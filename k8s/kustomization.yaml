@@ -1,0 +1,22 @@
+# ============================================================
+#  Kustomize — 一键部署全部资源
+#  用法: kubectl apply -k k8s/
+# ============================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: panghu-agent
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+
+# 替换镜像名（可选 — 配合 CI/CD）
+# images:
+#   - name: panghu-agent
+#     newName: harbor.your-company.com/project/panghu-agent
+#     newTag: latest

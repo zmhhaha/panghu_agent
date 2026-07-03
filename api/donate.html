@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>小额赞助 · 支持我们</title>
+<style>
+  :root {
+    --bg: #f8f9fa;
+    --card: #ffffff;
+    --text: #2d3436;
+    --sub: #636e72;
+    --accent: #e17055;
+    --border: #e9ecef;
+    --shadow: 0 2px 12px rgba(0,0,0,0.06);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px 40px;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+
+  /* ---- 顶部文案 ---- */
+  .header {
+    text-align: center;
+    margin-bottom: 28px;
+  }
+  .header .icon { font-size: 48px; margin-bottom: 8px; }
+  .header h1 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
+  .header p  { font-size: 14px; color: var(--sub); line-height: 1.6; }
+
+  /* ---- 金额按钮 ---- */
+  .amounts {
+    display: flex;
+    gap: 12px;
+    width: 100%;
+    max-width: 360px;
+    justify-content: center;
+    margin-bottom: 24px;
+  }
+  .btn-amount {
+    flex: 1;
+    max-width: 110px;
+    padding: 16px 0;
+    border: 2px solid var(--border);
+    border-radius: 16px;
+    background: var(--card);
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+  .btn-amount:active {
+    transform: scale(0.96);
+    border-color: var(--accent);
+    background: #fff5f3;
+  }
+  .btn-amount .price { font-size: 26px; color: var(--accent); }
+  .btn-amount .label { font-size: 13px; color: var(--sub); }
+
+  .btn-amount.active {
+    border-color: var(--accent);
+    background: #fff5f3;
+    box-shadow: 0 0 0 3px rgba(225,112,85,0.15);
+  }
+
+  /* ---- 自定义金额 ---- */
+  .custom-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    max-width: 360px;
+    margin-bottom: 28px;
+  }
+  .custom-row span { font-size: 14px; color: var(--sub); white-space: nowrap; }
+  .custom-row input {
+    flex: 1;
+    padding: 12px 14px;
+    border: 2px solid var(--border);
+    border-radius: 12px;
+    font-size: 16px;
+    outline: none;
+    text-align: center;
+    transition: border-color 0.2s;
+  }
+  .custom-row input:focus { border-color: var(--accent); }
+  .custom-row .unit { font-size: 14px; color: var(--sub); }
+
+  /* ---- 二维码区 ---- */
+  .qr-section {
+    width: 100%;
+    max-width: 320px;
+    background: var(--card);
+    border-radius: 20px;
+    box-shadow: var(--shadow);
+    padding: 28px 20px 24px;
+    text-align: center;
+    display: none;
+  }
+  .qr-section.show { display: block; }
+
+  .qr-section .amount-badge {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    font-size: 20px;
+    font-weight: 700;
+    padding: 6px 20px;
+    border-radius: 20px;
+    margin-bottom: 20px;
+  }
+
+  .qr-placeholder {
+    width: 200px;
+    height: 200px;
+    margin: 0 auto 16px;
+    border: 2px dashed var(--border);
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--sub);
+    font-size: 13px;
+    line-height: 1.8;
+    background: #fafafa;
+    overflow: hidden;
+    position: relative;
+  }
+  .qr-placeholder img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    position: absolute;
+    top: 0; left: 0;
+  }
+
+  .qr-section .tip {
+    font-size: 12px;
+    color: #b2bec3;
+    margin-top: 8px;
+  }
+  .qr-section .tip strong { color: var(--accent); }
+
+  /* ---- 说明 ---- */
+  .thanks {
+    margin-top: 32px;
+    text-align: center;
+    font-size: 13px;
+    color: #b2bec3;
+    line-height: 1.8;
+    max-width: 320px;
+  }
+  .thanks .heart { color: var(--accent); }
+</style>
+</head>
+<body>
+
+  <!-- 头部 -->
+  <div class="header">
+    <div class="icon">☕</div>
+    <h1>请作者喝杯咖啡</h1>
+    <p>如果这个工具帮到了你<br>一个小额赞助就是最大的鼓励</p>
+  </div>
+
+  <!-- 金额按钮 -->
+  <div class="amounts">
+    <button class="btn-amount" data-amount="0.10" onclick="selectAmount(this)">
+      <span class="price">¥0.10</span>
+      <span class="label">1 毛</span>
+    </button>
+    <button class="btn-amount" data-amount="0.20" onclick="selectAmount(this)">
+      <span class="price">¥0.20</span>
+      <span class="label">2 毛</span>
+    </button>
+    <button class="btn-amount" data-amount="0.50" onclick="selectAmount(this)">
+      <span class="price">¥0.50</span>
+      <span class="label">5 毛</span>
+    </button>
+  </div>
+
+  <!-- 自定义金额 -->
+  <div class="custom-row">
+    <span>自定义：</span>
+    <input type="number" id="customAmount" value=""
+           placeholder="输入金额" step="0.01" min="0.01"
+           onfocus="highlightCustom()" oninput="highlightCustom()">
+    <span class="unit">元</span>
+  </div>
+
+  <!-- 二维码区 -->
+  <div class="qr-section" id="qrSection">
+    <div class="amount-badge" id="qrBadge">¥0.10</div>
+    <div class="qr-placeholder" id="qrPlaceholder">
+      <!-- ★★★ 把微信/支付宝收款码图片放到 api/qrcodes/ 目录下 ★★★ -->
+      <!-- 例如: qrcodes/wechat.jpg、qrcodes/alipay.png -->
+      <img id="qrImage" src="" alt="收款码" style="display:none">
+      <span id="qrFallback">
+        📱<br>请将收款二维码图片<br>放到 api/qrcodes/ 目录
+      </span>
+    </div>
+    <p class="tip">请使用 <strong>微信</strong> 或 <strong>支付宝</strong> 扫码</p>
+    <p class="tip" style="margin-top:4px; font-size:11px">
+      扫码后请输入金额 <strong id="scanAmount">¥0.10</strong>
+    </p>
+  </div>
+
+  <!-- 底部 -->
+  <div class="thanks">
+    <span class="heart">❤</span> 每一分赞助都是对我们最大的支持<br>
+    感谢你让这个项目走得更远
+  </div>
+
+<script>
+  let activeBtn = null;
+
+  function selectAmount(btn) {
+    // 清除之前的状态
+    if (activeBtn) activeBtn.classList.remove('active');
+    btn.classList.add('active');
+    activeBtn = btn;
+
+    // 清除自定义
+    document.getElementById('customAmount').value = '';
+
+    // 显示二维码
+    showQR(parseFloat(btn.dataset.amount));
+  }
+
+  function highlightCustom() {
+    // 清除按钮状态
+    if (activeBtn) { activeBtn.classList.remove('active'); activeBtn = null; }
+
+    const val = parseFloat(document.getElementById('customAmount').value);
+    if (val > 0) {
+      showQR(val);
+    } else {
+      document.getElementById('qrSection').classList.remove('show');
+    }
+  }
+
+  function showQR(amount) {
+    const section = document.getElementById('qrSection');
+    const badge   = document.getElementById('qrBadge');
+    const scanAmt = document.getElementById('scanAmount');
+    const img     = document.getElementById('qrImage');
+    const fallback = document.getElementById('qrFallback');
+
+    badge.textContent = '¥' + amount.toFixed(2);
+    scanAmt.textContent = '¥' + amount.toFixed(2);
+    section.classList.add('show');
+
+    // 尝试加载对应的二维码图片
+    // 图片命名规则: qrcodes/wechat_0-10.png (金额下划线替换小数点)
+    const filename = 'qrcodes/pay_' + amount.toFixed(2).replace('.', '-') + '.png';
+    img.src = filename;
+    img.onload = function() {
+      img.style.display = 'block';
+      fallback.style.display = 'none';
+    };
+    img.onerror = function() {
+      img.style.display = 'none';
+      fallback.style.display = 'flex';
+    };
+
+    // 滚动到二维码
+    section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+</script>
+
+</body>
+</html>
