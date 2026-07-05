@@ -1,126 +1,149 @@
-# Panghu Agent
+# 🐯 Panghu Agent — 多 Agent 协作研究助手
 
-Agent 开发平台 — 多 Agent 协作研究助手，支持 CLI 本地使用和 API 在线服务。
+基于 CrewAI 的深度调研系统，支持异步提交、实时进度追踪、报告检索与下载。
+
+## 目录结构
 
 ```
 panghu_agent/
-├── crewai/                 # Agent 引擎（核心功能）
-├── api/                    # 付费 API 服务（独立模块）
-├── k8s/                    # Kubernetes 部署清单
-├── scripts/                # 构建 & 部署脚本
-├── Dockerfile              # 多架构 Docker 镜像
-├── docker-compose.yaml     # 本地编排
-└── README.md
+├── tools/                        # 共享工具
+│   ├── sqlite_client.py          # 共享 SQLite HTTP 客户端（K8s 持久化）
+│   └── custom_tools.py           # Agent 工具：Web 搜索、页面抓取、交叉验证
+├── research_agent/               # 研究助手核心
+│   ├── crew.py                   # Agent 定义（研究员 / 分析师 / 撰写者）
+│   ├── main.py                   # CLI 本地执行入口
+│   └── requirements.txt          # CrewAI + Anthropic + 抓取依赖
+├── app/
+│   ├── api/
+│   │   └── research_agent.py     # FastAPI 异步调研 API 服务
+│   └── ui/
+│       └── research_agent.py     # Gradio Web UI
+├── k8s/                          # Kubernetes 部署配置
+│   ├── namespace.yaml
+│   ├── configmap.yaml            # agent-config: PROVIDER
+│   ├── secret.yaml               # agent-secret: OPENAI_API_KEY
+│   ├── api-deployment.yaml       # API Deployment + Service
+│   └── ui-deployment.yaml        # UI Deployment + Service
+├── scripts/
+│   └── build.sh                  # 构建脚本
+├── Dockerfile.api                # API 镜像
+├── Dockerfile.ui                 # UI 镜像
+├── .env.example                  # 本地 LLM 配置示例
+└── .env                          # 本地 LLM 配置（不提交）
 ```
 
 ## 快速开始
 
-### Agent 引擎（本地 CLI）
+### 1. 本地 CLI 执行
 
 ```bash
-cd crewai
-pip install -r requirements.txt
-cp .env.example .env   # 编辑填写 API Key
-python main.py "你的调研主题"
+cd panghu_agent
+cp .env.example .env
+# 编辑 .env 填入 API Key
+
+python research_agent/main.py "你的调研主题"
 ```
 
-### 付费 API 服务（在线）
+### 2. 本地 API 服务
 
 ```bash
-# 1. 安装依赖
-cd crewai && pip install -r requirements.txt && cd ..
-cd api && pip install -r requirements.txt && cd ..
+pip install fastapi[standard] uvicorn[standard]
+pip install -r research_agent/requirements.txt
 
-# 2. 配置
-cp api/.env.example api/.env
-
-# 3. 启动
-python -m uvicorn api.server:app --host 0.0.0.0 --port 8000 --reload
+uvicorn app.api.research_agent:app --reload --port 8000
+# → http://localhost:8000/docs
 ```
 
-### Docker（推荐）
+### 3. 本地 UI
 
 ```bash
-# 本地构建 + 运行
-docker build -t panghu-agent:latest .
-docker run -d -p 8000:8000 \
-  -e PROVIDER=openai \
-  -e OPENAI_API_KEY=sk-xxx \
-  -e ADMIN_API_KEY=your-admin-secret \
-  -v $(pwd)/data:/app/data \
-  panghu-agent:latest
+pip install gradio requests
 
-# 或用 docker-compose
-docker compose up -d
-
-# ARM64 构建
-./scripts/build.sh --arm-only
-
-# 多架构构建 + 推送
-REGISTRY=harbor.your.com/project/ ./scripts/build.sh --push
+API_BASE=http://localhost:8000 python app/ui/research_agent.py
+# → http://localhost:7860
 ```
 
-### Kubernetes（ARM 服务器）
-
-```bash
-# 1. 编辑密钥
-vim k8s/secret.yaml   # 填入真实 API Key
-
-# 2. 编辑 Ingress 域名
-vim k8s/ingress.yaml  # 替换 agent.your-domain.com
-
-# 3. 一键部署
-kubectl apply -k k8s/
-
-# 4. 查看状态
-kubectl -n panghu-agent get pods,svc,ingress
-
-# 5. 查看 admin API Key（首次启动自动生成）
-kubectl -n panghu-agent logs deploy/panghu-agent | head -10
-```
-
-启动后访问 http://localhost:8000/docs 查看 API 文档。
-
-## API 端点概览
-
-### 用户端（需要 API Key）
+## API 端点
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/v1/me` | 当前用户信息 + 累计消费 |
-| GET | `/v1/usage` | 用量记录（分页） |
-| POST | `/v1/research` | 执行调研，按 Token 后付费 |
+| `POST` | `/research` | 提交调研任务，返回 `task_id` |
+| `GET` | `/research/{id}` | 查询任务状态和报告 |
+| `GET` | `/reports?q=关键词` | 检索已完成的报告 |
+| `GET` | `/reports/{id}` | 获取单篇报告全文 |
+| `GET` | `/download/{id}` | 下载 Markdown 报告 |
+| `GET` | `/health` | 健康检查 |
 
-### 管理端（需要 Admin Key）
+所有数据持久化到共享 SQLite 服务，容器本地不留数据。
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/admin/users` | 创建用户，返回 API Key |
-| GET | `/admin/users` | 用户列表 |
-| GET | `/admin/users/{id}` | 用户详情 + 统计 |
-| POST | `/admin/users/{id}/keys` | 生成新 API Key |
-| POST | `/admin/users/{id}/keys/{kid}/revoke` | 吊销 API Key |
-| GET | `/admin/pricing` | 定价配置 |
-| POST | `/admin/pricing` | 新增/更新定价 |
+## 构建与部署
 
-### 计费模式
-
-- **后付费**：按 Token 累计，不预扣余额
-- **定价管理**：通过 `/admin/pricing` 配置，支持按模型模糊匹配
-- **默认定价**：首次启动自动初始化（比官方价上浮 50%-100%）
-
-## curl 示例
+### 构建镜像
 
 ```bash
-# 创建用户
-curl -X POST http://localhost:8000/admin/users \
-  -H "Content-Type: application/json" \
-  -H "X-Admin-Key: your-admin-key" \
-  -d '{"username": "test", "email": "test@example.com"}'
+# API 镜像
+./scripts/build.sh api
 
-# 执行调研
-curl -X POST http://localhost:8000/v1/research \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: sk-your-api-key" \
-  -d '{"topic": "量子计算在金融领域的应用前景"}'
+# UI 镜像
+./scripts/build.sh ui
+
+# 构建 + 推送
+./scripts/build.sh api --push
+./scripts/build.sh ui --push
+```
+
+### 部署到 K8s
+
+```bash
+NS=research-agent
+
+# 创建命名空间 + 配置
+sed "s/__NAMESPACE__/$NS/g" k8s/namespace.yaml  | kubectl apply -f -
+sed "s/__NAMESPACE__/$NS/g" k8s/configmap.yaml   | kubectl apply -f -
+sed "s/__NAMESPACE__/$NS/g" k8s/secret.yaml      | kubectl apply -f -
+
+# 部署服务
+sed "s/__NAMESPACE__/$NS/g" k8s/api-deployment.yaml | kubectl apply -f -
+sed "s/__NAMESPACE__/$NS/g" k8s/ui-deployment.yaml  | kubectl apply -f -
+```
+
+### 重新部署
+
+Secret 中的 `OPENAI_API_KEY` 需要用真实 key 替换后再 apply：
+
+```bash
+kubectl create secret generic agent-secret -n $NS \
+  --from-literal=OPENAI_API_KEY="sk-your-real-key" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+kubectl rollout restart deploy/api -n $NS
+kubectl rollout restart deploy/ui  -n $NS
+```
+
+## 架构
+
+```
+用户 → Cloudflare Tunnel → research-agent.panghuer.top
+                                │
+              ┌─────────────────┴──────────────────┐
+              ▼                                     ▼
+    Gradio UI (:7860)                    FastAPI (:8000)
+    app/ui/research_agent.py            app/api/research_agent.py
+              │                                     │
+              │ HTTP 调用                            │
+              └─────────────► 共享 SQLite 服务 ◄─────┘
+                              http://sqlite.data.svc.cluster.local:8000
+```
+
+- **UI** 只做 HTTP 请求，不直接调 LLM，镜像极简
+- **API** 异步执行 CrewAI 调研，数据全走共享 SQLite
+- **SQLite** 独立持久化服务，pod 重启不丢数据
+
+## 研究流程
+
+```
+提交主题 → [研究员 Agent: 多渠道搜索 + 抓取页面 + 交叉验证]
+         → [分析师 Agent: 趋势识别 + SWOT + 洞察提炼]
+         → [撰写者 Agent: 结构化 Markdown 报告]
+         → 报告存入 SQLite → 支持检索 + 下载
 ```

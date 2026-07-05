@@ -7,7 +7,10 @@ import sys
 import os
 from dotenv import load_dotenv
 
-env_path = os.path.join(os.path.dirname(__file__), ".env")
+env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+
+# 把 panghu_agent 根目录加入 sys.path，确保 from research_agent.crew import 能正确导入
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 # ============================================================
 #  首次运行引导：自动创建 .env 并提示用户填写
@@ -71,7 +74,7 @@ if missing:
         os.environ[missing_var] = val
     load_dotenv(env_path, override=True)
 
-from crew import create_research_crew
+from research_agent.crew import create_research_crew
 
 
 def main():

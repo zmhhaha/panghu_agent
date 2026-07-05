@@ -4,26 +4,50 @@
 #  依赖 arm-cluster-master:5000/base:latest（已配国内源）
 # ============================================================
 #  用法:
-#    ./scripts/build.sh              # 本地构建（当前架构）
-#    ./scripts/build.sh --push       # 构建多架构 + 推送
-#    ./scripts/build.sh --arm-only   # 仅构建 ARM64
+#    ./scripts/build.sh api             # 构建 API 镜像
+#    ./scripts/build.sh ui              # 构建 UI 镜像
+#    ./scripts/build.sh api --push      # 构建 + 推送
+#    ./scripts/build.sh ui --arm-only   # 仅构建 ARM64
 # ============================================================
 set -euo pipefail
 
 REGISTRY="${REGISTRY:-arm-cluster-master:5000}"
-IMAGE_NAME="${IMAGE_NAME:-panghu-agent}"
-IMAGE_TAG="${IMAGE_TAG:-latest}"
-FULL_IMAGE="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
 
 cd "$(dirname "$0")/.."
 
-case "${1:-}" in
+TARGET="${1:-}"
+ACTION="${2:-}"
+
+usage() {
+  echo "用法: $0 {api|ui} [--push|--arm-only]"
+  exit 1
+}
+
+case "$TARGET" in
+  api)
+    IMAGE_NAME="${IMAGE_NAME:-agent-api}"
+    DOCKERFILE="Dockerfile.api"
+    PORT="8000"
+    ;;
+  ui)
+    IMAGE_NAME="${IMAGE_NAME:-agent-ui}"
+    DOCKERFILE="Dockerfile.ui"
+    PORT="7860"
+    ;;
+  *) usage ;;
+esac
+
+IMAGE_TAG="${IMAGE_TAG:-latest}"
+FULL_IMAGE="${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+
+case "$ACTION" in
   --push)
     echo "=== 多架构构建 + 推送: ${FULL_IMAGE} ==="
     docker buildx build \
       --build-arg REGISTRY="${REGISTRY}" \
       --platform linux/amd64,linux/arm64 \
-      --tag "${FULL_IMAGE}" \
+      -f "${DOCKERFILE}" \
+      -t "${FULL_IMAGE}" \
       --push \
       .
     echo "完成! 拉取: docker pull ${FULL_IMAGE}"
@@ -34,7 +58,8 @@ case "${1:-}" in
     docker buildx build \
       --build-arg REGISTRY="${REGISTRY}" \
       --platform linux/arm64 \
-      --tag "${FULL_IMAGE}-arm64" \
+      -f "${DOCKERFILE}" \
+      -t "${FULL_IMAGE}-arm64" \
       --load \
       .
     echo "完成! 镜像: ${FULL_IMAGE}-arm64"
@@ -44,7 +69,8 @@ case "${1:-}" in
     echo "=== 本地构建: ${FULL_IMAGE} ==="
     docker build \
       --build-arg REGISTRY="${REGISTRY}" \
+      -f "${DOCKERFILE}" \
       -t "${FULL_IMAGE}" .
-    echo "完成! 运行: docker run -d -p 8000:8000 ${FULL_IMAGE}"
+    echo "完成! 运行: docker run -d -p ${PORT}:${PORT} ${FULL_IMAGE}"
     ;;
 esac

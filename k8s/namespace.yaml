@@ -1,4 +1,8 @@
+# ============================================================
+#  Agent 命名空间
+#  用法: sed "s/__NAMESPACE__/research-agent/g" k8s/namespace.yaml | kubectl apply -f -
+# ============================================================
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: panghu-agent
+  name: __NAMESPACE__

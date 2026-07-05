@@ -1,0 +1,72 @@
+# ============================================================
+#  Research Agent — UI 服务 (K8s 部署, Gradio)
+#  源码通过 hostPath 挂载，改代码无需重建镜像
+#  用法: sed "s/__NAMESPACE__/research-agent/g" k8s/ui-deployment.yaml | kubectl apply -f -
+# ============================================================
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ui
+  namespace: __NAMESPACE__
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: research-ui
+  template:
+    metadata:
+      labels:
+        app: research-ui
+    spec:
+      nodeName: arm-cluster-master
+      containers:
+      - name: ui
+        image: arm-cluster-master:5000/agent-ui:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 7860
+        env:
+        - name: API_BASE
+          value: "http://api.__NAMESPACE__.svc.cluster.local"
+        - name: GRADIO_SERVER_PORT
+          value: "7860"
+        volumeMounts:
+        - name: code
+          mountPath: /app
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: "2"
+            memory: 2Gi
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 7860
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 7860
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: code
+        hostPath:
+          path: /root/armbianbegin/panghu_agent
+          type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui
+  namespace: __NAMESPACE__
+spec:
+  selector:
+    app: research-ui
+  ports:
+  - port: 7860

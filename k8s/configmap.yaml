@@ -1,10 +1,11 @@
+# ============================================================
+#  Agent 通用配置
+#  用法: sed "s/__NAMESPACE__/research-agent/g" k8s/configmap.yaml | kubectl apply -f -
+# ============================================================
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: panghu-agent-config
-  namespace: panghu-agent
+  name: agent-config
+  namespace: __NAMESPACE__
 data:
-  PROVIDER: "openai"
-  API_PORT: "8000"
-  ADMIN_EMAIL: "admin@localhost"
-  DATABASE_URL: "sqlite:////app/data/data.db"
+  PROVIDER: "deepseek"
