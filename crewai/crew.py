@@ -1,8 +1,8 @@
 import os
 from crewai import Agent, Task, Crew, Process, LLM
 
-# 如果需要网页搜索/爬取工具，取消下面的注释：
-# from crewai_tools import SerperDevTool, ScrapeWebsiteTool
+# 自定义工具（全部免费，无需第三方 API Key）
+from tools.custom_tools import WebSearchTool, WebFetchTool, MultiFetchTool
 
 
 # ============================================================
@@ -71,14 +71,20 @@ def create_researcher() -> Agent:
     """研究员：负责搜集和整理信息"""
     return Agent(
         role="高级研究分析师",
-        goal="深入调研并搜集关于 {topic} 的全面、准确的信息和数据",
+        goal="深入调研并搜集关于 {topic} 的全面、准确的信息和数据，通过多渠道交叉验证确保信息可靠",
         backstory="""你是一位资深的技术研究分析师，拥有10年以上的行业调研经验。你擅长：
-- 从海量信息中快速提取关键洞察
-- 交叉验证多个数据源的可靠性
-- 识别新兴趋势和技术突破
-- 整理结构化的调研笔记""",
+- 使用搜索引擎从多个渠道搜集最新信息
+- 深入阅读来源页面，提取关键数据和观点
+- 交叉验证多个独立来源的信息一致性
+- 识别信息的时效性、权威性和潜在偏见
+- 区分客观事实与主观观点，标注信息来源
+- 整理结构化的调研笔记，附上 URL 引用""",
         llm=PRIMARY_LLM,
-        # tools=[SerperDevTool(), ScrapeWebsiteTool()],  # 取消注释启用搜索
+        tools=[
+            WebSearchTool(),    # DuckDuckGo 免费搜索
+            WebFetchTool(),     # 抓取单个 URL 内容
+            MultiFetchTool(),   # 批量抓取 + 交叉验证
+        ],
         verbose=True,
         allow_delegation=False,
     )
@@ -123,22 +129,28 @@ def create_writer() -> Agent:
 def create_research_task(researcher: Agent) -> Task:
     """调研任务"""
     return Task(
-        description="""全面调研 {topic}，涵盖以下维度：
+        description="""全面调研 {topic}，覆盖以下维度：
 
-1. **核心概念与技术**：基础原理、关键技术栈、架构设计
-2. **最新进展**：最近6个月的重大更新、新版本发布、重要论文
-3. **主要参与者**：主要框架/产品、背后团队、社区活跃度
-4. **实际应用**：典型使用场景、成功案例、最佳实践
-5. **对比分析**：各方案的优劣势对比
+1. **核心概念与技术原理**：基础概念、关键技术栈、架构设计思路
+2. **最新进展**：最近12个月内的重大更新、版本发布、重要论文/博客
+3. **主要参与者**：领先框架/产品/公司、核心团队、社区活跃度（GitHub Stars、贡献者数等）
+4. **实际应用**：典型使用场景、真实成功案例、行业最佳实践
+5. **对比分析**：各方案的优劣势、适用场景、性能/成本对比
 
-要求：
-- 每个要点都标注信息来源
-- 区分事实和观点
-- 标注信息的时效性""",
-        expected_output="""一份结构化的调研数据文档，包含：
-- 分类整理的调研发现
-- 来源引用
-- 关键数据点汇总""",
+## 调研要求（非常重要）：
+
+- **必须使用搜索工具**获取最新信息，不要仅凭训练数据回答
+- **每个核心观点至少从 2 个独立来源交叉验证**，发现信息冲突时明确标注
+- **标注每条关键信息的来源 URL** 和发布时间
+- **区分「事实」和「观点」**——来自官方文档/论文的为事实，来自博客/社媒的为观点
+- **标注信息的时效性**：明确标注是哪一年的数据/版本
+- **对不确定的信息明确说"不确定"**，不要编造
+- 优先使用官方文档、学术论文、权威科技媒体作为来源""",
+        expected_output="""一份结构化的调研文档，包含：
+- 每个维度的详细发现（附来源 URL 和发布时间）
+- 关键数据点汇总表格
+- 多个来源的交叉验证标注（一致 / 存在分歧 / 仅单一来源）
+- 信息时效性标注（每条的年份/版本）""",
         agent=researcher,
     )
 
@@ -180,10 +192,10 @@ def create_report_task(writer: Agent, analysis_task: Task) -> Task:
 - 善用表格对比
 - 关键结论加粗标注
 - 中文撰写""",
-        expected_output="一份完整的 Markdown 格式研究报告，保存到 report.md",
+        expected_output="一份完整的 Markdown 格式研究报告",
         agent=writer,
         context=[analysis_task],
-        output_file="report.md",
+        # 不指定 output_file，多会话并发时避免文件互相覆盖
     )
 
 

@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: panghu-agent-data
+  namespace: panghu-agent
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: panghu-agent
+  namespace: panghu-agent
+  labels:
+    app: panghu-agent
+spec:
+  replicas: 1                         # SQLite 只能单实例；如用外置 DB 可扩容
+  selector:
+    matchLabels:
+      app: panghu-agent
+  template:
+    metadata:
+      labels:
+        app: panghu-agent
+    spec:
+      # ---- ARM 节点亲和性（可选） ----
+      # affinity:
+      #   nodeAffinity:
+      #     requiredDuringSchedulingIgnoredDuringExecution:
+      #       nodeSelectorTerms:
+      #         - matchExpressions:
+      #             - key: kubernetes.io/arch
+      #               operator: In
+      #               values:
+      #                 - arm64
+
+      containers:
+        - name: panghu-agent
+          image: arm-cluster-master:5000/panghu-agent:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+
+          # ---- 环境变量：ConfigMap + Secret ----
+          envFrom:
+            - configMapRef:
+                name: panghu-agent-config
+            - secretRef:
+                name: panghu-agent-secret
+
+          # ---- 资源限制（ARM 环境建议适当调整） ----
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+
+          # ---- 探针 ----
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # ---- 挂载 ----
+          volumeMounts:
+            # 数据持久化（SQLite 数据库）
+            - name: data
+              mountPath: /app/data
+            # 收款二维码（用 ConfigMap 或 hostPath，此处示例为 emptyDir）
+            - name: qrcodes
+              mountPath: /app/api/qrcodes
+
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: panghu-agent-data
+        - name: qrcodes
+          emptyDir: {}
+          # ★ 如要持久化二维码图片，改为 PVC 或 ConfigMap:
+          # configMap:
+          #   name: panghu-agent-qrcodes

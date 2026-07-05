@@ -34,6 +34,8 @@ if not os.path.exists(env_path):
         key = input("请输入 Anthropic API Key: ").strip()
         config_lines.append(f"ANTHROPIC_API_KEY={key}" + "\n")
 
+    # 网页搜索使用免费的 DuckDuckGo，无需额外 API Key
+
     with open(env_path, "w", encoding="utf-8") as fp:
         fp.writelines(config_lines)
     print(f"\n配置文件已保存到 {env_path}\n")
@@ -56,6 +58,8 @@ elif provider in ("openai", "deepseek"):
 elif provider == "anthropic":
     if not os.getenv("ANTHROPIC_API_KEY"):
         missing.append("ANTHROPIC_API_KEY")
+
+# 网页搜索使用免费的 DuckDuckGo，无需额外配置
 
 if missing:
     missing_var = "dummy"
