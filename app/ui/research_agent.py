@@ -101,22 +101,22 @@ def _progress_bar(elapsed: int, total: int, width: int = 20) -> str:
 
 
 def download_report_history(task_id: str):
-    """历史搜索页下载报告——返回文件路径供 gr.File 使用"""
-    if not task_id.strip():
+    """历史搜索页下载——保存到临时文件，返回路径供 DownloadButton 下载"""
+    tid = task_id.strip()
+    if not tid:
         raise gr.Error("请输入报告 ID")
+
     try:
-        r = requests.get(f"{API_BASE}/download/{task_id}", timeout=30)
+        r = requests.get(f"{API_BASE}/download/{tid}", timeout=30)
         if r.status_code == 404:
             raise gr.Error("报告未找到，请检查 ID 是否正确")
         r.raise_for_status()
-        cd = r.headers.get("Content-Disposition", "")
-        fname = "report.md"
-        if "filename=" in cd:
-            fname = cd.split("filename=")[-1].strip('\"')
-        path = f"/tmp/{fname}"
+
+        path = f"/tmp/{tid[:8]}.md"
         with open(path, "wb") as f:
             f.write(r.content)
-        return gr.update(value=path, visible=True)
+        return path
+
     except requests.HTTPError as e:
         raise gr.Error(f"下载失败 (HTTP {e.response.status_code})")
     except requests.ConnectionError:
@@ -216,10 +216,9 @@ with gr.Blocks(title="🐯 研究助手", theme=THEME) as demo:
 
         with gr.Row():
             rid_box = gr.Textbox(label="报告 ID", placeholder="粘贴搜索结果中的完整报告 ID", scale=3)
-            hist_dl_btn = gr.Button("📥 下载", variant="secondary", scale=1)
+            hist_dl_btn = gr.DownloadButton("📥 下载", variant="secondary", scale=1)
 
-        hist_file = gr.File(label="下载结果", visible=False)
-        hist_dl_btn.click(fn=download_report_history, inputs=[rid_box], outputs=[hist_file])
+        hist_dl_btn.click(fn=download_report_history, inputs=[rid_box], outputs=hist_dl_btn)
 
 if __name__ == "__main__":
     demo.queue(default_concurrency_limit=2).launch(
