@@ -1,0 +1,27 @@
+# docker build -f Dockerfile.api.base -t ${REGISTRY}/agent-api-base:latest .
+# docker push ${REGISTRY}/agent-api-base:latest
+
+ARG REGISTRY=arm-cluster-master:5000
+FROM ${REGISTRY}/base:latest
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip curl && \
+    rm -rf /var/lib/apt/lists/* && \
+    update-alternatives --install /usr/bin/python python /usr/bin/python3 1
+
+WORKDIR /app
+
+# ---- 先装轻量依赖（fastapi 很少变，缓存友好） ----
+RUN pip install --break-system-packages --no-cache-dir \
+    -i https://mirrors.aliyun.com/pypi/simple/ \
+    --trusted-host mirrors.aliyun.com \
+    --default-timeout=300 \
+    fastapi[standard]>=0.115.0 uvicorn[standard]>=0.32.0
+
+# ---- 再装 CrewAI 依赖（包很大，变动少，单独一层） ----
+COPY research_agent/requirements.txt ./requirements.txt
+RUN pip install --break-system-packages --no-cache-dir \
+    -i https://mirrors.aliyun.com/pypi/simple/ \
+    --trusted-host mirrors.aliyun.com \
+    --default-timeout=300 \
+    -r requirements.txt

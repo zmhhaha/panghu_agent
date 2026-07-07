@@ -1,0 +1,8 @@
+crewai[tools]>=0.108.0
+anthropic>=0.40.0
+python-dotenv>=1.0.0
+
+# Web 抓取 & 搜索（免费）
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+xmltodict>=0.13.0

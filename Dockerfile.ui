@@ -1,5 +1,5 @@
 # ============================================================
-#  Panghu Agent — UI 服务镜像（仅依赖层，源码通过 hostPath 挂载）
+#  Panghu Agent — UI 服务镜像（仅依赖层，agent.py 通过 ConfigMap 挂载）
 #  用法: docker build -f Dockerfile.ui -t agent-ui:latest .
 # ============================================================
 ARG REGISTRY=arm-cluster-master:5000
@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# ---- 只安装依赖，不 COPY 源码（源码通过 K8s hostPath 挂载） ----
+# ---- 只安装依赖，不 COPY 源码（agent.py 通过 ConfigMap 挂载） ----
 RUN pip install --break-system-packages --no-cache-dir \
     -i https://mirrors.aliyun.com/pypi/simple/ \
     --trusted-host mirrors.aliyun.com \
@@ -22,4 +22,4 @@ ENV PYTHONUNBUFFERED=1 \
     GRADIO_SERVER_NAME="0.0.0.0" \
     GRADIO_SERVER_PORT="7860"
 EXPOSE 7860
-CMD ["python", "app/ui/research_agent.py"]
+CMD ["python", "app/ui/agent.py"]

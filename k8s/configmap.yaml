@@ -8,4 +8,8 @@ metadata:
   name: agent-config
   namespace: __NAMESPACE__
 data:
-  PROVIDER: "deepseek"
+  PROVIDER: "custom"
+  CUSTOM_API_BASE: "http://0.0.0.0"
+  CUSTOM_MODEL: "deepseek-v4-pro"
+  # PROVIDER: "deepseek"
+

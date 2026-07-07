@@ -1,7 +1,7 @@
 # ============================================================
 #  Research Agent — API 服务 (K8s 部署)
-#  源码通过 hostPath 挂载，改代码无需重建镜像，pod 自动热重载
-#  用法: sed "s/__NAMESPACE__/research-agent/g" k8s/api-deployment.yaml | kubectl apply -f -
+#  agent.py 通过 ConfigMap 挂载（api-agent），config 通过 ConfigMap 注入，secret 通过 Secret 注入
+#  更新: bash scripts/deploy-api.sh research_agent
 # ============================================================
 ---
 apiVersion: apps/v1
@@ -19,7 +19,6 @@ spec:
       labels:
         app: research-api
     spec:
-      nodeName: arm-cluster-master
       containers:
       - name: api
         image: arm-cluster-master:5000/agent-api:latest
@@ -36,9 +35,16 @@ spec:
               name: agent-secret
               key: OPENAI_API_KEY
               optional: true
+        - name: CUSTOM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: agent-secret
+              key: CUSTOM_API_KEY
+              optional: true
         volumeMounts:
-        - name: code
-          mountPath: /app
+        - name: source
+          mountPath: /app/app/api/agent.py
+          subPath: agent.py
         resources:
           requests:
             cpu: 250m
@@ -46,23 +52,23 @@ spec:
           limits:
             cpu: "2"
             memory: 2Gi
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 30
-          periodSeconds: 30
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 10
-          periodSeconds: 10
+        # livenessProbe:
+        #   httpGet:
+        #     path: /health
+        #     port: 8000
+        #   initialDelaySeconds: 30
+        #   periodSeconds: 30
+        # readinessProbe:
+        #   httpGet:
+        #     path: /health
+        #     port: 8000
+        #   initialDelaySeconds: 10
+        #   periodSeconds: 10
       volumes:
-      - name: code
-        hostPath:
-          path: /root/armbianbegin/panghu_agent
-          type: Directory
+      - name: source
+        configMap:
+          name: api-agent
+          defaultMode: 0755
 ---
 apiVersion: v1
 kind: Service

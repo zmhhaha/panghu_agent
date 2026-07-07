@@ -74,9 +74,3 @@ case "$ACTION" in
     echo "完成! 运行: docker run -d -p ${PORT}:${PORT} ${FULL_IMAGE}"
     ;;
 esac
-
-# NS=research-agent
-# sed "s/__NAMESPACE__/$NS/g" k8s/api-deployment.yaml | kubectl delete -f -
-# sed "s/__NAMESPACE__/$NS/g" k8s/ui-deployment.yaml | kubectl delete -f -
-# sed "s/__NAMESPACE__/$NS/g" k8s/api-deployment.yaml | kubectl apply -f -
-# sed "s/__NAMESPACE__/$NS/g" k8s/ui-deployment.yaml | kubectl apply -f -

@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""研究/分析助手 - 多Agent协作。
-用法：python main.py "你的调研主题"
+"""科学综述助手 - 多Agent协作系统综述。
+用法: python main.py "你的研究主题"
 """
-
 import sys
 import os
 from dotenv import load_dotenv
 
 env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
 
-# 把 panghu_agent 根目录加入 sys.path，确保 from research_agent.crew import 能正确导入
+# 把 panghu_agent 根目录加入 sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 # ============================================================
@@ -21,23 +20,23 @@ if not os.path.exists(env_path):
     print("=" * 60)
     provider = input("请选择模型提供商 (openai / anthropic / deepseek / custom，默认 openai): ").strip() or "openai"
 
-    config_lines = [f"PROVIDER={provider}" + "\n"]
+    config_lines = [f"PROVIDER={provider}\n"]
 
     if provider == "custom":
         base_url = input("请输入 API 地址 (如 http://localhost:11434/v1): ").strip() or "http://localhost:11434/v1"
         api_key = input("请输入 API Key (如无可直接回车): ").strip()
         model = input("请输入模型名称 (如 qwen2.5:7b，默认 gpt-4o-mini): ").strip() or "gpt-4o-mini"
-        config_lines.append(f"CUSTOM_API_BASE={base_url}" + "\n")
-        config_lines.append(f"CUSTOM_API_KEY={api_key}" + "\n")
-        config_lines.append(f"CUSTOM_MODEL={model}" + "\n")
+        config_lines.append(f"CUSTOM_API_BASE={base_url}\n")
+        config_lines.append(f"CUSTOM_API_KEY={api_key}\n")
+        config_lines.append(f"CUSTOM_MODEL={model}\n")
     elif provider in ("openai", "deepseek"):
         key = input("请输入 OpenAI / DeepSeek API Key: ").strip()
-        config_lines.append(f"OPENAI_API_KEY={key}" + "\n")
+        config_lines.append(f"OPENAI_API_KEY={key}\n")
     elif provider == "anthropic":
         key = input("请输入 Anthropic API Key: ").strip()
-        config_lines.append(f"ANTHROPIC_API_KEY={key}" + "\n")
+        config_lines.append(f"ANTHROPIC_API_KEY={key}\n")
 
-    # 网页搜索使用免费的 DuckDuckGo，无需额外 API Key
+    # 所有学术搜索工具均为免费 API，无需额外 Key
 
     with open(env_path, "w", encoding="utf-8") as fp:
         fp.writelines(config_lines)
@@ -46,7 +45,7 @@ if not os.path.exists(env_path):
 # 加载 .env 文件
 load_dotenv(env_path)
 
-# 检查关键变量是否缺失，缺失则交互式补全
+# 检查关键变量是否缺失
 provider = os.getenv("PROVIDER", "openai").lower()
 
 missing = []
@@ -62,50 +61,48 @@ elif provider == "anthropic":
     if not os.getenv("ANTHROPIC_API_KEY"):
         missing.append("ANTHROPIC_API_KEY")
 
-# 网页搜索使用免费的 DuckDuckGo，无需额外配置
-
 if missing:
-    missing_var = "dummy"
     print("\n以下配置项缺失，请补充:")
     for missing_var in missing:
         val = input(f"  请输入 {missing_var}: ").strip()
         with open(env_path, "a", encoding="utf-8") as fp:
-            fp.write(f"{missing_var}={val}" + "\n")
+            fp.write(f"{missing_var}={val}\n")
         os.environ[missing_var] = val
     load_dotenv(env_path, override=True)
 
-from research_agent.crew import create_research_crew
+from scientific_agent.crew import create_scientific_crew
 
 
 def main():
-    # 从命令行获取调研主题
+    # 从命令行获取研究主题
     if len(sys.argv) > 1:
         topic = " ".join(sys.argv[1:])
     else:
-        topic = "2026年多Agent协作框架的发展现状与趋势"
+        topic = "深度学习在医学影像分析中的应用进展"
 
     sep = "=" * 60
     print(f"\n{sep}")
-    print(f"  研究助手启动")
-    print(f"  调研主题: {topic}")
+    print(f"  科研综述助手启动")
+    print(f"  研究主题: {topic}")
+    print(f"  Pipeline: 文献检索 → 文献筛选 → 数据提取 → 综合分析 → 综述撰写")
     print(f"{sep}\n")
 
     # 创建并运行 Crew
-    crew = create_research_crew()
+    crew = create_scientific_crew()
     result = crew.kickoff(inputs={"topic": topic})
 
-    # 保存报告到本地文件
-    report_path = os.path.join(os.path.dirname(__file__), "report.md")
+    # 保存综述报告到本地文件
+    report_path = os.path.join(os.path.dirname(__file__), "review.md")
     report_content = str(result)
     with open(report_path, "w", encoding="utf-8") as fp:
         fp.write(report_content)
 
     print(f"\n{sep}")
-    print(f"  调研完成！")
-    print(f"  报告已保存到: {report_path}")
+    print(f"  综述撰写完成！")
+    print(f"  综述报告已保存到: {report_path}")
     print(f"{sep}\n")
 
-    # 打印最终结果摘要
+    # 打印最终结果
     print(report_content)
 
 

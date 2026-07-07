@@ -1,10 +1,10 @@
 """
-研究助手 Agent — FastAPI（内部服务，不对外开放）
+科学综述助手 — FastAPI（内部服务，不对外开放）
 所有数据持久化到共享 SQLite 服务，容器本地不留数据。
-POST /research          → 提交任务，返回 task_id
-GET  /research/{id}     → 查询任务状态 & 结果
-GET  /reports           → 检索已完成的报告
-GET  /download/{id}     → 下载报告全文
+POST /scientific-research          → 提交任务，返回 task_id
+GET  /scientific-research/{id}     → 查询任务状态 & 结果
+GET  /scientific-reports           → 检索已完成的综述报告
+GET  /scientific-download/{id}     → 下载报告全文
 """
 import sys, os, threading, re
 
@@ -16,10 +16,10 @@ from pydantic import BaseModel, Field
 
 from tools import sqlite_client as db
 
-# ── 初始化 research 表 ──
-db.init_db("research")
+# ── 初始化 scientific 表 ──
+db.init_db("scientific")
 
-app = FastAPI(title="🐯 研究助手 API (internal)", version="3.0")
+app = FastAPI(title="🔬 科学综述助手 API (internal)", version="1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
@@ -41,37 +41,37 @@ class TaskResponse(BaseModel):
 
 
 # ============================================================
-#  后台研究线程
+# backend thread
 # ============================================================
 
-def _run_research(task_id: str, topic: str, email: str = ""):
+def _run_refinement(task_id: str, topic: str, email: str = ""):
     try:
         db.update_task(task_id, status="running")
 
-        from research_agent.crew import create_research_crew
-        crew = create_research_crew()
+        from scientific_agent.crew import create_scientific_crew
+        crew = create_scientific_crew()
         result = str(crew.kickoff(inputs={"topic": topic}))
 
         db.update_task(task_id, status="done", report=result)
 
-        # 报告存入共享 SQLite（检索 + 下载用）
+        # 报告存 SQLite
         try:
             summary = _extract_summary(result)
             keywords = _extract_keywords(topic)
             db.save_report(task_id, topic, summary, keywords, result)
         except Exception:
-            pass  # 报告存储失败不影响主流程
+            pass
 
-        # 发送完成邮件通知
+        # 发送邮件
         if email:
             from tools.email_client import send_email
             send_email(
                 to=email,
-                subject=f"🐯 调研完成: {topic[:30]}",
-                body=f"""<h2>调研完成</h2>
-<p><b>主题:</b> {topic}</p>
+                subject=f"🔬 综述完成: {topic[:30]}",
+                body=f"""<h2>科学综述撰写完成</h2>
+<p><b>研究主题:</b> {topic}</p>
 <p><b>报告长度:</b> {len(result)} 字符</p>
-<p>请访问 <a href=\"https://research-agent.panghuer.top\">研究助手</a> 搜索报告 ID <code>{task_id}</code> 查看或下载报告。</p>""",
+<p>请访问 <a href=\"https://research-agent.panghuer.top\">研究助手</a> 搜索综述报告 ID <code>{task_id}</code> 查看或下载报告。</p>""",
             )
 
     except Exception as e:
@@ -82,22 +82,22 @@ def _run_research(task_id: str, topic: str, email: str = ""):
 #  API 端点
 # ============================================================
 
-@app.get("/health")
+@app.get("/scientific-health")
 def health():
     return {"status": "ok"}
 
 
-@app.post("/research", response_model=TaskResponse)
+@app.post("/scientific-research", response_model=TaskResponse)
 def submit_research(req: ResearchRequest):
-    """提交调研任务，立即返回 task_id，后台异步执行"""
+    """提交科学综述任务，立即返回 task_id，后台异步执行"""
     task_id = db.create_task(req.topic)
-    threading.Thread(target=_run_research, args=(task_id, req.topic, req.email)).start()
+    threading.Thread(target=_run_refinement, args=(task_id, req.topic, req.email)).start()
     return TaskResponse(id=task_id, topic=req.topic, status="pending")
 
 
-@app.get("/research/{task_id}", response_model=TaskResponse)
+@app.get("/scientific-research/{task_id}", response_model=TaskResponse)
 def get_task(task_id: str):
-    """查询任务状态和结果"""
+    """查询科学综述任务状态和结果"""
     task = db.get_task(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
@@ -107,7 +107,7 @@ def get_task(task_id: str):
     )
 
 
-# ---- 报告检索 ----
+# ── reports ──
 
 class ReportItem(BaseModel):
     id: str
@@ -118,13 +118,13 @@ class ReportItem(BaseModel):
     created_at: str | None = None
 
 
-@app.get("/reports", response_model=list[ReportItem])
+@app.get("/scientific-reports", response_model=list[ReportItem])
 def search_reports(
     q: str = Query(default="", description="搜索关键词"),
     limit: int = Query(default=20, le=100),
     offset: int = Query(default=0, ge=0),
 ):
-    """检索已完成的报告"""
+    """检索已完成的综述报告"""
     rows = db.search_reports(q, limit, offset)
     return [
         ReportItem(
@@ -136,27 +136,27 @@ def search_reports(
     ]
 
 
-@app.get("/reports/{report_id}")
+@app.get("/scientific-reports/{report_id}")
 def get_report(report_id: str):
-    """获取单篇报告全文"""
+    """获取单篇综述报告全文"""
     r = db.get_report(report_id)
     if not r:
         raise HTTPException(404, "Report not found")
     return {k: r.get(k) for k in ("id", "topic", "summary", "keywords", "content", "model_used", "created_at")}
 
 
-# ---- 下载 ----
+# ── download ──
 
-@app.get("/download/{task_id}")
+@app.get("/scientific-download/{task_id}")
 def download_report(task_id: str):
-    """下载报告全文（Markdown 文件）"""
+    """下载综述报告全文（Markdown 文件）"""
     from fastapi.responses import Response
 
     r = db.get_report_by_task(task_id)
     if not r or not r.get("content"):
         raise HTTPException(404, "Report not found")
 
-    filename = _safe_filename(r.get("topic", "report"))
+    filename = _safe_filename(r.get("topic", "review"))
     return Response(
         content=r["content"].encode("utf-8"),
         media_type="text/markdown; charset=utf-8",
@@ -164,14 +164,12 @@ def download_report(task_id: str):
     )
 
 
-# ============================================================
-#  工具函数
-# ============================================================
+# ── helpers ──
 
 def _safe_filename(topic: str) -> str:
     safe = re.sub(r'[^\x00-\x7F]+', '', topic)
     safe = re.sub(r'[^\w\s-]', '', safe).strip()
-    return (safe[:40].replace(' ', '_') or 'report') + '.md'
+    return (safe[:40].replace(' ', '_') or 'review') + '.md'
 
 
 def _extract_summary(text: str, max_len: int = 200) -> str:
