@@ -31,19 +31,21 @@ cd scripts
 # ensure namespace
 kubectl create namespace ${NAMESPACE} --dry-run=client -o yaml $K | kubectl apply $K -f -
 
-# ConfigMap
-kubectl create configmap agent-config -n ${NAMESPACE} \
-    --from-literal=PROVIDER="custom" \
-    --from-literal=CUSTOM_API_BASE="${CUSTOM_API_BASE:-http://47.109.107.37/v1}" \
-    --from-literal=CUSTOM_MODEL="${CUSTOM_MODEL:-deepseek-v4-pro}" \
-    --dry-run=client -o yaml $K | kubectl apply $K -f -
+# # 注释掉，避免重复部署
+# # ConfigMap
+# kubectl create configmap agent-config -n ${NAMESPACE} \
+#     --from-literal=PROVIDER="custom" \
+#     --from-literal=CUSTOM_API_BASE="${CUSTOM_API_BASE:-http://47.109.107.37/v1}" \
+#     --from-literal=CUSTOM_MODEL="${CUSTOM_MODEL:-deepseek-v4-pro}" \
+#     --dry-run=client -o yaml $K | kubectl apply $K -f -
 
-# Secret（已存在则跳过）
-kubectl get secret agent-secret -n ${NAMESPACE} $K >/dev/null 2>&1 || \
-    kubectl create secret generic agent-secret -n ${NAMESPACE} \
-        --from-literal=OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
-        --from-literal=CUSTOM_API_KEY="${CUSTOM_API_KEY:-}" \
-        $K --dry-run=client -o yaml | kubectl apply $K -f -
+# # 已由 Vault 管理，无需部署 Secret
+# # Secret（已存在则跳过）
+# kubectl get secret agent-secret -n ${NAMESPACE} $K >/dev/null 2>&1 || \
+#     kubectl create secret generic agent-secret -n ${NAMESPACE} \
+#         --from-literal=OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
+#         --from-literal=CUSTOM_API_KEY="${CUSTOM_API_KEY:-}" \
+#         $K --dry-run=client -o yaml | kubectl apply $K -f -
 
 # ConfigMap (agent.py)
 kubectl create configmap api-agent -n ${NAMESPACE} \

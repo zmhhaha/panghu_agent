@@ -34,8 +34,6 @@ spec:
         - name: source
           mountPath: /app/app/ui/agent.py
           subPath: agent.py
-        - name: static
-          mountPath: /app/static
         resources:
           requests:
             cpu: 250m
@@ -61,9 +59,6 @@ spec:
         configMap:
           name: ui-agent
           defaultMode: 0755
-      - name: static
-        persistentVolumeClaim:
-          claimName: static-files
 ---
 apiVersion: v1
 kind: Service

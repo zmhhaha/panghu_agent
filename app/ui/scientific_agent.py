@@ -8,12 +8,11 @@ import gradio as gr
 import requests
 
 API_BASE = os.getenv("API_BASE", "http://api.research-agent.svc.cluster.local")
-STATIC_DIR = os.getenv("STATIC_DIR", "/app/static")
 THEME = gr.themes.Soft(primary_hue="blue", secondary_hue="gray")
 MAX_WAIT = 1200  # 最多等 20 分钟（5 Agent 流水线需要更长时间）
 
 
-def do_scientific_research(topic: str, email: str):
+def do_scientific_research(topic: str, email: str, request: gr.Request):
     """生成器：提交 + 轮询，逐次 yield 最新状态，UI 实时刷新"""
     _busy = gr.update(interactive=False)
     _ready = gr.update(interactive=True)
@@ -28,9 +27,15 @@ def do_scientific_research(topic: str, email: str):
         yield "⚠️ 请输入有效的邮箱地址，综述完成后会发送到邮箱", "", _hide, _hide, _ready
         return
 
+    # 获取用户身份（从 oauth2-proxy 注入的 header）
+    user_id = request.headers.get("X-Forwarded-User", "") if request else ""
+
     # ---- 提交 ----
     try:
-        r = requests.post(f"{API_BASE}/scientific-research", json={"topic": topic, "email": email}, timeout=10)
+        r = requests.post(f"{API_BASE}/scientific-research", json={"topic": topic, "email": email, "user_id": user_id}, timeout=10)
+        if r.status_code == 429:
+            yield "⏳ 您上一个综述任务还在执行中，请耐心等待完成后再提交新的", "", _hide, _hide, _ready
+            return
         r.raise_for_status()
         task_id = r.json()["id"]
     except Exception as e:
@@ -218,7 +223,7 @@ with gr.Blocks(title="🔬 科研综述助手", theme=THEME) as demo:
         download_btn.click(
             fn=download_review,
             inputs=[task_id_box],
-            outputs=[download_btn],
+            outputs=[report],
         )
 
     with gr.Tab("📑 综述历史"):
@@ -237,18 +242,18 @@ with gr.Blocks(title="🔬 科研综述助手", theme=THEME) as demo:
     with gr.Tab("❤️ 支持作者"):
         gr.Markdown("## ❤️ 感谢支持\n\n如果你觉得这个工具对你有帮助，欢迎赞赏支持作者继续开发。")
         with gr.Tabs():
-            with gr.Tab("🪙 1 毛"):
+            with gr.Tab("💰️ 1 毛"):
                 with gr.Row():
-                    # gr.Image(os.path.join(STATIC_DIR, "wchatpay0.1.jpg"), label="💚 微信 1 毛", container=False)
-                    gr.Image(os.path.join(STATIC_DIR, "alipay0.1.jpg"), label="💙 支付宝 1 毛", container=False)
-            with gr.Tab("🪙 2 毛"):
+                    # gr.Image("https://panghuer.top/static/wchatpay0.1.jpg", label="💚 微信 1 毛", container=False)
+                    gr.Image("https://panghuer.top/static/alipay0.1.jpg", label="💙 支付宝 1 毛", container=False)
+            with gr.Tab("💰️ 2 毛"):
                 with gr.Row():
-                    # gr.Image(os.path.join(STATIC_DIR, "wchatpay0.2.jpg"), label="💚 微信 2 毛", container=False)
-                    gr.Image(os.path.join(STATIC_DIR, "alipay0.2.jpg"), label="💙 支付宝 2 毛", container=False)
-            with gr.Tab("🪙 5 毛"):
+                    # gr.Image("https://panghuer.top/static/wchatpay0.2.jpg", label="💚 微信 2 毛", container=False)
+                    gr.Image("https://panghuer.top/static/alipay0.2.jpg", label="💙 支付宝 2 毛", container=False)
+            with gr.Tab("💰️ 5 毛"):
                 with gr.Row():
-                    # gr.Image(os.path.join(STATIC_DIR, "wchatpay0.5.jpg"), label="💚 微信 5 毛", container=False)
-                    gr.Image(os.path.join(STATIC_DIR, "alipay0.5.jpg"), label="💙 支付宝 5 毛", container=False)
+                    # gr.Image("https://panghuer.top/static/wchatpay0.5.jpg", label="💚 微信 5 毛", container=False)
+                    gr.Image("https://panghuer.top/static/alipay0.5.jpg", label="💙 支付宝 5 毛", container=False)
 
 if __name__ == "__main__":
     demo.queue(default_concurrency_limit=2).launch(

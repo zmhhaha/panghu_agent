@@ -19,6 +19,9 @@ from tools import sqlite_client as db
 # ── 初始化 scientific 表 ──
 db.init_db("scientific")
 
+# ── 启动时清理：将上次未完成的任务标记为 failed（服务重启导致后台线程丢失）──
+db.clear_stale_tasks()
+
 app = FastAPI(title="🔬 科学综述助手 API (internal)", version="1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
@@ -30,12 +33,14 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 class ResearchRequest(BaseModel):
     topic: str = Field(..., min_length=1, max_length=500)
     email: str = Field(default="", max_length=200)
+    user_id: str = Field(default="", max_length=200)
 
 
 class TaskResponse(BaseModel):
     id: str
     topic: str
     status: str
+    user_id: str | None = None
     report: str | None = None
     error: str | None = None
 
@@ -90,9 +95,13 @@ def health():
 @app.post("/scientific-research", response_model=TaskResponse)
 def submit_research(req: ResearchRequest):
     """提交科学综述任务，立即返回 task_id，后台异步执行"""
-    task_id = db.create_task(req.topic)
+    if req.user_id:
+        running = db.get_running_task_by_user(req.user_id)
+        if running:
+            raise HTTPException(429, detail=f"您已有综述任务正在执行（{running['id'][:8]}），请等待完成后再提交")
+    task_id = db.create_task(req.topic, req.user_id)
     threading.Thread(target=_run_refinement, args=(task_id, req.topic, req.email)).start()
-    return TaskResponse(id=task_id, topic=req.topic, status="pending")
+    return TaskResponse(id=task_id, topic=req.topic, status="pending", user_id=req.user_id)
 
 
 @app.get("/scientific-research/{task_id}", response_model=TaskResponse)

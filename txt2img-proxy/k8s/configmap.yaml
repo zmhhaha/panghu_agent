@@ -1,0 +1,14 @@
+# ============================================================
+#  txt2img-proxy — 通用配置
+#  切换 PROVIDER 来更换图片生成平台
+#  修改后: kubectl apply -f k8s/configmap.yaml && kubectl rollout restart deploy txt2img-proxy -n txt2img
+# ============================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: txt2img-config
+  namespace: txt2img
+data:
+  PROVIDER: "ark"
+  MODEL: ""
+  ARK_BASE_URL: "https://ark.cn-beijing.volces.com/api/v3"

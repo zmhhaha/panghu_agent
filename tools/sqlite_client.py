@@ -56,6 +56,7 @@ def init_db(service: str):
             id         TEXT PRIMARY KEY,
             topic      TEXT NOT NULL,
             status     TEXT DEFAULT 'pending',
+            user_id    TEXT,
             report     TEXT,
             error      TEXT,
             created_at TEXT DEFAULT (datetime('now')),
@@ -79,9 +80,10 @@ def init_db(service: str):
 
 # ── tasks ──
 
-def create_task(topic: str) -> str:
+def create_task(topic: str, user_id: str = "") -> str:
     tid = str(uuid.uuid4())
-    _execute(f"INSERT INTO {_SERVICE}_tasks (id,topic,status) VALUES ('{tid}','{_esc(topic)}','pending')")
+    _execute(f"INSERT INTO {_SERVICE}_tasks (id,topic,status,user_id) "
+             f"VALUES ('{tid}','{_esc(topic)}','pending','{_esc(user_id)}')")
     return tid
 
 
@@ -93,6 +95,50 @@ def update_task(task_id: str, **kwargs):
 def get_task(task_id: str) -> dict | None:
     rows = _query(f"SELECT * FROM {_SERVICE}_tasks WHERE id='{task_id}'")
     return rows[0] if rows else None
+
+
+def get_running_task_by_user(user_id: str) -> dict | None:
+    """返回该用户正在运行中的任务（status 为 pending/running），
+    如果超过 1 小时则自动标记为 timeout 并返回 None（允许重入）"""
+    rows = _query(
+        f"SELECT * FROM {_SERVICE}_tasks "
+        f"WHERE user_id='{_esc(user_id)}' AND status IN ('pending','running') "
+        f"ORDER BY created_at ASC LIMIT 1"
+    )
+    if not rows:
+        return None
+
+    task = rows[0]
+    # 判断是否超过 1 小时
+    created = task.get("created_at", "")
+    if created:
+        expired = _query(
+            f"SELECT CASE WHEN "
+            f"  datetime('{_esc(created)}', '+1 hour') < datetime('now') "
+            f"THEN 1 ELSE 0 END AS expired"
+        )
+        if expired and expired[0].get("expired") == 1:
+            _execute(
+                f"UPDATE {_SERVICE}_tasks SET status='timeout', "
+                f"error='任务执行超过 1 小时，已自动超时', "
+                f"updated_at=datetime('now') "
+                f"WHERE id='{task['id']}'"
+            )
+            return None
+
+    return task
+
+
+# ── 启动时清理 ──
+
+def clear_stale_tasks():
+    """服务启动时调用，将上次进程挂掉遗留的 running/pending 任务标记为 failed"""
+    _execute(
+        f"UPDATE {_SERVICE}_tasks SET status='failed', "
+        f"error='服务重启导致任务中断，请重新提交', "
+        f"updated_at=datetime('now') "
+        f"WHERE status IN ('pending','running')"
+    )
 
 
 # ── reports ──
