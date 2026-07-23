@@ -45,18 +45,26 @@ def do_fofawubian(text: str, request: gr.Request):
     for i in range(MAX_WAIT // 5):
         try:
             r = requests.get(f"{API_BASE}/fofawubian_agent/{task_id}", timeout=10)
-            task = r.json()
-            status = task["status"]
+            resp = r.json()
+            status = resp.get("status")
+
+            if status is None:
+                yield f"❌ API 返回异常: {resp}", _ready
+                return
 
             if status == "done":
-                yield task.get("report", "(空)"), _ready
+                yield resp.get("report", "(空)"), _ready
                 return
             elif status == "failed":
-                yield f"❌ {task.get('error', '未知错误')}", _ready
+                yield f"❌ {resp.get('error', '未知错误')}", _ready
                 return
             elif status == "running":
                 dots = "." * ((i % 3) + 1)
                 yield f"⏳ 在想{dots}", _busy
+
+            else:
+                dots = "." * ((i % 3) + 1)
+                yield f"⏳ {status}{dots}", _busy
 
             _time.sleep(5)
 

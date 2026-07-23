@@ -57,12 +57,12 @@ def _find_cached(text: str) -> str | None:
     """精确匹配: 如果同样的文本已有完成的结果，直接返回"""
     try:
         rows = db._query(
-            f"SELECT report FROM {db.get_service()}_reports "
-            f"WHERE topic='{db._esc(text)}' AND report IS NOT NULL "
+            f"SELECT content FROM {db.get_service()}_reports "
+            f"WHERE topic='{db._esc(text)}' AND content IS NOT NULL "
             f"ORDER BY created_at DESC LIMIT 1"
         )
-        if rows and rows[0].get("report"):
-            return rows[0]["report"]
+        if rows and rows[0].get("content"):
+            return rows[0]["content"]
     except Exception:
         pass
     return None
