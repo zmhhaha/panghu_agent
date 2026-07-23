@@ -1,7 +1,10 @@
 # ============================================================
 #  txt2img-proxy — Deployment + Service
-#  配置来源: ConfigMap txt2img-config（PROVIDER, MODEL, ARK_BASE_URL）
-#  密钥来源: Secret  txt2img-api-keys（各平台 API Key）
+#  配置来源: ConfigMap txt2img-config（PROVIDER, MODEL）
+#  密钥来源: Secret  txt2img-api-keys（各平台凭证）
+#
+#  ark 使用 AK/SK 签名（ARK_ACCESS_KEY / ARK_SECRET_KEY）
+#  其他平台使用 API Key
 #
 #  部署:
 #    kubectl apply -f k8s/namespace.yaml
@@ -39,14 +42,22 @@ spec:
         envFrom:
         - configMapRef:
             name: txt2img-config
-        # ── API 密钥（Secret） ──
+        # ── 凭证（Secret） ──
         env:
-        - name: ARK_API_KEY
+        # ark — AK/SK（SigV4 签名）
+        - name: ARK_ACCESS_KEY
           valueFrom:
             secretKeyRef:
               name: txt2img-api-keys
-              key: ARK_API_KEY
+              key: ARK_ACCESS_KEY
               optional: true
+        - name: ARK_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: txt2img-api-keys
+              key: ARK_SECRET_KEY
+              optional: true
+        # 其他平台（兼容保留）
         - name: REPLICATE_API_KEY
           valueFrom:
             secretKeyRef:

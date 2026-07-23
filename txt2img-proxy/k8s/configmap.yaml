@@ -1,5 +1,6 @@
 # ============================================================
 #  txt2img-proxy — 通用配置
+#  PROVIDER=ark 时使用 SigV4 签名的火山引擎视觉 CV API
 #  切换 PROVIDER 来更换图片生成平台
 #  修改后: kubectl apply -f k8s/configmap.yaml && kubectl rollout restart deploy txt2img-proxy -n txt2img
 # ============================================================
@@ -11,4 +12,3 @@ metadata:
 data:
   PROVIDER: "ark"
   MODEL: ""
-  ARK_BASE_URL: "https://ark.cn-beijing.volces.com/api/v3"

@@ -1,0 +1,27 @@
+# ============================================================
+#  txt2img-proxy — UI 服务镜像（Gradio）
+#  镜像内置 gradio_app.py（非 ConfigMap，因为 txt2img UI
+#  固定不变，不需要像 agent 那样通过 ConfigMap 替换）
+# ============================================================
+ARG REGISTRY=arm-cluster-master:5000
+FROM ${REGISTRY}/python3_base:latest
+
+ENV TZ=Asia/Shanghai
+WORKDIR /app
+
+COPY requirements.txt .
+# 额外依赖：gradio、requests
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir gradio>=5.0.0 \
+    -i https://mirrors.aliyun.com/pypi/simple/ \
+    --trusted-host mirrors.aliyun.com
+
+COPY gradio_app.py .
+
+ENV PYTHONUNBUFFERED=1 \
+    GRADIO_SERVER_NAME="0.0.0.0" \
+    GRADIO_SERVER_PORT="7860" \
+    API_BASE="http://txt2img-proxy.txt2img.svc.cluster.local:8000"
+
+EXPOSE 7860
+CMD ["python", "gradio_app.py"]

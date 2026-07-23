@@ -1,0 +1,68 @@
+# ============================================================
+#  txt2img-proxy — Gradio UI 服务 (K8s 部署)
+#  通过 API_BASE 环境变量指向集群内的 txt2img-proxy API
+#  Service 名 "ui"，供 oauth2-proxy 反向代理
+# ============================================================
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: txt2img-ui
+  namespace: txt2img
+  labels:
+    app: txt2img-ui
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: txt2img-ui
+  template:
+    metadata:
+      labels:
+        app: txt2img-ui
+    spec:
+      containers:
+      - name: ui
+        image: arm-cluster-master:5000/txt2img-ui:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 7860
+          name: http
+        env:
+        - name: API_BASE
+          value: "http://txt2img-proxy.txt2img.svc.cluster.local:8000"
+        - name: GRADIO_SERVER_PORT
+          value: "7860"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        # livenessProbe:
+        #   httpGet:
+        #     path: /
+        #     port: 7860
+        #   initialDelaySeconds: 30
+        #   periodSeconds: 30
+        #   timeoutSeconds: 5
+        # readinessProbe:
+        #   httpGet:
+        #     path: /
+        #     port: 7860
+        #   initialDelaySeconds: 10
+        #   periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui
+  namespace: txt2img
+spec:
+  selector:
+    app: txt2img-ui
+  ports:
+  - port: 7860
+    targetPort: 7860
+    name: http

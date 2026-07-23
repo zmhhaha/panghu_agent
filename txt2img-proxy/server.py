@@ -7,7 +7,7 @@
 #    http://txt2img-proxy.<namespace>.svc.cluster.local:8000
 #
 #  支持的提供商 (PROVIDER):
-#    ark        — 火山引擎方舟 (豆包 Seedream 系列)
+#    ark        — 火山引擎视觉 CV (SigV4 签名)
 #    replicate  — Replicate (SDXL / FLUX 等)
 #    together   — Together AI
 #    stability  — Stability AI
@@ -23,6 +23,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 import httpx
 from dotenv import load_dotenv
+from volcengine.cv import CVService
 
 load_dotenv()
 
@@ -31,24 +32,23 @@ logger = logging.getLogger("txt2img")
 
 # ── 通用配置 ────────────────────────────────────────────
 PROVIDER  = os.getenv("PROVIDER", "ark")   # 当前使用的提供商
-MODEL     = os.getenv("MODEL", "")          # 模型 ID（留空用各平台默认）
+MODEL     = os.getenv("MODEL", "")          # req_key（留空用默认）
 
-# 各平台 API Key — 独立环境变量，方便 K8s Vault / ESO 分别管理
-# 切换 PROVIDER 时自动读取对应的变量
+# 各平台 API Key / 凭证
 API_KEYS = {
-    "ark":       os.getenv("ARK_API_KEY", ""),
     "replicate": os.getenv("REPLICATE_API_KEY", ""),
     "together":  os.getenv("TOGETHER_API_KEY", ""),
     "stability": os.getenv("STABILITY_API_KEY", ""),
     "openai":    os.getenv("OPENAI_API_KEY", ""),
 }
 
-# 各平台独立配置（按需设置）
-ARK_BASE_URL = os.getenv("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3")
+# 火山引擎视觉 CV — AK/SK 签名凭证
+ARK_ACCESS_KEY = os.getenv("ARK_ACCESS_KEY", "")
+ARK_SECRET_KEY = os.getenv("ARK_SECRET_KEY", "")
 
 # ── 各平台默认模型 ──────────────────────────────────────
 DEFAULT_MODELS = {
-    "ark":        "doubao-seedream-3-0-t2i",
+    "ark":        "high_aes_general_v30l_zt2i",
     "replicate":  "stability-ai/stable-diffusion-3.5-medium",
     "together":   "stabilityai/stable-diffusion-xl-base-1.0",
     "stability":  "stable-diffusion-xl-1024-v1-0",
@@ -57,6 +57,7 @@ DEFAULT_MODELS = {
 
 # ── HTTP 客户端 ─────────────────────────────────────────
 client: httpx.AsyncClient | None = None
+_cv_service: CVService | None = None
 
 
 @asynccontextmanager
@@ -91,37 +92,62 @@ class GenResponse(BaseModel):
 #  各平台调用实现
 # ══════════════════════════════════════════════════════════
 
-async def _call_ark(req: GenRequest, api_key: str) -> list[bytes]:
-    """火山引擎方舟 — 豆包 Seedream 系列"""
-    model = MODEL or DEFAULT_MODELS["ark"]
+def _get_cv_service() -> CVService:
+    global _cv_service
+    if _cv_service is None:
+        _cv_service = CVService()
+        _cv_service.set_ak(ARK_ACCESS_KEY)
+        _cv_service.set_sk(ARK_SECRET_KEY)
+    return _cv_service
+
+
+async def _call_ark(req: GenRequest, _api_key: str) -> list[bytes]:
+    """火山引擎视觉 CV（官方 SDK 签名）"""
+    if not ARK_ACCESS_KEY or not ARK_SECRET_KEY:
+        raise HTTPException(500, "ARK_ACCESS_KEY / ARK_SECRET_KEY 未配置")
+
+    req_key = MODEL or DEFAULT_MODELS["ark"]
+    width = int(req.size.split("x")[0]) if "x" in req.size else 1328
+    height = int(req.size.split("x")[1]) if "x" in req.size else 1328
+
     body = {
-        "model": model,
+        "req_key": req_key,
         "prompt": req.prompt,
-        "size": req.size,
-        "n": req.n,
-        "output_format": req.output_format,
-        "response_format": "b64_json",
-        "watermark": False,
+        "width": width,
+        "height": height,
+        "use_pre_llm": True,
+        "seed": -1,
+        "scale": 2.5,
     }
+    if req.n > 1:
+        body["batch_size"] = req.n
 
-    resp = await client.post(
-        f"{ARK_BASE_URL}/images/generations",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json=body,
+    # 使用官方 SDK 签名并发送
+    import asyncio
+    loop = asyncio.get_event_loop()
+    svc = _get_cv_service()
+    resp = await loop.run_in_executor(
+        None,
+        lambda: svc.cv_process(body),
     )
-    if resp.status_code != 200:
-        _raise_api_error("ARK", resp)
 
-    data = resp.json()
-    images: list[bytes] = []
-    for item in data.get("data", []):
-        b64 = item.get("b64_json", "")
-        if b64:
-            images.append(base64.b64decode(b64))
-    return images
+    # SDK 返回的是 dict，如果出错会 raise 异常
+    result = resp.get("result", "")
+    if not result:
+        raise HTTPException(502, "ARK 返回为空")
+
+    # 先尝试 base64 解码
+    try:
+        img_bytes = base64.b64decode(result)
+        return [img_bytes]
+    except Exception:
+        pass
+
+    # 否则视为 URL 下载
+    img_resp = await client.get(result)
+    if img_resp.status_code != 200:
+        raise HTTPException(502, f"ARK 图片下载失败 ({img_resp.status_code})")
+    return [img_resp.content]
 
 
 async def _call_replicate(req: GenRequest, api_key: str) -> list[bytes]:
@@ -285,9 +311,14 @@ def _raise_api_error(provider: str, resp: httpx.Response):
 # ── 路由 ────────────────────────────────────────────────
 @app.post("/generate", response_model=GenResponse)
 async def generate(req: GenRequest):
-    api_key = API_KEYS.get(PROVIDER, "")
-    if not api_key:
-        raise HTTPException(500, f"{PROVIDER.upper()}_API_KEY 未配置")
+    # ark 使用 AK/SK 签名认证，不走 API_KEYS
+    if PROVIDER == "ark":
+        if not ARK_ACCESS_KEY or not ARK_SECRET_KEY:
+            raise HTTPException(500, "ARK_ACCESS_KEY / ARK_SECRET_KEY 未配置")
+    else:
+        api_key = API_KEYS.get(PROVIDER, "")
+        if not api_key:
+            raise HTTPException(500, f"{PROVIDER.upper()}_API_KEY 未配置")
 
     resolved_model = MODEL or DEFAULT_MODELS.get(PROVIDER, "")
     logger.info("generate: provider=%s model=%s prompt=%.60s", PROVIDER, resolved_model, req.prompt)
@@ -305,7 +336,7 @@ async def generate(req: GenRequest):
         raise HTTPException(500, f"不支持的提供商: {PROVIDER}")
 
     try:
-        raw_images = await caller(req, api_key)
+        raw_images = await caller(req, API_KEYS.get(PROVIDER, ""))
         images_b64 = [base64.b64encode(img).decode() for img in raw_images]
         logger.info("generated %d image(s)", len(images_b64))
         return GenResponse(images=images_b64, model=resolved_model)
