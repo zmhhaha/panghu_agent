@@ -23,7 +23,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 import httpx
 from dotenv import load_dotenv
-from volcengine.cv import CVService
+from volcenginesdkcore.signv4 import SignerV4
 
 load_dotenv()
 
@@ -55,9 +55,10 @@ DEFAULT_MODELS = {
     "openai":     "dall-e-3",
 }
 
-# ── HTTP 客户端 ─────────────────────────────────────────
-client: httpx.AsyncClient | None = None
-_cv_service: CVService | None = None
+# 火山引擎视觉 CV 常量
+ARK_HOST = "visual.volcengineapi.com"
+ARK_REGION = "cn-north-1"
+ARK_SERVICE = "cv"
 
 
 @asynccontextmanager
@@ -92,17 +93,37 @@ class GenResponse(BaseModel):
 #  各平台调用实现
 # ══════════════════════════════════════════════════════════
 
-def _get_cv_service() -> CVService:
-    global _cv_service
-    if _cv_service is None:
-        _cv_service = CVService()
-        _cv_service.set_ak(ARK_ACCESS_KEY)
-        _cv_service.set_sk(ARK_SECRET_KEY)
-    return _cv_service
+def _sign_ark_request(body: dict) -> tuple[dict, str]:
+    """用 SDK 的 SignerV4 对视觉 CV 请求签名，返回 (headers, url)
+    SignerV4.sign 直接修改传入的 headers 字典，不返回结果。"""
+    body_str = json.dumps(body)
+    query_params = {"Action": "CVProcess", "Version": "2022-08-31"}
+    url = f"https://{ARK_HOST}/"
+
+    headers = {"Content-Type": "application/json", "Host": ARK_HOST}
+    # 注意：SignerV4.sign 直接修改 headers 字典，不返回任何值
+    # query 传 dict 只是为了签名计算，实际请求时需要拼到 URL 上
+    SignerV4.sign(
+        path="/",
+        method="POST",
+        headers=headers,
+        body=body_str,
+        post_params={},
+        query=query_params,
+        ak=ARK_ACCESS_KEY,
+        sk=ARK_SECRET_KEY,
+        region=ARK_REGION,
+        service=ARK_SERVICE,
+    )
+    # sign 执行后 headers 已被添加 X-Date/X-Content-Sha256/Authorization
+    # 手动拼接 query 到 URL
+    import urllib.parse
+    url = f"https://{ARK_HOST}/?{urllib.parse.urlencode(query_params)}"
+    return headers, url
 
 
 async def _call_ark(req: GenRequest, _api_key: str) -> list[bytes]:
-    """火山引擎视觉 CV（官方 SDK 签名）"""
+    """火山引擎视觉 CV（SDK SignerV4 签名 + httpx 发送）"""
     if not ARK_ACCESS_KEY or not ARK_SECRET_KEY:
         raise HTTPException(500, "ARK_ACCESS_KEY / ARK_SECRET_KEY 未配置")
 
@@ -122,28 +143,26 @@ async def _call_ark(req: GenRequest, _api_key: str) -> list[bytes]:
     if req.n > 1:
         body["batch_size"] = req.n
 
-    # 使用官方 SDK 签名并发送
-    import asyncio
-    loop = asyncio.get_event_loop()
-    svc = _get_cv_service()
-    resp = await loop.run_in_executor(
-        None,
-        lambda: svc.cv_process(body),
-    )
+    headers, url = _sign_ark_request(body)
 
-    # SDK 返回的是 dict，如果出错会 raise 异常
-    result = resp.get("result", "")
+    # 用签名后的 headers + 序列化 body 发送
+    body_bytes = json.dumps(body).encode()
+    resp = await client.post(url, headers=headers, content=body_bytes)
+
+    if resp.status_code != 200:
+        _raise_api_error("ARK", resp)
+
+    data = resp.json()
+    result = data.get("result", "")
     if not result:
         raise HTTPException(502, "ARK 返回为空")
 
-    # 先尝试 base64 解码
     try:
         img_bytes = base64.b64decode(result)
         return [img_bytes]
     except Exception:
         pass
 
-    # 否则视为 URL 下载
     img_resp = await client.get(result)
     if img_resp.status_code != 200:
         raise HTTPException(502, f"ARK 图片下载失败 ({img_resp.status_code})")
