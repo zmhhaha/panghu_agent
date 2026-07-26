@@ -50,19 +50,19 @@ if PROVIDER == "openai":
     )
 elif PROVIDER == "deepseek":
     PRIMARY_LLM = LLM(
-        model="deepseek/deepseek-chat",
+        model="deepseek/deepseek-v4-flash",
         base_url="https://api.deepseek.com",
         api_key=os.getenv("OPENAI_API_KEY"),
         temperature=0.7,
     )
     SECONDARY_LLM = LLM(
-        model="deepseek/deepseek-chat",
+        model="deepseek/deepseek-v4-flash",
         base_url="https://api.deepseek.com",
         api_key=os.getenv("OPENAI_API_KEY"),
         temperature=0.5,
     )
     SYNTHESIS_LLM = LLM(
-        model="deepseek/deepseek-chat",
+        model="deepseek/deepseek-v4-flash",
         base_url="https://api.deepseek.com",
         api_key=os.getenv("OPENAI_API_KEY"),
         temperature=0.3,

@@ -17,7 +17,7 @@ PROVIDER = os.getenv("PROVIDER", "openai").lower()
 if PROVIDER == "openai":
     MODEL = LLM(model="openai/gpt-4o-mini", base_url="https://api.openai.com", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.8)
 elif PROVIDER == "deepseek":
-    MODEL = LLM(model="deepseek/deepseek-chat", base_url="https://api.deepseek.com", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.8)
+    MODEL = LLM(model="deepseek/deepseek-v4-flash", base_url="https://api.deepseek.com", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.8)
 elif PROVIDER == "custom":
     MODEL = LLM(model=os.getenv("CUSTOM_MODEL", "gpt-4o-mini"), base_url=os.getenv("CUSTOM_API_BASE", "http://localhost:11434/v1"), api_key=os.getenv("CUSTOM_API_KEY", ""), temperature=0.8)
 elif PROVIDER == "anthropic":

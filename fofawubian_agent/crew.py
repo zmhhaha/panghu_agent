@@ -35,7 +35,7 @@ if PROVIDER == "openai":
     )
 elif PROVIDER == "deepseek":
     MODEL = LLM(
-        model="deepseek/deepseek-chat",
+        model="deepseek/deepseek-v4-flash",
         base_url="https://api.deepseek.com",
         api_key=os.getenv("OPENAI_API_KEY"),
         temperature=0.8,
