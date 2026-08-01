@@ -1,0 +1,39 @@
+# ============================================================
+#  游戏试玩评价 agent — 专属 API 镜像
+#  基于共享 agent-api-base（已有 fastapi + crewai），额外装 Playwright/Chromium
+#  不污染共享 base 镜像，其他 agent 不受影响
+#
+#  用法:
+#    docker build -f game_review_agent/Dockerfile.api \
+#      -t arm-cluster-master:5000/game-review-agent-api:latest .
+#    （context 必须是 panghu_agent 仓库根目录）
+# ============================================================
+ARG REGISTRY=arm-cluster-master:5000
+FROM ${REGISTRY}/agent-api-base:latest
+
+# ---- 浏览器自动化依赖（仅本 agent 使用） ----
+# 先 pip 装 playwright，再装 chromium 及其系统依赖。
+# 若 --with-deps 失败（如 ARM64 源缺包），降级为仅浏览器 + 手动 apt 装依赖。
+RUN pip install --break-system-packages --no-cache-dir \
+    -i https://mirrors.aliyun.com/pypi/simple/ \
+    --trusted-host mirrors.aliyun.com \
+    --default-timeout=300 \
+    playwright>=1.45 && \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright playwright install chromium --with-deps || \
+    (echo "[warn] playwright chromium --with-deps 失败，尝试仅浏览器 + 手动依赖" && \
+     apt-get update && apt-get install -y --no-install-recommends \
+       libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 \
+       libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 \
+       libcairo2 libasound2 fonts-liberation && rm -rf /var/lib/apt/lists/* && \
+     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright playwright install chromium)
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+# ---- 复制全部代码（agent.py 通过 ConfigMap 挂载覆盖入口） ----
+COPY . /app
+
+ENV PYTHONUNBUFFERED=1
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD curl -sf http://localhost:8000/health || exit 1
+CMD ["python", "-m", "uvicorn", "app.api.agent:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
