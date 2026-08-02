@@ -29,8 +29,11 @@ if not os.path.exists(env_path):
         config_lines.append(f"CUSTOM_API_BASE={base_url}\n")
         config_lines.append(f"CUSTOM_API_KEY={api_key}\n")
         config_lines.append(f"CUSTOM_MODEL={model}\n")
-    elif provider in ("openai", "deepseek"):
-        key = input("请输入 OpenAI / DeepSeek API Key: ").strip()
+    elif provider == "deepseek":
+        key = input("请输入 DeepSeek API Key: ").strip()
+        config_lines.append(f"DEEPSEEK_API_KEY={key}\n")
+    elif provider == "openai":
+        key = input("请输入 OpenAI API Key: ").strip()
         config_lines.append(f"OPENAI_API_KEY={key}\n")
     elif provider == "anthropic":
         key = input("请输入 Anthropic API Key: ").strip()
@@ -54,7 +57,10 @@ if provider == "custom":
         missing.append("CUSTOM_API_BASE")
     if not os.getenv("CUSTOM_MODEL"):
         missing.append("CUSTOM_MODEL")
-elif provider in ("openai", "deepseek"):
+elif provider == "deepseek":
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        missing.append("DEEPSEEK_API_KEY")
+elif provider == "openai":
     if not os.getenv("OPENAI_API_KEY"):
         missing.append("OPENAI_API_KEY")
 elif provider == "anthropic":

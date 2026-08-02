@@ -35,15 +35,15 @@ if PROVIDER == "openai":
     )
 elif PROVIDER == "deepseek":
     MODEL = LLM(
-        model="deepseek/deepseek-v4-flash",
-        base_url="https://api.deepseek.com",
-        api_key=os.getenv("OPENAI_API_KEY"),
+        model="deepseek/" + os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+        base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        api_key=os.getenv("DEEPSEEK_API_KEY"),
         temperature=0.8,
     )
 elif PROVIDER == "custom":
     MODEL = LLM(
         model=os.getenv("CUSTOM_MODEL", "gpt-4o-mini"),
-        base_url=os.getenv("CUSTOM_API_BASE", "http://localhost:11434/v1"),
+        base_url=os.getenv("CUSTOM_BASE_URL") or os.getenv("CUSTOM_API_BASE", "http://localhost:11434/v1"),
         api_key=os.getenv("CUSTOM_API_KEY", ""),
         temperature=0.8,
     )

@@ -49,26 +49,15 @@ if PROVIDER == "openai":
         temperature=0.3,  # 分析+综合用低 temperature 保证准确性
     )
 elif PROVIDER == "deepseek":
-    PRIMARY_LLM = LLM(
-        model="deepseek/deepseek-v4-flash",
-        base_url="https://api.deepseek.com",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        temperature=0.7,
-    )
-    SECONDARY_LLM = LLM(
-        model="deepseek/deepseek-v4-flash",
-        base_url="https://api.deepseek.com",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        temperature=0.5,
-    )
-    SYNTHESIS_LLM = LLM(
-        model="deepseek/deepseek-v4-flash",
-        base_url="https://api.deepseek.com",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        temperature=0.3,
-    )
+    # DeepSeek API 兼容 OpenAI 格式，凭据用独立 DEEPSEEK_* 前缀（参考 panghu_game）
+    _ds_model = "deepseek/" + os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+    _ds_base = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+    _ds_key = os.getenv("DEEPSEEK_API_KEY")
+    PRIMARY_LLM = LLM(model=_ds_model, base_url=_ds_base, api_key=_ds_key, temperature=0.7)
+    SECONDARY_LLM = LLM(model=_ds_model, base_url=_ds_base, api_key=_ds_key, temperature=0.5)
+    SYNTHESIS_LLM = LLM(model=_ds_model, base_url=_ds_base, api_key=_ds_key, temperature=0.3)
 elif PROVIDER == "custom":
-    custom_base = os.getenv("CUSTOM_API_BASE", "http://localhost:11434/v1")
+    custom_base = os.getenv("CUSTOM_BASE_URL") or os.getenv("CUSTOM_API_BASE", "http://localhost:11434/v1")
     custom_key = os.getenv("CUSTOM_API_KEY", "")
     custom_model = os.getenv("CUSTOM_MODEL", "gpt-4o-mini")
 

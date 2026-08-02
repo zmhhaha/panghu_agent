@@ -1,6 +1,7 @@
 # ============================================================
 #  Agent 通用配置
 #  用法: sed "s/__NAMESPACE__/research-agent/g" k8s/configmap.yaml | kubectl apply -f -
+#  注意: 凭据走 Vault Secret（DEEPSEEK_API_KEY 等），ConfigMap 只放非敏感配置
 # ============================================================
 apiVersion: v1
 kind: ConfigMap
@@ -8,8 +9,11 @@ metadata:
   name: agent-config
   namespace: __NAMESPACE__
 data:
-  PROVIDER: "custom"
-  CUSTOM_API_BASE: "http://0.0.0.0"
-  CUSTOM_MODEL: "deepseek-v4-pro"
-  # PROVIDER: "deepseek"
-
+  # 模型提供商: openai | deepseek | anthropic | custom
+  PROVIDER: "deepseek"
+  # DeepSeek（OpenAI 兼容格式）
+  DEEPSEEK_BASE_URL: "https://api.deepseek.com"
+  DEEPSEEK_MODEL: "deepseek-v4-flash"
+  # OpenAI（如切到 openai 时使用）
+  OPENAI_BASE_URL: "https://api.openai.com"
+  OPENAI_MODEL: "gpt-4o-mini"
