@@ -41,6 +41,13 @@ spec:
               name: agent-secret
               key: CUSTOM_API_KEY
               optional: true
+        # DeepSeek 凭据（独立前缀，与 panghu_game 约定一致）
+        - name: DEEPSEEK_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: agent-secret
+              key: DEEPSEEK_API_KEY
+              optional: true
         volumeMounts:
         - name: source
           mountPath: /app/app/api/agent.py
