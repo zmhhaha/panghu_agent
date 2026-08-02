@@ -92,10 +92,12 @@ def main():
             browser_tools=tools,
             out_dir=out_dir,
         )
-        result = crew.kickoff(inputs={
-            "game_url": game_url,
-            "comment_targets": comment_targets,
-        })
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            result = str(pool.submit(crew.kickoff, {
+                "game_url": game_url,
+                "comment_targets": comment_targets,
+            }).result())
         report = str(result)
 
         report_path = os.path.join(out_dir, "report.md")

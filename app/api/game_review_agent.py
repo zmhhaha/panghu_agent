@@ -87,10 +87,16 @@ def _run_review(task_id: str, game_url: str, comment_targets: str):
             browser_tools=tools,
             out_dir=task_out_dir,
         )
-        result = str(crew.kickoff(inputs={
-            "game_url": game_url,
-            "comment_targets": comment_targets,
-        }))
+        # Playwright 会在本线程注册 running event loop，导致 crew.kickoff() 走
+        # async 路径报 "invoked synchronously from within a running event loop"。
+        # 把 kickoff 放到一个干净的线程池线程里跑（那里 is_inside_event_loop() 为
+        # false，同步执行成功），Playwright 的 page 对象跨线程串行访问是安全的。
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            result = str(pool.submit(crew.kickoff, {
+                "game_url": game_url,
+                "comment_targets": comment_targets,
+            }).result())
 
         db.update_task(task_id, status="done", report=result)
 
