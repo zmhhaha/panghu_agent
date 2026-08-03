@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 from tools.game_play.browser import GameBrowserSession
-from tools.game_play.tools import PageClickTool, PageGoTool, _get_element_by_idx, _scan
+from tools.game_play.tools import PageClickTool, PageGoTool, _get_element_by_idx, _scan, make_game_tools
 
 
 class _ThreadCheckingPage:
@@ -96,6 +96,32 @@ class _IndexedPage:
 
 
 class GameBrowserSessionTests(unittest.TestCase):
+    def test_generic_game_tools_are_exposed(self):
+        session = GameBrowserSession()
+        try:
+            names = {tool.name for tool in make_game_tools(session, "trial_output")}
+        finally:
+            session.close()
+
+        self.assertEqual(
+            names,
+            {
+                "page_scan",
+                "page_text",
+                "page_click",
+                "page_type",
+                "page_select",
+                "page_press",
+                "page_scroll",
+                "page_click_xy",
+                "page_drag",
+                "page_wait",
+                "page_screenshot",
+                "page_go",
+                "page_back",
+            },
+        )
+
     @patch("tools.game_play.tools.time.sleep", return_value=None)
     def test_tool_calls_are_dispatched_to_playwright_owner_thread(self, _sleep):
         browser = _ThreadCheckingBrowser()

@@ -1,13 +1,14 @@
 """
 通用游戏试玩评价 agent — CrewAI 流水线。
 
-三段式顺序执行：
-  试玩员（TrialPlayer）用浏览器工具真实游玩 → 产出结构化试玩日志
+四段式顺序执行：
+  技能分析师（SkillDesigner）探索陌生游戏 → 生成本次任务专属 skill.md
+  → 试玩员（TrialPlayer）依据 skill.md 用浏览器工具真实游玩 → 产出结构化试玩日志
   → 评测员（Evaluator）读日志提炼优缺点
     → 撰写者（Writer）输出 Markdown 评价报告
 
-注意：浏览器是有状态的，一次任务一个浏览器。play_task 的 expected_output
-是结构化试玩日志 JSON，作为给后续 agent 的上下文桥。
+注意：浏览器是有状态的，一次任务一个浏览器。技能分析与试玩共享同一个浏览器，
+skill_task 的 Markdown 输出作为 play_task 的操作手册，试玩日志再作为后续评测上下文。
 """
 import os
 
@@ -40,17 +41,39 @@ def create_game_review_crew(
         out_dir: 试玩日志/截图输出目录
     """
     tools = browser_tools or []
+    os.makedirs(out_dir, exist_ok=True)
+    generated_skill_path = os.path.abspath(os.path.join(out_dir, "skill.md"))
 
     # ── Agent ──────────────────────────────────────────────
-    trial_player = Agent(
-        role="游戏试玩员",
-        goal=f"打开 {game_url}，像真人玩家一样真实游玩，体验核心玩法，并输出结构化试玩日志",
-        backstory=(SKILL_TEXT or "你是一位资深游戏试玩员，擅长快速上手陌生网页游戏，并忠实记录游玩体验。"),
+    skill_designer = Agent(
+        role="网页游戏技能分析师",
+        goal=f"探索 {game_url} 的真实入口、控件、状态和核心循环，生成可执行且不依赖临时索引的游戏专属 skill.md",
+        backstory=(
+            "你擅长快速理解完全陌生的网页游戏，并把观察转成另一位 Agent 可以执行的操作手册。"
+            "你只使用通用浏览器能力，不为特定游戏编写代码，不把一次扫描得到的 idx 或 CSS 选择器写进技能。\n\n"
+            + (SKILL_TEXT or "所有判断必须来自真实页面，探索后输出可验证的游玩技能。")
+        ),
         llm=PRIMARY_LLM,
         tools=tools,
         verbose=True,
         allow_delegation=False,
-        memory=True,
+        memory=False,
+        max_iter=int(os.getenv("GAME_SKILL_MAX_STEPS", "15")),
+    )
+
+    trial_player = Agent(
+        role="游戏试玩员",
+        goal=f"依据本次生成的 skill.md 真实游玩 {game_url}，体验核心玩法，并输出结构化试玩日志",
+        backstory=(
+            (SKILL_TEXT or "你是一位资深游戏试玩员，擅长快速上手陌生网页游戏，并忠实记录游玩体验。")
+            + "\n\n你会把运行时生成的游戏专属 skill.md 当作操作手册，但页面最新状态永远优先于手册。"
+        ),
+        llm=PRIMARY_LLM,
+        tools=tools,
+        verbose=True,
+        allow_delegation=False,
+        memory=False,
+        max_iter=int(os.getenv("GAME_MAX_STEPS", "40")),
     )
 
     evaluator = Agent(
@@ -80,17 +103,56 @@ def create_game_review_crew(
     )
 
     # ── Task ───────────────────────────────────────────────
+    skill_task = Task(
+        description=f"""为陌生网页游戏 {game_url} 生成本次试玩专属的 skill.md。
+
+评测关注点：{comment_targets or '（无特别指定，全面体验）'}
+
+你必须先真实探索，而不是根据 URL 或常识猜测：
+1. 用 page_go 打开目标，再用 page_scan 阅读页面与可交互元素，并保存一张入口截图。
+2. 找出无需登录即可使用的开始、新建、公开案件、试玩、继续、教程等入口。游客/Guest 不等于受限。
+3. 可以安全点击菜单、教程、模式、公开关卡或预览，以确认状态变化；不得购买、登录、删除数据、公开发布内容或执行其他不可逆操作。
+4. 尽量探索到第一个真正需要玩家决策的核心玩法状态。若进入核心状态，就把当前状态和继续操作写清楚，试玩员会复用同一浏览器继续。
+5. 识别游戏所需的通用原子操作：page_click、page_type、page_select、page_press、page_scroll、page_click_xy、page_drag、page_wait、page_back。只记录实际需要的操作。
+6. 每次点击都从最新 page_scan 取 idx，并把目标文本原样放入 hint。操作后重新扫描。
+7. skill.md 不得记录 idx、CSS/XPath 或依赖本次 DOM 顺序的定位信息；只写可见文本、角色、页面状态、坐标区域与预期反馈。
+8. 未验证的规则放进“未知与验证方式”，不能当成事实。
+
+skill.md 必须使用以下结构：
+# <游戏名称> Play Skill
+## 游戏识别
+## 当前浏览器状态
+## 安全入局流程
+## 控件与原子操作映射
+## 核心玩法循环
+## 输入策略
+## 状态识别（加载中/可操作/进展/胜利/失败/卡住）
+## 等待与恢复策略
+## 截图证据节点
+## 禁止操作
+## 未知与验证方式
+
+输出纯 Markdown，不要使用代码围栏。""",
+        expected_output=(
+            "一份由真实页面探索产生、可供试玩员直接执行的游戏专属 Markdown skill；"
+            "不含临时 idx 或硬编码选择器，包含入口、控件、核心循环、状态判断、恢复和未知项。"
+        ),
+        agent=skill_designer,
+        output_file=generated_skill_path,
+        create_directory=True,
+    )
+
     play_task = Task(
-        description=f"""用浏览器工具真实游玩游戏 {game_url}。
+        description=f"""依据上一个任务生成的游戏专属 skill.md，用浏览器工具真实游玩游戏 {game_url}。
 
 评测关注点：{comment_targets or '（无特别指定，全面体验）'}
 
 **浏览器工具使用规则（重要）：**
-1. 先调用 page_go 打开游戏地址（若页面已打开可跳过）。
+1. 先读取上下文中的 skill.md。若技能分析师已到达可玩的页面，就从当前状态继续；否则按“安全入局流程”操作。
 2. 每次决策前必须先调用 page_scan 扫描当前页面，得到最新可交互元素列表。
-3. 用 page_click 点按钮（用 idx 索引），page_type 在输入框填文本，page_select 选下拉，page_press 按 Enter。
+3. 按 skill.md 选择通用工具：DOM 控件用 page_click/page_type/page_select，键盘用 page_press，长页面用 page_scroll，canvas/棋盘才使用 page_click_xy/page_drag。
 4. 操作后页面会变化，必须重新 page_scan 再继续。
-5. 不要编造页面状态——看不到的就不写。
+5. skill.md 是探索时的操作手册，不是永久真相。若页面与技能不一致，以最新 page_scan 为准，记录差异并采用技能中的恢复策略。
 6. 像真人玩家一样：进入游戏→体验玩法→推进进度→尽量玩到结算/通关。
 7. 玩的每一步都用 page_screenshot 截图存档作为证据。
 8. 当你判断已通关、已充分体验、或连续多步无进展时，结束游玩。
@@ -104,6 +166,7 @@ def create_game_review_crew(
 - evidence: [{type, path, title}]
 - outcome: {status(completed/partial/stuck/timeout), verdict_text, rounds_played, what_is_this_game, game_state_summary}""",
         agent=trial_player,
+        context=[skill_task],
     )
 
     evaluate_task = Task(
@@ -153,8 +216,8 @@ def create_game_review_crew(
     )
 
     return Crew(
-        agents=[trial_player, evaluator, writer],
-        tasks=[play_task, evaluate_task, report_task],
+        agents=[skill_designer, trial_player, evaluator, writer],
+        tasks=[skill_task, play_task, evaluate_task, report_task],
         process=Process.sequential,
         memory=False,
         verbose=True,

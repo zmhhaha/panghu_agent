@@ -21,10 +21,28 @@ from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from tools.game_play.browser import GameBrowserSession
 
-# 可交互标签集合
-_INTERACTIVE_TAGS = {"button", "a", "input", "select", "textarea", "option", "summary"}
 # 常见被忽略的控件（避免把隐藏/装饰元素当可交互）
 _IGNORED_TAGS = {"script", "style", "noscript", "template", "head", "meta", "link"}
+
+_INTERACTIVE_SELECTOR = ", ".join((
+    "button",
+    "a",
+    "input",
+    "select",
+    "textarea",
+    "summary",
+    "[data-action]",
+    '[role="button"]',
+    '[role="link"]',
+    '[role="menuitem"]',
+    '[role="option"]',
+    '[role="tab"]',
+    '[role="checkbox"]',
+    '[role="radio"]',
+    '[role="switch"]',
+    '[role="textbox"]',
+    '[contenteditable]:not([contenteditable="false"])',
+))
 
 MAX_TEXT_CHARS = 6000      # 可见文本截断上限
 MAX_ELEMENTS = 60          # 可交互元素列表上限
@@ -61,12 +79,13 @@ def _el_text(el) -> str:
             return f"value={attr[:40]}"
     except Exception:
         pass
-    try:
-        placeholder = (el.get_attribute("placeholder") or "").strip()
-        if placeholder:
-            return f"placeholder={placeholder[:40]}"
-    except Exception:
-        pass
+    for placeholder_attr in ("placeholder", "aria-placeholder", "data-placeholder"):
+        try:
+            placeholder = (el.get_attribute(placeholder_attr) or "").strip()
+            if placeholder:
+                return f"{placeholder_attr}={placeholder[:40]}"
+        except Exception:
+            pass
     return ""
 
 
@@ -82,13 +101,31 @@ def _element_label(el) -> str:
             value = None
         if value:
             return f"{attr}={value}"
+    try:
+        associated_label = el.evaluate(
+            "(e) => Array.from(e.labels || []).map((label) => label.innerText.trim()).filter(Boolean).join(' ')"
+        )
+        if associated_label:
+            return str(associated_label)[:80]
+    except Exception:
+        pass
+    try:
+        tag = el.evaluate("(e) => e.tagName.toLowerCase()")
+        if tag == "textarea":
+            return "textarea"
+        if tag == "input":
+            return f"input[type={el.get_attribute('type') or 'text'}]"
+        if el.get_attribute("contenteditable") not in (None, "false"):
+            return "contenteditable"
+    except Exception:
+        pass
     return ""
 
 
 def _indexed_elements(page: Page) -> list[tuple[object, str, str]]:
     """Build the canonical visible-element list used by scan and actions."""
     indexed = []
-    locator = page.locator("button, a, input, select, textarea, [data-action]")
+    locator = page.locator(_INTERACTIVE_SELECTOR)
     count = min(locator.count(), MAX_ELEMENTS + 20)
     for i in range(count):
         try:
@@ -108,6 +145,30 @@ def _indexed_elements(page: Page) -> list[tuple[object, str, str]]:
         if len(indexed) >= MAX_ELEMENTS:
             break
     return indexed
+
+
+def _canvas_regions(page: Page) -> list[str]:
+    """Describe visible canvas bounds for games that need coordinate input."""
+    regions = []
+    try:
+        canvases = page.locator("canvas")
+        count = min(canvases.count(), 10)
+        for i in range(count):
+            canvas = canvases.nth(i)
+            if not _visible_el(canvas):
+                continue
+            box = canvas.bounding_box()
+            if not box:
+                continue
+            label = _element_label(canvas) or "未命名画布"
+            regions.append(
+                f"[canvas:{i}] {label} "
+                f"x={round(box['x'])}, y={round(box['y'])}, "
+                f"width={round(box['width'])}, height={round(box['height'])}"
+            )
+    except Exception:
+        pass
+    return regions
 
 
 def _safe_selector(s: str) -> str | None:
@@ -186,6 +247,13 @@ def _scan(page: Page, max_text_chars: int = MAX_TEXT_CHARS) -> str:
         lines.append("(未找到可交互元素，可能需要等待页面加载)")
     lines.append("")
     lines.append(f"(共 {len(elements)} 个可交互元素)")
+
+    canvas_regions = _canvas_regions(page)
+    if canvas_regions:
+        lines.append("")
+        lines.append("===== Canvas / 坐标交互区域 =====")
+        lines.extend(canvas_regions)
+        lines.append("需要操作画布时使用 page_click_xy / page_drag；坐标必须位于上述边界内。")
 
     return "\n".join(lines)
 
@@ -387,6 +455,112 @@ class PagePressTool(BaseTool):
         return _on_page(self._page, press)
 
 
+class PageScrollInput(BaseModel):
+    """Input for scrolling the page or a hovered game surface."""
+    delta_y: int = Field(700, description="垂直滚动量；正数向下、负数向上", ge=-5000, le=5000)
+    delta_x: int = Field(0, description="水平滚动量；正数向右、负数向左", ge=-5000, le=5000)
+
+
+class PageScrollTool(BaseTool):
+    name: str = "page_scroll"
+    description: str = "滚动当前页面。长页面、隐藏在视口外的控件或滚轮类游戏操作可使用。滚动后必须重新 page_scan。"
+    args_schema: Type[BaseModel] = PageScrollInput
+
+    def __init__(self, page: PageTarget, **kwargs):
+        super().__init__(**kwargs)
+        self._page = page
+
+    def _run(self, delta_y: int = 700, delta_x: int = 0) -> str:
+        def scroll(page: Page) -> str:
+            try:
+                page.mouse.wheel(delta_x, delta_y)
+            except Exception as e:
+                return f"滚动失败: {e}"
+            time.sleep(0.5)
+            return f"已滚动: delta_x={delta_x}, delta_y={delta_y}"
+
+        return _on_page(self._page, scroll)
+
+
+class PageClickXYInput(BaseModel):
+    """Input for coordinate clicks on canvas or visual game surfaces."""
+    x: float = Field(..., description="视口横坐标", ge=0, le=10000)
+    y: float = Field(..., description="视口纵坐标", ge=0, le=10000)
+    description: str = Field(..., min_length=1, description="依据画布边界判断的目标说明")
+
+
+class PageClickXYTool(BaseTool):
+    name: str = "page_click_xy"
+    description: str = (
+        "按视口坐标点击，供 canvas、棋盘、地图等没有 DOM 控件的游戏使用。"
+        "只能使用 page_scan 返回的 canvas 边界内坐标；普通按钮仍用 page_click。"
+    )
+    args_schema: Type[BaseModel] = PageClickXYInput
+
+    def __init__(self, page: PageTarget, **kwargs):
+        super().__init__(**kwargs)
+        self._page = page
+
+    def _run(self, x: float, y: float, description: str) -> str:
+        def click_xy(page: Page) -> str:
+            try:
+                page.mouse.click(x, y)
+            except Exception as e:
+                return f"坐标点击失败: {e}"
+            time.sleep(0.5)
+            return f"已点击坐标 ({x}, {y}): {description}"
+
+        return _on_page(self._page, click_xy)
+
+
+class PageDragInput(BaseModel):
+    """Input for drag gestures."""
+    from_x: float = Field(..., description="起点横坐标", ge=0, le=10000)
+    from_y: float = Field(..., description="起点纵坐标", ge=0, le=10000)
+    to_x: float = Field(..., description="终点横坐标", ge=0, le=10000)
+    to_y: float = Field(..., description="终点纵坐标", ge=0, le=10000)
+    description: str = Field(..., min_length=1, description="拖拽目标与目的")
+
+
+class PageDragTool(BaseTool):
+    name: str = "page_drag"
+    description: str = "执行鼠标拖拽，适用于拼图、棋子、滑块、地图和 canvas。操作后必须重新 page_scan。"
+    args_schema: Type[BaseModel] = PageDragInput
+
+    def __init__(self, page: PageTarget, **kwargs):
+        super().__init__(**kwargs)
+        self._page = page
+
+    def _run(
+        self,
+        from_x: float,
+        from_y: float,
+        to_x: float,
+        to_y: float,
+        description: str,
+    ) -> str:
+        def drag(page: Page) -> str:
+            mouse_is_down = False
+            try:
+                page.mouse.move(from_x, from_y)
+                page.mouse.down()
+                mouse_is_down = True
+                page.mouse.move(to_x, to_y, steps=12)
+                page.mouse.up()
+                mouse_is_down = False
+            except Exception as e:
+                if mouse_is_down:
+                    try:
+                        page.mouse.up()
+                    except Exception:
+                        pass
+                return f"拖拽失败: {e}"
+            time.sleep(0.5)
+            return f"已拖拽 ({from_x}, {from_y}) -> ({to_x}, {to_y}): {description}"
+
+        return _on_page(self._page, drag)
+
+
 class PageWaitInput(BaseModel):
     """Input for waiting."""
     text: str = Field(default="", description="要等待出现的文本（空则只等固定时长）")
@@ -481,6 +655,37 @@ class PageGoTool(BaseTool):
         return _on_page(self._page, go)
 
 
+class PageBackInput(BaseModel):
+    """Input for browser back navigation."""
+    wait_seconds: float = Field(1.0, description="返回后等待页面稳定的秒数", ge=0, le=10)
+
+
+class PageBackTool(BaseTool):
+    name: str = "page_back"
+    description: str = "返回上一页，用于技能探索或误入非游戏页面后的恢复。返回后必须重新 page_scan。"
+    args_schema: Type[BaseModel] = PageBackInput
+
+    def __init__(self, page: PageTarget, **kwargs):
+        super().__init__(**kwargs)
+        self._page = page
+
+    def _run(self, wait_seconds: float = 1.0) -> str:
+        def go_back(page: Page) -> str:
+            previous_url = page.url
+            try:
+                response = page.go_back(timeout=20000, wait_until="domcontentloaded")
+            except PlaywrightTimeoutError:
+                response = None
+            except Exception as e:
+                return f"返回失败: {e}"
+            time.sleep(wait_seconds)
+            if response is None and page.url == previous_url:
+                return "返回失败: 没有可返回的上一页"
+            return f"已返回: {page.url}"
+
+        return _on_page(self._page, go_back)
+
+
 def make_game_tools(page: PageTarget, out_dir: str) -> list[BaseTool]:
     """创建通用游戏工具集（无游戏假设）。"""
     return [
@@ -490,7 +695,11 @@ def make_game_tools(page: PageTarget, out_dir: str) -> list[BaseTool]:
         PageTypeTool(page=page),
         PageSelectTool(page=page),
         PagePressTool(page=page),
+        PageScrollTool(page=page),
+        PageClickXYTool(page=page),
+        PageDragTool(page=page),
         PageWaitTool(page=page),
         PageScreenshotTool(page=page, out_dir=out_dir),
         PageGoTool(page=page),
+        PageBackTool(page=page),
     ]
