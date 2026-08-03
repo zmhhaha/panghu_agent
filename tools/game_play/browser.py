@@ -17,8 +17,15 @@
 """
 import json
 import os
+import threading
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from typing import TypeVar
 
 from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
+
+
+T = TypeVar("T")
 
 
 def _parse_cookies() -> list[dict]:
@@ -113,6 +120,100 @@ class GameBrowser:
         self._context = None
         self._browser = None
         self._pw = None
+
+
+class GameBrowserSession:
+    """Own a sync Playwright browser on one dedicated thread.
+
+    CrewAI may execute synchronous tools through an asyncio executor. A
+    Playwright ``Page`` cannot cross that thread boundary because its greenlet
+    is bound to the thread where ``sync_playwright().start()`` ran. This
+    session keeps browser creation, every page operation, and shutdown on one
+    worker while allowing tools to be called from arbitrary threads.
+    """
+
+    def __init__(
+        self,
+        headless: bool | None = None,
+        browser_factory: Callable[..., GameBrowser] = GameBrowser,
+    ):
+        self._headless = headless
+        self._browser_factory = browser_factory
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="game-browser")
+        self._browser: GameBrowser | None = None
+        self._owner_thread_id: int | None = None
+        self._closed = False
+        self._state_lock = threading.Lock()
+
+    def start(self) -> "GameBrowserSession":
+        with self._state_lock:
+            if self._closed:
+                raise RuntimeError("GameBrowserSession 已关闭，不能重新启动")
+            if self._browser is not None:
+                return self
+            self._executor.submit(self._start_on_owner_thread).result()
+        return self
+
+    def _start_on_owner_thread(self) -> None:
+        self._owner_thread_id = threading.get_ident()
+        browser = self._browser_factory(headless=self._headless)
+        try:
+            self._browser = browser.start()
+        except Exception:
+            try:
+                browser.close()
+            except Exception:
+                pass
+            self._owner_thread_id = None
+            raise
+
+    def run(self, operation: Callable[[Page], T]) -> T:
+        """Run one complete page operation on the Playwright owner thread."""
+        on_owner_thread = threading.get_ident() == self._owner_thread_id
+        with self._state_lock:
+            if self._closed:
+                raise RuntimeError("GameBrowserSession 已关闭")
+            if self._browser is None:
+                raise RuntimeError("GameBrowserSession 尚未启动，请先调用 start()")
+            future = None if on_owner_thread else self._executor.submit(
+                self._run_on_owner_thread, operation
+            )
+
+        if on_owner_thread:
+            return operation(self._get_page_on_owner_thread())
+        return future.result()
+
+    def _run_on_owner_thread(self, operation: Callable[[Page], T]) -> T:
+        return operation(self._get_page_on_owner_thread())
+
+    def _get_page_on_owner_thread(self) -> Page:
+        if self._browser is None:
+            raise RuntimeError("GameBrowserSession 尚未启动")
+        return self._browser.page
+
+    def close(self) -> None:
+        on_owner_thread = threading.get_ident() == self._owner_thread_id
+        with self._state_lock:
+            if self._closed:
+                return
+            self._closed = True
+            close_future = None
+            if self._browser is not None and not on_owner_thread:
+                close_future = self._executor.submit(self._close_on_owner_thread)
+
+        try:
+            if self._browser is not None:
+                if on_owner_thread:
+                    self._close_on_owner_thread()
+                elif close_future is not None:
+                    close_future.result()
+        finally:
+            self._executor.shutdown(wait=not on_owner_thread)
+
+    def _close_on_owner_thread(self) -> None:
+        if self._browser is not None:
+            self._browser.close()
+            self._browser = None
 
 
 def detect_login_redirect(page: Page) -> str | None:

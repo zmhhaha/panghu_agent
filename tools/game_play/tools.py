@@ -11,12 +11,15 @@
 import html
 import re
 import time
+from collections.abc import Callable
 
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 from typing import Type
 
 from playwright.sync_api import Page
+
+from tools.game_play.browser import GameBrowserSession
 
 # 可交互标签集合
 _INTERACTIVE_TAGS = {"button", "a", "input", "select", "textarea", "option", "summary"}
@@ -25,6 +28,16 @@ _IGNORED_TAGS = {"script", "style", "noscript", "template", "head", "meta", "lin
 
 MAX_TEXT_CHARS = 6000      # 可见文本截断上限
 MAX_ELEMENTS = 60          # 可交互元素列表上限
+
+
+PageTarget = Page | GameBrowserSession
+
+
+def _on_page(target: PageTarget, operation: Callable[[Page], str]) -> str:
+    """Run a whole tool operation without exposing Page across threads."""
+    if isinstance(target, GameBrowserSession):
+        return target.run(operation)
+    return operation(target)
 
 
 def _visible_el(el) -> bool:
@@ -78,12 +91,12 @@ class PageScanTool(BaseTool):
     )
     args_schema: Type[BaseModel] = PageScanInput
 
-    def __init__(self, page: Page, **kwargs):
+    def __init__(self, page: PageTarget, **kwargs):
         super().__init__(**kwargs)
         self._page = page
 
     def _run(self, max_text_chars: int = MAX_TEXT_CHARS) -> str:
-        return _scan(self._page, max_text_chars)
+        return _on_page(self._page, lambda page: _scan(page, max_text_chars))
 
 
 def _scan(page: Page, max_text_chars: int = MAX_TEXT_CHARS) -> str:
@@ -178,22 +191,25 @@ class PageTextTool(BaseTool):
     description: str = "读取某个可交互元素（或其附近）的完整文本，用于看清长内容。"
     args_schema: Type[BaseModel] = PageTextInput
 
-    def __init__(self, page: Page, **kwargs):
+    def __init__(self, page: PageTarget, **kwargs):
         super().__init__(**kwargs)
         self._page = page
 
     def _run(self, idx: int, max_chars: int = 2000) -> str:
-        el = _get_element_by_idx(self._page, idx)
-        if el is None:
-            return f"错误：找不到索引 {idx} 的元素，请先 page_scan 获取最新快照"
-        try:
-            txt = el.inner_text() or ""
-        except Exception as e:
-            return f"读取失败: {e}"
-        txt = re.sub(r"\n{3,}", "\n\n", txt)
-        if len(txt) > max_chars:
-            txt = txt[:max_chars] + "\n...(已截断)"
-        return f"[{idx}] 内容:\n{txt}"
+        def read(page: Page) -> str:
+            el = _get_element_by_idx(page, idx)
+            if el is None:
+                return f"错误：找不到索引 {idx} 的元素，请先 page_scan 获取最新快照"
+            try:
+                txt = el.inner_text() or ""
+            except Exception as e:
+                return f"读取失败: {e}"
+            txt = re.sub(r"\n{3,}", "\n\n", txt)
+            if len(txt) > max_chars:
+                txt = txt[:max_chars] + "\n...(已截断)"
+            return f"[{idx}] 内容:\n{txt}"
+
+        return _on_page(self._page, read)
 
 
 def _get_element_by_idx(page: Page, idx: int):
@@ -229,21 +245,24 @@ class PageClickTool(BaseTool):
     )
     args_schema: Type[BaseModel] = PageClickInput
 
-    def __init__(self, page: Page, **kwargs):
+    def __init__(self, page: PageTarget, **kwargs):
         super().__init__(**kwargs)
         self._page = page
 
     def _run(self, idx: int, hint: str = "") -> str:
-        el = _get_element_by_idx(self._page, idx)
-        if el is None:
-            return f"错误：找不到索引 {idx} 的元素（页面可能已变化），请重新 page_scan"
-        try:
-            el.scroll_into_view_if_needed(timeout=5000)
-            el.click(timeout=8000)
-        except Exception as e:
-            return f"点击失败: {e}"
-        time.sleep(0.8)  # 等渲染
-        return f"已点击 [{idx}] {hint or ''}"
+        def click(page: Page) -> str:
+            el = _get_element_by_idx(page, idx)
+            if el is None:
+                return f"错误：找不到索引 {idx} 的元素（页面可能已变化），请重新 page_scan"
+            try:
+                el.scroll_into_view_if_needed(timeout=5000)
+                el.click(timeout=8000)
+            except Exception as e:
+                return f"点击失败: {e}"
+            time.sleep(0.8)  # 等渲染
+            return f"已点击 [{idx}] {hint or ''}"
+
+        return _on_page(self._page, click)
 
 
 class PageTypeInput(BaseModel):
@@ -258,23 +277,26 @@ class PageTypeTool(BaseTool):
     description: str = "在输入框/文本域中输入文本，可选择提交（Enter）。用于提问、填表、搜索等。"
     args_schema: Type[BaseModel] = PageTypeInput
 
-    def __init__(self, page: Page, **kwargs):
+    def __init__(self, page: PageTarget, **kwargs):
         super().__init__(**kwargs)
         self._page = page
 
     def _run(self, idx: int, text: str, submit: bool = True) -> str:
-        el = _get_element_by_idx(self._page, idx)
-        if el is None:
-            return f"错误：找不到索引 {idx} 的元素（页面可能已变化），请重新 page_scan"
-        try:
-            el.fill("", timeout=5000)
-            el.fill(text, timeout=8000)
-            if submit:
-                el.press("Enter", timeout=3000)
-        except Exception as e:
-            return f"输入失败: {e}"
-        time.sleep(0.8)
-        return f"已输入 '{text[:50]}' {'并提交' if submit else ''}"
+        def type_text(page: Page) -> str:
+            el = _get_element_by_idx(page, idx)
+            if el is None:
+                return f"错误：找不到索引 {idx} 的元素（页面可能已变化），请重新 page_scan"
+            try:
+                el.fill("", timeout=5000)
+                el.fill(text, timeout=8000)
+                if submit:
+                    el.press("Enter", timeout=3000)
+            except Exception as e:
+                return f"输入失败: {e}"
+            time.sleep(0.8)
+            return f"已输入 '{text[:50]}' {'并提交' if submit else ''}"
+
+        return _on_page(self._page, type_text)
 
 
 class PageSelectInput(BaseModel):
@@ -288,24 +310,27 @@ class PageSelectTool(BaseTool):
     description: str = "在下拉框（select）中选择一个选项。value 可以是选项的值或可见文本。"
     args_schema: Type[BaseModel] = PageSelectInput
 
-    def __init__(self, page: Page, **kwargs):
+    def __init__(self, page: PageTarget, **kwargs):
         super().__init__(**kwargs)
         self._page = page
 
     def _run(self, idx: int, value: str) -> str:
-        el = _get_element_by_idx(self._page, idx)
-        if el is None:
-            return f"错误：找不到索引 {idx} 的元素（页面可能已变化），请重新 page_scan"
-        try:
-            el.select_option(value, timeout=5000)
-        except Exception:
-            # 尝试按 label 选
+        def select(page: Page) -> str:
+            el = _get_element_by_idx(page, idx)
+            if el is None:
+                return f"错误：找不到索引 {idx} 的元素（页面可能已变化），请重新 page_scan"
             try:
-                el.select_option(label=value, timeout=5000)
-            except Exception as e:
-                return f"下拉选择失败: {e}"
-        time.sleep(0.5)
-        return f"已选择 '{value}'"
+                el.select_option(value, timeout=5000)
+            except Exception:
+                # 尝试按 label 选
+                try:
+                    el.select_option(label=value, timeout=5000)
+                except Exception as e:
+                    return f"下拉选择失败: {e}"
+            time.sleep(0.5)
+            return f"已选择 '{value}'"
+
+        return _on_page(self._page, select)
 
 
 class PagePressInput(BaseModel):
@@ -318,17 +343,20 @@ class PagePressTool(BaseTool):
     description: str = "按一个键盘键（Enter/Escape/Tab/方向键等），用于提交、关闭弹窗、切换选项。"
     args_schema: Type[BaseModel] = PagePressInput
 
-    def __init__(self, page: Page, **kwargs):
+    def __init__(self, page: PageTarget, **kwargs):
         super().__init__(**kwargs)
         self._page = page
 
     def _run(self, key: str) -> str:
-        try:
-            self._page.keyboard.press(key)
-        except Exception as e:
-            return f"按键失败: {e}"
-        time.sleep(0.5)
-        return f"已按键 {key}"
+        def press(page: Page) -> str:
+            try:
+                page.keyboard.press(key)
+            except Exception as e:
+                return f"按键失败: {e}"
+            time.sleep(0.5)
+            return f"已按键 {key}"
+
+        return _on_page(self._page, press)
 
 
 class PageWaitInput(BaseModel):
@@ -342,19 +370,22 @@ class PageWaitTool(BaseTool):
     description: str = "等待页面加载或某个文本出现。游戏加载/动画时需要。"
     args_schema: Type[BaseModel] = PageWaitInput
 
-    def __init__(self, page: Page, **kwargs):
+    def __init__(self, page: PageTarget, **kwargs):
         super().__init__(**kwargs)
         self._page = page
 
     def _run(self, text: str = "", seconds: float = 2.0) -> str:
-        if text:
-            try:
-                self._page.wait_for_selector(f"text={_safe_selector(text)}", timeout=int(seconds * 1000))
-                return f"已等到文本出现: {text}"
-            except Exception:
-                return f"等待文本超时（{seconds}s）: {text}"
-        time.sleep(seconds)
-        return f"已等待 {seconds}s"
+        def wait(page: Page) -> str:
+            if text:
+                try:
+                    page.wait_for_selector(f"text={_safe_selector(text)}", timeout=int(seconds * 1000))
+                    return f"已等到文本出现: {text}"
+                except Exception:
+                    return f"等待文本超时（{seconds}s）: {text}"
+            time.sleep(seconds)
+            return f"已等待 {seconds}s"
+
+        return _on_page(self._page, wait)
 
 
 class PageScreenshotInput(BaseModel):
@@ -367,7 +398,7 @@ class PageScreenshotTool(BaseTool):
     description: str = "对当前页面截图并保存到输出目录，返回截图路径。用于保存游戏证据。"
     args_schema: Type[BaseModel] = PageScreenshotInput
 
-    def __init__(self, page: Page, out_dir: str, **kwargs):
+    def __init__(self, page: PageTarget, out_dir: str, **kwargs):
         super().__init__(**kwargs)
         self._page = page
         self._out_dir = out_dir
@@ -377,11 +408,15 @@ class PageScreenshotTool(BaseTool):
         os.makedirs(self._out_dir, exist_ok=True)
         safe = re.sub(r"[^\w\-]", "_", name)[:40] or "step"
         path = os.path.join(self._out_dir, f"{safe}.png")
-        try:
-            self._page.screenshot(path=path, full_page=False)
-        except Exception as e:
-            return f"截图失败: {e}"
-        return f"截图已保存: {path}"
+
+        def screenshot(page: Page) -> str:
+            try:
+                page.screenshot(path=path, full_page=False)
+            except Exception as e:
+                return f"截图失败: {e}"
+            return f"截图已保存: {path}"
+
+        return _on_page(self._page, screenshot)
 
 
 class PageGoInput(BaseModel):
@@ -394,20 +429,23 @@ class PageGoTool(BaseTool):
     description: str = "跳转到指定 URL。通常只在开局时使用一次。"
     args_schema: Type[BaseModel] = PageGoInput
 
-    def __init__(self, page: Page, **kwargs):
+    def __init__(self, page: PageTarget, **kwargs):
         super().__init__(**kwargs)
         self._page = page
 
     def _run(self, url: str) -> str:
-        try:
-            self._page.goto(url, timeout=20000, wait_until="domcontentloaded")
-        except Exception as e:
-            return f"跳转失败: {e}"
-        time.sleep(1.0)
-        return f"已跳转: {url}"
+        def go(page: Page) -> str:
+            try:
+                page.goto(url, timeout=20000, wait_until="domcontentloaded")
+            except Exception as e:
+                return f"跳转失败: {e}"
+            time.sleep(1.0)
+            return f"已跳转: {url}"
+
+        return _on_page(self._page, go)
 
 
-def make_game_tools(page: Page, out_dir: str) -> list[BaseTool]:
+def make_game_tools(page: PageTarget, out_dir: str) -> list[BaseTool]:
     """创建通用游戏工具集（无游戏假设）。"""
     return [
         PageScanTool(page=page),

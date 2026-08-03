@@ -68,7 +68,7 @@ def _run_review(task_id: str, game_url: str, comment_targets: str):
     try:
         db.update_task(task_id, status="running")
 
-        from tools.game_play.browser import GameBrowser
+        from tools.game_play.browser import GameBrowserSession
         from tools.game_play.tools import make_game_tools
         from game_review_agent.crew import create_game_review_crew
 
@@ -76,10 +76,9 @@ def _run_review(task_id: str, game_url: str, comment_targets: str):
         os.makedirs(task_out_dir, exist_ok=True)
 
         # 启动浏览器，为试玩员创建工具
-        browser = GameBrowser()
+        browser = GameBrowserSession()
         browser.start()
-        page = browser.page
-        tools = make_game_tools(page, task_out_dir)
+        tools = make_game_tools(browser, task_out_dir)
 
         crew = create_game_review_crew(
             game_url=game_url,
@@ -87,16 +86,6 @@ def _run_review(task_id: str, game_url: str, comment_targets: str):
             browser_tools=tools,
             out_dir=task_out_dir,
         )
-        # Playwright 启动时会把它的 event loop 设为当前线程的 running loop，
-        # 导致 crew.kickoff() 被误判为"在 async 环境里同步调用"而报错；
-        # 若换到其他线程跑 crew，工具跨线程访问 page 又会报 greenlet 错误。
-        # 解法：同一线程内先清除 running loop（Playwright 的 greenlet 调度
-        # 走 _dispatcher_fiber，不依赖全局 running loop），再同步 kickoff。
-        import asyncio
-        try:
-            asyncio._set_running_loop(None)
-        except Exception:
-            pass
         result = str(crew.kickoff({
             "game_url": game_url,
             "comment_targets": comment_targets,

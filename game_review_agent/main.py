@@ -19,7 +19,7 @@ import time
 # 把 panghu_agent 根目录加入 sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from tools.game_play.browser import GameBrowser
+from tools.game_play.browser import GameBrowser, GameBrowserSession
 from tools.game_play.tools import make_game_tools
 
 
@@ -80,10 +80,9 @@ def main():
     print("=" * 60)
 
     # 打开浏览器并创建工具（传给试玩员 agent）
-    browser = GameBrowser()
+    browser = GameBrowserSession()
     browser.start()
-    page = browser.page
-    tools = make_game_tools(page, out_dir)
+    tools = make_game_tools(browser, out_dir)
 
     try:
         crew = create_game_review_crew(
@@ -92,14 +91,6 @@ def main():
             browser_tools=tools,
             out_dir=out_dir,
         )
-        # Playwright 会把它的 event loop 设为当前线程 running loop，导致
-        # crew.kickoff() 误判为 async 环境而报错；同线程先清除 running loop 即可
-        #（Playwright greenlet 调度不依赖它），也避免跨线程访问 page 的 greenlet 错误。
-        import asyncio
-        try:
-            asyncio._set_running_loop(None)
-        except Exception:
-            pass
         result = str(crew.kickoff({
             "game_url": game_url,
             "comment_targets": comment_targets,
