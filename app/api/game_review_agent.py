@@ -87,16 +87,20 @@ def _run_review(task_id: str, game_url: str, comment_targets: str):
             browser_tools=tools,
             out_dir=task_out_dir,
         )
-        # Playwright 会在本线程注册 running event loop，导致 crew.kickoff() 走
-        # async 路径报 "invoked synchronously from within a running event loop"。
-        # 把 kickoff 放到一个干净的线程池线程里跑（那里 is_inside_event_loop() 为
-        # false，同步执行成功），Playwright 的 page 对象跨线程串行访问是安全的。
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            result = str(pool.submit(crew.kickoff, {
-                "game_url": game_url,
-                "comment_targets": comment_targets,
-            }).result())
+        # Playwright 启动时会把它的 event loop 设为当前线程的 running loop，
+        # 导致 crew.kickoff() 被误判为"在 async 环境里同步调用"而报错；
+        # 若换到其他线程跑 crew，工具跨线程访问 page 又会报 greenlet 错误。
+        # 解法：同一线程内先清除 running loop（Playwright 的 greenlet 调度
+        # 走 _dispatcher_fiber，不依赖全局 running loop），再同步 kickoff。
+        import asyncio
+        try:
+            asyncio._set_running_loop(None)
+        except Exception:
+            pass
+        result = str(crew.kickoff({
+            "game_url": game_url,
+            "comment_targets": comment_targets,
+        }))
 
         db.update_task(task_id, status="done", report=result)
 

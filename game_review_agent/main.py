@@ -92,12 +92,18 @@ def main():
             browser_tools=tools,
             out_dir=out_dir,
         )
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            result = str(pool.submit(crew.kickoff, {
-                "game_url": game_url,
-                "comment_targets": comment_targets,
-            }).result())
+        # Playwright 会把它的 event loop 设为当前线程 running loop，导致
+        # crew.kickoff() 误判为 async 环境而报错；同线程先清除 running loop 即可
+        #（Playwright greenlet 调度不依赖它），也避免跨线程访问 page 的 greenlet 错误。
+        import asyncio
+        try:
+            asyncio._set_running_loop(None)
+        except Exception:
+            pass
+        result = str(crew.kickoff({
+            "game_url": game_url,
+            "comment_targets": comment_targets,
+        }))
         report = str(result)
 
         report_path = os.path.join(out_dir, "report.md")
