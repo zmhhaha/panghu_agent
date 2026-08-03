@@ -17,7 +17,7 @@ from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 from typing import Type
 
-from playwright.sync_api import Page
+from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from tools.game_play.browser import GameBrowserSession
 
@@ -70,6 +70,46 @@ def _el_text(el) -> str:
     return ""
 
 
+def _element_label(el) -> str:
+    """Return the exact label used by both scanning and later index lookup."""
+    text = _el_text(el)
+    if text:
+        return text
+    for attr in ("data-action", "title", "aria-label", "data-tab", "name"):
+        try:
+            value = el.get_attribute(attr)
+        except Exception:
+            value = None
+        if value:
+            return f"{attr}={value}"
+    return ""
+
+
+def _indexed_elements(page: Page) -> list[tuple[object, str, str]]:
+    """Build the canonical visible-element list used by scan and actions."""
+    indexed = []
+    locator = page.locator("button, a, input, select, textarea, [data-action]")
+    count = min(locator.count(), MAX_ELEMENTS + 20)
+    for i in range(count):
+        try:
+            el = locator.nth(i)
+            if not _visible_el(el):
+                continue
+            tag = el.evaluate("(e) => e.tagName.toLowerCase()")
+            if tag in _IGNORED_TAGS:
+                continue
+            label = _element_label(el)
+            if not label:
+                continue
+        except Exception:
+            # React/Vue may replace a node while the list is being inspected.
+            continue
+        indexed.append((el, tag, label))
+        if len(indexed) >= MAX_ELEMENTS:
+            break
+    return indexed
+
+
 def _safe_selector(s: str) -> str | None:
     """把用户给的任意字符串转成安全的文本选择器片段，防注入。"""
     if not s:
@@ -109,28 +149,8 @@ def _scan(page: Page, max_text_chars: int = MAX_TEXT_CHARS) -> str:
     # 1) 收集可交互元素
     elements = []
     try:
-        locator = page.locator("button, a, input, select, textarea, [data-action]")
-        count = min(locator.count(), MAX_ELEMENTS + 20)
-        for i in range(count):
-            el = locator.nth(i)
-            if not _visible_el(el):
-                continue
-            tag = el.evaluate("(e) => e.tagName.toLowerCase()")
-            if tag in _IGNORED_TAGS:
-                continue
-            text = _el_text(el)
-            if not text:
-                # 用 data-action / title / aria-label 兜底
-                for attr in ("data-action", "title", "aria-label", "data-tab", "name"):
-                    v = el.get_attribute(attr)
-                    if v:
-                        text = f"{attr}={v}"
-                        break
-            if not text:
-                continue
-            elements.append({"idx": len(elements), "tag": tag, "text": text, "attrs": _quick_attrs(el)})
-            if len(elements) >= MAX_ELEMENTS:
-                break
+        for idx, (el, tag, label) in enumerate(_indexed_elements(page)):
+            elements.append({"idx": idx, "tag": tag, "text": label, "attrs": _quick_attrs(el)})
     except Exception:
         pass
 
@@ -215,32 +235,32 @@ class PageTextTool(BaseTool):
 def _get_element_by_idx(page: Page, idx: int):
     """按 page_scan 的索引定位元素（重新扫描，索引以最新扫描为准）。"""
     try:
-        locator = page.locator("button, a, input, select, textarea, [data-action]")
-        count = min(locator.count(), MAX_ELEMENTS + 20)
-        seen = 0
-        for i in range(count):
-            el = locator.nth(i)
-            if not _visible_el(el):
-                continue
-            if _el_text(el):
-                if seen == idx:
-                    return el
-                seen += 1
+        indexed = _indexed_elements(page)
+        if 0 <= idx < len(indexed):
+            return indexed[idx][0]
     except Exception:
         pass
     return None
 
 
+def _normalized_label(value: str) -> str:
+    value = re.sub(r"[\s\W_]+", "", value, flags=re.UNICODE).lower()
+    for suffix in ("button", "link", "按钮", "链接"):
+        if value.endswith(suffix):
+            value = value[: -len(suffix)]
+    return value
+
+
 class PageClickInput(BaseModel):
     """Input for clicking an element."""
     idx: int = Field(..., description="元素索引（来自最近一次 page_scan）")
-    hint: str = Field(default="", description="你要点的元素是什么（给模型参考，用于校验）")
+    hint: str = Field(..., min_length=1, description="从 page_scan 复制的目标可见文本，用于防止页面变化后错点")
 
 
 class PageClickTool(BaseTool):
     name: str = "page_click"
     description: str = (
-        "点击页面上某个可交互元素。idx 必须来自最近一次 page_scan 返回的元素索引。"
+        "点击页面上某个可交互元素。idx 和 hint 必须来自最近一次 page_scan。"
         "若点击后页面跳转/更新，请再次 page_scan。"
     )
     args_schema: Type[BaseModel] = PageClickInput
@@ -249,18 +269,26 @@ class PageClickTool(BaseTool):
         super().__init__(**kwargs)
         self._page = page
 
-    def _run(self, idx: int, hint: str = "") -> str:
+    def _run(self, idx: int, hint: str) -> str:
         def click(page: Page) -> str:
             el = _get_element_by_idx(page, idx)
             if el is None:
                 return f"错误：找不到索引 {idx} 的元素（页面可能已变化），请重新 page_scan"
+            actual_label = _element_label(el)
+            expected = _normalized_label(hint)
+            actual = _normalized_label(actual_label)
+            if expected and actual and expected not in actual and actual not in expected:
+                return (
+                    f"错误：索引 {idx} 当前是“{actual_label}”，与目标“{hint}”不符。"
+                    "页面可能已变化，请重新 page_scan，禁止继续猜索引。"
+                )
             try:
                 el.scroll_into_view_if_needed(timeout=5000)
                 el.click(timeout=8000)
             except Exception as e:
                 return f"点击失败: {e}"
             time.sleep(0.8)  # 等渲染
-            return f"已点击 [{idx}] {hint or ''}"
+            return f"已点击 [{idx}] {actual_label}"
 
         return _on_page(self._page, click)
 
@@ -436,7 +464,15 @@ class PageGoTool(BaseTool):
     def _run(self, url: str) -> str:
         def go(page: Page) -> str:
             try:
-                page.goto(url, timeout=20000, wait_until="domcontentloaded")
+                page.goto(url, timeout=30000, wait_until="domcontentloaded")
+            except PlaywrightTimeoutError:
+                try:
+                    body_text = page.inner_text("body").strip()
+                except Exception:
+                    body_text = ""
+                if body_text:
+                    return f"已打开页面（部分资源仍在加载）: {page.url}"
+                return f"跳转超时且页面为空: {url}"
             except Exception as e:
                 return f"跳转失败: {e}"
             time.sleep(1.0)
