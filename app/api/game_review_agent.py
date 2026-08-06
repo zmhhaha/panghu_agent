@@ -10,7 +10,7 @@ GET  /health                 → 健康检查
 后台线程里：
 1. 启动 Playwright 浏览器
 2. 用通用浏览器工具创建 crew 的试玩员工具
-3. crew.kickoff() 三段式流水线（试玩→评测→撰写）
+3. crew.kickoff() 四段式流水线（技能生成→试玩→评测→撰写）
 4. 结果存 SQLite，浏览器 close
 """
 import sys
