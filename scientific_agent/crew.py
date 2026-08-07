@@ -11,6 +11,7 @@ from crewai import Agent, Task, Crew, Process, LLM
 
 # 学术搜索工具（全部免费，无需第三方 API Key）
 from tools.academic_tools import (
+    AcademicSearchTool,
     ArxivSearchTool,
     ArxivFetchTool,
     PubMedSearchTool,
@@ -108,6 +109,7 @@ def create_literature_searcher() -> Agent:
 - 在构建检索式时，会同时使用中文和英文关键词以确保覆盖全面""",
         llm=PRIMARY_LLM,
         tools=[
+            AcademicSearchTool(),
             ArxivSearchTool(),
             PubMedSearchTool(),
             SemanticScholarSearchTool(),

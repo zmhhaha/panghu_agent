@@ -10,6 +10,7 @@
   SemanticScholarSearchTool - 搜索 Semantic Scholar（全学科 + 引用数据）
   SemanticScholarFetchTool  - 获取论文详情（引用数、参考文献）
   CrossrefLookupTool       - 通过 DOI 查找论文元数据
+  AcademicSearchTool       - 多数据库聚合搜索、去重和相关性排序
 """
 import re
 import time
@@ -17,6 +18,8 @@ import json
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 from typing import Type
+
+from tools.academic import search_academic
 
 
 # ============================================================
@@ -46,6 +49,84 @@ def _safe_import_requests():
         raise ImportError("未安装 requests 库，请运行: pip install requests")
 
 
+def _normalize_doi_identifier(value: str) -> str:
+    value = value.strip()
+    value = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", value, flags=re.I)
+    value = re.sub(r"^doi:\s*", "", value, flags=re.I)
+    return value.strip()
+
+
+class AcademicSearchInput(BaseModel):
+    """跨数据库学术检索参数。"""
+
+    topic: str = Field(..., description="研究主题或检索问题，支持中英文")
+    max_results: int = Field(30, description="去重排序后的最大结果数（5-60）", ge=5, le=60)
+    providers: str = Field(
+        "",
+        description=(
+            "可选数据库列表，用逗号分隔：openalex、crossref、semantic_scholar、"
+            "arxiv、pubmed；留空表示全部"
+        ),
+    )
+
+
+class AcademicSearchTool(BaseTool):
+    name: str = "academic_search"
+    description: str = (
+        "跨 OpenAlex、Crossref、Semantic Scholar、arXiv 和 PubMed 检索文献。"
+        "工具会自动生成查询变体、合并重复 DOI/标题并按主题相关性排序。"
+        "一般检索应优先使用本工具；需要数据库高级语法时再使用单库工具。"
+    )
+    args_schema: Type[BaseModel] = AcademicSearchInput
+
+    def _run(self, topic: str, max_results: int = 30, providers: str = "") -> str:
+        selected = [item.strip() for item in re.split(r"[,;\n]+", providers) if item.strip()]
+        try:
+            result = search_academic(
+                topic,
+                limit=max_results,
+                per_provider=min(12, max(5, max_results // 2)),
+                providers=selected or None,
+            )
+        except Exception as exc:
+            return f"聚合学术检索失败: {type(exc).__name__}: {str(exc)[:300]}"
+
+        papers = result["papers"]
+        lines = [
+            f"## 聚合学术检索结果: {topic}",
+            "",
+            f"查询变体: {' | '.join(result['query_variants'])}",
+            "来源结果数: " + ", ".join(
+                f"{name}={count}" for name, count in sorted(result["provider_counts"].items())
+            ),
+            f"跨库去重并排序后返回 {len(papers)} 篇。",
+            "",
+        ]
+        for index, paper in enumerate(papers, 1):
+            provider_names = paper.get("providers") or [paper.get("provider", "")]
+            lines.extend([
+                f"### [P{index}] {paper.get('title') or '无标题'}",
+                f"- **来源**: {', '.join(provider_names)}",
+                f"- **作者**: {paper.get('authors') or '未提供'}",
+                f"- **日期/刊物**: {paper.get('date') or '未知'} | {paper.get('venue') or '未知'}",
+                f"- **引用数**: {paper.get('cited_by_count', 0)} | **相关性分数**: {paper.get('relevance_score', 0)}",
+            ])
+            if paper.get("doi"):
+                lines.append(f"- **DOI**: [{paper['doi']}](https://doi.org/{paper['doi']})")
+            if paper.get("url"):
+                lines.append(f"- **链接**: {paper['url']}")
+            if paper.get("pdf_url"):
+                lines.append(f"- **开放全文**: {paper['pdf_url']}")
+            if paper.get("abstract"):
+                lines.append(f"- **摘要**: {str(paper['abstract'])[:700]}")
+            lines.append("")
+
+        if result["errors"]:
+            lines.append("### 部分来源告警")
+            lines.extend(f"- {name}: {error}" for name, error in sorted(result["errors"].items()))
+        return "\n".join(lines)
+
+
 # ============================================================
 #  arXiv 搜索工具
 # ============================================================
@@ -73,18 +154,19 @@ class ArxivSearchTool(BaseTool):
         import xml.etree.ElementTree as ET
 
         def _do_search():
-            q = query.replace(" ", "+")
-            url = (
-                f"http://export.arxiv.org/api/query"
-                f"?search_query=all:{urllib.parse.quote(query)}"
-                f"&start=0"
-                f"&max_results={max_results}"
-                f"&sortBy={sort_by}"
-                f"&sortOrder={'descending' if sort_by == 'lastUpdatedDate' else 'descending'}"
-            )
+            has_field_syntax = bool(re.search(r"\b(?:all|ti|au|abs|co|jr|cat|rn|id):", query, re.I))
+            search_query = query if has_field_syntax else f"all:{query}"
+            params = urllib.parse.urlencode({
+                "search_query": search_query,
+                "start": 0,
+                "max_results": max_results,
+                "sortBy": sort_by if sort_by in {"relevance", "lastUpdatedDate", "submittedDate"} else "relevance",
+                "sortOrder": "descending",
+            })
+            url = f"https://export.arxiv.org/api/query?{params}"
             req = urllib.request.Request(url, headers={"User-Agent": "ScientificAgent/1.0"})
-            resp = urllib.request.urlopen(req, timeout=30)
-            return resp.read().decode("utf-8")
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return resp.read().decode("utf-8")
 
         try:
             xml_data = _retry(_do_search, attempts=3, delay=1.5)
@@ -239,10 +321,6 @@ class PubMedSearchTool(BaseTool):
 
         requests_mod = _safe_import_requests()
 
-        # 限定最近 5 年（如果用户未指定）
-        if not date_range:
-            date_range = "2021:2026"
-
         def _do_esearch():
             full_query = query
             if date_range:
@@ -376,18 +454,14 @@ class PubMedFetchTool(BaseTool):
             if title_elem is not None and title_elem.text:
                 title = title_elem.text.strip()
 
-            abstract = ""
-            abstract_elem = article.find(".//Abstract/AbstractText")
-            if abstract_elem is not None and abstract_elem.text:
-                abstract = abstract_elem.text.strip()
-            else:
-                # 结构化摘要（多个 AbstractText 标签）
-                abs_parts = []
-                for abs_elem in article.findall(".//Abstract/AbstractText"):
-                    label = abs_elem.get("Label", "")
-                    text = abs_elem.text or ""
+            # 保留结构化摘要的所有章节及嵌套文本。
+            abs_parts = []
+            for abs_elem in article.findall(".//Abstract/AbstractText"):
+                label = abs_elem.get("Label", "")
+                text = " ".join("".join(abs_elem.itertext()).split())
+                if text:
                     abs_parts.append(f"{label}: {text}" if label else text)
-                abstract = "\n".join(abs_parts) if abs_parts else "无摘要"
+            abstract = "\n".join(abs_parts) if abs_parts else "无摘要"
 
             authors = []
             for a in article.findall(".//Author"):
@@ -463,7 +537,10 @@ class SemanticScholarSearchTool(BaseTool):
             params = {
                 "query": query,
                 "limit": limit,
-                "fields": "title,authors,abstract,year,citationCount,venue,externalIds,fieldsOfStudy,publicationTypes",
+                "fields": (
+                    "paperId,title,authors,abstract,year,publicationDate,citationCount,venue,"
+                    "externalIds,fieldsOfStudy,publicationTypes,isOpenAccess,openAccessPdf,url"
+                ),
             }
             if year:
                 # Semantic Scholar API 使用 year=2021-2026 格式
@@ -603,6 +680,17 @@ class SemanticScholarFetchTool(BaseTool):
                         output += f". DOI: {r_doi}"
                     output += "\n"
 
+            cited_by = data.get("citations", [])[:5]
+            if cited_by:
+                output += f"\n### 主要施引文献（前 {len(cited_by)} 篇）\n\n"
+                for j, citation in enumerate(cited_by, 1):
+                    c_title = citation.get("title", "无标题")
+                    c_authors = ", ".join(
+                        [a.get("name", "") for a in citation.get("authors", [])][:3]
+                    )
+                    c_year = citation.get("year", "")
+                    output += f"[{j}] {c_authors} ({c_year}). *{c_title}*\n"
+
             return output
 
         except Exception as e:
@@ -629,9 +717,14 @@ class CrossrefLookupTool(BaseTool):
 
     def _run(self, doi: str) -> str:
         requests_mod = _safe_import_requests()
+        normalized_doi = _normalize_doi_identifier(doi)
+        if not re.match(r"^10\.\d{4,9}/\S+$", normalized_doi, flags=re.I):
+            return f"Crossref 查询失败: 无效 DOI ({doi})"
 
         def _do_lookup():
-            url = f"https://api.crossref.org/works/{doi}"
+            import urllib.parse
+
+            url = f"https://api.crossref.org/works/{urllib.parse.quote(normalized_doi, safe='')}"
             resp = requests_mod.get(url, timeout=30,
                                     headers={"User-Agent": "ScientificAgent/1.0 (mailto:pangu@example.com)"})
             resp.raise_for_status()
@@ -640,7 +733,7 @@ class CrossrefLookupTool(BaseTool):
         try:
             data = _retry(_do_lookup, attempts=3, delay=1.0)
         except Exception as e:
-            return f"Crossref 查询失败 ({doi}): {type(e).__name__}: {str(e)[:300]}"
+            return f"Crossref 查询失败 ({normalized_doi}): {type(e).__name__}: {str(e)[:300]}"
 
         try:
             msg = data.get("message", {})
@@ -658,7 +751,7 @@ class CrossrefLookupTool(BaseTool):
             volume = msg.get("volume", "")
             issue = msg.get("issue", "")
             pages = msg.get("page", "")
-            doi_full = msg.get("DOI", doi)
+            doi_full = msg.get("DOI", normalized_doi)
             type_label = msg.get("type", "未知类型")
             abstract = (msg.get("abstract") or "")[:1000]
 
@@ -691,7 +784,7 @@ class CrossrefLookupTool(BaseTool):
             return output
 
         except Exception as e:
-            return f"Crossref 解析失败 ({doi}): {type(e).__name__}: {str(e)[:300]}"
+            return f"Crossref 解析失败 ({normalized_doi}): {type(e).__name__}: {str(e)[:300]}"
 
 
 # ============================================================
@@ -730,17 +823,18 @@ class AcademicMultiFetchTool(BaseTool):
             results.append(f"--- 论文 {i}/{len(id_list)} ---")
 
             # 自动识别 ID 类型
-            if re.match(r"^\d{4}\.\d{4,}(v\d+)?$", pid):
+            normalized_doi = _normalize_doi_identifier(pid)
+            if re.match(r"^(?:[a-z-]+/\d{7}|\d{4}\.\d{4,})(v\d+)?$", pid, flags=re.I):
                 # arXiv ID
                 fetcher = ArxivFetchTool()
                 results.append(fetcher._run(pid))
+            elif re.match(r"^10\.\d{4,9}/\S+$", normalized_doi, flags=re.I):
+                # DOI（支持 DOI: 和 https://doi.org/ 前缀）
+                fetcher = CrossrefLookupTool()
+                results.append(fetcher._run(normalized_doi))
             elif re.match(r"^\d{7,8}$", pid):
                 # PMID
                 fetcher = PubMedFetchTool()
-                results.append(fetcher._run(pid))
-            elif "/" in pid:
-                # DOI
-                fetcher = CrossrefLookupTool()
                 results.append(fetcher._run(pid))
             else:
                 # Semantic Scholar ID

@@ -67,7 +67,7 @@ CUSTOM_MODEL=qwen2.5:7b
 
 | Agent | 角色 | 职责 | 使用模型 | 工具 |
 |-------|------|------|----------|------|
-| 研究员 | 高级研究分析师 | 搜集信息、交叉验证、整理数据 | PRIMARY_LLM | WebSearch, WebFetch, MultiFetch |
+| 研究员 | 高级研究分析师 | 搜集信息、交叉验证、整理数据 | PRIMARY_LLM | AcademicSearch, WebSearch, WebFetch, MultiFetch |
 | 分析师 | 数据与趋势分析师 | 深度分析、提炼洞察 | PRIMARY_LLM | - |
 | 撰写者 | 技术报告撰写专家 | 输出结构化报告 | SECONDARY_LLM | - |
 
@@ -77,13 +77,14 @@ CUSTOM_MODEL=qwen2.5:7b
 
 | 工具 | 功能 | 依赖 |
 |------|------|------|
+| `AcademicSearchTool` | 跨 OpenAlex、Crossref、Semantic Scholar、arXiv、PubMed 检索并去重排序 | `requests` |
 | `WebSearchTool` | DuckDuckGo 网页搜索 | `ddgs` |
 | `WebFetchTool` | 抓取网页内容转文本 | `requests` + `beautifulsoup4` |
 | `MultiFetchTool` | 批量抓取 + 交叉验证 | 复用 `WebFetchTool` |
 | `FileReadTool` | 读取本地文件 | 内置 |
 | `FileWriteTool` | 写入本地文件 | 内置 |
 
-参考 `tools/custom_tools.py`，继承 `BaseTool` 即可添加自定义工具。
+学术检索实现位于 `tools/academic/`，CrewAI 包装位于 `tools/academic_tools.py`；网页工具位于 `tools/custom_tools.py`。
 
 ## 项目结构
 

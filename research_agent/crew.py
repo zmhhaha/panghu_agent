@@ -1,8 +1,9 @@
 import os
 from crewai import Agent, Task, Crew, Process, LLM
 
-# 自定义工具（全部免费，无需第三方 API Key）
+# 网页与学术检索工具（均支持无第三方 API Key 的基础额度）
 from tools.custom_tools import WebSearchTool, WebFetchTool, MultiFetchTool
+from tools.academic_tools import AcademicSearchTool
 
 
 # ============================================================
@@ -74,6 +75,7 @@ def create_researcher() -> Agent:
         goal="深入调研并搜集关于 {topic} 的全面、准确的信息和数据，通过多渠道交叉验证确保信息可靠",
         backstory="""你是一位资深的技术研究分析师，拥有10年以上的行业调研经验。你擅长：
 - 使用搜索引擎从多个渠道搜集最新信息
+- 使用学术数据库查找论文、预印本、引用和 DOI 元数据
 - 深入阅读来源页面，提取关键数据和观点
 - 交叉验证多个独立来源的信息一致性
 - 识别信息的时效性、权威性和潜在偏见
@@ -81,6 +83,7 @@ def create_researcher() -> Agent:
 - 整理结构化的调研笔记，附上 URL 引用""",
         llm=PRIMARY_LLM,
         tools=[
+            AcademicSearchTool(),  # 跨学术数据库检索、去重和排序
             WebSearchTool(),    # DuckDuckGo 免费搜索
             WebFetchTool(),     # 抓取单个 URL 内容
             MultiFetchTool(),   # 批量抓取 + 交叉验证
@@ -140,7 +143,9 @@ def create_research_task(researcher: Agent) -> Task:
 ## 调研要求（非常重要）：
 
 - **必须使用搜索工具**获取最新信息，不要仅凭训练数据回答
+- 涉及研究论文、技术方法或科学证据时，优先使用 academic_search；产品动态、官方文档和新闻使用 web_search
 - **每个核心观点至少从 2 个独立来源交叉验证**，发现信息冲突时明确标注
+- 引用论文时保留工具返回的 `[P编号]`、DOI 和论文链接，禁止把不同论文合并成一个来源
 - **标注每条关键信息的来源 URL** 和发布时间
 - **区分「事实」和「观点」**——来自官方文档/论文的为事实，来自博客/社媒的为观点
 - **标注信息的时效性**：明确标注是哪一年的数据/版本

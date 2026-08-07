@@ -1,5 +1,10 @@
+import ipaddress
+import os
 import re
+import socket
 import time
+import urllib.parse
+from pathlib import Path
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 from typing import Type
@@ -23,6 +28,61 @@ def _retry(func, attempts=3, delay=2.0, backoff=2.0):
     raise last_err
 
 
+def _resolve_agent_path(file_path: str) -> Path:
+    """Resolve a path inside the configured agent file root."""
+    root = Path(os.getenv("AGENT_FILE_ROOT") or Path.cwd()).resolve()
+    candidate = Path(file_path).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    resolved = candidate.resolve(strict=False)
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"文件路径超出允许目录: {root}") from exc
+    return resolved
+
+
+def _validate_public_url(url: str) -> str:
+    """Reject non-HTTP URLs and hosts that resolve to non-public addresses."""
+    parsed = urllib.parse.urlparse(url.strip())
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise ValueError("仅允许 http 或 https URL")
+    if not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("URL 主机无效或包含不允许的凭据")
+
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname == "localhost" or hostname.endswith((".localhost", ".local", ".internal")):
+        raise ValueError("不允许访问本机或内部域名")
+
+    try:
+        direct_ip = ipaddress.ip_address(hostname.split("%", 1)[0])
+        addresses = {direct_ip}
+    except ValueError:
+        try:
+            addresses = {
+                ipaddress.ip_address(item[4][0].split("%", 1)[0])
+                for item in socket.getaddrinfo(
+                    hostname,
+                    parsed.port or (443 if parsed.scheme.lower() == "https" else 80),
+                    type=socket.SOCK_STREAM,
+                )
+            }
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"无法解析 URL 主机: {hostname}") from exc
+
+    if not addresses or any(not address.is_global for address in addresses):
+        raise ValueError("不允许访问本机、私网、保留或链路本地地址")
+    return urllib.parse.urlunparse(parsed)
+
+
+def _max_web_fetch_bytes() -> int:
+    try:
+        configured = int(os.getenv("WEB_FETCH_MAX_BYTES", "5242880"))
+    except ValueError:
+        configured = 5 * 1024 * 1024
+    return min(max(configured, 64 * 1024), 20 * 1024 * 1024)
+
+
 # ============================================================
 #  文件读写工具
 # ============================================================
@@ -39,9 +99,10 @@ class FileReadTool(BaseTool):
 
     def _run(self, file_path: str) -> str:
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
+            path = _resolve_agent_path(file_path)
+            with path.open("r", encoding="utf-8") as f:
                 content = f.read()
-            return f"文件内容 ({file_path}):\n{content}"
+            return f"文件内容 ({path}):\n{content}"
         except Exception as e:
             return f"读取文件失败: {e}"
 
@@ -59,9 +120,10 @@ class FileWriteTool(BaseTool):
 
     def _run(self, file_path: str, content: str) -> str:
         try:
-            with open(file_path, "w", encoding="utf-8") as f:
+            path = _resolve_agent_path(file_path)
+            with path.open("w", encoding="utf-8") as f:
                 f.write(content)
-            return f"文件已写入: {file_path}"
+            return f"文件已写入: {path}"
         except Exception as e:
             return f"写入文件失败: {e}"
 
@@ -164,28 +226,77 @@ class WebFetchTool(BaseTool):
         except ImportError:
             return "错误：未安装 requests 库，请运行: pip install requests"
 
+        try:
+            safe_url = _validate_public_url(url)
+        except ValueError as exc:
+            return f"获取网页失败 ({url}): URL 被安全策略拒绝: {exc}"
+
         def _do_fetch():
-            resp = requests.get(
-                url,
-                timeout=30,
-                headers={
-                    "User-Agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/120.0.0.0 Safari/537.36"
-                    ),
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-                },
-            )
-            resp.raise_for_status()
-            return resp
+            current_url = safe_url
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8",
+                "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            }
+            for _ in range(6):
+                current_url = _validate_public_url(current_url)
+                resp = requests.get(
+                    current_url,
+                    timeout=30,
+                    headers=headers,
+                    allow_redirects=False,
+                    stream=True,
+                )
+                if resp.status_code in {301, 302, 303, 307, 308}:
+                    location = resp.headers.get("Location")
+                    resp.close()
+                    if not location:
+                        raise ValueError("重定向响应缺少 Location")
+                    current_url = urllib.parse.urljoin(current_url, location)
+                    continue
+
+                resp.raise_for_status()
+                content_type = resp.headers.get("Content-Type", "").lower()
+                allowed_types = ("text/", "application/json", "application/xml", "application/xhtml+xml")
+                if content_type and not content_type.startswith(allowed_types):
+                    resp.close()
+                    raise ValueError(f"不支持的网页内容类型: {content_type.split(';', 1)[0]}")
+
+                max_bytes = _max_web_fetch_bytes()
+                content_length = resp.headers.get("Content-Length")
+                if content_length and int(content_length) > max_bytes:
+                    resp.close()
+                    raise ValueError(f"网页内容超过 {max_bytes} 字节限制")
+                chunks = []
+                size = 0
+                for chunk in resp.iter_content(chunk_size=64 * 1024):
+                    if not chunk:
+                        continue
+                    size += len(chunk)
+                    if size > max_bytes:
+                        resp.close()
+                        raise ValueError(f"网页内容超过 {max_bytes} 字节限制")
+                    chunks.append(chunk)
+                encoding = resp.encoding or "utf-8"
+                body = b"".join(chunks).decode(encoding, errors="replace")
+                resp.close()
+                return current_url, body
+            raise ValueError("网页重定向次数过多")
 
         try:
-            resp = _retry(_do_fetch, attempts=2, delay=1.0)
+            final_url, response_text = _retry(_do_fetch, attempts=2, delay=1.0)
         except Exception as e:
+            error_detail = (
+                f"URL 被安全策略拒绝: {e}"
+                if isinstance(e, ValueError)
+                else f"{type(e).__name__}: {e}"
+            )
             return (
-                f"获取网页失败 ({url}): {type(e).__name__}: {e}\n"
+                f"获取网页失败 ({url}): {error_detail}\n"
                 f"建议：检查 URL 是否正确，或尝试搜索其他来源。"
             )
 
@@ -194,7 +305,7 @@ class WebFetchTool(BaseTool):
             try:
                 from bs4 import BeautifulSoup
 
-                soup = BeautifulSoup(resp.text, "html.parser")
+                soup = BeautifulSoup(response_text, "html.parser")
 
                 # 移除无关标签
                 for tag in soup(["script", "style", "nav", "footer", "header", "aside", "noscript"]):
@@ -213,7 +324,7 @@ class WebFetchTool(BaseTool):
 
             except ImportError:
                 # 纯正则回退：去掉 HTML 标签
-                text = re.sub(r"<style[^>]*>.*?</style>", "", resp.text, flags=re.DOTALL | re.IGNORECASE)
+                text = re.sub(r"<style[^>]*>.*?</style>", "", response_text, flags=re.DOTALL | re.IGNORECASE)
                 text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
                 text = re.sub(r"<[^>]+>", " ", text)
                 text = re.sub(r"&nbsp;", " ", text)
@@ -227,7 +338,7 @@ class WebFetchTool(BaseTool):
             if len(text) > max_chars:
                 text = text[:max_chars] + "\n\n...(内容过长，已截断，建议抓取更具体的子页面)"
 
-            return f"## 网页内容: {url}\n\n{text}"
+            return f"## 网页内容: {final_url}\n\n{text}"
 
         except Exception as e:
             return f"解析网页失败 ({url}): {type(e).__name__}: {e}"
