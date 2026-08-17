@@ -12,6 +12,20 @@ THEME = gr.themes.Soft(primary_hue="blue", secondary_hue="gray")
 MAX_WAIT = 600  # 最多等 10 分钟
 
 
+def payment_image(filename: str, label: str):
+    """Render remotely hosted payment images without server-side downloads."""
+    return gr.HTML(
+        f"""
+        <figure style="margin:0;text-align:center">
+          <figcaption style="margin-bottom:8px;font-weight:600">{label}</figcaption>
+          <img src="https://panghuer.top/static/{filename}" alt="{label}"
+               loading="lazy" referrerpolicy="no-referrer"
+               style="display:block;width:min(100%,320px);height:auto;margin:auto;border-radius:4px">
+        </figure>
+        """
+    )
+
+
 def do_research(topic: str, email: str, request: gr.Request):
     """生成器：提交 + 轮询，逐次 yield 最新状态，UI 实时刷新"""
     _busy = gr.update(interactive=False)
@@ -172,7 +186,7 @@ def search_reports(keyword: str):
 #  UI
 # ============================================================
 
-with gr.Blocks(title="🐯 研究助手", theme=THEME) as demo:
+with gr.Blocks(title="🐯 研究助手") as demo:
     gr.Markdown("# 🐯 研究助手\n**多 Agent 协作调研** — 提交主题，后台异步执行，实时进度反馈。")
 
     with gr.Tab("🔬 新调研"):
@@ -231,19 +245,20 @@ with gr.Blocks(title="🐯 研究助手", theme=THEME) as demo:
         with gr.Tabs():
             with gr.Tab("💰️ 1 毛"):
                 with gr.Row():
-                    # gr.Image("https://panghuer.top/static/wchatpay0.1.jpg", label="💚 微信 1 毛", container=False)
-                    gr.Image("https://panghuer.top/static/alipay0.1.jpg", label="💙 支付宝 1 毛", container=False)
+                    # payment_image("wchatpay0.1.jpg", "💚 微信 1 毛")
+                    payment_image("alipay0.1.jpg", "💙 支付宝 1 毛")
             with gr.Tab("💰️ 2 毛"):
                 with gr.Row():
-                    # gr.Image("https://panghuer.top/static/wchatpay0.2.jpg", label="💚 微信 2 毛", container=False)
-                    gr.Image("https://panghuer.top/static/alipay0.2.jpg", label="💙 支付宝 2 毛", container=False)
+                    # payment_image("wchatpay0.2.jpg", "💚 微信 2 毛")
+                    payment_image("alipay0.2.jpg", "💙 支付宝 2 毛")
             with gr.Tab("💰️ 5 毛"):
                 with gr.Row():
-                    # gr.Image("https://panghuer.top/static/wchatpay0.5.jpg", label="💚 微信 5 毛", container=False)
-                    gr.Image("https://panghuer.top/static/alipay0.5.jpg", label="💙 支付宝 5 毛", container=False)
+                    # payment_image("wchatpay0.5.jpg", "💚 微信 5 毛")
+                    payment_image("alipay0.5.jpg", "💙 支付宝 5 毛")
 
 if __name__ == "__main__":
     demo.queue(default_concurrency_limit=2).launch(
         server_name="0.0.0.0",
         server_port=int(os.getenv("GRADIO_SERVER_PORT", "7860")),
+        theme=THEME,
     )
