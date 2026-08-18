@@ -29,6 +29,13 @@ def do_zhougongjiemeng(text: str, request: gr.Request):
         if response.status_code == 429:
             yield "上一个梦还在解读，请稍等。", ready
             return
+        if not response.ok:
+            try:
+                detail = response.json().get("detail")
+            except ValueError:
+                detail = None
+            yield f"解读失败：{detail or response.text or response.reason}", ready
+            return
         response.raise_for_status()
         data = response.json()
         if data.get("status") == "done":

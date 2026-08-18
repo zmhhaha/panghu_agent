@@ -15,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from tools import sqlite_client as db
+from tools.llm_config import get_llm_config_error
 
 # ── 初始化 research 表 ──
 db.init_db("research")
@@ -89,12 +90,17 @@ def _run_research(task_id: str, topic: str, email: str = ""):
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    error = get_llm_config_error("research_agent")
+    return {"status": "degraded" if error else "ok", "llm_configured": error is None}
 
 
 @app.post("/research", response_model=TaskResponse)
 def submit_research(req: ResearchRequest):
     """提交调研任务，立即返回 task_id，后台异步执行"""
+    config_error = get_llm_config_error("research_agent")
+    if config_error:
+        raise HTTPException(503, detail=config_error)
+
     if req.user_id:
         running = db.get_running_task_by_user(req.user_id)
         if running:

@@ -6,6 +6,7 @@
 import os
 
 from crewai import Agent, Crew, LLM, Process, Task
+from tools.llm_config import require_llm_config
 
 
 _SKILL_PATH = os.path.join(os.path.dirname(__file__), "skill.md")
@@ -19,39 +20,42 @@ except FileNotFoundError:
     )
 
 
-PROVIDER = os.getenv("PROVIDER", "openai").lower()
+def create_model() -> LLM:
+    provider = require_llm_config("zhougongjiemeng_agent")
 
-if PROVIDER == "openai":
-    MODEL = LLM(
-        model="openai/gpt-4o-mini",
-        base_url="https://api.openai.com",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        temperature=0.7,
-    )
-elif PROVIDER == "deepseek":
-    MODEL = LLM(
-        model="deepseek/" + os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
-        base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-        api_key=os.getenv("DEEPSEEK_API_KEY"),
-        temperature=0.7,
-    )
-elif PROVIDER == "custom":
-    MODEL = LLM(
-        model=os.getenv("CUSTOM_MODEL", "gpt-4o-mini"),
-        base_url=os.getenv("CUSTOM_BASE_URL")
-        or os.getenv("CUSTOM_API_BASE", "http://localhost:11434/v1"),
-        api_key=os.getenv("CUSTOM_API_KEY", ""),
-        temperature=0.7,
-    )
-elif PROVIDER == "anthropic":
-    MODEL = LLM(
-        model="anthropic/claude-sonnet-4-6-20250514",
-        temperature=0.7,
-    )
-else:
-    MODEL = LLM(
-        model="anthropic/claude-sonnet-4-6-20250514",
-        temperature=0.7,
+    if provider == "openai":
+        return LLM(
+            model="openai/" + os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com"),
+            api_key=os.getenv("OPENAI_API_KEY"),
+            temperature=0.7,
+        )
+    if provider == "deepseek":
+        return LLM(
+            model="deepseek/" + os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+            base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+            api_key=os.getenv("DEEPSEEK_API_KEY"),
+            temperature=0.7,
+        )
+    if provider == "custom":
+        return LLM(
+            model=os.getenv("CUSTOM_MODEL", "gpt-4o-mini"),
+            base_url=os.getenv("CUSTOM_BASE_URL")
+            or os.getenv("CUSTOM_API_BASE", "http://localhost:11434/v1"),
+            api_key=os.getenv("CUSTOM_API_KEY", ""),
+            temperature=0.7,
+        )
+    if provider == "anthropic":
+        return LLM(
+            model="anthropic/" + os.getenv(
+                "ANTHROPIC_MODEL", "claude-sonnet-4-6-20250514"
+            ),
+            api_key=os.getenv("ANTHROPIC_API_KEY"),
+            temperature=0.7,
+        )
+
+    raise RuntimeError(
+        f"不支持的 PROVIDER={provider}；可选值为 openai、deepseek、custom、anthropic。"
     )
 
 
@@ -62,7 +66,7 @@ def create_zhougongjiemeng_agent() -> Agent:
             "读懂 {text} 中的梦境细节，给出有传统文化味道、贴近现实且不故弄玄虚的解读"
         ),
         backstory=SKILL_CONTENT,
-        llm=MODEL,
+        llm=create_model(),
         verbose=True,
         allow_delegation=False,
     )

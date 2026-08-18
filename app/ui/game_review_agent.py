@@ -34,6 +34,13 @@ def do_review(game_url: str, comment_targets: str, request: gr.Request):
         if r.status_code == 429:
             yield "⏳ 上一个还在处理，稍等", _ready
             return
+        if not r.ok:
+            try:
+                detail = r.json().get("detail")
+            except ValueError:
+                detail = None
+            yield f"配置错误：{detail or r.text or r.reason}", _ready
+            return
         r.raise_for_status()
         data = r.json()
         if data.get("status") == "done":

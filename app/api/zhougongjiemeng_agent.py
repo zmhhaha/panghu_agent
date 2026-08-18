@@ -10,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from tools import sqlite_client as db
+from tools.llm_config import get_llm_config_error
 
 
 SERVICE_NAME = "zhougongjiemeng_agent"
@@ -81,7 +82,11 @@ def _find_cached(text: str) -> str | None:
 
 @app.get("/zhougongjiemeng_agent-health")
 def health():
-    return {"status": "ok"}
+    config_error = get_llm_config_error("zhougongjiemeng_agent")
+    return {
+        "status": "degraded" if config_error else "ok",
+        "llm_configured": config_error is None,
+    }
 
 
 @app.post("/zhougongjiemeng_agent", response_model=TaskRsp)
@@ -89,6 +94,10 @@ def submit(req: Req):
     text = req.text.strip()
     if not text:
         raise HTTPException(422, "Dream description cannot be blank")
+
+    config_error = get_llm_config_error("zhougongjiemeng_agent")
+    if config_error:
+        raise HTTPException(503, config_error)
 
     cached = _find_cached(text)
     if cached:

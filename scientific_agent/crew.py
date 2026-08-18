@@ -21,6 +21,7 @@ from tools.academic_tools import (
     CrossrefLookupTool,
     AcademicMultiFetchTool,
 )
+from tools.llm_config import require_llm_config
 
 
 # ============================================================
@@ -28,7 +29,7 @@ from tools.academic_tools import (
 #  PROVIDER=openai | anthropic | deepseek | custom（默认 openai）
 # ============================================================
 
-PROVIDER = os.getenv("PROVIDER", "openai").lower()
+PROVIDER = require_llm_config("scientific_agent")
 
 if PROVIDER == "openai":
     PRIMARY_LLM = LLM(

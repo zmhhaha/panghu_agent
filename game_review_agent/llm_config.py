@@ -14,8 +14,9 @@
 import os
 
 from crewai import LLM
+from tools.llm_config import require_llm_config
 
-PROVIDER = os.getenv("PROVIDER", "openai").lower()
+PROVIDER = require_llm_config("game_review_agent")
 
 
 def _provider_kwargs():

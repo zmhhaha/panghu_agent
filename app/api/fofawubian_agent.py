@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from tools import sqlite_client as db
+from tools.llm_config import get_llm_config_error
 
 db.init_db("fofawubian_agent")
 db.clear_stale_tasks()
@@ -69,11 +70,16 @@ def _find_cached(text: str) -> str | None:
 
 @app.get("/fofawubian_agent-health")
 def health():
-    return {"status": "ok"}
+    error = get_llm_config_error("fofawubian_agent")
+    return {"status": "degraded" if error else "ok", "llm_configured": error is None}
 
 
 @app.post("/fofawubian_agent", response_model=TaskRsp)
 def submit(req: Req):
+    config_error = get_llm_config_error("fofawubian_agent")
+    if config_error:
+        raise HTTPException(503, detail=config_error)
+
     cached = _find_cached(req.text)
     if cached:
         return TaskRsp(id="cached", text=req.text, status="done", report=cached, cached=True)

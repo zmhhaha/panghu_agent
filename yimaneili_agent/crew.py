@@ -5,6 +5,7 @@
 """
 import os
 from crewai import Agent, Task, Crew, Process, LLM
+from tools.llm_config import require_llm_config
 
 _SKILL_PATH = os.path.join(os.path.dirname(__file__), "skill.md")
 try:
@@ -13,7 +14,7 @@ try:
 except FileNotFoundError:
     SKILL_CONTENT = "你是一个懂圣经的朋友，用平常话回几句感悟。"
 
-PROVIDER = os.getenv("PROVIDER", "openai").lower()
+PROVIDER = require_llm_config("yimaneili_agent")
 if PROVIDER == "openai":
     MODEL = LLM(model="openai/gpt-4o-mini", base_url="https://api.openai.com", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.8)
 elif PROVIDER == "deepseek":

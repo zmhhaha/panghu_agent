@@ -25,6 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from tools import sqlite_client as db
+from tools.llm_config import get_llm_config_error
 
 # ── 初始化 game_review_agent 表 ──
 db.init_db("game_review_agent")
@@ -117,12 +118,17 @@ def _run_review(task_id: str, game_url: str, comment_targets: str):
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    error = get_llm_config_error("game_review_agent")
+    return {"status": "degraded" if error else "ok", "llm_configured": error is None}
 
 
 @app.post("/game_review", response_model=TaskResponse)
 def submit_review(req: GameReviewRequest):
     """提交试玩评测任务，立即返回 task_id，后台异步执行"""
+    config_error = get_llm_config_error("game_review_agent")
+    if config_error:
+        raise HTTPException(503, detail=config_error)
+
     if req.user_id:
         running = db.get_running_task_by_user(req.user_id)
         if running:

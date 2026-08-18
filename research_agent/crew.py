@@ -4,6 +4,7 @@ from crewai import Agent, Task, Crew, Process, LLM
 # 网页与学术检索工具（均支持无第三方 API Key 的基础额度）
 from tools.custom_tools import WebSearchTool, WebFetchTool, MultiFetchTool
 from tools.academic_tools import AcademicSearchTool
+from tools.llm_config import require_llm_config
 
 
 # ============================================================
@@ -11,7 +12,7 @@ from tools.academic_tools import AcademicSearchTool
 #  PROVIDER=openai | anthropic | deepseek | custom（默认 openai）
 # ============================================================
 
-PROVIDER = os.getenv("PROVIDER", "openai").lower()
+PROVIDER = require_llm_config("research_agent")
 
 if PROVIDER == "openai":
     PRIMARY_LLM = LLM(

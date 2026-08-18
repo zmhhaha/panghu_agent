@@ -14,6 +14,13 @@ def do_yimaneili(text: str, request: gr.Request):
     try:
         r = requests.post(f"{API_BASE}/yimaneili_agent", json={"text": text, "user_id": user_id}, timeout=10)
         if r.status_code == 429: yield "⏳ 上一个还在处理，稍等", _ready; return
+        if not r.ok:
+            try:
+                detail = r.json().get("detail")
+            except ValueError:
+                detail = None
+            yield f"配置错误：{detail or r.text or r.reason}", _ready
+            return
         r.raise_for_status(); data = r.json()
         if data.get("status") == "done": yield data.get("report", "(空)"), _ready; return
         task_id = data["id"]

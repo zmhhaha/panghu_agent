@@ -115,14 +115,24 @@ fi
 echo ""
 echo "  等待 ESO 同步…"
 sleep 5
+MISSING_SECRET_NS=()
 for ns in "${NS_LIST[@]}"; do
   key=$(kubectl get secret agent-secret -n "$ns" -o jsonpath='{.data.DEEPSEEK_API_KEY}' 2>/dev/null || true)
   if [ -n "$key" ]; then
     echo "  ${ns}/agent-secret: ✅ DEEPSEEK_API_KEY 已同步"
   else
     echo "  ${ns}/agent-secret: ⚠️ 未找到 DEEPSEEK_API_KEY（检查 Vault 路径 secret/data/${ns}/api）"
+    MISSING_SECRET_NS+=("$ns")
   fi
 done
+
+if [ "${#MISSING_SECRET_NS[@]}" -gt 0 ]; then
+  echo ""
+  echo "ERROR: 以下 namespace 缺少 DEEPSEEK_API_KEY，停止部署且不重启 API："
+  printf '  - %s\n' "${MISSING_SECRET_NS[@]}"
+  echo "请先写入对应 Vault 路径并等待 ExternalSecret Ready=True，然后重新运行本脚本。"
+  exit 1
+fi
 
 # ============================================================
 #  Step 4: 重启 api pod（可选）

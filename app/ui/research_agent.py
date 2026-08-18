@@ -50,6 +50,13 @@ def do_research(topic: str, email: str, request: gr.Request):
         if r.status_code == 429:
             yield "⏳ 您上一个任务还在执行中，请耐心等待完成后再提交新的调研", "", _hide, _hide, _ready
             return
+        if not r.ok:
+            try:
+                detail = r.json().get("detail")
+            except ValueError:
+                detail = None
+            yield f"配置错误：{detail or r.text or r.reason}", "", _hide, _hide, _ready
+            return
         r.raise_for_status()
         task_id = r.json()["id"]
     except Exception as e:

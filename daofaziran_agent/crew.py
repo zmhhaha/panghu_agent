@@ -6,6 +6,7 @@
 """
 import os
 from crewai import Agent, Task, Crew, Process, LLM
+from tools.llm_config import require_llm_config
 
 
 # ============================================================
@@ -24,7 +25,7 @@ except FileNotFoundError:
 #  LLM 配置
 # ============================================================
 
-PROVIDER = os.getenv("PROVIDER", "openai").lower()
+PROVIDER = require_llm_config("daofaziran_agent")
 
 if PROVIDER == "openai":
     MODEL = LLM(
