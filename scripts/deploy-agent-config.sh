@@ -45,6 +45,7 @@ ALL_NS=(
   yimaneili-agent
   zhenzhuzhida-agent
   zhongkuifumo-agent
+  zhougongjiemeng-agent
   game-review-agent
 )
 
