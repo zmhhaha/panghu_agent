@@ -1,10 +1,12 @@
 # Literature Downloader
 
-独立的三阶段文献下载工具：
+独立的三阶段文献下载工具。用户提交一次任务后，后台会自动按顺序完成检索、PDF 收集（按最大重试轮数重试）、PDF 校验和最终报告生成：
 
 1. 检索本地库、OpenAlex、Crossref、arXiv 和 Semantic Scholar。
 2. 按 `arXiv -> DOI/Unpaywall -> Semantic Scholar -> 元数据 PDF URL` 下载 PDF，支持多轮重试。
 3. 校验 PDF 文件签名、大小和文本可读性，并生成 EvidenceGate-new 风格 Markdown 报告。
+
+UI 只需要填写研究主题、最大重试轮数和通知邮箱，然后点击“开始检索”。任务运行期间可以点击“刷新状态”主动查询进度；完成或失败时会向通知邮箱发送一次结果邮件。完成后，当前任务区域会显示最终报告和已校验 PDF 的下载按钮。历史报告页仅用于按主题或任务 ID 查询历史任务的状态；需要恢复历史任务时，将查询到的任务 ID 填回“新任务”页并点击“刷新状态”，不再提供单独的加载任务或历史文件下载按钮。
 
 ## 安装
 
@@ -70,12 +72,10 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 
 ## 主要 API
 
-- `POST /literature-download`：创建检索任务（提交 `email` 后，阶段完成和最终完成会发送通知）。
+- `POST /literature-download`：创建检索任务（提交 `email` 后，任务完成或失败会发送通知；检索、下载、校验和重试由后台自动执行）。
 - `GET /literature-download/{task_id}`：查询状态和文献列表。
-- `GET /literature-reports?q=...`：检索历史任务，可用于任务完成后的恢复查询。
-- `POST /literature-download/{task_id}/approve`：确认检索清单并开始下载。
-- `POST /literature-download/{task_id}/retry`：重试上一轮失败文献。
-- `POST /literature-download/{task_id}/finish`：结束收集并生成最终报告。
+- `GET /literature-reports?q=...`：按关键词、任务 ID 或状态查询历史任务。
+- `POST /literature-download/{task_id}/approve`、`/retry`、`/finish`：旧版本任务的兼容接口；新任务不需要调用这些接口。
 - `GET /literature-download/{task_id}/report/download`：下载 Markdown 报告。
 - `GET /literature-download/{task_id}/files/download`：下载通过校验的 PDF ZIP。
 - `GET /literature-download/{task_id}/reports`：列出检索、收集、校验和最终报告。
@@ -97,7 +97,7 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 - `LITERATURE_SEARCH_LIMIT`：默认返回最多 30 篇。
 - `LITERATURE_PER_PROVIDER`：每个外部来源默认最多 10 篇。
 - `ACADEMIC_CONTACT_EMAIL`：用于 OpenAlex/Crossref 的联系邮箱，当前固定为 `panghuer001@163.com`，不通过 Vault 管理。
-- 任务通知邮箱：由提交任务时的 `email` 字段提供，用于发送检索清单、每轮收集和最终完成通知；不是 Vault 配置项。
+- 任务通知邮箱：由提交任务时的 `email` 字段提供，仅在任务完成或失败时发送结果通知；不是 Vault 配置项。
 - Semantic Scholar API Key：未配置。系统仍会尝试公开接口，若受限流影响，会在检索报告中记录错误并继续处理其他来源。
 
 ## 是否需要 LLM

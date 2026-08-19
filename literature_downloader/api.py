@@ -38,7 +38,7 @@ class ActionRequest(BaseModel):
 def _run(task_id: str, stage: str) -> None:
     try:
         if stage == "search":
-            pipeline.search(task_id)
+            pipeline.run_all(task_id)
         elif stage == "collect":
             pipeline.collect_round(task_id)
         _notify_task(pipeline.status(task_id), stage)
@@ -71,25 +71,8 @@ def _notify_task(task: dict[str, Any], stage: str) -> None:
             f"<p><b>主题：</b>{escape(topic)}</p>"
             f"<p><b>任务 ID：</b><code>{escape(task_id)}</code></p>"
             f"<p>请访问 <a href=\"https://literature-downloader.panghuer.top\">文献下载工具</a>，"
-            "在“历史报告”中搜索任务 ID，下载最终报告和已校验 PDF。</p>"
-        )
-    elif status == "waiting:search_approval":
-        subject = f"文献检索完成，请确认清单：{topic[:35]}"
-        message = (
-            "<h2>文献检索阶段已完成</h2>"
-            f"<p><b>主题：</b>{escape(topic)}</p>"
-            f"<p><b>任务 ID：</b><code>{escape(task_id)}</code></p>"
-            f"<p>{escape(str(task.get('progress') or ''))}</p>"
-            "<p>请登录文献下载工具确认清单并启动 PDF 收集。</p>"
-        )
-    elif status == "waiting:collect_approval":
-        subject = f"文献下载轮次完成：{topic[:35]}"
-        message = (
-            "<h2>文献收集与校验轮次已完成</h2>"
-            f"<p><b>主题：</b>{escape(topic)}</p>"
-            f"<p><b>任务 ID：</b><code>{escape(task_id)}</code></p>"
-            f"<p>{escape(str(task.get('progress') or ''))}</p>"
-            "<p>请登录后选择重试失败文献，或结束收集生成最终报告。</p>"
+            "在“历史报告”中搜索任务 ID，将 ID 填回“新任务”页并点击“刷新状态”，"
+            "即可显示最终报告和已校验 PDF 的下载按钮。</p>"
         )
     elif status == "failed":
         subject = f"文献下载失败：{topic[:40]}"

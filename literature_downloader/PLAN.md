@@ -24,7 +24,7 @@
 
 ### `EvidenceGate-new`
 
-- `workflow/pipeline_runner.py`：阶段编排、用户确认和多轮收集循环。
+- `workflow/pipeline_runner.py`：阶段编排和多轮收集循环。
 - `workflow/pdf_downloader.py`：arXiv、DOI、Unpaywall、Semantic Scholar 下载策略。
 - `workflow/litdb.py`：SQLite 文献库和 PDF 状态管理。
 - `workflow/reports.py`：检索、收集和校验报告格式。
@@ -100,7 +100,7 @@ literature_downloader/
 - 检索报告：记录主题、查询变体、各来源结果和错误。
 - `need_to_download` 清单：标题、作者、DOI、arXiv ID、来源和 URL。
 
-检索完成后进入 `waiting:search_approval` 状态，等待用户确认清单，确认后才开始下载。
+检索完成后由后台流水线自动进入文献收集；`waiting:search_approval` 仅作为旧任务的持久化兼容状态，新任务不会等待用户确认。
 
 ## 6. 阶段二：文献收集专家
 
@@ -125,9 +125,9 @@ data/reports/<task_id>/collection_round_1/
 └── verification_report.md
 ```
 
-- 每轮完成后进入 `waiting:collect_approval` 状态。
-- 用户可以选择继续重试、结束收集或中止任务。
-- 没有待重试文献时自动结束收集阶段。
+- 每轮完成后由后台流水线自动判断是否进入下一轮。
+- 下一轮只处理失败或校验未通过的文献，达到用户设置的最大轮数后自动结束收集。
+- 没有待重试文献时立即生成最终报告。
 
 收集报告沿用 EvidenceGate-new 标准，包含尝试总数、成功数量、失败数量、来源、路径、文件大小、失败原因和总下载量。
 
@@ -182,9 +182,8 @@ generated_at: <ISO timestamp>
 
 - `POST /literature-download`：创建下载任务。
 - `GET /literature-download/{task_id}`：查询任务状态和实时进度。
-- `POST /literature-download/{task_id}/approve`：确认检索清单。
-- `POST /literature-download/{task_id}/retry`：开始下一轮重试。
-- `POST /literature-download/{task_id}/finish`：结束收集并确认结果。
+- `GET /literature-reports`：按主题、任务 ID 或状态查询历史任务。
+- `POST /literature-download/{task_id}/approve`、`/retry`、`/finish`：旧任务兼容接口，新任务不需要调用。
 - `GET /literature-download/{task_id}/report`：读取最终报告。
 - `GET /literature-download/{task_id}/report/download`：下载 Markdown 报告。
 - `GET /literature-download/{task_id}/files/download`：下载已通过校验的 PDF ZIP。
@@ -195,15 +194,13 @@ generated_at: <ISO timestamp>
 
 使用 Gradio 实现以下界面流程：
 
-1. 输入研究主题并启动检索。
-2. 展示检索统计和待下载清单。
-3. 点击“确认并开始下载”。
-4. 展示当前轮次、逐篇进度、成功和失败列表。
-5. 展示收集报告和校验报告。
-6. 对失败文献提供“重试”按钮。
-7. 最终提供：
+1. 输入研究主题、最大重试轮数和通知邮箱，点击“开始检索”。
+2. 后台自动完成检索、下载、校验和重试；页面自动轮询并展示当前轮次、逐篇进度、成功和失败列表。
+3. 保留“刷新状态”供用户主动查询长任务进度。
+4. 最终提供：
    - PDF 下载按钮，下载已通过校验的 PDF 压缩包。
    - Markdown 报告下载按钮。
+5. 历史报告页仅查询任务状态和任务 ID；复制任务 ID 到新任务页并刷新即可恢复当前任务下载入口。
 
 ## 11. 测试计划
 
@@ -214,7 +211,7 @@ generated_at: <ISO timestamp>
 5. 有效 PDF、损坏 PDF、过小文件、HTML 错误页和扫描版 PDF 校验测试。
 6. 多轮重试状态机和中止流程测试。
 7. 报告 Markdown 格式固定样例测试。
-8. API 创建、轮询、审批、重试和下载测试。
+8. API 创建、轮询、自动流水线和下载测试。
 9. 临时 SQLite 和临时 PDF 目录下的端到端测试。
 
 测试不依赖真实学术 API；网络集成测试单独标记并支持手动运行。
@@ -225,7 +222,7 @@ generated_at: <ISO timestamp>
 2. 适配本地检索及 OpenAlex、Crossref、arXiv、Semantic Scholar 查询。
 3. 实现 PDF 下载策略和单轮收集。
 4. 实现 PDF 校验和 EvidenceGate-new 风格报告。
-5. 串联三阶段流水线，加入审批和多轮重试状态机。
+5. 串联三阶段流水线，加入自动多轮重试状态机。
 6. 接入 FastAPI 后台任务和状态查询。
 7. 接入 Gradio UI、PDF 下载按钮和报告下载按钮。
 8. 完成单元测试、API 测试和本地端到端验证。

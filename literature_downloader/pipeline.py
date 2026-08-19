@@ -131,6 +131,13 @@ class LiteraturePipeline:
                 self._fail(task_id, exc)
                 raise
 
+    def run_all(self, task_id: str, callback: ProgressCallback | None = None) -> dict[str, Any]:
+        """Run search, collection rounds, verification, and finalization in order."""
+        result = self.search(task_id, callback)
+        while result.get("status") in {"waiting:search_approval", "waiting:collect_approval"}:
+            result = self.collect_round(task_id, callback)
+        return result
+
     def collect_round(self, task_id: str, callback: ProgressCallback | None = None) -> dict[str, Any]:
         with self._lock(task_id):
             task = self._require_task(task_id)

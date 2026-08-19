@@ -80,6 +80,25 @@ class CoreTests(unittest.TestCase):
     self.assertTrue(pipeline.claim_stage(task_id, "search"))
     self.assertFalse(pipeline.claim_stage(task_id, "search"))
 
+  def test_run_all_advances_without_user_approval(self) -> None:
+    root = Path(tempfile.mkdtemp())
+    config = Settings(root, root / "literature.db", root / "pdfs", root / "reports")
+    pipeline = LiteraturePipeline(config, Database(config.db_path))
+    task_id = pipeline.create_task("topic", 2)
+    with patch.object(
+        pipeline,
+        "search",
+        return_value={"status": "waiting:search_approval"},
+    ) as search, patch.object(
+        pipeline,
+        "collect_round",
+        return_value={"status": "completed"},
+    ) as collect:
+      result = pipeline.run_all(task_id)
+    self.assertEqual(result["status"], "completed")
+    search.assert_called_once_with(task_id, None)
+    collect.assert_called_once_with(task_id, None)
+
 
 if __name__ == "__main__":
     unittest.main()
