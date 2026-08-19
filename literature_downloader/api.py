@@ -111,10 +111,15 @@ def _notify_task(task: dict[str, Any], stage: str) -> None:
         pass
 
 
-def _start_thread(task_id: str, stage: str) -> None:
+def _start_thread(task_id: str, stage: str) -> bool:
+    """Start a stage once; repeated clicks return the already-running stage."""
     if not pipeline.claim_stage(task_id, stage):
-        raise HTTPException(status_code=409, detail="Task stage was already claimed")
+        current = _status_or_404(task_id)
+        if current.get("status") == "running" and current.get("phase") == stage:
+            return False
+        raise HTTPException(status_code=409, detail=f"Task stage was already claimed: {current.get('status')}")
     threading.Thread(target=_run, args=(task_id, stage), daemon=True, name=f"literature-{stage}-{task_id[:8]}").start()
+    return True
 
 
 def _status_or_404(task_id: str) -> dict[str, Any]:
@@ -169,7 +174,14 @@ def get_download_task(task_id: str) -> dict[str, Any]:
 def approve_download_task(task_id: str, request: ActionRequest | None = None) -> dict[str, Any]:
     action = (request.action if request else "approve").lower()
     if action == "approve":
-        _require_transition(task_id, {"waiting:search_approval"})
+        current = _status_or_404(task_id)
+        if current.get("status") == "running" and current.get("phase") == "collect":
+            return {"ok": True, "action": action, "task": current}
+        if current.get("status") != "waiting:search_approval":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Current task status does not allow this action: {current.get('status')}",
+            )
         _start_thread(task_id, "collect")
         return {"ok": True, "action": action, "task": _status_or_404(task_id)}
     if action == "retry":
@@ -181,7 +193,11 @@ def approve_download_task(task_id: str, request: ActionRequest | None = None) ->
 
 @app.post("/literature-download/{task_id}/retry")
 def retry_download_task(task_id: str) -> dict[str, Any]:
-    _require_transition(task_id, {"waiting:collect_approval"})
+    current = _status_or_404(task_id)
+    if current.get("status") == "running" and current.get("phase") == "collect":
+        return {"ok": True, "action": "retry", "task": current}
+    if current.get("status") != "waiting:collect_approval":
+        raise HTTPException(status_code=409, detail=f"Current task status does not allow this action: {current.get('status')}")
     _start_thread(task_id, "collect")
     return {"ok": True, "action": "retry", "task": _status_or_404(task_id)}
 

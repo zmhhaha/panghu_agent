@@ -184,7 +184,9 @@ def action(task_id: str, endpoint: str) -> Iterator[tuple[Any, ...]]:
     try:
         task = _request("POST", f"/literature-download/{task_id}/{endpoint}")
     except requests.RequestException as exc:
-        yield (f"操作失败：{exc}", *_controls({}, running=False))
+        response = getattr(exc, "response", None)
+        detail = _error(response) if response is not None else str(exc)
+        yield (f"操作失败：{detail}", *_controls({}, running=False))
         return
     task = task.get("task") or task
     yield (_render(task), *_controls(task, running=True))
