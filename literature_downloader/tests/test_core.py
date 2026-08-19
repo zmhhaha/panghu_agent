@@ -80,6 +80,20 @@ class CoreTests(unittest.TestCase):
     self.assertTrue(pipeline.claim_stage(task_id, "search"))
     self.assertFalse(pipeline.claim_stage(task_id, "search"))
 
+  def test_restart_clears_legacy_waiting_tasks(self) -> None:
+    root = Path(tempfile.mkdtemp())
+    config = Settings(root, root / "literature.db", root / "pdfs", root / "reports")
+    db = Database(config.db_path)
+    waiting_search = db.create_task("waiting search", 2, email="user@example.com")
+    waiting_collect = db.create_task("waiting collect", 2, email="user@example.com")
+    db.update_task(waiting_search, status="waiting:search_approval")
+    db.update_task(waiting_collect, status="waiting:collect_approval")
+
+    self.assertIsNone(db.get_active_task("user@example.com"))
+    self.assertEqual(db.interrupt_running_tasks(), 2)
+    self.assertEqual(db.get_task(waiting_search)["status"], "failed")
+    self.assertEqual(db.get_task(waiting_collect)["status"], "failed")
+
   def test_run_all_advances_without_user_approval(self) -> None:
     root = Path(tempfile.mkdtemp())
     config = Settings(root, root / "literature.db", root / "pdfs", root / "reports")

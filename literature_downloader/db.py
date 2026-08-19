@@ -166,7 +166,7 @@ class Database:
         with self.connect() as conn:
             row = conn.execute(
                 """SELECT * FROM tasks
-                WHERE status IN ('pending', 'running', 'waiting:search_approval', 'waiting:collect_approval')
+                WHERE status IN ('pending', 'running')
                   AND (user_id = ? OR email = ?)
                 ORDER BY created_at ASC LIMIT 1""",
                 (owner, owner),
@@ -233,7 +233,12 @@ class Database:
         return [dict(row) for row in rows]
 
     def interrupt_running_tasks(self) -> int:
-        """Mark work lost during a process restart while preserving checkpoints."""
+        """Mark unfinished work lost during a process restart.
+
+        The waiting statuses are checkpoints from the pre-automatic workflow.
+        They cannot resume without a user action in the new UI, so they must
+        not remain active forever after an API restart.
+        """
         now = utc_now()
         with self.connect() as conn:
             cursor = conn.execute(
@@ -241,7 +246,7 @@ class Database:
                 SET status = 'failed', phase = 'error',
                     progress = '服务重启中断了正在执行的阶段，请重新创建任务',
                     error = 'service restarted while task was running', updated_at = ?
-                WHERE status IN ('pending', 'running')""",
+                WHERE status IN ('pending', 'running', 'waiting:search_approval', 'waiting:collect_approval')""",
                 (now,),
             )
             return int(cursor.rowcount)
