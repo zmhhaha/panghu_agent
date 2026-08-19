@@ -6,6 +6,9 @@
 *.db-journal
 *.db-wal
 
+# Literature downloader runtime data
+literature_downloader/data/
+
 # Python
 __pycache__/
 *.pyc
