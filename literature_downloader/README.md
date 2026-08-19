@@ -6,6 +6,8 @@
 2. 按 `arXiv -> DOI/Unpaywall -> Semantic Scholar -> 元数据 PDF URL` 下载 PDF，支持多轮重试。
 3. 校验 PDF 文件签名、大小和文本可读性，并生成 EvidenceGate-new 风格 Markdown 报告。
 
+检索阶段会保存独立的 `search_report.md` 和 `need_to_download.md`，其中列出每篇文献的来源数据库、DOI/arXiv ID、元数据 URL 和公开 PDF URL。收集阶段的每轮报告会记录实际尝试过的下载 URL、下载策略、成功/失败原因和本地保存路径；校验阶段会记录来源链、文件检查结果和文本可读性。最终下载报告会汇总这三阶段内容。服务器本地路径只表示下载产物的保存位置，不是文献来源。
+
 UI 只需要填写研究主题、最大重试轮数和通知邮箱，然后点击“开始检索”。任务运行期间可以点击“刷新状态”主动查询进度；完成或失败时会向通知邮箱发送一次结果邮件。完成后，当前任务区域会显示最终报告和已校验 PDF 的下载按钮。历史报告页仅用于按主题或任务 ID 查询历史任务的状态；需要恢复历史任务时，将查询到的任务 ID 填回“新任务”页并点击“刷新状态”，不再提供单独的加载任务或历史文件下载按钮。
 
 ## 安装
@@ -87,7 +89,7 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 
 - `literature.db`：任务、文献、下载尝试和报告索引。
 - `pdfs/<task_id>/`：下载的 PDF 文件。
-- `reports/<task_id>/`：检索、每轮收集/校验和最终报告。
+- `reports/<task_id>/`：检索、待下载清单、每轮收集/校验和包含三阶段明细的最终报告。
 
 可通过 `LITERATURE_DATA_DIR`、`LITERATURE_DB_PATH`、`LITERATURE_PDF_DIR` 和 `LITERATURE_REPORTS_DIR` 修改路径。
 

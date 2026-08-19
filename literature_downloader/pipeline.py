@@ -110,6 +110,7 @@ class LiteraturePipeline:
                     "total": len(result["papers"]),
                     "local_hits": result["local_hits"],
                     "need_download": len(need_download),
+                    "query_variants": result.get("query_variants", []),
                     "by_provider": result["provider_counts"],
                     "errors": result["errors"],
                     "papers": [self._public_paper(row) for row in result["papers"]],
@@ -164,7 +165,21 @@ class LiteraturePipeline:
                     downloaded = collect_paper(paper, self._pdf_dir(task_id), self.config)
                     for attempt in downloaded.attempts:
                         self.db.add_attempt(task_id, paper_id, round_num, attempt)
-                    item = {"paper_id": paper_id, "title": paper.title, **downloaded.to_dict()}
+                    item = {
+                        "paper_id": paper_id,
+                        "title": paper.title,
+                        "authors": paper.authors,
+                        "date": paper.date,
+                        "doi": paper.doi,
+                        "arxiv_id": paper.arxiv_id,
+                        "provider": paper.provider,
+                        "providers": paper.providers,
+                        "venue": paper.venue,
+                        "url": paper.url,
+                        "pdf_url": paper.pdf_url,
+                        "identifiers": paper.identifiers,
+                        **downloaded.to_dict(),
+                    }
                     collection_rows.append(item)
                     if not downloaded.ok:
                         self.db.update_paper(paper_id, pdf_status="failed", verification_status="", pdf_path="")
@@ -173,7 +188,26 @@ class LiteraturePipeline:
                     self.db.update_paper(paper_id, pdf_status="downloaded", pdf_path=downloaded.path)
                     paper.pdf_path = downloaded.path
                     verification = verify_pdf(paper, self.config)
-                    verification_row = {"paper_id": paper_id, **verification.to_dict()}
+                    successful_attempt = next(
+                        (attempt for attempt in downloaded.attempts if attempt.get("ok")),
+                        {},
+                    )
+                    verification_row = {
+                        "paper_id": paper_id,
+                        "authors": paper.authors,
+                        "date": paper.date,
+                        "doi": paper.doi,
+                        "arxiv_id": paper.arxiv_id,
+                        "provider": paper.provider,
+                        "providers": paper.providers,
+                        "venue": paper.venue,
+                        "url": paper.url,
+                        "pdf_url": paper.pdf_url,
+                        "identifiers": paper.identifiers,
+                        "download_source": downloaded.source,
+                        "download_url": successful_attempt.get("url", ""),
+                        **verification.to_dict(),
+                    }
                     verification_rows.append(verification_row)
                     new_status = "verified" if verification.verdict == "pass" else "failed"
                     self.db.update_paper(
@@ -239,7 +273,13 @@ class LiteraturePipeline:
             pending = self.db.list_papers(task_id, ("pending_download", "failed", "downloaded", "downloading"))
             collection = dict(task.get("collection") or {})
             final_path = save_report(
-                format_final_report(task["topic"], list(collection.get("rounds") or []), verified, pending),
+                format_final_report(
+                    task["topic"],
+                    list(collection.get("rounds") or []),
+                    verified,
+                    pending,
+                    search=task.get("search") or {},
+                ),
                 task["topic"], "final_download", self._task_dir(task_id), "download_report.md",
             )
             zip_path = self.create_zip(task_id, verified)
@@ -311,6 +351,12 @@ class LiteraturePipeline:
             "arxiv_id": row.get("arxiv_id") or (row.get("identifiers") or {}).get("arxiv", ""),
             "provider": row.get("provider", ""),
             "providers": row.get("providers", []),
+            "venue": row.get("venue", ""),
+            "abstract": row.get("abstract", ""),
+            "pdf_url": row.get("pdf_url", ""),
+            "identifiers": row.get("identifiers", {}),
+            "open_access": row.get("open_access", False),
+            "cited_by_count": row.get("cited_by_count", 0),
             "url": row.get("url", ""),
             "pdf_status": row.get("pdf_status", "pending_download"),
             "verification_status": row.get("verification_status", ""),

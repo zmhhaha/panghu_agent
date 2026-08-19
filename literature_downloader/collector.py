@@ -153,5 +153,13 @@ def collect_paper(paper: Paper, target_dir: str | Path, config: Settings = setti
         if success:
             return success
 
+    # The search report's source URL may itself resolve to an openly hosted PDF.
+    # Keep it as the last fallback; HTML landing pages are rejected by the PDF
+    # signature check and remain visible in the collection report.
+    if paper.url:
+        success = attempt_download("metadata_url", paper.url)
+        if success:
+            return success
+
     error = attempts[-1]["error"] if attempts else "No downloadable PDF URL found"
     return DownloadResult(False, "", 0, "", error, attempts)

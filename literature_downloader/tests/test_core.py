@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from literature_downloader.config import Settings
+from literature_downloader.collector import collect_paper
 from literature_downloader.db import Database
 from literature_downloader.models import Paper
 from literature_downloader.pipeline import LiteraturePipeline
@@ -31,6 +32,25 @@ class CoreTests(unittest.TestCase):
     result = verify_pdf(Paper(title="Test", pdf_path=str(path)), Settings(root, root / "db", root / "pdfs", root / "reports"))
     self.assertEqual(result.verdict, "fail")
     self.assertTrue("signature" in result.reason or "small" in result.reason)
+
+  def test_collector_uses_source_metadata_url_as_last_fallback(self) -> None:
+    root = Path(tempfile.mkdtemp())
+    config = Settings(root, root / "db", root / "pdfs", root / "reports")
+    target = root / "source.pdf"
+    with patch(
+        "literature_downloader.collector.download_pdf",
+        return_value={"ok": True, "path": str(target), "size": 123, "error": ""},
+    ) as download:
+      result = collect_paper(
+          Paper(title="Source paper", url="https://repository.example/source.pdf"),
+          root / "pdfs",
+          config,
+      )
+
+    self.assertTrue(result.ok)
+    self.assertEqual(result.source, "metadata_url")
+    download.assert_called_once()
+    self.assertEqual(download.call_args.args[0], "https://repository.example/source.pdf")
 
 
   def test_pipeline_retries_failed_download(self) -> None:

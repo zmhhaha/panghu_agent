@@ -97,7 +97,7 @@ literature_downloader/
 ### 输出
 
 - 检索统计：总数、本地命中数、各 API 命中数、待下载数。
-- 检索报告：记录主题、查询变体、各来源结果和错误。
+- 检索报告：记录主题、查询变体、各来源结果和错误；每篇文献必须保留来源数据库、DOI/arXiv ID、元数据 URL、公开 PDF URL 和本地 PDF 状态。
 - `need_to_download` 清单：标题、作者、DOI、arXiv ID、来源和 URL。
 
 检索完成后由后台流水线自动进入文献收集；`waiting:search_approval` 仅作为旧任务的持久化兼容状态，新任务不会等待用户确认。
@@ -129,7 +129,7 @@ data/reports/<task_id>/collection_round_1/
 - 下一轮只处理失败或校验未通过的文献，达到用户设置的最大轮数后自动结束收集。
 - 没有待重试文献时立即生成最终报告。
 
-收集报告沿用 EvidenceGate-new 标准，包含尝试总数、成功数量、失败数量、来源、路径、文件大小、失败原因和总下载量。
+收集报告沿用 EvidenceGate-new 标准，包含尝试总数、成功数量、失败数量、文献元数据、实际下载来源、每次尝试的 URL、路径、文件大小、失败原因和总下载量。服务器本地路径只作为产物位置，不能替代来源 URL。
 
 ## 7. 阶段三：文献检察人员
 
@@ -148,7 +148,7 @@ data/reports/<task_id>/collection_round_1/
 - `fail`：文件不存在、损坏、过小或明显不是目标文献。
 - `uncertain`：文件存在但文本过少、疑似扫描版或无法确认内容。
 
-校验报告沿用 EvidenceGate-new 标准，列出检查总数、通过、失败、存疑文献及对应备注。只有 `pass` 的文献才能写入 `verified` 状态。
+校验报告沿用 EvidenceGate-new 标准，列出检查总数、通过、失败、存疑文献及对应备注，并关联原始来源 URL、实际下载 URL 和本地文件路径。只有 `pass` 的文献才能写入 `verified` 状态。
 
 ## 8. 报告设计
 
@@ -169,6 +169,8 @@ generated_at: <ISO timestamp>
 - `download_collection`：单轮收集报告
 - `verification`：单轮校验报告
 - `final_download`：最终汇总报告
+
+最终汇总报告必须按“文献检索员 -> 文献收集专家 -> 文献检察人员 -> 最终通过校验文献”的顺序呈现来源链和处理结果，不能只列服务器本地 PDF 路径。
 
 最终汇总报告需要包含：
 
