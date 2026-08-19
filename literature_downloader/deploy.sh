@@ -31,8 +31,7 @@ sed \
   | kubectl apply $K -f -
 
 echo "Applying the shared Gradio UI image and template"
-AGENT_UI_SOURCE="../literature_downloader/ui.py" \
-  bash scripts/deploy-ui.sh literature_downloader
+bash scripts/deploy-ui.sh literature_downloader
 
 kubectl rollout restart deployment/api -n "$NAMESPACE" $K
 kubectl rollout status deployment/api -n "$NAMESPACE" --timeout=300s $K

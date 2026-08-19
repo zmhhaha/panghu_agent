@@ -5,8 +5,7 @@
 #  用法:
 #    bash scripts/deploy-ui.sh research_agent            # 部署研究助手
 #    bash scripts/deploy-ui.sh scientific_agent           # 部署科研综述
-#    AGENT_UI_SOURCE=../literature_downloader/ui.py \
-#      bash scripts/deploy-ui.sh literature_downloader   # 复用通用 UI 镜像
+#    bash scripts/deploy-ui.sh literature_downloader     # 复用通用 UI 镜像
 #
 #  约定:
 #    - 源码 app/ui/<name>.py → ConfigMap key agent.py
@@ -19,10 +18,13 @@ cd "$script_dir"
 NAME="${1:-research_agent}"
 NAMESPACE="${NAME//_/-}"   # namespace
 K="--kubeconfig=/etc/kubernetes/super-admin.conf"
-# Most agents use app/ui/<name>.py. Standalone services can point the
-# generic UI image at another self-contained source file.
-SRC="${AGENT_UI_SOURCE:-../app/ui/${NAME}.py}"
+SRC="../app/ui/${NAME}.py"
 TMPL="../k8s/ui-deployment.yaml"
+
+if [[ ! -f "${SRC}" ]]; then
+  echo "ERROR: UI source not found: ${SRC}" >&2
+  exit 1
+fi
 
 echo "=== Deploying ${NAME} (namespace: ${NAMESPACE}) ==="
 

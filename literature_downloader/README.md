@@ -33,7 +33,7 @@ uvicorn literature_downloader.api:app --host 0.0.0.0 --port 8001
 先启动 API，再运行：
 
 ```bash
-python -m literature_downloader.ui
+python app/ui/literature_downloader.py
 ```
 
 默认 UI 地址为 `http://127.0.0.1:7860`。API 地址可通过 `API_BASE` 或 `LITERATURE_API_BASE` 修改。

@@ -47,7 +47,7 @@ literature_downloader/
 ├── reports.py                 # EvidenceGate-new 风格报告生成
 ├── pipeline.py                # 三阶段流水线和状态机
 ├── api.py                     # FastAPI 接口
-├── ui.py                      # Gradio 页面
+├── ../app/ui/literature_downloader.py  # 通用 UI 镜像注入的 Gradio 页面
 └── tests/
     ├── test_searcher.py
     ├── test_collector.py
