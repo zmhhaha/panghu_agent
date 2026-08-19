@@ -7,6 +7,7 @@ REGISTRY="${REGISTRY:-arm-cluster-master:5000}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 NAMESPACE="literature-downloader"
 API_IMAGE="${REGISTRY}/literature-downloader-api:${IMAGE_TAG}"
+ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-1200s}"
 K="--kubeconfig=${KUBECONFIG_PATH}"
 
 cd "$ROOT_DIR"
@@ -34,8 +35,8 @@ echo "Applying the shared Gradio UI image and template"
 bash scripts/deploy-ui.sh literature_downloader
 
 kubectl rollout restart deployment/api -n "$NAMESPACE" $K
-kubectl rollout status deployment/api -n "$NAMESPACE" --timeout=300s $K
-kubectl rollout status deployment/ui -n "$NAMESPACE" --timeout=300s $K
+kubectl rollout status deployment/api -n "$NAMESPACE" --timeout="$ROLLOUT_TIMEOUT" $K
+kubectl rollout status deployment/ui -n "$NAMESPACE" --timeout="$ROLLOUT_TIMEOUT" $K
 kubectl get pods,svc,pvc -n "$NAMESPACE" -o wide $K
 
 echo "Literature Downloader: https://literature-downloader.panghuer.top"

@@ -23,6 +23,9 @@ metadata:
   namespace: literature-downloader
 spec:
   replicas: 1
+  # The API image is large on the cluster's ARM nodes; allow a slow first pull
+  # without marking an otherwise healthy rollout as failed.
+  progressDeadlineSeconds: 1800
   strategy:
     type: Recreate
   selector:
