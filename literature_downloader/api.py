@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import threading
+from html import escape
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
@@ -19,11 +20,13 @@ pipeline = LiteraturePipeline()
 pipeline.db.interrupt_running_tasks()
 app = FastAPI(title="Literature Downloader API", version="1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+_submission_lock = threading.Lock()
 
 
 class DownloadRequest(BaseModel):
     topic: str = Field(..., min_length=1, max_length=500)
     max_rounds: int = Field(default=3, ge=1, le=10)
+    email: str = Field(default="", max_length=200)
     user_id: str = Field(default="", max_length=200)
     providers: list[str] | None = None
 
@@ -38,8 +41,73 @@ def _run(task_id: str, stage: str) -> None:
             pipeline.search(task_id)
         elif stage == "collect":
             pipeline.collect_round(task_id)
+        _notify_task(pipeline.status(task_id), stage)
     except Exception:
         # Pipeline persists the error; polling clients receive it from status.
+        try:
+            _notify_task(pipeline.status(task_id), stage)
+        except Exception:
+            pass
+
+
+def _is_email(value: str) -> bool:
+    local, separator, domain = value.strip().partition("@")
+    return bool(separator and local and domain and "." in domain)
+
+
+def _notify_task(task: dict[str, Any], stage: str) -> None:
+    """Send a best-effort notification after a background stage changes state."""
+    email = str(task.get("email") or "").strip()
+    if not email:
+        return
+
+    status = task.get("status")
+    task_id = str(task.get("id") or "")
+    topic = str(task.get("topic") or "")
+    if status == "completed":
+        subject = f"文献下载完成：{topic[:40]}"
+        message = (
+            "<h2>文献下载任务已完成</h2>"
+            f"<p><b>主题：</b>{escape(topic)}</p>"
+            f"<p><b>任务 ID：</b><code>{escape(task_id)}</code></p>"
+            f"<p>请访问 <a href=\"https://literature-downloader.panghuer.top\">文献下载工具</a>，"
+            "在“历史报告”中搜索任务 ID，下载最终报告和已校验 PDF。</p>"
+        )
+    elif status == "waiting:search_approval":
+        subject = f"文献检索完成，请确认清单：{topic[:35]}"
+        message = (
+            "<h2>文献检索阶段已完成</h2>"
+            f"<p><b>主题：</b>{escape(topic)}</p>"
+            f"<p><b>任务 ID：</b><code>{escape(task_id)}</code></p>"
+            f"<p>{escape(str(task.get('progress') or ''))}</p>"
+            "<p>请登录文献下载工具确认清单并启动 PDF 收集。</p>"
+        )
+    elif status == "waiting:collect_approval":
+        subject = f"文献下载轮次完成：{topic[:35]}"
+        message = (
+            "<h2>文献收集与校验轮次已完成</h2>"
+            f"<p><b>主题：</b>{escape(topic)}</p>"
+            f"<p><b>任务 ID：</b><code>{escape(task_id)}</code></p>"
+            f"<p>{escape(str(task.get('progress') or ''))}</p>"
+            "<p>请登录后选择重试失败文献，或结束收集生成最终报告。</p>"
+        )
+    elif status == "failed":
+        subject = f"文献下载失败：{topic[:40]}"
+        message = (
+            "<h2>文献下载任务失败</h2>"
+            f"<p><b>主题：</b>{escape(topic)}</p>"
+            f"<p><b>任务 ID：</b><code>{escape(task_id)}</code></p>"
+            f"<p><b>错误：</b>{escape(str(task.get('error') or '未知错误'))}</p>"
+        )
+    else:
+        return
+
+    try:
+        from tools.email_client import send_email
+
+        send_email(to=email, subject=subject, body=message)
+    except Exception:
+        # Email delivery must never turn a completed download into a failure.
         pass
 
 
@@ -70,9 +138,26 @@ def health() -> dict[str, Any]:
 
 @app.post("/literature-download")
 def create_download_task(request: DownloadRequest) -> dict[str, Any]:
-    task_id = pipeline.create_task(request.topic, request.max_rounds, request.user_id, request.providers)
-    _start_thread(task_id, "search")
-    return {"id": task_id, "status": "running", "phase": "search", "topic": request.topic}
+    email = request.email.strip()
+    if email and not _is_email(email):
+        raise HTTPException(status_code=422, detail="请输入有效的邮箱地址")
+    owner = request.user_id.strip() or email
+    with _submission_lock:
+        active = pipeline.db.get_active_task(owner)
+        if active:
+            raise HTTPException(
+                status_code=429,
+                detail=f"您已有任务正在执行（{str(active['id'])[:8]}），请等待完成后再提交新的任务",
+            )
+        task_id = pipeline.create_task(
+            request.topic,
+            request.max_rounds,
+            request.user_id,
+            request.providers,
+            email,
+        )
+        _start_thread(task_id, "search")
+    return _status_or_404(task_id)
 
 
 @app.get("/literature-download/{task_id}")
@@ -105,7 +190,9 @@ def retry_download_task(task_id: str) -> dict[str, Any]:
 def finish_download_task(task_id: str) -> dict[str, Any]:
     _require_transition(task_id, {"waiting:collect_approval", "waiting:search_approval"})
     try:
-        return {"ok": True, "action": "finish", "task": pipeline.finalize(task_id)}
+        task = pipeline.finalize(task_id)
+        _notify_task(task, "finish")
+        return {"ok": True, "action": "finish", "task": task}
     except (KeyError, FileNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -135,6 +222,51 @@ def read_download_report(task_id: str) -> Response:
     except (KeyError, FileNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return Response(path.read_text(encoding="utf-8"), media_type="text/markdown; charset=utf-8")
+
+
+@app.get("/literature-reports")
+def search_history(
+    q: str = Query(default="", description="搜索主题、任务 ID 或状态"),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict[str, Any]]:
+    """Return persisted task history for the UI and email follow-up."""
+    query = q if isinstance(q, str) else str(getattr(q, "default", "") or "")
+    limit_value = limit if isinstance(limit, int) else int(getattr(limit, "default", 20) or 20)
+    offset_value = offset if isinstance(offset, int) else int(getattr(offset, "default", 0) or 0)
+    rows = pipeline.db.search_history(query, limit_value, offset_value)
+    for row in rows:
+        task_id = row["id"]
+        # Do not expose absolute filesystem paths from the persistence layer.
+        row.pop("reports", None)
+        row["report_url"] = f"/literature-download/{task_id}/report/download" if row["report_available"] else ""
+        row["pdf_url"] = f"/literature-download/{task_id}/files/download" if row["pdf_available"] else ""
+    return rows
+
+
+@app.get("/literature-download/{task_id}/reports")
+def list_task_reports(task_id: str) -> list[dict[str, Any]]:
+    _status_or_404(task_id)
+    return [
+        {
+            "id": row["id"],
+            "round": row["round"],
+            "report_type": row["report_type"],
+            "created_at": row["created_at"],
+            "download_url": f"/literature-download/{task_id}/reports/{row['id']}/download",
+        }
+        for row in pipeline.db.list_reports(task_id)
+    ]
+
+
+@app.get("/literature-download/{task_id}/reports/{report_id}/download")
+def download_stage_report(task_id: str, report_id: int) -> FileResponse:
+    _status_or_404(task_id)
+    reports = [row for row in pipeline.db.list_reports(task_id) if int(row["id"]) == report_id]
+    if not reports:
+        raise HTTPException(status_code=404, detail="Report not found")
+    path = _safe_file(Path(reports[0]["path"]), settings.reports_dir)
+    return FileResponse(path, media_type="text/markdown", filename=path.name)
 
 
 @app.get("/literature-download/{task_id}/report/download")

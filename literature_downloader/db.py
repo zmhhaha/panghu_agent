@@ -68,6 +68,7 @@ class Database:
                     max_rounds INTEGER NOT NULL DEFAULT 3,
                     current_round INTEGER NOT NULL DEFAULT 0,
                     user_id TEXT NOT NULL DEFAULT '',
+                    email TEXT NOT NULL DEFAULT '',
                     search_json TEXT NOT NULL DEFAULT '{}',
                     collection_json TEXT NOT NULL DEFAULT '{}',
                     reports_json TEXT NOT NULL DEFAULT '{}',
@@ -133,6 +134,11 @@ class Database:
                 );
                 """
             )
+            # Existing PVC databases predate email notifications. Keep the
+            # migration idempotent so a rolling deployment can reuse them.
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+            if "email" not in columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN email TEXT NOT NULL DEFAULT ''")
 
     @staticmethod
     def _json(value: Any) -> str:
@@ -142,15 +148,63 @@ class Database:
     def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
         return dict(row) if row else None
 
-    def create_task(self, topic: str, max_rounds: int, user_id: str = "") -> str:
+    def create_task(self, topic: str, max_rounds: int, user_id: str = "", email: str = "") -> str:
         task_id = str(uuid.uuid4())
         now = utc_now()
         with self.connect() as conn:
             conn.execute(
-                "INSERT INTO tasks (id, topic, max_rounds, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (task_id, topic.strip(), max_rounds, user_id, now, now),
+                "INSERT INTO tasks (id, topic, max_rounds, user_id, email, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (task_id, topic.strip(), max_rounds, user_id, email.strip(), now, now),
             )
         return task_id
+
+    def get_active_task(self, owner: str) -> dict[str, Any] | None:
+        """Return the oldest unfinished task for a user or email."""
+        owner = owner.strip()
+        if not owner:
+            return None
+        with self.connect() as conn:
+            row = conn.execute(
+                """SELECT * FROM tasks
+                WHERE status IN ('pending', 'running', 'waiting:search_approval', 'waiting:collect_approval')
+                  AND (user_id = ? OR email = ?)
+                ORDER BY created_at ASC LIMIT 1""",
+                (owner, owner),
+            ).fetchone()
+        return self._row(row)
+
+    def search_history(self, query: str = "", limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
+        """Search persisted tasks for the history page."""
+        query = query.strip()
+        limit = min(max(int(limit), 1), 100)
+        offset = max(int(offset), 0)
+        with self.connect() as conn:
+            if query:
+                pattern = f"%{query}%"
+                rows = conn.execute(
+                    """SELECT id, topic, status, phase, progress, current_round,
+                              created_at, updated_at, reports_json
+                       FROM tasks
+                       WHERE topic LIKE ? OR id LIKE ? OR status LIKE ?
+                       ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+                    (pattern, pattern, pattern, limit, offset),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT id, topic, status, phase, progress, current_round,
+                              created_at, updated_at, reports_json
+                       FROM tasks ORDER BY created_at DESC LIMIT ? OFFSET ?""",
+                    (limit, offset),
+                ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            reports = json.loads(item.pop("reports_json") or "{}")
+            item["reports"] = reports
+            item["report_available"] = bool(reports.get("final")) and Path(str(reports["final"])).is_file()
+            item["pdf_available"] = bool(reports.get("pdf_zip")) and Path(str(reports["pdf_zip"])).is_file()
+            result.append(item)
+        return result
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         with self.connect() as conn:

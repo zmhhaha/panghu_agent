@@ -56,9 +56,16 @@ class LiteraturePipeline:
         if callback:
             callback({"id": task_id, **values})
 
-    def create_task(self, topic: str, max_rounds: int | None = None, user_id: str = "", providers: list[str] | None = None) -> str:
+    def create_task(
+        self,
+        topic: str,
+        max_rounds: int | None = None,
+        user_id: str = "",
+        providers: list[str] | None = None,
+        email: str = "",
+    ) -> str:
         rounds = min(max(int(max_rounds or self.config.max_rounds), 1), 10)
-        task_id = self.db.create_task(topic, rounds, user_id)
+        task_id = self.db.create_task(topic, rounds, user_id, email)
         if providers:
             self.db.update_task(task_id, search={"providers": providers})
         return task_id

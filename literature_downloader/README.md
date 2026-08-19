@@ -70,13 +70,16 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 
 ## 主要 API
 
-- `POST /literature-download`：创建检索任务。
+- `POST /literature-download`：创建检索任务（提交 `email` 后，阶段完成和最终完成会发送通知）。
 - `GET /literature-download/{task_id}`：查询状态和文献列表。
+- `GET /literature-reports?q=...`：检索历史任务，可用于任务完成后的恢复查询。
 - `POST /literature-download/{task_id}/approve`：确认检索清单并开始下载。
 - `POST /literature-download/{task_id}/retry`：重试上一轮失败文献。
 - `POST /literature-download/{task_id}/finish`：结束收集并生成最终报告。
 - `GET /literature-download/{task_id}/report/download`：下载 Markdown 报告。
 - `GET /literature-download/{task_id}/files/download`：下载通过校验的 PDF ZIP。
+- `GET /literature-download/{task_id}/reports`：列出检索、收集、校验和最终报告。
+- `GET /literature-download/{task_id}/reports/{report_id}/download`：下载指定阶段报告。
 
 ## 数据目录
 
@@ -94,6 +97,7 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 - `LITERATURE_SEARCH_LIMIT`：默认返回最多 30 篇。
 - `LITERATURE_PER_PROVIDER`：每个外部来源默认最多 10 篇。
 - `ACADEMIC_CONTACT_EMAIL`：用于 OpenAlex/Crossref 的联系邮箱，当前固定为 `panghuer001@163.com`，不通过 Vault 管理。
+- 任务通知邮箱：由提交任务时的 `email` 字段提供，用于发送检索清单、每轮收集和最终完成通知；不是 Vault 配置项。
 - Semantic Scholar API Key：未配置。系统仍会尝试公开接口，若受限流影响，会在检索报告中记录错误并继续处理其他来源。
 
 ## 是否需要 LLM
