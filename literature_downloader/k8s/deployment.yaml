@@ -48,18 +48,10 @@ spec:
               value: "30"
             - name: LITERATURE_PER_PROVIDER
               value: "10"
+            # Contact identity for OpenAlex/Crossref polite API access.
+            # This is not a secret and is intentionally kept out of Vault.
             - name: ACADEMIC_CONTACT_EMAIL
-              valueFrom:
-                secretKeyRef:
-                  name: literature-config
-                  key: ACADEMIC_CONTACT_EMAIL
-                  optional: true
-            - name: SEMANTIC_SCHOLAR_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: literature-config
-                  key: SEMANTIC_SCHOLAR_API_KEY
-                  optional: true
+              value: panghuer001@163.com
           volumeMounts:
             - name: data
               mountPath: /data/literature

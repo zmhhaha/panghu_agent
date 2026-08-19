@@ -59,10 +59,9 @@ docker push arm-cluster-master:5000/agent-ui:latest
 
 ### 集群外围配置
 
-Literature Downloader 沿用 `scientific-agent` 的 Vault、OAuth2 Proxy 和 Cloudflare Tunnel 配置方式。先在 Vault 写入 API 凭证，再依次应用 ExternalSecret、OAuth2 Proxy 和 TunnelRoute：
+Literature Downloader 使用现有的 OAuth2 Proxy 和 Cloudflare Tunnel 配置方式。学术联系邮箱是非敏感配置，已直接写入 API Deployment；不需要 Literature Downloader 的 Vault ExternalSecret。部署 API/UI 后再配置 OAuth2 Proxy 和 TunnelRoute：
 
 ```bash
-kubectl apply -f ../vault/inventory/literature-downloader-externalsecret.yaml
 bash ../oauth/k8s/deploy-agent-proxy.sh literature-downloader
 kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 ```
@@ -94,5 +93,9 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 - `LITERATURE_MAX_ROUNDS`：默认最大重试轮数 3。
 - `LITERATURE_SEARCH_LIMIT`：默认返回最多 30 篇。
 - `LITERATURE_PER_PROVIDER`：每个外部来源默认最多 10 篇。
-- `ACADEMIC_CONTACT_EMAIL`：用于 OpenAlex/Crossref/Unpaywall 的联系邮箱。
-- `SEMANTIC_SCHOLAR_API_KEY`：可选的 Semantic Scholar API Key。
+- `ACADEMIC_CONTACT_EMAIL`：用于 OpenAlex/Crossref 的联系邮箱，当前固定为 `panghuer001@163.com`，不通过 Vault 管理。
+- Semantic Scholar API Key：未配置。系统仍会尝试公开接口，若受限流影响，会在检索报告中记录错误并继续处理其他来源。
+
+## 是否需要 LLM
+
+当前三阶段流程不依赖 LLM：检索使用本地库和 OpenAlex/Crossref/arXiv/Semantic Scholar API，收集阶段按下载策略获取 PDF，检察阶段执行文件大小和文本可读性校验。查询变体、去重、排序和 EvidenceGate-new 风格报告均由确定性代码完成，因此不需要 `OPENAI_API_KEY`、`DEEPSEEK_API_KEY` 或其他模型配置。
