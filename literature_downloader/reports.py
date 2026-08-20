@@ -277,6 +277,36 @@ def format_final_report(
             lines.extend(_metadata_lines(paper))
             lines.append("")
 
+        # Local-library hits are shared search resources, but their records
+        # belong in every task's report just like API results. Older tasks did
+        # not persist this list, so retain a useful fallback for them.
+        local_rows = list(search.get("local_results") or [])
+        if not local_rows:
+            local_rows = [
+                paper for paper in search.get("papers") or []
+                if paper.get("provider") == "LocalLibrary"
+                or "LocalLibrary" in (paper.get("providers") or [])
+            ]
+        lines.extend(["### 本地库命中文献", ""])
+        if local_rows:
+            for index, paper in enumerate(local_rows, 1):
+                lines.append(f"#### [{index}] {_text(paper.get('title'))}")
+                lines.extend(_metadata_lines(paper, include_abstract=True))
+                lines.extend([
+                    f"- 当前 PDF 状态: {_text(paper.get('pdf_status'), 'unknown')}",
+                    f"- 当前任务校验状态: {_text(paper.get('verification_status'), '未校验')}",
+                    f"- 本地 PDF 路径: {_text(paper.get('pdf_path'), 'N/A')}",
+                    f"- 本轮处理: {'已有已校验 PDF，本轮未重新下载' if paper.get('pdf_status') == 'verified' else '未确认本地 PDF 可用性'}",
+                    "",
+                ])
+        elif search.get("local_hits"):
+            lines.extend([
+                f"本地库命中 {search.get('local_hits')} 篇，但该任务创建于明细保存功能之前，旧快照未保留逐篇元数据。",
+                "",
+            ])
+        else:
+            lines.extend(["本次未命中本地文献库。", ""])
+
     lines.extend(["## 二、文献收集专家报告", ""])
     for round_data in rounds:
         round_num = round_data.get("round", "?")

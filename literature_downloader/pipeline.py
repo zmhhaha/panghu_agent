@@ -116,6 +116,14 @@ class LiteraturePipeline:
                     "relevance": result.get("relevance", {}),
                     "by_provider": result["provider_counts"],
                     "errors": result["errors"],
+                    # Keep provider-level records in the task snapshot so
+                    # the final report can explain every hit, including
+                    # papers found in the shared local library.
+                    "local_results": [self._public_paper(row) for row in result.get("local_results", [])],
+                    "api_results": {
+                        provider: [self._public_paper(row) for row in rows]
+                        for provider, rows in (result.get("api_results") or {}).items()
+                    },
                     "papers": [self._public_paper(row) for row in result["papers"]],
                 }
                 reports = {"search": str(search_path), "need_to_download": str(list_path)}

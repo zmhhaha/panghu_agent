@@ -85,14 +85,26 @@ class CoreTests(unittest.TestCase):
     db = Database(config.db_path)
     pipeline = LiteraturePipeline(config, db)
     task_id = pipeline.create_task("topic", 2)
+    local_hit = {
+        "title": "A verified local paper",
+        "provider": "LocalLibrary",
+        "providers": ["LocalLibrary"],
+        "pdf_status": "verified",
+        "pdf_path": str(root / "local.pdf"),
+        "doi": "10.1000/local",
+    }
     search_result = {
-        "topic": "topic", "query_variants": ["topic"], "local_results": [], "api_results": {},
+        "topic": "topic", "query_variants": ["topic"], "local_results": [local_hit],
+        "api_results": {"OpenAlex": [{"title": "An API paper", "provider": "OpenAlex"}]},
         "papers": [{"title": "A paper", "provider": "arXiv", "arxiv_id": "1234.5678", "abstract": ""}],
         "need_download": [], "provider_counts": {}, "local_hits": 0, "errors": {},
     }
     with patch("literature_downloader.pipeline.search_literature", return_value=search_result):
         pipeline.search(task_id)
+    search_state = pipeline.status(task_id)["search"]
     self.assertEqual(pipeline.status(task_id)["status"], "waiting:search_approval")
+    self.assertEqual(search_state["local_results"][0]["title"], "A verified local paper")
+    self.assertEqual(search_state["api_results"]["OpenAlex"][0]["title"], "An API paper")
 
     good_pdf = root / "good.pdf"
     good_pdf.write_bytes(b"%PDF-1.4\n" + b"x" * 100)

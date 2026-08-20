@@ -136,6 +136,35 @@ class ReportFormatTests(unittest.TestCase):
             self.assertIn("https://repository.example/paper.pdf", report)
             self.assertIn("/data/literature/pdfs/task/paper.pdf", report)
 
+    def test_final_report_lists_local_library_hits_with_full_metadata(self) -> None:
+        local_paper = {
+            **self.paper,
+            "provider": "LocalLibrary",
+            "providers": ["LocalLibrary"],
+            "pdf_status": "verified",
+            "verification_status": "pass",
+            "pdf_path": "/data/literature/pdfs/shared/local-1.pdf",
+            "source_record": {"source": "shared-library", "record_id": "local-1"},
+        }
+        search = {
+            "total": 1,
+            "local_hits": 1,
+            "need_download": 0,
+            "by_provider": {},
+            "local_results": [local_paper],
+            "papers": [local_paper],
+        }
+
+        report = format_final_report("hydrometallurgy", [], [local_paper], [], search=search)
+
+        self.assertIn("本地库命中文献", report)
+        self.assertIn("A paper about hydrometallurgy", report)
+        self.assertIn("10.1000/example", report)
+        self.assertIn("shared-library", report)
+        self.assertIn("当前 PDF 状态: verified", report)
+        self.assertIn("/data/literature/pdfs/shared/local-1.pdf", report)
+        self.assertIn("已有已校验 PDF，本轮未重新下载", report)
+
 
 if __name__ == "__main__":
     unittest.main()

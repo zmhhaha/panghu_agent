@@ -83,6 +83,9 @@ def search_literature(
 
     local = db.search_local(_tokens(topic), limit=limit)
     local = [{**row, "provider": "LocalLibrary", "providers": ["LocalLibrary"]} for row in local]
+    # The shared library stores a task-owned copy of each paper. Collapse
+    # those copies before counting/reporting hits so one paper is listed once.
+    local = deduplicate_papers(local)
     api_results: dict[str, list[dict[str, Any]]] = {}
     errors: dict[str, str] = {}
     functions = {

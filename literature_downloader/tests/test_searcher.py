@@ -106,6 +106,33 @@ class SearchExpansionTests(unittest.TestCase):
         self.assertEqual(result["papers"], [])
         self.assertEqual(result["need_download"], [])
 
+    def test_local_library_copies_are_deduplicated(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        config = Settings(root, root / "literature.db", root / "pdfs", root / "reports")
+        db = Database(config.db_path)
+        first_task = db.create_task("previous topic 1", 1)
+        second_task = db.create_task("previous topic 2", 1)
+        paper = {
+            "title": "InP dry etching review",
+            "authors": "A. Author",
+            "provider": "OpenAlex",
+            "doi": "10.1000/inp-review",
+            "abstract": "InP plasma etching and dry etching.",
+            "pdf_status": "verified",
+            "pdf_path": str(root / "review.pdf"),
+        }
+        db.upsert_paper(first_task, paper)
+        db.upsert_paper(second_task, paper)
+        with patch("literature_downloader.searcher.search_openalex", return_value=[]), patch(
+            "literature_downloader.searcher.search_crossref", return_value=[]
+        ), patch("literature_downloader.searcher.search_arxiv", return_value=[]), patch(
+            "literature_downloader.searcher.search_semantic_scholar", return_value=[]
+        ):
+            result = search_literature("InP dry etching", db, config=config)
+
+        self.assertEqual(result["local_hits"], 1)
+        self.assertEqual(len(result["local_results"]), 1)
+
     def test_inp_scope_rejects_other_materials_with_same_etch_terms(self) -> None:
         root = Path(tempfile.mkdtemp())
         config = Settings(root, root / "literature.db", root / "pdfs", root / "reports")
