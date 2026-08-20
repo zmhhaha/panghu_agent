@@ -56,6 +56,21 @@ def _is_relevant(record: dict[str, Any]) -> bool:
     return True
 
 
+def _matches_topic_scope(topic: str, record: dict[str, Any]) -> bool:
+    """Apply a conservative domain gate for high-risk broad query terms."""
+    text = " ".join(str(record.get(field) or "") for field in ("title", "abstract", "venue")).lower()
+    normalized_topic = topic.lower()
+    if re.search(r"(?:\binp\b|indium\s+phosphide|磷化铟)", normalized_topic):
+        material = re.search(r"\binp\b|indium\s+phosphide|in(?:ga)?as?p|gainp|磷化铟", text)
+        if not material:
+            return False
+    if re.search(r"(?:dry\s+etch|plasma\s+etch|reactive\s+ion|干法刻蚀|等离子体刻蚀|刻蚀)", normalized_topic):
+        process = re.search(r"dry\s+etch|plasma\s+etch|reactive\s+ion|\bicp(?:-rie)?\b|\brie\b|etching|etch", text)
+        if not process:
+            return False
+    return True
+
+
 def search_literature(
     topic: str,
     db: Database,
@@ -117,7 +132,7 @@ def search_literature(
     # query match is empty. Never turn those zero-score fuzzy matches into
     # download targets; an empty result is safer than downloading another
     # topic's paper.
-    papers = [paper for paper in ranked if _is_relevant(paper)][:limit]
+    papers = [paper for paper in ranked if _is_relevant(paper) and _matches_topic_scope(topic, paper)][:limit]
     need_download = [
         paper for paper in papers
         if not paper.get("pdf_path") or paper.get("pdf_status") not in {"verified", "downloaded"}

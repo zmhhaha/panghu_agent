@@ -52,6 +52,32 @@ class CoreTests(unittest.TestCase):
     download.assert_called_once()
     self.assertEqual(download.call_args.args[0], "https://repository.example/source.pdf")
 
+  def test_collector_tries_alternate_open_access_urls(self) -> None:
+    root = Path(tempfile.mkdtemp())
+    config = Settings(root, root / "db", root / "pdfs", root / "reports")
+    target = root / "source.pdf"
+    calls: list[str] = []
+
+    def fake_download(url, target_path, config):
+      calls.append(url)
+      if "blocked" in url:
+        return {"ok": False, "path": str(target_path), "size": 0, "error": "HTTP 403"}
+      return {"ok": True, "path": str(target), "size": 123, "error": ""}
+
+    with patch("literature_downloader.collector.download_pdf", side_effect=fake_download):
+      result = collect_paper(
+          Paper(
+              title="Open paper",
+              pdf_url="https://blocked.example/paper.pdf",
+              identifiers={"openalex_pdf_urls": ["https://blocked.example/paper.pdf", "https://repository.example/paper.pdf"]},
+          ),
+          root / "pdfs",
+          config,
+      )
+
+    self.assertTrue(result.ok)
+    self.assertEqual(calls, ["https://blocked.example/paper.pdf", "https://repository.example/paper.pdf"])
+
 
   def test_pipeline_retries_failed_download(self) -> None:
     root = Path(tempfile.mkdtemp())

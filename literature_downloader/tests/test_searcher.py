@@ -102,6 +102,25 @@ class SearchExpansionTests(unittest.TestCase):
         self.assertEqual(result["papers"], [])
         self.assertEqual(result["need_download"], [])
 
+    def test_inp_scope_rejects_other_materials_with_same_etch_terms(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        config = Settings(root, root / "literature.db", root / "pdfs", root / "reports")
+        db = Database(config.db_path)
+        unrelated = {
+            "title": "ICP etching of lithium niobate",
+            "abstract": "Reactive ion etching and plasma process optimization.",
+            "provider": "OpenAlex",
+            "doi": "10.1000/lithium-niobate",
+            "url": "https://example.org/unrelated",
+        }
+        with patch("literature_downloader.searcher.search_openalex", return_value=[unrelated]), patch(
+            "literature_downloader.searcher.search_crossref", return_value=[]
+        ), patch("literature_downloader.searcher.search_arxiv", return_value=[]), patch(
+            "literature_downloader.searcher.search_semantic_scholar", return_value=[]
+        ):
+            result = search_literature("InP 的干法刻蚀研究进展", db, config=config)
+        self.assertEqual(result["papers"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

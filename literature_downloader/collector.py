@@ -69,9 +69,9 @@ def _semantic_id(paper: Paper) -> str:
     return paper.identifiers.get("semantic_scholar") or (f"DOI:{paper.doi}" if paper.doi else "")
 
 
-def _unpaywall_url(doi: str, config: Settings) -> str:
+def _unpaywall_urls(doi: str, config: Settings) -> list[str]:
     if not doi or not config.contact_email:
-        return ""
+        return []
     try:
         request = urllib.request.Request(
             f"https://api.unpaywall.org/v2/{urllib.parse.quote(doi)}?email={urllib.parse.quote(config.contact_email)}",
@@ -79,10 +79,25 @@ def _unpaywall_url(doi: str, config: Settings) -> str:
         )
         with urllib.request.urlopen(request, timeout=config.download_timeout) as response:
             data = json.loads(response.read().decode("utf-8", errors="replace"))
-        location = data.get("best_oa_location") or ((data.get("oa_locations") or [None])[0]) or {}
-        return str(location.get("url_for_pdf") or location.get("url") or "")
+        urls: list[str] = []
+        locations = []
+        best = data.get("best_oa_location")
+        if isinstance(best, dict):
+            locations.append(best)
+        locations.extend(item for item in (data.get("oa_locations") or []) if isinstance(item, dict))
+        for location in locations:
+            for key in ("url_for_pdf", "url_for_landing_page", "url"):
+                value = str(location.get(key) or "").strip()
+                if value and value not in urls:
+                    urls.append(value)
+        return urls
     except Exception:
-        return ""
+        return []
+
+
+def _unpaywall_url(doi: str, config: Settings) -> str:
+    """Compatibility wrapper for callers that only need the best URL."""
+    return (_unpaywall_urls(doi, config) or [""])[0]
 
 
 def _semantic_pdf_url(paper: Paper, config: Settings) -> str:
@@ -136,8 +151,19 @@ def collect_paper(paper: Paper, target_dir: str | Path, config: Settings = setti
         if success:
             return success
 
-    if paper.pdf_url:
-        success = attempt_download("metadata_pdf", paper.pdf_url)
+    # OpenAlex and Crossref can return several locations. A publisher PDF
+    # link may be blocked while an institutional repository link is usable.
+    identifiers = paper.identifiers or {}
+    alternate_urls: list[str] = []
+    for key in ("openalex_pdf_urls", "crossref_pdf_urls", "pdf_urls"):
+        values = identifiers.get(key) or []
+        if isinstance(values, str):
+            values = [values]
+        if isinstance(values, list):
+            alternate_urls.extend(str(value).strip() for value in values if str(value).strip())
+    metadata_urls = [paper.pdf_url, *alternate_urls]
+    for metadata_url in metadata_urls:
+        success = attempt_download("metadata_pdf", metadata_url)
         if success:
             return success
 
@@ -145,8 +171,7 @@ def collect_paper(paper: Paper, target_dir: str | Path, config: Settings = setti
         success = attempt_download("DOI", f"https://doi.org/{paper.doi}")
         if success:
             return success
-        oa_url = _unpaywall_url(paper.doi, config)
-        if oa_url:
+        for oa_url in _unpaywall_urls(paper.doi, config):
             success = attempt_download("Unpaywall", oa_url)
             if success:
                 return success

@@ -37,11 +37,15 @@ def search_openalex(query: str, limit: int, *, email: str = "") -> list[PaperRec
         location_candidates = [best_location, location, *locations]
         landing_url = ""
         pdf_url = ""
+        pdf_urls: list[str] = []
         for candidate in location_candidates:
             if not isinstance(candidate, dict):
                 continue
             landing_url = landing_url or str(candidate.get("landing_page_url") or "")
-            pdf_url = pdf_url or str(candidate.get("pdf_url") or "")
+            candidate_pdf = str(candidate.get("pdf_url") or "").strip()
+            if candidate_pdf and candidate_pdf not in pdf_urls:
+                pdf_urls.append(candidate_pdf)
+            pdf_url = pdf_url or candidate_pdf
         source = location.get("source") or {}
         inverted = item.get("abstract_inverted_index") or {}
         positions = sorted(
@@ -69,7 +73,10 @@ def search_openalex(query: str, limit: int, *, email: str = "") -> list[PaperRec
             abstract=abstract,
             pdf_url=pdf_url,
             open_access=bool((item.get("open_access") or {}).get("is_oa")),
-            identifiers={"openalex": str(item.get("id") or "")},
+            identifiers={
+                "openalex": str(item.get("id") or ""),
+                "openalex_pdf_urls": pdf_urls,
+            },
         ))
     return records
 
@@ -100,14 +107,16 @@ def search_crossref(query: str, limit: int, *, email: str = "") -> list[PaperRec
             date = "-".join(str(part).zfill(2) for part in date_parts[0][:3])
         doi = normalize_doi(item.get("DOI"))
         pdf_url = ""
+        pdf_urls: list[str] = []
         for link in item.get("link") or []:
             if not isinstance(link, dict):
                 continue
             content_type = str(link.get("content-type") or link.get("content_type") or "").lower()
             candidate_url = str(link.get("URL") or link.get("url") or "")
             if "pdf" in content_type or candidate_url.lower().split("?", 1)[0].endswith(".pdf"):
-                pdf_url = candidate_url
-                break
+                if candidate_url and candidate_url not in pdf_urls:
+                    pdf_urls.append(candidate_url)
+                pdf_url = pdf_url or candidate_url
         records.append(make_paper(
             "Crossref",
             type=item.get("type") or "paper",
@@ -124,6 +133,7 @@ def search_crossref(query: str, limit: int, *, email: str = "") -> list[PaperRec
             abstract=_strip_markup(item.get("abstract")),
             pdf_url=pdf_url,
             open_access=bool(pdf_url),
+            identifiers={"crossref_pdf_urls": pdf_urls},
         ))
     return records
 
