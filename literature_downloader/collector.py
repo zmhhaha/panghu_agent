@@ -62,7 +62,11 @@ def _arxiv_id(paper: Paper) -> str:
 
 
 def _semantic_id(paper: Paper) -> str:
-    return paper.identifiers.get("semantic_scholar") or (f"DOI:{paper.doi}" if paper.doi else paper.title)
+    # A title lookup requires a separate Semantic Scholar search for every
+    # paper and made large collections serially spend most of their time in
+    # rate-limited metadata calls. Search results already carry a paper ID or
+    # DOI when that route is meaningful.
+    return paper.identifiers.get("semantic_scholar") or (f"DOI:{paper.doi}" if paper.doi else "")
 
 
 def _unpaywall_url(doi: str, config: Settings) -> str:
@@ -132,6 +136,11 @@ def collect_paper(paper: Paper, target_dir: str | Path, config: Settings = setti
         if success:
             return success
 
+    if paper.pdf_url:
+        success = attempt_download("metadata_pdf", paper.pdf_url)
+        if success:
+            return success
+
     if paper.doi:
         success = attempt_download("DOI", f"https://doi.org/{paper.doi}")
         if success:
@@ -145,11 +154,6 @@ def collect_paper(paper: Paper, target_dir: str | Path, config: Settings = setti
     ss_url = _semantic_pdf_url(paper, config)
     if ss_url:
         success = attempt_download("Semantic Scholar", ss_url)
-        if success:
-            return success
-
-    if paper.pdf_url:
-        success = attempt_download("metadata_pdf", paper.pdf_url)
         if success:
             return success
 

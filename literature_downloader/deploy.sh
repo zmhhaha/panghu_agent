@@ -26,6 +26,12 @@ kubectl create configmap api-agent -n "$NAMESPACE" \
   --from-file=agent.py="app/api/literature_downloader.py" \
   --dry-run=client -o yaml $K | kubectl apply $K -f -
 
+# Match the shared Agent LLM configuration. The API key remains optional so
+# the deterministic search fallback continues to work without Vault.
+sed "s/__NAMESPACE__/${NAMESPACE}/g" \
+  literature_downloader/k8s/configmap.yaml \
+  | kubectl apply $K -f -
+
 sed \
   -e "s|__API_IMAGE__|${API_IMAGE}|g" \
   literature_downloader/k8s/deployment.yaml \

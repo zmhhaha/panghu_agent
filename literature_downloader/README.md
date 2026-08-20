@@ -8,6 +8,8 @@
 
 检索阶段会保存独立的 `search_report.md` 和 `need_to_download.md`，其中列出每篇文献的来源数据库、DOI/arXiv ID、元数据 URL 和公开 PDF URL。收集阶段的每轮报告会记录实际尝试过的下载 URL、下载策略、成功/失败原因和本地保存路径；校验阶段会记录来源链、文件检查结果和文本可读性。最终下载报告会汇总这三阶段内容。服务器本地路径只表示下载产物的保存位置，不是文献来源。
 
+检索阶段包含一个可选的文献检索专家 Agent：它使用统一 LLM 配置生成中英文术语、查询变体以及纳入/排除标准，再由程序调用学术 API 并对候选文献进行批量相关性重排。LLM 不能生成或修改 DOI、作者、元数据 URL 和 PDF URL；这些字段始终以 API 返回结果为准。LLM 未配置、调用失败或返回格式不合法时，自动回退到规则检索和规则相关性门槛。仅因为命中“研究进展”等泛化词、但没有命中主题术语的本地或外部文献不会进入待下载清单，避免不同任务之间出现主题串扰。
+
 UI 只需要填写研究主题、最大重试轮数和通知邮箱，然后点击“开始检索”。任务运行期间可以点击“刷新状态”主动查询进度；完成或失败时会向通知邮箱发送一次结果邮件。完成后，当前任务区域会显示最终报告和已校验 PDF 的下载按钮。历史报告页仅用于按主题或任务 ID 查询历史任务的状态；需要恢复历史任务时，将查询到的任务 ID 填回“新任务”页并点击“刷新状态”，不再提供单独的加载任务或历史文件下载按钮。
 
 ## 安装
@@ -63,7 +65,7 @@ docker push arm-cluster-master:5000/agent-ui:latest
 
 ### 集群外围配置
 
-Literature Downloader 使用现有的 OAuth2 Proxy 和 Cloudflare Tunnel 配置方式。学术联系邮箱是非敏感配置，已直接写入 API Deployment；不需要 Literature Downloader 的 Vault ExternalSecret。部署 API/UI 后再配置 OAuth2 Proxy 和 TunnelRoute：
+Literature Downloader 使用现有的 OAuth2 Proxy 和 Cloudflare Tunnel 配置方式。学术联系邮箱是非敏感配置，已直接写入 API Deployment。LLM 密钥是可选的，只有启用检索专家时才需要 Literature Downloader 的 Vault ExternalSecret。部署 API/UI 后再配置 OAuth2 Proxy 和 TunnelRoute：
 
 ```bash
 bash ../oauth/k8s/deploy-agent-proxy.sh literature-downloader
@@ -71,6 +73,8 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 ```
 
 默认访问地址为 `https://literature-downloader.panghuer.top`。OAuth2 Proxy 将请求转发到 `ui.literature-downloader.svc.cluster.local:7860`，并继续使用集群现有的 Casdoor/OIDC Secret。
+
+`literature_downloader/k8s/configmap.yaml` 包含 `PROVIDER=deepseek`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL` 和检索 Agent 参数，`deploy.sh` 会自动应用它。若需要启用 LLM，先在 Vault 写入 `secret/literature-downloader/api` 的 `DEEPSEEK_API_KEY`，再应用 `vault/inventory/literature-downloader-externalsecret.yaml` 并重启 API；没有该密钥时会自动使用规则回退。
 
 ## 主要 API
 
@@ -96,12 +100,20 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 ## 配置
 
 - `LITERATURE_MAX_ROUNDS`：默认最大重试轮数 3。
-- `LITERATURE_SEARCH_LIMIT`：默认返回最多 30 篇。
-- `LITERATURE_PER_PROVIDER`：每个外部来源默认最多 10 篇。
+- `LITERATURE_SEARCH_LIMIT`：默认返回最多 100 篇候选文献；服务会优先尝试带公开 PDF 地址、arXiv 或开放获取标记的记录。
+- `LITERATURE_PER_PROVIDER`：每个查询变体和外部来源默认最多 20 篇。
+- `LITERATURE_MAX_SEARCH_VARIANTS`：每个主题最多使用 6 个查询变体，提高召回率。
+- `LITERATURE_DOWNLOAD_CONCURRENCY`：每轮并发下载和校验数，默认 6；可按服务器带宽和 CPU 调整。下载优先级为 arXiv、检索结果公开 PDF URL、DOI/Unpaywall、Semantic Scholar OA 和最后的详情页 URL。
 - `ACADEMIC_CONTACT_EMAIL`：用于 OpenAlex/Crossref 的联系邮箱，当前固定为 `panghuer001@163.com`，不通过 Vault 管理。
 - 任务通知邮箱：由提交任务时的 `email` 字段提供，仅在任务完成或失败时发送结果通知；不是 Vault 配置项。
 - Semantic Scholar API Key：未配置。系统仍会尝试公开接口，若受限流影响，会在检索报告中记录错误并继续处理其他来源。
 
 ## 是否需要 LLM
 
-当前三阶段流程不依赖 LLM：检索使用本地库和 OpenAlex/Crossref/arXiv/Semantic Scholar API，收集阶段按下载策略获取 PDF，检察阶段执行文件大小和文本可读性校验。查询变体、去重、排序和 EvidenceGate-new 风格报告均由确定性代码完成，因此不需要 `OPENAI_API_KEY`、`DEEPSEEK_API_KEY` 或其他模型配置。
+LLM 检索专家是可选增强能力，不改变下载和校验的确定性流程。配置 `PROVIDER=deepseek`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL` 和 `DEEPSEEK_API_KEY` 后，系统会启用检索计划和相关性重排；也支持 `openai` 或 `custom` 的 OpenAI-compatible 接口。`DEEPSEEK_API_KEY` 由现有 `agent-secret`/Vault 机制注入，`agent-config` 只保存非敏感配置。未配置密钥时仍可正常检索、下载和生成报告，只是使用规则回退。
+
+额外配置：
+
+- `LITERATURE_LLM_ENABLED`：是否启用 LLM 增强，默认 `true`。
+- `LITERATURE_LLM_TIMEOUT`：单次 LLM 请求超时秒数，默认 30。
+- `LITERATURE_LLM_MAX_CANDIDATES`：单批最多提交给相关性重排的候选数，默认 40。

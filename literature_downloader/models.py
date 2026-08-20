@@ -27,6 +27,11 @@ class Paper:
     pdf_status: str = "pending_download"
     verification_status: str = ""
     relevance_score: float = 0.0
+    relevance_method: str = "rules"
+    llm_included: bool | None = None
+    llm_relevance_score: float | None = None
+    relevance_reason: str = ""
+    source_record: dict[str, Any] = field(default_factory=dict)
     local_id: int | None = None
 
     @classmethod
@@ -58,6 +63,11 @@ class Paper:
             pdf_status=str(record.get("pdf_status") or "pending_download"),
             verification_status=str(record.get("verification_status") or ""),
             relevance_score=float(record.get("relevance_score") or 0),
+            relevance_method=str(record.get("relevance_method") or "rules"),
+            llm_included=(None if record.get("llm_included") is None else bool(record.get("llm_included"))),
+            llm_relevance_score=(None if record.get("llm_relevance_score") is None else float(record.get("llm_relevance_score"))),
+            relevance_reason=str(record.get("relevance_reason") or ""),
+            source_record=dict(record.get("source_record") or {}),
             local_id=record.get("local_id"),
         )
 

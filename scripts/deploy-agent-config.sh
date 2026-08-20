@@ -47,6 +47,7 @@ ALL_NS=(
   zhongkuifumo-agent
   zhougongjiemeng-agent
   game-review-agent
+  literature-downloader
 )
 
 # ── 参数解析 ──
@@ -91,6 +92,9 @@ for ns in "${NS_LIST[@]}"; do
     --from-literal=PROVIDER=deepseek \
     --from-literal=DEEPSEEK_BASE_URL=https://api.deepseek.com \
     --from-literal=DEEPSEEK_MODEL=deepseek-v4-flash \
+    --from-literal=LITERATURE_LLM_ENABLED=true \
+    --from-literal=LITERATURE_LLM_TIMEOUT=30 \
+    --from-literal=LITERATURE_LLM_MAX_CANDIDATES=40 \
     --dry-run=client -o yaml $K | kubectl apply $K -f -
 done
 

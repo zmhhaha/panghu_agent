@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
 
@@ -111,6 +112,8 @@ class LiteraturePipeline:
                     "local_hits": result["local_hits"],
                     "need_download": len(need_download),
                     "query_variants": result.get("query_variants", []),
+                    "search_plan": result.get("search_plan", {}),
+                    "relevance": result.get("relevance", {}),
                     "by_provider": result["provider_counts"],
                     "errors": result["errors"],
                     "papers": [self._public_paper(row) for row in result["papers"]],
@@ -139,6 +142,111 @@ class LiteraturePipeline:
             result = self.collect_round(task_id, callback)
         return result
 
+    def _collect_one(
+        self,
+        task_id: str,
+        round_num: int,
+        row: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """Download and verify one paper without holding the task lock."""
+        paper_id = int(row["id"])
+        paper = Paper.from_record({**row, "local_id": paper_id})
+        try:
+            downloaded = collect_paper(paper, self._pdf_dir(task_id), self.config)
+            for attempt in downloaded.attempts:
+                self.db.add_attempt(task_id, paper_id, round_num, attempt)
+            item = {
+                "paper_id": paper_id,
+                "title": paper.title,
+                "authors": paper.authors,
+                "date": paper.date,
+                "doi": paper.doi,
+                "arxiv_id": paper.arxiv_id,
+                "provider": paper.provider,
+                "providers": paper.providers,
+                "venue": paper.venue,
+                "url": paper.url,
+                "pdf_url": paper.pdf_url,
+                "identifiers": paper.identifiers,
+                "relevance_score": paper.relevance_score,
+                "relevance_method": paper.relevance_method,
+                "llm_included": paper.llm_included,
+                "llm_relevance_score": paper.llm_relevance_score,
+                "relevance_reason": paper.relevance_reason,
+                "source_record": paper.source_record,
+                **downloaded.to_dict(),
+            }
+            if not downloaded.ok:
+                self.db.update_paper(paper_id, pdf_status="failed", verification_status="", pdf_path="")
+                return item, None
+
+            self.db.update_paper(paper_id, pdf_status="downloaded", pdf_path=downloaded.path)
+            paper.pdf_path = downloaded.path
+            verification = verify_pdf(paper, self.config)
+            successful_attempt = next(
+                (attempt for attempt in downloaded.attempts if attempt.get("ok")),
+                {},
+            )
+            verification_row = {
+                "paper_id": paper_id,
+                "authors": paper.authors,
+                "date": paper.date,
+                "doi": paper.doi,
+                "arxiv_id": paper.arxiv_id,
+                "provider": paper.provider,
+                "providers": paper.providers,
+                "venue": paper.venue,
+                "url": paper.url,
+                "pdf_url": paper.pdf_url,
+                "identifiers": paper.identifiers,
+                "relevance_score": paper.relevance_score,
+                "relevance_method": paper.relevance_method,
+                "llm_included": paper.llm_included,
+                "llm_relevance_score": paper.llm_relevance_score,
+                "relevance_reason": paper.relevance_reason,
+                "source_record": paper.source_record,
+                "download_source": downloaded.source,
+                "download_url": successful_attempt.get("url", ""),
+                **verification.to_dict(),
+            }
+            new_status = "verified" if verification.verdict == "pass" else "failed"
+            self.db.update_paper(
+                paper_id,
+                pdf_status=new_status,
+                verification_status=verification.verdict,
+                verification=verification.to_dict(),
+            )
+            return item, verification_row
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            self.db.update_paper(paper_id, pdf_status="failed", verification_status="", pdf_path="")
+            return {
+                "paper_id": paper_id,
+                "title": paper.title,
+                "authors": paper.authors,
+                "date": paper.date,
+                "doi": paper.doi,
+                "arxiv_id": paper.arxiv_id,
+                "provider": paper.provider,
+                "providers": paper.providers,
+                "venue": paper.venue,
+                "url": paper.url,
+                "pdf_url": paper.pdf_url,
+                "identifiers": paper.identifiers,
+                "relevance_score": paper.relevance_score,
+                "relevance_method": paper.relevance_method,
+                "llm_included": paper.llm_included,
+                "llm_relevance_score": paper.llm_relevance_score,
+                "relevance_reason": paper.relevance_reason,
+                "source_record": paper.source_record,
+                "ok": False,
+                "path": "",
+                "size": 0,
+                "source": "",
+                "error": error,
+                "attempts": [],
+            }, None
+
     def collect_round(self, task_id: str, callback: ProgressCallback | None = None) -> dict[str, Any]:
         with self._lock(task_id):
             task = self._require_task(task_id)
@@ -157,65 +265,30 @@ class LiteraturePipeline:
             collection_rows: list[dict[str, Any]] = []
             verification_rows: list[dict[str, Any]] = []
             try:
-                for index, row in enumerate(targets, 1):
-                    paper_id = int(row["id"])
-                    self._emit(task_id, "collect", f"第 {round_num} 轮：下载 {index}/{len(targets)} - {row['title'][:60]}", callback, current_round=round_num)
-                    self.db.update_paper(paper_id, pdf_status="downloading")
-                    paper = Paper.from_record({**row, "local_id": paper_id})
-                    downloaded = collect_paper(paper, self._pdf_dir(task_id), self.config)
-                    for attempt in downloaded.attempts:
-                        self.db.add_attempt(task_id, paper_id, round_num, attempt)
-                    item = {
-                        "paper_id": paper_id,
-                        "title": paper.title,
-                        "authors": paper.authors,
-                        "date": paper.date,
-                        "doi": paper.doi,
-                        "arxiv_id": paper.arxiv_id,
-                        "provider": paper.provider,
-                        "providers": paper.providers,
-                        "venue": paper.venue,
-                        "url": paper.url,
-                        "pdf_url": paper.pdf_url,
-                        "identifiers": paper.identifiers,
-                        **downloaded.to_dict(),
-                    }
-                    collection_rows.append(item)
-                    if not downloaded.ok:
-                        self.db.update_paper(paper_id, pdf_status="failed", verification_status="", pdf_path="")
-                        continue
+                for row in targets:
+                    self.db.update_paper(int(row["id"]), pdf_status="downloading")
 
-                    self.db.update_paper(paper_id, pdf_status="downloaded", pdf_path=downloaded.path)
-                    paper.pdf_path = downloaded.path
-                    verification = verify_pdf(paper, self.config)
-                    successful_attempt = next(
-                        (attempt for attempt in downloaded.attempts if attempt.get("ok")),
-                        {},
-                    )
-                    verification_row = {
-                        "paper_id": paper_id,
-                        "authors": paper.authors,
-                        "date": paper.date,
-                        "doi": paper.doi,
-                        "arxiv_id": paper.arxiv_id,
-                        "provider": paper.provider,
-                        "providers": paper.providers,
-                        "venue": paper.venue,
-                        "url": paper.url,
-                        "pdf_url": paper.pdf_url,
-                        "identifiers": paper.identifiers,
-                        "download_source": downloaded.source,
-                        "download_url": successful_attempt.get("url", ""),
-                        **verification.to_dict(),
+                max_workers = min(self.config.download_concurrency, len(targets))
+                with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="literature-download") as executor:
+                    futures = {
+                        executor.submit(self._collect_one, task_id, round_num, row): row
+                        for row in targets
                     }
-                    verification_rows.append(verification_row)
-                    new_status = "verified" if verification.verdict == "pass" else "failed"
-                    self.db.update_paper(
-                        paper_id,
-                        pdf_status=new_status,
-                        verification_status=verification.verdict,
-                        verification=verification.to_dict(),
-                    )
+                    for completed, future in enumerate(as_completed(futures), 1):
+                        row = futures[future]
+                        item, verification_row = future.result()
+                        collection_rows.append(item)
+                        if verification_row is not None:
+                            verification_rows.append(verification_row)
+                        self._emit(
+                            task_id,
+                            "collect",
+                            f"第 {round_num} 轮：已完成 {completed}/{len(targets)} - {row['title'][:60]}",
+                            callback,
+                            current_round=round_num,
+                        )
+                collection_rows.sort(key=lambda item: int(item.get("paper_id") or 0))
+                verification_rows.sort(key=lambda item: int(item.get("paper_id") or 0))
 
                 round_dir = self._task_dir(task_id) / f"collection_round_{round_num}"
                 collection_path = save_report(
@@ -362,4 +435,9 @@ class LiteraturePipeline:
             "verification_status": row.get("verification_status", ""),
             "pdf_path": row.get("pdf_path", ""),
             "relevance_score": row.get("relevance_score", 0),
+            "relevance_method": row.get("relevance_method", "rules"),
+            "llm_included": row.get("llm_included"),
+            "llm_relevance_score": row.get("llm_relevance_score"),
+            "relevance_reason": row.get("relevance_reason", ""),
+            "source_record": row.get("source_record", {}),
         }

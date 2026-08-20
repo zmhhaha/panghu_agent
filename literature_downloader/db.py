@@ -100,6 +100,11 @@ class Database:
                     verification_status TEXT NOT NULL DEFAULT '',
                     verification_json TEXT NOT NULL DEFAULT '{}',
                     relevance_score REAL NOT NULL DEFAULT 0,
+                    relevance_method TEXT NOT NULL DEFAULT 'rules',
+                    llm_included INTEGER,
+                    llm_relevance_score REAL,
+                    relevance_reason TEXT NOT NULL DEFAULT '',
+                    source_record_json TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     UNIQUE(task_id, identity_key),
@@ -139,6 +144,17 @@ class Database:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
             if "email" not in columns:
                 conn.execute("ALTER TABLE tasks ADD COLUMN email TEXT NOT NULL DEFAULT ''")
+            paper_columns = {row["name"] for row in conn.execute("PRAGMA table_info(papers)").fetchall()}
+            migrations = {
+                "relevance_method": "ALTER TABLE papers ADD COLUMN relevance_method TEXT NOT NULL DEFAULT 'rules'",
+                "llm_included": "ALTER TABLE papers ADD COLUMN llm_included INTEGER",
+                "llm_relevance_score": "ALTER TABLE papers ADD COLUMN llm_relevance_score REAL",
+                "relevance_reason": "ALTER TABLE papers ADD COLUMN relevance_reason TEXT NOT NULL DEFAULT ''",
+                "source_record_json": "ALTER TABLE papers ADD COLUMN source_record_json TEXT NOT NULL DEFAULT '{}'",
+            }
+            for name, statement in migrations.items():
+                if name not in paper_columns:
+                    conn.execute(statement)
 
     @staticmethod
     def _json(value: Any) -> str:
@@ -277,6 +293,11 @@ class Database:
             str(paper.get("verification_status") or ""),
             self._json(paper.get("verification") or {}),
             float(paper.get("relevance_score") or 0),
+            str(paper.get("relevance_method") or "rules"),
+            (None if paper.get("llm_included") is None else int(bool(paper.get("llm_included")))),
+            (None if paper.get("llm_relevance_score") is None else float(paper.get("llm_relevance_score"))),
+            str(paper.get("relevance_reason") or ""),
+            self._json(paper.get("source_record") or {}),
             now,
             now,
         )
@@ -286,8 +307,10 @@ class Database:
                     task_id, identity_key, title, authors, date, doi, arxiv_id, pmid,
                     provider, providers_json, abstract, url, pdf_url, venue,
                     cited_by_count, open_access, identifiers_json, pdf_path, pdf_status,
-                    verification_status, verification_json, relevance_score, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    verification_status, verification_json, relevance_score, relevance_method,
+                    llm_included, llm_relevance_score, relevance_reason, source_record_json,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(task_id, identity_key) DO UPDATE SET
                     title=CASE WHEN excluded.title <> '' THEN excluded.title ELSE papers.title END,
                     authors=CASE WHEN excluded.authors <> '' THEN excluded.authors ELSE papers.authors END,
@@ -299,6 +322,12 @@ class Database:
                     pdf_url=CASE WHEN excluded.pdf_url <> '' THEN excluded.pdf_url ELSE papers.pdf_url END,
                     venue=CASE WHEN excluded.venue <> '' THEN excluded.venue ELSE papers.venue END,
                     cited_by_count=MAX(papers.cited_by_count, excluded.cited_by_count),
+                    relevance_score=excluded.relevance_score,
+                    relevance_method=excluded.relevance_method,
+                    llm_included=excluded.llm_included,
+                    llm_relevance_score=excluded.llm_relevance_score,
+                    relevance_reason=excluded.relevance_reason,
+                    source_record_json=CASE WHEN excluded.source_record_json <> '{}' THEN excluded.source_record_json ELSE papers.source_record_json END,
                     updated_at=excluded.updated_at
                 """,
                 values,
@@ -348,6 +377,7 @@ class Database:
         result["providers"] = json.loads(result.pop("providers_json") or "[]")
         result["identifiers"] = json.loads(result.pop("identifiers_json") or "{}")
         result["verification"] = json.loads(result.pop("verification_json") or "{}")
+        result["source_record"] = json.loads(result.pop("source_record_json") or "{}")
         result["open_access"] = bool(result.get("open_access"))
         return result
 

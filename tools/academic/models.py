@@ -140,6 +140,7 @@ _STOPWORDS = {
     "about", "and", "current", "for", "from", "into", "latest", "of",
     "progress", "recent", "research", "review", "study", "the", "this",
     "with", "以及", "关于", "当前", "目前", "研究", "进展", "综述",
+    "研究进展", "最新进展", "目前难点", "当前难点", "发展方向", "未来方向",
 }
 
 

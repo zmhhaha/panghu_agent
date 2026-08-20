@@ -121,7 +121,17 @@ def _require_transition(task_id: str, allowed: set[str]) -> dict[str, Any]:
 
 @app.get("/literature-health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "db_path": str(settings.db_path), "max_rounds": settings.max_rounds}
+    return {
+        "status": "ok",
+        "db_path": str(settings.db_path),
+        "max_rounds": settings.max_rounds,
+        "search_limit": settings.search_limit,
+        "per_provider": settings.per_provider,
+        "max_search_variants": settings.max_search_variants,
+        "download_concurrency": settings.download_concurrency,
+        "llm_enabled": settings.llm_enabled,
+        "llm_max_candidates": settings.llm_max_candidates,
+    }
 
 
 @app.post("/literature-download")

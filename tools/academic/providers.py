@@ -32,6 +32,16 @@ def search_openalex(query: str, limit: int, *, email: str = "") -> list[PaperRec
         if not title:
             continue
         location = item.get("primary_location") or {}
+        best_location = item.get("best_oa_location") or {}
+        locations = item.get("locations") or []
+        location_candidates = [best_location, location, *locations]
+        landing_url = ""
+        pdf_url = ""
+        for candidate in location_candidates:
+            if not isinstance(candidate, dict):
+                continue
+            landing_url = landing_url or str(candidate.get("landing_page_url") or "")
+            pdf_url = pdf_url or str(candidate.get("pdf_url") or "")
         source = location.get("source") or {}
         inverted = item.get("abstract_inverted_index") or {}
         positions = sorted(
@@ -47,7 +57,7 @@ def search_openalex(query: str, limit: int, *, email: str = "") -> list[PaperRec
             "OpenAlex",
             title=title,
             date=item.get("publication_date"),
-            url=location.get("landing_page_url") or item.get("id") or (f"https://doi.org/{doi}" if doi else ""),
+            url=landing_url or item.get("id") or (f"https://doi.org/{doi}" if doi else ""),
             doi=doi,
             authors=", ".join(
                 str(authorship.get("author", {}).get("display_name") or "")
@@ -57,7 +67,7 @@ def search_openalex(query: str, limit: int, *, email: str = "") -> list[PaperRec
             venue=source.get("display_name"),
             cited_by_count=item.get("cited_by_count"),
             abstract=abstract,
-            pdf_url=location.get("pdf_url"),
+            pdf_url=pdf_url,
             open_access=bool((item.get("open_access") or {}).get("is_oa")),
             identifiers={"openalex": str(item.get("id") or "")},
         ))
@@ -89,6 +99,15 @@ def search_crossref(query: str, limit: int, *, email: str = "") -> list[PaperRec
         if date_parts and date_parts[0]:
             date = "-".join(str(part).zfill(2) for part in date_parts[0][:3])
         doi = normalize_doi(item.get("DOI"))
+        pdf_url = ""
+        for link in item.get("link") or []:
+            if not isinstance(link, dict):
+                continue
+            content_type = str(link.get("content-type") or link.get("content_type") or "").lower()
+            candidate_url = str(link.get("URL") or link.get("url") or "")
+            if "pdf" in content_type or candidate_url.lower().split("?", 1)[0].endswith(".pdf"):
+                pdf_url = candidate_url
+                break
         records.append(make_paper(
             "Crossref",
             type=item.get("type") or "paper",
@@ -103,6 +122,8 @@ def search_crossref(query: str, limit: int, *, email: str = "") -> list[PaperRec
             venue=((item.get("container-title") or [""])[0]),
             cited_by_count=item.get("is-referenced-by-count"),
             abstract=_strip_markup(item.get("abstract")),
+            pdf_url=pdf_url,
+            open_access=bool(pdf_url),
         ))
     return records
 

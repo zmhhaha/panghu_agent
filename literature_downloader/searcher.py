@@ -22,6 +22,8 @@ from tools.academic.query import build_query_variants  # noqa: E402
 
 from .config import Settings, settings  # noqa: E402
 from .db import Database  # noqa: E402
+from .relevance_ranker import rank_candidates  # noqa: E402
+from .search_planner import create_search_plan  # noqa: E402
 
 
 def _tokens(topic: str) -> list[str]:
@@ -32,12 +34,26 @@ def _tokens(topic: str) -> list[str]:
 
 
 def _with_identifiers(paper: dict[str, Any]) -> dict[str, Any]:
+    if not paper.get("source_record"):
+        paper["source_record"] = {
+            key: value for key, value in paper.items()
+            if key not in {"source_record", "pdf_path", "pdf_status", "verification_status"}
+        }
     identifiers = dict(paper.get("identifiers") or {})
     if identifiers.get("arxiv") and not paper.get("arxiv_id"):
         paper["arxiv_id"] = identifiers["arxiv"]
     if identifiers.get("pmid") and not paper.get("pmid"):
         paper["pmid"] = identifiers["pmid"]
     return paper
+
+
+def _is_relevant(record: dict[str, Any]) -> bool:
+    """Reject provider fuzzy matches with no lexical evidence for the topic."""
+    if float(record.get("relevance_score") or 0) <= 0:
+        return False
+    if record.get("relevance_method") == "llm" and record.get("llm_included") is False:
+        return False
+    return True
 
 
 def search_literature(
@@ -59,7 +75,10 @@ def search_literature(
         raise ValueError("topic must not be empty")
     limit = min(max(int(search_limit or config.search_limit), 1), 100)
     per_limit = min(max(int(per_provider or config.per_provider), 1), 25)
-    variants = build_query_variants(topic) or [topic]
+    search_plan = create_search_plan(topic, config=config, target_count=limit, max_variants=config.max_search_variants)
+    variants = [str(value).strip() for value in search_plan.get("query_variants") or [] if str(value).strip()]
+    if not variants:
+        variants = build_query_variants(topic, config.max_search_variants) or [topic]
     selected = providers or ["OpenAlex", "Crossref", "arXiv", "Semantic Scholar"]
 
     local = db.search_local(_tokens(topic), limit=limit)
@@ -78,12 +97,12 @@ def search_literature(
             continue
         rows: list[dict[str, Any]] = []
         provider_errors: list[str] = []
-        for variant in variants[:2]:
+        for variant in variants[:config.max_search_variants]:
             try:
                 rows.extend(functions[provider](variant))
             except Exception as exc:
                 provider_errors.append(f"{type(exc).__name__}: {str(exc)[:160]}")
-        api_results[provider] = [dict(row) for row in deduplicate_papers(rows)]
+        api_results[provider] = [_with_identifiers(dict(row)) for row in deduplicate_papers(rows)]
         if provider_errors:
             errors[provider] = "; ".join(provider_errors)
 
@@ -92,11 +111,35 @@ def search_literature(
         all_records.append(_with_identifiers(dict(row)))
     for provider_rows in api_results.values():
         all_records.extend(_with_identifiers(dict(row)) for row in provider_rows)
-    papers = rank_papers(deduplicate_papers(all_records), variants)[:limit]
-    need_download = [paper for paper in papers if not paper.get("pdf_path") or paper.get("pdf_status") not in {"verified", "downloaded"}]
+    ranked = rank_papers(deduplicate_papers(all_records), variants)
+    ranked, relevance = rank_candidates(ranked, topic=topic, plan=search_plan, config=config)
+    # Provider APIs often return newest/highly cited records even when the
+    # query match is empty. Never turn those zero-score fuzzy matches into
+    # download targets; an empty result is safer than downloading another
+    # topic's paper.
+    papers = [paper for paper in ranked if _is_relevant(paper)][:limit]
+    need_download = [
+        paper for paper in papers
+        if not paper.get("pdf_path") or paper.get("pdf_status") not in {"verified", "downloaded"}
+    ]
+    # Prefer records that expose a legal/open PDF route. This keeps the larger
+    # candidate pool useful: direct PDF, arXiv and OA records are attempted
+    # before metadata-only/paywalled records that commonly end in 403/HTML.
+    need_download.sort(
+        key=lambda paper: (
+            bool(paper.get("pdf_url")),
+            bool((paper.get("identifiers") or {}).get("arxiv") or paper.get("arxiv_id")),
+            bool(paper.get("open_access")),
+            bool(paper.get("doi")),
+            float(paper.get("relevance_score") or 0),
+        ),
+        reverse=True,
+    )
     return {
         "topic": topic,
         "query_variants": variants,
+        "search_plan": search_plan,
+        "relevance": relevance,
         "local_results": local,
         "api_results": api_results,
         "papers": papers,

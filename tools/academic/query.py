@@ -30,7 +30,7 @@ _GOAL_PHRASES = (
 
 
 def _clean(value: str) -> str:
-    value = re.sub(r"[，。；：、（）()]+", " ", value)
+    value = re.sub(r"[，。；：、（）()_\\-]+", " ", value)
     return re.sub(r"\s+", " ", value).strip(" ,;:")
 
 
@@ -60,6 +60,29 @@ def build_query_variants(topic: str, max_variants: int = 4) -> list[str]:
         normalized = _clean(value)
         if normalized and normalized.lower() not in {v.lower() for v in candidates}:
             candidates.append(normalized)
+
+    # EvidenceGate-new uses a domain-specific InP etching expansion. Preserve
+    # the same high-recall variants here instead of sending punctuation and
+    # Chinese goal phrases verbatim to OpenAlex/Crossref.
+    inp_topic = bool(re.search(r"inp|indium phosphide|磷化铟", raw, flags=re.I))
+    etching_topic = bool(re.search(r"dry etching|plasma etching|reactive ion etching|干法刻蚀|等离子体刻蚀|刻蚀", translated, flags=re.I))
+    if inp_topic and etching_topic:
+        inp_variants = [
+            "InP plasma etching",
+            "indium phosphide plasma etching",
+            "InP ICP etching",
+            "InP ICP-RIE etching",
+            "InP RIE",
+            "indium phosphide reactive ion etching",
+            "InP chlorine plasma etching",
+            "InP Cl2 etching",
+            "InP CH4 H2 etching",
+            "InP waveguide etching",
+            "InP photonic crystal etching",
+            "InP surface grating ICP etching",
+            "InP dry etching",
+        ]
+        return inp_variants[:max(1, max_variants)]
 
     if core.lower() != raw.lower():
         add(core)

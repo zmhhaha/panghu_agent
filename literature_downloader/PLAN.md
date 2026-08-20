@@ -4,10 +4,11 @@
 
 在 `panghu_agent` 下实现一个独立的文献下载工具，完成以下流程：
 
-1. 文献检索：查询本地文献库和外部学术 API，生成待下载清单。
-2. 文献收集：按来源优先级逐篇下载 PDF，支持多轮重试，并为每轮生成收集报告。
-3. 文献检验：逐篇检查 PDF 文件大小和文本可读性，生成校验报告。
-4. 最终提供 PDF 下载按钮和 Markdown 报告下载入口。
+1. 文献检索专家 Agent：理解研究主题，生成可追溯的检索计划、术语扩展和筛选标准。
+2. 文献检索员：依据检索计划查询本地文献库和外部学术 API，生成经过相关性筛选的待下载清单。
+3. 文献收集：按来源优先级逐篇下载 PDF，支持多轮重试，并为每轮生成收集报告。
+4. 文献检验：逐篇检查 PDF 文件大小和文本可读性，生成校验报告。
+5. 最终提供 PDF 下载按钮和 Markdown 报告下载入口。
 
 本模块第一版不改变现有 `scientific_agent` 的综述流程，而是作为独立的下载服务实现。
 
@@ -39,13 +40,16 @@ literature_downloader/
 ├── PLAN.md                    # 本计划
 ├── __init__.py
 ├── config.py                  # 路径、超时、重试次数、API 配置
+├── k8s/configmap.yaml         # PROVIDER、DeepSeek 非敏感配置和 LLM 开关
 ├── models.py                  # 文献、任务、下载尝试、校验结果模型
 ├── db.py                      # SQLite 初始化、查询和状态更新
+├── search_planner.py          # LLM 文献检索专家：查询计划和术语扩展
+├── relevance_ranker.py        # LLM 可选的批量相关性重排
 ├── searcher.py                # 本地库 + 外部 API 检索
 ├── collector.py               # PDF 下载和多轮重试
 ├── verifier.py                # PDF 文件和文本校验
 ├── reports.py                 # EvidenceGate-new 风格报告生成
-├── pipeline.py                # 三阶段流水线和状态机
+├── pipeline.py                # 检索专家、检索员、收集、检验流水线和状态机
 ├── api.py                     # FastAPI 接口
 ├── ../app/ui/literature_downloader.py  # 通用 UI 镜像注入的 Gradio 页面
 └── tests/
@@ -76,7 +80,38 @@ literature_downloader/
 
 去重优先级为 DOI、arXiv ID、标准化标题加作者。数据库操作需要幂等，重复提交同一任务不能产生重复文献记录。
 
-## 5. 阶段一：文献检索员
+## 5. 阶段一：文献检索专家 Agent
+
+文献检索专家是检索阶段的轻量 Agent，负责把自然语言研究主题转换为可执行、可审计的检索计划。它不直接访问出版社页面，不直接下载 PDF，也不允许凭空生成 DOI、文献记录或下载地址。
+
+### 输入
+
+- 用户研究主题
+- 可选文献数量、年份范围和语言偏好
+- 可选领域或排除条件
+
+### LLM 输出
+
+LLM 必须输出结构化 JSON，至少包含：
+
+- `core_concepts`：核心概念及其重要性
+- `synonyms`：中英文同义词、缩写、材料和方法术语
+- `query_variants`：面向 OpenAlex、Crossref、arXiv 等来源的查询式
+- `inclusion_criteria`：纳入标准
+- `exclusion_criteria`：排除标准
+- `target_count`：目标候选数量
+
+例如 InP 干法刻蚀主题应能扩展出 `InP plasma etching`、`indium phosphide ICP-RIE`、`Cl2 InP etching`、`CH4/H2 InP etching`、`InP waveguide etching` 等术语，而不是只重复用户原句。
+
+### 约束和降级
+
+1. 使用统一 LLM 配置（`PROVIDER`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL` 及对应 API Key），不新增独立的 OAuth 或 Semantic Scholar 密钥要求。
+2. LLM 返回必须经过 JSON Schema 校验；格式错误、超时、限流或模型不可用时，自动回退到 `searcher.py` 内置的规则查询变体。
+3. 同一主题的检索计划可缓存，缓存键至少包含规范化主题、年份范围、目标数量和模型版本。
+4. 检索计划必须写入检索报告，记录模型是否启用、模型标识、生成时间、原始主题和最终采用的查询式。
+5. LLM 生成的术语只能用于检索和筛选，不能覆盖 API 返回的标题、作者、DOI、arXiv ID、元数据 URL 或 PDF URL。
+
+## 6. 阶段二：文献检索员
 
 ### 输入
 
@@ -86,30 +121,41 @@ literature_downloader/
 
 ### 流程
 
-1. 对主题做关键词提取、同义词扩展和查询变体生成。
+1. 调用文献检索专家 Agent 获取检索计划；不可用时使用内置规则计划。
 2. 先查本地 SQLite 文献库。
-3. 查询 OpenAlex、Crossref、arXiv。
-4. 使用 Semantic Scholar 作为补充来源。
-5. 统一外部 API 返回的字段格式。
-6. 合并结果并去重。
-7. 标记本地已验证文献和需要下载 PDF 的文献。
+3. 使用计划中的查询式查询 OpenAlex、Crossref、arXiv。
+4. 使用 Semantic Scholar 作为补充来源（无需 API Key 时仅调用公开可用能力）。
+5. 统一外部 API 返回的字段格式，并保留原始来源数据。
+6. 合并结果并按 DOI、arXiv ID 或规范化标题去重。
+7. 对 API 返回的候选文献执行相关性重排；LLM 可用时批量输出 `relevance_score`、纳入/排除结果和理由，LLM 不可用时使用规则评分。
+8. 标记本地已验证文献和需要下载 PDF 的文献。
 
 ### 输出
 
 - 检索统计：总数、本地命中数、各 API 命中数、待下载数。
-- 检索报告：记录主题、查询变体、各来源结果和错误；每篇文献必须保留来源数据库、DOI/arXiv ID、元数据 URL、公开 PDF URL 和本地 PDF 状态。
+- 检索报告：记录主题、检索专家计划、LLM 配置和降级状态、查询变体、纳入/排除标准、各来源结果和错误；每篇文献必须保留来源数据库、DOI/arXiv ID、元数据 URL、公开 PDF URL、本地 PDF 状态、相关性评分和筛选理由。
 - `need_to_download` 清单：标题、作者、DOI、arXiv ID、来源和 URL。
+
+检索结果必须通过查询词相关性门槛；仅命中“研究进展”等泛化词而未命中主题术语的记录不得进入待下载清单，防止不同主题任务之间串入文献。
 
 检索完成后由后台流水线自动进入文献收集；`waiting:search_approval` 仅作为旧任务的持久化兼容状态，新任务不会等待用户确认。
 
-## 6. 阶段二：文献收集专家
+### 相关性重排规则
+
+- LLM 只能基于 API 返回的标题、摘要、作者、年份、DOI、来源和查询命中词进行判断。
+- 缺少摘要或元数据不完整时降低置信度，不允许模型自行补写缺失字段。
+- 原始 API 记录和 LLM 判断同时保存，确保可以复核模型是否误筛。
+- 仅命中“研究进展”等泛化词、未命中主题核心术语或纳入标准的记录不得进入待下载清单。
+
+## 7. 阶段三：文献收集专家
 
 每篇文献按照以下顺序尝试获取 PDF：
 
 1. arXiv 直接 PDF。
-2. DOI 跳转或 Unpaywall 开放获取地址。
-3. Semantic Scholar Open Access 地址。
-4. 文献元数据中已有的 PDF URL。
+2. 检索结果中已有的公开 PDF URL。
+3. DOI 跳转或 Unpaywall 开放获取地址。
+4. Semantic Scholar Open Access 地址（仅在已有 DOI 或 Semantic Scholar ID 时查询）。
+5. 文献元数据详情 URL（仅作为最后回退，并校验是否确实返回 PDF）。
 
 每种策略失败后记录原因并继续尝试下一种策略。下载时先写入临时文件，确认响应为 PDF 且文件完整后再移动到正式目录。
 
@@ -131,7 +177,7 @@ data/reports/<task_id>/collection_round_1/
 
 收集报告沿用 EvidenceGate-new 标准，包含尝试总数、成功数量、失败数量、文献元数据、实际下载来源、每次尝试的 URL、路径、文件大小、失败原因和总下载量。服务器本地路径只作为产物位置，不能替代来源 URL。
 
-## 7. 阶段三：文献检察人员
+## 8. 阶段四：文献检察人员
 
 对每个下载成功的 PDF 逐篇执行以下检查：
 
@@ -150,7 +196,7 @@ data/reports/<task_id>/collection_round_1/
 
 校验报告沿用 EvidenceGate-new 标准，列出检查总数、通过、失败、存疑文献及对应备注，并关联原始来源 URL、实际下载 URL 和本地文件路径。只有 `pass` 的文献才能写入 `verified` 状态。
 
-## 8. 报告设计
+## 9. 报告设计
 
 报告使用 Markdown，并保留 EvidenceGate-new 的文件头格式：
 
@@ -170,7 +216,9 @@ generated_at: <ISO timestamp>
 - `verification`：单轮校验报告
 - `final_download`：最终汇总报告
 
-最终汇总报告必须按“文献检索员 -> 文献收集专家 -> 文献检察人员 -> 最终通过校验文献”的顺序呈现来源链和处理结果，不能只列服务器本地 PDF 路径。
+检索报告需单独呈现“文献检索专家 Agent”部分和“文献检索员”部分：前者说明主题拆解、查询计划、纳入/排除标准及 LLM 状态，后者说明实际调用的数据库、返回数量、去重结果和最终清单。每篇候选文献同时保留原始 API 字段和相关性重排结果，不能只保留模型的摘要性结论。
+
+最终汇总报告必须按“文献检索专家 Agent -> 文献检索员 -> 文献收集专家 -> 文献检察人员 -> 最终通过校验文献”的顺序呈现来源链和处理结果，不能只列服务器本地 PDF 路径。
 
 最终汇总报告需要包含：
 
@@ -180,7 +228,7 @@ generated_at: <ISO timestamp>
 - 每篇文献的 PDF 路径、来源和大小
 - 报告文件和 PDF 压缩包路径
 
-## 9. API 规划
+## 10. API 规划
 
 - `POST /literature-download`：创建下载任务。
 - `GET /literature-download/{task_id}`：查询任务状态和实时进度。
@@ -192,7 +240,9 @@ generated_at: <ISO timestamp>
 
 后台任务需要支持服务重启后的恢复，并避免同一用户重复启动冲突任务。
 
-## 10. UI 规划
+默认检索最多保留 100 篇候选文献，每个查询变体和外部来源最多返回 20 篇，主题最多使用 6 个查询变体；收集阶段默认并发下载和校验 6 篇，可通过 `LITERATURE_SEARCH_LIMIT`、`LITERATURE_PER_PROVIDER`、`LITERATURE_MAX_SEARCH_VARIANTS` 和 `LITERATURE_DOWNLOAD_CONCURRENCY` 调整。
+
+## 11. UI 规划
 
 使用 Gradio 实现以下界面流程：
 
@@ -204,35 +254,43 @@ generated_at: <ISO timestamp>
    - Markdown 报告下载按钮。
 5. 历史报告页仅查询任务状态和任务 ID；复制任务 ID 到新任务页并刷新即可恢复当前任务下载入口。
 
-## 11. 测试计划
+## 12. 测试计划
 
 1. 文献字段标准化和去重测试。
-2. 本地库查询和状态更新测试。
-3. OpenAlex、Crossref、arXiv、Semantic Scholar 响应解析测试。
-4. arXiv、DOI、Semantic Scholar fallback 下载测试，使用 mock HTTP。
-5. 有效 PDF、损坏 PDF、过小文件、HTML 错误页和扫描版 PDF 校验测试。
-6. 多轮重试状态机和中止流程测试。
-7. 报告 Markdown 格式固定样例测试。
-8. API 创建、轮询、自动流水线和下载测试。
-9. 临时 SQLite 和临时 PDF 目录下的端到端测试。
+2. 文献检索专家 Agent 的 JSON Schema、查询计划缓存和主题术语扩展测试。
+3. LLM 超时、格式错误、限流和未配置时的规则回退测试。
+4. 本地库查询和状态更新测试。
+5. OpenAlex、Crossref、arXiv、Semantic Scholar 响应解析测试。
+6. LLM 相关性重排、缺少摘要降置信度和原始字段不可覆盖测试。
+7. arXiv、DOI、Semantic Scholar fallback 下载测试，使用 mock HTTP。
+8. 有效 PDF、损坏 PDF、过小文件、HTML 错误页和扫描版 PDF 校验测试。
+9. 多轮重试状态机和中止流程测试。
+10. 检索、收集、校验报告 Markdown 格式和 LLM 审计字段测试。
+11. API 创建、轮询、自动流水线和下载测试。
+12. 临时 SQLite 和临时 PDF 目录下的端到端测试。
 
 测试不依赖真实学术 API；网络集成测试单独标记并支持手动运行。
 
-## 12. 实施顺序
+## 13. 实施顺序
 
 1. 创建模块目录、配置和 SQLite 数据层。
-2. 适配本地检索及 OpenAlex、Crossref、arXiv、Semantic Scholar 查询。
-3. 实现 PDF 下载策略和单轮收集。
-4. 实现 PDF 校验和 EvidenceGate-new 风格报告。
-5. 串联三阶段流水线，加入自动多轮重试状态机。
-6. 接入 FastAPI 后台任务和状态查询。
-7. 接入 Gradio UI、PDF 下载按钮和报告下载按钮。
-8. 完成单元测试、API 测试和本地端到端验证。
-9. 按现有 Agent 约定接入 Kubernetes：专属 API 镜像基于 `agent-api-base`，UI 复用通用 `agent-ui` 镜像和 UI Deployment。
+2. 接入统一 LLM 配置，实现检索专家 Agent 的结构化查询计划、缓存和规则回退。
+3. 适配本地检索及 OpenAlex、Crossref、arXiv、Semantic Scholar 查询。
+4. 实现候选文献批量相关性重排，并保存原始 API 记录和模型判断。
+5. 实现 PDF 下载策略和单轮收集。
+6. 实现 PDF 校验和 EvidenceGate-new 风格报告。
+7. 串联检索专家、检索员、收集专家和检察人员，加入自动多轮重试状态机。
+8. 接入 FastAPI 后台任务和状态查询。
+9. 接入 Gradio UI、PDF 下载按钮和报告下载按钮。
+10. 完成单元测试、API 测试和本地端到端验证。
+11. 按现有 Agent 约定接入 Kubernetes：专属 API 镜像基于 `agent-api-base`，UI 复用通用 `agent-ui` 镜像和 UI Deployment。
 
-## 13. 完成标准
+## 14. 完成标准
 
 - 能从主题生成去重后的待下载清单。
+- 配置 LLM 时，能生成结构化检索计划、术语扩展、纳入/排除标准，并对候选文献进行批量相关性重排。
+- 未配置或无法调用 LLM 时，能自动回退到规则查询和规则相关性筛选，主流程仍可完成。
+- 检索报告能区分检索专家的计划与检索员的实际 API 结果，并记录模型、输入、输出和降级状态。
 - 至少支持 arXiv、DOI、Semantic Scholar 三种下载来源。
 - 下载失败可以进入下一轮，并保留每轮报告。
 - PDF 校验结果能够区分通过、失败和存疑。

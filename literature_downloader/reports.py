@@ -56,6 +56,18 @@ def _metadata_lines(paper: dict[str, Any], *, include_abstract: bool = False) ->
     if include_abstract and paper.get("abstract"):
         abstract = " ".join(str(paper["abstract"]).split())
         lines.append(f"- 摘要: {abstract[:800]}{'...' if len(abstract) > 800 else ''}")
+    if paper.get("relevance_score") is not None:
+        lines.append(f"- 规则相关性评分: {_text(paper.get('relevance_score'), '0')}")
+    if paper.get("llm_relevance_score") is not None:
+        lines.append(f"- LLM 相关性评分: {_text(paper.get('llm_relevance_score'), 'N/A')}")
+    if paper.get("relevance_method"):
+        lines.append(f"- 相关性判断方式: {_text(paper.get('relevance_method'))}")
+    if paper.get("relevance_reason"):
+        lines.append(f"- 相关性判断理由: {_text(paper.get('relevance_reason'))}")
+    source_record = paper.get("source_record") or {}
+    if isinstance(source_record, dict) and source_record:
+        compact_source = json.dumps(source_record, ensure_ascii=False, default=str, separators=(",", ":"))
+        lines.append(f"- 原始 API 字段摘要: `{compact_source[:1200]}`")
     return lines
 
 
@@ -84,6 +96,8 @@ def _successful_attempt_url(row: dict[str, Any]) -> str:
 
 
 def format_search_report(result: dict[str, Any]) -> str:
+    plan = result.get("search_plan") or {}
+    llm = plan.get("llm") or {}
     lines = [
         "# 文献检索报告", "", f"**研究主题**: {result['topic']}",
         f"**查询变体**: {', '.join(result.get('query_variants', [])) or 'N/A'}",
@@ -91,6 +105,27 @@ def format_search_report(result: dict[str, Any]) -> str:
         f"**本地库命中**: {result.get('local_hits', 0)} 篇",
         f"**待下载**: {len(result.get('need_download', []))} 篇", "",
     ]
+
+    lines.extend([
+        "## 文献检索专家 Agent", "",
+        f"- 状态: {_text(llm.get('status'), 'rules')}",
+        f"- 是否使用 LLM: {'是' if llm.get('used') else '否'}",
+        f"- Provider: {_text(llm.get('provider'))}",
+        f"- 模型: {_text(llm.get('model'))}",
+        f"- 说明: {_text(llm.get('reason'))}",
+        f"- 核心概念: {_text(', '.join(str(item) for item in plan.get('core_concepts') or []))}",
+        f"- 同义词和扩展术语: {_text(', '.join(str(item) for item in plan.get('synonyms') or []))}",
+        "- 纳入标准:",
+    ])
+    lines.extend(f"  - {item}" for item in plan.get("inclusion_criteria") or [])
+    lines.append("- 排除标准:")
+    lines.extend(f"  - {item}" for item in plan.get("exclusion_criteria") or [])
+    lines.extend([
+        "",
+        "## 文献检索员", "",
+        f"- 相关性重排: {_text((result.get('relevance') or {}).get('status'), 'rules')}",
+        f"- LLM 判断文献数: {(result.get('relevance') or {}).get('judged', 0)}", "",
+    ])
 
     local_rows = result.get("local_results") or []
     lines.extend(["## 本地文献库命中", ""])
@@ -216,11 +251,13 @@ def format_final_report(
 
     if search:
         lines.extend([
-            "## 一、文献检索员报告", "",
+            "## 一、文献检索专家 Agent 与文献检索员报告", "",
             f"- 检索结果总数: {search.get('total', len(search.get('papers') or []))} 篇",
             f"- 本地库命中: {search.get('local_hits', 0)} 篇",
             f"- 待下载: {search.get('need_download', 0)} 篇",
             f"- 检索来源统计: {_text(', '.join(f'{key}={value}' for key, value in (search.get('by_provider') or {}).items()))}",
+            f"- 检索专家状态: {_text((search.get('search_plan') or {}).get('llm', {}).get('status'), 'rules') if isinstance(search.get('search_plan'), dict) else 'rules'}",
+            f"- 相关性重排状态: {_text((search.get('relevance') or {}).get('status'), 'rules')}",
             "",
             "### 去重后的文献及来源",
             "",

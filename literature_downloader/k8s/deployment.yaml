@@ -42,19 +42,44 @@ spec:
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: agent-config
           env:
             - name: LITERATURE_DATA_DIR
               value: /data/literature
             - name: LITERATURE_MAX_ROUNDS
               value: "3"
             - name: LITERATURE_SEARCH_LIMIT
-              value: "30"
+              value: "100"
             - name: LITERATURE_PER_PROVIDER
-              value: "10"
+              value: "20"
+            - name: LITERATURE_MAX_SEARCH_VARIANTS
+              value: "6"
+            - name: LITERATURE_DOWNLOAD_CONCURRENCY
+              value: "6"
             # Contact identity for OpenAlex/Crossref polite API access.
             # This is not a secret and is intentionally kept out of Vault.
             - name: ACADEMIC_CONTACT_EMAIL
               value: panghuer001@163.com
+            - name: DEEPSEEK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secret
+                  key: DEEPSEEK_API_KEY
+                  optional: true
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secret
+                  key: OPENAI_API_KEY
+                  optional: true
+            - name: CUSTOM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secret
+                  key: CUSTOM_API_KEY
+                  optional: true
           volumeMounts:
             - name: data
               mountPath: /data/literature
