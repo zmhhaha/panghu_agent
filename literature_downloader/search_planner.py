@@ -22,6 +22,9 @@ from tools.llm_config import REQUIRED_API_KEYS, get_llm_config_error, get_provid
 from .config import Settings, settings
 
 
+SEARCH_PLAN_SCHEMA_VERSION = 2
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -171,7 +174,7 @@ def _fallback_plan(topic: str, max_variants: int, target_count: int, reason: str
 
 
 def _cache_path(config: Settings, topic: str, max_variants: int, target_count: int, model: str) -> Path:
-    key = "|".join((topic.strip().lower(), str(max_variants), str(target_count), model))
+    key = "|".join((str(SEARCH_PLAN_SCHEMA_VERSION), topic.strip().lower(), str(max_variants), str(target_count), model))
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
     return config.data_dir / "search_plans" / f"{digest}.json"
 
@@ -263,7 +266,7 @@ def _validate_payload(payload: Any, topic: str, max_variants: int, target_count:
     except (TypeError, ValueError):
         requested_target = target_count
     return {
-        "version": 1,
+        "version": SEARCH_PLAN_SCHEMA_VERSION,
         "topic": topic,
         "core_concepts": concepts,
         "synonyms": synonyms,
@@ -319,6 +322,17 @@ def create_search_plan(
                 "target_count": target,
                 "max_query_variants": variants_limit,
                 "scope_requirements_instruction": "Return required concept groups. Each group must have a name, literal terms/synonyms, and required=true when every included paper must mention that concept in title, abstract, or venue.",
+                "output_schema": {
+                    "core_concepts": ["..."],
+                    "synonyms": ["..."],
+                    "query_variants": ["..."],
+                    "inclusion_criteria": ["..."],
+                    "exclusion_criteria": ["..."],
+                    "scope_requirements": [
+                        {"name": "concept group", "terms": ["literal term", "synonym"], "required": True}
+                    ],
+                    "target_count": target,
+                },
                 "required_fields": [
                     "core_concepts", "synonyms", "query_variants",
                     "inclusion_criteria", "exclusion_criteria",

@@ -244,7 +244,7 @@ generated_at: <ISO timestamp>
 - `GET /literature-download/{task_id}/report/download`：下载 Markdown 报告。
 - `GET /literature-download/{task_id}/files/download`：下载已通过校验的 PDF ZIP。
 
-后台任务需要支持服务重启后的恢复，并避免同一用户重复启动冲突任务。
+后台任务需要支持服务重启后的恢复；不同任务始终按 `task_id` 隔离，允许同一用户并行提交多个任务。
 
 默认检索最多保留 100 篇候选文献，每个查询变体和外部来源最多返回 20 篇，主题最多使用 6 个查询变体；收集阶段默认并发下载和校验 6 篇，可通过 `LITERATURE_SEARCH_LIMIT`、`LITERATURE_PER_PROVIDER`、`LITERATURE_MAX_SEARCH_VARIANTS` 和 `LITERATURE_DOWNLOAD_CONCURRENCY` 调整。
 

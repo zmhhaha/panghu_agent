@@ -139,14 +139,9 @@ def create_download_task(request: DownloadRequest) -> dict[str, Any]:
     email = request.email.strip()
     if email and not _is_email(email):
         raise HTTPException(status_code=422, detail="请输入有效的邮箱地址")
-    owner = request.user_id.strip() or email
+    # Task identity, rather than user identity, is the isolation boundary.
+    # Multiple tasks from the same user may run independently.
     with _submission_lock:
-        active = pipeline.db.get_active_task(owner)
-        if active:
-            raise HTTPException(
-                status_code=429,
-                detail=f"您已有任务正在执行（{str(active['id'])[:8]}），请等待完成后再提交新的任务",
-            )
         task_id = pipeline.create_task(
             request.topic,
             request.max_rounds,

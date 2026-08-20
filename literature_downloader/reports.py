@@ -266,6 +266,7 @@ def format_final_report(
             f"- 待下载: {search.get('need_download', 0)} 篇",
             f"- 检索来源统计: {_text(', '.join(f'{key}={value}' for key, value in (search.get('by_provider') or {}).items()))}",
             f"- 检索专家状态: {_text((search.get('search_plan') or {}).get('llm', {}).get('status'), 'rules') if isinstance(search.get('search_plan'), dict) else 'rules'}",
+            f"- 检索专家说明: {_text((search.get('search_plan') or {}).get('llm', {}).get('reason')) if isinstance(search.get('search_plan'), dict) else 'N/A'}",
             f"- 相关性重排状态: {_text((search.get('relevance') or {}).get('status'), 'rules')}",
             "",
             "### 去重后的文献及来源",
