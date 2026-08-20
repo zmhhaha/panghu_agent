@@ -127,8 +127,22 @@ class LLMJsonClient:
         return json.loads(text)
 
 
+def _generic_query_variants(topic: str, max_variants: int) -> list[str]:
+    """Expand a topic using only the shared lexical query builder."""
+    variants: list[str] = []
+
+    def add(value: str) -> None:
+        value = str(value or "").strip()
+        if value and value.lower() not in {item.lower() for item in variants}:
+            variants.append(value)
+
+    for value in build_query_variants(topic, max_variants):
+        add(value)
+    return variants[:max(1, max_variants)]
+
+
 def _fallback_plan(topic: str, max_variants: int, target_count: int, reason: str = "") -> dict[str, Any]:
-    variants = build_query_variants(topic, max_variants) or [topic.strip()]
+    variants = _generic_query_variants(topic, max_variants) or [topic.strip()]
     return {
         "version": 1,
         "topic": topic,
@@ -137,6 +151,11 @@ def _fallback_plan(topic: str, max_variants: int, target_count: int, reason: str
         "query_variants": variants[:max_variants],
         "inclusion_criteria": ["标题或摘要明确涉及研究主题核心概念", "来自受支持的学术 API 且保留原始元数据"],
         "exclusion_criteria": ["仅命中泛化词而未命中主题术语", "标题和摘要均无法确认与主题相关"],
+        "scope_requirements": [],
+        "scope_filtering": {
+            "active": False,
+            "reason": "LLM scope_requirements unavailable; generic lexical filtering only",
+        },
         "target_count": target_count,
         "llm": {
             "enabled": False,
@@ -170,6 +189,60 @@ def _clean_list(value: Any, limit: int = 20) -> list[str]:
     return result
 
 
+def _clean_scope_requirements(value: Any, limit: int = 12) -> list[dict[str, Any]]:
+    """Normalize task-level scope groups returned by the retrieval expert.
+
+    Terms are opaque vocabulary supplied by the model. The service does not
+    know which materials, processes, diseases, or methods belong to a topic.
+    """
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
+            continue
+        terms = _clean_list(item.get("terms") or item.get("keywords") or item.get("synonyms"), 30)
+        if not terms:
+            continue
+        name = str(item.get("name") or item.get("label") or f"group_{index + 1}").strip()[:120]
+        required_value = item.get("required", True)
+        if isinstance(required_value, str):
+            required = required_value.strip().lower() not in {"0", "false", "no", "optional"}
+        else:
+            required = bool(required_value)
+        result.append({"name": name, "terms": terms, "required": required})
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _term_matches(text: str, term: str) -> bool:
+    term = str(term or "").strip()
+    if not term:
+        return False
+    # Literal matching avoids interpreting model vocabulary as executable regex.
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9+._-]*", term):
+        pattern = rf"(?<![A-Za-z0-9]){re.escape(term)}(?![A-Za-z0-9])"
+        return re.search(pattern, text, flags=re.IGNORECASE) is not None
+    return term.casefold() in text.casefold()
+
+
+def matches_plan_scope(record: dict[str, Any], plan: dict[str, Any]) -> bool:
+    """Apply only required scope groups supplied by the current LLM plan."""
+    scope = plan.get("scope_requirements")
+    llm = plan.get("llm") or {}
+    if not llm.get("used") or not isinstance(scope, list):
+        return True
+    text = " ".join(str(record.get(field) or "") for field in ("title", "abstract", "venue"))
+    for group in scope:
+        if not isinstance(group, dict) or not group.get("required", True):
+            continue
+        terms = group.get("terms") or []
+        if not any(_term_matches(text, term) for term in terms):
+            return False
+    return True
+
+
 def _validate_payload(payload: Any, topic: str, max_variants: int, target_count: int) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("LLM search plan must be a JSON object")
@@ -182,6 +255,9 @@ def _validate_payload(payload: Any, topic: str, max_variants: int, target_count:
     exclusion = _clean_list(payload.get("exclusion_criteria"), 20)
     if not inclusion or not exclusion:
         raise ValueError("LLM search plan must include inclusion and exclusion criteria")
+    scope_requirements = _clean_scope_requirements(payload.get("scope_requirements"))
+    if not scope_requirements or not any(group.get("required") for group in scope_requirements):
+        raise ValueError("LLM search plan must include required scope_requirements")
     try:
         requested_target = int(payload.get("target_count") or target_count)
     except (TypeError, ValueError):
@@ -194,6 +270,8 @@ def _validate_payload(payload: Any, topic: str, max_variants: int, target_count:
         "query_variants": variants,
         "inclusion_criteria": inclusion,
         "exclusion_criteria": exclusion,
+        "scope_requirements": scope_requirements,
+        "scope_filtering": {"active": True, "reason": "LLM supplied required scope groups"},
         "target_count": min(max(requested_target, 1), 100),
     }
 
@@ -240,7 +318,12 @@ def create_search_plan(
                 "topic": topic,
                 "target_count": target,
                 "max_query_variants": variants_limit,
-                "required_fields": ["core_concepts", "synonyms", "query_variants", "inclusion_criteria", "exclusion_criteria", "target_count"],
+                "scope_requirements_instruction": "Return required concept groups. Each group must have a name, literal terms/synonyms, and required=true when every included paper must mention that concept in title, abstract, or venue.",
+                "required_fields": [
+                    "core_concepts", "synonyms", "query_variants",
+                    "inclusion_criteria", "exclusion_criteria",
+                    "scope_requirements", "target_count",
+                ],
             },
         )
         plan = _validate_payload(payload, topic, variants_limit, target)

@@ -106,10 +106,16 @@ LLM 必须输出结构化 JSON，至少包含：
 ### 约束和降级
 
 1. 使用统一 LLM 配置（`PROVIDER`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL` 及对应 API Key），不新增独立的 OAuth 或 Semantic Scholar 密钥要求。
-2. LLM 返回必须经过 JSON Schema 校验；格式错误、超时、限流或模型不可用时，自动回退到 `searcher.py` 内置的规则查询变体。
+2. LLM 返回必须经过 JSON Schema 校验；格式错误、超时、限流或模型不可用时，自动回退到通用查询规范化和词法相关性，不启用任何内置领域规则。
 3. 同一主题的检索计划可缓存，缓存键至少包含规范化主题、年份范围、目标数量和模型版本。
 4. 检索计划必须写入检索报告，记录模型是否启用、模型标识、生成时间、原始主题和最终采用的查询式。
 5. LLM 生成的术语只能用于检索和筛选，不能覆盖 API 返回的标题、作者、DOI、arXiv ID、元数据 URL 或 PDF URL。
+
+### 确定性范围规则
+
+- 检索专家 LLM 通过 `scope_requirements` 在每个任务中生成“候选文献必须命中的术语组”。
+- 代码不包含 InP、GaN 或其他单一材料的特殊判断；任务范围由当前 LLM 计划决定。
+- LLM 不可用时严格范围过滤关闭，报告必须明确记录降级状态。
 
 ## 6. 阶段二：文献检索员
 
@@ -298,3 +304,14 @@ generated_at: <ISO timestamp>
 - 用户可以在页面查看并下载最终 Markdown 报告。
 - 用户可以下载所有通过校验的 PDF 压缩包。
 - 任务、文献状态、下载尝试和报告在服务重启后仍然保留。
+## Task-level retrieval scope (current design)
+
+The retrieval expert is responsible for producing topic-specific scope rules
+at runtime. Its JSON plan must include `scope_requirements`, where each group
+contains a name, literal terms or synonyms, and `required`. The searcher and
+the batch relevance ranker consume the same plan for the current task.
+
+There is no built-in subject rule in the service. The deterministic fallback
+only performs domain-neutral query normalization and lexical scoring. If the
+LLM is unavailable or its plan is malformed, strict scope filtering is
+disabled and the reports explicitly record that reduced-precision fallback.

@@ -8,7 +8,7 @@ from unittest.mock import patch
 from literature_downloader.config import Settings
 from literature_downloader.db import Database
 from literature_downloader.relevance_ranker import rank_candidates
-from literature_downloader.search_planner import LLMJsonClient, create_search_plan
+from literature_downloader.search_planner import LLMJsonClient, create_search_plan, matches_plan_scope
 
 
 class FakeClient:
@@ -44,6 +44,10 @@ class LLMSearchTests(unittest.TestCase):
             "query_variants": ["InP plasma etching", "indium phosphide ICP-RIE"],
             "inclusion_criteria": ["主题直接相关"],
             "exclusion_criteria": ["仅命中泛化词"],
+            "scope_requirements": [
+                {"name": "material", "terms": ["InP", "indium phosphide"], "required": True},
+                {"name": "process", "terms": ["dry etching", "plasma etching"], "required": True},
+            ],
             "target_count": 30,
         }
         fake = FakeClient(payload)
@@ -53,6 +57,20 @@ class LLMSearchTests(unittest.TestCase):
         self.assertEqual(first["llm"]["status"], "used")
         self.assertEqual(second["llm"]["status"], "cached")
         self.assertEqual(second["query_variants"], payload["query_variants"])
+        self.assertTrue(second["scope_filtering"]["active"])
+
+    def test_scope_is_generated_plan_data_and_rejects_missing_required_group(self) -> None:
+        plan = {
+            "llm": {"used": True},
+            "scope_requirements": [
+                {"name": "material", "terms": ["InP", "indium phosphide"], "required": True},
+                {"name": "process", "terms": ["dry etching", "plasma etching"], "required": True},
+            ],
+        }
+        self.assertTrue(matches_plan_scope({"title": "InP plasma etching"}, plan))
+        self.assertFalse(matches_plan_scope({"title": "lithium niobate plasma etching"}, plan))
+        fallback = {"llm": {"used": False}, "scope_requirements": plan["scope_requirements"]}
+        self.assertTrue(matches_plan_scope({"title": "lithium niobate plasma etching"}, fallback))
 
     def test_invalid_llm_plan_falls_back(self) -> None:
         root = Path(tempfile.mkdtemp())

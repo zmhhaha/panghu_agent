@@ -104,6 +104,7 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 - `LITERATURE_PER_PROVIDER`：每个查询变体和外部来源默认最多 20 篇。
 - `LITERATURE_MAX_SEARCH_VARIANTS`：每个主题最多使用 6 个查询变体，提高召回率。
 - `LITERATURE_DOWNLOAD_CONCURRENCY`：每轮并发下载和校验数，默认 6；可按服务器带宽和 CPU 调整。下载优先级为 arXiv、检索结果公开 PDF URL、DOI/Unpaywall、Semantic Scholar OA 和最后的详情页 URL。
+- `scope_requirements`：由每次任务的检索专家 LLM 生成的主题范围组；服务不内置材料、工艺或其他领域规则。LLM 不可用时仅使用通用查询规范化和词法相关性，并在报告中标记严格范围过滤未启用。
 - `ACADEMIC_CONTACT_EMAIL`：用于 OpenAlex/Crossref 的联系邮箱，当前固定为 `panghuer001@163.com`，不通过 Vault 管理。
 - 任务通知邮箱：由提交任务时的 `email` 字段提供，仅在任务完成或失败时发送结果通知；不是 Vault 配置项。
 - Semantic Scholar API Key：未配置。系统仍会尝试公开接口，若受限流影响，会在检索报告中记录错误并继续处理其他来源。
@@ -117,3 +118,16 @@ LLM 检索专家是可选增强能力，不改变下载和校验的确定性流�
 - `LITERATURE_LLM_ENABLED`：是否启用 LLM 增强，默认 `true`。
 - `LITERATURE_LLM_TIMEOUT`：单次 LLM 请求超时秒数，默认 30。
 - `LITERATURE_LLM_MAX_CANDIDATES`：单批最多提交给相关性重排的候选数，默认 40。
+### Task-level LLM scope rules
+
+The service does not contain a built-in material, process, disease, or other
+domain rule. When the retrieval expert LLM is available, it must return
+`scope_requirements`: named groups of literal terms and a `required` flag.
+The searcher applies those groups to title, abstract, and venue for the current
+task only. The same plan is sent to the relevance ranker and is preserved in
+the search report.
+
+When the LLM is unavailable or returns an invalid plan, the service uses only
+domain-neutral query normalization and lexical relevance scoring. Strict scope
+filtering is disabled and the report states that precision is reduced; no
+fallback InP or other subject-specific rule is applied.

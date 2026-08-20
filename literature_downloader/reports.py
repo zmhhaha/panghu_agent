@@ -120,6 +120,15 @@ def format_search_report(result: dict[str, Any]) -> str:
     lines.extend(f"  - {item}" for item in plan.get("inclusion_criteria") or [])
     lines.append("- 排除标准:")
     lines.extend(f"  - {item}" for item in plan.get("exclusion_criteria") or [])
+    scope_filtering = plan.get("scope_filtering") or {}
+    lines.append(f"- scope_requirements strict filtering: {'yes' if scope_filtering.get('active') else 'no'}")
+    lines.append(f"- scope note: {_text(scope_filtering.get('reason'))}")
+    lines.append("- LLM-provided scope requirements:")
+    for group in plan.get("scope_requirements") or []:
+        if isinstance(group, dict):
+            required = "required" if group.get("required", True) else "optional"
+            terms = ", ".join(str(term) for term in group.get("terms") or [])
+            lines.append(f"  - {group.get('name') or 'group'} ({required}): {terms}")
     lines.extend([
         "",
         "## 文献检索员", "",

@@ -23,7 +23,7 @@ from tools.academic.query import build_query_variants  # noqa: E402
 from .config import Settings, settings  # noqa: E402
 from .db import Database  # noqa: E402
 from .relevance_ranker import rank_candidates  # noqa: E402
-from .search_planner import create_search_plan  # noqa: E402
+from .search_planner import create_search_plan, matches_plan_scope  # noqa: E402
 
 
 def _tokens(topic: str) -> list[str]:
@@ -53,21 +53,6 @@ def _is_relevant(record: dict[str, Any]) -> bool:
         return False
     if record.get("relevance_method") == "llm" and record.get("llm_included") is False:
         return False
-    return True
-
-
-def _matches_topic_scope(topic: str, record: dict[str, Any]) -> bool:
-    """Apply a conservative domain gate for high-risk broad query terms."""
-    text = " ".join(str(record.get(field) or "") for field in ("title", "abstract", "venue")).lower()
-    normalized_topic = topic.lower()
-    if re.search(r"(?:\binp\b|indium\s+phosphide|磷化铟)", normalized_topic):
-        material = re.search(r"\binp\b|indium\s+phosphide|in(?:ga)?as?p|gainp|磷化铟", text)
-        if not material:
-            return False
-    if re.search(r"(?:dry\s+etch|plasma\s+etch|reactive\s+ion|干法刻蚀|等离子体刻蚀|刻蚀)", normalized_topic):
-        process = re.search(r"dry\s+etch|plasma\s+etch|reactive\s+ion|\bicp(?:-rie)?\b|\brie\b|etching|etch", text)
-        if not process:
-            return False
     return True
 
 
@@ -132,7 +117,10 @@ def search_literature(
     # query match is empty. Never turn those zero-score fuzzy matches into
     # download targets; an empty result is safer than downloading another
     # topic's paper.
-    papers = [paper for paper in ranked if _is_relevant(paper) and _matches_topic_scope(topic, paper)][:limit]
+    papers = [
+        paper for paper in ranked
+        if _is_relevant(paper) and matches_plan_scope(paper, search_plan)
+    ][:limit]
     need_download = [
         paper for paper in papers
         if not paper.get("pdf_path") or paper.get("pdf_status") not in {"verified", "downloaded"}

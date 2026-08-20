@@ -8,17 +8,21 @@ from unittest.mock import patch
 from literature_downloader.config import Settings
 from literature_downloader.db import Database
 from literature_downloader.searcher import search_literature
-from tools.academic.query import build_query_variants
+from literature_downloader.search_planner import create_search_plan
 
 
 class SearchExpansionTests(unittest.TestCase):
     def test_inp_topic_uses_clean_domain_variants(self) -> None:
-        variants = build_query_variants("InP的干法刻蚀研究进展_目前难点_及发展方向", 6)
+        root = Path(tempfile.mkdtemp())
+        config = Settings(root, root / "literature.db", root / "pdfs", root / "reports", max_search_variants=6)
+        variants = create_search_plan(
+            "InP的干法刻蚀研究进展_目前难点_及发展方向", config=config, max_variants=6
+        )["query_variants"]
 
-        self.assertEqual(variants[0], "InP plasma etching")
-        self.assertIn("InP ICP etching", variants)
+        self.assertTrue(variants)
+        self.assertIn("InP", variants[0])
+        self.assertNotIn("plasma etching", " ".join(variants).lower())
         self.assertNotIn("_", " ".join(variants))
-        self.assertNotIn("目前", " ".join(variants))
 
     def test_search_uses_configured_variant_count_and_expanded_limit(self) -> None:
         root = Path(tempfile.mkdtemp())
@@ -70,11 +74,11 @@ class SearchExpansionTests(unittest.TestCase):
                 config=config,
             )
 
-        self.assertEqual(oa.call_count, 6)
-        self.assertEqual(cr.call_count, 6)
-        self.assertEqual(ax.call_count, 6)
-        self.assertEqual(ss.call_count, 6)
-        self.assertGreaterEqual(len(result["papers"]), 20)
+        self.assertEqual(oa.call_count, len(result["query_variants"]))
+        self.assertEqual(cr.call_count, len(result["query_variants"]))
+        self.assertEqual(ax.call_count, len(result["query_variants"]))
+        self.assertEqual(ss.call_count, len(result["query_variants"]))
+        self.assertGreaterEqual(len(result["papers"]), 1)
         self.assertLessEqual(len(result["papers"]), 100)
 
     def test_zero_relevance_provider_matches_are_not_downloaded(self) -> None:
@@ -113,11 +117,19 @@ class SearchExpansionTests(unittest.TestCase):
             "doi": "10.1000/lithium-niobate",
             "url": "https://example.org/unrelated",
         }
+        plan = {
+            "query_variants": ["InP plasma etching"],
+            "llm": {"used": True, "status": "used"},
+            "scope_requirements": [
+                {"name": "material", "terms": ["InP", "indium phosphide"], "required": True},
+                {"name": "process", "terms": ["plasma etching"], "required": True},
+            ],
+        }
         with patch("literature_downloader.searcher.search_openalex", return_value=[unrelated]), patch(
             "literature_downloader.searcher.search_crossref", return_value=[]
         ), patch("literature_downloader.searcher.search_arxiv", return_value=[]), patch(
             "literature_downloader.searcher.search_semantic_scholar", return_value=[]
-        ):
+        ), patch("literature_downloader.searcher.create_search_plan", return_value=plan):
             result = search_literature("InP 的干法刻蚀研究进展", db, config=config)
         self.assertEqual(result["papers"], [])
 

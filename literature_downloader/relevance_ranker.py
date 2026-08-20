@@ -85,6 +85,7 @@ def rank_candidates(
             "你是文献筛选专家。只能根据给出的题目、摘要和元数据判断相关性，不得修改或补写 DOI、作者或 URL。只输出 JSON。",
             {
                 "topic": topic,
+                "scope_requirements": plan.get("scope_requirements", []),
                 "inclusion_criteria": plan.get("inclusion_criteria", []),
                 "exclusion_criteria": plan.get("exclusion_criteria", []),
                 "candidates": candidates,
