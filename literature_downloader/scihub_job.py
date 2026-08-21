@@ -84,6 +84,13 @@ class KubernetesJobClient:
     def create_job(self, namespace: str, manifest: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", f"/apis/batch/v1/namespaces/{namespace}/jobs", manifest)
 
+    def delete_job(self, namespace: str, name: str) -> None:
+        """Delete a finished Job and let Kubernetes garbage-collect its Pod."""
+        self._request(
+            "DELETE",
+            f"/apis/batch/v1/namespaces/{namespace}/jobs/{name}?propagationPolicy=Background",
+        )
+
     def get_job(self, namespace: str, name: str) -> dict[str, Any]:
         return self._request("GET", f"/apis/batch/v1/namespaces/{namespace}/jobs/{name}")
 

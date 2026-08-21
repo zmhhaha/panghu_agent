@@ -72,6 +72,7 @@ class SciHubJobManifestTests(unittest.TestCase):
         task_id = pipeline.create_task("topic", 1)
         db.upsert_paper(task_id, {"title": "Paper", "doi": "10.1000/example", "pdf_status": "pending_download"})
         db.update_task(task_id, status="ready:download")
+        deleted_jobs: list[str] = []
 
         class FakeClient:
             def create_config_map(self, namespace, manifest):
@@ -89,6 +90,9 @@ class SciHubJobManifestTests(unittest.TestCase):
             def delete_config_map(self, namespace, name):
                 return None
 
+            def delete_job(self, namespace, name):
+                deleted_jobs.append(name)
+
         with patch("literature_downloader.pipeline.KubernetesJobClient", FakeClient), patch(
             "literature_downloader.pipeline.verify_pdf",
             return_value=VerificationResult("Paper", "pass", str(shared / "paper.pdf"), 16, 10),
@@ -97,6 +101,7 @@ class SciHubJobManifestTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "completed")
         self.assertEqual(result["collection"]["cumulative_verified"], 1)
+        self.assertEqual(deleted_jobs, [f"scihub-download-{task_id[:12]}-r1"])
         paper = db.list_papers(task_id)[0]
         self.assertEqual(paper["pdf_status"], "verified")
         self.assertTrue(paper["pdf_path"].endswith("paper.pdf"))

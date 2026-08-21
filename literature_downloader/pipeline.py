@@ -552,6 +552,7 @@ class LiteraturePipeline:
             email=self.config.contact_email,
         )
         client = KubernetesJobClient()
+        job_status: dict[str, Any] = {}
         try:
             client.create_config_map(namespace, build_input_config_map(namespace, input_name, identifiers))
             client.create_job(namespace, job)
@@ -566,6 +567,18 @@ class LiteraturePipeline:
                 client.delete_config_map(namespace, input_name)
             except Exception:
                 pass
+            # The downloaded files live on the shared PVC, so the completed
+            # Job and its Pod are no longer needed after the result is ready.
+            # Keep TTL as a cluster-side safety net, but do not rely on the
+            # TTL controller being enabled or healthy.
+            delete_job = getattr(client, "delete_job", None)
+            if callable(delete_job):
+                try:
+                    delete_job(namespace, job_name)
+                except Exception:
+                    # A missing Job or a cleanup failure must not hide the
+                    # already collected PDF result.
+                    pass
 
         job_failed = int((job_status.get("status") or {}).get("failed") or 0) > 0
         root = self.config.scihub_papers_dir / "jobs" / task_id / f"round-{round_num}"

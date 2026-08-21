@@ -117,6 +117,7 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 - `LITERATURE_DOWNLOAD_RETRIES`：同一个 URL 遇到超时、HTTP 429 或 5xx 临时错误时的额外重试次数，默认 2；HTTP 403/405 不会无效重试。
 - `LITERATURE_DOWNLOAD_RETRY_BACKOFF_MS`：临时错误指数退避的初始毫秒数，默认 500。
 - `LITERATURE_DOWNLOAD_REQUEST_INTERVAL_MS`：同一域名两次请求之间的最小间隔，默认 250 毫秒，用于降低触发限流的概率。
+- SciHub Job 完成并读取共享 PVC 结果后会主动删除 Job 和 Pod；`ttlSecondsAfterFinished` 仍作为集群侧兜底清理机制，不影响已保存的 PDF。
 - hybrid 模式中，直链失败后会先显示 `scihub_fallback`（SciHub 备用下载中）；只有直链和 SciHub 都失败时才显示 `failed`。
 - 下载器会解析学术落地页中的 `citation_pdf_url`、`application/pdf` link 和明确的 `.pdf` 链接，并继续校验 PDF 文件签名；HTML 登录页或反爬页面不会被误收为 PDF。
 - `scope_requirements`：由每次任务的检索专家 LLM 生成的主题范围组；服务不内置材料、工艺或其他领域规则。LLM 不可用时仅使用通用查询规范化和词法相关性，并在报告中标记严格范围过滤未启用。
