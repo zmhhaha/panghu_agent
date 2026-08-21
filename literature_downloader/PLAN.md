@@ -71,7 +71,7 @@ literature_downloader/
 - 标题、作者、年份、期刊或会议、摘要
 - DOI、arXiv ID、PMID、原始 URL
 - 检索来源和本地 PDF 路径
-- PDF 状态：`none`、`pending_download`、`downloading`、`downloaded`、`verified`、`failed`
+- PDF 状态：`none`、`pending_download`、`downloading`、`scihub_fallback`、`downloaded`、`verified`、`failed`。`scihub_fallback` 表示直链失败后正在等待或执行 SciHub 备用下载，不代表最终失败。
 - 最近一次错误、更新时间和校验时间
 
 下载尝试记录至少包含：

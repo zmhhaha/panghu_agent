@@ -678,7 +678,7 @@ class LiteraturePipeline:
             if not ready and not started_by_api:
                 raise ValueError(f"task status does not allow collection: {task['status']}")
             round_num = int(task["current_round"] or 0) + 1
-            targets = self.db.list_papers(task_id, ("pending_download", "failed"))
+            targets = self.db.list_papers(task_id, ("pending_download", "failed", "scihub_fallback"))
             if not targets:
                 return self.finalize(task_id)
 
@@ -721,6 +721,13 @@ class LiteraturePipeline:
                 if self.config.download_backend == "hybrid":
                     fallback_targets = self.db.list_papers(task_id, ("pending_download", "failed"))
                     if fallback_targets:
+                        # A direct-source failure is not the final result in
+                        # hybrid mode. Mark these papers explicitly before
+                        # exposing the fallback progress so polling clients do
+                        # not show a misleading terminal `failed` state while
+                        # the SciHub Job is still running.
+                        for row in fallback_targets:
+                            self.db.update_paper(int(row["id"]), pdf_status="scihub_fallback")
                         self._emit(
                             task_id,
                             "collect",
@@ -764,7 +771,7 @@ class LiteraturePipeline:
                     "papers": collection_rows,
                     "verification": verification_rows,
                 })
-                pending = self.db.list_papers(task_id, ("pending_download", "failed"))
+                pending = self.db.list_papers(task_id, ("pending_download", "failed", "scihub_fallback"))
                 verified = self.db.list_papers(task_id, ("verified",))
                 collection.update({
                     "rounds": rounds,
@@ -777,6 +784,10 @@ class LiteraturePipeline:
                 self.db.update_task(task_id, current_round=round_num, collection=collection, reports=reports)
                 return self.finalize(task_id)
             except Exception as exc:
+                # Do not leave an in-progress fallback status behind if the
+                # worker itself fails before SciHub can produce its result.
+                for row in self.db.list_papers(task_id, ("scihub_fallback",)):
+                    self.db.update_paper(int(row["id"]), pdf_status="failed")
                 self._fail(task_id, exc)
                 raise
 
@@ -788,7 +799,10 @@ class LiteraturePipeline:
         with self._lock(task_id):
             task = self._require_task(task_id)
             verified = self.db.list_papers(task_id, ("verified",))
-            pending = self.db.list_papers(task_id, ("pending_download", "failed", "downloaded", "downloading"))
+            pending = self.db.list_papers(
+                task_id,
+                ("pending_download", "failed", "scihub_fallback", "downloaded", "downloading"),
+            )
             collection = dict(task.get("collection") or {})
             final_path = save_report(
                 format_final_report(

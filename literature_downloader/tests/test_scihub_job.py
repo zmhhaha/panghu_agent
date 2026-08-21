@@ -123,10 +123,12 @@ class SciHubJobManifestTests(unittest.TestCase):
         fallback_id = db.upsert_paper(task_id, {"title": "Fallback", "doi": "10.1000/fallback", "pdf_status": "pending_download"})
         db.update_task(task_id, status="ready:download")
         input_data: dict[str, str] = {}
+        fallback_status_at_job: list[str] = []
 
         class FakeClient:
             def create_config_map(self, namespace, manifest):
                 input_data.update(manifest["data"])
+                fallback_status_at_job.append(db.get_paper(fallback_id)["pdf_status"])
                 return manifest
 
             def create_job(self, namespace, manifest):
@@ -172,6 +174,7 @@ class SciHubJobManifestTests(unittest.TestCase):
         self.assertEqual(result["collection"]["rounds"][0]["downloaded"], 2)
         self.assertEqual(len(result["collection"]["rounds"][0]["verification"]), 2)
         self.assertEqual(set(input_data), {f"paper-{fallback_id}.txt"})
+        self.assertEqual(fallback_status_at_job, ["scihub_fallback"])
         self.assertEqual(db.get_paper(direct_id)["pdf_status"], "verified")
         self.assertEqual(db.get_paper(fallback_id)["pdf_status"], "verified")
         with db.connect() as conn:

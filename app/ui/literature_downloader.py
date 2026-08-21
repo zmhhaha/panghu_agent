@@ -18,6 +18,21 @@ POLL_SECONDS = 5
 SEARCH_DONE = {"ready:download", "failed"}
 DOWNLOAD_DONE = {"completed", "failed"}
 
+_PDF_STATUS_LABELS = {
+    "none": "未开始",
+    "pending_download": "待下载",
+    "downloading": "下载中",
+    "scihub_fallback": "SciHub 备用下载中",
+    "downloaded": "已下载，待校验",
+    "verified": "已校验",
+    "failed": "最终失败",
+}
+
+
+def _pdf_status_label(value: Any) -> str:
+    status = str(value or "pending_download")
+    return _PDF_STATUS_LABELS.get(status, status)
+
 
 def _request(method: str, path: str, **kwargs: Any) -> dict[str, Any]:
     response = requests.request(method, f"{API_BASE}{path}", timeout=30, **kwargs)
@@ -74,7 +89,7 @@ def _render(task: dict[str, Any], elapsed: int = 0) -> str:
     if papers:
         lines.extend(["", "| 文献 | PDF 状态 | 校验 |", "|---|---|---|"])
         lines.extend(
-            f"| {paper.get('title', '')[:90]} | {paper.get('pdf_status', '')} | "
+            f"| {paper.get('title', '')[:90]} | {_pdf_status_label(paper.get('pdf_status'))} | "
             f"{paper.get('verification_status', '') or '-'} |"
             for paper in papers
         )
@@ -97,6 +112,7 @@ def _download_updates(task: dict[str, Any] | None, running: bool = False) -> tup
     task = task or {}
     reports = task.get("reports") or {}
     return (
+        gr.update(interactive=not running),
         gr.update(interactive=not running),
         gr.update(interactive=bool(task.get("id"))),
         gr.update(visible=bool(reports.get("final"))),
@@ -218,6 +234,11 @@ def refresh_download(task_id: str) -> tuple[Any, ...]:
         return f"状态查询失败：{exc}", *_download_updates({"id": task_id}, False)
 
 
+def load_download_result(task_id: str) -> tuple[Any, ...]:
+    """Load a previously-triggered download without starting it again."""
+    return refresh_download(task_id)
+
+
 def download_file(task_id: str, endpoint: str, suffix: str) -> str:
     task_id = (task_id or "").strip()
     if not task_id:
@@ -266,14 +287,16 @@ with gr.Blocks(title="文献检索与下载工具") as demo:
             doi_button = gr.DownloadButton("下载 DOI 列表", visible=False)
 
     with gr.Tab("下载文献"):
-        download_task_id = gr.Textbox(label="检索任务 ID", placeholder="粘贴检索完成后得到的任务 ID")
+        download_task_id = gr.Textbox(label="任务 ID", placeholder="粘贴检索或下载任务的任务 ID")
         download_email = gr.Textbox(
-            label="通知邮箱（必填）",
+            label="通知邮箱（开始下载时必填）",
             placeholder="your@email.com",
             type="email",
         )
-        download_button = gr.Button("开始下载", variant="primary")
-        download_status = gr.Markdown(value="请输入任务 ID 和通知邮箱后开始下载。下载完成或失败后会发送邮件通知。")
+        with gr.Row():
+            download_button = gr.Button("开始下载", variant="primary")
+            load_download_button = gr.Button("按任务 ID 查询结果")
+        download_status = gr.Markdown(value="输入任务 ID 可查询已有下载结果；开始新的下载时还需要通知邮箱。")
         with gr.Row():
             refresh_download_button = gr.Button("刷新下载状态")
             final_report_button = gr.DownloadButton("下载最终报告", visible=False)
@@ -290,8 +313,9 @@ with gr.Blocks(title="文献检索与下载工具") as demo:
     search_report_button.click(lambda tid: download_file(tid, "report/download", ".md"), search_task_id, search_report_button)
     doi_button.click(lambda tid: download_file(tid, "doi-list/download", ".md"), search_task_id, doi_button)
 
-    download_controls = [download_button, refresh_download_button, final_report_button, pdf_button]
+    download_controls = [download_button, load_download_button, refresh_download_button, final_report_button, pdf_button]
     download_button.click(start_download, [download_task_id, download_email], [download_status, *download_controls])
+    load_download_button.click(load_download_result, download_task_id, [download_status, *download_controls])
     refresh_download_button.click(refresh_download, download_task_id, [download_status, *download_controls])
     final_report_button.click(lambda tid: download_file(tid, "report/download", ".md"), download_task_id, final_report_button)
     pdf_button.click(lambda tid: download_file(tid, "files/download", ".zip"), download_task_id, pdf_button)
