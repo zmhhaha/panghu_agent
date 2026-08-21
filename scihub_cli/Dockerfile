@@ -4,9 +4,12 @@ FROM python:3.11-slim
 # 设置工作目录
 WORKDIR /app
 
-# 安装 scihub-cli
-# 使用 --no-cache-dir 减小镜像体积
-RUN pip install --no-cache-dir scihub-cli
+# 安装 scihub-cli；与 Literature Downloader API 使用同一个阿里云 PyPI 源。
+RUN pip install --break-system-packages --no-cache-dir \
+    -i https://mirrors.aliyun.com/pypi/simple/ \
+    --trusted-host mirrors.aliyun.com \
+    --default-timeout=300 \
+    scihub-cli
 
 # 创建用于存放下载文件的目录
 RUN mkdir -p /app/papers
