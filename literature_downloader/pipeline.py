@@ -15,6 +15,7 @@ from .db import Database, identity_key
 from .models import Paper
 from .reports import (
     format_collection_report,
+    format_doi_list,
     format_final_report,
     format_need_to_download,
     format_search_report,
@@ -22,7 +23,7 @@ from .reports import (
     save_report,
 )
 from .scihub_job import KubernetesJobClient, build_input_config_map, build_job
-from .searcher import search_literature
+from .searcher import merge_search_results, search_literature
 from .verifier import verify_pdf
 
 
@@ -81,12 +82,12 @@ class LiteraturePipeline:
     def create_task(
         self,
         topic: str,
-        max_rounds: int | None = None,
+        search_rounds: int | None = None,
         user_id: str = "",
         providers: list[str] | None = None,
         email: str = "",
     ) -> str:
-        rounds = min(max(int(max_rounds or self.config.max_rounds), 1), 10)
+        rounds = min(max(int(search_rounds or self.config.search_rounds), 1), 10)
         task_id = self.db.create_task(topic, rounds, user_id, email)
         if providers:
             self.db.update_task(task_id, search={"providers": providers})
@@ -94,7 +95,7 @@ class LiteraturePipeline:
 
     def claim_stage(self, task_id: str, stage: str) -> bool:
         """Atomically claim a pending stage before starting a worker thread."""
-        allowed = ("pending",) if stage == "search" else ("waiting:search_approval", "waiting:collect_approval")
+        allowed = ("pending",) if stage == "search" else ("ready:download",)
         with self._lock(task_id):
             task = self._require_task(task_id)
             if task["status"] not in allowed:
@@ -108,10 +109,31 @@ class LiteraturePipeline:
             task = self._require_task(task_id)
             self._emit(task_id, "search", "正在查询本地文献库和外部学术 API", callback)
             try:
-                result = search_literature(
-                    task["topic"], self.db,
-                    providers=(task.get("search") or {}).get("providers"),
-                    config=self.config,
+                search_rounds = min(max(int(task.get("search_rounds") or self.config.search_rounds), 1), 10)
+                round_results: list[dict[str, Any]] = []
+                plan: dict[str, Any] | None = None
+                for round_index in range(search_rounds):
+                    self._emit(
+                        task_id,
+                        "search",
+                        f"正在进行第 {round_index + 1}/{search_rounds} 轮检索",
+                        callback,
+                    )
+                    current = search_literature(
+                        task["topic"],
+                        self.db,
+                        providers=(task.get("search") or {}).get("providers"),
+                        search_round=round_index,
+                        search_plan=plan,
+                        use_llm=round_index == 0,
+                        config=self.config,
+                    )
+                    plan = current.get("search_plan") or plan
+                    round_results.append(current)
+                result = merge_search_results(
+                    round_results,
+                    limit=min(max(int(self.config.search_limit), 1), 100),
+                    topic=task["topic"],
                 )
                 for row in result["papers"]:
                     if (
@@ -130,8 +152,10 @@ class LiteraturePipeline:
                 task_dir = self._task_dir(task_id)
                 search_path = save_report(format_search_report(result), task["topic"], "search", task_dir, "search_report.md")
                 list_path = save_report(format_need_to_download(need_download), task["topic"], "need_to_download", task_dir, "need_to_download.md")
+                doi_path = save_report(format_doi_list(result), task["topic"], "doi_list", task_dir, "doi_list.md")
                 self.db.save_report(task_id, 0, "search", str(search_path), search_path.read_text(encoding="utf-8"))
                 self.db.save_report(task_id, 0, "need_to_download", str(list_path), list_path.read_text(encoding="utf-8"))
+                self.db.save_report(task_id, 0, "doi_list", str(doi_path), doi_path.read_text(encoding="utf-8"))
 
                 search_state = {
                     "total": len(result["papers"]),
@@ -142,6 +166,9 @@ class LiteraturePipeline:
                     "relevance": result.get("relevance", {}),
                     "by_provider": result["provider_counts"],
                     "errors": result["errors"],
+                    "search_rounds": result.get("search_rounds") or [],
+                    "search_round_count": search_rounds,
+                    "doi_count": sum(1 for row in result["papers"] if str(row.get("doi") or "").strip()),
                     # Keep provider-level records in the task snapshot so
                     # the final report can explain every hit, including
                     # papers found in the shared local library.
@@ -152,29 +179,23 @@ class LiteraturePipeline:
                     },
                     "papers": [self._public_paper(row) for row in result["papers"]],
                 }
-                reports = {"search": str(search_path), "need_to_download": str(list_path)}
-                status = "waiting:search_approval" if need_download else "completed"
+                reports = {
+                    "search": str(search_path),
+                    "need_to_download": str(list_path),
+                    "doi_list": str(doi_path),
+                }
                 self.db.update_task(
                     task_id,
-                    status=status,
-                    phase="search" if need_download else "done",
-                    progress=(f"检索完成：{len(result['papers'])} 篇，{len(need_download)} 篇待下载" if need_download else "本地文献均已就绪"),
+                    status="ready:download",
+                    phase="search",
+                    progress=f"检索完成：{len(result['papers'])} 篇，{len(need_download)} 篇可下载",
                     search=search_state,
                     reports=reports,
                 )
-                if not need_download:
-                    return self.finalize(task_id)
                 return self.status(task_id)
             except Exception as exc:
                 self._fail(task_id, exc)
                 raise
-
-    def run_all(self, task_id: str, callback: ProgressCallback | None = None) -> dict[str, Any]:
-        """Run search, collection rounds, verification, and finalization in order."""
-        result = self.search(task_id, callback)
-        while result.get("status") in {"waiting:search_approval", "waiting:collect_approval"}:
-            result = self.collect_round(task_id, callback)
-        return result
 
     def _collect_one(
         self,
@@ -642,16 +663,18 @@ class LiteraturePipeline:
             merged[paper_id] = current
         return list(merged.values())
 
-    def collect_round(self, task_id: str, callback: ProgressCallback | None = None) -> dict[str, Any]:
+    def collect_round(
+        self,
+        task_id: str,
+        callback: ProgressCallback | None = None,
+    ) -> dict[str, Any]:
         with self._lock(task_id):
             task = self._require_task(task_id)
-            ready = task["status"] in {"waiting:search_approval", "waiting:collect_approval"}
+            ready = task["status"] == "ready:download"
             started_by_api = task["status"] == "running" and task["phase"] == "collect"
             if not ready and not started_by_api:
                 raise ValueError(f"task status does not allow collection: {task['status']}")
             round_num = int(task["current_round"] or 0) + 1
-            if round_num > int(task["max_rounds"]):
-                return self.finalize(task_id)
             targets = self.db.list_papers(task_id, ("pending_download", "failed"))
             if not targets:
                 return self.finalize(task_id)
@@ -749,18 +772,14 @@ class LiteraturePipeline:
                 reports = dict(task.get("reports") or {})
                 reports.update({"current_collection": str(collection_path), "current_verification": str(verification_path)})
                 self.db.update_task(task_id, current_round=round_num, collection=collection, reports=reports)
-                if not pending or round_num >= int(task["max_rounds"]):
-                    return self.finalize(task_id)
-                self.db.update_task(
-                    task_id,
-                    status="waiting:collect_approval",
-                    phase="verify",
-                    progress=f"第 {round_num} 轮完成：累计通过 {len(verified)} 篇，仍待处理 {len(pending)} 篇",
-                )
-                return self.status(task_id)
+                return self.finalize(task_id)
             except Exception as exc:
                 self._fail(task_id, exc)
                 raise
+
+    def download(self, task_id: str, callback: ProgressCallback | None = None) -> dict[str, Any]:
+        """Run the download and verification stage once for a searched task."""
+        return self.collect_round(task_id, callback)
 
     def finalize(self, task_id: str) -> dict[str, Any]:
         with self._lock(task_id):
@@ -791,13 +810,6 @@ class LiteraturePipeline:
             )
             return self.status(task_id)
 
-    def abort(self, task_id: str) -> dict[str, Any]:
-        task = self._require_task(task_id)
-        if task["status"] == "running":
-            raise ValueError("running stage cannot be interrupted safely")
-        self.db.update_task(task_id, status="aborted", phase="done", progress="任务已由用户中止")
-        return self.status(task_id)
-
     def create_zip(self, task_id: str, verified: list[dict[str, Any]] | None = None) -> Path:
         papers = verified if verified is not None else self.db.list_papers(task_id, ("verified",))
         zip_path = self._task_dir(task_id) / "verified_pdfs.zip"
@@ -815,9 +827,17 @@ class LiteraturePipeline:
 
     def report_path(self, task_id: str) -> Path:
         task = self._require_task(task_id)
-        path = Path(str((task.get("reports") or {}).get("final") or ""))
+        reports = task.get("reports") or {}
+        path = Path(str(reports.get("final") or reports.get("search") or ""))
         if not path.exists():
-            raise FileNotFoundError("final report is not available")
+            raise FileNotFoundError("search report is not available")
+        return path
+
+    def doi_list_path(self, task_id: str) -> Path:
+        task = self._require_task(task_id)
+        path = Path(str((task.get("reports") or {}).get("doi_list") or ""))
+        if not path.exists():
+            raise FileNotFoundError("DOI list is not available")
         return path
 
     def zip_path(self, task_id: str) -> Path:

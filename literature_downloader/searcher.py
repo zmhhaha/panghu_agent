@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import sys
+import inspect
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,9 @@ def search_literature(
     search_limit: int | None = None,
     per_provider: int | None = None,
     providers: list[str] | None = None,
+    search_round: int = 0,
+    search_plan: dict[str, Any] | None = None,
+    use_llm: bool = True,
     config: Settings = settings,
 ) -> dict[str, Any]:
     """Search local verified papers and external providers.
@@ -75,24 +79,53 @@ def search_literature(
         raise ValueError("topic must not be empty")
     limit = min(max(int(search_limit or config.search_limit), 1), 100)
     per_limit = min(max(int(per_provider or config.per_provider), 1), 25)
-    search_plan = create_search_plan(topic, config=config, target_count=limit, max_variants=config.max_search_variants)
+    search_round = max(0, int(search_round or 0))
+    search_plan = search_plan or create_search_plan(
+        topic, config=config, target_count=limit, max_variants=config.max_search_variants
+    )
     variants = [str(value).strip() for value in search_plan.get("query_variants") or [] if str(value).strip()]
     if not variants:
         variants = build_query_variants(topic, config.max_search_variants) or [topic]
     selected = providers or ["OpenAlex", "Crossref", "arXiv", "Semantic Scholar"]
 
-    local = db.search_local(_tokens(topic), limit=limit)
+    # Local-library hits do not change between provider pages. Query them only
+    # on the first round; the aggregate step still keeps them in the report.
+    local = db.search_local(_tokens(topic), limit=limit) if search_round == 0 else []
     local = [{**row, "provider": "LocalLibrary", "providers": ["LocalLibrary"]} for row in local]
     # The shared library stores a task-owned copy of each paper. Collapse
     # those copies before counting/reporting hits so one paper is listed once.
     local = deduplicate_papers(local)
     api_results: dict[str, list[dict[str, Any]]] = {}
     errors: dict[str, str] = {}
+    offset = search_round * per_limit
+
+    def call_provider(function: Any, query: str, **kwargs: Any) -> list[dict[str, Any]]:
+        """Keep compatibility with older test/custom adapters without offset."""
+        target = getattr(function, "side_effect", None) or function
+        try:
+            parameters = inspect.signature(target).parameters
+            accepts_offset = "offset" in parameters or any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters.values()
+            )
+        except (TypeError, ValueError):
+            accepts_offset = True
+        if not accepts_offset:
+            return function(query, per_limit, **kwargs)
+        try:
+            return function(query, per_limit, offset=offset, **kwargs)
+        except TypeError as exc:
+            if "offset" not in str(exc):
+                raise
+            return function(query, per_limit, **kwargs)
+
     functions = {
-        "OpenAlex": lambda query: search_openalex(query, per_limit, email=config.contact_email),
-        "Crossref": lambda query: search_crossref(query, per_limit, email=config.contact_email),
-        "arXiv": lambda query: search_arxiv(query, per_limit),
-        "Semantic Scholar": lambda query: search_semantic_scholar(query, per_limit, api_key=config.semantic_scholar_api_key),
+        "OpenAlex": lambda query: call_provider(search_openalex, query, email=config.contact_email),
+        "Crossref": lambda query: call_provider(search_crossref, query, email=config.contact_email),
+        "arXiv": lambda query: call_provider(search_arxiv, query),
+        "Semantic Scholar": lambda query: call_provider(
+            search_semantic_scholar, query, api_key=config.semantic_scholar_api_key
+        ),
     }
     for provider in selected:
         if provider not in functions:
@@ -115,7 +148,16 @@ def search_literature(
     for provider_rows in api_results.values():
         all_records.extend(_with_identifiers(dict(row)) for row in provider_rows)
     ranked = rank_papers(deduplicate_papers(all_records), variants)
-    ranked, relevance = rank_candidates(ranked, topic=topic, plan=search_plan, config=config)
+    if use_llm:
+        ranked, relevance = rank_candidates(ranked, topic=topic, plan=search_plan, config=config)
+    else:
+        relevance = {
+            "enabled": bool((search_plan.get("llm") or {}).get("enabled")),
+            "used": False,
+            "status": "rules",
+            "judged": 0,
+            "reason": "LLM 检索规划已复用；本轮只进行确定性相关性排序",
+        }
     # Provider APIs often return newest/highly cited records even when the
     # query match is empty. Never turn those zero-score fuzzy matches into
     # download targets; an empty result is safer than downloading another
@@ -147,6 +189,8 @@ def search_literature(
     )
     return {
         "topic": topic,
+        "search_round": search_round + 1,
+        "offset": offset,
         "query_variants": variants,
         "search_plan": search_plan,
         "relevance": relevance,
@@ -157,4 +201,126 @@ def search_literature(
         "provider_counts": {name: len(rows) for name, rows in api_results.items()},
         "local_hits": len(local),
         "errors": errors,
+    }
+
+
+def merge_search_results(
+    results: list[dict[str, Any]],
+    *,
+    limit: int,
+    topic: str,
+) -> dict[str, Any]:
+    """Merge provider pages from several search rounds without another LLM call."""
+    if not results:
+        return {
+            "topic": topic,
+            "query_variants": [],
+            "search_plan": {},
+            "relevance": {"status": "rules", "used": False, "judged": 0},
+            "local_results": [],
+            "api_results": {},
+            "papers": [],
+            "need_download": [],
+            "provider_counts": {},
+            "local_hits": 0,
+            "errors": {},
+            "search_rounds": [],
+        }
+
+    first = results[0]
+    variants = list(first.get("query_variants") or [])
+    plan = dict(first.get("search_plan") or {})
+    local = deduplicate_papers([
+        dict(row)
+        for result in results
+        for row in result.get("local_results") or []
+    ])
+    api_results: dict[str, list[dict[str, Any]]] = {}
+    for provider in {
+        provider
+        for result in results
+        for provider in (result.get("api_results") or {})
+    }:
+        api_results[provider] = deduplicate_papers([
+            dict(row)
+            for result in results
+            for row in (result.get("api_results") or {}).get(provider, [])
+        ])
+
+    candidates = deduplicate_papers([
+        dict(row)
+        for result in results
+        for row in result.get("papers") or []
+    ])
+    ranked = rank_papers(candidates, variants)
+    ranked = [
+        paper for paper in ranked
+        if _is_relevant(paper) and matches_plan_scope(paper, plan)
+    ]
+    # Preserve first-round LLM judgements while allowing later pages to fill
+    # the result set without another model request.
+    ranked.sort(
+        key=lambda paper: (
+            1 if paper.get("llm_included") is True else 0,
+            float(paper.get("llm_relevance_score") or 0),
+            float(paper.get("relevance_score") or 0),
+            str(paper.get("date") or ""),
+        ),
+        reverse=True,
+    )
+    ranked = ranked[: max(1, min(int(limit), 100))]
+
+    need_download = [
+        paper for paper in ranked
+        if (
+            not paper.get("pdf_path")
+            or paper.get("pdf_status") not in {"verified", "downloaded"}
+            or not Path(str(paper.get("pdf_path"))).is_file()
+        )
+    ]
+    need_download.sort(
+        key=lambda paper: (
+            bool(paper.get("pdf_url")),
+            bool((paper.get("identifiers") or {}).get("arxiv") or paper.get("arxiv_id")),
+            bool(paper.get("open_access")),
+            bool(paper.get("doi")),
+            float(paper.get("relevance_score") or 0),
+        ),
+        reverse=True,
+    )
+
+    errors: dict[str, str] = {}
+    for result in results:
+        for provider, error in (result.get("errors") or {}).items():
+            if error and provider not in errors:
+                errors[provider] = str(error)
+            elif error and str(error) not in errors[provider]:
+                errors[provider] += f"; {error}"
+    relevance = dict(first.get("relevance") or {})
+    relevance["judged"] = sum(int((result.get("relevance") or {}).get("judged") or 0) for result in results)
+    relevance["rounds"] = len(results)
+    round_stats = []
+    for result in results:
+        round_stats.append({
+            "round": int(result.get("search_round") or len(round_stats) + 1),
+            "offset": int(result.get("offset") or 0),
+            "found": len(result.get("papers") or []),
+            "local_hits": int(result.get("local_hits") or 0),
+            "provider_counts": dict(result.get("provider_counts") or {}),
+            "errors": dict(result.get("errors") or {}),
+        })
+
+    return {
+        "topic": topic,
+        "query_variants": variants,
+        "search_plan": plan,
+        "relevance": relevance,
+        "local_results": local,
+        "api_results": api_results,
+        "papers": ranked,
+        "need_download": need_download,
+        "provider_counts": {provider: len(rows) for provider, rows in api_results.items()},
+        "local_hits": len(local),
+        "errors": errors,
+        "search_rounds": round_stats,
     }

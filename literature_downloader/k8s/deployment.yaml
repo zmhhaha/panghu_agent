@@ -82,7 +82,7 @@ spec:
           env:
             - name: LITERATURE_DATA_DIR
               value: /data/literature
-            - name: LITERATURE_MAX_ROUNDS
+            - name: LITERATURE_SEARCH_ROUNDS
               value: "3"
             - name: LITERATURE_SEARCH_LIMIT
               value: "100"

@@ -26,7 +26,7 @@ class Settings:
     db_path: Path
     pdf_dir: Path
     reports_dir: Path
-    max_rounds: int = 3
+    search_rounds: int = 3
     search_limit: int = 100
     per_provider: int = 20
     max_search_variants: int = 6
@@ -65,7 +65,7 @@ def load_settings() -> Settings:
         db_path=Path(os.getenv("LITERATURE_DB_PATH", str(data_dir / "literature.db"))).resolve(),
         pdf_dir=Path(os.getenv("LITERATURE_PDF_DIR", str(data_dir / "pdfs"))).resolve(),
         reports_dir=Path(os.getenv("LITERATURE_REPORTS_DIR", str(data_dir / "reports"))).resolve(),
-        max_rounds=_env_int("LITERATURE_MAX_ROUNDS", 3, 1, 10),
+        search_rounds=_env_int("LITERATURE_SEARCH_ROUNDS", 3, 1, 10),
         search_limit=_env_int("LITERATURE_SEARCH_LIMIT", 100, 1, 100),
         per_provider=_env_int("LITERATURE_PER_PROVIDER", 20, 1, 25),
         max_search_variants=_env_int("LITERATURE_MAX_SEARCH_VARIANTS", 6, 1, 13),

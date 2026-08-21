@@ -71,7 +71,7 @@ class SciHubJobManifestTests(unittest.TestCase):
         pipeline = LiteraturePipeline(config, db)
         task_id = pipeline.create_task("topic", 1)
         db.upsert_paper(task_id, {"title": "Paper", "doi": "10.1000/example", "pdf_status": "pending_download"})
-        db.update_task(task_id, status="waiting:search_approval")
+        db.update_task(task_id, status="ready:download")
 
         class FakeClient:
             def create_config_map(self, namespace, manifest):
@@ -121,7 +121,7 @@ class SciHubJobManifestTests(unittest.TestCase):
         task_id = pipeline.create_task("topic", 1)
         direct_id = db.upsert_paper(task_id, {"title": "Direct", "doi": "10.1000/direct", "pdf_status": "pending_download"})
         fallback_id = db.upsert_paper(task_id, {"title": "Fallback", "doi": "10.1000/fallback", "pdf_status": "pending_download"})
-        db.update_task(task_id, status="waiting:search_approval")
+        db.update_task(task_id, status="ready:download")
         input_data: dict[str, str] = {}
 
         class FakeClient:
@@ -201,7 +201,7 @@ class SciHubJobManifestTests(unittest.TestCase):
             first_task,
             {"title": "Paper", "doi": "10.1000/example", "pdf_status": "pending_download"},
         )
-        db.update_task(first_task, status="waiting:search_approval")
+        db.update_task(first_task, status="ready:download")
         job_creations: list[str] = []
 
         class FakeClient:
@@ -241,7 +241,7 @@ class SciHubJobManifestTests(unittest.TestCase):
             second_task,
             {"title": "Paper", "doi": "10.1000/example", "pdf_status": "pending_download"},
         )
-        db.update_task(second_task, status="waiting:search_approval")
+        db.update_task(second_task, status="ready:download")
         second_result = pipeline.collect_round(second_task)
 
         self.assertEqual(second_result["status"], "completed")
@@ -256,7 +256,7 @@ class SciHubJobManifestTests(unittest.TestCase):
             third_task,
             {"title": "Paper", "doi": "10.1000/example", "pdf_status": "pending_download"},
         )
-        db.update_task(third_task, status="waiting:search_approval")
+        db.update_task(third_task, status="ready:download")
         with patch("literature_downloader.pipeline.KubernetesJobClient", FakeClient):
             pipeline.collect_round(third_task)
         self.assertEqual(len(job_creations), 2)

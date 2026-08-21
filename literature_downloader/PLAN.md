@@ -1,5 +1,7 @@
 # Literature Downloader 实施计划
 
+> 当前实现将检索与 PDF 下载分离：检索轮数用于扩展 API 分页结果，下载通过任务 ID 独立触发。
+
 ## 1. 目标
 
 在 `panghu_agent` 下实现一个独立的文献下载工具，完成以下流程：
@@ -144,7 +146,7 @@ LLM 必须输出结构化 JSON，至少包含：
 
 检索结果必须通过查询词相关性门槛；仅命中“研究进展”等泛化词而未命中主题术语的记录不得进入待下载清单，防止不同主题任务之间串入文献。
 
-检索完成后由后台流水线自动进入文献收集；`waiting:search_approval` 仅作为旧任务的持久化兼容状态，新任务不会等待用户确认。
+检索完成后状态为 `ready:download`，由用户在下载标签通过任务 ID 触发文献收集。
 
 ### 相关性重排规则
 
@@ -241,7 +243,6 @@ generated_at: <ISO timestamp>
 - `POST /literature-download`：创建下载任务。
 - `GET /literature-download/{task_id}`：查询任务状态和实时进度。
 - `GET /literature-reports`：按主题、任务 ID 或状态查询历史任务。
-- `POST /literature-download/{task_id}/approve`、`/retry`、`/finish`：旧任务兼容接口，新任务不需要调用。
 - `GET /literature-download/{task_id}/report`：读取最终报告。
 - `GET /literature-download/{task_id}/report/download`：下载 Markdown 报告。
 - `GET /literature-download/{task_id}/files/download`：下载已通过校验的 PDF ZIP。
@@ -254,8 +255,8 @@ generated_at: <ISO timestamp>
 
 使用 Gradio 实现以下界面流程：
 
-1. 输入研究主题、最大重试轮数和通知邮箱，点击“开始检索”。
-2. 后台自动完成检索、下载、校验和重试；页面自动轮询并展示当前轮次、逐篇进度、成功和失败列表。
+1. 输入研究主题、检索轮数和通知邮箱，点击“开始检索”。
+2. 后台完成多轮检索并生成检索报告；用户复制任务 ID 到下载标签后，再启动下载和校验。
 3. 保留“刷新状态”供用户主动查询长任务进度。
 4. 最终提供：
    - PDF 下载按钮，下载已通过校验的 PDF 压缩包。
@@ -317,3 +318,22 @@ There is no built-in subject rule in the service. The deterministic fallback
 only performs domain-neutral query normalization and lexical scoring. If the
 LLM is unavailable or its plan is malformed, strict scope filtering is
 disabled and the reports explicitly record that reduced-precision fallback.
+
+## Current workflow revision
+
+This section supersedes earlier draft text that described automatic collection
+retries. Search rounds are the only user-facing rounds setting. PDF collection
+is a separate, single user-triggered pass; transient retries inside one HTTP
+request remain collector implementation details and are not task rounds.
+
+The task setting is `search_rounds`. A search task performs
+that many paginated calls to each selected provider, merges and deduplicates the
+pages, and sends a search-completion email. Search never starts PDF collection.
+
+The search stage writes `search_report.md`, `doi_list.md`, and
+`need_to_download.md`, and ends in `ready:download`. A separate
+`POST /literature-download/{task_id}/download` starts one download/verification
+pass. The Gradio UI therefore has independent “文献检索” and “下载文献” tabs;
+the download tab requires the task ID produced by the search tab. The old
+approval/retry workflow is removed. The public task actions are search,
+status/history lookup, download-by-task-ID, and report/file downloads.

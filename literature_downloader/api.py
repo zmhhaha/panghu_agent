@@ -25,22 +25,18 @@ _submission_lock = threading.Lock()
 
 class DownloadRequest(BaseModel):
     topic: str = Field(..., min_length=1, max_length=500)
-    max_rounds: int = Field(default=3, ge=1, le=10)
+    search_rounds: int | None = Field(default=None, ge=1, le=10)
     email: str = Field(default="", max_length=200)
     user_id: str = Field(default="", max_length=200)
     providers: list[str] | None = None
 
 
-class ActionRequest(BaseModel):
-    action: str = Field(default="approve")
-
-
 def _run(task_id: str, stage: str) -> None:
     try:
         if stage == "search":
-            pipeline.run_all(task_id)
+            pipeline.search(task_id)
         elif stage == "collect":
-            pipeline.collect_round(task_id)
+            pipeline.download(task_id)
         _notify_task(pipeline.status(task_id), stage)
     except Exception:
         # Pipeline persists the error; polling clients receive it from status.
@@ -64,7 +60,17 @@ def _notify_task(task: dict[str, Any], stage: str) -> None:
     status = task.get("status")
     task_id = str(task.get("id") or "")
     topic = str(task.get("topic") or "")
-    if status == "completed":
+    if stage == "search" and status == "ready:download":
+        subject = f"文献检索完成：{topic[:40]}"
+        message = (
+            "<h2>文献检索任务已完成</h2>"
+            f"<p><b>主题：</b>{escape(topic)}</p>"
+            f"<p><b>任务 ID：</b><code>{escape(task_id)}</code></p>"
+            f"<p><a href=\"https://literature-downloader.panghuer.top/literature-download/{escape(task_id)}/report/download\">下载检索报告</a>　"
+            f"<a href=\"https://literature-downloader.panghuer.top/literature-download/{escape(task_id)}/doi-list/download\">下载 DOI 列表</a></p>"
+            "<p>请在文献下载工具的“下载”标签输入任务 ID，按需触发 PDF 下载。</p>"
+        )
+    elif stage == "collect" and status == "completed":
         subject = f"文献下载完成：{topic[:40]}"
         message = (
             "<h2>文献下载任务已完成</h2>"
@@ -75,9 +81,9 @@ def _notify_task(task: dict[str, Any], stage: str) -> None:
             "即可显示最终报告和已校验 PDF 的下载按钮。</p>"
         )
     elif status == "failed":
-        subject = f"文献下载失败：{topic[:40]}"
+        subject = f"文献{('检索' if stage == 'search' else '下载')}失败：{topic[:40]}"
         message = (
-            "<h2>文献下载任务失败</h2>"
+            f"<h2>文献{('检索' if stage == 'search' else '下载')}任务失败</h2>"
             f"<p><b>主题：</b>{escape(topic)}</p>"
             f"<p><b>任务 ID：</b><code>{escape(task_id)}</code></p>"
             f"<p><b>错误：</b>{escape(str(task.get('error') or '未知错误'))}</p>"
@@ -112,19 +118,12 @@ def _status_or_404(task_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Task not found") from exc
 
 
-def _require_transition(task_id: str, allowed: set[str]) -> dict[str, Any]:
-    status = _status_or_404(task_id)
-    if status["status"] not in allowed:
-        raise HTTPException(status_code=409, detail=f"Current task status does not allow this action: {status['status']}")
-    return status
-
-
 @app.get("/literature-health")
 def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "db_path": str(settings.db_path),
-        "max_rounds": settings.max_rounds,
+        "search_rounds": settings.search_rounds,
         "search_limit": settings.search_limit,
         "per_provider": settings.per_provider,
         "max_search_variants": settings.max_search_variants,
@@ -147,9 +146,10 @@ def create_download_task(request: DownloadRequest) -> dict[str, Any]:
     # Task identity, rather than user identity, is the isolation boundary.
     # Multiple tasks from the same user may run independently.
     with _submission_lock:
+        rounds = request.search_rounds or settings.search_rounds
         task_id = pipeline.create_task(
             request.topic,
-            request.max_rounds,
+            rounds,
             request.user_id,
             request.providers,
             email,
@@ -163,55 +163,19 @@ def get_download_task(task_id: str) -> dict[str, Any]:
     return _status_or_404(task_id)
 
 
-@app.post("/literature-download/{task_id}/approve")
-def approve_download_task(task_id: str, request: ActionRequest | None = None) -> dict[str, Any]:
-    action = (request.action if request else "approve").lower()
-    if action == "approve":
-        current = _status_or_404(task_id)
-        if current.get("status") == "running" and current.get("phase") == "collect":
-            return {"ok": True, "action": action, "task": current}
-        if current.get("status") != "waiting:search_approval":
-            raise HTTPException(
-                status_code=409,
-                detail=f"Current task status does not allow this action: {current.get('status')}",
-            )
-        _start_thread(task_id, "collect")
-        return {"ok": True, "action": action, "task": _status_or_404(task_id)}
-    if action == "retry":
-        return retry_download_task(task_id)
-    if action in {"finish", "abort"}:
-        return finish_download_task(task_id) if action == "finish" else abort_download_task(task_id)
-    raise HTTPException(status_code=400, detail="action must be approve, retry, finish, or abort")
-
-
-@app.post("/literature-download/{task_id}/retry")
-def retry_download_task(task_id: str) -> dict[str, Any]:
+@app.post("/literature-download/{task_id}/download")
+def start_download_task(task_id: str) -> dict[str, Any]:
+    """Trigger the optional PDF collection stage for a completed search."""
     current = _status_or_404(task_id)
     if current.get("status") == "running" and current.get("phase") == "collect":
-        return {"ok": True, "action": "retry", "task": current}
-    if current.get("status") != "waiting:collect_approval":
-        raise HTTPException(status_code=409, detail=f"Current task status does not allow this action: {current.get('status')}")
+        return {"ok": True, "action": "download", "task": current}
+    if current.get("status") != "ready:download":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Current task status does not allow download: {current.get('status')}",
+        )
     _start_thread(task_id, "collect")
-    return {"ok": True, "action": "retry", "task": _status_or_404(task_id)}
-
-
-@app.post("/literature-download/{task_id}/finish")
-def finish_download_task(task_id: str) -> dict[str, Any]:
-    _require_transition(task_id, {"waiting:collect_approval", "waiting:search_approval"})
-    try:
-        task = pipeline.finalize(task_id)
-        _notify_task(task, "finish")
-        return {"ok": True, "action": "finish", "task": task}
-    except (KeyError, FileNotFoundError) as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-@app.post("/literature-download/{task_id}/abort")
-def abort_download_task(task_id: str) -> dict[str, Any]:
-    try:
-        return {"ok": True, "action": "abort", "task": pipeline.abort(task_id)}
-    except (KeyError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True, "action": "download", "task": _status_or_404(task_id)}
 
 
 def _safe_file(path: Path, expected_root: Path) -> Path:
@@ -249,6 +213,7 @@ def search_history(
         # Do not expose absolute filesystem paths from the persistence layer.
         row.pop("reports", None)
         row["report_url"] = f"/literature-download/{task_id}/report/download" if row["report_available"] else ""
+        row["doi_url"] = f"/literature-download/{task_id}/doi-list/download" if row.get("doi_available") else ""
         row["pdf_url"] = f"/literature-download/{task_id}/files/download" if row["pdf_available"] else ""
     return rows
 
@@ -285,6 +250,15 @@ def download_report(task_id: str) -> FileResponse:
     except (KeyError, FileNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return FileResponse(path, media_type="text/markdown", filename="literature_download_report.md")
+
+
+@app.get("/literature-download/{task_id}/doi-list/download")
+def download_doi_list(task_id: str) -> FileResponse:
+    try:
+        path = _safe_file(pipeline.doi_list_path(task_id), settings.reports_dir)
+    except (KeyError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, media_type="text/markdown", filename="doi_list.md")
 
 
 @app.get("/literature-download/{task_id}/files/download")

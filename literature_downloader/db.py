@@ -65,7 +65,7 @@ class Database:
                     status TEXT NOT NULL DEFAULT 'pending',
                     phase TEXT NOT NULL DEFAULT 'init',
                     progress TEXT NOT NULL DEFAULT '',
-                    max_rounds INTEGER NOT NULL DEFAULT 3,
+                    search_rounds INTEGER NOT NULL DEFAULT 3,
                     current_round INTEGER NOT NULL DEFAULT 0,
                     user_id TEXT NOT NULL DEFAULT '',
                     email TEXT NOT NULL DEFAULT '',
@@ -171,9 +171,15 @@ class Database:
                 );
                 """
             )
-            # Existing PVC databases predate email notifications. Keep the
-            # migration idempotent so a rolling deployment can reuse them.
+            # Keep the small schema migration idempotent when a PVC is reused.
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+            if "search_rounds" not in columns and "max_rounds" in columns:
+                conn.execute("ALTER TABLE tasks RENAME COLUMN max_rounds TO search_rounds")
+                columns.remove("max_rounds")
+                columns.add("search_rounds")
+            elif "search_rounds" not in columns:
+                conn.execute("ALTER TABLE tasks ADD COLUMN search_rounds INTEGER NOT NULL DEFAULT 3")
+                columns.add("search_rounds")
             if "email" not in columns:
                 conn.execute("ALTER TABLE tasks ADD COLUMN email TEXT NOT NULL DEFAULT ''")
             paper_columns = {row["name"] for row in conn.execute("PRAGMA table_info(papers)").fetchall()}
@@ -196,13 +202,13 @@ class Database:
     def _row(row: sqlite3.Row | None) -> dict[str, Any] | None:
         return dict(row) if row else None
 
-    def create_task(self, topic: str, max_rounds: int, user_id: str = "", email: str = "") -> str:
+    def create_task(self, topic: str, search_rounds: int, user_id: str = "", email: str = "") -> str:
         task_id = str(uuid.uuid4())
         now = utc_now()
         with self.connect() as conn:
             conn.execute(
-                "INSERT INTO tasks (id, topic, max_rounds, user_id, email, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (task_id, topic.strip(), max_rounds, user_id, email.strip(), now, now),
+                "INSERT INTO tasks (id, topic, search_rounds, user_id, email, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (task_id, topic.strip(), search_rounds, user_id, email.strip(), now, now),
             )
         return task_id
 
@@ -230,7 +236,7 @@ class Database:
             if query:
                 pattern = f"%{query}%"
                 rows = conn.execute(
-                    """SELECT id, topic, status, phase, progress, current_round,
+                    """SELECT id, topic, status, phase, progress, search_rounds, current_round,
                               created_at, updated_at, reports_json
                        FROM tasks
                        WHERE topic LIKE ? OR id LIKE ? OR status LIKE ?
@@ -239,7 +245,7 @@ class Database:
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    """SELECT id, topic, status, phase, progress, current_round,
+                    """SELECT id, topic, status, phase, progress, search_rounds, current_round,
                               created_at, updated_at, reports_json
                        FROM tasks ORDER BY created_at DESC LIMIT ? OFFSET ?""",
                     (limit, offset),
@@ -249,7 +255,9 @@ class Database:
             item = dict(row)
             reports = json.loads(item.pop("reports_json") or "{}")
             item["reports"] = reports
-            item["report_available"] = bool(reports.get("final")) and Path(str(reports["final"])).is_file()
+            report_path = reports.get("final") or reports.get("search")
+            item["report_available"] = bool(report_path) and Path(str(report_path)).is_file()
+            item["doi_available"] = bool(reports.get("doi_list")) and Path(str(reports["doi_list"])).is_file()
             item["pdf_available"] = bool(reports.get("pdf_zip")) and Path(str(reports["pdf_zip"])).is_file()
             result.append(item)
         return result
@@ -283,9 +291,8 @@ class Database:
     def interrupt_running_tasks(self) -> int:
         """Mark unfinished work lost during a process restart.
 
-        The waiting statuses are checkpoints from the pre-automatic workflow.
-        They cannot resume without a user action in the new UI, so they must
-        not remain active forever after an API restart.
+        Search and download workers are in-memory threads. A service restart
+        must not leave either stage marked as active indefinitely.
         """
         now = utc_now()
         with self.connect() as conn:
@@ -294,7 +301,7 @@ class Database:
                 SET status = 'failed', phase = 'error',
                     progress = '服务重启中断了正在执行的阶段，请重新创建任务',
                     error = 'service restarted while task was running', updated_at = ?
-                WHERE status IN ('pending', 'running', 'waiting:search_approval', 'waiting:collect_approval')""",
+                WHERE status IN ('pending', 'running')""",
                 (now,),
             )
             return int(cursor.rowcount)

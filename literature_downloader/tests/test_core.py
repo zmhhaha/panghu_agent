@@ -225,9 +225,9 @@ class CoreTests(unittest.TestCase):
     self.assertEqual(calls, ["https://blocked.example/paper.pdf", "https://repository.example/paper.pdf"])
 
 
-  def test_pipeline_retries_failed_download(self) -> None:
+  def test_pipeline_separates_search_from_download(self) -> None:
     root = Path(tempfile.mkdtemp())
-    config = Settings(root, root / "literature.db", root / "pdfs", root / "reports", max_rounds=2, min_pdf_bytes=5, min_text_chars=1)
+    config = Settings(root, root / "literature.db", root / "pdfs", root / "reports", search_rounds=2, min_pdf_bytes=5, min_text_chars=1)
     db = Database(config.db_path)
     pipeline = LiteraturePipeline(config, db)
     task_id = pipeline.create_task("topic", 2)
@@ -242,13 +242,13 @@ class CoreTests(unittest.TestCase):
     search_result = {
         "topic": "topic", "query_variants": ["topic"], "local_results": [local_hit],
         "api_results": {"OpenAlex": [{"title": "An API paper", "provider": "OpenAlex"}]},
-        "papers": [{"title": "A paper", "provider": "arXiv", "arxiv_id": "1234.5678", "abstract": ""}],
+        "papers": [{"title": "A paper", "provider": "arXiv", "arxiv_id": "1234.5678", "abstract": "topic"}],
         "need_download": [], "provider_counts": {}, "local_hits": 0, "errors": {},
     }
     with patch("literature_downloader.pipeline.search_literature", return_value=search_result):
         pipeline.search(task_id)
     search_state = pipeline.status(task_id)["search"]
-    self.assertEqual(pipeline.status(task_id)["status"], "waiting:search_approval")
+    self.assertEqual(pipeline.status(task_id)["status"], "ready:download")
     self.assertEqual(search_state["local_results"][0]["title"], "A verified local paper")
     self.assertEqual(search_state["api_results"]["OpenAlex"][0]["title"], "An API paper")
 
@@ -258,9 +258,6 @@ class CoreTests(unittest.TestCase):
 
     def fake_collect(paper, target, config):
         calls["count"] += 1
-        if calls["count"] == 1:
-            from literature_downloader.models import DownloadResult
-            return DownloadResult(False, error="network")
         from literature_downloader.models import DownloadResult
         return DownloadResult(True, path=str(good_pdf), size=good_pdf.stat().st_size, source="arXiv")
 
@@ -269,9 +266,7 @@ class CoreTests(unittest.TestCase):
         "literature_downloader.pipeline.verify_pdf",
         return_value=VerificationResult("A paper", "pass", str(good_pdf), good_pdf.stat().st_size, 10),
     ):
-        first = pipeline.collect_round(task_id)
-        self.assertEqual(first["status"], "waiting:collect_approval")
-        final = pipeline.collect_round(task_id)
+        final = pipeline.download(task_id)
     self.assertEqual(final["status"], "completed")
     self.assertEqual(final["collection"]["cumulative_verified"], 1)
     self.assertTrue(Path(final["reports"]["pdf_zip"]).exists())
@@ -284,38 +279,19 @@ class CoreTests(unittest.TestCase):
     self.assertTrue(pipeline.claim_stage(task_id, "search"))
     self.assertFalse(pipeline.claim_stage(task_id, "search"))
 
-  def test_restart_clears_legacy_waiting_tasks(self) -> None:
+  def test_restart_clears_running_tasks(self) -> None:
     root = Path(tempfile.mkdtemp())
     config = Settings(root, root / "literature.db", root / "pdfs", root / "reports")
     db = Database(config.db_path)
-    waiting_search = db.create_task("waiting search", 2, email="user@example.com")
-    waiting_collect = db.create_task("waiting collect", 2, email="user@example.com")
-    db.update_task(waiting_search, status="waiting:search_approval")
-    db.update_task(waiting_collect, status="waiting:collect_approval")
+    waiting_search = db.create_task("running search", 2, email="user@example.com")
+    waiting_collect = db.create_task("running collect", 2, email="user@example.com")
+    db.update_task(waiting_search, status="running")
+    db.update_task(waiting_collect, status="running")
 
-    self.assertIsNone(db.get_active_task("user@example.com"))
+    self.assertEqual(db.get_active_task("user@example.com")["id"], waiting_search)
     self.assertEqual(db.interrupt_running_tasks(), 2)
     self.assertEqual(db.get_task(waiting_search)["status"], "failed")
     self.assertEqual(db.get_task(waiting_collect)["status"], "failed")
-
-  def test_run_all_advances_without_user_approval(self) -> None:
-    root = Path(tempfile.mkdtemp())
-    config = Settings(root, root / "literature.db", root / "pdfs", root / "reports")
-    pipeline = LiteraturePipeline(config, Database(config.db_path))
-    task_id = pipeline.create_task("topic", 2)
-    with patch.object(
-        pipeline,
-        "search",
-        return_value={"status": "waiting:search_approval"},
-    ) as search, patch.object(
-        pipeline,
-        "collect_round",
-        return_value={"status": "completed"},
-    ) as collect:
-      result = pipeline.run_all(task_id)
-    self.assertEqual(result["status"], "completed")
-    search.assert_called_once_with(task_id, None)
-    collect.assert_called_once_with(task_id, None)
 
 
 if __name__ == "__main__":

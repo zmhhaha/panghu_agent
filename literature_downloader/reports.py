@@ -111,7 +111,10 @@ def format_search_report(result: dict[str, Any]) -> str:
         f"**查询变体**: {', '.join(result.get('query_variants', [])) or 'N/A'}",
         f"**检索结果总数**: {len(result.get('papers', []))} 篇",
         f"**本地库命中**: {result.get('local_hits', 0)} 篇",
-        f"**待下载**: {len(result.get('need_download', []))} 篇", "",
+        f"**待下载**: {len(result.get('need_download', []))} 篇",
+        f"**检索轮数**: {len(result.get('search_rounds') or []) or 1}",
+        f"**DOI 数量**: {sum(1 for paper in result.get('papers') or [] if str(paper.get('doi') or '').strip())}",
+        "**说明**: 本报告仅完成文献检索；PDF 下载需在下载标签中输入任务 ID 单独触发。", "",
     ]
 
     lines.extend([
@@ -143,6 +146,16 @@ def format_search_report(result: dict[str, Any]) -> str:
         f"- 相关性重排: {_text((result.get('relevance') or {}).get('status'), 'rules')}",
         f"- LLM 判断文献数: {(result.get('relevance') or {}).get('judged', 0)}", "",
     ])
+    round_rows = result.get("search_rounds") or []
+    if round_rows:
+        lines.extend(["## 各轮检索统计", "", "| 轮次 | 偏移量 | 命中 | 本地命中 | Provider 统计 |", "|---:|---:|---:|---:|---|"])
+        for row in round_rows:
+            counts = ", ".join(f"{key}={value}" for key, value in (row.get("provider_counts") or {}).items()) or "N/A"
+            lines.append(
+                f"| {row.get('round', '-')} | {row.get('offset', 0)} | {row.get('found', 0)} | "
+                f"{row.get('local_hits', 0)} | {counts} |"
+            )
+        lines.append("")
 
     local_rows = result.get("local_results") or []
     lines.extend(["## 本地文献库命中", ""])
@@ -172,6 +185,35 @@ def format_search_report(result: dict[str, Any]) -> str:
     if result.get("errors"):
         lines.extend(["## API 错误", ""])
         lines.extend(f"- {name}: {error}" for name, error in result["errors"].items())
+    return "\n".join(lines)
+
+
+def format_doi_list(result: dict[str, Any]) -> str:
+    """Create a compact, traceable identifier list for downstream retrieval."""
+    papers = result.get("papers") or []
+    doi_count = sum(1 for paper in papers if str(paper.get("doi") or "").strip())
+    lines = [
+        "# DOI 列表",
+        "",
+        f"研究主题：{_text(result.get('topic'))}",
+        f"检索结果：{len(papers)} 篇；包含 DOI：{doi_count} 篇",
+        "",
+        "| 序号 | DOI | 标题 | 来源 | 其他标识 |",
+        "|---:|---|---|---|---|",
+    ]
+    for index, paper in enumerate(papers, 1):
+        doi = str(paper.get("doi") or "").strip() or "N/A"
+        identifiers = paper.get("identifiers") or {}
+        other = str(paper.get("arxiv_id") or identifiers.get("arxiv") or paper.get("url") or "N/A")
+        title = " ".join(str(paper.get("title") or "N/A").split()).replace("|", "\\|")
+        source = _text(paper.get("provider"), "N/A").replace("|", "\\|")
+        lines.append(f"| {index} | `{doi}` | {title} | {source} | {other} |")
+    if not papers:
+        lines.append("| - | N/A | 未找到符合条件的文献 | - | - |")
+    lines.extend([
+        "",
+        "此列表同时保留无 DOI 文献的 arXiv ID 或元数据 URL，便于后续下载和人工追溯。",
+    ])
     return "\n".join(lines)
 
 

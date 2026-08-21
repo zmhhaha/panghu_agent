@@ -1,16 +1,18 @@
 # Literature Downloader
 
-独立的三阶段文献下载工具。用户提交一次任务后，后台会自动按顺序完成检索、PDF 收集（按最大重试轮数重试）、PDF 校验和最终报告生成：
+> 当前版本：开始检索只执行多轮检索并生成检索报告、DOI 列表和待下载清单；PDF 下载必须在独立“下载文献”标签中通过任务 ID 手动触发。
+
+独立的三阶段文献工具。用户提交一次任务后，后台先完成多轮检索、相关性筛选和报告生成；PDF 收集与校验由用户在下载标签中通过任务 ID 单独触发：
 
 1. 检索本地库、OpenAlex、Crossref、arXiv 和 Semantic Scholar。
 2. 按 `arXiv -> 元数据公开 PDF -> Unpaywall/OpenAlex OA -> DOI 落地页 PDF 发现 -> Semantic Scholar/PMC -> 元数据 URL` 下载 PDF，支持多轮重试。
 3. 校验 PDF 文件签名、大小和文本可读性，并生成 EvidenceGate-new 风格 Markdown 报告。
 
-检索阶段会保存独立的 `search_report.md` 和 `need_to_download.md`，其中列出每篇文献的来源数据库、DOI/arXiv ID、元数据 URL 和公开 PDF URL。收集阶段的每轮报告会记录实际尝试过的下载 URL、下载策略、成功/失败原因和本地保存路径；校验阶段会记录来源链、文件检查结果和文本可读性。最终下载报告会汇总这三阶段内容。服务器本地路径只表示下载产物的保存位置，不是文献来源。
+检索阶段会保存独立的 `search_report.md`、`doi_list.md` 和 `need_to_download.md`，其中列出每篇文献的来源数据库、DOI/arXiv ID、元数据 URL 和公开 PDF URL。收集阶段的单次报告会记录实际尝试过的下载 URL、下载策略、成功/失败原因和本地保存路径；校验阶段会记录来源链、文件检查结果和文本可读性。最终下载报告会汇总这三阶段内容。服务器本地路径只表示下载产物的保存位置，不是文献来源。
 
 检索阶段包含一个可选的文献检索专家 Agent：它使用统一 LLM 配置生成中英文术语、查询变体以及纳入/排除标准，再由程序调用学术 API 并对候选文献进行批量相关性重排。LLM 不能生成或修改 DOI、作者、元数据 URL 和 PDF URL；这些字段始终以 API 返回结果为准。LLM 未配置、调用失败或返回格式不合法时，自动回退到规则检索和规则相关性门槛。仅因为命中“研究进展”等泛化词、但没有命中主题术语的本地或外部文献不会进入待下载清单，避免不同任务之间出现主题串扰。
 
-UI 只需要填写研究主题、最大重试轮数和通知邮箱，然后点击“开始检索”。任务运行期间可以点击“刷新状态”主动查询进度；完成或失败时会向通知邮箱发送一次结果邮件。完成后，当前任务区域会显示最终报告和已校验 PDF 的下载按钮。历史报告页仅用于按主题或任务 ID 查询历史任务的状态；需要恢复历史任务时，将查询到的任务 ID 填回“新任务”页并点击“刷新状态”，不再提供单独的加载任务或历史文件下载按钮。
+UI 只需要填写研究主题、检索轮数和通知邮箱，然后点击“开始检索”。检索完成或失败时会向通知邮箱发送一次结果邮件；检索报告和 DOI 列表可立即下载。需要 PDF 时，将任务 ID 复制到“下载文献”标签并点击“开始下载”，完成后可下载最终报告和已校验 PDF。历史任务页仅用于查询任务状态和任务 ID。
 
 ## 安装
 
@@ -79,11 +81,11 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 
 ## 主要 API
 
-- `POST /literature-download`：创建检索任务（提交 `email` 后，任务完成或失败会发送通知；检索、下载、校验和重试由后台自动执行）。
+- `POST /literature-download`：创建检索任务（提交 `email` 后，检索完成或失败会发送通知；请求使用 `search_rounds`）。
 - `GET /literature-download/{task_id}`：查询状态和文献列表。
 - `GET /literature-reports?q=...`：按关键词、任务 ID 或状态查询历史任务。
-- `POST /literature-download/{task_id}/approve`、`/retry`、`/finish`：旧版本任务的兼容接口；新任务不需要调用这些接口。
 - `GET /literature-download/{task_id}/report/download`：下载 Markdown 报告。
+- `GET /literature-download/{task_id}/doi-list/download`：下载检索阶段生成的 DOI/标识列表。
 - `GET /literature-download/{task_id}/files/download`：下载通过校验的 PDF ZIP。
 - `GET /literature-download/{task_id}/reports`：列出检索、收集、校验和最终报告。
 - `GET /literature-download/{task_id}/reports/{report_id}/download`：下载指定阶段报告。
@@ -100,13 +102,13 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 
 - `literature.db`：任务、任务文献、跨任务全局 `library_papers` 文献库、下载尝试和报告索引。
 - `pdfs/<task_id>/`：下载的 PDF 文件。
-- `reports/<task_id>/`：检索、待下载清单、每轮收集/校验和包含三阶段明细的最终报告。
+- `reports/<task_id>/`：检索报告、DOI 列表、待下载清单、单次收集/校验报告和包含三阶段明细的最终报告。
 
 可通过 `LITERATURE_DATA_DIR`、`LITERATURE_DB_PATH`、`LITERATURE_PDF_DIR` 和 `LITERATURE_REPORTS_DIR` 修改路径。
 
 ## 配置
 
-- `LITERATURE_MAX_ROUNDS`：默认最大重试轮数 3。
+- `LITERATURE_SEARCH_ROUNDS`：默认检索轮数 3。
 - `LITERATURE_SEARCH_LIMIT`：默认返回最多 100 篇候选文献；服务会优先尝试带公开 PDF 地址、arXiv 或开放获取标记的记录。
 - `LITERATURE_PER_PROVIDER`：每个查询变体和外部来源默认最多 20 篇。
 - `LITERATURE_MAX_SEARCH_VARIANTS`：每个主题最多使用 6 个查询变体，提高召回率。
@@ -143,3 +145,22 @@ When the LLM is unavailable or returns an invalid plan, the service uses only
 domain-neutral query normalization and lexical relevance scoring. Strict scope
 filtering is disabled and the report states that precision is reduced; no
 fallback InP or other subject-specific rule is applied.
+
+## Separated search and download workflow
+
+`POST /literature-download` now performs search only. The request accepts
+`search_rounds` (1-10).
+Each round requests the next provider page, then results are deduplicated across
+rounds. The first round may use the retrieval-expert LLM; later rounds reuse its
+plan and use deterministic ranking to control cost.
+
+Search completion is persisted as `ready:download` and produces:
+
+- `search_report.md` with local hits, provider records, source URLs, DOI/arXiv IDs, query rounds, and LLM status;
+- `doi_list.md` with a compact DOI/identifier table;
+- `need_to_download.md` with metadata and legal/open download routes.
+
+PDF collection is optional and starts with `POST /literature-download/{task_id}/download`.
+It runs one collection and verification pass, then creates the EvidenceGate-style
+download report and verified PDF ZIP. The UI exposes this as a separate “下载文献”
+tab where the user enters the search task ID.

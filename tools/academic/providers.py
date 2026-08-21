@@ -17,10 +17,11 @@ def _strip_markup(value: Any) -> str:
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text)).strip()
 
 
-def search_openalex(query: str, limit: int, *, email: str = "") -> list[PaperRecord]:
+def search_openalex(query: str, limit: int, *, email: str = "", offset: int = 0) -> list[PaperRecord]:
     params: dict[str, Any] = {
         "search": query,
         "per-page": min(max(1, limit), 50),
+        "page": max(1, offset // max(1, limit) + 1),
         "sort": "relevance_score:desc",
     }
     if email:
@@ -86,8 +87,12 @@ def search_openalex(query: str, limit: int, *, email: str = "") -> list[PaperRec
     return records
 
 
-def search_crossref(query: str, limit: int, *, email: str = "") -> list[PaperRecord]:
-    params: dict[str, Any] = {"query.bibliographic": query, "rows": min(max(1, limit), 50)}
+def search_crossref(query: str, limit: int, *, email: str = "", offset: int = 0) -> list[PaperRecord]:
+    params: dict[str, Any] = {
+        "query.bibliographic": query,
+        "rows": min(max(1, limit), 50),
+        "offset": max(0, offset),
+    }
     if email:
         params["mailto"] = email
     data = request_json(
@@ -148,10 +153,12 @@ def search_semantic_scholar(
     limit: int,
     *,
     api_key: str = "",
+    offset: int = 0,
 ) -> list[PaperRecord]:
     params = {
         "query": query,
         "limit": min(max(1, limit), 50),
+        "offset": max(0, offset),
         "fields": (
             "paperId,title,year,publicationDate,abstract,url,externalIds,authors,"
             "venue,citationCount,isOpenAccess,openAccessPdf"
@@ -203,12 +210,13 @@ def search_arxiv(
     limit: int,
     *,
     sort_by: str = "relevance",
+    offset: int = 0,
 ) -> list[PaperRecord]:
     raw = request_text(
         "https://export.arxiv.org/api/query",
         params={
             "search_query": _arxiv_expression(query),
-            "start": 0,
+            "start": max(0, offset),
             "max_results": min(max(1, limit), 25),
             "sortBy": sort_by if sort_by in {"relevance", "lastUpdatedDate", "submittedDate"} else "relevance",
             "sortOrder": "descending",
