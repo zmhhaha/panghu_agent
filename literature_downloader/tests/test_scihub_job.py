@@ -95,6 +95,86 @@ class SciHubJobManifestTests(unittest.TestCase):
         self.assertEqual(paper["pdf_status"], "verified")
         self.assertTrue(paper["pdf_path"].endswith("paper.pdf"))
 
+    def test_hybrid_backend_prefers_direct_download_and_falls_back_per_paper(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        shared = root / "shared"
+        direct_pdf = root / "direct.pdf"
+        direct_pdf.write_bytes(b"%PDF-1.4\ndirect")
+        config = Settings(
+            root / "data",
+            root / "literature.db",
+            root / "pdfs",
+            root / "reports",
+            download_backend="hybrid",
+            scihub_papers_dir=shared,
+            min_pdf_bytes=5,
+            min_text_chars=1,
+        )
+        db = Database(config.db_path)
+        pipeline = LiteraturePipeline(config, db)
+        task_id = pipeline.create_task("topic", 1)
+        direct_id = db.upsert_paper(task_id, {"title": "Direct", "doi": "10.1000/direct", "pdf_status": "pending_download"})
+        fallback_id = db.upsert_paper(task_id, {"title": "Fallback", "doi": "10.1000/fallback", "pdf_status": "pending_download"})
+        db.update_task(task_id, status="waiting:search_approval")
+        input_data: dict[str, str] = {}
+
+        class FakeClient:
+            def create_config_map(self, namespace, manifest):
+                input_data.update(manifest["data"])
+                return manifest
+
+            def create_job(self, namespace, manifest):
+                output = shared / "jobs" / task_id / "round-1" / f"paper-{fallback_id}"
+                output.mkdir(parents=True, exist_ok=True)
+                (output / "fallback.pdf").write_bytes(b"%PDF-1.4\nfallback")
+                return manifest
+
+            def wait_for_job(self, namespace, name, timeout_seconds, poll_seconds):
+                return {"status": {"succeeded": 1}}
+
+            def delete_config_map(self, namespace, name):
+                return None
+
+        def collect(paper, target, config):
+            from literature_downloader.models import DownloadResult
+            if paper.doi == "10.1000/direct":
+                return DownloadResult(
+                    True,
+                    path=str(direct_pdf),
+                    size=direct_pdf.stat().st_size,
+                    source="openalex",
+                    attempts=[{"source": "openalex", "ok": True, "size": direct_pdf.stat().st_size}],
+                )
+            return DownloadResult(
+                False,
+                error="no direct PDF",
+                source="openalex",
+                attempts=[{"source": "openalex", "ok": False, "error": "no direct PDF"}],
+            )
+
+        def verify(paper, config):
+            path = Path(paper.pdf_path)
+            return VerificationResult(paper.title, "pass", str(path), path.stat().st_size, 10)
+
+        with patch("literature_downloader.pipeline.collect_paper", side_effect=collect), patch(
+            "literature_downloader.pipeline.KubernetesJobClient", FakeClient
+        ), patch("literature_downloader.pipeline.verify_pdf", side_effect=verify):
+            result = pipeline.collect_round(task_id)
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["collection"]["rounds"][0]["attempted"], 2)
+        self.assertEqual(result["collection"]["rounds"][0]["downloaded"], 2)
+        self.assertEqual(len(result["collection"]["rounds"][0]["verification"]), 2)
+        self.assertEqual(set(input_data), {f"paper-{fallback_id}.txt"})
+        self.assertEqual(db.get_paper(direct_id)["pdf_status"], "verified")
+        self.assertEqual(db.get_paper(fallback_id)["pdf_status"], "verified")
+        with db.connect() as conn:
+            attempts = conn.execute(
+                "SELECT source FROM download_attempts WHERE task_id = ? AND paper_id = ? ORDER BY id",
+                (task_id, fallback_id),
+            ).fetchall()
+        self.assertEqual([attempt["source"] for attempt in attempts], ["openalex", "scihub-cli"])
+
     def test_successful_job_is_cached_and_reused_by_another_task(self) -> None:
         root = Path(tempfile.mkdtemp())
         shared = root / "shared"

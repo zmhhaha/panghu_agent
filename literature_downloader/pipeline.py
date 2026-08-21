@@ -504,8 +504,9 @@ class LiteraturePipeline:
             else:
                 error = "文献没有 DOI、arXiv ID 或可下载 URL"
                 self.db.update_paper(paper_id, pdf_status="failed", verification_status="", pdf_path="")
-                self.db.add_attempt(task_id, paper_id, round_num, {"source": "scihub-cli", "ok": False, "error": error})
-                collection_rows.append(self._scihub_item(row, ok=False, error=error))
+                attempt = {"source": "scihub-cli", "ok": False, "error": error}
+                self.db.add_attempt(task_id, paper_id, round_num, attempt)
+                collection_rows.append(self._scihub_item(row, ok=False, error=error, attempts=[attempt]))
 
         if not identifiers:
             return collection_rows, verification_rows
@@ -553,14 +554,27 @@ class LiteraturePipeline:
                 error = self._scihub_failure(output_dir)
                 if not job_failed:
                     error = f"{error}; Job completed without a PDF"
+                attempt = {
+                    "source": "scihub-cli",
+                    "url": identifiers[paper_id],
+                    "ok": False,
+                    "error": error,
+                }
                 self.db.update_paper(paper_id, pdf_status="failed", verification_status="", pdf_path="")
-                self.db.add_attempt(task_id, paper_id, round_num, {"source": "scihub-cli", "url": identifiers[paper_id], "ok": False, "error": error})
-                collection_rows.append(self._scihub_item(row, ok=False, source="scihub-cli", error=error))
+                self.db.add_attempt(task_id, paper_id, round_num, attempt)
+                collection_rows.append(self._scihub_item(row, ok=False, source="scihub-cli", error=error, attempts=[attempt]))
                 continue
 
             path = pdfs[0]
             paper = Paper.from_record({**row, "pdf_path": str(path)})
             verification = verify_pdf(paper, self.config)
+            attempt = {
+                "source": "scihub-cli",
+                "url": identifiers[paper_id],
+                "ok": verification.verdict == "pass",
+                "size": path.stat().st_size,
+                "error": "" if verification.verdict == "pass" else verification.reason,
+            }
             item = self._scihub_item(
                 row,
                 ok=True,
@@ -568,21 +582,11 @@ class LiteraturePipeline:
                 size=path.stat().st_size,
                 source="scihub-cli",
                 error="" if verification.verdict == "pass" else verification.reason,
+                attempts=[attempt],
             )
             collection_rows.append(item)
             verification_rows.append({"paper_id": paper_id, **verification.to_dict()})
-            self.db.add_attempt(
-                task_id,
-                paper_id,
-                round_num,
-                {
-                    "source": "scihub-cli",
-                    "url": identifiers[paper_id],
-                    "ok": verification.verdict == "pass",
-                    "size": path.stat().st_size,
-                    "error": "" if verification.verdict == "pass" else verification.reason,
-                },
-            )
+            self.db.add_attempt(task_id, paper_id, round_num, attempt)
             new_status = "verified" if verification.verdict == "pass" else "failed"
             self.db.update_paper(
                 paper_id,
@@ -600,6 +604,42 @@ class LiteraturePipeline:
                     "verification": verification.to_dict(),
                 })
         return collection_rows, verification_rows
+
+    @staticmethod
+    def _merge_fallback_rows(
+        primary_rows: list[dict[str, Any]],
+        fallback_rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Keep one report row per paper while preserving both download attempts."""
+        merged = {int(row.get("paper_id") or 0): dict(row) for row in primary_rows}
+        for fallback in fallback_rows:
+            paper_id = int(fallback.get("paper_id") or 0)
+            previous = merged.get(paper_id)
+            current = dict(fallback)
+            if previous:
+                current["attempts"] = [
+                    *(previous.get("attempts") or []),
+                    *(current.get("attempts") or []),
+                ]
+                if not current.get("ok") and previous.get("error"):
+                    fallback_error = current.get("error") or "SciHub fallback failed"
+                    current["error"] = f"原有下载失败: {previous['error']}; SciHub: {fallback_error}"
+            merged[paper_id] = current
+        return list(merged.values())
+
+    @staticmethod
+    def _merge_fallback_verification(
+        primary_rows: list[dict[str, Any]],
+        fallback_rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Keep the latest verification result once a fallback has been tried."""
+        merged = {int(row.get("paper_id") or 0): dict(row) for row in primary_rows}
+        for fallback in fallback_rows:
+            paper_id = int(fallback.get("paper_id") or 0)
+            current = dict(merged.get(paper_id) or {})
+            current.update(fallback)
+            merged[paper_id] = current
+        return list(merged.values())
 
     def collect_round(self, task_id: str, callback: ProgressCallback | None = None) -> dict[str, Any]:
         with self._lock(task_id):
@@ -651,6 +691,24 @@ class LiteraturePipeline:
                                 callback,
                                 current_round=round_num,
                             )
+                if self.config.download_backend == "hybrid":
+                    fallback_targets = self.db.list_papers(task_id, ("pending_download", "failed"))
+                    if fallback_targets:
+                        self._emit(
+                            task_id,
+                            "collect",
+                            f"SciHub fallback: {len(fallback_targets)} papers remain after direct download",
+                            callback,
+                            current_round=round_num,
+                        )
+                        fallback_rows, fallback_verification = self._collect_scihub(
+                            task_id, round_num, fallback_targets
+                        )
+                        collection_rows = self._merge_fallback_rows(collection_rows, fallback_rows)
+                        verification_rows = self._merge_fallback_verification(
+                            verification_rows, fallback_verification
+                        )
+
                 collection_rows.sort(key=lambda item: int(item.get("paper_id") or 0))
                 verification_rows.sort(key=lambda item: int(item.get("paper_id") or 0))
 

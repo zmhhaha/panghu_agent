@@ -99,7 +99,7 @@ spec:
             - name: LITERATURE_DOWNLOAD_REQUEST_INTERVAL_MS
               value: "250"
             - name: LITERATURE_DOWNLOAD_BACKEND
-              value: scihub-job
+              value: hybrid
             - name: SCIHUB_JOB_NAMESPACE
               value: literature-downloader
             - name: SCIHUB_JOB_IMAGE
