@@ -175,7 +175,7 @@ def build_job(
         "spec": {
             "backoffLimit": 0,
             "activeDeadlineSeconds": max(int(job_timeout_seconds), 300),
-            "ttlSecondsAfterFinished": 86400,
+            "ttlSecondsAfterFinished": 3600,
             "template": {
                 "metadata": {"labels": {"app": "scihub-downloader", "literature-task": task_id}},
                 "spec": {
