@@ -90,7 +90,7 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 
 ### SciHub Job 下载后端
 
-生产 Kubernetes Deployment 默认设置 `LITERATURE_DOWNLOAD_BACKEND=hybrid`。每个收集轮次先使用原有的 OpenAlex、Crossref、Europe PMC、arXiv、开放获取页面等直接下载流程；只有直接下载失败或校验不通过的文献才会进入 SciHub Job。Job 输入 DOI、arXiv ID 或文献 URL 通过临时 ConfigMap 注入，Job 将 PDF 写入共享 CephFS PVC，API 等待 Job 结束后从 `/data/scihub-papers` 读取并校验结果。Job 输出目录为 `/data/scihub-papers/jobs/<task_id>/round-<n>/paper-<paper_id>/`。只有校验通过的 PDF 才由 API 写入 SQLite 的全局 `library_papers` 文献库；后续任务会先复用仍存在的全局 PDF，不会再次创建 SciHub Job。Job 本身不挂载或写 SQLite。
+生产 Kubernetes Deployment 默认设置 `LITERATURE_DOWNLOAD_BACKEND=hybrid`。每个收集轮次先使用原有的 OpenAlex、Crossref、Europe PMC、arXiv、开放获取页面等直接下载流程；只有直接下载失败或校验不通过的文献才会进入 SciHub Job。Job 会为 SciHub CLI 配置 `panghuer001@163.com`，启用 CORE，并保存失败页面的 HTML 快照；这些配置用于提高 Unpaywall/CORE 命中率和诊断 403/405 响应。Job 输入 DOI、arXiv ID 或文献 URL 通过临时 ConfigMap 注入，Job 将 PDF 写入共享 CephFS PVC，API 等待 Job 结束后从 `/data/scihub-papers` 读取并校验结果。单篇文献下载失败但已生成 `download-report.json` 时不再使整个 Job 失败；只有容器、命令或输出基础设施错误才会使 Job 失败。Job 输出目录为 `/data/scihub-papers/jobs/<task_id>/round-<n>/paper-<paper_id>/`。只有校验通过的 PDF 才由 API 写入 SQLite 的全局 `library_papers` 文献库；后续任务会先复用仍存在的全局 PDF，不会再次创建 SciHub Job。Job 本身不挂载或写 SQLite。
 
 本地开发或没有 Kubernetes ServiceAccount 时可设置 `LITERATURE_DOWNLOAD_BACKEND=direct`，仅使用 API 容器内的直接下载逻辑；设置为 `scihub-job` 可强制所有待处理文献走 SciHub Job。可通过 `SCIHUB_JOB_IMAGE`、`SCIHUB_JOB_TIMEOUT`、`SCIHUB_RETRIES` 和 `SCIHUB_JOB_POLL_INTERVAL` 调整 Job 参数。
 

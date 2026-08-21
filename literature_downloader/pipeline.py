@@ -525,6 +525,7 @@ class LiteraturePipeline:
             request_timeout=self.config.download_timeout,
             job_timeout_seconds=self.config.scihub_job_timeout,
             retries=self.config.scihub_retries,
+            email=self.config.contact_email,
         )
         client = KubernetesJobClient()
         try:
@@ -552,8 +553,8 @@ class LiteraturePipeline:
             pdfs = sorted(path for path in output_dir.rglob("*.pdf") if path.is_file()) if output_dir.is_dir() else []
             if not pdfs:
                 error = self._scihub_failure(output_dir)
-                if not job_failed:
-                    error = f"{error}; Job completed without a PDF"
+                if job_failed and error == "SciHub CLI did not produce a PDF":
+                    error = f"{error}; SciHub Job failed before producing output"
                 attempt = {
                     "source": "scihub-cli",
                     "url": identifiers[paper_id],

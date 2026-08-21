@@ -122,14 +122,16 @@ def build_job(
     request_timeout: int,
     job_timeout_seconds: int,
     retries: int,
+    email: str = "",
 ) -> dict[str, Any]:
     """Build a Job that isolates each paper's SciHub output directory."""
     output_root = f"/app/papers/jobs/{task_id}/round-{round_num}"
     script = "\n".join(
         [
             "set -u",
-            "failed=0",
             "found=0",
+            "infra_failed=0",
+            "command -v scihub-cli >/dev/null 2>&1 || exit 3",
             "for input_file in /app/input/*.txt; do",
             "  [ -f \"$input_file\" ] || continue",
             "  found=1",
@@ -137,14 +139,31 @@ def build_job(
             "  paper_id=\"${paper_id%.txt}\"",
             f"  output=\"{output_root}/$paper_id\"",
             "  mkdir -p \"$output\"",
-            f"  if ! scihub-cli \"$input_file\" --output \"$output\" --parallel 1 --timeout {int(request_timeout)} --retries {int(retries)}; then",
-            "    failed=1",
+            f"  if ! scihub-cli \"$input_file\" --output \"$output\" --parallel 1 --timeout {int(request_timeout)} --retries {int(retries)} --enable-core --trace-html --trace-html-dir \"$output/trace-html\" --trace-html-max-chars 200000" + (" --email \"$SCIHUB_EMAIL\"" if email else "") + "; then",
+            "    [ -f \"$output/download-report.json\" ] || infra_failed=1",
             "  fi",
             "done",
             "[ \"$found\" -eq 1 ] || exit 2",
-            "exit \"$failed\"",
+            "exit \"$infra_failed\"",
         ]
     )
+    container: dict[str, Any] = {
+        "name": "downloader",
+        "image": image,
+        "imagePullPolicy": "Always",
+        "command": ["/bin/sh", "-c"],
+        "args": [script],
+        "volumeMounts": [
+            {"name": "input", "mountPath": "/app/input", "readOnly": True},
+            {"name": "papers-storage", "mountPath": "/app/papers"},
+        ],
+        "resources": {
+            "requests": {"cpu": "250m", "memory": "256Mi"},
+            "limits": {"cpu": "1", "memory": "1Gi"},
+        },
+    }
+    if email:
+        container["env"] = [{"name": "SCIHUB_EMAIL", "value": email}]
     return {
         "apiVersion": "batch/v1",
         "kind": "Job",
@@ -161,23 +180,7 @@ def build_job(
                 "metadata": {"labels": {"app": "scihub-downloader", "literature-task": task_id}},
                 "spec": {
                     "restartPolicy": "Never",
-                    "containers": [
-                        {
-                            "name": "downloader",
-                            "image": image,
-                            "imagePullPolicy": "Always",
-                            "command": ["/bin/sh", "-c"],
-                            "args": [script],
-                            "volumeMounts": [
-                                {"name": "input", "mountPath": "/app/input", "readOnly": True},
-                                {"name": "papers-storage", "mountPath": "/app/papers"},
-                            ],
-                            "resources": {
-                                "requests": {"cpu": "250m", "memory": "256Mi"},
-                                "limits": {"cpu": "1", "memory": "1Gi"},
-                            },
-                        }
-                    ],
+                    "containers": [container],
                     "volumes": [
                         {"name": "input", "configMap": {"name": input_config_map}},
                         {"name": "papers-storage", "persistentVolumeClaim": {"claimName": pvc_name}},

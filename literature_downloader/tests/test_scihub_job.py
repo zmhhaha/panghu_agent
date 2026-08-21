@@ -37,6 +37,7 @@ class SciHubJobManifestTests(unittest.TestCase):
             request_timeout=30,
             job_timeout_seconds=600,
             retries=2,
+            email="panghuer001@163.com",
         )
         pod = job["spec"]["template"]["spec"]
         container = pod["containers"][0]
@@ -47,6 +48,11 @@ class SciHubJobManifestTests(unittest.TestCase):
         self.assertIn("scihub-cli", script)
         self.assertIn("--parallel 1", script)
         self.assertIn("--timeout 30", script)
+        self.assertIn("--enable-core", script)
+        self.assertIn("--trace-html", script)
+        self.assertIn('--email \"$SCIHUB_EMAIL\"', script)
+        self.assertIn('exit "$infra_failed"', script)
+        self.assertEqual(container["env"], [{"name": "SCIHUB_EMAIL", "value": "panghuer001@163.com"}])
 
     def test_pipeline_reads_successful_job_output_from_shared_pvc(self) -> None:
         root = Path(tempfile.mkdtemp())
