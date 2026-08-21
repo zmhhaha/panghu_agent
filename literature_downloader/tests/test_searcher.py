@@ -9,9 +9,40 @@ from literature_downloader.config import Settings
 from literature_downloader.db import Database
 from literature_downloader.searcher import search_literature
 from literature_downloader.search_planner import create_search_plan
+from tools.academic.providers import search_openalex
 
 
 class SearchExpansionTests(unittest.TestCase):
+    def test_openalex_preserves_all_pdf_and_landing_locations(self) -> None:
+        payload = {
+            "results": [{
+                "id": "https://openalex.org/W1",
+                "display_name": "Open paper",
+                "doi": "https://doi.org/10.1000/open",
+                "primary_location": {
+                    "landing_page_url": "https://publisher.example/article",
+                    "pdf_url": "https://publisher.example/article.pdf",
+                    "source": {"display_name": "Journal"},
+                },
+                "best_oa_location": {
+                    "landing_page_url": "https://repository.example/record",
+                    "pdf_url": "https://repository.example/paper.pdf",
+                },
+                "locations": [],
+            }]
+        }
+        with patch("tools.academic.providers.request_json", return_value=payload):
+            paper = search_openalex("topic", 10)[0]
+
+        self.assertEqual(paper["identifiers"]["openalex_pdf_urls"], [
+            "https://repository.example/paper.pdf",
+            "https://publisher.example/article.pdf",
+        ])
+        self.assertEqual(paper["identifiers"]["openalex_landing_urls"], [
+            "https://repository.example/record",
+            "https://publisher.example/article",
+        ])
+
     def test_inp_topic_uses_clean_domain_variants(self) -> None:
         root = Path(tempfile.mkdtemp())
         config = Settings(root, root / "literature.db", root / "pdfs", root / "reports", max_search_variants=6)
@@ -132,6 +163,32 @@ class SearchExpansionTests(unittest.TestCase):
 
         self.assertEqual(result["local_hits"], 1)
         self.assertEqual(len(result["local_results"]), 1)
+
+    def test_global_library_paper_is_reused_by_search(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        config = Settings(root, root / "literature.db", root / "pdfs", root / "reports")
+        db = Database(config.db_path)
+        pdf_path = root / "review.pdf"
+        pdf_path.write_bytes(b"%PDF-1.4\ncontent")
+        db.upsert_library_paper({
+            "title": "InP dry etching review",
+            "authors": "A. Author",
+            "doi": "10.1000/inp-review",
+            "abstract": "InP plasma etching and dry etching.",
+            "pdf_status": "verified",
+            "pdf_path": str(pdf_path),
+            "verification_status": "pass",
+        })
+        with patch("literature_downloader.searcher.search_openalex", return_value=[]), patch(
+            "literature_downloader.searcher.search_crossref", return_value=[]
+        ), patch("literature_downloader.searcher.search_arxiv", return_value=[]), patch(
+            "literature_downloader.searcher.search_semantic_scholar", return_value=[]
+        ):
+            result = search_literature("InP dry etching", db, config=config)
+
+        self.assertEqual(result["local_hits"], 1)
+        self.assertEqual(len(result["need_download"]), 0)
+        self.assertEqual(result["papers"][0]["pdf_path"], str(pdf_path))
 
     def test_inp_scope_rejects_other_materials_with_same_etch_terms(self) -> None:
         root = Path(tempfile.mkdtemp())

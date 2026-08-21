@@ -22,6 +22,11 @@ docker push "$API_IMAGE"
 echo "Applying Literature Downloader API resources"
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml $K | kubectl apply $K -f -
 
+# The API launches one SciHub Job per collection round. Keep its shared
+# CephFS PVC in the same namespace so the Job and API can mount it directly.
+kubectl apply $K -f scihub_cli/namespace.yaml
+kubectl apply $K -f scihub_cli/pvc.yaml
+
 kubectl create configmap api-agent -n "$NAMESPACE" \
   --from-file=agent.py="app/api/literature_downloader.py" \
   --dry-run=client -o yaml $K | kubectl apply $K -f -

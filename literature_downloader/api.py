@@ -129,6 +129,11 @@ def health() -> dict[str, Any]:
         "per_provider": settings.per_provider,
         "max_search_variants": settings.max_search_variants,
         "download_concurrency": settings.download_concurrency,
+        "download_retries": settings.download_retries,
+        "download_request_interval_ms": settings.download_request_interval_ms,
+        "download_backend": settings.download_backend,
+        "scihub_job_namespace": settings.scihub_namespace,
+        "scihub_job_timeout": settings.scihub_job_timeout,
         "llm_enabled": settings.llm_enabled,
         "llm_max_candidates": settings.llm_max_candidates,
     }

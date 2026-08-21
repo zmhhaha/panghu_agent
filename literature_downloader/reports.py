@@ -82,7 +82,15 @@ def _attempt_lines(attempts: list[dict[str, Any]] | None) -> list[str]:
         url = _url(attempt.get("url"))
         elapsed = int(attempt.get("elapsed_ms") or 0)
         detail = f"；大小: {int(attempt.get('size') or 0)} bytes；耗时: {elapsed} ms"
+        status_code = int(attempt.get("status_code") or 0)
+        request_attempts = int(attempt.get("request_attempts") or 1)
+        if status_code:
+            detail += f"；HTTP: {status_code}"
+        detail += f"；HTTP 请求次数: {request_attempts}"
         lines.append(f"  {index}. {source}：{outcome}；URL: {url}{detail}")
+        final_url = str(attempt.get("final_url") or "")
+        if final_url and final_url != str(attempt.get("url") or ""):
+            lines.append(f"     最终重定向 URL: {_url(final_url)}")
         if attempt.get("error"):
             lines.append(f"     原因: {attempt['error']}")
     return lines
@@ -179,7 +187,7 @@ def format_need_to_download(papers: list[dict[str, Any]]) -> str:
     for index, paper in enumerate(papers, 1):
         lines.append(f"## [{index}] {_text(paper.get('title'))}")
         lines.extend(_metadata_lines(paper))
-        lines.append("- 推荐下载顺序: arXiv PDF -> DOI/Unpaywall -> Semantic Scholar OA -> 公开 PDF URL")
+        lines.append("- 推荐下载顺序: arXiv -> 元数据公开 PDF/落地页 -> Unpaywall/OpenAlex OA -> DOI 落地页 PDF 发现 -> Semantic Scholar/PMC")
         lines.append("")
     return "\n".join(lines)
 

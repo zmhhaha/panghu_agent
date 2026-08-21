@@ -4,6 +4,39 @@ metadata:
   name: literature-downloader
 ---
 apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: literature-downloader
+  namespace: literature-downloader
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: literature-downloader-scihub
+  namespace: literature-downloader
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["create", "get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: literature-downloader-scihub
+  namespace: literature-downloader
+subjects:
+  - kind: ServiceAccount
+    name: literature-downloader
+    namespace: literature-downloader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: literature-downloader-scihub
+---
+apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: literature-data
@@ -36,6 +69,7 @@ spec:
       labels:
         app: literature-api
     spec:
+      serviceAccountName: literature-downloader
       containers:
         - name: api
           image: __API_IMAGE__
@@ -58,6 +92,28 @@ spec:
               value: "6"
             - name: LITERATURE_DOWNLOAD_CONCURRENCY
               value: "6"
+            - name: LITERATURE_DOWNLOAD_RETRIES
+              value: "2"
+            - name: LITERATURE_DOWNLOAD_RETRY_BACKOFF_MS
+              value: "500"
+            - name: LITERATURE_DOWNLOAD_REQUEST_INTERVAL_MS
+              value: "250"
+            - name: LITERATURE_DOWNLOAD_BACKEND
+              value: scihub-job
+            - name: SCIHUB_JOB_NAMESPACE
+              value: literature-downloader
+            - name: SCIHUB_JOB_IMAGE
+              value: arm-cluster-master:5000/scihub-cli:latest
+            - name: SCIHUB_PVC_NAME
+              value: scihub-papers-pvc
+            - name: SCIHUB_PAPERS_DIR
+              value: /data/scihub-papers
+            - name: SCIHUB_JOB_TIMEOUT
+              value: "3600"
+            - name: SCIHUB_JOB_POLL_INTERVAL
+              value: "5"
+            - name: SCIHUB_RETRIES
+              value: "2"
             # Contact identity for OpenAlex/Crossref polite API access.
             # This is not a secret and is intentionally kept out of Vault.
             - name: ACADEMIC_CONTACT_EMAIL
@@ -83,6 +139,9 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data/literature
+            - name: scihub-papers
+              mountPath: /data/scihub-papers
+              readOnly: true
             - name: source
               mountPath: /app/app/api/agent.py
               subPath: agent.py
@@ -109,6 +168,9 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: literature-data
+        - name: scihub-papers
+          persistentVolumeClaim:
+            claimName: scihub-papers-pvc
         - name: source
           configMap:
             name: api-agent

@@ -37,9 +37,20 @@ class Settings:
     contact_email: str = ""
     semantic_scholar_api_key: str = ""
     download_concurrency: int = 6
+    download_retries: int = 2
+    download_retry_backoff_ms: int = 500
+    download_request_interval_ms: int = 250
     llm_enabled: bool = True
     llm_timeout: int = 30
     llm_max_candidates: int = 40
+    download_backend: str = "direct"
+    scihub_namespace: str = "literature-downloader"
+    scihub_job_image: str = "arm-cluster-master:5000/scihub-cli:latest"
+    scihub_pvc_name: str = "scihub-papers-pvc"
+    scihub_papers_dir: Path = Path("/data/scihub-papers")
+    scihub_job_timeout: int = 3600
+    scihub_job_poll_interval: int = 5
+    scihub_retries: int = 2
 
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -65,9 +76,20 @@ def load_settings() -> Settings:
         contact_email=os.getenv("ACADEMIC_CONTACT_EMAIL") or os.getenv("EVIDENCEGATE_MAILTO", ""),
         semantic_scholar_api_key=os.getenv("SEMANTIC_SCHOLAR_API_KEY", ""),
         download_concurrency=_env_int("LITERATURE_DOWNLOAD_CONCURRENCY", 6, 1, 16),
+        download_retries=_env_int("LITERATURE_DOWNLOAD_RETRIES", 2, 0, 5),
+        download_retry_backoff_ms=_env_int("LITERATURE_DOWNLOAD_RETRY_BACKOFF_MS", 500, 100, 10_000),
+        download_request_interval_ms=_env_int("LITERATURE_DOWNLOAD_REQUEST_INTERVAL_MS", 250, 0, 5_000),
         llm_enabled=os.getenv("LITERATURE_LLM_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"},
         llm_timeout=_env_int("LITERATURE_LLM_TIMEOUT", 30, 5, 180),
         llm_max_candidates=_env_int("LITERATURE_LLM_MAX_CANDIDATES", 40, 1, 100),
+        download_backend=os.getenv("LITERATURE_DOWNLOAD_BACKEND", "direct").strip().lower(),
+        scihub_namespace=os.getenv("SCIHUB_JOB_NAMESPACE", "literature-downloader").strip(),
+        scihub_job_image=os.getenv("SCIHUB_JOB_IMAGE", "arm-cluster-master:5000/scihub-cli:latest").strip(),
+        scihub_pvc_name=os.getenv("SCIHUB_PVC_NAME", "scihub-papers-pvc").strip(),
+        scihub_papers_dir=Path(os.getenv("SCIHUB_PAPERS_DIR", "/data/scihub-papers")).resolve(),
+        scihub_job_timeout=_env_int("SCIHUB_JOB_TIMEOUT", 3600, 60, 86_400),
+        scihub_job_poll_interval=_env_int("SCIHUB_JOB_POLL_INTERVAL", 5, 1, 60),
+        scihub_retries=_env_int("SCIHUB_RETRIES", 2, 0, 5),
     )
 
 

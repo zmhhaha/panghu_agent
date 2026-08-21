@@ -62,6 +62,9 @@ class ReportFormatTests(unittest.TestCase):
                     "size": 0,
                     "elapsed_ms": 100,
                     "error": "HTTP 403",
+                    "status_code": 403,
+                    "final_url": "https://publisher.example/login",
+                    "request_attempts": 1,
                 },
                 {
                     "source": "Unpaywall",
@@ -80,6 +83,9 @@ class ReportFormatTests(unittest.TestCase):
         self.assertIn("实际下载 URL: <https://repository.example/paper.pdf>", report)
         self.assertIn("https://doi.org/10.1000/example", report)
         self.assertIn("HTTP 403", report)
+        self.assertIn("HTTP: 403", report)
+        self.assertIn("HTTP 请求次数: 1", report)
+        self.assertIn("最终重定向 URL: <https://publisher.example/login>", report)
         self.assertIn("本地存储路径: /data/literature/pdfs/task/paper.pdf", report)
 
     def test_verification_and_final_reports_keep_source_chain(self) -> None:

@@ -159,11 +159,13 @@ LLM 必须输出结构化 JSON，至少包含：
 
 1. arXiv 直接 PDF。
 2. 检索结果中已有的公开 PDF URL。
-3. DOI 跳转或 Unpaywall 开放获取地址。
-4. Semantic Scholar Open Access 地址（仅在已有 DOI 或 Semantic Scholar ID 时查询）。
-5. 文献元数据详情 URL（仅作为最后回退，并校验是否确实返回 PDF）。
+3. OpenAlex 返回的全部机构仓储落地页，并从标准学术 HTML 元数据中发现 PDF。
+4. Unpaywall 全部开放获取位置，以及 Crossref/OpenAlex 补充的 OA 地址。
+5. DOI 跳转页；解析 `citation_pdf_url`、`application/pdf` link 和明确的 PDF 链接。
+6. Semantic Scholar Open Access 地址（未配置 API Key 时仅查询已有 Semantic Scholar ID 的记录）。
+7. PubMed Central 和文献元数据详情 URL（作为最后回退，并校验是否确实返回 PDF）。
 
-每种策略失败后记录原因并继续尝试下一种策略。下载时先写入临时文件，确认响应为 PDF 且文件完整后再移动到正式目录。
+每种策略失败后记录原因并继续尝试下一种策略。同一篇文献的落地页和 PDF 请求复用临时 Cookie 会话及 Referer。对超时、HTTP 429 和 5xx 使用有限指数退避，对 403/405 不盲目重试；按域名限速，避免并发触发来源限制。下载时先写入临时文件，确认响应包含 PDF 文件签名且文件完整后再移动到正式目录。
 
 ### 多轮重试
 

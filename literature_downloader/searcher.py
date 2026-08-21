@@ -126,7 +126,11 @@ def search_literature(
     ][:limit]
     need_download = [
         paper for paper in papers
-        if not paper.get("pdf_path") or paper.get("pdf_status") not in {"verified", "downloaded"}
+        if (
+            not paper.get("pdf_path")
+            or paper.get("pdf_status") not in {"verified", "downloaded"}
+            or not Path(str(paper.get("pdf_path"))).is_file()
+        )
     ]
     # Prefer records that expose a legal/open PDF route. This keeps the larger
     # candidate pool useful: direct PDF, arXiv and OA records are attempted

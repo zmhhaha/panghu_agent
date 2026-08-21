@@ -3,7 +3,7 @@
 独立的三阶段文献下载工具。用户提交一次任务后，后台会自动按顺序完成检索、PDF 收集（按最大重试轮数重试）、PDF 校验和最终报告生成：
 
 1. 检索本地库、OpenAlex、Crossref、arXiv 和 Semantic Scholar。
-2. 按 `arXiv -> DOI/Unpaywall -> Semantic Scholar -> 元数据 PDF URL` 下载 PDF，支持多轮重试。
+2. 按 `arXiv -> 元数据公开 PDF -> Unpaywall/OpenAlex OA -> DOI 落地页 PDF 发现 -> Semantic Scholar/PMC -> 元数据 URL` 下载 PDF，支持多轮重试。
 3. 校验 PDF 文件签名、大小和文本可读性，并生成 EvidenceGate-new 风格 Markdown 报告。
 
 检索阶段会保存独立的 `search_report.md` 和 `need_to_download.md`，其中列出每篇文献的来源数据库、DOI/arXiv ID、元数据 URL 和公开 PDF URL。收集阶段的每轮报告会记录实际尝试过的下载 URL、下载策略、成功/失败原因和本地保存路径；校验阶段会记录来源链、文件检查结果和文本可读性。最终下载报告会汇总这三阶段内容。服务器本地路径只表示下载产物的保存位置，不是文献来源。
@@ -49,10 +49,11 @@ python app/ui/literature_downloader.py
 在 ARM64 集群管理节点的 `panghu_agent` 目录执行：
 
 ```bash
+(cd scihub_cli && bash build.sh)
 bash literature_downloader/deploy.sh
 ```
 
-脚本只构建并推送 Literature Downloader 专属 API 镜像；UI 使用 panghu_agent 根目录的通用 `agent-ui` 镜像和通用 Gradio Deployment。脚本会创建 `literature-downloader` 命名空间和 5 Gi Ceph RBD PVC，并等待两个 Deployment 就绪。UI 通过集群内 Service 和 OAuth2 Proxy 暴露，不再使用专属 UI 镜像或 NodePort。
+脚本只构建并推送 Literature Downloader 专属 API 镜像；UI 使用 panghu_agent 根目录的通用 `agent-ui` 镜像和通用 Gradio Deployment。脚本会创建 `literature-downloader` 命名空间、5 Gi Ceph RBD 数据 PVC 和 5 Gi CephFS `scihub-papers-pvc`，并授予 API ServiceAccount 在本 namespace 创建/等待 SciHub Job 的权限。UI 通过集群内 Service 和 OAuth2 Proxy 暴露，不再使用专属 UI 镜像或 NodePort。
 
 部署前请确保共享 API 基础镜像和通用 UI 镜像已经构建并推送：
 
@@ -87,11 +88,17 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 - `GET /literature-download/{task_id}/reports`：列出检索、收集、校验和最终报告。
 - `GET /literature-download/{task_id}/reports/{report_id}/download`：下载指定阶段报告。
 
+### SciHub Job 下载后端
+
+生产 Kubernetes Deployment 默认设置 `LITERATURE_DOWNLOAD_BACKEND=scihub-job`。每个收集轮次会在 `literature-downloader` namespace 创建一个带唯一任务目录的 Job：输入 DOI、arXiv ID 或文献 URL 通过临时 ConfigMap 注入，Job 将 PDF 写入共享 CephFS PVC，API 等待 Job 结束后从 `/data/scihub-papers` 读取并校验结果。Job 输出目录为 `/data/scihub-papers/jobs/<task_id>/round-<n>/paper-<paper_id>/`。只有校验通过的 PDF 才由 API 写入 SQLite 的全局 `library_papers` 文献库；后续任务会先复用仍存在的全局 PDF，不会再次创建 SciHub Job。Job 本身不挂载或写 SQLite。
+
+本地开发或没有 Kubernetes ServiceAccount 时可设置 `LITERATURE_DOWNLOAD_BACKEND=direct`，恢复 API 容器内的直接下载逻辑。可通过 `SCIHUB_JOB_IMAGE`、`SCIHUB_JOB_TIMEOUT`、`SCIHUB_RETRIES` 和 `SCIHUB_JOB_POLL_INTERVAL` 调整 Job 参数。
+
 ## 数据目录
 
 默认写入 `literature_downloader/data/`：
 
-- `literature.db`：任务、文献、下载尝试和报告索引。
+- `literature.db`：任务、任务文献、跨任务全局 `library_papers` 文献库、下载尝试和报告索引。
 - `pdfs/<task_id>/`：下载的 PDF 文件。
 - `reports/<task_id>/`：检索、待下载清单、每轮收集/校验和包含三阶段明细的最终报告。
 
@@ -103,11 +110,16 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 - `LITERATURE_SEARCH_LIMIT`：默认返回最多 100 篇候选文献；服务会优先尝试带公开 PDF 地址、arXiv 或开放获取标记的记录。
 - `LITERATURE_PER_PROVIDER`：每个查询变体和外部来源默认最多 20 篇。
 - `LITERATURE_MAX_SEARCH_VARIANTS`：每个主题最多使用 6 个查询变体，提高召回率。
-- `LITERATURE_DOWNLOAD_CONCURRENCY`：每轮并发下载和校验数，默认 6；可按服务器带宽和 CPU 调整。下载优先级为 arXiv、检索结果公开 PDF URL、DOI/Unpaywall、Semantic Scholar OA 和最后的详情页 URL。
+- `LITERATURE_DOWNLOAD_CONCURRENCY`：每轮并发下载和校验数，默认 6；可按服务器带宽和 CPU 调整。
+- `LITERATURE_DOWNLOAD_RETRIES`：同一个 URL 遇到超时、HTTP 429 或 5xx 临时错误时的额外重试次数，默认 2；HTTP 403/405 不会无效重试。
+- `LITERATURE_DOWNLOAD_RETRY_BACKOFF_MS`：临时错误指数退避的初始毫秒数，默认 500。
+- `LITERATURE_DOWNLOAD_REQUEST_INTERVAL_MS`：同一域名两次请求之间的最小间隔，默认 250 毫秒，用于降低触发限流的概率。
+- 下载器会解析学术落地页中的 `citation_pdf_url`、`application/pdf` link 和明确的 `.pdf` 链接，并继续校验 PDF 文件签名；HTML 登录页或反爬页面不会被误收为 PDF。
 - `scope_requirements`：由每次任务的检索专家 LLM 生成的主题范围组；服务不内置材料、工艺或其他领域规则。LLM 不可用时仅使用通用查询规范化和词法相关性，并在报告中标记严格范围过滤未启用。
 - `ACADEMIC_CONTACT_EMAIL`：用于 OpenAlex/Crossref 的联系邮箱，当前固定为 `panghuer001@163.com`，不通过 Vault 管理。
 - 任务通知邮箱：由提交任务时的 `email` 字段提供，仅在任务完成或失败时发送结果通知；不是 Vault 配置项。
 - Semantic Scholar API Key：未配置。系统仍会尝试公开接口，若受限流影响，会在检索报告中记录错误并继续处理其他来源。
+- 未配置 Semantic Scholar API Key 时，下载阶段只对检索结果中已有 Semantic Scholar paper ID 的文献查询 OA PDF，不再对每个 DOI 逐篇发匿名请求，避免大任务因 429 限流显著变慢。
 
 ## 是否需要 LLM
 

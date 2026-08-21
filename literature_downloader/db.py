@@ -112,6 +112,38 @@ class Database:
                 );
                 CREATE INDEX IF NOT EXISTS idx_papers_identity ON papers(identity_key);
                 CREATE INDEX IF NOT EXISTS idx_papers_status ON papers(pdf_status);
+                CREATE TABLE IF NOT EXISTS library_papers (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    identity_key TEXT NOT NULL UNIQUE,
+                    title TEXT NOT NULL,
+                    authors TEXT NOT NULL DEFAULT '',
+                    date TEXT NOT NULL DEFAULT '',
+                    doi TEXT NOT NULL DEFAULT '',
+                    arxiv_id TEXT NOT NULL DEFAULT '',
+                    pmid TEXT NOT NULL DEFAULT '',
+                    provider TEXT NOT NULL DEFAULT '',
+                    providers_json TEXT NOT NULL DEFAULT '[]',
+                    abstract TEXT NOT NULL DEFAULT '',
+                    url TEXT NOT NULL DEFAULT '',
+                    pdf_url TEXT NOT NULL DEFAULT '',
+                    venue TEXT NOT NULL DEFAULT '',
+                    cited_by_count INTEGER NOT NULL DEFAULT 0,
+                    open_access INTEGER NOT NULL DEFAULT 0,
+                    identifiers_json TEXT NOT NULL DEFAULT '{}',
+                    pdf_path TEXT NOT NULL DEFAULT '',
+                    pdf_status TEXT NOT NULL DEFAULT 'none',
+                    verification_status TEXT NOT NULL DEFAULT '',
+                    verification_json TEXT NOT NULL DEFAULT '{}',
+                    relevance_score REAL NOT NULL DEFAULT 0,
+                    relevance_method TEXT NOT NULL DEFAULT 'rules',
+                    llm_included INTEGER,
+                    llm_relevance_score REAL,
+                    relevance_reason TEXT NOT NULL DEFAULT '',
+                    source_record_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_library_papers_status ON library_papers(pdf_status);
                 CREATE TABLE IF NOT EXISTS download_attempts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     task_id TEXT NOT NULL,
@@ -322,6 +354,10 @@ class Database:
                     pdf_url=CASE WHEN excluded.pdf_url <> '' THEN excluded.pdf_url ELSE papers.pdf_url END,
                     venue=CASE WHEN excluded.venue <> '' THEN excluded.venue ELSE papers.venue END,
                     cited_by_count=MAX(papers.cited_by_count, excluded.cited_by_count),
+                    pdf_path=CASE WHEN excluded.pdf_status IN ('verified', 'downloaded') AND excluded.pdf_path <> '' THEN excluded.pdf_path ELSE papers.pdf_path END,
+                    pdf_status=CASE WHEN excluded.pdf_status IN ('verified', 'downloaded') THEN excluded.pdf_status ELSE papers.pdf_status END,
+                    verification_status=CASE WHEN excluded.verification_status <> '' THEN excluded.verification_status ELSE papers.verification_status END,
+                    verification_json=CASE WHEN excluded.verification_json <> '{}' THEN excluded.verification_json ELSE papers.verification_json END,
                     relevance_score=excluded.relevance_score,
                     relevance_method=excluded.relevance_method,
                     llm_included=excluded.llm_included,
@@ -340,6 +376,92 @@ class Database:
     def get_paper(self, paper_id: int) -> dict[str, Any] | None:
         with self.connect() as conn:
             row = conn.execute("SELECT * FROM papers WHERE id = ?", (paper_id,)).fetchone()
+        return self.paper_row(row)
+
+    def upsert_library_paper(self, paper: dict[str, Any]) -> str:
+        """Persist a verified PDF in the cross-task literature library."""
+        now = utc_now()
+        key = identity_key(paper)
+        values = (
+            key,
+            str(paper.get("title") or "").strip(),
+            str(paper.get("authors") or ""),
+            str(paper.get("date") or ""),
+            normalize_doi(paper.get("doi")),
+            str(paper.get("arxiv_id") or (paper.get("identifiers") or {}).get("arxiv") or ""),
+            str(paper.get("pmid") or (paper.get("identifiers") or {}).get("pmid") or ""),
+            str(paper.get("provider") or ""),
+            self._json(paper.get("providers") or ([paper.get("provider")] if paper.get("provider") else [])),
+            str(paper.get("abstract") or ""),
+            str(paper.get("url") or ""),
+            str(paper.get("pdf_url") or ""),
+            str(paper.get("venue") or ""),
+            int(paper.get("cited_by_count") or 0),
+            int(bool(paper.get("open_access"))),
+            self._json(paper.get("identifiers") or {}),
+            str(paper.get("pdf_path") or ""),
+            str(paper.get("pdf_status") or "verified"),
+            str(paper.get("verification_status") or "pass"),
+            self._json(paper.get("verification") or {}),
+            float(paper.get("relevance_score") or 0),
+            str(paper.get("relevance_method") or "rules"),
+            (None if paper.get("llm_included") is None else int(bool(paper.get("llm_included")))),
+            (None if paper.get("llm_relevance_score") is None else float(paper.get("llm_relevance_score"))),
+            str(paper.get("relevance_reason") or ""),
+            self._json(paper.get("source_record") or {}),
+            now,
+            now,
+        )
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO library_papers (
+                    identity_key, title, authors, date, doi, arxiv_id, pmid,
+                    provider, providers_json, abstract, url, pdf_url, venue,
+                    cited_by_count, open_access, identifiers_json, pdf_path, pdf_status,
+                    verification_status, verification_json, relevance_score, relevance_method,
+                    llm_included, llm_relevance_score, relevance_reason, source_record_json,
+                    created_at, updated_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?
+                )
+                ON CONFLICT(identity_key) DO UPDATE SET
+                    title=CASE WHEN excluded.title <> '' THEN excluded.title ELSE library_papers.title END,
+                    authors=CASE WHEN excluded.authors <> '' THEN excluded.authors ELSE library_papers.authors END,
+                    date=CASE WHEN excluded.date <> '' THEN excluded.date ELSE library_papers.date END,
+                    doi=CASE WHEN excluded.doi <> '' THEN excluded.doi ELSE library_papers.doi END,
+                    arxiv_id=CASE WHEN excluded.arxiv_id <> '' THEN excluded.arxiv_id ELSE library_papers.arxiv_id END,
+                    pmid=CASE WHEN excluded.pmid <> '' THEN excluded.pmid ELSE library_papers.pmid END,
+                    provider=CASE WHEN excluded.provider <> '' THEN excluded.provider ELSE library_papers.provider END,
+                    providers_json=CASE WHEN excluded.providers_json <> '[]' THEN excluded.providers_json ELSE library_papers.providers_json END,
+                    abstract=CASE WHEN length(excluded.abstract) > length(library_papers.abstract) THEN excluded.abstract ELSE library_papers.abstract END,
+                    url=CASE WHEN excluded.url <> '' THEN excluded.url ELSE library_papers.url END,
+                    pdf_url=CASE WHEN excluded.pdf_url <> '' THEN excluded.pdf_url ELSE library_papers.pdf_url END,
+                    venue=CASE WHEN excluded.venue <> '' THEN excluded.venue ELSE library_papers.venue END,
+                    cited_by_count=MAX(library_papers.cited_by_count, excluded.cited_by_count),
+                    open_access=MAX(library_papers.open_access, excluded.open_access),
+                    identifiers_json=CASE WHEN excluded.identifiers_json <> '{}' THEN excluded.identifiers_json ELSE library_papers.identifiers_json END,
+                    pdf_path=CASE WHEN excluded.pdf_path <> '' THEN excluded.pdf_path ELSE library_papers.pdf_path END,
+                    pdf_status=CASE WHEN excluded.pdf_status <> '' THEN excluded.pdf_status ELSE library_papers.pdf_status END,
+                    verification_status=CASE WHEN excluded.verification_status <> '' THEN excluded.verification_status ELSE library_papers.verification_status END,
+                    verification_json=CASE WHEN excluded.verification_json <> '{}' THEN excluded.verification_json ELSE library_papers.verification_json END,
+                    relevance_score=excluded.relevance_score,
+                    relevance_method=excluded.relevance_method,
+                    llm_included=excluded.llm_included,
+                    llm_relevance_score=excluded.llm_relevance_score,
+                    relevance_reason=excluded.relevance_reason,
+                    source_record_json=CASE WHEN excluded.source_record_json <> '{}' THEN excluded.source_record_json ELSE library_papers.source_record_json END,
+                    updated_at=excluded.updated_at
+                """,
+                values,
+            )
+        return key
+
+    def get_library_paper(self, key: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM library_papers WHERE identity_key = ?", (key,)).fetchone()
         return self.paper_row(row)
 
     def list_papers(self, task_id: str, statuses: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
@@ -363,11 +485,17 @@ class Database:
             params.extend([pattern] * 4)
         where = " OR ".join(conditions) if conditions else "1=1"
         with self.connect() as conn:
-            rows = conn.execute(
+            library_rows = conn.execute(
+                f"SELECT * FROM library_papers WHERE ({where}) AND pdf_status = 'verified' ORDER BY date DESC LIMIT ?",
+                (*params, limit),
+            ).fetchall()
+            # Keep reading legacy task-owned rows so an existing database is
+            # useful before all historical downloads have been backfilled.
+            paper_rows = conn.execute(
                 f"SELECT * FROM papers WHERE ({where}) AND pdf_status = 'verified' ORDER BY date DESC LIMIT ?",
                 (*params, limit),
             ).fetchall()
-        return [self.paper_row(row) for row in rows]
+        return [self.paper_row(row) for row in (*library_rows, *paper_rows)]
 
     @staticmethod
     def paper_row(row: sqlite3.Row | None) -> dict[str, Any]:

@@ -36,12 +36,16 @@ def search_openalex(query: str, limit: int, *, email: str = "") -> list[PaperRec
         locations = item.get("locations") or []
         location_candidates = [best_location, location, *locations]
         landing_url = ""
+        landing_urls: list[str] = []
         pdf_url = ""
         pdf_urls: list[str] = []
         for candidate in location_candidates:
             if not isinstance(candidate, dict):
                 continue
-            landing_url = landing_url or str(candidate.get("landing_page_url") or "")
+            candidate_landing = str(candidate.get("landing_page_url") or "").strip()
+            if candidate_landing and candidate_landing not in landing_urls:
+                landing_urls.append(candidate_landing)
+            landing_url = landing_url or candidate_landing
             candidate_pdf = str(candidate.get("pdf_url") or "").strip()
             if candidate_pdf and candidate_pdf not in pdf_urls:
                 pdf_urls.append(candidate_pdf)
@@ -76,6 +80,7 @@ def search_openalex(query: str, limit: int, *, email: str = "") -> list[PaperRec
             identifiers={
                 "openalex": str(item.get("id") or ""),
                 "openalex_pdf_urls": pdf_urls,
+                "openalex_landing_urls": landing_urls,
             },
         ))
     return records

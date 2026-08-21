@@ -1,0 +1,45 @@
+# This manifest is a manual smoke-test Job. The Literature Downloader API
+# creates per-task Jobs with isolated input/output directories at runtime.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: scihub-download-job
+  namespace: literature-downloader
+spec:
+  # 如果失败，重启 Pod
+  backoffLimit: 2
+  template:
+    metadata:
+      labels:
+        app: scihub-downloader
+    spec:
+      # 容器启动后执行下载脚本
+      containers:
+      - name: downloader
+        image: arm-cluster-master:5000/scihub-cli:latest
+        # 覆盖默认的 CMD，执行我们准备好的脚本
+        command: ["/bin/sh"]
+        args: ["/app/config/download.sh"]
+        # 挂载配置和存储
+        volumeMounts:
+        - name: config-volume
+          mountPath: /app/config
+        - name: papers-storage
+          mountPath: /app/papers
+        # 资源限制（可选）
+        resources:
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+      volumes:
+      - name: config-volume
+        configMap:
+          name: scihub-config
+      - name: papers-storage
+        persistentVolumeClaim:
+          claimName: scihub-papers-pvc
+      # 对于 Job，重启策略应为 OnFailure 或 Never[reference:12]
+      restartPolicy: OnFailure
