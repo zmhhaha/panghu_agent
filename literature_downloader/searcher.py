@@ -57,6 +57,115 @@ def _is_relevant(record: dict[str, Any]) -> bool:
     return True
 
 
+def _split_boolean(value: str, operator: str) -> list[str]:
+    """Split a simple Boolean query without splitting inside quotes/groups."""
+    text = str(value or "").strip()
+    if not text:
+        return []
+    marker = operator.upper()
+    parts: list[str] = []
+    start = 0
+    depth = 0
+    quoted = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if char == '"':
+            quoted = not quoted
+            index += 1
+            continue
+        if not quoted:
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth = max(0, depth - 1)
+            elif depth == 0 and text[index:index + len(marker)].upper() == marker:
+                before = text[index - 1] if index else " "
+                after_index = index + len(marker)
+                after = text[after_index] if after_index < len(text) else " "
+                if not (before.isalnum() or before == "_") and not (after.isalnum() or after == "_"):
+                    parts.append(text[start:index].strip())
+                    start = after_index
+                    index = after_index
+                    continue
+        index += 1
+    parts.append(text[start:].strip())
+    return [part for part in parts if part]
+
+
+def _unwrap_query_group(value: str) -> str:
+    text = str(value or "").strip()
+    while text.startswith("(") and text.endswith(")"):
+        depth = 0
+        quoted = False
+        wraps_entire_value = True
+        for index, char in enumerate(text):
+            if char == '"':
+                quoted = not quoted
+            elif not quoted and char == "(":
+                depth += 1
+            elif not quoted and char == ")":
+                depth -= 1
+                if depth == 0 and index != len(text) - 1:
+                    wraps_entire_value = False
+                    break
+        if not wraps_entire_value or depth != 0:
+            break
+        text = text[1:-1].strip()
+    return text
+
+
+def _clean_query_atom(value: str) -> str:
+    text = re.sub(r"[*?]", "", str(value or ""))
+    text = re.sub(r"[()\[\]{}]", " ", text)
+    text = text.replace('"', " ")
+    text = re.sub(r"\b(?:AND|OR|NOT)\b", " ", text, flags=re.I)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _query_atoms(query: str) -> list[str]:
+    """Choose one useful term from each required Boolean clause.
+
+    LLM queries are intentionally richer than individual provider syntaxes.
+    Selecting the first alternative in each AND clause keeps the material and
+    method anchors while avoiding unsupported OR/wildcard expressions.
+    """
+    clauses = _split_boolean(_unwrap_query_group(query), "AND") or [str(query or "")]
+    atoms: list[str] = []
+    seen: set[str] = set()
+    for clause in clauses:
+        alternatives = _split_boolean(_unwrap_query_group(clause), "OR") or [clause]
+        atom = next((_clean_query_atom(item) for item in alternatives if _clean_query_atom(item)), "")
+        if atom and atom.casefold() not in seen:
+            atoms.append(atom)
+            seen.add(atom.casefold())
+    return atoms
+
+
+def _provider_query(provider: str, query: str) -> str:
+    """Translate the shared query plan to a provider-compatible expression."""
+    atoms = _query_atoms(query)
+    if provider == "arXiv":
+        return " AND ".join(f'all:"{atom}"' for atom in atoms[:8])
+    return " ".join(atoms)
+
+
+def _provider_queries(provider: str, variants: list[str]) -> list[str]:
+    queries: list[str] = []
+    seen: set[str] = set()
+    for variant in variants:
+        query = _provider_query(provider, variant)
+        if query and query.casefold() not in seen:
+            queries.append(query)
+            seen.add(query.casefold())
+    return queries
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "429" in text or "too many requests" in text or "rate limit" in text
+
+
 def search_literature(
     topic: str,
     db: Database,
@@ -68,6 +177,7 @@ def search_literature(
     search_plan: dict[str, Any] | None = None,
     use_llm: bool = True,
     config: Settings = settings,
+    disabled_providers: set[str] | None = None,
 ) -> dict[str, Any]:
     """Search local verified papers and external providers.
 
@@ -96,7 +206,9 @@ def search_literature(
     # those copies before counting/reporting hits so one paper is listed once.
     local = deduplicate_papers(local)
     api_results: dict[str, list[dict[str, Any]]] = {}
+    provider_queries: dict[str, list[str]] = {}
     errors: dict[str, str] = {}
+    disabled = disabled_providers if disabled_providers is not None else set()
     offset = search_round * per_limit
 
     def call_provider(function: Any, query: str, **kwargs: Any) -> list[dict[str, Any]]:
@@ -131,13 +243,23 @@ def search_literature(
         if provider not in functions:
             errors[provider] = "unsupported provider"
             continue
+        if provider in disabled:
+            api_results[provider] = []
+            provider_queries[provider] = []
+            errors[provider] = "skipped after provider rate limiting in an earlier round"
+            continue
         rows: list[dict[str, Any]] = []
         provider_errors: list[str] = []
-        for variant in variants[:config.max_search_variants]:
+        queries = _provider_queries(provider, variants[:config.max_search_variants])
+        provider_queries[provider] = queries
+        for query in queries:
             try:
-                rows.extend(functions[provider](variant))
+                rows.extend(functions[provider](query))
             except Exception as exc:
                 provider_errors.append(f"{type(exc).__name__}: {str(exc)[:160]}")
+                if _is_rate_limited(exc):
+                    disabled.add(provider)
+                    break
         api_results[provider] = [_with_identifiers(dict(row)) for row in deduplicate_papers(rows)]
         if provider_errors:
             errors[provider] = "; ".join(provider_errors)
@@ -196,6 +318,7 @@ def search_literature(
         "relevance": relevance,
         "local_results": local,
         "api_results": api_results,
+        "provider_queries": provider_queries,
         "papers": papers,
         "need_download": need_download,
         "provider_counts": {name: len(rows) for name, rows in api_results.items()},
@@ -219,6 +342,7 @@ def merge_search_results(
             "relevance": {"status": "rules", "used": False, "judged": 0},
             "local_results": [],
             "api_results": {},
+            "provider_queries": {},
             "papers": [],
             "need_download": [],
             "provider_counts": {},
@@ -236,6 +360,7 @@ def merge_search_results(
         for row in result.get("local_results") or []
     ])
     api_results: dict[str, list[dict[str, Any]]] = {}
+    provider_queries: dict[str, list[str]] = {}
     for provider in {
         provider
         for result in results
@@ -246,6 +371,11 @@ def merge_search_results(
             for result in results
             for row in (result.get("api_results") or {}).get(provider, [])
         ])
+        provider_queries[provider] = list(dict.fromkeys(
+            query
+            for result in results
+            for query in (result.get("provider_queries") or {}).get(provider, [])
+        ))
 
     candidates = deduplicate_papers([
         dict(row)
@@ -317,6 +447,7 @@ def merge_search_results(
         "relevance": relevance,
         "local_results": local,
         "api_results": api_results,
+        "provider_queries": provider_queries,
         "papers": ranked,
         "need_download": need_download,
         "provider_counts": {provider: len(rows) for provider, rows in api_results.items()},

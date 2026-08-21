@@ -7,12 +7,27 @@ from unittest.mock import patch
 
 from literature_downloader.config import Settings
 from literature_downloader.db import Database
-from literature_downloader.searcher import search_literature
+from literature_downloader.searcher import _provider_query, search_literature
 from literature_downloader.search_planner import create_search_plan
 from tools.academic.providers import search_openalex
 
 
 class SearchExpansionTests(unittest.TestCase):
+    def test_provider_queries_translate_llm_boolean_plan(self) -> None:
+        query = '(InP OR "Indium Phosphide") AND ("dry etch*" OR "plasma etch*" OR RIE)'
+
+        openalex = _provider_query("OpenAlex", query)
+        crossref = _provider_query("Crossref", query)
+        arxiv = _provider_query("arXiv", query)
+
+        self.assertEqual(openalex, "InP dry etch")
+        self.assertEqual(crossref, "InP dry etch")
+        self.assertEqual(arxiv, 'all:"InP" AND all:"dry etch"')
+        for value in (openalex, crossref):
+            self.assertNotIn(" OR ", value)
+            self.assertNotIn(" AND ", value)
+            self.assertNotIn("*", value)
+
     def test_openalex_preserves_all_pdf_and_landing_locations(self) -> None:
         payload = {
             "results": [{

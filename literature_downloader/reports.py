@@ -116,6 +116,12 @@ def format_search_report(result: dict[str, Any]) -> str:
         f"**DOI 数量**: {sum(1 for paper in result.get('papers') or [] if str(paper.get('doi') or '').strip())}",
         "**说明**: 本报告仅完成文献检索；PDF 下载需在下载标签中输入任务 ID 单独触发。", "",
     ]
+    provider_queries = result.get("provider_queries") or {}
+    if provider_queries:
+        lines.extend(["**各 Provider 实际查询**:", ""])
+        for provider, queries in provider_queries.items():
+            lines.append(f"- {provider}: {'；'.join(str(query) for query in queries) or '未执行'}")
+        lines.append("")
 
     lines.extend([
         "## 文献检索专家 Agent", "",

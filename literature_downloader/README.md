@@ -147,6 +147,14 @@ domain-neutral query normalization and lexical relevance scoring. Strict scope
 filtering is disabled and the report states that precision is reduced; no
 fallback InP or other subject-specific rule is applied.
 
+The LLM plan is not sent verbatim to every database. The searcher translates
+each semantic variant per provider: OpenAlex, Crossref, and Semantic Scholar
+receive plain-text anchor terms, while arXiv receives `all:"..."` clauses.
+Unsupported Boolean operators and wildcards are removed before the request.
+When a provider returns a rate-limit response, the remaining rounds skip that
+provider instead of issuing another burst of doomed requests. The search report
+records the actual provider queries alongside the original LLM variants.
+
 ## Separated search and download workflow
 
 `POST /literature-download` now performs search only. The request accepts

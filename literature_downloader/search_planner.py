@@ -316,7 +316,7 @@ def create_search_plan(
             }
             return plan
         payload = client.complete_json(
-            "你是文献检索专家。只输出 JSON，不要编造 DOI、作者、论文或 URL。生成可执行的中英文数据库查询计划。",
+            "你是文献检索专家。只输出 JSON，不要编造 DOI、作者、论文或 URL。生成可执行的中英文语义查询计划；query_variants 只写检索短语，不要使用数据库专属的布尔语法、括号、通配符或字段前缀，服务会为每个数据库单独转换查询。",
             {
                 "topic": topic,
                 "target_count": target,
