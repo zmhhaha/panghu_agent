@@ -31,6 +31,12 @@ class DownloadRequest(BaseModel):
     providers: list[str] | None = None
 
 
+class DownloadTriggerRequest(BaseModel):
+    """Parameters for the separately-triggered PDF collection stage."""
+
+    email: str = Field(..., min_length=1, max_length=200)
+
+
 def _run(task_id: str, stage: str) -> None:
     try:
         if stage == "search":
@@ -164,8 +170,12 @@ def get_download_task(task_id: str) -> dict[str, Any]:
 
 
 @app.post("/literature-download/{task_id}/download")
-def start_download_task(task_id: str) -> dict[str, Any]:
+def start_download_task(task_id: str, request: DownloadTriggerRequest) -> dict[str, Any]:
     """Trigger the optional PDF collection stage for a completed search."""
+    email = request.email.strip()
+    if not _is_email(email):
+        raise HTTPException(status_code=422, detail="请输入有效的邮箱地址")
+
     current = _status_or_404(task_id)
     if current.get("status") == "running" and current.get("phase") == "collect":
         return {"ok": True, "action": "download", "task": current}
@@ -174,6 +184,10 @@ def start_download_task(task_id: str) -> dict[str, Any]:
             status_code=409,
             detail=f"Current task status does not allow download: {current.get('status')}",
         )
+    # The download stage can be triggered much later than the search stage and
+    # may notify a different recipient. Persist the address before the worker
+    # starts so completion and failure notifications use this request's email.
+    pipeline.db.update_task(task_id, email=email)
     _start_thread(task_id, "collect")
     return {"ok": True, "action": "download", "task": _status_or_404(task_id)}
 

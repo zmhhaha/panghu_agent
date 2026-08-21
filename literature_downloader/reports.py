@@ -239,7 +239,8 @@ def format_collection_report(results: list[dict[str, Any]], round_num: int) -> s
     failed = [row for row in results if not row.get("ok")]
     total_bytes = sum(int(row.get("size") or 0) for row in success)
     lines = [
-        f"# 第 {round_num} 轮文献收集报告", "",
+        "# 文献收集报告", "",
+        "**收集方式**: 单次下载与校验", "",
         f"尝试收集: {len(results)} 篇", f"成功下载: {len(success)} 篇", f"下载失败: {len(failed)} 篇",
         f"总下载量: {total_bytes / 1024 / 1024:.2f} MB", "",
     ]
@@ -272,7 +273,8 @@ def format_verification_report(results: list[dict[str, Any]], round_num: int) ->
     failed = [row for row in results if row.get("verdict") == "fail"]
     uncertain = [row for row in results if row.get("verdict") == "uncertain"]
     lines = [
-        f"# 第 {round_num} 轮文献校验报告", "",
+        "# 文献校验报告", "",
+        "**校验方式**: 对本次下载结果统一校验", "",
         f"检查总数: {len(results)}", f"通过: {len(passed)}", f"未通过: {len(failed)}", f"存疑: {len(uncertain)}", "",
     ]
     for heading, rows in (("通过的文献", passed), ("未通过的文献", failed), ("存疑的文献", uncertain)):
@@ -304,7 +306,7 @@ def format_final_report(
     search: dict[str, Any] | None = None,
 ) -> str:
     lines = [
-        "# 文献下载最终报告", "", f"**研究主题**: {topic}", f"**收集轮数**: {len(rounds)}",
+        "# 文献下载最终报告", "", f"**研究主题**: {topic}", "**收集阶段**: 单次下载与校验",
         f"**最终通过校验**: {len(verified)} 篇", f"**仍待处理**: {len(pending)} 篇", "",
     ]
 
@@ -359,9 +361,8 @@ def format_final_report(
 
     lines.extend(["## 二、文献收集专家报告", ""])
     for round_data in rounds:
-        round_num = round_data.get("round", "?")
         lines.extend([
-            f"### 第 {round_num} 轮",
+            "### 本次收集",
             f"- 尝试收集: {round_data.get('attempted', 0)} 篇",
             f"- 成功下载: {round_data.get('downloaded', 0)} 篇",
             f"- 下载失败: {round_data.get('download_failed', 0)} 篇",
@@ -386,7 +387,7 @@ def format_final_report(
         verification_rows = round_data.get("verification") or []
         if not verification_rows:
             continue
-        lines.append(f"### 第 {round_data.get('round', '?')} 轮")
+        lines.append("### 本次校验")
         for row in verification_rows:
             lines.append(f"#### {_text(row.get('title'))}")
             lines.extend(_metadata_lines(row))

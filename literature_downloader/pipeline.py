@@ -679,7 +679,7 @@ class LiteraturePipeline:
             if not targets:
                 return self.finalize(task_id)
 
-            self._emit(task_id, "collect", f"第 {round_num} 轮：准备下载 {len(targets)} 篇文献", callback, current_round=round_num)
+            self._emit(task_id, "collect", f"正在准备单次下载 {len(targets)} 篇文献", callback, current_round=round_num)
             collection_rows: list[dict[str, Any]] = []
             verification_rows: list[dict[str, Any]] = []
             try:
@@ -690,7 +690,7 @@ class LiteraturePipeline:
                     self._emit(
                         task_id,
                         "collect",
-                        f"第 {round_num} 轮：正在创建并等待 SciHub Job（{len(targets)} 篇）",
+                        f"正在创建并等待 SciHub Job（{len(targets)} 篇）",
                         callback,
                         current_round=round_num,
                     )
@@ -711,7 +711,7 @@ class LiteraturePipeline:
                             self._emit(
                                 task_id,
                                 "collect",
-                                f"第 {round_num} 轮：已完成 {completed}/{len(targets)} - {row['title'][:60]}",
+                                f"下载进度：已完成 {completed}/{len(targets)} - {row['title'][:60]}",
                                 callback,
                                 current_round=round_num,
                             )

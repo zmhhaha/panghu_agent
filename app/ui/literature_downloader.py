@@ -59,7 +59,7 @@ def _render(task: dict[str, Any], elapsed: int = 0) -> str:
     collection = task.get("collection") or {}
     if collection:
         lines.extend([
-            f"下载轮次：{collection.get('current_round', 0)}",
+            "下载阶段：单次收集与校验",
             f"通过校验：{collection.get('cumulative_verified', 0)}",
             f"仍待处理：{collection.get('still_pending_count', 0)}",
         ])
@@ -182,13 +182,21 @@ def refresh_search(task_id: str) -> tuple[Any, ...]:
         return f"状态查询失败：{exc}", task_id, *_search_updates({"id": task_id}, False)
 
 
-def start_download(task_id: str) -> Iterator[tuple[Any, ...]]:
+def start_download(task_id: str, email: str) -> Iterator[tuple[Any, ...]]:
     task_id = (task_id or "").strip()
+    email = (email or "").strip()
     if not task_id:
         yield ("请输入检索任务 ID", *_download_updates({}, False))
         return
+    if not email or "@" not in email or "." not in email.rsplit("@", 1)[-1]:
+        yield ("请输入有效的通知邮箱，下载完成或失败后会发送任务通知", *_download_updates({}, False))
+        return
     try:
-        response = requests.post(f"{API_BASE}/literature-download/{task_id}/download", timeout=10)
+        response = requests.post(
+            f"{API_BASE}/literature-download/{task_id}/download",
+            json={"email": email},
+            timeout=10,
+        )
     except requests.RequestException as exc:
         yield (f"提交下载失败：{exc}", *_download_updates({"id": task_id}, False))
         return
@@ -259,8 +267,13 @@ with gr.Blocks(title="文献检索与下载工具") as demo:
 
     with gr.Tab("下载文献"):
         download_task_id = gr.Textbox(label="检索任务 ID", placeholder="粘贴检索完成后得到的任务 ID")
+        download_email = gr.Textbox(
+            label="通知邮箱（必填）",
+            placeholder="your@email.com",
+            type="email",
+        )
         download_button = gr.Button("开始下载", variant="primary")
-        download_status = gr.Markdown(value="请输入任务 ID 后开始下载。")
+        download_status = gr.Markdown(value="请输入任务 ID 和通知邮箱后开始下载。下载完成或失败后会发送邮件通知。")
         with gr.Row():
             refresh_download_button = gr.Button("刷新下载状态")
             final_report_button = gr.DownloadButton("下载最终报告", visible=False)
@@ -278,7 +291,7 @@ with gr.Blocks(title="文献检索与下载工具") as demo:
     doi_button.click(lambda tid: download_file(tid, "doi-list/download", ".md"), search_task_id, doi_button)
 
     download_controls = [download_button, refresh_download_button, final_report_button, pdf_button]
-    download_button.click(start_download, download_task_id, [download_status, *download_controls])
+    download_button.click(start_download, [download_task_id, download_email], [download_status, *download_controls])
     refresh_download_button.click(refresh_download, download_task_id, [download_status, *download_controls])
     final_report_button.click(lambda tid: download_file(tid, "report/download", ".md"), download_task_id, final_report_button)
     pdf_button.click(lambda tid: download_file(tid, "files/download", ".zip"), download_task_id, pdf_button)

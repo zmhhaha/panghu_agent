@@ -79,6 +79,9 @@ class ReportFormatTests(unittest.TestCase):
 
         report = format_collection_report([row], 1)
 
+        self.assertIn("# 文献收集报告", report)
+        self.assertIn("收集方式**: 单次下载与校验", report)
+        self.assertNotIn("第 1 轮文献收集报告", report)
         self.assertIn("实际下载来源: Unpaywall", report)
         self.assertIn("实际下载 URL: <https://repository.example/paper.pdf>", report)
         self.assertIn("https://doi.org/10.1000/example", report)
@@ -137,6 +140,11 @@ class ReportFormatTests(unittest.TestCase):
         verification_report = format_verification_report([verification], 1)
         final_report = format_final_report("hydrometallurgy", [collection], verified, [], search=search)
 
+        self.assertIn("# 文献校验报告", verification_report)
+        self.assertNotIn("第 1 轮文献校验报告", verification_report)
+        self.assertIn("收集阶段**: 单次下载与校验", final_report)
+        self.assertIn("### 本次收集", final_report)
+        self.assertIn("### 本次校验", final_report)
         for report in (verification_report, final_report):
             self.assertIn("来源数据库: OpenAlex", report)
             self.assertIn("https://repository.example/paper.pdf", report)

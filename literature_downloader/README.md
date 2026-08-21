@@ -82,6 +82,7 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 ## 主要 API
 
 - `POST /literature-download`：创建检索任务（提交 `email` 后，检索完成或失败会发送通知；请求使用 `search_rounds`）。
+- `POST /literature-download/{task_id}/download`：触发 PDF 收集；请求体必须提交本次下载阶段的通知邮箱，例如 `{"email":"user@example.com"}`。下载完成或失败会向该邮箱发送通知。
 - `GET /literature-download/{task_id}`：查询状态和文献列表。
 - `GET /literature-reports?q=...`：按关键词、任务 ID 或状态查询历史任务。
 - `GET /literature-download/{task_id}/report/download`：下载 Markdown 报告。
@@ -161,6 +162,10 @@ Search completion is persisted as `ready:download` and produces:
 - `need_to_download.md` with metadata and legal/open download routes.
 
 PDF collection is optional and starts with `POST /literature-download/{task_id}/download`.
+The request body is required and must contain the notification address for this
+download stage, for example `{"email":"user@example.com"}`. This address is
+persisted on the task before the worker starts, so download completion or
+failure notifications use the address entered on the “下载文献” tab.
 It runs one collection and verification pass, then creates the EvidenceGate-style
 download report and verified PDF ZIP. The UI exposes this as a separate “下载文献”
 tab where the user enters the search task ID.
