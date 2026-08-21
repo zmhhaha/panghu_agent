@@ -112,7 +112,7 @@ class LiteraturePipeline:
                 search_rounds = min(max(int(task.get("search_rounds") or self.config.search_rounds), 1), 10)
                 round_results: list[dict[str, Any]] = []
                 plan: dict[str, Any] | None = None
-                disabled_providers: set[str] = set()
+                provider_cooldowns: dict[str, int] = {}
                 for round_index in range(search_rounds):
                     self._emit(
                         task_id,
@@ -128,13 +128,13 @@ class LiteraturePipeline:
                         search_plan=plan,
                         use_llm=round_index == 0,
                         config=self.config,
-                        disabled_providers=disabled_providers,
+                        provider_cooldowns=provider_cooldowns,
                     )
                     plan = current.get("search_plan") or plan
                     round_results.append(current)
                 result = merge_search_results(
                     round_results,
-                    limit=min(max(int(self.config.search_limit), 1), 100),
+                    limit=max(int(self.config.search_limit), 0),
                     topic=task["topic"],
                 )
                 for row in result["papers"]:

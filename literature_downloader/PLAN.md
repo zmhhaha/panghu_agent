@@ -249,7 +249,7 @@ generated_at: <ISO timestamp>
 
 后台任务需要支持服务重启后的恢复；不同任务始终按 `task_id` 隔离，允许同一用户并行提交多个任务。
 
-默认检索最多保留 100 篇候选文献，每个查询变体和外部来源最多返回 20 篇，主题最多使用 6 个查询变体；收集阶段默认并发下载和校验 6 篇，可通过 `LITERATURE_SEARCH_LIMIT`、`LITERATURE_PER_PROVIDER`、`LITERATURE_MAX_SEARCH_VARIANTS` 和 `LITERATURE_DOWNLOAD_CONCURRENCY` 调整。
+默认不对去重后的相关检索结果设置服务层数量上限（`LITERATURE_SEARCH_LIMIT=0`；正数可作为运维资源保护值），每个查询变体和外部来源每页返回 20 篇，主题最多使用 6 个查询变体；收集阶段默认并发下载和校验 6 篇，可通过 `LITERATURE_SEARCH_LIMIT`、`LITERATURE_PER_PROVIDER`、`LITERATURE_MAX_SEARCH_VARIANTS` 和 `LITERATURE_DOWNLOAD_CONCURRENCY` 调整。学术 API 按域名节流，并对 429/5xx 使用 `Retry-After` 和指数退避；可通过 `ACADEMIC_API_REQUEST_INTERVAL_MS`、`ACADEMIC_API_RETRY_BACKOFF_SECONDS` 和 `ACADEMIC_API_RATE_LIMIT_MAX_WAIT_SECONDS` 调整。
 
 ## 11. UI 规划
 

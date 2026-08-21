@@ -110,7 +110,7 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 ## 配置
 
 - `LITERATURE_SEARCH_ROUNDS`：默认检索轮数 3。
-- `LITERATURE_SEARCH_LIMIT`：默认返回最多 100 篇候选文献；服务会优先尝试带公开 PDF 地址、arXiv 或开放获取标记的记录。
+- `LITERATURE_SEARCH_LIMIT`：默认 `0`，表示不对去重后的相关结果设置服务层数量上限；设置为正数可作为运维资源保护值。服务会优先尝试带公开 PDF 地址、arXiv 或开放获取标记的记录。
 - `LITERATURE_PER_PROVIDER`：每个查询变体和外部来源默认最多 20 篇。
 - `LITERATURE_MAX_SEARCH_VARIANTS`：每个主题最多使用 6 个查询变体，提高召回率。
 - `LITERATURE_DOWNLOAD_CONCURRENCY`：每轮并发下载和校验数，默认 6；可按服务器带宽和 CPU 调整。
@@ -120,6 +120,7 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 - 下载器会解析学术落地页中的 `citation_pdf_url`、`application/pdf` link 和明确的 `.pdf` 链接，并继续校验 PDF 文件签名；HTML 登录页或反爬页面不会被误收为 PDF。
 - `scope_requirements`：由每次任务的检索专家 LLM 生成的主题范围组；服务不内置材料、工艺或其他领域规则。LLM 不可用时仅使用通用查询规范化和词法相关性，并在报告中标记严格范围过滤未启用。
 - `ACADEMIC_CONTACT_EMAIL`：用于 OpenAlex/Crossref 的联系邮箱，当前固定为 `panghuer001@163.com`，不通过 Vault 管理。
+- `OPENALEX_API_KEY`：可选的 OpenAlex API Key；配置后可使用更高的 OpenAlex 配额，密钥本身不要写入 ConfigMap。
 - 任务通知邮箱：由提交任务时的 `email` 字段提供，仅在任务完成或失败时发送结果通知；不是 Vault 配置项。
 - Semantic Scholar API Key：未配置。系统仍会尝试公开接口，若受限流影响，会在检索报告中记录错误并继续处理其他来源。
 - 未配置 Semantic Scholar API Key 时，下载阶段只对检索结果中已有 Semantic Scholar paper ID 的文献查询 OA PDF，不再对每个 DOI 逐篇发匿名请求，避免大任务因 429 限流显著变慢。
@@ -151,9 +152,21 @@ The LLM plan is not sent verbatim to every database. The searcher translates
 each semantic variant per provider: OpenAlex, Crossref, and Semantic Scholar
 receive plain-text anchor terms, while arXiv receives `all:"..."` clauses.
 Unsupported Boolean operators and wildcards are removed before the request.
-When a provider returns a rate-limit response, the remaining rounds skip that
-provider instead of issuing another burst of doomed requests. The search report
-records the actual provider queries alongside the original LLM variants.
+When a provider returns a rate-limit response, the task pauses that provider
+for one round before retrying it, instead of issuing another burst of doomed
+requests. The search report records the actual provider queries alongside the
+original LLM variants.
+
+Academic API requests are throttled per host and retry transient `429/5xx`
+responses with exponential backoff. `Retry-After` is honored up to
+`ACADEMIC_API_RATE_LIMIT_MAX_WAIT_SECONDS` (default 60). After a provider is
+rate-limited, the search task pauses that provider for one round and then tries
+again, while continuing with other providers. Configure
+`ACADEMIC_API_REQUEST_INTERVAL_MS` to increase the gap between requests and
+`ACADEMIC_API_RETRY_BACKOFF_SECONDS` to change the initial exponential delay.
+API keys for providers that offer them, especially `SEMANTIC_SCHOLAR_API_KEY`
+and `OPENALEX_API_KEY`, remain the most reliable way to raise quotas. Keys are
+optional; the service continues with anonymous/polite access when absent.
 
 ## Separated search and download workflow
 

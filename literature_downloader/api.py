@@ -133,6 +133,7 @@ def health() -> dict[str, Any]:
         "search_limit": settings.search_limit,
         "per_provider": settings.per_provider,
         "max_search_variants": settings.max_search_variants,
+        "openalex_api_key_configured": bool(settings.openalex_api_key),
         "download_concurrency": settings.download_concurrency,
         "download_retries": settings.download_retries,
         "download_request_interval_ms": settings.download_request_interval_ms,

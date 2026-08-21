@@ -17,7 +17,14 @@ def _strip_markup(value: Any) -> str:
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text)).strip()
 
 
-def search_openalex(query: str, limit: int, *, email: str = "", offset: int = 0) -> list[PaperRecord]:
+def search_openalex(
+    query: str,
+    limit: int,
+    *,
+    email: str = "",
+    api_key: str = "",
+    offset: int = 0,
+) -> list[PaperRecord]:
     params: dict[str, Any] = {
         "search": query,
         "per-page": min(max(1, limit), 50),
@@ -26,6 +33,8 @@ def search_openalex(query: str, limit: int, *, email: str = "", offset: int = 0)
     }
     if email:
         params["mailto"] = email
+    if api_key:
+        params["api_key"] = api_key
     data = request_json("https://api.openalex.org/works", params=params)
     records: list[PaperRecord] = []
     for item in data.get("results", []):

@@ -7,12 +7,69 @@ from unittest.mock import patch
 
 from literature_downloader.config import Settings
 from literature_downloader.db import Database
-from literature_downloader.searcher import _provider_query, search_literature
+from literature_downloader.searcher import _provider_query, merge_search_results, search_literature
 from literature_downloader.search_planner import create_search_plan
 from tools.academic.providers import search_openalex
 
 
 class SearchExpansionTests(unittest.TestCase):
+    def test_zero_search_limit_keeps_all_merged_results(self) -> None:
+        rows = [
+            {
+                "title": f"InP dry etch paper {index}",
+                "provider": "Crossref",
+                "doi": f"10.1000/limit-{index}",
+            }
+            for index in range(150)
+        ]
+        result = merge_search_results(
+            [{"query_variants": ["InP dry etch"], "papers": rows, "api_results": {}, "local_results": []}],
+            limit=0,
+            topic="InP dry etching",
+        )
+
+        self.assertEqual(len(result["papers"]), 150)
+
+    def test_rate_limited_provider_enters_round_cooldown(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        config = Settings(root, root / "literature.db", root / "pdfs", root / "reports", max_search_variants=2)
+        db = Database(config.db_path)
+        plan = {
+            "query_variants": ["InP dry etch", "InP plasma etch"],
+            "llm": {"used": False},
+            "scope_requirements": [],
+        }
+        cooldowns: dict[str, int] = {}
+
+        with patch(
+            "literature_downloader.searcher.search_openalex",
+            side_effect=RuntimeError("HTTP 429 Too Many Requests"),
+        ) as provider:
+            first = search_literature(
+                "InP dry etching",
+                db,
+                providers=["OpenAlex"],
+                search_plan=plan,
+                use_llm=False,
+                config=config,
+                provider_cooldowns=cooldowns,
+            )
+            second = search_literature(
+                "InP dry etching",
+                db,
+                providers=["OpenAlex"],
+                search_round=1,
+                search_plan=plan,
+                use_llm=False,
+                config=config,
+                provider_cooldowns=cooldowns,
+            )
+
+        self.assertEqual(provider.call_count, 1)
+        self.assertEqual(cooldowns["OpenAlex"], 2)
+        self.assertIn("cooldown", second["errors"]["OpenAlex"])
+        self.assertEqual(first["papers"], [])
+
     def test_provider_queries_translate_llm_boolean_plan(self) -> None:
         query = '(InP OR "Indium Phosphide") AND ("dry etch*" OR "plasma etch*" OR RIE)'
 

@@ -177,7 +177,7 @@ def search_literature(
     search_plan: dict[str, Any] | None = None,
     use_llm: bool = True,
     config: Settings = settings,
-    disabled_providers: set[str] | None = None,
+    provider_cooldowns: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Search local verified papers and external providers.
 
@@ -187,7 +187,7 @@ def search_literature(
     topic = topic.strip()
     if not topic:
         raise ValueError("topic must not be empty")
-    limit = min(max(int(search_limit or config.search_limit), 1), 100)
+    limit = max(int(config.search_limit if search_limit is None else search_limit), 0)
     per_limit = min(max(int(per_provider or config.per_provider), 1), 25)
     search_round = max(0, int(search_round or 0))
     search_plan = search_plan or create_search_plan(
@@ -200,7 +200,7 @@ def search_literature(
 
     # Local-library hits do not change between provider pages. Query them only
     # on the first round; the aggregate step still keeps them in the report.
-    local = db.search_local(_tokens(topic), limit=limit) if search_round == 0 else []
+    local = db.search_local(_tokens(topic), limit=limit or None) if search_round == 0 else []
     local = [{**row, "provider": "LocalLibrary", "providers": ["LocalLibrary"]} for row in local]
     # The shared library stores a task-owned copy of each paper. Collapse
     # those copies before counting/reporting hits so one paper is listed once.
@@ -208,7 +208,7 @@ def search_literature(
     api_results: dict[str, list[dict[str, Any]]] = {}
     provider_queries: dict[str, list[str]] = {}
     errors: dict[str, str] = {}
-    disabled = disabled_providers if disabled_providers is not None else set()
+    cooldowns = provider_cooldowns if provider_cooldowns is not None else {}
     offset = search_round * per_limit
 
     def call_provider(function: Any, query: str, **kwargs: Any) -> list[dict[str, Any]]:
@@ -231,8 +231,14 @@ def search_literature(
                 raise
             return function(query, per_limit, **kwargs)
 
+    def openalex_query(query: str) -> list[dict[str, Any]]:
+        kwargs: dict[str, Any] = {"email": config.contact_email}
+        if config.openalex_api_key:
+            kwargs["api_key"] = config.openalex_api_key
+        return call_provider(search_openalex, query, **kwargs)
+
     functions = {
-        "OpenAlex": lambda query: call_provider(search_openalex, query, email=config.contact_email),
+        "OpenAlex": openalex_query,
         "Crossref": lambda query: call_provider(search_crossref, query, email=config.contact_email),
         "arXiv": lambda query: call_provider(search_arxiv, query),
         "Semantic Scholar": lambda query: call_provider(
@@ -243,22 +249,27 @@ def search_literature(
         if provider not in functions:
             errors[provider] = "unsupported provider"
             continue
-        if provider in disabled:
+        retry_round = int(cooldowns.get(provider, -1))
+        if retry_round > search_round:
             api_results[provider] = []
             provider_queries[provider] = []
-            errors[provider] = "skipped after provider rate limiting in an earlier round"
+            errors[provider] = f"skipped while rate-limit cooldown is active; retry from round {retry_round + 1}"
             continue
         rows: list[dict[str, Any]] = []
         provider_errors: list[str] = []
         queries = _provider_queries(provider, variants[:config.max_search_variants])
-        provider_queries[provider] = queries
+        provider_queries[provider] = []
         for query in queries:
+            provider_queries[provider].append(query)
             try:
                 rows.extend(functions[provider](query))
             except Exception as exc:
                 provider_errors.append(f"{type(exc).__name__}: {str(exc)[:160]}")
                 if _is_rate_limited(exc):
-                    disabled.add(provider)
+                    # Retry this provider after one quiet round. The HTTP
+                    # client already honors Retry-After within the request;
+                    # this cooldown prevents a burst across search rounds.
+                    cooldowns[provider] = search_round + 2
                     break
         api_results[provider] = [_with_identifiers(dict(row)) for row in deduplicate_papers(rows)]
         if provider_errors:
@@ -287,7 +298,9 @@ def search_literature(
     papers = [
         paper for paper in ranked
         if _is_relevant(paper) and matches_plan_scope(paper, search_plan)
-    ][:limit]
+    ]
+    if limit > 0:
+        papers = papers[:limit]
     need_download = [
         paper for paper in papers
         if (
@@ -398,7 +411,8 @@ def merge_search_results(
         ),
         reverse=True,
     )
-    ranked = ranked[: max(1, min(int(limit), 100))]
+    if limit > 0:
+        ranked = ranked[:limit]
 
     need_download = [
         paper for paper in ranked

@@ -85,7 +85,7 @@ spec:
             - name: LITERATURE_SEARCH_ROUNDS
               value: "3"
             - name: LITERATURE_SEARCH_LIMIT
-              value: "100"
+              value: "0"
             - name: LITERATURE_PER_PROVIDER
               value: "20"
             - name: LITERATURE_MAX_SEARCH_VARIANTS
@@ -98,6 +98,12 @@ spec:
               value: "500"
             - name: LITERATURE_DOWNLOAD_REQUEST_INTERVAL_MS
               value: "250"
+            - name: ACADEMIC_API_REQUEST_INTERVAL_MS
+              value: "350"
+            - name: ACADEMIC_API_RETRY_BACKOFF_SECONDS
+              value: "2"
+            - name: ACADEMIC_API_RATE_LIMIT_MAX_WAIT_SECONDS
+              value: "60"
             - name: LITERATURE_DOWNLOAD_BACKEND
               value: hybrid
             - name: SCIHUB_JOB_NAMESPACE
@@ -129,6 +135,12 @@ spec:
                 secretKeyRef:
                   name: agent-secret
                   key: OPENAI_API_KEY
+                  optional: true
+            - name: OPENALEX_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: agent-secret
+                  key: OPENALEX_API_KEY
                   optional: true
             - name: CUSTOM_API_KEY
               valueFrom:

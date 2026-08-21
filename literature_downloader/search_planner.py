@@ -275,7 +275,7 @@ def _validate_payload(payload: Any, topic: str, max_variants: int, target_count:
         "exclusion_criteria": exclusion,
         "scope_requirements": scope_requirements,
         "scope_filtering": {"active": True, "reason": "LLM supplied required scope groups"},
-        "target_count": min(max(requested_target, 1), 100),
+        "target_count": 0 if target_count <= 0 else min(max(requested_target, 1), target_count),
     }
 
 
@@ -287,7 +287,7 @@ def create_search_plan(
     max_variants: int | None = None,
 ) -> dict[str, Any]:
     """Create a cached LLM plan, or a deterministic plan on any failure."""
-    target = min(max(int(target_count or config.search_limit), 1), 100)
+    target = max(int(config.search_limit if target_count is None else target_count), 0)
     variants_limit = min(max(int(max_variants or config.max_search_variants), 1), 13)
     provider = get_provider()
     model = _model(provider)

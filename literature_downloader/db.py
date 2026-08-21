@@ -482,7 +482,7 @@ class Database:
             rows = conn.execute(query, params).fetchall()
         return [self.paper_row(row) for row in rows]
 
-    def search_local(self, tokens: list[str], limit: int = 50) -> list[dict[str, Any]]:
+    def search_local(self, tokens: list[str], limit: int | None = 50) -> list[dict[str, Any]]:
         tokens = [token.strip() for token in tokens if token.strip()]
         conditions: list[str] = []
         params: list[Any] = []
@@ -492,16 +492,22 @@ class Database:
             params.extend([pattern] * 4)
         where = " OR ".join(conditions) if conditions else "1=1"
         with self.connect() as conn:
-            library_rows = conn.execute(
-                f"SELECT * FROM library_papers WHERE ({where}) AND pdf_status = 'verified' ORDER BY date DESC LIMIT ?",
-                (*params, limit),
-            ).fetchall()
+            library_query = f"SELECT * FROM library_papers WHERE ({where}) AND pdf_status = 'verified' ORDER BY date DESC"
+            if limit is not None and int(limit) > 0:
+                library_query += " LIMIT ?"
+                library_params = (*params, int(limit))
+            else:
+                library_params = tuple(params)
+            library_rows = conn.execute(library_query, library_params).fetchall()
             # Keep reading legacy task-owned rows so an existing database is
             # useful before all historical downloads have been backfilled.
-            paper_rows = conn.execute(
-                f"SELECT * FROM papers WHERE ({where}) AND pdf_status = 'verified' ORDER BY date DESC LIMIT ?",
-                (*params, limit),
-            ).fetchall()
+            paper_query = f"SELECT * FROM papers WHERE ({where}) AND pdf_status = 'verified' ORDER BY date DESC"
+            if limit is not None and int(limit) > 0:
+                paper_query += " LIMIT ?"
+                paper_params = (*params, int(limit))
+            else:
+                paper_params = tuple(params)
+            paper_rows = conn.execute(paper_query, paper_params).fetchall()
         return [self.paper_row(row) for row in (*library_rows, *paper_rows)]
 
     @staticmethod

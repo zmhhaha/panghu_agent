@@ -10,12 +10,13 @@ from pathlib import Path
 PACKAGE_DIR = Path(__file__).resolve().parent
 
 
-def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+def _env_int(name: str, default: int, minimum: int, maximum: int | None = None) -> int:
     try:
         value = int(os.getenv(name, str(default)))
     except ValueError:
         value = default
-    return min(max(value, minimum), maximum)
+    value = max(value, minimum)
+    return min(value, maximum) if maximum is not None else value
 
 
 @dataclass(frozen=True)
@@ -27,7 +28,9 @@ class Settings:
     pdf_dir: Path
     reports_dir: Path
     search_rounds: int = 3
-    search_limit: int = 100
+    # 0 means keep every deduplicated, relevant result. A positive value is
+    # available as an operator-controlled resource guard.
+    search_limit: int = 0
     per_provider: int = 20
     max_search_variants: int = 6
     min_pdf_bytes: int = 10 * 1024
@@ -35,6 +38,7 @@ class Settings:
     download_timeout: int = 30
     max_pdf_bytes: int = 50 * 1024 * 1024
     contact_email: str = ""
+    openalex_api_key: str = ""
     semantic_scholar_api_key: str = ""
     download_concurrency: int = 6
     download_retries: int = 2
@@ -66,7 +70,7 @@ def load_settings() -> Settings:
         pdf_dir=Path(os.getenv("LITERATURE_PDF_DIR", str(data_dir / "pdfs"))).resolve(),
         reports_dir=Path(os.getenv("LITERATURE_REPORTS_DIR", str(data_dir / "reports"))).resolve(),
         search_rounds=_env_int("LITERATURE_SEARCH_ROUNDS", 3, 1, 10),
-        search_limit=_env_int("LITERATURE_SEARCH_LIMIT", 100, 1, 100),
+        search_limit=_env_int("LITERATURE_SEARCH_LIMIT", 0, 0),
         per_provider=_env_int("LITERATURE_PER_PROVIDER", 20, 1, 25),
         max_search_variants=_env_int("LITERATURE_MAX_SEARCH_VARIANTS", 6, 1, 13),
         min_pdf_bytes=_env_int("LITERATURE_MIN_PDF_BYTES", 10 * 1024, 512, 10 * 1024 * 1024),
@@ -74,6 +78,7 @@ def load_settings() -> Settings:
         download_timeout=_env_int("LITERATURE_DOWNLOAD_TIMEOUT", 30, 5, 180),
         max_pdf_bytes=_env_int("LITERATURE_MAX_PDF_BYTES", 50 * 1024 * 1024, 1_000_000, 500 * 1024 * 1024),
         contact_email=os.getenv("ACADEMIC_CONTACT_EMAIL") or os.getenv("EVIDENCEGATE_MAILTO", ""),
+        openalex_api_key=os.getenv("OPENALEX_API_KEY", "").strip(),
         semantic_scholar_api_key=os.getenv("SEMANTIC_SCHOLAR_API_KEY", ""),
         download_concurrency=_env_int("LITERATURE_DOWNLOAD_CONCURRENCY", 6, 1, 16),
         download_retries=_env_int("LITERATURE_DOWNLOAD_RETRIES", 2, 0, 5),
