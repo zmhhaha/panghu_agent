@@ -3,7 +3,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from tools.game_play.browser import GameBrowserSession
+from tools.game_play.browser import GameBrowserSession, _merge_cookies, _parse_cookie_header
 from tools.game_play.tools import PageClickTool, PageGoTool, _get_element_by_idx, _scan, make_game_tools
 
 
@@ -96,6 +96,47 @@ class _IndexedPage:
 
 
 class GameBrowserSessionTests(unittest.TestCase):
+    def test_forwarded_sso_cookie_is_scoped_and_whitelisted(self):
+        with patch.dict("os.environ", {"GAME_AUTH_COOKIE_NAMES": "_oauth2_proxy,game_session"}):
+            cookies = _parse_cookie_header(
+                "_oauth2_proxy=opaque-token; _oauth2_proxy_1=chunk; unrelated=do-not-forward; game_session=game-token",
+                ".panghuer.top",
+            )
+
+        self.assertEqual(
+            [cookie["name"] for cookie in cookies],
+            ["_oauth2_proxy", "_oauth2_proxy_1", "game_session"],
+        )
+        self.assertTrue(all(cookie["domain"] == ".panghuer.top" for cookie in cookies))
+        self.assertTrue(all(cookie["path"] == "/" and cookie["secure"] for cookie in cookies))
+
+    def test_request_cookie_overrides_fallback_cookie_without_duplicate(self):
+        fallback = [{"name": "_oauth2_proxy", "value": "stale", "domain": ".panghuer.top", "path": "/"}]
+        forwarded = [{"name": "_oauth2_proxy", "value": "current", "domain": ".panghuer.top", "path": "/"}]
+
+        merged = _merge_cookies(fallback, forwarded)
+
+        self.assertEqual(merged, [forwarded[0]])
+
+    def test_sso_header_reaches_browser_factory(self):
+        browser = _ThreadCheckingBrowser()
+        received = {}
+
+        def factory(**kwargs):
+            received.update(kwargs)
+            return browser
+
+        session = GameBrowserSession(
+            browser_factory=factory,
+            auth_cookie_header="_oauth2_proxy=current-token",
+            auth_cookie_domain=".panghuer.top",
+        ).start()
+        try:
+            self.assertEqual(received["auth_cookie_header"], "_oauth2_proxy=current-token")
+            self.assertEqual(received["auth_cookie_domain"], ".panghuer.top")
+        finally:
+            session.close()
+
     def test_generic_game_tools_are_exposed(self):
         session = GameBrowserSession()
         try:

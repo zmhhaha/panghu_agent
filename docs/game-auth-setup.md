@@ -4,7 +4,18 @@
 `oauth2-proxy`（Casdoor OIDC）保护。浏览器要访问它们，必须持有登录后的
 会话 cookie（默认名 `_oauth2_proxy`）。
 
-本 agent 的设计是：**由环境变量注入已登录的 cookie，不在容器里演 OAuth 交互**。
+本 agent 的认证顺序是：
+
+1. 用户从已登录的游戏评价页面提交任务时，UI 将当前 `_oauth2_proxy` Cookie
+   仅通过内存中的 API 请求转发给后台任务；后台 Playwright 浏览器复用同一个 SSO 会话。
+2. CLI、定时任务或没有用户页面会话时，再使用 Vault 中的 `game-auth` Cookie 作为 fallback。
+
+默认只转发 `_oauth2_proxy` 及 oauth2-proxy 自动生成的数字分片（如
+`_oauth2_proxy_1`）。如果某个游戏确实还需要额外的认证 Cookie，可在 API 的
+运行环境中设置 `GAME_AUTH_COOKIE_NAMES=_oauth2_proxy,game_session`；不要把无关
+业务 Cookie 加入白名单。
+
+两种方式都不在容器内输入 Casdoor 用户名/密码，也不把 OAuth 密码交给 Agent。
 
 ## 1. 获取登录 cookie
 
@@ -28,7 +39,7 @@ with sync_playwright() as p:
     ctx.storage_state(path="storage_state.json")   # 导出
 ```
 
-## 2. 注入到 K8s 集群
+## 2. 注入到 K8s 集群（仅 CLI/后台任务需要）
 
 把 cookie 值作为 Secret `game-auth` 注入（namespace 是 `game-review-agent`）：
 
@@ -55,7 +66,21 @@ kubectl rollout restart deploy/api -n game-review-agent \
 kubectl exec -it deploy/api -n game-review-agent -- env | grep GAME_AUTH
 ```
 
-## 4. 轮换（重要）
+## 4. 当前集群的前置故障
+
+如果 SSO 页面本身能登录，但 Agent 的后台 fallback 仍无凭据，先检查 Vault：
+
+```bash
+kubectl get clustersecretstore vault-backend
+kubectl get externalsecret game-auth -n game-review-agent
+kubectl get secret game-auth -n game-review-agent
+kubectl -n vault exec vault-0 -- vault status
+```
+
+只有 Vault `Sealed: false`、`vault-backend` `Ready=True` 后，`game-auth` 才会同步。
+不要把 Cookie 值写入 Deployment、ConfigMap、Git 或日志；应由 Vault → ExternalSecret → Secret 注入。
+
+## 5. 轮换（重要）
 
 - cookie 有效期 **720 小时（30 天）**，到期后访问受保护页面会跳到登录页。
 - agent 检测到 `/oauth2/sign_in` 重定向时，会在试玩日志里明确报
@@ -67,3 +92,5 @@ kubectl exec -it deploy/api -n game-review-agent -- env | grep GAME_AUTH
 - ❌ 不要把整个浏览器 profile 目录（如 `.qianfu-browser-test`）复制进容器
 - ❌ 不要用环境变量注入 OAuth 账号密码让 agent 走交互登录
 - ✅ 只注入登录后的 cookie，且经 K8s Secret 挂载，不落盘
+- ✅ 用户提交任务时优先使用当前请求的 SSO Cookie，避免共享一个固定账号
+- ✅ 认证 Cookie 默认按 `.panghuer.top` 域注入，避免转发到无关站点

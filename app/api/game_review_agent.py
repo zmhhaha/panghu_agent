@@ -20,7 +20,7 @@ import re
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -64,7 +64,7 @@ class TaskResponse(BaseModel):
 #  后台试玩评测线程
 # ============================================================
 
-def _run_review(task_id: str, game_url: str, comment_targets: str):
+def _run_review(task_id: str, game_url: str, comment_targets: str, auth_cookie_header: str = ""):
     browser = None
     try:
         db.update_task(task_id, status="running")
@@ -77,7 +77,9 @@ def _run_review(task_id: str, game_url: str, comment_targets: str):
         os.makedirs(task_out_dir, exist_ok=True)
 
         # 启动浏览器，为试玩员创建工具
-        browser = GameBrowserSession()
+        # This is the user's existing Casdoor/oauth2-proxy session. It stays
+        # in memory for this task and is never persisted in SQLite or logs.
+        browser = GameBrowserSession(auth_cookie_header=auth_cookie_header)
         browser.start()
         tools = make_game_tools(browser, task_out_dir)
 
@@ -123,7 +125,7 @@ def health():
 
 
 @app.post("/game_review", response_model=TaskResponse)
-def submit_review(req: GameReviewRequest):
+def submit_review(req: GameReviewRequest, request: Request):
     """提交试玩评测任务，立即返回 task_id，后台异步执行"""
     config_error = get_llm_config_error("game_review_agent")
     if config_error:
@@ -134,7 +136,12 @@ def submit_review(req: GameReviewRequest):
         if running:
             raise HTTPException(429, detail=f"您已有任务正在执行（{running['id'][:8]}），请等待完成后再提交")
     task_id = db.create_task(f"{req.game_url} | {req.comment_targets[:30]}", req.user_id)
-    threading.Thread(target=_run_review, args=(task_id, req.game_url, req.comment_targets)).start()
+    auth_cookie_header = request.headers.get("cookie", "").strip()
+    threading.Thread(
+        target=_run_review,
+        args=(task_id, req.game_url, req.comment_targets, auth_cookie_header),
+        daemon=True,
+    ).start()
     return TaskResponse(
         id=task_id, game_url=req.game_url, comment_targets=req.comment_targets,
         status="pending", user_id=req.user_id,

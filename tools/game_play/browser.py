@@ -17,6 +17,7 @@
 """
 import json
 import os
+import re
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -26,6 +27,62 @@ from playwright.sync_api import Browser, BrowserContext, Page, sync_playwright
 
 
 T = TypeVar("T")
+
+
+_COOKIE_CHUNK_RE = re.compile(r"^(?P<base>.+)_\d+$")
+
+
+def _parse_cookie_header(cookie_header: str, domain: str = ".panghuer.top") -> list[dict]:
+    """Convert an incoming HTTP Cookie header into Playwright cookies.
+
+    The header is intentionally kept in memory and is never logged or written
+    to task storage. A browser request only needs name/value/domain/path; the
+    original Cookie attributes are not sent by browsers.
+    """
+    configured_names = {
+        item.strip()
+        for item in os.getenv("GAME_AUTH_COOKIE_NAMES", "_oauth2_proxy").split(",")
+        if item.strip()
+    }
+    cookies: list[dict] = []
+    for part in (cookie_header or "").split(";"):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        name, value = part.split("=", 1)
+        name = name.strip()
+        if not name or name.lower() in {"domain", "path", "secure", "samesite"}:
+            continue
+        # oauth2-proxy splits an oversized session into suffixed cookies
+        # (for example `_oauth2_proxy_1`). Permit those chunks only when the
+        # unsuffixed base name is explicitly allowlisted.
+        chunk_match = _COOKIE_CHUNK_RE.match(name)
+        allowed = name in configured_names or (
+            chunk_match is not None and chunk_match.group("base") in configured_names
+        )
+        if not allowed:
+            continue
+        cookies.append({"name": name, "value": value.strip(), "domain": domain, "path": "/", "secure": True})
+    return cookies
+
+
+def _merge_cookies(*cookie_lists: list[dict]) -> list[dict]:
+    """Merge cookie sources, allowing a request cookie to override fallback state."""
+    merged: dict[tuple[str, str, str], dict] = {}
+    order: list[tuple[str, str, str]] = []
+    for cookies in cookie_lists:
+        for cookie in cookies:
+            key = (
+                str(cookie.get("name", "")),
+                str(cookie.get("domain", "")),
+                str(cookie.get("path", "/")),
+            )
+            if not key[0]:
+                continue
+            if key not in merged:
+                order.append(key)
+            merged[key] = cookie
+    return [merged[key] for key in order]
 
 
 def _parse_cookies() -> list[dict]:
@@ -65,10 +122,17 @@ def _parse_cookies() -> list[dict]:
 class GameBrowser:
     """Playwright 浏览器生命周期管理器。"""
 
-    def __init__(self, headless: bool | None = None):
+    def __init__(
+        self,
+        headless: bool | None = None,
+        auth_cookie_header: str = "",
+        auth_cookie_domain: str | None = None,
+    ):
         self._pw = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
+        self.auth_cookie_header = auth_cookie_header.strip()
+        self.auth_cookie_domain = auth_cookie_domain or os.getenv("GAME_AUTH_COOKIE_DOMAIN", ".panghuer.top")
         # GAME_HEADLESS=0 时开窗口（本地调试）；默认 headless
         if headless is None:
             headless = os.getenv("GAME_HEADLESS", "1") != "0"
@@ -90,6 +154,11 @@ class GameBrowser:
         )
         # 注入认证 cookie（如有）
         cookies = _parse_cookies()
+        if self.auth_cookie_header:
+            cookies = _merge_cookies(
+                cookies,
+                _parse_cookie_header(self.auth_cookie_header, self.auth_cookie_domain),
+            )
         if cookies:
             try:
                 self._context.add_cookies(cookies)
@@ -136,9 +205,13 @@ class GameBrowserSession:
         self,
         headless: bool | None = None,
         browser_factory: Callable[..., GameBrowser] = GameBrowser,
+        auth_cookie_header: str = "",
+        auth_cookie_domain: str | None = None,
     ):
         self._headless = headless
         self._browser_factory = browser_factory
+        self._auth_cookie_header = auth_cookie_header
+        self._auth_cookie_domain = auth_cookie_domain
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="game-browser")
         self._browser: GameBrowser | None = None
         self._owner_thread_id: int | None = None
@@ -156,7 +229,11 @@ class GameBrowserSession:
 
     def _start_on_owner_thread(self) -> None:
         self._owner_thread_id = threading.get_ident()
-        browser = self._browser_factory(headless=self._headless)
+        browser = self._browser_factory(
+            headless=self._headless,
+            auth_cookie_header=self._auth_cookie_header,
+            auth_cookie_domain=self._auth_cookie_domain,
+        )
         try:
             self._browser = browser.start()
         except Exception:

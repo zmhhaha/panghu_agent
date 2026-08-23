@@ -24,11 +24,17 @@ def do_review(game_url: str, comment_targets: str, request: gr.Request):
         return
 
     user_id = request.headers.get("X-Forwarded-User", "") if request else ""
+    # Gradio receives the user's oauth2-proxy session, while the API call is
+    # server-to-server. Forward the opaque Cookie header so the API's browser
+    # can open the same protected games as that user. Never log or persist it.
+    auth_cookie_header = request.headers.get("cookie", "") if request else ""
 
     try:
+        request_headers = {"Cookie": auth_cookie_header} if auth_cookie_header else {}
         r = requests.post(
             f"{API_BASE}/game_review",
             json={"game_url": game_url, "comment_targets": comment_targets, "user_id": user_id},
+            headers=request_headers,
             timeout=10,
         )
         if r.status_code == 429:
