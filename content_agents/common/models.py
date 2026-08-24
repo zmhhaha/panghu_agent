@@ -103,6 +103,15 @@ class ContentItem:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> "ContentItem":
+        data = dict(value)
+        data["source_refs"] = [
+            ref if isinstance(ref, SourceRef) else SourceRef(**ref)
+            for ref in data.get("source_refs", [])
+        ]
+        return cls(**data)
+
 
 @dataclass(frozen=True)
 class PublicationResult:
@@ -110,4 +119,3 @@ class PublicationResult:
     status: str
     external_id: str = ""
     error: str = ""
-
