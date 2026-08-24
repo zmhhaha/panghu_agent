@@ -65,10 +65,11 @@ def collect(*, sample: bool = False) -> list[Candidate]:
 
 
 def render(candidate: Candidate, config: AgentConfig) -> ContentItem:
-    score = int(candidate.metadata.get("meme_score", 0))
-    body = (f"{candidate.title}\n\n发生了什么：{candidate.summary or '具体背景请打开原始来源核对。'}\n\n"
-            "网友怎么调侃：网友把这个事件重新包装成戏称、谐音或典故，用来形容其中的反差感。这里记录公开语境中的玩笑，不把未经证实的传闻当事实。\n\n"
-            f"为什么好笑：熟悉的说法被套进了意外场景，形成错位感（候选评分 {score}）。\n\n原始来源：{candidate.url}")
+    summary = " ".join((candidate.summary or "").split()).strip()
+    # Keep the post close to the source. Do not invent context when Bilibili
+    # only provides a title and do not repeat the title in the body.
+    body = summary or "\u6765\u6e90\u89c6\u9891\u672a\u63d0\u4f9b\u6587\u5b57\u7b80\u4ecb\uff0c\u8bf7\u4ee5\u539f\u89c6\u9891\u4e3a\u51c6\u3002"
+    body += f"\n\n\u539f\u89c6\u9891\uff1a{candidate.url}"
     risk, status, notes = assess(body, default_risk="medium")
     return ContentItem.create(bot_name=config.bot_name, bot_version=config.bot_version, prompt_version=config.prompt_version, title=f"今日热梗：{candidate.title}", body=body, summary=candidate.summary, language="zh-CN", source_refs=[SourceRef(name=candidate.source, url=candidate.url, external_id=candidate.external_id, published_at=candidate.published_at, excerpt=candidate.summary)], tags=["热梗", "网友调侃", candidate.source], topics=["internet-culture", "event-joke"], risk_level=risk, review_status=status, review_notes=notes)
 
