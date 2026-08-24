@@ -10,10 +10,10 @@ from content_agents.common.http import HttpClientError
 from content_agents.common.models import Candidate, ContentItem, SourceRef
 from content_agents.common.review import assess
 from content_agents.common.runner import run_agent
-from content_agents.common.source import fetch_bilibili_hot, fetch_baidu_hot, fetch_feed
+from content_agents.common.source import fetch_bilibili_hot, fetch_feed
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-DEFAULT_FEEDS = "Baidu Hot Search|https://top.baidu.com/board?tab=realtime||Bilibili 热门|https://api.bilibili.com/x/web-interface/ranking/v2?rid=0&type=all"
+DEFAULT_FEEDS = "Bilibili Hot Ranking|https://api.bilibili.com/x/web-interface/ranking/v2?rid=0&type=all"
 NEWS_EXCLUDE_TERMS = ("地震", "台风", "洪水", "火灾", "事故", "遇难", "死亡", "受贿", "判刑", "犯罪", "猥亵", "诈骗", "袭击", "战争", "军事", "政治局", "会议", "通报", "辟谣", "疫情", "外交", "总统")
 MEME_SIGNAL_PATTERNS = (r"[‘’'\"“”].{1,32}[’'\"“”]", r"(?:梗|反转|破防|笑死|绷不住|离谱|抽象|逆天|真香|上大分|网友调侃)", r"(?:空城计|关中王|牛来了|封神)", r"(?:竟然|居然|没想到|原来是|被称为|戏称|谐音|双关)")
 
@@ -46,9 +46,7 @@ def collect(*, sample: bool = False) -> list[Candidate]:
             continue
         source, url = (part.strip() for part in value.split("|", 1))
         try:
-            if "top.baidu.com/board" in url:
-                candidates.extend(fetch_baidu_hot(url, source=source, limit=50))
-            elif "bilibili.com" in url or "bilibili" in source.lower():
+            if "bilibili.com" in url or "bilibili" in source.lower():
                 candidates.extend(fetch_bilibili_hot(url, source=source, limit=50))
             else:
                 candidates.extend(fetch_feed(url, source=source))

@@ -48,7 +48,7 @@ The RSS adapter writes `feed.xml` and `rss-items.json` at the data directory roo
 | `HUBLOG_SERVICE_TOKEN` | empty | Compatibility fallback for local runs |
 | `GITHUB_TOKEN` | empty | Optional GitHub API token |
 | `NEWS_FEEDS` | China News International | `name|url||name|url` |
-| `MEME_FEEDS` | Baidu Hot Search | `name|url||name|url`; Baidu board URLs are parsed from embedded JSON |
+| `MEME_FEEDS` | Bilibili Hot Ranking | `name|url||name|url`; Bilibili ranking API is parsed as JSON |
 | `MEME_MIN_SCORE` | `3` | Minimum event-joke score; ordinary news and sensitive events are discarded |
 | `LLM_BASE_URL` | empty | Optional OpenAI-compatible endpoint |
 | `LLM_API_KEY` | empty | LLM credential, from a Secret only |
@@ -60,7 +60,7 @@ Publication policy:
 - `blocked` items are never sent to a channel.
 - With `BOT_DRAFT_ONLY=true`, RSS and Hublog are recorded as `draft` and are not public.
 - With draft mode disabled, only `approved` items go to RSS or Hublog.
-- Meme candidates must pass the event-joke filter; the bot prefers puns, nicknames, reversals, idiom remixes, and colloquial phrases from Baidu or Bilibili. It intentionally drops ordinary news instead of reposting it.
+- Meme candidates must pass the event-joke filter; the bot prefers puns, nicknames, reversals, idiom remixes, and colloquial phrases from Bilibili. It intentionally drops ordinary news instead of reposting it.
 - Production currently sets `CONTENT_AUTO_APPROVE=true`, so all non-blocked GitHub, news, and meme items are approved automatically. Blocklist matches remain blocked.
 
 ## Hublog tokens
