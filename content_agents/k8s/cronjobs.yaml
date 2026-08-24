@@ -5,6 +5,7 @@ metadata:
   name: github-trending-agent
   namespace: content-agents
 spec:
+  timeZone: Asia/Shanghai
   schedule: "0 0 * * *" # 08:00 Asia/Shanghai when the cluster clock is UTC.
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
@@ -43,6 +44,7 @@ metadata:
   name: international-news-agent
   namespace: content-agents
 spec:
+  timeZone: Asia/Shanghai
   schedule: "30 0,12 * * *" # 08:30 and 20:30 Asia/Shanghai when the cluster clock is UTC.
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
@@ -81,6 +83,7 @@ metadata:
   name: meme-collector-agent
   namespace: content-agents
 spec:
+  timeZone: Asia/Shanghai
   schedule: "30 10 * * *" # 18:30 Asia/Shanghai when the cluster clock is UTC.
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
