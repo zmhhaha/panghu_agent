@@ -9,11 +9,11 @@ from content_agents.common.http import HttpClientError
 from content_agents.common.models import Candidate, ContentItem, SourceRef
 from content_agents.common.review import assess
 from content_agents.common.runner import run_agent
-from content_agents.common.source import fetch_feed
+from content_agents.common.source import fetch_baidu_hot, fetch_feed
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
-DEFAULT_FEEDS = "Google Trends China|https://trends.google.com/trending/rss?geo=CN"
+DEFAULT_FEEDS = "Baidu Hot Search|https://top.baidu.com/board?tab=realtime"
 
 
 def collect(*, sample: bool = False) -> list[Candidate]:
@@ -34,7 +34,12 @@ def collect(*, sample: bool = False) -> list[Candidate]:
             continue
         source, url = value.split("|", 1)
         try:
-            candidates.extend(fetch_feed(url.strip(), source=source.strip()))
+            source = source.strip()
+            url = url.strip()
+            if "top.baidu.com/board" in url:
+                candidates.extend(fetch_baidu_hot(url, source=source, limit=50))
+            else:
+                candidates.extend(fetch_feed(url, source=source))
         except (HttpClientError, ValueError) as exc:
             logging.getLogger(__name__).warning("Meme feed failed source=%s error=%s", source, exc)
     unique: dict[str, Candidate] = {row.url: row for row in candidates if row.url}

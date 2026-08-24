@@ -46,8 +46,8 @@ The RSS adapter writes `feed.xml` and `rss-items.json` at the data directory roo
 | `HUBLOG_SERVICE_TOKENS` | empty | Raw-token JSON envelope; each bot selects its own entry |
 | `HUBLOG_SERVICE_TOKEN` | empty | Compatibility fallback for local runs |
 | `GITHUB_TOKEN` | empty | Optional GitHub API token |
-| `NEWS_FEEDS` | BBC World and Al Jazeera | `name|url||name|url` |
-| `MEME_FEEDS` | Google Trends China | `name|url||name|url` |
+| `NEWS_FEEDS` | China News International | `name|url||name|url` |
+| `MEME_FEEDS` | Baidu Hot Search | `name|url||name|url`; Baidu board URLs are parsed from embedded JSON |
 | `LLM_BASE_URL` | empty | Optional OpenAI-compatible endpoint |
 | `LLM_API_KEY` | empty | LLM credential, from a Secret only |
 | `LLM_REQUIRED` | `false` | Fail the run if the optional LLM is not configured |

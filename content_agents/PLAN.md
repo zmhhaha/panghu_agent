@@ -42,11 +42,11 @@ Use GitHub Search API with a configurable lookback window and optional `GITHUB_T
 
 ### International news
 
-Use configurable RSS/Atom feeds, defaulting to BBC World and Al Jazeera. Separate confirmed information, source wording, and speculation. Default to high risk and human review. Schedule: 08:30 and 20:30 Asia/Shanghai.
+Use configurable RSS/Atom feeds, defaulting to China News International. Separate confirmed information, source wording, and speculation. Default to high risk and human review. Schedule: 08:30 and 20:30 Asia/Shanghai.
 
 ### Meme collection
 
-Use configurable trend RSS, defaulting to Google Trends China. Explain the phrase, context, and propagation without copying original images, video, music, or large user-generated excerpts. Default to medium risk and human review. Schedule: 18:30 Asia/Shanghai.
+Use configurable trend sources, defaulting to the Baidu Hot Search public board. The collector parses the board's embedded JSON and explains the phrase, context, and propagation without copying original images, video, music, or large user-generated excerpts. Default to medium risk and human review. Schedule: 18:30 Asia/Shanghai.
 
 ## Review and publication
 

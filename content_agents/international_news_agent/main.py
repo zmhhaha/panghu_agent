@@ -14,8 +14,7 @@ from content_agents.common.source import fetch_feed
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
 DEFAULT_FEEDS = (
-    "BBC World|https://feeds.bbci.co.uk/news/world/rss.xml",
-    "Al Jazeera|https://www.aljazeera.com/xml/rss/all.xml",
+    "China News International|https://www.chinanews.com.cn/rss/world.xml",
 )
 
 

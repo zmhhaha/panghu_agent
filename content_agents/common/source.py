@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -63,3 +64,46 @@ def fetch_feed(url: str, *, source: str) -> list[Candidate]:
         )
         for entry in parse_feed(get_text(url, headers={"User-Agent": "panghu-content-agent/0.1"}), source=source)
     ]
+
+
+def fetch_baidu_hot(url: str, *, source: str, limit: int = 20) -> list[Candidate]:
+    """Extract Baidu's embedded hot-list JSON from the public board page."""
+    html = get_text(url, headers={"User-Agent": "panghu-content-agent/0.1"})
+    marker = "<!--s-data:"
+    start = html.find(marker)
+    if start < 0:
+        raise ValueError("Baidu hot board did not contain embedded data")
+    payload_start = start + len(marker)
+    try:
+        document, _ = json.JSONDecoder().raw_decode(html[payload_start:])
+    except json.JSONDecodeError as exc:
+        raise ValueError("Baidu hot board embedded data is invalid JSON") from exc
+
+    candidates: list[Candidate] = []
+    cards = document.get("data", {}).get("cards", []) if isinstance(document, dict) else []
+    for card in cards:
+        if not isinstance(card, dict) or card.get("component") != "hotList":
+            continue
+        for row in card.get("content", []):
+            if not isinstance(row, dict):
+                continue
+            title = str(row.get("word") or row.get("query") or "").strip()
+            link = str(row.get("rawUrl") or row.get("url") or "").strip()
+            if not title or not link:
+                continue
+            candidates.append(
+                Candidate(
+                    external_id=link,
+                    title=title,
+                    summary=str(row.get("desc") or "").strip(),
+                    url=link,
+                    source=source,
+                    metadata={
+                        "rank": row.get("index"),
+                        "hot_score": row.get("hotScore"),
+                    },
+                )
+            )
+            if len(candidates) >= limit:
+                return candidates
+    return candidates

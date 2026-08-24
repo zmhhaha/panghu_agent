@@ -14,5 +14,5 @@ data:
   LLM_BASE_URL: ""
   LLM_MODEL: gpt-4o-mini
   LLM_REQUIRED: "false"
-  NEWS_FEEDS: "BBC World|https://feeds.bbci.co.uk/news/world/rss.xml||Al Jazeera|https://www.aljazeera.com/xml/rss/all.xml"
-  MEME_FEEDS: "Google Trends China|https://trends.google.com/trending/rss?geo=CN"
+  NEWS_FEEDS: "China News International|https://www.chinanews.com.cn/rss/world.xml"
+  MEME_FEEDS: "Baidu Hot Search|https://top.baidu.com/board?tab=realtime"
