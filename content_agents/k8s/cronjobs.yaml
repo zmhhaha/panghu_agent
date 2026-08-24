@@ -1,0 +1,114 @@
+# Deployment: deploy.sh renders image registry and tag before applying this file.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: github-trending-agent
+  namespace: content-agents
+spec:
+  schedule: "0 0 * * *" # 08:00 Asia/Shanghai when the cluster clock is UTC.
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: agent
+              image: arm-cluster-master:5000/panghu-content-github-trending:latest
+              imagePullPolicy: Always
+              command: [python, -m, content_agents.github_trending_agent.main]
+              envFrom:
+                - configMapRef:
+                    name: content-agents-config
+                - secretRef:
+                    name: content-agent-hublog
+                    optional: true
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+              resources:
+                requests: {cpu: 50m, memory: 128Mi}
+                limits: {cpu: 500m, memory: 512Mi}
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: content-agents-data
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: international-news-agent
+  namespace: content-agents
+spec:
+  schedule: "30 0,12 * * *" # 08:30 and 20:30 Asia/Shanghai when the cluster clock is UTC.
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: agent
+              image: arm-cluster-master:5000/panghu-content-international-news:latest
+              imagePullPolicy: Always
+              command: [python, -m, content_agents.international_news_agent.main]
+              envFrom:
+                - configMapRef:
+                    name: content-agents-config
+                - secretRef:
+                    name: content-agent-hublog
+                    optional: true
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+              resources:
+                requests: {cpu: 50m, memory: 128Mi}
+                limits: {cpu: 500m, memory: 512Mi}
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: content-agents-data
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: meme-collector-agent
+  namespace: content-agents
+spec:
+  schedule: "30 10 * * *" # 18:30 Asia/Shanghai when the cluster clock is UTC.
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: agent
+              image: arm-cluster-master:5000/panghu-content-meme-collector:latest
+              imagePullPolicy: Always
+              command: [python, -m, content_agents.meme_collector_agent.main]
+              envFrom:
+                - configMapRef:
+                    name: content-agents-config
+                - secretRef:
+                    name: content-agent-hublog
+                    optional: true
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+              resources:
+                requests: {cpu: 50m, memory: 128Mi}
+                limits: {cpu: 500m, memory: 512Mi}
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: content-agents-data

@@ -1,0 +1,5 @@
+# Deployment: apply with content_agents/deploy.sh.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: content-agents

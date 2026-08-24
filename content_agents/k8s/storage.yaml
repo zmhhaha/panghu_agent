@@ -1,0 +1,12 @@
+# Deployment: apply with content_agents/deploy.sh. CephFS stores run data and review output.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: content-agents-data
+  namespace: content-agents
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: ceph-cephfs
+  resources:
+    requests:
+      storage: 1Gi

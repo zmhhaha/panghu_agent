@@ -1,0 +1,18 @@
+# Deployment: apply with content_agents/deploy.sh. Keep secrets out of this ConfigMap.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: content-agents-config
+  namespace: content-agents
+data:
+  CONTENT_DATA_DIR: /data/content-agents
+  AGENT_CHANNELS: json,rss,hublog
+  BOT_DRAFT_ONLY: "true"
+  BOT_MAX_ITEMS: "5"
+  BOT_LOOKBACK_HOURS: "24"
+  HUBLOG_BASE_URL: http://hublog-api.hublog.svc.cluster.local
+  LLM_BASE_URL: ""
+  LLM_MODEL: gpt-4o-mini
+  LLM_REQUIRED: "false"
+  NEWS_FEEDS: "BBC World|https://feeds.bbci.co.uk/news/world/rss.xml||Al Jazeera|https://www.aljazeera.com/xml/rss/all.xml"
+  MEME_FEEDS: "Google Trends China|https://trends.google.com/trending/rss?geo=CN"
