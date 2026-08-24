@@ -50,12 +50,16 @@ Use configurable trend sources, defaulting to the Baidu Hot Search public board.
 
 ## Review and publication
 
-`BOT_DRAFT_ONLY=true` is the safe default:
+`BOT_DRAFT_ONLY=true` is the safe local default:
 
 - JSON remains the review ledger.
 - Blocked content goes to no channel.
 - RSS and Hublog are recorded as drafts and are not public.
 - When draft mode is disabled, only approved content is sent to public channels.
+
+The production ConfigMap currently enables `CONTENT_AUTO_APPROVE=true` and
+`BOT_DRAFT_ONLY=false`, so non-blocked content from all three bots is published.
+Blocklist matches remain blocked.
 
 Future work can add a review API that promotes `needs_review` to `approved`, followed by an idempotent publication worker.
 

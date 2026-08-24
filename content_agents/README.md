@@ -40,6 +40,7 @@ The RSS adapter writes `feed.xml` and `rss-items.json` at the data directory roo
 | `CONTENT_DATA_DIR` | `/data/content-agents` | Persistent JSONL/RSS directory |
 | `AGENT_CHANNELS` | `json` | Comma-separated: `json`, `rss`, `hublog` |
 | `BOT_DRAFT_ONLY` | `true` | Keep public channels in draft mode |
+| `CONTENT_AUTO_APPROVE` | `false` | Mark non-blocked generated content as `approved`; blocklist hits remain blocked |
 | `BOT_MAX_ITEMS` | `5` | Maximum candidates per run |
 | `BOT_LOOKBACK_HOURS` | `24` | GitHub query window |
 | `HUBLOG_BASE_URL` | cluster-internal Hublog service | Hublog API base URL |
@@ -57,7 +58,8 @@ Publication policy:
 - JSON always keeps the generated item as a review ledger.
 - `blocked` items are never sent to a channel.
 - With `BOT_DRAFT_ONLY=true`, RSS and Hublog are recorded as `draft` and are not public.
-- With draft mode disabled, only `approved` items go to RSS or Hublog. News and meme items are `needs_review` by default.
+- With draft mode disabled, only `approved` items go to RSS or Hublog.
+- Production currently sets `CONTENT_AUTO_APPROVE=true`, so all non-blocked GitHub, news, and meme items are approved automatically. Blocklist matches remain blocked.
 
 ## Hublog tokens
 
