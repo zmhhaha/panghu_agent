@@ -33,6 +33,11 @@ class JsonStore:
             self._index_path.write_text(json.dumps(sorted(self._index), ensure_ascii=False), encoding="utf-8")
             return True
 
+    def save_content_revision(self, item: ContentItem) -> None:
+        """Append an updated moderation state without changing the content hash index."""
+        with self._lock:
+            self._append("content-items.jsonl", item.to_dict())
+
     def find_content(self, content_hash: str) -> ContentItem | None:
         """Load an existing item so failed channel publications can be retried."""
         path = self.root / "content-items.jsonl"

@@ -16,4 +16,5 @@ data:
   LLM_MODEL: gpt-4o-mini
   LLM_REQUIRED: "false"
   NEWS_FEEDS: "China News International|https://www.chinanews.com.cn/rss/world.xml"
-  MEME_FEEDS: "Baidu Hot Search|https://top.baidu.com/board?tab=realtime"
+  MEME_FEEDS: "Baidu Hot Search|https://top.baidu.com/board?tab=realtime||Bilibili 热门|https://api.bilibili.com/x/web-interface/ranking/v2?rid=0&type=all"
+  MEME_MIN_SCORE: "3"

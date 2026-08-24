@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import uuid
 from collections import Counter
 from collections.abc import Callable, Iterable
@@ -28,6 +29,8 @@ def run_agent(
     retries = 0
     publication_rows: list[dict[str, Any]] = []
     attempted_ids: set[str] = set()
+
+    auto_approve = os.getenv("CONTENT_AUTO_APPROVE", "false").strip().lower() in {"1", "true", "yes", "on"}
 
     def publish_item(item: ContentItem, *, retry: bool) -> None:
         nonlocal retries
@@ -57,6 +60,10 @@ def run_agent(
         if existing_item is not None:
             duplicates += 1
             item = existing_item
+            if auto_approve and item.review_status == "needs_review":
+                item.review_status = "approved"
+                item.review_notes = ["auto-approved by CONTENT_AUTO_APPROVE=true (legacy item)"]
+                store.save_content_revision(item)
         else:
             store.save_content(item)
             generated += 1
@@ -66,7 +73,13 @@ def run_agent(
     # request. Replay approved items with failed/draft/missing channel records
     # so transient Hublog or RSS outages do not strand content in the ledger.
     for item in store.iter_content():
-        if item.content_id in attempted_ids or item.review_status != "approved":
+        if item.content_id in attempted_ids:
+            continue
+        if auto_approve and item.review_status == "needs_review":
+            item.review_status = "approved"
+            item.review_notes = ["auto-approved by CONTENT_AUTO_APPROVE=true (legacy item)"]
+            store.save_content_revision(item)
+        if item.review_status != "approved":
             continue
         pending = any(not store.is_published(item.content_id, channel.name) for channel in channels)
         if pending:

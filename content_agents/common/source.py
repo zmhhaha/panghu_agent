@@ -107,3 +107,26 @@ def fetch_baidu_hot(url: str, *, source: str, limit: int = 20) -> list[Candidate
             if len(candidates) >= limit:
                 return candidates
     return candidates
+
+
+def fetch_bilibili_hot(url: str, *, source: str, limit: int = 20) -> list[Candidate]:
+    """Read Bilibili's public ranking JSON without scraping video pages."""
+    document = json.loads(get_text(url, headers={"User-Agent": "panghu-content-agent/0.1", "Accept": "application/json"}))
+    rows = document.get("data", {}).get("list", []) if isinstance(document, dict) else []
+    candidates: list[Candidate] = []
+    for rank, row in enumerate(rows[:limit], start=1):
+        if not isinstance(row, dict):
+            continue
+        title = re.sub(r"<[^>]+>", "", str(row.get("title") or "")).strip()
+        bvid = str(row.get("bvid") or "").strip()
+        if not title or not bvid:
+            continue
+        candidates.append(Candidate(
+            external_id=bvid,
+            title=title,
+            summary=re.sub(r"\s+", " ", str(row.get("desc") or "")).strip(),
+            url=f"https://www.bilibili.com/video/{bvid}",
+            source=source,
+            metadata={"rank": rank, "view_count": row.get("stat", {}).get("view")},
+        ))
+    return candidates
