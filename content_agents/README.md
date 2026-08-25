@@ -49,10 +49,18 @@ The RSS adapter writes `feed.xml` and `rss-items.json` at the data directory roo
 | `GITHUB_TOKEN` | empty | Optional GitHub API token |
 | `NEWS_FEEDS` | China News International | `name|url||name|url` |
 | `MEME_FEEDS` | Bilibili Hot Ranking | `name|url||name|url`; Bilibili ranking API is parsed as JSON |
-| `MEME_MIN_SCORE` | `3` | Minimum event-joke score; ordinary news and sensitive events are discarded |
+| `MEME_MIN_SCORE` | `6` | Minimum short-phrase meme score; ordinary news and sensitive events are discarded |
+| `MEME_MAX_TITLE_LENGTH` | `12` | Maximum title length for a reusable meme phrase |
 | `LLM_BASE_URL` | empty | Optional OpenAI-compatible endpoint |
 | `LLM_API_KEY` | empty | LLM credential, from a Secret only |
 | `LLM_REQUIRED` | `false` | Fail the run if the optional LLM is not configured |
+| `MEME_AGENT_ENABLED` | `true` | Use the configured LLM to judge and extract reusable meme phrases |
+
+When `LLM_BASE_URL` and `LLM_API_KEY` are present, the meme agent sends each
+Bilibili candidate to the configured OpenAI-compatible model. The model must
+return `is_meme`, a short `phrase`, `context`, `joke`, and `confidence`. The
+local short-phrase rules remain as a fallback when the model is unavailable.
+The meme CronJob optionally reads these values from Secret `content-agent-llm`.
 
 Publication policy:
 

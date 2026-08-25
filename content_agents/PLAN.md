@@ -46,7 +46,13 @@ Use configurable RSS/Atom feeds, defaulting to China News International. Separat
 
 ### Meme collection
 
-Use configurable trend sources, defaulting to Bilibili rankings. The collector rejects ordinary news and sensitive events, and keeps phrases with evidence of a pun, nickname, reversal, idiom remix, or other public joking context. It explains the event and the joke without copying original images, video, music, or large user-generated excerpts. Default to medium risk and human review. Schedule: 18:30 Asia/Shanghai.
+Use configurable trend sources, defaulting to Bilibili rankings. An optional
+LLM content agent judges each candidate, extracts a reusable short phrase, and
+separates event context from the joke. The collector rejects ordinary news and
+sensitive events, and keeps phrases with evidence of a pun, nickname, reversal,
+idiom remix, or other public joking context. Without an LLM it falls back to
+strict local short-phrase rules. It does not copy large user-generated excerpts.
+Default to medium risk and human review. Schedule: 18:30 Asia/Shanghai.
 
 ## Review and publication
 

@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: content-llm-service
+  namespace: content-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: content-llm-service}
+  template:
+    metadata:
+      labels: {app: content-llm-service}
+    spec:
+      containers:
+        - name: api
+          image: arm-cluster-master:5000/panghu-content-llm:latest
+          imagePullPolicy: Always
+          ports: [{name: http, containerPort: 8000}]
+          envFrom:
+            - configMapRef: {name: content-llm-config}
+            - secretRef: {name: content-llm-secret, optional: true}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {cpu: "2", memory: 2Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: content-llm-service
+  namespace: content-agents
+spec:
+  selector: {app: content-llm-service}
+  ports: [{name: http, port: 80, targetPort: http}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: content-llm-config
+  namespace: content-agents
+data:
+  PROVIDER: deepseek
+  DEEPSEEK_BASE_URL: https://api.deepseek.com
+  DEEPSEEK_MODEL: deepseek-v4-flash
