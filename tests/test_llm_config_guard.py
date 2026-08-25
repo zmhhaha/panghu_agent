@@ -28,6 +28,12 @@ API_CASES = [
         "/zhougongjiemeng_agent",
         {"text": "test"},
     ),
+    (
+        "app.api.xiaotanrenjian_agent",
+        "/xiaotanrenjian_agent-health",
+        "/xiaotanrenjian_agent",
+        {"text": "test"},
+    ),
 ]
 
 
@@ -40,6 +46,8 @@ CREW_MODULES = [
     "research_agent.crew",
     "scientific_agent.crew",
     "game_review_agent.llm_config",
+    "zhougongjiemeng_agent.crew",
+    "xiaotanrenjian_agent.crew",
 ]
 
 

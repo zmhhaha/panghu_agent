@@ -46,6 +46,7 @@ ALL_NS=(
   zhenzhuzhida-agent
   zhongkuifumo-agent
   zhougongjiemeng-agent
+  xiaotanrenjian-agent
   game-review-agent
   literature-downloader
 )
