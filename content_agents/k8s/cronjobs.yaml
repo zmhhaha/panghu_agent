@@ -31,7 +31,8 @@ spec:
                 - name: data
                   mountPath: /data
               resources:
-                requests: {cpu: 50m, memory: 128Mi}
+                # Short-lived batch worker: reserve only startup capacity; limits remain the runtime ceiling.
+                requests: {cpu: 10m, memory: 32Mi}
                 limits: {cpu: 500m, memory: 512Mi}
           volumes:
             - name: data
@@ -70,7 +71,8 @@ spec:
                 - name: data
                   mountPath: /data
               resources:
-                requests: {cpu: 50m, memory: 128Mi}
+                # Short-lived batch worker: reserve only startup capacity; limits remain the runtime ceiling.
+                requests: {cpu: 10m, memory: 32Mi}
                 limits: {cpu: 500m, memory: 512Mi}
           volumes:
             - name: data
@@ -109,7 +111,8 @@ spec:
                 - name: data
                   mountPath: /data
               resources:
-                requests: {cpu: 50m, memory: 128Mi}
+                # Short-lived batch worker: reserve only startup capacity; limits remain the runtime ceiling.
+                requests: {cpu: 10m, memory: 32Mi}
                 limits: {cpu: 500m, memory: 512Mi}
           volumes:
             - name: data
