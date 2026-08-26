@@ -1,9 +1,10 @@
 # Panghu Content Agents
 
-This directory contains three platform-independent content bots:
+This directory contains platform-independent content bots:
 
 - `github_trending_agent`: collect active and popular open-source repositories.
 - `international_news_agent`: collect international-news leads from RSS/Atom feeds.
+- `finance_news_agent`: collect finance and market briefs, including 财联社电报.
 - `meme_collector_agent`: collect trending phrases and their public source context.
 
 The bots produce a common `ContentItem`. Hublog is only an optional channel adapter; JSON and RSS output can run without Hublog.
@@ -19,6 +20,7 @@ export CONTENT_DATA_DIR=/tmp/panghu-content-test
 
 python -m content_agents.github_trending_agent.main --sample
 python -m content_agents.international_news_agent.main --sample
+python -m content_agents.finance_news_agent.main --sample
 python -m content_agents.meme_collector_agent.main --sample
 ```
 
@@ -32,6 +34,9 @@ bot-runs.jsonl               # run statistics
 ```
 
 The RSS adapter writes `feed.xml` and `rss-items.json` at the data directory root.
+The shared ledger de-duplicates by bot, source name, and source `external_id`
+before falling back to the rendered content hash, so a revised feed summary
+does not create a duplicate Hublog post.
 
 ## Configuration
 
@@ -48,6 +53,7 @@ The RSS adapter writes `feed.xml` and `rss-items.json` at the data directory roo
 | `HUBLOG_SERVICE_TOKEN` | empty | Compatibility fallback for local runs |
 | `GITHUB_TOKEN` | empty | Optional GitHub API token |
 | `NEWS_FEEDS` | China News International | `name|url||name|url` |
+| `FINANCE_NEWS_FEEDS` | 财联社电报 | `name|url||name|url`; 财联社电报 API is parsed as JSON |
 | `MEME_FEEDS` | Bilibili Hot Ranking | `name|url||name|url`; Bilibili ranking API is parsed as JSON |
 | `MEME_MIN_SCORE` | `6` | Minimum short-phrase meme score; ordinary news and sensitive events are discarded |
 | `MEME_MAX_TITLE_LENGTH` | `12` | Maximum title length for a reusable meme phrase |
@@ -73,7 +79,7 @@ Publication policy:
 
 Never commit raw tokens. Hublog stores only SHA-256 hashes. The content-agent namespace receives a separate raw-token JSON envelope under the same key name, and each bot selects its own entry by its fixed `bot_name`.
 
-Run `panghu_chat/hublog/scripts/generate-service-tokens.py` and store its two JSON outputs separately:
+Run `panghu_chat/hublog/scripts/generate-service-tokens.py` and store its two JSON outputs separately. This includes the `finance-news` bot token:
 
 - hash-only JSON in `secret/hublog/auth` for the Hublog API;
 - raw-token JSON in `secret/content-agents/auth` for the content-agent Pods.
@@ -81,8 +87,24 @@ Run `panghu_chat/hublog/scripts/generate-service-tokens.py` and store its two JS
 The raw envelope has this shape (use real generated values only in Vault):
 
 ```json
-{"github-trending":{"token":"..."},"international-news":{"token":"..."},"meme-collector":{"token":"..."}}
+{"github-trending":{"token":"..."},"international-news":{"token":"..."},"finance-news":{"token":"..."},"meme-collector":{"token":"..."}}
 ```
+
+When adding the finance bot to a running cluster, generate only its new token
+and merge that one-key JSON object into both existing Vault envelopes. Do not
+regenerate or replace the existing bot entries:
+
+```bash
+cd ~/armbianbegin/panghu_chat/hublog
+python3 scripts/generate-service-tokens.py \
+  --bot finance-news --expires-at 2027-08-26T00:00:00Z
+```
+
+The first JSON output belongs in `secret/hublog/auth` and contains only a
+token hash; the second belongs in `secret/content-agents/auth` and contains
+the raw service token. Merge each with its corresponding existing
+`HUBLOG_SERVICE_TOKENS` value, then force-sync `content-agent-hublog` before
+starting the new CronJob. Never put the raw token in a ConfigMap or Git.
 
 `deploy.sh` applies `vault/inventory/content-agents-hublog-externalsecret.yaml`, which syncs one `HUBLOG_SERVICE_TOKENS` key into `content-agents/content-agent-hublog`. CronJobs import that Secret with `envFrom`; no per-bot `SERVICE_TOKEN_*` mapping is needed.
 
@@ -107,13 +129,21 @@ bash deploy.sh                # build, push, and apply all manifests
 bash deploy.sh --skip-build   # apply using existing images
 ```
 
-Override the registry or tag with `REGISTRY=... IMAGE_TAG=...`. The deployment creates the `content-agents` Namespace, a CephFS PVC, the ConfigMap, three CronJobs, and the ExternalSecret. It keeps draft mode enabled by default.
+Override the registry or tag with `REGISTRY=... IMAGE_TAG=...`. The deployment creates the `content-agents` Namespace, a CephFS PVC, the ConfigMap, four CronJobs, and the ExternalSecret. It keeps draft mode enabled by default.
 
 Manual run and logs:
 
 ```bash
 kubectl -n content-agents create job --from=cronjob/github-trending-agent github-trending-manual
 kubectl -n content-agents logs -f job/github-trending-manual
+```
+
+Finance-agent smoke test after deployment:
+
+```bash
+kubectl -n content-agents create job --from=cronjob/finance-news-agent finance-news-manual
+kubectl -n content-agents wait --for=condition=complete job/finance-news-manual --timeout=180s
+kubectl -n content-agents logs job/finance-news-manual
 ```
 
 ## Decoupling contract

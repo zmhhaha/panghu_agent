@@ -1,0 +1,1 @@
+"""Finance news content agent."""

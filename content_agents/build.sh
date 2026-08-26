@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the three independent content-agent images.
+# Build the independent content-agent images.
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -13,6 +13,7 @@ fi
 declare -A IMAGES=(
     [github_trending]="panghu-content-github-trending"
     [international_news]="panghu-content-international-news"
+    [finance_news]="panghu-content-finance-news"
     [meme_collector]="panghu-content-meme-collector"
 )
 
@@ -24,4 +25,3 @@ for agent in "${!IMAGES[@]}"; do
         docker push "${image}"
     fi
 done
-

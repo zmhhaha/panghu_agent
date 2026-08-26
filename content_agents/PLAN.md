@@ -2,7 +2,7 @@
 
 ## Goal and boundary
 
-Implement three independent content producers under `panghu_agent/content_agents`: GitHub trends, international news, and meme collection. Collection, normalization, deduplication, risk review, and audit records belong to the bots. Presentation platforms do not.
+Implement independent content producers under `panghu_agent/content_agents`: GitHub trends, international news, finance news, and meme collection. Collection, normalization, deduplication, risk review, and audit records belong to the bots. Presentation platforms do not.
 
 Hublog is an optional `ChannelAdapter`. The same normalized item can be exported to JSON, RSS/Atom, Hublog, Portal, email, or another future channel. A Hublog outage must not stop collection or review.
 
@@ -44,6 +44,15 @@ Use GitHub Search API with a configurable lookback window and optional `GITHUB_T
 
 Use configurable RSS/Atom feeds, defaulting to China News International. Separate confirmed information, source wording, and speculation. Default to high risk and human review. Schedule: 08:30 and 20:30 Asia/Shanghai.
 
+### Finance news
+
+Use configurable finance feeds, defaulting to 财联社公开电报 JSON. Keep this
+as a separate bot identity from international news so finance posts have their
+own account, tags, topic, token, and publication schedule. Publish source
+wording and a direct detail link, with a high-risk disclaimer that the brief is
+not investment advice. Schedule: every 30 minutes; duplicate source IDs are
+ignored by the shared ledger.
+
 ### Meme collection
 
 Use configurable trend sources, defaulting to Bilibili rankings. An optional
@@ -64,7 +73,7 @@ Default to medium risk and human review. Schedule: 18:30 Asia/Shanghai.
 - When draft mode is disabled, only approved content is sent to public channels.
 
 The production ConfigMap currently enables `CONTENT_AUTO_APPROVE=true` and
-`BOT_DRAFT_ONLY=false`, so non-blocked content from all three bots is published.
+`BOT_DRAFT_ONLY=false`, so non-blocked content from all bots is published.
 Blocklist matches remain blocked.
 
 Future work can add a review API that promotes `needs_review` to `approved`, followed by an idempotent publication worker.
@@ -76,7 +85,7 @@ Bots use separate Hublog Service Tokens, never personal SSO cookies. Raw tokens 
 ## Kubernetes deployment
 
 - Namespace: `content-agents`
-- Three independent CronJobs and one CephFS PVC
+- Four independent CronJobs and one CephFS PVC
 - One image and token field per bot
 - ConfigMap for non-secret settings; Vault/ExternalSecret for tokens
 - `build.sh` builds/pushes images; `deploy.sh` applies Namespace, PVC, ConfigMap, CronJobs, and ExternalSecret

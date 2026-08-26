@@ -57,6 +57,37 @@ class JsonStore:
                     continue
         return None
 
+    def find_content_by_source(self, *, bot_name: str, source: str, external_id: str) -> ContentItem | None:
+        """Find an item already created for the same source record.
+
+        Source IDs are more stable than rendered text. This prevents a feed
+        correcting its summary or whitespace from creating a second Hublog
+        post for the same underlying news item.
+        """
+        if not external_id:
+            return None
+        path = self.root / "content-items.jsonl"
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            return None
+        for line in reversed(lines):
+            try:
+                value = json.loads(line)
+                if value.get("bot_name") != bot_name:
+                    continue
+                refs = value.get("source_refs", [])
+                if any(
+                    isinstance(ref, dict)
+                    and ref.get("name") == source
+                    and str(ref.get("external_id") or "") == external_id
+                    for ref in refs
+                ):
+                    return ContentItem.from_dict(value)
+            except (TypeError, KeyError, json.JSONDecodeError):
+                continue
+        return None
+
     def iter_content(self) -> list[ContentItem]:
         path = self.root / "content-items.jsonl"
         try:

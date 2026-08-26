@@ -57,6 +57,17 @@ def run_agent(
     for candidate in candidates:
         item = renderer(candidate, config)
         existing_item = store.find_content(item.content_hash)
+        if existing_item is None:
+            # Prefer the source identity when available. Feeds can revise a
+            # summary without changing the underlying article/event ID.
+            for source_ref in item.source_refs:
+                existing_item = store.find_content_by_source(
+                    bot_name=config.bot_name,
+                    source=source_ref.name,
+                    external_id=source_ref.external_id,
+                )
+                if existing_item is not None:
+                    break
         if existing_item is not None:
             duplicates += 1
             item = existing_item

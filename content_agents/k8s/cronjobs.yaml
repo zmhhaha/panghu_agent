@@ -42,6 +42,45 @@ spec:
 apiVersion: batch/v1
 kind: CronJob
 metadata:
+  name: finance-news-agent
+  namespace: content-agents
+spec:
+  timeZone: Asia/Shanghai
+  schedule: "*/30 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: agent
+              image: arm-cluster-master:5000/panghu-content-finance-news:latest
+              imagePullPolicy: Always
+              command: [python, -m, content_agents.finance_news_agent.main]
+              envFrom:
+                - configMapRef:
+                    name: content-agents-config
+                - secretRef:
+                    name: content-agent-hublog
+                    optional: true
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+              resources:
+                requests: {cpu: 10m, memory: 32Mi}
+                limits: {cpu: 500m, memory: 512Mi}
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: content-agents-data
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
   name: international-news-agent
   namespace: content-agents
 spec:

@@ -4,6 +4,8 @@ import json
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .http import get_text
 from .models import Candidate
@@ -64,6 +66,56 @@ def fetch_feed(url: str, *, source: str) -> list[Candidate]:
         )
         for entry in parse_feed(get_text(url, headers={"User-Agent": "panghu-content-agent/0.1"}), source=source)
     ]
+
+
+def fetch_cls_telegraph(url: str, *, source: str, limit: int = 20) -> list[Candidate]:
+    """Read 财联社's public rolling-news JSON endpoint.
+
+    The endpoint expects ``lastTime`` to be a Unix timestamp.  Supplying the
+    current time asks for the newest items and avoids baking a moving timestamp
+    into the ConfigMap.
+    """
+    parts = urlsplit(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query.setdefault("rn", str(limit))
+    query["lastTime"] = str(int(datetime.now(timezone.utc).timestamp()))
+    request_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+    document = json.loads(get_text(request_url, headers={
+        "User-Agent": "panghu-content-agent/0.1",
+        "Accept": "application/json",
+        "Referer": "https://www.cls.cn/telegraph",
+    }))
+    if not isinstance(document, dict) or document.get("errno") not in (0, "0"):
+        raise ValueError("财联社电报接口返回错误")
+    data = document.get("data")
+    rows = data.get("roll_data", []) if isinstance(data, dict) else []
+    if not isinstance(rows, list):
+        raise ValueError("财联社电报接口返回数据格式错误")
+    candidates: list[Candidate] = []
+    for row in rows[:limit]:
+        if not isinstance(row, dict):
+            continue
+        item_id = str(row.get("id") or "").strip()
+        title = str(row.get("title") or "").strip()
+        summary = str(row.get("brief") or row.get("content") or "").strip()
+        if not item_id or not title:
+            continue
+        published_at = ""
+        if row.get("ctime"):
+            try:
+                published_at = datetime.fromtimestamp(int(row["ctime"]), tz=timezone.utc).isoformat()
+            except (TypeError, ValueError, OSError):
+                published_at = str(row["ctime"])
+        candidates.append(Candidate(
+            external_id=item_id,
+            title=title,
+            summary=summary,
+            url=f"https://www.cls.cn/detail/{item_id}",
+            source=source,
+            published_at=published_at,
+            metadata={"reading_num": row.get("reading_num"), "comment_num": row.get("comment_num")},
+        ))
+    return candidates
 
 
 def fetch_baidu_hot(url: str, *, source: str, limit: int = 20) -> list[Candidate]:
