@@ -3,11 +3,12 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 from content_agents.common.config import AgentConfig
-from content_agents.common.http import HttpClientError, get_json
+from content_agents.common.http import HttpClientError, get_json, post_json
 from content_agents.common.models import Candidate, ContentItem, SourceRef
 from content_agents.common.review import assess
 from content_agents.common.runner import run_agent
@@ -67,13 +68,37 @@ def collect(*, lookback_hours: int, sample: bool = False) -> list[Candidate]:
 def render(candidate: Candidate, config: AgentConfig) -> ContentItem:
     meta = candidate.metadata
     title = f"GitHub \u4eca\u65e5\u70ed\u95e8\uff1a{candidate.title}"
+    analysis = meta.get("llm_analysis") or {}
     body = (
         f"{candidate.title}\uff1a{candidate.summary}\n\n"
         f"\u4e3a\u4ec0\u4e48\u503c\u5f97\u5173\u6ce8\uff1a\u8fd1\u671f\u6d3b\u8dc3\u5ea6\u8f83\u9ad8\uff0c\u5f53\u524d\u7ea6 {meta.get('stars', 0)} stars\u3001{meta.get('forks', 0)} forks\u3002\n"
         f"\u6280\u672f\u6808\uff1a{meta.get('language', 'unknown')}\uff1b\u8bb8\u53ef\u8bc1\uff1a{meta.get('license', 'unknown')}\u3002\n"
-        "\u4f7f\u7528\u524d\u8bf7\u81ea\u884c\u68c0\u67e5 README\u3001\u8bb8\u53ef\u8bc1\u3001\u4f9d\u8d56\u548c\u5b89\u88c5\u811a\u672c\u3002\n\n"
+        f"\u9879\u76ee\u89e3\u8bfb\uff1a{analysis.get('overview', '请阅读项目 README 了解定位和适用场景。')}\n"
+        f"\u4e3b\u8981\u80fd\u529b\u4e0e\u9002\u7528\u573a\u666f\uff1a{analysis.get('highlights', '请以原仓库文档为准。')}\n"
+        f"\u4e0a\u624b\u5efa\u8bae\uff1a{analysis.get('getting_started', '建议先阅读 README 并运行官方示例。')}\n"
+        f"\u6ce8\u610f\u4e8b\u9879\uff1a{analysis.get('cautions', '使用前请自行检查 README、许可证、依赖和安装脚本。')}\n\n"
         f"\u539f\u4ed3\u5e93\uff1a{candidate.url}"
     )
+
+
+def enrich_batch(candidates: list[Candidate]) -> list[Candidate]:
+    service_url = os.getenv("CONTENT_LLM_SERVICE_URL", "").rstrip("/")
+    if not service_url or not candidates:
+        return candidates
+    payload = {"candidates": [{"full_name": c.title, "description": c.summary, "url": c.url,
+        "stars": c.metadata.get("stars", 0), "forks": c.metadata.get("forks", 0),
+        "language": c.metadata.get("language", "unknown"), "license": c.metadata.get("license", "unknown")}
+        for c in candidates]}
+    try:
+        result = post_json(f"{service_url}/v1/github/enrich-batch", payload, timeout=180)
+        items = result.get("items") if isinstance(result, dict) else None
+        if not isinstance(items, list) or len(items) != len(candidates):
+            raise RuntimeError("invalid GitHub batch response")
+        return [replace(c, metadata={**c.metadata, "llm_analysis": item if isinstance(item, dict) else {}})
+                for c, item in zip(candidates, items)]
+    except (HttpClientError, RuntimeError) as exc:
+        logging.getLogger(__name__).warning("GitHub batch enrichment failed: %s", exc)
+        return candidates
     risk, status, notes = assess(
         body,
         default_risk="low" if meta.get("license") not in (None, "unknown") else "medium",
@@ -109,7 +134,7 @@ def main() -> None:
     parser.add_argument("--sample", action="store_true", help="use an offline sample candidate")
     args = parser.parse_args()
     config = AgentConfig.from_env("github-trending")
-    run_agent(config, lambda: collect(lookback_hours=config.lookback_hours, sample=args.sample), render)
+    run_agent(config, lambda: enrich_batch(collect(lookback_hours=config.lookback_hours, sample=args.sample)), render)
 
 
 if __name__ == "__main__":

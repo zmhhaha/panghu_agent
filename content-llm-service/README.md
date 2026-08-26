@@ -6,6 +6,8 @@
 
 `POST /v1/meme/judge-batch` 接收候选数组，由 CrewAI Agent 使用网页搜索/抓取 tools 批量判断是否为可独立传播的短句梗，并返回按输入顺序排列的结构化结果。`POST /v1/meme/judge` 保留用于单条调试调用。
 
+`POST /v1/github/enrich-batch` 接收 GitHub 项目候选数组，由同一 CrewAI LLM 批量补充项目定位、主要能力、上手建议和注意事项。
+
 ## 配置
 
 支持现有 `tools.llm_config` 的 `openai`、`deepseek`、`anthropic`、`custom` Provider。API 密钥只放在 `content-llm-secret`，不要写入 Git。

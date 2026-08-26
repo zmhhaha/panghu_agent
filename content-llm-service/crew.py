@@ -57,3 +57,25 @@ def create_meme_batch_crew(candidates: list[dict]) -> Crew:
         agent=researcher,
     )
     return Crew(agents=[researcher], tasks=[task], process=Process.sequential, memory=False, verbose=False)
+
+
+def create_github_batch_crew(candidates: list[dict]) -> Crew:
+    analyst = Agent(
+        role="open source project analyst",
+        goal="explain GitHub projects accurately and concisely for Chinese readers",
+        backstory="You inspect project descriptions and public repository pages, distinguish facts from inference, and never invent features.",
+        tools=[WebSearchTool(), WebFetchTool()],
+        llm=build_llm(), allow_delegation=False, verbose=False,
+    )
+    task = Task(
+        description=(
+            "Analyze every GitHub repository candidate below. Return ONLY a JSON array in the same order. "
+            "Each object must contain: overview (2-4 Chinese sentences explaining what it does and who needs it), "
+            "highlights (2-4 concrete capabilities or use cases), getting_started (one concise practical starting suggestion), "
+            "cautions (one sentence about maturity, license, security, or dependencies). Use only the supplied facts or public repository information; never invent numbers.\n"
+            + __import__("json").dumps(candidates, ensure_ascii=False)
+        ),
+        expected_output="A JSON array of project analysis objects",
+        agent=analyst,
+    )
+    return Crew(agents=[analyst], tasks=[task], process=Process.sequential, memory=False, verbose=False)
