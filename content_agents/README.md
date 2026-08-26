@@ -51,16 +51,14 @@ The RSS adapter writes `feed.xml` and `rss-items.json` at the data directory roo
 | `MEME_FEEDS` | Bilibili Hot Ranking | `name|url||name|url`; Bilibili ranking API is parsed as JSON |
 | `MEME_MIN_SCORE` | `6` | Minimum short-phrase meme score; ordinary news and sensitive events are discarded |
 | `MEME_MAX_TITLE_LENGTH` | `12` | Maximum title length for a reusable meme phrase |
-| `LLM_BASE_URL` | empty | Optional OpenAI-compatible endpoint |
-| `LLM_API_KEY` | empty | LLM credential, from a Secret only |
-| `LLM_REQUIRED` | `false` | Fail the run if the optional LLM is not configured |
-| `MEME_AGENT_ENABLED` | `true` | Use the configured LLM to judge and extract reusable meme phrases |
+| `MEME_AGENT_ENABLED` | `true` | Enable shared LLM-based meme judging |
+| `MEME_AGENT_SERVICE_URL` | cluster-local `content-llm-service` | Shared LLM service endpoint |
 
-When `LLM_BASE_URL` and `LLM_API_KEY` are present, the meme agent sends each
-Bilibili candidate to the configured OpenAI-compatible model. The model must
-return `is_meme`, a short `phrase`, `context`, `joke`, and `confidence`. The
-local short-phrase rules remain as a fallback when the model is unavailable.
-The meme CronJob optionally reads these values from Secret `content-agent-llm`.
+Meme Collector does not own an LLM configuration. It sends each Bilibili
+candidate to the shared `content-llm-service`, which uses CrewAI and selects
+the provider from its own `PROVIDER` ConfigMap value. The service owns model
+and endpoint settings and reads credentials from its ExternalSecret. It
+returns `is_meme`, a short `phrase`, `context`, `joke`, and `confidence`.
 
 Publication policy:
 

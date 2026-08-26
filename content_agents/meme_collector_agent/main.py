@@ -97,7 +97,7 @@ def agent_judge(candidate: Candidate, config: AgentConfig) -> tuple[Candidate | 
     return replace(candidate, title=phrase, summary=summary, metadata=metadata), "agent-approved"
 
 
-def collect(*, sample: bool = False) -> list[Candidate]:
+def collect(config: AgentConfig, *, sample: bool = False) -> list[Candidate]:
     if sample:
         return [Candidate(external_id="sample-meme-001", title="是关中王来了", summary="", url="https://example.com/meme", source="Sample", metadata={"meme_score": 7})]
     candidates: list[Candidate] = []
@@ -151,7 +151,7 @@ def main() -> None:
     parser.add_argument("--sample", action="store_true")
     args = parser.parse_args()
     config = AgentConfig.from_env("meme-collector")
-    run_agent(config, lambda: collect(sample=args.sample), render)
+    run_agent(config, lambda: collect(config, sample=args.sample), render)
 
 
 if __name__ == "__main__":

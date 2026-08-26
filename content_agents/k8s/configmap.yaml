@@ -12,9 +12,6 @@ data:
   BOT_LOOKBACK_HOURS: "24"
   CONTENT_AUTO_APPROVE: "true"
   HUBLOG_BASE_URL: http://hublog-api.hublog.svc.cluster.local
-  LLM_BASE_URL: ""
-  LLM_MODEL: gpt-4o-mini
-  LLM_REQUIRED: "false"
   MEME_AGENT_ENABLED: "true"
   MEME_AGENT_SERVICE_URL: http://content-llm-service.content-agents.svc.cluster.local
   NEWS_FEEDS: "China News International|https://www.chinanews.com.cn/rss/world.xml"
