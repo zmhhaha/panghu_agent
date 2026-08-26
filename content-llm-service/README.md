@@ -4,7 +4,7 @@
 
 ## API
 
-`POST /v1/meme/judge` 接收 `title`、`summary`、`url`，由 CrewAI Agent 使用网页搜索/抓取 tools 判断是否为可独立传播的短句梗，并返回结构化 JSON。
+`POST /v1/meme/judge-batch` 接收候选数组，由 CrewAI Agent 使用网页搜索/抓取 tools 批量判断是否为可独立传播的短句梗，并返回按输入顺序排列的结构化结果。`POST /v1/meme/judge` 保留用于单条调试调用。
 
 ## 配置
 

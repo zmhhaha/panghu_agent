@@ -34,3 +34,26 @@ def create_meme_crew(candidate: dict) -> Crew:
         expected_output="严格的单个 JSON 对象", agent=researcher,
     )
     return Crew(agents=[researcher], tasks=[task], process=Process.sequential, memory=False, verbose=False)
+
+
+def create_meme_batch_crew(candidates: list[dict]) -> Crew:
+    researcher = Agent(
+        role="internet meme researcher",
+        goal="identify reusable short event-based internet memes and reject ordinary headlines",
+        backstory="You understand Chinese internet wordplay, nicknames, idiom remixes, and event-based jokes.",
+        tools=[WebSearchTool(), WebFetchTool()],
+        llm=build_llm(), allow_delegation=False, verbose=False,
+    )
+    task = Task(
+        description=(
+            "Analyze every Bilibili candidate below. Only approve phrases similar to "
+            "恒大空城计, 是关中王来了, 华强买瓜, 狐狸与酱板鸭. Reject ordinary news, full event headlines, "
+            "celebrity/sports reposts, and generic summaries. Return ONLY a JSON array, "
+            "with one object per input candidate in the same order. Each object must contain "
+            "is_meme (boolean), phrase (<=12 Chinese characters), context, joke, confidence.\n"
+            + __import__("json").dumps(candidates, ensure_ascii=False)
+        ),
+        expected_output="A JSON array of judgement objects",
+        agent=researcher,
+    )
+    return Crew(agents=[researcher], tasks=[task], process=Process.sequential, memory=False, verbose=False)

@@ -97,6 +97,38 @@ def agent_judge(candidate: Candidate, config: AgentConfig) -> tuple[Candidate | 
     return replace(candidate, title=phrase, summary=summary, metadata=metadata), "agent-approved"
 
 
+def apply_agent_result(candidate: Candidate, result: object) -> tuple[Candidate | None, str]:
+    if not isinstance(result, dict) or not result.get("is_meme"):
+        return None, "agent-rejected"
+    phrase = compact_title(str(result.get("phrase") or candidate.title))
+    if not phrase or len(phrase) > 12:
+        return None, "agent-invalid-phrase"
+    metadata = dict(candidate.metadata)
+    metadata["agent_confidence"] = result.get("confidence", 0)
+    metadata["agent_judgement"] = "approved"
+    summary = " ".join(filter(None, [str(result.get("context") or "").strip(), str(result.get("joke") or "").strip()]))
+    return replace(candidate, title=phrase, summary=summary, metadata=metadata), "agent-approved"
+
+
+def agent_judge_batch(candidates: list[Candidate], config: AgentConfig) -> list[Candidate | None]:
+    service_url = os.getenv("MEME_AGENT_SERVICE_URL", "").rstrip("/")
+    if not service_url:
+        return [agent_judge(candidate, config)[0] for candidate in candidates]
+    try:
+        result = post_json(
+            f"{service_url}/v1/meme/judge-batch",
+            {"candidates": [{"title": c.title, "summary": c.summary, "url": c.url} for c in candidates]},
+            timeout=180,
+        )
+        items = result.get("items") if isinstance(result, dict) else None
+        if not isinstance(items, list) or len(items) != len(candidates):
+            raise RuntimeError("invalid batch judgement response")
+        return [apply_agent_result(candidate, item)[0] for candidate, item in zip(candidates, items)]
+    except (HttpClientError, RuntimeError) as exc:
+        logging.getLogger(__name__).warning("Meme batch agent failed: %s", exc)
+        return [candidate for candidate in candidates]
+
+
 def collect(config: AgentConfig, *, sample: bool = False) -> list[Candidate]:
     if sample:
         return [Candidate(external_id="sample-meme-001", title="是关中王来了", summary="", url="https://example.com/meme", source="Sample", metadata={"meme_score": 7})]
@@ -114,16 +146,16 @@ def collect(config: AgentConfig, *, sample: bool = False) -> list[Candidate]:
             logging.getLogger(__name__).warning("Meme feed failed source=%s error=%s", source, exc)
     scored: list[tuple[int, Candidate]] = []
     minimum = max(1, int(os.getenv("MEME_MIN_SCORE", "6")))
-    for candidate in {row.url: row for row in candidates if row.url}.values():
+    unique_candidates = list({row.url: row for row in candidates if row.url}.values())
+    judged_candidates = agent_judge_batch(unique_candidates, config) if agent_enabled(config) else unique_candidates
+    for candidate in judged_candidates:
+        if candidate is None:
+            continue
         score, reasons = meme_score(candidate)
         if agent_enabled(config):
-            judged, agent_reason = agent_judge(candidate, config)
-            if judged is None:
-                continue
-            candidate = judged
             score, local_reasons = meme_score(candidate)
             reasons.extend(local_reasons)
-            reasons.append(agent_reason)
+            reasons.append("agent-approved")
             score = max(score, minimum)
         if score >= minimum:
             candidate.metadata.update(meme_score=score, meme_reasons=reasons)
