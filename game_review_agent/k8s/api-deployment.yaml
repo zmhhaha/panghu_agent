@@ -56,8 +56,8 @@ spec:
           subPath: agent.py
         resources:
           requests:
-            cpu: 250m
-            memory: 768Mi
+            cpu: 50m
+            memory: 256Mi
           limits:
             cpu: "2"
             memory: 3Gi
