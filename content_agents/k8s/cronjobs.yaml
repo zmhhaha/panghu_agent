@@ -12,6 +12,9 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
+      # Completed or failed Jobs are retained for one hour, then cleaned by
+      # the Kubernetes TTL controller.
+      ttlSecondsAfterFinished: 3600
       backoffLimit: 2
       template:
         spec:
@@ -52,6 +55,7 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
+      ttlSecondsAfterFinished: 3600
       backoffLimit: 2
       template:
         spec:
@@ -91,6 +95,7 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
+      ttlSecondsAfterFinished: 3600
       backoffLimit: 2
       template:
         spec:
@@ -131,6 +136,7 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
+      ttlSecondsAfterFinished: 3600
       backoffLimit: 2
       template:
         spec:
