@@ -79,26 +79,6 @@ def render(candidate: Candidate, config: AgentConfig) -> ContentItem:
         f"\u6ce8\u610f\u4e8b\u9879\uff1a{analysis.get('cautions', '使用前请自行检查 README、许可证、依赖和安装脚本。')}\n\n"
         f"\u539f\u4ed3\u5e93\uff1a{candidate.url}"
     )
-
-
-def enrich_batch(candidates: list[Candidate]) -> list[Candidate]:
-    service_url = os.getenv("CONTENT_LLM_SERVICE_URL", "").rstrip("/")
-    if not service_url or not candidates:
-        return candidates
-    payload = {"candidates": [{"full_name": c.title, "description": c.summary, "url": c.url,
-        "stars": c.metadata.get("stars", 0), "forks": c.metadata.get("forks", 0),
-        "language": c.metadata.get("language", "unknown"), "license": c.metadata.get("license", "unknown")}
-        for c in candidates]}
-    try:
-        result = post_json(f"{service_url}/v1/github/enrich-batch", payload, timeout=180)
-        items = result.get("items") if isinstance(result, dict) else None
-        if not isinstance(items, list) or len(items) != len(candidates):
-            raise RuntimeError("invalid GitHub batch response")
-        return [replace(c, metadata={**c.metadata, "llm_analysis": item if isinstance(item, dict) else {}})
-                for c, item in zip(candidates, items)]
-    except (HttpClientError, RuntimeError) as exc:
-        logging.getLogger(__name__).warning("GitHub batch enrichment failed: %s", exc)
-        return candidates
     risk, status, notes = assess(
         body,
         default_risk="low" if meta.get("license") not in (None, "unknown") else "medium",
@@ -127,6 +107,26 @@ def enrich_batch(candidates: list[Candidate]) -> list[Candidate]:
         review_status=status,
         review_notes=notes,
     )
+
+
+def enrich_batch(candidates: list[Candidate]) -> list[Candidate]:
+    service_url = os.getenv("CONTENT_LLM_SERVICE_URL", "").rstrip("/")
+    if not service_url or not candidates:
+        return candidates
+    payload = {"candidates": [{"full_name": c.title, "description": c.summary, "url": c.url,
+        "stars": c.metadata.get("stars", 0), "forks": c.metadata.get("forks", 0),
+        "language": c.metadata.get("language", "unknown"), "license": c.metadata.get("license", "unknown")}
+        for c in candidates]}
+    try:
+        result = post_json(f"{service_url}/v1/github/enrich-batch", payload, timeout=180)
+        items = result.get("items") if isinstance(result, dict) else None
+        if not isinstance(items, list) or len(items) != len(candidates):
+            raise RuntimeError("invalid GitHub batch response")
+        return [replace(c, metadata={**c.metadata, "llm_analysis": item if isinstance(item, dict) else {}})
+                for c, item in zip(candidates, items)]
+    except (HttpClientError, RuntimeError) as exc:
+        logging.getLogger(__name__).warning("GitHub batch enrichment failed: %s", exc)
+        return candidates
 
 
 def main() -> None:
