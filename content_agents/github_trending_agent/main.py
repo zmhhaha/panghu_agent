@@ -125,7 +125,12 @@ def enrich_batch(candidates: list[Candidate]) -> list[Candidate]:
         return [replace(c, metadata={**c.metadata, "llm_analysis": item if isinstance(item, dict) else {}})
                 for c, item in zip(candidates, items)]
     except (HttpClientError, RuntimeError) as exc:
-        logging.getLogger(__name__).warning("GitHub batch enrichment failed: %s", exc)
+        logging.getLogger(__name__).warning(
+            "GitHub batch enrichment failed; fallback applied (attempts=%s, status=%s): %s",
+            getattr(exc, "attempts", 1),
+            getattr(exc, "status_code", "n/a"),
+            exc,
+        )
         return candidates
 
 

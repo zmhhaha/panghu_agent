@@ -83,7 +83,12 @@ def agent_judge(candidate: Candidate, config: AgentConfig) -> tuple[Candidate | 
         else:
             result = generate_json(prompt, config)
     except (HttpClientError, RuntimeError) as exc:
-        logging.getLogger(__name__).warning("Meme agent judge failed: %s", exc)
+        logging.getLogger(__name__).warning(
+            "Meme agent judge failed; fallback applied (attempts=%s, status=%s): %s",
+            getattr(exc, "attempts", 1),
+            getattr(exc, "status_code", "n/a"),
+            exc,
+        )
         return candidate, "llm-fallback"
     if not isinstance(result, dict) or not result.get("is_meme"):
         return None, "agent-rejected"
@@ -125,7 +130,12 @@ def agent_judge_batch(candidates: list[Candidate], config: AgentConfig) -> list[
             raise RuntimeError("invalid batch judgement response")
         return [apply_agent_result(candidate, item)[0] for candidate, item in zip(candidates, items)]
     except (HttpClientError, RuntimeError) as exc:
-        logging.getLogger(__name__).warning("Meme batch agent failed: %s", exc)
+        logging.getLogger(__name__).warning(
+            "Meme batch agent failed; fallback applied (attempts=%s, status=%s): %s",
+            getattr(exc, "attempts", 1),
+            getattr(exc, "status_code", "n/a"),
+            exc,
+        )
         return [candidate for candidate in candidates]
 
 

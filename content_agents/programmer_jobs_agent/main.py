@@ -259,7 +259,12 @@ def summarize(jobs: list[Candidate]) -> dict[str, Any] | None:
     try:
         result = post_json(f"{service_url}/v1/jobs/programmer-summary", payload, timeout=180)
     except HttpClientError as exc:
-        logger.warning("Programming jobs batch summary failed: %s", exc)
+        logger.warning(
+            "Programming jobs batch summary failed; publication skipped (attempts=%s, status=%s): %s",
+            getattr(exc, "attempts", 1),
+            getattr(exc, "status_code", "n/a"),
+            exc,
+        )
         return None
     if not isinstance(result, dict) or not clean(result.get("overview")):
         logger.warning("Programming jobs batch summary returned an invalid result")
