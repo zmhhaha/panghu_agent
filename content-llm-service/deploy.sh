@@ -15,4 +15,7 @@ else
   echo "[content-llm] WARNING: Vault secret/content-agents/llm not found; service will remain degraded until configured."
 fi
 sed "s|arm-cluster-master:5000/panghu-content-llm:latest|${REGISTRY}/panghu-content-llm:${IMAGE_TAG}|g" "${SCRIPT_DIR}/k8s.yaml" | kubectl apply -f -
+# `latest` leaves the Deployment template unchanged, so apply alone would keep
+# serving the old image. Restart explicitly after a successful build/apply.
+kubectl -n content-agents rollout restart deployment/content-llm-service
 kubectl -n content-agents rollout status deployment/content-llm-service --timeout=300s
