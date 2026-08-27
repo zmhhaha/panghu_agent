@@ -3,17 +3,15 @@ from __future__ import annotations
 import argparse
 import hashlib
 import html
-import json
 import logging
 import os
-import re
 from datetime import datetime
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
 from content_agents.common.config import AgentConfig
-from content_agents.common.http import HttpClientError, get_text, post_json
+from content_agents.common.http import HttpClientError, get_json, post_json
 from content_agents.common.models import Candidate, ContentItem, SourceRef
 from content_agents.common.review import assess
 from content_agents.common.runner import run_agent
@@ -64,40 +62,23 @@ def first(row: dict[str, Any], *keys: str) -> str:
     return ""
 
 
-def json_documents(page: str) -> list[object]:
-    """Extract embedded JSON without trying to bypass Boss anti-crawling controls."""
-    documents: list[object] = []
-    for match in re.finditer(r"<script[^>]*>(.*?)</script>", page, re.I | re.S):
-        body = html.unescape(match.group(1)).strip()
-        if not body or body[0] not in "[{":
-            continue
-        try:
-            documents.append(json.loads(body))
-        except json.JSONDecodeError:
-            continue
-    for marker in ("__NEXT_DATA__", "__INITIAL_STATE__", "__INITIAL_PROPS__"):
-        assignment = re.search(rf"{marker}\s*=\s*", page)
-        if not assignment:
-            continue
-        start = page.find("{", assignment.end())
-        if start < 0:
-            continue
-        try:
-            document, _ = json.JSONDecoder().raw_decode(page[start:])
-            documents.append(document)
-        except json.JSONDecodeError:
-            continue
-    return documents
+def boss_api_url(search_url: str) -> str:
+    """Build the read-only job-list URL used by Boss's public search page."""
+    parts = urlsplit(search_url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query.setdefault("city", "100010000")
+    query.setdefault("scene", "1")
+    query.setdefault("ka", "page-0")
+    return urlunsplit((parts.scheme, parts.netloc, "/wapi/zpgeek/search/joblist.json", urlencode(query), ""))
 
 
-def walk_json(value: object):
-    if isinstance(value, dict):
-        yield value
-        for child in value.values():
-            yield from walk_json(child)
-    elif isinstance(value, list):
-        for child in value:
-            yield from walk_json(child)
+def boss_headers(search_url: str) -> dict[str, str]:
+    return {
+        "User-Agent": "Mozilla/5.0 (compatible; PanghuJobMarketBot/1.0; +https://hublog.panghuer.top/)",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+        "Referer": search_url,
+    }
 
 
 def normalize_job(row: dict[str, Any], *, search_name: str, search_url: str) -> Candidate | None:
@@ -140,28 +121,38 @@ def fetch_boss_jobs() -> tuple[list[Candidate], list[tuple[str, str]]]:
     jobs: list[Candidate] = []
     sources: list[tuple[str, str]] = []
     seen: set[str] = set()
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; PanghuJobMarketBot/1.0; +https://hublog.panghuer.top/)",
-        "Accept-Language": "zh-CN,zh;q=0.9",
-    }
     for search_name, search_url in search_specs():
         try:
-            page = get_text(search_url, headers=headers, timeout=20)
+            document = get_json(boss_api_url(search_url), headers=boss_headers(search_url), timeout=20)
         except HttpClientError as exc:
-            logger.warning("Boss search failed search=%s error=%s", search_name, exc)
+            logger.warning("Boss job-list request failed search=%s error=%s", search_name, exc)
             continue
-        if any(marker in page.lower() for marker in ("captcha", "安全验证", "访问过于频繁")):
-            logger.warning("Boss search requires verification; skip search=%s", search_name)
+        if not isinstance(document, dict):
+            logger.warning("Boss job-list returned an invalid document search=%s", search_name)
+            continue
+        if document.get("code") not in (0, "0"):
+            logger.warning(
+                "Boss job-list rejected search=%s code=%s message=%s; no bypass is attempted",
+                search_name,
+                document.get("code"),
+                text(document.get("message")) or "unknown",
+            )
+            continue
+        data = document.get("zpData")
+        rows = data.get("jobList", []) if isinstance(data, dict) else []
+        if not isinstance(rows, list):
+            logger.warning("Boss job-list did not contain jobs search=%s", search_name)
             continue
         sources.append((search_name, search_url))
-        for document in json_documents(page):
-            for row in walk_json(document):
-                job = normalize_job(row, search_name=search_name, search_url=search_url)
-                if job and job.external_id not in seen:
-                    seen.add(job.external_id)
-                    jobs.append(job)
-                    if len(jobs) >= MAX_SOURCE_JOBS:
-                        return jobs, sources
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            job = normalize_job(row, search_name=search_name, search_url=search_url)
+            if job and job.external_id not in seen:
+                seen.add(job.external_id)
+                jobs.append(job)
+                if len(jobs) >= MAX_SOURCE_JOBS:
+                    return jobs, sources
     return jobs, sources
 
 

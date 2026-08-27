@@ -1,9 +1,10 @@
 # Programmer Jobs Agent
 
-`programmer-jobs-agent` reads only public Boss 直聘 programming-job search
-pages and publishes one daily market summary. It does not use a Boss account,
-cookie, private API, or verification bypass. A source verification page is a
-normal quiet run: no empty report is published.
+`programmer-jobs-agent` reads the job-list response used by Boss 直聘 public
+programming-job search pages and publishes one daily market summary. It does
+not use a Boss account, cookie, private API, or verification bypass. A source
+verification or IP-rejection response is a normal quiet run: no empty report
+is published.
 
 ## Output
 
@@ -29,7 +30,10 @@ BOSS_JOB_SEARCHES: "北京后端|https://www.zhipin.com/web/geek/job?query=Java&
 ```
 
 Use only URLs that are available without credentials. The agent does not
-attempt to circumvent a page's access controls.
+attempt to circumvent a page's access controls. Boss can reject a server exit
+IP with response code `35`; in that case the cluster needs an official
+authorized data source or a different, approved collection path before this
+bot can publish.
 
 ## Deployment
 
