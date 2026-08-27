@@ -65,15 +65,17 @@ Default to medium risk and human review. Schedule: 18:30 Asia/Shanghai.
 
 ### Programmer jobs
 
-Use Boss 直聘 public job-search pages configured with `BOSS_JOB_SEARCHES`; do
-not depend on a logged-in account, cookies, or an anti-bot bypass. Normalize
-only available title, company, city, compensation, experience, education, and
-skill labels. A daily run collects at most 80 records and makes one batch call
-to `content-llm-service` to produce a single market report: demand directions,
-common technical skills, and qualified experience/education/salary signals.
-If the page requires verification, returns no valid records, or the LLM call
-fails, it does not publish. The ledger identifies the report by UTC date, so a
-same-day retry does not create another post. Schedule: 09:00 Asia/Shanghai.
+Use the public sources configured in `PROGRAMMER_JOB_FEEDS`: RemoteJobsCN RSS,
+Remotive JSON, Remote OK JSON, and AI Dev Jobs JSON. Do not depend on accounts,
+cookies, proxy rotation, or access-control bypasses. Normalize only available
+title, company, city, compensation, experience, education, skill labels, and a
+short public description. A daily run collects at most 80 recent technical-job
+records and makes one batch call to `content-llm-service` to produce a single
+market report: demand directions, common technical skills, and qualified
+experience/education/salary signals. If no source returns valid records or the
+LLM call fails, it does not publish. The ledger identifies the report by the
+Asia/Shanghai date, so a same-day retry does not create another post. Schedule:
+09:00 Asia/Shanghai.
 
 ## Review and publication
 

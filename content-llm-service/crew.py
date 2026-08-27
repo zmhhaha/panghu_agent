@@ -90,7 +90,7 @@ def create_programmer_jobs_summary_crew(jobs: list[dict]) -> Crew:
     )
     task = Task(
         description=(
-            "根据下面的 Boss 直聘程序员岗位样本，生成一份中文招聘日报。只返回一个 JSON 对象，不要 Markdown。"
+            "根据下面来自多个公开技术招聘源的程序员岗位样本，生成一份中文招聘日报。只返回一个 JSON 对象，不要 Markdown。"
             "字段必须包含：overview（2-4句，说明样本范围与整体需求）；directions（数组，最多6项，每项含 direction、demand、skills，"
             "skills 为技能数组）；top_skills（最多20项技能数组）；experience_signal；education_signal；salary_signal；advice。"
             "只总结样本中能够支持的观察；信息缺失时明确写‘样本字段不足’，不要编造数量、公司规模或薪资均值。\n"

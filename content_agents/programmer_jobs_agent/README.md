@@ -1,43 +1,54 @@
 # Programmer Jobs Agent
 
-`programmer-jobs-agent` reads the job-list response used by Boss 直聘 public
-programming-job search pages and publishes one daily market summary. It does
-not use a Boss account, cookie, private API, or verification bypass. A source
-verification or IP-rejection response is a normal quiet run: no empty report
-is published.
+`programmer-jobs-agent` publishes one daily Chinese-language summary of recent
+technical hiring. It does not access Boss 直聘, nor does it use accounts,
+cookies, proxy rotation, or an access-control bypass.
+
+## Sources
+
+The default `PROGRAMMER_JOB_FEEDS` combines these accessible public sources:
+
+| Source | Format | Role in the report |
+| --- | --- | --- |
+| RemoteJobsCN | RSS | Chinese remote and Web3 technical opportunities |
+| Remotive | JSON API | Structured remote engineering roles and skill tags |
+| Remote OK | JSON API | Broader remote technical-role sample |
+| AI Dev Jobs | JSON API | AI/ML-oriented developer roles |
+
+Only technical titles, tags, or descriptions are retained. The configured
+`PROGRAMMER_JOB_LOOKBACK_DAYS` window defaults to seven days. Each source is
+independent: a temporary source failure is logged while the remaining sources
+continue. If no valid technical roles remain, the run does not publish.
 
 ## Output
 
-After collecting at most 80 valid job records, the agent sends their compact
-fields to `content-llm-service` once. The resulting Hublog post includes:
+The agent collects at most 80 normalized roles, then sends all of them to
+`content-llm-service` in one request. The generated Hublog report contains:
 
-- the main hiring directions and their commonly requested skills;
-- high-frequency technologies;
-- observed experience, education, and salary signals when present;
-- public Boss search-page links for verification.
+- hiring directions with their common skills;
+- cross-source high-frequency technical skills;
+- experience, education, and compensation signals only when source fields
+  support them;
+- source API/RSS links for verification.
 
-The ledger uses `programmer-jobs-daily:<Asia/Shanghai date>` as the source identity, so
-retries on the same day do not create a second Hublog report.
+The ledger uses `programmer-jobs-daily:<Asia/Shanghai date>` as the source
+identity, so retries on the same day cannot create a second report.
 
-## Search scope
+## Configuration
 
-`BOSS_JOB_SEARCHES` belongs in `k8s/configmap.yaml`. Its syntax is
-`name|url||name|url`. The default searches for `开发工程师`. For example, to
-cover particular locations or roles, configure public search URLs such as:
+The non-secret configuration is in `content_agents/k8s/configmap.yaml`:
 
 ```yaml
-BOSS_JOB_SEARCHES: "北京后端|https://www.zhipin.com/web/geek/job?query=Java&city=101010100||上海前端|https://www.zhipin.com/web/geek/job?query=React&city=101020100"
+PROGRAMMER_JOB_FEEDS: "RemoteJobsCN|https://remotejobscn.com/rss.xml||Remotive|https://remotive.com/api/remote-jobs||Remote OK|https://remoteok.com/api||AI Dev Jobs|https://aidevboard.com/api/v1/jobs?tags=python,ai&posted_within_days=7"
+PROGRAMMER_JOB_LOOKBACK_DAYS: "7"
 ```
 
-Use only URLs that are available without credentials. The agent does not
-attempt to circumvent a page's access controls. Boss can reject a server exit
-IP with response code `35`; in that case the cluster needs an official
-authorized data source or a different, approved collection path before this
-bot can publish.
+Keep the source names unchanged unless the corresponding source adapter is
+also updated. API keys are not required for these default read-only feeds.
 
 ## Deployment
 
-First deploy the updated shared LLM service, because this bot requires its
+Deploy the updated shared LLM service first because the report uses its
 `/v1/jobs/programmer-summary` endpoint:
 
 ```bash
@@ -45,29 +56,7 @@ cd ~/armbianbegin/panghu_agent/content-llm-service
 bash deploy.sh
 ```
 
-Generate only the new service-token entry, then merge its two JSON outputs into
-the existing `HUBLOG_SERVICE_TOKENS` values in both Vault paths. Do not replace
-the existing entries for other bots.
-
-```bash
-cd ~/armbianbegin/panghu_chat/hublog
-BOT_NAME=programmer-jobs bash scripts/generate-service-token.sh
-```
-
-- The hash-only output goes to `secret/hublog/auth`.
-- The raw-token output goes to `secret/content-agents/auth`.
-
-After writing both merged values, sync the ExternalSecrets. Hublog reads its
-hash map from a Secret volume, so it does not need an API rollout for this new
-bot identity.
-
-```bash
-kubectl -n hublog annotate externalsecret hublog-config force-sync="$(date +%s)" --overwrite
-kubectl -n content-agents annotate externalsecret content-agent-hublog force-sync="$(date +%s)" --overwrite
-kubectl -n content-agents wait --for=condition=Ready externalsecret/content-agent-hublog --timeout=120s
-```
-
-Build and apply the agent manifests:
+Then build and deploy the agent:
 
 ```bash
 cd ~/armbianbegin/panghu_agent/content_agents
@@ -77,5 +66,5 @@ kubectl -n content-agents wait --for=condition=complete job/programmer-jobs-manu
 kubectl -n content-agents logs job/programmer-jobs-manual
 ```
 
-The production CronJob runs daily at 09:00 `Asia/Shanghai`. Completed Jobs are
-automatically removed after one hour.
+The production CronJob runs daily at 09:00 `Asia/Shanghai`. Completed jobs are
+removed after one hour.

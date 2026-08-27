@@ -5,7 +5,7 @@ This directory contains platform-independent content bots:
 - `github_trending_agent`: collect active and popular open-source repositories.
 - `international_news_agent`: collect international-news leads from RSS/Atom feeds.
 - `finance_news_agent`: collect finance and market briefs, including 财联社电报.
-- `programmer_jobs_agent`: summarize daily programming-job demand from Boss 直聘 public search pages.
+- `programmer_jobs_agent`: summarize daily programming-job demand from public technical-job RSS and APIs.
 - `meme_collector_agent`: collect trending phrases and their public source context.
 
 The bots produce a common `ContentItem`. Hublog is only an optional channel adapter; JSON and RSS output can run without Hublog.
@@ -56,7 +56,8 @@ does not create a duplicate Hublog post.
 | `GITHUB_TOKEN` | empty | Optional GitHub API token |
 | `NEWS_FEEDS` | China News International | `name|url||name|url` |
 | `FINANCE_NEWS_FEEDS` | 财联社电报 | `name|url||name|url`; 财联社电报 API is parsed as JSON |
-| `BOSS_JOB_SEARCHES` | 开发工程师检索页 | `name|url||name|url`; Boss public job-search pages, no cookies or account credentials |
+| `PROGRAMMER_JOB_FEEDS` | RemoteJobsCN/Remotive/Remote OK/AI Dev Jobs | `name|url||name|url`; public RSS/API sources only |
+| `PROGRAMMER_JOB_LOOKBACK_DAYS` | `7` | Keep recent job records within this window before the daily LLM summary |
 | `MEME_FEEDS` | Bilibili Hot Ranking | `name|url||name|url`; Bilibili ranking API is parsed as JSON |
 | `MEME_MIN_SCORE` | `6` | Minimum short-phrase meme score; ordinary news and sensitive events are discarded |
 | `MEME_MAX_TITLE_LENGTH` | `12` | Maximum title length for a reusable meme phrase |
@@ -158,9 +159,10 @@ kubectl -n content-agents logs job/programmer-jobs-manual
 ```
 
 The job requests exactly one batch LLM summary per run, after collecting up to
-80 job records. It publishes one daily report only when Boss returns valid
-public job records and the LLM returns a valid summary. Boss verification or a
-source/LLM failure results in a quiet run instead of an empty post.
+80 job records from RemoteJobsCN, Remotive, Remote OK, and AI Dev Jobs. It
+publishes one daily report only when at least one public source returns valid
+technical jobs and the LLM returns a valid summary. A source/LLM failure
+results in a quiet run instead of an empty post.
 
 ## Decoupling contract
 

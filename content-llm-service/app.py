@@ -28,7 +28,7 @@ class MemeBatchRequest(BaseModel):
 
 class GithubProjectRequest(BaseModel):
     full_name: str = Field(..., min_length=1, max_length=200)
-    description: str = Field(default="", max_length=4000)
+    description: str = Field(default="", max_length=1000)
     url: str = Field(default="", max_length=2000)
     stars: int = 0
     forks: int = 0
@@ -48,6 +48,8 @@ class ProgrammingJobRequest(BaseModel):
     experience: str = Field(default="", max_length=100)
     education: str = Field(default="", max_length=100)
     skills: list[str] = Field(default_factory=list, max_length=30)
+    description: str = Field(default="", max_length=4000)
+    source: str = Field(default="", max_length=100)
 
 
 class ProgrammerJobsSummaryRequest(BaseModel):
