@@ -2,7 +2,7 @@
 
 ## Goal and boundary
 
-Implement independent content producers under `panghu_agent/content_agents`: GitHub trends, international news, finance news, and meme collection. Collection, normalization, deduplication, risk review, and audit records belong to the bots. Presentation platforms do not.
+Implement independent content producers under `panghu_agent/content_agents`: GitHub trends, international news, finance news, programmer-jobs, and meme collection. Collection, normalization, deduplication, risk review, and audit records belong to the bots. Presentation platforms do not.
 
 Hublog is an optional `ChannelAdapter`. The same normalized item can be exported to JSON, RSS/Atom, Hublog, Portal, email, or another future channel. A Hublog outage must not stop collection or review.
 
@@ -63,6 +63,18 @@ idiom remix, or other public joking context. Without an LLM it falls back to
 strict local short-phrase rules. It does not copy large user-generated excerpts.
 Default to medium risk and human review. Schedule: 18:30 Asia/Shanghai.
 
+### Programmer jobs
+
+Use Boss 直聘 public job-search pages configured with `BOSS_JOB_SEARCHES`; do
+not depend on a logged-in account, cookies, or an anti-bot bypass. Normalize
+only available title, company, city, compensation, experience, education, and
+skill labels. A daily run collects at most 80 records and makes one batch call
+to `content-llm-service` to produce a single market report: demand directions,
+common technical skills, and qualified experience/education/salary signals.
+If the page requires verification, returns no valid records, or the LLM call
+fails, it does not publish. The ledger identifies the report by UTC date, so a
+same-day retry does not create another post. Schedule: 09:00 Asia/Shanghai.
+
 ## Review and publication
 
 `BOT_DRAFT_ONLY=true` is the safe local default:
@@ -85,7 +97,7 @@ Bots use separate Hublog Service Tokens, never personal SSO cookies. Raw tokens 
 ## Kubernetes deployment
 
 - Namespace: `content-agents`
-- Four independent CronJobs and one CephFS PVC
+- Five independent CronJobs and one CephFS PVC
 - One image and token field per bot
 - ConfigMap for non-secret settings; Vault/ExternalSecret for tokens
 - `build.sh` builds/pushes images; `deploy.sh` applies Namespace, PVC, ConfigMap, CronJobs, and ExternalSecret

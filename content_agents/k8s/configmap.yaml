@@ -17,6 +17,9 @@ data:
   MEME_AGENT_SERVICE_URL: http://content-llm-service.content-agents.svc.cluster.local
   NEWS_FEEDS: "China News International|https://www.chinanews.com.cn/rss/world.xml"
   FINANCE_NEWS_FEEDS: "财联社电报|https://www.cls.cn/api/cache?rn=20&name=telegraph"
+  # Public Boss job-search pages. Add more `name|url` entries with `||` when
+  # a different city or technology focus is wanted. Do not put cookies here.
+  BOSS_JOB_SEARCHES: "开发工程师|https://www.zhipin.com/web/geek/job?query=%E5%BC%80%E5%8F%91%E5%B7%A5%E7%A8%8B%E5%B8%88"
   MEME_FEEDS: "Bilibili Hot Ranking|https://api.bilibili.com/x/web-interface/ranking/v2?rid=0&type=all"
   MEME_MIN_SCORE: "6"
   MEME_MAX_TITLE_LENGTH: "12"

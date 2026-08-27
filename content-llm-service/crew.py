@@ -79,3 +79,24 @@ def create_github_batch_crew(candidates: list[dict]) -> Crew:
         agent=analyst,
     )
     return Crew(agents=[analyst], tasks=[task], process=Process.sequential, memory=False, verbose=False)
+
+
+def create_programmer_jobs_summary_crew(jobs: list[dict]) -> Crew:
+    analyst = Agent(
+        role="中国程序员招聘市场分析师",
+        goal="将岗位样本归纳为准确、可行动的技术招聘趋势，而非逐条复述职位",
+        backstory="你只根据提供的公开岗位字段做归纳，清楚区分样本观察与普遍事实，不臆测企业或薪资。",
+        llm=build_llm(), allow_delegation=False, verbose=False,
+    )
+    task = Task(
+        description=(
+            "根据下面的 Boss 直聘程序员岗位样本，生成一份中文招聘日报。只返回一个 JSON 对象，不要 Markdown。"
+            "字段必须包含：overview（2-4句，说明样本范围与整体需求）；directions（数组，最多6项，每项含 direction、demand、skills，"
+            "skills 为技能数组）；top_skills（最多20项技能数组）；experience_signal；education_signal；salary_signal；advice。"
+            "只总结样本中能够支持的观察；信息缺失时明确写‘样本字段不足’，不要编造数量、公司规模或薪资均值。\n"
+            + __import__("json").dumps(jobs, ensure_ascii=False)
+        ),
+        expected_output="A single valid JSON object for a Chinese programmer jobs daily report",
+        agent=analyst,
+    )
+    return Crew(agents=[analyst], tasks=[task], process=Process.sequential, memory=False, verbose=False)

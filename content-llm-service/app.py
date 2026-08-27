@@ -6,7 +6,12 @@ from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from tools.llm_config import get_llm_config_error
-from .crew import create_github_batch_crew, create_meme_batch_crew, create_meme_crew
+from .crew import (
+    create_github_batch_crew,
+    create_meme_batch_crew,
+    create_meme_crew,
+    create_programmer_jobs_summary_crew,
+)
 
 app = FastAPI(title="Panghu Content LLM Service", version="0.1.0")
 
@@ -33,6 +38,20 @@ class GithubProjectRequest(BaseModel):
 
 class GithubBatchRequest(BaseModel):
     candidates: list[GithubProjectRequest] = Field(..., min_length=1, max_length=50)
+
+
+class ProgrammingJobRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=200)
+    company: str = Field(default="", max_length=200)
+    city: str = Field(default="", max_length=100)
+    salary: str = Field(default="", max_length=100)
+    experience: str = Field(default="", max_length=100)
+    education: str = Field(default="", max_length=100)
+    skills: list[str] = Field(default_factory=list, max_length=30)
+
+
+class ProgrammerJobsSummaryRequest(BaseModel):
+    jobs: list[ProgrammingJobRequest] = Field(..., min_length=1, max_length=80)
 
 
 def parse_json_result(value: str) -> Any:
@@ -100,3 +119,23 @@ def enrich_github_batch(request: GithubBatchRequest) -> dict[str, Any]:
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"github batch agent failed: {exc}") from exc
+
+
+@app.post("/v1/jobs/programmer-summary")
+def summarize_programmer_jobs(request: ProgrammerJobsSummaryRequest) -> dict[str, Any]:
+    """Summarize a daily job sample with one shared LLM request."""
+    error = get_llm_config_error("content_llm_service")
+    if error:
+        raise HTTPException(status_code=503, detail=error)
+    try:
+        raw = create_programmer_jobs_summary_crew(
+            [item.model_dump() for item in request.jobs]
+        ).kickoff()
+        result = parse_json_result(str(raw))
+        if not isinstance(result, dict) or not isinstance(result.get("overview"), str):
+            raise HTTPException(status_code=502, detail="CrewAI returned an invalid jobs summary")
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"programmer jobs summary failed: {exc}") from exc

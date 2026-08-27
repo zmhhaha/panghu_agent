@@ -15,6 +15,7 @@ declare -A IMAGES=(
     [international_news]="panghu-content-international-news"
     [finance_news]="panghu-content-finance-news"
     [meme_collector]="panghu-content-meme-collector"
+    [programmer_jobs]="panghu-content-programmer-jobs"
 )
 
 for agent in "${!IMAGES[@]}"; do

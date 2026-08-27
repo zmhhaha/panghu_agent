@@ -5,6 +5,7 @@ This directory contains platform-independent content bots:
 - `github_trending_agent`: collect active and popular open-source repositories.
 - `international_news_agent`: collect international-news leads from RSS/Atom feeds.
 - `finance_news_agent`: collect finance and market briefs, including 财联社电报.
+- `programmer_jobs_agent`: summarize daily programming-job demand from Boss 直聘 public search pages.
 - `meme_collector_agent`: collect trending phrases and their public source context.
 
 The bots produce a common `ContentItem`. Hublog is only an optional channel adapter; JSON and RSS output can run without Hublog.
@@ -21,6 +22,7 @@ export CONTENT_DATA_DIR=/tmp/panghu-content-test
 python -m content_agents.github_trending_agent.main --sample
 python -m content_agents.international_news_agent.main --sample
 python -m content_agents.finance_news_agent.main --sample
+python -m content_agents.programmer_jobs_agent.main --sample
 python -m content_agents.meme_collector_agent.main --sample
 ```
 
@@ -54,6 +56,7 @@ does not create a duplicate Hublog post.
 | `GITHUB_TOKEN` | empty | Optional GitHub API token |
 | `NEWS_FEEDS` | China News International | `name|url||name|url` |
 | `FINANCE_NEWS_FEEDS` | 财联社电报 | `name|url||name|url`; 财联社电报 API is parsed as JSON |
+| `BOSS_JOB_SEARCHES` | 开发工程师检索页 | `name|url||name|url`; Boss public job-search pages, no cookies or account credentials |
 | `MEME_FEEDS` | Bilibili Hot Ranking | `name|url||name|url`; Bilibili ranking API is parsed as JSON |
 | `MEME_MIN_SCORE` | `6` | Minimum short-phrase meme score; ordinary news and sensitive events are discarded |
 | `MEME_MAX_TITLE_LENGTH` | `12` | Maximum title length for a reusable meme phrase |
@@ -87,17 +90,17 @@ Run `panghu_chat/hublog/scripts/generate-service-tokens.py` and store its two JS
 The raw envelope has this shape (use real generated values only in Vault):
 
 ```json
-{"github-trending":{"token":"..."},"international-news":{"token":"..."},"finance-news":{"token":"..."},"meme-collector":{"token":"..."}}
+{"github-trending":{"token":"..."},"international-news":{"token":"..."},"finance-news":{"token":"..."},"programmer-jobs":{"token":"..."},"meme-collector":{"token":"..."}}
 ```
 
-When adding the finance bot to a running cluster, generate only its new token
+When adding a bot to a running cluster, generate only its new token
 and merge that one-key JSON object into both existing Vault envelopes. Do not
 regenerate or replace the existing bot entries:
 
 ```bash
 cd ~/armbianbegin/panghu_chat/hublog
 python3 scripts/generate-service-tokens.py \
-  --bot finance-news --expires-at 2027-08-26T00:00:00Z
+  --bot programmer-jobs --expires-at 2027-08-26T00:00:00Z
 ```
 
 The first JSON output belongs in `secret/hublog/auth` and contains only a
@@ -129,7 +132,7 @@ bash deploy.sh                # build, push, and apply all manifests
 bash deploy.sh --skip-build   # apply using existing images
 ```
 
-Override the registry or tag with `REGISTRY=... IMAGE_TAG=...`. The deployment creates the `content-agents` Namespace, a CephFS PVC, the ConfigMap, four CronJobs, and the ExternalSecret. It keeps draft mode enabled by default.
+Override the registry or tag with `REGISTRY=... IMAGE_TAG=...`. The deployment creates the `content-agents` Namespace, a CephFS PVC, the ConfigMap, five CronJobs, and the ExternalSecret. It keeps draft mode enabled by default.
 
 Manual run and logs:
 
@@ -145,6 +148,19 @@ kubectl -n content-agents create job --from=cronjob/finance-news-agent finance-n
 kubectl -n content-agents wait --for=condition=complete job/finance-news-manual --timeout=180s
 kubectl -n content-agents logs job/finance-news-manual
 ```
+
+Programmer-jobs smoke test after the token and shared LLM service are ready:
+
+```bash
+kubectl -n content-agents create job --from=cronjob/programmer-jobs-agent programmer-jobs-manual
+kubectl -n content-agents wait --for=condition=complete job/programmer-jobs-manual --timeout=300s
+kubectl -n content-agents logs job/programmer-jobs-manual
+```
+
+The job requests exactly one batch LLM summary per run, after collecting up to
+80 job records. It publishes one daily report only when Boss returns valid
+public job records and the LLM returns a valid summary. Boss verification or a
+source/LLM failure results in a quiet run instead of an empty post.
 
 ## Decoupling contract
 

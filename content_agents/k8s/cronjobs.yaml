@@ -85,6 +85,48 @@ spec:
 apiVersion: batch/v1
 kind: CronJob
 metadata:
+  name: programmer-jobs-agent
+  namespace: content-agents
+spec:
+  # With timeZone set, this is 09:00 China Standard Time every day.
+  timeZone: Asia/Shanghai
+  schedule: "0 9 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 3600
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: agent
+              image: arm-cluster-master:5000/panghu-content-programmer-jobs:latest
+              imagePullPolicy: Always
+              command: [python, -m, content_agents.programmer_jobs_agent.main]
+              envFrom:
+                - configMapRef:
+                    name: content-agents-config
+                - secretRef:
+                    name: content-agent-hublog
+                    optional: true
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+              resources:
+                # One daily batch request goes to content-llm-service.
+                requests: {cpu: 10m, memory: 32Mi}
+                limits: {cpu: 500m, memory: 512Mi}
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: content-agents-data
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
   name: international-news-agent
   namespace: content-agents
 spec:
