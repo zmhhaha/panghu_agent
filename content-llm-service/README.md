@@ -10,6 +10,8 @@
 
 `POST /v1/jobs/programmer-summary` 接收一天采集到的程序员岗位样本，并以一次 LLM 请求归纳招聘方向、高频技能、经验/学历与薪资信号。该接口不联网抓取 Boss 直聘，也不逐岗位调用模型。
 
+`POST /v1/jobs/programmer-weekly-summary` 接收最多七篇已经发布的程序员招聘日报，并以一次 LLM 请求生成周度趋势报告。它不接收或保存岗位明细。
+
 ## 配置
 
 支持现有 `tools.llm_config` 的 `openai`、`deepseek`、`anthropic`、`custom` Provider。API 密钥只放在 `content-llm-secret`，不要写入 Git。

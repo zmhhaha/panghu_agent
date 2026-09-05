@@ -17,10 +17,12 @@ data:
   MEME_AGENT_SERVICE_URL: http://content-llm-service.content-agents.svc.cluster.local
   NEWS_FEEDS: "China News International|https://www.chinanews.com.cn/rss/world.xml"
   FINANCE_NEWS_FEEDS: "财联社电报|https://www.cls.cn/api/cache?rn=20&name=telegraph"
-  # Public technical-job sources. They are fetched without accounts, cookies,
-  # proxy rotation, or any access-control bypass.
-  PROGRAMMER_JOB_FEEDS: "RemoteJobsCN|https://remotejobscn.com/rss.xml||Remotive|https://remotive.com/api/remote-jobs||Remote OK|https://remoteok.com/api||AI Dev Jobs|https://aidevboard.com/api/v1/jobs?tags=python,ai&posted_within_days=7"
+  # Public technical-job sources. JDWatch detail pages are fetched in report
+  # order with a random 3-10s pause; no account, cookie, proxy rotation, or
+  # access-control bypass is used. A 403/429 stops the current run.
+  PROGRAMMER_JOB_FEEDS: "RemoteJobsCN|https://remotejobscn.com/rss.xml||Remotive|https://remotive.com/api/remote-jobs||Remote OK|https://remoteok.com/api||AI Dev Jobs|https://aidevboard.com/api/v1/jobs?tags=python,ai&posted_within_days=7||JDWatch Daily|https://www.jdwatch.work/blog"
   PROGRAMMER_JOB_LOOKBACK_DAYS: "7"
+  PROGRAMMER_JOB_MAX_PER_SOURCE: "20"
   MEME_FEEDS: "Bilibili Hot Ranking|https://api.bilibili.com/x/web-interface/ranking/v2?rid=0&type=all"
   MEME_MIN_SCORE: "6"
   MEME_MAX_TITLE_LENGTH: "12"

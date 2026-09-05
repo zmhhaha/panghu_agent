@@ -11,6 +11,7 @@ from .crew import (
     create_meme_batch_crew,
     create_meme_crew,
     create_programmer_jobs_summary_crew,
+    create_programmer_jobs_weekly_summary_crew,
 )
 
 app = FastAPI(title="Panghu Content LLM Service", version="0.1.0")
@@ -54,6 +55,16 @@ class ProgrammingJobRequest(BaseModel):
 
 class ProgrammerJobsSummaryRequest(BaseModel):
     jobs: list[ProgrammingJobRequest] = Field(..., min_length=1, max_length=80)
+
+
+class ProgrammerJobsReportRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=300)
+    content: str = Field(..., min_length=1, max_length=12000)
+    published_at: str = Field(default="", max_length=100)
+
+
+class ProgrammerJobsWeeklySummaryRequest(BaseModel):
+    reports: list[ProgrammerJobsReportRequest] = Field(..., min_length=1, max_length=7)
 
 
 def parse_json_result(value: str) -> Any:
@@ -141,3 +152,23 @@ def summarize_programmer_jobs(request: ProgrammerJobsSummaryRequest) -> dict[str
         raise
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"programmer jobs summary failed: {exc}") from exc
+
+
+@app.post("/v1/jobs/programmer-weekly-summary")
+def summarize_programmer_jobs_weekly(request: ProgrammerJobsWeeklySummaryRequest) -> dict[str, Any]:
+    """Summarize already-published daily reports with one shared LLM request."""
+    error = get_llm_config_error("content_llm_service")
+    if error:
+        raise HTTPException(status_code=503, detail=error)
+    try:
+        raw = create_programmer_jobs_weekly_summary_crew(
+            [item.model_dump() for item in request.reports]
+        ).kickoff()
+        result = parse_json_result(str(raw))
+        if not isinstance(result, dict) or not isinstance(result.get("overview"), str):
+            raise HTTPException(status_code=502, detail="CrewAI returned an invalid weekly jobs summary")
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"programmer jobs weekly summary failed: {exc}") from exc

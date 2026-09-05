@@ -1,1 +1,1 @@
-"""Daily programming-job market summary agent."""
+"""Daily and weekly programming-job market summary agent."""

@@ -100,3 +100,24 @@ def create_programmer_jobs_summary_crew(jobs: list[dict]) -> Crew:
         agent=analyst,
     )
     return Crew(agents=[analyst], tasks=[task], process=Process.sequential, memory=False, verbose=False)
+
+
+def create_programmer_jobs_weekly_summary_crew(reports: list[dict]) -> Crew:
+    analyst = Agent(
+        role="中国程序员招聘趋势分析师",
+        goal="根据已发布的招聘日报归纳一周趋势，避免把日报中的样本描述夸大为完整市场事实",
+        backstory="你只使用输入日报中的观察和链接，清楚区分统计样本、趋势信号与无法确认的信息，不补造岗位数量或薪资结论。",
+        llm=build_llm(), allow_delegation=False, verbose=False,
+    )
+    task = Task(
+        description=(
+            "根据下面已经发布的程序员招聘日报，生成一份中文招聘周报。只返回一个 JSON 对象，不要 Markdown。"
+            "字段必须包含：overview（2-4句，说明覆盖日期和样本范围）；directions（数组，最多6项，每项含 direction、demand、skills）；"
+            "top_skills（最多20项技能数组）；company_signals（数组，最多6项，每项含 direction、demand）；advice。"
+            "只总结日报中能够支持的观察；日报没有提供的数量、薪资或公司变化必须写‘日报未提供’，不要推断总体市场。\n"
+            + __import__("json").dumps(reports, ensure_ascii=False)
+        ),
+        expected_output="A single valid JSON object for a Chinese weekly programmer jobs report",
+        agent=analyst,
+    )
+    return Crew(agents=[analyst], tasks=[task], process=Process.sequential, memory=False, verbose=False)

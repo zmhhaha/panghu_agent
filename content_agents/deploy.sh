@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and deploy the three content-agent CronJobs.
+# Build and deploy the content-agent CronJobs.
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

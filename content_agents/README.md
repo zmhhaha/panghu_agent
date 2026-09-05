@@ -5,7 +5,7 @@ This directory contains platform-independent content bots:
 - `github_trending_agent`: collect active and popular open-source repositories.
 - `international_news_agent`: collect international-news leads from RSS/Atom feeds.
 - `finance_news_agent`: collect finance and market briefs, including 财联社电报.
-- `programmer_jobs_agent`: summarize daily programming-job demand from public technical-job RSS and APIs.
+- `programmer_jobs_agent`: summarize daily and weekly programming-job demand from public technical-job RSS, APIs, and the JDWatch daily report.
 - `meme_collector_agent`: collect trending phrases and their public source context.
 
 The bots produce a common `ContentItem`. Hublog is only an optional channel adapter; JSON and RSS output can run without Hublog.
@@ -56,8 +56,9 @@ does not create a duplicate Hublog post.
 | `GITHUB_TOKEN` | empty | Optional GitHub API token |
 | `NEWS_FEEDS` | China News International | `name|url||name|url` |
 | `FINANCE_NEWS_FEEDS` | 财联社电报 | `name|url||name|url`; 财联社电报 API is parsed as JSON |
-| `PROGRAMMER_JOB_FEEDS` | RemoteJobsCN/Remotive/Remote OK/AI Dev Jobs | `name|url||name|url`; public RSS/API sources only |
+| `PROGRAMMER_JOB_FEEDS` | RemoteJobsCN/Remotive/Remote OK/AI Dev Jobs/JDWatch Daily | `name|url||name|url`; public RSS/API/report sources only; JDWatch detail pages are fetched politely |
 | `PROGRAMMER_JOB_LOOKBACK_DAYS` | `7` | Keep recent job records within this window before the daily LLM summary |
+| `PROGRAMMER_JOB_MAX_PER_SOURCE` | `20` | Limit each public job source in the daily batch |
 | `MEME_FEEDS` | Bilibili Hot Ranking | `name|url||name|url`; Bilibili ranking API is parsed as JSON |
 | `MEME_MIN_SCORE` | `6` | Minimum short-phrase meme score; ordinary news and sensitive events are discarded |
 | `MEME_MAX_TITLE_LENGTH` | `12` | Maximum title length for a reusable meme phrase |
@@ -133,7 +134,7 @@ bash deploy.sh                # build, push, and apply all manifests
 bash deploy.sh --skip-build   # apply using existing images
 ```
 
-Override the registry or tag with `REGISTRY=... IMAGE_TAG=...`. The deployment creates the `content-agents` Namespace, a CephFS PVC, the ConfigMap, five CronJobs, and the ExternalSecret. It keeps draft mode enabled by default.
+Override the registry or tag with `REGISTRY=... IMAGE_TAG=...`. The deployment creates the `content-agents` Namespace, a CephFS PVC, the ConfigMap, six CronJobs (including the programmer-jobs daily and weekly tasks), and the ExternalSecret. It keeps draft mode enabled by default.
 
 Manual run and logs:
 
@@ -150,7 +151,7 @@ kubectl -n content-agents wait --for=condition=complete job/finance-news-manual 
 kubectl -n content-agents logs job/finance-news-manual
 ```
 
-Programmer-jobs smoke test after the token and shared LLM service are ready:
+Programmer-jobs daily smoke test after the token and shared LLM service are ready:
 
 ```bash
 kubectl -n content-agents create job --from=cronjob/programmer-jobs-agent programmer-jobs-manual
@@ -158,11 +159,20 @@ kubectl -n content-agents wait --for=condition=complete job/programmer-jobs-manu
 kubectl -n content-agents logs job/programmer-jobs-manual
 ```
 
-The job requests exactly one batch LLM summary per run, after collecting up to
-80 job records from RemoteJobsCN, Remotive, Remote OK, and AI Dev Jobs. It
-publishes one daily report only when at least one public source returns valid
-technical jobs and the LLM returns a valid summary. A source/LLM failure
-results in a quiet run instead of an empty post.
+The daily job requests exactly one batch LLM summary per run, after collecting
+up to 80 job records from the configured public sources. It publishes one daily
+report only when at least one source returns valid technical jobs and the LLM
+returns a valid summary. A source/LLM failure results in a quiet run instead of
+an empty post. The weekly smoke test is:
+
+```bash
+kubectl -n content-agents create job --from=cronjob/programmer-jobs-weekly-agent programmer-jobs-weekly-manual
+kubectl -n content-agents wait --for=condition=complete job/programmer-jobs-weekly-manual --timeout=300s
+kubectl -n content-agents logs job/programmer-jobs-weekly-manual
+```
+
+The weekly job reads the bot's latest seven Hublog daily reports and makes one
+batch request to the shared LLM service. It does not persist raw job records.
 
 ## Decoupling contract
 

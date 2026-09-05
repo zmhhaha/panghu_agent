@@ -66,16 +66,22 @@ Default to medium risk and human review. Schedule: 18:30 Asia/Shanghai.
 ### Programmer jobs
 
 Use the public sources configured in `PROGRAMMER_JOB_FEEDS`: RemoteJobsCN RSS,
-Remotive JSON, Remote OK JSON, and AI Dev Jobs JSON. Do not depend on accounts,
-cookies, proxy rotation, or access-control bypasses. Normalize only available
-title, company, city, compensation, experience, education, skill labels, and a
-short public description. A daily run collects at most 80 recent technical-job
-records and makes one batch call to `content-llm-service` to produce a single
-market report: demand directions, common technical skills, and qualified
-experience/education/salary signals. If no source returns valid records or the
-LLM call fails, it does not publish. The ledger identifies the report by the
-Asia/Shanghai date, so a same-day retry does not create another post. Schedule:
-09:00 Asia/Shanghai.
+Remotive JSON, Remote OK JSON, AI Dev Jobs JSON, and the public JDWatch daily
+report. Do not depend on accounts, cookies, proxy rotation, or access-control
+bypasses. JDWatch visits the public index, the latest report page, and up to
+`PROGRAMMER_JOB_MAX_PER_SOURCE` public job-detail pages in report order. Detail
+requests are separated by a random 3-10 second pause; a 403 or 429 stops the
+remaining detail requests for that run. Normalize only available title,
+company, city, compensation, experience, education, skill labels, and a short
+public description from each page's JSON-LD, with the report entry as a
+fallback. Do not access login pages, CAPTCHA challenges, or paid content. A
+daily run collects at most 80 recent technical-job records and makes one batch
+call to `content-llm-service` to produce one Hublog report. Raw job records are
+not persisted. A Sunday weekly run reads the latest seven daily Hublog reports
+and makes one batch call to produce a weekly trend report. If no source/report
+or LLM result is valid, the corresponding task does not publish.
+Daily schedule: 09:00 Asia/Shanghai. Weekly schedule: Sunday 10:00
+Asia/Shanghai.
 
 ## Review and publication
 
