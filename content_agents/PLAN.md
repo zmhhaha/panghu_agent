@@ -38,7 +38,7 @@ Every run gets a `run_id` and records candidate, generated, duplicate, publicati
 
 ### GitHub trending
 
-Use GitHub Search API with a configurable lookback window and optional `GITHUB_TOKEN`. Report repository purpose, activity, stars/forks, language, license, and the original link. Missing license metadata raises the item to medium risk. Schedule: 08:00 Asia/Shanghai.
+Use GitHub Search API with a configurable lookback window and optional `GITHUB_TOKEN`. Report repository purpose, activity, stars/forks, language, license, and the original link. Missing license metadata raises the item to medium risk. The batch LLM enrichment runs after the evening collection window. Schedule: 19:30 Asia/Shanghai.
 
 ### International news
 
@@ -61,7 +61,8 @@ separates event context from the joke. The collector rejects ordinary news and
 sensitive events, and keeps phrases with evidence of a pun, nickname, reversal,
 idiom remix, or other public joking context. Without an LLM it falls back to
 strict local short-phrase rules. It does not copy large user-generated excerpts.
-Default to medium risk and human review. Schedule: 18:30 Asia/Shanghai.
+Default to medium risk and human review. The LLM judging runs after the evening
+collection window. Schedule: 21:00 Asia/Shanghai.
 
 ### Programmer jobs
 
@@ -80,8 +81,8 @@ call to `content-llm-service` to produce one Hublog report. Raw job records are
 not persisted. A Sunday weekly run reads the latest seven daily Hublog reports
 and makes one batch call to produce a weekly trend report. If no source/report
 or LLM result is valid, the corresponding task does not publish.
-Daily schedule: 09:00 Asia/Shanghai. Weekly schedule: Sunday 10:00
-Asia/Shanghai.
+Daily schedule: 20:00 Asia/Shanghai. Weekly schedule: Sunday 20:30
+Asia/Shanghai. Both tasks call the shared LLM service after collection.
 
 ## Review and publication
 
@@ -105,7 +106,7 @@ Bots use separate Hublog Service Tokens, never personal SSO cookies. Raw tokens 
 ## Kubernetes deployment
 
 - Namespace: `content-agents`
-- Five independent CronJobs and one CephFS PVC
+- Six independent CronJobs and one CephFS PVC
 - One image and token field per bot
 - ConfigMap for non-secret settings; Vault/ExternalSecret for tokens
 - `build.sh` builds/pushes images; `deploy.sh` applies Namespace, PVC, ConfigMap, CronJobs, and ExternalSecret

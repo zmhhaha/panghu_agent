@@ -84,6 +84,7 @@ kubectl -n content-agents wait --for=condition=complete job/programmer-jobs-manu
 kubectl -n content-agents logs job/programmer-jobs-manual
 ```
 
-The production daily CronJob runs at 09:00 `Asia/Shanghai`. The weekly CronJob
-runs on Sunday at 10:00 `Asia/Shanghai`. Completed jobs are removed after one
-hour.
+The production daily CronJob runs at 20:00 `Asia/Shanghai`, after the public
+source collection window. The weekly CronJob runs on Sunday at 20:30
+`Asia/Shanghai`. Both schedules invoke the shared LLM service after
+collection. Completed jobs are removed after one hour.

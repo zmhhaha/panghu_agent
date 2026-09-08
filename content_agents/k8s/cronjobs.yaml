@@ -6,7 +6,8 @@ metadata:
   namespace: content-agents
 spec:
   timeZone: Asia/Shanghai
-  schedule: "0 0 * * *" # 08:00 Asia/Shanghai when the cluster clock is UTC.
+  # LLM enrichment runs after the evening traffic window.
+  schedule: "30 19 * * *" # 19:30 Asia/Shanghai.
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
@@ -90,7 +91,7 @@ metadata:
 spec:
   # Daily collection reads one public report and publishes one Hublog report.
   timeZone: Asia/Shanghai
-  schedule: "0 9 * * *"
+  schedule: "0 20 * * *" # 20:00 Asia/Shanghai.
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
@@ -131,7 +132,7 @@ metadata:
   namespace: content-agents
 spec:
   timeZone: Asia/Shanghai
-  schedule: "0 10 * * 0"
+  schedule: "30 20 * * 0" # Sunday 20:30 Asia/Shanghai.
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
@@ -213,7 +214,8 @@ metadata:
   namespace: content-agents
 spec:
   timeZone: Asia/Shanghai
-  schedule: "30 10 * * *" # 18:30 Asia/Shanghai when the cluster clock is UTC.
+  # LLM judging runs after the evening traffic window.
+  schedule: "0 21 * * *" # 21:00 Asia/Shanghai.
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
