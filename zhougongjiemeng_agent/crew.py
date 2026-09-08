@@ -19,6 +19,13 @@ except FileNotFoundError:
         "给出温和、审慎的象征性解读，不把梦说成确定预言。"
     )
 
+_KNOWLEDGE_PATH = os.path.join(os.path.dirname(__file__), "knowledge.md")
+try:
+    with open(_KNOWLEDGE_PATH, "r", encoding="utf-8") as knowledge_file:
+        KNOWLEDGE_CONTENT = knowledge_file.read()
+except FileNotFoundError:
+    KNOWLEDGE_CONTENT = ""
+
 
 def create_model() -> LLM:
     provider = require_llm_config("zhougongjiemeng_agent")
@@ -65,7 +72,7 @@ def create_zhougongjiemeng_agent() -> Agent:
         goal=(
             "读懂 {text} 中的梦境细节，给出有传统文化味道、贴近现实且不故弄玄虚的解读"
         ),
-        backstory=SKILL_CONTENT,
+        backstory=SKILL_CONTENT + "\n\n" + KNOWLEDGE_CONTENT,
         llm=create_model(),
         verbose=True,
         allow_delegation=False,

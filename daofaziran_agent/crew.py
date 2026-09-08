@@ -20,6 +20,13 @@ try:
 except FileNotFoundError:
     SKILL_CONTENT = "你是一个懂老子的朋友，用平常话回几句感悟。"
 
+_KNOWLEDGE_PATH = os.path.join(os.path.dirname(__file__), "knowledge.md")
+try:
+    with open(_KNOWLEDGE_PATH, "r", encoding="utf-8") as f:
+        KNOWLEDGE_CONTENT = f.read()
+except FileNotFoundError:
+    KNOWLEDGE_CONTENT = ""
+
 
 # ============================================================
 #  LLM 配置
@@ -62,7 +69,7 @@ def create_daofaziran_agent() -> Agent:
     return Agent(
         role="一个懂老子的朋友",
         goal="用老子的眼光看待 {text}，用平常话说几句有味道的话",
-        backstory=SKILL_CONTENT,
+        backstory=SKILL_CONTENT + "\n\n" + KNOWLEDGE_CONTENT,
         llm=MODEL,
         verbose=True,
         allow_delegation=False,

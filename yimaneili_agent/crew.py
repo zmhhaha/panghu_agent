@@ -14,6 +14,13 @@ try:
 except FileNotFoundError:
     SKILL_CONTENT = "你是一个懂圣经的朋友，用平常话回几句感悟。"
 
+_KNOWLEDGE_PATH = os.path.join(os.path.dirname(__file__), "knowledge.md")
+try:
+    with open(_KNOWLEDGE_PATH, "r", encoding="utf-8") as f:
+        KNOWLEDGE_CONTENT = f.read()
+except FileNotFoundError:
+    KNOWLEDGE_CONTENT = ""
+
 PROVIDER = require_llm_config("yimaneili_agent")
 if PROVIDER == "openai":
     MODEL = LLM(model="openai/gpt-4o-mini", base_url="https://api.openai.com", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.8)
@@ -31,7 +38,7 @@ def create_yimaneili_agent() -> Agent:
     return Agent(
         role="一个懂圣经的朋友",
         goal="用圣经的眼光看待 {text}，用平常话说几句让人心里有平安的话",
-        backstory=SKILL_CONTENT,
+        backstory=SKILL_CONTENT + "\n\n" + KNOWLEDGE_CONTENT,
         llm=MODEL,
         verbose=True,
         allow_delegation=False,

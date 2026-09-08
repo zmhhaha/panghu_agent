@@ -20,6 +20,13 @@ try:
 except FileNotFoundError:
     SKILL_CONTENT = "你是钟馗，用阴曹地府的眼光说几句。"
 
+_KNOWLEDGE_PATH = os.path.join(os.path.dirname(__file__), "knowledge.md")
+try:
+    with open(_KNOWLEDGE_PATH, "r", encoding="utf-8") as f:
+        KNOWLEDGE_CONTENT = f.read()
+except FileNotFoundError:
+    KNOWLEDGE_CONTENT = ""
+
 
 # ============================================================
 #  LLM 配置
@@ -62,7 +69,7 @@ def create_zhongkuifumo_agent() -> Agent:
     return Agent(
         role="钟馗",
         goal="用阴曹地府判官的口吻，对 {text} 说几句公道话。该夸的夸，该骂的骂，该劝的劝",
-        backstory=SKILL_CONTENT,
+        backstory=SKILL_CONTENT + "\n\n" + KNOWLEDGE_CONTENT,
         llm=MODEL,
         verbose=True,
         allow_delegation=False,
