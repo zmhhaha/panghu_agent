@@ -18,7 +18,27 @@ spec:
     metadata:
       labels:
         app: research-api
+        # RAG 的 NetworkPolicy 只放行带此标签的 Pod
+        rag-client: "true"
     spec:
+      initContainers:
+      # 启动时把本 Agent 的 knowledge.md 同步到 RAG。
+      # 脚本任何失败都返回 0，不阻塞 Agent 启动（见 scripts/sync_knowledge.py）。
+      - name: rag-sync
+        image: arm-cluster-master:5000/agent-api:latest
+        imagePullPolicy: Always
+        command: ["python", "/app/scripts/sync_knowledge.py"]
+        env:
+        - name: AGENT_NAME
+          value: __AGENT__
+        - name: RAG_URL
+          value: http://rag-service.data.svc.cluster.local:8080
+        - name: RAG_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: rag-token
+              key: RAG_TOKEN
+              optional: true
       containers:
       - name: api
         image: arm-cluster-master:5000/agent-api:latest

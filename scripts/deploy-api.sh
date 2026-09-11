@@ -16,6 +16,8 @@ cd "$script_dir"
 
 NAME="${1:-research_agent}"
 NAMESPACE="${NAME//_/-}"   # namespace
+AGENT="${NAME%_agent}"     # 调用者名（与 RAG 的 RAG_TOKEN_<CALLER> 对应）
+VAULT_TOKEN_KEY="RAG_TOKEN_$(printf '%s' "$AGENT" | tr 'a-z-' 'A-Z_')"
 K="--kubeconfig=/etc/kubernetes/super-admin.conf"
 SRC="../app/api/${NAME}.py"
 
@@ -52,8 +54,15 @@ kubectl create configmap api-agent -n ${NAMESPACE} \
     --from-file=agent.py="${SRC}" \
     --dry-run=client -o yaml $K | kubectl apply $K -f -
 
+# RAG 调用令牌：只取本 Agent 那一个 Vault 键（ExternalSecret 每命名空间一份）
+sed -e "s/__NAMESPACE__/${NAMESPACE}/g" \
+    -e "s/__VAULT_TOKEN_KEY__/${VAULT_TOKEN_KEY}/g" \
+    ../k8s/rag-token-externalsecret.yaml | kubectl apply $K -f -
+
 # apply K8s
-sed "s/__NAMESPACE__/${NAMESPACE}/g" ../k8s/api-deployment.yaml | kubectl apply $K -f -
+sed -e "s/__NAMESPACE__/${NAMESPACE}/g" \
+    -e "s/__AGENT__/${AGENT}/g" \
+    ../k8s/api-deployment.yaml | kubectl apply $K -f -
 
 # restart
 kubectl rollout restart deploy/api -n ${NAMESPACE} $K
