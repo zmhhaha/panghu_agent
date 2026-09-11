@@ -88,7 +88,7 @@ def _run_research(task_id: str, topic: str, email: str = ""):
 #  API 端点
 # ============================================================
 
-@app.get("/health")
+@app.get("/research-health")
 def health():
     error = get_llm_config_error("research_agent")
     return {"status": "degraded" if error else "ok", "llm_configured": error is None}

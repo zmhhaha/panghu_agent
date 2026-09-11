@@ -9,6 +9,8 @@ COPY . /app
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
+# 该镜像服务多个 agent，健康检查路径各不相同（/<name>-health），
+# 故用与路径无关的 TCP 探活；k8s 探针见 k8s/api-deployment.yaml。
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -sf http://localhost:8000/health || exit 1
-CMD ["python", "-m", "uvicorn", "app.api.agent:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    CMD python -c "import socket; socket.create_connection(('127.0.0.1', 8000), 3)" || exit 1
+CMD ["python", "-m", "uvicorn", "app.api.agent:app", "--host", "0.0.0.0", "--port", "8000"]

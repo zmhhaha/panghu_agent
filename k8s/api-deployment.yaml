@@ -59,18 +59,25 @@ spec:
           limits:
             cpu: "2"
             memory: 2Gi
-        # livenessProbe:
-        #   httpGet:
-        #     path: /health
-        #     port: 8000
-        #   initialDelaySeconds: 30
-        #   periodSeconds: 30
-        # readinessProbe:
-        #   httpGet:
-        #     path: /health
-        #     port: 8000
-        #   initialDelaySeconds: 10
-        #   periodSeconds: 10
+        # 探针统一用 tcpSocket 探测 8000 端口：只要 uvicorn 在监听即通过。
+        # （各 agent 健康检查路径不统一，research 是 /health、其余是 <name>-health，
+        #  故不能用 httpGet /health，否则会把其他 agent 探针探挂。）
+        # startupProbe：应用（含启动时连 sqlite 的重试）全部就绪前，不启动 liveness/readiness
+        startupProbe:
+          tcpSocket:
+            port: 8000
+          periodSeconds: 5
+          failureThreshold: 36      # 最长等待 ~180s 启动
+        readinessProbe:
+          tcpSocket:
+            port: 8000
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          tcpSocket:
+            port: 8000
+          periodSeconds: 30
+          failureThreshold: 3
       volumes:
       - name: source
         configMap:

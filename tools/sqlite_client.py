@@ -7,12 +7,20 @@ SQLite 服务 HTTP 客户端（通用）
 """
 from __future__ import annotations
 import json
+import os
+import time
 import uuid
 import urllib.request
 import urllib.error
 
 SQLITE_URL = "http://sqlite.data.svc.cluster.local:8000"
 _SERVICE = "default"   # init_db() 之前的值
+
+# sqlite 服务短暂不可用（如节点重启时 sqlite 尚未就绪）时的重试参数。
+# 只在「连接被拒/连不上」时重试；HTTP 错误与超时不重试（避免重复写入）。
+_RETRY_ATTEMPTS = int(os.environ.get("SQLITE_RETRY_ATTEMPTS", "10"))
+_RETRY_DELAY = float(os.environ.get("SQLITE_RETRY_DELAY", "3"))
+_RETRYABLE = (ConnectionRefusedError, ConnectionResetError, ConnectionAbortedError, ConnectionError)
 
 
 def set_service(name: str):
@@ -27,18 +35,37 @@ def get_service() -> str:
 
 # ── low-level ──
 
+def _urlopen(req, timeout: int = 10):
+    """带重试的 urlopen：sqlite 短暂不可用（连接被拒/连不上）时自动重试。
+    服务已经响应（HTTP 4xx/5xx）或超时则直接抛出，不重试，避免重复写入。"""
+    last_err = None
+    for attempt in range(_RETRY_ATTEMPTS):
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError:
+            raise  # 服务已正常响应，非连接问题
+        except urllib.error.URLError as e:
+            if isinstance(getattr(e, "reason", None), _RETRYABLE):
+                last_err = e
+                if attempt < _RETRY_ATTEMPTS - 1:
+                    time.sleep(_RETRY_DELAY)
+                    continue
+            raise
+    raise last_err
+
+
 def _execute(sql: str):
     data = json.dumps({"sql": sql}).encode("utf-8")
     req = urllib.request.Request(f"{SQLITE_URL}/execute", data=data,
                                  headers={"Content-Type": "application/json"})
-    urllib.request.urlopen(req, timeout=10)
+    _urlopen(req)
 
 
 def _query(sql: str) -> list[dict]:
     data = json.dumps({"sql": sql}).encode("utf-8")
     req = urllib.request.Request(f"{SQLITE_URL}/query", data=data,
                                  headers={"Content-Type": "application/json"})
-    resp = urllib.request.urlopen(req, timeout=10)
+    resp = _urlopen(req)
     return json.loads(resp.read().decode("utf-8")).get("rows", [])
 
 

@@ -118,7 +118,7 @@ def _run_review(task_id: str, game_url: str, comment_targets: str, auth_cookie_h
 #  API 端点
 # ============================================================
 
-@app.get("/health")
+@app.get("/game-review-health")
 def health():
     error = get_llm_config_error("game_review_agent")
     return {"status": "degraded" if error else "ok", "llm_configured": error is None}

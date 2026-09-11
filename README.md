@@ -72,7 +72,7 @@ API_BASE=http://localhost:8000 python app/ui/research_agent.py
 | `GET` | `/reports?q=关键词` | 检索已完成的报告 |
 | `GET` | `/reports/{id}` | 获取单篇报告全文 |
 | `GET` | `/download/{id}` | 下载 Markdown 报告 |
-| `GET` | `/health` | 健康检查 |
+| `GET` | `/research-health` | 健康检查 |
 
 所有数据持久化到共享 SQLite 服务，容器本地不留数据。
 

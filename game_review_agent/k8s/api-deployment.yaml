@@ -63,13 +63,13 @@ spec:
             memory: 3Gi
         livenessProbe:
           httpGet:
-            path: /health
+            path: /game-review-health
             port: 8000
           initialDelaySeconds: 30
           periodSeconds: 30
         readinessProbe:
           httpGet:
-            path: /health
+            path: /game-review-health
             port: 8000
           initialDelaySeconds: 10
           periodSeconds: 10
