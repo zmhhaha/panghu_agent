@@ -9,7 +9,7 @@ from tools.llm_config import require_llm_config
 def build_llm() -> LLM:
     provider = require_llm_config("content_llm_service")
     if provider == "deepseek":
-        return LLM(model="deepseek/" + os.getenv("DEEPSEEK_MODEL", "deepseek-chat"), base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"), api_key=os.getenv("DEEPSEEK_API_KEY"), temperature=0.2)
+        return LLM(model="deepseek/" + os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"), base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"), api_key=os.getenv("DEEPSEEK_API_KEY"), temperature=0.2)
     if provider == "custom":
         return LLM(model=os.getenv("CUSTOM_MODEL", "gpt-4o-mini"), base_url=os.getenv("CUSTOM_BASE_URL", "http://localhost:11434/v1"), api_key=os.getenv("CUSTOM_API_KEY", ""), temperature=0.2)
     if provider == "anthropic":
