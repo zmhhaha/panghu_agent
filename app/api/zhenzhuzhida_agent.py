@@ -21,8 +21,9 @@ def _run(task_id: str, text: str):
     try:
         db.update_task(task_id, status="running")
         from zhenzhuzhida_agent.crew import create_zhenzhuzhida_crew
+        from tools.rag_client import fetch_reference
         crew = create_zhenzhuzhida_crew()
-        result = str(crew.kickoff(inputs={"text": text}))
+        result = str(crew.kickoff(inputs={"text": text, "reference": fetch_reference("zhenzhuzhida", text)}))
         db.update_task(task_id, status="done", report=result)
         try: summary = _extract_summary(result); keywords = _extract_keywords(text); db.save_report(task_id, text, summary, keywords, result)
         except: pass

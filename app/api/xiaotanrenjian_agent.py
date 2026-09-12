@@ -38,8 +38,9 @@ def _run(task_id: str, text: str):
     try:
         db.update_task(task_id, status="running")
         from xiaotanrenjian_agent.crew import create_xiaotanrenjian_crew
+        from tools.rag_client import fetch_reference
         crew = create_xiaotanrenjian_crew()
-        result = str(crew.kickoff(inputs={"text": text}))
+        result = str(crew.kickoff(inputs={"text": text, "reference": fetch_reference("xiaotanrenjian", text)}))
         db.update_task(task_id, status="done", report=result)
         _save_report(task_id, text, result)
     except Exception as exc:
