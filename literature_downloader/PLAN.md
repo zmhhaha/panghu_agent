@@ -42,7 +42,7 @@ literature_downloader/
 ├── PLAN.md                    # 本计划
 ├── __init__.py
 ├── config.py                  # 路径、超时、重试次数、API 配置
-├── k8s/configmap.yaml         # PROVIDER、DeepSeek 非敏感配置和 LLM 开关
+├── k8s/configmap.yaml         # LITERATURE_* 检索参数和 LLM 开关
 ├── models.py                  # 文献、任务、下载尝试、校验结果模型
 ├── db.py                      # SQLite 初始化、查询和状态更新
 ├── search_planner.py          # LLM 文献检索专家：查询计划和术语扩展
@@ -107,7 +107,7 @@ LLM 必须输出结构化 JSON，至少包含：
 
 ### 约束和降级
 
-1. 使用统一 LLM 配置（`PROVIDER`、`DEEPSEEK_BASE_URL`、`DEEPSEEK_MODEL` 及对应 API Key），不新增独立的 OAuth 或 Semantic Scholar 密钥要求。
+1. 模型调用统一走集群内 llm-service（`LLM_BASE_URL`、`LLM_MODEL`、`LLM_SERVICE_TOKEN`），本服务不持有 provider 凭据，也不新增独立的 OAuth 或 Semantic Scholar 密钥要求。
 2. LLM 返回必须经过 JSON Schema 校验；格式错误、超时、限流或模型不可用时，自动回退到通用查询规范化和词法相关性，不启用任何内置领域规则。
 3. 同一主题的检索计划可缓存，缓存键至少包含规范化主题、年份范围、目标数量和模型版本。
 4. 检索计划必须写入检索报告，记录模型是否启用、模型标识、生成时间、原始主题和最终采用的查询式。

@@ -140,13 +140,9 @@ spec:
                   key: LLM_SERVICE_TOKEN
                   optional: true
             # 模型凭据已全部收归 llm-service：不再注入 provider API Key（见上方 LLM_*）。
-            # OPENALEX_API_KEY 是学术检索用的，不是模型凭据，保留。
-            - name: OPENALEX_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: agent-secret
-                  key: OPENALEX_API_KEY
-                  optional: true
+            # 本服务原先还从这里取 OPENALEX_API_KEY，但该键从未真正写入过 Vault，
+            # 且 OpenAlex 匿名额度够用（健康检查里 openalex_api_key_configured 一直是 false），
+            # 随 agent-secret 一并移除。将来要用带 key 的额度，再加回环境变量和 Vault 路径即可。
           volumeMounts:
             - name: data
               mountPath: /data/literature
