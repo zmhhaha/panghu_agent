@@ -68,6 +68,15 @@ spec:
               name: agent-secret
               key: DEEPSEEK_API_KEY
               optional: true
+        # RAG 检索：运行时要取参考素材（tools/rag_client.py 读这两个变量）
+        - name: RAG_URL
+          value: http://rag-service.data.svc.cluster.local:8080
+        - name: RAG_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: rag-token
+              key: RAG_TOKEN
+              optional: true
         volumeMounts:
         - name: source
           mountPath: /app/app/api/agent.py
