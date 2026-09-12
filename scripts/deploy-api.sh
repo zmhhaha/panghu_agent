@@ -59,6 +59,10 @@ sed -e "s/__NAMESPACE__/${NAMESPACE}/g" \
     -e "s/__VAULT_TOKEN_KEY__/${VAULT_TOKEN_KEY}/g" \
     ../k8s/rag-token-externalsecret.yaml | kubectl apply $K -f -
 
+# llm-service 调用令牌（每个命名空间一份，与 RAG 同源）
+sed "s/__NAMESPACE__/${NAMESPACE}/g" \
+    ../k8s/llm-token-externalsecret.yaml | kubectl apply $K -f -
+
 # apply K8s
 sed -e "s/__NAMESPACE__/${NAMESPACE}/g" \
     -e "s/__AGENT__/${AGENT}/g" \

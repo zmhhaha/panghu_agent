@@ -6,7 +6,6 @@
 """
 import os
 from crewai import Agent, Task, Crew, Process, LLM
-from tools.llm_config import require_llm_config
 
 
 # ============================================================
@@ -25,36 +24,28 @@ except FileNotFoundError:
 
 
 # ============================================================
-#  LLM 配置
+#  LLM 配置：统一走集群内 llm-service（本服务不再持有 provider 凭据）
 # ============================================================
 
-PROVIDER = require_llm_config("daofaziran_agent")
+_LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").rstrip("/")
+_LLM_TOKEN = os.getenv("LLM_SERVICE_TOKEN", "").strip()
+LLM_ALIAS = os.getenv("LLM_MODEL", "chat-default")
 
-if PROVIDER == "openai":
-    MODEL = LLM(
-        model="openai/gpt-4o-mini",
-        base_url="https://api.openai.com",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        temperature=0.8,
+if not _LLM_BASE_URL or not _LLM_TOKEN:
+    raise RuntimeError(
+        "daofaziran_agent 未配置 llm-service：需要 LLM_BASE_URL 与 LLM_SERVICE_TOKEN"
+        "（见 k8s/api-deployment.yaml 与 vault/inventory/llm-token-externalsecret.yaml）"
     )
-elif PROVIDER == "deepseek":
-    MODEL = LLM(
-        model="deepseek/" + os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
-        base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-        api_key=os.getenv("DEEPSEEK_API_KEY"),
-        temperature=0.8,
-    )
-elif PROVIDER == "custom":
-    MODEL = LLM(
-        model=os.getenv("CUSTOM_MODEL", "gpt-4o-mini"),
-        base_url=os.getenv("CUSTOM_BASE_URL") or os.getenv("CUSTOM_API_BASE", "http://localhost:11434/v1"),
-        api_key=os.getenv("CUSTOM_API_KEY", ""),
-        temperature=0.8,
-    )
-elif PROVIDER == "anthropic":
-    MODEL = LLM(model="anthropic/claude-sonnet-4-6-20250514", temperature=0.8)
-else:
-    MODEL = LLM(model="anthropic/claude-sonnet-4-6-20250514", temperature=0.8)
+
+# 必须显式给 provider：CrewAI 只把 prefix 属于 canonical provider 的模型名交给原生实现，
+# `openai/<别名>` 会落到未安装的 litellm 分支并报错（实测踩过）。
+MODEL = LLM(
+    model=LLM_ALIAS,
+    provider="openai",
+    base_url=_LLM_BASE_URL,
+    api_key=_LLM_TOKEN,
+    temperature=0.8,
+)
 
 
 # ============================================================

@@ -20,6 +20,8 @@ spec:
         app: research-api
         # RAG 的 NetworkPolicy 只放行带此标签的 Pod
         rag-client: "true"
+        # llm-service 的 NetworkPolicy 只放行带此标签的 Pod
+        llm-client: "true"
     spec:
       initContainers:
       # 启动时把本 Agent 的 knowledge.md 同步到 RAG。
@@ -76,6 +78,16 @@ spec:
             secretKeyRef:
               name: rag-token
               key: RAG_TOKEN
+              optional: true
+        # 模型调用：走集群内 llm-service（已迁移的 Agent 会读这两个变量；
+        # 未迁移的仍用 agent-config 里的 provider 配置，互不影响）
+        - name: LLM_BASE_URL
+          value: http://llm-service.llm.svc.cluster.local/v1
+        - name: LLM_SERVICE_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: llm-token
+              key: LLM_SERVICE_TOKEN
               optional: true
         volumeMounts:
         - name: source

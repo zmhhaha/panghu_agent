@@ -65,9 +65,8 @@ Pod 需要带 `llm-client: "true"` 标签，才能通过 llm-service 的 Network
 令牌由 `vault/inventory/content-llm-externalsecret.yaml` 从 `secret/llm-service/auth` 同步到
 `content-llm-secret`（与 llm-service 同源，不各存一份）。
 
-### 迁移收尾
+### 迁移收尾（已完成）
 
-provider 凭据（Vault `secret/content-agents/llm` 里的 `DEEPSEEK_API_KEY`）在迁移验证通过后应当**移除**——
-本服务已不再读取它。做法是删掉 `vault/inventory/content-llm-externalsecret.yaml` 里的第一个
-`dataFrom`（即 `secret/data/content-agents/llm`），再 `kubectl apply` 该文件并重启 Deployment；
-此后 `content-llm-secret` 只会剩下 `LLM_SERVICE_TOKEN`。
+provider 凭据已移除：`vault/inventory/content-llm-externalsecret.yaml` 不再同步
+`secret/content-agents/llm`，本服务**只持有 `LLM_SERVICE_TOKEN`**。
+`content-llm-secret` 里原有的 `DEEPSEEK_API_KEY` 会在下一次 ExternalSecret 同步后被清掉。
