@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -57,12 +58,19 @@ def main() -> int:
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=300) as response:
-            body = json.loads(response.read().decode("utf-8", "replace"))
-        print(f"[rag-sync] {agent}: 已同步 {body.get('chunk_count')} 个分块 -> {body.get('collection')}")
-    except Exception as error:  # noqa: BLE001 —— 任何失败都不阻塞 Agent 启动
-        print(f"[rag-sync] {agent}: 同步失败（不影响启动）: {type(error).__name__}: {error}", file=sys.stderr)
+    # 多台 Agent 同时启动时会撞上 embedding 服务的忙限（RAG 侧已重试，这里再兜一层）
+    for attempt in range(1, 4):
+        try:
+            with urllib.request.urlopen(request, timeout=300) as response:
+                body = json.loads(response.read().decode("utf-8", "replace"))
+            print(f"[rag-sync] {agent}: 已同步 {body.get('chunk_count')} 个分块 -> {body.get('collection')}")
+            return 0
+        except Exception as error:  # noqa: BLE001 —— 任何失败都不阻塞 Agent 启动
+            if attempt < 3:
+                print(f"[rag-sync] {agent}: 第 {attempt} 次同步失败，重试中: {type(error).__name__}", file=sys.stderr)
+                time.sleep(3 * attempt)
+                continue
+            print(f"[rag-sync] {agent}: 同步失败（不影响启动）: {type(error).__name__}: {error}", file=sys.stderr)
     return 0
 
 
