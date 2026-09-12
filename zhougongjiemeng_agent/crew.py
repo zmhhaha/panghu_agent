@@ -6,7 +6,6 @@
 import os
 
 from crewai import Agent, Crew, LLM, Process, Task
-from tools.llm_config import require_llm_config
 
 
 _SKILL_PATH = os.path.join(os.path.dirname(__file__), "skill.md")
@@ -24,42 +23,17 @@ except FileNotFoundError:
 
 
 def create_model() -> LLM:
-    provider = require_llm_config("zhougongjiemeng_agent")
-
-    if provider == "openai":
-        return LLM(
-            model="openai/" + os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com"),
-            api_key=os.getenv("OPENAI_API_KEY"),
-            temperature=0.7,
+    """统一走集群内 llm-service：本服务不再持有 provider 凭据。"""
+    base_url = os.getenv("LLM_BASE_URL", "").rstrip("/")
+    token = os.getenv("LLM_SERVICE_TOKEN", "").strip()
+    alias = os.getenv("LLM_MODEL", "chat-guarded")
+    if not base_url or not token:
+        raise RuntimeError(
+            "zhougongjiemeng_agent 未配置 llm-service：需要 LLM_BASE_URL 与 LLM_SERVICE_TOKEN"
+            "（见 k8s/api-deployment.yaml 与 vault/inventory/llm-token-externalsecret.yaml）"
         )
-    if provider == "deepseek":
-        return LLM(
-            model="deepseek/" + os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
-            base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-            api_key=os.getenv("DEEPSEEK_API_KEY"),
-            temperature=0.7,
-        )
-    if provider == "custom":
-        return LLM(
-            model=os.getenv("CUSTOM_MODEL", "gpt-4o-mini"),
-            base_url=os.getenv("CUSTOM_BASE_URL")
-            or os.getenv("CUSTOM_API_BASE", "http://localhost:11434/v1"),
-            api_key=os.getenv("CUSTOM_API_KEY", ""),
-            temperature=0.7,
-        )
-    if provider == "anthropic":
-        return LLM(
-            model="anthropic/" + os.getenv(
-                "ANTHROPIC_MODEL", "claude-sonnet-4-6-20250514"
-            ),
-            api_key=os.getenv("ANTHROPIC_API_KEY"),
-            temperature=0.7,
-        )
-
-    raise RuntimeError(
-        f"不支持的 PROVIDER={provider}；可选值为 openai、deepseek、custom、anthropic。"
-    )
+    # CrewAI 必须显式给 provider：`openai/<别名>` 会落到未安装的 litellm 分支并报错
+    return LLM(model=alias, provider="openai", base_url=base_url, api_key=token, temperature=0.7)
 
 
 def create_zhougongjiemeng_agent() -> Agent:

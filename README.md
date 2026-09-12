@@ -164,6 +164,16 @@ kubectl rollout restart deploy/ui  -n $NS
 > ⚠️ 该脚本会重建并推送**公共镜像** `agent-api:latest`（全部 Agent 共用，且 `imagePullPolicy: Always`）。
 > 跑之前请确认服务器工作区干净，否则会把未提交的改动一起发给所有 Agent。
 
+### 模型调用：统一走 llm-service
+
+Agent **不再持有任何 provider 凭据**，模型调用经集群内的 `llm-service`：
+
+- 环境变量：`LLM_BASE_URL`、`LLM_MODEL`（默认 `chat-guarded`）、`LLM_SERVICE_TOKEN`（来自 `llm-token` ExternalSecret）
+- Pod 需带 `llm-client: "true"` 标签，才能通过 llm-service 的 NetworkPolicy
+- **档位**：本系列 Agent 由**用户写 prompt**，一律用 `guarded` 档（禁扩权字段、收紧参数上限）。
+  将来做**内部机器对话**时，那条路径改用 `trusted` 档（`chat-default` / `chat-tools`）——
+  同一个服务两套用法靠别名区分，不用改代码。详见 `llm-service/README.md` 的职责边界。
+
 ### 踩过的坑
 
 1. **`{reference}` 占位符必须与 inputs 配套**：`crew.py` 的 task 描述用了 `{reference}`，

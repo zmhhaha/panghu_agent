@@ -4,7 +4,15 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from tools import sqlite_client as db
-from tools.llm_config import get_llm_config_error
+
+
+def llm_service_config_error() -> str | None:
+    """模型调用统一走集群内 llm-service：本服务不再持有 provider 凭据。"""
+    if not os.getenv("LLM_BASE_URL", "").strip():
+        return "bingbichunqiu_agent 配置不完整：LLM_BASE_URL 未注入（应指向集群内 llm-service）。"
+    if not os.getenv("LLM_SERVICE_TOKEN", "").strip():
+        return "bingbichunqiu_agent 配置不完整：LLM_SERVICE_TOKEN 未注入，请检查 ExternalSecret 是否已同步。"
+    return None
 db.init_db("bingbichunqiu_agent"); db.clear_stale_tasks()
 app=FastAPI(title="📜 秉笔春秋 API",version="3.0"); app.add_middleware(CORSMiddleware,allow_origins=["*"],allow_methods=["*"],allow_headers=["*"])
 class Req(BaseModel): text:str=Field(...,min_length=1,max_length=2000)
@@ -17,10 +25,10 @@ def _run(i,t):
  except Exception as e: db.update_task(i,status="failed",error=str(e))
 @app.get("/bingbichunqiu_agent-health")
 def health():
- e=get_llm_config_error("bingbichunqiu_agent"); return {"status":"degraded" if e else "ok","llm_configured":e is None}
+ e=llm_service_config_error(); return {"status":"degraded" if e else "ok","llm_configured":e is None}
 @app.post("/bingbichunqiu_agent",response_model=TaskRsp)
 def submit(req:Req):
- e=get_llm_config_error("bingbichunqiu_agent")
+ e=llm_service_config_error()
  if e: raise HTTPException(503,detail=e)
  i=db.create_task(req.text); threading.Thread(target=_run,args=(i,req.text),daemon=True).start(); return TaskRsp(id=i,text=req.text,status="pending")
 @app.get("/bingbichunqiu_agent/{task_id}",response_model=TaskRsp)

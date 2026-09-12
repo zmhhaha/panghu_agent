@@ -10,7 +10,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from tools import sqlite_client as db
-from tools.llm_config import get_llm_config_error
+
+
+def llm_service_config_error() -> str | None:
+    """模型调用统一走集群内 llm-service：本服务不再持有 provider 凭据。"""
+    if not os.getenv("LLM_BASE_URL", "").strip():
+        return "zhougongjiemeng_agent 配置不完整：LLM_BASE_URL 未注入（应指向集群内 llm-service）。"
+    if not os.getenv("LLM_SERVICE_TOKEN", "").strip():
+        return "zhougongjiemeng_agent 配置不完整：LLM_SERVICE_TOKEN 未注入，请检查 ExternalSecret 是否已同步。"
+    return None
 
 
 SERVICE_NAME = "zhougongjiemeng_agent"
@@ -83,7 +91,7 @@ def _find_cached(text: str) -> str | None:
 
 @app.get("/zhougongjiemeng_agent-health")
 def health():
-    config_error = get_llm_config_error("zhougongjiemeng_agent")
+    config_error = llm_service_config_error()
     return {
         "status": "degraded" if config_error else "ok",
         "llm_configured": config_error is None,
@@ -96,7 +104,7 @@ def submit(req: Req):
     if not text:
         raise HTTPException(422, "Dream description cannot be blank")
 
-    config_error = get_llm_config_error("zhougongjiemeng_agent")
+    config_error = llm_service_config_error()
     if config_error:
         raise HTTPException(503, config_error)
 
