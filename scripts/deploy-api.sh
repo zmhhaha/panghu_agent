@@ -41,21 +41,10 @@ cd scripts
 # ensure namespace
 kubectl create namespace ${NAMESPACE} --dry-run=client -o yaml $K | kubectl apply $K -f -
 
-# # 注释掉，避免重复部署
-# # ConfigMap
-# kubectl create configmap agent-config -n ${NAMESPACE} \
-#     --from-literal=PROVIDER="custom" \
-#     --from-literal=CUSTOM_API_BASE="${CUSTOM_API_BASE:-http://47.109.107.37/v1}" \
-#     --from-literal=CUSTOM_MODEL="${CUSTOM_MODEL:-deepseek-v4-pro}" \
-#     --dry-run=client -o yaml $K | kubectl apply $K -f -
-
-# # 已由 Vault 管理，无需部署 Secret
-# # Secret（已存在则跳过）
-# kubectl get secret agent-secret -n ${NAMESPACE} $K >/dev/null 2>&1 || \
-#     kubectl create secret generic agent-secret -n ${NAMESPACE} \
-#         --from-literal=OPENAI_API_KEY="${OPENAI_API_KEY:-}" \
-#         --from-literal=CUSTOM_API_KEY="${CUSTOM_API_KEY:-}" \
-#         $K --dry-run=client -o yaml | kubectl apply $K -f -
+# 注：原先这里还会创建 agent-config（PROVIDER / CUSTOM_*）和 agent-secret（provider key）。
+# 迁移到 llm-service 后两者都不再需要——模型凭据只存在于 llm-service 自己：
+#   agent-config 只剩 literature-downloader 用（LITERATURE_*），由它的 deploy.sh 应用；
+#   provider key 由各 namespace 的 Vault ExternalSecret 管理，本脚本不碰。
 
 # ConfigMap (agent.py)
 kubectl create configmap api-agent -n ${NAMESPACE} \

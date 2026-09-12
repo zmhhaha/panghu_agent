@@ -20,9 +20,9 @@ panghu_agent/
 │       └── research_agent.py     # Gradio Web UI
 ├── k8s/                          # Kubernetes 部署配置
 │   ├── namespace.yaml
-│   ├── configmap.yaml            # agent-config: PROVIDER
-│   ├── secret.yaml               # agent-secret: OPENAI_API_KEY
-│   ├── api-deployment.yaml       # API Deployment + Service
+│   ├── api-deployment.yaml       # API Deployment + Service（含 LLM_* 与 RAG 注入）
+│   ├── llm-token-externalsecret.yaml   # llm-service 调用令牌（每命名空间一份）
+│   ├── rag-token-externalsecret.yaml   # RAG 调用令牌（每命名空间一份）
 │   └── ui-deployment.yaml        # UI Deployment + Service
 ├── scripts/
 │   └── build.sh                  # 构建脚本
@@ -94,31 +94,27 @@ API_BASE=http://localhost:8000 python app/ui/research_agent.py
 
 ### 部署到 K8s
 
+用统一脚本（自动建 namespace、ConfigMap，apply `llm-token` / `rag-token` ExternalSecret，
+按 Agent 选好 llm-service 档位后再 apply 模板）：
+
 ```bash
-NS=research-agent
-
-# 创建命名空间 + 配置
-sed "s/__NAMESPACE__/$NS/g" k8s/namespace.yaml  | kubectl apply -f -
-sed "s/__NAMESPACE__/$NS/g" k8s/configmap.yaml   | kubectl apply -f -
-sed "s/__NAMESPACE__/$NS/g" k8s/secret.yaml      | kubectl apply -f -
-
-# 部署服务
-sed "s/__NAMESPACE__/$NS/g" k8s/api-deployment.yaml | kubectl apply -f -
-sed "s/__NAMESPACE__/$NS/g" k8s/ui-deployment.yaml  | kubectl apply -f -
+bash scripts/deploy-api.sh <agent>_agent    # 例如 zhougongjiemeng_agent
 ```
+
+> ⚠️ 该脚本会重建并推送**公共镜像** `agent-api:latest`（全部 Agent 共用，`imagePullPolicy: Always`）。
+> 跑之前请确认服务器工作区干净。
 
 ### 重新部署
 
-Secret 中的 `OPENAI_API_KEY` 需要用真实 key 替换后再 apply：
+模型凭据已收归集群内 `llm-service`，各 Agent 不再需要 provider key：
 
 ```bash
-kubectl create secret generic agent-secret -n $NS \
-  --from-literal=OPENAI_API_KEY="sk-your-real-key" \
-  --dry-run=client -o yaml | kubectl apply -f -
-
 kubectl rollout restart deploy/api -n $NS
 kubectl rollout restart deploy/ui  -n $NS
 ```
+
+`LLM_SERVICE_TOKEN` 来自 `llm-token` ExternalSecret（Vault `secret/llm-service/auth`），
+不需要手工创建 Secret。
 
 ## 架构
 

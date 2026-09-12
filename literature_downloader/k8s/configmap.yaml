@@ -4,12 +4,7 @@ metadata:
   name: agent-config
   namespace: __NAMESPACE__
 data:
-  # Shared Agent LLM configuration. Credentials remain in agent-secret.
-  PROVIDER: "deepseek"
-  DEEPSEEK_BASE_URL: "https://api.deepseek.com"
-  DEEPSEEK_MODEL: "deepseek-v4-flash"
-  OPENAI_BASE_URL: "https://api.openai.com"
-  OPENAI_MODEL: "gpt-4o-mini"
+  # 模型调用走集群内 llm-service（凭据在其自身 Secret 里），这里只放本服务的检索参数。
   LITERATURE_LLM_ENABLED: "true"
   LITERATURE_LLM_TIMEOUT: "30"
   LITERATURE_LLM_MAX_CANDIDATES: "40"

@@ -139,29 +139,13 @@ spec:
                   name: llm-token
                   key: LLM_SERVICE_TOKEN
                   optional: true
-            - name: DEEPSEEK_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: agent-secret
-                  key: DEEPSEEK_API_KEY
-                  optional: true
-            - name: OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: agent-secret
-                  key: OPENAI_API_KEY
-                  optional: true
+            # 模型凭据已全部收归 llm-service：不再注入 provider API Key（见上方 LLM_*）。
+            # OPENALEX_API_KEY 是学术检索用的，不是模型凭据，保留。
             - name: OPENALEX_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: agent-secret
                   key: OPENALEX_API_KEY
-                  optional: true
-            - name: CUSTOM_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: agent-secret
-                  key: CUSTOM_API_KEY
                   optional: true
           volumeMounts:
             - name: data

@@ -18,54 +18,31 @@ if not os.path.exists(env_path):
     print("=" * 60)
     print("  首次运行检测到没有 .env 配置文件")
     print("=" * 60)
-    provider = input("请选择模型提供商 (openai / anthropic / deepseek / custom，默认 openai): ").strip() or "openai"
-
-    config_lines = [f"PROVIDER={provider}\n"]
-
-    if provider == "custom":
-        base_url = input("请输入 API 地址 (如 http://localhost:11434/v1): ").strip() or "http://localhost:11434/v1"
-        api_key = input("请输入 API Key (如无可直接回车): ").strip()
-        model = input("请输入模型名称 (如 qwen2.5:7b，默认 gpt-4o-mini): ").strip() or "gpt-4o-mini"
-        config_lines.append(f"CUSTOM_API_BASE={base_url}\n")
-        config_lines.append(f"CUSTOM_API_KEY={api_key}\n")
-        config_lines.append(f"CUSTOM_MODEL={model}\n")
-    elif provider == "deepseek":
-        key = input("请输入 DeepSeek API Key: ").strip()
-        config_lines.append(f"DEEPSEEK_API_KEY={key}\n")
-    elif provider == "openai":
-        key = input("请输入 OpenAI API Key: ").strip()
-        config_lines.append(f"OPENAI_API_KEY={key}\n")
-    elif provider == "anthropic":
-        key = input("请输入 Anthropic API Key: ").strip()
-        config_lines.append(f"ANTHROPIC_API_KEY={key}\n")
+    # 模型调用统一走集群内 llm-service：本地跑同样只配这三个变量
+    base_url = input(
+        "请输入 llm-service 基址 (默认 http://llm-service.llm.svc.cluster.local/v1): "
+    ).strip() or "http://llm-service.llm.svc.cluster.local/v1"
+    model = input("请输入模型别名 (默认 chat-tools；chat-guarded 禁 tools 会 400): ").strip() or "chat-tools"
+    token = input("请输入 LLM_SERVICE_TOKEN: ").strip()
 
     # 所有学术搜索工具均为免费 API，无需额外 Key
 
     with open(env_path, "w", encoding="utf-8") as fp:
-        fp.writelines(config_lines)
+        fp.writelines([
+            f"LLM_BASE_URL={base_url}\n",
+            f"LLM_MODEL={model}\n",
+            f"LLM_SERVICE_TOKEN={token}\n",
+        ])
     print(f"\n配置文件已保存到 {env_path}\n")
 
 # 加载 .env 文件
 load_dotenv(env_path)
 
 # 检查关键变量是否缺失
-provider = os.getenv("PROVIDER", "openai").lower()
-
+# 只有令牌是必需的：LLM_BASE_URL / LLM_MODEL 在 crew.py 里有默认值
 missing = []
-if provider == "custom":
-    if not os.getenv("CUSTOM_API_BASE"):
-        missing.append("CUSTOM_API_BASE")
-    if not os.getenv("CUSTOM_MODEL"):
-        missing.append("CUSTOM_MODEL")
-elif provider == "deepseek":
-    if not os.getenv("DEEPSEEK_API_KEY"):
-        missing.append("DEEPSEEK_API_KEY")
-elif provider == "openai":
-    if not os.getenv("OPENAI_API_KEY"):
-        missing.append("OPENAI_API_KEY")
-elif provider == "anthropic":
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        missing.append("ANTHROPIC_API_KEY")
+if not os.getenv("LLM_SERVICE_TOKEN"):
+    missing.append("LLM_SERVICE_TOKEN")
 
 if missing:
     print("\n以下配置项缺失，请补充:")

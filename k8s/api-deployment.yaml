@@ -47,29 +47,9 @@ spec:
         imagePullPolicy: Always
         ports:
         - containerPort: 8000
-        envFrom:
-        - configMapRef:
-            name: agent-config
         env:
-        - name: OPENAI_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: agent-secret
-              key: OPENAI_API_KEY
-              optional: true
-        - name: CUSTOM_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: agent-secret
-              key: CUSTOM_API_KEY
-              optional: true
-        # DeepSeek 凭据（独立前缀，与 panghu_game 约定一致）
-        - name: DEEPSEEK_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: agent-secret
-              key: DEEPSEEK_API_KEY
-              optional: true
+        # 模型凭据已全部收归 llm-service：这里不再注入任何 provider API Key，
+        # 也不再从 agent-config 取 PROVIDER / DEEPSEEK_* / OPENAI_*（见下方 LLM_*）。
         # RAG 检索：运行时要取参考素材（tools/rag_client.py 读这两个变量）
         - name: RAG_URL
           value: http://rag-service.data.svc.cluster.local:8080
@@ -79,8 +59,7 @@ spec:
               name: rag-token
               key: RAG_TOKEN
               optional: true
-        # 模型调用：走集群内 llm-service（已迁移的 Agent 会读这几个变量；
-        # 未迁移的仍用 agent-config 里的 provider 配置，互不影响）
+        # 模型调用：统一走集群内 llm-service，本模板不再注入任何 provider 凭据
         # 档位由 scripts/deploy-api.sh 按 Agent 填充 __LLM_MODEL__：
         #   - 本法系列（用户写 prompt）→ chat-guarded（禁扩权字段、收紧上限）
         #   - research / scientific（带检索工具）→ chat-tools（trusted，guarded 档禁 tools 会 400）

@@ -41,16 +41,6 @@ kubectl create configmap api-agent -n ${NAMESPACE} \
     --from-file=agent.py="app/api/${NAME}.py" \
     --dry-run=client -o yaml $K | kubectl apply $K -f -
 
-# ConfigMap (agent-config: LLM 配置，ESO 不管理 ConfigMap 故手动创建)
-# 支持通过环境变量覆盖默认值，例如: PROVIDER=deepseek DEEPSEEK_MODEL=deepseek-v4-flash bash game_review_agent/deploy-api.sh
-kubectl create configmap agent-config -n ${NAMESPACE} \
-    --from-literal=PROVIDER="${PROVIDER:-deepseek}" \
-    --from-literal=DEEPSEEK_BASE_URL="${DEEPSEEK_BASE_URL:-https://api.deepseek.com}" \
-    --from-literal=DEEPSEEK_MODEL="${DEEPSEEK_MODEL:-deepseek-v4-flash}" \
-    --from-literal=OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://api.openai.com}" \
-    --from-literal=OPENAI_MODEL="${OPENAI_MODEL:-gpt-4o-mini}" \
-    --dry-run=client -o yaml $K | kubectl apply $K -f -
-
 # llm-service 调用令牌（从 Vault secret/llm-service/auth 取 LLM_SERVICE_TOKEN）
 # 没有它 api 容器会在 import 时 RuntimeError 起不来
 sed "s/__NAMESPACE__/${NAMESPACE}/g" \

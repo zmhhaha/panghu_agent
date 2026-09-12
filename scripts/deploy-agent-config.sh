@@ -1,23 +1,24 @@
 #!/bin/bash
 # ============================================================
-#  Panghu Agent — 统一部署 DeepSeek LLM 配置
+#  Panghu Agent — 各 namespace 的 Secret 同步与重启
 #
 #  用途：
-#    1. apply 全部 agent 的 ExternalSecret（DeepSeek only + extract）
-#    2. 更新各 namespace 的 agent-config ConfigMap（PROVIDER=deepseek）
-#    3. 强制 ESO 立即同步 Vault → Secret
-#    4. 重启 api pod 使新环境变量生效
+#    1. apply 各 agent 的 ExternalSecret（从 Vault 同步 Secret）
+#    2. 强制 ESO 立即同步
+#    3. 校验 llm-service 令牌（llm-token / LLM_SERVICE_TOKEN）已就绪
+#    4. 重启 api pod 使新 Secret 生效（可选）
 #
-#  前提：Vault 各路径 secret/data/<ns>/api 已写入 DeepSeek 凭据
-#        （DEEPSEEK_API_KEY / DEEPSEEK_BASE_URL / DEEPSEEK_MODEL）
+#  前提：Vault 路径 secret/data/llm-service/auth 已写入 LLM_SERVICE_TOKEN
 #
 #  用法:
 #    bash deploy-agent-config.sh                # 全部 agent
 #    bash deploy-agent-config.sh research-agent # 仅指定 agent（可多次传参）
 #
 #  说明:
-#    - game-review-agent 用专属 deploy-api.sh 部署（会自建 ConfigMap），
-#      本脚本只同步其 ExternalSecret 和重启 pod。
+#    - 模型凭据已收归集群内 llm-service。各 Agent 的 agent-secret 不再需要 provider key，
+#      本脚本也不再写 PROVIDER / DEEPSEEK_* 到 agent-config（那是迁移前的旧配置）。
+#    - agent-config 现在只有 literature-downloader 在用（LITERATURE_* 检索参数），
+#      由 literature_downloader/deploy.sh 负责应用。
 #    - 默认不重启 pod，加 --restart 才执行 rollout restart。
 # ============================================================
 set -euo pipefail
@@ -83,22 +84,16 @@ for ns in "${NS_LIST[@]}"; do
 done
 
 # ============================================================
-#  Step 2: 更新 agent-config ConfigMap（PROVIDER=deepseek）
+#  Step 2（已移除）：agent-config 不再由本脚本管理
+#
+#  迁移到 llm-service 后，PROVIDER / DEEPSEEK_* / OPENAI_* 已无人读取，
+#  部署模板也不再 envFrom: agent-config。agent-config 目前只有
+#  literature-downloader 需要（LITERATURE_* 检索参数），由
+#  literature_downloader/deploy.sh 应用。
+#
+#  注意：各 namespace 里遗留的 PROVIDER / DEEPSEEK_* 键不会自动删除，属惰性残留；
+#  如需清理，kubectl delete configmap agent-config -n <ns> 后重新部署即可。
 # ============================================================
-echo ""
-echo "===== Step 2: 更新 agent-config ConfigMap ====="
-for ns in "${NS_LIST[@]}"; do
-  # game-review-agent 由 deploy-api.sh 自动创建，此处仍幂等执行（create+apply 覆盖）
-  echo "  ${ns}: PROVIDER=deepseek, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL"
-  kubectl create configmap agent-config -n "$ns" \
-    --from-literal=PROVIDER=deepseek \
-    --from-literal=DEEPSEEK_BASE_URL=https://api.deepseek.com \
-    --from-literal=DEEPSEEK_MODEL=deepseek-v4-flash \
-    --from-literal=LITERATURE_LLM_ENABLED=true \
-    --from-literal=LITERATURE_LLM_TIMEOUT=30 \
-    --from-literal=LITERATURE_LLM_MAX_CANDIDATES=40 \
-    --dry-run=client -o yaml $K | kubectl apply $K -f -
-done
 
 # ============================================================
 #  Step 3: 强制 ESO 立即同步
@@ -106,9 +101,11 @@ done
 echo ""
 echo "===== Step 3: 强制 ESO 同步 ====="
 for ns in "${NS_LIST[@]}"; do
-  kubectl annotate externalsecret agent-secret -n "$ns" \
-    force-sync=$(date +%s) --overwrite $K >/dev/null 2>&1 || true
-  echo "  ${ns}/agent-secret force-sync"
+  for es in agent-secret llm-token; do
+    kubectl annotate externalsecret "$es" -n "$ns" \
+      force-sync=$(date +%s) --overwrite $K >/dev/null 2>&1 || true
+  done
+  echo "  ${ns}: agent-secret / llm-token force-sync"
 done
 # game-review-agent 额外同步 game-auth
 if [[ " ${NS_LIST[*]} " =~ " game-review-agent " ]]; then
@@ -117,24 +114,25 @@ if [[ " ${NS_LIST[*]} " =~ " game-review-agent " ]]; then
   echo "  game-review-agent/game-auth force-sync"
 fi
 
-# 等 ESO 同步完成（轮询 Secret 是否含 DEEPSEEK_API_KEY）
+# 等 ESO 同步完成（轮询 llm-token 是否含 LLM_SERVICE_TOKEN）
 echo ""
 echo "  等待 ESO 同步…"
 sleep 5
 MISSING_SECRET_NS=()
 for ns in "${NS_LIST[@]}"; do
-  key=$(kubectl get secret agent-secret -n "$ns" -o jsonpath='{.data.DEEPSEEK_API_KEY}' 2>/dev/null || true)
+  key=$(kubectl get secret llm-token -n "$ns" -o jsonpath='{.data.LLM_SERVICE_TOKEN}' 2>/dev/null || true)
   if [ -n "$key" ]; then
-    echo "  ${ns}/agent-secret: ✅ DEEPSEEK_API_KEY 已同步"
+    echo "  ${ns}/llm-token: ✅ LLM_SERVICE_TOKEN 已同步"
   else
-    echo "  ${ns}/agent-secret: ⚠️ 未找到 DEEPSEEK_API_KEY（检查 Vault 路径 secret/data/${ns}/api）"
+    echo "  ${ns}/llm-token: ⚠️ 未找到 LLM_SERVICE_TOKEN（检查 Vault 路径 secret/llm-service/auth，"
+    echo "     以及本 namespace 是否已 apply k8s/llm-token-externalsecret.yaml）"
     MISSING_SECRET_NS+=("$ns")
   fi
 done
 
 if [ "${#MISSING_SECRET_NS[@]}" -gt 0 ]; then
   echo ""
-  echo "ERROR: 以下 namespace 缺少 DEEPSEEK_API_KEY，停止部署且不重启 API："
+  echo "ERROR: 以下 namespace 缺少 llm-service 令牌，停止部署且不重启 API："
   printf '  - %s\n' "${MISSING_SECRET_NS[@]}"
   echo "请先写入对应 Vault 路径并等待 ExternalSecret Ready=True，然后重新运行本脚本。"
   exit 1

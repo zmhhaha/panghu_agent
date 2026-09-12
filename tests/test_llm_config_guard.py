@@ -4,7 +4,6 @@ import sys
 import pytest
 from fastapi.testclient import TestClient
 
-from tools import llm_config
 from tools import sqlite_client as db
 
 
@@ -58,29 +57,7 @@ def _configure_missing_llm_service_token(monkeypatch):
     monkeypatch.delenv("LLM_SERVICE_TOKEN", raising=False)
 
 
-# --- 遗留：tools.llm_config 目前只剩本文件引用，Step 2 摘 provider 凭据时一并删除 ---
-
-
-def test_shared_guard_rejects_missing_provider_key(monkeypatch):
-    monkeypatch.setenv("PROVIDER", "deepseek")
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-
-    error = llm_config.get_llm_config_error("test_agent")
-
-    assert error is not None
-    assert "DEEPSEEK_API_KEY" in error
-    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
-        llm_config.require_llm_config("test_agent")
-
-
-def test_custom_provider_allows_keyless_local_endpoint(monkeypatch):
-    monkeypatch.setenv("PROVIDER", "custom")
-    monkeypatch.delenv("CUSTOM_API_KEY", raising=False)
-
-    assert llm_config.get_llm_config_error("test_agent") is None
-
-
-# --- 迁移后的守卫：模型调用统一走集群内 llm-service ---
+# --- 守卫：模型调用统一走集群内 llm-service ---
 
 
 @pytest.mark.parametrize("module_name", CREW_MODULES)

@@ -28,17 +28,8 @@ spec:
         imagePullPolicy: Always
         ports:
         - containerPort: 8000
-        envFrom:
-        - configMapRef:
-            name: agent-config
         env:
-        # DeepSeek 凭据（与 panghu_game 约定一致，provider 用独立前缀）
-        - name: DEEPSEEK_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: agent-secret
-              key: DEEPSEEK_API_KEY
-              optional: true
+        # 模型凭据已全部收归 llm-service：不再注入 provider API Key，也不再从 agent-config 取值。
         # 游戏试玩 agent：受保护游戏的登录 cookie（可选，不配置则只能访问公开页面）
         - name: GAME_AUTH_COOKIE
           valueFrom:
