@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-from tools.llm_config import get_llm_config_error
 from .crew import (
     create_github_batch_crew,
     create_meme_batch_crew,
@@ -67,6 +67,15 @@ class ProgrammerJobsWeeklySummaryRequest(BaseModel):
     reports: list[ProgrammerJobsReportRequest] = Field(..., min_length=1, max_length=7)
 
 
+def llm_service_config_error() -> str | None:
+    """配置是否齐备：本服务不再持有 provider 凭据，只认 llm-service 的地址与内部令牌。"""
+    if not os.getenv("LLM_BASE_URL", "").strip():
+        return "content-llm-service 配置不完整：LLM_BASE_URL 未注入（应指向集群内 llm-service）。"
+    if not os.getenv("LLM_SERVICE_TOKEN", "").strip():
+        return "content-llm-service 配置不完整：LLM_SERVICE_TOKEN 未注入，请检查 ExternalSecret 是否已同步。"
+    return None
+
+
 def parse_json_result(value: str) -> Any:
     text = value.strip()
     fenced = re.search(r"```(?:json)?\s*([\[{].*?[\]}])\s*```", text, re.S)
@@ -81,13 +90,13 @@ def parse_json_result(value: str) -> Any:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    error = get_llm_config_error("content_llm_service")
+    error = llm_service_config_error()
     return {"status": "ok" if error is None else "degraded", "llm_configured": error is None}
 
 
 @app.post("/v1/meme/judge")
 def judge_meme(request: MemeJudgeRequest) -> dict[str, Any]:
-    error = get_llm_config_error("content_llm_service")
+    error = llm_service_config_error()
     if error:
         raise HTTPException(status_code=503, detail=error)
     try:
@@ -100,7 +109,7 @@ def judge_meme(request: MemeJudgeRequest) -> dict[str, Any]:
 
 @app.post("/v1/meme/judge-batch")
 def judge_meme_batch(request: MemeBatchRequest) -> dict[str, Any]:
-    error = get_llm_config_error("content_llm_service")
+    error = llm_service_config_error()
     if error:
         raise HTTPException(status_code=503, detail=error)
     try:
@@ -118,7 +127,7 @@ def judge_meme_batch(request: MemeBatchRequest) -> dict[str, Any]:
 
 @app.post("/v1/github/enrich-batch")
 def enrich_github_batch(request: GithubBatchRequest) -> dict[str, Any]:
-    error = get_llm_config_error("content_llm_service")
+    error = llm_service_config_error()
     if error:
         raise HTTPException(status_code=503, detail=error)
     try:
@@ -137,7 +146,7 @@ def enrich_github_batch(request: GithubBatchRequest) -> dict[str, Any]:
 @app.post("/v1/jobs/programmer-summary")
 def summarize_programmer_jobs(request: ProgrammerJobsSummaryRequest) -> dict[str, Any]:
     """Summarize a daily job sample with one shared LLM request."""
-    error = get_llm_config_error("content_llm_service")
+    error = llm_service_config_error()
     if error:
         raise HTTPException(status_code=503, detail=error)
     try:
@@ -157,7 +166,7 @@ def summarize_programmer_jobs(request: ProgrammerJobsSummaryRequest) -> dict[str
 @app.post("/v1/jobs/programmer-weekly-summary")
 def summarize_programmer_jobs_weekly(request: ProgrammerJobsWeeklySummaryRequest) -> dict[str, Any]:
     """Summarize already-published daily reports with one shared LLM request."""
-    error = get_llm_config_error("content_llm_service")
+    error = llm_service_config_error()
     if error:
         raise HTTPException(status_code=503, detail=error)
     try:

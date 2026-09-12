@@ -14,43 +14,38 @@
 
 ## 配置
 
-支持现有 `tools.llm_config` 的 `openai`、`deepseek`、`anthropic`、`custom` Provider。API 密钥只放在 `content-llm-secret`，不要写入 Git。
+**模型调用统一走集群内的 `llm-service`**：本服务**不再持有任何 provider 凭据**，
+只认 ConfigMap 里的入口与别名，以及 Vault 同步来的内部令牌。
+
+| 配置项 | 来源 | 说明 |
+|---|---|---|
+| `LLM_BASE_URL` | ConfigMap `content-llm-config` | `http://llm-service.llm.svc.cluster.local/v1`（**基址**，litellm 自己接 `/chat/completions`） |
+| `LLM_MODEL` | ConfigMap `content-llm-config` | llm-service 注册的**模型别名**（如 `chat-default`），不是上游模型名 |
+| `LLM_SERVICE_TOKEN` | Secret `content-llm-secret`（Vault `secret/llm-service/auth`） | 调用 llm-service 的内部令牌 |
+
+provider 密钥、模型别名路由、超时重试与失败转移都由 llm-service 负责，见 `llm-service/README.md`。
 
 ## 部署
 
 ```bash
 cd panghu_agent/content-llm-service
-bash build.sh
-kubectl apply -f k8s.yaml
+bash deploy.sh          # 构建推送镜像 + 应用 ExternalSecret + 应用 k8s + 重启等待就绪
 ```
 
 Service 地址：`http://content-llm-service.content-agents.svc.cluster.local`
 
 ## Provider configuration
 
-The service follows the same convention as `research-agent` and
-`scientific-agent`: `PROVIDER` and model endpoint settings are stored in the
-ConfigMap, while only provider credentials are stored in Vault. The default
-deployment uses DeepSeek:
+本服务**不再自行配置 provider**。它通过 `LLM_BASE_URL` + `LLM_MODEL`（模型别名）调用集群内的
+`llm-service`，并携带 `LLM_SERVICE_TOKEN`；provider 凭据只存在于 llm-service。
 
-```yaml
-PROVIDER: deepseek
-DEEPSEEK_BASE_URL: https://api.deepseek.com
-DEEPSEEK_MODEL: deepseek-v4-flash
-```
+Pod 需要带 `llm-client: "true"` 标签，才能通过 llm-service 的 NetworkPolicy；
+令牌由 `vault/inventory/content-llm-externalsecret.yaml` 从 `secret/llm-service/auth` 同步到
+`content-llm-secret`（与 llm-service 同源，不各存一份）。
 
-Write only the credential to Vault:
+### 迁移收尾
 
-```bash
-kubectl -n vault exec vault-0 -- vault kv put secret/content-agents/llm \
-  DEEPSEEK_API_KEY='...'
-```
-
-密钥配置在 Vault `secret/content-agents/llm`，由
-`vault/inventory/content-llm-externalsecret.yaml` 同步为
-`content-llm-secret`，不要写入 Git。推荐使用 `bash deploy.sh` 部署。
-
-```bash
-kubectl -n vault exec vault-0 -- vault kv put secret/content-agents/llm \
-  DEEPSEEK_API_KEY='...'
-```
+provider 凭据（Vault `secret/content-agents/llm` 里的 `DEEPSEEK_API_KEY`）在迁移验证通过后应当**移除**——
+本服务已不再读取它。做法是删掉 `vault/inventory/content-llm-externalsecret.yaml` 里的第一个
+`dataFrom`（即 `secret/data/content-agents/llm`），再 `kubectl apply` 该文件并重启 Deployment；
+此后 `content-llm-secret` 只会剩下 `LLM_SERVICE_TOKEN`。
