@@ -147,3 +147,33 @@ kubectl rollout restart deploy/ui  -n $NS
          → [撰写者 Agent: 结构化 Markdown 报告]
          → 报告存入 SQLite → 支持检索 + 下载
 ```
+
+## 知识库（knowledge.md）与 RAG 接入
+
+每个 Agent 的 `knowledge.md` 是它的知识库源码——**行为在 `skill.md`，知识在 `knowledge.md`**，分开维护。
+
+- **进 prompt 的只有 `skill.md`**；`knowledge.md` 不再进 prompt，改由 RAG 按需检索提供参考素材。
+- 回答前，[`app/api/<agent>.py`](app/api/) 的 `_run` 调 [`tools/rag_client.fetch_reference()`](tools/rag_client.py)
+  （`mode=context`，只取素材、不触发 RAG 侧生成），以 `<reference>` 边界标记注入 task；`skill.md` 始终权威。
+- Agent 启动时 initContainer `rag-sync`（[`scripts/sync_knowledge.py`](scripts/sync_knowledge.py)）
+  会把整份 `knowledge.md` POST 给 RAG，幂等（按 checksum），失败只告警、不阻塞启动。
+
+**部署**：`bash scripts/deploy-api.sh <agent>_agent` 会一并创建 `rag-token` ExternalSecret、
+加 initContainer 与 RAG 运行环境。
+
+> ⚠️ 该脚本会重建并推送**公共镜像** `agent-api:latest`（全部 Agent 共用，且 `imagePullPolicy: Always`）。
+> 跑之前请确认服务器工作区干净，否则会把未提交的改动一起发给所有 Agent。
+
+### 踩过的坑
+
+1. **`{reference}` 占位符必须与 inputs 配套**：`crew.py` 的 task 描述用了 `{reference}`，
+   `app/api/<agent>.py` 的 `kickoff(inputs=...)` 就必须传 `reference`，否则 crewai 直接报"缺少输入"。两处必须一起改。
+2. **RAG 凭据要同时给 initContainer 和 api 容器**：只配 initContainer 的话，同步会成功，
+   但回答时 `fetch_reference` 取不到素材（`RAG_TOKEN` 未注入）。
+3. **先验证检索、再移除知识**：从 prompt 去掉 `knowledge.md` 之前，必须先确认线上能取到素材。
+   否则一旦检索失败（401 / 未部署），Agent 会**完全没有素材**，回答质量直接掉。
+4. **别对没有 `knowledge.md` 的服务跑 `deploy-api.sh`**（research / scientific / game-review）：
+   Vault 里没有对应的 `RAG_TOKEN_*`，会留下一个永远 not-ready 的 ExternalSecret。
+5. **并发灌库会把 embedding 打爆**：多台 Agent 同时启动时 embedding 返回 429，RAG 的 ingest 会 500、
+   同步静默失败。两侧已加退避重试；如需同时部署多家，建议错峰。
+
