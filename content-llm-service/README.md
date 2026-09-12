@@ -20,10 +20,19 @@
 | 配置项 | 来源 | 说明 |
 |---|---|---|
 | `LLM_BASE_URL` | ConfigMap `content-llm-config` | `http://llm-service.llm.svc.cluster.local/v1`（**基址**，litellm 自己接 `/chat/completions`） |
-| `LLM_MODEL` | ConfigMap `content-llm-config` | llm-service 注册的**模型别名**（如 `chat-default`），不是上游模型名 |
+| `LLM_MODEL` | ConfigMap `content-llm-config` | llm-service 注册的**模型别名** —— 本服务用 `chat-tools`（见下） |
 | `LLM_SERVICE_TOKEN` | Secret `content-llm-secret`（Vault `secret/llm-service/auth`） | 调用 llm-service 的内部令牌 |
 
 provider 密钥、模型别名路由、超时重试与失败转移都由 llm-service 负责，见 `llm-service/README.md`。
+
+### 职责边界：为什么用 `chat-tools` 而不是 `chat-default`
+
+- **llm-service** 只管通道与策略：凭据、路由、超时重试、限流、用量；它不判断业务语义，但**按别名的能力档位**放行能力。
+- **本服务**管业务语义：用什么工具（WebSearch / WebFetch）、提示词、输出解析。
+
+本服务的 CrewAI 会让模型做**函数调用**，请求体里带 `tools` / `tool_choice`；而 llm-service 的
+`chat-default` 显式声明了 `capabilities.tools = false`（纯生成档位，RAG 在用）。所以本服务用**自己的档位**
+`chat-tools`。两边各用各的别名，"谁能做什么"在 llm-service 的 ConfigMap 里一眼可见。
 
 ### 踩坑：CrewAI 的 `LLM(model=...)` 不能写成 `openai/<别名>`
 
