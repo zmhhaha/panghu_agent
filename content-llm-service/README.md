@@ -25,6 +25,19 @@
 
 provider 密钥、模型别名路由、超时重试与失败转移都由 llm-service 负责，见 `llm-service/README.md`。
 
+### 踩坑：CrewAI 的 `LLM(model=...)` 不能写成 `openai/<别名>`
+
+CrewAI 只会把前缀属于它「canonical provider」的模型名交给原生实现，**`openai/...` 不在其中**——
+写 `LLM(model="openai/chat-default")` 会落到未安装的 litellm 分支，报
+`Unable to initialize LLM ... LiteLLM fallback package is not installed`。
+必须**显式给 provider**：
+
+```python
+LLM(model="chat-default", provider="openai", base_url=LLM_BASE_URL, api_key=LLM_SERVICE_TOKEN, temperature=0.2)
+```
+
+模型名直接用别名，请求体里的 `model` 就是别名，正合 llm-service 的约定。
+
 ## 部署
 
 ```bash

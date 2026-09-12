@@ -19,7 +19,10 @@ def build_llm() -> LLM:
             "content-llm-service 未配置 llm-service：需要 LLM_BASE_URL 与 LLM_SERVICE_TOKEN"
             "（见 k8s.yaml 与 vault/inventory/content-llm-externalsecret.yaml）"
         )
-    return LLM(model="openai/" + alias, base_url=url, api_key=token, temperature=0.2)
+    # 必须显式给 provider="openai"：CrewAI 只把 prefix 属于「canonical provider」的模型名
+    # 交给原生实现，而 `openai/...` 不在其中，会落到未安装的 litellm 分支并报错（实测踩过）。
+    # 模型名直接用别名，body 里的 model 就是别名，正合 llm-service 的约定。
+    return LLM(model=alias, provider="openai", base_url=url, api_key=token, temperature=0.2)
 
 
 def create_meme_crew(candidate: dict) -> Crew:
