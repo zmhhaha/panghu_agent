@@ -12,7 +12,8 @@ class TaskRsp(BaseModel): id:str; text:str; status:str; report:str|None=None; er
 def _run(i,t):
  try:
   db.update_task(i,status="running"); from bingbichunqiu_agent.crew import create_bingbichunqiu_crew
-  r=str(create_bingbichunqiu_crew().kickoff(inputs={"text":t})); db.update_task(i,status="done",report=r); db.save_report(i,t,r[:150],"",r)
+  from tools.rag_client import fetch_reference
+  r=str(create_bingbichunqiu_crew().kickoff(inputs={"text":t,"reference":fetch_reference("bingbichunqiu",t)})); db.update_task(i,status="done",report=r); db.save_report(i,t,r[:150],"",r)
  except Exception as e: db.update_task(i,status="failed",error=str(e))
 @app.get("/bingbichunqiu_agent-health")
 def health():
