@@ -81,12 +81,14 @@ spec:
               optional: true
         # 模型调用：走集群内 llm-service（已迁移的 Agent 会读这几个变量；
         # 未迁移的仍用 agent-config 里的 provider 配置，互不影响）
-        # 本系列 Agent 由**用户写 prompt**，用 guarded 档位（禁扩权字段、收紧上限）；
-        # 将来做内部机器对话时，改用 trusted 档位（chat-default / chat-tools）即可。
+        # 档位由 scripts/deploy-api.sh 按 Agent 填充 __LLM_MODEL__：
+        #   - 本法系列（用户写 prompt）→ chat-guarded（禁扩权字段、收紧上限）
+        #   - research / scientific（带检索工具）→ chat-tools（trusted，guarded 档禁 tools 会 400）
+        # 将来做内部机器对话时，改用 trusted 档（chat-default / chat-tools）即可。
         - name: LLM_BASE_URL
           value: http://llm-service.llm.svc.cluster.local/v1
         - name: LLM_MODEL
-          value: chat-guarded
+          value: __LLM_MODEL__
         - name: LLM_SERVICE_TOKEN
           valueFrom:
             secretKeyRef:

@@ -51,6 +51,11 @@ kubectl create configmap agent-config -n ${NAMESPACE} \
     --from-literal=OPENAI_MODEL="${OPENAI_MODEL:-gpt-4o-mini}" \
     --dry-run=client -o yaml $K | kubectl apply $K -f -
 
+# llm-service 调用令牌（从 Vault secret/llm-service/auth 取 LLM_SERVICE_TOKEN）
+# 没有它 api 容器会在 import 时 RuntimeError 起不来
+sed "s/__NAMESPACE__/${NAMESPACE}/g" \
+  k8s/llm-token-externalsecret.yaml | kubectl apply $K -f -
+
 # apply 专属 deployment
 sed "s/__NAMESPACE__/${NAMESPACE}/g" game_review_agent/k8s/api-deployment.yaml | kubectl apply $K -f -
 

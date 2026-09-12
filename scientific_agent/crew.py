@@ -21,74 +21,32 @@ from tools.academic_tools import (
     CrossrefLookupTool,
     AcademicMultiFetchTool,
 )
-from tools.llm_config import require_llm_config
 
 
 # ============================================================
-#  LLM 配置 — 通过环境变量 PROVIDER 切换模型提供商
-#  PROVIDER=openai | anthropic | deepseek | custom（默认 openai）
+#  LLM 配置：统一走集群内 llm-service（本服务不再持有 provider 凭据）
+#  本服务是任务型服务（带学术检索工具），用 trusted 档位。
 # ============================================================
 
-PROVIDER = require_llm_config("scientific_agent")
+_LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").rstrip("/")
+_LLM_TOKEN = os.getenv("LLM_SERVICE_TOKEN", "").strip()
+LLM_ALIAS = os.getenv("LLM_MODEL", "chat-tools")
 
-if PROVIDER == "openai":
-    PRIMARY_LLM = LLM(
-        model="openai/gpt-4o-mini",
-        base_url="https://api.openai.com",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        temperature=0.7,
+if not _LLM_BASE_URL or not _LLM_TOKEN:
+    raise RuntimeError(
+        "scientific_agent 未配置 llm-service：需要 LLM_BASE_URL 与 LLM_SERVICE_TOKEN"
+        "（见 k8s/api-deployment.yaml 与 vault/inventory/llm-token-externalsecret.yaml）"
     )
-    SECONDARY_LLM = LLM(
-        model="openai/gpt-4o-mini",
-        base_url="https://api.openai.com",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        temperature=0.5,
-    )
-    SYNTHESIS_LLM = LLM(
-        model="openai/gpt-4o-mini",
-        base_url="https://api.openai.com",
-        api_key=os.getenv("OPENAI_API_KEY"),
-        temperature=0.3,  # 分析+综合用低 temperature 保证准确性
-    )
-elif PROVIDER == "deepseek":
-    # DeepSeek API 兼容 OpenAI 格式，凭据用独立 DEEPSEEK_* 前缀（参考 panghu_game）
-    _ds_model = "deepseek/" + os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
-    _ds_base = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-    _ds_key = os.getenv("DEEPSEEK_API_KEY")
-    PRIMARY_LLM = LLM(model=_ds_model, base_url=_ds_base, api_key=_ds_key, temperature=0.7)
-    SECONDARY_LLM = LLM(model=_ds_model, base_url=_ds_base, api_key=_ds_key, temperature=0.5)
-    SYNTHESIS_LLM = LLM(model=_ds_model, base_url=_ds_base, api_key=_ds_key, temperature=0.3)
-elif PROVIDER == "custom":
-    custom_base = os.getenv("CUSTOM_BASE_URL") or os.getenv("CUSTOM_API_BASE", "http://localhost:11434/v1")
-    custom_key = os.getenv("CUSTOM_API_KEY", "")
-    custom_model = os.getenv("CUSTOM_MODEL", "gpt-4o-mini")
 
-    PRIMARY_LLM = LLM(
-        model=custom_model,
-        base_url=custom_base,
-        api_key=custom_key,
-        temperature=0.7,
-    )
-    SECONDARY_LLM = LLM(
-        model=custom_model,
-        base_url=custom_base,
-        api_key=custom_key,
-        temperature=0.5,
-    )
-    SYNTHESIS_LLM = LLM(
-        model=custom_model,
-        base_url=custom_base,
-        api_key=custom_key,
-        temperature=0.3,
-    )
-elif PROVIDER == "anthropic":
-    PRIMARY_LLM = LLM(model="anthropic/claude-sonnet-4-6-20250514", temperature=0.7)
-    SECONDARY_LLM = LLM(model="anthropic/claude-haiku-4-5-20251001", temperature=0.5)
-    SYNTHESIS_LLM = LLM(model="anthropic/claude-sonnet-4-6-20250514", temperature=0.3)
-else:
-    PRIMARY_LLM = LLM(model="anthropic/claude-sonnet-4-6-20250514", temperature=0.7)
-    SECONDARY_LLM = LLM(model="anthropic/claude-haiku-4-5-20251001", temperature=0.5)
-    SYNTHESIS_LLM = LLM(model="anthropic/claude-sonnet-4-6-20250514", temperature=0.3)
+
+def _make_llm(temperature: float) -> LLM:
+    # CrewAI 必须显式给 provider：`openai/<别名>` 会落到未安装的 litellm 分支并报错
+    return LLM(model=LLM_ALIAS, provider="openai", base_url=_LLM_BASE_URL, api_key=_LLM_TOKEN, temperature=temperature)
+
+
+PRIMARY_LLM = _make_llm(0.7)
+SECONDARY_LLM = _make_llm(0.5)
+SYNTHESIS_LLM = _make_llm(0.3)  # 分析+综合用低 temperature 保证准确性
 
 
 # ============================================================

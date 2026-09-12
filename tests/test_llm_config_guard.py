@@ -14,14 +14,14 @@ API_CASES = [
     ("app.api.zhongkuifumo_agent", "/zhongkuifumo_agent-health", "/zhongkuifumo_agent", {"text": "test"}),
     ("app.api.yimaneili_agent", "/yimaneili_agent-health", "/yimaneili_agent", {"text": "test"}),
     ("app.api.zhenzhuzhida_agent", "/zhenzhuzhida_agent-health", "/zhenzhuzhida_agent", {"text": "test"}),
-    ("app.api.research_agent", "/health", "/research", {"topic": "test"}),
+    ("app.api.research_agent", "/research-health", "/research", {"topic": "test"}),
     (
         "app.api.scientific_agent",
         "/scientific-health",
         "/scientific-research",
         {"topic": "test"},
     ),
-    ("app.api.game_review_agent", "/health", "/game_review", {"game_url": "http://test"}),
+    ("app.api.game_review_agent", "/game-review-health", "/game_review", {"game_url": "http://test"}),
     (
         "app.api.zhougongjiemeng_agent",
         "/zhougongjiemeng_agent-health",
@@ -46,18 +46,24 @@ CREW_MODULES = [
     "research_agent.crew",
     "scientific_agent.crew",
     "game_review_agent.llm_config",
-    "zhougongjiemeng_agent.crew",
+    # zhougongjiemeng_agent 不在此列：它的 crew 用惰性 create_model()，配置缺失在调用时才报错，
+    # 不在 import 期失败。它的配置守卫由下面的 API_CASES 用例覆盖（健康检查降级 + 提交 503）。
     "xiaotanrenjian_agent.crew",
 ]
 
 
-def _configure_missing_deepseek_key(monkeypatch):
-    monkeypatch.setenv("PROVIDER", "deepseek")
-    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+def _configure_missing_llm_service_token(monkeypatch):
+    """只留 base URL、抽掉令牌——集群里真正会缺的就是这一个（base URL 写死在 manifest 里）。"""
+    monkeypatch.setenv("LLM_BASE_URL", "http://llm-service.llm.svc.cluster.local/v1")
+    monkeypatch.delenv("LLM_SERVICE_TOKEN", raising=False)
+
+
+# --- 遗留：tools.llm_config 目前只剩本文件引用，Step 2 摘 provider 凭据时一并删除 ---
 
 
 def test_shared_guard_rejects_missing_provider_key(monkeypatch):
-    _configure_missing_deepseek_key(monkeypatch)
+    monkeypatch.setenv("PROVIDER", "deepseek")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
 
     error = llm_config.get_llm_config_error("test_agent")
 
@@ -74,12 +80,15 @@ def test_custom_provider_allows_keyless_local_endpoint(monkeypatch):
     assert llm_config.get_llm_config_error("test_agent") is None
 
 
+# --- 迁移后的守卫：模型调用统一走集群内 llm-service ---
+
+
 @pytest.mark.parametrize("module_name", CREW_MODULES)
 def test_crew_modules_fail_before_constructing_llm(monkeypatch, module_name):
-    _configure_missing_deepseek_key(monkeypatch)
+    _configure_missing_llm_service_token(monkeypatch)
     sys.modules.pop(module_name, None)
 
-    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
+    with pytest.raises(RuntimeError, match="LLM_SERVICE_TOKEN"):
         importlib.import_module(module_name)
 
 
@@ -95,7 +104,7 @@ def test_api_reports_degraded_and_rejects_submission(
     submit_path,
     payload,
 ):
-    _configure_missing_deepseek_key(monkeypatch)
+    _configure_missing_llm_service_token(monkeypatch)
     monkeypatch.setenv("GAME_OUT_DIR", str(tmp_path / "game-review"))
     monkeypatch.setattr(db, "init_db", lambda service: db.set_service(service))
     monkeypatch.setattr(db, "clear_stale_tasks", lambda: None)
@@ -111,4 +120,4 @@ def test_api_reports_degraded_and_rejects_submission(
 
     submit_response = client.post(submit_path, json=payload)
     assert submit_response.status_code == 503
-    assert "DEEPSEEK_API_KEY" in submit_response.json()["detail"]
+    assert "LLM_SERVICE_TOKEN" in submit_response.json()["detail"]

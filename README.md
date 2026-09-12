@@ -168,11 +168,18 @@ kubectl rollout restart deploy/ui  -n $NS
 
 Agent **不再持有任何 provider 凭据**，模型调用经集群内的 `llm-service`：
 
-- 环境变量：`LLM_BASE_URL`、`LLM_MODEL`（默认 `chat-guarded`）、`LLM_SERVICE_TOKEN`（来自 `llm-token` ExternalSecret）
+- 环境变量：`LLM_BASE_URL`、`LLM_MODEL`、`LLM_SERVICE_TOKEN`（来自 `llm-token` ExternalSecret）
 - Pod 需带 `llm-client: "true"` 标签，才能通过 llm-service 的 NetworkPolicy
-- **档位**：本系列 Agent 由**用户写 prompt**，一律用 `guarded` 档（禁扩权字段、收紧参数上限）。
-  将来做**内部机器对话**时，那条路径改用 `trusted` 档（`chat-default` / `chat-tools`）——
-  同一个服务两套用法靠别名区分，不用改代码。详见 `llm-service/README.md` 的职责边界。
+- **档位按 Agent 区分**，由 [`scripts/deploy-api.sh`](scripts/deploy-api.sh) 决定（模板里是 `__LLM_MODEL__` 占位符，
+  可用环境变量 `LLM_MODEL` 覆盖）：
+  - **8 家本法系列**：由**用户写 prompt**，用 `guarded` 档（`chat-guarded`，禁扩权字段、收紧参数上限）。
+  - **research / scientific**：带学术与网页检索工具，`guarded` 档禁 `tools` 会 400，故用 trusted 档 `chat-tools`。
+  - 将来做**内部机器对话**时，那条路径改用 `chat-default` / `chat-tools`——同一个服务两套用法靠别名区分，不用改代码。
+    详见 `llm-service/README.md` 的职责边界。
+
+> 已迁移到 llm-service 的服务：8 家本法系列、`research_agent`、`scientific_agent`、`game_review_agent`
+> （独立 manifest `game_review_agent/k8s/api-deployment.yaml` + 独立部署脚本）、`literature_downloader`
+> （`literature_downloader/deploy.sh`）、`content-llm-service`。还有 RAG。
 
 ### 踩过的坑
 

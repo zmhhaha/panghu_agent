@@ -17,12 +17,14 @@ from typing import Any
 import requests
 
 from tools.academic.query import build_query_variants
-from tools.llm_config import REQUIRED_API_KEYS, get_llm_config_error, get_provider
 
 from .config import Settings, settings
 
 
 SEARCH_PLAN_SCHEMA_VERSION = 2
+
+# 模型调用统一走集群内 llm-service，不再按 provider 分支
+LLM_SERVICE_PROVIDER = "llm-service"
 
 
 def _now() -> str:
@@ -36,33 +38,26 @@ def _bool_env(name: str, default: bool = True) -> bool:
     return value.strip().lower() not in {"0", "false", "no", "off"}
 
 
-def _model(provider: str) -> str:
-    if provider == "deepseek":
-        return os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash").strip()
-    if provider == "openai":
-        return os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip()
-    if provider == "custom":
-        return os.getenv("CUSTOM_MODEL") or os.getenv("LLM_MODEL") or "gpt-4o-mini"
-    return os.getenv("LLM_MODEL", "").strip()
+def _model() -> str:
+    return os.getenv("LLM_MODEL", "chat-default").strip()
 
 
-def _base_url(provider: str) -> str:
-    if provider == "deepseek":
-        value = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-    elif provider == "openai":
-        value = os.getenv("OPENAI_BASE_URL", "https://api.openai.com")
-    elif provider == "custom":
-        value = os.getenv("CUSTOM_BASE_URL") or os.getenv("CUSTOM_API_BASE") or os.getenv("LLM_BASE_URL", "")
-    else:
-        value = os.getenv("LLM_BASE_URL", "")
-    return value.strip().rstrip("/")
+def _base_url() -> str:
+    """llm-service 的基址，形如 http://llm-service.llm.svc.cluster.local/v1。"""
+    return os.getenv("LLM_BASE_URL", "").strip().rstrip("/")
 
 
-def _api_key(provider: str) -> str:
-    key_name = REQUIRED_API_KEYS.get(provider)
-    if key_name:
-        return os.getenv(key_name, "").strip()
-    return (os.getenv("CUSTOM_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
+def _api_key() -> str:
+    return os.getenv("LLM_SERVICE_TOKEN", "").strip()
+
+
+def llm_service_config_error() -> str | None:
+    """模型调用统一走集群内 llm-service：本服务不再持有 provider 凭据。"""
+    if not _base_url():
+        return "literature_downloader 配置不完整：LLM_BASE_URL 未注入（应指向集群内 llm-service）。"
+    if not _api_key():
+        return "literature_downloader 配置不完整：LLM_SERVICE_TOKEN 未注入，请检查 ExternalSecret 是否已同步。"
+    return None
 
 
 class LLMJsonClient:
@@ -79,23 +74,17 @@ class LLMJsonClient:
     def from_environment(cls, config: Settings = settings) -> "LLMJsonClient | None":
         if not config.llm_enabled:
             return None
-        provider = get_provider()
-        if provider not in {"openai", "deepseek", "custom"}:
+        base_url = _base_url()
+        model = _model()
+        api_key = _api_key()
+        if not base_url or not model or not api_key:
             return None
-        if get_llm_config_error("literature_search_agent"):
-            return None
-        base_url = _base_url(provider)
-        model = _model(provider)
-        api_key = _api_key(provider)
-        if not base_url or not model or (provider != "custom" and not api_key):
-            return None
-        return cls(provider, model, base_url, api_key, config.llm_timeout)
+        return cls(LLM_SERVICE_PROVIDER, model, base_url, api_key, config.llm_timeout)
 
     def complete_json(self, system_prompt: str, user_payload: dict[str, Any]) -> Any:
+        # base_url 已含版本前缀（…/v1），这里只接 /chat/completions
         endpoint = self.base_url
         if not endpoint.endswith("/chat/completions"):
-            if self.provider == "openai" and not endpoint.endswith("/v1"):
-                endpoint += "/v1"
             endpoint += "/chat/completions"
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -164,8 +153,8 @@ def _fallback_plan(topic: str, max_variants: int, target_count: int, reason: str
             "enabled": False,
             "used": False,
             "status": "fallback",
-            "provider": get_provider(),
-            "model": _model(get_provider()),
+            "provider": LLM_SERVICE_PROVIDER,
+            "model": _model(),
             "reason": reason or "LLM 未启用或配置不可用",
             "generated_at": _now(),
             "cache_hit": False,
@@ -289,9 +278,8 @@ def create_search_plan(
     """Create a cached LLM plan, or a deterministic plan on any failure."""
     target = max(int(config.search_limit if target_count is None else target_count), 0)
     variants_limit = min(max(int(max_variants or config.max_search_variants), 1), 13)
-    provider = get_provider()
-    model = _model(provider)
-    fallback_reason = get_llm_config_error("literature_search_agent") or "LLM 未启用"
+    model = _model()
+    fallback_reason = llm_service_config_error() or "LLM 未启用"
     fallback = _fallback_plan(topic, variants_limit, target, fallback_reason)
     if not config.llm_enabled:
         fallback["llm"]["status"] = "disabled"

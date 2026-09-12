@@ -12,7 +12,7 @@ from literature_downloader.search_planner import LLMJsonClient, create_search_pl
 
 
 class FakeClient:
-    provider = "deepseek"
+    provider = "llm-service"
     model = "test-model"
 
     def __init__(self, payload):
@@ -26,14 +26,46 @@ class LLMSearchTests(unittest.TestCase):
     def _settings(self, root: Path) -> Settings:
         return Settings(root, root / "literature.db", root / "pdfs", root / "reports", llm_enabled=True)
 
-    def test_missing_llm_key_returns_deterministic_plan(self) -> None:
+    def test_missing_llm_service_token_returns_deterministic_plan(self) -> None:
         root = Path(tempfile.mkdtemp())
         config = self._settings(root)
-        with patch.dict("os.environ", {"PROVIDER": "deepseek"}, clear=True):
+        # 只给地址、不给令牌：这是集群里真正会缺的那一个 → 回退确定性计划
+        with patch.dict(
+            "os.environ",
+            {"LLM_BASE_URL": "http://llm-service.llm.svc.cluster.local/v1"},
+            clear=True,
+        ):
             plan = create_search_plan("InP 干法刻蚀", config=config)
         self.assertFalse(plan["llm"]["used"])
         self.assertEqual(plan["llm"]["status"], "fallback")
+        self.assertIn("LLM_SERVICE_TOKEN", plan["llm"]["reason"])
         self.assertTrue(plan["query_variants"])
+
+    def test_llm_service_env_is_resolved(self) -> None:
+        root = Path(tempfile.mkdtemp())
+        config = self._settings(root)
+        env = {
+            "LLM_BASE_URL": "http://llm-service.llm.svc.cluster.local/v1/",
+            "LLM_MODEL": "chat-default",
+            "LLM_SERVICE_TOKEN": "tok",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            client = LLMJsonClient.from_environment(config)
+        self.assertIsNotNone(client)
+        self.assertEqual(client.base_url, "http://llm-service.llm.svc.cluster.local/v1")
+        self.assertEqual(client.model, "chat-default")
+        self.assertEqual(client.api_key, "tok")
+        self.assertEqual(client.provider, "llm-service")
+
+        # LLM_MODEL 缺省时用 chat-default（trusted 档，允许 response_format）
+        env.pop("LLM_MODEL")
+        with patch.dict("os.environ", env, clear=True):
+            self.assertEqual(LLMJsonClient.from_environment(config).model, "chat-default")
+
+        # 缺令牌则不构造客户端，由上层回退
+        env.pop("LLM_SERVICE_TOKEN")
+        with patch.dict("os.environ", env, clear=True):
+            self.assertIsNone(LLMJsonClient.from_environment(config))
 
     def test_llm_plan_is_schema_checked_and_cached(self) -> None:
         root = Path(tempfile.mkdtemp())

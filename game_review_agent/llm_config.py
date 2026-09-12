@@ -1,55 +1,29 @@
 """
 试玩评测 agent — LLM 配置。
 
-与 panghu_game 的 provider 约定保持一致：每个 provider 用独立前缀的环境变量，
-凭据通过 Vault Secret 注入，ConfigMap 只放 PROVIDER 选择。
-    PROVIDER=openai | anthropic | deepseek | custom（默认 openai）
+模型调用统一走集群内 llm-service：本服务**不再持有 provider 凭据**，
+只需要入口地址、模型别名与内部令牌（provider 密钥由 llm-service 持有）。
 
-环境变量约定（参考 panghu_game/QianFu/.env.example）：
-    OPENAI_BASE_URL / OPENAI_API_KEY / OPENAI_MODEL
-    DEEPSEEK_BASE_URL / DEEPSEEK_API_KEY / DEEPSEEK_MODEL
-    ANTHROPIC_BASE_URL / ANTHROPIC_API_KEY / ANTHROPIC_MODEL
-    CUSTOM_BASE_URL / CUSTOM_API_KEY / CUSTOM_MODEL
+    LLM_BASE_URL / LLM_MODEL / LLM_SERVICE_TOKEN
 """
 import os
 
 from crewai import LLM
-from tools.llm_config import require_llm_config
 
-PROVIDER = require_llm_config("game_review_agent")
+_LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").rstrip("/")
+_LLM_TOKEN = os.getenv("LLM_SERVICE_TOKEN", "").strip()
+LLM_ALIAS = os.getenv("LLM_MODEL", "chat-tools")
 
-
-def _provider_kwargs():
-    """返回当前 provider 的 model/base_url/api_key 三元组（不含 temperature）。"""
-    if PROVIDER == "openai":
-        return {
-            "model": "openai/" + os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-            "base_url": os.getenv("OPENAI_BASE_URL", "https://api.openai.com"),
-            "api_key": os.getenv("OPENAI_API_KEY"),
-        }
-    if PROVIDER == "deepseek":
-        return {
-            "model": "deepseek/" + os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
-            "base_url": os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-            "api_key": os.getenv("DEEPSEEK_API_KEY"),
-        }
-    if PROVIDER == "custom":
-        return {
-            "model": os.getenv("CUSTOM_MODEL", "gpt-4o-mini"),
-            "base_url": os.getenv("CUSTOM_BASE_URL", os.getenv("CUSTOM_API_BASE", "http://localhost:11434/v1")),
-            "api_key": os.getenv("CUSTOM_API_KEY", ""),
-        }
-    # anthropic（默认）
-    return {
-        "model": os.getenv("ANTHROPIC_MODEL", "anthropic/claude-sonnet-4-6-20250514"),
-        "base_url": os.getenv("ANTHROPIC_BASE_URL"),
-        "api_key": os.getenv("ANTHROPIC_API_KEY"),
-    }
+if not _LLM_BASE_URL or not _LLM_TOKEN:
+    raise RuntimeError(
+        "game_review_agent 未配置 llm-service：需要 LLM_BASE_URL 与 LLM_SERVICE_TOKEN"
+        "（见 k8s/api-deployment.yaml 与 vault/inventory/llm-token-externalsecret.yaml）"
+    )
 
 
 def _make(temperature: float) -> LLM:
-    kw = _provider_kwargs()
-    return LLM(temperature=temperature, **{k: v for k, v in kw.items() if v})
+    # CrewAI 必须显式给 provider：`openai/<别名>` 会落到未安装的 litellm 分支并报错
+    return LLM(model=LLM_ALIAS, provider="openai", base_url=_LLM_BASE_URL, api_key=_LLM_TOKEN, temperature=temperature)
 
 
 PRIMARY_LLM = _make(0.7)

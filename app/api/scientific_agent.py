@@ -15,7 +15,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from tools import sqlite_client as db
-from tools.llm_config import get_llm_config_error
+
+
+def llm_service_config_error() -> str | None:
+    """模型调用统一走集群内 llm-service：本服务不再持有 provider 凭据。"""
+    if not os.getenv("LLM_BASE_URL", "").strip():
+        return "scientific_agent 配置不完整：LLM_BASE_URL 未注入（应指向集群内 llm-service）。"
+    if not os.getenv("LLM_SERVICE_TOKEN", "").strip():
+        return "scientific_agent 配置不完整：LLM_SERVICE_TOKEN 未注入，请检查 ExternalSecret 是否已同步。"
+    return None
+
 
 # ── 初始化 scientific 表 ──
 db.init_db("scientific")
@@ -90,14 +99,14 @@ def _run_refinement(task_id: str, topic: str, email: str = ""):
 
 @app.get("/scientific-health")
 def health():
-    error = get_llm_config_error("scientific_agent")
+    error = llm_service_config_error()
     return {"status": "degraded" if error else "ok", "llm_configured": error is None}
 
 
 @app.post("/scientific-research", response_model=TaskResponse)
 def submit_research(req: ResearchRequest):
     """提交科学综述任务，立即返回 task_id，后台异步执行"""
-    config_error = get_llm_config_error("scientific_agent")
+    config_error = llm_service_config_error()
     if config_error:
         raise HTTPException(503, detail=config_error)
 

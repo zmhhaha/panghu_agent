@@ -43,25 +43,21 @@ python main.py
 python main.py "大语言模型在医疗领域的应用"
 ```
 
-## 支持的模型提供商
+## 模型调用
 
-| 提供商 | PROVIDER 值 | 说明 |
-|-------|------------|------|
-| OpenAI | `openai` | GPT-4o / GPT-4o-mini |
-| Anthropic | `anthropic` | Claude Sonnet / Haiku |
-| DeepSeek | `deepseek` | DeepSeek Chat |
-| 自定义 | `custom` | 任意兼容 OpenAI API 的端点 |
+统一走集群内 `llm-service`，本服务**不再持有任何 provider 凭据**：
 
-### 自定义 API（PROVIDER=custom）
+| 环境变量 | 说明 |
+|---------|------|
+| `LLM_BASE_URL` | `http://llm-service.llm.svc.cluster.local/v1`（基址，不含 `/chat/completions`） |
+| `LLM_MODEL` | 模型别名。本服务带学术/网页检索工具，用 trusted 档 **`chat-tools`**；`chat-guarded` 禁 `tools`，会直接 400 |
+| `LLM_SERVICE_TOKEN` | 内部令牌，来自 `llm-token` ExternalSecret（Vault `secret/llm-service/auth`） |
 
-支持接入任何兼容 OpenAI API 格式的端点：
+这三项与 `llm-client: "true"` Pod 标签（llm-service NetworkPolicy 的放行条件）都由
+[`k8s/api-deployment.yaml`](../k8s/api-deployment.yaml) + [`scripts/deploy-api.sh`](../scripts/deploy-api.sh) 注入，
+档位由脚本按 Agent 名选择。
 
-```ini
-PROVIDER=custom
-CUSTOM_API_BASE=http://localhost:11434/v1
-CUSTOM_API_KEY=your-api-key-here
-CUSTOM_MODEL=qwen2.5:7b
-```
+本地直接 `python main.py` 时也要先导出这三个变量，否则 crew 在 import 期就会报错（故意 fail fast）。
 
 ## Agent 说明
 

@@ -37,6 +37,12 @@ sed "s/__NAMESPACE__/${NAMESPACE}/g" \
   literature_downloader/k8s/configmap.yaml \
   | kubectl apply $K -f -
 
+# llm-service 调用令牌（从 Vault secret/llm-service/auth 取 LLM_SERVICE_TOKEN）。
+# 运行时的 LLM 增强依赖它；缺了只会回退确定性检索，Pod 仍能起来。
+sed "s/__NAMESPACE__/${NAMESPACE}/g" \
+  k8s/llm-token-externalsecret.yaml \
+  | kubectl apply $K -f -
+
 sed \
   -e "s|__API_IMAGE__|${API_IMAGE}|g" \
   literature_downloader/k8s/deployment.yaml \
