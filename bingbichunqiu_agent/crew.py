@@ -4,7 +4,7 @@ from tools.llm_config import require_llm_config
 
 BASE = os.path.dirname(__file__)
 with open(os.path.join(BASE, "skill.md"), encoding="utf-8") as f: SKILL = f.read()
-with open(os.path.join(BASE, "knowledge.md"), encoding="utf-8") as f: KNOWLEDGE = f.read()
+# knowledge.md 不再进 prompt：改由 RAG 按需提供参考素材（见 tools/rag_client.py）
 PROVIDER = require_llm_config("bingbichunqiu_agent")
 if PROVIDER == "openai":
     MODEL = LLM(model="openai/gpt-4o-mini", base_url="https://api.openai.com", api_key=os.getenv("OPENAI_API_KEY"), temperature=0.8)
@@ -19,7 +19,7 @@ def create_bingbichunqiu_agent():
     return Agent(
         role="秉笔春秋史官",
         goal="依据可靠史料回答 {text}，辨析史实、传说与后世评价，并以史鉴今",
-        backstory=SKILL + "\n\n" + KNOWLEDGE,
+        backstory=SKILL,
         llm=MODEL,
         verbose=True,
         allow_delegation=False,
