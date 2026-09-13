@@ -8,12 +8,12 @@ from tools.custom_tools import WebFetchTool, WebSearchTool
 def build_llm() -> LLM:
     """统一走集群内 llm-service。
 
-    本服务**不再持有任何 provider 凭据**：provider 密钥、模型别名路由、超时重试与失败转移
+    本服务**不再持有任何 provider 凭据**：provider 密钥、模型别名路由、超时与重试
     都由 llm-service 负责（见 llm-service/README.md），这里只给别名和内部令牌。
     """
     url = os.getenv("LLM_BASE_URL", "").rstrip("/")
     token = os.getenv("LLM_SERVICE_TOKEN", "")
-    alias = os.getenv("LLM_MODEL", "chat-default")
+    alias = os.getenv("LLM_MODEL", "deepseek-trusted")
     if not url or not token:
         raise RuntimeError(
             "content-llm-service 未配置 llm-service：需要 LLM_BASE_URL 与 LLM_SERVICE_TOKEN"

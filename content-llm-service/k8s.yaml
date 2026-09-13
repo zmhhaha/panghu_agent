@@ -45,7 +45,7 @@ metadata:
 data:
   # 统一走集群内 llm-service：这里只配入口与能力档位，
   # provider 凭据由 llm-service 持有（本服务不再保存任何 provider API Key）。
-  # 用 chat-tools 而非 chat-default：本服务的 CrewAI 需要函数调用（网页工具），
-  # 而 chat-default 在 llm-service 侧显式禁止 tools。
+  # 用 deepseek-trusted：本服务的 CrewAI 需要函数调用（网页工具），
+  # 而 deepseek-guarded 在 llm-service 侧禁止 tools，会直接 400。
   LLM_BASE_URL: http://llm-service.llm.svc.cluster.local/v1
-  LLM_MODEL: chat-tools
+  LLM_MODEL: deepseek-trusted

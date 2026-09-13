@@ -20,7 +20,7 @@ if not os.path.exists(env_path):
     base_url = input(
         "请输入 llm-service 基址 (默认 http://llm-service.llm.svc.cluster.local/v1): "
     ).strip() or "http://llm-service.llm.svc.cluster.local/v1"
-    model = input("请输入模型别名 (默认 chat-guarded): ").strip() or "chat-guarded"
+    model = input("请输入模型别名 (默认 deepseek-guarded): ").strip() or "deepseek-guarded"
     token = input("请输入 LLM_SERVICE_TOKEN: ").strip()
 
     with open(env_path, "w", encoding="utf-8") as fp:

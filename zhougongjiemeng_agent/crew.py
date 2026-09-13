@@ -26,7 +26,7 @@ def create_model() -> LLM:
     """统一走集群内 llm-service：本服务不再持有 provider 凭据。"""
     base_url = os.getenv("LLM_BASE_URL", "").rstrip("/")
     token = os.getenv("LLM_SERVICE_TOKEN", "").strip()
-    alias = os.getenv("LLM_MODEL", "chat-guarded")
+    alias = os.getenv("LLM_MODEL", "deepseek-guarded")
     if not base_url or not token:
         raise RuntimeError(
             "zhougongjiemeng_agent 未配置 llm-service：需要 LLM_BASE_URL 与 LLM_SERVICE_TOKEN"

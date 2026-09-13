@@ -50,7 +50,7 @@ python main.py "大语言模型在医疗领域的应用"
 | 环境变量 | 说明 |
 |---------|------|
 | `LLM_BASE_URL` | `http://llm-service.llm.svc.cluster.local/v1`（基址，不含 `/chat/completions`） |
-| `LLM_MODEL` | 模型别名。本服务带学术/网页检索工具，用 trusted 档 **`chat-tools`**；`chat-guarded` 禁 `tools`，会直接 400 |
+| `LLM_MODEL` | 模型别名。本服务带学术/网页检索工具，用 trusted 档 **`deepseek-trusted`**；`deepseek-guarded` 禁 `tools`，会直接 400 |
 | `LLM_SERVICE_TOKEN` | 内部令牌，来自 `llm-token` ExternalSecret（Vault `secret/llm-service/auth`） |
 
 这三项与 `llm-client: "true"` Pod 标签（llm-service NetworkPolicy 的放行条件）都由

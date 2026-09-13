@@ -20,29 +20,32 @@
 | 配置项 | 来源 | 说明 |
 |---|---|---|
 | `LLM_BASE_URL` | ConfigMap `content-llm-config` | `http://llm-service.llm.svc.cluster.local/v1`（**基址**，litellm 自己接 `/chat/completions`） |
-| `LLM_MODEL` | ConfigMap `content-llm-config` | llm-service 注册的**模型别名** —— 本服务用 `chat-tools`（见下） |
+| `LLM_MODEL` | ConfigMap `content-llm-config` | llm-service 注册的**模型别名** —— 本服务用 `deepseek-trusted`（见下） |
 | `LLM_SERVICE_TOKEN` | Secret `content-llm-secret`（Vault `secret/llm-service/auth`） | 调用 llm-service 的内部令牌 |
 
-provider 密钥、模型别名路由、超时重试与失败转移都由 llm-service 负责，见 `llm-service/README.md`。
+provider 密钥、模型别名路由、超时与重试都由 llm-service 负责，见 `llm-service/README.md`。
 
-### 职责边界：为什么用 `chat-tools` 而不是 `chat-default`
+### 职责边界：为什么用 `deepseek-trusted`
 
 - **llm-service** 只管通道与策略：凭据、路由、超时重试、限流、用量；它不判断业务语义，但**按别名的能力档位**放行能力。
 - **本服务**管业务语义：用什么工具（WebSearch / WebFetch）、提示词、输出解析。
 
-本服务的 CrewAI 会让模型做**函数调用**，请求体里带 `tools` / `tool_choice`；而 llm-service 的
-`chat-default` 显式声明了 `capabilities.tools = false`（纯生成档位，RAG 在用）。所以本服务用**自己的档位**
-`chat-tools`。两边各用各的别名，"谁能做什么"在 llm-service 的 ConfigMap 里一眼可见。
+本服务的 CrewAI 会让模型做**函数调用**，请求体里带 `tools` / `tool_choice`。
+llm-service 只有 `guarded` 档禁 tools、`trusted` 档允许 —— 所以用 `deepseek-trusted`。
+
+（历史上这里曾用 `chat-tools` / `chat-default` 两个名字区分「函数调用」和「纯生成」，但两者其实
+**都是 trusted 档、策略完全相同**，只差默认 temperature 和 timeout，而 temperature 本服务在代码里
+本来就显式传了 0.2。那套名字已废弃，别名格式改为 `<provider>-<tier>`。）
 
 ### 踩坑：CrewAI 的 `LLM(model=...)` 不能写成 `openai/<别名>`
 
 CrewAI 只会把前缀属于它「canonical provider」的模型名交给原生实现，**`openai/...` 不在其中**——
-写 `LLM(model="openai/chat-default")` 会落到未安装的 litellm 分支，报
+写 `LLM(model="openai/deepseek-trusted")` 会落到未安装的 litellm 分支，报
 `Unable to initialize LLM ... LiteLLM fallback package is not installed`。
 必须**显式给 provider**：
 
 ```python
-LLM(model="chat-default", provider="openai", base_url=LLM_BASE_URL, api_key=LLM_SERVICE_TOKEN, temperature=0.2)
+LLM(model="deepseek-trusted", provider="openai", base_url=LLM_BASE_URL, api_key=LLM_SERVICE_TOKEN, temperature=0.2)
 ```
 
 模型名直接用别名，请求体里的 `model` 就是别名，正合 llm-service 的约定。

@@ -44,11 +44,11 @@ spec:
               key: GAME_AUTH_COOKIES_JSON
               optional: true
         # 模型调用：走集群内 llm-service，本服务不再持有 provider 凭据。
-        # 用 chat-tools（trusted 档）——guarded 档禁 tools/response_format，会直接 400。
+        # 用 deepseek-trusted（trusted 档）——guarded 档禁 tools/response_format，会直接 400。
         - name: LLM_BASE_URL
           value: http://llm-service.llm.svc.cluster.local/v1
         - name: LLM_MODEL
-          value: chat-tools
+          value: deepseek-trusted
         - name: LLM_SERVICE_TOKEN
           valueFrom:
             secretKeyRef:

@@ -46,21 +46,21 @@ class LLMSearchTests(unittest.TestCase):
         config = self._settings(root)
         env = {
             "LLM_BASE_URL": "http://llm-service.llm.svc.cluster.local/v1/",
-            "LLM_MODEL": "chat-default",
+            "LLM_MODEL": "deepseek-trusted",
             "LLM_SERVICE_TOKEN": "tok",
         }
         with patch.dict("os.environ", env, clear=True):
             client = LLMJsonClient.from_environment(config)
         self.assertIsNotNone(client)
         self.assertEqual(client.base_url, "http://llm-service.llm.svc.cluster.local/v1")
-        self.assertEqual(client.model, "chat-default")
+        self.assertEqual(client.model, "deepseek-trusted")
         self.assertEqual(client.api_key, "tok")
         self.assertEqual(client.provider, "llm-service")
 
-        # LLM_MODEL 缺省时用 chat-default（trusted 档，允许 response_format）
+        # LLM_MODEL 缺省时用 deepseek-trusted（trusted 档，允许 response_format）
         env.pop("LLM_MODEL")
         with patch.dict("os.environ", env, clear=True):
-            self.assertEqual(LLMJsonClient.from_environment(config).model, "chat-default")
+            self.assertEqual(LLMJsonClient.from_environment(config).model, "deepseek-trusted")
 
         # 缺令牌则不构造客户端，由上层回退
         env.pop("LLM_SERVICE_TOKEN")

@@ -13,7 +13,7 @@ from tools.academic_tools import AcademicSearchTool
 
 _LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").rstrip("/")
 _LLM_TOKEN = os.getenv("LLM_SERVICE_TOKEN", "").strip()
-LLM_ALIAS = os.getenv("LLM_MODEL", "chat-tools")
+LLM_ALIAS = os.getenv("LLM_MODEL", "deepseek-trusted")
 
 if not _LLM_BASE_URL or not _LLM_TOKEN:
     raise RuntimeError(

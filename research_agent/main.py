@@ -23,7 +23,7 @@ if not os.path.exists(env_path):
     base_url = input(
         "请输入 llm-service 基址 (默认 http://llm-service.llm.svc.cluster.local/v1): "
     ).strip() or "http://llm-service.llm.svc.cluster.local/v1"
-    model = input("请输入模型别名 (默认 chat-tools；chat-guarded 禁 tools 会 400): ").strip() or "chat-tools"
+    model = input("请输入模型别名 (默认 deepseek-trusted；deepseek-guarded 禁 tools 会 400): ").strip() or "deepseek-trusted"
     token = input("请输入 LLM_SERVICE_TOKEN: ").strip()
 
     # 网页搜索使用免费的 DuckDuckGo，无需额外 API Key

@@ -132,7 +132,7 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 LLM 检索专家是可选增强能力，不改变下载和校验的确定性流程。模型调用统一走集群内 `llm-service`，本服务不再持有 provider 凭据：
 
 - `LLM_BASE_URL`：`http://llm-service.llm.svc.cluster.local/v1`（基址，本服务自己接 `/chat/completions`）
-- `LLM_MODEL`：模型别名，默认 **`chat-default`**（trusted 档）。检索计划与相关性重排都用 `response_format`，`chat-guarded` 会直接 400；本服务不需要函数调用，故不用 `chat-tools`
+- `LLM_MODEL`：模型别名，默认 **`deepseek-trusted`**（trusted 档）。检索计划与相关性重排都用 `response_format`，`deepseek-guarded` 会直接 400
 - `LLM_SERVICE_TOKEN`：内部令牌，来自 `llm-token` ExternalSecret（`k8s/llm-token-externalsecret.yaml`，Vault `secret/llm-service/auth`）
 - Pod 需带 `llm-client: "true"` 标签，才能通过 llm-service 的 NetworkPolicy
 

@@ -167,11 +167,11 @@ Agent **不再持有任何 provider 凭据**，模型调用经集群内的 `llm-
 - 环境变量：`LLM_BASE_URL`、`LLM_MODEL`、`LLM_SERVICE_TOKEN`（来自 `llm-token` ExternalSecret）
 - Pod 需带 `llm-client: "true"` 标签，才能通过 llm-service 的 NetworkPolicy
 - **档位按 Agent 区分**，由 [`scripts/deploy-api.sh`](scripts/deploy-api.sh) 决定（模板里是 `__LLM_MODEL__` 占位符，
-  可用环境变量 `LLM_MODEL` 覆盖）：
-  - **8 家本法系列**：由**用户写 prompt**，用 `guarded` 档（`chat-guarded`，禁扩权字段、收紧参数上限）。
-  - **research / scientific**：带学术与网页检索工具，`guarded` 档禁 `tools` 会 400，故用 trusted 档 `chat-tools`。
-  - 将来做**内部机器对话**时，那条路径改用 `chat-default` / `chat-tools`——同一个服务两套用法靠别名区分，不用改代码。
-    详见 `llm-service/README.md` 的职责边界。
+  可用环境变量 `LLM_MODEL` 覆盖）。别名格式固定为 `<provider>-<tier>`：
+  - **8 家本法系列**：由**用户写 prompt**，用 `deepseek-guarded`（guarded 档，禁扩权字段、收紧参数上限）。
+  - **research / scientific**：带学术与网页检索工具，`guarded` 档禁 `tools` 会 400，故用 `deepseek-trusted`。
+  - 将来做**内部机器对话**时，那条路径继续用 `deepseek-trusted` 即可（它本就允许 tools）。
+    详见 `llm-service/README.md` 的别名命名约定。
 
 > 已迁移到 llm-service 的服务：8 家本法系列、`research_agent`、`scientific_agent`、`game_review_agent`
 > （独立 manifest `game_review_agent/k8s/api-deployment.yaml` + 独立部署脚本）、`literature_downloader`
@@ -185,8 +185,13 @@ Agent **不再持有任何 provider 凭据**，模型调用经集群内的 `llm-
    但回答时 `fetch_reference` 取不到素材（`RAG_TOKEN` 未注入）。
 3. **先验证检索、再移除知识**：从 prompt 去掉 `knowledge.md` 之前，必须先确认线上能取到素材。
    否则一旦检索失败（401 / 未部署），Agent 会**完全没有素材**，回答质量直接掉。
-4. **别对没有 `knowledge.md` 的服务跑 `deploy-api.sh`**（research / scientific / game-review）：
-   Vault 里没有对应的 `RAG_TOKEN_*`，会留下一个永远 not-ready 的 ExternalSecret。
-5. **并发灌库会把 embedding 打爆**：多台 Agent 同时启动时 embedding 返回 429，RAG 的 ingest 会 500、
+4. **`llm-service` 档位选错会直接 400**：`deepseek-guarded`（guarded 档）禁 `tools` 和 `response_format`，
+   带检索工具的 Agent（research / scientific / game_review）或需要 JSON 输出的服务
+   （literature_downloader）用了它就会被拒。档位由 `deploy-api.sh` 按 Agent 名自动选，
+   手工渲染模板时别写错。见上面「模型调用」一节。
+5. **没有 `knowledge.md` 的服务也要注意 RAG 凭据**（research / scientific / game-review）：
+   Vault 里没有对应的 `RAG_TOKEN_*`。`deploy-api.sh` 现在会默认跳过 `rag-token` 的创建
+   （要强制时设 `RAG_CALLER=1`），它们的 `rag-sync` initContainer 会空跑并返回 0，不阻塞启动。
+6. **并发灌库会把 embedding 打爆**：多台 Agent 同时启动时 embedding 返回 429，RAG 的 ingest 会 500、
    同步静默失败。两侧已加退避重试；如需同时部署多家，建议错峰。
 
