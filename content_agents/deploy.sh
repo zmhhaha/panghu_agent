@@ -21,6 +21,7 @@ fi
 kubectl apply -f "${SCRIPT_DIR}/k8s/namespace.yaml"
 kubectl apply -f "${SCRIPT_DIR}/k8s/storage.yaml"
 kubectl apply -f "${SCRIPT_DIR}/k8s/configmap.yaml"
+kubectl apply -f "${SCRIPT_DIR}/k8s/llm-token-externalsecret.yaml"
 sed "s|arm-cluster-master:5000|${REGISTRY}|g; s|:latest|:${IMAGE_TAG}|g" \
     "${SCRIPT_DIR}/k8s/cronjobs.yaml" | kubectl apply -f -
 

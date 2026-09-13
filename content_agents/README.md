@@ -7,6 +7,8 @@ This directory contains platform-independent content bots:
 - `finance_news_agent`: collect finance and market briefs, including 财联社电报.
 - `programmer_jobs_agent`: summarize daily and weekly programming-job demand from public technical-job RSS, APIs, and the JDWatch daily report.
 - `meme_collector_agent`: collect trending phrases and their public source context.
+- `llm_guard_report_agent`: publish the daily llm-service guard/usage report. Reads the cluster-internal
+  llm-service `/v1/guard/report` aggregate and posts it to Hublog as a **private** item by default.
 
 The bots produce a common `ContentItem`. Hublog is only an optional channel adapter; JSON and RSS output can run without Hublog.
 
@@ -120,6 +122,41 @@ kubectl -n content-agents wait --for=condition=Ready \
   externalsecret/content-agent-hublog --timeout=120s
 kubectl -n content-agents get secret content-agent-hublog \
   -o jsonpath='{.data}' | jq 'keys'
+```
+
+## llm-service guard report
+
+`llm_guard_report_agent` is the only bot whose data source is **inside the cluster** instead of a
+public feed: it GETs `llm-service`'s `/v1/guard/report` aggregate (per-caller requests, tokens,
+prompt-injection detection hits, canary leaks) and renders one Markdown post.
+
+It needs **two** credentials, and they come from two different envelopes:
+
+| Purpose | Env | Source |
+| --- | --- | --- |
+| Read the aggregate | `LLM_API_KEY` | the `llm-token` ExternalSecret in this namespace, key `LLM_SERVICE_TOKEN` — this bot's llm-service caller identity is `llm-report` |
+| Publish to Hublog | `HUBLOG_SERVICE_TOKENS` | the shared raw envelope (`content-agent-hublog`), entry `llm-guard-report` |
+
+`llm-service` only returns the aggregate to callers listed in `LLM_GUARD.report_callers`; the
+default ConfigMap lists `llm-report`. The CronJob carries the `llm-client: "true"` pod label,
+which llm-service's NetworkPolicy requires.
+
+The post is published with the channel default (`visibility=public`) — it doubles as a public
+view of llm-service usage.
+
+Offline smoke test (no network, no token):
+
+```bash
+cd panghu_agent
+python -m content_agents.llm_guard_report_agent.main --sample
+```
+
+Manual run against the cluster:
+
+```bash
+kubectl -n content-agents create job --from=cronjob/llm-guard-report-agent llm-guard-report-manual
+kubectl -n content-agents wait --for=condition=complete job/llm-guard-report-manual --timeout=180s
+kubectl -n content-agents logs job/llm-guard-report-manual
 ```
 
 ## Build and deploy

@@ -248,3 +248,60 @@ spec:
             - name: data
               persistentVolumeClaim:
                 claimName: content-agents-data
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: llm-guard-report-agent
+  namespace: content-agents
+spec:
+  timeZone: Asia/Shanghai
+  # 每天 09:17 出一次日报（读的是 llm-service 自启动以来的累计值）。避开整点。
+  schedule: "17 9 * * *" # 09:17 Asia/Shanghai.
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 3600
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            # llm-service 的 NetworkPolicy 只放行带这个标签的 Pod
+            llm-client: "true"
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: agent
+              image: arm-cluster-master:5000/panghu-content-llm-guard-report:latest
+              imagePullPolicy: Always
+              command: [python, -m, content_agents.llm_guard_report_agent.main]
+              env:
+                # 数据源是集群内 llm-service（不是公网）；LLM_API_KEY 是它给本 bot 的调用方令牌，
+                # 身份为 llm-report，必须出现在 llm-service 的 LLM_GUARD.report_callers 白名单里。
+                - name: LLM_BASE_URL
+                  value: http://llm-service.llm.svc.cluster.local/v1
+                - name: LLM_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: llm-token
+                      key: LLM_SERVICE_TOKEN
+                      optional: true
+              envFrom:
+                - configMapRef:
+                    name: content-agents-config
+                - secretRef:
+                    name: content-agent-hublog
+                    optional: true
+              volumeMounts:
+                - name: data
+                  mountPath: /data
+              resources:
+                # 一次 GET + 一次发帖，很轻。
+                requests: {cpu: 10m, memory: 32Mi}
+                limits: {cpu: 200m, memory: 256Mi}
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: content-agents-data
