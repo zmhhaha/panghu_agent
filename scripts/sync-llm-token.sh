@@ -3,11 +3,11 @@
 #  Panghu Agent — llm-service 令牌同步与重启
 #
 #  用途：
-#    1. 强制 ESO 立即同步 llm-token（从 Vault secret/llm-service/auth 取 LLM_SERVICE_TOKEN）
+#    1. 强制 ESO 立即同步 llm-token（从 Vault secret/llm-service/callers 取本调用方那一个键）
 #    2. 校验各 namespace 的令牌已就绪
 #    3. 重启 api pod 使新 Secret 生效（可选，加 --restart）
 #
-#  前提：Vault 路径 secret/llm-service/auth 已写入 LLM_SERVICE_TOKEN，
+#  前提：Vault 路径 secret/llm-service/callers 已写入各调用方的 LLM_TOKEN_<CALLER>，
 #        且各 namespace 已 apply panghu_agent/k8s/llm-token-externalsecret.yaml
 #        （deploy-api.sh 与各服务自己的 deploy 脚本会自动做这一步）。
 #
@@ -87,8 +87,8 @@ for ns in "${NS_LIST[@]}"; do
   if [ -n "$key" ]; then
     echo "  ${ns}/llm-token: ✅ LLM_SERVICE_TOKEN 已同步"
   else
-    echo "  ${ns}/llm-token: ⚠️ 未找到 LLM_SERVICE_TOKEN（检查 Vault 路径 secret/llm-service/auth，"
-    echo "     以及本 namespace 是否已 apply k8s/llm-token-externalsecret.yaml）"
+    echo "  ${ns}/llm-token: ⚠️ 未找到 LLM_SERVICE_TOKEN（检查 Vault 路径 secret/llm-service/callers"
+    echo "     里有没有本调用方的 LLM_TOKEN_* 键，以及本 namespace 是否已 apply k8s/llm-token-externalsecret.yaml）"
     MISSING_SECRET_NS+=("$ns")
   fi
 done

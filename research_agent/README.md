@@ -51,7 +51,7 @@ python main.py "大语言模型在医疗领域的应用"
 |---------|------|
 | `LLM_BASE_URL` | `http://llm-service.llm.svc.cluster.local/v1`（基址，不含 `/chat/completions`） |
 | `LLM_MODEL` | 模型别名。本服务带学术/网页检索工具，用 trusted 档 **`deepseek-trusted`**；`deepseek-guarded` 禁 `tools`，会直接 400 |
-| `LLM_SERVICE_TOKEN` | 内部令牌，来自 `llm-token` ExternalSecret（Vault `secret/llm-service/auth`） |
+| `LLM_SERVICE_TOKEN` | 本服务在 llm-service 侧的**专属**令牌，来自 `llm-token` ExternalSecret（Vault `secret/llm-service/callers` 的 `LLM_TOKEN_RESEARCH`） |
 
 这三项与 `llm-client: "true"` Pod 标签（llm-service NetworkPolicy 的放行条件）都由
 [`k8s/api-deployment.yaml`](../k8s/api-deployment.yaml) + [`scripts/deploy-api.sh`](../scripts/deploy-api.sh) 注入，

@@ -6,6 +6,8 @@ KUBECONFIG_PATH="${KUBECONFIG_PATH:-/etc/kubernetes/super-admin.conf}"
 REGISTRY="${REGISTRY:-arm-cluster-master:5000}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 NAMESPACE="literature-downloader"
+# 本服务在 llm-service 侧的调用者名：Vault 键 LLM_TOKEN_LITERATURE_DOWNLOADER -> 身份 literature-downloader
+LLM_VAULT_TOKEN_KEY="LLM_TOKEN_LITERATURE_DOWNLOADER"
 API_IMAGE="${REGISTRY}/literature-downloader-api:${IMAGE_TAG}"
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-1200s}"
 K="--kubeconfig=${KUBECONFIG_PATH}"
@@ -37,9 +39,10 @@ sed "s/__NAMESPACE__/${NAMESPACE}/g" \
   literature_downloader/k8s/configmap.yaml \
   | kubectl apply $K -f -
 
-# llm-service 调用令牌（从 Vault secret/llm-service/auth 取 LLM_SERVICE_TOKEN）。
+# llm-service 调用令牌（只取本调用方那一个键；llm-service 由变量名反推身份）。
 # 运行时的 LLM 增强依赖它；缺了只会回退确定性检索，Pod 仍能起来。
-sed "s/__NAMESPACE__/${NAMESPACE}/g" \
+sed -e "s/__NAMESPACE__/${NAMESPACE}/g" \
+    -e "s/__VAULT_TOKEN_KEY__/${LLM_VAULT_TOKEN_KEY}/g" \
   k8s/llm-token-externalsecret.yaml \
   | kubectl apply $K -f -
 

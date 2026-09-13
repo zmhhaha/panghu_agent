@@ -21,7 +21,7 @@
 |---|---|---|
 | `LLM_BASE_URL` | ConfigMap `content-llm-config` | `http://llm-service.llm.svc.cluster.local/v1`（**基址**，litellm 自己接 `/chat/completions`） |
 | `LLM_MODEL` | ConfigMap `content-llm-config` | llm-service 注册的**模型别名** —— 本服务用 `deepseek-trusted`（见下） |
-| `LLM_SERVICE_TOKEN` | Secret `content-llm-secret`（Vault `secret/llm-service/auth`） | 调用 llm-service 的内部令牌 |
+| `LLM_SERVICE_TOKEN` | Secret `content-llm-secret`（Vault `secret/llm-service/callers` 的 `LLM_TOKEN_CONTENT_LLM_SERVICE`） | 本服务在 llm-service 侧的**专属**令牌 |
 
 provider 密钥、模型别名路由、超时与重试都由 llm-service 负责，见 `llm-service/README.md`。
 
@@ -65,8 +65,9 @@ Service 地址：`http://content-llm-service.content-agents.svc.cluster.local`
 `llm-service`，并携带 `LLM_SERVICE_TOKEN`；provider 凭据只存在于 llm-service。
 
 Pod 需要带 `llm-client: "true"` 标签，才能通过 llm-service 的 NetworkPolicy；
-令牌由 `vault/inventory/content-llm-externalsecret.yaml` 从 `secret/llm-service/auth` 同步到
-`content-llm-secret`（与 llm-service 同源，不各存一份）。
+令牌由 `vault/inventory/content-llm-externalsecret.yaml` 从 `secret/llm-service/callers` 里
+**只取本服务那一个键**（`LLM_TOKEN_CONTENT_LLM_SERVICE`）同步到 `content-llm-secret` ——
+每个调用方拿不到别人的令牌，llm-service 由变量名反推身份。
 
 ### 迁移收尾（已完成）
 

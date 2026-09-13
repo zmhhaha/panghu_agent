@@ -113,8 +113,9 @@ kubectl rollout restart deploy/api -n $NS
 kubectl rollout restart deploy/ui  -n $NS
 ```
 
-`LLM_SERVICE_TOKEN` 来自 `llm-token` ExternalSecret（Vault `secret/llm-service/auth`），
-不需要手工创建 Secret。
+`LLM_SERVICE_TOKEN` 是**本调用方专属**的令牌（每个命名空间一个，互不可见），来自 `llm-token`
+ExternalSecret —— 它从 Vault `secret/llm-service/callers` 里只取本调用方那一个键（`LLM_TOKEN_<CALLER>`）。
+llm-service **由变量名反推身份**，所以客户端无法自称是谁。不需要手工创建 Secret。
 
 ## 架构
 

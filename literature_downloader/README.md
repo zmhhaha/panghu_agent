@@ -77,7 +77,7 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 
 默认访问地址为 `https://literature-downloader.panghuer.top`。OAuth2 Proxy 将请求转发到 `ui.literature-downloader.svc.cluster.local:7860`，并继续使用集群现有的 Casdoor/OIDC Secret。
 
-`literature_downloader/k8s/configmap.yaml` 包含检索 Agent 参数（`LITERATURE_*`），`deploy.sh` 会自动应用它。模型调用走集群内 `llm-service`：`deploy.sh` 会一并 apply `k8s/llm-token-externalsecret.yaml`，把 Vault `secret/llm-service/auth` 的 `LLM_SERVICE_TOKEN` 注入 `llm-token` Secret。没有该令牌时不会报错，只是自动退回规则检索。
+`literature_downloader/k8s/configmap.yaml` 包含检索 Agent 参数（`LITERATURE_*`），`deploy.sh` 会自动应用它。模型调用走集群内 `llm-service`：`deploy.sh` 会一并 apply `k8s/llm-token-externalsecret.yaml`，从 Vault `secret/llm-service/callers` 取本服务**专属**的 `LLM_TOKEN_LITERATURE_DOWNLOADER` 注入 `llm-token` Secret。没有该令牌时不会报错，只是自动退回规则检索。
 
 ## 主要 API
 
@@ -133,7 +133,7 @@ LLM 检索专家是可选增强能力，不改变下载和校验的确定性流�
 
 - `LLM_BASE_URL`：`http://llm-service.llm.svc.cluster.local/v1`（基址，本服务自己接 `/chat/completions`）
 - `LLM_MODEL`：模型别名，默认 **`deepseek-trusted`**（trusted 档）。检索计划与相关性重排都用 `response_format`，`deepseek-guarded` 会直接 400
-- `LLM_SERVICE_TOKEN`：内部令牌，来自 `llm-token` ExternalSecret（`k8s/llm-token-externalsecret.yaml`，Vault `secret/llm-service/auth`）
+- `LLM_SERVICE_TOKEN`：本服务在 llm-service 侧的**专属**令牌，来自 `llm-token` ExternalSecret（`k8s/llm-token-externalsecret.yaml`，取 Vault `secret/llm-service/callers` 的 `LLM_TOKEN_LITERATURE_DOWNLOADER`）
 - Pod 需带 `llm-client: "true"` 标签，才能通过 llm-service 的 NetworkPolicy
 
 三者任一缺失时 `LLMJsonClient.from_environment()` 返回 `None`，系统退回规则检索，仍可正常检索、下载和生成报告。

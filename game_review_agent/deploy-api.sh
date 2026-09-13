@@ -15,6 +15,8 @@ cd "$script_dir/.."
 
 NAME="game_review_agent"
 NAMESPACE="game-review-agent"
+# 本服务在 llm-service 侧的调用者名：Vault 键 LLM_TOKEN_GAME_REVIEW -> 身份 game-review
+LLM_VAULT_TOKEN_KEY="LLM_TOKEN_GAME_REVIEW"
 K="--kubeconfig=/etc/kubernetes/super-admin.conf"
 REGISTRY="${REGISTRY:-arm-cluster-master:5000}"
 IMAGE="${REGISTRY}/game-review-agent-api:latest"
@@ -41,10 +43,11 @@ kubectl create configmap api-agent -n ${NAMESPACE} \
     --from-file=agent.py="app/api/${NAME}.py" \
     --dry-run=client -o yaml $K | kubectl apply $K -f -
 
-# llm-service 调用令牌（从 Vault secret/llm-service/auth 取 LLM_SERVICE_TOKEN）
+# llm-service 调用令牌（只取本调用方那一个键；llm-service 由变量名反推身份）
 # 没有它 api 容器会在 import 时 RuntimeError 起不来
-sed "s/__NAMESPACE__/${NAMESPACE}/g" \
-  k8s/llm-token-externalsecret.yaml | kubectl apply $K -f -
+sed -e "s/__NAMESPACE__/${NAMESPACE}/g" \
+    -e "s/__VAULT_TOKEN_KEY__/${LLM_VAULT_TOKEN_KEY}/g" \
+    k8s/llm-token-externalsecret.yaml | kubectl apply $K -f -
 
 # apply 专属 deployment
 sed "s/__NAMESPACE__/${NAMESPACE}/g" game_review_agent/k8s/api-deployment.yaml | kubectl apply $K -f -

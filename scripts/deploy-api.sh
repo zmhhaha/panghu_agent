@@ -18,8 +18,9 @@ cd "$script_dir"
 
 NAME="${1:-research_agent}"
 NAMESPACE="${NAME//_/-}"   # namespace
-AGENT="${NAME%_agent}"     # 调用者名（与 RAG 的 RAG_TOKEN_<CALLER> 对应）
+AGENT="${NAME%_agent}"     # 调用者名（与 RAG 的 RAG_TOKEN_<CALLER> / llm 的 LLM_TOKEN_<CALLER> 对应）
 VAULT_TOKEN_KEY="RAG_TOKEN_$(printf '%s' "$AGENT" | tr 'a-z-' 'A-Z_')"
+LLM_VAULT_TOKEN_KEY="LLM_TOKEN_$(printf '%s' "$AGENT" | tr 'a-z-' 'A-Z_')"
 K="--kubeconfig=/etc/kubernetes/super-admin.conf"
 SRC="../app/api/${NAME}.py"
 
@@ -72,8 +73,9 @@ else
         ../k8s/rag-token-externalsecret.yaml | kubectl apply $K -f -
 fi
 
-# llm-service 调用令牌（每个命名空间一份，与 RAG 同源）
-sed "s/__NAMESPACE__/${NAMESPACE}/g" \
+# llm-service 调用令牌（每个命名空间一份，只取本调用方那一个键）
+sed -e "s/__NAMESPACE__/${NAMESPACE}/g" \
+    -e "s/__VAULT_TOKEN_KEY__/${LLM_VAULT_TOKEN_KEY}/g" \
     ../k8s/llm-token-externalsecret.yaml | kubectl apply $K -f -
 
 # apply K8s
