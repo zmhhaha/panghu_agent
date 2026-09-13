@@ -256,8 +256,9 @@ metadata:
   namespace: content-agents
 spec:
   timeZone: Asia/Shanghai
-  # 每天 09:17 出一次日报（读的是 llm-service 自启动以来的累计值）。避开整点。
-  schedule: "17 9 * * *" # 09:17 Asia/Shanghai.
+  # 每天凌晨出一次日报。读的是 llm-service 自启动以来的累计值，所以几点跑不影响数据窗口；
+  # 放在凌晨是为了让报告在早上就能看到。错开整点和其它 job（19:30/20:30/21:00/00:30/12:30）。
+  schedule: "15 4 * * *" # 04:15 Asia/Shanghai.
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
