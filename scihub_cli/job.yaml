@@ -6,6 +6,7 @@ metadata:
   name: scihub-download-job
   namespace: literature-downloader
 spec:
+  ttlSecondsAfterFinished: 3600
   # 如果失败，重启 Pod
   backoffLimit: 2
   template:
