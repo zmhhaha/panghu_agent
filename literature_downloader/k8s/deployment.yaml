@@ -68,7 +68,7 @@ spec:
     metadata:
       labels:
         app: literature-api
-        # llm-service 的 NetworkPolicy 只放行带此标签的 Pod
+        # llm-service 的 NetworkPolicy 只放行带此标签的 Pod（注 2026-09-20 实测：本集群 CNI 不实现 NetworkPolicy，该策略当前未生效；缺标签不会被拦、也不会表现为超时。见 docs/network-policy-engine.md）
         llm-client: "true"
     spec:
       serviceAccountName: literature-downloader
