@@ -1,0 +1,24 @@
+{
+  "agents": {
+    "bingbichunqiu": {
+      "display_name": "秉笔春秋",
+      "service_name": "bingbichunqiu_agent",
+      "host": "bingbichunqiu-agent.panghuer.top",
+      "plugin": "bingbichunqiu",
+      "legacy_path": "/bingbichunqiu_agent",
+      "llm_model": "deepseek-guarded",
+      "rag_enabled": true,
+      "max_input_length": 2000,
+      "max_output_length": 600,
+      "concurrency": 2,
+      "enabled": true,
+      "icon": "📜",
+      "tagline": "从史料、时代与因果中，为今日之问落一笔。",
+      "input_label": "史事或问题",
+      "input_placeholder": "例如：为什么秦始皇能完成统一？历代史家又如何评价这件事？",
+      "submit_label": "📜 请史官落笔",
+      "empty_message": "先落一笔，史官不能对着空白竹简起笔。",
+      "waiting_message": "正在查考旧闻，整理因果"
+    }
+  }
+}
