@@ -1,0 +1,19 @@
+# 百家争鸣的 API 镜像。
+#
+# 刻意**不复用**公共的 `agent-api:latest`：那张 tag 由 scripts/deploy-api.sh 为
+# research / scientific 等「按服务部署」的 Agent 维护，两边共用会互相覆盖 —— 一边
+# 重建镜像，另一边的服务下次重启就悄悄换上了不属于它的代码（2026-09-28 讨论过）。
+# 基座镜像 `agent-api-base` 继续共用：那是「怎么跑 CrewAI」，不是「谁的代码」。
+ARG REGISTRY=arm-cluster-master:5000
+FROM ${REGISTRY}/agent-api-base:latest
+
+# 整个仓库都拷进去：八个人格各自的包（<slug>_agent/）与框架都在里面。
+# 构建上下文必须是仓库根目录，见 deploy.sh。
+COPY . /app
+
+ENV PYTHONUNBUFFERED=1
+EXPOSE 8000
+# 健康检查走与路径无关的 TCP 探活；k8s 的探针是 HTTP /health，见 k8s.yaml。
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "import socket; socket.create_connection(('127.0.0.1', 8000), 3)" || exit 1
+CMD ["python", "-m", "uvicorn", "baijiazhengming.api:app", "--host", "0.0.0.0", "--port", "8000"]

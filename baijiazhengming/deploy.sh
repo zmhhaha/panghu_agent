@@ -25,8 +25,10 @@ AGENTS=(bingbichunqiu daofaziran fofawubian xiaotanrenjian yimaneili zhenzhuzhid
 cd "${ROOT_DIR}"
 
 echo "== 1/5 构建镜像 =="
-docker build -f Dockerfile.api -t "${REGISTRY}/agent-api:latest" .
-docker push "${REGISTRY}/agent-api:latest"
+# 自有的镜像 tag，**不碰**公共的 `agent-api:latest`（那是 scripts/deploy-api.sh 给
+# research / scientific 等按服务部署的 Agent 用的；共用会让两边互相覆盖）。
+docker build -f baijiazhengming/Dockerfile.api -t "${REGISTRY}/baijiazhengming-api:latest" .
+docker push "${REGISTRY}/baijiazhengming-api:latest"
 docker build -f baijiazhengming/Dockerfile.ui -t "${REGISTRY}/baijiazhengming-ui:latest" .
 docker push "${REGISTRY}/baijiazhengming-ui:latest"
 

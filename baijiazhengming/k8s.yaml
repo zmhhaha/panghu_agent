@@ -89,7 +89,7 @@ spec:
         # 八个人格的基线 knowledge.md 各同步一次，各自用自己的 RAG 凭据
         # （见 baijiazhengming/sync_baseline.py）。失败只告警，不阻塞启动。
         - name: rag-sync
-          image: arm-cluster-master:5000/agent-api:latest
+          image: arm-cluster-master:5000/baijiazhengming-api:latest
           imagePullPolicy: Always
           command: ["python", "-m", "baijiazhengming.sync_baseline"]
           envFrom:
@@ -99,7 +99,7 @@ spec:
               value: http://rag-service.data.svc.cluster.local:8080
       containers:
         - name: api
-          image: arm-cluster-master:5000/agent-api:latest
+          image: arm-cluster-master:5000/baijiazhengming-api:latest
           imagePullPolicy: Always
           command: ["python", "-m", "uvicorn", "baijiazhengming.api:app"]
           args: ["--host", "0.0.0.0", "--port", "8000"]
