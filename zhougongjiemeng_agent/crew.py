@@ -21,28 +21,39 @@ except FileNotFoundError:
 
 # knowledge.md 不再进 prompt：改由 RAG 按需提供参考素材（见 tools/rag_client.py）
 
+# 与其余七个插件**同结构**：配置在模块导入时读取，构造模型时只做校验。
+_LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").rstrip("/")
+_LLM_TOKEN = os.getenv("LLM_SERVICE_TOKEN", "").strip()
+LLM_ALIAS = os.getenv("LLM_MODEL", "deepseek-guarded")
+# 单次 LLM 调用超时（秒）。不设的话请求会一直挂住 —— 任务永远停在 running、
+# 并发槽位被占死；框架侧的看门狗只能把用户解锁，救不回槽位。
+_LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "120"))
+# 八个插件之间**唯一**保留的取值差异：周公 0.7，其余七个 0.8。保留是因为它可能是有意
+# 的（tagline 要求「给出有分寸、不故弄玄虚的解读」）；要完全拉平就改成 0.8。
+LLM_TEMPERATURE = 0.7
 
-def create_model() -> LLM:
+def build_model() -> LLM:
     """统一走集群内 llm-service：本服务不再持有 provider 凭据。
 
     凭据优先取本 agent 自己的 `LLM_TOKEN_ZHOUGONGJIEMENG` —— 共享运行时把八个人的
     token 一次性注入进程，凭据按人格分开是正确性要求而不是记账要求。取不到时退回
     进程级的 `LLM_SERVICE_TOKEN`，旧的按服务部署就是后者，行为不变。
     """
-    base_url = os.getenv("LLM_BASE_URL", "").rstrip("/")
-    token = os.getenv("LLM_TOKEN_ZHOUGONGJIEMENG", "").strip() or os.getenv(
-        "LLM_SERVICE_TOKEN", ""
-    ).strip()
-    alias = os.getenv("LLM_MODEL", "deepseek-guarded")
-    # 单次 LLM 调用超时（秒）；不设会一直挂住，任务永远停在 running
-    timeout = float(os.getenv("LLM_TIMEOUT", "120"))
-    if not base_url or not token:
+    api_key = os.getenv("LLM_TOKEN_ZHOUGONGJIEMENG", "").strip() or _LLM_TOKEN
+    if not _LLM_BASE_URL or not api_key:
         raise RuntimeError(
             "zhougongjiemeng_agent 未配置 llm-service：需要 LLM_BASE_URL 与 LLM_SERVICE_TOKEN"
             "（见 k8s/api-deployment.yaml 与 vault/inventory/llm-token-externalsecret.yaml）"
         )
     # CrewAI 必须显式给 provider：`openai/<别名>` 会落到未安装的 litellm 分支并报错
-    return LLM(model=alias, provider="openai", base_url=base_url, api_key=token, temperature=0.7, timeout=timeout)
+    return LLM(
+        model=LLM_ALIAS,
+        provider="openai",
+        base_url=_LLM_BASE_URL,
+        api_key=api_key,
+        temperature=LLM_TEMPERATURE,
+        timeout=_LLM_TIMEOUT,
+    )
 
 
 def create_zhougongjiemeng_agent() -> Agent:
@@ -52,7 +63,7 @@ def create_zhougongjiemeng_agent() -> Agent:
             "读懂 {text} 中的梦境细节，给出有传统文化味道、贴近现实且不故弄玄虚的解读"
         ),
         backstory=SKILL_CONTENT,
-        llm=create_model(),
+        llm=build_model(),
         verbose=True,
         allow_delegation=False,
     )

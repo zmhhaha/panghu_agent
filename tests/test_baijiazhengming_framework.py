@@ -173,3 +173,33 @@ def test_every_persona_passes_a_timeout_to_the_llm(slug):
     assert calls, f"{path} 里找不到 LLM(...) 调用"
     for call in calls:
         assert "timeout" in {kw.arg for kw in call.keywords}, f"{path} 的 LLM() 没有 timeout"
+
+
+@pytest.mark.parametrize("slug", PERSONAS)
+def test_every_persona_reads_temperature_from_the_same_constant(slug):
+    """八个插件必须**同结构**：temperature 走模块级 `LLM_TEMPERATURE` 常量。
+
+    取值允许不同（周公 0.7、其余 0.8，那是有意保留的），但**取值方式**必须一样 ——
+    这条是为了防止哪天又有人在某一个文件里写死一个字面量，把「结构统一」重新打散
+    （历史上周公就是从结构到取值都漂移了那一份，加 timeout 时差点静默漏掉）。
+    """
+    path = REPO / f"{slug}_agent" / "crew.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    module_assigns = {
+        node.targets[0].id
+        for node in tree.body
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
+    }
+    assert "LLM_TEMPERATURE" in module_assigns, f"{path} 没有模块级 LLM_TEMPERATURE"
+
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "LLM"
+    ]
+    for call in calls:
+        temperature = {kw.arg: kw.value for kw in call.keywords}.get("temperature")
+        assert isinstance(temperature, ast.Name), f"{path} 的 temperature 不是模块级常量"
+        assert temperature.id == "LLM_TEMPERATURE", f"{path} 的 temperature 没走 LLM_TEMPERATURE"
