@@ -32,6 +32,11 @@ docker push "${REGISTRY}/baijiazhengming-ui:latest"
 
 echo "== 2/5 应用清单（公网流量尚未切换）=="
 kubectl apply ${KUBECONFIG_ARG} -f baijiazhengming/k8s.yaml
+# 镜像是固定 tag `:latest` + imagePullPolicy: Always —— **apply 不会因此滚动更新**，
+# 必须显式重启。实测踩过：清单和 registry 都更新了，UI Pod 还跑着只认识一个人格的
+# 旧镜像，于是八个域名里七个仍显示秉笔春秋。
+kubectl rollout restart ${KUBECONFIG_ARG} deployment/baijiazhengming-api -n "${NAMESPACE}"
+kubectl rollout restart ${KUBECONFIG_ARG} deployment/baijiazhengming-ui -n "${NAMESPACE}"
 kubectl rollout status ${KUBECONFIG_ARG} deployment/baijiazhengming-api -n "${NAMESPACE}" --timeout=300s
 kubectl rollout status ${KUBECONFIG_ARG} deployment/baijiazhengming-ui -n "${NAMESPACE}" --timeout=300s
 
