@@ -46,10 +46,11 @@ echo "== 3/5 自检：八个人格各跑一道真题 =="
 kubectl exec ${KUBECONFIG_ARG} -n "${NAMESPACE}" deploy/baijiazhengming-api \
     -- python -m baijiazhengming.selfcheck
 
-echo "== 4/5 切换八个代理的 upstream → ${UPSTREAM} =="
-for slug in "${AGENTS[@]}"; do
-    bash "${REPO_ROOT}/oauth/k8s/deploy-agent-proxy.sh" "${slug}-agent" "${UPSTREAM}"
-done
+echo "== 4/5 更新共享代理的 upstream → ${UPSTREAM} =="
+# 八个人格的代理已在 2026-09-28 合并成一个共享实例（oauth2-proxy-baijiazhengming），
+# 隧道只喂它。那八个旧的仍留在 ns oauth 里当单域名回滚的退路，但**不再由日常部署
+# 渲染/重启** —— 原先是循环它们，结果真正在用的那个反倒不会被更新。
+bash "${REPO_ROOT}/oauth/k8s/deploy-agent-proxy.sh" baijiazhengming "${UPSTREAM}"
 
 echo "== 5/5 探活 =="
 for slug in "${AGENTS[@]}"; do
@@ -60,9 +61,11 @@ done
 
 cat <<'EOF'
 
-完成。旧服务仍在跑，回滚就是把某个代理的 upstream 指回去（不带第二个参数 = 旧值）：
-  bash oauth/k8s/deploy-agent-proxy.sh <slug>-agent
+完成。当前的回滚口径（八个旧命名空间的 api/ui 已由 retire-legacy-personas.sh 删除）：
 
-确认八个域名都正常、且登录后各是各自的人格之后，再执行：
-  bash panghu_agent/scripts/retire-legacy-personas.sh
+- 共享代理/UI 出问题 → 修好它，或把它的 upstream 指回上一个可用地址：
+    bash oauth/k8s/deploy-agent-proxy.sh baijiazhengming <upstream>
+- 需要按单个域名退回旧服务 → 先用 scripts/deploy-api.sh / deploy-ui.sh 把那个服务搭回来，
+  再到 Cloudflare 后台把该域名指回它的 oauth2-proxy-<slug>-agent（那八个代理仍在 ns oauth，
+  ConfigMap 也还在，只是当前没流量）。
 EOF
