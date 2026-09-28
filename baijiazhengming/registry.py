@@ -9,12 +9,26 @@ from pathlib import Path
 
 from .plugin import AgentPlugin
 from .plugins.bingbichunqiu import BingBiChunQiuPlugin
+from .plugins.daofaziran import DaoFaZiRanPlugin
+from .plugins.fofawubian import FoFaWuBianPlugin
+from .plugins.xiaotanrenjian import XiaoTanRenJianPlugin
+from .plugins.yimaneili import YiMaNeiLiPlugin
+from .plugins.zhenzhuzhida import ZhenZhuZhiDaPlugin
+from .plugins.zhongkuifumo import ZhongKuiFuMoPlugin
+from .plugins.zhougongjiemeng import ZhouGongJieMengPlugin
 
 
 _SLUG = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 _HOST = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$")
 _PLUGIN_TYPES: dict[str, type[AgentPlugin]] = {
     "bingbichunqiu": BingBiChunQiuPlugin,
+    "daofaziran": DaoFaZiRanPlugin,
+    "fofawubian": FoFaWuBianPlugin,
+    "xiaotanrenjian": XiaoTanRenJianPlugin,
+    "yimaneili": YiMaNeiLiPlugin,
+    "zhenzhuzhida": ZhenZhuZhiDaPlugin,
+    "zhongkuifumo": ZhongKuiFuMoPlugin,
+    "zhougongjiemeng": ZhouGongJieMengPlugin,
 }
 
 
@@ -42,8 +56,12 @@ class AgentDefinition:
     # 用户已经有了一个在跑的任务时显示的话。默认值是通用说法；
     # 每个 agent 可以把它换成有人格味的写法（迁自各自旧 UI 的原话）。
     busy_message: str
-    # 失败提示的前缀，UI 会在后面接上具体原因。
+    # 失败提示，**是模板**：`{detail}` 会被替换成具体原因。做成模板是因为八个人格
+    # 的标点习惯不一样（有 `查考失败：{detail}`、也有 `❌ {detail}`），统一成
+    # 「前缀 + 全角冒号」会把语气改掉。
     failed_message: str
+    # 等待超时（轮询到头）时显示的话。默认是通用说法，各人格可以换成自己的。
+    timeout_message: str
 
 
 class AgentRegistry:
@@ -111,7 +129,8 @@ class AgentRegistry:
             empty_message=str(data.get("empty_message", "请先输入内容。")),
             waiting_message=str(data.get("waiting_message", "正在处理")),
             busy_message=str(data.get("busy_message", "上一个任务还在处理，请稍候。")),
-            failed_message=str(data.get("failed_message", "处理失败")),
+            failed_message=str(data.get("failed_message", "处理失败：{detail}")),
+            timeout_message=str(data.get("timeout_message", "处理用时较长，请稍后再来。")),
         )
 
     def list_enabled(self) -> list[AgentDefinition]:

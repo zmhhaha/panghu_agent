@@ -23,9 +23,16 @@ except FileNotFoundError:
 
 
 def create_model() -> LLM:
-    """统一走集群内 llm-service：本服务不再持有 provider 凭据。"""
+    """统一走集群内 llm-service：本服务不再持有 provider 凭据。
+
+    凭据优先取本 agent 自己的 `LLM_TOKEN_ZHOUGONGJIEMENG` —— 共享运行时把八个人的
+    token 一次性注入进程，凭据按人格分开是正确性要求而不是记账要求。取不到时退回
+    进程级的 `LLM_SERVICE_TOKEN`，旧的按服务部署就是后者，行为不变。
+    """
     base_url = os.getenv("LLM_BASE_URL", "").rstrip("/")
-    token = os.getenv("LLM_SERVICE_TOKEN", "").strip()
+    token = os.getenv("LLM_TOKEN_ZHOUGONGJIEMENG", "").strip() or os.getenv(
+        "LLM_SERVICE_TOKEN", ""
+    ).strip()
     alias = os.getenv("LLM_MODEL", "deepseek-guarded")
     if not base_url or not token:
         raise RuntimeError(

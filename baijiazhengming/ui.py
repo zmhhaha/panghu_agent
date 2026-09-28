@@ -76,7 +76,9 @@ def do_agent(text: str, request: gr.Request):
                 detail = response.json().get("detail")
             except ValueError:
                 detail = None
-            yield f"{definition.failed_message}：{detail or response.text or response.reason}", ready
+            yield definition.failed_message.replace(
+                "{detail}", str(detail or response.text or response.reason)
+            ), ready
             return
         data = response.json()
         if data.get("status") == "done":
@@ -100,7 +102,9 @@ def do_agent(text: str, request: gr.Request):
                 yield data.get("report", "(空)"), ready
                 return
             if status == "failed":
-                yield f"{definition.failed_message}：{data.get('error', '未知错误')}", ready
+                yield definition.failed_message.replace(
+                    "{detail}", str(data.get("error", "未知错误"))
+                ), ready
                 return
             if status is None:
                 yield f"API 返回异常：{data}", ready
@@ -111,7 +115,7 @@ def do_agent(text: str, request: gr.Request):
         except Exception as error:
             yield f"请求失败：{error}", ready
             return
-    yield "处理用时较长，请稍后再来。", ready
+    yield definition.timeout_message, ready
 
 
 CSS = """

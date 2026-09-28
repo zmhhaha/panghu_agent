@@ -24,9 +24,14 @@
 - `baijiazhengming-api` Deployment + Service；
 - `baijiazhengming-ui` Deployment + Service；
 - 可选的共享 worker 或进程内有界线程池；
-- 一份框架级 Vault/ExternalSecret 和 RAG/LLM 调用配置。
+- 一份 Vault/ExternalSecret，把八个人格各自的 LLM/RAG 凭据一次性注入 —— 键名就是
+  `LLM_TOKEN_<SLUG>` / `RAG_TOKEN_<SLUG>`，代码按 slug 取对应的那一个。**按人格分凭据是
+  正确性要求**（rag-service 用凭据决定 collection），不是记账要求。
 
-迁移初期保留旧 namespace 和域名入口，先让旧 OAuth2 Proxy 指向共享 UI Service，验证完成后再合并认证网关并下线旧 Deployment。
+迁移初期保留旧 namespace 和域名入口。八个代理的 upstream 由 `oauth/k8s/proxy-configmap.yaml`
+的 `__UPSTREAM__` 占位符渲染（**不手工改运行中的 ConfigMap**），代理名字不变，所以 Cloudflare
+后台与 Casdoor 回调都不用动；旧 Deployment 保留到八个域名验证通过，再由
+`scripts/retire-legacy-personas.sh` 删除。
 
 ## 3. 建议目录
 
@@ -80,7 +85,11 @@ agents:
 
 `max_output_length` 的默认值在 2026-09-28 从 600 提到 2000：实测旧服务 13 份报告里 **30% 超过 600 字符**（p90=1314、max=1602），600 是个会静默砍掉三成回答的值。这个字段是 per-agent 的，需要更长的 agent 可以单独放宽。
 
-界面上给用户看的几句话也都在注册表里（`empty_message` / `waiting_message` / `busy_message` / `failed_message` 以及输入框的标签与占位符），迁移一个 agent 时应当**从它旧 UI 里逐字搬过来** —— 否则人格味会在迁移中丢掉。`busy_message` 与 `failed_message` 有通用默认值，所以漏填不会报错，只会退化成通用说法。
+界面上给用户看的几句话也都在注册表里（`empty_message` / `waiting_message` / `busy_message` / `failed_message` / `timeout_message` 以及输入框的标签与占位符），迁移一个 agent 时应当**从它旧 UI 里逐字搬过来** —— 否则人格味会在迁移中丢掉。这几个字段都有通用默认值，所以漏填不会报错，只会退化成通用说法。
+
+`failed_message` **是模板**：`{detail}` 会被替换成具体原因。做成模板是因为八个人格的标点习惯不一样（有 `查考失败：{detail}`、也有 `❌ {detail}`），统一成「前缀 + 全角冒号」会把语气改掉。
+
+有两处**刻意统一**了，因为共享 UI 只有一套交互形态：等待时追加的点号一律是 `.`（旧 UI 里有用 `·` 的），超时话术走 `timeout_message`（旧 UI 里各写各的）。
 
 注册表后续可生成 Portal 卡片、OAuth callback 清单、Cloudflare TunnelRoute、部署启停列表、RAG 同步列表和健康检查列表，减少手工改动多个目录的风险。
 

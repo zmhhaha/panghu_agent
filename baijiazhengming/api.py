@@ -92,6 +92,8 @@ def framework_health():
         agents[definition.slug] = {
             "status": "degraded" if error else "ok",
             "error": error,
+            # 还没轮到执行的任务数：并发满时会堆积，是判断要不要扩容的唯一信号
+            "queued": runtime.queue_depth(definition),
         }
     status = "ok" if all(item["status"] == "ok" for item in agents.values()) else "degraded"
     return {"status": status, "agents": agents}

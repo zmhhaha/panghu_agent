@@ -16,11 +16,11 @@ spec:
   target:
     name: llm-token
     creationPolicy: Owner
-  data:
-    - secretKey: LLM_SERVICE_TOKEN
-      remoteRef:
+  # extract 整个 callers 路径：八个人格的 token 一次性全注入，env 名天然就是
+  # LLM_TOKEN_<SLUG> —— 代码就是按这个名字找各自的凭据的（见 registry/credentials）。
+  dataFrom:
+    - extract:
         key: secret/data/llm-service/callers
-        property: LLM_TOKEN_BINGBICHUNQIU
 ---
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
@@ -35,11 +35,9 @@ spec:
   target:
     name: rag-token
     creationPolicy: Owner
-  data:
-    - secretKey: RAG_TOKEN
-      remoteRef:
+  dataFrom:
+    - extract:
         key: secret/data/rag-service/callers
-        property: RAG_TOKEN_BINGBICHUNQIU
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -59,21 +57,17 @@ spec:
         rag-client: "true"
     spec:
       initContainers:
-        - name: rag-sync-bingbichunqiu
+        # 八个人格的基线 knowledge.md 各同步一次，各自用自己的 RAG 凭据
+        # （见 baijiazhengming/sync_baseline.py）。失败只告警，不阻塞启动。
+        - name: rag-sync
           image: arm-cluster-master:5000/agent-api:latest
           imagePullPolicy: Always
-          command: ["python", "/app/scripts/sync_knowledge.py"]
+          command: ["python", "-m", "baijiazhengming.sync_baseline"]
+          envFrom:
+            - secretRef: {name: rag-token}
           env:
-            - name: AGENT_NAME
-              value: bingbichunqiu
             - name: RAG_URL
               value: http://rag-service.data.svc.cluster.local:8080
-            - name: RAG_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: rag-token
-                  key: RAG_TOKEN
-                  optional: true
       containers:
         - name: api
           image: arm-cluster-master:5000/agent-api:latest
@@ -82,24 +76,19 @@ spec:
           args: ["--host", "0.0.0.0", "--port", "8000"]
           ports:
             - containerPort: 8000
+          envFrom:
+            # 八个人格的凭据都在这里：键名就是 LLM_TOKEN_<SLUG> / RAG_TOKEN_<SLUG>，
+            # 代码按 slug 取对应的那一个。拿错 token 会读到别人的 RAG collection，
+            # 所以这是正确性问题，不是记账问题。
+            - secretRef: {name: llm-token}
+            - secretRef: {name: rag-token}
           env:
             - name: LLM_BASE_URL
               value: http://llm-service.llm.svc.cluster.local/v1
             - name: LLM_MODEL
               value: deepseek-guarded
-            - name: LLM_SERVICE_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: llm-token
-                  key: LLM_SERVICE_TOKEN
             - name: RAG_URL
               value: http://rag-service.data.svc.cluster.local:8080
-            - name: RAG_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: rag-token
-                  key: RAG_TOKEN
-                  optional: true
           resources:
             requests: {cpu: 100m, memory: 256Mi}
             limits: {cpu: "2", memory: 2Gi}

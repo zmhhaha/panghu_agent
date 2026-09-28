@@ -17,10 +17,26 @@ import urllib.request
 TIMEOUT = float(os.getenv("RAG_TIMEOUT", "20"))
 
 
+def _token_for(agent: str) -> str:
+    """按 agent 取 RAG 凭据。
+
+    共享运行时（`baijiazhengming`）一个进程里跑多个人格，凭据必须按 agent 分开：
+    rag-service 用**凭据**决定 collection，所以拿错 token 就会读到别人的语料。
+    Vault 里的键名就是 `RAG_TOKEN_<AGENT>`，与这里的规则一致。
+
+    只有 `RAG_TOKEN` 的旧部署（每个服务一个进程）照旧可用。
+    """
+    if agent:
+        token = os.getenv(f"RAG_TOKEN_{agent.upper()}", "").strip()
+        if token:
+            return token
+    return os.getenv("RAG_TOKEN", "").strip()
+
+
 def fetch_reference(agent: str, question: str, top_k: int = 4) -> str:
     """返回拼接好的参考素材；取不到时返回空串。"""
     url = os.getenv("RAG_URL", "").rstrip("/")
-    token = os.getenv("RAG_TOKEN", "")
+    token = _token_for(agent)
     if not url or not token or not question.strip():
         return ""
     request = urllib.request.Request(

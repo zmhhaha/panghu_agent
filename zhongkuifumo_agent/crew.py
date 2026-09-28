@@ -35,14 +35,25 @@ _LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").rstrip("/")
 _LLM_TOKEN = os.getenv("LLM_SERVICE_TOKEN", "").strip()
 LLM_ALIAS = os.getenv("LLM_MODEL", "deepseek-guarded")
 
-if not _LLM_BASE_URL or not _LLM_TOKEN:
-    raise RuntimeError(
-        "zhongkuifumo_agent 未配置 llm-service：需要 LLM_BASE_URL 与 LLM_SERVICE_TOKEN"
-        "（见 k8s/api-deployment.yaml 与 vault/inventory/llm-token-externalsecret.yaml）"
-    )
+def build_model() -> LLM:
+    """构造走集群内 llm-service 的模型。
+
+    凭据优先取本 agent 自己的 `LLM_TOKEN_ZHONGKUIFUMO` —— 共享运行时把八个人的 token 一次性
+    注入进程（见 baijiazhengming/k8s.yaml 的 ExternalSecret），凭据按人格分开是
+    正确性要求而不是记账要求。取不到时退回进程级的 `LLM_SERVICE_TOKEN`，
+    旧的按服务部署就是后者，行为不变。
+
+    注意不能在模块导入期做这个检查：一个人格的 env 缺失不该让整个进程起不来。
+    """
+    api_key = os.getenv("LLM_TOKEN_ZHONGKUIFUMO", "").strip() or _LLM_TOKEN
+    if not _LLM_BASE_URL or not api_key:
+        raise RuntimeError(
+            "zhongkuifumo_agent 未配置 llm-service：需要 LLM_BASE_URL 与 LLM_SERVICE_TOKEN"
+            "（见 k8s/api-deployment.yaml 与 vault/inventory/llm-token-externalsecret.yaml）"
+        )
+    return LLM(model=LLM_ALIAS, provider="openai", base_url=_LLM_BASE_URL, api_key=api_key, temperature=0.8)
 
 # CrewAI 必须显式给 provider：`openai/<别名>` 会落到未安装的 litellm 分支并报错
-MODEL = LLM(model=LLM_ALIAS, provider="openai", base_url=_LLM_BASE_URL, api_key=_LLM_TOKEN, temperature=0.8)
 
 
 # ============================================================
@@ -54,7 +65,7 @@ def create_zhongkuifumo_agent() -> Agent:
         role="钟馗",
         goal="用阴曹地府判官的口吻，对 {text} 说几句公道话。该夸的夸，该骂的骂，该劝的劝",
         backstory=SKILL_CONTENT,
-        llm=MODEL,
+        llm=build_model(),
         verbose=True,
         allow_delegation=False,
     )
