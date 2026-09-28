@@ -39,6 +39,35 @@ spec:
     - extract:
         key: secret/data/rag-service/callers
 ---
+# 框架 API 的最小鉴权 token（见 baijiazhengming/auth.py）。UI 与 API 各注入一次：
+# 集群里任何 Pod 都能访问这个 ClusterIP Service，没有这道门时提交任务无需任何凭据，
+# 而提交是要花 llm-service 额度的，user_id 又来自请求体。
+#
+# ⚠️ 首次部署前必须先写进 Vault。下面两处注入都是 `optional: true`，所以 Secret 缺失时
+#    Pod 照样起得来，但 API 会**拒绝所有任务请求**（刻意的失败关闭）：/health 报 degraded
+#    并写明原因，deploy.sh 的第 3 步自检会因此停住、不切流量。相比让 Pod 卡在
+#    CreateContainerConfigError，这样运维看到的是一条能直接照做的错误信息。
+#      kubectl exec -n vault vault-0 -- vault kv put secret/baijiazhengming/api \
+#        BAIJIA_API_TOKEN="$(openssl rand -hex 32)"
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: baijia-api-token
+  namespace: baijiazhengming
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-backend
+    kind: ClusterSecretStore
+  target:
+    name: baijia-api-token
+    creationPolicy: Owner
+  data:
+    - secretKey: BAIJIA_API_TOKEN
+      remoteRef:
+        key: secret/data/baijiazhengming/api
+        property: BAIJIA_API_TOKEN
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -82,6 +111,8 @@ spec:
             # 所以这是正确性问题，不是记账问题。
             - secretRef: {name: llm-token}
             - secretRef: {name: rag-token}
+            # 框架 API 自己的 token：只用于校验调用方，和上面按人格分的凭据是两件事
+            - secretRef: {name: baijia-api-token, optional: true}
           env:
             - name: LLM_BASE_URL
               value: http://llm-service.llm.svc.cluster.local/v1
@@ -89,6 +120,13 @@ spec:
               value: deepseek-guarded
             - name: RAG_URL
               value: http://rag-service.data.svc.cluster.local:8080
+            # 单次 LLM 调用超时（秒）。crew 里的默认值也是 120，这里显式写出来便于调整。
+            - name: LLM_TIMEOUT
+              value: "120"
+            # 「运行中」任务的看门狗时限（秒）：超过它的任务会被标成 timeout，该用户随即可
+            # 重新提交。注意看门狗只解锁用户、不中断执行（卡住的线程仍占着并发槽位）。
+            - name: BAIJIA_RUNNING_TTL
+              value: "900"
           resources:
             requests: {cpu: 100m, memory: 256Mi}
             limits: {cpu: "2", memory: 2Gi}
@@ -136,6 +174,9 @@ spec:
           imagePullPolicy: Always
           ports:
             - containerPort: 7860
+          envFrom:
+            # 和 API 用同一个 token：UI 是唯一需要调用框架 API 的常规消费者
+            - secretRef: {name: baijia-api-token, optional: true}
           env:
             - name: API_BASE
               value: http://baijiazhengming-api.baijiazhengming.svc.cluster.local

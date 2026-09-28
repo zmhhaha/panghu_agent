@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import uuid
 
@@ -9,6 +10,13 @@ from tools import sqlite_client
 
 
 _SERVICE_NAME = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
+
+# 「运行中」任务的看门狗时限（秒）。旧实现 `sqlite_client.get_running_task_by_user()`
+# 有 1 小时自动超时，TaskStore 重写时把它漏掉了 —— 于是一个卡在 running 的任务会
+# **永久**锁死该用户（`get_running_task` 每次都命中它，而 running 永远不会自己结束）。
+# 这里恢复，并把默认值收紧：LLM 单次调用有 `LLM_TIMEOUT`（默认 120s）兜底，一道题
+# 正常几轮就结束；900s 已是很宽的余量，而 UI 的轮询上限 MAX_WAIT 只有 600s。
+RUNNING_TTL_SECONDS = int(os.getenv("BAIJIA_RUNNING_TTL", "900"))
 
 
 class TaskStore:
@@ -72,9 +80,11 @@ class TaskStore:
         assignments = ", ".join(
             f"{key}='{self._escape(str(value))}'" for key, value in values.items()
         )
+        # 只允许改「非终态」的任务：看门狗把任务标成 timeout 之后，仍在跑的那个线程
+        # 结束时不能再把结果写回去 —— 否则用户已经收到超时，库里却又变成 done。
         sqlite_client._execute(
             f"UPDATE {self.tasks_table} SET {assignments}, updated_at=datetime('now') "
-            f"WHERE id='{self._escape(task_id)}'"
+            f"WHERE id='{self._escape(task_id)}' AND status IN ('pending','running')"
         )
 
     def get_task(self, task_id: str) -> dict | None:
@@ -86,12 +96,30 @@ class TaskStore:
     def get_running_task(self, user_id: str) -> dict | None:
         if not user_id:
             return None
+        # `expired` 交给 SQLite 算：所有时间戳都是服务端的 datetime('now')，用本地时钟
+        # 比会漂。基准取 `updated_at` —— 任务转成 running 时被刷新，正是「开始执行」的时刻。
         rows = sqlite_client._query(
-            f"SELECT * FROM {self.tasks_table} "
+            f"SELECT *, CASE WHEN datetime(COALESCE(updated_at, created_at), "
+            f"'+{RUNNING_TTL_SECONDS} seconds') < datetime('now') "
+            "THEN 1 ELSE 0 END AS expired "
+            f"FROM {self.tasks_table} "
             f"WHERE user_id='{self._escape(user_id)}' "
             "AND status IN ('pending','running') ORDER BY created_at ASC LIMIT 1"
         )
-        return rows[0] if rows else None
+        if not rows:
+            return None
+        task = rows[0]
+        if task.get("expired") in (1, "1", True):
+            # 看门狗：放行该用户，并把原因落库（否则用户和运维都看不到发生过什么）。
+            # 仍在执行的那个线程会在 finally 里释放并发槽位；它稍后写入的结果会被
+            # update_task 的终态保护丢掉。
+            self.update_task(
+                task["id"],
+                status="timeout",
+                error=f"任务执行超过 {RUNNING_TTL_SECONDS} 秒仍未完成，已放行新任务。",
+            )
+            return None
+        return task
 
     def find_cached(self, text: str) -> str | None:
         rows = sqlite_client._query(

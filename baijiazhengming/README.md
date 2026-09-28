@@ -24,9 +24,17 @@
 那要求 rag-service 放宽授权（它现在会主动 404 拒绝跨 collection），等于把隔离从服务端
 挪到客户端。同理，不要靠运行时改全局环境变量来切换 Agent 凭据。
 
+**框架自己还有一把 `BAIJIA_API_TOKEN`**，回答的是另一个问题——「谁能调用框架 API」，
+由 UI 与 API 共用，缺失时任务端点一律 503。它与上面按人格分的凭据**互不替代**：
+一个描述调用方是谁，一个描述以谁的身份查语料。见 `docs/baijiazhengming-framework.md` §11。
+
 ## 部署与回滚
 
 ```bash
+# 首次部署前：写框架 API 的 token（缺失时任务端点一律 503，第 3 步自检会拦住）
+kubectl exec -n vault vault-0 -- vault kv put secret/baijiazhengming/api \
+  BAIJIA_API_TOKEN="$(openssl rand -hex 32)"
+
 bash baijiazhengming/deploy.sh                  # 构建 → apply → 自检 → 切八个代理 → 探活
 bash scripts/retire-legacy-personas.sh --yes    # 确认稳定后删掉八个旧命名空间
 ```

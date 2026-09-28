@@ -114,6 +114,8 @@ GET  /v1/agents/{slug}/tasks/{task_id}
 - Pydantic 输入校验和长度限制；
 - 有界并发的后台任务执行；
 - pending/running/done/failed/timeout 状态；
+- **运行中任务的看门狗与单次 LLM 超时**（`BAIJIA_RUNNING_TTL` / `LLM_TIMEOUT`，见 §11.2）；
+- **框架级鉴权**（`BAIJIA_API_TOKEN`，见 §11.1）；
 - SQLite 任务、报告和缓存；
 - LLM Service 调用和模型档位；
 - RAG 查询、知识同步和失败降级；
@@ -161,3 +163,53 @@ GET  /v1/agents/{slug}/tasks/{task_id}
 - 不把任意 Host、模块名、shell 命令或文件路径暴露给用户输入；
 - 共享 API 的故障影响面更大，必须使用插件级超时、并发限制、错误隔离和健康指标；
 - 共享 SQLite 上下文、共享 LLM token 和多域名 OAuth 是实施前必须单独验证的三个风险点。
+
+---
+
+## 11. 鉴权与超时（2026-09-28 补充）
+
+### 11.1 框架级 token 不替代按人格凭据
+
+两套凭据回答的是**不同问题**，不要合并：
+
+| 凭据 | 回答的问题 | 数量 |
+|---|---|---|
+| `BAIJIA_API_TOKEN` | **谁能调用框架 API** | 框架级一个（UI 与 selfcheck 共用） |
+| `LLM_TOKEN_<SLUG>` / `RAG_TOKEN_<SLUG>` | **以谁的身份访问 llm-service / rag-service** | 每个人格各一个 |
+
+**为什么必须有**：这个 Service 是 ClusterIP，而本 namespace 没有任何 NetworkPolicy ——
+集群里**任何 Pod**都能访问。提交要消耗 llm-service 额度，而 `user_id` 来自请求体，所以没有
+这道门时可以：盗用额度、把 `user_id` 填成别人的值长期占住对方的槽位、或靠 `topic` 精确匹配
+读出别人的缓存回答。
+
+**失败关闭**：`BAIJIA_API_TOKEN` 缺失时任务端点一律 **503**，`/health` 报 degraded 并写明原因；
+`deploy.sh` 的第 3 步自检会因此停住，所以**不会切换流量**。k8s 注入写成
+`optional: true`，是为了让 Pod 起得来、由应用给出可照做的错误信息，而不是卡在
+`CreateContainerConfigError`。
+
+健康检查端点（`/health`、`/v1/agents/{slug}/health`、旧 `<slug>_agent-health`）保持**匿名**：
+k8s 的三个探针都打 `/health`，拿不到 Secret。
+
+> ⚠️ **`user_id` 仍然是请求体字段。** 它现在只在"调用方已通过 token 认证"的前提下才可信，
+> 所以**不要再把 API 暴露给不持有 token 的调用方**。若要进一步收窄，应改为由可信反向代理
+> 注入身份头、由 API 侧校验，而不是继续信任请求体。
+
+### 11.2 两种超时，各自负责一半
+
+| 超时 | 默认值 | 负责什么 |
+|---|---|---|
+| `LLM_TIMEOUT` | 120s | **单次 LLM 调用**。不设的话请求会一直挂住 |
+| `BAIJIA_RUNNING_TTL` | 900s | **「运行中」任务的看门狗**：超过就把任务标 `timeout`，并放行该用户 |
+
+看门狗**只负责解锁用户，不负责中断执行**——线程无法被安全打断，卡住的任务仍占着它那份并发
+槽位直到自己结束。所以 `LLM_TIMEOUT` 治本、看门狗兜底，**两个都要有**。
+
+`BAIJIA_RUNNING_TTL` 默认 900s 而不是旧实现的 1 小时：LLM 单次调用已有 120s 兜底，一道题
+正常几轮就结束；而 UI 的轮询上限 `MAX_WAIT` 只有 600s，用户真正等待的窗口更短。
+
+判死之后还有一处保护：`update_task` **只允许改 `pending`/`running` 状态**的任务，因此那个
+"迟到的"执行线程（终于返回时）写不回 `done`——否则用户已经收到超时，库里却又变成成功。
+
+> 这两条都是**回归修复**：旧 `sqlite_client.get_running_task_by_user()` 本来有 1 小时自动超时，
+> `TaskStore` 重写时漏掉了，导致卡在 `running` 的任务会**永久**锁死该用户；而 LLM 调用从来
+> 没设过超时。回归测试见 `tests/test_baijiazhengming_framework.py`。

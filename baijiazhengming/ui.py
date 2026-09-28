@@ -16,6 +16,13 @@ API_BASE = os.getenv(
 MAX_WAIT = int(os.getenv("MAX_WAIT", "600"))
 REGISTRY = get_registry()
 DEFAULT_SLUG = os.getenv("AGENT_SLUG", "").strip()
+# 框架 API 的最小鉴权：token 由同一个 Secret 同时注入 UI 与 API（见 k8s.yaml / auth.py）。
+# 未注入时请求会拿到 503，用户看到的是带原因的失败提示，而不是静默无响应。
+API_TOKEN = os.getenv("BAIJIA_API_TOKEN", "").strip()
+
+
+def _api_headers() -> dict[str, str]:
+    return {"Authorization": f"Bearer {API_TOKEN}"} if API_TOKEN else {}
 
 
 def _resolve(request: gr.Request | None) -> AgentDefinition | None:
@@ -66,6 +73,7 @@ def do_agent(text: str, request: gr.Request):
         response = requests.post(
             f"{API_BASE}/v1/agents/{definition.slug}/tasks",
             json={"text": text, "user_id": user_id},
+            headers=_api_headers(),
             timeout=10,
         )
         if response.status_code == 429:
@@ -93,7 +101,9 @@ def do_agent(text: str, request: gr.Request):
     for index in range(MAX_WAIT // 5):
         try:
             response = requests.get(
-                f"{API_BASE}/v1/agents/{definition.slug}/tasks/{task_id}", timeout=10
+                f"{API_BASE}/v1/agents/{definition.slug}/tasks/{task_id}",
+                headers=_api_headers(),
+                timeout=10,
             )
             response.raise_for_status()
             data = response.json()

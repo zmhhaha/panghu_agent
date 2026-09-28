@@ -19,13 +19,25 @@ import time
 import urllib.error
 import urllib.request
 
+from . import auth
+
 BASE = os.getenv("SELFCHECK_BASE", "http://127.0.0.1:8000").rstrip("/")
 QUESTION = os.getenv("SELFCHECK_QUESTION", "用一句话介绍你自己")
 WAIT_SECONDS = float(os.getenv("SELFCHECK_WAIT", "300"))
+# 自检走的是框架 API，所以要带和 UI 同一个 token；`kubectl exec` 进 api 容器时它在 env 里。
+TOKEN = auth.token()
+
+
+def _headers(extra: dict[str, str] | None = None) -> dict[str, str]:
+    headers = dict(extra or {})
+    if TOKEN:
+        headers["Authorization"] = f"Bearer {TOKEN}"
+    return headers
 
 
 def _get(path: str) -> dict:
-    with urllib.request.urlopen(BASE + path, timeout=30) as response:
+    request = urllib.request.Request(BASE + path, headers=_headers())
+    with urllib.request.urlopen(request, timeout=30) as response:
         return json.loads(response.read().decode())
 
 
@@ -33,7 +45,7 @@ def _post(path: str, payload: dict) -> dict:
     request = urllib.request.Request(
         BASE + path,
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json"},
+        headers=_headers({"Content-Type": "application/json"}),
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=30) as response:
@@ -41,9 +53,15 @@ def _post(path: str, payload: dict) -> dict:
 
 
 def main() -> int:
-    agents = _get("/health").get("agents", {})
+    health = _get("/health")
+    agents = health.get("agents", {})
     for slug, item in agents.items():
         print(f"  health {slug}: {item.get('status')} queued={item.get('queued')}")
+    print(f"  运行中任务看门狗: {health.get('running_ttl_seconds')}s")
+    # 鉴权没就绪时任务端点会全部 503，与其等到下面逐条 POST 报错，不如在这里说清楚
+    if health.get("auth", {}).get("status") != "ok":
+        print(f"FAIL 框架鉴权未就绪：{health.get('auth', {}).get('error')}", file=sys.stderr)
+        return 1
     broken = [slug for slug, item in agents.items() if item.get("status") != "ok"]
     if broken:
         print(f"FAIL 配置不完整：{broken}", file=sys.stderr)

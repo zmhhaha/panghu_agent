@@ -34,13 +34,15 @@ def create_model() -> LLM:
         "LLM_SERVICE_TOKEN", ""
     ).strip()
     alias = os.getenv("LLM_MODEL", "deepseek-guarded")
+    # 单次 LLM 调用超时（秒）；不设会一直挂住，任务永远停在 running
+    timeout = float(os.getenv("LLM_TIMEOUT", "120"))
     if not base_url or not token:
         raise RuntimeError(
             "zhougongjiemeng_agent 未配置 llm-service：需要 LLM_BASE_URL 与 LLM_SERVICE_TOKEN"
             "（见 k8s/api-deployment.yaml 与 vault/inventory/llm-token-externalsecret.yaml）"
         )
     # CrewAI 必须显式给 provider：`openai/<别名>` 会落到未安装的 litellm 分支并报错
-    return LLM(model=alias, provider="openai", base_url=base_url, api_key=token, temperature=0.7)
+    return LLM(model=alias, provider="openai", base_url=base_url, api_key=token, temperature=0.7, timeout=timeout)
 
 
 def create_zhougongjiemeng_agent() -> Agent:

@@ -23,6 +23,9 @@ except FileNotFoundError:
 _LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").rstrip("/")
 _LLM_TOKEN = os.getenv("LLM_SERVICE_TOKEN", "").strip()
 LLM_ALIAS = os.getenv("LLM_MODEL", "deepseek-guarded")
+# 单次 LLM 调用超时（秒）。不设的话请求会一直挂住 —— 任务永远停在 running、
+# 并发槽位被占死；框架侧的看门狗只能把用户解锁，救不回槽位。
+_LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "120"))
 
 def build_model() -> LLM:
     """构造走集群内 llm-service 的模型。
@@ -40,7 +43,7 @@ def build_model() -> LLM:
             "zhenzhuzhida_agent 未配置 llm-service：需要 LLM_BASE_URL 与 LLM_SERVICE_TOKEN"
             "（见 k8s/api-deployment.yaml 与 vault/inventory/llm-token-externalsecret.yaml）"
         )
-    return LLM(model=LLM_ALIAS, provider="openai", base_url=_LLM_BASE_URL, api_key=api_key, temperature=0.8)
+    return LLM(model=LLM_ALIAS, provider="openai", base_url=_LLM_BASE_URL, api_key=api_key, temperature=0.8, timeout=_LLM_TIMEOUT)
 
 # CrewAI 必须显式给 provider：`openai/<别名>` 会落到未安装的 litellm 分支并报错
 
