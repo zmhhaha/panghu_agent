@@ -13,7 +13,7 @@ docker build -f baijiazhengming/Dockerfile.ui -t "${REGISTRY}/baijiazhengming-ui
 docker push "${REGISTRY}/baijiazhengming-ui:latest"
 
 kubectl apply ${KUBECONFIG_ARG} -f baijiazhengming/k8s.yaml
-kubectl rollout status ${KUBECONFIG_ARG} deployment/baijiazhengming-api -n panghu-agent --timeout=180s
-kubectl rollout status ${KUBECONFIG_ARG} deployment/baijiazhengming-ui -n panghu-agent --timeout=180s
+kubectl rollout status ${KUBECONFIG_ARG} deployment/baijiazhengming-api -n baijiazhengming --timeout=180s
+kubectl rollout status ${KUBECONFIG_ARG} deployment/baijiazhengming-ui -n baijiazhengming --timeout=180s
 
 echo "百家争鸣旁路部署完成；现有 OAuth/Cloudflare 路由尚未切换。"

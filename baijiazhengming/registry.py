@@ -39,6 +39,11 @@ class AgentDefinition:
     submit_label: str
     empty_message: str
     waiting_message: str
+    # 用户已经有了一个在跑的任务时显示的话。默认值是通用说法；
+    # 每个 agent 可以把它换成有人格味的写法（迁自各自旧 UI 的原话）。
+    busy_message: str
+    # 失败提示的前缀，UI 会在后面接上具体原因。
+    failed_message: str
 
 
 class AgentRegistry:
@@ -77,7 +82,9 @@ class AgentRegistry:
         if legacy_path != f"/{service_name}":
             raise ValueError(f"legacy_path must match service_name for {slug}")
         max_input = int(data.get("max_input_length", 2000))
-        max_output = int(data.get("max_output_length", 600))
+        # 默认从 600 提到 2000。实测旧服务 13 份报告里 30% 超过 600 字符
+        # （p90=1314、max=1602）—— 600 是个会静默砍掉三成回答的值。
+        max_output = int(data.get("max_output_length", 2000))
         concurrency = int(data.get("concurrency", 2))
         if not 1 <= max_input <= 20_000 or not 1 <= max_output <= 20_000:
             raise ValueError(f"invalid text limits for {slug}")
@@ -103,6 +110,8 @@ class AgentRegistry:
             submit_label=str(data.get("submit_label", "提交")),
             empty_message=str(data.get("empty_message", "请先输入内容。")),
             waiting_message=str(data.get("waiting_message", "正在处理")),
+            busy_message=str(data.get("busy_message", "上一个任务还在处理，请稍候。")),
+            failed_message=str(data.get("failed_message", "处理失败")),
         )
 
     def list_enabled(self) -> list[AgentDefinition]:

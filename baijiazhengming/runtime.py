@@ -66,7 +66,7 @@ class AgentRuntime:
         store = self._stores[definition.slug]
         running = store.get_running_task(user_id)
         if running:
-            raise UserTaskRunningError("上一个任务还在处理，请稍候。")
+            raise UserTaskRunningError(definition.busy_message)
         cached = store.find_cached(text)
         if cached:
             return Submission("cached", text, "done", report=cached, cached=True)

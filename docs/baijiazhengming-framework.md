@@ -19,7 +19,7 @@
   -> Agent Plugin + llm-service / rag-service / sqlite
 ```
 
-最终 Kubernetes 资源集中在 `panghu-agent` namespace：
+最终 Kubernetes 资源集中在 `baijiazhengming` namespace：
 
 - `baijiazhengming-api` Deployment + Service；
 - `baijiazhengming-ui` Deployment + Service；
@@ -73,10 +73,14 @@ agents:
     llm_model: deepseek-guarded
     rag: false
     max_input_length: 2000
-    max_output_length: 600
+    max_output_length: 2000
     concurrency: 2
     enabled: true
 ```
+
+`max_output_length` 的默认值在 2026-09-28 从 600 提到 2000：实测旧服务 13 份报告里 **30% 超过 600 字符**（p90=1314、max=1602），600 是个会静默砍掉三成回答的值。这个字段是 per-agent 的，需要更长的 agent 可以单独放宽。
+
+界面上给用户看的几句话也都在注册表里（`empty_message` / `waiting_message` / `busy_message` / `failed_message` 以及输入框的标签与占位符），迁移一个 agent 时应当**从它旧 UI 里逐字搬过来** —— 否则人格味会在迁移中丢掉。`busy_message` 与 `failed_message` 有通用默认值，所以漏填不会报错，只会退化成通用说法。
 
 注册表后续可生成 Portal 卡片、OAuth callback 清单、Cloudflare TunnelRoute、部署启停列表、RAG 同步列表和健康检查列表，减少手工改动多个目录的风险。
 

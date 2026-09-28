@@ -11,7 +11,7 @@ from .registry import AgentDefinition, get_registry
 
 
 API_BASE = os.getenv(
-    "API_BASE", "http://baijiazhengming-api.panghu-agent.svc.cluster.local"
+    "API_BASE", "http://baijiazhengming-api.baijiazhengming.svc.cluster.local"
 ).rstrip("/")
 MAX_WAIT = int(os.getenv("MAX_WAIT", "600"))
 REGISTRY = get_registry()
@@ -69,14 +69,14 @@ def do_agent(text: str, request: gr.Request):
             timeout=10,
         )
         if response.status_code == 429:
-            yield response.json().get("detail", "上一个任务还在处理，请稍候。"), ready
+            yield response.json().get("detail", definition.busy_message), ready
             return
         if not response.ok:
             try:
                 detail = response.json().get("detail")
             except ValueError:
                 detail = None
-            yield f"处理失败：{detail or response.text or response.reason}", ready
+            yield f"{definition.failed_message}：{detail or response.text or response.reason}", ready
             return
         data = response.json()
         if data.get("status") == "done":
@@ -100,7 +100,7 @@ def do_agent(text: str, request: gr.Request):
                 yield data.get("report", "(空)"), ready
                 return
             if status == "failed":
-                yield f"处理失败：{data.get('error', '未知错误')}", ready
+                yield f"{definition.failed_message}：{data.get('error', '未知错误')}", ready
                 return
             if status is None:
                 yield f"API 返回异常：{data}", ready

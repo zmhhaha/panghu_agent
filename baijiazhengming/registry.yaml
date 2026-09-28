@@ -9,7 +9,7 @@
       "llm_model": "deepseek-guarded",
       "rag_enabled": true,
       "max_input_length": 2000,
-      "max_output_length": 600,
+      "max_output_length": 2000,
       "concurrency": 2,
       "enabled": true,
       "icon": "📜",
@@ -18,7 +18,9 @@
       "input_placeholder": "例如：为什么秦始皇能完成统一？历代史家又如何评价这件事？",
       "submit_label": "📜 请史官落笔",
       "empty_message": "先落一笔，史官不能对着空白竹简起笔。",
-      "waiting_message": "正在查考旧闻，整理因果"
+      "waiting_message": "正在查考旧闻，整理因果",
+      "busy_message": "上一次查考还未完，请稍候。",
+      "failed_message": "查考失败"
     }
   }
 }
