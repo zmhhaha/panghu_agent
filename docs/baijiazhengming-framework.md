@@ -213,3 +213,29 @@ k8s 的三个探针都打 `/health`，拿不到 Secret。
 > 这两条都是**回归修复**：旧 `sqlite_client.get_running_task_by_user()` 本来有 1 小时自动超时，
 > `TaskStore` 重写时漏掉了，导致卡在 `running` 的任务会**永久**锁死该用户；而 LLM 调用从来
 > 没设过超时。回归测试见 `tests/test_baijiazhengming_framework.py`。
+
+## 12. 判断「某个代理还有没有流量」的正确判据（2026-09-28 踩坑）
+
+合并代理时要把八个按域名的 `oauth2-proxy-<slug>-agent` 删掉。**判据不能用它们的 Pod 日志**：
+
+- 那些 Deployment 曾被先缩到 **0 副本**，而 `kubectl logs deploy/...` 在零副本时返回**空** ——
+  空日志被读成了「没有流量」，于是把它们删了，**八个域名立刻 502**（Cloudflare 后台的路由
+  当时还指着它们）。
+- **副本为 0 ≠ 没人用。** 要判断流量归属，看 **Service 的 endpoints**，或者直接看**接收方
+  代理的访问日志**；要用日志判断「这个代理还在不在被用」，先确认它有 Pod。
+
+**正确的收尾顺序**（不能反）：
+
+1. 改 Cloudflare 后台，把八个域名指向 `oauth2-proxy-baijiazhengming.oauth.svc.cluster.local:4180`；
+2. 逐个域名验证：`/ready` 200、`/` 302、各自登录一次；
+3. **这时**才删那八个按域名的代理 —— 判据是**它们自己的访问日志连续几分钟为空**（此时它们
+   有 Pod，空日志才有意义）。
+
+删错了的恢复方式（实测有效，会把各自的 ConfigMap 一起从模板渲染回来）：
+
+```bash
+for s in <八个 slug>; do
+  bash oauth/k8s/deploy-agent-proxy.sh "${s}-agent" \
+    http://baijiazhengming-ui.baijiazhengming.svc.cluster.local:7860
+done
+```
