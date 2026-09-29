@@ -2,8 +2,10 @@
 # 删掉八个人格的旧服务与旧命名空间。
 #
 # ⚠️ 不可逆。跑之前先确认八条链路都已经在新运行时上（deploy.sh 的自检与八个域名的
-# /ready 都过了），因为删掉之后回滚就只能靠 scripts/deploy-api.sh / deploy-ui.sh
-# 重新搭一套（要重新拉镜像、重新同步 RAG 基线）。
+# /ready 都过了），因为删掉之后回滚要三步：先用 `git checkout` 取回各人格的
+# `app/api/<slug>_agent.py` 与 `app/ui/<slug>_agent.py`（2026-09-30 已从仓库删除，
+# 只留在 git 历史里），再跑 scripts/deploy-api.sh / deploy-ui.sh 重新搭一套
+# （要重新拉镜像、重新同步 RAG 基线）。
 #
 # 用法：
 #   bash scripts/retire-legacy-personas.sh --yes

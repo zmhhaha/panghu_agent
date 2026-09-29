@@ -7,12 +7,10 @@ from fastapi.testclient import TestClient
 from tools import sqlite_client as db
 
 
+# 八个人格的 FastAPI 包装（app/api/<slug>_agent.py）已随旧运行时退役并从仓库删除
+# （2026-09-30）——他们现在由共享框架 baijiazhengming 服务，配置守卫由框架自己覆盖。
+# 这里留下的是仍在独立运行的服务。
 API_CASES = [
-    ("app.api.daofaziran_agent", "/daofaziran_agent-health", "/daofaziran_agent", {"text": "test"}),
-    ("app.api.fofawubian_agent", "/fofawubian_agent-health", "/fofawubian_agent", {"text": "test"}),
-    ("app.api.zhongkuifumo_agent", "/zhongkuifumo_agent-health", "/zhongkuifumo_agent", {"text": "test"}),
-    ("app.api.yimaneili_agent", "/yimaneili_agent-health", "/yimaneili_agent", {"text": "test"}),
-    ("app.api.zhenzhuzhida_agent", "/zhenzhuzhida_agent-health", "/zhenzhuzhida_agent", {"text": "test"}),
     ("app.api.research_agent", "/research-health", "/research", {"topic": "test"}),
     (
         "app.api.scientific_agent",
@@ -21,18 +19,6 @@ API_CASES = [
         {"topic": "test"},
     ),
     ("app.api.game_review_agent", "/game-review-health", "/game_review", {"game_url": "http://test"}),
-    (
-        "app.api.zhougongjiemeng_agent",
-        "/zhougongjiemeng_agent-health",
-        "/zhougongjiemeng_agent",
-        {"text": "test"},
-    ),
-    (
-        "app.api.xiaotanrenjian_agent",
-        "/xiaotanrenjian_agent-health",
-        "/xiaotanrenjian_agent",
-        {"text": "test"},
-    ),
 ]
 
 
@@ -46,7 +32,8 @@ CREW_MODULES = [
     "scientific_agent.crew",
     "game_review_agent.llm_config",
     # zhougongjiemeng_agent 不在此列：它的 crew 用惰性 create_model()，配置缺失在调用时才报错，
-    # 不在 import 期失败。它的配置守卫由下面的 API_CASES 用例覆盖（健康检查降级 + 提交 503）。
+    # 不在 import 期失败。它原先由自己的 FastAPI 包装在 API_CASES 里覆盖，那套包装已随旧运行时
+    # 退役（2026-09-30）；现在这条守卫由共享框架 baijiazhengming 负责。
     "xiaotanrenjian_agent.crew",
 ]
 
