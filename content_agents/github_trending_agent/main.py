@@ -12,6 +12,7 @@ from content_agents.common.http import HttpClientError, get_json, post_json
 from content_agents.common.models import Candidate, ContentItem, SourceRef
 from content_agents.common.review import assess
 from content_agents.common.runner import run_agent
+from content_agents.common.storage import JsonStore
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
@@ -37,7 +38,7 @@ def collect(*, lookback_hours: int, sample: bool = False) -> list[Candidate]:
         headers["Authorization"] = f"Bearer {token}"
     try:
         payload = get_json(
-            f"https://api.github.com/search/repositories?q={query}&sort=stars&order=desc&per_page=20",
+            f"https://api.github.com/search/repositories?q={query}&sort=stars&order=desc&per_page=100",
             headers=headers,
         )
     except HttpClientError as exc:
@@ -139,7 +140,16 @@ def main() -> None:
     parser.add_argument("--sample", action="store_true", help="use an offline sample candidate")
     args = parser.parse_args()
     config = AgentConfig.from_env("github-trending")
-    run_agent(config, lambda: enrich_batch(collect(lookback_hours=config.lookback_hours, sample=args.sample)), render)
+    store = JsonStore(config.data_dir / config.bot_name)
+    def collect_new():
+        candidates = collect(lookback_hours=config.lookback_hours, sample=args.sample)
+        unseen = [c for c in candidates if store.find_content_by_source(
+            bot_name=config.bot_name, source=c.source, external_id=c.external_id) is None][:config.max_items]
+        logging.getLogger(__name__).info('GitHub candidates=%d unseen_selected=%d', len(candidates), len(unseen))
+        if not unseen:
+            logging.getLogger(__name__).info('GitHub: no new repositories; skipping LLM request')
+        return enrich_batch(unseen)
+    run_agent(config, collect_new, render)
 
 
 if __name__ == "__main__":

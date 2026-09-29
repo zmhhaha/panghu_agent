@@ -10,6 +10,8 @@ data:
   BOT_DRAFT_ONLY: "false"
   BOT_MAX_ITEMS: "5"
   BOT_LOOKBACK_HOURS: "24"
+  BOT_REPLAY_MAX_AGE_HOURS: "24"
+  BOT_REPLAY_MAX_ITEMS: "2"
   CONTENT_AUTO_APPROVE: "true"
   HUBLOG_BASE_URL: http://hublog-api.hublog.svc.cluster.local
   CONTENT_LLM_SERVICE_URL: http://content-llm-service.content-agents.svc.cluster.local

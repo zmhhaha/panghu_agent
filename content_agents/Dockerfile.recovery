@@ -1,0 +1,6 @@
+# Build from the currently deployed image without reinstalling dependencies:
+# docker build -f content_agents/Dockerfile.recovery --build-arg BASE_IMAGE=<old-image> -t <new-image> content_agents
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY common/channel.py common/runner.py common/rss_cache.py /app/content_agents/common/
+COPY github_trending_agent/main.py /app/content_agents/github_trending_agent/main.py

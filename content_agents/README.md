@@ -213,4 +213,44 @@ batch request to the shared LLM service. It does not persist raw job records.
 
 ## Decoupling contract
 
+### Publication recovery and retention
+
+Each channel is isolated: an RSS exception is recorded as a failed publication
+and does not prevent Hublog delivery. Failed/skipped channel results are kept
+in `bot-runs.jsonl` and `channel-publications.jsonl` on the PVC. Each bot also
+writes `run-health.json`; two consecutive runs with channel failures emit an
+`ERROR CONTENT_AGENT_ALERT` log. This is a log signal, not an external message
+notification. Collectors that return no candidates are not classified as failures.
+
+The shared RSS cache uses a CephFS advisory lock and same-directory atomic file
+replacement. Invalid UTF-8, JSON, or schema is backed up to
+`rss-items.json.corrupt-<id>` and rebuilt from entries previously published to
+RSS. All writers must use this version for the lock to be effective.
+To repair the cache without publishing Hublog posts, run inside an agent container:
+
+```bash
+python -m content_agents.common.rss_cache
+```
+
+Retries preserve Hublog idempotency keys. `BOT_REPLAY_MAX_AGE_HOURS=24` limits
+replay age (including source timestamps when supplied), and
+`BOT_REPLAY_MAX_ITEMS=2` bounds old pending items per run. Set the latter to `0`
+to disable replay. These limits also apply to existing items encountered in
+the current feed. Old ledger data is retained, not deleted. A run may publish
+up to `BOT_MAX_ITEMS` new items plus the bounded replay allowance.
+
+GitHub searches up to 100 repositories, removes known source identities before
+selecting `BOT_MAX_ITEMS`, and sends only that selection in one LLM batch.
+When all candidates are known it logs `no new repositories` and skips the LLM.
+This remains a recently-pushed repository search ranked by total stars, not
+GitHub's official Trending daily-growth ranking.
+
+Recovery on 2026-09-29: RSS corruption was backed up and rebuilt, and missing
+Hublog bot auth entries were merged from Vault version 10 into the current
+`secret/hublog/auth` map while preserving Hermes. Do not overwrite that map
+with a single new bot: merge existing entries and use Vault KV v2 CAS to avoid
+losing concurrent updates. Hublog reloads the mounted auth Secret without restart.
+The seven live CronJobs use `recovery-20260929` images; subsequent normal
+build/deploy from this source includes these fixes in the usual image tags.
+
 The core package never stores a Hublog post ID or assumes a Hublog database. A channel adapter maps `ContentItem` to the target API and records its external ID. Hublog uses `Idempotency-Key: <bot-name>:<content-hash>`, so retries do not create duplicate posts.

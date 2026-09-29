@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
-import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from pathlib import Path
 from .config import AgentConfig
 from .http import HttpClientError, post_json
 from .models import ContentItem, PublicationResult
 from .storage import JsonStore
+from .rss_cache import rss_lock, load_entries, write_entries
 
 
 class ChannelAdapter(ABC):
@@ -37,25 +36,10 @@ class RssChannel(ChannelAdapter):
         self.items_path = root / "rss-items.json"
 
     def publish(self, item: ContentItem) -> PublicationResult:
-        try:
-            old = json.loads(self.items_path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, json.JSONDecodeError):
-            old = []
-        entries = [item.to_dict(), *[row for row in old if row.get("content_hash") != item.content_hash]][:100]
-        self.items_path.write_text(json.dumps(entries, ensure_ascii=False), encoding="utf-8")
-        rss = ET.Element("rss", version="2.0")
-        channel = ET.SubElement(rss, "channel")
-        ET.SubElement(channel, "title").text = "Panghu Content Agents"
-        ET.SubElement(channel, "link").text = "https://hublog.panghuer.top/"
-        ET.SubElement(channel, "description").text = "Generated content from Panghu agents"
-        for row in entries:
-            node = ET.SubElement(channel, "item")
-            ET.SubElement(node, "guid").text = row["content_id"]
-            ET.SubElement(node, "title").text = row["title"]
-            ET.SubElement(node, "description").text = row["body"]
-            ET.SubElement(node, "link").text = row["source_refs"][0]["url"] if row.get("source_refs") else ""
-            ET.SubElement(node, "pubDate").text = row["created_at"]
-        self.path.write_bytes(ET.tostring(rss, encoding="utf-8", xml_declaration=True))
+        with rss_lock(self.path.parent):
+            old = load_entries(self.path.parent)
+            entries = [item.to_dict(), *[row for row in old if row.get("content_hash") != item.content_hash]][:100]
+            write_entries(self.path.parent, entries)
         return PublicationResult(channel=self.name, status="published", external_id=item.content_id)
 
 

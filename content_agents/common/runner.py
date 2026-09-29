@@ -6,6 +6,7 @@ import uuid
 from collections import Counter
 from collections.abc import Callable, Iterable
 from typing import Any
+from datetime import datetime, timedelta, timezone
 
 from .channel import ChannelAdapter, build_channels
 from .config import AgentConfig
@@ -29,6 +30,20 @@ def run_agent(
     retries = 0
     publication_rows: list[dict[str, Any]] = []
     attempted_ids: set[str] = set()
+    replay_limit = max(0, int(os.getenv("BOT_REPLAY_MAX_ITEMS", "2")))
+    replay_cutoff = datetime.now(timezone.utc) - timedelta(hours=max(0, int(os.getenv("BOT_REPLAY_MAX_AGE_HOURS", "24"))))
+    replayed = 0
+
+    def fresh(item: ContentItem) -> bool:
+        try:
+            dates = [datetime.fromisoformat(item.created_at.replace('Z', '+00:00'))]
+            dates += [datetime.fromisoformat(ref.published_at.replace('Z', '+00:00'))
+                      for ref in item.source_refs if ref.published_at]
+            now = datetime.now(timezone.utc)
+            return all(d.replace(tzinfo=d.tzinfo or timezone.utc) >= replay_cutoff for d in dates) and (
+                not item.valid_until or datetime.fromisoformat(item.valid_until.replace('Z', '+00:00')) > now)
+        except (ValueError, TypeError):
+            return False
 
     auto_approve = os.getenv("CONTENT_AUTO_APPROVE", "false").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -48,7 +63,12 @@ def run_agent(
                 reason = "BOT_DRAFT_ONLY=true" if config.draft_only else "content requires review"
                 result = PublicationResult(channel=channel.name, status="draft", error=reason)
             else:
-                result = channel.publish(item)
+                try:
+                    result = channel.publish(item)
+                except Exception as exc:
+                    logger.exception("channel publication failed bot=%s channel=%s content_id=%s",
+                                     config.bot_name, channel.name, item.content_id)
+                    result = PublicationResult(channel=channel.name, status="failed", error=f"{type(exc).__name__}: {exc}")
             if retry:
                 retries += 1
             store.save_publication(result, item.content_id)
@@ -71,6 +91,11 @@ def run_agent(
         if existing_item is not None:
             duplicates += 1
             item = existing_item
+            if not fresh(item) or replayed >= replay_limit:
+                continue
+            if not any(not store.is_published(item.content_id, c.name) for c in channels):
+                continue
+            replayed += 1
             if auto_approve and item.review_status == "needs_review":
                 item.review_status = "approved"
                 item.review_notes = ["auto-approved by CONTENT_AUTO_APPROVE=true (legacy item)"]
@@ -83,8 +108,12 @@ def run_agent(
     # A source item may fall out of the current top-N candidates after a failed
     # request. Replay approved items with failed/draft/missing channel records
     # so transient Hublog or RSS outages do not strand content in the ledger.
-    for item in store.iter_content():
+    for item in sorted(store.iter_content(), key=lambda row: row.created_at, reverse=True):
+        if replayed >= replay_limit:
+            break
         if item.content_id in attempted_ids:
+            continue
+        if not fresh(item):
             continue
         if auto_approve and item.review_status == "needs_review":
             item.review_status = "approved"
@@ -94,6 +123,7 @@ def run_agent(
             continue
         pending = any(not store.is_published(item.content_id, channel.name) for channel in channels)
         if pending:
+            replayed += 1
             publish_item(item, retry=True)
     record = {
         "run_id": run_id,
@@ -107,6 +137,19 @@ def run_agent(
         "publication_counts": dict(Counter(row["status"] for row in publication_rows)),
     }
     store.save_run(record)
+    recent = store.root / "run-health.json"
+    import json
+    from .rss_cache import atomic_write
+    try:
+        previous = json.loads(recent.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        previous = {}
+    failures = [row for row in publication_rows if row['status'] in {'failed', 'skipped'}]
+    streak = int(previous.get('consecutive_failures', 0)) + 1 if failures else 0
+    atomic_write(recent, json.dumps({'run_id': run_id, 'consecutive_failures': streak,
+        'errors': failures, 'updated_at': datetime.now(timezone.utc).isoformat()}, ensure_ascii=False).encode('utf-8'))
+    if streak >= 2:
+        logger.error('CONTENT_AGENT_ALERT bot=%s consecutive_failures=%d errors=%s', config.bot_name, streak, failures)
     logger.info(
         "run_id=%s bot_name=%s candidates=%d generated=%d duplicates=%d retries=%d publication_counts=%s",
         run_id,
