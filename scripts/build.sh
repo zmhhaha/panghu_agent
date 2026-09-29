@@ -4,9 +4,10 @@
 #  依赖 arm-cluster-master:5000/base:latest（已配国内源）
 # ============================================================
 #  用法:
-#    ./scripts/build.sh api             # 构建 API 镜像
-#    ./scripts/build.sh ui              # 构建 UI 镜像
-#    ./scripts/build.sh api --push      # 构建 + 推送
+#    ./scripts/build.sh api             # 构建 + 推送 API 镜像（默认）
+#    ./scripts/build.sh ui              # 构建 + 推送 UI 镜像（默认）
+#    ./scripts/build.sh api --no-push   # 仅本地构建（不推送）
+#    ./scripts/build.sh api --push      # 多架构构建 + 推送
 #    ./scripts/build.sh ui --arm-only   # 仅构建 ARM64
 # ============================================================
 set -euo pipefail
@@ -19,7 +20,7 @@ TARGET="${1:-}"
 ACTION="${2:-}"
 
 usage() {
-  echo "用法: $0 {api|ui} [--push|--arm-only]"
+  echo "用法: $0 {api|ui} [--push|--arm-only|--no-push]"
   exit 1
 }
 
@@ -65,12 +66,22 @@ case "$ACTION" in
     echo "完成! 镜像: ${FULL_IMAGE}-arm64"
     ;;
 
-  *)
+  --no-push)
     echo "=== 本地构建: ${FULL_IMAGE} ==="
     docker build \
       --build-arg REGISTRY="${REGISTRY}" \
       -f "${DOCKERFILE}" \
       -t "${FULL_IMAGE}" .
     echo "完成! 运行: docker run -d -p ${PORT}:${PORT} ${FULL_IMAGE}"
+    ;;
+
+  *)
+    echo "=== 构建 + 推送: ${FULL_IMAGE} ==="
+    docker build \
+      --build-arg REGISTRY="${REGISTRY}" \
+      -f "${DOCKERFILE}" \
+      -t "${FULL_IMAGE}" .
+    docker push "${FULL_IMAGE}"
+    echo "完成! 拉取: docker pull ${FULL_IMAGE}"
     ;;
 esac

@@ -5,9 +5,10 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 REGISTRY="${REGISTRY:-arm-cluster-master:5000}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
-PUSH=false
-if [[ "${1:-}" == "--push" ]]; then
-    PUSH=true
+# Push by default; --no-push builds without pushing (--push kept as a no-op alias for the default).
+PUSH=true
+if [[ "${1:-}" == "--no-push" ]]; then
+    PUSH=false
 fi
 
 declare -A IMAGES=(
