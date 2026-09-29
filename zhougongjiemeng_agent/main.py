@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""周公解梦 CLI。用法: python zhougongjiemeng_agent/main.py "你的梦境"。"""
+"""周公解梦 CLI。用法: python zhougongjiemeng_agent/main.py "你的梦境"。
+
+给了 `REFERENCE_FILE=ref.md` 就把那个文件当参考素材。线上的素材由框架从 RAG 检索后
+作为 `{reference}` 注入（见 tools/rag_client.py），本机没有这一步 —— 但**必须传**，
+task 描述里的占位符不传就没人替换。
+"""
 import os
 import sys
 
@@ -22,8 +27,15 @@ def main():
     if not text:
         raise SystemExit("梦境内容不能为空")
 
+    # 本机的参考素材（见文件头）。线上由框架检索注入。
+    reference = ""
+    ref_file = os.getenv("REFERENCE_FILE", "").strip()
+    if ref_file:
+        with open(ref_file, encoding="utf-8") as fp:
+            reference = fp.read()
+
     crew = create_zhougongjiemeng_crew()
-    result = crew.kickoff(inputs={"text": text})
+    result = crew.kickoff(inputs={"text": text, "reference": reference})
     print(str(result))
 
 

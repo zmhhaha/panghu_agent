@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
-"""道法自然 — 以老子思想阐述文本/思路。
-用法: python main.py "你的思考或文本"
+"""道法自然 — 本机跑，不启集群。
+
+用法:
+    python main.py "你的思考或文本"
+    REFERENCE_FILE=ref.md python main.py "你的思考或文本"
+
+线上的参考素材由框架从 RAG 检索后作为 `{reference}` 注入 task（见 tools/rag_client.py）；
+本机没有这一步，所以：给了 `REFERENCE_FILE` 就读那个文件当素材，否则传空 ——
+**必须传**，task 描述里的 `{reference}` 占位符不传就没人替换。
 """
 import sys
 import os
@@ -68,9 +75,17 @@ def main():
     print(f"  Pipeline: 解经 → 悟道 → 述道")
     print(f"{sep}\n")
 
+    # 本机的参考素材：见文件头的说明。线上由框架检索注入，这里只能从文件读或留空。
+    reference = ""
+    ref_file = os.getenv("REFERENCE_FILE", "").strip()
+    if ref_file:
+        with open(ref_file, encoding="utf-8") as fp:
+            reference = fp.read()
+        print(f"📎 参考素材: {ref_file}（{len(reference)} 字）")
+
     # 创建并运行 Crew
     crew = create_daofaziran_crew()
-    result = crew.kickoff(inputs={"text": text})
+    result = crew.kickoff(inputs={"text": text, "reference": reference})
 
     # 保存结果到本地文件
     report_path = os.path.join(os.path.dirname(__file__), "output.md")
