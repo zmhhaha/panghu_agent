@@ -161,7 +161,7 @@ def test_auth_accepts_the_configured_token(monkeypatch):
 @pytest.mark.parametrize("slug", PERSONAS)
 def test_every_persona_passes_a_timeout_to_the_llm(slug):
     """静态检查而不是导入：crewai 只在镜像里，且这里只想守住"别把 timeout 删了"。"""
-    path = REPO / f"{slug}_agent" / "crew.py"
+    path = REPO / "baijiazhengming" / "personas" / f"{slug}_agent" / "crew.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
     calls = [
         node
@@ -183,7 +183,7 @@ def test_every_persona_reads_temperature_from_the_same_constant(slug):
     这条是为了防止哪天又有人在某一个文件里写死一个字面量，把「结构统一」重新打散
     （历史上周公就是从结构到取值都漂移了那一份，加 timeout 时差点静默漏掉）。
     """
-    path = REPO / f"{slug}_agent" / "crew.py"
+    path = REPO / "baijiazhengming" / "personas" / f"{slug}_agent" / "crew.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
     module_assigns = {
         node.targets[0].id

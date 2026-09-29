@@ -39,7 +39,7 @@ def main() -> int:
         print(f"[rag-sync] {agent}: 未配置 RAG_URL / RAG_TOKEN，跳过同步", file=sys.stderr)
         return 0
 
-    path = Path(os.getenv("KNOWLEDGE_PATH", f"/app/{agent}_agent/knowledge.md"))
+    path = Path(os.getenv("KNOWLEDGE_PATH", f"/app/baijiazhengming/personas/{agent}_agent/knowledge.md"))
     try:
         content = path.read_text(encoding="utf-8")
     except OSError as error:

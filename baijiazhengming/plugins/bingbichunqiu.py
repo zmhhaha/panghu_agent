@@ -6,5 +6,5 @@ from .persona import PersonaPlugin
 
 class BingBiChunQiuPlugin(PersonaPlugin):
     slug = "bingbichunqiu"
-    crew_module = "bingbichunqiu_agent.crew"
+    crew_module = "baijiazhengming.personas.bingbichunqiu_agent.crew"
     crew_factory = "create_bingbichunqiu_crew"

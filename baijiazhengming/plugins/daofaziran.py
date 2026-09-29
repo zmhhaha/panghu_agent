@@ -6,5 +6,5 @@ from .persona import PersonaPlugin
 
 class DaoFaZiRanPlugin(PersonaPlugin):
     slug = "daofaziran"
-    crew_module = "daofaziran_agent.crew"
+    crew_module = "baijiazhengming.personas.daofaziran_agent.crew"
     crew_factory = "create_daofaziran_crew"

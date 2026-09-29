@@ -6,5 +6,5 @@ from .persona import PersonaPlugin
 
 class ZhenZhuZhiDaPlugin(PersonaPlugin):
     slug = "zhenzhuzhida"
-    crew_module = "zhenzhuzhida_agent.crew"
+    crew_module = "baijiazhengming.personas.zhenzhuzhida_agent.crew"
     crew_factory = "create_zhenzhuzhida_crew"

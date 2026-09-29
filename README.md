@@ -13,6 +13,12 @@ panghu_agent/
 │   ├── crew.py                   # Agent 定义（研究员 / 分析师 / 撰写者）
 │   ├── main.py                   # CLI 本地执行入口
 │   └── requirements.txt          # CrewAI + Anthropic + 抓取依赖
+├── baijiazhengming/              # 八个人格的共享运行时（一个 Deployment 服务八个域名）
+│   ├── registry.yaml             # 人格名册：slug / 人格名 / 模型档位 / UI 文案
+│   ├── runtime.py, api.py, ...   # 调度、任务存储、API、鉴权
+│   ├── personas/<slug>_agent/    # 每个人格自己的包：crew.py + skill.md + knowledge.md（+ 本机 CLI）
+│   ├── plugins/                  # 把各人格的 crew 接进框架
+│   └── k8s.yaml                  # Deployment（逐个注入人格凭据）
 ├── app/
 │   ├── api/
 │   │   └── research_agent.py     # FastAPI 异步调研 API 服务
@@ -48,8 +54,8 @@ python research_agent/main.py "你的调研主题"
 `zhenzhuzhida` / `zhongkuifumo` / `zhougongjiemeng`）**各自也有同形状的本机 CLI**：
 
 ```bash
-python bingbichunqiu_agent/main.py "为什么秦始皇能完成统一？"
-REFERENCE_FILE=材料.md python fofawubian_agent/main.py   # 可选：把这个文件当参考素材
+python baijiazhengming/personas/bingbichunqiu_agent/main.py "为什么秦始皇能完成统一？"
+REFERENCE_FILE=材料.md python baijiazhengming/personas/fofawubian_agent/main.py   # 可选：把这个文件当参考素材
 ```
 
 两个前提：本机能解析到 llm-service 的地址（在集群内或走隧道），且 `LLM_SERVICE_TOKEN`
@@ -111,8 +117,11 @@ API_BASE=http://localhost:8000 python app/ui/research_agent.py
 按 Agent 选好 llm-service 档位后再 apply 模板）：
 
 ```bash
-bash scripts/deploy-api.sh <agent>_agent    # 例如 zhougongjiemeng_agent
+bash scripts/deploy-api.sh research_agent    # 按服务部署的 Agent，例如 research_agent / scientific_agent
 ```
+
+> 八个人格（秉笔春秋、道法自然那一批）**不再这样部署** —— 他们由共享运行时
+> `baijiazhengming/` 一个 Deployment 服务，见 [docs/baijiazhengming-framework.md](docs/baijiazhengming-framework.md)。
 
 > ⚠️ 该脚本会重建并推送**公共镜像** `agent-api:latest`（全部 Agent 共用，`imagePullPolicy: Always`）。
 > 跑之前请确认服务器工作区干净。

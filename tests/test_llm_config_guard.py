@@ -23,18 +23,18 @@ API_CASES = [
 
 
 CREW_MODULES = [
-    "daofaziran_agent.crew",
-    "fofawubian_agent.crew",
-    "zhongkuifumo_agent.crew",
-    "yimaneili_agent.crew",
-    "zhenzhuzhida_agent.crew",
+    "baijiazhengming.personas.daofaziran_agent.crew",
+    "baijiazhengming.personas.fofawubian_agent.crew",
+    "baijiazhengming.personas.zhongkuifumo_agent.crew",
+    "baijiazhengming.personas.yimaneili_agent.crew",
+    "baijiazhengming.personas.zhenzhuzhida_agent.crew",
     "research_agent.crew",
     "scientific_agent.crew",
     "game_review_agent.llm_config",
     # zhougongjiemeng_agent 不在此列：它的 crew 用惰性 create_model()，配置缺失在调用时才报错，
     # 不在 import 期失败。它原先由自己的 FastAPI 包装在 API_CASES 里覆盖，那套包装已随旧运行时
     # 退役（2026-09-30）；现在这条守卫由共享框架 baijiazhengming 负责。
-    "xiaotanrenjian_agent.crew",
+    "baijiazhengming.personas.xiaotanrenjian_agent.crew",
 ]
 
 

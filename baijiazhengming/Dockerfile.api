@@ -7,7 +7,7 @@
 ARG REGISTRY=arm-cluster-master:5000
 FROM ${REGISTRY}/agent-api-base:latest
 
-# 整个仓库都拷进去：八个人格各自的包（<slug>_agent/）与框架都在里面。
+# 整个仓库都拷进去：八个人格各自的包（baijiazhengming/personas/<slug>_agent/）与框架都在里面。
 # 构建上下文必须是仓库根目录，见 deploy.sh。
 COPY . /app
 

@@ -58,6 +58,10 @@ panghu_agent/
 │       ├── xiaotanrenjian.py
 │       ├── bingbichunqiu.py
 │       └── hehuozhouli.py
+│   └── personas/                 # 八个人格各自的包（2026-09-30 从仓库根搬进来）
+│       ├── daofaziran_agent/     # crew.py + skill.md + knowledge.md + 本机 CLI
+│       ├── fofawubian_agent/
+│       └── …
 ├── app/api/baijiazhengming.py
 ├── app/ui/baijiazhengming.py
 └── k8s/baijiazhengming-{api,ui}.yaml
