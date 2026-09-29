@@ -39,10 +39,23 @@ panghu_agent/
 ```bash
 cd panghu_agent
 cp .env.example .env
-# 编辑 .env 填入 API Key
+# 编辑 .env 填 LLM_SERVICE_TOKEN —— 模型统一走集群内 llm-service，本地不再持有 provider 凭据
 
 python research_agent/main.py "你的调研主题"
 ```
+
+八个人格（`bingbichunqiu` / `daofaziran` / `fofawubian` / `xiaotanrenjian` / `yimaneili` /
+`zhenzhuzhida` / `zhongkuifumo` / `zhougongjiemeng`）**各自也有同形状的本机 CLI**：
+
+```bash
+python bingbichunqiu_agent/main.py "为什么秦始皇能完成统一？"
+REFERENCE_FILE=材料.md python fofawubian_agent/main.py   # 可选：把这个文件当参考素材
+```
+
+两个前提：本机能解析到 llm-service 的地址（在集群内或走隧道），且 `LLM_SERVICE_TOKEN`
+是 llm-service 认的令牌（线上框架用的是每个人格自己的 `LLM_TOKEN_<SLUG>`）。
+**线上不需要这些 CLI** —— 线上由框架按名册直接调 crew，它们只是本机调试用；
+所以不传 `REFERENCE_FILE` 时素材就是空的（线上那一步由框架从 RAG 检索后注入）。
 
 ### 2. 本地 API 服务
 
