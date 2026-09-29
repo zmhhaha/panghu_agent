@@ -1,8 +1,11 @@
 # Python
-__pycache__/
-*.pyc
-*.pyo
-*.egg-info/
+# ⚠️ 必须带 `**/`：Docker 的忽略规则**不跨目录**，只写 `__pycache__/` 只挡根目录那一个，
+# 嵌套的照样被 `COPY . /app` 带进镜像 —— 2026-09-30 就是这么发现「老路径下只剩 __pycache__
+# 的残留目录」出现在容器里的。
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.egg-info/
 dist/
 build/
 
