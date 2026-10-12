@@ -9,9 +9,14 @@
 - `plugin.py`、`plugins/`：领域插件协议与参考插件。
 - `task_store.py`：显式 service scope 的任务存储，避免共享进程串表。
 - `runtime.py`：缓存、per-agent 并发、后台执行、RAG 和错误隔离。
+- `language.py`：统一根据用户主要输入语言回复的公共 Prompt。
 - `api.py`：统一 `/v1/agents/...` API 和旧路径兼容层。
 - `ui.py`：按可信 Host allowlist 选择 Agent 的共享 Gradio UI。
 - `k8s.yaml`、`deploy.sh`：一条命令部署全部八个人格（先自检、再切八个代理的 upstream）。
+
+## 回答语言
+
+共享运行时会在每个 Crew 任务执行前追加语言策略：默认跟随用户主要输入语言；用户明确指定语言时遵循指定；代码、书名、URL、模型名和必要原文可保留原语言。该策略是 Prompt 约束，不对输出做字符比例拦截，也不因知识库使用中文而强制中文回答。
 
 ## 凭据：按人格分开，不是框架一个身份
 

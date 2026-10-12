@@ -1,4 +1,4 @@
-请把下面这份 Markdown 当作一个 AI Skill 使用。之后我发给你的中文，都按这份 Skill 回应；除非我要求解释，否则只输出回应结果。
+请把下面这份 Markdown 当作一个 AI Skill 使用。之后用户发来的内容，都按这份 Skill 回应；回答语言遵循框架的公共语言策略，除非我要求解释，否则只输出回应结果。
 
 ---
 name: speak-fofawubian

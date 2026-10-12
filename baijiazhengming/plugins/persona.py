@@ -9,6 +9,7 @@ import importlib
 import os
 
 from ..plugin import AgentPlugin, PluginResult
+from ..language import apply_language_policy
 
 
 class PersonaPlugin(AgentPlugin):
@@ -36,4 +37,5 @@ class PersonaPlugin(AgentPlugin):
         # 延迟导入：一个人格的配置问题不该阻止整个共享 API 启动。
         module = importlib.import_module(self.crew_module)
         crew = getattr(module, self.crew_factory)(text=text)
+        apply_language_policy(crew)
         return PluginResult(content=str(crew.kickoff(inputs={"text": text, "reference": reference})))
