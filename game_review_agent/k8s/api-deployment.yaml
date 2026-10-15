@@ -30,21 +30,6 @@ spec:
         - containerPort: 8000
         env:
         # 模型凭据已全部收归 llm-service：不再注入 provider API Key，也不再从 agent-config 取值。
-        # 游戏试玩 agent：受保护游戏的登录 cookie（可选，不配置则只能访问公开页面）
-        - name: GAME_AUTH_COOKIE
-          valueFrom:
-            secretKeyRef:
-              name: game-auth
-              key: GAME_AUTH_COOKIE
-              optional: true
-        - name: GAME_AUTH_COOKIES_JSON
-          valueFrom:
-            secretKeyRef:
-              name: game-auth
-              key: GAME_AUTH_COOKIES_JSON
-              optional: true
-        # 模型调用：走集群内 llm-service，本服务不再持有 provider 凭据。
-        # 用 deepseek-trusted（trusted 档）——guarded 档禁 tools/response_format，会直接 400。
         - name: LLM_BASE_URL
           value: http://llm-service.llm.svc.cluster.local/v1
         - name: LLM_MODEL

@@ -68,12 +68,6 @@ for ns in "${NS_LIST[@]}"; do
     force-sync=$(date +%s) --overwrite $K >/dev/null 2>&1 || true
   echo "  ${ns}/llm-token force-sync"
 done
-# game-review-agent 额外同步 game-auth
-if [[ " ${NS_LIST[*]} " =~ " game-review-agent " ]]; then
-  kubectl annotate externalsecret game-auth -n game-review-agent \
-    force-sync=$(date +%s) --overwrite $K >/dev/null 2>&1 || true
-  echo "  game-review-agent/game-auth force-sync"
-fi
 
 # ============================================================
 #  Step 2: 校验令牌已就绪

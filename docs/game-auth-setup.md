@@ -1,3 +1,5 @@
+> ⚠️ **2026-10-15 起本文描述的做法已废弃。** `game-auth` 的 ExternalSecret 已删除，api-deployment 里对应的环境变量注入也已移除 —— game-review-agent 只用于评价自己的游戏，不需要登录凭据。保留本文仅作历史记录。
+
 # 游戏试玩评价 agent — 访问凭据配置
 
 生产环境的游戏（qianfu.panghuer.top、tewu.panghuer.top 等）都通过
