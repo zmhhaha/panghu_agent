@@ -13,7 +13,7 @@ def build_llm() -> LLM:
     """
     url = os.getenv("LLM_BASE_URL", "").rstrip("/")
     token = os.getenv("LLM_SERVICE_TOKEN", "")
-    alias = os.getenv("LLM_MODEL", "deepseek-trusted")
+    alias = os.getenv("LLM_MODEL", "custom-trusted")
     if not url or not token:
         raise RuntimeError(
             "content-llm-service 未配置 llm-service：需要 LLM_BASE_URL 与 LLM_SERVICE_TOKEN"

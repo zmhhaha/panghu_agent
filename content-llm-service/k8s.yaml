@@ -45,7 +45,7 @@ metadata:
 data:
   # 统一走集群内 llm-service：这里只配入口与能力档位，
   # provider 凭据由 llm-service 持有（本服务不再保存任何 provider API Key）。
-  # 用 deepseek-trusted：本服务的 CrewAI 需要函数调用（网页工具），
-  # 而 deepseek-guarded 在 llm-service 侧禁止 tools，会直接 400。
+  # 用 custom-trusted：本服务的 CrewAI 需要函数调用（网页工具），
+  # 而 custom-guarded 在 llm-service 侧禁止 tools，会直接 400。
   LLM_BASE_URL: http://llm-service.llm.svc.cluster.local/v1
-  LLM_MODEL: deepseek-trusted
+  LLM_MODEL: custom-trusted

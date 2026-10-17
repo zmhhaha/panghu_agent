@@ -79,7 +79,7 @@ agents:
     display_name: 秉笔春秋
     host: bingbichunqiu-agent.panghuer.top
     plugin: bingbichunqiu
-    llm_model: deepseek-guarded
+    llm_model: custom-guarded
     rag: false
     max_input_length: 2000
     max_output_length: 2000
@@ -138,7 +138,7 @@ GET  /v1/agents/{slug}/tasks/{task_id}
 
 ## 7. LLM、RAG 与凭据
 
-插件只声明 `llm_model: deepseek-guarded` 等模型档位，不直接持有 provider API Key。API 统一使用 `LLM_BASE_URL`、`LLM_MODEL` 和 `LLM_SERVICE_TOKEN` 访问集群内 llm-service。
+插件只声明 `llm_model: custom-guarded` 等模型档位，不直接持有 provider API Key。API 统一使用 `LLM_BASE_URL`、`LLM_MODEL` 和 `LLM_SERVICE_TOKEN` 访问集群内 llm-service。
 
 知识文件仍放在插件目录，但由框架统一执行 checksum、RAG 同步、检索、重试和失败降级。是否启用检索由注册表的 `rag` 字段控制。
 

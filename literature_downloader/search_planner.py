@@ -39,7 +39,7 @@ def _bool_env(name: str, default: bool = True) -> bool:
 
 
 def _model() -> str:
-    return os.getenv("LLM_MODEL", "deepseek-trusted").strip()
+    return os.getenv("LLM_MODEL", "custom-trusted").strip()
 
 
 def _base_url() -> str:

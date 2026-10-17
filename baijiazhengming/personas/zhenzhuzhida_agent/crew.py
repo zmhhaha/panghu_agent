@@ -22,7 +22,7 @@ except FileNotFoundError:
 
 _LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").rstrip("/")
 _LLM_TOKEN = os.getenv("LLM_SERVICE_TOKEN", "").strip()
-LLM_ALIAS = os.getenv("LLM_MODEL", "deepseek-guarded")
+LLM_ALIAS = os.getenv("LLM_MODEL", "custom-guarded")
 # 单次 LLM 调用超时（秒）。不设的话请求会一直挂住 —— 任务永远停在 running、
 # 并发槽位被占死；框架侧的看门狗只能把用户解锁，救不回槽位。
 _LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "120"))
