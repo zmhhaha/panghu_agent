@@ -17,7 +17,7 @@ _LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "120"))
 # 采样温度。八个插件里只有周公保留 0.7（见其文件内的说明），其余统一 0.8。
 LLM_TEMPERATURE = 0.8
 
-def build_model() -> LLM:
+def build_model(model: str | None = None) -> LLM:
     """构造走集群内 llm-service 的模型。
 
     凭据优先取本 agent 自己的 `LLM_TOKEN_BINGBICHUNQIU` —— 共享运行时把八个人的 token 一次性
@@ -34,7 +34,7 @@ def build_model() -> LLM:
             "（见 k8s/api-deployment.yaml 与 vault/inventory/llm-token-externalsecret.yaml）"
         )
     return LLM(
-        model=LLM_ALIAS,
+        model=model or LLM_ALIAS,
         provider="openai",
         base_url=_LLM_BASE_URL,
         api_key=api_key,
@@ -44,12 +44,12 @@ def build_model() -> LLM:
 
 # CrewAI 必须显式给 provider：`openai/<别名>` 会落到未安装的 litellm 分支并报错
 
-def create_bingbichunqiu_agent():
+def create_bingbichunqiu_agent(model: str | None = None):
     return Agent(
         role="秉笔春秋史官",
         goal="依据可靠史料回答 {text}，辨析史实、传说与后世评价，并以史鉴今",
         backstory=SKILL,
-        llm=build_model(),
+        llm=build_model(model),
         verbose=True,
         allow_delegation=False,
     )
@@ -70,5 +70,5 @@ def create_advise_task(agent):
         agent=agent,
     )
 
-def create_bingbichunqiu_crew(text=""):
-    agent=create_bingbichunqiu_agent(); return Crew(agents=[agent], tasks=[create_advise_task(agent)], process=Process.sequential, memory=False, verbose=True)
+def create_bingbichunqiu_crew(text="", model: str | None = None):
+    agent=create_bingbichunqiu_agent(model); return Crew(agents=[agent], tasks=[create_advise_task(agent)], process=Process.sequential, memory=False, verbose=True)

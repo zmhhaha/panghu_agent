@@ -117,7 +117,7 @@ spec:
             - name: LLM_BASE_URL
               value: http://llm-service.llm.svc.cluster.local/v1
             - name: LLM_MODEL
-              value: deepseek-guarded
+              value: custom-guarded
             - name: RAG_URL
               value: http://rag-service.data.svc.cluster.local:8080
             # 单次 LLM 调用超时（秒）。crew 里的默认值也是 120，这里显式写出来便于调整。

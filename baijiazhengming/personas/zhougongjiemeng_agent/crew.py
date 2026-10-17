@@ -32,7 +32,7 @@ _LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "120"))
 # 的（tagline 要求「给出有分寸、不故弄玄虚的解读」）；要完全拉平就改成 0.8。
 LLM_TEMPERATURE = 0.7
 
-def build_model() -> LLM:
+def build_model(model: str | None = None) -> LLM:
     """统一走集群内 llm-service：本服务不再持有 provider 凭据。
 
     凭据优先取本 agent 自己的 `LLM_TOKEN_ZHOUGONGJIEMENG` —— 共享运行时把八个人的
@@ -47,7 +47,7 @@ def build_model() -> LLM:
         )
     # CrewAI 必须显式给 provider：`openai/<别名>` 会落到未安装的 litellm 分支并报错
     return LLM(
-        model=LLM_ALIAS,
+        model=model or LLM_ALIAS,
         provider="openai",
         base_url=_LLM_BASE_URL,
         api_key=api_key,
@@ -56,14 +56,14 @@ def build_model() -> LLM:
     )
 
 
-def create_zhougongjiemeng_agent() -> Agent:
+def create_zhougongjiemeng_agent(model: str | None = None) -> Agent:
     return Agent(
         role="一位熟悉周公解梦民俗与现代睡眠常识的解梦先生",
         goal=(
             "读懂 {text} 中的梦境细节，给出有传统文化味道、贴近现实且不故弄玄虚的解读"
         ),
         backstory=SKILL_CONTENT,
-        llm=build_model(),
+        llm=build_model(model),
         verbose=True,
         allow_delegation=False,
     )
@@ -91,8 +91,8 @@ def create_interpret_dream_task(agent: Agent) -> Task:
     )
 
 
-def create_zhougongjiemeng_crew(text: str = "") -> Crew:
-    agent = create_zhougongjiemeng_agent()
+def create_zhougongjiemeng_crew(text: str = "", model: str | None = None) -> Crew:
+    agent = create_zhougongjiemeng_agent(model)
     task = create_interpret_dream_task(agent)
     return Crew(
         agents=[agent],

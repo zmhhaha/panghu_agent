@@ -121,25 +121,27 @@ class TaskStore:
             return None
         return task
 
-    def find_cached(self, text: str) -> str | None:
+    def find_cached(self, text: str, model: str) -> str | None:
         rows = sqlite_client._query(
             f"SELECT content FROM {self.reports_table} "
-            f"WHERE topic='{self._escape(text)}' AND content IS NOT NULL "
+            f"WHERE topic='{self._escape(text)}' AND model_used='{self._escape(model)}' "
+            "AND content IS NOT NULL "
             "ORDER BY created_at DESC LIMIT 1"
         )
         if rows and rows[0].get("content"):
             return rows[0]["content"]
         return None
 
-    def save_report(self, task_id: str, text: str, content: str) -> None:
+    def save_report(self, task_id: str, text: str, content: str, model: str) -> None:
         summary = self._summary(content)
         keywords = self._keywords(text)
         sqlite_client._execute(
             f"INSERT OR REPLACE INTO {self.reports_table} "
-            "(id,task_id,topic,summary,keywords,content,created_at) VALUES ("
+            "(id,task_id,topic,summary,keywords,content,model_used,created_at) VALUES ("
             f"'{self._escape(task_id)}','{self._escape(task_id)}',"
             f"'{self._escape(text)}','{self._escape(summary)}',"
-            f"'{self._escape(keywords)}','{self._escape(content)}',datetime('now'))"
+            f"'{self._escape(keywords)}','{self._escape(content)}',"
+            f"'{self._escape(model)}',datetime('now'))"
         )
 
     @staticmethod

@@ -19,5 +19,5 @@ class AgentPlugin(ABC):
         return None
 
     @abstractmethod
-    def run(self, text: str, reference: str) -> PluginResult:
+    def run(self, text: str, reference: str, model: str) -> PluginResult:
         raise NotImplementedError

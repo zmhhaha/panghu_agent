@@ -41,6 +41,7 @@ class Submission:
 class _Queued:
     task_id: str
     text: str
+    model: str
     enqueued_at: float
 
 
@@ -79,7 +80,8 @@ class AgentRuntime:
     def configuration_error(self, definition: AgentDefinition) -> str | None:
         return self._plugins[definition.slug].configuration_error()
 
-    def submit(self, definition: AgentDefinition, text: str, user_id: str = "") -> Submission:
+    def submit(self, definition: AgentDefinition, text: str, user_id: str = "", model: str | None = None) -> Submission:
+        model = model or os.getenv("LLM_MODEL", "deepseek-guarded")
         text = text.strip()
         if not text:
             raise ValueError("输入内容不能为空")
@@ -93,7 +95,7 @@ class AgentRuntime:
         running = store.get_running_task(user_id)
         if running:
             raise UserTaskRunningError(definition.busy_message)
-        cached = store.find_cached(text)
+        cached = store.find_cached(text, model)
         if cached:
             return Submission("cached", text, "done", report=cached, cached=True)
 
@@ -103,7 +105,7 @@ class AgentRuntime:
         task_id = store.create_task(text, user_id)
         try:
             with self._queue_lock:
-                self._queues[definition.slug].append(_Queued(task_id, text, time.monotonic()))
+                self._queues[definition.slug].append(_Queued(task_id, text, model, time.monotonic()))
             # 事件只是唤醒调度器；入队与抢槽位之间没有竞态需要靠锁保护
             self._queue_event.set()
         except Exception as error:
@@ -148,7 +150,7 @@ class AgentRuntime:
                 if not slot.acquire(blocking=False):
                     break
                 item = queue.popleft()
-                self._executor.submit(self._run, definition, item.task_id, item.text, slot)
+                self._executor.submit(self._run, definition, item.task_id, item.text, item.model, slot)
 
     def get_task(self, definition: AgentDefinition, task_id: str) -> dict | None:
         return self._stores[definition.slug].get_task(task_id)
@@ -158,18 +160,19 @@ class AgentRuntime:
         definition: AgentDefinition,
         task_id: str,
         text: str,
+        model: str,
         slot: threading.BoundedSemaphore,
     ) -> None:
         store = self._stores[definition.slug]
         try:
             store.update_task(task_id, status="running")
             reference = get_reference(definition, text)
-            result = self._plugins[definition.slug].run(text, reference).content.strip()
+            result = self._plugins[definition.slug].run(text, reference, model).content.strip()
             if len(result) > definition.max_output_length:
                 result = result[: definition.max_output_length].rstrip() + "…"
             store.update_task(task_id, status="done", report=result)
             try:
-                store.save_report(task_id, text, result)
+                store.save_report(task_id, text, result, model)
             except Exception as error:  # 报告缓存失败不能把已完成的回答改成失败。
                 print(f"[baijia] save report failed for {definition.slug}: {error}")
         except Exception as error:

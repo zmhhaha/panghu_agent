@@ -58,9 +58,12 @@ def _definition(slug: str) -> AgentDefinition:
     return definition
 
 
-def _submit(definition: AgentDefinition, request: SubmitRequest) -> TaskResponse:
+def _submit(definition: AgentDefinition, request: SubmitRequest, *, internal: bool = False) -> TaskResponse:
     try:
-        result = runtime.submit(definition, request.text, request.user_id)
+        result = runtime.submit(
+            definition, request.text, request.user_id,
+            model=definition.llm_model if internal else None,
+        )
     except (AgentBusyError, UserTaskRunningError) as error:
         raise HTTPException(429, str(error)) from error
     except ValueError as error:
@@ -161,6 +164,11 @@ def submit_task(slug: str, request: SubmitRequest):
     return _submit(_definition(slug), request)
 
 
+@app.post("/v1/internal/agents/{slug}/tasks", response_model=TaskResponse, dependencies=_AUTH)
+def submit_internal_task(slug: str, request: SubmitRequest):
+    return _submit(_definition(slug), request, internal=True)
+
+
 @app.get("/v1/agents/{slug}/tasks/{task_id}", response_model=TaskResponse, dependencies=_AUTH)
 def get_task(slug: str, task_id: str):
     return _task(_definition(slug), task_id)
@@ -168,7 +176,7 @@ def get_task(slug: str, task_id: str):
 
 def _legacy_submit(definition: AgentDefinition):
     def endpoint(request: SubmitRequest):
-        return _submit(definition, request)
+        return _submit(definition, request, internal=True)
 
     endpoint.__name__ = f"submit_{definition.slug}_legacy"
     return endpoint

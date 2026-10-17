@@ -14,6 +14,14 @@
 - `ui.py`：按可信 Host allowlist 选择 Agent 的共享 Gradio UI。
 - `k8s.yaml`、`deploy.sh`：一条命令部署全部八个人格（先自检、再切八个代理的 upstream）。
 
+## 模型选择
+
+公开 UI 调用 `POST /v1/agents/{slug}/tasks`，使用 API Deployment 的 `LLM_MODEL`。
+内部调用 `POST /v1/internal/agents/{slug}/tasks`，使用 `registry.yaml` 中该人格的
+`llm_model`；旧路径 `POST /{service_name}` 也按名册选择。两类入口都需要
+`BAIJIA_API_TOKEN`，请求体只需 `text` 和可选的 `user_id`，调用方不能在请求体里指定模型。
+报告缓存按实际使用的模型隔离。
+
 ## 回答语言
 
 共享运行时会在每个 Crew 任务执行前追加语言策略：默认跟随用户主要输入语言；用户明确指定语言时遵循指定；代码、书名、URL、模型名和必要原文可保留原语言。该策略是 Prompt 约束，不对输出做字符比例拦截，也不因知识库使用中文而强制中文回答。
