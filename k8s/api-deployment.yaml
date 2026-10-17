@@ -66,9 +66,9 @@ spec:
               optional: true
         # 模型调用：统一走集群内 llm-service，本模板不再注入任何 provider 凭据
         # 档位由 scripts/deploy-api.sh 按 Agent 填充 __LLM_MODEL__：
-        #   - 本法系列（用户写 prompt）→ custom-guarded（禁扩权字段、收紧上限）
-        #   - research / scientific（带检索工具）→ custom-trusted（trusted，guarded 档禁 tools 会 400）
-        # 将来做内部机器对话时，继续用 custom-trusted（它本就允许 tools）即可。
+        #   - 本法系列（用户写 prompt）→ llm-guarded（禁扩权字段、收紧上限）
+        #   - research / scientific（带检索工具）→ llm-trusted（trusted，guarded 档禁 tools 会 400）
+        # 将来做内部机器对话时，继续用 llm-trusted（它本就允许 tools）即可。
         - name: LLM_BASE_URL
           value: http://llm-service.llm.svc.cluster.local/v1
         - name: LLM_MODEL

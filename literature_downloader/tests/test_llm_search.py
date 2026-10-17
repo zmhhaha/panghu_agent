@@ -60,7 +60,7 @@ class LLMSearchTests(unittest.TestCase):
         # LLM_MODEL 缺省时用 custom-trusted（trusted 档，允许 response_format）
         env.pop("LLM_MODEL")
         with patch.dict("os.environ", env, clear=True):
-            self.assertEqual(LLMJsonClient.from_environment(config).model, "custom-trusted")
+            self.assertEqual(LLMJsonClient.from_environment(config).model, "llm-trusted")
 
         # 缺令牌则不构造客户端，由上层回退
         env.pop("LLM_SERVICE_TOKEN")
@@ -90,6 +90,13 @@ class LLMSearchTests(unittest.TestCase):
         self.assertEqual(second["llm"]["status"], "cached")
         self.assertEqual(second["query_variants"], payload["query_variants"])
         self.assertTrue(second["scope_filtering"]["active"])
+
+        fake.model = 'llm-trusted'
+        with patch("literature_downloader.search_planner.LLMJsonClient.from_environment", return_value=fake):
+            first_stable = create_search_plan("InP 干法刻蚀", config=config)
+            second_stable = create_search_plan("InP 干法刻蚀", config=config)
+        self.assertEqual(first_stable['llm']['status'], 'used')
+        self.assertEqual(second_stable['llm']['status'], 'used')
 
     def test_scope_is_generated_plan_data_and_rejects_missing_required_group(self) -> None:
         plan = {

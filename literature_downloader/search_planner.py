@@ -39,7 +39,7 @@ def _bool_env(name: str, default: bool = True) -> bool:
 
 
 def _model() -> str:
-    return os.getenv("LLM_MODEL", "custom-trusted").strip()
+    return os.getenv("LLM_MODEL", "llm-trusted").strip()
 
 
 def _base_url() -> str:
@@ -288,8 +288,9 @@ def create_search_plan(
         return fallback
 
     cache = _cache_path(config, topic, variants_limit, target, client.model)
+    cache_enabled = client.model not in ("llm-guarded", "llm-trusted")
     try:
-        if cache.is_file():
+        if cache_enabled and cache.is_file():
             cached = json.loads(cache.read_text(encoding="utf-8"))
             plan = _validate_payload(cached, topic, variants_limit, target)
             plan["llm"] = {
@@ -340,8 +341,9 @@ def create_search_plan(
             "generated_at": plan["generated_at"],
             "cache_hit": False,
         }
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
+        if cache_enabled:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
         return plan
     except Exception as exc:
         fallback["llm"].update({

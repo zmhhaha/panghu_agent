@@ -20,18 +20,18 @@
 | 配置项 | 来源 | 说明 |
 |---|---|---|
 | `LLM_BASE_URL` | ConfigMap `content-llm-config` | `http://llm-service.llm.svc.cluster.local/v1`（**基址**，litellm 自己接 `/chat/completions`） |
-| `LLM_MODEL` | ConfigMap `content-llm-config` | llm-service 注册的**模型别名** —— 本服务用 `custom-trusted`（见下） |
+| `LLM_MODEL` | ConfigMap `content-llm-config` | llm-service 注册的**模型别名** —— 本服务用 `llm-trusted`（见下） |
 | `LLM_SERVICE_TOKEN` | Secret `content-llm-secret`（Vault `secret/llm-service/callers` 的 `LLM_TOKEN_CONTENT_LLM_SERVICE`） | 本服务在 llm-service 侧的**专属**令牌 |
 
 provider 密钥、模型别名路由、超时与重试都由 llm-service 负责，见 `llm-service/README.md`。
 
-### 职责边界：为什么用 `custom-trusted`
+### 职责边界：为什么用 `llm-trusted`
 
 - **llm-service** 只管通道与策略：凭据、路由、超时重试、限流、用量；它不判断业务语义，但**按别名的能力档位**放行能力。
 - **本服务**管业务语义：用什么工具（WebSearch / WebFetch）、提示词、输出解析。
 
 本服务的 CrewAI 会让模型做**函数调用**，请求体里带 `tools` / `tool_choice`。
-llm-service 只有 `guarded` 档禁 tools、`trusted` 档允许 —— 所以用 `custom-trusted`。
+llm-service 只有 `guarded` 档禁 tools、`trusted` 档允许 —— 所以用 `llm-trusted`。
 
 （历史上这里曾用 `chat-tools` / `chat-default` 两个名字区分「函数调用」和「纯生成」，但两者其实
 **都是 trusted 档、策略完全相同**，只差默认 temperature 和 timeout，而 temperature 本服务在代码里
@@ -40,12 +40,12 @@ llm-service 只有 `guarded` 档禁 tools、`trusted` 档允许 —— 所以用
 ### 踩坑：CrewAI 的 `LLM(model=...)` 不能写成 `openai/<别名>`
 
 CrewAI 只会把前缀属于它「canonical provider」的模型名交给原生实现，**`openai/...` 不在其中**——
-写 `LLM(model="openai/custom-trusted")` 会落到未安装的 litellm 分支，报
+写 `LLM(model="openai/llm-trusted")` 会落到未安装的 litellm 分支，报
 `Unable to initialize LLM ... LiteLLM fallback package is not installed`。
 必须**显式给 provider**：
 
 ```python
-LLM(model="custom-trusted", provider="openai", base_url=LLM_BASE_URL, api_key=LLM_SERVICE_TOKEN, temperature=0.2)
+LLM(model="llm-trusted", provider="openai", base_url=LLM_BASE_URL, api_key=LLM_SERVICE_TOKEN, temperature=0.2)
 ```
 
 模型名直接用别名，请求体里的 `model` 就是别名，正合 llm-service 的约定。

@@ -53,10 +53,17 @@ class TaskStore:
                 content TEXT NOT NULL,
                 tokens_used INTEGER DEFAULT 0,
                 model_used TEXT,
+                requested_alias TEXT,
+                route_revision TEXT,
                 created_at TEXT DEFAULT (datetime('now'))
             )
             """
         )
+
+        columns = {row["name"] for row in sqlite_client._query(f"PRAGMA table_info({self.reports_table})")}
+        for column in ("requested_alias", "route_revision"):
+            if column not in columns:
+                sqlite_client._execute(f"ALTER TABLE {self.reports_table} ADD COLUMN {column} TEXT")
 
     def clear_stale_tasks(self) -> None:
         sqlite_client._execute(
@@ -122,6 +129,9 @@ class TaskStore:
         return task
 
     def find_cached(self, text: str, model: str) -> str | None:
+        # Stable routes can change upstream without changing model names.
+        if model in ("llm-guarded", "llm-trusted"):
+            return None
         rows = sqlite_client._query(
             f"SELECT content FROM {self.reports_table} "
             f"WHERE topic='{self._escape(text)}' AND model_used='{self._escape(model)}' "
@@ -132,16 +142,17 @@ class TaskStore:
             return rows[0]["content"]
         return None
 
-    def save_report(self, task_id: str, text: str, content: str, model: str) -> None:
+    def save_report(self, task_id: str, text: str, content: str, model: str, route_revision: str | None = None) -> None:
         summary = self._summary(content)
         keywords = self._keywords(text)
+        revision_sql = "NULL" if route_revision is None else f"'{self._escape(route_revision)}'"
         sqlite_client._execute(
             f"INSERT OR REPLACE INTO {self.reports_table} "
-            "(id,task_id,topic,summary,keywords,content,model_used,created_at) VALUES ("
+            "(id,task_id,topic,summary,keywords,content,model_used,requested_alias,route_revision,created_at) VALUES ("
             f"'{self._escape(task_id)}','{self._escape(task_id)}',"
             f"'{self._escape(text)}','{self._escape(summary)}',"
             f"'{self._escape(keywords)}','{self._escape(content)}',"
-            f"'{self._escape(model)}',datetime('now'))"
+            f"'{self._escape(model)}','{self._escape(model)}',{revision_sql},datetime('now'))"
         )
 
     @staticmethod

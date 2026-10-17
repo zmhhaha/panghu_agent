@@ -33,7 +33,7 @@ spec:
         - name: LLM_BASE_URL
           value: http://llm-service.llm.svc.cluster.local/v1
         - name: LLM_MODEL
-          value: custom-trusted
+          value: llm-trusted
         - name: LLM_SERVICE_TOKEN
           valueFrom:
             secretKeyRef:

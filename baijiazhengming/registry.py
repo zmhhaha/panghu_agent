@@ -115,7 +115,7 @@ class AgentRegistry:
             host=host,
             plugin_name=plugin_name,
             legacy_path=legacy_path,
-            llm_model=str(data.get("llm_model", "custom-guarded")),
+            llm_model=str(data.get("llm_model", "llm-guarded")),
             rag_enabled=bool(data.get("rag_enabled", False)),
             max_input_length=max_input,
             max_output_length=max_output,

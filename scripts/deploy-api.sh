@@ -9,8 +9,8 @@
 #  约定:
 #    - 源码 app/api/<name>.py → ConfigMap api-agent (key: agent.py)
 #    - 模板 k8s/api-deployment.yaml，__NAMESPACE__ / __AGENT__ / __LLM_MODEL__ 占位
-#    - llm-service 档位：research / scientific 带检索工具，走 custom-trusted（trusted）；
-#      其余（用户写 prompt 的对话型 Agent）走 custom-guarded。可用环境变量 LLM_MODEL 覆盖。
+#    - llm-service 档位：research / scientific 带检索工具，走 llm-trusted（trusted）；
+#      其余（用户写 prompt 的对话型 Agent）走 llm-guarded。可用环境变量 LLM_MODEL 覆盖。
 # ============================================================
 set -e
 script_dir="$(cd "$(dirname "$0")" && pwd)"
@@ -26,8 +26,8 @@ SRC="../app/api/${NAME}.py"
 
 # llm-service 别名：guarded 档禁 tools/response_format，带工具的 Agent 必须用 trusted 档
 case "$AGENT" in
-    research|scientific) LLM_MODEL="${LLM_MODEL:-custom-trusted}" ;;
-    *)                   LLM_MODEL="${LLM_MODEL:-custom-guarded}" ;;
+    research|scientific) LLM_MODEL="${LLM_MODEL:-llm-trusted}" ;;
+    *)                   LLM_MODEL="${LLM_MODEL:-llm-guarded}" ;;
 esac
 
 echo "=== Deploying API: ${NAME} (namespace: ${NAMESPACE}) ==="

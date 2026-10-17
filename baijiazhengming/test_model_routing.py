@@ -65,6 +65,29 @@ class ModelRoutingTest(unittest.TestCase):
             store.find_cached("same text", "custom-guarded")
         self.assertIn("model_used='custom-guarded'", query.call_args.args[0])
 
+    def test_stable_alias_never_reads_old_report_cache(self):
+        store = TaskStore("daofaziran_agent")
+        with patch("baijiazhengming.task_store.sqlite_client._query") as query:
+            for model in ("llm-guarded", "llm-trusted"):
+                self.assertIsNone(store.find_cached("same text", model))
+            query.assert_not_called()
+
+    def test_report_schema_migration_and_nullable_revision(self):
+        import sqlite3
+        db = sqlite3.connect(':memory:')
+        db.row_factory = sqlite3.Row
+        db.execute('CREATE TABLE daofaziran_agent_reports (id TEXT PRIMARY KEY, task_id TEXT, topic TEXT, summary TEXT, keywords TEXT, content TEXT, model_used TEXT, created_at TEXT)')
+        def query(sql): return [dict(row) for row in db.execute(sql)]
+        with patch('baijiazhengming.task_store.sqlite_client._query', side_effect=query), patch('baijiazhengming.task_store.sqlite_client._execute', side_effect=db.execute):
+            store = TaskStore('daofaziran_agent')
+            store.initialize()
+            store.initialize()
+            store.save_report('id', 'topic', 'answer', 'llm-guarded')
+            row = query('SELECT * FROM daofaziran_agent_reports')[0]
+            self.assertEqual(row['requested_alias'], 'llm-guarded')
+            self.assertIsNone(row['route_revision'])
+        db.close()
+
     def test_each_crew_builds_requested_model(self):
         for definition in get_registry().list_enabled():
             with self.subTest(agent=definition.slug):

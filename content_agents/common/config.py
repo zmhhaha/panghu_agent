@@ -51,6 +51,6 @@ class AgentConfig:
             hublog_service_token=resolve_service_token(bot_name),
             llm_base_url=os.getenv("LLM_BASE_URL", "").rstrip("/"),
             llm_api_key=os.getenv("LLM_API_KEY", ""),
-            llm_model=os.getenv("LLM_MODEL", "custom-trusted"),
+            llm_model=os.getenv("LLM_MODEL", "llm-trusted"),
             llm_required=_bool("LLM_REQUIRED", False),
         )

@@ -191,9 +191,9 @@ Agent **不再持有任何 provider 凭据**，模型调用经集群内的 `llm-
 - Pod 需带 `llm-client: "true"` 标签，才能通过 llm-service 的 NetworkPolicy
 - **档位按 Agent 区分**，由 [`scripts/deploy-api.sh`](scripts/deploy-api.sh) 决定（模板里是 `__LLM_MODEL__` 占位符，
   可用环境变量 `LLM_MODEL` 覆盖）。别名格式固定为 `<provider>-<tier>`：
-  - **8 家本法系列**：由**用户写 prompt**，用 `custom-guarded`（guarded 档，禁扩权字段、收紧参数上限）。
-  - **research / scientific**：带学术与网页检索工具，`guarded` 档禁 `tools` 会 400，故用 `custom-trusted`。
-  - 将来做**内部机器对话**时，那条路径继续用 `custom-trusted` 即可（它本就允许 tools）。
+  - **8 家本法系列**：由**用户写 prompt**，用 `llm-guarded`（guarded 档，禁扩权字段、收紧参数上限）。
+  - **research / scientific**：带学术与网页检索工具，`guarded` 档禁 `tools` 会 400，故用 `llm-trusted`。
+  - 将来做**内部机器对话**时，那条路径继续用 `llm-trusted` 即可（它本就允许 tools）。
     详见 `llm-service/README.md` 的别名命名约定。
 
 > 已迁移到 llm-service 的服务：8 家本法系列、`research_agent`、`scientific_agent`、`game_review_agent`
@@ -208,7 +208,7 @@ Agent **不再持有任何 provider 凭据**，模型调用经集群内的 `llm-
    但回答时 `fetch_reference` 取不到素材（`RAG_TOKEN` 未注入）。
 3. **先验证检索、再移除知识**：从 prompt 去掉 `knowledge.md` 之前，必须先确认线上能取到素材。
    否则一旦检索失败（401 / 未部署），Agent 会**完全没有素材**，回答质量直接掉。
-4. **`llm-service` 档位选错会直接 400**：`custom-guarded`（guarded 档）禁 `tools` 和 `response_format`，
+4. **`llm-service` 档位选错会直接 400**：`llm-guarded`（guarded 档）禁 `tools` 和 `response_format`，
    带检索工具的 Agent（research / scientific / game_review）或需要 JSON 输出的服务
    （literature_downloader）用了它就会被拒。档位由 `deploy-api.sh` 按 Agent 名自动选，
    手工渲染模板时别写错。见上面「模型调用」一节。

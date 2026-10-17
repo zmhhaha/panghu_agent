@@ -81,7 +81,7 @@ class AgentRuntime:
         return self._plugins[definition.slug].configuration_error()
 
     def submit(self, definition: AgentDefinition, text: str, user_id: str = "", model: str | None = None) -> Submission:
-        model = model or os.getenv("LLM_MODEL", "custom-guarded")
+        model = model or os.getenv("LLM_MODEL", "llm-guarded")
         text = text.strip()
         if not text:
             raise ValueError("输入内容不能为空")
