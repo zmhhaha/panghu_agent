@@ -83,3 +83,6 @@ python -m unittest tests.test_gateway_responses \
 解析后仍完整、工具结果第二轮历史符合 Responses schema、JSON Schema 输出、失败终态、
 无状态约束，以及两个直接 HTTP 客户端的请求。线上发布后还需用实际别名验收普通文本、工具
 往返和 JSON 输出，确认 custom 与 DeepSeek 两种上游都可用。
+
+2026-10-20 已验证 CrewAI 1.15.1 与 ARM 镜像中的 1.15.28。后者已自行转换工具历史，适配层
+始终从 executor 的原始消息构造 input，避免重复转换；相应 9 项回归在两个版本均通过。

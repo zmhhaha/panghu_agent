@@ -1,10 +1,12 @@
 """Exercise real CrewAI/OpenAI serialization without provider network access."""
 from __future__ import annotations
 
+import copy
 import json
 from types import SimpleNamespace
 
 import httpx
+from crewai.llms.providers.openai.completion import OpenAICompletion
 from openai import OpenAI
 from openai.types.responses.response_input_item_param import ResponseInputItemParam
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -39,6 +41,42 @@ def gateway(handler):
 
 
 class GatewayResponsesTests(unittest.TestCase):
+    def test_superclass_converted_tool_history_is_not_converted_twice(self):
+        history = [
+            {"role": "system", "content": "Use the search tool once."},
+            {"role": "user", "content": "Find InP papers."},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "call_search", "type": "function", "function": {"name": "lookup", "arguments": '{"q":"InP"}'}},
+            ]},
+            {"role": "tool", "tool_call_id": "call_search", "content": "InP paper"},
+        ]
+        pristine = copy.deepcopy(history)
+        converted_input = [
+            {"role": "user", "content": "Find InP papers."},
+            {"type": "function_call", "call_id": "call_search", "name": "lookup", "arguments": '{"q":"InP"}'},
+            {"type": "function_call_output", "call_id": "call_search", "output": "InP paper"},
+        ]
+        # CrewAI 1.15.28 returns Responses items here; 1.15.1 returns Chat
+        # messages. Exercise that newer superclass contract with the real SDK.
+        prepared = {"model": "llm-trusted", "instructions": "Use the search tool once.",
+                    "input": copy.deepcopy(converted_input), "temperature": 0.2, "max_output_tokens": 256}
+        sent = []
+        def handler(request):
+            sent.append(json.loads(request.content))
+            return httpx.Response(200, json=terminal(text_output("找到文献")))
+        llm = gateway(handler)
+        with patch.object(OpenAICompletion, "_prepare_responses_params", return_value=prepared) as prepare:
+            self.assertEqual(llm.call(history), "找到文献")
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0]["input"], converted_input)
+        self.assertEqual(sent[0]["instructions"], "Use the search tool once.")
+        self.assertFalse(any(item.get("role") == "system" for item in sent[0]["input"]))
+        self.assertEqual(sent[0]["temperature"], 0.2)
+        self.assertEqual(sent[0]["max_output_tokens"], 256)
+        self.assertFalse(sent[0]["store"])
+        self.assertEqual(history, pristine)
+        prepare.assert_called_once()
+
     def test_tool_call_and_second_turn_use_responses_with_complete_history(self):
         sent = []
         def handler(request):

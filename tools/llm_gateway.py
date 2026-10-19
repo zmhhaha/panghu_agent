@@ -76,7 +76,11 @@ class GatewayResponsesLLM(OpenAICompletion):
         params = super()._prepare_responses_params(messages, tools, response_model)
         if params.get("previous_response_id") or params.get("conversation"):
             raise ValueError("llm-service requires the full stateless message history")
-        params["input"] = _input_messages(params["input"])
+        # Recent CrewAI 1.15 releases already convert params["input"] to
+        # Responses items. Always adapt the original executor history once.
+        # The superclass extracts system messages into instructions.
+        input_messages = [message for message in messages if message.get("role") != "system"]
+        params["input"] = _input_messages(input_messages or messages)
         params["store"] = False
         return params
 
