@@ -49,7 +49,7 @@ python main.py "大语言模型在医疗领域的应用"
 
 | 环境变量 | 说明 |
 |---------|------|
-| `LLM_BASE_URL` | `http://llm-service.llm.svc.cluster.local/v1`（基址，不含 `/chat/completions`） |
+| `LLM_BASE_URL` | `http://llm-service.llm.svc.cluster.local/v1`（基址，公共客户端追加 `/responses`） |
 | `LLM_MODEL` | 模型别名。本服务带学术/网页检索工具，用 trusted 档 **`llm-trusted`**；`llm-guarded` 禁 `tools`，会直接 400 |
 | `LLM_SERVICE_TOKEN` | 本服务在 llm-service 侧的**专属**令牌，来自 `llm-token` ExternalSecret（Vault `secret/llm-service/callers` 的 `LLM_TOKEN_RESEARCH`） |
 
@@ -58,6 +58,8 @@ python main.py "大语言模型在医疗领域的应用"
 档位由脚本按 Agent 名选择。
 
 本地直接 `python main.py` 时也要先导出这三个变量，否则 crew 在 import 期就会报错（故意 fail fast）。
+
+模型工厂使用 `GatewayResponsesLLM`，保留网页/学术工具的参数与第二轮历史；版本要求和基座重建步骤见 [Responses 接入](../docs/llm-service-responses.md)。
 
 ## Agent 说明
 

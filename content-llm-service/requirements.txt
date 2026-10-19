@@ -1,4 +1,4 @@
-crewai[tools]>=0.108.0
+crewai[tools]>=1.15.1,<1.16
 fastapi[standard]>=0.115.0
 uvicorn[standard]>=0.32.0
 requests>=2.31.0

@@ -5,7 +5,8 @@
 """
 import os
 
-from crewai import Agent, Crew, LLM, Process, Task
+from crewai import Agent, Crew, Process, Task
+from tools.llm_gateway import GatewayResponsesLLM as LLM
 
 
 _SKILL_PATH = os.path.join(os.path.dirname(__file__), "skill.md")
@@ -45,7 +46,7 @@ def build_model(model: str | None = None) -> LLM:
             "zhougongjiemeng_agent 未配置 llm-service：需要 LLM_BASE_URL 与 LLM_SERVICE_TOKEN"
             "（见 k8s/api-deployment.yaml 与 vault/inventory/llm-token-externalsecret.yaml）"
         )
-    # CrewAI 必须显式给 provider：`openai/<别名>` 会落到未安装的 litellm 分支并报错
+    # 公共客户端使用原生 Responses；模型名保持网关别名，工具历史在客户端转换。
     return LLM(
         model=model or LLM_ALIAS,
         provider="openai",

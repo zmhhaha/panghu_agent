@@ -7,7 +7,8 @@
     (Searcher)   (Screener)   (Extractor)  (Synthesizer)  (Writer)
 """
 import os
-from crewai import Agent, Task, Crew, Process, LLM
+from crewai import Agent, Task, Crew, Process
+from tools.llm_gateway import GatewayResponsesLLM as LLM
 
 # 学术搜索工具（全部免费，无需第三方 API Key）
 from tools.academic_tools import (
@@ -40,7 +41,7 @@ if not _LLM_BASE_URL or not _LLM_TOKEN:
 
 
 def _make_llm(temperature: float) -> LLM:
-    # CrewAI 必须显式给 provider：`openai/<别名>` 会落到未安装的 litellm 分支并报错
+    # 公共客户端使用原生 Responses；模型名保持网关别名，工具历史在客户端转换。
     return LLM(model=LLM_ALIAS, provider="openai", base_url=_LLM_BASE_URL, api_key=_LLM_TOKEN, temperature=temperature)
 
 

@@ -67,11 +67,15 @@ does not create a duplicate Hublog post.
 | `MEME_AGENT_ENABLED` | `true` | Enable shared LLM-based meme judging |
 | `MEME_AGENT_SERVICE_URL` | cluster-local `content-llm-service` | Shared LLM service endpoint |
 
-Meme Collector does not own an LLM configuration. It sends each Bilibili
-candidate to the shared `content-llm-service`, which uses CrewAI and selects
-the provider from its own `PROVIDER` ConfigMap value. The service owns model
-and endpoint settings and reads credentials from its ExternalSecret. It
+Production Meme Collector sends each Bilibili candidate to the shared
+`content-llm-service`, which uses CrewAI and calls llm-service through
+`LLM_BASE_URL`, `LLM_MODEL`, and its own caller token. llm-service selects the
+upstream provider and holds provider credentials. The content service
 returns `is_meme`, a short `phrase`, `context`, `joke`, and `confidence`.
+
+The optional direct path in `common/llm.py` also uses `/v1/responses`, with
+`store:false` and JSON output through `text.format`. Both paths are covered by
+the [Responses migration and deployment guide](../docs/llm-service-responses.md).
 
 Publication policy:
 

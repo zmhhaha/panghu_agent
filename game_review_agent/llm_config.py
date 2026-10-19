@@ -8,7 +8,7 @@
 """
 import os
 
-from crewai import LLM
+from tools.llm_gateway import GatewayResponsesLLM as LLM
 
 _LLM_BASE_URL = os.getenv("LLM_BASE_URL", "").rstrip("/")
 _LLM_TOKEN = os.getenv("LLM_SERVICE_TOKEN", "").strip()
@@ -22,7 +22,7 @@ if not _LLM_BASE_URL or not _LLM_TOKEN:
 
 
 def _make(temperature: float) -> LLM:
-    # CrewAI 必须显式给 provider：`openai/<别名>` 会落到未安装的 litellm 分支并报错
+    # 公共客户端使用原生 Responses；模型名保持网关别名，工具历史在客户端转换。
     return LLM(model=LLM_ALIAS, provider="openai", base_url=_LLM_BASE_URL, api_key=_LLM_TOKEN, temperature=temperature)
 
 

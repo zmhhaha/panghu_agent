@@ -4,7 +4,8 @@
 从同目录的 skill.md 读取完整 AI Skill 指令注入 Agent。
 """
 import os
-from crewai import Agent, Task, Crew, Process, LLM
+from crewai import Agent, Task, Crew, Process
+from tools.llm_gateway import GatewayResponsesLLM as LLM
 
 _SKILL_PATH = os.path.join(os.path.dirname(__file__), "skill.md")
 try:
@@ -54,7 +55,7 @@ def build_model(model: str | None = None) -> LLM:
         timeout=_LLM_TIMEOUT,
     )
 
-# CrewAI 必须显式给 provider：`openai/<别名>` 会落到未安装的 litellm 分支并报错
+# 公共客户端使用原生 Responses；模型名保持网关别名，工具历史在客户端转换。
 
 
 def create_zhenzhuzhida_agent(model: str | None = None) -> Agent:

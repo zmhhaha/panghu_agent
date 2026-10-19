@@ -127,7 +127,7 @@ spec:
             - name: ACADEMIC_CONTACT_EMAIL
               value: panghuer001@163.com
             # 模型调用：走集群内 llm-service，本服务不再持有 provider 凭据。
-            # 用 llm-trusted（trusted 档）——检索计划与重排需要 response_format，
+            # 用 llm-trusted（trusted 档）——检索计划与重排需要 Responses text.format，
             # llm-guarded 会直接 400；本服务不需要函数调用，但 trusted 本身就是它该用的档。
             - name: LLM_BASE_URL
               value: http://llm-service.llm.svc.cluster.local/v1

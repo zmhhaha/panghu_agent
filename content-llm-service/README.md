@@ -19,7 +19,7 @@
 
 | 配置项 | 来源 | 说明 |
 |---|---|---|
-| `LLM_BASE_URL` | ConfigMap `content-llm-config` | `http://llm-service.llm.svc.cluster.local/v1`（**基址**，litellm 自己接 `/chat/completions`） |
+| `LLM_BASE_URL` | ConfigMap `content-llm-config` | `http://llm-service.llm.svc.cluster.local/v1`（**基址**，公共原生客户端追加 `/responses`） |
 | `LLM_MODEL` | ConfigMap `content-llm-config` | llm-service 注册的**模型别名** —— 本服务用 `llm-trusted`（见下） |
 | `LLM_SERVICE_TOKEN` | Secret `content-llm-secret`（Vault `secret/llm-service/callers` 的 `LLM_TOKEN_CONTENT_LLM_SERVICE`） | 本服务在 llm-service 侧的**专属**令牌 |
 
@@ -37,18 +37,18 @@ llm-service 只有 `guarded` 档禁 tools、`trusted` 档允许 —— 所以用
 **都是 trusted 档、策略完全相同**，只差默认 temperature 和 timeout，而 temperature 本服务在代码里
 本来就显式传了 0.2。那套名字已废弃，别名格式改为 `<provider>-<tier>`。）
 
-### 踩坑：CrewAI 的 `LLM(model=...)` 不能写成 `openai/<别名>`
+### CrewAI Responses 客户端
 
-CrewAI 只会把前缀属于它「canonical provider」的模型名交给原生实现，**`openai/...` 不在其中**——
-写 `LLM(model="openai/llm-trusted")` 会落到未安装的 litellm 分支，报
-`Unable to initialize LLM ... LiteLLM fallback package is not installed`。
-必须**显式给 provider**：
+使用 CrewAI >= 1.15.1 的公共原生客户端，固定无状态 Responses，并修正 executor 的工具历史和参数传递：
 
 ```python
-LLM(model="llm-trusted", provider="openai", base_url=LLM_BASE_URL, api_key=LLM_SERVICE_TOKEN, temperature=0.2)
+from tools.llm_gateway import GatewayResponsesLLM
+
+GatewayResponsesLLM(model="llm-trusted", base_url=LLM_BASE_URL, api_key=LLM_SERVICE_TOKEN, temperature=0.2)
 ```
 
 模型名直接用别名，请求体里的 `model` 就是别名，正合 llm-service 的约定。
+工具在本服务执行，每次携带完整历史、`store:false`。首次发布的基座要求和验证方式见 [Responses 接入](../docs/llm-service-responses.md)。
 
 ## 部署
 

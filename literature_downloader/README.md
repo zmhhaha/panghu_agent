@@ -131,12 +131,14 @@ kubectl apply -f ../cloudflare-tunnel/operator/tunnel-routes.yaml
 
 LLM 检索专家是可选增强能力，不改变下载和校验的确定性流程。模型调用统一走集群内 `llm-service`，本服务不再持有 provider 凭据：
 
-- `LLM_BASE_URL`：`http://llm-service.llm.svc.cluster.local/v1`（基址，本服务自己接 `/chat/completions`）
-- `LLM_MODEL`：模型别名，默认 **`llm-trusted`**（trusted 档）。检索计划与相关性重排都用 `response_format`，`llm-guarded` 会直接 400
+- `LLM_BASE_URL`：`http://llm-service.llm.svc.cluster.local/v1`（基址，本服务自己接 `/responses`）
+- `LLM_MODEL`：模型别名，默认 **`llm-trusted`**（trusted 档）。检索计划与相关性重排都用 JSON `text.format`，`llm-guarded` 会直接 400
 - `LLM_SERVICE_TOKEN`：本服务在 llm-service 侧的**专属**令牌，来自 `llm-token` ExternalSecret（`k8s/llm-token-externalsecret.yaml`，取 Vault `secret/llm-service/callers` 的 `LLM_TOKEN_LITERATURE_DOWNLOADER`）
 - Pod 需带 `llm-client: "true"` 标签，才能通过 llm-service 的 NetworkPolicy
 
 三者任一缺失时 `LLMJsonClient.from_environment()` 返回 `None`，系统退回规则检索，仍可正常检索、下载和生成报告。
+
+请求使用完整 `input` 与 `store:false`，从 Responses 的终态输出读取 JSON；失败、截断或拒绝回复不会被当成有效计划。部署顺序见 [Responses 接入](../docs/llm-service-responses.md)。
 
 额外配置：
 

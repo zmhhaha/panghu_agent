@@ -187,6 +187,10 @@ llm-service **由变量名反推身份**，所以客户端无法自称是谁。�
 
 Agent **不再持有任何 provider 凭据**，模型调用经集群内的 `llm-service`：
 
+模型请求统一使用 `/v1/responses`。CrewAI 服务通过公共
+[`GatewayResponsesLLM`](tools/llm_gateway.py) 保留工具历史及结构化输出；首次发布需先重建
+CrewAI 1.15.x（最低 1.15.1）的 API 基座，详见 [Responses 接入与部署](docs/llm-service-responses.md)。
+
 - 环境变量：`LLM_BASE_URL`、`LLM_MODEL`、`LLM_SERVICE_TOKEN`（来自 `llm-token` ExternalSecret）
 - Pod 需带 `llm-client: "true"` 标签，才能通过 llm-service 的 NetworkPolicy
 - **档位按 Agent 区分**，由 [`scripts/deploy-api.sh`](scripts/deploy-api.sh) 决定（模板里是 `__LLM_MODEL__` 占位符，
@@ -208,7 +212,7 @@ Agent **不再持有任何 provider 凭据**，模型调用经集群内的 `llm-
    但回答时 `fetch_reference` 取不到素材（`RAG_TOKEN` 未注入）。
 3. **先验证检索、再移除知识**：从 prompt 去掉 `knowledge.md` 之前，必须先确认线上能取到素材。
    否则一旦检索失败（401 / 未部署），Agent 会**完全没有素材**，回答质量直接掉。
-4. **`llm-service` 档位选错会直接 400**：`llm-guarded`（guarded 档）禁 `tools` 和 `response_format`，
+4. **`llm-service` 档位选错会直接 400**：`llm-guarded`（guarded 档）禁 `tools` 和 JSON `text.format`，
    带检索工具的 Agent（research / scientific / game_review）或需要 JSON 输出的服务
    （literature_downloader）用了它就会被拒。档位由 `deploy-api.sh` 按 Agent 名自动选，
    手工渲染模板时别写错。见上面「模型调用」一节。

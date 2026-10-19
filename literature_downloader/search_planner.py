@@ -16,6 +16,8 @@ from typing import Any
 
 import requests
 
+from tools.responses_client import response_text
+
 from tools.academic.query import build_query_variants
 
 from .config import Settings, settings
@@ -82,38 +84,23 @@ class LLMJsonClient:
         return cls(LLM_SERVICE_PROVIDER, model, base_url, api_key, config.llm_timeout)
 
     def complete_json(self, system_prompt: str, user_payload: dict[str, Any]) -> Any:
-        # base_url 已含版本前缀（…/v1），这里只接 /chat/completions
-        endpoint = self.base_url
-        if not endpoint.endswith("/chat/completions"):
-            endpoint += "/chat/completions"
+        endpoint = f"{self.base_url.rstrip('/')}/responses"
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         payload = {
             "model": self.model,
             "temperature": 0.1,
-            "messages": [
+            "store": False,
+            "input": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
             ],
-            "response_format": {"type": "json_object"},
+            "text": {"format": {"type": "json_object"}},
         }
         response = requests.post(endpoint, headers=headers, json=payload, timeout=self.timeout)
-        # Some OpenAI-compatible gateways do not implement response_format.
-        # Retry once without it while keeping strict JSON parsing locally.
-        if response.status_code == 400 and "response_format" in response.text.lower():
-            payload.pop("response_format", None)
-            response = requests.post(endpoint, headers=headers, json=payload, timeout=self.timeout)
         response.raise_for_status()
-        body = response.json()
-        choices = body.get("choices") or []
-        if not choices:
-            raise ValueError("LLM response has no choices")
-        message = choices[0].get("message") or {}
-        content = message.get("content", "")
-        if isinstance(content, list):
-            content = "".join(str(part.get("text", "")) for part in content if isinstance(part, dict))
-        text = str(content).strip()
+        text = response_text(response.json()).strip()
         text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
         text = re.sub(r"\s*```$", "", text)
         return json.loads(text)

@@ -5,7 +5,8 @@
 改 skill.md 就等于改行为，不动代码。
 """
 import os
-from crewai import Agent, Task, Crew, Process, LLM
+from crewai import Agent, Task, Crew, Process
+from tools.llm_gateway import GatewayResponsesLLM as LLM
 
 
 # ============================================================
@@ -65,7 +66,7 @@ def build_model(model: str | None = None) -> LLM:
         timeout=_LLM_TIMEOUT,
     )
 
-# CrewAI 必须显式给 provider：`openai/<别名>` 会落到未安装的 litellm 分支并报错
+# 公共客户端使用原生 Responses；模型名保持网关别名，工具历史在客户端转换。
 
 
 # ============================================================

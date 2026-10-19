@@ -1,4 +1,4 @@
-crewai[tools]>=0.108.0
+crewai[tools]>=1.15.1,<1.16
 anthropic>=0.40.0
 python-dotenv>=1.0.0
 
