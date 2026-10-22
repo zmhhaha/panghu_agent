@@ -12,6 +12,16 @@ THEME = gr.themes.Soft(primary_hue="blue", secondary_hue="gray")
 MAX_WAIT = 1200  # 最多等 20 分钟（5 Agent 流水线需要更长时间）
 
 
+def _report_download(task_id: str, content: bytes):
+    """Give DownloadButton an existing file before making it visible."""
+    import tempfile
+    import uuid
+    tid = str(uuid.UUID(task_id))
+    with tempfile.NamedTemporaryFile(prefix=tid[:8]+'_', suffix='.md', delete=False) as report_file:
+        report_file.write(content)
+    return gr.update(value=report_file.name, visible=True)
+
+
 def payment_image(filename: str, label: str):
     """Render remotely hosted payment images without server-side downloads."""
     return gr.HTML(
@@ -26,7 +36,7 @@ def payment_image(filename: str, label: str):
     )
 
 
-def do_scientific_research(topic: str, email: str, request: gr.Request):
+def do_scientific_research(topic: str, email: str, engine: str, mode: str, request: gr.Request):
     """生成器：提交 + 轮询，逐次 yield 最新状态，UI 实时刷新"""
     _busy = gr.update(interactive=False)
     _ready = gr.update(interactive=True)
@@ -37,16 +47,17 @@ def do_scientific_research(topic: str, email: str, request: gr.Request):
     if not topic:
         yield "⚠️ 请输入研究主题", "", _hide, _hide, _ready
         return
-    if not email or "@" not in email:
-        yield "⚠️ 请输入有效的邮箱地址，综述完成后会发送到邮箱", "", _hide, _hide, _ready
+    if email and "@" not in email:
+        yield "⚠️ 请输入有效的邮箱地址，或留空跳过通知", "", _hide, _hide, _ready
         return
 
-    # 获取用户身份（从 oauth2-proxy 注入的 header）
-    user_id = request.headers.get("X-Forwarded-User", "") if request else ""
+    # Gradio 队列反序列化后 headers 为普通字典，仍按 HTTP 规则忽略大小写。
+    headers = {key.lower(): value for key, value in request.headers.items()} if request else {}
+    user_id = headers.get("x-forwarded-user", "")
 
     # ---- 提交 ----
     try:
-        r = requests.post(f"{API_BASE}/scientific-research", json={"topic": topic, "email": email, "user_id": user_id}, timeout=10)
+        r = requests.post(f"{API_BASE}/scientific-research", json={"topic": topic, "email": email, "user_id": user_id, "engine": None if engine == "default" else engine, "mode": mode}, timeout=10)
         if r.status_code == 429:
             yield "⏳ 您上一个综述任务还在执行中，请耐心等待完成后再提交新的", "", _hide, _hide, _ready
             return
@@ -55,7 +66,9 @@ def do_scientific_research(topic: str, email: str, request: gr.Request):
                 detail = r.json().get("detail")
             except ValueError:
                 detail = None
-            yield f"配置错误：{detail or r.text or r.reason}", "", _hide, _hide, _ready
+            recovered_id = detail.get("task_id", "") if isinstance(detail, dict) else ""
+            message = detail.get("message") if isinstance(detail, dict) else detail
+            yield f"提交未确认：{message or r.reason}\n\n任务 ID: `{recovered_id}`。保留此 ID，可重新查询；任务可能已接收。", recovered_id, _hide, _hide, _ready
             return
         r.raise_for_status()
         task_id = r.json()["id"]
@@ -74,6 +87,7 @@ def do_scientific_research(topic: str, email: str, request: gr.Request):
     for i in range(MAX_WAIT // 5):
         try:
             r = requests.get(f"{API_BASE}/scientific-research/{task_id}", timeout=10)
+            r.raise_for_status()
             task = r.json()
             status = task["status"]
             elapsed = (i + 1) * 5
@@ -83,7 +97,7 @@ def do_scientific_research(topic: str, email: str, request: gr.Request):
                 filename = f"{task_id[:8]}_{topic[:20].replace(' ','_')}.md"
                 yield (report, task_id,
                        gr.update(value=filename, visible=True),
-                       gr.update(visible=True), _ready)
+                       _report_download(task_id, report.encode('utf-8')), _ready)
                 return
 
             elif status == "failed":
@@ -93,11 +107,11 @@ def do_scientific_research(topic: str, email: str, request: gr.Request):
                 return
 
             elif status == "running":
-                bar = _progress_bar(elapsed, MAX_WAIT)
+                bar = "进度未知" if task.get("progress") is None else f"进度: {task['progress']}%"
                 yield (f"🔬 科学综述撰写中...\n\n"
                        f"📋 任务ID: `{task_id}`\n\n"
                        f"⏱ 已运行: {elapsed} 秒\n\n"
-                       f"🔄 当前阶段: 文献检索 → 文献筛选 → 数据提取 → 综合分析 → 综述撰写\n\n{bar}",
+                       f"🔄 状态: {task.get('state') or status} · 阶段: {task.get('stage') or '未提供'}\n\n{bar}",
                        task_id, _hide, _hide, _busy)
 
             else:
@@ -119,19 +133,48 @@ def do_scientific_research(topic: str, email: str, request: gr.Request):
            task_id, _hide, _hide, _ready)
 
 
-def _progress_bar(elapsed: int, total: int, width: int = 20) -> str:
-    """生成 ASCII 进度条"""
-    pct = min(elapsed / total, 1.0)
-    filled = int(width * pct)
-    bar = "█" * filled + "░" * (width - filled)
-    return f"`[{bar}]` {int(pct * 100)}%"
+def query_task(task_id: str, cancel=False):
+    """Manual recovery keeps the task ID even when the API is unavailable."""
+    import uuid
+    tid = (task_id or "").strip()
+    try:
+        if str(uuid.UUID(tid)) != tid:
+            raise ValueError()
+    except ValueError:
+        return "请输入完整的任务 UUID", gr.update(visible=False)
+    try:
+        if cancel:
+            response = requests.post(f"{API_BASE}/scientific-research/{tid}/cancel", timeout=10)
+        else:
+            response = requests.get(f"{API_BASE}/scientific-research/{tid}", timeout=10)
+        if not response.ok:
+            detail = response.json().get("detail", response.reason)
+            message = detail.get("message") if isinstance(detail, dict) else detail
+            return f"查询未完成: {message}\n\n任务 ID: `{tid}`，可稍后重查。", gr.update(visible=False)
+        task = response.json()
+        if task['status'] == 'done':
+            report = task.get('report') or '(空报告)'
+            return report, _report_download(tid, report.encode('utf-8'))
+        progress = '进度未知' if task.get('progress') is None else f"进度 {task['progress']}%"
+        return (f"任务 ID: `{tid}`\n\n状态: {task.get('state') or task['status']} · "
+                f"阶段: {task.get('stage') or '未提供'} · {progress}\n\n"
+                f"{task.get('error') or ''}", gr.update(visible=False))
+    except Exception as exc:
+        return f"查询失败: {exc}\n\n任务 ID: `{tid}`，可稍后重查。", gr.update(visible=False)
+
+
+def cancel_task(task_id: str):
+    return query_task(task_id, cancel=True)
 
 
 def download_review_history(task_id: str):
-    """历史搜索页下载——保存到临时文件，返回路径供 DownloadButton 下载"""
+    """Prepare a history report file before showing its download link."""
+    import uuid
     tid = task_id.strip()
-    if not tid:
-        raise gr.Error("请输入报告 ID")
+    try:
+        if str(uuid.UUID(tid)) != tid: raise ValueError()
+    except ValueError:
+        raise gr.Error("请输入完整的报告 UUID")
 
     try:
         r = requests.get(f"{API_BASE}/scientific-download/{tid}", timeout=30)
@@ -139,10 +182,7 @@ def download_review_history(task_id: str):
             raise gr.Error("综述报告未找到，请检查 ID 是否正确")
         r.raise_for_status()
 
-        path = f"/tmp/{tid[:8]}.md"
-        with open(path, "wb") as f:
-            f.write(r.content)
-        return path
+        return _report_download(tid, r.content)
 
     except requests.HTTPError as e:
         raise gr.Error(f"下载失败 (HTTP {e.response.status_code})")
@@ -196,59 +236,50 @@ def search_reviews(keyword: str):
 with gr.Blocks(title="🔬 科研综述助手") as demo:
     gr.Markdown("""# 🔬 科研综述助手
 
-**严谨的科学文献综述工具** — 采用系统文献综述（Systematic Review）方法论。
+**科学文献研究与综述工具**。输出受检索覆盖和资料访问等级限制；普通综述不自动等同于系统综述。
 
-### 🧠 Pipeline
-```
-📚 文献检索员 ⟶ 🔍 文献筛选员 ⟶ 📊 数据提取员 ⟶ 🧩 综合分析员 ⟶ ✍️ 综述撰写员
-  学术数据库检索    PRISMA 标准筛选    结构化提取       跨研究综合分析    标准综述格式
-```
+检索文献 → 筛选资料 → 提取证据 → 综合分析 → 撰写报告。
 
 ### 📡 数据来源
-**arXiv** (物理/CS/数学) · **PubMed** (生物医学, 3500万+引用) · **Semantic Scholar** (全学科, 2亿+论文) · **Crossref** (DOI 元数据验证)
+**arXiv**（物理/计算机/数学）· **PubMed**（生物医学）· **Crossref**（论文元数据与 DOI 核对）。其他来源可能受接口权限和限流影响。
 
-所有学术 API 均为免费，无需 API Key。
+报告会说明实际使用的来源，以及只能获取摘要或来源请求失败等限制。
 """)
 
     with gr.Tab("📚 新综述"):
-        gr.Markdown("综述撰写耗时约 **10-20 分钟**（5 Agent 流水线），完成后会将综述报告发送到你的邮箱。")
+        gr.Markdown("处理时间取决于检索范围和来源响应。邮箱留空即可跳过通知；填写邮箱后，完成时发送查看报告的通知。")
         topic = gr.Textbox(
             label="研究主题",
             placeholder="例如：Transformer 架构在自然语言处理中的最新进展",
             lines=2,
         )
         email = gr.Textbox(
-            label="邮箱（必填）",
+            label="邮箱（选填）",
             placeholder="your@email.com",
-            type="email",
         )
-        btn = gr.Button("🚀 开始综述撰写", variant="primary", size="lg")
-
-        # 实时状态 / 报告展示
-        report = gr.Markdown(
-            value="💡 输入研究主题后点击「开始综述撰写」\n\n> 系统将自动完成：学术数据库检索 → PRISMA 标准筛选 → 结构化数据提取 → 跨研究综合分析 → 综述撰写",
-            label="状态 & 综述报告",
-        )
-
         with gr.Row():
-            task_id_box = gr.Textbox(label="任务 ID", visible=False)
+            engine = gr.Dropdown(choices=['default','crewai','pi'], value='default', label='执行后端')
+            mode = gr.Dropdown(choices=['review','brief'], value='review', label='研究范围（Pi）')
+        btn = gr.Button("🚀 开始综述撰写", variant="primary", size="lg")
+        report = gr.Markdown(value="输入研究主题后开始。来源失败、摘要访问及证据不足会限制结论。")
+        with gr.Row():
+            task_id_box = gr.Textbox(label="任务 ID（保留此 ID 可重查）")
             filename_box = gr.Textbox(label="文件名", visible=False)
-            download_btn = gr.Button("📥 下载综述报告", variant="secondary", size="lg", visible=False)
-
+            download_btn = gr.DownloadButton("📥 下载综述报告", visible=False)
+        with gr.Row():
+            query_btn = gr.Button('按 ID 查询')
+            cancel_btn = gr.Button('取消 Pi 任务')
+        gr.Markdown('20 分钟后停止自动轮询，任务继续在后台运行；可按 ID 重新查询。进入发布阶段后取消不会撤回报告。')
         btn.click(
             fn=do_scientific_research,
-            inputs=[topic, email],
+            inputs=[topic, email, engine, mode],
             outputs=[report, task_id_box, filename_box, download_btn, btn],
         )
-
-        download_btn.click(
-            fn=download_review,
-            inputs=[task_id_box],
-            outputs=[report],
-        )
+        query_btn.click(fn=query_task, inputs=[task_id_box], outputs=[report, download_btn])
+        cancel_btn.click(fn=cancel_task, inputs=[task_id_box], outputs=[report, download_btn])
 
     with gr.Tab("📑 综述历史"):
-        gr.Markdown("输入关键词搜索已完成的综述报告，复制报告 ID 后点击下载。")
+        gr.Markdown("输入关键词搜索已完成的综述报告，复制报告 ID 后点击准备下载，再保存文件。")
         kw = gr.Textbox(label="关键词", placeholder="深度学习、医学影像、文献综述...")
         search_btn = gr.Button("搜索")
         results = gr.Markdown()
@@ -256,9 +287,10 @@ with gr.Blocks(title="🔬 科研综述助手") as demo:
 
         with gr.Row():
             rid_box = gr.Textbox(label="报告 ID", placeholder="粘贴搜索结果中的完整报告 ID", scale=3)
-            hist_dl_btn = gr.DownloadButton("📥 下载", variant="secondary", scale=1)
+            hist_prepare_btn = gr.Button("准备下载", variant="secondary", scale=1)
+            hist_dl_btn = gr.DownloadButton("📥 下载", visible=False, scale=1)
 
-        hist_dl_btn.click(fn=download_review_history, inputs=[rid_box], outputs=hist_dl_btn)
+        hist_prepare_btn.click(fn=download_review_history, inputs=[rid_box], outputs=[hist_dl_btn])
 
     with gr.Tab("❤️ 支持作者"):
         gr.Markdown("## ❤️ 感谢支持\n\n如果你觉得这个工具对你有帮助，欢迎赞赏支持作者继续开发。")

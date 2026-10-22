@@ -1,0 +1,14 @@
+# Test-only derivative; never use this image for the public research service.
+ARG WORKER_BASE
+FROM ${WORKER_BASE}
+RUN pip install --no-cache-dir httpx==0.28.1
+COPY validation-fixtures/llm-service/app.py /llm-service/app.py
+COPY tests/scientific_pi /app/tests/scientific_pi
+COPY scientific_agent/pi_client.py scientific_agent/pi_projection.py /app/scientific_agent/
+COPY tools/sqlite_client.py tools/email_client.py /app/tools/
+COPY app/api/scientific_agent.py /app/app/api/scientific_agent.py
+COPY app/ui/scientific_agent.py /app/app/ui/scientific_agent.py
+COPY k8s/scientific-pi /app/k8s/scientific-pi
+COPY scripts/test-scientific-pi.py /app/scripts/test-scientific-pi.py
+RUN ln -s /opt/pi/node_modules /app/pi_worker/node/node_modules
+CMD ["python", "scripts/test-scientific-pi.py"]

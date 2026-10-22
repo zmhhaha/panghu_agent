@@ -5,6 +5,8 @@ from __future__ import annotations
 import time
 import os
 import threading
+from contextlib import contextmanager
+from contextvars import ContextVar
 from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import urlparse
@@ -14,6 +16,19 @@ DEFAULT_TIMEOUT = 20
 _TRANSIENT_STATUS = {429, 500, 502, 503, 504}
 _RATE_LOCK = threading.Lock()
 _LAST_REQUEST_AT: dict[str, float] = {}
+_SCOPED_TRANSPORT = ContextVar("academic_http_transport", default=None)
+
+
+@contextmanager
+def using_transport(get):
+    """Override HTTP only in the current execution context, restoring on exit."""
+    if not callable(get):
+        raise TypeError("academic transport must be callable")
+    token = _SCOPED_TRANSPORT.set(get)
+    try:
+        yield
+    finally:
+        _SCOPED_TRANSPORT.reset(token)
 
 
 def _env_float(name: str, default: float, minimum: float, maximum: float | None = None) -> float:
@@ -76,7 +91,7 @@ def _get(
         response = None
         try:
             _throttle(url)
-            response = requests.get(
+            response = (_SCOPED_TRANSPORT.get() or requests.get)(
                 url,
                 params=params,
                 headers={"User-Agent": "PanghuAcademic/1.0", **(headers or {})},

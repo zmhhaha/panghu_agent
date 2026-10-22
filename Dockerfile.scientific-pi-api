@@ -1,0 +1,11 @@
+# Pin this argument to the EXISTING compatible scientific/CrewAI API image digest.
+# This builds a separate image; never overwrite the shared agent-api:latest tag.
+ARG SCIENTIFIC_API_BASE
+FROM ${SCIENTIFIC_API_BASE}
+COPY app/api/scientific_agent.py /app/app/api/scientific_agent.py
+# The existing scientific-workflow ConfigMap masks /app/scientific_agent.
+# API bootstrap appends this fixed image path after the mounted CrewAI package.
+COPY scientific_agent/pi_contracts.py scientific_agent/pi_client.py scientific_agent/pi_projection.py /opt/scientific-pi-extension/
+# Existing deploy template overlays /app/app/api/agent.py from a ConfigMap.
+# Invoke this dedicated module explicitly so that overlay cannot mask the update.
+CMD ["python", "-m", "uvicorn", "app.api.scientific_agent:app", "--host", "0.0.0.0", "--port", "8000"]

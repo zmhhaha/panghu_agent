@@ -1,0 +1,10 @@
+# Strategic merge patch for the scientific UI Deployment only.
+# Gradio 6.19 reads this full URL when building /config, assets and queue URLs.
+spec:
+  template:
+    spec:
+      containers:
+      - name: ui
+        env:
+        - name: GRADIO_ROOT_PATH
+          value: https://scientific-agent.panghuer.top

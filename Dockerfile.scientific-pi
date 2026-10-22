@@ -1,0 +1,32 @@
+# Build arguments may be overridden with organization-reviewed multiarch digests.
+# Deployment renderer only accepts final image digests, never a moving latest tag.
+ARG NODE_IMAGE=node@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
+ARG PYTHON_IMAGE=python@sha256:cf50a4f6ac4f026458b08d5222023d700ac806410dff5e9ca8728fa44f2b850f
+FROM ${NODE_IMAGE} AS pi-dependencies
+WORKDIR /opt/pi
+COPY pi_worker/node/package.json pi_worker/node/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
+
+FROM ${PYTHON_IMAGE}
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash ca-certificates libstdc++6 && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=pi-dependencies /usr/local/bin/node /usr/local/bin/node
+COPY --from=pi-dependencies /opt/pi /opt/pi
+COPY pi_worker/requirements.lock /tmp/scientific-pi-requirements.txt
+RUN pip install --no-cache-dir -r /tmp/scientific-pi-requirements.txt
+COPY scientific_agent/__init__.py scientific_agent/pi_contracts.py scientific_agent/pi_runtime_config.py /app/scientific_agent/
+COPY scientific_agent/pi_healthcheck.py /app/scientific_agent/pi_healthcheck.py
+COPY pi_worker /app/pi_worker
+COPY scientific_skills /app/scientific_skills
+COPY tools/__init__.py /app/tools/__init__.py
+COPY tools/academic /app/tools/academic
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    SCIENTIFIC_PI_RUNTIME_DIR=/data \
+    SCIENTIFIC_PI_RUNTIME_REVISION=pi-jsonl-0.73.1-v1 \
+    SCIENTIFIC_PI_SKILL_BUNDLE_REVISION=local-procedures-v1
+# Root controller has only the explicitly documented deployment capabilities.
+# Every Pi attempt drops to a never-reused nonroot UID with empty capabilities.
+# Fixture mode cannot be enabled by environment configuration.
+EXPOSE 8080
+CMD ["python", "-m", "uvicorn", "pi_worker.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
