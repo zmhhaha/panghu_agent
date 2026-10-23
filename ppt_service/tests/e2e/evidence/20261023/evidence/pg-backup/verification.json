@@ -1,0 +1,17 @@
+{
+  "all_database_metadata_equal_before_restore_write": true,
+  "all_hashes_and_file_metadata_equal": true,
+  "auth_and_cross_owner_acl_verified": true,
+  "database_kind": "postgresql",
+  "files": 27,
+  "history_and_idempotency_verified": true,
+  "model_requests": 0,
+  "new_instance_writable": true,
+  "powerpoint_acceptance": "pending",
+  "publication_verified": false,
+  "schema": "p5_6019db2f1d934989a93c1b166a5f7cca",
+  "source_database": "ppt_p5_backup",
+  "status": "restored-and-verified",
+  "tables": 12,
+  "target_database": "ppt_p5_restore"
+}

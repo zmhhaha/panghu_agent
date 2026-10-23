@@ -1,0 +1,1698 @@
+{
+  "database_schema": "public",
+  "definitions": [
+    {
+      "column_default": null,
+      "column_name": "revision",
+      "data_type": "integer",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 1,
+      "table_name": "api_schema_revision",
+      "udt_name": "int4"
+    },
+    {
+      "column_default": null,
+      "column_name": "id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 1,
+      "table_name": "assets",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "project_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 2,
+      "table_name": "assets",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "storage_key",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 3,
+      "table_name": "assets",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "display_name",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 4,
+      "table_name": "assets",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "sha256",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 5,
+      "table_name": "assets",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "media_type",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 6,
+      "table_name": "assets",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "bytes",
+      "data_type": "bigint",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 7,
+      "table_name": "assets",
+      "udt_name": "int8"
+    },
+    {
+      "column_default": null,
+      "column_name": "parse_status",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 8,
+      "table_name": "assets",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "removed",
+      "data_type": "boolean",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 9,
+      "table_name": "assets",
+      "udt_name": "bool"
+    },
+    {
+      "column_default": "0",
+      "column_name": "parse_attempt",
+      "data_type": "integer",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 10,
+      "table_name": "assets",
+      "udt_name": "int4"
+    },
+    {
+      "column_default": null,
+      "column_name": "parse_token",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 11,
+      "table_name": "assets",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "parse_scope_uid",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 12,
+      "table_name": "assets",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "parse_lease_until",
+      "data_type": "timestamp with time zone",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 13,
+      "table_name": "assets",
+      "udt_name": "timestamptz"
+    },
+    {
+      "column_default": null,
+      "column_name": "parse_error",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 14,
+      "table_name": "assets",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "text_summary",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 15,
+      "table_name": "assets",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 1,
+      "table_name": "checkpoints",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "project_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 2,
+      "table_name": "checkpoints",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "issuer",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 3,
+      "table_name": "checkpoints",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "subject",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 4,
+      "table_name": "checkpoints",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "storage_key",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 5,
+      "table_name": "checkpoints",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "manifest",
+      "data_type": "json",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 6,
+      "table_name": "checkpoints",
+      "udt_name": "json"
+    },
+    {
+      "column_default": null,
+      "column_name": "created_at",
+      "data_type": "timestamp with time zone",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 7,
+      "table_name": "checkpoints",
+      "udt_name": "timestamptz"
+    },
+    {
+      "column_default": null,
+      "column_name": "id",
+      "data_type": "integer",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 1,
+      "table_name": "execution_slots",
+      "udt_name": "int4"
+    },
+    {
+      "column_default": null,
+      "column_name": "job_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 2,
+      "table_name": "execution_slots",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "fencing_token",
+      "data_type": "bigint",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 3,
+      "table_name": "execution_slots",
+      "udt_name": "int8"
+    },
+    {
+      "column_default": null,
+      "column_name": "issuer",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 1,
+      "table_name": "idempotency_keys",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "subject",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 2,
+      "table_name": "idempotency_keys",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "route",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 3,
+      "table_name": "idempotency_keys",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "key",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 4,
+      "table_name": "idempotency_keys",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "request_hash",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 5,
+      "table_name": "idempotency_keys",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "response",
+      "data_type": "json",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 6,
+      "table_name": "idempotency_keys",
+      "udt_name": "json"
+    },
+    {
+      "column_default": null,
+      "column_name": "expires_at",
+      "data_type": "timestamp with time zone",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 7,
+      "table_name": "idempotency_keys",
+      "udt_name": "timestamptz"
+    },
+    {
+      "column_default": null,
+      "column_name": "job_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 1,
+      "table_name": "job_events",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "seq",
+      "data_type": "integer",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 2,
+      "table_name": "job_events",
+      "udt_name": "int4"
+    },
+    {
+      "column_default": null,
+      "column_name": "type",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 3,
+      "table_name": "job_events",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "payload",
+      "data_type": "json",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 4,
+      "table_name": "job_events",
+      "udt_name": "json"
+    },
+    {
+      "column_default": null,
+      "column_name": "created_at",
+      "data_type": "timestamp with time zone",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 5,
+      "table_name": "job_events",
+      "udt_name": "timestamptz"
+    },
+    {
+      "column_default": null,
+      "column_name": "id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 1,
+      "table_name": "jobs",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "project_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 2,
+      "table_name": "jobs",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "issuer",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 3,
+      "table_name": "jobs",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "subject",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 4,
+      "table_name": "jobs",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "kind",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 5,
+      "table_name": "jobs",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "stage",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 6,
+      "table_name": "jobs",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "status",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 7,
+      "table_name": "jobs",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "input_snapshot",
+      "data_type": "json",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 8,
+      "table_name": "jobs",
+      "udt_name": "json"
+    },
+    {
+      "column_default": null,
+      "column_name": "base_version_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 9,
+      "table_name": "jobs",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "checkpoint_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 10,
+      "table_name": "jobs",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "attempt",
+      "data_type": "integer",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 11,
+      "table_name": "jobs",
+      "udt_name": "int4"
+    },
+    {
+      "column_default": null,
+      "column_name": "fencing_token",
+      "data_type": "bigint",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 12,
+      "table_name": "jobs",
+      "udt_name": "int8"
+    },
+    {
+      "column_default": null,
+      "column_name": "lease_until",
+      "data_type": "timestamp with time zone",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 13,
+      "table_name": "jobs",
+      "udt_name": "timestamptz"
+    },
+    {
+      "column_default": null,
+      "column_name": "deadline",
+      "data_type": "timestamp with time zone",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 14,
+      "table_name": "jobs",
+      "udt_name": "timestamptz"
+    },
+    {
+      "column_default": null,
+      "column_name": "session_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 15,
+      "table_name": "jobs",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "run_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 16,
+      "table_name": "jobs",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "job_uid",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 17,
+      "table_name": "jobs",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "stopped",
+      "data_type": "boolean",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 18,
+      "table_name": "jobs",
+      "udt_name": "bool"
+    },
+    {
+      "column_default": null,
+      "column_name": "event_cursor",
+      "data_type": "integer",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 19,
+      "table_name": "jobs",
+      "udt_name": "int4"
+    },
+    {
+      "column_default": null,
+      "column_name": "event_floor",
+      "data_type": "integer",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 20,
+      "table_name": "jobs",
+      "udt_name": "int4"
+    },
+    {
+      "column_default": null,
+      "column_name": "error_code",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 21,
+      "table_name": "jobs",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "created_at",
+      "data_type": "timestamp with time zone",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 22,
+      "table_name": "jobs",
+      "udt_name": "timestamptz"
+    },
+    {
+      "column_default": null,
+      "column_name": "id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 1,
+      "table_name": "plans",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "project_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 2,
+      "table_name": "plans",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "revision",
+      "data_type": "integer",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 3,
+      "table_name": "plans",
+      "udt_name": "int4"
+    },
+    {
+      "column_default": null,
+      "column_name": "phase",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 4,
+      "table_name": "plans",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "input_snapshot_hash",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 5,
+      "table_name": "plans",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "outline",
+      "data_type": "json",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 6,
+      "table_name": "plans",
+      "udt_name": "json"
+    },
+    {
+      "column_default": null,
+      "column_name": "design",
+      "data_type": "json",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 7,
+      "table_name": "plans",
+      "udt_name": "json"
+    },
+    {
+      "column_default": null,
+      "column_name": "user_feedback",
+      "data_type": "text",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 8,
+      "table_name": "plans",
+      "udt_name": "text"
+    },
+    {
+      "column_default": null,
+      "column_name": "checkpoint_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 9,
+      "table_name": "plans",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "confirmation_selection",
+      "data_type": "json",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 10,
+      "table_name": "plans",
+      "udt_name": "json"
+    },
+    {
+      "column_default": null,
+      "column_name": "confirmed_at",
+      "data_type": "timestamp with time zone",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 11,
+      "table_name": "plans",
+      "udt_name": "timestamptz"
+    },
+    {
+      "column_default": null,
+      "column_name": "id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 1,
+      "table_name": "projects",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "issuer",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 2,
+      "table_name": "projects",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "subject",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 3,
+      "table_name": "projects",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "title",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 4,
+      "table_name": "projects",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "settings",
+      "data_type": "json",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 5,
+      "table_name": "projects",
+      "udt_name": "json"
+    },
+    {
+      "column_default": null,
+      "column_name": "external_model_ack",
+      "data_type": "boolean",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 6,
+      "table_name": "projects",
+      "udt_name": "bool"
+    },
+    {
+      "column_default": null,
+      "column_name": "revision",
+      "data_type": "integer",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 7,
+      "table_name": "projects",
+      "udt_name": "int4"
+    },
+    {
+      "column_default": null,
+      "column_name": "stage",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 8,
+      "table_name": "projects",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "active_job_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 9,
+      "table_name": "projects",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "confirmed_plan_revision",
+      "data_type": "integer",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 10,
+      "table_name": "projects",
+      "udt_name": "int4"
+    },
+    {
+      "column_default": null,
+      "column_name": "latest_version_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 11,
+      "table_name": "projects",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "deletion_requested",
+      "data_type": "boolean",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 12,
+      "table_name": "projects",
+      "udt_name": "bool"
+    },
+    {
+      "column_default": null,
+      "column_name": "cleanup_ready",
+      "data_type": "boolean",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 13,
+      "table_name": "projects",
+      "udt_name": "bool"
+    },
+    {
+      "column_default": null,
+      "column_name": "created_at",
+      "data_type": "timestamp with time zone",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 14,
+      "table_name": "projects",
+      "udt_name": "timestamptz"
+    },
+    {
+      "column_default": null,
+      "column_name": "id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 1,
+      "table_name": "usage_records",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "issuer",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 2,
+      "table_name": "usage_records",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "subject",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 3,
+      "table_name": "usage_records",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "project_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 4,
+      "table_name": "usage_records",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "job_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 5,
+      "table_name": "usage_records",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "attempt",
+      "data_type": "integer",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 6,
+      "table_name": "usage_records",
+      "udt_name": "int4"
+    },
+    {
+      "column_default": null,
+      "column_name": "phase",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 7,
+      "table_name": "usage_records",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "model",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 8,
+      "table_name": "usage_records",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "provider",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 9,
+      "table_name": "usage_records",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "provider_request_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 10,
+      "table_name": "usage_records",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "input_tokens",
+      "data_type": "bigint",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 11,
+      "table_name": "usage_records",
+      "udt_name": "int8"
+    },
+    {
+      "column_default": null,
+      "column_name": "output_tokens",
+      "data_type": "bigint",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 12,
+      "table_name": "usage_records",
+      "udt_name": "int8"
+    },
+    {
+      "column_default": null,
+      "column_name": "reported_cost",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 13,
+      "table_name": "usage_records",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "currency",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 14,
+      "table_name": "usage_records",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "cost_status",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 15,
+      "table_name": "usage_records",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "outcome",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 16,
+      "table_name": "usage_records",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "issuer",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 1,
+      "table_name": "user_quotas",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "subject",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 2,
+      "table_name": "user_quotas",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "enabled",
+      "data_type": "boolean",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 3,
+      "table_name": "user_quotas",
+      "udt_name": "bool"
+    },
+    {
+      "column_default": null,
+      "column_name": "period",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 4,
+      "table_name": "user_quotas",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "generation_limit",
+      "data_type": "integer",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 5,
+      "table_name": "user_quotas",
+      "udt_name": "int4"
+    },
+    {
+      "column_default": null,
+      "column_name": "revision_limit",
+      "data_type": "integer",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 6,
+      "table_name": "user_quotas",
+      "udt_name": "int4"
+    },
+    {
+      "column_default": null,
+      "column_name": "generation_count",
+      "data_type": "integer",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 7,
+      "table_name": "user_quotas",
+      "udt_name": "int4"
+    },
+    {
+      "column_default": null,
+      "column_name": "revision_count",
+      "data_type": "integer",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 8,
+      "table_name": "user_quotas",
+      "udt_name": "int4"
+    },
+    {
+      "column_default": null,
+      "column_name": "id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 1,
+      "table_name": "versions",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "project_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 2,
+      "table_name": "versions",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "job_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 3,
+      "table_name": "versions",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "issuer",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 4,
+      "table_name": "versions",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "subject",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 5,
+      "table_name": "versions",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "parent_version_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "YES",
+      "ordinal_position": 6,
+      "table_name": "versions",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "checkpoint_id",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 7,
+      "table_name": "versions",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "manifest",
+      "data_type": "json",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 8,
+      "table_name": "versions",
+      "udt_name": "json"
+    },
+    {
+      "column_default": null,
+      "column_name": "artifact_root",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 9,
+      "table_name": "versions",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "status",
+      "data_type": "character varying",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 10,
+      "table_name": "versions",
+      "udt_name": "varchar"
+    },
+    {
+      "column_default": null,
+      "column_name": "created_at",
+      "data_type": "timestamp with time zone",
+      "identity_generation": null,
+      "is_identity": "NO",
+      "is_nullable": "NO",
+      "ordinal_position": 11,
+      "table_name": "versions",
+      "udt_name": "timestamptz"
+    },
+    {
+      "conname": "api_schema_revision_pkey",
+      "definition": "PRIMARY KEY (revision)",
+      "table_name": "api_schema_revision"
+    },
+    {
+      "conname": "assets_pkey",
+      "definition": "PRIMARY KEY (id)",
+      "table_name": "assets"
+    },
+    {
+      "conname": "assets_project_id_fkey",
+      "definition": "FOREIGN KEY (project_id) REFERENCES public.projects(id)",
+      "table_name": "assets"
+    },
+    {
+      "conname": "assets_storage_key_key",
+      "definition": "UNIQUE (storage_key)",
+      "table_name": "assets"
+    },
+    {
+      "conname": "checkpoints_pkey",
+      "definition": "PRIMARY KEY (id)",
+      "table_name": "checkpoints"
+    },
+    {
+      "conname": "checkpoints_project_id_fkey",
+      "definition": "FOREIGN KEY (project_id) REFERENCES public.projects(id)",
+      "table_name": "checkpoints"
+    },
+    {
+      "conname": "checkpoints_storage_key_key",
+      "definition": "UNIQUE (storage_key)",
+      "table_name": "checkpoints"
+    },
+    {
+      "conname": "execution_slots_id_check",
+      "definition": "CHECK (id = 1)",
+      "table_name": "execution_slots"
+    },
+    {
+      "conname": "execution_slots_pkey",
+      "definition": "PRIMARY KEY (id)",
+      "table_name": "execution_slots"
+    },
+    {
+      "conname": "idempotency_keys_pkey",
+      "definition": "PRIMARY KEY (issuer, subject, route, key)",
+      "table_name": "idempotency_keys"
+    },
+    {
+      "conname": "job_events_job_id_fkey",
+      "definition": "FOREIGN KEY (job_id) REFERENCES public.jobs(id)",
+      "table_name": "job_events"
+    },
+    {
+      "conname": "job_events_pkey",
+      "definition": "PRIMARY KEY (job_id, seq)",
+      "table_name": "job_events"
+    },
+    {
+      "conname": "jobs_pkey",
+      "definition": "PRIMARY KEY (id)",
+      "table_name": "jobs"
+    },
+    {
+      "conname": "jobs_project_id_fkey",
+      "definition": "FOREIGN KEY (project_id) REFERENCES public.projects(id)",
+      "table_name": "jobs"
+    },
+    {
+      "conname": "plans_checkpoint_id_fkey",
+      "definition": "FOREIGN KEY (checkpoint_id) REFERENCES public.checkpoints(id)",
+      "table_name": "plans"
+    },
+    {
+      "conname": "plans_pkey",
+      "definition": "PRIMARY KEY (id)",
+      "table_name": "plans"
+    },
+    {
+      "conname": "plans_project_id_fkey",
+      "definition": "FOREIGN KEY (project_id) REFERENCES public.projects(id)",
+      "table_name": "plans"
+    },
+    {
+      "conname": "plans_project_id_revision_key",
+      "definition": "UNIQUE (project_id, revision)",
+      "table_name": "plans"
+    },
+    {
+      "conname": "projects_pkey",
+      "definition": "PRIMARY KEY (id)",
+      "table_name": "projects"
+    },
+    {
+      "conname": "usage_records_job_id_attempt_provider_provider_request_id_key",
+      "definition": "UNIQUE (job_id, attempt, provider, provider_request_id)",
+      "table_name": "usage_records"
+    },
+    {
+      "conname": "usage_records_job_id_fkey",
+      "definition": "FOREIGN KEY (job_id) REFERENCES public.jobs(id)",
+      "table_name": "usage_records"
+    },
+    {
+      "conname": "usage_records_pkey",
+      "definition": "PRIMARY KEY (id)",
+      "table_name": "usage_records"
+    },
+    {
+      "conname": "usage_records_project_id_fkey",
+      "definition": "FOREIGN KEY (project_id) REFERENCES public.projects(id)",
+      "table_name": "usage_records"
+    },
+    {
+      "conname": "user_quotas_pkey",
+      "definition": "PRIMARY KEY (issuer, subject)",
+      "table_name": "user_quotas"
+    },
+    {
+      "conname": "versions_checkpoint_id_fkey",
+      "definition": "FOREIGN KEY (checkpoint_id) REFERENCES public.checkpoints(id)",
+      "table_name": "versions"
+    },
+    {
+      "conname": "versions_job_id_fkey",
+      "definition": "FOREIGN KEY (job_id) REFERENCES public.jobs(id)",
+      "table_name": "versions"
+    },
+    {
+      "conname": "versions_job_id_key",
+      "definition": "UNIQUE (job_id)",
+      "table_name": "versions"
+    },
+    {
+      "conname": "versions_pkey",
+      "definition": "PRIMARY KEY (id)",
+      "table_name": "versions"
+    },
+    {
+      "conname": "versions_project_id_fkey",
+      "definition": "FOREIGN KEY (project_id) REFERENCES public.projects(id)",
+      "table_name": "versions"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX api_schema_revision_pkey ON public.api_schema_revision USING btree (revision)",
+      "indexname": "api_schema_revision_pkey",
+      "tablename": "api_schema_revision"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX assets_pkey ON public.assets USING btree (id)",
+      "indexname": "assets_pkey",
+      "tablename": "assets"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX assets_storage_key_key ON public.assets USING btree (storage_key)",
+      "indexname": "assets_storage_key_key",
+      "tablename": "assets"
+    },
+    {
+      "indexdef": "CREATE INDEX ix_assets_parse_queue ON public.assets USING btree (parse_status, parse_lease_until)",
+      "indexname": "ix_assets_parse_queue",
+      "tablename": "assets"
+    },
+    {
+      "indexdef": "CREATE INDEX ix_assets_project_id ON public.assets USING btree (project_id)",
+      "indexname": "ix_assets_project_id",
+      "tablename": "assets"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX checkpoints_pkey ON public.checkpoints USING btree (id)",
+      "indexname": "checkpoints_pkey",
+      "tablename": "checkpoints"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX checkpoints_storage_key_key ON public.checkpoints USING btree (storage_key)",
+      "indexname": "checkpoints_storage_key_key",
+      "tablename": "checkpoints"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX execution_slots_pkey ON public.execution_slots USING btree (id)",
+      "indexname": "execution_slots_pkey",
+      "tablename": "execution_slots"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX idempotency_keys_pkey ON public.idempotency_keys USING btree (issuer, subject, route, key)",
+      "indexname": "idempotency_keys_pkey",
+      "tablename": "idempotency_keys"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX job_events_pkey ON public.job_events USING btree (job_id, seq)",
+      "indexname": "job_events_pkey",
+      "tablename": "job_events"
+    },
+    {
+      "indexdef": "CREATE INDEX ix_jobs_project_id ON public.jobs USING btree (project_id)",
+      "indexname": "ix_jobs_project_id",
+      "tablename": "jobs"
+    },
+    {
+      "indexdef": "CREATE INDEX ix_jobs_status ON public.jobs USING btree (status)",
+      "indexname": "ix_jobs_status",
+      "tablename": "jobs"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX jobs_pkey ON public.jobs USING btree (id)",
+      "indexname": "jobs_pkey",
+      "tablename": "jobs"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX uq_project_active_job ON public.jobs USING btree (project_id) WHERE ((status)::text = ANY ((ARRAY['queued'::character varying, 'starting'::character varying, 'running'::character varying, 'collecting'::character varying, 'validating'::character varying, 'cancelling'::character varying])::text[]))",
+      "indexname": "uq_project_active_job",
+      "tablename": "jobs"
+    },
+    {
+      "indexdef": "CREATE INDEX ix_plans_project_id ON public.plans USING btree (project_id)",
+      "indexname": "ix_plans_project_id",
+      "tablename": "plans"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX plans_pkey ON public.plans USING btree (id)",
+      "indexname": "plans_pkey",
+      "tablename": "plans"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX plans_project_id_revision_key ON public.plans USING btree (project_id, revision)",
+      "indexname": "plans_project_id_revision_key",
+      "tablename": "plans"
+    },
+    {
+      "indexdef": "CREATE INDEX ix_projects_issuer ON public.projects USING btree (issuer)",
+      "indexname": "ix_projects_issuer",
+      "tablename": "projects"
+    },
+    {
+      "indexdef": "CREATE INDEX ix_projects_subject ON public.projects USING btree (subject)",
+      "indexname": "ix_projects_subject",
+      "tablename": "projects"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX projects_pkey ON public.projects USING btree (id)",
+      "indexname": "projects_pkey",
+      "tablename": "projects"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX usage_records_job_id_attempt_provider_provider_request_id_key ON public.usage_records USING btree (job_id, attempt, provider, provider_request_id)",
+      "indexname": "usage_records_job_id_attempt_provider_provider_request_id_key",
+      "tablename": "usage_records"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX usage_records_pkey ON public.usage_records USING btree (id)",
+      "indexname": "usage_records_pkey",
+      "tablename": "usage_records"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX user_quotas_pkey ON public.user_quotas USING btree (issuer, subject)",
+      "indexname": "user_quotas_pkey",
+      "tablename": "user_quotas"
+    },
+    {
+      "indexdef": "CREATE INDEX ix_versions_project_id ON public.versions USING btree (project_id)",
+      "indexname": "ix_versions_project_id",
+      "tablename": "versions"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX versions_job_id_key ON public.versions USING btree (job_id)",
+      "indexname": "versions_job_id_key",
+      "tablename": "versions"
+    },
+    {
+      "indexdef": "CREATE UNIQUE INDEX versions_pkey ON public.versions USING btree (id)",
+      "indexname": "versions_pkey",
+      "tablename": "versions"
+    },
+    {
+      "definition": "CREATE TRIGGER ppt_immutable BEFORE UPDATE ON public.checkpoints FOR EACH ROW EXECUTE FUNCTION public.ppt_immutable_record()",
+      "table_name": "checkpoints",
+      "tgenabled": "O",
+      "tgname": "ppt_immutable"
+    },
+    {
+      "definition": "CREATE TRIGGER ppt_immutable_input BEFORE UPDATE ON public.jobs FOR EACH ROW EXECUTE FUNCTION public.ppt_immutable_job_input()",
+      "table_name": "jobs",
+      "tgenabled": "O",
+      "tgname": "ppt_immutable_input"
+    },
+    {
+      "definition": "CREATE TRIGGER ppt_immutable_plan BEFORE UPDATE ON public.plans FOR EACH ROW EXECUTE FUNCTION public.ppt_immutable_plan()",
+      "table_name": "plans",
+      "tgenabled": "O",
+      "tgname": "ppt_immutable_plan"
+    },
+    {
+      "definition": "CREATE TRIGGER ppt_immutable BEFORE UPDATE ON public.versions FOR EACH ROW EXECUTE FUNCTION public.ppt_immutable_record()",
+      "table_name": "versions",
+      "tgenabled": "O",
+      "tgname": "ppt_immutable"
+    },
+    {
+      "arguments": "",
+      "definition": "CREATE OR REPLACE FUNCTION public.ppt_immutable_job_input()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$ BEGIN IF NEW.input_snapshot::jsonb IS DISTINCT FROM OLD.input_snapshot::jsonb THEN RAISE EXCEPTION 'immutable job input'; END IF; RETURN NEW; END $function$\n",
+      "proname": "ppt_immutable_job_input"
+    },
+    {
+      "arguments": "",
+      "definition": "CREATE OR REPLACE FUNCTION public.ppt_immutable_plan()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$ BEGIN IF (to_jsonb(NEW)-'confirmed_at'-'confirmation_selection') IS DISTINCT FROM (to_jsonb(OLD)-'confirmed_at'-'confirmation_selection') OR (OLD.confirmed_at IS NOT NULL AND NEW.confirmation_selection::jsonb IS DISTINCT FROM OLD.confirmation_selection::jsonb) THEN RAISE EXCEPTION 'immutable plan'; END IF; RETURN NEW; END $function$\n",
+      "proname": "ppt_immutable_plan"
+    },
+    {
+      "arguments": "",
+      "definition": "CREATE OR REPLACE FUNCTION public.ppt_immutable_record()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$ BEGIN RAISE EXCEPTION 'immutable record'; END $function$\n",
+      "proname": "ppt_immutable_record"
+    }
+  ],
+  "quiescence": {
+    "active_projects": 0,
+    "idle_slot": 1,
+    "nonterminal_jobs": 0,
+    "parser_writers_or_leases": 0,
+    "slots": 1,
+    "unproven_attached_jobs": 0
+  },
+  "schema": "ppt-service.p1.database.v1",
+  "tables": {
+    "api_schema_revision": {
+      "rows": 2,
+      "sha256": "a379ec6e54c883ff35f18131a4b2341eae7cfd1a696217b9598d16f5c079004f"
+    },
+    "assets": {
+      "rows": 1,
+      "sha256": "ccbaf1cd7806605f3530d0d4779d9badeb48d59e76637f9fcb5a7950e7109ba2"
+    },
+    "checkpoints": {
+      "rows": 1,
+      "sha256": "dcd9d17ef1750e21a726e76964cb1406adf1370ff2ee88fe755e34f6b4f747f3"
+    },
+    "execution_slots": {
+      "rows": 1,
+      "sha256": "cd0f884addf998c6d2e3b35acea632d80c0a09a54a5c9692789ef4cdd35de8cf"
+    },
+    "idempotency_keys": {
+      "rows": 1,
+      "sha256": "c956ab566a865570e7e164739b7e188a7ef2408a61bc6aa0413e1c15d5130aa7"
+    },
+    "job_events": {
+      "rows": 2,
+      "sha256": "d579e15597f680d72bae0fadb30108796713ed3434c3abed02acf740a4250fe8"
+    },
+    "jobs": {
+      "rows": 1,
+      "sha256": "d360c035e490a44f00a34e501b127a7ce8c4fe9b50c493c5fea590983110a6fd"
+    },
+    "plans": {
+      "rows": 1,
+      "sha256": "67cc068cd4122613ea80576077385810d0a28f514afbf4654fbe039bddca964d"
+    },
+    "projects": {
+      "rows": 1,
+      "sha256": "0ef76687a06461d4bd6e0066a30ddc2e4ea8cc4f698654652d7c456f945d4496"
+    },
+    "usage_records": {
+      "rows": 1,
+      "sha256": "9152894b0312e8b8271932dadcac61c47c0c8d5a895f3e4f2c530bc72f80d208"
+    },
+    "user_quotas": {
+      "rows": 1,
+      "sha256": "bad445c26e31b2de10e5f21da73ac1b24f788dab4ca541deb6868ae8f1015c9c"
+    },
+    "versions": {
+      "rows": 1,
+      "sha256": "5567adc20564078ceae5ee28fa3343ad585b730bbb675d256aaf9c9b8f264423"
+    }
+  }
+}

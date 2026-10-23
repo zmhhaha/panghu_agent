@@ -1,0 +1,127 @@
+{
+  "project_id": "contract-project",
+  "version_id": "contract-version",
+  "source_revision": 3,
+  "revision": 2,
+  "binding": {
+    "project_id": "contract-project",
+    "version_id": "contract-version",
+    "source_revision": 3,
+    "manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "input_snapshot_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "pptx_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "source_fingerprint_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "evidence_id": "synthetic-contract-evidence",
+    "evidence_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+    "runtime": {
+      "engine": "pi",
+      "runtime_revision": "synthetic-contract-revision",
+      "profile": "ppt",
+      "checkpoint_format": "artifact-replay-v1"
+    }
+  },
+  "pages": [
+    {
+      "number": 1,
+      "title": "Synthetic contract page; no acceptance evidence",
+      "preview_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "source_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+      "preview_url": "/api/v1/versions/contract-version/slides/1/preview"
+    }
+  ],
+  "native_chart_count": 1,
+  "programmatic_status": "pending",
+  "visual_status": "passed",
+  "powerpoint_status": "passed",
+  "human_status": "passed",
+  "acceptance_status": "pending",
+  "pending_reasons": [
+    "independent_postflight_integration_pending"
+  ],
+  "can_review": true,
+  "can_revoke": true,
+  "publication_authorized": false,
+  "records": [
+    {
+      "id": "synthetic-record-1",
+      "revision": 1,
+      "kind": "visual_review",
+      "created_at": "2000-01-01T00:00:00Z",
+      "reviewer": {
+        "issuer": "https://synthetic.invalid",
+        "sub": "contract-reviewer"
+      },
+      "binding": {
+        "project_id": "contract-project",
+        "version_id": "contract-version",
+        "source_revision": 3,
+        "manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "input_snapshot_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "pptx_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "source_fingerprint_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+        "evidence_id": "synthetic-contract-evidence",
+        "evidence_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "runtime": {
+          "engine": "pi",
+          "runtime_revision": "synthetic-contract-revision",
+          "profile": "ppt",
+          "checkpoint_format": "artifact-replay-v1"
+        }
+      },
+      "payload": {
+        "pages": [
+          {
+            "number": 1,
+            "preview_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+            "verdict": "pass",
+            "issues": []
+          }
+        ],
+        "note": "Synthetic contract assertion; not an actual visual review"
+      },
+      "revoked": false,
+      "stale": false
+    },
+    {
+      "id": "synthetic-record-2",
+      "revision": 2,
+      "kind": "powerpoint_review",
+      "created_at": "2000-01-01T00:00:00Z",
+      "reviewer": {
+        "issuer": "https://synthetic.invalid",
+        "sub": "contract-reviewer"
+      },
+      "binding": {
+        "project_id": "contract-project",
+        "version_id": "contract-version",
+        "source_revision": 3,
+        "manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+        "input_snapshot_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+        "pptx_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+        "source_fingerprint_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+        "evidence_id": "synthetic-contract-evidence",
+        "evidence_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+        "runtime": {
+          "engine": "pi",
+          "runtime_revision": "synthetic-contract-revision",
+          "profile": "ppt",
+          "checkpoint_format": "artifact-replay-v1"
+        }
+      },
+      "payload": {
+        "application_version": "Microsoft PowerPoint synthetic contract build",
+        "platform": "Synthetic test platform",
+        "checks": {
+          "opened": "pass",
+          "content_edited": "pass",
+          "native_chart_edited": "pass",
+          "saved": "pass",
+          "reopened": "pass"
+        },
+        "note": "Synthetic contract assertion; PowerPoint was not run"
+      },
+      "revoked": false,
+      "stale": false
+    }
+  ]
+}

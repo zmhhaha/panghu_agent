@@ -1,0 +1,71 @@
+# Pass an explicit repository@sha256:<digest>; build.sh rejects floating bases.
+ARG HERMES_BASE_IMAGE
+FROM ${HERMES_BASE_IMAGE}
+
+USER 0
+ARG PPT_MASTER_ARCHIVE_SHA256
+ARG PPT_MASTER_COMMIT=c350bc31e6d43b7bcf5234183d650ba8f9f4c9d7
+LABEL org.opencontainers.image.title="PPT Service isolated executor" \
+      io.ppt-service.ppt-master.commit="c350bc31e6d43b7bcf5234183d650ba8f9f4c9d7" \
+      io.ppt-service.ppt-master.skill-version="6.7.2"
+
+# Do not invoke the inherited s6/cron/private-agent entrypoint, even in build checks.
+ENTRYPOINT ["/opt/hermes/.venv/bin/python", "-m", "ppt_service.worker.execute"]
+CMD []
+ENV PYTHONPATH=/opt/ppt-service \
+    HOME=/work/home \
+    HERMES_HOME=/work/home \
+    HERMES_WRITE_SAFE_ROOT=/work \
+    HERMES_LAZY_INSTALL_TARGET=/work/home/lazy-packages \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright \
+    PPT_MASTER_SKILL_DIR=/opt/ppt-master/skills/ppt-master \
+    PPT_MASTER_COMMIT=c350bc31e6d43b7bcf5234183d650ba8f9f4c9d7 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PATH=/opt/hermes/.venv/bin:${PATH}
+
+RUN test "$(dpkg --print-architecture)" = arm64 \
+    && test -x /opt/hermes/.venv/bin/python \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates fontconfig fonts-noto-cjk git \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY .vendors/ppt-master.tar /tmp/ppt-master.tar
+RUN test "$PPT_MASTER_COMMIT" = c350bc31e6d43b7bcf5234183d650ba8f9f4c9d7 \
+    && test -n "$PPT_MASTER_ARCHIVE_SHA256" \
+    && printf '%s  /tmp/ppt-master.tar\n' "$PPT_MASTER_ARCHIVE_SHA256" | sha256sum --check --strict \
+    && test "$(git get-tar-commit-id < /tmp/ppt-master.tar)" = "$PPT_MASTER_COMMIT" \
+    && mkdir -p /opt/ppt-master /opt/ppt-service/build-info \
+    && tar -xf /tmp/ppt-master.tar -C /opt/ppt-master \
+    && rm /tmp/ppt-master.tar \
+    && /opt/hermes/.venv/bin/python /opt/ppt-master/skills/ppt-master/scripts/attribution_guard.py \
+    && /opt/hermes/.venv/bin/python -c 'from pathlib import Path; s=Path("/opt/ppt-master/skills/ppt-master/SKILL.md").read_text(); assert "version: \"6.7.2\"" in s' \
+    && printf '%s\n' "$PPT_MASTER_ARCHIVE_SHA256" > /opt/ppt-service/build-info/ppt-master.archive.sha256 \
+    && printf '%s\n' "$PPT_MASTER_COMMIT" > /opt/ppt-service/build-info/ppt-master.commit
+
+COPY images/requirements-worker.lock /opt/ppt-service/build-info/requirements-worker.lock
+RUN /opt/hermes/.venv/bin/python -m ensurepip --upgrade \
+    && /opt/hermes/.venv/bin/python -m pip install --no-cache-dir --only-binary=:all: \
+        -r /opt/ppt-service/build-info/requirements-worker.lock \
+    && /opt/hermes/.venv/bin/python -m pip check \
+    && /opt/hermes/.venv/bin/python -m playwright install --with-deps chromium \
+    && chmod -R a+rX /opt/ms-playwright \
+    && /opt/hermes/.venv/bin/python -m pip freeze --all > /opt/ppt-service/build-info/pip-freeze.txt \
+    && dpkg-query -W > /opt/ppt-service/build-info/dpkg-packages.txt \
+    && fc-cache -f \
+    && rm -rf /var/lib/apt/lists/*
+
+# Narrow context allowlist prevents copying uploads, sessions, keys or vendor .git.
+COPY __init__.py /opt/ppt-service/ppt_service/__init__.py
+COPY worker/ /opt/ppt-service/ppt_service/worker/
+COPY images/check_runtime.py /opt/ppt-service/check_runtime.py
+RUN if ! getent group 10000 >/dev/null; then groupadd --gid 10000 ppt-service; fi \
+    && if ! getent passwd 10000 >/dev/null; then useradd --uid 10000 --gid 10000 --home-dir /work/home --no-create-home --shell /usr/sbin/nologin ppt-service; fi \
+    && mkdir -p /work/home /work/project /work/inputs /work/base /work/result \
+    && chown -R 10000:10000 /work \
+    && chmod -R a+rX /opt/ppt-master /opt/ppt-service
+WORKDIR /work/project
+USER 10000:10000
+# No model, Gateway, Office or PPT generation: verify imports, guard and CJK Chromium.
+RUN /opt/hermes/.venv/bin/python /opt/ppt-service/check_runtime.py

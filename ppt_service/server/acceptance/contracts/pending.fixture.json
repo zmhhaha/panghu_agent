@@ -1,0 +1,47 @@
+{
+  "project_id": "contract-project",
+  "version_id": "contract-version",
+  "source_revision": 3,
+  "revision": 0,
+  "binding": {
+    "project_id": "contract-project",
+    "version_id": "contract-version",
+    "source_revision": 3,
+    "manifest_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "input_snapshot_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "pptx_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "source_fingerprint_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+    "evidence_id": "synthetic-contract-evidence",
+    "evidence_sha256": "5555555555555555555555555555555555555555555555555555555555555555",
+    "runtime": {
+      "engine": "pi",
+      "runtime_revision": "synthetic-contract-revision",
+      "profile": "ppt",
+      "checkpoint_format": "artifact-replay-v1"
+    }
+  },
+  "pages": [
+    {
+      "number": 1,
+      "title": "Synthetic contract page; no acceptance evidence",
+      "preview_sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+      "source_sha256": "7777777777777777777777777777777777777777777777777777777777777777",
+      "preview_url": "/api/v1/versions/contract-version/slides/1/preview"
+    }
+  ],
+  "native_chart_count": 1,
+  "programmatic_status": "pending",
+  "visual_status": "pending",
+  "powerpoint_status": "pending",
+  "human_status": "pending",
+  "acceptance_status": "pending",
+  "pending_reasons": [
+    "independent_postflight_integration_pending",
+    "visual_review_pending",
+    "powerpoint_review_pending"
+  ],
+  "can_review": true,
+  "can_revoke": false,
+  "publication_authorized": false,
+  "records": []
+}

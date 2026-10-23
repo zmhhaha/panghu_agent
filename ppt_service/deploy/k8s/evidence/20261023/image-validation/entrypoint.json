@@ -1,0 +1,1 @@
+{"database_connected": false, "default_entrypoint": true, "health": {"deployment_mode": "test", "manual_acceptance": "pending", "status": "ok"}, "listeners": ["127.0.0.1:8000"], "model_requests": 0, "network": "none", "unauthorized_root": 401}

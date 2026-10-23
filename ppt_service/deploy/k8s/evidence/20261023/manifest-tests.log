@@ -1,0 +1,23 @@
+test_candidate_cannot_start_or_invoke_models (test_manifests.ManifestContracts.test_candidate_cannot_start_or_invoke_models) ... ok
+test_database_rules_are_symmetric_and_same_namespace (test_manifests.ManifestContracts.test_database_rules_are_symmetric_and_same_namespace) ... ok
+test_default_deny_and_no_public_exposure (test_manifests.ManifestContracts.test_default_deny_and_no_public_exposure) ... ok
+test_dns_requires_namespace_and_pod_match (test_manifests.ManifestContracts.test_dns_requires_namespace_and_pod_match) ... ok
+test_images_are_manifest_pins_or_explicit_unresolved_placeholders (test_manifests.ManifestContracts.test_images_are_manifest_pins_or_explicit_unresolved_placeholders) ... ok
+test_migration_is_bounded_and_uses_own_credential (test_manifests.ManifestContracts.test_migration_is_bounded_and_uses_own_credential) ... ok
+test_no_kubernetes_api_privilege_or_serviceaccount_token (test_manifests.ManifestContracts.test_no_kubernetes_api_privilege_or_serviceaccount_token) ... ok
+test_no_unreviewed_https_or_unbounded_peer (test_manifests.ManifestContracts.test_no_unreviewed_https_or_unbounded_peer) ... ok
+test_only_exact_frpc_peers_reach_website (test_manifests.ManifestContracts.test_only_exact_frpc_peers_reach_website) ... ok
+test_own_claims_and_ceph_classes (test_manifests.ManifestContracts.test_own_claims_and_ceph_classes) ... ok
+test_packaged_runtime_paths_are_explicit (test_manifests.ManifestContracts.test_packaged_runtime_paths_are_explicit) ... ok
+test_probes_do_not_bypass_auth_or_confuse_liveness_with_schema (test_manifests.ManifestContracts.test_probes_do_not_bypass_auth_or_confuse_liveness_with_schema) ... ok
+test_proxy_security_contract_preserves_token_and_cookie_requirements (test_manifests.ManifestContracts.test_proxy_security_contract_preserves_token_and_cookie_requirements) ... ok
+test_secrets_are_references_and_separated_by_consumer (test_manifests.ManifestContracts.test_secrets_are_references_and_separated_by_consumer) ... ok
+test_security_context_and_resource_bounds (test_manifests.ManifestContracts.test_security_context_and_resource_bounds) ... ok
+test_site_mount_cannot_rewrite_frozen_data_permissions (test_manifests.ManifestContracts.test_site_mount_cannot_rewrite_frozen_data_permissions) ... ok
+test_site_port_is_loopback_and_not_exposed_by_service (test_manifests.ManifestContracts.test_site_port_is_loopback_and_not_exposed_by_service) ... ok
+test_targets_are_isolated_and_migration_is_separate (test_manifests.ManifestContracts.test_targets_are_isolated_and_migration_is_separate) ... ok
+
+----------------------------------------------------------------------
+Ran 18 tests in 0.102s
+
+OK

@@ -1,0 +1,15 @@
+**
+!__init__.py
+!worker/
+!worker/**
+!images/
+!images/Dockerfile.worker
+!images/requirements-worker.lock
+!images/check_runtime.py
+!.vendors/
+!.vendors/ppt-master.tar
+**/__pycache__
+**/*.pyc
+**/.env
+**/.env.*
+**/.git

@@ -1,0 +1,39 @@
+# Server build: both the frontend and the API dependencies are installed here.
+ARG NODE_BUILD_IMAGE=node:22.20.0-bookworm-slim
+ARG PYTHON_RUNTIME_IMAGE=python:3.13.5-slim-bookworm
+FROM ${NODE_BUILD_IMAGE} AS frontend
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+RUN npm install --global --registry "${NPM_REGISTRY}" pnpm@9.15.9
+WORKDIR /build/web
+COPY web/package.json web/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile --registry "${NPM_REGISTRY}"
+COPY web/ ./
+RUN pnpm run build
+
+FROM ${PYTHON_RUNTIME_IMAGE} AS dependencies
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+COPY requirements-api.lock /tmp/requirements-api.lock
+RUN python -m pip install --no-cache-dir --only-binary=:all: --index-url "${PIP_INDEX_URL}" -r /tmp/requirements-api.lock \
+    && python -m pip check
+
+FROM ${PYTHON_RUNTIME_IMAGE}
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/opt/ppt-service \
+    DATA_ROOT=/var/lib/ppt-service/state PPT_WEB_DIST=/opt/ppt-service/web/dist \
+    PPT_EXECUTION_ENABLED=false HOME=/tmp
+WORKDIR /opt/ppt-service
+COPY --from=dependencies /usr/local/lib/python3.13/site-packages/ /usr/local/lib/python3.13/site-packages/
+COPY code/ /opt/ppt-service/
+COPY --from=frontend /build/web/dist/ /opt/ppt-service/web/dist/
+COPY build-info/ /opt/ppt-service/build-info/
+COPY requirements-api.lock /opt/ppt-service/build-info/requirements-api.lock
+COPY verify_image.py /opt/ppt-service/verify_image.py
+COPY write_site_manifest.py /tmp/write_site_manifest.py
+RUN python -m pip check \
+    && python -c "from ppt_service.server.site import create_site; from ppt_service.server.migrate import REVISION; assert REVISION == 2" \
+    && python /tmp/write_site_manifest.py /opt/ppt-service \
+    && rm /tmp/write_site_manifest.py \
+    && mkdir -p /var/lib/ppt-service && chown 10000:10000 /var/lib/ppt-service \
+    && chmod -R a+rX /opt/ppt-service
+USER 10000:10000
+EXPOSE 8000
+ENTRYPOINT ["/usr/local/bin/python", "-m", "uvicorn", "ppt_service.server.site:create_site", "--factory", "--host", "127.0.0.1", "--port", "8000", "--no-proxy-headers"]

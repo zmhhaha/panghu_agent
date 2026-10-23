@@ -1,0 +1,16 @@
+{
+  "base/config.yaml": "fb941b15d1fdc19246d833b7b0845e3439b534d3fdb74ef12ff33ecb54622f8f",
+  "base/kustomization.yaml": "1da1e51c2f5d216c8c8ea62468ec2c0e69d6c5b06d66b92674f99e20613ee4e0",
+  "base/namespace.yaml": "5395c0c328234e37084cbf211b5451449e6d969550a0631919d6619346459cf0",
+  "base/networkpolicy.yaml": "2b9514dbc9d1bbd3cc2c13ea4abcead1e4d1f7e0e7b68b051fa9af8185cdb6d4",
+  "base/postgres.yaml": "bbb91298672a3499a76aa20698df7681f3f87da8f7dfcd3ea2a5354d6be0fa21",
+  "base/serviceaccounts.yaml": "78ab897ff1fc8a9e73a2422ae4e7cf46196b3acd2dd33c62d99767e1666116d8",
+  "base/site.yaml": "9fde7c73afb25e768a020e2a186f961adbb46925b1f8d083a0d9af94d88d6d30",
+  "base/storage.yaml": "ea2144381ab304c8fb782b322762abb4a3d134969a2a8b5b75fd81b1f6bb58b7",
+  "bootstrap-database.sql": "0702f0ed967ec211c49d444efe3a555801117825c96a7f490e1277642efeb31d",
+  "CONTRACT.md": "0a980e1f55a0fa008a179680fb09dcd2a08865b84be8ac38550c6ab4cac0b30f",
+  "grant-runtime.sql": "eb22150b1589380a843bb96e07d119170a2cc8f2bb214b8a6f6c1db185991b5b",
+  "migrate-job/job.yaml": "4199ac11c47c7b63405038d8479f400bcbb7f84576644a0d0c491a02d8111439",
+  "migrate-job/kustomization.yaml": "ac8f9ca83566e89d5f22911d4b543be180301ab22bebd8f07306d3098154d10e",
+  "tests/test_manifests.py": "037cc3d83bfcc6e17ac4035e4bc286de3c8024853be42248c80af8b4bb11521a"
+}

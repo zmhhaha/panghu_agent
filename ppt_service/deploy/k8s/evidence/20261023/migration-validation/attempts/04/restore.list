@@ -1,0 +1,85 @@
+;
+; Archive created at 2026-10-23 09:45:29 UTC
+;     dbname: ppt_p1_source_fixture
+;     TOC Entries: 74
+;     Compression: gzip
+;     Dump Version: 1.15-0
+;     Format: CUSTOM
+;     Integer: 4 bytes
+;     Offset: 8 bytes
+;     Dumped from database version: 16.15
+;     Dumped by pg_dump version: 16.15
+;
+;
+; Selected TOC Entries:
+;
+; P1 existing verified-empty schema: 5; 2615 2200 SCHEMA - public pg_database_owner
+3570; 0 0 COMMENT - SCHEMA public pg_database_owner
+228; 1255 16549 FUNCTION public ppt_immutable_job_input() ppt_migrator
+229; 1255 16551 FUNCTION public ppt_immutable_plan() ppt_migrator
+227; 1255 16546 FUNCTION public ppt_immutable_record() ppt_migrator
+215; 1259 16390 TABLE public api_schema_revision ppt_migrator
+220; 1259 16424 TABLE public assets ppt_migrator
+221; 1259 16440 TABLE public checkpoints ppt_migrator
+217; 1259 16404 TABLE public execution_slots ppt_migrator
+218; 1259 16410 TABLE public idempotency_keys ppt_migrator
+224; 1259 16489 TABLE public job_events ppt_migrator
+222; 1259 16454 TABLE public jobs ppt_migrator
+223; 1259 16469 TABLE public plans ppt_migrator
+216; 1259 16395 TABLE public projects ppt_migrator
+226; 1259 16526 TABLE public usage_records ppt_migrator
+219; 1259 16417 TABLE public user_quotas ppt_migrator
+225; 1259 16501 TABLE public versions ppt_migrator
+3552; 0 16390 TABLE DATA public api_schema_revision ppt_migrator
+3557; 0 16424 TABLE DATA public assets ppt_migrator
+3558; 0 16440 TABLE DATA public checkpoints ppt_migrator
+3554; 0 16404 TABLE DATA public execution_slots ppt_migrator
+3555; 0 16410 TABLE DATA public idempotency_keys ppt_migrator
+3561; 0 16489 TABLE DATA public job_events ppt_migrator
+3559; 0 16454 TABLE DATA public jobs ppt_migrator
+3560; 0 16469 TABLE DATA public plans ppt_migrator
+3553; 0 16395 TABLE DATA public projects ppt_migrator
+3563; 0 16526 TABLE DATA public usage_records ppt_migrator
+3556; 0 16417 TABLE DATA public user_quotas ppt_migrator
+3562; 0 16501 TABLE DATA public versions ppt_migrator
+3352; 2606 16394 CONSTRAINT public api_schema_revision api_schema_revision_pkey ppt_migrator
+3364; 2606 16431 CONSTRAINT public assets assets_pkey ppt_migrator
+3366; 2606 16433 CONSTRAINT public assets assets_storage_key_key ppt_migrator
+3370; 2606 16446 CONSTRAINT public checkpoints checkpoints_pkey ppt_migrator
+3372; 2606 16448 CONSTRAINT public checkpoints checkpoints_storage_key_key ppt_migrator
+3358; 2606 16409 CONSTRAINT public execution_slots execution_slots_pkey ppt_migrator
+3360; 2606 16416 CONSTRAINT public idempotency_keys idempotency_keys_pkey ppt_migrator
+3384; 2606 16495 CONSTRAINT public job_events job_events_pkey ppt_migrator
+3376; 2606 16460 CONSTRAINT public jobs jobs_pkey ppt_migrator
+3380; 2606 16475 CONSTRAINT public plans plans_pkey ppt_migrator
+3382; 2606 16477 CONSTRAINT public plans plans_project_id_revision_key ppt_migrator
+3356; 2606 16401 CONSTRAINT public projects projects_pkey ppt_migrator
+3391; 2606 16534 CONSTRAINT public usage_records usage_records_job_id_attempt_provider_provider_request_id_key ppt_migrator
+3393; 2606 16532 CONSTRAINT public usage_records usage_records_pkey ppt_migrator
+3362; 2606 16423 CONSTRAINT public user_quotas user_quotas_pkey ppt_migrator
+3387; 2606 16509 CONSTRAINT public versions versions_job_id_key ppt_migrator
+3389; 2606 16507 CONSTRAINT public versions versions_pkey ppt_migrator
+3367; 1259 16545 INDEX public ix_assets_parse_queue ppt_migrator
+3368; 1259 16439 INDEX public ix_assets_project_id ppt_migrator
+3373; 1259 16466 INDEX public ix_jobs_project_id ppt_migrator
+3374; 1259 16468 INDEX public ix_jobs_status ppt_migrator
+3378; 1259 16488 INDEX public ix_plans_project_id ppt_migrator
+3353; 1259 16403 INDEX public ix_projects_issuer ppt_migrator
+3354; 1259 16402 INDEX public ix_projects_subject ppt_migrator
+3385; 1259 16525 INDEX public ix_versions_project_id ppt_migrator
+3377; 1259 16467 INDEX public uq_project_active_job ppt_migrator
+3405; 2620 16547 TRIGGER public checkpoints ppt_immutable ppt_migrator
+3408; 2620 16548 TRIGGER public versions ppt_immutable ppt_migrator
+3406; 2620 16550 TRIGGER public jobs ppt_immutable_input ppt_migrator
+3407; 2620 16552 TRIGGER public plans ppt_immutable_plan ppt_migrator
+3394; 2606 16434 FK CONSTRAINT public assets assets_project_id_fkey ppt_migrator
+3395; 2606 16449 FK CONSTRAINT public checkpoints checkpoints_project_id_fkey ppt_migrator
+3399; 2606 16496 FK CONSTRAINT public job_events job_events_job_id_fkey ppt_migrator
+3396; 2606 16461 FK CONSTRAINT public jobs jobs_project_id_fkey ppt_migrator
+3397; 2606 16483 FK CONSTRAINT public plans plans_checkpoint_id_fkey ppt_migrator
+3398; 2606 16478 FK CONSTRAINT public plans plans_project_id_fkey ppt_migrator
+3403; 2606 16540 FK CONSTRAINT public usage_records usage_records_job_id_fkey ppt_migrator
+3404; 2606 16535 FK CONSTRAINT public usage_records usage_records_project_id_fkey ppt_migrator
+3400; 2606 16520 FK CONSTRAINT public versions versions_checkpoint_id_fkey ppt_migrator
+3401; 2606 16515 FK CONSTRAINT public versions versions_job_id_fkey ppt_migrator
+3402; 2606 16510 FK CONSTRAINT public versions versions_project_id_fkey ppt_migrator

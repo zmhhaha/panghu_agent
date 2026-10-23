@@ -1,0 +1,230 @@
+{
+  "date": "2026-10-22",
+  "package": "P4",
+  "status": "independent_module_verified_not_integrated",
+  "baseline_commit": "75ee2e699c5af71a337a5434c0b554defd4dbbf8",
+  "backend": {
+    "passed": 38,
+    "seconds": 2.156,
+    "architecture": "arm64",
+    "database": "isolated SQLite",
+    "image": "sha256:8148cd5182e718d3f0c51b513a00ea0f04edb2b7db1b21fae5d9d0a21aa6f7c7",
+    "source_tar_sha256": "6550ae84cea0a51661cf06b5c623afd07e6c5b593b9b4d6ca90cc6303aad460d",
+    "log": "root@192.168.137.101:/root/ppt-service-p4-20261022/unit-results.txt",
+    "network": "none",
+    "uid": 10000,
+    "read_only_root_source": true,
+    "temporary_container_removed": true
+  },
+  "frontend": {
+    "suite_passed": 72,
+    "p4_tests_in_suite": 22,
+    "seconds": 6.02,
+    "typescript": "passed",
+    "vite_build": "passed",
+    "production_bundle_includes_p4": false
+  },
+  "browser": {
+    "url": "http://127.0.0.1:18506/src/acceptance/demo.html",
+    "data": "synthetic_memory_only",
+    "checks_passed": [
+      "initial human and full acceptance pending",
+      "PNG page navigation",
+      "blank issue blocks submission",
+      "save described page issue",
+      "partial desktop check remains pending",
+      "revocation preserves history",
+      "version switch isolates history",
+      "stale source blocks editing",
+      "stale source still allows page navigation"
+    ]
+  },
+  "remaining": [
+    "trusted resolver and controller evidence bridge",
+    "reviewed core schema migration and deletion lifecycle",
+    "PostgreSQL concurrency and transaction validation",
+    "authenticated immutable candidate PNG adapter",
+    "router and main page integration",
+    "actual visual and PowerPoint manual acceptance"
+  ],
+  "model_calls": 0,
+  "deployed": false,
+  "git_committed": false,
+  "files": [
+    {
+      "path": "docs/acceptance-workbench-preview.png",
+      "bytes": 62058,
+      "sha256": "d6bfe771d67f150eb612a2b5c618b0ad23f356b78fcd97a719b470ee48f30d32"
+    },
+    {
+      "path": "docs/acceptance-workbench-review.png",
+      "bytes": 47161,
+      "sha256": "c9994e590f41786c61ebeca4a56841799ce74f7bdf6b48658a3402cafa455823"
+    },
+    {
+      "path": "docs/acceptance-workbench.md",
+      "bytes": 8622,
+      "sha256": "b78fce729633aa2367be9c3b337cad1d2f40a7b64085e216ebf954228f135dae"
+    },
+    {
+      "path": "server/acceptance/__init__.py",
+      "bytes": 469,
+      "sha256": "5e67fda0fc2c57bf89cbdb15a866f59e1973c6c5762f71c476d073cdb8e6d33b"
+    },
+    {
+      "path": "server/acceptance/contracts/command.schema.json",
+      "bytes": 9485,
+      "sha256": "954299e20b03af22daee0b2ff4c804c7bcd06aec46ff1ce21e2c7859800cb51f"
+    },
+    {
+      "path": "server/acceptance/contracts/human-passed.fixture.json",
+      "bytes": 4909,
+      "sha256": "5d628762f827fddf5bd5c843bb707444035c5f0a7f913fff2445d038576fbdf3"
+    },
+    {
+      "path": "server/acceptance/contracts/pending.fixture.json",
+      "bytes": 1774,
+      "sha256": "836dfaf6346ee62ea8bebe6e05d3b0101d0bfb39920c09f28af5334658bccd90"
+    },
+    {
+      "path": "server/acceptance/contracts/powerpoint-review.fixture.json",
+      "bytes": 1235,
+      "sha256": "696cfae1b7bcab8a293f1f5ac22e0bdd7db76a3510565150b674daba1db3c467"
+    },
+    {
+      "path": "server/acceptance/contracts/revoke.fixture.json",
+      "bytes": 958,
+      "sha256": "460972a1344e6bd1abef2d1301ff8a4a1a8088098030dee4bb9fa0046138f5cb"
+    },
+    {
+      "path": "server/acceptance/contracts/snapshot.schema.json",
+      "bytes": 8199,
+      "sha256": "79ff3bf37c743774bb420d1374205b854d388e8195c54019930d211df94978e3"
+    },
+    {
+      "path": "server/acceptance/contracts/visual-review.fixture.json",
+      "bytes": 1155,
+      "sha256": "885ff9c4cab1a9a3124e0d731a71d5cd2acbc6e1e1a4b581e3d247482c19ce5d"
+    },
+    {
+      "path": "server/acceptance/contracts.py",
+      "bytes": 5158,
+      "sha256": "ea4b69aff09ec1930c172932f077351a3089af177a6dff4333b9f6977d2ac724"
+    },
+    {
+      "path": "server/acceptance/domain.py",
+      "bytes": 8571,
+      "sha256": "1e57232b49d8cf86b8e38b15d4fd66af9b8d42a80199a782a58a4e9302fb2788"
+    },
+    {
+      "path": "server/acceptance/generate_contract.py",
+      "bytes": 3743,
+      "sha256": "9d5af13e6105bd70d5e641a54465714e1d6a038e634a050d8fb9880892e7f7aa"
+    },
+    {
+      "path": "server/acceptance/README.md",
+      "bytes": 8596,
+      "sha256": "4628187b2a77a826ebbe34e67c01e978b16c48766cb8c61334f5c2bf361e7070"
+    },
+    {
+      "path": "server/acceptance/router.py",
+      "bytes": 1415,
+      "sha256": "37b491bfc1bf504c9e577cdee0816e1749dba1de50348e248c162e5aa4315dd7"
+    },
+    {
+      "path": "server/acceptance/store.py",
+      "bytes": 9118,
+      "sha256": "267e51ca8750de411500406b6e71847bf0277a2df0ecf2f9267e41bcca81c6a3"
+    },
+    {
+      "path": "tests/server/run_acceptance_checks.sh",
+      "bytes": 973,
+      "sha256": "f51e8a9313c749d03065e738918c66fb71af0db035d29a645e4a219de5176bbb"
+    },
+    {
+      "path": "tests/server/test_acceptance.py",
+      "bytes": 27496,
+      "sha256": "48c58e51e8e87ae09dd200c68d48f84a61da87f69e150d1c668cbdf5f597db12"
+    },
+    {
+      "path": "web/src/acceptance/acceptance.css",
+      "bytes": 6744,
+      "sha256": "f2927b89cd6a049a433d5671f1a6ebb00de8e00820b7fb834a6efe2a4edb8510"
+    },
+    {
+      "path": "web/src/acceptance/AcceptancePanel.test.tsx",
+      "bytes": 18998,
+      "sha256": "e64f9e8b731f1a47c900fd985219a72332f693807f70d542d3f9697bfc87daf5"
+    },
+    {
+      "path": "web/src/acceptance/AcceptancePanel.tsx",
+      "bytes": 23500,
+      "sha256": "f52fc8826fff8ef1541bb797ad1c90212c423039cb1e00f558ae30adf01076de"
+    },
+    {
+      "path": "web/src/acceptance/client.test.ts",
+      "bytes": 4428,
+      "sha256": "48609d7afe28760c48fb64a11facc677730750c7fd9a12695132a07ad03560ad"
+    },
+    {
+      "path": "web/src/acceptance/client.ts",
+      "bytes": 5075,
+      "sha256": "4f81a421f0b754b955cc5ba9d53c57519e3567a2ce93a8818d5a419559da6a47"
+    },
+    {
+      "path": "web/src/acceptance/contracts.ts",
+      "bytes": 2941,
+      "sha256": "6bcce1c239f1940e7d354b91764e6422f16a6722bad295f9a2d18935da0f4ea6"
+    },
+    {
+      "path": "web/src/acceptance/demo-assets.py",
+      "bytes": 2331,
+      "sha256": "14346640fa3f9342b20ae62a9b94c18610b39120235b516f219f01c780873044"
+    },
+    {
+      "path": "web/src/acceptance/demo-slide-1.png",
+      "bytes": 60402,
+      "sha256": "04111575cb88cbc2f6aa4942a0e61bfc14fe43eedef59887ea45def63e1f3409"
+    },
+    {
+      "path": "web/src/acceptance/demo-slide-2.png",
+      "bytes": 62872,
+      "sha256": "e4ddf1ed9bef2bb8f1ddda5178d86cf3dc5db0e916baf4a4b4ac4c359ff12089"
+    },
+    {
+      "path": "web/src/acceptance/demo-worker.js",
+      "bytes": 775,
+      "sha256": "84a9bcaf38fc359752683f9ee0727cb31ccfb26d6f4aa3ef495f357a4ee3de8b"
+    },
+    {
+      "path": "web/src/acceptance/demo.html",
+      "bytes": 946,
+      "sha256": "5abdb3b5e4e2381c4cfbb92735dff53083372a881d649f503218b582783c952d"
+    },
+    {
+      "path": "web/src/acceptance/demo.tsx",
+      "bytes": 5821,
+      "sha256": "f3a6580e349f777e98a05ab855370f21832e2c6b1297d571d939efd8dcd1c236"
+    },
+    {
+      "path": "web/src/acceptance/drafts.ts",
+      "bytes": 2267,
+      "sha256": "be35a517ae688e588201badccbee5865ed99fc0b10342dd0af8a1446b34bf459"
+    },
+    {
+      "path": "web/src/acceptance/fixtures.ts",
+      "bytes": 1490,
+      "sha256": "d296812a5c8260a1d509295e79048b4bcd8c37a5ff4f0eacd074d8b52e1a91e1"
+    },
+    {
+      "path": "web/src/acceptance/index.ts",
+      "bytes": 159,
+      "sha256": "fbdeb5c991e9ff25a7986aa01efaeac420cae9f43a632bee9d0c56916dae696f"
+    },
+    {
+      "path": "web/src/acceptance/README.md",
+      "bytes": 2997,
+      "sha256": "8df776a953a8e603433ba5ed498bbc57c9a128dd6991ee9e6ba819bf9347a1a6"
+    }
+  ]
+}

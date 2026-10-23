@@ -1,0 +1,15 @@
+{
+  "persistent_mutations": 0,
+  "validation_namespace": "default",
+  "namespace_mapped_only_in_validation_copy": true,
+  "targets": {
+    "base": {
+      "rendered_objects": 18,
+      "server_dry_run_passed": true
+    },
+    "migrate-job": {
+      "rendered_objects": 1,
+      "server_dry_run_passed": true
+    }
+  }
+}

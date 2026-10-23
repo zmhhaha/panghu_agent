@@ -1,0 +1,8 @@
+# OFFLINE TEST ONLY. Parent must verify the local base image ID before building.
+FROM ppt-service-pi:candidate-offline-r19-20261022-7f92-v2
+USER 0:0
+RUN mkdir -p /work/inputs /work/task /work/base /work/project /work/result /work/audit /work/runtime \
+ && chown 0:0 /work /work/inputs /work/task /work/base /work/project /work/result /work/audit /work/runtime \
+ && chmod 0755 /work /work/inputs /work/task /work/base /work/project /work/result /work/audit /work/runtime
+LABEL ppt.execution="offline-domain-test-only" ppt.production-ready="false"
+# Keep inherited TEST-ONLY entrypoint; the fixed domain test overrides it explicitly.

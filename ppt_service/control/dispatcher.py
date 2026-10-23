@@ -1,0 +1,238 @@
+"""Durable single-slot controller; daemon CLI is disabled by default.
+
+A replacement controller stops/reconciles expired executions, never retries a
+possibly paid phase. All external calls occur outside database transactions.
+"""
+from __future__ import annotations
+import argparse,json,os,time,uuid
+from datetime import datetime,timezone
+from decimal import Decimal,InvalidOperation
+from pathlib import Path
+from sqlalchemy import create_engine,select
+from sqlalchemy.orm import sessionmaker
+from ppt_service.server.models import Job,Project,Plan,Version,Checkpoint,Asset,ExecutionSlot,now
+from ppt_service.server.repository import Repository,ACTIVE
+from .execution import *
+from .staging import Stager,read_json,open_regular,atomic_json
+from .attempt_builder import build_attempt
+from .publisher import Publisher
+
+class Dispatcher:
+    def __init__(self,sessions,config:RuntimeConfig,backend:ExecutionBackend,sandbox:Sandbox,*,oracle_provider=None):
+        self.sessions=sessions;self.config=config;self.backend=backend;self.sandbox=sandbox
+        self.stager=Stager(config);self.publisher=Publisher(config,sandbox);self.owned={};self.oracle_provider=oracle_provider
+    def _attempt(self,s,j):
+        return build_attempt(s,j)
+    def _fail_unlaunched(self,s,jid,attempt,token,phase):
+        """Dispose of this transaction's new claim before any external work.
+
+        This path is only reached from a failed, pure attempt build immediately
+        after claim_next. Existing/attached executions always require their real
+        stop proof instead. Keep stopped false: rejection is not OS evidence.
+        """
+        slot=s.get(ExecutionSlot,1,with_for_update=True)
+        j=s.get(Job,jid,with_for_update=True)
+        if (not slot or not j or slot.job_id!=jid or slot.fencing_token!=token
+                or j.fencing_token!=token or j.attempt!=attempt or j.kind!=phase
+                or j.status not in ('starting','cancelling') or j.job_uid or j.run_id):
+            raise ControlError('stale_claim')
+        p=s.get(Project,j.project_id,with_for_update=True)
+        if not p or p.active_job_id!=jid:raise ControlError('stale_claim')
+        cancelled=j.status=='cancelling' or p.deletion_requested
+        j.status='cancelled' if cancelled else 'failed'
+        j.error_code=None if cancelled else 'execution_interrupted'
+        j.lease_until=None;j.deadline=None
+        p.active_job_id=None;p.stage='ready' if p.latest_version_id else 'draft'
+        p.cleanup_ready=p.deletion_requested;slot.job_id=None
+        Repository(s).event(j,'job.cancelled' if cancelled else 'job.failed',
+            {} if cancelled else {'error_code':j.error_code})
+        result={'status':j.status,'job_id':jid}
+        if not cancelled:result['error_code']=j.error_code
+        return result
+    def _db_stopped(self,a,h):
+        proof=self.backend.prove_stopped(h)
+        if proof.uid!=a.uid or not proof.all_writers_stopped:raise ControlError('writers_not_stopped')
+        with self.sessions.begin() as s:
+            j=Repository(s).prove_stopped(a.job_id,a.attempt,a.token,job_uid=h.uid,all_writers_stopped=True)
+            return j.status
+    def progress(self,jid,attempt,token,stage):
+        with self.sessions.begin() as s:
+            r=Repository(s);j,p,slot=r.fenced(jid,attempt,token)
+            if stage not in (j.kind,'collecting','validating'):raise ControlError('invalid_progress')
+            r.event(j,'stage.changed',{'stage':stage});j.stage=stage
+    def _usage(self,a,layout):
+        ledger=layout.audit/'proxy-ledger'
+        if not ledger.exists() or not (ledger/'usage.jsonl').exists():return
+        latest={}
+        with open_regular(ledger,'usage.jsonl',16*1024**2) as stream:
+            for line in stream:
+                if len(line)>65536:raise ControlError('usage_record_limit')
+                row=json.loads(line)
+                if row.get('job_id')!=a.job_id or row.get('attempt')!=a.attempt or row.get('phase')!=a.phase or row.get('model')!=self.config.model:raise ControlError('usage_attribution_mismatch')
+                rid=row.get('proxy_request_id');uuid.UUID(rid);latest[rid]=row
+        with self.sessions.begin() as s:
+            repo=Repository(s)
+            for rid,row in latest.items():
+                cost=row.get('cost_usd')
+                if cost is not None:
+                    try:
+                        value=Decimal(str(cost))
+                        if not value.is_finite() or value<0:cost=None
+                    except InvalidOperation:cost=None
+                for key in ('input_tokens','output_tokens'):
+                    value=row.get(key)
+                    if value is not None and (type(value) is not int or value<0 or value>=2**63):raise ControlError('invalid_usage_tokens')
+                repo.record_usage(a.job_id,a.attempt,phase=a.phase,outcome=row.get('outcome','proxy_shutdown') if row.get('event')=='request_finished' else 'proxy_shutdown',model=self.config.model,provider='service-model-proxy',provider_request_id=row.get('provider_request_id') or rid,input_tokens=row.get('input_tokens'),output_tokens=row.get('output_tokens'),reported_cost=cost,currency='USD' if cost is not None else None)
+    def _fail(self,a,h,code):
+        self.backend.stop(h)
+        status=self._db_stopped(a,h)
+        layout=self.stager.layout(a)
+        try:self._usage(a,layout)
+        except Exception:
+            # A ledger durability/attribution fault is operator-visible privately,
+            # never a fabricated zero record. Preserve the ledger for recovery.
+            atomic_json(layout.audit/'usage-import-error.json',{'error_code':'usage_import_failed'})
+        if status!='cancelled':
+            with self.sessions.begin() as s:Repository(s).finish_failed(a.job_id,a.attempt,a.token,error_code=code)
+        self.backend.cleanup(h);self.owned.pop(a.job_id,None)
+        return 'cancelled' if status=='cancelled' else 'failed'
+    def _start(self,a,checkpoint_manifest):
+        h=self.backend.reconcile(a);self.owned[a.job_id]=(a,h)
+        # Persist attempt identity BEFORE any staging/container side effect. A
+        # crash before create can then be safely reconciled as an empty group.
+        with self.sessions.begin() as s:
+            r=Repository(s);j,p,slot=r.fenced(a.job_id,a.attempt,a.token);j.job_uid=h.uid;j.session_id=a.session_id
+        try:
+            layout,inventory=self.stager.stage(a,checkpoint_manifest)
+            if a.phase in ('generate','revise'):
+                if self.oracle_provider is None:raise ControlError('trusted_chart_oracle_required')
+                oracle=self.oracle_provider(a,checkpoint_manifest)
+                if not isinstance(oracle,dict) or not isinstance(oracle.get('expected_charts'),list):raise ControlError('trusted_chart_oracle_required')
+                authorized={x['sha256'] for x in a.snapshot.get('assets',[])}
+                if oracle['expected_charts'] and not oracle.get('source_sha256'):raise ControlError('oracle_source_required')
+                if not set(oracle.get('source_sha256',[])).issubset(authorized):raise ControlError('oracle_source_mismatch')
+                atomic_json(layout.audit/'trusted-oracle.json',oracle)
+            if hasattr(self.sandbox,'scope_uid'):self.sandbox.scope_uid=a.uid
+            parsed=self.sandbox.parse(layout.inputs,inventory)
+            self.stager.finish_inputs(a,layout,parsed)
+            with self.sessions.begin() as s:
+                r=Repository(s);j,p,slot=r.fenced(a.job_id,a.attempt,a.token)
+                ids={row['id'] for row in parsed['sources']}
+                if ids!={row['id'] for row in inventory['sources']}:raise ControlError('parse_inventory_mismatch')
+                for aid in ids:
+                    asset=s.get(Asset,aid)
+                    if asset and asset.project_id==a.project_id:asset.parse_status='succeeded'
+                r.heartbeat(a.job_id,a.attempt,a.token,self.config.lease_seconds)
+            h=self.backend.create(a,layout);self.owned[a.job_id]=(a,h)
+            with self.sessions.begin() as s:Repository(s).attach_execution(a.job_id,a.attempt,a.token,job_uid=h.uid,session_id=a.session_id)
+            return {'status':'started','job_id':a.job_id}
+        except Exception as exc:
+            code='parse_failed' if isinstance(exc,ControlError) and exc.code in ('parse_failed','source_hash_mismatch','parse_snapshot_mismatch','project_text_limit') else 'execution_interrupted'
+            self._fail(a,h,code)
+            return {'status':'failed','job_id':a.job_id,'error_code':code}
+    def _complete(self,a,h,checkpoint_manifest):
+        finalized=False
+        try:
+            self.backend.stop(h)
+            status=self._db_stopped(a,h)
+            layout=self.stager.layout(a)
+            self._usage(a,layout)
+            if status=='cancelled':self.backend.cleanup(h);self.owned.pop(a.job_id,None);return {'status':'cancelled','job_id':a.job_id}
+            snapshot,indexes=self.stager.collect(a,layout)
+            request={'job_id':a.job_id,'attempt':a.attempt,'phase':a.phase,'session_id':a.session_id,'input_snapshot_sha256':a.snapshot['hash'],'pages':a.snapshot.get('settings',{}).get('page_count',8)}
+            if checkpoint_manifest:
+                for source,target in (('design_spec.md_sha256','approved_design_spec_sha256'),('spec_lock.md_sha256','approved_spec_lock_sha256')):
+                    if source in checkpoint_manifest:request[target]=checkpoint_manifest[source]
+            if a.phase in ('generate','revise'):
+                oracle=read_json(layout.audit,'trusted-oracle.json')
+                if not isinstance(oracle,dict) or not isinstance(oracle.get('expected_charts'),list):raise ControlError('trusted_chart_oracle_required')
+                request['expected_charts']=oracle['expected_charts']
+                authorized={x['sha256'] for x in a.snapshot.get('assets',[])}
+                if oracle['expected_charts'] and not oracle.get('source_sha256'):raise ControlError('oracle_source_required')
+                if not set(oracle.get('source_sha256',[])).issubset(authorized):raise ControlError('oracle_source_mismatch')
+            atomic_json(layout.audit/'validation-request.json',request)
+            validated=self.publisher.validate(snapshot,request)
+            atomic_json(layout.audit/'validation-result.json',validated)
+            if not validated.get('accepted'):
+                # Preserve original needs_input/actor record; do not manufacture a
+                # plan/base. Current public schema supports failed, not needs_input.
+                with self.sessions.begin() as s:Repository(s).finish_failed(a.job_id,a.attempt,a.token,error_code='quality_gate_failed')
+                outcome='needs_input' if validated.get('status')=='needs_input' else 'failed'
+            else:
+                with self.sessions.begin() as s:
+                    repo=Repository(s);repo.admission_lock();self.publisher.promote(repo,a,snapshot,validated)
+                outcome='succeeded'
+            finalized=True
+            self.backend.cleanup(h);self.owned.pop(a.job_id,None)
+            return {'status':outcome,'job_id':a.job_id}
+        except Exception:
+            if finalized:
+                atomic_json(layout.audit/'cleanup-pending.json',{'uid':h.uid,'job_id':a.job_id,'attempt':a.attempt,'token':a.token})
+                self.owned.pop(a.job_id,None)
+                return {'status':outcome,'job_id':a.job_id,'cleanup_pending':True}
+            # Do not retry a model phase. Stop/fence again before failure cleanup.
+            outcome=self._fail(a,h,'quality_gate_failed')
+            return {'status':outcome,'job_id':a.job_id}|({'error_code':'quality_gate_failed'} if outcome=='failed' else {})
+    def tick(self):
+        admission=self.config.state==RuntimeState.CONFIGURED and self.backend.ready
+        # Real Docker paid admission stays closed until operator config is explicit.
+        # Tests inject a backend; they do not enable a production bypass flag.
+        with self.sessions.begin() as s:
+            slot=s.get(ExecutionSlot,1)
+            active=s.get(Job,slot.job_id) if slot and slot.job_id else None
+            if active:
+                a,cp=self._attempt(s,active)
+                status=active.status;lease=active.lease_until;deadline=active.deadline
+            else:
+                if not admission:return {'status':'disabled'}
+                j=Repository(s).claim_next(self.config.lease_seconds)
+                if not j:return {'status':'idle'}
+                claim=(j.id,j.attempt,j.fencing_token,j.kind)
+                try:a,cp=self._attempt(s,j)
+                except (ControlError,ValueError,TypeError,KeyError,AttributeError):
+                    # A permanent bad checkpoint/lineage must not roll the
+                    # claim back to queued forever and block later projects.
+                    # The claim and terminal disposition commit atomically.
+                    return self._fail_unlaunched(s,*claim)
+                status='claimed';lease=j.lease_until;deadline=j.deadline
+        if status=='claimed':return self._start(a,cp)
+        def expired(value):
+            if value is None:return True
+            if value.tzinfo is None:value=value.replace(tzinfo=timezone.utc)
+            return value<=now()
+        owned=self.owned.get(a.job_id)
+        h=owned[1] if owned else self.backend.reconcile(a)
+        if not admission:
+            self._fail(a,h,'execution_interrupted');return {'status':'disabled_stopped','job_id':a.job_id}
+        if not owned:
+            if not expired(lease) and status!='cancelling':return {'status':'leased','job_id':a.job_id}
+            # Reconcile all old resources before releasing slot. Never resume/run.
+            self._fail(a,h,'execution_interrupted')
+            return {'status':'reconciled','job_id':a.job_id}
+        if status=='cancelling' or expired(deadline):
+            self._fail(a,h,'execution_timeout')
+            return {'status':'stopped','job_id':a.job_id}
+        observed=self.backend.observe(h)
+        if observed.running:
+            with self.sessions.begin() as s:Repository(s).heartbeat(a.job_id,a.attempt,a.token,self.config.lease_seconds)
+            return {'status':'running','job_id':a.job_id}
+        if observed.exit_code!=0:
+            self._fail(a,h,'execution_interrupted');return {'status':'failed','job_id':a.job_id}
+        return self._complete(a,h,cp)
+
+def main():
+    from .pods import DockerBackend,DockerSandbox
+    parser=argparse.ArgumentParser();parser.add_argument('--once',action='store_true');args=parser.parse_args()
+    config=RuntimeConfig.env()
+    if config.state==RuntimeState.CONFIGURED:config.require_paid_admission()
+    url=os.environ['DATABASE_URL']
+    if not url.startswith('postgresql'):raise ControlError('postgresql_required')
+    engine=create_engine(url,pool_pre_ping=True);sessions=sessionmaker(engine,expire_on_commit=False)
+    controller=Dispatcher(sessions,config,DockerBackend(config),DockerSandbox(config))
+    try:
+        while True:
+            result=controller.tick();print(json.dumps(result),flush=True)
+            if args.once:return 0
+            time.sleep(1)
+    finally:engine.dispose()
+if __name__=='__main__':raise SystemExit(main())

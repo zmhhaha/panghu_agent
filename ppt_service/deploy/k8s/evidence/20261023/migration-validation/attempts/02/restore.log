@@ -1,0 +1,4 @@
+pg_restore: error: could not execute query: ERROR:  schema "public" already exists
+Command was: CREATE SCHEMA public;
+
+

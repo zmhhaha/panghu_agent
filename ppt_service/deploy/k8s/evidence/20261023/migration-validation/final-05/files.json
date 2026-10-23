@@ -1,0 +1,150 @@
+{
+  "entries": {
+    ".": {
+      "gid": 10000,
+      "kind": "directory",
+      "mode": 448,
+      "mtime_ns": 1792753764582473323,
+      "uid": 10000
+    },
+    "controller-state": {
+      "gid": 0,
+      "kind": "directory",
+      "mode": 448,
+      "mtime_ns": 1792753764582473323,
+      "uid": 0
+    },
+    "controller-state/fixture.json": {
+      "bytes": 48,
+      "gid": 0,
+      "kind": "file",
+      "mode": 384,
+      "mtime_ns": 1700000000123456789,
+      "sha256": "4323292c833057f9c266d23f3cb984c5e86c7cab8f24184bf3d0ec543a447d81",
+      "uid": 0
+    },
+    "empty-retained-directory": {
+      "gid": 10000,
+      "kind": "directory",
+      "mode": 448,
+      "mtime_ns": 1792753764582473323,
+      "uid": 10000
+    },
+    "material-locks": {
+      "gid": 10000,
+      "kind": "directory",
+      "mode": 448,
+      "mtime_ns": 1792753764582473323,
+      "uid": 10000
+    },
+    "material-locks/a5235637-3677-573f-8cd4-695b14542c09": {
+      "bytes": 0,
+      "gid": 10000,
+      "kind": "file",
+      "mode": 384,
+      "mtime_ns": 1700000000123456789,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "uid": 10000
+    },
+    "projects": {
+      "gid": 10000,
+      "kind": "directory",
+      "mode": 493,
+      "mtime_ns": 1792753764582473323,
+      "uid": 10000
+    },
+    "projects/2b7b40a6-bced-5c84-9d8d-13537a746534": {
+      "gid": 10000,
+      "kind": "directory",
+      "mode": 493,
+      "mtime_ns": 1792753764582473323,
+      "uid": 10000
+    },
+    "projects/2b7b40a6-bced-5c84-9d8d-13537a746534/assets": {
+      "gid": 10000,
+      "kind": "directory",
+      "mode": 493,
+      "mtime_ns": 1792753764582473323,
+      "uid": 10000
+    },
+    "projects/2b7b40a6-bced-5c84-9d8d-13537a746534/assets/a5235637-3677-573f-8cd4-695b14542c09": {
+      "gid": 10000,
+      "kind": "directory",
+      "mode": 448,
+      "mtime_ns": 1792753764582473323,
+      "uid": 10000
+    },
+    "projects/2b7b40a6-bced-5c84-9d8d-13537a746534/assets/a5235637-3677-573f-8cd4-695b14542c09/original": {
+      "bytes": 48,
+      "gid": 10000,
+      "kind": "file",
+      "mode": 384,
+      "mtime_ns": 1700000000123456789,
+      "sha256": "d67f97384bd744e3ca40562524387d35ab5a347ff8e1c9417c92c9f13d59a8a9",
+      "uid": 10000
+    },
+    "projects/2b7b40a6-bced-5c84-9d8d-13537a746534/checkpoints": {
+      "gid": 10000,
+      "kind": "directory",
+      "mode": 493,
+      "mtime_ns": 1792753764582473323,
+      "uid": 10000
+    },
+    "projects/2b7b40a6-bced-5c84-9d8d-13537a746534/checkpoints/25996970-053b-5ab2-9e19-c00a4c55ce35": {
+      "gid": 10000,
+      "kind": "directory",
+      "mode": 448,
+      "mtime_ns": 1792753764582473323,
+      "uid": 10000
+    },
+    "projects/2b7b40a6-bced-5c84-9d8d-13537a746534/checkpoints/25996970-053b-5ab2-9e19-c00a4c55ce35/checkpoint.json": {
+      "bytes": 47,
+      "gid": 10000,
+      "kind": "file",
+      "mode": 384,
+      "mtime_ns": 1700000000123456789,
+      "sha256": "7c586121ccb53df5634cd56046d019ea389b3be2e05e986a6c66a1344add4966",
+      "uid": 10000
+    },
+    "projects/2b7b40a6-bced-5c84-9d8d-13537a746534/checkpoints/25996970-053b-5ab2-9e19-c00a4c55ce35/project": {
+      "gid": 10000,
+      "kind": "directory",
+      "mode": 448,
+      "mtime_ns": 1792753764582473323,
+      "uid": 10000
+    },
+    "projects/2b7b40a6-bced-5c84-9d8d-13537a746534/checkpoints/25996970-053b-5ab2-9e19-c00a4c55ce35/project/source.md": {
+      "bytes": 38,
+      "gid": 10000,
+      "kind": "file",
+      "mode": 384,
+      "mtime_ns": 1700000000123456789,
+      "sha256": "73c77cf3d071c41f532eb0ffb6fb4de6fe4be947e3bfeb13e5bf64054e69a8e0",
+      "uid": 10000
+    },
+    "projects/2b7b40a6-bced-5c84-9d8d-13537a746534/versions": {
+      "gid": 10000,
+      "kind": "directory",
+      "mode": 493,
+      "mtime_ns": 1792753764582473323,
+      "uid": 10000
+    },
+    "projects/2b7b40a6-bced-5c84-9d8d-13537a746534/versions/1a60bc8a-0a1c-5d38-810a-3e8878285bed": {
+      "gid": 10000,
+      "kind": "directory",
+      "mode": 448,
+      "mtime_ns": 1792753764582473323,
+      "uid": 10000
+    },
+    "projects/2b7b40a6-bced-5c84-9d8d-13537a746534/versions/1a60bc8a-0a1c-5d38-810a-3e8878285bed/artifact.txt": {
+      "bytes": 49,
+      "gid": 10000,
+      "kind": "file",
+      "mode": 384,
+      "mtime_ns": 1700000000123456789,
+      "sha256": "70a44906c4a2cb1b709d7f7a50deddc845b922f2690432298852896361f48077",
+      "uid": 10000
+    }
+  },
+  "schema": "ppt-service.p1.files.v1"
+}

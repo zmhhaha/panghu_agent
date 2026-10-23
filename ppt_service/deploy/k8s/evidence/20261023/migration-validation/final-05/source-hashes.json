@@ -1,0 +1,10 @@
+{
+  "ppt_service/deploy/k8s/bootstrap-database.sql": "0702f0ed967ec211c49d444efe3a555801117825c96a7f490e1277642efeb31d",
+  "ppt_service/deploy/k8s/grant-runtime.sql": "eb22150b1589380a843bb96e07d119170a2cc8f2bb214b8a6f6c1db185991b5b",
+  "ppt_service/deploy/k8s/migration/README.md": "7553fed38c7e2075ba5d510004801b73b91f18927278f5e4a87103c61c7c7861",
+  "ppt_service/deploy/k8s/migration/db_inventory.py": "47e695645bb47274bb734d5824f269706a5c12e024a4f1dc675e00d4d97bd09a",
+  "ppt_service/deploy/k8s/migration/snapshot.py": "7c1153f2f530a7a03bfffb305bd825ee215a53eab062e164cd834c7ebae7c68f",
+  "ppt_service/deploy/k8s/migration/tests/pg_fixture.py": "95c9ca7005a5350e29f355a0f54a86921711c6dc0fc3c51cf3a6db80e1087361",
+  "ppt_service/deploy/k8s/migration/tests/run_isolated_linux.sh": "bcc028dc1d550e2e653cf2d9a4113d14421a61866ee59d04de8ef587e4993303",
+  "ppt_service/deploy/k8s/migration/tests/test_migration.py": "93e54cb2c41a8d03b6af1d8f1f580162d25c8d9f4fcf3eb5a585967bfb322075"
+}

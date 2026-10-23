@@ -1,0 +1,15 @@
+ARG PYTHON_API_BASE
+FROM ${PYTHON_API_BASE}
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_DISABLE_PIP_VERSION_CHECK=1 PYTHONPATH=/opt/ppt-service DATA_ROOT=/work/development-data PPT_WEB_DIST=/opt/ppt-service/web-dist PPT_LOCAL_TEST_ONLY=1 PPT_EXECUTION_ENABLED=false
+WORKDIR /opt/ppt-service
+COPY requirements-api.in /opt/ppt-service/requirements-api.in
+RUN python -m pip install --no-cache-dir --timeout 40 -r requirements-api.in && python -m pip check && mkdir -p /opt/ppt-service/build-info && python -m pip freeze > /opt/ppt-service/build-info/api-freeze.txt
+COPY __init__.py /opt/ppt-service/ppt_service/__init__.py
+COPY server/ /opt/ppt-service/ppt_service/server/
+COPY control/ /opt/ppt-service/ppt_service/control/
+COPY tests/server/ /opt/ppt-service/tests/server/
+COPY web/dist/ /opt/ppt-service/web-dist/
+RUN groupadd --gid 10000 ppt-service && useradd --uid 10000 --gid 10000 --home-dir /tmp --no-create-home --shell /usr/sbin/nologin ppt-service && mkdir -p /work/development-data && chown 10000:10000 /work/development-data && chmod -R a+rX /opt/ppt-service
+USER 10000:10000
+EXPOSE 8000
+ENTRYPOINT ["python","-m","uvicorn","ppt_service.control.dev_site:create_development_site","--factory","--host","0.0.0.0","--port","8000","--no-proxy-headers"]

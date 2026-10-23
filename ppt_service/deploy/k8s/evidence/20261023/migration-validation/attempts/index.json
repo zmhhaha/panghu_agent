@@ -1,0 +1,230 @@
+{
+  "archive_members": 282,
+  "archive_sha256": "1bfa4213641195a6875a6e47839d55878f4f19d23464051da0ec7670afd03257",
+  "attempts": {
+    "01": {
+      "cleanup": {
+        "owned_resources_removed": true,
+        "run_id": "ppt-p1-migration-20261023082354-1935931"
+      },
+      "copied_sha256": {
+        "cleanup.json": "b961435a25ca63cdc9d0e555208a5a733c9b171cdc729e47e3d6a30a055324a1",
+        "images.txt": "d5fa9c3660cd32d7d883b970374307696562d9493ef0a1779bab5b6fb9b44162",
+        "run.log": "d2d34b1464c8bb73f038c00304ae6e37532d13202e405e89ffdc0d4c6868e3c4",
+        "source-tar.sha256": "d414eeae68d5afc0111038898a2a4c1915ce4dfd7c4e2aeeb859a33a5464b11d",
+        "started-at.txt": "48111a1f1585a38fcf5a8836deac84f992d55fab94d3210e7e3388abbd398c05",
+        "unittest.log": "d2d34b1464c8bb73f038c00304ae6e37532d13202e405e89ffdc0d4c6868e3c4"
+      },
+      "failed_stage": "unit-test temporary fake-psql execution refused by noexec tmpfs; PostgreSQL not started",
+      "missing_diagnostic_files": [
+        "archive.list",
+        "bootstrap.log",
+        "capture.json",
+        "compare.json",
+        "database.json",
+        "dump-check.log",
+        "dump.sha256",
+        "files-backup.json",
+        "files-capture.json",
+        "files-old-unchanged.json",
+        "files-restored.json",
+        "files.json",
+        "grant.log",
+        "migrate.json",
+        "migrate.log",
+        "postgres.log",
+        "restore-diff.log",
+        "restore-toc.sha256",
+        "restore.list",
+        "restore.log",
+        "restored-observed-capture.json",
+        "restored-observed.json",
+        "runtime.json",
+        "runtime.log",
+        "seed.json",
+        "seed.log",
+        "source-after-dump.json",
+        "source-final.json",
+        "status.json",
+        "target-bootstrap.log",
+        "target-empty.json"
+      ],
+      "source_tar_sha256": "ab8ab9b660be872c13af8deca11f1f677f284c6fb1f88f8fbbe85cbdf8d31be9",
+      "tests": {
+        "errors": 3,
+        "passed": 15,
+        "seconds": 0.077,
+        "skips": 1,
+        "tests": 19
+      }
+    },
+    "02": {
+      "cleanup": {
+        "owned_resources_removed": true,
+        "run_id": "ppt-p1-migration-20261023085714-2011755"
+      },
+      "copied_sha256": {
+        "bootstrap.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "capture.json": "7b218ffc9b19cbda22c1e608ce1a98c565b06cf1c9deda3e95079411b8666283",
+        "cleanup.json": "5d9579273306dd8e07f48c1a698005679d57376520290e463d3288a3badd6832",
+        "database.json": "67f3f61f1eb878a2fc9a76c9b31b8d2b936681303a19673ba5326e4c6ce7ac11",
+        "dump-check.log": "eb00077fdb9e3ffd644d114c6ece044d510aedcb99d53be3adca8fd4ae119be4",
+        "dump.sha256": "fd0fd7a22421e12d1b39c508e7fecbe4ca9af586dd2a76d90dfbc0802e712875",
+        "files-backup.json": "53c25005eb21c96e94239f36d3f947681183d3468fa3362e524c5728aeabfdb8",
+        "files-capture.json": "a89caa087844254500f8ecc78fb76efb038f60e26449c4536d5016b0ba0b5276",
+        "files.json": "d870085a1334a1111ae6e0a2cdd029612ccfb6aa5fffebf28c5707af6143fd40",
+        "images.txt": "d5fa9c3660cd32d7d883b970374307696562d9493ef0a1779bab5b6fb9b44162",
+        "restore.log": "1ff52c0f1cfba943c5a63d0d27afe96c39de883da7eb0cc651ec647b46eb1ff0",
+        "run.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "seed.json": "0724ec47b6267cf10bc40da699b013ee589f72846d6ae8c32e600cce8023a99a",
+        "seed.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "source-after-dump.json": "1fe149dff9afb4800c4cb1dfe74ce61f46fe253640411fe92aaad32f34261519",
+        "source-tar.sha256": "1ed430da3ec14ef01bb5086b009722ef7eef332e13733f720a9a4e0b72795279",
+        "started-at.txt": "3ccea62deac71a9517431c52dbe9de84b36700def5a8ac3c2d0516b96c1eca72",
+        "target-bootstrap.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "target-empty.json": "918d918cb94bb2dfc971b7428cc21c77ee0bdfad0e8cf6d78f2cbaaaa8c64212",
+        "unittest.log": "1e22d5bc41ad6df7b90f0b8d7ba5fb0fd96f0fbbf0646f7ecb66b2365b0914ee"
+      },
+      "failed_stage": "pg_restore rejected CREATE SCHEMA public because verified-empty public already existed",
+      "missing_diagnostic_files": [
+        "archive.list",
+        "compare.json",
+        "files-old-unchanged.json",
+        "files-restored.json",
+        "grant.log",
+        "migrate.json",
+        "migrate.log",
+        "postgres.log",
+        "restore-diff.log",
+        "restore-toc.sha256",
+        "restore.list",
+        "restored-observed-capture.json",
+        "restored-observed.json",
+        "runtime.json",
+        "runtime.log",
+        "source-final.json",
+        "status.json"
+      ],
+      "source_tar_sha256": "841b9188ab9640d527b04c435618be3663eec911f6629088c01ff0866358a46d",
+      "tests": {
+        "errors": 0,
+        "passed": 18,
+        "seconds": 1.281,
+        "skips": 1,
+        "tests": 19
+      }
+    },
+    "03": {
+      "cleanup": {
+        "owned_resources_removed": true,
+        "run_id": "ppt-p1-migration-20261023090923-2042648"
+      },
+      "copied_sha256": {
+        "archive.list": "6811923182c0877f9f64b61f20d07e9c573549f787472618fb0baee8f7c33cc4",
+        "bootstrap.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "capture.json": "7b218ffc9b19cbda22c1e608ce1a98c565b06cf1c9deda3e95079411b8666283",
+        "cleanup.json": "1a5dca8a3a0a4f71a195f0c613a3ec77b9b441be4c6216363e3d229eaee07121",
+        "compare.json": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "database.json": "67f3f61f1eb878a2fc9a76c9b31b8d2b936681303a19673ba5326e4c6ce7ac11",
+        "dump-check.log": "4883c7087bc0173b5c8411806ec0264cbfe6cda814493b048b4d96c27cbaf378",
+        "dump.sha256": "5c0fef9637b1a997d4b0f1c1291c0017cbf8aa08f3995c585ce465d8bbce01c7",
+        "files-backup.json": "44151ba9b4ad6acbf765a65027c5175001f324bfe4f8c822e77cfdbbc0eb8ca4",
+        "files-capture.json": "2cca4534efda8faab7756d12db9aaa1ca28d135fb88e4b721e11ef9d79d0a4cf",
+        "files.json": "50301602b21e1254416727598d65162ab48413ba33045720f7306c424f589645",
+        "images.txt": "d5fa9c3660cd32d7d883b970374307696562d9493ef0a1779bab5b6fb9b44162",
+        "restore.list": "4577870a73e5abba18cbd3ea6cc4e04b82bebe4a89e294409f915dfc084c1a17",
+        "restore.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "run.log": "90ca3adfc85e64b0fdda2ec8b73773bb489ee474bd1a4f106d1825fffa4679ed",
+        "seed.json": "0724ec47b6267cf10bc40da699b013ee589f72846d6ae8c32e600cce8023a99a",
+        "seed.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "source-after-dump.json": "1fe149dff9afb4800c4cb1dfe74ce61f46fe253640411fe92aaad32f34261519",
+        "source-tar.sha256": "c9bd3c9d156cb4c395f0e46b290f1b61bc7e8ebbae2083efa8fd3af753d9db1f",
+        "started-at.txt": "8f549ea86f6ea00a26279743104408ff718c14c9d5da163182e8a9c0f8ec0f6d",
+        "target-bootstrap.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "target-empty.json": "918d918cb94bb2dfc971b7428cc21c77ee0bdfad0e8cf6d78f2cbaaaa8c64212",
+        "unittest.log": "29f8ae9492cdeb5b9a0d3eb7eb0efa6606f3c95894d94219c350c174876dfd16"
+      },
+      "failed_stage": "pg_restore succeeded after exact TOC change; raw database comparison rejected a difference; target fingerprint not saved",
+      "missing_diagnostic_files": [
+        "files-old-unchanged.json",
+        "files-restored.json",
+        "grant.log",
+        "migrate.json",
+        "migrate.log",
+        "postgres.log",
+        "restore-diff.log",
+        "restore-toc.sha256",
+        "restored-observed-capture.json",
+        "restored-observed.json",
+        "runtime.json",
+        "runtime.log",
+        "source-final.json",
+        "status.json"
+      ],
+      "source_tar_sha256": "2db73bfd4f8967ae22a35cbf2aada264e2e6c4693b68c7018bb691c64c002b9e",
+      "tests": {
+        "errors": 0,
+        "passed": 18,
+        "seconds": 1.301,
+        "skips": 1,
+        "tests": 19
+      }
+    },
+    "04": {
+      "cleanup": {
+        "owned_resources_removed": true,
+        "run_id": "ppt-p1-migration-20261023094519-2119653"
+      },
+      "copied_sha256": {
+        "archive.list": "3b5a661abfce61736657472e9653bdca852188167ca238419351aa71e7ba50dc",
+        "bootstrap.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "capture.json": "7b218ffc9b19cbda22c1e608ce1a98c565b06cf1c9deda3e95079411b8666283",
+        "cleanup.json": "51b3c2ccdd1e333c3031d96801884019bad0cca93abadbd74609d0f93ccefbb1",
+        "compare.json": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "database.json": "67f3f61f1eb878a2fc9a76c9b31b8d2b936681303a19673ba5326e4c6ce7ac11",
+        "dump-check.log": "051f731176e5baa8fc5b2e4233f25810dd005103778a6465c39a4383075f6a1c",
+        "dump.sha256": "436eafeafb4b4c582fbcb5d2ae6c0427c8da131941396838e2a511e95125c9f2",
+        "files-backup.json": "4a39bb8a2299252e120711c9581fe3790ce3b134f9a59d9053a8aaafbc928ed1",
+        "files-capture.json": "18b2c705e2ac11c80e921c6b3f621aae6567efb7452273e7895ac45c59684df3",
+        "files.json": "e0cffea88b66f13983c06113e80d9dd764d8a33ea080fc744b63039fc573f845",
+        "images.txt": "d5fa9c3660cd32d7d883b970374307696562d9493ef0a1779bab5b6fb9b44162",
+        "restore-diff.log": "0de24c7e4a031f2c892c835758adc00868fcc7874d361fd19557572fa75b9c6e",
+        "restore-toc.sha256": "70fe31b26e14bc0a297ae566146a8ae126df9a873542bccc70a742904c96b78a",
+        "restore.list": "30e7201cd7c8c79e6e74f9d3aad3d80350572dfeb6667cab160380cfe5c1d07b",
+        "restore.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "restored-observed-capture.json": "bd3f298db4aa8570e6683c69cc698912d927c6d98ff2e2b9e2d507cfd6ba5bd2",
+        "restored-observed.json": "3ac8dc951746a2d32770be0bcea0a3f91dbc11d5ffad492cffe167973fdf1f16",
+        "run.log": "90ca3adfc85e64b0fdda2ec8b73773bb489ee474bd1a4f106d1825fffa4679ed",
+        "seed.json": "0724ec47b6267cf10bc40da699b013ee589f72846d6ae8c32e600cce8023a99a",
+        "seed.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "source-after-dump.json": "1fe149dff9afb4800c4cb1dfe74ce61f46fe253640411fe92aaad32f34261519",
+        "source-tar.sha256": "71d5740c36ed2e79d065789727ee6432962b549e37f78b63356c4b6ce666cd51",
+        "started-at.txt": "3cde1e94388d39b975dda460dfcedf82a62e43d7f1a7f866a01bb5d115c7ae0c",
+        "target-bootstrap.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "target-empty.json": "918d918cb94bb2dfc971b7428cc21c77ee0bdfad0e8cf6d78f2cbaaaa8c64212",
+        "unittest.log": "6d105907a8f815843cc77a88ef71ea67c91dfba08238634a872efd9d7990ccbb"
+      },
+      "failed_stage": "target fingerprint saved; raw comparison rejected only the complete jobs partial-index cast representation",
+      "missing_diagnostic_files": [
+        "files-old-unchanged.json",
+        "files-restored.json",
+        "grant.log",
+        "migrate.json",
+        "migrate.log",
+        "postgres.log",
+        "runtime.json",
+        "runtime.log",
+        "source-final.json",
+        "status.json"
+      ],
+      "source_tar_sha256": "f5e36d577210ab9b6fd6826f461f4fcf94453751b786bc1406b125639212966c",
+      "tests": {
+        "errors": 0,
+        "passed": 18,
+        "seconds": 1.224,
+        "skips": 1,
+        "tests": 19
+      }
+    }
+  }
+}

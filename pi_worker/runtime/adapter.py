@@ -52,6 +52,7 @@ class RuntimeSettings:
     model_api: str | None = None
     model_compat: Mapping[str, bool | str] = field(default_factory=dict)
     model_max_tokens: int | None = None
+    model_input: tuple[str, ...] | None = None
     expected_pi_version: str = PI_VERSION
     skill_paths: tuple[Path, ...] = ()
     skill_hashes: tuple[str, ...] = ()
@@ -144,7 +145,11 @@ class PiRuntime:
             raise RuntimeExecutionError("configuration_missing", "Completions compatibility requires openai-completions")
         if s.model_max_tokens is not None and (type(s.model_max_tokens) is not int or not 1 <= s.model_max_tokens <= 8192):
             raise RuntimeExecutionError("configuration_missing", "Model token limit must be an integer from 1 to 8192")
-        if (s.model_compat or s.model_max_tokens is not None) and not s.model_base_url:
+        if s.model_input is not None and (type(s.model_input) is not tuple
+                or any(type(item) is not str for item in s.model_input)
+                or s.model_input not in (("text",), ("text", "image"))):
+            raise RuntimeExecutionError("configuration_missing", "Model inputs must explicitly select text or text and image")
+        if (s.model_compat or s.model_max_tokens is not None or s.model_input is not None) and not s.model_base_url:
             raise RuntimeExecutionError("configuration_missing", "Custom model settings require an explicit endpoint")
         if not (0 <= s.term_grace_seconds <= 10 and 0 < s.kill_grace_seconds <= 10):
             raise RuntimeExecutionError("configuration_missing", "Invalid bounded shutdown configuration")
@@ -189,6 +194,8 @@ class PiRuntime:
             model["maxTokens"] = self.settings.model_max_tokens
         if self.settings.model_compat:
             model["compat"] = dict(self.settings.model_compat)
+        if self.settings.model_input is not None:
+            model["input"] = list(self.settings.model_input)
         return model
 
     @staticmethod
