@@ -33,7 +33,7 @@ def main():
         engine.dispose();return
     import httpx
     with httpx.Client(base_url=args.url,timeout=20,trust_env=False,headers={'Origin':'http://127.0.0.1:18505'}) as c:
-        response=c.get('/healthz');assert response.status_code==200;assert response.json()['manual_acceptance']=='pending'
+        response=c.get('/healthz');assert response.status_code==200;assert response.json()=={'status':'ok'}
         if args.action=='create':
             title='Material acceptance '+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
             response=c.post('/api/v1/projects',json={'title':title,'page_count':3,'external_model_ack':True});assert response.status_code==201;project=response.json()

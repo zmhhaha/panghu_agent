@@ -1,13 +1,15 @@
-# P2 独立 PPT 登录
+# PPT 登录部署
 
-公共配置、用户待填项和完整部署顺序统一见 [OAuth 部署文档](../../../../oauth/k8s/PPT.md)。域名为 `https://ppt.panghuer.top`，回调为 `/oauth2/callback`；本轮交付准备代码，由用户配置 Casdoor/Cloudflare Tunnel 并部署，**NOT DEPLOY READY**，尚未完成真实 SSO。
+PPT 使用独立 Casdoor 应用，部署到 `ppt-service`，公开地址为 `https://ppt.panghuer.top`，回调为 `/oauth2/callback`。Casdoor 和 Cloudflare Tunnel 由用户在各自后台配置；所需字段及邮箱名单见 [OAuth 配置](../../../../oauth/k8s/PPT.md)。
 
-服务器标准入口位于 `panghu_agent/ppt_service`：`bash build.sh` 默认构建、验证并推送 ARM64 站点镜像，digest 保存在 `rendered/image.txt`；`bash deploy.sh` 默认先构建再部署，`--skip-build` 复用 digest。首次可先 `bash deploy.sh --prepare` 启动独立 PG，再完成新空 CephFS `state` 的存储准备；四条 Vault 凭据、邮箱名单和专用 Casdoor 应用就绪后，通过 `PPT_CLIENT_ID` 或 `PPT_AUTH_CONFIG` 提供公开配置，仅首次使用 `bash deploy.sh --init-db` 初始化全新库/角色，后续不再传此开关。具体前置、命令和失败边界见 [服务器部署说明](../k8s/README.md#服务器标准入口)。
+在服务器仓库的 `panghu_agent/ppt_service` 目录提供实际公开 client ID 后，运行 `bash deploy.sh`，完成构建、推送、数据库初始化或升级以及网站发布。也可先运行 `bash build.sh`，再用 `bash deploy.sh --skip-build` 部署已推送摘要。前置条件和完整命令见 [部署说明](../k8s/README.md#服务器标准入口)。
 
-本目录不再保存第二份 `oauth2-proxy.cfg` 或 API `.env` 示例。代理和 API 的 client/audience 等公开认证参数集中在 [oauth/k8s/ppt-proxy-configmap.yaml](../../../../oauth/k8s/ppt-proxy-configmap.yaml)，`configure-ppt.py` 仅用 `--client-id` 与 `--output` 生成这两份 ConfigMap。精确邮箱名单独立放在 [ppt-owner-configmap.yaml](../../../../oauth/k8s/ppt-owner-configmap.yaml) 的 `ppt-owner.data.emails`，每行一个邮箱，无需 `ppt-invites.json` 或 `sub` 配对；凭据走 [Vault](../../../../vault/inventory/PPT-SERVICE.md)。同 Pod 的真实站点绑定 `127.0.0.1:8000` 并使用 `--no-proxy-headers`，只暴露代理4180。
+公开认证参数集中在 [ppt-proxy-configmap.yaml](../../../../oauth/k8s/ppt-proxy-configmap.yaml)。`configure-ppt.py` 只用 `--client-id` 和 `--output` 生成一致的代理 client ID 与 API audience。精确邮箱名单独立放在 [ppt-owner-configmap.yaml](../../../../oauth/k8s/ppt-owner-configmap.yaml) 的 `ppt-owner.data.emails`，每行一个邮箱；凭据由 [Vault](../../../../vault/inventory/PPT-SERVICE.md) 管理，路径为 `secret/ppt-service/...`。业务目录不保存第二份代理配置或凭据示例。
 
-站点入口为 `ppt_service.server.site:create_site`，包含已构建的前端；首次部署本次认证改造需要重建、推送站点镜像并使用新 registry digest。静态页面和 `/assets/*` 都需要真实 JWT，返回 `no-store`。API 检验 RS256、issuer/audience/expiry/稳定 `sub`、loopback peer，以及写入时的 Origin/CSRF；每次认证请求还要求 JWT 内的 `email_verified` 为布尔值 `true`，并重新读取 `/owner/emails` 判断邮箱准入。空名单拒绝所有用户，名单读取或格式失败返回 503；项目归属继续绑定 `issuer/sub`。
+同 Pod 的网站仅绑定 `127.0.0.1:8000`，Service 只暴露代理 4180。页面、`/assets/*` 和 API 均需认证并返回 `no-store`。API 验证 RS256、issuer、audience、有效期、稳定 `sub`、loopback peer，以及写入请求的 Origin/CSRF；邮箱必须已验证且位于名单中。项目归属继续绑定 `issuer/sub`。
 
-`INVITATION_EMAILS_FILE=/owner/emails` 由公共认证配置提供。网站和代理均挂载整个只读 `/owner` 目录，不用 `subPath`；日后只增删名单，应用 ConfigMap 并等待文件更新即可，无需重建镜像。已建立连接不因名单修改立即断开。`PPT_EXECUTION_ENABLED=false`、`deployment_mode=test` 和 `manual_acceptance=pending` 保留；SSO 不启用 Pi 或真实模型调用。
+网站与代理均挂载只读 `/owner` 目录，读取同一份 `/owner/emails`，不使用 `subPath`。增删名单后应用 ConfigMap 并等待目录投影更新，API 在后续认证请求中重读名单；空名单拒绝全部用户，读取或格式错误返回 503。名单变更不立即终止已有连接。
 
-本轮结果见 [RESULTS.md](RESULTS.md)，可交给部署者运行的固定 v7.8.0 合成协议脚本见 [VALIDATION.md](VALIDATION.md) 与 [tests/oidc](../../tests/oidc/README.md)。协议脚本的真实25项尚未执行；本地配置/语法/打包检查与真实浏览器验收分别记录。P1 既有47项站点/认证测试属于先前独立镜像证据，不冒充本次完成 Casdoor 登录。
+网站部署不会接通 Pi 模型生成，`PPT_EXECUTION_ENABLED=false` 保持关闭，生成请求仍返回 `503 execution_not_connected`。实际 Casdoor 登录、Cookie、注销、网络和入口缓存行为需按 [OAuth 文档的验收项](../../../../oauth/k8s/PPT.md#6-部署后验收) 检查。
+
+2026-10-24：当前部署以本文及 [K8s README](../k8s/README.md) 为准。[RESULTS.md](RESULTS.md)、[VALIDATION.md](VALIDATION.md) 和 [协议验收工具](../../tests/oidc/README.md) 保留先前验证记录；其中旧 namespace 和旧部署步骤属于历史上下文。

@@ -23,7 +23,6 @@ def create_development_site():
     if not (dist/'index.html').is_file():
         raise RuntimeError('A real built frontend is required')
     settings = Settings.env()
-    settings.deployment_mode = 'test'
     api = create_app(settings)
     migrate(api.state.engine)
     origins = {'http://127.0.0.1:18505', 'http://localhost:18505'}

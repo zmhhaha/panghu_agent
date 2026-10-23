@@ -1,5 +1,4 @@
 """Site boundary checks using the existing signed-RS256 fixture, no auth override."""
-from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import os
@@ -45,8 +44,6 @@ def login(client, token):
     assert me.status_code == 200
     assert me.json()['sub'] == 'stable-alice'
     assert me.json()['issuer'] == 'https://casdoor.test'
-    assert me.json()['deployment_mode'] == 'test'
-    assert me.json()['manual_acceptance'] == 'pending'
     assert 'Secure' in me.headers['set-cookie']
     return headers | {'Origin': 'https://ppt.test', 'X-CSRF-Token': me.json()['csrf_token']}
 
@@ -142,7 +139,7 @@ def test_forbidden_flags(site_client, monkeypatch, name, value):
         create_site(site.state.settings, site.state.engine, dist)
 
 
-def test_startup_dist_release_and_no_implicit_migration(site_client, monkeypatch, tmp_path):
+def test_startup_dist_and_no_implicit_migration(site_client, monkeypatch, tmp_path):
     site, _, _, dist = site_client
     config = site.state.settings
     monkeypatch.delenv('PPT_WEB_DIST', raising=False)
@@ -152,8 +149,6 @@ def test_startup_dist_release_and_no_implicit_migration(site_client, monkeypatch
     empty_engine = create_engine('sqlite://')
     create_site(config, empty_engine)
     assert inspect(empty_engine).get_table_names() == []
-    with pytest.raises(RuntimeError, match='PowerPoint'):
-        create_site(replace(config, deployment_mode='production'), site.state.engine, dist)
     with pytest.raises(RuntimeError, match='PostgreSQL'):
         create_site(config, dist=dist)
     with pytest.raises(RuntimeError):

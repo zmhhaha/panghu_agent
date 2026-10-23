@@ -16,11 +16,8 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: ppt-postgres
-  annotations:
-    ppt.panghuer.top/status: NOT-DEPLOY-READY
 spec:
-  # Applying this candidate does not launch a database or initialize its volume.
-  replicas: 0
+  replicas: 1
   serviceName: ppt-postgres
   selector:
     matchLabels:
@@ -56,7 +53,7 @@ spec:
               drop: [ALL]
           env:
             - name: POSTGRES_DB
-              value: ppt_test
+              value: postgres
             - name: POSTGRES_USER
               value: ppt_bootstrap
             - name: POSTGRES_PASSWORD
@@ -80,16 +77,16 @@ spec:
               memory: 1Gi
           startupProbe:
             exec:
-              command: [pg_isready, -h, 127.0.0.1, -U, ppt_bootstrap, -d, ppt_test]
+              command: [pg_isready, -h, 127.0.0.1, -U, ppt_bootstrap, -d, postgres]
             periodSeconds: 5
             failureThreshold: 60
           readinessProbe:
             exec:
-              command: [pg_isready, -h, 127.0.0.1, -U, ppt_bootstrap, -d, ppt_test]
+              command: [pg_isready, -h, 127.0.0.1, -U, ppt_bootstrap, -d, postgres]
             periodSeconds: 5
           livenessProbe:
             exec:
-              command: [pg_isready, -h, 127.0.0.1, -U, ppt_bootstrap, -d, ppt_test]
+              command: [pg_isready, -h, 127.0.0.1, -U, ppt_bootstrap, -d, postgres]
             periodSeconds: 20
             failureThreshold: 3
           volumeMounts:

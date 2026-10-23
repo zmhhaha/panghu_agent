@@ -1,4 +1,6 @@
-# P1 PostgreSQL 与文件迁移、保留和回滚
+# PPT PostgreSQL 与文件迁移、保留和回滚
+
+本文用于搬迁或恢复**已有数据**。首次安装和普通升级直接按 [部署说明](../README.md#服务器标准入口) 运行 `bash deploy.sh`，无需执行本文的停写、dump/restore 或迁移演练。恢复已有数据时，先准备新目标并完成恢复与一致性检查；只有目标满足部署合同（含 bootstrap 完成标记）后，才可交给部署脚本校验和发布，避免正常部署提前初始化目标表和 `state` 目录。
 
 此目录提供可执行的离线工具及操作合同，默认不连接数据库、不控制容器、不删除原数据。`snapshot.py` 和 `db_inventory.py` 只使用 Python 标准库；数据库工具另外调用操作环境中已审查的 `psql`。应用镜像不因此自动包含 PostgreSQL 客户端。运行工具需要 Linux，Python 使用已批准 site/API 镜像里的 `/usr/local/bin/python`；在独立操作环境中也可显式选定其他可信 Python。
 
@@ -6,7 +8,7 @@
 
 ## 迁移边界和归属
 
-1. 旧 PostgreSQL 数据库、旧镜像、旧配置、旧数据根和旧控制器状态保持原样保留；新版本连接全新、专用 PostgreSQL 数据库和新 PVC。首次演练只用合成数据，namespace 为 `ppt-service-test`。
+1. 旧 PostgreSQL 数据库、旧镜像、旧配置、旧数据根和旧控制器状态保持原样保留；恢复到全新、专用 PostgreSQL 数据库和新 PVC，网站部署目标为 `ppt-service`。恢复工具必须指向经过核对的新目标，不能覆盖源库或原数据卷。
 2. 备份整个 `DATA_ROOT`。除 `projects/` 里的原始材料、解析结果、attempts、checkpoints 和 versions，还包括 `material-locks/`、空目录及根级控制状态。没有“忽略旧任务”或清理规则。
 3. 逐项核实所有数据/控制路径。若 UID ledger、控制器私有目录、Pi 状态等在 `DATA_ROOT` 外，分别按本流程 inventory/copy/verify，保留配置中的绑定。不能根据应用数据根推断已覆盖外部状态。Pi UID ledger 要求本地可靠文件系统和 root 私有归属，不能移动到未经验证的共享 PVC，也不能重置分配历史。
 4. 文件默认选择 `--ownership preserve`，验证每个文件和目录的 SHA-256（文件）、mode、纳秒 mtime、UID/GID、类型和完整路径集合。inode、ctime 和 atime不属于恢复一致性声明。源文件的 hard link、symlink、FIFO、socket、设备、嵌套 mount/device、特殊权限位和 xattrs/ACL 全部拒绝；需要这些语义时必须采用另行审查的原生文件系统迁移。
@@ -24,13 +26,13 @@
 4. 源数据卷在独立迁移环境只读挂载；旧服务保持停止。数据库 `capture` 会检查所有非 terminal Job、未证明停止的附着 Job、项目 active ID、唯一执行 slot 以及 parser status/lease。需要它们通过，但这只是必要条件，不替代第 2、3 步。
 5. 新环境的 API、parser、dispatcher、proxy 都保持关闭。新旧版本绝不能同时对同一资源写入。
 
-相邻部署包的 namespace 是 `ppt-service-test`，`Deployment/ppt-site` 初始 replicas 为 0，`StatefulSet/ppt-postgres` 初始 replicas 为 0；独立 `migrate-job/` 中 `Job/ppt-migrate-schema2` 初始 suspend 为 true。trusted parser/dispatcher/Pi 运行器不在这些 K8s 工作负载里，原 host 上的它们仍需独立停写及真实终止证明。下面的服务名是**显式输入示例**，不是当前线上资源探测结果。对现有 Docker 开发部署，须由操作员先确认精确容器 ID 和数据 bind mount，再执行对应 stop，不得使用全局 stop/prune 命令。
+网站在 `ppt-service`，由 `deploy.sh` 协调 PostgreSQL、一次性 schema 迁移、数据目录检查和网站 rollout。正常部署会自动启动工作负载；恢复操作必须单独保持新旧网站及全部 writer 停止，不能把模板的初始副本数或 Job 状态当作实际停写证明。trusted parser/dispatcher/Pi 运行器仍须按其实际 backend 独立停写并取得终止证据。下面的服务名是**显式输入示例**，不是当前线上资源探测结果。对现有 Docker 开发部署，须由操作员先确认精确容器 ID 和数据 bind mount，再执行对应 stop，不得使用全局 stop/prune 命令。
 
 ## 显式准备 PostgreSQL 客户端凭据
 
 用专属迁移连接，分别连接旧库和新空库；只读 inventory 角色需能读取指定 schema 的全部表/定义，dump/restore 角色权限需独立审核。服务名称使用简单小写标识符。专用 schema 默认 `public`，要求恰好包含应用的 12 张表（包括 `api_schema_revision`）；存在额外表时拒绝不完整迁移。初次恢复保持同名 schema，迁入另一全新数据库。迁移不包括其他应用的 schema。
 
-相邻 K8s 初始化合同中的应用数据库是 `ppt_service`，`POSTGRES_DB=ppt_test` 只用于维护/初始化；target service 必须明确连接 `ppt_service`，不能把应用表恢复到维护库。应用和 schema migrator 分别使用不同角色，应用 URL 使用 `postgresql+psycopg://`；这里 `psql`/`pg_dump` 使用的是 libpq service，并不接受 SQLAlchemy 的 `+psycopg` URL。
+相邻 K8s 初始化合同中的应用数据库是 `ppt_service`，`POSTGRES_DB=postgres` 只用于维护/初始化；target service 必须明确连接 `ppt_service`，不能把应用表恢复到维护库。应用和 schema migrator 分别使用不同角色，应用 URL 使用 `postgresql+psycopg://`；这里 `psql`/`pg_dump` 使用的是 libpq service，并不接受 SQLAlchemy 的 `+psycopg` URL。
 
 由部署流程提供 `/run/ppt-migration/pg_service.conf` 和 `/run/ppt-migration/pgpass` 两个 root 或当前运行 UID 所有、mode `0600`/`0400` 的普通单链接文件；不要从现网进程环境中提取，不要 `source` 应用 `.env`，不要在命令行传密码，不要开启 `set -x`。K8s Secret 投射通常是 symlink，工具会拒绝；需要在受信任初始化步骤复制指定文件到内存 `emptyDir`、设置 `0400` 并验证普通文件，或使用经验证的普通文件 mount。
 
@@ -113,6 +115,8 @@ sha256sum /migration/run-001/database.dump
 ## 恢复到新数据库和新 PVC
 
 管理员先创建全新、专用 PostgreSQL 数据库，确认目标连接不可能指向旧库；记录数据库/卷身份。使用同一 PostgreSQL server major 和兼容的 `pg_dump`/`pg_restore` 客户端进行首次演练。严禁对原数据库执行 restore、`--clean`、drop 或破坏性 schema downgrade。
+
+普通部署只有在角色密码及全部 bootstrap 授权完成后，才写入数据库 comment `ppt-service-bootstrap-v1`，并要求既有目标具有该标记。本文的 schema dump/restore 不建立这个完成标记；恢复比较通过也不等于可自动发布。目标缺标记或存在部分初始化时，保持停写并保留数据供管理员核实，不手工补注释绕过部署检查，也不让脚本重置旧密码或覆盖恢复结果。
 
 `check-empty` 检查指定 schema 没有任何表，不会创建数据库。**它不能证明 target 和 source 是不同数据库**；该身份对照是操作员的必要检查。dump 和 manifest 的独立可信 digest 必须先验证。下例 `printf` 只校验无敏感信息的文件摘要，不接收任何 API/数据库凭据。
 

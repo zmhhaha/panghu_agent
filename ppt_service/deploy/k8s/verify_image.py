@@ -64,7 +64,7 @@ def main():
         assert client.post('/api/v1/projects/synthetic/plans', headers=headers, json={}).status_code == 503
         with site.state.sessions() as session:
             assert session.scalar(select(func.count(Job.id))) == 0
-        assert client.get('/healthz').json() == {'status': 'ok', 'deployment_mode': 'test', 'manual_acceptance': 'pending'}
+        assert client.get('/healthz').json() == {'status': 'ok'}
         assert client.get('/oauth2/callback').status_code == 404
         assert client.get('/assets/private.js.map', headers=headers).status_code == 404
     engine.dispose()

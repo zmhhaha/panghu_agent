@@ -29,7 +29,7 @@ React / TypeScript / Vite 中文私有项目工作台。仅使用同源 `/api/v1
 - SSE：GET `/jobs/{id}/events`，fetch 流携带真实 `Last-Event-ID`；消费 `id` / `seq` 单调事件，忽略重复。410/409 先刷新权威快照再连接。仅保留允许的 status/stage 字段，绝不渲染原始日志、推理与命令。
 - 版本：GET `/projects/{id}/versions` 数组 `{id,created_at,parent_version_id?,slides:[{number,title,purpose?}]}`。
 - 预览：`<img>` 同源授权 GET `/versions/{id}/slides/{n}/preview`；API 须固定 PNG/JPEG Content-Type 且禁止 SVG。下载 GET `/versions/{id}/download` 真实成功响应后才创建下载 Blob；不伪造 PPTX。
-- 账号：GET `/me` `{issuer,sub,name?,quota:{enabled,...},usage?,deployment_mode:'test',manual_acceptance:'pending'}`。用量缺失显示未知，费用缺失绝不当零，未配置额度显示“未启用”。
+- 账号：GET `/me` `{issuer,sub,csrf_token,quota:{enabled,...}}`。用量缺失显示未知，费用缺失绝不当零，未配置额度显示“未启用”。
 
 GET 项目还应返回当前 `input_snapshot_hash`（不是旧方案 hash），确认后的方案返回 `confirmation_selection.direction_id`，供客户端恢复准确状态。后端仍是快照、确认失效、权限、并发、幂等与发布状态的权威。
 

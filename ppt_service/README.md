@@ -1,8 +1,12 @@
 # PPT Service
 
-独立的多用户 PPT 制作网站，使用专用 Hermes 执行环境调用 PPT Master。
+独立的多用户 PPT 制作网站。当前已实现网站、项目管理与材料上传；Pi 模型生成链路仍在接入。
 
-服务器部署入口（2026-10-23）：在本目录运行 `bash build.sh`，构建并验证 ARM64 网站镜像后推送到 `arm-cluster-master:5000`；`bash deploy.sh` 默认先构建再部署，也支持 `--skip-build` 复用已推送摘要。首次准备、Vault/Casdoor/邮箱名单、存储和 `--init-db` 顺序见 [部署说明](deploy/k8s/README.md#服务器标准入口)。原 Hermes Worker 构建移至 `build_worker.sh`。当前网站部署仍关闭模型执行，Pi 业务接线另行完成。
+服务器部署入口（2026-10-24）：namespace 为 `ppt-service`。按 [部署说明](deploy/k8s/README.md#服务器标准入口) 配置 Casdoor、邮箱名单、Cloudflare 和 Vault 的 `secret/ppt-service/...` 凭据后，在本目录运行 `bash deploy.sh`，完成构建、推送、数据库初始化或升级及网站发布。也可先运行 `bash build.sh`，再执行 `bash deploy.sh --skip-build` 复用已推送摘要。原 Hermes Worker 构建入口为 `build_worker.sh`；网站发布保持模型执行关闭。
+
+## 历史开发与样稿记录
+
+以下记录保留当时的开发入口、执行器和验证状态；当前网站部署以以上入口为准。
 
 最新状态（2026-10-22）：用户已通过真实选择 `website_development_before_manual_gate` 选择“先开发并测试网站（推荐）”，允许 PowerPoint 人工验收前开发测试；正式发布/邀请用户前仍须实际 PowerPoint 验收。本机 SSH 开发入口为 `http://127.0.0.1:18505`，采用固定 local test identity，FastAPI/PostgreSQL 项目 CRUD、上传和受控材料解析已真实联通，网页可显示解析状态及受限摘要；正式 Casdoor SSO 与 PPT 生成闭环尚未完成，`POST /plans` 仍返回 503 `execution_not_connected`。R8/V2 原 actor 仍为 needs_input，控制器独立 review 未使其成为 accepted base。最新开发测试与限制见末尾；下文旧实现状态、顺序决定和镜像验证均为历史快照。
 

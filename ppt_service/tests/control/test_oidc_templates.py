@@ -14,6 +14,7 @@ class OidcTemplateTests(unittest.TestCase):
     def setUpClass(cls):
         objects = list(yaml.safe_load_all((COMMON / 'oauth/k8s/ppt-proxy-configmap.yaml').read_text(encoding='utf-8')))
         objects.extend(yaml.safe_load_all((COMMON / 'oauth/k8s/ppt-owner-configmap.yaml').read_text(encoding='utf-8')))
+        cls.namespaces = {obj['metadata']['namespace'] for obj in objects}
         cls.maps = {obj['metadata']['name']: obj['data'] for obj in objects}
         cls.proxy = tomllib.loads(cls.maps['ppt-oidc']['oauth2-proxy.cfg'])
         cls.auth = cls.maps['ppt-auth']
@@ -36,6 +37,7 @@ class OidcTemplateTests(unittest.TestCase):
         self.assertNotIn('email_domains', self.proxy)
 
     def test_dedicated_client_and_independent_owner_list(self):
+        self.assertEqual(self.namespaces, {'ppt-service'})
         self.assertEqual(self.proxy['client_id'], 'REQUIRED_DEDICATED_PPT_CLIENT_ID')
         self.assertEqual(self.proxy['client_id'], self.auth['OIDC_AUDIENCE'])
         self.assertNotIn('INVITATION_SUBJECTS', self.auth)

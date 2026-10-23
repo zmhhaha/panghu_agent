@@ -15,10 +15,8 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ppt-site
-  annotations:
-    ppt.panghuer.top/status: NOT-DEPLOY-READY
 spec:
-  replicas: 0
+  replicas: 1
   strategy:
     type: Recreate
   selector:

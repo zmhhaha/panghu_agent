@@ -1,12 +1,8 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: ppt-service-test
+  name: ppt-service
   labels:
     app.kubernetes.io/part-of: ppt-service
-    ppt.panghuer.top/environment: isolated-test
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
-  annotations:
-    ppt.panghuer.top/status: NOT-DEPLOY-READY
-    ppt.panghuer.top/release: test-only-manual-acceptance-pending

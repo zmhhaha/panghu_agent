@@ -54,7 +54,6 @@ def project_dto(p,s,detail=False):
     return d
 def create_app(settings:Settings|None=None,engine=None):
     settings=settings or Settings.env()
-    if settings.deployment_mode!='test':raise RuntimeError('Formal release disabled: PowerPoint manual acceptance pending')
     if engine is None:
         if not settings.database_url.startswith('postgresql'):raise RuntimeError('PostgreSQL required')
         engine=create_engine(settings.database_url,pool_pre_ping=True)
@@ -74,13 +73,13 @@ def create_app(settings:Settings|None=None,engine=None):
         response.headers['Content-Security-Policy']="default-src 'none'; frame-ancestors 'none'"
         return response
     @app.get('/healthz')
-    def health():return {'status':'ok','deployment_mode':'test','manual_acceptance':'pending'}
+    def health():return {'status':'ok'}
     @app.get('/api/v1/me')
     def me(response:Response,owner=Depends(authenticate),s=Depends(session)):
         token=secrets.token_urlsafe(32)
         response.set_cookie('ppt_csrf',token,secure=True,httponly=False,samesite='strict',path='/')
         q=s.get(UserQuota,(owner.issuer,owner.sub))
-        return {'issuer':owner.issuer,'sub':owner.sub,'csrf_token':token,'deployment_mode':'test','manual_acceptance':'pending','quota':{'enabled':bool(q and q.enabled),'period':q.period if q else None,'generation_limit':q.generation_limit if q else None,'revision_limit':q.revision_limit if q else None}}
+        return {'issuer':owner.issuer,'sub':owner.sub,'csrf_token':token,'quota':{'enabled':bool(q and q.enabled),'period':q.period if q else None,'generation_limit':q.generation_limit if q else None,'revision_limit':q.revision_limit if q else None}}
     @app.post('/api/v1/projects',status_code=201)
     def create(body:ProjectCreate,owner=Depends(authenticate),s=Depends(session)):
         data=body.model_dump();title=data.pop('title');ack=data.pop('external_model_ack')

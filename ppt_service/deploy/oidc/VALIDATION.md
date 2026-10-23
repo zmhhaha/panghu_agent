@@ -33,7 +33,7 @@
 
 远端仅创建了空目录 `/root/ppt-service-p2-oidc-20261023-r1`。上传初稿脚本包的 SCP 请求被工具报告为 `Rejected (rejected by user)`，没有额外拒绝理由或自动审核标记；没有重试或绕过。随后根据用户自行部署的指示停止远端工作。因此没有上传/执行 runner、提取二进制、创建测试容器、修改网络、访问业务库或变更生产服务。该空目录没有自动删除，避免在停止远端操作后追加变更。
 
-P1 已有的打包镜像 47 项 site/auth 检查仍是原有证据，见 [P1 RESULTS.md](../k8s/RESULTS.md)；它不能替代本轮待运行的真实代理验证。执行仍关闭，`deployment_mode=test` 与 `manual_acceptance=pending` 保持原有合同。
+P1 已有的打包镜像 47 项 site/auth 检查仍是原有证据，见 [P1 RESULTS.md](../k8s/RESULTS.md)；它不能替代本轮待运行的真实代理验证。当前按正常服务部署，`/healthz` 返回 `{"status":"ok"}`；规划与生成执行仍未接通，产物独立质量检查及 PowerPoint 人工验收仍须另行完成。
 
 ## 邮箱准入改造后的本地 API/站点验证
 

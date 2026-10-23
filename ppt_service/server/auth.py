@@ -17,7 +17,6 @@ class Settings:
     allowed_origins:tuple[str,...]=()
     invitation_emails_file:str=''
     max_storage_bytes:int=20*1024**3
-    deployment_mode:str='test'
     event_retention_days:int=30
     raw_log_retention_days:int=7
     staging_retention_days:int=7

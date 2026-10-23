@@ -129,8 +129,11 @@ def test_no_auth_header_bypass(ctx):
     app,c,_=ctx;app.dependency_overrides.clear()
     assert c.get('/api/v1/me',headers={'X-Auth-Request-User':'alice','X-Auth-Request-Email':'a@x'}).status_code==401
 
-def test_release_guard(ctx,tmp_path):
-    with pytest.raises(RuntimeError):create_app(Settings('sqlite://',str(tmp_path),deployment_mode='production'))
+def test_liveness_does_not_require_auth_or_database(ctx):
+    app,c,_=ctx;app.dependency_overrides.clear()
+    app.state.engine.dispose()
+    assert c.get('/healthz').json()=={'status':'ok'}
+    assert c.get('/api/v1/me').status_code==401
 
 def seed_version(app,p):
     with app.state.sessions.begin() as s:

@@ -20,7 +20,7 @@ def main():
             if time.monotonic() >= deadline:
                 raise
             time.sleep(0.25)
-    assert health == {"status": "ok", "deployment_mode": "test", "manual_acceptance": "pending"}
+    assert health == {"status": "ok"}
     try:
         urllib.request.urlopen("http://127.0.0.1:8000/", timeout=2)
         raise AssertionError("unauthorized root was served")

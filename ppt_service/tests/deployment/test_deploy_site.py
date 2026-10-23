@@ -20,7 +20,7 @@ deploy = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(deploy)
 IMAGE = 'arm-cluster-master:5000/ppt-service-site@sha256:' + 'a' * 64
 OTHER_IMAGE = 'arm-cluster-master:5000/ppt-service-site@sha256:' + 'b' * 64
-NS = 'ppt-service-test'
+NS = 'ppt-service'
 
 
 @pytest.fixture(autouse=True)
@@ -52,11 +52,11 @@ def secret_url(url):
 
 
 def dedicated_url(role='ppt_migrator', password='synthetic%27password%5Cvalue'):
-    return f'postgresql+psycopg://{role}:{password}@ppt-postgres.ppt-service-test.svc.cluster.local:5432/ppt_service'
+    return f'postgresql+psycopg://{role}:{password}@ppt-postgres.ppt-service.svc.cluster.local:5432/ppt_service'
 
 
 def database_state():
-    return {'database_exists': True, 'owner': 'ppt_migrator', 'roles': [
+    return {'database_exists': True, 'owner': 'ppt_migrator', 'bootstrap_marker': deploy.BOOTSTRAP_MARKER, 'roles': [
         {'name': name, 'super': False, 'createdb': False, 'createrole': False,
          'replication': False, 'inherit': False, 'login': True, 'member':False}
         for name in ('ppt_migrator', 'ppt_runtime')]}
@@ -69,6 +69,7 @@ class Scenario(deploy.Deployment):
         self.events = []
         self.applied = []
         self.jobs = []
+        self.job_options = []
         self.revisions = [revision, 2]
         self.owner = owner
         self.existing_site = existing_site
@@ -112,10 +113,21 @@ class Scenario(deploy.Deployment):
         self.events.append(('revision',))
         return self.revisions.pop(0)
 
-    def run_job(self, job):
+    def run_job(self, job, **options):
         self.jobs.append(copy.deepcopy(job))
+        self.job_options.append(options)
 
-    def psql(self, sql, database='ppt_test', user='ppt_bootstrap'):
+    def storage_claim(self, template, *, existing_site):
+        self.events.append(('storage-claim',))
+        return 'data-claim-uid', False
+
+    def patch_storage(self, uid, annotations):
+        self.events.append(('storage-patch', uid, annotations))
+
+    def initialize_database(self):
+        self.events.append(('initialize-database',))
+
+    def psql(self, sql, database='postgres', user='ppt_bootstrap'):
         self.events.append(('psql', database, user, sql))
         return ''
 
@@ -180,6 +192,54 @@ def eso_status(refresh, ready=True):
     return {'status': {'refreshTime':refresh,'conditions':[{'type':'Ready','status':'True' if ready else 'False'}]}}
 
 
+@pytest.mark.parametrize(('names', 'required'), [
+    (('ppt-postgres-bootstrap',), {
+        'ppt-postgres-bootstrap': ('secret/ppt-service/postgres-bootstrap', 'POSTGRES_PASSWORD'),
+    }),
+    (('ppt-database-migrator', 'ppt-database-runtime', 'ppt-oidc'), {
+        'ppt-database-migrator': ('secret/ppt-service/database-migrator', 'DATABASE_URL'),
+        'ppt-database-runtime': ('secret/ppt-service/database-runtime', 'DATABASE_URL'),
+        'ppt-oidc': ('secret/ppt-service/oidc', 'CLIENT_SECRET', 'COOKIE_SECRET'),
+    }),
+])
+def test_secret_wait_failure_explains_required_vault_inputs_without_exposing_stderr(names, required, capsys):
+    marker = 'synthetic-private-provider-value-do-not-print'
+    runner = Runner([*[eso_status('old') for _ in names], '', (1, marker, marker + '\n' + dedicated_url())])
+    instance = deploy.Deployment(runner=runner)
+    with pytest.raises(deploy.DeployError) as caught:
+        instance.wait_secrets(*names)
+    message = str(caught.value)
+    assert 'readiness wait failed' in message
+    assert NS in message and 'ESO read access' in message
+    assert 'Vault CLI paths/fields' in message
+    assert 'vault/inventory/PPT-SERVICE.md' in message
+    for name, expected in required.items():
+        assert 'ExternalSecret/' + name in message
+        assert all(value in message for value in expected)
+    for other in set(deploy.SECRET_NAMES) - set(names):
+        assert 'ExternalSecret/' + other not in message
+    assert marker not in message and dedicated_url() not in message
+    assert capsys.readouterr() == ('', '')
+    assert not runner.replies
+
+
+def test_main_prints_controlled_secret_wait_guidance_without_provider_values(monkeypatch, capsys):
+    marker = 'synthetic-private-provider-value-do-not-print'
+    instance = deploy.Deployment(runner=Runner([eso_status('old'), '', (1, marker, marker + dedicated_url())]))
+    instance.deploy = lambda **kwargs: instance.wait_secrets('ppt-postgres-bootstrap')
+    monkeypatch.setattr(deploy, 'Deployment', lambda: instance)
+    monkeypatch.setenv('PPT_SITE_IMAGE', IMAGE)
+    assert deploy.main(['--skip-build']) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    assert 'ERROR: ExternalSecret readiness wait failed' in captured.err
+    assert 'ExternalSecret/ppt-postgres-bootstrap' in captured.err
+    assert 'secret/ppt-service/postgres-bootstrap' in captured.err
+    assert 'POSTGRES_PASSWORD' in captured.err
+    assert 'vault/inventory/PPT-SERVICE.md' in captured.err
+    assert marker not in captured.err and dedicated_url() not in captured.err
+
+
 def test_secret_refresh_waits_for_a_new_ready_refresh_not_old_ready(monkeypatch):
     runner=Runner([eso_status('old'),'', '',eso_status('old'),eso_status('new')])
     instance=deploy.Deployment(runner=runner)
@@ -233,62 +293,64 @@ def test_secret_refresh_timeout_rejects_stale_or_unready_status(monkeypatch,late
         instance.wait_secrets('ppt-oidc')
 
 
-def test_prepare_preserves_site_and_waits_only_bootstrap():
+def test_deploy_requires_all_four_secrets_before_starting_postgres():
     instance = Scenario()
-    instance.deploy(prepare=True, init_db=False, image=None)
-    assert not instance.jobs
-    assert not any(d['kind'] == 'Deployment' for d in instance.applied)
-    assert [e for e in instance.events if e[0] == 'wait-secrets'] == [('wait-secrets', ('ppt-postgres-bootstrap',))]
-    assert next(d for d in instance.applied if d['kind'] == 'StatefulSet')['spec']['replicas'] == 1
-    assert not any(e[0] == 'kube' and 'scale' in e[1] for e in instance.events)
-    assert instance.events.index(('secret-owners',)) < next(i for i, e in enumerate(instance.events)
-        if e[0] == 'apply' and any(kind == 'ExternalSecret' for kind, _ in e[1]))
+    instance.deploy(image=IMAGE)
+    waits = [event for event in instance.events if event[0] == 'wait-secrets']
+    assert waits == [('wait-secrets', deploy.SECRET_NAMES)]
+    wait_index = instance.events.index(waits[0])
+    pg_index = next(i for i, event in enumerate(instance.events)
+                    if event[0] == 'apply' and ('StatefulSet', 'ppt-postgres') in event[1])
+    assert wait_index < pg_index
+    assert ('initialize-database',) in instance.events
     assert instance.events[-1] == ('unlock',)
 
 
-def test_prepare_failure_releases_deployment_lock():
+def test_deployment_failure_releases_lock_before_database_start():
     instance = Scenario(fail_bootstrap=True)
     with pytest.raises(deploy.DeployError):
-        instance.deploy(prepare=True, init_db=False, image=None)
+        instance.deploy(image=IMAGE)
+    assert not any(document['kind'] == 'StatefulSet' for document in instance.applied)
     assert instance.events[-1] == ('unlock',)
 
 
 def test_existing_owner_list_is_preserved_without_override():
     instance = Scenario()
-    instance.deploy(prepare=False, init_db=False, image=IMAGE)
+    instance.deploy(image=IMAGE)
     assert not any(d['metadata']['name'] == 'ppt-owner' for d in instance.applied)
 
 
 def test_initial_owner_list_is_applied_when_absent():
     instance = Scenario(owner=False)
-    instance.deploy(prepare=False, init_db=False, image=IMAGE)
+    instance.deploy(image=IMAGE)
     assert sum(d['metadata']['name'] == 'ppt-owner' for d in instance.applied) == 1
 
 
 def test_migration_and_site_use_the_same_manifest_digest():
     instance = Scenario(revision=1, existing_site=0)
-    instance.deploy(prepare=False, init_db=False, image=IMAGE)
+    instance.deploy(image=IMAGE)
     assert {job['spec']['template']['spec']['containers'][0]['image'] for job in instance.jobs} == {IMAGE}
     site = next(d for d in instance.applied if d['kind'] == 'Deployment')
     assert site['spec']['template']['spec']['containers'][0]['image'] == IMAGE
     assert sum(job['metadata']['name'].startswith('ppt-migrate-') for job in instance.jobs) == 1
+    assert instance.job_options[0] == {'rerun_completed': True}
 
 
 def test_current_schema_skips_migration_job():
     instance = Scenario(revision=2)
-    instance.deploy(prepare=False, init_db=False, image=IMAGE)
+    instance.deploy(image=IMAGE)
     assert not any(job['metadata']['name'].startswith('ppt-migrate-') for job in instance.jobs)
 
 
 def test_existing_site_replica_count_is_preserved():
     instance = Scenario(existing_site=3)
-    instance.deploy(prepare=False, init_db=False, image=IMAGE)
+    instance.deploy(image=IMAGE)
     site = next(d for d in instance.applied if d['kind'] == 'Deployment')
     assert site['spec']['replicas'] == 3
 
 
 @pytest.mark.parametrize('replacement', [
-    'postgresql://ppt_migrator:synthetic@ppt-postgres.ppt-service-test.svc.cluster.local:5432/ppt_service',
+    'postgresql://ppt_migrator:synthetic@ppt-postgres.ppt-service.svc.cluster.local:5432/ppt_service',
     dedicated_url().replace('ppt_migrator:', 'ppt_runtime:'), dedicated_url().replace(':5432/', ':5433/'),
     dedicated_url().replace('ppt-postgres.', 'other-postgres.'), dedicated_url().replace('/ppt_service', '/other'),
     dedicated_url() + '?sslmode=disable', dedicated_url() + '#fragment', dedicated_url(password=''),
@@ -313,12 +375,56 @@ def test_database_password_decodes_reserved_characters_without_logging(capsys):
 @pytest.mark.parametrize('state', [
     {'database_exists': True, 'roles': []}, {'database_exists': False, 'roles': [{'name': 'ppt_migrator'}]},
 ])
-def test_explicit_init_refuses_existing_or_partial_database(state):
+def test_automatic_init_refuses_partial_database(state):
     instance = deploy.Deployment(runner=Runner())
     instance.db_state = lambda: state
     instance.get = lambda *args, **kwargs: pytest.fail('Existing initialization must not fetch credentials')
-    with pytest.raises(deploy.DeployError, match='existing or partial'):
+    with pytest.raises(deploy.DeployError, match='Partial database initialization'):
         instance.initialize_database()
+
+
+def test_automatic_init_reuses_complete_database_without_fetching_or_changing_passwords():
+    instance = deploy.Deployment(runner=Runner())
+    instance.db_state = database_state
+    instance.get = lambda *args, **kwargs: pytest.fail('Existing database credentials must not be rewritten')
+    assert instance.initialize_database() is False
+
+
+def test_automatic_init_creates_new_database_and_roles_from_vault_urls():
+    runner = Runner([''])
+    instance = deploy.Deployment(runner=runner)
+    instance.db_state = lambda: {'database_exists': False, 'roles': []}
+    instance.get = lambda _kind, name: secret_url(dedicated_url(role='ppt_runtime' if name.endswith('runtime') else 'ppt_migrator'))
+    assert instance.initialize_database() is True
+    args, kwargs = runner.calls[0]
+    assert args[-2:] == ['-d', 'postgres']
+    assert 'CREATE DATABASE "ppt_service" OWNER "ppt_migrator";' in kwargs['input']
+    sql = kwargs['input']
+    assert 'CREATE ROLE "ppt_runtime" LOGIN' in sql
+    assert sql.count("PASSWORD 'synthetic''password\\value'") == 2
+    assert 'ALTER ROLE' not in sql
+    assert ":'migrator_password'" not in sql and ":'runtime_password'" not in sql
+    assert sql.rstrip().endswith("COMMENT ON DATABASE \"ppt_service\" IS 'ppt-service-bootstrap-v1';")
+    assert sql.index('SET standard_conforming_strings = on;') < sql.index('CREATE ROLE')
+
+
+@pytest.mark.parametrize('marker', [None, '', 'unrelated-database'])
+def test_existing_roles_and_database_without_completion_marker_remain_partial(marker):
+    state = database_state()
+    state['bootstrap_marker'] = marker
+    instance = deploy.Deployment(runner=Runner())
+    instance.db_state = lambda: state
+    instance.get = lambda *args, **kwargs: pytest.fail('Partial bootstrap must not rewrite existing passwords')
+    with pytest.raises(deploy.DeployError, match='Partial database initialization'):
+        instance.initialize_database()
+
+
+def test_db_inventory_reads_bootstrap_marker_from_database_comment():
+    runner = Runner([database_state()])
+    assert deploy.Deployment(runner=runner).db_state() == database_state()
+    query = runner.calls[0][1]['input']
+    assert "'bootstrap_marker'" in query
+    assert "shobj_description(oid, 'pg_database')" in query
 
 
 def test_init_passwords_are_only_in_sql_stdin_and_failures_hide_stderr(capsys):
@@ -403,6 +509,78 @@ def test_completed_matching_job_allows_server_defaults_and_controller_labels():
     assert len(runner.calls)==1
 
 
+def completed_migration(uid, *, after_uid=None):
+    job = deploy.make_job(IMAGE, 'migrate', '' if after_uid is None else 'after:' + after_uid)
+    job['metadata']['uid'] = uid
+    job['status'] = {'conditions': [{'type': 'Complete', 'status': 'True'}]}
+    return job
+
+
+def test_restored_old_schema_does_not_reuse_same_image_completed_migration_receipt():
+    job = deploy.make_job(IMAGE, 'migrate')
+    original = copy.deepcopy(job)
+    previous = completed_migration('previous-migration-uid')
+    runner = Runner([previous, '', '', ''])
+    deploy.Deployment(runner=runner).run_job(job, rerun_completed=True)
+    created = yaml.safe_load(next(kwargs['input'] for args, kwargs in runner.calls if 'create' in args))
+    expected = deploy.make_job(IMAGE, 'migrate', 'after:previous-migration-uid')
+    assert created['metadata']['name'] == expected['metadata']['name'] != job['metadata']['name']
+    assert created['spec'] == job['spec']
+    assert created['metadata']['annotations'] == {
+        'ppt.panghuer.top/previous-job-name': job['metadata']['name'],
+        'ppt.panghuer.top/previous-job-uid': 'previous-migration-uid',
+    }
+    assert 'job/' + created['metadata']['name'] in runner.calls[-1][0]
+    assert all('delete' not in args for args, _ in runner.calls)
+    assert job == original
+
+
+def test_restored_schema_follows_completed_history_until_an_active_migration():
+    root = completed_migration('first-migration-uid')
+    second = completed_migration('second-migration-uid', after_uid='first-migration-uid')
+    active = deploy.make_job(IMAGE, 'migrate', 'after:second-migration-uid')
+    active['status'] = {'active': 1}
+    runner = Runner([root, second, active, ''])
+    deploy.Deployment(runner=runner).run_job(deploy.make_job(IMAGE, 'migrate'), rerun_completed=True)
+    gets = [args[args.index('get') + 2] for args, _ in runner.calls if 'get' in args]
+    assert gets == [root['metadata']['name'], second['metadata']['name'], active['metadata']['name']]
+    assert 'job/' + active['metadata']['name'] in runner.calls[-1][0]
+    assert not any('create' in args or 'delete' in args for args, _ in runner.calls)
+
+
+def test_failed_successor_is_preserved_instead_of_starting_a_parallel_migration():
+    previous = completed_migration('previous-migration-uid')
+    failed = deploy.make_job(IMAGE, 'migrate', 'after:previous-migration-uid')
+    failed['status'] = {'conditions': [{'type': 'Failed', 'status': 'True'}]}
+    runner = Runner([previous, failed])
+    with pytest.raises(deploy.DeployError, match='preserve its evidence'):
+        deploy.Deployment(runner=runner).run_job(deploy.make_job(IMAGE, 'migrate'), rerun_completed=True)
+    assert len(runner.calls) == 2
+    assert not any('create' in args or 'delete' in args for args, _ in runner.calls)
+
+
+def test_interrupted_migration_retry_waits_for_the_same_successor_job():
+    previous = completed_migration('previous-migration-uid')
+    interrupted = Runner([previous, '', '', (1, '', 'synthetic wait interrupted')])
+    with pytest.raises(deploy.DeployError, match='did not complete'):
+        deploy.Deployment(runner=interrupted).run_job(deploy.make_job(IMAGE, 'migrate'), rerun_completed=True)
+    created = yaml.safe_load(next(kwargs['input'] for args, kwargs in interrupted.calls if 'create' in args))
+    created['status'] = {'active': 1}
+    resumed = Runner([previous, created, ''])
+    deploy.Deployment(runner=resumed).run_job(deploy.make_job(IMAGE, 'migrate'), rerun_completed=True)
+    assert 'job/' + created['metadata']['name'] in resumed.calls[-1][0]
+    assert not any('create' in args or 'delete' in args for args, _ in resumed.calls)
+
+
+def test_completed_migration_without_uid_cannot_start_an_untraceable_successor():
+    previous = completed_migration('temporary')
+    del previous['metadata']['uid']
+    runner = Runner([previous])
+    with pytest.raises(deploy.DeployError, match='valid UID'):
+        deploy.Deployment(runner=runner).run_job(deploy.make_job(IMAGE, 'migrate'), rerun_completed=True)
+    assert len(runner.calls) == 1
+
+
 def test_job_wait_failure_keeps_job_and_hides_child_stderr():
     job=deploy.make_job(IMAGE,'migrate')
     previous=copy.deepcopy(job)
@@ -414,38 +592,167 @@ def test_job_wait_failure_keeps_job_and_hides_child_stderr():
     assert all('delete' not in args for args,_ in runner.calls)
 
 
-def test_storage_job_is_readonly_nonroot_and_has_no_db_credentials():
-    job = deploy.make_job(IMAGE, 'storage')
+@pytest.mark.parametrize('initialize_volume', [False, True])
+def test_storage_job_is_nonroot_and_has_no_db_credentials(initialize_volume):
+    job = deploy.make_job(IMAGE, 'storage', claim_uid='data-claim-uid', initialize_volume=initialize_volume)
     spec = job['spec']['template']['spec']
     container = spec['containers'][0]
     assert spec['automountServiceAccountToken'] is False
     assert spec['securityContext']['runAsNonRoot'] is True
     assert spec['securityContext']['runAsUser'] == 10000
-    assert 'fsGroup' not in spec['securityContext']
+    if initialize_volume:
+        assert spec['securityContext']['fsGroup'] == 10000
+        assert spec['securityContext']['fsGroupChangePolicy'] == 'OnRootMismatch'
+    else:
+        assert 'fsGroup' not in spec['securityContext']
     assert container['env'] == []
-    assert next(v for v in spec['volumes'] if v['name'] == 'data')['persistentVolumeClaim']['readOnly'] is True
-    assert next(v for v in container['volumeMounts'] if v['name'] == 'data')['readOnly'] is True
+    assert next(v for v in spec['volumes'] if v['name'] == 'data')['persistentVolumeClaim'] == {'claimName': 'ppt-data'}
+    assert next(v for v in container['volumeMounts'] if v['name'] == 'data') == {'name': 'data', 'mountPath': '/var/lib/ppt-service'}
+    assert job['spec']['template']['metadata']['annotations'] == {deploy.STORAGE_UID: 'data-claim-uid'}
     assert container['securityContext']['readOnlyRootFilesystem'] is True
     assert container['securityContext']['capabilities']['drop'] == ['ALL']
+
+
+def run_storage_script(*, mode=stat.S_IFDIR|0o700, uid=10000, gid=10000, accessible=True, missing=False, contents=()):
+    state = SimpleNamespace(mode=mode, missing=missing, calls=[])
+    def state_stat(*args, **kwargs):
+        if state.missing:
+            raise FileNotFoundError()
+        return SimpleNamespace(st_mode=state.mode, st_uid=uid, st_gid=gid)
+    def mkdir(*args, **kwargs):
+        state.calls.append(('mkdir', args, kwargs))
+        state.missing = False
+        state.mode = stat.S_IFDIR|0o2700
+    def fchmod(fd, permissions):
+        state.calls.append(('fchmod', fd, permissions))
+        state.mode = stat.S_IFDIR|permissions
+    fake_os = SimpleNamespace(open=lambda *a, **k: 10, close=lambda *a: None,
+        stat=state_stat, listdir=lambda *a: list(contents), mkdir=mkdir, fchmod=fchmod,
+        access=lambda *a: accessible, O_RDONLY=0, O_DIRECTORY=1, O_NOFOLLOW=2, R_OK=4, W_OK=2, X_OK=1)
+    real_import = builtins.__import__
+    def fake_import(name, *args, **kwargs):
+        return fake_os if name == 'os' else real_import(name, *args, **kwargs)
+    namespace = {'__builtins__': vars(builtins)|{'__import__': fake_import}}
+    return state, lambda: exec(deploy.STORAGE_INIT, namespace)
 
 
 @pytest.mark.parametrize('mode,uid,gid,accessible,accepted', [
     (stat.S_IFDIR|0o700,10000,10000,True,True), (stat.S_IFLNK|0o700,10000,10000,True,False),
     (stat.S_IFDIR|0o777,10000,10000,True,False), (stat.S_IFDIR|0o700,0,0,True,False),
     (stat.S_IFDIR|0o700,10000,10000,False,False),
-], ids=['private-owner-directory','symlink','broad-mode','wrong-owner','not-traversable'])
-def test_readonly_storage_check_rejects_unsafe_metadata(mode,uid,gid,accessible,accepted):
-    fake_os = SimpleNamespace(lstat=lambda _: SimpleNamespace(st_mode=mode,st_uid=uid,st_gid=gid),
-                              access=lambda *_: accessible,R_OK=4,X_OK=1)
-    real_import = builtins.__import__
-    def fake_import(name,*args,**kwargs):
-        return fake_os if name=='os' else real_import(name,*args,**kwargs)
-    namespace = {'__builtins__': vars(builtins)|{'__import__':fake_import}}
+], ids=['private-owner-directory','symlink','broad-mode','wrong-owner','not-accessible'])
+def test_storage_init_checks_existing_state_without_permission_changes(mode,uid,gid,accessible,accepted):
+    state, execute = run_storage_script(mode=mode,uid=uid,gid=gid,accessible=accessible)
     if accepted:
-        exec(deploy.STORAGE_CHECK,namespace)
+        execute()
     else:
         with pytest.raises(AssertionError):
-            exec(deploy.STORAGE_CHECK,namespace)
+            execute()
+    assert state.calls == []
+
+
+def test_storage_init_creates_only_a_private_state_directory_and_clears_inherited_setgid():
+    state, execute = run_storage_script(missing=True)
+    execute()
+    assert state.calls == [('mkdir', ('state',), {'mode': 0o700, 'dir_fd': 10}), ('fchmod', 10, 0o700)]
+    assert state.mode == stat.S_IFDIR|0o700
+
+
+def test_storage_init_does_not_adopt_a_nonempty_volume_with_no_state():
+    state, execute = run_storage_script(missing=True, contents=('old-frozen-data',))
+    with pytest.raises(AssertionError, match='state_missing_on_nonempty_volume'):
+        execute()
+    assert state.calls == []
+
+
+def data_claim(*, pending=False, ready=False, bound_uid=None):
+    annotations = {'ppt.panghuer.top/retention': 'keep'}
+    if pending or ready:
+        annotations[deploy.STORAGE_STATE] = 'pending-v1' if pending else 'ready-v1'
+    if bound_uid:
+        annotations[deploy.STORAGE_UID] = bound_uid
+    return {'apiVersion': 'v1', 'kind': 'PersistentVolumeClaim',
+            'metadata': {'name': 'ppt-data', 'namespace': NS, 'uid': 'data-claim-uid',
+                         'resourceVersion': '42', 'annotations': annotations},
+            'spec': {'storageClassName': 'ceph-cephfs', 'accessModes': ['ReadWriteMany']}}
+
+
+def data_claim_template():
+    return next(document for document in deploy.load_base()
+                if document['kind'] == 'PersistentVolumeClaim' and document['metadata']['name'] == 'ppt-data')
+
+
+def test_new_dynamic_claim_is_marked_pending_before_any_job_and_bound_to_uid():
+    claim = data_claim(pending=True)
+    runner = Runner(['', '', claim, claim, ''])
+    instance = deploy.Deployment(runner=runner)
+    assert instance.storage_claim(data_claim_template(), existing_site=None) == ('data-claim-uid', True)
+    created = yaml.safe_load(runner.calls[1][1]['input'])
+    assert created['metadata']['annotations'][deploy.STORAGE_STATE] == 'pending-v1'
+    assert 'volumeName' not in created['spec']
+    patch = json.loads(runner.calls[-1][0][-1])
+    assert patch[0] == {'op': 'test', 'path': '/metadata/uid', 'value': 'data-claim-uid'}
+    assert patch[1] == {'op': 'test', 'path': '/metadata/resourceVersion', 'value': '42'}
+    assert patch[-1]['value'][deploy.STORAGE_UID] == 'data-claim-uid'
+    assert patch[-1]['value']['ppt.panghuer.top/retention'] == 'keep'
+
+
+@pytest.mark.parametrize('bound_uid', [None, 'data-claim-uid'])
+def test_interrupted_pending_claim_is_resumed_with_same_uid_and_fsgroup(bound_uid):
+    claim = data_claim(pending=True, bound_uid=bound_uid)
+    claim['spec']['volumeName'] = 'dynamically-provisioned-volume'
+    runner = Runner([claim, claim, ''])
+    instance = deploy.Deployment(runner=runner)
+    assert instance.storage_claim(data_claim_template(), existing_site=None) == ('data-claim-uid', True)
+    assert not any('create' in args for args, _ in runner.calls)
+
+
+@pytest.mark.parametrize('claim', [data_claim(), data_claim(ready=True, bound_uid='data-claim-uid')])
+def test_existing_ready_or_restored_claim_never_requests_fsgroup(claim):
+    instance = deploy.Deployment(runner=Runner([claim]))
+    assert instance.storage_claim(data_claim_template(), existing_site={'spec': {'replicas': 1}}) == ('data-claim-uid', False)
+
+
+@pytest.mark.parametrize('change', ['different-uid', 'existing-site', 'data-source', 'selector'])
+def test_pending_claim_cannot_adopt_another_volume_or_existing_site(change):
+    claim = data_claim(pending=True, bound_uid='other-uid' if change == 'different-uid' else 'data-claim-uid')
+    if change == 'data-source':
+        claim['spec']['dataSource'] = {'kind': 'VolumeSnapshot', 'name': 'frozen-data'}
+    if change == 'selector':
+        claim['spec']['selector'] = {'matchLabels': {'restored': 'true'}}
+    instance = deploy.Deployment(runner=Runner([claim]))
+    with pytest.raises(deploy.DeployError):
+        instance.storage_claim(data_claim_template(), existing_site={} if change != 'existing-site' else {'spec': {'replicas': 0}})
+
+
+@pytest.mark.parametrize('field', ['volumeName', 'selector', 'dataSource', 'dataSourceRef'])
+def test_first_claim_initialization_rejects_preloaded_sources(field):
+    template = data_claim_template()
+    template['spec'][field] = 'preloaded'
+    runner = Runner([''])
+    instance = deploy.Deployment(runner=runner)
+    with pytest.raises(deploy.DeployError, match='dynamically provisioned'):
+        instance.storage_claim(template, existing_site=None)
+    assert len(runner.calls) == 1
+
+
+def test_storage_ready_mark_refuses_pvc_replacement():
+    claim = data_claim(pending=True, bound_uid='data-claim-uid')
+    claim['metadata']['uid'] = 'replacement-uid'
+    runner = Runner([claim])
+    instance = deploy.Deployment(runner=runner)
+    with pytest.raises(deploy.DeployError, match='identity changed'):
+        instance.patch_storage('data-claim-uid', {deploy.STORAGE_STATE: 'ready-v1'})
+    assert len(runner.calls) == 1
+
+
+def test_storage_is_marked_ready_before_site_rollout():
+    instance = Scenario()
+    instance.deploy(image=IMAGE)
+    ready = ('storage-patch', 'data-claim-uid', {deploy.STORAGE_STATE: 'ready-v1', deploy.STORAGE_UID: 'data-claim-uid'})
+    site_index = next(i for i, event in enumerate(instance.events)
+                      if event[0] == 'apply' and ('Deployment', 'ppt-site') in event[1])
+    assert instance.events.index(ready) < site_index
 
 
 def configure_main(monkeypatch,tmp_path,receipt=IMAGE):
@@ -473,15 +780,7 @@ def test_default_main_builds_then_deploys_digest_receipt(monkeypatch,tmp_path):
     stub,service=configure_main(monkeypatch,tmp_path)
     assert deploy.main([])==0
     assert stub.commands==[(['bash',str(service/'build.sh')],{'check':False})]
-    assert stub.deployments==[{'prepare':False,'init_db':False,'image':IMAGE}]
-
-
-def test_prepare_main_never_builds_or_reads_image_receipt(monkeypatch,tmp_path):
-    stub,service=configure_main(monkeypatch,tmp_path)
-    (service/'rendered/image.txt').unlink()
-    assert deploy.main(['--prepare'])==0
-    assert stub.commands==[]
-    assert stub.deployments==[{'prepare':True,'init_db':False,'image':None}]
+    assert stub.deployments==[{'image':IMAGE}]
 
 
 @pytest.mark.parametrize('value',[IMAGE,'arm-cluster-master:5000/ppt-service-site:latest'])

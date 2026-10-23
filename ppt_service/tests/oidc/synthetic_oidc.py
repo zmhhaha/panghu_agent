@@ -307,7 +307,7 @@ def main():
         identity = json.loads(raw) if status == 200 else {}
         check("session_id_token_replaces_inbound_authorization", status == 200 and seen[-1] == "Bearer " + fixture.issued_token)
         check("real_api_checks_issuer_audience_subject", identity.get("issuer") == ISSUER and identity.get("sub") == SUBJECT)
-        check("release_guard_preserved", identity.get("deployment_mode") == "test" and identity.get("manual_acceptance") == "pending")
+        check("authenticated_identity_contract", bool(identity.get("csrf_token")) and isinstance(identity.get("quota"), dict))
         payload = json.dumps({"title": "Synthetic OIDC project"}).encode()
         base = {"Content-Type": "application/json"}
         check("mutation_missing_origin_and_csrf_rejected", http(session, PROXY + "/api/v1/projects", base, payload)[0] == 403)

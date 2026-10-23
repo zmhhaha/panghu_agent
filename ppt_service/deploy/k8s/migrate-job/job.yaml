@@ -2,11 +2,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: ppt-migrate-schema2
-  annotations:
-    ppt.panghuer.top/status: NOT-DEPLOY-READY
 spec:
-  # Explicit operator-reviewed unsuspension is a separate migration action.
-  suspend: true
   backoffLimit: 0
   activeDeadlineSeconds: 300
   template:

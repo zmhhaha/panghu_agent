@@ -76,17 +76,18 @@ class ManifestContracts(unittest.TestCase):
         cls.policies = {d['metadata']['name']: d['spec'] for d in cls.base if d['kind'] == 'NetworkPolicy'}
 
     def test_targets_are_isolated_and_migration_is_separate(self):
-        self.assertEqual(self.base_config['namespace'], 'ppt-service-test')
-        self.assertEqual(self.migration_config['namespace'], 'ppt-service-test')
+        self.assertEqual(self.base_config['namespace'], 'ppt-service')
+        self.assertEqual(self.migration_config['namespace'], 'ppt-service')
         self.assertEqual(len(self.index), len(self.all), 'duplicate Kubernetes object identity')
         self.assertNotIn('Job', {d['kind'] for d in self.base})
         self.assertEqual([d['kind'] for d in self.migration], ['Job'])
-        self.assertEqual(self.index['Namespace', 'ppt-service-test']['metadata']['labels']['pod-security.kubernetes.io/enforce'], 'restricted')
+        self.assertEqual(self.index['Namespace', 'ppt-service']['metadata']['labels']['pod-security.kubernetes.io/enforce'], 'restricted')
 
-    def test_candidate_cannot_start_or_invoke_models(self):
-        self.assertEqual(self.site['spec']['replicas'], 0)
-        self.assertEqual(self.postgres['spec']['replicas'], 0)
-        self.assertIs(self.job['spec']['suspend'], True)
+    def test_deployment_starts_the_site_and_database_with_execution_disabled(self):
+        self.assertEqual(self.site['spec']['replicas'], 1)
+        self.assertEqual(self.postgres['spec']['replicas'], 1)
+        self.assertNotIn('suspend', self.job['spec'])
+        self.assertNotIn('NOT-DEPLOY-READY', yaml.safe_dump(self.all))
         self.assertEqual(self.config['PPT_EXECUTION_ENABLED'], 'false')
         self.assertNotIn('PPT_LOCAL_TEST_ONLY', self.config)
         self.assertNotIn('INVITATION_SUBJECTS', self.auth)
@@ -251,11 +252,11 @@ class ManifestContracts(unittest.TestCase):
         self.assertTrue(set(self.config).isdisjoint(self.auth))
         self.assertNotIn('ppt-oidc', {d['metadata']['name'] for d in self.base if d['kind'] == 'ConfigMap'})
         for document in self.shared:
-            self.assertEqual(document['metadata']['namespace'], 'ppt-service-test')
+            self.assertEqual(document['metadata']['namespace'], 'ppt-service')
 
     def test_oidc_egress_only_allows_the_internal_tls_controller(self):
         document = yaml.load((COMMON / 'oauth/k8s/ppt-oidc-egress.yaml').read_text(encoding='utf-8'), Loader=UniqueLoader)
-        self.assertEqual(document['metadata']['namespace'], 'ppt-service-test')
+        self.assertEqual(document['metadata']['namespace'], 'ppt-service')
         spec = document['spec']
         self.assertEqual(spec['podSelector'], {'matchLabels': {'app.kubernetes.io/name': 'ppt-site'}})
         self.assertEqual(spec['policyTypes'], ['Egress'])

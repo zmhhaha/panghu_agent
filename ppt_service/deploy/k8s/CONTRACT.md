@@ -1,226 +1,189 @@
-# P1 isolated Kubernetes candidate contract
+# PPT Kubernetes deployment contract
 
-**NOT DEPLOY READY.** `base` describes a future isolated `ppt-service-test`
-environment. It starts no workloads: site and PostgreSQL have zero replicas,
-and the separate migration Job is suspended. Rendering or server dry-run does
-not prove deployment, network enforcement, storage ownership, SSO, Pi execution,
-PowerPoint acceptance or release readiness. Applying the base would still create
-PVCs and allocate storage; it is not a read-only validation command.
+The website is deployed in `ppt-service`, with public origin
+`https://ppt.panghuer.top`. [README.md](README.md) is the operator entry point.
+The deployment provides the website, OAuth proxy, dedicated PostgreSQL and
+persistent storage. Pi model execution is still being integrated;
+`PPT_EXECUTION_ENABLED=false` remains in effect and generation requests return
+`503 execution_not_connected`.
 
-## Server build and coordinated deployment
+## Server build and deployment
 
-The operator-facing `../../build.sh` builds the frontend and locked Python
-dependencies on the build server, verifies the resulting site in an isolated
-container, and pushes to `arm-cluster-master:5000` by default. Only a successful
-verified push writes the matching repository manifest digest to
-`../../rendered/image.txt`. `../../deploy.sh` normally builds first;
-`--skip-build` consumes that receipt or an explicit `PPT_SITE_IMAGE` digest.
-The original Hermes worker build is `../../build_worker.sh`.
+Run `../../deploy.sh` from the server checkout. It normally builds and verifies
+the ARM64 site image, pushes it to `arm-cluster-master:5000`, and then deploys the
+verified registry digest. `../../build.sh` can run separately, followed by
+`../../deploy.sh --skip-build`. Only a successful verified push writes the matching
+repository manifest digest to `../../rendered/image.txt`. A local Docker image ID
+or mutable tag is not that digest. `PPT_SITE_IMAGE` can provide an explicit
+verified digest. The original Hermes worker build is `../../build_worker.sh`.
 
-`--prepare` applies infrastructure, synchronizes bootstrap credentials and starts
-the dedicated PostgreSQL instance without changing the existing website.
-`--init-db` explicitly initializes only an entirely new database and roles from
-the dedicated Vault-backed URLs. Redeployment preserves an existing owner list
-unless `PPT_OWNER_CONFIG` explicitly supplies its replacement. Migration, runtime
-privileges and prepared storage are checked before the website rollout. The
-storage check is read-only and does not establish write I/O or initialize the
-CephFS directory. A deployment lock prevents overlapping helper runs.
+The ordinary deployment command synchronizes the four Vault-backed Secrets,
+starts PostgreSQL, initializes a new application database or migrates a complete
+existing one, checks runtime privileges and storage, and rolls out the website.
+Role passwords are set atomically with each CREATE ROLE. Only after all bootstrap
+database/schema grants succeed does initialization write database comment
+`ppt-service-bootstrap-v1`. Reuse requires that completion marker as well as the
+expected roles and ownership; it does not unconditionally reset existing
+passwords. A missing marker or other partial initialization stops deployment and
+preserves the database for operator investigation. Manually adding a comment is
+not a substitute for completed initialization. A deployment lock prevents
+overlapping helper runs.
 
-These scripts do not configure Casdoor or Cloudflare, enable Pi/model execution,
-or establish live SSO, CSI or CNI acceptance. Original base and migration
-templates retain their zero-replica/suspended defaults; do not reapply them over
-the coordinated deployment as a routine upgrade. Follow [README.md](README.md)
-for first installation and recovery.
+`PPT_CLIENT_ID` or `PPT_AUTH_CONFIG` supplies the public authentication settings;
+a later deployment may reuse valid settings already in the cluster. An existing
+owner list is preserved unless `PPT_OWNER_CONFIG` explicitly supplies its
+replacement. Casdoor and Cloudflare are configured by the operator in their
+respective dashboards.
+
+The `base` and `migrate-job` directories are helper inputs, not a separate
+environment. The helper coordinates resource ordering and the one-off migration;
+reapplying raw templates is not the normal upgrade command. Rendering and server
+dry-run alone do not verify SSO, CSI mounts, CNI traffic or model execution.
 
 ## Targets and topology
 
-| Target | Includes | Deliberately separate |
-| --- | --- | --- |
-| `base` | Namespace, three tokenless SAs, configuration, two PVCs, independent PostgreSQL StatefulSet, same-Pod site/OAuth proxy, ClusterIP services and policies | No Job, RBAC, worker, model proxy, parser, ingress, NodePort, hostPath or Docker socket |
-| `migrate-job` | Suspended schema-2 Job using the same site image | Does not include base, initialize roles, mount data files or run on site startup |
+| Target | Resources |
+| --- | --- |
+| `base` | Namespace, tokenless service accounts, configuration, dedicated PVCs, PostgreSQL StatefulSet, same-Pod website/OAuth proxy, ClusterIP services and network policies |
+| `migrate-job` | One-off schema migration using the same site image and its own database role |
 
-Only `ppt-site:4180` is a website Service port. Uvicorn serves the real
-`ppt_service.server.site:create_site` factory on **127.0.0.1:8000**, with
-`--no-proxy-headers`; oauth2-proxy is its same-Pod caller. The API's trusted peer
-list is exactly loopback. There is no routable site 8000 port. The site requires
-built assets at `/opt/ppt-service/web/dist` and uses Python at
-`/usr/local/bin/python`, with `/opt/ppt-service` as its working directory.
-It must use the packaged site image contract, never `control.dev_site`.
+Only `ppt-site:4180` is exposed as a website Service port. Uvicorn serves
+`ppt_service.server.site:create_site` on `127.0.0.1:8000`, with
+`--no-proxy-headers`; the same-Pod oauth2-proxy is its caller. The trusted peer
+list is exactly loopback. The site uses `/usr/local/bin/python`, working directory
+`/opt/ppt-service` and built assets at `/opt/ppt-service/web/dist`.
 
-The site liveness/startup probes check only loopback `/healthz`. Readiness also
-requires the runtime connection to read schema revision 2. A healthy HTTP process
-alone does not establish database readiness. oauth2-proxy uses `/ping` and
-`/ready`; actual v7.8.0 parsing/forwarding remains P2 acceptance. The site and proxy
-share a network namespace, and cannot be isolated from one another by policy.
+Startup and liveness probes check loopback `/healthz`; readiness also requires
+the runtime connection to read the current schema revision. oauth2-proxy uses
+`/ping` and `/ready`. Website and proxy share a network namespace, so network
+policy cannot isolate those two containers from each other.
 
-The site has `PPT_EXECUTION_ENABLED=false`, no `PPT_LOCAL_TEST_ONLY`, and an empty
-`ppt-owner.data.emails` whitelist in `oauth/k8s/ppt-owner-configmap.yaml`.
-Both site and proxy mount this ConfigMap directory read-only at `/owner`, without
-`subPath`; `INVITATION_EMAILS_FILE` and `authenticated_emails_file` point to the
-same `/owner/emails` file. Membership uses exact verified email addresses, one
-per line; no administrator-maintained subject list is needed. The API reloads
-the file on each authenticated request and continues to identify resource
-ownership by verified issuer and subject. Kubernetes projection updates take
-time and do not terminate in-progress requests or streams. Empty denies all;
-file read or format failures reject access with 503. The whitelist code requires
-a newly built site image; the older P1 image does not support this configuration.
-The domain is confirmed as `ppt.panghuer.top`; its dedicated client
-ID remains a placeholder. Existing `deployment_mode=test` / `manual_acceptance=pending`
-guards are preserved in application code. No Pi worker contract is invented;
-the Pi execution chain is a separate prerequisite.
-The Pi owner's [deployment handoff](../../K8S_DEPLOYMENT_HANDOFF.md) records
-the existing Docker/UID/queue/model-authority evidence and the remaining K8s
-backend work. Docker bridge/IP checks, host boot/monotonic leases and CID stop
-proofs cannot be reused as cross-node Kubernetes guarantees. A later worker
-integration must verify K8s network boundaries, durable UID allocation, clock
-and private control storage, full writer termination and the confirmed
-checkpoint/base-version stage routes. Its test-derived local image also needs
-current sources and an actual business entrypoint before it can be deployed.
+Both containers mount the independent `ppt-owner` ConfigMap directory read-only
+at `/owner`, without `subPath`. `INVITATION_EMAILS_FILE` and
+`authenticated_emails_file` point to the same `/owner/emails`. Membership uses
+exact verified emails, one per line; resource ownership remains bound to the
+verified issuer and stable subject. The API reads the list on each authenticated
+request. Empty denies everyone, while unreadable or malformed lists return 503.
+Projection updates take time and do not terminate existing streams.
 
 ## Required configuration and credentials
 
-No Secret values are included. These names are local to `ppt-service-test`:
-
-| Consumer | Secret | Key | Meaning |
-| --- | --- | --- | --- |
-| Site only | `ppt-database-runtime` | `DATABASE_URL` | Dedicated least-privilege runtime PostgreSQL login |
-| Migration only | `ppt-database-migrator` | `DATABASE_URL` | Separate schema-owning migration login |
-| PostgreSQL only | `ppt-postgres-bootstrap` | `POSTGRES_PASSWORD` | Initial `ppt_bootstrap` administrator; never mounted in site or migrator |
-| OAuth proxy only | `ppt-oidc` | `client-secret`, `cookie-secret` | Dedicated PPT Casdoor client and valid proxy cookie secret |
-
-Both application URLs must use explicit `postgresql+psycopg://` SQLAlchemy
-driver URLs and target the new database
-`ppt_service` on `ppt-postgres.ppt-service-test.svc.cluster.local:5432`, use the
-installed psycopg driver, and authenticate **different roles**.
-Sharing a DB host does not authorize use of the existing `data/postgres` service
-or its credentials. Do not log URLs, environment dumps or Secret contents.
-
-`POSTGRES_DB=ppt_test` is only the independent bootstrap/maintenance database;
-`bootstrap-database.sql` creates the separately owned `ppt_service` application
-database. Website/migrator URLs must target the latter. Database initialization
-creates only the administrator/maintenance database. Before running
-the migration, provision the independent migration and runtime login roles using
-the reviewed provisioning procedure. Migrator must own the application schema
-and be able to create tables, functions and triggers; runtime must have required
-DML/sequence access and read access to `api_schema_revision`, with no ownership,
-DDL, superuser, role creation or database creation privileges. Apply grants and
-default privileges for future migration-created objects. Verify them against the
-real database; creating two Kubernetes Secrets does not establish DB isolation.
-
-The base pins the read-only verified PostgreSQL **16.15 alpine** manifest
-`postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea`
-and oauth2-proxy **v7.8.0** manifest
-`quay.io/oauth2-proxy/oauth2-proxy@sha256:d73ce980a96ec1143901a4676eaf0d148ae1dc965a59d3a3e5cf626cc84350aa`.
-The packaged site remains an unresolved placeholder pending its verified ARM64
-registry manifest digest. A Docker image config ID or an unpushed local tag is
-not a registry manifest digest. PostgreSQL metadata confirms uid/gid 70; site
-and proxy run at uid/gid 10000. No image dependency lock is changed here.
-
-P2 public authentication configuration is owned by
-[oauth/k8s/PPT.md](../../../../oauth/k8s/PPT.md), with Vault mappings in
+Secrets are local to `ppt-service`; values are managed in Vault and mapped by
 [vault/inventory](../../../../vault/inventory/PPT-SERVICE.md).
-The base consumes external `ppt-auth`, `ppt-oidc` and `ppt-owner` ConfigMaps rather
-than duplicating them. Use the OAuth renderer to set matching client IDs, and
-maintain the independent `ppt-owner` email whitelist after configuring the
-dedicated application. P2 must validate the actual
-RS256 token, claims, JWKS rotation, proxy token forwarding/header replacement,
-cookie size, logout, expiration, Origin and CSRF checks. Do not reuse another
-agent's client, users, database role or live tokens.
+
+| Consumer | Secret | Key |
+| --- | --- | --- |
+| Website | `ppt-database-runtime` | `DATABASE_URL` |
+| Schema migration | `ppt-database-migrator` | `DATABASE_URL` |
+| PostgreSQL | `ppt-postgres-bootstrap` | `POSTGRES_PASSWORD` |
+| OAuth proxy | `ppt-oidc` | `client-secret`, `cookie-secret` |
+
+Vault CLI records are `secret/ppt-service/oidc`,
+`secret/ppt-service/database-runtime`, `secret/ppt-service/database-migrator` and
+`secret/ppt-service/postgres-bootstrap`. ExternalSecret references use the
+corresponding KV v2 `secret/data/ppt-service/...` paths and explicit properties.
+The application and migration Job do not receive a Vault token or Kubernetes
+API token.
+
+Both application URLs use `postgresql+psycopg://` and target database
+`ppt_service` at `ppt-postgres.ppt-service.svc.cluster.local:5432`, with different
+roles. `POSTGRES_USER=ppt_bootstrap` and `POSTGRES_DB=postgres` provide only the
+administrator and maintenance database. The migration role owns the application
+schema; runtime has required table DML/sequence privileges and read-only access
+to `api_schema_revision`, with no schema ownership, DDL, superuser, role creation
+or database creation. The deployment applies migration grants before rolling
+out the website. Secret synchronization is not a substitute for these database
+checks.
+
+Bootstrap credentials go only to PostgreSQL, migration credentials only to the
+migration workload, and runtime credentials only to the website. Proxy
+credentials do not enter the website. Pi Workers receive no database credential
+or long-lived provider/gateway token. Do not log URLs, Secret contents or
+complete environment dumps.
+
+Public authentication settings are owned by
+[oauth/k8s](../../../../oauth/k8s/PPT.md). The proxy client ID and API audience
+must match the dedicated Casdoor application. Actual RS256 tokens, issuer,
+audience, expiry, verified email, JWKS, forwarded identity, Cookie behavior,
+Origin and CSRF are verified during deployment acceptance. The base does not
+duplicate the shared authentication ConfigMaps.
 
 ## Storage and security
 
-The repository defines `ceph-cephfs` in
-`ceph/cephfs-storageclass.yaml` and `ceph-rbd` in
-`ceph/ceph-rbd-storageclass.yaml`. `ppt-data` requests its own 20 GiB RWX CephFS
-claim; `ppt-postgres-data` requests its own 10 GiB RWO RBD claim. No existing PVC
-is referenced. A read-only 2026-10-23 cluster inspection confirmed both class
-names, `Delete` reclaim policy and volume expansion support on Kubernetes
-v1.31.14 with five Ready ARM64 nodes. Actual CSI mount ownership remains untested.
-Only site mounts the CephFS data, only PostgreSQL mounts the RBD database; the
-proxy cannot read data or database credentials. No parser or execution container
-is launched.
+`ppt-data` requests a dedicated 20 GiB RWX `ceph-cephfs` claim, mounted only by the
+website at `/var/lib/ppt-service`; `DATA_ROOT` is its `state` child. PostgreSQL
+uses its own 10 GiB RWO `ceph-rbd` claim. Existing service claims are not reused.
 
-All containers use nonroot uid/gid, seccomp RuntimeDefault, dropped ALL
-capabilities, no privilege escalation and a read-only root. Writable temporary
-directories are bounded emptyDir volumes. All three workload templates explicitly
-select `kubernetes.io/arch=arm64`. **The site has no `fsGroup` or
-`fsGroupChangePolicy`**: CSI/kubelet ownership rewriting could turn immutable
-0400/0500 candidate files or a private ledger into group-writable data. File
-restore must preserve metadata; the application's data root must retain its
-original uid 10000 ownership and writable root directory. Do not recursively
-map/chown a restored tree. A future Pi UID ledger needs its own trusted control
-domain and must not become writable to this website.
+The website runs as UID/GID 10000 without `fsGroup` or `fsGroupChangePolicy`.
+Before website rollout, a nonroot initialization Job creates `state` with owner
+10000:10000 and mode 0700 on an empty writable volume, or verifies an existing
+directory's type, owner, mode and access. It rejects symbolic links and a missing
+`state` on a nonempty root. It does not rewrite existing files or directory
+permissions.
 
-The CephFS PVC mounts at `/var/lib/ppt-service`; `DATA_ROOT` is the child
-`/var/lib/ppt-service/state`. Restore tooling requires this destination child
-not to exist, and must preserve the source directory's owner/modes/mtime. An
-empty first-use PVC still needs its newly created `state` directory initialized
-with the intended uid 10000 owner using an explicit reviewed preparation step;
-the nonroot website must not be expected to create it under a root-owned mount.
-Verify actual CSI mount permissions without a recursive root init container or
-permission broadening. The **new empty** PostgreSQL RBD claim retains
-`fsGroup=70`; never apply that ownership policy blindly to an existing database
-volume. The nonroot postgres entrypoint must pass an actual isolated first-start
-test. Every process has resource
-requests/limits and startup/readiness/liveness checks where long-running.
+Only a dynamically provisioned PVC newly created by the deployment helper is
+marked for first initialization. Its pending state is bound to the observed PVC
+UID; the helper refuses to apply that path to an existing website or a restored
+claim. The initialization Job may use `fsGroup=10000` with
+`fsGroupChangePolicy=OnRootMismatch` for that pending new volume. A failed first
+attempt can be retried by the normal deployment command; successful initialization
+marks the same claim ready before website creation. Existing unmarked claims
+never acquire `fsGroup`; their valid `state` is reused, or a new directory can be
+created only if the empty root is already writable by UID 10000. Other ownership
+or permission states require operator investigation.
 
-Three SAs and all Pod templates explicitly disable API token automount. No
-Role/RoleBinding/ClusterRole or token Secret is generated. The database and
-migration have no reason to access the Kubernetes API.
+Restoring data preserves its owner, mode and timestamp; recursive ownership
+mapping is not part of deployment. The PostgreSQL claim uses its own UID/GID 70
+and `fsGroup=70`; database storage is separate from website files.
 
-**Ceph classes currently specify `reclaimPolicy: Delete`.** The retention
-annotation is an operator note, not an enforced data-retention policy. Scaling
-workloads down retains these standalone claims; deleting their namespace or
-PVCs can delete the underlying data. Keep both claims/PVs, take a verified
-DB+file backup, and follow the explicit rollback procedure. Never run
-`kubectl delete -k base` as a rollback or cleanup shortcut.
+Workloads select `kubernetes.io/arch=arm64`. Containers run without root or
+privilege escalation, with seccomp RuntimeDefault, dropped ALL capabilities and
+a read-only root. Writable temporary directories are bounded emptyDir volumes.
+Requests, limits and long-running workload probes are explicit. Service accounts
+and Pod templates disable API token automount; workloads receive no API RBAC,
+hostPath or Docker socket.
+
+Ceph StorageClasses use `reclaimPolicy: Delete`. Scaling down retains the
+standalone PVCs; deleting namespace/PVCs can remove underlying data. Back up the
+database and files before recovery work, retain both claims, and follow
+[migration/README.md](migration/README.md). `kubectl delete -k base` is not a
+rollback operation.
 
 ## Network contract
 
 | Source | Destination | Allowed port |
 | --- | --- | --- |
-| All test Pods | `kube-system` Pods labeled `k8s-app=kube-dns` | UDP/TCP 53 |
-| `frpc` namespace Pods labeled `app=frpc` | `ppt-site` | TCP 4180 |
-| `ppt-site` and `ppt-migrator` | Same-namespace `ppt-postgres` | TCP 5432 |
-| Site/OAuth proxy, with P2 overlay | Exact `ingress-nginx` controller Pods serving `auth.panghuer.top` | TCP 443 |
-| Any other traffic | Any destination | Denied by default |
+| PPT workloads | `kube-system` Pods labeled `k8s-app=kube-dns` | UDP/TCP 53 |
+| Selected Cloudflare Connector, or optional `frpc/app=frpc` | `ppt-site` | TCP 4180 |
+| Website and migration | Same-namespace `ppt-postgres` | TCP 5432 |
+| Website/OAuth proxy | Exact `ingress-nginx` controller serving `auth.panghuer.top` | TCP 443 |
+| Other traffic | Other destinations | Denied by default |
 
-Namespace and Pod selectors are in the same peer entry where both must match.
-The selected entry infrastructure's egress to 4180 must also be verified.
-Cloudflare Tunnel public-hostname and two-ended network policy preparation is
-owned by [cloudflare-tunnel](../../../../cloudflare-tunnel/PPT.md); optional VPS
-Nginx/frpc preparation is owned by [vps](../../../../vps/PPT.md).
-These are separate deployer-applied resources, not automatically activated by
-the base. Only the chosen test route should expose the service. No public Ingress,
-LoadBalancer or NodePort is supplied.
+Namespace and Pod selectors share a peer entry so both must match. The entry
+connector needs reciprocal egress to 4180. Cloudflare public-hostname, cache
+bypass and both policies are managed under
+[cloudflare-tunnel](../../../../cloudflare-tunnel/PPT.md); the optional VPS route
+is managed under [vps](../../../../vps/PPT.md). Activate one route for the host.
+No NodePort, LoadBalancer or public API port 8000 is provided.
 
-Kubernetes NetworkPolicy does not match a hostname. P2 must establish actual
-DNS answers and routing for every OIDC HTTPS destination and add exact `/32`
-IP blocks (or a dedicated internal namespace+Pod selector with the precise
-actual port) through a reviewed isolated overlay. No broad Internet CIDR, fake
-DNS result, insecure TLS skip or `hostAliases` workaround belongs in the base.
-The baseline remains closed; separately apply `oauth/k8s/ppt-oidc-egress.yaml`
-after checking the existing split-horizon/internal-TLS prerequisites.
-Read-only cluster inspection found `calico-node` and `kube-proxy` DaemonSets;
-this replaces the old flannel assumption in earlier examples. Validate both
-allow and deny traffic on the actual enforcing CNI; the existence
-of NetworkPolicy YAML is not isolation evidence. DNS/NAT/node-local resolver
-behavior must be checked against the actual cluster path.
+Casdoor uses the existing CoreDNS split horizon and internal TLS ingress while
+retaining `https://auth.panghuer.top` as issuer. The shared
+`oauth/k8s/ppt-oidc-egress.yaml` permits only the specified controller Pods on
+443. NetworkPolicy cannot select HTTPS hostnames; actual DNS, TLS and
+allow/deny traffic must be checked on Calico. YAML existence is not evidence of
+enforced traffic isolation.
 
-## Validation boundaries
+## Execution and evidence
 
-Run declarative configuration tests from the repository root with existing
-Python and PyYAML (no installation is needed in the current workspace):
+Website deployment does not launch a Pi Worker or model proxy. Follow
+[K8S_DEPLOYMENT_HANDOFF.md](../../K8S_DEPLOYMENT_HANDOFF.md) for the remaining
+execution integration: durable UID allocation, task-bound model authority,
+checkpoint/base-version routes, lease semantics and complete writer termination.
+Docker bridge/IP, boot/monotonic clock and container-ID evidence do not establish
+cross-node Kubernetes behavior. Generated PPTX still requires artifact and
+PowerPoint acceptance.
 
-```powershell
-python -m unittest discover -s panghu_agent/ppt_service/deploy/k8s/tests -p test_manifests.py -v
-```
-
-Render both targets with the actual Kubernetes/kustomize tool. Server dry-run
-needs a separately prepared validation namespace and resolvable schema; it must
-not be described as successful storage allocation, DB boot, proxy parsing or
-deployment acceptance. The zero-replica/suspended defaults, missing secrets,
-placeholder images, separately applied OIDC HTTPS egress, unresolved client/invites and
-unverified storage/UID bootstrap are deliberate remaining activation gates.
-No node memory taint toleration is added: observed node metrics were inconsistent,
-and real available capacity/scheduling remains to be accepted before activation.
+2026-10-24: this contract and [README.md](README.md) describe the current
+`ppt-service` deployment. Historical [RESULTS.md](RESULTS.md) and evidence keep
+the namespace, staged helper commands and validation boundaries from their own
+runs; those old commands are not the current installation procedure.
