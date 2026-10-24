@@ -272,7 +272,7 @@ def main():
         check("proxy_version_7_8_0", "v7.8.0" in version)
         proxy_env = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
             "SSL_CERT_FILE": str(work / "ca.pem"), "OAUTH2_PROXY_CLIENT_SECRET": fixture.client_secret,
-            "OAUTH2_PROXY_COOKIE_SECRET": base64.b64encode(secrets.token_bytes(32)).decode()}
+            "OAUTH2_PROXY_COOKIE_SECRET": base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()}
         proxy = subprocess.Popen([str(args.binary), "--config", str(work / "oauth2-proxy.cfg")],
                                  env=proxy_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         for _ in range(100):
