@@ -252,3 +252,31 @@ curl -sS -o /dev/null -w '%{http_code}\n' https://ppt.panghuer.top/api/v1/me
 
 Pi 生成 worker 尚未接入，`PPT_EXECUTION_ENABLED=false`；恢复网站和登录入口不代表已经能够生成 PPT。
 后续执行器工作见 [K8S_DEPLOYMENT_HANDOFF.md](../../K8S_DEPLOYMENT_HANDOFF.md)。
+
+## 9. 认证修复已提交并部署 — 2026-10-24
+
+用户随后授权“提交，推送，部署”，覆盖上文由用户自行部署的动作边界。
+本节记录本次实际发布结果；第 8 节中的未提交、未发布状态属于此前的本地验证阶段。
+
+- 业务代码：`panghu_agent` 提交 `19ced3e`；主仓库发布引用：`4a423d9`。
+  两者均已推送 GitHub 的 `codex/scientific-pi-worker` 分支，并由服务器快进拉取。
+- 在 `/root/armbianbegin/panghu_agent/ppt_service` 清除旧的
+  `PPT_AUTH_CONFIG/PPT_OWNER_CONFIG/PPT_CLIENT_ID/PPT_SITE_IMAGE` 覆盖值后运行
+  `KUBECONFIG=/etc/kubernetes/super-admin.conf bash deploy.sh`。
+  重新构建 ARM64 镜像、镜像自检、私有 registry 推送、数据库/存储检查及网站滚动发布均成功。
+- 发布镜像：`arm-cluster-master:5000/ppt-service-site@sha256:6d4c497d6db873790b9344773770d69fd9b7879ca8242c1005ecbf4fa2c89348`。
+  镜像自检核对 18 个运行输入、3 个真实打包网页资源，使用不带 `email_verified` 的
+  RS256 合成令牌访问首页、资源和身份 API，并检查 CSRF/项目 API；未调用模型。
+- 新 Pod `ppt-site-5df97f867c-djpq7` 为 `2/2 Running`，Deployment `1/1 Available`。
+  容器内 `auth.py` 摘要与服务器新源码一致，网站 loopback `/healthz` 返回 200。
+- `ppt-auth`、`ppt-oidc`、`ppt-owner` 的公开配置数据摘要与部署前一致，OAuth 代理镜像也一致。
+  运行容器中的 `PPT_EXECUTION_ENABLED` 仍为 `false`。
+- 公网 curl 检查：首页 302、匿名 `/api/v1/me` 401、`/ready` 200。
+  默认 Python User-Agent 请求曾被 Cloudflare 返回 403；curl 和浏览器标识对照请求正常。
+  该客户端过滤响应不能作为 PPT 认证失败的证据。
+
+旧镜像及配置摘要保存在服务器 `/root/ppt-auth-release-20261024-before.json`，
+发布后结果在 `/root/ppt-auth-release-20261024-after.json`，两份记录均不包含凭据。
+浏览器验证工具启动失败，真实 Casdoor 登录后的页面/API 操作仍待验证；
+合成令牌镜像自检与匿名公网检查不能替代真实浏览器 SSO 验收。
+Pi 执行接线、真实代理完整协议、CNI 拒绝路径及 PPT 产物验收继续按各自任务完成。

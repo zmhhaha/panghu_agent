@@ -56,3 +56,16 @@ python -m pytest ppt_service/tests/server/test_auth.py ppt_service/tests/server/
 默认签名令牌不携带 `email_verified`，覆盖首页、身份 API 和既有身份/名单/Origin/CSRF 拒绝检查；额外用例确认该声明缺失、为 `false` 或字符串时不控制 API 准入。5 项因 Windows 符号链接权限跳过，1 项因未指定独立构建前端 `PPT_SITE_TEST_DIST` 跳过，不能据此声称实际前端产物或 Linux ConfigMap 投影已验收。2 条现有依赖/合成 HS256 密钥警告保留。
 
 真实代理脚本已增加缺少 `email_verified` 的直连 API 检查，但尚未执行；上文 25 项是旧版脚本的历史范围。本轮没有构建新镜像或发布到集群，没有提交或推送代码，真实 Casdoor 登录后的页面/API 验证仍待部署新镜像后完成。
+
+## 2026-10-24 后续授权发布结果
+
+用户随后授权提交、推送和部署，已完成业务代码 `19ced3e` 与主仓库 `4a423d9` 的推送和服务器同步。
+标准 `deploy.sh` 已重新构建、验证、推送并发布镜像
+`arm-cluster-master:5000/ppt-service-site@sha256:6d4c497d6db873790b9344773770d69fd9b7879ca8242c1005ecbf4fa2c89348`。
+镜像自检核对 18 个运行输入、3 个打包网页资源；不带 `email_verified` 的 RS256 合成令牌可访问页面/身份 API，
+CSRF 和项目 API 检查通过，模型请求为 0。此为实际发布镜像的独立合成自检，不等同真实 Casdoor 登录。
+
+网站新 Pod `ppt-site-5df97f867c-djpq7` 为 2/2 Ready，运行代码摘要匹配新源码，
+公开认证配置和名单摘要保持一致。公网 curl 得到 `/` 302、匿名 `/api/v1/me` 401、`/ready` 200。
+运行中的模型执行仍关闭。完整发布记录见 [部署排障第 9 节](../k8s/TROUBLESHOOTING.md#9-认证修复已提交并部署--2026-10-24)。
+浏览器工具启动失败，真实登录后的操作与完整代理协议、名单投影和 CNI 等剩余验收保持待验；本次不勾选 P2 总项。
