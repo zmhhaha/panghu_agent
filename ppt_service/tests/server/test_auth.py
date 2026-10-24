@@ -22,7 +22,7 @@ def auth_client(tmp_path):
     key=rsa.generate_private_key(public_exponent=65537,key_size=2048)
     app.state.jwks=SimpleNamespace(get_signing_key_from_jwt=lambda token:SimpleNamespace(key=key.public_key()))
     def token(*,omit=(),**overrides):
-        claims={'iss':'https://casdoor.test','sub':'stable-alice','aud':'ppt','iat':datetime.now(timezone.utc),'exp':datetime.now(timezone.utc)+timedelta(minutes=5),'email':'alice@example.test','email_verified':True}|overrides
+        claims={'iss':'https://casdoor.test','sub':'stable-alice','aud':'ppt','iat':datetime.now(timezone.utc),'exp':datetime.now(timezone.utc)+timedelta(minutes=5),'email':'alice@example.test'}|overrides
         for claim in omit:claims.pop(claim,None)
         return jwt.encode(claims,key,algorithm='RS256')
     c=TestClient(app,base_url='https://ppt.test',client=('127.0.0.1',12345))
@@ -39,12 +39,19 @@ def test_signed_identity_and_csrf(auth_client):
 
 @pytest.mark.parametrize('claims',[{'iss':'https://other.test'},{'email':'unlisted@example.test'},
     {'sub':''},{'sub':123},{'sub':'x'*257},{'aud':'other'},{'exp':datetime.now(timezone.utc)-timedelta(seconds=60)},
-    {'omit':('email',)},{'omit':('email_verified',)},
-    {'email':None},{'email':123},{'email':'not-an-email'},{'email':' alice@example.test'},
-    {'email_verified':None},{'email_verified':False},{'email_verified':'true'},{'email_verified':1}])
+    {'omit':('email',)},
+    {'email':None},{'email':123},{'email':'not-an-email'},{'email':' alice@example.test'}])
 def test_invalid_claims_reject(auth_client,claims):
     app,c,token=auth_client
     assert c.get('/api/v1/me',headers={'Authorization':'Bearer '+token(**claims)}).status_code==401
+
+@pytest.mark.parametrize('claims',[{'omit':('email_verified',)},
+    {'email_verified':False},{'email_verified':'true'}], ids=['missing','false','string'])
+def test_casdoor_email_verification_claim_does_not_control_admission(auth_client,claims):
+    _,c,token=auth_client
+    response=c.get('/api/v1/me',headers={'Authorization':'Bearer '+token(**claims)})
+    assert response.status_code==200
+    assert response.json()['sub']=='stable-alice'
 
 def test_untrusted_peer_rejects_even_valid_jwt(auth_client):
     app,c,token=auth_client

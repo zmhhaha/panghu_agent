@@ -60,6 +60,9 @@ bash deploy.sh --skip-build
 
 ## 发布检查与故障处理
 
+本次实际故障、修复命令及验证边界集中记录在 [2026-10-24 部署排障记录](TROUBLESHOOTING.md)，
+包括 Cookie 编码与同步、通用输入错误、rollout 状态、Cloudflare 旧源站及网络策略。
+
 ```bash
 kubectl -n ppt-service get pods,pvc,externalsecret
 kubectl -n ppt-service rollout status deployment/ppt-site --timeout=300s

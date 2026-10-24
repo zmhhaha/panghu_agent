@@ -111,11 +111,13 @@ class Fixture:
         self.jwks_available = True
         self.issuer_calls = {"discovery": 0, "authorize": 0, "token": 0, "jwks": 0}
 
-    def token(self, key_id="synthetic-key-1", **overrides):
+    def token(self, key_id="synthetic-key-1", omit=(), **overrides):
         now = int(time.time())
         claims = {"iss": ISSUER, "aud": CLIENT, "sub": SUBJECT, "iat": now,
                   "exp": now + 300, "email": EMAIL, "email_verified": True}
         claims.update(overrides)
+        for claim in omit:
+            claims.pop(claim, None)
         return jwt.encode(claims, self.keys[key_id], algorithm="RS256", headers={"kid": key_id})
 
 
@@ -317,12 +319,16 @@ def main():
         check("mutation_valid_origin_csrf_accepted", http(session, PROXY + "/api/v1/projects", headers, payload)[0] == 201)
 
         direct = request.build_opener(request.HTTPSHandler(context=context))
+        check("real_api_admits_without_email_verified", http(direct, "http://127.0.0.1:8000/api/v1/me",
+              {"Authorization": "Bearer " + fixture.token(omit=("email_verified",))})[0] == 200)
+        valid_claims = {"iss": ISSUER, "aud": CLIENT, "sub": SUBJECT, "iat": int(time.time()),
+                        "exp": int(time.time()) + 300, "email": EMAIL}
         variants = {"wrong_issuer": fixture.token(iss="https://wrong.example.invalid"),
             "wrong_audience": fixture.token(aud="wrong-client"), "unlisted_email": fixture.token(email="synthetic-unlisted@example.invalid"),
             "expired": fixture.token(exp=int(time.time()) - 60),
-            "wrong_signature": jwt.encode({"iss": ISSUER, "aud": CLIENT, "sub": SUBJECT, "iat": int(time.time()), "exp": int(time.time()) + 300},
+            "wrong_signature": jwt.encode(valid_claims,
                                           rsa.generate_private_key(public_exponent=65537, key_size=2048), algorithm="RS256", headers={"kid": "synthetic-key-1"}),
-            "unsupported_hs256": jwt.encode({"iss": ISSUER, "aud": CLIENT, "sub": SUBJECT, "iat": int(time.time()), "exp": int(time.time()) + 300},
+            "unsupported_hs256": jwt.encode(valid_claims,
                                             "synthetic-hs256-key-that-is-not-an-rsa-key", algorithm="HS256", headers={"kid": "synthetic-key-1"})}
         for name, token in variants.items():
             check("real_api_rejects_" + name, http(direct, "http://127.0.0.1:8000/api/v1/me", {"Authorization": "Bearer " + token})[0] == 401)

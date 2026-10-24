@@ -35,7 +35,7 @@ def main():
     migrate(engine)
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     token = jwt.encode({'iss': 'https://p1.test', 'sub': 'p1-owner', 'aud': 'p1',
-                        'email': 'p1-owner@ppt.test', 'email_verified': True,
+                        'email': 'p1-owner@ppt.test',
                         'iat': datetime.now(timezone.utc), 'exp': datetime.now(timezone.utc) + timedelta(minutes=5)}, key, algorithm='RS256')
     with tempfile.TemporaryDirectory() as scratch:
         emails = Path(scratch) / 'emails'

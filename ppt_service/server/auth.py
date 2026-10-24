@@ -72,7 +72,8 @@ async def authenticate(request:Request)->Identity:
         sub=claims['sub']
         if not isinstance(sub,str) or not sub or len(sub)>256:raise ValueError()
         email=claims.get('email')
-        if claims.get('email_verified') is not True or not _exact_email(email):raise ValueError()
+        # Casdoor enforces email verification before issuing this identity.
+        if not _exact_email(email):raise ValueError()
     except Exception:
         raise HTTPException(401,detail={'code':'authentication_required'}) from None
     if email.casefold() not in invitation_emails(config.invitation_emails_file):

@@ -63,7 +63,7 @@ The end-to-end checks cover real parsing/startup; anonymous API 401 without a
 redirect; a completed synthetic authorization-code exchange; replacement of
 caller-supplied Authorization by the session's ID token; host-only Secure,
 HttpOnly, Path=/ and SameSite=Lax cookie attributes; synthetic cookie size;
-the real API's issuer/audience/subject and verified-email checks, Origin/CSRF mutations and
+the real API's issuer/audience/subject and email-allowlist checks, Origin/CSRF mutations and
 test/pending guard; invalid JWTs; accepting a new JWKS kid; unknown-kid failure
 when JWKS is unavailable; and client-cookie removal on logout.
 
@@ -77,8 +77,13 @@ The API and proxy use the same owner-maintained email file. In deployment this
 is `INVITATION_EMAILS_FILE=/owner/emails`; the synthetic fixture sets
 `Settings.invitation_emails_file` to its own temporary file containing only
 `synthetic-invited@example.invalid`. No email/sub pairing is needed. The API
-requires the signed JWT's `email_verified` to be the boolean `true`, and matches
-its email to the file with `casefold`. Caller-supplied identity/email headers
+matches the signed JWT's email to the file with `casefold`. Casdoor owns email
+verification; the API's admission decision does not depend on `email_verified`
+being present or on its value. A direct request to the real API exercises the
+missing claim while retaining a valid signature and allowlisted email; API unit
+tests also cover boolean-false and string-valued claims. The proxy fixture retains
+its existing protocol settings.
+Caller-supplied identity/email headers
 cannot grant access. Ownership remains keyed by issuer and stable subject,
 so two subjects using the same invited email cannot see each other's projects.
 

@@ -35,10 +35,24 @@
 
 P1 已有的打包镜像 47 项 site/auth 检查仍是原有证据，见 [P1 RESULTS.md](../k8s/RESULTS.md)；它不能替代本轮待运行的真实代理验证。当前按正常服务部署，`/healthz` 返回 `{"status":"ok"}`；规划与生成执行仍未接通，产物独立质量检查及 PowerPoint 人工验收仍须另行完成。
 
-## 邮箱准入改造后的本地 API/站点验证
+## 邮箱准入改造后的本地 API/站点验证（历史记录）
 
 API 已改为与代理共用 `/owner/emails` 邮箱名单，不再配置 subject 邀请或 email/sub 配对。JWT 必须提供 `email_verified=true` 和名单中的 email；issuer/sub 继续作为项目所有权键。每次请求读取最多 64 KiB，不缓存旧名单，并支持 Kubernetes ConfigMap 投影 symlink；空/未配置名单为 401，配置文件读取或格式错误为 503。
 
 本地实际构建目录参加 auth/site 验证，最终 **73 passed、5 skipped、0 failed，10.31 秒**，2 条已有依赖/合成 HS256 测试警告。新增检查覆盖 email 缺失、未验证与错误类型、未列入、伪造转发头、casefold、动态增删、丢失/不可读/非法/超大文件、同邮箱不同 subject 或 issuer 的项目隔离。5 项 symlink 测试因 Windows 账户缺少创建符号链接的权限而明确跳过，不能称为真实 ConfigMap 投影验收通过；Linux 部署仍须执行。
 
 JUnit 位于工作区 `.research-temp/ppt-p2-email-20261023/auth-site-final02.xml`。初次默认 pytest 临时目录 ACL 导致 74 项 setup error；切换到工作区独立 `--basetemp` 后恢复。随后 symlink 权限错误通过明确的平台 skip 记录，未放宽产品行为。真实代理 25 项仍未执行，本轮没有构建新镜像、上传、部署或请求模型。
+
+## 2026-10-24 邮箱验证责任调整
+
+当前合同以 [OAuth 配置](../../../../oauth/k8s/PPT.md) 为准：邮箱验证由 Casdoor 的注册和登录策略负责，PPT API 不再额外要求或判断 `email_verified` 声明。API 仍校验签名、issuer、audience、有效期、稳定 `sub`，从签名令牌取得有效邮箱并检查独立精确白名单，保留 Origin/CSRF 与项目归属隔离；代理 OIDC 安全配置继续生效。上节强制 `email_verified=true` 的说明和检查数字仅反映当时版本，不作为本次调整后的验证收据；新版本需单独记录代码检查和真实登录结果。
+
+本次本地 auth/site 回归结果为 **70 passed、6 skipped、0 failed，13.87 秒**。命令在 `panghu_agent` 目录运行：
+
+```bash
+python -m pytest ppt_service/tests/server/test_auth.py ppt_service/tests/server/test_site.py -q -p no:cacheprovider --basetemp=ppt_service/.runtime/pytest-casdoor-auth-20261024-r1 --tb=short
+```
+
+默认签名令牌不携带 `email_verified`，覆盖首页、身份 API 和既有身份/名单/Origin/CSRF 拒绝检查；额外用例确认该声明缺失、为 `false` 或字符串时不控制 API 准入。5 项因 Windows 符号链接权限跳过，1 项因未指定独立构建前端 `PPT_SITE_TEST_DIST` 跳过，不能据此声称实际前端产物或 Linux ConfigMap 投影已验收。2 条现有依赖/合成 HS256 密钥警告保留。
+
+真实代理脚本已增加缺少 `email_verified` 的直连 API 检查，但尚未执行；上文 25 项是旧版脚本的历史范围。本轮没有构建新镜像或发布到集群，没有提交或推送代码，真实 Casdoor 登录后的页面/API 验证仍待部署新镜像后完成。

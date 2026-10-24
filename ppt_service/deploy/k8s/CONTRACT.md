@@ -61,10 +61,16 @@ policy cannot isolate those two containers from each other.
 Both containers mount the independent `ppt-owner` ConfigMap directory read-only
 at `/owner`, without `subPath`. `INVITATION_EMAILS_FILE` and
 `authenticated_emails_file` point to the same `/owner/emails`. Membership uses
-exact verified emails, one per line; resource ownership remains bound to the
+exact emails, one per line; resource ownership remains bound to the
 verified issuer and stable subject. The API reads the list on each authenticated
 request. Empty denies everyone, while unreadable or malformed lists return 503.
 Projection updates take time and do not terminate existing streams.
+
+Casdoor enforces email verification through its registration and login policies.
+The API does not additionally require or evaluate an `email_verified` claim.
+It still requires a valid signed email and exact allowlist membership, alongside
+signature, issuer, audience and token-time checks. The proxy's OIDC security
+settings remain in effect.
 
 ## Required configuration and credentials
 
@@ -104,7 +110,7 @@ complete environment dumps.
 Public authentication settings are owned by
 [oauth/k8s](../../../../oauth/k8s/PPT.md). The proxy client ID and API audience
 must match the dedicated Casdoor application. Actual RS256 tokens, issuer,
-audience, expiry, verified email, JWKS, forwarded identity, Cookie behavior,
+audience, expiry, valid signed email and allowlist membership, JWKS, forwarded identity, Cookie behavior,
 Origin and CSRF are verified during deployment acceptance. The base does not
 duplicate the shared authentication ConfigMaps.
 

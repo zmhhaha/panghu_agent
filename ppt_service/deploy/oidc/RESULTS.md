@@ -61,3 +61,7 @@
 首次构建与配置合跑为 47 通过、3 失败，原始 JUnit 保留在工作区 `.research-temp/ppt-server-build-final/tests.xml`。三项失败来自旧测试强制要求邮箱名单为空；现已修正为验证独立名单的结构、字符串及精确邮箱合同，未清空或改写用户已填写的名单。上面的 34 项是修正后重新执行的结果。
 
 这些本地检查不代表新脚本已在服务器构建、推送或执行 K8s 部署。Casdoor/Cloudflare 仍由用户配置，新空 CephFS `state` 仍由存储管理员按 `10000:10000`/`0700` 准备，不使用网站 fsGroup 或递归 chown 旧树。Pi/真实模型未接通，执行关闭、test 与人工验收 pending 保留。
+
+## 邮箱验证责任调整 — 2026-10-24
+
+上文收据保留当时的配置和检查范围。当前认证合同见 [OAuth 配置](../../../../oauth/k8s/PPT.md)：Casdoor 负责邮箱验证，PPT API 不再额外要求或判断 `email_verified` 声明。签名、issuer、audience、有效期、稳定 `sub`、有效签名邮箱、独立精确白名单、Origin/CSRF 和项目归属隔离仍须检查；代理 OIDC 安全配置继续生效。上文要求 `email_verified=true` 的历史说明及其检查数字不能作为本次调整后的验证收据。

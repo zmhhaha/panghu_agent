@@ -6,7 +6,7 @@ PPT 使用独立 Casdoor 应用，部署到 `ppt-service`，公开地址为 `htt
 
 公开认证参数集中在 [ppt-proxy-configmap.yaml](../../../../oauth/k8s/ppt-proxy-configmap.yaml)。`configure-ppt.py` 只用 `--client-id` 和 `--output` 生成一致的代理 client ID 与 API audience。精确邮箱名单独立放在 [ppt-owner-configmap.yaml](../../../../oauth/k8s/ppt-owner-configmap.yaml) 的 `ppt-owner.data.emails`，每行一个邮箱；凭据由 [Vault](../../../../vault/inventory/PPT-SERVICE.md) 管理，路径为 `secret/ppt-service/...`。业务目录不保存第二份代理配置或凭据示例。
 
-同 Pod 的网站仅绑定 `127.0.0.1:8000`，Service 只暴露代理 4180。页面、`/assets/*` 和 API 均需认证并返回 `no-store`。API 验证 RS256、issuer、audience、有效期、稳定 `sub`、loopback peer，以及写入请求的 Origin/CSRF；邮箱必须已验证且位于名单中。项目归属继续绑定 `issuer/sub`。
+同 Pod 的网站仅绑定 `127.0.0.1:8000`，Service 只暴露代理 4180。页面、`/assets/*` 和 API 均需认证并返回 `no-store`。API 验证 RS256、issuer、audience、有效期、稳定 `sub`、loopback peer，以及写入请求的 Origin/CSRF；签名令牌中必须包含有效邮箱，且位于名单中。邮箱验证由 Casdoor 的注册和登录策略负责，API 不再额外要求或判断 `email_verified` 声明，无需额外配置该 Token attribute。代理 OIDC 安全配置继续生效。项目归属继续绑定 `issuer/sub`。
 
 网站与代理均挂载只读 `/owner` 目录，读取同一份 `/owner/emails`，不使用 `subPath`。增删名单后应用 ConfigMap 并等待目录投影更新，API 在后续认证请求中重读名单；空名单拒绝全部用户，读取或格式错误返回 503。名单变更不立即终止已有连接。
 
