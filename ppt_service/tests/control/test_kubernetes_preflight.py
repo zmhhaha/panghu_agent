@@ -1,8 +1,14 @@
 """Offline lifecycle/failure tests; these never claim actual CNI isolation."""
 import json
+import os
 from pathlib import Path
+import signal
 import socket
+import subprocess
+import sys
 import threading
+import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -132,6 +138,120 @@ def test_probe_budget_expires_instead_of_self_reporting_success():
     clock = iter((0, 31))
     with pytest.raises(ControlError, match='preflight_probe_timeout'):
         preflight.run_probes('sandbox', request, monotonic=lambda: next(clock))
+
+
+def test_idle_proxy_listener_stops_without_another_incoming_connection():
+    ready, stopped = threading.Event(), threading.Event()
+    thread = threading.Thread(target=preflight._serve, args=('challenge', ready, stopped),
+                              kwargs={'bind': ('127.0.0.1', 0)}, daemon=True)
+    thread.start()
+    try:
+        assert ready.wait(2)
+        stopped.set()
+        thread.join(2)
+        assert not thread.is_alive()
+    finally:
+        stopped.set()
+        thread.join(2)
+
+
+def test_proxy_sigterm_handler_stops_listener_and_preserves_finished_probe_report(monkeypatch):
+    request = {'dns_servers': [], 'challenge': 'scope-challenge'}
+    report = {'passed': True, 'scope_uid': 'completed-probe'}
+    written, handlers, stop_events, observed_shutdown = [], [], [], []
+    listener_ready = threading.Event()
+    previous = object()
+    original_serve = preflight._serve
+    monkeypatch.setattr(preflight, 'read_json', lambda *args: request)
+    monkeypatch.setattr(preflight, 'dns_servers', lambda: [])
+    monkeypatch.setattr(preflight, 'run_probes', lambda *args, **kwargs: dict(report))
+    monkeypatch.setattr(preflight, 'atomic_json', lambda path, value: written.append(value))
+    monkeypatch.setattr(preflight.signal, 'signal', lambda number, handler: handlers.append((number, handler)) or previous)
+    def serve(challenge, ready, stopped):
+        stop_events.append(stopped)
+        class Ready:
+            def set(self):
+                ready.set()
+                listener_ready.set()
+        original_serve(challenge, Ready(), stopped, bind=('127.0.0.1', 0))
+    monkeypatch.setattr(preflight, '_serve', serve)
+    def terminate():
+        if listener_ready.wait(3):
+            try:
+                if handlers and callable(handlers[0][1]):
+                    handlers[0][1](signal.SIGTERM, None)
+                observed_shutdown.append(stop_events[0].is_set())
+            finally:
+                # Keep a broken signal-handler regression bounded as well.
+                stop_events[0].set()
+    cancellation = threading.Thread(target=terminate, daemon=True)
+    cancellation.start()
+    assert preflight.probe_main('proxy') == 0
+    cancellation.join(2)
+    assert not cancellation.is_alive()
+    assert written == [report]
+    assert observed_shutdown == [True]
+    assert handlers[0][0] == signal.SIGTERM and callable(handlers[0][1])
+    assert handlers[-1] == (signal.SIGTERM, previous)
+
+
+def test_main_stop_observation_outlasts_kubelet_grace_without_using_total_budget(runtime, monkeypatch, capsys):
+    config, settings, _, backend, attempt = runtime
+    grace = backend.pod(backend.reconcile(attempt), 'budget-probe', 'proxy', preflight.MODULE, [])['spec']['terminationGracePeriodSeconds']
+    observed = []
+    monkeypatch.setattr(preflight.RuntimeConfig, 'env', classmethod(lambda cls: config))
+    monkeypatch.setattr(preflight.KubeSettings, 'env', classmethod(lambda cls: settings))
+    def transport(config, selected):
+        observed.append(selected)
+        return SimpleNamespace(client=SimpleNamespace(api_server='https://192.168.137.101:6443'))
+    monkeypatch.setattr(preflight, 'KubernetesBackend', transport)
+    monkeypatch.setattr(preflight, 'deployment_targets', lambda *args, **kwargs: targets())
+    monkeypatch.setattr(preflight, 'Preflight', lambda *args: SimpleNamespace(run=lambda: {'passed': True}))
+    monkeypatch.setattr(sys, 'argv', ['preflight'])
+    assert preflight.main() == 0
+    assert observed[0].stop_timeout >= grace + 10
+    assert preflight.SCHEDULING_SECONDS + observed[0].stop_timeout <= preflight.TOTAL_SECONDS - 5
+    assert json.loads(capsys.readouterr().out)['passed'] is True
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='Real Unix SIGTERM delivery requires POSIX')
+def test_proxy_process_handles_real_sigterm_and_keeps_probe_report(tmp_path):
+    report, ready = tmp_path / 'probe.json', tmp_path / 'ready'
+    code = '''
+import signal
+from pathlib import Path
+from ppt_service.control import kubernetes_preflight as p
+report, ready_file = Path(REPORT_PATH), Path(READY_PATH)
+p.read_json = lambda *args: {'dns_servers': [], 'challenge': 'scope-challenge'}
+p.dns_servers = lambda: []
+p.run_probes = lambda *args, **kwargs: {'passed': True, 'scope_uid': 'completed-probe'}
+original_write, original_serve = p.atomic_json, p._serve
+p.atomic_json = lambda path, value: original_write(report, value)
+def serve(challenge, ready, stopped):
+    class Ready:
+        def set(self):
+            ready.set()
+            ready_file.write_text('listening')
+    original_serve(challenge, Ready(), stopped, bind=('127.0.0.1', 0))
+p._serve = serve
+raise SystemExit(p.probe_main('proxy'))
+'''.replace('REPORT_PATH', repr(str(report))).replace('READY_PATH', repr(str(ready)))
+    process = subprocess.Popen([sys.executable, '-c', code], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        deadline = time.monotonic() + 5
+        while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert ready.exists(), 'proxy failed to reach its actual listening state'
+        before = report.read_bytes()
+        process.send_signal(signal.SIGTERM)
+        assert process.wait(timeout=3) == 0
+        assert report.read_bytes() == before
+        assert json.loads(before)['passed'] is True
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=3)
+        process.communicate(timeout=3)
 
 
 def test_scope_proxy_probe_requires_actual_echo_and_not_just_open_port():

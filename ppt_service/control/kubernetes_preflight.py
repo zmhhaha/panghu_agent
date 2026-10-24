@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import signal
 import socket
 import ssl
 import struct
@@ -29,7 +30,8 @@ from .staging import atomic_json, make_readonly, read_json
 
 MODULE = 'ppt_service.control.kubernetes_preflight'
 PROBE_SECONDS = 30
-SCHEDULING_SECONDS = 85
+SCHEDULING_SECONDS = 70
+STOP_OBSERVATION_SECONDS = 45
 TOTAL_SECONDS = 120
 SOCKET_SECONDS = 0.7
 UPSTREAM_IP = '62.234.50.20'
@@ -161,14 +163,18 @@ def run_probes(role, request, *, local_node=None, local_dns=None, probe=_socket_
             'passed': all(row['passed'] for row in result), 'probes': result}
 
 
-def _serve(challenge, ready):
+def _serve(challenge, ready, stopped, *, bind=('0.0.0.0', 8080)):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server.bind(('0.0.0.0', 8080))
+        server.bind(bind)
         server.listen(16)
+        server.settimeout(0.2)
         ready.set()
-        while True:
-            stream, _ = server.accept()
+        while not stopped.is_set():
+            try:
+                stream, _ = server.accept()
+            except socket.timeout:
+                continue
             with stream:
                 stream.settimeout(1)
                 try:
@@ -181,17 +187,30 @@ def _serve(challenge, ready):
 def probe_main(role):
     request = read_json(Path('/request'), 'request.json')
     require(dns_servers() == request['dns_servers'], 'preflight_dns_mismatch')
-    report = run_probes(role, request, local_node=os.getenv('PPT_PREFLIGHT_NODE_IP'), local_dns=request['dns_servers'])
-    atomic_json(Path('/output/probe-result.json'), report)
-    if role == 'proxy':
-        # Ready means its probes have finished, so the controller can schedule
-        # the worker while this fixed, credential-free listener remains alive.
-        ready = threading.Event()
-        thread = threading.Thread(target=_serve, args=(request['challenge'], ready), daemon=True)
-        thread.start()
-        require(ready.wait(2), 'preflight_proxy_unavailable')
-        thread.join(PROBE_SECONDS + 60)
-    return 0 if report['passed'] else 1
+    stopped = threading.Event()
+    # Python is PID 1 in the Pod. An explicit handler makes the kubelet's
+    # SIGTERM stop the listener instead of waiting for the 30-second SIGKILL.
+    previous = signal.signal(signal.SIGTERM, lambda *_: stopped.set()) if role == 'proxy' else None
+    try:
+        report = run_probes(role, request, local_node=os.getenv('PPT_PREFLIGHT_NODE_IP'), local_dns=request['dns_servers'])
+        atomic_json(Path('/output/probe-result.json'), report)
+        if role == 'proxy':
+            # Ready means its probes have finished, so the controller can
+            # schedule the worker while this credential-free listener lives.
+            ready = threading.Event()
+            thread = threading.Thread(target=_serve, args=(request['challenge'], ready, stopped), daemon=True)
+            thread.start()
+            try:
+                require(ready.wait(2), 'preflight_proxy_unavailable')
+                stopped.wait(PROBE_SECONDS + 60)
+            finally:
+                stopped.set()
+                thread.join(2)
+            require(not thread.is_alive(), 'preflight_proxy_not_stopped')
+        return 0 if report['passed'] else 1
+    finally:
+        if role == 'proxy':
+            signal.signal(signal.SIGTERM, previous)
 
 
 class Preflight:
@@ -318,7 +337,7 @@ def main():
         return probe_main(args.probe_role)
     try:
         config, settings = RuntimeConfig.env(), KubeSettings.env()
-        settings = replace(settings, startup_timeout=60, stop_timeout=25, poll_seconds=0.25)
+        settings = replace(settings, startup_timeout=60, stop_timeout=STOP_OBSERVATION_SECONDS, poll_seconds=0.25)
         backend = KubernetesBackend(config, settings)
         result = Preflight(backend, deployment_targets(config, api_url=backend.client.api_server, node_ips=args.node_ip)).run()
     except Exception as exc:
