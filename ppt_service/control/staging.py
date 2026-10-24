@@ -98,7 +98,10 @@ def make_writable(root:Path):
 
 def storage_bytes(root:Path):
     total=0;count=0
-    for folder,dirs,files in os.walk(root,followlinks=False):
+    def unavailable(_):
+        # os.walk otherwise ignores unreadable directories and understates use.
+        raise ControlError('storage_inventory_unavailable') from None
+    for folder,dirs,files in os.walk(root,followlinks=False,onerror=unavailable):
         dirs[:]=[d for d in dirs if not (Path(folder)/d).is_symlink()]
         for name in files:
             info=(Path(folder)/name).lstat();count+=1
