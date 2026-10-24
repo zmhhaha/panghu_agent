@@ -1,5 +1,5 @@
 from __future__ import annotations
-import asyncio,json,secrets
+import asyncio,json,re,secrets
 from typing import Literal
 from fastapi import FastAPI,Depends,Request,Response,UploadFile,File,Header,HTTPException
 from fastapi.responses import StreamingResponse
@@ -12,6 +12,7 @@ from .models import *
 from .repository import Repository,fail,job_dto,TERMINAL
 from .storage import Storage,MAX_PROJECT
 from .middleware import BodyLimitMiddleware
+CSRF_TOKEN_RE=re.compile(r'[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]\Z')
 class Strict(BaseModel):model_config=ConfigDict(extra='forbid')
 class ProjectCreate(Strict):
     title:str=Field(min_length=1,max_length=200)
@@ -79,8 +80,11 @@ def create_app(settings:Settings|None=None,engine=None):
     @app.get('/healthz')
     def health():return {'status':'ok'}
     @app.get('/api/v1/me')
-    def me(response:Response,owner=Depends(authenticate),s=Depends(session)):
-        token=secrets.token_urlsafe(32)
+    def me(request:Request,response:Response,owner=Depends(authenticate),s=Depends(session)):
+        # Other tabs share this cookie but retain their own in-memory header.
+        # Reading a profile must not invalidate those authenticated documents.
+        token=request.cookies.get('ppt_csrf','')
+        if not CSRF_TOKEN_RE.fullmatch(token):token=secrets.token_urlsafe(32)
         response.set_cookie('ppt_csrf',token,secure=True,httponly=False,samesite='strict',path='/')
         q=s.get(UserQuota,(owner.issuer,owner.sub))
         return {'issuer':owner.issuer,'sub':owner.sub,'csrf_token':token,'quota':{'enabled':bool(q and q.enabled),'period':q.period if q else None,'generation_limit':q.generation_limit if q else None,'revision_limit':q.revision_limit if q else None}}

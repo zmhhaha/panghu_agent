@@ -2,8 +2,12 @@ import type { Job, Profile, Project, Version } from './domain';
 import { adaptDirections } from './planning';
 const root = '/api/v1';
 let csrfToken: string | null = null;
+let authenticationEpoch = 0;
+let pendingProfile: Promise<Profile> | null = null;
+function clearAuthentication() { csrfToken=null;authenticationEpoch++;pendingProfile=null; }
 export const errors: Record<string,string> = {
   EXECUTION_NOT_CONNECTED:'执行器尚未接通，当前仅可测试项目、资料和设置；不会调用模型。',
+  CSRF_REJECTED:'页面安全校验已失效，请刷新页面后重试。',
   CONSENT_REQUIRED:'请先确认外部模型数据传输，再重试此操作。', UPLOAD_LIMIT:'文件超出上传限额，请检查单文件 25 MiB、项目 10 文件 / 100 MiB 限制。',
   UNAUTHENTICATED:'登录已过期，请重新登录。', FORBIDDEN:'当前账号无法执行此操作。', NOT_FOUND:'资源不可用或已删除，请返回项目列表。', STALE_REVISION:'资料或设置已变更，请刷新项目并重新确认方案。', STALE_PLAN:'确认已失效，请重新规划并确认。', SNAPSHOT_MISMATCH:'材料快照已变化，请重新规划。', ACTIVE_JOB_EXISTS:'项目已有活动任务，请等待完成或取消。', QUEUE_FULL:'任务队列已满，请稍后重试。', PARSE_FAILED:'资料解析失败，请检查文件是否含可读文本，或更换文件。', MODEL_CONNECTION_FAILED:'模型连接失败，请稍后重新提交。', TIMEOUT:'任务超时，已有版本仍可使用。请减少资料或页数后重试。', QUALITY_GATE_FAILED:'产物未通过质量检查，请调整要求后重试。', RENDER_FAILED:'预览渲染失败，请重试或联系管理员。', EXPORT_FAILED:'PPTX 导出失败，请重试或联系管理员。', STORAGE_LIMIT:'存储空间不足，请清理不再需要的项目后重试。', QUOTA_EXCEEDED:'当前可用额度不足，请联系服务管理员。', NETWORK_ERROR:'无法连接服务，请检查网络并重试。', INVALID_RESPONSE:'服务响应暂不可用，请刷新或联系管理员。', CURSOR_EXPIRED:'进度记录已过期，正在重新读取任务状态。'
 };
@@ -18,6 +22,9 @@ export class IntentKeys {
 }
 export const intents = new IntentKeys();
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  return performRequest<T>(path,init,true);
+}
+async function performRequest<T>(path: string, init: RequestInit, retryCsrf: boolean): Promise<T> {
   let response: Response;
   const headers = new Headers(init.headers);
   headers.delete('X-CSRF-Token');
@@ -25,10 +32,37 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   if (isMutation && csrfToken) headers.set('X-CSRF-Token',csrfToken);
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type','application/json');
   try { response = await fetch(`${root}${path}`, { credentials:'same-origin', ...init, headers }); } catch { throw new ApiError('NETWORK_ERROR'); }
-  if (response.status === 401) csrfToken = null;
-  if (!response.ok) { let code = response.status === 401 ? 'UNAUTHENTICATED' : response.status === 403 ? 'FORBIDDEN' : response.status === 404 ? 'NOT_FOUND' : 'SERVICE_ERROR'; try { const body = await response.json(); code = body.error?.code ?? body.detail?.code ?? body.code ?? code; } catch { /* Never expose server HTML or raw details. */ } throw new ApiError(code,response.status); }
+  if (response.status === 401) clearAuthentication();
+  if (!response.ok) {
+    let code = response.status === 401 ? 'UNAUTHENTICATED' : response.status === 403 ? 'FORBIDDEN' : response.status === 404 ? 'NOT_FOUND' : 'SERVICE_ERROR';
+    let csrfRejected=false;
+    try { const body=await response.json();const raw=body?.error?.code??body?.detail?.code??body?.code;if(typeof raw==='string')code=raw;csrfRejected=body?.detail?.code==='csrf_rejected'; } catch { /* Never expose server HTML or raw details. */ }
+    // This exact rejection occurs before mutation. Preserve its body and intent
+    // key, and recover once; other errors never repeat a write automatically.
+    const replayable=typeof ReadableStream==='undefined'||!(init.body instanceof ReadableStream);
+    if(response.status===403&&isMutation&&csrfRejected&&retryCsrf&&replayable) {
+      await readProfile();
+      return performRequest<T>(path,init,false);
+    }
+    throw new ApiError(code,response.status);
+  }
   if (response.status === 204) return undefined as T;
   try { return await response.json() as T; } catch { throw new ApiError('INVALID_RESPONSE'); }
+}
+function readProfile():Promise<Profile> {
+  if(pendingProfile)return pendingProfile;
+  const epoch=authenticationEpoch;
+  const operation=(async()=>{
+    const raw=await request<RecordValue>('/me');
+    // A 401 from another request invalidates pending identity reads too.
+    if(epoch!==authenticationEpoch)throw new ApiError('UNAUTHENTICATED',401);
+    csrfToken=typeof raw.csrf_token==='string'&&raw.csrf_token?raw.csrf_token:null;
+    const {csrf_token:_csrf,...profile}=raw;
+    return {...profile,subject:raw.sub??raw.subject,name:raw.name??raw.display_name??'我的账号'} as Profile;
+  })();
+  const pending=operation.finally(()=>{if(pendingProfile===pending)pendingProfile=null;});
+  pendingProfile=pending;
+  return pending;
 }
 export async function mutate<T>(path:string,payload:unknown = {},method='POST'):Promise<T> { const key=intents.key(path,payload); const result=await request<T>(path,{method,body:JSON.stringify(payload),headers:{'Idempotency-Key':key}}); intents.complete(path,payload); return result; }
 const id = encodeURIComponent;
@@ -49,7 +83,7 @@ export function adaptProject(raw: RecordValue): Project {
 export function adaptJob(raw:RecordValue):Job {return {...raw,id:raw.id??raw.job_id,last_event_seq:raw.event_cursor??raw.last_event_seq??0} as Job;}
 const flatSettings=(s:Project['settings'])=>({page_count:s.pages,language:s.language==='简体中文'?'zh':s.language,audience:s.audience,purpose:s.purpose,style:s.style,requirements:s.requirements});
 export const api = {
-  me: async () => {const raw=await request<RecordValue>('/me');csrfToken=typeof raw.csrf_token==='string'&&raw.csrf_token?raw.csrf_token:null;const {csrf_token: _csrf, ...profile}=raw;return {...profile,subject:raw.sub??raw.subject,name:raw.name??raw.display_name??'我的账号'} as Profile;}, projects: async () => (await request<RecordValue[]>('/projects')).map(adaptProject), project: async (projectId:string, signal?:AbortSignal) => adaptProject(await request<RecordValue>(`/projects/${id(projectId)}`,{signal})),
+  me: readProfile, projects: async () => (await request<RecordValue[]>('/projects')).map(adaptProject), project: async (projectId:string, signal?:AbortSignal) => adaptProject(await request<RecordValue>(`/projects/${id(projectId)}`,{signal})),
   create: async (title:string) => adaptProject(await mutate<RecordValue>('/projects',{title,purpose:'',audience:'',page_count:8,language:'zh',style:'',requirements:'',external_model_ack:false})),
   update: async (p:Project, settings:Project['settings']) => adaptProject(await mutate<RecordValue>(`/projects/${id(p.id)}`,{title:p.title,...flatSettings(settings),external_model_ack:p.external_model_ack??false,expected_revision:p.revision},'PATCH')),
   acknowledge: async (p:Project) => adaptProject(await mutate<RecordValue>(`/projects/${id(p.id)}`,{title:p.title,...flatSettings(p.settings),external_model_ack:true,expected_revision:p.revision},'PATCH')),
@@ -62,14 +96,14 @@ export const api = {
   job: async (jobId:string) => adaptJob(await request<RecordValue>(`/jobs/${id(jobId)}`)), cancel: async (jobId:string) => adaptJob(await mutate<RecordValue>(`/jobs/${id(jobId)}/cancel`)),
   versions: (projectId:string) => request<Version[]>(`/projects/${id(projectId)}/versions`),
   preview: (versionId:string,page:number) => `${root}/versions/${id(versionId)}/slides/${page}/preview`,
-  download: async (versionId:string) => { const response=await fetch(`${root}/versions/${id(versionId)}/download`,{credentials:'same-origin'}); if(response.status===401)csrfToken=null; if (!response.ok) throw new ApiError(response.status===401?'UNAUTHENTICATED':'EXPORT_FAILED',response.status); const blob=await response.blob(); if (!blob.size) throw new ApiError('EXPORT_FAILED'); const url=URL.createObjectURL(blob); const link=document.createElement('a'); link.href=url; link.download=`presentation-${versionId}.pptx`; link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); }
+  download: async (versionId:string) => { const response=await fetch(`${root}/versions/${id(versionId)}/download`,{credentials:'same-origin'}); if(response.status===401)clearAuthentication(); if (!response.ok) throw new ApiError(response.status===401?'UNAUTHENTICATED':'EXPORT_FAILED',response.status); const blob=await response.blob(); if (!blob.size) throw new ApiError('EXPORT_FAILED'); const url=URL.createObjectURL(blob); const link=document.createElement('a'); link.href=url; link.download=`presentation-${versionId}.pptx`; link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); }
 };
 export const cursorStore = { read(jobId:string) { const n=Number(localStorage.getItem(`ppt:cursor:${jobId}`)); return Number.isSafeInteger(n)&&n>=0?n:0; }, write(jobId:string,seq:number) { if (Number.isSafeInteger(seq)&&seq>=0) localStorage.setItem(`ppt:cursor:${jobId}`,String(seq)); } };
 export interface BusinessEvent { seq:number; type:string; payload?: { status?:string; stage?:string }; }
 // Fetch streaming supports a real Last-Event-ID header on every reconnect; EventSource cannot set it.
 export async function consumeEvents(jobId:string,cursor:number,signal:AbortSignal,onEvent:(event:BusinessEvent)=>void) {
  const response=await fetch(`${root}/jobs/${id(jobId)}/events`,{credentials:'same-origin',headers:{Accept:'text/event-stream',...(cursor?{'Last-Event-ID':String(cursor)}:{})},signal});
- if (response.status===401) csrfToken=null;
+ if (response.status===401) clearAuthentication();
  if (response.status===410 || response.status===409) throw new ApiError('CURSOR_EXPIRED',response.status);
  if (!response.ok) throw new ApiError(response.status===401?'UNAUTHENTICATED':'NETWORK_ERROR',response.status);
  if (!response.body) throw new ApiError('INVALID_RESPONSE');
