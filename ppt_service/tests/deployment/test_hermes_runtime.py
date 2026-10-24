@@ -62,8 +62,37 @@ def test_controller_is_trusted_and_tokens_never_reach_task_service_account():
     secret_rule = next(rule for rule in role['rules'] if rule['resources'] == ['secrets'])
     assert 'list' not in secret_rule['verbs']
     security = resource(result, 'Deployment', runtime.CONTROLLER)['spec']['template']['spec']['containers'][0]['securityContext']
-    assert security['capabilities'] == {'drop': ['ALL'], 'add': ['CHOWN', 'DAC_OVERRIDE', 'FOWNER']}
+    assert security['capabilities'] == {'drop': ['ALL']}
     assert security['allowPrivilegeEscalation'] is False and security['readOnlyRootFilesystem'] is True
+
+
+def test_controller_and_task_manifests_fit_restricted_policy_and_shared_file_owner(tmp_path):
+    import uuid
+    from ppt_service.control.execution import RuntimeConfig
+    from ppt_service.control.kubernetes import KubeSettings, KubernetesBackend
+
+    controller_pod = resource(manifest(), 'Deployment', runtime.CONTROLLER)['spec']['template']['spec']
+    backend = KubernetesBackend(RuntimeConfig(tmp_path), KubeSettings(WORKER_IMAGE), client=SimpleNamespace())
+    handle = backend.register_sandbox_scope(str(uuid.uuid4()))
+    modules = {'worker': 'ppt_service.worker.execute', 'proxy': 'ppt_service.worker.model_proxy',
+               'sandbox': 'ppt_service.control.parsing'}
+    pods = [controller_pod, *[backend.pod(handle, 'security-probe-' + role, role, module, [])['spec']
+                             for role, module in modules.items()]]
+    for pod in pods:
+        assert not any(pod.get(key, False) for key in ('hostNetwork', 'hostPID', 'hostIPC'))
+        assert pod['securityContext']['seccompProfile']['type'] == 'RuntimeDefault'
+        assert not any('hostPath' in volume for volume in pod['volumes'])
+        for container in pod['containers']:
+            effective = pod.get('securityContext', {}) | container['securityContext']
+            # The shared data layout is 10000:10000/0700. All components can
+            # handle their own files without root or added Linux capabilities.
+            assert effective['runAsUser'] == effective['runAsGroup'] == 10000
+            assert effective['runAsNonRoot'] is True
+            assert effective.get('privileged', False) is False
+            assert effective['allowPrivilegeEscalation'] is False
+            assert effective['readOnlyRootFilesystem'] is True
+            assert effective['capabilities'].get('add', []) == []
+            assert 'ALL' in effective['capabilities']['drop']
 
 
 def test_controller_receives_only_runtime_database_secret_and_disabled_default():

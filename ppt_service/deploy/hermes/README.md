@@ -19,8 +19,11 @@ Chromium 和文档工具，同时覆盖本次受审源码；显式替换继承�
 构建上下文逐个收集 Python 源文件，不递归拷贝 HOME、`.venv`、`.env`、上传文件和 Git。
 
 Controller 是可信组件，使用专用 SA 和 namespace Role，没有 ClusterRole、Docker socket、
-hostPath 或特权容器。挂载完整 PVC 的目的为服务端准备/冻结/发布文件；以 root 运行但只保留
-`CHOWN`、`DAC_OVERRIDE`、`FOWNER`，用来处理 UID 10000 的任务文件。任务 Pod 使用另一个
+hostPath 或特权容器。挂载完整 PVC 的目的为服务端准备/冻结/发布文件；与网站和任务一样使用
+UID/GID `10000:10000`，`runAsNonRoot=true`，丢弃所有 capabilities，兼容 namespace 的
+`restricted` Pod Security 策略。现有 `state` 目录须属于 `10000:10000` 且权限为 `0700`；
+Controller 创建的文件与任务产出归同一用户，文件复制、权限冻结与恢复无需 root。任务间隔离
+由各 Pod 仅挂载本次任务的 PVC subPath、独立网络策略和权限边界实现。任务 Pod 使用另一个
 无 RBAC 的 `ppt-worker` SA 且不挂 token。Worker 和代理的任务 Secret/最终停止证明由后端
 按 attempt 管理；只有所有容器停止后才移除 `ppt.panghuer.top/writers-stopped` finalizer。
 不要强删 Pod、移除 finalizer 或先删 namespace 来替代停止证明。

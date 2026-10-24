@@ -117,9 +117,9 @@ def render(*, controller_image, worker_image, kube_api_cidr, kube_api_port=(6443
         'env': [{'name': key, 'value': value} for key, value in sorted(environment.items())] + [
             {'name': 'DATABASE_URL', 'valueFrom': {'secretKeyRef': {
                 'name': 'ppt-database-runtime', 'key': 'DATABASE_URL'}}}],
-        'securityContext': {'runAsUser': 0, 'runAsGroup': 0, 'runAsNonRoot': False,
+        'securityContext': {'runAsUser': 10000, 'runAsGroup': 10000, 'runAsNonRoot': True,
                             'allowPrivilegeEscalation': False, 'readOnlyRootFilesystem': True,
-                            'capabilities': {'drop': ['ALL'], 'add': ['CHOWN', 'DAC_OVERRIDE', 'FOWNER']}},
+                            'capabilities': {'drop': ['ALL']}},
         'resources': {'requests': {'cpu': '100m', 'memory': '256Mi'},
                       'limits': {'cpu': '1', 'memory': '1Gi'}},
         'volumeMounts': [{'name': 'data', 'mountPath': '/var/lib/ppt-service'},
