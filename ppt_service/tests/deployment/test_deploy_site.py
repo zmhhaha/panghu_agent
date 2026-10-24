@@ -792,11 +792,119 @@ def test_skip_build_uses_only_valid_manifest_digest(monkeypatch,tmp_path,value):
     assert bool(stub.deployments)==(value==IMAGE)
 
 
+@pytest.mark.parametrize('failure', ['unreadable', 'yaml', 'toml', 'shape'])
+def test_auth_input_diagnostic_names_override_without_echoing_private_path_or_content(monkeypatch, tmp_path, capsys, failure):
+    marker = 'synthetic-private-auth-input-do-not-print'
+    path = tmp_path / (marker + '.yaml')
+    if failure == 'yaml':
+        path.write_text('secret: ["' + marker, encoding='utf-8')
+    elif failure == 'toml':
+        documents = deploy.load_documents(deploy.REPOSITORY / 'oauth/k8s/ppt-proxy-configmap.yaml')
+        for document in documents:
+            if document['metadata']['name'] == 'ppt-oidc':
+                document['data']['oauth2-proxy.cfg'] = 'secret = ["' + marker
+        path.write_text(yaml.safe_dump_all(documents), encoding='utf-8')
+    elif failure == 'shape':
+        path.write_text(yaml.safe_dump_all([marker, marker]), encoding='utf-8')
+    instance = deploy.Deployment(runner=Runner())
+    instance.deploy = lambda **kwargs: instance.authentication()
+    monkeypatch.setattr(deploy, 'Deployment', lambda: instance)
+    monkeypatch.setenv('PPT_SITE_IMAGE', IMAGE)
+    monkeypatch.setenv('PPT_AUTH_CONFIG', str(path))
+    assert deploy.main(['--skip-build']) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    assert 'ERROR: PPT_AUTH_CONFIG could not be read or parsed' in captured.err
+    assert marker not in captured.err and str(path) not in captured.err
+    assert 'Traceback' not in captured.err
+
+
+def test_invalid_client_renderer_diagnostic_names_input_without_printing_value(monkeypatch, capsys):
+    marker = 'synthetic-private-client-input-do-not-print'
+    instance = deploy.Deployment(runner=Runner())
+    instance.deploy = lambda **kwargs: instance.authentication()
+    monkeypatch.setattr(deploy, 'Deployment', lambda: instance)
+    monkeypatch.setenv('PPT_SITE_IMAGE', IMAGE)
+    monkeypatch.setenv('PPT_CLIENT_ID', marker + '\ninvalid-client')
+    assert deploy.main(['--skip-build']) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    assert 'ERROR: PPT_CLIENT_ID could not render valid authentication configuration' in captured.err
+    assert marker not in captured.err and 'invalid-client' not in captured.err
+    assert 'Traceback' not in captured.err
+
+
+@pytest.mark.parametrize('failure', ['unreadable', 'yaml', 'shape'])
+def test_owner_input_diagnostic_names_override_without_echoing_private_path_or_emails(monkeypatch, tmp_path, capsys, failure):
+    marker = 'synthetic-private-owner-input-do-not-print'
+    path = tmp_path / (marker + '.yaml')
+    if failure == 'yaml':
+        path.write_text('emails: ["' + marker + '@example.invalid', encoding='utf-8')
+    elif failure == 'shape':
+        path.write_text(yaml.safe_dump([marker + '@example.invalid']), encoding='utf-8')
+    instance = Scenario()
+    monkeypatch.setattr(deploy, 'Deployment', lambda: instance)
+    monkeypatch.setenv('PPT_SITE_IMAGE', IMAGE)
+    monkeypatch.setenv('PPT_OWNER_CONFIG', str(path))
+    assert deploy.main(['--skip-build']) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    assert 'ERROR: PPT_OWNER_CONFIG' in captured.err
+    assert 'could not be read or parsed' in captured.err
+    assert marker not in captured.err and str(path) not in captured.err
+    assert '@example.invalid' not in captured.err and 'Traceback' not in captured.err
+    assert instance.events[-1] == ('unlock',)
+
+
+@pytest.mark.parametrize('failure', ['missing', 'permission', 'encoding'])
+def test_default_image_receipt_diagnostic_names_file_without_printing_exception(monkeypatch, tmp_path, capsys, failure):
+    marker = 'synthetic-private-image-input-do-not-print'
+    service = tmp_path / marker
+    monkeypatch.setattr(deploy, 'SERVICE', service)
+    monkeypatch.setattr(deploy, 'Deployment', lambda: pytest.fail('Unreadable image receipt must stop before deployment'))
+    if failure != 'missing':
+        def fail_read(*args, **kwargs):
+            if failure == 'permission':
+                raise PermissionError(marker)
+            raise UnicodeDecodeError('utf-8', marker.encode(), 0, 1, marker)
+        monkeypatch.setattr(Path, 'read_text', fail_read)
+    assert deploy.main(['--skip-build']) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ''
+    assert 'ERROR: Default rendered/image.txt could not be read' in captured.err
+    assert 'PPT_SITE_IMAGE' in captured.err
+    assert marker not in captured.err and str(service) not in captured.err
+    assert 'Traceback' not in captured.err
+
+
 def test_environment_namespace_override_is_rejected_without_commands(monkeypatch):
     monkeypatch.setenv('NAMESPACE','default')
     with pytest.raises(SystemExit) as caught:
         deploy.main(['--dry-run'])
     assert caught.value.code==2
+
+
+def test_website_release_preserves_enabled_kubernetes_admission():
+    instance = Scenario()
+    original = instance.get
+    def get(kind, name, **kwargs):
+        if (kind, name) == ('configmap', 'ppt-site'):
+            return {'data': {'PPT_EXECUTION_ENABLED': 'true', 'PPT_EXECUTION_BACKEND': 'kubernetes'}}
+        return original(kind, name, **kwargs)
+    instance.get = get
+    instance.deploy(image=IMAGE)
+    config = next(d for d in instance.applied if d['kind'] == 'ConfigMap' and d['metadata']['name'] == 'ppt-site')
+    assert config['data']['PPT_EXECUTION_ENABLED'] == 'true'
+    assert config['data']['PPT_EXECUTION_BACKEND'] == 'kubernetes'
+
+
+def test_website_release_rejects_unknown_enabled_backend():
+    instance = Scenario()
+    original = instance.get
+    instance.get = lambda kind, name, **kwargs: ({'data': {'PPT_EXECUTION_ENABLED': 'true'}}
+        if (kind, name) == ('configmap', 'ppt-site') else original(kind, name, **kwargs))
+    with pytest.raises(deploy.DeployError, match='Kubernetes|kubernetes'):
+        instance.deploy(image=IMAGE)
 
 
 def test_dry_run_never_instantiates_command_runner(monkeypatch):

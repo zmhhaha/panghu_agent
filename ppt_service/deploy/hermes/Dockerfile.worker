@@ -1,0 +1,22 @@
+# Only a build may use a local cached image ID. Deployment always uses a pushed
+# registry manifest digest produced from this overlay of the reviewed source.
+ARG PPT_HERMES_BASE_IMAGE
+FROM ${PPT_HERMES_BASE_IMAGE}
+USER 0:0
+ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+COPY requirements-control.lock /opt/ppt-service/build-info/requirements-control.lock
+RUN /opt/hermes/.venv/bin/python -m pip install --no-cache-dir --only-binary=:all: --no-deps \
+      --index-url "${PIP_INDEX_URL}" -r /opt/ppt-service/build-info/requirements-control.lock \
+    && /opt/hermes/.venv/bin/python -m pip check
+COPY code/ /opt/ppt-service/ppt_service/
+COPY source-manifest.json /opt/ppt-service/build-info/hermes-worker-source.json
+RUN /opt/hermes/.venv/bin/python -c "from ppt_service.worker.execute import main; from ppt_service.worker.model_proxy import ProxyConfig; import ppt_service.control.publisher; import ppt_service.control.parsing; import ppt_service.control.hermes_delivery; import ppt_service.server.models; import ppt_service.server.repository; import sqlalchemy; import psycopg" \
+    && chmod -R a+rX /opt/ppt-service/ppt_service
+ENV PYTHONPATH=/opt/ppt-service PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    HOME=/work/home HERMES_HOME=/work/home HERMES_WRITE_SAFE_ROOT=/work \
+    HERMES_LAZY_INSTALL_TARGET=/work/home/lazy-packages
+WORKDIR /work/project
+USER 10000:10000
+# Never inherit a private Hermes gateway/s6 entrypoint or copy a private HOME.
+ENTRYPOINT ["/opt/hermes/.venv/bin/python", "-m", "ppt_service.worker.execute"]
+CMD []

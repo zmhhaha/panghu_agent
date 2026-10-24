@@ -96,6 +96,11 @@ class MaterialParser:
             a=s.scalar(select(Asset).where(Asset.project_id==p.id,Asset.parse_status=='queued',Asset.removed==False,Asset.parse_attempt<self.max_attempts).order_by(Asset.id).with_for_update(skip_locked=True).limit(1))
             if not a:return None
             token=str(uuid.uuid4());a.parse_attempt+=1;a.parse_token=token;a.parse_scope_uid=str(uuid.uuid5(uuid.NAMESPACE_URL,'ppt-material:'+a.id+':'+token));a.parse_status='parsing';a.parse_lease_until=now()+timedelta(seconds=self.lease_seconds);a.parse_error=None;a.text_summary=None
+            # The durable no-writer scope must exist before the DB claim can
+            # commit. Recovery after a crash between claim and execute can then
+            # prove that no Pod was ever submitted rather than wedging forever.
+            if hasattr(self.scopes,'ensure_scope'):
+                self.scopes.ensure_scope(a.parse_scope_uid)
             return claim_value(a)
     def _locked(self,s,c):
         p=s.scalar(select(Project).where(Project.id==c.project_id).with_for_update())
@@ -162,6 +167,8 @@ class MaterialParser:
             if not self.live(c):return {'status':'stale','asset_id':c.asset_id}
             result=None;error=None
             try:
+                if hasattr(self.scopes,'ensure_scope'):
+                    self.scopes.ensure_scope(c.scope_uid)
                 expected=f'projects/{c.project_id}/assets/{c.asset_id}/original'
                 if c.storage_key!=expected or c.media_type not in EXT:raise ControlError('source_unavailable')
                 inputs=self.root/f'projects/{c.project_id}/material-parses/{c.asset_id}/{c.token}/inputs';inputs.mkdir(parents=True,exist_ok=False)

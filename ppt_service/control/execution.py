@@ -35,7 +35,7 @@ class RuntimeConfig:
         if self.lease_seconds<60 or self.parse_timeout>60 or self.validation_timeout>300:raise ControlError('invalid_deadlines')
     @classmethod
     def env(cls):
-        return cls(data_root=Path(os.environ['DATA_ROOT']),state=RuntimeState(os.getenv('PPT_CONTROL_STATE','disabled')),upstream_env_file=Path(os.environ['PPT_UPSTREAM_ENV_FILE']) if os.getenv('PPT_UPSTREAM_ENV_FILE') else None,allow_paid_execution=os.getenv('PPT_ALLOW_PAID_EXECUTION')=='true',policy_approved=os.getenv('PPT_NETWORK_POLICY_APPROVED')=='true')
+        return cls(data_root=Path(os.environ['DATA_ROOT']),state=RuntimeState(os.getenv('PPT_CONTROL_STATE','disabled')),upstream_env_file=Path(os.environ['PPT_UPSTREAM_ENV_FILE']) if os.getenv('PPT_UPSTREAM_ENV_FILE') else None,allow_paid_execution=os.getenv('PPT_ALLOW_PAID_EXECUTION')=='true',policy_approved=os.getenv('PPT_NETWORK_POLICY_APPROVED')=='true',lease_seconds=300 if os.getenv('PPT_EXECUTION_BACKEND')=='kubernetes' else 90)
     def require_paid_admission(self):
         if self.state!=RuntimeState.CONFIGURED or not self.allow_paid_execution or not self.policy_approved or self.upstream_env_file is None:raise ControlError('execution_disabled')
         if self.upstream_env_file.is_symlink() or not self.upstream_env_file.is_file():raise ControlError('upstream_configuration_unavailable')

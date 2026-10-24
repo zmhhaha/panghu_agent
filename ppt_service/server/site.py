@@ -1,4 +1,4 @@
-"""Real-auth website: no migrations, identity overrides or execution."""
+"""Real-auth website with explicit admission to the isolated Hermes controller."""
 from __future__ import annotations
 import os
 import stat
@@ -91,8 +91,12 @@ def create_site(settings: Settings | None = None, engine=None, dist=None):
     """Uvicorn factory; reverse proxy owns OAuth, rebuild/restart updates assets."""
     if os.getenv('PPT_LOCAL_TEST_ONLY') is not None:
         raise RuntimeError('PPT_LOCAL_TEST_ONLY is forbidden for the real-auth site')
-    if os.getenv('PPT_EXECUTION_ENABLED', 'false').strip().lower() != 'false':
-        raise RuntimeError('This site cannot enable execution')
+    execution_flag = os.getenv('PPT_EXECUTION_ENABLED', 'false').strip().lower()
+    if execution_flag not in ('true', 'false'):
+        raise RuntimeError('Invalid execution admission flag')
+    execution_enabled = execution_flag == 'true'
+    if execution_enabled and os.getenv('PPT_EXECUTION_BACKEND') != 'kubernetes':
+        raise RuntimeError('Execution requires the isolated Kubernetes controller')
     files = _built_files(dist if dist is not None else os.getenv('PPT_WEB_DIST'))
     api = create_app(settings, engine)
     execution_routes = [route for route in api.routes if getattr(route, 'path', None) in EXECUTION_PATHS]
@@ -114,10 +118,10 @@ def create_site(settings: Settings | None = None, engine=None, dist=None):
                 except HTTPException as exc:
                     return await JSONResponse({'detail': exc.detail}, exc.status_code,
                                               headers=HEADERS)(scope, receive, send)
-                if execution:
+                if execution and not execution_enabled:
                     return await JSONResponse({'detail': {'code': 'execution_not_connected'}},
                                               503, headers=HEADERS)(scope, receive, send)
-                if scope['method'] not in ('GET', 'HEAD'):
+                if static and scope['method'] not in ('GET', 'HEAD'):
                     return await JSONResponse({'detail': {'code': 'method_not_allowed'}}, 405,
                                               headers=HEADERS | {'Allow': 'GET, HEAD'})(scope, receive, send)
                 item = files.get(path)

@@ -121,7 +121,7 @@ class Dispatcher:
                 if ids!={row['id'] for row in inventory['sources']}:raise ControlError('parse_inventory_mismatch')
                 for aid in ids:
                     asset=s.get(Asset,aid)
-                    if asset and asset.project_id==a.project_id:asset.parse_status='succeeded'
+                    if asset and asset.project_id==a.project_id:asset.parse_status='ready'
                 r.heartbeat(a.job_id,a.attempt,a.token,self.config.lease_seconds)
             h=self.backend.create(a,layout);self.owned[a.job_id]=(a,h)
             with self.sessions.begin() as s:Repository(s).attach_execution(a.job_id,a.attempt,a.token,job_uid=h.uid,session_id=a.session_id)
@@ -140,6 +140,8 @@ class Dispatcher:
             if status=='cancelled':self.backend.cleanup(h);self.owned.pop(a.job_id,None);return {'status':'cancelled','job_id':a.job_id}
             snapshot,indexes=self.stager.collect(a,layout)
             request={'job_id':a.job_id,'attempt':a.attempt,'phase':a.phase,'session_id':a.session_id,'input_snapshot_sha256':a.snapshot['hash'],'pages':a.snapshot.get('settings',{}).get('page_count',8)}
+            if hasattr(self.backend,'execution_image'):
+                request['execution_image']=self.backend.execution_image(h)
             if checkpoint_manifest:
                 for source,target in (('design_spec.md_sha256','approved_design_spec_sha256'),('spec_lock.md_sha256','approved_spec_lock_sha256')):
                     if source in checkpoint_manifest:request[target]=checkpoint_manifest[source]
@@ -150,10 +152,18 @@ class Dispatcher:
                 authorized={x['sha256'] for x in a.snapshot.get('assets',[])}
                 if oracle['expected_charts'] and not oracle.get('source_sha256'):raise ControlError('oracle_source_required')
                 if not set(oracle.get('source_sha256',[])).issubset(authorized):raise ControlError('oracle_source_mismatch')
+                request['trusted_oracle']=oracle
+                request['authorized_source_sha256']=sorted(authorized)
             atomic_json(layout.audit/'validation-request.json',request)
             validated=self.publisher.validate(snapshot,request)
             atomic_json(layout.audit/'validation-result.json',validated)
-            if not validated.get('accepted'):
+            if validated.get('review_candidate') is True and a.phase in ('generate','revise'):
+                from .review_delivery import save_review_candidate
+                with self.sessions.begin() as s:
+                    repo=Repository(s);repo.admission_lock()
+                    save_review_candidate(repo,a,snapshot,request,validated,self.config)
+                outcome='review'
+            elif not validated.get('accepted'):
                 # Preserve original needs_input/actor record; do not manufacture a
                 # plan/base. Current public schema supports failed, not needs_input.
                 with self.sessions.begin() as s:Repository(s).finish_failed(a.job_id,a.attempt,a.token,error_code='quality_gate_failed')
@@ -175,7 +185,7 @@ class Dispatcher:
             return {'status':outcome,'job_id':a.job_id}|({'error_code':'quality_gate_failed'} if outcome=='failed' else {})
     def tick(self):
         admission=self.config.state==RuntimeState.CONFIGURED and self.backend.ready
-        # Real Docker paid admission stays closed until operator config is explicit.
+        # Paid admission stays closed until operator config is explicit.
         # Tests inject a backend; they do not enable a production bypass flag.
         with self.sessions.begin() as s:
             slot=s.get(ExecutionSlot,1)
@@ -220,18 +230,55 @@ class Dispatcher:
             self._fail(a,h,'execution_interrupted');return {'status':'failed','job_id':a.job_id}
         return self._complete(a,h,cp)
 
+def build_controller(sessions,config):
+    """Select one backend; Kubernetes does not require a Docker socket."""
+    from .chart_oracle import ChartOracle
+    mode=os.getenv('PPT_EXECUTION_BACKEND','docker')
+    if mode=='kubernetes':
+        from .kubernetes import KubeSettings,KubernetesBackend,KubernetesParseScopes
+        from .kubernetes_sandbox import KubernetesSandbox
+        from .materials import MaterialParser
+        settings=KubeSettings.env()
+        def check_live_claim(a):
+            with sessions.begin() as s:
+                r=Repository(s);j,p,_=r.fenced(a.job_id,a.attempt,a.token)
+                def live(value):
+                    if value is None:return False
+                    if value.tzinfo is None:value=value.replace(tzinfo=timezone.utc)
+                    return value>now()
+                if (j.job_uid!=a.uid or not live(j.lease_until) or not live(j.deadline)
+                        or not p.external_model_ack):raise ControlError('execution_revoked')
+                r.heartbeat(a.job_id,a.attempt,a.token,config.lease_seconds)
+        backend=KubernetesBackend(config,settings,before_worker=check_live_claim)
+        sandbox=KubernetesSandbox(config,settings,backend=backend)
+        materials=MaterialParser(sessions,config,sandbox,KubernetesParseScopes(backend),lease_seconds=300)
+    elif mode=='docker':
+        from .pods import DockerBackend,DockerSandbox
+        if config.state==RuntimeState.CONFIGURED:config.require_paid_admission()
+        backend= DockerBackend(config);sandbox=DockerSandbox(config);materials=None
+    else:raise ControlError('unsupported_execution_backend')
+    return Dispatcher(sessions,config,backend,sandbox,oracle_provider=ChartOracle.env()),materials
+
 def main():
-    from .pods import DockerBackend,DockerSandbox
     parser=argparse.ArgumentParser();parser.add_argument('--once',action='store_true');args=parser.parse_args()
     config=RuntimeConfig.env()
-    if config.state==RuntimeState.CONFIGURED:config.require_paid_admission()
     url=os.environ['DATABASE_URL']
     if not url.startswith('postgresql'):raise ControlError('postgresql_required')
     engine=create_engine(url,pool_pre_ping=True);sessions=sessionmaker(engine,expire_on_commit=False)
-    controller=Dispatcher(sessions,config,DockerBackend(config),DockerSandbox(config))
+    controller,materials=build_controller(sessions,config)
     try:
         while True:
-            result=controller.tick();print(json.dumps(result),flush=True)
+            try:
+                result=controller.tick()
+                # Parsing never delays heartbeats for an active model attempt.
+                if materials is not None and result['status'] in ('idle','disabled'):
+                    parsed=materials.tick()
+                    if parsed['status']!='idle':result={'status':'material','result':parsed}
+            except ControlError as exc:
+                # Preserve unresolved scopes and the DB slot. API error bodies,
+                # credentials and model output are never written to stdout.
+                result={'status':'control_blocked','error_code':exc.code}
+            print(json.dumps(result),flush=True)
             if args.once:return 0
             time.sleep(1)
     finally:engine.dispose()

@@ -1,0 +1,12 @@
+# Reuse the verified small site image's Python/API dependencies, without Hermes.
+ARG PPT_SITE_BASE_IMAGE
+FROM ${PPT_SITE_BASE_IMAGE}
+USER 0:0
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/opt/ppt-service HOME=/tmp
+WORKDIR /opt/ppt-service
+COPY code/ /opt/ppt-service/ppt_service/
+COPY source-manifest.json /opt/ppt-service/build-info/hermes-controller-source.json
+RUN /usr/local/bin/python -c "from ppt_service.control.dispatcher import Dispatcher; from ppt_service.control.kubernetes import KubernetesBackend; from ppt_service.control.kubernetes_sandbox import KubernetesSandbox"
+# No inherited website entrypoint and no provider credential in this image.
+ENTRYPOINT ["/usr/local/bin/python", "-m", "ppt_service.control.dispatcher"]
+CMD []

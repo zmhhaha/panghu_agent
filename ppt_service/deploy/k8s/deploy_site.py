@@ -471,14 +471,20 @@ class Deployment:
     def authentication(self):
         selected = os.getenv('PPT_AUTH_CONFIG')
         if selected:
-            return validate_auth(load_documents(selected))
+            try:
+                return validate_auth(load_documents(selected))
+            except (DeployError, OSError, ValueError, KeyError, TypeError, AttributeError, yaml.YAMLError):
+                raise DeployError('PPT_AUTH_CONFIG could not be read or parsed as the required authentication configuration; check its YAML/TOML file') from None
         client_id = os.getenv('PPT_CLIENT_ID')
         if client_id:
-            path = REPOSITORY / 'oauth/k8s/configure-ppt.py'
-            spec = importlib.util.spec_from_file_location('ppt_client_config', path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            return validate_auth(list(yaml.safe_load_all(module.render_configuration(client_id))))
+            try:
+                path = REPOSITORY / 'oauth/k8s/configure-ppt.py'
+                spec = importlib.util.spec_from_file_location('ppt_client_config', path)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                return validate_auth(list(yaml.safe_load_all(module.render_configuration(client_id))))
+            except (DeployError, OSError, ValueError, KeyError, TypeError, AttributeError, yaml.YAMLError):
+                raise DeployError('PPT_CLIENT_ID could not render valid authentication configuration; check the client ID and oauth/k8s/configure-ppt.py template') from None
         existing = [self.get('configmap', name) for name in ('ppt-auth', 'ppt-oidc')]
         if all(existing):
             return validate_auth(existing)
@@ -492,9 +498,20 @@ class Deployment:
             self.check_secret_owners()
             auth = self.authentication()
             existing_site = self.get('deployment', 'ppt-site')
+            # The execution rollout explicitly enables these two public keys.
+            # A routine website release preserves that operator choice.
+            current_config = self.get('configmap', 'ppt-site')
+            if current_config and current_config.get('data', {}).get('PPT_EXECUTION_ENABLED') == 'true':
+                if current_config['data'].get('PPT_EXECUTION_BACKEND') != 'kubernetes':
+                    raise DeployError('Enabled website execution requires PPT_EXECUTION_BACKEND=kubernetes')
+                site_config = next(doc for doc in base if doc['kind'] == 'ConfigMap' and doc['metadata']['name'] == 'ppt-site')
+                site_config['data'].update(PPT_EXECUTION_ENABLED='true', PPT_EXECUTION_BACKEND='kubernetes')
             target_replicas = max(1, (existing_site or {}).get('spec', {}).get('replicas', 1))
             owner_path = os.getenv('PPT_OWNER_CONFIG')
-            owner = validate_owner(load_documents(owner_path or REPOSITORY / 'oauth/k8s/ppt-owner-configmap.yaml'))
+            try:
+                owner = validate_owner(load_documents(owner_path or REPOSITORY / 'oauth/k8s/ppt-owner-configmap.yaml'))
+            except (DeployError, OSError, ValueError, KeyError, TypeError, AttributeError, yaml.YAMLError):
+                raise DeployError('PPT_OWNER_CONFIG or its default oauth/k8s/ppt-owner-configmap.yaml could not be read or parsed as the required owner ConfigMap') from None
             data_claim = next(doc for doc in base if doc['kind'] == 'PersistentVolumeClaim' and doc['metadata']['name'] == 'ppt-data')
             claim_uid, initialize_volume = self.storage_claim(data_claim, existing_site=existing_site)
             self.apply([doc for doc in base if doc['kind'] not in ('Namespace', 'Deployment', 'StatefulSet')
@@ -544,7 +561,7 @@ class Deployment:
             print('Waiting for the website and OAuth proxy rollout.', flush=True)
             self.kube('-n', NAMESPACE, 'rollout', 'status', 'deployment/ppt-site', '--timeout=300s')
             print(self.kube('-n', NAMESPACE, 'get', 'pods,svc,pvc'), end='', flush=True)
-            print('Website deployed. Configure the documented Tunnel peer policies and ppt.panghuer.top entry. Pi execution remains disabled until its worker is connected.')
+            print('Website deployed. Configure the documented Tunnel peer policies and ppt.panghuer.top entry. Execution admission follows the existing explicit website configuration.')
         finally:
             failed = sys.exc_info()[0] is not None
             try:
@@ -572,7 +589,10 @@ def main(argv=None):
                 raise DeployError('Server image build/verification/push failed; deployment stopped')
         selected = os.getenv('PPT_SITE_IMAGE')
         if selected is None:
-            selected = (SERVICE / 'rendered/image.txt').read_text(encoding='utf-8').strip()
+            try:
+                selected = (SERVICE / 'rendered/image.txt').read_text(encoding='utf-8').strip()
+            except (OSError, ValueError):
+                raise DeployError('Default rendered/image.txt could not be read; run build.sh successfully or set PPT_SITE_IMAGE to the pushed image digest') from None
         image = image_digest(selected)
         Deployment().deploy(image=image)
     except (DeployError, OSError, ValueError, KeyError, TypeError, yaml.YAMLError, tomllib.TOMLDecodeError):

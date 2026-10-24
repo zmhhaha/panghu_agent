@@ -43,7 +43,11 @@ def asset_dto(a):return {k:getattr(a,k) for k in ('id','display_name','media_typ
 def plan_dto(a):return {k:getattr(a,k) for k in ('revision','phase','input_snapshot_hash','outline','design','confirmation_selection','confirmed_at')}|{'options':a.design.get('directions',a.design.get('options',[]))}
 def version_dto(v):
     slides=[{'number':i,'title':slide.get('title',''),'summary':slide.get('summary',''),'preview_url':f'/api/v1/versions/{v.id}/slides/{i}/preview'} for i,slide in enumerate(v.manifest.get('slides',[]),1)]
-    return {'id':v.id,'project_id':v.project_id,'parent_version_id':v.parent_version_id,'status':v.status,'created_at':v.created_at,'slides':slides,'download_url':f'/api/v1/versions/{v.id}/download','preview_notice':'Preview may differ from Microsoft PowerPoint.'}
+    value={'id':v.id,'project_id':v.project_id,'parent_version_id':v.parent_version_id,'status':v.status,'created_at':v.created_at,'slides':slides,'download_url':f'/api/v1/versions/{v.id}/download','preview_notice':'Preview may differ from Microsoft PowerPoint.','can_revise':v.status=='published'}
+    if v.status=='review':
+        allowed={'independent_export_build_contract','independent_visual_review','powerpoint_open_edit_save_reopen','postflight_warnings_review'}
+        value.update(validation_status='gate_pending',publication_authorization=False,required_pending_gates=[gate for gate in v.manifest.get('required_pending_gates',[]) if gate in allowed])
+    return value
 def project_dto(p,s,detail=False):
     d={k:getattr(p,k) for k in ('id','title','revision','stage','active_job_id','confirmed_plan_revision','latest_version_id','external_model_ack','deletion_requested')}
     d.update(p.settings)
@@ -179,6 +183,7 @@ def create_app(settings:Settings|None=None,engine=None):
         def action():
             p=r.project(pid,owner,True);v=r.version(body.base_version_id,owner)
             if v.project_id!=pid:fail('not_found',404)
+            if v.status!='published':fail('review_version_not_revision_base')
             if any(n<1 or n>len(v.manifest.get('slides',[])) for n in body.pages):fail('invalid_slide_number',422)
             j=r.enqueue(p,owner,'revise',body.expected_revision,{'feedback':body.feedback,'pages':body.pages,'base_version_id':v.id,'checkpoint_id':v.checkpoint_id});j.base_version_id=v.id;j.checkpoint_id=v.checkpoint_id
             return job_dto(j)
@@ -205,7 +210,7 @@ def create_app(settings:Settings|None=None,engine=None):
     @app.get('/api/v1/projects/{pid}/versions')
     def versions(pid:str,owner=Depends(authenticate),s=Depends(session)):
         Repository(s).project(pid,owner)
-        return [version_dto(v) for v in s.scalars(select(Version).where(Version.project_id==pid,Version.status=='published').order_by(Version.created_at))]
+        return [version_dto(v) for v in s.scalars(select(Version).where(Version.project_id==pid,Version.status.in_(('published','review'))).order_by(Version.created_at))]
     def blob(v,key,mime,filename=None):
         if not isinstance(key,str) or not key.startswith(v.artifact_root+'/'):fail('artifact_unavailable',404)
         try:stream=app.state.storage.open(key,200*1024**2)

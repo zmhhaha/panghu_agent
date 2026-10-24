@@ -76,10 +76,14 @@ class BuilderTests(unittest.TestCase):
         self.assertTrue(manifest['session_id'])
 
     def test_revise_requires_matching_base_version_and_checkpoint(self):
-        version = Obj(project_id=PID, issuer='iss', subject='sub', checkpoint_id='cp1')
+        version = Obj(project_id=PID, issuer='iss', subject='sub', checkpoint_id='cp1', status='published')
         session = FakeSession({('Version', 'v1'): version, ('Checkpoint', 'cp1'): checkpoint()})
         attempt, _ = build_attempt(session, job(kind='revise', base_version_id='v1', checkpoint_id='cp1'))
         self.assertEqual(attempt.base_version_id, 'v1')
+        version.status='review'
+        with self.assertRaisesRegex(ControlError, 'base_version_mismatch'):
+            build_attempt(session, job(kind='revise', base_version_id='v1', checkpoint_id='cp1'))
+        version.status='published'
         with self.assertRaisesRegex(ControlError, 'base_version_mismatch'):
             build_attempt(FakeSession(), job(kind='revise', base_version_id='v1'))
         with self.assertRaisesRegex(ControlError, 'base_checkpoint_mismatch'):

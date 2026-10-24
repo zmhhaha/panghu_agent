@@ -32,7 +32,7 @@ class Repository:
         if not j:fail('not_found',404)
         return j
     def version(self,vid,owner):
-        v=self.s.scalar(select(Version).join(Project).where(Version.id==vid,Project.issuer==owner.issuer,Project.subject==owner.sub,Project.deletion_requested==False,Version.status=='published'))
+        v=self.s.scalar(select(Version).join(Project).where(Version.id==vid,Project.issuer==owner.issuer,Project.subject==owner.sub,Project.deletion_requested==False,Version.status.in_(('published','review'))))
         if not v:fail('not_found',404)
         return v
     def revision(self,p,expected):
@@ -178,6 +178,18 @@ class Repository:
         c=self._checkpoint(p,checkpoint_key,checkpoint_manifest)
         v=Version(project_id=p.id,job_id=j.id,issuer=p.issuer,subject=p.subject,parent_version_id=j.base_version_id,checkpoint_id=c.id,manifest=manifest,artifact_root=artifact_root)
         self.s.add(v);self.s.flush();p.latest_version_id=v.id;p.active_job_id=None;p.stage='ready';p.revision+=1;j.status='succeeded';slot.job_id=None
+        self.event(j,'artifact.ready',{'version_id':v.id});self.event(j,'job.succeeded');return v
+    def save_review_version(self,jid,attempt,token,*,version_id,manifest,artifact_root,checkpoint_key,checkpoint_manifest,review_validated=False):
+        """Trusted draft persistence only; never promotes a revision baseline."""
+        j,p,slot=self.fenced(jid,attempt,token)
+        if not review_validated or not j.stopped or j.status!='validating' or j.kind not in ('generate','revise'):fail('trusted_validation_required')
+        if str(uuid.UUID(version_id))!=version_id or artifact_root!=f'projects/{p.id}/versions/{version_id}/review':raise ValueError('review namespace')
+        if manifest.get('status')!='review' or manifest.get('eligible_as_revision_base') is not False or manifest.get('publication_authorization') is not False:raise ValueError('review contract')
+        if checkpoint_manifest.get('status')!='review' or checkpoint_manifest.get('eligible_as_revision_base') is not False:raise ValueError('review checkpoint contract')
+        c=self._checkpoint(p,checkpoint_key,checkpoint_manifest)
+        v=Version(id=version_id,project_id=p.id,job_id=j.id,issuer=p.issuer,subject=p.subject,parent_version_id=j.base_version_id,checkpoint_id=c.id,manifest=manifest,artifact_root=artifact_root,status='review')
+        self.s.add(v);self.s.flush();p.active_job_id=None;p.stage='awaiting_review';p.revision+=1
+        j.status='succeeded';j.stage='review';slot.job_id=None
         self.event(j,'artifact.ready',{'version_id':v.id});self.event(j,'job.succeeded');return v
     def finish_failed(self,jid,attempt,token,*,error_code):
         j,p,slot=self.fenced(jid,attempt,token,allow_cancel=True)

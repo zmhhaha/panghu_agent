@@ -30,7 +30,7 @@ def build_attempt(session, job, *, engine='hermes'):
     checkpoint = None
     if job.kind == 'revise':
         version = session.get(Version, job.base_version_id) if job.base_version_id else None
-        if not version or (version.project_id, version.issuer, version.subject) != (
+        if not version or version.status != 'published' or (version.project_id, version.issuer, version.subject) != (
                 job.project_id, job.issuer, job.subject):
             raise ControlError('base_version_mismatch')
         checkpoint = session.get(Checkpoint, version.checkpoint_id)

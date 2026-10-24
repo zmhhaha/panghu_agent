@@ -76,13 +76,28 @@ def test_disabled_does_not_claim(store):
 
 def test_plan_pipeline_real_transactions_and_two_gate_context(store):
     sessions,owner,pid,jid,root=store;backend=FakeBackend();controller=Dispatcher(sessions,configured(root),backend,TestSandbox())
-    assert controller.tick()['status']=='started';assert controller.tick()['status']=='succeeded'
+    # A subsequent model phase parses a private copy again. Its internal parser
+    # vocabulary must not replace the website's material status or hide the
+    # summary already delivered to the user by the material parser.
+    from ppt_service.server.app import asset_dto
+    summary='Public source Chinese: 中文'
+    with sessions.begin() as s:
+        source=s.scalar(select(Asset).where(Asset.project_id==pid))
+        source.parse_status='ready';source.text_summary=summary
+    def assert_material_still_ready():
+        with sessions() as s:
+            material=asset_dto(s.scalar(select(Asset).where(Asset.project_id==pid)))
+            assert material['parse_status']=='ready'
+            assert material['text_summary']==summary and material['parse_error'] is None
+    assert controller.tick()['status']=='started';assert_material_still_ready()
+    assert controller.tick()['status']=='succeeded'
     with sessions.begin() as s:
         p=s.get(Project,pid);assert p.stage=='awaiting_confirmation';initial=s.scalar(select(Plan).where(Plan.project_id==pid));assert initial.phase=='plan_initial'
         initial.confirmation_selection={'design_mode':'free_design','template_id':None};initial.confirmed_at=now();p.confirmed_plan_revision=initial.revision
         repo=Repository(s);repo.admission_lock();repo.quota(owner)
         j=repo.enqueue(p,owner,'plan_options',p.revision,{'confirmation_selection':initial.confirmation_selection});j.checkpoint_id=initial.checkpoint_id;options_jid=j.id
     assert controller.tick()['status']=='started'
+    assert_material_still_ready()
     a,h=controller.owned[options_jid];task=read_task(controller.stager.layout(a).task/'task.json');message=json.loads(input_message(task).split('\n',1)[1])
     assert message['stage1_confirmation']['channel']=='website';assert message['stage1_confirmation']['selection']['design_mode']=='free_design'
     assert controller.tick()['status']=='succeeded'

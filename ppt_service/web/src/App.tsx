@@ -73,7 +73,48 @@ function Planning({project,disabled,consent,setConsent,perform,start}:{project:P
 }
 function Versions({project,versions,disabled,consent,setConsent,start,perform}:{project:Project;versions:Version[];disabled:boolean;consent:boolean;setConsent:(v:boolean)=>void;start:Starter;perform:Performer}) {
  const [base,setBase]=useState('');const [pages,setPages]=useState<number[]>([]);const [feedback,setFeedback]=useState('');const [perPage,setPerPage]=useState<Record<string,string>>({});const [scope,setScope]=useState('whole');
- const version=versions.find(v=>v.id===base);const changeBase=(value:string)=>{setBase(value);setPages([]);setPerPage({});setFeedback('');};
- return <div className="panel"><div className="section-title"><div><h2>版本与逐页修改</h2><p>每次修改创建新版本，历史版本保留下载。请选择明确基线后预览和修改。</p></div><Layers size={21}/></div>{!versions.length?<Empty title="还没有已发布版本">完成方案确认并生成后，通过检查的版本会出现在这里。</Empty>:<><div className="version-list">{versions.map((v,i)=><div key={v.id} className={`version-row ${base===v.id?'chosen':''}`}><label><input name="base" type="radio" checked={base===v.id} onChange={()=>changeBase(v.id)}/><span><strong>版本 {versions.length-i}</strong><code>{v.id}</code><small>{new Date(v.created_at).toLocaleString('zh-CN')}{v.parent_version_id&&` · 基于 ${v.parent_version_id}`}</small></span></label><button className="secondary compact" disabled={disabled} onClick={()=>void perform(()=>api.download(v.id))}>下载 PPTX</button></div>)}</div>{!version?<p className="notice">选择一个版本作为预览与修改基线；新版本到达不会替换你的选择。</p>:<><div className="selected-base">当前基线 <code>{version.id}</code></div><p className="hint">预览为源 SVG 的静态 PNG 栅格图，PowerPoint 的字体、换行与布局可能有所不同。</p><div className="slide-grid">{version.slides.map(slide=><article className="slide" key={slide.number}><Preview versionId={version.id} page={slide.number}/><div><span className="page-number">{slide.number.toString().padStart(2,'0')}</span><strong>{slide.title}</strong></div>{(slide.summary??slide.purpose)&&<p>{slide.summary??slide.purpose}</p>}</article>)}</div><section className="revision-form"><h3>提交修改意见</h3><fieldset disabled={disabled}><legend className="sr-only">修改范围</legend><div className="inline-radios"><label><input type="radio" name="scope" checked={scope==='whole'} onChange={()=>setScope('whole')}/>整份演示稿</label><label><input type="radio" name="scope" checked={scope==='pages'} onChange={()=>setScope('pages')}/>指定页面</label></div>{scope==='pages'&&<div className="page-feedback">{version.slides.map(slide=><div key={slide.number}><label className="check-page"><input type="checkbox" checked={pages.includes(slide.number)} onChange={e=>setPages(old=>e.target.checked?[...old,slide.number].sort((a,b)=>a-b):old.filter(n=>n!==slide.number))}/>第 {slide.number} 页 · {slide.title}</label>{pages.includes(slide.number)&&<label>第 {slide.number} 页意见<textarea rows={2} maxLength={5000} value={perPage[String(slide.number)]??''} onChange={e=>setPerPage(old=>({...old,[slide.number]:e.target.value}))}/></label>}</div>)}</div>}<label>{scope==='whole'?'整份修改意见':'共同修改意见（可选）'}<textarea rows={4} maxLength={10000} value={feedback} onChange={e=>setFeedback(e.target.value)} placeholder="说明需要调整的内容、数据或版式…"/></label><Consent checked={consent} onChange={setConsent}/><button className="primary" disabled={disabled||!consent||(scope==='whole'?!feedback.trim():!pages.length||(!feedback.trim()&&pages.some(n=>!perPage[String(n)]?.trim())))} onClick={()=>void start(()=>api.revise(project,version.id,scope==='pages'?pages:[],feedback,scope==='pages'?Object.fromEntries(pages.map(n=>[String(n),perPage[String(n)]??''])):{},consent))}>基于所选版本创建修改任务 <ArrowRight size={16}/></button><p className="hint">提交基线：{version.id}。不会自动切换到最新版本。</p></fieldset></section></>}</>}</div>;
+ const version=versions.find(v=>v.id===base);const review=version?.status==='review';
+ const canRevise=!!version&&!review&&version.can_revise!==false;
+ const changeBase=(value:string)=>{setBase(value);setPages([]);setPerPage({});setFeedback('');};
+ const gateLabels:Record<string,string>={independent_export_build_contract:'完整导出核验',independent_visual_review:'逐页视觉审核',powerpoint_open_edit_save_reopen:'PowerPoint 打开、编辑、保存与重开验收',postflight_warnings_review:'质量提示复核'};
+ return <div className="panel">
+  <div className="section-title"><div><h2>版本与逐页修改</h2><p>选择版本查看预览或下载。已发布版本可作为修改基线，待审核草稿仅供审核。</p></div><Layers size={21}/></div>
+  {!versions.length?<Empty title="还没有可预览版本">完成方案确认并生成后，通过独立程序检查的草稿会出现在这里。</Empty>:<>
+   <div className="version-list">{versions.map((v,i)=><div key={v.id} className={'version-row '+(base===v.id?'chosen':'')}>
+    <label><input name="base" type="radio" checked={base===v.id} onChange={()=>changeBase(v.id)}/><span>
+     <strong>{v.status==='review'?'待审核草稿':'版本'} {versions.length-i}</strong><code>{v.id}</code>
+     <small>{new Date(v.created_at).toLocaleString('zh-CN')}{v.parent_version_id&&' · 基于 '+v.parent_version_id}</small>
+    </span></label>
+    <button className="secondary compact" disabled={disabled} onClick={()=>void perform(()=>api.download(v.id))}>{v.status==='review'?'下载审核草稿':'下载 PPTX'}</button>
+   </div>)}</div>
+   {!version?<p className="notice">选择一个版本查看预览；新版本到达不会替换你的选择。</p>:<>
+    <div className="selected-base">{review?'当前预览':'当前基线'} <code>{version.id}</code></div>
+    {review&&<div className="notice warning" role="status"><div>
+     <strong>待审核草稿 · 尚未正式发布</strong>
+     <p>已完成独立程序检查，可以预览和下载审核。仍需完成以下审核：</p>
+     <ul>{(version.required_pending_gates?.length?version.required_pending_gates:['independent_export_build_contract','independent_visual_review','powerpoint_open_edit_save_reopen']).map(gate=><li key={gate}>{gateLabels[gate]??'其他审核待完成'}</li>)}</ul>
+     <p>本草稿不能作为修改基线。完成验收后才能开放正式版本修改。</p>
+    </div></div>}
+    <p className="hint">预览为源 SVG 的静态 PNG 栅格图，PowerPoint 的字体、换行与布局可能有所不同。</p>
+    <div className="slide-grid">{version.slides.map(slide=><article className="slide" key={slide.number}>
+     <Preview key={version.id+':'+slide.number} versionId={version.id} page={slide.number}/>
+     <div><span className="page-number">{slide.number.toString().padStart(2,'0')}</span><strong>{slide.title}</strong></div>
+     {(slide.summary??slide.purpose)&&<p>{slide.summary??slide.purpose}</p>}
+    </article>)}</div>
+    {canRevise&&<section className="revision-form"><h3>提交修改意见</h3><fieldset disabled={disabled}>
+     <legend className="sr-only">修改范围</legend>
+     <div className="inline-radios"><label><input type="radio" name="scope" checked={scope==='whole'} onChange={()=>setScope('whole')}/>整份演示稿</label><label><input type="radio" name="scope" checked={scope==='pages'} onChange={()=>setScope('pages')}/>指定页面</label></div>
+     {scope==='pages'&&<div className="page-feedback">{version.slides.map(slide=><div key={slide.number}>
+      <label className="check-page"><input type="checkbox" checked={pages.includes(slide.number)} onChange={e=>setPages(old=>e.target.checked?[...old,slide.number].sort((a,b)=>a-b):old.filter(n=>n!==slide.number))}/>第 {slide.number} 页 · {slide.title}</label>
+      {pages.includes(slide.number)&&<label>第 {slide.number} 页意见<textarea rows={2} maxLength={5000} value={perPage[String(slide.number)]??''} onChange={e=>setPerPage(old=>({...old,[slide.number]:e.target.value}))}/></label>}
+     </div>)}</div>}
+     <label>{scope==='whole'?'整份修改意见':'共同修改意见（可选）'}<textarea rows={4} maxLength={10000} value={feedback} onChange={e=>setFeedback(e.target.value)} placeholder="说明需要调整的内容、数据或版式…"/></label>
+     <Consent checked={consent} onChange={setConsent}/>
+     <button className="primary" disabled={disabled||!consent||(scope==='whole'?!feedback.trim():!pages.length||(!feedback.trim()&&pages.some(n=>!perPage[String(n)]?.trim())))} onClick={()=>void start(()=>api.revise(project,version.id,scope==='pages'?pages:[],feedback,scope==='pages'?Object.fromEntries(pages.map(n=>[String(n),perPage[String(n)]??''])):{},consent))}>基于所选版本创建修改任务 <ArrowRight size={16}/></button>
+     <p className="hint">提交基线：{version.id}。不会自动切换到最新版本。</p>
+    </fieldset></section>}
+   </>}
+  </>}
+ </div>;
 }
 function Preview({versionId,page}:{versionId:string;page:number}) {const [failed,setFailed]=useState(false);const [loaded,setLoaded]=useState(false);return <div className="preview">{!loaded&&!failed&&<span role="status">正在读取第 {page} 页预览…</span>}{failed?<div role="status">第 {page} 页预览暂不可用 <button className="link" onClick={()=>{setFailed(false);setLoaded(false);}}>重试</button></div>:<img alt={`第 ${page} 页静态预览`} src={api.preview(versionId,page)} loading="lazy" onLoad={()=>setLoaded(true)} onError={()=>setFailed(true)}/>}</div>;}

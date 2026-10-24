@@ -24,6 +24,7 @@ def symlink(target,link,*,directory=False):
 def site_client(auth_client, tmp_path, monkeypatch):
     monkeypatch.delenv('PPT_LOCAL_TEST_ONLY', raising=False)
     monkeypatch.delenv('PPT_EXECUTION_ENABLED', raising=False)
+    monkeypatch.delenv('PPT_EXECUTION_BACKEND', raising=False)
     api, _, token = auth_client
     dist = tmp_path / 'dist'
     (dist / 'assets').mkdir(parents=True)
@@ -46,6 +47,30 @@ def login(client, token):
     assert me.json()['issuer'] == 'https://casdoor.test'
     assert 'Secure' in me.headers['set-cookie']
     return headers | {'Origin': 'https://ppt.test', 'X-CSRF-Token': me.json()['csrf_token']}
+
+
+def test_enabled_kubernetes_admission_keeps_auth_csrf_and_idempotency(site_client, monkeypatch):
+    old, _, token, dist = site_client
+    monkeypatch.setenv('PPT_EXECUTION_ENABLED', 'true')
+    monkeypatch.setenv('PPT_EXECUTION_BACKEND', 'kubernetes')
+    site = create_site(old.state.settings, old.state.engine, dist)
+    site.state.jwks = old.state.jwks
+    c = TestClient(site, base_url='https://ppt.test', client=('127.0.0.1', 12345))
+    headers = login(c, token)
+    project = c.post('/api/v1/projects', headers=headers,
+                     json={'title': 'Hermes canary', 'external_model_ack': True}).json()
+    path = '/api/v1/projects/' + project['id'] + '/plans'
+    body = {'expected_revision': project['revision']}
+    assert c.post(path, json=body).status_code == 401
+    assert c.post(path, headers={'Authorization': headers['Authorization']}, json=body).status_code == 403
+    assert c.post(path, headers=headers | {'X-CSRF-Token': 'wrong'}, json=body).status_code == 403
+    headers['Idempotency-Key'] = 'hermes-admission'
+    first = c.post(path, headers=headers, json=body)
+    assert first.status_code == 202
+    assert first.json()['status'] == 'queued'
+    assert c.post(path, headers=headers, json=body).json()['id'] == first.json()['id']
+    with site.state.sessions() as s:
+        assert s.scalar(select(func.count(Job.id))) == 1
 
 
 def test_real_identity_project_settings_and_static(site_client):

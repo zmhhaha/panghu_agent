@@ -11,7 +11,12 @@ kind: NetworkPolicy
 metadata:
   name: dns-egress
 spec:
-  podSelector: {}
+  # NetworkPolicy rules are additive: never give task/validation Pods DNS.
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [ppt-site, ppt-migrator, ppt-postgres, ppt-hermes-controller]
   policyTypes: [Egress]
   egress:
     - to:
