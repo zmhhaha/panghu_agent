@@ -1,6 +1,6 @@
 # K8s 部署对接与后续验收交接
 
-更新时间：2026-10-25。当前部署与业务验证以文末 Hermes 进展为准。前面的 Pi 开发、暂停独立 Docker 环境配置与模型重试等说明保留为历史记录。
+更新时间：2026-10-25。当前部署与业务验证以文末 Hermes 进展为准。8页DSH白底架构导读review草稿已成功入库，后端已具备所有者预览与下载；浏览器实际核对待恢复登录。前面的 Pi 开发、暂停独立 Docker 环境配置与模型重试等说明保留为历史记录。
 
 ## 当前事实
 
@@ -89,10 +89,126 @@ build4预检scope `8616ce31-6787-4852-893c-e57a67ee1e37`：三角色各14项网�
 
 本次Worker提示没有给出 `control/planning.py` 接受的严格结构，候选使用
 `stage1_items/service_form_parameters`，未匹配官方stage1或outline/design格式。
-正在补充明确的stage1、stage2提示合同，保留严格校验，之后重建镜像再作真实尝试。
+后续 `ad97c11` 已补充明确的stage1、stage2提示合同，保留严格校验并重建镜像。
 transport错误码过滤原本不接受数字，将包含数字1的错误泛化为
-`validation_execution_failed`；该问题也在修复，原始具体校验回执仍保留。
+`validation_execution_failed`；`ad97c11` 已修复错误传播，原始具体校验回执仍保留。
 
 网站状态同步修复 `f2d8838` 已build/deploy并Ready，活跃任务使用权威GET补同步，
-“刷新状态”包含当前任务；其上线不改变上述校验失败。后续真实重跑和方案入库尚待验证，
-不预先记录后续成功或最终执行镜像，也不将部署/预检通过推导为PPT生成或人工验收通过。
+“刷新状态”包含当前任务；其上线不改变上述历史校验失败。
+
+## 2026-10-25：build5 及两轮规划确认完成
+
+Controller为 `sha256:db94823530c997989b768533d615b4da876e3386539b5dfd01b533f6d41bc1dc`，
+Worker为 `sha256:f19950f0bf09bcf80f822e03b703891b6162d4f0b586e43e52fd4d53e2d5c995`。
+完整无模型预检scope `fd0d4a1a-ab59-4945-947f-e5c1fa82d25d` 四个成功flags全true，
+三角色各14项通过，退出0，之后恢复Controller/site执行。
+
+第三次初始规划 `fdddea19-dd1e-4e43-8def-2c7258be1698` 成功入库方案修订1。
+用户明确确认后，第二阶段 `4b1d35ff-eeaf-4438-9115-7f429e216f1c` 成功入库方案修订2，
+包含三套完整8页方向。用户再次选择 `direction-a` 白底架构导读，已保存网页确认。
+规范准备job `fb19dbf7-4bee-49b6-90e4-320a39c8f6c6` 已成功且停止，项目修订15；
+scope为 `6d51eaa5-8c08-5a98-9604-b28703d07d15`，规范与锁文件已齐全。
+
+`7e11b96` 修复官方沟通字段和对象形式逐页表达未显示的问题，99项前端测试及TS/build通过；
+实际网站digest `sha256:47fb9b2f17dba7e8ba5c6a88c56f2ce43f6092dff3b6e6039dfcf24d947de453`，
+浏览器已核实完整正文与逐页表达显示。目前仍无PPT产物、预览/下载或PowerPoint人工验收，
+最终进展及用量边界见上述业务回执。P1/P2总项和正式发布门继续待验。
+
+## 2026-10-25：首次生成失败与build6修复
+
+prepare成功后自动创建generate job `92a705d4-3068-4416-ab71-cdf91b897ae7`，
+scope为 `a74b24ad-d169-54a2-afcf-815277ef4c44`。任务已失败并停止，公开错误码为
+`quality_gate_failed`，manifest为 `needs_input`。虽然8份SVG已写出、作者early/final静态
+检查均0错误0警告，官方 `visual_review.py` 仍以退出码3报 `playwright not installed`；
+未完成真实业务PNG、视觉检查、finalize或PPTX导出。失败SVG只保留为私有证据，
+不能手动提升为成功checkpoint或可发布草稿。
+
+已复现的根因是Hermes的 `bash -lc` 将 `python3` 解析为 `/usr/bin/python3`，
+而运行库在 `/opt/hermes/.venv/bin/python` 中。固定venv下Playwright及真实Chromium
+渲染、像素检查均通过，并非缺包或审批拒绝。修复 `94a18c6` 已推送、服务器已快进拉取：
+官方Python工具全部使用固定venv和脚本绝对路径，保留拒绝/超时停止规则，不安装运行库。
+对应回归61 passed、5 skipped、90 subtests passed，独立review通过。
+
+同一提交修复网页串联prepare/generate后退回显示prepare成功的问题，保留最后实际任务，
+避免掩盖generate失败；前端100项、TypeScript及production build通过。
+
+build6镜像已构建推送。新Worker的官方8页无模型渲染检查通过：`passed=true`、
+`no_model_calls=true`、`rendered=8`、`failed=0`、`all_background=0`、`png_count=8`、
+`preview_stopped=true`，退出0；8张1280×720 PNG及确定色块检查通过。
+报告 `/root/ppt-official-render-smoke-20261025-b6.log`；检查使用无网络、只读根、
+UID10000、drop ALL及no-new-privileges容器，不能代替DSH业务PPT或人工视觉验收。
+build6执行镜像已按关闭准入、禁用状态部署、完整预检、恢复启用的顺序成功部署。
+本次预检scope为 `f02133c8-46d9-4625-b49c-8e31104b3598`，`passed`、`no_model_calls`、
+`writers_stopped`、`cleanup_complete` 全true，proxy、worker、sandbox各14项探针均0失败，
+报告 `/root/ppt-network-preflight-20261025-b6.log`。网站通过标准
+`bash deploy.sh --skip-build` 部署成功，日志 `/root/ppt-site-deploy-20261025-runtime6.log`；
+site2/2、Controller1/1就绪，网站digest为
+`sha256:96070732086f057bb9b653a889e134f481ecda90801352f8e143042f76a88f1e`，
+Worker为 `sha256:cc3c6765e5b7c84adebab7fe54b3e49b7085266ca5249cf5c7308d996c5b774e`。
+
+两轮用户确认保留。网页重试prepare `e8aa2e0e-ceda-469d-9578-69b9cb1b4369` 已通过，
+自动创建generate `c4aec6c4-4ac9-4e9f-85d8-12e9bbab956b`，scope为
+`bca0747a-1c8f-5ad5-9835-bcf38d09c231`，最终failed、stopped=true；阶段截止时间为
+`2026-10-25 11:54:46.876179+00`。私有候选包含8份SVG、8份PNG、1份PPTX，
+独立沙箱 `ec1cb298-970f-4057-8fdb-47004f6e0d2d` 退出2，原诊断
+`validation_execution_failed`。候选未成为版本，不提供下载。代理61次请求中60次completed、
+1次client_disconnected；token与费用未汇总。
+OpenSpec的build6回执revision为 `9bba9bc451fad31e5090804ba96d71e0450333a6`，validate=true，
+不据此记录业务或人工验收通过。最终业务结果继续补记到
+[DSH业务回执](docs/dsh-code-learning-live-20261025.md)。
+
+## 2026-10-25：build7备注与诊断修复，审核稿成功入库
+
+build6候选的官方delivery检查passed，8slides、8notes、errors空、motion0、hidden0；
+服务独立 `render_validation` 却硬编码notes必须0，拒绝了方案已确认的文字讲者备注。
+修复 `c696a52` 已推送、服务器已拉取：只接受无备注或每页一个纯文本备注，并严格检查
+根、内容类型、双向关系、孤儿/共享/重复部分和备注资源，要求官方与原生计数一致。
+新增脱敏 `failure.json` 与K8s只读失败诊断回收；这些诊断不会把失败改成成功。
+范围191 passed、1 skipped、14 deselected、110 subtests passed；首次4项Windows平台环境
+失败及随后排除项不计通过。K8s范围46 passed，覆盖范围不相加。
+
+build7Worker镜像为 `sha256:0b7aeb56f48a81a162e8863e7dbef08e4b6f8d44ff421e6b2047d291b6ff7d73`，
+已构建推送。Controller为
+`sha256:ec99998b3379048f95d8db4acdd8452b903f60ac754b086851bd780a543f079e`。
+已按disabled→完整预检→enable部署通过；网站未重建，沿用
+`sha256:96070732086f057bb9b653a889e134f481ecda90801352f8e143042f76a88f1e`。
+预检scope为 `2b5f36c0-828b-4c37-87a7-73fdf58f3238`，四个成功flags全true，
+proxy、worker、sandbox各14项探针均0失败，退出0，日志为
+`/root/ppt-network-preflight-20261025-b7.log`。
+已停止候选的只读测试副本 `/root/ppt-actual-candidate-check-20261025-b7-r2` 使用manifest
+SHA256 `ab5ee2ba5c93fb5824b2a0113c0a8def8edd10df755a290c8dcb5eaef6691e43`。
+首个副本因缺home报 `session_database_missing`，仅补齐5个 `.db`、不拷配置/凭据后，
+禁网、只读根、UID10000、drop ALL的完整 `run_candidate_delivery` 退出0，
+4个程序质量门通过，`review_artifacts_ready=true`。
+
+测试仍为 `accepted=false`、`publication_authorization=false`，人工、视觉及导出构建合同待验。
+无模型调用，原job和数据库不变；未把旧候选变成版本，也未开放下载。日志为
+`/root/ppt-actual-candidate-check-20261025-b7-r2.log`。OpenSpec已补notes及failure诊断规格，
+revision `54d486cdbbe079e5fbc344c8677c32e05a3acceb`，validate=true。
+
+网页新prepare `be8d728f-a180-46ae-bb7c-195ecdb66159` 已通过，自动generate为
+`94a9e5a7-fe29-4e8c-a5ff-db32bb509a1d`，scope为
+`38fe0ae8-74c0-52b7-8ff4-4ec3e4fee57f`。prepare最终succeeded、stopped=true，scope为
+`90f1a9d1-fd09-5913-82de-3e5e917a8f19`；generate最终succeeded、stopped=true、error=null。
+项目修订18、stage为 `awaiting_review`、`active_job_id=null`。
+
+审核稿Version `31d2bb16-f372-44eb-a2bf-16178b1d0eca` 已入库，status为 `review`，
+包含8PNG、8SVG、1PPTX。PPTX为56768bytes，SHA256为
+`8ed10a226228b4b65ec733f861204bcf56d9c3b46078a99251624f1325d7761c`，最终存储hash核对match=true。
+独立证据nonce为 `2b5c0a40-c6fd-4eec-b306-18a558e49cbd`；source manifest SHA256为
+`e6d1a17de2b8fd16db6944ff737ba2bfe637e54fa1010252c8b437d0f74f8773`，receipt SHA256为
+`2c34f42647e091421b15f313a968a6083ce6100390fe2773801c498b59132caf`，source fingerprint为
+`7bf19ed0c29eb7a97f1eb405275949b7598e628f843057a48fffe646ef787548`。
+
+草稿仍为 `eligible_as_revision_base=false`、`publication_authorization=false`，必需待验门为
+`independent_export_build_contract`、`independent_visual_review`、
+`powerpoint_open_edit_save_reopen`、`postflight_warnings_review`。不能把review入库当作正式验收或发布。
+prepare代理18次请求（16completed、1client_disconnected、1proxy_shutdown），generate代理50次
+（49completed、1proxy_shutdown）；完整tokens及费用未汇总，不记为0。
+
+最后浏览器会话已过期，已打开Casdoor并请用户登录。后端所有者专属预览与下载已具备，
+网页实际预览8页和下载仍待恢复登录后核对，未宣称已经在浏览器完成下载。
+
+服务器审核稿入库成功结果已同步到OpenSpec，最终revision为
+`cf6fb80c68c3af97cc3a81eba403623ca7b60760`，validate=true。任务仍26完成、35待办，
+P1/P2总项未勾选；浏览器核对及四项质量门继续pending。
