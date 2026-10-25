@@ -6,6 +6,7 @@ import pytest
 
 from ppt_service.control.planning import project_planning
 from ppt_service.worker.prompts import stage_instructions
+from ppt_service.worker.preview import PYTHON, VISUAL_REVIEW
 
 
 @pytest.mark.parametrize('phase', ['plan_initial', 'plan_options'])
@@ -38,3 +39,15 @@ def test_stage2_example_is_a_shape_and_can_carry_actual_eight_page_task():
                            expected_page_count=8)
     assert len(dto['outline']['pages']) == 8
     assert '全部N页' in instruction
+
+
+@pytest.mark.parametrize('phase', ['plan_initial', 'plan_options', 'prepare', 'generate', 'revise'])
+def test_every_phase_uses_fixed_official_python_without_bypassing_approval(phase):
+    instruction = stage_instructions(phase)
+    assert f'固定解释器 {PYTHON}' in instruction
+    assert f'{PYTHON} {VISUAL_REVIEW} <project> --server-url <controller_url>' in instruction
+    assert '禁止依赖shell中python、python3或pip的PATH解析' in instruction
+    assert '不自行安装包或浏览器' in instruction
+    assert '同一操作已被拒绝、超时或待授权时' in instruction
+    assert '不得更换解释器或改写命令重试' in instruction
+    assert '视觉门未通过不得finalize/导出' in instruction

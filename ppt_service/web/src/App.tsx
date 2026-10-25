@@ -50,6 +50,9 @@ function Workspace({id,profile,onBack,onChanged}:{id:string;profile:Profile;onBa
  const refresh=useCallback(async()=>{const sequence=++refreshSequence.current;try{const p=await api.project(id);const versions=await api.versions(id);if(sequence!==refreshSequence.current)return;setProject(p);setVersions(versions);setError(null);}catch(e){if(sequence===refreshSequence.current)setError(e);}finally{if(sequence===refreshSequence.current)setLoading(false);}},[id]);
  useEffect(()=>{void refresh();},[refresh]);
  const parsePollingError=useParsePolling(project,tab==='materials'&&!busy,setProject);
+ // The controller can replace prepare with generate without a browser action.
+ // Keep that newest job after the project clears its active task at completion.
+ useEffect(()=>{if(project?.active_job_id)setLocalJob(project.active_job_id);},[project?.active_job_id]);
  const settled=useCallback(()=>{void refresh();},[refresh]);
  const {job,setJob,connection,error:jobError,refresh:refreshJob}=useJob(project?.active_job_id??localJob,settled);
  const active=!!job&&activeStatuses.has(job.status)||!!project?.active_job_id&&!job;

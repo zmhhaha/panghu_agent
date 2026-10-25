@@ -5,6 +5,7 @@ import http.client
 import json
 import os
 from pathlib import Path
+import shlex
 import signal
 import socket
 import stat
@@ -148,14 +149,19 @@ class OfficialPreview:
     def instructions(self) -> str:
         if not self.ready:
             raise RuntimeError("Preview has not passed readiness")
+        help_command = shlex.join([PYTHON, VISUAL_REVIEW, "--help"])
+        render_command = shlex.join([PYTHON, VISUAL_REVIEW, str(self.project), "--server-url", ORIGIN])
         return ("\n可信Worker预览上下文：执行器已启动并健康核对当前项目的临时官方live-preview。"
                 "恢复材料中禁止Agent启动daemon的历史说明不阻止使用这个已就绪服务。"
                 "不要自行启动、重启或关闭服务；Worker负责finally关闭。"
                 f"\n项目绝对路径：{json.dumps(str(self.project), ensure_ascii=False)}"
                 f"\n唯一已就绪官方origin：{ORIGIN}"
-                f"\n使用官方 {VISUAL_REVIEW}；先读取其实际CLI帮助，"
-                f"审查时显式传 --server-url {ORIGIN} 并绑定上述项目。"
+                "\n首次正常调用官方渲染工具前，先用固定解释器核对实际CLI帮助。"
+                f"\n官方渲染帮助命令：{help_command}"
+                f"\n本任务全页渲染命令：{render_command}\n"
                 "省略--pages审查全部页；核对预期页数与实际rendered成功数，不能仅凭exit0声称完成。"
+                "这些命令仍经过现有审批；同一操作已被拒绝、超时或待授权时必须停止，"
+                "不得更换解释器或改写命令重试。"
                 "不得替换URL、端口或声称尚未执行的视觉审查已通过。\n")
 
     def stop(self, *, grace: float = 3) -> None:

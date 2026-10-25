@@ -3,6 +3,7 @@ import http.client
 import json
 import os
 from pathlib import Path
+import shlex
 import signal
 import subprocess
 import tempfile
@@ -166,7 +167,28 @@ class PreviewTests(unittest.TestCase):
         self.assertNotIn("secret", repr(popen.call_args))
         self.assertNotIn("untrusted", service.instructions())
         self.assertIn("--server-url http://127.0.0.1:8765", service.instructions())
+        lines = service.instructions().splitlines()
+        help_command = next(line.split('：', 1)[1] for line in lines if line.startswith('官方渲染帮助命令：'))
+        render_command = next(line.split('：', 1)[1] for line in lines if line.startswith('本任务全页渲染命令：'))
+        self.assertEqual(shlex.split(help_command), [preview.PYTHON, preview.VISUAL_REVIEW, '--help'])
+        self.assertEqual(shlex.split(render_command), [preview.PYTHON, preview.VISUAL_REVIEW,
+                                                     str(self.project), '--server-url', preview.ORIGIN])
+        self.assertNotIn('--pages', shlex.split(render_command))
         self.assertTrue(service.ready)
+
+    def test_render_context_shell_quotes_project_and_preserves_approval_stop_rule(self):
+        self.project = self.project.rename(self.project.with_name("deck with spaces 'quote' $(marker)"))
+        service = self.supervisor()
+        with self.assertRaisesRegex(RuntimeError, 'readiness'):
+            service.instructions()
+        service.ready = True  # Only exercising serialization after the separate readiness test.
+        context = service.instructions()
+        command = next(line.split('：', 1)[1] for line in context.splitlines()
+                       if line.startswith('本任务全页渲染命令：'))
+        self.assertEqual(shlex.split(command), [preview.PYTHON, preview.VISUAL_REVIEW,
+                                               str(self.project), '--server-url', preview.ORIGIN])
+        self.assertIn('同一操作已被拒绝、超时或待授权时必须停止', context)
+        self.assertIn('不得更换解释器或改写命令重试', context)
 
     def test_health_must_match_all_identity_fields(self):
         for field, value in (("project", "/outside"), ("pid", 9), ("pid", True),
