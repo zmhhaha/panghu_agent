@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import json
 import os
 from pathlib import Path
 import re
@@ -360,6 +361,48 @@ def run_candidate_delivery(snapshot, request, trusted_oracle, authorized_source_
     return _compose(snapshot, manifest, request, programmatic, postflight, output / "programmatic", output, execution_image)
 
 
+def _record_failure(output, envelope, error):
+    """Best-effort private diagnosis; never a draft receipt or retry authority.
+
+    The CLI calls this only if its output did not exist when this run began.
+    Refuse links, old receipts and duplicate failure files rather than modify
+    another run's evidence. No exception text or untrusted tool output is kept.
+    """
+    try:
+        output = Path(output).absolute()
+        if any(path.is_symlink() or path.is_junction() for path in (output, *output.parents)):
+            return
+        if output.exists() and not output.is_dir():
+            return
+        receipt = output / "candidate-delivery.json"
+        if receipt.exists() or receipt.is_symlink() or receipt.is_junction():
+            return
+        code = error.code if isinstance(error, ControlError) else None
+        if not isinstance(code, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,79}", code):
+            code = "validation_execution_failed"
+        payload = {"schema": "ppt-service.hermes-review-failure.v1", "status": "failed",
+                   "accepted": False, "publication_authorization": False,
+                   "review_artifacts_ready": False, "error_code": code}
+        if isinstance(envelope, dict):
+            nonce = envelope.get("validation_nonce")
+            try:
+                if isinstance(nonce, str) and str(uuid.UUID(nonce)) == nonce:
+                    payload["validation_nonce"] = nonce
+            except ValueError:
+                pass
+            source = envelope.get("source_manifest_sha256")
+            if isinstance(source, str) and _SHA.fullmatch(source):
+                payload["source_manifest_sha256"] = source
+        output.mkdir(exist_ok=True)
+        # Exclusive creation also refuses a pre-existing or dangling link.
+        with (output / "failure.json").open("x", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+            handle.write("\n")
+    except OSError:
+        # A diagnosis failure must neither disclose details nor change exit 2.
+        return
+
+
 def main():
     """Fixed validator entrypoint; no caller-supplied success/stop flags accepted."""
     parser = argparse.ArgumentParser(description="Independently validate Hermes review artifacts")
@@ -367,6 +410,9 @@ def main():
     parser.add_argument("--request", type=Path, default=Path("/request/request.json"))
     parser.add_argument("--output", type=Path, default=Path("/output/delivery"))
     args = parser.parse_args()
+    output = args.output.absolute()
+    record_failure = not output.exists() and not output.is_symlink() and not output.is_junction()
+    envelope = None
     try:
         envelope = read_json(args.request.parent, args.request.name)
         request = {key: value for key, value in envelope.items()
@@ -376,9 +422,11 @@ def main():
                  and len(authorized) == len(set(authorized)), "draft_authorized_sources_invalid")
         run_candidate_delivery(args.snapshot, request, envelope.get("trusted_oracle"), set(authorized), args.output)
         return 0
-    except Exception:
+    except Exception as exc:
         # Partial output is private failed evidence, never a candidate receipt.
         # Do not echo tool stderr, paths, input text or upstream diagnostics.
+        if record_failure:
+            _record_failure(output, envelope, exc)
         return 2
 
 

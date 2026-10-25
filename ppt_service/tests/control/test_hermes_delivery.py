@@ -13,6 +13,7 @@ import sqlite3
 import sys
 from types import SimpleNamespace
 import uuid
+import zipfile
 
 from PIL import Image
 import pytest
@@ -23,7 +24,7 @@ from ppt_service.control import render_validation as render
 from ppt_service.control.execution import ControlError, PPT_MASTER_COMMIT
 from ppt_service.control.staging import atomic_json, read_json
 from ppt_service.tests.control.test_postflight_validation import FakeOfficialCommands
-from ppt_service.tests.test_candidate_validation import EXPECTED, NS, presentation, zipped
+from ppt_service.tests.test_candidate_validation import EXPECTED, NS, presentation, with_notes, zipped
 
 
 class OfflineCommands(FakeOfficialCommands):
@@ -37,7 +38,7 @@ class OfflineCommands(FakeOfficialCommands):
                 "schema": "ppt-master.pptx-delivery-check.v1", "status": "passed", "errors": [],
                 "file": {"path": str(deck.resolve()), "bytes": deck.stat().st_size},
                 "slides": {"count": 3, "hidden_count": 0},
-                "package": {"zip_integrity": "passed", "parts": {"notes": 0}},
+                "package": {"zip_integrity": "passed", "parts": {"notes": getattr(self, "notes_count", 0)}},
                 "motion": {
                     "transitions": dict.fromkeys(("carrier_slide_count", "visual_effect_slide_count", "timed_advance_slide_count"), 0),
                     "object_animations": dict.fromkeys(("timing_slide_count", "object_animation_slide_count", "audio_timing_slide_count"), 0),
@@ -159,6 +160,34 @@ def run(case, **overrides):
 
 def no_receipt(case):
     assert not (case.output / "candidate-delivery.json").exists()
+
+
+def test_text_speaker_notes_pass_real_package_checks_and_remain_review_only(case):
+    with zipfile.ZipFile(case.project / "deck.pptx") as archive:
+        parts = {name: archive.read(name) for name in archive.namelist()}
+    # The fixture helper uses text XML; decode only the container parts it edits.
+    for name in ("[Content_Types].xml", *[key for key in parts if key.startswith("ppt/slides/_rels/")]):
+        parts[name] = parts[name].decode()
+    (case.project / "deck.pptx").write_bytes(zipped(with_notes(parts)))
+    pptx = next(row for row in case.manifest["artifacts"] if row["role"] == "pptx")
+    pptx.update(render.hash_file(case.project, "deck.pptx"))
+    atomic_json(case.snapshot / "result/manifest.json", case.manifest)
+    case.request["source_manifest_sha256"] = render.hash_file(case.snapshot / "result", "manifest.json")["sha256"]
+    case.binding = render.source_binding(case.snapshot, case.manifest, case.request)[0]
+    case.commands.notes_count = 3
+    report = run(case).report()
+    programmatic = read_json(case.output / "programmatic", "programmatic-evidence.json")
+    assert programmatic["delivery"]["notes_count"] == programmatic["native"]["notes_count"] == 3
+    assert programmatic["native"]["notes_structure_verified"] is True
+    assert report["status"] == "review" and report["accepted"] is False
+    assert report["publication_authorization"] is False
+
+
+def test_official_note_count_must_match_independent_ooxml(case):
+    case.commands.notes_count = 3  # Actual OOXML has no notes.
+    with pytest.raises(ControlError, match="independent_notes_mismatch"):
+        run(case)
+    no_receipt(case)
 
 
 def test_real_evidence_composition_delivers_checked_draft_and_fresh_pngs(case):
@@ -361,6 +390,81 @@ def test_fixed_cli_failed_request_never_writes_a_success_receipt(case, monkeypat
     monkeypatch.setattr(sys, "argv", ["hermes_delivery", "--snapshot", str(case.snapshot),
                                      "--request", str(target), "--output", str(case.output)])
     assert delivery.main() == 2; no_receipt(case)
+    failure = read_json(case.output, "failure.json")
+    assert failure["error_code"] == "draft_authorized_sources_invalid"
+    assert failure["status"] == "failed" and failure["accepted"] is False
+
+
+def cli_request(case, monkeypatch):
+    target = case.snapshot.parent / "request.json"
+    atomic_json(target, {**case.request, "trusted_oracle": case.oracle,
+                         "authorized_source_sha256": sorted(case.authorized)})
+    monkeypatch.setattr(sys, "argv", ["hermes_delivery", "--snapshot", str(case.snapshot),
+                                     "--request", str(target), "--output", str(case.output)])
+
+
+@pytest.mark.parametrize("error,code", [
+    (ControlError("stage1_contract_invalid"), "stage1_contract_invalid"),
+    (ControlError("unsafe-code/private-input"), "validation_execution_failed"),
+    (RuntimeError("provider-token and /private/source"), "validation_execution_failed"),
+])
+def test_fixed_cli_retains_only_bound_safe_failure_code(case, monkeypatch, error, code):
+    cli_request(case, monkeypatch)
+
+    def fail(*args):
+        case.output.mkdir()
+        (case.output / "private-check.log").write_text("Private partial evidence")
+        raise error
+
+    monkeypatch.setattr(delivery, "run_candidate_delivery", fail)
+    assert delivery.main() == 2
+    no_receipt(case)
+    failure = read_json(case.output, "failure.json")
+    assert failure == {"schema": "ppt-service.hermes-review-failure.v1", "status": "failed",
+                       "accepted": False, "publication_authorization": False,
+                       "review_artifacts_ready": False, "error_code": code,
+                       "validation_nonce": case.request["validation_nonce"],
+                       "source_manifest_sha256": case.request["source_manifest_sha256"]}
+    assert (case.output / "private-check.log").read_text() == "Private partial evidence"
+
+
+def test_fixed_cli_does_not_modify_preexisting_output(case, monkeypatch):
+    cli_request(case, monkeypatch)
+    case.output.mkdir()
+    (case.output / "previous-evidence.log").write_text("Keep unchanged")
+    assert delivery.main() == 2
+    assert [p.name for p in case.output.iterdir()] == ["previous-evidence.log"]
+    assert (case.output / "previous-evidence.log").read_text() == "Keep unchanged"
+
+
+@pytest.mark.parametrize("existing", ["candidate-delivery.json", "failure.json"])
+def test_fixed_cli_failure_never_overwrites_a_receipt_created_during_run(case, monkeypatch, existing):
+    cli_request(case, monkeypatch)
+
+    def fail(*args):
+        case.output.mkdir()
+        (case.output / existing).write_text("Existing receipt")
+        raise ControlError("offline_failure")
+
+    monkeypatch.setattr(delivery, "run_candidate_delivery", fail)
+    assert delivery.main() == 2
+    assert [p.name for p in case.output.iterdir()] == [existing]
+    assert (case.output / existing).read_text() == "Existing receipt"
+
+
+def test_fixed_cli_failure_does_not_follow_a_linked_output_parent(case, monkeypatch):
+    target = case.snapshot.parent / "outside"; target.mkdir()
+    link = case.snapshot.parent / "linked"
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        pytest.skip("Directory symlink creation unavailable in this environment")
+    case.output = link / "delivery"
+    cli_request(case, monkeypatch)
+    monkeypatch.setattr(delivery, "run_candidate_delivery",
+                        lambda *args: (_ for _ in ()).throw(ControlError("offline_failure")))
+    assert delivery.main() == 2
+    assert not list(target.iterdir())
 
 
 @pytest.mark.parametrize("fault", ["file", "extra", "nonce", "authority", "baseline", "preview", "report", "image"])

@@ -208,11 +208,12 @@ def check_delivery_report(report,exit_code,pptx,binding):
         if transitions.get(key)!=0:raise ControlError('unexpected_motion')
     for key in ('timing_slide_count','object_animation_slide_count','audio_timing_slide_count'):
         if animations.get(key)!=0:raise ControlError('unexpected_motion')
-    if report.get('package',{}).get('parts',{}).get('notes')!=0:raise ControlError('unexpected_notes')
+    notes=report.get('package',{}).get('parts',{}).get('notes')
+    if type(notes) is not int or notes not in (0,len(binding['svg_sources'])):raise ControlError('invalid_notes_roster')
     advisories=report.get('advisories')
     if not isinstance(advisories,list) or bool(advisories)!=(report['status']=='passed-with-advisories'):raise ControlError('invalid_delivery_report')
     # Advisories are preserved and explicitly not equivalent to zero warnings.
-    return {'status':report['status'],'advisory_count':len(advisories),'advisories':copy.deepcopy(advisories),'full_exporter_postflight_verified':False,'policy':'errors/motion/notes/hidden-slides reject; advisories retained, not waived as full acceptance'}
+    return {'status':report['status'],'advisory_count':len(advisories),'advisories':copy.deepcopy(advisories),'notes_count':notes,'full_exporter_postflight_verified':False,'policy':'errors/motion/hidden-slides reject; notes require none or one passive text part per slide with independent package verification; advisories retained, not waived as full acceptance'}
 
 
 def verify_programmatic(snapshot,manifest,request,output,validation_id,*,commands=None,preview_factory=None):
@@ -233,6 +234,7 @@ def verify_programmatic(snapshot,manifest,request,output,validation_id,*,command
     code=commands.run([PYTHON,str(SCRIPTS/'pptx_delivery_check.py'),str(pptx)],delivery_out,delivery_err,timeout=60)
     delivery=read_json(output,'delivery.json',4*1024**2);delivery_checked=check_delivery_report(delivery,code,pptx,binding)
     native=inspect_pptx(pptx,request.get('expected_charts'))
+    if native.get('notes_structure_verified') is not True or native.get('notes_count')!=delivery_checked['notes_count']:raise ControlError('independent_notes_mismatch')
     if native['slide_count']!=len(binding['svg_sources']) or (native['chart_count'] and not native['chart_data_verified']):raise ControlError('native_chart_not_verified')
     atomic_json(output/'native-inspection.json',native)
     preview=None;render_code=None;cleanup_ok=False

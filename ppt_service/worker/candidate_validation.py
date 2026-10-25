@@ -234,6 +234,7 @@ class _Budget:
 class _Package:
     def __init__(self, data, budget, *, allow_ppt_printer_settings=False):
         self.budget, self.xmls, self.relationships = budget, {}, {}
+        self._content_types = None
         printer_parts = set()
         try:
             self.zip = zipfile.ZipFile(io.BytesIO(data))
@@ -296,6 +297,9 @@ class _Package:
             self._check_printer_settings(printer_parts)
 
     def _content_type(self, name):
+        if self._content_types is not None:
+            defaults, overrides = self._content_types
+            return overrides.get("/" + name, defaults.get(name.rsplit(".", 1)[-1].lower()))
         types = self.xml("[Content_Types].xml")
         ct = "{http://schemas.openxmlformats.org/package/2006/content-types}"
         if types.tag != ct + "Types":
@@ -311,6 +315,7 @@ class _Package:
             if not key or key in mapping or not node.get("ContentType"):
                 _fail("Invalid/duplicate compatibility content type declaration")
             mapping[key] = node.get("ContentType")
+        self._content_types = (defaults, overrides)
         return overrides.get("/" + name, defaults.get(name.rsplit(".", 1)[-1].lower()))
 
     def _check_printer_settings(self, parts):
@@ -659,6 +664,85 @@ def _expectations(expected_charts, limits):
     return expected_charts
 
 
+def _inspect_notes(package, slides):
+    """Accept no notes or one passive text notes part for every presented slide.
+
+    Counts alone cannot prove this: shared/orphan parts and wrong reverse
+    relationships are rejected independently of the official delivery report.
+    Notes never authorize audio, images, hyperlinks or other resource payloads.
+    """
+    notes_type = "application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"
+    master_type = "application/vnd.openxmlformats-officedocument.presentationml.notesMaster+xml"
+    p = "{" + NS["p"] + "}"
+    notes, masters = set(), set()
+    for name in package.parts:
+        if not name.endswith(".xml"):
+            continue
+        root = package.xml(name)
+        content_type = package._content_type(name)
+        if root.tag == p + "notes" or content_type == notes_type or name.startswith("ppt/notesSlides/"):
+            if root.tag != p + "notes" or content_type != notes_type:
+                _fail("Invalid notes root/content type")
+            notes.add(name)
+        if root.tag == p + "notesMaster" or content_type == master_type or name.startswith("ppt/notesMasters/"):
+            if root.tag != p + "notesMaster" or content_type != master_type:
+                _fail("Invalid notes master root/content type")
+            masters.add(name)
+    linked, used_masters = set(), set()
+    for slide in slides:
+        targets = [target for kind, target in package.relationships.get(slide, {}).values()
+                   if kind == REL + "notesSlide"]
+        if len(targets) > 1:
+            _fail("Slide requires at most one notes part")
+        if not targets:
+            continue
+        target = targets[0]
+        if target not in notes or target in linked:
+            _fail("Missing/shared notes part")
+        incoming = [(source, kind) for source, relationships in package.relationships.items()
+                    for kind, other in relationships.values() if other == target]
+        if incoming != [(slide, REL + "notesSlide")]:
+            _fail("Notes part requires one matching slide reference")
+        reverse, note_masters = [], []
+        for kind, other in package.relationships.get(target, {}).values():
+            if kind == REL + "slide":
+                reverse.append(other)
+            elif kind == REL + "notesMaster":
+                note_masters.append(other)
+            else:
+                _fail("Only passive text notes relationships supported")
+        if reverse != [slide] or len(note_masters) > 1 or not set(note_masters).issubset(masters):
+            _fail("Notes reverse slide/master relationship mismatch")
+        linked.add(target)
+        used_masters.update(note_masters)
+    note_relationships = [(source, target) for source, relationships in package.relationships.items()
+                          for kind, target in relationships.values() if kind == REL + "notesSlide"]
+    if (linked != notes or len(note_relationships) != len(notes)
+            or len(notes) not in (0, len(slides)) or used_masters != masters):
+        _fail("Notes roster must be empty or cover every slide exactly once")
+    for source, relationships in package.relationships.items():
+        for kind, target in relationships.values():
+            if kind == REL + "notesMaster" and (target not in masters or source not in notes | {"ppt/presentation.xml"}):
+                _fail("Invalid notes master reference")
+    for master in masters:
+        relationships = list(package.relationships.get(master, {}).values())
+        if len(relationships) > 1 or any(kind != REL + "theme" for kind, _ in relationships):
+            _fail("Only passive notes master theme relationships supported")
+        for _, theme in relationships:
+            if (theme is None or package.xml(theme).tag != "{http://schemas.openxmlformats.org/drawingml/2006/main}theme"
+                    or package.relationships.get(theme)):
+                _fail("Notes theme must not reference resource payloads")
+    forbidden = {"pic", "graphicFrame", "contentPart", "audio", "audioFile", "audioCd", "wavAudioFile",
+                 "video", "videoFile", "quickTimeFile", "snd", "sndAc", "timing", "transition",
+                 "hlinkClick", "hlinkMouseOver", "oleObj", "control"}
+    for name in notes | masters:
+        for node in package.xml(name).iter():
+            if (node.tag.rsplit("}", 1)[-1] in forbidden
+                    or any(key.startswith("{" + NS["r"] + "}") for key in node.attrib)):
+                _fail("Only passive text notes supported")
+    return len(notes)
+
+
 def inspect_pptx(path, expected_charts=None, *, limits=Limits()):
     """Check OOXML/chart chain and optionally cached + XLSX source data.
 
@@ -702,12 +786,13 @@ def inspect_pptx(path, expected_charts=None, *, limits=Limits()):
             if not part.lower().endswith(".xlsx"):
                 _fail("Only XLSX embedded packages supported")
             embedded[part] = _Workbook(_Package(package.read(part), budget))
-    seen_slides, found = set(), []
+    seen_slides, ordered_slides, found = set(), [], []
     for ordinal, slide_id in enumerate(slide_ids, 1):
         slide = package.related(presentation, slide_id.get(RID), "slide")
         if slide in seen_slides:
             _fail("Duplicate slide relationship in presentation order")
         seen_slides.add(slide)
+        ordered_slides.append(slide)
         slide_root = package.xml(slide)
         if slide_root.tag != "{" + NS["p"] + "}sld":
             _fail("Slide relationship points to non-slide part")
@@ -735,7 +820,9 @@ def inspect_pptx(path, expected_charts=None, *, limits=Limits()):
             if wanted["slide"] != ordinal:
                 _fail("Native chart not on expected slide ordinal")
             _check_chart(chart_root, workbook, wanted)
-    return {"slide_count": len(slide_ids), "chart_count": len(found),
+    notes_count = _inspect_notes(package, ordered_slides)
+    return {"slide_count": len(slide_ids), "notes_count": notes_count, "notes_structure_verified": True,
+            "chart_count": len(found),
             "charts": [{"slide": ordinal, "part": part} for ordinal, part, _, _ in found],
             "chart_data_verified": bool(expectations), "structural_only": not bool(expectations),
             "quality_gates_verified": False, "visual_acceptance": False}

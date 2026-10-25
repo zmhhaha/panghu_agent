@@ -101,6 +101,31 @@ def presentation(*, cache=None, book=None, external=False, hyperlink=None, two_s
     return parts
 
 
+def with_notes(parts=None, *, master=False):
+    parts = presentation(two_slides=True) if parts is None else parts
+    slides = [name for name in parts if name.startswith("ppt/slides/") and name.endswith(".xml")]
+    declarations = ""
+    for ordinal, slide in enumerate(slides, 1):
+        note = f"ppt/notesSlides/notesSlide{ordinal}.xml"
+        declarations += f'<Override PartName="/{note}" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"/>'
+        parts[note] = (f'<p:notes xmlns:p="{NS["p"]}" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+                       '<p:cSld><p:spTree><p:sp><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>讲者文字备注</a:t></a:r></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:notes>')
+        relationships = [("slide", "slide", "../slides/" + Path(slide).name, False)]
+        if master:
+            relationships.append(("master", "notesMaster", "../notesMasters/notesMaster1.xml", False))
+        parts[f"ppt/notesSlides/_rels/notesSlide{ordinal}.xml.rels"] = rels(relationships)
+        key = "ppt/slides/_rels/" + Path(slide).name + ".rels"
+        existing = parts.get(key, rels([]))
+        parts[key] = existing.replace("</Relationships>",
+            f'<Relationship Id="notes" Type="{REL}notesSlide" Target="../notesSlides/notesSlide{ordinal}.xml"/></Relationships>')
+    if master:
+        name = "ppt/notesMasters/notesMaster1.xml"
+        parts[name] = f'<p:notesMaster xmlns:p="{NS["p"]}"><p:cSld><p:spTree/></p:cSld></p:notesMaster>'
+        declarations += f'<Override PartName="/{name}" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesMaster+xml"/>'
+    parts["[Content_Types].xml"] = parts["[Content_Types].xml"].replace("</Types>", declarations + "</Types>")
+    return parts
+
+
 PRINTER = "ppt/printerSettings/printerSettings1.bin"
 PRINTER_CT = "application/vnd.openxmlformats-officedocument.presentationml.printerSettings"
 PRESENTATION_CT = "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"
@@ -154,6 +179,64 @@ class ChartValidationTests(unittest.TestCase):
 
     def test_shared_string_workbook(self):
         self.assertTrue(self.inspect(presentation(book=workbook(shared=True)))["chart_data_verified"])
+
+    def test_no_notes_or_one_text_notes_part_for_every_slide(self):
+        self.assertEqual(self.inspect()["notes_count"], 0)
+        for master in (False, True):
+            with self.subTest(master=master):
+                result = self.inspect(with_notes(master=master))
+                self.assertEqual(result["notes_count"], 2)
+                self.assertTrue(result["notes_structure_verified"])
+
+    def test_notes_reject_partial_orphan_shared_duplicate_and_wrong_backlinks(self):
+        for change in ("partial", "orphan", "shared", "duplicate", "backlink", "other-incoming", "wrong-root", "wrong-type"):
+            parts = with_notes()
+            first = "ppt/slides/_rels/slide93.xml.rels"
+            second = "ppt/slides/_rels/slide1.xml.rels"
+            reverse = "ppt/notesSlides/_rels/notesSlide1.xml.rels"
+            if change in ("partial", "orphan"):
+                parts[second] = rels([])
+                if change == "partial":
+                    del parts["ppt/notesSlides/notesSlide2.xml"]
+                    del parts["ppt/notesSlides/_rels/notesSlide2.xml.rels"]
+                    parts["[Content_Types].xml"] = parts["[Content_Types].xml"].replace('<Override PartName="/ppt/notesSlides/notesSlide2.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"/>', "")
+            elif change == "shared":
+                parts[second] = parts[second].replace("notesSlide2.xml", "notesSlide1.xml")
+            elif change == "duplicate":
+                parts[first] = parts[first].replace("</Relationships>", f'<Relationship Id="notes2" Type="{REL}notesSlide" Target="../notesSlides/notesSlide2.xml"/></Relationships>')
+            elif change == "backlink":
+                parts[reverse] = parts[reverse].replace("slide93.xml", "slide1.xml")
+            elif change == "other-incoming":
+                parts[first] = parts[first].replace("</Relationships>", f'<Relationship Id="other" Type="{REL}image" Target="../notesSlides/notesSlide1.xml"/></Relationships>')
+            elif change == "wrong-root":
+                parts["ppt/notesSlides/notesSlide1.xml"] = f'<p:sld xmlns:p="{NS["p"]}"/>'
+            else:
+                parts["[Content_Types].xml"] = parts["[Content_Types].xml"].replace("presentationml.notesSlide+xml", "presentationml.slide+xml")
+            with self.subTest(change=change), self.assertRaises(ValidationError):
+                self.inspect(parts)
+
+    def test_notes_and_notes_masters_reject_nontext_resources(self):
+        for change in ("image-relationship", "external-link", "audio-element", "picture-element", "resource-attribute", "master-image", "orphan-master"):
+            parts = with_notes(master=True)
+            key = "ppt/notesSlides/notesSlide1.xml"
+            relkey = "ppt/notesSlides/_rels/notesSlide1.xml.rels"
+            if change == "image-relationship":
+                parts[relkey] = parts[relkey].replace("</Relationships>", f'<Relationship Id="image" Type="{REL}image" Target="../notesMasters/notesMaster1.xml"/></Relationships>')
+            elif change == "external-link":
+                parts[relkey] = parts[relkey].replace("</Relationships>", f'<Relationship Id="link" Type="{REL}hyperlink" Target="https://example.com" TargetMode="External"/></Relationships>')
+            elif change == "audio-element":
+                parts[key] = parts[key].replace("</p:notes>", '<a:audioFile/></p:notes>')
+            elif change == "picture-element":
+                parts[key] = parts[key].replace("</p:notes>", '<p:pic/></p:notes>')
+            elif change == "resource-attribute":
+                parts[key] = parts[key].replace('<p:notes ', '<p:notes xmlns:r="' + NS["r"] + '" r:embed="resource" ')
+            elif change == "master-image":
+                parts["ppt/notesMasters/_rels/notesMaster1.xml.rels"] = rels([("image", "image", "../notesSlides/notesSlide1.xml", False)])
+            else:
+                for i in (1, 2):
+                    parts[f"ppt/notesSlides/_rels/notesSlide{i}.xml.rels"] = rels([("slide", "slide", "../slides/" + ("slide93.xml" if i == 1 else "slide1.xml"), False)])
+            with self.subTest(change=change), self.assertRaises(ValidationError):
+                self.inspect(parts)
 
     def test_slide_ordinal_is_presentation_order(self):
         result = self.inspect(presentation(two_slides=True))

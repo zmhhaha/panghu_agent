@@ -19,6 +19,42 @@ from .staging import atomic_json, copy_tree, make_readonly, read_json, relative
 from .render_validation import hash_file
 
 
+class _MissingSandboxResult(FileNotFoundError):
+    """Marks a result read failure, distinct from a sandbox lifecycle failure."""
+    def __init__(self, output_name):
+        super().__init__(output_name)
+        self.output_name = output_name
+
+
+def _review_failure_code(output, envelope, code, failure, result):
+    """Read only an image validator's bound failure diagnostic after stop.
+
+    A diagnostic can explain a missing success receipt. It cannot replace a
+    lifecycle error or turn any nonzero execution into a candidate result.
+    """
+    if (type(code) is not int or code == 0 or result is not None
+            or not isinstance(failure, _MissingSandboxResult)
+            or failure.output_name != 'delivery/candidate-delivery.json'
+            or (output / 'delivery' / 'candidate-delivery.json').exists()):
+        return None
+    try:
+        report = read_json(output, 'delivery/failure.json', 16 * 1024)
+    except (OSError, ControlError, ValueError, TypeError):
+        return None
+    fields = {'schema', 'status', 'accepted', 'publication_authorization',
+              'review_artifacts_ready', 'error_code', 'validation_nonce', 'source_manifest_sha256'}
+    if (not isinstance(report, dict) or set(report) != fields
+            or report.get('schema') != 'ppt-service.hermes-review-failure.v1'
+            or report.get('status') != 'failed'
+            or any(report.get(key) is not False for key in
+                   ('accepted', 'publication_authorization', 'review_artifacts_ready'))
+            or report.get('validation_nonce') != envelope['validation_nonce']
+            or report.get('source_manifest_sha256') != envelope['source_manifest_sha256']):
+        return None
+    error = report.get('error_code')
+    return error if isinstance(error, str) and re.fullmatch(r'[a-z][a-z0-9_]{0,79}', error) else None
+
+
 class KubernetesSandbox:
     def __init__(self, config: RuntimeConfig, settings: KubeSettings, backend=None, *, client=None):
         self.config, self.settings = config, settings
@@ -81,6 +117,10 @@ class KubernetesSandbox:
             try:
                 result = read_json(output, output_name, 8 * 1024**2)
                 require(isinstance(result, dict), 'invalid_sandbox_result')
+            except FileNotFoundError:
+                # Only this read site may issue the marker. A FileNotFoundError
+                # from Pod creation/wait/cleanup remains a lifecycle failure.
+                result, failure = None, _MissingSandboxResult(output_name)
             except Exception as exc:
                 result, failure = None, exc
         else:
@@ -155,6 +195,13 @@ class KubernetesSandbox:
             by_path = {row['path']: row for row in inventory['files']}
             require(hash_file(snapshot / 'result', 'manifest.json', 4 * 1024**2)['sha256'] == source_hash,
                     'validation_source_changed')
+            if review:
+                if ('delivery/candidate-delivery.json' in by_path and 'delivery/failure.json' in by_path
+                        and failure is None):
+                    failure = ControlError('validation_conflicting_output')
+                diagnostic = _review_failure_code(pending, envelope, code, failure, result)
+                if diagnostic is not None:
+                    failure = ControlError(diagnostic)
             if review and result is not None and failure is None and code == 0:
                 from .hermes_delivery import read_candidate_delivery
                 try:
@@ -188,7 +235,7 @@ class KubernetesSandbox:
                                  or not {'independent_visual_review', 'independent_postflight_and_delivery'}.issubset(gates)))):
                         failure = ControlError('publication_guard_violation')
             safe_error = failure.code if isinstance(failure, ControlError) else 'validation_execution_failed'
-            if code != 0 and isinstance(result, dict):
+            if not review and code != 0 and isinstance(result, dict) and not isinstance(failure, ControlError):
                 safe_error = result.get('error_code', safe_error)
             if not isinstance(safe_error, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,79}', safe_error):
                 safe_error = 'validation_execution_failed'

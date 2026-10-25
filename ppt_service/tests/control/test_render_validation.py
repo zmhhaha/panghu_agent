@@ -72,6 +72,17 @@ def test_delivery_advisories_are_preserved_not_full_postflight(tmp_path):
     result=check_delivery_report(report,0,path,{'pptx':{'bytes':10},'svg_sources':[{}, {}, {}]})
     assert result['advisory_count']==1;assert result['full_exporter_postflight_verified'] is False
 
+def test_complete_notes_count_is_supported_but_not_a_package_certificate(tmp_path):
+    path=tmp_path/'deck.pptx';report=delivery_fixture(path);report['package']['parts']['notes']=3
+    result=check_delivery_report(report,0,path,{'pptx':{'bytes':10},'svg_sources':[{}, {}, {}]})
+    assert result['notes_count']==3;assert result['full_exporter_postflight_verified'] is False
+
+@pytest.mark.parametrize('notes',[1,2,4,-1,True,None,'3'])
+def test_partial_or_invalid_note_counts_reject(tmp_path,notes):
+    path=tmp_path/'deck.pptx';report=delivery_fixture(path);report['package']['parts']['notes']=notes
+    with pytest.raises(ControlError,match='invalid_notes_roster'):
+        check_delivery_report(report,0,path,{'pptx':{'bytes':10},'svg_sources':[{}, {}, {}]})
+
 @pytest.mark.parametrize('problem',['exit','notes','motion','errors','contradictory'])
 def test_delivery_failures_reject(tmp_path,problem):
     path=tmp_path/'deck.pptx';report=delivery_fixture(path);code=0

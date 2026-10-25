@@ -277,6 +277,174 @@ def test_planning_failure_transport_preserves_bounded_error_codes_with_stage_num
     assert not api.objects
 
 
+def install_review_failure(runtime, *, mutate=None, exit_code=2, with_candidate=False,
+                           candidate_error=None, terminal=True):
+    config, settings, api, backend, attempt = runtime
+
+    def on_pod(obj):
+        if obj['metadata']['labels'][ROLE] != 'sandbox':
+            return
+        envelope = json.loads((source_mount(runtime, obj, '/request') / 'request.json').read_text())
+        output = source_mount(runtime, obj, '/output')
+        if with_candidate:
+            result = transport_delivery(output, envelope)
+            if candidate_error is not None:
+                result['error_code'] = candidate_error
+            atomic_json(output / 'delivery' / 'candidate-delivery.json', result)
+        report = {'schema': 'ppt-service.hermes-review-failure.v1', 'status': 'failed',
+                  'accepted': False, 'publication_authorization': False,
+                  'review_artifacts_ready': False, 'error_code': 'unexpected_notes',
+                  'validation_nonce': envelope['validation_nonce'],
+                  'source_manifest_sha256': envelope['source_manifest_sha256']}
+        if mutate:
+            replacement = mutate(report)
+            if replacement is not None:
+                report = replacement
+        atomic_json(output / 'delivery' / 'failure.json', report)
+        if terminal:
+            api.terminal(obj, exit_code=exit_code)
+
+    api.on_pod = on_pod
+
+
+def rejected_review(runtime, *, phase='generate', expected='unexpected_notes'):
+    config, settings, api, backend, attempt = runtime
+    h = backend.create(replace(attempt, phase=phase), staged(runtime))
+    backend.stop(h)
+    sandbox = KubernetesSandbox(config, settings, backend)
+    sandbox.scope_uid = h.uid
+    snapshot, request = candidate(runtime)
+    request['phase'] = phase
+    manifest = json.loads((snapshot / 'result' / 'manifest.json').read_text())
+    manifest['phase'] = phase
+    atomic_json(snapshot / 'result' / 'manifest.json', manifest)
+    with pytest.raises(ControlError) as raised:
+        sandbox.validate(snapshot, request)
+    assert raised.value.code == expected
+    retained = Path(raised.value.evidence_path)
+    transport = json.loads((retained / 'transport-manifest.json').read_text())
+    assert transport['controller_error_code'] == expected
+    assert transport['writers_stopped'] is True and transport['transport_verified'] is False
+    assert (retained / 'delivery' / 'failure.json').is_file()
+    assert backend.prove_stopped(h).all_writers_stopped
+    backend.cleanup(h)
+    assert not api.objects
+    return retained, transport
+
+
+@pytest.mark.parametrize('phase', ['generate', 'revise'])
+def test_bound_review_failure_diagnostic_is_retained_without_candidate(runtime, phase):
+    install_review_failure(runtime)
+    retained, transport = rejected_review(runtime, phase=phase)
+    assert transport['sandbox_exit_code'] == 2
+    assert [row['path'] for row in transport['files']] == ['delivery/failure.json']
+    assert not (retained / 'delivery' / 'candidate-delivery.json').exists()
+    report = json.loads((retained / 'delivery' / 'failure.json').read_text())
+    assert report['accepted'] is report['review_artifacts_ready'] is report['publication_authorization'] is False
+
+
+@pytest.mark.parametrize('fault', [
+    'schema', 'status', 'accepted', 'publication_authorization', 'review_artifacts_ready',
+    'false_number', 'nonce', 'source', 'missing_binding', 'extra_field', 'non_object',
+    'url_code', 'uppercase_code', 'newline_code', 'long_code', 'numeric_code', 'missing_code',
+])
+def test_review_failure_diagnostic_rejects_malicious_or_unbound_report(runtime, fault):
+    def mutate(report):
+        if fault == 'schema':
+            report['schema'] = 'ppt-service.hermes-review-failure.v2'
+        elif fault == 'status':
+            report['status'] = 'candidate'
+        elif fault in ('accepted', 'publication_authorization', 'review_artifacts_ready'):
+            report[fault] = True
+        elif fault == 'false_number':
+            report['accepted'] = 0
+        elif fault == 'nonce':
+            report['validation_nonce'] = str(uuid.uuid4())
+        elif fault == 'source':
+            report['source_manifest_sha256'] = '0' * 64
+        elif fault == 'missing_binding':
+            del report['source_manifest_sha256']
+        elif fault == 'extra_field':
+            report['message'] = '/private/path?token=SECRET'
+        elif fault == 'non_object':
+            return ['unexpected_notes']
+        elif fault == 'missing_code':
+            del report['error_code']
+        else:
+            report['error_code'] = {'url_code': '/private/path?token=SECRET',
+                                    'uppercase_code': 'UPSTREAM_SECRET', 'newline_code': 'invalid\ncode',
+                                    'long_code': 'x' * 81, 'numeric_code': 1}[fault]
+    install_review_failure(runtime, mutate=mutate)
+    rejected_review(runtime, expected='validation_execution_failed')
+
+
+def test_review_failure_diagnostic_does_not_turn_zero_exit_into_success(runtime):
+    install_review_failure(runtime, exit_code=0)
+    retained, transport = rejected_review(runtime, expected='validation_execution_failed')
+    assert transport['sandbox_exit_code'] == 0
+    assert not (retained / 'delivery' / 'candidate-delivery.json').exists()
+
+
+@pytest.mark.parametrize('exit_code', [0, 2])
+def test_review_success_and_failure_receipts_together_are_rejected(runtime, exit_code):
+    install_review_failure(runtime, exit_code=exit_code, with_candidate=True,
+                           candidate_error='candidate_claimed_error')
+    retained, transport = rejected_review(runtime, expected='validation_conflicting_output')
+    assert transport['sandbox_exit_code'] == exit_code
+    assert (retained / 'delivery' / 'candidate-delivery.json').is_file()
+
+
+def test_review_failure_diagnostic_cannot_override_sandbox_cleanup_error(runtime, monkeypatch):
+    config, settings, api, backend, attempt = runtime
+    install_review_failure(runtime)
+    def cleanup_failed(*args):
+        raise ControlError('sandbox_policy_cleanup_failed')
+    monkeypatch.setattr(backend, 'remove_sandbox_policy', cleanup_failed)
+    retained, transport = rejected_review(runtime, expected='sandbox_policy_cleanup_failed')
+    assert transport['sandbox_exit_code'] == 2
+
+
+def test_review_failure_diagnostic_requires_physical_stop_proof(runtime):
+    config, settings, api, backend, attempt = runtime
+    h = stopped_job(runtime)
+    install_review_failure(runtime, terminal=False)
+    api.terminate_on_delete = False
+    sandbox = KubernetesSandbox(config, settings, backend)
+    sandbox.scope_uid = h.uid
+    snapshot, request = candidate(runtime)
+    with pytest.raises(ControlError, match='validation_writers_not_stopped') as raised:
+        sandbox.validate(snapshot, request)
+    root = Path(raised.value.evidence_path)
+    assert (root / 'controller-quarantine.json').is_file()
+    assert (root / 'output' / 'delivery' / 'failure.json').is_file()
+    assert not list((snapshot.parent / 'validation-evidence').glob('*/transport-manifest.json'))
+    assert not backend.prove_stopped(h).all_writers_stopped
+
+
+def test_nonzero_review_candidate_cannot_supply_failure_code(runtime):
+    config, settings, api, backend, attempt = runtime
+    def on_pod(obj):
+        if obj['metadata']['labels'][ROLE] != 'sandbox':
+            return
+        envelope = json.loads((source_mount(runtime, obj, '/request') / 'request.json').read_text())
+        output = source_mount(runtime, obj, '/output')
+        result = transport_delivery(output, envelope)
+        result['error_code'] = 'candidate_claimed_error'
+        atomic_json(output / 'delivery' / 'candidate-delivery.json', result)
+        api.terminal(obj, exit_code=2)
+    api.on_pod = on_pod
+    h = stopped_job(runtime)
+    sandbox = KubernetesSandbox(config, settings, backend)
+    sandbox.scope_uid = h.uid
+    snapshot, request = candidate(runtime)
+    with pytest.raises(ControlError) as raised:
+        sandbox.validate(snapshot, request)
+    assert raised.value.code == 'validation_execution_failed'
+    transport = json.loads((Path(raised.value.evidence_path) / 'transport-manifest.json').read_text())
+    assert transport['controller_error_code'] == 'validation_execution_failed'
+    assert transport['sandbox_exit_code'] == 2 and transport['transport_verified'] is False
+
+
 @pytest.mark.parametrize('fault', ['nonce', 'source', 'accepted', 'gates', 'png', 'image'])
 def test_validation_rejects_unbound_or_forged_output(runtime, fault):
     config, settings, api, backend, attempt = runtime
