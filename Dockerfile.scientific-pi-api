@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r /tmp/scientific-api-requirements.txt && pip ch
 COPY app/__init__.py /app/app/__init__.py
 COPY app/api/__init__.py app/api/scientific_agent.py /app/app/api/
 COPY scientific_agent/__init__.py scientific_agent/pi_contracts.py scientific_agent/pi_client.py scientific_agent/pi_projection.py scientific_agent/pi_citations.py scientific_agent/pi_sections.py scientific_agent/pi_report_versions.py /app/scientific_agent/
+COPY scientific_agent/pi_revision_contracts.py scientific_agent/pi_revision_validation.py /app/scientific_agent/
 COPY tools/__init__.py tools/sqlite_client.py tools/email_client.py /app/tools/
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 SCIENTIFIC_DEFAULT_ENGINE=pi
 EXPOSE 8000

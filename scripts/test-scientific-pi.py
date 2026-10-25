@@ -9,7 +9,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parent.parent
-SUITES = ('contracts', 'research', 'worker', 'api', 'runtime', 'integration', 'deployment')
+SUITES = ('contracts', 'revisions', 'research', 'worker', 'api', 'runtime', 'integration', 'deployment')
 
 
 def main():

@@ -114,6 +114,13 @@ body {background:#f7f8f7!important;}
 .research-citation-card:target {border-color:#176d64;box-shadow:0 0 0 2px #d6e9e1;}
 .research-citation-link {font-weight:600;white-space:nowrap;}
 #citation-actions {align-items:center!important;gap:12px!important;}
+#writing-card {margin-top:24px!important;}
+#writing-card .research-section p {max-width:850px;}
+.research-revision-prose {max-height:460px;overflow:auto;border:1px solid #e0e8e2!important;
+  border-radius:8px!important;padding:16px!important;background:#fbfcfa!important;overflow-wrap:anywhere;}
+.research-revision-prose p, .research-revision-prose li {font-size:13px!important;line-height:1.9!important;}
+#revision-comparison textarea {font-family:ui-monospace,Consolas,monospace!important;font-size:12px!important;}
+#revision-controls, #version-actions {flex-wrap:wrap!important;gap:12px!important;}
 .research-artifacts {display:grid;grid-template-columns:1fr 1fr;gap:15px 24px;margin:3px 0 20px;}
 .research-artifacts div {padding-bottom:12px;border-bottom:1px solid #e9eee7;min-width:0;}
 .research-artifacts dt {font-size:12px;font-weight:600;color:#5d7b60;margin-bottom:4px;}
@@ -153,6 +160,9 @@ body {background:#f7f8f7!important;}
   .research-artifacts {grid-template-columns:1fr;gap:12px;}
   .research-citation-card {padding:14px;}
   #citation-actions {flex-direction:column!important;align-items:stretch!important;}
+  #revision-controls, #version-actions {flex-direction:column!important;align-items:stretch!important;}
+  #revision-controls > *, #version-actions > * {min-width:0!important;width:100%!important;}
+  .research-revision-prose {max-height:380px;padding:12px!important;}
   #task-actions {display:grid!important;grid-template-columns:1fr 1fr!important;gap:12px!important;}
   #task-actions > .form {grid-column:1 / -1;min-width:0!important;width:100%!important;}
   #task-actions button {width:100%!important;min-width:0!important;}
@@ -200,6 +210,9 @@ class WorkbenchSession:
         self.report_source = None
         self.citation_cache = None
         self.citation_revision = 0
+        self.writing_generation = 0
+        self.writing = None
+        self.writing_loading = None
 
     def __deepcopy__(self, memo):
         duplicate = WorkbenchSession()
@@ -238,7 +251,9 @@ def _bind(session, request, require_user=False):
 
 
 def _uuid(value):
-    value = (value or "").strip()
+    if not isinstance(value, str):
+        raise ValueError("请输入完整的任务或报告 ID。")
+    value = value.strip()
     try:
         if str(uuid.UUID(value)) != value:
             raise ValueError()
@@ -388,6 +403,9 @@ def _clear_report(session):
         session.report_source = None
         session.citation_cache = None
         session.citation_revision += 1
+        session.writing_generation += 1
+        session.writing = None
+        session.writing_loading = None
 
 
 def _empty_view(message, task_id="", polling=False, retry=None, session=None):
@@ -1066,6 +1084,759 @@ def return_to_draft():
     return gr.update(selected="new")
 
 
+WRITING_OUTPUTS = 18
+WRITING_REPORT_LIMIT = 2 * 1024 * 1024
+ADOPTION_FIELDS = ("expected_current_version_id", "expected_selection_revision", "base_sha256",
+                   "candidate_sha256", "comparison_token")
+
+
+def _writing_skip(count=WRITING_OUTPUTS):
+    return tuple(gr.skip() for _ in range(count))
+
+
+def _writing_owner(session, request):
+    return session.owner == (str(getattr(request, "session_hash", "") or ""), _identity(request))
+
+
+def _writing_token(session):
+    work = session.writing
+    if not work or not session.report_source:
+        raise ValueError("请先打开已完成的报告，再选择需要修改的章节。")
+    return (session.owner, session.view, session.writing_generation, work["reader_key"],
+            work["version_id"], work["edit_revision"])
+
+
+def _writing_current(session, token, request):
+    try:
+        return _writing_owner(session, request) and _writing_token(session) == token
+    except ValueError:
+        return False
+
+
+def _digest(value):
+    if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+        raise ValueError("报告版本校验未完成，请重新打开报告。")
+    return value
+
+
+def _version_metadata(row, root_id):
+    if not isinstance(row, dict) or _uuid(row.get("root_report_id")) != root_id:
+        raise ValueError("版本与当前报告不一致，请重新打开报告。")
+    checked = dict(row)
+    for key in ("version_id", "source_report_id"):
+        checked[key] = _uuid(row.get(key))
+    checked["report_sha256"] = _digest(row.get("report_sha256"))
+    if row.get("parent_version_id") is not None:
+        checked["parent_version_id"] = _uuid(row["parent_version_id"])
+    return checked
+
+
+def _writing_state(data):
+    if not isinstance(data, dict) or data.get("schema_version") != "1":
+        raise ValueError("写作版本暂时无法加载，请稍后重试。")
+    root = _uuid(data.get("root_report_id"))
+    current = _uuid(data["current_version_id"]) if data.get("current_version_id") else None
+    sequence = data.get("selection_revision")
+    if type(sequence) is not int or sequence < 0:
+        raise ValueError("写作版本暂时无法加载，请稍后重试。")
+    rows = data.get("versions")
+    if not isinstance(rows, list) or len(rows) > 100:
+        raise ValueError("版本列表暂时无法加载，请稍后重试。")
+    versions = [_version_metadata(row, root) for row in rows]
+    if len({row["version_id"] for row in versions}) != len(versions):
+        raise ValueError("版本列表暂时无法加载，请稍后重试。")
+    return dict(root_id=root, current_version_id=current, selection_revision=sequence,
+                current_sha256=_digest(data["current_sha256"]) if current else None, versions=versions)
+
+
+def _read_sections(data, content):
+    raw = content.encode("utf-8")
+    if len(raw) > WRITING_REPORT_LIMIT or not isinstance(data, dict):
+        raise ValueError("章节暂时无法加载，请重新打开报告。")
+    if _digest(data.get("report_sha256")) != hashlib.sha256(raw).hexdigest():
+        raise ValueError("章节与当前阅读版本不一致，请重新打开报告。")
+    rows = data.get("sections")
+    if not isinstance(rows, list) or len(rows) > 2000:
+        raise ValueError("章节暂时无法加载，请重新打开报告。")
+    sections = {}
+    references = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise ValueError("章节暂时无法加载，请重新打开报告。")
+        key, start, end = row.get("section_id"), row.get("start_byte"), row.get("end_byte")
+        if (not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", key)
+                or key in sections or type(start) is not int or type(end) is not int
+                or not 0 <= start <= end <= len(raw) or not isinstance(row.get("title"), str)):
+            raise ValueError("章节暂时无法加载，请重新打开报告。")
+        text = raw[start:end].decode("utf-8")
+        if hashlib.sha256(raw[start:end]).hexdigest() != _digest(row.get("sha256")):
+            raise ValueError("章节与当前阅读版本不一致，请重新打开报告。")
+        sections[key] = dict(row, text=text)
+        if re.search(r"\breferences?\b|\bbibliography\b|参考文献", row["title"], re.I):
+            references.append((start, end))
+    return {key: row for key, row in sections.items() if row.get("editable") is True
+            and not any(max(row["start_byte"], start) < min(row["end_byte"], end)
+                        for start, end in references)}
+
+
+def _version_choices(work):
+    choices = [("原始报告 · 保留原件", "original")]
+    for number, row in enumerate(work["versions"], 1):
+        name = "初始写作稿" if row.get("kind") == "base" or not row.get("parent_version_id") else f"修订版本 {number}"
+        if row["version_id"] == work["current_version_id"]:
+            name += " · 当前采用"
+        elif row.get("parent_version_id"):
+            name += " · 候选"
+        choices.append((name, row["version_id"]))
+    return gr.update(choices=choices, value=work["version_id"] or "original", interactive=True)
+
+
+def _writing_notice(work):
+    def label(version_id, original=False):
+        if version_id is None:
+            return "原始报告" if original else "尚未建立写作稿"
+        for number, row in enumerate(work["versions"], 1):
+            if row["version_id"] == version_id:
+                return "初始写作稿" if not row.get("parent_version_id") else f"修订版本 {number}"
+        return "已保存的写作版本"
+    reading = label(work["version_id"], original=True)
+    if work["current_version_id"] is None and work["versions"]:
+        return f"当前阅读：{reading}。准备已保存，可刷新列表查看当前采用状态。"
+    return f"当前阅读：{reading}。当前采用：{label(work['current_version_id'])}。"
+
+
+def _merge_writing_head(work, state):
+    """Delayed reads and adoption receipts cannot move the local head backwards."""
+    incoming, existing = state["selection_revision"], work["selection_revision"]
+    if incoming < existing:
+        return False
+    same_head = (state["current_version_id"], state["current_sha256"]) == (work["current_version_id"], work["current_sha256"])
+    discovered_base = (existing == incoming == 0 and work["current_version_id"] is None and
+        any(row["version_id"] == state["current_version_id"] and not row.get("parent_version_id")
+            for row in state.get("versions", [])))
+    if incoming == existing and not same_head and not discovered_base:
+        raise ValueError("采用状态校验未完成，请重新刷新写作版本。")
+    work.update({key: state[key] for key in ("current_version_id", "current_sha256", "selection_revision")})
+    if "versions" in state:
+        # Preserve the exact version being read if the server history page is
+        # bounded or a concurrent candidate is absent from that page.
+        rows = list(state["versions"])
+        keep = {work["version_id"], work["current_version_id"]}
+        for row in work["versions"]:
+            if row["version_id"] in keep and not any(item["version_id"] == row["version_id"] for item in rows):
+                rows.append(row)
+        work["versions"] = rows
+    return True
+
+
+def _writing_updates(work=None, notice=None):
+    if work is None:
+        return (notice or "打开一份已完成的报告，即可查看章节和写作版本。",
+                gr.update(choices=[], value=None, interactive=False),
+                gr.update(choices=[], value=None, interactive=False), "", "先选择章节，写下修改目标，再预览。",
+                gr.update(interactive=False, value="确认并开始章节修订"), "尚未开始章节修订。", "",
+                gr.update(interactive=False), gr.update(active=False), gr.update(interactive=False),
+                "", "", "", gr.update(interactive=False), "", gr.update(value=None, interactive=False), "")
+    choices = [(f"{number}. {row['title']}", key) for number, (key, row) in enumerate(work["sections"].items(), 1)]
+    section = work["sections"].get(work["section_id"], {})
+    return (notice or _writing_notice(work), _version_choices(work),
+            gr.update(choices=choices, value=work["section_id"], interactive=bool(choices)), section.get("text", ""),
+            "先写下修改目标，再点击「预览修改范围」。准备预览不会启动修订任务。",
+            gr.update(interactive=False, value="确认并开始章节修订"), "尚未开始章节修订。", "",
+            gr.update(interactive=False), gr.update(active=False), gr.update(interactive=False),
+            "", "", "", gr.update(interactive=False), "", gr.update(value=None, interactive=False), "")
+
+
+def _new_writing(session, state, source_id, content, section_data, version_id=None):
+    source_key = (session.owner, source_id, hashlib.sha256(content.encode("utf-8")).hexdigest())
+    sections = _read_sections(section_data, content)
+    return dict(state, source_id=source_id, content=content, reader_key=source_key,
+                reader_view=session.view, version_id=version_id, sections=sections,
+                section_id=next(iter(sections), None), edit_revision=0, prepared=None,
+                plans={}, tracking=None, track_revision=0, track_inflight=False,
+                comparison=None, adoption_keys={})
+
+
+def load_writing_workspace(session, request: gr.Request):
+    """Load only the exact report currently rendered; stale report changes skip."""
+    token = None
+    try:
+        headers = _bind(session, request, require_user=True)
+        with session.lock:
+            source = session.report_source
+            if not source:
+                return _writing_updates()
+            if session.writing and session.writing["reader_key"] == source["key"]:
+                return _writing_skip()
+            token = (session.owner, session.view, session.writing_generation, source["key"])
+            if session.writing_loading == token:
+                return _writing_skip()
+            session.writing_loading = token
+            source_id, content = session.task_id, source["text"]
+        response = requests.get(f"{API_BASE}/scientific-reports/{source_id}/writing-state", headers=headers, timeout=10)
+        if not response.ok:
+            raise ValueError(_http_message(response, "写作版本查询"))
+        state_data = response.json()
+        state = _writing_state(state_data)
+        if state_data.get("source_report_id") != source_id or state_data.get("source_sha256") != token[3][2]:
+            raise ValueError("写作版本与当前报告不一致，请重新打开报告。")
+        response = requests.get(f"{API_BASE}/scientific-reports/{source_id}/sections", headers=headers, timeout=10)
+        if not response.ok:
+            raise ValueError(_http_message(response, "章节查询"))
+        with session.lock:
+            if not _writing_owner(session, request) or (session.owner, session.view, session.writing_generation,
+                    session.report_source and session.report_source["key"]) != token:
+                return _writing_skip()
+            version_id = next((row["version_id"] for row in state["versions"]
+                               if row["source_report_id"] == source_id and
+                               row["report_sha256"] == source["key"][2]), None)
+            session.writing = _new_writing(session, state, source_id, content, response.json(), version_id)
+            return _writing_updates(session.writing)
+    except (ValueError, UnicodeError, KeyError, TypeError, requests.RequestException):
+        with session.lock:
+            if token is not None and (session.owner, session.view, session.writing_generation,
+                    session.report_source and session.report_source["key"]) != token:
+                return _writing_skip()
+        return _writing_updates(notice="章节与写作版本暂时无法加载。原报告仍可阅读，请稍后点击「刷新写作版本」。")
+    finally:
+        with session.lock:
+            if session.writing_loading == token:
+                session.writing_loading = None
+
+
+def refresh_writing_versions(session, request: gr.Request):
+    with session.lock:
+        unloaded = session.writing is None
+    if unloaded:
+        return load_writing_workspace(session, request)
+    token = None
+    try:
+        headers = _bind(session, request, require_user=True)
+        with session.lock:
+            token = _writing_token(session)
+            work = session.writing
+            source_id = work["source_id"]
+        response = requests.get(f"{API_BASE}/scientific-reports/{source_id}/writing-state", headers=headers, timeout=10)
+        if not response.ok:
+            raise ValueError(_http_message(response, "写作版本查询"))
+        state_data = response.json()
+        state = _writing_state(state_data)
+        if state_data.get("source_report_id") != source_id or state_data.get("source_sha256") != work["reader_key"][2]:
+            raise ValueError("写作版本与当前报告不一致，请重新打开报告。")
+        with session.lock:
+            if not _writing_current(session, token, request):
+                return _writing_skip()
+            if state["root_id"] != work["root_id"]:
+                raise ValueError("写作版本与当前报告不一致，请重新打开报告。")
+            old_sequence = work["selection_revision"]
+            if not _merge_writing_head(work, state):
+                return _writing_skip()
+            if work["selection_revision"] != old_sequence:
+                work["comparison"] = None
+            # Refreshing must preserve the draft and running task controls.
+            updates = list(_writing_skip())
+            updates[0], updates[1] = _writing_notice(work), _version_choices(work)
+            if work["selection_revision"] != old_sequence:
+                updates[14], updates[15] = gr.update(interactive=False), "当前采用的版本已变化，请重新比较后决定是否采用。"
+            return tuple(updates)
+    except (ValueError, KeyError, TypeError, requests.RequestException):
+        with session.lock:
+            if token is not None and not _writing_current(session, token, request):
+                return _writing_skip()
+        updates = list(_writing_skip())
+        updates[0] = "写作版本暂时无法刷新，请稍后重试。"
+        return tuple(updates)
+
+
+def select_writing_version(version_id, session, request: gr.Request):
+    """A version choice invalidates old report timers before issuing any I/O."""
+    operation = None
+    try:
+        headers = _bind(session, request, require_user=True)
+        with session.lock:
+            _writing_token(session)
+            old = session.writing
+            if version_id == (old["version_id"] or "original"):
+                return _writing_skip(9 + WRITING_OUTPUTS)
+            if version_id != "original" and not any(row["version_id"] == version_id for row in old["versions"]):
+                raise ValueError("请先刷新版本列表，再选择报告版本。")
+            root = old["root_id"]
+            _clear_report(session)
+            session.view += 1
+            session.polling = False
+            operation = (session.owner, session.view, session.writing_generation)
+        if version_id == "original":
+            response = requests.get(f"{API_BASE}/scientific-reports/{root}", headers=headers, timeout=10)
+            if not response.ok:
+                raise ValueError(_http_message(response, "版本查询"))
+            detail = response.json()
+            if not isinstance(detail, dict) or detail.get("id") != root:
+                raise ValueError("原始报告与当前研究不一致，请重新查询。")
+            source_id, content, chosen = root, detail.get("content"), None
+            sections_url = f"{API_BASE}/scientific-reports/{root}/sections"
+        else:
+            response = requests.get(f"{API_BASE}/scientific-report-versions/{_uuid(version_id)}", headers=headers, timeout=10)
+            if not response.ok:
+                raise ValueError(_http_message(response, "版本查询"))
+            detail = _version_metadata(response.json(), root)
+            if detail["version_id"] != version_id:
+                raise ValueError("版本与当前选择不一致，请重新查询。")
+            source_id, content, chosen = detail["source_report_id"], detail.get("content"), version_id
+            sections_url = f"{API_BASE}/scientific-report-versions/{version_id}/sections"
+        if not isinstance(content, str) or len(content.encode("utf-8")) > WRITING_REPORT_LIMIT:
+            raise ValueError("报告版本内容无效，请重新查询。")
+        if chosen and hashlib.sha256(content.encode("utf-8")).hexdigest() != detail["report_sha256"]:
+            raise ValueError("报告版本校验未完成，请重新查询。")
+        response = requests.get(sections_url, headers=headers, timeout=10)
+        if not response.ok:
+            raise ValueError(_http_message(response, "章节查询"))
+        section_data = response.json()
+        choices, _ = _available_artifacts(source_id, headers)
+        with session.lock:
+            if not _writing_owner(session, request) or operation != (session.owner, session.view, session.writing_generation):
+                return _writing_skip(9 + WRITING_OUTPUTS)
+            state = {key: old[key] for key in ("root_id", "current_version_id", "current_sha256", "selection_revision", "versions")}
+            work = _new_writing(session, state, source_id, content, section_data, chosen)
+            session.task_id, session.report_source = source_id, {"key": work["reader_key"], "text": content}
+            session.writing = work
+            download = _report_download(chosen or source_id, content.encode("utf-8"), session)
+            main = ("**正在阅读所选报告版本**\n\n章节与下载均对应当前版本。", content, source_id, download,
+                    gr.update(interactive=False), gr.update(active=False),
+                    gr.update(choices=choices, value=choices[0][1] if choices else None, interactive=bool(choices)),
+                    gr.update(visible=False), gr.skip())
+            return main + _writing_updates(work)
+    except (ValueError, UnicodeError, KeyError, TypeError, OSError, requests.RequestException):
+        with session.lock:
+            if operation is not None and operation != (session.owner, session.view, session.writing_generation):
+                return _writing_skip(9 + WRITING_OUTPUTS)
+        return _writing_skip(9) + _writing_updates(notice="所选版本暂时无法打开，请重新查询报告后再试。")
+
+
+def prepare_version_download(session, request: gr.Request):
+    token = None
+    try:
+        headers = _bind(session, request, require_user=True)
+        with session.lock:
+            token, work = _writing_token(session), session.writing
+            version_id, source_id = work["version_id"], work["source_id"]
+        path = f"scientific-report-versions/{version_id}/download" if version_id else f"scientific-download/{source_id}"
+        response = requests.get(f"{API_BASE}/{path}", headers=headers, timeout=30)
+        if not response.ok:
+            raise ValueError(_http_message(response, "版本下载"))
+        raw = response.content
+        if (not isinstance(raw, bytes) or len(raw) > WRITING_REPORT_LIMIT
+                or hashlib.sha256(raw).hexdigest() != work["reader_key"][2]):
+            raise ValueError("下载内容与当前阅读版本不一致，请重新打开该版本。")
+        with session.lock:
+            if not _writing_current(session, token, request):
+                return _writing_skip(2)
+            # Keep this control mounted. Gradio 6.19 can leave a previously
+            # hidden DownloadButton invisible on its first FileData update.
+            return (gr.update(value=_save_file(version_id or source_id, raw, session), interactive=True),
+                    "已准备好当前阅读版本的原始 Markdown。")
+    except (ValueError, KeyError, TypeError, OSError, requests.RequestException) as exc:
+        with session.lock:
+            if token is not None and not _writing_current(session, token, request):
+                return _writing_skip(2)
+        return gr.update(value=None, interactive=False), str(exc) if isinstance(exc, ValueError) else "版本下载暂未完成，请稍后重试。"
+
+
+def invalidate_revision_draft(session):
+    with session.lock:
+        if session.writing:
+            session.writing["edit_revision"] += 1
+            session.writing["prepared"] = None
+    return "修改目标已变化，请重新预览修改范围。", gr.update(interactive=False, value="确认并开始章节修订")
+
+
+def select_revision_section(section_id, session, request: gr.Request):
+    try:
+        _bind(session, request, require_user=True)
+        with session.lock:
+            _writing_token(session)
+            work = session.writing
+            if section_id not in work["sections"]:
+                raise ValueError("请先选择当前报告中的章节。")
+            if section_id != work["section_id"]:
+                work["edit_revision"] += 1
+                work["prepared"] = None
+                work["comparison"] = None
+                work["section_id"] = section_id
+            return (work["sections"][section_id]["text"], "请为这个章节写下修改目标，再预览范围。",
+                    gr.update(interactive=False), "", "", "", gr.update(interactive=False), "")
+    except ValueError as exc:
+        return ("", str(exc), gr.update(interactive=False), "", "", "", gr.update(interactive=False), "")
+
+
+def _revision_fields(work, section_id, instruction, duration):
+    instruction = (instruction or "").strip()
+    if section_id not in work["sections"] or section_id != work["section_id"]:
+        raise ValueError("章节已变化，请重新选择章节并预览。")
+    if (not instruction or len(instruction) > 2000 or len(instruction.encode("utf-8")) > 8000
+            or any((ord(c) < 32 and c not in "\r\n\t") or ord(c) == 127 for c in instruction)):
+        raise ValueError("请填写 1—2000 字的修改目标。")
+    if type(duration) is not int or not 60 <= duration <= 3600:
+        raise ValueError("请选择有效的修订时限。")
+    body = dict(base_sha256=work["reader_key"][2], section_id=section_id,
+                instruction=instruction, timeout_seconds=duration)
+    fingerprint = hashlib.sha256(json.dumps(dict(body, source_id=work["source_id"], root=work["root_id"]),
+                                            sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+    return body, fingerprint
+
+
+def prepare_section_revision(section_id, instruction, duration, session, request: gr.Request):
+    token = None
+    try:
+        headers = _bind(session, request, require_user=True)
+        with session.lock:
+            token, work = _writing_token(session), session.writing
+            body, fingerprint = _revision_fields(work, section_id, instruction, duration)
+            plan = work["plans"].setdefault(fingerprint, dict(key=str(uuid.uuid4()), task_id="", intent_id="", starting=False))
+            work["prepared"] = None
+        response = requests.post(f"{API_BASE}/scientific-reports/{work['source_id']}/revision-previews",
+                                 headers=dict(headers, **{"Idempotency-Key": plan["key"]}), json=body, timeout=20)
+        if not response.ok:
+            raise ValueError(_http_message(response, "修改预览") + " 原报告保持原样。")
+        data = response.json()
+        intent = data["intent"]
+        intent_id = _uuid(intent["intent_id"])
+        parent = _version_metadata(data["parent"], work["root_id"])
+        section = data["section"]
+        if (parent["source_report_id"] != work["source_id"] or parent["report_sha256"] != body["base_sha256"]
+                or section.get("section_id") != section_id
+                or section.get("sha256") != work["sections"][section_id]["sha256"]
+                or section.get("text") != work["sections"][section_id]["text"]
+                or intent.get("parent_version_id") != parent["version_id"]
+                or data["snapshot"].get("material_policy") != "recorded_evidence_only"):
+            raise ValueError("预览与当前章节不一致，请重新打开报告后再试。")
+        with session.lock:
+            if not _writing_current(session, token, request):
+                return _writing_skip(4)
+            plan.update(intent_id=intent_id, fingerprint=fingerprint, parent_version_id=parent["version_id"], body=body)
+            work["prepared"] = plan
+            # Source+SHA identify the immutable parent even when preparation has
+            # just imported its first private base version.
+            work["version_id"] = parent["version_id"]
+            if not any(row["version_id"] == parent["version_id"] for row in work["versions"]):
+                work["versions"].append(parent)
+            preview = (f"### 将修改：{html.escape(section['title'])}\n\n"
+                       f"<blockquote>{html.escape(body['instruction'])}</blockquote>\n\n"
+                       "只修改所选章节，使用已经记录的文献证据；其他正文和参考文献保留原件。\n\n"
+                       f"最长运行 {duration // 60} 分钟。确认后才会启动修订任务。")
+            return (preview, gr.update(interactive=True, value="恢复这次修订" if plan["task_id"] else "确认并开始章节修订"),
+                    _version_choices(work), _writing_notice(work))
+    except (ValueError, UnicodeError, KeyError, TypeError, requests.RequestException) as exc:
+        with session.lock:
+            if token is not None and not _writing_current(session, token, request):
+                return _writing_skip(4)
+        message = str(exc) if isinstance(exc, ValueError) else "预览暂未确认。再次预览会恢复同一份修改准备。"
+        return message, gr.update(interactive=False), gr.skip(), gr.skip()
+
+
+def _revision_tracking_current(session, token, track_revision, task_id, request):
+    return (_writing_current(session, token, request) and session.writing["track_revision"] == track_revision
+            and session.writing["tracking"] and session.writing["tracking"]["task_id"] == task_id)
+
+
+def _revision_task_updates(task, work):
+    tracker = work["tracking"]
+    if (not isinstance(task, dict) or _uuid(task.get("id")) != tracker["task_id"]
+            or task.get("task_kind") != "revision" or task.get("root_report_id") != work["root_id"]):
+        raise ValueError("这个任务不属于当前报告的章节修订。")
+    parent = _uuid(task.get("parent_version_id"))
+    if tracker.get("parent_version_id") and tracker["parent_version_id"] != parent:
+        raise ValueError("修订任务与预览版本不一致，请重新恢复查看。")
+    tracker["parent_version_id"] = parent
+    candidate = _uuid(task["candidate_version_id"]) if task.get("candidate_version_id") else None
+    state = task.get("state") or task.get("status")
+    active = task.get("status") in ("pending", "running")
+    ready = task.get("status") == "done" and bool(candidate)
+    tracker.update(polling=active, candidate_version_id=candidate if ready else None)
+    labels = dict(STATE_LABELS, running="章节修订中", queued="修订排队中", succeeded="候选版本已就绪",
+                  validating="检查修订内容", publishing="保存候选版本", cancelled="修订已取消", failed="本次修订未完成")
+    status = "**" + labels.get(state, "正在查询章节修订") + "**"
+    if ready:
+        status += "\n\n候选已单独保存。请比较修改前后，再决定是否采用。当前阅读和采用版本保持原样。"
+    elif task.get("status") == "done":
+        status += "\n\n候选版本还未确认，请稍后恢复查看。"
+    elif state in ("cancelled", "failed", "timed_out"):
+        status += "\n\n原报告保持原样。可以调整修改目标，重新预览。"
+    elif state == "cancel_requested":
+        status += "\n\n已申请取消，等待后台停止。"
+    else:
+        status += "\n\n修订在后台运行，保留修订任务 ID 可稍后恢复。"
+    return (status, tracker["task_id"], gr.update(interactive=state in ("queued", "running", "validating")),
+            gr.update(active=active), gr.update(interactive=ready), gr.skip())
+
+
+def start_section_revision(section_id, instruction, duration, session, request: gr.Request):
+    token = plan = None
+    track_revision = None
+    try:
+        headers = _bind(session, request, require_user=True)
+        with session.lock:
+            token, work = _writing_token(session), session.writing
+            _, fingerprint = _revision_fields(work, section_id, instruction, duration)
+            plan = work["prepared"]
+            if not plan or plan.get("fingerprint") != fingerprint:
+                work["prepared"] = None
+                raise ValueError("修改条件已变化，请重新预览后再确认开始。")
+            if plan["starting"]:
+                return _writing_skip(6)
+            plan["starting"] = True
+            known_task = plan["task_id"]
+            track_revision = work["track_revision"]
+        if known_task:
+            response = requests.get(f"{API_BASE}/scientific-research/{known_task}", headers=headers, timeout=10)
+        else:
+            response = requests.post(f"{API_BASE}/scientific-revision-previews/{plan['intent_id']}/start",
+                                     headers=headers, json={}, timeout=20)
+        if not response.ok:
+            recovered = _detail(response).get("task_id")
+            if recovered:
+                plan["task_id"] = _uuid(recovered)
+            if response.status_code < 500:
+                raise ValueError(_http_message(response, "修订提交") + " 请重新预览或恢复任务状态。")
+            raise requests.ConnectionError("ambiguous revision submission")
+        task = response.json()
+        if (not isinstance(task, dict) or task.get("task_kind") != "revision"
+                or task.get("root_report_id") != work["root_id"]
+                or task.get("parent_version_id") != plan["parent_version_id"]
+                or task.get("intent_id") != plan["intent_id"]):
+            raise ValueError("修订提交与预览版本不一致，请重新恢复查看。")
+        plan["task_id"] = _uuid(task.get("id"))
+        with session.lock:
+            if not _writing_current(session, token, request) or work["track_revision"] != track_revision:
+                return _writing_skip(6)
+            work["track_revision"] += 1
+            work["comparison"] = None
+            work["tracking"] = dict(task_id=plan["task_id"], intent_id=plan["intent_id"],
+                                    parent_version_id=plan["parent_version_id"], polling=True)
+            updates = list(_revision_task_updates(task, work))
+            updates[5] = gr.update(interactive=False, value="修订已提交")
+            return tuple(updates)
+    except (ValueError, UnicodeError, KeyError, TypeError, requests.RequestException) as exc:
+        with session.lock:
+            if token is not None and (not _writing_current(session, token, request)
+                    or (track_revision is not None and work["track_revision"] != track_revision)):
+                return _writing_skip(6)
+            recovered = plan.get("task_id", "") if plan else ""
+            if recovered and session.writing:
+                session.writing["track_revision"] += 1
+                session.writing["tracking"] = dict(task_id=recovered, parent_version_id=plan["parent_version_id"],
+                                                   intent_id=plan["intent_id"], polling=True)
+        ambiguous = isinstance(exc, requests.RequestException)
+        message = ("修订提交尚未确认。已保留这次修改准备；点击「恢复这次修订」会查询或重试同一任务。"
+                   if ambiguous else str(exc) if isinstance(exc, ValueError) else "修订状态暂时无法确认，请恢复查看。")
+        return (message, recovered, gr.update(interactive=False), gr.update(active=bool(recovered)),
+                gr.update(interactive=False), gr.update(interactive=ambiguous, value="恢复这次修订"))
+    finally:
+        if plan:
+            with session.lock:
+                plan["starting"] = False
+
+
+def _fetch_revision_task(task_id, session, token, track_revision, headers, request, cancel=False):
+    transient = True
+    try:
+        if cancel:
+            response = requests.post(f"{API_BASE}/scientific-research/{task_id}/cancel", headers=headers, timeout=10)
+        else:
+            response = requests.get(f"{API_BASE}/scientific-research/{task_id}", headers=headers, timeout=10)
+        if not response.ok:
+            transient = response.status_code >= 500
+            raise ValueError(_http_message(response, "修订状态查询"))
+        with session.lock:
+            if not _revision_tracking_current(session, token, track_revision, task_id, request):
+                return _writing_skip(6)
+            transient = False
+            return _revision_task_updates(response.json(), session.writing)
+    except (ValueError, KeyError, TypeError, requests.RequestException) as exc:
+        with session.lock:
+            if not _revision_tracking_current(session, token, track_revision, task_id, request):
+                return _writing_skip(6)
+            session.writing["tracking"]["polling"] = transient
+        return (str(exc) if isinstance(exc, ValueError) else "修订状态暂未确认，将继续查询。保留任务 ID 可恢复。",
+                task_id, gr.update(interactive=False), gr.update(active=transient), gr.update(interactive=False), gr.skip())
+
+
+def restore_revision_task(task_id, session, request: gr.Request):
+    try:
+        headers = _bind(session, request, require_user=True)
+        task_id = _uuid(task_id)
+        with session.lock:
+            token, work = _writing_token(session), session.writing
+            work["track_revision"] += 1
+            work["comparison"] = None
+            work["tracking"] = dict(task_id=task_id, polling=True)
+            revision = work["track_revision"]
+        return _fetch_revision_task(task_id, session, token, revision, headers, request)
+    except ValueError as exc:
+        return str(exc), gr.skip(), gr.update(interactive=False), gr.update(active=False), gr.update(interactive=False), gr.skip()
+
+
+def pause_revision_tracking(session):
+    with session.lock:
+        if session.writing:
+            session.writing["track_revision"] += 1
+            session.writing["tracking"] = None
+            session.writing["comparison"] = None
+    return ("点击「恢复修订」查询这个任务。", gr.update(interactive=False), gr.update(active=False),
+            gr.update(interactive=False), gr.update(interactive=False), "")
+
+
+def refresh_revision_task(session, request: gr.Request):
+    work = None
+    try:
+        headers = _bind(session, request, require_user=True)
+        with session.lock:
+            token, work = _writing_token(session), session.writing
+            tracker = work["tracking"]
+            if not tracker or not tracker["polling"] or work["track_inflight"]:
+                return _writing_skip(6)
+            task_id, revision = tracker["task_id"], work["track_revision"]
+            work["track_inflight"] = True
+        return _fetch_revision_task(task_id, session, token, revision, headers, request)
+    except ValueError:
+        return _writing_skip(6)
+    finally:
+        if work:
+            with session.lock:
+                work["track_inflight"] = False
+
+
+def cancel_revision_task(session, request: gr.Request):
+    try:
+        headers = _bind(session, request, require_user=True)
+        with session.lock:
+            token, work = _writing_token(session), session.writing
+            if not work["tracking"]:
+                raise ValueError("请先恢复需要取消的修订任务。")
+            task_id, revision = work["tracking"]["task_id"], work["track_revision"]
+        return _fetch_revision_task(task_id, session, token, revision, headers, request, cancel=True)
+    except ValueError as exc:
+        return str(exc), gr.skip(), gr.update(interactive=False), gr.update(active=False), gr.update(interactive=False), gr.skip()
+
+
+def compare_revision_candidate(session, request: gr.Request):
+    token = None
+    revision = task_id = None
+    try:
+        headers = _bind(session, request, require_user=True)
+        with session.lock:
+            token, work = _writing_token(session), session.writing
+            tracker = work["tracking"]
+            candidate_id = tracker and tracker.get("candidate_version_id")
+            if not candidate_id:
+                raise ValueError("候选版本尚未就绪，请先恢复修订任务状态。")
+            revision, task_id = work["track_revision"], tracker["task_id"]
+        response = requests.get(f"{API_BASE}/scientific-report-versions/{candidate_id}/comparison", headers=headers, timeout=15)
+        if not response.ok:
+            raise ValueError(_http_message(response, "版本比较"))
+        data = response.json()
+        candidate, parent = _version_metadata(data["candidate"], work["root_id"]), _version_metadata(data["parent"], work["root_id"])
+        section, adoption = data["section"], data["adoption"]
+        if (data.get("root_report_id") != work["root_id"] or candidate["version_id"] != candidate_id
+                or parent["version_id"] != tracker["parent_version_id"]
+                or candidate.get("parent_version_id") != parent["version_id"]
+                or adoption.get("base_sha256") != parent["report_sha256"]
+                or adoption.get("candidate_sha256") != candidate["report_sha256"]
+                or type(adoption.get("expected_selection_revision")) is not int
+                or type(adoption.get("can_adopt")) is not bool):
+            raise ValueError("候选比较与当前修订不一致，请重新恢复任务。")
+        _digest(adoption.get("comparison_token"))
+        if adoption.get("expected_current_version_id"):
+            _uuid(adoption["expected_current_version_id"])
+        for label in ("before", "after"):
+            value = section.get(label)
+            if (not isinstance(value, str) or len(value.encode("utf-8")) > WRITING_REPORT_LIMIT
+                    or hashlib.sha256(value.encode("utf-8")).hexdigest() != _digest(section.get(label + "_sha256"))):
+                raise ValueError("候选章节校验未完成，请重新比较。")
+        difference = data["diff"]
+        text = difference.get("text") if difference.get("available") is True else None
+        if not isinstance(text, str) or len(text.encode("utf-8")) > 512 * 1024 or text.count("\n") > 10000:
+            text = "本次差异较长，未在页面展开。请对照完整的修改前后正文，或下载候选版本核对。"
+        with session.lock:
+            if not _revision_tracking_current(session, token, revision, task_id, request):
+                return _writing_skip(6)
+            expected = adoption["expected_selection_revision"]
+            if (expected < work["selection_revision"] or
+                    (expected == work["selection_revision"] and work["current_version_id"] is not None
+                     and adoption["expected_current_version_id"] != work["current_version_id"])):
+                adoption["can_adopt"] = False
+                adoption["reason"] = "current_changed"
+            work["comparison"] = dict(data=data, token=token, track_revision=revision, task_id=task_id,
+                                      adoption_key=work["adoption_keys"].setdefault(adoption["comparison_token"], str(uuid.uuid4())), adopting=False)
+            for row in (parent, candidate):
+                if not any(existing["version_id"] == row["version_id"] for existing in work["versions"]):
+                    work["versions"].append(row)
+            notice = ("请核对修改前后与差异。采用后会把这个候选设为当前写作稿。" if adoption["can_adopt"] else
+                      "当前采用状态已变化，请重新比较后决定是否采用。" if adoption.get("reason") == "current_changed" else
+                      "此候选基于较早的写作版本，当前只能查看和下载。请基于当前采用版本重新修改。")
+            return section["before"], section["after"], text, gr.update(interactive=adoption["can_adopt"]), notice, _version_choices(work)
+    except (ValueError, UnicodeError, KeyError, TypeError, requests.RequestException) as exc:
+        with session.lock:
+            if token is not None and (not _writing_current(session, token, request) or
+                    (revision is not None and not _revision_tracking_current(session, token, revision, task_id, request))):
+                return _writing_skip(6)
+        return "", "", "", gr.update(interactive=False), str(exc) if isinstance(exc, ValueError) else "版本比较暂未完成，请稍后重试。", gr.skip()
+
+
+def adopt_revision_candidate(session, request: gr.Request):
+    token = comparison = None
+    try:
+        headers = _bind(session, request, require_user=True)
+        with session.lock:
+            token, work = _writing_token(session), session.writing
+            comparison = work["comparison"]
+            if (not comparison or comparison["token"] != token or
+                    comparison["track_revision"] != work["track_revision"] or
+                    not comparison["data"]["adoption"]["can_adopt"]):
+                raise ValueError("请先重新比较候选版本，再确认采用。")
+            if comparison["adopting"]:
+                return _writing_skip(4)
+            comparison["adopting"] = True
+            data = comparison["data"]
+            candidate_id = data["candidate"]["version_id"]
+            body = {key: data["adoption"][key] for key in ADOPTION_FIELDS}
+        response = requests.post(f"{API_BASE}/scientific-report-versions/{candidate_id}/adopt", json=body,
+                                 headers=dict(headers, **{"Idempotency-Key": comparison["adoption_key"]}), timeout=15)
+        if not response.ok:
+            if response.status_code >= 500:
+                raise requests.ConnectionError("ambiguous adoption")
+            raise ValueError("当前写作稿已变化或暂不能采用，请重新比较候选版本。")
+        result = response.json()
+        current = _uuid(result.get("current_version_id"))
+        sha = _digest(result.get("current_sha256"))
+        sequence = result.get("selection_revision")
+        if result.get("root_report_id") != work["root_id"] or type(sequence) is not int or sequence < 0:
+            raise ValueError("采用结果暂时无法校验，请刷新写作版本。")
+        with session.lock:
+            if not _revision_tracking_current(session, token, comparison["track_revision"], comparison["task_id"], request):
+                return _writing_skip(4)
+            # Use the current server head, never an old idempotency receipt.
+            merged = _merge_writing_head(work, dict(current_version_id=current, current_sha256=sha, selection_revision=sequence))
+            comparison["data"]["adoption"]["can_adopt"] = False
+            notice = ("采用操作已处理；已保留较新的当前采用状态。当前阅读保持原样。" if not merged else
+                      "已采用此版本作为当前写作稿。可从版本列表打开或下载；原始报告仍保留。"
+                      if current == candidate_id and sha == data["candidate"]["report_sha256"] else
+                      "这次采用已处理；当前写作稿已有后续更新。已同步最新采用状态，阅读版本保持原样。")
+            return notice, gr.update(interactive=False, value="采用为当前写作稿"), _version_choices(work), _writing_notice(work)
+    except (ValueError, KeyError, TypeError, requests.RequestException) as exc:
+        with session.lock:
+            if token is not None and (not _writing_current(session, token, request) or
+                    (comparison and not _revision_tracking_current(session, token, comparison["track_revision"], comparison["task_id"], request))):
+                return _writing_skip(4)
+        ambiguous = isinstance(exc, requests.RequestException)
+        return ("采用结果尚未确认。请点击「重试确认采用」，会恢复同一次操作。" if ambiguous else
+                str(exc) if isinstance(exc, ValueError) else "采用结果暂未确认，请刷新写作版本。",
+                gr.update(interactive=ambiguous, value="重试确认采用" if ambiguous else "采用为当前写作稿"), gr.skip(), gr.skip())
+    finally:
+        if comparison:
+            with session.lock:
+                comparison["adopting"] = False
+
+
 def payment_image(filename, label):
     return gr.HTML(f'''<figure style="margin:0;text-align:center">
       <figcaption style="margin-bottom:8px;font-weight:600">{label}</figcaption>
@@ -1141,6 +1912,46 @@ with gr.Blocks(title="研究工作台", delete_cache=(3600, 86400)) as demo:
                       <li>补足缺口再研究：把需要比较的方案、争议或遗漏范围写进下一次计划，逐步收紧文章的论点。</li></ol>
                     </div>''')
                     refine_btn = gr.Button("调整问题，规划下一次研究", elem_classes=["research-secondary"])
+                with gr.Column(elem_id="writing-card", elem_classes=["research-card"]):
+                    gr.Markdown("## 把报告改成更好的文章\n\n选择一节，说明你希望加强的分析或表达。先核对修改范围，再开始；完成后比较原文与候选，决定是否采用。", elem_classes=["research-section"])
+                    writing_notice = gr.Markdown("打开一份已完成的报告，即可查看章节和写作版本。", elem_classes=["research-note"])
+                    with gr.Row(elem_id="version-actions"):
+                        writing_version = gr.Dropdown(choices=[], label="阅读版本", interactive=False, scale=4)
+                        versions_refresh = gr.Button("刷新写作版本", elem_classes=["research-secondary"])
+                        version_prepare_download = gr.Button("准备所选版本下载", elem_classes=["research-secondary"])
+                        version_download = gr.DownloadButton("下载所选版本", interactive=False, elem_classes=["research-primary"])
+                    version_download_notice = gr.Markdown("", elem_classes=["research-note"])
+                    with gr.Row(elem_classes=["research-columns"]):
+                        with gr.Column(scale=6, min_width=280):
+                            writing_section = gr.Dropdown(choices=[], label="选择要修改的章节", interactive=False)
+                            section_preview = gr.Markdown("", sanitize_html=True, elem_classes=["research-revision-prose"])
+                        with gr.Column(scale=5, min_width=280):
+                            revision_instruction = gr.Textbox(label="你希望怎样改进？", lines=5,
+                                placeholder="例如：把逐篇罗列改成按主题综合，比较研究之间的一致与分歧，并明确现有证据的局限。")
+                            revision_duration = gr.Dropdown(choices=[("10 分钟", 600), ("20 分钟", 1200), ("30 分钟", 1800)], value=1200, label="修订运行上限")
+                            revision_prepare = gr.Button("预览修改范围", elem_classes=["research-secondary"])
+                            revision_preview = gr.Markdown("先选择章节，写下修改目标，再预览。", sanitize_html=True, elem_classes=["research-note"])
+                            revision_start = gr.Button("确认并开始章节修订", interactive=False, elem_classes=["research-primary"])
+                            gr.Markdown("本轮使用已有文献与证据，不新增检索。发现证据缺口时，应回到「开始研究」补充资料。", elem_classes=["research-note"])
+                    revision_status = gr.Markdown("尚未开始章节修订。", elem_classes=["research-note"])
+                    with gr.Row(elem_id="revision-controls"):
+                        revision_task_id = gr.Textbox(label="修订任务 ID", placeholder="开始后自动显示；保留此 ID 可恢复修订", scale=4)
+                        revision_resume = gr.Button("恢复修订", elem_classes=["research-secondary"])
+                        revision_cancel = gr.Button("取消修订", interactive=False, elem_classes=["research-danger"])
+                        revision_compare = gr.Button("比较候选版本", interactive=False, elem_classes=["research-secondary"])
+                    with gr.Accordion("核对本次修改", open=True, elem_id="revision-comparison", elem_classes=["research-accordion"]):
+                        with gr.Row(elem_classes=["research-columns"]):
+                            with gr.Column(scale=1, min_width=280):
+                                gr.Markdown("### 修改前")
+                                revision_before = gr.Markdown("", sanitize_html=True, elem_classes=["research-revision-prose"])
+                            with gr.Column(scale=1, min_width=280):
+                                gr.Markdown("### 候选修改")
+                                revision_after = gr.Markdown("", sanitize_html=True, elem_classes=["research-revision-prose"])
+                        revision_diff = gr.Textbox(label="逐行差异（− 删除，+ 新增）", lines=9, interactive=False)
+                        adopt_notice = gr.Markdown("", elem_classes=["research-note"])
+                        revision_adopt = gr.Button("采用为当前写作稿", interactive=False, elem_classes=["research-primary"])
+                        gr.Markdown("候选完成后会单独保存。采用前请核对论断、引用与局限；这些检查不能替代学术判断。", elem_classes=["research-note"])
+                    revision_timer = gr.Timer(value=POLL_SECONDS, active=False)
                 with gr.Accordion("研究记录与附件 · 用于复核过程", open=False, elem_classes=["research-accordion"]):
                     gr.Markdown("阅读全文只需下载上方报告。需要追溯资料、核对筛选或复查引用时，再使用以下记录。", elem_classes=["research-note"])
                     gr.HTML('''<dl class="research-artifacts">
@@ -1185,6 +1996,12 @@ with gr.Blocks(title="研究工作台", delete_cache=(3600, 86400)) as demo:
         draft_inputs = [question, years, audience, include, exclude, email, mode, duration]
         view_outputs = [status, report, task_id_box, download_btn, cancel_btn, timer, artifact_choice, artifact_download, confirm_btn]
         navigation_outputs = view_outputs + [workspace_tabs]
+        writing_outputs = [writing_notice, writing_version, writing_section, section_preview, revision_preview,
+                           revision_start, revision_status, revision_task_id, revision_cancel, revision_timer,
+                           revision_compare, revision_before, revision_after, revision_diff, revision_adopt,
+                           adopt_notice, version_download, version_download_notice]
+        revision_tracking_outputs = [revision_status, revision_task_id, revision_cancel, revision_timer,
+                                     revision_compare, revision_start]
         for component in draft_inputs:
             component.change(fn=invalidate_plan, inputs=[session], outputs=[plan_preview, confirm_btn], queue=False)
         preview_btn.click(fn=prepare_plan, inputs=draft_inputs + [session], outputs=[plan_preview, confirm_btn], queue=False)
@@ -1201,6 +2018,25 @@ with gr.Blocks(title="研究工作台", delete_cache=(3600, 86400)) as demo:
         history_choices.input(fn=open_history, inputs=[history_choices, session], outputs=navigation_outputs, queue=False)
         history_prepare.click(fn=download_review_history, inputs=[history_id, session], outputs=[history_download, history_download_notice], queue=False)
         refine_btn.click(fn=return_to_draft, inputs=[], outputs=[workspace_tabs], queue=False)
+        report.change(fn=load_writing_workspace, inputs=[session], outputs=writing_outputs, queue=False)
+        versions_refresh.click(fn=refresh_writing_versions, inputs=[session], outputs=writing_outputs, queue=False)
+        writing_version.input(fn=select_writing_version, inputs=[writing_version, session], outputs=view_outputs + writing_outputs, queue=False)
+        version_prepare_download.click(fn=prepare_version_download, inputs=[session], outputs=[version_download, version_download_notice], queue=False)
+        writing_section.input(fn=select_revision_section, inputs=[writing_section, session],
+            outputs=[section_preview, revision_preview, revision_start, revision_before, revision_after, revision_diff, revision_adopt, adopt_notice], queue=False)
+        revision_instruction.input(fn=invalidate_revision_draft, inputs=[session], outputs=[revision_preview, revision_start], queue=False)
+        revision_duration.input(fn=invalidate_revision_draft, inputs=[session], outputs=[revision_preview, revision_start], queue=False)
+        revision_prepare.click(fn=prepare_section_revision, inputs=[writing_section, revision_instruction, revision_duration, session],
+                               outputs=[revision_preview, revision_start, writing_version, writing_notice], queue=False)
+        revision_start.click(fn=start_section_revision, inputs=[writing_section, revision_instruction, revision_duration, session], outputs=revision_tracking_outputs, queue=False)
+        revision_task_id.input(fn=pause_revision_tracking, inputs=[session],
+            outputs=[revision_status, revision_cancel, revision_timer, revision_compare, revision_adopt, adopt_notice], queue=False)
+        revision_resume.click(fn=restore_revision_task, inputs=[revision_task_id, session], outputs=revision_tracking_outputs, queue=False)
+        revision_cancel.click(fn=cancel_revision_task, inputs=[session], outputs=revision_tracking_outputs, queue=False)
+        revision_timer.tick(fn=refresh_revision_task, inputs=[session], outputs=revision_tracking_outputs, queue=False, show_progress="hidden")
+        revision_compare.click(fn=compare_revision_candidate, inputs=[session],
+            outputs=[revision_before, revision_after, revision_diff, revision_adopt, adopt_notice, writing_version], queue=False)
+        revision_adopt.click(fn=adopt_revision_candidate, inputs=[session], outputs=[adopt_notice, revision_adopt, writing_version, writing_notice], queue=False)
 
 if __name__ == "__main__":
     demo.queue(default_concurrency_limit=2).launch(

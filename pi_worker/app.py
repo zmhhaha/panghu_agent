@@ -5,6 +5,7 @@ Launch: uvicorn pi_worker.app:create_app --factory --host 0.0.0.0 --port 8080
 import hmac
 import json
 import os
+import re
 import sqlite3
 import uuid
 from contextlib import asynccontextmanager
@@ -94,12 +95,15 @@ def create_app(settings=None, store=None, runtime=None, validator=None):
             return JSONResponse(ContractError('unauthorized','Worker authentication required',401).to_dict(),status_code=401)
         # Enforce actual bytes independently of a caller's Content-Length.
         if request.method in ('PUT','POST'):
+            limit = (16*1024*1024 + 16384 if request.method == 'PUT'
+                     and re.fullmatch(r'/v1/revisions/[0-9a-f-]{36}', request.url.path)
+                     else 16384)
             parts = []
             size = 0
             async for part in request.stream():
                 size += len(part)
-                if size>16384:
-                    return JSONResponse(ContractError('request_too_large','Request exceeds 16 KiB',413).to_dict(),status_code=413)
+                if size>limit:
+                    return JSONResponse(ContractError('request_too_large','Request exceeds byte limit',413).to_dict(),status_code=413)
                 parts.append(part)
             request._body = b''.join(parts)
         return await call_next(request)
@@ -128,12 +132,20 @@ def create_app(settings=None, store=None, runtime=None, validator=None):
         return value
 
     async def body_json(request):
+        def object_pairs(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError('Duplicate JSON key')
+                result[key] = value
+            return result
         try:
-            value = json.loads(await request.body())
+            value = json.loads(await request.body(), object_pairs_hook=object_pairs,
+                               parse_constant=lambda value: (_ for _ in ()).throw(ValueError()))
             if not isinstance(value,dict):
                 raise ValueError()
             return value
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
             raise ContractError('invalid_request','Expected JSON object',422)
 
     def queue(request):
@@ -168,6 +180,34 @@ def create_app(settings=None, store=None, runtime=None, validator=None):
                 if configured is not None and data[key]!=configured:
                     queue(request).reject(data,ContractError('configuration_missing','Pinned runtime/skill revision mismatch',422))
         snapshot, created = queue(request).submit(job,max_queue=settings.max_queue)
+        return JSONResponse(snapshot,status_code=201 if created else 200)
+
+    @app.put('/v1/revisions/{task_id}')
+    async def put_revision(task_id: str, request: Request):
+        from scientific_agent.pi_revision_contracts import RevisionJob
+        valid_id(task_id)
+        payload = await body_json(request)
+        if set(payload) != {'job','input'}:
+            raise ContractError('invalid_revision_request','Expected a revision job and fixed input',422)
+        job = RevisionJob.from_dict(payload['job'])
+        data = job.to_dict()
+        if data['task_id'] != task_id:
+            raise ContractError('invalid_task_id','URL/body task IDs differ',422)
+        try:
+            queue(request).get(task_id)
+        except ContractError as exc:
+            if exc.status_code != 404:
+                raise
+            capabilities = getattr(runtime,'capabilities',{}) if runtime else {}
+            if (not ready(request) or not isinstance(capabilities,dict)
+                    or '1' not in capabilities.get('revision_job_versions',[])
+                    or capabilities.get('revision_input_scope') != 'recorded_evidence_only'):
+                raise ContractError('revision_not_supported','Runtime cannot execute fixed-evidence revisions',503,True)
+            for key in ('runtime_revision','skill_bundle_revision'):
+                configured = getattr(settings,key)
+                if configured is not None and data[key] != configured:
+                    queue(request).reject(data,ContractError('configuration_missing','Pinned runtime/skill revision mismatch',422))
+        snapshot, created = queue(request).submit_revision(job,payload['input'],max_queue=settings.max_queue)
         return JSONResponse(snapshot,status_code=201 if created else 200)
 
     @app.get('/v1/tasks')

@@ -3,7 +3,7 @@
 Internal callers pass X-Forwarded-User from the existing authenticated UI proxy.
 This service is not a public identity-verifying gateway.
 """
-import sys, os, threading, re, logging, hashlib
+import sys, os, threading, re, logging, hashlib, json
 from contextlib import asynccontextmanager
 from typing import Literal
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -59,6 +59,11 @@ class TaskResponse(BaseModel):
     schema_version: str | None = None
     report_sha256: str | None = None
     result_digest: str | None = None
+    task_kind: str | None = None
+    intent_id: str | None = None
+    parent_version_id: str | None = None
+    root_report_id: str | None = None
+    candidate_version_id: str | None = None
 
 class ReportItem(BaseModel):
     id: str
@@ -84,6 +89,19 @@ class RevisionPreviewRequest(BaseModel):
             raise ValueError('A nonblank modification instruction without control characters is required')
         return value
 
+
+class RevisionStartRequest(BaseModel):
+    model_config = {'extra':'forbid'}
+
+
+class AdoptCandidateRequest(BaseModel):
+    model_config = {'extra':'forbid'}
+    expected_current_version_id: str | None = Field(default=None,pattern=r'^[0-9a-f-]{36}$')
+    expected_selection_revision: int = Field(ge=0,lt=2**53-1,strict=True)
+    base_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    candidate_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    comparison_token: str = Field(pattern=r'^[0-9a-f]{64}$')
+
 def _send_notification(email, topic, task_id):
     from tools.email_client import send_email
     if not send_email(to=email, subject=f'🔬 综述完成: {topic[:30]}', body=f'研究报告已完成。报告 ID: {task_id}。请访问研究助手查看或下载。'):
@@ -98,6 +116,7 @@ def create_app(database=None, worker=None, projection=None, start_reconciler=Tru
     if projection is None:
         projection = PiProjection(database,worker,os.getenv('SCIENTIFIC_PI_SKILL_BUNDLE_REVISION',''),os.getenv('SCIENTIFIC_PI_RUNTIME_REVISION',''),_send_notification)
     versions = versions if versions is not None else ReportVersionStore(database)
+    projection.versions = versions
     stop = threading.Event()
     def reconcile_loop():
         while not stop.is_set():
@@ -206,6 +225,12 @@ def create_app(database=None, worker=None, projection=None, start_reconciler=Tru
 
     def pi_response(row, snapshot):
         values = dict(snapshot,user_id=row['user_id'],notification_status=row.get('notification_status'))
+        import json
+        job = json.loads(row['job'])
+        if job.get('task_kind') == 'revision':
+            values.update({key:job[key] for key in ('task_kind','intent_id','parent_version_id','root_report_id')})
+            binding = writing_operation(versions.get_revision_job,row['user_id'],row['id'])
+            values['candidate_version_id'] = binding.get('candidate_version_id') if binding else None
         values['status'] = public_status(values['state'])
         if values['status'] == 'done':
             try: report = database.get_report_by_task(row['id'])
@@ -261,7 +286,12 @@ def create_app(database=None, worker=None, projection=None, start_reconciler=Tru
         row = require_owner(pi_row(task_id),x_forwarded_user)
         if row:
             if row['dispatch']=='rejected': worker_error(WorkerError(int(row['rejection_status']),row['error_code'],row['error']),task_id)
-            try: return pi_response(row,worker.get(task_id))
+            try:
+                if projection.is_revision(row):
+                    binding = versions.get_revision_job(row['user_id'],task_id)
+                    if binding['status'] in ('cancel_requested','cancelled'):
+                        return pi_response(row,projection.recover_revision_cancel(row))
+                return pi_response(row,projection.sync_revision(row,worker.get(task_id)))
             except WorkerError as exc: worker_error(exc,task_id,exc.status==404 and row['dispatch'] in ('prepared','ambiguous'))
         task = database.get_task(task_id)
         if not task: raise HTTPException(404,'Task not found')
@@ -272,7 +302,10 @@ def create_app(database=None, worker=None, projection=None, start_reconciler=Tru
         row = require_owner(pi_row(task_id),x_forwarded_user)
         if not row: raise HTTPException(409,'Cancellation is supported for Pi tasks only')
         if row['dispatch']=='rejected': return get_task(task_id,x_forwarded_user)
-        try: return pi_response(row,worker.cancel(task_id))
+        try:
+            if projection.is_revision(row):
+                return pi_response(row,projection.cancel_revision(row))
+            return pi_response(row,projection.sync_revision(row,worker.cancel(task_id)))
         except WorkerError as exc: worker_error(exc,task_id)
 
     @app.get('/scientific-research/{task_id}/artifacts')
@@ -388,6 +421,53 @@ def create_app(database=None, worker=None, projection=None, start_reconciler=Tru
                     items=writing_operation(versions.list_versions,user,report['id'],limit=limit,offset=offset),
                     limit=limit,offset=offset)
 
+    @app.get('/scientific-reports/{report_id}/writing-state')
+    def writing_state(report_id:str,x_forwarded_user:str|None=Header(default=None)):
+        user = trusted_user(x_forwarded_user)
+        report = owned_report(report_id,user)
+        return dict(writing_operation(versions.writing_state,user,report['id'],report_sha256(report['content'])),
+                    source_report_id=report['id'],source_sha256=report_sha256(report['content']))
+
+    def published_candidate(version_id,user):
+        version = writing_operation(versions.get_version,user,version_id,include_content=True)
+        binding = writing_operation(versions.get_revision_job,user,version['source_report_id'])
+        if (not binding or binding['status'] != 'succeeded' or binding['candidate_version_id'] != version_id
+                or not binding['result_digest'] or version['parent_version_id'] is None):
+            raise HTTPException(409,detail={'code':'candidate_not_available','message':'A fully published revision candidate is required','retryable':False})
+        try:
+            source = owned_report(version['source_report_id'],user)
+        except HTTPException as exc:
+            if exc.status_code != 404: raise
+            raise HTTPException(409,detail={'code':'candidate_not_available','message':'The revision source report has not been published','retryable':True})
+        row = require_owner(pi_row(version['source_report_id']),user)
+        if (not row or row['job'] != binding['job'] or source['id'] != version['source_report_id']
+                or source.get('task_id') != version['source_report_id']
+                or source['content'] != version['content']
+                or report_sha256(source['content']) != version['report_sha256']):
+            raise HTTPException(409,detail={'code':'candidate_not_available','message':'The published revision does not match its registered version','retryable':False})
+        return version
+
+    @app.get('/scientific-report-versions/{candidate_id}/comparison')
+    def compare_revision(candidate_id:str,x_forwarded_user:str|None=Header(default=None)):
+        user = trusted_user(x_forwarded_user)
+        published_candidate(candidate_id,user)
+        return writing_operation(versions.compare_candidate,user,candidate_id)
+
+    @app.post('/scientific-report-versions/{candidate_id}/adopt')
+    def adopt_revision(candidate_id:str,req:AdoptCandidateRequest,idempotency_key:str|None=Header(default=None),
+                       x_forwarded_user:str|None=Header(default=None)):
+        user = trusted_user(x_forwarded_user)
+        if idempotency_key is None or not 1 <= len(idempotency_key) <= 128 or any(not 32 <= ord(c) <= 126 for c in idempotency_key):
+            raise HTTPException(422,'A valid Idempotency-Key is required')
+        previous = writing_operation(versions.find_adoption,user,idempotency_key)
+        if previous is None:
+            published_candidate(candidate_id,user)
+        receipt = writing_operation(versions.adopt_candidate,user,candidate_id,
+                    req.expected_current_version_id,req.expected_selection_revision,req.base_sha256,
+                    req.candidate_sha256,req.comparison_token,idempotency_key)
+        return dict(writing_operation(versions.writing_state,user,receipt['root_report_id'],include_versions=False),
+                    adoption=receipt)
+
     def public_snapshot(snapshot):
         metadata = {key:snapshot.get(key) for key in ('snapshot_id','version_id','report_sha256',
                     'payload_bytes','created_at','expires_at','pinned') if key in snapshot}
@@ -460,7 +540,35 @@ def create_app(database=None, worker=None, projection=None, start_reconciler=Tru
     @app.get('/scientific-revision-previews/{intent_id}')
     def revision_preview(intent_id:str,x_forwarded_user:str|None=Header(default=None)):
         user = trusted_user(x_forwarded_user)
-        return dict(schema_version='1',intent=writing_operation(versions.get_intent,user,intent_id),dispatch_available=False)
+        binding = writing_operation(versions.find_revision_job,user,intent_id)
+        if binding:
+            return dict(schema_version='1',task_id=binding['task_id'],state=binding['status'],
+                        candidate_version_id=binding['candidate_version_id'],dispatch_available=False)
+        return dict(schema_version='1',intent=writing_operation(versions.get_intent,user,intent_id),dispatch_available=False,
+                    start_url='/scientific-revision-previews/'+intent_id+'/start')
+
+    @app.post('/scientific-revision-previews/{intent_id}/start',response_model=TaskResponse)
+    def start_revision(intent_id:str,req:RevisionStartRequest|None=None,
+                       x_forwarded_user:str|None=Header(default=None)):
+        user = trusted_user(x_forwarded_user)
+        try:
+            row = projection.prepare_revision(user,intent_id)
+        except WorkerError as exc: worker_error(exc)
+        except (VersionError,SectionError) as exc:
+            raise HTTPException(exc.status,detail={'code':exc.code,'message':str(exc),'retryable':False})
+        except ContractError as exc:
+            raise HTTPException(exc.status_code,detail={'code':exc.code,'message':str(exc),'retryable':False})
+        except Exception:
+            raise HTTPException(503,detail={'code':'version_storage_unavailable','message':'Revision preparation may be stored; retry the same preview','retryable':True})
+        try:
+            snapshot = projection.dispatch(row)
+        except WorkerError as exc:
+            try: current = projection.get(row['id'])
+            except Exception: current = None
+            worker_error(exc,row['id'],current is None or current['dispatch'] in ('prepared','ambiguous'))
+        except Exception:
+            raise HTTPException(503,detail={'code':'storage_unavailable','message':'Revision submission may have been accepted; query this task ID','task_id':row['id'],'retryable':True})
+        return pi_response(row,snapshot)
 
     @app.get('/scientific-download/{task_id}')
     def download_report(task_id:str,x_forwarded_user:str|None=Header(default=None)):

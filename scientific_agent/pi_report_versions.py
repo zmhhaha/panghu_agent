@@ -8,6 +8,7 @@ and never starts a worker. Expired snapshot payloads leave idempotency tombstone
 from __future__ import annotations
 
 import base64
+import difflib
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
@@ -23,6 +24,10 @@ NAMESPACE = uuid.UUID('8d896b64-dccd-4ad4-9501-609cac8db1df')
 _VERSION_COLUMNS = 'version_id,owner,root_report_id,source_report_id,parent_version_id,report_sha256,content_bytes,topic,created_at'
 _SNAPSHOT_COLUMNS = 'snapshot_id,owner,version_id,idempotency_key,request_sha256,report_sha256,payload_bytes,payload_sha256,created_at,expires_at,purged_at'
 _INTENT_COLUMNS = 'intent_id,owner,parent_version_id,root_report_id,snapshot_id,base_sha256,section_id,section_sha256,instruction,timeout_seconds,idempotency_key,request_sha256,status,created_at,expires_at'
+MAX_SELECTION_REVISION = 2**53 - 1
+MAX_DIFF_INPUT_BYTES = 128 * 1024
+MAX_DIFF_OUTPUT_BYTES = 256 * 1024
+MAX_DIFF_LINES = 2000
 
 
 class VersionError(ValueError):
@@ -107,12 +112,14 @@ class ReportVersionStore:
                  owner_snapshot_bytes=64 * 1024 * 1024, global_snapshot_bytes=256 * 1024 * 1024,
                  owner_snapshot_count=10, owner_version_count=100,
                  owner_version_bytes=32 * 1024 * 1024, global_version_bytes=256 * 1024 * 1024,
-                 owner_intent_count=10000, owner_live_intent_count=100):
+                 owner_intent_count=10000, owner_live_intent_count=100,
+                 owner_adoption_count=10000, global_adoption_count=100000):
         self.db, self.clock = db, clock or (lambda: datetime.now(timezone.utc))
         values = locals().copy()
         for name in ('snapshot_ttl', 'intent_ttl', 'owner_snapshot_bytes', 'global_snapshot_bytes',
                      'owner_snapshot_count', 'owner_version_count', 'owner_version_bytes',
-                     'global_version_bytes', 'owner_intent_count', 'owner_live_intent_count'):
+                     'global_version_bytes', 'owner_intent_count', 'owner_live_intent_count',
+                     'owner_adoption_count', 'global_adoption_count'):
             value = values[name]
             _require(type(value) is int and value > 0)
             setattr(self, name, value)
@@ -153,6 +160,21 @@ class ReportVersionStore:
         self.db._execute('CREATE INDEX IF NOT EXISTS scientific_report_versions_owner_root ON scientific_report_versions(owner,root_report_id,created_at,version_id)')
         self.db._execute('CREATE INDEX IF NOT EXISTS scientific_report_snapshots_owner ON scientific_report_snapshots(owner,expires_at)')
         self.db._execute('CREATE INDEX IF NOT EXISTS scientific_revision_intents_snapshot ON scientific_report_revision_intents(snapshot_id,owner,status,expires_at)')
+        self.db._execute('''CREATE TABLE IF NOT EXISTS scientific_report_revision_jobs (
+            task_id TEXT PRIMARY KEY, owner TEXT NOT NULL, intent_id TEXT NOT NULL,
+            snapshot_id TEXT NOT NULL, request_sha256 TEXT NOT NULL, job TEXT NOT NULL,
+            status TEXT NOT NULL, candidate_version_id TEXT, result_digest TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(owner,intent_id))''')
+        self.db._execute('CREATE INDEX IF NOT EXISTS scientific_revision_jobs_active ON scientific_report_revision_jobs(status,owner,snapshot_id)')
+        # The append-only event is both the selection head and idempotency
+        # receipt. One INSERT SELECT commits the CAS and its retry record.
+        self.db._execute('''CREATE TABLE IF NOT EXISTS scientific_report_adoptions (
+            adoption_id TEXT PRIMARY KEY, owner TEXT NOT NULL, root_report_id TEXT NOT NULL,
+            version_id TEXT NOT NULL, report_sha256 TEXT NOT NULL, parent_version_id TEXT NOT NULL,
+            base_sha256 TEXT NOT NULL, expected_current_version_id TEXT,
+            expected_selection_revision INTEGER NOT NULL, selection_revision INTEGER NOT NULL,
+            idempotency_key TEXT NOT NULL, request_sha256 TEXT NOT NULL, created_at TEXT NOT NULL,
+            UNIQUE(owner,idempotency_key), UNIQUE(owner,root_report_id,selection_revision))''')
 
     def _version(self, owner, version_id):
         rows = self.db._query('SELECT * FROM scientific_report_versions WHERE owner=' + _sql(owner) + ' AND version_id=' + _sql(version_id))
@@ -172,6 +194,28 @@ class ReportVersionStore:
     def _version_meta(row):
         return {key: row[key] for key in _VERSION_COLUMNS.split(',') if key != 'owner'}
 
+    @staticmethod
+    def _unfulfilled_reservations(owner=None, consuming_owner=None, consuming_source=None):
+        """Count active promises not yet represented by an actual version.
+
+        Source identity consumes the reservation in the version INSERT itself;
+        neither a later status update nor its successful HTTP response is needed.
+        """
+        condition = "j.status IN ('reserved','queued','running','validating','cancel_requested','publishing')"
+        condition += ' AND NOT EXISTS (SELECT 1 FROM scientific_report_versions v WHERE v.owner=j.owner AND v.source_report_id=j.task_id)'
+        if owner is not None:
+            condition += ' AND j.owner=' + _sql(owner)
+        if consuming_source is not None:
+            condition += ' AND NOT (j.owner=' + _sql(consuming_owner) + ' AND j.task_id=' + _sql(consuming_source) + ')'
+        return '(SELECT COUNT(*) FROM scientific_report_revision_jobs j WHERE ' + condition + ')'
+
+    def _version_admission(self, owner, added_bytes, consuming_source=None):
+        own = self._unfulfilled_reservations(owner,owner,consuming_source)
+        total = self._unfulfilled_reservations(None,owner,consuming_source)
+        return ('(SELECT COUNT(*) FROM scientific_report_versions WHERE owner=' + _sql(owner) + ')+' + own + '+1<=' + str(self.owner_version_count) +
+                ' AND (SELECT COALESCE(SUM(content_bytes),0) FROM scientific_report_versions WHERE owner=' + _sql(owner) + ')+' + own + '*' + str(MAX_REPORT_BYTES) + '+' + str(added_bytes) + '<=' + str(self.owner_version_bytes) +
+                ' AND (SELECT COALESCE(SUM(content_bytes),0) FROM scientific_report_versions)+' + total + '*' + str(MAX_REPORT_BYTES) + '+' + str(added_bytes) + '<=' + str(self.global_version_bytes))
+
     def ensure_base(self, owner, source_report_id, content, topic=''):
         owner, source_report_id = _owner(owner), _identifier(source_report_id)
         raw = _content(content)
@@ -187,9 +231,8 @@ class ReportVersionStore:
             version_id = existing[0]['version_id']
         else:
             self.db._execute('INSERT INTO scientific_report_versions (' + _VERSION_COLUMNS.replace('content_bytes,topic', 'content_b64,content_bytes,topic') + ') SELECT ' + ','.join(map(_sql, values)) +
-                ' WHERE (SELECT COUNT(*) FROM scientific_report_versions WHERE owner=' + _sql(owner) + ')<' + str(self.owner_version_count) +
-                ' AND (SELECT COALESCE(SUM(content_bytes),0) FROM scientific_report_versions WHERE owner=' + _sql(owner) + ')+' + str(len(raw)) + '<=' + str(self.owner_version_bytes) +
-                ' AND (SELECT COALESCE(SUM(content_bytes),0) FROM scientific_report_versions)+' + str(len(raw)) + '<=' + str(self.global_version_bytes) +
+                ' WHERE ' + self._version_admission(owner,len(raw)) +
+                ' AND NOT EXISTS (SELECT 1 FROM scientific_report_revision_jobs WHERE owner=' + _sql(owner) + ' AND task_id=' + _sql(source_report_id) + ')' +
                 ' ON CONFLICT DO NOTHING')
             existing = self.db._query('SELECT version_id FROM scientific_report_versions WHERE owner=' + _sql(owner) + ' AND source_report_id=' + _sql(source_report_id))
             if existing:
@@ -198,6 +241,8 @@ class ReportVersionStore:
             row = self._version(owner, version_id)
         except VersionError as exc:
             if exc.code == 'version_not_found':
+                bound = self.db._query('SELECT task_id FROM scientific_report_revision_jobs WHERE owner=' + _sql(owner) + ' AND task_id=' + _sql(source_report_id))
+                _require(not bound,'reserved_source_conflict',409)
                 raise VersionError('version_quota_exceeded', status=429) from None
             raise
         _require(row['report_sha256'] == digest and row['content'] == content,
@@ -224,13 +269,21 @@ class ReportVersionStore:
         version_id = _stable('candidate', owner, key)
         existing = self.db._query('SELECT version_id FROM scientific_report_versions WHERE owner=' + _sql(owner) + ' AND version_id=' + _sql(version_id))
         if not existing:
+            binding = self.get_revision_job(owner,source_report_id)
+            if binding:
+                fixed = json.loads(binding['job'])
+                _require(binding['status'] in ('reserved','queued','running','validating','cancel_requested','publishing')
+                         and fixed['parent_version_id'] == parent_version_id
+                         and fixed['base_sha256'] == base_sha256
+                         and fixed['root_report_id'] == parent['root_report_id'], 'revision_job_conflict',409)
             values = [version_id, owner, parent['root_report_id'], source_report_id, parent_version_id, digest,
                       base64.b64encode(raw).decode('ascii'), len(raw), topic, now]
+            reservation_gate = (' AND EXISTS (SELECT 1 FROM scientific_report_revision_jobs WHERE owner=' + _sql(owner) +
+                ' AND task_id=' + _sql(source_report_id) + " AND status IN ('reserved','queued','running','validating','cancel_requested','publishing'))") if binding else (
+                ' AND NOT EXISTS (SELECT 1 FROM scientific_report_revision_jobs WHERE owner=' + _sql(owner) + ' AND task_id=' + _sql(source_report_id) + ')')
             self.db._execute('INSERT INTO scientific_report_versions (' + _VERSION_COLUMNS.replace('content_bytes,topic', 'content_b64,content_bytes,topic') + ') SELECT ' + ','.join(map(_sql, values)) +
                 ' WHERE EXISTS (SELECT 1 FROM scientific_report_versions WHERE owner=' + _sql(owner) + ' AND version_id=' + _sql(parent_version_id) + ' AND root_report_id=' + _sql(parent['root_report_id']) + ' AND report_sha256=' + _sql(base_sha256) + ')' +
-                ' AND (SELECT COUNT(*) FROM scientific_report_versions WHERE owner=' + _sql(owner) + ')<' + str(self.owner_version_count) +
-                ' AND (SELECT COALESCE(SUM(content_bytes),0) FROM scientific_report_versions WHERE owner=' + _sql(owner) + ')+' + str(len(raw)) + '<=' + str(self.owner_version_bytes) +
-                ' AND (SELECT COALESCE(SUM(content_bytes),0) FROM scientific_report_versions)+' + str(len(raw)) + '<=' + str(self.global_version_bytes) +
+                ' AND ' + self._version_admission(owner,len(raw),source_report_id if binding else None) + reservation_gate +
                 ' ON CONFLICT DO NOTHING')
         try:
             row = self._version(owner, version_id)
@@ -282,6 +335,8 @@ class ReportVersionStore:
             if allow_pin:
                 pinned = bool(self.db._query("SELECT intent_id FROM scientific_report_revision_intents WHERE owner=" + _sql(row['owner']) + ' AND snapshot_id=' + _sql(row['snapshot_id']) +
                                             " AND status IN ('prepared','queued','running','validating','publishing') AND expires_at>" + _sql(now) + ' LIMIT 1'))
+                pinned = pinned or bool(self.db._query('SELECT task_id FROM scientific_report_revision_jobs WHERE owner=' + _sql(row['owner']) +
+                    ' AND snapshot_id=' + _sql(row['snapshot_id']) + " AND status IN ('reserved','queued','running','validating','cancel_requested','publishing') LIMIT 1"))
             if not pinned:
                 raise VersionError('snapshot_expired', status=410)
         _require(row['payload'] is not None, 'snapshot_integrity_error', 409)
@@ -427,10 +482,261 @@ class ReportVersionStore:
         _require(result['request_sha256'] == fingerprint, 'intent_key_conflict', 409)
         return result
 
+    def get_revision_job(self, owner, task_id):
+        owner, task_id = _owner(owner), _identifier(task_id)
+        rows = self.db._query('SELECT * FROM scientific_report_revision_jobs WHERE owner=' + _sql(owner) + ' AND task_id=' + _sql(task_id))
+        return self._checked_revision_job(rows[0]) if rows else None
+
+    def find_revision_job(self, owner, intent_id):
+        owner, intent_id = _owner(owner), _identifier(intent_id)
+        rows = self.db._query('SELECT * FROM scientific_report_revision_jobs WHERE owner=' + _sql(owner) + ' AND intent_id=' + _sql(intent_id))
+        return self._checked_revision_job(rows[0]) if rows else None
+
+    @staticmethod
+    def _checked_revision_job(row):
+        from .pi_revision_contracts import RevisionJob
+        try:
+            job = RevisionJob.from_dict(json.loads(row['job'])).to_dict()
+            _require(job['task_id'] == row['task_id'] and job['user_id'] == row['owner']
+                     and job['intent_id'] == row['intent_id']
+                     and job['input_digest'] == row['request_sha256']
+                     and row['job'] == _json(job), 'revision_job_integrity_error', 409)
+        except (ValueError, TypeError, KeyError) as exc:
+            raise VersionError('revision_job_integrity_error',status=409) from exc
+        return row
+
+    def active_revision_jobs(self):
+        return self.db._query("SELECT * FROM scientific_report_revision_jobs WHERE status IN ('reserved','queued','running','validating','cancel_requested','publishing')")
+
+    def reserve_revision_job(self, owner, intent_id, job):
+        """Pin immutable input before the independently committed API index.
+
+        The binding itself is recoverable if the next SQL HTTP request fails.
+        Active bindings pin input beyond preview TTL; terminal tombstones cannot
+        be restarted and do not retain expired payloads.
+        """
+        from .pi_revision_contracts import RevisionJob, validate_revision_materials
+        owner, intent_id = _owner(owner), _identifier(intent_id)
+        job = RevisionJob.from_dict(job).to_dict()
+        existing = self.find_revision_job(owner, intent_id)
+        if existing:
+            _require(existing['request_sha256'] == job['input_digest'] and existing['task_id'] == job['task_id'], 'revision_job_conflict', 409)
+            return existing
+        intent = self.get_intent(owner, intent_id)
+        _require(job['user_id'] == owner and job['intent_id'] == intent_id
+                 and all(job[k] == intent[k] for k in ('parent_version_id','root_report_id','base_sha256',
+                     'section_id','section_sha256','instruction','timeout_seconds')), 'revision_job_conflict', 409)
+        material = self.get_snapshot(owner, intent['snapshot_id'])
+        wire = dict(report=material['report'], items=material['items'],
+                    artifacts={k:base64.b64encode(v).decode('ascii') for k,v in material['artifacts'].items()})
+        validate_revision_materials(job, wire)
+        now = self._stamp(self._time())
+        values = [job['task_id'],owner,intent_id,intent['snapshot_id'],job['input_digest'],_json(job),'reserved',now,now]
+        self.db._execute('INSERT INTO scientific_report_revision_jobs (task_id,owner,intent_id,snapshot_id,request_sha256,job,status,created_at,updated_at) SELECT ' + ','.join(map(_sql,values)) +
+            ' WHERE EXISTS (SELECT 1 FROM scientific_report_revision_intents WHERE owner=' + _sql(owner) + ' AND intent_id=' + _sql(intent_id) + " AND status='prepared' AND expires_at>" + _sql(now) + ')' +
+            ' AND EXISTS (SELECT 1 FROM scientific_report_snapshots WHERE owner=' + _sql(owner) + ' AND snapshot_id=' + _sql(intent['snapshot_id']) + ' AND payload IS NOT NULL)' +
+            ' AND ' + self._version_admission(owner,MAX_REPORT_BYTES) +
+            ' AND NOT EXISTS (SELECT 1 FROM scientific_report_versions WHERE owner=' + _sql(owner) + ' AND source_report_id=' + _sql(job['task_id']) + ')' +
+            ' ON CONFLICT DO NOTHING')
+        row = self.find_revision_job(owner, intent_id)
+        if row is None:
+            self.get_intent(owner,intent_id)
+            self.get_snapshot(owner,intent['snapshot_id'])
+            raise VersionError('version_quota_exceeded',status=429)
+        _require(row['request_sha256'] == job['input_digest'] and row['task_id'] == job['task_id'], 'revision_job_conflict', 409)
+        return row
+
+    def revision_materials(self, owner, task_id):
+        from .pi_revision_contracts import validate_revision_materials
+        row = self.get_revision_job(owner, task_id)
+        _require(row is not None, 'revision_job_not_found', 404)
+        snapshot = self.get_snapshot(owner, row['snapshot_id'])
+        wire = dict(report=snapshot['report'],items=snapshot['items'],
+                    artifacts={k:base64.b64encode(v).decode('ascii') for k,v in snapshot['artifacts'].items()})
+        validate_revision_materials(json.loads(row['job']), wire)
+        return wire
+
+    def update_revision_job(self, owner, task_id, status, *, candidate_version_id=None, result_digest=None):
+        _require(status in ('reserved','queued','running','validating','cancel_requested','publishing',
+                            'succeeded','failed','timed_out','cancelled','rejected'))
+        row = self.get_revision_job(owner, task_id)
+        _require(row is not None, 'revision_job_not_found', 404)
+        # A delayed queued/ambiguous response cannot reopen a completed binding.
+        if row['status'] in ('succeeded','failed','timed_out','cancelled','rejected'):
+            return row
+        if row['status'] == 'cancel_requested' and status in ('reserved','queued','running','validating'):
+            return row
+        changes = {'status':status,'updated_at':self._stamp(self._time())}
+        if candidate_version_id is not None:
+            changes['candidate_version_id'] = _identifier(candidate_version_id)
+        if result_digest is not None:
+            changes['result_digest'] = _digest(result_digest)
+        self.db._execute('UPDATE scientific_report_revision_jobs SET ' + ','.join(k+'='+_sql(v) for k,v in changes.items()) +
+            ' WHERE owner=' + _sql(owner) + ' AND task_id=' + _sql(task_id) + " AND status IN ('reserved','queued','running','validating','cancel_requested','publishing')" +
+            (" AND status!='cancel_requested'" if status in ('reserved','queued','running','validating') else ''))
+        return self.get_revision_job(owner,task_id)
+
+    def writing_state(self, owner, source_report_id, source_sha256=None, include_versions=True):
+        """Read the effective selection; no baseline import or selection write."""
+        owner, source_report_id = _owner(owner), _identifier(source_report_id)
+        sources = self.db._query('SELECT root_report_id FROM scientific_report_versions WHERE owner=' + _sql(owner) + ' AND source_report_id=' + _sql(source_report_id))
+        root = sources[0]['root_report_id'] if sources else source_report_id
+        events = self.db._query('SELECT * FROM scientific_report_adoptions WHERE owner=' + _sql(owner) + ' AND root_report_id=' + _sql(root) + ' ORDER BY selection_revision DESC LIMIT 1')
+        if events:
+            head = events[0]
+            current = self._version(owner,head['version_id'])
+            _require(current['root_report_id'] == root and current['report_sha256'] == head['report_sha256']
+                     and type(head['selection_revision']) is int and 1 <= head['selection_revision'] <= MAX_SELECTION_REVISION,
+                     'selection_integrity_error',409)
+            revision = head['selection_revision']
+        else:
+            bases = self.db._query('SELECT version_id FROM scientific_report_versions WHERE owner=' + _sql(owner) +
+                ' AND root_report_id=' + _sql(root) + ' AND source_report_id=' + _sql(root) + ' AND parent_version_id IS NULL LIMIT 1')
+            current = self._version(owner,bases[0]['version_id']) if bases else None
+            revision = 0
+        result = dict(schema_version='1',root_report_id=root,
+                      current_version_id=current['version_id'] if current else None,
+                      current_sha256=current['report_sha256'] if current else source_sha256,
+                      selection_revision=revision)
+        if include_versions:
+            result['versions'] = [dict(row,is_current=row['version_id'] == result['current_version_id'])
+                                  for row in self.list_versions(owner,root,limit=100)]
+        return result
+
+    def _completed_candidate(self, owner, candidate_id):
+        candidate = self._version(owner,candidate_id)
+        _require(candidate['parent_version_id'] is not None,'candidate_not_available',409)
+        parent = self._version(owner,candidate['parent_version_id'])
+        binding = self.get_revision_job(owner,candidate['source_report_id'])
+        _require(binding is not None and binding['status'] == 'succeeded'
+                 and binding['candidate_version_id'] == candidate_id
+                 and isinstance(binding['result_digest'],str)
+                 and re.fullmatch('[0-9a-f]{64}',binding['result_digest']) is not None,
+                 'candidate_not_available',409)
+        job = json.loads(binding['job'])
+        _require(job['parent_version_id'] == parent['version_id']
+                 and job['root_report_id'] == candidate['root_report_id'] == parent['root_report_id']
+                 and job['base_sha256'] == parent['report_sha256'], 'candidate_integrity_error',409)
+        return candidate,parent,binding,job
+
+    @staticmethod
+    def _comparison_fingerprint(owner, candidate, parent, state):
+        # A consistency fingerprint, not proof that a person saw a screen.
+        return _sha(_json(dict(owner=owner,root_report_id=candidate['root_report_id'],
+            candidate_version_id=candidate['version_id'],parent_version_id=parent['version_id'],
+            base_sha256=parent['report_sha256'],candidate_sha256=candidate['report_sha256'],
+            expected_current_version_id=state['current_version_id'],
+            expected_selection_revision=state['selection_revision'])).encode('utf-8'))
+
+    @staticmethod
+    def _section_diff(before, after):
+        unavailable = dict(format='unified',text='',available=False,reason='diff_too_large')
+        if len(before.encode('utf-8'))+len(after.encode('utf-8')) > MAX_DIFF_INPUT_BYTES:
+            return unavailable
+        old, new = before.splitlines(keepends=True), after.splitlines(keepends=True)
+        if len(old)+len(new) > MAX_DIFF_LINES:
+            return unavailable
+        parts, size = [], 0
+        for part in difflib.unified_diff(old,new,fromfile='parent-section.md',tofile='candidate-section.md'):
+            if part.startswith(('+','-',' ')) and not part.endswith(('\n','\r')):
+                part += '\n\\ No newline at end of file\n'
+            size += len(part.encode('utf-8'))
+            if size > MAX_DIFF_OUTPUT_BYTES:
+                return unavailable
+            parts.append(part)
+        return dict(format='unified',text=''.join(parts),available=True,reason=None)
+
+    def compare_candidate(self, owner, candidate_id):
+        owner, candidate_id = _owner(owner), _identifier(candidate_id)
+        candidate,parent,binding,job = self._completed_candidate(owner,candidate_id)
+        selection = select_section(parent['content'],job['section_id'],job['base_sha256'])
+        _require(selection['sha256'] == job['section_sha256'],'candidate_integrity_error',409)
+        original, revised = parent['content'].encode('utf-8'),candidate['content'].encode('utf-8')
+        start,end = selection['start_byte'],selection['end_byte']
+        new_end = len(revised)-(len(original)-end)
+        _require(start <= new_end and revised[:start] == original[:start] and revised[new_end:] == original[end:],
+                 'candidate_integrity_error',409)
+        try:
+            before,after = original[start:end].decode('utf-8'),revised[start:new_end].decode('utf-8')
+        except UnicodeError:
+            raise VersionError('candidate_integrity_error',status=409) from None
+        state = self.writing_state(owner,candidate['root_report_id'],include_versions=False)
+        adoption = dict(expected_current_version_id=state['current_version_id'],
+                        expected_selection_revision=state['selection_revision'],
+                        base_sha256=parent['report_sha256'],candidate_sha256=candidate['report_sha256'],
+                        comparison_token=self._comparison_fingerprint(owner,candidate,parent,state),
+                        can_adopt=state['current_version_id'] == parent['version_id'],
+                        reason=None if state['current_version_id'] == parent['version_id'] else 'parent_not_current')
+        return dict(schema_version='1',root_report_id=candidate['root_report_id'],
+                    parent=self._version_meta(parent),candidate=self._version_meta(candidate),
+                    section=dict(section_id=job['section_id'],title=selection['title'],start_byte=start,end_byte=end,
+                                 candidate_end_byte=new_end,before=before,after=after,
+                                 before_sha256=_sha(original[start:end]),after_sha256=_sha(revised[start:new_end])),
+                    diff=self._section_diff(before,after),adoption=adoption)
+
+    def find_adoption(self, owner, key):
+        rows = self.db._query('SELECT * FROM scientific_report_adoptions WHERE owner=' + _sql(_owner(owner)) + ' AND idempotency_key=' + _sql(_key(key)))
+        return rows[0] if rows else None
+
+    @staticmethod
+    def _adoption_receipt(row, replayed):
+        return dict(adoption_id=row['adoption_id'],root_report_id=row['root_report_id'],
+                    target_version_id=row['version_id'],report_sha256=row['report_sha256'],
+                    selection_revision=row['selection_revision'],replayed=replayed)
+
+    def adopt_candidate(self, owner, candidate_id, expected_current_version_id, expected_selection_revision,
+                        base_sha256, candidate_sha256, comparison_token, key):
+        owner, candidate_id, key = _owner(owner), _identifier(candidate_id), _key(key)
+        if expected_current_version_id is not None:
+            _identifier(expected_current_version_id)
+        _require(type(expected_selection_revision) is int and 0 <= expected_selection_revision < MAX_SELECTION_REVISION)
+        _digest(base_sha256), _digest(candidate_sha256), _digest(comparison_token)
+        request_sha = _sha(_json(dict(owner=owner,candidate_version_id=candidate_id,
+            expected_current_version_id=expected_current_version_id,expected_selection_revision=expected_selection_revision,
+            base_sha256=base_sha256,candidate_sha256=candidate_sha256)).encode('utf-8'))
+        previous = self.find_adoption(owner,key)
+        if previous:
+            _require(previous['request_sha256'] == request_sha,'adoption_key_conflict',409)
+            return self._adoption_receipt(previous,True)
+        candidate,parent,binding,job = self._completed_candidate(owner,candidate_id)
+        _require(parent['report_sha256'] == base_sha256 and candidate['report_sha256'] == candidate_sha256,
+                 'stale_comparison',409)
+        expected = dict(current_version_id=expected_current_version_id,selection_revision=expected_selection_revision)
+        _require(comparison_token == self._comparison_fingerprint(owner,candidate,parent,expected),'stale_comparison',409)
+        _require(expected_current_version_id == parent['version_id'],'parent_not_current',409)
+        root = candidate['root_report_id']
+        condition = 'owner=' + _sql(owner) + ' AND root_report_id=' + _sql(root)
+        current = ('COALESCE((SELECT version_id FROM scientific_report_adoptions WHERE ' + condition + ' ORDER BY selection_revision DESC LIMIT 1),'
+                   '(SELECT version_id FROM scientific_report_versions WHERE ' + condition + ' AND source_report_id=' + _sql(root) + ' AND parent_version_id IS NULL LIMIT 1))')
+        adoption_id,now = _stable('adoption',owner,key),self._stamp(self._time())
+        values = [adoption_id,owner,root,candidate_id,candidate_sha256,parent['version_id'],base_sha256,
+                  expected_current_version_id,expected_selection_revision,expected_selection_revision+1,key,request_sha,now]
+        self.db._execute('INSERT INTO scientific_report_adoptions (adoption_id,owner,root_report_id,version_id,report_sha256,parent_version_id,base_sha256,expected_current_version_id,expected_selection_revision,selection_revision,idempotency_key,request_sha256,created_at) SELECT ' + ','.join(map(_sql,values)) +
+            ' WHERE (SELECT COALESCE(MAX(selection_revision),0) FROM scientific_report_adoptions WHERE ' + condition + ')=' + str(expected_selection_revision) +
+            ' AND ' + current + ' IS ' + _sql(expected_current_version_id) +
+            ' AND EXISTS (SELECT 1 FROM scientific_report_versions v JOIN scientific_report_revision_jobs j ON j.owner=v.owner AND j.task_id=v.source_report_id JOIN scientific_reports r ON r.id=v.source_report_id AND r.task_id=v.source_report_id WHERE v.owner=' + _sql(owner) +
+            ' AND v.version_id=' + _sql(candidate_id) + ' AND v.parent_version_id=' + _sql(parent['version_id']) +
+            ' AND v.root_report_id=' + _sql(root) + ' AND v.report_sha256=' + _sql(candidate_sha256) +
+            " AND j.status='succeeded' AND j.candidate_version_id=v.version_id AND j.result_digest=" + _sql(binding['result_digest']) +
+            ' AND r.content=' + _sql(candidate['content']) + ')' +
+            ' AND EXISTS (SELECT 1 FROM scientific_report_versions WHERE owner=' + _sql(owner) + ' AND version_id=' + _sql(parent['version_id']) + ' AND root_report_id=' + _sql(root) + ' AND report_sha256=' + _sql(base_sha256) + ')' +
+            ' AND (SELECT COUNT(*) FROM scientific_report_adoptions WHERE owner=' + _sql(owner) + ')<' + str(self.owner_adoption_count) +
+            ' AND (SELECT COUNT(*) FROM scientific_report_adoptions)<' + str(self.global_adoption_count) +
+            ' ON CONFLICT DO NOTHING')
+        result = self.find_adoption(owner,key)
+        if result:
+            _require(result['request_sha256'] == request_sha,'adoption_key_conflict',409)
+            return self._adoption_receipt(result,False)
+        if (self.db._query('SELECT COUNT(*) AS n FROM scientific_report_adoptions WHERE owner=' + _sql(owner))[0]['n'] >= self.owner_adoption_count
+                or self.db._query('SELECT COUNT(*) AS n FROM scientific_report_adoptions')[0]['n'] >= self.global_adoption_count):
+            raise VersionError('adoption_quota_exceeded',status=429)
+        raise VersionError('selection_conflict',status=409)
+
     def cleanup_expired(self):
         now, token = self._stamp(self._time()), str(uuid.uuid4())
         self.db._execute('UPDATE scientific_report_snapshots SET payload=NULL,purged_at=' + _sql(now) + ',purge_token=' + _sql(token) +
             ' WHERE payload IS NOT NULL AND expires_at<=' + _sql(now) +
-            " AND NOT EXISTS (SELECT 1 FROM scientific_report_revision_intents i WHERE i.owner=scientific_report_snapshots.owner AND i.snapshot_id=scientific_report_snapshots.snapshot_id AND i.status IN ('prepared','queued','running','validating','publishing') AND i.expires_at>" + _sql(now) + ')')
+            " AND NOT EXISTS (SELECT 1 FROM scientific_report_revision_intents i WHERE i.owner=scientific_report_snapshots.owner AND i.snapshot_id=scientific_report_snapshots.snapshot_id AND i.status IN ('prepared','queued','running','validating','publishing') AND i.expires_at>" + _sql(now) + ')' +
+            " AND NOT EXISTS (SELECT 1 FROM scientific_report_revision_jobs j WHERE j.owner=scientific_report_snapshots.owner AND j.snapshot_id=scientific_report_snapshots.snapshot_id AND j.status IN ('reserved','queued','running','validating','cancel_requested','publishing'))")
         rows = self.db._query('SELECT COUNT(*) AS n FROM scientific_report_snapshots WHERE purge_token=' + _sql(token))
         return {'cleared_snapshots': rows[0]['n'] if rows else 0}

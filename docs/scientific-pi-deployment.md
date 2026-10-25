@@ -1,6 +1,8 @@
 # 独立科研 Pi worker：部署与验收说明
 
-本实现不改变人用 Pi 网页工作台。源码分为：无框架共享契约、专用 worker/私有 SQLite、Pi 子进程适配、精选本地科研流程与工具、兼容科学 API/UI、可恢复报告发布。
+源码分为：无框架共享契约、专用 worker/私有 SQLite、Pi 子进程适配、精选本地科研流程与工具、科研 API/研究工作台、可恢复报告发布。
+
+**2026-10-23 21:01:45（Asia/Shanghai）Pi专用迁移已上线：** 新科研API只接收Pi研究任务，继续查询和下载既有报告；专用镜像不安装CrewAI。API/UI在短暂维护窗口成对更新，保留worker完整spec；真实Pi完成/取消、8类附件校验与线上Gradio HTTP8项通过。实际浏览器与登录会话验收仍待完成，见[本次工作台记录](../../docs/scientific-research-pi/workbench-20261023/README.md)。2026-10-22记录代表迁移前部署。
 
 **2026-10-22 当前状态：独立 worker、配套 API/UI 已进入生产部署与 canary 验收。** 最新镜像、凭据/PVC、实际网络与模型证据、部署结果和剩余问题统一记录在[本次上线记录](https://github.com/zmhhaha/armbianbegin/blob/codex/scientific-pi-worker/docs/scientific-research-pi/rollout-20261022.md)。本文保留部署方法和早期候选历史；旧 digest、146 项测试及“未部署”观察不能代表当前线上状态。实际 canary 是否通过，以该上线记录为准。
 
@@ -31,11 +33,11 @@ npm ci --ignore-scripts --no-audit --no-fund --prefix pi_worker/node
 
 worker 使用 [Dockerfile.scientific-pi](../Dockerfile.scientific-pi)。`NODE_IMAGE` 与 `PYTHON_IMAGE` 的默认值已固定为实际验证的多架构基础镜像 digest，也可由操作者传入已审查的替代 digest。Python 安装使用精确锁文件，Node 安装使用 `npm ci` 和现有 npm 锁文件。最终部署镜像强制使用 `repository@sha256:...`。操作系统软件仓库的元数据没有全部锁定，因此不声称构建字节完全可重复。
 
-科学 API 使用 [Dockerfile.scientific-pi-api](../Dockerfile.scientific-pi-api)，SCIENTIFIC_API_BASE 必须是现有兼容 CrewAI API 镜像的固定 digest。此镜像只叠加新 API 和 Pi client/projection/contracts，保留原 CrewAI 依赖；不覆盖共享 agent-api:latest。
+科研 API 使用 [Dockerfile.scientific-pi-api](../Dockerfile.scientific-pi-api)，从同一已验收 Python 3.13 基础镜像 digest 独立构建。镜像只复制 API、Pi client/projection/contracts、SQLite HTTP 客户端和邮件 HTTP 客户端；这些客户端使用标准库 `urllib`。它安装 [requirements-api.lock](../scientific_agent/requirements-api.lock) 中沿用 worker 已验证版本的 13 个精确依赖，不安装 CrewAI、模型 SDK、学术检索库或 Node 运行时。构建执行 `pip check`；API 的新依赖闭包仍需用新镜像实测启动，不能以 worker 历史验收代替。共享 `Dockerfile.api.base` 与其他 CrewAI 应用保持其独立部署流程。
 
 ```bash
 docker build -f Dockerfile.scientific-pi -t <dedicated-worker-tag> .
-docker build -f Dockerfile.scientific-pi-api --build-arg SCIENTIFIC_API_BASE=<existing-api@sha256:digest> -t <dedicated-scientific-api-tag> .
+docker build -f Dockerfile.scientific-pi-api -t <dedicated-scientific-api-tag> .
 ```
 
 以下是 **2026-10-22 较早一轮、生产上线前的历史候选** 构建记录。该轮只在 Linux ARM64 完成独立镜像构建、推送与容器验收，当时未修改生产 Deployment 或就绪标志；后续正式 worker 的最终 digest 与验收次数以本次上线记录为准。Registry manifest digest 不可与 Docker image config ID 混用：
@@ -65,7 +67,9 @@ export SCIENTIFIC_PI_API_IMAGE=<dedicated-api@sha256:digest>
 bash scripts/deploy-scientific-pi.sh --render <review-directory>
 ```
 
-输出 worker.json、api-patch.json、api-egress-review.json。worker 为 scientific-agent namespace 中的单副本 Recreate Deployment、专用 Ceph RBD RWO PVC、ClusterIP 控制端口及 NetworkPolicy。既有人用 Pi 的 Service、OAuth、HOME/workspace、PVC 与 frpc 均不修改。
+输出 worker.json、api-patch.json、api-egress-review.json。worker 为 scientific-agent namespace 中的单副本 Recreate Deployment、专用 Ceph RBD RWO PVC、ClusterIP 控制端口及 NetworkPolicy。
+
+`api-patch.json` 将默认引擎设为 `pi`，使用新 API 镜像，并定向删除已核对的旧部署项：`scientific-workflow` 对 `/app/scientific_agent` 的整目录覆盖、`source` 对旧 API 入口的覆盖、`rag-sync` 初始化容器、API 的 LLM/RAG 配置及凭据引用、LLM/RAG 调用标签。Worker 控制令牌通过既有 Secret 引用；模型令牌继续只在 worker 中使用。旧 ConfigMap 对象保留，以便从完整 Deployment 快照回滚。Strategic patch 保留其他不相关的挂载与环境变量。
 
 凭据通过外层仓库 Vault inventory 中的 scientific-pi-worker ExternalSecret 映射：
 
@@ -74,7 +78,7 @@ bash scripts/deploy-scientific-pi.sh --render <review-directory>
 
 模型配置通过 SCIENTIFIC_PI_MODEL_PROVIDER/MODEL/MODEL_BASE_URL/MODEL_API 指定；默认渲染为 existing scientific 网关 `/v1`、`llm-trusted`、`openai-completions`，不恢复已退役的 pi-trusted 路由。该 API 的真实工具回合已由隔离探针验证，专用生产 worker caller 的 Vault 凭据与网关注册已在本次上线中完成，当前结果和证据见上线记录。为满足网关严格请求 schema，可信 factory 为 completions 固定 `supportsStore=false`、`supportsUsageInStreaming=false`、`supportsReasoningEffort=false`、`maxTokensField=max_tokens`，模型 `maxTokens=8192`；不放宽网关。经审查的直接端点可用 `SCIENTIFIC_PI_MODEL_COMPAT_PROFILE=none` 清除此兼容 profile；openai-responses 不附带 completions compat，仍限制 8192 tokens，并需单独验证端点/网络例外。
 
-新 API 显式运行 `app.api.scientific_agent:app`，避免旧 ConfigMap 对 agent.py 的覆盖掩盖新代码。另将新 Pi 模块放在镜像固定目录 `/opt/scientific-pi-extension`，在 mounted `scientific_agent` package 路径末尾追加，保留原 CrewAI 整目录覆盖优先级；该布局已通过上述只读 Linux 模拟覆盖验证。SCIENTIFIC_DEFAULT_ENGINE 保持 crewai，先用显式 engine=pi canary。
+新 API 显式运行 `app.api.scientific_agent:app`，Pi 模块位于镜像内 `/app/scientific_agent`。迁移补丁删除旧代码覆盖后，这些模块直接从镜像加载。`SCIENTIFIC_DEFAULT_ENGINE=pi` 同时是新镜像默认值和渲染配置；新请求显式指定 `crewai` 会被拒绝，既有任务、报告仍可查询。
 
 ## 科研 UI 的公网 HTTPS 地址
 
@@ -108,9 +112,19 @@ SCIENTIFIC_PI_CAPABILITY_VERIFIED、SCIENTIFIC_PI_MODEL_VERIFIED、SCIENTIFIC_PI
 
 worker 入站仅 scientific API；出站仅 DNS、所选内部模型端口与明确的广泛公网 HTTPS。公网 HTTPS 不是学术域名白名单。默认排除 LAN/node/link-local/metadata/fake-IP 范围，不自动为 fake-IP 放宽策略；本集群依赖 fake-IP；worker 学术桥接已使用固定公共 IPv4 引导的受控 HTTPS DNS，并在真实 worker 镜像的同节点基线/受限 Pod 完成 TLS、学术检索和标识符验证。完整结果与保留的未知项见[网络验收记录](scientific-pi-network-acceptance.md)。透明 TCP CONNECTED 不算来源可用。
 
-API 出站策略单独输出，不自动 apply：若原 API 没有 egress policy，单独新增只放行 worker 的 policy 会意外阻断其数据库、模型和邮件。部署者必须检查现有 policy union 后再应用增量。
+API 出站策略单独输出，不自动 apply：若原 API 没有 egress policy，单独新增只放行 worker 的 policy 会意外阻断其数据库和邮件。部署者必须检查现有 policy union 后再应用增量。
 
-`--apply` 是显式部署入口，先等 ExternalSecret Ready、做 server dry-run 再 apply worker；只有 SCIENTIFIC_PI_APPLY_API=1 才 patch 现有 API。本次生产部署的实际操作、资源与回滚快照见上线记录。
+迁移已有生产 API 时使用独立的 `--apply-api`，它仅更新 API，不 apply `worker.json`。现有 worker 镜像、就绪证据、凭据、网络策略和 PVC 均沿用当前部署。不要为了 API 迁移重新声明 worker 验收标志，也不要把默认未验收的 worker 渲染文件应用到已验收 worker。
+
+部署前在维护窗口停止入口的新研究提交，确认既有任务已结束，并在独立新镜像内验证：无 CrewAI 包时能导入和启动 API、Pi 健康与任务路径可用、旧报告仍可查询下载。随后审查渲染文件并执行：
+
+```bash
+bash scripts/deploy-scientific-pi.sh --apply-api <review-directory>
+```
+
+该模式先等 ExternalSecret Ready，再只读检查共享报告库中的旧后端 `pending/running` 任务数为零；不为终止任务修改数据库。此检查不能替代停止入口提交，否则检查后仍可能出现新旧任务。脚本保存 `api-before.json` 与完整旧 spec 的 `api-rollback.json`（私有权限），执行 API patch 的 server dry-run 后才 patch，最后等待 API rollout。构建、推送镜像和应用补丁是独立步骤；`--render` 不执行这些操作。
+
+新装或需要单独更新 worker 时仍可用 `--apply`：先等 ExternalSecret Ready、做 server dry-run 再 apply worker；只有 `SCIENTIFIC_PI_APPLY_API=1` 才同时迁移 API。Worker 的实机/模型/隔离验收门槛照常执行。2026-10-22 生产部署的历史操作、资源和回滚快照见上线记录。
 
 ## 状态、保留与回滚
 
@@ -118,6 +132,14 @@ Pi 任务独立于旧 clear_stale_tasks。明确拒绝持久化为 worker tombst
 
 成果默认 30 天，metadata/index/拒绝/UID 分配保留至少 180 天（worker 当前无限保留这些小记录）。publishing 成果不自动清理。过期附件410，已发布 Markdown 继续由共享报告库提供。
 
-回滚先暂停 Pi 接单或将默认后端恢复 crewai，确认在途任务已完成/取消，保留 PVC 和报告，再恢复记录中的旧科学 API 镜像/命令及必要配置。不重置共享仓库，不删除人用 Pi 数据，不将 shared latest 当回滚版本。
+回滚先暂停入口接单，确认在途任务已完成/取消，保留 PVC 和报告，再审查并恢复完整旧 API spec：
+
+```bash
+kubectl -n scientific-agent patch deployment/api --type=json \
+  --patch-file <review-directory>/api-rollback.json
+kubectl -n scientific-agent rollout status deployment/api --timeout=180s
+```
+
+旧镜像、命令、覆盖挂载和凭据引用一并从快照恢复；切回 CrewAI 需要恢复旧 API，不能只给新 Pi 专用镜像设置旧默认值。研究工作台 UI 应使用部署前另存的 UI spec/不可变 ConfigMap 快照回滚。共享报告和 worker PVC 始终保留，`shared latest` 不能充当可复现的回滚版本。
 
 具体测试证据分别见 [API 记录](scientific-pi-api.md)、[运行时记录](scientific-pi-runtime-verification.md)、[技能记录](scientific-pi-skills.md) 与 [集成验收](scientific-pi-acceptance.md)。

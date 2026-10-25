@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from pi_worker.runtime import PiRuntime, RuntimeSettings, RuntimeExecutionError
 from scientific_agent.pi_contracts import input_digest
+from pi_worker.research_tools import BUNDLE_REVISION
 
 ROOT = Path(__file__).resolve().parents[3]
 FAKE = Path(__file__).with_name("fake_pi.py")
@@ -30,7 +31,7 @@ class RuntimeTest(unittest.TestCase):
                     "topic": "fixture topic", "user_id": "opaque-user", "engine": "pi", "mode": "review",
                     "timeout_seconds": 60, "created_at": now.isoformat(),
                     "execution_deadline_at": (now + timedelta(seconds=60)).isoformat(),
-                    "skill_bundle_revision": "local-procedures-v1", "runtime_revision": "runtime-test"}
+                    "skill_bundle_revision": BUNDLE_REVISION, "runtime_revision": "runtime-test"}
         self.job["input_digest"] = input_digest(self.job)
         self.events = []
 
@@ -43,7 +44,7 @@ class RuntimeTest(unittest.TestCase):
                     provider="fixture", model="fixture-model", fixture_mode=True,
                     skill_paths=(SKILL,), skill_hashes=(hashlib.sha256(SKILL.read_bytes()).hexdigest(),),
                     bundle_manifest=MANIFEST, bundle_manifest_sha256=hashlib.sha256(MANIFEST.read_bytes()).hexdigest(),
-                    skill_bundle_revision="local-procedures-v1", runtime_revision="runtime-test",
+                    skill_bundle_revision=BUNDLE_REVISION, runtime_revision="runtime-test",
                     term_grace_seconds=0.1, kill_grace_seconds=1, idle_timeout_seconds=1)
         return PiRuntime(dataclasses.replace(settings, **kwargs))
 
@@ -200,9 +201,9 @@ class RuntimeTest(unittest.TestCase):
         self.assertFalse(self.runtime(model_env={"NODE_OPTIONS": "private"}).health()["ready"])
 
     def test_skill_and_manifest_mismatch_fail_closed(self):
-        for runtime in (self.runtime(skill_hashes=("0" * 64,)), self.runtime(bundle_manifest_sha256="0" * 64)):
+        for index, runtime in enumerate((self.runtime(skill_hashes=("0" * 64,)), self.runtime(bundle_manifest_sha256="0" * 64))):
             with self.assertRaises(RuntimeExecutionError) as caught:
-                self.execute(runtime, str(time.monotonic_ns()))
+                self.execute(runtime, f"mismatch-{index}")
             self.assertEqual(caught.exception.code, "runtime_not_ready")
 
     def test_recovery_unknown_orphan_is_not_claimed_safe(self):

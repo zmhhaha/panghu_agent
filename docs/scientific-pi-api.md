@@ -116,10 +116,79 @@ Expired snapshot/intent access returns 410; reusing an expired idempotency key
 does not silently create a fresh input. Integrity/conflict errors return 409,
 and temporary writing-storage failures return a sanitized retryable 503.
 
-`ReportVersionStore.append_candidate()` is an internal registration hook for a
-future already-published revision report/task. It is not exposed as an HTTP
-draft-upload endpoint. Pi execution, whole-report revision validation, version
-comparison and explicit adoption remain separate implementation stages.
+`ReportVersionStore.append_candidate()` is an internal registration hook. The
+revision publisher invokes it after independent candidate validation and before
+inserting the readable report. It is not exposed as an HTTP draft-upload route.
+
+## Stage 3 candidate: fixed-evidence Pi execution
+
+This implementation is local and has not replaced the deployed stage 1/2
+API/worker. Stage 4 adds local diff, explicit adoption and version-selection UI;
+see the editor contract below. Production and real-model acceptance remain separate.
+
+`POST /scientific-revision-previews/{intent_id}/start` accepts an empty object
+or no body and requires the same trusted owner. The server constructs all model
+input from the prepared intent and fixed snapshot. It returns the existing
+task response with `task_kind=revision`, `intent_id`, `parent_version_id`,
+`root_report_id` and, after publication, `candidate_version_id`. Repeating start
+uses the same task, input, pins and deadline; it cannot restart terminal work.
+An existing binding is recoverable even after the preview's one-day TTL.
+
+Use `GET /scientific-research/{task_id}` and
+`POST /scientific-research/{task_id}/cancel` for status and cancellation.
+Cancelling an ambiguous submission persists `cancel_requested`; GET 404 alone
+does not prove that an in-flight submission was cancelled. Recovery cancels a
+late acceptance, performs no new PUT, and confirms absence after the immutable
+deadline. Publishing keeps the existing non-cancellable boundary. A completed
+candidate is readable/downloadable as its own task/report and private version;
+it neither overwrites the parent nor adopts itself. Revisions send no email.
+
+Worker health must advertise `revision_job_versions=["1"]`,
+`revision_input_scope=recorded_evidence_only` and `max_revision_input_bytes`.
+An older worker returns `revision_not_supported` before a new binding is
+reserved. Internal `PUT /v1/revisions/{task_id}` accepts `{job,input}` separately
+from the unchanged ResearchJob v1 route. RevisionJob is at most 16 KiB; fixed
+input is at most 16 MiB of canonical UTF-8 JSON, containing the exact report,
+artifact manifest and canonical base64 for four records. Its fingerprint binds
+the section, evidence digest, owner, instruction, timeout and runtime/skill pins.
+
+The worker atomically stores fixed inputs and admits the task into the existing
+queue, sharing active-user, queue, deadline, lease, UID and cancellation limits.
+Before dispatch, the API atomically reserves one candidate version and its
+maximum 2 MiB report budget. All version admissions count outstanding reserves;
+full version storage therefore rejects a new revision before model execution.
+Candidate registration consumes its reserve atomically; cancellation/failure
+releases it. A lost response after registration does not double-count the reserve.
+Fixed input storage is bounded to 64 MiB per owner and 256 MiB globally and is
+released at terminal execution or immutable packaging. An active API binding
+in `scientific_report_revision_jobs` pins its snapshot through dispatch and
+publication beyond preview expiry. Terminal bindings retain idempotency
+tombstones. A confirmed stopped attempt's workspace is removed after packaging;
+uncertain process termination keeps fencing and recovery in control.
+
+The trusted revision profile exposes only `read,write` tools and loads no full
+research skills. It supplies exact report/section files and the fixed records,
+and requests only `revision-output.json`: schema version, replacement section
+and its claims. It performs no new retrieval or full-text restoration. Historical
+`full_text_path` values are never followed. Each claim uses a unique canonical
+`<!-- claim:ID -->` marker before its prose paragraph and citations.
+
+The standard-library composer replaces the exact UTF-8 range, retains all other
+report bytes and the original papers/evidence/references bytes, and merges only
+target claims. It rejects bibliography ranges (including containing parents),
+changed target headings or external structure, unknown citations/evidence,
+invalid/duplicate markers and missing paragraph citations. With unchanged
+evidence sets, recorded conflicting/insufficient assessments cannot become
+supported. Material disclosures and recorded limitations remain explicit.
+These structural checks do not independently establish scientific accuracy.
+
+The API verifies the immutable result and bounded artifact hashes, downloads
+`revision_output` and the four records, and independently rebuilds the complete
+candidate. Only exact agreement permits publication. It registers parent/root
+lineage first, inserts and reads back the report, and then acknowledges the
+worker. Each independently committed step can be retried after a lost response;
+the snapshot remains pinned until the task becomes terminal. No cross-service
+transaction or automatic adoption is assumed.
 
 **2026-10-23 deployed at 21:01:45 Asia/Shanghai:** new research runs exclusively on Pi.
 The API preserves read access to old CrewAI tasks and shared reports, while the
@@ -146,7 +215,7 @@ availability.
   starts reconciliation. An injected projection supplies its database and worker
   when those arguments are omitted. `versions` optionally injects a
   `ReportVersionStore`; the default uses the same database. The lifespan
-  initializes its additive version/snapshot/intent tables. Construction and
+  initializes its additive version/snapshot/intent/revision-job tables. Construction and
   imports still perform no network calls.
 - `PiClient(base_url, token, transport=None, timeout=10)` uses exact `/v1` worker
   routes, including authenticated health. The injected transport receives
@@ -155,16 +224,18 @@ availability.
   `WorkerError` exposes `status`, `code`, and `retryable`. Upstream exception text,
   credentials, URLs, and arbitrary error messages are not forwarded to users.
 - `PiProjection(database, worker, skill_revision, runtime_revision, notifier=None)`
-  exposes `initialize`, `prepare`, `dispatch`, `get`, `publish`, `notify`, and
-  `reconcile`. It exclusively uses `database._execute/_query` and fixed
+  exposes `initialize`, `prepare`, `prepare_revision`, `dispatch`, `get`,
+  `cancel_revision`, `publish`, `notify`, and `reconcile`. It uses
+  `database._execute/_query` and its attached `ReportVersionStore`, with fixed
   `scientific_pi_index`, `scientific_notifications`, and `scientific_reports`
   tables. It does not edit the shared SQLite helper or worker queue.
 - `ReportVersionStore(database, ...)` stores private append-only report versions,
   bounded snapshots and fixed-input intents in `scientific_report_versions`,
-  `scientific_report_snapshots` and `scientific_report_revision_intents`. Its
+  `scientific_report_snapshots`, `scientific_report_revision_intents` and
+  `scientific_report_revision_jobs`. Its
   public API routes perform owner filtering; the store never starts Pi or
   publishes/overwrites `scientific_reports`.
-- Worker methods used are `put`, `get`, `cancel`, `pending(cursor=None)`, `result`,
+- Worker methods used are `put`, `put_revision`, `get`, `cancel`, `pending(cursor=None)`, `result`,
   `ack`, `artifacts`, `artifact`, and `health`. Pending publication is
   `{items:[TaskSnapshot],next_cursor:null|string}`; artifact listing is
   `{items:[metadata]}`. Acknowledgement binds `attempt`, `result_digest`, and
@@ -347,10 +418,16 @@ Keep the existing HTTPS `GRADIO_ROOT_PATH` deployment setting.
 
 ## Local verification
 
+The counts and browser limitations below describe the earlier workbench snapshot.
+The 2026-10-25 editor acceptance is recorded in
+[the writing workspace evidence](../../docs/scientific-research-pi/writing-workspace-20261025/README.md).
+
 Run from the panghu_agent checkout, without installing pytest:
 
 ```sh
 python -m unittest discover -s tests/scientific_pi/api -v
+python -m unittest discover -s tests/scientific_pi/revisions -v
+python -m unittest discover -s tests/scientific_pi/worker -v
 python -m compileall -q app/api/scientific_agent.py app/ui/scientific_agent.py scientific_agent/pi_client.py scientific_agent/pi_projection.py tests/scientific_pi/api
 ```
 
@@ -386,3 +463,63 @@ HTTP fixtures inject a ready runtime and preconstructed results, so they do not
 certify model execution or scientific output. Candidate release still requires
 the remaining deployment/browser checks recorded above; the earlier production
 rollout cannot substitute for those checks.
+
+## Chapter editor and explicit adoption (stage 4, local candidate)
+
+`GET /scientific-reports/{id}/writing-state` returns the owner-scoped root,
+current adopted version/hash, monotonic `selection_revision`, source ID/hash,
+and up to 100 version metadata rows. GET does not import a baseline or create
+an adoption. Before the first preview the current version can be null; after
+baseline import, revision 0 logically selects the original baseline.
+
+`GET /scientific-report-versions/{candidate_id}/comparison` requires a fully
+published, SHA-matching report and succeeded revision binding. It returns
+parent/candidate metadata, the exact target section before/after and their
+hashes, a bounded unified diff, and an `adoption` consistency envelope.
+Diff calculation is limited to 128 KiB total input, 2,000 total lines and
+256 KiB output. A large diff returns `available=false`/`diff_too_large` while
+preserving exact section text and version downloads. This read never adopts.
+
+`POST /scientific-report-versions/{candidate_id}/adopt` requires a stable
+`Idempotency-Key` and exactly these body fields:
+
+```json
+{
+  "expected_current_version_id": "<parent-version-uuid>",
+  "expected_selection_revision": 0,
+  "base_sha256": "<64 lowercase hex>",
+  "candidate_sha256": "<64 lowercase hex>",
+  "comparison_token": "<64 lowercase hex from comparison>"
+}
+```
+
+The token binds owner/root/candidate/parent/hash/head; it is a consistency
+fingerprint, not proof that a person read the screen. An append-only
+`scientific_report_adoptions` event is both the selection and idempotency
+receipt. One conditional INSERT checks current head/revision, owner/root,
+parent/candidate, succeeded binding, matching published source and quotas.
+There is no transaction spanning SQL HTTP calls. Concurrent different requests
+can advance the same revision only once. A lost response retries the same key.
+Replaying an older successful key returns its original `adoption` receipt and
+the latest head at the response top level; clients must not treat the old
+receipt's target as current. Selection conflicts return 409 and require a new
+comparison. A candidate from an older branch is readable/downloadable but has
+`can_adopt=false`/`parent_not_current`; forced overwrite and history restore
+are outside this version. Events default to 10,000 per owner / 100,000 global.
+
+The Chinese editor separates reading, editing and revision-task tracking.
+Users select a section, describe the improvement, preview fixed materials/time
+limits, explicitly start, cancel or restore by revision ID, compare and adopt.
+Input changes invalidate preview confirmation. Ambiguous start retries retain
+the same intent and task. Completion and adoption do not replace the reading
+view. Selection changes invalidate stale responses and comparison controls;
+head updates only move forward. Citation access uses the reading version's
+source report/hash, and version download verifies exact SHA before exposing it.
+The UI remains a single deployable file with no additional dependencies.
+
+Local synthetic validation on 2026-10-25: API/UI 297, revision contracts 48,
+real API/client/worker publication 18, revision publication 4 and editor chain
+3, totaling 370 passing tests. Actual Gradio 6.19 desktop and 390×844 mobile
+clicks cover preview, candidate comparison, explicit adoption, history and
+browser downloads. Desktop cancellation preserves the parent. Synthetic
+fixtures do not certify real Pi output, Casdoor login or production deployment.

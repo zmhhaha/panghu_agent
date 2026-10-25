@@ -1,5 +1,6 @@
 """SQLite lifecycle authority; every transition uses a write transaction."""
 import base64
+import hashlib
 import json
 import sqlite3
 import threading
@@ -15,7 +16,13 @@ TERMINAL = ('succeeded', 'failed', 'cancelled', 'timed_out')
 
 
 class QueueStore:
-    def __init__(self, db_path):
+    def __init__(self, db_path, *, revision_owner_bytes=64*1024*1024,
+                 revision_global_bytes=256*1024*1024):
+        if (type(revision_owner_bytes) is not int or revision_owner_bytes < 1
+                or type(revision_global_bytes) is not int or revision_global_bytes < 1):
+            raise ValueError('Revision input quotas must be positive byte counts')
+        self.revision_owner_bytes = revision_owner_bytes
+        self.revision_global_bytes = revision_global_bytes
         self.path = Path(db_path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if __import__('os').name != 'nt':
@@ -25,6 +32,10 @@ class QueueStore:
             db.execute('CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, created TEXT NOT NULL, state TEXT NOT NULL, snapshot TEXT NOT NULL, job TEXT NOT NULL, lease TEXT, lease_until TEXT, result TEXT, result_path TEXT, expires TEXT)')
             db.execute('CREATE TABLE IF NOT EXISTS rejected_tasks (id TEXT PRIMARY KEY, input_digest TEXT NOT NULL, code TEXT NOT NULL, message TEXT NOT NULL, status INTEGER NOT NULL, created TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS execution_uids (sequence INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, attempt INTEGER NOT NULL)')
+            db.execute('''CREATE TABLE IF NOT EXISTS revision_inputs (
+                task_id TEXT PRIMARY KEY REFERENCES tasks(id), payload TEXT NOT NULL,
+                payload_bytes INTEGER NOT NULL, payload_sha256 TEXT NOT NULL,
+                expires TEXT NOT NULL)''')
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_active_user ON tasks(user_id) WHERE state IN ('queued','running','cancel_requested','validating','publishing')")
 
     @contextmanager
@@ -72,12 +83,36 @@ class QueueStore:
                 raise ContractError('task_conflict','Task ID already accepted',409)
             self._remember_rejection(db,payload,error)
             row=db.execute('SELECT * FROM rejected_tasks WHERE id=?',(payload['task_id'],)).fetchone()
+            if row['input_digest'] != payload['input_digest']:
+                raise ContractError('task_conflict','Task ID is bound to another input',409)
             rejection=ContractError(row['code'],row['message'],row['status'])
         raise rejection
 
     def submit(self, job, max_queue=None):
         from scientific_agent.pi_contracts import ResearchJob
         payload = job.to_dict() if hasattr(job, 'to_dict') else ResearchJob.from_dict(job).to_dict()
+        # Keep the original endpoint strictly ResearchJob v1, including callers
+        # that pass an object rather than a dict.
+        payload = ResearchJob.from_dict(payload).to_dict()
+        return self._submit(payload, max_queue=max_queue)
+
+    def submit_revision(self, job, material, max_queue=None):
+        from scientific_agent.pi_revision_contracts import RevisionJob, validate_revision_materials
+        payload = job.to_dict() if hasattr(job, 'to_dict') else job
+        payload = RevisionJob.from_dict(payload).to_dict()
+        validate_revision_materials(payload, material)
+        encoded = canonical_json(material)
+        # Input size/hash checks are independent of the HTTP transport and apply
+        # equally to in-process admission and replay.
+        raw = encoded.encode('utf-8')
+        if len(raw) > 16*1024*1024:
+            raise ContractError('revision_input_too_large', 'Revision input exceeds byte limit', 413)
+        if hashlib.sha256(raw).hexdigest() != payload['input_sha256']:
+            raise ContractError('revision_input_mismatch', 'Revision input digest mismatch', 409)
+        self.expire_queued()
+        return self._submit(payload, max_queue=max_queue, revision_input=encoded)
+
+    def _submit(self, payload, max_queue=None, revision_input=None):
         rejection = None
         with self._tx() as db:
             row = db.execute('SELECT * FROM tasks WHERE id=?', (payload['task_id'],)).fetchone()
@@ -87,17 +122,32 @@ class QueueStore:
                 return json.loads(row['snapshot']), False
             tombstone=db.execute('SELECT * FROM rejected_tasks WHERE id=?',(payload['task_id'],)).fetchone()
             if tombstone:
+                if tombstone['input_digest'] != payload['input_digest']:
+                    raise ContractError('task_conflict','Task ID is bound to another input',409)
                 raise ContractError(tombstone['code'],tombstone['message'],tombstone['status'])
             try:
                 if max_queue is not None and db.execute("SELECT count(*) FROM tasks WHERE state IN ('queued','running','cancel_requested','validating','publishing')").fetchone()[0] >= max_queue:
                     raise ContractError('queue_full','Queue admission limit reached',429)
+                if revision_input is not None:
+                    required = len(revision_input.encode('utf-8'))
+                    global_bytes = db.execute('SELECT COALESCE(SUM(payload_bytes),0) FROM revision_inputs').fetchone()[0]
+                    owner_bytes = db.execute('SELECT COALESCE(SUM(i.payload_bytes),0) FROM revision_inputs i JOIN tasks t ON t.id=i.task_id WHERE t.user_id=?', (payload['user_id'],)).fetchone()[0]
+                    if owner_bytes+required > self.revision_owner_bytes or global_bytes+required > self.revision_global_bytes:
+                        raise ContractError('revision_input_quota_exceeded', 'Revision input storage limit reached', 429)
                 if parse_timestamp(payload['execution_deadline_at']) <= parse_timestamp(utc_now()):
                     raise ContractError('invalid_deadline', 'Execution deadline has elapsed', 422)
                 snap = dict(schema_version='1', id=payload['task_id'], topic=payload['topic'], engine='pi', mode=payload['mode'], state='queued', status='pending', revision=0, attempt=0, stage=None, progress=None, created_at=payload['created_at'], updated_at=utc_now(), execution_deadline_at=payload['execution_deadline_at'], started_at=None, finished_at=None, error_code=None, error=None, report_id=None, result_digest=None, report_sha256=None, report=None)
+                if revision_input is not None:
+                    snap['task_kind'] = 'revision'
+                    snap['intent_id'] = payload['intent_id']
                 try:
                     db.execute('INSERT INTO tasks(id,user_id,created,state,snapshot,job) VALUES(?,?,?,?,?,?)', (snap['id'], payload['user_id'], snap['created_at'], 'queued', canonical_json(snap), canonical_json(payload)))
                 except sqlite3.IntegrityError:
                     raise ContractError('user_busy', 'User already has an active Pi task', 429)
+                if revision_input is not None:
+                    db.execute('INSERT INTO revision_inputs(task_id,payload,payload_bytes,payload_sha256,expires) VALUES(?,?,?,?,?)',
+                               (payload['task_id'], revision_input, len(revision_input.encode('utf-8')),
+                                payload['input_sha256'], payload['execution_deadline_at']))
             except ContractError as exc:
                 rejection=exc
                 self._remember_rejection(db,payload,exc)
@@ -111,6 +161,9 @@ class QueueStore:
 
     def _finish(self, db, row, snap, state, code=None):
         snap.update(state=state, error_code=code, error=code, finished_at=utc_now())
+        # Only tombstones and bounded job metadata survive terminal execution.
+        # Replays are still bound by the immutable task input digest.
+        db.execute('DELETE FROM revision_inputs WHERE task_id=?', (row['id'],))
         return self._save(db, row, snap, lease=None, lease_until=None)
 
     def cancel(self, task_id):
@@ -152,6 +205,22 @@ class QueueStore:
             self._save(db, row, snap, lease=token, lease_until=self._until(ttl))
             internal_job = json.loads(row['job'])
             internal_job['_runtime_uid'] = runtime_uid
+            if internal_job.get('task_kind') == 'revision':
+                material = db.execute('SELECT * FROM revision_inputs WHERE task_id=?', (row['id'],)).fetchone()
+                if material is None:
+                    self._finish(db, row, snap, 'failed', 'revision_input_unavailable')
+                    return None
+                raw = material['payload'].encode('utf-8')
+                if (len(raw) > 16*1024*1024 or len(raw) != material['payload_bytes']
+                        or hashlib.sha256(raw).hexdigest() != material['payload_sha256']
+                        or material['payload_sha256'] != internal_job['input_sha256']):
+                    self._finish(db, row, snap, 'failed', 'revision_input_corrupt')
+                    return None
+                try:
+                    internal_job['_revision_input'] = json.loads(material['payload'])
+                except (ValueError, TypeError):
+                    self._finish(db, row, snap, 'failed', 'revision_input_corrupt')
+                    return None
             return dict(job=internal_job, snapshot=snap, token=token)
 
     @staticmethod
@@ -219,6 +288,7 @@ class QueueStore:
             if parse_timestamp(snap['execution_deadline_at']) <= parse_timestamp(utc_now()):
                 return self._finish(db, row, snap, 'timed_out', 'deadline_exceeded')
             snap.update(state='publishing', stage='publish', result_digest=result['result_digest'], report_sha256=result['report_sha256'], error_code=None, error=None)
+            db.execute('DELETE FROM revision_inputs WHERE task_id=?', (task_id,))
             return self._save(db, row, snap, lease=None, lease_until=None, result=canonical_json(result), result_path=str(result_path), expires=self._until(retention_days*86400))
 
     def result(self, task_id):

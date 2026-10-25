@@ -11,6 +11,7 @@ from urllib.parse import unquote
 from scientific_agent.pi_contracts import ContractError, canonical_json, result_digest, report_sha256
 
 FILES = {'report': ('report.md', 'text/markdown'), 'searches': ('searches.jsonl','application/x-ndjson'), 'papers': ('papers.jsonl','application/x-ndjson'), 'screening': ('screening.jsonl','application/x-ndjson'), 'evidence': ('evidence.jsonl','application/x-ndjson'), 'claims': ('claims.jsonl','application/x-ndjson'), 'references': ('references.json','application/json'), 'validation': ('validation.json','application/json')}
+REVISION_FILES = dict(FILES, revision_output=('revision-output.json','application/json'))
 TOTAL_LIMIT = 50*1024*1024
 REPORT_LIMIT = 2*1024*1024
 
@@ -49,14 +50,19 @@ def safe_read(root, relative, limit=TOTAL_LIMIT):
 
 def validate_and_copy(workspace, results_root, job, attempt, validator=None):
     workspace, results_root = Path(workspace), Path(results_root)
-    if validator is None:
+    revision = job.get('task_kind') == 'revision'
+    file_definitions = REVISION_FILES if revision else FILES
+    revision_validation = None
+    if revision:
+        contents, revision_validation = _revision_contents(workspace, job)
+    elif validator is None:
         from pi_worker.research_tools import validate_research_outputs
         validator = validate_research_outputs
     # Read once into bounded controller memory before invoking external validator.
-    contents = {}
+    contents = contents if revision else {}
     total = 0
-    for artifact_id, (name, _) in FILES.items():
-        if artifact_id == 'validation':
+    for artifact_id, (name, _) in file_definitions.items():
+        if revision or artifact_id == 'validation':
             continue
         data = safe_read(workspace, name, REPORT_LIMIT if artifact_id == 'report' else TOTAL_LIMIT)
         total += len(data)
@@ -65,7 +71,7 @@ def validate_and_copy(workspace, results_root, job, attempt, validator=None):
         contents[name] = data
     private_inputs = {}
     try:
-        for line in contents['papers.jsonl'].decode('utf-8').splitlines():
+        for line in ([] if revision else contents['papers.jsonl'].decode('utf-8').splitlines()):
             if not line.strip():
                 continue
             paper = json.loads(line)
@@ -92,6 +98,11 @@ def validate_and_copy(workspace, results_root, job, attempt, validator=None):
             raise ValueError()
         canonical_json(provenance)
         provenance['acquired_full_text'] = [dict(path=name,size=len(data),sha256=hashlib.sha256(data).hexdigest()) for name,data in sorted(private_inputs.items())]
+        if revision:
+            provenance.update(material_policy='recorded_evidence_only', retrieval_performed=False,
+                              full_text_restored=False, retrieval_interval_basis='not_performed_recorded_evidence_only',
+                              revision={key:job[key] for key in ('intent_id','parent_version_id','root_report_id',
+                                        'base_sha256','section_id','section_sha256','input_sha256')})
     except (ValueError, TypeError):
         raise ContractError('invalid_artifact', 'Missing or invalid execution provenance', 422)
     # Optional runtime manifest is untrusted; validate every reference even though
@@ -103,7 +114,7 @@ def validate_and_copy(workspace, results_root, job, attempt, validator=None):
             for entry in candidate['artifacts']:
                 artifact_id = entry['artifact_id']
                 relative = entry.get('path', entry.get('relative_path'))
-                if artifact_id in ids or artifact_id not in FILES or relative != FILES[artifact_id][0]:
+                if artifact_id in ids or artifact_id not in file_definitions or relative != file_definitions[artifact_id][0]:
                     raise ValueError()
                 ids.add(artifact_id)
                 safe_read(workspace,relative)
@@ -120,14 +131,14 @@ def validate_and_copy(workspace, results_root, job, attempt, validator=None):
             destination_file = staging/name
             destination_file.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
             destination_file.write_bytes(data)
-        validation = validator(staging)
+        validation = revision_validation if revision else validator(staging)
         if not isinstance(validation,dict) or validation.get('valid') is not True:
             raise ContractError('validation_failed', 'Research output validation failed', 422)
         contents['validation.json'] = canonical_json(validation).encode('utf-8')
         (staging/'validation.json').write_bytes(contents['validation.json'])
         artifacts = []
         total = sum(len(data) for data in private_inputs.values())
-        for artifact_id, (name, media) in FILES.items():
+        for artifact_id, (name, media) in file_definitions.items():
             data = contents[name]
             total += len(data)
             artifacts.append(dict(artifact_id=artifact_id,path=name,media_type=media,size=len(data),sha256=hashlib.sha256(data).hexdigest()))
@@ -167,6 +178,46 @@ def validate_and_copy(workspace, results_root, job, attempt, validator=None):
     finally:
         if staging.exists():
             shutil.rmtree(staging)
+
+
+def _revision_contents(workspace, job):
+    """Compose only from queue-owned input and the stopped child's bounded JSON.
+
+    Historical full_text_path values are never followed. The revision validator
+    explicitly validates recorded evidence, whereas the research validator
+    requires the originally acquired files for a newly retrieved report.
+    """
+    from scientific_agent.pi_revision_contracts import RevisionJob, validate_revision_materials
+    from scientific_agent.pi_revision_validation import compose_revision
+    wire = {key:value for key,value in job.items()
+            if key not in {'attempt','_runtime_uid','_revision_input'}}
+    checked = RevisionJob.from_dict(wire).to_dict()
+    material = validate_revision_materials(checked, job.get('_revision_input'))
+    def pairs(values):
+        result = {}
+        for key, value in values:
+            if key in result:
+                raise ValueError('Duplicate JSON key')
+            result[key] = value
+        return result
+    try:
+        candidate_bytes = safe_read(workspace,'revision-output.json',16*1024*1024)
+        candidate = json.loads(candidate_bytes,
+                               object_pairs_hook=pairs,
+                               parse_constant=lambda value: (_ for _ in ()).throw(ValueError()))
+        composed = compose_revision(material['report'],material['items'],material['artifacts'],
+                                    checked['section_id'],checked['base_sha256'],candidate)
+    except ContractError:
+        raise
+    except (ValueError, TypeError, KeyError, RecursionError, UnicodeError) as exc:
+        raise ContractError(getattr(exc,'code','revision_validation_failed'),
+                            'Fixed-evidence revision validation failed',422) from exc
+    contents = {'report.md':composed['report_markdown'].encode('utf-8'),
+                'revision-output.json':candidate_bytes,
+                'searches.jsonl':b'', 'screening.jsonl':b''}
+    for identifier, raw in composed['artifacts'].items():
+        contents[FILES[identifier][0]] = raw
+    return contents, composed['validation']
 
 
 def artifact_bytes(store, task_id, artifact_id):

@@ -1,6 +1,6 @@
 {
   "schema_version": "1",
-  "bundle_revision": "local-procedures-v1",
+  "bundle_revision": "local-procedures-v2",
   "origin": "original_local_procedures",
   "upstream_content_vendored": false,
   "review_status": "local_procedural_review_only",
@@ -9,8 +9,8 @@
   "license_scope": "Original local skill/template text only; does not license upstream candidates or existing repository tools",
   "attribution": "Panghu project contributors; no upstream content copied",
   "local_files": [
-    {"path":"research-procedure/SKILL.md","sha256":"53a72cb85638a6e44532fa0e4fe5baac42b0f5339acb72ce48bed26f0f2854ca","license":"MIT"},
-    {"path":"task-template.md","sha256":"478fe0d21d04c8849aa8a66d54cfbd9b6e7286cc4e36e1d816c8d43c1d16bac2","license":"MIT"},
+    {"path":"research-procedure/SKILL.md","sha256":"28f1f9928915ca0e7e5cd7b923c677885f6f94e8a01352a480cce2a63d965024","license":"MIT"},
+    {"path":"task-template.md","sha256":"a07841766a8c309d44fd7dcd927626699f6bc9854bfe70f9c7dd0aa9ae193899","license":"MIT"},
     {"path":"LICENSE","sha256":"a33fc59adfe98910106ce803f2ac323543c83758c9c4f6d23f1c512aaec6d6f3","license":"MIT"}
   ],
   "upstream_audit": {

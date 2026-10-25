@@ -16,6 +16,7 @@ COPY --from=pi-dependencies /opt/pi /opt/pi
 COPY pi_worker/requirements.lock /tmp/scientific-pi-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/scientific-pi-requirements.txt
 COPY scientific_agent/__init__.py scientific_agent/pi_contracts.py scientific_agent/pi_runtime_config.py /app/scientific_agent/
+COPY scientific_agent/pi_sections.py scientific_agent/pi_citations.py scientific_agent/pi_revision_contracts.py scientific_agent/pi_revision_validation.py /app/scientific_agent/
 COPY scientific_agent/pi_healthcheck.py /app/scientific_agent/pi_healthcheck.py
 COPY pi_worker /app/pi_worker
 COPY scientific_skills /app/scientific_skills
@@ -24,7 +25,7 @@ COPY tools/academic /app/tools/academic
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     SCIENTIFIC_PI_RUNTIME_DIR=/data \
     SCIENTIFIC_PI_RUNTIME_REVISION=pi-jsonl-0.73.1-v1 \
-    SCIENTIFIC_PI_SKILL_BUNDLE_REVISION=local-procedures-v1
+    SCIENTIFIC_PI_SKILL_BUNDLE_REVISION=local-procedures-v2
 # Root controller has only the explicitly documented deployment capabilities.
 # Every Pi attempt drops to a never-reused nonroot UID with empty capabilities.
 # Fixture mode cannot be enabled by environment configuration.

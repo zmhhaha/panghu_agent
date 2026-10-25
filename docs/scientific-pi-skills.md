@@ -1,14 +1,15 @@
 # Local scientific skill bundle and research tool bridge
 
 This document records the reviewed local skill bundle and its controlled
-checks. Current deployment and real-source results are recorded in the
-[deployment record](https://github.com/zmhhaha/armbianbegin/blob/codex/scientific-pi-worker/docs/scientific-research-pi/rollout-20261022.md).
-The controlled tests verify output structure and failure handling, not
-scientific accuracy.
+checks. The [2026-10-22 deployment record](https://github.com/zmhhaha/armbianbegin/blob/codex/scientific-pi-worker/docs/scientific-research-pi/rollout-20261022.md)
+is historical evidence for the earlier bundle. The 2026-10-23 writing revision
+and its verification limits are described below. Controlled tests verify
+contracts, output consistency and failure handling; they do not establish
+scientific accuracy or the narrative quality of a real report.
 
 ## Bundle and upstream audit
 
-The pinned bundle revision is `local-procedures-v1`. Its original procedural
+The current pinned bundle revision is `local-procedures-v2`. Its original procedural
 skill covers paper lookup, screening/critical thinking, evidence extraction,
 writing, citation management and final review in one small skill:
 [research-procedure](../scientific_skills/research-procedure/SKILL.md). The
@@ -19,8 +20,9 @@ license scope and the upstream audit status. The original local procedure/templa
 text uses the bundled [MIT license](../scientific_skills/LICENSE).
 
 The original fetch of [K-Dense scientific-agent-skills](https://github.com/K-Dense-AI/scientific-agent-skills)
-was blocked. That initial observation remains in the immutable runtime manifest,
-whose full byte hash is pinned by the runtime factory. On **2026-10-22**, the
+was blocked. That initial observation remains in the runtime manifest's upstream
+audit field; each released manifest's full byte hash is pinned by the runtime
+factory. On **2026-10-22**, the
 [completed selection audit](scientific-pi-upstream-audit-20261022.md) superseded
 the missing-source finding: repository identity, exact commit
 `593377bb048752abb0152deab9fbb1083a6087df`, MIT license/copyright, all five entry
@@ -36,8 +38,11 @@ and conditional upstream citation instructions. OpenRouter is only an optional
 diagram dependency of critical-thinking, not a general hard requirement. The
 existing original procedure remains the selected runtime skill. No upstream
 content was copied into it, edited or stripped of attribution; no upstream code
-was executed or installed. The skill/template/license/manifest bytes and the
-default bundle are unchanged. There is no runtime clone or automatic update.
+was executed or installed. At that selection audit, the
+skill/template/license/manifest bytes and the `local-procedures-v1` default bundle
+were unchanged. The later `local-procedures-v2` writing revision changes the
+original local skill, task template and trusted prompt mode selection; it does
+not vendor an upstream candidate. There is no runtime clone or automatic update.
 
 ## Runtime integration
 
@@ -68,12 +73,41 @@ if validation["valid"] is not True:
 `validate_workspace` is the same callable as `validate_research_outputs`.
 `build_research_prompt(job)` includes only topic/mode/task_id/attempt, omits
 user/email/credentials and encodes angle delimiters in the untrusted job JSON.
-It reads immutable repository resources, not user-selected paths. The runtime
+It selects a writing contract from the validated `brief`/`review` enum and puts
+that trusted contract outside the job JSON. Template substitution happens once,
+so mode-like text, closing delimiters and template placeholders inside a topic
+remain research data. This boundary is not evidence that a real model always
+resists semantic prompt injection. It reads immutable repository resources,
+not user-selected paths. The runtime
 should discover only `SKILL_PATH` and the pinned manifest. Supply the immutable
 application checkout on PYTHONPATH when invoking tools from the isolated attempt
 workspace; do not add control credentials or a private Python HOME. The controller
 must terminate/fence the producing attempt before validation/copying to avoid
 file replacement races. Source text and model instructions cannot grant access.
+
+## Writing modes in v2
+
+| Mode | Expected writing |
+| --- | --- |
+| `brief` | A compact answer, the most relevant evidence and its limits. Concise prose or useful bullets may support a bounded answer; a catalogue of papers does not replace synthesis. |
+| `review` | A narrative literature review with an abstract, an introduction that frames the question, scope and concise methods, thematic findings, discussion, limitations, a bounded conclusion and references. |
+
+Both modes first plan an argument from the material actually acquired. In a
+review, themes follow the question, mechanisms, comparisons or outcomes rather
+than assigning each paper its own Findings subsection. Comparable studies are
+discussed together: what agrees, what differs, and which differences in methods,
+conditions or measures are supported by the available material. Unknown reasons
+remain unknown; incompatible metrics do not justify a ranking or pooled effect.
+Published findings and the review author's interpretation must be distinguishable.
+Tables and lists can supplement the main argument.
+
+Methods summarize the actual search scope, criteria and important access limits
+in readable prose. Exact queries, individual screening decisions and detailed
+audit records stay in the required evidence artifacts. No fixed word, paragraph
+or paper count is imposed, and a paragraph need not cite two papers. Sparse or
+abstract-only evidence narrows the answer; it must not be padded with invented
+comparisons or inferred full-text details. An unanswerable question requires an
+honest evidence-insufficiency report. Neither mode claims systematic-review status.
 
 ## CLI and function interface
 
@@ -133,11 +167,21 @@ rejected, and timestamps are UTC RFC3339 ending in Z.
 | references.json | array of unique positive n/paper_id mappings; [] for none |
 | report.md | Scope, Methods, Findings, Limitations and References headings (Chinese equivalents allowed), literal numbered [n] citations and matching claim markers |
 
+The report row describes the validator's structural minimum. The `review`
+writing contract also calls for the narrative structure described above; passing
+the structural checks does not prove that a report develops that argument.
+
 Empty JSONL means a zero-byte file, not `[]` or blank lines. All files are UTF-8
 without BOM. JSON duplicate keys, nonfinite numbers, malformed types, unsupported
 fields and invalid timestamps fail. Each paper needs one screening record;
 evidence must refer to included papers and an acquired access level. Claims
 must refer to existing evidence and cite its papers within the claim paragraph.
+One coherent synthesis paragraph can link several evidence records and papers
+through a single claim's `evidence_ids`. Its exact `<!-- claim:CLAIM_ID -->`
+comment stays immediately before that paragraph, with no intervening heading or
+other claim comment; each supporting paper is cited in the same paragraph.
+This permits cross-paper synthesis without turning every source into a separate
+sentence, bullet or subsection.
 Conflicting assessments need at least two distinct evidence records. References
 cannot have duplicate numbers or assign multiple numbers to the same paper.
 Grouped/ranged citations are rejected; use separate [1] [2]. Every cited number
@@ -184,7 +228,10 @@ are checked for contradictions with records. Arbitrary scientific prose,
 paraphrases, every implicit screening denominator, systematic-review protocol
 quality and the truth of claimed acquisition/verification require human/source
 review. Systematic-review wording is marked unknown and is never certified by
-this validator. No fixture pass proves scientific accuracy or public API reachability.
+this validator. The validator does not assess narrative coherence, depth of
+synthesis or whether the discussion answers the research question. Those require
+reading the report and checking its important claims against acquired source
+material. No fixture pass proves scientific accuracy or public API reachability.
 
 ## Local validation evidence
 
@@ -198,6 +245,36 @@ It covers zero evidence, abstract-only access, missing/duplicate references,
 claim/evidence links and paragraph citations, duplicate papers, contradictory
 evidence, source errors, unknown/mismatched identifier verification, malformed
 schemas/JSON/UTF-8/timestamps, quota/path/link checks, CLI exits, prompt boundaries,
-local bundle hashes and import independence from CrewAI. It makes no live model
-or source calls and does not validate real scientific findings. Pi skill loading,
-real model/tool round trips and live network/source acceptance remain A/F gates.
+local bundle hashes and import independence from CrewAI. The v2 regressions also
+check distinct trusted writing contracts, rejection of unknown or malformed
+modes, malicious topic delimiters/placeholders that cannot replace that contract,
+and one adjacent claim paragraph supported by two papers with both citations.
+It makes no live model or source calls and does not validate real scientific
+findings.
+
+As of the **2026-10-23 v2 candidate verification**, the research suite passed
+**51 tests**. The ARM64 candidate also passed **6 JSONL compactor tests**,
+**7 Linux isolation tests**, **1 actual pinned Pi CLI test using a loopback model
+fixture**, dependency consistency checks and resource/hash pins. Its image digest
+was `sha256:bf125403086dd6d5e82174550a28e29457b30604c37fd4d239661448231016c4`.
+These are controlled compatibility and containment checks. The loopback fixture
+does not establish that a real model writes a good narrative review, retrieves
+adequate literature or interprets it accurately.
+
+A real `review` task, `1e5cec61-23d5-5a68-a658-82a9b168de2d`, then completed
+the chip-manufacturing question for 2020–2026 on the deployed v2 image. Its report,
+eight artifacts, manifest and full result digest were verified; all 15 included
+evidence records were abstract-only. An independent anonymous review rated the
+previous report 14/24 (revise) and the v2 report 18/24 (acceptable as a focused
+narrative review based on abstracts), checking seven representative claims
+against the saved abstracts. It recommended local wording edits; no full text,
+independent bibliographic authenticity or manufacturing maturity was verified.
+
+The generated online report retains its original bytes. A separate editorial
+copy clarifies gas/plasma steps, qualitative yield, unsupported temporal wording
+and the limits of cross-study comparisons. The acceptance record is in the parent
+repository at `docs/scientific-research-pi/review-quality-20261023/`. This single
+same-question run used a different retrieved evidence set, so it is not a
+controlled writing experiment or proof of quality for other questions. The v2
+prompt change and a green consistency validator alone do not constitute that
+acceptance.

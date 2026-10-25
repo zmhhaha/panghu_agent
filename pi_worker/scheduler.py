@@ -1,6 +1,7 @@
 """Single-instance, single-runner scheduler. Runtime owns process-tree termination."""
 import json
 import os
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -197,3 +198,26 @@ class Scheduler:
             self.store.finish_attempt(task_id,attempt,token,'failed','validation_failed')
         finally:
             self._runner = None
+            # A stopped revision needs no second on-disk evidence copy after
+            # controller packaging. Do not clean anything while process safety
+            # is uncertain: fencing and orphan recovery retain priority.
+            if job.get('task_kind') == 'revision' and not self.degraded:
+                try:
+                    self._discard_revision_workspace(workspace)
+                except (OSError, ContractError):
+                    self.degraded = True
+
+    @staticmethod
+    def _discard_revision_workspace(workspace):
+        workspace = Path(workspace)
+        if workspace.is_symlink():
+            raise ContractError('invalid_artifact','Refusing symlink revision workspace cleanup',422)
+        def remove_readonly(function, filename, exc):
+            target = Path(filename)
+            if target.is_symlink():
+                target.unlink()
+            else:
+                target.chmod(0o700)
+                function(filename)
+        if workspace.exists():
+            shutil.rmtree(workspace,onexc=remove_readonly)

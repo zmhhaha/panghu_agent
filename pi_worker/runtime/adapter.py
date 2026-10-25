@@ -25,7 +25,7 @@ from typing import Callable, Mapping
 import uuid
 
 from scientific_agent.pi_contracts import ContractError, parse_timestamp, utc_now
-from .profiles import DefaultScientificResearchProfile, ExecutionProfile, ProfileError, bounded_provenance
+from .profiles import DefaultScientificResearchProfile, FixedEvidenceRevisionProfile, ExecutionProfile, ProfileError, bounded_provenance
 
 PI_PACKAGE = "@mariozechner/pi-coding-agent"
 PI_VERSION = "0.73.1"
@@ -95,6 +95,16 @@ class PiRuntime:
     @property
     def ready(self) -> bool:
         return self.health()["ready"]
+
+    @property
+    def capabilities(self):
+        # Domain adapters using another trusted profile do not implicitly gain
+        # the scientific revision protocol.
+        if isinstance(self.profile, DefaultScientificResearchProfile):
+            return {'revision_job_versions': ['1'],
+                    'revision_input_scope': 'recorded_evidence_only',
+                    'max_revision_input_bytes': 16*1024*1024}
+        return {}
 
     def health(self) -> dict:
         try:
@@ -509,11 +519,16 @@ class PiRuntime:
         self._check_settings()
         # B may include attempt in the internal dispatch object, but the shared
         # wire schema remains strict and is validated without this local field.
-        wire = {k: v for k, v in job.items() if k not in {"attempt", "_runtime_uid"}}
+        wire = {k: v for k, v in job.items() if k not in {"attempt", "_runtime_uid", "_revision_input"}}
+        profile = self.profile
+        if wire.get('task_kind') == 'revision':
+            if not isinstance(profile, DefaultScientificResearchProfile) or '_revision_input' not in job:
+                raise RuntimeExecutionError('revision_not_supported', 'Revision requires a trusted fixed-evidence input')
+            profile = FixedEvidenceRevisionProfile(job['_revision_input'])
         uid = job.get("_runtime_uid")
         if not s.fixture_mode and (type(uid) is not int or not 10000 <= uid < 2**31 - 1):
             raise RuntimeExecutionError("runtime_not_ready", "Worker must persist a unique never-reused attempt UID")
-        checked = self.profile.validate(wire)
+        checked = profile.validate(wire)
         if (checked.runtime_revision != s.runtime_revision or checked.skill_bundle_revision != s.skill_bundle_revision):
             raise RuntimeExecutionError("runtime_not_ready", "Accepted job revisions do not match runtime configuration")
         if cancel.is_set():
@@ -531,6 +546,9 @@ class PiRuntime:
         home, agent, tmp = workspace / ".home", workspace / ".home" / ".pi" / "agent", workspace / ".tmp"
         agent.mkdir(parents=True, mode=0o700)
         tmp.mkdir(mode=0o700)
+        prepare = getattr(profile, 'prepare_workspace', None)
+        if prepare is not None:
+            prepare(wire, workspace)
         self._verify_resources()
         env = self._environment(home, agent, tmp)
         # One retry owner: disable both Pi's session retry and the underlying
@@ -560,11 +578,14 @@ class PiRuntime:
         command += ["--print", "--mode", "json", "--no-session", "--no-extensions", "--no-skills",
                     "--no-prompt-templates", "--no-themes", "--no-context-files", "--offline",
                     "--provider", s.provider, "--model", s.model]
-        for path in s.skill_paths:
+        allowed_tools = getattr(profile, 'allowed_tools', None)
+        if allowed_tools is not None:
+            command += ['--tools', ','.join(allowed_tools)]
+        for path in (s.skill_paths if getattr(profile, 'load_research_skills', True) else ()):
             command += ["--skill", str(path.resolve())]
         # Trusted profiles provide domain instructions, never request-selected code.
         try:
-            prompt = self.profile.build_prompt(wire)
+            prompt = profile.build_prompt(wire)
         except ImportError:
             raise RuntimeExecutionError("runtime_not_ready", "Reviewed research prompt builder is unavailable")
         prompt_path = workspace / "task.md"
@@ -741,7 +762,7 @@ class PiRuntime:
                       "pi_version": version, "node_version": node, "image_digest": s.image_digest,
                       "skill_bundle_revision": s.skill_bundle_revision, "runtime_revision": s.runtime_revision,
                       "token_usage": None, "fixture_mode": s.fixture_mode,
-                      **bounded_provenance(self.profile, started, finished)}
+                      **bounded_provenance(profile, started, finished)}
         if s.compact_events:
             provenance["output_accounting"] = output_accounting
         # The envelope bounds retrieval; C's per-search timestamps remain the

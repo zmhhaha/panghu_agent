@@ -24,6 +24,7 @@ REQUIRED_ARTIFACTS = {"report", "searches", "papers", "screening", "evidence", "
 MAX_BYTES = 50 * 1024 * 1024
 FIELDS = ("artifact_id", "media_type", "size", "sha256")
 STATES = {"queued", "running", "cancel_requested", "validating", "publishing", "succeeded", "failed", "cancelled", "timed_out"}
+EXPECTED_SKILL_BUNDLE_REVISION = "local-procedures-v2"
 
 
 class ProbeFailure(Exception):
@@ -214,7 +215,7 @@ def verify(api, task_id):
     require(sorted(manifest_items, key=lambda item: item["artifact_id"]) == sorted(checked, key=lambda item: item["artifact_id"]), "manifest_artifacts_mismatch")
     provenance = manifest.get("provenance", {})
     require(provenance.get("fixture_mode") is False, "fixture_result_rejected")
-    require(provenance.get("runtime_revision") == "pi-jsonl-0.73.1-v1" and provenance.get("skill_bundle_revision") == "local-procedures-v1", "unexpected_runtime_revision")
+    require(provenance.get("runtime_revision") == "pi-jsonl-0.73.1-v1" and provenance.get("skill_bundle_revision") == EXPECTED_SKILL_BUNDLE_REVISION, "unexpected_runtime_revision")
     require(isinstance(provenance.get("image_digest"), str) and re.fullmatch(r"sha256:[0-9a-f]{64}", provenance["image_digest"]), "image_digest_missing")
     envelope = dict(schema_version="1", task_id=task_id, attempt=row["attempt"], report_sha256=row["report_sha256"],
                     artifacts=sorted(checked, key=lambda item: item["artifact_id"]), provenance=provenance)
@@ -250,7 +251,7 @@ def self_test():
     contents = {name: ("\n".join(canonical(row) for row in values) + "\n").encode() for name, values in rows.items()}
     contents.update(report=report.encode(), references=canonical([{"n": 1, "paper_id": "p1"}]).encode(), validation=canonical({"valid": True, "errors": []}).encode())
     items = [dict(artifact_id=name, size=len(data), sha256=sha(data), media_type="text/markdown" if name == "report" else "application/json") for name, data in sorted(contents.items())]
-    provenance = dict(fixture_mode=False, runtime_revision="pi-jsonl-0.73.1-v1", skill_bundle_revision="local-procedures-v1", image_digest="sha256:" + "0" * 64)
+    provenance = dict(fixture_mode=False, runtime_revision="pi-jsonl-0.73.1-v1", skill_bundle_revision=EXPECTED_SKILL_BUNDLE_REVISION, image_digest="sha256:" + "0" * 64)
     envelope = dict(schema_version="1", task_id=task_id, attempt=1, report_sha256=sha(report.encode()), artifacts=items, provenance=provenance)
     result_hash = sha(canonical(envelope).encode())
     row = dict(id=task_id, engine="pi", mode="brief", user_id=USER, state="succeeded", status="done", topic="Offline fixture", report=report,

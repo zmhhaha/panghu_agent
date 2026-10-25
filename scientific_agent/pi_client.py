@@ -19,7 +19,7 @@ class WorkerError(Exception):
 
 
 def urllib_transport(method, url, headers, payload, timeout, max_bytes=None):
-    req = urllib.request.Request(url, data=None if payload is None else json.dumps(payload).encode('utf-8'), headers=headers, method=method)
+    req = urllib.request.Request(url, data=None if payload is None else json.dumps(payload,ensure_ascii=False,separators=(',',':'),allow_nan=False).encode('utf-8'), headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
             body = response.read() if max_bytes is None else response.read(max_bytes + 1)
@@ -85,6 +85,9 @@ class PiClient:
             raise WorkerError(exc.status_code, exc.code, str(exc)) from exc
 
     def put(self, job): return self.request('PUT', self._task(job['task_id']), job)
+    def put_revision(self, job, material):
+        task_id = self._task(job['task_id']).removeprefix('/tasks/')
+        return self.request('PUT', '/revisions/' + task_id, {'job':job, 'input':material})
     def get(self, task_id): return self.request('GET', self._task(task_id))
     def cancel(self, task_id): return self.request('POST', self._task(task_id) + '/cancel', {})
     def result(self, task_id): return self.request('GET', self._task(task_id) + '/result')

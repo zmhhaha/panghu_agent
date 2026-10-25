@@ -12,7 +12,7 @@ from pathlib import Path
 from pi_worker.runtime import PiRuntime, RuntimeSettings
 
 RUNTIME_REVISION = "pi-jsonl-0.73.1-v1"
-BUNDLE_MANIFEST_SHA256 = "fbfc5770ae54f88c7146e94a3845c7ccb480b45137f308c7fc4237dd78803645"
+BUNDLE_MANIFEST_SHA256 = "34645ae7322a971bc79da2006d8d4faa65ab59075d9720e410be740b0abebd41"
 SCIENTIFIC_GATEWAY_COMPLETIONS_COMPAT = {
     "supportsStore": False,
     "supportsUsageInStreaming": False,

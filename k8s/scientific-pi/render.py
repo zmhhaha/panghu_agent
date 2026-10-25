@@ -11,7 +11,7 @@ import re
 from urllib.parse import urlparse
 
 REVISION = 'pi-jsonl-0.73.1-v1'
-BUNDLE = 'local-procedures-v1'
+BUNDLE = 'local-procedures-v2'
 WORKER = 'scientific-pi-worker'
 
 
@@ -82,7 +82,7 @@ def render(namespace, worker_image, model_endpoint, model, verified=False):
     api_egress = obj('networking.k8s.io/v1', 'NetworkPolicy', 'scientific-api-to-pi', {'podSelector': {'matchLabels': {'app': 'research-api'}}, 'policyTypes': ['Egress'],
         'egress': [{'to': [{'podSelector': {'matchLabels': labels}}], 'ports': [{'protocol': 'TCP', 'port': 8080}]}]})
     # Do not create an Egress-only policy if existing API has no other egress policy:
-    # NetworkPolicy union would newly isolate it and break SQLite/model/mail.
+    # NetworkPolicy union would newly isolate it and break SQLite/mail.
     # The deployment script applies worker resources only; API egress patch is
     # returned separately for explicit review against existing policy coverage.
     return {'apiVersion': 'v1', 'kind': 'List', 'items': [pvc, deployment, service, policy]}, api_egress
@@ -91,11 +91,20 @@ def render(namespace, worker_image, model_endpoint, model, verified=False):
 def api_patch(namespace, image):
     pinned_image(image)
     def value(name, text): return {'name': name, 'value': text}
-    return {'spec': {'template': {'spec': {'containers': [{'name': 'api', 'image': image,
+    return {'spec': {'template': {
+        'metadata': {'labels': {'llm-client': None, 'rag-client': None}},
+        'spec': {
+        # These are the observed scientific API overlays. Keep unrelated volumes,
+        # mounts and environment variables through strategic list merge.
+        'initContainers': [{'name': 'rag-sync', '$patch': 'delete'}],
+        'volumes': [{'name': name, '$patch': 'delete'} for name in ('source', 'scientific-workflow')],
+        'containers': [{'name': 'api', 'image': image,
         'command': ['python', '-m', 'uvicorn', 'app.api.scientific_agent:app', '--host', '0.0.0.0', '--port', '8000'],
-        'env': [value('SCIENTIFIC_DEFAULT_ENGINE', 'crewai'), value('SCIENTIFIC_PI_WORKER_URL', f'http://{WORKER}.{namespace}.svc.cluster.local:8080'),
+        'volumeMounts': [{'mountPath': path, '$patch': 'delete'} for path in ('/app/app/api/agent.py', '/app/scientific_agent')],
+        'env': [value('SCIENTIFIC_DEFAULT_ENGINE', 'pi'), value('SCIENTIFIC_PI_WORKER_URL', f'http://{WORKER}.{namespace}.svc.cluster.local:8080'),
                 value('SCIENTIFIC_PI_RUNTIME_REVISION', REVISION), value('SCIENTIFIC_PI_SKILL_BUNDLE_REVISION', BUNDLE),
-                {'name': 'SCIENTIFIC_PI_WORKER_TOKEN', 'valueFrom': {'secretKeyRef': {'name': WORKER, 'key': 'SCIENTIFIC_PI_WORKER_TOKEN'}}}]}]}}}}
+                {'name': 'SCIENTIFIC_PI_WORKER_TOKEN', 'valueFrom': {'secretKeyRef': {'name': WORKER, 'key': 'SCIENTIFIC_PI_WORKER_TOKEN'}}},
+                *[{'name': name, '$patch': 'delete'} for name in ('LLM_BASE_URL', 'LLM_MODEL', 'LLM_SERVICE_TOKEN', 'RAG_URL', 'RAG_TOKEN')]]}]}}}}
 
 
 def main():

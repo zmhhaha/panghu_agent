@@ -190,6 +190,7 @@ class IntegrationHarness:
                                        notifier=lambda *args: (_ for _ in ()).throw(AssertionError("email must not be sent")))
         self.public_app = create_public_app(self.db, self.worker, self.projection, start_reconciler=False)
         self.public_http = self.stack.enter_context(TestClient(self.public_app))
+        self.public_http.headers['X-Forwarded-User'] = 'trusted-fixture-user'
         self.scheduler = Scheduler(self.store, self.runtime, self.root)
 
     def close(self):
@@ -206,7 +207,8 @@ class IntegrationHarness:
                    "engine": "pi", "mode": "review", "timeout_seconds": 1800,
                    "email": ""}
         payload.update(overrides)
-        return self.public_http.post("/scientific-research", json=payload, headers={"Idempotency-Key": key})
+        return self.public_http.post("/scientific-research", json=payload,
+                                     headers={"Idempotency-Key": key,"X-Forwarded-User": user})
 
     def execute_next(self):
         claim = self.store.claim()
