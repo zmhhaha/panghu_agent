@@ -73,8 +73,14 @@ def verify_installation():
     subprocess.run([sys.executable,'-m','pip','check'],capture_output=True,check=True)
     checks.append('locked_python_dependencies_and_pip_check')
     node_version = subprocess.check_output(['/usr/local/bin/node','--version'],text=True,timeout=30).strip()
-    pi_version = subprocess.check_output(['/usr/local/bin/node',
-        '/opt/pi/node_modules/@mariozechner/pi-coding-agent/dist/cli.js','--version'],text=True,timeout=30).strip()
+    pi_probe = subprocess.run(['/usr/local/bin/node',
+        '/opt/pi/node_modules/@mariozechner/pi-coding-agent/dist/cli.js','--version'],
+        capture_output=True,text=True,check=True,timeout=30)
+    # The pinned CLI writes --version to stderr. Match the runtime's handling
+    # of either stream while keeping the probe's stdout a single JSON receipt.
+    pi_versions = {value.strip() for value in (pi_probe.stdout,pi_probe.stderr) if value.strip()}
+    assert len(pi_versions) == 1
+    pi_version = pi_versions.pop()
     package = json.loads(Path('/opt/pi/node_modules/@mariozechner/pi-coding-agent/package.json').read_text())
     lock = json.loads(Path('/app/pi_worker/node/package-lock.json').read_text())
     from pi_worker.runtime.adapter import PI_VERSION
