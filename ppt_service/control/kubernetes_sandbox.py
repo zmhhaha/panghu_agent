@@ -190,7 +190,7 @@ class KubernetesSandbox:
             safe_error = failure.code if isinstance(failure, ControlError) else 'validation_execution_failed'
             if code != 0 and isinstance(result, dict):
                 safe_error = result.get('error_code', safe_error)
-            if not isinstance(safe_error, str) or not re.fullmatch(r'[a-z_]{1,80}', safe_error):
+            if not isinstance(safe_error, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,79}', safe_error):
                 safe_error = 'validation_execution_failed'
             verified = failure is None and code == 0
             receipt = self.backend._read(h)

@@ -1,6 +1,6 @@
 # K8s 部署对接与后续验收交接
 
-更新时间：2026-10-23。用户已要求：由另一 agent 负责整体 K8s 部署，本会话暂停独立 Docker 环境配置与真实模型重试，等 K8s 部署完成后再做集成校验。
+更新时间：2026-10-25。当前部署与业务验证以文末 Hermes 进展为准。前面的 Pi 开发、暂停独立 Docker 环境配置与模型重试等说明保留为历史记录。
 
 ## 当前事实
 
@@ -64,3 +64,35 @@ PPTX 下载和独立 PNG 预览。草稿不更新最新正式版本，不允许�
 
 以上说明记录代码接线与运行边界。真实镜像、网络、模型执行和人工确认的部署回执需另行
 补记，不能从本节推导生产全流程已经通过。
+
+## 2026-10-25：真实部署与 DSH 源码项目
+
+Hermes执行扩展现已实际部署到 `ppt-service`，Controller和网站均已开启执行。
+Controller采用UID/GID10000、runAsNonRoot、drop ALL，与现有CephFS state所有者一致；
+真实文件复制、冻结、同UID权限操作及清理已通过，namespace继续执行restricted策略。
+网站CSRF多标签页修复已部署，真实登录后的设置保存和源码资料上传成功。
+
+第二次真实规划使用的执行恢复修复提交为 `12eb8a1`。相应Controller、Worker digest、
+完整无模型预检，以及两次真实规划的失败记录见 [DSH业务回执](docs/dsh-code-learning-live-20261025.md)。
+build4预检scope `8616ce31-6787-4852-893c-e57a67ee1e37`：三角色各14项网络检查全部通过，
+真实writers-stopped及cleanup均通过，退出0。预检修复显式处理Proxy探针SIGTERM，
+停止观察45秒覆盖30秒终止宽限期；没有强删Pod或绕过finalizer。
+
+用户选择直接依据仓库里的DSH集成源码，制作“dsh代码学习”项目的8页中文PPT。
+源资料已上传并解析成功，原项目及演示要求保留。首次真实规划因HermesError失败后
+已正常停止清理，观察到一次gpt-6.1-sol请求完成，输入685/输出65 tokens，费用unknown。
+新Worker明确配置上下文预算和Ceph SQLite journal模式，并对原run状态GET作有界恢复，
+第二次真实规划job `daaa0f6a-1cca-48e0-8a27-fe4343ec2c3b` 的Worker已实际完成：
+222.64秒，`hermes_status_retries=2`，候选manifest为 `awaiting_confirmation`。
+独立校验sandbox退出2，实际 `validated.json` 为 `stage1_contract_invalid`；
+方案未入库，也没有PPT。不能将Worker完成或候选自报状态当作网站接受方案。
+
+本次Worker提示没有给出 `control/planning.py` 接受的严格结构，候选使用
+`stage1_items/service_form_parameters`，未匹配官方stage1或outline/design格式。
+正在补充明确的stage1、stage2提示合同，保留严格校验，之后重建镜像再作真实尝试。
+transport错误码过滤原本不接受数字，将包含数字1的错误泛化为
+`validation_execution_failed`；该问题也在修复，原始具体校验回执仍保留。
+
+网站状态同步修复 `f2d8838` 已build/deploy并Ready，活跃任务使用权威GET补同步，
+“刷新状态”包含当前任务；其上线不改变上述校验失败。后续真实重跑和方案入库尚待验证，
+不预先记录后续成功或最终执行镜像，也不将部署/预检通过推导为PPT生成或人工验收通过。

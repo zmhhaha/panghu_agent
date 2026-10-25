@@ -37,10 +37,80 @@ GUIDANCE = {
 }
 
 
+# These examples are wire contracts, not source facts or confirmed choices.
+# The independent planning projector deliberately accepts explicit shapes only.
+PLANNING_EXAMPLES = {
+    "plan_initial": {
+        "stage": "stage1", "status": "awaiting_confirmation",
+        "confirmation_received": False,
+        "title": {"value": "按任务填写文稿名称"},
+        "primary_language": {"value": "按任务填写语言"},
+        "audience": {"value": "按材料与要求填写受众"},
+        "communication_intent": {"value": "按材料与要求填写沟通意图"},
+        "audience_outcome": {"value": "填写受众阅读后应获得的认识"},
+        "core_message": {"value": "填写有来源依据的核心信息"},
+        "delivery_context": {"value": "给出使用场景建议，未知项明确待确认"},
+        "artifact_afterlife": {"value": "给出文稿后续用途建议"},
+        "content_divergence": {"value": ""},
+        "canvas": {"value": "ppt169"},
+        "template_choice": {"value": "free_design", "reason": "填写建议依据"},
+    },
+    "plan_options": {
+        "page_plan": {"pages": [
+            {"ordinal": i, "title": f"示意页{i}，须替换为真实标题",
+             "core_message": "填写本页有材料依据的核心结论",
+             "content": ["填写本页实际内容及来源位置"],
+             "visual": "填写本页适合的关系或结构示意"}
+            for i in range(1, 4)
+        ]},
+        "design": {
+            "directions": [
+                {"id": key, "name": f"填写方向{i}名称", "note": "解释与其他方向的实质区别",
+                 "mode": "free_design", "visual_style": "填写本方向的版式、层次和图形规则",
+                 "color": "填写本方向的背景、正文、强调色与用途",
+                 "typography": "填写标题、正文、代码的字体及字号规则",
+                 "icons": "填写图标和线条的使用规则",
+                 "image_strategy": "仅使用已授权材料中的图像或可编辑结构图，不联网取图",
+                 "page_expression": [
+                     {"ordinal": n, "expression": "填写本方向在这一页的具体布局与视觉表达"}
+                     for n in range(1, 4)
+                 ]}
+                for i, key in enumerate(("direction-a", "direction-b", "direction-c"), 1)
+            ],
+            "production_parameters": {
+                "generation_mode": "split", "spec_depth": "complete", "canvas": "ppt169",
+                "narration": False, "animation": False,
+            },
+        },
+    },
+}
+
+
+def planning_contract(phase: str) -> str:
+    if phase not in PLANNING_EXAMPLES:
+        return ""
+    explanation = (
+        "plan必须直接采用下列Stage1结构；字段用value表达建议，template_choice.value只能为free_design或templates。"
+        "保留完整官方Stage1沟通项与建议依据，可添加其他解释字段；不把建议写成已确认。"
+        "不要用stage1_items/service_form_parameters等自创容器替代这些必需字段。"
+        if phase == "plan_initial" else
+        "plan必须采用下列Stage2结构。page_plan.pages必须包含任务要求的全部N页，ordinal按1到N连续；"
+        "下面3页仅示意结构，绝非把任务页数改为3。每页填写真实标题、核心信息、内容、来源和视觉建议。"
+        "design.directions必须恰好3项，id唯一、稳定且为字符串；三方向共享完整page_plan和production_parameters，"
+        "各方向仍须有完整视觉规则；page_expression按ordinal逐页列出全部N页，与page_plan一一对应，"
+        "不得用一句话或占位符代替完整方案。"
+        "不混用options/design_directions等另一种容器；推荐仅是建议，不能写用户已选择。"
+    )
+    return ("\n服务端严格规划合同（下方JSON仅为manifest.plan，示意文字须按本任务实际替换）：\n"
+            + explanation + "\n```json\n"
+            + json.dumps(PLANNING_EXAMPLES[phase], ensure_ascii=False, indent=2)
+            + "\n```\n缺失信息仍写manifest.questions，不得把questions当作上述结构的替代。\n")
+
+
 def stage_instructions(phase: str) -> str:
     if phase not in PHASES:
         raise ValueError("Unsupported PPT execution phase")
-    return COMMON + "\n当前阶段：" + phase + "\n" + GUIDANCE[phase] + """
+    return COMMON + "\n当前阶段：" + phase + "\n" + GUIDANCE[phase] + planning_contract(phase) + """
 候选manifest必须是JSON对象：schema_version=1、phase、status（awaiting_confirmation/needs_input/prepared/candidate）、project_root（相对/work/project的实际项目目录）、input_snapshot_sha256、plan、questions、artifacts、slides、quality、provenance。
 artifacts每项含role/path/sha256/bytes/media_type，path相对project_root；不能列绝对路径或父目录。slides每项含id/ordinal/title/svg_path/preview_path/source_refs/native_chart_keys。所有被slides的svg_path和preview_path引用的文件都必须列入artifacts并记录实际sha256/bytes，包括未改动或从基线复用的页面，不能只列变更文件；整理目录可对实际已有文件读取sha256sum，不需要临时内联Python脚本。provenance映射事实/图表对象到源文件SHA256和位置。生成态status=candidate必须列pptx、每页preview、final/postflight证据；needs_input只列实际已有项，规划态不得伪造这些。quality只存真实报告引用对象（path、可选sha256），引用的报告须同时列入artifacts；无报告时用空对象。描述性状态放plan或quality_notes，不能用passed字符串充当报告。不要写或信任清单中的费用字段。
 """

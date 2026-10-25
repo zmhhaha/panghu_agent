@@ -221,6 +221,62 @@ def test_review_transport_completes_undeclared_source_index(runtime):
     assert result['accepted'] is False
 
 
+@pytest.mark.parametrize('reported_code, expected_code', [
+    ('stage1_contract_invalid', 'stage1_contract_invalid'),
+    ('stage2_contract_invalid', 'stage2_contract_invalid'),
+    ('quality_gate_failed', 'quality_gate_failed'),
+    ('/private/path?token=SECRET', 'validation_execution_failed'),
+    ('UPSTREAM_SECRET', 'validation_execution_failed'),
+    ('invalid\ncode', 'validation_execution_failed'),
+    ('x' * 81, 'validation_execution_failed'),
+    (1, 'validation_execution_failed'),
+    (None, 'validation_execution_failed'),
+])
+def test_planning_failure_transport_preserves_bounded_error_codes_with_stage_numbers(
+        runtime, reported_code, expected_code):
+    config, settings, api, backend, attempt = runtime
+    h = backend.create(attempt, staged(runtime))
+    backend.stop(h)
+    sandbox = KubernetesSandbox(config, settings, backend)
+    sandbox.scope_uid = h.uid
+    snapshot, request = candidate(runtime)
+    request['phase'] = 'plan_initial'
+    manifest_path = snapshot / 'result' / 'manifest.json'
+    manifest = json.loads(manifest_path.read_text())
+    manifest['phase'] = 'plan_initial'
+    manifest['status'] = 'awaiting_confirmation'
+    atomic_json(manifest_path, manifest)
+
+    def on_pod(obj):
+        if obj['metadata']['labels'][ROLE] != 'sandbox':
+            return
+        envelope = json.loads((source_mount(runtime, obj, '/request') / 'request.json').read_text())
+        output = source_mount(runtime, obj, '/output')
+        atomic_json(output / 'validated.json', {
+            'accepted': False, 'error_code': reported_code,
+            'validation_nonce': envelope['validation_nonce'],
+            'source_manifest_sha256': envelope['source_manifest_sha256'],
+        })
+        api.terminal(obj, exit_code=2)
+
+    api.on_pod = on_pod
+    with pytest.raises(ControlError) as raised:
+        sandbox.validate(snapshot, request)
+    assert raised.value.code == expected_code
+    evidence = Path(raised.value.evidence_path)
+    transport = json.loads((evidence / 'transport-manifest.json').read_text())
+    assert transport['controller_error_code'] == expected_code
+    assert transport['sandbox_exit_code'] == 2
+    assert transport['writers_stopped'] is True
+    assert transport['transport_verified'] is False
+    assert [row['path'] for row in transport['files']] == ['validated.json']
+    # Preserve the raw rejected result privately, without using it to publish.
+    assert json.loads((evidence / 'validated.json').read_text())['error_code'] == reported_code
+    assert backend.prove_stopped(h).all_writers_stopped
+    backend.cleanup(h)
+    assert not api.objects
+
+
 @pytest.mark.parametrize('fault', ['nonce', 'source', 'accepted', 'gates', 'png', 'image'])
 def test_validation_rejects_unbound_or_forged_output(runtime, fault):
     config, settings, api, backend, attempt = runtime
