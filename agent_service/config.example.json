@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "callers": [
+    {
+      "tenant": "internal",
+      "caller": "ppt-service",
+      "profiles": ["workspace-task.v1"],
+      "token_ref": "ppt-service"
+    }
+  ],
+  "profiles": [
+    {
+      "name": "workspace-task.v1",
+      "revision": "v1",
+      "engine": "hermes",
+      "runtime_revision": "replace-with-reviewed-runtime-revision",
+      "image_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "enabled": false,
+      "max_timeout_seconds": 600
+    }
+  ],
+  "workers": [
+    {
+      "engine": "pi",
+      "base_url": "http://127.0.0.1:8091",
+      "token_ref": "pi-worker",
+      "receipt_key_ref": "pi-worker"
+    },
+    {
+      "engine": "hermes",
+      "base_url": "http://127.0.0.1:8092",
+      "token_ref": "hermes-worker",
+      "receipt_key_ref": "hermes-worker"
+    }
+  ],
+  "api": {
+    "host": "127.0.0.1",
+    "port": 8080,
+    "max_request_bytes": 65536,
+    "max_input_bytes": 1048576
+  },
+  "dispatcher": {
+    "poll_seconds": 1.0,
+    "lease_seconds": 60
+  },
+  "store": {
+    "max_events": 1000,
+    "max_queue": 1000
+  }
+}

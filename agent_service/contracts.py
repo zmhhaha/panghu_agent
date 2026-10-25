@@ -1,0 +1,280 @@
+"""Version one wire contracts. Execution completion grants no business approval."""
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import math
+import re
+from dataclasses import dataclass, field
+from typing import Any, Callable, Literal
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+MAX_INPUT_BYTES = 1024 * 1024
+MAX_ARTIFACT_BYTES = 8 * 1024 * 1024
+TERMINAL_STATES = frozenset({'completed', 'needs_input', 'failed', 'cancelled', 'timed_out', 'quarantined'})
+
+
+class ServiceError(RuntimeError):
+    def __init__(self, code: str, status: int = 400):
+        super().__init__(code)
+        self.code, self.status = code, status
+
+
+def canonical_bytes(value: Any) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False,
+                      allow_nan=False).encode('utf-8')
+
+
+def digest(value: Any) -> str:
+    return hashlib.sha256(canonical_bytes(value)).hexdigest()
+
+
+def safe_name(value: str) -> str:
+    if (not value or len(value) > 120 or value in {'.', '..'}
+            or any(c in value for c in '/\\:\x00')
+            or any(ord(c) < 32 for c in value)):
+        raise ValueError('An ordinary basename is required')
+    return value
+
+
+class WireModel(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True, frozen=True)
+
+
+class InputRef(WireModel):
+    input_id: str
+    sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+
+    @field_validator('input_id')
+    @classmethod
+    def uuid_id(cls, value):
+        if str(UUID(value)) != value:
+            raise ValueError('Canonical UUID required')
+        return value
+
+
+class JobRequest(WireModel):
+    api_version: Literal['1'] = '1'
+    profile: str = Field(pattern=r'^[a-z][a-z0-9_.-]{0,79}$')
+    profile_revision: str = Field(pattern=r'^[A-Za-z0-9_.-]{1,100}$')
+    business_ref: str = Field(min_length=1, max_length=200)
+    task: dict[str, Any]
+    inputs: list[InputRef] = Field(default_factory=list, max_length=10)
+    timeout_seconds: int = Field(default=600, ge=1, le=3600)
+
+    @model_validator(mode='after')
+    def bounded_task(self):
+        if len(canonical_bytes(self.task)) > 32768:
+            raise ValueError('Task exceeds its bound')
+        def depth(value, level=0):
+            if level > 10:
+                raise ValueError('Task nesting exceeds its bound')
+            if isinstance(value, dict):
+                for k, v in value.items():
+                    if not isinstance(k, str):
+                        raise ValueError('JSON object keys must be strings')
+                    depth(v, level + 1)
+            elif isinstance(value, list):
+                for v in value:
+                    depth(v, level + 1)
+        depth(self.task)
+        if len({x.input_id for x in self.inputs}) != len(self.inputs):
+            raise ValueError('Duplicate input reference')
+        return self
+
+
+class InlineFile(WireModel):
+    name: str
+    sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    content_base64: str = Field(max_length=12 * 1024 * 1024)
+
+    @field_validator('name')
+    @classmethod
+    def basename(cls, value):
+        return safe_name(value)
+
+    def content(self, limit=MAX_ARTIFACT_BYTES) -> bytes:
+        if len(self.content_base64) > ((limit + 2) // 3) * 4:
+            raise ServiceError('file_too_large', 413)
+        try:
+            data = base64.b64decode(self.content_base64, validate=True)
+        except ValueError:
+            raise ServiceError('invalid_file', 422) from None
+        if len(data) > limit or hashlib.sha256(data).hexdigest() != self.sha256:
+            raise ServiceError('file_integrity_invalid', 422)
+        return data
+
+    @classmethod
+    def from_bytes(cls, name: str, content: bytes):
+        return cls(name=name, sha256=hashlib.sha256(content).hexdigest(),
+                   content_base64=base64.b64encode(content).decode('ascii'))
+
+
+class ExecutionEnvelope(WireModel):
+    api_version: Literal['1'] = '1'
+    job_id: str
+    attempt_id: str
+    fence: int = Field(ge=1)
+    engine: Literal['pi', 'hermes']
+    profile: str
+    profile_revision: str
+    runtime_revision: str
+    image_digest: str = Field(pattern=r'^sha256:[0-9a-f]{64}$')
+    deadline_at: float
+    lease_expires_at: float
+    task: dict[str, Any]
+    inputs: list[InlineFile] = Field(default_factory=list, max_length=10)
+
+    @field_validator('job_id', 'attempt_id')
+    @classmethod
+    def uuid_id(cls, value):
+        if str(UUID(value)) != value:
+            raise ValueError('Canonical UUID required')
+        return value
+
+    def identity(self):
+        # Lease renewal does not change immutable execution identity.
+        return self.model_dump(exclude={'lease_expires_at'})
+
+    @model_validator(mode='after')
+    def valid_times(self):
+        if (not all(math.isfinite(x) and x > 0 for x in (self.deadline_at, self.lease_expires_at))
+                or self.lease_expires_at > self.deadline_at + 45):
+            raise ValueError('Invalid bounded execution clocks')
+        if len(canonical_bytes(self.task)) > 32768:
+            raise ValueError('Task exceeds its bound')
+        return self
+
+    @property
+    def request_sha256(self):
+        return digest(self.identity())
+
+
+class StopReceipt(WireModel):
+    job_id: str
+    attempt_id: str
+    fence: int
+    engine: Literal['pi', 'hermes']
+    request_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    resource_ids: list[str] = Field(min_length=1, max_length=64)
+    observed_at: float
+    result_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    signature: str = Field(pattern=r'^[0-9a-f]{64}$')
+
+    @field_validator('observed_at')
+    @classmethod
+    def finite_time(cls, value):
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError('Invalid observation time')
+        return value
+
+
+class WorkerResult(WireModel):
+    state: Literal['completed', 'needs_input', 'failed', 'cancelled', 'timed_out', 'quarantined']
+    error_code: str | None = Field(default=None, pattern=r'^[a-z][a-z0-9_]{0,79}$')
+    usage: dict[str, Any] | None = None
+    artifacts: list[InlineFile] = Field(default_factory=list, max_length=32)
+    stop_receipt: StopReceipt | None = None
+
+    def result_digest(self):
+        return digest(self.model_dump(exclude={'stop_receipt'}))
+
+
+def sign_receipt(envelope: ExecutionEnvelope, result: WorkerResult, key: bytes,
+                 resource_ids: tuple[str, ...], observed_at: float) -> StopReceipt:
+    if len(key) < 32 or not resource_ids or not all(isinstance(x, str) and 0 < len(x) <= 200 for x in resource_ids):
+        raise ServiceError('stop_evidence_invalid', 503)
+    body = dict(job_id=envelope.job_id, attempt_id=envelope.attempt_id, fence=envelope.fence,
+                engine=envelope.engine, request_sha256=envelope.request_sha256,
+                resource_ids=list(resource_ids), observed_at=observed_at,
+                result_sha256=result.result_digest())
+    return StopReceipt(**body, signature=hmac.new(key, canonical_bytes(body), hashlib.sha256).hexdigest())
+
+
+def verify_receipt(envelope: ExecutionEnvelope, result: WorkerResult, key: bytes, now: float) -> bool:
+    proof = result.stop_receipt
+    if proof is None or len(key) < 32 or result.state == 'quarantined':
+        return False
+    if (proof.job_id != envelope.job_id or proof.attempt_id != envelope.attempt_id
+            or proof.fence != envelope.fence or proof.engine != envelope.engine
+            or proof.request_sha256 != envelope.request_sha256
+            or proof.result_sha256 != result.result_digest()
+            or not 0 < proof.observed_at <= now + 5
+            or len(set(proof.resource_ids)) != len(proof.resource_ids)
+            or any(not x or len(x) > 200 for x in proof.resource_ids)):
+        return False
+    expected = hmac.new(key, canonical_bytes(proof.model_dump(exclude={'signature'})), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, proof.signature)
+
+
+@dataclass(frozen=True)
+class Principal:
+    tenant: str
+    caller: str
+    profiles: frozenset[str]
+
+
+@dataclass(frozen=True)
+class ProfilePolicy:
+    name: str
+    revision: str
+    engine: Literal['pi', 'hermes']
+    runtime_revision: str
+    image_digest: str
+    enabled: bool = False
+    max_timeout_seconds: int = 600
+    task_validator: Callable[[dict], None] = field(default=lambda _: None, repr=False, compare=False)
+    supports_inputs: bool = False
+
+    def __post_init__(self):
+        if (self.engine not in {'pi', 'hermes'} or not self.name or not self.revision
+                or not self.runtime_revision or not re.fullmatch(r'sha256:[0-9a-f]{64}', self.image_digest)
+                or type(self.enabled) is not bool or type(self.supports_inputs) is not bool
+                or not 1 <= self.max_timeout_seconds <= 3600):
+            raise ValueError('Invalid server-owned profile policy')
+
+    def pins(self):
+        return dict(engine=self.engine, runtime_revision=self.runtime_revision,
+                    image_digest=self.image_digest, profile_revision=self.revision, profile=self.name)
+
+
+class ProfileRegistry:
+    def __init__(self, profiles=()):
+        self._profiles = {}
+        for profile in profiles:
+            key = (profile.name, profile.revision)
+            if key in self._profiles:
+                raise ValueError('Duplicate profile revision')
+            self._profiles[key] = profile
+
+    def policy(self, name, revision):
+        return self._profiles.get((name, revision))
+
+    def resolve(self, principal: Principal, request: JobRequest, *, require_enabled=True):
+        profile = self._profiles.get((request.profile, request.profile_revision))
+        if request.profile not in principal.profiles or profile is None:
+            raise ServiceError('profile_unavailable', 404)
+        if require_enabled and not profile.enabled:
+            raise ServiceError('profile_not_ready', 503)
+        if request.timeout_seconds > profile.max_timeout_seconds:
+            raise ServiceError('deadline_exceeds_profile', 422)
+        if request.inputs and not profile.supports_inputs:
+            raise ServiceError('input_staging_not_ready', 503)
+        profile.task_validator(request.task)
+        return profile
+
+    def capabilities(self, principal: Principal):
+        return [dict(profile=p.name, profile_revision=p.revision, **{k: v for k, v in p.pins().items() if k not in {'profile', 'profile_revision'}},
+                     configured=p.enabled, supports_inputs=p.supports_inputs,
+                     native_resume=False, publication_authorized=False,
+                     max_timeout_seconds=p.max_timeout_seconds)
+                for p in self._profiles.values() if p.name in principal.profiles]
+
+
+def validate_workspace_task(task: dict):
+    if set(task) != {'prompt'} or not isinstance(task['prompt'], str) or not 1 <= len(task['prompt']) <= 16000:
+        raise ServiceError('invalid_workspace_task', 422)
