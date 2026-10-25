@@ -1,10 +1,15 @@
 # Scientific Pi API and research workbench
 
-**2026-10-25 local candidate:** evidence-linked citations, section indexing,
-private report versions and fixed revision-input previews are implemented under
-OpenSpec change `add-scientific-evidence-linked-revisions`. These additions have
-not been deployed. The [implementation plan](../../docs/scientific-research-pi/writing-workspace-20261025/README.md)
-separates this foundation from later Pi section execution and adoption controls.
+**2026-10-25 15:49:52 Asia/Shanghai deployed:** evidence-linked citations,
+section indexing, private report versions and fixed revision-input previews are
+online under OpenSpec change `add-scientific-evidence-linked-revisions`.
+The server fetched fixed Git commits (application `e87eb0c`, release tooling
+`26168fb`), built the API image and updated the paired API/UI source. Local
+regressions passed 224/224, isolated ARM64 image checks 14/14, and production
+operator API checks 13/13. Existing reports, worker and identity settings were
+preserved. Real-user Casdoor browser acceptance remains pending. The
+[implementation and release record](../../docs/scientific-research-pi/writing-workspace-20261025/README.md)
+separates this deployed foundation from later Pi execution and adoption controls.
 
 `GET /scientific-research/{task_id}/citations` requires the trusted authenticated
 user, checks Pi ownership before reading worker records, and resolves published
