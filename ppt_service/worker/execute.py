@@ -11,6 +11,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import secrets
 import signal
 import stat
@@ -34,6 +35,32 @@ CANDIDATE_STATES = {
     "generate": {"candidate", "needs_input"},
     "revise": {"candidate", "needs_input"},
 }
+
+
+def _hermes_failure(error: HermesError) -> dict:
+    """Private fixed categories only; never retain an exception URL or body."""
+    operation = error.operation
+    category = {
+        '/v1/capabilities': 'capabilities',
+        '/api/sessions': 'create_session',
+        '/v1/runs': 'admit',
+        'response_too_large': 'response_validation',
+        'invalid_json': 'response_validation',
+        'event_too_large': 'response_validation',
+        'invalid_event': 'response_validation',
+    }.get(operation, 'unknown') if type(operation) is str else 'unknown'
+    if type(operation) is str:
+        identifier = r'[A-Za-z0-9_.-]{1,256}'
+        for pattern, name in ((rf'/v1/runs/{identifier}', 'status'),
+                              (rf'/v1/runs/{identifier}/stop', 'stop'),
+                              (rf'/v1/runs/{identifier}/events', 'events'),
+                              (rf'/api/sessions/{identifier}', 'get_session')):
+            if re.fullmatch(pattern, operation):
+                category = name
+                break
+    status = error.status
+    return {'hermes_operation': category,
+            'hermes_http_status': status if type(status) is int and 100 <= status <= 599 else None}
 
 
 def candidate_handoff(path: Path, task: dict) -> str:
@@ -142,7 +169,12 @@ def configure(home: Path, result: Path, model: str, base_url: str) -> None:
     # This is an operator supplied model origin. The execution namespace must
     # independently enforce its approved egress proxy; URL checks are no firewall.
     config = {
-        "model": {"provider": "ppt-model", "default": model, "supports_vision": True},
+        # Conservative service budget matching Hermes' existing fallback. This
+        # avoids external model-metadata discovery inside the isolated worker;
+        # it is not a claim about the provider's maximum context window.
+        "model": {"provider": "ppt-model", "default": model, "supports_vision": True,
+                  "context_length": 256000},
+        "database": {"journal_mode": "delete"},
         "providers": {"ppt-model": {"base_url": base_url, "api_mode": "codex_responses", "key_env": "PPT_MODEL_API_KEY", "default_model": model, "discover_models": False, "models": [model]}},
         "fallback_providers": [],
         "terminal": {"backend": "local", "cwd": "/work/project", "timeout": 120},
@@ -285,11 +317,39 @@ def run(task: dict | None, *, probe_only: bool, deadline_seconds: int) -> int:
             state.update({"job_id": task["job_id"], "attempt": task["attempt"], "phase": task["phase"], "session_id": session_id, "run_id": run_id, "status": "running"})
             atomic_json(result / "execution.json", state)
             stop_sent = False
+            status_retries = 0
             while time.monotonic() - started < deadline_seconds:
+                remaining = deadline_seconds - (time.monotonic() - started)
+                if remaining <= 0:
+                    break
+                # A poll never receives a fresh phase deadline. In particular,
+                # the first Agent initialization can outlive one HTTP request.
+                client.timeout = min(10, remaining)
                 if interrupted and not stop_sent:
                     client.stop(run_id)
                     stop_sent = True
-                status = client.status(run_id)
+                remaining = deadline_seconds - (time.monotonic() - started)
+                if remaining <= 0:
+                    break
+                client.timeout = min(10, remaining)
+                try:
+                    status = client.status(run_id)
+                except HermesError as exc:
+                    # Retry only the existing run's status GET. Bad JSON,
+                    # authentication, missing runs and admission are not retried.
+                    transient = (exc.operation == f'/v1/runs/{safe_id(run_id)}'
+                                 and (exc.status is None or exc.status in (502, 503, 504)))
+                    if not transient or process.poll() is not None or status_retries >= 3:
+                        raise
+                    remaining = deadline_seconds - (time.monotonic() - started)
+                    if remaining <= 0:
+                        break
+                    if interrupted and not stop_sent:
+                        continue  # Send cancellation before another poll/backoff.
+                    status_retries += 1
+                    state['hermes_status_retries'] = status_retries
+                    time.sleep(min(2, remaining))
+                    continue
                 observed = status.get("status")
                 if observed in TERMINAL:
                     # Private transcript is retained for operator-only acceptance;
@@ -315,7 +375,7 @@ def run(task: dict | None, *, probe_only: bool, deadline_seconds: int) -> int:
                     return 0
                 if process.poll() is not None:
                     raise RuntimeError("Gateway exited during task execution")
-                time.sleep(2)
+                time.sleep(min(2, max(0, deadline_seconds - (time.monotonic() - started))))
             try:
                 client.stop(run_id)
             except HermesError:
@@ -323,7 +383,10 @@ def run(task: dict | None, *, probe_only: bool, deadline_seconds: int) -> int:
             state["status"] = "deadline_exceeded"
             return 3
     except (ValueError, RuntimeError, HermesError, OSError) as exc:
-        state.update({"status": "failed", "error_type": type(exc).__name__})
+        state.update({"status": "failed", "error_type": type(exc).__name__,
+                      "elapsed_seconds": round(time.monotonic() - started, 2)})
+        if isinstance(exc, HermesError):
+            state.update(_hermes_failure(exc))
         # Error messages are intentionally not printed: upstream exceptions may
         # carry request details. Operator-only gateway log remains in this attempt.
         return 1

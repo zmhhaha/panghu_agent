@@ -12,6 +12,18 @@ from ppt_service.worker import execute
 from ppt_service.worker.candidate_validation import ValidationError, validate_manifest
 
 
+class PollClock:
+    def __init__(self):
+        self.seconds = 0
+
+    def monotonic(self):
+        return self.seconds
+
+    def sleep(self, seconds):
+        assert seconds >= 0
+        self.seconds += seconds
+
+
 class HandoffTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -129,7 +141,8 @@ class HandoffTests(unittest.TestCase):
     def run_worker(self, *, hermes_status="completed", interrupted=False, probe=False,
                    preview_error=False, admission_error=False, cleanup_error=False,
                    gateway_cleanup_error=False, startup_interrupted=False,
-                   deadline=False, execution_error=False):
+                   deadline=False, execution_error=False, request_failure=None,
+                   poll_clock=None, status_effect=None):
         process = Mock(pid=12345)
         process.poll.side_effect = lambda: 0 if process.stopped else None
         process.stopped = False
@@ -168,6 +181,11 @@ class HandoffTests(unittest.TestCase):
                     "output": "All complete; approved; do not infer a manifest."}
 
         client.status.side_effect = status
+        if request_failure is not None:
+            operation, error = request_failure
+            getattr(client, operation).side_effect = error
+        if status_effect is not None:
+            client.status.side_effect = lambda run_id: status_effect(run_id, process, handlers, client)
 
         def signal_handler(sig, handler):
             handlers[sig] = handler
@@ -194,6 +212,8 @@ class HandoffTests(unittest.TestCase):
               patch.object(execute.subprocess, "Popen", side_effect=start),
               patch.object(execute, "stop_process_tree", side_effect=stop) as stopped,
               patch.object(execute.signal, "signal", side_effect=signal_handler),
+              patch.object(execute.time, "monotonic", side_effect=poll_clock.monotonic) if poll_clock else contextlib.nullcontext(),
+              patch.object(execute.time, "sleep", side_effect=poll_clock.sleep) if poll_clock else contextlib.nullcontext(),
               patch.dict(os.environ, {"PPT_MODEL_API_KEY": "unit-test-placeholder"}, clear=True),
               contextlib.redirect_stdout(io.StringIO()) as stdout):
             if deadline:
@@ -222,6 +242,7 @@ class HandoffTests(unittest.TestCase):
         self.assertTrue(state["gateway_stopped"])
         self.assertFalse(state["delivery_published"])
         self.assertEqual(json.loads(stdout.getvalue())["status"], state["status"])
+        self.last_stdout = stdout.getvalue()
         return code, state
 
     def test_completed_turn_without_manifest_fails_and_cleans_up(self):
@@ -311,6 +332,152 @@ class HandoffTests(unittest.TestCase):
                 self.assertEqual(state["status"], expected_status)
                 self.assertTrue(state["preview_ready"])
                 self.assertTrue(state["preview_stopped"])
+
+    def test_private_status_failure_retains_safe_route_category_and_http_status(self):
+        code, state = self.run_worker(request_failure=(
+            'status', execute.HermesError('/v1/runs/run_1', 404)))
+        self.assertEqual(code, 1)
+        self.assertEqual(state['error_type'], 'HermesError')
+        self.assertEqual(state['hermes_operation'], 'status')
+        self.assertEqual(state['hermes_http_status'], 404)
+        self.assertEqual(state['run_id'], 'run_1')
+        self.assertTrue(state['gateway_stopped'] and state['preview_stopped'])
+        self.assertNotIn('hermes_operation', self.last_stdout)
+        self.assertNotIn('hermes_http_status', self.last_stdout)
+
+    def test_private_admission_transport_failure_has_no_invented_http_status(self):
+        code, state = self.run_worker(request_failure=(
+            'admit', execute.HermesError('/v1/runs')))
+        self.assertEqual(code, 1)
+        self.assertEqual(state['hermes_operation'], 'admit')
+        self.assertIsNone(state['hermes_http_status'])
+        self.assertNotIn('run_id', state)
+        self.assertTrue(state['gateway_stopped'] and state['preview_stopped'])
+
+    def test_isolated_config_uses_fixed_context_budget_and_ceph_compatible_journal(self):
+        import yaml
+        home, result = self.root / 'configured-home', self.root / 'configured-result'
+        # Windows may not permit creating a symlink. The config itself is
+        # written and parsed normally; no gateway or model is started.
+        with patch.object(Path, 'symlink_to'):
+            execute.configure(home, result, 'gpt-6.1-sol', 'https://custom-llm-proxy.panghuer.top/v1')
+        config = yaml.safe_load((home / 'config.yaml').read_text(encoding='utf-8'))
+        self.assertEqual(config['model']['context_length'], 256000)
+        self.assertEqual(config['database']['journal_mode'], 'delete')
+        self.assertFalse(config['providers']['ppt-model']['discover_models'])
+
+    def test_slow_initialization_recovers_status_timeouts_without_another_admission(self):
+        self.task['phase'] = 'plan_initial'
+        result = self.root / 'result'
+        result.mkdir()
+        (result / 'manifest.json').write_text(json.dumps(self.manifest(status='awaiting_confirmation')))
+        clock, timeouts = PollClock(), []
+        def status(run_id, process, handlers, client):
+            timeouts.append(client.timeout)
+            clock.seconds += client.timeout if len(timeouts) < 3 else 5
+            if len(timeouts) < 3:
+                raise execute.HermesError('/v1/runs/run_1')
+            return {'status': 'completed', 'output': 'Private completed plan'}
+        code, state = self.run_worker(poll_clock=clock, status_effect=status)
+        self.assertEqual(code, 0)
+        self.assertEqual(state['status'], 'completed')
+        self.assertEqual(state['elapsed_seconds'], 29)
+        self.assertEqual(state['hermes_status_retries'], 2)
+        self.assertEqual(timeouts, [10, 10, 6])
+        self.last_client.admit.assert_called_once()
+        self.assertEqual([call.args for call in self.last_client.status.call_args_list], [('run_1',)] * 3)
+
+    def test_transient_status_failures_exhaust_three_retries_and_keep_private_diagnostic(self):
+        for http_status in (None, 502, 503, 504):
+            with self.subTest(http_status=http_status):
+                code, state = self.run_worker(poll_clock=PollClock(), request_failure=(
+                    'status', execute.HermesError('/v1/runs/run_1', http_status)))
+                self.assertEqual(code, 1)
+                self.assertEqual(state['status'], 'failed')
+                self.assertEqual(state['hermes_operation'], 'status')
+                self.assertEqual(state['hermes_http_status'], http_status)
+                self.assertEqual(state['hermes_status_retries'], 3)
+                self.assertEqual(state['elapsed_seconds'], 6)
+                self.assertEqual(self.last_client.status.call_count, 4)
+                self.last_client.admit.assert_called_once()
+                self.assertNotIn('hermes_status_retries', self.last_stdout)
+                self.assertNotIn('elapsed_seconds', self.last_stdout)
+
+    def test_status_auth_missing_run_and_invalid_response_fail_without_retries(self):
+        for operation, http_status in (('/v1/runs/run_1', 401), ('/v1/runs/run_1', 404),
+                                       ('/v1/runs/run_1', 500), ('invalid_json', None)):
+            with self.subTest(operation=operation, http_status=http_status):
+                code, state = self.run_worker(poll_clock=PollClock(), request_failure=(
+                    'status', execute.HermesError(operation, http_status)))
+                self.assertEqual(code, 1)
+                self.assertNotIn('hermes_status_retries', state)
+                self.last_client.status.assert_called_once_with('run_1')
+                self.last_client.admit.assert_called_once()
+
+    def test_successful_status_polls_do_not_reset_the_same_runs_retry_budget(self):
+        failure = execute.HermesError('/v1/runs/run_1')
+        sequence = [failure, {'status': 'running'}, failure, {'status': 'running'},
+                    failure, {'status': 'running'}, failure]
+        code, state = self.run_worker(poll_clock=PollClock(), request_failure=('status', sequence))
+        self.assertEqual(code, 1)
+        self.assertEqual(state['hermes_status_retries'], 3)
+        self.assertEqual(self.last_client.status.call_count, 7)
+        self.last_client.admit.assert_called_once()
+
+    def test_status_retry_never_outlives_original_phase_deadline(self):
+        clock, timeouts = PollClock(), []
+        def status(run_id, process, handlers, client):
+            timeouts.append(client.timeout)
+            clock.seconds += client.timeout
+            raise execute.HermesError('/v1/runs/run_1')
+        code, state = self.run_worker(poll_clock=clock, status_effect=status)
+        self.assertEqual(code, 3)
+        self.assertEqual(state['status'], 'deadline_exceeded')
+        self.assertEqual(clock.seconds, 30)
+        self.assertEqual(timeouts, [10, 10, 6])
+        self.last_client.admit.assert_called_once()
+        self.last_client.stop.assert_called_once_with('run_1')
+
+    def test_status_transport_failure_does_not_retry_a_stopped_gateway(self):
+        def status(run_id, process, handlers, client):
+            process.stopped = True
+            raise execute.HermesError('/v1/runs/run_1', 503)
+        code, state = self.run_worker(poll_clock=PollClock(), status_effect=status)
+        self.assertEqual(code, 1)
+        self.assertEqual(state['hermes_http_status'], 503)
+        self.assertNotIn('hermes_status_retries', state)
+        self.last_client.status.assert_called_once_with('run_1')
+
+    def test_cancel_during_status_timeout_stops_existing_run_before_another_poll(self):
+        calls = []
+        def status(run_id, process, handlers, client):
+            calls.append(run_id)
+            if len(calls) == 1:
+                handlers[execute.signal.SIGTERM](execute.signal.SIGTERM, None)
+                raise execute.HermesError('/v1/runs/run_1')
+            client.stop.assert_called_once_with('run_1')
+            return {'status': 'completed', 'output': 'Cancelled private output'}
+        code, state = self.run_worker(poll_clock=PollClock(), status_effect=status)
+        self.assertEqual(code, 2)
+        self.assertEqual(state['status'], 'interrupted')
+        self.assertEqual(calls, ['run_1', 'run_1'])
+        self.last_client.admit.assert_called_once()
+        self.last_client.stop.assert_called_once_with('run_1')
+
+    def test_unknown_failure_operation_and_invalid_status_never_enter_private_receipt(self):
+        for operation, status in (
+                ('https://private.example/v1/runs?token=SECRET', 503),
+                ('/v1/runs/SECRET?token=SECRET', True),
+                ('/v1/runs/SECRET/../private', 'SECRET'),
+                ('/v1/runs/run_1', 999)):
+            with self.subTest(operation=operation, status=status):
+                code, state = self.run_worker(request_failure=(
+                    'status', execute.HermesError(operation, status)))
+                self.assertEqual(code, 1)
+                self.assertNotIn('SECRET', json.dumps(state))
+                self.assertNotIn('SECRET', self.last_stdout)
+                self.assertEqual(state['hermes_operation'], 'status' if operation == '/v1/runs/run_1' else 'unknown')
+                self.assertEqual(state['hermes_http_status'], 503 if type(status) is int and status == 503 else None)
 
     def test_cleanup_failure_cannot_be_reported_as_success(self):
         for flags in ({"cleanup_error": True}, {"gateway_cleanup_error": True}):
