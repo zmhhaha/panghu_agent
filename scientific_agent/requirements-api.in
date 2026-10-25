@@ -1,0 +1,4 @@
+# Scientific API only. Pi, SQLite and mail HTTP clients use Python's urllib.
+# Exact transitive versions are retained from the verified worker lockfile.
+fastapi==0.138.2
+uvicorn==0.49.0

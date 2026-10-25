@@ -18,13 +18,17 @@ class WorkerError(Exception):
         self.status, self.code, self.retryable = status, code, retryable
 
 
-def urllib_transport(method, url, headers, payload, timeout):
+def urllib_transport(method, url, headers, payload, timeout, max_bytes=None):
     req = urllib.request.Request(url, data=None if payload is None else json.dumps(payload).encode('utf-8'), headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
-            return response.status, dict(response.headers), response.read()
+            body = response.read() if max_bytes is None else response.read(max_bytes + 1)
+            return response.status, dict(response.headers), body
     except urllib.error.HTTPError as exc:
-        return exc.code, dict(exc.headers), exc.read()
+        # Error JSON has its own small budget. A zero-byte artifact may expire
+        # between listing and download; its 410 must remain readable as JSON.
+        body = exc.read() if max_bytes is None else exc.read(64 * 1024 + 1)
+        return exc.code, dict(exc.headers), body
 
 
 class PiClient:
@@ -32,15 +36,25 @@ class PiClient:
         self.base_url, self.token = base_url.rstrip('/'), token
         self.transport, self.timeout = transport or urllib_transport, timeout
 
-    def request(self, method, path, payload=None, binary=False):
+    def request(self, method, path, payload=None, binary=False, max_bytes=None):
         if not self.base_url or not self.token:
             raise WorkerError(503, 'configuration_missing', 'Pi worker is not configured', True)
+        if max_bytes is not None and (type(max_bytes) is not int or not 0 <= max_bytes <= 50 * 1024 * 1024):
+            raise WorkerError(422, 'invalid_artifact_limit', 'Invalid artifact size limit')
         try:
-            status, headers, body = self.transport(method, self.base_url + '/v1' + path,
-                {'Authorization': 'Bearer ' + self.token, 'Content-Type': 'application/json'}, payload, self.timeout)
+            args = (method, self.base_url + '/v1' + path,
+                    {'Authorization': 'Bearer ' + self.token, 'Content-Type': 'application/json'}, payload, self.timeout)
+            # Keep the five-argument injected transport contract. Production
+            # urllib reads at most the declared artifact size plus one byte.
+            if self.transport is urllib_transport and max_bytes is not None:
+                status, headers, body = self.transport(*args, max_bytes=max_bytes)
+            else:
+                status, headers, body = self.transport(*args)
         except Exception as exc:
             raise WorkerError(503, 'worker_unavailable', 'Pi worker is temporarily unreachable', True) from exc
         if binary and 200 <= status < 300:
+            if max_bytes is not None and len(body) > max_bytes:
+                raise WorkerError(502, 'artifact_size_mismatch', 'Artifact exceeded its declared size')
             return body, headers
         try:
             data = json.loads(body)
@@ -80,8 +94,8 @@ class PiClient:
         return self.request('GET', '/tasks?' + urlencode(params))
     def ack(self, task_id, payload): return self.request('POST', self._task(task_id) + '/publication-ack', payload)
     def artifacts(self, task_id): return self.request('GET', self._task(task_id) + '/artifacts')
-    def artifact(self, task_id, artifact_id):
+    def artifact(self, task_id, artifact_id, max_bytes=None):
         if not isinstance(artifact_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', artifact_id):
             raise WorkerError(422, 'invalid_artifact', 'Invalid artifact identifier')
-        return self.request('GET', self._task(task_id) + '/artifacts/' + quote(artifact_id, safe=''), binary=True)
+        return self.request('GET', self._task(task_id) + '/artifacts/' + quote(artifact_id, safe=''), binary=True, max_bytes=max_bytes)
     def health(self): return self.request('GET', '/health')

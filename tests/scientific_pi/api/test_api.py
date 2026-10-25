@@ -3,6 +3,8 @@ import importlib
 import json
 import logging
 import sqlite3
+import subprocess
+import sys
 import threading
 import unittest
 import uuid
@@ -127,13 +129,15 @@ class ProjectionTests(unittest.TestCase):
         self.sent = []
         self.projection = PiProjection(self.database, self.worker, 'skills-pinned', 'runtime-pinned', lambda *args:self.sent.append(args))
         self.client = TestClient(create_app(self.database, self.worker, self.projection, start_reconciler=False))
+        self.client.headers['X-Forwarded-User'] = 'trusted-user'
         self.client.__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
         self.addCleanup(self.database.connection.close)
         self.payload = dict(topic='  Test review  ', user_id='trusted-user', engine='pi', mode='review')
 
-    def submit(self, key='fixed-key', **extra):
-        return self.client.post('/scientific-research', json=dict(self.payload, **extra), headers={'Idempotency-Key':key})
+    def submit(self, key='fixed-key', authenticated_user='trusted-user', **extra):
+        return self.client.post('/scientific-research', json=dict(self.payload, **extra),
+                                headers={'Idempotency-Key':key,'X-Forwarded-User':authenticated_user})
 
     def accepted(self, **extra):
         response = self.submit(**extra)
@@ -301,47 +305,129 @@ class ProjectionTests(unittest.TestCase):
         self.assertNotIn('authorization', response.headers)
         self.assertEqual(self.client.get('/scientific-research/'+task_id+'/artifacts/bad.name').status_code,422)
 
-    def test_legacy_default_fields_without_pi_fallback(self):
-        with patch.dict('os.environ', {'LLM_BASE_URL':'http://llm.invalid','LLM_SERVICE_TOKEN':'test'}), patch('app.api.scientific_agent.threading.Thread'):
-            response = self.client.post('/scientific-research',json=dict(topic='Legacy',user_id='old-user'))
-        self.assertEqual(response.status_code,200)
+    def test_default_is_pi_without_legacy_llm_configuration_or_fallback(self):
+        with patch.dict('os.environ', {'SCIENTIFIC_DEFAULT_ENGINE':'crewai','LLM_BASE_URL':'','LLM_SERVICE_TOKEN':''}):
+            response = self.client.post('/scientific-research',json=dict(topic='Pi by default'))
+        self.assertEqual(response.status_code,200,response.text)
         task = response.json()
-        self.assertEqual(task['engine'],'crewai')
-        self.assertEqual(task['status'],'pending')
-        self.assertEqual(task['user_id'],'old-user')
-        self.assertEqual(self.client.get('/scientific-research/'+task['id']).json()['topic'],'Legacy')
+        self.assertEqual(task['engine'],'pi')
+        self.assertEqual(task['user_id'],'trusted-user')
+        self.assertEqual(self.worker.put_count,1)
+        self.assertEqual(self.database._query('SELECT * FROM scientific_tasks'),[])
+        self.worker.reject = 429
+        self.assertEqual(self.submit(key='no-fallback').status_code,429)
+        self.assertEqual(self.database._query('SELECT * FROM scientific_tasks'),[])
+
+    def test_explicit_crewai_is_rejected_without_dispatch(self):
+        self.assertEqual(self.submit(engine='crewai').status_code,422)
+        self.assertEqual(self.worker.put_count,0)
+        self.assertEqual(self.database._query('SELECT * FROM scientific_tasks'),[])
+
+    def test_legacy_task_and_report_remain_shared_and_unchanged(self):
+        task_id = self.database.create_task('Legacy shared','old-user')
+        content = '# Legacy report\r\nexact 科研 bytes\r\n'
+        self.database.connection.execute('INSERT INTO scientific_reports (id,task_id,topic,content) VALUES (?,?,?,?)',
+                                         (task_id,task_id,'Legacy shared',content))
+        self.database.connection.commit()
+        with TestClient(create_app(self.database,self.worker,self.projection,start_reconciler=False)) as anonymous:
+            task = anonymous.get('/scientific-research/'+task_id)
+            self.assertEqual(task.status_code,200,task.text)
+            self.assertEqual(task.json()['engine'],'crewai')
+            self.assertEqual(task.json()['status'],'pending')
+            self.assertEqual(anonymous.get('/scientific-reports/'+task_id).json()['content'],content)
+            self.assertEqual(anonymous.get('/scientific-download/'+task_id).content,content.encode('utf-8'))
+            self.assertEqual(anonymous.get('/scientific-reports').json()[0]['id'],task_id)
+        self.assertEqual(self.database.get_task(task_id)['status'],'pending')
         self.assertEqual(self.worker.put_count,0)
 
-    def test_legacy_execution_stores_before_done_and_mail_failure_stays_done(self):
-        import types
-        import app.api.scientific_agent as api
-        events = []
-        class LegacyDB:
-            def update_task(self,task_id,**values): events.append(('task',values['status']))
-            def save_report(self,*args): events.append(('report',args[-1]))
-            def get_report_by_task(self,task_id): return {'content':'Legacy result'}
-        crew = types.ModuleType('scientific_agent.crew')
-        crew.create_scientific_crew = lambda:types.SimpleNamespace(kickoff=lambda **kwargs:'Legacy result')
-        notifier = types.SimpleNamespace(notify=lambda *args:(_ for _ in ()).throw(TimeoutError('mail failed')))
-        with patch.dict('sys.modules',{'scientific_agent.crew':crew}):
-            api._run_refinement('fixture-id','Legacy','user@example.test',LegacyDB(),notifier)
-        self.assertEqual(events,[('task','running'),('report','Legacy result'),('task','done')])
-
     def test_health_uses_actual_worker_readiness(self):
-        with patch.dict('os.environ', {'SCIENTIFIC_DEFAULT_ENGINE':'pi'}):
-            self.assertTrue(self.client.get('/scientific-health').json()['worker_ready'])
+        with patch.dict('os.environ', {'SCIENTIFIC_DEFAULT_ENGINE':'crewai','LLM_BASE_URL':'','LLM_SERVICE_TOKEN':''}):
+            health = self.client.get('/scientific-health').json()
+            self.assertTrue(health['worker_ready'])
+            self.assertEqual(health['status'],'ok')
+            self.assertEqual(health['backend'],'pi')
+            self.assertIsNone(health['llm_configured'])
+            self.assertFalse(health['model_probe_performed'])
             self.worker.health = lambda:dict(alive=True,queue_writable=True,runtime_ready=False,worker_ready=False)
             self.assertEqual(self.client.get('/scientific-health').json()['status'],'degraded')
+            self.worker.health = lambda:(_ for _ in ()).throw(WorkerError(503,'worker_unavailable','Offline'))
+            self.assertFalse(self.client.get('/scientific-health').json()['worker_ready'])
 
     def test_validation_and_idempotency_scope(self):
-        for change in ({'user_id':''},{'topic':'   '},{'engine':'bad'},{'mode':'bad'},{'timeout_seconds':True},{'timeout_seconds':60.5}):
+        for change in ({'user_id':'forged-user'},{'topic':'   '},{'engine':'bad'},{'mode':'bad'},{'timeout_seconds':True},{'timeout_seconds':60.5}):
             self.assertEqual(self.submit(**change).status_code,422)
         first = self.accepted()
         self.assertEqual(self.submit().json()['id'], first)
         self.assertEqual(self.submit(topic='Changed').status_code,409)
         self.assertEqual(self.submit(email='new@example.test').status_code,409)
-        self.assertNotEqual(self.submit(user_id='another-user').json()['id'],first)
+        self.assertNotEqual(self.submit(user_id='another-user',authenticated_user='another-user').json()['id'],first)
         self.assertEqual(self.client.get('/scientific-research/not-a-uuid').status_code,422)
+
+    def test_submission_uses_only_trusted_forwarded_identity(self):
+        self.assertEqual(self.submit(authenticated_user='').status_code,401)
+        self.assertEqual(self.submit(authenticated_user='   ').status_code,401)
+        self.assertEqual(self.submit(authenticated_user='x'*201,user_id='').status_code,422)
+        self.assertEqual(self.submit(user_id='someone-else').status_code,422)
+        self.assertEqual(self.worker.put_count,0)
+        task_id = self.accepted(user_id='')
+        self.assertEqual(self.projection.get(task_id)['user_id'],'trusted-user')
+
+    def test_pi_ownership_guards_tasks_cancel_artifacts_reports_and_downloads(self):
+        task_id = self.accepted()
+        self.worker.complete(task_id)
+        self.projection.reconcile()
+        paths = [('/scientific-research/'+task_id,'get'),
+                 ('/scientific-research/'+task_id+'/cancel','post'),
+                 ('/scientific-research/'+task_id+'/artifacts','get'),
+                 ('/scientific-research/'+task_id+'/artifacts/report','get'),
+                 ('/scientific-reports/'+task_id,'get'),('/scientific-download/'+task_id,'get')]
+        for path, method in paths:
+            with self.subTest(path=path):
+                for identity, expected in (('another-user',404),('',401),('x'*201,422)):
+                    response = getattr(self.client,method)(path,headers={'X-Forwarded-User':identity})
+                    self.assertEqual(response.status_code,expected,response.text)
+        self.assertEqual(self.worker.tasks[task_id]['state'],'succeeded')
+        self.assertEqual(self.client.get('/scientific-download/'+task_id).status_code,200)
+
+    def test_cross_user_cancel_never_reaches_worker(self):
+        task_id = self.accepted()
+        with patch.object(self.worker,'cancel',wraps=self.worker.cancel) as cancel:
+            response = self.client.post('/scientific-research/'+task_id+'/cancel',headers={'X-Forwarded-User':'other'})
+        self.assertEqual(response.status_code,404)
+        cancel.assert_not_called()
+        self.assertEqual(self.worker.tasks[task_id]['state'],'queued')
+
+    def test_report_alias_cannot_bypass_pi_task_ownership(self):
+        task_id = self.accepted()
+        alias = str(uuid.uuid4())
+        self.database.connection.execute('INSERT INTO scientific_reports (id,task_id,topic,content) VALUES (?,?,?,?)',
+                                         (alias,task_id,'Alias','Private report'))
+        self.database.connection.commit()
+        self.assertEqual(self.client.get('/scientific-reports/'+alias).status_code,200)
+        self.assertEqual(self.client.get('/scientific-reports/'+alias,headers={'X-Forwarded-User':'other'}).status_code,404)
+
+    def test_report_search_filters_ownership_before_pagination(self):
+        own = self.accepted(topic="shared topic own's")
+        self.worker.complete(own)
+        self.projection.reconcile()
+        other = self.accepted(key='other',user_id='other',authenticated_user='other',topic='shared topic private')
+        self.worker.complete(other)
+        self.projection.reconcile()
+        legacy = self.database.create_task('shared topic legacy','legacy')
+        self.database.connection.execute('INSERT INTO scientific_reports (id,task_id,topic,content,created_at) VALUES (?,?,?,?,?)',
+                                         (legacy,legacy,'shared topic legacy','shared legacy','2020-01-01'))
+        self.database.connection.execute('UPDATE scientific_reports SET created_at=? WHERE id=?',('2030-01-01',other))
+        self.database.connection.commit()
+        query = '/scientific-reports?q=shared%20topic&limit=1'
+        self.assertEqual(self.client.get(query).json()[0]['id'],own)
+        self.assertEqual(self.client.get(query+'&offset=1').json()[0]['id'],legacy)
+        anonymous = self.client.get('/scientific-reports',headers={'X-Forwarded-User':''}).json()
+        self.assertEqual([row['id'] for row in anonymous],[legacy])
+        others = self.client.get('/scientific-reports',headers={'X-Forwarded-User':'other'}).json()
+        self.assertEqual({row['id'] for row in others},{legacy,other})
+        quoted = self.client.get('/scientific-reports',params={'q':"own's"}).json()
+        self.assertEqual([row['id'] for row in quoted],[own])
+        self.assertEqual(self.client.get('/scientific-reports',params={'q':"' OR 1=1 --"}).json(),[])
 
 
 class ClientTests(unittest.TestCase):
@@ -379,6 +465,20 @@ class ClientTests(unittest.TestCase):
             importlib.reload(api)
             PiClient('http://worker','secret')
             self.assertEqual(urlopen.call_count,0)
+
+    def test_api_import_does_not_require_crewai_or_legacy_execution_module(self):
+        result = subprocess.run([sys.executable,'-c', '''
+import importlib.abc, sys
+class NoCrew(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'scientific_agent.crew' or fullname == 'crewai' or fullname.startswith('crewai.'):
+            raise ModuleNotFoundError('CrewAI is absent', name=fullname)
+sys.meta_path.insert(0, NoCrew())
+import app.api.scientific_agent as api
+assert api.ResearchRequest(topic='Research').engine is None
+assert not hasattr(api, '_run_refinement')
+'''],capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
 
     def test_all_cancel_timeout_public_mappings(self):
         for state in ('cancelled','timed_out','failed'): self.assertEqual(public_status(state),'failed')

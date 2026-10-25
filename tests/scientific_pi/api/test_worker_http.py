@@ -34,6 +34,7 @@ class WorkerHTTPTests(unittest.TestCase):
                 try:
                     projection = PiProjection(database,worker,'skills-pinned','runtime-pinned')
                     with TestClient(create_app(database,worker,projection,start_reconciler=False)) as public:
+                        public.headers['X-Forwarded-User'] = 'user'
                         self.assertTrue(public.get('/scientific-health').json()['worker_ready'])
                         payload = dict(topic='Fixture',user_id='user',engine='pi')
                         task_id = public.post('/scientific-research',json=payload).json()['id']
@@ -84,6 +85,7 @@ class WorkerHTTPTests(unittest.TestCase):
                 try:
                     projection = PiProjection(database,worker,'skills','runtime')
                     with TestClient(create_app(database,worker,projection,start_reconciler=False)) as public:
+                        public.headers['X-Forwarded-User'] = 'same-user'
                         payload = dict(topic='Busy fixture',user_id='same-user',engine='pi')
                         active_id = public.post('/scientific-research',json=payload).json()['id']
                         response = public.post('/scientific-research',json=payload,headers={'Idempotency-Key':'rejected-before-crash'})
