@@ -1,6 +1,6 @@
 # K8s 部署对接与后续验收交接
 
-更新时间：2026-10-25。当前部署与业务验证以文末 Hermes 进展为准。8页DSH白底架构导读review草稿已成功入库，后端已具备所有者预览与下载；浏览器实际核对待恢复登录。前面的 Pi 开发、暂停独立 Docker 环境配置与模型重试等说明保留为历史记录。
+更新时间：2026-10-25。当前部署与业务验证以文末 Hermes 进展为准。8页DSH白底架构导读review草稿已成功入库；浏览器恢复登录后已核对全部8页PNG并成功触发审核稿下载，四项质量门仍pending。前面的 Pi 开发、暂停独立 Docker 环境配置与模型重试等说明保留为历史记录。
 
 ## 当前事实
 
@@ -206,9 +206,17 @@ revision `54d486cdbbe079e5fbc344c8677c32e05a3acceb`，validate=true。
 prepare代理18次请求（16completed、1client_disconnected、1proxy_shutdown），generate代理50次
 （49completed、1proxy_shutdown）；完整tokens及费用未汇总，不记为0。
 
-最后浏览器会话已过期，已打开Casdoor并请用户登录。后端所有者专属预览与下载已具备，
-网页实际预览8页和下载仍待恢复登录后核对，未宣称已经在浏览器完成下载。
+此前浏览器会话已过期，曾打开Casdoor并请用户登录。用户回复已登录后会话恢复，
+网页显示项目修订18、等待审核、“预览与修改”版本数1，选中上述review版本。
+已按1至8逐页点击、截图，8张PNG均加载，未见加载错误或明显遮挡；白底架构图、顺序图、
+配置层、判断树、runner关系及阅读路径均实际显示。这是网页栅格显示检查，不替代独立视觉门。
+截图为本机 `.runtime/ppt-dsh-review-page1.png` 至 `ppt-dsh-review-page8.png`，不提交二进制。
 
-服务器审核稿入库成功结果已同步到OpenSpec，最终revision为
+实际点击“下载审核草稿”，按钮等待后恢复且无错误。handler只有HTTP成功、非空Blob后才触发
+原生download，故记为下载动作成功触发；未独立核对浏览器落盘文件hash，未完成PowerPoint验收。
+
+服务器审核稿入库成功结果已同步到OpenSpec，当时revision为
 `cf6fb80c68c3af97cc3a81eba403623ca7b60760`，validate=true。任务仍26完成、35待办，
-P1/P2总项未勾选；浏览器核对及四项质量门继续pending。
+P1/P2总项未勾选。上述revision记录服务器成功结果；其后浏览器逐页显示和下载触发已核对，
+已同步到最新OpenSpec revision `76320cb94820eeaefa2fa28c002ae6e95113cbeb`，validate=true。
+四项质量门继续pending。
