@@ -280,3 +280,91 @@ Pi 生成 worker 尚未接入，`PPT_EXECUTION_ENABLED=false`；恢复网站和�
 浏览器验证工具启动失败，真实 Casdoor 登录后的页面/API 操作仍待验证；
 合成令牌镜像自检与匿名公网检查不能替代真实浏览器 SSO 验收。
 Pi 执行接线、真实代理完整协议、CNI 拒绝路径及 PPT 产物验收继续按各自任务完成。
+
+## 10. 保存设置或上传前置请求返回 csrf_rejected — 2026-10-25
+
+本轮真实浏览器操作中，保存演示要求的 `PATCH` 返回 HTTP403，错误码为
+`csrf_rejected`。上传资料前也会先保存外部模型使用同意；这个前置请求失败时，
+实际的 `POST /assets` 不会发出，因此不能仅凭未出现上传日志认定 multipart 处理卡住。
+
+已确认一个独立的 CSRF 生命周期问题：旧版每次 `GET /api/v1/me` 都生成随机令牌，
+覆盖浏览器共享的 `ppt_csrf` Cookie；每个页面则分别在 API 模块内存中保存响应令牌。
+另一个标签页或后续的身份读取会更新 Cookie，先前页面仍发送旧 header，服务端因不匹配
+正确拒绝写请求。合成身份测试也稳定复现了“再次读取 me 后，旧页面写请求403”的路径。
+并发身份读取会增加这种不一致的机会；生产故障不依赖开发环境的 React StrictMode。
+
+修复包含以下行为：
+
+- 后端 `GET /me` 复用严格符合现有 32 字节 base64url 编码格式的 CSRF Cookie；
+  Cookie 缺失或格式异常时才生成新令牌，继续使用 `Secure`、`SameSite=strict` 和原路径。
+- 前端只合并正在进行的 `/me` 请求，完成后不缓存身份结果；401 清除内存令牌，
+  并使此前尚未完成的身份读取失效，避免迟到的响应恢复旧身份。
+- 仅在写请求收到明确的 HTTP403、`detail.code=csrf_rejected` 时，重新读取一次 `/me`，
+  使用原正文和原 `Idempotency-Key` 重试一次；multipart 上传保留同一个文件与提交意图。
+  再次被拒绝就停止，GET、401、其他403及服务端错误不自动重放写操作。
+- 仍检查真实登录身份、项目归属、精确 Origin 和 Cookie/header 匹配；
+  最终拒绝显示“页面安全校验已失效，请刷新页面后重试。（CSRF_REJECTED）”。
+
+本次修复提交为子仓库 `6d306ff`。本地回归结果：后端 **42 passed、1 skipped**，
+前端 API/CSRF 回归 **28 passed**，TypeScript 编译通过。前端测试在本地 Windows 环境
+使用 `--pool=threads --maxWorkers=1 --minWorkers=1` 完成；默认 fork runner 曾停留在收集阶段。
+
+网站已部署镜像
+`arm-cluster-master:5000/ppt-service-site@sha256:6f69fb9bf4193a85c90f48a710ce8938abd4d5194b4300bb9c78b3d31079b006`，
+新网站 Pod 为 **2/2 Ready**。真实登录后的网页保存设置、上传资料均已成功。
+这确认本轮复现的 CSRF 故障已修复；历史 `SERVICE_ERROR` 是前端通用错误映射，
+此前每一次通用报错的根因不能都据此认定为同一个 CSRF 问题。
+
+## 11. Controller 被 restricted Pod Security 拒绝 — 2026-10-25
+
+首版 Hermes controller 使用 UID0，并保留 `CHOWN`、`DAC_OVERRIDE`、`FOWNER`。
+正式 `ppt-service` 命名空间执行 `restricted:latest`，拒绝该 Pod；没有为接入执行器
+降低整个命名空间的 Pod Security 要求。
+
+相关修复提交为 `c289d26`、`c0d0651`。Controller 改为 **UID10000/GID10000**，
+删除额外 capabilities。实际运行核验结果为 UID10000、GID10000、有效 capabilities 为0；
+已有 Ceph 数据目录为10000:10000、权限0700。同 UID 自身 chown、冻结、复制和清理
+操作已在真实运行环境通过。任务仍只挂载各自的 PVC 子路径，源资料使用只读挂载。
+
+库存统计还改为遇到目录遍历错误就抛出 `storage_inventory_unavailable`，拒绝新任务，
+避免无权限目录被 `os.walk` 静默跳过而漏计空间。清理异常不作为停止证明或验收通过；
+保留证据供管理员处理，不用扩大 controller 权限来掩盖异常。
+
+## 12. 执行器预检停止失败，以及修复后的完整复验 — 2026-10-25
+
+首轮无模型预检中，worker、proxy、sandbox 三个角色各自的网络检查结果均为通过。
+整轮预检仍然失败：预检 proxy 的 PID1 未处理 SIGTERM，进程存活超过25秒停止预算，
+未能在该轮预算内完成真实停止证明。因此网络子项通过不能写成完整预检通过。
+
+随后已通过正常 Backend 流程核验精确 Pod UID 和实际停止证据并完成回收。
+这次回收不改变首轮失败的结果，也不替代修复后的完整重跑。
+该阶段的完整预检状态为待复验，保留这次失败记录。
+
+停止处理修复随后以子仓库提交 `086d74d` 发布；Windows 回归为
+**42 passed、1 skipped**。修复后的 b3 首次预检（scope 前缀 `23eb`）已经取得真实
+停止证明，但清理阶段的 Kubernetes API 操作失败，整轮结果仍为失败。
+随后通过正常 Backend 重试完成清理；重试成功不能据以推断前次 API 失败的具体 HTTP 根因，
+也不把该次失败报告改写为通过。
+
+修复后再次完整运行的 scope 为 `7d606076-6503-4753-bac8-ade8376ab0c8`，
+进程退出码为0，报告结果如下：
+
+| 检查 | 结果 |
+| --- | --- |
+| `passed` | `true` |
+| `no_model_calls` | `true` |
+| `writers_stopped` | `true` |
+| `cleanup_complete` | `true` |
+| proxy 网络检查 | 14项全部通过 |
+| worker 网络检查 | 14项全部通过 |
+| sandbox 网络检查 | 14项全部通过 |
+
+成功报告保存于服务器 `/root/ppt-network-preflight-20261025-b3-r2.log`。
+本次通过使用的最终镜像为：
+
+- `arm-cluster-master:5000/ppt-hermes-controller@sha256:bf51a8662f834c7e2e76dbd9ffa76e54b9fc1c0588eaab486c1ee2267d9c696a`
+- `arm-cluster-master:5000/ppt-hermes-worker@sha256:8340270fdfb0b4d39c13ef8daa776867cd28890c645726222274cc00b6ef771d`
+
+这次完整复验确认了网络隔离、全部 writer 的停止证明和资源清理，未调用模型。
+网站执行开启和真实规划正在继续；截至本次记录尚无 PPT 产物，不能把无模型预检通过
+记录成真实规划、PPT 生成或人工产物验收通过。
