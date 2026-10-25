@@ -1,5 +1,5 @@
 import type { Job, Profile, Project, Version } from './domain';
-import { adaptDirections } from './planning';
+import { adaptCommunication, adaptDirections, adaptPlanQuestions } from './planning';
 const root = '/api/v1';
 let csrfToken: string | null = null;
 let authenticationEpoch = 0;
@@ -71,10 +71,10 @@ export function adaptProject(raw: RecordValue): Project {
  const plans = raw.plans ?? []; const latest = plans.length ? plans[plans.length-1] : raw.plan;
  const options = latest?.design?.directions ?? latest?.design?.options ?? latest?.directions;
  const plan = latest ? { ...latest, revision:String(latest.revision), stage:latest.phase==='plan_initial'?'communication':latest.phase==='plan_options'?'directions':latest.stage,
- communication: { summary:latest.design?.summary??latest.outline?.summary??(typeof latest.outline==='string'?latest.outline:''), template_options:latest.design?.validated_templates??[] },
+ communication:adaptCommunication(latest),
  directions:adaptDirections(options),
  recommendation:latest.design?.recommendation ? {direction_id:String(latest.design.recommendation.direction_id??''),reason:typeof latest.design.recommendation.reason==='string'?latest.design.recommendation.reason:'',selection_is:String(latest.design.recommendation.selection_is??'')} : undefined,
- questions:latest.questions??latest.design?.questions??latest.outline?.questions??[],
+ questions:adaptPlanQuestions(latest.questions??latest.design?.questions??latest.outline?.questions??latest.outline?.communication?.questions??latest.design?.communication?.questions??latest.communication?.questions),
  confirmed_direction_id:latest.confirmed_at ? latest.confirmation_selection?.direction_id??latest.selection?.direction_id??latest.design?.selection?.direction_id : undefined,
  } : undefined;
  return { ...raw, settings:raw.settings??{pages:raw.page_count??8,language:raw.language==='zh'?'简体中文':raw.language??'简体中文',audience:raw.audience??'',purpose:raw.purpose??'',style:raw.style??'',requirements:raw.requirements??''}, assets:raw.assets??[], plan,
