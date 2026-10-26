@@ -3,7 +3,7 @@ kind: PersistentVolumeClaim
 metadata:
   name: ppt-data
   annotations:
-    ppt.panghuer.top/retention: keep-for-explicit-backup-and-owner-approved-removal
+    ppt-service.panghuer.top/retention: keep-for-explicit-backup-and-owner-approved-removal
 spec:
   storageClassName: ceph-cephfs
   accessModes: [ReadWriteMany]
@@ -16,7 +16,7 @@ kind: PersistentVolumeClaim
 metadata:
   name: ppt-postgres-data
   annotations:
-    ppt.panghuer.top/retention: keep-for-explicit-backup-and-owner-approved-removal
+    ppt-service.panghuer.top/retention: keep-for-explicit-backup-and-owner-approved-removal
 spec:
   storageClassName: ceph-rbd
   accessModes: [ReadWriteOnce]

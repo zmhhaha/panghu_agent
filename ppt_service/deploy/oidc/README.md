@@ -1,6 +1,6 @@
 # PPT 登录部署
 
-PPT 使用独立 Casdoor 应用，部署到 `ppt-service`，公开地址为 `https://ppt.panghuer.top`，回调为 `/oauth2/callback`。Casdoor 和 Cloudflare Tunnel 由用户在各自后台配置；所需字段及邮箱名单见 [OAuth 配置](../../../../oauth/k8s/PPT.md)。
+PPT 使用独立 Casdoor 应用，部署到 `ppt-service`，公开地址为 `https://ppt-service.panghuer.top`，回调为 `/oauth2/callback`。Casdoor 和 Cloudflare Tunnel 由用户在各自后台配置；所需字段及邮箱名单见 [OAuth 配置](../../../../oauth/k8s/PPT.md)。
 
 在服务器仓库的 `panghu_agent/ppt_service` 目录提供实际公开 client ID 后，运行 `bash deploy.sh`，完成构建、推送、数据库初始化或升级以及网站发布。也可先运行 `bash build.sh`，再用 `bash deploy.sh --skip-build` 部署已推送摘要。前置条件和完整命令见 [部署说明](../k8s/README.md#服务器标准入口)。
 

@@ -39,8 +39,10 @@ with engine.connect() as db:
     assert not db.scalar(text("SELECT has_table_privilege(current_user, 'public.api_schema_revision', 'DELETE')"))
 engine.dispose()
 """
-STORAGE_STATE = 'ppt.panghuer.top/state-layout'
-STORAGE_UID = 'ppt.panghuer.top/state-claim-uid'
+STORAGE_STATE = 'ppt-service.panghuer.top/state-layout'
+STORAGE_UID = 'ppt-service.panghuer.top/state-claim-uid'
+LEGACY_STORAGE_STATE = 'ppt.panghuer.top/state-layout'
+LEGACY_STORAGE_UID = 'ppt.panghuer.top/state-claim-uid'
 STORAGE_INIT = """import os, stat
 root = '/var/lib/ppt-service'
 parent = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -70,6 +72,15 @@ assert os.access(root + '/state', os.R_OK | os.W_OK | os.X_OK)
 
 class DeployError(RuntimeError):
     pass
+
+
+def storage_markers(annotations):
+    values = []
+    for key, legacy_key in ((STORAGE_STATE, LEGACY_STORAGE_STATE), (STORAGE_UID, LEGACY_STORAGE_UID)):
+        if key in annotations and legacy_key in annotations and annotations[key] != annotations[legacy_key]:
+            raise DeployError('Conflicting old and new PPT storage initialization markers')
+        values.append(annotations.get(key, annotations.get(legacy_key)))
+    return tuple(values)
 
 
 def load_documents(path):
@@ -136,8 +147,8 @@ def validate_auth(documents):
             or 'INVITATION_SUBJECTS' in auth
             or auth.get('OIDC_ISSUER') != 'https://auth.panghuer.top'
             or proxy.get('oidc_issuer_url') != auth['OIDC_ISSUER']
-            or auth.get('ALLOWED_ORIGINS') != 'https://ppt.panghuer.top'
-            or proxy.get('redirect_url') != 'https://ppt.panghuer.top/oauth2/callback'
+            or auth.get('ALLOWED_ORIGINS') != 'https://ppt-service.panghuer.top'
+            or proxy.get('redirect_url') != 'https://ppt-service.panghuer.top/oauth2/callback'
             or proxy.get('pass_authorization_header') is not True
             or proxy.get('email_domains')
             or any(proxy.get(key) for key in ('ssl_insecure_skip_verify',
@@ -267,8 +278,8 @@ class Deployment:
         if not uid:
             raise DeployError('Cannot determine the PPT data PVC identity')
         annotations = claim['metadata'].get('annotations', {})
-        pending = annotations.get(STORAGE_STATE) == 'pending-v1'
-        bound_uid = annotations.get(STORAGE_UID)
+        state, bound_uid = storage_markers(annotations)
+        pending = state == 'pending-v1'
         if bound_uid and bound_uid != uid:
             raise DeployError('Storage initialization marker belongs to a different PVC UID')
         if pending:
@@ -282,6 +293,14 @@ class Deployment:
         if (claim or {}).get('metadata', {}).get('uid') != uid:
             raise DeployError('The PPT data PVC identity changed during initialization')
         merged = dict(claim['metadata'].get('annotations', {}))
+        state, bound_uid = storage_markers(merged)
+        if bound_uid and bound_uid != uid:
+            raise DeployError('Storage initialization marker belongs to a different PVC UID')
+        for key, legacy_key, value in ((STORAGE_STATE, LEGACY_STORAGE_STATE, state),
+                                       (STORAGE_UID, LEGACY_STORAGE_UID, bound_uid)):
+            if value is not None:
+                merged[key] = value
+            merged.pop(legacy_key, None)
         merged.update(annotations)
         patch = [{'op': 'test', 'path': '/metadata/uid', 'value': uid}]
         if claim['metadata'].get('resourceVersion'):
@@ -456,8 +475,8 @@ class Deployment:
                     suffix = hashlib.sha256(identity.encode()).hexdigest()[:16]
                     job['metadata']['name'] = 'ppt-migrate-' + suffix
                     job['metadata'].setdefault('annotations', {}).update({
-                        'ppt.panghuer.top/previous-job-name': name,
-                        'ppt.panghuer.top/previous-job-uid': uid,
+                        'ppt-service.panghuer.top/previous-job-name': name,
+                        'ppt-service.panghuer.top/previous-job-uid': uid,
                     })
                     continue
             else:
@@ -556,12 +575,12 @@ class Deployment:
             site['spec']['replicas'] = target_replicas
             site['spec']['template']['spec']['containers'][0]['image'] = image
             # Credentials and public envFrom values are read only on startup.
-            site['spec']['template'].setdefault('metadata', {}).setdefault('annotations', {})['ppt.panghuer.top/config-refresh'] = self.lock_token
+            site['spec']['template'].setdefault('metadata', {}).setdefault('annotations', {})['ppt-service.panghuer.top/config-refresh'] = self.lock_token
             self.apply([site])
             print('Waiting for the website and OAuth proxy rollout.', flush=True)
             self.kube('-n', NAMESPACE, 'rollout', 'status', 'deployment/ppt-site', '--timeout=300s')
             print(self.kube('-n', NAMESPACE, 'get', 'pods,svc,pvc'), end='', flush=True)
-            print('Website deployed. Configure the documented Tunnel peer policies and ppt.panghuer.top entry. Execution admission follows the existing explicit website configuration.')
+            print('Website deployed. Configure the documented Tunnel peer policies and ppt-service.panghuer.top entry. Execution admission follows the existing explicit website configuration.')
         finally:
             failed = sys.exc_info()[0] is not None
             try:

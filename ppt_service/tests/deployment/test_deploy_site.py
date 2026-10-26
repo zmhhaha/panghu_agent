@@ -527,8 +527,8 @@ def test_restored_old_schema_does_not_reuse_same_image_completed_migration_recei
     assert created['metadata']['name'] == expected['metadata']['name'] != job['metadata']['name']
     assert created['spec'] == job['spec']
     assert created['metadata']['annotations'] == {
-        'ppt.panghuer.top/previous-job-name': job['metadata']['name'],
-        'ppt.panghuer.top/previous-job-uid': 'previous-migration-uid',
+        'ppt-service.panghuer.top/previous-job-name': job['metadata']['name'],
+        'ppt-service.panghuer.top/previous-job-uid': 'previous-migration-uid',
     }
     assert 'job/' + created['metadata']['name'] in runner.calls[-1][0]
     assert all('delete' not in args for args, _ in runner.calls)
@@ -666,7 +666,7 @@ def test_storage_init_does_not_adopt_a_nonempty_volume_with_no_state():
 
 
 def data_claim(*, pending=False, ready=False, bound_uid=None):
-    annotations = {'ppt.panghuer.top/retention': 'keep'}
+    annotations = {'ppt-service.panghuer.top/retention': 'keep'}
     if pending or ready:
         annotations[deploy.STORAGE_STATE] = 'pending-v1' if pending else 'ready-v1'
     if bound_uid:
@@ -694,7 +694,7 @@ def test_new_dynamic_claim_is_marked_pending_before_any_job_and_bound_to_uid():
     assert patch[0] == {'op': 'test', 'path': '/metadata/uid', 'value': 'data-claim-uid'}
     assert patch[1] == {'op': 'test', 'path': '/metadata/resourceVersion', 'value': '42'}
     assert patch[-1]['value'][deploy.STORAGE_UID] == 'data-claim-uid'
-    assert patch[-1]['value']['ppt.panghuer.top/retention'] == 'keep'
+    assert patch[-1]['value']['ppt-service.panghuer.top/retention'] == 'keep'
 
 
 @pytest.mark.parametrize('bound_uid', [None, 'data-claim-uid'])
@@ -711,6 +711,40 @@ def test_interrupted_pending_claim_is_resumed_with_same_uid_and_fsgroup(bound_ui
 def test_existing_ready_or_restored_claim_never_requests_fsgroup(claim):
     instance = deploy.Deployment(runner=Runner([claim]))
     assert instance.storage_claim(data_claim_template(), existing_site={'spec': {'replicas': 1}}) == ('data-claim-uid', False)
+
+
+def test_legacy_ready_storage_markers_preserve_existing_volume_and_migrate_atomically():
+    claim = data_claim()
+    claim['metadata']['annotations'].update({deploy.LEGACY_STORAGE_STATE: 'ready-v1',
+                                            deploy.LEGACY_STORAGE_UID: 'data-claim-uid'})
+    runner = Runner([claim, claim, ''])
+    instance = deploy.Deployment(runner=runner)
+    assert instance.storage_claim(data_claim_template(), existing_site={'spec': {'replicas': 1}}) == ('data-claim-uid', False)
+    instance.patch_storage('data-claim-uid', {deploy.STORAGE_STATE: 'ready-v1', deploy.STORAGE_UID: 'data-claim-uid'})
+    patch = json.loads(runner.calls[-1][0][-1])
+    assert patch[:2] == [{'op': 'test', 'path': '/metadata/uid', 'value': 'data-claim-uid'},
+                        {'op': 'test', 'path': '/metadata/resourceVersion', 'value': '42'}]
+    assert patch[-1]['value'][deploy.STORAGE_STATE] == 'ready-v1'
+    assert patch[-1]['value'][deploy.STORAGE_UID] == 'data-claim-uid'
+    assert deploy.LEGACY_STORAGE_STATE not in patch[-1]['value']
+    assert deploy.LEGACY_STORAGE_UID not in patch[-1]['value']
+    assert not any('create' in args for args, _ in runner.calls)
+
+
+@pytest.mark.parametrize('key,legacy_key,new_value,old_value', [
+    (deploy.STORAGE_STATE, deploy.LEGACY_STORAGE_STATE, 'ready-v1', 'pending-v1'),
+    (deploy.STORAGE_UID, deploy.LEGACY_STORAGE_UID, 'data-claim-uid', 'other-claim-uid'),
+])
+def test_conflicting_legacy_storage_markers_are_rejected_before_write(key,legacy_key,new_value,old_value):
+    claim = data_claim()
+    claim['metadata']['annotations'].update({key: new_value, legacy_key: old_value})
+    runner = Runner([claim, claim])
+    instance = deploy.Deployment(runner=runner)
+    with pytest.raises(deploy.DeployError, match='Conflicting old and new'):
+        instance.storage_claim(data_claim_template(), existing_site=None)
+    with pytest.raises(deploy.DeployError, match='Conflicting old and new'):
+        instance.patch_storage('data-claim-uid', {deploy.STORAGE_UID: 'data-claim-uid'})
+    assert not any('patch' in args or 'create' in args for args, _ in runner.calls)
 
 
 @pytest.mark.parametrize('change', ['different-uid', 'existing-site', 'data-source', 'selector'])

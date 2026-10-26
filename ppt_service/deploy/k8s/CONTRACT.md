@@ -1,7 +1,7 @@
 # PPT Kubernetes deployment contract
 
 The website is deployed in `ppt-service`, with public origin
-`https://ppt.panghuer.top`. [README.md](README.md) is the operator entry point.
+`https://ppt-service.panghuer.top`. [README.md](README.md) is the operator entry point.
 The deployment provides the website, OAuth proxy, dedicated PostgreSQL and
 persistent storage. Pi model execution is still being integrated;
 `PPT_EXECUTION_ENABLED=false` remains in effect and generation requests return

@@ -164,7 +164,7 @@ def test_material_parse_uses_offline_pod_and_exact_scope_proof(runtime):
     assert 'Public material' in result['sources'][0]['text']
     assert scopes.prove_stopped(uid)
     pod = next(call[3] for call in api.calls if call[:2] == ('POST', 'pods'))
-    assert pod['metadata']['labels']['ppt.panghuer.top/attempt'] == uid
+    assert pod['metadata']['labels']['ppt-service.panghuer.top/attempt'] == uid
     assert pod['spec']['containers'][0]['args'] == ['-m', 'ppt_service.control.parsing']
     assert pod['spec']['containers'][0]['env'] == [
         {'name': 'PPT_RUNTIME_WORKER_IMAGE', 'value': settings.worker_image}]

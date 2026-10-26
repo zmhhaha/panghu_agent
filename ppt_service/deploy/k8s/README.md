@@ -1,6 +1,6 @@
 # PPT 服务器部署
 
-PPT 使用 `ppt-service` namespace，公开地址为 `https://ppt.panghuer.top`。在服务器仓库的 `panghu_agent/ppt_service` 目录运行 [deploy.sh](../../deploy.sh)，完成镜像构建与推送、数据库初始化或升级、存储检查和网站发布。
+PPT 使用 `ppt-service` namespace，公开地址为 `https://ppt-service.panghuer.top`。在服务器仓库的 `panghu_agent/ppt_service` 目录运行 [deploy.sh](../../deploy.sh)，完成镜像构建与推送、数据库初始化或升级、存储检查和网站发布。
 
 网站与 OAuth 代理位于同一 Pod，Service 只暴露代理的 4180 端口；API 仅监听 `127.0.0.1:8000`。网站使用独立 PostgreSQL 和 Ceph PVC。Pi 模型生成尚未接通，部署保持 `PPT_EXECUTION_ENABLED=false`，生成请求仍返回 `503 execution_not_connected`。
 
@@ -15,6 +15,19 @@ PPT 使用 `ppt-service` namespace，公开地址为 `https://ppt.panghuer.top`�
 | 镜像、数据库、存储与权限合同 | [CONTRACT.md](CONTRACT.md) |
 
 Casdoor 和 Cloudflare 由用户在后台配置。公开认证配置集中在仓库的 `oauth/k8s`，凭据由 Vault/ESO 同步，业务目录引用这些配置。
+
+## 域名统一
+
+公开域名、回调和允许的 Origin 统一使用 `ppt-service.panghuer.top`；Kubernetes namespace
+仍是 `ppt-service`，现有 `ppt-site`、PostgreSQL、Secret 和 PVC 名称不变。域名切换后的
+首次部署应提供现有应用的 `PPT_CLIENT_ID`，或使用 `configure-ppt.py` 生成新的
+`PPT_AUTH_CONFIG`，以更新线上原有的域名配置。用户需要在新域名重新登录。
+
+新任务的 Kubernetes metadata 前缀为 `ppt-service.panghuer.top/`。控制器将前缀记录在
+私有 authority journal 中；缺少此前缀字段的历史任务继续使用旧前缀，按原有精确 UID、
+完整容器停止状态和 finalizer 证明收尾，不强删资源。已有 PVC 的初始化状态和 UID 标记
+兼容读取旧前缀，写入时以 UID 和 resourceVersion 为条件迁至新键；两套键冲突时停止部署。
+此次变更不迁移存储、数据库或 Python 包 `ppt_service`。
 
 ## 服务器标准入口
 
@@ -68,7 +81,7 @@ kubectl -n ppt-service get pods,pvc,externalsecret
 kubectl -n ppt-service rollout status deployment/ppt-site --timeout=300s
 ```
 
-站点就绪后访问 `https://ppt.panghuer.top`，完成 [真实登录、邮箱准入、Cookie/CSRF 和匿名资产拒绝检查](../../../../oauth/k8s/PPT.md#6-部署后验收)。网络策略应实际允许入口 4180、数据库 5432 和指定 Casdoor HTTPS 路径，并拒绝其他访问；Pod Ready 不能代替这些检查。
+站点就绪后访问 `https://ppt-service.panghuer.top`，完成 [真实登录、邮箱准入、Cookie/CSRF 和匿名资产拒绝检查](../../../../oauth/k8s/PPT.md#6-部署后验收)。网络策略应实际允许入口 4180、数据库 5432 和指定 Casdoor HTTPS 路径，并拒绝其他访问；Pod Ready 不能代替这些检查。
 
 凭据同步失败先看 [ESO 排错](../../../../vault/inventory/PPT-SERVICE.md#排查首次部署的凭据同步失败)。数据库初始化、迁移或目录检查失败时，先查对应错误和已有资源状态，保留数据；修复原因后重跑 `bash deploy.sh`。凭据值、完整数据库 URL 和 Pod 环境不要输出到日志。
 

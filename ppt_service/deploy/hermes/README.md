@@ -25,7 +25,9 @@ UID/GID `10000:10000`，`runAsNonRoot=true`，丢弃所有 capabilities，兼容
 Controller 创建的文件与任务产出归同一用户，文件复制、权限冻结与恢复无需 root。任务间隔离
 由各 Pod 仅挂载本次任务的 PVC subPath、独立网络策略和权限边界实现。任务 Pod 使用另一个
 无 RBAC 的 `ppt-worker` SA 且不挂 token。Worker 和代理的任务 Secret/最终停止证明由后端
-按 attempt 管理；只有所有容器停止后才移除 `ppt.panghuer.top/writers-stopped` finalizer。
+按 attempt 管理；只有所有容器停止后才移除 `ppt-service.panghuer.top/writers-stopped` finalizer。
+历史任务的 authority journal 没有 `metadata_prefix` 字段时，控制器继续使用原有 metadata
+前缀核验和收尾；新任务记录新前缀。两类任务均保留精确 API UID、镜像绑定和停止证明要求。
 不要强删 Pod、移除 finalizer 或先删 namespace 来替代停止证明。
 
 ## 1. 投射现有上游凭据
