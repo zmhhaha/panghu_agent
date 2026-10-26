@@ -21,6 +21,8 @@ export const errors: Record<string,string> = {
   UPSTREAM_BAD_GATEWAY:'服务入口未收到有效的后端响应。操作结果尚未确认，请先刷新状态核对。',
   SERVICE_UNAVAILABLE:'服务暂不可用，请稍后刷新状态核对。',
   UPSTREAM_TIMEOUT:'服务入口等待后端响应超时。操作可能已完成，请先刷新状态核对。',
+  ASSET_PARSE_NOT_FAILED:'此文件当前不是解析失败状态，请刷新资料列表核对。',
+  ASSET_PARSE_BUSY:'此文件仍有解析任务正在处理，请等待完成后刷新状态。',
   CONSENT_REQUIRED:'请先确认外部模型数据传输，再重试此操作。', UPLOAD_LIMIT:'文件超出上传限额，请检查单文件 25 MiB、项目 10 文件 / 100 MiB 限制。',
   UNAUTHENTICATED:'登录已过期，请重新登录。', FORBIDDEN:'当前账号无法执行此操作。', NOT_FOUND:'资源不可用或已删除，请返回项目列表。', STALE_REVISION:'资料或设置已变更，请刷新项目并重新确认方案。', STALE_PLAN:'确认已失效，请重新规划并确认。', SNAPSHOT_MISMATCH:'材料快照已变化，请重新规划。', ACTIVE_JOB_EXISTS:'项目已有活动任务，请等待完成或取消。', QUEUE_FULL:'任务队列已满，请稍后重试。', PARSE_FAILED:'资料解析未通过，请返回“资料与要求”查看各文件的解析状态和具体原因。', MODEL_CONNECTION_FAILED:'模型连接失败，请稍后重新提交。', TIMEOUT:'任务超时，已有版本仍可使用。请减少资料或页数后重试。', QUALITY_GATE_FAILED:'产物未通过质量检查，请调整要求后重试。', RENDER_FAILED:'预览渲染失败，请重试或联系管理员。', EXPORT_FAILED:'PPTX 导出失败，请重试或联系管理员。', STORAGE_LIMIT:'存储空间不足，请清理不再需要的项目后重试。', QUOTA_EXCEEDED:'当前可用额度不足，请联系服务管理员。', NETWORK_ERROR:'无法连接服务，请检查网络并重试。', INVALID_RESPONSE:'服务响应暂不可用，请刷新或联系管理员。', CURSOR_EXPIRED:'进度记录已过期，正在重新读取任务状态。'
 };
@@ -125,6 +127,7 @@ export const api = {
   acknowledge: async (p:Project, signal?:AbortSignal) => adaptProject(await mutate<RecordValue>(`/projects/${id(p.id)}`,{title:p.title,...flatSettings(p.settings),external_model_ack:true,expected_revision:p.revision},'PATCH',signal)),
   remove: (p:Project) => mutate<void>(`/projects/${id(p.id)}`,{expected_revision:p.revision},'DELETE'),
   removeAsset: (p:Project,assetId:string) => mutate<unknown>(`/projects/${id(p.id)}/assets/${id(assetId)}?expected_revision=${p.revision}`,{},'DELETE'),
+  reparseAsset: (p:Project,assetId:string) => mutate<{revision:number;asset_id:string;parse_status:'queued'}>(`/projects/${id(p.id)}/assets/${id(assetId)}/reparse`,{expected_revision:p.revision}),
   upload: async (p:Project,file:File,signal?:AbortSignal) => { const body=new FormData(); body.set('file',file); return request<unknown>(`/projects/${id(p.id)}/assets`,{method:'POST',body,signal,headers:{'Idempotency-Key':intents.key(`/projects/${id(p.id)}/assets`,[p.revision,file.name,file.size,file.lastModified])}},UPLOAD_TIMEOUT_MS); },
   plan: (p:Project, feedback:string, _consent:boolean) => mutate<{job_id:string}>(`/projects/${id(p.id)}/plans`,{expected_revision:p.revision,feedback,phase:p.plan?.stage==='communication'&&p.plan.confirmed_at&&!feedback.trim()?'plan_options':'plan_initial'}),
   confirm: async (p:Project, selection:unknown) => adaptProject(await mutate<RecordValue>(`/projects/${id(p.id)}/plans/${id(p.plan!.revision)}/confirm`,{expected_revision:p.revision,input_snapshot_hash:p.plan!.input_snapshot_hash,selection})),

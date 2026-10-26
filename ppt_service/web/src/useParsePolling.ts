@@ -5,7 +5,7 @@ import { hasPendingParses } from './parse';
 
 export const PARSE_POLL_INTERVAL = 5000;
 
-/** Poll only a visible material panel with actual nonterminal parse states. */
+/** Poll visible material/planning panels with actual nonterminal parse states. */
 export function useParsePolling(project: Project | null, enabled: boolean, onProject: (project: Project) => void) {
   const [error, setError] = useState<unknown>(null);
   const receiver = useRef(onProject);

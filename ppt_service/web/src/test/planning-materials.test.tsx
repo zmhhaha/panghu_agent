@@ -1,9 +1,10 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../App';
-import { api } from '../api';
+import { api, ApiError } from '../api';
 import { defaultSettings, type Project } from '../domain';
+import { PARSE_POLL_INTERVAL } from '../useParsePolling';
 
 vi.mock('../api',async original=>({...await original<typeof import('../api')>(),api:{
  me:vi.fn(),projects:vi.fn(),project:vi.fn(),versions:vi.fn(),plan:vi.fn(),generate:vi.fn(),confirm:vi.fn(),removeAsset:vi.fn(),job:vi.fn(),
@@ -76,6 +77,46 @@ describe('planning requires completed source parsing',()=>{
   await user.click(screen.getByRole('button',{name:'刷新状态'}));
   await waitFor(()=>expect(screen.getByRole('button',{name:'开始规划'})).toBeEnabled());
   expect(screen.queryByRole('region',{name:'待处理资料解析状态'})).not.toBeInTheDocument();
+ });
+
+ it('polls pending sources in planning and requires consent plus an explicit click after they become ready',async()=>{
+  vi.useFakeTimers();
+  vi.mocked(api.project).mockResolvedValue({...project,assets:[{...project.assets[0],parse_status:'parsing',parse_error:null}]});
+  vi.mocked(api.plan).mockImplementation(()=>new Promise<{job_id:string}>(()=>{}));
+  const view=render(<App/>);
+  try {
+   await act(async()=>{});
+   fireEvent.click(screen.getByRole('tab',{name:/沟通与方案/}));
+   expect(screen.getByRole('button',{name:'开始规划'})).toBeDisabled();
+   vi.mocked(api.project).mockResolvedValue({...project,assets:[{...project.assets[0],parse_status:'ready',parse_error:null}]});
+   await act(async()=>{await vi.advanceTimersByTimeAsync(PARSE_POLL_INTERVAL);});
+   expect(screen.getByRole('status',{name:'学习资料.pdf解析状态'})).toHaveTextContent('解析完成');
+   expect(screen.queryByRole('region',{name:'待处理资料解析状态'})).not.toBeInTheDocument();
+   expect(screen.getByRole('button',{name:'开始规划'})).toBeDisabled();
+   expect(api.plan).not.toHaveBeenCalled();expect(api.generate).not.toHaveBeenCalled();expect(api.confirm).not.toHaveBeenCalled();
+   fireEvent.click(screen.getByRole('checkbox'));
+   expect(screen.getByRole('button',{name:'开始规划'})).toBeEnabled();
+   expect(api.plan).not.toHaveBeenCalled();
+   fireEvent.click(screen.getByRole('button',{name:'开始规划'}));
+   expect(api.plan).toHaveBeenCalledTimes(1);
+   expect(screen.getByRole('button',{name:'开始规划'})).toBeDisabled();
+   expect(api.generate).not.toHaveBeenCalled();expect(api.confirm).not.toHaveBeenCalled();
+  } finally {view.unmount();vi.useRealTimers();}
+ });
+
+ it('shows a polling authentication error in planning without creating a model task',async()=>{
+  vi.useFakeTimers();
+  vi.mocked(api.project).mockResolvedValue({...project,assets:[{...project.assets[0],parse_status:'parsing',parse_error:null}]});
+  const view=render(<App/>);
+  try {
+   await act(async()=>{});
+   fireEvent.click(screen.getByRole('tab',{name:/沟通与方案/}));
+   vi.mocked(api.project).mockRejectedValue(new ApiError('UNAUTHENTICATED',401));
+   await act(async()=>{await vi.advanceTimersByTimeAsync(PARSE_POLL_INTERVAL);});
+   expect(screen.getByRole('link',{name:'重新登录'})).toBeInTheDocument();
+   expect(screen.getByRole('button',{name:'开始规划'})).toBeDisabled();
+   expect(api.plan).not.toHaveBeenCalled();expect(api.generate).not.toHaveBeenCalled();
+  } finally {view.unmount();vi.useRealTimers();}
  });
 
  it('keeps an unknown failure private while still identifying the blocked source',async()=>{

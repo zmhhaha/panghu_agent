@@ -1,3 +1,4 @@
+import copy
 import hashlib
 from dataclasses import replace
 import json
@@ -7,7 +8,7 @@ import uuid
 import pytest
 
 from ppt_service.control.execution import ControlError, parse_failure_report
-from ppt_service.control.kubernetes import FINALIZER, KubernetesParseScopes, ROLE
+from ppt_service.control.kubernetes import FINALIZER, KubeError, KubernetesParseScopes, ROLE
 from ppt_service.control.kubernetes_sandbox import KubernetesSandbox
 from ppt_service.control.parsing import parse_inputs
 from ppt_service.control.staging import atomic_json
@@ -38,6 +39,59 @@ def install_parser(runtime):
         atomic_json(output / 'parsed.json', parse_inputs(inputs, json.loads((inputs / 'inventory.json').read_text())))
         api.terminal(obj)
     api.on_pod = on_pod
+
+
+def defer_sandbox_deletion(runtime, monkeypatch, *, get_reads=2, list_reads=2, fault=None):
+    """DELETE is accepted before GET and LIST independently lose the old Pod."""
+    _, _, api, backend, _ = runtime
+    request = api.request
+    pending = {}
+    remaining = {'get': get_reads, 'list': list_reads}
+    observations = {'get': 0, 'list': 0}
+    clock = [0.0]
+    monkeypatch.setattr(backend, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(backend, 'sleep', lambda seconds: clock.__setitem__(0, clock[0] + seconds))
+
+    def visible(view, obj):
+        if remaining[view] == 0:
+            return None
+        if remaining[view] is not None:
+            remaining[view] -= 1
+        observations[view] += 1
+        obj = copy.deepcopy(obj)
+        if fault == view + '_uid':
+            obj['metadata']['uid'] = 'late-replacement-uid'
+        elif fault == view + '_running':
+            obj['status']['containerStatuses'][0]['state'] = {'running': {'startedAt': '2026-10-27T00:00:00Z'}}
+        return obj
+
+    def delayed(method, resource, name=None, body=None, query=None):
+        if resource == 'pods' and method == 'DELETE' and name in pending:
+            api.calls.append((method, resource, name, copy.deepcopy(body), query))
+            assert body['preconditions']['uid'] == pending[name]['metadata']['uid']
+            return {'kind': 'Status', 'status': 'Success', 'code': 202}
+        if resource == 'pods' and method == 'GET' and name in pending:
+            api.calls.append((method, resource, name, copy.deepcopy(body), query))
+            obj = visible('get', pending[name])
+            if obj is None:
+                raise KubeError(404)
+            return obj
+        result = request(method, resource, name, body, query)
+        if (resource == 'pods' and method == 'PATCH'
+                and result['metadata']['labels'][ROLE] == 'sandbox'
+                and not result['metadata'].get('finalizers')):
+            pending[name] = copy.deepcopy(result)
+        elif resource == 'pods' and method == 'GET' and name is None:
+            selector = dict(pair.split('=', 1) for pair in query['labelSelector'].split(','))
+            for pod in pending.values():
+                if all(pod['metadata']['labels'].get(key) == value for key, value in selector.items()):
+                    obj = visible('list', pod)
+                    if obj is not None:
+                        result['items'].append(obj)
+        return result
+
+    monkeypatch.setattr(api, 'request', delayed)
+    return observations, remaining, clock
 
 
 def material(runtime):
@@ -174,6 +228,87 @@ def test_material_parse_uses_offline_pod_and_exact_scope_proof(runtime):
     assert not any(call[1] == 'secrets' for call in api.calls)
     assert not api.objects
     assert scopes.stop_and_prove(uid)
+
+
+@pytest.mark.parametrize('get_reads,list_reads', [(2, 3), (0, 3), (3, 0)])
+def test_material_result_survives_delayed_get_and_list_deletion(runtime, monkeypatch, get_reads, list_reads):
+    config, settings, api, backend, _ = runtime
+    install_parser(runtime)
+    observed, remaining, clock = defer_sandbox_deletion(
+        runtime, monkeypatch, get_reads=get_reads, list_reads=list_reads)
+    inputs, inventory = material(runtime)
+    scopes = KubernetesParseScopes(backend)
+    uid = str(uuid.uuid4())
+    h = scopes.ensure_scope(uid)
+    sandbox = KubernetesSandbox(config, settings, backend)
+    sandbox.scope_uid = uid
+
+    result = sandbox.parse(inputs, inventory)
+
+    assert result['sources'][0]['parse_status'] == 'succeeded'
+    assert 'Public material' in result['sources'][0]['text']
+    assert observed == {'get': get_reads, 'list': list_reads}
+    assert remaining == {'get': 0, 'list': 0}
+    assert 0 < clock[0] < settings.stop_timeout
+    assert scopes.prove_stopped(uid)
+    entry = next(row for row in backend._read(h)['resources'] if row['resource'] == 'pods')
+    assert entry['deleted'] and entry['finalizer_release_requested']
+    assert entry['stop_receipt']['terminated'] is True
+    assert entry['stop_receipt']['api_uid'] == entry['api_uid']
+    assert not api.objects
+
+
+@pytest.mark.parametrize('fault', ['get_uid', 'list_uid', 'get_running', 'list_running', 'timeout'])
+def test_delayed_sandbox_deletion_rejects_late_uid_or_unstopped_observations(runtime, monkeypatch, fault):
+    config, settings, api, backend, _ = runtime
+    install_parser(runtime)
+    get_reads = 0 if fault.startswith('list_') else None
+    _, _, clock = defer_sandbox_deletion(runtime, monkeypatch, get_reads=get_reads, list_reads=None, fault=fault)
+    if fault == 'timeout':
+        wait_pod = backend.wait_pod
+        waits = []
+        def slow_stop(*args):
+            waits.append(args)
+            if len(waits) == 2:
+                # Termination and API removal share one stop-time allowance.
+                clock[0] += settings.stop_timeout / 2
+            return wait_pod(*args)
+        monkeypatch.setattr(backend, 'wait_pod', slow_stop)
+    inputs, inventory = material(runtime)
+    scopes = KubernetesParseScopes(backend)
+    uid = str(uuid.uuid4())
+    h = scopes.ensure_scope(uid)
+    sandbox = KubernetesSandbox(config, settings, backend)
+    sandbox.scope_uid = uid
+
+    with pytest.raises(ControlError) as raised:
+        sandbox.parse(inputs, inventory)
+
+    assert raised.value.code == 'validation_writers_not_stopped'
+    evidence = Path(raised.value.evidence_path)
+    assert (evidence / 'controller-quarantine.json').is_file()
+    assert json.loads((evidence / 'output' / 'parsed.json').read_text())['sources'][0]['parse_status'] == 'succeeded'
+    assert not scopes.prove_stopped(uid)
+    entry = next(row for row in backend._read(h)['resources'] if row['resource'] == 'pods')
+    assert entry['stop_receipt']['api_uid'] == entry['api_uid']
+    assert all(call[3]['preconditions']['uid'] == entry['api_uid']
+               for call in api.calls if call[0] == 'DELETE' and call[1] == 'pods')
+    if fault == 'timeout':
+        assert settings.stop_timeout <= clock[0] < settings.stop_timeout + settings.poll_seconds
+
+
+def test_sandbox_deletion_does_not_wait_for_other_model_writers(runtime, monkeypatch):
+    config, settings, _, backend, attempt = runtime
+    h = backend.create(attempt, staged(runtime))
+    install_parser(runtime)
+    defer_sandbox_deletion(runtime, monkeypatch)
+    inputs, inventory = material(runtime)
+    sandbox = KubernetesSandbox(config, settings, backend)
+    sandbox.scope_uid = h.uid
+
+    assert sandbox.parse(inputs, inventory)['sources'][0]['parse_status'] == 'succeeded'
+    assert backend.observe(h).running
+    assert not backend.prove_stopped(h).all_writers_stopped
 
 
 def install_parser_failure(runtime, inventory, *, changes=None, exit_code=2, terminal=True):

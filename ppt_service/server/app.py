@@ -24,6 +24,7 @@ class ProjectCreate(Strict):
     requirements:str=Field(default='',max_length=12000)
     external_model_ack:bool=False
 class ProjectPatch(ProjectCreate):expected_revision:int
+class AssetReparse(Strict):expected_revision:int=Field(ge=1)
 class PlanRequest(Strict):
     expected_revision:int
     feedback:str=Field(default='',max_length=12000)
@@ -130,6 +131,26 @@ def create_app(settings:Settings|None=None,engine=None):
         if not a:fail('not_found',404)
         # Snapshot-referenced bytes remain until trusted project cleanup.
         a.removed=True;p.revision+=1;p.confirmed_plan_revision=None;p.stage='draft';return {'revision':p.revision}
+    @app.post('/api/v1/projects/{pid}/assets/{aid}/reparse',status_code=202)
+    def reparse_asset(pid:str,aid:str,body:AssetReparse,key:str|None=Header(None,alias='Idempotency-Key'),owner=Depends(authenticate),s=Depends(session)):
+        r=Repository(s)
+        def current():
+            p=r.project(pid,owner,True)
+            a=s.scalar(select(Asset).where(Asset.id==aid,Asset.project_id==pid,Asset.removed==False).with_for_update())
+            if not a:fail('not_found',404)
+            return p,a
+        def action():
+            p,a=current();r.revision(p,body.expected_revision)
+            if p.active_job_id:fail('project_busy')
+            if a.parse_status!='failed':fail('asset_parse_not_failed')
+            # Failed status is issued only after the parser's stop proof. Never
+            # reset an outstanding lease or turn a live attempt into a retry.
+            if a.parse_lease_until is not None:fail('asset_parse_busy')
+            a.parse_status='queued';a.parse_attempt=0;a.parse_error=None;a.text_summary=None
+            a.parse_token=None;a.parse_scope_uid=None;a.parse_lease_until=None
+            p.revision+=1;p.confirmed_plan_revision=None;p.stage='draft'
+            return {'revision':p.revision,'asset_id':a.id,'parse_status':'queued'}
+        return r.idempotent(owner,f'projects/{pid}/assets/{aid}/reparse',key,body.model_dump(),action,authorize=current)
     @app.post('/api/v1/projects/{pid}/plans',status_code=202)
     def plan(pid:str,body:PlanRequest,key:str|None=Header(None,alias='Idempotency-Key'),owner=Depends(authenticate),s=Depends(session)):
         r=Repository(s)

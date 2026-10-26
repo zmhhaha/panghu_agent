@@ -504,6 +504,7 @@ class KubernetesBackend:
 
     def finish_sandbox(self, h, name):
         """Stop and retain proof for one sandbox without revoking the model attempt."""
+        deadline = self.monotonic() + self.settings.stop_timeout
         with self._locked(h.uid):
             record = self._read(h)
             entry = next(e for e in record['resources'] if e['resource'] == 'pods' and e['name'] == name)
@@ -514,7 +515,7 @@ class KubernetesBackend:
             self.client.request('DELETE', 'pods', name,
                                 {'apiVersion': 'v1', 'kind': 'DeleteOptions', 'gracePeriodSeconds': 30,
                                  'preconditions': {'uid': entry['api_uid']}})
-        self.wait_pod(h, name, self.settings.stop_timeout)
+        self.wait_pod(h, name, max(0, deadline - self.monotonic()))
         with self._locked(h.uid):
             record = self._read(h)
             entry = next(e for e in record['resources'] if e['resource'] == 'pods' and e['name'] == name)
@@ -524,6 +525,22 @@ class KubernetesBackend:
                                      'status': obj['status'], 'terminated': True}
             self._write(h, record)
             self._remove_resource(h, record, entry, obj)
+        # DELETE acceptance does not mean the API has removed the Pod yet.
+        # Both views must settle before a caller can keep a successful result;
+        # prove_stopped deliberately rejects deleted entries still in LIST.
+        while self.monotonic() < deadline:
+            with self._locked(h.uid):
+                record = self._read(h)
+                entry = next(e for e in record['resources'] if e['resource'] == 'pods' and e['name'] == name)
+                obj = self._get(h, entry)
+                listed = self._pods(h, record).get(name)
+                require(all(self.terminated(candidate) for candidate in (obj, listed) if candidate is not None),
+                        'writers_not_stopped')
+                self._write(h, record)
+                if obj is None and listed is None:
+                    return
+            self.sleep(self.settings.poll_seconds)
+        raise ControlError('writers_not_stopped')
 
     def stop(self, h):
         with self._locked(h.uid):

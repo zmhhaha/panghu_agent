@@ -95,6 +95,41 @@ describe('profile and CSRF recovery lifecycle',()=>{
   expect(retry.headers.get('X-CSRF-Token')).toBe('fresh-fixture');
  });
 
+ it('reparses only the selected asset with the expected revision and preserves its POST intent through CSRF recovery',async()=>{
+  const queued={revision:8,asset_id:'asset / fixture',parse_status:'queued'};
+  const fetcher=vi.fn().mockResolvedValueOnce(response({csrf_token:'old-fixture'}))
+   .mockResolvedValueOnce(response({detail:{code:'csrf_rejected'}},403))
+   .mockResolvedValueOnce(response({csrf_token:'fresh-fixture'}))
+   .mockResolvedValueOnce(response(queued));
+  vi.stubGlobal('fetch',fetcher);await client.api.me();
+  const project:Project={id:'project / fixture',title:'fixture',stage:'draft',revision:7,input_snapshot_hash:'snapshot',settings:defaultSettings,assets:[]};
+  await expect(client.api.reparseAsset(project,'asset / fixture')).resolves.toEqual(queued);
+  const expected='/api/v1/projects/project%20%2F%20fixture/assets/asset%20%2F%20fixture/reparse';
+  expect(fetcher.mock.calls.map(([url])=>url)).toEqual(['/api/v1/me',expected,'/api/v1/me',expected]);
+  const first=fetcher.mock.calls[1][1];const retry=fetcher.mock.calls[3][1];
+  expect(first.method).toBe('POST');expect(retry.method).toBe('POST');
+  expect(JSON.parse(first.body)).toEqual({expected_revision:7});expect(retry.body).toBe(first.body);
+  expect(first.headers.get('Idempotency-Key')).toBeTruthy();
+  expect(retry.headers.get('Idempotency-Key')).toBe(first.headers.get('Idempotency-Key'));
+  expect(first.headers.get('X-CSRF-Token')).toBe('old-fixture');
+  expect(retry.headers.get('X-CSRF-Token')).toBe('fresh-fixture');
+  expect(retry.headers.get('Content-Type')).toBe('application/json');
+ });
+
+ it.each([
+  ['asset_parse_not_failed','此文件当前不是解析失败状态'],
+  ['asset_parse_busy','此文件仍有解析任务正在处理'],
+ ])('shows a safe actionable message for a %s reparse rejection without replaying it',async(code,message)=>{
+  const fetcher=vi.fn().mockResolvedValue(response({detail:{code,message:'/work/private secret-token https://internal.invalid'}},409));
+  vi.stubGlobal('fetch',fetcher);
+  const project:Project={id:'fixture',title:'fixture',stage:'draft',revision:7,input_snapshot_hash:'snapshot',settings:defaultSettings,assets:[]};
+  const failure=await client.api.reparseAsset(project,'source').catch(error=>error);
+  expect(failure).toMatchObject({code:code.toUpperCase(),status:409});
+  expect(client.safeError(failure)).toContain(message);
+  expect(client.safeError(failure)).not.toMatch(/secret-token|\/work|https?:|internal/);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+ });
+
  it('stops after a second CSRF rejection and shows a specific recovery message',async()=>{
   const fetcher=vi.fn().mockImplementation(async(url:string)=>url.endsWith('/me')?response({csrf_token:'fixture'}):response({detail:{code:'csrf_rejected'}},403));
   vi.stubGlobal('fetch',fetcher);
