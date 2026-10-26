@@ -127,7 +127,8 @@ class Dispatcher:
             with self.sessions.begin() as s:Repository(s).attach_execution(a.job_id,a.attempt,a.token,job_uid=h.uid,session_id=a.session_id)
             return {'status':'started','job_id':a.job_id}
         except Exception as exc:
-            code='parse_failed' if isinstance(exc,ControlError) and exc.code in ('parse_failed','source_hash_mismatch','parse_snapshot_mismatch','project_text_limit') else 'execution_interrupted'
+            parse_errors=PARSE_ERROR_CODES|{'parse_snapshot_mismatch','parse_inventory_mismatch'}
+            code='parse_failed' if isinstance(exc,ControlError) and isinstance(exc.code,str) and exc.code in parse_errors else 'execution_interrupted'
             self._fail(a,h,code)
             return {'status':'failed','job_id':a.job_id,'error_code':code}
     def _complete(self,a,h,checkpoint_manifest):

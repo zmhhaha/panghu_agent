@@ -78,6 +78,23 @@ describe('profile and CSRF recovery lifecycle',()=>{
   expect(retry.headers.get('X-CSRF-Token')).toBe('fresh-fixture');
  });
 
+ it('removes only the selected asset at the expected project revision and preserves its DELETE intent on CSRF recovery',async()=>{
+  const fetcher=vi.fn().mockResolvedValueOnce(response({csrf_token:'old-fixture'}))
+   .mockResolvedValueOnce(response({detail:{code:'csrf_rejected'}},403))
+   .mockResolvedValueOnce(response({csrf_token:'fresh-fixture'}))
+   .mockResolvedValueOnce(response({revision:8}));
+  vi.stubGlobal('fetch',fetcher);await client.api.me();
+  const project:Project={id:'project / fixture',title:'fixture',stage:'draft',revision:7,input_snapshot_hash:'snapshot',settings:defaultSettings,assets:[]};
+  await client.api.removeAsset(project,'asset / fixture');
+  const expected='/api/v1/projects/project%20%2F%20fixture/assets/asset%20%2F%20fixture?expected_revision=7';
+  expect(fetcher.mock.calls.map(([url])=>url)).toEqual(['/api/v1/me',expected,'/api/v1/me',expected]);
+  const first=fetcher.mock.calls[1][1];const retry=fetcher.mock.calls[3][1];
+  expect(first.method).toBe('DELETE');expect(retry.method).toBe('DELETE');
+  expect(retry.body).toBe(first.body);
+  expect(retry.headers.get('Idempotency-Key')).toBe(first.headers.get('Idempotency-Key'));
+  expect(retry.headers.get('X-CSRF-Token')).toBe('fresh-fixture');
+ });
+
  it('stops after a second CSRF rejection and shows a specific recovery message',async()=>{
   const fetcher=vi.fn().mockImplementation(async(url:string)=>url.endsWith('/me')?response({csrf_token:'fixture'}):response({detail:{code:'csrf_rejected'}},403));
   vi.stubGlobal('fetch',fetcher);

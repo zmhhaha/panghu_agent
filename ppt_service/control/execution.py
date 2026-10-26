@@ -9,6 +9,40 @@ import os,uuid
 PINNED_WORKER='sha256:6e9bdb213f75120171d712e9bd037759cedfce6aced2caff0dae01d5fa08583a'
 PPT_MASTER_COMMIT='c350bc31e6d43b7bcf5234183d650ba8f9f4c9d7'
 PHASES=frozenset(('plan_initial','plan_options','prepare','generate','revise'))
+PARSE_FAILURE_SCHEMA='ppt-service.parse-failure.v1'
+# Only fixed parser reason codes may cross the sandbox boundary. Exception
+# messages, paths, source text and arbitrary worker-generated codes never do.
+PARSE_ERROR_CODES=frozenset((
+    'parse_failed','unsafe_xml','xml_limit','zip_entry_limit','duplicate_zip_part',
+    'unsupported_zip_part','zip_expansion_limit','active_office_content',
+    'zip_size_mismatch','external_office_reference','invalid_docx','text_limit',
+    'invalid_text','unsupported_pdf','pdf_page_limit','pdf_active_form',
+    'scanned_pdf_unsupported','image_limit','unsupported_media','source_limit',
+    'source_hash_mismatch','project_text_limit',
+))
+
+def safe_parse_error(code):
+    return code if type(code) is str and code in PARSE_ERROR_CODES else 'parse_failed'
+
+def _parse_snapshot_hash(value):
+    return value if (type(value) is str and len(value)==64
+                     and all(c in '0123456789abcdef' for c in value)) else None
+
+def parse_failure_report(code,snapshot_hash):
+    return {'schema':PARSE_FAILURE_SCHEMA,'status':'failed',
+            'input_snapshot_sha256':_parse_snapshot_hash(snapshot_hash),
+            'error_code':safe_parse_error(code)}
+
+def parse_failure_reason(report,snapshot_hash):
+    expected=_parse_snapshot_hash(snapshot_hash)
+    if (expected is None or type(report) is not dict
+            or set(report)!={'schema','status','input_snapshot_sha256','error_code'}
+            or report.get('schema')!=PARSE_FAILURE_SCHEMA or report.get('status')!='failed'
+            or report.get('input_snapshot_sha256')!=expected):
+        return None
+    code=report.get('error_code')
+    return code if type(code) is str and code in PARSE_ERROR_CODES else None
+
 class RuntimeState(StrEnum):
     DISABLED='disabled'
     CONFIGURED='configured'

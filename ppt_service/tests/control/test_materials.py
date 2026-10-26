@@ -94,6 +94,23 @@ def test_failed_source_is_safe_and_never_executes_parser(ctx,problem):
         a=s.get(Asset,aid);assert a.parse_error==expected;assert a.text_summary is None
     assert runner.tick()['status']=='idle'
 
+@pytest.mark.parametrize('reason,expected',[
+    ('pdf_page_limit','pdf_page_limit'),
+    ('scanned_pdf_unsupported','scanned_pdf_unsupported'),
+    ('/private/source.pdf SECRET','parse_failed'),
+])
+def test_material_failure_preserves_only_known_parser_reasons(ctx,reason,expected):
+    sessions,runner,aid,pid,original,sandbox,*_=ctx
+    def reject(*args):raise ControlError(reason)
+    sandbox.parse=reject
+    assert runner.tick()['status']=='failed'
+    with sessions() as s:
+        asset=s.get(Asset,aid)
+        assert asset.parse_error==expected and asset.text_summary is None
+        assert asset.parse_status=='failed'
+        assert not s.scalars(select(Job).where(Job.project_id==pid)).all()
+
+
 def test_restart_requires_stop_proof_and_old_token_never_returns(ctx):
     sessions,runner,aid,pid,original,sandbox,scopes,_=ctx;old=runner.claim()
     with sessions.begin() as s:s.get(Asset,aid).parse_lease_until=now()-timedelta(seconds=1)

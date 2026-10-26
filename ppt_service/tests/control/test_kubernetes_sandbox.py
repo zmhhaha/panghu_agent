@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from ppt_service.control.execution import ControlError
+from ppt_service.control.execution import ControlError, parse_failure_report
 from ppt_service.control.kubernetes import FINALIZER, KubernetesParseScopes, ROLE
 from ppt_service.control.kubernetes_sandbox import KubernetesSandbox
 from ppt_service.control.parsing import parse_inputs
@@ -174,6 +174,62 @@ def test_material_parse_uses_offline_pod_and_exact_scope_proof(runtime):
     assert not any(call[1] == 'secrets' for call in api.calls)
     assert not api.objects
     assert scopes.stop_and_prove(uid)
+
+
+def install_parser_failure(runtime, inventory, *, changes=None, exit_code=2, terminal=True):
+    config, settings, api, backend, attempt = runtime
+    def on_pod(obj):
+        if obj['metadata']['labels'][ROLE] != 'sandbox':
+            return
+        output = source_mount(runtime, obj, '/output')
+        report = parse_failure_report('pdf_page_limit', inventory['input_snapshot_sha256'])
+        report.update(changes or {})
+        atomic_json(output / 'parsed.json', report)
+        if terminal:
+            api.terminal(obj, exit_code=exit_code)
+    api.on_pod = on_pod
+
+
+@pytest.mark.parametrize('changes,exit_code,expected', [
+    ({}, 2, 'pdf_page_limit'),
+    ({'input_snapshot_sha256': '0' * 64}, 2, 'parse_failed'),
+    ({'schema': 'untrusted.v1'}, 2, 'parse_failed'),
+    ({'error_code': '/private/source.pdf SECRET'}, 2, 'parse_failed'),
+    ({'message': 'source text SECRET'}, 2, 'parse_failed'),
+    ({}, 0, 'parse_failed'),
+])
+def test_parser_failure_requires_bound_diagnostic_and_nonzero_exit(runtime, changes, exit_code, expected):
+    config, settings, api, backend, attempt = runtime
+    inputs, inventory = material(runtime)
+    install_parser_failure(runtime, inventory, changes=changes, exit_code=exit_code)
+    sandbox = KubernetesSandbox(config, settings, backend)
+    with pytest.raises(ControlError) as raised:
+        sandbox.parse(inputs, inventory)
+    assert raised.value.code == expected
+    assert not api.objects
+
+
+def test_parser_diagnostic_cannot_override_policy_cleanup_failure(runtime, monkeypatch):
+    config, settings, api, backend, attempt = runtime
+    inputs, inventory = material(runtime)
+    install_parser_failure(runtime, inventory)
+    def reject_cleanup(*args):
+        raise ControlError('sandbox_policy_cleanup_failed')
+    monkeypatch.setattr(backend, 'remove_sandbox_policy', reject_cleanup)
+    with pytest.raises(ControlError) as raised:
+        KubernetesSandbox(config, settings, backend).parse(inputs, inventory)
+    assert raised.value.code == 'sandbox_policy_cleanup_failed'
+
+
+def test_parser_diagnostic_requires_physical_stop_proof(runtime):
+    config, settings, api, backend, attempt = runtime
+    inputs, inventory = material(runtime)
+    install_parser_failure(runtime, inventory, terminal=False)
+    api.terminate_on_delete = False
+    with pytest.raises(ControlError) as raised:
+        KubernetesSandbox(config, settings, backend).parse(inputs, inventory)
+    assert raised.value.code == 'validation_writers_not_stopped'
+    assert (Path(raised.value.evidence_path) / 'controller-quarantine.json').is_file()
 
 
 def test_validation_persists_stopped_outputs_without_granting_publication(runtime):

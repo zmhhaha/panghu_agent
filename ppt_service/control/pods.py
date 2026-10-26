@@ -145,13 +145,18 @@ class DockerSandbox:
                 _,raw=self.docker.call('wait',name,timeout=timeout)
                 code=int(raw.strip())
                 result=read_json(output,output_name,8*1024**2)
+                if module=='ppt_service.control.parsing':
+                    if code!=0:
+                        reason=parse_failure_reason(result,request.get('input_snapshot_sha256'))
+                        raise ControlError(reason or 'parse_failed')
+                    if not isinstance(result,dict) or 'error_code' in result or result.get('status')=='failed' or result.get('schema')==PARSE_FAILURE_SCHEMA:raise ControlError('parse_failed')
                 if code!=0:raise ControlError(result.get('error_code','sandbox_failed'))
                 return result
             finally:
                 # Forced removal tears down the complete sandbox namespace on timeout.
                 self.docker.call('rm','--force','--volumes',name,timeout=30,check=False)
     def parse(self,inputs,inventory):
-        return self._run('ppt_service.control.parsing',[(inputs,'/inputs')],{},'parsed.json',self.config.parse_timeout)
+        return self._run('ppt_service.control.parsing',[(inputs,'/inputs')],{'input_snapshot_sha256':inventory.get('input_snapshot_sha256')},'parsed.json',self.config.parse_timeout)
     def validate(self,snapshot,request):
         """Persistent, bounded validation evidence; parse() keeps its old path."""
         from .staging import open_regular,copy_tree,make_readonly,relative

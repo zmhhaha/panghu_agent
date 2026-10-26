@@ -11,11 +11,11 @@ from pathlib import Path
 from sqlalchemy import create_engine,select,exists,and_,or_
 from sqlalchemy.orm import sessionmaker
 from ppt_service.server.models import Asset,Project,now
-from .execution import RuntimeConfig,ControlError
+from .execution import RuntimeConfig,ControlError,PARSE_ERROR_CODES
 from .staging import EXT,copy_file,atomic_json,make_readonly
 from .pods import Docker,DockerSandbox
 
-SAFE_ERRORS=frozenset(('parse_failed','source_unavailable','source_hash_mismatch','parse_result_mismatch','parse_interrupted','parse_aborted'))
+SAFE_ERRORS=PARSE_ERROR_CODES|frozenset(('source_unavailable','parse_result_mismatch','parse_interrupted','parse_aborted'))
 def future(value):
     if value is None:return False
     if value.tzinfo is None:value=value.replace(tzinfo=timezone.utc)

@@ -13,7 +13,7 @@ import stat
 import tempfile
 import uuid
 
-from .execution import Attempt, ControlError, RuntimeConfig
+from .execution import Attempt, ControlError, RuntimeConfig, PARSE_FAILURE_SCHEMA, parse_failure_reason
 from .kubernetes import KubernetesBackend, KubeSettings, require
 from .staging import atomic_json, copy_tree, make_readonly, read_json, relative
 from .render_validation import hash_file
@@ -145,8 +145,16 @@ class KubernetesSandbox:
         root, output, result, code, failure, stopped, h, name = self._run(
             'ppt_service.control.parsing', [(Path(inputs), '/inputs', True)], {}, 'parsed.json', self.config.parse_timeout)
         try:
-            if failure is not None or code != 0:
+            if failure is not None:
                 raise failure if isinstance(failure, ControlError) else ControlError('parse_failed')
+            if type(code) is not int or code != 0:
+                # A bound diagnostic explains failure only after stop. Never
+                # replace creation/wait/cleanup errors or promote a failed Pod.
+                reason = (parse_failure_reason(result, inventory.get('input_snapshot_sha256'))
+                          if stopped and type(code) is int and code != 0 else None)
+                raise ControlError(reason or 'parse_failed')
+            require('error_code' not in result and result.get('status') != 'failed'
+                    and result.get('schema') != PARSE_FAILURE_SCHEMA, 'parse_failed')
             require(result.get('input_snapshot_sha256') == inventory.get('input_snapshot_sha256'), 'parse_snapshot_mismatch')
             return result
         finally:
