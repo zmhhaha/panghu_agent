@@ -4,6 +4,10 @@ ARG PYTHON_BASE_IMAGE=python@sha256:cf50a4f6ac4f026458b08d5222023d700ac806410dff
 FROM ${PYTHON_BASE_IMAGE}
 WORKDIR /opt/agent-service
 COPY agent_service/ /opt/agent-service/agent_service/
+COPY scientific_agent/ /opt/agent-service/scientific_agent/
+COPY pi_worker/ /opt/agent-service/pi_worker/
+COPY tools/ /opt/agent-service/tools/
+COPY scientific_skills/ /opt/agent-service/scientific_skills/
 RUN python -m pip install --no-cache-dir -r /opt/agent-service/agent_service/requirements.txt \
     && python -m pip check \
     && mkdir -p /run/agent-control \

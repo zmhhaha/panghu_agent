@@ -234,7 +234,27 @@ def build_controller(sessions,config):
     """Select one backend; Kubernetes does not require a Docker socket."""
     from .chart_oracle import ChartOracle
     mode=os.getenv('PPT_EXECUTION_BACKEND','docker')
-    if mode=='kubernetes':
+    if mode=='agent-service':
+        from agent_service.client import AgentClient
+        from .agent_connector import AgentConnector,AgentConnectorSettings
+        from .agent_validation import AgentKubernetesSandbox
+        from .kubernetes import KubeSettings,KubernetesParseScopes
+        from .materials import MaterialParser
+        token_path=Path(os.environ['PPT_AGENT_SERVICE_TOKEN_FILE'])
+        with open_regular(token_path.parent,token_path.name,512) as stream:
+            token=stream.read(513).decode('ascii').strip()
+        client=AgentClient(os.environ['PPT_AGENT_SERVICE_URL'],token)
+        sandbox=AgentKubernetesSandbox(config,KubeSettings.env())
+        oracle=ChartOracle.env()
+        def oracle_for_task(task):
+            from types import SimpleNamespace
+            snapshot=dict(task['input_snapshot'],hash=task['input_snapshot_sha256'])
+            return oracle(SimpleNamespace(snapshot=snapshot))
+        controller=AgentConnector(sessions,config,client,sandbox,
+            settings=AgentConnectorSettings.env(),oracle_provider=oracle_for_task)
+        materials=MaterialParser(sessions,config,sandbox,KubernetesParseScopes(sandbox.transport.backend),lease_seconds=300)
+        return controller,materials
+    elif mode=='kubernetes':
         from .kubernetes import KubeSettings,KubernetesBackend,KubernetesParseScopes
         from .kubernetes_sandbox import KubernetesSandbox
         from .materials import MaterialParser

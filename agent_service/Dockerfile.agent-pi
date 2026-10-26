@@ -2,25 +2,31 @@
 # pinned Pi 0.73.1 and its compatible Node binary; no private Agent HOME is copied.
 ARG PI_DONOR_IMAGE
 ARG PYTHON_BASE_IMAGE
+ARG PPT_DONOR_IMAGE
 FROM ${PI_DONOR_IMAGE} AS pi_donor
-FROM ${PYTHON_BASE_IMAGE}
+FROM ${PPT_DONOR_IMAGE}
 USER 0:0
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=pi_donor /usr/local/bin/node /usr/local/bin/node
 COPY --from=pi_donor /opt/pi/ /opt/pi/
 COPY agent_service/ /opt/agent-service/agent_service/
-RUN python -m pip install --no-cache-dir -r /opt/agent-service/agent_service/requirements.txt \
-    && python -m pip check \
+COPY agent_service/academic_extension.mjs /opt/pi/node_modules/agent-service-academic.mjs
+COPY scientific_agent/ /opt/agent-service/scientific_agent/
+COPY pi_worker/ /opt/agent-service/pi_worker/
+COPY tools/ /opt/agent-service/tools/
+COPY scientific_skills/ /opt/agent-service/scientific_skills/
+RUN /opt/hermes/.venv/bin/python -m pip install --no-cache-dir -r /opt/agent-service/agent_service/requirements.txt \
+    && /opt/hermes/.venv/bin/python -m pip check \
     && mkdir -p /run/agent-control /run/agent-secrets /work \
     && chmod 0700 /run/agent-control /run/agent-secrets \
     && chmod 0711 /work \
-    && chmod -R a+rX /opt/agent-service/agent_service
+    && chmod -R a+rX /opt/agent-service
 ENV PYTHONPATH=/opt/agent-service PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOME=/run/agent-control
 WORKDIR /opt/agent-service
 EXPOSE 8090
 # Python must be PID 1 in a private Pod PID namespace. The trusted controller
 # needs CHOWN, DAC_OVERRIDE, KILL, SETUID, SETGID only; the child launcher clears
 # all capabilities and sets no_new_privs. No model credential is baked in.
-ENTRYPOINT ["python", "-m", "agent_service.worker_entry"]
+ENTRYPOINT ["/opt/hermes/.venv/bin/python", "-m", "agent_service.worker_entry"]
 CMD []

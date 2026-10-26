@@ -502,10 +502,11 @@ class Deployment:
             # A routine website release preserves that operator choice.
             current_config = self.get('configmap', 'ppt-site')
             if current_config and current_config.get('data', {}).get('PPT_EXECUTION_ENABLED') == 'true':
-                if current_config['data'].get('PPT_EXECUTION_BACKEND') != 'kubernetes':
-                    raise DeployError('Enabled website execution requires PPT_EXECUTION_BACKEND=kubernetes')
+                selected_backend=current_config['data'].get('PPT_EXECUTION_BACKEND')
+                if selected_backend not in ('kubernetes','agent-service'):
+                    raise DeployError('Enabled website execution requires an isolated configured backend')
                 site_config = next(doc for doc in base if doc['kind'] == 'ConfigMap' and doc['metadata']['name'] == 'ppt-site')
-                site_config['data'].update(PPT_EXECUTION_ENABLED='true', PPT_EXECUTION_BACKEND='kubernetes')
+                site_config['data'].update(PPT_EXECUTION_ENABLED='true', PPT_EXECUTION_BACKEND=selected_backend)
             target_replicas = max(1, (existing_site or {}).get('spec', {}).get('replicas', 1))
             owner_path = os.getenv('PPT_OWNER_CONFIG')
             try:

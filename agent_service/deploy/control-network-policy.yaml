@@ -1,0 +1,72 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: agent-service-isolation, namespace: agent-service}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: agent-execution-service}
+  policyTypes: [Ingress, Egress]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}
+          podSelector: {matchLabels: {k8s-app: kube-dns}}
+      ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: data}}
+          podSelector: {matchLabels: {app: postgres}}
+__DATABASE_PEERS__
+      ports: [{protocol: TCP, port: __DATABASE_PORT__}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: agent-service-business-ingress, namespace: agent-service}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: agent-execution-service, component: api}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: ppt-service}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: ppt-hermes-controller}}
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: scientific-agent}}
+          podSelector: {matchLabels: {app: research-api}}
+        - podSelector: {matchLabels: {app.kubernetes.io/name: agent-execution-service}}
+      ports: [{protocol: TCP, port: 8080}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: agent-service-worker-control, namespace: agent-service}
+spec:
+  podSelector:
+    matchLabels: {app: agent-service}
+  policyTypes: [Egress]
+  egress:
+    - to:
+__KUBERNETES_API_PEERS__
+      ports: __KUBERNETES_API_PORTS__
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: agent-workers}}
+          podSelector: {matchLabels: {app: agent-capsule}}
+      ports: [{protocol: TCP, port: 8090}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: agent-model-proxy, namespace: agent-service}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: agent-execution-service, component: model-proxy}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: agent-workers}}
+          podSelector: {matchLabels: {app: agent-capsule}}
+      ports: [{protocol: TCP, port: 8080}]
+  egress:
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: llm}}
+          podSelector: {matchLabels: {app: llm-service}}
+      ports: [{protocol: TCP, port: 80}, {protocol: TCP, port: 8000}]
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 198.18.0.0/15, 224.0.0.0/4, 240.0.0.0/4]
+      ports: [{protocol: TCP, port: 443}]

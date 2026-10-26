@@ -10,7 +10,10 @@ kind: Namespace
 metadata:
   name: agent-workers
   labels:
-    pod-security.kubernetes.io/enforce: baseline
+    # The controller's verified read-only bind mounts need SYS_ADMIN, which
+    # baseline admission forbids. This exemption applies only to this namespace;
+    # the actual Pods retain explicit capability/AppArmor/seccomp restrictions.
+    pod-security.kubernetes.io/enforce: privileged
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -23,6 +26,13 @@ kind: ServiceAccount
 metadata:
   name: agent-service-dispatcher
   namespace: agent-service
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-model-proxy
+  namespace: agent-service
+automountServiceAccountToken: false
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

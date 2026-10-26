@@ -18,7 +18,7 @@ import uuid
 
 SERVICE = Path(__file__).resolve().parent
 PYTHON_BASE = "python@sha256:cf50a4f6ac4f026458b08d5222023d700ac806410dff5e9ca8728fa44f2b850f"
-TARGETS = {"control": "Dockerfile.control", "pi": "Dockerfile.agent-pi"}
+TARGETS = {"control": "Dockerfile.control", "pi": "Dockerfile.agent-pi", "hermes": "Dockerfile.agent-hermes"}
 SHA256 = re.compile(r"sha256:[0-9a-f]{64}\Z")
 PART = re.compile(r"[a-z0-9]+(?:[._-]+[a-z0-9]+)*\Z")
 TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\Z")
@@ -136,7 +136,7 @@ def context_archive(service, target, destination):
     for required in ("__init__.py", "__main__.py", "requirements.txt", TARGETS[target]):
         if "agent_service/" + required not in files:
             raise BuildError("required_build_source_missing")
-    if target == "pi":
+    if target in {'control', 'pi', 'hermes'}:
         # Only this reviewed image-owned bundle crosses the non-code allowlist.
         # Its manifest cannot add files, change the directory or load settings.
         manifest = read_regular(service / (PROFILE_RESOURCE + "manifest.json"), 16 * 1024)
@@ -156,7 +156,25 @@ def context_archive(service, target, destination):
             raise BuildError("invalid_profile_resource_manifest") from None
         files["agent_service/" + PROFILE_RESOURCE + "manifest.json"] = manifest
         files["agent_service/" + PROFILE_RESOURCE + "CONTRACT.md"] = contract
-    if len(files) > 256 or sum(map(len, files.values())) > 16 * 1024 * 1024:
+    root = service.parent
+    # Explicit framework-neutral dependencies of the reviewed collectors. No
+    # business API/database/publisher, sessions or private Agent HOME is copied.
+    ordinary = ['pi_worker/__init__.py', 'scientific_agent/__init__.py', 'tools/__init__.py']
+    ordinary += ['scientific_agent/' + name for name in ('pi_contracts.py', 'pi_citations.py',
+        'pi_sections.py', 'pi_revision_contracts.py', 'pi_revision_validation.py',
+        'academic_observations.py')]
+    for name in ordinary:
+        files[name] = read_regular(root / name)
+    for prefix in ('pi_worker/research_tools', 'tools/academic'):
+        base = checked_directory(root / prefix)
+        for path in sorted(base.rglob('*.py')):
+            relative = path.relative_to(root)
+            if any(part.startswith('.') or part == '__pycache__' for part in relative.parts):
+                continue
+            files[relative.as_posix()] = read_regular(path)
+    for name in ('manifest.json', 'LICENSE', 'task-template.md', 'research-procedure/SKILL.md'):
+        files['scientific_skills/' + name] = read_regular(root / 'scientific_skills' / name)
+    if len(files) > 512 or sum(map(len, files.values())) > 32 * 1024 * 1024:
         raise BuildError("build_context_too_large")
     with tarfile.open(destination, "w") as archive:
         for name, content in sorted(files.items()):
@@ -185,6 +203,9 @@ def build(target="control", *, push=True, service=SERVICE, environ=None, runner=
     if target == "pi":
         donor = immutable_image(environ.get("PI_DONOR_IMAGE"))
         arguments += ["--build-arg", "PI_DONOR_IMAGE=" + donor]
+    if target in {'pi', 'hermes'}:
+        ppt_donor = immutable_image(environ.get('PPT_DONOR_IMAGE'))
+        arguments += ['--build-arg', 'PPT_DONOR_IMAGE=' + ppt_donor]
     with tempfile.TemporaryDirectory(prefix="agent-service-build-") as temporary:
         archive, metadata = Path(temporary) / "context.tar", Path(temporary) / "metadata.json"
         context_archive(service, target, archive)
@@ -227,7 +248,8 @@ def build(target="control", *, push=True, service=SERVICE, environ=None, runner=
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, epilog=(
         "Environment: REGISTRY, IMAGE_TAG, IMAGE, PLATFORM (default linux/arm64), "
-        "PYTHON_BASE_IMAGE (reviewed Python digest), PI_DONOR_IMAGE (required for pi). "
+        "PYTHON_BASE_IMAGE (reviewed Python digest), PI_DONOR_IMAGE (required for pi), "
+        "PPT_DONOR_IMAGE (reviewed PPT/Hermes runtime required for pi/hermes). "
         "A successful push writes rendered/<target>-image.txt; --no-push writes no deployable digest."))
     parser.add_argument("--target", choices=TARGETS, default="control")
     parser.add_argument("--no-push", action="store_true")

@@ -22,6 +22,11 @@ def source_context(dockerfile: Path) -> tuple[bytes, str]:
     files = [SERVICE / '__init__.py']
     for directory in ('control', 'server', 'worker'):
         files.extend(sorted((SERVICE / directory).glob('*.py')))
+    # Only the neutral client/contract and reviewed PPT implementation enter the
+    # business images. No service credentials, runtime HOME or engine vendor copy.
+    agent = SERVICE.parent / 'agent_service'
+    agent_names = ('__init__.py', 'artifacts.py', 'client.py', 'contracts.py', 'engines.py',
+                   'profiles/__init__.py', 'profiles/base.py', 'profiles/ppt.py')
     output = io.BytesIO()
     manifest = {}
     with tarfile.open(fileobj=output, mode='w') as archive:
@@ -34,6 +39,15 @@ def source_context(dockerfile: Path) -> tuple[bytes, str]:
             item = tarfile.TarInfo('code/' + relative)
             item.size = len(content)
             item.mode = 0o644
+            archive.addfile(item, io.BytesIO(content))
+        for name in agent_names:
+            path = agent / name
+            if path.is_symlink() or not path.is_file():
+                raise ValueError('agent_client_source_must_be_regular')
+            content = path.read_bytes()
+            manifest['agent_service/' + name] = hashlib.sha256(content).hexdigest()
+            item = tarfile.TarInfo('agent-code/agent_service/' + name)
+            item.size = len(content); item.mode = 0o644
             archive.addfile(item, io.BytesIO(content))
         for name, raw in [('Dockerfile', dockerfile.read_bytes()),
                           ('requirements-control.lock', (HERE / 'requirements-control.lock').read_bytes()),

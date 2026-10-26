@@ -31,7 +31,7 @@ class ConfigurationError(ServiceError):
 
 def _read_json(path, *, secret=False):
     import json
-    limit = 131072 if secret else 65536
+    limit = 131072 if secret else 4 * 1024 * 1024
     failure = 'secrets_file_unavailable' if secret else 'configuration_file_unavailable'
     try:
         filename = Path(path).absolute()
@@ -122,6 +122,8 @@ class _Worker(_Model):
 class _KubernetesWorker(_Model):
     pool_id: str = Field(pattern=r'^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$')
     engine: Literal['pi', 'hermes']
+    binding_id: str | None = Field(default=None, pattern=r'^[a-z][a-z0-9_.-]{0,79}$')
+    binding_revision: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_.-]{1,100}$')
     namespace: str = Field(pattern=r'^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$')
     image: str = Field(min_length=1, max_length=400)
     host_config_map: str = Field(min_length=1, max_length=253)
@@ -130,6 +132,8 @@ class _KubernetesWorker(_Model):
     port: int = Field(default=8090, ge=8090, le=8090)
     uid_start: int | None = Field(default=None, ge=65536, le=2147483647)
     uid_count: int = Field(default=65536, ge=1, le=1000000)
+    read_only_mounts: bool = False
+    mount_apparmor_profile: str = Field(default='agent-capsule-inputs', pattern=r'^[a-zA-Z0-9_.-]{1,80}$')
     token_ref: str = Field(pattern=r'^[a-z][a-z0-9_.-]{0,63}$')
     receipt_key_ref: str = Field(pattern=r'^[a-z][a-z0-9_.-]{0,63}$')
 
@@ -182,8 +186,8 @@ class _KubernetesWorker(_Model):
 class _Api(_Model):
     host: str = Field(default='127.0.0.1', pattern=r'^[A-Za-z0-9_.:-]{1,253}$')
     port: int = Field(default=8080, ge=1, le=65535)
-    max_request_bytes: int = Field(default=65536, ge=1024, le=1024 * 1024)
-    max_input_bytes: int = Field(default=1024 * 1024, ge=1, le=1024 * 1024)
+    max_request_bytes: int = Field(default=4 * 1024 * 1024, ge=1024, le=4 * 1024 * 1024)
+    max_input_bytes: int = Field(default=64 * 1024 * 1024, ge=1, le=64 * 1024 * 1024)
 
 
 class _Dispatch(_Model):
@@ -203,6 +207,14 @@ class _Store(_Model):
     max_queue: int = Field(default=1000, ge=1, le=10000)
 
 
+class _ModelProxy(_Model):
+    upstream_base_url: str = Field(min_length=1, max_length=300)
+    upstream_token_ref: str = Field(pattern=r'^[a-z][a-z0-9_.-]{0,63}$')
+    signing_key_ref: str = Field(pattern=r'^[a-z][a-z0-9_.-]{0,63}$')
+    max_calls_per_attempt: int = Field(default=128, ge=1, le=1000)
+    max_output_tokens: int = Field(default=32768, ge=256, le=131072)
+
+
 class _Public(_Model):
     schema_version: Literal[2]
     callers: list[_Caller] = Field(min_length=1, max_length=100)
@@ -212,10 +224,11 @@ class _Public(_Model):
     execution_bindings: list[dict] = Field(default_factory=list, max_length=100)
     routes: list[dict] = Field(default_factory=list, max_length=100)
     workers: list[_Worker] = Field(default_factory=list, max_length=2)
-    kubernetes_workers: list[_KubernetesWorker] = Field(default_factory=list, max_length=2)
+    kubernetes_workers: list[_KubernetesWorker] = Field(default_factory=list, max_length=100)
     api: _Api = Field(default_factory=_Api)
     dispatcher: _Dispatch = Field(default_factory=_Dispatch)
     store: _Store = Field(default_factory=_Store)
+    model_proxy: _ModelProxy | None = None
 
     @field_validator('schema_version', mode='before')
     @classmethod
@@ -226,10 +239,11 @@ class _Public(_Model):
 
     @model_validator(mode='after')
     def unique_routes(self):
-        engines = [w.engine for w in self.workers] + [w.engine for w in self.kubernetes_workers]
+        engines = [w.engine for w in self.workers]
+        kube_engines = {w.engine for w in self.kubernetes_workers}
         pools = [w.pool_id for w in self.kubernetes_workers]
         caller_keys = [c.token_ref for c in self.callers]
-        if (len(set(engines)) != len(engines)
+        if (len(set(engines)) != len(engines) or set(engines) & kube_engines
                 or len(set(caller_keys)) != len(caller_keys) or len(set(pools)) != len(pools)):
             raise ValueError('Duplicate configured identity or route')
         return self
@@ -257,6 +271,7 @@ class ServiceConfiguration:
     deployment_registry: object = field(default=None, repr=False)
     kubernetes_pools: tuple = field(default=(), repr=False)
     kubernetes_credentials: tuple[KubernetesWorkerCredentials, ...] = field(default=(), repr=False)
+    model_proxy_settings: object = field(default=None, repr=False)
     api_host: str = '127.0.0.1'
     api_port: int = 8080
     poll_seconds: float = 1.0
@@ -287,15 +302,26 @@ class ServiceConfiguration:
                 from .kubernetes_client import KubernetesClient
                 from .kubernetes_provider import KubernetesWorkerAdapter
                 credentials = {value.pool_id: value for value in self.kubernetes_credentials}
+                routed = {}
                 for pool in self.kubernetes_pools:
                     private = credentials[pool.pool_id]
                     kube = KubernetesClient.from_service_account()
                     try:
-                        adapter = KubernetesWorkerAdapter(store, pool, kube, private.token, private.receipt_key)
+                        from .model_proxy import ModelGrantIssuer
+                        issuer = (ModelGrantIssuer(self.model_proxy_settings.signing_key)
+                                  if self.model_proxy_settings is not None else None)
+                        pins = pool.policy.execution_binding
+                        model_policy = (self.deployment_registry.binding(pins.binding_id,
+                                        pins.binding_revision).model_policy if pins else None)
+                        adapter = KubernetesWorkerAdapter(store, pool, kube, private.token,
+                            private.receipt_key, model_grant_issuer=issuer, model_policy=model_policy)
                     except Exception:
                         kube.close()
                         raise
-                    adapters[pool.policy.engine] = adapter
+                    routed.setdefault(pool.policy.engine, []).append((pool.policy, adapter))
+                from .routing import RoutedWorkerAdapter
+                for engine, entries in routed.items():
+                    adapters[engine] = RoutedWorkerAdapter(entries)
         except Exception:
             for adapter in adapters.values():
                 try:
@@ -340,8 +366,13 @@ def load_configuration(config_path, secrets_path, *, allow_sqlite=False) -> Serv
         if any(not set(caller.profiles) <= registered_names for caller in public.callers):
             raise ValueError('Caller scope names an unregistered task contract')
         for pool in public.kubernetes_workers:
-            matches = [policy for policy in registry.policies() if policy.engine == pool.engine]
-            if len(matches) != 1 or matches[0].image_digest != pool.image.rsplit('@', 1)[1]:
+            if (pool.binding_id is None) != (pool.binding_revision is None):
+                raise ValueError('Both fixed binding identity fields are required')
+            matches = ([deployment_registry.binding_policy(pool.binding_id, pool.binding_revision)]
+                       if pool.binding_id is not None else
+                       [policy for policy in registry.policies() if policy.engine == pool.engine])
+            if (len(matches) != 1 or matches[0].engine != pool.engine
+                    or matches[0].image_digest != pool.image.rsplit('@', 1)[1]):
                 raise ValueError('A Worker pool requires exactly one matching pinned routed profile')
     except (ValueError, TypeError, KeyError, RecursionError):
         raise ConfigurationError() from None
@@ -401,19 +432,38 @@ def load_configuration(config_path, secrets_path, *, allow_sqlite=False) -> Serv
         api_settings = ApiSettings(principals, public.api.max_request_bytes, public.api.max_input_bytes)
     except (ValueError, TypeError):
         raise ConfigurationError() from None
+    proxy_settings = None
+    if public.model_proxy is not None:
+        try:
+            from .model_proxy import ModelProxySettings
+            proxy_settings = ModelProxySettings(
+                signing_key=decoded[public.model_proxy.signing_key_ref],
+                upstream_base_url=public.model_proxy.upstream_base_url,
+                upstream_token=secrets.tokens[public.model_proxy.upstream_token_ref],
+                max_calls_per_attempt=public.model_proxy.max_calls_per_attempt,
+                max_output_tokens=public.model_proxy.max_output_tokens)
+        except (KeyError, ValueError, TypeError):
+            raise ConfigurationError('model_proxy_configuration_invalid') from None
     pools, kube_credentials = (), ()
     if public.kubernetes_workers:
         try:
             from .kubernetes_provider import KubernetesPool
             pools = tuple(KubernetesPool(pool_id=worker.pool_id,
-                policy=next(policy for policy in registry.policies() if policy.engine == worker.engine),
+                policy=(deployment_registry.binding_policy(worker.binding_id, worker.binding_revision)
+                        if worker.binding_id is not None else
+                        next(policy for policy in registry.policies() if policy.engine == worker.engine)),
                 namespace=worker.namespace, image=worker.image, host_config_map=worker.host_config_map,
                 pod_cidrs=tuple(worker.pod_cidrs), enabled=worker.enabled, port=worker.port,
-                uid_start=worker.uid_start, uid_count=worker.uid_count)
+                uid_start=worker.uid_start, uid_count=worker.uid_count,
+                read_only_mounts=worker.read_only_mounts,
+                mount_apparmor_profile=worker.mount_apparmor_profile)
                 for worker in public.kubernetes_workers)
             kube_credentials = tuple(KubernetesWorkerCredentials(worker.pool_id,
                 secrets.tokens[worker.token_ref], decoded[worker.receipt_key_ref])
                 for worker in public.kubernetes_workers)
+            if any(pool.enabled and (proxy_settings is None or pool.policy.execution_binding is None
+                    or pool.policy.supports_inputs and not pool.read_only_mounts) for pool in pools):
+                raise ValueError('Enabled domain capsules require model grants and read-only input mounts')
         except KeyError:
             raise ConfigurationError('required_secret_missing') from None
         except (ValueError, TypeError, StopIteration):
@@ -421,6 +471,7 @@ def load_configuration(config_path, secrets_path, *, allow_sqlite=False) -> Serv
     return ServiceConfiguration(database_url=database_url, api_settings=api_settings, registry=registry,
         worker_endpoints=endpoints, deployment_registry=deployment_registry,
         kubernetes_pools=pools, kubernetes_credentials=kube_credentials,
+        model_proxy_settings=proxy_settings,
         api_host=public.api.host, api_port=public.api.port,
         poll_seconds=public.dispatcher.poll_seconds, lease_seconds=public.dispatcher.lease_seconds,
         max_events=public.store.max_events, max_queue=public.store.max_queue,

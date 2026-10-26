@@ -14,8 +14,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-MAX_INPUT_BYTES = 1024 * 1024
-MAX_ARTIFACT_BYTES = 8 * 1024 * 1024
+MAX_INPUT_BYTES = 64 * 1024 * 1024
+MAX_ARTIFACT_BYTES = 256 * 1024 * 1024
+MAX_FILES = 2048
 TERMINAL_STATES = frozenset({'completed', 'needs_input', 'failed', 'cancelled', 'timed_out', 'quarantined'})
 
 
@@ -39,6 +40,21 @@ def safe_name(value: str) -> str:
             or any(c in value for c in '/\\:\x00')
             or any(ord(c) < 32 for c in value)):
         raise ValueError('An ordinary basename is required')
+    return value
+
+
+def safe_relative_path(value: str) -> str:
+    """Portable project-relative path, never an archive or a host path."""
+    if (type(value) is not str or not 1 <= len(value) <= 500 or '\\' in value
+            or value.startswith('/') or any(ord(c) < 32 or ord(c) == 127 for c in value)):
+        raise ValueError('An ordinary relative path is required')
+    parts = value.split('/')
+    for part in parts:
+        safe_name(part)
+        if (any(c in part for c in '\"<>|?*') or part.endswith((' ', '.')) or part.split('.')[0].casefold() in
+                {'con', 'prn', 'aux', 'nul', *(f'com{i}' for i in range(1, 10)),
+                 *(f'lpt{i}' for i in range(1, 10))}):
+            raise ValueError('A portable relative path is required')
     return value
 
 
@@ -104,6 +120,13 @@ class ExecutionBindingPins(WireModel):
 class InputRef(WireModel):
     input_id: str
     sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    path: str | None = None
+    role: str | None = Field(default=None, pattern=r'^[a-z][a-z0-9_.-]{0,79}$')
+
+    @field_validator('path')
+    @classmethod
+    def relative_path(cls, value):
+        return safe_relative_path(value) if value is not None else None
 
     @field_validator('input_id')
     @classmethod
@@ -113,17 +136,34 @@ class InputRef(WireModel):
         return value
 
 
+class CheckpointRef(WireModel):
+    checkpoint_id: str
+    sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    format: Literal['workspace-tree.v1'] = 'workspace-tree.v1'
+
+    @field_validator('checkpoint_id')
+    @classmethod
+    def canonical_id(cls, value):
+        if str(UUID(value)) != value:
+            raise ValueError('Canonical checkpoint UUID required')
+        return value
+
+
 class JobRequest(WireModel):
     api_version: Literal['1'] = '1'
     profile: str = Field(pattern=r'^[a-z][a-z0-9_.-]{0,79}$')
     profile_revision: str = Field(pattern=r'^[A-Za-z0-9_.-]{1,100}$')
     business_ref: str = Field(min_length=1, max_length=200)
     task: dict[str, Any]
-    inputs: list[InputRef] = Field(default_factory=list, max_length=10)
+    inputs: list[InputRef] = Field(default_factory=list, max_length=MAX_FILES)
+    checkpoint_ref: CheckpointRef | None = None
     timeout_seconds: int = Field(default=600, ge=1, le=3600)
+    execution_deadline_at: float | None = Field(default=None, gt=0)
 
     @model_validator(mode='after')
     def bounded_task(self):
+        if self.execution_deadline_at is not None and not math.isfinite(self.execution_deadline_at):
+            raise ValueError('A finite absolute execution deadline is required')
         if len(canonical_bytes(self.task)) > 32768:
             raise ValueError('Task exceeds its bound')
         def depth(value, level=0):
@@ -140,18 +180,21 @@ class JobRequest(WireModel):
         depth(self.task)
         if len({x.input_id for x in self.inputs}) != len(self.inputs):
             raise ValueError('Duplicate input reference')
+        paths = [x.path.casefold() for x in self.inputs if x.path is not None]
+        if len(set(paths)) != len(paths):
+            raise ValueError('Duplicate input path')
         return self
 
 
 class InlineFile(WireModel):
     name: str
     sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
-    content_base64: str = Field(max_length=12 * 1024 * 1024)
+    content_base64: str = Field(max_length=((MAX_INPUT_BYTES + 2) // 3) * 4)
 
     @field_validator('name')
     @classmethod
     def basename(cls, value):
-        return safe_name(value)
+        return safe_relative_path(value)
 
     def content(self, limit=MAX_ARTIFACT_BYTES) -> bytes:
         if len(self.content_base64) > ((limit + 2) // 3) * 4:
@@ -183,8 +226,18 @@ class ExecutionEnvelope(WireModel):
     deadline_at: float
     lease_expires_at: float
     task: dict[str, Any]
-    inputs: list[InlineFile] = Field(default_factory=list, max_length=10)
+    inputs: list[InlineFile] = Field(default_factory=list, max_length=MAX_FILES)
+    checkpoint_ref: CheckpointRef | None = None
+    checkpoint_inputs: list[InlineFile] = Field(default_factory=list, max_length=MAX_FILES)
     execution_binding: ExecutionBindingPins | None = None
+    task_schema: str = 'workspace-text.v1'
+    output_schema: str = 'text-output.v1'
+    max_input_bytes: int = Field(default=1024 * 1024, ge=1, le=MAX_INPUT_BYTES)
+    max_input_total_bytes: int = Field(default=10 * 1024 * 1024, ge=1, le=MAX_ARTIFACT_BYTES)
+    max_input_files: int = Field(default=10, ge=0, le=MAX_FILES)
+    max_artifact_bytes: int = Field(default=8 * 1024 * 1024, ge=1, le=MAX_ARTIFACT_BYTES)
+    max_artifact_file_bytes: int = Field(default=8 * 1024 * 1024, ge=1, le=MAX_INPUT_BYTES)
+    max_artifact_files: int = Field(default=32, ge=1, le=MAX_FILES)
 
     @field_validator('job_id', 'attempt_id')
     @classmethod
@@ -239,7 +292,7 @@ class WorkerResult(WireModel):
     state: Literal['completed', 'needs_input', 'failed', 'cancelled', 'timed_out', 'quarantined']
     error_code: str | None = Field(default=None, pattern=r'^[a-z][a-z0-9_]{0,79}$')
     usage: dict[str, Any] | None = None
-    artifacts: list[InlineFile] = Field(default_factory=list, max_length=32)
+    artifacts: list[InlineFile] = Field(default_factory=list, max_length=MAX_FILES)
     stop_receipt: StopReceipt | None = None
 
     def result_digest(self):
@@ -292,6 +345,14 @@ class ProfilePolicy:
     task_validator: Callable[[dict], None] = field(default=lambda _: None, repr=False, compare=False)
     supports_inputs: bool = False
     execution_binding: ExecutionBindingPins | None = None
+    task_schema: str = 'workspace-text.v1'
+    output_schema: str = 'text-output.v1'
+    max_input_bytes: int = 1024 * 1024
+    max_input_total_bytes: int = 10 * 1024 * 1024
+    max_input_files: int = 10
+    max_artifact_bytes: int = 8 * 1024 * 1024
+    max_artifact_file_bytes: int = 8 * 1024 * 1024
+    max_artifact_files: int = 32
 
     def __post_init__(self):
         if (self.engine not in {'pi', 'hermes'} or not self.name or not self.revision
@@ -303,13 +364,25 @@ class ProfilePolicy:
             if (not isinstance(self.execution_binding, ExecutionBindingPins)
                     or not self.execution_binding.matches_base(self.pins())):
                 raise ValueError('Execution binding does not match its profile')
+        bounds = {'max_input_bytes': MAX_INPUT_BYTES, 'max_input_total_bytes': MAX_ARTIFACT_BYTES,
+                  'max_input_files': MAX_FILES, 'max_artifact_bytes': MAX_ARTIFACT_BYTES,
+                  'max_artifact_file_bytes': MAX_INPUT_BYTES, 'max_artifact_files': MAX_FILES}
+        if any(type(getattr(self, k)) is not int or not 1 <= getattr(self, k) <= v
+               for k, v in bounds.items()):
+            raise ValueError('Invalid profile resource bounds')
 
     def pins(self):
         value = dict(engine=self.engine, runtime_revision=self.runtime_revision,
                      image_digest=self.image_digest, profile_revision=self.revision, profile=self.name)
         if self.execution_binding is not None:
             value['execution_binding'] = self.execution_binding.model_dump(mode='json')
+            value.update(self.execution_limits())
+            value.update(task_schema=self.task_schema, output_schema=self.output_schema)
         return value
+
+    def execution_limits(self):
+        return {name: getattr(self, name) for name in ('max_input_bytes', 'max_input_total_bytes',
+            'max_input_files', 'max_artifact_bytes', 'max_artifact_file_bytes', 'max_artifact_files')}
 
     def matches(self, value):
         data = value.model_dump(mode='json') if isinstance(value, ExecutionEnvelope) else value
@@ -346,6 +419,10 @@ class ProfileRegistry:
             raise ServiceError('deadline_exceeds_profile', 422)
         if request.inputs and not profile.supports_inputs:
             raise ServiceError('input_staging_not_ready', 503)
+        if request.checkpoint_ref is not None and not profile.supports_inputs:
+            raise ServiceError('checkpoint_not_supported', 422)
+        if len(request.inputs) > profile.max_input_files:
+            raise ServiceError('input_quota_exceeded', 413)
         profile.task_validator(request.task)
         return profile
 

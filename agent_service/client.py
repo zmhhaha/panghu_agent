@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import json
 import re
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from uuid import UUID
 
 import httpx
 
-from .contracts import MAX_ARTIFACT_BYTES, MAX_INPUT_BYTES, JobRequest, ServiceError, safe_name
+from .contracts import MAX_ARTIFACT_BYTES, MAX_INPUT_BYTES, JobRequest, ServiceError
+from .artifacts import relative_path
 
 
 class AgentClient:
@@ -84,8 +85,8 @@ class AgentClient:
         return self._request('GET', '/v1/capabilities')
 
     def upload_input(self, name: str, content: bytes):
-        safe_name(name)
-        if not isinstance(content, bytes) or not 1 <= len(content) <= MAX_INPUT_BYTES:
+        relative_path(name)
+        if not isinstance(content, bytes) or not 0 <= len(content) <= MAX_INPUT_BYTES:
             raise ValueError('Input exceeds its byte limit')
         return self._request('POST', '/v1/inputs', params={'name': name}, content=content,
                              headers={'Content-Type': 'application/octet-stream'})
@@ -104,6 +105,23 @@ class AgentClient:
     def get_job(self, job_id: str):
         return self._request('GET', '/v1/jobs/' + self._id(job_id))
 
+    def lookup_job(self, idempotency_key: str):
+        """Recover a lost submission response without repeating a POST."""
+        if (type(idempotency_key) is not str or not 1 <= len(idempotency_key) <= 128
+                or any(not 33 <= ord(c) <= 126 for c in idempotency_key)):
+            raise ValueError('An explicit idempotency key is required')
+        return self._request('GET', '/v1/jobs/by-idempotency/' + quote(idempotency_key, safe=''))
+
+    def input_metadata(self, input_id: str):
+        return self._request('GET', '/v1/inputs/' + self._id(input_id))
+
+    def download_input(self, input_id: str):
+        return self._request('GET', '/v1/inputs/' + self._id(input_id) + '/content',
+                             limit=MAX_INPUT_BYTES, raw=True)
+
+    def delete_input(self, input_id: str):
+        return self._request('DELETE', '/v1/inputs/' + self._id(input_id))
+
     def events(self, job_id: str, *, after=0, limit=100):
         if type(after) is not int or not 0 <= after <= 2**63 - 1 or type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError('Invalid event page')
@@ -114,11 +132,59 @@ class AgentClient:
         return self._request('POST', '/v1/jobs/' + self._id(job_id) + '/cancel', json={})
 
     def artifacts(self, job_id: str):
-        return self._request('GET', '/v1/jobs/' + self._id(job_id) + '/artifacts')
+        return self._request('GET', '/v1/jobs/' + self._id(job_id) + '/artifacts', limit=4 * 1024 * 1024)
+
+    def artifact_manifest(self, job_id: str):
+        return self._request('GET', '/v1/jobs/' + self._id(job_id) + '/artifact-manifest',
+                             limit=4 * 1024 * 1024)
 
     def download_artifact(self, artifact_id: str):
         return self._request('GET', '/v1/artifacts/' + self._id(artifact_id) + '/content',
                              limit=MAX_ARTIFACT_BYTES, raw=True)
+
+    def delete_artifact(self, artifact_id: str):
+        return self._request('DELETE', '/v1/artifacts/' + self._id(artifact_id))
+
+    def create_checkpoint(self, job_id: str, *, idempotency_key: str,
+                          artifact_ids=None, format='workspace-tree.v1'):
+        return self._request('POST', '/v1/jobs/' + self._id(job_id) + '/checkpoints',
+            json={'artifact_ids': artifact_ids, 'format': format},
+            headers={'Idempotency-Key': self._idempotency_key(idempotency_key)}, limit=4 * 1024 * 1024)
+
+    def get_checkpoint(self, checkpoint_id: str):
+        return self._request('GET', '/v1/checkpoints/' + self._id(checkpoint_id), limit=4 * 1024 * 1024)
+
+    def delete_checkpoint(self, checkpoint_id: str):
+        return self._request('DELETE', '/v1/checkpoints/' + self._id(checkpoint_id))
+
+    def release_job_resources(self, job_id: str, *, inputs=True, artifacts=True):
+        if type(inputs) is not bool or type(artifacts) is not bool:
+            raise ValueError('Explicit boolean retention flags required')
+        return self._request('POST', '/v1/jobs/' + self._id(job_id) + '/retention/release',
+                             json={'inputs': inputs, 'artifacts': artifacts})
+
+    def recovery(self, job_id: str):
+        return self._request('GET', '/v1/jobs/' + self._id(job_id) + '/recovery')
+
+    def save_recovery(self, job_id: str, document: dict, *, expected_revision=None):
+        return self._request('PUT', '/v1/jobs/' + self._id(job_id) + '/recovery',
+                             json={'document': document, 'expected_revision': expected_revision})
+
+    def acknowledge_publication(self, job_id: str, *, idempotency_key: str,
+                                manifest_sha256: str, delivery_ref: str, decision='candidate_received'):
+        return self._request('POST', '/v1/jobs/' + self._id(job_id) + '/publication-ack',
+            json={'manifest_sha256': manifest_sha256, 'delivery_ref': delivery_ref, 'decision': decision},
+            headers={'Idempotency-Key': self._idempotency_key(idempotency_key)})
+
+    def publication_acknowledgements(self, job_id: str):
+        return self._request('GET', '/v1/jobs/' + self._id(job_id) + '/publication-ack')
+
+    @staticmethod
+    def _idempotency_key(value):
+        if (type(value) is not str or not 1 <= len(value) <= 128
+                or any(not 33 <= ord(char) <= 126 for char in value)):
+            raise ValueError('An explicit idempotency key is required')
+        return value
 
 
 ExecutionClient = AgentClient

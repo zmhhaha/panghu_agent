@@ -5,6 +5,7 @@ import time
 
 from .contracts import ExecutionEnvelope, InlineFile, ServiceError, TERMINAL_STATES, verify_receipt
 from .event_ingestion import sync_worker_events
+from .storage import execution_fields
 
 
 class Dispatcher:
@@ -21,13 +22,16 @@ class Dispatcher:
             value = self.store.get_input(job['tenant'], job['caller'], ref['input_id'])
             if value['sha256'] != ref['sha256']:
                 raise ServiceError('input_integrity_invalid', 503)
-            inputs.append(InlineFile.from_bytes(value['name'], value['content']))
+            inputs.append(InlineFile.from_bytes(ref.get('path') or value['name'], value['content']))
+        checkpoint = request.get('checkpoint_ref')
+        checkpoint_files = self.store.checkpoint_files(job['tenant'], job['caller'], checkpoint, pins)
         return ExecutionEnvelope(job_id=job['job_id'], attempt_id=job['attempt_id'], fence=job['fence'],
             engine=pins['engine'], profile=request['profile'], profile_revision=request['profile_revision'],
             runtime_revision=pins['runtime_revision'], image_digest=pins['image_digest'],
             execution_binding=pins.get('execution_binding'),
+            checkpoint_ref=checkpoint, checkpoint_inputs=checkpoint_files,
             deadline_at=float(job['deadline_at']), lease_expires_at=float(job['lease_expires_at']),
-            task=request['task'], inputs=inputs)
+            task=request['task'], inputs=inputs, **execution_fields(pins))
 
     def _quarantine(self, job, code):
         return self.store.finish(job['job_id'], job['attempt_id'], job['fence'],
@@ -146,8 +150,12 @@ class Dispatcher:
             result = adapter.result(envelope)
             if not verify_receipt(envelope, result, self._receipt_key(adapter, envelope), self.clock()):
                 return self._quarantine(job, 'worker_stop_receipt_invalid')
-            files = [{'name': f.name, 'content': f.content()} for f in result.artifacts]
-            if len({f['name'] for f in files}) != len(files) or sum(len(f['content']) for f in files) > 8 * 1024 * 1024:
+            from .artifacts import unique_paths
+            files = [{'name': f.name, 'content': f.content(limit=envelope.max_artifact_file_bytes)}
+                     for f in result.artifacts]
+            unique_paths(file['name'] for file in files)
+            if (len(files) > envelope.max_artifact_files
+                    or sum(len(f['content']) for f in files) > envelope.max_artifact_bytes):
                 return self._quarantine(job, 'worker_artifacts_invalid')
             outcome = result.model_dump(exclude={'artifacts'})
             if current['cancel_requested']:

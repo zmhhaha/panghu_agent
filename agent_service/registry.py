@@ -13,7 +13,13 @@ from typing import Literal, Mapping
 from pydantic import Field, field_validator, model_validator
 
 from .contracts import (ExecutionBindingPins, ProfilePolicy, ProfileRegistry,
-                        WireModel, digest, safe_name, validate_workspace_task)
+                        WireModel, digest, safe_relative_path)
+from .profiles import implementation
+
+Tool = Literal['read', 'write', 'bash', 'image', 'academic_search', 'academic_verify']
+OutputSchema = Literal['text-output.v1', 'ppt-plan_initial-output.v1', 'ppt-plan_options-output.v1',
+    'ppt-generate-output.v1', 'ppt-revise-output.v1', 'ppt-prepare-output.v1',
+    'research-output.v1', 'research-revision-output.v1']
 
 NAME = r'^[a-z][a-z0-9_.-]{0,79}$'
 REVISION = r'^[A-Za-z0-9_.-]{1,100}$'
@@ -42,11 +48,17 @@ def _unique(values):
 class TaskContract(_Record):
     name: str = Field(pattern=NAME)
     revision: str = Field(pattern=REVISION)
-    task_schema: Literal['workspace-text.v1']
-    output_schema: Literal['text-output.v1']
-    required_tools: tuple[Literal['read', 'write'], ...] = Field(min_length=2, max_length=2)
+    task_schema: str = Field(pattern=NAME)
+    output_schema: OutputSchema
+    required_tools: tuple[Tool, ...] = Field(min_length=2, max_length=6)
     required_model_capabilities: tuple[Literal['text', 'tool_calls', 'vision'], ...] = Field(min_length=2, max_length=3)
     max_timeout_seconds: int = Field(default=600, ge=1, le=3600)
+    max_input_bytes: int | None = Field(default=None, ge=1, le=64 * 1024 * 1024)
+    max_input_total_bytes: int | None = Field(default=None, ge=1, le=256 * 1024 * 1024)
+    max_input_files: int | None = Field(default=None, ge=1, le=2048)
+    max_artifact_bytes: int | None = Field(default=None, ge=1, le=256 * 1024 * 1024)
+    max_artifact_file_bytes: int | None = Field(default=None, ge=1, le=64 * 1024 * 1024)
+    max_artifact_files: int | None = Field(default=None, ge=1, le=2048)
 
     @field_validator('required_tools', 'required_model_capabilities')
     @classmethod
@@ -55,16 +67,26 @@ class TaskContract(_Record):
 
     @model_validator(mode='after')
     def reviewed_handler(self):
-        # The only implemented collector is deliberately not exposed under
-        # PPT/research names. Future handlers must implement both ends first.
-        if (self.name != 'workspace-task.v1' or set(self.required_tools) != {'read', 'write'}
+        handler = implementation(self.name)
+        if (self.task_schema != handler.task_schema or self.output_schema != handler.output_schema
+                or set(self.required_tools) != set(handler.required_tools)
                 or not {'text', 'tool_calls'} <= set(self.required_model_capabilities)):
             raise ValueError('Task contract has no reviewed implementation')
+        if 'image' in handler.required_tools and 'vision' not in self.required_model_capabilities:
+            raise ValueError('The image tool requires a vision-capable model policy')
+        for key, maximum in handler.limits.as_dict().items():
+            value = getattr(self, key)
+            if value is not None and value > maximum:
+                raise ValueError('Contract cannot widen implementation quotas')
         return self
 
     @property
     def task_validator(self):
-        return validate_workspace_task
+        return implementation(self.name).validate_task
+
+    def limits(self):
+        return {key: getattr(self, key) if getattr(self, key) is not None else maximum
+                for key, maximum in implementation(self.name).limits.as_dict().items()}
 
 
 class Resource(_Record):
@@ -74,16 +96,16 @@ class Resource(_Record):
     @field_validator('name')
     @classmethod
     def ordinary_resource(cls, value):
-        return safe_name(value)
+        return safe_relative_path(value)
 
 
 class CapabilityBundle(_Record):
     name: str = Field(pattern=NAME)
     revision: str = Field(pattern=REVISION)
-    resources: tuple[Resource, ...] = Field(min_length=1, max_length=32)
+    resources: tuple[Resource, ...] = Field(min_length=1, max_length=2048)
     source: str = Field(min_length=1, max_length=300)
     license: str = Field(pattern=r'^[A-Za-z0-9().+ -]{1,120}$')
-    required_tools: tuple[Literal['read', 'write'], ...] = Field(max_length=2)
+    required_tools: tuple[Tool, ...] = Field(max_length=6)
 
     @field_validator('source')
     @classmethod
@@ -108,8 +130,8 @@ class CapabilityBundle(_Record):
 class ToolEnvironment(_Record):
     name: str = Field(pattern=NAME)
     revision: str = Field(pattern=REVISION)
-    tools: tuple[Literal['read', 'write'], ...] = Field(min_length=2, max_length=2)
-    capabilities: tuple[Literal['text-output.v1'], ...] = Field(min_length=1, max_length=1)
+    tools: tuple[Tool, ...] = Field(min_length=2, max_length=6)
+    capabilities: tuple[OutputSchema, ...] = Field(min_length=1, max_length=8)
     image_digest: str = Field(pattern=r'^sha256:[0-9a-f]{64}$')
     runtime_revision: str = Field(pattern=REVISION)
 
@@ -139,7 +161,7 @@ class ModelPolicy(_Record):
 
 class AcceptanceRecord(_Record):
     combination_sha256: str = Field(pattern=SHA256)
-    suite: Literal['workspace-contract.v1']
+    suite: str = Field(pattern=NAME)
     report_sha256: str = Field(pattern=SHA256)
 
     @field_validator('report_sha256')
@@ -243,6 +265,10 @@ class DeploymentRegistry:
             if (binding.acceptance is not None
                     and binding.acceptance.combination_sha256 != fingerprints[key]):
                 raise ValueError('Stale combination acceptance record')
+            suite = ('workspace-contract.v1' if c.name == 'workspace-task.v1'
+                     else c.name.replace('.v1', '-contract.v1'))
+            if binding.acceptance is not None and binding.acceptance.suite != suite:
+                raise ValueError('Acceptance suite does not cover the actual domain contract')
         if type(routes) not in (list, tuple) or len(routes) > 100:
             raise ValueError('Invalid bounded routes')
         policies, seen = [], set()
@@ -266,12 +292,34 @@ class DeploymentRegistry:
             policies.append(ProfilePolicy(contract.name, contract.revision, binding.engine,
                 environment.runtime_revision, environment.image_digest,
                 enabled=route.enabled, max_timeout_seconds=contract.max_timeout_seconds,
-                task_validator=contract.task_validator, supports_inputs=False, execution_binding=pins))
+                task_validator=contract.task_validator,
+                supports_inputs=implementation(contract.name).supports_inputs,
+                execution_binding=pins, task_schema=contract.task_schema,
+                output_schema=contract.output_schema, **contract.limits()))
         return cls(contracts, bundles, environments, bindings, ProfileRegistry(policies),
                    MappingProxyType(fingerprints))
 
     def profiles(self):
         return self._profiles
+
+    def binding_policy(self, binding_id, revision):
+        """Retain disabled historical pools so recovery uses the original pins."""
+        binding = self.binding(binding_id, revision)
+        if binding is None:
+            raise ValueError('Unknown fixed execution binding')
+        c = self.contract(binding.profile, binding.profile_revision)
+        b = self.bundle(binding.bundle.name, binding.bundle.revision)
+        e = self.environment(binding.tool_environment.name, binding.tool_environment.revision)
+        pins = ExecutionBindingPins.create(**_identity(c, b, e, binding),
+            binding_id=binding.id, binding_revision=binding.revision,
+            acceptance_sha256=digest(binding.acceptance.model_dump(mode='json')
+                if binding.acceptance else {'status': 'unreviewed'}))
+        active = self._profiles.policy(c.name, c.revision)
+        return ProfilePolicy(c.name, c.revision, binding.engine, e.runtime_revision, e.image_digest,
+            enabled=bool(active and active.execution_binding == pins and active.enabled),
+            max_timeout_seconds=c.max_timeout_seconds, task_validator=c.task_validator,
+            supports_inputs=implementation(c.name).supports_inputs, execution_binding=pins,
+            task_schema=c.task_schema, output_schema=c.output_schema, **c.limits())
 
     def contract(self, name, revision):
         return self._contracts.get((name, revision))

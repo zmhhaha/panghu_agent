@@ -4,6 +4,12 @@
 # 环境变量（含 API Key）
 .env
 
+# Agent deployment receipts, public operator catalogs and independent host evidence.
+/agent_service/rendered/
+/agent_service/config.production.json
+/agent_service/worker-hosts/
+/.venv-agent-deploy/
+
 # 数据库文件
 *.db
 *.db-journal

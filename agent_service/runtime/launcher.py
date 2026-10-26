@@ -61,6 +61,7 @@ def main():
             os.close(fd)
             raise RuntimeError("isolation sentinel readable")
     os.chdir(config["cwd"])
+    os.umask(config.get('umask', 0o077))
     os.execvpe(config["command"][0], config["command"], os.environ)
 
 

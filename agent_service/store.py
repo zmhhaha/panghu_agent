@@ -15,13 +15,15 @@ import uuid
 
 from sqlalchemy import (Boolean, Column, Float, ForeignKey, Integer, JSON,
                         LargeBinary, MetaData, String, Table, UniqueConstraint,
-                        create_engine, func, insert, select, text, update)
+                        create_engine, func, insert, inspect, or_, select, text, update)
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import StaticPool
 from pydantic import ValidationError
 
 from .contracts import (ExecutionBindingPins, ExecutionEnvelope, InlineFile, ServiceError,
-                        WorkerResult, canonical_bytes, digest)
+                        WorkerResult, MAX_INPUT_BYTES, MAX_ARTIFACT_BYTES, canonical_bytes, digest)
+from .artifacts import relative_path, unique_paths
+from .storage import FileStoreMixin, define_tables, execution_fields
 
 
 metadata = MetaData()
@@ -30,7 +32,7 @@ inputs = Table(
     Column("id", String(36), primary_key=True),
     Column("tenant", String(128), nullable=False),
     Column("caller", String(128), nullable=False),
-    Column("name", String(128), nullable=False),
+    Column("name", String(1024), nullable=False),
     Column("sha256", String(64), nullable=False),
     Column("size", Integer, nullable=False),
     Column("content", LargeBinary, nullable=False),
@@ -81,6 +83,7 @@ worker_allocations = Table(
     Column("pod_name", String(63), nullable=False),
     Column("intent_sha256", String(64), nullable=False),
     Column("agent_uid", Integer),
+    Column("aux_uid", Integer),
     Column("pod_uid", String(128)),
     Column("create_claimed", Boolean, nullable=False, default=False),
     Column("worker_start_claimed", Boolean, nullable=False, default=False),
@@ -90,6 +93,7 @@ worker_allocations = Table(
     Column("created_at", Float, nullable=False),
     UniqueConstraint("pool_id", "namespace", "pod_name", name="agent_worker_resource_name"),
     UniqueConstraint("agent_uid", name="agent_worker_uid_never_reused"),
+    UniqueConstraint("aux_uid", name="agent_worker_aux_uid_never_reused"),
 )
 worker_event_cursors = Table(
     "agent_worker_event_cursors", metadata,
@@ -111,7 +115,7 @@ artifacts = Table(
     Column("id", String(36), primary_key=True),
     Column("job_id", String(36), ForeignKey("agent_jobs.id"), nullable=False),
     Column("attempt_id", String(36), ForeignKey("agent_attempts.id"), nullable=False),
-    Column("name", String(128), nullable=False),
+    Column("name", String(1024), nullable=False),
     Column("sha256", String(64), nullable=False),
     Column("size", Integer, nullable=False),
     Column("content", LargeBinary, nullable=False),
@@ -123,6 +127,7 @@ slot = Table(
     Column("job_id", String(36), ForeignKey("agent_jobs.id")),
     Column("next_fence", Integer, nullable=False, default=1),
 )
+file_tables = define_tables(metadata)
 
 ACTIVE = frozenset({"starting", "running", "cancelling"})
 TERMINAL = frozenset({"completed", "needs_input", "failed", "cancelled", "timed_out", "quarantined"})
@@ -137,11 +142,10 @@ _WORKER_EVENT_KINDS = frozenset({"pi_event", "runtime_finished", "engine_started
 
 
 def _name(value):
-    if (not isinstance(value, str) or not 1 <= len(value) <= 128
-            or value in {".", ".."} or any(c in value for c in "/\\:")
-            or any(ord(c) < 32 or ord(c) == 127 for c in value)):
-        raise ServiceError("invalid_file_name", 422)
-    return value
+    try:
+        return relative_path(value)
+    except ServiceError:
+        raise ServiceError("invalid_file_name", 422) from None
 
 
 def _identity(value):
@@ -166,9 +170,9 @@ def _input(row, content=False):
     return result
 
 
-class Store:
+class Store(FileStoreMixin):
     def __init__(self, database_url: str, *, allow_sqlite=False, clock=time.time,
-                 max_blob_bytes=1024 * 1024, max_artifact_bytes=8 * 1024 * 1024,
+                 max_blob_bytes=MAX_INPUT_BYTES, max_artifact_bytes=MAX_ARTIFACT_BYTES,
                  max_events=1000, max_queue=1000):
         dialect = make_url(database_url).get_backend_name()
         if dialect not in {"postgresql", "sqlite"} or (dialect == "sqlite" and allow_sqlite is not True):
@@ -192,6 +196,7 @@ class Store:
         self.max_artifact_bytes = max_artifact_bytes
         self.max_events = max_events
         self.max_queue = max_queue
+        self.file_tables = file_tables
 
     @contextmanager
     def _tx(self):
@@ -214,8 +219,30 @@ class Store:
     def initialize(self):
         metadata.create_all(self.engine)
         with self._tx() as conn:
+            # Allocations retain both host identities permanently, including
+            # attempts that do not start the optional preview process.
+            if 'aux_uid' not in {item['name'] for item in inspect(conn).get_columns('agent_worker_allocations')}:
+                conn.execute(text('ALTER TABLE agent_worker_allocations ADD COLUMN aux_uid INTEGER'))
+            conn.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS agent_worker_aux_uid_never_reused '
+                              'ON agent_worker_allocations (aux_uid)'))
+            if self.dialect == "postgresql":
+                # Widening is lossless; existing immutable file identities stay
+                # valid while new profiles may use safe relative subdirectories.
+                conn.execute(text("ALTER TABLE agent_inputs ALTER COLUMN name TYPE VARCHAR(1024)"))
+                conn.execute(text("ALTER TABLE agent_artifacts ALTER COLUMN name TYPE VARCHAR(1024)"))
             if conn.execute(select(slot.c.id).where(slot.c.id == 1)).first() is None:
                 conn.execute(insert(slot).values(id=1, job_id=None, next_fence=1))
+            # Backfill reference ownership for pre-data-plane jobs. Explicitly
+            # released retention never gets reattached on control restart.
+            for historical in conn.execute(select(jobs)).mappings():
+                retained = conn.execute(select(file_tables['retention']).where(
+                    file_tables['retention'].c.job_id == historical['id'])).mappings().first()
+                if not retained or not retained['inputs_released']:
+                    self._retain_submission(conn, historical)
+                if not retained or not retained['artifacts_released']:
+                    for artifact in conn.execute(select(artifacts.c.id).where(
+                            artifacts.c.job_id == historical['id'])):
+                        self._retain(conn, 'artifact', artifact.id, 'job_output', historical['id'])
 
     def close(self):
         self.engine.dispose()
@@ -262,7 +289,7 @@ class Store:
 
     def put_input(self, tenant, caller, name, content):
         _identity(tenant); _identity(caller); _name(name)
-        if type(content) is not bytes or not 0 < len(content) <= self.max_blob_bytes:
+        if type(content) is not bytes or not 0 <= len(content) <= self.max_blob_bytes:
             raise ServiceError("input_size_limit", 413)
         values = {"id": str(uuid.uuid4()), "tenant": tenant, "caller": caller,
                   "name": name, "sha256": hashlib.sha256(content).hexdigest(),
@@ -277,13 +304,15 @@ class Store:
                               inputs.c.tenant == tenant, inputs.c.caller == caller)).mappings().first()
             if row is None:
                 raise ServiceError("not_found", 404)
+            self._require_blob(conn, 'input', input_id)
             return _input(row, True)
 
-    def _check_inputs(self, conn, tenant, caller, request):
+    def _check_inputs(self, conn, tenant, caller, request, pins=None):
         refs = request.get("inputs", [])
-        if not isinstance(refs, list) or len(refs) > 32:
+        pins = pins or {}
+        if not isinstance(refs, list) or len(refs) > pins.get('max_input_files', 2048):
             raise ServiceError("invalid_inputs", 422)
-        seen = set()
+        seen, paths, total = set(), [], 0
         for ref in refs:
             if not isinstance(ref, dict) or not {"input_id", "sha256"} <= set(ref):
                 raise ServiceError("invalid_inputs", 422)
@@ -291,12 +320,26 @@ class Store:
             if not isinstance(identifier, str) or identifier in seen:
                 raise ServiceError("invalid_inputs", 422)
             seen.add(identifier)
-            source = conn.execute(select(inputs.c.sha256).where(inputs.c.id == identifier,
+            self._require_blob(conn, 'input', identifier)
+            source = conn.execute(select(inputs.c.sha256, inputs.c.name, inputs.c.size).where(inputs.c.id == identifier,
                                   inputs.c.tenant == tenant, inputs.c.caller == caller)).first()
             if source is None:
                 raise ServiceError("not_found", 404)
             if source.sha256 != ref["sha256"]:
                 raise ServiceError("input_hash_mismatch", 409)
+            paths.append(_name(ref.get('path') or source.name))
+            total += source.size
+            if (source.size > pins.get('max_input_bytes', self.max_blob_bytes)
+                    or total > pins.get('max_input_total_bytes', MAX_INPUT_BYTES)):
+                raise ServiceError('input_size_limit', 413)
+        unique_paths(paths)
+        checkpoint = self._check_checkpoint(conn, tenant, caller, request, pins or None)
+        if checkpoint is not None and pins:
+            checkpoint_files = checkpoint['manifest']['files']
+            if (total + sum(item['size'] for item in checkpoint_files)
+                    > pins.get('max_input_total_bytes', MAX_INPUT_BYTES)
+                    or len(refs) + len(checkpoint_files) > pins.get('max_input_files', 2048)):
+                raise ServiceError('input_size_limit', 413)
 
     def lookup_submission(self, tenant, caller, idempotency_key, request):
         """Replay independent of current routes, after resource reauthorization."""
@@ -304,7 +347,7 @@ class Store:
         if (not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key) <= 128
                 or any(not 33 <= ord(c) <= 126 for c in idempotency_key)):
             raise ServiceError("idempotency_key_required", 400)
-        if not isinstance(request, dict) or len(canonical_bytes(request)) > 256 * 1024:
+        if not isinstance(request, dict) or len(canonical_bytes(request)) > 4 * 1024 * 1024:
             raise ServiceError("invalid_request", 422)
         with self._tx() as conn:
             self._check_inputs(conn, tenant, caller, request)
@@ -323,7 +366,7 @@ class Store:
         if (not isinstance(idempotency_key, str) or not 1 <= len(idempotency_key) <= 128
                 or any(not 33 <= ord(c) <= 126 for c in idempotency_key)):
             raise ServiceError("idempotency_key_required", 400)
-        if not isinstance(request, dict) or len(canonical_bytes(request)) > 256 * 1024:
+        if not isinstance(request, dict) or len(canonical_bytes(request)) > 4 * 1024 * 1024:
             raise ServiceError("invalid_request", 422)
         if (not isinstance(pins, dict) or pins.get("engine") not in {"pi", "hermes"}
                 or not all(isinstance(pins.get(k), str) and pins[k] for k in ("runtime_revision", "image_digest"))
@@ -341,12 +384,23 @@ class Store:
             # Persist the validated, explicit wire representation. Registry
             # changes cannot alter this already accepted execution contract.
             pins = {**pins, "execution_binding": binding.model_dump(mode="json")}
+        for key in ('max_input_bytes', 'max_input_total_bytes', 'max_artifact_bytes',
+                    'max_artifact_file_bytes'):
+            if key in pins and (type(pins[key]) is not int or not 1 <= pins[key] <= 256 * 1024 * 1024):
+                raise ServiceError('invalid_execution_pins', 503)
+        for key in ('max_input_files', 'max_artifact_files'):
+            if key in pins and (type(pins[key]) is not int or not 1 <= pins[key] <= 2048):
+                raise ServiceError('invalid_execution_pins', 503)
         seconds = request.get("timeout_seconds")
         if type(seconds) is not int or not 1 <= seconds <= 3600:
             raise ServiceError("invalid_timeout", 422)
+        absolute_deadline = request.get('execution_deadline_at')
+        if (absolute_deadline is not None and (type(absolute_deadline) not in (int, float)
+                or not math.isfinite(absolute_deadline) or absolute_deadline <= 0)):
+            raise ServiceError('invalid_deadline', 422)
         request_hash = digest(request)
         with self._tx() as conn:
-            self._check_inputs(conn, tenant, caller, request)
+            self._check_inputs(conn, tenant, caller, request, pins)
             existing = conn.execute(select(jobs).where(jobs.c.tenant == tenant,
                                     jobs.c.caller == caller, jobs.c.idempotency_key == idempotency_key)).mappings().first()
             if existing:
@@ -360,10 +414,13 @@ class Store:
             row = {"id": str(uuid.uuid4()), "tenant": tenant, "caller": caller,
                    "idempotency_key": idempotency_key, "request_hash": request_hash,
                    "request": request, "pins": pins, "state": "queued", "created_at": created,
-                   "deadline_at": created + seconds, "event_cursor": 0,
+                   "deadline_at": min(created + seconds, absolute_deadline)
+                       if absolute_deadline is not None else created + seconds,
+                   "event_cursor": 0,
                    "attempt_id": None, "fence": 0, "lease_expires_at": None,
                    "cancel_requested": False, "outcome": None}
             conn.execute(insert(jobs).values(**row))
+            self._retain_submission(conn, row)
             self._event(conn, row, "job.queued")
             return _job(row), True
 
@@ -506,14 +563,19 @@ class Store:
             if (item is None or item["sha256"] != reference["sha256"]
                     or hashlib.sha256(item["content"]).hexdigest() != reference["sha256"]):
                 raise ServiceError("input_integrity_invalid", 503)
-            files.append(InlineFile.from_bytes(item["name"], item["content"]))
+            self._require_blob(conn, 'input', item['id'])
+            files.append(InlineFile.from_bytes(reference.get('path') or item["name"], item["content"]))
+        checkpoint = self._check_checkpoint(conn, row['tenant'], row['caller'], row['request'], row['pins'])
+        checkpoint_files = ([] if checkpoint is None else self._checkpoint_files(
+            conn, row['tenant'], row['caller'], checkpoint, row['pins']))
         return ExecutionEnvelope(job_id=row["id"], attempt_id=row["attempt_id"], fence=row["fence"],
             engine=row["pins"]["engine"], profile=row["request"]["profile"],
             profile_revision=row["request"]["profile_revision"],
             runtime_revision=row["pins"]["runtime_revision"], image_digest=row["pins"]["image_digest"],
             execution_binding=row["pins"].get("execution_binding"),
+            checkpoint_ref=row['request'].get('checkpoint_ref'), checkpoint_inputs=checkpoint_files,
             deadline_at=float(row["deadline_at"]), lease_expires_at=float(row["lease_expires_at"]),
-            task=row["request"]["task"], inputs=files)
+            task=row["request"]["task"], inputs=files, **execution_fields(row['pins']))
 
     def _matching_worker_request(self, conn, envelope):
         if not isinstance(envelope, ExecutionEnvelope):
@@ -551,7 +613,8 @@ class Store:
             raise ServiceError("worker_allocation_conflict", 409)
         return dict(row)
 
-    def reserve_worker(self, envelope, pool_id, namespace, pod_name, intent_sha256, agent_uid=None):
+    def reserve_worker(self, envelope, pool_id, namespace, pod_name, intent_sha256,
+                       agent_uid=None, aux_uid=None):
         """Persist one immutable resource intent before a Kubernetes API call.
 
         The allocation contains only identity/pins digests. It deliberately
@@ -564,7 +627,9 @@ class Store:
                 or not isinstance(namespace, str) or not _RESOURCE_NAME.fullmatch(namespace)
                 or not isinstance(pod_name, str) or not _RESOURCE_NAME.fullmatch(pod_name)
                 or not isinstance(intent_sha256, str) or not _SHA256.fullmatch(intent_sha256)
-                or agent_uid is not None and (type(agent_uid) is not int or not 65536 <= agent_uid <= 2147483647)):
+                or any(uid is not None and (type(uid) is not int or not 65536 <= uid <= 2147483647)
+                       for uid in (agent_uid, aux_uid))
+                or aux_uid is not None and (agent_uid is None or agent_uid == aux_uid)):
             raise ServiceError("invalid_worker_allocation", 422)
         with self._tx() as conn:
             row = self._worker_current(conn, envelope.job_id, envelope.attempt_id,
@@ -576,7 +641,7 @@ class Store:
                          "fence": envelope.fence, "engine": envelope.engine,
                          "request_sha256": envelope.request_sha256, "pool_id": pool_id,
                          "namespace": namespace, "pod_name": pod_name, "intent_sha256": intent_sha256,
-                         "agent_uid": agent_uid}
+                         "agent_uid": agent_uid, "aux_uid": aux_uid}
             existing = conn.execute(select(worker_allocations).where(
                 worker_allocations.c.attempt_id == envelope.attempt_id)).mappings().first()
             if existing is not None:
@@ -588,8 +653,13 @@ class Store:
                 worker_allocations.c.pod_name == pod_name)).first()
             if named is not None:
                 raise ServiceError("worker_allocation_conflict", 409)
-            if agent_uid is not None and conn.execute(select(worker_allocations.c.attempt_id).where(
-                    worker_allocations.c.agent_uid == agent_uid)).first() is not None:
+            reserved_uids = tuple(uid for uid in (agent_uid, aux_uid) if uid is not None)
+            # Cross-column uniqueness is serialized by the same durable global
+            # transaction fence as admission. An old agent UID must never be a
+            # future preview UID, or vice versa, even after retirement.
+            if reserved_uids and conn.execute(select(worker_allocations.c.attempt_id).where(or_(
+                    worker_allocations.c.agent_uid.in_(reserved_uids),
+                    worker_allocations.c.aux_uid.in_(reserved_uids)))).first() is not None:
                 raise ServiceError("worker_allocation_conflict", 409)
             values = {**immutable, "pod_uid": None, "create_claimed": False, "worker_start_claimed": False,
                       "retired": False, "candidate_result": None, "stop_observed_at": None,
@@ -633,11 +703,12 @@ class Store:
             if control is None:
                 raise ServiceError("store_not_initialized", 503)
             fence = control["next_fence"]
-            if fence > uid_count:
+            if 2 * fence > uid_count:
                 return False
-            uid = uid_start + fence - 1
-            return conn.execute(select(worker_allocations.c.attempt_id).where(
-                worker_allocations.c.agent_uid == uid)).first() is None
+            pair = (uid_start + 2 * (fence - 1), uid_start + 2 * (fence - 1) + 1)
+            return conn.execute(select(worker_allocations.c.attempt_id).where(or_(
+                worker_allocations.c.agent_uid.in_(pair),
+                worker_allocations.c.aux_uid.in_(pair)))).first() is None
 
     def resolve_uncreated_attempt(self, envelope, code="worker_not_created"):
         """Kubernetes-controller-only release before resource creation authority.
@@ -679,7 +750,8 @@ class Store:
                 raise ServiceError("stale_attempt", 409)
             state = ("cancelled" if row["cancel_requested"] else
                      "timed_out" if row["deadline_at"] <= self.clock() else "failed")
-            outcome = {"state": state, "error_code": code, "usage": None, "stop_receipt": None}
+            outcome = {"state": state, "error_code": code, "usage": None, "stop_receipt": None,
+                       "_service_not_started": True}
             row.update(state=state, outcome=outcome)
             if allocation is not None:
                 conn.execute(update(worker_allocations).where(
@@ -734,7 +806,8 @@ class Store:
         artifacts or treats native completion as host-observed process stop.
         """
         try:
-            if not isinstance(result_wire, dict) or len(canonical_bytes(result_wire)) > 12 * 1024 * 1024:
+            from .transport import MAX_WORKER_WIRE_BYTES
+            if not isinstance(result_wire, dict) or len(canonical_bytes(result_wire)) > MAX_WORKER_WIRE_BYTES:
                 raise ValueError()
             result = WorkerResult.model_validate(result_wire)
             if result.state == "quarantined" or result.stop_receipt is None:
@@ -742,11 +815,17 @@ class Store:
             if (len({item.name for item in result.artifacts}) != len(result.artifacts)
                     or sum(len(item.content()) for item in result.artifacts) > self.max_artifact_bytes):
                 raise ValueError()
+            unique_paths(item.name for item in result.artifacts)
             normalized = result.model_dump()
         except (ValueError, TypeError, RecursionError):
             raise ServiceError("invalid_worker_result", 422) from None
         with self._tx() as conn:
             allocation = self._allocation(conn, attempt_id, request_sha256)
+            job = self._find(conn, allocation['job_id'])
+            if (len(result.artifacts) > job['pins'].get('max_artifact_files', 32)
+                    or sum(len(item.content(limit=job['pins'].get('max_artifact_file_bytes', self.max_artifact_bytes)))
+                           for item in result.artifacts) > job['pins'].get('max_artifact_bytes', self.max_artifact_bytes)):
+                raise ServiceError('artifact_size_limit', 413)
             receipt = result.stop_receipt
             stopped_without_result = (
                 result.state in {"failed", "cancelled", "timed_out"} and not result.artifacts
@@ -833,7 +912,8 @@ class Store:
                      "timed_out" if row["deadline_at"] <= self.clock() else "failed")
             candidate = allocation["candidate_result"]
             outcome = {"state": state, "error_code": "quarantine_stopped",
-                       "usage": candidate.get("usage"), "stop_receipt": candidate.get("stop_receipt")}
+                       "usage": candidate.get("usage"), "stop_receipt": candidate.get("stop_receipt"),
+                       "_service_stop_proven": True}
             row.update(state=state, outcome=outcome)
             conn.execute(update(jobs).where(jobs.c.id == job_id).values(state=state, outcome=outcome))
             conn.execute(update(attempts).where(attempts.c.id == attempt_id,
@@ -933,7 +1013,7 @@ class Store:
         if code is not None and (not isinstance(code, str) or not _CODE.fullmatch(code)):
             raise ServiceError("invalid_outcome", 422)
         candidates = [] if artifacts is None else artifacts
-        if not isinstance(candidates, list) or len(candidates) > 32:
+        if not isinstance(candidates, list) or len(candidates) > 2048:
             raise ServiceError("artifact_size_limit", 413)
         checked = []
         names = set()
@@ -943,7 +1023,7 @@ class Store:
                 raise ServiceError("invalid_artifact", 422)
             name = _name(item.get("name"))
             content = item.get("content")
-            if type(content) is not bytes or not content or name in names:
+            if type(content) is not bytes or name in names:
                 raise ServiceError("invalid_artifact", 422)
             names.add(name)
             total += len(content)
@@ -954,17 +1034,26 @@ class Store:
                 raise ServiceError("artifact_hash_mismatch", 409)
             checked.append({"id": str(uuid.uuid4()), "job_id": job_id, "attempt_id": attempt_id,
                             "name": name, "sha256": checksum, "size": len(content), "content": content})
+        unique_paths(item['name'] for item in checked)
         with self._tx() as conn:
             row = self._current(conn, job_id, attempt_id, fence)
             if row is None:
                 raise ServiceError("stale_attempt", 409)
+            if (len(checked) > row['pins'].get('max_artifact_files', 32)
+                    or total > row['pins'].get('max_artifact_bytes', self.max_artifact_bytes)
+                    or any(item['size'] > row['pins'].get('max_artifact_file_bytes', self.max_artifact_bytes)
+                           for item in checked)):
+                raise ServiceError('artifact_size_limit', 413)
             if stopped is not True:
                 self._quarantine(conn, row, code or "stop_unverified")
                 return _job(row)
             if row["lease_expires_at"] <= self.clock():
                 self._quarantine(conn, row, "lease_expired")
                 return _job(row)
-            final = dict(outcome)
+            final = {key: value for key, value in outcome.items() if not key.startswith('_service_')}
+            # Only trusted control-plane finish can set this marker. Worker
+            # JSON and business requests have no corresponding writable field.
+            final['_service_stop_proven'] = True
             # Cancellation wins an in-flight completion race. No late result is
             # exported when the business already requested stop.
             if row["cancel_requested"]:
@@ -975,8 +1064,11 @@ class Store:
             final.setdefault("usage", None)
             final.setdefault("stop_receipt", None)
             row.update(state=state, outcome=final)
-            if state in {"completed", "needs_input"} and checked:
-                conn.execute(insert(globals()["artifacts"]), checked)
+            if state in {"completed", "needs_input"}:
+                if checked:
+                    conn.execute(insert(globals()["artifacts"]), checked)
+                manifest = self._freeze_artifact_manifest(conn, row, checked)
+                final['_service_artifact_manifest_sha256'] = manifest['sha256']
             conn.execute(update(jobs).where(jobs.c.id == job_id).values(state=state, outcome=final))
             conn.execute(update(attempts).where(attempts.c.id == attempt_id).values(state=state, outcome=final))
             payload = {"error_code": final["error_code"]} if final.get("error_code") else {}
@@ -989,7 +1081,8 @@ class Store:
         with self._tx() as conn:
             self._find(conn, job_id, tenant, caller)
             rows = conn.execute(select(artifacts).where(artifacts.c.job_id == job_id).order_by(artifacts.c.name)).mappings()
-            return [self._artifact(row) for row in rows]
+            return [dict(self._artifact(row), available=not self._removed(conn, 'artifact', row['id']))
+                    for row in rows]
 
     @staticmethod
     def _artifact(row, content=False):
@@ -1005,4 +1098,5 @@ class Store:
                 artifacts.c.id == artifact_id, jobs.c.tenant == tenant, jobs.c.caller == caller)).mappings().first()
             if row is None:
                 raise ServiceError("not_found", 404)
+            self._require_blob(conn, 'artifact', artifact_id)
             return self._artifact(row, True)

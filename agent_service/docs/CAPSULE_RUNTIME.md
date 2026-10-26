@@ -1,5 +1,9 @@
 # 按任务运行 Agent Worker
 
+> 历史运行层快照：后续领域输入、多文件成果、双 UID、模型授权和 Hermes 宿主的
+> 代码进展见 [实现交接](IMPLEMENTATION_HANDOFF_20261026.md)。下文的早期实现及
+> 验证边界仍按原提交保留，不代表新增代码已经通过测试或部署验收。
+
 2026-10-26，`codex/agent-execution-service`。本轮增加按任务分配的 K8s 执行层、持久
 事件汇入、停止恢复和 Pi 宿主候选。已有 PPT/Hermes 及科研服务继续使用现有执行链。
 

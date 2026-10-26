@@ -37,6 +37,8 @@ class KubernetesPool:
     port: int = 8090
     uid_start: int | None = None
     uid_count: int = 65536
+    read_only_mounts: bool = False
+    mount_apparmor_profile: str = 'agent-capsule-inputs'
 
     def __post_init__(self):
         label = r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?'
@@ -65,13 +67,15 @@ class KubernetesWorkerAdapter:
     provisioning = 'kubernetes_per_attempt'
 
     def __init__(self, store, pool: KubernetesPool, kube, master_token: str,
-                 master_receipt_key: bytes, *, client_factory=None, clock=time.time):
+                 master_receipt_key: bytes, *, client_factory=None, clock=time.time,
+                 model_grant_issuer=None, model_policy=None):
         if (not 32 <= len(master_token) <= 512 or len(master_receipt_key) < 32
                 or any(not 33 <= ord(c) <= 126 for c in master_token)):
             raise ValueError('Dedicated pool credentials required')
         self.store, self.pool, self.kube = store, pool, kube
         self._token_key, self._receipt_key = master_token.encode(), master_receipt_key
         self._factory, self.clock = client_factory or RemoteWorkerAdapter, clock
+        self.model_grant_issuer, self.model_policy = model_grant_issuer, model_policy
 
     def close(self):
         self.kube.close()
@@ -83,7 +87,13 @@ class KubernetesWorkerAdapter:
     def _credentials(self, envelope):
         token = hmac.new(self._token_key,
             ('agent-token-v1:' + envelope.request_sha256).encode(), hashlib.sha256).hexdigest()
-        return {'worker_token': token, 'receipt_key_hex': self.receipt_key_for(envelope).hex()}
+        value = {'worker_token': token, 'receipt_key_hex': self.receipt_key_for(envelope).hex()}
+        if self.model_grant_issuer is not None and self.model_policy is not None:
+            value.update(model_proxy_token=self.model_grant_issuer.issue(envelope, self.model_policy),
+                model_proxy_attempt_id=envelope.attempt_id,
+                model_proxy_request_sha256=envelope.request_sha256,
+                model_proxy_expires_at=envelope.deadline_at)
+        return value
 
     def _path(self, kind, name=''):
         return f'/api/v1/namespaces/{self.pool.namespace}/{kind}' + ('/' + name if name else '')
@@ -118,7 +128,7 @@ class KubernetesWorkerAdapter:
         value = self._get('configmaps', self.pool.host_config_map)
         try:
             raw = value['data']['config.json']
-            if value.get('immutable') is not True or type(raw) is not str or len(raw.encode()) > 65536:
+            if value.get('immutable') is not True or type(raw) is not str or len(raw.encode()) > 4 * 1024 * 1024:
                 raise ValueError()
             def pairs(items):
                 result = {}
@@ -131,7 +141,7 @@ class KubernetesWorkerAdapter:
                 parse_constant=lambda _: (_ for _ in ()).throw(ValueError())))
             actual = host_policy(config)
             p = self.pool.policy
-            if (actual.pins() != p.pins() or actual.enabled != p.enabled
+            if (actual.pins() != p.pins()
                     or actual.max_timeout_seconds != p.max_timeout_seconds
                     or actual.supports_inputs != p.supports_inputs):
                 raise ValueError()
@@ -139,12 +149,13 @@ class KubernetesWorkerAdapter:
             raise ServiceError('worker_host_config_invalid', 503) from None
 
     def _manifest(self, envelope):
-        if not self.pool.policy.matches(envelope) or envelope.inputs:
+        if (not self.pool.policy.matches(envelope)
+                or (envelope.inputs or envelope.checkpoint_inputs) and not self.pool.read_only_mounts):
             raise ServiceError('execution_pins_mismatch', 422)
         attempt = str(UUID(envelope.attempt_id))
-        if self.pool.uid_start is None or envelope.fence > self.pool.uid_count:
+        if self.pool.uid_start is None or 2 * envelope.fence > self.pool.uid_count:
             raise ServiceError('worker_uid_range_exhausted', 503)
-        runtime_uid = self.pool.uid_start + envelope.fence - 1
+        runtime_uid = self.pool.uid_start + 2 * (envelope.fence - 1)
         name = 'agent-' + attempt
         credentials = canonical_bytes(self._credentials(envelope))
         annotations = {PREFIX + 'request': envelope.request_sha256,
@@ -156,7 +167,7 @@ class KubernetesWorkerAdapter:
             'AGENT_RUNTIME_IMAGE_DIGEST': envelope.image_digest, 'AGENT_ENGINE': envelope.engine,
             'AGENT_PROFILE_NAME': envelope.profile, 'AGENT_PROFILE_REVISION': envelope.profile_revision,
             'AGENT_RUNTIME_REVISION': envelope.runtime_revision,
-            'AGENT_RUNTIME_UID': str(runtime_uid)}.items()]
+            'AGENT_RUNTIME_UID': str(runtime_uid), 'AGENT_PREVIEW_UID': str(runtime_uid + 1)}.items()]
         if envelope.execution_binding is not None:
             env.append({'name': 'AGENT_EXECUTION_BINDING_SHA256',
                         'value': envelope.execution_binding.sha256})
@@ -171,15 +182,16 @@ class KubernetesWorkerAdapter:
                 'activeDeadlineSeconds': self.pool.policy.max_timeout_seconds + 90,
                 'securityContext': {'seccompProfile': {'type': 'RuntimeDefault'}},
                 'containers': [{'name': 'worker', 'image': self.pool.image, 'imagePullPolicy': 'IfNotPresent',
-                    'command': ['python', '-m', 'agent_service.worker_entry'],
+                    'command': ['/opt/hermes/.venv/bin/python', '-m', 'agent_service.worker_entry'],
                     'args': ['--config', '/etc/agent-worker/config.json',
                              '--secrets', '/run/agent-secrets/worker.json'],
                     'ports': [{'name': 'worker', 'containerPort': self.pool.port}], 'env': env,
                     'securityContext': {'runAsUser': 0, 'runAsGroup': 0, 'readOnlyRootFilesystem': True,
                         'allowPrivilegeEscalation': False, 'capabilities': {'drop': ['ALL'],
-                            'add': ['CHOWN', 'DAC_OVERRIDE', 'KILL', 'SETUID', 'SETGID']}},
+                            'add': ['CHOWN', 'DAC_OVERRIDE', 'KILL', 'SETUID', 'SETGID'] +
+                                   (['SYS_ADMIN'] if self.pool.read_only_mounts else [])}},
                     'resources': {'requests': {'cpu': '100m', 'memory': '128Mi'},
-                        'limits': {'cpu': '1', 'memory': '768Mi', 'ephemeral-storage': '1Gi'}},
+                        'limits': {'cpu': '1', 'memory': '2Gi', 'ephemeral-storage': '4Gi'}},
                     'volumeMounts': [{'name': 'config', 'mountPath': '/etc/agent-worker', 'readOnly': True},
                         {'name': 'credentials', 'mountPath': '/run/agent-secrets', 'readOnly': True},
                         {'name': 'control', 'mountPath': '/run/agent-control'},
@@ -187,9 +199,13 @@ class KubernetesWorkerAdapter:
                 'volumes': [{'name': 'config', 'configMap': {'name': self.pool.host_config_map,
                                 'defaultMode': 0o444}},
                     {'name': 'credentials', 'secret': {'secretName': name + '-auth', 'defaultMode': 0o400}},
-                    {'name': 'control', 'emptyDir': {'medium': 'Memory', 'sizeLimit': '32Mi'}},
-                    {'name': 'work', 'emptyDir': {'sizeLimit': '512Mi'}},
+                    {'name': 'control', 'emptyDir': {'sizeLimit': '2Gi'}},
+                    {'name': 'work', 'emptyDir': {'sizeLimit': '1Gi'}},
                     {'name': 'tmp', 'emptyDir': {'medium': 'Memory', 'sizeLimit': '128Mi'}}]}}
+        if self.pool.read_only_mounts:
+            pod['spec']['containers'][0]['securityContext']['appArmorProfile'] = {
+                'type': 'Localhost', 'localhostProfile': self.pool.mount_apparmor_profile}
+            env.append({'name': 'AGENT_READ_ONLY_MOUNTS', 'value': '1'})
         secret = {'apiVersion': 'v1', 'kind': 'Secret', 'type': 'Opaque', 'immutable': True,
             'metadata': {'name': name + '-auth', 'namespace': self.pool.namespace,
                          'labels': labels, 'annotations': annotations},
@@ -208,11 +224,13 @@ class KubernetesWorkerAdapter:
                 raise
             value = self.store.reserve_worker(envelope, self.pool.pool_id, self.pool.namespace,
                                              pod['metadata']['name'], intent,
-                                             agent_uid=self.pool.uid_start + envelope.fence - 1)
+                                             agent_uid=self.pool.uid_start + 2 * (envelope.fence - 1),
+                                             aux_uid=self.pool.uid_start + 2 * (envelope.fence - 1) + 1)
         if (value['request_sha256'] != envelope.request_sha256 or value['pool_id'] != self.pool.pool_id
                 or value['namespace'] != self.pool.namespace or value['intent_sha256'] != intent
                 or value['pod_name'] != pod['metadata']['name']
-                or value.get('agent_uid') != self.pool.uid_start + envelope.fence - 1):
+                or value.get('agent_uid') != self.pool.uid_start + 2 * (envelope.fence - 1)
+                or value.get('aux_uid') != self.pool.uid_start + 2 * (envelope.fence - 1) + 1):
             raise ServiceError('worker_allocation_conflict', 409)
         return value, pod, secret
 

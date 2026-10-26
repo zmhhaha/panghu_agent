@@ -95,8 +95,8 @@ def create_site(settings: Settings | None = None, engine=None, dist=None):
     if execution_flag not in ('true', 'false'):
         raise RuntimeError('Invalid execution admission flag')
     execution_enabled = execution_flag == 'true'
-    if execution_enabled and os.getenv('PPT_EXECUTION_BACKEND') != 'kubernetes':
-        raise RuntimeError('Execution requires the isolated Kubernetes controller')
+    if execution_enabled and os.getenv('PPT_EXECUTION_BACKEND') not in ('kubernetes','agent-service'):
+        raise RuntimeError('Execution requires an isolated configured controller')
     files = _built_files(dist if dist is not None else os.getenv('PPT_WEB_DIST'))
     api = create_app(settings, engine)
     execution_routes = [route for route in api.routes if getattr(route, 'path', None) in EXECUTION_PATHS]

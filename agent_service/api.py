@@ -25,7 +25,9 @@ from starlette.exceptions import HTTPException
 from starlette.requests import ClientDisconnect
 
 from .contracts import (MAX_INPUT_BYTES, ExecutionBindingPins, JobRequest, Principal, ProfileRegistry,
-                        ServiceError, safe_name)
+                        ServiceError)
+from .artifacts import relative_path
+from .storage import execution_fields
 
 
 @dataclass(frozen=True)
@@ -46,7 +48,7 @@ class ApiSettings:
                     or len(principal.tenant) > 128 or len(principal.caller) > 128
                     or not isinstance(principal.profiles, frozenset)):
                 raise ValueError('Invalid configured service identity')
-        if (type(self.max_request_bytes) is not int or not 1024 <= self.max_request_bytes <= 1024 * 1024
+        if (type(self.max_request_bytes) is not int or not 1024 <= self.max_request_bytes <= 4 * 1024 * 1024
                 or type(self.max_input_bytes) is not int or not 1 <= self.max_input_bytes <= MAX_INPUT_BYTES):
             raise ValueError('Invalid API request bounds')
         object.__setattr__(self, 'principals', MappingProxyType(copied))
@@ -94,6 +96,7 @@ def public_job(job: dict) -> dict:
     pins = job.get('pins') or {}
     visible_pins = {k: pins[k] for k in ('profile', 'profile_revision', 'engine',
                                        'runtime_revision', 'image_digest') if k in pins}
+    visible_pins.update(execution_fields(pins))
     if 'execution_binding' in pins:
         try:
             binding = ExecutionBindingPins.model_validate(pins['execution_binding'])
@@ -104,6 +107,7 @@ def public_job(job: dict) -> dict:
         # The strict metadata model excludes credentials and arbitrary nested
         # configuration; the business caller receives every pinned identifier.
         visible_pins['execution_binding'] = binding.model_dump(mode='json')
+    proof = _public_stop_proof(job, outcome)
     return {
         'api_version': '1', 'job_id': job.get('job_id', job.get('id')),
         'state': job['state'],
@@ -116,7 +120,35 @@ def public_job(job: dict) -> dict:
         'error_code': (outcome.get('error_code') if isinstance(outcome.get('error_code'), str)
                        and re.fullmatch(r'[a-z][a-z0-9_]{0,79}', outcome['error_code']) else None),
         'usage': _usage(outcome.get('usage')), 'publication_authorized': False,
+        'stop_proven': proof['stop_proven'], 'stop_proof': proof,
+        'not_started': proof.get('not_started', False),
+        'artifact_manifest_sha256': outcome.get('_service_artifact_manifest_sha256'),
+        'checkpoint_ref': job['request'].get('checkpoint_ref'),
     }
+
+
+def _public_stop_proof(job, outcome):
+    receipt = outcome.get('stop_receipt')
+    stopped = (outcome.get('_service_stop_proven') is True
+        and job['state'] in {'completed', 'needs_input', 'failed', 'cancelled', 'timed_out'}
+        and isinstance(receipt, dict) and receipt.get('job_id') == job.get('job_id', job.get('id'))
+        and receipt.get('attempt_id') == job.get('attempt_id') and receipt.get('fence') == job.get('fence')
+        and receipt.get('engine') == job.get('pins', {}).get('engine'))
+    if stopped:
+        stopped = (all(isinstance(receipt.get(key), str) and re.fullmatch(r'[0-9a-f]{64}', receipt[key])
+                       for key in ('request_sha256', 'result_sha256'))
+            and type(receipt.get('resource_ids')) is list and 1 <= len(receipt['resource_ids']) <= 64
+            and all(type(item) is str and 1 <= len(item) <= 200
+                    and all(ord(char) >= 32 and ord(char) != 127 for char in item)
+                    for item in receipt['resource_ids'])
+            and type(receipt.get('observed_at')) in (int, float)
+            and math.isfinite(receipt['observed_at']) and receipt['observed_at'] > 0)
+    if not stopped:
+        return dict(stop_proven=False, not_started=outcome.get('_service_not_started') is True
+                    or job['state'] in {'cancelled', 'timed_out'}
+                    and job.get('attempt_id') is None and job.get('fence', 0) == 0)
+    return dict(stop_proven=True, **{key: receipt[key] for key in
+        ('attempt_id', 'fence', 'request_sha256', 'result_sha256', 'resource_ids', 'observed_at')})
 
 
 def _public_event(item: dict):
@@ -137,7 +169,8 @@ def _input_metadata(value):
 
 
 def _artifact_metadata(value):
-    return {key: value[key] for key in ('artifact_id', 'name', 'sha256', 'size', 'job_id', 'attempt_id')}
+    return {key: value[key] for key in ('artifact_id', 'name', 'sha256', 'size', 'job_id', 'attempt_id',
+                                       'available') if key in value}
 
 
 async def _bounded_body(request: Request, limit: int):
@@ -264,17 +297,41 @@ def create_app(settings: ApiSettings, store, registry: ProfileRegistry,
     @app.post('/v1/inputs', status_code=201)
     async def upload_input(request: Request, name: str = Query(...)):
         try:
-            safe_name(name)
-        except ValueError:
+            relative_path(name)
+        except (ValueError, ServiceError):
             raise ServiceError('invalid_file_name', 422) from None
         if request.headers.get('content-type', '').split(';', 1)[0].lower() != 'application/octet-stream':
             raise ServiceError('unsupported_content_type', 415)
         data = await _bounded_body(request, settings.max_input_bytes)
-        if not data:
-            raise ServiceError('input_empty', 422)
         principal = request.state.principal
         saved = await run_in_threadpool(store.put_input, principal.tenant, principal.caller, name, data)
         return _input_metadata(saved)
+
+    @app.get('/v1/inputs/{input_id}')
+    async def get_input(request: Request, input_id: str):
+        principal = request.state.principal
+        value = await run_in_threadpool(store.get_input, principal.tenant, principal.caller, _id(input_id))
+        return _input_metadata(value)
+
+    @app.get('/v1/inputs/{input_id}/content')
+    async def input_content(request: Request, input_id: str):
+        principal = request.state.principal
+        value = await run_in_threadpool(store.get_input, principal.tenant, principal.caller, _id(input_id))
+        return Response(value['content'], media_type='application/octet-stream',
+                        headers={'ETag': '"' + value['sha256'] + '"'})
+
+    @app.delete('/v1/inputs/{input_id}')
+    async def delete_input(request: Request, input_id: str):
+        principal = request.state.principal
+        return await run_in_threadpool(store.delete_input, principal.tenant, principal.caller, _id(input_id))
+
+    @app.get('/v1/jobs/by-idempotency/{key:path}')
+    async def lookup_job(request: Request, key: str):
+        principal = request.state.principal
+        job = await run_in_threadpool(store.lookup_job, principal.tenant, principal.caller, key)
+        if job['request']['profile'] not in principal.profiles:
+            raise ServiceError('not_found', 404)
+        return public_job(job)
 
     @app.post('/v1/jobs')
     async def submit(request: Request):
@@ -332,6 +389,85 @@ def create_app(settings: ApiSettings, store, registry: ProfileRegistry,
         await authorized_job(principal, job_id)
         values = await run_in_threadpool(store.get_artifacts, principal.tenant, principal.caller, _id(job_id))
         return {'items': [_artifact_metadata(value) for value in values]}
+
+    @app.get('/v1/jobs/{job_id}/artifact-manifest')
+    async def artifact_manifest(request: Request, job_id: str):
+        principal = request.state.principal
+        await authorized_job(principal, job_id)
+        return await run_in_threadpool(store.get_artifact_manifest, principal.tenant, principal.caller, _id(job_id))
+
+    @app.delete('/v1/artifacts/{artifact_id}')
+    async def delete_artifact(request: Request, artifact_id: str):
+        principal = request.state.principal
+        return await run_in_threadpool(store.delete_artifact, principal.tenant, principal.caller, _id(artifact_id))
+
+    @app.post('/v1/jobs/{job_id}/checkpoints')
+    async def create_checkpoint(request: Request, job_id: str):
+        principal = request.state.principal
+        await authorized_job(principal, job_id)
+        raw = await _bounded_body(request, 256 * 1024)
+        body = _json(raw) if raw else {}
+        if set(body) - {'artifact_ids', 'format'}:
+            raise ServiceError('invalid_checkpoint_request', 422)
+        result, created = await run_in_threadpool(store.create_checkpoint, principal.tenant,
+            principal.caller, _id(job_id), request.headers.get('idempotency-key', ''),
+            artifact_ids=body.get('artifact_ids'), format=body.get('format', 'workspace-tree.v1'))
+        return JSONResponse(result, status_code=201 if created else 200)
+
+    @app.get('/v1/checkpoints/{checkpoint_id}')
+    async def get_checkpoint(request: Request, checkpoint_id: str):
+        principal = request.state.principal
+        result = await run_in_threadpool(store.get_checkpoint, principal.tenant, principal.caller, _id(checkpoint_id))
+        await authorized_job(principal, result['source_job_id'])
+        return result
+
+    @app.delete('/v1/checkpoints/{checkpoint_id}')
+    async def delete_checkpoint(request: Request, checkpoint_id: str):
+        principal = request.state.principal
+        return await run_in_threadpool(store.delete_checkpoint, principal.tenant, principal.caller, _id(checkpoint_id))
+
+    @app.post('/v1/jobs/{job_id}/retention/release')
+    async def release_retention(request: Request, job_id: str):
+        principal = request.state.principal
+        body = _json(await _bounded_body(request, 1024))
+        if set(body) - {'inputs', 'artifacts'}:
+            raise ServiceError('invalid_retention_request', 422)
+        return await run_in_threadpool(store.release_job_resources, principal.tenant, principal.caller,
+            _id(job_id), inputs=body.get('inputs', True), artifacts=body.get('artifacts', True))
+
+    @app.get('/v1/jobs/{job_id}/recovery')
+    async def recovery(request: Request, job_id: str):
+        principal = request.state.principal
+        await authorized_job(principal, job_id)
+        return await run_in_threadpool(store.recovery, principal.tenant, principal.caller, _id(job_id))
+
+    @app.put('/v1/jobs/{job_id}/recovery')
+    async def save_recovery(request: Request, job_id: str):
+        principal = request.state.principal
+        await authorized_job(principal, job_id)
+        body = _json(await _bounded_body(request, 65536))
+        if set(body) - {'document', 'expected_revision'} or type(body.get('document')) is not dict:
+            raise ServiceError('invalid_recovery_document', 422)
+        return await run_in_threadpool(store.save_recovery, principal.tenant, principal.caller,
+            _id(job_id), body['document'], expected_revision=body.get('expected_revision'))
+
+    @app.post('/v1/jobs/{job_id}/publication-ack')
+    async def publication_ack(request: Request, job_id: str):
+        principal = request.state.principal
+        await authorized_job(principal, job_id)
+        body = _json(await _bounded_body(request, 4096))
+        result, created = await run_in_threadpool(store.acknowledge_publication,
+            principal.tenant, principal.caller, _id(job_id),
+            request.headers.get('idempotency-key', ''), body)
+        return JSONResponse(result, status_code=201 if created else 200)
+
+    @app.get('/v1/jobs/{job_id}/publication-ack')
+    async def publication_acknowledgements(request: Request, job_id: str):
+        principal = request.state.principal
+        await authorized_job(principal, job_id)
+        values = await run_in_threadpool(store.publication_acknowledgements,
+                                       principal.tenant, principal.caller, _id(job_id))
+        return {'items': values, 'publication_authorized': False}
 
     @app.get('/v1/artifacts/{artifact_id}/content')
     async def artifact_content(request: Request, artifact_id: str):

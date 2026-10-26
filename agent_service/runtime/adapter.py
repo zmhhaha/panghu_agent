@@ -58,11 +58,13 @@ class RuntimeSettings:
     skill_hashes: tuple[str, ...] = ()
     bundle_manifest: Path | None = None
     bundle_manifest_sha256: str | None = None
+    bundle_root: Path | None = None
     skill_bundle_revision: str = ""
     runtime_revision: str = ""
     image_digest: str | None = None
     model_env: Mapping[str, str] = field(default_factory=dict, repr=False)
     tool_pythonpath: Path | None = None
+    tool_proxy_base_url: str | None = None
     fixture_mode: bool = False
     compact_events: bool = False
     capability_verified: bool = False
@@ -170,6 +172,8 @@ class PiRuntime:
                 raise RuntimeExecutionError("configuration_missing", "Only explicit provider credential environment entries are accepted")
             if any(word in key for word in ("WORKER", "VAULT", "KUBE", "SQLITE", "CONTROL", "REDIS", "SMTP")):
                 raise RuntimeExecutionError("configuration_missing", "Control credentials cannot enter the model environment")
+        if s.tool_proxy_base_url is not None and s.tool_proxy_base_url != s.model_base_url:
+            raise RuntimeExecutionError('configuration_missing', 'Tools must use the fixed task proxy origin')
         if s.fixture_mode:
             return
         if not self.profile.production_ready:
@@ -245,10 +249,11 @@ class PiRuntime:
             manifest = json.loads(raw_manifest)
             if manifest["bundle_revision"] != s.skill_bundle_revision:
                 raise RuntimeExecutionError("runtime_not_ready", "Reviewed skill bundle revision mismatch")
+            resource_root = (s.bundle_root or manifest_path.parent).resolve()
             for item in manifest["local_files"]:
                 relative = Path(item["path"])
-                resource = manifest_path.parent / relative
-                if relative.is_absolute() or ".." in relative.parts or resource.is_symlink() or not resource.resolve().is_relative_to(manifest_path.parent):
+                resource = resource_root / relative
+                if relative.is_absolute() or ".." in relative.parts or resource.is_symlink() or not resource.resolve().is_relative_to(resource_root):
                     raise RuntimeExecutionError("runtime_not_ready", "Unsafe reviewed skill resource path")
                 if hashlib.sha256(resource.read_bytes()).hexdigest() != item["sha256"]:
                     raise RuntimeExecutionError("runtime_not_ready", "Reviewed skill resource hash does not match")
@@ -389,7 +394,7 @@ class PiRuntime:
     def _environment(self, home: Path, agent: Path, tmp: Path) -> dict[str, str]:
         # PATH is necessary for reviewed tools. Production supplies an immutable
         # image PATH; no arbitrary controller environment entries survive.
-        env = {"PATH": "/usr/local/bin:/usr/bin:/bin" if os.name != "nt" else os.environ.get("PATH", ""),
+        env = {"PATH": "/opt/hermes/.venv/bin:/usr/local/bin:/usr/bin:/bin" if os.name != "nt" else os.environ.get("PATH", ""),
                "HOME": str(home), "USERPROFILE": str(home), "XDG_CONFIG_HOME": str(home / ".config"),
                "XDG_CACHE_HOME": str(home / ".cache"), "TMPDIR": str(tmp), "TMP": str(tmp), "TEMP": str(tmp),
                "PI_CODING_AGENT_DIR": str(agent), "PI_OFFLINE": "1", "NO_COLOR": "1", "LANG": "C.UTF-8"}
@@ -399,6 +404,11 @@ class PiRuntime:
                     env[key] = os.environ[key]
         if self.settings.tool_pythonpath:
             env["PYTHONPATH"] = str(self.settings.tool_pythonpath.resolve())
+        if self.settings.tool_proxy_base_url:
+            env['AGENT_TOOL_PROXY_BASE_URL'] = self.settings.tool_proxy_base_url
+        if getattr(self.profile, 'shared_project', False):
+            env['PLAYWRIGHT_BROWSERS_PATH'] = '/opt/ms-playwright'
+            env['PPT_MASTER_SKILL_DIR'] = '/opt/ppt-master/skills/ppt-master'
         env.update(self.settings.model_env)
         return env
 
@@ -454,17 +464,30 @@ class PiRuntime:
                 group.rmdir()
                 raise RuntimeExecutionError("runtime_not_ready", "Delegated cgroup.kill is unavailable")
             (group / "pids.max").write_text(str(s.max_processes))
-        for root, dirs, files in os.walk(workspace):
+        protected = set(getattr(self.profile, 'protected_paths', ()))
+        for root, dirs, files in os.walk(workspace, topdown=True, followlinks=False):
+            if Path(root) == workspace:
+                dirs[:] = [name for name in dirs if name not in protected]
             os.chown(root, 0, 0)
             os.chmod(root, 0o700)
             os.chown(root, uid, uid)
+            if getattr(self.profile, 'shared_project', False):
+                here = Path(root)
+                if here == workspace:
+                    os.chmod(root, 0o710)
+                elif here == workspace / 'project' or (workspace / 'project') in here.parents:
+                    os.chmod(root, 0o2770)
             for name in files:
                 os.chown(Path(root) / name, uid, uid)
+                if getattr(self.profile, 'shared_project', False) and (
+                        Path(root) == workspace / 'project' or (workspace / 'project') in Path(root).parents):
+                    os.chmod(Path(root) / name, 0o660)
         config = control / ("launch-" + uuid.uuid4().hex + ".json")
         self._atomic(config, json.dumps({"controller_pid": os.getpid(), "max_processes": s.max_processes,
                      "cgroup": str(group) if group else None, "uid": uid, "gid": uid,
                      "denied_paths": [str(control), *[str(p.resolve()) for p in s.denied_paths]],
-                     "cwd": str(workspace), "command": command}))
+                     "cwd": str(workspace), "command": command,
+                     "umask": 0o007 if getattr(self.profile, 'shared_project', False) else 0o077}))
         launched = [sys.executable, str(Path(__file__).with_name("launcher.py")), str(config)]
         return group, config, launched
 
@@ -569,6 +592,9 @@ class PiRuntime:
         command += ["--print", "--mode", "json", "--no-session", "--no-extensions", "--no-skills",
                     "--no-prompt-templates", "--no-themes", "--no-context-files", "--offline",
                     "--provider", s.provider, "--model", s.model]
+        for extension in getattr(profile, 'extension_paths', ()):
+            # Fixed profile-owned immutable image resources, never a Job path.
+            command += ['--extension', str(extension.resolve())]
         allowed_tools = getattr(profile, 'allowed_tools', None)
         if allowed_tools is not None:
             command += ['--tools', ','.join(allowed_tools)]

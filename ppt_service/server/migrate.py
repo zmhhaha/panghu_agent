@@ -3,9 +3,9 @@ API startup never implicitly migrates production databases.
 """
 import os
 from sqlalchemy import create_engine,text,select,inspect
-from .models import Base,ExecutionSlot
+from .models import Base,ExecutionSlot,AgentOutbox
 from sqlalchemy.orm import Session
-REVISION=2
+REVISION=3
 
 def migrate(engine):
     with engine.begin() as c:
@@ -25,6 +25,9 @@ def migrate(engine):
                 if name not in existing:c.execute(text(f'ALTER TABLE assets ADD COLUMN {name} {kind}'))
             c.execute(text('CREATE INDEX IF NOT EXISTS ix_assets_parse_queue ON assets (parse_status, parse_lease_until)'))
             c.execute(text('INSERT INTO api_schema_revision (revision) VALUES (2)'))
+        if current<3:
+            AgentOutbox.__table__.create(c,checkfirst=True)
+            c.execute(text('INSERT INTO api_schema_revision (revision) VALUES (3)'))
         if engine.dialect.name=='postgresql':
             # Baselines and immutable input snapshots cannot silently change after publication.
             c.execute(text("""CREATE OR REPLACE FUNCTION ppt_immutable_record() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'immutable record'; END $$"""))

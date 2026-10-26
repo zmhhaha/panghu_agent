@@ -1,13 +1,14 @@
 """Fixed-image, single-attempt capsule host. No caller-selected executable.
 
-The only runnable native host here is the bounded Pi text profile. Hermes stays
-explicitly unavailable until its own isolated host has passed acceptance. A
-dedicated Responses proxy grant and an operator-owned acceptance record are
-required; this process never substitutes a personal or upstream API key.
+Pi and Hermes domain hosts use explicit reviewed contracts and fixed packages.
+A dedicated Responses proxy grant and an operator-owned acceptance record are
+required; this process never substitutes a personal or upstream API key. New
+domain implementations remain unverified until their own acceptance is run.
 """
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import hashlib
 import json
 import math
@@ -50,7 +51,7 @@ class WorkerConfigError(RuntimeError):
 
 
 class HostProfile(WireModel):
-    name: Literal['workspace-task.v1'] = 'workspace-task.v1'
+    name: str = Field(default='workspace-task.v1', pattern=r'^[a-z][a-z0-9_.-]{0,79}$')
     revision: str = Field(pattern=r'^[A-Za-z0-9_.-]{1,100}$')
     runtime_revision: str = Field(pattern=r'^[A-Za-z0-9_.-]{1,100}$')
     image_digest: str = Field(pattern=r'^sha256:[0-9a-f]{64}$')
@@ -91,6 +92,15 @@ class HostConfig(WireModel):
     profile: HostProfile
     model: ProxyModel | None = None
     execution_catalog: dict | None = None
+    binding_id: str | None = Field(default=None, pattern=r'^[a-z][a-z0-9_.-]{0,79}$')
+    binding_revision: str | None = Field(default=None, pattern=r'^[A-Za-z0-9_.-]{1,100}$')
+
+    @model_validator(mode='after')
+    def binding_selector(self):
+        if ((self.binding_id is None) != (self.binding_revision is None)
+                or self.binding_id is not None and self.execution_catalog is None):
+            raise ValueError('A complete operator binding selector and catalog are required')
+        return self
 
     @field_validator('execution_catalog')
     @classmethod
@@ -119,11 +129,22 @@ def host_policy(config: HostConfig) -> ProfilePolicy:
         return ProfilePolicy(p.name, p.revision, config.engine, p.runtime_revision,
             p.image_digest, enabled=p.enabled, max_timeout_seconds=p.max_timeout_seconds,
             task_validator=validate_workspace_task)
-    policy = _host_registry(config).profiles().policy(p.name, p.revision)
+    registry = _host_registry(config)
+    if config.binding_id is not None:
+        policy = registry.binding_policy(config.binding_id, config.binding_revision)
+        record = registry.binding(config.binding_id, config.binding_revision)
+        if p.enabled and record.acceptance is None:
+            raise WorkerConfigError()
+        # A retained host may finish a formerly active binding. New admissions
+        # are routed solely by the control-plane registry, not this local flag.
+        policy = replace(policy, enabled=p.enabled)
+    else:
+        policy = registry.profiles().policy(p.name, p.revision)
     if (policy is None or policy.execution_binding is None
+            or policy.name != p.name or policy.revision != p.revision
             or policy.engine != config.engine or policy.runtime_revision != p.runtime_revision
             or policy.image_digest != p.image_digest or policy.enabled != p.enabled
-            or policy.max_timeout_seconds != p.max_timeout_seconds or policy.supports_inputs):
+            or policy.max_timeout_seconds != p.max_timeout_seconds):
         raise WorkerConfigError()
     return policy
 
@@ -147,7 +168,7 @@ class HostSecrets(WireModel):
                   self.model_proxy_request_sha256, self.model_proxy_expires_at)
         if any(x is not None for x in fields):
             if (any(x is None for x in fields)
-                    or not 32 <= len(self.model_proxy_token.get_secret_value()) <= 256
+                    or not 32 <= len(self.model_proxy_token.get_secret_value()) <= 2048
                     or any(ord(c) < 33 or ord(c) > 126 for c in self.model_proxy_token.get_secret_value())
                     or not _canonical_uuid(self.model_proxy_attempt_id)
                     or not re.fullmatch(r'[0-9a-f]{64}', self.model_proxy_request_sha256)
@@ -171,6 +192,7 @@ class CapsuleScope(WireModel):
     # This default exists only for direct offline fixture construction. A real
     # capsule must receive an explicitly reserved UID via from_env below.
     agent_uid: int = Field(default=AGENT_UID, strict=True, ge=1, le=2**31 - 1)
+    preview_uid: int | None = Field(default=None, strict=True, ge=1, le=2**31 - 1)
 
     @field_validator('attempt_id', 'pod_uid')
     @classmethod
@@ -196,9 +218,13 @@ class CapsuleScope(WireModel):
         if (type(runtime_uid) is not str or not re.fullmatch(r'[1-9][0-9]{0,9}', runtime_uid)
                 or not 65536 <= int(runtime_uid) <= 2**31 - 1):
             raise WorkerConfigError()
+        preview_uid = env.get('AGENT_PREVIEW_UID')
+        if (type(preview_uid) is not str or not re.fullmatch(r'[1-9][0-9]{0,9}', preview_uid)
+                or int(preview_uid) != int(runtime_uid) + 1):
+            raise WorkerConfigError()
         return cls(attempt_id=env.get('AGENT_ATTEMPT_ID'), pod_uid=env.get('AGENT_POD_UID'),
                    request_sha256=env.get('AGENT_REQUEST_SHA256'), agent_uid=int(runtime_uid),
-                   execution_binding_sha256=binding_hash)
+                   execution_binding_sha256=binding_hash, preview_uid=int(preview_uid))
 
 
 def _read_operator_json(path: Path, *, private=False, max_bytes=65536):
@@ -255,7 +281,7 @@ def accepted_host(config: HostConfig, path=Path('/etc/agent-worker/acceptance.js
             required.add('execution_binding_sha256')
         if set(value) != required:
             return False
-        expected = dict(schema_version=1, engine='pi', profile=config.profile.name,
+        expected = dict(schema_version=1, engine=config.engine, profile=config.profile.name,
                         profile_revision=config.profile.revision,
                         runtime_revision=config.profile.runtime_revision,
                         image_digest=config.profile.image_digest, model_api='openai-responses')
@@ -354,23 +380,49 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
     grant_ok = (secrets.model_proxy_token is not None
                 and secrets.model_proxy_attempt_id == scope.attempt_id
                 and secrets.model_proxy_request_sha256 == scope.request_sha256
-                and now() < secrets.model_proxy_expires_at <= now() + 600)
+                and now() < secrets.model_proxy_expires_at <= now() + 3600)
     if (config.engine != 'pi' or not config.profile.enabled or config.model is None
             or not acceptance or not grant_ok
             or scope.execution_binding_sha256 !=
                 (policy.execution_binding.sha256 if policy.execution_binding else None)):
         return _UnavailableDriver(config.engine)
-    resource, manifest, resource_hash, manifest_hash = _image_resources()
-    _check_bound_pi(config, policy, resource_hash)
-    profile = _AcceptedWorkspaceProfile(runtime_revision=config.profile.runtime_revision,
-                                         skill_bundle_revision=PROFILE_BUNDLE_REVISION)
+    resource_root = None
+    if policy.name == 'workspace-task.v1':
+        resource, manifest, resource_hash, manifest_hash = _image_resources()
+        _check_bound_pi(config, policy, resource_hash)
+        profile = _AcceptedWorkspaceProfile(runtime_revision=config.profile.runtime_revision,
+                                             skill_bundle_revision=PROFILE_BUNDLE_REVISION)
+        skills, hashes, bundle_revision = (resource,), (resource_hash,), PROFILE_BUNDLE_REVISION
+    else:
+        from .resources import measured_package
+        from .domain_runtime import DomainExecutionProfile
+        if policy.execution_binding is None:
+            raise WorkerConfigError()
+        registry = _host_registry(config)
+        binding = registry.binding(policy.execution_binding.binding_id, policy.execution_binding.binding_revision)
+        if (binding.adapter_revision != PI_ADAPTER_REVISION or binding.engine != 'pi'
+                or binding.model_policy.model != config.model.model
+                or binding.model_policy.provider != config.model.provider):
+            raise WorkerConfigError()
+        resource_root, manifest, manifest_hash, skills, hashes = measured_package(config, policy, CONTROL_ROOT)
+        bundle_revision = policy.execution_binding.bundle_revision
+        extensions = ((Path('/opt/pi/node_modules/agent-service-academic.mjs'),)
+                      if policy.name == 'research.generate.v1' else ())
+        profile = DomainExecutionProfile(policy, bundle_revision, extensions=extensions)
+        profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL_ROOT
     settings = RuntimeSettings(command=(NODE, PI_CLI), node_command=(NODE,),
         provider=config.model.provider, model=config.model.model,
         model_base_url=config.model.proxy_base_url, model_api=config.model.api,
         model_env={'AGENT_MODEL_API_KEY': secrets.model_proxy_token.get_secret_value()},
-        runtime_revision=config.profile.runtime_revision, skill_bundle_revision=PROFILE_BUNDLE_REVISION,
-        image_digest=config.profile.image_digest, skill_paths=(resource,), skill_hashes=(resource_hash,),
+        tool_proxy_base_url=config.model.proxy_base_url,
+        model_input=('text', 'image') if 'vision' in (
+            _host_registry(config).binding(policy.execution_binding.binding_id,
+                policy.execution_binding.binding_revision).model_policy.capabilities
+            if policy.execution_binding else ()) else ('text',),
+        runtime_revision=config.profile.runtime_revision, skill_bundle_revision=bundle_revision,
+        image_digest=config.profile.image_digest, skill_paths=skills, skill_hashes=hashes,
         bundle_manifest=manifest, bundle_manifest_sha256=manifest_hash,
+        bundle_root=resource_root,
         capability_verified=True, model_verified=True, isolation_verified=True,
         control_dir=CONTROL_ROOT, run_uid_start=scope.agent_uid, run_gid=scope.agent_uid,
         # Projected Secret directories are traversable; the protected file,
@@ -382,7 +434,12 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
                 or now() >= secrets.model_proxy_expires_at or stop_controller.consumed):
             raise ServiceError('model_proxy_grant_invalid', 503)
         return {**profile.make_wire(request), '_runtime_uid': scope.agent_uid}
-    return PiDriver(runtime, stop_controller, wire_builder=wire, enabled=True)
+    driver = PiDriver(runtime, stop_controller, wire_builder=wire, enabled=True)
+    if policy.name == 'research.generate.v1':
+        driver.academic_observer = lambda workspace: __import__(
+            'agent_service.tool_client', fromlist=['save_academic_observations']).save_academic_observations(
+                config.model.proxy_base_url, secrets.model_proxy_token.get_secret_value(), workspace)
+    return driver
 
 
 class ScopedWorkerHost(WorkerHost):
@@ -444,9 +501,18 @@ def assemble_app(config: HostConfig, secrets: HostSecrets, scope: CapsuleScope):
         raise WorkerConfigError()
     # The child may traverse its own attempt but cannot list or replace siblings.
     WORKSPACE_ROOT.chmod(0o711)
-    stopper = LinuxUidStopController(CONTROL_ROOT, scope.attempt_id, scope.pod_uid, scope.request_sha256,
-                                    agent_uid=scope.agent_uid)
-    driver = build_pi_driver(config, secrets, scope, stopper, acceptance=accepted_host(config))
+    from .stop_group import StopGroup
+    scopes = [LinuxUidStopController(CONTROL_ROOT / 'engine-scope', scope.attempt_id, scope.pod_uid,
+                                    scope.request_sha256, agent_uid=scope.agent_uid)]
+    if scope.preview_uid is not None:
+        scopes.append(LinuxUidStopController(CONTROL_ROOT / 'preview-scope', scope.attempt_id, scope.pod_uid,
+                                            scope.request_sha256, agent_uid=scope.preview_uid))
+    stopper = StopGroup(*scopes)
+    if config.engine == 'pi':
+        driver = build_pi_driver(config, secrets, scope, stopper, acceptance=accepted_host(config))
+    else:
+        from .hermes_host import build_hermes_driver
+        driver = build_hermes_driver(config, secrets, scope, stopper, acceptance=accepted_host(config))
     host = ScopedWorkerHost(policy, driver, CONTROL_ROOT, WORKSPACE_ROOT,
         bytes.fromhex(secrets.receipt_key_hex.get_secret_value()), scope=scope, stop_controller=stopper,
         proxy_expires_at=secrets.model_proxy_expires_at)
@@ -460,7 +526,7 @@ def main(argv=None):
     parser.add_argument('--check', action='store_true')
     args = parser.parse_args(argv)
     try:
-        config = HostConfig.model_validate(_read_operator_json(args.config))
+        config = HostConfig.model_validate(_read_operator_json(args.config, max_bytes=4 * 1024 * 1024))
         secrets = HostSecrets.model_validate(_read_operator_json(args.secrets, private=True))
         scope = CapsuleScope.from_env(config)
         private_kernel_scope()

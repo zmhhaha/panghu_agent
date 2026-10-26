@@ -1,0 +1,25 @@
+# The reviewed immutable donor already contains complete PPT Master resources,
+# fonts, Chromium and its native/Python dependencies. No runtime git clone occurs.
+ARG PPT_DONOR_IMAGE
+FROM ${PPT_DONOR_IMAGE}
+USER 0:0
+COPY agent_service/ /opt/agent-service/agent_service/
+COPY scientific_agent/ /opt/agent-service/scientific_agent/
+COPY pi_worker/ /opt/agent-service/pi_worker/
+COPY tools/ /opt/agent-service/tools/
+COPY scientific_skills/ /opt/agent-service/scientific_skills/
+RUN /opt/hermes/.venv/bin/python -m pip install --no-cache-dir -r /opt/agent-service/agent_service/requirements.txt \
+    && /opt/hermes/.venv/bin/python -m pip check \
+    && mkdir -p /run/agent-control /run/agent-secrets /work \
+    && chmod 0700 /run/agent-control /run/agent-secrets \
+    && chmod 0711 /work \
+    && chmod -R a+rX /opt/agent-service
+ENV PYTHONPATH=/opt/agent-service PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    HOME=/run/agent-control HERMES_HOME=/run/agent-control/hermes \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
+WORKDIR /opt/agent-service
+EXPOSE 8090
+# The inherited gateway/private-home entrypoint is replaced entirely. The
+# trusted host launches /opt/hermes/.venv/bin/hermes for one bounded attempt.
+ENTRYPOINT ["/opt/hermes/.venv/bin/python", "-m", "agent_service.worker_entry"]
+CMD []

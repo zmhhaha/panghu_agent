@@ -25,9 +25,12 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import Field
 
-from .contracts import (ExecutionEnvelope, InlineFile, ProfilePolicy, ServiceError, TERMINAL_STATES,
+from .contracts import (MAX_ARTIFACT_BYTES, ExecutionEnvelope, InlineFile, ProfilePolicy, ServiceError, TERMINAL_STATES,
                         WireModel, WorkerResult, canonical_bytes, sign_receipt)
-from .engines import EngineRequest, NativeOutcome
+from .engines import EngineRequest, NativeOutcome, StopEvidence
+from .artifacts import freeze_files, frozen_manifest, unique_paths
+from .staging import ExecutionContext, stage_inputs
+from .transport import MAX_WORKER_WIRE_BYTES
 
 
 class LeaseRequest(WireModel):
@@ -159,8 +162,14 @@ class WorkerHost:
                 native_ready = value() is True if callable(value) else value is True
             except Exception:
                 native_ready = False
+            contextual = (callable(getattr(self.driver, 'execute_with_context', None))
+                          and callable(getattr(self.driver, 'release_context', None)))
+            if self.policy.output_schema != 'text-output.v1' and not contextual:
+                native_ready = False
             return dict(api_version='1', **self.policy.pins(), ready=self.policy.enabled and native_ready and self._state is None and not self._storage_failed,
-                        supports_inputs=False, native_resume=False, publication_authorized=False)
+                        supports_inputs=self.policy.supports_inputs and contextual,
+                        native_resume=False, checkpoint_formats=['workspace-tree.v1'] if self.policy.supports_inputs else [],
+                        publication_authorized=False)
 
     def _matching(self, attempt_id):
         if self._state is None or self._state['envelope']['attempt_id'] != attempt_id:
@@ -181,17 +190,36 @@ class WorkerHost:
             if not self.capabilities()['ready']:
                 raise ServiceError('worker_not_ready', 503)
             if (not self.policy.matches(envelope)
-                    or self.driver.engine != envelope.engine):
+                    or self.driver.engine != envelope.engine
+                    or envelope.task_schema != self.policy.task_schema
+                    or envelope.output_schema != self.policy.output_schema
+                    or any(getattr(envelope, key) != value
+                           for key, value in self.policy.execution_limits().items())):
                 raise ServiceError('execution_pins_mismatch', 422)
             if envelope.deadline_at <= self.clock() or envelope.lease_expires_at <= self.clock():
                 raise ServiceError('execution_expired', 409)
             if envelope.lease_expires_at > envelope.deadline_at + 45 or envelope.lease_expires_at > self.clock() + 300:
                 raise ServiceError('invalid_lease', 422)
             self.policy.task_validator(envelope.task)
-            # The first host provides prompt-only tasks. Domain mount plans must
-            # be implemented and verified before a profile advertises file input.
-            if envelope.inputs:
+            from .profiles import implementation
+            profile = implementation(envelope.profile)
+            if (profile.task_schema != envelope.task_schema or profile.output_schema != envelope.output_schema):
+                raise ServiceError('execution_schema_mismatch', 422)
+            profile.validate_task(envelope.task)
+            if (envelope.inputs or envelope.checkpoint_inputs) and not self.capabilities()['supports_inputs']:
                 raise ServiceError('input_staging_not_ready', 422)
+            if bool(envelope.checkpoint_inputs) and envelope.checkpoint_ref is None:
+                raise ServiceError('invalid_checkpoint_reference', 422)
+            files = [*envelope.inputs, *envelope.checkpoint_inputs]
+            if len(files) > envelope.max_input_files:
+                raise ServiceError('input_size_limit', 413)
+            unique_paths(item.name for item in envelope.inputs)
+            unique_paths(item.name for item in envelope.checkpoint_inputs)
+            size = sum(len(item.content(limit=envelope.max_input_bytes)) for item in envelope.inputs)
+            size += sum(len(item.content(limit=envelope.max_artifact_file_bytes))
+                        for item in envelope.checkpoint_inputs)
+            if size > envelope.max_input_total_bytes:
+                raise ServiceError('input_size_limit', 413)
             changed = dict(envelope=envelope.model_dump(), request_sha256=envelope.request_sha256,
                                state='running', result=None, events=[], lease_expires_at=envelope.lease_expires_at)
             self._commit(changed)  # Durable identity exists before any native API.
@@ -263,6 +291,10 @@ class WorkerHost:
     def _execute(self, envelope):
         finished = threading.Event()
         native = None
+        context = ExecutionContext()
+        request = None
+        context_released = False
+        unmount_failed = False
         workspace = self.workspace_root / envelope.attempt_id
         def watch():
             while not finished.wait(0.05):
@@ -274,10 +306,28 @@ class WorkerHost:
         watchdog = threading.Thread(target=watch, daemon=True)
         watchdog.start()
         try:
+            from .profiles import implementation
+            profile = implementation(envelope.profile)
+            staged_input = staged_checkpoint = None
+            if envelope.inputs:
+                staged_input = stage_inputs(self.control_dir / 'input-sources',
+                    envelope.attempt_id, envelope.inputs, max_bytes=envelope.max_input_total_bytes,
+                    max_file_bytes=envelope.max_input_bytes, max_files=envelope.max_input_files,
+                    subtree='inputs')
+                context = ExecutionContext(inputs=staged_input)
+            if envelope.checkpoint_inputs:
+                staged_checkpoint = stage_inputs(self.control_dir / 'checkpoint-sources',
+                    envelope.attempt_id, envelope.checkpoint_inputs, max_bytes=envelope.max_input_total_bytes,
+                    max_file_bytes=envelope.max_artifact_file_bytes, max_files=envelope.max_input_files,
+                    subtree='base')
+            context = ExecutionContext(inputs=staged_input, checkpoint=staged_checkpoint,
+                                       prompt=profile.build_prompt(envelope.task))
             request = EngineRequest(envelope.attempt_id, envelope.profile, envelope.task,
                 max(1, min(self.policy.max_timeout_seconds, math.ceil(envelope.deadline_at - self.clock()))),
                 datetime.fromtimestamp(envelope.deadline_at, timezone.utc))
-            native = self.driver.execute(request, workspace, self._emit, self._cancel)
+            execute_context = getattr(self.driver, 'execute_with_context', None)
+            native = (execute_context(request, workspace, self._emit, self._cancel, context=context)
+                      if callable(execute_context) else self.driver.execute(request, workspace, self._emit, self._cancel))
             if type(native) is not NativeOutcome or native.stopped is not True or not native.resource_ids:
                 raise ServiceError('writers_not_stopped', 503)
             state = native.status if native.status in TERMINAL_STATES else 'failed'
@@ -286,24 +336,25 @@ class WorkerHost:
                          'cancelled' if self._cancel_cause == 'user_cancel' else 'failed')
             artifacts = []
             if state in {'completed', 'needs_input'}:
-                if native.output is not None:
+                proof = StopEvidence(envelope.attempt_id, True, native.resource_ids)
+                if envelope.output_schema == 'text-output.v1' and native.output is not None:
                     value = ({'schema_version': '1', 'text': native.output}
                              if type(native.output) is str else native.output)
                     self._validate_text_output(value)
                     artifacts.append(InlineFile.from_bytes('response.json', canonical_bytes(value)))
-                elif state == 'completed':
-                    from .artifacts import read_output
-                    raw = read_output(workspace, self.output_name)
-                    def pairs(items):
-                        result = {}
-                        for key, value in items:
-                            if key in result:
-                                raise ValueError('Duplicate output key')
-                            result[key] = value
-                        return result
-                    value = json.loads(raw, object_pairs_hook=pairs)
-                    self._validate_text_output(value)
-                    artifacts.append(InlineFile.from_bytes(self.output_name, raw))
+                elif state == 'completed' or envelope.output_schema != 'text-output.v1':
+                    artifacts = profile.collect_output(workspace, envelope, proof)
+            try:
+                self._release_context(request, context)
+            except Exception:
+                unmount_failed = True
+                raise
+            context_released = True
+            if state in {'completed', 'needs_input'}:
+                artifacts = freeze_files(artifacts, envelope, proof)
+                # The frozen bytes, rather than Agent-written manifest claims,
+                # become both the signed result and the control-plane handoff.
+                self._freeze_manifest(envelope, artifacts)
             code = self._cancel_cause if state == 'failed' and self._cancel_cause else native.error_code
             result = WorkerResult(state=state, error_code=code, usage=native.usage, artifacts=artifacts)
             receipt = sign_receipt(envelope, result, self.receipt_key, native.resource_ids, self.clock())
@@ -311,8 +362,12 @@ class WorkerHost:
         except Exception:
             # Output failure after proven stop is a failed handoff, not an
             # unresolved writer. It must not permanently consume the queue slot.
-            if type(native) is NativeOutcome and native.stopped is True and native.resource_ids:
+            if (not unmount_failed and type(native) is NativeOutcome
+                    and native.stopped is True and native.resource_ids):
                 try:
+                    if not context_released:
+                        self._release_context(request, context)
+                        context_released = True
                     result = WorkerResult(state='failed', error_code='worker_output_invalid')
                     result = result.model_copy(update={'stop_receipt': sign_receipt(envelope, result,
                         self.receipt_key, native.resource_ids, self.clock())})
@@ -323,6 +378,16 @@ class WorkerHost:
         finally:
             finished.set()
             watchdog.join(timeout=1)
+            if (context_released and type(native) is NativeOutcome
+                    and native.stopped is True and native.resource_ids):
+                for staged in (context.inputs, context.checkpoint):
+                    if staged is not None:
+                        try:
+                            staged.cleanup()
+                        except Exception:
+                            # Sources may remain for operator cleanup; failure
+                            # never upgrades an uncertain writer to stopped.
+                            pass
         with self._guard:
             # Recheck cancel under the same lock as publishing the final result.
             if self._cancel.is_set() and result.state in {'completed', 'needs_input'}:
@@ -337,6 +402,28 @@ class WorkerHost:
                 self._commit(changed)
             except ServiceError:
                 pass  # storage failure remains fenced and never exposes success
+
+    def _release_context(self, request, context):
+        release = getattr(self.driver, 'release_context', None)
+        if callable(release):
+            if release(request) is not None:
+                raise ServiceError('input_unmount_unverified', 503)
+        elif context.input_root is not None or context.checkpoint_root is not None:
+            raise ServiceError('input_unmount_unverified', 503)
+
+    def _freeze_manifest(self, envelope, files):
+        """One private, immutable host manifest, after exact stop evidence."""
+        body = frozen_manifest(envelope.job_id, envelope.attempt_id,
+            [dict(name=file.name, sha256=file.sha256, size=len(file.content(limit=envelope.max_artifact_file_bytes)))
+             for file in files])
+        target = self.control_dir / 'artifact-manifest.json'
+        flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, 'O_NOFOLLOW', 0)
+        descriptor = os.open(target, flags, 0o400)
+        with os.fdopen(descriptor, 'wb') as stream:
+            stream.write(canonical_bytes(body))
+            stream.flush()
+            os.fsync(stream.fileno())
+        return body
 
     @staticmethod
     def _validate_text_output(value):
@@ -378,7 +465,7 @@ def create_worker_app(host: WorkerHost, token: str):
         chunks = []
         async for chunk in request.stream():
             size += len(chunk)
-            if size > 12 * 1024 * 1024:
+            if size > MAX_WORKER_WIRE_BYTES:
                 return JSONResponse({'detail': {'code': 'request_too_large'}}, status_code=413)
             chunks.append(chunk)
         request._body = b''.join(chunks)

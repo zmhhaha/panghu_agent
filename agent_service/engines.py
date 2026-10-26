@@ -271,6 +271,46 @@ class PiDriver(_BaseDriver):
             outcome = self._fence(request, outcome)
         return outcome
 
+    def execute_with_context(self, request, workspace, emit, cancel, *, context):
+        profile = getattr(self.runtime, 'profile', None)
+        if not hasattr(profile, '_context'):
+            if context.inputs is not None or context.checkpoint is not None:
+                return self._fence(request, NativeOutcome('failed', error_code='input_staging_not_ready'))
+            return self.execute(request, workspace, emit, cancel)
+        if profile._context is not None:
+            return self._fence(request, NativeOutcome('quarantined', error_code='input_context_conflict'))
+        profile._context = context
+        # Read-only inputs remain available for the trusted collector. WorkerHost
+        # releases them after collection and before signing the result receipt.
+        outcome = self.execute(request, workspace, emit, cancel)
+        if outcome.stopped:
+            try:
+                cleanup = getattr(profile, 'after_stopped', None)
+                if callable(cleanup):
+                    cleanup(workspace)
+            except Exception:
+                return NativeOutcome('failed', stopped=True, error_code='preview_cleanup_unverified',
+                                     resource_ids=outcome.resource_ids)
+        observer = getattr(self, 'academic_observer', None)
+        if outcome.stopped and outcome.status == 'completed' and callable(observer):
+            try:
+                observer(workspace)
+            except Exception:
+                return NativeOutcome('failed', stopped=True, error_code='academic_observation_unavailable',
+                                     resource_ids=outcome.resource_ids)
+        return outcome
+
+    def release_context(self, request):
+        proof = self.stop_controller.prove_stopped(request.execution_id)
+        if not proof.all_writers_stopped:
+            raise ValueError('Cannot unmount inputs before all writers stop')
+        profile = getattr(self.runtime, 'profile', None)
+        if getattr(profile, '_mounts', None) is not None:
+            profile._mounts.close()
+            profile._mounts = None
+        if hasattr(profile, '_context'):
+            profile._context = None
+
 
 class HermesDriver(_BaseDriver):
     """Adapts a dedicated loopback Hermes gateway, never a personal dashboard.

@@ -6,7 +6,11 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .contracts import ExecutionEnvelope, ProfilePolicy, ServiceError, WorkerResult
+from .contracts import MAX_ARTIFACT_BYTES, ExecutionEnvelope, ProfilePolicy, ServiceError, WorkerResult
+
+
+# One bounded inline payload for source+checkpoint or result, plus metadata.
+MAX_WORKER_WIRE_BYTES = ((MAX_ARTIFACT_BYTES + 2) // 3) * 4 + 8 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -52,7 +56,7 @@ class RemoteWorkerAdapter:
                 chunks, size = [], 0
                 for chunk in response.iter_bytes():
                     size += len(chunk)
-                    if size > 12 * 1024 * 1024:
+                    if size > MAX_WORKER_WIRE_BYTES:
                         raise ServiceError('worker_response_too_large', 503)
                     chunks.append(chunk)
             import json

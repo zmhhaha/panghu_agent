@@ -62,7 +62,7 @@ def main(argv=None):
     parser.add_argument('--secrets', required=True, help='Private database/tokens/receipt-keys JSON file')
     parser.add_argument('--allow-sqlite', action='store_true', help='Explicit local development only')
     parser.add_argument('--once', action='store_true', help='Run one dispatch tick (dispatch command only)')
-    parser.add_argument('command', choices=('check', 'init-db', 'api', 'dispatch'))
+    parser.add_argument('command', choices=('check', 'init-db', 'api', 'dispatch', 'model-proxy'))
     args = parser.parse_args(argv)
     if args.once and args.command != 'dispatch':
         parser.error('--once is only valid with dispatch')
@@ -74,8 +74,18 @@ def main(argv=None):
             return 0
         store = config.build_store()
         if args.command == 'init-db':
+            from . import model_proxy  # Register durable model admission table.
             store.initialize()
             _output({'status': 'database_initialized'})
+            return 0
+        if args.command == 'model-proxy':
+            if config.model_proxy_settings is None:
+                raise ServiceError('model_proxy_configuration_missing', 503)
+            import uvicorn
+            from .model_proxy import ModelProxy, create_model_proxy_app
+            app = create_model_proxy_app(ModelProxy(store, config.model_proxy_settings))
+            uvicorn.run(app, host='0.0.0.0', port=8080, access_log=False,
+                        proxy_headers=False, server_header=False, log_config=_logging_configuration())
             return 0
         adapters = config.build_adapters(store)
         if args.command == 'api':

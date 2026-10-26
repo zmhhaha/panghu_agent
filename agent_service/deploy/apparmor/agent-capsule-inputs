@@ -1,0 +1,33 @@
+# Candidate node profile: load on each eligible Linux node before enabling a
+# read_only_mounts pool. The two bind mounts and matching remount/unmount are
+# the only mount operations allowed; no generic mount permission is present.
+# Verify parser/kernel support during the deferred real-host acceptance.
+#include <tunables/global>
+profile agent-capsule-inputs flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  file,
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  signal,
+  capability chown,
+  capability dac_override,
+  capability kill,
+  capability setuid,
+  capability setgid,
+  capability sys_admin,
+  mount options=(bind) /run/agent-control/input-sources/*/inputs/ -> /work/*/inputs/,
+  mount options=(bind) /run/agent-control/checkpoint-sources/*/base/ -> /work/*/base/,
+  remount options=(ro,bind,nosuid,nodev,noexec) /work/*/inputs/,
+  remount options=(ro,bind,nosuid,nodev,noexec) /work/*/base/,
+  umount /work/*/inputs/,
+  umount /work/*/base/,
+  deny mount fstype=proc,
+  deny mount fstype=sysfs,
+  deny mount fstype=cgroup,
+  deny mount fstype=cgroup2,
+  deny /proc/sys/** w,
+  deny /proc/sysrq-trigger w,
+  deny /sys/** w,
+}

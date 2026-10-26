@@ -1,9 +1,14 @@
 # 通用 Agent 执行服务
 
-状态：2026-10-26，已实现控制接口、按任务 K8s capsule、恢复、Pi 宿主候选，以及
-独立任务合同/能力包/工具环境/执行绑定注册。尚未生产部署或接管现有业务。
+状态：2026-10-26，已写入通用控制接口、PPT 五阶段与科研生成/修订合同、
+Pi/Hermes 独立宿主、受控模型/学术工具代理、只读输入、多文件成果、检查点，
+以及两个业务的持久连接器。**这批新增代码按用户要求未运行测试、构建或部署**。
+交接与待验证项见 [IMPLEMENTATION_HANDOFF_20261026.md](docs/IMPLEMENTATION_HANDOFF_20261026.md)。
+部署入口见 [正规部署说明](deploy/README.md)，离线目录生成见
+[DEPLOYMENT_CATALOG.md](docs/DEPLOYMENT_CATALOG.md)，文件、检查点与交付协议见
+[FILE_DATA_PLANE.md](docs/FILE_DATA_PLANE.md)。
 独立分支 `codex/agent-execution-service` 从 `panghu_agent/origin/main`（`64a6188`）创建；
-PPT／科研合入 main 后已同步 main，通用 runtime 仍无业务包依赖。进程核心与低层客户端的
+PPT／科研合入 main 后已同步 main。进程核心与低层客户端的
 窄范围抽取记录见 [RUNTIME_EXTRACTION.md](docs/RUNTIME_EXTRACTION.md)。
 首批历史验证见 [VALIDATION_20261026.md](docs/VALIDATION_20261026.md)；
 运行层验证见 [CAPSULE_VALIDATION_20261026.md](docs/CAPSULE_VALIDATION_20261026.md)；
@@ -13,7 +18,7 @@ PPT／科研合入 main 后已同步 main，通用 runtime 仍无业务包依赖
 [BUSINESS_CAPABILITY_COVERAGE.md](docs/BUSINESS_CAPABILITY_COVERAGE.md)。
 用户已确认的任务合同、能力包、工具环境与 Agent 适配边界见
 [CAPABILITY_ARCHITECTURE.md](docs/CAPABILITY_ARCHITECTURE.md)；能力包与引擎独立组合，
-按完整组合验收后放行。注册机制已实现，PPT/科研合同及生产组合验收仍待完成。
+按完整组合验收后放行。领域合同及连接器代码已写入，生产组合验收仍待完成。
 当前配置与 Worker 精确绑定见 [REGISTRY_BINDINGS.md](docs/REGISTRY_BINDINGS.md)。
 
 业务调用同一个 Jobs API，由部署者将版本化任务 profile 路由到 Pi 或 Hermes。
@@ -43,8 +48,9 @@ flowchart LR
   SQLite 仅在显式开发／测试配置下使用。
 - 幂等键绑定原始请求。路由变更、配置禁用或丢失响应后重投，都不会改变已接受任务的
   引擎、版本和绝对截止时间。没有不确定收费任务的自动重试。
-- 输入／产物 blob 的大小和 SHA256、所有权及不可变访问；当前每文件输入上限1MiB，
-  产物总量8MiB。没有自动 TTL 删除，后续引用保留和主动删除另行接入。
+- 按合同限制输入和产物大小/数量，支持相对目录与二进制普通文件；PPT 成果最多
+  2048 文件、256MiB、单文件64MiB。引用保留、主动删除、检查点和交付回执均已写入，
+  没有自动 TTL 删除仍被业务引用的文件。
 - 独立 Worker API，持久化执行身份后才启动原生引擎；租约失联自主停止，重启后的
   未解决执行进入 quarantine。物理执行无法证实停止时不交付产物、不释放槽。
 - Pi CLI 与 Hermes Runs 驱动。Hermes 持久保存 session、admission 意图和原 run；
@@ -58,25 +64,31 @@ flowchart LR
 - 控制重启复用原资源与候选；隔离任务须确认原 Pod 停止并退休后才能回收槽，不交付
   隔离前候选，也不发起新的物理 attempt。
 - Worker 净化事件与持久 cursor 同事务汇入业务事件，重连不重复，饱和后仍可推进游标。
+- PPT 的 plan_initial/plan_options/prepare/generate/revise 与科研 generate/revise 均有
+  独立 task schema、工具范围、输出 collector 和业务复验。PPT 保持两轮确认和审核稿；
+  科研保留固定证据修订及原有报告版本/发布事务。
+- 模型使用 attempt/request/binding/deadline 绑定的短期 Responses grant；固定上游
+  key 只在代理侧。持久调用 admission 防止失联后重新付费；学术调用另有受保护观测。
 
 ## 当前边界
 
-这是服务基础与引擎适配的首批交付，**尚未上线或接管 PPT／科研**。现有8页 DSH PPT
-仍由原 Hermes 链路提供。Pi 的 `WorkspaceTaskProfile.production_ready` 默认 `False`，
-没有因通用包装而获得 PPT 五阶段生产能力。
+**尚未上线或接管 PPT／科研**。业务后端只有显式选择 `agent-service` 才走新连接器；
+默认配置维持原入口。新目录生成器将所有路由保持关闭，操作员验收证据与宿主
+实际 readiness 都满足后才能开放具体的合同/引擎组合。
 
 当前 Worker capsule 只接受一个 attempt。完成后不再就绪，不能将一个静态 endpoint
 当作可反复使用的生产资源池。新增 K8s provider 为每次任务创建独立 capsule，并核对
 实际执行命令、权限和挂载；Pi 宿主候选采用私有 PID namespace、控制／Agent UID 分离
 和 pidfd 停止观察。真实候选镜像、网络／挂载／模型能力仍须验收后才开放业务路由。
 
-首个中立 profile 是 `workspace-task.v1`，支持有界 `prompt`。Worker API 当前明确声明
-`supports_inputs=false`，领域文件的只读挂载尚未接入；上传存储接口本身已有实现。
-Pi profile 的开发准备函数不等于生产只读挂载证明。
+`workspace-task.v1` 仍只支持有界文本；领域合同独立声明只读输入能力。
+输入通过专用受限宿主执行真正的 RO bind mount，没有复制/仅 chmod 的降级路径。
+PPT 预览使用独立持久预留 UID，停止证明覆盖两组 writer。实际节点的 mount/AppArmor、
+CNI、模型回合和领域成果仍待用户回来后验证。
 
 业务事件包括持久生命周期及 Worker 净化进度，使用持久 worker cursor 去重汇入。
-暂不提供原生 session resume/fork/steer、跨引擎恢复、
-业务连接器或任意代码／插件上传。
+支持明确兼容规则内的文件检查点重放；暂不提供原生 session resume/fork/steer
+或任意代码／插件上传。私人 HOME 和引擎原生会话不会跨引擎迁移。
 
 ## API
 
@@ -89,10 +101,17 @@ Pi profile 的开发准备函数不等于生产只读挂载证明。
 | `POST /v1/inputs?name=source.txt` | 有界普通文件上传，Content-Type 为 application/octet-stream |
 | `POST /v1/jobs` | 必带 Idempotency-Key，接受返回202；已存在的相同请求返回200 |
 | `GET /v1/jobs/{id}` | 权威状态、执行 pins、错误码及已知用量 |
+| `GET /v1/jobs/by-idempotency/{key}` | 只读恢复丢失响应的提交，取消时不重新 POST |
 | `GET /v1/jobs/{id}/events?after=0&limit=100` | 持久事件分页，最多100条 |
 | `POST /v1/jobs/{id}/cancel` | 请求取消，返回 cancelling 直到确实停止 |
 | `GET /v1/jobs/{id}/artifacts` | 已冻结的候选文件索引 |
 | `GET /v1/artifacts/{id}/content` | 每次授权的有界文件下载 |
+| `GET /v1/jobs/{id}/artifact-manifest` | 服务测量的成果集合、文件摘要与 attempt 绑定 |
+| `POST /v1/jobs/{id}/checkpoints` | 可信停止成果建立可保留的文件检查点 |
+| `GET/DELETE /v1/checkpoints/{id}` | 所有权范围内读取/主动删除检查点 |
+| `PUT/GET /v1/jobs/{id}/recovery` | 使用 revision CAS 保存业务恢复元数据 |
+| `POST /v1/jobs/{id}/retention/release` | 业务显式释放引用，不自动删除仍被依赖的文件 |
+| `POST/GET /v1/jobs/{id}/publication-ack` | 记录交付确认；不授予业务发布权限 |
 
 任务请求不包含 engine、model URL、命令或凭据：
 
@@ -111,7 +130,8 @@ with AgentClient(service_origin, service_token) as client:
     state = client.get_job(job["job_id"])
 ```
 
-业务端应先持久保存阶段引用和幂等键，丢响应后重投同一个键。PPT 的每个阶段对应一个
+业务端应先持久保存阶段引用和幂等键，丢响应后可只读按幂等键恢复原 Job；取消过程中
+不通过重 POST 制造新提交。PPT 的每个阶段对应一个
 服务 Job；两轮确认、大纲和版本基线、独立校验、PowerPoint验收与发布仍属于 PPT 后端。
 
 ## 如何切换引擎
@@ -147,16 +167,16 @@ API进程不动态加载请求指定模块。K8s 候选配置见
 [config.kubernetes.example.json](config.kubernetes.example.json)，两种模式不能占用同一 engine。
 `bash agent_service/build.sh` 构建控制镜像，`--target pi` 构建 Pi 候选；详见运行层文档。
 
-## 后续实施顺序
+## 本轮交接
 
-1. 在已完成的注册机制上实现真实 PPT/科研任务 schema/collector，当前只允许文本
-   合同，不能登记领域名称来绕过实现和验收。
-2. 接通只读领域输入、多文件/二进制成果、profile 额度、中立检查点及引用保留/删除。
-3. 接通短期模型授权、Hermes 独立宿主和固定候选镜像，完成真实 K8s、网络、模型、
-   工具与取消验收。当前 provider 仅注入 Worker 控制认证，生产 readiness 保持关闭。
-4. 接 PPT 五阶段 outbox/结果映射，保留现有网页、两轮确认、版本、独立验收与发布。
-5. 接科研生成和固定证据修订，保留发布事务与恢复；按相同合同验收不同引擎后，
-   逐业务开放新任务路由并验证回滚。
+上述领域合同、文件数据面、两引擎宿主、短期模型授权、业务连接器和部署入口均已
+写入代码。本轮按用户要求没有运行测试、编译检查、镜像构建、模型请求或部署。
+历史验证报告只对应之前的提交，不能覆盖本轮新增功能。
+
+完整实现与回来后的验证入口见
+[IMPLEMENTATION_HANDOFF_20261026.md](docs/IMPLEMENTATION_HANDOFF_20261026.md)，
+PPT 配置见 [部署接线](../ppt_service/deploy/agent/README.md)，科研配置见
+[科研接线](../scientific_agent/AGENT_SERVICE.md)。
 
 OpenSpec 权威变更为仓库映射项目中的 `add-pi-first-agent-execution-service`；该历史 change
 ID保留，2026-10-25后的用户授权已将实现目标扩展为 Pi/Hermes 双引擎。
