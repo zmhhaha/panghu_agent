@@ -2,7 +2,7 @@
 
 此镜像提供 `apparmor_parser` 和发行版 include 文件，`apt-get` 只在镜像构建内部执行。节点继续使用已有 Docker，不安装宿主软件。工具容器仅用于管理员装载内核策略，完成即退出；它与 Worker 镜像、任务 API 和模型凭据无关。
 
-前提：目标节点已启用 AppArmor，且宿主 `/sys/kernel/security/apparmor` 存在。当前操作是节点内核策略变更，实际执行前需审定规则文件和构建出的镜像摘要。本文尚未作为真实节点验收结果。
+前提：目标节点已启用 AppArmor，且宿主 `/sys/kernel/security/apparmor` 存在。当前操作是节点内核策略变更，实际执行前需审定规则文件和构建出的镜像摘要。加载命令不能代替真实 Worker 验收；本次 master 节点的实测与运行时问题见[节点隔离验证记录](NODE_ISOLATION_VALIDATION_20261027.md)。
 
 ## 构建并固定工具镜像
 
@@ -41,7 +41,8 @@ docker run --rm --network none --read-only --user 0:0 \
   --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m \
   --mount "type=bind,src=$AGENT_INPUT_PROFILE,dst=/profiles/agent-capsule-inputs,readonly" \
   --mount type=bind,src=/sys/kernel/security/apparmor,dst=/apparmor-kernel,readonly \
-  "$NODE_TOOLS_IMAGE" --subdomainfs /apparmor-kernel --jobs 1 --max-jobs 1 \
+  "$NODE_TOOLS_IMAGE" --subdomainfs /apparmor-kernel \
+  --kernel-features /apparmor-kernel/features --jobs 1 --max-jobs 1 \
   --skip-kernel-load --skip-cache /profiles/agent-capsule-inputs
 
 # 解析通过后装载/替换此策略；只有这个命令需要可写 AppArmor 子树。
@@ -52,19 +53,28 @@ docker run --rm --network none --read-only --user 0:0 \
   --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m \
   --mount "type=bind,src=$AGENT_INPUT_PROFILE,dst=/profiles/agent-capsule-inputs,readonly" \
   --mount type=bind,src=/sys/kernel/security/apparmor,dst=/apparmor-kernel \
-  "$NODE_TOOLS_IMAGE" --subdomainfs /apparmor-kernel --jobs 1 --max-jobs 1 \
+  "$NODE_TOOLS_IMAGE" --subdomainfs /apparmor-kernel \
+  --kernel-features /apparmor-kernel/features --jobs 1 --max-jobs 1 \
   --replace --skip-cache /profiles/agent-capsule-inputs
 
 grep -Fx 'agent-capsule-inputs (enforce)' /sys/kernel/security/apparmor/profiles
 ```
 
-容器内使用独立的 `/apparmor-kernel` 挂点，并通过 `--subdomainfs` 显式指定接口；部分 runc 版本禁止在容器受保护的 `/sys` 子树中创建同名挂点。`--jobs 1 --max-jobs 1` 使解析器在工具容器的内存限制内顺序工作。解析器可能报告禁用缓存；本流程已使用 `--skip-cache`，仍以命令退出码及宿主实际 `(enforce)` 记录为准。
+容器内使用独立的 `/apparmor-kernel` 挂点，并通过 `--subdomainfs` 显式指定接口；部分 runc 版本禁止在容器受保护的 `/sys` 子树中创建同名挂点。`--kernel-features` 同时显式指定目标内核公开的 feature ABI，避免从容器默认 `/sys` 发现环境；它不扩大规则授权。`--jobs 1 --max-jobs 1` 使解析器在工具容器的内存限制内顺序工作。解析器可能报告禁用缓存；本流程已使用 `--skip-cache`，仍须检查命令退出码、宿主实际 `(enforce)` 记录和 Worker 的实际进程标签。
 
 工具只添加 `MAC_ADMIN`，不使用 `--privileged`、`SYS_ADMIN`、宿主 PID/网络或 `seccomp=unconfined`。默认 seccomp 保持开启。仅此管理工具使用 `apparmor=unconfined`，使它能通过指定的 securityfs 接口装载策略；业务 Worker 继续使用 `Localhost: agent-capsule-inputs` 和 `RuntimeDefault` seccomp。
 
 若内核、用户命名空间或运行时拒绝装载，应停止并检查原因，不扩大挂载或能力。没有既有 Docker 的节点先不作为工具执行目标，不为此安装新宿主软件。策略成功装载只证明内核接收规则；仍须用真实 Worker 验证两个允许的只读 bind/remount、拒绝任意 mount 和输入写入，以及停止后卸载。验收失败不得开放 pool。
 
 此方式不在 `/etc/apparmor.d` 写文件，也不安装开机服务。节点重启后须重新装载和核对，再恢复执行资格；一次手工加载不代表重启后仍然就绪。
+
+## 核对实际进程，而非仅检查 Pod 声明
+
+2026-10-26 的 master 实测中，Kubernetes 的 `Localhost` 声明、Docker Inspect 的 AppArmorProfile 及内核已加载策略均正确，但运行中的 OCI `process.apparmorProfile` 缺失，PID 1 和 exec 子进程实际仍为 `unconfined`。这时无关 tmpfs 挂载未被拒绝；重载规则或指定 feature ABI 都不能修复该运行时遗漏。
+
+Worker 入口现在在读取授权或执行任务前通过 `confinement.py` 核对实际 PID 1 标签、NoNewPrivs 和 Seccomp。标签已经是固定 `agent-capsule-inputs (enforce)` 时继续；仅对 `unconfined` 状态尝试在固定 proc attr 文件写入 `changeprofile agent-capsule-inputs`，随后必须精确读回同一 enforce 标签。它不加载策略、不增加能力、不接受配置提供的其他 profile，也不接受 complain 或其他未知标签；写入或核验失败即拒绝任务。Pod 仍声明同一个 Localhost profile，不能移除声明来依赖自收紧。
+
+这是运行中进程主动缩小权限范围，不是给 Agent 授权切换任意 profile。真实 r5 输入路径预检、r7 checkpoint base 路径预检在 no_new_privs、RuntimeDefault 和原有控制器能力不变、没有 MAC_ADMIN 的条件下验证了固定转换、exec 后标签继承、两条允许路径的只读挂载、无关 mount 拒绝、降权和 detached writer 停止。r7 直接调用新固定镜像中的正式 `ensure_controller_confinement`。完整引擎/业务验收仍由精确镜像与 binding 的独立候选执行覆盖；不能把该节点预检推广为所有任务已验收。
 
 ## pool 节点选择
 
