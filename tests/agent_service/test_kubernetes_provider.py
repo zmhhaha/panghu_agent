@@ -311,10 +311,12 @@ def test_two_sequential_jobs_have_distinct_pods_and_single_native_admissions(mak
         assert running['state'] == 'running'
         allocation = h.allocation(job)
         identities.append((allocation['pod_name'], allocation['pod_uid']))
-        expected_uid = h.pool.uid_start + running['fence'] - 1
+        expected_uid = h.pool.uid_start + 2 * (running['fence'] - 1)
         env = {item['name']: item.get('value') for item in h.pod(job)['spec']['containers'][0]['env']}
         assert env['AGENT_RUNTIME_UID'] == str(expected_uid)
         assert allocation['agent_uid'] == expected_uid
+        assert env['AGENT_PREVIEW_UID'] == str(expected_uid + 1)
+        assert allocation['aux_uid'] == expected_uid + 1
         runtime_uids.append(expected_uid)
         h.worker.complete(running['attempt_id'])
         completed = h.dispatcher.poll(running)
@@ -333,7 +335,7 @@ def test_two_sequential_jobs_have_distinct_pods_and_single_native_admissions(mak
 
 def test_exhausted_uid_range_rejects_queued_job_without_allocating_or_holding_slot(make_harness):
     h = make_harness()
-    h.pool = replace(h.pool, uid_count=1)
+    h.pool = replace(h.pool, uid_count=2)
     h.rebuild_control()
     assert h.adapter.ready(h.pool.policy) is True
     first = h.submit('first')

@@ -133,7 +133,7 @@ def test_duplicate_keys_nonfinite_json_and_oversize_files_rejected(tmp_path):
     with pytest.raises(ConfigurationError, match='secrets_invalid'):
         load_configuration(config_path, private_path)
     config_path, private_path = files(tmp_path)
-    config_path.write_bytes(b'x' * 65537)
+    config_path.write_bytes(b'x' * (4 * 1024 * 1024 + 1))
     with pytest.raises(ConfigurationError, match='configuration_file_unavailable'):
         load_configuration(config_path, private_path)
     config_path, private_path = files(tmp_path)

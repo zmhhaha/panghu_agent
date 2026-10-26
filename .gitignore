@@ -9,6 +9,9 @@
 /agent_service/config.production.json
 /agent_service/worker-hosts/
 /.venv-agent-deploy/
+/.pytest-agent-service-*/
+/.pytest-catalog-*/
+/.pytest-research-profiles-*/
 
 # 数据库文件
 *.db

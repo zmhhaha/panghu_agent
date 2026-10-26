@@ -41,8 +41,8 @@ def test_original_pod_and_normal_api_defaults_are_accepted(expected):
     for env in worker['env']:
         if env.get('valueFrom', {}).get('fieldRef'):
             env['valueFrom']['fieldRef']['apiVersion'] = 'v1'
-    worker['resources']['limits'].update(cpu='1000m', memory='805306368', **{'ephemeral-storage': '1073741824'})
-    worker['resources']['requests'].update(cpu='0.1', memory='134217728', **{'ephemeral-storage': '1Gi'})
+    worker['resources']['limits'].update(cpu='1000m', memory='2147483648', **{'ephemeral-storage': '4294967296'})
+    worker['resources']['requests'].update(cpu='0.1', memory='134217728', **{'ephemeral-storage': '4Gi'})
     for volume in spec['volumes']:
         if 'emptyDir' in volume and 'medium' not in volume['emptyDir']:
             volume['emptyDir']['medium'] = ''
@@ -121,7 +121,7 @@ def test_volumes_mounts_ports_and_credentials_are_measured(expected, change):
     elif change == 'other-configmap':
         next(v['configMap'] for v in spec['volumes'] if 'configMap' in v)['name'] = 'unreviewed'
     elif change == 'larger-workspace':
-        next(v['emptyDir'] for v in spec['volumes'] if v['name'] == 'work')['sizeLimit'] = '1Gi'
+        next(v['emptyDir'] for v in spec['volumes'] if v['name'] == 'work')['sizeLimit'] = '2Gi'
     elif change == 'private-subpath':
         worker['volumeMounts'][0]['subPath'] = 'somewhere-else'
     elif change == 'mount-propagation':

@@ -19,7 +19,7 @@ PROBE = textwrap.dedent(r'''
         package_path = image / 'scientific_agent'
         package_path.mkdir(parents=True)
         (package_path / '__init__.py').write_text('', encoding='utf-8')
-        for name in ('pi_contracts.py', 'pi_client.py', 'pi_projection.py', 'pi_citations.py', 'pi_sections.py', 'pi_report_versions.py', 'pi_revision_contracts.py', 'pi_revision_validation.py'):
+        for name in ('pi_contracts.py', 'pi_client.py', 'pi_projection.py', 'pi_citations.py', 'pi_sections.py', 'pi_report_versions.py', 'pi_revision_contracts.py', 'pi_revision_validation.py', 'agent_config.py', 'agent_client.py', 'agent_projection.py', 'academic_observations.py'):
             if mode != 'missing-dependency' or name != 'pi_contracts.py':
                 shutil.copyfile(root / 'scientific_agent' / name, package_path / name)
         for name in ('app', 'app/api', 'tools'):
@@ -53,13 +53,21 @@ PROBE = textwrap.dedent(r'''
                 versions = importlib.import_module('scientific_agent.pi_report_versions')
                 revisions = importlib.import_module('scientific_agent.pi_revision_contracts')
                 revision_validation = importlib.import_module('scientific_agent.pi_revision_validation')
+                agent_client = importlib.import_module('scientific_agent.agent_client')
+                agent_projection = importlib.import_module('scientific_agent.agent_projection')
+                observations = importlib.import_module('scientific_agent.academic_observations')
                 assert api.ContractError is client.ContractError is contracts.ContractError
                 assert api.PiClient is client.PiClient
                 assert api.PiProjection is projection.PiProjection
-                for module in (contracts, client, projection, citations, sections, versions, revisions, revision_validation):
+                assert agent_client.WorkerError is client.WorkerError
+                assert issubclass(agent_projection.ScientificAgentProjection, projection.PiProjection)
+                for module in (contracts, client, projection, citations, sections, versions, revisions, revision_validation,
+                               agent_client, agent_projection, observations):
                     assert pathlib.Path(module.__file__).parent == package_path
                 assert 'scientific_agent.crew' not in sys.modules
                 assert 'crewai' not in sys.modules
+                assert 'agent_service' not in sys.modules
+                assert 'pi_worker.runtime' not in sys.modules
         assert list(package.__path__) == original_paths
 ''')
 

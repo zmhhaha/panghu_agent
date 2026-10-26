@@ -335,6 +335,11 @@ class ScientificAgentClient:
             return self._legacy('get', task_id)
         if row['local_cancelled'] or row['terminal_state']:
             return self._snapshot(row)
+        if not row['admission_started'] and not row['job_id']:
+            # A prepared mapping is an intent, not a queued remote execution.
+            # The business projection dispatches only after a read returns 404;
+            # reporting admission uncertainty here would suppress its first POST.
+            raise WorkerError(404, 'task_not_found', 'Execution has not been admitted')
         try:
             remote = self._remote(row)
         except WorkerError as exc:

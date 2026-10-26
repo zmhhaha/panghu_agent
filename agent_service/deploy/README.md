@@ -1,6 +1,6 @@
 # 通用 Agent 服务的正规部署
 
-本轮实现尚未测试、构建或部署；按用户要求，验证统一留到用户返回后进行。本文是待验证的操作说明，不能作为真实组合已通过验收的记录。现有 PPT、科研业务不会因为生成或部署这些文件自动切换。
+本轮已完成本地回归：596 passed、21 skipped，详见 [本地验证记录](../docs/LOCAL_VALIDATION_20261026.md)。本文中的镜像构建、Linux 节点隔离和真实引擎/模型/K8s 流程仍需服务器独立验收，不能将本地测试作为真实组合已通过验收的记录。现有 PPT、科研业务不会因为生成或部署这些文件自动切换。
 
 服务固定使用 `agent-service` 控制命名空间、`agent-workers` 执行命名空间。业务调用地址为 `http://agent-service.agent-service.svc.cluster.local:8080`。控制 API、Dispatcher、模型代理分别运行；Pi/Hermes 由 Dispatcher 为每次尝试创建独立 Pod。没有个人 Agent HOME、会话或宿主 kubeconfig 挂载。
 
@@ -164,4 +164,4 @@ API 入站只开放 `ppt-service` + `app.kubernetes.io/name=ppt-hermes-controlle
 
 候选完成不等于业务发布：结果携带可验证停止身份、冻结文件 manifest、输入/输出 hash 和 portable checkpoint。检查点是业务文件树，禁止携带原生 Pi/Hermes 会话和密钥。服务中的 publication acknowledgement 只记录业务已接收/决定，不赋予执行服务发布权限。文件引用尚存在或 Job 被 quarantine 时不会通过删除接口移除底层材料。
 
-待用户返回后，统一执行接口/引用事务/检查点/双 UID/真实只读挂载/AppArmor/代理租约/双引擎能力/取消与超时/构建和 K8s 端到端验收。上述过程完成前，不宣称新实现已可用于生产接管。
+接口、引用事务、检查点、双 UID 和部署渲染的本地回归已通过。服务器仍需真实只读挂载、AppArmor、代理租约、双引擎能力、取消与超时、固定镜像构建和 K8s 端到端验收；这些过程完成前，不宣称新实现已可用于生产接管。

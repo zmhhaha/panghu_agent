@@ -56,14 +56,15 @@ def config(value=None, **changes):
 
 def scope(c):
     return CapsuleScope(attempt_id=ATTEMPT, pod_uid=POD, request_sha256=REQUEST,
-        agent_uid=1000001, execution_binding_sha256=host_policy(c).execution_binding.sha256)
+        agent_uid=1000001, preview_uid=1000002,
+        execution_binding_sha256=host_policy(c).execution_binding.sha256)
 
 
 def scope_env(c):
     return dict(AGENT_ATTEMPT_ID=ATTEMPT, AGENT_POD_UID=POD, AGENT_REQUEST_SHA256=REQUEST,
         AGENT_ENGINE='pi', AGENT_PROFILE_NAME='workspace-task.v1', AGENT_PROFILE_REVISION='v1',
         AGENT_RUNTIME_REVISION='runtime-v1', AGENT_RUNTIME_IMAGE_DIGEST=IMAGE,
-        AGENT_RUNTIME_UID='1000001',
+        AGENT_RUNTIME_UID='1000001', AGENT_PREVIEW_UID='1000002',
         AGENT_EXECUTION_BINDING_SHA256=host_policy(c).execution_binding.sha256)
 
 

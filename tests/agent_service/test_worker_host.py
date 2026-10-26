@@ -37,14 +37,14 @@ def config(**changes):
 
 def scope():
     return CapsuleScope(attempt_id=ATTEMPT, pod_uid=POD, request_sha256=REQUEST_HASH,
-                        agent_uid=RUNTIME_UID)
+                        agent_uid=RUNTIME_UID, preview_uid=RUNTIME_UID + 1)
 
 
 def scope_env():
     return dict(AGENT_ATTEMPT_ID=ATTEMPT, AGENT_POD_UID=POD, AGENT_REQUEST_SHA256=REQUEST_HASH,
         AGENT_ENGINE='pi', AGENT_PROFILE_NAME='workspace-task.v1', AGENT_PROFILE_REVISION='v1',
         AGENT_RUNTIME_REVISION='runtime-v1', AGENT_RUNTIME_IMAGE_DIGEST=IMAGE,
-        AGENT_RUNTIME_UID=str(RUNTIME_UID))
+        AGENT_RUNTIME_UID=str(RUNTIME_UID), AGENT_PREVIEW_UID=str(RUNTIME_UID + 1))
 
 
 def credentials(*, grant=True, **changes):
@@ -103,10 +103,11 @@ def test_production_scope_requires_canonical_reserved_uid(value):
         CapsuleScope.from_env(config(), env)
 
 
-@pytest.mark.parametrize('uid', [65536, RUNTIME_UID, 2**31 - 1])
+@pytest.mark.parametrize('uid', [65536, RUNTIME_UID, 2**31 - 2])
 def test_production_scope_keeps_exact_trusted_uid(uid):
-    actual = CapsuleScope.from_env(config(), {**scope_env(), 'AGENT_RUNTIME_UID': str(uid)})
-    assert actual.agent_uid == uid
+    actual = CapsuleScope.from_env(config(), {**scope_env(), 'AGENT_RUNTIME_UID': str(uid),
+                                             'AGENT_PREVIEW_UID': str(uid + 1)})
+    assert actual.agent_uid == uid and actual.preview_uid == uid + 1
 
 
 def test_direct_scope_construction_keeps_legacy_offline_default_only():

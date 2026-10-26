@@ -18,7 +18,7 @@ def service(tmp_path):
     for name in ("__init__.py", "__main__.py", "runtime.py"):
         (root / name).write_text("# fixture source\n", encoding="utf-8")
     (root / "requirements.txt").write_text("fixture==1.0\n", encoding="utf-8")
-    for name in ("Dockerfile.control", "Dockerfile.agent-pi"):
+    for name in ("Dockerfile.control", "Dockerfile.agent-pi", "Dockerfile.agent-hermes"):
         (root / name).write_text("FROM scratch\nCOPY agent_service/ /code/\n", encoding="utf-8")
     (root / ".env").write_text("PRIVATE_KEY=not-for-the-build\n", encoding="utf-8")
     (root / "credentials.json").write_text('{"key":"private"}', encoding="utf-8")
@@ -35,8 +35,20 @@ def service(tmp_path):
     (bundle / "credentials.json").write_text('{"key":"private"}', encoding="utf-8")
     (bundle / "NOT_ALLOWED.md").write_text("private resource notes\n", encoding="utf-8")
     (bundle / "private.py").write_text("PRIVATE_RESOURCE='private'\n", encoding="utf-8")
-    # Sibling business packages never enter the neutral build context.
-    (tmp_path / "scientific_agent").mkdir()
+    # Only reviewed framework-neutral helpers may cross the package allowlist;
+    # business API/database/runtime files must still remain outside it.
+    names = ['pi_worker/__init__.py', 'pi_worker/research_tools/__init__.py',
+             'pi_worker/research_tools/validation.py', 'tools/__init__.py',
+             'tools/academic/__init__.py', 'scientific_agent/__init__.py']
+    names += ['scientific_agent/' + name for name in ('pi_contracts.py', 'pi_citations.py',
+        'pi_sections.py', 'pi_revision_contracts.py', 'pi_revision_validation.py',
+        'academic_observations.py')]
+    names += ['scientific_skills/' + name for name in
+              ('manifest.json', 'LICENSE', 'task-template.md', 'research-procedure/SKILL.md')]
+    for name in names:
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('# Reviewed neutral fixture resource\n', encoding='utf-8')
     (tmp_path / "scientific_agent" / "private.py").write_text("PRIVATE_BUSINESS='private'\n", encoding="utf-8")
     return root
 
@@ -89,9 +101,13 @@ def test_build_push_records_exact_matching_immutable_digest_and_bounds_context(s
     assert command[command.index("--platform") + 1] == "linux/arm64"
     assert "--push" in command and "--load" not in command
     assert "PYTHON_BASE_IMAGE=" + PYTHON_BASE in command
-    assert set(runner.names) == {"agent_service/__init__.py", "agent_service/__main__.py",
-                                 "agent_service/runtime.py", "agent_service/requirements.txt",
-                                 "agent_service/Dockerfile.control"}
+    assert {"agent_service/__init__.py", "agent_service/__main__.py", "agent_service/runtime.py",
+            "agent_service/requirements.txt", "agent_service/Dockerfile.control",
+            "agent_service/resources/workspace-text-v1/CONTRACT.md",
+            "scientific_agent/academic_observations.py", "pi_worker/research_tools/validation.py"} <= set(runner.names)
+    assert not any(name.endswith(('credentials.json', 'private.py', 'NOT_ALLOWED.md')) for name in runner.names)
+    assert all(name.startswith(('agent_service/', 'scientific_agent/', 'pi_worker/', 'tools/', 'scientific_skills/'))
+               for name in runner.names)
     assert runner.calls[1][-1] == "arm-cluster-master:5000/agent-service-control:fixture"
 
 
@@ -159,10 +175,13 @@ def test_pi_build_requires_immutable_reviewed_donor_before_docker(service, donor
 def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(service):
     runner = DockerFixture()
     donor = "registry:5000/reviewed-pi@sha256:" + "a" * 64
+    ppt_donor = "registry:5000/reviewed-ppt@sha256:" + "b" * 64
     result = build("pi", service=service,
-                   environ={"PI_DONOR_IMAGE": donor, "IMAGE": "registry:5000/agent-pi:review"}, runner=runner)
+                   environ={"PI_DONOR_IMAGE": donor, "PPT_DONOR_IMAGE": ppt_donor,
+                            "IMAGE": "registry:5000/agent-pi:review"}, runner=runner)
     assert result == "registry:5000/agent-pi@" + runner.checksum
     assert "PI_DONOR_IMAGE=" + donor in runner.calls[0]
+    assert "PPT_DONOR_IMAGE=" + ppt_donor in runner.calls[0]
     assert "agent_service/Dockerfile.agent-pi" in runner.names
     assert "agent_service/Dockerfile.control" not in runner.names
     assert set(name for name in runner.names if "/resources/" in name) == {
@@ -184,7 +203,8 @@ def test_pi_profile_manifest_cannot_replace_or_expand_reviewed_resource_inputs(s
     manifest.write_text(json.dumps(resource), encoding="utf-8")
     receipt, runner = old_receipt(service, "pi"), DockerFixture()
     with pytest.raises(BuildError, match="invalid_profile_resource_manifest"):
-        build("pi", service=service, environ={"PI_DONOR_IMAGE": "registry:5000/pi@sha256:" + "a" * 64}, runner=runner)
+        build("pi", service=service, environ={"PI_DONOR_IMAGE": "registry:5000/pi@sha256:" + "a" * 64,
+            "PPT_DONOR_IMAGE": "registry:5000/ppt@sha256:" + "b" * 64}, runner=runner)
     assert not receipt.exists() and runner.calls == []
 
 

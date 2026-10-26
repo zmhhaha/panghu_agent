@@ -27,13 +27,17 @@ def public():
         'kubernetes_workers': [{'pool_id': 'pi-workspace', 'engine': 'pi', 'namespace': 'agent-workers',
             'image': 'registry.internal:5000/agent-worker-pi@' + IMAGE_DIGEST,
             'host_config_map': 'agent-pi-host', 'pod_cidrs': ['10.244.0.0/16'],
-            'token_ref': 'pi-pool', 'receipt_key_ref': 'pi-pool'}]}
+            'token_ref': 'pi-pool', 'receipt_key_ref': 'pi-pool'}],
+        'model_proxy': {'upstream_base_url': 'http://llm-service.llm.svc.cluster.local/v1',
+            'upstream_token_ref': 'upstream-model', 'signing_key_ref': 'model-signing'}}
 
 
 def private():
     return {'database_url': DATABASE,
-        'tokens': {'ppt': CALLER_TOKEN, 'pi-pool': POOL_TOKEN, 'external': EXTERNAL_TOKEN},
-        'receipt_keys': {'pi-pool': base64.b64encode(RECEIPT).decode()}}
+        'tokens': {'ppt': CALLER_TOKEN, 'pi-pool': POOL_TOKEN, 'external': EXTERNAL_TOKEN,
+                   'upstream-model': 'offline-upstream-model-token-0000000000'},
+        'receipt_keys': {'pi-pool': base64.b64encode(RECEIPT).decode(),
+                         'model-signing': base64.b64encode(b'offline-model-signing-key-000000000').decode()}}
 
 
 def files(tmp_path, cfg=None, secret=None):
@@ -204,10 +208,12 @@ def test_runtime_requires_store_and_constructs_explicit_kubernetes_adapter(tmp_p
         observed['client_constructed'] = True
         return kube
     class Adapter:
-        def __init__(self, received_store, pool, received_kube, token, key):
+        def __init__(self, received_store, pool, received_kube, token, key,
+                     *, model_grant_issuer, model_policy):
             assert received_store is store and received_kube is kube
             assert token == POOL_TOKEN and key == RECEIPT
             assert pool is loaded.kubernetes_pools[0]
+            assert model_grant_issuer is not None and model_policy.api_mode == 'openai-responses'
         def close(self):
             observed['adapter_closed'] = True
     monkeypatch.setattr(kubernetes_client.KubernetesClient, 'from_service_account', make_client)
@@ -235,7 +241,7 @@ def test_failed_adapter_assembly_closes_new_client_and_existing_adapter(tmp_path
     class Kube:
         def close(self):
             closed.append('kube')
-    def unavailable(*_args):
+    def unavailable(*_args, **_kwargs):
         raise RuntimeError('private provider URL ' + POOL_TOKEN)
     monkeypatch.setattr(transport, 'RemoteWorkerAdapter', Existing)
     monkeypatch.setattr(kubernetes_client.KubernetesClient, 'from_service_account', Kube)

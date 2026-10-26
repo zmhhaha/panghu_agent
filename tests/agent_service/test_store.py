@@ -107,14 +107,15 @@ def test_input_hash_owner_and_replay_are_rechecked(store):
     assert store.get_job("tenant-a", "ppt", job["id"])["state"] == "queued"
 
 
-@pytest.mark.parametrize("name", ["../a", "a/b", "a\\b", "C:a", "..", "a\x00b"])
-def test_input_file_names_cannot_be_paths(store, name):
+@pytest.mark.parametrize("name", ["../a", "a\\b", "C:a", "..", "a\x00b"])
+def test_input_file_names_reject_unsafe_paths(store, name):
     with pytest.raises(ServiceError):
         store.put_input("tenant-a", "ppt", name, b"payload")
 
 
 def test_input_bound_and_empty_input(store):
-    for content in [b"", b"a" * (store.max_blob_bytes + 1), "not bytes"]:
+    assert store.put_input("tenant-a", "ppt", "inputs/empty.bin", b"")['size'] == 0
+    for content in [b"a" * (store.max_blob_bytes + 1), "not bytes"]:
         with pytest.raises(ServiceError) as exc:
             store.put_input("tenant-a", "ppt", "input.txt", content)
         assert exc.value.status == 413
@@ -331,7 +332,7 @@ def test_worker_allocation_freezes_intent_and_measures_request_from_database(sto
     assert set(first) == {"attempt_id", "job_id", "fence", "engine", "request_sha256", "pool_id",
                           "namespace", "pod_name", "intent_sha256", "pod_uid", "create_claimed",
                           "retired", "worker_start_claimed", "candidate_result", "stop_observed_at", "created_at",
-                          "agent_uid"}
+                          "agent_uid", "aux_uid"}
     assert first["request_sha256"] == envelope.request_sha256
     assert first["create_claimed"] is False and first["pod_uid"] is None
     with pytest.raises(ServiceError) as exc:
@@ -632,7 +633,7 @@ def test_unallocated_resolution_is_exact_and_does_not_manufacture_stop_proof(sto
     result = store.resolve_uncreated_attempt(envelope)
     assert result["state"] == "failed" and store.active() is None
     assert result["outcome"] == {"state": "failed", "error_code": "worker_not_created",
-                                 "usage": None, "stop_receipt": None}
+                                 "usage": None, "stop_receipt": None, "_service_not_started": True}
     assert store.get_artifacts("tenant-a", "ppt", job["id"]) == []
     assert store.resolve_uncreated_attempt(envelope)["event_cursor"] == result["event_cursor"]
     with pytest.raises(ServiceError) as exc:
@@ -718,7 +719,7 @@ def test_uid_capacity_is_advisory_and_counts_fences_and_retired_uids(store, cloc
     job = store.claim()
     envelope = allocation_envelope(job)
     store.reserve_worker(envelope, "pi-pool", "agent-service", "agent-" + envelope.attempt_id,
-                         "a" * 64, agent_uid=70001)
+                         "a" * 64, agent_uid=70001, aux_uid=70002)
     store.claim_worker_create(envelope.attempt_id, envelope.request_sha256)
     store.bind_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1")
     store.claim_worker_start(envelope.attempt_id, envelope.request_sha256)
@@ -726,9 +727,9 @@ def test_uid_capacity_is_advisory_and_counts_fences_and_retired_uids(store, cloc
     store.observe_worker_stopped(envelope.attempt_id, envelope.request_sha256, "pod-uid-1", clock.now)
     store.retire_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1")
     finish(store, job)
-    assert store.worker_uid_available(70001, 1) is False  # next fence is2, range exhausted
-    assert store.worker_uid_available(70000, 2) is False  # next UID would reuse retired70001
-    assert store.worker_uid_available(70001, 2) is True
+    assert store.worker_uid_available(70001, 3) is False  # next fence consumes a second pair
+    assert store.worker_uid_available(69999, 4) is False  # proposed pair reuses retired identities
+    assert store.worker_uid_available(70001, 4) is True
     submit(store, "following")
     assert store.claim()["fence"] == 2  # advisory reads never consume a fence
     assert store.worker_uid_available(70001, 2) is False

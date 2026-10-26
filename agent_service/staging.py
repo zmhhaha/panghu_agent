@@ -39,6 +39,10 @@ class StagedInputs:
                 if (stat.S_ISLNK(item.st_mode) or getattr(item, 'st_file_attributes', 0) & 0x400
                         or os.name == 'posix' and item.st_uid != self.owner_uid):
                     raise ServiceError('unsafe_input_staging', 503)
+                # Windows maps chmod(0444) to the DOS read-only attribute;
+                # unlike POSIX directory ownership, it also blocks unlink.
+                if os.name == 'nt' and stat.S_ISREG(item.st_mode):
+                    candidate.chmod(0o600)
             current.chmod(0o700)
         shutil.rmtree(self.root)
 
