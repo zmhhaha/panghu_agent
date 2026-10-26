@@ -40,8 +40,9 @@ docker run --rm --network none --read-only --user 0:0 \
   --pids-limit 32 --memory 128m --cpus 1 \
   --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m \
   --mount "type=bind,src=$AGENT_INPUT_PROFILE,dst=/profiles/agent-capsule-inputs,readonly" \
-  --mount type=bind,src=/sys/kernel/security/apparmor,dst=/sys/kernel/security/apparmor,readonly \
-  "$NODE_TOOLS_IMAGE" --skip-kernel-load --skip-cache /profiles/agent-capsule-inputs
+  --mount type=bind,src=/sys/kernel/security/apparmor,dst=/apparmor-kernel,readonly \
+  "$NODE_TOOLS_IMAGE" --subdomainfs /apparmor-kernel --jobs 1 --max-jobs 1 \
+  --skip-kernel-load --skip-cache /profiles/agent-capsule-inputs
 
 # 解析通过后装载/替换此策略；只有这个命令需要可写 AppArmor 子树。
 docker run --rm --network none --read-only --user 0:0 \
@@ -50,11 +51,14 @@ docker run --rm --network none --read-only --user 0:0 \
   --pids-limit 32 --memory 128m --cpus 1 \
   --tmpfs /tmp:rw,noexec,nosuid,nodev,size=16m \
   --mount "type=bind,src=$AGENT_INPUT_PROFILE,dst=/profiles/agent-capsule-inputs,readonly" \
-  --mount type=bind,src=/sys/kernel/security/apparmor,dst=/sys/kernel/security/apparmor \
-  "$NODE_TOOLS_IMAGE" --replace --skip-cache /profiles/agent-capsule-inputs
+  --mount type=bind,src=/sys/kernel/security/apparmor,dst=/apparmor-kernel \
+  "$NODE_TOOLS_IMAGE" --subdomainfs /apparmor-kernel --jobs 1 --max-jobs 1 \
+  --replace --skip-cache /profiles/agent-capsule-inputs
 
 grep -Fx 'agent-capsule-inputs (enforce)' /sys/kernel/security/apparmor/profiles
 ```
+
+容器内使用独立的 `/apparmor-kernel` 挂点，并通过 `--subdomainfs` 显式指定接口；部分 runc 版本禁止在容器受保护的 `/sys` 子树中创建同名挂点。`--jobs 1 --max-jobs 1` 使解析器在工具容器的内存限制内顺序工作。解析器可能报告禁用缓存；本流程已使用 `--skip-cache`，仍以命令退出码及宿主实际 `(enforce)` 记录为准。
 
 工具只添加 `MAC_ADMIN`，不使用 `--privileged`、`SYS_ADMIN`、宿主 PID/网络或 `seccomp=unconfined`。默认 seccomp 保持开启。仅此管理工具使用 `apparmor=unconfined`，使它能通过指定的 securityfs 接口装载策略；业务 Worker 继续使用 `Localhost: agent-capsule-inputs` 和 `RuntimeDefault` seccomp。
 

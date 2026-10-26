@@ -23,6 +23,10 @@ RUN /opt/hermes/.venv/bin/python -m venv /opt/agent-service/.venv \
     && chmod 0700 /run/agent-control /run/agent-secrets \
     && chmod 0711 /work \
     && chmod -R a+rX /opt/agent-service
+# Donor source checkouts can retain collaborative group-write permissions.
+# Capability packages are image-owned inputs and must remain immutable to Agents.
+RUN chown -R 0:0 /opt/ppt-master \
+    && chmod -R a+rX,go-w /opt/ppt-master
 ENV PYTHONPATH=/opt/agent-service PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOME=/run/agent-control
 WORKDIR /opt/agent-service
 EXPOSE 8090
