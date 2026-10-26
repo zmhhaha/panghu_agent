@@ -1,23 +1,25 @@
 # The reviewed immutable donor already contains complete PPT Master resources,
 # fonts, Chromium and its native/Python dependencies. No runtime git clone occurs.
 ARG PPT_DONOR_IMAGE
-FROM ${PPT_DONOR_IMAGE}
+FROM ${PPT_DONOR_IMAGE} AS neutral_runtime
 USER 0:0
+COPY agent_service/requirements.txt /tmp/agent-service-requirements.txt
+RUN /opt/hermes/.venv/bin/python -m venv /opt/agent-service/.venv \
+    && /opt/agent-service/.venv/bin/python -m pip install --no-cache-dir -r /tmp/agent-service-requirements.txt \
+    && /opt/agent-service/.venv/bin/python -m pip check \
+    && rm /tmp/agent-service-requirements.txt \
+    && chown -R 0:0 /opt/ppt-master \
+    && chmod -R a+rX,go-w /opt/ppt-master
+FROM neutral_runtime
 COPY agent_service/ /opt/agent-service/agent_service/
 COPY scientific_agent/ /opt/agent-service/scientific_agent/
 COPY pi_worker/ /opt/agent-service/pi_worker/
 COPY tools/ /opt/agent-service/tools/
 COPY scientific_skills/ /opt/agent-service/scientific_skills/
-RUN /opt/hermes/.venv/bin/python -m venv /opt/agent-service/.venv \
-    && /opt/agent-service/.venv/bin/python -m pip install --no-cache-dir -r /opt/agent-service/agent_service/requirements.txt \
-    && /opt/agent-service/.venv/bin/python -m pip check \
-    && mkdir -p /run/agent-control /run/agent-secrets /work \
+RUN mkdir -p /run/agent-control /run/agent-secrets /work \
     && chmod 0700 /run/agent-control /run/agent-secrets \
     && chmod 0711 /work \
     && chmod -R a+rX /opt/agent-service
-# Normalize source-checkout modes before measuring this image-owned package.
-RUN chown -R 0:0 /opt/ppt-master \
-    && chmod -R a+rX,go-w /opt/ppt-master
 ENV PYTHONPATH=/opt/agent-service PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     HOME=/run/agent-control HERMES_HOME=/run/agent-control/hermes \
     PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
