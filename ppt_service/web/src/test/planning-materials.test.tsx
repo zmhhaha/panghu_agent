@@ -6,7 +6,7 @@ import { api } from '../api';
 import { defaultSettings, type Project } from '../domain';
 
 vi.mock('../api',async original=>({...await original<typeof import('../api')>(),api:{
- me:vi.fn(),projects:vi.fn(),project:vi.fn(),versions:vi.fn(),plan:vi.fn(),generate:vi.fn(),confirm:vi.fn(),removeAsset:vi.fn(),
+ me:vi.fn(),projects:vi.fn(),project:vi.fn(),versions:vi.fn(),plan:vi.fn(),generate:vi.fn(),confirm:vi.fn(),removeAsset:vi.fn(),job:vi.fn(),
 }}));
 const project:Project={id:'parse-blocked',title:'资料解析前置检查',revision:1,stage:'draft',
  settings:defaultSettings,input_snapshot_hash:'snapshot',assets:[
@@ -93,31 +93,73 @@ describe('planning requires completed source parsing',()=>{
   expect(screen.getByText(/25 MiB \/ 文件/)).toBeInTheDocument();
  });
 
- it('removes a failed source only after confirmation and refreshes the remaining ready sources to unlock planning',async()=>{
+ it('deletes a failed file directly in planning only after inline confirmation and refreshes to unlock planning',async()=>{
   const ready={id:'usable',display_name:'可用资料.md',bytes:100,parse_status:'ready',parse_error:null};
   const initial={...project,assets:[...project.assets,ready]};
   const remaining={...project,revision:2,assets:[ready]};
   vi.mocked(api.project).mockResolvedValueOnce(initial).mockResolvedValue(remaining);
   vi.mocked(api.removeAsset).mockResolvedValue({revision:2});
-  const confirm=vi.spyOn(window,'confirm').mockReturnValue(true);
+  const nativeConfirm=vi.spyOn(window,'confirm').mockImplementation(()=>{throw new Error('Native dialogs are unavailable');});
   const user=await openPlanning();expect(screen.getByRole('button',{name:'开始规划'})).toBeDisabled();
-  await user.click(screen.getByRole('tab',{name:/资料与要求/}));
-  await user.click(screen.getByRole('button',{name:'移除资料 学习资料.pdf'}));
-  expect(confirm).toHaveBeenCalledWith(expect.stringContaining('已有历史版本不受影响'));
+  await user.click(screen.getByRole('button',{name:'删除文件 学习资料.pdf'}));
+  const confirmation=screen.getByRole('group',{name:'删除文件确认 学习资料.pdf'});
+  expect(confirmation).toHaveTextContent('学习资料.pdf');
+  expect(confirmation).toHaveTextContent('已有历史版本不受影响');
+  expect(api.removeAsset).not.toHaveBeenCalled();
+  await user.click(within(confirmation).getByRole('button',{name:'确认删除'}));
   await waitFor(()=>expect(api.removeAsset).toHaveBeenCalledWith(initial,'source'));
-  await waitFor(()=>expect(screen.queryByText('学习资料.pdf')).not.toBeInTheDocument());
+  expect(api.removeAsset).toHaveBeenCalledTimes(1);expect(nativeConfirm).not.toHaveBeenCalled();
+  await waitFor(()=>expect(screen.queryByRole('button',{name:'删除文件 学习资料.pdf'})).not.toBeInTheDocument());
   expect(screen.getByText('可用资料.md')).toBeInTheDocument();
-  await user.click(screen.getByRole('tab',{name:/沟通与方案/}));
   await waitFor(()=>expect(screen.getByRole('button',{name:'开始规划'})).toBeEnabled());
   expect(screen.queryByRole('region',{name:'待处理资料解析状态'})).not.toBeInTheDocument();
+  expect(screen.getByRole('region',{name:'项目文件管理'})).toBeInTheDocument();
  });
 
- it('keeps a failed source and makes no removal request when confirmation is cancelled',async()=>{
-  const confirm=vi.spyOn(window,'confirm').mockReturnValue(false);
+ it('shows inline confirmation in materials and keeps the file when deletion is cancelled',async()=>{
   const user=userEvent.setup();render(<App/>);await screen.findByRole('heading',{name:project.title});
-  await user.click(screen.getByRole('button',{name:'移除资料 学习资料.pdf'}));
-  expect(confirm).toHaveBeenCalledTimes(1);expect(api.removeAsset).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button',{name:'删除文件 学习资料.pdf'}));
+  const confirmation=screen.getByRole('group',{name:'删除文件确认 学习资料.pdf'});
+  expect(confirmation).toHaveTextContent('学习资料.pdf');expect(api.removeAsset).not.toHaveBeenCalled();
+  await user.click(within(confirmation).getByRole('button',{name:'取消'}));
+  expect(screen.queryByRole('group',{name:'删除文件确认 学习资料.pdf'})).not.toBeInTheDocument();
+  expect(api.removeAsset).not.toHaveBeenCalled();
   expect(screen.getByText('学习资料.pdf')).toBeInTheDocument();
   expect(api.project).toHaveBeenCalledTimes(1);
+ });
+
+ it.each(['ready','parsed','queued','parsing'])('keeps deletion discoverable for a %s file in both workspace tabs',async(parse_status)=>{
+  vi.mocked(api.project).mockResolvedValue({...project,assets:[{...project.assets[0],parse_status,parse_error:null}]});
+  const user=userEvent.setup();render(<App/>);await screen.findByRole('heading',{name:project.title});
+  expect(screen.getByRole('button',{name:'删除文件 学习资料.pdf'})).toBeEnabled();
+  await user.click(screen.getByRole('tab',{name:/沟通与方案/}));
+  expect(screen.getByRole('button',{name:'删除文件 学习资料.pdf'})).toBeEnabled();
+  expect(api.removeAsset).not.toHaveBeenCalled();
+ });
+
+ it('disables deletion and its confirmation while a deletion request is pending',async()=>{
+  const ready={id:'usable',display_name:'可用资料.md',bytes:100,parse_status:'ready',parse_error:null};
+  vi.mocked(api.project).mockResolvedValue({...project,assets:[...project.assets,ready]});
+  vi.mocked(api.removeAsset).mockImplementation(()=>new Promise<never>(()=>{}));
+  const user=await openPlanning();
+  await user.click(screen.getByRole('button',{name:'删除文件 学习资料.pdf'}));
+  await user.click(screen.getByRole('button',{name:'确认删除'}));
+  await waitFor(()=>expect(api.removeAsset).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole('button',{name:'确认删除'})).toBeDisabled();
+  expect(screen.getByRole('button',{name:'删除文件 可用资料.md'})).toBeDisabled();
+  await user.click(screen.getByRole('button',{name:'确认删除'}));
+  expect(api.removeAsset).toHaveBeenCalledTimes(1);
+ });
+
+ it('keeps file deletion disabled in both tabs while the project has an active job',async()=>{
+  vi.mocked(api.project).mockResolvedValue({...project,active_job_id:'active-job'});
+  vi.mocked(api.job).mockImplementation(()=>new Promise<never>(()=>{}));
+  const user=userEvent.setup();render(<App/>);await screen.findByRole('heading',{name:project.title});
+  expect(screen.getByRole('button',{name:'删除文件 学习资料.pdf'})).toBeDisabled();
+  await user.click(screen.getByRole('tab',{name:/沟通与方案/}));
+  expect(screen.getByRole('button',{name:'删除文件 学习资料.pdf'})).toBeDisabled();
+  await user.click(screen.getByRole('button',{name:'删除文件 学习资料.pdf'}));
+  expect(screen.queryByRole('group',{name:'删除文件确认 学习资料.pdf'})).not.toBeInTheDocument();
+  expect(api.removeAsset).not.toHaveBeenCalled();
  });
 });

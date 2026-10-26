@@ -110,7 +110,9 @@ def create_app(settings:Settings|None=None,engine=None):
         if not p.external_model_ack:fail('external_model_ack_required',422)
         if p.active_job_id:fail('project_busy')
         count=s.scalar(select(func.count(Asset.id)).where(Asset.project_id==pid,Asset.removed==False))
-        total=s.scalar(select(func.coalesce(func.sum(Asset.bytes),0)).where(Asset.project_id==pid))
+        # Project allowance follows the current file list. Retained originals
+        # still count toward the global physical-storage budget below.
+        total=s.scalar(select(func.coalesce(func.sum(Asset.bytes),0)).where(Asset.project_id==pid,Asset.removed==False))
         if count>=10:fail('project_file_limit',413)
         aid,key,size,h,mime=await app.state.storage.upload(pid,file)
         try:
