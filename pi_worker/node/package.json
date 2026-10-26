@@ -1,0 +1,9 @@
+{
+  "name": "panghu-scientific-pi-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned noninteractive scientific worker runtime; separate from the human Pi workbench",
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "0.73.1"
+  }
+}

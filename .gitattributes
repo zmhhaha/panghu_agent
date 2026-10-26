@@ -1,0 +1,6 @@
+# Skill hashes are over exact bytes; keep reviewed resources stable on Windows.
+scientific_skills/** text eol=lf
+pi_worker/node/*.json text eol=lf
+pi_worker/runtime/*.mjs text eol=lf
+scripts/deploy-scientific-pi.sh text eol=lf
+Dockerfile.scientific-pi* text eol=lf

@@ -1,0 +1,11 @@
+--- /root/ppt-service-p1-migration-20261023-r1/retry-04/evidence/database.json	2026-10-23 17:45:29.018142775 +0800
++++ /root/ppt-service-p1-migration-20261023-r1/retry-04/evidence/restored-observed.json	2026-10-23 17:45:31.371454474 +0800
+@@ -1532,7 +1532,7 @@
+       "tablename": "jobs"
+     },
+     {
+-      "indexdef": "CREATE UNIQUE INDEX uq_project_active_job ON public.jobs USING btree (project_id) WHERE ((status)::text = ANY ((ARRAY['queued'::character varying, 'starting'::character varying, 'running'::character varying, 'collecting'::character varying, 'validating'::character varying, 'cancelling'::character varying])::text[]))",
++      "indexdef": "CREATE UNIQUE INDEX uq_project_active_job ON public.jobs USING btree (project_id) WHERE ((status)::text = ANY (ARRAY[('queued'::character varying)::text, ('starting'::character varying)::text, ('running'::character varying)::text, ('collecting'::character varying)::text, ('validating'::character varying)::text, ('cancelling'::character varying)::text]))",
+       "indexname": "uq_project_active_job",
+       "tablename": "jobs"
+     },

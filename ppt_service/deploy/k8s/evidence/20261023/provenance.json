@@ -1,0 +1,9 @@
+{
+  "runtime_inputs": 13,
+  "current_runtime_drift": [],
+  "context_sha256": "297b4a03d0ed8003e3295b35aa1c1e9375e93db41004fb2cf8db3e7ad5355a58",
+  "image_config_id": "sha256:374c669d4b556d744a8f1c4ee82b51b3867def29126ecefd6c0d43d0db616314",
+  "image_pushed": false,
+  "registry_manifest_pending": true,
+  "target_namespace_created": false
+}

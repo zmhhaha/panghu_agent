@@ -1,0 +1,52 @@
+DEPRECATED: The legacy builder is deprecated and will be removed in a future release.
+            BuildKit is currently disabled; enable it by removing the DOCKER_BUILDKIT=0
+            environment-variable.
+
+Sending build context to Docker daemon    385kB
+Step 1/16 : ARG SITE_DEPENDENCY_IMAGE
+Step 2/16 : ARG PYTHON_RUNTIME_IMAGE
+Step 3/16 : FROM ${SITE_DEPENDENCY_IMAGE} AS dependencies
+ ---> 8148cd5182e7
+Step 4/16 : FROM ${PYTHON_RUNTIME_IMAGE}
+ ---> 2bdb5454ee91
+Step 5/16 : USER 0:0
+ ---> Running in 3a2f3595a72b
+ ---> Removed intermediate container 3a2f3595a72b
+ ---> 5a5e75e47a04
+Step 6/16 : COPY --from=dependencies /usr/local/lib/python3.13/site-packages/ /usr/local/lib/python3.13/site-packages/
+ ---> af66a71a94c5
+Step 7/16 : ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/opt/ppt-service     DATA_ROOT=/var/lib/ppt-service/state PPT_WEB_DIST=/opt/ppt-service/web/dist     PPT_EXECUTION_ENABLED=false HOME=/tmp
+ ---> Running in 886c6cfa3f27
+ ---> Removed intermediate container 886c6cfa3f27
+ ---> 38e3b9438146
+Step 8/16 : WORKDIR /opt/ppt-service
+ ---> Running in f41cffcfacde
+ ---> Removed intermediate container f41cffcfacde
+ ---> 6b7e1c604363
+Step 9/16 : COPY code/ /opt/ppt-service/
+ ---> f7206d698654
+Step 10/16 : COPY web/dist/ /opt/ppt-service/web/dist/
+ ---> 1d1b7654b5db
+Step 11/16 : COPY build-info/ /opt/ppt-service/build-info/
+ ---> f30a418e0ead
+Step 12/16 : COPY verify_image.py /opt/ppt-service/verify_image.py
+ ---> 329316c63685
+Step 13/16 : RUN python -m pip check && python -c "from ppt_service.server.site import create_site; from ppt_service.server.migrate import REVISION; assert REVISION == 2"     && mkdir -p /var/lib/ppt-service && chown 10000:10000 /var/lib/ppt-service     && chmod -R a+rX /opt/ppt-service
+ ---> Running in 78b6c2fc9df6
+No broken requirements found.
+ ---> Removed intermediate container 78b6c2fc9df6
+ ---> 8fa42c5d8ebb
+Step 14/16 : USER 10000:10000
+ ---> Running in 8a1bf728cebf
+ ---> Removed intermediate container 8a1bf728cebf
+ ---> 3da4c6817967
+Step 15/16 : EXPOSE 8000
+ ---> Running in feb0b4434fe2
+ ---> Removed intermediate container feb0b4434fe2
+ ---> 77ee3dc8d044
+Step 16/16 : ENTRYPOINT ["/usr/local/bin/python", "-m", "uvicorn", "ppt_service.server.site:create_site", "--factory", "--host", "127.0.0.1", "--port", "8000", "--no-proxy-headers"]
+ ---> Running in 9abfa86aab81
+ ---> Removed intermediate container 9abfa86aab81
+ ---> 374c669d4b55
+Successfully built 374c669d4b55
+Successfully tagged ppt-service-site:p1-20261023-r1

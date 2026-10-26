@@ -1,0 +1,25 @@
+{
+  "observed_date": "2026-10-23",
+  "observed_window": "This session, before 2026-10-23 08:35:19 UTC; exact query timestamps were not retained",
+  "recorded_at_utc": "2026-10-23 08:35:19 UTC",
+  "read_only": true,
+  "sources": [
+    "kubectl --kubeconfig=/etc/kubernetes/super-admin.conf describe nodes (only Name and Allocated resources excerpts)",
+    "kubectl --kubeconfig=/etc/kubernetes/super-admin.conf get nodes -o custom-columns=NAME:.metadata.name,ARCH:.status.nodeInfo.architecture,CPU:.status.allocatable.cpu,MEMORY:.status.allocatable.memory,TAINTS:.spec.taints[*].key"
+  ],
+  "full_raw_describe_retained": false,
+  "nodes": [
+    {"name": "arm-cluster-master", "arch": "arm64", "allocatable_cpu": "8", "allocatable_memory": "10996360Ki", "taint_keys": [], "cpu_requests": "3770m", "cpu_requests_percent": 47, "memory_requests": "5938Mi", "memory_requests_percent": 55, "cpu_limits_percent": 482, "memory_limits_percent": 376},
+    {"name": "nanopct4-server1", "arch": "arm64", "allocatable_cpu": "6", "allocatable_memory": "1035776819200m", "taint_keys": ["memory.guard/over-80"], "cpu_requests": "250m", "cpu_requests_percent": 4, "memory_requests": "0", "memory_requests_percent": 0},
+    {"name": "nanopct4-server2", "arch": "arm64", "allocatable_cpu": "6", "allocatable_memory": "1035776819200m", "taint_keys": ["memory.guard/over-80"], "cpu_requests": "250m", "cpu_requests_percent": 4, "memory_requests": "0", "memory_requests_percent": 0},
+    {"name": "nanopct4-server3", "arch": "arm64", "allocatable_cpu": "6", "allocatable_memory": "1035776819200m", "taint_keys": ["memory.guard/over-80"], "cpu_requests": "250m", "cpu_requests_percent": 4, "memory_requests": "0", "memory_requests_percent": 0},
+    {"name": "orangepi5-max-server1", "arch": "arm64", "allocatable_cpu": "8", "allocatable_memory": "16239196Ki", "taint_keys": [], "cpu_requests": "4835m", "cpu_requests_percent": 60, "memory_requests": "8792Mi", "memory_requests_percent": 55, "cpu_limits_percent": 418, "memory_limits_percent": 228}
+  ],
+  "candidate_requests": {
+    "site_proxy_postgres": {"cpu_millicores": 220, "memory_mib": 576},
+    "one_migrator_additional": {"cpu_millicores": 100, "memory_mib": 128}
+  },
+  "assessment": "Master and Orange had sufficient static request headroom for this candidate plus one migrator at observation time. The three Nano nodes carried memory guard taints and cannot be counted as available just because requests were low. Limits were overcommitted on both untainted nodes.",
+  "does_not_establish": ["Actual workload scheduling", "Current memory usage", "Peak capacity", "OOM recovery", "CSI behavior", "CNI enforcement", "Complete capacity acceptance"],
+  "cluster_mutations": 0
+}

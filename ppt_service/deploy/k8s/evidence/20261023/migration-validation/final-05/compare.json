@@ -1,0 +1,1 @@
+{"action": "compare", "comparison_rules": ["ppt-jobs-active-index-cast-v1"], "manifest_sha256": "3ac8dc951746a2d32770be0bcea0a3f91dbc11d5ffad492cffe167973fdf1f16", "read_only": true, "tables": 12, "verified": true, "writers_stopped_proven": false}

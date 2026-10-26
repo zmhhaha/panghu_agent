@@ -1,0 +1,79 @@
+********************************************************************************
+WARNING: POSTGRES_HOST_AUTH_METHOD has been set to "trust". This will allow
+         anyone with access to the Postgres port to access your database without
+         a password, even if POSTGRES_PASSWORD is set. See PostgreSQL
+         documentation about "trust":
+         https://www.postgresql.org/docs/current/auth-trust.html
+         In Docker's default configuration, this is effectively any other
+         container on the same system.
+
+         It is not recommended to use POSTGRES_HOST_AUTH_METHOD=trust. Replace
+         it with "-e POSTGRES_PASSWORD=password" instead to set a password in
+         "docker run".
+********************************************************************************
+The files belonging to this database system will be owned by user "postgres".
+This user must also own the server process.
+
+The database cluster will be initialized with locale "en_US.utf8".
+The default database encoding has accordingly been set to "UTF8".
+The default text search configuration will be set to "english".
+
+Data page checksums are disabled.
+
+fixing permissions on existing directory /var/lib/postgresql/data ... ok
+creating subdirectories ... ok
+selecting dynamic shared memory implementation ... posix
+selecting default max_connections ... 100
+selecting default shared_buffers ... 128MB
+selecting default time zone ... UTC
+creating configuration files ... ok
+running bootstrap script ... ok
+sh: locale: not found
+2026-10-23 11:09:20.783 UTC [30] WARNING:  no usable system locales were found
+performing post-bootstrap initialization ... ok
+syncing data to disk ... ok
+
+
+Success. You can now start the database server using:
+
+    pg_ctl -D /var/lib/postgresql/data -l logfile start
+
+initdb: warning: enabling "trust" authentication for local connections
+initdb: hint: You can change this by editing pg_hba.conf or using the option -A, or --auth-local and --auth-host, the next time you run initdb.
+waiting for server to start....2026-10-23 11:09:21.649 UTC [43] LOG:  starting PostgreSQL 16.15 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+2026-10-23 11:09:21.655 UTC [43] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2026-10-23 11:09:21.658 UTC [46] LOG:  database system was shut down at 2026-10-23 11:09:21 UTC
+2026-10-23 11:09:21.671 UTC [43] LOG:  database system is ready to accept connections
+ done
+server started
+CREATE DATABASE
+
+
+/usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*
+
+waiting for server to shut down...2026-10-23 11:09:21.783 UTC [43] LOG:  received fast shutdown request
+2026-10-23 11:09:21.783 UTC [43] LOG:  aborting any active transactions
+.2026-10-23 11:09:21.786 UTC [43] LOG:  background worker "logical replication launcher" (PID 49) exited with exit code 1
+2026-10-23 11:09:21.813 UTC [44] LOG:  shutting down
+2026-10-23 11:09:21.813 UTC [44] LOG:  checkpoint starting: shutdown immediate
+2026-10-23 11:09:21.849 UTC [44] LOG:  checkpoint complete: wrote 926 buffers (5.7%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.034 s, sync=0.002 s, total=0.037 s; sync files=301, longest=0.001 s, average=0.001 s; distance=4283 kB, estimate=4283 kB; lsn=0/1925C98, redo lsn=0/1925C98
+2026-10-23 11:09:21.872 UTC [43] LOG:  database system is shut down
+ done
+server stopped
+
+PostgreSQL init process complete; ready for start up.
+
+2026-10-23 11:09:21.936 UTC [1] LOG:  starting PostgreSQL 16.15 on aarch64-unknown-linux-musl, compiled by gcc (Alpine 15.2.0) 15.2.0, 64-bit
+2026-10-23 11:09:21.943 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2026-10-23 11:09:21.947 UTC [59] LOG:  database system was shut down at 2026-10-23 11:09:21 UTC
+2026-10-23 11:09:21.960 UTC [1] LOG:  database system is ready to accept connections
+2026-10-23 11:09:32.349 UTC [152] ERROR:  permission denied for schema public at character 14
+2026-10-23 11:09:32.349 UTC [152] STATEMENT:  CREATE TABLE public.runtime_forbidden(id int)
+2026-10-23 11:09:32.350 UTC [152] ERROR:  must be owner of table projects
+2026-10-23 11:09:32.350 UTC [152] STATEMENT:  ALTER TABLE public.projects ADD COLUMN forbidden int
+2026-10-23 11:09:32.350 UTC [152] ERROR:  permission denied for table api_schema_revision
+2026-10-23 11:09:32.350 UTC [152] STATEMENT:  INSERT INTO public.api_schema_revision(revision) VALUES(99)
+2026-10-23 11:09:32.351 UTC [152] ERROR:  permission denied for table api_schema_revision
+2026-10-23 11:09:32.351 UTC [152] STATEMENT:  UPDATE public.api_schema_revision SET revision=revision
+2026-10-23 11:09:32.351 UTC [152] ERROR:  permission denied for table api_schema_revision
+2026-10-23 11:09:32.351 UTC [152] STATEMENT:  DELETE FROM public.api_schema_revision WHERE revision=99

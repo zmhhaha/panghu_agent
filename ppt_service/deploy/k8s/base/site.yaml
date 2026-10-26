@@ -1,0 +1,192 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ppt-site
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ppt-site
+  ports:
+    - name: oauth
+      port: 4180
+      targetPort: oauth
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ppt-site
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ppt-site
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ppt-site
+    spec:
+      serviceAccountName: ppt-site
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10000
+        runAsGroup: 10000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: site
+          image: REQUIRED_PPT_SITE_ARM64_REGISTRY_MANIFEST:unresolved
+          imagePullPolicy: IfNotPresent
+          workingDir: /opt/ppt-service
+          command: [/usr/local/bin/python]
+          args:
+            - -m
+            - uvicorn
+            - ppt_service.server.site:create_site
+            - --factory
+            - --host
+            - 127.0.0.1
+            - --port
+            - "8000"
+            - --no-proxy-headers
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          envFrom:
+            - configMapRef:
+                name: ppt-site
+            - configMapRef:
+                name: ppt-auth
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ppt-database-runtime
+                  key: DATABASE_URL
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          startupProbe:
+            exec:
+              command:
+                - /usr/local/bin/python
+                - -c
+                - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).read()"
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            # /healthz alone does not inspect database/schema readiness.
+            exec:
+              command:
+                - /usr/local/bin/python
+                - -c
+                - >-
+                  import os, urllib.request; from sqlalchemy import create_engine, text;
+                  urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).read();
+                  engine = create_engine(os.environ['DATABASE_URL'], connect_args={'connect_timeout': 3});
+                  connection = engine.connect();
+                  assert connection.scalar(text('SELECT max(revision) FROM api_schema_revision')) == 2;
+                  connection.close(); engine.dispose()
+            periodSeconds: 10
+            timeoutSeconds: 8
+          livenessProbe:
+            exec:
+              command:
+                - /usr/local/bin/python
+                - -c
+                - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).read()"
+            periodSeconds: 20
+            timeoutSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/ppt-service
+            - name: owner
+              mountPath: /owner
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+        - name: oauth2-proxy
+          image: quay.io/oauth2-proxy/oauth2-proxy@sha256:d73ce980a96ec1143901a4676eaf0d148ae1dc965a59d3a3e5cf626cc84350aa
+          imagePullPolicy: IfNotPresent
+          args: [--config=/etc/ppt-oidc/oauth2-proxy.cfg]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ppt-oidc
+                  key: client-secret
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ppt-oidc
+                  key: cookie-secret
+          ports:
+            - name: oauth
+              containerPort: 4180
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          startupProbe:
+            httpGet:
+              path: /ping
+              port: oauth
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: oauth
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /ping
+              port: oauth
+            periodSeconds: 20
+          volumeMounts:
+            - name: oidc-config
+              mountPath: /etc/ppt-oidc
+              readOnly: true
+            - name: owner
+              mountPath: /owner
+              readOnly: true
+            - name: proxy-tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: ppt-data
+        - name: oidc-config
+          configMap:
+            name: ppt-oidc
+        - name: owner
+          configMap:
+            name: ppt-owner
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        - name: proxy-tmp
+          emptyDir:
+            sizeLimit: 16Mi

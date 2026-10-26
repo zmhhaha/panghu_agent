@@ -1,0 +1,24 @@
+test_active_job_slot_or_parser_lease_rejected (test_migration.DatabaseWrapperTests.test_active_job_slot_or_parser_lease_rejected) ... ok
+test_complete_readonly_output_is_fingerprinted_without_inherited_credentials (test_migration.DatabaseWrapperTests.test_complete_readonly_output_is_fingerprinted_without_inherited_credentials) ... ok
+test_missing_table_partial_stream_or_nonzero_psql_are_rejected (test_migration.DatabaseWrapperTests.test_missing_table_partial_stream_or_nonzero_psql_are_rejected) ... ok
+test_public_credential_permissions_symlink_and_sql_identifier_rejected (test_migration.DatabaseWrapperTests.test_public_credential_permissions_symlink_and_sql_identifier_rejected) ... ok
+test_atomic_manifest_never_overwrites_old_evidence (test_migration.SnapshotTests.test_atomic_manifest_never_overwrites_old_evidence) ... ok
+test_changed_bytes_same_length_and_mtime_detected (test_migration.SnapshotTests.test_changed_bytes_same_length_and_mtime_detected) ... ok
+test_complete_tree_copied_atomically_with_metadata_and_old_data_unchanged (test_migration.SnapshotTests.test_complete_tree_copied_atomically_with_metadata_and_old_data_unchanged) ... ok
+test_corrupt_copy_or_mode_or_mtime_detected (test_migration.SnapshotTests.test_corrupt_copy_or_mode_or_mtime_detected) ... ok
+test_destination_created_at_publish_race_is_never_replaced (test_migration.SnapshotTests.test_destination_created_at_publish_race_is_never_replaced) ... ok
+test_destination_inside_source_refused_before_writes (test_migration.SnapshotTests.test_destination_inside_source_refused_before_writes) ... ok
+test_existing_empty_destination_is_never_replaced (test_migration.SnapshotTests.test_existing_empty_destination_is_never_replaced) ... ok
+test_existing_nonempty_destination_preserved (test_migration.SnapshotTests.test_existing_nonempty_destination_preserved) ... ok
+test_explicit_owner_mapping_is_reported_and_validated (test_migration.SnapshotTests.test_explicit_owner_mapping_is_reported_and_validated) ... ok
+test_hardlink_and_fifo_refused_without_following_or_hanging (test_migration.SnapshotTests.test_hardlink_and_fifo_refused_without_following_or_hanging) ... ok
+test_manifest_digest_and_unsafe_parent_path_rejected (test_migration.SnapshotTests.test_manifest_digest_and_unsafe_parent_path_rejected) ... ok
+test_real_uid_change_is_not_misreported_as_preserved_ownership (test_migration.SnapshotTests.test_real_uid_change_is_not_misreported_as_preserved_ownership) ... ok
+test_source_drift_during_copy_never_publishes_and_keeps_unpublished_tree (test_migration.SnapshotTests.test_source_drift_during_copy_never_publishes_and_keeps_unpublished_tree) ... ok
+test_special_bits_and_xattrs_refused (test_migration.SnapshotTests.test_special_bits_and_xattrs_refused) ... skipped 'temporary filesystem has no user xattrs'
+test_symlink_file_directory_and_root_ancestor_refused (test_migration.SnapshotTests.test_symlink_file_directory_and_root_ancestor_refused) ... ok
+
+----------------------------------------------------------------------
+Ran 19 tests in 1.281s
+
+OK (skipped=1)

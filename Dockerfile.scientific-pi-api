@@ -1,0 +1,16 @@
+# Dedicated scientific API: no shared CrewAI base, model client or worker runtime.
+# Keep the already verified Python 3.13 base; review replacement digests explicitly.
+ARG PYTHON_IMAGE=python@sha256:cf50a4f6ac4f026458b08d5222023d700ac806410dff5e9ca8728fa44f2b850f
+FROM ${PYTHON_IMAGE}
+WORKDIR /app
+COPY scientific_agent/requirements-api.lock /tmp/scientific-api-requirements.txt
+RUN pip install --no-cache-dir -r /tmp/scientific-api-requirements.txt && pip check
+COPY app/__init__.py /app/app/__init__.py
+COPY app/api/__init__.py app/api/scientific_agent.py /app/app/api/
+COPY scientific_agent/__init__.py scientific_agent/pi_contracts.py scientific_agent/pi_client.py scientific_agent/pi_projection.py scientific_agent/pi_citations.py scientific_agent/pi_sections.py scientific_agent/pi_report_versions.py /app/scientific_agent/
+COPY scientific_agent/pi_revision_contracts.py scientific_agent/pi_revision_validation.py /app/scientific_agent/
+COPY tools/__init__.py tools/sqlite_client.py tools/email_client.py /app/tools/
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 SCIENTIFIC_DEFAULT_ENGINE=pi
+EXPOSE 8000
+# The dedicated entrypoint and deployment patch remove the former code overlays.
+CMD ["python", "-m", "uvicorn", "app.api.scientific_agent:app", "--host", "0.0.0.0", "--port", "8000"]

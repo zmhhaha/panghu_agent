@@ -1,0 +1,9 @@
+{
+  "stage": "kubectl client-output parsing",
+  "result": "runner failed before server dry-run",
+  "error": "json.decoder.JSONDecodeError: Extra data",
+  "cause": "kubectl create emitted adjacent JSON documents instead of one List",
+  "correction": "decode each complete JSON document; retain original renders; rerun in validation-r2",
+  "application_failure": false,
+  "persistent_mutations": 0
+}

@@ -1,0 +1,828 @@
+[
+  {
+    "apiVersion": "v1",
+    "kind": "Namespace",
+    "metadata": {
+      "annotations": {
+        "ppt.panghuer.top/release": "test-only-manual-acceptance-pending",
+        "ppt.panghuer.top/status": "NOT-DEPLOY-READY"
+      },
+      "labels": {
+        "app.kubernetes.io/part-of": "ppt-service",
+        "pod-security.kubernetes.io/enforce": "restricted",
+        "pod-security.kubernetes.io/enforce-version": "latest",
+        "ppt.panghuer.top/environment": "isolated-test"
+      },
+      "name": "ppt-service-test"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "automountServiceAccountToken": false,
+    "kind": "ServiceAccount",
+    "metadata": {
+      "name": "ppt-migrator",
+      "namespace": "ppt-service-test"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "automountServiceAccountToken": false,
+    "kind": "ServiceAccount",
+    "metadata": {
+      "name": "ppt-postgres",
+      "namespace": "ppt-service-test"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "automountServiceAccountToken": false,
+    "kind": "ServiceAccount",
+    "metadata": {
+      "name": "ppt-site",
+      "namespace": "ppt-service-test"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "data": {
+      "allowed-emails": "",
+      "oauth2-proxy.cfg": "# NOT DEPLOY READY: dedicated client, domain, forwarding and egress unverified.\nhttp_address = \"0.0.0.0:4180\"\nprovider = \"oidc\"\noidc_issuer_url = \"https://auth.panghuer.top\"\nredirect_url = \"https://REQUIRED_PPT_TEST_DOMAIN.invalid/oauth2/callback\"\nclient_id = \"REQUIRED_DEDICATED_PPT_CLIENT_ID\"\nscope = \"openid email profile\"\nupstreams = [\"http://127.0.0.1:8000/\"]\npass_host_header = true\nreverse_proxy = true\nproxy_websockets = true\npass_authorization_header = true\npass_access_token = false\nauthenticated_emails_file = \"/etc/ppt-oidc/allowed-emails\"\napi_routes = [\"^/api/\"]\ncookie_name = \"__Host-ppt\"\ncookie_path = \"/\"\ncookie_secure = true\ncookie_httponly = true\ncookie_samesite = \"lax\"\ncookie_expire = \"8h\"\ncookie_csrf_per_request = true\nrequest_logging = false\nskip_provider_button = true\n"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "name": "ppt-oidc",
+      "namespace": "ppt-service-test"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "data": {
+      "ALLOWED_ORIGINS": "https://REQUIRED_PPT_TEST_DOMAIN.invalid",
+      "DATA_ROOT": "/var/lib/ppt-service/state",
+      "INVITATION_SUBJECTS": "",
+      "MAX_STORAGE_BYTES": "21474836480",
+      "OIDC_AUDIENCE": "REQUIRED_DEDICATED_PPT_CLIENT_ID",
+      "OIDC_ISSUER": "https://auth.panghuer.top",
+      "OIDC_JWKS_URL": "https://auth.panghuer.top/.well-known/jwks",
+      "PPT_EXECUTION_ENABLED": "false",
+      "PPT_WEB_DIST": "/opt/ppt-service/web/dist",
+      "TRUSTED_PROXY_CIDRS": "127.0.0.1/32,::1/128"
+    },
+    "kind": "ConfigMap",
+    "metadata": {
+      "name": "ppt-site",
+      "namespace": "ppt-service-test"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "kind": "Service",
+    "metadata": {
+      "name": "ppt-postgres",
+      "namespace": "ppt-service-test"
+    },
+    "spec": {
+      "clusterIP": "None",
+      "ports": [
+        {
+          "name": "postgres",
+          "port": 5432,
+          "targetPort": "postgres"
+        }
+      ],
+      "selector": {
+        "app.kubernetes.io/name": "ppt-postgres"
+      },
+      "type": "ClusterIP"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "kind": "Service",
+    "metadata": {
+      "name": "ppt-site",
+      "namespace": "ppt-service-test"
+    },
+    "spec": {
+      "ports": [
+        {
+          "name": "oauth",
+          "port": 4180,
+          "targetPort": "oauth"
+        }
+      ],
+      "selector": {
+        "app.kubernetes.io/name": "ppt-site"
+      },
+      "type": "ClusterIP"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "kind": "PersistentVolumeClaim",
+    "metadata": {
+      "annotations": {
+        "ppt.panghuer.top/retention": "keep-for-explicit-backup-and-owner-approved-removal"
+      },
+      "name": "ppt-data",
+      "namespace": "ppt-service-test"
+    },
+    "spec": {
+      "accessModes": [
+        "ReadWriteMany"
+      ],
+      "resources": {
+        "requests": {
+          "storage": "20Gi"
+        }
+      },
+      "storageClassName": "ceph-cephfs"
+    }
+  },
+  {
+    "apiVersion": "v1",
+    "kind": "PersistentVolumeClaim",
+    "metadata": {
+      "annotations": {
+        "ppt.panghuer.top/retention": "keep-for-explicit-backup-and-owner-approved-removal"
+      },
+      "name": "ppt-postgres-data",
+      "namespace": "ppt-service-test"
+    },
+    "spec": {
+      "accessModes": [
+        "ReadWriteOnce"
+      ],
+      "resources": {
+        "requests": {
+          "storage": "10Gi"
+        }
+      },
+      "storageClassName": "ceph-rbd"
+    }
+  },
+  {
+    "apiVersion": "apps/v1",
+    "kind": "Deployment",
+    "metadata": {
+      "annotations": {
+        "ppt.panghuer.top/status": "NOT-DEPLOY-READY"
+      },
+      "name": "ppt-site",
+      "namespace": "ppt-service-test"
+    },
+    "spec": {
+      "replicas": 0,
+      "selector": {
+        "matchLabels": {
+          "app.kubernetes.io/name": "ppt-site"
+        }
+      },
+      "strategy": {
+        "type": "Recreate"
+      },
+      "template": {
+        "metadata": {
+          "labels": {
+            "app.kubernetes.io/name": "ppt-site"
+          }
+        },
+        "spec": {
+          "automountServiceAccountToken": false,
+          "containers": [
+            {
+              "args": [
+                "-m",
+                "uvicorn",
+                "ppt_service.server.site:create_site",
+                "--factory",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8000",
+                "--no-proxy-headers"
+              ],
+              "command": [
+                "/usr/local/bin/python"
+              ],
+              "env": [
+                {
+                  "name": "DATABASE_URL",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "DATABASE_URL",
+                      "name": "ppt-database-runtime"
+                    }
+                  }
+                },
+                {
+                  "name": "PYTHONDONTWRITEBYTECODE",
+                  "value": "1"
+                }
+              ],
+              "envFrom": [
+                {
+                  "configMapRef": {
+                    "name": "ppt-site"
+                  }
+                }
+              ],
+              "image": "REQUIRED_PPT_SITE_ARM64_REGISTRY_MANIFEST:unresolved",
+              "imagePullPolicy": "IfNotPresent",
+              "livenessProbe": {
+                "exec": {
+                  "command": [
+                    "/usr/local/bin/python",
+                    "-c",
+                    "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).read()"
+                  ]
+                },
+                "periodSeconds": 20,
+                "timeoutSeconds": 5
+              },
+              "name": "site",
+              "readinessProbe": {
+                "exec": {
+                  "command": [
+                    "/usr/local/bin/python",
+                    "-c",
+                    "import os, urllib.request; from sqlalchemy import create_engine, text; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).read(); engine = create_engine(os.environ['DATABASE_URL'], connect_args={'connect_timeout': 3}); connection = engine.connect(); assert connection.scalar(text('SELECT max(revision) FROM api_schema_revision')) == 2; connection.close(); engine.dispose()"
+                  ]
+                },
+                "periodSeconds": 10,
+                "timeoutSeconds": 8
+              },
+              "resources": {
+                "limits": {
+                  "cpu": "1",
+                  "memory": "1Gi"
+                },
+                "requests": {
+                  "cpu": "100m",
+                  "memory": "256Mi"
+                }
+              },
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true
+              },
+              "startupProbe": {
+                "exec": {
+                  "command": [
+                    "/usr/local/bin/python",
+                    "-c",
+                    "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).read()"
+                  ]
+                },
+                "failureThreshold": 30,
+                "periodSeconds": 5,
+                "timeoutSeconds": 5
+              },
+              "volumeMounts": [
+                {
+                  "mountPath": "/var/lib/ppt-service",
+                  "name": "data"
+                },
+                {
+                  "mountPath": "/tmp",
+                  "name": "tmp"
+                }
+              ],
+              "workingDir": "/opt/ppt-service"
+            },
+            {
+              "args": [
+                "--config=/etc/ppt-oidc/oauth2-proxy.cfg"
+              ],
+              "env": [
+                {
+                  "name": "OAUTH2_PROXY_CLIENT_SECRET",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "client-secret",
+                      "name": "ppt-oidc"
+                    }
+                  }
+                },
+                {
+                  "name": "OAUTH2_PROXY_COOKIE_SECRET",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "cookie-secret",
+                      "name": "ppt-oidc"
+                    }
+                  }
+                }
+              ],
+              "image": "quay.io/oauth2-proxy/oauth2-proxy@sha256:d73ce980a96ec1143901a4676eaf0d148ae1dc965a59d3a3e5cf626cc84350aa",
+              "imagePullPolicy": "IfNotPresent",
+              "livenessProbe": {
+                "httpGet": {
+                  "path": "/ping",
+                  "port": "oauth"
+                },
+                "periodSeconds": 20
+              },
+              "name": "oauth2-proxy",
+              "ports": [
+                {
+                  "containerPort": 4180,
+                  "name": "oauth"
+                }
+              ],
+              "readinessProbe": {
+                "httpGet": {
+                  "path": "/ready",
+                  "port": "oauth"
+                },
+                "periodSeconds": 10
+              },
+              "resources": {
+                "limits": {
+                  "cpu": "250m",
+                  "memory": "256Mi"
+                },
+                "requests": {
+                  "cpu": "20m",
+                  "memory": "64Mi"
+                }
+              },
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true
+              },
+              "startupProbe": {
+                "failureThreshold": 30,
+                "httpGet": {
+                  "path": "/ping",
+                  "port": "oauth"
+                },
+                "periodSeconds": 5
+              },
+              "volumeMounts": [
+                {
+                  "mountPath": "/etc/ppt-oidc",
+                  "name": "oidc-config",
+                  "readOnly": true
+                },
+                {
+                  "mountPath": "/tmp",
+                  "name": "proxy-tmp"
+                }
+              ]
+            }
+          ],
+          "nodeSelector": {
+            "kubernetes.io/arch": "arm64"
+          },
+          "securityContext": {
+            "runAsGroup": 10000,
+            "runAsNonRoot": true,
+            "runAsUser": 10000,
+            "seccompProfile": {
+              "type": "RuntimeDefault"
+            }
+          },
+          "serviceAccountName": "ppt-site",
+          "terminationGracePeriodSeconds": 30,
+          "volumes": [
+            {
+              "name": "data",
+              "persistentVolumeClaim": {
+                "claimName": "ppt-data"
+              }
+            },
+            {
+              "configMap": {
+                "name": "ppt-oidc"
+              },
+              "name": "oidc-config"
+            },
+            {
+              "emptyDir": {
+                "sizeLimit": "64Mi"
+              },
+              "name": "tmp"
+            },
+            {
+              "emptyDir": {
+                "sizeLimit": "16Mi"
+              },
+              "name": "proxy-tmp"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "apiVersion": "apps/v1",
+    "kind": "StatefulSet",
+    "metadata": {
+      "annotations": {
+        "ppt.panghuer.top/status": "NOT-DEPLOY-READY"
+      },
+      "name": "ppt-postgres",
+      "namespace": "ppt-service-test"
+    },
+    "spec": {
+      "replicas": 0,
+      "selector": {
+        "matchLabels": {
+          "app.kubernetes.io/name": "ppt-postgres"
+        }
+      },
+      "serviceName": "ppt-postgres",
+      "template": {
+        "metadata": {
+          "labels": {
+            "app.kubernetes.io/name": "ppt-postgres"
+          }
+        },
+        "spec": {
+          "automountServiceAccountToken": false,
+          "containers": [
+            {
+              "env": [
+                {
+                  "name": "POSTGRES_DB",
+                  "value": "ppt_test"
+                },
+                {
+                  "name": "POSTGRES_USER",
+                  "value": "ppt_bootstrap"
+                },
+                {
+                  "name": "POSTGRES_PASSWORD",
+                  "valueFrom": {
+                    "secretKeyRef": {
+                      "key": "POSTGRES_PASSWORD",
+                      "name": "ppt-postgres-bootstrap"
+                    }
+                  }
+                },
+                {
+                  "name": "POSTGRES_INITDB_ARGS",
+                  "value": "--data-checksums --encoding=UTF8 --lc-collate=C --lc-ctype=C"
+                },
+                {
+                  "name": "PGDATA",
+                  "value": "/var/lib/postgresql/data/pgdata"
+                }
+              ],
+              "image": "postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
+              "imagePullPolicy": "IfNotPresent",
+              "livenessProbe": {
+                "exec": {
+                  "command": [
+                    "pg_isready",
+                    "-h",
+                    "127.0.0.1",
+                    "-U",
+                    "ppt_bootstrap",
+                    "-d",
+                    "ppt_test"
+                  ]
+                },
+                "failureThreshold": 3,
+                "periodSeconds": 20
+              },
+              "name": "postgres",
+              "ports": [
+                {
+                  "containerPort": 5432,
+                  "name": "postgres"
+                }
+              ],
+              "readinessProbe": {
+                "exec": {
+                  "command": [
+                    "pg_isready",
+                    "-h",
+                    "127.0.0.1",
+                    "-U",
+                    "ppt_bootstrap",
+                    "-d",
+                    "ppt_test"
+                  ]
+                },
+                "periodSeconds": 5
+              },
+              "resources": {
+                "limits": {
+                  "cpu": "1",
+                  "memory": "1Gi"
+                },
+                "requests": {
+                  "cpu": "100m",
+                  "memory": "256Mi"
+                }
+              },
+              "securityContext": {
+                "allowPrivilegeEscalation": false,
+                "capabilities": {
+                  "drop": [
+                    "ALL"
+                  ]
+                },
+                "readOnlyRootFilesystem": true
+              },
+              "startupProbe": {
+                "exec": {
+                  "command": [
+                    "pg_isready",
+                    "-h",
+                    "127.0.0.1",
+                    "-U",
+                    "ppt_bootstrap",
+                    "-d",
+                    "ppt_test"
+                  ]
+                },
+                "failureThreshold": 60,
+                "periodSeconds": 5
+              },
+              "volumeMounts": [
+                {
+                  "mountPath": "/var/lib/postgresql/data",
+                  "name": "database"
+                },
+                {
+                  "mountPath": "/var/run/postgresql",
+                  "name": "postgres-run"
+                },
+                {
+                  "mountPath": "/tmp",
+                  "name": "tmp"
+                }
+              ]
+            }
+          ],
+          "nodeSelector": {
+            "kubernetes.io/arch": "arm64"
+          },
+          "securityContext": {
+            "fsGroup": 70,
+            "fsGroupChangePolicy": "OnRootMismatch",
+            "runAsGroup": 70,
+            "runAsNonRoot": true,
+            "runAsUser": 70,
+            "seccompProfile": {
+              "type": "RuntimeDefault"
+            }
+          },
+          "serviceAccountName": "ppt-postgres",
+          "terminationGracePeriodSeconds": 60,
+          "volumes": [
+            {
+              "name": "database",
+              "persistentVolumeClaim": {
+                "claimName": "ppt-postgres-data"
+              }
+            },
+            {
+              "emptyDir": {
+                "sizeLimit": "16Mi"
+              },
+              "name": "postgres-run"
+            },
+            {
+              "emptyDir": {
+                "sizeLimit": "64Mi"
+              },
+              "name": "tmp"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "apiVersion": "networking.k8s.io/v1",
+    "kind": "NetworkPolicy",
+    "metadata": {
+      "name": "default-deny",
+      "namespace": "ppt-service-test"
+    },
+    "spec": {
+      "podSelector": {},
+      "policyTypes": [
+        "Ingress",
+        "Egress"
+      ]
+    }
+  },
+  {
+    "apiVersion": "networking.k8s.io/v1",
+    "kind": "NetworkPolicy",
+    "metadata": {
+      "name": "dns-egress",
+      "namespace": "ppt-service-test"
+    },
+    "spec": {
+      "egress": [
+        {
+          "ports": [
+            {
+              "port": 53,
+              "protocol": "UDP"
+            },
+            {
+              "port": 53,
+              "protocol": "TCP"
+            }
+          ],
+          "to": [
+            {
+              "namespaceSelector": {
+                "matchLabels": {
+                  "kubernetes.io/metadata.name": "kube-system"
+                }
+              },
+              "podSelector": {
+                "matchLabels": {
+                  "k8s-app": "kube-dns"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "podSelector": {},
+      "policyTypes": [
+        "Egress"
+      ]
+    }
+  },
+  {
+    "apiVersion": "networking.k8s.io/v1",
+    "kind": "NetworkPolicy",
+    "metadata": {
+      "name": "frpc-ingress",
+      "namespace": "ppt-service-test"
+    },
+    "spec": {
+      "ingress": [
+        {
+          "from": [
+            {
+              "namespaceSelector": {
+                "matchLabels": {
+                  "kubernetes.io/metadata.name": "frpc"
+                }
+              },
+              "podSelector": {
+                "matchLabels": {
+                  "app": "frpc"
+                }
+              }
+            }
+          ],
+          "ports": [
+            {
+              "port": 4180,
+              "protocol": "TCP"
+            }
+          ]
+        }
+      ],
+      "podSelector": {
+        "matchLabels": {
+          "app.kubernetes.io/name": "ppt-site"
+        }
+      },
+      "policyTypes": [
+        "Ingress"
+      ]
+    }
+  },
+  {
+    "apiVersion": "networking.k8s.io/v1",
+    "kind": "NetworkPolicy",
+    "metadata": {
+      "name": "migrator-postgres-egress",
+      "namespace": "ppt-service-test"
+    },
+    "spec": {
+      "egress": [
+        {
+          "ports": [
+            {
+              "port": 5432,
+              "protocol": "TCP"
+            }
+          ],
+          "to": [
+            {
+              "podSelector": {
+                "matchLabels": {
+                  "app.kubernetes.io/name": "ppt-postgres"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "podSelector": {
+        "matchLabels": {
+          "app.kubernetes.io/name": "ppt-migrator"
+        }
+      },
+      "policyTypes": [
+        "Egress"
+      ]
+    }
+  },
+  {
+    "apiVersion": "networking.k8s.io/v1",
+    "kind": "NetworkPolicy",
+    "metadata": {
+      "name": "postgres-ingress",
+      "namespace": "ppt-service-test"
+    },
+    "spec": {
+      "ingress": [
+        {
+          "from": [
+            {
+              "podSelector": {
+                "matchLabels": {
+                  "app.kubernetes.io/name": "ppt-site"
+                }
+              }
+            },
+            {
+              "podSelector": {
+                "matchLabels": {
+                  "app.kubernetes.io/name": "ppt-migrator"
+                }
+              }
+            }
+          ],
+          "ports": [
+            {
+              "port": 5432,
+              "protocol": "TCP"
+            }
+          ]
+        }
+      ],
+      "podSelector": {
+        "matchLabels": {
+          "app.kubernetes.io/name": "ppt-postgres"
+        }
+      },
+      "policyTypes": [
+        "Ingress"
+      ]
+    }
+  },
+  {
+    "apiVersion": "networking.k8s.io/v1",
+    "kind": "NetworkPolicy",
+    "metadata": {
+      "name": "site-postgres-egress",
+      "namespace": "ppt-service-test"
+    },
+    "spec": {
+      "egress": [
+        {
+          "ports": [
+            {
+              "port": 5432,
+              "protocol": "TCP"
+            }
+          ],
+          "to": [
+            {
+              "podSelector": {
+                "matchLabels": {
+                  "app.kubernetes.io/name": "ppt-postgres"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "podSelector": {
+        "matchLabels": {
+          "app.kubernetes.io/name": "ppt-site"
+        }
+      },
+      "policyTypes": [
+        "Egress"
+      ]
+    }
+  }
+]

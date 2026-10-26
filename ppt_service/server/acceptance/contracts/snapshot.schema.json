@@ -1,0 +1,349 @@
+{
+  "$defs": {
+    "PageView": {
+      "additionalProperties": false,
+      "properties": {
+        "number": {
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Number",
+          "type": "integer"
+        },
+        "title": {
+          "maxLength": 200,
+          "title": "Title",
+          "type": "string"
+        },
+        "preview_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Preview Sha256",
+          "type": "string"
+        },
+        "source_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Source Sha256",
+          "type": "string"
+        },
+        "preview_url": {
+          "title": "Preview Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "number",
+        "title",
+        "preview_sha256",
+        "source_sha256",
+        "preview_url"
+      ],
+      "title": "PageView",
+      "type": "object"
+    },
+    "ReviewRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[A-Za-z0-9_-]{1,80}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "integer"
+        },
+        "kind": {
+          "enum": [
+            "visual_review",
+            "powerpoint_review",
+            "revoke"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "reviewer": {
+          "$ref": "#/$defs/Reviewer"
+        },
+        "binding": {
+          "$ref": "#/$defs/SourceBinding"
+        },
+        "payload": {
+          "additionalProperties": true,
+          "title": "Payload",
+          "type": "object"
+        },
+        "revoked": {
+          "title": "Revoked",
+          "type": "boolean"
+        },
+        "stale": {
+          "title": "Stale",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "kind",
+        "created_at",
+        "reviewer",
+        "binding",
+        "payload",
+        "revoked",
+        "stale"
+      ],
+      "title": "ReviewRecord",
+      "type": "object"
+    },
+    "Reviewer": {
+      "additionalProperties": false,
+      "properties": {
+        "issuer": {
+          "title": "Issuer",
+          "type": "string"
+        },
+        "sub": {
+          "title": "Sub",
+          "type": "string"
+        }
+      },
+      "required": [
+        "issuer",
+        "sub"
+      ],
+      "title": "Reviewer",
+      "type": "object"
+    },
+    "RuntimeBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "engine": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Engine",
+          "type": "string"
+        },
+        "runtime_revision": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Runtime Revision",
+          "type": "string"
+        },
+        "profile": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Profile",
+          "type": "string"
+        },
+        "checkpoint_format": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Checkpoint Format",
+          "type": "string"
+        }
+      },
+      "required": [
+        "engine",
+        "runtime_revision",
+        "profile",
+        "checkpoint_format"
+      ],
+      "title": "RuntimeBinding",
+      "type": "object"
+    },
+    "SourceBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,80}$",
+          "title": "Project Id",
+          "type": "string"
+        },
+        "version_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,80}$",
+          "title": "Version Id",
+          "type": "string"
+        },
+        "source_revision": {
+          "minimum": 0,
+          "title": "Source Revision",
+          "type": "integer"
+        },
+        "manifest_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Manifest Sha256",
+          "type": "string"
+        },
+        "input_snapshot_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Input Snapshot Sha256",
+          "type": "string"
+        },
+        "pptx_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Pptx Sha256",
+          "type": "string"
+        },
+        "source_fingerprint_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Source Fingerprint Sha256",
+          "type": "string"
+        },
+        "evidence_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,80}$",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "evidence_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Evidence Sha256",
+          "type": "string"
+        },
+        "runtime": {
+          "$ref": "#/$defs/RuntimeBinding"
+        }
+      },
+      "required": [
+        "project_id",
+        "version_id",
+        "source_revision",
+        "manifest_sha256",
+        "input_snapshot_sha256",
+        "pptx_sha256",
+        "source_fingerprint_sha256",
+        "evidence_id",
+        "evidence_sha256",
+        "runtime"
+      ],
+      "title": "SourceBinding",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "project_id": {
+      "pattern": "^[A-Za-z0-9_-]{1,80}$",
+      "title": "Project Id",
+      "type": "string"
+    },
+    "version_id": {
+      "pattern": "^[A-Za-z0-9_-]{1,80}$",
+      "title": "Version Id",
+      "type": "string"
+    },
+    "source_revision": {
+      "title": "Source Revision",
+      "type": "integer"
+    },
+    "revision": {
+      "title": "Revision",
+      "type": "integer"
+    },
+    "binding": {
+      "$ref": "#/$defs/SourceBinding"
+    },
+    "pages": {
+      "items": {
+        "$ref": "#/$defs/PageView"
+      },
+      "title": "Pages",
+      "type": "array"
+    },
+    "native_chart_count": {
+      "title": "Native Chart Count",
+      "type": "integer"
+    },
+    "programmatic_status": {
+      "const": "pending",
+      "title": "Programmatic Status",
+      "type": "string"
+    },
+    "visual_status": {
+      "enum": [
+        "pending",
+        "passed",
+        "needs_changes"
+      ],
+      "title": "Visual Status",
+      "type": "string"
+    },
+    "powerpoint_status": {
+      "enum": [
+        "pending",
+        "passed",
+        "needs_changes"
+      ],
+      "title": "Powerpoint Status",
+      "type": "string"
+    },
+    "human_status": {
+      "enum": [
+        "pending",
+        "passed",
+        "needs_changes"
+      ],
+      "title": "Human Status",
+      "type": "string"
+    },
+    "acceptance_status": {
+      "enum": [
+        "pending",
+        "stale",
+        "unreviewable"
+      ],
+      "title": "Acceptance Status",
+      "type": "string"
+    },
+    "pending_reasons": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Pending Reasons",
+      "type": "array"
+    },
+    "can_review": {
+      "title": "Can Review",
+      "type": "boolean"
+    },
+    "can_revoke": {
+      "title": "Can Revoke",
+      "type": "boolean"
+    },
+    "publication_authorized": {
+      "const": false,
+      "default": false,
+      "title": "Publication Authorized",
+      "type": "boolean"
+    },
+    "records": {
+      "items": {
+        "$ref": "#/$defs/ReviewRecord"
+      },
+      "title": "Records",
+      "type": "array"
+    }
+  },
+  "required": [
+    "project_id",
+    "version_id",
+    "source_revision",
+    "revision",
+    "binding",
+    "pages",
+    "native_chart_count",
+    "programmatic_status",
+    "visual_status",
+    "powerpoint_status",
+    "human_status",
+    "acceptance_status",
+    "pending_reasons",
+    "can_review",
+    "can_revoke",
+    "records"
+  ],
+  "title": "AcceptanceSnapshot",
+  "type": "object"
+}

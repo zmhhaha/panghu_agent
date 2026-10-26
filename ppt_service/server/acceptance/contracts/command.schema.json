@@ -1,0 +1,392 @@
+{
+  "$defs": {
+    "Issue": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "enum": [
+            "layout",
+            "text",
+            "chart",
+            "image",
+            "other"
+          ],
+          "title": "Category",
+          "type": "string"
+        },
+        "severity": {
+          "enum": [
+            "minor",
+            "major",
+            "blocking"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "category",
+        "severity",
+        "description"
+      ],
+      "title": "Issue",
+      "type": "object"
+    },
+    "PageReview": {
+      "additionalProperties": false,
+      "properties": {
+        "number": {
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Number",
+          "type": "integer"
+        },
+        "preview_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Preview Sha256",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "pending",
+            "pass",
+            "needs_changes"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        },
+        "issues": {
+          "items": {
+            "$ref": "#/$defs/Issue"
+          },
+          "maxItems": 50,
+          "title": "Issues",
+          "type": "array"
+        }
+      },
+      "required": [
+        "number",
+        "preview_sha256",
+        "verdict",
+        "issues"
+      ],
+      "title": "PageReview",
+      "type": "object"
+    },
+    "PowerPointChecks": {
+      "additionalProperties": false,
+      "properties": {
+        "opened": {
+          "enum": [
+            "pending",
+            "pass",
+            "fail"
+          ],
+          "title": "Opened",
+          "type": "string"
+        },
+        "content_edited": {
+          "enum": [
+            "pending",
+            "pass",
+            "fail"
+          ],
+          "title": "Content Edited",
+          "type": "string"
+        },
+        "native_chart_edited": {
+          "enum": [
+            "pending",
+            "pass",
+            "fail",
+            "not_applicable"
+          ],
+          "title": "Native Chart Edited",
+          "type": "string"
+        },
+        "saved": {
+          "enum": [
+            "pending",
+            "pass",
+            "fail"
+          ],
+          "title": "Saved",
+          "type": "string"
+        },
+        "reopened": {
+          "enum": [
+            "pending",
+            "pass",
+            "fail"
+          ],
+          "title": "Reopened",
+          "type": "string"
+        }
+      },
+      "required": [
+        "opened",
+        "content_edited",
+        "native_chart_edited",
+        "saved",
+        "reopened"
+      ],
+      "title": "PowerPointChecks",
+      "type": "object"
+    },
+    "PowerPointReviewCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_revision": {
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "binding": {
+          "$ref": "#/$defs/SourceBinding"
+        },
+        "kind": {
+          "const": "powerpoint_review",
+          "title": "Kind",
+          "type": "string"
+        },
+        "application_version": {
+          "maxLength": 200,
+          "title": "Application Version",
+          "type": "string"
+        },
+        "platform": {
+          "maxLength": 100,
+          "title": "Platform",
+          "type": "string"
+        },
+        "checks": {
+          "$ref": "#/$defs/PowerPointChecks"
+        },
+        "note": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "expected_revision",
+        "binding",
+        "kind",
+        "application_version",
+        "platform",
+        "checks"
+      ],
+      "title": "PowerPointReviewCommand",
+      "type": "object"
+    },
+    "RevokeCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_revision": {
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "binding": {
+          "$ref": "#/$defs/SourceBinding"
+        },
+        "kind": {
+          "const": "revoke",
+          "title": "Kind",
+          "type": "string"
+        },
+        "record_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,80}$",
+          "title": "Record Id",
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "expected_revision",
+        "binding",
+        "kind",
+        "record_id",
+        "reason"
+      ],
+      "title": "RevokeCommand",
+      "type": "object"
+    },
+    "RuntimeBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "engine": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Engine",
+          "type": "string"
+        },
+        "runtime_revision": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Runtime Revision",
+          "type": "string"
+        },
+        "profile": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Profile",
+          "type": "string"
+        },
+        "checkpoint_format": {
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Checkpoint Format",
+          "type": "string"
+        }
+      },
+      "required": [
+        "engine",
+        "runtime_revision",
+        "profile",
+        "checkpoint_format"
+      ],
+      "title": "RuntimeBinding",
+      "type": "object"
+    },
+    "SourceBinding": {
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,80}$",
+          "title": "Project Id",
+          "type": "string"
+        },
+        "version_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,80}$",
+          "title": "Version Id",
+          "type": "string"
+        },
+        "source_revision": {
+          "minimum": 0,
+          "title": "Source Revision",
+          "type": "integer"
+        },
+        "manifest_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Manifest Sha256",
+          "type": "string"
+        },
+        "input_snapshot_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Input Snapshot Sha256",
+          "type": "string"
+        },
+        "pptx_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Pptx Sha256",
+          "type": "string"
+        },
+        "source_fingerprint_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Source Fingerprint Sha256",
+          "type": "string"
+        },
+        "evidence_id": {
+          "pattern": "^[A-Za-z0-9_-]{1,80}$",
+          "title": "Evidence Id",
+          "type": "string"
+        },
+        "evidence_sha256": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Evidence Sha256",
+          "type": "string"
+        },
+        "runtime": {
+          "$ref": "#/$defs/RuntimeBinding"
+        }
+      },
+      "required": [
+        "project_id",
+        "version_id",
+        "source_revision",
+        "manifest_sha256",
+        "input_snapshot_sha256",
+        "pptx_sha256",
+        "source_fingerprint_sha256",
+        "evidence_id",
+        "evidence_sha256",
+        "runtime"
+      ],
+      "title": "SourceBinding",
+      "type": "object"
+    },
+    "VisualReviewCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_revision": {
+          "minimum": 0,
+          "title": "Expected Revision",
+          "type": "integer"
+        },
+        "binding": {
+          "$ref": "#/$defs/SourceBinding"
+        },
+        "kind": {
+          "const": "visual_review",
+          "title": "Kind",
+          "type": "string"
+        },
+        "pages": {
+          "items": {
+            "$ref": "#/$defs/PageReview"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Pages",
+          "type": "array"
+        },
+        "note": {
+          "default": "",
+          "maxLength": 4000,
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "expected_revision",
+        "binding",
+        "kind",
+        "pages"
+      ],
+      "title": "VisualReviewCommand",
+      "type": "object"
+    }
+  },
+  "discriminator": {
+    "mapping": {
+      "powerpoint_review": "#/$defs/PowerPointReviewCommand",
+      "revoke": "#/$defs/RevokeCommand",
+      "visual_review": "#/$defs/VisualReviewCommand"
+    },
+    "propertyName": "kind"
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/VisualReviewCommand"
+    },
+    {
+      "$ref": "#/$defs/PowerPointReviewCommand"
+    },
+    {
+      "$ref": "#/$defs/RevokeCommand"
+    }
+  ]
+}

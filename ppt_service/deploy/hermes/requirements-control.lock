@@ -1,0 +1,6 @@
+# Add only controller/schema packages absent from the original worker lock.
+# --no-deps preserves the Hermes worker's exact cryptography, Pillow, greenlet
+# and typing_extensions pins. pip check and explicit imports verify compatibility.
+SQLAlchemy==2.0.40
+psycopg==3.2.9
+psycopg-binary==3.2.9

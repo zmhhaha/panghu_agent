@@ -1,0 +1,1 @@
+{"ddl_and_revision_writes_denied": ["CREATE", "ALTER", "INSERT", "UPDATE", "DELETE"], "model_requests": 0, "runtime_select_insert_update_delete_verified": true, "schema_revision_readable": true}

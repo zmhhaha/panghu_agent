@@ -1,0 +1,5 @@
+# Worker-only Python dependencies. Pi JavaScript dependencies are independently
+# pinned by pi_worker/node/package-lock.json. No CrewAI in this image.
+fastapi==0.138.2
+uvicorn==0.49.0
+requests==2.32.5

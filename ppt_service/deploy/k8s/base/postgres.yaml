@@ -1,0 +1,108 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ppt-postgres
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: ppt-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: ppt-postgres
+spec:
+  replicas: 1
+  serviceName: ppt-postgres
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ppt-postgres
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ppt-postgres
+    spec:
+      serviceAccountName: ppt-postgres
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        # Verified postgres 16.15 alpine image uses uid/gid 70.
+        # fsGroup applies only to this new empty isolated database PVC.
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: POSTGRES_DB
+              value: postgres
+            - name: POSTGRES_USER
+              value: ppt_bootstrap
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ppt-postgres-bootstrap
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_INITDB_ARGS
+              value: --data-checksums --encoding=UTF8 --lc-collate=C --lc-ctype=C
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          startupProbe:
+            exec:
+              command: [pg_isready, -h, 127.0.0.1, -U, ppt_bootstrap, -d, postgres]
+            periodSeconds: 5
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: [pg_isready, -h, 127.0.0.1, -U, ppt_bootstrap, -d, postgres]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: [pg_isready, -h, 127.0.0.1, -U, ppt_bootstrap, -d, postgres]
+            periodSeconds: 20
+            failureThreshold: 3
+          volumeMounts:
+            - name: database
+              mountPath: /var/lib/postgresql/data
+            - name: postgres-run
+              mountPath: /var/run/postgresql
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: database
+          persistentVolumeClaim:
+            claimName: ppt-postgres-data
+        - name: postgres-run
+          emptyDir:
+            sizeLimit: 16Mi
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

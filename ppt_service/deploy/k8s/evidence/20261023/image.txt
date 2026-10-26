@@ -1,0 +1,1 @@
+sha256:374c669d4b556d744a8f1c4ee82b51b3867def29126ecefd6c0d43d0db616314 arm64 10000:10000 ["/usr/local/bin/python","-m","uvicorn","ppt_service.server.site:create_site","--factory","--host","127.0.0.1","--port","8000","--no-proxy-headers"]

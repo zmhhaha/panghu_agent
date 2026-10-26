@@ -1,0 +1,22 @@
+{
+  "input/test_site.py": {
+    "source": "panghu_agent\\ppt_service\\tests\\server\\test_site.py",
+    "bytes": 11463,
+    "sha256": "be3fc88a182d6a668e85b92690af4255a3926960e1c6b267abc7427133b04528"
+  },
+  "input/test_auth.py": {
+    "source": "panghu_agent\\ppt_service\\tests\\server\\test_auth.py",
+    "bytes": 2856,
+    "sha256": "f361492c6f335ac40928330e815b0ed7ed6946dbdde7fd3cf2d056a2eddf966c"
+  },
+  "input/probe_entrypoint.py": {
+    "source": "panghu_agent\\ppt_service\\deploy\\k8s\\tests\\probe_entrypoint.py",
+    "bytes": 1780,
+    "sha256": "31b4599ecebc4b52f5021e68f1c670a18e0cd9d01cd917282a2b9e53d87340a9"
+  },
+  "run_image_independent.sh": {
+    "source": "panghu_agent\\ppt_service\\deploy\\k8s\\tests\\run_image_independent.sh",
+    "bytes": 4014,
+    "sha256": "0f4b1e2ab953c4c850b47c7e31b2a701fe4e5aa1c4d1a391f49bdebe404e9af4"
+  }
+}

@@ -1,0 +1,14 @@
+{"image_manifest_sha256": "edade184b7143731c14d1eb78ee9be8d8bd1b4bbdba1aad8e99f7ef43e058fb8", "installed_site": "/opt/ppt-service/ppt_service/server/site.py", "site_sha256": "b6779d49e7875a9bd28f5c1e887fd9a12ced6ba9037a8a40776be2a0b9a0691a"}
+...............................................                          [100%]
+=============================== warnings summary ===============================
+../usr/local/lib/python3.13/site-packages/_pytest/config/__init__.py:1277
+  /usr/local/lib/python3.13/site-packages/_pytest/config/__init__.py:1277: PytestAssertRewriteWarning: Module already imported so cannot be rewritten: anyio
+    self._mark_plugins_for_rewrite(hook)
+
+../usr/local/lib/python3.13/site-packages/starlette/testclient.py:37
+  /usr/local/lib/python3.13/site-packages/starlette/testclient.py:37: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = typing.Callable[[], typing.ContextManager[anyio.abc.BlockingPortal]]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+----------------- generated xml file: /evidence/site-auth.xml ------------------
+47 passed, 2 warnings in 15.27s

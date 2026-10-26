@@ -1,0 +1,8 @@
+fastapi==0.115.12
+uvicorn==0.34.2
+SQLAlchemy==2.0.40
+psycopg[binary]==3.2.9
+PyJWT[crypto]==2.10.1
+python-multipart==0.0.20
+httpx==0.28.1
+pytest==8.3.5

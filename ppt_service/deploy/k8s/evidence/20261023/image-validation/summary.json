@@ -1,0 +1,19 @@
+{
+  "image_id": "sha256:374c669d4b556d744a8f1c4ee82b51b3867def29126ecefd6c0d43d0db616314",
+  "tests": 47,
+  "passed": 47,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "pytest_seconds": 15.276,
+  "default_entrypoint_passed": true,
+  "loopback_only": true,
+  "health_mode": "test",
+  "manual_acceptance": "pending",
+  "unauthorized_root": 401,
+  "owned_resources_removed": true,
+  "source_hashes_verified": 4,
+  "evidence_tar_sha256": "5ae865b1d1e0d35b6dc0a5dacd554a9e964c69e9fcdb2a8910863441f4cc9a09",
+  "model_requests": 0,
+  "production_ready": false
+}

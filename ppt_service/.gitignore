@@ -1,0 +1,18 @@
+.venv/
+.vendors/
+.rendered/
+rendered/
+.runtime/
+node_modules/
+web/dist/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+.env.*
+!.env.example
+
+# Reviewed historical validation receipts referenced by the deployment docs.
+!deploy/k8s/evidence/20261023/**/*.log
+!tests/e2e/evidence/20261023/**/*.log
+!tests/e2e/evidence/20261023-fixes/**/*.log

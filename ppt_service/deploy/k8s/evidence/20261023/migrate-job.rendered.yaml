@@ -1,0 +1,65 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  annotations:
+    ppt.panghuer.top/status: NOT-DEPLOY-READY
+  name: ppt-migrate-schema2
+  namespace: ppt-service-test
+spec:
+  activeDeadlineSeconds: 300
+  backoffLimit: 0
+  suspend: true
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ppt-migrator
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - command:
+        - /usr/local/bin/python
+        - -m
+        - ppt_service.server.migrate
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              key: DATABASE_URL
+              name: ppt-database-migrator
+        - name: PYTHONDONTWRITEBYTECODE
+          value: "1"
+        image: REQUIRED_PPT_SITE_ARM64_REGISTRY_MANIFEST:unresolved
+        imagePullPolicy: IfNotPresent
+        name: migrate
+        resources:
+          limits:
+            cpu: "1"
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+        volumeMounts:
+        - mountPath: /tmp
+          name: tmp
+        workingDir: /opt/ppt-service
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      restartPolicy: Never
+      securityContext:
+        runAsGroup: 10000
+        runAsNonRoot: true
+        runAsUser: 10000
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: ppt-migrator
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - emptyDir:
+          sizeLimit: 32Mi
+        name: tmp

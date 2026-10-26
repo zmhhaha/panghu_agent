@@ -1,0 +1,51 @@
+{
+  "stage": "stage1",
+  "status": "awaiting_confirmation",
+  "confirmation_surface": "chat",
+  "confirmation_received": false,
+  "route": "generate-pptx",
+  "profile": "Default",
+  "title": {"value": "从资料到可编辑 PPT：公开文档验收样稿", "origin": "requirements.title", "explanation": "交付文件及演示稿的完整题名。"},
+  "primary_language": {"value": "zh-CN", "origin": "requirements.language", "explanation": "正文与用户沟通使用简体中文；源代码标识及图表系列名保留原文。"},
+  "audience": {"value": "服务维护者和受邀试用者", "origin": "requirements.audience", "explanation": "决定术语说明和验收细节的深度。"},
+  "communication_intent": {"value": "解释资料忠实、确认流程、原生图表及恢复边界，支持技术验收，而非商业推介。", "origin": "requirements.goal", "explanation": "先解释机制与边界，再支持验收操作。"},
+  "audience_outcome": {"value": "读者能追溯材料来源，区分确认与发布授权，理解原生图表和恢复的前提，并在 PowerPoint 中人工打开文件、编辑图表数据以完成最终验收。", "origin": "recommendation_based_on_requirements", "explanation": "可观察的验收成功条件；当前尚未执行任何最终验收。"},
+  "core_message": {"value": "资料事实必须可追溯；确认按阶段推进；原生图表须由数据驱动且可编辑；恢复须具备已批准规划与所需资源，预览不能代替 PowerPoint 人工验收。", "origin": "recommendation_based_on_requirements_and_sources", "explanation": "全稿需要保留的核心信息。"},
+  "delivery_context": {"value": "建议以读者自主阅读和 PowerPoint 桌面人工验收为主，必要时辅以维护者讲解；现场或远程场景及演示时长尚未指定。", "origin": "recommendation_pending_confirmation", "explanation": "这是待确认建议，不把未提供的演示场景或时长当作事实。"},
+  "artifact_afterlife": {"value": "建议用于技术验收留档、问题复核及维护交接，保留源文件归档和可编辑对象。", "origin": "recommendation_pending_confirmation", "explanation": "定义交付后的复核与复用需求。"},
+  "content_divergence": {"value": "", "origin": "not_specified", "explanation": "自由文本：可填写对源材料措辞和组织方式的保留程度；留空表示没有额外指定，不放宽事实来源边界。"},
+  "canvas": {"value": "ppt169", "dimensions": "1280x720", "origin": "recommendation_pending_confirmation", "explanation": "建议使用16:9横屏；项目初始化未指定画布，此处等待确认。"},
+  "template_choice": {"value": "free_design", "origin": "requirements.template_preference", "explanation": "自由设计不是Quick；仍完整遵守Default两阶段确认、质量门和原生导出。适合当前无品牌模板、需验收长中文与原生图表的任务。", "alternative": "templates：使用已登记的品牌、风格、版式或整套模板；如切换至此模式，先展示索引候选并明确选择至少一项，再完成Stage1确认。", "explicit_workspace_roots": [], "selected_roots": [], "selection_confirmed": false, "catalog_expanded": false},
+  "carried_requirements": {
+    "explanation": "以下为本次表单已给出的约束，仅保留给后续阶段，不代表Stage2已准备或确认。",
+    "pages": 6,
+    "page_count_explanation": "固定6页，位于服务允许的3至20页范围；本阶段不编排逐页大纲。",
+    "external_model_acknowledged": true,
+    "external_model_explanation": "仅记录表单声明已知悉外部模型，不等于确认Stage1或授权额外来源与联网。",
+    "notes": false,
+    "notes_explanation": "不生成演讲备注；必要解释必须保留在页面正文。",
+    "animations": false,
+    "narration": false,
+    "motion_explanation": "不运行动画、旁白或自动播放制作。",
+    "native_charts": true,
+    "native_charts_explanation": "支持的图表须有完整内联JSON metadata、同步SVG fallback及原生Chart导出，不得默默改成形状。",
+    "visual_review": true,
+    "visual_review_explanation": "后续制作阶段做逐页视觉复核；本阶段没有页面，不宣称已通过。",
+    "layout_acceptance": "至少一页含较长中文段落；至少一页嵌入提供的workflow-illustration.png，并标为流程示意。",
+    "chart_requirement": "第4页必须使用public-doc-2的Q1/Q2/Q3、Cloud [12,15,19]、Services [8,9,11]，原生分组柱状图；页上保留文档示例数据、单位未提供；不得归属于真实公司，不补单位，不推断经营结论。",
+    "final_acceptance": "需要PowerPoint人工打开并编辑图表数据；SVG预览仅作为辅助。",
+    "source_boundary": "仅使用/work/inputs中已授权材料作为事实来源；不联网研究、不抓取网页、不补造事实、数据或引用。图片仅作流程示意，不作统计或外部事实证据。"
+  },
+  "missing_source_context": [
+    {"field": "business_entity", "status": "not_provided", "handling": "保留为文档示例，不归属于任何真实公司。", "blocking": false},
+    {"field": "currency", "status": "not_provided", "handling": "不添加币种，不称为营收。", "blocking": false},
+    {"field": "measurement_unit", "status": "not_provided", "handling": "明确标注单位未提供，不推断计量单位。", "blocking": false}
+  ],
+  "questions": [
+    {"id": "stage1-contract", "question": "是否确认上述受众、目的、验收成功条件、核心信息，以及建议的阅读/验收场景和留档用途？可逐项修改或清空开放文本。", "required": true},
+    {"id": "stage1-canvas-template", "question": "是否确认简体中文、16:9横屏（1280×720）及free_design自由设计？若改用templates，请先提出以便展示登记候选。", "required": true},
+    {"id": "source-treatment", "question": "是否补充材料保留程度、讲解场景或时长？不补充时保留当前空白与未指定状态。", "required": false}
+  ],
+  "refine_spec_offer": "后续可选择在完整Design Spec写好后、锁定前人工审阅；默认关闭，本阶段不创建Design Spec。",
+  "stage_boundary": "停在Stage1确认门；无可信确认上下文，未准备Stage2、design_spec、spec_lock、页面、预览、PPTX或质量检查报告。"
+}

@@ -1,0 +1,45 @@
+{
+  "schema_version": "1",
+  "bundle_revision": "local-procedures-v2",
+  "origin": "original_local_procedures",
+  "upstream_content_vendored": false,
+  "review_status": "local_procedural_review_only",
+  "automatic_updates": false,
+  "license": "MIT",
+  "license_scope": "Original local skill/template text only; does not license upstream candidates or existing repository tools",
+  "attribution": "Panghu project contributors; no upstream content copied",
+  "local_files": [
+    {"path":"research-procedure/SKILL.md","sha256":"28f1f9928915ca0e7e5cd7b923c677885f6f94e8a01352a480cce2a63d965024","license":"MIT"},
+    {"path":"task-template.md","sha256":"a07841766a8c309d44fd7dcd927626699f6bc9854bfe70f9c7dd0aa9ae193899","license":"MIT"},
+    {"path":"LICENSE","sha256":"a33fc59adfe98910106ce803f2ac323543c83758c9c4f6d23f1c512aaec6d6f3","license":"MIT"}
+  ],
+  "upstream_audit": {
+    "candidate_repository": "https://github.com/K-Dense-AI/scientific-agent-skills",
+    "attempted_url": "https://api.github.com/repos/K-Dense-AI/scientific-agent-skills/commits/HEAD",
+    "fetch_result": "blocked: hostname api.github.com resolves to a non-public IP address",
+    "upstream_commit": null,
+    "reviewed_upstream_files": [],
+    "notice": "Candidates below are NOT vendored, fetched, licensed or verified. No upstream revision/hash is asserted. No upstream promotional instructions were edited or copied.",
+    "candidates": [
+      {"name":"paper-lookup","status":"not_vendored_not_verified","path":null,"sha256":null,"license":null,"notice":null,"patches":[]},
+      {"name":"scientific-critical-thinking","status":"not_vendored_not_verified","path":null,"sha256":null,"license":null,"notice":null,"patches":[]},
+      {"name":"scientific-writing","status":"not_vendored_not_verified","path":null,"sha256":null,"license":null,"notice":null,"patches":[]},
+      {"name":"citation-management","status":"not_vendored_not_verified","path":null,"sha256":null,"license":null,"notice":null,"patches":[]},
+      {"name":"peer-review","status":"not_vendored_not_verified","path":null,"sha256":null,"license":null,"notice":null,"patches":[]}
+    ]
+  },
+  "dependencies": {
+    "hard": ["Python >=3.12", "existing tools.academic package", "requests for live academic HTTP calls only"],
+    "offline_validator": ["Python >=3.12 standard library only"],
+    "default_sources": ["crossref", "pubmed", "arxiv"],
+    "optional_sources": ["openalex", "semantic_scholar"],
+    "disabled_unimplemented_saas": ["Parallel", "OpenRouter"],
+    "mandatory_paid_services": [],
+    "runtime_downloads": false,
+    "crewai_imports": false,
+    "pdf_parser": null
+  },
+  "tool_entry_point": "python -m pi_worker.research_tools",
+  "task_template": "task-template.md",
+  "skills": ["research-procedure/SKILL.md"]
+}

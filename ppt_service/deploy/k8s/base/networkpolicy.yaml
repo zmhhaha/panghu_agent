@@ -1,0 +1,115 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dns-egress
+spec:
+  # NetworkPolicy rules are additive: never give task/validation Pods DNS.
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values: [ppt-site, ppt-migrator, ppt-postgres, ppt-hermes-controller]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frpc-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ppt-site
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: frpc
+          podSelector:
+            matchLabels:
+              app: frpc
+      ports:
+        - protocol: TCP
+          port: 4180
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: site-postgres-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ppt-site
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ppt-postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: migrator-postgres-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ppt-migrator
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ppt-postgres
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ppt-postgres
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ppt-site
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ppt-migrator
+      ports:
+        - protocol: TCP
+          port: 5432
+# The baseline has no HTTPS egress. P2's separately applied
+# oauth/k8s/ppt-oidc-egress.yaml permits only the internal ingress-nginx TLS
+# controller, using the existing Casdoor split horizon. Verify actual CNI
+# allow/deny traffic after deployment. Never substitute 0.0.0.0/0 here.

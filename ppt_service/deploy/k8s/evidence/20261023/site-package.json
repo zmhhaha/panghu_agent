@@ -1,0 +1,60 @@
+{
+  "context_sha256": "297b4a03d0ed8003e3295b35aa1c1e9375e93db41004fb2cf8db3e7ad5355a58",
+  "files": 17,
+  "runtime_inputs": {
+    "code/ppt_service/__init__.py": {
+      "sha256": "b8e69c75f5e04d782e2df72e0026effea4e4dc3bd7a09b68158a7077fae108e9",
+      "bytes": 85
+    },
+    "code/ppt_service/server/__init__.py": {
+      "sha256": "66e86ba248e8d305cd0876990580efa4137a12458d10a9efbef414ffea9211e6",
+      "bytes": 67
+    },
+    "code/ppt_service/server/app.py": {
+      "sha256": "e311251f47dfccf5595ce0140bac2755c141410da29f6872e938097bedb5134c",
+      "bytes": 19226
+    },
+    "code/ppt_service/server/auth.py": {
+      "sha256": "2b6f372eefb16b90cdb0a14631e1f3c692924131dc06df86d66e37581836b548",
+      "bytes": 2771
+    },
+    "code/ppt_service/server/middleware.py": {
+      "sha256": "39a0c02d6783ce2b4ba0ff31338bfd901e7cd347a67c52491fdefefa328186f6",
+      "bytes": 1354
+    },
+    "code/ppt_service/server/migrate.py": {
+      "sha256": "c480497a35d0d6ab68f9ce84a6beea7fe7708a33bdd5a7b9dc4840df9aaac692",
+      "bytes": 3697
+    },
+    "code/ppt_service/server/models.py": {
+      "sha256": "0322faf3f9ea0579aca149e803ad6403b73ec0be4cdf6f81245b381ee11876eb",
+      "bytes": 9083
+    },
+    "code/ppt_service/server/repository.py": {
+      "sha256": "edba456cf8ab4ea22ae3fd591a477cb2efd37b18da84cd5287a01a31456f1e7c",
+      "bytes": 14250
+    },
+    "code/ppt_service/server/site.py": {
+      "sha256": "b6779d49e7875a9bd28f5c1e887fd9a12ced6ba9037a8a40776be2a0b9a0691a",
+      "bytes": 6839
+    },
+    "code/ppt_service/server/storage.py": {
+      "sha256": "a326488f0ed45708f91b2ee84cedc5d796078eb8153f6044e863e40aa6b0be80",
+      "bytes": 3889
+    },
+    "web/dist/assets/index-C0RgSHL_.css": {
+      "sha256": "119e63d6513ad2170415b348083b66f11a4ee3f3d52409fbc9a8eab2c8999e0d",
+      "bytes": 15784
+    },
+    "web/dist/assets/index-C66NMsHg.js": {
+      "sha256": "dae3182e070ee2b0d2a2d6584df13f8a4bfa67ab77b43f483fbf4679e00c888f",
+      "bytes": 279237
+    },
+    "web/dist/index.html": {
+      "sha256": "f136015b22c75b4e3f18a540f72a67c7fda46aeeb35a0e8853ed5448c0075e41",
+      "bytes": 404
+    }
+  },
+  "model_requests": 0,
+  "production_ready": false
+}
