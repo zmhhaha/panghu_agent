@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass, field
+import ipaddress
 import math
 import os
 from pathlib import Path
@@ -121,6 +122,66 @@ class _Worker(_Model):
         return value
 
 
+class _KubernetesWorker(_Model):
+    pool_id: str = Field(pattern=r'^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$')
+    engine: Literal['pi', 'hermes']
+    namespace: str = Field(pattern=r'^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$')
+    image: str = Field(min_length=1, max_length=400)
+    host_config_map: str = Field(min_length=1, max_length=253)
+    pod_cidrs: list[str] = Field(min_length=1, max_length=8)
+    enabled: bool = False
+    port: int = Field(default=8090, ge=8090, le=8090)
+    uid_start: int | None = Field(default=None, ge=65536, le=2147483647)
+    uid_count: int = Field(default=65536, ge=1, le=1000000)
+    token_ref: str = Field(pattern=r'^[a-z][a-z0-9_.-]{0,63}$')
+    receipt_key_ref: str = Field(pattern=r'^[a-z][a-z0-9_.-]{0,63}$')
+
+    @field_validator('image')
+    @classmethod
+    def pinned_image(cls, value):
+        if not re.fullmatch(
+                r'(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?/)?'
+                r'[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*'
+                r'@sha256:[0-9a-f]{64}', value):
+            raise ValueError('A fixed Worker repository and digest are required')
+        registry = value.rsplit('@', 1)[0].split('/', 1)[0]
+        if ':' in registry:
+            if not 1 <= int(registry.rsplit(':', 1)[1]) <= 65535:
+                raise ValueError('Invalid registry port')
+        return value
+
+    @field_validator('host_config_map')
+    @classmethod
+    def config_map_name(cls, value):
+        if any(not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', part)
+               for part in value.split('.')):
+            raise ValueError('A fixed ConfigMap name is required')
+        return value
+
+    @field_validator('pod_cidrs')
+    @classmethod
+    def private_pod_networks(cls, values):
+        seen = set()
+        forbidden = tuple(ipaddress.ip_network(value) for value in (
+            '0.0.0.0/8', '127.0.0.0/8', '169.254.0.0/16', '224.0.0.0/4', '240.0.0.0/4',
+            '::/128', '::1/128', 'fe80::/10', 'ff00::/8', '::ffff:0:0/96'))
+        for value in values:
+            network = ipaddress.ip_network(value, strict=True)
+            if (network.prefixlen == 0 or not network.is_private or network in seen
+                    or any(network.version == blocked.version and network.overlaps(blocked)
+                           for blocked in forbidden)):
+                raise ValueError('A bounded private Pod network is required')
+            seen.add(network)
+        return values
+
+    @model_validator(mode='after')
+    def reserved_uid_range(self):
+        if (self.enabled and self.uid_start is None
+                or self.uid_start is not None and self.uid_start + self.uid_count - 1 > 2147483647):
+            raise ValueError('An enabled pool requires an explicitly reserved bounded UID range')
+        return self
+
+
 class _Api(_Model):
     host: str = Field(default='127.0.0.1', pattern=r'^[A-Za-z0-9_.:-]{1,253}$')
     port: int = Field(default=8080, ge=1, le=65535)
@@ -150,6 +211,7 @@ class _Public(_Model):
     callers: list[_Caller] = Field(min_length=1, max_length=100)
     profiles: list[_Profile] = Field(default_factory=list, max_length=100)
     workers: list[_Worker] = Field(default_factory=list, max_length=2)
+    kubernetes_workers: list[_KubernetesWorker] = Field(default_factory=list, max_length=2)
     api: _Api = Field(default_factory=_Api)
     dispatcher: _Dispatch = Field(default_factory=_Dispatch)
     store: _Store = Field(default_factory=_Store)
@@ -164,11 +226,16 @@ class _Public(_Model):
     @model_validator(mode='after')
     def unique_routes(self):
         profiles = [(p.name, p.revision) for p in self.profiles]
-        engines = [w.engine for w in self.workers]
+        engines = [w.engine for w in self.workers] + [w.engine for w in self.kubernetes_workers]
+        pools = [w.pool_id for w in self.kubernetes_workers]
         caller_keys = [c.token_ref for c in self.callers]
         if (len(set(profiles)) != len(profiles) or len(set(engines)) != len(engines)
-                or len(set(caller_keys)) != len(caller_keys)):
+                or len(set(caller_keys)) != len(caller_keys) or len(set(pools)) != len(pools)):
             raise ValueError('Duplicate configured identity or route')
+        for pool in self.kubernetes_workers:
+            matches = [p for p in self.profiles if p.engine == pool.engine]
+            if len(matches) != 1 or matches[0].image_digest != pool.image.rsplit('@', 1)[1]:
+                raise ValueError('A Worker pool requires exactly one matching pinned profile')
         return self
 
 
@@ -179,11 +246,20 @@ class _Secrets(_Model):
 
 
 @dataclass(frozen=True)
+class KubernetesWorkerCredentials:
+    pool_id: str
+    token: str = field(repr=False)
+    receipt_key: bytes = field(repr=False)
+
+
+@dataclass(frozen=True)
 class ServiceConfiguration:
     database_url: str = field(repr=False)
     api_settings: ApiSettings = field(repr=False)
     registry: ProfileRegistry = field(repr=False)
     worker_endpoints: tuple[WorkerEndpoint, ...] = field(repr=False)
+    kubernetes_pools: tuple = field(default=(), repr=False)
+    kubernetes_credentials: tuple[KubernetesWorkerCredentials, ...] = field(default=(), repr=False)
     api_host: str = '127.0.0.1'
     api_port: int = 8080
     poll_seconds: float = 1.0
@@ -202,24 +278,46 @@ class ServiceConfiguration:
         except Exception:
             raise ConfigurationError('database_configuration_unavailable') from None
 
-    def build_adapters(self):
+    def build_adapters(self, store=None):
         from .transport import RemoteWorkerAdapter
         adapters = {}
         try:
             for endpoint in self.worker_endpoints:
                 adapters[endpoint.engine] = RemoteWorkerAdapter(endpoint)
+            if self.kubernetes_pools:
+                if store is None:
+                    raise ValueError('A persistent store is required for Worker provisioning')
+                from .kubernetes_client import KubernetesClient
+                from .kubernetes_provider import KubernetesWorkerAdapter
+                credentials = {value.pool_id: value for value in self.kubernetes_credentials}
+                for pool in self.kubernetes_pools:
+                    private = credentials[pool.pool_id]
+                    kube = KubernetesClient.from_service_account()
+                    try:
+                        adapter = KubernetesWorkerAdapter(store, pool, kube, private.token, private.receipt_key)
+                    except Exception:
+                        kube.close()
+                        raise
+                    adapters[pool.policy.engine] = adapter
         except Exception:
             for adapter in adapters.values():
-                adapter.close()
+                try:
+                    adapter.close()
+                except Exception:
+                    pass
             raise ConfigurationError('worker_configuration_unavailable') from None
         return adapters
 
     def summary(self):
+        engines = [endpoint.engine for endpoint in self.worker_endpoints]
+        engines += [pool.policy.engine for pool in self.kubernetes_pools]
+        mode = ('mixed' if self.worker_endpoints and self.kubernetes_pools else
+                'kubernetes_per_attempt' if self.kubernetes_pools else
+                'external_single_capsule' if self.worker_endpoints else 'unconfigured')
         return {'status': 'configuration_valid', 'schema_version': 1,
                 'database_kind': self.database_kind,
                 'caller_count': len(self.api_settings.principals),
-                'worker_engines': [endpoint.engine for endpoint in self.worker_endpoints],
-                'worker_provisioning': 'external_single_capsule', 'model_requests': 0}
+                'worker_engines': engines, 'worker_provisioning': mode, 'model_requests': 0}
 
 
 def load_configuration(config_path, secrets_path, *, allow_sqlite=False) -> ServiceConfiguration:
@@ -294,8 +392,27 @@ def load_configuration(config_path, secrets_path, *, allow_sqlite=False) -> Serv
         api_settings = ApiSettings(principals, public.api.max_request_bytes, public.api.max_input_bytes)
     except (ValueError, TypeError):
         raise ConfigurationError() from None
+    pools, kube_credentials = (), ()
+    if public.kubernetes_workers:
+        try:
+            from .kubernetes_provider import KubernetesPool
+            pools = tuple(KubernetesPool(pool_id=worker.pool_id,
+                policy=next(registry.policy(profile.name, profile.revision) for profile in public.profiles
+                            if profile.engine == worker.engine),
+                namespace=worker.namespace, image=worker.image, host_config_map=worker.host_config_map,
+                pod_cidrs=tuple(worker.pod_cidrs), enabled=worker.enabled, port=worker.port,
+                uid_start=worker.uid_start, uid_count=worker.uid_count)
+                for worker in public.kubernetes_workers)
+            kube_credentials = tuple(KubernetesWorkerCredentials(worker.pool_id,
+                secrets.tokens[worker.token_ref], decoded[worker.receipt_key_ref])
+                for worker in public.kubernetes_workers)
+        except KeyError:
+            raise ConfigurationError('required_secret_missing') from None
+        except (ValueError, TypeError, StopIteration):
+            raise ConfigurationError('worker_configuration_invalid') from None
     return ServiceConfiguration(database_url=database_url, api_settings=api_settings, registry=registry,
-        worker_endpoints=endpoints, api_host=public.api.host, api_port=public.api.port,
+        worker_endpoints=endpoints, kubernetes_pools=pools, kubernetes_credentials=kube_credentials,
+        api_host=public.api.host, api_port=public.api.port,
         poll_seconds=public.dispatcher.poll_seconds, lease_seconds=public.dispatcher.lease_seconds,
         max_events=public.store.max_events, max_queue=public.store.max_queue,
         allow_sqlite=allow_sqlite, database_kind='sqlite-development' if dialect == 'sqlite' else 'postgresql')

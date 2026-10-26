@@ -1,0 +1,82 @@
+# Internal control API and dispatcher have separate service identities.
+# Apply only during the reviewed deployment, not from a task or Worker Pod.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-service
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agent-workers
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-service-api
+  namespace: agent-service
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-service-dispatcher
+  namespace: agent-service
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-worker-observer
+  namespace: agent-workers
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-worker-controller
+  namespace: agent-workers
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, create, patch, delete]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get, create, delete]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-worker-observer
+  namespace: agent-workers
+subjects:
+  - kind: ServiceAccount
+    name: agent-service-api
+    namespace: agent-service
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agent-worker-observer
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-worker-controller
+  namespace: agent-workers
+subjects:
+  - kind: ServiceAccount
+    name: agent-service-dispatcher
+    namespace: agent-service
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agent-worker-controller

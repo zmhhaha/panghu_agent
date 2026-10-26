@@ -334,7 +334,7 @@ class PiRuntime:
 
     @staticmethod
     def _uid_processes(uid):
-        if type(uid) is not int or not 10000 <= uid < 2**31 - 1:
+        if type(uid) is not int or not 10000 <= uid <= 2**31 - 1:
             raise RuntimeExecutionError("process_safety_unverified", "Invalid dedicated attempt UID")
         if sys.platform != "linux" or os.geteuid() != 0:
             raise RuntimeExecutionError("process_safety_unverified", "UID verification requires Linux root controller")
@@ -517,7 +517,7 @@ class PiRuntime:
         wire = {k: v for k, v in job.items() if k not in {"attempt", "_runtime_uid"}}
         profile = self.profile
         uid = job.get("_runtime_uid")
-        if not s.fixture_mode and (type(uid) is not int or not 10000 <= uid < 2**31 - 1):
+        if not s.fixture_mode and (type(uid) is not int or not 10000 <= uid <= 2**31 - 1):
             raise RuntimeExecutionError("runtime_not_ready", "Worker must persist a unique never-reused attempt UID")
         checked = profile.validate(wire)
         if (checked.runtime_revision != s.runtime_revision or checked.skill_bundle_revision != s.skill_bundle_revision):

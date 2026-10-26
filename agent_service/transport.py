@@ -94,6 +94,12 @@ class RemoteWorkerAdapter:
     def cancel(self, envelope: ExecutionEnvelope):
         return self._json('POST', f'/v1/executions/{envelope.attempt_id}/cancel', {})
 
+    def events(self, envelope: ExecutionEnvelope, after: int = 0, limit: int = 100):
+        if (type(after) is not int or not 0 <= after <= 500
+                or type(limit) is not int or not 1 <= limit <= 100):
+            raise ValueError('Invalid bounded Worker event cursor')
+        return self._json('GET', f'/v1/executions/{envelope.attempt_id}/events?after={after}&limit={limit}')
+
     def result(self, envelope: ExecutionEnvelope) -> WorkerResult:
         try:
             return WorkerResult.model_validate(self._json('GET', f'/v1/executions/{envelope.attempt_id}/result'))

@@ -234,11 +234,19 @@ class WorkerHost:
                 raise ServiceError('result_not_ready', 409)
             return self._state['result']
 
-    def events(self, attempt_id, after):
+    def events(self, attempt_id, after, limit=100):
+        if (type(after) is not int or after < 0
+                or type(limit) is not int or not 1 <= limit <= 100):
+            raise ServiceError('invalid_cursor', 422)
         with self._guard:
             self._matching(attempt_id)
-            items = self._state['events'][after:after + 100]
-            return {'items': items, 'next_cursor': items[-1]['seq'] if items else after}
+            if after > len(self._state['events']):
+                raise ServiceError('invalid_cursor', 409)
+            items = deepcopy(self._state['events'][after:after + limit])
+            next_cursor = items[-1]['seq'] if items else after
+            return {'attempt_id': attempt_id, 'request_sha256': self._state['request_sha256'],
+                    'items': items, 'next_cursor': next_cursor,
+                    'has_more': next_cursor < len(self._state['events'])}
 
     def _emit(self, event):
         # Native tool data/prose is never forwarded to the business event stream.
@@ -411,9 +419,7 @@ def create_worker_app(host: WorkerHost, token: str):
         return host.result(attempt_id)
 
     @app.get('/v1/executions/{attempt_id}/events')
-    def events(attempt_id: str, after: int = 0):
-        if after < 0:
-            raise ServiceError('invalid_cursor', 422)
-        return host.events(attempt_id, after)
+    def events(attempt_id: str, after: int = 0, limit: int = 100):
+        return host.events(attempt_id, after, limit)
 
     return app

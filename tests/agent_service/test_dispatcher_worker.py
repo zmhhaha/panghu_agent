@@ -61,7 +61,8 @@ def setup_chain(tmp_path):
         worker.__enter__()
         opened.append(worker)
         def transport(request):
-            response = worker.request(request.method, request.url.path, content=request.content,
+            path = request.url.path + ('?' + request.url.query.decode() if request.url.query else '')
+            response = worker.request(request.method, path, content=request.content,
                                       headers=dict(request.headers))
             return httpx.Response(response.status_code, content=response.content, headers=dict(response.headers))
         adapter = RemoteWorkerAdapter(WorkerEndpoint('http://capsule', TOKEN, KEY, engine),

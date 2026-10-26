@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
-from agent_service.contracts import ServiceError
+from agent_service.contracts import ExecutionEnvelope, InlineFile, ServiceError, WorkerResult, sign_receipt
 from agent_service.store import Store
 
 
@@ -246,3 +246,285 @@ def test_pg_no_stop_proof_keeps_slot_across_connection(pg_store, pg_url):
         assert peer.get_artifacts("fixture-tenant", "ppt", attempt["id"]) == []
     finally:
         peer.close()
+
+
+def _worker_envelope(job):
+    return ExecutionEnvelope(job_id=job["id"], attempt_id=job["attempt_id"], fence=job["fence"],
+        engine=job["pins"]["engine"], profile=job["request"]["profile"],
+        profile_revision=job["request"]["profile_revision"], runtime_revision=job["pins"]["runtime_revision"],
+        image_digest=job["pins"]["image_digest"], deadline_at=float(job["deadline_at"]),
+        lease_expires_at=float(job["lease_expires_at"]), task=job["request"]["task"])
+
+
+def _worker_create_process(url, attempt_id, request_sha256, ready, release, output):
+    store = None
+    try:
+        store = Store(url, clock=Clock())
+        ready.put(True)
+        if not release.wait(15):
+            raise RuntimeError("fixture_release_timeout")
+        output.put({"claimed": store.claim_worker_create(attempt_id, request_sha256)})
+    except BaseException as exc:
+        output.put({"error_type": type(exc).__name__})
+    finally:
+        if store is not None:
+            store.close()
+
+
+def test_pg_worker_create_cas_and_candidate_binding_survive_processes_and_reconnect(pg_store, pg_url):
+    store, clock = pg_store
+    _submit(store)
+    job = store.claim()
+    envelope = _worker_envelope(job)
+    allocation = store.reserve_worker(envelope, "pi-pool", "agent-service", "agent-" + envelope.attempt_id,
+                                      "a" * 64, agent_uid=65536)
+    ctx = multiprocessing.get_context("spawn")
+    ready, release, output = ctx.Queue(), ctx.Event(), ctx.Queue()
+    children = [ctx.Process(target=_worker_create_process,
+        args=(pg_url, envelope.attempt_id, envelope.request_sha256, ready, release, output)) for _ in range(2)]
+    peer = Store(pg_url, clock=clock)
+    try:
+        for child in children:
+            child.start()
+        assert [ready.get(timeout=15) for _ in children] == [True, True]
+        release.set()
+        replies = [output.get(timeout=15) for _ in children]
+        assert not any("error_type" in reply for reply in replies)
+        assert sorted(reply["claimed"] for reply in replies) == [False, True]
+        assert peer.claim_worker_create(envelope.attempt_id, envelope.request_sha256) is False
+        assert peer.get_worker_allocation(envelope.attempt_id)["pod_name"] == allocation["pod_name"]
+        assert peer.get_worker_allocation(envelope.attempt_id)["agent_uid"] == 65536
+        with pytest.raises(ServiceError) as exc:
+            peer.reserve_worker(envelope, "pi-pool", "agent-service", allocation["pod_name"],
+                                "a" * 64, agent_uid=65537)
+        assert exc.value.code == "worker_allocation_conflict"
+        peer.bind_worker(envelope.attempt_id, envelope.request_sha256, "pg-pod-uid-1")
+        with pytest.raises(ServiceError) as exc:
+            store.bind_worker(envelope.attempt_id, envelope.request_sha256, "recreated-pod-uid")
+        assert exc.value.code == "worker_allocation_conflict"
+        assert store.claim_worker_start(envelope.attempt_id, envelope.request_sha256) is True
+        assert peer.claim_worker_start(envelope.attempt_id, envelope.request_sha256) is False
+        result = WorkerResult(state="completed", artifacts=[InlineFile.from_bytes("result.txt", b"durable candidate")])
+        result = result.model_copy(update={"stop_receipt": sign_receipt(envelope, result,
+            b"fixture-only-receipt-key-0000000000", ("pg-pod-uid-1",), clock.now)})
+        store.stage_worker_result(envelope.attempt_id, envelope.request_sha256, result.model_dump())
+        assert peer.get_worker_allocation(envelope.attempt_id)["candidate_result"] == result.model_dump()
+        assert peer.get_artifacts("fixture-tenant", "ppt", job["id"]) == []
+        with pytest.raises(ServiceError):
+            peer.retire_worker(envelope.attempt_id, envelope.request_sha256, "pg-pod-uid-1")
+        peer.observe_worker_stopped(envelope.attempt_id, envelope.request_sha256, "pg-pod-uid-1", clock.now)
+        assert store.get_worker_allocation(envelope.attempt_id)["stop_observed_at"] == clock.now
+        _finish(store, job)
+        peer.retire_worker(envelope.attempt_id, envelope.request_sha256, "pg-pod-uid-1")
+        assert store.get_worker_allocation(envelope.attempt_id)["retired"] is True
+        _submit(peer, "next-uid")
+        next_envelope = _worker_envelope(peer.claim())
+        next_resource = ("other-pool", "another-namespace", "agent-" + next_envelope.attempt_id, "b" * 64)
+        with pytest.raises(ServiceError) as exc:
+            store.reserve_worker(next_envelope, *next_resource, agent_uid=65536)
+        assert exc.value.code == "worker_allocation_conflict"
+        assert store.reserve_worker(next_envelope, *next_resource, agent_uid=65537)["agent_uid"] == 65537
+    finally:
+        peer.close()
+        release.set()
+        for child in children:
+            if child.pid is not None:
+                child.join(timeout=5)
+                if child.is_alive():
+                    child.terminate()
+                    child.join(timeout=5)
+        ready.close(); output.close()
+
+
+def test_pg_worker_event_cursor_page_commit_is_atomic_and_replayable(pg_store, pg_url, monkeypatch):
+    store, clock = pg_store
+    _submit(store)
+    job = store.claim()
+    identity = (job["id"], job["attempt_id"], job["fence"])
+    peer = Store(pg_url, clock=clock)
+
+    def page(after):
+        return [{"seq": after + i, "type": "engine.progress", "payload": {"event": "engine_progress"}}
+                for i in (1, 2)]
+
+    try:
+        assert peer.worker_event_cursor(*identity) == 0
+        assert store.ingest_worker_events(*identity, 0, page(0), 2) == 2
+        assert peer.worker_event_cursor(*identity) == 2
+        cursor = peer.events("fixture-tenant", "ppt", job["id"])["next_cursor"]
+        assert peer.ingest_worker_events(*identity, 0, page(0), 2) == 2
+        assert peer.events("fixture-tenant", "ppt", job["id"])["next_cursor"] == cursor
+        original = store._event
+        counter = [0]
+
+        def interrupted(connection, row, kind, payload=None):
+            counter[0] += 1
+            if counter[0] == 2:
+                raise RuntimeError("fixture_transaction_interruption")
+            return original(connection, row, kind, payload)
+
+        with monkeypatch.context() as changes:
+            changes.setattr(store, "_event", interrupted)
+            with pytest.raises(RuntimeError, match="fixture_transaction_interruption"):
+                store.ingest_worker_events(*identity, 2, page(2), 4)
+        assert peer.worker_event_cursor(*identity) == 2
+        assert peer.events("fixture-tenant", "ppt", job["id"])["next_cursor"] == cursor
+        assert peer.ingest_worker_events(*identity, 2, page(2), 4) == 4
+        _finish(store, job)
+        with pytest.raises(ServiceError) as exc:
+            peer.ingest_worker_events(*identity, 0, page(0), 2)
+        assert exc.value.code == "stale_attempt"
+    finally:
+        peer.close()
+
+
+def _resolve_worker_process(url, identity, ready, release, output):
+    store = None
+    try:
+        store = Store(url, clock=Clock())
+        ready.put(True)
+        if not release.wait(15):
+            raise RuntimeError("fixture_release_timeout")
+        result = store.resolve_worker_quarantine(*identity)
+        output.put({"state": result["state"], "event_cursor": result["event_cursor"],
+                    "attempt_id": result["attempt_id"]})
+    except BaseException as exc:
+        output.put({"error_type": type(exc).__name__})
+    finally:
+        if store is not None:
+            store.close()
+
+
+def test_pg_quarantine_release_is_durable_idempotent_and_exact_across_processes(pg_store, pg_url):
+    store, clock = pg_store
+    _submit(store)
+    job = store.claim()
+    envelope = _worker_envelope(job)
+    identity = (job["id"], job["attempt_id"], job["fence"])
+    store.reserve_worker(envelope, "pi-pool", "agent-service", "agent-" + envelope.attempt_id, "a" * 64)
+    store.claim_worker_create(envelope.attempt_id, envelope.request_sha256)
+    store.bind_worker(envelope.attempt_id, envelope.request_sha256, "pg-pod-uid-1")
+    store.claim_worker_start(envelope.attempt_id, envelope.request_sha256)
+    _finish(store, job, stopped=False)
+    result = WorkerResult(state="completed", usage={"input_tokens": 12},
+                          artifacts=[InlineFile.from_bytes("late.txt", b"do not publish")])
+    result = result.model_copy(update={"stop_receipt": sign_receipt(envelope, result,
+        b"fixture-only-receipt-key-0000000000", ("pg-pod-uid-1",), clock.now)})
+    store.stage_worker_result(envelope.attempt_id, envelope.request_sha256, result.model_dump())
+    store.observe_worker_stopped(envelope.attempt_id, envelope.request_sha256, "pg-pod-uid-1", clock.now)
+    store.retire_worker(envelope.attempt_id, envelope.request_sha256, "pg-pod-uid-1")
+    ctx = multiprocessing.get_context("spawn")
+    ready, release, output = ctx.Queue(), ctx.Event(), ctx.Queue()
+    children = [ctx.Process(target=_resolve_worker_process, args=(pg_url, identity, ready, release, output))
+                for _ in range(2)]
+    peer = Store(pg_url, clock=clock)
+    try:
+        assert peer.active()["state"] == "quarantined"
+        for child in children:
+            child.start()
+        assert [ready.get(timeout=15) for _ in children] == [True, True]
+        release.set()
+        replies = [output.get(timeout=15) for _ in children]
+        assert not any("error_type" in reply for reply in replies)
+        assert [reply["state"] for reply in replies] == ["failed", "failed"]
+        assert len({reply["event_cursor"] for reply in replies}) == 1
+        assert {reply["attempt_id"] for reply in replies} == {job["attempt_id"]}
+        assert peer.active() is None
+        final = peer.get_job("fixture-tenant", "ppt", job["id"])
+        assert final["outcome"]["error_code"] == "quarantine_stopped"
+        assert final["outcome"]["usage"] == {"input_tokens": 12}
+        assert peer.get_artifacts("fixture-tenant", "ppt", job["id"]) == []
+        events = peer.events("fixture-tenant", "ppt", job["id"])["items"]
+        assert sum(item["payload"].get("error_code") == "quarantine_stopped" for item in events) == 1
+        _submit(peer, "following")
+        following = peer.claim()
+        assert following["id"] != job["id"] and following["fence"] > job["fence"]
+        assert store.resolve_worker_quarantine(*identity)["event_cursor"] == final["event_cursor"]
+        assert peer.active()["attempt_id"] == following["attempt_id"]
+    finally:
+        peer.close()
+        release.set()
+        for child in children:
+            if child.pid is not None:
+                child.join(timeout=5)
+                if child.is_alive():
+                    child.terminate()
+                    child.join(timeout=5)
+        ready.close(); output.close()
+
+
+def _uncreated_race_process(url, wire, operation, ready, release, output):
+    store = None
+    reserved = False
+    try:
+        store = Store(url, clock=Clock())
+        envelope = ExecutionEnvelope.model_validate(wire)
+        ready.put(True)
+        if not release.wait(15):
+            raise RuntimeError("fixture_release_timeout")
+        if operation == "reserve":
+            store.reserve_worker(envelope, "pi-pool", "agent-service", "agent-" + envelope.attempt_id,
+                                 "a" * 64, agent_uid=70001)
+            reserved = True
+            created = store.claim_worker_create(envelope.attempt_id, envelope.request_sha256)
+            output.put({"operation": operation, "reserved": True, "created": created})
+        else:
+            result = store.resolve_uncreated_attempt(envelope)
+            output.put({"operation": operation, "resolved": result is not None,
+                        "state": None if result is None else result["state"]})
+    except ServiceError as exc:
+        output.put({"operation": operation, "reserved": reserved, "created": False, "code": exc.code})
+    except BaseException as exc:
+        output.put({"operation": operation, "error_type": type(exc).__name__})
+    finally:
+        if store is not None:
+            store.close()
+
+
+def test_pg_uncreated_resolution_cannot_race_with_late_resource_authorization(pg_store, pg_url):
+    store, clock = pg_store
+    _submit(store)
+    job = store.claim(provisioning={"pi": "kubernetes_per_attempt"})
+    envelope = _worker_envelope(job)
+    ctx = multiprocessing.get_context("spawn")
+    ready, release, output = ctx.Queue(), ctx.Event(), ctx.Queue()
+    children = [ctx.Process(target=_uncreated_race_process,
+        args=(pg_url, envelope.model_dump(), operation, ready, release, output))
+        for operation in ("reserve", "resolve")]
+    peer = Store(pg_url, clock=clock)
+    try:
+        assert peer.attempt_provisioning(envelope) == "kubernetes_per_attempt"
+        for child in children:
+            child.start()
+        assert [ready.get(timeout=15) for _ in children] == [True, True]
+        release.set()
+        replies = [output.get(timeout=15) for _ in children]
+        assert not any("error_type" in reply for reply in replies)
+        values = {reply["operation"]: reply for reply in replies}
+        reservation, resolution = values["reserve"], values["resolve"]
+        if resolution["resolved"]:
+            assert resolution["state"] == "failed" and peer.active() is None
+            assert reservation["created"] is False and reservation["code"] == "stale_attempt"
+            assert peer.get_artifacts("fixture-tenant", "ppt", job["id"]) == []
+            with pytest.raises(ServiceError) as exc:
+                store.claim_worker_create(envelope.attempt_id, envelope.request_sha256)
+            assert exc.value.code in {"stale_attempt", "worker_allocation_missing"}
+            if reservation["reserved"]:
+                allocation = peer.get_worker_allocation(envelope.attempt_id)
+                assert allocation["retired"] is True and allocation["create_claimed"] is False
+                assert allocation["agent_uid"] == 70001
+        else:
+            assert reservation == {"operation": "reserve", "reserved": True, "created": True}
+            assert peer.active()["attempt_id"] == job["attempt_id"]
+            assert peer.resolve_uncreated_attempt(envelope) is None
+        assert peer.worker_uid_available(70001, 1) is False
+    finally:
+        peer.close()
+        release.set()
+        for child in children:
+            if child.pid is not None:
+                child.join(timeout=5)
+                if child.is_alive():
+                    child.terminate()
+                    child.join(timeout=5)
+        ready.close(); output.close()

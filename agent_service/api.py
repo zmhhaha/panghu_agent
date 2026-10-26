@@ -241,6 +241,10 @@ def create_app(settings: ApiSettings, store, registry: ProfileRegistry,
             engine = item['engine']
             policy = registry.policy(item['profile'], item['profile_revision'])
             item['ready'] = item['configured'] and await run_in_threadpool(_ready, adapters.get(engine), policy)
+            if getattr(adapters.get(engine), 'provisioning', None) == 'kubernetes_per_attempt':
+                item['provisioning'] = 'kubernetes_per_attempt'
+                item['readiness_basis'] = 'pool_admission'
+                item['requires_native_readiness_check'] = True
             item['cancel'] = item['ready']
             item['native_fork'] = False
             item['steer'] = False

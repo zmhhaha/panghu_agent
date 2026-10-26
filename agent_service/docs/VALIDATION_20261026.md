@@ -1,5 +1,8 @@
 # 通用 Agent 服务首批验证
 
+这是提交 `c707c85` 对应的历史记录。本轮新增 K8s capsule 和宿主候选的最新证据及
+当前限制见 [CAPSULE_VALIDATION_20261026.md](CAPSULE_VALIDATION_20261026.md)。
+
 日期：2026-10-26，Asia/Shanghai。分支：`codex/agent-execution-service`。
 基线：`panghu_agent/origin/main`，`64a61883587a5f5a55dfeb8dd6c4ced26ed34271`。
 

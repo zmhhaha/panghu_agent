@@ -2,6 +2,12 @@
 
 Recorded 2026-10-26, Asia/Shanghai.
 
+The provenance and test results below describe the initial extraction. The
+capsule implementation subsequently aligns the adapter's UID checks with the
+host's inclusive `65536..2147483647` reserved range; its extracted-byte hash is
+historical. Current host/runtime evidence is recorded in
+[CAPSULE_VALIDATION_20261026.md](CAPSULE_VALIDATION_20261026.md).
+
 This implementation lives on `codex/agent-execution-service`, created from
 `origin/main` at `64a61883587a5f5a55dfeb8dd6c4ced26ed34271`. It does not require
 checking out, merging or importing the scientific development branch. The

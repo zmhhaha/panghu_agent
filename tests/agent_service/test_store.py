@@ -1,10 +1,11 @@
 """SQLite verifies store semantics, never PostgreSQL locking/production isolation."""
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import threading
 
 import pytest
 
-from agent_service.contracts import ServiceError
+from agent_service.contracts import ExecutionEnvelope, InlineFile, ServiceError, WorkerResult, sign_receipt
 from agent_service.store import Store
 
 
@@ -301,3 +302,478 @@ def test_raw_engine_text_and_unknown_event_cannot_enter_public_event_log(store):
         with pytest.raises(ServiceError):
             store.append_event(claimed["id"], claimed["attempt_id"], claimed["fence"], kind, payload)
     assert store.events("tenant-a", "ppt", claimed["id"])["next_cursor"] == 2
+
+
+def allocation_envelope(job, **changes):
+    return ExecutionEnvelope(job_id=job["id"], attempt_id=job["attempt_id"], fence=job["fence"],
+        engine=job["pins"]["engine"], profile=job["request"]["profile"],
+        profile_revision=job["request"]["profile_revision"], runtime_revision=job["pins"]["runtime_revision"],
+        image_digest=job["pins"]["image_digest"], deadline_at=float(job["deadline_at"]),
+        lease_expires_at=float(job["lease_expires_at"]), task=job["request"]["task"], **changes)
+
+
+def reserve_allocation(store, envelope):
+    return store.reserve_worker(envelope, "pi-pool", "agent-service", "agent-" + envelope.attempt_id, "a" * 64)
+
+
+def staged_result(envelope, now):
+    result = WorkerResult(state="completed", artifacts=[InlineFile.from_bytes("result.txt", b"candidate")])
+    return result.model_copy(update={"stop_receipt": sign_receipt(envelope, result,
+        b"fixture-only-receipt-key-0000000000", ("pod-uid-1",), now)}).model_dump()
+
+
+def test_worker_allocation_freezes_intent_and_measures_request_from_database(store):
+    submit(store)
+    job = store.claim()
+    envelope = allocation_envelope(job)
+    first = reserve_allocation(store, envelope)
+    assert first == reserve_allocation(store, envelope)
+    assert set(first) == {"attempt_id", "job_id", "fence", "engine", "request_sha256", "pool_id",
+                          "namespace", "pod_name", "intent_sha256", "pod_uid", "create_claimed",
+                          "retired", "worker_start_claimed", "candidate_result", "stop_observed_at", "created_at",
+                          "agent_uid"}
+    assert first["request_sha256"] == envelope.request_sha256
+    assert first["create_claimed"] is False and first["pod_uid"] is None
+    with pytest.raises(ServiceError) as exc:
+        store.reserve_worker(envelope, "other-pool", "agent-service", first["pod_name"], "a" * 64)
+    assert exc.value.code == "worker_allocation_conflict"
+    for changed in ({"task": {"prompt": "different task"}}, {"runtime_revision": "different-runtime"},
+                    {"deadline_at": envelope.deadline_at + 1},
+                    {"lease_expires_at": envelope.lease_expires_at + 1}):
+        with pytest.raises(ServiceError) as exc:
+            reserve_allocation(store, envelope.model_copy(update=changed))
+        assert exc.value.code == "worker_allocation_conflict"
+    assert store.get_worker_allocation(envelope.attempt_id) == first
+
+
+def test_worker_allocation_identity_binds_measured_input_bytes(store):
+    source = store.put_input("tenant-a", "ppt", "source.txt", b"given source")
+    submit(store, inputs=[{"input_id": source["id"], "sha256": source["sha256"]}])
+    job = store.claim()
+    envelope = allocation_envelope(job, inputs=[InlineFile.from_bytes("source.txt", b"given source")])
+    tampered = envelope.model_copy(update={"inputs": [InlineFile.from_bytes("source.txt", b"substitution")]})
+    with pytest.raises(ServiceError) as exc:
+        reserve_allocation(store, tampered)
+    assert exc.value.code == "worker_allocation_conflict"
+    assert reserve_allocation(store, envelope)["request_sha256"] == envelope.request_sha256
+
+
+def test_worker_create_claim_is_once_across_connections_and_uid_cannot_be_rebound(store, clock):
+    submit(store)
+    envelope = allocation_envelope(store.claim())
+    reserve_allocation(store, envelope)
+    peer = Store(str(store.engine.url), allow_sqlite=True, clock=clock)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            claims = list(pool.map(lambda s: s.claim_worker_create(envelope.attempt_id, envelope.request_sha256),
+                                   [store, peer]))
+        assert sorted(claims) == [False, True]
+        assert peer.claim_worker_create(envelope.attempt_id, envelope.request_sha256) is False
+        bound = peer.bind_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1")
+        assert store.bind_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1") == bound
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            native_claims = list(pool.map(lambda s: s.claim_worker_start(envelope.attempt_id, envelope.request_sha256),
+                                          [store, peer]))
+        assert sorted(native_claims) == [False, True]
+        with pytest.raises(ServiceError) as exc:
+            store.bind_worker(envelope.attempt_id, envelope.request_sha256, "new-pod-under-same-name")
+        assert exc.value.code == "worker_allocation_conflict"
+        assert peer.get_worker_allocation(envelope.attempt_id)["pod_uid"] == "pod-uid-1"
+    finally:
+        peer.close()
+
+
+def test_worker_candidate_stop_observation_and_retirement_survive_finish(store, clock):
+    submit(store)
+    job = store.claim()
+    envelope = allocation_envelope(job)
+    reserve_allocation(store, envelope)
+    with pytest.raises(ServiceError):
+        store.bind_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1")
+    assert store.claim_worker_create(envelope.attempt_id, envelope.request_sha256)
+    store.bind_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1")
+    assert store.claim_worker_start(envelope.attempt_id, envelope.request_sha256) is True
+    assert store.claim_worker_start(envelope.attempt_id, envelope.request_sha256) is False
+    # Pod disappearance alone must never authorize retiring/reusing resources.
+    with pytest.raises(ServiceError):
+        store.retire_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1")
+    with pytest.raises(ServiceError):
+        store.observe_worker_stopped(envelope.attempt_id, envelope.request_sha256, "pod-uid-1", clock.now)
+    candidate = staged_result(envelope, clock.now)
+    first = store.stage_worker_result(envelope.attempt_id, envelope.request_sha256, candidate)
+    assert store.stage_worker_result(envelope.attempt_id, envelope.request_sha256, candidate) == first
+    assert store.get_artifacts("tenant-a", "ppt", envelope.job_id) == []
+    assert store.get_job("tenant-a", "ppt", envelope.job_id)["state"] == "starting"
+    other = WorkerResult(state="failed", error_code="different_result")
+    other = other.model_copy(update={"stop_receipt": sign_receipt(envelope, other,
+        b"fixture-only-receipt-key-0000000000", ("pod-uid-1",), clock.now)}).model_dump()
+    with pytest.raises(ServiceError) as exc:
+        store.stage_worker_result(envelope.attempt_id, envelope.request_sha256, other)
+    assert exc.value.code == "worker_allocation_conflict"
+    for value in (float("nan"), float("inf"), clock.now + 6, -1):
+        with pytest.raises(ServiceError):
+            store.observe_worker_stopped(envelope.attempt_id, envelope.request_sha256, "pod-uid-1", value)
+    with pytest.raises(ServiceError):
+        store.observe_worker_stopped(envelope.attempt_id, envelope.request_sha256, "pod-replacement", clock.now)
+    observed = store.observe_worker_stopped(envelope.attempt_id, envelope.request_sha256, "pod-uid-1", clock.now)
+    assert observed["stop_observed_at"] == clock.now
+    finish(store, job)
+    assert store.active() is None
+    retired = store.retire_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1")
+    assert retired["retired"] is True and retired["candidate_result"] == candidate
+    assert store.retire_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1") == retired
+    assert store.get_worker_allocation(envelope.attempt_id) == retired
+    with pytest.raises(ServiceError):
+        store.bind_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1")
+
+
+@pytest.mark.parametrize("reason", ["cancel", "lease", "deadline"])
+def test_worker_allocation_cannot_launch_after_cancel_or_lease_expiry(store, clock, reason):
+    submit(store, timeout_seconds=5 if reason == "deadline" else 600)
+    job = store.claim(lease_seconds=10)
+    envelope = allocation_envelope(job)
+    reserve_allocation(store, envelope)
+    if reason == "cancel":
+        store.cancel("tenant-a", "ppt", job["id"])
+    else:
+        clock.now += 6 if reason == "deadline" else 11
+    with pytest.raises(ServiceError) as exc:
+        reserve_allocation(store, envelope)
+    assert exc.value.code == "stale_attempt"
+    with pytest.raises(ServiceError) as exc:
+        store.claim_worker_create(envelope.attempt_id, envelope.request_sha256)
+    assert exc.value.code == "stale_attempt"
+    assert store.get_worker_allocation(envelope.attempt_id)["create_claimed"] is False
+
+
+def test_worker_late_resource_observation_after_cancel_is_preserved_for_cleanup(store):
+    submit(store)
+    job = store.claim()
+    envelope = allocation_envelope(job)
+    reserve_allocation(store, envelope)
+    assert store.claim_worker_create(envelope.attempt_id, envelope.request_sha256)
+    store.cancel("tenant-a", "ppt", job["id"])
+    assert store.bind_worker(envelope.attempt_id, envelope.request_sha256, "late-observed-pod")["pod_uid"] == "late-observed-pod"
+    with pytest.raises(ServiceError) as exc:
+        store.bind_worker(envelope.attempt_id, "0" * 64, "late-observed-pod")
+    assert exc.value.code == "worker_allocation_conflict"
+
+
+def test_worker_cold_capsule_fallback_requires_exact_failed_stop_identity(store, clock):
+    submit(store)
+    envelope = allocation_envelope(store.claim())
+    reserve_allocation(store, envelope)
+    assert store.claim_worker_create(envelope.attempt_id, envelope.request_sha256)
+    store.bind_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1")
+    for state, code, files, resources in [
+        ("completed", "capsule_stopped_without_result", [], ("k8s:agent-service:pod-uid-1",)),
+        ("failed", "engine_error", [], ("k8s:agent-service:pod-uid-1",)),
+        ("failed", "capsule_stopped_without_result", [], ("k8s:other-namespace:pod-uid-1",)),
+        ("failed", "capsule_stopped_without_result", [InlineFile.from_bytes("unsafe.txt", b"unsafe")],
+         ("k8s:agent-service:pod-uid-1",)),
+    ]:
+        result = WorkerResult(state=state, error_code=code, artifacts=files)
+        result = result.model_copy(update={"stop_receipt": sign_receipt(envelope, result,
+            b"fixture-only-receipt-key-0000000000", resources, clock.now)})
+        with pytest.raises(ServiceError) as exc:
+            store.stage_worker_result(envelope.attempt_id, envelope.request_sha256, result.model_dump())
+        assert exc.value.code == "worker_allocation_conflict"
+    result = WorkerResult(state="cancelled", error_code="capsule_stopped_without_result")
+    result = result.model_copy(update={"stop_receipt": sign_receipt(envelope, result,
+        b"fixture-only-receipt-key-0000000000", ("k8s:agent-service:pod-uid-1",), clock.now)})
+    saved = store.stage_worker_result(envelope.attempt_id, envelope.request_sha256, result.model_dump())
+    assert saved["worker_start_claimed"] is False
+    store.observe_worker_stopped(envelope.attempt_id, envelope.request_sha256, "pod-uid-1", clock.now)
+    assert store.retire_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1")["retired"] is True
+
+
+def test_quarantine_resolution_requires_candidate_stop_observation_and_retirement(store, clock):
+    submit(store)
+    job = store.claim()
+    envelope = allocation_envelope(job)
+    reserve_allocation(store, envelope)
+    store.claim_worker_create(envelope.attempt_id, envelope.request_sha256)
+    store.bind_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1")
+    store.claim_worker_start(envelope.attempt_id, envelope.request_sha256)
+    finish(store, job, stopped=False)
+    identity = (job["id"], job["attempt_id"], job["fence"])
+    for phase in ("candidate", "stop_observation", "retired"):
+        with pytest.raises(ServiceError) as exc:
+            store.resolve_worker_quarantine(*identity)
+        assert exc.value.code == "worker_stop_unverified"
+        assert store.active()["state"] == "quarantined"
+        if phase == "candidate":
+            store.stage_worker_result(envelope.attempt_id, envelope.request_sha256, staged_result(envelope, clock.now))
+        elif phase == "stop_observation":
+            store.observe_worker_stopped(envelope.attempt_id, envelope.request_sha256, "pod-uid-1", clock.now)
+        else:
+            store.retire_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1")
+    resolved = store.resolve_worker_quarantine(*identity)
+    assert resolved["state"] == "failed"
+    assert resolved["outcome"]["error_code"] == "quarantine_stopped"
+    assert store.active() is None
+    assert store.get_artifacts("tenant-a", "ppt", job["id"]) == []
+
+
+@pytest.mark.parametrize("expected", ["failed", "cancelled", "timed_out"])
+def test_quarantine_resolution_preserves_identity_and_never_exports_late_candidates(store, clock, expected):
+    submit(store, timeout_seconds=600 if expected == "failed" else 5)
+    job = store.claim(lease_seconds=10)
+    envelope = allocation_envelope(job)
+    reserve_allocation(store, envelope)
+    store.claim_worker_create(envelope.attempt_id, envelope.request_sha256)
+    store.bind_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1")
+    store.claim_worker_start(envelope.attempt_id, envelope.request_sha256)
+    if expected == "cancelled":
+        store.cancel("tenant-a", "ppt", job["id"])
+    clock.now += 11
+    assert store.reconcile_expired() == 1
+    usage = {"input_tokens": 7, "reported_cost": None, "cost_status": "unknown"} if expected == "failed" else None
+    result = WorkerResult(state="completed", usage=usage,
+                          artifacts=[InlineFile.from_bytes("late.txt", b"not accepted after quarantine")])
+    result = result.model_copy(update={"stop_receipt": sign_receipt(envelope, result,
+        b"fixture-only-receipt-key-0000000000", ("pod-uid-1",), clock.now)})
+    store.stage_worker_result(envelope.attempt_id, envelope.request_sha256, result.model_dump())
+    store.observe_worker_stopped(envelope.attempt_id, envelope.request_sha256, "pod-uid-1", clock.now)
+    store.retire_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1")
+    identity = (job["id"], job["attempt_id"], job["fence"])
+    result = store.resolve_worker_quarantine(*identity)
+    assert result["state"] == expected
+    assert result["outcome"]["usage"] == usage
+    assert result["outcome"]["error_code"] == "quarantine_stopped"
+    assert (result["attempt_id"], result["fence"]) == (job["attempt_id"], job["fence"])
+    assert store.get_artifacts("tenant-a", "ppt", job["id"]) == []
+    assert store.active() is None
+    assert store.resolve_worker_quarantine(*identity)["event_cursor"] == result["event_cursor"]
+    page = store.events("tenant-a", "ppt", job["id"])
+    assert page["items"][-1]["type"] == "job." + expected
+    assert page["items"][-1]["payload"] == {"error_code": "quarantine_stopped"}
+    # A duplicate reconciliation cannot release the next job's physical slot.
+    following = submit(store, "following")
+    next_attempt = store.claim()
+    assert next_attempt["id"] == following["id"]
+    assert store.resolve_worker_quarantine(*identity)["event_cursor"] == result["event_cursor"]
+    assert store.active()["attempt_id"] == next_attempt["attempt_id"]
+    for wrong in ((job["id"], job["attempt_id"], job["fence"] + 1),
+                  (job["id"], next_attempt["attempt_id"], job["fence"])):
+        with pytest.raises(ServiceError) as exc:
+            store.resolve_worker_quarantine(*wrong)
+        assert exc.value.code == "stale_attempt"
+
+
+def test_verified_retirement_does_not_allow_resolving_a_nonquarantined_job(store, clock):
+    submit(store)
+    job = store.claim()
+    envelope = allocation_envelope(job)
+    reserve_allocation(store, envelope)
+    store.claim_worker_create(envelope.attempt_id, envelope.request_sha256)
+    store.bind_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1")
+    store.claim_worker_start(envelope.attempt_id, envelope.request_sha256)
+    store.stage_worker_result(envelope.attempt_id, envelope.request_sha256, staged_result(envelope, clock.now))
+    store.observe_worker_stopped(envelope.attempt_id, envelope.request_sha256, "pod-uid-1", clock.now)
+    store.retire_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1")
+    with pytest.raises(ServiceError) as exc:
+        store.resolve_worker_quarantine(job["id"], job["attempt_id"], job["fence"])
+    assert exc.value.code == "stale_attempt"
+    assert store.active()["state"] == "starting"
+
+
+def test_worker_uid_is_frozen_before_pod_binding_and_never_reused_by_later_attempts(store, clock):
+    submit(store)
+    first_job = store.claim()
+    first_envelope = allocation_envelope(first_job)
+    resource = ("pi-pool", "agent-service", "agent-" + first_envelope.attempt_id, "a" * 64)
+    first = store.reserve_worker(first_envelope, *resource, agent_uid=65536)
+    assert first["agent_uid"] == 65536 and first["pod_uid"] is None
+    peer = Store(str(store.engine.url), allow_sqlite=True, clock=clock)
+    try:
+        assert peer.get_worker_allocation(first_envelope.attempt_id)["agent_uid"] == 65536
+        assert peer.reserve_worker(first_envelope, *resource, agent_uid=65536) == first
+        for changed in (None, 65537):
+            with pytest.raises(ServiceError) as exc:
+                peer.reserve_worker(first_envelope, *resource, agent_uid=changed)
+            assert exc.value.code == "worker_allocation_conflict"
+        finish(store, first_job)
+        submit(peer, "following")
+        following = peer.claim()
+        assert following["fence"] > first_job["fence"]
+        envelope = allocation_envelope(following)
+        next_resource = ("other-pool", "another-namespace", "agent-" + envelope.attempt_id, "b" * 64)
+        with pytest.raises(ServiceError) as exc:
+            peer.reserve_worker(envelope, *next_resource, agent_uid=65536)
+        assert exc.value.code == "worker_allocation_conflict"
+        assert peer.reserve_worker(envelope, *next_resource, agent_uid=65537)["agent_uid"] == 65537
+    finally:
+        peer.close()
+
+
+def test_worker_uid_rejects_unreserved_low_values_booleans_and_nonintegers(store):
+    submit(store)
+    envelope = allocation_envelope(store.claim())
+    resource = ("pi-pool", "agent-service", "agent-" + envelope.attempt_id, "a" * 64)
+    for invalid in (True, False, -1, 0, 10001, 65535, 2147483648, "65536", 65536.0):
+        with pytest.raises(ServiceError) as exc:
+            store.reserve_worker(envelope, *resource, agent_uid=invalid)
+        assert exc.value.code == "invalid_worker_allocation"
+    with pytest.raises(ServiceError) as exc:
+        store.get_worker_allocation(envelope.attempt_id)
+    assert exc.value.code == "worker_allocation_missing"
+    assert store.reserve_worker(envelope, *resource, agent_uid=2147483647)["agent_uid"] == 2147483647
+
+
+def test_unallocated_resolution_is_exact_and_does_not_manufacture_stop_proof(store):
+    submit(store)
+    job = store.claim(provisioning={"pi": "kubernetes_per_attempt"})
+    envelope = allocation_envelope(job)
+    with pytest.raises(ServiceError) as exc:
+        store.resolve_uncreated_attempt(envelope.model_copy(update={"task": {"prompt": "changed"}}))
+    assert exc.value.code == "stale_attempt"
+    assert store.active()["state"] == "starting"
+    result = store.resolve_uncreated_attempt(envelope)
+    assert result["state"] == "failed" and store.active() is None
+    assert result["outcome"] == {"state": "failed", "error_code": "worker_not_created",
+                                 "usage": None, "stop_receipt": None}
+    assert store.get_artifacts("tenant-a", "ppt", job["id"]) == []
+    assert store.resolve_uncreated_attempt(envelope)["event_cursor"] == result["event_cursor"]
+    with pytest.raises(ServiceError) as exc:
+        reserve_allocation(store, envelope)
+    assert exc.value.code == "stale_attempt"
+    with pytest.raises(ServiceError) as exc:
+        store.claim_worker_create(envelope.attempt_id, envelope.request_sha256)
+    assert exc.value.code == "worker_allocation_missing"
+    submit(store, "following")
+    following = store.claim()
+    assert store.resolve_uncreated_attempt(envelope)["event_cursor"] == result["event_cursor"]
+    assert store.active()["attempt_id"] == following["attempt_id"]
+
+
+def test_uncreated_resolution_retires_unclaimed_intent_and_blocks_late_creation(store):
+    submit(store)
+    job = store.claim(provisioning={"pi": "kubernetes_per_attempt"})
+    envelope = allocation_envelope(job)
+    reserve_allocation(store, envelope)
+    result = store.resolve_uncreated_attempt(envelope)
+    assert result["state"] == "failed" and store.active() is None
+    allocation = store.get_worker_allocation(envelope.attempt_id)
+    assert allocation["retired"] is True and allocation["create_claimed"] is False
+    assert store.resolve_uncreated_attempt(envelope)["event_cursor"] == result["event_cursor"]
+    with pytest.raises(ServiceError) as exc:
+        store.claim_worker_create(envelope.attempt_id, envelope.request_sha256)
+    assert exc.value.code == "stale_attempt"
+
+
+def test_uncreated_resolution_refuses_any_claimed_creation_intent(store):
+    submit(store)
+    job = store.claim(provisioning={"pi": "kubernetes_per_attempt"})
+    envelope = allocation_envelope(job)
+    reserve_allocation(store, envelope)
+    assert store.claim_worker_create(envelope.attempt_id, envelope.request_sha256) is True
+    assert store.resolve_uncreated_attempt(envelope) is None
+    assert store.active()["attempt_id"] == job["attempt_id"]
+
+
+def test_unallocated_resolution_race_cannot_release_then_authorize_creation(store, clock):
+    submit(store)
+    job = store.claim(provisioning={"pi": "kubernetes_per_attempt"})
+    envelope = allocation_envelope(job)
+    peer = Store(str(store.engine.url), allow_sqlite=True, clock=clock)
+    barrier = threading.Barrier(2)
+
+    def reserve():
+        barrier.wait(5)
+        reserved = False
+        try:
+            reserve_allocation(store, envelope)
+            reserved = True
+            return {"reserved": True, "created": store.claim_worker_create(envelope.attempt_id, envelope.request_sha256)}
+        except ServiceError as error:
+            return {"reserved": reserved, "created": False, "code": error.code}
+
+    def resolve():
+        barrier.wait(5)
+        return peer.resolve_uncreated_attempt(envelope)
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            reserve_task, resolve_task = executor.submit(reserve), executor.submit(resolve)
+            reservation, resolution = reserve_task.result(), resolve_task.result()
+        if resolution is None:
+            assert reservation == {"reserved": True, "created": True}
+            assert peer.active()["attempt_id"] == job["attempt_id"]
+        else:
+            assert reservation["created"] is False and reservation["code"] == "stale_attempt"
+            assert resolution["state"] == "failed" and peer.active() is None
+            with pytest.raises(ServiceError) as exc:
+                store.claim_worker_create(envelope.attempt_id, envelope.request_sha256)
+            assert exc.value.code in {"worker_allocation_missing", "stale_attempt"}
+            if reservation["reserved"]:
+                assert store.get_worker_allocation(envelope.attempt_id)["retired"] is True
+    finally:
+        peer.close()
+
+
+def test_uid_capacity_is_advisory_and_counts_fences_and_retired_uids(store, clock):
+    assert store.worker_uid_available(70001, 2) is True
+    submit(store)
+    job = store.claim()
+    envelope = allocation_envelope(job)
+    store.reserve_worker(envelope, "pi-pool", "agent-service", "agent-" + envelope.attempt_id,
+                         "a" * 64, agent_uid=70001)
+    store.claim_worker_create(envelope.attempt_id, envelope.request_sha256)
+    store.bind_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1")
+    store.claim_worker_start(envelope.attempt_id, envelope.request_sha256)
+    store.stage_worker_result(envelope.attempt_id, envelope.request_sha256, staged_result(envelope, clock.now))
+    store.observe_worker_stopped(envelope.attempt_id, envelope.request_sha256, "pod-uid-1", clock.now)
+    store.retire_worker(envelope.attempt_id, envelope.request_sha256, "pod-uid-1")
+    finish(store, job)
+    assert store.worker_uid_available(70001, 1) is False  # next fence is2, range exhausted
+    assert store.worker_uid_available(70000, 2) is False  # next UID would reuse retired70001
+    assert store.worker_uid_available(70001, 2) is True
+    submit(store, "following")
+    assert store.claim()["fence"] == 2  # advisory reads never consume a fence
+    assert store.worker_uid_available(70001, 2) is False
+    for start, count in ((True, 1), (70001, False), (65535, 1), (2147483647, 2), (70001, 1000001)):
+        with pytest.raises(ServiceError) as exc:
+            store.worker_uid_available(start, count)
+        assert exc.value.code == "invalid_worker_allocation"
+
+
+def test_attempt_provisioning_is_frozen_and_legacy_records_stay_static(store):
+    from sqlalchemy import select, update
+    from agent_service.store import attempts
+
+    submit(store)
+    static = store.claim()
+    assert store.attempt_provisioning(allocation_envelope(static)) == "external_static"
+    assert store.resolve_uncreated_attempt(allocation_envelope(static)) is None
+    assert store.active()["attempt_id"] == static["attempt_id"]
+    finish(store, static)
+    submit(store, "new-kube")
+    route = {"pi": "kubernetes_per_attempt"}
+    claimed = store.claim(provisioning=route)
+    envelope = allocation_envelope(claimed)
+    route["pi"] = "external_static"
+    assert store.attempt_provisioning(envelope) == "kubernetes_per_attempt"
+    # Fixture an old/unknown persisted record, as opposed to new deployment
+    # configuration. Neither may be reinterpreted as proof of no static run.
+    for legacy in (None, "unknown-version"):
+        with store.engine.begin() as connection:
+            intent = dict(connection.execute(select(attempts.c.dispatch_intent).where(
+                attempts.c.id == envelope.attempt_id)).scalar_one())
+            if legacy is None:
+                intent.pop("provisioning")
+            else:
+                intent["provisioning"] = legacy
+            connection.execute(update(attempts).where(attempts.c.id == envelope.attempt_id).values(dispatch_intent=intent))
+        assert store.attempt_provisioning(envelope) == "external_static"
+        assert store.resolve_uncreated_attempt(envelope) is None
+        assert store.active()["attempt_id"] == envelope.attempt_id
+
+
+def test_invalid_provisioning_map_never_claims_an_attempt(store):
+    submit(store)
+    for invalid in ([], {"unknown": "kubernetes_per_attempt"}, {"pi": "unreviewed"},
+                    {"pi": True}, {"pi": ["kubernetes_per_attempt"]}):
+        with pytest.raises(ValueError, match="Invalid server-owned worker provisioning"):
+            store.claim(provisioning=invalid)
+    assert store.claim()["fence"] == 1

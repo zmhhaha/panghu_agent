@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "engine": "pi",
+  "profile": {
+    "name": "workspace-task.v1",
+    "revision": "v1",
+    "runtime_revision": "replace-with-reviewed-runtime-revision",
+    "image_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "enabled": false,
+    "max_timeout_seconds": 600
+  },
+  "model": null
+}

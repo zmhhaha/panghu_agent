@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import hashlib
+import math
 import re
 import time
 import uuid
@@ -18,7 +19,7 @@ from sqlalchemy import (Boolean, Column, Float, ForeignKey, Integer, JSON,
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import StaticPool
 
-from .contracts import ServiceError, canonical_bytes, digest
+from .contracts import ExecutionEnvelope, InlineFile, ServiceError, WorkerResult, canonical_bytes, digest
 
 
 metadata = MetaData()
@@ -66,6 +67,35 @@ attempts = Table(
     Column("outcome", JSON),
     UniqueConstraint("job_id", "fence", name="agent_attempt_fence"),
 )
+worker_allocations = Table(
+    "agent_worker_allocations", metadata,
+    Column("attempt_id", String(36), ForeignKey("agent_attempts.id"), primary_key=True),
+    Column("job_id", String(36), ForeignKey("agent_jobs.id"), nullable=False),
+    Column("fence", Integer, nullable=False),
+    Column("engine", String(16), nullable=False),
+    Column("request_sha256", String(64), nullable=False),
+    Column("pool_id", String(64), nullable=False),
+    Column("namespace", String(63), nullable=False),
+    Column("pod_name", String(63), nullable=False),
+    Column("intent_sha256", String(64), nullable=False),
+    Column("agent_uid", Integer),
+    Column("pod_uid", String(128)),
+    Column("create_claimed", Boolean, nullable=False, default=False),
+    Column("worker_start_claimed", Boolean, nullable=False, default=False),
+    Column("retired", Boolean, nullable=False, default=False),
+    Column("candidate_result", JSON),
+    Column("stop_observed_at", Float),
+    Column("created_at", Float, nullable=False),
+    UniqueConstraint("pool_id", "namespace", "pod_name", name="agent_worker_resource_name"),
+    UniqueConstraint("agent_uid", name="agent_worker_uid_never_reused"),
+)
+worker_event_cursors = Table(
+    "agent_worker_event_cursors", metadata,
+    Column("attempt_id", String(36), ForeignKey("agent_attempts.id"), primary_key=True),
+    Column("job_id", String(36), ForeignKey("agent_jobs.id"), nullable=False),
+    Column("fence", Integer, nullable=False),
+    Column("cursor", Integer, nullable=False, default=0),
+)
 events = Table(
     "agent_events", metadata,
     Column("job_id", String(36), ForeignKey("agent_jobs.id"), primary_key=True),
@@ -98,6 +128,10 @@ EVENT_TYPES = frozenset({"job.queued", "job.starting", "job.running", "job.cance
                          "job.completed", "job.needs_input", "job.failed", "job.cancelled",
                          "job.timed_out", "job.quarantined", "engine.progress"})
 _CODE = re.compile(r"[a-z][a-z0-9_.-]{0,63}\Z")
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_RESOURCE_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z")
+_POD_UID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
+_WORKER_EVENT_KINDS = frozenset({"pi_event", "runtime_finished", "engine_started", "engine_progress"})
 
 
 def _name(value):
@@ -388,9 +422,14 @@ class Store:
                 raise ServiceError("store_not_initialized", 503)
             return None if current.job_id is None else _job(self._find(conn, current.job_id))
 
-    def claim(self, lease_seconds=60):
+    def claim(self, lease_seconds=60, *, provisioning=None):
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 300:
             raise ValueError("Invalid lease interval")
+        provisioning = {} if provisioning is None else provisioning
+        if (not isinstance(provisioning, dict) or not set(provisioning) <= {"pi", "hermes"}
+                or any(not isinstance(value, str) or value not in {"external_static", "kubernetes_per_attempt"}
+                       for value in provisioning.values())):
+            raise ValueError("Invalid server-owned worker provisioning")
         with self._tx() as conn:
             control = conn.execute(select(slot).where(slot.c.id == 1).with_for_update()).mappings().first()
             if control is None:
@@ -417,7 +456,8 @@ class Store:
                 # keeps control ownership alive only for stop and handoff.
                 lease = min(self.clock() + lease_seconds, row["deadline_at"] + 45)
                 intent = {"job_id": row["id"], "attempt_id": attempt_id, "fence": fence,
-                          "pins": row["pins"], "deadline_at": row["deadline_at"]}
+                          "pins": row["pins"], "deadline_at": row["deadline_at"],
+                          "provisioning": provisioning.get(row["pins"]["engine"], "external_static")}
                 conn.execute(insert(attempts).values(id=attempt_id, job_id=row["id"], fence=fence,
                              state="starting", created_at=self.clock(), lease_expires_at=lease,
                              deadline_at=row["deadline_at"], dispatch_intent=intent, outcome=None))
@@ -435,6 +475,402 @@ class Store:
                 or row["state"] not in ACTIVE):
             return None
         return row
+
+    def _worker_current(self, conn, job_id, attempt_id, fence, *, launching=False):
+        row = self._current(conn, job_id, attempt_id, fence)
+        if (row is None or row["lease_expires_at"] <= self.clock()
+                or launching and (row["cancel_requested"] or row["deadline_at"] <= self.clock())):
+            raise ServiceError("stale_attempt", 409)
+        return row
+
+    def _worker_envelope(self, conn, row):
+        """Measure immutable identity from authority, not a caller-supplied hash."""
+        files = []
+        for reference in row["request"].get("inputs", []):
+            item = conn.execute(select(inputs).where(inputs.c.id == reference["input_id"],
+                                inputs.c.tenant == row["tenant"], inputs.c.caller == row["caller"])).mappings().first()
+            if (item is None or item["sha256"] != reference["sha256"]
+                    or hashlib.sha256(item["content"]).hexdigest() != reference["sha256"]):
+                raise ServiceError("input_integrity_invalid", 503)
+            files.append(InlineFile.from_bytes(item["name"], item["content"]))
+        return ExecutionEnvelope(job_id=row["id"], attempt_id=row["attempt_id"], fence=row["fence"],
+            engine=row["pins"]["engine"], profile=row["request"]["profile"],
+            profile_revision=row["request"]["profile_revision"],
+            runtime_revision=row["pins"]["runtime_revision"], image_digest=row["pins"]["image_digest"],
+            deadline_at=float(row["deadline_at"]), lease_expires_at=float(row["lease_expires_at"]),
+            task=row["request"]["task"], inputs=files)
+
+    def _matching_worker_request(self, conn, envelope):
+        if not isinstance(envelope, ExecutionEnvelope):
+            raise ServiceError("invalid_worker_allocation", 422)
+        row = self._find(conn, envelope.job_id)
+        if (row["attempt_id"] != envelope.attempt_id or row["fence"] != envelope.fence
+                or envelope.request_sha256 != self._worker_envelope(conn, row).request_sha256):
+            raise ServiceError("stale_attempt", 409)
+        return row
+
+    @staticmethod
+    def _attempt_provisioning(conn, row):
+        value = conn.execute(select(attempts.c.dispatch_intent).where(
+            attempts.c.id == row["attempt_id"], attempts.c.job_id == row["id"],
+            attempts.c.fence == row["fence"])).first()
+        if value is None:
+            raise ServiceError("stale_attempt", 409)
+        intent = value.dispatch_intent
+        # Older/unknown records cannot prove that a static Worker did not run.
+        return ("kubernetes_per_attempt" if isinstance(intent, dict)
+                and intent.get("provisioning") == "kubernetes_per_attempt" else "external_static")
+
+    def attempt_provisioning(self, envelope):
+        """Read immutable attempt ownership, independently of current routing."""
+        with self._tx() as conn:
+            return self._attempt_provisioning(conn, self._matching_worker_request(conn, envelope))
+
+    @staticmethod
+    def _allocation(conn, attempt_id, request_sha256=None):
+        row = conn.execute(select(worker_allocations).where(
+            worker_allocations.c.attempt_id == attempt_id)).mappings().first()
+        if row is None:
+            raise ServiceError("worker_allocation_missing", 404)
+        if request_sha256 is not None and row["request_sha256"] != request_sha256:
+            raise ServiceError("worker_allocation_conflict", 409)
+        return dict(row)
+
+    def reserve_worker(self, envelope, pool_id, namespace, pod_name, intent_sha256, agent_uid=None):
+        """Persist one immutable resource intent before a Kubernetes API call.
+
+        The allocation contains only identity/pins digests. It deliberately
+        stores neither task/Pod content nor tokens, receipt keys or credentials.
+        A configured host-global Agent UID is burned for this attempt forever;
+        nullable UIDs exist only for legacy/offline fixtures, not production.
+        """
+        if (not isinstance(envelope, ExecutionEnvelope)
+                or not isinstance(pool_id, str) or not _CODE.fullmatch(pool_id)
+                or not isinstance(namespace, str) or not _RESOURCE_NAME.fullmatch(namespace)
+                or not isinstance(pod_name, str) or not _RESOURCE_NAME.fullmatch(pod_name)
+                or not isinstance(intent_sha256, str) or not _SHA256.fullmatch(intent_sha256)
+                or agent_uid is not None and (type(agent_uid) is not int or not 65536 <= agent_uid <= 2147483647)):
+            raise ServiceError("invalid_worker_allocation", 422)
+        with self._tx() as conn:
+            row = self._worker_current(conn, envelope.job_id, envelope.attempt_id,
+                                       envelope.fence, launching=True)
+            if (envelope.request_sha256 != self._worker_envelope(conn, row).request_sha256
+                    or not self.clock() < envelope.lease_expires_at <= row["lease_expires_at"]):
+                raise ServiceError("worker_allocation_conflict", 409)
+            immutable = {"attempt_id": envelope.attempt_id, "job_id": envelope.job_id,
+                         "fence": envelope.fence, "engine": envelope.engine,
+                         "request_sha256": envelope.request_sha256, "pool_id": pool_id,
+                         "namespace": namespace, "pod_name": pod_name, "intent_sha256": intent_sha256,
+                         "agent_uid": agent_uid}
+            existing = conn.execute(select(worker_allocations).where(
+                worker_allocations.c.attempt_id == envelope.attempt_id)).mappings().first()
+            if existing is not None:
+                if any(existing[name] != value for name, value in immutable.items()) or existing["retired"]:
+                    raise ServiceError("worker_allocation_conflict", 409)
+                return dict(existing)
+            named = conn.execute(select(worker_allocations.c.attempt_id).where(
+                worker_allocations.c.pool_id == pool_id, worker_allocations.c.namespace == namespace,
+                worker_allocations.c.pod_name == pod_name)).first()
+            if named is not None:
+                raise ServiceError("worker_allocation_conflict", 409)
+            if agent_uid is not None and conn.execute(select(worker_allocations.c.attempt_id).where(
+                    worker_allocations.c.agent_uid == agent_uid)).first() is not None:
+                raise ServiceError("worker_allocation_conflict", 409)
+            values = {**immutable, "pod_uid": None, "create_claimed": False, "worker_start_claimed": False,
+                      "retired": False, "candidate_result": None, "stop_observed_at": None,
+                      "created_at": self.clock()}
+            conn.execute(insert(worker_allocations).values(**values))
+            return values
+
+    def claim_worker_create(self, attempt_id, request_sha256):
+        """At most one controller may issue resource creation for an attempt.
+
+        Crash after this committed claim is intentionally uncertain. A caller
+        may inspect the original name, but must never create it again after a
+        404, because a previous Pod with that name might already have executed.
+        """
+        with self._tx() as conn:
+            allocation = self._allocation(conn, attempt_id, request_sha256)
+            self._worker_current(conn, allocation["job_id"], attempt_id, allocation["fence"], launching=True)
+            if allocation["retired"]:
+                raise ServiceError("worker_allocation_conflict", 409)
+            if allocation["create_claimed"]:
+                return False
+            changed = conn.execute(update(worker_allocations).where(
+                worker_allocations.c.attempt_id == attempt_id,
+                worker_allocations.c.create_claimed.is_(False),
+                worker_allocations.c.retired.is_(False)).values(create_claimed=True))
+            return changed.rowcount == 1
+
+    def get_worker_allocation(self, attempt_id):
+        """Trusted-controller resource lookup also works after logical finish."""
+        with self._tx() as conn:
+            return self._allocation(conn, attempt_id)
+
+    def worker_uid_available(self, uid_start, uid_count):
+        """Advisory capacity only; reservation still fences every actual launch."""
+        if (type(uid_start) is not int or not 65536 <= uid_start <= 2147483647
+                or type(uid_count) is not int or not 1 <= uid_count <= 1000000
+                or uid_start + uid_count - 1 > 2147483647):
+            raise ServiceError("invalid_worker_allocation", 422)
+        with self._tx() as conn:
+            control = conn.execute(select(slot).where(slot.c.id == 1)).mappings().first()
+            if control is None:
+                raise ServiceError("store_not_initialized", 503)
+            fence = control["next_fence"]
+            if fence > uid_count:
+                return False
+            uid = uid_start + fence - 1
+            return conn.execute(select(worker_allocations.c.attempt_id).where(
+                worker_allocations.c.agent_uid == uid)).first() is None
+
+    def resolve_uncreated_attempt(self, envelope, code="worker_not_created"):
+        """Kubernetes-controller-only release before resource creation authority.
+
+        The immutable attempt must belong to the Kubernetes provisioner;
+        absence of this table's records says nothing about a static Worker. The
+        same transaction lock serializes this decision with resource reservation
+        and creation claims. An unclaimed intent is retired here, retaining its
+        burned UID; no old controller may acquire launch authority afterwards.
+        No stopped receipt or artifacts are manufactured.
+        """
+        if (not isinstance(envelope, ExecutionEnvelope) or not isinstance(code, str)
+                or not _CODE.fullmatch(code)):
+            raise ServiceError("invalid_worker_allocation", 422)
+        with self._tx() as conn:
+            row = self._matching_worker_request(conn, envelope)
+            if self._attempt_provisioning(conn, row) != "kubernetes_per_attempt":
+                return None
+            allocation = conn.execute(select(worker_allocations).where(
+                worker_allocations.c.attempt_id == envelope.attempt_id)).mappings().first()
+            if allocation is not None:
+                if (allocation["job_id"] != row["id"] or allocation["fence"] != row["fence"]
+                        or allocation["request_sha256"] != envelope.request_sha256):
+                    raise ServiceError("worker_allocation_conflict", 409)
+                if (allocation["create_claimed"] or allocation["worker_start_claimed"]
+                        or allocation["pod_uid"] is not None or allocation["candidate_result"] is not None
+                        or allocation["stop_observed_at"] is not None):
+                    return None
+            previous = row["outcome"]
+            if (row["state"] in {"cancelled", "timed_out", "failed"}
+                    and isinstance(previous, dict) and previous.get("error_code") == code
+                    and previous.get("usage") is None and previous.get("stop_receipt") is None):
+                return _job(row)
+            if allocation is not None and allocation["retired"]:
+                return None
+            control = conn.execute(select(slot).where(slot.c.id == 1).with_for_update()).mappings().first()
+            if (row["state"] not in ACTIVE | {"quarantined"}
+                    or control is None or control["job_id"] != row["id"]):
+                raise ServiceError("stale_attempt", 409)
+            state = ("cancelled" if row["cancel_requested"] else
+                     "timed_out" if row["deadline_at"] <= self.clock() else "failed")
+            outcome = {"state": state, "error_code": code, "usage": None, "stop_receipt": None}
+            row.update(state=state, outcome=outcome)
+            if allocation is not None:
+                conn.execute(update(worker_allocations).where(
+                    worker_allocations.c.attempt_id == envelope.attempt_id).values(retired=True))
+            conn.execute(update(jobs).where(jobs.c.id == row["id"]).values(state=state, outcome=outcome))
+            conn.execute(update(attempts).where(attempts.c.id == envelope.attempt_id,
+                         attempts.c.fence == envelope.fence).values(state=state, outcome=outcome))
+            self._event(conn, row, "job." + state, {"error_code": code})
+            conn.execute(update(slot).where(slot.c.id == 1, slot.c.job_id == row["id"]).values(job_id=None))
+            return _job(row)
+
+    def claim_worker_start(self, attempt_id, request_sha256):
+        """Persist sole authority for native PUT, separately from Pod creation."""
+        with self._tx() as conn:
+            allocation = self._allocation(conn, attempt_id, request_sha256)
+            self._worker_current(conn, allocation["job_id"], attempt_id, allocation["fence"], launching=True)
+            if (allocation["retired"] or not allocation["create_claimed"] or allocation["pod_uid"] is None
+                    or allocation["candidate_result"] is not None):
+                raise ServiceError("worker_allocation_conflict", 409)
+            if allocation["worker_start_claimed"]:
+                return False
+            changed = conn.execute(update(worker_allocations).where(
+                worker_allocations.c.attempt_id == attempt_id,
+                worker_allocations.c.worker_start_claimed.is_(False),
+                worker_allocations.c.retired.is_(False)).values(worker_start_claimed=True))
+            return changed.rowcount == 1
+
+    def bind_worker(self, attempt_id, request_sha256, pod_uid):
+        """Record observed physical identity exactly once, including after cancel.
+
+        This observation cannot start execution. A late creation response still
+        needs to bind its UID so cancellation/recovery can stop the right Pod.
+        """
+        if not isinstance(pod_uid, str) or not _POD_UID.fullmatch(pod_uid):
+            raise ServiceError("invalid_worker_allocation", 422)
+        with self._tx() as conn:
+            allocation = self._allocation(conn, attempt_id, request_sha256)
+            if (not allocation["create_claimed"] or allocation["retired"]
+                    or allocation["pod_uid"] not in {None, pod_uid}):
+                raise ServiceError("worker_allocation_conflict", 409)
+            if allocation["pod_uid"] is None:
+                conn.execute(update(worker_allocations).where(
+                    worker_allocations.c.attempt_id == attempt_id).values(pod_uid=pod_uid))
+                allocation["pod_uid"] = pod_uid
+            return allocation
+
+    def stage_worker_result(self, attempt_id, request_sha256, result_wire):
+        """Persist an authenticated candidate before terminating its Pod.
+
+        The trusted provider authenticates the receipt first; these checks also
+        bind the stored object to this allocation. Nothing here publishes Job
+        artifacts or treats native completion as host-observed process stop.
+        """
+        try:
+            if not isinstance(result_wire, dict) or len(canonical_bytes(result_wire)) > 12 * 1024 * 1024:
+                raise ValueError()
+            result = WorkerResult.model_validate(result_wire)
+            if result.state == "quarantined" or result.stop_receipt is None:
+                raise ValueError()
+            if (len({item.name for item in result.artifacts}) != len(result.artifacts)
+                    or sum(len(item.content()) for item in result.artifacts) > self.max_artifact_bytes):
+                raise ValueError()
+            normalized = result.model_dump()
+        except (ValueError, TypeError, RecursionError):
+            raise ServiceError("invalid_worker_result", 422) from None
+        with self._tx() as conn:
+            allocation = self._allocation(conn, attempt_id, request_sha256)
+            receipt = result.stop_receipt
+            stopped_without_result = (
+                result.state in {"failed", "cancelled", "timed_out"} and not result.artifacts
+                and result.error_code == "capsule_stopped_without_result"
+                and "k8s:" + allocation["namespace"] + ":" + str(allocation["pod_uid"]) in receipt.resource_ids)
+            if (receipt.job_id != allocation["job_id"] or receipt.attempt_id != attempt_id
+                    or receipt.fence != allocation["fence"] or receipt.engine != allocation["engine"]
+                    or receipt.request_sha256 != request_sha256
+                    or receipt.result_sha256 != result.result_digest()
+                    or not allocation["create_claimed"]
+                    or not (allocation["worker_start_claimed"] or stopped_without_result)
+                    or allocation["pod_uid"] is None):
+                raise ServiceError("worker_allocation_conflict", 409)
+            if allocation["candidate_result"] is not None:
+                if digest(allocation["candidate_result"]) != digest(normalized):
+                    raise ServiceError("worker_allocation_conflict", 409)
+                return allocation
+            if allocation["retired"]:
+                raise ServiceError("worker_allocation_conflict", 409)
+            conn.execute(update(worker_allocations).where(
+                worker_allocations.c.attempt_id == attempt_id).values(candidate_result=normalized))
+            allocation["candidate_result"] = normalized
+            return allocation
+
+    def observe_worker_stopped(self, attempt_id, request_sha256, pod_uid, observed_at):
+        """Trusted-provider observation, never an external boolean callback."""
+        if (not isinstance(pod_uid, str) or not _POD_UID.fullmatch(pod_uid)
+                or type(observed_at) not in {int, float} or not math.isfinite(observed_at)
+                or not 0 < observed_at <= self.clock() + 5):
+            raise ServiceError("invalid_worker_stop_observation", 422)
+        with self._tx() as conn:
+            allocation = self._allocation(conn, attempt_id, request_sha256)
+            if (allocation["pod_uid"] != pod_uid or not allocation["create_claimed"]
+                    or allocation["candidate_result"] is None):
+                raise ServiceError("worker_allocation_conflict", 409)
+            if allocation["stop_observed_at"] is None:
+                if allocation["retired"]:
+                    raise ServiceError("worker_allocation_conflict", 409)
+                conn.execute(update(worker_allocations).where(
+                    worker_allocations.c.attempt_id == attempt_id).values(stop_observed_at=float(observed_at)))
+                allocation["stop_observed_at"] = float(observed_at)
+            return allocation
+
+    def retire_worker(self, attempt_id, request_sha256, pod_uid):
+        """Mark exact observed resources retired; this is not a stop proof."""
+        if not isinstance(pod_uid, str) or not _POD_UID.fullmatch(pod_uid):
+            raise ServiceError("invalid_worker_allocation", 422)
+        with self._tx() as conn:
+            allocation = self._allocation(conn, attempt_id, request_sha256)
+            if (allocation["pod_uid"] != pod_uid or not allocation["create_claimed"]
+                    or allocation["stop_observed_at"] is None):
+                raise ServiceError("worker_allocation_conflict", 409)
+            if not allocation["retired"]:
+                conn.execute(update(worker_allocations).where(
+                    worker_allocations.c.attempt_id == attempt_id).values(retired=True))
+                allocation["retired"] = True
+            return allocation
+
+    def resolve_worker_quarantine(self, job_id, attempt_id, fence):
+        """Release only a quarantined slot with durable exact physical stop.
+
+        The Kubernetes provider must authenticate its recovered receipt before
+        calling this internal method. This guard additionally requires that the
+        exact Pod UID was observed stopped and retired. Recovery never publishes
+        candidate artifacts, replaces the attempt, or grants another model call.
+        """
+        with self._tx() as conn:
+            row = self._find(conn, job_id)
+            if (row["attempt_id"] != attempt_id or type(fence) is not int or row["fence"] != fence):
+                raise ServiceError("stale_attempt", 409)
+            allocation = self._allocation(conn, attempt_id)
+            if (allocation["job_id"] != job_id or allocation["fence"] != fence
+                    or not allocation["pod_uid"] or allocation["candidate_result"] is None
+                    or allocation["stop_observed_at"] is None or not allocation["retired"]):
+                raise ServiceError("worker_stop_unverified", 409)
+            resolved = row["outcome"]
+            if (row["state"] in {"cancelled", "timed_out", "failed"}
+                    and isinstance(resolved, dict) and resolved.get("error_code") == "quarantine_stopped"):
+                return _job(row)
+            control = conn.execute(select(slot).where(slot.c.id == 1).with_for_update()).mappings().first()
+            if row["state"] != "quarantined" or control is None or control["job_id"] != job_id:
+                raise ServiceError("stale_attempt", 409)
+            state = ("cancelled" if row["cancel_requested"] else
+                     "timed_out" if row["deadline_at"] <= self.clock() else "failed")
+            candidate = allocation["candidate_result"]
+            outcome = {"state": state, "error_code": "quarantine_stopped",
+                       "usage": candidate.get("usage"), "stop_receipt": candidate.get("stop_receipt")}
+            row.update(state=state, outcome=outcome)
+            conn.execute(update(jobs).where(jobs.c.id == job_id).values(state=state, outcome=outcome))
+            conn.execute(update(attempts).where(attempts.c.id == attempt_id,
+                         attempts.c.fence == fence).values(state=state, outcome=outcome))
+            self._event(conn, row, "job." + state, {"error_code": "quarantine_stopped"})
+            conn.execute(update(slot).where(slot.c.id == 1, slot.c.job_id == job_id).values(job_id=None))
+            return _job(row)
+
+    def worker_event_cursor(self, job_id, attempt_id, fence):
+        with self._tx() as conn:
+            self._worker_current(conn, job_id, attempt_id, fence)
+            row = conn.execute(select(worker_event_cursors).where(
+                worker_event_cursors.c.attempt_id == attempt_id)).mappings().first()
+            if row is None:
+                return 0
+            if row["job_id"] != job_id or row["fence"] != fence:
+                raise ServiceError("stale_attempt", 409)
+            return row["cursor"]
+
+    def ingest_worker_events(self, job_id, attempt_id, fence, after, items, next_cursor):
+        """Atomically ingest an exact sanitized page and advance its durable cursor."""
+        if (type(after) is not int or type(next_cursor) is not int
+                or not 0 <= after <= next_cursor <= 500 or not isinstance(items, list)
+                or len(items) > 100 or next_cursor != after + len(items)):
+            raise ServiceError("invalid_worker_events", 422)
+        for index, item in enumerate(items, after + 1):
+            if (not isinstance(item, dict) or set(item) != {"seq", "type", "payload"}
+                    or type(item["seq"]) is not int or item["seq"] != index
+                    or item["type"] != "engine.progress" or not isinstance(item["payload"], dict)
+                    or set(item["payload"]) != {"event"} or not isinstance(item["payload"]["event"], str)
+                    or item["payload"]["event"] not in _WORKER_EVENT_KINDS):
+                raise ServiceError("invalid_worker_events", 422)
+        with self._tx() as conn:
+            row = self._worker_current(conn, job_id, attempt_id, fence)
+            saved = conn.execute(select(worker_event_cursors).where(
+                worker_event_cursors.c.attempt_id == attempt_id)).mappings().first()
+            cursor = 0 if saved is None else saved["cursor"]
+            if saved is not None and (saved["job_id"] != job_id or saved["fence"] != fence):
+                raise ServiceError("stale_attempt", 409)
+            if cursor >= next_cursor:
+                return cursor
+            if cursor != after:
+                raise ServiceError("worker_event_cursor_conflict", 409)
+            for item in items:
+                self._event(conn, row, item["type"], item["payload"])
+            if saved is None:
+                conn.execute(insert(worker_event_cursors).values(
+                    attempt_id=attempt_id, job_id=job_id, fence=fence, cursor=next_cursor))
+            else:
+                conn.execute(update(worker_event_cursors).where(
+                    worker_event_cursors.c.attempt_id == attempt_id).values(cursor=next_cursor))
+            return next_cursor
 
     def mark_running(self, job_id, attempt_id, fence):
         with self._tx() as conn:

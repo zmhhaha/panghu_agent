@@ -4,3 +4,7 @@ pi_worker/node/*.json text eol=lf
 pi_worker/runtime/*.mjs text eol=lf
 scripts/deploy-scientific-pi.sh text eol=lf
 Dockerfile.scientific-pi* text eol=lf
+agent_service/resources/** text eol=lf
+agent_service/runtime/*.mjs text eol=lf
+agent_service/*.sh text eol=lf
+agent_service/Dockerfile* text eol=lf

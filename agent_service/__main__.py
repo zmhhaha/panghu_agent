@@ -77,7 +77,7 @@ def main(argv=None):
             store.initialize()
             _output({'status': 'database_initialized'})
             return 0
-        adapters = config.build_adapters()
+        adapters = config.build_adapters(store)
         if args.command == 'api':
             import uvicorn
             from .api import create_app
