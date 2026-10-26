@@ -16,12 +16,18 @@ export const errors: Record<string,string> = {
   UPLOAD_CANCELLED:'已停止等待上传结果，文件可能已被服务器收到。请刷新资料列表核对；此操作不会删除已收到的文件。',
   UPLOAD_REFRESH_FAILED:'文件已确认上传，部分状态尚未更新。请点击“刷新状态”核对，无需立即重复上传。',
   UPLOAD_PARTIAL_REFRESH_FAILED:'已确认收到部分文件，但资料列表尚未同步，本批其余文件尚未发送。请先刷新状态核对，再只选择尚未收到的文件继续上传。',
+  REQUEST_TOO_LARGE:'上传请求超过服务入口允许的大小。请减少文件大小，或联系管理员调整上传限制。',
+  SERVER_RECEIVE_TIMEOUT:'服务器接收请求超时，操作结果尚未确认。请先刷新状态核对，再决定是否重试。',
+  UPSTREAM_BAD_GATEWAY:'服务入口未收到有效的后端响应。操作结果尚未确认，请先刷新状态核对。',
+  SERVICE_UNAVAILABLE:'服务暂不可用，请稍后刷新状态核对。',
+  UPSTREAM_TIMEOUT:'服务入口等待后端响应超时。操作可能已完成，请先刷新状态核对。',
   CONSENT_REQUIRED:'请先确认外部模型数据传输，再重试此操作。', UPLOAD_LIMIT:'文件超出上传限额，请检查单文件 25 MiB、项目 10 文件 / 100 MiB 限制。',
   UNAUTHENTICATED:'登录已过期，请重新登录。', FORBIDDEN:'当前账号无法执行此操作。', NOT_FOUND:'资源不可用或已删除，请返回项目列表。', STALE_REVISION:'资料或设置已变更，请刷新项目并重新确认方案。', STALE_PLAN:'确认已失效，请重新规划并确认。', SNAPSHOT_MISMATCH:'材料快照已变化，请重新规划。', ACTIVE_JOB_EXISTS:'项目已有活动任务，请等待完成或取消。', QUEUE_FULL:'任务队列已满，请稍后重试。', PARSE_FAILED:'资料解析失败，请检查文件是否含可读文本，或更换文件。', MODEL_CONNECTION_FAILED:'模型连接失败，请稍后重新提交。', TIMEOUT:'任务超时，已有版本仍可使用。请减少资料或页数后重试。', QUALITY_GATE_FAILED:'产物未通过质量检查，请调整要求后重试。', RENDER_FAILED:'预览渲染失败，请重试或联系管理员。', EXPORT_FAILED:'PPTX 导出失败，请重试或联系管理员。', STORAGE_LIMIT:'存储空间不足，请清理不再需要的项目后重试。', QUOTA_EXCEEDED:'当前可用额度不足，请联系服务管理员。', NETWORK_ERROR:'无法连接服务，请检查网络并重试。', INVALID_RESPONSE:'服务响应暂不可用，请刷新或联系管理员。', CURSOR_EXPIRED:'进度记录已过期，正在重新读取任务状态。'
 };
 const errorAliases: Record<string,string> = { EVENT_CURSOR_EXPIRED:'CURSOR_EXPIRED', REVISION_CONFLICT:'STALE_REVISION', PROJECT_REVISION_MISMATCH:'STALE_REVISION', PLAN_STALE:'STALE_PLAN', INPUT_SNAPSHOT_MISMATCH:'SNAPSHOT_MISMATCH', JOB_ALREADY_ACTIVE:'ACTIVE_JOB_EXISTS', PROJECT_BUSY:'ACTIVE_JOB_EXISTS', EXTERNAL_MODEL_ACK_REQUIRED:'CONSENT_REQUIRED', PARSE_ERROR:'PARSE_FAILED', MATERIAL_PARSE_FAILED:'PARSE_FAILED', FILE_TOO_LARGE:'UPLOAD_LIMIT', TOO_MANY_FILES:'UPLOAD_LIMIT', PROJECT_STORAGE_LIMIT:'STORAGE_LIMIT', MODEL_UNAVAILABLE:'MODEL_CONNECTION_FAILED', EXECUTION_TIMEOUT:'TIMEOUT', QUALITY_FAILED:'QUALITY_GATE_FAILED' };
 export class ApiError extends Error { public code:string; constructor(code: string, public status = 0) { const normalized=code.toUpperCase();const canonical=errorAliases[normalized]??normalized; super(errors[canonical] ?? '操作未完成，请刷新后重试；若持续发生，请联系管理员。');this.code=canonical; } }
-export const safeError = (error: unknown) => error instanceof ApiError ? `${error.message}（${/^[A-Z_]{1,60}$/.test(error.code) ? error.code : 'SERVICE_ERROR'}）` : errors.NETWORK_ERROR;
+export const safeError = (error: unknown) => error instanceof ApiError ? `${error.message}（${/^[A-Z_]{1,60}$/.test(error.code) ? error.code : 'SERVICE_ERROR'}${Number.isInteger(error.status)&&error.status>=400&&error.status<=599?`，HTTP ${error.status}`:''}）` : errors.NETWORK_ERROR;
+const httpErrorCodes:Record<number,string>={408:'SERVER_RECEIVE_TIMEOUT',413:'REQUEST_TOO_LARGE',502:'UPSTREAM_BAD_GATEWAY',503:'SERVICE_UNAVAILABLE',504:'UPSTREAM_TIMEOUT'};
 // Keys live only in memory: retries of the same intent reuse them; changed payload creates a new intent.
 export class IntentKeys {
   private keys = new Map<string,string>();
@@ -64,7 +70,7 @@ async function performRequest<T>(path: string, init: RequestInit, retryCsrf: boo
   try { response = await fetch(`${root}${path}`, { credentials:'same-origin', ...init, headers }); } catch { throw new ApiError('NETWORK_ERROR'); }
   if (response.status === 401) clearAuthentication();
   if (!response.ok) {
-    let code = response.status === 401 ? 'UNAUTHENTICATED' : response.status === 403 ? 'FORBIDDEN' : response.status === 404 ? 'NOT_FOUND' : 'SERVICE_ERROR';
+    let code = response.status === 401 ? 'UNAUTHENTICATED' : response.status === 403 ? 'FORBIDDEN' : response.status === 404 ? 'NOT_FOUND' : httpErrorCodes[response.status]??'SERVICE_ERROR';
     let csrfRejected=false;
     try { const body=await response.json();const raw=body?.error?.code??body?.detail?.code??body?.code;if(typeof raw==='string')code=raw;csrfRejected=body?.detail?.code==='csrf_rejected'; } catch { /* Never expose server HTML or raw details. */ }
     // This exact rejection occurs before mutation. Preserve its body and intent
