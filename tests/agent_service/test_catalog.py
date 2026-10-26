@@ -148,8 +148,10 @@ def test_public_output_is_complete_and_cannot_replace_an_existing_catalog(image_
         catalog.write_catalog(directory, public, hosts, summary)
 
 
-def test_generator_requires_the_actual_root_worker_image_on_non_posix_hosts():
-    if os.name == 'posix':
-        pytest.skip('Non-POSIX production gate is exercised on Windows')
+@pytest.mark.parametrize('name,uid', [('nt', 0), ('posix', 10000)])
+def test_generator_requires_the_actual_root_worker_image_on_non_posix_hosts(monkeypatch, name, uid):
+    # Replace only this module's OS view so both refusal branches execute on
+    # every host without changing pathlib's real platform behavior.
+    monkeypatch.setattr(catalog, 'os', SimpleNamespace(name=name, geteuid=lambda: uid))
     with pytest.raises(catalog.CatalogError, match='run_inside_root_owned_worker_image'):
         catalog.generate(pi_image=PI, runtime_revision='runtime-v1')

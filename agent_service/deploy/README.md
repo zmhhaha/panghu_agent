@@ -39,7 +39,11 @@ python3 agent_service/deploy/bootstrap.py \
 
 初始化固定作用于 `data/postgres-0` 中的 `agent_service` 数据库和角色；数据库管理员使用容器现有的 `POSTGRES_USER`（包括通过 `envFrom` 注入的值），未配置时才使用 `postgres`。脚本会为业务、Worker、结果签名及模型代理分别生成独立随机凭据，通过带版本号的 CAS 合并写入 `secret/agent-service/runtime` 和 `secret/llm-service/callers`，保留其他字段及已配置值，不输出凭据、数据库 URL 或原始 SQL 错误。重试不会轮换已有密码或令牌。运行中断后可再次执行；如专用角色已存在而 Vault 中缺失其数据库 URL，脚本会停止，要求先恢复原凭据，避免猜测或重置密码。
 
-新角色使用 `NOINHERIT`、无管理权限和独立数据库所有权；脚本拒绝接管具有其他角色成员关系、其他数据库所有权/显式授权或其他业务对象权限的已有角色，只收紧本服务数据库及其 `public` schema 的 PUBLIC 权限。共享 PostgreSQL 的 PUBLIC 可能仍授予其他数据库 CONNECT；报告中的 `other_database_connect_count` 会显示这类继承连接数，不代表具有其他业务表的读写权限。若其他业务通过 PUBLIC 暴露了 schema 创建、表、序列或函数执行权限，脚本也会停止交由平台检查。绝对禁止向其他数据库建立连接涉及共享 HBA/ACL 策略，不由此脚本修改。
+新角色使用 `NOINHERIT`、无管理权限和独立数据库所有权；脚本拒绝接管具有其他角色成员关系、其他数据库所有权/显式授权或其他业务对象权限的已有角色，只收紧本服务数据库及其 `public` schema 的 PUBLIC 权限。共享 PostgreSQL 的 PUBLIC 可能仍授予其他数据库 CONNECT；报告中的 `other_database_connect_count` 会显示这类继承连接数，不代表具有其他业务表的读写权限。其他数据库的 schema 创建、表或序列权限仍会阻止初始化。
+
+函数审计只对已审定的 `pgcrypto`、`pg_trgm`、`citext` 扩展成员作有限区分：同时满足 PUBLIC EXECUTE、SECURITY INVOKER、没有向 `agent_service` 直接授予对象级 EXECUTE 的函数，单独累计在 `cross_database_reviewed_public_functions`，不计入 `cross_database_unsafe_objects`。这些标准扩展提供密码学、字符串和计算操作；INVOKER 仍以调用角色的权限运行，不授予其底层业务表权限。未知扩展、自定义函数、SECURITY DEFINER 或对象级直接授权的可执行函数仍会阻止初始化，不会因有 PUBLIC EXECUTE 而自动放行。
+
+需要分析阻断原因时，可由平台管理员在各数据库执行只读的 [audit_database_access.sql](audit_database_access.sql)。它按关系类型、扩展、语言、DEFINER/INVOKER、PUBLIC/直接授权等维度返回聚合计数，不执行业务函数，也不输出函数定义、参数或业务数据。审计和上述区分均不修改其他业务 ACL；绝对禁止向其他数据库建立连接涉及共享 HBA/ACL 策略，不由此脚本修改。
 
 ESO 仅做只读检查：读取现有 `eso-role` 及其策略，保守判断两条 Vault 数据路径是否可读，不修改共享策略或创建登录 Token。`--apply` 返回 0 表示凭据、数据库登录与可证明的策略覆盖已完成；返回 2 且状态为 `credentials_database_ready_eso_review_needed` 表示凭据和数据库已就绪，但仍需在规范平台配置中确认 ESO 权限，并在部署时实际等待三个 ExternalSecret Ready。返回 1 给出固定错误类别；不要为诊断将 Vault 记录或原始数据库错误粘贴到日志。默认只读检查返回 0 仅表示检查命令完成，需要同时查看 `ready`；该模式不会验证运行时密码登录。
 

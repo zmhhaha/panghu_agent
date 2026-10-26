@@ -38,7 +38,7 @@ for index, targets in enumerate(json.loads(os.environ['AGENT_TEST_TARGETS'])):
     print('AGENT_TEST_PHASE=' + json.dumps(targets), flush=True)
     xml = '/tmp/agent-results-' + str(index) + '.xml'
     command = [sys.executable, '-m', 'pytest', *targets, '-q', '-p', 'no:cacheprovider',
-        '--tb=short', '--basetemp=/tmp/agent-tests-' + str(index), '--junitxml=' + xml]
+        '--tb=short', '-rs', '--basetemp=/tmp/agent-tests-' + str(index), '--junitxml=' + xml]
     result = subprocess.run(command, check=False)
     counts = dict.fromkeys(('tests', 'failures', 'errors', 'skipped'))
     try:
@@ -162,7 +162,8 @@ def validate_source(code_root, suite='postgres'):
     relative = ['agent_service', 'tests/agent_service']
     if suite != 'postgres':
         relative += ['scientific_agent', 'pi_worker/__init__.py', 'pi_worker/research_tools',
-                     'tools/__init__.py', 'tools/academic', 'scientific_skills']
+                     'tools/__init__.py', 'tools/academic', 'scientific_skills',
+                     'tests/scientific_pi/revisions/test_revision_validation.py']
     if suite == 'connectors':
         relative += ['app/api/scientific_agent.py', 'tools/sqlite_client.py',
             'ppt_service/__init__.py', 'ppt_service/control', 'ppt_service/server',

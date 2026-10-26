@@ -50,7 +50,8 @@ def test_source_plan_excludes_repository_credentials_and_rejects_private_source(
     relative = ['agent_service/store.py', 'tests/agent_service/test_postgres.py',
         'scientific_agent/__init__.py', 'pi_worker/__init__.py',
         'pi_worker/research_tools/__init__.py', 'tools/__init__.py',
-        'tools/academic/__init__.py', 'scientific_skills/manifest.json']
+        'tools/academic/__init__.py', 'scientific_skills/manifest.json',
+        'tests/scientific_pi/revisions/test_revision_validation.py']
     for name in relative:
         path = tmp_path / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -58,6 +59,8 @@ def test_source_plan_excludes_repository_credentials_and_rejects_private_source(
     (tmp_path / '.env').write_text('NEVER_MOUNT_REPOSITORY_SECRET', encoding='utf-8')
     roots = runner.validate_source(tmp_path, 'all')
     assert tmp_path not in roots and tmp_path / '.env' not in roots
+    assert tmp_path / 'tests/scientific_pi/revisions/test_revision_validation.py' in roots
+    assert tmp_path / 'tests/scientific_pi/revisions' not in roots
     (tmp_path / 'scientific_agent' / '.env').write_text('unsafe-source', encoding='utf-8')
     with pytest.raises(runner.HarnessFailure, match='private_file_in_source_tree'):
         runner.validate_source(tmp_path, 'all')
