@@ -1,6 +1,8 @@
 import type { Job, Profile, Project, Version } from './domain';
 import { adaptCommunication, adaptDirections, adaptPlanQuestions } from './planning';
 const root = '/api/v1';
+const REQUEST_TIMEOUT_MS = 30_000;
+const UPLOAD_TIMEOUT_MS = 5 * 60_000;
 let csrfToken: string | null = null;
 let authenticationEpoch = 0;
 let pendingProfile: Promise<Profile> | null = null;
@@ -8,6 +10,12 @@ function clearAuthentication() { csrfToken=null;authenticationEpoch++;pendingPro
 export const errors: Record<string,string> = {
   EXECUTION_NOT_CONNECTED:'执行器尚未接通，当前仅可测试项目、资料和设置；不会调用模型。',
   CSRF_REJECTED:'页面安全校验已失效，请刷新页面后重试。',
+  REQUEST_TIMEOUT:'等待请求超时。操作可能已完成，请先刷新状态核对，再决定是否重试。',
+  REQUEST_CANCELLED:'已停止等待请求。操作可能已完成，请先刷新状态核对。',
+  UPLOAD_TIMEOUT:'等待上传结果超时，文件可能已被服务器收到。请先刷新资料列表核对，再决定是否重新上传。',
+  UPLOAD_CANCELLED:'已停止等待上传结果，文件可能已被服务器收到。请刷新资料列表核对；此操作不会删除已收到的文件。',
+  UPLOAD_REFRESH_FAILED:'文件已确认上传，部分状态尚未更新。请点击“刷新状态”核对，无需立即重复上传。',
+  UPLOAD_PARTIAL_REFRESH_FAILED:'已确认收到部分文件，但资料列表尚未同步，本批其余文件尚未发送。请先刷新状态核对，再只选择尚未收到的文件继续上传。',
   CONSENT_REQUIRED:'请先确认外部模型数据传输，再重试此操作。', UPLOAD_LIMIT:'文件超出上传限额，请检查单文件 25 MiB、项目 10 文件 / 100 MiB 限制。',
   UNAUTHENTICATED:'登录已过期，请重新登录。', FORBIDDEN:'当前账号无法执行此操作。', NOT_FOUND:'资源不可用或已删除，请返回项目列表。', STALE_REVISION:'资料或设置已变更，请刷新项目并重新确认方案。', STALE_PLAN:'确认已失效，请重新规划并确认。', SNAPSHOT_MISMATCH:'材料快照已变化，请重新规划。', ACTIVE_JOB_EXISTS:'项目已有活动任务，请等待完成或取消。', QUEUE_FULL:'任务队列已满，请稍后重试。', PARSE_FAILED:'资料解析失败，请检查文件是否含可读文本，或更换文件。', MODEL_CONNECTION_FAILED:'模型连接失败，请稍后重新提交。', TIMEOUT:'任务超时，已有版本仍可使用。请减少资料或页数后重试。', QUALITY_GATE_FAILED:'产物未通过质量检查，请调整要求后重试。', RENDER_FAILED:'预览渲染失败，请重试或联系管理员。', EXPORT_FAILED:'PPTX 导出失败，请重试或联系管理员。', STORAGE_LIMIT:'存储空间不足，请清理不再需要的项目后重试。', QUOTA_EXCEEDED:'当前可用额度不足，请联系服务管理员。', NETWORK_ERROR:'无法连接服务，请检查网络并重试。', INVALID_RESPONSE:'服务响应暂不可用，请刷新或联系管理员。', CURSOR_EXPIRED:'进度记录已过期，正在重新读取任务状态。'
 };
@@ -21,10 +29,32 @@ export class IntentKeys {
   complete(route:string,payload:unknown) { this.keys.delete(JSON.stringify([route,payload])); }
 }
 export const intents = new IntentKeys();
-export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  return performRequest<T>(path,init,true);
+export async function request<T>(path: string, init: RequestInit = {}, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const cancel = () => controller.abort();
+  const signal = init.signal;
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort',cancel,{once:true});
+  let abortListener: (()=>void) | undefined;
+  const interrupted = new Promise<never>((_,reject) => {
+    abortListener = () => reject(new ApiError(timedOut?'REQUEST_TIMEOUT':'REQUEST_CANCELLED'));
+    if (controller.signal.aborted) abortListener();
+    else controller.signal.addEventListener('abort',abortListener,{once:true});
+  });
+  const timer = setTimeout(()=>{timedOut=true;controller.abort();},timeoutMs);
+  try {
+    // The deadline includes response body consumption and CSRF recovery. A
+    // cancelled waiter cannot hang behind the shared profile read either.
+    return await Promise.race([performRequest<T>(path,{...init,signal:controller.signal},true),interrupted]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort',cancel);
+    if(abortListener)controller.signal.removeEventListener('abort',abortListener);
+  }
 }
 async function performRequest<T>(path: string, init: RequestInit, retryCsrf: boolean): Promise<T> {
+  if(init.signal?.aborted)throw new ApiError('REQUEST_CANCELLED');
   let response: Response;
   const headers = new Headers(init.headers);
   headers.delete('X-CSRF-Token');
@@ -64,7 +94,7 @@ function readProfile():Promise<Profile> {
   pendingProfile=pending;
   return pending;
 }
-export async function mutate<T>(path:string,payload:unknown = {},method='POST'):Promise<T> { const key=intents.key(path,payload); const result=await request<T>(path,{method,body:JSON.stringify(payload),headers:{'Idempotency-Key':key}}); intents.complete(path,payload); return result; }
+export async function mutate<T>(path:string,payload:unknown = {},method='POST',signal?:AbortSignal):Promise<T> { const key=intents.key(path,payload); const result=await request<T>(path,{method,body:JSON.stringify(payload),headers:{'Idempotency-Key':key},signal}); intents.complete(path,payload); return result; }
 const id = encodeURIComponent;
 type RecordValue = Record<string, any>;
 export function adaptProject(raw: RecordValue): Project {
@@ -86,15 +116,15 @@ export const api = {
   me: readProfile, projects: async () => (await request<RecordValue[]>('/projects')).map(adaptProject), project: async (projectId:string, signal?:AbortSignal) => adaptProject(await request<RecordValue>(`/projects/${id(projectId)}`,{signal})),
   create: async (title:string) => adaptProject(await mutate<RecordValue>('/projects',{title,purpose:'',audience:'',page_count:8,language:'zh',style:'',requirements:'',external_model_ack:false})),
   update: async (p:Project, settings:Project['settings']) => adaptProject(await mutate<RecordValue>(`/projects/${id(p.id)}`,{title:p.title,...flatSettings(settings),external_model_ack:p.external_model_ack??false,expected_revision:p.revision},'PATCH')),
-  acknowledge: async (p:Project) => adaptProject(await mutate<RecordValue>(`/projects/${id(p.id)}`,{title:p.title,...flatSettings(p.settings),external_model_ack:true,expected_revision:p.revision},'PATCH')),
+  acknowledge: async (p:Project, signal?:AbortSignal) => adaptProject(await mutate<RecordValue>(`/projects/${id(p.id)}`,{title:p.title,...flatSettings(p.settings),external_model_ack:true,expected_revision:p.revision},'PATCH',signal)),
   remove: (p:Project) => mutate<void>(`/projects/${id(p.id)}`,{expected_revision:p.revision},'DELETE'),
-  upload: async (p:Project,file:File) => { const body=new FormData(); body.set('file',file); return request<unknown>(`/projects/${id(p.id)}/assets`,{method:'POST',body,headers:{'Idempotency-Key':intents.key(`/projects/${id(p.id)}/assets`,[p.revision,file.name,file.size,file.lastModified])}}); },
+  upload: async (p:Project,file:File,signal?:AbortSignal) => { const body=new FormData(); body.set('file',file); return request<unknown>(`/projects/${id(p.id)}/assets`,{method:'POST',body,signal,headers:{'Idempotency-Key':intents.key(`/projects/${id(p.id)}/assets`,[p.revision,file.name,file.size,file.lastModified])}},UPLOAD_TIMEOUT_MS); },
   plan: (p:Project, feedback:string, _consent:boolean) => mutate<{job_id:string}>(`/projects/${id(p.id)}/plans`,{expected_revision:p.revision,feedback,phase:p.plan?.stage==='communication'&&p.plan.confirmed_at&&!feedback.trim()?'plan_options':'plan_initial'}),
   confirm: async (p:Project, selection:unknown) => adaptProject(await mutate<RecordValue>(`/projects/${id(p.id)}/plans/${id(p.plan!.revision)}/confirm`,{expected_revision:p.revision,input_snapshot_hash:p.plan!.input_snapshot_hash,selection})),
   generate: (p:Project, _consent:boolean) => mutate<{job_id:string}>(`/projects/${id(p.id)}/generations`,{expected_revision:p.revision,plan_revision:Number(p.plan!.revision)}),
   revise: (p:Project,base:string,pages:number[],feedback:string,pageFeedback:Record<string,string>,_consent:boolean) => mutate<{job_id:string}>(`/projects/${id(p.id)}/revisions`,{expected_revision:p.revision,base_version_id:base,pages,feedback:[feedback,...Object.entries(pageFeedback).map(([n,text])=>`第 ${n} 页：${text}`)].filter(Boolean).join('\n\n')}),
   job: async (jobId:string, signal?:AbortSignal) => adaptJob(await request<RecordValue>(`/jobs/${id(jobId)}`,{signal})), cancel: async (jobId:string) => adaptJob(await mutate<RecordValue>(`/jobs/${id(jobId)}/cancel`)),
-  versions: (projectId:string) => request<Version[]>(`/projects/${id(projectId)}/versions`),
+  versions: (projectId:string, signal?:AbortSignal) => request<Version[]>(`/projects/${id(projectId)}/versions`,{signal}),
   preview: (versionId:string,page:number) => `${root}/versions/${id(versionId)}/slides/${page}/preview`,
   download: async (versionId:string) => { const response=await fetch(`${root}/versions/${id(versionId)}/download`,{credentials:'same-origin'}); if(response.status===401)clearAuthentication(); if (!response.ok) throw new ApiError(response.status===401?'UNAUTHENTICATED':'EXPORT_FAILED',response.status); const blob=await response.blob(); if (!blob.size) throw new ApiError('EXPORT_FAILED'); const url=URL.createObjectURL(blob); const link=document.createElement('a'); link.href=url; link.download=`presentation-${versionId}.pptx`; link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); }
 };

@@ -44,10 +44,19 @@ export default function App() {
  {projects.length?<div className="project-grid">{projects.map(p=><button className="project-card" key={p.id} onClick={()=>select(p.id)}><span className="card-icon"><Presentation size={24}/></span><span className="pill">{label(p.stage)}</span><h2>{p.title}</h2><p>{p.settings?.purpose||'添加资料，开始规划演示稿'}</p><div><span>{p.settings?.pages??8} 页目标</span><span>进入项目 <ArrowRight size={15}/></span></div></button>)}</div>:<Empty title="从第一个项目开始">上传真实资料，确认内容与设计后再启动生成。项目创建后不会自动调用模型。</Empty>}<UsageView profile={profile}/>
  <div className="process-note"><span>01 资料与要求</span><ArrowRight size={15}/><span>02 沟通与方案确认</span><ArrowRight size={15}/><span>03 生成与修改</span></div></> }</main></div></div>;
 }
+type UploadState = {phase:'preparing'|'uploading'|'syncing'|'complete'|'stopped';current:number;total:number;fileName:string;received:number};
+const uploadPending = (state:UploadState|null) => !!state && ['preparing','uploading','syncing'].includes(state.phase);
+function UploadStatus({state,onCancel}:{state:UploadState;onCancel:()=>void}) {
+ const pending=uploadPending(state);
+ const heading=state.phase==='preparing'?'正在准备上传':state.phase==='uploading'?`正在上传第 ${state.current} / ${state.total} 个文件`:state.phase==='syncing'?'正在更新资料列表':state.phase==='complete'?'资料上传完成':'上传等待已结束';
+ return <div className={`upload-status ${state.phase==='stopped'?'upload-stopped':''}`}><div className="upload-feedback" role="status" aria-live="polite" aria-atomic="true">{pending?<LoaderCircle className="spin" size={19}/>:state.phase==='complete'?<Check size={19}/>:<CircleAlert size={19}/>}<div><strong>{heading}</strong>{state.fileName&&pending&&<span className="upload-file">{state.fileName}</span>}<small>{state.received} / {state.total} 个文件已确认收到{state.phase==='stopped'?'；请刷新状态核对后再继续。':state.phase==='syncing'?'；正在同步项目状态。':state.phase==='uploading'?'；请等待服务器确认。':''}</small></div></div>{pending&&<button className="secondary compact" type="button" onClick={onCancel}><X size={14}/>取消等待</button>}</div>;
+}
 function Workspace({id,profile,onBack,onChanged}:{id:string;profile:Profile;onBack:()=>void;onChanged:()=>void}) {
  const [project,setProject]=useState<Project|null>(null);const [versions,setVersions]=useState<Version[]>([]);const [loading,setLoading]=useState(true);const [error,setError]=useState<unknown>(null);const [tab,setTab]=useState('materials');const [busy,setBusy]=useState(false);const busyRef=useRef(false);const [consent,setConsent]=useState(false);const [localJob,setLocalJob]=useState<string|null>(null);
  const refreshSequence=useRef(0);
- const refresh=useCallback(async()=>{const sequence=++refreshSequence.current;try{const p=await api.project(id);const versions=await api.versions(id);if(sequence!==refreshSequence.current)return;setProject(p);setVersions(versions);setError(null);}catch(e){if(sequence===refreshSequence.current)setError(e);}finally{if(sequence===refreshSequence.current)setLoading(false);}},[id]);
+ const [uploadState,setUploadState]=useState<UploadState|null>(null);const uploadController=useRef<AbortController|null>(null);
+ useEffect(()=>()=>uploadController.current?.abort(),[]);
+ const refresh=useCallback(async()=>{const sequence=++refreshSequence.current;try{const p=await api.project(id);const versions=await api.versions(id);if(sequence!==refreshSequence.current)return;setProject(p);setVersions(versions);setUploadState(state=>uploadPending(state)?state:null);setError(null);}catch(e){if(sequence===refreshSequence.current)setError(e);}finally{if(sequence===refreshSequence.current)setLoading(false);}},[id]);
  useEffect(()=>{void refresh();},[refresh]);
  const parsePollingError=useParsePolling(project,tab==='materials'&&!busy,setProject);
  // The controller can replace prepare with generate without a browser action.
@@ -57,25 +66,53 @@ function Workspace({id,profile,onBack,onChanged}:{id:string;profile:Profile;onBa
  const {job,setJob,connection,error:jobError,refresh:refreshJob}=useJob(project?.active_job_id??localJob,settled);
  const active=!!job&&activeStatuses.has(job.status)||!!project?.active_job_id&&!job;
  const perform=async(action:()=>Promise<unknown>)=>{if(busyRef.current)return;busyRef.current=true;setBusy(true);setError(null);try{await action();await refresh();onChanged();}catch(e){setError(e);if(e instanceof ApiError&&['STALE_REVISION','STALE_PLAN','SNAPSHOT_MISMATCH'].includes(e.code)){await refresh();setError(e);}}finally{busyRef.current=false;setBusy(false);}};
+ const uploadFiles=async(files:File[])=>{
+  if(!project||!files.length||busyRef.current||active)return;
+  const controller=new AbortController();uploadController.current=controller;
+  busyRef.current=true;setBusy(true);setError(null);
+  let received=0;let currentIndex=0;let fileName=files[0].name;let syncing=false;
+  const progress=(phase:UploadState['phase'])=>setUploadState({phase,current:currentIndex,total:files.length,fileName,received});
+  progress('preparing');
+  try {
+   let current=await api.acknowledge(project,controller.signal);setProject(current);
+   for(let index=0;index<files.length;index++){
+    const file=files[index];currentIndex=index+1;fileName=file.name;syncing=false;progress('uploading');
+    await api.upload(current,file,controller.signal);received++;syncing=true;progress('syncing');
+    current=await api.project(id,controller.signal);setProject(current);
+   }
+   setVersions(await api.versions(id,controller.signal));onChanged();progress('complete');
+  } catch(nextError){
+   progress('stopped');
+   if(received===files.length)setError(new ApiError('UPLOAD_REFRESH_FAILED',nextError instanceof ApiError?nextError.status:0));
+   else if(syncing&&received>0)setError(new ApiError('UPLOAD_PARTIAL_REFRESH_FAILED',nextError instanceof ApiError?nextError.status:0));
+   else if(nextError instanceof ApiError&&nextError.code==='REQUEST_CANCELLED')setError(new ApiError('UPLOAD_CANCELLED'));
+   else if(nextError instanceof ApiError&&nextError.code==='REQUEST_TIMEOUT')setError(new ApiError('UPLOAD_TIMEOUT'));
+   else setError(nextError);
+  } finally {
+   if(uploadController.current===controller)uploadController.current=null;
+   busyRef.current=false;setBusy(false);
+  }
+ };
  const start=async(action:()=>Promise<{job_id:string}>)=>perform(async()=>{const result=await action();setLocalJob(result.job_id);});
  if(loading)return <div className="loading" role="status"><LoaderCircle className="spin"/>正在读取项目…</div>;
  if(!project)return <><button className="link" onClick={onBack}><ArrowLeft size={15}/>返回项目</button><ErrorBox error={error} onRetry={()=>void refresh()}/></>;
  const disabled=busy||active;
  return <><button className="back link" onClick={onBack}><ArrowLeft size={15}/>全部项目</button><div className="page-heading"><div><span className="eyebrow">PRIVATE PROJECT</span><h1>{project.title}</h1><p><span className="pill">{label(project.stage)}</span><span className="metadata">项目修订 {project.revision}</span></p></div><button className="secondary compact" disabled={busy} onClick={()=>void Promise.all([refresh(),refreshJob()])}><RefreshCw size={16}/>刷新状态</button></div><ErrorBox error={error}/>{tab==='materials'&&<ErrorBox error={parsePollingError}/>}
  {job&&<section className="job-panel" aria-label="当前任务"><div><span className={`status-dot ${active?'pulse':''}`}/><strong role="status">{label(job.status)}</strong><span>{job.stage?label(job.stage):'等待服务状态'}</span><small>{connection}</small></div><div><code>任务 {job.id}</code>{activeStatuses.has(job.status)&&<button className="secondary compact" disabled={busy||job.status==='cancelling'} onClick={()=>void perform(async()=>{setJob(await api.cancel(job.id));})}>{job.status==='cancelling'?'正在停止…':'取消任务'}</button>}</div>{job.error_code&&<ErrorBox error={new ApiError(job.error_code)}/>}<ErrorBox error={jobError}/><p>关闭页面后任务继续执行，返回时会恢复服务端记录。</p></section>}
+ {uploadState&&<UploadStatus state={uploadState} onCancel={()=>uploadController.current?.abort()}/>}
  <div className="tabs" role="tablist" aria-label="项目工作区">{[['materials','资料与要求'],['planning','沟通与方案'],['versions','预览与修改']].map(([key,text],n)=><button key={key} role="tab" aria-selected={tab===key} aria-controls={`panel-${key}`} id={`tab-${key}`} onClick={()=>setTab(key)}><span>0{n+1}</span>{text}{key==='versions'&&<small>{versions.length}</small>}</button>)}</div>
  <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
- {tab==='materials'&&<Materials project={project} disabled={disabled} perform={perform} onUpdate={p=>{setProject(p);}} consent={consent} setConsent={setConsent}/>}
+ {tab==='materials'&&<Materials project={project} disabled={disabled} perform={perform} onUpdate={p=>{setProject(p);}} consent={consent} setConsent={setConsent} upload={uploadFiles} uploadState={uploadState}/>}
  {tab==='planning'&&<Planning project={project} disabled={disabled} consent={consent} setConsent={setConsent} perform={perform} start={start}/>}
  {tab==='versions'&&<Versions project={project} versions={versions} disabled={disabled} consent={consent} setConsent={setConsent} start={start} perform={perform}/>}
  </div><UsageView profile={profile} job={job}/><details className="details"><summary>项目标识与数据管理</summary><p>项目 ID：<code>{project.id}</code></p><p>当前输入快照：<code>{project.input_snapshot_hash||'尚未建立'}</code></p><p>删除将移除资料与历史版本，并请求停止活动任务。</p><button className="danger" disabled={busy} onClick={()=>{if(window.confirm('确认删除此项目及全部资料和版本？此操作无法撤销。'))void perform(async()=>{await api.remove(project);onBack();});}}>删除项目</button></details></>;
 }
 type Performer=(action:()=>Promise<unknown>)=>Promise<void>;
 type Starter=(action:()=>Promise<{job_id:string}>)=>Promise<void>;
-function Materials({project,disabled,perform,onUpdate,consent,setConsent}:{project:Project;disabled:boolean;perform:Performer;onUpdate:(p:Project)=>void;consent:boolean;setConsent:(v:boolean)=>void}) {
+function Materials({project,disabled,perform,onUpdate,consent,setConsent,upload,uploadState}:{project:Project;disabled:boolean;perform:Performer;onUpdate:(p:Project)=>void;consent:boolean;setConsent:(v:boolean)=>void;upload:(files:File[])=>Promise<void>;uploadState:UploadState|null}) {
  const [settings,setSettings]=useState<Settings>(project.settings??defaultSettings);const [fileError,setFileError]=useState('');const [dirty,setDirty]=useState(false);useEffect(()=>{setSettings(project.settings??defaultSettings);setDirty(false);},[project.settings?.pages,project.settings?.language,project.settings?.audience,project.settings?.purpose,project.settings?.style,project.settings?.requirements]);
  const change=(key:keyof Settings,value:string|number)=>{setSettings(old=>({...old,[key]:value}));setDirty(true);};
- return <div className="workspace-columns"><section className="panel"><div className="section-title"><div><h2>源资料</h2><p>以资料为依据，不补造事实、数字或引用。</p></div><Upload size={20}/></div><Consent checked={consent} onChange={setConsent}/><label className={`upload-zone ${disabled?'disabled':''}`}><Upload size={27}/><strong>选择并上传文件</strong><span>Markdown · 文本 PDF · DOCX · PNG · JPEG</span><small>25 MiB / 文件 · 最多 10 个文件 · 合计 100 MiB</small><input aria-label="上传源资料" type="file" multiple accept=".md,.pdf,.docx,.png,.jpg,.jpeg" disabled={disabled||!consent} onChange={e=>{const files=Array.from(e.target.files??[]);e.target.value='';const message=validateFiles(files,project.assets??[]);setFileError(message);if(!message&&files.length)void perform(async()=>{let current=await api.acknowledge(project);onUpdate(current);for(const file of files){await api.upload(current,file);current=await api.project(project.id);onUpdate(current);}});}}/></label>{!consent&&<p className="hint">勾选上方数据传输同意后可上传资料。</p>}{fileError&&<p role="alert" className="field-error">{fileError}</p>}
+ return <div className="workspace-columns"><section className="panel"><div className="section-title"><div><h2>源资料</h2><p>以资料为依据，不补造事实、数字或引用。</p></div><Upload size={20}/></div><Consent checked={consent} onChange={setConsent}/><label className={`upload-zone ${disabled?'disabled':''}`}><Upload size={27}/><strong>{uploadPending(uploadState)?'正在处理本次上传':'选择并上传文件'}</strong><span>Markdown · 文本 PDF · DOCX · PNG · JPEG</span><small>25 MiB / 文件 · 最多 10 个文件 · 合计 100 MiB</small><input aria-label="上传源资料" type="file" multiple accept=".md,.pdf,.docx,.png,.jpg,.jpeg" disabled={disabled||!consent} onChange={e=>{const files=Array.from(e.target.files??[]);e.target.value='';const message=validateFiles(files,project.assets??[]);setFileError(message);if(!message&&files.length)void upload(files);}}/></label>{!consent&&<p className="hint">勾选上方数据传输同意后可上传资料。</p>}{fileError&&<p role="alert" className="field-error">{fileError}</p>}
  <div className="storage">{project.assets?.length??0} / 10 个文件 <span>{((project.assets??[]).reduce((n,a)=>n+a.bytes,0)/1024**2).toFixed(1)} / 100 MiB</span></div>
  {hasObservedParser(project.assets??[])&&<p className="hint">材料解析采用隔离本地沙箱；下方状态来自服务端，不会调用模型。</p>}{hasPendingParses(project.assets??[])&&<p className="hint">等待中的解析状态每 5 秒更新；也可点击“刷新状态”。离开资料页或隐藏页面时暂停刷新。</p>}
   {project.assets?.length?<ul className="assets">{project.assets.map(a=><li key={a.id}><FileText size={19}/><div><strong>{a.display_name}</strong><small>{(a.bytes/1024**2).toFixed(2)} MiB · <span role="status" aria-label={`${a.display_name}解析状态`}>{parseStatusLabel(a.parse_status)}</span></small>{parseSummary(a)&&<p className="plain-text" aria-label={`${a.display_name}文本摘要`}>{parseSummary(a)}</p>}{a.parse_status==='failed'&&<p className="field-error" role="alert">{parseFailureMessage(a.parse_error??a.error_code)}</p>}</div></li>)}</ul>:<Empty title="尚未添加资料">上传后会显示真实解析状态和可用摘要。</Empty>}
