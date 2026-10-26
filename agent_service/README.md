@@ -1,17 +1,20 @@
 # 通用 Agent 执行服务
 
-状态：2026-10-26，已实现控制接口、按任务分配 K8s capsule、恢复及 Pi 宿主候选。
+状态：2026-10-26，已实现控制接口、按任务 K8s capsule、恢复、Pi 宿主候选，以及
+独立任务合同/能力包/工具环境/执行绑定注册。尚未生产部署或接管现有业务。
 独立分支 `codex/agent-execution-service` 从 `panghu_agent/origin/main`（`64a6188`）创建；
 PPT／科研合入 main 后已同步 main，通用 runtime 仍无业务包依赖。进程核心与低层客户端的
 窄范围抽取记录见 [RUNTIME_EXTRACTION.md](docs/RUNTIME_EXTRACTION.md)。
 首批历史验证见 [VALIDATION_20261026.md](docs/VALIDATION_20261026.md)；
-本轮验证见 [CAPSULE_VALIDATION_20261026.md](docs/CAPSULE_VALIDATION_20261026.md)。
+运行层验证见 [CAPSULE_VALIDATION_20261026.md](docs/CAPSULE_VALIDATION_20261026.md)；
+注册与绑定验证见 [REGISTRY_VALIDATION_20261026.md](docs/REGISTRY_VALIDATION_20261026.md)。
 本轮运行层、构建与部署边界见 [CAPSULE_RUNTIME.md](docs/CAPSULE_RUNTIME.md)。
 现有 PPT/科研 API 与业务能力的覆盖差距及后续服务边界见
 [BUSINESS_CAPABILITY_COVERAGE.md](docs/BUSINESS_CAPABILITY_COVERAGE.md)。
 用户已确认的任务合同、能力包、工具环境与 Agent 适配边界见
 [CAPABILITY_ARCHITECTURE.md](docs/CAPABILITY_ARCHITECTURE.md)；能力包与引擎独立组合，
-按完整组合验收后放行。这是目标架构，领域注册和组合验收仍待实现。
+按完整组合验收后放行。注册机制已实现，PPT/科研合同及生产组合验收仍待完成。
+当前配置与 Worker 精确绑定见 [REGISTRY_BINDINGS.md](docs/REGISTRY_BINDINGS.md)。
 
 业务调用同一个 Jobs API，由部署者将版本化任务 profile 路由到 Pi 或 Hermes。
 模型、命令、镜像、凭据和引擎会话属于服务端配置，不由业务请求选择。
@@ -32,6 +35,8 @@ flowchart LR
 ## 首批已实现
 
 - 中立 Job / Attempt / Input / Artifact / Capability / StopReceipt 契约。
+- 独立、不可变的任务合同、能力包、工具环境与执行绑定目录；拒绝未知实现、缺失依赖
+  和旧组合验收。新 Job 固定包/环境/适配器/模型策略及验收摘要，贯通 Worker/K8s。
 - 调用服务身份绑定 tenant、caller 和 profile 权限；逐任务、事件及产物鉴权。
   撤回 profile 权限后禁止读取历史结果，原调用方仍能取消原任务。
 - PostgreSQL 持久状态、全局单槽、事务领取、attempt/fence/租约、取消与完成竞态处理。
@@ -111,8 +116,8 @@ with AgentClient(service_origin, service_token) as client:
 
 ## 如何切换引擎
 
-在服务端的 `profiles` 中，将同一个 `name + revision` 的 `engine` 路由改到另一个已经
-完成能力验收的 Worker，同时填写该 Worker 的固定 runtime/image pins。业务请求无需改名。
+在服务端登记同一任务合同可用的能力包/工具环境和新引擎 `execution_bindings`，补齐
+精确组合的验收记录，再调整 `routes` 的绑定引用。业务请求无需改名。
 配置生效后只影响新 Job，旧 Job 和旧幂等键继续使用原来的 pins。未就绪返回503，
 不会静默切换其他引擎或导入另一引擎的原生 HOME。
 
@@ -122,7 +127,8 @@ with AgentClient(service_origin, service_token) as client:
 ## 开发运行
 
 需要 Python 3.11+，依赖见 [requirements.txt](requirements.txt)。公开配置模板为
-[config.example.json](config.example.json)；调用 token、receipt key 和 database URL
+[config.example.json](config.example.json)，控制配置直接使用 schema_version 2，旧版
+合并式 profiles 配置会被拒绝。调用 token、receipt key 和 database URL
 放在单独的受保护文件中，不提交 Git。示例中 profile 默认禁用。
 
 CLI 的精确参数可执行 `python -m agent_service --help` 查看。典型顺序：
@@ -143,8 +149,8 @@ API进程不动态加载请求指定模块。K8s 候选配置见
 
 ## 后续实施顺序
 
-1. 实现真实任务合同、能力包/工具环境注册与执行绑定，解除全部 profile 共用文本
-   schema/collector 的限制。
+1. 在已完成的注册机制上实现真实 PPT/科研任务 schema/collector，当前只允许文本
+   合同，不能登记领域名称来绕过实现和验收。
 2. 接通只读领域输入、多文件/二进制成果、profile 额度、中立检查点及引用保留/删除。
 3. 接通短期模型授权、Hermes 独立宿主和固定候选镜像，完成真实 K8s、网络、模型、
    工具与取消验收。当前 provider 仅注入 Worker 控制认证，生产 readiness 保持关闭。

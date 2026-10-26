@@ -18,8 +18,10 @@ from sqlalchemy import (Boolean, Column, Float, ForeignKey, Integer, JSON,
                         create_engine, func, insert, select, text, update)
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import StaticPool
+from pydantic import ValidationError
 
-from .contracts import ExecutionEnvelope, InlineFile, ServiceError, WorkerResult, canonical_bytes, digest
+from .contracts import (ExecutionBindingPins, ExecutionEnvelope, InlineFile, ServiceError,
+                        WorkerResult, canonical_bytes, digest)
 
 
 metadata = MetaData()
@@ -327,6 +329,18 @@ class Store:
                 or not all(isinstance(pins.get(k), str) and pins[k] for k in ("runtime_revision", "image_digest"))
                 or not re.fullmatch(r"sha256:[0-9a-f]{64}", pins["image_digest"])):
             raise ServiceError("invalid_execution_pins", 503)
+        if "execution_binding" in pins:
+            try:
+                binding = ExecutionBindingPins.model_validate(pins["execution_binding"])
+                if (not binding.matches_base(pins)
+                        or binding.profile != request.get("profile")
+                        or binding.profile_revision != request.get("profile_revision")):
+                    raise ValueError("Execution binding disagrees with submitted pins")
+            except (ValidationError, ValueError, TypeError):
+                raise ServiceError("invalid_execution_pins", 503) from None
+            # Persist the validated, explicit wire representation. Registry
+            # changes cannot alter this already accepted execution contract.
+            pins = {**pins, "execution_binding": binding.model_dump(mode="json")}
         seconds = request.get("timeout_seconds")
         if type(seconds) is not int or not 1 <= seconds <= 3600:
             raise ServiceError("invalid_timeout", 422)
@@ -497,6 +511,7 @@ class Store:
             engine=row["pins"]["engine"], profile=row["request"]["profile"],
             profile_revision=row["request"]["profile_revision"],
             runtime_revision=row["pins"]["runtime_revision"], image_digest=row["pins"]["image_digest"],
+            execution_binding=row["pins"].get("execution_binding"),
             deadline_at=float(row["deadline_at"]), lease_expires_at=float(row["lease_expires_at"]),
             task=row["request"]["task"], inputs=files)
 

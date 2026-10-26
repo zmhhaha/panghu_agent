@@ -70,10 +70,7 @@ class RemoteWorkerAdapter:
             c = self._json('GET', '/v1/capabilities')
             if c.get('ready') is not True or c.get('engine') != self.endpoint.engine:
                 return False
-            return policy is None or (c.get('profile') == policy.name
-                    and c.get('profile_revision') == policy.revision
-                    and c.get('runtime_revision') == policy.runtime_revision
-                    and c.get('image_digest') == policy.image_digest
+            return policy is None or (policy.matches(c)
                     and (not policy.supports_inputs or c.get('supports_inputs') is True))
         except ServiceError:
             return False

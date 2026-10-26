@@ -1,0 +1,294 @@
+"""Reviewed task implementations and content-addressed deployment bindings.
+
+This registry parses data only. It never imports configuration-selected modules,
+downloads skills or opens execution resources. Adding a domain contract requires
+an explicit reviewed implementation, not a new name for the text collector.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Literal, Mapping
+
+from pydantic import Field, field_validator, model_validator
+
+from .contracts import (ExecutionBindingPins, ProfilePolicy, ProfileRegistry,
+                        WireModel, digest, safe_name, validate_workspace_task)
+
+NAME = r'^[a-z][a-z0-9_.-]{0,79}$'
+REVISION = r'^[A-Za-z0-9_.-]{1,100}$'
+SHA256 = r'^[0-9a-f]{64}$'
+
+
+class _Record(WireModel):
+    @model_validator(mode='before')
+    @classmethod
+    def immutable_sequences(cls, value):
+        if isinstance(value, dict):
+            value = dict(value)
+            for key in ('required_tools', 'required_model_capabilities', 'resources',
+                        'tools', 'capabilities'):
+                if key in value and isinstance(value[key], list):
+                    value[key] = tuple(value[key])
+        return value
+
+
+def _unique(values):
+    if len(set(values)) != len(values):
+        raise ValueError('Duplicate capability')
+    return tuple(sorted(values))
+
+
+class TaskContract(_Record):
+    name: str = Field(pattern=NAME)
+    revision: str = Field(pattern=REVISION)
+    task_schema: Literal['workspace-text.v1']
+    output_schema: Literal['text-output.v1']
+    required_tools: tuple[Literal['read', 'write'], ...] = Field(min_length=2, max_length=2)
+    required_model_capabilities: tuple[Literal['text', 'tool_calls', 'vision'], ...] = Field(min_length=2, max_length=3)
+    max_timeout_seconds: int = Field(default=600, ge=1, le=3600)
+
+    @field_validator('required_tools', 'required_model_capabilities')
+    @classmethod
+    def unique_requirements(cls, values):
+        return _unique(values)
+
+    @model_validator(mode='after')
+    def reviewed_handler(self):
+        # The only implemented collector is deliberately not exposed under
+        # PPT/research names. Future handlers must implement both ends first.
+        if (self.name != 'workspace-task.v1' or set(self.required_tools) != {'read', 'write'}
+                or not {'text', 'tool_calls'} <= set(self.required_model_capabilities)):
+            raise ValueError('Task contract has no reviewed implementation')
+        return self
+
+    @property
+    def task_validator(self):
+        return validate_workspace_task
+
+
+class Resource(_Record):
+    name: str
+    sha256: str = Field(pattern=SHA256)
+
+    @field_validator('name')
+    @classmethod
+    def ordinary_resource(cls, value):
+        return safe_name(value)
+
+
+class CapabilityBundle(_Record):
+    name: str = Field(pattern=NAME)
+    revision: str = Field(pattern=REVISION)
+    resources: tuple[Resource, ...] = Field(min_length=1, max_length=32)
+    source: str = Field(min_length=1, max_length=300)
+    license: str = Field(pattern=r'^[A-Za-z0-9().+ -]{1,120}$')
+    required_tools: tuple[Literal['read', 'write'], ...] = Field(max_length=2)
+
+    @field_validator('source')
+    @classmethod
+    def ordinary_source(cls, value):
+        if any(ord(c) < 33 or ord(c) > 126 for c in value):
+            raise ValueError('Invalid bundle provenance')
+        return value
+
+    @field_validator('required_tools')
+    @classmethod
+    def unique_tools(cls, value):
+        return _unique(value)
+
+    @field_validator('resources')
+    @classmethod
+    def unique_resources(cls, values):
+        if len({r.name.casefold() for r in values}) != len(values):
+            raise ValueError('Duplicate resource identity')
+        return tuple(sorted(values, key=lambda r: r.name))
+
+
+class ToolEnvironment(_Record):
+    name: str = Field(pattern=NAME)
+    revision: str = Field(pattern=REVISION)
+    tools: tuple[Literal['read', 'write'], ...] = Field(min_length=2, max_length=2)
+    capabilities: tuple[Literal['text-output.v1'], ...] = Field(min_length=1, max_length=1)
+    image_digest: str = Field(pattern=r'^sha256:[0-9a-f]{64}$')
+    runtime_revision: str = Field(pattern=REVISION)
+
+    @field_validator('tools', 'capabilities')
+    @classmethod
+    def unique_capabilities(cls, values):
+        return _unique(values)
+
+
+class ResourceRef(_Record):
+    name: str = Field(pattern=NAME)
+    revision: str = Field(pattern=REVISION)
+
+
+class ModelPolicy(_Record):
+    revision: str = Field(pattern=REVISION)
+    api_mode: Literal['openai-responses']
+    provider: str = Field(pattern=r'^[A-Za-z0-9_.-]{1,80}$')
+    model: str = Field(pattern=r'^[A-Za-z0-9_./:-]{1,200}$')
+    capabilities: tuple[Literal['text', 'tool_calls', 'vision'], ...] = Field(min_length=1, max_length=3)
+
+    @field_validator('capabilities')
+    @classmethod
+    def unique_capabilities(cls, values):
+        return _unique(values)
+
+
+class AcceptanceRecord(_Record):
+    combination_sha256: str = Field(pattern=SHA256)
+    suite: Literal['workspace-contract.v1']
+    report_sha256: str = Field(pattern=SHA256)
+
+    @field_validator('report_sha256')
+    @classmethod
+    def nonplaceholder_report(cls, value):
+        if value == '0' * 64:
+            raise ValueError('An acceptance report reference is required')
+        return value
+
+
+class ExecutionBinding(_Record):
+    id: str = Field(pattern=NAME)
+    revision: str = Field(pattern=REVISION)
+    profile: str = Field(pattern=NAME)
+    profile_revision: str = Field(pattern=REVISION)
+    bundle: ResourceRef
+    tool_environment: ResourceRef
+    engine: Literal['pi', 'hermes']
+    adapter_revision: str = Field(pattern=REVISION)
+    model_policy: ModelPolicy
+    acceptance: AcceptanceRecord | None = None
+
+
+class Route(_Record):
+    profile: str = Field(pattern=NAME)
+    profile_revision: str = Field(pattern=REVISION)
+    binding_id: str = Field(pattern=NAME)
+    binding_revision: str = Field(pattern=REVISION)
+    enabled: bool = False
+
+
+def _parse(cls, value):
+    return value if isinstance(value, cls) else cls.model_validate(value)
+
+
+def _identity(contract, bundle, environment, binding):
+    c, b, e, x = (_parse(cls, value) for cls, value in
+                  ((TaskContract, contract), (CapabilityBundle, bundle),
+                   (ToolEnvironment, environment), (ExecutionBinding, binding)))
+    if ((x.profile, x.profile_revision) != (c.name, c.revision)
+            or (x.bundle.name, x.bundle.revision) != (b.name, b.revision)
+            or (x.tool_environment.name, x.tool_environment.revision) != (e.name, e.revision)
+            or set(e.tools) != set(c.required_tools)
+            or not set(b.required_tools) <= set(e.tools)
+            or c.output_schema not in e.capabilities
+            or not set(c.required_model_capabilities) <= set(x.model_policy.capabilities)):
+        raise ValueError('Incompatible execution combination')
+    return dict(profile=c.name, profile_revision=c.revision,
+        contract_sha256=digest(c.model_dump(mode='json')),
+        bundle_name=b.name, bundle_revision=b.revision, bundle_sha256=digest(b.model_dump(mode='json')),
+        tool_environment_name=e.name, tool_environment_revision=e.revision,
+        tool_environment_sha256=digest(e.model_dump(mode='json')),
+        engine=x.engine, runtime_revision=e.runtime_revision, image_digest=e.image_digest,
+        adapter_revision=x.adapter_revision, model_policy_revision=x.model_policy.revision,
+        model_policy_sha256=digest(x.model_policy.model_dump(mode='json')))
+
+
+def binding_fingerprint(contract, bundle, environment, binding):
+    """Offline candidate identity to bind an operator's acceptance report to."""
+    return digest(_identity(contract, bundle, environment, binding))
+
+
+def _index(cls, values, *, binding=False):
+    if type(values) not in (tuple, list) or len(values) > 100:
+        raise ValueError('Invalid bounded registry')
+    result = {}
+    for value in values:
+        record = _parse(cls, value)
+        key = (record.id if binding else record.name, record.revision)
+        if key in result:
+            raise ValueError('Duplicate registry identity')
+        result[key] = record
+    return MappingProxyType(result)
+
+
+@dataclass(frozen=True)
+class DeploymentRegistry:
+    _contracts: Mapping
+    _bundles: Mapping
+    _environments: Mapping
+    _bindings: Mapping
+    _profiles: ProfileRegistry
+    _fingerprints: Mapping
+
+    @classmethod
+    def from_config(cls, task_contracts, capability_bundles, tool_environments,
+                    execution_bindings, routes):
+        contracts = _index(TaskContract, task_contracts)
+        bundles = _index(CapabilityBundle, capability_bundles)
+        environments = _index(ToolEnvironment, tool_environments)
+        bindings = _index(ExecutionBinding, execution_bindings, binding=True)
+        fingerprints = {}
+        for key, binding in bindings.items():
+            try:
+                c = contracts[(binding.profile, binding.profile_revision)]
+                b = bundles[(binding.bundle.name, binding.bundle.revision)]
+                e = environments[(binding.tool_environment.name, binding.tool_environment.revision)]
+            except KeyError:
+                raise ValueError('Missing reviewed execution resource') from None
+            fingerprints[key] = binding_fingerprint(c, b, e, binding)
+            if (binding.acceptance is not None
+                    and binding.acceptance.combination_sha256 != fingerprints[key]):
+                raise ValueError('Stale combination acceptance record')
+        if type(routes) not in (list, tuple) or len(routes) > 100:
+            raise ValueError('Invalid bounded routes')
+        policies, seen = [], set()
+        for raw in routes:
+            route = _parse(Route, raw)
+            key = (route.profile, route.profile_revision)
+            binding = bindings.get((route.binding_id, route.binding_revision))
+            if (key in seen or binding is None or key not in contracts
+                    or key != (binding.profile, binding.profile_revision)):
+                raise ValueError('Missing or conflicting route')
+            if route.enabled and binding.acceptance is None:
+                raise ValueError('Enabled combination requires reviewed acceptance')
+            seen.add(key)
+            contract = contracts[key]
+            bundle = bundles[(binding.bundle.name, binding.bundle.revision)]
+            environment = environments[(binding.tool_environment.name, binding.tool_environment.revision)]
+            pins = ExecutionBindingPins.create(**_identity(contract, bundle, environment, binding),
+                binding_id=binding.id, binding_revision=binding.revision,
+                acceptance_sha256=digest(binding.acceptance.model_dump(mode='json')
+                                         if binding.acceptance else {'status': 'unreviewed'}))
+            policies.append(ProfilePolicy(contract.name, contract.revision, binding.engine,
+                environment.runtime_revision, environment.image_digest,
+                enabled=route.enabled, max_timeout_seconds=contract.max_timeout_seconds,
+                task_validator=contract.task_validator, supports_inputs=False, execution_binding=pins))
+        return cls(contracts, bundles, environments, bindings, ProfileRegistry(policies),
+                   MappingProxyType(fingerprints))
+
+    def profiles(self):
+        return self._profiles
+
+    def contract(self, name, revision):
+        return self._contracts.get((name, revision))
+
+    def bundle(self, name, revision):
+        return self._bundles.get((name, revision))
+
+    def environment(self, name, revision):
+        return self._environments.get((name, revision))
+
+    def binding(self, name, revision):
+        return self._bindings.get((name, revision))
+
+    def summary(self):
+        return dict(task_contracts=len(self._contracts), capability_bundles=len(self._bundles),
+                    tool_environments=len(self._environments), execution_bindings=len(self._bindings),
+                    routes=len(self._profiles.policies()),
+                    combinations=[dict(binding_id=k[0], binding_revision=k[1], combination_sha256=v,
+                                       approval_record_present=self._bindings[k].acceptance is not None)
+                                  for k, v in self._fingerprints.items()])

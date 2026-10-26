@@ -1,22 +1,100 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "callers": [
     {
       "tenant": "internal",
       "caller": "ppt-service",
-      "profiles": ["workspace-task.v1"],
+      "profiles": [
+        "workspace-task.v1"
+      ],
       "token_ref": "ppt-service"
     }
   ],
-  "profiles": [
+  "task_contracts": [
     {
       "name": "workspace-task.v1",
       "revision": "v1",
-      "engine": "hermes",
-      "runtime_revision": "replace-with-reviewed-runtime-revision",
-      "image_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-      "enabled": false,
+      "task_schema": "workspace-text.v1",
+      "output_schema": "text-output.v1",
+      "required_tools": [
+        "read",
+        "write"
+      ],
+      "required_model_capabilities": [
+        "text",
+        "tool_calls"
+      ],
       "max_timeout_seconds": 600
+    }
+  ],
+  "capability_bundles": [
+    {
+      "name": "workspace-instructions",
+      "revision": "workspace-text-v1",
+      "resources": [
+        {
+          "name": "CONTRACT.md",
+          "sha256": "2b1804a598232efdf77379a811232fa3381d74e384a89e3cc7c6c2a0eba67763"
+        }
+      ],
+      "source": "local-reviewed",
+      "license": "MIT",
+      "required_tools": [
+        "read",
+        "write"
+      ]
+    }
+  ],
+  "tool_environments": [
+    {
+      "name": "workspace-tools",
+      "revision": "tools-v1",
+      "tools": [
+        "read",
+        "write"
+      ],
+      "capabilities": [
+        "text-output.v1"
+      ],
+      "runtime_revision": "replace-with-reviewed-runtime-revision",
+      "image_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "execution_bindings": [
+    {
+      "id": "workspace-hermes",
+      "revision": "binding-v1",
+      "profile": "workspace-task.v1",
+      "profile_revision": "v1",
+      "bundle": {
+        "name": "workspace-instructions",
+        "revision": "workspace-text-v1"
+      },
+      "tool_environment": {
+        "name": "workspace-tools",
+        "revision": "tools-v1"
+      },
+      "engine": "hermes",
+      "adapter_revision": "hermes-adapter-v1",
+      "model_policy": {
+        "revision": "model-v1",
+        "provider": "task-proxy",
+        "model": "replace-with-reviewed-model-route",
+        "api_mode": "openai-responses",
+        "capabilities": [
+          "text",
+          "tool_calls"
+        ]
+      }
+    }
+  ],
+  "routes": [
+    {
+      "profile": "workspace-task.v1",
+      "profile_revision": "v1",
+      "binding_id": "workspace-hermes",
+      "binding_revision": "binding-v1",
+      "enabled": false
     }
   ],
   "workers": [

@@ -25,6 +25,7 @@ class Dispatcher:
         return ExecutionEnvelope(job_id=job['job_id'], attempt_id=job['attempt_id'], fence=job['fence'],
             engine=pins['engine'], profile=request['profile'], profile_revision=request['profile_revision'],
             runtime_revision=pins['runtime_revision'], image_digest=pins['image_digest'],
+            execution_binding=pins.get('execution_binding'),
             deadline_at=float(job['deadline_at']), lease_expires_at=float(job['lease_expires_at']),
             task=request['task'], inputs=inputs)
 

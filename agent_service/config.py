@@ -20,8 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from sqlalchemy.engine import make_url
 
 from .api import ApiSettings
-from .contracts import (Principal, ProfilePolicy, ProfileRegistry, ServiceError,
-                        validate_workspace_task)
+from .contracts import Principal, ProfileRegistry, ServiceError
 from .transport import WorkerEndpoint
 
 
@@ -83,7 +82,7 @@ class _Model(BaseModel):
 class _Caller(_Model):
     tenant: str = Field(min_length=1, max_length=128)
     caller: str = Field(min_length=1, max_length=128)
-    profiles: list[Literal['workspace-task.v1']] = Field(max_length=1)
+    profiles: list[str] = Field(max_length=100)
     token_ref: str = Field(pattern=r'^[a-z][a-z0-9_.-]{0,63}$')
 
     @field_validator('tenant', 'caller')
@@ -93,15 +92,13 @@ class _Caller(_Model):
             raise ValueError('Invalid identity')
         return value
 
-
-class _Profile(_Model):
-    name: Literal['workspace-task.v1']
-    revision: str = Field(pattern=r'^[A-Za-z0-9_.-]{1,100}$')
-    engine: Literal['pi', 'hermes']
-    runtime_revision: str = Field(pattern=r'^[A-Za-z0-9_.-]{1,100}$')
-    image_digest: str = Field(pattern=r'^sha256:[0-9a-f]{64}$')
-    enabled: bool = False
-    max_timeout_seconds: int = Field(default=600, ge=1, le=3600)
+    @field_validator('profiles')
+    @classmethod
+    def registered_contract_names(cls, values):
+        if (len(set(values)) != len(values)
+                or any(not re.fullmatch(r'[a-z][a-z0-9_.-]{0,79}', value) for value in values)):
+            raise ValueError('Invalid or duplicate task contract name')
+        return values
 
 
 class _Worker(_Model):
@@ -207,9 +204,13 @@ class _Store(_Model):
 
 
 class _Public(_Model):
-    schema_version: Literal[1]
+    schema_version: Literal[2]
     callers: list[_Caller] = Field(min_length=1, max_length=100)
-    profiles: list[_Profile] = Field(default_factory=list, max_length=100)
+    task_contracts: list[dict] = Field(default_factory=list, max_length=100)
+    capability_bundles: list[dict] = Field(default_factory=list, max_length=100)
+    tool_environments: list[dict] = Field(default_factory=list, max_length=100)
+    execution_bindings: list[dict] = Field(default_factory=list, max_length=100)
+    routes: list[dict] = Field(default_factory=list, max_length=100)
     workers: list[_Worker] = Field(default_factory=list, max_length=2)
     kubernetes_workers: list[_KubernetesWorker] = Field(default_factory=list, max_length=2)
     api: _Api = Field(default_factory=_Api)
@@ -225,17 +226,12 @@ class _Public(_Model):
 
     @model_validator(mode='after')
     def unique_routes(self):
-        profiles = [(p.name, p.revision) for p in self.profiles]
         engines = [w.engine for w in self.workers] + [w.engine for w in self.kubernetes_workers]
         pools = [w.pool_id for w in self.kubernetes_workers]
         caller_keys = [c.token_ref for c in self.callers]
-        if (len(set(profiles)) != len(profiles) or len(set(engines)) != len(engines)
+        if (len(set(engines)) != len(engines)
                 or len(set(caller_keys)) != len(caller_keys) or len(set(pools)) != len(pools)):
             raise ValueError('Duplicate configured identity or route')
-        for pool in self.kubernetes_workers:
-            matches = [p for p in self.profiles if p.engine == pool.engine]
-            if len(matches) != 1 or matches[0].image_digest != pool.image.rsplit('@', 1)[1]:
-                raise ValueError('A Worker pool requires exactly one matching pinned profile')
         return self
 
 
@@ -258,6 +254,7 @@ class ServiceConfiguration:
     api_settings: ApiSettings = field(repr=False)
     registry: ProfileRegistry = field(repr=False)
     worker_endpoints: tuple[WorkerEndpoint, ...] = field(repr=False)
+    deployment_registry: object = field(default=None, repr=False)
     kubernetes_pools: tuple = field(default=(), repr=False)
     kubernetes_credentials: tuple[KubernetesWorkerCredentials, ...] = field(default=(), repr=False)
     api_host: str = '127.0.0.1'
@@ -314,10 +311,11 @@ class ServiceConfiguration:
         mode = ('mixed' if self.worker_endpoints and self.kubernetes_pools else
                 'kubernetes_per_attempt' if self.kubernetes_pools else
                 'external_single_capsule' if self.worker_endpoints else 'unconfigured')
-        return {'status': 'configuration_valid', 'schema_version': 1,
+        return {'status': 'configuration_valid', 'schema_version': 2,
                 'database_kind': self.database_kind,
                 'caller_count': len(self.api_settings.principals),
-                'worker_engines': engines, 'worker_provisioning': mode, 'model_requests': 0}
+                'worker_engines': engines, 'worker_provisioning': mode, 'model_requests': 0,
+                'catalog': self.deployment_registry.summary() if self.deployment_registry is not None else None}
 
 
 def load_configuration(config_path, secrets_path, *, allow_sqlite=False) -> ServiceConfiguration:
@@ -331,6 +329,21 @@ def load_configuration(config_path, secrets_path, *, allow_sqlite=False) -> Serv
     try:
         public = _Public.model_validate(public_wire)
     except (ValueError, TypeError, RecursionError):
+        raise ConfigurationError() from None
+    try:
+        from .registry import DeploymentRegistry
+        deployment_registry = DeploymentRegistry.from_config(
+            public.task_contracts, public.capability_bundles, public.tool_environments,
+            public.execution_bindings, public.routes)
+        registry = deployment_registry.profiles()
+        registered_names = {contract['name'] for contract in public.task_contracts}
+        if any(not set(caller.profiles) <= registered_names for caller in public.callers):
+            raise ValueError('Caller scope names an unregistered task contract')
+        for pool in public.kubernetes_workers:
+            matches = [policy for policy in registry.policies() if policy.engine == pool.engine]
+            if len(matches) != 1 or matches[0].image_digest != pool.image.rsplit('@', 1)[1]:
+                raise ValueError('A Worker pool requires exactly one matching pinned routed profile')
+    except (ValueError, TypeError, KeyError, RecursionError):
         raise ConfigurationError() from None
     try:
         secrets = _Secrets.model_validate(secret_wire)
@@ -385,10 +398,6 @@ def load_configuration(config_path, secrets_path, *, allow_sqlite=False) -> Serv
     except (ValueError, TypeError):
         raise ConfigurationError('worker_configuration_invalid') from None
     try:
-        registry = ProfileRegistry(ProfilePolicy(profile.name, profile.revision, profile.engine,
-                                   profile.runtime_revision, profile.image_digest,
-                                   enabled=profile.enabled, max_timeout_seconds=profile.max_timeout_seconds,
-                                   task_validator=validate_workspace_task) for profile in public.profiles)
         api_settings = ApiSettings(principals, public.api.max_request_bytes, public.api.max_input_bytes)
     except (ValueError, TypeError):
         raise ConfigurationError() from None
@@ -397,8 +406,7 @@ def load_configuration(config_path, secrets_path, *, allow_sqlite=False) -> Serv
         try:
             from .kubernetes_provider import KubernetesPool
             pools = tuple(KubernetesPool(pool_id=worker.pool_id,
-                policy=next(registry.policy(profile.name, profile.revision) for profile in public.profiles
-                            if profile.engine == worker.engine),
+                policy=next(policy for policy in registry.policies() if policy.engine == worker.engine),
                 namespace=worker.namespace, image=worker.image, host_config_map=worker.host_config_map,
                 pod_cidrs=tuple(worker.pod_cidrs), enabled=worker.enabled, port=worker.port,
                 uid_start=worker.uid_start, uid_count=worker.uid_count)
@@ -411,7 +419,8 @@ def load_configuration(config_path, secrets_path, *, allow_sqlite=False) -> Serv
         except (ValueError, TypeError, StopIteration):
             raise ConfigurationError('worker_configuration_invalid') from None
     return ServiceConfiguration(database_url=database_url, api_settings=api_settings, registry=registry,
-        worker_endpoints=endpoints, kubernetes_pools=pools, kubernetes_credentials=kube_credentials,
+        worker_endpoints=endpoints, deployment_registry=deployment_registry,
+        kubernetes_pools=pools, kubernetes_credentials=kube_credentials,
         api_host=public.api.host, api_port=public.api.port,
         poll_seconds=public.dispatcher.poll_seconds, lease_seconds=public.dispatcher.lease_seconds,
         max_events=public.store.max_events, max_queue=public.store.max_queue,

@@ -1,6 +1,7 @@
 # PPT 与科研的通用 Agent 服务覆盖情况
 
-2026-10-26，基于 `codex/agent-execution-service` 的 `cf35db2` 只读核对。
+2026-10-26，最初基于 `codex/agent-execution-service` 的 `cf35db2` 核对，
+现已补充独立注册与绑定的实现状态，见 [本轮记录](REGISTRY_BINDINGS.md)。
 本文件区分代码已经实现的接口与尚待实现的业务能力。没有上线通用服务、调用模型或
 修改现有 PPT/科研服务。权威规格仍为映射项目中的 OpenSpec change
 `add-pi-first-agent-execution-service`。
@@ -8,8 +9,9 @@
 ## 当前结论
 
 通用服务已实现任务控制底座与 Pi/Hermes 驱动合同，但**尚不能替换现有 PPT 或科研
-完整执行链**。现阶段配置加载器把全部 profile 绑定到文本任务校验器，Worker 仅接
-prompt、只输出文本 JSON。不能只改引擎名称或提供 API Key 就获得现有业务能力。
+完整执行链**。配置现已分开注册合同、能力包、环境和执行绑定，但可执行实现仍只
+有文本任务，Worker 仅接 prompt、只输出文本 JSON。不能只改引擎名称或提供 API Key
+就获得现有业务能力。
 
 ## PPT 实际使用的 Hermes 接口
 
@@ -40,8 +42,8 @@ HTTP 路由本身提供。
 | `GET /v1/jobs/{id}/artifacts` | 候选产物索引；当前 Worker 只导出文本 JSON |
 | `GET /v1/artifacts/{id}/content` | 有鉴权的不可变文件下载，尚非完整业务项目交接 |
 
-实现见 `agent_service/api.py:237`，当前文本输出限制见 `worker_api.py:284`、`:342`，
-profile 校验器固定绑定见 `config.py:386`。服务没有新增原生 session resume/fork/steer
+实现见 `agent_service/api.py`，当前文本输出限制见 `worker_api.py`；合同与能力包
+注册及可信实现选择见 `registry.py`。服务没有新增原生 session resume/fork/steer
 接口，不接受业务请求指定命令、镜像、模型凭据或宿主路径。
 
 ## 完整业务能力缺口

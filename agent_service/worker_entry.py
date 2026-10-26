@@ -37,6 +37,9 @@ NODE = '/usr/local/bin/node'
 PI_CLI = '/opt/pi/node_modules/@mariozechner/pi-coding-agent/dist/cli.js'
 PROFILE_BUNDLE_REVISION = 'workspace-text-v1'
 RESOURCE_ROOT = Path(__file__).with_name('resources') / PROFILE_BUNDLE_REVISION
+PI_ADAPTER_REVISION = 'pi-adapter-v1'
+CATALOG_KEYS = frozenset({'task_contracts', 'capability_bundles', 'tool_environments',
+                          'execution_bindings', 'routes'})
 
 
 class WorkerConfigError(RuntimeError):
@@ -87,6 +90,42 @@ class HostConfig(WireModel):
     engine: Literal['pi', 'hermes']
     profile: HostProfile
     model: ProxyModel | None = None
+    execution_catalog: dict | None = None
+
+    @field_validator('execution_catalog')
+    @classmethod
+    def fixed_catalog(cls, value):
+        if value is not None and set(value) != CATALOG_KEYS:
+            raise ValueError('A complete fixed execution catalog is required')
+        return value
+
+
+def _host_registry(config: HostConfig):
+    from .registry import DeploymentRegistry
+    try:
+        return DeploymentRegistry.from_config(**config.execution_catalog)
+    except (ValueError, TypeError, KeyError, RecursionError):
+        raise WorkerConfigError() from None
+
+
+def host_policy(config: HostConfig) -> ProfilePolicy:
+    """Resolve only the operator-mounted catalog and check the host's identity.
+
+    The legacy no-catalog form is retained for existing offline capsule fixtures.
+    It has no binding identity and cannot admit a catalog-bound execution.
+    """
+    p = config.profile
+    if config.execution_catalog is None:
+        return ProfilePolicy(p.name, p.revision, config.engine, p.runtime_revision,
+            p.image_digest, enabled=p.enabled, max_timeout_seconds=p.max_timeout_seconds,
+            task_validator=validate_workspace_task)
+    policy = _host_registry(config).profiles().policy(p.name, p.revision)
+    if (policy is None or policy.execution_binding is None
+            or policy.engine != config.engine or policy.runtime_revision != p.runtime_revision
+            or policy.image_digest != p.image_digest or policy.enabled != p.enabled
+            or policy.max_timeout_seconds != p.max_timeout_seconds or policy.supports_inputs):
+        raise WorkerConfigError()
+    return policy
 
 
 class HostSecrets(WireModel):
@@ -128,6 +167,7 @@ class CapsuleScope(WireModel):
     attempt_id: str
     pod_uid: str
     request_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    execution_binding_sha256: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
     # This default exists only for direct offline fixture construction. A real
     # capsule must receive an explicitly reserved UID via from_env below.
     agent_uid: int = Field(default=AGENT_UID, strict=True, ge=1, le=2**31 - 1)
@@ -142,18 +182,23 @@ class CapsuleScope(WireModel):
     @classmethod
     def from_env(cls, config: HostConfig, env=None):
         env = os.environ if env is None else env
+        policy = host_policy(config)
         expected = {'AGENT_ENGINE': config.engine, 'AGENT_PROFILE_NAME': config.profile.name,
                     'AGENT_PROFILE_REVISION': config.profile.revision,
                     'AGENT_RUNTIME_REVISION': config.profile.runtime_revision,
                     'AGENT_RUNTIME_IMAGE_DIGEST': config.profile.image_digest}
         if any(env.get(k) != v for k, v in expected.items()):
             raise WorkerConfigError()
+        binding_hash = env.get('AGENT_EXECUTION_BINDING_SHA256')
+        if binding_hash != (policy.execution_binding.sha256 if policy.execution_binding else None):
+            raise WorkerConfigError()
         runtime_uid = env.get('AGENT_RUNTIME_UID')
         if (type(runtime_uid) is not str or not re.fullmatch(r'[1-9][0-9]{0,9}', runtime_uid)
                 or not 65536 <= int(runtime_uid) <= 2**31 - 1):
             raise WorkerConfigError()
         return cls(attempt_id=env.get('AGENT_ATTEMPT_ID'), pod_uid=env.get('AGENT_POD_UID'),
-                   request_sha256=env.get('AGENT_REQUEST_SHA256'), agent_uid=int(runtime_uid))
+                   request_sha256=env.get('AGENT_REQUEST_SHA256'), agent_uid=int(runtime_uid),
+                   execution_binding_sha256=binding_hash)
 
 
 def _read_operator_json(path: Path, *, private=False, max_bytes=65536):
@@ -202,15 +247,20 @@ def accepted_host(config: HostConfig, path=Path('/etc/agent-worker/acceptance.js
     acceptance records and never accepts one in a Job or Worker request.
     """
     try:
+        policy = host_policy(config)
         value = _read_operator_json(path)
         required = {'schema_version', 'engine', 'profile', 'profile_revision', 'runtime_revision',
                     'image_digest', 'model_api', 'checks', 'evidence_sha256'}
+        if policy.execution_binding is not None:
+            required.add('execution_binding_sha256')
         if set(value) != required:
             return False
         expected = dict(schema_version=1, engine='pi', profile=config.profile.name,
                         profile_revision=config.profile.revision,
                         runtime_revision=config.profile.runtime_revision,
                         image_digest=config.profile.image_digest, model_api='openai-responses')
+        if policy.execution_binding is not None:
+            expected['execution_binding_sha256'] = policy.execution_binding.sha256
         if any(type(value.get(k)) is not type(v) or value[k] != v for k, v in expected.items()):
             return False
         checks = value['checks']
@@ -244,24 +294,74 @@ class _AcceptedWorkspaceProfile(WorkspaceTaskProfile):
     production_ready = True
 
 
+def _image_resources():
+    """Measure the shipped text bundle; registry metadata never chooses paths."""
+    resource, manifest = RESOURCE_ROOT / 'CONTRACT.md', RESOURCE_ROOT / 'manifest.json'
+    try:
+        for path in (resource, manifest):
+            info = path.lstat()
+            if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                    or getattr(info, 'st_file_attributes', 0) & 0x400
+                    or not 0 < info.st_size <= 65536):
+                raise WorkerConfigError()
+        raw = manifest.read_bytes()
+        def pairs(items):
+            value = {}
+            for key, item in items:
+                if key in value:
+                    raise WorkerConfigError()
+                value[key] = item
+            return value
+        descriptor = json.loads(raw, object_pairs_hook=pairs)
+        resource_hash = hashlib.sha256(resource.read_bytes()).hexdigest()
+        if descriptor != {'bundle_revision': PROFILE_BUNDLE_REVISION,
+                          'local_files': [{'path': 'CONTRACT.md', 'sha256': resource_hash}]}:
+            raise WorkerConfigError()
+        return resource, manifest, resource_hash, hashlib.sha256(raw).hexdigest()
+    except (OSError, ValueError, TypeError, RecursionError):
+        raise WorkerConfigError() from None
+
+
+def _check_bound_pi(config, policy, resource_hash):
+    if policy.execution_binding is None:
+        return
+    pins = policy.execution_binding
+    registry = _host_registry(config)
+    contract = registry.contract(policy.name, policy.revision)
+    bundle = registry.bundle(pins.bundle_name, pins.bundle_revision)
+    environment = registry.environment(pins.tool_environment_name, pins.tool_environment_revision)
+    binding = registry.binding(pins.binding_id, pins.binding_revision)
+    if (contract is None or bundle is None or environment is None or binding is None
+            or contract.task_schema != 'workspace-text.v1' or contract.output_schema != 'text-output.v1'
+            or set(contract.required_tools) != {'read', 'write'}
+            or set(contract.required_model_capabilities) != {'text', 'tool_calls'}
+            or bundle.revision != PROFILE_BUNDLE_REVISION
+            or [item.model_dump(mode='json') for item in bundle.resources] !=
+                [{'name': 'CONTRACT.md', 'sha256': resource_hash}]
+            or set(environment.tools) != {'read', 'write'}
+            or set(environment.capabilities) != {'text-output.v1'}
+            or binding.engine != 'pi' or binding.adapter_revision != PI_ADAPTER_REVISION
+            or binding.model_policy.api_mode != 'openai-responses'
+            or set(binding.model_policy.capabilities) != {'text', 'tool_calls'}
+            or config.model is None or binding.model_policy.provider != config.model.provider
+            or binding.model_policy.model != config.model.model):
+        raise WorkerConfigError()
+
+
 def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScope,
                     stop_controller, *, acceptance=False, now=time.time):
+    policy = host_policy(config)
     grant_ok = (secrets.model_proxy_token is not None
                 and secrets.model_proxy_attempt_id == scope.attempt_id
                 and secrets.model_proxy_request_sha256 == scope.request_sha256
                 and now() < secrets.model_proxy_expires_at <= now() + 600)
     if (config.engine != 'pi' or not config.profile.enabled or config.model is None
-            or not acceptance or not grant_ok):
+            or not acceptance or not grant_ok
+            or scope.execution_binding_sha256 !=
+                (policy.execution_binding.sha256 if policy.execution_binding else None)):
         return _UnavailableDriver(config.engine)
-    resource = RESOURCE_ROOT / 'CONTRACT.md'
-    manifest = RESOURCE_ROOT / 'manifest.json'
-    # Fixed image-owned resources, never caller-selected paths or content.
-    expected_manifest = json.loads(manifest.read_text(encoding='utf-8'))
-    if (expected_manifest.get('bundle_revision') != PROFILE_BUNDLE_REVISION
-            or len(expected_manifest.get('local_files', [])) != 1
-            or expected_manifest['local_files'][0]['path'] != 'CONTRACT.md'):
-        raise WorkerConfigError()
-    resource_hash = expected_manifest['local_files'][0]['sha256']
+    resource, manifest, resource_hash, manifest_hash = _image_resources()
+    _check_bound_pi(config, policy, resource_hash)
     profile = _AcceptedWorkspaceProfile(runtime_revision=config.profile.runtime_revision,
                                          skill_bundle_revision=PROFILE_BUNDLE_REVISION)
     settings = RuntimeSettings(command=(NODE, PI_CLI), node_command=(NODE,),
@@ -270,7 +370,7 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
         model_env={'AGENT_MODEL_API_KEY': secrets.model_proxy_token.get_secret_value()},
         runtime_revision=config.profile.runtime_revision, skill_bundle_revision=PROFILE_BUNDLE_REVISION,
         image_digest=config.profile.image_digest, skill_paths=(resource,), skill_hashes=(resource_hash,),
-        bundle_manifest=manifest, bundle_manifest_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        bundle_manifest=manifest, bundle_manifest_sha256=manifest_hash,
         capability_verified=True, model_verified=True, isolation_verified=True,
         control_dir=CONTROL_ROOT, run_uid_start=scope.agent_uid, run_gid=scope.agent_uid,
         # Projected Secret directories are traversable; the protected file,
@@ -288,6 +388,9 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
 class ScopedWorkerHost(WorkerHost):
     def __init__(self, *args, scope, stop_controller, proxy_expires_at=None, **kwargs):
         super().__init__(*args, **kwargs)
+        if scope.execution_binding_sha256 != (self.policy.execution_binding.sha256
+                                               if self.policy.execution_binding else None):
+            raise WorkerConfigError()
         self.scope, self.stop_controller = scope, stop_controller
         self.proxy_expires_at = proxy_expires_at
 
@@ -322,6 +425,7 @@ class ScopedWorkerHost(WorkerHost):
 
 
 def assemble_app(config: HostConfig, secrets: HostSecrets, scope: CapsuleScope):
+    policy = host_policy(config)
     private_kernel_scope()
     # Kubernetes emptyDir mounts replace the image directory's permissions.
     # Establish the private root-owned control boundary before either journal
@@ -343,10 +447,6 @@ def assemble_app(config: HostConfig, secrets: HostSecrets, scope: CapsuleScope):
     stopper = LinuxUidStopController(CONTROL_ROOT, scope.attempt_id, scope.pod_uid, scope.request_sha256,
                                     agent_uid=scope.agent_uid)
     driver = build_pi_driver(config, secrets, scope, stopper, acceptance=accepted_host(config))
-    policy = ProfilePolicy(config.profile.name, config.profile.revision, config.engine,
-        config.profile.runtime_revision, config.profile.image_digest,
-        enabled=config.profile.enabled, max_timeout_seconds=config.profile.max_timeout_seconds,
-        task_validator=validate_workspace_task)
     host = ScopedWorkerHost(policy, driver, CONTROL_ROOT, WORKSPACE_ROOT,
         bytes.fromhex(secrets.receipt_key_hex.get_secret_value()), scope=scope, stop_controller=stopper,
         proxy_expires_at=secrets.model_proxy_expires_at)

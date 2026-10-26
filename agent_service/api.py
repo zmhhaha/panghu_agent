@@ -24,7 +24,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.requests import ClientDisconnect
 
-from .contracts import (MAX_INPUT_BYTES, JobRequest, Principal, ProfileRegistry,
+from .contracts import (MAX_INPUT_BYTES, ExecutionBindingPins, JobRequest, Principal, ProfileRegistry,
                         ServiceError, safe_name)
 
 
@@ -92,11 +92,22 @@ def _usage(value):
 def public_job(job: dict) -> dict:
     outcome = job.get('outcome') or {}
     pins = job.get('pins') or {}
+    visible_pins = {k: pins[k] for k in ('profile', 'profile_revision', 'engine',
+                                       'runtime_revision', 'image_digest') if k in pins}
+    if 'execution_binding' in pins:
+        try:
+            binding = ExecutionBindingPins.model_validate(pins['execution_binding'])
+            if not binding.matches_base(pins):
+                raise ValueError('Execution binding disagrees with stored pins')
+        except (ValidationError, ValueError, TypeError):
+            raise ServiceError('invalid_execution_pins', 503) from None
+        # The strict metadata model excludes credentials and arbitrary nested
+        # configuration; the business caller receives every pinned identifier.
+        visible_pins['execution_binding'] = binding.model_dump(mode='json')
     return {
         'api_version': '1', 'job_id': job.get('job_id', job.get('id')),
         'state': job['state'],
-        'pins': {k: pins[k] for k in ('profile', 'profile_revision', 'engine',
-                                     'runtime_revision', 'image_digest') if k in pins},
+        'pins': visible_pins,
         'business_ref': job['request']['business_ref'],
         'created_at': job['created_at'], 'deadline_at': job['deadline_at'],
         'event_cursor': job.get('event_cursor', 0),

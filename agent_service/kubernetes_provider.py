@@ -113,7 +113,7 @@ class KubernetesWorkerAdapter:
             return False
 
     def _ensure_host_config(self):
-        from .worker_entry import HostConfig
+        from .worker_entry import HostConfig, WorkerConfigError, host_policy
         import json
         value = self._get('configmaps', self.pool.host_config_map)
         try:
@@ -127,19 +127,19 @@ class KubernetesWorkerAdapter:
                         raise ValueError()
                     result[key] = item
                 return result
-            config = HostConfig.model_validate(json.loads(raw, object_pairs_hook=pairs))
+            config = HostConfig.model_validate(json.loads(raw, object_pairs_hook=pairs,
+                parse_constant=lambda _: (_ for _ in ()).throw(ValueError())))
+            actual = host_policy(config)
             p = self.pool.policy
-            if (config.engine != p.engine or config.profile.name != p.name
-                    or config.profile.revision != p.revision or config.profile.runtime_revision != p.runtime_revision
-                    or config.profile.image_digest != p.image_digest or config.profile.enabled != p.enabled
-                    or config.profile.max_timeout_seconds != p.max_timeout_seconds):
+            if (actual.pins() != p.pins() or actual.enabled != p.enabled
+                    or actual.max_timeout_seconds != p.max_timeout_seconds
+                    or actual.supports_inputs != p.supports_inputs):
                 raise ValueError()
-        except (ValueError, TypeError, KeyError):
+        except (ValueError, TypeError, KeyError, RecursionError, WorkerConfigError):
             raise ServiceError('worker_host_config_invalid', 503) from None
 
     def _manifest(self, envelope):
-        if (any(getattr(envelope, k) != v for k, v in self.pool.policy.pins().items())
-                or envelope.inputs):
+        if not self.pool.policy.matches(envelope) or envelope.inputs:
             raise ServiceError('execution_pins_mismatch', 422)
         attempt = str(UUID(envelope.attempt_id))
         if self.pool.uid_start is None or envelope.fence > self.pool.uid_count:
@@ -157,6 +157,9 @@ class KubernetesWorkerAdapter:
             'AGENT_PROFILE_NAME': envelope.profile, 'AGENT_PROFILE_REVISION': envelope.profile_revision,
             'AGENT_RUNTIME_REVISION': envelope.runtime_revision,
             'AGENT_RUNTIME_UID': str(runtime_uid)}.items()]
+        if envelope.execution_binding is not None:
+            env.append({'name': 'AGENT_EXECUTION_BINDING_SHA256',
+                        'value': envelope.execution_binding.sha256})
         env.append({'name': 'AGENT_POD_UID', 'valueFrom': {'fieldRef': {'fieldPath': 'metadata.uid'}}})
         pod = {'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {
             'name': name, 'namespace': self.pool.namespace, 'labels': labels,

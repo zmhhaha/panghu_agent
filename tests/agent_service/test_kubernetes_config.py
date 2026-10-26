@@ -10,6 +10,7 @@ import pytest
 
 from agent_service import __main__ as cli
 from agent_service.config import ConfigurationError, load_configuration
+from registry_fixtures import make_catalog
 
 
 CALLER_TOKEN = 'offline-caller-token-00000000000000000'
@@ -21,10 +22,8 @@ IMAGE_DIGEST = 'sha256:' + 'a' * 64
 
 
 def public():
-    return {'schema_version': 1,
+    return {**make_catalog(image_digest=IMAGE_DIGEST, runtime_revision='r1'),
         'callers': [{'tenant': 'internal', 'caller': 'ppt', 'profiles': ['workspace-task.v1'], 'token_ref': 'ppt'}],
-        'profiles': [{'name': 'workspace-task.v1', 'revision': 'v1', 'engine': 'pi',
-                      'runtime_revision': 'r1', 'image_digest': IMAGE_DIGEST}],
         'kubernetes_workers': [{'pool_id': 'pi-workspace', 'engine': 'pi', 'namespace': 'agent-workers',
             'image': 'registry.internal:5000/agent-worker-pi@' + IMAGE_DIGEST,
             'host_config_map': 'agent-pi-host', 'pod_cidrs': ['10.244.0.0/16'],
@@ -113,10 +112,10 @@ def test_unbounded_or_unreserved_uid_allocation_is_rejected(tmp_path, start, cou
     lambda cfg: cfg['kubernetes_workers'].append(deepcopy(cfg['kubernetes_workers'][0])),
     lambda cfg: cfg.update(workers=[{'engine': 'pi', 'base_url': 'http://worker.internal',
                                      'token_ref': 'external', 'receipt_key_ref': 'pi-pool'}]),
-    lambda cfg: cfg['profiles'].append(dict(cfg['profiles'][0], revision='v2')),
-    lambda cfg: cfg.update(profiles=[]),
-    lambda cfg: cfg['profiles'][0].update(engine='hermes'),
-    lambda cfg: cfg['profiles'][0].update(image_digest='sha256:' + 'b' * 64),
+    lambda cfg: cfg['routes'].append(dict(cfg['routes'][0], profile_revision='v2')),
+    lambda cfg: cfg.update(routes=[]),
+    lambda cfg: cfg['execution_bindings'][0].update(engine='hermes'),
+    lambda cfg: cfg['tool_environments'][0].update(image_digest='sha256:' + 'b' * 64),
     lambda cfg: cfg['kubernetes_workers'][0].update(image='registry.internal/agent-worker:latest'),
     lambda cfg: cfg['kubernetes_workers'][0].update(image='https://registry.internal/agent@' + IMAGE_DIGEST),
     lambda cfg: cfg['kubernetes_workers'][0].update(image='registry.internal:99999/agent@' + IMAGE_DIGEST),
@@ -163,7 +162,11 @@ def test_missing_master_secret_has_fixed_error_without_value_echo(tmp_path):
 
 def test_two_kubernetes_engines_cannot_share_a_pool_id(tmp_path):
     cfg = public()
-    cfg['profiles'].append(dict(cfg['profiles'][0], engine='hermes', revision='v2'))
+    other = make_catalog('hermes', revision='v2', runtime_revision='r1')
+    # The second contract deliberately reuses the same reviewed bundle/environment.
+    cfg['task_contracts'] += other['task_contracts']
+    cfg['execution_bindings'] += other['execution_bindings']
+    cfg['routes'] += other['routes']
     cfg['kubernetes_workers'].append(dict(cfg['kubernetes_workers'][0], engine='hermes'))
     with pytest.raises(ConfigurationError):
         load_configuration(*files(tmp_path, cfg))
@@ -177,7 +180,7 @@ def test_check_is_offline_and_emits_only_public_summary(tmp_path, monkeypatch, c
     monkeypatch.setattr(kubernetes_provider, 'KubernetesWorkerAdapter', forbidden)
     monkeypatch.setattr(store, 'Store', forbidden)
     enabled = public()
-    enabled['profiles'][0]['enabled'] = True
+    enabled.update(make_catalog(enabled=True, image_digest=IMAGE_DIGEST, runtime_revision='r1'))
     enabled['kubernetes_workers'][0].update(enabled=True, uid_start=1000000)
     cfg, secret = files(tmp_path, enabled)
     assert cli.main(['check', '--config', str(cfg), '--secrets', str(secret)]) == 0

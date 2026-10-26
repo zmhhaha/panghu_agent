@@ -180,7 +180,7 @@ class WorkerHost:
                 return self.status(envelope.attempt_id)
             if not self.capabilities()['ready']:
                 raise ServiceError('worker_not_ready', 503)
-            if (any(getattr(envelope, k) != v for k, v in self.policy.pins().items())
+            if (not self.policy.matches(envelope)
                     or self.driver.engine != envelope.engine):
                 raise ServiceError('execution_pins_mismatch', 422)
             if envelope.deadline_at <= self.clock() or envelope.lease_expires_at <= self.clock():

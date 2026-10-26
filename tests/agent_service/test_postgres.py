@@ -16,7 +16,8 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
-from agent_service.contracts import ExecutionEnvelope, InlineFile, ServiceError, WorkerResult, sign_receipt
+from agent_service.contracts import (ExecutionBindingPins, ExecutionEnvelope, InlineFile,
+                                     ServiceError, WorkerResult, sign_receipt)
 from agent_service.store import Store
 
 
@@ -37,6 +38,37 @@ def _request(**changes):
 def _pins(engine="pi"):
     return {"profile": "workspace-task.v1", "profile_revision": "r1", "engine": engine,
             "runtime_revision": "fixture-r1", "image_digest": "sha256:" + "a" * 64}
+
+
+def test_binding_is_durable_and_original_request_digest_survives_route_change(pg_store, pg_url):
+    store, clock = pg_store
+    base = _pins()
+    binding = ExecutionBindingPins.create(**base, binding_id='workspace-pi', binding_revision='r1',
+        contract_sha256='1' * 64, bundle_name='workspace-text', bundle_revision='r1', bundle_sha256='2' * 64,
+        tool_environment_name='text-tools', tool_environment_revision='r1', tool_environment_sha256='3' * 64,
+        adapter_revision='pi-v1', model_policy_revision='model-v1', model_policy_sha256='4' * 64,
+        acceptance_sha256='5' * 64)
+    original, created = store.submit('fixture-tenant', 'ppt', 'binding-once', _request(),
+                                    {**base, 'execution_binding': binding.model_dump(mode='json')})
+    assert created
+    peer = Store(pg_url, clock=clock)
+    try:
+        alternate = {**_pins('hermes')}
+        replay, created = peer.submit('fixture-tenant', 'ppt', 'binding-once', _request(), alternate)
+        assert created is False and replay['id'] == original['id']
+        assert replay['pins']['execution_binding'] == binding.model_dump(mode='json')
+        claim = peer.claim()
+        # Use the public dispatcher construction, then compare against Store's
+        # own authoritative envelope when reserving a resource for the attempt.
+        from agent_service.dispatcher import Dispatcher
+        envelope = Dispatcher(peer, {})._envelope(claim)
+        assert envelope.execution_binding == binding and envelope.engine == 'pi'
+        allocation = peer.reserve_worker(envelope, pool_id='fixture-pool',
+            namespace='agent-workers', pod_name='agent-' + envelope.attempt_id,
+            intent_sha256='6' * 64, agent_uid=90001)
+        assert allocation['request_sha256'] == envelope.request_sha256
+    finally:
+        peer.close()
 
 
 def _submit(store, key="one", **changes):

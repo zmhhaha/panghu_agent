@@ -15,6 +15,7 @@ import pytest
 from agent_service import __main__ as cli
 from agent_service.config import ConfigurationError, load_configuration
 from agent_service.contracts import JobRequest, ServiceError
+from registry_fixtures import make_catalog
 
 
 DATABASE_SENTINEL = 'postgresql+psycopg://agent:private-database-password@db.invalid/agent'
@@ -24,11 +25,9 @@ RECEIPT = base64.b64encode(b'synthetic-receipt-key-32-bytes-long').decode('ascii
 
 
 def public():
-    return {'schema_version': 1,
+    return {**make_catalog(),
             'callers': [{'tenant': 'internal', 'caller': 'ppt-service',
                          'profiles': ['workspace-task.v1'], 'token_ref': 'ppt-service'}],
-            'profiles': [{'name': 'workspace-task.v1', 'revision': 'v1', 'engine': 'pi',
-                          'runtime_revision': 'runtime-v1', 'image_digest': 'sha256:' + 'a' * 64}],
             'workers': [{'engine': 'pi', 'base_url': 'http://127.0.0.1:8091',
                          'token_ref': 'pi-worker', 'receipt_key_ref': 'pi-worker'}]}
 
@@ -70,8 +69,7 @@ def test_loading_is_offline_and_defaults_execution_to_disabled(tmp_path, monkeyp
 
 def test_only_reviewed_validator_and_static_engine_route_are_loaded(tmp_path):
     cfg = public()
-    cfg['profiles'][0]['engine'] = 'hermes'
-    cfg['profiles'][0]['enabled'] = True
+    cfg.update(make_catalog('hermes', enabled=True))
     loaded = load_configuration(*files(tmp_path, cfg))
     principal = loaded.api_settings.principals[TOKEN_SENTINEL]
     request = JobRequest(profile='workspace-task.v1', profile_revision='v1', business_ref='one',
@@ -84,15 +82,15 @@ def test_only_reviewed_validator_and_static_engine_route_are_loaded(tmp_path):
 @pytest.mark.parametrize('mutate', [
     lambda cfg: cfg.update(schema_version=True),
     lambda cfg: cfg.update(executable='arbitrary.module:run'),
-    lambda cfg: cfg['profiles'][0].update(validator='arbitrary.module:run'),
-    lambda cfg: cfg['profiles'][0].update(name='unreviewed-profile'),
-    lambda cfg: cfg['profiles'][0].update(enabled='true'),
-    lambda cfg: cfg['profiles'][0].update(engine='dsh'),
-    lambda cfg: cfg['profiles'][0].update(image_digest='mutable:latest'),
+    lambda cfg: cfg['task_contracts'][0].update(validator='arbitrary.module:run'),
+    lambda cfg: cfg['task_contracts'][0].update(name='unreviewed-profile'),
+    lambda cfg: cfg['routes'][0].update(enabled='true'),
+    lambda cfg: cfg['execution_bindings'][0].update(engine='dsh'),
+    lambda cfg: cfg['tool_environments'][0].update(image_digest='mutable:latest'),
     lambda cfg: cfg.update(dispatcher={'poll_seconds': 6.0}),
     lambda cfg: cfg.update(dispatcher={'lease_seconds': True}),
     lambda cfg: cfg['workers'].append(copy.deepcopy(cfg['workers'][0])),
-    lambda cfg: cfg['profiles'].append(copy.deepcopy(cfg['profiles'][0])),
+    lambda cfg: cfg['task_contracts'].append(copy.deepcopy(cfg['task_contracts'][0])),
     lambda cfg: cfg['callers'].append(copy.deepcopy(cfg['callers'][0])),
     lambda cfg: cfg['workers'][0].update(base_url='https://user:secret@worker.internal'),
     lambda cfg: cfg['workers'][0].update(base_url='https://worker.internal/other'),
@@ -127,7 +125,7 @@ def test_missing_or_invalid_secrets_have_fixed_errors_without_value_echo(tmp_pat
 
 def test_duplicate_keys_nonfinite_json_and_oversize_files_rejected(tmp_path):
     config_path, private_path = files(tmp_path)
-    config_path.write_text('{"schema_version":1,"schema_version":1}', encoding='utf-8')
+    config_path.write_text('{"schema_version":2,"schema_version":2}', encoding='utf-8')
     with pytest.raises(ConfigurationError, match='configuration_invalid'):
         load_configuration(config_path, private_path)
     config_path, private_path = files(tmp_path)

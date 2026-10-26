@@ -8,6 +8,7 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Callable, Literal
 from uuid import UUID
 
@@ -43,6 +44,61 @@ def safe_name(value: str) -> str:
 
 class WireModel(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True, frozen=True)
+
+
+class ExecutionBindingPins(WireModel):
+    """Content-addressed server resolution, never a caller-selected backend.
+
+    Only ordinary public identifiers and hashes cross this boundary. The
+    deployment registry owns the approval record; its digest is not a substitute
+    for native readiness, model authorization or actual host stop observation.
+    """
+    schema_version: Literal['1'] = '1'
+    binding_id: str = Field(pattern=r'^[a-z][a-z0-9_.-]{0,79}$')
+    binding_revision: str = Field(pattern=r'^[A-Za-z0-9_.-]{1,100}$')
+    profile: str = Field(pattern=r'^[a-z][a-z0-9_.-]{0,79}$')
+    profile_revision: str = Field(pattern=r'^[A-Za-z0-9_.-]{1,100}$')
+    contract_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    bundle_name: str = Field(pattern=r'^[a-z][a-z0-9_.-]{0,79}$')
+    bundle_revision: str = Field(pattern=r'^[A-Za-z0-9_.-]{1,100}$')
+    bundle_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    tool_environment_name: str = Field(pattern=r'^[a-z][a-z0-9_.-]{0,79}$')
+    tool_environment_revision: str = Field(pattern=r'^[A-Za-z0-9_.-]{1,100}$')
+    tool_environment_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    engine: Literal['pi', 'hermes']
+    runtime_revision: str = Field(pattern=r'^[A-Za-z0-9_.-]{1,100}$')
+    image_digest: str = Field(pattern=r'^sha256:[0-9a-f]{64}$')
+    adapter_revision: str = Field(pattern=r'^[A-Za-z0-9_.-]{1,100}$')
+    model_policy_revision: str = Field(pattern=r'^[A-Za-z0-9_.-]{1,100}$')
+    model_policy_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    combination_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    acceptance_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+    sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+
+    @classmethod
+    def create(cls, **identity):
+        identity = dict(identity)
+        combination = {k: v for k, v in identity.items()
+                       if k not in {'schema_version', 'binding_id', 'binding_revision',
+                                    'acceptance_sha256', 'combination_sha256', 'sha256'}}
+        identity['combination_sha256'] = digest(combination)
+        body = dict(schema_version='1', **identity)
+        body.pop('sha256', None)
+        return cls(**body, sha256=digest(body))
+
+    @model_validator(mode='after')
+    def content_addressed(self):
+        body = self.model_dump(exclude={'sha256'})
+        combination = {k: v for k, v in body.items()
+                       if k not in {'schema_version', 'binding_id', 'binding_revision',
+                                    'acceptance_sha256', 'combination_sha256'}}
+        if digest(body) != self.sha256 or digest(combination) != self.combination_sha256:
+            raise ValueError('Execution binding identity changed')
+        return self
+
+    def matches_base(self, pins):
+        return all(pins.get(k) == getattr(self, k) for k in
+                   ('profile', 'profile_revision', 'engine', 'runtime_revision', 'image_digest'))
 
 
 class InputRef(WireModel):
@@ -128,6 +184,7 @@ class ExecutionEnvelope(WireModel):
     lease_expires_at: float
     task: dict[str, Any]
     inputs: list[InlineFile] = Field(default_factory=list, max_length=10)
+    execution_binding: ExecutionBindingPins | None = None
 
     @field_validator('job_id', 'attempt_id')
     @classmethod
@@ -138,7 +195,10 @@ class ExecutionEnvelope(WireModel):
 
     def identity(self):
         # Lease renewal does not change immutable execution identity.
-        return self.model_dump(exclude={'lease_expires_at'})
+        excluded = {'lease_expires_at'}
+        if self.execution_binding is None:
+            excluded.add('execution_binding')
+        return self.model_dump(exclude=excluded)
 
     @model_validator(mode='after')
     def valid_times(self):
@@ -147,6 +207,8 @@ class ExecutionEnvelope(WireModel):
             raise ValueError('Invalid bounded execution clocks')
         if len(canonical_bytes(self.task)) > 32768:
             raise ValueError('Task exceeds its bound')
+        if self.execution_binding is not None and not self.execution_binding.matches_base(self.model_dump()):
+            raise ValueError('Execution binding does not match its envelope')
         return self
 
     @property
@@ -229,6 +291,7 @@ class ProfilePolicy:
     max_timeout_seconds: int = 600
     task_validator: Callable[[dict], None] = field(default=lambda _: None, repr=False, compare=False)
     supports_inputs: bool = False
+    execution_binding: ExecutionBindingPins | None = None
 
     def __post_init__(self):
         if (self.engine not in {'pi', 'hermes'} or not self.name or not self.revision
@@ -236,23 +299,42 @@ class ProfilePolicy:
                 or type(self.enabled) is not bool or type(self.supports_inputs) is not bool
                 or not 1 <= self.max_timeout_seconds <= 3600):
             raise ValueError('Invalid server-owned profile policy')
+        if self.execution_binding is not None:
+            if (not isinstance(self.execution_binding, ExecutionBindingPins)
+                    or not self.execution_binding.matches_base(self.pins())):
+                raise ValueError('Execution binding does not match its profile')
 
     def pins(self):
-        return dict(engine=self.engine, runtime_revision=self.runtime_revision,
-                    image_digest=self.image_digest, profile_revision=self.revision, profile=self.name)
+        value = dict(engine=self.engine, runtime_revision=self.runtime_revision,
+                     image_digest=self.image_digest, profile_revision=self.revision, profile=self.name)
+        if self.execution_binding is not None:
+            value['execution_binding'] = self.execution_binding.model_dump(mode='json')
+        return value
+
+    def matches(self, value):
+        data = value.model_dump(mode='json') if isinstance(value, ExecutionEnvelope) else value
+        if not isinstance(data, dict):
+            return False
+        pins = self.pins()
+        return (all(data.get(k) == v for k, v in pins.items())
+                and data.get('execution_binding') == pins.get('execution_binding'))
 
 
 class ProfileRegistry:
     def __init__(self, profiles=()):
-        self._profiles = {}
+        indexed = {}
         for profile in profiles:
             key = (profile.name, profile.revision)
-            if key in self._profiles:
+            if key in indexed:
                 raise ValueError('Duplicate profile revision')
-            self._profiles[key] = profile
+            indexed[key] = profile
+        self._profiles = MappingProxyType(indexed)
 
     def policy(self, name, revision):
         return self._profiles.get((name, revision))
+
+    def policies(self):
+        return tuple(self._profiles.values())
 
     def resolve(self, principal: Principal, request: JobRequest, *, require_enabled=True):
         profile = self._profiles.get((request.profile, request.profile_revision))
