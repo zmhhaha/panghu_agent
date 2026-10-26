@@ -300,6 +300,39 @@ def make_harness(tmp_path):
         value.store.close()
 
 
+@pytest.mark.parametrize('selector', [
+    {'kubernetes.io/hostname': 'worker-a'},
+    [('kubernetes.io/hostname', 'worker-a')],
+    (['kubernetes.io/hostname', 'worker-a'],),
+    (('kubernetes.io/hostname', 'worker-a'), ('kubernetes.io/hostname', 'worker-b')),
+    (('kubernetes.io/hostname', 1),),
+    (('Invalid_Prefix/host', 'worker-a'),),
+    (('kubernetes.io/hostname', 'worker-a\n'),),
+])
+def test_pool_constructor_rejects_mutable_or_invalid_node_selectors(selector):
+    policy = ProfilePolicy('workspace-task.v1', 'v1', 'pi', 'r1', 'sha256:' + 'a' * 64)
+    with pytest.raises(ValueError, match='Invalid fixed Kubernetes node selector'):
+        KubernetesPool('pi-pool', policy, 'agent-workers',
+            'registry/worker@' + policy.image_digest, 'agent-host', ('10.244.0.0/16',),
+            node_selector=selector)
+
+
+def test_explicit_node_selector_survives_real_dispatch_and_measured_pod_roundtrip(make_harness):
+    h = make_harness()
+    selector = (('kubernetes.io/hostname', 'fixture-node'),
+                ('agent-service.panghuer.top/apparmor', 'loaded'))
+    h.pool = replace(h.pool, node_selector=selector)
+    h.rebuild_control()
+    job = h.submit()
+    running = h.dispatcher.dispatch_once()
+    assert running['state'] == 'running'
+    assert h.pod(job)['spec']['nodeSelector'] == dict(selector)
+    h.worker.complete(running['attempt_id'])
+    assert h.dispatcher.poll(running)['state'] == 'completed'
+    assert len(h.worker.puts()) == 1
+    assert h.store.active() is None
+
+
 @pytest.mark.parametrize('engine', ['pi', 'hermes'])
 def test_two_sequential_jobs_have_distinct_pods_and_single_native_admissions(make_harness, engine):
     h = make_harness(engine=engine)

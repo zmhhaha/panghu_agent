@@ -134,10 +134,7 @@ worker-hosts/
 
 具有文件/检查点输入的候选池需设置 `read_only_mounts: true`，并在所有可调度执行节点装载本目录 `apparmor/agent-capsule-inputs` 配置。示例供后续真实 Linux 验收，当前未运行解析器或装载验证。
 
-```bash
-sudo install -m 0644 agent_service/deploy/apparmor/agent-capsule-inputs /etc/apparmor.d/agent-capsule-inputs
-sudo apparmor_parser -r /etc/apparmor.d/agent-capsule-inputs
-```
+宿主缺少解析器时，使用[一次性节点管理工具镜像](../docs/NODE_APPARMOR_TOOLS.md)装载：解析器仅安装在容器内，不要求宿主安装额外软件。工具只添加 `MAC_ADMIN`，规则只读挂载，写入权限限于 AppArmor 的 securityfs 子目录；Worker 的 Localhost AppArmor 和默认 seccomp 保持启用。该文档同时说明逐节点验收、重启后重新加载，以及尚待实现的 pool 节点选择方案。
 
 控制器只允许将 `/run/agent-control/input-sources/<attempt>/inputs` 和 `checkpoint-sources/<attempt>/base` bind 到对应 `/work/<attempt>/inputs`、`base`，重新挂载为 `ro,nosuid,nodev,noexec`，并验证实际只读挂载。仅 chmod 不算隔离，失败不降级为可写复制。Agent 子进程会清除能力、切换独立 UID，控制器确认进程停止、收集文件、完成非懒卸载后才冻结和签署结果。
 

@@ -1,5 +1,6 @@
 """Measured Pod spec validation permits API defaults, never execution drift."""
 from copy import deepcopy
+from dataclasses import replace
 import uuid
 
 import pytest
@@ -10,17 +11,70 @@ from agent_service.kubernetes_provider import KubernetesPool, KubernetesWorkerAd
 
 
 @pytest.fixture
-def expected():
+def capsule():
     policy = ProfilePolicy('workspace-task.v1', 'v1', 'pi', 'runtime-v1', 'sha256:' + 'a' * 64, enabled=True)
     pool = KubernetesPool('pi-pool', policy, 'agent-service', 'registry/agent@' + policy.image_digest,
                            'agent-host-config', ('10.244.0.0/16',), enabled=True,
                            uid_start=2000000, uid_count=100)
-    adapter = KubernetesWorkerAdapter(object(), pool, object(), 'x' * 32, b'y' * 32)
     envelope = ExecutionEnvelope(job_id=str(uuid.UUID(int=1)), attempt_id=str(uuid.UUID(int=2)),
         fence=1, engine='pi', profile=policy.name, profile_revision=policy.revision,
         runtime_revision=policy.runtime_revision, image_digest=policy.image_digest,
         deadline_at=300.0, lease_expires_at=100.0, task={'prompt': 'offline'})
+    return pool, envelope
+
+
+@pytest.fixture
+def expected(capsule):
+    pool, envelope = capsule
+    adapter = KubernetesWorkerAdapter(object(), pool, object(), 'x' * 32, b'y' * 32)
     return adapter._manifest(envelope)[0]
+
+
+def test_default_pool_adds_no_node_selector(expected):
+    assert 'nodeSelector' not in expected['spec']
+
+
+def test_fixed_pool_node_selector_is_injected_and_accepts_only_exact_values(capsule):
+    pool, envelope = capsule
+    selected = replace(pool, node_selector=(('kubernetes.io/hostname', 'worker-02'),
+        ('worker.example.com/purpose', 'agent-workers')))
+    adapter = KubernetesWorkerAdapter(object(), selected, object(), 'x' * 32, b'y' * 32)
+    wanted = adapter._manifest(envelope)[0]
+    assert wanted['spec']['nodeSelector'] == dict(selected.node_selector)
+    validate_pod(deepcopy(wanted), wanted)
+    observed = deepcopy(wanted)
+    observed['spec']['nodeName'] = 'worker-02'
+    validate_pod(observed, wanted)
+
+
+@pytest.mark.parametrize('mutation', ['delete', 'change', 'add', 'remove-key', 'replace-with-list'])
+def test_measured_pod_cannot_change_the_fixed_node_selector(capsule, mutation):
+    pool, envelope = capsule
+    selected = replace(pool, node_selector=(('kubernetes.io/hostname', 'worker-02'),
+        ('worker.example.com/purpose', 'agent-workers')))
+    adapter = KubernetesWorkerAdapter(object(), selected, object(), 'x' * 32, b'y' * 32)
+    wanted = adapter._manifest(envelope)[0]
+    observed = deepcopy(wanted)
+    if mutation == 'delete':
+        observed['spec'].pop('nodeSelector')
+    elif mutation == 'change':
+        observed['spec']['nodeSelector']['kubernetes.io/hostname'] = 'worker-03'
+    elif mutation == 'add':
+        observed['spec']['nodeSelector']['unreviewed.example.com/pool'] = 'other'
+    elif mutation == 'remove-key':
+        observed['spec']['nodeSelector'].pop('worker.example.com/purpose')
+    else:
+        observed['spec']['nodeSelector'] = [['kubernetes.io/hostname', 'worker-02']]
+    with pytest.raises(ServiceError) as failure:
+        validate_pod(observed, wanted)
+    assert failure.value.code == 'kubernetes_resource_mismatch'
+
+
+def test_unconfigured_pool_does_not_accept_injected_scheduling_selector(expected):
+    observed = deepcopy(expected)
+    observed['spec']['nodeSelector'] = {'kubernetes.io/hostname': 'unexpected-worker'}
+    with pytest.raises(ServiceError):
+        validate_pod(observed, expected)
 
 
 def test_original_pod_and_normal_api_defaults_are_accepted(expected):

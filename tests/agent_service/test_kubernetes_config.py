@@ -3,13 +3,15 @@ from __future__ import annotations
 
 import base64
 from copy import deepcopy
+from dataclasses import FrozenInstanceError
 import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from agent_service import __main__ as cli
-from agent_service.config import ConfigurationError, load_configuration
+from agent_service.config import ConfigurationError, _KubernetesWorker, load_configuration
 from registry_fixtures import make_catalog
 
 
@@ -56,6 +58,7 @@ def test_pool_loads_reuses_fixed_profile_and_defaults_to_disabled(tmp_path):
     assert pool.policy.enabled is pool.enabled is False
     assert pool.pod_cidrs == ('10.244.0.0/16',) and pool.port == 8090
     assert pool.uid_start is None and pool.uid_count == 65536
+    assert pool.node_selector == ()
     assert loaded.kubernetes_credentials[0].pool_id == pool.pool_id
     assert loaded.kubernetes_credentials[0].receipt_key == RECEIPT
     assert loaded.summary()['worker_engines'] == ['pi']
@@ -79,6 +82,65 @@ def test_private_ipv6_ula_pod_network_is_explicitly_supported(tmp_path):
     cfg['kubernetes_workers'][0]['pod_cidrs'] = ['10.244.0.0/16', 'fd42:1234::/64']
     loaded = load_configuration(*files(tmp_path, cfg))
     assert loaded.kubernetes_pools[0].pod_cidrs == ('10.244.0.0/16', 'fd42:1234::/64')
+
+
+def test_explicit_node_selector_loads_as_sorted_immutable_pairs(tmp_path):
+    cfg = public()
+    labels = {'worker.example.com/purpose': 'agent_workers',
+              'kubernetes.io/hostname': 'worker-02', 'empty-value': ''}
+    cfg['kubernetes_workers'][0]['node_selector'] = labels
+    pool = load_configuration(*files(tmp_path, cfg)).kubernetes_pools[0]
+    assert pool.node_selector == tuple(sorted(labels.items()))
+    assert isinstance(pool.node_selector, tuple)
+    assert all(isinstance(pair, tuple) for pair in pool.node_selector)
+    labels['kubernetes.io/hostname'] = 'different-worker'
+    assert dict(pool.node_selector)['kubernetes.io/hostname'] == 'worker-02'
+    with pytest.raises(FrozenInstanceError):
+        pool.node_selector = ()
+
+
+@pytest.mark.parametrize('labels', [
+    {}, {'kubernetes.io/hostname': 'worker-02'},
+    {'example.com/worker_role': 'Agent.Worker_2'}, {'worker': ''},
+    {'a' * 63: 'b' * 63},
+    {'.'.join(('a' * 63, 'b' * 63, 'c' * 63, 'd' * 61)) + '/worker': 'accepted'},
+])
+def test_valid_node_selector_label_boundaries_are_accepted(tmp_path, labels):
+    cfg = public()
+    cfg['kubernetes_workers'][0]['node_selector'] = labels
+    loaded = load_configuration(*files(tmp_path, cfg))
+    assert loaded.kubernetes_pools[0].node_selector == tuple(sorted(labels.items()))
+
+
+@pytest.mark.parametrize('labels', [
+    None, [], [['worker', 'agent']], 'worker=agent',
+    {'': 'agent'}, {'/worker': 'agent'}, {'example.com/': 'agent'},
+    {'bad_prefix.example/worker': 'agent'}, {'Upper.example/worker': 'agent'},
+    {'example..com/worker': 'agent'}, {'-example.com/worker': 'agent'},
+    {'example.com-/worker': 'agent'}, {'example.com//worker': 'agent'},
+    {'example.com/worker/other': 'agent'}, {'worker\n': 'agent'}, {'bad worker': 'agent'},
+    {'.worker': 'agent'}, {'-worker': 'agent'}, {'worker.': 'agent'}, {'worker-': 'agent'},
+    {'a' * 64: 'agent'}, {'a' * 64 + '.example/worker': 'agent'},
+    {'.'.join(('a' * 63, 'b' * 63, 'c' * 63, 'd' * 62)) + '/worker': 'agent'},
+    {'worker': 'a' * 64}, {'worker': 'bad value'}, {'worker': 'bad/value'},
+    {'worker': 'agent\n'}, {'worker': '.agent'}, {'worker': '-agent'},
+    {'worker': 'agent.'}, {'worker': 'agent-'},
+    {'worker': None}, {'worker': True}, {'worker': 1}, {'worker': []}, {'worker': {}},
+])
+def test_illegal_node_selector_input_is_rejected_without_sanitizing_it(tmp_path, labels):
+    cfg = public()
+    cfg['kubernetes_workers'][0]['node_selector'] = labels
+    with pytest.raises(ConfigurationError):
+        load_configuration(*files(tmp_path, cfg))
+
+
+@pytest.mark.parametrize('labels', [{1: 'agent'}, {True: 'agent'}, {None: 'agent'}])
+def test_node_selector_keys_must_be_strings_before_json_serialization(labels):
+    # JSON object keys are strings on the wire. Direct configuration validation
+    # must not silently convert an operator's Python mapping to another label.
+    raw = {**public()['kubernetes_workers'][0], 'node_selector': labels}
+    with pytest.raises(ValidationError):
+        _KubernetesWorker.model_validate(raw)
 
 
 def test_enabling_pool_requires_explicit_reserved_uid_range(tmp_path):

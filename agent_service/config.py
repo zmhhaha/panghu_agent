@@ -134,8 +134,16 @@ class _KubernetesWorker(_Model):
     uid_count: int = Field(default=65536, ge=1, le=1000000)
     read_only_mounts: bool = False
     mount_apparmor_profile: str = Field(default='agent-capsule-inputs', pattern=r'^[a-zA-Z0-9_.-]{1,80}$')
+    node_selector: dict[str, str] = Field(default_factory=dict)
     token_ref: str = Field(pattern=r'^[a-z][a-z0-9_.-]{0,63}$')
     receipt_key_ref: str = Field(pattern=r'^[a-z][a-z0-9_.-]{0,63}$')
+
+    @field_validator('node_selector')
+    @classmethod
+    def fixed_nodes(cls, values):
+        from .kubernetes_provider import validate_node_selector
+        validate_node_selector(tuple(values.items()))
+        return values
 
     @field_validator('image')
     @classmethod
@@ -456,7 +464,8 @@ def load_configuration(config_path, secrets_path, *, allow_sqlite=False) -> Serv
                 pod_cidrs=tuple(worker.pod_cidrs), enabled=worker.enabled, port=worker.port,
                 uid_start=worker.uid_start, uid_count=worker.uid_count,
                 read_only_mounts=worker.read_only_mounts,
-                mount_apparmor_profile=worker.mount_apparmor_profile)
+                mount_apparmor_profile=worker.mount_apparmor_profile,
+                node_selector=tuple(sorted(worker.node_selector.items())))
                 for worker in public.kubernetes_workers)
             kube_credentials = tuple(KubernetesWorkerCredentials(worker.pool_id,
                 secrets.tokens[worker.token_ref], decoded[worker.receipt_key_ref])

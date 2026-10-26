@@ -170,6 +170,37 @@ def test_cli_never_prints_arbitrary_sql_url_or_subprocess_exception(monkeypatch,
     assert output.err == '' and 'private' not in output.out
 
 
+@pytest.mark.parametrize('stdout,stderr', [
+    (b'No value found at secret/data/agent-service/runtime\n',
+     b'command terminated with exit code 2\n'),
+    (b'', b'No value found at secret/data/agent-service/runtime\n'
+           b'command terminated with exit code 2\n'),
+])
+def test_missing_kv_read_accepts_exact_stdout_or_stderr_diagnostic(stdout, stderr):
+    cluster = module.Cluster(runner=lambda *_, **__: SimpleNamespace(
+        returncode=2, stdout=stdout, stderr=stderr))
+    assert cluster.kv(module.RUNTIME_PATH) == ({}, 0)
+
+
+@pytest.mark.parametrize('command,returncode,stdout', [
+    (['kv', 'put', '-format=json', module.RUNTIME_PATH, '-'], 2,
+        b'No value found at secret/data/agent-service/runtime\n'),
+    (['kv', 'get', '-format=json', module.RUNTIME_PATH], 1,
+        b'No value found at secret/data/agent-service/runtime\n'),
+    (['kv', 'get', '-format=json', module.RUNTIME_PATH], 2,
+        b'No value found at secret/data/other-service/runtime\n'),
+    (['kv', 'get', '-format=json', module.RUNTIME_PATH], 2,
+        b'prefix No value found at secret/data/agent-service/runtime\n'),
+    (['kv', 'get', '-format=json', module.RUNTIME_PATH], 2,
+        b'No value found at secret/data/agent-service/runtime\nprivate-payload\n'),
+])
+def test_missing_diagnostic_never_masks_other_commands_or_arbitrary_output(command, returncode, stdout):
+    cluster = module.Cluster(runner=lambda *_, **__: SimpleNamespace(
+        returncode=returncode, stdout=stdout, stderr=b''))
+    with pytest.raises(module.BootstrapError, match='vault_operation_unavailable'):
+        cluster.vault(command, missing=True)
+
+
 @pytest.mark.parametrize('policy,coverage', [
     ('# path "secret/data/*" { capabilities = ["read"] }', 'not_proven'),
     ('path "secret/data/*" { capabilities = [ # "read"\n "update"] }', 'not_proven'),

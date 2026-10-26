@@ -31,24 +31,52 @@ DATABASE = "agent_service_agent_fixture"
 DATABASE_URL = "postgresql+psycopg://postgres@/" + DATABASE + "?host=/pgsocket"
 RESULT_MARKER = "AGENT_ISOLATED_PG_RESULT="
 INNER_RUNNER = r'''
-import json, subprocess, sys, time, xml.etree.ElementTree as ET
+import importlib.metadata, json, os, subprocess, sys, time, xml.etree.ElementTree as ET
 started = time.monotonic()
-command = [sys.executable, '-m', 'pytest', 'tests/agent_service/test_postgres.py',
-           '-q', '-p', 'no:cacheprovider', '--tb=short',
-           '--basetemp=/tmp/agent-pg-tests', '--junitxml=/tmp/agent-pg-results.xml']
-result = subprocess.run(command, check=False)
-counts = {'tests': None, 'failures': None, 'errors': None, 'skipped': None}
-try:
-    root = ET.parse('/tmp/agent-pg-results.xml').getroot()
-    suites = [root] if root.tag == 'testsuite' else list(root.findall('testsuite'))
-    for key in counts:
-        counts[key] = sum(int(s.get(key, '0')) for s in suites)
-except (OSError, ValueError, ET.ParseError):
-    pass
-print('AGENT_ISOLATED_PG_RESULT=' + json.dumps(dict(returncode=result.returncode,
-      duration_seconds=round(time.monotonic()-started, 3), **counts)), flush=True)
-sys.exit(result.returncode)
+phases, returncode = [], 0
+for index, targets in enumerate(json.loads(os.environ['AGENT_TEST_TARGETS'])):
+    print('AGENT_TEST_PHASE=' + json.dumps(targets), flush=True)
+    xml = '/tmp/agent-results-' + str(index) + '.xml'
+    command = [sys.executable, '-m', 'pytest', *targets, '-q', '-p', 'no:cacheprovider',
+        '--tb=short', '--basetemp=/tmp/agent-tests-' + str(index), '--junitxml=' + xml]
+    result = subprocess.run(command, check=False)
+    counts = dict.fromkeys(('tests', 'failures', 'errors', 'skipped'))
+    try:
+        root = ET.parse(xml).getroot()
+        suites = [root] if root.tag == 'testsuite' else list(root.findall('testsuite'))
+        for key in counts:
+            counts[key] = sum(int(s.get(key, '0')) for s in suites)
+    except (OSError, ValueError, ET.ParseError):
+        pass
+    phases.append(dict(targets=targets, returncode=result.returncode, **counts))
+    returncode = returncode or result.returncode
+counts = {key: sum(phase[key] for phase in phases) if all(type(phase[key]) is int
+    for phase in phases) else None for key in ('tests', 'failures', 'errors', 'skipped')}
+versions = {}
+for name in ('pytest', 'pytest-subtests', 'fastapi', 'starlette', 'pydantic',
+             'httpx', 'SQLAlchemy', 'psycopg', 'requests', 'PyJWT', 'Pillow'):
+    try:
+        versions[name] = importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        versions[name] = None
+print('AGENT_ISOLATED_PG_RESULT=' + json.dumps(dict(returncode=returncode,
+    duration_seconds=round(time.monotonic()-started, 3), phases=phases,
+    dependency_versions=versions, **counts)), flush=True)
+sys.exit(returncode)
 '''
+
+
+def test_targets(suite):
+    if suite == 'postgres':
+        return [['tests/agent_service/test_postgres.py']]
+    groups = [['tests/agent_service']]
+    if suite == 'connectors':
+        # Distinct processes prevent test_api.py imports in the two suites
+        # from colliding. Business tests remain offline synthetic peers.
+        groups += [['tests/scientific_pi/api/test_agent_service.py',
+                    'tests/scientific_pi/api/test_academic_observations.py'],
+                   ['ppt_service/tests/control/test_agent_connector.py']]
+    return groups
 
 
 class HarnessFailure(RuntimeError):
@@ -130,14 +158,23 @@ def cleanup_containers(names, run_id):
     return success
 
 
-def validate_source(code_root):
-    roots = [checked_path(code_root / "agent_service"),
-             checked_path(code_root / "tests" / "agent_service")]
+def validate_source(code_root, suite='postgres'):
+    relative = ['agent_service', 'tests/agent_service']
+    if suite != 'postgres':
+        relative += ['scientific_agent', 'pi_worker/__init__.py', 'pi_worker/research_tools',
+                     'tools/__init__.py', 'tools/academic', 'scientific_skills']
+    if suite == 'connectors':
+        relative += ['app/api/scientific_agent.py', 'tools/sqlite_client.py',
+            'ppt_service/__init__.py', 'ppt_service/control', 'ppt_service/server',
+            'ppt_service/worker', 'tests/scientific_pi/api',
+            'ppt_service/tests/control/test_agent_connector.py']
+    roots = [checked_path(code_root / path) for path in relative]
     if not (roots[0] / "store.py").is_file() or not (roots[1] / "test_postgres.py").is_file():
         raise HarnessFailure("reviewed_source_missing")
-    # Mount only these two source trees, never the repository's .env/HOME/keys.
+    # Mount only explicit source trees/files, never .env/HOME/keys or the whole
+    # repository. Related business source is included only for connector runs.
     for root in roots:
-        for path in (root, *root.rglob("*")):
+        for path in (root, *(root.rglob("*") if root.is_dir() else ())):
             info = path.lstat()
             if stat.S_ISLNK(info.st_mode) or not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
                 raise HarnessFailure("source_link_or_special_file")
@@ -172,9 +209,20 @@ def main(argv=None):
     parser.add_argument("--code-root", type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument("--report-dir", type=Path, required=True,
                         help="New report directory; it is preserved, never recursively deleted")
-    parser.add_argument("--suite", choices=("postgres", "all"), default="postgres",
-                        help="Explicit fixed test target; both modes use the disposable PostgreSQL fixture")
+    parser.add_argument("--suite", choices=("postgres", "all", "connectors"), default="postgres",
+                        help="Fixed target; connectors adds offline business tests, all modes use disposable PostgreSQL")
+    parser.add_argument('--test-image', default=SITE_IMAGE,
+                        help='Already cached dependency image, fixed sha256 identity required')
+    parser.add_argument('--postgres-image', default=PG_IMAGE,
+                        help='Already cached PostgreSQL image, fixed sha256 identity required')
+    parser.add_argument('--timeout', type=int, default=900,
+                        help='Total test-container timeout in seconds (60..3600)')
     args = parser.parse_args(argv)
+    for value in (args.test_image, args.postgres_image):
+        if not re.fullmatch(r'(?:[A-Za-z0-9._:/-]+@)?sha256:[a-f0-9]{64}', value):
+            parser.error('Use an immutable repository@sha256 digest or cached sha256 image ID')
+    if not 60 <= args.timeout <= 3600:
+        parser.error('Timeout must be between 60 and 3600 seconds')
     if sys.platform != "linux" or os.geteuid() != 0:
         parser.error("Run on the explicitly selected Linux root Docker host")
     code_root = checked_path(args.code_root)
@@ -191,7 +239,7 @@ def main(argv=None):
               "suite": args.suite,
               "no_model_calls": True, "test_returncode": None, "tests": None,
               "passed": False, "error_code": None,
-              "images": {"tests": SITE_IMAGE, "postgres": PG_IMAGE},
+              "images": {"tests": args.test_image, "postgres": args.postgres_image},
               "cleanup": {"containers_removed": False, "socket_removed": False}}
     socket_root = None
     socket_identity = None
@@ -203,12 +251,12 @@ def main(argv=None):
     try:
         for signum in (signal.SIGTERM, signal.SIGINT):
             old_handlers[signum] = signal.signal(signum, interrupted)
-        roots = validate_source(code_root)
+        roots = validate_source(code_root, args.suite)
         local_linux_docker()
-        for image in (SITE_IMAGE, PG_IMAGE):
+        for image in (args.test_image, args.postgres_image):
             require(execute(["docker", "image", "inspect", "--format", "{{.Id}}", image]), "cached_image_missing")
         probe = docker_base(names[0], run_id, user="0:0", memory="64m", pids=32, cpus="0.25")
-        probe += ["--rm", "--entrypoint", "id", PG_IMAGE, "postgres"]
+        probe += ["--rm", "--entrypoint", "id", args.postgres_image, "postgres"]
         identity = require(execute(probe), "postgres_uid_probe_failed")
         found = re.fullmatch(r"uid=(\d+)\(postgres\) gid=(\d+)\(postgres\)(?: groups=.*)?\s*", identity)
         if found is None or not 1 <= int(found[1]) < 65536 or not 1 <= int(found[2]) < 65536:
@@ -232,7 +280,7 @@ def main(argv=None):
                "--mount", f"type=bind,source={shared},target=/var/run/postgresql",
                "-e", "POSTGRES_DB=" + DATABASE, "-e", "POSTGRES_USER=postgres",
                "-e", "POSTGRES_HOST_AUTH_METHOD=trust", "-e", "PGHOST=/pgsocket",
-               PG_IMAGE, "-c", "listen_addresses=", "-c", "unix_socket_directories=/pgsocket",
+               args.postgres_image, "-c", "listen_addresses=", "-c", "unix_socket_directories=/pgsocket",
                "-c", "unix_socket_permissions=0777"]
         require(execute(pg), "postgres_start_failed")
         until = time.monotonic() + 45
@@ -249,16 +297,18 @@ def main(argv=None):
         if not ready:
             raise HarnessFailure("postgres_readiness_failed")
         test = docker_base(names[2], run_id, user="10000:10000", memory="768m", pids=128)
-        test += ["--tmpfs", "/tmp:rw,nosuid,nodev,size=384m,mode=1777",
-                 "--mount", f"type=bind,source={roots[0]},target=/src/agent_service,readonly",
-                 "--mount", f"type=bind,source={roots[1]},target=/src/tests/agent_service,readonly",
+        test += ["--tmpfs", "/tmp:rw,nosuid,nodev,size=384m,mode=1777"]
+        for root in roots:
+            test += ['--mount', f'type=bind,source={root},target=/src/{root.relative_to(code_root).as_posix()},readonly']
+        test += [
                  "--mount", f"type=bind,source={shared},target=/pgsocket",
                  "-w", "/src", "-e", "PYTHONPATH=/src", "-e", "PYTHONDONTWRITEBYTECODE=1",
+                 '-e', 'PYTHONUNBUFFERED=1', '-e', 'PYTEST_DISABLE_PLUGIN_AUTOLOAD=1',
+                 '-e', 'PYTEST_PLUGINS=pytest_subtests',
+                 '-e', 'AGENT_TEST_TARGETS=' + json.dumps(test_targets(args.suite)),
                  "-e", "AGENT_TEST_DATABASE_URL=" + DATABASE_URL,
-                 "--entrypoint", "python", SITE_IMAGE, "-c",
-                 INNER_RUNNER.replace("'tests/agent_service/test_postgres.py'",
-                    repr("tests/agent_service" if args.suite == "all" else "tests/agent_service/test_postgres.py"))]
-        result = execute(test, timeout=180, log=report_dir / "postgres-tests.log")
+                 "--entrypoint", "python", args.test_image, "-c", INNER_RUNNER]
+        result = execute(test, timeout=args.timeout, log=report_dir / "postgres-tests.log")
         report["test_returncode"] = result.returncode
         summaries = [line[len(RESULT_MARKER):] for line in result.stdout.splitlines() if line.startswith(RESULT_MARKER)]
         if len(summaries) != 1:

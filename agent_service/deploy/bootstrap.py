@@ -66,8 +66,24 @@ class Cluster:
         result = self.exec('vault', 'vault-0', ['vault', *command], payload=payload)
         if result.returncode:
             error = result.stderr.lower()
-            if missing and result.returncode == 2 and b'no value found at' in error:
-                return None
+            if missing and result.returncode == 2:
+                missing_path = None
+                if len(command) == 4 and command[:3] == ['kv', 'get', '-format=json']:
+                    path = command[3]
+                    if path.startswith('secret/'):
+                        missing_path = 'secret/data/' + path[len('secret/'):]
+                elif len(command) == 3 and command[:2] == ['read', '-format=json']:
+                    missing_path = command[2]
+                if missing_path is not None:
+                    expected = ('No value found at ' + missing_path).encode('utf-8')
+                    # Vault may print its missing-value diagnostic on stdout;
+                    # kubectl may append its own fixed exit-status line on stderr.
+                    # Recognize only this complete diagnostic for a read command.
+                    lines = [line.strip() for raw in (result.stdout, result.stderr)
+                        for line in raw.splitlines() if line.strip()]
+                    if expected in lines and all(line in (expected,
+                            b'command terminated with exit code 2') for line in lines):
+                        return None
             if b'check-and-set' in error and b'did not match' in error:
                 raise BootstrapError('vault_cas_conflict')
             raise BootstrapError('vault_operation_unavailable')

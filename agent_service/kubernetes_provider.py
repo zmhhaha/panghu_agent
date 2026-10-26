@@ -25,6 +25,27 @@ FINALIZER = 'agent-service.panghuer.top/observed-stop'
 PREFIX = 'agent-service.panghuer.top/'
 
 
+def validate_node_selector(values):
+    """Validate the operator's immutable Kubernetes label constraints."""
+    name = r'[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,61}[A-Za-z0-9])?'
+    dns_label = r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?'
+    if type(values) is not tuple or len(values) > 64:
+        raise ValueError('Invalid fixed Kubernetes node selector')
+    seen = set()
+    for pair in values:
+        if (type(pair) is not tuple or len(pair) != 2
+                or any(type(item) is not str for item in pair)):
+            raise ValueError('Invalid fixed Kubernetes node selector')
+        key, value = pair
+        prefix, separator, suffix = key.rpartition('/')
+        if (key in seen or not re.fullmatch(name, suffix)
+                or separator and (not prefix or len(prefix) > 253
+                    or not re.fullmatch(dns_label + r'(?:\.' + dns_label + r')*', prefix))
+                or value and not re.fullmatch(name, value)):
+            raise ValueError('Invalid fixed Kubernetes node selector')
+        seen.add(key)
+
+
 @dataclass(frozen=True)
 class KubernetesPool:
     pool_id: str
@@ -39,8 +60,10 @@ class KubernetesPool:
     uid_count: int = 65536
     read_only_mounts: bool = False
     mount_apparmor_profile: str = 'agent-capsule-inputs'
+    node_selector: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self):
+        validate_node_selector(self.node_selector)
         label = r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?'
         if (not re.fullmatch(label, self.pool_id) or not re.fullmatch(label, self.namespace)
                 or not re.fullmatch(label + r'(?:\.' + label + r')*', self.host_config_map)
@@ -202,6 +225,8 @@ class KubernetesWorkerAdapter:
                     {'name': 'control', 'emptyDir': {'sizeLimit': '2Gi'}},
                     {'name': 'work', 'emptyDir': {'sizeLimit': '1Gi'}},
                     {'name': 'tmp', 'emptyDir': {'medium': 'Memory', 'sizeLimit': '128Mi'}}]}}
+        if self.pool.node_selector:
+            pod['spec']['nodeSelector'] = dict(self.pool.node_selector)
         if self.pool.read_only_mounts:
             pod['spec']['containers'][0]['securityContext']['appArmorProfile'] = {
                 'type': 'Localhost', 'localhostProfile': self.pool.mount_apparmor_profile}

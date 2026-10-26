@@ -69,3 +69,69 @@ python -m pytest tests/agent_service -q -p no:cacheprovider --tb=short --basetem
 不代表验收报告摘要本身证明真实模型能力。Linux真实数据库验证持久和事务语义；
 实际候选镜像、CNI、外部模型/工具、短期模型授权签发、Hermes生产宿主、领域
 输入/collector/checkpoint以及PPT/科研连接器仍待完成。生产readiness保持关闭。
+
+## 固定依赖的 Linux 回归复现入口
+
+后续版本继续复用 `tests/agent_service/run_isolated_postgres.py`，不要连接现有业务数据库。
+以下是复现步骤，执行结果以新报告为准，不改变上文历史验收数量。先完成本版本控制镜像构建，
+在独立临时目录准备测试依赖镜像；此步骤允许下载依赖，但不挂载生产凭据，也不运行测试：
+
+```bash
+# 在 Agent 仓库根目录执行；目录用于保留本次依赖构建材料。
+export AGENT_TEST_BUILD_DIR=/root/agent-service-test-image-20261026-r1
+mkdir -m 700 "$AGENT_TEST_BUILD_DIR"
+cp agent_service/requirements.txt "$AGENT_TEST_BUILD_DIR/requirements.txt"
+cat > "$AGENT_TEST_BUILD_DIR/Dockerfile" <<'DOCKERFILE'
+ARG CONTROL_IMAGE
+FROM ${CONTROL_IMAGE}
+USER 0:0
+COPY requirements.txt /tmp/agent-test-requirements.txt
+RUN python -m pip install --no-cache-dir -r /tmp/agent-test-requirements.txt \
+    starlette==0.46.2 pytest==8.3.5 pytest-subtests==0.14.2 \
+    PyJWT==2.10.1 Pillow==11.2.1 \
+    && python -m pip check
+USER 10000:10000
+ENTRYPOINT ["python"]
+DOCKERFILE
+
+export AGENT_TEST_CONTROL_IMAGE="$(cat agent_service/rendered/control-image.txt)"
+docker build --pull=false \
+  --build-arg CONTROL_IMAGE="$AGENT_TEST_CONTROL_IMAGE" \
+  --tag agent-service-tests:20261026-r1 "$AGENT_TEST_BUILD_DIR"
+export AGENT_TEST_IMAGE="$(docker image inspect --format '{{.Id}}' agent-service-tests:20261026-r1)"
+```
+
+测试镜像沿用本版本 `agent_service/requirements.txt` 的全部固定生产依赖；额外固定 pytest、
+subtests 插件、Starlette 及 PPT 边界测试需要的 PyJWT/Pillow。实际安装版本写入测试报告。
+构建材料目录必须是本次新目录；如已存在，换一个运行后缀，不覆盖旧证据。PostgreSQL 使用已缓存镜像，
+可通过 `--postgres-image` 传入固定镜像 ID 或仓库 digest。默认值与上文历史运行相同。
+
+```bash
+python3 tests/agent_service/run_isolated_postgres.py \
+  --code-root "$PWD" \
+  --report-dir /root/agent-service-linux-evidence-20261026-r1 \
+  --test-image "$AGENT_TEST_IMAGE" \
+  --suite connectors \
+  --timeout 1200
+```
+
+`--suite postgres` 只跑真实 PostgreSQL 用例；`--suite all` 跑整个 `tests/agent_service`；
+`--suite connectors` 先跑整个目录，再分别运行科研新增的
+`test_agent_service.py` / `test_academic_observations.py` 与 PPT 的 `test_agent_connector.py`。
+三个阶段使用不同 pytest 进程，避免两组 `test_api.py` 导入互相污染；任一阶段失败仍保留其状态，
+后续阶段继续运行。禁用自动加载其他 pytest 插件，显式加载 `pytest_subtests`。
+
+实际测试使用固定 digest、`--pull=never`、`--network none`、只读根文件系统、非 root UID10000、
+drop ALL capabilities 和 NNP；PostgreSQL 也禁网且不监听 TCP。测试容器上限为 768Mi、1 CPU、
+128 PID，PostgreSQL 上限为 512Mi、1 CPU、128 PID；PGDATA 为专属 tmpfs，唯一共享项是本次
+随机 `/dev/shm` 目录下的 Unix socket。源码仅按脚本中的固定目录/文件白名单只读挂载，
+不挂整个仓库、Docker socket、kubeconfig、Vault 或业务数据库。
+
+报告目录保留 `report.json`、`postgres-tests.log`、`postgres-container.log`；JSON 包含三段
+pytest 退出码、JUnit 统计、依赖版本、清理结果和整体 `passed`。无需 pytest JSON 插件。
+只有所有阶段零失败/错误/跳过、测试数量大于零，且本次带标签容器及临时 socket 清理完成，
+才返回成功。源码和报告目录不会被递归删除；容器/socket 清理由脚本根据随机运行 ID 与身份核对执行。
+若外部强制 SIGKILL 导致未完成清理，以报告的缺失/失败为准，并仅处理本次运行 ID 对应的资源。
+
+这里的业务连接器用例仍使用离线合成 Worker/模型响应；真实 PostgreSQL 结果验证事务和持久化，
+不等于真实 Pi/Hermes、模型、K8s Pod 或业务发布验收。

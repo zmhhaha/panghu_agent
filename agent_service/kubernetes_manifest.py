@@ -199,6 +199,7 @@ def validate_pod(actual, expected):
         _require(actual.get('kind', 'Pod') == 'Pod' and actual.get('apiVersion', 'v1') == 'v1')
         spec, fixed = actual['spec'], expected['spec']
         _require(type(spec) is dict and type(fixed) is dict)
+        _same(spec.get('nodeSelector', {}), fixed.get('nodeSelector', {}))
         for key in ('automountServiceAccountToken', 'restartPolicy', 'activeDeadlineSeconds',
                     'terminationGracePeriodSeconds'):
             _same(spec.get(key), fixed[key])
