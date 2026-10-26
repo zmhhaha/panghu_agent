@@ -183,6 +183,66 @@ def context_archive(service, target, destination):
             archive.addfile(entry, io.BytesIO(content))
 
 
+def docker_json(runner, arguments, *, limit=4 * 1024 * 1024):
+    result = runner(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    try:
+        if type(result.stdout) is not bytes or not 0 < len(result.stdout) <= limit:
+            raise ValueError()
+        return json.loads(result.stdout, object_pairs_hook=unique_pairs)
+    except (ValueError, TypeError, UnicodeError, RecursionError):
+        raise BuildError('invalid_docker_inspection') from None
+
+
+def native_platform(runner, platform):
+    info = docker_json(runner, ['docker', 'info', '--format',
+        '{"os":{{json .OSType}},"architecture":{{json .Architecture}}}'], limit=65536)
+    aliases = {'amd64': 'amd64', 'x86_64': 'amd64', 'arm64': 'arm64', 'aarch64': 'arm64'}
+    if (type(info) is not dict or info.get('os') != 'linux'
+            or type(info.get('architecture')) is not str
+            or 'linux/' + aliases.get(info['architecture'], '') != platform):
+        raise BuildError('native_builder_platform_mismatch')
+
+
+def local_image(runner, image, platform):
+    info = docker_json(runner, ['docker', 'image', 'inspect', '--format',
+        '{"id":{{json .Id}},"os":{{json .Os}},"architecture":{{json .Architecture}},'
+        '"repo_digests":{{json .RepoDigests}}}', image], limit=128 * 1024)
+    if (type(info) is not dict or type(info.get('id')) is not str
+            or not SHA256.fullmatch(info['id']) or info.get('os') != 'linux'
+            or info.get('architecture') != platform.split('/')[1]):
+        raise BuildError('built_image_platform_mismatch')
+    return info
+
+
+def native_push(runner, image, name, platform):
+    # The local content ID binds the inspected remote config to the image that
+    # was just built. RepoDigests are checked after a successful push, never
+    # treated as proof that a stale image had been published by this invocation.
+    built = local_image(runner, image, platform)
+    runner(['docker', 'push', image], check=True)
+    remote = docker_json(runner, ['docker', 'manifest', 'inspect', '--insecure', '--verbose', image])
+    published = local_image(runner, image, platform)
+    if type(remote) is not dict:
+        raise BuildError('single_platform_manifest_required')
+    descriptor = remote.get('Descriptor')
+    manifest = remote.get('SchemaV2Manifest', remote.get('OCIManifest'))
+    if type(descriptor) is not dict or type(manifest) is not dict:
+        raise BuildError('pushed_manifest_mismatch')
+    checksum = descriptor.get('digest')
+    config = manifest.get('config')
+    declared_platform = descriptor.get('platform')
+    if (type(checksum) is not str or not SHA256.fullmatch(checksum)
+            or manifest.get('schemaVersion') != 2 or type(config) is not dict
+            or config.get('digest') != built['id'] or published['id'] != built['id']
+            or type(published.get('repo_digests')) is not list
+            or name + '@' + checksum not in published['repo_digests']
+            or (declared_platform is not None and (type(declared_platform) is not dict
+                or declared_platform.get('os') != 'linux'
+                or declared_platform.get('architecture') != platform.split('/')[1]))):
+        raise BuildError('pushed_manifest_mismatch')
+    return checksum
+
+
 def build(target="control", *, push=True, service=SERVICE, environ=None, runner=None):
     if target not in TARGETS or type(push) is not bool:
         raise BuildError("invalid_build_target")
@@ -197,8 +257,7 @@ def build(target="control", *, push=True, service=SERVICE, environ=None, runner=
     if platform not in {"linux/arm64", "linux/amd64"}:
         raise BuildError("invalid_build_platform")
     base = immutable_image(environ.get("PYTHON_BASE_IMAGE", PYTHON_BASE))
-    arguments = ["docker", "buildx", "build", "--platform", platform,
-                 "--file", "agent_service/" + TARGETS[target], "--tag", image,
+    arguments = ["--platform", platform, "--file", "agent_service/" + TARGETS[target], "--tag", image,
                  "--build-arg", "PYTHON_BASE_IMAGE=" + base]
     if target == "pi":
         donor = immutable_image(environ.get("PI_DONOR_IMAGE"))
@@ -209,28 +268,43 @@ def build(target="control", *, push=True, service=SERVICE, environ=None, runner=
     with tempfile.TemporaryDirectory(prefix="agent-service-build-") as temporary:
         archive, metadata = Path(temporary) / "context.tar", Path(temporary) / "metadata.json"
         context_archive(service, target, archive)
-        arguments += ["--push" if push else "--load", "--metadata-file", str(metadata), "-"]
+        probe = runner(['docker', 'buildx', 'version'], stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE, check=False)
+        use_buildx = probe.returncode == 0
+        if use_buildx:
+            arguments = ['docker', 'buildx', 'build', *arguments,
+                '--push' if push else '--load', '--metadata-file', str(metadata), '-']
+        else:
+            native_platform(runner, platform)
+            arguments = ['docker', 'build', *arguments, '-']
         with archive.open("rb") as stream:
-            runner(arguments, stdin=stream, check=True)
+            options = dict(stdin=stream, check=True)
+            if not use_buildx:
+                # An inherited DOCKER_BUILDKIT=1 must not make docker build
+                # demand the optional plugin that the probe just found absent.
+                options['env'] = {**os.environ, 'DOCKER_BUILDKIT': '0'}
+            runner(arguments, **options)
         if not push:
             return None
-        try:
-            report = json.loads(read_regular(metadata, 128 * 1024), object_pairs_hook=unique_pairs)
-            checksum = report["containerimage.digest"]
-            if (not isinstance(checksum, str) or not SHA256.fullmatch(checksum)
-                    or report.get("image.name", image) != image):
-                raise ValueError()
-        except (ValueError, TypeError, KeyError):
-            raise BuildError("invalid_build_metadata") from None
-        # Fetch the exact pushed tag's raw manifest. Its digest must match the
-        # build metadata, so an unrelated repository digest or raced tag cannot
-        # become the deployment receipt.
-        result = runner(["docker", "buildx", "imagetools", "inspect", "--raw", image],
-                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
-        raw = result.stdout
-        if (type(raw) is not bytes or len(raw) > 4 * 1024 * 1024
-                or "sha256:" + hashlib.sha256(raw).hexdigest() != checksum):
-            raise BuildError("pushed_manifest_mismatch")
+        if use_buildx:
+            try:
+                report = json.loads(read_regular(metadata, 128 * 1024), object_pairs_hook=unique_pairs)
+                checksum = report["containerimage.digest"]
+                if (not isinstance(checksum, str) or not SHA256.fullmatch(checksum)
+                        or report.get("image.name", image) != image):
+                    raise ValueError()
+            except (ValueError, TypeError, KeyError):
+                raise BuildError("invalid_build_metadata") from None
+            # Fetch the exact pushed tag's raw manifest. Its digest must match
+            # this build's metadata rather than an unrelated/raced registry tag.
+            result = runner(["docker", "buildx", "imagetools", "inspect", "--raw", image],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+            raw = result.stdout
+            if (type(raw) is not bytes or len(raw) > 4 * 1024 * 1024
+                    or "sha256:" + hashlib.sha256(raw).hexdigest() != checksum):
+                raise BuildError("pushed_manifest_mismatch")
+        else:
+            checksum = native_push(runner, image, name, platform)
         digest = name + "@" + checksum
         checked_directory(receipt.parent)
         pending = receipt.with_name("." + target + "-image-" + uuid.uuid4().hex + ".tmp")

@@ -20,9 +20,34 @@
 
 ## 1. 准备数据库、Vault 和模型调用方
 
-在现有 PostgreSQL 中创建独立数据库和专用角色，例如数据库 `agent_service`。专用角色需能够在此数据库中创建和迁移本服务自己的表，不授予其他业务数据库权限。服务不使用 SQLite 生产部署，也不会自动创建数据库角色。
+在现有 PostgreSQL 中准备独立数据库和专用角色 `agent_service`。专用角色需能够在此数据库中创建和迁移本服务自己的表，不授予其他业务数据库权限。应用进程不创建数据库或角色；首次部署可用下面的管理脚本完成初始化。
 
-以下命令只展示字段名和输入格式，替换占位值后在有权限的管理终端执行；密钥不要写入仓库。`receipt_keys` 和模型签名密钥都是独立随机密钥的 **base64** 文本（至少 32 个随机字节），不是十六进制。业务/Worker 令牌各自独立且至少 32 个可打印字符。
+### 服务器上的初始化脚本
+
+在检出的 Agent 仓库根目录执行。脚本只需服务器已有的 `python3`、`kubectl` 和管理 kubeconfig，复用 `vault/vault-0` 内已登录的 Vault CLI；不要求新建凭据 JSON 文件。若 Vault 登录失效，先按平台仓库中的 `armbianbegin/vault/scripts/login.sh` 恢复登录，再继续，不向 Agent 服务增加 Vault 管理凭据。
+
+```bash
+# 默认只读：检查 Vault 字段、数据库角色/权限和 ESO 策略覆盖情况。
+python3 agent_service/deploy/bootstrap.py \
+  --kubeconfig /etc/kubernetes/super-admin.conf
+
+# 显式初始化缺失项；已有凭据保持原值。
+python3 agent_service/deploy/bootstrap.py \
+  --kubeconfig /etc/kubernetes/super-admin.conf \
+  --apply
+```
+
+初始化固定作用于 `data/postgres-0` 中的 `agent_service` 数据库和角色；数据库管理员使用容器现有的 `POSTGRES_USER`（包括通过 `envFrom` 注入的值），未配置时才使用 `postgres`。脚本会为业务、Worker、结果签名及模型代理分别生成独立随机凭据，通过带版本号的 CAS 合并写入 `secret/agent-service/runtime` 和 `secret/llm-service/callers`，保留其他字段及已配置值，不输出凭据、数据库 URL 或原始 SQL 错误。重试不会轮换已有密码或令牌。运行中断后可再次执行；如专用角色已存在而 Vault 中缺失其数据库 URL，脚本会停止，要求先恢复原凭据，避免猜测或重置密码。
+
+新角色使用 `NOINHERIT`、无管理权限和独立数据库所有权；脚本拒绝接管具有其他角色成员关系、其他数据库所有权/显式授权或其他业务对象权限的已有角色，只收紧本服务数据库及其 `public` schema 的 PUBLIC 权限。共享 PostgreSQL 的 PUBLIC 可能仍授予其他数据库 CONNECT；报告中的 `other_database_connect_count` 会显示这类继承连接数，不代表具有其他业务表的读写权限。若其他业务通过 PUBLIC 暴露了 schema 创建、表、序列或函数执行权限，脚本也会停止交由平台检查。绝对禁止向其他数据库建立连接涉及共享 HBA/ACL 策略，不由此脚本修改。
+
+ESO 仅做只读检查：读取现有 `eso-role` 及其策略，保守判断两条 Vault 数据路径是否可读，不修改共享策略或创建登录 Token。`--apply` 返回 0 表示凭据、数据库登录与可证明的策略覆盖已完成；返回 2 且状态为 `credentials_database_ready_eso_review_needed` 表示凭据和数据库已就绪，但仍需在规范平台配置中确认 ESO 权限，并在部署时实际等待三个 ExternalSecret Ready。返回 1 给出固定错误类别；不要为诊断将 Vault 记录或原始数据库错误粘贴到日志。默认只读检查返回 0 仅表示检查命令完成，需要同时查看 `ready`；该模式不会验证运行时密码登录。
+
+初始化脚本完成后，仍按下面的流程构建镜像、准备目录，再执行 `deploy.sh --init-db` 创建应用表。新增模型调用令牌也需等待原有 llm-service ExternalSecret 同步，并按其既有流程重启读取环境变量的进程。脚本不发布工作负载、不启用 route/pool，也不生成引擎验收结论。
+
+### 手动准备的替代方式
+
+已手动准备数据库时，也可按以下字段格式在有权限的管理终端写入。此处 runtime 的 `put` 仅用于首次创建完整记录；已有记录用 `patch` 更新指定字段，避免覆盖其他值。密钥不要写入仓库。`receipt_keys` 和模型签名密钥都是独立随机密钥的 **base64** 文本（至少 32 个随机字节），不是十六进制。业务/Worker 令牌各自独立且至少 32 个可打印字符。
 
 ```bash
 vault kv put secret/agent-service/runtime \

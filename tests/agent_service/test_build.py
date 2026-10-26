@@ -62,6 +62,9 @@ class DockerFixture:
 
     def __call__(self, arguments, **options):
         assert isinstance(arguments, list) and "shell" not in options
+        if arguments == ['docker', 'buildx', 'version']:
+            assert options['check'] is False
+            return SimpleNamespace(returncode=0, stdout=b'fixture buildx', stderr=b'')
         assert options["check"] is True
         self.calls.append(arguments)
         if arguments[:3] == ["docker", "buildx", "build"]:
@@ -170,6 +173,122 @@ def test_pi_build_requires_immutable_reviewed_donor_before_docker(service, donor
     with pytest.raises(BuildError):
         build("pi", service=service, environ=environment, runner=runner)
     assert not receipt.exists() and runner.calls == []
+
+
+class NativeDockerFixture:
+    """Legacy single-architecture Docker with no optional buildx plugin."""
+    def __init__(self, *, arch='aarch64', fail=None, mismatch=None, oci=False):
+        self.calls, self.names = [], []
+        self.arch, self.fail, self.mismatch, self.oci = arch, fail, mismatch, oci
+        self.image_id = 'sha256:' + 'c' * 64
+        self.checksum = 'sha256:' + 'd' * 64
+        self.pushed, self.inspections = False, 0
+
+    def __call__(self, arguments, **options):
+        assert isinstance(arguments, list) and 'shell' not in options
+        self.calls.append(arguments)
+        if arguments == ['docker', 'buildx', 'version']:
+            assert options['check'] is False
+            return SimpleNamespace(returncode=1, stdout=b'', stderr=b'docker: buildx unavailable')
+        assert options['check'] is True
+        if self.fail and arguments[1:1 + len(self.fail.split())] == self.fail.split():
+            raise subprocess.CalledProcessError(1, arguments)
+        if arguments[:2] == ['docker', 'info']:
+            return SimpleNamespace(stdout=json.dumps({'os': 'linux', 'architecture': self.arch}).encode())
+        if arguments[:2] == ['docker', 'build']:
+            assert options['env']['DOCKER_BUILDKIT'] == '0'
+            with tarfile.open(fileobj=options['stdin']) as archive:
+                self.names = archive.getnames()
+                assert all(member.isfile() for member in archive.getmembers())
+            self.image = arguments[arguments.index('--tag') + 1]
+            return SimpleNamespace(returncode=0)
+        if arguments[:3] == ['docker', 'image', 'inspect']:
+            self.inspections += 1
+            name = self.image.rsplit(':', 1)[0]
+            references = [name + '@' + self.checksum] if self.pushed else []
+            value = dict(id=self.image_id, os='linux', architecture='arm64', repo_digests=references)
+            if self.mismatch == 'local-platform':
+                value['architecture'] = 'amd64'
+            if self.pushed and self.mismatch == 'local-id':
+                value['id'] = 'sha256:' + 'f' * 64
+            if self.pushed and self.mismatch == 'repo':
+                value['repo_digests'] = ['different.invalid/image@' + self.checksum]
+            if self.pushed and self.mismatch == 'digest':
+                value['repo_digests'] = [name + '@sha256:' + 'f' * 64]
+            if self.pushed and self.mismatch == 'missing-repodigests':
+                value['repo_digests'] = None
+            return SimpleNamespace(stdout=json.dumps(value).encode())
+        if arguments[:2] == ['docker', 'push']:
+            self.pushed = True
+            return SimpleNamespace(returncode=0)
+        assert arguments[:5] == ['docker', 'manifest', 'inspect', '--insecure', '--verbose']
+        descriptor = dict(digest=self.checksum, platform={'os': 'linux', 'architecture': 'arm64'})
+        manifest = dict(schemaVersion=2, config={'digest': self.image_id}, layers=[])
+        if self.mismatch == 'remote-platform':
+            descriptor['platform']['architecture'] = 'amd64'
+        if self.mismatch == 'config':
+            manifest['config']['digest'] = 'sha256:' + 'f' * 64
+        result = dict(Ref=self.image, Descriptor=descriptor,
+            **{'OCIManifest' if self.oci else 'SchemaV2Manifest': manifest})
+        if self.mismatch == 'multiplatform':
+            result = [result]
+        if self.mismatch == 'malformed':
+            return SimpleNamespace(stdout=b'{invalid json')
+        return SimpleNamespace(stdout=json.dumps(result).encode())
+
+
+@pytest.mark.parametrize('oci', [False, True])
+def test_no_buildx_uses_native_build_push_and_exact_remote_digest_receipt(service, oci):
+    runner = NativeDockerFixture(oci=oci)
+    receipt = old_receipt(service)
+    expected = 'arm-cluster-master:5000/agent-service-control@' + runner.checksum
+    assert build(service=service, environ={'IMAGE_TAG': 'native'}, runner=runner) == expected
+    assert receipt.read_text() == expected + '\n'
+    build_command = next(command for command in runner.calls if command[:2] == ['docker', 'build'])
+    assert build_command[build_command.index('--platform') + 1] == 'linux/arm64'
+    assert '--push' not in build_command and '--metadata-file' not in build_command
+    assert any(command[:2] == ['docker', 'push'] for command in runner.calls)
+    assert any(command[:5] == ['docker', 'manifest', 'inspect', '--insecure', '--verbose'] for command in runner.calls)
+    assert runner.inspections == 2
+    assert not any(command[1:3] == ['buildx', 'build'] for command in runner.calls)
+    assert not any(name.endswith(('credentials.json', 'private.py', 'NOT_ALLOWED.md')) for name in runner.names)
+
+
+def test_no_buildx_no_push_builds_locally_without_registry_or_deployable_receipt(service):
+    runner = NativeDockerFixture()
+    receipt = old_receipt(service)
+    assert build(service=service, push=False, environ={}, runner=runner) is None
+    assert not receipt.exists()
+    assert [command[:2] for command in runner.calls] == [['docker', 'buildx'], ['docker', 'info'], ['docker', 'build']]
+
+
+@pytest.mark.parametrize('arch', ['x86_64', 'amd64', 'armv7l', 'unknown'])
+def test_native_fallback_refuses_cross_architecture_before_build(service, arch):
+    runner = NativeDockerFixture(arch=arch)
+    receipt = old_receipt(service)
+    with pytest.raises(BuildError, match='native_builder_platform_mismatch'):
+        build(service=service, environ={}, runner=runner)
+    assert not receipt.exists()
+    assert not any(command[:2] == ['docker', 'build'] for command in runner.calls)
+
+
+@pytest.mark.parametrize('mismatch', ['local-platform', 'local-id', 'repo', 'digest', 'missing-repodigests',
+    'remote-platform', 'config', 'multiplatform', 'malformed'])
+def test_native_fallback_cannot_accept_raced_unrelated_or_unverified_digest(service, mismatch):
+    runner = NativeDockerFixture(mismatch=mismatch)
+    receipt = old_receipt(service)
+    with pytest.raises(BuildError):
+        build(service=service, environ={}, runner=runner)
+    assert not receipt.exists()
+
+
+@pytest.mark.parametrize('failure', ['info', 'build', 'push', 'manifest inspect', 'image inspect'])
+def test_native_failure_never_preserves_old_or_writes_new_receipt(service, failure):
+    runner = NativeDockerFixture(fail=failure)
+    receipt = old_receipt(service)
+    with pytest.raises(subprocess.CalledProcessError):
+        build(service=service, environ={}, runner=runner)
+    assert not receipt.exists()
 
 
 def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(service):

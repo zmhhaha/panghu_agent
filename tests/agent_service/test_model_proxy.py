@@ -1,0 +1,416 @@
+"""Offline grants and durable admissions use the real execution database.
+
+Synthetic catalog acceptance and MockTransport do not establish native Worker
+or upstream readiness. No model/provider or academic network calls are made.
+"""
+from copy import deepcopy
+from dataclasses import replace
+import json
+import time
+from types import SimpleNamespace
+
+from fastapi.testclient import TestClient
+import httpx
+import pytest
+from sqlalchemy import select, update
+
+from agent_service.contracts import ExecutionBindingPins, ServiceError, canonical_bytes, digest
+from agent_service.model_proxy import (
+    ModelGrantIssuer, ModelProxy, ModelProxySettings, create_model_proxy_app,
+    observations, requests,
+)
+from agent_service.registry import DeploymentRegistry
+from agent_service.store import Store, attempts, jobs, worker_allocations
+from registry_fixtures import make_catalog
+from scientific_agent.academic_observations import (
+    AcademicObservationError, validate_academic_observations,
+)
+
+
+@pytest.fixture
+def execution(tmp_path):
+    opened = []
+
+    def make(*, engine='pi', profile='workspace-task.v1', allocation=True, **settings):
+        configured = make_catalog(engine, True)
+        registry = DeploymentRegistry.from_config(**{
+            key: value for key, value in configured.items() if key != 'schema_version'})
+        policy = registry.profiles().policy('workspace-task.v1', 'v1')
+        model_policy = registry.binding('workspace-' + engine, 'binding-v1').model_policy
+        if profile != policy.name:
+            # Only model scope is under test. This explicitly synthetic binding
+            # supplies no native profile acceptance or production route.
+            identity = policy.execution_binding.model_dump(mode='json', exclude={'sha256', 'schema_version'})
+            identity['profile'] = profile
+            policy = replace(policy, name=profile,
+                execution_binding=ExecutionBindingPins.create(**identity))
+        store = Store('sqlite:///' + str(tmp_path / (str(len(opened)) + '.db')),
+                      allow_sqlite=True)
+        store.initialize()
+        opened.append(store)
+        request = dict(api_version='1', profile=profile, profile_revision='v1',
+            business_ref='offline-task', task={'prompt': 'offline'}, inputs=[], timeout_seconds=600)
+        store.submit('tenant', 'business', 'one', request, policy.pins())
+        claimed = store.claim(lease_seconds=300, provisioning={engine: 'kubernetes_per_attempt'})
+        with store.engine.connect() as db:
+            row = db.execute(select(jobs).where(jobs.c.id == claimed['id'])).mappings().one()
+            envelope = store._worker_envelope(db, row)
+        if allocation:
+            store.reserve_worker(envelope, 'offline-pool', 'agent-workers',
+                'worker-' + envelope.attempt_id, 'a' * 64, agent_uid=2000000, aux_uid=2000001)
+            assert store.claim_worker_create(envelope.attempt_id, envelope.request_sha256)
+        calls = []
+
+        def upstream(request):
+            calls.append(request)
+            return httpx.Response(200, json={'object': 'response', 'output': []})
+
+        client = httpx.Client(transport=httpx.MockTransport(upstream))
+        opened.append(client)
+        proxy = ModelProxy(store, ModelProxySettings(b'g' * 32,
+            'https://fixed-upstream.invalid/v1', 'offline-provider-token', **settings), client=client)
+        token = proxy.issuer.issue(envelope, model_policy)
+        return SimpleNamespace(store=store, envelope=envelope, model_policy=model_policy,
+            proxy=proxy, token=token, calls=calls,
+            body={'model': model_policy.model, 'input': 'Offline fixture'})
+
+    yield make
+    for item in reversed(opened):
+        item.close()
+
+
+def error(code, action, status=None):
+    with pytest.raises(ServiceError) as failure:
+        action()
+    assert failure.value.code == code
+    if status is not None:
+        assert failure.value.status == status
+
+
+@pytest.mark.parametrize('engine', ['pi', 'hermes'])
+def test_both_engines_use_scoped_responses_and_replay_without_spending_again(execution, engine):
+    run = execution(engine=engine)
+    assert run.proxy.issuer.issue(run.envelope, run.model_policy) == run.token
+    grant = run.proxy.authorize(run.token)
+    assert grant['request'] == run.envelope.request_sha256
+    assert grant['binding'] == run.envelope.execution_binding.sha256
+    expected = run.proxy.respond(run.token, run.body)
+    assert expected == run.proxy.respond(run.token, dict(reversed(list(run.body.items()))))
+    assert len(run.calls) == 1
+    request = run.calls[0]
+    assert str(request.url) == 'https://fixed-upstream.invalid/v1/responses'
+    sent = json.loads(request.content)
+    assert sent['store'] is False and sent['max_output_tokens'] == 32768
+    assert sent['model'] == run.model_policy.model
+    assert request.headers['authorization'] == 'Bearer offline-provider-token'
+    assert 'offline-provider-token' not in run.token
+
+
+def test_complete_response_is_replayed_by_new_proxy_after_controller_restart(execution):
+    run = execution()
+    original = run.proxy.respond(run.token, run.body)
+    recovered_store = Store(str(run.store.engine.url), allow_sqlite=True)
+    recovered_store.initialize()
+    recovered = ModelProxy(recovered_store, run.proxy.settings,
+        client=httpx.Client(transport=httpx.MockTransport(
+            lambda request: pytest.fail('Completed admission must not call upstream'))))
+    try:
+        assert recovered.respond(run.token, run.body) == original
+    finally:
+        recovered.client.close()
+        recovered_store.close()
+
+
+@pytest.mark.parametrize('token', ['', 'not-a-grant', 'a.b', None, 'x' * 2049])
+def test_invalid_grants_never_reach_the_upstream(execution, token):
+    run = execution()
+    error('model_grant_invalid', lambda: run.proxy.respond(token, run.body), 401)
+    assert run.calls == []
+
+
+def test_signature_cannot_be_reused_with_another_attempt_or_signing_key(execution):
+    run = execution()
+    payload, signature = run.token.split('.')
+    error('model_grant_invalid', lambda: run.proxy.authorize(payload[:-1] + 'A.' + signature), 401)
+    error('model_grant_invalid', lambda: ModelGrantIssuer(b'z' * 32).decode(run.token), 401)
+    expired = run.proxy.issuer.issue(run.envelope.model_copy(
+        update={'deadline_at': time.time() - 1}), run.model_policy)
+    error('model_grant_invalid', lambda: run.proxy.authorize(expired), 401)
+
+
+@pytest.mark.parametrize('table,change', [
+    (jobs, {'cancel_requested': True}),
+    (jobs, {'fence': 999}),
+    (jobs, {'state': 'completed'}),
+    (jobs, {'lease_expires_at': 1.0}),
+    (jobs, {'deadline_at': 1.0}),
+    (attempts, {'fence': 999}),
+    (worker_allocations, {'retired': True}),
+    (worker_allocations, {'create_claimed': False}),
+    (worker_allocations, {'request_sha256': '0' * 64}),
+])
+def test_grants_are_revoked_by_authoritative_job_and_allocation_state(execution, table, change):
+    run = execution()
+    with run.store.engine.begin() as db:
+        db.execute(update(table).values(**change))
+    error('model_grant_revoked', lambda: run.proxy.respond(run.token, run.body), 401)
+    assert run.calls == []
+
+
+def test_grant_requires_claimed_allocation_and_pinned_model_policy(execution):
+    unallocated = execution(allocation=False)
+    error('model_grant_revoked', lambda: unallocated.proxy.authorize(unallocated.token), 401)
+    run = execution()
+    changed = run.model_policy.model_copy(update={'model': 'a-different-model'})
+    token = run.proxy.issuer.issue(run.envelope, changed)
+    error('model_grant_scope_mismatch', lambda: run.proxy.authorize(token), 401)
+
+
+def test_lost_upstream_response_retains_admission_and_never_automatically_retries(execution):
+    run = execution()
+    calls = []
+
+    def fail(request):
+        calls.append(request)
+        raise httpx.ReadError('private upstream detail must not escape')
+
+    run.proxy.client.close()
+    run.proxy.client = httpx.Client(transport=httpx.MockTransport(fail))
+    try:
+        error('model_admission_uncertain', lambda: run.proxy.respond(run.token, run.body), 502)
+        error('model_admission_uncertain', lambda: run.proxy.respond(run.token, run.body), 409)
+        assert len(calls) == 1
+        with run.store.engine.connect() as db:
+            record = db.execute(select(requests)).mappings().one()
+        assert record['state'] == 'admitted' and record['response'] is None
+    finally:
+        run.proxy.client.close()
+
+
+def test_cancel_during_response_cannot_complete_or_replay_the_admission(execution):
+    run = execution()
+
+    class CancelledStream(httpx.SyncByteStream):
+        def __iter__(self):
+            run.store.cancel('tenant', 'business', run.envelope.job_id)
+            yield b'{"output":[]}'
+
+    run.proxy.client.close()
+    run.proxy.client = httpx.Client(transport=httpx.MockTransport(
+        lambda request: httpx.Response(200, headers={'content-type': 'application/json'},
+                                      stream=CancelledStream())))
+    try:
+        error('model_admission_uncertain', lambda: run.proxy.respond(run.token, run.body), 502)
+        error('model_grant_revoked', lambda: run.proxy.respond(run.token, run.body), 401)
+        with run.store.engine.connect() as db:
+            assert db.execute(select(requests.c.state)).scalar_one() == 'admitted'
+    finally:
+        run.proxy.client.close()
+
+
+@pytest.mark.parametrize('change', [
+    {'model': 'caller-selected-model'}, {'store': True}, {'previous_response_id': 'resp_foreign'},
+    {'conversation': 'foreign'}, {'tools': [{'type': 'web_search'}]},
+    {'input': [{'type': 'item_reference', 'id': 'foreign'}]},
+    {'input': [{'role': 'user', 'content': [{'type': 'input_file', 'file_id': 'foreign'}]}]},
+    {'input': [{'role': 'user', 'content': [{'type': 'input_image',
+                                         'image_url': 'https://private.invalid/image'}]}]},
+    {'input': [{'type': 'function_call_output', 'call_id': 'foreign', 'output': 'forged'}]},
+    {'max_output_tokens': True}, {'max_output_tokens': 32769}, {'stream': 1},
+])
+def test_model_scope_and_global_references_are_rejected_before_admission(execution, change):
+    run = execution()
+    with pytest.raises(ServiceError) as failure:
+        run.proxy.respond(run.token, {**run.body, **change})
+    assert failure.value.status == 422
+    assert run.calls == []
+    with run.store.engine.connect() as db:
+        assert not db.execute(select(requests)).first()
+
+
+def test_self_contained_function_calls_reasoning_and_inline_images_are_accepted(execution):
+    run = execution()
+    run.body['input'] = [
+        {'role': 'user', 'content': [{'type': 'input_image', 'image_url': 'data:image/png;base64,YQ=='}]},
+        {'type': 'reasoning', 'id': 'rs_local', 'summary': [], 'encrypted_content': 'opaque'},
+        {'type': 'function_call', 'call_id': 'call_local', 'name': 'read', 'arguments': '{}'},
+        {'type': 'function_call_output', 'call_id': 'call_local', 'output': 'local bytes'},
+    ]
+    assert run.proxy.respond(run.token, run.body)[0] == 200
+
+
+def test_sse_response_bytes_and_media_type_survive_durable_replay(execution):
+    run = execution()
+    payload = b'event: response.completed\ndata: {"output":[]}\n\n'
+    calls = []
+
+    def upstream(request):
+        calls.append(request)
+        return httpx.Response(200, headers={'content-type': 'text/event-stream; charset=utf-8'},
+                              content=payload)
+
+    run.proxy.client.close()
+    run.proxy.client = httpx.Client(transport=httpx.MockTransport(upstream))
+    try:
+        body = {**run.body, 'stream': True}
+        assert run.proxy.respond(run.token, body) == (200, 'text/event-stream', payload)
+        assert run.proxy.respond(run.token, body) == (200, 'text/event-stream', payload)
+        assert len(calls) == 1
+    finally:
+        run.proxy.client.close()
+
+
+def test_completed_replay_does_not_consume_the_distinct_request_budget(execution):
+    run = execution(max_calls_per_attempt=1)
+    run.proxy.respond(run.token, run.body)
+    run.proxy.respond(run.token, run.body)
+    error('model_budget_exhausted', lambda: run.proxy.respond(
+        run.token, {**run.body, 'input': 'Different request'}), 429)
+    assert len(run.calls) == 1
+
+
+@pytest.mark.parametrize('status,headers,raw', [
+    (302, {'location': 'https://other.invalid', 'content-type': 'application/json'}, b'{}'),
+    (429, {'content-type': 'application/json'}, b'{"private":"provider response"}'),
+    (200, {'content-type': 'text/html'}, b'private page'),
+    (200, {'content-type': 'application/json'}, b''),
+    (200, {'content-type': 'application/json'}, b'0123456789'),
+])
+def test_bad_or_oversized_upstream_responses_remain_uncertain(execution, status, headers, raw):
+    run = execution(max_response_bytes=8)
+    calls = []
+
+    def upstream(request):
+        calls.append(request)
+        return httpx.Response(status, headers=headers, content=raw)
+
+    run.proxy.client.close()
+    run.proxy.client = httpx.Client(transport=httpx.MockTransport(upstream))
+    try:
+        error('model_admission_uncertain', lambda: run.proxy.respond(run.token, run.body), 502)
+        error('model_admission_uncertain', lambda: run.proxy.respond(run.token, run.body), 409)
+        assert len(calls) == 1
+    finally:
+        run.proxy.client.close()
+
+
+def observed_search():
+    search = dict(source='crossref', query='controlled fixture', searched_at='2026-10-26T00:00:00Z',
+        status='success', result_count=0, error=None)
+    request = dict(tool='academic_search',
+                   payload={'query': search['query'], 'providers': ['crossref'], 'limit': 1})
+    response = dict(schema_version='1', searches=[search], papers=[], database_total=None, notes=[])
+    return request, response
+
+
+def test_real_tool_admission_is_replayed_and_bound_to_observed_search_bytes(execution, monkeypatch):
+    run = execution(profile='research.generate.v1')
+    request, result = observed_search()
+    calls = []
+
+    def actual_bridge(tool, payload, task):
+        calls.append((tool, payload, task))
+        return result
+
+    monkeypatch.setattr('agent_service.profiles.research.academic_tool', actual_bridge)
+    assert run.proxy.academic(run.token, request) == result
+    assert run.proxy.academic(run.token, request) == result
+    assert len(calls) == 1
+    observed = run.proxy.academic_observations(run.token)
+    assert observed['observations'][0]['call_sha256'] == digest(request)
+    arguments = dict(attempt_id=run.envelope.attempt_id,
+        request_sha256=run.envelope.request_sha256,
+        source_policy={'providers': ['crossref'], 'max_results': 1})
+    searches = canonical_bytes(result['searches'][0]) + b'\n'
+    checked = validate_academic_observations(canonical_bytes(observed), searches, b'', **arguments)
+    assert checked['search_calls'] == 1 and checked['scientific_accuracy_verified'] is False
+    forged = deepcopy(result['searches'][0])
+    forged['result_count'] = 123
+    with pytest.raises(AcademicObservationError):
+        validate_academic_observations(canonical_bytes(observed), canonical_bytes(forged) + b'\n', b'', **arguments)
+    with pytest.raises(AcademicObservationError):
+        validate_academic_observations(canonical_bytes(observed), searches, b'',
+            **{**arguments, 'attempt_id': '00000000-0000-0000-0000-000000000001'})
+
+
+def test_interrupted_tool_call_is_retained_and_forged_complete_ledger_is_rejected(execution, monkeypatch):
+    run = execution(profile='research.generate.v1')
+    request, result = observed_search()
+    calls = []
+
+    def fail(*args):
+        calls.append(args)
+        raise RuntimeError('Interrupted actual bridge')
+
+    monkeypatch.setattr('agent_service.profiles.research.academic_tool', fail)
+    with pytest.raises(RuntimeError):
+        run.proxy.academic(run.token, request)
+    error('tool_observation_uncertain', lambda: run.proxy.academic(run.token, request), 409)
+    assert len(calls) == 1
+    observed = run.proxy.academic_observations(run.token)
+    assert observed['observations'][0]['state'] == 'admitted'
+    with pytest.raises(AcademicObservationError):
+        validate_academic_observations(canonical_bytes(observed),
+            canonical_bytes(result['searches'][0]) + b'\n', b'',
+            attempt_id=run.envelope.attempt_id, request_sha256=run.envelope.request_sha256,
+            source_policy={'providers': ['crossref'], 'max_results': 1})
+
+
+def test_tool_bridge_rejects_non_research_profile_without_calling_it(execution, monkeypatch):
+    run = execution()
+    monkeypatch.setattr('agent_service.profiles.research.academic_tool',
+        lambda *args: pytest.fail('Workspace profile cannot access the research bridge'))
+    error('research_tool_not_authorized', lambda: run.proxy.academic(run.token, observed_search()[0]), 403)
+    with run.store.engine.connect() as db:
+        assert not db.execute(select(observations)).first()
+
+
+@pytest.mark.parametrize('raw', [
+    b'{"model":"fixture-model","input":"ok","temperature":NaN}',
+    b'{"model":"fixture-model","input":[{"type":"reasoning","summary":null}]}',
+    b'{"model":"fixture-model","input":[{"role":[],"content":"bad role"}]}',
+    b'{"model":"fixture-model","input":[{"type":"function_call_output","call_id":[],"output":"x"}]}',
+    b'{"model":"fixture-model","input":[{"role":"user","content":[{"type":"input_image",'
+        b'"image_url":"data:image/png;base64,YQ==","detail":[]}]}]}',
+    b'{"model":"fixture-model","input":[{"role":"user","content":[{"type":[]}]}]}',
+    b'{"model":"fixture-model","input":"ok","temperature":1e9999}',
+    b'{"model":"fixture-model","input":' + b'[' * 2000 + b'0' + b']' * 2000 + b'}',
+])
+def test_malformed_client_json_is_rejected_without_internal_errors_or_admission(execution, raw):
+    run = execution()
+    with TestClient(create_model_proxy_app(run.proxy), raise_server_exceptions=False) as client:
+        response = client.post('/v1/responses', content=raw,
+            headers={'authorization': 'Bearer ' + run.token, 'content-type': 'application/json'})
+    assert response.status_code == 422
+    assert set(response.json()) == {'error'}
+    assert run.calls == []
+    with run.store.engine.connect() as db:
+        assert not db.execute(select(requests)).first()
+
+
+@pytest.mark.parametrize('raw', [
+    b'{"tool":[],"payload":{}}',
+    b'{"tool":"academic_search","payload":{"query":NaN}}',
+    b'{"tool":"academic_search","payload":{"query":1e9999}}',
+])
+def test_malformed_academic_request_cannot_crash_or_create_an_admission(execution, raw):
+    run = execution(profile='research.generate.v1')
+    with TestClient(create_model_proxy_app(run.proxy), raise_server_exceptions=False) as client:
+        response = client.post('/v1/tools/academic', content=raw,
+            headers={'authorization': 'Bearer ' + run.token, 'content-type': 'application/json'})
+    assert response.status_code in {403, 422}
+    assert set(response.json()) == {'error'}
+    with run.store.engine.connect() as db:
+        assert not db.execute(select(observations)).first()
+
+
+def test_http_boundary_lists_only_granted_model_and_enforces_request_size(execution):
+    run = execution(max_request_bytes=32)
+    with TestClient(create_model_proxy_app(run.proxy)) as client:
+        assert client.get('/v1/models').status_code == 401
+        headers = {'authorization': 'Bearer ' + run.token}
+        assert client.get('/v1/models', headers=headers).json()['data'] == [
+            {'id': 'fixture-model', 'object': 'model'}]
+        assert client.post('/v1/responses', headers=headers, content=b'{' * 33).status_code == 413
+        assert client.post('/v1/responses', headers=headers, content=b'{invalid').status_code == 422
+    assert run.calls == []

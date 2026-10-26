@@ -12,6 +12,7 @@
 /.pytest-agent-service-*/
 /.pytest-catalog-*/
 /.pytest-research-profiles-*/
+/.pytest-native-build-*/
 
 # 数据库文件
 *.db

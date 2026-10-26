@@ -44,6 +44,16 @@ def _b64(value):
     return base64.urlsafe_b64encode(value).decode('ascii').rstrip('=')
 
 
+def _request_json(raw):
+    def reject_constant(_value):
+        raise ValueError()
+
+    try:
+        return json.loads(raw, parse_constant=reject_constant)
+    except (ValueError, UnicodeError, RecursionError):
+        raise ServiceError('invalid_json', 422) from None
+
+
 @dataclass(frozen=True)
 class ModelProxySettings:
     signing_key: bytes = field(repr=False)
@@ -174,18 +184,21 @@ class ModelProxy:
                 call_ids.add(item['call_id'])
             elif kind == 'function_call_output':
                 if (set(item) - {'type', 'call_id', 'output', 'id', 'status'}
-                        or item.get('call_id') not in call_ids or not isinstance(item.get('output'), str)):
+                        or not isinstance(item.get('call_id'), str)
+                        or item['call_id'] not in call_ids or not isinstance(item.get('output'), str)):
                     reject()
             elif kind == 'reasoning':
                 if set(item) - {'type', 'id', 'summary', 'encrypted_content', 'status'}:
                     reject()
-                if any(not isinstance(s, dict) or set(s) != {'type', 'text'}
+                summary = item.get('summary', [])
+                if not isinstance(summary, list) or any(not isinstance(s, dict) or set(s) != {'type', 'text'}
                        or s['type'] != 'summary_text' or not isinstance(s['text'], str)
-                       for s in item.get('summary', [])):
+                       for s in summary):
                     reject()
             elif kind == 'message':
                 if (set(item) - {'type', 'id', 'role', 'content', 'status'}
-                        or item.get('role') not in {'user', 'assistant', 'system', 'developer'}):
+                        or not isinstance(item.get('role'), str)
+                        or item['role'] not in {'user', 'assistant', 'system', 'developer'}):
                     reject()
                 content = item.get('content')
                 if isinstance(content, str):
@@ -196,6 +209,8 @@ class ModelProxy:
                     if not isinstance(part, dict):
                         reject()
                     content_type = part.get('type')
+                    if not isinstance(content_type, str):
+                        reject()
                     if content_type in {'input_text', 'output_text'}:
                         if set(part) - {'type', 'text', 'annotations', 'logprobs'} or not isinstance(part.get('text'), str):
                             reject()
@@ -205,6 +220,7 @@ class ModelProxy:
                         image = part.get('image_url')
                         if (set(part) - {'type', 'image_url', 'detail'} or not isinstance(image, str)
                                 or not re.fullmatch(r'data:image/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+=*', image)
+                                or not isinstance(part.get('detail', 'auto'), str)
                                 or part.get('detail', 'auto') not in {'auto', 'low', 'high', 'original'}):
                             reject()
                     elif content_type == 'refusal':
@@ -218,8 +234,15 @@ class ModelProxy:
     def academic(self, token, value):
         grant = self.authorize(token)
         if (not isinstance(value, dict) or set(value) != {'tool', 'payload'}
+                or not isinstance(value['tool'], str)
                 or value['tool'] not in {'academic_search', 'academic_verify'}
-                or not isinstance(value['payload'], dict) or len(canonical_bytes(value)) > 16384):
+                or not isinstance(value['payload'], dict)):
+            raise ServiceError('research_tool_not_authorized', 403)
+        try:
+            raw_request = canonical_bytes(value)
+        except (ValueError, TypeError, UnicodeError, RecursionError):
+            raise ServiceError('research_tool_not_authorized', 403) from None
+        if len(raw_request) > 16384:
             raise ServiceError('research_tool_not_authorized', 403)
         with self.store.engine.connect() as db:
             job = db.execute(select(jobs).where(jobs.c.id == grant['job'])).mappings().one()
@@ -264,7 +287,10 @@ class ModelProxy:
     def respond(self, token, value):
         grant = self.authorize(token)
         body = self._body(value, grant)
-        identity = digest(body)
+        try:
+            identity = digest(body)
+        except (ValueError, TypeError, UnicodeError, RecursionError):
+            raise ServiceError('model_request_scope_invalid', 422) from None
         key = (requests.c.attempt_id == grant['attempt']) & (requests.c.body_sha256 == identity)
         # Locking the attempt serializes admission and the per-attempt budget.
         with self.store.engine.begin() as db:
@@ -342,10 +368,7 @@ def create_model_proxy_app(proxy: ModelProxy):
             if size > proxy.settings.max_request_bytes:
                 raise ServiceError('request_too_large', 413)
             chunks.append(chunk)
-        try:
-            value = json.loads(b''.join(chunks))
-        except (ValueError, UnicodeError):
-            raise ServiceError('invalid_json', 422) from None
+        value = _request_json(b''.join(chunks))
         from starlette.concurrency import run_in_threadpool
         status, media, payload = await run_in_threadpool(proxy.respond, authorization, value)
         return Response(payload, status_code=status, media_type=media,
@@ -360,10 +383,7 @@ def create_model_proxy_app(proxy: ModelProxy):
             raw.extend(chunk)
             if len(raw) > 16384:
                 raise ServiceError('request_too_large', 413)
-        try:
-            value = json.loads(raw)
-        except (ValueError, UnicodeError):
-            raise ServiceError('invalid_json', 422) from None
+        value = _request_json(raw)
         from starlette.concurrency import run_in_threadpool
         return await run_in_threadpool(proxy.academic, authorization, value)
 
