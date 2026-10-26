@@ -173,11 +173,14 @@ SELECT json_build_object('unsafe_objects',
     AND has_schema_privilege((SELECT oid FROM r), n.oid, 'CREATE')) +
   (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
-    AND c.relkind IN ('r','p','v','m','f')
-    AND has_table_privilege((SELECT oid FROM r), c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')) +
+    AND CASE WHEN c.relkind IN ('r','p','v','m','f') THEN
+      has_table_privilege((SELECT oid FROM r), c.oid, 'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
+      ELSE false END) +
   (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-    WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND c.relkind='S'
-    AND has_sequence_privilege((SELECT oid FROM r), c.oid, 'SELECT,UPDATE,USAGE')) +
+    WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
+    AND CASE WHEN c.relkind='S' THEN
+      has_sequence_privilege((SELECT oid FROM r), c.oid, 'SELECT,UPDATE,USAGE')
+      ELSE false END) +
   (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
     WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
     AND has_function_privilege((SELECT oid FROM r), p.oid, 'EXECUTE')));

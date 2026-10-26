@@ -152,6 +152,16 @@ python3 -m venv .venv-agent-deploy
 export AGENT_SERVICE_PYTHON_BIN="$PWD/.venv-agent-deploy/bin/python"
 ```
 
+若服务器已有 `pip`，但缺少 `venv/ensurepip`，也可以把依赖装入独立管理目录，使用同一套 `deploy.sh`，无需更改系统 Python 包：
+
+```bash
+export AGENT_DEPLOY_LIBS='/root/agent-service-deploy/deploy-python'
+python3 -m pip install --target "$AGENT_DEPLOY_LIBS" -r agent_service/requirements.txt
+export PYTHONPATH="$AGENT_DEPLOY_LIBS${PYTHONPATH:+:$PYTHONPATH}"
+```
+
+此目录仅用于管理员部署，不挂载给业务或 Worker。不要将它加入 Git。
+
 首次部署显式初始化数据库：
 
 ```bash

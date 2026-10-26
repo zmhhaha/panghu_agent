@@ -117,6 +117,36 @@ def pg_store(pg_url):
     store.close()
 
 
+def test_pg_bootstrap_audit_handles_mixed_relation_kinds_and_detects_public_grants(pg_url):
+    """Audit a low-privilege built-in role without creating cluster-wide roles.
+
+    The disposable schema contains a table, index, view and sequence. PostgreSQL
+    may evaluate AND operands in either order, so a sequence ACL function must
+    never be invoked on those other pg_class objects. PUBLIC grants still count.
+    """
+    from agent_service.deploy.bootstrap import CROSS_DATABASE_INSPECTION
+    audit = CROSS_DATABASE_INSPECTION.replace("rolname = 'agent_service'",
+        "rolname = 'pg_read_all_settings'")
+    engine = create_engine(pg_url)
+    try:
+        with engine.begin() as connection:
+            assert connection.scalar(text("SELECT NOT rolsuper FROM pg_roles "
+                "WHERE rolname = 'pg_read_all_settings'")) is True
+            connection.exec_driver_sql('CREATE TABLE bootstrap_audit_table (id integer PRIMARY KEY)')
+            connection.exec_driver_sql('CREATE VIEW bootstrap_audit_view AS SELECT id FROM bootstrap_audit_table')
+            connection.exec_driver_sql('CREATE SEQUENCE bootstrap_audit_sequence')
+            before = connection.scalar(text(audit))['unsafe_objects']
+            connection.exec_driver_sql('GRANT SELECT ON bootstrap_audit_table, bootstrap_audit_view TO PUBLIC')
+            connection.exec_driver_sql('GRANT USAGE ON SEQUENCE bootstrap_audit_sequence TO PUBLIC')
+            after = connection.scalar(text(audit))['unsafe_objects']
+            assert after == before + 3
+            connection.exec_driver_sql('REVOKE SELECT ON bootstrap_audit_table, bootstrap_audit_view FROM PUBLIC')
+            connection.exec_driver_sql('REVOKE USAGE ON SEQUENCE bootstrap_audit_sequence FROM PUBLIC')
+            assert connection.scalar(text(audit))['unsafe_objects'] == before
+    finally:
+        engine.dispose()
+
+
 def _claim_process(url, ready, release, output):
     """Fresh process: no inherited SQLAlchemy pool or Python synchronization lock."""
     store = None
