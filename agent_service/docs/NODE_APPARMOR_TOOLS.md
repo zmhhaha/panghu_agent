@@ -62,11 +62,11 @@ grep -Fx 'agent-capsule-inputs (enforce)' /sys/kernel/security/apparmor/profiles
 
 此方式不在 `/etc/apparmor.d` 写文件，也不安装开机服务。节点重启后须重新装载和核对，再恢复执行资格；一次手工加载不代表重启后仍然就绪。
 
-## 可选的 pool 节点选择方案
+## pool 节点选择
 
-**当前 `KubernetesPool` 尚无 `node_selector` 配置字段，以下是待实现方案，不能直接加入当前配置。** 当前开启输入池前，应确保所有可能调度到的节点均已加载并验收策略；只给节点添加标签不会限制现有 Worker 的调度。
+`KubernetesPool` 已支持操作员配置的 `node_selector`，默认空。非空配置固定写入 Pod 的 `spec.nodeSelector`，资源核验拒绝选择器丢失、改变或未经授权的注入。开启输入池前，应确保选择器限定的节点均已加载并验收策略。
 
-可增加操作员配置 `kubernetes_workers[].node_selector`，写入 Worker 的 `spec.nodeSelector`。节点仅在本次启动后实际加载并验收规则后，才标记 `agent-service.panghuer.top/input-profile=agent-capsule-inputs-<规则SHA256前20位>`；完整摘要放在节点 annotation，避免超过 label 的63字符限制。池同时选择该标签及镜像的 OS/架构。例如未来配置片段：
+节点仅在本次启动后实际加载并验收规则后，才标记 `agent-service.panghuer.top/input-profile=agent-capsule-inputs-<规则SHA256前20位>`；完整摘要放在节点 annotation，避免超过 label 的63字符限制。池同时选择该标签及镜像的 OS/架构。例如配置片段：
 
 ```json
 {
@@ -78,4 +78,4 @@ grep -Fx 'agent-capsule-inputs (enforce)' /sys/kernel/security/apparmor/profiles
 }
 ```
 
-实现时 selector 必须来自服务端公开配置，并进入持久 Pod 意图及资源一致性检查；业务请求不得选择节点。改动只影响新任务，不重新解释已分配 Pod。节点标签需在重启、规则更换或验收失败时撤销，重新装载验收后再恢复；没有匹配节点时保持任务未就绪，不降级 AppArmor。节点开机加载和就绪标签的自动维护可作为独立平台工作实现，不能把永久标签当作内核策略当前存在的证明。
+selector 来自服务端公开配置，并进入持久 Pod 意图及资源一致性检查；业务请求不得选择节点。改动只影响新任务，不重新解释已分配 Pod。节点标签需在重启、规则更换或验收失败时撤销，重新装载验收后再恢复；没有匹配节点时保持待调度，不降级 AppArmor。节点开机加载和就绪标签的自动维护可作为独立平台工作实现，不能把永久标签当作内核策略当前存在的证明。

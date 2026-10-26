@@ -78,6 +78,8 @@ def test_unconfigured_pool_does_not_accept_injected_scheduling_selector(expected
 
 
 def test_original_pod_and_normal_api_defaults_are_accepted(expected):
+    assert expected['spec']['containers'][0]['command'] == [
+        '/opt/agent-service/.venv/bin/python', '-m', 'agent_service.worker_entry']
     validate_pod(deepcopy(expected), expected)
     observed = deepcopy(expected)
     spec = observed['spec']

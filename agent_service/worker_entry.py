@@ -413,6 +413,7 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
     settings = RuntimeSettings(command=(NODE, PI_CLI), node_command=(NODE,),
         provider=config.model.provider, model=config.model.model,
         model_base_url=config.model.proxy_base_url, model_api=config.model.api,
+        model_max_tokens=8192,
         model_env={'AGENT_MODEL_API_KEY': secrets.model_proxy_token.get_secret_value()},
         tool_proxy_base_url=config.model.proxy_base_url,
         model_input=('text', 'image') if 'vision' in (

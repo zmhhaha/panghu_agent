@@ -1,6 +1,6 @@
 # 从 Worker 镜像生成部署目录
 
-`python -m agent_service.catalog` 在已构建的领域 Worker 镜像内读取固定能力包，生成公共
+`/opt/agent-service/.venv/bin/python -m agent_service.catalog` 在已构建的领域 Worker 镜像内读取固定能力包，生成公共
 部署配置、每个绑定的宿主配置和组合 fingerprint。它不访问网络、模型、数据库、Vault
 或 Kubernetes，也不生成密钥、验收记录。生成器需要 Linux root，以检查能力包确实为
 镜像内 root 所有、无 group/other 写权限的普通文件；拒绝链接和多硬链接文件。
@@ -15,7 +15,7 @@ mkdir -p agent_service/rendered/catalog
 
 docker run --rm --network none --read-only --user 0:0 \
   --mount type=bind,source="$PWD/agent_service/rendered/catalog",target=/catalog \
-  --entrypoint /opt/hermes/.venv/bin/python \
+  --entrypoint /opt/agent-service/.venv/bin/python \
   "$PI_IMAGE" -m agent_service.catalog \
   --pi-image "$PI_IMAGE" \
   --hermes-image "$HERMES_IMAGE" \
@@ -31,6 +31,10 @@ docker run --rm --network none --read-only --user 0:0 \
 `--pod-cidr` 必须对应实际集群网络，可重复指定。只有 Hermes 时改用其镜像运行、传
 `--hermes-image` 并设置 `--engine hermes`。每次生成必须使用新目录或空目录，避免覆盖
 已有目录中的验收和历史绑定。生成器没有执行上述命令；本轮代码尚未实测。
+
+两个 Worker 镜像都使用 `/opt/agent-service/.venv` 运行中立控制层和目录生成器；中立
+依赖仅安装到这个独立环境。Hermes 与 PPT 工具继续使用原有 `/opt/hermes/.venv`，避免
+控制层的依赖升级影响原生工具环境。控制服务镜像仍使用它自己的默认 `python`。
 
 输出：
 

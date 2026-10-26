@@ -86,7 +86,7 @@ bash agent_service/build.sh --target pi
 bash agent_service/build.sh --target hermes
 ```
 
-成功推送才写入 `agent_service/rendered/control-image.txt`、`pi-image.txt`、`hermes-image.txt`。部署使用这些固定摘要，不能用 `latest` 或只构建未推送的标签代替。构建上下文使用明确的源码/中立校验器/科学检索工具清单，不包含 `.env`、个人 HOME、会话、数据库或部署凭据。Worker 镜像里的入口是 `/opt/hermes/.venv/bin/python -m agent_service.worker_entry`；继承自 PPT 镜像的网关入口会被替换。
+成功推送才写入 `agent_service/rendered/control-image.txt`、`pi-image.txt`、`hermes-image.txt`。部署使用这些固定摘要，不能用 `latest` 或只构建未推送的标签代替。构建上下文使用明确的源码/中立校验器/科学检索工具清单，不包含 `.env`、个人 HOME、会话、数据库或部署凭据。Worker 镜像里的入口是 `/opt/agent-service/.venv/bin/python -m agent_service.worker_entry`；中立控制依赖安装在该独立虚拟环境。Hermes 网关和 PPT 脚本继续使用 donor 原有 `/opt/hermes/.venv`，继承自 PPT 镜像的网关入口会被替换。
 
 ## 3. 生成并审定公开目录
 

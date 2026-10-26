@@ -170,6 +170,7 @@ def test_bound_driver_uses_measured_builtin_bundle_and_dedicated_proxy(monkeypat
     settings, profile = captured[0]
     assert settings.skill_bundle_revision == 'workspace-text-v1'
     assert settings.model_api == 'openai-responses'
+    assert settings.model_max_tokens == 8192
     assert (settings.provider, settings.model) == ('custom', 'fixed-model')
     assert set(settings.model_env) == {'AGENT_MODEL_API_KEY'}
     assert profile.allowed_tools == ('read', 'write') and profile.load_skills is False

@@ -16,8 +16,9 @@ COPY scientific_agent/ /opt/agent-service/scientific_agent/
 COPY pi_worker/ /opt/agent-service/pi_worker/
 COPY tools/ /opt/agent-service/tools/
 COPY scientific_skills/ /opt/agent-service/scientific_skills/
-RUN /opt/hermes/.venv/bin/python -m pip install --no-cache-dir -r /opt/agent-service/agent_service/requirements.txt \
-    && /opt/hermes/.venv/bin/python -m pip check \
+RUN /opt/hermes/.venv/bin/python -m venv /opt/agent-service/.venv \
+    && /opt/agent-service/.venv/bin/python -m pip install --no-cache-dir -r /opt/agent-service/agent_service/requirements.txt \
+    && /opt/agent-service/.venv/bin/python -m pip check \
     && mkdir -p /run/agent-control /run/agent-secrets /work \
     && chmod 0700 /run/agent-control /run/agent-secrets \
     && chmod 0711 /work \
@@ -28,5 +29,5 @@ EXPOSE 8090
 # Python must be PID 1 in a private Pod PID namespace. The trusted controller
 # needs CHOWN, DAC_OVERRIDE, KILL, SETUID, SETGID only; the child launcher clears
 # all capabilities and sets no_new_privs. No model credential is baked in.
-ENTRYPOINT ["/opt/hermes/.venv/bin/python", "-m", "agent_service.worker_entry"]
+ENTRYPOINT ["/opt/agent-service/.venv/bin/python", "-m", "agent_service.worker_entry"]
 CMD []

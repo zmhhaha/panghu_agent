@@ -205,7 +205,7 @@ class KubernetesWorkerAdapter:
                 'activeDeadlineSeconds': self.pool.policy.max_timeout_seconds + 90,
                 'securityContext': {'seccompProfile': {'type': 'RuntimeDefault'}},
                 'containers': [{'name': 'worker', 'image': self.pool.image, 'imagePullPolicy': 'IfNotPresent',
-                    'command': ['/opt/hermes/.venv/bin/python', '-m', 'agent_service.worker_entry'],
+                    'command': ['/opt/agent-service/.venv/bin/python', '-m', 'agent_service.worker_entry'],
                     'args': ['--config', '/etc/agent-worker/config.json',
                              '--secrets', '/run/agent-secrets/worker.json'],
                     'ports': [{'name': 'worker', 'containerPort': self.pool.port}], 'env': env,

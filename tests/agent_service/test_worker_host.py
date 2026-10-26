@@ -180,6 +180,7 @@ def test_pinned_pi_configuration_keeps_control_credentials_out_of_agent(monkeypa
     s = captured['settings']
     assert s.command == ('/usr/local/bin/node', '/opt/pi/node_modules/@mariozechner/pi-coding-agent/dist/cli.js')
     assert s.model_api == 'openai-responses' and s.fixture_mode is False
+    assert s.model_max_tokens == 8192
     assert set(s.model_env) == {'AGENT_MODEL_API_KEY'}
     assert TOKEN not in str(s.model_env) and 'c' * 64 not in str(s.model_env)
     assert s.run_uid_start == RUNTIME_UID and s.run_gid == RUNTIME_UID

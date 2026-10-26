@@ -11,6 +11,42 @@ import pytest
 from agent_service.build_image import BuildError, PYTHON_BASE, build
 
 
+def dockerfile_text(name):
+    path = Path(__file__).parents[2] / 'agent_service' / name
+    return path.read_text(encoding='utf-8')
+
+
+def docker_entrypoint(text):
+    entries = [line.removeprefix('ENTRYPOINT ').strip()
+               for line in text.splitlines() if line.startswith('ENTRYPOINT ')]
+    assert len(entries) == 1
+    return json.loads(entries[0])
+
+
+@pytest.mark.parametrize('name', ['Dockerfile.agent-pi', 'Dockerfile.agent-hermes'])
+def test_workers_isolate_neutral_controller_dependencies_from_native_hermes_environment(name):
+    text = dockerfile_text(name)
+    commands = ' '.join(text.replace('\\\n', ' ').split())
+    native = '/opt/hermes/.venv/bin/python'
+    controller = '/opt/agent-service/.venv/bin/python'
+    assert native + ' -m venv /opt/agent-service/.venv' in commands
+    assert controller + ' -m pip install --no-cache-dir -r /opt/agent-service/agent_service/requirements.txt' in commands
+    assert controller + ' -m pip check' in commands
+    # Installing the controller requirements into the donor environment can
+    # break Hermes/PPT's reviewed dependency set before any Worker starts.
+    assert native + ' -m pip install' not in commands
+    assert native + ' -m pip check' not in commands
+    assert docker_entrypoint(text) == [controller, '-m', 'agent_service.worker_entry']
+
+
+def test_control_image_keeps_its_independent_default_python_entrypoint():
+    text = dockerfile_text('Dockerfile.control')
+    assert docker_entrypoint(text) == ['python', '-m', 'agent_service']
+    assert 'python -m pip install --no-cache-dir -r /opt/agent-service/agent_service/requirements.txt' in text
+    assert 'python -m pip check' in text
+    assert '/opt/hermes/.venv' not in text
+
+
 @pytest.fixture
 def service(tmp_path):
     root = tmp_path / "agent service"
