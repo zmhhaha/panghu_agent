@@ -7,6 +7,8 @@ PPT／科研合入 main 后已同步 main，通用 runtime 仍无业务包依赖
 首批历史验证见 [VALIDATION_20261026.md](docs/VALIDATION_20261026.md)；
 本轮验证见 [CAPSULE_VALIDATION_20261026.md](docs/CAPSULE_VALIDATION_20261026.md)。
 本轮运行层、构建与部署边界见 [CAPSULE_RUNTIME.md](docs/CAPSULE_RUNTIME.md)。
+现有 PPT/科研 API 与业务能力的覆盖差距及后续服务边界见
+[BUSINESS_CAPABILITY_COVERAGE.md](docs/BUSINESS_CAPABILITY_COVERAGE.md)。
 
 业务调用同一个 Jobs API，由部署者将版本化任务 profile 路由到 Pi 或 Hermes。
 模型、命令、镜像、凭据和引擎会话属于服务端配置，不由业务请求选择。
