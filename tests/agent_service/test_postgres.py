@@ -147,6 +147,65 @@ def test_pg_bootstrap_audit_handles_mixed_relation_kinds_and_detects_public_gran
         engine.dispose()
 
 
+@pytest.mark.parametrize('extension,reviewed', [
+    ('pgcrypto', True), ('pg_trgm', True), ('citext', True), ('hstore', False),
+])
+def test_pg_bootstrap_reviewed_extension_invokers_do_not_hide_other_grants(pg_url, extension, reviewed):
+    """Install only in the disposable schema; no platform role/ACL is changed.
+
+    Known PUBLIC invokers are observed separately. An unreviewed extension,
+    custom routine, SECURITY DEFINER, and direct execution grant stay blocking.
+    """
+    from agent_service.deploy.bootstrap import CROSS_DATABASE_INSPECTION
+    audit = CROSS_DATABASE_INSPECTION.replace("rolname = 'agent_service'",
+        "rolname = 'pg_read_all_settings'")
+    engine = create_engine(pg_url)
+    try:
+        with engine.begin() as connection:
+            assert not connection.scalar(text('SELECT EXISTS (SELECT 1 FROM pg_extension '
+                'WHERE extname = :extension)'), {'extension': extension}), 'Use a fresh disposable fixture'
+            before = connection.scalar(text(audit))
+            schema = connection.scalar(text('SELECT current_schema()'))
+            assert schema.startswith('agent_fixture_')
+            connection.exec_driver_sql('CREATE EXTENSION ' + extension + ' WITH SCHEMA '
+                + connection.dialect.identifier_preparer.quote(schema))
+            signatures = connection.scalars(text("SELECT p.oid::regprocedure::text FROM pg_proc p "
+                "JOIN pg_depend dep ON dep.classid = 'pg_proc'::regclass AND dep.objid = p.oid "
+                "AND dep.refclassid = 'pg_extension'::regclass AND dep.deptype = 'e' "
+                "JOIN pg_extension e ON e.oid = dep.refobjid WHERE e.extname = :extension "
+                "AND has_function_privilege('pg_read_all_settings', p.oid, 'EXECUTE') ORDER BY p.oid"),
+                {'extension': extension}).all()
+            assert signatures
+            initial = connection.scalar(text(audit))
+            if not reviewed:
+                assert initial['unsafe_objects'] == before['unsafe_objects'] + len(signatures)
+                assert initial['reviewed_public_functions'] == before['reviewed_public_functions']
+                return
+            assert initial['unsafe_objects'] == before['unsafe_objects']
+            assert initial['reviewed_public_functions'] == before['reviewed_public_functions'] + len(signatures)
+            connection.exec_driver_sql("CREATE FUNCTION bootstrap_custom_invoker() RETURNS integer "
+                "LANGUAGE sql AS 'SELECT 1'")
+            custom = connection.scalar(text(audit))
+            assert custom['unsafe_objects'] == initial['unsafe_objects'] + 1
+            signature = signatures[0]
+            connection.exec_driver_sql('ALTER FUNCTION ' + signature + ' SECURITY DEFINER')
+            definer = connection.scalar(text(audit))
+            assert definer['unsafe_objects'] == custom['unsafe_objects'] + 1
+            assert definer['reviewed_public_functions'] == initial['reviewed_public_functions'] - 1
+            connection.exec_driver_sql('ALTER FUNCTION ' + signature + ' SECURITY INVOKER')
+            connection.exec_driver_sql('GRANT EXECUTE ON FUNCTION ' + signature + ' TO pg_read_all_settings')
+            direct = connection.scalar(text(audit))
+            assert direct['unsafe_objects'] == custom['unsafe_objects'] + 1
+            assert direct['reviewed_public_functions'] == initial['reviewed_public_functions'] - 1
+            connection.exec_driver_sql('REVOKE EXECUTE ON FUNCTION ' + signature + ' FROM PUBLIC')
+            assert connection.scalar(text(audit)) == direct
+            connection.exec_driver_sql('REVOKE EXECUTE ON FUNCTION ' + signature + ' FROM pg_read_all_settings')
+            connection.exec_driver_sql('GRANT EXECUTE ON FUNCTION ' + signature + ' TO PUBLIC')
+            assert connection.scalar(text(audit)) == custom
+    finally:
+        engine.dispose()
+
+
 def _claim_process(url, ready, release, output):
     """Fresh process: no inherited SQLAlchemy pool or Python synchronization lock."""
     store = None

@@ -166,8 +166,29 @@ SELECT json_build_object(
 DATABASE_LIST = """SELECT COALESCE(json_agg(datname), '[]'::json) FROM pg_database
 WHERE datallowconn AND NOT datistemplate AND datname <> 'agent_service';"""
 
+# Reviewed pgcrypto/pg_trgm/citext PUBLIC invoker functions supply computation,
+# strings and cryptography, not the caller's missing business-table privileges.
+# Unknown/custom/definer routines and direct object grants remain blocking.
 CROSS_DATABASE_INSPECTION = """
-WITH r AS (SELECT oid FROM pg_roles WHERE rolname = 'agent_service')
+WITH r AS (SELECT oid FROM pg_roles WHERE rolname = 'agent_service'),
+routine_access AS (
+  SELECT p.prosecdef, has_function_privilege((SELECT oid FROM r), p.oid, 'EXECUTE') AS executable,
+    EXISTS (SELECT 1 FROM pg_depend dep JOIN pg_extension ext ON ext.oid = dep.refobjid
+      WHERE dep.classid = 'pg_proc'::regclass AND dep.objid = p.oid
+        AND dep.refclassid = 'pg_extension'::regclass AND dep.deptype = 'e'
+        AND ext.extname IN ('pgcrypto', 'pg_trgm', 'citext')) AS reviewed_extension,
+    EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
+      WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE') AS public_execute,
+    EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) a
+      WHERE a.grantee = (SELECT oid FROM r) AND a.privilege_type = 'EXECUTE') AS direct_agent_execute
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
+), classified_routines AS (
+  SELECT executable,
+    (reviewed_extension AND NOT prosecdef AND public_execute AND NOT direct_agent_execute)
+      AS reviewed_public_invoker
+  FROM routine_access
+)
 SELECT json_build_object('unsafe_objects',
   (SELECT count(*) FROM pg_namespace n WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
     AND has_schema_privilege((SELECT oid FROM r), n.oid, 'CREATE')) +
@@ -181,9 +202,9 @@ SELECT json_build_object('unsafe_objects',
     AND CASE WHEN c.relkind='S' THEN
       has_sequence_privilege((SELECT oid FROM r), c.oid, 'SELECT,UPDATE,USAGE')
       ELSE false END) +
-  (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-    WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema'
-    AND has_function_privilege((SELECT oid FROM r), p.oid, 'EXECUTE')));
+  (SELECT count(*) FROM classified_routines WHERE executable AND NOT reviewed_public_invoker),
+  'reviewed_public_functions',
+  (SELECT count(*) FROM classified_routines WHERE executable AND reviewed_public_invoker));
 """
 
 
@@ -197,6 +218,7 @@ def inspect_database(cluster):
         raise BootstrapError('database_inspection_invalid')
     result = {key: result[key] for key in (*bools, *counts)}
     result['cross_database_unsafe_objects'] = 0
+    result['cross_database_reviewed_public_functions'] = 0
     if result['role_exists']:
         names = _json(cluster.sql(DATABASE_LIST))
         if type(names) is not list or len(names) > 100:
@@ -206,9 +228,11 @@ def inspect_database(cluster):
                 raise BootstrapError('database_inspection_invalid')
             audit = _json(cluster.sql(CROSS_DATABASE_INSPECTION, database=name))
             number = audit.get('unsafe_objects') if type(audit) is dict else None
-            if type(number) is not int or number < 0:
+            reviewed = audit.get('reviewed_public_functions') if type(audit) is dict else None
+            if type(number) is not int or number < 0 or type(reviewed) is not int or reviewed < 0:
                 raise BootstrapError('database_inspection_invalid')
             result['cross_database_unsafe_objects'] += number
+            result['cross_database_reviewed_public_functions'] += reviewed
     return result
 
 

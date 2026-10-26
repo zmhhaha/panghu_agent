@@ -23,6 +23,7 @@ class ClusterFixture:
         self.writes, self.statements, self.authenticated = [], [], []
         self.role_exists = self.database_exists = False
         self.unsafe = False
+        self.reviewed_public_functions = 0
         self.conflict = None
 
     def vault(self, command, **_):
@@ -59,7 +60,8 @@ class ClusterFixture:
         if sql == module.DATABASE_LIST:
             return b'["postgres","appdb"]'
         if sql == module.CROSS_DATABASE_INSPECTION:
-            return b'{"unsafe_objects":0}'
+            return json.dumps({'unsafe_objects': 0,
+                'reviewed_public_functions': self.reviewed_public_functions}).encode()
         if sql.startswith('SELECT pg_advisory_lock'):
             self.role_exists = self.database_exists = True
             return b''
@@ -105,6 +107,19 @@ def test_apply_preserves_shared_fields_and_is_repeatable_without_rotation():
     assert all('ALTER ROLE' not in sql and 'DROP ' not in sql for _, sql in cluster.statements)
     creation = next(sql for _, sql in cluster.statements if sql.startswith('SELECT pg_advisory_lock'))
     assert 'NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS' in creation
+
+
+def test_reviewed_public_invokers_are_observed_without_becoming_cross_database_authority():
+    cluster = ClusterFixture()
+    cluster.role_exists = cluster.database_exists = True
+    cluster.records[module.RUNTIME_PATH] = runtime()
+    cluster.records[module.CALLERS_PATH][module.MODEL_KEY] = 'private-model-token-' + 'x' * 40
+    cluster.reviewed_public_functions = 93
+    report = module.bootstrap(cluster)
+    assert report['ready'] is True
+    assert report['database']['cross_database_reviewed_public_functions'] == 186
+    assert report['database']['cross_database_unsafe_objects'] == 0
+    assert cluster.writes == [] and cluster.authenticated == []
 
 
 def test_cas_conflict_rereads_winner_without_clobbering_concurrent_fields():
