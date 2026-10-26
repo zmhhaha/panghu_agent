@@ -12,6 +12,7 @@ describe('safe gateway error messages',()=>{
   [502,'UPSTREAM_BAD_GATEWAY','未收到有效的后端响应'],
   [503,'SERVICE_UNAVAILABLE','服务暂不可用'],
   [504,'UPSTREAM_TIMEOUT','等待后端响应超时'],
+  [524,'UPSTREAM_TIMEOUT','等待后端响应超时'],
  ] as const)('explains a non-JSON HTTP %s without exposing its response or retrying the write',async(status,code,message)=>{
   const fetcher=vi.fn().mockResolvedValue(new Response(privateHtml,{status,headers:{'Content-Type':'text/html'}}));
   vi.stubGlobal('fetch',fetcher);
