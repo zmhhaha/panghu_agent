@@ -184,11 +184,8 @@ def test_mount_verification_failure_requires_real_unmount_and_retains_uncertaint
     staged = simulated_mount
     libc = FakeLibc(unmount_result=-1)
     monkeypatch.setattr(mounts.ReadOnlyInputs, '_libc', staticmethod(lambda: libc))
-    # A reported successful bind/remount cannot substitute for both independent
-    # read-only and mountpoint checks. This facade affects only mounts.py.
-    monkeypatch.setattr(mounts, 'os', SimpleNamespace(fsencode=os.fsencode,
-        ST_RDONLY=1, statvfs=lambda path: SimpleNamespace(f_flag=0),
-        path=SimpleNamespace(ismount=lambda path: False)))
+    # Successful syscalls cannot substitute for independent kernel mount checks.
+    monkeypatch.setattr(mounts, 'verified_read_only_mount', lambda path: False)
     fails('input_unmount_unverified', staged.boundary.prepare)
     assert staged.boundary.targets == [staged.workspace / 'inputs']
     assert len(libc.unmounts) == 1 and libc.unmounts[0][1] == 0
@@ -196,6 +193,29 @@ def test_mount_verification_failure_requires_real_unmount_and_retains_uncertaint
     libc.unmount_result = 0
     staged.boundary.close()
     assert staged.boundary.targets == []
+
+
+def test_mountinfo_accepts_same_filesystem_bind_without_ismount_heuristic():
+    # Captured mountinfo form: the bind has the same device as its parent, but
+    # Linux records a separate exact mountpoint with the required VFS flags.
+    document = ('83 31 0:27 / /work rw,relatime - overlay overlay rw\n'
+        '95 83 0:27 /run/agent-control/input-sources/id/inputs /work/id/inputs '
+        'ro,nosuid,nodev,noexec,relatime - overlay overlay rw\n')
+    assert mounts.mountinfo_is_read_only(document, '/work/id/inputs')
+    assert not mounts.mountinfo_is_read_only(document, '/work/id/inputs/nested')
+
+
+@pytest.mark.parametrize('flags', ['rw,nosuid,nodev,noexec', 'ro,nodev,noexec', 'ro,nosuid,noexec', 'ro,nosuid,nodev'])
+def test_mountinfo_rejects_missing_required_vfs_flag(flags):
+    assert not mounts.mountinfo_is_read_only(
+        f'95 83 0:27 /source /work/id/inputs {flags} - overlay overlay rw\n', '/work/id/inputs')
+
+
+def test_mountinfo_decodes_kernel_escaping_and_rejects_stacked_mounts():
+    row = '95 83 0:27 /source /work/id/space\\040name ro,nosuid,nodev,noexec - overlay overlay rw\n'
+    assert mounts.mountinfo_is_read_only(row, '/work/id/space name')
+    assert not mounts.mountinfo_is_read_only(row + row, '/work/id/space name')
+    assert not mounts.mountinfo_is_read_only('malformed\n', '/work/id/space name')
 
 
 def test_domain_workspace_requires_staging_context_and_rejects_overlapping_contexts(tmp_path):

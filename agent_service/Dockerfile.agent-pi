@@ -6,8 +6,10 @@ ARG PPT_DONOR_IMAGE
 FROM ${PI_DONOR_IMAGE} AS pi_donor
 FROM ${PPT_DONOR_IMAGE}
 USER 0:0
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
-    && rm -rf /var/lib/apt/lists/*
+RUN if [ "$(dpkg-query -W -f='${Status}\n' ca-certificates libstdc++6 2>/dev/null | grep -cx 'install ok installed')" != 2 ]; then \
+      apt-get update && apt-get install -y --no-install-recommends ca-certificates libstdc++6 \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
 COPY --from=pi_donor /usr/local/bin/node /usr/local/bin/node
 COPY --from=pi_donor /opt/pi/ /opt/pi/
 COPY agent_service/ /opt/agent-service/agent_service/

@@ -8,12 +8,41 @@ from __future__ import annotations
 import ctypes
 import os
 from pathlib import Path
+import re
 import stat
 
 from .contracts import ServiceError
 
 MS_BIND, MS_REMOUNT, MS_RDONLY = 4096, 32, 1
 MS_NOSUID, MS_NODEV, MS_NOEXEC = 2, 4, 8
+
+
+def mountinfo_is_read_only(document, target):
+    """Verify an exact Linux mountpoint, including same-filesystem bind mounts.
+
+    os.path.ismount compares device/inode metadata and misses bind mounts whose
+    source and parent share a filesystem. The kernel mount table is authoritative
+    for their existence and per-mount VFS flags.
+    """
+    matches = []
+    for line in document.splitlines():
+        fields = line.split()
+        if len(fields) < 10 or '-' not in fields[6:]:
+            continue
+        path = re.sub(r'\\(040|011|012|134)', lambda match: chr(int(match[1], 8)), fields[4])
+        if path == str(target):
+            matches.append(fields)
+    # Multiple stacked mounts are ambiguous; no fallback to the lower mount.
+    return (len(matches) == 1
+        and {'ro', 'nosuid', 'nodev', 'noexec'} <= set(matches[0][5].split(',')))
+
+
+def verified_read_only_mount(target):
+    try:
+        return (bool(os.statvfs(target).f_flag & os.ST_RDONLY)
+            and mountinfo_is_read_only(Path('/proc/self/mountinfo').read_text(encoding='utf-8'), target))
+    except (OSError, UnicodeError):
+        return False
 
 
 class ReadOnlyInputs:
@@ -54,7 +83,7 @@ class ReadOnlyInputs:
                 flags = MS_BIND | MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC
                 if libc.mount(None, os.fsencode(target), None, flags, None) != 0:
                     raise ServiceError('read_only_mount_failed', 503)
-                if not os.statvfs(target).f_flag & os.ST_RDONLY or not os.path.ismount(target):
+                if not verified_read_only_mount(target):
                     raise ServiceError('read_only_mount_unverified', 503)
         except BaseException:
             self.close()
