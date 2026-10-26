@@ -26,8 +26,8 @@ class ClusterFixture:
         self.conflict = None
 
     def vault(self, command, **_):
-        if command == ['token', 'lookup', '-field=ttl']:
-            return b'1000'
+        if command == ['token', 'lookup', '-format=json']:
+            return b'{"data":{"id":"private-test-admin-token"}}'
         if command[-1] == 'auth/kubernetes/role/eso-role':
             return json.dumps({'data': {'token_policies': ['eso-policy']}}).encode()
         if command[-1] == 'sys/policies/acl/eso-policy':
@@ -197,8 +197,21 @@ def test_missing_kv_read_accepts_exact_stdout_or_stderr_diagnostic(stdout, stder
 def test_missing_diagnostic_never_masks_other_commands_or_arbitrary_output(command, returncode, stdout):
     cluster = module.Cluster(runner=lambda *_, **__: SimpleNamespace(
         returncode=returncode, stdout=stdout, stderr=b''))
-    with pytest.raises(module.BootstrapError, match='vault_operation_unavailable'):
+    with pytest.raises(module.BootstrapError, match='vault_kv_(?:get|put)_unavailable'):
         cluster.vault(command, missing=True)
+
+
+@pytest.mark.parametrize('command,category', [
+    (['token', 'lookup', '-format=json'], 'token_lookup'),
+    (['kv', 'get', '-format=json', module.RUNTIME_PATH], 'kv_get'),
+    (['kv', 'put', '-format=json', module.RUNTIME_PATH, '-'], 'kv_put'),
+    (['read', '-format=json', 'auth/kubernetes/role/eso-role'], 'policy_read'),
+])
+def test_vault_operation_failures_have_safe_fixed_categories(command, category):
+    cluster = module.Cluster(runner=lambda *_, **__: SimpleNamespace(returncode=1,
+        stdout=b'private-value', stderr=b'private-error-value'))
+    with pytest.raises(module.BootstrapError, match='^vault_' + category + '_unavailable$'):
+        cluster.vault(command)
 
 
 @pytest.mark.parametrize('policy,coverage', [

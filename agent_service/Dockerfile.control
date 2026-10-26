@@ -2,6 +2,7 @@
 # remain repository@sha256 references and are validated by build_image.py.
 ARG PYTHON_BASE_IMAGE=python@sha256:cf50a4f6ac4f026458b08d5222023d700ac806410dff5e9ca8728fa44f2b850f
 FROM ${PYTHON_BASE_IMAGE}
+USER 0:0
 WORKDIR /opt/agent-service
 COPY agent_service/ /opt/agent-service/agent_service/
 COPY scientific_agent/ /opt/agent-service/scientific_agent/

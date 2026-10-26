@@ -86,7 +86,11 @@ class Cluster:
                         return None
             if b'check-and-set' in error and b'did not match' in error:
                 raise BootstrapError('vault_cas_conflict')
-            raise BootstrapError('vault_operation_unavailable')
+            operation = ('token_lookup' if command[:2] == ['token', 'lookup'] else
+                'kv_get' if command[:2] == ['kv', 'get'] else
+                'kv_put' if command[:2] == ['kv', 'put'] else
+                'policy_read' if command[:1] == ['read'] else 'operation')
+            raise BootstrapError('vault_' + operation + '_unavailable')
         return result.stdout
 
     def kv(self, path):
@@ -410,7 +414,12 @@ def inspect_eso(cluster):
 def bootstrap(cluster, *, apply=False, database_host='postgres.data.svc.cluster.local'):
     if not re.fullmatch(r'[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?', database_host):
         raise BootstrapError('invalid_database_service_host')
-    cluster.vault(['token', 'lookup', '-field=ttl'])
+    # Vault CLI's token lookup does not support the generic read -field flag.
+    # Capture its JSON response without ever printing the token-bearing data.
+    token = _json(cluster.vault(['token', 'lookup', '-format=json']))
+    if (type(token) is not dict or type(token.get('data')) is not dict
+            or not token['data'].get('id')):
+        raise BootstrapError('vault_token_lookup_invalid')
     runtime, _ = cluster.kv(RUNTIME_PATH)
     callers, _ = cluster.kv(CALLERS_PATH)
     state = inspect_database(cluster)
