@@ -9,6 +9,9 @@ PPT／科研合入 main 后已同步 main，通用 runtime 仍无业务包依赖
 本轮运行层、构建与部署边界见 [CAPSULE_RUNTIME.md](docs/CAPSULE_RUNTIME.md)。
 现有 PPT/科研 API 与业务能力的覆盖差距及后续服务边界见
 [BUSINESS_CAPABILITY_COVERAGE.md](docs/BUSINESS_CAPABILITY_COVERAGE.md)。
+用户已确认的任务合同、能力包、工具环境与 Agent 适配边界见
+[CAPABILITY_ARCHITECTURE.md](docs/CAPABILITY_ARCHITECTURE.md)；能力包与引擎独立组合，
+按完整组合验收后放行。这是目标架构，领域注册和组合验收仍待实现。
 
 业务调用同一个 Jobs API，由部署者将版本化任务 profile 路由到 Pi 或 Hermes。
 模型、命令、镜像、凭据和引擎会话属于服务端配置，不由业务请求选择。
@@ -140,12 +143,14 @@ API进程不动态加载请求指定模块。K8s 候选配置见
 
 ## 后续实施顺序
 
-1. 接通短期任务模型代理授权的签发／注入，补齐 Hermes 独立宿主。当前 provider 只签发
-   Worker 控制认证，未签发模型授权；默认示例和原生生产 readiness 保持关闭。
-2. 构建候选镜像，完成真实 K8s、网络、模型／工具／取消验收，再按 profile 开放可用性。
-3. PPT 后端 outbox 连接器，保留现有网页与两轮确认，先迁移新阶段任务。
-4. 领域文件挂载、产物引用／删除与业务额度／计量对接。
-5. 科研及其他业务按各自 profile 迁入，保留独立验收与回滚。
+1. 实现真实任务合同、能力包/工具环境注册与执行绑定，解除全部 profile 共用文本
+   schema/collector 的限制。
+2. 接通只读领域输入、多文件/二进制成果、profile 额度、中立检查点及引用保留/删除。
+3. 接通短期模型授权、Hermes 独立宿主和固定候选镜像，完成真实 K8s、网络、模型、
+   工具与取消验收。当前 provider 仅注入 Worker 控制认证，生产 readiness 保持关闭。
+4. 接 PPT 五阶段 outbox/结果映射，保留现有网页、两轮确认、版本、独立验收与发布。
+5. 接科研生成和固定证据修订，保留发布事务与恢复；按相同合同验收不同引擎后，
+   逐业务开放新任务路由并验证回滚。
 
 OpenSpec 权威变更为仓库映射项目中的 `add-pi-first-agent-execution-service`；该历史 change
 ID保留，2026-10-25后的用户授权已将实现目标扩展为 Pi/Hermes 双引擎。
