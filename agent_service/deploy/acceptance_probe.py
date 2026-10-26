@@ -27,6 +27,7 @@ from fastapi import Request
 
 from agent_service.contracts import (ExecutionEnvelope, InlineFile, JobRequest, ServiceError,
     WorkerResult, canonical_bytes, digest, verify_receipt)
+from agent_service.confinement import ensure_controller_confinement
 from agent_service.worker_entry import (CapsuleScope, HostConfig, HostSecrets,
     _read_operator_json, host_policy)
 
@@ -321,6 +322,7 @@ def isolation_preflight(scope):
     from agent_service.linux_stop import LinuxUidStopController, private_kernel_scope
     from agent_service.mounts import ReadOnlyInputs
     from agent_service.staging import ExecutionContext, stage_inputs
+    confinement = ensure_controller_confinement(read_only_mounts=True)
     private_kernel_scope()
     CONTROL.mkdir(mode=0o700, parents=True, exist_ok=True); CONTROL.chmod(0o700)
     WORK.mkdir(mode=0o711, parents=True, exist_ok=True); WORK.chmod(0o711)
@@ -377,7 +379,8 @@ def isolation_preflight(scope):
         time.sleep(.1)
         require(heartbeat == (workspace / 'detached-heartbeat').read_bytes())
         observed.pop('detached_pid')
-        return dict(**observed, read_only_mount_measured=True, arbitrary_mount_denied=True,
+        return dict(**observed, controller_confinement=confinement,
+                    read_only_mount_measured=True, arbitrary_mount_denied=True,
                     detached_writers_stopped=True, private_kernel_scope=True)
     finally:
         stopper.stop(identity)
@@ -564,6 +567,7 @@ def run_worker(origin):
     require(parsed.scheme == 'http' and (parsed.hostname or '').endswith('.agent-service.svc.cluster.local')
         and parsed.port == 8080 and parsed.path == '' and not parsed.query and not parsed.fragment
         and not parsed.username and not parsed.password)
+    ensure_controller_confinement(read_only_mounts=True)
     admin = credential(BOOTSTRAP)
     client = httpx.Client(trust_env=False, follow_redirects=False, timeout=30)
     headers = {'Authorization': 'Bearer ' + admin}

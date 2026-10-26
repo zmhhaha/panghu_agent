@@ -25,6 +25,7 @@ import uuid
 from pydantic import Field, SecretStr, field_validator, model_validator
 
 from .contracts import ProfilePolicy, ServiceError, WireModel, validate_workspace_task
+from .confinement import ensure_controller_confinement
 from .engine_profiles import WorkspaceTaskProfile
 from .engines import NativeOutcome, PiDriver
 from .linux_stop import AGENT_UID, LinuxUidStopController, private_kernel_scope
@@ -482,8 +483,17 @@ class ScopedWorkerHost(WorkerHost):
             self.stop_controller.stop(self.scope.attempt_id)
 
 
+def controller_preflight(config: HostConfig, *, _reader=None):
+    mounts = os.environ.get('AGENT_READ_ONLY_MOUNTS')
+    if mounts not in (None, '1'):
+        raise WorkerConfigError()
+    return ensure_controller_confinement(
+        read_only_mounts=mounts == '1' or host_policy(config).supports_inputs, _reader=_reader)
+
+
 def assemble_app(config: HostConfig, secrets: HostSecrets, scope: CapsuleScope):
     policy = host_policy(config)
+    controller_preflight(config)
     private_kernel_scope()
     # Kubernetes emptyDir mounts replace the image directory's permissions.
     # Establish the private root-owned control boundary before either journal
@@ -528,6 +538,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         config = HostConfig.model_validate(_read_operator_json(args.config, max_bytes=4 * 1024 * 1024))
+        controller_preflight(config)
         secrets = HostSecrets.model_validate(_read_operator_json(args.secrets, private=True))
         scope = CapsuleScope.from_env(config)
         private_kernel_scope()
