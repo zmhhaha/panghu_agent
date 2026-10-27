@@ -179,6 +179,34 @@ class ModelProxy:
         """Allow self-contained conversation data, never provider/global refs."""
         def reject():
             raise ServiceError('model_input_reference_not_authorized', 422)
+
+        def inline_image(part):
+            image = part.get('image_url')
+            if (set(part) - {'type', 'image_url', 'detail'} or not isinstance(image, str)
+                    or not re.fullmatch(r'data:image/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+=*', image)
+                    or not isinstance(part.get('detail', 'auto'), str)
+                    or part.get('detail', 'auto') not in {'auto', 'low', 'high', 'original'}):
+                reject()
+
+        def tool_output(value):
+            if isinstance(value, str):
+                return
+            # Pi's Responses converter keeps image-bearing tool results as
+            # content parts. Keep their tool-call identity and bytes intact;
+            # only self-contained text and inline images are authorized.
+            if not isinstance(value, list) or not 1 <= len(value) <= 2000:
+                reject()
+            for part in value:
+                if not isinstance(part, dict):
+                    reject()
+                if part.get('type') == 'input_text':
+                    if set(part) != {'type', 'text'} or not isinstance(part['text'], str):
+                        reject()
+                elif part.get('type') == 'input_image':
+                    inline_image(part)
+                else:
+                    reject()
+
         if isinstance(value, str):
             return
         if not isinstance(value, list) or len(value) > 2000:
@@ -196,8 +224,9 @@ class ModelProxy:
             elif kind == 'function_call_output':
                 if (set(item) - {'type', 'call_id', 'output', 'id', 'status'}
                         or not isinstance(item.get('call_id'), str)
-                        or item['call_id'] not in call_ids or not isinstance(item.get('output'), str)):
+                        or item['call_id'] not in call_ids):
                     reject()
+                tool_output(item.get('output'))
             elif kind == 'reasoning':
                 if set(item) - {'type', 'id', 'summary', 'encrypted_content', 'status'}:
                     reject()
@@ -234,12 +263,7 @@ class ModelProxy:
                         if part.get('annotations') not in (None, []):
                             reject()
                     elif content_type == 'input_image':
-                        image = part.get('image_url')
-                        if (set(part) - {'type', 'image_url', 'detail'} or not isinstance(image, str)
-                                or not re.fullmatch(r'data:image/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+=*', image)
-                                or not isinstance(part.get('detail', 'auto'), str)
-                                or part.get('detail', 'auto') not in {'auto', 'low', 'high', 'original'}):
-                            reject()
+                        inline_image(part)
                     elif content_type == 'refusal':
                         if set(part) != {'type', 'refusal'} or not isinstance(part['refusal'], str):
                             reject()

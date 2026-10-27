@@ -335,6 +335,107 @@ def test_phase_support_does_not_allow_extra_fields_or_other_input_types(executio
         assert db.execute(select(requests)).first() is None
 
 
+@pytest.mark.parametrize('content', [
+    [{'type': 'input_text', 'text': 'Offline tool result'}],
+    [{'type': 'input_image', 'image_url': 'data:image/png;base64,YQ=='}],
+    [{'type': 'input_text', 'text': 'Offline preview'},
+     {'type': 'input_image', 'image_url': 'data:image/jpeg;base64,YQ==', 'detail': 'high'},
+     {'type': 'input_image', 'image_url': 'data:image/webp;base64,Yg==', 'detail': 'auto'}],
+])
+def test_pi_image_tool_result_preserves_content_role_call_identity_and_durable_replay(execution, content):
+    run = execution()
+    history = [
+        {'role': 'user', 'content': 'Inspect the offline preview'},
+        {'type': 'function_call', 'id': 'fc_preview', 'call_id': 'call_preview',
+         'name': 'read', 'arguments': '{"path":"preview.png"}'},
+        {'type': 'function_call_output', 'call_id': 'call_preview', 'output': deepcopy(content)},
+    ]
+    original = deepcopy(history)
+    body = dict(run.body, input=history, stream=True)
+    result = run.proxy.respond(run.token, body)
+    assert json.loads(run.calls[0].content)['input'] == original
+    assert history == original
+    # Recover through another proxy instance to exercise persisted response
+    # replay, not an in-memory cache. No extra paid model request is allowed.
+    recovered = ModelProxy(run.store, run.proxy.settings, client=httpx.Client(
+        transport=httpx.MockTransport(lambda _: pytest.fail('Do not repay for image tool history'))))
+    try:
+        assert recovered.respond(run.token, body) == result
+    finally:
+        recovered.client.close()
+    assert len(run.calls) == 1
+    with run.store.engine.connect() as db:
+        assert db.execute(select(requests.c.state)).scalar_one() == 'complete'
+
+
+def test_changed_tool_image_bytes_create_distinct_request_identity(execution):
+    run = execution()
+    body = dict(run.body, input=[
+        {'type': 'function_call', 'call_id': 'call_preview', 'name': 'read', 'arguments': '{}'},
+        {'type': 'function_call_output', 'call_id': 'call_preview',
+         'output': [{'type': 'input_image', 'image_url': 'data:image/png;base64,YQ=='}]},
+    ])
+    run.proxy.respond(run.token, body)
+    changed = deepcopy(body)
+    changed['input'][-1]['output'][0]['image_url'] = 'data:image/png;base64,Yg=='
+    run.proxy.respond(run.token, changed)
+    run.proxy.respond(run.token, body)
+    assert len(run.calls) == 2
+    with run.store.engine.connect() as db:
+        assert len(set(db.execute(select(requests.c.body_sha256)).scalars())) == 2
+
+
+@pytest.mark.parametrize('output', [
+    [], [{'type': 'input_text', 'text': ''}] * 2001, None, {}, False,
+    [None], ['text'], [{'type': 'input_text', 'text': 42}],
+    [{'type': 'input_text', 'text': 'x', 'file_id': 'foreign'}],
+    [{'type': 'output_text', 'text': 'x'}],
+    [{'type': 'input_file', 'file_id': 'foreign'}],
+    [{'type': 'item_reference', 'id': 'foreign'}],
+    [{'type': 'input_image', 'file_id': 'foreign'}],
+    [{'type': 'input_image', 'image_url': 'https://remote.invalid/private.png'}],
+    [{'type': 'input_image', 'image_url': 'file:///private.png'}],
+    [{'type': 'input_image', 'image_url': 'data:image/svg+xml;base64,YQ=='}],
+    [{'type': 'input_image', 'image_url': 'data:image/png;base64,'}],
+    [{'type': 'input_image', 'image_url': 'data:image/png;base64,YQ==\n'}],
+    [{'type': 'input_image', 'image_url': {'url': 'data:image/png;base64,YQ=='}}],
+    [{'type': 'input_image', 'image_url': 'data:image/png;base64,YQ==', 'file_id': 'foreign'}],
+    [{'type': 'input_image', 'image_url': 'data:image/png;base64,YQ==', 'detail': []}],
+    [{'type': 'input_image', 'image_url': 'data:image/png;base64,YQ==', 'detail': 'unknown'}],
+])
+def test_tool_output_array_scope_is_checked_before_admission(execution, output):
+    run = execution()
+    body = dict(run.body, input=[
+        {'type': 'function_call', 'call_id': 'call_preview', 'name': 'read', 'arguments': '{}'},
+        {'type': 'function_call_output', 'call_id': 'call_preview', 'output': output},
+    ])
+    error('model_input_reference_not_authorized', lambda: run.proxy.respond(run.token, body), 422)
+    assert run.calls == []
+    with run.store.engine.connect() as db:
+        assert db.execute(select(requests)).first() is None
+
+
+def test_inline_tool_image_cannot_reference_a_call_outside_its_history(execution):
+    run = execution()
+    body = dict(run.body, input=[{'type': 'function_call_output', 'call_id': 'foreign',
+        'output': [{'type': 'input_image', 'image_url': 'data:image/png;base64,YQ=='}]}])
+    error('model_input_reference_not_authorized', lambda: run.proxy.respond(run.token, body), 422)
+    assert run.calls == []
+    with run.store.engine.connect() as db:
+        assert db.execute(select(requests)).first() is None
+
+
+def test_tool_result_content_part_limit_includes_the_last_allowed_part():
+    history = [
+        {'type': 'function_call', 'call_id': 'local', 'name': 'read', 'arguments': '{}'},
+        {'type': 'function_call_output', 'call_id': 'local',
+         'output': [{'type': 'input_text', 'text': 'Offline tool result'}] * 2000},
+    ]
+    ModelProxy._input(history)
+    history[-1]['output'].append({'type': 'input_text', 'text': 'Offline excess part'})
+    error('model_input_reference_not_authorized', lambda: ModelProxy._input(history), 422)
+
+
 def test_sse_response_bytes_and_media_type_survive_durable_replay(execution):
     run = execution()
     payload = b'event: response.completed\ndata: {"output":[]}\n\n'
