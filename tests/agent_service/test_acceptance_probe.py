@@ -51,7 +51,7 @@ def authority(image_packages, tmp_path):
         value.store.close()
 
 
-@pytest.mark.parametrize('profile', sorted(probe.PROFILES))
+@pytest.mark.parametrize('profile', sorted(probe.FIXTURE_PROFILES))
 def test_fixture_matches_actual_profile_contract(profile):
     task, files = probe.fixture(profile)
     assert implementation(profile).validate_task(task) is None
@@ -96,7 +96,7 @@ def test_admin_factory_refuses_production_or_unrelated_inputs(image_packages, ch
         row['acceptance'] = dict(combination_sha256=binding_fingerprint(contract, bundle, environment, binding),
             suite='offline-fixture.v1', report_sha256='c' * 64)
     elif change == 'unsupported':
-        value = config('ppt.plan_options.v1').model_dump(mode='json')
+        value['profile']['name'] = 'unsupported-profile.v1'
     else:
         value['model']['model'] = 'caller-selected-model'
     with pytest.raises((ServiceError, ValueError, RuntimeError)):

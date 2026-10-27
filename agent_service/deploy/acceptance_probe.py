@@ -32,7 +32,10 @@ from agent_service.worker_entry import (CapsuleScope, HostConfig, HostSecrets,
     _read_operator_json, host_policy)
 
 
-PROFILES = {'ppt.plan_initial.v1', 'research.revise.v1'}
+PROFILES = {'ppt.' + stage + '.v1' for stage in (
+    'plan_initial', 'plan_options', 'prepare', 'generate', 'revise')} | {
+    'research.generate.v1', 'research.revise.v1'}
+FIXTURE_PROFILES = {'ppt.plan_initial.v1', 'research.revise.v1'}
 CONTROL = Path('/run/agent-control')
 WORK = Path('/work')
 BOOTSTRAP = Path('/run/agent-probe-bootstrap/token')
@@ -87,6 +90,7 @@ def credential(path):
 
 def fixture(profile, timeout=600):
     """Explicit synthetic business data; only the Agent/model execution is real."""
+    require(profile in FIXTURE_PROFILES, 'candidate_scenario_required')
     business = str(uuid4())
     if profile == 'ppt.plan_initial.v1':
         project, asset = str(uuid4()), str(uuid4())
@@ -129,37 +133,56 @@ def fixture(profile, timeout=600):
 
 
 class ProbeAuthority:
-    def __init__(self, config, directory, upstream_token, bootstrap, worker_name, worker_namespace, uid):
+    def __init__(self, config, directory, upstream_token, bootstrap, worker_name, worker_namespace, uid, *, scenario=None):
         from agent_service.model_proxy import ModelProxy, ModelProxySettings, requests
         from agent_service.store import Store
         self.config, self.policy, self.binding = candidate_config(config.model_dump(mode='json'))
         require(type(uid) is int and 65536 <= uid <= 2**31 - 4)
-        self.bootstrap, self.uid = bootstrap, uid
+        self.bootstrap, self.uid, self.scenario = bootstrap, uid, scenario
+        if scenario is not None:
+            require(scenario.document['profile'] == self.policy.name)
+            scenario.reserve_uid(uid)
         self.directory = Path(directory)
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.directory.chmod(0o700)
         # A second coordinator must never reset an ambiguous paid probe.
         atomic(self.directory / 'once.json', {'mode': 'candidate-only', 'created_at': time.time()})
-        self.store = Store('sqlite:///' + str(self.directory / 'candidate.sqlite3'), allow_sqlite=True)
+        if scenario is None:
+            self.store = Store('sqlite:///' + str(self.directory / 'candidate.sqlite3'), allow_sqlite=True)
+        else:
+            from agent_service.deploy.candidate_scenario import CandidateScenarioStore
+            self.store = CandidateScenarioStore('sqlite:///' + str(self.directory / 'candidate.sqlite3'),
+                allow_sqlite=True, scenario=scenario)
         self.store.initialize()
         self.proxy = ModelProxy(self.store, ModelProxySettings(secrets.token_bytes(48),
             'http://llm-service.llm.svc.cluster.local/v1', upstream_token,
             max_calls_per_attempt=40, max_output_tokens=32768))
         self.request_table, self.receipt_key = requests, secrets.token_bytes(32)
-        task, files = fixture(config.profile.name)
+        task, files = (fixture(config.profile.name) if scenario is None else
+                       (scenario.document['task'], scenario.files))
         from agent_service.profiles import implementation
         implementation(config.profile.name).validate_task(task)
         refs = []
         for name, raw in sorted(files.items()):
             item = self.store.put_input('candidate-probe', 'administrator', name, raw)
             refs.append({'input_id': item['input_id'], 'sha256': item['sha256']})
+        timeout = 600 if scenario is None else scenario.document['timeout_seconds']
+        absolute = None
+        if scenario is not None and self.policy.name.startswith('research.'):
+            from agent_service.profiles.research import task_deadline
+            absolute = task_deadline(task)
         request = JobRequest(profile=self.policy.name, profile_revision=self.policy.revision,
-            business_ref='candidate-only:' + str(uuid4()), task=task, inputs=refs, timeout_seconds=600)
+            business_ref='candidate-only:' + str(uuid4()), task=task, inputs=refs,
+            timeout_seconds=timeout, execution_deadline_at=absolute)
         self.store.submit('candidate-probe', 'administrator', 'single-candidate-probe',
             request.model_dump(mode='json'), self.policy.pins())
         claimed = self.store.claim(lease_seconds=300, provisioning={self.policy.engine: 'kubernetes_per_attempt'})
         with self.store.engine.connect() as db:
             self.envelope = self.store._worker_envelope(db, claimed)
+        require(len(canonical_bytes(self.envelope.model_dump(mode='json'))) < MAX_WIRE - 1024 * 1024,
+            'candidate_probe_scale_exceeded')
+        atomic(self.directory / 'candidate-request.json', dict(schema_version='agent-candidate-request.v1',
+            candidate_scope_only=True, envelope=self.envelope.model_dump(mode='json')))
         self.store.reserve_worker(self.envelope, 'candidate-probe', worker_namespace, worker_name,
             digest({'mode': 'candidate-only', 'config': config.model_dump(mode='json'),
                 'worker_name': worker_name, 'worker_namespace': worker_namespace, 'uid': uid}),
@@ -183,7 +206,9 @@ class ProbeAuthority:
                 require(self.store.claim_worker_start(self.envelope.attempt_id, self.envelope.request_sha256))
                 require(self.store.mark_running(self.envelope.job_id, self.envelope.attempt_id, self.envelope.fence))
                 self.registered = pod_uid
-            return dict(harness_sha256=harness_sha256(), config=self.config.model_dump(mode='json'),
+            return dict(harness_sha256=harness_sha256(),
+                scenario=None if self.scenario is None else self.scenario.metadata,
+                config=self.config.model_dump(mode='json'),
                 envelope=self.envelope.model_dump(mode='json'),
                 scope=dict(attempt_id=self.envelope.attempt_id, pod_uid=pod_uid,
                     request_sha256=self.envelope.request_sha256, agent_uid=self.uid, preview_uid=self.uid + 1,
@@ -214,6 +239,8 @@ class ProbeAuthority:
             require(verify_receipt(self.envelope, result, self.receipt_key, time.time()), 'candidate_stop_receipt_invalid')
             require(type(document.get('observations')) is dict)
             require(document['observations'].get('harness_sha256') == harness_sha256(), 'candidate_harness_mismatch')
+            if self.scenario is not None:
+                require(document['observations'].get('scenario') == self.scenario.metadata, 'candidate_harness_mismatch')
             atomic(self.directory / 'candidate-result.json', document)
             self.store.stage_worker_result(self.envelope.attempt_id, self.envelope.request_sha256,
                 result.model_dump(mode='json'))
@@ -235,6 +262,7 @@ class ProbeAuthority:
                 registry.bundle(self.binding.bundle.name, self.binding.bundle.revision),
                 registry.environment(self.binding.tool_environment.name, self.binding.tool_environment.revision), self.binding)
             self.recorded = dict(schema_version='agent-candidate-probe.v1', candidate_only=True,
+                candidate_scope_only=True, scenario=None if self.scenario is None else self.scenario.metadata,
                 production_acceptance_created=False, production_routes_changed=False,
                 engine=self.policy.engine, profile=self.policy.name, profile_revision=self.policy.revision,
                 binding_id=self.binding.id, binding_revision=self.binding.revision, combination_sha256=combination,
@@ -394,7 +422,7 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
     """Explicit admin-only factory using measured preflights, no acceptance file."""
     from agent_service.domain_runtime import DomainExecutionProfile
     from agent_service.resources import measured_package
-    policy = host_policy(config)
+    config, policy, binding = candidate_config(config.model_dump(mode='json'))
     require(not policy.enabled and observations['model_round_trip']['status'] == 200
         and observations['isolation']['detached_writers_stopped'] is True
         and observations['isolation']['read_only_mount_measured'] is True)
@@ -413,12 +441,15 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
     from agent_service.runtime import PiRuntime, RuntimeSettings
     from agent_service.worker_entry import NODE, PI_CLI
     from agent_service.engines import PiDriver
-    profile = DomainExecutionProfile(policy, policy.execution_binding.bundle_revision)
+    extensions = ((Path('/opt/pi/node_modules/agent-service-academic.mjs'),)
+                  if policy.name == 'research.generate.v1' else ())
+    profile = DomainExecutionProfile(policy, policy.execution_binding.bundle_revision, extensions=extensions)
     profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL
     settings = RuntimeSettings(command=(NODE, PI_CLI), node_command=(NODE,), provider=config.model.provider,
         model=config.model.model, model_base_url=config.model.proxy_base_url, model_api=config.model.api,
         model_max_tokens=8192,
-        model_input=('text',), model_env={'AGENT_MODEL_API_KEY': credentials.model_proxy_token.get_secret_value()},
+        model_input=('text', 'image') if 'vision' in binding.model_policy.capabilities else ('text',),
+        model_env={'AGENT_MODEL_API_KEY': credentials.model_proxy_token.get_secret_value()},
         tool_proxy_base_url=config.model.proxy_base_url, runtime_revision=policy.runtime_revision,
         skill_bundle_revision=policy.execution_binding.bundle_revision, image_digest=policy.image_digest,
         skill_paths=skills, skill_hashes=hashes, bundle_manifest=manifest,
@@ -444,7 +475,12 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
         require(request.deadline_at.timestamp() <= credentials.model_proxy_expires_at,
             'candidate_request_deadline_mismatch')
         return {**profile.make_wire(request), '_runtime_uid': scope.agent_uid}
-    return PiDriver(runtime, stopper, wire_builder=wire, enabled=True)
+    driver = PiDriver(runtime, stopper, wire_builder=wire, enabled=True)
+    if policy.name == 'research.generate.v1':
+        driver.academic_observer = lambda workspace: __import__(
+            'agent_service.tool_client', fromlist=['save_academic_observations']).save_academic_observations(
+                config.model.proxy_base_url, credentials.model_proxy_token.get_secret_value(), workspace)
+    return driver
 
 
 def response_completed(response):
@@ -459,9 +495,17 @@ def response_completed(response):
 
 
 def render_probe(config, *, name, worker_image, node, uid_start, bootstrap_secret,
-                 upstream_secret, upstream_key='token'):
+                 upstream_secret, upstream_key='token', scenario=None, source_dir=None, parent_evidence_dir=None):
     """Public one-shot manifests only; never reads or emits any Secret value."""
     config, policy, _ = candidate_config(config.model_dump(mode='json'))
+    prepared = None
+    if scenario is not None:
+        require(source_dir is not None)
+        from agent_service.deploy.candidate_scenario import load_scenario
+        prepared = load_scenario(scenario, source_dir, parent_evidence_dir, policy)
+        prepared.reserve_uid(uid_start)
+    else:
+        require(source_dir is None and parent_evidence_dir is None)
     resource_name = re.compile(r'[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?\Z')
     require(all(type(value) is str and resource_name.fullmatch(value)
                 for value in (name, bootstrap_secret, upstream_secret)))
@@ -487,9 +531,15 @@ def render_probe(config, *, name, worker_image, node, uid_start, bootstrap_secre
         return dict(apiVersion='networking.k8s.io/v1' if kind == 'NetworkPolicy' else 'v1', kind=kind,
             metadata=dict(name=object_name, namespace=namespace, labels=identity, annotations=annotations), **fields)
 
+    probe_data = {'acceptance_probe.py': code, 'config.json': canonical_bytes(value).decode('utf-8')}
+    if prepared is not None:
+        from agent_service.deploy import candidate_scenario
+        probe_data['candidate_scenario.py'] = Path(candidate_scenario.__file__).read_text(encoding='utf-8')
+        probe_data['scenario.json'] = canonical_bytes(prepared.document).decode('utf-8')
+        annotations['agent-service.panghuer.top/scenario-harness-sha256'] = candidate_scenario.module_sha256()
     for namespace in ('agent-service', 'agent-workers'):
         items.append(obj('ConfigMap', namespace, name, immutable=True,
-            data={'acceptance_probe.py': code, 'config.json': canonical_bytes(value).decode('utf-8')}))
+            data=probe_data))
     # This unique selector never overlaps the production model-proxy Service.
     proxy_labels = {**identity, 'app': 'agent-model-proxy', 'llm-client': 'true',
                     'app.kubernetes.io/name': 'agent-candidate-probe', 'component': 'candidate-proxy'}
@@ -506,6 +556,14 @@ def render_probe(config, *, name, worker_image, node, uid_start, bootstrap_secre
             {'to': [dict(namespaceSelector={'matchLabels': {'kubernetes.io/metadata.name': 'llm'}},
                 podSelector={'matchLabels': {'app': 'llm-service'}})],
              'ports': [dict(protocol='TCP', port=80), dict(protocol='TCP', port=8000)]}])))
+    if policy.name == 'research.generate.v1':
+        # Same public HTTPS boundary as the production academic proxy. The
+        # native Agent still has only its task-proxy network access; fixed
+        # academic bridge code controls destinations, redirects and payloads.
+        items[-1]['spec']['egress'].append({'to': [{'ipBlock': {'cidr': '0.0.0.0/0',
+            'except': ['0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8',
+                '169.254.0.0/16', '172.16.0.0/12', '192.168.0.0/16', '198.18.0.0/15',
+                '224.0.0.0/4', '240.0.0.0/4']}}], 'ports': [{'protocol': 'TCP', 'port': 443}]})
     base_env = [{'name': key, 'value': setting} for key, setting in
         {'PYTHONDONTWRITEBYTECODE': '1', 'PYTHONUNBUFFERED': '1', 'PYTHONPATH': '/opt/agent-service',
          'HOME': str(CONTROL)}.items()]
@@ -515,6 +573,10 @@ def render_probe(config, *, name, worker_image, node, uid_start, bootstrap_secre
     probe_mounts = [dict(name='probe', mountPath='/probe/acceptance_probe.py',
                         subPath='acceptance_probe.py', readOnly=True),
                     dict(name='probe', mountPath='/probe/config.json', subPath='config.json', readOnly=True)]
+    if prepared is not None:
+        probe_mounts.append(dict(name='probe',
+            mountPath='/opt/agent-service/agent_service/deploy/candidate_scenario.py',
+            subPath='candidate_scenario.py', readOnly=True))
     bootstrap_mount = dict(name='bootstrap', mountPath=str(BOOTSTRAP), subPath='token', readOnly=True)
     writable = [dict(name='control', emptyDir=dict(sizeLimit='2Gi')),
                 dict(name='tmp', emptyDir=dict(medium='Memory', sizeLimit='128Mi'))]
@@ -526,20 +588,32 @@ def render_probe(config, *, name, worker_image, node, uid_start, bootstrap_secre
         hostPID=False, hostIPC=False, hostNetwork=False, shareProcessNamespace=False,
         terminationGracePeriodSeconds=30, securityContext=dict(seccompProfile=dict(type='RuntimeDefault')))
     command = ['/opt/agent-service/.venv/bin/python', '/probe/acceptance_probe.py']
+    scenario_args, scenario_volumes, scenario_mounts = [], [], []
+    if prepared is not None:
+        scenario_args = ['--scenario', '/probe/scenario.json', '--source-dir', '/run/agent-probe-sources']
+        scenario_mounts = [dict(name='probe', mountPath='/probe/scenario.json', subPath='scenario.json', readOnly=True),
+            dict(name='scenario-sources', mountPath='/run/agent-probe-sources', readOnly=True)]
+        scenario_volumes = [dict(name='scenario-sources', hostPath=dict(path=str(prepared.source_dir), type='Directory'))]
+        if prepared.parent_dir is not None:
+            scenario_args += ['--parent-evidence-dir', '/run/agent-probe-parent']
+            scenario_mounts.append(dict(name='scenario-parent', mountPath='/run/agent-probe-parent', readOnly=True))
+            scenario_volumes.append(dict(name='scenario-parent', hostPath=dict(path=str(prepared.parent_dir), type='Directory')))
     # Use the exact fixed Worker image for both Pods, so the proxy also has the
     # same neutral profile validators; no native Agent runs in the proxy.
     items.append(obj('Pod', 'agent-service', name + '-proxy', spec={**base_spec,
         'activeDeadlineSeconds': 1200,
         'containers': [dict(name='proxy', image=worker_image, imagePullPolicy='IfNotPresent',
             command=command, args=['proxy', '--config', '/probe/config.json', '--worker-name', worker_name,
-                '--uid-start', str(uid_start)], env=base_env, securityContext=security,
+                '--uid-start', str(uid_start), *scenario_args], env=base_env, securityContext=security,
             resources=dict(requests=dict(cpu='50m', memory='128Mi'), limits=dict(cpu='1', memory='1Gi')),
             ports=[dict(name='http', containerPort=8080)],
-            volumeMounts=mounts + [dict(name='upstream', mountPath=str(UPSTREAM), subPath='token', readOnly=True)])],
-        'volumes': [config_volume, bootstrap_volume, *writable, dict(name='upstream',
+            volumeMounts=mounts + scenario_mounts + [dict(name='upstream', mountPath=str(UPSTREAM), subPath='token', readOnly=True)])],
+        'volumes': [config_volume, bootstrap_volume, *writable, *scenario_volumes, dict(name='upstream',
             secret=dict(secretName=upstream_secret, defaultMode=0o400,
                         items=[dict(key=upstream_key, path='token')]))]}))
     items[-1]['metadata']['labels'] = proxy_labels
+    if prepared is not None:
+        items[-1]['spec']['nodeSelector'] = {'kubernetes.io/hostname': node}
     worker_security = {**security, 'capabilities': dict(drop=['ALL'],
         add=['CHOWN', 'DAC_OVERRIDE', 'KILL', 'SETUID', 'SETGID', 'SYS_ADMIN']),
         'appArmorProfile': dict(type='Localhost', localhostProfile='agent-capsule-inputs')}
@@ -592,6 +666,10 @@ def run_worker(origin):
         and scope.execution_binding_sha256 == envelope.execution_binding.sha256
         and package.get('harness_sha256') == harness_sha256())
     observations = {'harness_sha256': harness_sha256(), 'isolation': isolation_preflight(scope)}
+    if package.get('scenario') is not None:
+        from agent_service.deploy.candidate_scenario import module_sha256
+        require(package['scenario'].get('scenario_harness_sha256') == module_sha256(), 'candidate_harness_mismatch')
+        observations['scenario'] = package['scenario']
     model_body = dict(model=config.model.model, store=False, max_output_tokens=2048,
         input='Return the exact text CANDIDATE_MODEL_OK as plain text. This is a connectivity probe.')
     model_headers = {'Authorization': 'Bearer ' + credentials.model_proxy_token.get_secret_value()}
@@ -620,6 +698,8 @@ def run_worker(origin):
                 renewed = time.monotonic()
             time.sleep(.1)
         result = host.result(envelope.attempt_id)
+        require(len(canonical_bytes({'result': result, 'observations': observations})) <= MAX_WIRE,
+            'candidate_probe_scale_exceeded')
         response = client.post(origin + '/probe/result', headers=headers,
             json={'result': result, 'observations': observations}, timeout=45)
         response.raise_for_status()
@@ -645,6 +725,9 @@ def main(argv=None):
     proxy.add_argument('--worker-namespace', default='agent-workers')
     proxy.add_argument('--uid-start', type=int, required=True,
         help='Three never-reused administrator-reserved UIDs, separate from production ranges')
+    proxy.add_argument('--scenario', type=Path)
+    proxy.add_argument('--source-dir', type=Path)
+    proxy.add_argument('--parent-evidence-dir', type=Path)
     worker = sub.add_parser('worker')
     worker.add_argument('--proxy-origin', required=True)
     render = sub.add_parser('render', help='Only public one-shot objects; creates no Secrets or production approvals')
@@ -657,6 +740,9 @@ def main(argv=None):
     render.add_argument('--upstream-secret', required=True)
     render.add_argument('--upstream-key', default='token')
     render.add_argument('--output', type=Path, required=True)
+    render.add_argument('--scenario', type=Path)
+    render.add_argument('--source-dir', type=Path)
+    render.add_argument('--parent-evidence-dir', type=Path)
     args = parser.parse_args(argv)
     try:
         if args.mode == 'worker':
@@ -665,14 +751,26 @@ def main(argv=None):
             config = HostConfig.model_validate(json.loads(args.config.read_bytes()))
             manifest = render_probe(config, name=args.name, worker_image=args.worker_image,
                 node=args.node, uid_start=args.uid_start, bootstrap_secret=args.bootstrap_secret,
-                upstream_secret=args.upstream_secret, upstream_key=args.upstream_key)
+                upstream_secret=args.upstream_secret, upstream_key=args.upstream_key,
+                scenario=args.scenario, source_dir=args.source_dir, parent_evidence_dir=args.parent_evidence_dir)
             atomic(args.output, manifest)
             print(json.dumps({'status': 'candidate_manifest_rendered', 'harness_sha256': harness_sha256(),
                 'production_acceptance_created': False, 'secret_values_emitted': False}), flush=True)
             return 0
         config = HostConfig.model_validate(_read_operator_json(args.config, max_bytes=4 * 1024 * 1024))
+        scenario = None
+        if args.scenario is not None:
+            # Host paths are accepted only by the administrator render CLI.
+            # The runtime proxy sees fixed read-only mount destinations.
+            require(args.scenario == Path('/probe/scenario.json')
+                and args.source_dir == Path('/run/agent-probe-sources')
+                and args.parent_evidence_dir in (None, Path('/run/agent-probe-parent')))
+            from agent_service.deploy.candidate_scenario import load_scenario
+            scenario = load_scenario(args.scenario, args.source_dir, args.parent_evidence_dir, host_policy(config))
+        else:
+            require(args.source_dir is None and args.parent_evidence_dir is None)
         authority = ProbeAuthority(config, args.state_dir, credential(UPSTREAM), credential(BOOTSTRAP),
-            args.worker_name, args.worker_namespace, args.uid_start)
+            args.worker_name, args.worker_namespace, args.uid_start, scenario=scenario)
         import uvicorn
         from agent_service.__main__ import _logging_configuration
         uvicorn.run(proxy_app(authority), host='0.0.0.0', port=8080, access_log=False,
