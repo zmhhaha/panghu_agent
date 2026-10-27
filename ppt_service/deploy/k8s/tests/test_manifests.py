@@ -214,6 +214,8 @@ class ManifestContracts(unittest.TestCase):
         self.assertIn('/healthz', live)
         self.assertNotIn('api_schema_revision', live)
         self.assertIn('api_schema_revision', ready)
+        self.assertIn('from ppt_service.server.migrate import REVISION', ready)
+        self.assertIn('== REVISION', ready)
         self.assertIn("os.environ['DATABASE_URL']", ready)
         self.assertNotIn('Authorization', ready)
         self.assertEqual(self.proxy['readinessProbe']['httpGet']['path'], '/ready')

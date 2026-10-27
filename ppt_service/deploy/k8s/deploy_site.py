@@ -24,15 +24,16 @@ HERE = Path(__file__).resolve().parent
 SERVICE = HERE.parents[1]
 REPOSITORY = SERVICE.parents[1]
 NAMESPACE = 'ppt-service'
+SCHEMA_REVISION = 3
 SECRET_NAMES = ('ppt-postgres-bootstrap', 'ppt-database-migrator', 'ppt-database-runtime', 'ppt-oidc')
 BOOTSTRAP_MARKER = 'ppt-service-bootstrap-v1'
 IMAGE_PATTERN = re.compile(r'[^\s@]+@sha256:[0-9a-f]{64}\Z')
-RUNTIME_CHECK = """import os
+RUNTIME_CHECK = f"""import os
 from sqlalchemy import create_engine, text
-engine = create_engine(os.environ['DATABASE_URL'], connect_args={'connect_timeout': 5})
+engine = create_engine(os.environ['DATABASE_URL'], connect_args={{'connect_timeout': 5}})
 with engine.connect() as db:
     assert db.scalar(text('SELECT current_user')) == 'ppt_runtime'
-    assert db.scalar(text('SELECT max(revision) FROM public.api_schema_revision')) == 2
+    assert db.scalar(text('SELECT max(revision) FROM public.api_schema_revision')) == {SCHEMA_REVISION}
     assert not db.scalar(text("SELECT has_schema_privilege(current_user, 'public', 'CREATE')"))
     assert not db.scalar(text("SELECT has_table_privilege(current_user, 'public.api_schema_revision', 'INSERT')"))
     assert not db.scalar(text("SELECT has_table_privilege(current_user, 'public.api_schema_revision', 'UPDATE')"))
@@ -423,7 +424,7 @@ class Deployment:
         if exists != 't':
             raise DeployError('Cannot determine the target schema revision')
         revision = int(self.psql('SELECT coalesce(max(revision),0) FROM public.api_schema_revision;', 'ppt_service').strip())
-        if revision not in (0, 1, 2):
+        if not 0 <= revision <= SCHEMA_REVISION:
             raise DeployError('Unsupported schema revision; refusing automatic migration')
         return revision
 
@@ -445,7 +446,7 @@ class Deployment:
                 if any(c['type'] == 'Complete' and c['status'] == 'True' for c in conditions):
                     if not rerun_completed:
                         return
-                    # A schema restored below revision 2 needs a new migration,
+                    # A schema restored below the current revision needs a new migration,
                     # even with the same image. Follow a stable receipt chain:
                     # retries find the same active/failed next Job, preserving
                     # both execution deduplication and all historical evidence.
@@ -531,14 +532,14 @@ class Deployment:
             self.initialize_database()
             print('Checking and upgrading the schema revision.', flush=True)
             revision = self.revision()
-            if revision != 2:
+            if revision != SCHEMA_REVISION:
                 if existing_site and existing_site['spec'].get('replicas', 1):
                     self.kube('-n', NAMESPACE, 'scale', 'deployment/ppt-site', '--replicas=0')
                     self.kube('-n', NAMESPACE, 'wait', '--for=delete', 'pod',
                               '-l', 'app.kubernetes.io/name=ppt-site', '--timeout=120s')
                 self.run_job(make_job(image, 'migrate'), rerun_completed=True)
-                if self.revision() != 2:
-                    raise DeployError('Migration Job completed but the database is not at schema revision 2')
+                if self.revision() != SCHEMA_REVISION:
+                    raise DeployError(f'Migration Job completed but the database is not at schema revision {SCHEMA_REVISION}')
             self.psql((HERE / 'grant-runtime.sql').read_text(encoding='utf-8').replace(':"runtime"', '"ppt_runtime"'),
                       'ppt_service', 'ppt_migrator')
             print('Checking runtime database access and initializing the CephFS state directory.', flush=True)

@@ -1,9 +1,16 @@
 # 通用 Agent 执行服务
 
-状态：2026-10-26，已写入通用控制接口、PPT 五阶段与科研生成/修订合同、
+状态：2026-10-27，已写入通用控制接口、PPT 五阶段与科研生成/修订合同、
 Pi/Hermes 独立宿主、受控模型/学术工具代理、只读输入、多文件成果、检查点，
-以及两个业务的持久连接器。**这批新增代码按用户要求未运行测试、构建或部署**。
-交接与待验证项见 [IMPLEMENTATION_HANDOFF_20261026.md](docs/IMPLEMENTATION_HANDOFF_20261026.md)。
+以及两个业务的持久连接器。`9623df8` 已在服务器构建、推送并部署，三个控制服务均为
+`1/1 Ready`；Linux/真实 PostgreSQL 完整回归 954 项通过，零失败、错误或跳过。
+**生产执行路由仍关闭，现有 PPT/科研后端尚未切换。** Pi 真实候选已进入原生请求，
+r7 已完成六次原生调用，随后下一次原生请求仍在 admission 前返回 HTTP 422；最后已完成
+响应的 `reasoning` 历史支持仍在补充，不能视为执行成功。当前先完成 Pi 的全部领域验证与
+业务试接，Hermes 不作为前置条件，共享网关的额外 Hermes 参数扩展暂停。
+最新结果、镜像摘要和证据边界见
+[RUNTIME_VALIDATION_20261027.md](docs/RUNTIME_VALIDATION_20261027.md)，
+初始实现交接见 [IMPLEMENTATION_HANDOFF_20261026.md](docs/IMPLEMENTATION_HANDOFF_20261026.md)。
 部署入口见 [正规部署说明](deploy/README.md)，离线目录生成见
 [DEPLOYMENT_CATALOG.md](docs/DEPLOYMENT_CATALOG.md)，文件、检查点与交付协议见
 [FILE_DATA_PLANE.md](docs/FILE_DATA_PLANE.md)。
@@ -72,7 +79,7 @@ flowchart LR
 
 ## 当前边界
 
-**尚未上线或接管 PPT／科研**。业务后端只有显式选择 `agent-service` 才走新连接器；
+**内部控制面已部署，PPT／科研尚未接入新执行后端**。业务后端只有显式选择 `agent-service` 才走新连接器；
 默认配置维持原入口。新目录生成器将所有路由保持关闭，操作员验收证据与宿主
 实际 readiness 都满足后才能开放具体的合同/引擎组合。
 
@@ -83,8 +90,9 @@ flowchart LR
 
 `workspace-task.v1` 仍只支持有界文本；领域合同独立声明只读输入能力。
 输入通过专用受限宿主执行真正的 RO bind mount，没有复制/仅 chmod 的降级路径。
-PPT 预览使用独立持久预留 UID，停止证明覆盖两组 writer。实际节点的 mount/AppArmor、
-CNI、模型回合和领域成果仍待用户回来后验证。
+PPT 预览使用独立持久预留 UID，停止证明覆盖两组 writer。已在真实节点验证指定输入/
+检查点挂载与 AppArmor 隔离、降权和停止，并修复权限交接顺序；完整 CNI、原生模型回合、
+领域成果和业务发布验收仍未完成，具体通过范围以最新验证记录为准。
 
 业务事件包括持久生命周期及 Worker 净化进度，使用持久 worker cursor 去重汇入。
 支持明确兼容规则内的文件检查点重放；暂不提供原生 session resume/fork/steer
@@ -170,10 +178,24 @@ API进程不动态加载请求指定模块。K8s 候选配置见
 ## 本轮交接
 
 上述领域合同、文件数据面、两引擎宿主、短期模型授权、业务连接器和部署入口均已
-写入代码。本轮按用户要求没有运行测试、编译检查、镜像构建、模型请求或部署。
-历史验证报告只对应之前的提交，不能覆盖本轮新增功能。
+写入代码，线上控制面仍为 `9623df8`。最新源码 `a067949` 完整离线/真实 PostgreSQL 回归为
+1071 项通过、零失败或跳过、模型调用 0、临时测试资源清理完成。
+真实 Pi r6 的两项 ledger 均为 HTTP 200（回显及一次原生调用），下一次原生请求因 phase
+在 admission 前返回 422；r7 修复 phase 后七项 ledger 均为 HTTP 200（回显及六次原生调用），
+随后第七次原生请求仍在 admission 前返回 422。两轮均 exit 2、restart 0、停写已证实、
+临时资源已清理且过期 grant 返回 401；这些证明停止与清理，不证明领域执行成功。
 
-完整实现与回来后的验证入口见
+`548fb33` 已补齐业务部署接线，`96fad52`/`5ad6c90` 补齐受限工具图片和 assistant phase，
+`03b5fff` 提供七个领域 profile 的分阶段候选验证入口，均不表示七个合同已验收。
+`a067949` 已补齐受限 reasoning 历史回放；当前正在做新版本完整 Linux/PG 与真实领域验证。
+共享 `llm-service` 的独立分支 `codex/agent-native-responses` 已部署 `e5351c4`，保留原生
+Responses 的 phase、图片工具结果及自包含 reasoning 历史，部署只改变镜像。当前没有 production
+acceptance，所有生产执行路由保持关闭，PPT/科研后端未切换。后续先完成 Pi 领域验证，
+再按全局单槽接入业务试用并检查独立发布与回滚；Hermes 不是前置条件。最新证据见
+[原生引擎恢复验证](docs/RUNTIME_VALIDATION_20261027.md)，初次部署背景见
+[服务器交接](docs/SERVER_DEPLOYMENT_20261026.md)。
+
+完整实现及原始验证计划见
 [IMPLEMENTATION_HANDOFF_20261026.md](docs/IMPLEMENTATION_HANDOFF_20261026.md)，
 PPT 配置见 [部署接线](../ppt_service/deploy/agent/README.md)，科研配置见
 [科研接线](../scientific_agent/AGENT_SERVICE.md)。
