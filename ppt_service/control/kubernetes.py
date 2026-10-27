@@ -26,6 +26,7 @@ import uuid
 
 from .execution import Attempt, ControlError, Handle, Layout, Observation, RuntimeConfig, RuntimeState, StopProof
 from .staging import atomic_json, read_json, relative
+from ppt_service.server.phase_limits import phase_pod_timeout_seconds, phase_timeout_seconds
 
 METADATA_PREFIX = 'ppt-service.panghuer.top/'
 LEGACY_METADATA_PREFIX = 'ppt.panghuer.top/'
@@ -426,8 +427,8 @@ class KubernetesBackend:
         worker = self.pod(h, h.worker_name, 'worker', 'ppt_service.worker.execute',
                           [(getattr(layout, part), '/work/' + part, part in ('inputs', 'task', 'base'))
                            for part in ('inputs', 'task', 'base', 'home', 'project', 'result')],
-                          env=worker_env, deadline=720 if a.phase.startswith('plan') else 1920,
-                          args=['--task', '/work/task/task.json', '--deadline', '600' if a.phase.startswith('plan') else '1800'])
+                          env=worker_env, deadline=phase_pod_timeout_seconds(a.phase),
+                          args=['--task', '/work/task/task.json', '--deadline', str(phase_timeout_seconds(a.phase))])
         worker['spec']['hostAliases'] = [{'ip': proxy_ip, 'hostnames': ['model-proxy']}]
         if self.before_worker is not None:
             # Production supplies a fresh DB fence/lease/cancellation check after

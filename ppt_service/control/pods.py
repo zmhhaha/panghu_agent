@@ -8,6 +8,7 @@ import json,os,secrets,subprocess,tempfile,uuid,re
 from pathlib import Path
 from .execution import *
 from .staging import atomic_json,read_json
+from ppt_service.server.phase_limits import phase_timeout_seconds
 
 LABEL='io.ppt-service.control'
 class CommandRunner:
@@ -95,7 +96,7 @@ class DockerBackend:
         self.docker.call('network','connect','--ip','172.30.240.2','--alias','model-proxy',wb,h.proxy_name)
         worker=secure_container(h.worker_name,h.uid)+['--network',wb,'--ip','172.30.240.3','--add-host','model-proxy:172.30.240.2','--env','PPT_MODEL=gpt-6.1-sol','--env','PPT_MODEL_PROXY_ORIGIN=http://model-proxy:8080','--env','PPT_MODEL_BASE_URL=http://model-proxy:8080/v1','--env','PPT_MODEL_API_KEY='+key]
         for part in ('inputs','task','base','home','project','result'):worker+=mount(getattr(layout,part),'/work/'+part,part in ('inputs','task','base'))
-        worker+=['--entrypoint','/opt/hermes/.venv/bin/python',self.config.worker_image,'-m','ppt_service.worker.execute','--task','/work/task/task.json','--deadline','600' if a.phase.startswith('plan') else '1800']
+        worker+=['--entrypoint','/opt/hermes/.venv/bin/python',self.config.worker_image,'-m','ppt_service.worker.execute','--task','/work/task/task.json','--deadline',str(phase_timeout_seconds(a.phase))]
         self.docker.call(*worker)
         # Persist identity before starting either process. Proxy key never enters DB.
         atomic_json(layout.audit/'execution-handle.json',{'uid':h.uid,'worker':h.worker_name,'proxy':h.proxy_name,'job_id':a.job_id,'attempt':a.attempt,'token':a.token})

@@ -1,4 +1,4 @@
-import type { Job, Profile, Project, Version } from './domain';
+import { hasConfirmedCommunication, type Job, type Profile, type Project, type Version } from './domain';
 import type { AcceptanceBinding } from './acceptance/contracts';
 import { adaptCommunication, adaptDirections, adaptPlanQuestions } from './planning';
 const root = '/api/v1';
@@ -30,10 +30,12 @@ export const errors: Record<string,string> = {
   REVIEW_VERSION_REQUIRED:'此操作需要选择待审核草稿，请重新选择版本。',
   REVIEW_EVIDENCE_UNAVAILABLE:'审核草稿的来源证据暂不可用，请重新读取记录；若仍失败，请联系管理员。',
   REVIEW_CHECKPOINT_UNAVAILABLE:'审核草稿暂时无法恢复修改，请联系管理员。',
+  INITIAL_CONFIRMATION_REQUIRED:'初步沟通尚未确认或确认已失效。请在“沟通与方案”重新确认沟通内容与设计方式，再生成三套设计方向。',
+  OPTIONS_CONFIRMATION_REQUIRED:'请在“沟通与方案”主动选择一个设计方向，确认所选完整方案后，再生成演示稿。',
   CONSENT_REQUIRED:'请先确认外部模型数据传输，再重试此操作。', UPLOAD_LIMIT:'文件超出上传限额，请检查单文件 25 MiB、项目 10 文件 / 100 MiB 限制。',
   UNAUTHENTICATED:'登录已过期，请重新登录。', FORBIDDEN:'当前账号无法执行此操作。', NOT_FOUND:'资源不可用或已删除，请返回项目列表。', STALE_REVISION:'资料或设置已变更，请刷新项目并重新确认方案。', STALE_PLAN:'确认已失效，请重新规划并确认。', SNAPSHOT_MISMATCH:'材料快照已变化，请重新规划。', ACTIVE_JOB_EXISTS:'项目已有活动任务，请等待完成或取消。', QUEUE_FULL:'任务队列已满，请稍后重试。', PARSE_FAILED:'资料解析未通过，请返回“资料与要求”查看各文件的解析状态和具体原因。', MODEL_CONNECTION_FAILED:'模型连接失败，请稍后重新提交。', TIMEOUT:'任务超时，已有版本仍可使用。请减少资料或页数后重试。', QUALITY_GATE_FAILED:'产物未通过质量检查，请调整要求后重试。', RENDER_FAILED:'预览渲染失败，请重试或联系管理员。', EXPORT_FAILED:'PPTX 导出失败，请重试或联系管理员。', STORAGE_LIMIT:'存储空间不足，请清理不再需要的项目后重试。', QUOTA_EXCEEDED:'当前可用额度不足，请联系服务管理员。', NETWORK_ERROR:'无法连接服务，请检查网络并重试。', INVALID_RESPONSE:'服务响应暂不可用，请刷新或联系管理员。', CURSOR_EXPIRED:'进度记录已过期，正在重新读取任务状态。'
 };
-const errorAliases: Record<string,string> = { EVENT_CURSOR_EXPIRED:'CURSOR_EXPIRED', REVISION_CONFLICT:'STALE_REVISION', PROJECT_REVISION_MISMATCH:'STALE_REVISION', PLAN_STALE:'STALE_PLAN', INPUT_SNAPSHOT_MISMATCH:'SNAPSHOT_MISMATCH', JOB_ALREADY_ACTIVE:'ACTIVE_JOB_EXISTS', PROJECT_BUSY:'ACTIVE_JOB_EXISTS', EXTERNAL_MODEL_ACK_REQUIRED:'CONSENT_REQUIRED', PARSE_ERROR:'PARSE_FAILED', MATERIAL_PARSE_FAILED:'PARSE_FAILED', FILE_TOO_LARGE:'UPLOAD_LIMIT', TOO_MANY_FILES:'UPLOAD_LIMIT', PROJECT_STORAGE_LIMIT:'STORAGE_LIMIT', MODEL_UNAVAILABLE:'MODEL_CONNECTION_FAILED', EXECUTION_TIMEOUT:'TIMEOUT', QUALITY_FAILED:'QUALITY_GATE_FAILED' };
+const errorAliases: Record<string,string> = { EVENT_CURSOR_EXPIRED:'CURSOR_EXPIRED', REVISION_CONFLICT:'STALE_REVISION', PROJECT_REVISION_MISMATCH:'STALE_REVISION', STALE_PROJECT_REVISION:'STALE_REVISION', STALE_PLAN_REVISION:'STALE_PLAN', STALE_INPUT_SNAPSHOT:'SNAPSHOT_MISMATCH', PLAN_STALE:'STALE_PLAN', INPUT_SNAPSHOT_MISMATCH:'SNAPSHOT_MISMATCH', JOB_ALREADY_ACTIVE:'ACTIVE_JOB_EXISTS', PROJECT_BUSY:'ACTIVE_JOB_EXISTS', EXTERNAL_MODEL_ACK_REQUIRED:'CONSENT_REQUIRED', PARSE_ERROR:'PARSE_FAILED', MATERIAL_PARSE_FAILED:'PARSE_FAILED', FILE_TOO_LARGE:'UPLOAD_LIMIT', TOO_MANY_FILES:'UPLOAD_LIMIT', PROJECT_STORAGE_LIMIT:'STORAGE_LIMIT', MODEL_UNAVAILABLE:'MODEL_CONNECTION_FAILED', EXECUTION_TIMEOUT:'TIMEOUT', QUALITY_FAILED:'QUALITY_GATE_FAILED' };
 export class ApiError extends Error { public code:string; constructor(code: string, public status = 0) { const normalized=code.toUpperCase();const canonical=errorAliases[normalized]??normalized; super(errors[canonical] ?? '操作未完成，请刷新后重试；若持续发生，请联系管理员。');this.code=canonical; } }
 export const safeError = (error: unknown) => error instanceof ApiError ? `${error.message}（${/^[A-Z_]{1,60}$/.test(error.code) ? error.code : 'SERVICE_ERROR'}${Number.isInteger(error.status)&&error.status>=400&&error.status<=599?`，HTTP ${error.status}`:''}）` : errors.NETWORK_ERROR;
 const httpErrorCodes:Record<number,string>={408:'SERVER_RECEIVE_TIMEOUT',413:'REQUEST_TOO_LARGE',502:'UPSTREAM_BAD_GATEWAY',503:'SERVICE_UNAVAILABLE',504:'UPSTREAM_TIMEOUT',524:'UPSTREAM_TIMEOUT'};
@@ -123,7 +125,7 @@ export function adaptProject(raw: RecordValue): Project {
  confirmed_direction_id:latest.confirmed_at ? latest.confirmation_selection?.direction_id??latest.selection?.direction_id??latest.design?.selection?.direction_id : undefined,
  } : undefined;
  return { ...raw, settings:raw.settings??{pages:raw.page_count??8,language:raw.language==='zh'?'简体中文':raw.language??'简体中文',audience:raw.audience??'',purpose:raw.purpose??'',style:raw.style??'',requirements:raw.requirements??''}, assets:raw.assets??[], plan,
- input_snapshot_hash:raw.input_snapshot_hash??'', confirmed_plan_revision:raw.confirmed_plan_revision==null?null:String(raw.confirmed_plan_revision) } as Project;
+ input_snapshot_hash:raw.input_snapshot_hash??'', confirmed_plan_revision:raw.confirmed_plan_revision==null?null:String(raw.confirmed_plan_revision), latest_job:raw.latest_job?adaptJob(raw.latest_job):null } as Project;
 }
 export function adaptJob(raw:RecordValue):Job {return {...raw,id:raw.id??raw.job_id,last_event_seq:raw.event_cursor??raw.last_event_seq??0} as Job;}
 const flatSettings=(s:Project['settings'])=>({page_count:s.pages,language:s.language==='简体中文'?'zh':s.language,audience:s.audience,purpose:s.purpose,style:s.style,requirements:s.requirements});
@@ -136,7 +138,11 @@ export const api = {
   removeAsset: (p:Project,assetId:string) => mutate<unknown>(`/projects/${id(p.id)}/assets/${id(assetId)}?expected_revision=${p.revision}`,{},'DELETE'),
   reparseAsset: (p:Project,assetId:string) => mutate<{revision:number;asset_id:string;parse_status:'queued'}>(`/projects/${id(p.id)}/assets/${id(assetId)}/reparse`,{expected_revision:p.revision}),
   upload: async (p:Project,file:File,signal?:AbortSignal) => { const body=new FormData(); body.set('file',file); return request<unknown>(`/projects/${id(p.id)}/assets`,{method:'POST',body,signal,headers:{'Idempotency-Key':intents.key(`/projects/${id(p.id)}/assets`,[p.revision,file.name,file.size,file.lastModified])}},UPLOAD_TIMEOUT_MS); },
-  plan: (p:Project, feedback:string, _consent:boolean) => mutate<{job_id:string}>(`/projects/${id(p.id)}/plans`,{expected_revision:p.revision,feedback,phase:p.plan?.stage==='communication'&&p.plan.confirmed_at&&!feedback.trim()?'plan_options':'plan_initial'}),
+  plan: (p:Project, feedback:string, _consent:boolean) => {
+   const advance=p.plan?.stage==='communication'&&!!p.plan.confirmed_at&&p.plan.input_snapshot_hash===p.input_snapshot_hash&&!feedback.trim();
+   if(advance&&!hasConfirmedCommunication(p))return Promise.reject(new ApiError('INITIAL_CONFIRMATION_REQUIRED'));
+   return mutate<{job_id:string}>(`/projects/${id(p.id)}/plans`,{expected_revision:p.revision,feedback,phase:advance?'plan_options':'plan_initial'});
+  },
   confirm: async (p:Project, selection:unknown) => adaptProject(await mutate<RecordValue>(`/projects/${id(p.id)}/plans/${id(p.plan!.revision)}/confirm`,{expected_revision:p.revision,input_snapshot_hash:p.plan!.input_snapshot_hash,selection})),
   generate: (p:Project, _consent:boolean) => mutate<{job_id:string}>(`/projects/${id(p.id)}/generations`,{expected_revision:p.revision,plan_revision:Number(p.plan!.revision)}),
   revise: (p:Project,base:string,pages:number[],feedback:string,pageFeedback:Record<string,string>,_consent:boolean) => mutate<{job_id:string}>(`/projects/${id(p.id)}/revisions`,{expected_revision:p.revision,base_version_id:base,pages,feedback:[feedback,...Object.entries(pageFeedback).map(([n,text])=>`第 ${n} 页：${text}`)].filter(Boolean).join('\n\n')}),

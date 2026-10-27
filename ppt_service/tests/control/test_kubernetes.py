@@ -201,6 +201,20 @@ def test_worker_proxy_manifests_and_credentials_are_separate(runtime):
     assert backend._read(h)['runtime']['execution_image'] == settings.worker_image
 
 
+@pytest.mark.parametrize('phase,seconds', [('plan_initial', 600), ('plan_options', 1200),
+                                           ('prepare', 1800), ('generate', 1800), ('revise', 1800)])
+def test_phase_budgets_match_worker_and_pod_lifetime(runtime, phase, seconds):
+    config, settings, api, backend, original = runtime
+    attempt = replace(original, phase=phase)
+    handle = backend.create(attempt, staged(runtime))
+    worker = api.objects['pods', handle.worker_name]
+    proxy = api.objects['pods', handle.proxy_name]
+    command = worker['spec']['containers'][0]['args']
+    assert command[command.index('--deadline') + 1] == str(seconds)
+    assert worker['spec']['activeDeadlineSeconds'] == seconds + 120
+    assert proxy['spec']['activeDeadlineSeconds'] == 2100
+
+
 def test_network_policy_is_exact_attempt_and_no_dns(runtime):
     config, settings, api, backend, attempt = runtime
     h = backend.reconcile(attempt)

@@ -10,6 +10,34 @@ describe('immutable confirmation',()=>{
  it('sends first stage free design selection with its own immutable snapshot',async()=>{const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({id:'p',plans:[]})));vi.stubGlobal('fetch',fetcher);const initial={...project,plan:{revision:'1',stage:'communication' as const,input_snapshot_hash:'initial-snapshot'}};await api.confirm(initial,{design_mode:'free_design',template_id:null});expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({expected_revision:2,input_snapshot_hash:'initial-snapshot',selection:{design_mode:'free_design',template_id:null}});});
  it('keeps explicit edit base even if latest differs',async()=>{const fetcher=vi.fn().mockResolvedValue(new Response('{"job_id":"j"}'));vi.stubGlobal('fetch',fetcher);await api.revise({...project,latest_version_id:'new-version'},'older-version',[2],'修改',{2:'缩短标题'},true);expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({expected_revision:2,base_version_id:'older-version',pages:[2],feedback:'修改\n\n第 2 页：缩短标题'});});
  it('maps stage one confirmation to options job only after actual server confirmation',async()=>{const fetcher=vi.fn().mockResolvedValue(new Response('{"job_id":"j"}'));vi.stubGlobal('fetch',fetcher);await api.plan({...project,plan:{revision:'2',stage:'communication',input_snapshot_hash:'hash',confirmed_at:'2026-10-21'}},'',true);expect(JSON.parse(fetcher.mock.calls[0][1].body).phase).toBe('plan_options');});
+ it.each([
+  {name:'cleared confirmation pointer',confirmed_plan_revision:null,input_snapshot_hash:'hash'},
+  {name:'different confirmed revision',confirmed_plan_revision:'1',input_snapshot_hash:'hash'},
+ ])('does not spend a planning request on historical confirmation with $name',async state=>{
+  const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);
+  const initial:Project={...project,...state,plan:{revision:'2',stage:'communication',input_snapshot_hash:'hash',confirmed_at:'2026-10-21'}};
+  await expect(api.plan(initial,' \n ',true)).rejects.toMatchObject({code:'INITIAL_CONFIRMATION_REQUIRED'});
+  expect(fetcher).not.toHaveBeenCalled();
+ });
+ it('starts a new initial plan from changed inputs without requiring feedback or confirming the obsolete plan',async()=>{
+  const fetcher=vi.fn().mockResolvedValue(new Response('{"job_id":"new-initial"}'));vi.stubGlobal('fetch',fetcher);
+  const initial:Project={...project,input_snapshot_hash:'new-upload',confirmed_plan_revision:null,plan:{revision:'2',stage:'communication',input_snapshot_hash:'hash',confirmed_at:'2026-10-21'}};
+  await api.plan(initial,'',true);
+  expect(fetcher).toHaveBeenCalledOnce();expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({expected_revision:2,feedback:'',phase:'plan_initial'});
+ });
+ it('allows explicit feedback to create a new initial plan after the old confirmation was cleared',async()=>{
+  const fetcher=vi.fn().mockResolvedValue(new Response('{"job_id":"new-initial"}'));vi.stubGlobal('fetch',fetcher);
+  const initial:Project={...project,confirmed_plan_revision:null,plan:{revision:'2',stage:'communication',input_snapshot_hash:'hash',confirmed_at:'2026-10-21'}};
+  await api.plan(initial,'缩小为入门介绍，保留资料引用。',true);
+  expect(fetcher).toHaveBeenCalledOnce();
+  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({expected_revision:2,feedback:'缩小为入门介绍，保留资料引用。',phase:'plan_initial'});
+ });
+ it('adapts the latest terminal job from the project detail without losing its authoritative cursor',()=>{
+  const latest={id:'latest',job_id:'latest',project_id:'p',kind:'plan_options',status:'failed',stage:'plan_options',event_cursor:17,attempt:1,error_code:'execution_timeout',base_version_id:null};
+  const result=adaptProject({id:'p',plans:[],latest_job:latest});
+  expect(result.latest_job).toMatchObject({id:'latest',project_id:'p',kind:'plan_options',status:'failed',stage:'plan_options',last_event_seq:17,error_code:'execution_timeout'});
+  expect(adaptProject({id:'p',plans:[],latest_job:null}).latest_job).toBeNull();
+ });
 });
 describe('retry and safety',()=>{
  it('acknowledges with required title and preserves all configured project fields',async()=>{const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({id:'p',plans:[]})));vi.stubGlobal('fetch',fetcher);const configured={...project,settings:{...defaultSettings,pages:12,audience:'实际受众',purpose:'实际用途'}};await api.acknowledge(configured);expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({title:'项目',page_count:12,language:'zh',audience:'实际受众',purpose:'实际用途',style:defaultSettings.style,requirements:'',external_model_ack:true,expected_revision:2});});

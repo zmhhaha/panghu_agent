@@ -64,6 +64,8 @@ def project_dto(p,s,detail=False):
     if detail:
         d['assets']=[asset_dto(a) for a in s.scalars(select(Asset).where(Asset.project_id==p.id,Asset.removed==False))]
         d['plans']=[plan_dto(a) for a in s.scalars(select(Plan).where(Plan.project_id==p.id).order_by(Plan.revision))]
+        latest=s.scalar(select(Job).where(Job.project_id==p.id,Job.issuer==p.issuer,Job.subject==p.subject).order_by(Job.created_at.desc(),Job.id.desc()).limit(1))
+        d['latest_job']=job_dto(latest) if latest else None
     return d
 def create_app(settings:Settings|None=None,engine=None):
     settings=settings or Settings.env()
@@ -168,7 +170,10 @@ def create_app(settings:Settings|None=None,engine=None):
                 if not initial or initial.input_snapshot_hash!=r.snapshot(p)['hash']:fail('initial_confirmation_required')
                 extra['checkpoint_id']=initial.checkpoint_id
                 extra['confirmation_selection']=initial.confirmation_selection
-            j=r.enqueue(p,owner,body.phase,body.expected_revision,extra);j.checkpoint_id=extra.get('checkpoint_id');p.confirmed_plan_revision=None
+            j=r.enqueue(p,owner,body.phase,body.expected_revision,extra);j.checkpoint_id=extra.get('checkpoint_id')
+            # A Stage2 failure must not erase the real Stage1 confirmation.
+            # Successful accept_plan invalidates the pointer for its new plan.
+            if body.phase=='plan_initial':p.confirmed_plan_revision=None
             return job_dto(j)
         return r.idempotent(owner,f'projects/{pid}/plans',key,body.model_dump(),action,
                             authorize=lambda:r.project(pid,owner,True))

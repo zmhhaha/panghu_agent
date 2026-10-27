@@ -4,6 +4,7 @@ from datetime import timedelta
 from fastapi import HTTPException
 from sqlalchemy import select,func,text
 from .models import *
+from .phase_limits import phase_timeout_seconds
 ACTIVE=('queued','starting','running','collecting','validating','cancelling')
 TERMINAL=('succeeded','failed','cancelled','interrupted')
 def fail(code,status=409): raise HTTPException(status,detail={'code':code})
@@ -121,7 +122,7 @@ class Repository:
         if not j:return None
         slot.fencing_token+=1;slot.job_id=j.id;j.fencing_token=slot.fencing_token
         j.status='starting';j.lease_until=now()+timedelta(seconds=lease_seconds)
-        j.deadline=now()+timedelta(minutes=10 if j.kind.startswith('plan') else 30)
+        j.deadline=now()+timedelta(seconds=phase_timeout_seconds(j.kind))
         self.event(j,'job.started',{'stage':j.stage});return j
     def fenced(self,jid,attempt,token,allow_cancel=False):
         slot=self.s.get(ExecutionSlot,1,with_for_update=True)
@@ -160,7 +161,9 @@ class Repository:
         c=self._checkpoint(p,checkpoint_key,checkpoint_manifest)
         n=(self.s.scalar(select(func.max(Plan.revision)).where(Plan.project_id==p.id)) or 0)+1
         plan=Plan(project_id=p.id,revision=n,phase=j.kind,input_snapshot_hash=j.input_snapshot['hash'],outline=outline,design=design,user_feedback=j.input_snapshot.get('feedback',''),checkpoint_id=c.id)
-        self.s.add(plan);p.stage='awaiting_confirmation';p.active_job_id=None;p.revision+=1
+        # A new candidate plan is unconfirmed. Keep the prior Stage1 pointer
+        # during Stage2 execution/failure, but never transfer it to this plan.
+        self.s.add(plan);p.stage='awaiting_confirmation';p.active_job_id=None;p.confirmed_plan_revision=None;p.revision+=1
         j.status='succeeded';slot.job_id=None;self.event(j,'plan.ready',{'revision':n,'phase':j.kind});self.event(j,'job.succeeded');return plan
     def accept_prepared(self,jid,attempt,token,*,checkpoint_key,checkpoint_manifest,independently_validated=False):
         j,p,slot=self.fenced(jid,attempt,token)

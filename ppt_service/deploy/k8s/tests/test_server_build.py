@@ -175,6 +175,7 @@ class BuildTests(unittest.TestCase):
         self.assertFalse(any('/tests/' in name or '/test/' in name or '/worker/' in name
                              or '/control/' in name or '.git' in name for name in names))
         self.assertIn('code/ppt_service/server/review_revisions.py', names)
+        self.assertIn('code/ppt_service/server/phase_limits.py', names)
         self.assertIn('code/ppt_service/server/acceptance/resolver.py', names)
         self.assertIn('web/src/acceptance/AcceptancePanel.tsx', names)
 
