@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import io
 import json
 from pathlib import Path
 import sys
+import subprocess
 import tarfile
 from types import SimpleNamespace
 
@@ -154,6 +156,31 @@ def test_source_context_excludes_private_data_and_pins_reviewed_current_sources(
         receipt = json.load(archive.extractfile('source-manifest.json'))
         assert receipt['worker/execute.py']
     assert len(digest) == 64
+
+
+@pytest.mark.parametrize('dockerfile', ['Dockerfile.controller', 'Dockerfile.worker'])
+def test_packaged_agent_sources_import_without_the_checkout(tmp_path, dockerfile):
+    context, digest = build.source_context(DIRECTORY / dockerfile)
+    with tarfile.open(fileobj=io.BytesIO(context), mode='r:') as archive:
+        receipt = json.load(archive.extractfile('source-manifest.json'))
+        diagnostics = archive.extractfile('agent-code/agent_service/diagnostics.py').read()
+        assert receipt['agent_service/diagnostics.py'] == hashlib.sha256(diagnostics).hexdigest()
+        assert digest == hashlib.sha256(json.dumps(receipt, sort_keys=True).encode()).hexdigest()
+        # Reproduce only the explicit Agent COPY subtree. Do not let the source
+        # checkout or PYTHONPATH hide a missing transitive runtime dependency.
+        for member in archive.getmembers():
+            if member.name.startswith('agent-code/agent_service/'):
+                assert member.isfile()
+                target = tmp_path / member.name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(archive.extractfile(member).read())
+    result = subprocess.run([sys.executable, '-I', '-c',
+        'import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); '
+        'from agent_service import engines, client; from agent_service.profiles import ppt; '
+        'assert Path(engines.__file__).is_relative_to(Path(sys.argv[1])); '
+        'assert Path(engines.log_execution_failure.__code__.co_filename).is_relative_to(Path(sys.argv[1]))',
+        str(tmp_path / 'agent-code')], cwd=tmp_path, capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
 
 
 def test_build_writes_registry_manifest_receipts_only_after_both_pushes(tmp_path):

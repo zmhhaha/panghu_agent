@@ -25,7 +25,7 @@ def source_context(dockerfile: Path) -> tuple[bytes, str]:
     # Only the neutral client/contract and reviewed PPT implementation enter the
     # business images. No service credentials, runtime HOME or engine vendor copy.
     agent = SERVICE.parent / 'agent_service'
-    agent_names = ('__init__.py', 'artifacts.py', 'client.py', 'contracts.py', 'engines.py',
+    agent_names = ('__init__.py', 'artifacts.py', 'client.py', 'contracts.py', 'diagnostics.py', 'engines.py',
                    'profiles/__init__.py', 'profiles/base.py', 'profiles/ppt.py')
     output = io.BytesIO()
     manifest = {}
