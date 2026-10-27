@@ -266,6 +266,75 @@ def test_self_contained_function_calls_reasoning_and_inline_images_are_accepted(
     assert run.proxy.respond(run.token, run.body)[0] == 200
 
 
+@pytest.mark.parametrize('phase', [None, 'commentary', 'final_answer'])
+def test_pi_multiturn_assistant_phase_survives_forwarding_and_paid_response_replay(execution, phase):
+    run = execution()
+    # The pinned Pi Responses converter emits this history shape after a model
+    # turn containing assistant text and a local function call. This is the next
+    # distinct request, not a retry of the original prompt-only model turn.
+    run.proxy.respond(run.token, run.body)
+    history = [
+        {'role': 'user', 'content': [{'type': 'input_text', 'text': 'Offline source task'}]},
+        {'type': 'message', 'id': 'msg_local', 'role': 'assistant', 'status': 'completed',
+         'phase': phase, 'content': [{'type': 'output_text', 'text': 'Reading the local source.',
+                                    'annotations': []}]},
+        {'type': 'function_call', 'id': 'fc_local', 'call_id': 'call_local',
+         'name': 'read', 'arguments': '{"path":"inputs/source.txt"}'},
+        {'type': 'function_call_output', 'call_id': 'call_local', 'output': 'Offline source bytes'},
+    ]
+    body = dict(run.body, input=history, stream=True)
+    expected = run.proxy.respond(run.token, body)
+    assert json.loads(run.calls[-1].content)['input'] == history
+    assert run.proxy.respond(run.token, dict(reversed(list(body.items())))) == expected
+    assert len(run.calls) == 2
+    with run.store.engine.connect() as db:
+        records = db.execute(select(requests)).mappings().all()
+    assert len(records) == 2 and all(record['state'] == 'complete' for record in records)
+
+
+def test_assistant_phase_is_part_of_distinct_request_admission_identity(execution):
+    run = execution()
+    body = dict(run.body, input=[{'type': 'message', 'role': 'assistant',
+        'content': 'Offline prior model turn', 'phase': 'commentary'}])
+    run.proxy.respond(run.token, body)
+    changed = deepcopy(body)
+    changed['input'][0]['phase'] = 'final_answer'
+    run.proxy.respond(run.token, changed)
+    run.proxy.respond(run.token, body)
+    assert len(run.calls) == 2
+    assert [json.loads(call.content)['input'][0]['phase'] for call in run.calls] == ['commentary', 'final_answer']
+    with run.store.engine.connect() as db:
+        identities = db.execute(select(requests.c.body_sha256)).scalars().all()
+    assert len(set(identities)) == 2
+
+
+@pytest.mark.parametrize('phase', ['', 'analysis', 'commentary\n', True, False, 0, 1, [], {}, ['commentary']])
+def test_unknown_or_wrongly_typed_phase_is_rejected_before_admission(execution, phase):
+    run = execution()
+    body = dict(run.body, input=[{'type': 'message', 'role': 'assistant',
+        'content': 'Offline history', 'phase': phase}])
+    error('model_input_reference_not_authorized', lambda: run.proxy.respond(run.token, body), 422)
+    assert run.calls == []
+    with run.store.engine.connect() as db:
+        assert db.execute(select(requests)).first() is None
+
+
+@pytest.mark.parametrize('item', [
+    {'type': 'message', 'role': 'assistant', 'content': 'Offline history',
+     'phase': 'commentary', 'previous_response_id': 'foreign'},
+    {'type': 'function_call', 'call_id': 'call_local', 'name': 'read',
+     'arguments': '{}', 'phase': 'commentary'},
+    {'type': 'item_reference', 'id': 'foreign', 'phase': 'final_answer'},
+])
+def test_phase_support_does_not_allow_extra_fields_or_other_input_types(execution, item):
+    run = execution()
+    error('model_input_reference_not_authorized', lambda: run.proxy.respond(
+        run.token, dict(run.body, input=[item])), 422)
+    assert run.calls == []
+    with run.store.engine.connect() as db:
+        assert db.execute(select(requests)).first() is None
+
+
 def test_sse_response_bytes_and_media_type_survive_durable_replay(execution):
     run = execution()
     payload = b'event: response.completed\ndata: {"output":[]}\n\n'

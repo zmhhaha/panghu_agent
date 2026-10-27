@@ -207,9 +207,15 @@ class ModelProxy:
                        for s in summary):
                     reject()
             elif kind == 'message':
-                if (set(item) - {'type', 'id', 'role', 'content', 'status'}
+                phase = item.get('phase')
+                # Pi 0.73.1 replays assistant text signatures with Responses
+                # phase metadata after tool calls. Preserve this semantic field
+                # in forwarding/admission identity; reject unknown phase values.
+                if (set(item) - {'type', 'id', 'role', 'content', 'status', 'phase'}
                         or not isinstance(item.get('role'), str)
-                        or item['role'] not in {'user', 'assistant', 'system', 'developer'}):
+                        or item['role'] not in {'user', 'assistant', 'system', 'developer'}
+                        or (phase is not None and (type(phase) is not str
+                            or phase not in {'commentary', 'final_answer'}))):
                     reject()
                 content = item.get('content')
                 if isinstance(content, str):
