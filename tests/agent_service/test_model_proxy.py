@@ -457,6 +457,55 @@ def test_sse_response_bytes_and_media_type_survive_durable_replay(execution):
         run.proxy.client.close()
 
 
+@pytest.mark.parametrize('reasoning', [
+    {'type': 'reasoning', 'id': 'rs_offline', 'encrypted_content': 'opaque-offline-ciphertext',
+     'summary': [], 'content': []},  # Exact observed r7 shape; no real cipher or text.
+    {'type': 'reasoning', 'id': 'rs_offline', 'status': 'completed', 'encrypted_content': None,
+     'summary': [{'type': 'summary_text', 'text': 'Offline summary fixture'}],
+     'content': [{'type': 'reasoning_text', 'text': 'Offline content fixture'}]},
+])
+def test_pi_native_reasoning_history_is_preserved_and_replayed_without_new_reasoning_parameters(execution, reasoning):
+    run = execution()
+    body = dict(run.body, input=[{'role': 'user', 'content': 'Offline task'}, reasoning,
+        {'type': 'function_call', 'call_id': 'call_local', 'name': 'read', 'arguments': '{}'},
+        {'type': 'function_call_output', 'call_id': 'call_local', 'output': 'Offline tool result'}])
+    expected = run.proxy.respond(run.token, body)
+    sent = json.loads(run.calls[0].content)
+    assert sent['input'] == body['input']
+    assert 'reasoning' not in sent and 'include' not in sent
+    assert run.proxy.respond(run.token, body) == expected
+    assert len(run.calls) == 1
+    changed = deepcopy(body)
+    changed['input'][1]['encrypted_content'] = 'changed-offline-ciphertext'
+    run.proxy.respond(run.token, changed)
+    assert len(run.calls) == 2
+    with run.store.engine.connect() as db:
+        assert len(set(db.execute(select(requests.c.body_sha256)).scalars())) == 2
+
+
+@pytest.mark.parametrize('change', [
+    {'id': None}, {'id': ''}, {'id': []}, {'encrypted_content': {}}, {'status': []}, {'status': 'unknown'},
+    {'summary': None}, {'content': None}, {'content': {}}, {'content': [None]},
+    {'content': [{'type': 'summary_text', 'text': 'wrong content kind'}]},
+    {'summary': [{'type': 'reasoning_text', 'text': 'wrong summary kind'}]},
+    {'content': [{'type': 'reasoning_text', 'text': 42}]},
+    {'content': [{'type': 'reasoning_text', 'text': 'offline', 'url': 'https://remote.invalid'}]},
+    {'content': [{'type': 'item_reference', 'id': 'foreign'}]},
+    {'content': [{'type': 'input_image', 'image_url': 'data:image/png;base64,YQ=='}]},
+    {'previous_response_id': 'foreign'},
+    {'content': [{'type': 'reasoning_text', 'text': 'offline'}] * 2001},
+])
+def test_native_reasoning_unknown_fields_types_or_references_fail_before_admission(execution, change):
+    run = execution()
+    item = dict(type='reasoning', id='rs_offline', encrypted_content='opaque-offline', summary=[], content=[])
+    item.update(change)
+    error('model_input_reference_not_authorized', lambda: run.proxy.respond(
+        run.token, dict(run.body, input=[item])), 422)
+    assert run.calls == []
+    with run.store.engine.connect() as db:
+        assert db.execute(select(requests)).first() is None
+
+
 def test_completed_replay_does_not_consume_the_distinct_request_budget(execution):
     run = execution(max_calls_per_attempt=1)
     run.proxy.respond(run.token, run.body)

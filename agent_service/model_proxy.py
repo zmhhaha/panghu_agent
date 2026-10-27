@@ -228,13 +228,22 @@ class ModelProxy:
                     reject()
                 tool_output(item.get('output'))
             elif kind == 'reasoning':
-                if set(item) - {'type', 'id', 'summary', 'encrypted_content', 'status'}:
+                # Native Responses output can carry reasoning even when the
+                # client did not request a reasoning mode. Pi replays the full
+                # signed item, including content:[], on the next tool turn.
+                if (set(item) - {'type', 'id', 'summary', 'encrypted_content', 'status', 'content'}
+                        or ('id' in item and (type(item['id']) is not str or not item['id']))
+                        or (item.get('encrypted_content') is not None
+                            and type(item['encrypted_content']) is not str)
+                        or (item.get('status') is not None and (type(item['status']) is not str
+                            or item['status'] not in {'in_progress', 'completed', 'incomplete'}))):
                     reject()
-                summary = item.get('summary', [])
-                if not isinstance(summary, list) or any(not isinstance(s, dict) or set(s) != {'type', 'text'}
-                       or s['type'] != 'summary_text' or not isinstance(s['text'], str)
-                       for s in summary):
-                    reject()
+                for key, part_type in (('summary', 'summary_text'), ('content', 'reasoning_text')):
+                    parts = item.get(key, [])
+                    if type(parts) is not list or len(parts) > 2000 or any(
+                            type(part) is not dict or set(part) != {'type', 'text'}
+                            or part['type'] != part_type or type(part['text']) is not str for part in parts):
+                        reject()
             elif kind == 'message':
                 phase = item.get('phase')
                 # Pi 0.73.1 replays assistant text signatures with Responses

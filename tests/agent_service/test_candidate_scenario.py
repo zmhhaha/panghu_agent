@@ -23,6 +23,33 @@ from test_acceptance_probe import authority, config
 from test_catalog import image_packages
 
 
+class _OwnerStat:
+    """Preserve real inode/mode/link metadata; only this fixture's UID differs."""
+    def __init__(self, observed, uid):
+        self.observed, self.st_uid = observed, uid
+
+    def __getattr__(self, name):
+        return getattr(self.observed, name)
+
+
+@pytest.fixture(autouse=True)
+def synthetic_source_root_owner(tmp_path, monkeypatch):
+    # Linux regression runs as UID10000. Only scenario reads of this unit
+    # test's synthetic tmp tree get the explicit administrator-owner double.
+    # Real production checks and all paths outside this test stay unchanged.
+    native = type(Path())
+    controlled = tmp_path.absolute()
+    class SyntheticRootPath(native):
+        def lstat(self, *args, **kwargs):
+            observed = super().lstat(*args, **kwargs)
+            try:
+                self.relative_to(controlled)
+            except ValueError:
+                return observed
+            return _OwnerStat(observed, 0)
+    monkeypatch.setattr(scenario, 'Path', SyntheticRootPath)
+
+
 def save(path, value):
     raw = value if type(value) is bytes else canonical_bytes(value)
     path.write_bytes(raw)
@@ -204,6 +231,30 @@ def test_source_hardlink_cannot_be_imported(image_packages, tmp_path):
     os.link(sources / name, alias)
     with pytest.raises(ServiceError):
         scenario.load_scenario(path, sources, None, host_policy(config()))
+
+
+@pytest.mark.parametrize('operation', ['read', 'members'])
+def test_real_nonroot_source_metadata_is_rejected_without_administrator_owner_double(tmp_path, monkeypatch, operation):
+    sources = tmp_path / 'untrusted-user-source'
+    sources.mkdir()
+    (sources / 'source.txt').write_bytes(b'Untrusted nonroot-owned fixture')
+    native = type(Path())
+    # In the real UID10000 Linux run, this uses the actual nonroot st_uid.
+    # Windows/root hosts preserve every real stat field and simulate only UID.
+    class NonRootPath(native):
+        def lstat(self, *args, **kwargs):
+            observed = super().lstat(*args, **kwargs)
+            return observed if observed.st_uid != 0 else _OwnerStat(observed, 10000)
+    class PosixOwnershipOS:
+        name = 'posix'
+        def __getattr__(self, name):
+            return getattr(os, name)
+    monkeypatch.setattr(scenario, 'Path', NonRootPath)
+    monkeypatch.setattr(scenario, 'os', PosixOwnershipOS())
+    action = (lambda: scenario._read(sources, 'source.txt')) if operation == 'read' else (
+        lambda: scenario._source_members(NonRootPath(sources), {'source.txt'}))
+    with pytest.raises(ServiceError, match='candidate_source_ownership_invalid'):
+        action()
 
 
 def test_even_empty_unlisted_source_directories_are_not_projected(image_packages, tmp_path):
