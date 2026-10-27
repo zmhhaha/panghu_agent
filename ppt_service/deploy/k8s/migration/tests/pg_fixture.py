@@ -16,7 +16,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
-from ppt_service.server.migrate import migrate
+from ppt_service.server.migrate import migrate, REVISION
 from ppt_service.server.models import (Project, Asset, Checkpoint, Plan, Job, JobEvent,
                                       Version, IdempotencyKey, UserQuota, UsageRecord)
 
@@ -112,7 +112,7 @@ def runtime_permissions():
                    "plans", "projects", "usage_records", "user_quotas", "versions")
     with engine.connect() as connection:
         revision = connection.scalar(text("SELECT max(revision) FROM public.api_schema_revision"))
-        assert revision == 2
+        assert revision == REVISION
         for table in table_names:
             for operation in ("SELECT", "INSERT", "UPDATE", "DELETE"):
                 assert connection.scalar(text("SELECT has_table_privilege(current_user,:table,:operation)"),
@@ -160,7 +160,7 @@ def main():
         engine = connect("ppt_p1_restore_fixture", "ppt_migrator")
         migrate(engine)
         engine.dispose()
-        result = {"migrator_schema2_and_triggers_installed": True, "model_requests": 0}
+        result = {"migrator_schema_revision": REVISION, "triggers_installed": True, "model_requests": 0}
     else:
         result = runtime_permissions()
     print(json.dumps(result, sort_keys=True))

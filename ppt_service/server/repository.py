@@ -173,6 +173,9 @@ class Repository:
         self.event(n,'job.queued',{'stage':'generate'});return n
     def publish_version(self,jid,attempt,token,*,manifest,artifact_root,checkpoint_key,checkpoint_manifest,independently_validated=False):
         j,p,slot=self.fenced(jid,attempt,token)
+        # A review-only branch can produce another review draft, never a
+        # published version, even if an internal caller supplies a pass flag.
+        if 'review_base' in j.input_snapshot:fail('review_revision_not_publishable')
         if not independently_validated or not j.stopped or j.status!='validating' or j.kind not in ('generate','revise'):fail('trusted_validation_required')
         if not artifact_root.startswith('projects/'+p.id+'/versions/'):raise ValueError('version namespace')
         c=self._checkpoint(p,checkpoint_key,checkpoint_manifest)

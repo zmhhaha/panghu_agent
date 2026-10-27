@@ -13,7 +13,7 @@ COPY code/ /opt/ppt-service/
 COPY web/dist/ /opt/ppt-service/web/dist/
 COPY build-info/ /opt/ppt-service/build-info/
 COPY verify_image.py /opt/ppt-service/verify_image.py
-RUN python -m pip check && python -c "from ppt_service.server.site import create_site; from ppt_service.server.migrate import REVISION; assert REVISION == 2" \
+RUN python -m pip check && python -c "from ppt_service.server.site import create_site; from ppt_service.server.migrate import REVISION; assert REVISION == 3" \
     && mkdir -p /var/lib/ppt-service && chown 10000:10000 /var/lib/ppt-service \
     && chmod -R a+rX /opt/ppt-service
 USER 10000:10000

@@ -7,6 +7,7 @@ import { planningLabels, restoredDirection } from './planning';
 import { useParsePolling } from './useParsePolling';
 import { hasObservedParser, hasPendingParses, unreadyParseAssets } from './parse';
 import { SourceFiles } from './SourceFiles';
+import { AcceptancePanel, type AcceptanceSnapshot, type SavedReviewFeedback } from './acceptance';
 import './styles.css';
 function ErrorBox({error,onRetry}:{error:unknown;onRetry?:()=>void}) { if(!error)return null;return <div className="notice error" role="alert"><CircleAlert size={18}/><div>{safeError(error)} {error instanceof ApiError&&error.status===401?<a href="/oauth2/start">重新登录</a>:onRetry&&<button className="link" onClick={onRetry}>重试读取</button>}</div></div>; }
 function Empty({title,children}:{title:string;children?:React.ReactNode}) {return <div className="empty"><FolderClosed size={30}/><h3>{title}</h3><p>{children}</p></div>;}
@@ -134,12 +135,31 @@ function Planning({project,disabled,consent,setConsent,perform,start}:{project:P
 }
 function Versions({project,versions,disabled,consent,setConsent,start,perform}:{project:Project;versions:Version[];disabled:boolean;consent:boolean;setConsent:(v:boolean)=>void;start:Starter;perform:Performer}) {
  const [base,setBase]=useState('');const [pages,setPages]=useState<number[]>([]);const [feedback,setFeedback]=useState('');const [perPage,setPerPage]=useState<Record<string,string>>({});const [scope,setScope]=useState('whole');
+ const [reviewSnapshot,setReviewSnapshot]=useState<AcceptanceSnapshot|null>(null);
+ const [reviewConsent,setReviewConsent]=useState(false);
+ const [reviewNotice,setReviewNotice]=useState('');const revisionForm=useRef<HTMLElement|null>(null);
+ const lastReview=useRef<AcceptanceSnapshot|null>(null);
  const version=versions.find(v=>v.id===base);const review=version?.status==='review';
  const canRevise=!!version&&!review&&version.can_revise!==false;
- const changeBase=(value:string)=>{setBase(value);setPages([]);setPerPage({});setFeedback('');};
+ const currentReview=reviewSnapshot?.project_id===project.id&&reviewSnapshot.version_id===base?reviewSnapshot:null;
+ const canReviewRevise=!!review&&currentReview?.can_review===true;
+ const observeReview=useCallback((value:AcceptanceSnapshot|null)=>{
+  if(value&&(value.project_id!==project.id||value.version_id!==base))return;
+  const previous=lastReview.current;
+  if(!value)setReviewConsent(false);
+  else {
+   if(previous&&JSON.stringify(previous.binding)!==JSON.stringify(value.binding)){setPages([]);setPerPage({});setFeedback('');setScope('whole');setReviewConsent(false);setReviewNotice('审核稿来源已变化，未提交的修改意见已清空，请核对当前来源后重新填写。');}
+   else if(previous&&previous.revision!==value.revision){setReviewConsent(false);setReviewNotice('检查记录已更新，请核对修改意见并重新确认本次数据传输。');}
+   lastReview.current=value;
+  }
+  setReviewSnapshot(value);
+ },[base,project.id]);
+ const useSavedFeedback=(value:SavedReviewFeedback)=>{if(!currentReview||value.reviewRevision!==currentReview.revision||JSON.stringify(value.binding)!==JSON.stringify(currentReview.binding))return;setScope('pages');setPages(value.pages);setPerPage({});setFeedback(value.feedback);setReviewConsent(false);setReviewNotice(`已带入第 ${value.pages.join('、')} 页的已保存问题，请核对修改意见后提交。`);revisionForm.current?.scrollIntoView?.({behavior:'smooth',block:'start'});};
+ const changeBase=(value:string)=>{setBase(value);setPages([]);setPerPage({});setFeedback('');setScope('whole');setReviewSnapshot(null);setReviewConsent(false);setReviewNotice('');lastReview.current=null;};
+ const revisionFeedback=[feedback,...(scope==='pages'?pages.map(n=>perPage[String(n)]?.trim()?`第 ${n} 页：${perPage[String(n)]}`:''):[])].filter(Boolean).join('\n\n');
  const gateLabels:Record<string,string>={independent_export_build_contract:'完整导出核验',independent_visual_review:'逐页视觉审核',powerpoint_open_edit_save_reopen:'PowerPoint 打开、编辑、保存与重开验收',postflight_warnings_review:'质量提示复核'};
  return <div className="panel">
-  <div className="section-title"><div><h2>版本与逐页修改</h2><p>选择版本查看预览或下载。已发布版本可作为修改基线，待审核草稿仅供审核。</p></div><Layers size={21}/></div>
+  <div className="section-title"><div><h2>版本与逐页修改</h2><p>选择具体版本查看、检查或提交修改。审核草稿的修改结果仍需审核。</p></div><Layers size={21}/></div>
   {!versions.length?<Empty title="还没有可预览版本">完成方案确认并生成后，通过独立程序检查的草稿会出现在这里。</Empty>:<>
    <div className="version-list">{versions.map((v,i)=><div key={v.id} className={'version-row '+(base===v.id?'chosen':'')}>
     <label><input name="base" type="radio" checked={base===v.id} onChange={()=>changeBase(v.id)}/><span>
@@ -154,25 +174,27 @@ function Versions({project,versions,disabled,consent,setConsent,start,perform}:{
      <strong>待审核草稿 · 尚未正式发布</strong>
      <p>已完成独立程序检查，可以预览和下载审核。仍需完成以下审核：</p>
      <ul>{(version.required_pending_gates?.length?version.required_pending_gates:['independent_export_build_contract','independent_visual_review','powerpoint_open_edit_save_reopen']).map(gate=><li key={gate}>{gateLabels[gate]??'其他审核待完成'}</li>)}</ul>
-     <p>本草稿不能作为修改基线。完成验收后才能开放正式版本修改。</p>
+     <p>可保存检查问题，并基于本草稿创建新的审核稿；这不会发布演示稿，也不会替代正式版本验收。</p>
     </div></div>}
     <p className="hint">预览为源 SVG 的静态 PNG 栅格图，PowerPoint 的字体、换行与布局可能有所不同。</p>
-    <div className="slide-grid">{version.slides.map(slide=><article className="slide" key={slide.number}>
+    {review?<AcceptancePanel projectId={project.id} versionId={version.id} onSnapshot={observeReview} onUseFeedback={useSavedFeedback}/>:<div className="slide-grid">{version.slides.map(slide=><article className="slide" key={slide.number}>
      <Preview key={version.id+':'+slide.number} versionId={version.id} page={slide.number}/>
      <div><span className="page-number">{slide.number.toString().padStart(2,'0')}</span><strong>{slide.title}</strong></div>
      {(slide.summary??slide.purpose)&&<p>{slide.summary??slide.purpose}</p>}
-    </article>)}</div>
-    {canRevise&&<section className="revision-form"><h3>提交修改意见</h3><fieldset disabled={disabled}>
+    </article>)}</div>}
+    {review&&!canReviewRevise&&<p className="hint">读取到当前有效的检查记录与来源后，才可提交审核稿修改；来源失效时请先处理资料或重新生成。</p>}
+    {(canRevise||canReviewRevise)&&<section ref={revisionForm} className="revision-form" aria-label={review?'审核稿修改':'正式版本修改'}><h3>{review?'基于所选草稿创建新审核稿':'提交修改意见'}</h3>{review&&<><p className="hint">可手动填写，或在上方将已保存问题带入。提交会调用外部模型；原草稿与检查记录保留，新结果仍需独立检查与人工审核。</p>{reviewNotice&&<p className="notice" role="status">{reviewNotice}</p>}</>}<fieldset disabled={disabled}>
      <legend className="sr-only">修改范围</legend>
      <div className="inline-radios"><label><input type="radio" name="scope" checked={scope==='whole'} onChange={()=>setScope('whole')}/>整份演示稿</label><label><input type="radio" name="scope" checked={scope==='pages'} onChange={()=>setScope('pages')}/>指定页面</label></div>
      {scope==='pages'&&<div className="page-feedback">{version.slides.map(slide=><div key={slide.number}>
       <label className="check-page"><input type="checkbox" checked={pages.includes(slide.number)} onChange={e=>setPages(old=>e.target.checked?[...old,slide.number].sort((a,b)=>a-b):old.filter(n=>n!==slide.number))}/>第 {slide.number} 页 · {slide.title}</label>
       {pages.includes(slide.number)&&<label>第 {slide.number} 页意见<textarea rows={2} maxLength={5000} value={perPage[String(slide.number)]??''} onChange={e=>setPerPage(old=>({...old,[slide.number]:e.target.value}))}/></label>}
      </div>)}</div>}
-     <label>{scope==='whole'?'整份修改意见':'共同修改意见（可选）'}<textarea rows={4} maxLength={10000} value={feedback} onChange={e=>setFeedback(e.target.value)} placeholder="说明需要调整的内容、数据或版式…"/></label>
-     <Consent checked={consent} onChange={setConsent}/>
-     <button className="primary" disabled={disabled||!consent||(scope==='whole'?!feedback.trim():!pages.length||(!feedback.trim()&&pages.some(n=>!perPage[String(n)]?.trim())))} onClick={()=>void start(()=>api.revise(project,version.id,scope==='pages'?pages:[],feedback,scope==='pages'?Object.fromEntries(pages.map(n=>[String(n),perPage[String(n)]??''])):{},consent))}>基于所选版本创建修改任务 <ArrowRight size={16}/></button>
-     <p className="hint">提交基线：{version.id}。不会自动切换到最新版本。</p>
+     <label>{scope==='whole'?'整份修改意见':'共同修改意见（可选）'}<textarea rows={4} maxLength={review?12000:10000} value={feedback} onChange={e=>setFeedback(e.target.value)} placeholder="说明需要调整的内容、数据或版式…"/></label>
+     <Consent checked={review?reviewConsent:consent} onChange={review?setReviewConsent:setConsent}/>
+     {review?<button className="primary" disabled={disabled||!reviewConsent||!currentReview?.can_review||!revisionFeedback.trim()||revisionFeedback.length>12000||(scope==='pages'&&!pages.length)} onClick={()=>{if(currentReview?.can_review)void start(async()=>{const result=await api.reviewRevise(project,version.id,scope==='pages'?pages:[],revisionFeedback,currentReview.binding,currentReview.revision,reviewConsent);setReviewConsent(false);return result;});}}>创建新审核稿修改任务 <ArrowRight size={16}/></button>:<button className="primary" disabled={disabled||!consent||(scope==='whole'?!feedback.trim():!pages.length||(!feedback.trim()&&pages.some(n=>!perPage[String(n)]?.trim())))} onClick={()=>void start(()=>api.revise(project,version.id,scope==='pages'?pages:[],feedback,scope==='pages'?Object.fromEntries(pages.map(n=>[String(n),perPage[String(n)]??''])):{},consent))}>基于所选版本创建修改任务 <ArrowRight size={16}/></button>}
+     {review&&revisionFeedback.length>12000&&<p className="field-error" role="alert">修改意见合计超过 12000 字符，请精简后提交。</p>}
+     <p className="hint">{review?'审核稿来源':'提交基线'}：{version.id}。不会自动切换到最新版本。</p>
     </fieldset></section>}
    </>}
   </>}

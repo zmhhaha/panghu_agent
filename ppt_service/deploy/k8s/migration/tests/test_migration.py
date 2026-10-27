@@ -312,7 +312,7 @@ class DatabaseWrapperTests(unittest.TestCase):
 
     def test_complete_readonly_output_is_fingerprinted_without_inherited_credentials(self):
         result = self.run_fingerprint(self.messages())
-        self.assertEqual(len(result["tables"]), 12)
+        self.assertEqual(len(result["tables"]), len(db_inventory.TABLES))
         self.assertTrue(all(value["rows"] == 0 for value in result["tables"].values()))
         sql = db_inventory.query("public")
         self.assertIn("REPEATABLE READ READ ONLY", sql)

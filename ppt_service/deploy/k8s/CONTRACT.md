@@ -96,8 +96,12 @@ Both application URLs use `postgresql+psycopg://` and target database
 roles. `POSTGRES_USER=ppt_bootstrap` and `POSTGRES_DB=postgres` provide only the
 administrator and maintenance database. The migration role owns the application
 schema; runtime has required table DML/sequence privileges and read-only access
-to `api_schema_revision`, with no schema ownership, DDL, superuser, role creation
-or database creation. The deployment applies migration grants before rolling
+to `api_schema_revision`. Schema revision 3 adds append-only human review entries:
+runtime has SELECT/INSERT only on entries and SELECT/INSERT/UPDATE on streams,
+with no DELETE/TRUNCATE/REFERENCES/TRIGGER on either review table. A PostgreSQL
+trigger also rejects entry UPDATE/DELETE for the migration owner. Runtime retains
+no schema ownership, DDL, superuser, role creation or database creation privileges.
+The deployment applies migration grants before rolling
 out the website. Secret synchronization is not a substitute for these database
 checks.
 

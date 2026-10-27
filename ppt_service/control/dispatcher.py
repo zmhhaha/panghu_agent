@@ -103,6 +103,20 @@ class Dispatcher:
         with self.sessions.begin() as s:
             r=Repository(s);j,p,slot=r.fenced(a.job_id,a.attempt,a.token);j.job_uid=h.uid;j.session_id=a.session_id
         try:
+            if 'review_base' in a.snapshot:
+                # Review admission is a draft branch, not a published baseline.
+                # Recheck its exact frozen evidence before creating any worker.
+                from ppt_service.server.review_revisions import recheck_review_source
+                from ppt_service.server.storage import Storage
+                with self.sessions.begin() as s:
+                    # Slot -> terminal source job -> current job -> project;
+                    # the review HTTP resolver never takes the execution slot.
+                    s.get(ExecutionSlot,1,with_for_update=True)
+                    base=s.get(Version,a.base_version_id)
+                    if not base:raise ControlError('base_version_mismatch')
+                    s.get(Job,base.job_id,with_for_update=True)
+                    j,_,_=Repository(s).fenced(a.job_id,a.attempt,a.token)
+                    recheck_review_source(s,Storage(self.config.data_root),j)
             layout,inventory=self.stager.stage(a,checkpoint_manifest)
             if a.phase in ('generate','revise'):
                 if self.oracle_provider is None:raise ControlError('trusted_chart_oracle_required')

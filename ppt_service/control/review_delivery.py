@@ -114,7 +114,8 @@ def save_review_candidate(repo, a, snapshot, request, validated, config):
     checkpoint_manifest = {
         'schema_version': 1, 'status': 'review', 'eligible_as_revision_base': False,
         'session_id': a.session_id, 'input_snapshot_sha256': a.snapshot['hash'],
-        'project_root': relative(manifest['project_root']), **indexes,
+        'project_root': relative(manifest['project_root']),
+        'control_context': a.snapshot.get('control_context', {}), **indexes,
     }
     atomic_json(checkpoint / 'checkpoint.json', checkpoint_manifest)
     make_readonly(checkpoint)

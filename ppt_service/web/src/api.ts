@@ -1,4 +1,5 @@
 import type { Job, Profile, Project, Version } from './domain';
+import type { SourceBinding } from './acceptance/contracts';
 import { adaptCommunication, adaptDirections, adaptPlanQuestions } from './planning';
 const root = '/api/v1';
 const REQUEST_TIMEOUT_MS = 30_000;
@@ -23,6 +24,12 @@ export const errors: Record<string,string> = {
   UPSTREAM_TIMEOUT:'服务入口等待后端响应超时。操作可能已完成，请先刷新状态核对。',
   ASSET_PARSE_NOT_FAILED:'此文件当前不是解析失败状态，请刷新资料列表核对。',
   ASSET_PARSE_BUSY:'此文件仍有解析任务正在处理，请等待完成后刷新状态。',
+  REVIEW_SOURCE_CHANGED:'审核草稿来源已变化，请重新读取检查记录后核对修改意见。',
+  REVIEW_RECORDS_CHANGED:'检查记录已有更新，请重新读取记录并核对，再提交修改。',
+  REVIEW_FEEDBACK_REQUIRED:'请填写修改意见或从当前已保存的检查问题带入。',
+  REVIEW_VERSION_REQUIRED:'此操作需要选择待审核草稿，请重新选择版本。',
+  REVIEW_EVIDENCE_UNAVAILABLE:'审核草稿的来源证据暂不可用，请重新读取记录；若仍失败，请联系管理员。',
+  REVIEW_CHECKPOINT_UNAVAILABLE:'审核草稿暂时无法恢复修改，请联系管理员。',
   CONSENT_REQUIRED:'请先确认外部模型数据传输，再重试此操作。', UPLOAD_LIMIT:'文件超出上传限额，请检查单文件 25 MiB、项目 10 文件 / 100 MiB 限制。',
   UNAUTHENTICATED:'登录已过期，请重新登录。', FORBIDDEN:'当前账号无法执行此操作。', NOT_FOUND:'资源不可用或已删除，请返回项目列表。', STALE_REVISION:'资料或设置已变更，请刷新项目并重新确认方案。', STALE_PLAN:'确认已失效，请重新规划并确认。', SNAPSHOT_MISMATCH:'材料快照已变化，请重新规划。', ACTIVE_JOB_EXISTS:'项目已有活动任务，请等待完成或取消。', QUEUE_FULL:'任务队列已满，请稍后重试。', PARSE_FAILED:'资料解析未通过，请返回“资料与要求”查看各文件的解析状态和具体原因。', MODEL_CONNECTION_FAILED:'模型连接失败，请稍后重新提交。', TIMEOUT:'任务超时，已有版本仍可使用。请减少资料或页数后重试。', QUALITY_GATE_FAILED:'产物未通过质量检查，请调整要求后重试。', RENDER_FAILED:'预览渲染失败，请重试或联系管理员。', EXPORT_FAILED:'PPTX 导出失败，请重试或联系管理员。', STORAGE_LIMIT:'存储空间不足，请清理不再需要的项目后重试。', QUOTA_EXCEEDED:'当前可用额度不足，请联系服务管理员。', NETWORK_ERROR:'无法连接服务，请检查网络并重试。', INVALID_RESPONSE:'服务响应暂不可用，请刷新或联系管理员。', CURSOR_EXPIRED:'进度记录已过期，正在重新读取任务状态。'
 };
@@ -133,6 +140,7 @@ export const api = {
   confirm: async (p:Project, selection:unknown) => adaptProject(await mutate<RecordValue>(`/projects/${id(p.id)}/plans/${id(p.plan!.revision)}/confirm`,{expected_revision:p.revision,input_snapshot_hash:p.plan!.input_snapshot_hash,selection})),
   generate: (p:Project, _consent:boolean) => mutate<{job_id:string}>(`/projects/${id(p.id)}/generations`,{expected_revision:p.revision,plan_revision:Number(p.plan!.revision)}),
   revise: (p:Project,base:string,pages:number[],feedback:string,pageFeedback:Record<string,string>,_consent:boolean) => mutate<{job_id:string}>(`/projects/${id(p.id)}/revisions`,{expected_revision:p.revision,base_version_id:base,pages,feedback:[feedback,...Object.entries(pageFeedback).map(([n,text])=>`第 ${n} 页：${text}`)].filter(Boolean).join('\n\n')}),
+  reviewRevise: (p:Project,base:string,pages:number[],feedback:string,binding:SourceBinding,reviewRevision:number,consent:boolean) => {if(!consent)return Promise.reject(new ApiError('CONSENT_REQUIRED'));return mutate<{job_id:string}>(`/projects/${id(p.id)}/review-revisions`,{expected_revision:p.revision,base_version_id:base,pages,feedback,review_binding:binding,review_revision:reviewRevision,external_model_ack:consent});},
   job: async (jobId:string, signal?:AbortSignal) => adaptJob(await request<RecordValue>(`/jobs/${id(jobId)}`,{signal})), cancel: async (jobId:string) => adaptJob(await mutate<RecordValue>(`/jobs/${id(jobId)}/cancel`)),
   versions: (projectId:string, signal?:AbortSignal) => request<Version[]>(`/projects/${id(projectId)}/versions`,{signal}),
   preview: (versionId:string,page:number) => `${root}/versions/${id(versionId)}/slides/${page}/preview`,

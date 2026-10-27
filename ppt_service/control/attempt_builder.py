@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import uuid
 
+from fastapi import HTTPException
 from sqlalchemy import select
 
 from ppt_service.server.models import Checkpoint, Plan, Version
@@ -28,14 +29,27 @@ def build_attempt(session, job, *, engine='hermes'):
     if job.kind not in PHASES:
         raise ControlError('unsupported_phase')
     checkpoint = None
+    review_context = None
     if job.kind == 'revise':
         version = session.get(Version, job.base_version_id) if job.base_version_id else None
-        if not version or version.status != 'published' or (version.project_id, version.issuer, version.subject) != (
+        if not version or (version.project_id, version.issuer, version.subject) != (
                 job.project_id, job.issuer, job.subject):
             raise ControlError('base_version_mismatch')
         checkpoint = session.get(Checkpoint, version.checkpoint_id)
         if job.checkpoint_id != version.checkpoint_id:
             raise ControlError('base_checkpoint_mismatch')
+        from ppt_service.server.review_revisions import has_review_base, validate_review_base
+        if has_review_base(job.input_snapshot):
+            if engine != 'hermes':
+                raise ControlError('review_engine_unavailable')
+            try:
+                review_context = validate_review_base(session, job, version, checkpoint)
+            except HTTPException:
+                raise ControlError('review_checkpoint_unavailable') from None
+        elif version.status != 'published':
+            raise ControlError('base_version_mismatch')
+    elif 'review_base' in job.input_snapshot:
+        raise ControlError('review_phase_invalid')
     elif job.checkpoint_id:
         checkpoint = session.get(Checkpoint, job.checkpoint_id)
     if checkpoint and (checkpoint.project_id, checkpoint.issuer, checkpoint.subject) != (
@@ -55,6 +69,8 @@ def build_attempt(session, job, *, engine='hermes'):
         raise ControlError('invalid_session')
     snapshot = copy.deepcopy(job.input_snapshot)
     context = copy.deepcopy(checkpoint.manifest.get('control_context', {})) if checkpoint else {}
+    if review_context is not None:
+        context = review_context
     if job.kind in CONFIRMATION_PHASES:
         plan = session.scalar(select(Plan).where(Plan.checkpoint_id == checkpoint.id,
                                                  Plan.project_id == job.project_id))

@@ -4,25 +4,28 @@ import { beforeEach,describe,it,expect,vi } from 'vitest';
 import App from '../App';
 import { api } from '../api';
 import { defaultSettings,type Project } from '../domain';
+import { acceptanceClient } from '../acceptance/client';
+import { syntheticSnapshot } from '../acceptance/fixtures';
 vi.mock('../api',async original=>({...await original<typeof import('../api')>(),api:{me:vi.fn(),projects:vi.fn(),project:vi.fn(),versions:vi.fn(),create:vi.fn(),update:vi.fn(),acknowledge:vi.fn(),upload:vi.fn(),confirm:vi.fn(),plan:vi.fn(),generate:vi.fn(),revise:vi.fn(),preview:vi.fn(()=>'/api/v1/versions/v/slides/1/preview'),download:vi.fn()}}));
+vi.mock('../acceptance/client',async original=>({...await original<typeof import('../acceptance/client')>(),acceptanceClient:{load:vi.fn(),save:vi.fn()}}));
 const base:Project={id:'p',title:'真实资料项目',revision:2,stage:'awaiting_confirmation',settings:defaultSettings,assets:[{id:'a',display_name:'资料.md',bytes:10,parse_status:'parsed'}],input_snapshot_hash:'hash',plan:{revision:'2',input_snapshot_hash:'hash',stage:'directions',directions:['A','B','C'].map(id=>({id,title:`方案 ${id}`,description:'来自服务的方向',pages:[{number:1,title:'封面'}],production_settings:{语言:'中文'}}))}};
-beforeEach(()=>{vi.clearAllMocks();localStorage.setItem('ppt:selected-project','p');vi.mocked(api.me).mockResolvedValue({subject:'sub',name:'测试账号',quota:{enabled:false},usage:{input_tokens:10,cost_status:'unknown'}});vi.mocked(api.projects).mockResolvedValue([base]);vi.mocked(api.project).mockResolvedValue(base);vi.mocked(api.versions).mockResolvedValue([]);});
+beforeEach(()=>{vi.clearAllMocks();localStorage.setItem('ppt:selected-project','p');vi.mocked(api.me).mockResolvedValue({subject:'sub',name:'测试账号',quota:{enabled:false},usage:{input_tokens:10,cost_status:'unknown'}});vi.mocked(api.projects).mockResolvedValue([base]);vi.mocked(api.project).mockResolvedValue(base);vi.mocked(api.versions).mockResolvedValue([]);vi.mocked(acceptanceClient.load).mockImplementation(async(_project,version)=>{const value=syntheticSnapshot(version);return {...value,project_id:'p',binding:{...value.binding,project_id:'p'},pages:[{...value.pages[0],title:'审核草稿封面'}]};});});
 describe('workbench business interactions',()=>{
- it('shows checked review drafts for preview and download with outstanding gates and no revision form',async()=>{
+ it('shows review records and download with outstanding gates and no published revision form',async()=>{
   const draft={id:'review-1',status:'review' as const,can_revise:false,created_at:'2026-10-24T00:00:00Z',required_pending_gates:['independent_export_build_contract','independent_visual_review','powerpoint_open_edit_save_reopen'],slides:[{number:1,title:'审核草稿封面'}]};
   vi.mocked(api.versions).mockResolvedValue([draft]);const user=userEvent.setup();render(<App/>);
   await screen.findByRole('heading',{name:'真实资料项目'});await user.click(screen.getByRole('tab',{name:/预览与修改/}));await user.click(screen.getByRole('radio'));
   expect(screen.getByText('待审核草稿 · 尚未正式发布')).toBeInTheDocument();expect(screen.getByText('完整导出核验')).toBeInTheDocument();expect(screen.getByText('逐页视觉审核')).toBeInTheDocument();expect(screen.getByText('PowerPoint 打开、编辑、保存与重开验收')).toBeInTheDocument();
-  expect(screen.getByText('审核草稿封面')).toBeInTheDocument();expect(screen.queryByRole('button',{name:/创建修改任务/})).not.toBeInTheDocument();expect(screen.queryByLabelText('整份修改意见')).not.toBeInTheDocument();
+  await screen.findByLabelText('第 1 页检查结论');expect(screen.getByText('审核草稿封面')).toBeInTheDocument();expect(screen.queryByRole('button',{name:'基于所选版本创建修改任务'})).not.toBeInTheDocument();expect(screen.getByRole('button',{name:'创建新审核稿修改任务'})).toBeDisabled();
   await user.click(screen.getByRole('button',{name:'下载审核草稿'}));await waitFor(()=>expect(api.download).toHaveBeenCalledWith('review-1'));expect(api.revise).not.toHaveBeenCalled();
  });
  it('restores published revision controls when switching away from a review draft and resets preview errors',async()=>{
   const draft={id:'review-1',status:'review' as const,can_revise:false,created_at:'2026-10-24T00:00:00Z',slides:[{number:1,title:'审核草稿封面'}]};
   const published={id:'published-1',status:'published' as const,can_revise:true,created_at:'2026-10-23T00:00:00Z',slides:[{number:1,title:'正式封面'}]};
   vi.mocked(api.versions).mockResolvedValue([draft,published]);const user=userEvent.setup();render(<App/>);await screen.findByRole('heading',{name:'真实资料项目'});await user.click(screen.getByRole('tab',{name:/预览与修改/}));
-  await user.click(screen.getAllByRole('radio')[0]);fireEvent.error(screen.getByRole('img',{name:'第 1 页静态预览'}));expect(screen.getByText(/第 1 页预览暂不可用/)).toBeInTheDocument();
+  await user.click(screen.getAllByRole('radio')[0]);fireEvent.error(await screen.findByRole('img',{name:/第 1 页静态 PNG 预览/}));expect(screen.getByText(/第 1 页预览暂不可用/)).toBeInTheDocument();
   await user.click(screen.getAllByRole('radio')[1]);expect(screen.getByLabelText('整份修改意见')).toBeInTheDocument();expect(screen.getByText(/提交基线：published-1/)).toBeInTheDocument();expect(screen.queryByText(/第 1 页预览暂不可用/)).not.toBeInTheDocument();expect(screen.getByRole('img',{name:'第 1 页静态预览'})).toBeInTheDocument();
-  await user.click(screen.getAllByRole('radio')[0]);expect(screen.queryByLabelText('整份修改意见')).not.toBeInTheDocument();expect(screen.getByText('待审核草稿 · 尚未正式发布')).toBeInTheDocument();expect(api.revise).not.toHaveBeenCalled();
+  await user.click(screen.getAllByRole('radio')[0]);await screen.findByLabelText('第 1 页检查结论');expect(screen.queryByRole('button',{name:'基于所选版本创建修改任务'})).not.toBeInTheDocument();expect(screen.getByText('待审核草稿 · 尚未正式发布')).toBeInTheDocument();expect(api.revise).not.toHaveBeenCalled();
  });
  it('shows testing gate and unknown costs with unconfigured quota',async()=>{render(<App/>);await screen.findByRole('heading',{name:'真实资料项目'});expect(screen.getByText(/PowerPoint 人工验收待完成/)).toBeInTheDocument();expect(screen.getByText('未启用')).toBeInTheDocument();expect(screen.getByText('费用未知（待供应商记录）')).toBeInTheDocument();});
  it('requires explicit direction and sends selected actual server option',async()=>{const user=userEvent.setup();vi.mocked(api.confirm).mockResolvedValue(base);render(<App/>);await screen.findByRole('heading',{name:'真实资料项目'});await user.click(screen.getByRole('tab',{name:/沟通与方案/}));const confirm=screen.getByRole('button',{name:/确认所选完整方案/});expect(confirm).toBeDisabled();await user.click(screen.getByRole('radio',{name:'选择方案 B'}));await user.click(confirm);await waitFor(()=>expect(api.confirm).toHaveBeenCalledWith(base,{direction_id:'B'}));expect(api.generate).not.toHaveBeenCalled();});

@@ -64,13 +64,13 @@ def database_state():
 
 class Scenario(deploy.Deployment):
     """Fake orchestration, while preserving the real deploy() control flow."""
-    def __init__(self, *, revision=2, existing_site=3, owner=True, fail_bootstrap=False):
+    def __init__(self, *, revision=deploy.TARGET_SCHEMA_REVISION, existing_site=3, owner=True, fail_bootstrap=False):
         super().__init__(runner=Runner())
         self.events = []
         self.applied = []
         self.jobs = []
         self.job_options = []
-        self.revisions = [revision, 2]
+        self.revisions = [revision, deploy.TARGET_SCHEMA_REVISION]
         self.owner = owner
         self.existing_site = existing_site
         self.fail_bootstrap = fail_bootstrap
@@ -337,9 +337,23 @@ def test_migration_and_site_use_the_same_manifest_digest():
 
 
 def test_current_schema_skips_migration_job():
-    instance = Scenario(revision=2)
+    instance = Scenario(revision=deploy.TARGET_SCHEMA_REVISION)
     instance.deploy(image=IMAGE)
     assert not any(job['metadata']['name'].startswith('ppt-migrate-') for job in instance.jobs)
+
+
+def test_schema2_is_upgraded_before_runtime_access():
+    instance = Scenario(revision=2)
+    instance.deploy(image=IMAGE)
+    assert instance.jobs[0]['metadata']['name'].startswith('ppt-migrate-')
+    assert instance.job_options[0] == {'rerun_completed': True}
+
+
+def test_runtime_probe_requires_review_append_only_privileges():
+    assert 'ppt_acceptance_entries' in deploy.RUNTIME_CHECK
+    assert 'ppt_acceptance_streams' in deploy.RUNTIME_CHECK
+    assert "'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'" in deploy.RUNTIME_CHECK
+    assert "'public.ppt_acceptance_entries', 'UPDATE'" in deploy.RUNTIME_CHECK
 
 
 def test_existing_site_replica_count_is_preserved():
@@ -443,7 +457,7 @@ def test_init_passwords_are_only_in_sql_stdin_and_failures_hide_stderr(capsys):
     assert capsys.readouterr() == ('', '')
 
 
-@pytest.mark.parametrize('revision', [0, 1, 2])
+@pytest.mark.parametrize('revision', [0, 1, 2, 3])
 def test_supported_schema_revisions(revision):
     runner = Runner(['t', str(revision)])
     instance = deploy.Deployment(runner=runner)
@@ -457,7 +471,7 @@ def test_absent_schema_revision_table_is_initial_revision_zero():
     assert instance.revision() == 0
 
 
-@pytest.mark.parametrize('revision', [3, -1])
+@pytest.mark.parametrize('revision', [4, -1])
 def test_unsupported_schema_revision_is_rejected(revision):
     instance = deploy.Deployment(runner=Runner(['t', str(revision)]))
     instance.db_state = database_state

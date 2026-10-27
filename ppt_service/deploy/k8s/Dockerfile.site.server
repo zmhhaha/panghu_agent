@@ -29,7 +29,7 @@ COPY requirements-api.lock /opt/ppt-service/build-info/requirements-api.lock
 COPY verify_image.py /opt/ppt-service/verify_image.py
 COPY write_site_manifest.py /tmp/write_site_manifest.py
 RUN python -m pip check \
-    && python -c "from ppt_service.server.site import create_site; from ppt_service.server.migrate import REVISION; assert REVISION == 2" \
+    && python -c "from ppt_service.server.site import create_site; from ppt_service.server.migrate import REVISION; assert REVISION == 3" \
     && python /tmp/write_site_manifest.py /opt/ppt-service \
     && rm /tmp/write_site_manifest.py \
     && mkdir -p /var/lib/ppt-service && chown 10000:10000 /var/lib/ppt-service \

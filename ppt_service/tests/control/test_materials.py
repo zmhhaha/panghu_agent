@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import create_engine,select,text
 from sqlalchemy.orm import sessionmaker
 from ppt_service.server.models import Asset,Project,Job,ExecutionSlot,now
-from ppt_service.server.migrate import migrate
+from ppt_service.server.migrate import migrate,REVISION
 from ppt_service.server.repository import Repository
 from ppt_service.control.materials import MaterialParser,ControlError
 from ppt_service.control.execution import RuntimeConfig
@@ -32,7 +32,7 @@ def test_00_incremental_migration_preserves_original_rows():
     migrate(engine);migrate(engine)
     with engine.connect() as c:
         after=c.execute(text('SELECT id, project_id, storage_key, sha256, bytes FROM assets ORDER BY id')).all()
-        assert after==before;assert c.scalar(text('SELECT max(revision) FROM api_schema_revision'))==2
+        assert after==before;assert c.scalar(text('SELECT max(revision) FROM api_schema_revision'))==REVISION
         assert c.scalar(text('SELECT count(*) FROM assets WHERE parse_attempt IS NULL'))==0
     engine.dispose()
 

@@ -2,6 +2,8 @@
 
 独立的多用户 PPT 制作网站。当前已实现网站、项目管理与材料上传；Pi 模型生成链路仍在接入。
 
+2026-10-27 审核与修改：网站的 Hermes 业务链已能生成待审核草稿。版本页接入逐页问题和桌面 PowerPoint 实际检查记录，保存记录不调用模型。用户可明确选择一份完整且来源有效的审核稿，通过独立同意和书面意见创建新审核稿；也可带入当前已保存的问题页。原稿和审核历史保留，新稿仍须独立校验并保持待审核，不自动成为正式发布版本。Pi 接入及最终 PowerPoint 验收仍有待办。部署使用 Git 源码和正式 schema 3 迁移，服务器验证与实际发布结果以本轮收据为准。
+
 服务器部署入口（2026-10-24）：namespace 为 `ppt-service`。按 [部署说明](deploy/k8s/README.md#服务器标准入口) 配置 Casdoor、邮箱名单、Cloudflare 和 Vault 的 `secret/ppt-service/...` 凭据后，在本目录运行 `bash deploy.sh`，完成构建、推送、数据库初始化或升级及网站发布。也可先运行 `bash build.sh`，再执行 `bash deploy.sh --skip-build` 复用已推送摘要。原 Hermes Worker 构建入口为 `build_worker.sh`；网站发布保持模型执行关闭。
 
 ## 历史开发与样稿记录

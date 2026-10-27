@@ -99,7 +99,7 @@ spec:
                   urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).read();
                   engine = create_engine(os.environ['DATABASE_URL'], connect_args={'connect_timeout': 3});
                   connection = engine.connect();
-                  assert connection.scalar(text('SELECT max(revision) FROM api_schema_revision')) == 2;
+                  assert connection.scalar(text('SELECT max(revision) FROM api_schema_revision')) == 3;
                   connection.close(); engine.dispose()
             periodSeconds: 10
             timeoutSeconds: 8

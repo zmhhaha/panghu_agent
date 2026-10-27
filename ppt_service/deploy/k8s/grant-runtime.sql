@@ -7,3 +7,9 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO :"runtime";
 -- The application reads schema readiness; it must not rewrite migration state.
 REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
   ON public.api_schema_revision FROM :"runtime";
+-- Human review history is append-only. Stream UPDATE is the optimistic CAS;
+-- revocation is a new entry, never a DELETE or an UPDATE of earlier evidence.
+REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+  ON public.ppt_acceptance_entries FROM :"runtime";
+REVOKE DELETE, TRUNCATE, REFERENCES, TRIGGER
+  ON public.ppt_acceptance_streams FROM :"runtime";

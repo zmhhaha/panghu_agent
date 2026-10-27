@@ -66,7 +66,7 @@ class ManifestContracts(unittest.TestCase):
         cls.index = {(d['kind'], d['metadata']['name']): d for d in cls.all}
         cls.site = cls.index['Deployment', 'ppt-site']
         cls.postgres = cls.index['StatefulSet', 'ppt-postgres']
-        cls.job = cls.index['Job', 'ppt-migrate-schema2']
+        cls.job = cls.index['Job', 'ppt-migrate-schema3']
         cls.site_container, cls.proxy = pod_spec(cls.site)['containers']
         cls.migrator = pod_spec(cls.job)['containers'][0]
         cls.config = cls.index['ConfigMap', 'ppt-site']['data']
@@ -214,6 +214,7 @@ class ManifestContracts(unittest.TestCase):
         self.assertIn('/healthz', live)
         self.assertNotIn('api_schema_revision', live)
         self.assertIn('api_schema_revision', ready)
+        self.assertIn('== 3', ready)
         self.assertIn("os.environ['DATABASE_URL']", ready)
         self.assertNotIn('Authorization', ready)
         self.assertEqual(self.proxy['readinessProbe']['httpGet']['path'], '/ready')

@@ -22,6 +22,11 @@ def source_context(dockerfile: Path) -> tuple[bytes, str]:
     files = [SERVICE / '__init__.py']
     for directory in ('control', 'server', 'worker'):
         files.extend(sorted((SERVICE / directory).glob('*.py')))
+    # The dispatcher revalidates review-only revision authority against the
+    # server-owned resolver. Include that production subpackage explicitly;
+    # generated fixtures, demo assets and tests do not enter the overlay.
+    for name in ('__init__.py', 'contracts.py', 'domain.py', 'router.py', 'store.py', 'resolver.py'):
+        files.append(SERVICE / 'server/acceptance' / name)
     output = io.BytesIO()
     manifest = {}
     with tarfile.open(fileobj=output, mode='w') as archive:

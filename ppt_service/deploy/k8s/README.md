@@ -67,6 +67,17 @@ bash deploy.sh --skip-build
 
 应用数据库为 `ppt_service`，使用 `ppt_migrator` 和 `ppt_runtime` 两个独立角色；`postgres` 仅为初始化/维护数据库。两份 `DATABASE_URL` 必须使用 `postgresql+psycopg://`，目标为 `ppt-postgres.ppt-service.svc.cluster.local:5432/ppt_service`。bootstrap 凭据仅给 PostgreSQL，迁移角色负责 schema，网站运行角色只能访问所需数据且不能修改 schema revision。
 
+当前目标为 schema revision 3。正式迁移在事务内新增 `ppt_acceptance_streams` 和
+`ppt_acceptance_entries`，保留原项目、附件、版本和检查点；不会重写历史业务行。
+若旧 revision 中已经存在同名审核表，迁移停止并保留冲突对象，不能将独立演示数据自动接入正式服务。
+审核记录只允许追加；PostgreSQL 触发器拒绝修改、删除旧 entry，运行角色也没有这些操作和
+`TRUNCATE` 的权限。撤销通过新增记录实现，stream 的 `UPDATE` 仅供正常审核修订 CAS。
+部署运行检查必须确认 revision 3 及以上权限边界后才启动新站点。
+
+回滚应用镜像不能删除新增审核历史或降低 schema revision。若需要回滚，选择能够读取 schema 3
+的兼容镜像，并保留当前表和记录；旧版部署脚本会拒绝它不认识的新 revision。
+当前项目删除为撤权/软删除与停写协调，不物理清理审核记录；将来的彻底清理必须另有明确流程。
+
 `ppt-data` 使用 20 GiB RWX CephFS，挂载到 `/var/lib/ppt-service`，应用数据位于 `state` 子目录；`ppt-postgres-data` 使用 10 GiB RWO RBD。首次部署会运行非 root 的目录初始化 Job，在新空卷上创建 `state`，UID/GID 为 `10000:10000`、权限为 `0700`，完成后才发布网站。
 
 仅脚本新建的动态 CephFS PVC 在首次初始化期间使用 `fsGroup=10000`；状态与 PVC UID 绑定，拉取镜像或 CSI 暂时失败后可修复原因并重跑普通部署。网站和已有卷的检查不使用 `fsGroup`，不会递归修改旧数据权限。已有 `state` 须符合 UID/GID 和 `0700` 要求；其他情况报错后由部署者核对。详细约定见 [运行合同](CONTRACT.md#storage-and-security)。
