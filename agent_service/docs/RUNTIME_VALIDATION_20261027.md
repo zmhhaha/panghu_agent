@@ -98,4 +98,4 @@ arm-cluster-master:5000/agent-service-hermes@sha256:f216fcb19923ba6e12ea2a138eb0
 
 `9623df8` 已成功部署，`agent-service-api`、`agent-service-dispatcher`、`agent-model-proxy` 三个 Deployment 均核对为 `1/1 Ready`，`agent-workers` 当前无 Pod；Pi r5 使用上方固定 Pi 镜像完成了这一轮候选执行。控制面部署引用新的目录和镜像不代表 Pi/Hermes 生产组合已放行。
 
-最新线上控制面仍为 `9623df8`。候选镜像、后续 Agent 源码和平台共享网关构建不构成生产升级；构建、控制面就绪和 954 项回归也不等于真实领域验收。全部生产路由继续关闭，PPT/科研现有后端未切换，没有登记 production acceptance。下一步先完成 Pi 多轮 Responses 历史的剩余修复，使用全新候选身份和预留 UID 验证，再按实际证据推进 Pi 各领域阶段、业务网络、单槽试接和发布/回滚验收。
+最新线上控制面仍为 `9623df8`，全部生产路由继续关闭，PPT/科研现有后端未切换，没有登记 production acceptance。共享网关的 Pi 原生历史修复已部署，后续失败位于领域成果交接。`df3343f` 已推送并同步服务器，包含主线合并、PPT schema 4 和精确输出合同，尚未构建或完成新 Linux 全回归。用户要求休息后已停止新工作、清理临时 validator 资源与短期凭据，保留测试数据；最新状态和接续步骤见 [2026-10-28 收尾记录](SESSION_HANDOFF_20261028.md)。

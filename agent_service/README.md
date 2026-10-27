@@ -197,6 +197,8 @@ acceptance，所有生产执行路由保持关闭，PPT/科研后端未切换。
 
 完整实现及原始验证计划见
 [IMPLEMENTATION_HANDOFF_20261026.md](docs/IMPLEMENTATION_HANDOFF_20261026.md)，
+2026-10-28 休息收尾和最新接续边界见
+[SESSION_HANDOFF_20261028.md](docs/SESSION_HANDOFF_20261028.md)。
 PPT 配置见 [部署接线](../ppt_service/deploy/agent/README.md)，科研配置见
 [科研接线](../scientific_agent/AGENT_SERVICE.md)。
 
