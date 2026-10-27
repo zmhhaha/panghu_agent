@@ -39,7 +39,7 @@ describe('P4 shared Python/TypeScript contract', () => {
     const route = '/api/v1/projects/contract-project/versions/contract-version/acceptance';
     expect(fetcher.mock.calls[1][0]).toBe(route);
     const get = fetcher.mock.calls[1][1] as RequestInit;
-    expect(get.credentials).toBe('same-origin'); expect(get.signal).toBe(controller.signal); expect(new Headers(get.headers).has('X-CSRF-Token')).toBe(false);
+    expect(get.credentials).toBe('same-origin'); expect(get.signal?.aborted).toBe(false); expect(new Headers(get.headers).has('X-CSRF-Token')).toBe(false);
     const command = visualFixture as AcceptanceCommand;
     fetcher.mockRejectedValueOnce(Error('transport interrupted'));
     await expect(acceptanceClient.save('contract-project', 'contract-version', command)).rejects.toMatchObject({ code: 'NETWORK_ERROR' });
@@ -55,5 +55,30 @@ describe('P4 shared Python/TypeScript contract', () => {
       expect(JSON.parse(String(init.body)).binding.source_revision).toBe(3);
     }
     expect(localStorage.length).toBe(0);
+  });
+
+  it('propagates caller cancellation to the pending authenticated fetch without retrying', async () => {
+    const aborted = vi.fn();
+    const fetcher = vi.fn((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init.signal!.addEventListener('abort', () => {
+        aborted();
+        reject(new DOMException('The operation was aborted.', 'AbortError'));
+      }, { once: true });
+    }));
+    vi.stubGlobal('fetch', fetcher);
+    const controller = new AbortController();
+    const pending = acceptanceClient.load('contract-project', 'contract-version', controller.signal);
+    const cancelled = expect(pending).rejects.toMatchObject({ code: 'REQUEST_CANCELLED' });
+    expect(fetcher).toHaveBeenCalledOnce();
+    const [url, init] = fetcher.mock.calls[0];
+    expect(url).toBe('/api/v1/projects/contract-project/versions/contract-version/acceptance');
+    expect(init.credentials).toBe('same-origin');
+    expect(new Headers(init.headers).has('X-CSRF-Token')).toBe(false);
+    expect(init.signal?.aborted).toBe(false);
+    controller.abort();
+    expect(init.signal?.aborted).toBe(true);
+    expect(aborted).toHaveBeenCalledOnce();
+    await cancelled;
+    expect(fetcher).toHaveBeenCalledOnce();
   });
 });
