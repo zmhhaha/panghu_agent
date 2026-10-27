@@ -438,9 +438,11 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
             ('control_unreadable', 'input_write_denied', 'caps_empty', 'no_new_privileges',
              'read_only_mount_measured', 'arbitrary_mount_denied', 'detached_writers_stopped', 'private_kernel_scope'))), profile=profile)
     def wire(request):
-        require(request.execution_id == scope.attempt_id and not stopper.consumed
-            and time.time() < credentials.model_proxy_expires_at
-            and request.deadline_at.timestamp() <= credentials.model_proxy_expires_at)
+        require(request.execution_id == scope.attempt_id, 'candidate_scope_mismatch')
+        require(not stopper.consumed, 'candidate_scope_consumed')
+        require(time.time() < credentials.model_proxy_expires_at, 'candidate_grant_expired')
+        require(request.deadline_at.timestamp() <= credentials.model_proxy_expires_at,
+            'candidate_request_deadline_mismatch')
         return {**profile.make_wire(request), '_runtime_uid': scope.agent_uid}
     return PiDriver(runtime, stopper, wire_builder=wire, enabled=True)
 

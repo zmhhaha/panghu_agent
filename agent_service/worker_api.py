@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager, closing
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
@@ -31,6 +31,20 @@ from .engines import EngineRequest, NativeOutcome, StopEvidence
 from .artifacts import freeze_files, frozen_manifest, unique_paths
 from .staging import ExecutionContext, stage_inputs
 from .transport import MAX_WORKER_WIRE_BYTES
+
+
+def _native_deadline(timestamp: float) -> datetime:
+    """Convert an exact envelope clock inward to native microsecond precision.
+
+    fromtimestamp rounds to the nearest microsecond, which can exceed the exact
+    scoped model grant by a fraction of a microsecond. Only the native datetime
+    is shortened; the authoritative envelope, lease and watchdog keep their
+    original float values.
+    """
+    deadline = datetime.fromtimestamp(timestamp, timezone.utc)
+    if deadline.timestamp() > timestamp:
+        deadline -= timedelta(microseconds=1)
+    return deadline
 
 
 class LeaseRequest(WireModel):
@@ -324,7 +338,7 @@ class WorkerHost:
                                        prompt=profile.build_prompt(envelope.task))
             request = EngineRequest(envelope.attempt_id, envelope.profile, envelope.task,
                 max(1, min(self.policy.max_timeout_seconds, math.ceil(envelope.deadline_at - self.clock()))),
-                datetime.fromtimestamp(envelope.deadline_at, timezone.utc))
+                _native_deadline(envelope.deadline_at))
             execute_context = getattr(self.driver, 'execute_with_context', None)
             native = (execute_context(request, workspace, self._emit, self._cancel, context=context)
                       if callable(execute_context) else self.driver.execute(request, workspace, self._emit, self._cancel))

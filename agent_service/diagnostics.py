@@ -25,7 +25,9 @@ _CODES = frozenset({'cancelled', 'timed_out', 'runtime_not_ready', 'runtime_busy
     'invalid_ppt_task', 'ppt_input_snapshot_mismatch', 'ppt_project_not_fresh',
     'ppt_prepared_checkpoint_required', 'model_proxy_grant_invalid',
     'model_grant_invalid', 'model_grant_revoked', 'model_grant_scope_mismatch',
-    'model_upstream_rejected', 'model_upstream_protocol_invalid', 'model_response_too_large'})
+    'model_upstream_rejected', 'model_upstream_protocol_invalid', 'model_response_too_large',
+    'candidate_scope_mismatch', 'candidate_scope_consumed', 'candidate_grant_expired',
+    'candidate_request_deadline_mismatch'})
 _NAMED_CATEGORIES = {'RuntimeExecutionError': 'runtime_error', 'ProfileError': 'profile_error',
                      'ServiceError': 'service_error', 'ContractError': 'contract_error',
                      '_DriverError': 'driver_error',
