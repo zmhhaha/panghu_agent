@@ -21,6 +21,10 @@ class DomainExecutionProfile(ExecutionProfile):
         self.impl = implementation(policy.name)
         self.allowed_tools = tuple(t for t in self.impl.required_tools if t in {'read', 'write', 'bash'})
         # Pi's read tool natively accepts images; no invented `image` tool.
+        # Research embeds its checksum-verified, tool-rendered procedure in the
+        # prompt. Loading the raw CLI-oriented skill again would contradict it,
+        # and a revision must not acquire a new search workflow.
+        self.load_skills = not policy.name.startswith('research.')
         self.extension_paths = tuple(Path(p) for p in extensions)
         self.protected_paths = ('inputs', 'base', '.preview-home', '.preview-tmp')
         self._context, self._mounts = None, None

@@ -61,9 +61,28 @@ def test_research_prompt_uses_original_fixed_bundle_and_real_schemas():
     assert 'none was selected or installed' in prompt
     assert 'academic_search' in prompt
     assert 'Do not write academic-observations.json' in prompt
+    assert 'python -m pi_worker.research_tools' not in prompt
+    assert 'Run the offline `validate` CLI' not in prompt
+    assert 'academic_search({"query":"exact query","providers":["crossref"],"limit":10})' in prompt
+    assert 'academic_verify({"kind":"doi","identifier":"10.1234/example"})' in prompt
+    assert 'controller runs offline validation after you stop' in prompt
+    assert 'relative to result/, not the attempt root' in prompt
     assert 'bash' not in profile.required_tools
     with pytest.raises(ServiceError):
         profile.validate_task({**data, 'engine': 'pi'})
+
+
+def test_research_tool_prompt_render_does_not_rewrite_untrusted_job_text():
+    profile = research.ResearchProfile()
+    topic = 'Compare python -m pi_worker.research_tools search and academic_search semantics'
+    data = task(source_policy={'providers': ['crossref'], 'max_results': 1})
+    data['topic'] = topic
+    prompt = profile.build_prompt(data)
+    job = prompt.split('<research-job-json>\n', 1)[1].split('\n</research-job-json>', 1)[0]
+    assert json.loads(job) == {'topic': topic, 'mode': 'review'}
+    # The hash-pinned source resources are unchanged; only host prompt rendering differs.
+    resource = research.verified_bundle()['task-template.md']
+    assert 'python -m pi_worker.research_tools search' in resource
 
 
 @pytest.mark.parametrize('proof', [None, StopEvidence('another-attempt', True, ('writer',)),

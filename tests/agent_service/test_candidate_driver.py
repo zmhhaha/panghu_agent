@@ -80,6 +80,7 @@ def test_all_seven_candidate_factories_keep_exact_contract_tools_and_capabilitie
     assert driver.runtime.profile.extension_paths == (
         (Path('/opt/pi/node_modules/agent-service-academic.mjs'),) if academic else ())
     assert callable(getattr(driver, 'academic_observer', None)) is academic
+    assert driver.runtime.profile.load_skills is profile.startswith('ppt.')
     assert driver.runtime.profile.policy.enabled is False
     assert run.config.profile.enabled is False
     assert all(not route['enabled'] for route in run.config.execution_catalog['routes'])

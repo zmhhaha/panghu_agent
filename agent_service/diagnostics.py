@@ -6,13 +6,15 @@ import logging
 import re
 
 
-_COMPONENTS = frozenset({'pi_runtime', 'pi_driver', 'model_proxy'})
+_COMPONENTS = frozenset({'pi_runtime', 'pi_driver', 'model_proxy', 'worker_host'})
 _STAGES = frozenset({'check_settings', 'validate_request', 'prepare_workspace',
     'prepare_profile_workspace', 'verify_resources', 'write_agent_config', 'probe_versions',
     'build_command', 'build_prompt', 'write_prompt', 'prepare_isolation', 'persist_journal',
     'launch', 'execute_native', 'validate_completion', 'stop_processes', 'write_provenance',
     'check_request', 'wire_builder', 'validate_native_request', 'authorize_upstream',
-    'open_upstream', 'validate_upstream', 'receive_upstream', 'persist_response'})
+    'open_upstream', 'validate_upstream', 'receive_upstream', 'persist_response',
+    'stage_inputs', 'collect_output', 'release_context', 'freeze_artifacts',
+    'freeze_manifest', 'sign_result'})
 _CODES = frozenset({'cancelled', 'timed_out', 'runtime_not_ready', 'runtime_busy',
     'runtime_exit', 'runtime_protocol_error', 'runtime_idle_timeout', 'runtime_output_limit',
     'runtime_raw_output_limit', 'runtime_output_line_limit', 'runtime_event_limit',
@@ -28,7 +30,19 @@ _CODES = frozenset({'cancelled', 'timed_out', 'runtime_not_ready', 'runtime_busy
     'model_grant_invalid', 'model_grant_revoked', 'model_grant_scope_mismatch',
     'model_upstream_rejected', 'model_upstream_protocol_invalid', 'model_response_too_large',
     'candidate_scope_mismatch', 'candidate_scope_consumed', 'candidate_grant_expired',
-    'candidate_request_deadline_mismatch'})
+    'candidate_request_deadline_mismatch', 'worker_output_invalid', 'writers_not_stopped',
+    'invalid_ppt_output', 'invalid_file_path', 'invalid_ppt_quality_refs', 'invalid_ppt_stage1',
+    'ppt_profile_mismatch', 'ppt_linked_artifact', 'ppt_artifact_size_limit',
+    'ppt_artifact_roster_mismatch', 'ppt_questions_required', 'ppt_premature_execution',
+    'ppt_three_directions_required', 'ppt_production_parameters_required',
+    'ppt_formal_spec_required', 'ppt_quality_reports_required', 'ppt_candidate_incomplete',
+    'ppt_approved_spec_changed', 'ppt_checkpoint_binding_mismatch', 'ppt_checkpoint_roster_mismatch',
+    'ppt_checkpoint_integrity_invalid', 'unsafe_artifact', 'artifact_size_limit',
+    'artifact_changed', 'duplicate_file_path', 'file_path_collision',
+    'invalid_research_artifact', 'invalid_research_json', 'research_output_invalid',
+    'research_artifact_too_large', 'research_full_text_not_acquired',
+    'research_observation_not_protected', 'research_academic_observation_mismatch',
+    'research_revision_input_mismatch', 'research_revision_input_invalid'})
 _NAMED_CATEGORIES = {'RuntimeExecutionError': 'runtime_error', 'ProfileError': 'profile_error',
                      'ServiceError': 'service_error', 'ContractError': 'contract_error',
                      '_DriverError': 'driver_error',

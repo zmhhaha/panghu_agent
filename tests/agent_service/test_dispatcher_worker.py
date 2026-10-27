@@ -161,6 +161,51 @@ def test_bad_output_after_proven_stop_fails_and_releases_slot(setup_chain, outpu
     assert store.active() is None
 
 
+@pytest.mark.parametrize('stage', ['collect_output', 'freeze_artifacts', 'freeze_manifest', 'release_context'])
+@pytest.mark.parametrize('failure_kind', ['contract', 'permission'])
+def test_output_handoff_diagnostics_keep_fixed_stage_without_payloads(
+        setup_chain, monkeypatch, caplog, stage, failure_kind):
+    import errno
+    import logging
+    import agent_service.worker_api as module
+    from agent_service.profiles.text import TextProfile
+
+    _, _, host, _, adapter, store, app = setup_chain()
+    secret = 'PRIVATE_MODEL_TEXT_TOKEN_AND_PATH'
+    def fail(*args, **kwargs):
+        if failure_kind == 'permission':
+            raise PermissionError(errno.EACCES, secret, secret)
+        raise ServiceError('invalid_ppt_quality_refs', 422)
+    if stage == 'collect_output':
+        monkeypatch.setattr(TextProfile, 'collect_output', fail)
+    elif stage == 'freeze_artifacts':
+        monkeypatch.setattr(module, 'freeze_files', fail)
+    elif stage == 'freeze_manifest':
+        monkeypatch.setattr(host, '_freeze_manifest', fail)
+    else:
+        monkeypatch.setattr(host, '_release_context', fail)
+    submit(app)
+    dispatcher = Dispatcher(store, {'pi': adapter})
+    with caplog.at_level(logging.WARNING, logger='agent_service.diagnostics'):
+        running = dispatcher.dispatch_once()
+        host._thread.join(5)
+        final = dispatcher.poll(running)
+    records = [record for record in caplog.records if record.name == 'agent_service.diagnostics']
+    assert len(records) == 1
+    record = json.loads(records[0].getMessage())
+    assert record == dict(event='execution_failure', component='worker_host', stage=stage,
+        category='os_error' if failure_kind == 'permission' else 'service_error',
+        code='unclassified_error' if failure_kind == 'permission' else 'invalid_ppt_quality_refs',
+        errno=errno.EACCES if failure_kind == 'permission' else None)
+    assert secret not in caplog.text and str(host.workspace_root) not in caplog.text
+    assert all(record.exc_info is None and not record.stack_info for record in records)
+    assert final['state'] == ('quarantined' if stage == 'release_context' else 'failed')
+    assert final['outcome']['error_code'] == (
+        'worker_stop_receipt_invalid' if stage == 'release_context' else 'worker_output_invalid')
+    assert host._state['result']['error_code'] == (
+        'worker_execution_unresolved' if stage == 'release_context' else 'worker_output_invalid')
+
+
 def test_control_restart_reconciles_without_put_again(setup_chain):
     _, driver, host, _, adapter, store, app = setup_chain()
     submit(app)

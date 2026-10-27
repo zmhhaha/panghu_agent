@@ -31,6 +31,7 @@ from .engines import EngineRequest, NativeOutcome, StopEvidence
 from .artifacts import freeze_files, frozen_manifest, unique_paths
 from .staging import ExecutionContext, stage_inputs
 from .transport import MAX_WORKER_WIRE_BYTES
+from .diagnostics import log_execution_failure
 
 
 def _native_deadline(timestamp: float) -> datetime:
@@ -309,6 +310,7 @@ class WorkerHost:
         request = None
         context_released = False
         unmount_failed = False
+        stage = 'stage_inputs'
         workspace = self.workspace_root / envelope.attempt_id
         def watch():
             while not finished.wait(0.05):
@@ -334,14 +336,18 @@ class WorkerHost:
                     envelope.attempt_id, envelope.checkpoint_inputs, max_bytes=envelope.max_input_total_bytes,
                     max_file_bytes=envelope.max_artifact_file_bytes, max_files=envelope.max_input_files,
                     subtree='base')
+            stage = 'build_prompt'
             context = ExecutionContext(inputs=staged_input, checkpoint=staged_checkpoint,
                                        prompt=profile.build_prompt(envelope.task))
+            stage = 'validate_request'
             request = EngineRequest(envelope.attempt_id, envelope.profile, envelope.task,
                 max(1, min(self.policy.max_timeout_seconds, math.ceil(envelope.deadline_at - self.clock()))),
                 _native_deadline(envelope.deadline_at))
             execute_context = getattr(self.driver, 'execute_with_context', None)
+            stage = 'execute_native'
             native = (execute_context(request, workspace, self._emit, self._cancel, context=context)
                       if callable(execute_context) else self.driver.execute(request, workspace, self._emit, self._cancel))
+            stage = 'validate_completion'
             if type(native) is not NativeOutcome or native.stopped is not True or not native.resource_ids:
                 raise ServiceError('writers_not_stopped', 503)
             state = native.status if native.status in TERMINAL_STATES else 'failed'
@@ -350,6 +356,7 @@ class WorkerHost:
                          'cancelled' if self._cancel_cause == 'user_cancel' else 'failed')
             artifacts = []
             if state in {'completed', 'needs_input'}:
+                stage = 'collect_output'
                 proof = StopEvidence(envelope.attempt_id, True, native.resource_ids)
                 if envelope.output_schema == 'text-output.v1' and native.output is not None:
                     value = ({'schema_version': '1', 'text': native.output}
@@ -359,21 +366,26 @@ class WorkerHost:
                 elif state == 'completed' or envelope.output_schema != 'text-output.v1':
                     artifacts = profile.collect_output(workspace, envelope, proof)
             try:
+                stage = 'release_context'
                 self._release_context(request, context)
             except Exception:
                 unmount_failed = True
                 raise
             context_released = True
             if state in {'completed', 'needs_input'}:
+                stage = 'freeze_artifacts'
                 artifacts = freeze_files(artifacts, envelope, proof)
                 # The frozen bytes, rather than Agent-written manifest claims,
                 # become both the signed result and the control-plane handoff.
+                stage = 'freeze_manifest'
                 self._freeze_manifest(envelope, artifacts)
+            stage = 'sign_result'
             code = self._cancel_cause if state == 'failed' and self._cancel_cause else native.error_code
             result = WorkerResult(state=state, error_code=code, usage=native.usage, artifacts=artifacts)
             receipt = sign_receipt(envelope, result, self.receipt_key, native.resource_ids, self.clock())
             result = result.model_copy(update={'stop_receipt': receipt})
-        except Exception:
+        except Exception as error:
+            log_execution_failure('worker_host', stage, error)
             # Output failure after proven stop is a failed handoff, not an
             # unresolved writer. It must not permanently consume the queue slot.
             if (not unmount_failed and type(native) is NativeOutcome
@@ -385,7 +397,8 @@ class WorkerHost:
                     result = WorkerResult(state='failed', error_code='worker_output_invalid')
                     result = result.model_copy(update={'stop_receipt': sign_receipt(envelope, result,
                         self.receipt_key, native.resource_ids, self.clock())})
-                except Exception:
+                except Exception as release_error:
+                    log_execution_failure('worker_host', 'release_context', release_error)
                     result = WorkerResult(state='quarantined', error_code='worker_execution_unresolved')
             else:
                 result = WorkerResult(state='quarantined', error_code='worker_execution_unresolved')

@@ -177,6 +177,50 @@ def _confirmation(value, stage, snapshot_hash, page_count):
                  and bool(value['design']['production_parameters']), 'ppt_production_parameters_required')
 
 
+def _manifest_example(task):
+    """Concrete JSON field shapes; example file hashes must be measured anew."""
+    phase = task['phase']
+    count = task['input_snapshot']['settings'].get('page_count', 8)
+    artifact = lambda path, role, media: dict(path=path, role=role, media_type=media,
+        sha256='<actual 64 lowercase hexadecimal SHA256 of this file>', bytes=0)
+    plan, slides = {}, []
+    artifacts = [artifact('planning-notes.md', 'planning', 'text/markdown')]
+    quality = {}
+    if phase == 'plan_initial':
+        plan = dict(stage='stage1', status='awaiting_confirmation',
+            **{key: {'value': value} for key, value in {
+                'title': '<source-grounded presentation title>',
+                'primary_language': '<requested language>', 'audience': '<requested audience>',
+                'communication_intent': '<source-grounded purpose>', 'template_choice': 'free_design'}.items()})
+    elif phase == 'plan_options':
+        pages = {'pages': [dict(ordinal=n, title='<page title>', purpose='<specific page purpose>')
+                           for n in range(1, count + 1)]}
+        plan = dict(page_plan=pages, design={'directions': [
+            dict(id=key, name='<distinct direction name>', note='<specific design rationale>',
+                 page_plan=pages, production_parameters={'language': '<requested language>',
+                     'aspect_ratio': '16:9', 'typography': '<actual fonts and sizes>',
+                     'palette': '<actual colors>', 'layout': '<actual composition and spacing>'})
+            for key in ('A', 'B', 'C')]})
+    else:
+        artifacts = [artifact(name, 'specification', 'text/markdown')
+                     for name in ('design_spec.md', 'spec_lock.md')]
+        artifacts.append(artifact('reports/gates.json', 'quality_report', 'application/json'))
+        quality = {'reports': [{'path': 'reports/gates.json'}]}
+        if phase in ('generate', 'revise'):
+            artifacts.append(artifact('presentation.pptx', 'pptx',
+                'application/vnd.openxmlformats-officedocument.presentationml.presentation'))
+            for n in range(1, count + 1):
+                svg, png = f'svg_output/slide-{n:02d}.svg', f'previews/slide-{n:02d}.png'
+                artifacts.extend([artifact(svg, 'svg', 'image/svg+xml'), artifact(png, 'preview', 'image/png')])
+                slides.append(dict(id=f'slide-{n}', ordinal=n, title='<actual title>', svg_path=svg,
+                    preview_path=png, source_refs=[], native_chart_keys=[]))
+    status = ('awaiting_confirmation' if phase.startswith('plan_') else
+              'prepared' if phase == 'prepare' else 'candidate')
+    return dict(schema_version=1, phase=phase, status=status,
+        input_snapshot_sha256=task['input_snapshot_sha256'], project_root='deck',
+        plan=plan, questions=[], artifacts=artifacts, slides=slides, quality=quality, provenance={})
+
+
 class PPTProfile:
     supports_inputs = True
     limits = ProfileLimits(max_input_bytes=16 * 1024**2, max_input_total_bytes=256 * 1024**2,
@@ -284,7 +328,31 @@ class PPTProfile:
             'for title,primary_language,audience,communication_intent,template_choice; template_choice '
             'is free_design or templates. Stage2 plan requires page_plan.pages and design.directions '
             '(exactly three stable unique ids, names and distinct designs), with complete '
-            'production_parameters and each direction covering all N pages.\nTask JSON:\n'
+            'production_parameters and each direction covering all N pages.\n'
+            'Exact file handoff contract: result/manifest.json is outside project/. project_root is '
+            'the child path relative to project/ (for example deck), not an absolute path and not '
+            'project/deck. All artifacts[].path, slides[].svg_path, slides[].preview_path and quality '
+            'report paths are relative to that child (for example planning-notes.md), without repeating '
+            'project_root. Declare exactly every ordinary file under that child, including files '
+            'created by official scripts and unchanged replayed files, and no inputs/base/native state. '
+            'Measure SHA256 and bytes after all writes finish; examples below are shape examples, '
+            'not real measurements. Replace every placeholder and bytes=0 with actual values.\n'
+            'quality is ONLY a tree of report references: {}, {"reports":[{"path":"reports/gates.json"}]} '
+            'or {"reports":[{"path":"reports/gates.json","sha256":"<same measured digest as artifacts>"}]}. '
+            'Each referenced file must be declared in artifacts. A bare string is also interpreted '
+            'as an artifact path, never explanatory prose. Do not put status, passed, booleans, '
+            'notes, summaries, recommendations or gate verdicts inside quality; put honest '
+            'observations in the actual report file or plan/provenance. Planning may use quality={} '
+            'when it has no report. prepare/generate/revise require real declared report references. '
+            'A report reference is structural evidence only, never a publication or human review.\n'
+            'For needs_input keep the same typed fields and actual file roster; set status=needs_input '
+            'and questions to a nonempty array of honest questions. Do not invent files or successful '
+            'gates to fill the example. For planning, slides must be []; no formal specs/lock or '
+            'slides/PPTX may exist yet. For prepare, slides must be [] and no SVG/PPTX may exist yet. '
+            'Generation examples must be extended with actual chart artifacts/references only when '
+            'the authorized source and approved design require them.\n'
+            'Manifest JSON shape for this exact phase and page count:\n'
+            + canonical_bytes(_manifest_example(task)).decode('utf-8') + '\nTask JSON:\n'
             + canonical_bytes(task).decode('utf-8') + '\n'
         )
 
