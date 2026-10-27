@@ -75,7 +75,8 @@ def test_targets(suite):
         # from colliding. Business tests remain offline synthetic peers.
         groups += [['tests/scientific_pi/api/test_agent_service.py',
                     'tests/scientific_pi/api/test_academic_observations.py'],
-                   ['ppt_service/tests/control/test_agent_connector.py']]
+                   ['ppt_service/tests/control/test_agent_connector.py'],
+                   ['ppt_service/tests/server/test_acceptance_migration.py']]
     return groups
 
 
@@ -168,7 +169,9 @@ def validate_source(code_root, suite='postgres'):
         relative += ['app/api/scientific_agent.py', 'tools/sqlite_client.py',
             'ppt_service/__init__.py', 'ppt_service/control', 'ppt_service/server',
             'ppt_service/worker', 'tests/scientific_pi/api',
-            'ppt_service/tests/control/test_agent_connector.py']
+            'ppt_service/tests/control/test_agent_connector.py',
+            'ppt_service/tests/server/test_acceptance_migration.py',
+            'ppt_service/deploy/k8s/grant-runtime.sql']
     roots = [checked_path(code_root / path) for path in relative]
     if not (roots[0] / "store.py").is_file() or not (roots[1] / "test_postgres.py").is_file():
         raise HarnessFailure("reviewed_source_missing")
@@ -308,6 +311,7 @@ def main(argv=None):
                  '-e', 'PYTEST_PLUGINS=pytest_subtests',
                  '-e', 'AGENT_TEST_TARGETS=' + json.dumps(test_targets(args.suite)),
                  "-e", "AGENT_TEST_DATABASE_URL=" + DATABASE_URL,
+                 "-e", "TEST_DATABASE_URL=" + DATABASE_URL,
                  "--entrypoint", "python", args.test_image, "-c", INNER_RUNNER]
         result = execute(test, timeout=args.timeout, log=report_dir / "postgres-tests.log")
         report["test_returncode"] = result.returncode

@@ -37,7 +37,7 @@ OAuth、Cloudflare、Vault 和模型供应商密钥继续在各公共服务的�
 
 ## 数据与确认
 
-`AgentOutbox` 与 PPT Job/ExecutionSlot 保存在同一 PostgreSQL 内，由 schema 3
+`AgentOutbox` 与 PPT Job/ExecutionSlot 保存在同一 PostgreSQL 内，由 schema 4
 迁移安装。请求意图、输入上传引用、远端任务 ID、幂等标识、执行绑定、事件游标、
 检查点和业务接收状态均持久化；重启后继续同一任务。取消或不确定提交不会产生
 第二次付费任务。终止证明不足或 quarantine 时保留业务执行槽。
@@ -70,7 +70,9 @@ PPT 与科研共享一个全局 Agent 执行槽，同一时刻只运行一次尝
 其解释器属于该校验镜像自身，不成为业务任务合同的一部分。
 
 先通过 [网站标准部署入口](../k8s/README.md#服务器标准入口) 构建并推送包含当前代码的
-site/migrator 镜像，使用现有迁移流程安装 schema 3，保留网站当前执行后端。
+site/migrator 镜像，使用现有迁移流程安装 schema 4，保留网站当前执行后端。
+schema 3 属于现有 PPT 审核历史，schema 4 在保留其表、记录和追加约束的基础上新增 Outbox。
+早期 Agent 分支测试库的另一种 schema 3 缺少审核表，会被拒绝自动升级；不得改写正式库账本来绕过检查。
 再使用固定 site 和完整工具镜像摘要构建控制器与独立校验器：
 
 ```bash

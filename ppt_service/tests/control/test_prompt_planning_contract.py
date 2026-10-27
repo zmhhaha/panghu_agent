@@ -41,6 +41,21 @@ def test_stage2_example_is_a_shape_and_can_carry_actual_eight_page_task():
     assert '全部N页' in instruction
 
 
+def test_stage2_handoff_is_bounded_without_skipping_confirmation():
+    instruction = stage_instructions('plan_options')
+    # Concise chat completion must not shrink the actual machine-readable plan.
+    example = json.loads(instruction.split('```json\n', 1)[1].split('\n```', 1)[0])
+    dto = project_planning({'phase': 'plan_options', 'status': 'awaiting_confirmation', 'plan': example},
+                           expected_page_count=3)
+    assert len(dto['design']['directions']) == 3
+    assert all(len(direction['page_expression']) == 3 for direction in dto['design']['directions'])
+    assert dto['design']['source_projection']['confirmation_authority'] == 'website_database_only'
+    assert '停在最终方案确认门' in instruction and '不写未确认的spec/lock/SVG' in instruction
+    assert '不重复Stage1沟通' in instruction and '最终文本简短说明' in instruction
+    assert '查看JSON优先使用read_file/search_files' in instruction
+    assert '不得改用 Quick 或伪造确认、锁、检查报告' in instruction
+
+
 @pytest.mark.parametrize('phase', ['plan_initial', 'plan_options', 'prepare', 'generate', 'revise'])
 def test_every_phase_uses_fixed_official_python_without_bypassing_approval(phase):
     instruction = stage_instructions(phase)

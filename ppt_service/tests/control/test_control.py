@@ -74,6 +74,24 @@ def test_disabled_does_not_claim(store):
     assert controller.tick()['status']=='disabled'
     with sessions() as s:assert s.get(Job,jid).status=='queued';assert s.get(ExecutionSlot,1).job_id is None
 
+@pytest.mark.parametrize('reason,public_code',[
+    ('pdf_page_limit','parse_failed'),
+    ('scanned_pdf_unsupported','parse_failed'),
+    ('sandbox_policy_cleanup_failed','execution_interrupted'),
+])
+def test_parser_reasons_remain_public_parse_failure_before_model_launch(store,reason,public_code):
+    sessions,owner,pid,jid,root=store;backend=FakeBackend()
+    class RejectedSource(TestSandbox):
+        def parse(self,*args):raise ControlError(reason)
+    controller=Dispatcher(sessions,configured(root),backend,RejectedSource())
+    assert controller.tick()=={'status':'failed','job_id':jid,'error_code':public_code}
+    assert backend.creates==0
+    with sessions() as s:
+        assert s.get(Job,jid).error_code==public_code
+        assert s.get(Job,jid).status=='failed'
+        assert s.get(ExecutionSlot,1).job_id is None
+
+
 def test_plan_pipeline_real_transactions_and_two_gate_context(store):
     sessions,owner,pid,jid,root=store;backend=FakeBackend();controller=Dispatcher(sessions,configured(root),backend,TestSandbox())
     # A subsequent model phase parses a private copy again. Its internal parser

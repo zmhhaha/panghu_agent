@@ -1,6 +1,9 @@
-import type { Job, Profile, Project, Version } from './domain';
+import { hasConfirmedCommunication, type Job, type Profile, type Project, type Version } from './domain';
+import type { AcceptanceBinding } from './acceptance/contracts';
 import { adaptCommunication, adaptDirections, adaptPlanQuestions } from './planning';
 const root = '/api/v1';
+const REQUEST_TIMEOUT_MS = 30_000;
+const UPLOAD_TIMEOUT_MS = 5 * 60_000;
 let csrfToken: string | null = null;
 let authenticationEpoch = 0;
 let pendingProfile: Promise<Profile> | null = null;
@@ -8,12 +11,34 @@ function clearAuthentication() { csrfToken=null;authenticationEpoch++;pendingPro
 export const errors: Record<string,string> = {
   EXECUTION_NOT_CONNECTED:'执行器尚未接通，当前仅可测试项目、资料和设置；不会调用模型。',
   CSRF_REJECTED:'页面安全校验已失效，请刷新页面后重试。',
+  REQUEST_TIMEOUT:'等待请求超时。操作可能已完成，请先刷新状态核对，再决定是否重试。',
+  REQUEST_CANCELLED:'已停止等待请求。操作可能已完成，请先刷新状态核对。',
+  UPLOAD_TIMEOUT:'等待上传结果超时，文件可能已被服务器收到。请先刷新资料列表核对，再决定是否重新上传。',
+  UPLOAD_CANCELLED:'已停止等待上传结果，文件可能已被服务器收到。请刷新资料列表核对；此操作不会删除已收到的文件。',
+  UPLOAD_REFRESH_FAILED:'文件已确认上传，部分状态尚未更新。请点击“刷新状态”核对，无需立即重复上传。',
+  UPLOAD_PARTIAL_REFRESH_FAILED:'已确认收到部分文件，但资料列表尚未同步，本批其余文件尚未发送。请先刷新状态核对，再只选择尚未收到的文件继续上传。',
+  REQUEST_TOO_LARGE:'上传请求超过服务入口允许的大小。请减少文件大小，或联系管理员调整上传限制。',
+  SERVER_RECEIVE_TIMEOUT:'服务器接收请求超时，操作结果尚未确认。请先刷新状态核对，再决定是否重试。',
+  UPSTREAM_BAD_GATEWAY:'服务入口未收到有效的后端响应。操作结果尚未确认，请先刷新状态核对。',
+  SERVICE_UNAVAILABLE:'服务暂不可用，请稍后刷新状态核对。',
+  UPSTREAM_TIMEOUT:'服务入口等待后端响应超时。操作可能已完成，请先刷新状态核对。',
+  ASSET_PARSE_NOT_FAILED:'此文件当前不是解析失败状态，请刷新资料列表核对。',
+  ASSET_PARSE_BUSY:'此文件仍有解析任务正在处理，请等待完成后刷新状态。',
+  REVIEW_SOURCE_CHANGED:'审核草稿来源已变化，请重新读取检查记录后核对修改意见。',
+  REVIEW_RECORDS_CHANGED:'检查记录已有更新，请重新读取记录并核对，再提交修改。',
+  REVIEW_FEEDBACK_REQUIRED:'请填写修改意见或从当前已保存的检查问题带入。',
+  REVIEW_VERSION_REQUIRED:'此操作需要选择待审核草稿，请重新选择版本。',
+  REVIEW_EVIDENCE_UNAVAILABLE:'审核草稿的来源证据暂不可用，请重新读取记录；若仍失败，请联系管理员。',
+  REVIEW_CHECKPOINT_UNAVAILABLE:'审核草稿暂时无法恢复修改，请联系管理员。',
+  INITIAL_CONFIRMATION_REQUIRED:'初步沟通尚未确认或确认已失效。请在“沟通与方案”重新确认沟通内容与设计方式，再生成三套设计方向。',
+  OPTIONS_CONFIRMATION_REQUIRED:'请在“沟通与方案”主动选择一个设计方向，确认所选完整方案后，再生成演示稿。',
   CONSENT_REQUIRED:'请先确认外部模型数据传输，再重试此操作。', UPLOAD_LIMIT:'文件超出上传限额，请检查单文件 25 MiB、项目 10 文件 / 100 MiB 限制。',
-  UNAUTHENTICATED:'登录已过期，请重新登录。', FORBIDDEN:'当前账号无法执行此操作。', NOT_FOUND:'资源不可用或已删除，请返回项目列表。', STALE_REVISION:'资料或设置已变更，请刷新项目并重新确认方案。', STALE_PLAN:'确认已失效，请重新规划并确认。', SNAPSHOT_MISMATCH:'材料快照已变化，请重新规划。', ACTIVE_JOB_EXISTS:'项目已有活动任务，请等待完成或取消。', QUEUE_FULL:'任务队列已满，请稍后重试。', PARSE_FAILED:'资料解析失败，请检查文件是否含可读文本，或更换文件。', MODEL_CONNECTION_FAILED:'模型连接失败，请稍后重新提交。', TIMEOUT:'任务超时，已有版本仍可使用。请减少资料或页数后重试。', QUALITY_GATE_FAILED:'产物未通过质量检查，请调整要求后重试。', RENDER_FAILED:'预览渲染失败，请重试或联系管理员。', EXPORT_FAILED:'PPTX 导出失败，请重试或联系管理员。', STORAGE_LIMIT:'存储空间不足，请清理不再需要的项目后重试。', QUOTA_EXCEEDED:'当前可用额度不足，请联系服务管理员。', NETWORK_ERROR:'无法连接服务，请检查网络并重试。', INVALID_RESPONSE:'服务响应暂不可用，请刷新或联系管理员。', CURSOR_EXPIRED:'进度记录已过期，正在重新读取任务状态。'
+  UNAUTHENTICATED:'登录已过期，请重新登录。', FORBIDDEN:'当前账号无法执行此操作。', NOT_FOUND:'资源不可用或已删除，请返回项目列表。', STALE_REVISION:'资料或设置已变更，请刷新项目并重新确认方案。', STALE_PLAN:'确认已失效，请重新规划并确认。', SNAPSHOT_MISMATCH:'材料快照已变化，请重新规划。', ACTIVE_JOB_EXISTS:'项目已有活动任务，请等待完成或取消。', QUEUE_FULL:'任务队列已满，请稍后重试。', PARSE_FAILED:'资料解析未通过，请返回“资料与要求”查看各文件的解析状态和具体原因。', MODEL_CONNECTION_FAILED:'模型连接失败，请稍后重新提交。', TIMEOUT:'任务超时，已有版本仍可使用。请减少资料或页数后重试。', QUALITY_GATE_FAILED:'产物未通过质量检查，请调整要求后重试。', RENDER_FAILED:'预览渲染失败，请重试或联系管理员。', EXPORT_FAILED:'PPTX 导出失败，请重试或联系管理员。', STORAGE_LIMIT:'存储空间不足，请清理不再需要的项目后重试。', QUOTA_EXCEEDED:'当前可用额度不足，请联系服务管理员。', NETWORK_ERROR:'无法连接服务，请检查网络并重试。', INVALID_RESPONSE:'服务响应暂不可用，请刷新或联系管理员。', CURSOR_EXPIRED:'进度记录已过期，正在重新读取任务状态。'
 };
-const errorAliases: Record<string,string> = { EVENT_CURSOR_EXPIRED:'CURSOR_EXPIRED', REVISION_CONFLICT:'STALE_REVISION', PROJECT_REVISION_MISMATCH:'STALE_REVISION', PLAN_STALE:'STALE_PLAN', INPUT_SNAPSHOT_MISMATCH:'SNAPSHOT_MISMATCH', JOB_ALREADY_ACTIVE:'ACTIVE_JOB_EXISTS', PROJECT_BUSY:'ACTIVE_JOB_EXISTS', EXTERNAL_MODEL_ACK_REQUIRED:'CONSENT_REQUIRED', PARSE_ERROR:'PARSE_FAILED', MATERIAL_PARSE_FAILED:'PARSE_FAILED', FILE_TOO_LARGE:'UPLOAD_LIMIT', TOO_MANY_FILES:'UPLOAD_LIMIT', PROJECT_STORAGE_LIMIT:'STORAGE_LIMIT', MODEL_UNAVAILABLE:'MODEL_CONNECTION_FAILED', EXECUTION_TIMEOUT:'TIMEOUT', QUALITY_FAILED:'QUALITY_GATE_FAILED' };
+const errorAliases: Record<string,string> = { EVENT_CURSOR_EXPIRED:'CURSOR_EXPIRED', REVISION_CONFLICT:'STALE_REVISION', PROJECT_REVISION_MISMATCH:'STALE_REVISION', STALE_PROJECT_REVISION:'STALE_REVISION', STALE_PLAN_REVISION:'STALE_PLAN', STALE_INPUT_SNAPSHOT:'SNAPSHOT_MISMATCH', PLAN_STALE:'STALE_PLAN', INPUT_SNAPSHOT_MISMATCH:'SNAPSHOT_MISMATCH', JOB_ALREADY_ACTIVE:'ACTIVE_JOB_EXISTS', PROJECT_BUSY:'ACTIVE_JOB_EXISTS', EXTERNAL_MODEL_ACK_REQUIRED:'CONSENT_REQUIRED', PARSE_ERROR:'PARSE_FAILED', MATERIAL_PARSE_FAILED:'PARSE_FAILED', FILE_TOO_LARGE:'UPLOAD_LIMIT', TOO_MANY_FILES:'UPLOAD_LIMIT', PROJECT_STORAGE_LIMIT:'STORAGE_LIMIT', MODEL_UNAVAILABLE:'MODEL_CONNECTION_FAILED', EXECUTION_TIMEOUT:'TIMEOUT', QUALITY_FAILED:'QUALITY_GATE_FAILED' };
 export class ApiError extends Error { public code:string; constructor(code: string, public status = 0) { const normalized=code.toUpperCase();const canonical=errorAliases[normalized]??normalized; super(errors[canonical] ?? '操作未完成，请刷新后重试；若持续发生，请联系管理员。');this.code=canonical; } }
-export const safeError = (error: unknown) => error instanceof ApiError ? `${error.message}（${/^[A-Z_]{1,60}$/.test(error.code) ? error.code : 'SERVICE_ERROR'}）` : errors.NETWORK_ERROR;
+export const safeError = (error: unknown) => error instanceof ApiError ? `${error.message}（${/^[A-Z_]{1,60}$/.test(error.code) ? error.code : 'SERVICE_ERROR'}${Number.isInteger(error.status)&&error.status>=400&&error.status<=599?`，HTTP ${error.status}`:''}）` : errors.NETWORK_ERROR;
+const httpErrorCodes:Record<number,string>={408:'SERVER_RECEIVE_TIMEOUT',413:'REQUEST_TOO_LARGE',502:'UPSTREAM_BAD_GATEWAY',503:'SERVICE_UNAVAILABLE',504:'UPSTREAM_TIMEOUT',524:'UPSTREAM_TIMEOUT'};
 // Keys live only in memory: retries of the same intent reuse them; changed payload creates a new intent.
 export class IntentKeys {
   private keys = new Map<string,string>();
@@ -21,10 +46,32 @@ export class IntentKeys {
   complete(route:string,payload:unknown) { this.keys.delete(JSON.stringify([route,payload])); }
 }
 export const intents = new IntentKeys();
-export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  return performRequest<T>(path,init,true);
+export async function request<T>(path: string, init: RequestInit = {}, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const cancel = () => controller.abort();
+  const signal = init.signal;
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener('abort',cancel,{once:true});
+  let abortListener: (()=>void) | undefined;
+  const interrupted = new Promise<never>((_,reject) => {
+    abortListener = () => reject(new ApiError(timedOut?'REQUEST_TIMEOUT':'REQUEST_CANCELLED'));
+    if (controller.signal.aborted) abortListener();
+    else controller.signal.addEventListener('abort',abortListener,{once:true});
+  });
+  const timer = setTimeout(()=>{timedOut=true;controller.abort();},timeoutMs);
+  try {
+    // The deadline includes response body consumption and CSRF recovery. A
+    // cancelled waiter cannot hang behind the shared profile read either.
+    return await Promise.race([performRequest<T>(path,{...init,signal:controller.signal},true),interrupted]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort',cancel);
+    if(abortListener)controller.signal.removeEventListener('abort',abortListener);
+  }
 }
 async function performRequest<T>(path: string, init: RequestInit, retryCsrf: boolean): Promise<T> {
+  if(init.signal?.aborted)throw new ApiError('REQUEST_CANCELLED');
   let response: Response;
   const headers = new Headers(init.headers);
   headers.delete('X-CSRF-Token');
@@ -34,7 +81,7 @@ async function performRequest<T>(path: string, init: RequestInit, retryCsrf: boo
   try { response = await fetch(`${root}${path}`, { credentials:'same-origin', ...init, headers }); } catch { throw new ApiError('NETWORK_ERROR'); }
   if (response.status === 401) clearAuthentication();
   if (!response.ok) {
-    let code = response.status === 401 ? 'UNAUTHENTICATED' : response.status === 403 ? 'FORBIDDEN' : response.status === 404 ? 'NOT_FOUND' : 'SERVICE_ERROR';
+    let code = response.status === 401 ? 'UNAUTHENTICATED' : response.status === 403 ? 'FORBIDDEN' : response.status === 404 ? 'NOT_FOUND' : httpErrorCodes[response.status]??'SERVICE_ERROR';
     let csrfRejected=false;
     try { const body=await response.json();const raw=body?.error?.code??body?.detail?.code??body?.code;if(typeof raw==='string')code=raw;csrfRejected=body?.detail?.code==='csrf_rejected'; } catch { /* Never expose server HTML or raw details. */ }
     // This exact rejection occurs before mutation. Preserve its body and intent
@@ -64,7 +111,7 @@ function readProfile():Promise<Profile> {
   pendingProfile=pending;
   return pending;
 }
-export async function mutate<T>(path:string,payload:unknown = {},method='POST'):Promise<T> { const key=intents.key(path,payload); const result=await request<T>(path,{method,body:JSON.stringify(payload),headers:{'Idempotency-Key':key}}); intents.complete(path,payload); return result; }
+export async function mutate<T>(path:string,payload:unknown = {},method='POST',signal?:AbortSignal):Promise<T> { const key=intents.key(path,payload); const result=await request<T>(path,{method,body:JSON.stringify(payload),headers:{'Idempotency-Key':key},signal}); intents.complete(path,payload); return result; }
 const id = encodeURIComponent;
 type RecordValue = Record<string, any>;
 export function adaptProject(raw: RecordValue): Project {
@@ -78,7 +125,7 @@ export function adaptProject(raw: RecordValue): Project {
  confirmed_direction_id:latest.confirmed_at ? latest.confirmation_selection?.direction_id??latest.selection?.direction_id??latest.design?.selection?.direction_id : undefined,
  } : undefined;
  return { ...raw, settings:raw.settings??{pages:raw.page_count??8,language:raw.language==='zh'?'简体中文':raw.language??'简体中文',audience:raw.audience??'',purpose:raw.purpose??'',style:raw.style??'',requirements:raw.requirements??''}, assets:raw.assets??[], plan,
- input_snapshot_hash:raw.input_snapshot_hash??'', confirmed_plan_revision:raw.confirmed_plan_revision==null?null:String(raw.confirmed_plan_revision) } as Project;
+ input_snapshot_hash:raw.input_snapshot_hash??'', confirmed_plan_revision:raw.confirmed_plan_revision==null?null:String(raw.confirmed_plan_revision), latest_job:raw.latest_job?adaptJob(raw.latest_job):null } as Project;
 }
 export function adaptJob(raw:RecordValue):Job {return {...raw,id:raw.id??raw.job_id,last_event_seq:raw.event_cursor??raw.last_event_seq??0} as Job;}
 const flatSettings=(s:Project['settings'])=>({page_count:s.pages,language:s.language==='简体中文'?'zh':s.language,audience:s.audience,purpose:s.purpose,style:s.style,requirements:s.requirements});
@@ -86,15 +133,22 @@ export const api = {
   me: readProfile, projects: async () => (await request<RecordValue[]>('/projects')).map(adaptProject), project: async (projectId:string, signal?:AbortSignal) => adaptProject(await request<RecordValue>(`/projects/${id(projectId)}`,{signal})),
   create: async (title:string) => adaptProject(await mutate<RecordValue>('/projects',{title,purpose:'',audience:'',page_count:8,language:'zh',style:'',requirements:'',external_model_ack:false})),
   update: async (p:Project, settings:Project['settings']) => adaptProject(await mutate<RecordValue>(`/projects/${id(p.id)}`,{title:p.title,...flatSettings(settings),external_model_ack:p.external_model_ack??false,expected_revision:p.revision},'PATCH')),
-  acknowledge: async (p:Project) => adaptProject(await mutate<RecordValue>(`/projects/${id(p.id)}`,{title:p.title,...flatSettings(p.settings),external_model_ack:true,expected_revision:p.revision},'PATCH')),
+  acknowledge: async (p:Project, signal?:AbortSignal) => adaptProject(await mutate<RecordValue>(`/projects/${id(p.id)}`,{title:p.title,...flatSettings(p.settings),external_model_ack:true,expected_revision:p.revision},'PATCH',signal)),
   remove: (p:Project) => mutate<void>(`/projects/${id(p.id)}`,{expected_revision:p.revision},'DELETE'),
-  upload: async (p:Project,file:File) => { const body=new FormData(); body.set('file',file); return request<unknown>(`/projects/${id(p.id)}/assets`,{method:'POST',body,headers:{'Idempotency-Key':intents.key(`/projects/${id(p.id)}/assets`,[p.revision,file.name,file.size,file.lastModified])}}); },
-  plan: (p:Project, feedback:string, _consent:boolean) => mutate<{job_id:string}>(`/projects/${id(p.id)}/plans`,{expected_revision:p.revision,feedback,phase:p.plan?.stage==='communication'&&p.plan.confirmed_at&&!feedback.trim()?'plan_options':'plan_initial'}),
+  removeAsset: (p:Project,assetId:string) => mutate<unknown>(`/projects/${id(p.id)}/assets/${id(assetId)}?expected_revision=${p.revision}`,{},'DELETE'),
+  reparseAsset: (p:Project,assetId:string) => mutate<{revision:number;asset_id:string;parse_status:'queued'}>(`/projects/${id(p.id)}/assets/${id(assetId)}/reparse`,{expected_revision:p.revision}),
+  upload: async (p:Project,file:File,signal?:AbortSignal) => { const body=new FormData(); body.set('file',file); return request<unknown>(`/projects/${id(p.id)}/assets`,{method:'POST',body,signal,headers:{'Idempotency-Key':intents.key(`/projects/${id(p.id)}/assets`,[p.revision,file.name,file.size,file.lastModified])}},UPLOAD_TIMEOUT_MS); },
+  plan: (p:Project, feedback:string, _consent:boolean) => {
+   const advance=p.plan?.stage==='communication'&&!!p.plan.confirmed_at&&p.plan.input_snapshot_hash===p.input_snapshot_hash&&!feedback.trim();
+   if(advance&&!hasConfirmedCommunication(p))return Promise.reject(new ApiError('INITIAL_CONFIRMATION_REQUIRED'));
+   return mutate<{job_id:string}>(`/projects/${id(p.id)}/plans`,{expected_revision:p.revision,feedback,phase:advance?'plan_options':'plan_initial'});
+  },
   confirm: async (p:Project, selection:unknown) => adaptProject(await mutate<RecordValue>(`/projects/${id(p.id)}/plans/${id(p.plan!.revision)}/confirm`,{expected_revision:p.revision,input_snapshot_hash:p.plan!.input_snapshot_hash,selection})),
   generate: (p:Project, _consent:boolean) => mutate<{job_id:string}>(`/projects/${id(p.id)}/generations`,{expected_revision:p.revision,plan_revision:Number(p.plan!.revision)}),
   revise: (p:Project,base:string,pages:number[],feedback:string,pageFeedback:Record<string,string>,_consent:boolean) => mutate<{job_id:string}>(`/projects/${id(p.id)}/revisions`,{expected_revision:p.revision,base_version_id:base,pages,feedback:[feedback,...Object.entries(pageFeedback).map(([n,text])=>`第 ${n} 页：${text}`)].filter(Boolean).join('\n\n')}),
+  reviewRevise: (p:Project,base:string,pages:number[],feedback:string,binding:AcceptanceBinding,reviewRevision:number,consent:boolean) => {if(!consent)return Promise.reject(new ApiError('CONSENT_REQUIRED'));return mutate<{job_id:string}>(`/projects/${id(p.id)}/review-revisions`,{expected_revision:p.revision,base_version_id:base,pages,feedback,review_binding:binding,review_revision:reviewRevision,external_model_ack:consent});},
   job: async (jobId:string, signal?:AbortSignal) => adaptJob(await request<RecordValue>(`/jobs/${id(jobId)}`,{signal})), cancel: async (jobId:string) => adaptJob(await mutate<RecordValue>(`/jobs/${id(jobId)}/cancel`)),
-  versions: (projectId:string) => request<Version[]>(`/projects/${id(projectId)}/versions`),
+  versions: (projectId:string, signal?:AbortSignal) => request<Version[]>(`/projects/${id(projectId)}/versions`,{signal}),
   preview: (versionId:string,page:number) => `${root}/versions/${id(versionId)}/slides/${page}/preview`,
   download: async (versionId:string) => { const response=await fetch(`${root}/versions/${id(versionId)}/download`,{credentials:'same-origin'}); if(response.status===401)clearAuthentication(); if (!response.ok) throw new ApiError(response.status===401?'UNAUTHENTICATED':'EXPORT_FAILED',response.status); const blob=await response.blob(); if (!blob.size) throw new ApiError('EXPORT_FAILED'); const url=URL.createObjectURL(blob); const link=document.createElement('a'); link.href=url; link.download=`presentation-${versionId}.pptx`; link.click(); setTimeout(()=>URL.revokeObjectURL(url),1000); }
 };

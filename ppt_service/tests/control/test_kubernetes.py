@@ -11,7 +11,8 @@ import pytest
 
 from ppt_service.control.execution import Attempt, ControlError, Layout, RuntimeConfig, RuntimeState
 from ppt_service.control.kubernetes import (FINALIZER, INTENT, ROLE, SCOPE, KubeError,
-                                           KubeSettings, KubernetesBackend)
+                                           KubeSettings, KubernetesBackend, METADATA_PREFIX,
+                                           LEGACY_METADATA_PREFIX)
 from ppt_service.control.kubernetes import KubernetesClient, _NoRedirect
 
 
@@ -114,6 +115,54 @@ def test_reconcile_prelaunch_is_durable_and_does_not_break_staging(runtime):
     assert all(call[0] == 'GET' for call in api.calls)
 
 
+def test_legacy_authority_keeps_exact_resource_keys_and_can_finish_after_restart(runtime):
+    config, settings, api, backend, attempt = runtime
+    layout = staged(runtime)
+    h = backend.create(attempt, layout)
+
+    def legacy(value):
+        if isinstance(value, dict):
+            return {key.replace(METADATA_PREFIX, LEGACY_METADATA_PREFIX): legacy(item)
+                    for key, item in value.items()}
+        if isinstance(value, list):
+            return [legacy(item) for item in value]
+        return value.replace(METADATA_PREFIX, LEGACY_METADATA_PREFIX) if isinstance(value, str) else value
+
+    api.objects = {key: legacy(obj) for key, obj in api.objects.items()}
+    record = backend._read(h)
+    record.pop('metadata_prefix')
+    backend._write(h, record)
+    replacement = KubernetesBackend(config, settings, api)
+    assert replacement.observe(h).running
+    assert not replacement.prove_stopped(h).all_writers_stopped
+    body = replacement.pod(h, 'legacy-sandbox', 'sandbox', 'ppt_service.control.parsing',
+                           [(layout.inputs, '/inputs', True)])
+    assert body['metadata']['labels'][LEGACY_METADATA_PREFIX + 'attempt'] == h.uid
+    assert body['metadata']['finalizers'] == [LEGACY_METADATA_PREFIX + 'writers-stopped']
+    policy = replacement.policy(h, 'legacy-policy', 'worker')
+    assert policy['spec']['podSelector']['matchLabels'] == {
+        LEGACY_METADATA_PREFIX + 'attempt': h.uid, LEGACY_METADATA_PREFIX + 'role': 'worker'}
+    replacement.stop(h)
+    assert replacement.prove_stopped(h).all_writers_stopped
+    replacement.cleanup(h)
+    assert not api.objects
+    assert any(call[0:2] == ('GET', 'pods') and call[4] == {
+        'labelSelector': LEGACY_METADATA_PREFIX + 'attempt=' + h.uid} for call in api.calls)
+    assert all(call[3][0]['path'] == '/metadata/uid' and call[3][1]['path'] == '/metadata/resourceVersion'
+               for call in api.calls if call[0] == 'PATCH')
+
+
+def test_unknown_authority_metadata_prefix_is_rejected(runtime):
+    config, settings, api, backend, attempt = runtime
+    h = backend.reconcile(attempt)
+    record = backend._read(h)
+    record['metadata_prefix'] = 'unrelated.example/'
+    backend._write(h, record)
+    with pytest.raises(ControlError, match='execution_authority_mismatch'):
+        backend.handle_for_scope(h.uid)
+    assert not backend.prove_stopped(h).all_writers_stopped
+
+
 def test_worker_proxy_manifests_and_credentials_are_separate(runtime):
     config, settings, api, backend, attempt = runtime
     layout = staged(runtime)
@@ -150,6 +199,20 @@ def test_worker_proxy_manifests_and_credentials_are_separate(runtime):
     assert secret['data']['client-key'] not in journal
     assert (layout.audit / 'kubernetes-resources.json').exists()
     assert backend._read(h)['runtime']['execution_image'] == settings.worker_image
+
+
+@pytest.mark.parametrize('phase,seconds', [('plan_initial', 600), ('plan_options', 1200),
+                                           ('prepare', 1800), ('generate', 1800), ('revise', 1800)])
+def test_phase_budgets_match_worker_and_pod_lifetime(runtime, phase, seconds):
+    config, settings, api, backend, original = runtime
+    attempt = replace(original, phase=phase)
+    handle = backend.create(attempt, staged(runtime))
+    worker = api.objects['pods', handle.worker_name]
+    proxy = api.objects['pods', handle.proxy_name]
+    command = worker['spec']['containers'][0]['args']
+    assert command[command.index('--deadline') + 1] == str(seconds)
+    assert worker['spec']['activeDeadlineSeconds'] == seconds + 120
+    assert proxy['spec']['activeDeadlineSeconds'] == 2100
 
 
 def test_network_policy_is_exact_attempt_and_no_dns(runtime):

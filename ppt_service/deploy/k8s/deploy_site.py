@@ -24,24 +24,35 @@ HERE = Path(__file__).resolve().parent
 SERVICE = HERE.parents[1]
 REPOSITORY = SERVICE.parents[1]
 NAMESPACE = 'ppt-service'
-SCHEMA_REVISION = 3
+TARGET_SCHEMA_REVISION = 4
 SECRET_NAMES = ('ppt-postgres-bootstrap', 'ppt-database-migrator', 'ppt-database-runtime', 'ppt-oidc')
 BOOTSTRAP_MARKER = 'ppt-service-bootstrap-v1'
 IMAGE_PATTERN = re.compile(r'[^\s@]+@sha256:[0-9a-f]{64}\Z')
-RUNTIME_CHECK = f"""import os
+RUNTIME_CHECK = """import os
 from sqlalchemy import create_engine, text
-engine = create_engine(os.environ['DATABASE_URL'], connect_args={{'connect_timeout': 5}})
+engine = create_engine(os.environ['DATABASE_URL'], connect_args={'connect_timeout': 5})
 with engine.connect() as db:
     assert db.scalar(text('SELECT current_user')) == 'ppt_runtime'
-    assert db.scalar(text('SELECT max(revision) FROM public.api_schema_revision')) == {SCHEMA_REVISION}
+    assert db.scalar(text('SELECT max(revision) FROM public.api_schema_revision')) == __SCHEMA_REVISION__
+    for privilege in ('SELECT', 'INSERT', 'UPDATE', 'DELETE'):
+        assert db.scalar(text("SELECT has_table_privilege(current_user, 'public.ppt_agent_outbox', :privilege)"), {'privilege': privilege})
     assert not db.scalar(text("SELECT has_schema_privilege(current_user, 'public', 'CREATE')"))
     assert not db.scalar(text("SELECT has_table_privilege(current_user, 'public.api_schema_revision', 'INSERT')"))
     assert not db.scalar(text("SELECT has_table_privilege(current_user, 'public.api_schema_revision', 'UPDATE')"))
     assert not db.scalar(text("SELECT has_table_privilege(current_user, 'public.api_schema_revision', 'DELETE')"))
+    for table in ('ppt_acceptance_streams', 'ppt_acceptance_entries'):
+        for privilege in ('SELECT', 'INSERT'):
+            assert db.scalar(text("SELECT has_table_privilege(current_user, :table, :privilege)"), {'table': 'public.' + table, 'privilege': privilege})
+        for privilege in ('DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'):
+            assert not db.scalar(text("SELECT has_table_privilege(current_user, :table, :privilege)"), {'table': 'public.' + table, 'privilege': privilege})
+    assert db.scalar(text("SELECT has_table_privilege(current_user, 'public.ppt_acceptance_streams', 'UPDATE')"))
+    assert not db.scalar(text("SELECT has_table_privilege(current_user, 'public.ppt_acceptance_entries', 'UPDATE')"))
 engine.dispose()
-"""
-STORAGE_STATE = 'ppt.panghuer.top/state-layout'
-STORAGE_UID = 'ppt.panghuer.top/state-claim-uid'
+""".replace('__SCHEMA_REVISION__', str(TARGET_SCHEMA_REVISION))
+STORAGE_STATE = 'ppt-service.panghuer.top/state-layout'
+STORAGE_UID = 'ppt-service.panghuer.top/state-claim-uid'
+LEGACY_STORAGE_STATE = 'ppt.panghuer.top/state-layout'
+LEGACY_STORAGE_UID = 'ppt.panghuer.top/state-claim-uid'
 STORAGE_INIT = """import os, stat
 root = '/var/lib/ppt-service'
 parent = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -71,6 +82,15 @@ assert os.access(root + '/state', os.R_OK | os.W_OK | os.X_OK)
 
 class DeployError(RuntimeError):
     pass
+
+
+def storage_markers(annotations):
+    values = []
+    for key, legacy_key in ((STORAGE_STATE, LEGACY_STORAGE_STATE), (STORAGE_UID, LEGACY_STORAGE_UID)):
+        if key in annotations and legacy_key in annotations and annotations[key] != annotations[legacy_key]:
+            raise DeployError('Conflicting old and new PPT storage initialization markers')
+        values.append(annotations.get(key, annotations.get(legacy_key)))
+    return tuple(values)
 
 
 def load_documents(path):
@@ -137,8 +157,8 @@ def validate_auth(documents):
             or 'INVITATION_SUBJECTS' in auth
             or auth.get('OIDC_ISSUER') != 'https://auth.panghuer.top'
             or proxy.get('oidc_issuer_url') != auth['OIDC_ISSUER']
-            or auth.get('ALLOWED_ORIGINS') != 'https://ppt.panghuer.top'
-            or proxy.get('redirect_url') != 'https://ppt.panghuer.top/oauth2/callback'
+            or auth.get('ALLOWED_ORIGINS') != 'https://ppt-service.panghuer.top'
+            or proxy.get('redirect_url') != 'https://ppt-service.panghuer.top/oauth2/callback'
             or proxy.get('pass_authorization_header') is not True
             or proxy.get('email_domains')
             or any(proxy.get(key) for key in ('ssl_insecure_skip_verify',
@@ -268,8 +288,8 @@ class Deployment:
         if not uid:
             raise DeployError('Cannot determine the PPT data PVC identity')
         annotations = claim['metadata'].get('annotations', {})
-        pending = annotations.get(STORAGE_STATE) == 'pending-v1'
-        bound_uid = annotations.get(STORAGE_UID)
+        state, bound_uid = storage_markers(annotations)
+        pending = state == 'pending-v1'
         if bound_uid and bound_uid != uid:
             raise DeployError('Storage initialization marker belongs to a different PVC UID')
         if pending:
@@ -283,6 +303,14 @@ class Deployment:
         if (claim or {}).get('metadata', {}).get('uid') != uid:
             raise DeployError('The PPT data PVC identity changed during initialization')
         merged = dict(claim['metadata'].get('annotations', {}))
+        state, bound_uid = storage_markers(merged)
+        if bound_uid and bound_uid != uid:
+            raise DeployError('Storage initialization marker belongs to a different PVC UID')
+        for key, legacy_key, value in ((STORAGE_STATE, LEGACY_STORAGE_STATE, state),
+                                       (STORAGE_UID, LEGACY_STORAGE_UID, bound_uid)):
+            if value is not None:
+                merged[key] = value
+            merged.pop(legacy_key, None)
         merged.update(annotations)
         patch = [{'op': 'test', 'path': '/metadata/uid', 'value': uid}]
         if claim['metadata'].get('resourceVersion'):
@@ -424,7 +452,7 @@ class Deployment:
         if exists != 't':
             raise DeployError('Cannot determine the target schema revision')
         revision = int(self.psql('SELECT coalesce(max(revision),0) FROM public.api_schema_revision;', 'ppt_service').strip())
-        if not 0 <= revision <= SCHEMA_REVISION:
+        if revision not in range(TARGET_SCHEMA_REVISION + 1):
             raise DeployError('Unsupported schema revision; refusing automatic migration')
         return revision
 
@@ -446,7 +474,7 @@ class Deployment:
                 if any(c['type'] == 'Complete' and c['status'] == 'True' for c in conditions):
                     if not rerun_completed:
                         return
-                    # A schema restored below the current revision needs a new migration,
+                    # A schema restored below the target needs a new migration,
                     # even with the same image. Follow a stable receipt chain:
                     # retries find the same active/failed next Job, preserving
                     # both execution deduplication and all historical evidence.
@@ -457,8 +485,8 @@ class Deployment:
                     suffix = hashlib.sha256(identity.encode()).hexdigest()[:16]
                     job['metadata']['name'] = 'ppt-migrate-' + suffix
                     job['metadata'].setdefault('annotations', {}).update({
-                        'ppt.panghuer.top/previous-job-name': name,
-                        'ppt.panghuer.top/previous-job-uid': uid,
+                        'ppt-service.panghuer.top/previous-job-name': name,
+                        'ppt-service.panghuer.top/previous-job-uid': uid,
                     })
                     continue
             else:
@@ -532,14 +560,14 @@ class Deployment:
             self.initialize_database()
             print('Checking and upgrading the schema revision.', flush=True)
             revision = self.revision()
-            if revision != SCHEMA_REVISION:
+            if revision != TARGET_SCHEMA_REVISION:
                 if existing_site and existing_site['spec'].get('replicas', 1):
                     self.kube('-n', NAMESPACE, 'scale', 'deployment/ppt-site', '--replicas=0')
                     self.kube('-n', NAMESPACE, 'wait', '--for=delete', 'pod',
                               '-l', 'app.kubernetes.io/name=ppt-site', '--timeout=120s')
                 self.run_job(make_job(image, 'migrate'), rerun_completed=True)
-                if self.revision() != SCHEMA_REVISION:
-                    raise DeployError(f'Migration Job completed but the database is not at schema revision {SCHEMA_REVISION}')
+                if self.revision() != TARGET_SCHEMA_REVISION:
+                    raise DeployError(f'Migration Job completed but the database is not at schema revision {TARGET_SCHEMA_REVISION}')
             self.psql((HERE / 'grant-runtime.sql').read_text(encoding='utf-8').replace(':"runtime"', '"ppt_runtime"'),
                       'ppt_service', 'ppt_migrator')
             print('Checking runtime database access and initializing the CephFS state directory.', flush=True)
@@ -558,12 +586,12 @@ class Deployment:
             site['spec']['replicas'] = target_replicas
             site['spec']['template']['spec']['containers'][0]['image'] = image
             # Credentials and public envFrom values are read only on startup.
-            site['spec']['template'].setdefault('metadata', {}).setdefault('annotations', {})['ppt.panghuer.top/config-refresh'] = self.lock_token
+            site['spec']['template'].setdefault('metadata', {}).setdefault('annotations', {})['ppt-service.panghuer.top/config-refresh'] = self.lock_token
             self.apply([site])
             print('Waiting for the website and OAuth proxy rollout.', flush=True)
             self.kube('-n', NAMESPACE, 'rollout', 'status', 'deployment/ppt-site', '--timeout=300s')
             print(self.kube('-n', NAMESPACE, 'get', 'pods,svc,pvc'), end='', flush=True)
-            print('Website deployed. Configure the documented Tunnel peer policies and ppt.panghuer.top entry. Execution admission follows the existing explicit website configuration.')
+            print('Website deployed. Configure the documented Tunnel peer policies and ppt-service.panghuer.top entry. Execution admission follows the existing explicit website configuration.')
         finally:
             failed = sys.exc_info()[0] is not None
             try:

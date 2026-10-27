@@ -27,6 +27,11 @@ def source_context(dockerfile: Path) -> tuple[bytes, str]:
     agent = SERVICE.parent / 'agent_service'
     agent_names = ('__init__.py', 'artifacts.py', 'client.py', 'contracts.py', 'diagnostics.py', 'engines.py',
                    'profiles/__init__.py', 'profiles/base.py', 'profiles/ppt.py')
+    # The dispatcher revalidates review-only revision authority against the
+    # server-owned resolver. Include that production subpackage explicitly;
+    # generated fixtures, demo assets and tests do not enter the overlay.
+    for name in ('__init__.py', 'contracts.py', 'domain.py', 'router.py', 'store.py', 'resolver.py'):
+        files.append(SERVICE / 'server/acceptance' / name)
     output = io.BytesIO()
     manifest = {}
     with tarfile.open(fileobj=output, mode='w') as archive:

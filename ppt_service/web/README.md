@@ -2,14 +2,14 @@
 
 React / TypeScript / Vite 中文私有项目工作台。仅使用同源 `/api/v1` 与 `/oauth2/start`、`/oauth2/sign_out`，没有演示数据、模型直连或部署脚本。页面明确显示开发测试状态，PowerPoint 人工验收仍待完成，正式发布与邀请仍未开放。
 
-## 本地安装、验证、构建
+## 服务器安装、验证、构建
 
-本环境使用显式捆绑 Node/pnpm 路径，在本目录执行：
+当前 PPT 的验证和生产构建都在服务器 checkout 中执行，按 Git 提交、推送、服务器获取提交、构建和发布。仅运行当前改动相关检查；以下命令在服务器的本目录执行：
 
 ```bash
-"C:/Users/4770_2070super/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node.exe" "C:/Users/4770_2070super/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/pnpm/bin/pnpm.mjs" install
-"C:/Users/4770_2070super/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node.exe" "C:/Users/4770_2070super/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/pnpm/bin/pnpm.mjs" test
-"C:/Users/4770_2070super/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/node/bin/node.exe" "C:/Users/4770_2070super/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/pnpm/bin/pnpm.mjs" run build
+pnpm install --frozen-lockfile
+pnpm exec vitest run src/test/review-workspace.test.tsx src/test/App.test.tsx src/test/api.test.ts src/acceptance
+pnpm run build
 ```
 
 `pnpm-workspace.yaml` 将 workspace 限制在本应用，只允许 esbuild 的必要安装脚本；不改全局配置。提交锁文件可复现安装。输出 `dist/index.html` 与 `dist/assets/*`，由父任务的 API 同源静态挂载。API、OAuth 路由必须优先于 SPA fallback；`/assets` 应挂载构建目录，未知 `/api/*` 不应返回 HTML。没有修改现有 DSH GUI。后续经父任务授权，仅刷新现有开发 API 容器的只读静态资源挂载；单次脚本在 `integration/refresh_development_assets.sh`，不操作数据库或正式服务。
@@ -25,6 +25,7 @@ React / TypeScript / Vite 中文私有项目工作台。仅使用同源 `/api/v1
 - 方向输出适配 `plan.design.directions` 或旧 `plan.design.options`；真实官方投影每项保留原 `id/name/note/page_expression`，`page_plan` 为带 `pages` 数组的完整共享对象，`production_parameters` 为原始共用制作参数。逐页适配 `ordinal/title/core_message/content[].text/source_refs`，保留完整元数据供纯文本核对。也兼容旧 `{number,title,purpose,points,sources}`。不虚构候选或改写 ID。
 - 生成：POST `/projects/{id}/generations` `{expected_revision,plan_revision}`。页面同时核对已确认 revision、当前输入快照、具体方向。
 - 修改：POST `/projects/{id}/revisions` `{expected_revision,base_version_id,pages,feedback}`。逐页意见以明确页号汇入 `feedback`；`pages:[]` 表示整份。选中的基线不随新版本到达改变。
+- 审核稿修改：POST `/projects/{id}/review-revisions` `{expected_revision,base_version_id,pages,feedback,review_binding,review_revision,external_model_ack:true}`。必须选择具体 review 草稿、读取当前来源绑定及记录修订，再单独勾选本次外部模型同意并提交；不先 PATCH 项目以免改变来源修订。未同意时 client 不发请求。它不会把草稿作为 published 基线，结果仍为新的审核稿。
 - 任务：GET `/jobs/{id}`，`event_cursor` 适配 UI `last_event_seq`。POST `/jobs/{id}/cancel` 请求后以实际任务状态显示 cancelling，不能乐观宣告 cancelled。
 - SSE：GET `/jobs/{id}/events`，fetch 流携带真实 `Last-Event-ID`；消费 `id` / `seq` 单调事件，忽略重复。410/409 先刷新权威快照再连接。仅保留允许的 status/stage 字段，绝不渲染原始日志、推理与命令。
 - 版本：GET `/projects/{id}/versions` 数组 `{id,created_at,parent_version_id?,slides:[{number,title,purpose?}]}`。
@@ -43,12 +44,20 @@ GET `/me` 的真实 `csrf_token` 仅保存在 API 模块内存，并从返回给
 
 AssetDTO 新增 `text_summary: string | null`、`parse_error: string | null`。文件使用独立解析状态：`queued` 等待解析、`parsing` 解析中、`stopping` 正在停止、`ready` 完成、`failed` 失败；不把材料 ready 解释为演示稿已生成。摘要仅在 ready/旧 parsed 状态按转义纯文本展示，前端进一步限制 2000 字符；缺失、null、失败或来源移除后清除旧摘要。安全错误采用 `src/parse.ts` 的允许清单中文说明，未知值不原样显示。
 
-`src/useParsePolling.ts` 对 queued/parsing/stopping 的当前项目每 5 秒读取一次详情，不轮询版本列表，不重启任务。仅资料标签页且浏览器可见时执行；切换标签、切换项目、隐藏页面或卸载会清理定时器并中止请求，忽略迟到响应；ready/failed 或权限错误后停止。手动“刷新状态”保留。解析修订变更不会重置尚未保存的设置。
+`src/useParsePolling.ts` 对 queued/parsing/stopping 的当前项目每 5 秒读取一次详情，不轮询版本列表，不重启任务。在资料或规划标签页且浏览器可见时执行；离开这两个标签页、切换项目、隐藏页面或卸载会清理定时器并中止请求，忽略迟到响应；ready/failed 或权限错误后停止。手动“刷新状态”保留。解析修订变更不会重置尚未保存的设置。解析失败的文件可直接重新解析，删除与重新解析按钮在两个标签页均可见。
 
 开发通知明确区分制稿执行器尚未接通。仅当真实文件状态已出现 parsing/stopping/ready/failed，才显示隔离本地解析说明，旧 queued 数据不会静态声称解析器已接通。SSO、PowerPoint 人工门和制稿 503 保护保持原样。
 
 解析增量随后已由父任务上线，并完成 10 项真实浏览器检查，详见 `integration/PARSE_BROWSER_RESULTS.md`；首次未通过尝试亦保留。历史 `integration/RESULTS.md` 仍是更早一轮 27 测试 / 11 浏览器检查证据。规划兼容与 CSRF 的本轮构建尚未部署，验证范围见 `integration/PLANNING_COMPATIBILITY.md`。
 
-## 验证范围与限制
+## 审核记录与审核稿修改（2026-10-27）
+
+`App.tsx` 的版本页在用户明确选择 review 草稿后挂载 `AcceptancePanel`，通过同源、既有鉴权和 CSRF 的 acceptance 接口读取及保存记录。审核组件的单页预览替代重复的整页网格；published 版本保留原预览与修改流程。可逐页记问题、记录实际 PowerPoint 版本及操作结果、读取历史、撤销记录。保存检查不会自动发布；完整验收状态仍由服务端保守返回。
+
+“将已保存问题带入修改”只读取最新、未撤销、未失效且匹配当前绑定的视觉检查记录。未保存的草稿不会进入修改意见。带入操作仅填写指定页和问题，用户仍须核对、单独同意外部模型传输并明确提交。也可在有效来源下手填整份或指定页意见。来源失效、读取失败或记录修订冲突时必须重新读取并核对；浏览器不自动替换审核绑定或重发修改任务。切换来源版本会清空修改草稿与本次同意，新版本到达不会自动切换所选来源。
+
+`onSnapshot` 将已读取/已保存的服务端快照交给版本页，`onUseFeedback` 传递完整来源绑定、审核记录修订、问题页号与问题文本。`api.reviewRevise` 发送独立的 `/review-revisions` 请求；既有 `/revisions` 继续只用于正式版本。本轮针对性测试覆盖真实组件接入、保存与重新读取、失效/撤销、未保存问题不带入、独立同意、准确来源和请求合同；测试及构建结果以服务器执行记录为准。
+
+## 历史验证范围与限制
 
 Vitest + Testing Library 验证快照失效、两阶段 selection payload、无方案不虚构、幂等与错误过滤、断线恢复/游标过期、真实取消状态、旧版基线保留、未知费用和源文本转义。测试 API 仅存在测试文件，产品无 mock fallback。27 项 Vitest / Testing Library 测试通过。另使用 `integration/browser_smoke.py` 对现有开发 API 做真实 Playwright DOM 集成，11 项检查通过，覆盖创建、同意与上传、设置、刷新恢复、预期执行 503 和 320/390px 布局边界，详见 `integration/RESULTS.md`。未启动真实模型、未验证完整生成执行器、正式 SSO、PowerPoint 人工验收或视觉验收。

@@ -26,11 +26,14 @@ import uuid
 
 from .execution import Attempt, ControlError, Handle, Layout, Observation, RuntimeConfig, RuntimeState, StopProof
 from .staging import atomic_json, read_json, relative
+from ppt_service.server.phase_limits import phase_pod_timeout_seconds, phase_timeout_seconds
 
-FINALIZER = 'ppt.panghuer.top/writers-stopped'
-SCOPE = 'ppt.panghuer.top/attempt'
-ROLE = 'ppt.panghuer.top/role'
-INTENT = 'ppt.panghuer.top/intent'
+METADATA_PREFIX = 'ppt-service.panghuer.top/'
+LEGACY_METADATA_PREFIX = 'ppt.panghuer.top/'
+FINALIZER = METADATA_PREFIX + 'writers-stopped'
+SCOPE = METADATA_PREFIX + 'attempt'
+ROLE = METADATA_PREFIX + 'role'
+INTENT = METADATA_PREFIX + 'intent'
 RESOURCES = {'pods': '/api/v1', 'secrets': '/api/v1',
              'networkpolicies': '/apis/networking.k8s.io/v1'}
 NAME = re.compile(r'[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?\Z')
@@ -41,6 +44,14 @@ MAX_API_BYTES = 8 * 1024**2
 def require(condition, code='invalid_kubernetes_configuration'):
     if not condition:
         raise ControlError(code)
+
+
+def metadata_keys(record):
+    # An existing authority journal keeps its exact resource identity scheme.
+    # Never guess a prefix from an untrusted Pod or mix selectors in one scope.
+    prefix = record.get('metadata_prefix', LEGACY_METADATA_PREFIX)
+    require(prefix in (METADATA_PREFIX, LEGACY_METADATA_PREFIX), 'execution_authority_mismatch')
+    return tuple(prefix + key for key in ('attempt', 'role', 'intent', 'writers-stopped'))
 
 
 @dataclass(frozen=True)
@@ -181,6 +192,7 @@ class KubernetesBackend:
         require(pins.get('namespace') == self.settings.namespace
                 and isinstance(pins.get('execution_image'), str) and IMAGE.fullmatch(pins['execution_image']),
                 'execution_runtime_mismatch')
+        metadata_keys(record)
         return record
 
     def runtime_pins(self):
@@ -210,7 +222,8 @@ class KubernetesBackend:
                 self._read(h)
             else:
                 audit = self.config.data_root.absolute() / f'projects/{a.project_id}/attempts/{a.job_id}/{a.attempt}-{a.token}/audit'
-                self._write(h, {'schema': 1, 'identity': {'uid': h.uid, 'job_id': h.job_id,
+                self._write(h, {'schema': 1, 'metadata_prefix': METADATA_PREFIX,
+                            'identity': {'uid': h.uid, 'job_id': h.job_id,
                             'attempt': h.attempt, 'token': h.token}, 'audit': str(audit),
                             'project_id': a.project_id, 'phase': a.phase, 'revoked': False,
                             'runtime': self.runtime_pins(), 'launch_not_started': True, 'resources': []})
@@ -234,7 +247,8 @@ class KubernetesBackend:
             if self._path(uid).exists():
                 self._read(h)
             else:
-                self._write(h, {'schema': 1, 'identity': {'uid': uid, 'job_id': h.job_id,
+                self._write(h, {'schema': 1, 'metadata_prefix': METADATA_PREFIX,
+                            'identity': {'uid': uid, 'job_id': h.job_id,
                             'attempt': 1, 'token': 1}, 'audit': str(self.authority / (uid + '-audit')),
                             'project_id': None, 'phase': 'parse', 'sandbox_only': True,
                             'runtime': self.runtime_pins(), 'revoked': False,
@@ -242,25 +256,27 @@ class KubernetesBackend:
         return h
 
     def _metadata(self, h, name, role):
+        scope_key, role_key, intent_key, _ = metadata_keys(self._read(h))
         return {'name': name, 'namespace': self.settings.namespace,
-                'labels': {SCOPE: h.uid, ROLE: role,
+                'labels': {scope_key: h.uid, role_key: role,
                            'app': {'worker': 'ppt-hermes-worker', 'proxy': 'ppt-model-proxy',
                                    'sandbox': 'ppt-sandbox'}.get(role, 'ppt-execution')},
-                'annotations': {INTENT: str(uuid.uuid4())}}
+                'annotations': {intent_key: str(uuid.uuid4())}}
 
     def create_resource(self, h, resource, body, *, sandbox=False):
         """Persist intent before POST. A lost response can only be reconciled by exact intent."""
         with self._locked(h.uid):
             record = self._read(h)
+            _, role_key, intent_key, _ = metadata_keys(record)
             require(record['runtime'] == self.runtime_pins(), 'execution_runtime_mismatch')
-            require(not record['revoked'] or (sandbox and body['metadata']['labels'][ROLE] == 'sandbox'
+            require(not record['revoked'] or (sandbox and body['metadata']['labels'][role_key] == 'sandbox'
                     and resource in ('pods', 'networkpolicies')
                     and all(e.get('stop_receipt') for e in record['resources'] if e['resource'] == 'pods'
                             and e['role'] != 'sandbox')), 'execution_revoked')
             name = body['metadata']['name']
             require(not any(r['resource'] == resource and r['name'] == name for r in record['resources']), 'execution_already_exists')
-            entry = {'resource': resource, 'name': name, 'intent': body['metadata']['annotations'][INTENT],
-                     'role': body['metadata']['labels'][ROLE], 'api_uid': None, 'submitted': True,
+            entry = {'resource': resource, 'name': name, 'intent': body['metadata']['annotations'][intent_key],
+                     'role': body['metadata']['labels'][role_key], 'api_uid': None, 'submitted': True,
                      'finalized': False, 'deleted': False}
             if resource == 'pods':
                 entry['execution_image'] = record['runtime']['execution_image']
@@ -273,11 +289,12 @@ class KubernetesBackend:
             return result
 
     def _bind(self, h, entry, obj):
+        scope_key, role_key, intent_key, _ = metadata_keys(self._read(h))
         meta = obj.get('metadata', {})
         require(meta.get('name') == entry['name'] and meta.get('namespace') == self.settings.namespace
-                and meta.get('labels', {}).get(SCOPE) == h.uid
-                and meta.get('labels', {}).get(ROLE) == entry['role']
-                and meta.get('annotations', {}).get(INTENT) == entry['intent']
+                and meta.get('labels', {}).get(scope_key) == h.uid
+                and meta.get('labels', {}).get(role_key) == entry['role']
+                and meta.get('annotations', {}).get(intent_key) == entry['intent']
                 and isinstance(meta.get('uid'), str) and bool(meta['uid']), 'kubernetes_resource_identity_mismatch')
         require(entry['api_uid'] in (None, meta['uid']), 'kubernetes_resource_uid_mismatch')
         if entry['resource'] == 'pods':
@@ -303,7 +320,8 @@ class KubernetesBackend:
         return obj
 
     def _pods(self, h, record):
-        result = self.client.request('GET', 'pods', query={'labelSelector': SCOPE + '=' + h.uid})
+        scope_key, _, _, _ = metadata_keys(record)
+        result = self.client.request('GET', 'pods', query={'labelSelector': scope_key + '=' + h.uid})
         require(isinstance(result.get('items'), list) and not result.get('metadata', {}).get('continue'), 'incomplete_execution_inventory')
         known = {e['name']: e for e in record['resources'] if e['resource'] == 'pods'}
         require(all(o.get('metadata', {}).get('name') in known for o in result['items']), 'untracked_execution_writer')
@@ -333,7 +351,7 @@ class KubernetesBackend:
                 'reserved_kubernetes_environment')
         env = [{'name': 'PPT_RUNTIME_WORKER_IMAGE', 'value': self.settings.worker_image}, *env]
         metadata = self._metadata(h, name, role)
-        metadata['finalizers'] = [FINALIZER]
+        metadata['finalizers'] = [metadata_keys(self._read(h))[3]]
         volumes = [{'name': 'data', 'persistentVolumeClaim': {'claimName': self.settings.pvc_name}},
                    {'name': 'tmp', 'emptyDir': {'medium': 'Memory', 'sizeLimit': '256Mi'}},
                    {'name': 'shm', 'emptyDir': {'medium': 'Memory', 'sizeLimit': '128Mi'}}]
@@ -361,13 +379,14 @@ class KubernetesBackend:
                          'containers': [container], 'volumes': volumes}}
 
     def policy(self, h, name, role):
-        selector = {SCOPE: h.uid, ROLE: role}
+        scope_key, role_key, _, _ = metadata_keys(self._read(h))
+        selector = {scope_key: h.uid, role_key: role}
         rules = {'podSelector': {'matchLabels': selector}, 'policyTypes': ['Ingress', 'Egress'], 'ingress': [], 'egress': []}
         port = [{'protocol': 'TCP', 'port': 8080}]
         if role == 'worker':
-            rules['egress'] = [{'to': [{'podSelector': {'matchLabels': {SCOPE: h.uid, ROLE: 'proxy'}}}], 'ports': port}]
+            rules['egress'] = [{'to': [{'podSelector': {'matchLabels': {scope_key: h.uid, role_key: 'proxy'}}}], 'ports': port}]
         elif role == 'proxy':
-            rules['ingress'] = [{'from': [{'podSelector': {'matchLabels': {SCOPE: h.uid, ROLE: 'worker'}}}], 'ports': port}]
+            rules['ingress'] = [{'from': [{'podSelector': {'matchLabels': {scope_key: h.uid, role_key: 'worker'}}}], 'ports': port}]
             rules['egress'] = [{'to': [{'ipBlock': {'cidr': self.config.approved_upstream_ip + '/32'}}],
                                 'ports': [{'protocol': 'TCP', 'port': 443}]}]
         return {'apiVersion': 'networking.k8s.io/v1', 'kind': 'NetworkPolicy',
@@ -409,8 +428,8 @@ class KubernetesBackend:
         worker = self.pod(h, h.worker_name, 'worker', 'ppt_service.worker.execute',
                           [(getattr(layout, part), '/work/' + part, part in ('inputs', 'task', 'base'))
                            for part in ('inputs', 'task', 'base', 'home', 'project', 'result')],
-                          env=worker_env, deadline=720 if a.phase.startswith('plan') else 1920,
-                          args=['--task', '/work/task/task.json', '--deadline', '600' if a.phase.startswith('plan') else '1800'])
+                          env=worker_env, deadline=phase_pod_timeout_seconds(a.phase),
+                          args=['--task', '/work/task/task.json', '--deadline', str(phase_timeout_seconds(a.phase))])
         worker['spec']['hostAliases'] = [{'ip': proxy_ip, 'hostnames': ['model-proxy']}]
         if self.before_worker is not None:
             # Production supplies a fresh DB fence/lease/cancellation check after
@@ -478,7 +497,7 @@ class KubernetesBackend:
                 record = self._read(h)
                 entry = next(e for e in record['resources'] if e['resource'] == 'pods' and e['name'] == name)
                 obj = self._get(h, entry)
-                require(obj is not None and FINALIZER in obj['metadata'].get('finalizers', []), 'execution_writer_missing')
+                require(obj is not None and metadata_keys(record)[3] in obj['metadata'].get('finalizers', []), 'execution_writer_missing')
                 self._write(h, record)
                 if self.terminated(obj):
                     return obj['status']['containerStatuses'][0]['state']['terminated']['exitCode']
@@ -487,17 +506,18 @@ class KubernetesBackend:
 
     def finish_sandbox(self, h, name):
         """Stop and retain proof for one sandbox without revoking the model attempt."""
+        deadline = self.monotonic() + self.settings.stop_timeout
         with self._locked(h.uid):
             record = self._read(h)
             entry = next(e for e in record['resources'] if e['resource'] == 'pods' and e['name'] == name)
             require(entry['role'] == 'sandbox', 'invalid_sandbox_identity')
             obj = self._get(h, entry)
-            require(obj is not None and FINALIZER in obj['metadata'].get('finalizers', []), 'execution_writer_missing')
+            require(obj is not None and metadata_keys(record)[3] in obj['metadata'].get('finalizers', []), 'execution_writer_missing')
             self._write(h, record)
             self.client.request('DELETE', 'pods', name,
                                 {'apiVersion': 'v1', 'kind': 'DeleteOptions', 'gracePeriodSeconds': 30,
                                  'preconditions': {'uid': entry['api_uid']}})
-        self.wait_pod(h, name, self.settings.stop_timeout)
+        self.wait_pod(h, name, max(0, deadline - self.monotonic()))
         with self._locked(h.uid):
             record = self._read(h)
             entry = next(e for e in record['resources'] if e['resource'] == 'pods' and e['name'] == name)
@@ -507,6 +527,22 @@ class KubernetesBackend:
                                      'status': obj['status'], 'terminated': True}
             self._write(h, record)
             self._remove_resource(h, record, entry, obj)
+        # DELETE acceptance does not mean the API has removed the Pod yet.
+        # Both views must settle before a caller can keep a successful result;
+        # prove_stopped deliberately rejects deleted entries still in LIST.
+        while self.monotonic() < deadline:
+            with self._locked(h.uid):
+                record = self._read(h)
+                entry = next(e for e in record['resources'] if e['resource'] == 'pods' and e['name'] == name)
+                obj = self._get(h, entry)
+                listed = self._pods(h, record).get(name)
+                require(all(self.terminated(candidate) for candidate in (obj, listed) if candidate is not None),
+                        'writers_not_stopped')
+                self._write(h, record)
+                if obj is None and listed is None:
+                    return
+            self.sleep(self.settings.poll_seconds)
+        raise ControlError('writers_not_stopped')
 
     def stop(self, h):
         with self._locked(h.uid):
@@ -520,7 +556,7 @@ class KubernetesBackend:
                     continue
                 obj = pods.get(entry['name'])
                 require(obj is not None, 'execution_writer_missing')
-                require(FINALIZER in obj['metadata'].get('finalizers', []), 'execution_finalizer_missing')
+                require(metadata_keys(record)[3] in obj['metadata'].get('finalizers', []), 'execution_finalizer_missing')
                 self.client.request('DELETE', 'pods', entry['name'],
                                     {'apiVersion': 'v1', 'kind': 'DeleteOptions', 'gracePeriodSeconds': 30,
                                      'preconditions': {'uid': entry['api_uid']}})
@@ -546,7 +582,7 @@ class KubernetesBackend:
                                 and obj is None, 'invalid_stop_receipt')
                         entry['deleted'] = True
                     else:
-                        require(obj is not None and (FINALIZER in obj['metadata'].get('finalizers', [])
+                        require(obj is not None and (metadata_keys(record)[3] in obj['metadata'].get('finalizers', [])
                                 or (entry.get('finalizer_release_requested') and entry.get('stop_receipt')))
                                 and self.terminated(obj), 'writers_not_stopped')
                         entry['stop_receipt'] = {'api_uid': entry['api_uid'],
@@ -585,14 +621,15 @@ class KubernetesBackend:
             require(self.terminated(obj) and entry.get('stop_receipt'), 'writers_not_stopped')
             meta = obj['metadata']
             finalizers = meta.get('finalizers', [])
-            require(FINALIZER in finalizers or entry.get('finalizer_release_requested'), 'execution_finalizer_missing')
+            finalizer = metadata_keys(record)[3]
+            require(finalizer in finalizers or entry.get('finalizer_release_requested'), 'execution_finalizer_missing')
             entry['finalizer_release_requested'] = True
             self._write(h, record)
-            if FINALIZER in finalizers:
+            if finalizer in finalizers:
                 self.client.request('PATCH', 'pods', entry['name'],
                     [{'op': 'test', 'path': '/metadata/uid', 'value': entry['api_uid']},
                      {'op': 'test', 'path': '/metadata/resourceVersion', 'value': meta['resourceVersion']},
-                     {'op': 'replace', 'path': '/metadata/finalizers', 'value': [f for f in finalizers if f != FINALIZER]}])
+                     {'op': 'replace', 'path': '/metadata/finalizers', 'value': [f for f in finalizers if f != finalizer]}])
             entry['finalized'] = True
             self._write(h, record)
         try:

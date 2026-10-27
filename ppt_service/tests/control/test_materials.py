@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import create_engine,select,text
 from sqlalchemy.orm import sessionmaker
 from ppt_service.server.models import Asset,Project,Job,ExecutionSlot,now
-from ppt_service.server.migrate import migrate
+from ppt_service.server.migrate import migrate,REVISION
 from ppt_service.server.repository import Repository
 from ppt_service.control.materials import MaterialParser,ControlError
 from ppt_service.control.execution import RuntimeConfig
@@ -32,7 +32,7 @@ def test_00_incremental_migration_preserves_original_rows():
     migrate(engine);migrate(engine)
     with engine.connect() as c:
         after=c.execute(text('SELECT id, project_id, storage_key, sha256, bytes FROM assets ORDER BY id')).all()
-        assert after==before;assert c.scalar(text('SELECT max(revision) FROM api_schema_revision'))==2
+        assert after==before;assert c.scalar(text('SELECT max(revision) FROM api_schema_revision'))==REVISION
         assert c.scalar(text('SELECT count(*) FROM assets WHERE parse_attempt IS NULL'))==0
     engine.dispose()
 
@@ -93,6 +93,23 @@ def test_failed_source_is_safe_and_never_executes_parser(ctx,problem):
     with sessions() as s:
         a=s.get(Asset,aid);assert a.parse_error==expected;assert a.text_summary is None
     assert runner.tick()['status']=='idle'
+
+@pytest.mark.parametrize('reason,expected',[
+    ('pdf_page_limit','pdf_page_limit'),
+    ('scanned_pdf_unsupported','scanned_pdf_unsupported'),
+    ('/private/source.pdf SECRET','parse_failed'),
+])
+def test_material_failure_preserves_only_known_parser_reasons(ctx,reason,expected):
+    sessions,runner,aid,pid,original,sandbox,*_=ctx
+    def reject(*args):raise ControlError(reason)
+    sandbox.parse=reject
+    assert runner.tick()['status']=='failed'
+    with sessions() as s:
+        asset=s.get(Asset,aid)
+        assert asset.parse_error==expected and asset.text_summary is None
+        assert asset.parse_status=='failed'
+        assert not s.scalars(select(Job).where(Job.project_id==pid)).all()
+
 
 def test_restart_requires_stop_proof_and_old_token_never_returns(ctx):
     sessions,runner,aid,pid,original,sandbox,scopes,_=ctx;old=runner.claim()

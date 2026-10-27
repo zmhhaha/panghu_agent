@@ -15,6 +15,7 @@ def test_connector_suites_use_separate_pytest_processes_and_keep_real_postgres()
     assert groups[1] == ['tests/scientific_pi/api/test_agent_service.py',
                          'tests/scientific_pi/api/test_academic_observations.py']
     assert groups[2] == ['ppt_service/tests/control/test_agent_connector.py']
+    assert groups[3] == ['ppt_service/tests/server/test_acceptance_migration.py']
     assert runner.test_targets('postgres') == [['tests/agent_service/test_postgres.py']]
 
 

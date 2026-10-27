@@ -8,6 +8,7 @@ import json,os,secrets,subprocess,tempfile,uuid,re
 from pathlib import Path
 from .execution import *
 from .staging import atomic_json,read_json
+from ppt_service.server.phase_limits import phase_timeout_seconds
 
 LABEL='io.ppt-service.control'
 class CommandRunner:
@@ -95,7 +96,7 @@ class DockerBackend:
         self.docker.call('network','connect','--ip','172.30.240.2','--alias','model-proxy',wb,h.proxy_name)
         worker=secure_container(h.worker_name,h.uid)+['--network',wb,'--ip','172.30.240.3','--add-host','model-proxy:172.30.240.2','--env','PPT_MODEL=gpt-6.1-sol','--env','PPT_MODEL_PROXY_ORIGIN=http://model-proxy:8080','--env','PPT_MODEL_BASE_URL=http://model-proxy:8080/v1','--env','PPT_MODEL_API_KEY='+key]
         for part in ('inputs','task','base','home','project','result'):worker+=mount(getattr(layout,part),'/work/'+part,part in ('inputs','task','base'))
-        worker+=['--entrypoint','/opt/hermes/.venv/bin/python',self.config.worker_image,'-m','ppt_service.worker.execute','--task','/work/task/task.json','--deadline','600' if a.phase.startswith('plan') else '1800']
+        worker+=['--entrypoint','/opt/hermes/.venv/bin/python',self.config.worker_image,'-m','ppt_service.worker.execute','--task','/work/task/task.json','--deadline',str(phase_timeout_seconds(a.phase))]
         self.docker.call(*worker)
         # Persist identity before starting either process. Proxy key never enters DB.
         atomic_json(layout.audit/'execution-handle.json',{'uid':h.uid,'worker':h.worker_name,'proxy':h.proxy_name,'job_id':a.job_id,'attempt':a.attempt,'token':a.token})
@@ -145,13 +146,18 @@ class DockerSandbox:
                 _,raw=self.docker.call('wait',name,timeout=timeout)
                 code=int(raw.strip())
                 result=read_json(output,output_name,8*1024**2)
+                if module=='ppt_service.control.parsing':
+                    if code!=0:
+                        reason=parse_failure_reason(result,request.get('input_snapshot_sha256'))
+                        raise ControlError(reason or 'parse_failed')
+                    if not isinstance(result,dict) or 'error_code' in result or result.get('status')=='failed' or result.get('schema')==PARSE_FAILURE_SCHEMA:raise ControlError('parse_failed')
                 if code!=0:raise ControlError(result.get('error_code','sandbox_failed'))
                 return result
             finally:
                 # Forced removal tears down the complete sandbox namespace on timeout.
                 self.docker.call('rm','--force','--volumes',name,timeout=30,check=False)
     def parse(self,inputs,inventory):
-        return self._run('ppt_service.control.parsing',[(inputs,'/inputs')],{},'parsed.json',self.config.parse_timeout)
+        return self._run('ppt_service.control.parsing',[(inputs,'/inputs')],{'input_snapshot_sha256':inventory.get('input_snapshot_sha256')},'parsed.json',self.config.parse_timeout)
     def validate(self,snapshot,request):
         """Persistent, bounded validation evidence; parse() keeps its old path."""
         from .staging import open_regular,copy_tree,make_readonly,relative

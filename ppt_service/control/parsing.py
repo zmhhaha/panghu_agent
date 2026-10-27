@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse,hashlib,json,stat,zipfile,xml.etree.ElementTree as ET
 from pathlib import Path
 from .staging import open_regular,relative,read_json,atomic_json
-from .execution import ControlError
+from .execution import ControlError,parse_failure_report
 MAX_BYTES=25*1024**2
 MAX_TEXT=500_000
 MAX_TOTAL_TEXT=1_500_000
@@ -100,10 +100,13 @@ def parse_inputs(root:Path,inventory:dict):
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--inputs',type=Path,default=Path('/inputs'));parser.add_argument('--output',type=Path,default=Path('/output/parsed.json'));args=parser.parse_args()
+    inventory=None
     try:
         inventory=read_json(args.inputs,'inventory.json',1024**2)
         result=parse_inputs(args.inputs,inventory);atomic_json(args.output,result);return 0
-    except Exception:
+    except Exception as exc:
         # Parser diagnostics never disclose source text, filesystem paths or stack.
-        atomic_json(args.output,{'error_code':'parse_failed'});return 2
+        code=exc.code if isinstance(exc,ControlError) else 'parse_failed'
+        snapshot=inventory.get('input_snapshot_sha256') if isinstance(inventory,dict) else None
+        atomic_json(args.output,parse_failure_report(code,snapshot));return 2
 if __name__=='__main__':raise SystemExit(main())

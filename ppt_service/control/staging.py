@@ -156,6 +156,8 @@ class Stager:
         settings=a.snapshot.get('settings',{})
         context=a.snapshot.get('control_context',{})
         settings=settings|{'title':a.snapshot.get('title',''),'source_inventory':'/work/inputs/inventory.json','parsed_materials':'/work/inputs/parsed.json','revision_pages':a.snapshot.get('pages',[])}
+        if 'review_base' in a.snapshot:
+            settings=settings|{'review_draft_branch':True,'delivery_status':'review'}
         inventory=read_json(layout.inputs,'inventory.json')
         assets=[{**source,'path':'/work/inputs/'+source['path'],'display_name':source['id']+EXT[source['media_type']]} for source in inventory['sources']]
         task={'schema_version':1,'job_id':a.job_id,'attempt':a.attempt,'phase':a.phase,'session_id':a.session_id,'input_snapshot_sha256':a.snapshot['hash'],'requirements':settings|{'pages':settings.get('page_count',8),'external_model_acknowledged':True},'assets':assets,'feedback':a.snapshot.get('feedback',''),'base_version_id':a.base_version_id}

@@ -27,7 +27,7 @@ cleanup() {
   trap - EXIT
   for name in "$extract_name" "$test_name"; do
     if docker container inspect "$name" >/dev/null 2>&1; then
-      actual_owner=$(docker container inspect --format '{{index .Config.Labels "ppt.panghuer.top/owner"}}' "$name")
+      actual_owner=$(docker container inspect --format '{{index .Config.Labels "ppt-service.panghuer.top/owner"}}' "$name")
       [[ "$actual_owner" == "$owner" ]] || exit 3
       docker rm -f "$name" >/dev/null
     fi
@@ -44,7 +44,7 @@ cleanup() {
 trap cleanup EXIT
 docker image inspect --format '{{.Id}} {{.Architecture}} {{json .RepoDigests}}' "$proxy_id" > "$case_dir/output/proxy-image.txt"
 docker image inspect --format '{{.Id}} {{.Architecture}}' "$site_id" > "$case_dir/output/site-image.txt"
-docker create --name "$extract_name" --network none --label "ppt.panghuer.top/owner=$owner" "$proxy_id" >/dev/null
+docker create --name "$extract_name" --network none --label "ppt-service.panghuer.top/owner=$owner" "$proxy_id" >/dev/null
 docker cp "$extract_name:/bin/oauth2-proxy" "$case_dir/bin/oauth2-proxy"
 docker rm "$extract_name" >/dev/null
 chmod 0555 "$case_dir/bin/oauth2-proxy"
@@ -52,7 +52,7 @@ sha256sum "$case_dir/bin/oauth2-proxy" "$case_dir/input/synthetic_oidc.py" "$cas
 set +e
 docker run --rm --name "$test_name" --pull=never --network none --read-only \
   --user 10000:10000 --cap-drop ALL --security-opt no-new-privileges \
-  --memory 1g --cpus 1 --pids-limit 128 --label "ppt.panghuer.top/owner=$owner" \
+  --memory 1g --cpus 1 --pids-limit 128 --label "ppt-service.panghuer.top/owner=$owner" \
   --tmpfs /tmp:rw,nosuid,nodev,noexec,size=128m,uid=10000,gid=10000,mode=0700 \
   --mount "type=bind,src=$case_dir/input,dst=/tests,readonly" \
   --mount "type=bind,src=$case_dir/bin,dst=/probe-bin,readonly" \

@@ -1,6 +1,6 @@
 # PPT 服务器部署
 
-PPT 使用 `ppt-service` namespace，公开地址为 `https://ppt.panghuer.top`。在服务器仓库的 `panghu_agent/ppt_service` 目录运行 [deploy.sh](../../deploy.sh)，完成镜像构建与推送、数据库初始化或升级、存储检查和网站发布。
+PPT 使用 `ppt-service` namespace，公开地址为 `https://ppt-service.panghuer.top`。在服务器仓库的 `panghu_agent/ppt_service` 目录运行 [deploy.sh](../../deploy.sh)，完成镜像构建与推送、数据库初始化或升级、存储检查和网站发布。
 
 网站与 OAuth 代理位于同一 Pod，Service 只暴露代理的 4180 端口；API 仅监听 `127.0.0.1:8000`。网站使用独立 PostgreSQL 和 Ceph PVC。Pi 模型生成尚未接通，部署保持 `PPT_EXECUTION_ENABLED=false`，生成请求仍返回 `503 execution_not_connected`。
 
@@ -15,6 +15,19 @@ PPT 使用 `ppt-service` namespace，公开地址为 `https://ppt.panghuer.top`�
 | 镜像、数据库、存储与权限合同 | [CONTRACT.md](CONTRACT.md) |
 
 Casdoor 和 Cloudflare 由用户在后台配置。公开认证配置集中在仓库的 `oauth/k8s`，凭据由 Vault/ESO 同步，业务目录引用这些配置。
+
+## 域名统一
+
+公开域名、回调和允许的 Origin 统一使用 `ppt-service.panghuer.top`；Kubernetes namespace
+仍是 `ppt-service`，现有 `ppt-site`、PostgreSQL、Secret 和 PVC 名称不变。域名切换后的
+首次部署应提供现有应用的 `PPT_CLIENT_ID`，或使用 `configure-ppt.py` 生成新的
+`PPT_AUTH_CONFIG`，以更新线上原有的域名配置。用户需要在新域名重新登录。
+
+新任务的 Kubernetes metadata 前缀为 `ppt-service.panghuer.top/`。控制器将前缀记录在
+私有 authority journal 中；缺少此前缀字段的历史任务继续使用旧前缀，按原有精确 UID、
+完整容器停止状态和 finalizer 证明收尾，不强删资源。已有 PVC 的初始化状态和 UID 标记
+兼容读取旧前缀，写入时以 UID 和 resourceVersion 为条件迁至新键；两套键冲突时停止部署。
+此次变更不迁移存储、数据库或 Python 包 `ppt_service`。
 
 ## 服务器标准入口
 
@@ -32,7 +45,7 @@ bash deploy.sh
 
 同一命令用于后续发布。脚本默认先构建、验证并推送站点镜像，再同步凭据、启动独立 PostgreSQL、处理数据库初始化或 schema 升级、检查运行角色与数据目录，最后发布网站。已存在的数据库不因重复部署被清空；异常的部分初始化状态会停止部署并要求排查。
 
-当前目标为 schema 3，包含通用 Agent 接入的 `AgentOutbox`。普通 `bash deploy.sh` 会将已有 schema 0/1/2 升到 3，已为 3 时跳过迁移；迁移后未达到目标或发现比应用更新的版本时停止发布。网站就绪检查跟随镜像内的迁移版本。数据库升级会保留既有执行后端，业务切换仍按 [通用 Agent 接线](../agent/README.md) 单独完成。
+当前目标为 schema 4，包含通用 Agent 接入的 `AgentOutbox`。普通 `bash deploy.sh` 会将已有 schema 0/1/2/3 升到 4，已为 4 时跳过迁移；迁移后未达到目标或发现比应用更新的版本时停止发布。网站就绪检查跟随镜像内的迁移版本。数据库升级会保留既有执行后端，业务切换仍按 [通用 Agent 接线](../agent/README.md) 单独完成。
 
 如需先完成镜像构建，再发布：
 
@@ -56,6 +69,20 @@ bash deploy.sh --skip-build
 
 应用数据库为 `ppt_service`，使用 `ppt_migrator` 和 `ppt_runtime` 两个独立角色；`postgres` 仅为初始化/维护数据库。两份 `DATABASE_URL` 必须使用 `postgresql+psycopg://`，目标为 `ppt-postgres.ppt-service.svc.cluster.local:5432/ppt_service`。bootstrap 凭据仅给 PostgreSQL，迁移角色负责 schema，网站运行角色只能访问所需数据且不能修改 schema revision。
 
+当前目标为 schema revision 4。revision 3 在事务内新增 `ppt_acceptance_streams` 和
+`ppt_acceptance_entries`，revision 4 新增 `ppt_agent_outbox`。保留原项目、附件、版本、
+检查点和审核历史，不会重写历史业务行。
+若旧 revision 中已经存在同名审核表，迁移停止并保留冲突对象，不能将独立演示数据自动接入正式服务。
+审核记录只允许追加；PostgreSQL 触发器拒绝修改、删除旧 entry，运行角色也没有这些操作和
+`TRUNCATE` 的权限。撤销通过新增记录实现，stream 的 `UPDATE` 仅供正常审核修订 CAS。
+早期 Agent 分支测试库的另一种 revision 3 缺少正式审核表，会停止迁移并保留原库待检查；
+不得通过改写正式库 revision 或自动补造审核历史绕过检查。
+部署运行检查必须确认 revision 4、Outbox CRUD 权限及上述审核权限边界后才启动新站点。
+
+回滚应用镜像不能删除新增审核历史或降低 schema revision。若需要回滚，选择能够读取 schema 4
+的兼容镜像，并保留当前表和记录；旧版部署脚本会拒绝它不认识的新 revision。
+当前项目删除为撤权/软删除与停写协调，不物理清理审核记录；将来的彻底清理必须另有明确流程。
+
 `ppt-data` 使用 20 GiB RWX CephFS，挂载到 `/var/lib/ppt-service`，应用数据位于 `state` 子目录；`ppt-postgres-data` 使用 10 GiB RWO RBD。首次部署会运行非 root 的目录初始化 Job，在新空卷上创建 `state`，UID/GID 为 `10000:10000`、权限为 `0700`，完成后才发布网站。
 
 仅脚本新建的动态 CephFS PVC 在首次初始化期间使用 `fsGroup=10000`；状态与 PVC UID 绑定，拉取镜像或 CSI 暂时失败后可修复原因并重跑普通部署。网站和已有卷的检查不使用 `fsGroup`，不会递归修改旧数据权限。已有 `state` 须符合 UID/GID 和 `0700` 要求；其他情况报错后由部署者核对。详细约定见 [运行合同](CONTRACT.md#storage-and-security)。
@@ -70,7 +97,7 @@ kubectl -n ppt-service get pods,pvc,externalsecret
 kubectl -n ppt-service rollout status deployment/ppt-site --timeout=300s
 ```
 
-站点就绪后访问 `https://ppt.panghuer.top`，完成 [真实登录、邮箱准入、Cookie/CSRF 和匿名资产拒绝检查](../../../../oauth/k8s/PPT.md#6-部署后验收)。网络策略应实际允许入口 4180、数据库 5432 和指定 Casdoor HTTPS 路径，并拒绝其他访问；Pod Ready 不能代替这些检查。
+站点就绪后访问 `https://ppt-service.panghuer.top`，完成 [真实登录、邮箱准入、Cookie/CSRF 和匿名资产拒绝检查](../../../../oauth/k8s/PPT.md#6-部署后验收)。网络策略应实际允许入口 4180、数据库 5432 和指定 Casdoor HTTPS 路径，并拒绝其他访问；Pod Ready 不能代替这些检查。
 
 凭据同步失败先看 [ESO 排错](../../../../vault/inventory/PPT-SERVICE.md#排查首次部署的凭据同步失败)。数据库初始化、迁移或目录检查失败时，先查对应错误和已有资源状态，保留数据；修复原因后重跑 `bash deploy.sh`。凭据值、完整数据库 URL 和 Pod 环境不要输出到日志。
 

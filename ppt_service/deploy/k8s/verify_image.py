@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 import jwt
-from sqlalchemy import create_engine, select, func
+from sqlalchemy import create_engine, select, func, inspect, text
 from sqlalchemy.pool import StaticPool
 from ppt_service.server.auth import Settings
 from ppt_service.server.migrate import migrate
@@ -33,6 +33,9 @@ def main():
         assert hashlib.sha256(data).hexdigest() == expected['sha256']
     engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
     migrate(engine)
+    with engine.connect() as db:
+        assert db.scalar(text('SELECT max(revision) FROM api_schema_revision')) == 3
+    assert {'ppt_acceptance_entries', 'ppt_acceptance_streams'}.issubset(inspect(engine).get_table_names())
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     token = jwt.encode({'iss': 'https://p1.test', 'sub': 'p1-owner', 'aud': 'p1',
                         'email': 'p1-owner@ppt.test',
@@ -60,6 +63,11 @@ def main():
         me = client.get('/api/v1/me', headers=headers)
         assert me.status_code == 200
         headers |= {'Origin': 'https://ppt.test', 'X-CSRF-Token': me.json()['csrf_token']}
+        # Real mounted review routes retain normal authentication and ownership;
+        # a synthetic nonexistent version never creates a record or a model Job.
+        review_path = '/api/v1/projects/synthetic/versions/synthetic/acceptance'
+        assert client.get(review_path).status_code == 401
+        assert client.get(review_path, headers=headers).status_code == 404
         assert client.post('/api/v1/projects', headers=headers, json={'title': 'P1 image-only fixture'}).status_code == 201
         assert client.post('/api/v1/projects/synthetic/plans', headers=headers, json={}).status_code == 503
         with site.state.sessions() as session:
@@ -70,6 +78,7 @@ def main():
     engine.dispose()
     print(json.dumps({'installed_image': True, 'runtime_inputs_verified': len(inputs),
                       'bundled_http_assets': asset_count, 'real_signed_jwt': True,
+                      'review_schema_revision': 3, 'review_routes_authenticated': True,
                       'execution_disabled': True, 'model_requests': 0, 'production_ready': False}))
 
 

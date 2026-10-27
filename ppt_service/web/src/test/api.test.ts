@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { defaultSettings, type Project } from '../domain';
+import { syntheticSnapshot } from '../acceptance/fixtures';
 
 let client:typeof import('../api');
 const response=(body:unknown,status=200)=>new Response(JSON.stringify(body),{status});
@@ -12,6 +13,32 @@ beforeEach(async()=>{vi.resetModules();client=await import('../api');});
 afterEach(()=>{vi.unstubAllGlobals();});
 
 describe('profile and CSRF recovery lifecycle',()=>{
+ it('binds review-only revision to the explicit draft and current saved review without a project PATCH',async()=>{
+  const fetcher=vi.fn().mockResolvedValueOnce(response({csrf_token:'fixture-token'})).mockResolvedValueOnce(response({job_id:'new-review-job'},202));
+  vi.stubGlobal('fetch',fetcher);await client.api.me();
+  const project:Project={id:'p',title:'fixture',stage:'awaiting_review',revision:7,input_snapshot_hash:'snapshot',settings:defaultSettings,assets:[]};
+  const binding={...syntheticSnapshot('review-1').binding,project_id:'p'};
+  await expect(client.api.reviewRevise(project,'review-1',[2],'修正标题重叠',binding,3,true)).resolves.toEqual({job_id:'new-review-job'});
+  expect(fetcher.mock.calls.map(([url])=>url)).toEqual(['/api/v1/me','/api/v1/projects/p/review-revisions']);
+  const request=fetcher.mock.calls[1][1];expect(request.method).toBe('POST');
+  expect(JSON.parse(request.body)).toEqual({expected_revision:7,base_version_id:'review-1',pages:[2],feedback:'修正标题重叠',review_binding:binding,review_revision:3,external_model_ack:true});
+  expect(request.headers.get('X-CSRF-Token')).toBe('fixture-token');expect(request.headers.get('Idempotency-Key')).toBeTruthy();
+ });
+
+ it('never sends a review revision without fresh explicit external-model consent',async()=>{
+  const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);
+  const project:Project={id:'p',title:'fixture',stage:'awaiting_review',revision:7,input_snapshot_hash:'snapshot',settings:defaultSettings,assets:[],external_model_ack:true};
+  await expect(client.api.reviewRevise(project,'review-1',[],'调整布局',syntheticSnapshot('review-1').binding,0,false)).rejects.toMatchObject({code:'CONSENT_REQUIRED'});
+  expect(fetcher).not.toHaveBeenCalled();
+ });
+
+ it('keeps a stale review error safe and never retries a write or substitutes a newer review binding',async()=>{
+  const fetcher=vi.fn().mockResolvedValue(response({detail:{code:'review_records_changed'}},409));vi.stubGlobal('fetch',fetcher);
+  const project:Project={id:'p',title:'fixture',stage:'awaiting_review',revision:7,input_snapshot_hash:'snapshot',settings:defaultSettings,assets:[]};
+  await expect(client.api.reviewRevise(project,'review-1',[],'调整布局',syntheticSnapshot('review-1').binding,2,true)).rejects.toMatchObject({code:'REVIEW_RECORDS_CHANGED',status:409});
+  expect(fetcher).toHaveBeenCalledOnce();expect(client.safeError(new client.ApiError('review_records_changed',409))).toContain('重新读取记录');
+ });
+
  it('shares only pending profile reads and fetches the next identity afresh',async()=>{
   const pending=deferred<Response>();
   const fetcher=vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValueOnce(response({sub:'second-user',csrf_token:'second-fixture'}));
@@ -76,6 +103,58 @@ describe('profile and CSRF recovery lifecycle',()=>{
   expect(first.headers.get('Idempotency-Key')).toBe(retry.headers.get('Idempotency-Key'));
   expect(retry.headers.get('Content-Type')).toBeNull();
   expect(retry.headers.get('X-CSRF-Token')).toBe('fresh-fixture');
+ });
+
+ it('removes only the selected asset at the expected project revision and preserves its DELETE intent on CSRF recovery',async()=>{
+  const fetcher=vi.fn().mockResolvedValueOnce(response({csrf_token:'old-fixture'}))
+   .mockResolvedValueOnce(response({detail:{code:'csrf_rejected'}},403))
+   .mockResolvedValueOnce(response({csrf_token:'fresh-fixture'}))
+   .mockResolvedValueOnce(response({revision:8}));
+  vi.stubGlobal('fetch',fetcher);await client.api.me();
+  const project:Project={id:'project / fixture',title:'fixture',stage:'draft',revision:7,input_snapshot_hash:'snapshot',settings:defaultSettings,assets:[]};
+  await client.api.removeAsset(project,'asset / fixture');
+  const expected='/api/v1/projects/project%20%2F%20fixture/assets/asset%20%2F%20fixture?expected_revision=7';
+  expect(fetcher.mock.calls.map(([url])=>url)).toEqual(['/api/v1/me',expected,'/api/v1/me',expected]);
+  const first=fetcher.mock.calls[1][1];const retry=fetcher.mock.calls[3][1];
+  expect(first.method).toBe('DELETE');expect(retry.method).toBe('DELETE');
+  expect(retry.body).toBe(first.body);
+  expect(retry.headers.get('Idempotency-Key')).toBe(first.headers.get('Idempotency-Key'));
+  expect(retry.headers.get('X-CSRF-Token')).toBe('fresh-fixture');
+ });
+
+ it('reparses only the selected asset with the expected revision and preserves its POST intent through CSRF recovery',async()=>{
+  const queued={revision:8,asset_id:'asset / fixture',parse_status:'queued'};
+  const fetcher=vi.fn().mockResolvedValueOnce(response({csrf_token:'old-fixture'}))
+   .mockResolvedValueOnce(response({detail:{code:'csrf_rejected'}},403))
+   .mockResolvedValueOnce(response({csrf_token:'fresh-fixture'}))
+   .mockResolvedValueOnce(response(queued));
+  vi.stubGlobal('fetch',fetcher);await client.api.me();
+  const project:Project={id:'project / fixture',title:'fixture',stage:'draft',revision:7,input_snapshot_hash:'snapshot',settings:defaultSettings,assets:[]};
+  await expect(client.api.reparseAsset(project,'asset / fixture')).resolves.toEqual(queued);
+  const expected='/api/v1/projects/project%20%2F%20fixture/assets/asset%20%2F%20fixture/reparse';
+  expect(fetcher.mock.calls.map(([url])=>url)).toEqual(['/api/v1/me',expected,'/api/v1/me',expected]);
+  const first=fetcher.mock.calls[1][1];const retry=fetcher.mock.calls[3][1];
+  expect(first.method).toBe('POST');expect(retry.method).toBe('POST');
+  expect(JSON.parse(first.body)).toEqual({expected_revision:7});expect(retry.body).toBe(first.body);
+  expect(first.headers.get('Idempotency-Key')).toBeTruthy();
+  expect(retry.headers.get('Idempotency-Key')).toBe(first.headers.get('Idempotency-Key'));
+  expect(first.headers.get('X-CSRF-Token')).toBe('old-fixture');
+  expect(retry.headers.get('X-CSRF-Token')).toBe('fresh-fixture');
+  expect(retry.headers.get('Content-Type')).toBe('application/json');
+ });
+
+ it.each([
+  ['asset_parse_not_failed','此文件当前不是解析失败状态'],
+  ['asset_parse_busy','此文件仍有解析任务正在处理'],
+ ])('shows a safe actionable message for a %s reparse rejection without replaying it',async(code,message)=>{
+  const fetcher=vi.fn().mockResolvedValue(response({detail:{code,message:'/work/private secret-token https://internal.invalid'}},409));
+  vi.stubGlobal('fetch',fetcher);
+  const project:Project={id:'fixture',title:'fixture',stage:'draft',revision:7,input_snapshot_hash:'snapshot',settings:defaultSettings,assets:[]};
+  const failure=await client.api.reparseAsset(project,'source').catch(error=>error);
+  expect(failure).toMatchObject({code:code.toUpperCase(),status:409});
+  expect(client.safeError(failure)).toContain(message);
+  expect(client.safeError(failure)).not.toMatch(/secret-token|\/work|https?:|internal/);
+  expect(fetcher).toHaveBeenCalledTimes(1);
  });
 
  it('stops after a second CSRF rejection and shows a specific recovery message',async()=>{

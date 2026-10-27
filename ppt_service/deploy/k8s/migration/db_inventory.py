@@ -21,7 +21,8 @@ from snapshot import Refused, atomic_json, encoded, open_parent, read_json
 
 SCHEMA = "ppt-service.p1.database.v1"
 TABLES = ("api_schema_revision", "assets", "checkpoints", "execution_slots", "idempotency_keys",
-          "job_events", "jobs", "plans", "projects", "usage_records", "user_quotas", "versions")
+          "job_events", "jobs", "plans", "ppt_acceptance_entries", "ppt_acceptance_streams", "ppt_agent_outbox",
+          "projects", "usage_records", "user_quotas", "versions")
 INDEX_CAST_RULE = "ppt-jobs-active-index-cast-v1"
 # PostgreSQL 16 pg_dump/restore reparses this one partial-index predicate by
 # distributing the text[] cast over its varchar elements. These are the two

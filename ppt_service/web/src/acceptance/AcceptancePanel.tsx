@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, safeError } from '../api';
 import { acceptanceClient, assertSnapshot, rasterPreviewUrl } from './client';
 import { powerpointDraft, powerpointValidation, visualDraft } from './drafts';
-import type { AcceptanceClient, AcceptanceCommand, AcceptancePage, AcceptanceRecord, AcceptanceSnapshot, CheckVerdict, IssueCategory, IssueSeverity, PageReview, PageVerdict, PowerPointReview, VisualReview } from './contracts';
+import type { AcceptanceBinding, AcceptanceClient, AcceptanceCommand, AcceptancePage, AcceptanceRecord, AcceptanceSnapshot, CheckVerdict, IssueCategory, IssueSeverity, PageReview, PageVerdict, PowerPointReview, VisualReview } from './contracts';
 import './acceptance.css';
 
 const reviewLabels = { pending: '待检查', passed: '已通过', needs_changes: '需修改' };
@@ -24,13 +24,20 @@ function errorText(error: unknown): string {
   return safeError(error);
 }
 
-export interface AcceptancePanelProps { projectId: string; versionId: string; client?: AcceptanceClient }
+export interface SavedReviewFeedback { binding: AcceptanceBinding; reviewRevision: number; pages: number[]; feedback: string }
+export interface AcceptancePanelProps {
+  projectId: string;
+  versionId: string;
+  client?: AcceptanceClient;
+  onSnapshot?: (snapshot: AcceptanceSnapshot | null) => void;
+  onUseFeedback?: (feedback: SavedReviewFeedback) => void;
+}
 /** A keyed boundary discards drafts and suppresses in-flight responses when the selected version changes. */
-export function AcceptancePanel({ projectId, versionId, client = acceptanceClient }: AcceptancePanelProps) {
-  return <AcceptanceWorkspace key={JSON.stringify([projectId, versionId])} projectId={projectId} versionId={versionId} client={client} />;
+export function AcceptancePanel({ projectId, versionId, client = acceptanceClient, onSnapshot, onUseFeedback }: AcceptancePanelProps) {
+  return <AcceptanceWorkspace key={JSON.stringify([projectId, versionId])} projectId={projectId} versionId={versionId} client={client} onSnapshot={onSnapshot} onUseFeedback={onUseFeedback} />;
 }
 
-function AcceptanceWorkspace({ projectId, versionId, client }: Required<AcceptancePanelProps>) {
+function AcceptanceWorkspace({ projectId, versionId, client, onSnapshot, onUseFeedback }: AcceptancePanelProps & { client: AcceptanceClient }) {
   const [snapshot, setSnapshot] = useState<AcceptanceSnapshot | null>(null);
   const [visual, setVisual] = useState<VisualReview | null>(null);
   const [powerpoint, setPowerpoint] = useState<PowerPointReview | null>(null);
@@ -49,6 +56,7 @@ function AcceptanceWorkspace({ projectId, versionId, client }: Required<Acceptan
   const snapshotRef = useRef<AcceptanceSnapshot | null>(null);
   const draftsRef = useRef({ visual, powerpoint });
   draftsRef.current = { visual, powerpoint };
+  const snapshotObserver = useRef(onSnapshot); snapshotObserver.current = onSnapshot;
 
   const accept = useCallback((next: AcceptanceSnapshot, kind?: AcceptanceCommand['kind']) => {
     const previous = snapshotRef.current;
@@ -61,7 +69,7 @@ function AcceptanceWorkspace({ projectId, versionId, client }: Required<Acceptan
       setSelectedPage(0); setLoadedPreviews({});
       if (previous && (visualDirty || powerpointDirty)) setNotice('版本来源已变化，旧来源的未保存草稿已清空，请重新检查。');
     } else if (!kind && (visualDirty || powerpointDirty)) setNotice('已重新读取服务端记录，未保存草稿已保留。请核对最新记录后再保存。');
-    snapshotRef.current = next; setSnapshot(next);
+    snapshotRef.current = next; setSnapshot(next); snapshotObserver.current?.(next);
   }, []);
 
   const load = useCallback(async () => {
@@ -74,13 +82,14 @@ function AcceptanceWorkspace({ projectId, versionId, client }: Required<Acceptan
       const next = assertSnapshot(await client.load(projectId, versionId, abort.signal), projectId, versionId);
       if (mounted.current && generation.current === attempt) { accept(next); setSelectedPage(0); setRevokeId(''); setRevokeReason(''); }
     } catch (failure) {
-      if (mounted.current && generation.current === attempt && !abort.signal.aborted) setError(failure);
+      if (mounted.current && generation.current === attempt && !abort.signal.aborted) { setError(failure); snapshotObserver.current?.(null); }
     } finally { if (mounted.current && generation.current === attempt) setLoading(false); }
   }, [accept, client, projectId, versionId]);
 
   useEffect(() => {
     mounted.current = true; busy.current = false; setSaving(false);
     snapshotRef.current = null; setSnapshot(null); setVisual(null); setPowerpoint(null); setLoadedPreviews({});
+    snapshotObserver.current?.(null);
     void load();
     return () => { mounted.current = false; ++generation.current; controller.current?.abort(); };
   }, [load]);
@@ -97,7 +106,7 @@ function AcceptanceWorkspace({ projectId, versionId, client }: Required<Acceptan
         accept(next, affectedKind); setNotice(command.kind === 'revoke' ? '已保存撤销记录，历史检查仍可查看。' : '检查记录已保存至服务端。');
         setRevokeId(''); setRevokeReason('');
       }
-    } catch (failure) { if (mounted.current && generation.current === attempt) setError(failure); }
+    } catch (failure) { if (mounted.current && generation.current === attempt) { setError(failure); if (failure instanceof ApiError && [401, 403, 404, 409].includes(failure.status)) snapshotObserver.current?.(null); } }
     finally { if (mounted.current && generation.current === attempt) { busy.current = false; setSaving(false); } }
   }
 
@@ -110,6 +119,16 @@ function AcceptanceWorkspace({ projectId, versionId, client }: Required<Acceptan
   const powerpointError = powerpoint && snapshot ? powerpointValidation(powerpoint, snapshot.native_chart_count) : '';
   const currentPreviewLoaded = page && loadedPreviews[`${page.number}:${page.preview_sha256}`] && !!rasterPreviewUrl(versionId, page.number, page.preview_url);
   const unseenPassingPages = visual?.pages.some(review => review.verdict === 'pass' && !loadedPreviews[`${review.number}:${review.preview_sha256}`]);
+  // The latest saved observation owns the conclusion; revocation never revives
+  // an older record. Unsaved form edits are deliberately excluded from feedback.
+  const latestVisual = snapshot?.records.slice().reverse().find(record => record.kind === 'visual_review');
+  const savedChanges = snapshot?.can_review && latestVisual && !latestVisual.stale && !latestVisual.revoked && JSON.stringify(latestVisual.binding) === JSON.stringify(snapshot.binding)
+    ? (latestVisual.payload as VisualReview).pages.filter(review => review.verdict === 'needs_changes' && review.issues.length > 0) : [];
+  const useSavedFeedback = () => {
+    if (!snapshot || error != null || !savedChanges.length || !onUseFeedback) return;
+    onUseFeedback({ binding: snapshot.binding, reviewRevision: snapshot.revision, pages: savedChanges.map(review => review.number),
+      feedback: savedChanges.map(review => `第 ${review.number} 页：${snapshot.pages.find(page => page.number === review.number)?.title ?? ''}\n${review.issues.map(issue => `- ${categories[issue.category]} / ${severities[issue.severity]}：${issue.description}`).join('\n')}`).join('\n\n') });
+  };
 
   return <section className="ppt-acceptance" aria-label={`版本 ${versionId} 的验收工作台`}>
     <header className="acceptance-heading"><div><span className="acceptance-kicker">VERSION REVIEW</span><h2>逐页检查与验收记录</h2><p>查看预览、记录问题，再在桌面 PowerPoint 中验证可编辑性。</p></div><button type="button" className="acceptance-secondary" onClick={() => void load()} disabled={loading || saving}>重新读取记录</button></header>
@@ -125,7 +144,7 @@ function AcceptanceWorkspace({ projectId, versionId, client }: Required<Acceptan
         <Status title="人工检查" value={reviewLabels[snapshot.human_status]} />
         <Status title="完整验收" value={snapshot.acceptance_status === 'stale' ? '来源已变化' : snapshot.acceptance_status === 'unreviewable' ? '暂不可检查' : '待完成'} />
       </div>
-      <div className="acceptance-notice"><strong>完整验收待完成</strong><p>人工记录由服务端保存并判定。程序检查尚未接入，勾选桌面检查不会使完整验收自动通过。</p>{snapshot.pending_reasons.filter(reason => reasons[reason] && reason !== 'independent_postflight_integration_pending').map(reason => <p key={reason}>{reasons[reason]}</p>)}</div>
+      <div className="acceptance-notice"><strong>完整验收待完成</strong><p>人工记录由服务端保存并判定。完整程序验收尚未接入，保存检查不会自动发布演示稿。</p>{snapshot.pending_reasons.filter(reason => reasons[reason] && reason !== 'independent_postflight_integration_pending').map(reason => <p key={reason}>{reasons[reason]}</p>)}</div>
       {!snapshot.can_review && <p role="status" className="acceptance-alert">当前版本来源已失效或暂不具备检查条件。请重新读取记录；历史记录保留供核对。</p>}
       <details className="acceptance-binding"><summary>查看版本与来源绑定</summary><dl><dt>项目修订</dt><dd>{snapshot.source_revision}</dd><dt>验收记录修订</dt><dd>{snapshot.revision}</dd><dt>执行后端</dt><dd>{snapshot.binding.runtime.engine} · {snapshot.binding.runtime.profile}</dd><dt>PPTX 指纹</dt><dd><code>{snapshot.binding.pptx_sha256}</code></dd><dt>输入快照</dt><dd><code>{snapshot.binding.input_snapshot_sha256}</code></dd><dt>源文件指纹</dt><dd><code>{snapshot.binding.source_fingerprint_sha256}</code></dd><dt>产物清单</dt><dd><code>{snapshot.binding.manifest_sha256}</code></dd><dt>检查证据</dt><dd><code>{snapshot.binding.evidence_id} · {snapshot.binding.evidence_sha256}</code></dd></dl></details>
 
@@ -157,6 +176,7 @@ function AcceptanceWorkspace({ projectId, versionId, client }: Required<Acceptan
       </form>
 
       <section aria-label="验收历史" className="acceptance-history"><div className="acceptance-section-heading"><div><span className="acceptance-kicker">03 / SAVED HISTORY</span><h3>服务端检查记录</h3></div><span>{snapshot.records.length} 条</span></div><p className="acceptance-help">记录保留原始版本和来源。撤销最新记录后，该项恢复待检查，不会沿用更早的通过结果。</p>
+        {onUseFeedback && <div className="acceptance-save-row"><button type="button" className="acceptance-secondary" disabled={loading || saving || error != null || !savedChanges.length} onClick={useSavedFeedback}>将已保存问题带入修改</button><span>仅带入当前有效的已保存视觉问题；填写后还需明确提交修改任务。</span></div>}
         {!snapshot.records.length && <p>此版本还没有保存的检查记录。</p>}
         {[...snapshot.records].reverse().map(record => <article className="acceptance-history-row" key={record.id}><div><strong>{kindLabels[record.kind]}</strong><span className="acceptance-history-state">{record.revoked ? '已撤销' : record.stale ? '来源已失效' : '已记录'}</span></div><p><time dateTime={record.created_at}>{formatTime(record.created_at)}</time> · 检查人 {record.reviewer.sub} · 修订 {record.revision}</p><details><summary>查看记录内容与来源</summary><RecordDetails record={record} /><dl><dt>记录编号</dt><dd><code>{record.id}</code></dd><dt>版本</dt><dd><code>{record.binding.version_id}</code></dd><dt>PPTX 指纹</dt><dd><code>{record.binding.pptx_sha256}</code></dd></dl></details>
           {snapshot.can_revoke && record.kind !== 'revoke' && !record.revoked && <button type="button" className="acceptance-text-button" disabled={loading || saving} onClick={() => { setRevokeId(record.id); setRevokeReason(''); }}>撤销此记录</button>}

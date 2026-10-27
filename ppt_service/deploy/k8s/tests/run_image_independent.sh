@@ -21,7 +21,7 @@ cleanup() {
   trap - EXIT
   for name in "$test_name" "$entry_name"; do
     if docker container inspect "$name" >/dev/null 2>&1; then
-      actual_owner=$(docker container inspect --format '{{index .Config.Labels "ppt.panghuer.top/owner"}}' "$name")
+      actual_owner=$(docker container inspect --format '{{index .Config.Labels "ppt-service.panghuer.top/owner"}}' "$name")
       if [[ "$actual_owner" != "$owner" ]]; then
         echo 'Unexpected container owner; cleanup refused' >&2
         exit 3
@@ -45,7 +45,7 @@ docker image inspect --format '{{.Id}} {{.Architecture}} {{.Config.User}} {{json
 sha256sum "$case_dir/input/test_site.py" "$case_dir/input/test_auth.py" "$case_dir/input/probe_entrypoint.py" > "$case_dir/output/input-sha256.txt"
 common=(--pull=never --network none --read-only --user 10000:10000
   --cap-drop ALL --security-opt no-new-privileges --memory 1g --cpus 1 --pids-limit 128
-  --label "ppt.panghuer.top/owner=$owner"
+  --label "ppt-service.panghuer.top/owner=$owner"
   --tmpfs /tmp:rw,nosuid,nodev,noexec,size=128m,uid=10000,gid=10000,mode=0700)
 set +e
 docker run --rm --name "$test_name" "${common[@]}" \

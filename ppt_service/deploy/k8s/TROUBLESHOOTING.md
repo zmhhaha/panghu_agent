@@ -1,8 +1,12 @@
 # PPT 部署排障记录 — 2026-10-24
 
 本次在 `root@192.168.137.101` 管理的集群中恢复 PPT 网站，使用正式 namespace
-`ppt-service`，公网地址为 `https://ppt.panghuer.top`。入口采用现有 Cloudflare Tunnel
+`ppt-service`，当时公网地址为 `https://ppt.panghuer.top`。入口采用现有 Cloudflare Tunnel
 直连 Service，暂不经过 VPS/nginx/frpc。正常部署入口仍为 [README.md](README.md)。
+
+2026-10-26 域名统一为 `https://ppt-service.panghuer.top`，namespace 仍为 `ppt-service`。
+下文配置表和可执行命令已同步当前域名及 `cloudflare-tunnel/ppt-service/` 路径；
+明确标注为当时操作或结果的记录保留历史事实。
 
 ## 1. OAuth 代理因 Cookie 密钥编码错误反复重启
 
@@ -106,17 +110,17 @@ ExternalSecret 与对应 Job 的状态，不通过删除 namespace/PVC、重置�
 `app=cloudflared,tunnel=main`。在主仓库根目录应用对应规则：
 
 ```bash
-kubectl apply -f cloudflare-tunnel/ppt/site-ingress.yaml
+kubectl apply -f cloudflare-tunnel/ppt-service/site-ingress.yaml
 ```
 
 Public Hostname 的正确配置为：
 
 | 字段 | 值 |
 | --- | --- |
-| Hostname | `ppt.panghuer.top` |
+| Hostname | `ppt-service.panghuer.top` |
 | 类型 | `HTTP` |
 | Service URL | `ppt-site.ppt-service.svc.cluster.local:4180` |
-| HTTP Host Header | `ppt.panghuer.top` |
+| HTTP Host Header | `ppt-service.panghuer.top` |
 
 应用入口策略后，两个 Connector 到正式 Service 的 `/ready` 均已返回 200；
 公网当时仍为 502。用户将后台源站从 `ppt-service-test` 改为 `ppt-service` 并保存后，
@@ -240,8 +244,8 @@ email 格式和独立邮箱白名单；项目归属仍是 issuer/sub，写请求
 可重复检查公网状态，命令不输出登录跳转中的 state、Cookie 或授权码：
 
 ```bash
-curl -sS -o /dev/null -w '%{http_code}\n' https://ppt.panghuer.top/
-curl -sS -o /dev/null -w '%{http_code}\n' https://ppt.panghuer.top/api/v1/me
+curl -sS -o /dev/null -w '%{http_code}\n' https://ppt-service.panghuer.top/
+curl -sS -o /dev/null -w '%{http_code}\n' https://ppt-service.panghuer.top/api/v1/me
 ```
 
 这些结果确认公网入口和匿名认证拦截已恢复。浏览器验证工具本次启动失败，未完成真实用户登录、

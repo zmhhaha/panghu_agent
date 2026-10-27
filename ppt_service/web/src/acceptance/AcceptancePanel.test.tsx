@@ -18,6 +18,28 @@ function recordVisual(snapshot: AcceptanceSnapshot, command: AcceptanceCommand):
 }
 
 describe('P4 version-bound review workspace', () => {
+  it('reports loaded snapshots and only offers saved current problems to the host revision form', async () => {
+    const initial=syntheticSnapshot(); const client=clientFor(initial); const onSnapshot=vi.fn(),onUseFeedback=vi.fn();
+    client.save.mockImplementation(async(_p,_v,command)=>recordVisual(initial,command));
+    render(<AcceptancePanel projectId="demo-project" versionId="demo-v1" client={client} onSnapshot={onSnapshot} onUseFeedback={onUseFeedback}/>);await ready();
+    expect(onSnapshot).toHaveBeenLastCalledWith(initial);
+    fireEvent.click(screen.getByRole('button',{name:'添加问题'}));fireEvent.change(screen.getByLabelText('问题 1 说明'),{target:{value:'标题重叠'}});
+    expect(screen.getByRole('button',{name:'将已保存问题带入修改'})).toBeDisabled();expect(onUseFeedback).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button',{name:'保存视觉检查记录'}));await screen.findByText('检查记录已保存至服务端。');
+    fireEvent.change(screen.getByLabelText('问题 1 说明'),{target:{value:'尚未保存的新问题'}});
+    fireEvent.click(screen.getByRole('button',{name:'将已保存问题带入修改'}));
+    expect(onUseFeedback).toHaveBeenCalledWith({binding:initial.binding,reviewRevision:1,pages:[1],feedback:expect.stringContaining('标题重叠')});
+    expect(onUseFeedback.mock.calls[0][0].feedback).not.toContain('尚未保存');expect(onSnapshot.mock.calls.at(-1)?.[0].revision).toBe(1);
+  });
+
+  it('never revives an earlier problem record when the latest saved visual record is revoked', async () => {
+    const initial=syntheticSnapshot();const visual=visualDraft(initial);visual.pages[0]={...visual.pages[0],verdict:'needs_changes',issues:[{category:'layout',severity:'major',description:'旧问题'}]};
+    const first=recordVisual(initial,{expected_revision:0,binding:initial.binding,kind:'visual_review',...visual});
+    const second=recordVisual(first,{expected_revision:1,binding:initial.binding,kind:'visual_review',...visual});second.records[1].revoked=true;
+    const onUseFeedback=vi.fn();render(<AcceptancePanel projectId="demo-project" versionId="demo-v1" client={clientFor(second)} onUseFeedback={onUseFeedback}/>);await ready();
+    expect(screen.getByRole('button',{name:'将已保存问题带入修改'})).toBeDisabled();expect(onUseFeedback).not.toHaveBeenCalled();
+  });
+
   it('starts every human check pending and shows complete acceptance pending', async () => {
     setup(); await ready();
     expect(screen.getByLabelText('第 1 页检查结论')).toHaveValue('pending');

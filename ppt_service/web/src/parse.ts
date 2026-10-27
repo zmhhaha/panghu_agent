@@ -1,6 +1,7 @@
 import type { Asset } from './domain';
 
-export const pendingParseStatuses = new Set(['queued', 'parsing', 'stopping']);
+export const pendingParseStatuses = new Set(['queued', 'parsing', 'stopping', 'pending']);
+const readyParseStatuses = new Set(['ready', 'parsed']);
 const labels: Record<string, string> = {
   queued: '等待解析', parsing: '解析中', stopping: '正在停止解析',
   ready: '解析完成', failed: '解析失败', removed: '原资料已移除',
@@ -9,13 +10,14 @@ const labels: Record<string, string> = {
 };
 export function parseStatusLabel(status: string) { return labels[status] ?? '解析状态待核对'; }
 export function hasPendingParses(assets: Asset[]) { return assets.some(asset => pendingParseStatuses.has(asset.parse_status)); }
+export function unreadyParseAssets(assets: Asset[]) { return assets.filter(asset => !readyParseStatuses.has(asset.parse_status)); }
 export function hasObservedParser(assets: Asset[]) { return assets.some(asset => ['parsing', 'stopping', 'ready', 'failed'].includes(asset.parse_status)); }
 const reasons: Record<string, string> = {
   scanned_pdf_unsupported: '暂不支持扫描 PDF 的 OCR，请上传带文本层的 PDF 或文字文档。',
-  pdf_page_limit: 'PDF 页数超过解析限制，请拆分文档后重新上传。',
+  pdf_page_limit: 'PDF 超过 150 页解析限制，请拆分文档后重新上传。',
   pdf_active_form: 'PDF 含不支持的交互表单，请导出为普通文本 PDF 后重新上传。',
   unsupported_pdf: 'PDF 格式不受支持或已加密，请重新导出带文本层、未加密的 PDF。',
-  text_limit: '文本超过解析限制，请缩短或拆分资料后重新上传。',
+  text_limit: '单文件文本超过 50 万字符解析限制，请缩短或拆分资料后重新上传。',
   zip_expansion_limit: '文档解压后内容过大，请简化或拆分文档后重新上传。',
   zip_entry_limit: '文档包含过多内部文件，请简化或重新导出后上传。',
   duplicate_zip_part: '文档内部结构异常，请重新导出后上传。',
@@ -52,5 +54,5 @@ export function parseFailureMessage(code?: string | null) {
 }
 export function parseSummary(asset: Asset) {
   const value = 'text_summary' in asset ? asset.text_summary : asset.summary;
-  return typeof value === 'string' && ['ready', 'parsed'].includes(asset.parse_status) ? value.slice(0, 2000) : null;
+  return typeof value === 'string' && readyParseStatuses.has(asset.parse_status) ? value.slice(0, 2000) : null;
 }

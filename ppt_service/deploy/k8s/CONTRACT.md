@@ -1,7 +1,7 @@
 # PPT Kubernetes deployment contract
 
 The website is deployed in `ppt-service`, with public origin
-`https://ppt.panghuer.top`. [README.md](README.md) is the operator entry point.
+`https://ppt-service.panghuer.top`. [README.md](README.md) is the operator entry point.
 The deployment provides the website, OAuth proxy, dedicated PostgreSQL and
 persistent storage. Pi model execution is still being integrated;
 `PPT_EXECUTION_ENABLED=false` remains in effect and generation requests return
@@ -96,8 +96,14 @@ Both application URLs use `postgresql+psycopg://` and target database
 roles. `POSTGRES_USER=ppt_bootstrap` and `POSTGRES_DB=postgres` provide only the
 administrator and maintenance database. The migration role owns the application
 schema; runtime has required table DML/sequence privileges and read-only access
-to `api_schema_revision`, with no schema ownership, DDL, superuser, role creation
-or database creation. The deployment applies migration grants before rolling
+to `api_schema_revision`. Schema revision 3 adds append-only human review entries:
+runtime has SELECT/INSERT only on entries and SELECT/INSERT/UPDATE on streams,
+with no DELETE/TRUNCATE/REFERENCES/TRIGGER on either review table. A PostgreSQL
+trigger also rejects entry UPDATE/DELETE for the migration owner. Runtime retains
+no schema ownership, DDL, superuser, role creation or database creation privileges.
+Schema revision 4 adds `ppt_agent_outbox` with runtime CRUD privileges while
+preserving the revision 3 review tables, entries and append-only constraints.
+The deployment applies migration grants before rolling
 out the website. Secret synchronization is not a substitute for these database
 checks.
 

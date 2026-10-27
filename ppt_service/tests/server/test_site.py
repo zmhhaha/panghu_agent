@@ -112,7 +112,7 @@ def test_unknown_paths_never_return_index(site_client, path):
     assert 'built app' not in result.text
 
 
-@pytest.mark.parametrize('suffix', ['plans', 'plans/1/confirm', 'generations', 'revisions'])
+@pytest.mark.parametrize('suffix', ['plans', 'plans/1/confirm', 'generations', 'revisions', 'review-revisions'])
 def test_execution_auth_then_csrf_then_503_without_jobs(site_client, suffix):
     site, c, token, _ = site_client
     path = '/api/v1/projects/any/' + suffix

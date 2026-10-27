@@ -25,6 +25,7 @@ EXECUTION_PATHS = frozenset({
     '/api/v1/projects/{pid}/plans/{revision}/confirm',
     '/api/v1/projects/{pid}/generations',
     '/api/v1/projects/{pid}/revisions',
+    '/api/v1/projects/{pid}/review-revisions',
 })
 
 

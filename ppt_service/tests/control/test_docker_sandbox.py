@@ -53,6 +53,6 @@ def test_real_md_docx_pdf_png_container(sandbox_root):
     files=[('source.md','text/markdown','公开测试材料'.encode()),('source.docx','application/vnd.openxmlformats-officedocument.wordprocessingml.document',doc.getvalue()),('source.pdf','application/pdf',pdf_bytes()),('image.png','image/png',png_bytes())]
     result=execute(sandbox_root,files)
     assert len(result['sources'])==4;assert result['sources'][2]['pages']==1;assert 'Public deterministic source' in result['sources'][2]['text'];assert result['sources'][3]['image']=={'width':1,'height':1}
-@pytest.mark.parametrize('data',[pdf_bytes(False),pdf_bytes(True,151)])
-def test_real_scan_and_pdf_page_limit_reject(sandbox_root,data):
-    with pytest.raises(ControlError,match='parse_failed'):execute(sandbox_root,[('source.pdf','application/pdf',data)])
+@pytest.mark.parametrize('data,expected',[(pdf_bytes(False),'scanned_pdf_unsupported'),(pdf_bytes(True,151),'pdf_page_limit')])
+def test_real_scan_and_pdf_page_limit_reject(sandbox_root,data,expected):
+    with pytest.raises(ControlError,match=expected):execute(sandbox_root,[('source.pdf','application/pdf',data)])

@@ -62,6 +62,14 @@ r5 Pod UID 为 `f8a66f6a-4dd7-4e7b-8e06-a517c514bffb`，独立观察到 terminat
 
 r6/r7 均独立观察到 Pod terminated、exit 2、restart 0，全部写进程停止证据已确认；租约到期后原 grant 返回 HTTP 401，临时资源已清理，UID 不复用。响应 ledger 以 root 所有、`0600` 权限保存，文档只记录状态与结构，不公开其正文。这两轮均未通过真实 PPT 领域验收。
 
+`candidate-pi-ppt-r8` 使用 `a067949`，任务由隔离测试数据库中的真实 PPT API 创建项目、上传资料、排队，再由 `build_agent_task` 导出，未使用旧随机 fixture 重绑定。17 项模型 ledger 全部 `complete/200`，原生执行之后在成果交接阶段返回 `worker_output_invalid`、产物 0。该结果说明失败阶段已移至成果校验，不能声称完整领域任务通过，也不能据此放宽产物校验。
+
+r8 实际 Pod UID `3d862a2c-6c07-475b-97f3-1b578e9b4e97`，Pi 镜像 `cd6af229bb0f33c6e45944472824ae510e596d5426aa94c58a88e2f12f85e827`，2026-10-27 `13:55:09Z`–`13:59:32Z`，terminated exit 2、restart 0。全部写入者停止、过期 grant HTTP 401、临时资源清理已确认。证据 `/root/agent-service-deploy-20261026/evidence/candidate-pi-ppt-r8/`，UID 42000030–42000032 永久消费。仅保留测试业务数据库与测量证据用于离线排查，不占用运行 Pod。
+
+`candidate-pi-research-r1` 同样使用 `a067949`，由真实 `ScientificAgentProjection`/`ScientificAgentClient._prepare` 创建科研生成任务，仅将新加载的 SQLite 客户端模块存储传输定向到独立本地数据库，不访问共享科研数据库。Crossref 限定 `max_results=1`，按单槽顺序在 r8 清理后启动。该轮 10 项模型 ledger 均 `complete/200`，最终也为 `worker_output_invalid`、产物 0；尚不能证明科研领域输出、受限搜索观测匹配或业务发布通过。
+
+科研 r1 Pod UID `e509a63f-5988-4c8d-9c28-c42365a9bbcd`，Pi 镜像同上，2026-10-27 `14:32:59Z`–`14:35:19Z`，terminated exit 2、restart 0。全部写入者停止、过期 grant HTTP 401、临时资源清理已确认，UID 42000033–42000035 永久消费。证据 `/root/agent-service-deploy-20261026/evidence/candidate-pi-research-r1/`，后续先离线排查交接失败，不将 HTTP 200 作为领域验收。
+
 ## 最新源码与业务试接准备
 
 以下为代码准备进展，不代表它们已部署为生产控制面或已完成真实领域验收：

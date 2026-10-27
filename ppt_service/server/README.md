@@ -1,6 +1,32 @@
 # PPT Service API
 
-This package owns persistence and the public API. It never invokes Hermes, starts a subprocess, parses Office/PDF, renders previews, or trusts a worker's success claim. The normal deployment uses `server.site:create_site`; `/healthz` reports application liveness. Planning and generation still return `execution_not_connected` until the execution pipeline is wired. Generated presentations retain their independent quality and PowerPoint acceptance requirements.
+This package owns persistence and the public API. It never invokes Hermes, starts a subprocess, parses Office/PDF, renders previews, or trusts a worker's success claim. The normal deployment uses `server.site:create_site`; `/healthz` reports application liveness. Model jobs require the configured execution pipeline and explicit external-model consent. Generated presentations retain their independent quality and PowerPoint acceptance requirements.
+
+## Review records and draft revisions
+
+The mounted `GET /api/v1/projects/{pid}/versions/{vid}/acceptance` and
+`POST .../acceptance/records` routes persist source-bound human observations.
+The resolver verifies owner, terminal job, immutable checkpoint and complete
+retained evidence before exposing a context. These records do not publish a
+version or assert that a human actually performed the reported PowerPoint steps.
+
+`POST /api/v1/projects/{pid}/review-revisions` is a separate draft branch. It
+requires `expected_revision`, an explicit `base_version_id`, `feedback`, optional
+`pages`, the exact latest `review_binding`/`review_revision`, and a fresh
+`external_model_ack: true`. Normal authentication, CSRF, idempotency, quota and
+single-project admission apply. The original material/settings snapshot must
+still match, and the real confirmed stage-two plan must remain bound. Only the
+supported Hermes/PPT Master native checkpoint contract is restored; there is no
+cross-engine fallback. Controller revalidation and full checkpoint copying occur
+before launching a worker.
+
+Its immutable job authority restricts output to another review draft. Original
+versions/checkpoints retain `eligible_as_revision_base: false` and are never
+rewritten. The existing `/revisions` route still requires a published baseline;
+the repository also rejects published output from every review-only job. New
+drafts bind their parent version and undergo the same stop proof and independent
+programmatic verification. Visual review, PowerPoint checks and formal publication
+remain separate pending gates.
 
 From the `panghu_agent` directory, install the pinned `ppt_service/requirements-api.in` into an isolated virtual environment. Python 3.12/3.13 are targeted. Run `python -m ppt_service.server.migrate`, then `uvicorn ppt_service.server.app:create_app --factory --no-proxy-headers`. Migration is a separate explicit step; startup does not modify the database. Required environment: `DATABASE_URL` (PostgreSQL psycopg URL), `DATA_ROOT`. Authentication additionally requires `OIDC_ISSUER`, `OIDC_AUDIENCE`, `OIDC_JWKS_URL` (HTTPS), comma-separated `TRUSTED_PROXY_CIDRS`, `ALLOWED_ORIGINS`, and `INVITATION_EMAILS_FILE=/owner/emails`. Maintain exact email addresses, one per line, in the independent `oauth/k8s/ppt-owner-configmap.yaml` (`ppt-owner.data.emails`); no subject list or email/subject pairing file is needed.
 

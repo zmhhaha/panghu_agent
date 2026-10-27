@@ -1,9 +1,9 @@
 from __future__ import annotations
-import asyncio,json,re,secrets
+import asyncio,hashlib,json,re,secrets
 from typing import Literal
 from fastapi import FastAPI,Depends,Request,Response,UploadFile,File,Header,HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel,Field,ConfigDict
+from pydantic import BaseModel,Field,ConfigDict,StrictInt
 from sqlalchemy import create_engine,select,func
 from sqlalchemy.orm import sessionmaker
 import jwt
@@ -12,6 +12,8 @@ from .models import *
 from .repository import Repository,fail,job_dto,TERMINAL
 from .storage import Storage,MAX_PROJECT
 from .middleware import BodyLimitMiddleware
+from .acceptance.contracts import SourceBinding
+from .acceptance.domain import AcceptanceError
 CSRF_TOKEN_RE=re.compile(r'[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]\Z')
 class Strict(BaseModel):model_config=ConfigDict(extra='forbid')
 class ProjectCreate(Strict):
@@ -24,6 +26,7 @@ class ProjectCreate(Strict):
     requirements:str=Field(default='',max_length=12000)
     external_model_ack:bool=False
 class ProjectPatch(ProjectCreate):expected_revision:int
+class AssetReparse(Strict):expected_revision:int=Field(ge=1)
 class PlanRequest(Strict):
     expected_revision:int
     feedback:str=Field(default='',max_length=12000)
@@ -40,6 +43,11 @@ class Revise(Strict):
     base_version_id:str
     feedback:str=Field(min_length=1,max_length=12000)
     pages:list[int]=Field(default_factory=list,max_length=20)
+class ReviewRevise(Revise):
+    review_binding:SourceBinding
+    review_revision:int=Field(ge=0,strict=True)
+    pages:list[StrictInt]=Field(default_factory=list,max_length=20)
+    external_model_ack:bool=Field(default=False,strict=True)
 def asset_dto(a):return {k:getattr(a,k) for k in ('id','display_name','media_type','bytes','sha256','parse_status','text_summary','parse_error')}
 def plan_dto(a):return {k:getattr(a,k) for k in ('revision','phase','input_snapshot_hash','outline','design','confirmation_selection','confirmed_at')}|{'options':a.design.get('directions',a.design.get('options',[]))}
 def version_dto(v):
@@ -56,6 +64,8 @@ def project_dto(p,s,detail=False):
     if detail:
         d['assets']=[asset_dto(a) for a in s.scalars(select(Asset).where(Asset.project_id==p.id,Asset.removed==False))]
         d['plans']=[plan_dto(a) for a in s.scalars(select(Plan).where(Plan.project_id==p.id).order_by(Plan.revision))]
+        latest=s.scalar(select(Job).where(Job.project_id==p.id,Job.issuer==p.issuer,Job.subject==p.subject).order_by(Job.created_at.desc(),Job.id.desc()).limit(1))
+        d['latest_job']=job_dto(latest) if latest else None
     return d
 def create_app(settings:Settings|None=None,engine=None):
     settings=settings or Settings.env()
@@ -110,7 +120,9 @@ def create_app(settings:Settings|None=None,engine=None):
         if not p.external_model_ack:fail('external_model_ack_required',422)
         if p.active_job_id:fail('project_busy')
         count=s.scalar(select(func.count(Asset.id)).where(Asset.project_id==pid,Asset.removed==False))
-        total=s.scalar(select(func.coalesce(func.sum(Asset.bytes),0)).where(Asset.project_id==pid))
+        # Project allowance follows the current file list. Retained originals
+        # still count toward the global physical-storage budget below.
+        total=s.scalar(select(func.coalesce(func.sum(Asset.bytes),0)).where(Asset.project_id==pid,Asset.removed==False))
         if count>=10:fail('project_file_limit',413)
         aid,key,size,h,mime=await app.state.storage.upload(pid,file)
         try:
@@ -128,6 +140,26 @@ def create_app(settings:Settings|None=None,engine=None):
         if not a:fail('not_found',404)
         # Snapshot-referenced bytes remain until trusted project cleanup.
         a.removed=True;p.revision+=1;p.confirmed_plan_revision=None;p.stage='draft';return {'revision':p.revision}
+    @app.post('/api/v1/projects/{pid}/assets/{aid}/reparse',status_code=202)
+    def reparse_asset(pid:str,aid:str,body:AssetReparse,key:str|None=Header(None,alias='Idempotency-Key'),owner=Depends(authenticate),s=Depends(session)):
+        r=Repository(s)
+        def current():
+            p=r.project(pid,owner,True)
+            a=s.scalar(select(Asset).where(Asset.id==aid,Asset.project_id==pid,Asset.removed==False).with_for_update())
+            if not a:fail('not_found',404)
+            return p,a
+        def action():
+            p,a=current();r.revision(p,body.expected_revision)
+            if p.active_job_id:fail('project_busy')
+            if a.parse_status!='failed':fail('asset_parse_not_failed')
+            # Failed status is issued only after the parser's stop proof. Never
+            # reset an outstanding lease or turn a live attempt into a retry.
+            if a.parse_lease_until is not None:fail('asset_parse_busy')
+            a.parse_status='queued';a.parse_attempt=0;a.parse_error=None;a.text_summary=None
+            a.parse_token=None;a.parse_scope_uid=None;a.parse_lease_until=None
+            p.revision+=1;p.confirmed_plan_revision=None;p.stage='draft'
+            return {'revision':p.revision,'asset_id':a.id,'parse_status':'queued'}
+        return r.idempotent(owner,f'projects/{pid}/assets/{aid}/reparse',key,body.model_dump(),action,authorize=current)
     @app.post('/api/v1/projects/{pid}/plans',status_code=202)
     def plan(pid:str,body:PlanRequest,key:str|None=Header(None,alias='Idempotency-Key'),owner=Depends(authenticate),s=Depends(session)):
         r=Repository(s)
@@ -138,7 +170,10 @@ def create_app(settings:Settings|None=None,engine=None):
                 if not initial or initial.input_snapshot_hash!=r.snapshot(p)['hash']:fail('initial_confirmation_required')
                 extra['checkpoint_id']=initial.checkpoint_id
                 extra['confirmation_selection']=initial.confirmation_selection
-            j=r.enqueue(p,owner,body.phase,body.expected_revision,extra);j.checkpoint_id=extra.get('checkpoint_id');p.confirmed_plan_revision=None
+            j=r.enqueue(p,owner,body.phase,body.expected_revision,extra);j.checkpoint_id=extra.get('checkpoint_id')
+            # A Stage2 failure must not erase the real Stage1 confirmation.
+            # Successful accept_plan invalidates the pointer for its new plan.
+            if body.phase=='plan_initial':p.confirmed_plan_revision=None
             return job_dto(j)
         return r.idempotent(owner,f'projects/{pid}/plans',key,body.model_dump(),action,
                             authorize=lambda:r.project(pid,owner,True))
@@ -193,6 +228,32 @@ def create_app(settings:Settings|None=None,engine=None):
             return job_dto(j)
         return r.idempotent(owner,f'projects/{pid}/revisions',key,body.model_dump(),action,
                             authorize=lambda:r.project(pid,owner,True))
+    @app.post('/api/v1/projects/{pid}/review-revisions',status_code=202)
+    def review_revise(pid:str,body:ReviewRevise,key:str|None=Header(None,alias='Idempotency-Key'),owner=Depends(authenticate),s=Depends(session)):
+        from .review_revisions import admit_review_revision
+        r=Repository(s)
+        def authorize():
+            version=r.version(body.base_version_id,owner)
+            if version.project_id!=pid:fail('not_found',404)
+            # Match the review resolver's terminal-job -> project lock order.
+            s.get(Job,version.job_id,with_for_update=True)
+            r.project(pid,owner,True)
+        def action():
+            p=r.project(pid,owner,True);r.revision(p,body.expected_revision)
+            if p.active_job_id:fail('project_busy')
+            if body.external_model_ack is not True:fail('external_model_ack_required',422)
+            if not body.feedback.strip():fail('review_feedback_required',422)
+            v=r.version(body.base_version_id,owner)
+            if v.project_id!=pid:fail('not_found',404)
+            if len(set(body.pages))!=len(body.pages) or any(n<1 or n>len(v.manifest.get('slides',[])) for n in body.pages):fail('invalid_slide_number',422)
+            try:
+                authority=admit_review_revision(s,app.state.storage,owner,p,v,body.review_binding,body.review_revision)
+            except AcceptanceError as exc:
+                raise HTTPException(exc.status,detail={'code':exc.code}) from None
+            j=r.enqueue(p,owner,'revise',body.expected_revision,{'feedback':body.feedback.strip(),'pages':body.pages,'base_version_id':v.id,'checkpoint_id':v.checkpoint_id,'review_base':authority})
+            j.base_version_id=v.id;j.checkpoint_id=v.checkpoint_id
+            return job_dto(j)
+        return r.idempotent(owner,f'projects/{pid}/review-revisions',key,body.model_dump(mode='json'),action,authorize=authorize)
     @app.get('/api/v1/jobs/{jid}')
     def job(jid:str,owner=Depends(authenticate),s=Depends(session)):return job_dto(Repository(s).job(jid,owner))
     @app.post('/api/v1/jobs/{jid}/cancel')
@@ -222,6 +283,13 @@ def create_app(settings:Settings|None=None,engine=None):
         signature=stream.read(8);stream.seek(0)
         if (mime=='image/png' and signature!=b'\x89PNG\r\n\x1a\n') or (filename and not signature.startswith(b'PK')):
             stream.close();fail('artifact_unavailable',404)
+        if v.status=='review':
+            expected=v.manifest.get('pptx_sha256') if filename else next((slide.get('preview_sha256') for slide in v.manifest.get('slides',[]) if slide.get('preview_key')==key),None)
+            h=hashlib.sha256()
+            while chunk:=stream.read(65536):h.update(chunk)
+            stream.seek(0)
+            if not isinstance(expected,str) or h.hexdigest()!=expected:
+                stream.close();fail('artifact_unavailable',404)
         headers={'Content-Disposition':'attachment; filename="presentation.pptx"'} if filename else {}
         def chunks():
             try:
@@ -273,4 +341,9 @@ def create_app(settings:Settings|None=None,engine=None):
                 yield ': keepalive\n\n'
                 await asyncio.sleep(1)
         return StreamingResponse(stream(),media_type='text/event-stream',headers={'X-Accel-Buffering':'no'})
+    from .acceptance import AcceptanceService, create_acceptance_router
+    from .acceptance.resolver import ReviewContextResolver
+    app.state.review_resolver = ReviewContextResolver(app.state.storage)
+    app.state.acceptance = AcceptanceService(app.state.sessions, app.state.review_resolver)
+    app.include_router(create_acceptance_router(app.state.acceptance))
     return app

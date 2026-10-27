@@ -154,7 +154,11 @@ class BuildTests(unittest.TestCase):
         for relative in ('.env', '.git/config', 'data/uploads/secret.txt', 'worker/key.py',
                          'control/dev_site.py', 'server/private_token.py', 'tests/test_secret.py',
                          'web/.npmrc', 'web/src/test/secret.ts', 'web/src/local-token.ts',
-                         'web/src/acceptance/demo.tsx', 'web/node_modules/secret', 'web/dist/index.html'):
+                         'web/src/acceptance/demo.tsx', 'web/src/acceptance/fixtures.ts',
+                         'web/src/acceptance/demo-worker.js',
+                         'server/acceptance/generate_contract.py',
+                         'server/acceptance/contracts/synthetic.fixture.json',
+                         'web/node_modules/secret', 'web/dist/index.html'):
             target = self.service / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(b'SECRET_SENTINEL')
@@ -170,6 +174,10 @@ class BuildTests(unittest.TestCase):
             self.assertTrue(all(item.isfile() for item in archive.getmembers()))
         self.assertFalse(any('/tests/' in name or '/test/' in name or '/worker/' in name
                              or '/control/' in name or '.git' in name for name in names))
+        self.assertIn('code/ppt_service/server/review_revisions.py', names)
+        self.assertIn('code/ppt_service/server/phase_limits.py', names)
+        self.assertIn('code/ppt_service/server/acceptance/resolver.py', names)
+        self.assertIn('web/src/acceptance/AcceptancePanel.tsx', names)
 
     def test_all_relative_frontend_imports_resolve_inside_allowlist(self):
         inputs = BUILD.context_inputs(self.service)

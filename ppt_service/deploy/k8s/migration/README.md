@@ -30,7 +30,7 @@
 
 ## 显式准备 PostgreSQL 客户端凭据
 
-用专属迁移连接，分别连接旧库和新空库；只读 inventory 角色需能读取指定 schema 的全部表/定义，dump/restore 角色权限需独立审核。服务名称使用简单小写标识符。专用 schema 默认 `public`，要求恰好包含应用的 12 张表（包括 `api_schema_revision`）；存在额外表时拒绝不完整迁移。初次恢复保持同名 schema，迁入另一全新数据库。迁移不包括其他应用的 schema。
+用专属迁移连接，分别连接旧库和新空库；只读 inventory 角色需能读取指定 schema 的全部表/定义，dump/restore 角色权限需独立审核。服务名称使用简单小写标识符。专用 schema 默认 `public`，当前 schema 4 要求恰好包含应用的 15 张表（包括 `api_schema_revision`、两张审核表和 `ppt_agent_outbox`）；存在额外表时拒绝不完整迁移。初次恢复保持同名 schema，迁入另一全新数据库。迁移不包括其他应用的 schema。
 
 相邻 K8s 初始化合同中的应用数据库是 `ppt_service`，`POSTGRES_DB=postgres` 只用于维护/初始化；target service 必须明确连接 `ppt_service`，不能把应用表恢复到维护库。应用和 schema migrator 分别使用不同角色，应用 URL 使用 `postgresql+psycopg://`；这里 `psql`/`pg_dump` 使用的是 libpq service，并不接受 SQLAlchemy 的 `+psycopg` URL。
 
@@ -174,7 +174,7 @@ PostgreSQL 16 的 custom archive 含 `CREATE SCHEMA public`，全新数据库也
 
 PG16 实测会将 `public.jobs` 的唯一部分索引 `uq_project_active_job` 中 `varchar[]` 整体转 `text[]` 的表达式，反解为每个 `varchar` 元素分别转 `text`。`capture` 和 `compare --output` 始终保存原始 `indexdef`。`compare` 先验证 expected 清单的独立 SHA-256，再在副本中应用唯一规则 `ppt-jobs-active-index-cast-v1`：只接受代码中记录的两条完整 DDL，严格绑定表/索引名、唯一性、`btree(project_id)`、status 列、六种状态的顺序及全部类型转换；成功回执的 `comparison_rules` 记录是否使用。改状态、唯一性、列、类型、附加条件或其他未知 DDL 仍拒绝；其他清单字段完整比较。原始 SQL、清单 digest 和已用规则应一并留作审计证据。
 
-先完成**恢复前后的数据库完整比较（含上述已知 DDL 规则）**，再运行所选新镜像的一次性 `python -m ppt_service.server.migrate` schema Job。若源 schema 与当前工具不同（少列、缺少 12 表）会拒绝；应为该旧版本设计并审查对应的显式迁移，不能让工具猜测或修改原库。本版本对应 schema revision 2。迁移 Job 只能拿到新 target 的连接。schema 安装幂等不等于版本任意向前/向后兼容；不得在生产 API 启动时隐式迁移。
+先完成**恢复前后的数据库完整比较（含上述已知 DDL 规则）**，再运行所选新镜像的一次性 `python -m ppt_service.server.migrate` schema Job。当前工具精确覆盖 schema revision 4 的 15 张表，包含两张人工审核表及 Agent Outbox；旧 revision 2/3 的源应使用与该版本匹配的历史 inventory 工具先完成恢复比较，再对新 target 运行正式升级。若源 schema 与所选工具不同（少列、缺表或多表）会拒绝；不能让工具猜测或修改原库。迁移 Job 只能拿到新 target 的连接。schema 安装幂等不等于版本任意向前/向后兼容；不得在生产 API 启动时隐式迁移。
 
 在新环境保持模型能力关闭，分别验证真实挂载下 API UID 的材料上传/下载/删除、跨用户权限、旧项目/计划/版本历史、SSE 和幂等重放、quota/usage、材料恢复状态。新写测试使用新的合成项目，写入时间和项目 ID要记录。验证通过后才按部署流程逐步开放入口与 parser；dispatcher/付费执行/Pi 切换仍需相应主线验收，P1 不启用模型请求。
 

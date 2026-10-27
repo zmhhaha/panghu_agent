@@ -1,8 +1,9 @@
 # P4 human review module
 
-This independent module records per-version visual review and actual Microsoft
-PowerPoint manual checks. It is **not mounted in the website**, does not create
-tables on import, and never publishes/promotes a version. No model calls are made.
+This module records per-version visual review and actual Microsoft PowerPoint
+manual checks. The website mounts it with the trusted `ReviewContextResolver`;
+the versioned schema-3 migration installs its tables. Importing it creates no
+tables, and saving a human record never calls a model or publishes a version.
 
 The separate SQLAlchemy metadata contains `ppt_acceptance_streams` and
 `ppt_acceptance_entries`. Record payloads are append-only through this API;
@@ -107,13 +108,17 @@ resolver**, no arbitrary context-from-JSON endpoint and no callable generic
 programmatic-success flag. A resolver implemented from untrusted reports would
 break the security boundary and must not be mounted.
 
-Schema installation belongs to a reviewed host migration. The separate
-`AcceptanceBase.metadata` supports isolated tests and explicit migration planning;
-it must not be merged by casually running `create_all` on the live service.
-No core model, repository, migration, app, controller or production table was
-changed by this package. SQLAlchemy transactions, unique constraints, CAS and row
-locks are used. Local tests cover SQLite durability/concurrency; PostgreSQL schema,
-locking and production recovery still need integration verification.
+Schema installation belongs to `server.migrate` revision 3, never API startup or
+an operator calling `create_all` against the live service. It rejects conflicting
+review tables found under an earlier schema revision. PostgreSQL protects entries
+with an UPDATE/DELETE rejection trigger, and runtime grants separately deny
+entry UPDATE/DELETE/TRUNCATE and stream DELETE/TRUNCATE. Stream UPDATE remains
+available for optimistic revision CAS. Corrections and revocations append entries.
+The current project deletion flow revokes access and marks stopped cleanup state;
+it does not physically purge this history. Physical purge requires a separate
+reviewed lifecycle operation. SQLAlchemy transactions, unique constraints, CAS
+and row locks remain in use; real deployment and test evidence are recorded
+separately from these implementation guarantees.
 
 ## Status and remaining work
 
@@ -128,11 +133,11 @@ are still pending, **`programmatic_status` is always `pending`,
 `independent_postflight_integration_pending`. A human pass does not complete P3,
 accept a candidate, grant publication authority, or modify legacy results.
 
-Before website integration: implement/review the resolver and monotonic revision,
-install/rollback the separate schema, map authenticated independent previews,
-mount the router, wire the standalone panel, connect genuine controller proof,
-and validate PostgreSQL transactions plus real-browser login. Full visual and
-PowerPoint manual acceptance remains a human task after integration.
+The mounted resolver checks owner-locked source rows and immutable controller
+evidence rather than accepting browser/Worker declarations. Human observations
+remain distinct from a separately requested review-only draft revision and cannot
+authorize publication. Full visual and PowerPoint manual acceptance remains a
+human task; installed code and synthetic regression results are not such evidence.
 
 Isolated tests, from the repository root:
 
