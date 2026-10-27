@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, safeError } from '../api';
 import { acceptanceClient, assertSnapshot, rasterPreviewUrl } from './client';
 import { powerpointDraft, powerpointValidation, visualDraft } from './drafts';
-import type { AcceptanceClient, AcceptanceCommand, AcceptancePage, AcceptanceRecord, AcceptanceSnapshot, CheckVerdict, IssueCategory, IssueSeverity, PageReview, PageVerdict, PowerPointReview, SourceBinding, VisualReview } from './contracts';
+import type { AcceptanceBinding, AcceptanceClient, AcceptanceCommand, AcceptancePage, AcceptanceRecord, AcceptanceSnapshot, CheckVerdict, IssueCategory, IssueSeverity, PageReview, PageVerdict, PowerPointReview, VisualReview } from './contracts';
 import './acceptance.css';
 
 const reviewLabels = { pending: '待检查', passed: '已通过', needs_changes: '需修改' };
@@ -24,7 +24,7 @@ function errorText(error: unknown): string {
   return safeError(error);
 }
 
-export interface SavedReviewFeedback { binding: SourceBinding; reviewRevision: number; pages: number[]; feedback: string }
+export interface SavedReviewFeedback { binding: AcceptanceBinding; reviewRevision: number; pages: number[]; feedback: string }
 export interface AcceptancePanelProps {
   projectId: string;
   versionId: string;
