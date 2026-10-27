@@ -99,6 +99,31 @@ class HermesHostDriver:
             'PPT_MASTER_SKILL_DIR': '/opt/ppt-master/skills/ppt-master'}
         return home, key, env
 
+    def _prepare_ownership(self, workspace):
+        """Set shared modes while controller-owned, then hand off to the Agent.
+
+        The capsule has CHOWN but deliberately lacks FOWNER. A preview may
+        already have handed project paths to the Agent, so reclaim ownership
+        before chmod rather than relying on root bypassing file ownership.
+        """
+        uid = self.scope.agent_uid
+        for directory, dirs, files in os.walk(workspace, topdown=True, followlinks=False):
+            here = Path(directory)
+            if here == workspace:
+                dirs[:] = [name for name in dirs if name not in set(self.profile.protected_paths)]
+            project = here == workspace / 'project' or workspace / 'project' in here.parents
+            if self.profile.shared_project and (here == workspace or project):
+                os.chown(directory, 0, 0)
+                here.chmod(0o710 if here == workspace else 0o2770)
+            os.chown(directory, uid, uid)
+            for name in files:
+                path = here / name
+                if not path.is_symlink():
+                    if self.profile.shared_project and project:
+                        os.chown(path, 0, 0)
+                        path.chmod(0o660)
+                    os.chown(path, uid, uid)
+
     def execute(self, request, workspace, emit, cancel):
         from .staging import ExecutionContext
         return self.execute_with_context(request, workspace, emit, cancel, context=ExecutionContext())
@@ -119,23 +144,7 @@ class HermesHostDriver:
             self.profile.prepare_workspace(self.profile.make_wire(request), workspace)
             home, gateway_key, env = self._configure(workspace)
             uid = self.scope.agent_uid
-            for directory, dirs, files in os.walk(workspace, topdown=True, followlinks=False):
-                if Path(directory) == workspace:
-                    dirs[:] = [name for name in dirs if name not in set(self.profile.protected_paths)]
-                os.chown(directory, uid, uid)
-                if self.profile.shared_project:
-                    here = Path(directory)
-                    if here == workspace:
-                        here.chmod(0o710)
-                    elif here == workspace / 'project' or workspace / 'project' in here.parents:
-                        here.chmod(0o2770)
-                for name in files:
-                    path = Path(directory) / name
-                    if not path.is_symlink():
-                        os.chown(path, uid, uid)
-                        if self.profile.shared_project and (
-                                Path(directory) == workspace / 'project' or workspace / 'project' in Path(directory).parents):
-                            path.chmod(0o660)
+            self._prepare_ownership(workspace)
             launch = self.control_root / 'hermes-launch.json'
             command = ['/opt/hermes/.venv/bin/python', '-m', 'agent_service.hermes_bootstrap',
                        'gateway', 'run', '--no-supervise', '--external-supervisor']

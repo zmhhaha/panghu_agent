@@ -17,6 +17,8 @@ import threading
 import time
 from typing import Any, Callable, Protocol
 
+from .diagnostics import log_execution_failure
+
 
 MAX_PAYLOAD_BYTES = 4 * 1024 * 1024
 MAX_OUTPUT_BYTES = 1024 * 1024
@@ -217,13 +219,16 @@ class PiDriver(_BaseDriver):
                 emit: Callable[[dict], None], cancel: threading.Event) -> NativeOutcome:
         outcome = NativeOutcome("failed", error_code="engine_error")
         end = self._budget(request)
+        diagnostic_stage = 'check_request'
         try:
             self._check(cancel, end)
             if not self.enabled or self.runtime is None or self.wire_builder is None:
                 raise _DriverError("engine_unavailable")
             # Readiness is enforced by the real runtime as well. Fixture runtimes
             # are explicitly injected by tests; never enable production readiness.
+            diagnostic_stage = 'wire_builder'
             wire = self.wire_builder(request)
+            diagnostic_stage = 'validate_native_request'
             if type(wire) is not dict:
                 raise _DriverError("invalid_native_request")
             wire = deepcopy(wire)
@@ -250,14 +255,18 @@ class PiDriver(_BaseDriver):
                         "tool_execution_start", "tool_execution_end"}:
                     self._emit(emit, "engine_progress", event=event["event"])
 
+            diagnostic_stage = 'execute_native'
             self.runtime.execute(wire, Path(workspace), forward, cancel)
+            diagnostic_stage = 'validate_completion'
             self._check(cancel, end)
             # PiRuntime supplies files, not a trusted return payload or billing.
             outcome = NativeOutcome("completed")
         except _DriverError as exc:
+            log_execution_failure('pi_driver', diagnostic_stage, exc)
             status = exc.code if exc.code in {"cancelled", "timed_out"} else "failed"
             outcome = NativeOutcome(status, error_code=exc.code)
         except Exception as exc:
+            log_execution_failure('pi_driver', diagnostic_stage, exc)
             # Only reviewed runtime error categories are retained; exception text
             # may include credentials, input material or host paths.
             code = getattr(exc, "code", "engine_error")

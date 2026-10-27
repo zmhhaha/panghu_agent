@@ -37,17 +37,22 @@ class TrustedPreview:
                 raise ServiceError('preview_checkpoint_lock_present', 422)
         # Preview and Agent share only the project group. Private HOME, inputs,
         # control credentials and observation files are not made group-readable.
-        os.chown(self.workspace, self.agent_uid, self.agent_uid)
+        # The root controller has CHOWN, but deliberately lacks FOWNER. Apply
+        # final modes while root owns each inode, then hand it to the Agent.
+        os.chown(self.workspace, 0, 0)
         self.workspace.chmod(0o710)
+        os.chown(self.workspace, self.agent_uid, self.agent_uid)
         for directory, dirs, files in os.walk(self.workspace / 'project', followlinks=False):
-            os.chown(directory, self.agent_uid, self.agent_uid)
+            os.chown(directory, 0, 0)
             os.chmod(directory, 0o2770)
+            os.chown(directory, self.agent_uid, self.agent_uid)
             for name in files:
                 target = Path(directory) / name
                 if target.is_symlink() or target.stat().st_nlink != 1:
                     raise ServiceError('preview_project_invalid', 422)
-                os.chown(target, self.agent_uid, self.agent_uid)
+                os.chown(target, 0, 0)
                 target.chmod(0o660)
+                os.chown(target, self.agent_uid, self.agent_uid)
         home, tmp = self.workspace / '.preview-home', self.workspace / '.preview-tmp'
         for path in (home, tmp):
             path.mkdir(mode=0o700)

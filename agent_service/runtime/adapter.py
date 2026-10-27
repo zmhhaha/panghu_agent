@@ -26,6 +26,7 @@ import uuid
 
 from .contracts import ContractError, parse_timestamp, utc_now
 from .profiles import ExecutionProfile, ProfileError, bounded_provenance
+from ..diagnostics import log_execution_failure
 
 PI_PACKAGE = "@mariozechner/pi-coding-agent"
 PI_VERSION = "0.73.1"
@@ -465,23 +466,26 @@ class PiRuntime:
                 raise RuntimeExecutionError("runtime_not_ready", "Delegated cgroup.kill is unavailable")
             (group / "pids.max").write_text(str(s.max_processes))
         protected = set(getattr(self.profile, 'protected_paths', ()))
+        shared_project = getattr(self.profile, 'shared_project', False)
         for root, dirs, files in os.walk(workspace, topdown=True, followlinks=False):
             if Path(root) == workspace:
                 dirs[:] = [name for name in dirs if name not in protected]
+            here = Path(root)
+            project_directory = here == workspace / 'project' or (workspace / 'project') in here.parents
+            mode = 0o710 if shared_project and here == workspace else (
+                0o2770 if shared_project and project_directory else 0o700)
+            # CAP_CHOWN and DAC_OVERRIDE do not grant chmod on an Agent-owned
+            # inode. Set its final mode while the controller owns it, then
+            # transfer ownership; no CAP_FOWNER is needed by the capsule.
             os.chown(root, 0, 0)
-            os.chmod(root, 0o700)
+            os.chmod(root, mode)
             os.chown(root, uid, uid)
-            if getattr(self.profile, 'shared_project', False):
-                here = Path(root)
-                if here == workspace:
-                    os.chmod(root, 0o710)
-                elif here == workspace / 'project' or (workspace / 'project') in here.parents:
-                    os.chmod(root, 0o2770)
             for name in files:
-                os.chown(Path(root) / name, uid, uid)
-                if getattr(self.profile, 'shared_project', False) and (
-                        Path(root) == workspace / 'project' or (workspace / 'project') in Path(root).parents):
-                    os.chmod(Path(root) / name, 0o660)
+                path = here / name
+                if shared_project and project_directory:
+                    os.chown(path, 0, 0)
+                    os.chmod(path, 0o660)
+                os.chown(path, uid, uid)
         config = control / ("launch-" + uuid.uuid4().hex + ".json")
         self._atomic(config, json.dumps({"controller_pid": os.getpid(), "max_processes": s.max_processes,
                      "cgroup": str(group) if group else None, "uid": uid, "gid": uid,
@@ -521,14 +525,18 @@ class PiRuntime:
                 cancel_event: threading.Event) -> None:
         if not self._lock.acquire(blocking=False):
             raise RuntimeExecutionError("runtime_busy", "Only one runtime execution is allowed")
+        self._diagnostic_stage = 'check_settings'
         try:
             self._execute(job, Path(workspace), event_sink, cancel_event)
-        except RuntimeExecutionError:
+        except Exception as exc:
+            log_execution_failure('pi_runtime', self._diagnostic_stage, exc)
+            if isinstance(exc, RuntimeExecutionError):
+                raise
+            if isinstance(exc, ProfileError):
+                raise RuntimeExecutionError(exc.code, str(exc)) from exc
+            if isinstance(exc, (OSError, ValueError, ContractError)):
+                raise RuntimeExecutionError("runtime_error", "Runtime configuration, filesystem or job validation failed") from exc
             raise
-        except ProfileError as exc:
-            raise RuntimeExecutionError(exc.code, str(exc)) from exc
-        except (OSError, ValueError, ContractError) as exc:
-            raise RuntimeExecutionError("runtime_error", "Runtime configuration, filesystem or job validation failed") from exc
         finally:
             self._lock.release()
 
@@ -539,6 +547,7 @@ class PiRuntime:
         # wire schema remains strict and is validated without this local field.
         wire = {k: v for k, v in job.items() if k not in {"attempt", "_runtime_uid"}}
         profile = self.profile
+        self._diagnostic_stage = 'validate_request'
         uid = job.get("_runtime_uid")
         if not s.fixture_mode and (type(uid) is not int or not 10000 <= uid <= 2**31 - 1):
             raise RuntimeExecutionError("runtime_not_ready", "Worker must persist a unique never-reused attempt UID")
@@ -551,6 +560,7 @@ class PiRuntime:
         if seconds <= 0:
             raise RuntimeExecutionError("timed_out", "Execution deadline elapsed")
         end_time = time.monotonic() + seconds
+        self._diagnostic_stage = 'prepare_workspace'
         if workspace.is_symlink():
             raise RuntimeExecutionError("unsafe_workspace", "Attempt workspace must not be a symlink")
         workspace.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -562,12 +572,15 @@ class PiRuntime:
         tmp.mkdir(mode=0o700)
         prepare = getattr(profile, 'prepare_workspace', None)
         if prepare is not None:
+            self._diagnostic_stage = 'prepare_profile_workspace'
             prepare(wire, workspace)
+        self._diagnostic_stage = 'verify_resources'
         self._verify_resources()
         env = self._environment(home, agent, tmp)
         # One retry owner: disable both Pi's session retry and the underlying
         # provider SDK retry in this fresh task-only settings file. Otherwise a
         # single scheduler attempt can silently make several HTTP requests.
+        self._diagnostic_stage = 'write_agent_config'
         self._atomic(agent / "settings.json", json.dumps({"retry": {
             "enabled": False, "provider": {"maxRetries": 0}}}))
         if s.model_base_url:
@@ -579,12 +592,14 @@ class PiRuntime:
         # executable paths are strongly preferred in the immutable image.
         command = list(s.command)
         command[0] = shutil.which(command[0]) or command[0]
+        self._diagnostic_stage = 'probe_versions'
         node = self._probe(s.node_command, env, workspace)
         version = self._probe(command, env, workspace)
         if time.monotonic() >= end_time:
             raise RuntimeExecutionError("timed_out", "Execution deadline elapsed during startup")
         if version != s.expected_pi_version:
             raise RuntimeExecutionError("runtime_not_ready", "Pi version does not match the reviewed pin")
+        self._diagnostic_stage = 'build_command'
         if s.compact_events:
             # The fixed image-owned preload runs inside the same isolated child;
             # no NODE_OPTIONS or job-selected loader path is used.
@@ -601,16 +616,20 @@ class PiRuntime:
         for path in (s.skill_paths if getattr(profile, 'load_skills', True) else ()):
             command += ["--skill", str(path.resolve())]
         # Trusted profiles provide domain instructions, never request-selected code.
+        self._diagnostic_stage = 'build_prompt'
         try:
             prompt = profile.build_prompt(wire)
         except ImportError:
             raise RuntimeExecutionError("runtime_not_ready", "Reviewed task prompt builder is unavailable")
+        self._diagnostic_stage = 'write_prompt'
         prompt_path = workspace / "task.md"
         prompt_path.write_text(prompt, encoding="utf-8")
         command += ["@" + str(prompt_path)]
         group = config = journal = job_object = process = None
         if not s.fixture_mode:
+            self._diagnostic_stage = 'prepare_isolation'
             group, config, command = self._prepare_cgroup(workspace, command, uid)
+        self._diagnostic_stage = 'persist_journal'
         control = s.control_dir or home
         control.mkdir(parents=True, exist_ok=True)
         journal = control / ("runtime-" + uuid.uuid4().hex + ".json")
@@ -652,6 +671,7 @@ class PiRuntime:
                 pipe.close()
 
         stop_readers = threading.Event()
+        self._diagnostic_stage = 'launch'
         try:
             process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                        stderr=subprocess.PIPE, cwd=workspace, env=env,
@@ -666,6 +686,7 @@ class PiRuntime:
                 thread.start()
                 threads.append(thread)
             emit("runtime_started", fixture_mode=s.fixture_mode)
+            self._diagnostic_stage = 'execute_native'
             while True:
                 now = time.monotonic()
                 if process.poll() is not None and root_exited_at is None:
@@ -733,6 +754,7 @@ class PiRuntime:
                 # results, session cwd, or untrusted progress percentages.
                 if event_type in {"agent_start", "agent_end", "turn_start", "turn_end", "message_end", "tool_execution_start", "tool_execution_end"}:
                     emit("pi_event", event=event_type)
+            self._diagnostic_stage = 'validate_completion'
             if process.returncode:
                 raise RuntimeExecutionError("runtime_exit", "Pi exited unsuccessfully", True)
             if not completed or not assistant_seen or not observed_models:
@@ -755,6 +777,7 @@ class PiRuntime:
                     self._stop_tree(process, group, job_object, None if s.fixture_mode else uid)
                 stopped = True
             except BaseException as cleanup_error:
+                self._diagnostic_stage = 'stop_processes'
                 self._unsafe = True
                 failure = RuntimeExecutionError("process_safety_unverified", "Runtime process tree stop could not be confirmed; recovery must block")
                 failure.__cause__ = cleanup_error
@@ -774,6 +797,7 @@ class PiRuntime:
                     and failure.retryable and job.get("attempt", 1) == 1):
                 self._wait_for_model_retry(cancel, end_time)
             raise failure
+        self._diagnostic_stage = 'write_provenance'
         finished = utc_now()
         provenance = {"model": s.model, "provider": s.provider, "pi_package": PI_PACKAGE,
                       "pi_version": version, "node_version": node, "image_digest": s.image_digest,
