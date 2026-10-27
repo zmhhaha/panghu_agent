@@ -26,7 +26,7 @@ import uuid
 
 from .contracts import ContractError, parse_timestamp, utc_now
 from .profiles import ExecutionProfile, ProfileError, bounded_provenance
-from ..diagnostics import log_execution_failure
+from ..diagnostics import log_execution_failure, log_pi_model_failure
 
 PI_PACKAGE = "@mariozechner/pi-coding-agent"
 PI_VERSION = "0.73.1"
@@ -210,6 +210,7 @@ class PiRuntime:
 
     @staticmethod
     def _model_request_error(message):
+        log_pi_model_failure(message)
         # Pinned Pi 0.73.1 preserves OpenAI APIError.message as "<status> <body>".
         # Verified against actual loopback 429/503 responses. Never search an
         # arbitrary body for numbers or retry generic provider/protocol errors.

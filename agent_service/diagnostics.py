@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 
 _COMPONENTS = frozenset({'pi_runtime', 'pi_driver', 'model_proxy'})
@@ -42,6 +43,53 @@ _NAMED_CATEGORIES = {'RuntimeExecutionError': 'runtime_error', 'ProfileError': '
                      'TimeoutException': 'http_timeout', 'NetworkError': 'http_network_error',
                      'TransportError': 'http_transport_error', 'ProtocolError': 'http_protocol_error',
                      'RequestError': 'http_request_error', 'HTTPStatusError': 'http_status_error'}
+
+
+def log_pi_model_failure(message: dict) -> None:
+    """Describe the pinned SDK's error shape without logging its native text.
+
+    Pi serializes Error.message rather than its JS exception type. These labels
+    are diagnostic hints from reviewed, anchored message templates, never proof
+    of an upstream status or a reason to retry. Property names, response values,
+    paths, and arbitrary provider error codes must not become log labels.
+    """
+    try:
+        reason = message.get('stopReason')
+        reason = reason if type(reason) is str and reason in {'error', 'aborted'} else 'unknown'
+        raw = message.get('errorMessage')
+        category, status = 'native_unknown', None
+        if type(raw) is not str:
+            category = 'native_error_missing'
+        elif len(raw) > 16384:
+            category = 'native_error_oversized'
+        else:
+            http = re.match(r'\A([45][0-9]{2}) (?=\S)', raw)
+            if reason == 'error' and http:
+                category, status = 'http_status_message', int(http.group(1))
+            elif re.fullmatch(r"Cannot read properties of (?:undefined|null) \(reading '[^'\r\n]{1,128}'\)", raw):
+                category = 'js_nullish_property_read'
+            elif re.fullmatch(r"Cannot set properties of (?:undefined|null) \(setting '[^'\r\n]{1,128}'\)", raw):
+                category = 'js_nullish_property_write'
+            elif re.fullmatch(r'[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*){0,5} is not a function', raw):
+                category = 'js_not_function'
+            elif re.fullmatch(r'[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*){0,5} is not iterable', raw):
+                category = 'js_not_iterable'
+            elif re.fullmatch(r'Unhandled stop reason: [^\r\n]{1,128}', raw):
+                category = 'responses_stop_reason_unknown'
+            elif re.fullmatch(r'Error Code [A-Za-z0-9_-]{1,128}: [^\r\n]*', raw):
+                category = 'responses_stream_error'
+            elif raw == 'Unknown error (no error details in response)':
+                category = 'responses_failed_without_details'
+            elif raw == 'An unknown error occurred':
+                category = 'responses_unsuccessful_status'
+            elif raw == 'Request was aborted':
+                category = 'request_aborted'
+        record = dict(event='pi_model_failure', component='pi_runtime', stage='execute_native',
+                      category=category, stop_reason=reason, native_http_status=status)
+        logging.getLogger(__name__).warning('%s', json.dumps(record, sort_keys=True))
+    except Exception:
+        # Operator logging must never change the original error/retry semantics.
+        pass
 
 
 def log_execution_failure(component: str, stage: str, error: BaseException, *,
