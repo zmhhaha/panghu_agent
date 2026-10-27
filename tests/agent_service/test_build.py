@@ -30,7 +30,8 @@ def test_workers_isolate_neutral_controller_dependencies_from_native_hermes_envi
     native = '/opt/hermes/.venv/bin/python'
     controller = '/opt/agent-service/.venv/bin/python'
     assert native + ' -m venv /opt/agent-service/.venv' in commands
-    assert controller + ' -m pip install --no-cache-dir -r /opt/agent-service/agent_service/requirements.txt' in commands
+    assert 'COPY agent_service/requirements.txt /tmp/agent-service-requirements.txt' in commands
+    assert controller + ' -m pip install --no-cache-dir -r /tmp/agent-service-requirements.txt' in commands
     assert controller + ' -m pip check' in commands
     # Installing the controller requirements into the donor environment can
     # break Hermes/PPT's reviewed dependency set before any Worker starts.
