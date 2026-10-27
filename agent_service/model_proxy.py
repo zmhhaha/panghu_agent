@@ -22,6 +22,7 @@ from sqlalchemy import (Column, Float, ForeignKey, Integer, LargeBinary, String,
                         Table, insert, select, update, func)
 
 from .contracts import ServiceError, canonical_bytes, digest
+from .diagnostics import log_execution_failure
 from .store import metadata, jobs, attempts, worker_allocations
 
 
@@ -159,8 +160,18 @@ class ModelProxy:
         if (type(value.get('stream', False)) is not bool
                 or value.get('include', []) not in ([], ['reasoning.encrypted_content'])):
             raise ServiceError('model_request_scope_invalid', 422)
+        cache_key = value.get('prompt_cache_key')
+        if cache_key is not None and (type(cache_key) is not str or not 1 <= len(cache_key) <= 256
+                or any(ord(char) < 32 or ord(char) == 127 for char in cache_key)):
+            raise ServiceError('model_request_scope_invalid', 422)
         self._input(value['input'])
-        value = dict(value, store=False, max_output_tokens=bound)
+        # Pi attaches its ephemeral native session ID even in --no-session
+        # mode. Task-scoped execution does not preserve native sessions or
+        # request upstream cache affinity; omit this advisory hint before
+        # admission hashing and forwarding to the shared Responses gateway.
+        # Conversation/model/tool content remains unchanged.
+        value = {key: item for key, item in value.items() if key != 'prompt_cache_key'}
+        value.update(store=False, max_output_tokens=bound)
         return value
 
     @staticmethod
@@ -306,22 +317,31 @@ class ModelProxy:
                 raise ServiceError('model_budget_exhausted', 429)
             db.execute(insert(requests).values(attempt_id=grant['attempt'], body_sha256=identity,
                 state='admitted', created_at=time.time()))
+        diagnostic_stage = 'authorize_upstream'
+        upstream_status = upstream_media = None
         try:
             self.authorize(token)
             remaining = max(.1, min(600., grant['exp'] - time.time()))
             # No retry, no redirect, no client/discovery URL, no environment proxy.
+            diagnostic_stage = 'open_upstream'
             with self.client.stream('POST', self.settings.upstream_base_url.rstrip('/') + '/responses',
                     headers={'Authorization': 'Bearer ' + self.settings.upstream_token,
                              'Content-Type': 'application/json', 'Accept-Encoding': 'identity'},
                     content=canonical_bytes(body), timeout=httpx.Timeout(remaining, connect=min(10., remaining))) as response:
+                diagnostic_stage = 'validate_upstream'
+                upstream_status = response.status_code
+                upstream_media = response.headers.get('content-type', '').split(';')[0]
                 if response.status_code != 200:
                     raise ServiceError('model_upstream_rejected', 502)
-                media = response.headers.get('content-type', '').split(';')[0]
+                media = upstream_media
                 if media not in {'application/json', 'text/event-stream'}:
                     raise ServiceError('model_upstream_protocol_invalid', 502)
                 chunks, size = [], 0
+                diagnostic_stage = 'receive_upstream'
                 for chunk in response.iter_bytes(65536):
+                    diagnostic_stage = 'authorize_upstream'
                     self.authorize(token)
+                    diagnostic_stage = 'receive_upstream'
                     size += len(chunk)
                     if size > self.settings.max_response_bytes:
                         raise ServiceError('model_response_too_large', 502)
@@ -329,12 +349,16 @@ class ModelProxy:
                 payload = b''.join(chunks)
                 if not payload:
                     raise ServiceError('model_upstream_protocol_invalid', 502)
+            diagnostic_stage = 'authorize_upstream'
             self.authorize(token)
+            diagnostic_stage = 'persist_response'
             with self.store.engine.begin() as db:
                 db.execute(update(requests).where(key).values(state='complete', status=200,
                     media_type=media, response=payload))
             return 200, media, payload
-        except Exception:
+        except Exception as exc:
+            log_execution_failure('model_proxy', diagnostic_stage, exc,
+                upstream_status=upstream_status, upstream_media=upstream_media)
             # Retain admitted, including ambiguous network failures. Reconciliation
             # never spends again merely because an HTTP response was lost.
             raise ServiceError('model_admission_uncertain', 502) from None

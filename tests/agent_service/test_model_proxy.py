@@ -6,6 +6,7 @@ or upstream readiness. No model/provider or academic network calls are made.
 from copy import deepcopy
 from dataclasses import replace
 import json
+import logging
 import time
 from types import SimpleNamespace
 
@@ -104,6 +105,32 @@ def test_both_engines_use_scoped_responses_and_replay_without_spending_again(exe
     assert sent['model'] == run.model_policy.model
     assert request.headers['authorization'] == 'Bearer offline-provider-token'
     assert 'offline-provider-token' not in run.token
+
+
+def test_ephemeral_native_cache_hint_is_not_forwarded_or_a_new_paid_admission(execution):
+    run = execution()
+    body = dict(run.body, stream=True, max_output_tokens=8192,
+        tools=[{'type': 'function', 'name': 'read', 'parameters': {'type': 'object'}}],
+        prompt_cache_key='private-native-session-id')
+    result = run.proxy.respond(run.token, body)
+    sent = json.loads(run.calls[0].content)
+    assert sent == {**run.body, 'stream': True, 'max_output_tokens': 8192,
+                   'tools': body['tools'], 'store': False}
+    assert 'private-native-session-id' not in run.calls[0].content.decode()
+    assert run.proxy.respond(run.token, dict(body, prompt_cache_key='another-native-session')) == result
+    assert run.proxy.respond(run.token, {key: value for key, value in body.items()
+                                        if key != 'prompt_cache_key'}) == result
+    assert len(run.calls) == 1
+
+
+@pytest.mark.parametrize('cache_hint', [False, [], '', 'x' * 257, 'line\nbreak'])
+def test_invalid_native_cache_hint_fails_before_admission(execution, cache_hint):
+    run = execution()
+    error('model_request_scope_invalid', lambda: run.proxy.respond(
+        run.token, dict(run.body, prompt_cache_key=cache_hint)), 422)
+    assert run.calls == []
+    with run.store.engine.connect() as db:
+        assert db.execute(select(requests)).all() == []
 
 
 def test_complete_response_is_replayed_by_new_proxy_after_controller_restart(execution):
@@ -292,6 +319,98 @@ def test_bad_or_oversized_upstream_responses_remain_uncertain(execution, status,
         assert len(calls) == 1
     finally:
         run.proxy.client.close()
+
+
+@pytest.mark.parametrize('failure_kind,stage,category,code,status,media', [
+    ('rejected', 'validate_upstream', 'service_error', 'model_upstream_rejected', 503, 'json'),
+    ('private_media', 'validate_upstream', 'service_error', 'model_upstream_protocol_invalid', 200, 'other'),
+    ('connect_timeout', 'open_upstream', 'http_connect_timeout', 'unclassified_error', None, 'unknown'),
+    ('read_error', 'receive_upstream', 'http_read_error', 'unclassified_error', 200, 'event_stream'),
+    ('revoked', 'authorize_upstream', 'service_error', 'model_grant_revoked', None, 'unknown'),
+    ('persistence', 'persist_response', 'unexpected_error', 'unclassified_error', 200, 'json'),
+])
+def test_upstream_failure_diagnostics_are_bounded_and_preserve_uncertain_admission(
+        execution, caplog, monkeypatch, failure_kind, stage, category, code, status, media):
+    run = execution()
+    private = 'PRIVATE_BODY_HEADER_EXCEPTION_AND_REQUEST_DATA'
+    run.body['input'] = private
+    calls = []
+
+    class BrokenStream(httpx.SyncByteStream):
+        def __init__(self, request):
+            self.request = request
+
+        def __iter__(self):
+            raise httpx.ReadError(private, request=self.request)
+            yield b''  # Explicit stream generator; no model bytes are delivered.
+
+    def upstream(request):
+        calls.append(request)
+        if failure_kind == 'connect_timeout':
+            raise httpx.ConnectTimeout(private, request=request)
+        if failure_kind == 'read_error':
+            return httpx.Response(200, headers={'content-type': 'text/event-stream'},
+                                  stream=BrokenStream(request))
+        if failure_kind == 'rejected':
+            return httpx.Response(503, headers={'content-type': 'application/json',
+                'x-private-header': private}, json={'error': {'message': private}})
+        if failure_kind == 'private_media':
+            return httpx.Response(200, headers={'content-type': 'application/' + private},
+                                  content=private.encode())
+        return httpx.Response(200, json={'output': [private]})
+
+    if failure_kind == 'revoked':
+        original_authorize, authorizations = run.proxy.authorize, []
+
+        def revoke_after_admission(token):
+            authorizations.append(True)
+            if len(authorizations) == 2:
+                raise ServiceError('model_grant_revoked', 401)
+            return original_authorize(token)
+
+        monkeypatch.setattr(run.proxy, 'authorize', revoke_after_admission)
+    if failure_kind == 'persistence':
+        original_begin, transactions = run.store.engine.begin, []
+
+        def fail_response_persistence():
+            transactions.append(True)
+            if len(transactions) == 2:
+                raise RuntimeError(private)
+            return original_begin()
+
+        monkeypatch.setattr(run.store.engine, 'begin', fail_response_persistence)
+    run.proxy.client.close()
+    run.proxy.client = httpx.Client(transport=httpx.MockTransport(upstream))
+    try:
+        with caplog.at_level(logging.WARNING, logger='agent_service.diagnostics'):
+            error('model_admission_uncertain', lambda: run.proxy.respond(run.token, run.body), 502)
+            # An uncertain admission never calls the upstream a second time.
+            error('model_admission_uncertain', lambda: run.proxy.respond(run.token, run.body), 409)
+        assert len(calls) == (0 if failure_kind == 'revoked' else 1)
+        records = [record for record in caplog.records if record.name == 'agent_service.diagnostics']
+        assert len(records) == 1
+        assert json.loads(records[0].getMessage()) == dict(event='execution_failure',
+            component='model_proxy', stage=stage, category=category, code=code, errno=None,
+            upstream_status=status, upstream_media=media)
+        assert records[0].exc_info is None and not records[0].stack_info
+        for sensitive in (private, run.token, run.proxy.settings.upstream_token,
+                          run.proxy.settings.upstream_base_url, run.envelope.attempt_id):
+            assert sensitive not in records[0].getMessage()
+        with run.store.engine.connect() as db:
+            record = db.execute(select(requests)).mappings().one()
+        assert record['state'] == 'admitted'
+        assert record['status'] is None and record['response'] is None
+    finally:
+        run.proxy.client.close()
+
+
+def test_successful_model_response_and_replay_emit_no_failure_warning(execution, caplog):
+    run = execution()
+    with caplog.at_level(logging.WARNING, logger='agent_service.diagnostics'):
+        first = run.proxy.respond(run.token, run.body)
+        assert run.proxy.respond(run.token, run.body) == first
+    assert len(run.calls) == 1
+    assert not [record for record in caplog.records if record.name == 'agent_service.diagnostics']
 
 
 def observed_search():

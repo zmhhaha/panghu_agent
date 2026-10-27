@@ -5,12 +5,13 @@ import json
 import logging
 
 
-_COMPONENTS = frozenset({'pi_runtime', 'pi_driver'})
+_COMPONENTS = frozenset({'pi_runtime', 'pi_driver', 'model_proxy'})
 _STAGES = frozenset({'check_settings', 'validate_request', 'prepare_workspace',
     'prepare_profile_workspace', 'verify_resources', 'write_agent_config', 'probe_versions',
     'build_command', 'build_prompt', 'write_prompt', 'prepare_isolation', 'persist_journal',
     'launch', 'execute_native', 'validate_completion', 'stop_processes', 'write_provenance',
-    'check_request', 'wire_builder', 'validate_native_request'})
+    'check_request', 'wire_builder', 'validate_native_request', 'authorize_upstream',
+    'open_upstream', 'validate_upstream', 'receive_upstream', 'persist_response'})
 _CODES = frozenset({'cancelled', 'timed_out', 'runtime_not_ready', 'runtime_busy',
     'runtime_exit', 'runtime_protocol_error', 'runtime_idle_timeout', 'runtime_output_limit',
     'runtime_raw_output_limit', 'runtime_output_line_limit', 'runtime_event_limit',
@@ -22,13 +23,27 @@ _CODES = frozenset({'cancelled', 'timed_out', 'runtime_not_ready', 'runtime_busy
     'read_only_mounts_unavailable', 'input_mount_layout_invalid', 'unsafe_input_staging',
     'read_only_mount_failed', 'read_only_mount_unverified', 'input_unmount_unverified',
     'invalid_ppt_task', 'ppt_input_snapshot_mismatch', 'ppt_project_not_fresh',
-    'ppt_prepared_checkpoint_required', 'model_proxy_grant_invalid'})
+    'ppt_prepared_checkpoint_required', 'model_proxy_grant_invalid',
+    'model_grant_invalid', 'model_grant_revoked', 'model_grant_scope_mismatch',
+    'model_upstream_rejected', 'model_upstream_protocol_invalid', 'model_response_too_large'})
 _NAMED_CATEGORIES = {'RuntimeExecutionError': 'runtime_error', 'ProfileError': 'profile_error',
                      'ServiceError': 'service_error', 'ContractError': 'contract_error',
-                     '_DriverError': 'driver_error'}
+                     '_DriverError': 'driver_error',
+                     'ConnectTimeout': 'http_connect_timeout', 'ReadTimeout': 'http_read_timeout',
+                     'WriteTimeout': 'http_write_timeout', 'PoolTimeout': 'http_pool_timeout',
+                     'ConnectError': 'http_connect_error', 'ReadError': 'http_read_error',
+                     'WriteError': 'http_write_error', 'CloseError': 'http_close_error',
+                     'RemoteProtocolError': 'http_remote_protocol_error',
+                     'LocalProtocolError': 'http_local_protocol_error',
+                     'UnsupportedProtocol': 'http_unsupported_protocol', 'ProxyError': 'http_proxy_error',
+                     'DecodingError': 'http_decoding_error', 'TooManyRedirects': 'http_redirect_error',
+                     'TimeoutException': 'http_timeout', 'NetworkError': 'http_network_error',
+                     'TransportError': 'http_transport_error', 'ProtocolError': 'http_protocol_error',
+                     'RequestError': 'http_request_error', 'HTTPStatusError': 'http_status_error'}
 
 
-def log_execution_failure(component: str, stage: str, error: BaseException) -> None:
+def log_execution_failure(component: str, stage: str, error: BaseException, *,
+                          upstream_status=None, upstream_media=None) -> None:
     """Emit only reviewed labels and a bounded OS errno, never exception strings.
 
     This is operator logging, separate from public events/results. Unknown codes,
@@ -48,6 +63,12 @@ def log_execution_failure(component: str, stage: str, error: BaseException) -> N
             component=component if component in _COMPONENTS else 'unknown',
             stage=stage if stage in _STAGES else 'unknown', category=category, code=code,
             errno=number if type(number) is int and 1 <= number <= 4095 else None)
+        if component == 'model_proxy':
+            record['upstream_status'] = (upstream_status if type(upstream_status) is int
+                                         and 100 <= upstream_status <= 599 else None)
+            record['upstream_media'] = ('json' if upstream_media == 'application/json' else
+                'event_stream' if upstream_media == 'text/event-stream' else
+                'other' if type(upstream_media) is str and upstream_media else 'unknown')
         logging.getLogger(__name__).warning('%s', json.dumps(record, sort_keys=True))
     except Exception:
         pass
