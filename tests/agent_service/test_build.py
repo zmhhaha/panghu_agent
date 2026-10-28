@@ -206,7 +206,7 @@ def test_invalid_build_inputs_never_reach_docker_and_invalidate_stale_receipts(s
 def test_pi_build_requires_immutable_reviewed_donor_before_docker(service, donor):
     receipt = old_receipt(service, "pi")
     runner = DockerFixture()
-    environment = {} if donor is None else {"PI_DONOR_IMAGE": donor}
+    environment = {} if donor is None else {"PI_CAGE_IMAGE": donor}
     with pytest.raises(BuildError):
         build("pi", service=service, environ=environment, runner=runner)
     assert not receipt.exists() and runner.calls == []
@@ -333,10 +333,12 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
     donor = "registry:5000/reviewed-pi@sha256:" + "a" * 64
     ppt_donor = "registry:5000/reviewed-ppt@sha256:" + "b" * 64
     result = build("pi", service=service,
-                   environ={"PI_DONOR_IMAGE": donor, "PPT_DONOR_IMAGE": ppt_donor,
+                   environ={"PI_CAGE_IMAGE": donor, "PPT_DONOR_IMAGE": ppt_donor,
                             "IMAGE": "registry:5000/agent-pi:review"}, runner=runner)
     assert result == "registry:5000/agent-pi@" + runner.checksum
-    assert "PI_DONOR_IMAGE=" + donor in runner.calls[0]
+    from agent_service.pi_cage import PI_CAGE_REVISION
+    assert "PI_CAGE_IMAGE=" + donor in runner.calls[0]
+    assert "PI_CAGE_REVISION=" + PI_CAGE_REVISION in runner.calls[0]
     assert "PPT_DONOR_IMAGE=" + ppt_donor in runner.calls[0]
     assert "agent_service/Dockerfile.agent-pi" in runner.names
     assert "agent_service/Dockerfile.control" not in runner.names
@@ -359,7 +361,7 @@ def test_pi_profile_manifest_cannot_replace_or_expand_reviewed_resource_inputs(s
     manifest.write_text(json.dumps(resource), encoding="utf-8")
     receipt, runner = old_receipt(service, "pi"), DockerFixture()
     with pytest.raises(BuildError, match="invalid_profile_resource_manifest"):
-        build("pi", service=service, environ={"PI_DONOR_IMAGE": "registry:5000/pi@sha256:" + "a" * 64,
+        build("pi", service=service, environ={"PI_CAGE_IMAGE": "registry:5000/pi@sha256:" + "a" * 64,
             "PPT_DONOR_IMAGE": "registry:5000/ppt@sha256:" + "b" * 64}, runner=runner)
     assert not receipt.exists() and runner.calls == []
 

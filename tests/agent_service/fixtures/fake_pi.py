@@ -13,7 +13,7 @@ if "--version" in sys.argv:
         time.sleep(90)
     if mode == "version_log":
         print("unexpected log", file=sys.stderr)
-    print("24.21.0" if mode == "node" else ("99.0.0" if mode == "wrong_version" else "0.73.1"),
+    print("24.21.0" if mode == "node" else ("99.0.0" if mode == "wrong_version" else "0.99.2"),
           file=sys.stderr if mode == "stderr_version" else sys.stdout)
     raise SystemExit(0)
 

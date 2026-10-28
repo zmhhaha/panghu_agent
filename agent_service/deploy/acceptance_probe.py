@@ -440,8 +440,9 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
         return driver
     from agent_service.runtime import PiRuntime, RuntimeSettings
     from agent_service.worker_entry import NODE, PI_CLI
+    from agent_service.pi_cage import ACADEMIC_EXTENSION
     from agent_service.engines import PiDriver
-    extensions = ((Path('/opt/pi/node_modules/agent-service-academic.mjs'),)
+    extensions = ((Path(ACADEMIC_EXTENSION),)
                   if policy.name == 'research.generate.v1' else ())
     profile = DomainExecutionProfile(policy, policy.execution_binding.bundle_revision, extensions=extensions)
     profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL
@@ -460,7 +461,8 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
     preliminary._verify_resources()
     pi_version, node_version = preliminary._readiness_versions()
     observations['capability'] = dict(engine='pi', pi_version=pi_version, node_version=node_version,
-        package_measured=True, allowed_tools=list(profile.impl.required_tools))
+        package_measured=True, allowed_tools=list(profile.impl.required_tools),
+        **preliminary._source_provenance())
     # These prerequisite booleans are derived from this actual probe, not from a
     # manufactured production approval or a user-supplied all-true record.
     runtime = PiRuntime(replace(settings, capability_verified=bool(pi_version and node_version),

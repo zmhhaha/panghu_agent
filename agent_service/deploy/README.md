@@ -77,20 +77,35 @@ Vault 的既有 ESO 读取策略也需覆盖 `secret/data/agent-service/runtime`
 
 ## 2. 构建候选镜像并推入私人 Registry
 
-在服务器仓库根目录执行。`build.sh` 沿用外层 `cluster_config.sh` 的 Registry 设置，也接受显式 `REGISTRY`、`IMAGE_TAG`、`PLATFORM`。控制面和两种引擎分别构建；Pi/Hermes 候选均使用已经包含完整 PPT Master、字体、Chromium 及 Python 环境的审定 PPT 镜像。Pi 另外从审定 Pi 镜像复制固定 Node 和 `/opt/pi`。
+在服务器仓库根目录执行。`build.sh` 沿用外层 `cluster_config.sh` 的 Registry 设置，也接受显式 `REGISTRY`、`IMAGE_TAG`、`PLATFORM`。Pi/Hermes 候选使用包含完整 PPT Master、字体、Chromium 及 Python 环境的审定 PPT 镜像。Pi 的执行入口、Node 和 `@earendil-works/pi-coding-agent 0.99.2` 来自用户的 `zmhhaha/pi-cage` 仓库，先按该仓库的 `build.sh` 构建固定源码，再把生成的镜像摘要传给本服务。具体来源与验证边界见 [pi-cage 接入](../docs/PI_CAGE_INTEGRATION.md)。
+
+在单独的 pi-cage 检出中构建（所需提交也固定在 `agent_service/pi_cage.py`）：
+
+```bash
+git clone --branch codex/agent-service-worker https://github.com/zmhhaha/pi-cage.git
+cd pi-cage
+git checkout --detach e0262e65e43c6924164e995394f715dc5d19c210
+REGISTRY=arm-cluster-master:5000 IMAGE=pi-cage-agent-runtime TAG=e0262e6 bash build.sh --push
+cat rendered/image.txt
+```
+
+回到 `panghu_agent` 仓库根目录，使用上一步实际推送的摘要：
 
 ```bash
 export REGISTRY='arm-cluster-master:5000'
 export PLATFORM='linux/arm64'
 export PPT_DONOR_IMAGE='替换审定PPT镜像仓库@sha256:替换64位摘要'
-export PI_DONOR_IMAGE='替换审定Pi镜像仓库@sha256:替换64位摘要'
+export PI_CAGE_IMAGE='arm-cluster-master:5000/pi-cage-agent-runtime@sha256:替换上一步64位实际摘要'
 
 bash agent_service/build.sh --target control
 bash agent_service/build.sh --target pi
+# Hermes 按需单独构建，Pi 接入不以它为前置。
 bash agent_service/build.sh --target hermes
 ```
 
 成功推送才写入 `agent_service/rendered/control-image.txt`、`pi-image.txt`、`hermes-image.txt`。部署使用这些固定摘要，不能用 `latest` 或只构建未推送的标签代替。构建上下文使用明确的源码/中立校验器/科学检索工具清单，不包含 `.env`、个人 HOME、会话、数据库或部署凭据。Worker 镜像里的入口是 `/opt/agent-service/.venv/bin/python -m agent_service.worker_entry`；中立控制依赖安装在该独立虚拟环境。Hermes 网关和 PPT 脚本继续使用 donor 原有 `/opt/hermes/.venv`，继承自 PPT 镜像的网关入口会被替换。
+
+`PI_DONOR_IMAGE` 已移除。普通旧 Pi/scientific 镜像、缺失源码身份、错误提交、被修改的 Worker 入口或错误 npm 版本会在构建及 readiness 时被拒绝。新绑定使用 `pi-cage-adapter-v1`，旧 Pi 的验收记录不能直接用于此版本。
 
 ## 3. 生成并审定公开目录
 

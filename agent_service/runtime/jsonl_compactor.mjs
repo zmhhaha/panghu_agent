@@ -1,4 +1,4 @@
-// Reviewed Pi 0.73.1 print-mode transport. This file never changes model/tool data
+// Bounded pi-cage print-mode transport. This file never changes model/tool data
 // inside Pi: it only removes repeated snapshots from the diagnostic stdout wire.
 import { fileURLToPath } from 'node:url';
 
@@ -77,7 +77,7 @@ export class CompactStream {
         this.stats.message_updates++;
         const update = event.assistantMessageEvent;
         if (!update || Array.isArray(update) || typeof update.type !== 'string') return this.fail('runtime_protocol_error');
-        // Pi 0.73.1 repeats the same growing assistant in both fields. Preserve
+        // Pi repeats the same growing assistant in both fields. Preserve
         // each delta and its metadata exactly, never the two cumulative copies.
         const { partial: _partial, ...delta } = update;
         event = { type: event.type, assistantMessageEvent: delta };

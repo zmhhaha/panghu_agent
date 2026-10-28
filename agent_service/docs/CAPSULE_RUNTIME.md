@@ -114,7 +114,7 @@ Kubernetes projected volume，先由受信 init/Vault 阶段复制到私有普�
 ```bash
 bash agent_service/build.sh
 # 使用已评审、已缓存或可拉取的 Pi donor 镜像的不可变身份：
-PI_DONOR_IMAGE='registry/reviewed-pi@sha256:<64位实际摘要>' bash agent_service/build.sh --target pi
+PI_CAGE_IMAGE='registry/reviewed-pi-cage@sha256:<64位实际摘要>' bash agent_service/build.sh --target pi
 # 只构建本地候选，省略推送和可部署摘要记录：
 bash agent_service/build.sh --target control --no-push
 ```

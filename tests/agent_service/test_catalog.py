@@ -64,6 +64,10 @@ def test_dual_engine_catalog_matches_real_domain_schemas_and_limits(image_packag
     assert len(public['routes']) == 7
     assert summary['routes_enabled'] is summary['acceptance_created'] is False
     assert summary['network_requests'] == 0
+    assert summary['pi_runtime_requirement']['repository'] == 'https://github.com/zmhhaha/pi-cage'
+    assert summary['pi_runtime_requirement']['adapter_revision'] == 'pi-cage-adapter-v1'
+    assert all(binding['adapter_revision'] == ('pi-cage-adapter-v1' if binding['engine'] == 'pi'
+        else 'hermes-adapter-v1') for binding in public['execution_bindings'])
     assert public['model_proxy']['upstream_base_url'] == 'http://llm-service.llm.svc.cluster.local/v1'
     for contract in public['task_contracts']:
         handler = implementation(contract['name'])

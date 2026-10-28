@@ -30,16 +30,16 @@ from .engine_profiles import WorkspaceTaskProfile
 from .engines import NativeOutcome, PiDriver
 from .linux_stop import AGENT_UID, LinuxUidStopController, private_kernel_scope
 from .runtime import PiRuntime, RuntimeSettings
+from .pi_cage import PI_CLI, ACADEMIC_EXTENSION
 from .worker_api import WorkerHost, create_worker_app
 
 
 CONTROL_ROOT = Path('/run/agent-control')
 WORKSPACE_ROOT = Path('/work')
 NODE = '/usr/local/bin/node'
-PI_CLI = '/opt/pi/node_modules/@mariozechner/pi-coding-agent/dist/cli.js'
 PROFILE_BUNDLE_REVISION = 'workspace-text-v1'
 RESOURCE_ROOT = Path(__file__).with_name('resources') / PROFILE_BUNDLE_REVISION
-PI_ADAPTER_REVISION = 'pi-adapter-v1'
+PI_ADAPTER_REVISION = 'pi-cage-adapter-v1'
 CATALOG_KEYS = frozenset({'task_contracts', 'capability_bundles', 'tool_environments',
                           'execution_bindings', 'routes'})
 
@@ -407,7 +407,7 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
             raise WorkerConfigError()
         resource_root, manifest, manifest_hash, skills, hashes = measured_package(config, policy, CONTROL_ROOT)
         bundle_revision = policy.execution_binding.bundle_revision
-        extensions = ((Path('/opt/pi/node_modules/agent-service-academic.mjs'),)
+        extensions = ((Path(ACADEMIC_EXTENSION),)
                       if policy.name == 'research.generate.v1' else ())
         profile = DomainExecutionProfile(policy, bundle_revision, extensions=extensions)
         profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL_ROOT

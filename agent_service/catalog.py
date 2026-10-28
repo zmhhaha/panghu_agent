@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 
 from .contracts import canonical_bytes, digest, safe_relative_path
 from .profiles import implementation
+from .pi_cage import PI_CAGE_REPOSITORY, PI_CAGE_REVISION, PI_PACKAGE, PI_VERSION
 from .registry import (CapabilityBundle, DeploymentRegistry, ExecutionBinding,
                        ModelPolicy, TaskContract, ToolEnvironment, binding_fingerprint)
 
@@ -258,7 +259,7 @@ def generate(*, pi_image=None, hermes_image=None, engine='pi', runtime_revision,
             data = dict(id=binding_id, profile=contract.name, profile_revision=contract.revision,
                 bundle=dict(name=bundle.name, revision=bundle.revision),
                 tool_environment=dict(name=environment.name, revision=environment.revision),
-                engine=native, adapter_revision=native + '-adapter-v1',
+                engine=native, adapter_revision='pi-cage-adapter-v1' if native == 'pi' else 'hermes-adapter-v1',
                 model_policy=policy.model_dump(mode='json'))
             # The combination identity includes measured resource hashes and
             # contract quotas, not merely bundle/environment revision labels.
@@ -323,6 +324,10 @@ def generate(*, pi_image=None, hermes_image=None, engine='pi', runtime_revision,
         worker_configs=[dict(host_config_map=name, path='worker-configs/' + name + '/config.json',
             engine=host['engine'], binding_id=host['binding_id'], binding_revision=host['binding_revision'])
             for name, host in sorted(hosts.items())])
+    if 'pi' in images:
+        summary['pi_runtime_requirement'] = dict(repository=PI_CAGE_REPOSITORY,
+            revision=PI_CAGE_REVISION, package=PI_PACKAGE, version=PI_VERSION,
+            adapter_revision='pi-cage-adapter-v1', verification_required_at=['worker_build', 'worker_readiness'])
     return public, hosts, summary
 
 

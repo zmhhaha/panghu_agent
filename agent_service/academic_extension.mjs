@@ -1,5 +1,5 @@
 // Explicit image-owned Pi extension. No shell or arbitrary remote URL tool.
-import { Type } from '@sinclair/typebox';
+import { Type } from 'typebox';
 
 export default function (pi) {
   const call = async (name, payload, signal) => {

@@ -13,6 +13,7 @@ from agent_service.contracts import ServiceError
 from agent_service.deploy import acceptance_probe as probe
 from agent_service.engines import EngineRequest, StopEvidence
 from agent_service import resources, runtime, tool_client
+from agent_service.pi_cage import ACADEMIC_EXTENSION
 from test_acceptance_probe import config
 from test_catalog import image_packages
 
@@ -26,7 +27,10 @@ class OfflineRuntime:
         pass
 
     def _readiness_versions(self):
-        return '0.73.1', '24.21.0'
+        return '0.99.2', '24.21.0'
+
+    def _source_provenance(self):
+        return {}
 
     def execute(self, wire, workspace, emit, cancel):
         pass
@@ -78,7 +82,7 @@ def test_all_seven_candidate_factories_keep_exact_contract_tools_and_capabilitie
     assert driver.runtime.settings.model_env == {'AGENT_MODEL_API_KEY': 'offline-attempt-only-grant'}
     academic = profile == 'research.generate.v1'
     assert driver.runtime.profile.extension_paths == (
-        (Path('/opt/pi/node_modules/agent-service-academic.mjs'),) if academic else ())
+        (Path(ACADEMIC_EXTENSION),) if academic else ())
     assert callable(getattr(driver, 'academic_observer', None)) is academic
     assert driver.runtime.profile.load_skills is profile.startswith('ppt.')
     assert driver.runtime.profile.policy.enabled is False

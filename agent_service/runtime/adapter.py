@@ -1,4 +1,4 @@
-"""Pinned Pi JSONL print-mode adapter. No shell, environment inheritance or fallback.
+"""Pinned pi-cage single-task adapter. No shell, environment inheritance or fallback.
 
 Only fixture_mode permits same-UID execution. Production requires a Linux root
 controller, unique child UID, capability clearing and explicit acceptance evidence.
@@ -27,11 +27,10 @@ import uuid
 from .contracts import ContractError, parse_timestamp, utc_now
 from .profiles import ExecutionProfile, ProfileError, bounded_provenance
 from ..diagnostics import log_execution_failure, log_pi_model_failure
+from ..pi_cage import PI_PACKAGE, PI_VERSION, PI_CLI, verify_runtime
 
-PI_PACKAGE = "@mariozechner/pi-coding-agent"
-PI_VERSION = "0.73.1"
 COMPACTOR_PATH = Path(__file__).with_name("jsonl_compactor.mjs")
-COMPACTOR_SHA256 = "4ffaeac575e82d149b7104a6e48ff928dbf5a9cd77232ba22cd6415fbb0a8d89"
+COMPACTOR_SHA256 = "7d7b158694e9b2eca70770ca657d3e945e3f2998c5f8328d4f193de1b426c791"
 OUTPUT_STAT_KEYS = frozenset({"raw_bytes", "raw_lines", "raw_max_line_bytes", "output_bytes",
                               "output_lines", "output_max_line_bytes", "message_updates", "tool_updates"})
 MODEL_RETRY_DELAY_SECONDS = 2.0
@@ -45,8 +44,8 @@ class RuntimeExecutionError(RuntimeError):
 
 @dataclass(frozen=True)
 class RuntimeSettings:
-    command: tuple[str, ...] = ("pi",)
-    node_command: tuple[str, ...] = ("node",)
+    command: tuple[str, ...] = ("/usr/local/bin/node", PI_CLI)
+    node_command: tuple[str, ...] = ("/usr/local/bin/node",)
     provider: str = ""
     model: str = ""
     model_base_url: str | None = None
@@ -94,6 +93,7 @@ class PiRuntime:
         self._unsafe = False
         self._probe_lock = threading.Lock()
         self._version_cache = None
+        self._pi_cage_identity = None
 
     @property
     def ready(self) -> bool:
@@ -115,7 +115,24 @@ class PiRuntime:
                     "fixture_mode": self.settings.fixture_mode}
         return {"ready": True, "fixture_mode": self.settings.fixture_mode,
                 "package": PI_PACKAGE, "expected_pi_version": self.settings.expected_pi_version,
-                "pi_version": pi_version, "node_version": node_version}
+                "pi_version": pi_version, "node_version": node_version,
+                **self._source_provenance()}
+
+    def _source_provenance(self):
+        # Synthetic subprocess fixtures never assert a real repository identity.
+        if self._pi_cage_identity is None or self.settings.fixture_mode:
+            return {}
+        return {"pi_cage_repository": self._pi_cage_identity["repository"],
+                "pi_cage_revision": self._pi_cage_identity["revision"]}
+
+    def _verify_pi_cage(self):
+        if self.settings.fixture_mode:
+            return
+        try:
+            self._pi_cage_identity = verify_runtime()
+        except (OSError, ValueError, TypeError, KeyError):
+            self._pi_cage_identity = None
+            raise RuntimeExecutionError("runtime_not_ready", "Pinned pi-cage runtime identity does not match") from None
 
     def _check_settings(self):
         s = self.settings
@@ -127,8 +144,11 @@ class PiRuntime:
             raise RuntimeExecutionError("configuration_missing", "Event compaction must be an explicit trusted setting")
         if s.compact_events and (len(s.command) != 2 or len(s.node_command) != 1
                                 or s.command[0] != s.node_command[0]
-                                or Path(s.command[1]).name != "cli.js" or s.expected_pi_version != PI_VERSION):
-            raise RuntimeExecutionError("configuration_missing", "Event compaction requires the pinned Node Pi CLI entry")
+                                or Path(s.command[1]).name != "worker-cli.mjs" or s.expected_pi_version != PI_VERSION):
+            raise RuntimeExecutionError("configuration_missing", "Event compaction requires the pinned Node pi-cage entry")
+        if not s.fixture_mode and (s.command != ("/usr/local/bin/node", PI_CLI)
+                or s.node_command != ("/usr/local/bin/node",) or s.expected_pi_version != PI_VERSION):
+            raise RuntimeExecutionError("configuration_missing", "Production requires the fixed pi-cage worker entry")
         if s.model_base_url is not None or s.model_api is not None:
             from urllib.parse import urlsplit
             parsed = urlsplit(s.model_base_url or "")
@@ -211,8 +231,8 @@ class PiRuntime:
     @staticmethod
     def _model_request_error(message):
         log_pi_model_failure(message)
-        # Pinned Pi 0.73.1 preserves OpenAI APIError.message as "<status> <body>".
-        # Verified against actual loopback 429/503 responses. Never search an
+        # Only the explicit OpenAI APIError.message shape "<status> <body>"
+        # is eligible for the scheduler's existing bounded retry. Never search an
         # arbitrary body for numbers or retry generic provider/protocol errors.
         raw = message.get("errorMessage")
         status = (re.match(r"\A(429|500|502|503|504) (?=\S)", raw)
@@ -237,6 +257,7 @@ class PiRuntime:
 
     def _verify_resources(self):
         s = self.settings
+        self._verify_pi_cage()
         if s.compact_events and (COMPACTOR_PATH.is_symlink() or not COMPACTOR_PATH.is_file()
                                or hashlib.sha256(COMPACTOR_PATH.read_bytes()).hexdigest() != COMPACTOR_SHA256):
             raise RuntimeExecutionError("runtime_not_ready", "Reviewed event compactor hash does not match")
@@ -266,6 +287,7 @@ class PiRuntime:
         # Probe trusted installed executables, never a model endpoint. File
         # identity invalidates cache immediately; TTL bounds other drift.
         s = self.settings
+        self._verify_pi_cage()
         identity = []
         for command in (s.command, s.node_command):
             executable = shutil.which(command[0]) or command[0]
@@ -289,7 +311,7 @@ class PiRuntime:
                 node_version = self._probe(s.node_command, env, home)
             if pi_version != s.expected_pi_version:
                 raise RuntimeExecutionError("runtime_not_ready", "Pi version does not match the reviewed pin")
-            if int(node_version.split(".")[0]) < 20:
+            if tuple(int(part) for part in node_version.split(".")[:3]) < (22, 19, 0):
                 raise RuntimeExecutionError("runtime_not_ready", "Node version is below the supported minimum")
             self._version_cache = (key, time.monotonic(), pi_version, node_version)
             return pi_version, node_version
@@ -400,6 +422,7 @@ class PiRuntime:
                "HOME": str(home), "USERPROFILE": str(home), "XDG_CONFIG_HOME": str(home / ".config"),
                "XDG_CACHE_HOME": str(home / ".cache"), "TMPDIR": str(tmp), "TMP": str(tmp), "TEMP": str(tmp),
                "PI_CODING_AGENT_DIR": str(agent), "PI_OFFLINE": "1", "NO_COLOR": "1", "LANG": "C.UTF-8"}
+        env["PI_SKIP_VERSION_CHECK"] = "1"
         if os.name == "nt":
             for key in ("SYSTEMROOT", "WINDIR", "COMSPEC"):
                 if key in os.environ:
@@ -600,6 +623,8 @@ class PiRuntime:
             raise RuntimeExecutionError("timed_out", "Execution deadline elapsed during startup")
         if version != s.expected_pi_version:
             raise RuntimeExecutionError("runtime_not_ready", "Pi version does not match the reviewed pin")
+        if tuple(int(part) for part in node.split(".")[:3]) < (22, 19, 0):
+            raise RuntimeExecutionError("runtime_not_ready", "Node version is below the supported minimum")
         self._diagnostic_stage = 'build_command'
         if s.compact_events:
             # The fixed image-owned preload runs inside the same isolated child;
@@ -804,6 +829,7 @@ class PiRuntime:
                       "pi_version": version, "node_version": node, "image_digest": s.image_digest,
                       "skill_bundle_revision": s.skill_bundle_revision, "runtime_revision": s.runtime_revision,
                       "token_usage": None, "fixture_mode": s.fixture_mode,
+                      **self._source_provenance(),
                       **bounded_provenance(profile, started, finished)}
         if s.compact_events:
             provenance["output_accounting"] = output_accounting

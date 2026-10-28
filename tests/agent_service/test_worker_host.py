@@ -178,7 +178,7 @@ def test_pinned_pi_configuration_keeps_control_credentials_out_of_agent(monkeypa
     monkeypatch.setattr('agent_service.worker_entry.PiRuntime', Runtime)
     driver = build_pi_driver(config(), credentials(), scope(), Stopper(), acceptance=True, now=lambda: 100)
     s = captured['settings']
-    assert s.command == ('/usr/local/bin/node', '/opt/pi/node_modules/@mariozechner/pi-coding-agent/dist/cli.js')
+    assert s.command == ('/usr/local/bin/node', '/usr/local/lib/pi-cage/worker-cli.mjs')
     assert s.model_api == 'openai-responses' and s.fixture_mode is False
     assert s.model_max_tokens == 8192
     assert set(s.model_env) == {'AGENT_MODEL_API_KEY'}

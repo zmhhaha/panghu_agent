@@ -15,6 +15,11 @@ import tarfile
 import tempfile
 import uuid
 
+try:
+    from .pi_cage import PI_CAGE_REVISION
+except ImportError:  # build.sh executes this file directly.
+    from pi_cage import PI_CAGE_REVISION
+
 
 SERVICE = Path(__file__).resolve().parent
 PYTHON_BASE = "python@sha256:cf50a4f6ac4f026458b08d5222023d700ac806410dff5e9ca8728fa44f2b850f"
@@ -260,8 +265,9 @@ def build(target="control", *, push=True, service=SERVICE, environ=None, runner=
     arguments = ["--platform", platform, "--file", "agent_service/" + TARGETS[target], "--tag", image,
                  "--build-arg", "PYTHON_BASE_IMAGE=" + base]
     if target == "pi":
-        donor = immutable_image(environ.get("PI_DONOR_IMAGE"))
-        arguments += ["--build-arg", "PI_DONOR_IMAGE=" + donor]
+        donor = immutable_image(environ.get("PI_CAGE_IMAGE"))
+        arguments += ["--build-arg", "PI_CAGE_IMAGE=" + donor,
+                      "--build-arg", "PI_CAGE_REVISION=" + PI_CAGE_REVISION]
     if target in {'pi', 'hermes'}:
         ppt_donor = immutable_image(environ.get('PPT_DONOR_IMAGE'))
         arguments += ['--build-arg', 'PPT_DONOR_IMAGE=' + ppt_donor]
@@ -322,7 +328,7 @@ def build(target="control", *, push=True, service=SERVICE, environ=None, runner=
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, epilog=(
         "Environment: REGISTRY, IMAGE_TAG, IMAGE, PLATFORM (default linux/arm64), "
-        "PYTHON_BASE_IMAGE (reviewed Python digest), PI_DONOR_IMAGE (required for pi), "
+        "PYTHON_BASE_IMAGE (reviewed Python digest), PI_CAGE_IMAGE (pinned pi-cage digest required for pi), "
         "PPT_DONOR_IMAGE (reviewed PPT/Hermes runtime required for pi/hermes). "
         "A successful push writes rendered/<target>-image.txt; --no-push writes no deployable digest."))
     parser.add_argument("--target", choices=TARGETS, default="control")

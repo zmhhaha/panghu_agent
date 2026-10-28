@@ -10,7 +10,7 @@ from agent_service.contracts import ExecutionEnvelope, ServiceError
 from agent_service.kubernetes_provider import KubernetesPool, KubernetesWorkerAdapter
 from agent_service.registry import DeploymentRegistry, binding_fingerprint
 from agent_service.worker_entry import (CapsuleScope, HostConfig, HostSecrets,
-    WorkerConfigError, accepted_host, build_pi_driver, host_policy)
+    WorkerConfigError, accepted_host, build_pi_driver, host_policy, PI_ADAPTER_REVISION)
 from registry_fixtures import make_catalog
 
 
@@ -39,6 +39,7 @@ def catalog():
     bundle['resources'] = [{'name': 'CONTRACT.md',
         'sha256': hashlib.sha256((RESOURCE_ROOT / 'CONTRACT.md').read_bytes()).hexdigest()}]
     binding = value['execution_bindings'][0]
+    binding['adapter_revision'] = PI_ADAPTER_REVISION
     binding['bundle']['revision'] = PROFILE_BUNDLE_REVISION
     binding['model_policy'].update(provider='custom', model='fixed-model')
     return approve(value)
@@ -177,7 +178,7 @@ def test_bound_driver_uses_measured_builtin_bundle_and_dedicated_proxy(monkeypat
 
 
 @pytest.mark.parametrize('change', ['resource_hash', 'resource_name', 'extra_resource',
-    'bundle_revision', 'provider', 'model', 'adapter_revision', 'vision'])
+    'bundle_revision', 'provider', 'model', 'adapter_revision', 'old_pi_adapter', 'vision'])
 def test_accepted_metadata_does_not_expand_shipped_driver_capabilities(monkeypatch, change):
     value = catalog()
     bundle, binding = value['capability_bundles'][0], value['execution_bindings'][0]
@@ -194,6 +195,8 @@ def test_accepted_metadata_does_not_expand_shipped_driver_capabilities(monkeypat
         binding['model_policy'][change] = 'different-value'
     elif change == 'adapter_revision':
         binding[change] = 'unimplemented-adapter'
+    elif change == 'old_pi_adapter':
+        binding['adapter_revision'] = 'pi-adapter-v1'
     elif change == 'vision':
         value['task_contracts'][0]['required_model_capabilities'].append('vision')
         binding['model_policy']['capabilities'].append('vision')
