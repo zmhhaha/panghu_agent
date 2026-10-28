@@ -152,6 +152,8 @@ def main():
     parser.add_argument('app_commit')
     parser.add_argument('outer_commit')
     parser.add_argument('--checks-receipt', type=Path)
+    parser.add_argument('--resume-after-restore', type=Path,
+                        help='Failed private receipt at restored-fingerprint verification; never adopts an unknown target.')
     parser.add_argument('--execute', action='store_true')
     args = parser.parse_args()
     require(all(re.fullmatch('[0-9a-f]{40}', value) for value in (args.app_commit, args.outer_commit)),
@@ -208,6 +210,26 @@ def main():
     require({'shared-db-deployment-contracts', 'shared-db-build-contracts', 'shared-db-helper-syntax'}
             <= {row['stage'] for row in checks['stages'] if row.get('passed')}, 'Required server checks missing')
 
+    resume = None
+    if args.resume_after_restore:
+        path = args.resume_after_restore
+        require(path.is_absolute() and path.parent.parent == Path('/root')
+                and not path.is_symlink() and not path.parent.is_symlink(), 'Invalid private recovery receipt path')
+        previous = json.loads(path.read_text())
+        previous_transfer = json.loads((path.parent / 'transfer-receipt.json').read_text())
+        require(previous.get('phase') == 'restore-dedicated-database-and-compare-all-data'
+                and previous.get('passed') is False and previous.get('target_admission_opened') is False
+                and not previous.get('old_source_fenced')
+                and previous_transfer.get('phase') == 'verify-restored-schema-data-and-runtime'
+                and previous_transfer.get('passed') is False,
+                'Recovery is restricted to a restored but unopened, unfenced installation')
+        changed = call(['git', '-C', str(APP), 'diff', '--name-only', previous['app_commit'], args.app_commit]).splitlines()
+        require(set(changed) <= {'ppt_service/deploy/k8s/consolidate_database.py',
+                                'ppt_service/deploy/k8s/database_fingerprint.py',
+                                'ppt_service/tests/deployment/test_database_fingerprint.py'},
+                'Recovery revision changes application or transfer inputs')
+        resume = path.parent
+
     output = Path('/root') / ('ppt-shared-db-' + args.app_commit[:12] + '-' + uuid.uuid4().hex[:10] + '-migration')
     output.mkdir(mode=0o700)
     save(output / 'checks.json', checks)
@@ -217,6 +239,9 @@ def main():
                'checks_sha256': digest(args.checks_receipt), 'server_only': True, 'source_from_git': True,
                'model_requests': 0, 'application_row_mutations_by_script': False,
                'passed': False, 'target_admission_opened': False, 'phase': 'preflight'}
+    if resume:
+        receipt['resume_after_restore'] = {'receipt': str(args.resume_after_restore),
+                                           'sha256': digest(args.resume_after_restore)}
     maintenance = None
     deployment = deploy.Deployment(runner=lambda command, **kw: subprocess.run(command, timeout=420, **kw))
     with (output / 'migration.log').open('x') as log:
@@ -252,6 +277,18 @@ def main():
             return value
 
         def stop(name, snapshot):
+            if resume:
+                before = json.loads((resume / snapshot).read_text())
+                current = get('deployment', name)
+                expected = copy.deepcopy(before['spec'])
+                expected['replicas'] = 0
+                require(current['metadata']['uid'] == before['metadata']['uid'] and current['spec'] == expected,
+                        'Recovery writers differ from the original stopped snapshots')
+                selector = ','.join(k + '=' + v for k, v in current['spec']['selector']['matchLabels'].items())
+                require(not json.loads(kube('get', 'pods', '-l', selector, '-o', 'json'))['items'],
+                        'Recovery requires all original writer Pods to have stopped')
+                save(output / snapshot, before)
+                return before, current
             before = get('deployment', name)
             save(output / snapshot, before)
             require(before['spec'].get('replicas', 1) > 0,
@@ -286,8 +323,23 @@ def main():
         try:
             deployment.lock()
             deployment.check_secret_owners()
-            transfer.preflight()
+            if resume:
+                original_metadata = json.loads((resume / 'transfer-source-metadata.json').read_text())
+                current_source, current_target = transfer.metadata('source'), transfer.metadata('target')
+                transfer.validate_source(current_source)
+                require(current_source == original_metadata, 'Source metadata changed after interrupted restore')
+                require({k: v for k, v in current_target.items() if k != 'server_version_num'} ==
+                        {k: v for k, v in original_metadata.items() if k != 'server_version_num'},
+                        'Restored target metadata does not match the recorded source')
+                archive = Path(previous_transfer['archive']['path'])
+                require(archive.parent == resume and not archive.is_symlink()
+                        and digest(archive) == previous_transfer['archive']['sha256'], 'Recorded database backup changed')
+            else:
+                transfer.preflight()
             before_preserved = preserved()
+            if resume:
+                require(before_preserved == json.loads((resume / 'preserved-before.json').read_text()),
+                        'Preserved installation changed after interrupted restore')
             save(output / 'preserved-before.json', before_preserved)
             credentials = {}
             passwords = {}
@@ -315,6 +367,12 @@ def main():
                 require(passwords[role] and not any(character in passwords[role] for character in ('\x00', '\r', '\n')),
                         'Invalid source database password')
             save(output / 'credentials-before.private.json', credentials)
+            if resume:
+                old_credentials = json.loads((resume / 'credentials-before.private.json').read_text())
+                require(all(credentials[key]['old'] == old_credentials[key]['old']
+                            and credentials[key]['vault']['data'] == old_credentials[key]['vault']['data']
+                            and credentials[key]['secret']['data'] == old_credentials[key]['secret']['data']
+                            for key in credentials), 'Credentials changed after interrupted restore')
             idle()
             phase('stop-idle-application-writers')
             site, stopped_site = stop('ppt-site', 'site-before.json')
@@ -342,20 +400,52 @@ def main():
             kube('wait', '--for=condition=Ready', 'pod/' + name, '--timeout=180s')
             files_before = json.loads(kube('exec', name, '--', '/usr/local/bin/python', '-c', FILE_CODE, 'index'))
             save(output / 'files-before.private.json', files_before)
-            backup = output / 'ppt-data.tar'
-            with backup.open('xb') as stream:
-                result = subprocess.run(K + ['-n', 'ppt-service', 'exec', name, '--', '/usr/local/bin/python', '-c', FILE_CODE, 'archive'],
-                                        stdout=stream, stderr=log, timeout=600)
-                require(result.returncode == 0, 'PPT file backup failed')
-                stream.flush()
-                os.fsync(stream.fileno())
+            if resume:
+                require(files_before == json.loads((resume / 'files-before.private.json').read_text()),
+                        'Frozen files changed after interrupted restore')
+                backup = Path(previous['file_backup']['path'])
+                require(backup.parent == resume and not backup.is_symlink()
+                        and digest(backup) == previous['file_backup']['sha256'], 'Recorded file backup changed')
+            else:
+                backup = output / 'ppt-data.tar'
+                with backup.open('xb') as stream:
+                    result = subprocess.run(K + ['-n', 'ppt-service', 'exec', name, '--', '/usr/local/bin/python', '-c', FILE_CODE, 'archive'],
+                                            stdout=stream, stderr=log, timeout=600)
+                    require(result.returncode == 0, 'PPT file backup failed')
+                    stream.flush()
+                    os.fsync(stream.fileno())
             restorable = {key: value for key, value in files_before.items() if value['kind'] != 'socket'}
             require(archive_index(backup) == restorable, 'File archive differs from frozen files')
             receipt['file_backup'] = {'path': str(backup), 'sha256': digest(backup), 'entries': len(restorable),
                                       'runtime_sockets_metadata_only': len(files_before) - len(restorable)}
 
             phase('restore-dedicated-database-and-compare-all-data')
-            receipt['transfer'] = transfer.run(passwords)
+            if resume:
+                require(transfer.metadata('source') == current_source
+                        and transfer.metadata('target') == current_target,
+                        'Database or role metadata changed during recovery checks')
+                original_fingerprint = json.loads((resume / 'transfer-source-before.private.json').read_text())
+                source_now, target_now = transfer.fingerprint('source'), transfer.fingerprint('target')
+                require(source_now == original_fingerprint == target_now,
+                        'Recovery requires complete original/source/target fingerprint equality')
+                verified_hash = hashlib.sha256(transfer_module.canonical(source_now)).hexdigest()
+                require(verified_hash == previous_transfer['source_fingerprint_sha256'],
+                        'Recorded source fingerprint receipt does not match its evidence')
+                save(output / 'transfer-source-before.private.json', source_now)
+                save(output / 'transfer-source-metadata.json', current_source)
+                save(output / 'transfer-target-after.private.json', target_now)
+                role = json.loads(transfer.psql('target', transfer_module.RUNTIME_SQL, user='ppt_runtime'))
+                require(role == {'user': 'ppt_runtime', 'schema': 3, 'schema_create': False,
+                    'revision_write': False, 'entries_read_append': True, 'entries_mutable': False,
+                    'streams_cas': True, 'streams_destructive': False}, 'Recovery runtime role contract failed')
+                receipt['transfer'] = dict(previous_transfer, passed=True, phase='complete', source_unchanged=True,
+                    fingerprints_equal=True, database_locale_and_acl_equal=True, runtime_read_only_check=True,
+                    target_fingerprint_sha256=verified_hash,
+                    recovered_from=str(resume), tables=len(target_now['tables']), sequences=len(target_now['sequences']))
+                receipt['transfer'].pop('diagnostic', None)
+                receipt['transfer'].pop('error_type', None)
+            else:
+                receipt['transfer'] = transfer.run(passwords)
             require(preserved() == before_preserved, 'Shared databases/configuration/PVC changed')
             require(json.loads(kube('exec', name, '--', '/usr/local/bin/python', '-c', FILE_CODE, 'index')) == files_before,
                     'PPT files changed during database transfer')

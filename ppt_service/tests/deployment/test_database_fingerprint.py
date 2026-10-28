@@ -16,6 +16,18 @@ SPEC.loader.exec_module(fingerprints)
 TABLE = 'reader\'s "notes"'
 SEQUENCE = 'ppt_note_id_seq'
 SHA256 = '0123456789abcdef' * 4
+SOURCE_ACTIVE_INDEX = (
+    "CREATE UNIQUE INDEX uq_project_active_job ON public.jobs USING btree (project_id) "
+    "WHERE ((status)::text = ANY ((ARRAY['queued'::character varying, 'starting'::character varying, "
+    "'running'::character varying, 'collecting'::character varying, 'validating'::character varying, "
+    "'cancelling'::character varying])::text[]))"
+)
+RESTORED_ACTIVE_INDEX = (
+    "CREATE UNIQUE INDEX uq_project_active_job ON public.jobs USING btree (project_id) "
+    "WHERE ((status)::text = ANY (ARRAY[('queued'::character varying)::text, ('starting'::character varying)::text, "
+    "('running'::character varying)::text, ('collecting'::character varying)::text, "
+    "('validating'::character varying)::text, ('cancelling'::character varying)::text]))"
+)
 
 
 def catalog():
@@ -138,3 +150,38 @@ def test_malformed_psql_output_never_enters_error_messages():
     with pytest.raises(ValueError, match='^invalid_database_fingerprint_result$') as failure:
         fingerprints.fingerprint(psql)
     assert 'PRIVATE_SENTINEL' not in str(failure.value)
+
+
+def index_fingerprint(definition, *, relation='jobs', name='uq_project_active_job'):
+    structure = catalog()
+    structure['indexes'] = [{'relation': relation, 'name': name, 'owner': 'ppt_migrator',
+        'valid': True, 'ready': True, 'live': True, 'replica_identity': False,
+        'clustered': False, 'definition': definition}]
+    psql, _ = recording_psql(structure, data())
+    return fingerprints.fingerprint(psql)
+
+
+def test_exact_original_active_job_index_definition_is_unchanged():
+    result = index_fingerprint(SOURCE_ACTIVE_INDEX)
+    assert result['catalog']['indexes'] == [{'relation': 'jobs', 'name': 'uq_project_active_job',
+        'owner': 'ppt_migrator', 'valid': True, 'ready': True, 'live': True,
+        'replica_identity': False, 'clustered': False, 'definition': SOURCE_ACTIVE_INDEX}]
+
+
+def test_exact_restored_active_job_index_is_canonicalized_to_original_definition():
+    assert index_fingerprint(RESTORED_ACTIVE_INDEX) == index_fingerprint(SOURCE_ACTIVE_INDEX)
+
+
+@pytest.mark.parametrize('definition, context', [
+    (RESTORED_ACTIVE_INDEX.replace("'queued'", "'succeeded'"), {}),
+    (RESTORED_ACTIVE_INDEX.replace('CREATE UNIQUE INDEX', 'CREATE INDEX'), {}),
+    (RESTORED_ACTIVE_INDEX.replace('(project_id)', '(issuer)'), {}),
+    (RESTORED_ACTIVE_INDEX.replace('ON public.jobs ', 'ON public.other_jobs '), {}),
+    (RESTORED_ACTIVE_INDEX, {'relation': 'other_jobs'}),
+    (RESTORED_ACTIVE_INDEX, {'name': 'other_active_index'}),
+    (RESTORED_ACTIVE_INDEX + ';', {}),
+])
+def test_changed_active_job_index_is_never_normalized_or_hidden(definition, context):
+    changed = index_fingerprint(definition, **context)
+    assert changed != index_fingerprint(SOURCE_ACTIVE_INDEX)
+    assert changed['catalog']['indexes'][0]['definition'] == definition

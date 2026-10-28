@@ -19,6 +19,20 @@ _SHA256 = re.compile(r'[0-9a-f]{64}\Z')
 _CATALOG_ARRAYS = {'schemas', 'relations', 'columns', 'constraints', 'indexes',
                    'triggers', 'functions', 'sequence_definitions', 'default_acl',
                    'row_security_policies'}
+# PostgreSQL 16 dump/restore can distribute this one varchar-array text[] cast
+# over its elements. Only these two complete observed definitions are equivalent.
+_ACTIVE_INDEX_ARRAY_CAST = (
+    "CREATE UNIQUE INDEX uq_project_active_job ON public.jobs USING btree (project_id) "
+    "WHERE ((status)::text = ANY ((ARRAY['queued'::character varying, 'starting'::character varying, "
+    "'running'::character varying, 'collecting'::character varying, 'validating'::character varying, "
+    "'cancelling'::character varying])::text[]))"
+)
+_ACTIVE_INDEX_ELEMENT_CAST = (
+    "CREATE UNIQUE INDEX uq_project_active_job ON public.jobs USING btree (project_id) "
+    "WHERE ((status)::text = ANY (ARRAY[('queued'::character varying)::text, ('starting'::character varying)::text, "
+    "('running'::character varying)::text, ('collecting'::character varying)::text, "
+    "('validating'::character varying)::text, ('cancelling'::character varying)::text]))"
+)
 
 
 def quote_ident(value: str) -> str:
@@ -251,5 +265,9 @@ def fingerprint(psql: Callable[[str], str]) -> dict:
         if (not isinstance(value, dict) or set(value) != {'last_value', 'is_called'}
                 or type(value['last_value']) is not int or type(value['is_called']) is not bool):
             raise ValueError('invalid_database_fingerprint_sequence')
+    for index in catalog['indexes']:
+        if (index.get('relation') == 'jobs' and index.get('name') == 'uq_project_active_job'
+                and index.get('definition') in (_ACTIVE_INDEX_ARRAY_CAST, _ACTIVE_INDEX_ELEMENT_CAST)):
+            index['definition'] = _ACTIVE_INDEX_ARRAY_CAST
     return {'format': FORMAT, 'schema': 'public', 'catalog': catalog,
             'tables': tables, 'sequences': sequences}
