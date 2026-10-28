@@ -89,7 +89,7 @@ class DiagnosticTests(unittest.TestCase):
 
     def test_research_assessment_rejection_exposes_only_reviewed_code(self):
         from scientific_agent.pi_revision_validation import RevisionValidationError
-        for code in ('unsupported_assessment_upgrade', SECRET):
+        for code in ('unsupported_assessment_upgrade', 'invalid_claim_markers', SECRET):
             with self.subTest(code=code), self.assertLogs(LOGGER, level='WARNING') as capture:
                 log_execution_failure('worker_host', 'collect_output', RevisionValidationError(code))
             record = self.records(capture)[0]
