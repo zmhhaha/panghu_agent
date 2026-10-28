@@ -499,7 +499,8 @@ assert not WorkspaceTaskProfile.production_ready
         self.assertNotIn("--skill", observed["argv"])
         self.assertEqual(observed["argv"][observed["argv"].index("--tools") + 1], "read,write")
         config = json.loads((self.root / "neutral-attempt" / ".home" / ".pi" / "agent" / "models.json").read_text())
-        self.assertEqual(config["providers"]["fixture"]["apiKey"], "AGENT_MODEL_API_KEY")
+        self.assertEqual(config["providers"]["fixture"]["apiKey"], "${AGENT_MODEL_API_KEY}")
+        self.assertNotIn("task-only-fixture-key", json.dumps(config))
         self.assertEqual((self.root / "neutral-attempt" / "inputs" / "source.txt").read_bytes(), b"fixed supplied input")
         self.assertFalse(profile.production_ready)
 

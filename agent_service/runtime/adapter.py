@@ -610,7 +610,9 @@ class PiRuntime:
         if s.model_base_url:
             self._atomic(agent / "models.json", json.dumps({"providers": {s.provider: {
                 "baseUrl": s.model_base_url, "api": s.model_api,
-                "apiKey": "AGENT_MODEL_API_KEY", "authHeader": True,
+                # Pi 0.99.2 interpolates explicit environment references only.
+                # A bare variable name would be sent as the literal credential.
+                "apiKey": "${AGENT_MODEL_API_KEY}", "authHeader": True,
                 "models": [self._custom_model_definition()]}}}))
         # Resolve commands now, before replacing cwd/PATH. Explicit absolute
         # executable paths are strongly preferred in the immutable image.
