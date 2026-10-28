@@ -283,10 +283,18 @@ def load_scenario(path, source_dir, parent_dir, policy):
             total += sum(map(len, data.values()))
             checked_parent['portable_checkpoint_sha256'] = manifest['sha256']
         else:
-            require(original.profile in {'research.generate.v1', 'research.revise.v1'}
-                and original.task['business_task_id'] == task['business_task_id']
+            # A revision is a new business task. This candidate export carries
+            # no published version-to-source mapping for a previous revision,
+            # so only a directly verified generation can be its parent.
+            require(original.profile == 'research.generate.v1',
+                'candidate_research_revision_parent_unsupported')
+            require(task['root_report_id'] == original.task['business_task_id']
+                and task['business_task_id'] != original.task['business_task_id']
                 and original.task['topic'] == task['topic'], 'candidate_parent_lineage_invalid')
-            require(files.get('input-report.md') == data.get('report.md'), 'candidate_parent_lineage_invalid')
+            require('report.md' in data and files.get('input-report.md') == data['report.md'],
+                'candidate_parent_lineage_invalid')
+            require(task['base_sha256'] == hashlib.sha256(data['report.md']).hexdigest(),
+                'candidate_parent_lineage_invalid')
             for name in ('papers.jsonl', 'evidence.jsonl', 'claims.jsonl', 'references.json'):
                 require(name in data and files.get(name) == data[name], 'candidate_parent_lineage_invalid')
     if policy.name.startswith('ppt.'):

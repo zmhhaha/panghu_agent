@@ -5,11 +5,14 @@ node/engine readiness. Production acceptance and routes are never created.
 """
 from copy import deepcopy
 from datetime import datetime, timezone
+import base64
 import hashlib
 import json
 import os
 from pathlib import Path
+import sqlite3
 import time
+from types import SimpleNamespace
 from uuid import uuid4
 
 import httpx
@@ -68,7 +71,9 @@ def write_scenario(root, profile, task, files, *, parent=None, export=False):
     exported = None
     if export:
         exported = dict(name='business-export.json', sha256=save(sources / 'business-export.json', dict(
-            schema_version='agent-candidate-business-export.v1', source='ppt-control-test-database', task=task)))
+            schema_version='agent-candidate-business-export.v1',
+            source='ppt-control-test-database' if profile.startswith('ppt.') else 'scientific-test-database',
+            task=task)))
     value = dict(schema_version='agent-candidate-scenario.v1', candidate_scope_only=True, scenario_id=str(uuid4()),
         profile=profile, timeout_seconds=600, task=task, inputs=rows, business_export=exported, parent=parent)
     path = root / 'scenario.json'
@@ -76,11 +81,33 @@ def write_scenario(root, profile, task, files, *, parent=None, export=False):
     return path, sources, value
 
 
+def record_stopped_parent(run, artifacts):
+    """Synthetic signed result/Pod evidence; never real execution or publication."""
+    pod_uid = str(uuid4())
+    run.register(pod_uid)
+    result = WorkerResult(state='completed', artifacts=[InlineFile.from_bytes(name, raw)
+        for name, raw in artifacts.items()])
+    proof = sign_receipt(run.envelope, result, run.receipt_key,
+        ('pod:' + pod_uid, 'uid:' + str(run.uid), 'uid:' + str(run.uid + 1)), time.time())
+    result = result.model_copy(update={'stop_receipt': proof})
+    document = dict(result=result.model_dump(mode='json'), observations=dict(
+        harness_sha256=probe.harness_sha256(), isolation={'uid': [run.uid + 2] * 3}, offline_fixture_only=True))
+    if run.scenario is not None:
+        document['observations']['scenario'] = run.scenario.metadata
+    run.result(document)
+    pod = dict(metadata={'uid': pod_uid}, spec={'containers': [{'name': 'worker', 'image': 'registry.invalid/pi@' + run.envelope.image_digest}]},
+        status={'phase': 'Succeeded', 'containerStatuses': [{'name': 'worker', 'restartCount': 0,
+            'imageID': 'docker-pullable://registry.invalid/pi@' + run.envelope.image_digest,
+            'state': {'terminated': {'exitCode': 0, 'finishedAt': datetime.now(timezone.utc).isoformat()}}}]})
+    save(run.directory / 'worker-pod.json', pod)
+    documents = {name: json.loads((run.directory / name).read_bytes()) for name in scenario.PARENT_FILES.values()}
+    hashes = {key: hashlib.sha256((run.directory / name).read_bytes()).hexdigest() for key, name in scenario.PARENT_FILES.items()}
+    return documents, hashes
+
+
 @pytest.fixture
 def stopped_parent(authority):
     run = authority()
-    pod_uid = str(uuid4())
-    run.register(pod_uid)
     task = run.envelope.task
     raw = b'Offline fixture notes, not real Agent output.\n'
     checkpoint = dict(schema_version=CHECKPOINT_SCHEMA, ppt_master_revision=PPT_MASTER_REVISION,
@@ -90,22 +117,67 @@ def stopped_parent(authority):
         files=[dict(path='demo/notes.md', sha256=hashlib.sha256(raw).hexdigest(), bytes=len(raw))],
         total_bytes=len(raw), publication_authorized=False)
     checkpoint['sha256'] = digest(checkpoint)
-    result = WorkerResult(state='completed', artifacts=[InlineFile.from_bytes('project/demo/notes.md', raw),
-        InlineFile.from_bytes('result/checkpoint.json', canonical_bytes(checkpoint))])
-    proof = sign_receipt(run.envelope, result, run.receipt_key,
-        ('pod:' + pod_uid, 'uid:' + str(run.uid), 'uid:' + str(run.uid + 1)), time.time())
-    result = result.model_copy(update={'stop_receipt': proof})
-    document = dict(result=result.model_dump(mode='json'), observations=dict(
-        harness_sha256=probe.harness_sha256(), isolation={'uid': [run.uid + 2] * 3}, offline_fixture_only=True))
-    run.result(document)
-    pod = dict(metadata={'uid': pod_uid}, spec={'containers': [{'name': 'worker', 'image': 'registry.invalid/pi@' + run.envelope.image_digest}]},
-        status={'phase': 'Succeeded', 'containerStatuses': [{'name': 'worker', 'restartCount': 0,
-            'imageID': 'docker-pullable://registry.invalid/pi@' + run.envelope.image_digest,
-            'state': {'terminated': {'exitCode': 0, 'finishedAt': datetime.now(timezone.utc).isoformat()}}}]})
-    save(run.directory / 'worker-pod.json', pod)
-    documents = {name: json.loads((run.directory / name).read_bytes()) for name in scenario.PARENT_FILES.values()}
-    hashes = {key: hashlib.sha256((run.directory / name).read_bytes()).hexdigest() for key, name in scenario.PARENT_FILES.items()}
+    documents, hashes = record_stopped_parent(run, {'project/demo/notes.md': raw,
+        'result/checkpoint.json': canonical_bytes(checkpoint)})
     return run, checkpoint, documents, hashes
+
+
+@pytest.fixture
+def research_revision_from_generation(image_packages, tmp_path, request):
+    """Use the real revision business constructor over an explicit offline base."""
+    from scientific_agent.agent_client import ScientificAgentClient
+    from scientific_agent.agent_projection import ScientificAgentProjection
+    from scientific_agent.pi_report_versions import ReportVersionStore
+
+    template, files = probe.fixture('research.revise.v1')
+    material = json.loads(files['revision-materials.json'])
+    generation = {key: template[key] for key in ('schema_version', 'business_task_id', 'topic', 'mode',
+        'created_at', 'execution_deadline_at')}
+    generation.update(mode='brief', source_policy={'providers': ['crossref'], 'max_results': 1})
+    path, sources, _ = write_scenario(tmp_path / 'generation', 'research.generate.v1', generation, {})
+    value = config('research.generate.v1')
+    prepared = scenario.load_scenario(path, sources, None, host_policy(value))
+    run = probe.ProbeAuthority(value, tmp_path / 'generation-authority', 'offline-upstream',
+        'offline-bootstrap', 'research-worker', 'agent-workers', 2100000000, scenario=prepared)
+    run.proxy.client.close()
+    run.proxy.client = httpx.Client(transport=httpx.MockTransport(lambda _: pytest.fail('No model calls')))
+    artifacts = {name: files[name] for name in ('papers.jsonl', 'evidence.jsonl', 'claims.jsonl', 'references.json')}
+    artifacts['report.md'] = files['input-report.md']
+    if getattr(request, 'param', True) is False:
+        del artifacts['report.md']
+    _, hashes = record_stopped_parent(run, artifacts)
+    database = sqlite3.connect(':memory:')
+    database.row_factory = sqlite3.Row
+    def execute(statement):
+        database.execute(statement)
+        database.commit()
+    db = SimpleNamespace(_execute=execute, _query=lambda statement: [dict(row) for row in database.execute(statement)])
+    def offline_capability(method, url, *_):
+        assert method == 'GET' and url == 'http://offline.invalid/v1/capabilities'
+        return 200, {}, canonical_bytes({'profiles': [{'profile': 'research.revise.v1',
+            'profile_revision': 'v1', 'ready': True}]})
+    worker = ScientificAgentClient(db, 'http://offline.invalid', 'offline-' + 'x' * 32,
+        transport=offline_capability)
+    projection = ScientificAgentProjection(db, worker)
+    projection.initialize()
+    versions = ReportVersionStore(db)
+    versions.initialize()
+    projection.versions = worker.versions = versions
+    try:
+        base = versions.ensure_base('offline-owner', generation['business_task_id'], material['report'], generation['topic'])
+        snapshot = versions.save_snapshot('offline-owner', base['version_id'], material['items'],
+            {name: base64.b64decode(raw) for name, raw in material['artifacts'].items()}, 'offline-snapshot')
+        intent = versions.prepare_intent('offline-owner', base['version_id'], template['base_sha256'],
+            template['section_id'], template['section_sha256'], template['instruction'], 'offline-intent',
+            snapshot['snapshot_id'], timeout_seconds=600)
+        row = projection.prepare_revision('offline-owner', intent['intent_id'])
+        task = json.loads(worker._row(row['id'])['task'])
+        files['revision-materials.json'] = canonical_bytes(versions.revision_materials('offline-owner', row['id']))
+        yield run, task, files, hashes
+    finally:
+        database.close()
+        run.proxy.client.close()
+        run.store.close()
 
 
 def options_task(parent, checkpoint):
@@ -287,3 +359,65 @@ def test_research_generation_uses_explicit_source_policy_with_no_fabricated_revi
     finally:
         authority.proxy.client.close()
         authority.store.close()
+
+
+def test_research_revision_accepts_real_business_constructor_new_task(research_revision_from_generation, tmp_path):
+    parent, task, files, hashes = research_revision_from_generation
+    assert task['business_task_id'] != parent.envelope.task['business_task_id']
+    assert task['root_report_id'] == parent.envelope.task['business_task_id']
+    path, sources, _ = write_scenario(tmp_path / 'revision', 'research.revise.v1', task, files,
+        parent=hashes, export=True)
+    prepared = scenario.load_scenario(path, sources, parent.directory, host_policy(config('research.revise.v1')))
+    assert prepared.document['task'] == task
+    assert prepared.files == files
+    assert prepared.metadata['parent']['external_all_containers_stopped'] is True
+    assert prepared.metadata['production_acceptance_created'] is False
+
+
+@pytest.mark.parametrize('research_revision_from_generation', [False], indirect=True)
+def test_research_revision_rejects_missing_parent_and_input_report(research_revision_from_generation, tmp_path):
+    parent, task, files, hashes = research_revision_from_generation
+    del files['input-report.md']
+    path, sources, _ = write_scenario(tmp_path / 'revision', 'research.revise.v1', task, files,
+        parent=hashes, export=True)
+    with pytest.raises(ServiceError, match='candidate_parent_lineage_invalid'):
+        scenario.load_scenario(path, sources, parent.directory, host_policy(config('research.revise.v1')))
+
+
+@pytest.mark.parametrize('change', ['root', 'reused_task', 'base_hash', 'topic', 'report',
+    'papers.jsonl', 'evidence.jsonl', 'claims.jsonl', 'references.json'])
+def test_research_revision_requires_direct_generation_lineage_and_exact_bytes(
+        research_revision_from_generation, tmp_path, change):
+    parent, task, files, hashes = research_revision_from_generation
+    task, files = deepcopy(task), deepcopy(files)
+    if change == 'root':
+        task['root_report_id'] = str(uuid4())
+    elif change == 'reused_task':
+        task['business_task_id'] = parent.envelope.task['business_task_id']
+    elif change == 'base_hash':
+        task['base_sha256'] = '0' * 64
+    elif change == 'topic':
+        task['topic'] = 'Unrelated topic'
+    elif change == 'report':
+        files['input-report.md'] += b'\nUnrelated report bytes.\n'
+    else:
+        files[change] += b' \n'
+    path, sources, _ = write_scenario(tmp_path / 'revision', 'research.revise.v1', task, files,
+        parent=hashes, export=True)
+    with pytest.raises(ServiceError, match='candidate_parent_lineage_invalid'):
+        scenario.load_scenario(path, sources, parent.directory, host_policy(config('research.revise.v1')))
+
+
+def test_research_revision_parent_requires_unavailable_published_version_mapping(authority, tmp_path):
+    parent = authority('research.revise.v1')
+    files = {file.name: file.content() for file in parent.envelope.inputs}
+    artifacts = {name: files[name] for name in ('papers.jsonl', 'evidence.jsonl', 'claims.jsonl', 'references.json')}
+    artifacts['report.md'] = files['input-report.md']
+    _, hashes = record_stopped_parent(parent, artifacts)
+    task = deepcopy(parent.envelope.task)
+    task['business_task_id'] = str(uuid4())
+    task['intent_id'], task['parent_version_id'] = str(uuid4()), str(uuid4())
+    path, sources, _ = write_scenario(tmp_path / 'revision', 'research.revise.v1', task, files,
+        parent=hashes, export=True)
+    with pytest.raises(ServiceError, match='candidate_research_revision_parent_unsupported'):
+        scenario.load_scenario(path, sources, parent.directory, host_policy(config('research.revise.v1')))

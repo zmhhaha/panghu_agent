@@ -286,7 +286,26 @@ class ProbeAuthority:
 
 def proxy_app(authority):
     from agent_service.model_proxy import create_model_proxy_app
+    from fastapi.responses import JSONResponse
     app = create_model_proxy_app(authority.proxy)
+    @app.exception_handler(ServiceError)
+    async def failure(request, exc):
+        # Candidate-only diagnostics distinguish pre-admission rejection from a
+        # provider failure without recording headers, request bodies or grants.
+        known = {'authentication_required', 'invalid_json', 'request_too_large',
+            'model_grant_invalid', 'model_grant_revoked', 'model_grant_scope_mismatch',
+            'model_request_scope_invalid', 'model_output_bound_invalid',
+            'model_input_reference_not_authorized', 'model_admission_uncertain',
+            'model_budget_exhausted', 'model_upstream_rejected',
+            'model_upstream_protocol_invalid', 'model_response_too_large',
+            'research_tool_not_authorized', 'research_tool_budget_exhausted',
+            'research_tool_output_limit', 'tool_observation_uncertain'}
+        route = request.url.path if request.url.path in {
+            '/v1/responses', '/v1/models', '/v1/tools/academic'} else 'candidate-control'
+        print(json.dumps(dict(event='candidate_request_rejected', route=route,
+            status=exc.status if type(exc.status) is int and 400 <= exc.status <= 599 else None,
+            code=exc.code if exc.code in known else 'candidate_request_failed')), flush=True)
+        return JSONResponse({'error': {'code': exc.code}}, status_code=exc.status)
     def authorize(request):
         if not hmac.compare_digest(request.headers.get('authorization', ''), 'Bearer ' + authority.bootstrap):
             raise ServiceError('candidate_admin_authentication_required', 401)

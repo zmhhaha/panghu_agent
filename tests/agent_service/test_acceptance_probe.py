@@ -169,6 +169,24 @@ def test_admin_endpoints_authenticate_and_bound_input_without_leaking_tokens(aut
         assert client.get('/probe/evidence', headers=headers).json()['candidate_only'] is True
 
 
+def test_candidate_rejection_diagnostic_excludes_credentials_query_and_content(authority, capsys):
+    value = authority()
+    value.register(str(uuid4()))
+    with TestClient(probe.proxy_app(value)) as client:
+        response = client.post('/v1/responses?private=do-not-log-query',
+            headers={'Authorization': 'Bearer ' + value.grant},
+            json={'model': value.config.model.model, 'input': 'do-not-log-body', 'max_output_tokens': 0})
+    assert response.status_code == 422
+    assert response.json() == {'error': {'code': 'model_output_bound_invalid'}}
+    output = capsys.readouterr().out
+    assert json.loads(output) == {'event': 'candidate_request_rejected', 'route': '/v1/responses',
+                                 'status': 422, 'code': 'model_output_bound_invalid'}
+    assert not any(secret in output for secret in (value.grant, BOOTSTRAP,
+        'offline-upstream-caller-token', 'do-not-log-query', 'do-not-log-body'))
+    with value.store.engine.connect() as conn:
+        assert not conn.execute(value.request_table.select()).all()
+
+
 @pytest.mark.parametrize('status,content,expected', [
     (200, {'status': 'completed', 'output': [{'type': 'message', 'content': [
         {'type': 'output_text', 'text': 'CANDIDATE_MODEL_OK'}]}]}, True),
