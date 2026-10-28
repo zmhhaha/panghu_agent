@@ -16,7 +16,7 @@ spec:
     matchExpressions:
       - key: app.kubernetes.io/name
         operator: In
-        values: [ppt-site, ppt-migrator, ppt-postgres, ppt-hermes-controller]
+        values: [ppt-site, ppt-migrator, ppt-hermes-controller]
   policyTypes: [Egress]
   egress:
     - to:
@@ -64,9 +64,12 @@ spec:
   policyTypes: [Egress]
   egress:
     - to:
-        - podSelector:
+        - namespaceSelector:
             matchLabels:
-              app.kubernetes.io/name: ppt-postgres
+              kubernetes.io/metadata.name: data
+          podSelector:
+            matchLabels:
+              app: postgres
       ports:
         - protocol: TCP
           port: 5432
@@ -82,33 +85,17 @@ spec:
   policyTypes: [Egress]
   egress:
     - to:
-        - podSelector:
+        - namespaceSelector:
             matchLabels:
-              app.kubernetes.io/name: ppt-postgres
+              kubernetes.io/metadata.name: data
+          podSelector:
+            matchLabels:
+              app: postgres
       ports:
         - protocol: TCP
           port: 5432
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: postgres-ingress
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: ppt-postgres
-  policyTypes: [Ingress]
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: ppt-site
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: ppt-migrator
-      ports:
-        - protocol: TCP
-          port: 5432
+# The shared data/postgres installation owns its existing ingress policies.
+# This deployment only grants its site and migrator the exact database egress.
 # The baseline has no HTTPS egress. P2's separately applied
 # oauth/k8s/ppt-oidc-egress.yaml permits only the internal ingress-nginx TLS
 # controller, using the existing Casdoor split horizon. Verify actual CNI

@@ -10,16 +10,3 @@ spec:
   resources:
     requests:
       storage: 20Gi
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: ppt-postgres-data
-  annotations:
-    ppt-service.panghuer.top/retention: keep-for-explicit-backup-and-owner-approved-removal
-spec:
-  storageClassName: ceph-rbd
-  accessModes: [ReadWriteOnce]
-  resources:
-    requests:
-      storage: 10Gi

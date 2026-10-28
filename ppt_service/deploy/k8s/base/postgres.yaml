@@ -1,3 +1,8 @@
+# RETIRED: reference for the former standalone PostgreSQL installation only.
+# Not included by base/kustomization.yaml. New deployments use the existing
+# postgres.data.svc.cluster.local:5432/ppt_service database through Secrets.
+# Existing standalone resources/PVC remain for explicit migration rollback;
+# do not apply this file as part of the current shared-database deployment.
 apiVersion: v1
 kind: Service
 metadata:

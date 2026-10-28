@@ -65,7 +65,6 @@ class ManifestContracts(unittest.TestCase):
         cls.all = cls.base + cls.migration + cls.shared
         cls.index = {(d['kind'], d['metadata']['name']): d for d in cls.all}
         cls.site = cls.index['Deployment', 'ppt-site']
-        cls.postgres = cls.index['StatefulSet', 'ppt-postgres']
         cls.job = cls.index['Job', 'ppt-migrate-schema3']
         cls.site_container, cls.proxy = pod_spec(cls.site)['containers']
         cls.migrator = pod_spec(cls.job)['containers'][0]
@@ -83,9 +82,8 @@ class ManifestContracts(unittest.TestCase):
         self.assertEqual([d['kind'] for d in self.migration], ['Job'])
         self.assertEqual(self.index['Namespace', 'ppt-service']['metadata']['labels']['pod-security.kubernetes.io/enforce'], 'restricted')
 
-    def test_deployment_starts_the_site_and_database_with_execution_disabled(self):
+    def test_deployment_starts_only_the_site_with_execution_disabled(self):
         self.assertEqual(self.site['spec']['replicas'], 1)
-        self.assertEqual(self.postgres['spec']['replicas'], 1)
         self.assertNotIn('suspend', self.job['spec'])
         self.assertNotIn('NOT-DEPLOY-READY', yaml.safe_dump(self.all))
         self.assertEqual(self.config['PPT_EXECUTION_ENABLED'], 'false')
@@ -101,6 +99,17 @@ class ManifestContracts(unittest.TestCase):
         self.assertNotIn('control.dev_site', text)
         self.assertNotIn('llm-service', text)
         self.assertNotIn('openai_api_key', text)
+
+    def test_retired_standalone_database_is_not_recreated(self):
+        self.assertNotIn('postgres.yaml', self.base_config['resources'])
+        self.assertNotIn('StatefulSet', {d['kind'] for d in self.base})
+        for kind, name in (
+                ('Service', 'ppt-postgres'),
+                ('ServiceAccount', 'ppt-postgres'),
+                ('PersistentVolumeClaim', 'ppt-postgres-data'),
+                ('NetworkPolicy', 'postgres-ingress')):
+            self.assertNotIn((kind, name), self.index)
+        self.assertNotIn('ppt-postgres-bootstrap', yaml.safe_dump(self.all))
 
     def test_site_port_is_loopback_and_not_exposed_by_service(self):
         args = self.site_container['args']
@@ -145,8 +154,6 @@ class ManifestContracts(unittest.TestCase):
         self.assertNotIn('Secret', {d['kind'] for d in self.all})
         self.assertEqual(env_key(self.proxy, 'OAUTH2_PROXY_CLIENT_SECRET'), {'name': 'ppt-oidc', 'key': 'client-secret'})
         self.assertEqual(env_key(self.proxy, 'OAUTH2_PROXY_COOKIE_SECRET'), {'name': 'ppt-oidc', 'key': 'cookie-secret'})
-        database = pod_spec(self.postgres)['containers'][0]
-        self.assertEqual(env_key(database, 'POSTGRES_PASSWORD'), {'name': 'ppt-postgres-bootstrap', 'key': 'POSTGRES_PASSWORD'})
         self.assertNotIn('DATABASE_URL', self.config)
         self.assertNotIn('database', {m['name'] for m in self.proxy['volumeMounts']})
         self.assertNotIn('data', {m['name'] for m in self.proxy['volumeMounts']})
@@ -158,13 +165,13 @@ class ManifestContracts(unittest.TestCase):
         for document in self.all:
             if document['kind'] == 'ServiceAccount':
                 self.assertIs(document['automountServiceAccountToken'], False)
-        for document in (self.site, self.postgres, self.job):
+        for document in (self.site, self.job):
             spec = pod_spec(document)
             self.assertIs(spec['automountServiceAccountToken'], False)
             self.assertIn(('ServiceAccount', spec['serviceAccountName']), self.index)
 
     def test_security_context_and_resource_bounds(self):
-        for document in (self.site, self.postgres, self.job):
+        for document in (self.site, self.job):
             spec = pod_spec(document)
             security = spec['securityContext']
             self.assertEqual(spec['nodeSelector'], {'kubernetes.io/arch': 'arm64'})
@@ -194,13 +201,12 @@ class ManifestContracts(unittest.TestCase):
         self.assertNotIn('fsGroup', security)
         self.assertNotIn('fsGroupChangePolicy', security)
         self.assertNotIn('supplementalGroups', security)
-        self.assertEqual(pod_spec(self.postgres)['securityContext']['fsGroup'], 70)
         mount = next(mount for mount in self.site_container['volumeMounts'] if mount['name'] == 'data')
         self.assertEqual(mount['mountPath'], '/var/lib/ppt-service')
         self.assertEqual(self.config['DATA_ROOT'], mount['mountPath'] + '/state')
 
     def test_images_are_manifest_pins_or_explicit_unresolved_placeholders(self):
-        for document in (self.site, self.postgres, self.job):
+        for document in (self.site, self.job):
             for container in pod_spec(document)['containers']:
                 image = container['image']
                 self.assertTrue(re.fullmatch(r'REQUIRED_[A-Z0-9_]+:unresolved', image) or re.fullmatch(r'[^\s@]+@sha256:[0-9a-f]{64}', image), image)
@@ -220,14 +226,12 @@ class ManifestContracts(unittest.TestCase):
         self.assertEqual(self.proxy['readinessProbe']['httpGet']['path'], '/ready')
         self.assertEqual(self.proxy['livenessProbe']['httpGet']['path'], '/ping')
 
-    def test_own_claims_and_ceph_classes(self):
+    def test_only_the_existing_ppt_data_claim_is_managed(self):
         data = self.index['PersistentVolumeClaim', 'ppt-data']['spec']
-        database = self.index['PersistentVolumeClaim', 'ppt-postgres-data']['spec']
         self.assertEqual((data['storageClassName'], data['accessModes']), ('ceph-cephfs', ['ReadWriteMany']))
-        self.assertEqual((database['storageClassName'], database['accessModes']), ('ceph-rbd', ['ReadWriteOnce']))
         self.assertEqual(data['resources']['requests']['storage'], '20Gi')
-        self.assertEqual(database['resources']['requests']['storage'], '10Gi')
-        for document in (self.site, self.postgres):
+        self.assertEqual([d['metadata']['name'] for d in self.base if d['kind'] == 'PersistentVolumeClaim'], ['ppt-data'])
+        for document in (self.site, self.job):
             for volume in pod_spec(document)['volumes']:
                 if 'persistentVolumeClaim' in volume:
                     self.assertIn(('PersistentVolumeClaim', volume['persistentVolumeClaim']['claimName']), self.index)
@@ -285,7 +289,12 @@ class ManifestContracts(unittest.TestCase):
                     self.assertNotIn('nodePort', port)
 
     def test_dns_requires_namespace_and_pod_match(self):
-        rule = self.policies['dns-egress']['egress'][0]
+        dns = self.policies['dns-egress']
+        self.assertEqual(dns['podSelector'], {'matchExpressions': [{
+            'key': 'app.kubernetes.io/name', 'operator': 'In',
+            'values': ['ppt-site', 'ppt-migrator', 'ppt-hermes-controller'],
+        }]})
+        rule = dns['egress'][0]
         self.assertEqual(rule['to'], [{'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'kube-system'}}, 'podSelector': {'matchLabels': {'k8s-app': 'kube-dns'}}}])
         self.assertEqual({(p['protocol'], p['port']) for p in rule['ports']}, {('UDP', 53), ('TCP', 53)})
 
@@ -296,13 +305,22 @@ class ManifestContracts(unittest.TestCase):
         self.assertEqual(rule['from'], [{'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'frpc'}}, 'podSelector': {'matchLabels': {'app': 'frpc'}}}])
         self.assertEqual(rule['ports'], [{'protocol': 'TCP', 'port': 4180}])
 
-    def test_database_rules_are_symmetric_and_same_namespace(self):
+    def test_database_egress_requires_shared_namespace_and_postgres_pod(self):
         for name, source in (('site-postgres-egress', 'ppt-site'), ('migrator-postgres-egress', 'ppt-migrator')):
             policy = self.policies[name]
             self.assertEqual(policy['podSelector']['matchLabels'], {'app.kubernetes.io/name': source})
-            self.assertEqual(policy['egress'], [{'to': [{'podSelector': {'matchLabels': {'app.kubernetes.io/name': 'ppt-postgres'}}}], 'ports': [{'protocol': 'TCP', 'port': 5432}]}])
-        ingress = self.policies['postgres-ingress']['ingress']
-        self.assertEqual(ingress, [{'from': [{'podSelector': {'matchLabels': {'app.kubernetes.io/name': 'ppt-site'}}}, {'podSelector': {'matchLabels': {'app.kubernetes.io/name': 'ppt-migrator'}}}], 'ports': [{'protocol': 'TCP', 'port': 5432}]}])
+            self.assertEqual(policy['policyTypes'], ['Egress'])
+            self.assertEqual(policy['egress'], [{'to': [{
+                'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'data'}},
+                'podSelector': {'matchLabels': {'app': 'postgres'}},
+            }], 'ports': [{'protocol': 'TCP', 'port': 5432}]}])
+        database_policies = {name for name, policy in self.policies.items()
+                             if any(port['port'] == 5432 for rule in policy.get('egress', [])
+                                    for port in rule.get('ports', []))}
+        self.assertEqual(database_policies, {'site-postgres-egress', 'migrator-postgres-egress'})
+        self.assertNotIn('postgres-ingress', self.policies)
+        self.assertFalse(any(port['port'] == 5432 for policy in self.policies.values()
+                             for rule in policy.get('ingress', []) for port in rule.get('ports', [])))
 
     def test_no_unreviewed_https_or_unbounded_peer(self):
         # Every peer needs a real Pod selector (with optional namespace) or an

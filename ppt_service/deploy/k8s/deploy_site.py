@@ -24,8 +24,12 @@ HERE = Path(__file__).resolve().parent
 SERVICE = HERE.parents[1]
 REPOSITORY = SERVICE.parents[1]
 NAMESPACE = 'ppt-service'
+POSTGRES_NAMESPACE = 'data'
+POSTGRES_POD = 'postgres-0'
+POSTGRES_ADMIN = 'appuser'
+POSTGRES_HOST = 'postgres.data.svc.cluster.local'
 TARGET_SCHEMA_REVISION = 3
-SECRET_NAMES = ('ppt-postgres-bootstrap', 'ppt-database-migrator', 'ppt-database-runtime', 'ppt-oidc')
+SECRET_NAMES = ('ppt-database-migrator', 'ppt-database-runtime', 'ppt-oidc')
 BOOTSTRAP_MARKER = 'ppt-service-bootstrap-v1'
 IMAGE_PATTERN = re.compile(r'[^\s@]+@sha256:[0-9a-f]{64}\Z')
 RUNTIME_CHECK = """import os
@@ -176,14 +180,14 @@ def validate_owner(documents):
 
 
 def database_password(secret, role):
-    """Validate the dedicated URL without logging it or passing it in argv."""
+    """Validate the PPT logical database URL without exposing its credentials."""
     try:
         raw = base64.b64decode(secret['data']['DATABASE_URL'], validate=True).decode('utf-8')
         if any(ord(character) < 32 or ord(character) == 127 for character in raw):
             raise ValueError()
         url = urlsplit(raw)
         if (url.scheme != 'postgresql+psycopg' or unquote(url.username or '') != role
-                or url.hostname != 'ppt-postgres.ppt-service.svc.cluster.local'
+                or url.hostname != POSTGRES_HOST
                 or url.port != 5432 or url.path != '/ppt_service' or url.query or url.fragment):
             raise ValueError()
         password = unquote(url.password or '')
@@ -360,7 +364,6 @@ class Deployment:
         except DeployError:
             # Describe only the fixed public mapping, never provider messages or values.
             vault_requirements = {
-                'ppt-postgres-bootstrap': ('secret/ppt-service/postgres-bootstrap', 'POSTGRES_PASSWORD'),
                 'ppt-database-migrator': ('secret/ppt-service/database-migrator', 'DATABASE_URL'),
                 'ppt-database-runtime': ('secret/ppt-service/database-runtime', 'DATABASE_URL'),
                 'ppt-oidc': ('secret/ppt-service/oidc', 'CLIENT_SECRET, COOKIE_SECRET'),
@@ -396,8 +399,8 @@ class Deployment:
                     retriggered = True
                 time.sleep(2)
 
-    def psql(self, sql, database='postgres', user='ppt_bootstrap'):
-        return self.kube('-n', NAMESPACE, 'exec', '-i', 'ppt-postgres-0', '--',
+    def psql(self, sql, database='postgres', user=POSTGRES_ADMIN):
+        return self.kube('-n', POSTGRES_NAMESPACE, 'exec', '-i', POSTGRES_POD, '--',
             'psql', '-X', '--no-password', '--quiet', '--no-align', '--tuples-only',
             '-v', 'ON_ERROR_STOP=1', '-U', user, '-d', database, input=sql)
 
@@ -544,16 +547,12 @@ class Deployment:
             self.apply([doc for doc in base if doc['kind'] not in ('Namespace', 'Deployment', 'StatefulSet')
                         and doc is not data_claim])
             self.apply(load_documents(REPOSITORY / 'vault/inventory/ppt-service-externalsecret.yaml'))
-            print('Synchronizing the four Vault credentials and starting the dedicated database.', flush=True)
+            print('Synchronizing the three Vault credentials for the existing data/postgres instance.', flush=True)
             self.wait_secrets(*SECRET_NAMES)
             for secret_name, role in (('ppt-database-migrator', 'ppt_migrator'),
                                       ('ppt-database-runtime', 'ppt_runtime')):
                 database_password(self.get('secret', secret_name), role)
-            postgres = next(doc for doc in base if doc['kind'] == 'StatefulSet')
-            postgres['spec']['replicas'] = 1
-            self.apply([postgres])
-            self.kube('-n', NAMESPACE, 'rollout', 'status', 'statefulset/ppt-postgres', '--timeout=300s')
-            print('Initializing a new dedicated database or reusing its complete existing setup.', flush=True)
+            print('Initializing the PPT logical database in data/postgres or reusing its complete existing setup.', flush=True)
             self.initialize_database()
             print('Checking and upgrading the schema revision.', flush=True)
             revision = self.revision()
@@ -607,7 +606,7 @@ def main(argv=None):
     if os.getenv('NAMESPACE', NAMESPACE) != NAMESPACE:
         parser.error('This deployment is fixed to ppt-service')
     if args.dry_run:
-        print('Plan: server build/verify/push (unless --skip-build); namespace and deployment lock; public OIDC client and four Vault credentials; PostgreSQL and automatic database initialization/reuse; schema migration; runtime and state initialization Jobs; website rollout. Casdoor/Tunnel remain administrator-managed. Pi execution remains disabled.')
+        print('Plan: server build/verify/push (unless --skip-build); namespace and deployment lock; public OIDC client and three Vault credentials; PPT logical database initialization/reuse on the existing data/postgres instance; schema migration; runtime and state initialization Jobs; website rollout. Casdoor/Tunnel remain administrator-managed. Pi execution remains disabled.')
         return 0
     try:
         if not args.skip_build:

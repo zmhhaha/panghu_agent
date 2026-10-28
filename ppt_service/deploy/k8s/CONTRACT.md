@@ -2,10 +2,11 @@
 
 The website is deployed in `ppt-service`, with public origin
 `https://ppt-service.panghuer.top`. [README.md](README.md) is the operator entry point.
-The deployment provides the website, OAuth proxy, dedicated PostgreSQL and
-persistent storage. Pi model execution is still being integrated;
-`PPT_EXECUTION_ENABLED=false` remains in effect and generation requests return
-`503 execution_not_connected`.
+The deployment provides the website, OAuth proxy and PPT file storage. Database
+`ppt_service` is isolated by its own roles inside the existing `data/postgres`
+instance. Routine website releases preserve the operator's existing execution
+settings and do not submit model work. The trusted execution deployment is
+documented under [Hermes](../hermes/README.md).
 
 ## Server build and deployment
 
@@ -17,9 +18,12 @@ repository manifest digest to `../../rendered/image.txt`. A local Docker image I
 or mutable tag is not that digest. `PPT_SITE_IMAGE` can provide an explicit
 verified digest. The original Hermes worker build is `../../build_worker.sh`.
 
-The ordinary deployment command synchronizes the four Vault-backed Secrets,
-starts PostgreSQL, initializes a new application database or migrates a complete
-existing one, checks runtime privileges and storage, and rolls out the website.
+The ordinary deployment command synchronizes three Vault-backed Secrets,
+uses the operator-side administrative connection to `data/postgres-0` to
+initialize a new dedicated logical database or migrate a complete existing one,
+checks runtime privileges and storage, and rolls out the website. It does not
+create, scale, upgrade or reconfigure the shared PostgreSQL StatefulSet/PVC, nor
+restart the retired `ppt-postgres` instance.
 Role passwords are set atomically with each CREATE ROLE. Only after all bootstrap
 database/schema grants succeed does initialization write database comment
 `ppt-service-bootstrap-v1`. Reuse requires that completion marker as well as the
@@ -44,8 +48,9 @@ dry-run alone do not verify SSO, CSI mounts, CNI traffic or model execution.
 
 | Target | Resources |
 | --- | --- |
-| `base` | Namespace, tokenless service accounts, configuration, dedicated PVCs, PostgreSQL StatefulSet, same-Pod website/OAuth proxy, ClusterIP services and network policies |
+| `base` | Namespace, tokenless service accounts, configuration, PPT file PVC, same-Pod website/OAuth proxy, ClusterIP website Service and network policies |
 | `migrate-job` | One-off schema migration using the same site image and its own database role |
+| Existing `data/postgres` | Shared PostgreSQL instance with dedicated `ppt_service` database and `ppt_migrator`/`ppt_runtime` roles; administered outside PPT workloads |
 
 Only `ppt-site:4180` is exposed as a website Service port. Uvicorn serves
 `ppt_service.server.site:create_site` on `127.0.0.1:8000`, with
@@ -79,22 +84,22 @@ Secrets are local to `ppt-service`; values are managed in Vault and mapped by
 
 | Consumer | Secret | Key |
 | --- | --- | --- |
-| Website | `ppt-database-runtime` | `DATABASE_URL` |
+| Website and trusted controller | `ppt-database-runtime` | `DATABASE_URL` |
 | Schema migration | `ppt-database-migrator` | `DATABASE_URL` |
-| PostgreSQL | `ppt-postgres-bootstrap` | `POSTGRES_PASSWORD` |
 | OAuth proxy | `ppt-oidc` | `client-secret`, `cookie-secret` |
 
 Vault CLI records are `secret/ppt-service/oidc`,
-`secret/ppt-service/database-runtime`, `secret/ppt-service/database-migrator` and
-`secret/ppt-service/postgres-bootstrap`. ExternalSecret references use the
+`secret/ppt-service/database-runtime` and `secret/ppt-service/database-migrator`.
+ExternalSecret references use the
 corresponding KV v2 `secret/data/ppt-service/...` paths and explicit properties.
 The application and migration Job do not receive a Vault token or Kubernetes
 API token.
 
 Both application URLs use `postgresql+psycopg://` and target database
-`ppt_service` at `ppt-postgres.ppt-service.svc.cluster.local:5432`, with different
-roles. `POSTGRES_USER=ppt_bootstrap` and `POSTGRES_DB=postgres` provide only the
-administrator and maintenance database. The migration role owns the application
+`ppt_service` at `postgres.data.svc.cluster.local:5432`, with different
+roles. They never use the shared `appdb` database or `appuser` administrator as
+an application login. Shared administrator access stays in the server-side
+operator connection and is not projected into the PPT namespace. The migration role owns the application
 schema; runtime has required table DML/sequence privileges and read-only access
 to `api_schema_revision`. Schema revision 3 adds append-only human review entries:
 runtime has SELECT/INSERT only on entries and SELECT/INSERT/UPDATE on streams,
@@ -105,9 +110,10 @@ The deployment applies migration grants before rolling
 out the website. Secret synchronization is not a substitute for these database
 checks.
 
-Bootstrap credentials go only to PostgreSQL, migration credentials only to the
-migration workload, and runtime credentials only to the website. Proxy
-credentials do not enter the website. Pi Workers receive no database credential
+Migration credentials go only to the migration workload, and runtime credentials
+only to the website and trusted controller. Proxy credentials do not enter the
+website. The legacy `ppt-postgres-bootstrap` Secret/Vault record is retained only
+for rollback and is not part of the default credential manifest. Workers receive no database credential
 or long-lived provider/gateway token. Do not log URLs, Secret contents or
 complete environment dumps.
 
@@ -121,8 +127,9 @@ duplicate the shared authentication ConfigMaps.
 ## Storage and security
 
 `ppt-data` requests a dedicated 20 GiB RWX `ceph-cephfs` claim, mounted only by the
-website at `/var/lib/ppt-service`; `DATA_ROOT` is its `state` child. PostgreSQL
-uses its own 10 GiB RWO `ceph-rbd` claim. Existing service claims are not reused.
+website and trusted execution workloads at `/var/lib/ppt-service`; `DATA_ROOT` is
+its `state` child. Database storage belongs to the existing shared `data/postgres`
+instance. PPT does not create, mount or change the shared database claim.
 
 The website runs as UID/GID 10000 without `fsGroup` or `fsGroupChangePolicy`.
 Before website rollout, a nonroot initialization Job creates `state` with owner
@@ -143,8 +150,8 @@ created only if the empty root is already writable by UID 10000. Other ownership
 or permission states require operator investigation.
 
 Restoring data preserves its owner, mode and timestamp; recursive ownership
-mapping is not part of deployment. The PostgreSQL claim uses its own UID/GID 70
-and `fsGroup=70`; database storage is separate from website files.
+mapping is not part of deployment. Database storage is separate from website
+files; changing database hosts does not move or rewrite `ppt-data`.
 
 Workloads select `kubernetes.io/arch=arm64`. Containers run without root or
 privilege escalation, with seccomp RuntimeDefault, dropped ALL capabilities and
@@ -153,9 +160,9 @@ Requests, limits and long-running workload probes are explicit. Service accounts
 and Pod templates disable API token automount; workloads receive no API RBAC,
 hostPath or Docker socket.
 
-Ceph StorageClasses use `reclaimPolicy: Delete`. Scaling down retains the
-standalone PVCs; deleting namespace/PVCs can remove underlying data. Back up the
-database and files before recovery work, retain both claims, and follow
+Ceph StorageClasses use `reclaimPolicy: Delete`. Scaling down retains PVCs;
+deleting namespace/PVCs can remove underlying data. Back up the database and
+files before recovery work, retain the source database and file claims, and follow
 [migration/README.md](migration/README.md). `kubectl delete -k base` is not a
 rollback operation.
 
@@ -165,7 +172,7 @@ rollback operation.
 | --- | --- | --- |
 | PPT workloads | `kube-system` Pods labeled `k8s-app=kube-dns` | UDP/TCP 53 |
 | Selected Cloudflare Connector, or optional `frpc/app=frpc` | `ppt-site` | TCP 4180 |
-| Website and migration | Same-namespace `ppt-postgres` | TCP 5432 |
+| Website, migration and trusted controller | Namespace `data`, Pod label `app=postgres` | TCP 5432 |
 | Website/OAuth proxy | Exact `ingress-nginx` controller serving `auth.panghuer.top` | TCP 443 |
 | Other traffic | Other destinations | Denied by default |
 
@@ -176,6 +183,11 @@ bypass and both policies are managed under
 is managed under [vps](../../../../vps/PPT.md). Activate one route for the host.
 No NodePort, LoadBalancer or public API port 8000 is provided.
 
+Database egress is limited to the exact shared instance selector and port.
+Workers, model proxies and sandboxes receive neither database credentials nor
+database network permission. PPT deployment does not install an ingress policy
+that would replace or restrict other clients of `data/postgres`.
+
 Casdoor uses the existing CoreDNS split horizon and internal TLS ingress while
 retaining `https://auth.panghuer.top` as issuer. The shared
 `oauth/k8s/ppt-oidc-egress.yaml` permits only the specified controller Pods on
@@ -185,7 +197,7 @@ enforced traffic isolation.
 
 ## Execution and evidence
 
-Website deployment does not launch a Pi Worker or model proxy. Follow
+Website deployment does not launch a Worker or model proxy. Follow
 [K8S_DEPLOYMENT_HANDOFF.md](../../K8S_DEPLOYMENT_HANDOFF.md) for the remaining
 execution integration: durable UID allocation, task-bound model authority,
 checkpoint/base-version routes, lease semantics and complete writer termination.
@@ -193,7 +205,16 @@ Docker bridge/IP, boot/monotonic clock and container-ID evidence do not establis
 cross-node Kubernetes behavior. Generated PPTX still requires artifact and
 PowerPoint acceptance.
 
-2026-10-24: this contract and [README.md](README.md) describe the current
-`ppt-service` deployment. Historical [RESULTS.md](RESULTS.md) and evidence keep
-the namespace, staged helper commands and validation boundaries from their own
-runs; those old commands are not the current installation procedure.
+Consolidating an existing standalone database requires quiescing all writers,
+backing up the source database and data root, restoring into a new empty
+`ppt_service` database and verifying rows, schema revision, sequences, triggers,
+ownership and runtime privileges before changing the two Vault URLs. Preserve
+the bootstrap completion marker and append-only review history. Conflicting
+target databases/roles are not overwritten. Keep the stopped legacy instance,
+PVC and credentials for rollback; after new writes, rollback requires a separate
+reconciliation rather than reopening the stale source.
+
+2026-10-28: this contract and [README.md](README.md) describe the shared-database
+deployment. Historical [RESULTS.md](RESULTS.md), troubleshooting and evidence keep
+the independent instance, namespace, helper commands and validation boundaries
+from their own runs; those old commands are not the current installation procedure.
