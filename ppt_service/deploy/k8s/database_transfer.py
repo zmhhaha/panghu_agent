@@ -256,7 +256,9 @@ class Transfer:
             receipt['phase'] = 'verify-target-archive-reader'
             listing = self.output / 'ppt-service-archive-list.private.txt'
             with archive.open('rb') as stream, self.open_private(listing.name, binary=True) as out:
-                self.execute(self.command('target', 'pg_restore', '--list'), stdin=stream, stdout=out)
+                # --list shows only selected entries. Without --create it hides
+                # DATABASE/its ACL even when those entries exist in the archive.
+                self.execute(self.command('target', 'pg_restore', '--create', '--list'), stdin=stream, stdout=out)
             toc = listing.read_text(encoding='utf-8')
             require(re.search(r'^\d+;\s+\d+\s+\d+\s+DATABASE\s+-\s+ppt_service\s+ppt_migrator\s*$', toc, re.M),
                     'Archive is missing the reviewed PPT database creation entry')

@@ -64,6 +64,7 @@ class Harness(transfer.Transfer):
         if 'pg_dump' in command:
             kwargs['stdout'].write(b'synthetic-private-custom-archive')
         elif '--list' in command:
+            assert '--create' in command, 'Database entries must be selected for directory validation'
             value = b'1; 1262 16384 DATABASE - ppt_service ppt_migrator\n' if self.readable else b'; missing database entry\n'
             kwargs['stdout'].write(value)
         elif 'pg_restore' in command:
