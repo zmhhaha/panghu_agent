@@ -86,6 +86,8 @@ def test_readonly_mount_never_allows_non_root_ownership(projected, filesystem, c
 @pytest.mark.parametrize('failure', ['writable_file', 'hardlink', 'empty', 'oversized',
                                     'escape', 'nonregular', 'duplicate_json'])
 def test_readonly_projection_keeps_file_and_document_checks(projected, tmp_path, failure):
+    if failure in ('empty', 'oversized', 'duplicate_json'):
+        projected.document.chmod(0o600)
     if failure == 'writable_file':
         projected.document.chmod(0o666)
     elif failure == 'hardlink':
@@ -104,6 +106,8 @@ def test_readonly_projection_keeps_file_and_document_checks(projected, tmp_path,
         projected.document.mkdir()
     elif failure == 'duplicate_json':
         projected.document.write_bytes(b'{"same":1,"same":2}')
+    if failure in ('empty', 'oversized', 'duplicate_json'):
+        projected.document.chmod(0o444)
     with pytest.raises(module.WorkerConfigError):
         module._read_operator_json(projected.path, max_bytes=32)
 
