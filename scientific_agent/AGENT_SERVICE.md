@@ -30,6 +30,54 @@ Vault `secret/data/agent-service/runtime` 的 `SCIENTIFIC_SERVICE_TOKEN` 同步�
 `scientific-agent/scientific-agent-service` Secret 的 `token`，科研 API 只读挂载到上述文件。
 这里不新建供应商 API Key、Vault 登录、OAuth/Casdoor 应用或 Cloudflare 入口。
 
+## 服务器常规构建与更新
+
+科研 API 继续使用已有 [Dockerfile.scientific-pi-api](../Dockerfile.scientific-pi-api)。
+文件名沿用早期 Pi 接入命名，当前镜像也包含通用 Agent 连接器；它不运行 Pi/Hermes Worker。
+在服务器拉取已提交源码后，从仓库根目录构建并推送到现有独立科研 API 仓库。
+先用 `git status --short` 确认没有未记录的源码修改，再为本次提交使用固定 tag：
+
+```bash
+SCIENTIFIC_API_REVISION="$(git rev-parse --short=12 HEAD)"
+SCIENTIFIC_API_TAG="arm-cluster-master:5000/scientific-api:agent-service-${SCIENTIFIC_API_REVISION}"
+
+docker build -f Dockerfile.scientific-pi-api -t "$SCIENTIFIC_API_TAG" .
+docker push "$SCIENTIFIC_API_TAG"
+docker image inspect "$SCIENTIFIC_API_TAG" \
+  --format '{{range .RepoDigests}}{{println .}}{{end}}'
+```
+
+推送成功后，取最后一条命令列出的 `arm-cluster-master:5000/scientific-api@sha256:...`
+作为部署镜像。这里使用 Registry manifest digest，不使用本地 image ID、tag 或 `latest`。
+把下面的摘要替换为本次实际值，并为每次部署选用新的记录目录：
+
+```bash
+SCIENTIFIC_API_IMAGE='arm-cluster-master:5000/scientific-api@sha256:替换为本次实际64位摘要'
+SCIENTIFIC_DEPLOY_DIR="$PWD/rendered/scientific-agent-service/${SCIENTIFIC_API_REVISION}"
+mkdir -p "$SCIENTIFIC_DEPLOY_DIR"
+printf '%s\n' "$SCIENTIFIC_API_IMAGE" > "$SCIENTIFIC_DEPLOY_DIR/api-image.txt"
+git rev-parse HEAD > "$SCIENTIFIC_DEPLOY_DIR/source-revision.txt"
+```
+
+同一提交再次部署时使用另一个新目录，保留原记录。接着按下节使用现有渲染器生成
+`--execution-backend agent-service` 补丁，审查网络规则并应用；这些步骤也用于接入后的
+常规 API 更新。无需新建部署脚本、重建旧专用 Worker 或修改其 PVC。
+
+部署目录保存实际镜像摘要、源码提交、渲染补丁、审定网络规则及回退快照。
+它们是可复查的部署输入，不把终端里临时设置的 `kubectl set env` 当作唯一配置来源。
+通用服务仍通过自己的 [build.sh/deploy.sh](../agent_service/deploy/README.md) 更新，使用
+已审定的公开配置与 Worker host 目录；不要用重新生成的全关闭初始目录覆盖已审定生产配置。
+
+以下旧入口不用于通用 Agent 后端的常规科研更新：
+
+| 旧入口 | 行为与适用范围 |
+| --- | --- |
+| `bash scripts/deploy-api.sh scientific_agent` | 构建并应用共享 `agent-api:latest`、旧 `api-agent` 源码挂载及 LLM/RAG 配置，会覆盖独立科研 API 的部署设置。 |
+| `bash scripts/deploy-scientific-pi.sh --apply-api ...` 或 `--apply` 配合 `SCIENTIFIC_PI_APPLY_API=1` | 固定渲染专用 `pi` 后端，并删除通用 Agent token 挂载与配置；仅用于旧专用 Worker 路径或明确回退。 |
+
+已有旧 Worker、PVC 和历史连接凭据继续用于历史任务恢复及回退，不随本次 API 更新删除。
+保留历史资源不表示新任务仍提交给旧 Worker；新任务后端由本次 API 补丁明确指定。
+
 ## Pi 优先的单任务试接
 
 PPT 与科研共享通用服务的一个全局执行槽，同一时刻只运行一次 Agent 尝试；并发提交进入队列。
@@ -39,8 +87,8 @@ Pod 按一次生成或修订创建，所有写进程停止且证据持久化后�
 1. 先为 `research.generate.v1` 和 `research.revise.v1` 分别记录真实 Pi、模型、工具及隔离验收，
    审定对应镜像 digest 和 binding revision，仅启用这两个已验收的 Pi 绑定。保持全局并发为 1；
    Hermes pool/route 继续关闭，不能用 PPT 或普通文本探针的通过代替科研合同验收。
-2. 构建包含当前 `scientific_agent`、`agent_service` 客户端及科研工具校验代码的 API 镜像并推送私仓，
-   使用固定 `repo@sha256:...`。等待既有 `scientific-agent-service` ExternalSecret Ready。
+2. 按上节构建包含当前业务连接器及科研校验代码的独立 API 镜像并推送私仓，
+   将实际 `repo@sha256:...` 赋给 `SCIENTIFIC_API_IMAGE`。等待既有 `scientific-agent-service` ExternalSecret Ready。
    暂停新科研提交并排空现有任务，保存当前 API Deployment 与网络策略用于恢复。
 3. 在仓库根目录生成可审查的 API 补丁和独立出站规则。此模式只生成文件，无需旧 Worker 镜像，
    不创建新 Worker、PVC 或 Secret：
@@ -48,12 +96,12 @@ Pod 按一次生成或修订创建，所有写进程停止且证据持久化后�
    ```bash
    python k8s/scientific-pi/render.py \
      --execution-backend agent-service \
-     --api-image '<private-registry>/scientific-api@sha256:<64位摘要>' \
-     --api-patch --output rendered/scientific-agent-service/api-patch.json
+     --api-image "$SCIENTIFIC_API_IMAGE" \
+     --api-patch --output "$SCIENTIFIC_DEPLOY_DIR/api-patch.json"
 
    python k8s/scientific-pi/render.py \
      --execution-backend agent-service \
-     --api-egress-policy --output rendered/scientific-agent-service/api-egress-review.json
+     --api-egress-policy --output "$SCIENTIFIC_DEPLOY_DIR/api-egress-review.json"
    ```
 
    默认目标命名空间为 `agent-service`，Secret 为 `scientific-agent-service/token`，两类 profile revision
@@ -68,9 +116,9 @@ Pod 按一次生成或修订创建，所有写进程停止且证据持久化后�
 
    ```bash
    kubectl -n scientific-agent patch deployment/api --type strategic \
-     --patch-file rendered/scientific-agent-service/api-patch.json --dry-run=server
+     --patch-file "$SCIENTIFIC_DEPLOY_DIR/api-patch.json" --dry-run=server
    kubectl -n scientific-agent patch deployment/api --type strategic \
-     --patch-file rendered/scientific-agent-service/api-patch.json
+     --patch-file "$SCIENTIFIC_DEPLOY_DIR/api-patch.json"
    kubectl -n scientific-agent rollout status deployment/api --timeout=180s
    ```
 
@@ -79,7 +127,6 @@ Pod 按一次生成或修订创建，所有写进程停止且证据持久化后�
    然后一次只提交一个新研究任务，验证真实搜索、报告和引用，再对已发布基线执行一次固定证据修订，
    检查取消、重启恢复、产物校验及接收回执。全部业务检查通过后再恢复常规提交。
 
-`scripts/deploy-scientific-pi.sh` 仍为原有专用 Pi Worker 部署入口，默认不会切换到通用服务。
 恢复旧后端时使用保存的 Deployment/网络策略，或以默认 `--execution-backend pi` 生成并审查补丁；
 先停止新提交并处理通用服务中的活动任务，不能通过回退配置丢弃不确定任务或绕过执行槽。
 

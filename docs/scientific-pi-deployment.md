@@ -1,5 +1,12 @@
 # 独立科研 Pi worker：部署与验收说明
 
+本文保留旧专用 Pi Worker 的部署和验收历史。通用 Agent 后端的科研 API 构建、固定摘要
+更新及部署补丁请使用[科研接入指引](../scientific_agent/AGENT_SERVICE.md#服务器常规构建与更新)。
+本文的 `deploy-scientific-pi.sh` 在应用 API 时会明确设置回专用 `pi` 后端；
+`scripts/deploy-api.sh scientific_agent` 会应用共享 `latest` 镜像和旧配置。
+两者均不用于已选择 `agent-service` 后端的常规更新。旧 Worker/PVC 保留供历史恢复及回退；
+这条入口说明不表示通用服务的生产切换已经验收完成。
+
 源码分为：无框架共享契约、专用 worker/私有 SQLite、Pi 子进程适配、精选本地科研流程与工具、科研 API/研究工作台、可恢复报告发布。
 
 **2026-10-23 21:01:45（Asia/Shanghai）Pi专用迁移已上线：** 新科研API只接收Pi研究任务，继续查询和下载既有报告；专用镜像不安装CrewAI。API/UI在短暂维护窗口成对更新，保留worker完整spec；真实Pi完成/取消、8类附件校验与线上Gradio HTTP8项通过。实际浏览器与登录会话验收仍待完成，见[本次工作台记录](../../docs/scientific-research-pi/workbench-20261023/README.md)。2026-10-22记录代表迁移前部署。
