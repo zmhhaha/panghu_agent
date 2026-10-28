@@ -7,10 +7,11 @@ import { defaultSettings, type Project } from '../domain';
 
 vi.mock('../api',async original=>({...await original<typeof import('../api')>(),api:{
  me:vi.fn(),projects:vi.fn(),project:vi.fn(),versions:vi.fn(),acknowledge:vi.fn(),upload:vi.fn(),
+ plan:vi.fn(),generate:vi.fn(),revise:vi.fn(),reviewRevise:vi.fn(),
 }}));
 
 const project:Project={id:'upload-project',title:'上传状态项目',revision:1,stage:'draft',
- settings:defaultSettings,assets:[],input_snapshot_hash:''};
+ settings:defaultSettings,assets:[],input_snapshot_hash:'',external_model_ack:true};
 function deferred<T>() {
  let resolve!:(value:T)=>void;
  const promise=new Promise<T>(done=>{resolve=done;});
@@ -27,9 +28,83 @@ beforeEach(()=>{
 async function open() {
  const user=userEvent.setup();render(<App/>);
  await screen.findByRole('heading',{name:project.title});
- await user.click(screen.getByRole('checkbox'));
  return user;
 }
+function expectNoModelJobs() {
+ expect(api.plan).not.toHaveBeenCalled();expect(api.generate).not.toHaveBeenCalled();
+ expect(api.revise).not.toHaveBeenCalled();expect(api.reviewRevise).not.toHaveBeenCalled();
+}
+
+describe('persisted project external-model consent',()=>{
+ it('saves once and reuses server consent through tabs, refresh, remount and upload without starting a model job',async()=>{
+  let stored:Project={...project,external_model_ack:false};
+  vi.mocked(api.project).mockImplementation(async()=>stored);
+  vi.mocked(api.acknowledge).mockImplementation(async value=>{stored={...value,revision:value.revision+1,external_model_ack:true};return stored;});
+  vi.mocked(api.upload).mockResolvedValue({id:'received'});
+  const user=userEvent.setup();const first=render(<App/>);
+  await screen.findByRole('heading',{name:project.title});
+  expect(screen.getByLabelText('上传源资料')).toBeDisabled();
+  await user.click(screen.getByRole('checkbox',{name:/我同意将本项目必要/}));
+  await screen.findByText(/本项目已同意使用外部模型/);
+  await waitFor(()=>expect(screen.getByLabelText('上传源资料')).toBeEnabled());
+  expect(api.acknowledge).toHaveBeenCalledOnce();
+  expect(vi.mocked(api.acknowledge).mock.calls[0][0]).toMatchObject({id:project.id,external_model_ack:false});
+  expect(api.upload).not.toHaveBeenCalled();expectNoModelJobs();
+  await user.click(screen.getByRole('tab',{name:/沟通与方案/}));
+  expect(screen.queryByRole('checkbox',{name:/我同意/})).not.toBeInTheDocument();
+  expect(screen.getByText(/本项目已同意使用外部模型/)).toBeInTheDocument();
+  await user.click(screen.getByRole('button',{name:'刷新状态'}));
+  await waitFor(()=>expect(screen.getByRole('button',{name:'刷新状态'})).toBeEnabled());
+  first.unmount();render(<App/>);
+  await screen.findByRole('heading',{name:project.title});
+  expect(screen.queryByRole('checkbox',{name:/我同意/})).not.toBeInTheDocument();
+  expect(screen.getByLabelText('上传源资料')).toBeEnabled();
+  await user.upload(screen.getByLabelText('上传源资料'),new File(['synthetic only'],'已授权资料.md'));
+  await screen.findByText('资料上传完成');
+  expect(api.upload).toHaveBeenCalledWith(stored,expect.any(File),expect.any(AbortSignal));
+  expect(api.acknowledge).toHaveBeenCalledOnce();expectNoModelJobs();
+ });
+
+ it('does not carry one project consent into a different project',async()=>{
+  const other:Project={...project,id:'unacknowledged-project',title:'尚未授权的独立项目',external_model_ack:false,
+   assets:[{id:'other-source',display_name:'独立资料.md',bytes:1,parse_status:'ready'}]};
+  vi.mocked(api.projects).mockResolvedValue([project,other]);
+  vi.mocked(api.project).mockImplementation(async id=>id===other.id?other:project);
+  const user=await open();
+  expect(screen.queryByRole('checkbox',{name:/我同意/})).not.toBeInTheDocument();
+  await user.click(screen.getByRole('button',{name:other.title}));
+  await screen.findByRole('heading',{name:other.title});
+  expect(screen.getByRole('checkbox',{name:/我同意/})).not.toBeChecked();
+  expect(screen.queryByText(/本项目已同意使用外部模型/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText('上传源资料')).toBeDisabled();
+  await user.click(screen.getByRole('tab',{name:/沟通与方案/}));
+  expect(screen.getByRole('button',{name:'开始规划'})).toBeDisabled();
+  await user.click(screen.getByRole('button',{name:project.title}));
+  await screen.findByRole('heading',{name:project.title});
+  expect(screen.queryByRole('checkbox',{name:/我同意/})).not.toBeInTheDocument();
+  expect(screen.getByLabelText('上传源资料')).toBeEnabled();
+  expect(api.acknowledge).not.toHaveBeenCalled();expect(api.upload).not.toHaveBeenCalled();expectNoModelJobs();
+ });
+
+ it('keeps consent ungranted after a failed save and never uploads or submits a model task automatically',async()=>{
+  vi.mocked(api.project).mockResolvedValue({...project,external_model_ack:false,
+   assets:[{id:'source',display_name:'已解析资料.md',bytes:1,parse_status:'ready'}]});
+  vi.mocked(api.acknowledge).mockRejectedValue(new ApiError('NETWORK_ERROR'));
+  const user=await open();
+  await user.click(screen.getByRole('checkbox',{name:/我同意/}));
+  await screen.findByRole('alert');
+  expect(screen.getByRole('checkbox',{name:/我同意/})).not.toBeChecked();
+  expect(screen.queryByText(/本项目已同意使用外部模型/)).not.toBeInTheDocument();
+  expect(screen.getByLabelText('上传源资料')).toBeDisabled();
+  await user.click(screen.getByRole('tab',{name:/沟通与方案/}));
+  expect(screen.getByRole('checkbox',{name:/我同意/})).not.toBeChecked();
+  expect(screen.getByRole('button',{name:'开始规划'})).toBeDisabled();
+  await user.click(screen.getByRole('button',{name:'刷新状态'}));
+  await waitFor(()=>expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+  expect(screen.getByRole('checkbox',{name:/我同意/})).not.toBeChecked();
+  expect(api.acknowledge).toHaveBeenCalledOnce();expect(api.upload).not.toHaveBeenCalled();expectNoModelJobs();
+ });
+});
 
 describe('upload waiting and recovery',()=>{
  it('shows the current file and batch count, cancels waiting and unlocks without sending the next file',async()=>{
@@ -53,6 +128,7 @@ describe('upload waiting and recovery',()=>{
   expect(screen.getByLabelText('上传源资料')).toBeEnabled();
   expect(screen.getByRole('button',{name:'刷新状态'})).toBeEnabled();
   expect(api.upload).toHaveBeenCalledTimes(1);
+  expect(api.acknowledge).not.toHaveBeenCalled();
   await user.click(screen.getByRole('button',{name:'刷新状态'}));
   await waitFor(()=>expect(screen.queryByText('上传等待已结束')).not.toBeInTheDocument());
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();

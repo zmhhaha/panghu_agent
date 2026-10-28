@@ -125,6 +125,36 @@ def test_transport_bounds_and_consent(ctx):
     assert c.post('/api/v1/projects',content=b'{}',headers={'Content-Type':'application/json','Content-Length':str(129*1024)}).status_code==413
     assert c.post('/api/v1/projects/'+p['id']+'/assets',content=b'x',headers={'Content-Length':str(27*1024**2)}).status_code==413
 
+
+@pytest.mark.parametrize('ack', [False, True])
+def test_project_model_consent_survives_refresh_and_omitted_update(ctx, ack):
+    _, c, _ = ctx
+    p = c.post('/api/v1/projects', json={'title': 'Saved consent', 'external_model_ack': ack}).json()
+    assert getp(c, p)['external_model_ack'] is ack
+    assert c.get('/api/v1/projects').json()[0]['external_model_ack'] is ack
+    response = c.patch('/api/v1/projects/'+p['id'], json={
+        'title': 'Updated requirements', 'expected_revision': p['revision']})
+    assert response.status_code == 200, response.text
+    assert response.json()['external_model_ack'] is ack
+    refreshed = getp(c, p)
+    assert refreshed['external_model_ack'] is ack
+    assert refreshed['revision'] == p['revision'] + 1
+
+
+def test_project_model_consent_can_be_explicitly_revoked(ctx):
+    _, c, _ = ctx
+    p = project(c)
+    response = c.patch('/api/v1/projects/'+p['id'], json={
+        'title': p['title'], 'expected_revision': p['revision'], 'external_model_ack': False})
+    assert response.status_code == 200, response.text
+    assert response.json()['external_model_ack'] is False
+    p = getp(c, p)
+    assert p['external_model_ack'] is False
+    assert c.post('/api/v1/projects/'+p['id']+'/assets',
+                  files={'file': ('source.md', b'# source', 'text/markdown')}).status_code == 422
+    assert plan(c, p).status_code == 422
+
+
 def test_no_auth_header_bypass(ctx):
     app,c,_=ctx;app.dependency_overrides.clear()
     assert c.get('/api/v1/me',headers={'X-Auth-Request-User':'alice','X-Auth-Request-Email':'a@x'}).status_code==401

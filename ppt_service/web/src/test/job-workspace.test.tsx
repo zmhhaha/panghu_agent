@@ -5,7 +5,7 @@ import { api,consumeEvents } from '../api';
 import { defaultSettings,type Job,type Project } from '../domain';
 
 vi.mock('../api',async original=>({...await original<typeof import('../api')>(),api:{me:vi.fn(),projects:vi.fn(),project:vi.fn(),versions:vi.fn(),job:vi.fn(),generate:vi.fn()},consumeEvents:vi.fn()}));
-const project:Project={id:'p',title:'运行中的规划项目',revision:2,stage:'planning',settings:defaultSettings,assets:[],input_snapshot_hash:'hash',active_job_id:'j'};
+const project:Project={id:'p',title:'运行中的规划项目',revision:2,stage:'planning',settings:defaultSettings,assets:[],input_snapshot_hash:'hash',active_job_id:'j',external_model_ack:true};
 const queued={id:'j',project_id:'p',kind:'plan_initial',status:'queued',stage:'plan_initial',last_event_seq:1};
 beforeEach(()=>{
  vi.clearAllMocks();Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});localStorage.setItem('ppt:selected-project','p');
@@ -54,7 +54,7 @@ describe('workspace job synchronization',()=>{
   vi.mocked(api.generate).mockImplementation(async()=>{currentProject={...currentProject,revision:3,stage:'generating',active_job_id:'prepare'};return {job_id:'prepare'};});
   render(<App/>);await screen.findByRole('heading',{name:project.title});
   fireEvent.click(screen.getByRole('tab',{name:/沟通与方案/}));
-  fireEvent.click(screen.getByRole('checkbox',{name:/我同意将本项目必要/}));
+  expect(screen.queryByRole('checkbox',{name:/我同意将本项目必要/})).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button',{name:'生成演示稿'}));
   await screen.findByText('任务 prepare');expect(screen.getByText('制作准备')).toBeInTheDocument();
   await waitFor(()=>expect(receivers.has('prepare')).toBe(true));

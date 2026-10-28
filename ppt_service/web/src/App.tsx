@@ -29,7 +29,10 @@ function CommunicationReview({communication}:{communication?:Communication}) {
  </section>;
 }
 function ProductionSettings({data}:{data:Record<string,unknown>}) {const keys=['page_count','design_spec_depth','refine_spec','native_charts','visual_review','proactive_speaker_notes','proactive_custom_animations','proactive_narration_audio'];const selected=Object.entries(data).filter(([key])=>keys.includes(key));const visible=selected.length?selected:Object.entries(data).slice(0,6);return <><dl>{visible.map(([key,value])=><div key={key}><dt>{planningLabels[key]??key}</dt><dd><PlainPlanValue value={value}/></dd></div>)}</dl><PlanDetails title="核对完整制作参数" data={data}/></>;}
-function Consent({checked,onChange}:{checked:boolean;onChange:(v:boolean)=>void}) {return <label className="consent"><input type="checkbox" checked={checked} onChange={e=>onChange(e.target.checked)}/><span>我同意将本项目必要的正文及图片发送给服务指定的外部模型，用于规划、生成与修改。请仅上传有权使用的资料。</span></label>;}
+function Consent({checked,onChange,disabled=false}:{checked:boolean;onChange:(v:boolean)=>void;disabled?:boolean}) {
+ if(checked)return <p className="consent" role="status"><ShieldCheck size={18} aria-hidden="true"/><span>本项目已同意使用外部模型，上传、规划、生成和修改无需重复确认。</span></p>;
+ return <label className="consent"><input type="checkbox" checked={false} disabled={disabled} onChange={e=>{if(e.target.checked)onChange(true);}}/><span>我同意将本项目必要的正文及图片发送给服务指定的外部模型，用于规划、生成与修改。本项目只需确认一次。请仅上传有权使用的资料。</span></label>;
+}
 function UsageView({profile,job}:{profile:Profile;job?:Job|null}) {const usage=job?.usage??profile.usage;return <div className="usage"><div><span>已观测输入 / 输出</span><strong>{usage?.input_tokens??'未知'} / {usage?.output_tokens??'未知'} tokens</strong></div><div><span>供应商费用</span><strong>{usageCost(usage)}</strong></div><div><span>用户额度</span><strong>{profile.quota?.enabled ? `剩余 ${profile.quota.remaining??'待核对'} · ${profile.quota.period??'当前周期'}`:'未启用'}</strong></div></div>;}
 export default function App() {
  const [profile,setProfile]=useState<Profile|null>(null);const [projects,setProjects]=useState<Project[]>([]);const [selected,setSelected]=useState<string|null>(()=>localStorage.getItem('ppt:selected-project'));const [error,setError]=useState<unknown>(null);const [loading,setLoading]=useState(true);const [creating,setCreating]=useState(false);const [title,setTitle]=useState('');const [busy,setBusy]=useState(false);
@@ -59,10 +62,10 @@ function PlanningJobNotice({job,project,onOpen}:{job:Job;project:Project;onOpen:
  if(!['failed','interrupted','cancelled'].includes(job.status))return null;
  const timedOut=!!job.error_code&&new ApiError(job.error_code).code==='TIMEOUT';
  const recovery=hasConfirmedCommunication(project)?'初步沟通仍已确认，可核对后重新提交三套方向规划。':project.plan&&project.plan.input_snapshot_hash!==project.input_snapshot_hash?'资料或设置已变化，请依据最新资料重新规划。':'请核对当前方案；若初步沟通确认已失效，先重新确认沟通内容与设计方式。';
- return <div className="notice warning"><div><strong>{timedOut?'三套设计方向规划超时':'三套设计方向规划未完成'}</strong><p>本次方案未成功交付，也没有生成演示稿。已有资料与规划记录仍保留。{recovery}重试会创建新任务，需要你明确勾选外部模型授权并点击提交。</p><button className="secondary compact" onClick={onOpen}>查看规划与重试</button></div></div>;
+ return <div className="notice warning"><div><strong>{timedOut?'三套设计方向规划超时':'三套设计方向规划未完成'}</strong><p>本次方案未成功交付，也没有生成演示稿。已有资料与规划记录仍保留。{recovery}重试会创建新任务，请核对要求后点击提交。</p><button className="secondary compact" onClick={onOpen}>查看规划与重试</button></div></div>;
 }
 function Workspace({id,profile,onBack,onChanged}:{id:string;profile:Profile;onBack:()=>void;onChanged:()=>void}) {
- const [project,setProject]=useState<Project|null>(null);const [versions,setVersions]=useState<Version[]>([]);const [loading,setLoading]=useState(true);const [error,setError]=useState<unknown>(null);const [tab,setTab]=useState('materials');const [busy,setBusy]=useState(false);const busyRef=useRef(false);const [consent,setConsent]=useState(false);const [localJob,setLocalJob]=useState<string|null>(null);
+ const [project,setProject]=useState<Project|null>(null);const [versions,setVersions]=useState<Version[]>([]);const [loading,setLoading]=useState(true);const [error,setError]=useState<unknown>(null);const [tab,setTab]=useState('materials');const [busy,setBusy]=useState(false);const busyRef=useRef(false);const [localJob,setLocalJob]=useState<string|null>(null);
  const [submittedJob,setSubmittedJob]=useState<{id:string;projectRevision:number}|null>(null);
  const refreshSequence=useRef(0);
  const [uploadState,setUploadState]=useState<UploadState|null>(null);const uploadController=useRef<AbortController|null>(null);
@@ -87,14 +90,14 @@ function Workspace({id,profile,onBack,onChanged}:{id:string;profile:Profile;onBa
  const active=!!trackedJobId&&(!job||activeStatuses.has(job.status));
  const perform=async(action:()=>Promise<unknown>)=>{if(busyRef.current)return;busyRef.current=true;setBusy(true);setError(null);try{await action();await refresh();onChanged();}catch(e){setError(e);if(e instanceof ApiError&&['STALE_REVISION','STALE_PLAN','SNAPSHOT_MISMATCH'].includes(e.code)){await refresh();setError(e);}}finally{busyRef.current=false;setBusy(false);}};
  const uploadFiles=async(files:File[])=>{
-  if(!project||!files.length||busyRef.current||active)return;
+  if(!project?.external_model_ack||!files.length||busyRef.current||active)return;
   const controller=new AbortController();uploadController.current=controller;
   busyRef.current=true;setBusy(true);setError(null);
   let received=0;let currentIndex=0;let fileName=files[0].name;let syncing=false;
   const progress=(phase:UploadState['phase'])=>setUploadState({phase,current:currentIndex,total:files.length,fileName,received});
   progress('preparing');
   try {
-   let current=await api.acknowledge(project,controller.signal);setProject(current);
+   let current=project;
    for(let index=0;index<files.length;index++){
     const file=files[index];currentIndex=index+1;fileName=file.name;syncing=false;progress('uploading');
     await api.upload(current,file,controller.signal);received++;syncing=true;progress('syncing');
@@ -116,6 +119,8 @@ function Workspace({id,profile,onBack,onChanged}:{id:string;profile:Profile;onBa
  const start=async(action:()=>Promise<{job_id:string}>)=>perform(async()=>{const projectRevision=project?.revision??0;const result=await action();refreshSequence.current++;setSubmittedJob({id:result.job_id,projectRevision});setLocalJob(result.job_id);});
  if(loading)return <div className="loading" role="status"><LoaderCircle className="spin"/>正在读取项目…</div>;
  if(!project)return <><button className="link" onClick={onBack}><ArrowLeft size={15}/>返回项目</button><ErrorBox error={error} onRetry={()=>void refresh()}/></>;
+ const consent=project.external_model_ack===true;
+ const setConsent=(value:boolean)=>{if(value&&!consent)void perform(async()=>{setProject(await api.acknowledge(project));});};
  const disabled=busy||active;
  return <><button className="back link" onClick={onBack}><ArrowLeft size={15}/>全部项目</button><div className="page-heading"><div><span className="eyebrow">PRIVATE PROJECT</span><h1>{project.title}</h1><p><span className="pill">{label(project.stage)}</span><span className="metadata">项目修订 {project.revision}</span></p></div><button className="secondary compact" disabled={busy} onClick={()=>void Promise.all([refresh(),refreshJob()])}><RefreshCw size={16}/>刷新状态</button></div><ErrorBox error={error}/>{parsePanel&&<ErrorBox error={parsePollingError}/>}
  {job&&<section className="job-panel" aria-label="当前任务"><div><span className={`status-dot ${active?'pulse':''}`}/><strong role="status">{label(job.status)}</strong><span>{job.stage?label(job.stage):'等待服务状态'}</span><small>{trackedJobId?connection:''}</small></div><div><code>任务 {job.id}</code>{activeStatuses.has(job.status)&&<button className="secondary compact" disabled={busy||job.status==='cancelling'} onClick={()=>void perform(async()=>{setJob(await api.cancel(job.id));})}>{job.status==='cancelling'?'正在停止…':'取消任务'}</button>}</div>{job.error_code&&<ErrorBox error={new ApiError(job.error_code)}/>}<ErrorBox error={trackedJobId?jobError:null}/><PlanningJobNotice job={job} project={project} onOpen={()=>setTab('planning')}/><p>{active?'关闭页面后任务继续执行，返回时会恢复服务端记录。':'最近一次任务的服务端记录；刷新页面后仍可查看结果。'}</p></section>}
@@ -132,7 +137,7 @@ type Starter=(action:()=>Promise<{job_id:string}>)=>Promise<void>;
 function Materials({project,disabled,perform,onUpdate,consent,setConsent,upload,uploadState}:{project:Project;disabled:boolean;perform:Performer;onUpdate:(p:Project)=>void;consent:boolean;setConsent:(v:boolean)=>void;upload:(files:File[])=>Promise<void>;uploadState:UploadState|null}) {
  const [settings,setSettings]=useState<Settings>(project.settings??defaultSettings);const [fileError,setFileError]=useState('');const [dirty,setDirty]=useState(false);useEffect(()=>{setSettings(project.settings??defaultSettings);setDirty(false);},[project.settings?.pages,project.settings?.language,project.settings?.audience,project.settings?.purpose,project.settings?.style,project.settings?.requirements]);
  const change=(key:keyof Settings,value:string|number)=>{setSettings(old=>({...old,[key]:value}));setDirty(true);};
- return <div className="workspace-columns"><section className="panel"><div className="section-title"><div><h2>源资料</h2><p>以资料为依据，不补造事实、数字或引用。</p></div><Upload size={20}/></div><Consent checked={consent} onChange={setConsent}/><label className={`upload-zone ${disabled?'disabled':''}`}><Upload size={27}/><strong>{uploadPending(uploadState)?'正在处理本次上传':'选择并上传文件'}</strong><span>Markdown · 文本 PDF · DOCX · PNG · JPEG</span><small>25 MiB / 文件 · 最多 10 个文件 · 合计 100 MiB</small><input aria-label="上传源资料" type="file" multiple accept=".md,.pdf,.docx,.png,.jpg,.jpeg" disabled={disabled||!consent} onChange={e=>{const files=Array.from(e.target.files??[]);e.target.value='';const message=validateFiles(files,project.assets??[]);setFileError(message);if(!message&&files.length)void upload(files);}}/></label>{!consent&&<p className="hint">勾选上方数据传输同意后可上传资料。</p>}{fileError&&<p role="alert" className="field-error">{fileError}</p>}
+ return <div className="workspace-columns"><section className="panel"><div className="section-title"><div><h2>源资料</h2><p>以资料为依据，不补造事实、数字或引用。</p></div><Upload size={20}/></div><Consent checked={consent} onChange={setConsent} disabled={disabled}/><label className={`upload-zone ${disabled?'disabled':''}`}><Upload size={27}/><strong>{uploadPending(uploadState)?'正在处理本次上传':'选择并上传文件'}</strong><span>Markdown · 文本 PDF · DOCX · PNG · JPEG</span><small>25 MiB / 文件 · 最多 10 个文件 · 合计 100 MiB</small><input aria-label="上传源资料" type="file" multiple accept=".md,.pdf,.docx,.png,.jpg,.jpeg" disabled={disabled||!consent} onChange={e=>{const files=Array.from(e.target.files??[]);e.target.value='';const message=validateFiles(files,project.assets??[]);setFileError(message);if(!message&&files.length)void upload(files);}}/></label>{!consent&&<p className="hint">勾选上方数据传输同意后可上传资料。</p>}{fileError&&<p role="alert" className="field-error">{fileError}</p>}
  <div className="storage">{project.assets?.length??0} / 10 个文件 <span>{((project.assets??[]).reduce((n,a)=>n+a.bytes,0)/1024**2).toFixed(1)} / 100 MiB</span></div>
  <p className="hint">带文本层 PDF 最多 150 页；单文件文本最多 50 万字符。超出请拆分后上传。</p>
  {hasObservedParser(project.assets??[])&&<p className="hint">材料解析采用隔离本地沙箱；下方状态来自服务端，不会调用模型。</p>}{hasPendingParses(project.assets??[])&&<p className="hint">在“资料与要求”和“沟通与方案”每 5 秒更新解析状态；也可点击“刷新状态”。离开这两个页面或隐藏页面时暂停刷新。</p>}
@@ -145,7 +150,7 @@ function Planning({project,disabled,consent,setConsent,perform,start}:{project:P
  const communicationConfirmed=hasConfirmedCommunication(project);
  useEffect(()=>{setDirection(restoredDirection(project));setTemplate('');},[plan?.revision,plan?.confirmed_direction_id,project.confirmed_plan_revision,project.input_snapshot_hash]);const stale=!!plan&&plan.input_snapshot_hash!==project.input_snapshot_hash;const validDirections=plan?.directions?.length===3&&plan.directions.every(d=>d.title&&d.pages.length>0);
  const needsConfirmation=plan?.stage==='communication'&&!stale&&!communicationConfirmed&&!feedback.trim();
- return <div className="planning"><section className="panel"><div className="section-title"><div><span className="eyebrow">PLAN BEFORE PRODUCTION</span><h2>{!plan?'先明确内容，再确定设计':plan.stage==='communication'?'第一次确认 · 沟通与设计方式':'第二次确认 · 选择完整方案'}</h2><p>每次确认都绑定具体方案修订与资料快照，服务端核验后才会生效。</p></div></div><Consent checked={consent} onChange={setConsent}/>{stale&&<div className="notice warning" role="status">资料或设置已变化，当前方案确认已失效，请重新规划。</div>}
+ return <div className="planning"><section className="panel"><div className="section-title"><div><span className="eyebrow">PLAN BEFORE PRODUCTION</span><h2>{!plan?'先明确内容，再确定设计':plan.stage==='communication'?'第一次确认 · 沟通与设计方式':'第二次确认 · 选择完整方案'}</h2><p>每次确认都绑定具体方案修订与资料快照，服务端核验后才会生效。</p></div></div><Consent checked={consent} onChange={setConsent} disabled={disabled}/>{stale&&<div className="notice warning" role="status">资料或设置已变化，当前方案确认已失效，请重新规划。</div>}
  {!!project.assets?.length&&<section className="planning-materials" aria-label={parseBlocked?'待处理资料解析状态':'项目文件管理'}><div className="asset-list-heading"><h3>已上传文件</h3><small>{project.assets.length} 个文件 · 可直接删除</small></div>{parseBlocked&&<div className="notice warning"><CircleAlert size={18}/><div><strong>资料尚未全部解析完成</strong><p>请先等待解析完成，或在下方删除不再使用的文件，再开始规划。可点击“刷新状态”核对；添加文件请返回“资料与要求”。</p></div></div>}<SourceFiles project={project} disabled={disabled} perform={perform} showSummary={false}/>{disabled&&<p className="hint">项目有活动任务或正在提交，完成后可删除文件。</p>}</section>}
   {plan?.stage==='communication'&&plan.confirmed_at&&!communicationConfirmed&&!stale&&<div className="notice warning" role="status"><div><strong>初步沟通需要重新确认</strong><p>已有沟通记录仍保留，但当前项目的确认状态已失效。请重新确认下方沟通内容与设计方式，再生成三套设计方向；确认本身不会启动模型任务。</p></div></div>}
   {communicationConfirmed&&<div className="notice"><p>初步沟通已确认。点击“生成三套设计方向”后仅生成方案；随后还需主动选择一个方向、确认所选完整方案，再点击“生成演示稿”。</p></div>}
@@ -158,7 +163,6 @@ function Planning({project,disabled,consent,setConsent,perform,start}:{project:P
 function Versions({project,versions,disabled,consent,setConsent,start,perform}:{project:Project;versions:Version[];disabled:boolean;consent:boolean;setConsent:(v:boolean)=>void;start:Starter;perform:Performer}) {
  const [base,setBase]=useState('');const [pages,setPages]=useState<number[]>([]);const [feedback,setFeedback]=useState('');const [perPage,setPerPage]=useState<Record<string,string>>({});const [scope,setScope]=useState('whole');
  const [reviewSnapshot,setReviewSnapshot]=useState<AcceptanceSnapshot|null>(null);
- const [reviewConsent,setReviewConsent]=useState(false);
  const [reviewNotice,setReviewNotice]=useState('');const revisionForm=useRef<HTMLElement|null>(null);
  const lastReview=useRef<AcceptanceSnapshot|null>(null);
  const version=versions.find(v=>v.id===base);const review=version?.status==='review';
@@ -168,16 +172,15 @@ function Versions({project,versions,disabled,consent,setConsent,start,perform}:{
  const observeReview=useCallback((value:AcceptanceSnapshot|null)=>{
   if(value&&(value.project_id!==project.id||value.version_id!==base))return;
   const previous=lastReview.current;
-  if(!value)setReviewConsent(false);
-  else {
-   if(previous&&JSON.stringify(previous.binding)!==JSON.stringify(value.binding)){setPages([]);setPerPage({});setFeedback('');setScope('whole');setReviewConsent(false);setReviewNotice('审核稿来源已变化，未提交的修改意见已清空，请核对当前来源后重新填写。');}
-   else if(previous&&previous.revision!==value.revision){setReviewConsent(false);setReviewNotice('检查记录已更新，请核对修改意见并重新确认本次数据传输。');}
+  if(value){
+   if(previous&&JSON.stringify(previous.binding)!==JSON.stringify(value.binding)){setPages([]);setPerPage({});setFeedback('');setScope('whole');setReviewNotice('审核稿来源已变化，未提交的修改意见已清空，请核对当前来源后重新填写。');}
+   else if(previous&&previous.revision!==value.revision){setReviewNotice('检查记录已更新，请核对修改意见后提交。');}
    lastReview.current=value;
   }
   setReviewSnapshot(value);
  },[base,project.id]);
- const useSavedFeedback=(value:SavedReviewFeedback)=>{if(!currentReview||value.reviewRevision!==currentReview.revision||JSON.stringify(value.binding)!==JSON.stringify(currentReview.binding))return;setScope('pages');setPages(value.pages);setPerPage({});setFeedback(value.feedback);setReviewConsent(false);setReviewNotice(`已带入第 ${value.pages.join('、')} 页的已保存问题，请核对修改意见后提交。`);revisionForm.current?.scrollIntoView?.({behavior:'smooth',block:'start'});};
- const changeBase=(value:string)=>{setBase(value);setPages([]);setPerPage({});setFeedback('');setScope('whole');setReviewSnapshot(null);setReviewConsent(false);setReviewNotice('');lastReview.current=null;};
+ const useSavedFeedback=(value:SavedReviewFeedback)=>{if(!currentReview||value.reviewRevision!==currentReview.revision||JSON.stringify(value.binding)!==JSON.stringify(currentReview.binding))return;setScope('pages');setPages(value.pages);setPerPage({});setFeedback(value.feedback);setReviewNotice(`已带入第 ${value.pages.join('、')} 页的已保存问题，请核对修改意见后提交。`);revisionForm.current?.scrollIntoView?.({behavior:'smooth',block:'start'});};
+ const changeBase=(value:string)=>{setBase(value);setPages([]);setPerPage({});setFeedback('');setScope('whole');setReviewSnapshot(null);setReviewNotice('');lastReview.current=null;};
  const revisionFeedback=[feedback,...(scope==='pages'?pages.map(n=>perPage[String(n)]?.trim()?`第 ${n} 页：${perPage[String(n)]}`:''):[])].filter(Boolean).join('\n\n');
  const gateLabels:Record<string,string>={independent_export_build_contract:'完整导出核验',independent_visual_review:'逐页视觉审核',powerpoint_open_edit_save_reopen:'PowerPoint 打开、编辑、保存与重开验收',postflight_warnings_review:'质量提示复核'};
  return <div className="panel">
@@ -213,8 +216,8 @@ function Versions({project,versions,disabled,consent,setConsent,start,perform}:{
       {pages.includes(slide.number)&&<label>第 {slide.number} 页意见<textarea rows={2} maxLength={5000} value={perPage[String(slide.number)]??''} onChange={e=>setPerPage(old=>({...old,[slide.number]:e.target.value}))}/></label>}
      </div>)}</div>}
      <label>{scope==='whole'?'整份修改意见':'共同修改意见（可选）'}<textarea rows={4} maxLength={review?12000:10000} value={feedback} onChange={e=>setFeedback(e.target.value)} placeholder="说明需要调整的内容、数据或版式…"/></label>
-     <Consent checked={review?reviewConsent:consent} onChange={review?setReviewConsent:setConsent}/>
-     {review?<button className="primary" disabled={disabled||!reviewConsent||!currentReview?.can_review||!revisionFeedback.trim()||revisionFeedback.length>12000||(scope==='pages'&&!pages.length)} onClick={()=>{if(currentReview?.can_review)void start(async()=>{const result=await api.reviewRevise(project,version.id,scope==='pages'?pages:[],revisionFeedback,currentReview.binding,currentReview.revision,reviewConsent);setReviewConsent(false);return result;});}}>创建新审核稿修改任务 <ArrowRight size={16}/></button>:<button className="primary" disabled={disabled||!consent||(scope==='whole'?!feedback.trim():!pages.length||(!feedback.trim()&&pages.some(n=>!perPage[String(n)]?.trim())))} onClick={()=>void start(()=>api.revise(project,version.id,scope==='pages'?pages:[],feedback,scope==='pages'?Object.fromEntries(pages.map(n=>[String(n),perPage[String(n)]??''])):{},consent))}>基于所选版本创建修改任务 <ArrowRight size={16}/></button>}
+     <Consent checked={consent} onChange={setConsent} disabled={disabled}/>
+     {review?<button className="primary" disabled={disabled||!consent||!currentReview?.can_review||!revisionFeedback.trim()||revisionFeedback.length>12000||(scope==='pages'&&!pages.length)} onClick={()=>{if(currentReview?.can_review)void start(()=>api.reviewRevise(project,version.id,scope==='pages'?pages:[],revisionFeedback,currentReview.binding,currentReview.revision));}}>创建新审核稿修改任务 <ArrowRight size={16}/></button>:<button className="primary" disabled={disabled||!consent||(scope==='whole'?!feedback.trim():!pages.length||(!feedback.trim()&&pages.some(n=>!perPage[String(n)]?.trim())))} onClick={()=>void start(()=>api.revise(project,version.id,scope==='pages'?pages:[],feedback,scope==='pages'?Object.fromEntries(pages.map(n=>[String(n),perPage[String(n)]??''])):{},consent))}>基于所选版本创建修改任务 <ArrowRight size={16}/></button>}
      {review&&revisionFeedback.length>12000&&<p className="field-error" role="alert">修改意见合计超过 12000 字符，请精简后提交。</p>}
      <p className="hint">{review?'审核稿来源':'提交基线'}：{version.id}。不会自动切换到最新版本。</p>
     </fieldset></section>}
