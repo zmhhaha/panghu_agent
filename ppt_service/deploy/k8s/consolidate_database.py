@@ -71,6 +71,10 @@ else:
    with path.open('rb') as stream:
     for chunk in iter(lambda:stream.read(1048576),b''):digest.update(chunk)
    row.update(kind='file',bytes=info.st_size,sha256=digest.hexdigest())
+  elif stat.S_ISSOCK(info.st_mode):
+   # Unix sockets in stopped task directories have no restorable contents.
+   # Record their metadata; tarfile intentionally omits these runtime nodes.
+   row['kind']='socket'
   else:raise RuntimeError('unsupported_state_file')
   result[name]=row
   if row['kind']=='directory':
@@ -345,8 +349,10 @@ def main():
                 require(result.returncode == 0, 'PPT file backup failed')
                 stream.flush()
                 os.fsync(stream.fileno())
-            require(archive_index(backup) == files_before, 'File archive differs from frozen files')
-            receipt['file_backup'] = {'path': str(backup), 'sha256': digest(backup), 'entries': len(files_before)}
+            restorable = {key: value for key, value in files_before.items() if value['kind'] != 'socket'}
+            require(archive_index(backup) == restorable, 'File archive differs from frozen files')
+            receipt['file_backup'] = {'path': str(backup), 'sha256': digest(backup), 'entries': len(restorable),
+                                      'runtime_sockets_metadata_only': len(files_before) - len(restorable)}
 
             phase('restore-dedicated-database-and-compare-all-data')
             receipt['transfer'] = transfer.run(passwords)
