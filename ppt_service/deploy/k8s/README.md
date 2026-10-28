@@ -102,6 +102,15 @@ kubectl -n ppt-service rollout status deployment/ppt-site --timeout=300s
 
 从 `ppt-service/ppt-postgres` 合并到共享实例时，先排空任务、停止网站和控制器全部 writer，备份源库与文件数据根，再恢复到 `data/postgres` 中全新的 `ppt_service` 逻辑库。迁移保留两个专用角色、数据库完成标记、schema 3、审核触发器、序列、记录与原有文件绑定；核对成功后才更新 Vault 中两份连接地址、同步 ESO 并切换消费者。文件仍使用原 `ppt-data`，不搬卷、不改 owner。共享实例中的其他库和权限保持原样。
 
+一次性迁移入口为 `deploy/k8s/consolidate_database.py`，仅在既有 Linux 管理服务器、两层精确 Git checkout 和通过的服务器检查收据下执行。默认仅展示计划；实际迁移使用下列命令。当前更改不影响任何镜像构建输入，因此保留已有 Git 构建的三个不可变镜像。
+
+```bash
+python3 ppt_service/deploy/k8s/consolidate_database.py <app完整提交> <outer完整提交> \
+  --checks-receipt /root/<本次服务器检查>/receipt.json --execute
+```
+
+私有数据库/文件备份、逐表摘要、结构/权限比对、原配置和阶段收据保存在服务器 `/root/ppt-shared-db-*-migration/`。脚本拒绝已有同名目标库或角色；失败保留现场，不自动删除目标或回切旧库。排障后按收据阶段恢复，不能直接重跑来覆盖部分迁移结果。
+
 切换后旧 `ppt-postgres` 保持停止，旧数据库 PVC、bootstrap Secret 和 Vault 记录保留作为回退依据；从默认清单移除不表示删除线上对象。普通部署不会重建旧实例，也不删除旧卷。目标出现同名库/角色、身份或完成标记不符时停止，不能覆盖目标或用手工补标记绕过检查。
 
 从旧 Docker 服务搬迁数据时，按 [迁移说明](migration/README.md) 停止全部 writer，备份数据库和整个数据根，恢复到新目标并核对记录、定义及文件 metadata，再切换入口。它是已有数据搬迁流程，首次安装直接使用上面的部署命令。

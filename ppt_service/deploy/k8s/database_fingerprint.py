@@ -58,7 +58,8 @@ def _acl(expression: str) -> str:
                    CASE WHEN x.grantee=0 THEN 'PUBLIC'
                         ELSE pg_get_userbyid(x.grantee) END AS grantee,
                    x.privilege_type AS privilege, x.is_grantable AS grantable
-            FROM aclexplode(""" + expression + """ ) x) a), '[]'::jsonb)"""
+            FROM aclexplode(CASE WHEN cardinality(""" + expression + """)>0
+                THEN """ + expression + """ ELSE NULL::aclitem[] END) x) a), '[]'::jsonb)"""
 
 
 def _records(query: str, order: str) -> str:
