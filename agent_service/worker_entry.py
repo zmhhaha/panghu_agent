@@ -241,7 +241,12 @@ def _read_operator_json(path: Path, *, private=False, max_bytes=65536):
         raise WorkerConfigError()
     for component in (parent, *parent.parents):
         info = component.stat()
-        if info.st_uid != 0 or info.st_mode & 0o022:
+        if info.st_uid != 0:
+            raise WorkerConfigError()
+        # Kubernetes projected volumes retain writable directory mode bits
+        # even when the container's mount is read-only. Only the measured
+        # filesystem mount flag can make those mode bits safe here.
+        if info.st_mode & 0o022 and not os.statvfs(component).f_flag & os.ST_RDONLY:
             raise WorkerConfigError()
     before = resolved.lstat()
     if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_uid != 0
@@ -507,8 +512,13 @@ def assemble_app(config: HostConfig, secrets: HostSecrets, scope: CapsuleScope):
     if not WORKSPACE_ROOT.exists():
         WORKSPACE_ROOT.mkdir(mode=0o711)
     info = WORKSPACE_ROOT.lstat()
-    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022
+    if (not stat.S_ISDIR(info.st_mode) or info.st_uid != 0
             or WORKSPACE_ROOT.is_symlink()):
+        raise WorkerConfigError()
+    # A fresh Kubernetes emptyDir is root-owned but initially mode 0777.
+    # Do not take ownership of a writable directory that already contains
+    # entries; establish the private boundary before initializing the host.
+    if info.st_mode & 0o022 and any(WORKSPACE_ROOT.iterdir()):
         raise WorkerConfigError()
     # The child may traverse its own attempt but cannot list or replace siblings.
     WORKSPACE_ROOT.chmod(0o711)
