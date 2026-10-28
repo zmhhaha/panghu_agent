@@ -78,6 +78,13 @@ def log_pi_model_failure(message: dict) -> None:
             category = 'native_error_oversized'
         else:
             http = re.match(r'\A([45][0-9]{2}) (?=\S)', raw)
+            provider = message.get('provider')
+            if http is None and type(provider) is str and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}', provider):
+                # Pi 0.99.2 formats known HTTP statuses as
+                # "<provider> API error (<status>): <message/body>". Match
+                # the exact event provider; never search arbitrary body text.
+                prefix = 'OpenAI' if provider == 'openai' else provider
+                http = re.match(r'\A' + re.escape(prefix) + r' API error \(([45][0-9]{2})\): (?=\S)', raw)
             if reason == 'error' and http:
                 category, status = 'http_status_message', int(http.group(1))
             elif re.fullmatch(r"Cannot read properties of (?:undefined|null) \(reading '[^'\r\n]{1,128}'\)", raw):

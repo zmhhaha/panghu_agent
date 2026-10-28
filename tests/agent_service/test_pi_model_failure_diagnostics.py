@@ -12,16 +12,19 @@ LOGGER = 'agent_service.diagnostics'
 
 
 class PiModelFailureDiagnosticsTests(unittest.TestCase):
-    def classify(self, raw, *, reason='error', expected='native_unknown', status=None):
+    def classify(self, raw, *, reason='error', expected='native_unknown', status=None,
+                 provider=None, expected_retryable=None):
         with self.assertLogs(LOGGER, level='WARNING') as capture:
-            error = PiRuntime._model_request_error({'stopReason': reason, 'errorMessage': raw})
+            error = PiRuntime._model_request_error({'stopReason': reason, 'errorMessage': raw,
+                                                   'provider': provider})
         self.assertEqual(len(capture.records), 1)
         self.assertNotIn(SECRET, '\n'.join(capture.output))
         self.assertTrue(all(record.exc_info is None and not record.stack_info for record in capture.records))
         self.assertEqual(json.loads(capture.records[0].getMessage()), dict(
             event='pi_model_failure', component='pi_runtime', stage='execute_native',
             category=expected, stop_reason=reason, native_http_status=status))
-        retryable = reason == 'error' and status in {429, 500, 502, 503, 504}
+        retryable = (reason == 'error' and status in {429, 500, 502, 503, 504}
+                     if expected_retryable is None else expected_retryable)
         self.assertEqual(error.code, 'model_http_transient' if retryable else 'model_error')
         self.assertEqual(error.retryable, retryable)
         self.assertNotIn(SECRET, str(error))
@@ -35,6 +38,31 @@ class PiModelFailureDiagnosticsTests(unittest.TestCase):
             with self.subTest(raw=raw):
                 self.classify(raw, expected=('responses_stream_error' if raw.startswith('Error Code ') else 'native_unknown'))
         self.classify(f'503 {SECRET}', reason='aborted')
+
+    def test_pi_cage_http_wrapper_exposes_only_status_without_changing_retry(self):
+        # Pinned SDK formatProviderError preserves both an extracted status and
+        # a message which may itself carry the status and sensitive body.
+        for provider, prefix in (('task-model', 'task-model'), ('openai', 'OpenAI'),
+                                 ('private.gateway-v1', 'private.gateway-v1')):
+            for status in (401, 422, 429, 503):
+                for body in (f'{status} {{"code":"{SECRET}"}}', SECRET):
+                    with self.subTest(provider=provider, status=status, body=body):
+                        self.classify(f'{prefix} API error ({status}): {body}', provider=provider,
+                            expected='http_status_message', status=status, expected_retryable=False)
+
+    def test_pi_cage_http_wrapper_requires_exact_provider_and_anchored_shape(self):
+        for provider in (None, '', {}, SECRET, 'task-model\n', 'task-model' * 20):
+            with self.subTest(provider=provider):
+                self.classify(f'task-model API error (503): {SECRET}', provider=provider)
+        for raw in (f' {SECRET} task-model API error (503): body',
+                    f'task-model API error (503): ', f'task-model API error (200): {SECRET}',
+                    f'task-model API error (5030): {SECRET}', f'task-model API error (503):\n{SECRET}',
+                    f'task-modelX API error (503): {SECRET}', f'openai API error (503): {SECRET}'):
+            with self.subTest(raw=raw):
+                self.classify(raw, provider='task-model')
+        self.classify(f'task-model API error (503): {SECRET}', provider='task-model', reason='aborted')
+        self.classify(f'openai API error (503): {SECRET}', provider='openai')
+        self.classify(f'privateXgateway-v1 API error (503): {SECRET}', provider='private.gateway-v1')
 
     def test_reviewed_js_shapes_discard_property_names(self):
         cases = {
