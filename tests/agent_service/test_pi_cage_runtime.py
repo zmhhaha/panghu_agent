@@ -1,6 +1,7 @@
 """Pinned repository entry and identity gates; no model or production acceptance."""
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 
 import pytest
@@ -9,6 +10,17 @@ from agent_service.engine_profiles import WorkspaceTaskProfile
 from agent_service.pi_cage import PI_CLI, PI_PACKAGE, PI_VERSION
 from agent_service.runtime import PiRuntime, RuntimeExecutionError, RuntimeSettings
 from agent_service.runtime import adapter
+
+
+@pytest.mark.parametrize('name,expected', [
+    ('research.generate.v1', ('read', 'write', 'academic_search', 'academic_verify')),
+    ('research.revise.v1', ('read', 'write')),
+    ('ppt.generate.v1', ('read', 'write', 'bash')),
+])
+def test_cli_tool_selection_exposes_only_contract_authorized_tools(name, expected):
+    from agent_service.domain_runtime import DomainExecutionProfile
+    profile = DomainExecutionProfile(SimpleNamespace(name=name), 'fixture-bundle')
+    assert profile.allowed_tools == expected
 
 
 def runtime(**changes):

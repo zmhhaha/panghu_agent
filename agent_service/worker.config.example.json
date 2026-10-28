@@ -76,7 +76,7 @@
           "revision": "tools-v1"
         },
         "engine": "pi",
-        "adapter_revision": "pi-adapter-v1",
+        "adapter_revision": "pi-cage-adapter-v1",
         "model_policy": {
           "revision": "model-v1",
           "provider": "task-proxy",

@@ -72,7 +72,7 @@ python -m agent_service --config /etc/agent-service/config.json \
 
 新增引擎路由时可以复用同一合同、能力包和环境引用，登记新的适配器及组合验收后
 改 `routes.binding_id/binding_revision`。不必修改业务调用的模型/Agent 名称。当前
-K8s adapter 仍限制每个 engine 一个 routed profile/pool；多领域调度尚待后续扩展。
+K8s adapter 按完整绑定选择同一 engine 下的不同 profile/pool。
 运维须保留旧任务所需的镜像、宿主配置和执行资源，不能删除旧组合后期待新宿主接管。
 
 ## Worker 如何核对
@@ -82,15 +82,15 @@ K8s adapter 仍限制每个 engine 一个 routed profile/pool；多领域调度�
 catalog。宿主解析出的合同、完整绑定、engine/runtime/image、enable 和 timeout 必须
 与控制端一致，任一摘要不同都不会进入原生 admission。
 
-当前 Pi 镜像只装配 `pi-adapter-v1`、`workspace-text-v1` 和镜像内的 `CONTRACT.md`。
-宿主实测资源内容并核对 manifest、包资源清单、read/write、文本输出及 provider/model；
-配置里的包描述不能改变镜像内的文件路径或脚本。静态 Hermes 驱动协议已有实现，
-独立生产 Hermes 宿主仍未装配，不因有注册项就变成可运行。
+当前 Pi 镜像装配 `pi-cage-adapter-v1`，核对用户 pi-cage 仓库的固定入口、源码提交和
+实际安装版本，详见 [pi-cage 接入](PI_CAGE_INTEGRATION.md)。宿主按合同实测资源内容、
+manifest、工具及 provider/model；配置里的包描述不能改变镜像内的文件路径或脚本。
+PPT/科研领域合同已有实现，真实完整验收仍需逐项通过；注册项本身不表示可用于生产。
 
 K8s 注入 `AGENT_EXECUTION_BINDING_SHA256`，宿主 scope 与 `acceptance.json` 额外核对
 `execution_binding_sha256`。宿主验收仍需要独立 evidence 文件和模型/隔离/任务代理
-授权证明；控制端组合批准记录不替代这些条件。任务模型 grant 签发/注入仍未完成，
-因此默认示例全部禁用。
+授权证明；控制端组合批准记录不替代这些条件。任务模型 grant 已按 attempt 签发和
+注入；尚未通过真实领域验收的组合继续禁用。
 
 旧无 catalog 宿主仅保留现有离线 capsule 测试构造，不能匹配新控制配置生成的有绑定
 任务。生产新配置须使用带 catalog 的宿主。执行结束仍先可信确认所有 writer 及原 Pod

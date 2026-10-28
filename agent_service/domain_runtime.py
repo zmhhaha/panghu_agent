@@ -19,7 +19,11 @@ class DomainExecutionProfile(ExecutionProfile):
     def __init__(self, policy, bundle_revision, *, extensions=()):
         self.policy, self.bundle_revision = policy, bundle_revision
         self.impl = implementation(policy.name)
-        self.allowed_tools = tuple(t for t in self.impl.required_tools if t in {'read', 'write', 'bash'})
+        # Pi 0.99.2 applies --tools to registered extension tools as well as
+        # builtins. Select precisely the domain contract's supported tools;
+        # merely loading the academic extension does not activate its tools.
+        self.allowed_tools = tuple(t for t in self.impl.required_tools
+            if t in {'read', 'write', 'bash', 'academic_search', 'academic_verify'})
         # Pi's read tool natively accepts images; no invented `image` tool.
         # Research embeds its checksum-verified, tool-rendered procedure in the
         # prompt. Loading the raw CLI-oriented skill again would contradict it,

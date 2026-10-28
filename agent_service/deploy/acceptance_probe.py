@@ -29,7 +29,7 @@ from agent_service.contracts import (ExecutionEnvelope, InlineFile, JobRequest, 
     WorkerResult, canonical_bytes, digest, verify_receipt)
 from agent_service.confinement import ensure_controller_confinement
 from agent_service.worker_entry import (CapsuleScope, HostConfig, HostSecrets,
-    _read_operator_json, host_policy)
+    _read_operator_json, host_policy, PI_ADAPTER_REVISION)
 
 
 PROFILES = {'ppt.' + stage + '.v1' for stage in (
@@ -63,7 +63,7 @@ def candidate_config(value):
     binding = registry.binding(config.binding_id, config.binding_revision)
     require(binding.acceptance is None and not policy.enabled
         and all(not route.get('enabled', False) for route in config.execution_catalog['routes'])
-        and binding.adapter_revision == config.engine + '-adapter-v1'
+        and binding.adapter_revision == (PI_ADAPTER_REVISION if config.engine == 'pi' else 'hermes-adapter-v1')
         and binding.model_policy.model == config.model.model
         and binding.model_policy.provider == config.model.provider)
     return config, policy, binding
