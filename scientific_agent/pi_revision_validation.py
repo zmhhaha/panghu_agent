@@ -398,10 +398,15 @@ def compose_revision(report, items, artifacts, section_id, base_sha256, output):
     uncertain = {frozenset(row["evidence_ids"]) for row in parsed["claims"]
                  if row["assessment"] in ("conflicting", "insufficient")}
     for row in new_claims:
-        _require(row["assessment"] != "supported" or
-                 frozenset(row["evidence_ids"]) not in uncertain,
-                 "unsupported_assessment_upgrade")
         previous = old_claims.get(row["claim_id"])
+        evidence_ids = frozenset(row["evidence_ids"])
+        # Distinct claims may assess the same evidence differently. Preserve an
+        # existing supported claim only under its own ID and exact evidence set.
+        preserved_support = (previous is not None and previous["assessment"] == "supported" and
+                             evidence_ids == frozenset(previous["evidence_ids"]))
+        _require(row["assessment"] != "supported" or
+                 evidence_ids not in uncertain or preserved_support,
+                 "unsupported_assessment_upgrade")
         _require(not (row["assessment"] == "supported" and previous and
                      previous["assessment"] in ("conflicting", "insufficient") and
                      set(row["evidence_ids"]).issubset(previous["evidence_ids"])),

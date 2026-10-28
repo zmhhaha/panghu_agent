@@ -87,6 +87,15 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(self.records(capture), [dict(event='execution_failure', component='pi_runtime',
             stage='prepare_profile_workspace', category='os_error', code='unclassified_error', errno=errno.EACCES)])
 
+    def test_research_assessment_rejection_exposes_only_reviewed_code(self):
+        from scientific_agent.pi_revision_validation import RevisionValidationError
+        for code in ('unsupported_assessment_upgrade', SECRET):
+            with self.subTest(code=code), self.assertLogs(LOGGER, level='WARNING') as capture:
+                log_execution_failure('worker_host', 'collect_output', RevisionValidationError(code))
+            record = self.records(capture)[0]
+            self.assertEqual(record['code'], code if code != SECRET else 'unclassified_error')
+            self.assertEqual(record['stage'], 'collect_output')
+
     def test_profile_validation_logs_reviewed_code_and_keeps_public_error(self):
         runtime = PiRuntime(self.settings, profile=Profile(
             validation_error=ProfileError('invalid_native_request', SECRET)))

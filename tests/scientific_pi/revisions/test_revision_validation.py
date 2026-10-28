@@ -204,6 +204,82 @@ class RevisionValidationTests(unittest.TestCase):
             output["claims"][0]["assessment"] = "supported"
             self.assertCode("unsupported_assessment_upgrade", lambda: self.compose(output=output))
 
+    def shared_evidence_fixture(self, assessment, inside=False):
+        self.fixture = revision_fixture()
+        rows = [json.loads(line) for line in self.fixture["artifacts"]["claims"].splitlines()]
+        rows[0] = claim("c_out", ("e1", "e2"), assessment)
+        self.fixture["artifacts"]["claims"] = b"".join(
+            json.dumps(row).encode() + b"\r\n" for row in rows)
+        report = self.fixture["report"].replace("方法背景引用 [1]。", "方法背景引用 [1] [2]。")
+        output = self.fixture["output"]
+        output["claims"] = [claim("c1", ("e1", "e2"))]
+        output["section_markdown"] = output["section_markdown"].replace("claim:c2", "claim:c1")
+        if inside:
+            block = "<!-- claim:c_out -->\r\n方法背景引用 [1] [2]。\r\n\r\n"
+            report = report.replace(block, "").replace("## 局限", block + "## 局限")
+            output["section_markdown"] += block
+            output["claims"].append(rows[0])
+        self.report_fixture(report)
+
+    def test_supported_claim_can_preserve_id_and_evidence_shared_with_uncertain_claim(self):
+        for assessment in ("conflicting", "insufficient"):
+            for inside in (False, True):
+                for evidence_ids in (("e1", "e2"), ("e2", "e1")):
+                    with self.subTest(assessment=assessment, inside=inside, evidence_ids=evidence_ids):
+                        self.shared_evidence_fixture(assessment, inside)
+                        self.fixture["output"]["claims"][0]["evidence_ids"] = list(evidence_ids)
+                        selected = self.input()["section"]
+                        result = self.compose()
+                        raw = self.fixture["report"].encode("utf-8")
+                        replacement = self.fixture["output"]["section_markdown"].encode("utf-8")
+                        self.assertEqual(result["report_markdown"].encode("utf-8"),
+                                         raw[:selected["start_byte"]] + replacement + raw[selected["end_byte"]:])
+                        for kind in ("papers", "evidence", "references"):
+                            self.assertEqual(result["artifacts"][kind], self.fixture["artifacts"][kind])
+                        claims = [json.loads(line) for line in result["artifacts"]["claims"].splitlines()]
+                        self.assertEqual(next(row["assessment"] for row in claims
+                                              if row["claim_id"] == "c1"), "supported")
+                        self.assertEqual(next(row["assessment"] for row in claims
+                                              if row["claim_id"] == "c_out"), assessment)
+
+    def test_supported_claim_cannot_be_renamed_when_evidence_is_shared_with_uncertain_claim(self):
+        for assessment in ("conflicting", "insufficient"):
+            self.shared_evidence_fixture(assessment)
+            output = self.fixture["output"]
+            output["claims"][0] = claim("c_new", ("e1", "e2"))
+            output["section_markdown"] = output["section_markdown"].replace("claim:c1", "claim:c_new")
+            self.assertCode("unsupported_assessment_upgrade", self.compose)
+
+    def test_same_uncertain_claim_cannot_upgrade_with_identical_evidence(self):
+        for assessment in ("conflicting", "insufficient"):
+            self.fixture = revision_fixture(assessment=assessment)
+            output = self.fixture["output"]
+            output["claims"][0] = claim("c1", ("e1", "e2"))
+            output["section_markdown"] = output["section_markdown"].replace("claim:c2", "claim:c1")
+            self.assertCode("unsupported_assessment_upgrade", self.compose)
+
+    def test_supported_claim_with_changed_evidence_cannot_bypass_uncertain_evidence_check(self):
+        for assessment in ("conflicting", "insufficient"):
+            self.shared_evidence_fixture(assessment)
+            rows = [json.loads(line) for line in self.fixture["artifacts"]["claims"].splitlines()]
+            rows[1]["evidence_ids"] = ["e1"]
+            self.fixture["artifacts"]["claims"] = b"".join(
+                json.dumps(row).encode() + b"\r\n" for row in rows)
+            self.fixture["items"] = manifest(self.fixture["report"], self.fixture["artifacts"])
+            self.assertCode("unsupported_assessment_upgrade", self.compose)
+
+    def test_supported_claim_outside_selection_cannot_be_borrowed_with_identical_evidence(self):
+        self.shared_evidence_fixture("conflicting", inside=True)
+        rows = [json.loads(line) for line in self.fixture["artifacts"]["claims"].splitlines()]
+        rows[2] = claim("c_tail", ("e1", "e2"))
+        self.fixture["artifacts"]["claims"] = b"".join(
+            json.dumps(row).encode() + b"\r\n" for row in rows)
+        self.report_fixture(self.fixture["report"].replace("研究局限 [2]。", "研究局限 [1] [2]。"))
+        output = self.fixture["output"]
+        output["claims"][0] = claim("c_tail", ("e1", "e2"))
+        output["section_markdown"] = output["section_markdown"].replace("claim:c1", "claim:c_tail")
+        self.assertCode("invalid_claim_markers", self.compose)
+
     def test_external_claim_id_cannot_be_reused(self):
         output = copy.deepcopy(self.fixture["output"])
         output["claims"][0] = claim("c_out", ("e1", "e2"))

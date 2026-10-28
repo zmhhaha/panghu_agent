@@ -42,7 +42,8 @@ _CODES = frozenset({'cancelled', 'timed_out', 'runtime_not_ready', 'runtime_busy
     'invalid_research_artifact', 'invalid_research_json', 'research_output_invalid',
     'research_artifact_too_large', 'research_full_text_not_acquired',
     'research_observation_not_protected', 'research_academic_observation_mismatch',
-    'research_revision_input_mismatch', 'research_revision_input_invalid'})
+    'research_revision_input_mismatch', 'research_revision_input_invalid',
+    'unsupported_assessment_upgrade'})
 _NAMED_CATEGORIES = {'RuntimeExecutionError': 'runtime_error', 'ProfileError': 'profile_error',
                      'ServiceError': 'service_error', 'ContractError': 'contract_error',
                      '_DriverError': 'driver_error',
