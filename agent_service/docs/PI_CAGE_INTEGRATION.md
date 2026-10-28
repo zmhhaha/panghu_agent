@@ -80,6 +80,11 @@ assistant `phase` 及自包含 reasoning 历史带入第二轮请求；JSONL 压
 
 r3 使用与当前生产配置相同的模型声明字段结构，provider/model 改为本地夹具名，
 没有显式设置 `reasoning` 能力。
+该轮只检查 `auth_present`，未验证 Authorization 中的 token 与任务环境变量等值，
+因此不能据此声称认证正确。后续真实科研候选发现 Pi 0.99.2 将裸变量名当作密钥字面值，
+`7379e4c` 改为 `"apiKey": "${AGENT_MODEL_API_KEY}"`；真实 CLI 的四组禁网对照确认
+新写法精确读取环境变量，并由真实生成 r4 继续验证。详见
+[科研验证记录](RESEARCH_VALIDATION_20261028.md)。
 另一次 r2 压力样例显式设置 `reasoning: true` 后会发送顶层 `reasoning/include`，
 当前共享网关尚未支持该组合；本次通过结果不覆盖这一配置。
 服务器协议报告为
@@ -98,5 +103,14 @@ Running、Ready、重启数 0。实际控制面镜像摘要为上表的
 公开记录已保存至服务器
 `/root/agent-service-deploy-20261026/pi-cage-rollout-d871717.json`，`passed=true`。
 
-生产 route/pool 继续关闭，PPT/科研尚未切换。代码迁移、镜像构建、协议验证和控制面部署
-已完成；新 pi-cage Worker 的真实 PPT/科研领域任务、独立产物验收与逐业务试接仍待完成。
+生产 route/pool 继续关闭，PPT/科研尚未切换。上面的 `d871717` 镜像、回归和部署结果
+保留为该提交的历史记录，不覆盖之后的修复。按用户最新要求先跑科研，真实生成 r4
+及独立产物验收、隔离数据库发布已通过；修订 r1 的校验误判已在 `162ed53` 修复，
+已有真实输出离线复核通过。修订 r2 又因输出包含选区外 claim 被校验器正确拒绝，
+`772bef1` 明确提示词后，修订 r3 已真实执行 completed，独立产物、隔离业务发布与
+候选版本比较均通过。验收工具 `f263796` 核对真实容器终态，原始证据保持不变；
+实际运行与部署镜像仍为 `772bef1`。
+该版本的关闭配置已按正常 `deploy.sh` 更新，三个控制面 Deployment 均 1/1 Ready，
+七条 route 与十四个 pool 仍关闭，Worker Pod 为 0。正式 Jobs HTTP 交付链与
+科研入口切换尚未验收，下一步按科研业务接入，不以 PPT 或 Hermes 为前置。
+最新证据和边界见[科研验证记录](RESEARCH_VALIDATION_20261028.md)。
