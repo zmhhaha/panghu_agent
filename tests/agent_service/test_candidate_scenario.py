@@ -95,7 +95,8 @@ def record_stopped_parent(run, artifacts):
     if run.scenario is not None:
         document['observations']['scenario'] = run.scenario.metadata
     run.result(document)
-    pod = dict(metadata={'uid': pod_uid}, spec={'containers': [{'name': 'worker', 'image': 'registry.invalid/pi@' + run.envelope.image_digest}]},
+    pod = dict(metadata={'uid': pod_uid}, spec={'restartPolicy': 'Never',
+        'containers': [{'name': 'worker', 'image': 'registry.invalid/pi@' + run.envelope.image_digest}]},
         status={'phase': 'Succeeded', 'containerStatuses': [{'name': 'worker', 'restartCount': 0,
             'imageID': 'docker-pullable://registry.invalid/pi@' + run.envelope.image_digest,
             'state': {'terminated': {'exitCode': 0, 'finishedAt': datetime.now(timezone.utc).isoformat()}}}]})
@@ -269,6 +270,66 @@ def test_parent_with_unknown_writer_or_changed_scope_cannot_continue(stopped_par
         documents['candidate-request.json']['envelope']['task']['feedback'] = 'tampered'
     with pytest.raises(ServiceError):
         scenario.verify_parent(documents)
+
+
+def test_parent_pod_phase_can_lag_completed_never_restart_containers(stopped_parent):
+    _, _, original, _ = stopped_parent
+    for phase in ('Running', 'Succeeded'):
+        documents = deepcopy(original)
+        documents['worker-pod.json']['status']['phase'] = phase
+        envelope, result = scenario.verify_parent(documents)
+        assert result.state == 'completed'
+        assert envelope.attempt_id == result.stop_receipt.attempt_id
+
+
+def test_parent_stop_requires_explicit_never_restart_policy(stopped_parent):
+    _, _, original, _ = stopped_parent
+    for phase in ('Running', 'Succeeded'):
+        for policy in ('Always', 'OnFailure', None):
+            documents = deepcopy(original)
+            pod = documents['worker-pod.json']
+            pod['status']['phase'] = phase
+            if policy is None:
+                del pod['spec']['restartPolicy']
+            else:
+                pod['spec']['restartPolicy'] = policy
+            with pytest.raises(ServiceError, match='candidate_parent_stop_unverified'):
+                scenario.verify_parent(documents)
+
+
+def test_lagging_running_phase_does_not_waive_container_stop_checks(stopped_parent):
+    _, _, original, _ = stopped_parent
+    for change in ('running', 'waiting', 'missing', 'extra-running', 'restart', 'exit'):
+        documents = deepcopy(original)
+        pod = documents['worker-pod.json']
+        pod['status']['phase'] = 'Running'
+        status = pod['status']['containerStatuses'][0]
+        if change in ('running', 'waiting'):
+            status['state'] = {change: {}}
+        elif change == 'missing':
+            pod['status']['containerStatuses'] = []
+        elif change == 'extra-running':
+            pod['spec']['containers'].append(dict(pod['spec']['containers'][0], name='other'))
+            pod['status']['containerStatuses'].append(dict(status, name='other', state={'running': {}}))
+        elif change == 'restart':
+            status['restartCount'] = 1
+        else:
+            status['state']['terminated']['exitCode'] = 1
+        with pytest.raises(ServiceError, match='candidate_parent_stop_unverified'):
+            scenario.verify_parent(documents)
+
+
+def test_other_pod_phases_cannot_prove_parent_stop(stopped_parent):
+    _, _, original, _ = stopped_parent
+    for phase in ('Pending', 'Unknown', 'Failed', None):
+        documents = deepcopy(original)
+        pod = documents['worker-pod.json']
+        if phase is None:
+            del pod['status']['phase']
+        else:
+            pod['status']['phase'] = phase
+        with pytest.raises(ServiceError, match='candidate_parent_stop_unverified'):
+            scenario.verify_parent(documents)
 
 
 @pytest.mark.parametrize('change', ['extra', 'source', 'hash', 'no-export', 'different-project', 'parent-hash'])

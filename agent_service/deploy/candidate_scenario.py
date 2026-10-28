@@ -142,8 +142,11 @@ def verify_parent(documents):
         and evidence.get('artifact_count') == len(measured), 'candidate_parent_integrity_invalid')
     require(pod.get('metadata', {}).get('uid') == evidence.get('pod_uid')
         and 'pod:' + evidence['pod_uid'] in proof.resource_ids
-        and pod.get('status', {}).get('phase') == 'Succeeded', 'candidate_parent_stop_unverified')
+        and pod.get('status', {}).get('phase') in ('Running', 'Succeeded'), 'candidate_parent_stop_unverified')
     spec, state = pod['spec'], pod['status']
+    # The aggregate Pod phase can lag its final container status. Accept that
+    # captured state only when no container can restart; check every one below.
+    require(spec.get('restartPolicy') == 'Never', 'candidate_parent_stop_unverified')
     require(all(spec.get(key, False) is False for key in ('hostPID', 'hostIPC', 'hostNetwork', 'shareProcessNamespace')),
         'candidate_parent_stop_unverified')
     require(not spec.get('initContainers') and not spec.get('ephemeralContainers')
