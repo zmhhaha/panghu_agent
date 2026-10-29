@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -10,7 +11,9 @@ import pytest
 
 from agent_service.contracts import canonical_bytes, digest
 from agent_service.deploy.acceptance_probe import fixture
-from agent_service.profiles.ppt import CHECKPOINT_SCHEMA, PPT_MASTER_REVISION, _manifest_example
+from agent_service.profiles.ppt import (
+    CHECKPOINT_SCHEMA, PPT_MASTER_REVISION, _manifest_example, checkpoint_descriptor,
+)
 from ppt_service.control.agent_validation import (
     AgentKubernetesSandbox, AgentValidationFailure, TRANSPORT_SCHEMA, validate_private_candidate,
 )
@@ -152,6 +155,110 @@ def test_private_validation_rejects_a_different_page_count(candidate):
     with pytest.raises(ControlError, match='agent_validation_identity_mismatch'):
         validate_private_candidate(candidate.snapshot, dict(candidate.request, pages=4,
             source_manifest_sha256=candidate.source, validation_nonce=str(uuid4())))
+
+
+@pytest.fixture
+def prepared_candidate(candidate):
+    # Explicit synthetic file-only transport, not a production confirmation or
+    # an official quality report. The real gate process is checked separately.
+    task = candidate.request['task']
+    task.update(phase='prepare', schema_version='ppt-prepare.v1')
+    parent = copy.deepcopy(candidate.checkpoint)
+    parent['phase'] = 'plan_options'
+    parent['sha256'] = digest({key: value for key, value in parent.items() if key != 'sha256'})
+    task['checkpoint'] = checkpoint_descriptor(parent)
+    shared = dict(channel='website_database', input_snapshot_sha256=task['input_snapshot_sha256'],
+        confirmed_at='2026-10-29T13:00:00+00:00', plan_sha256='c' * 64)
+    chosen = dict(id='A', name='Synthetic fixture direction')
+    pages = {'pages': [dict(ordinal=n, title=f'Page {n}', purpose='Explain the synthetic source')
+                       for n in range(1, 4)]}
+    task['confirmations'] = {
+        'stage1': dict(shared, plan_id=str(uuid4()), plan_revision=1,
+            selection={'design_mode': 'free_design'}, outline={}, design={}),
+        'stage2': dict(shared, plan_id=str(uuid4()), plan_revision=2,
+            selection={'direction_id': 'A'}, outline=pages,
+            design={'directions': [chosen], 'production_parameters': {'language': 'en'}},
+            selected_direction=chosen),
+    }
+    root_name = 'synthetic_workflow_20261029'
+    root = candidate.snapshot / 'project' / root_name
+    (candidate.snapshot / 'project/deck').rename(root)
+    manifest = _manifest_example(task)
+    manifest['project_root'] = root_name
+    rows = [put(root, name, raw) for name, raw in (
+        ('design_spec.md', b'# Synthetic design specification\n'),
+        ('spec_lock.md', b'# Synthetic specification lock\n'),
+        ('reports/gates.json', b'{"fixture_only": true}\n'),
+    )]
+    manifest['artifacts'] = [dict(row, role='quality_report' if row['path'].endswith('.json')
+        else 'specification', media_type='application/json' if row['path'].endswith('.json')
+        else 'text/markdown') for row in rows] + [candidate.manifest['artifacts'][0]]
+    candidate.manifest = manifest
+    candidate.source = json_file(candidate.snapshot, 'result/manifest.json', manifest)['sha256']
+    cp = candidate.checkpoint
+    cp.update(phase='prepare', project_root=root_name,
+        files=[{key: row[key] for key in ('path', 'bytes', 'sha256')} for row in manifest['artifacts']])
+    cp['files'] = [dict(row, path=root_name + '/' + row['path']) for row in cp['files']]
+    cp['total_bytes'] = sum(row['bytes'] for row in cp['files'])
+    cp['sha256'] = digest({key: value for key, value in cp.items() if key != 'sha256'})
+    json_file(candidate.snapshot, 'result/checkpoint.json', cp)
+    candidate.request.update(phase='prepare', source_manifest_sha256=candidate.source,
+        validation_nonce=str(uuid4()))
+    candidate.project = root
+    return candidate
+
+
+@pytest.mark.parametrize('gate_rejects', [False, True])
+def test_prepare_file_only_checkpoint_restores_empty_svg_directory_only_in_gate_scratch(
+        prepared_candidate, monkeypatch, gate_rejects):
+    from ppt_service.control.publisher import OfficialGates
+    case = prepared_candidate
+    before = {path.relative_to(case.snapshot).as_posix(): path.read_bytes()
+              for path in case.snapshot.rglob('*') if path.is_file()}
+    assert not (case.project / 'svg_output').exists()
+    invoked = []
+
+    def observe_command(gates, name, args):
+        invoked.append(name)
+        if name == 'project_validate':
+            assert args[-3].endswith('/project_manager.py') and args[-2] == 'validate'
+            project = Path(args[-1])
+            assert project.name == case.project.name and project != case.project
+            assert (project / 'svg_output').is_dir() and not list((project / 'svg_output').iterdir())
+            measured = {path.relative_to(project).as_posix(): path.read_bytes()
+                        for path in project.rglob('*') if path.is_file()}
+            assert measured == {row['path']: (case.project / row['path']).read_bytes()
+                                for row in case.manifest['artifacts']}
+            if gate_rejects:
+                raise ControlError('independent_quality_gate_failed')
+
+    monkeypatch.setattr(OfficialGates, '_run', observe_command)
+    if gate_rejects:
+        with pytest.raises(ControlError, match='independent_quality_gate_failed'):
+            validate_private_candidate(case.snapshot, case.request)
+    else:
+        report = validate_private_candidate(case.snapshot, case.request)
+        assert report['accepted'] is True and report['status'] == 'prepared'
+        assert report['evidence']['official_gates_verified'] is True
+        assert report['publication_authorized'] is False and report['manifest'] == case.manifest
+    assert invoked == ['attribution', 'project_validate']
+    assert not (case.project / 'svg_output').exists()
+    assert before == {path.relative_to(case.snapshot).as_posix(): path.read_bytes()
+                      for path in case.snapshot.rglob('*') if path.is_file()}
+
+
+def test_prepare_scratch_reconstruction_does_not_repair_tampered_formal_specs(prepared_candidate, monkeypatch):
+    from ppt_service.control.publisher import OfficialGates
+    case = prepared_candidate
+    (case.project / 'design_spec.md').write_bytes(b'Altered after the checkpoint was frozen')
+
+    def never_run(*args):
+        raise AssertionError('File integrity must be checked before constructing a gate project')
+
+    monkeypatch.setattr(OfficialGates, '_run', never_run)
+    with pytest.raises(ControlError, match='agent_validator_evidence_changed'):
+        validate_private_candidate(case.snapshot, case.request)
+    assert not (case.project / 'svg_output').exists()
 
 
 def generated_report(candidate):

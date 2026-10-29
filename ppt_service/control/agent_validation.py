@@ -170,11 +170,18 @@ def validate_private_candidate(snapshot, request, *, gate_runner=None, evidence_
         if task['phase'] == 'generate':
             require(hashlib.sha256(content).hexdigest() == task['checkpoint']['approved_specs'].get(name), 'approved_spec_lock_changed')
     with tempfile.TemporaryDirectory(prefix='ppt-agent-independent-') as temp:
-        scratch = Path(temp); copy_tree(root, scratch / 'project')
+        scratch = Path(temp)
+        project = scratch / 'project' / root.name
+        copy_tree(root, project)
         from .staging import make_writable
-        make_writable(scratch / 'project')
+        make_writable(project)
+        if task['phase'] == 'prepare':
+            # Portable checkpoints carry files, so the official init's empty
+            # output directory is absent after transport. Recreate only this
+            # known empty structure in the disposable validation copy.
+            (project / 'svg_output').mkdir(exist_ok=True)
         gates = gate_runner or OfficialGates(scratch / 'evidence')
-        evidence = gates.run(scratch / 'project', task['phase'], request['pages'])
+        evidence = gates.run(project, task['phase'], request['pages'])
     require(evidence.get('official_gates_verified') is True, 'independent_quality_gate_failed')
     if task['phase'] == 'prepare':
         require(manifest['status'] == 'prepared' and not manifest.get('slides'), 'premature_slide_generation')
