@@ -5,7 +5,8 @@
 本文的 `deploy-scientific-pi.sh` 在应用 API 时会明确设置回专用 `pi` 后端；
 `scripts/deploy-api.sh scientific_agent` 会应用共享 `latest` 镜像和旧配置。
 两者均不用于已选择 `agent-service` 后端的常规更新。旧 Worker/PVC 保留供历史恢复及回退；
-这条入口说明不表示通用服务的生产切换已经验收完成。
+2026-10-29 科研已接入通用服务，实际镜像及正式 HTTP 验收见
+[科研生产接入记录](../agent_service/docs/SCIENTIFIC_CUTOVER_20261029.md)。
 
 源码分为：无框架共享契约、专用 worker/私有 SQLite、Pi 子进程适配、精选本地科研流程与工具、科研 API/研究工作台、可恢复报告发布。
 

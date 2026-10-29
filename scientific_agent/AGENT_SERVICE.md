@@ -4,10 +4,10 @@
 业务后端提交 `research.generate.v1` 或 `research.revise.v1`，由通用服务的已验收执行绑定
 选择 Pi/Hermes。业务配置不包含模型供应商密钥、原生命令、镜像或 Agent 会话。
 
-当前优先完成 Pi 的生成、固定证据修订和业务试接，Hermes 不作为前置条件。通用服务控制面
-已部署，并有离线及 Linux/PostgreSQL 回归记录；生产执行路由仍关闭，科研现有后端尚未切换。
-真实 Pi 领域执行、业务试接及其证据见 [原生引擎验证记录](../agent_service/docs/RUNTIME_VALIDATION_20261027.md)，
-控制面 Ready 或回归通过不能代替这两项验收。
+2026-10-29 科研生产 API 已接入通用服务，科研生成和固定证据修订均使用用户的 pi-cage。
+只开放两个科研 Pi 路由，全局执行并发为 1；PPT 与 Hermes 尚未切换。精确 Worker 镜像、
+正式 Jobs HTTP 与生产科研 HTTP 的生成、修订、下载、发布和接收回执均已验收。
+实际镜像、任务与证据见 [科研生产接入记录](../agent_service/docs/SCIENTIFIC_CUTOVER_20261029.md)。
 
 ## 配置与凭据归属
 
@@ -23,7 +23,8 @@ SCIENTIFIC_AGENT_REVISION_REVISION=v1
 
 该 token 是科研业务调用 Agent 服务的身份凭据，授予上述两个 profile 的权限；它不是模型
 API Key。模型凭据、Responses 协议、工具环境、能力包和引擎路由统一由通用服务管理。
-默认仍为现有 `pi` 后端；代码变更不会自动切换已部署服务。不得在完成环境验收之前启用路由。
+代码缺省仍为 `pi`，本次生产部署通过审定补丁显式选择 `agent-service`。后续更新沿用部署目录
+中的实际配置；不得用缺省值覆盖已部署后端，也不得在完成环境验收之前启用新的执行组合。
 
 业务凭据复用 [平台 ExternalSecret 清单](../agent_service/deploy/platform/vault/agent-service-externalsecret.yaml)：
 Vault `secret/data/agent-service/runtime` 的 `SCIENTIFIC_SERVICE_TOKEN` 同步为
@@ -155,5 +156,5 @@ lineage 和选中范围外字节不变校验。报告与版本提交并读回后
 不会把其中的历史 engine/runtime 字段交给通用服务选路。若需要排空已有 Pi 任务，可保留
 原 `SCIENTIFIC_PI_WORKER_URL/TOKEN`，仅供历史记录恢复；新任务使用独立幂等命名空间。
 
-本页提供业务试接步骤，不构成科研已经迁移上线或真实 Pi 合同已经验收的记录。实际执行结果以验证记录
-及对应任务、产物、停止证明和业务接收证据为准。
+本页提供接入和常规更新步骤。实际部署与验收范围以验证记录及对应任务、产物、停止证明和业务
+接收证据为准；科研已通过的组合不会自动使 PPT、Hermes 或其他技能组合获得验收。
