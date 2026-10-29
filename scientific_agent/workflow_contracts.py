@@ -268,7 +268,9 @@ def source_papers(snapshot):
     for batch in snapshot['search_batches']:
         for paper in batch['papers']:
             if paper['paper_id'] in included:
-                papers.setdefault(paper['paper_id'], paper)
+                # Match the business source table after supplemental retrieval:
+                # select the latest complete measured record, never merge fields.
+                papers[paper['paper_id']] = paper
     for material in snapshot['materials']:
         identifier = material['material_id']
         if identifier not in included:
@@ -343,7 +345,9 @@ def _draft(output, context):
         _disclosures(report, parsed)
     except RevisionValidationError:
         raise WorkflowContractError('workflow_draft_trace_invalid') from None
-    headings = [m.group(1).strip() for m in re.finditer(r'^#{1,6}\s+(.+?)\s*#*$', report, re.M)]
+    from .pi_sections import index_sections
+    headings = [section['title'] for section in index_sections(report)['sections']
+                if section['kind'] == 'section']
     confirmed = [s['title'] for s in context['outline']['content']['sections']]
     cursor = 0
     for title in headings:

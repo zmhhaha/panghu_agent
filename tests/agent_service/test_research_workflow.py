@@ -174,6 +174,29 @@ def test_draft_rejects_unconfirmed_outline_and_new_source_references():
         contracts.validate_stage_output('draft', output, ctx)
 
 
+def test_confirmed_outline_heading_inside_code_block_is_not_an_actual_section():
+    ctx = draft_context()
+    output = draft()
+    output['report_markdown'] = output['report_markdown'].replace('# Scope\n',
+        '# Report\n\n```markdown\n# Scope\n```\n')
+    with pytest.raises(contracts.WorkflowContractError, match='outline_mismatch'):
+        contracts.validate_stage_output('draft', output, ctx)
+
+
+def test_supplemental_batch_selects_latest_whole_observed_record_like_business_table():
+    ctx = outline_context()
+    batch = deepcopy(ctx['evidence_snapshot']['search_batches'][0])
+    batch.update(batch_id=uid(150), attempt_id=uid(151), request_sha256='f' * 64)
+    batch['observations'].update(attempt_id=uid(151), request_sha256='f' * 64)
+    changed = deepcopy(batch['papers'][0])
+    changed.update(title='New complete observed metadata record', abstract='New actual observed abstract.')
+    batch['papers'] = [deepcopy(changed)]
+    batch['observations']['observations'][0]['response']['papers'] = [deepcopy(changed)]
+    ctx['evidence_snapshot']['search_batches'].append(batch)
+    contracts.validate_context(ctx, task('outline', ctx))
+    assert contracts.source_papers(ctx['evidence_snapshot']) == [changed]
+
+
 def test_draft_collection_produces_fixed_evidence_revision_compatible_bytes(tmp_path):
     ctx, output = draft_context(), draft()
     (tmp_path / 'inputs').mkdir()
