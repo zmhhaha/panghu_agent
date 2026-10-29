@@ -25,10 +25,10 @@ class DomainExecutionProfile(ExecutionProfile):
         self.allowed_tools = tuple(t for t in self.impl.required_tools
             if t in {'read', 'write', 'bash', 'academic_search', 'academic_verify'})
         # Pi's read tool natively accepts images; no invented `image` tool.
-        # Research embeds its checksum-verified, tool-rendered procedure in the
-        # prompt. Loading the raw CLI-oriented skill again would contradict it,
-        # and a revision must not acquire a new search workflow.
-        self.load_skills = not policy.name.startswith('research.')
+        # Research and video embed their checksum-verified procedures in the
+        # prompt. Only PPT uses Pi's separate skill loading; other domains must
+        # not acquire an additional CLI-oriented or search workflow.
+        self.load_skills = policy.name.startswith('ppt.')
         self.extension_paths = tuple(Path(p) for p in extensions)
         self.protected_paths = ('inputs', 'base', '.preview-home', '.preview-tmp')
         self._context, self._mounts = None, None

@@ -20,7 +20,8 @@ Tool = Literal['read', 'write', 'bash', 'image', 'academic_search', 'academic_ve
 OutputSchema = Literal['text-output.v1', 'ppt-plan_initial-output.v1', 'ppt-plan_options-output.v1',
     'ppt-generate-output.v1', 'ppt-revise-output.v1', 'ppt-prepare-output.v1',
     'research-output.v1', 'research-revision-output.v1', 'research-plan-output.v1',
-    'research-retrieve-output.v1', 'research-outline-output.v1', 'research-draft-output.v1']
+    'research-retrieve-output.v1', 'research-outline-output.v1', 'research-draft-output.v1',
+    'video-storyboard-output.v1', 'video-scene-output.v1']
 
 NAME = r'^[a-z][a-z0-9_.-]{0,79}$'
 REVISION = r'^[A-Za-z0-9_.-]{1,100}$'

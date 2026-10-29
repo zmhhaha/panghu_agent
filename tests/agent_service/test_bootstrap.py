@@ -96,7 +96,7 @@ def test_apply_preserves_shared_fields_and_is_repeatable_without_rotation():
     original_runtime = deepcopy(cluster.records[module.RUNTIME_PATH])
     original_callers = deepcopy(cluster.records[module.CALLERS_PATH])
     assert original_callers['LLM_TOKEN_EXISTING_SERVICE'].startswith('existing-private-token')
-    assert len(set(original_runtime[key] for key in module.TOKEN_KEYS)) == 4
+    assert len(set(original_runtime[key] for key in module.TOKEN_KEYS)) == 5
     assert len(set(original_runtime[key] for key in module.SIGNING_KEYS)) == 3
     text = json.dumps(result)
     assert all(value not in text for value in [*original_runtime.values(), *original_callers.values()])
@@ -159,6 +159,22 @@ def test_existing_values_are_preserved_and_invalid_values_are_never_silently_rep
     with pytest.raises(module.BootstrapError, match='existing_runtime_token_invalid'):
         module.ensure_runtime(cluster, 'postgres.data.svc.cluster.local')
     assert cluster.writes == []
+
+
+def test_existing_runtime_adds_only_independent_video_caller_token():
+    cluster = ClusterFixture()
+    cluster.role_exists = cluster.database_exists = True
+    previous = runtime()
+    previous.pop('VIDEO_WORKBENCH_SERVICE_TOKEN')
+    previous['OPERATOR_EXTRA'] = 'preserve-existing-field'
+    cluster.records[module.RUNTIME_PATH] = deepcopy(previous)
+    cluster.versions[module.RUNTIME_PATH] = 1
+    saved, action = module.ensure_runtime(cluster, 'postgres.data.svc.cluster.local')
+    assert action == 'missing_fields_added'
+    assert all(saved[key] == value for key, value in previous.items())
+    assert set(saved) - set(previous) == {'VIDEO_WORKBENCH_SERVICE_TOKEN'}
+    assert module.valid_token(saved['VIDEO_WORKBENCH_SERVICE_TOKEN'])
+    assert saved['VIDEO_WORKBENCH_SERVICE_TOKEN'] not in previous.values()
 
 
 def test_secret_payloads_use_stdin_and_never_appear_in_command_arguments():

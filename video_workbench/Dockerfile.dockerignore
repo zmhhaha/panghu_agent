@@ -1,0 +1,16 @@
+**
+!agent_service/
+!agent_service/**
+!video_workbench/
+!video_workbench/**
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.runtime/
+**/.env
+**/.env.*
+agent_service/rendered/
+agent_service/config.production.json
+agent_service/worker-hosts/
+video_workbench/*.db
+video_workbench/*.db-*

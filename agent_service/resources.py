@@ -12,6 +12,7 @@ from .contracts import ServiceError, canonical_bytes
 PPT_COMMIT = 'c350bc31e6d43b7bcf5234183d650ba8f9f4c9d7'
 PPT_ROOT = Path('/opt/ppt-master')
 RESEARCH_ROOT = Path(__file__).resolve().parent.parent / 'scientific_skills'
+VIDEO_ROOT = Path(__file__).resolve().parent / 'resources' / 'video-workbench-v1'
 
 
 def measured_package(config, policy, control_root):
@@ -31,6 +32,11 @@ def measured_package(config, policy, control_root):
         root = RESEARCH_ROOT
         mandatory = {'research-procedure/SKILL.md', 'task-template.md', 'LICENSE'}
         from .profiles.research import verified_bundle
+        verified_bundle()
+    elif policy.name.startswith('video.'):
+        root = VIDEO_ROOT
+        mandatory = {'video-procedure/SKILL.md', 'CONTRACT.md', 'LICENSE'}
+        from .profiles.video import verified_bundle
         verified_bundle()
     else:
         raise ServiceError('package_profile_unknown', 503)

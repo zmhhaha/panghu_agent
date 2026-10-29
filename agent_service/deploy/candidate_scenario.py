@@ -223,7 +223,8 @@ def load_scenario(path, source_dir, parent_dir, policy):
         business = _json(raw)
         require(type(business) is dict and set(business) == {'schema_version', 'source', 'task'}
             and business['schema_version'] == 'agent-candidate-business-export.v1'
-            and business['source'] == ('ppt-control-test-database' if policy.name.startswith('ppt.') else 'scientific-test-database')
+            and business['source'] == ('ppt-control-test-database' if policy.name.startswith('ppt.') else
+                'video-workbench-test-database' if policy.name.startswith('video.') else 'scientific-test-database')
             and business['task'] == value['task'], 'candidate_business_export_mismatch')
         expected.add(export['name'])
     _source_members(source_dir, expected)
@@ -313,6 +314,14 @@ def load_scenario(path, source_dir, parent_dir, policy):
             raw = files[asset['id'] + extensions[asset['media_type']]]
             require(len(raw) == asset['bytes'] and hashlib.sha256(raw).hexdigest() == asset['sha256'],
                 'candidate_source_snapshot_mismatch')
+    elif policy.name in {'video.storyboard.v1', 'video.scene.v1'}:
+        require(set(files) == {'video-input.json'}, 'candidate_video_input_required')
+        from agent_service.profiles.video import decode_video_json, validate_video_input
+        raw = files['video-input.json']
+        document = decode_video_json(raw)
+        validate_video_input(document, policy.name.split('.')[1])
+        require(canonical_bytes(document) == raw and hashlib.sha256(raw).hexdigest() == task['input_sha256'],
+            'candidate_video_input_mismatch')
     elif policy.name == 'research.generate.v1':
         require(not files)
     elif workflow:

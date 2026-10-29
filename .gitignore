@@ -9,11 +9,13 @@
 /agent_service/config.production.json
 /agent_service/worker-hosts/
 /scientific_agent/rendered/
+/video_workbench/rendered/
 /scientific_agent/web/node_modules/
 /scientific_agent/web/dist/
 /scientific_agent/web/*.tsbuildinfo
 /.runtime/
 /.venv-agent-deploy/
+/.venv-video/
 /.pytest-*/
 
 # 数据库文件

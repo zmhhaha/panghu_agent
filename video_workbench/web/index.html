@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>帧序 · 画面制作工作台</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script type="module" src="/assets/app.mjs"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="帧序工作台首页"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span>帧序<small>画面制作工作台</small></span></a>
+    <div class="topbar-right"><span class="session-label" id="session-label">正在连接…</span><button class="icon-button" id="refresh-all" type="button" aria-label="刷新工作台" title="刷新工作台">↻</button></div>
+  </header>
+
+  <div class="application-shell">
+    <aside class="project-sidebar">
+      <div class="sidebar-label"><span>项目</span><span class="count" id="project-count">—</span></div>
+      <button class="button new-project-button" id="new-project" type="button" data-testid="new-project"><span aria-hidden="true">＋</span>新建项目</button>
+      <nav id="project-list" aria-label="项目列表" data-testid="project-list"><p class="sidebar-empty">正在读取项目…</p></nav>
+      <p class="sidebar-note">从一份文稿开始，<br>把每个镜头慢慢做好。</p>
+    </aside>
+
+    <main id="main-content">
+      <div class="message error-message" id="global-error" role="alert" hidden><span id="error-text"></span><button type="button" class="text-button" id="retry-read">重新读取</button><a id="login-link" href="/oauth2/start" hidden>重新登录</a><button type="button" class="dismiss" id="dismiss-error" aria-label="关闭提示">×</button></div>
+      <div class="message success-message" id="success-message" role="status" hidden></div>
+
+      <section class="welcome" id="welcome" data-testid="welcome">
+        <div class="eyebrow">把想法变成清晰的画面</div>
+        <h1>一份文稿，<br><span>从第一个镜头开始。</span></h1>
+        <p>拆解内容、制作画面，再通过预览和批注逐步完善。<br>SVG 与 HTML 源码始终跟随版本保存。</p>
+        <button class="button primary" id="welcome-create" type="button">创建第一个项目 <span aria-hidden="true">↗</span></button>
+        <div class="welcome-steps"><div><b>01</b><span>准备文稿</span><small>明确想讲什么</small></div><div><b>02</b><span>拆成镜头</span><small>安排每一段表达</small></div><div><b>03</b><span>看效果，再修改</span><small>保留满意的版本</small></div></div>
+      </section>
+
+      <section class="workspace" id="workspace" hidden data-testid="workspace">
+        <div class="workspace-heading"><div><div class="eyebrow">制作中的项目</div><h1 id="project-title"></h1><p id="project-meta"></p></div><button class="button secondary" id="export-project" type="button" data-testid="export-project">导出项目 <span aria-hidden="true">↗</span></button></div>
+        <details class="brief-panel"><summary><span>文稿与视觉方向</span><small>查看项目原稿</small><span aria-hidden="true">⌄</span></summary><div class="brief-content"><div><h3>原始文稿</h3><p class="preserve-whitespace" id="project-script"></p></div><div><h3>视觉方向</h3><p class="preserve-whitespace" id="project-style"></p></div></div></details>
+        <div class="operation-banner" id="storyboard-status" role="status" hidden><span class="status-dot"></span><span id="storyboard-status-text"></span><button class="text-button" id="cancel-storyboard" type="button">申请取消</button></div>
+
+        <div class="production-grid">
+          <section class="scenes-panel" aria-labelledby="scenes-heading">
+            <div class="panel-heading"><div><h2 id="scenes-heading">分镜</h2><span id="scene-count">0 个镜头</span></div><button class="icon-button bordered" id="add-scene" aria-label="新增镜头" title="新增镜头" type="button" data-testid="add-scene">＋</button></div>
+            <div id="scene-list" class="scene-list" aria-label="镜头列表" data-testid="scene-list"></div>
+            <div class="scenes-empty" id="scenes-empty" hidden><span class="empty-glyph" aria-hidden="true">▧</span><h3>先给内容安排镜头</h3><p>让 Agent 按文稿拆分镜头，<br>或手动添加第一个镜头。</p><button class="button primary" type="button" id="create-storyboard" data-testid="create-storyboard">按文稿拆分镜头</button><button class="text-button" type="button" id="empty-add-scene">手动添加镜头</button></div>
+          </section>
+
+          <section class="scene-workspace" id="scene-workspace" aria-label="镜头制作" hidden>
+            <div class="scene-header"><div><span class="eyebrow" id="scene-number"></span><h2 id="scene-title"></h2></div><button class="text-button" id="toggle-scene-editor" type="button">编辑镜头</button></div>
+            <form class="scene-editor" id="scene-form" hidden data-testid="scene-form">
+              <div class="form-heading"><h3 id="scene-form-heading">编辑镜头</h3><button type="button" class="text-button" id="reset-scene-draft">重新载入</button></div>
+              <label>镜头标题<input name="title" id="scene-title-input" required maxlength="300" placeholder="例如：CPU 与 GPU 的分工" data-testid="scene-title-input"></label>
+              <label>旁白<textarea name="narration" id="scene-narration" rows="3" maxlength="10000" required placeholder="这个镜头对应的讲解内容"></textarea></label>
+              <label>画面说明<textarea name="visual_description" id="scene-visual" rows="3" maxlength="10000" required placeholder="希望出现什么图形、关系、布局或动效" data-testid="scene-visual"></textarea></label>
+              <div class="form-row"><label>预计时长 <span class="optional">秒</span><input name="duration_seconds" id="scene-duration" type="number" min="1" max="120" step="0.5" required value="8"></label><label>画面格式<select name="format" id="scene-format"><option value="svg">SVG · 矢量画面</option><option value="html">HTML · 网页画面</option></select></label></div>
+              <div class="form-actions"><span class="draft-status" id="draft-status"></span><button type="button" class="button secondary" id="cancel-scene-edit">取消</button><button class="button primary" type="submit" id="save-scene" data-testid="save-scene">保存镜头</button></div>
+            </form>
+
+            <div id="scene-detail">
+              <div class="narration-strip"><span>旁白</span><p id="scene-narration-text"></p></div>
+              <div class="preview-panel">
+                <div class="preview-toolbar"><div class="preview-tabs" role="tablist" aria-label="预览方式"><button type="button" role="tab" aria-selected="true" id="preview-tab">画面预览</button><button type="button" role="tab" aria-selected="false" id="source-tab">查看源码</button></div><div class="version-tools"><label class="sr-only" for="version-select">选择预览版本</label><select id="version-select" data-testid="version-select" disabled><option>尚无版本</option></select><span class="version-badge" id="version-badge" hidden></span></div></div>
+                <div class="preview-stage" id="preview-stage"><div class="preview-empty" id="preview-empty"><span aria-hidden="true">▱</span><h3>这个镜头还没有画面</h3><p>检查旁白和画面说明，<br>然后生成第一个候选版本。</p></div><iframe id="scene-preview" title="镜头画面预览" sandbox="" referrerpolicy="no-referrer" hidden data-testid="scene-preview"></iframe><pre id="source-view" hidden aria-label="镜头源码" tabindex="0"></pre></div>
+                <div class="preview-footer"><span id="version-summary"></span><button class="text-button" type="button" id="download-source" disabled data-testid="download-source">下载源码 ↓</button></div>
+              </div>
+              <div class="new-version-notice" id="new-version-notice" hidden><span id="new-version-text"></span><button class="text-button" id="view-latest" type="button">查看最新候选 →</button></div>
+              <div class="version-actions"><span id="adoption-note">制作完成后，可以预览并选择采用的版本。</span><button class="button secondary" id="adopt-version" type="button" disabled data-testid="adopt-version">采用此版本</button></div>
+              <div class="operation-banner" id="scene-status" role="status" hidden><span class="status-dot"></span><span id="scene-status-text"></span><button class="text-button" id="cancel-operation" type="button" hidden data-testid="cancel-operation">申请取消</button></div>
+              <section class="feedback-panel" aria-labelledby="feedback-heading"><div class="feedback-heading"><h3 id="feedback-heading">让画面更接近你的想法</h3><span id="revision-base"></span></div><label class="sr-only" for="feedback">修改意见</label><textarea id="feedback" rows="3" maxlength="8000" placeholder="例如：用两组芯片表现并行计算，把右侧的说明文字放大。" data-testid="feedback"></textarea><div class="feedback-actions"><p id="generation-hint">根据当前镜头说明生成画面。</p><button class="button secondary" type="button" id="generate-scene" data-testid="generate-scene">生成镜头</button><button class="button primary" type="button" id="revise-scene" disabled data-testid="revise-scene">按批注修改 <span aria-hidden="true">↗</span></button></div></section>
+            </div>
+          </section>
+
+          <div class="select-scene-empty" id="select-scene-empty"><span class="empty-glyph" aria-hidden="true">▧</span><h2>每个镜头，都可以单独打磨。</h2><p>先安排分镜，再在这里查看画面、<br>比较版本，写下修改意见。</p></div>
+        </div>
+      </section>
+      <div class="loading-view" id="loading-view" role="status" hidden><span class="loader"></span><p>正在读取项目…</p></div>
+    </main>
+  </div>
+
+  <dialog id="create-project-dialog" aria-labelledby="create-project-heading" data-testid="create-project-dialog"><form id="create-project-form"><div class="dialog-heading"><div><span class="eyebrow">开始一个新作品</span><h2 id="create-project-heading">从文稿开始</h2></div><button class="icon-button" id="close-project-dialog" type="button" aria-label="关闭新建项目">×</button></div><label>项目名称<input id="new-title" name="title" required maxlength="300" placeholder="例如：CPU 与 GPU，究竟如何分工？" data-testid="new-title"></label><label>文稿<textarea id="new-script" name="script" rows="8" required maxlength="50000" placeholder="粘贴你已经准备好的讲解文稿。" data-testid="new-script"></textarea></label><label>视觉方向 <span class="optional">选填</span><textarea id="new-style" name="style" rows="3" maxlength="4000" placeholder="例如：深色背景、橙色重点、清晰的方块与连线；文字简洁。" data-testid="new-style"></textarea></label><p class="message error-message" id="create-error" role="alert" hidden></p><p class="dialog-hint">先保存文稿，再拆分镜头和制作画面。</p><div class="dialog-actions"><button class="button secondary" id="cancel-create-project" type="button">取消</button><button class="button primary" id="submit-create-project" type="submit" data-testid="submit-create-project">创建项目 <span aria-hidden="true">→</span></button></div></form></dialog>
+</body>
+</html>

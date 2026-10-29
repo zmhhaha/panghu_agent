@@ -1,5 +1,6 @@
 """Offline candidate-factory wiring; synthetic preflights are not acceptance."""
 from datetime import datetime, timedelta, timezone
+import hashlib
 from pathlib import Path
 import threading
 import time
@@ -9,7 +10,7 @@ from uuid import uuid4
 from pydantic import SecretStr
 import pytest
 
-from agent_service.contracts import ServiceError
+from agent_service.contracts import ServiceError, canonical_bytes
 from agent_service.deploy import acceptance_probe as probe
 from agent_service.engines import EngineRequest, StopEvidence
 from agent_service import resources, runtime, tool_client
@@ -17,6 +18,7 @@ from agent_service.pi_cage import ACADEMIC_EXTENSION
 from agent_service.model_timeouts import buffered_model_idle_timeout
 from test_acceptance_probe import config
 from test_catalog import image_packages
+from test_candidate_scenario import synthetic_source_root_owner, write_scenario
 
 
 class OfflineRuntime:
@@ -88,6 +90,10 @@ def test_all_candidate_factories_keep_exact_contract_tools_and_capabilities(fact
         (Path(ACADEMIC_EXTENSION),) if academic else ())
     assert callable(getattr(driver, 'academic_observer', None)) is academic
     assert driver.runtime.profile.load_skills is profile.startswith('ppt.')
+    if profile.startswith('video.'):
+        assert run.config.profile.revision == '1'
+        assert driver.runtime.profile.allowed_tools == ('read', 'write')
+        assert driver.runtime.profile.shared_project is False
     assert driver.runtime.profile.policy.enabled is False
     assert run.config.profile.enabled is False
     assert all(not route['enabled'] for route in run.config.execution_catalog['routes'])
@@ -102,12 +108,21 @@ def test_noninitial_stages_require_an_explicit_scenario_instead_of_fabricated_hi
 
 
 @pytest.mark.parametrize('profile', ['research.generate.v1', 'research.retrieve.v1', 'research.plan.v1',
-                                    'research.outline.v1', 'research.draft.v1', 'research.revise.v1', 'ppt.generate.v1'])
-def test_only_research_generation_proxy_gets_public_https_for_fixed_academic_bridge(image_packages, profile):
+                                    'research.outline.v1', 'research.draft.v1', 'research.revise.v1',
+                                    'ppt.generate.v1', 'video.storyboard.v1', 'video.scene.v1'])
+def test_only_research_generation_proxy_gets_public_https_for_fixed_academic_bridge(image_packages, tmp_path, profile):
     value = config(profile)
+    inputs = {}
+    if profile.startswith('video.'):
+        from test_video_profile import storyboard, scene
+        document = storyboard() if profile == 'video.storyboard.v1' else scene()
+        raw = canonical_bytes(document)
+        path, sources, _ = write_scenario(tmp_path / 'video-network-candidate', profile,
+            {'input_sha256': hashlib.sha256(raw).hexdigest()}, {'video-input.json': raw})
+        inputs = {'scenario': path, 'source_dir': sources}
     rendered = probe.render_probe(value, name='candidate-academic',
         worker_image='registry.invalid/pi@' + value.profile.image_digest, node='reviewed-node',
-        uid_start=2100000000, bootstrap_secret='offline-bootstrap', upstream_secret='offline-upstream')
+        uid_start=2100000000, bootstrap_secret='offline-bootstrap', upstream_secret='offline-upstream', **inputs)
     policy = next(item for item in rendered['items'] if item['kind'] == 'NetworkPolicy')
     public = [destination['ipBlock'] for rule in policy['spec']['egress']
               for destination in rule['to'] if 'ipBlock' in destination]

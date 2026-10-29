@@ -65,6 +65,16 @@ def test_fixture_matches_actual_profile_contract(profile):
         assert verified['section']['sha256'] == task['section_sha256']
 
 
+@pytest.mark.parametrize('profile', ['video.storyboard.v1', 'video.scene.v1'])
+def test_video_probe_requires_explicit_reviewed_scenario(image_packages, profile):
+    with pytest.raises(ServiceError, match='candidate_scenario_required'):
+        probe.fixture(profile)
+    with pytest.raises(ServiceError, match='candidate_scenario_required'):
+        probe.render_probe(config(profile), name='video-needs-scenario', worker_image=IMAGE,
+            node='offline-node', uid_start=2100000000, bootstrap_secret='offline-bootstrap',
+            upstream_secret='offline-upstream')
+
+
 @pytest.mark.parametrize('profile', sorted(probe.PROFILES))
 @pytest.mark.parametrize('engine', ['pi', 'hermes'])
 def test_candidate_is_exact_disabled_binding_without_production_approval(image_packages, profile, engine):

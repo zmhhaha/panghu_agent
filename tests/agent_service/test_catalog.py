@@ -57,11 +57,11 @@ def generate(**changes):
 def test_dual_engine_catalog_matches_real_domain_schemas_and_limits(image_packages):
     public, hosts, summary = generate()
     _Public.model_validate(public)
-    assert len(public['task_contracts']) == 11
-    assert len(public['capability_bundles']) == 2
-    assert len(public['execution_bindings']) == len(public['kubernetes_workers']) == len(hosts) == 22
+    assert len(public['task_contracts']) == 13
+    assert len(public['capability_bundles']) == 3
+    assert len(public['execution_bindings']) == len(public['kubernetes_workers']) == len(hosts) == 26
     assert len(public['tool_environments']) == 8
-    assert len(public['routes']) == 11
+    assert len(public['routes']) == 13
     assert summary['routes_enabled'] is summary['acceptance_created'] is False
     assert summary['network_requests'] == 0
     assert summary['pi_runtime_requirement']['repository'] == 'https://github.com/zmhhaha/pi-cage'
@@ -94,7 +94,7 @@ def test_dual_engine_catalog_matches_real_domain_schemas_and_limits(image_packag
 
 def test_hermes_only_catalog_never_requires_a_pi_image(image_packages):
     public, hosts, _ = catalog.generate(hermes_image=HERMES, engine='hermes', runtime_revision='runtime-v1')
-    assert len(hosts) == 11
+    assert len(hosts) == 13
     assert all(host['engine'] == 'hermes' for host in hosts.values())
     assert all(route['binding_id'].endswith('-hermes') for route in public['routes'])
 
@@ -146,7 +146,7 @@ def test_public_output_is_complete_and_cannot_replace_an_existing_catalog(image_
     catalog.write_catalog(directory, public, hosts, summary)
     assert json.loads((directory / 'config.public.json').read_bytes()) == public
     assert json.loads((directory / 'summary.json').read_bytes()) == summary
-    assert len(list((directory / 'worker-configs').glob('*/config.json'))) == 22
+    assert len(list((directory / 'worker-configs').glob('*/config.json'))) == 26
     assert summary['public_config_sha256'] == hashlib.sha256(catalog.canonical_bytes(public)).hexdigest()
     with pytest.raises(catalog.CatalogError, match='catalog_output_must_be_empty'):
         catalog.write_catalog(directory, public, hosts, summary)
@@ -159,3 +159,42 @@ def test_generator_requires_the_actual_root_worker_image_on_non_posix_hosts(monk
     monkeypatch.setattr(catalog, 'os', SimpleNamespace(name=name, geteuid=lambda: uid))
     with pytest.raises(catalog.CatalogError, match='run_inside_root_owned_worker_image'):
         catalog.generate(pi_image=PI, runtime_revision='runtime-v1')
+
+
+def test_video_catalog_uses_exact_revision_bundle_and_dedicated_caller(image_packages):
+    public, hosts, _ = generate()
+    caller = next(item for item in public['callers'] if item['caller'] == 'video-workbench')
+    assert caller['token_ref'] == 'video-workbench'
+    assert set(caller['profiles']) == set(catalog.VIDEO_PROFILES)
+    for contract in public['task_contracts']:
+        assert contract['revision'] == ('1' if contract['name'] in catalog.VIDEO_PROFILES else 'v1')
+    bundle = next(item for item in public['capability_bundles'] if item['name'] == 'video-workbench')
+    assert {item['name'] for item in bundle['resources']} == {'manifest.json', *catalog.VIDEO_FILES}
+    for host in hosts.values():
+        if host['profile']['name'] in catalog.VIDEO_PROFILES:
+            binding = next(item for item in host['execution_catalog']['execution_bindings']
+                           if item['id'] == host['binding_id'])
+            assert binding['bundle'] == {'name': bundle['name'], 'revision': bundle['revision']}
+
+
+@pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md'])
+def test_changed_video_resource_cannot_enter_catalog(image_packages, tmp_path, monkeypatch, changed):
+    root = tmp_path / 'video-resource'
+    for name in ('manifest.json', *catalog.VIDEO_FILES):
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((catalog.VIDEO_ROOT / name).read_bytes())
+    (root / changed).write_bytes((root / changed).read_bytes() + b' ')
+    monkeypatch.setattr(catalog, 'VIDEO_ROOT', root)
+    with pytest.raises(catalog.CatalogError, match='video_bundle_integrity'):
+        generate()
+
+
+def test_latest_tag_with_digest_preserves_registry_and_host_pins(image_packages):
+    image = PI.replace('@', ':latest@')
+    public, hosts, _ = catalog.generate(pi_image=image, runtime_revision='runtime-v1')
+    _Public.model_validate(public)
+    assert all(pool['image'] == image for pool in public['kubernetes_workers'])
+    assert all(host['profile']['image_digest'] == PI.rsplit('@', 1)[1] for host in hosts.values())
+    with pytest.raises(catalog.CatalogError, match='immutable_worker_image_required'):
+        catalog._image(image.replace(':latest@', ':release@'))

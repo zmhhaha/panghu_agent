@@ -28,6 +28,11 @@ SHA256 = re.compile(r"sha256:[0-9a-f]{64}\Z")
 PART = re.compile(r"[a-z0-9]+(?:[._-]+[a-z0-9]+)*\Z")
 TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\Z")
 PROFILE_RESOURCE = "resources/workspace-text-v1/"
+# Keep the standard-library-only builder independent of service imports. These
+# reviewed pins are also checked by the profile and image-owned catalog reader.
+VIDEO_RESOURCE = "resources/video-workbench-v1/"
+VIDEO_MANIFEST_SHA256 = "d5a5fcb5081d65acce5783f72effe3fafe1954613e62d6dc5471cbfe2cd8a681"
+VIDEO_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'video-procedure/SKILL.md'})
 
 
 class BuildError(RuntimeError):
@@ -81,7 +86,7 @@ def immutable_image(value):
     if not isinstance(value, str) or value.count("@") != 1:
         raise BuildError("immutable_base_required")
     name, checksum = value.split("@")
-    repository(name)
+    repository(name.removesuffix(':latest'))
     if not SHA256.fullmatch(checksum):
         raise BuildError("immutable_base_required")
     return value
@@ -161,6 +166,28 @@ def context_archive(service, target, destination):
             raise BuildError("invalid_profile_resource_manifest") from None
         files["agent_service/" + PROFILE_RESOURCE + "manifest.json"] = manifest
         files["agent_service/" + PROFILE_RESOURCE + "CONTRACT.md"] = contract
+        manifest = read_regular(service / (VIDEO_RESOURCE + 'manifest.json'), 65536)
+        try:
+            resource = json.loads(manifest, object_pairs_hook=unique_pairs)
+            if (hashlib.sha256(manifest).hexdigest() != VIDEO_MANIFEST_SHA256
+                    or resource.get('bundle_revision') != 'video-workbench-v1'
+                    or resource.get('automatic_updates') is not False
+                    or resource.get('upstream_content_vendored') is not False
+                    or resource.get('license') != 'MIT'):
+                raise ValueError()
+            rows = resource['local_files']
+            if (type(rows) is not list or len(rows) != len(VIDEO_FILES)
+                    or any(type(row) is not dict or set(row) != {'path', 'sha256'} for row in rows)
+                    or {row['path'] for row in rows} != VIDEO_FILES):
+                raise ValueError()
+            for row in rows:
+                raw = read_regular(service / (VIDEO_RESOURCE + row['path']), 128 * 1024)
+                if hashlib.sha256(raw).hexdigest() != row['sha256']:
+                    raise ValueError()
+                files['agent_service/' + VIDEO_RESOURCE + row['path']] = raw
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise BuildError('invalid_video_resource_manifest') from None
+        files['agent_service/' + VIDEO_RESOURCE + 'manifest.json'] = manifest
     root = service.parent
     # Explicit framework-neutral dependencies of the reviewed collectors. No
     # business API/database/publisher, sessions or private Agent HOME is copied.
@@ -255,9 +282,14 @@ def build(target="control", *, push=True, service=SERVICE, environ=None, runner=
     environ = os.environ if environ is None else environ
     runner = subprocess.run if runner is None else runner
     registry = environ.get("REGISTRY", "arm-cluster-master:5000")
-    tag = environ.get("IMAGE_TAG", datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ"))
+    tag = environ.get("IMAGE_TAG", "latest")
     image = environ.get("IMAGE", registry + "/agent-service-" + target + ":" + tag)
     name = tagged_image(image)
+    if tag != 'latest' or image.rsplit(':', 1)[1] != 'latest':
+        raise BuildError('latest_image_tag_required')
+    source_revision = environ.get('SOURCE_REVISION')
+    if source_revision is not None and not re.fullmatch(r'[0-9a-f]{7,64}', source_revision):
+        raise BuildError('invalid_source_revision')
     platform = environ.get("PLATFORM", "linux/arm64")
     if platform not in {"linux/arm64", "linux/amd64"}:
         raise BuildError("invalid_build_platform")
@@ -274,6 +306,10 @@ def build(target="control", *, push=True, service=SERVICE, environ=None, runner=
     with tempfile.TemporaryDirectory(prefix="agent-service-build-") as temporary:
         archive, metadata = Path(temporary) / "context.tar", Path(temporary) / "metadata.json"
         context_archive(service, target, archive)
+        arguments += ['--label', 'org.opencontainers.image.created=' + datetime.now(timezone.utc).isoformat(),
+                      '--label', 'agent-service.panghuer.top/source-sha256=' + hashlib.sha256(archive.read_bytes()).hexdigest()]
+        if source_revision is not None:
+            arguments += ['--label', 'org.opencontainers.image.revision=' + source_revision]
         probe = runner(['docker', 'buildx', 'version'], stdout=subprocess.PIPE,
                        stderr=subprocess.PIPE, check=False)
         use_buildx = probe.returncode == 0
@@ -311,7 +347,7 @@ def build(target="control", *, push=True, service=SERVICE, environ=None, runner=
                 raise BuildError("pushed_manifest_mismatch")
         else:
             checksum = native_push(runner, image, name, platform)
-        digest = name + "@" + checksum
+        digest = image + "@" + checksum
         checked_directory(receipt.parent)
         pending = receipt.with_name("." + target + "-image-" + uuid.uuid4().hex + ".tmp")
         try:
@@ -327,7 +363,7 @@ def build(target="control", *, push=True, service=SERVICE, environ=None, runner=
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, epilog=(
-        "Environment: REGISTRY, IMAGE_TAG, IMAGE, PLATFORM (default linux/arm64), "
+        "Environment: REGISTRY, IMAGE_TAG (latest only), IMAGE (latest tag only), SOURCE_REVISION, PLATFORM (default linux/arm64), "
         "PYTHON_BASE_IMAGE (reviewed Python digest), PI_CAGE_IMAGE (pinned pi-cage digest required for pi), "
         "PPT_DONOR_IMAGE (reviewed PPT/Hermes runtime required for pi/hermes). "
         "A successful push writes rendered/<target>-image.txt; --no-push writes no deployable digest."))

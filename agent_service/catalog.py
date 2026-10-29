@@ -18,6 +18,9 @@ from urllib.parse import urlsplit
 
 from .contracts import canonical_bytes, digest, safe_relative_path
 from .profiles import implementation
+from .profiles.video import (BUNDLE_ROOT as VIDEO_ROOT, BUNDLE_REVISION as VIDEO_REVISION,
+                             BUNDLE_MANIFEST_SHA256 as VIDEO_MANIFEST_SHA256,
+                             BUNDLE_FILES as VIDEO_FILES)
 from .pi_cage import PI_CAGE_REPOSITORY, PI_CAGE_REVISION, PI_PACKAGE, PI_VERSION
 from .registry import (CapabilityBundle, DeploymentRegistry, ExecutionBinding,
                        ModelPolicy, TaskContract, ToolEnvironment, binding_fingerprint)
@@ -33,6 +36,7 @@ PPT_PROFILES = tuple('ppt.' + stage + '.v1' for stage in (
     'plan_initial', 'plan_options', 'prepare', 'generate', 'revise'))
 RESEARCH_PROFILES = ('research.generate.v1', 'research.revise.v1', 'research.plan.v1',
                      'research.retrieve.v1', 'research.outline.v1', 'research.draft.v1')
+VIDEO_PROFILES = ('video.storyboard.v1', 'video.scene.v1')
 CATALOG_KEYS = ('task_contracts', 'capability_bundles', 'tool_environments',
                 'execution_bindings', 'routes')
 MAX_FILE_BYTES = 16 * 1024 * 1024
@@ -42,7 +46,7 @@ REVISION = re.compile(r'[A-Za-z0-9_.-]{1,100}\Z')
 IMAGE = re.compile(
     r'(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?/)?'
     r'[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*'
-    r'@sha256:[0-9a-f]{64}\Z')
+    r'(?::latest)?@sha256:[0-9a-f]{64}\Z')
 
 
 class CatalogError(RuntimeError):
@@ -179,10 +183,29 @@ def _research_bundle():
     return bundle, total
 
 
+def _video_bundle():
+    raw = _read(VIDEO_ROOT / 'manifest.json', 65536)
+    _require(hashlib.sha256(raw).hexdigest() == VIDEO_MANIFEST_SHA256, 'video_bundle_integrity')
+    manifest = _json(raw)
+    _require(type(manifest) is dict and manifest.get('bundle_revision') == VIDEO_REVISION
+        and manifest.get('license') == 'MIT' and manifest.get('automatic_updates') is False
+        and manifest.get('upstream_content_vendored') is False, 'video_bundle_integrity')
+    rows = manifest.get('local_files')
+    _require(type(rows) is list and len(rows) == len(VIDEO_FILES)
+        and all(type(row) is dict and set(row) == {'path', 'sha256'} for row in rows)
+        and {row['path'] for row in rows} == VIDEO_FILES, 'video_bundle_integrity')
+    resources, total = _measure(VIDEO_ROOT, ['manifest.json', *sorted(VIDEO_FILES)])
+    measured = {row['name']: row['sha256'] for row in resources}
+    _require(all(measured[row['path']] == row['sha256'] for row in rows), 'video_bundle_integrity')
+    return CapabilityBundle.model_validate(dict(name='video-workbench', revision=VIDEO_REVISION,
+        resources=resources, source='original-local-video-procedures-v1', license='MIT',
+        required_tools=['read', 'write'])), total
+
+
 def _image(value):
     _require(type(value) is str and IMAGE.fullmatch(value) is not None
         and value.rsplit(':', 1)[-1] != '0' * 64, 'immutable_worker_image_required')
-    origin = value.rsplit('@', 1)[0].split('/', 1)[0]
+    origin = value.rsplit('@', 1)[0].removesuffix(':latest').split('/', 1)[0]
     if ':' in origin:
         _require(1 <= int(origin.rsplit(':', 1)[1]) <= 65535, 'immutable_worker_image_required')
     return value
@@ -191,7 +214,7 @@ def _image(value):
 def _contract(name):
     handler = implementation(name)
     capabilities = ['text', 'tool_calls'] + (['vision'] if 'image' in handler.required_tools else [])
-    return TaskContract.model_validate(dict(name=name, revision='v1', task_schema=handler.task_schema,
+    return TaskContract.model_validate(dict(name=name, revision='1' if name in VIDEO_PROFILES else 'v1', task_schema=handler.task_schema,
         output_schema=handler.output_schema, required_tools=list(handler.required_tools),
         required_model_capabilities=capabilities, max_timeout_seconds=3600,
         **handler.limits.as_dict()))
@@ -233,7 +256,8 @@ def generate(*, pi_image=None, hermes_image=None, engine='pi', runtime_revision,
     networks.sort()
     ppt_bundle, ppt_bytes = _ppt_bundle()
     research_bundle, research_bytes = _research_bundle()
-    contracts = [_contract(name) for name in (*PPT_PROFILES, *RESEARCH_PROFILES)]
+    video_bundle, video_bytes = _video_bundle()
+    contracts = [_contract(name) for name in (*PPT_PROFILES, *RESEARCH_PROFILES, *VIDEO_PROFILES)]
     environments, bindings, routes, pools = [], [], [], []
     host_selections = []
     for native, image in sorted(images.items()):
@@ -250,7 +274,8 @@ def generate(*, pi_image=None, hermes_image=None, engine='pi', runtime_revision,
             environments.append(environment.model_dump(mode='json'))
             environment_by_tools[tools] = environment
         for contract in contracts:
-            bundle = ppt_bundle if contract.name.startswith('ppt.') else research_bundle
+            bundle = (ppt_bundle if contract.name.startswith('ppt.') else
+                      video_bundle if contract.name in VIDEO_PROFILES else research_bundle)
             environment = environment_by_tools[tuple(sorted(contract.required_tools))]
             model_data = dict(api_mode='openai-responses', model=model, provider=provider,
                               capabilities=list(contract.required_model_capabilities))
@@ -283,13 +308,15 @@ def generate(*, pi_image=None, hermes_image=None, engine='pi', runtime_revision,
                 routes.append(dict(profile=contract.name, profile_revision=contract.revision,
                     binding_id=binding.id, binding_revision=binding.revision, enabled=False))
     catalog = dict(task_contracts=[item.model_dump(mode='json') for item in contracts],
-        capability_bundles=[ppt_bundle.model_dump(mode='json'), research_bundle.model_dump(mode='json')],
+        capability_bundles=[item.model_dump(mode='json') for item in (ppt_bundle, research_bundle, video_bundle)],
         tool_environments=environments, execution_bindings=bindings, routes=routes)
     registry = DeploymentRegistry.from_config(**catalog)
     public = dict(schema_version=2, callers=[
         dict(tenant='internal', caller='ppt-service', profiles=list(PPT_PROFILES), token_ref='ppt-service'),
         dict(tenant='internal', caller='scientific-service', profiles=list(RESEARCH_PROFILES),
-             token_ref='scientific-service')], **catalog, workers=[], kubernetes_workers=pools,
+             token_ref='scientific-service'),
+        dict(tenant='internal', caller='video-workbench', profiles=list(VIDEO_PROFILES),
+             token_ref='video-workbench')], **catalog, workers=[], kubernetes_workers=pools,
         api=dict(host='0.0.0.0', port=8080, max_request_bytes=1024 * 1024, max_input_bytes=16 * 1024 * 1024),
         dispatcher=dict(poll_seconds=1.0, lease_seconds=60), store=dict(max_events=1000, max_queue=1000),
         model_proxy=dict(upstream_base_url=upstream_base_url, upstream_token_ref='model-upstream',
@@ -321,7 +348,10 @@ def generate(*, pi_image=None, hermes_image=None, engine='pi', runtime_revision,
             scope='skill_entrypoints_and_references_complete_tool_inventory_pinned_by_image'),
             dict(name=research_bundle.name, revision=research_bundle.revision,
                 resources=len(research_bundle.resources), measured_bytes=research_bytes,
-                scope='original_local_procedures_not_upstream_k_dense')],
+                scope='original_local_procedures_not_upstream_k_dense'),
+            dict(name=video_bundle.name, revision=video_bundle.revision,
+                resources=len(video_bundle.resources), measured_bytes=video_bytes,
+                scope='original_local_svg_html_video_procedures')],
         worker_configs=[dict(host_config_map=name, path='worker-configs/' + name + '/config.json',
             engine=host['engine'], binding_id=host['binding_id'], binding_revision=host['binding_revision'])
             for name, host in sorted(hosts.items())])

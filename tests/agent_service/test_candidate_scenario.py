@@ -72,7 +72,8 @@ def write_scenario(root, profile, task, files, *, parent=None, export=False):
     if export:
         exported = dict(name='business-export.json', sha256=save(sources / 'business-export.json', dict(
             schema_version='agent-candidate-business-export.v1',
-            source='ppt-control-test-database' if profile.startswith('ppt.') else 'scientific-test-database',
+            source='ppt-control-test-database' if profile.startswith('ppt.') else
+                'video-workbench-test-database' if profile.startswith('video.') else 'scientific-test-database',
             task=task)))
     value = dict(schema_version='agent-candidate-scenario.v1', candidate_scope_only=True, scenario_id=str(uuid4()),
         profile=profile, timeout_seconds=600, task=task, inputs=rows, business_export=exported, parent=parent)
@@ -112,6 +113,45 @@ def test_staged_candidate_without_business_export_or_with_changed_context_is_rej
         {'context.json': workflow_bytes(ctx)}, export=True)
     with pytest.raises(ServiceError, match='candidate_workflow_context_invalid'):
         scenario.load_scenario(path, sources, None, host_policy(config(profile)))
+
+
+@pytest.mark.parametrize('kind,format', [('storyboard', 'svg'), ('scene', 'svg'), ('scene', 'html')])
+def test_video_scenario_and_manifest_bind_only_canonical_business_input(image_packages, tmp_path, kind, format):
+    from test_video_profile import storyboard, scene
+    document = storyboard() if kind == 'storyboard' else scene(format)
+    raw = canonical_bytes(document)
+    profile = 'video.' + kind + '.v1'
+    path, sources, _ = write_scenario(tmp_path / 'video-candidate', profile,
+        {'input_sha256': hashlib.sha256(raw).hexdigest()}, {'video-input.json': raw}, export=True)
+    host = config(profile)
+    loaded = scenario.load_scenario(path, sources, None, host_policy(host))
+    assert loaded.files == {'video-input.json': raw}
+    assert loaded.metadata['production_acceptance_created'] is False
+    assert not loaded.checkpoint_files and loaded.checkpoint_ref is None
+    image = 'registry.invalid/agent-pi:latest@' + host.profile.image_digest
+    manifest = probe.render_probe(host, name='video-offline-candidate', worker_image=image,
+        node='offline-node', uid_start=2100000000, bootstrap_secret='offline-bootstrap',
+        upstream_secret='offline-upstream', scenario=path, source_dir=sources)
+    worker = next(item for item in manifest['items'] if item.get('kind') == 'Pod'
+                  and item['metadata']['namespace'] == 'agent-workers')
+    assert worker['spec']['containers'][0]['image'] == image
+    assert worker['spec']['restartPolicy'] == 'Never'
+
+
+@pytest.mark.parametrize('change', ['task_sha', 'noncanonical', 'wrong_kind', 'wrong_filename'])
+def test_video_scenario_refuses_rebound_or_malformed_input(image_packages, tmp_path, change):
+    from test_video_profile import storyboard
+    document = storyboard()
+    if change == 'wrong_kind':
+        document['kind'] = 'scene'
+    raw = canonical_bytes(document)
+    if change == 'noncanonical':
+        raw += b'\n'
+    task = {'input_sha256': '0' * 64 if change == 'task_sha' else hashlib.sha256(raw).hexdigest()}
+    name = 'other.json' if change == 'wrong_filename' else 'video-input.json'
+    path, sources, _ = write_scenario(tmp_path / 'video-invalid', 'video.storyboard.v1', task, {name: raw})
+    with pytest.raises(ServiceError):
+        scenario.load_scenario(path, sources, None, host_policy(config('video.storyboard.v1')))
 
 
 def record_stopped_parent(run, artifacts):

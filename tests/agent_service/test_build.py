@@ -72,6 +72,11 @@ def service(tmp_path):
     (bundle / "credentials.json").write_text('{"key":"private"}', encoding="utf-8")
     (bundle / "NOT_ALLOWED.md").write_text("private resource notes\n", encoding="utf-8")
     (bundle / "private.py").write_text("PRIVATE_RESOURCE='private'\n", encoding="utf-8")
+    from agent_service.profiles.video import BUNDLE_ROOT, BUNDLE_FILES
+    for name in ('manifest.json', *BUNDLE_FILES):
+        target = root / 'resources/video-workbench-v1' / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((BUNDLE_ROOT / name).read_bytes())
     # Only reviewed framework-neutral helpers may cross the package allowlist;
     # business API/database/runtime files must still remain outside it.
     names = ['pi_worker/__init__.py', 'pi_worker/research_tools/__init__.py',
@@ -133,8 +138,8 @@ def old_receipt(service, target="control"):
 def test_build_push_records_exact_matching_immutable_digest_and_bounds_context(service):
     runner = DockerFixture()
     receipt = old_receipt(service)
-    digest = build(service=service, environ={"IMAGE_TAG": "fixture"}, runner=runner)
-    expected = "arm-cluster-master:5000/agent-service-control@" + runner.checksum
+    digest = build(service=service, environ={"SOURCE_REVISION": "a" * 40}, runner=runner)
+    expected = "arm-cluster-master:5000/agent-service-control:latest@" + runner.checksum
     assert digest == expected and receipt.read_text(encoding="utf-8") == expected + "\n"
     command = runner.calls[0]
     assert command[:3] == ["docker", "buildx", "build"]
@@ -148,7 +153,10 @@ def test_build_push_records_exact_matching_immutable_digest_and_bounds_context(s
     assert not any(name.endswith(('credentials.json', 'private.py', 'NOT_ALLOWED.md')) for name in runner.names)
     assert all(name.startswith(('agent_service/', 'scientific_agent/', 'pi_worker/', 'tools/', 'scientific_skills/'))
                for name in runner.names)
-    assert runner.calls[1][-1] == "arm-cluster-master:5000/agent-service-control:fixture"
+    assert runner.calls[1][-1] == "arm-cluster-master:5000/agent-service-control:latest"
+    assert 'org.opencontainers.image.revision=' + 'a' * 40 in command
+    assert any(item.startswith('agent-service.panghuer.top/source-sha256=') for item in command)
+    assert any(item.startswith('org.opencontainers.image.created=') for item in command)
 
 
 def test_no_push_removes_previous_deployable_digest_and_does_not_query_registry(service):
@@ -278,8 +286,8 @@ class NativeDockerFixture:
 def test_no_buildx_uses_native_build_push_and_exact_remote_digest_receipt(service, oci):
     runner = NativeDockerFixture(oci=oci)
     receipt = old_receipt(service)
-    expected = 'arm-cluster-master:5000/agent-service-control@' + runner.checksum
-    assert build(service=service, environ={'IMAGE_TAG': 'native'}, runner=runner) == expected
+    expected = 'arm-cluster-master:5000/agent-service-control:latest@' + runner.checksum
+    assert build(service=service, environ={}, runner=runner) == expected
     assert receipt.read_text() == expected + '\n'
     build_command = next(command for command in runner.calls if command[:2] == ['docker', 'build'])
     assert build_command[build_command.index('--platform') + 1] == 'linux/arm64'
@@ -330,12 +338,12 @@ def test_native_failure_never_preserves_old_or_writes_new_receipt(service, failu
 
 def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(service):
     runner = DockerFixture()
-    donor = "registry:5000/reviewed-pi@sha256:" + "a" * 64
-    ppt_donor = "registry:5000/reviewed-ppt@sha256:" + "b" * 64
+    donor = "registry:5000/reviewed-pi:latest@sha256:" + "a" * 64
+    ppt_donor = "registry:5000/reviewed-ppt:latest@sha256:" + "b" * 64
     result = build("pi", service=service,
                    environ={"PI_CAGE_IMAGE": donor, "PPT_DONOR_IMAGE": ppt_donor,
-                            "IMAGE": "registry:5000/agent-pi:review"}, runner=runner)
-    assert result == "registry:5000/agent-pi@" + runner.checksum
+                            "IMAGE": "registry:5000/agent-pi:latest"}, runner=runner)
+    assert result == "registry:5000/agent-pi:latest@" + runner.checksum
     from agent_service.pi_cage import PI_CAGE_REVISION
     assert "PI_CAGE_IMAGE=" + donor in runner.calls[0]
     assert "PI_CAGE_REVISION=" + PI_CAGE_REVISION in runner.calls[0]
@@ -344,7 +352,11 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
     assert "agent_service/Dockerfile.control" not in runner.names
     assert set(name for name in runner.names if "/resources/" in name) == {
         "agent_service/resources/workspace-text-v1/CONTRACT.md",
-        "agent_service/resources/workspace-text-v1/manifest.json"}
+        "agent_service/resources/workspace-text-v1/manifest.json",
+        "agent_service/resources/video-workbench-v1/manifest.json",
+        "agent_service/resources/video-workbench-v1/CONTRACT.md",
+        "agent_service/resources/video-workbench-v1/LICENSE",
+        "agent_service/resources/video-workbench-v1/video-procedure/SKILL.md"}
     assert not any(name.endswith(("credentials.json", "NOT_ALLOWED.md", "private.py")) for name in runner.names)
 
 
@@ -399,3 +411,21 @@ def test_linked_python_source_cannot_enter_the_build_context(service, tmp_path):
     with pytest.raises(BuildError):
         build(service=service, environ={}, runner=runner)
     assert not receipt.exists() and runner.calls == []
+
+
+@pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'video-procedure/SKILL.md'])
+def test_modified_video_resource_fails_before_docker(service, changed):
+    path = service / 'resources/video-workbench-v1' / changed
+    path.write_bytes(path.read_bytes() + b' ')
+    receipt, runner = old_receipt(service), DockerFixture()
+    with pytest.raises(BuildError, match='invalid_video_resource_manifest'):
+        build(service=service, environ={}, runner=runner)
+    assert not receipt.exists() and not runner.calls
+
+
+@pytest.mark.parametrize('environment', [{'IMAGE_TAG': 'version'}, {'IMAGE': 'registry:5000/agent:version'}])
+def test_application_build_uses_latest_only(service, environment):
+    runner = DockerFixture()
+    with pytest.raises(BuildError, match='latest_image_tag_required'):
+        build(service=service, environ=environment, runner=runner)
+    assert not runner.calls

@@ -36,7 +36,8 @@ from agent_service.worker_entry import (CapsuleScope, HostConfig, HostSecrets,
 PROFILES = {'ppt.' + stage + '.v1' for stage in (
     'plan_initial', 'plan_options', 'prepare', 'generate', 'revise')} | {
     'research.generate.v1', 'research.revise.v1', 'research.plan.v1',
-    'research.retrieve.v1', 'research.outline.v1', 'research.draft.v1'}
+    'research.retrieve.v1', 'research.outline.v1', 'research.draft.v1',
+    'video.storyboard.v1', 'video.scene.v1'}
 FIXTURE_PROFILES = {'ppt.plan_initial.v1', 'research.revise.v1'}
 CONTROL = Path('/run/agent-control')
 WORK = Path('/work')
@@ -530,6 +531,10 @@ def render_probe(config, *, name, worker_image, node, uid_start, bootstrap_secre
         prepared.reserve_uid(uid_start)
     else:
         require(source_dir is None and parent_evidence_dir is None)
+        # Preserve legacy manifest-only rendering. Its runtime still rejects
+        # unsupported built-in fixtures; new video candidates require their
+        # reviewed immutable input before any manifest is produced.
+        require(not policy.name.startswith('video.'), 'candidate_scenario_required')
     resource_name = re.compile(r'[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?\Z')
     require(all(type(value) is str and resource_name.fullmatch(value)
                 for value in (name, bootstrap_secret, upstream_secret)))
