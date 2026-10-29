@@ -75,7 +75,10 @@ def require_capabilities(namespace, revision, *, runner=subprocess.run):
                                 'python', '-c', CAPABILITY_CHECK], runner=runner))
     expected = {'ppt.' + phase + '.v1' for phase in ('plan_initial','plan_options','prepare','generate','revise')}
     rows = value.get('profiles')
-    if (not isinstance(rows, list) or len(rows) != len(expected)
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise RuntimeError('all_five_ppt_capabilities_must_be_ready')
+    rows = [row for row in rows if row.get('profile_revision') == revision]
+    if (len(rows) != len(expected)
             or {row.get('profile') for row in rows} != expected
             or any(row.get('profile_revision') != revision or row.get('configured') is not True
                    or row.get('ready') is not True for row in rows)):

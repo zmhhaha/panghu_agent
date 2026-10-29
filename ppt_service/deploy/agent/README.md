@@ -26,7 +26,9 @@ ppt.generate.v1
 ppt.revise.v1
 ```
 
-每个任务的 profile revision 默认 `v1`。先对 Pi 的上述五个合同分别完成能力包、
+本次迁移使用新的 profile revision `v2`，保留旧 `v1` 的目录与历史绑定；任务名称和
+任务/输出 schema 仍为上述 `*.v1`。控制器部署须显式指定 `--profile-revision v2`。
+先对 Pi 的上述五个合同分别完成能力包、
 工具镜像、模型接口与工具组合的验收，配置路由才可启用。以后启用 Hermes 时另行验收，
 本次试接无需同时启用两种引擎。
 generate/revise 的绑定需要图像输入与实际逐页图像检查能力。
@@ -110,6 +112,7 @@ renderer 只生成配置，加入 `--apply` 才会写入集群，`--enable-execu
 bash ppt_service/deploy/agent/deploy.sh \
   --controller-image '<controller-registry-image@sha256:digest>' \
   --worker-image '<validator-registry-image@sha256:digest>' \
+  --profile-revision v2 \
   --kube-api-cidr 192.168.137.101/32 \
   --kube-api-port 6443
 ```

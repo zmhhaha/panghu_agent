@@ -100,3 +100,19 @@ def test_disabled_staging_still_requires_drain_but_can_precede_ppt_route_accepta
     runtime.deploy(manifest(enabled=False), runner=scenario.runner)
     assert any('apply' in call for call in scenario.calls)
     assert not any('deploy/agent-service-api' in call or 'patch' in call for call in scenario.calls)
+
+
+def test_readiness_selects_the_requested_revision_without_discarding_legacy_profiles():
+    scenario = Scenario()
+    scenario.profiles = [dict(row, configured=False, ready=False) for row in scenario.profiles] + [
+        dict(row, profile_revision='v2') for row in scenario.profiles]
+    runtime.require_capabilities('agent-service', 'v2', runner=scenario.runner)
+    scenario.profiles[-1]['ready'] = False
+    with pytest.raises(RuntimeError, match='all_five_ppt_capabilities'):
+        runtime.require_capabilities('agent-service', 'v2', runner=scenario.runner)
+
+
+def test_legacy_readiness_cannot_substitute_for_a_missing_target_revision():
+    scenario = Scenario()
+    with pytest.raises(RuntimeError, match='all_five_ppt_capabilities'):
+        runtime.require_capabilities('agent-service', 'v2', runner=scenario.runner)

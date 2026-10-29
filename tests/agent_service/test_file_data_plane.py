@@ -87,6 +87,7 @@ def test_binary_checkpoint_owner_hash_and_transitive_retention_survive_restart(s
     expect_code('not_found', lambda: store.get_artifact('tenant', 'business', first_artifact))
 
 
+@pytest.mark.parametrize('revision', ['v1', 'v2'])
 @pytest.mark.parametrize('source,target,allowed', [
     ('ppt.plan_initial.v1', 'ppt.plan_options.v1', True),
     ('ppt.plan_options.v1', 'ppt.prepare.v1', True),
@@ -96,20 +97,23 @@ def test_binary_checkpoint_owner_hash_and_transitive_retention_survive_restart(s
     ('ppt.plan_initial.v1', 'ppt.generate.v1', False),
     ('ppt.generate.v1', 'research.generate.v1', False),
 ])
-def test_checkpoint_stage_graph_and_bundle_identity_are_enforced(source, target, allowed):
-    initial = binding(profile=source, profile_revision='v1', contract_sha256='1' * 64)
-    changed = binding(profile=target, profile_revision='v1', engine='hermes',
+def test_checkpoint_stage_graph_and_bundle_identity_are_enforced(source, target, allowed, revision):
+    initial = binding(profile=source, profile_revision=revision, contract_sha256='1' * 64)
+    changed = binding(profile=target, profile_revision=revision, engine='hermes',
         binding_id='target-hermes', contract_sha256='1' * 64 if source == target else '7' * 64)
     manifest = checkpoint_manifest(job_id=str(uuid.uuid4()), attempt_id=str(uuid.uuid4()),
-        profile=source, profile_revision='v1', contract_sha256=initial.contract_sha256,
+        profile=source, profile_revision=revision, contract_sha256=initial.contract_sha256,
         execution_binding=initial.model_dump(mode='json'), artifacts=[])
     target_pins = policy(changed).pins()
     if allowed:
         assert compatible_checkpoint(manifest, target_pins) is True
     else:
         expect_code('checkpoint_format_incompatible', lambda: compatible_checkpoint(manifest, target_pins))
-    altered = policy(binding(profile=target, profile_revision='v1', bundle_sha256='8' * 64)).pins()
+    altered = policy(binding(profile=target, profile_revision=revision, bundle_sha256='8' * 64)).pins()
     expect_code('checkpoint_format_incompatible', lambda: compatible_checkpoint(manifest, altered))
+    other_revision = 'v2' if revision == 'v1' else 'v1'
+    different_revision = policy(binding(profile=target, profile_revision=other_revision)).pins()
+    expect_code('checkpoint_format_incompatible', lambda: compatible_checkpoint(manifest, different_revision))
 
 
 def test_staging_exposes_exactly_one_readonly_mount_subtree_and_rejects_aliases(tmp_path):
