@@ -126,4 +126,29 @@ describe('project workflow',()=>{
     render(<App/>);await screen.findByRole('button',{name:'查看引用 1'});expect(screen.getAllByRole('button',{name:'查看引用 1'})).toHaveLength(1);expect(document.querySelector('code')).toHaveTextContent('[1]');
     expect(screen.getByRole('link',{name:'外部链接'})).toHaveAttribute('href','https://example.org');
   });
+  it('hides canonical claim comments while keeping code examples and citation evidence usable',async()=>{
+    const report=['# 有证据的报告','','<!-- claim:c1 -->','关键发现 [1]。','',
+      '内联标记 <!-- claim:论断二 -->其后文字。','',
+      '内联示例 `<!-- claim:inline-example -->`；转义示例 &lt;!-- claim:escaped-example --&gt;。','',
+      '```markdown','<!-- claim:fenced-example -->','[1]','```','',
+      '    <!-- claim:indented-example -->','    [1]','',
+      '<!-- ordinary:keep -->','','<!-- claim:noncanonical-->','',
+      '<!-- claim:mixed --><!-- ordinary:mixed -->'].join('\n');
+    server(project({stage:'review',current_version_id:'v1',versions:[{id:'v1'}]}),call=>call.path.endsWith('/versions/v1')?response({id:'v1',report_markdown:report,sources:[{paper_id:'p1',title:'标记对应的来源',abstract:'保留的证据摘要',access_level:'abstract'}],references:[{n:1,paper_id:'p1'}],section_index:{sections:[]}}):undefined);
+    render(<App/>);const citation=await screen.findByRole('button',{name:'查看引用 1'});
+    const markdown=document.querySelector('.markdown')!;
+    expect(markdown).not.toHaveTextContent('<!-- claim:c1 -->');
+    expect(markdown).not.toHaveTextContent('<!-- claim:论断二 -->');
+    expect(markdown).toHaveTextContent('内联标记 其后文字。');
+    expect(Array.from(markdown.querySelectorAll('code'),node=>node.textContent)).toEqual([
+      '<!-- claim:inline-example -->','<!-- claim:fenced-example -->\n[1]\n','<!-- claim:indented-example -->\n[1]\n']);
+    expect(markdown).toHaveTextContent('<!-- claim:escaped-example -->');
+    expect(markdown).toHaveTextContent('<!-- ordinary:keep -->');
+    expect(markdown).toHaveTextContent('<!-- claim:noncanonical-->');
+    expect(markdown).toHaveTextContent('<!-- claim:mixed --><!-- ordinary:mixed -->');
+    expect(screen.getAllByRole('button',{name:'查看引用 1'})).toHaveLength(1);
+    await userEvent.click(citation);
+    expect(await screen.findByRole('heading',{name:'标记对应的来源'})).toBeInTheDocument();
+    expect(screen.getByText('保留的证据摘要')).toBeInTheDocument();
+  });
 });
