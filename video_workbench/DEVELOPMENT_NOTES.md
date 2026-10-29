@@ -60,7 +60,7 @@
 
 域名偏好已明确。共享 Redis 的 CONFIG/INFO 元数据查询在未提供凭据时返回 NOAUTH；未读取密码，因此不能把未登记编号视为可用。内部代理生成器采用独立小 Redis 实例，隔离工作台会话 DB0，并要求专用 Cookie 与 Redis 凭据；复用现有 OIDC client，但不复用共享 Cookie 密钥。资源成本、Secret 引用和渲染命令见 [deploy/README.md](deploy/README.md)。调查与离线生成阶段未创建 Secret、未应用资源。
 
-继续本轮真实验证，暂缓更新工具中的需求状态，待有实际结果后再同步。
+本轮按用户休息要求暂停新增真实任务与部署，阶段状态已同步；继续顺序见 [CHECKPOINT.md](CHECKPOINT.md)。尚未取得的真实验收结果保持待办。
 
 ## 工具中的记录位置
 
