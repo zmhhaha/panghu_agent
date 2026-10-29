@@ -83,6 +83,10 @@ class Revision(Fields):
     expected_revision: int = Field(ge=1, strict=True)
 
 
+class Storyboard(Revision):
+    max_scenes: int = Field(default=12, ge=1, le=12, strict=True)
+
+
 class Generation(Revision):
     base_version_id: str | None = Field(default=None, max_length=100)
     instruction: str = Field(default='', max_length=8000)
@@ -272,7 +276,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                                 scene_id, body.expected_revision)
 
     @app.post('/api/projects/{project_id}/storyboard', status_code=202)
-    def storyboard(project_id: str, body: Revision, owner=Depends(mutation), idempotency_key: str | None = Header(default=None)):
+    def storyboard(project_id: str, body: Storyboard, owner=Depends(mutation), idempotency_key: str | None = Header(default=None)):
         workflow.require_gateway()
         return store.start(owner, project_id, 'storyboard', body.model_dump(), idempotency(idempotency_key))
 

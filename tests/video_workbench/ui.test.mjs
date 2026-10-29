@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   acceptProjectRead, activeOperations, chooseVersion, createIntentKeys, createSceneDraft,
-  createWorkspaceState, intentFingerprint, issueProjectRead, selectProject, selectScene,
+  createStoryboardRequest, createWorkspaceState, intentFingerprint, issueProjectRead, selectProject, selectScene,
   selectedVersion, syncSceneDraft, updateProjectSummary, versionPath,
 } from '../../video_workbench/web/model.mjs';
 
@@ -106,6 +106,31 @@ test('uncertain retries reuse intent keys and confirmed success retires them', (
   keys.complete('POST', '/generate', { expected_revision: 2, instruction: '放大文字' });
   assert.notEqual(keys.get('POST', '/generate', { instruction: '放大文字', expected_revision: 2 }), first);
   assert.notEqual(intentFingerprint('POST', '/a', {}), intentFingerprint('POST', '/b', {}));
+});
+
+test('storyboard request snapshots its limit and revision and binds both to retry intent', () => {
+  const state = createWorkspaceState();
+  open(state, project('a', 3));
+  const intent = createStoryboardRequest(state.project, 1);
+  let sequence = 0;
+  const keys = createIntentKeys(() => `storyboard-${++sequence}`);
+  const key = keys.get('POST', intent.path, intent.body);
+  acceptProjectRead(state, issueProjectRead(state), project('a', 4));
+  const changedLimit = createStoryboardRequest({ id: 'a', revision: 3 }, 2);
+  assert.equal(intent.path, '/api/projects/a/storyboard');
+  assert.deepEqual(intent.body, { expected_revision: 3, max_scenes: 1 });
+  assert.equal(keys.get('POST', intent.path, intent.body), key);
+  assert.notEqual(keys.get('POST', changedLimit.path, changedLimit.body), key);
+  const afterPolling = createStoryboardRequest(state.project, 1);
+  assert.notEqual(keys.get('POST', afterPolling.path, afterPolling.body), key);
+  assert.throws(() => { intent.body.max_scenes = 12; }, TypeError);
+});
+
+test('storyboard limits retain the default twelve and reject noninteger or out of range input', () => {
+  assert.equal(createStoryboardRequest({ id: 'a', revision: 1 }).body.max_scenes, 12);
+  for (const limit of [0, 13, 1.5, '1', true, null, NaN, Infinity]) {
+    assert.throws(() => createStoryboardRequest({ id: 'a', revision: 1 }, limit));
+  }
 });
 
 test('polling tracks submitting and cancelling operations, deduplicates and excludes terminal states', () => {

@@ -29,6 +29,7 @@ class FakeGateway:
         self.ready = False
         self.bad_hash = False
         self.unsafe = False
+        self.storyboard_scene_count = 1
 
     def upload(self, document):
         return dict(input_id=str(uuid4()), sha256=digest(document), path='video-input.json', role='video_input')
@@ -57,7 +58,7 @@ class FakeGateway:
         return dict(job_id=job_id, state='cancelling')
 
     def collect(self, job_id, kind, input_sha256):
-        output = dict(schema_version='1', scenes=[SCENE]) if kind == 'storyboard' else dict(
+        output = dict(schema_version='1', scenes=[dict(SCENE) for _ in range(self.storyboard_scene_count)]) if kind == 'storyboard' else dict(
             schema_version='1', format='svg', source='<svg><script>alert(1)</script></svg>' if self.unsafe else SVG, summary='候选画面')
         return dict(schema_version='1', kind=kind, input_sha256='0' * 64 if self.bad_hash else input_sha256, output=output)
 
@@ -131,6 +132,7 @@ def test_storyboard_and_project_edit_lock(env):
     p = project(client, False)
     r = client.post(f'/api/projects/{p["id"]}/storyboard', json=dict(expected_revision=p['revision']), headers={'Idempotency-Key': 'storyboard-1'})
     assert r.status_code == 202
+    assert store.operation(r.json()['id'])['document']['max_scenes'] == 12
     assert client.post(f'/api/projects/{p["id"]}/scenes', json=SCENE).status_code == 409
     gateway.ready = True
     workflow.tick()
@@ -138,6 +140,84 @@ def test_storyboard_and_project_edit_lock(env):
     assert len(p['scenes']) == 1
     assert p['storyboard_operation']['status'] == 'completed'
     assert client.post(f'/api/projects/{p["id"]}/storyboard', json=dict(expected_revision=p['revision']), headers={'Idempotency-Key': 'storyboard-2'}).status_code == 409
+
+
+@pytest.mark.parametrize('limit', [0, 13, 1.5, 1.0, '1', True, None])
+def test_invalid_storyboard_limit_is_rejected_before_operation(env, limit):
+    client, store, workflow, gateway = env
+    p = project(client, False)
+    response = client.post(f'/api/projects/{p["id"]}/storyboard',
+                           json=dict(expected_revision=p['revision'], max_scenes=limit),
+                           headers={'Idempotency-Key': 'invalid-storyboard-limit'})
+    assert response.status_code == 422
+    assert store.active_operations() == [] and gateway.submits == 0
+    assert client.get('/api/projects/' + p['id']).json()['revision'] == p['revision']
+
+
+def test_one_scene_limit_is_hash_bound_and_preserved_through_submission(env):
+    client, store, workflow, gateway = env
+    p = project(client, False)
+    response = client.post(f'/api/projects/{p["id"]}/storyboard',
+                           json=dict(expected_revision=p['revision'], max_scenes=1),
+                           headers={'Idempotency-Key': 'one-scene-storyboard'})
+    assert response.status_code == 202
+    operation_id = response.json()['id']
+    operation = Store(store.path).operation(operation_id)
+    assert operation['document']['max_scenes'] == 1
+    assert operation['input_sha256'] == digest(operation['document'])
+    gateway.ready = True
+    workflow.tick()
+    submitted = gateway.jobs[operation_id]['document']
+    assert submitted == operation['document'] and submitted['max_scenes'] == 1
+    assert store.operation(operation_id)['input_ref']['sha256'] == digest(submitted)
+    result = client.get('/api/projects/' + p['id']).json()
+    assert result['storyboard_operation']['status'] == 'completed' and len(result['scenes']) == 1
+
+
+def test_storyboard_above_requested_limit_never_creates_scenes(env):
+    client, store, workflow, gateway = env
+    p = project(client, False)
+    response = client.post(f'/api/projects/{p["id"]}/storyboard',
+                           json=dict(expected_revision=p['revision'], max_scenes=1),
+                           headers={'Idempotency-Key': 'too-many-scenes-storyboard'})
+    assert response.status_code == 202
+    gateway.storyboard_scene_count = 2
+    gateway.ready = True
+    workflow.tick()
+    operation = store.operation(response.json()['id'])
+    assert operation['status'] == 'failed' and operation['error'] == 'video_scene_limit_exceeded'
+    assert client.get('/api/projects/' + p['id']).json()['scenes'] == []
+
+
+def test_storyboard_idempotency_binds_requested_scene_limit(env):
+    client, store, workflow, gateway = env
+    p = project(client, False)
+    path = f'/api/projects/{p["id"]}/storyboard'
+    headers = {'Idempotency-Key': 'storyboard-limit-intent'}
+    body = dict(expected_revision=p['revision'], max_scenes=1)
+    first = client.post(path, json=body, headers=headers)
+    replay = client.post(path, json=body, headers=headers)
+    assert first.status_code == replay.status_code == 202 and first.json()['id'] == replay.json()['id']
+    conflict = client.post(path, json=dict(body, max_scenes=2), headers=headers)
+    assert conflict.status_code == 409 and conflict.json()['detail']['code'] == 'idempotency_conflict'
+    assert len(store.active_operations()) == 1
+    assert store.operation(first.json()['id'])['document']['max_scenes'] == 1
+    workflow.tick()
+    assert gateway.submits == 1
+
+
+def test_default_storyboard_limit_replays_legacy_request_hash(env):
+    client, store, workflow, gateway = env
+    p = project(client, False)
+    request = dict(expected_revision=p['revision'])
+    legacy = store.start('alice', p['id'], 'storyboard', request, 'legacy-storyboard-limit')
+    with store.transaction() as db:
+        saved_hash = db.execute('SELECT request_hash FROM operations WHERE id=?', (legacy['id'],)).fetchone()[0]
+    assert saved_hash == digest(dict(project_id=p['id'], scene_id=None, kind='storyboard', request=request))
+    replay = client.post(f'/api/projects/{p["id"]}/storyboard', json=dict(request, max_scenes=12),
+                         headers={'Idempotency-Key': 'legacy-storyboard-limit'})
+    assert replay.status_code == 202 and replay.json()['id'] == legacy['id']
+    assert len(store.active_operations()) == 1
 
 
 def test_idempotency_replay_before_revision_check(env):

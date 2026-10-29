@@ -102,6 +102,8 @@ class Workflow:
         if state == 'completed':
             result = gateway.collect(op['job_id'], 'storyboard' if op['kind'] == 'storyboard' else 'scene', op['input_sha256'])
             valid = validate_video_result(result, op['input_sha256'], 'storyboard' if op['kind'] == 'storyboard' else 'scene')
+            if op['kind'] == 'storyboard' and len(valid['output']['scenes']) > op['document']['max_scenes']:
+                raise ServiceError('video_scene_limit_exceeded', 422)
             if op['kind'] != 'storyboard' and valid['output']['format'] != op['document']['format']:
                 raise ServiceError('video_format_mismatch', 422)
             self.store.complete(op['id'], valid['output'])

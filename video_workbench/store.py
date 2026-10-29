@@ -144,7 +144,12 @@ class Store:
         return self.project(owner, project_id)
 
     def start(self, owner, project_id, kind, request, idem, *, scene_id=None, timeout=600):
-        fingerprint = digest(dict(project_id=project_id, scene_id=scene_id, kind=kind, request=request))
+        fingerprint_request = dict(request)
+        # An explicit default must replay operations saved before this field
+        # existed. Other limits remain distinct paid request intents.
+        if kind == 'storyboard' and type(request.get('max_scenes')) is int and request['max_scenes'] == 12:
+            fingerprint_request.pop('max_scenes')
+        fingerprint = digest(dict(project_id=project_id, scene_id=scene_id, kind=kind, request=fingerprint_request))
         with self.transaction() as db:
             # Idempotent replay precedes current revision/head checks.
             existing = db.execute('SELECT request_hash,document FROM operations WHERE owner=? AND idem=?', (owner, idem)).fetchone()
@@ -160,7 +165,7 @@ class Store:
                 if project['scenes']:
                     raise ServiceError('storyboard_requires_empty_project', 409)
                 document = dict(schema_version='1', kind=kind, title=project['title'], script=project['script'],
-                                style=project['style'], max_scenes=12)
+                                style=project['style'], max_scenes=request.get('max_scenes', 12))
             else:
                 scene = self._scene(project, scene_id)
                 base_id = request.get('base_version_id')

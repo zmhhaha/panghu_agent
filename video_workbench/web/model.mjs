@@ -127,6 +127,17 @@ export function syncSceneDraft(draft, scene, revision) {
   return draft?.dirty ? draft : createSceneDraft(scene, revision);
 }
 
+/** Freeze the clicked values before rendering, polling or uncertain retries. */
+export function createStoryboardRequest(project, maxScenes = 12) {
+  if (!project?.id || !Number.isInteger(maxScenes) || maxScenes < 1 || maxScenes > 12) {
+    throw new Error('Invalid storyboard limit');
+  }
+  return Object.freeze({
+    path: `/api/projects/${encodeURIComponent(project.id)}/storyboard`,
+    body: Object.freeze({ expected_revision: project.revision, max_scenes: maxScenes }),
+  });
+}
+
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === 'object') {

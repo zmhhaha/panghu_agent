@@ -1,5 +1,5 @@
 import {
-  activeOperations, chooseVersion, createIntentKeys, createSceneDraft, createWorkspaceState,
+  activeOperations, chooseVersion, createIntentKeys, createSceneDraft, createStoryboardRequest, createWorkspaceState,
   acceptProjectRead, isActiveOperation, issueProjectRead, latestVersion, orderedVersions,
   selectProject, selectScene, selectedScene, selectedVersion, statusLabel, syncSceneDraft,
   updateProjectSummary, versionPath,
@@ -34,6 +34,7 @@ const ERROR_LABELS = {
   operation_in_progress: '这个镜头还有正在执行的任务，请等待任务结束。',
   active_operation: '当前任务尚未结束，请稍后重试。',
   storyboard_exists: '项目已经有镜头，请逐个编辑或添加镜头。',
+  video_scene_limit_exceeded: '返回的镜头超过本次上限，未保存分镜。',
   agent_not_configured: '尚未配置 Agent 服务，仍可手动整理文稿与镜头。',
   service_unavailable: 'Agent 服务暂时不可用，请稍后重试。',
   idempotency_conflict: '这个操作与先前提交的内容不一致，请刷新后重试。',
@@ -282,6 +283,7 @@ function render() {
   renderOperation(project.storyboard_operation, 'storyboard');
   const storyboardBusy = isActiveOperation(project.storyboard_operation) || pending.has(`storyboard:${project.id}`);
   $('create-storyboard').disabled = storyboardBusy || project.scenes.length > 0;
+  $('storyboard-max-scenes').disabled = storyboardBusy || project.scenes.length > 0;
   $('create-storyboard').textContent = storyboardBusy ? '正在拆分镜头…' : '按文稿拆分镜头';
   $('add-scene').disabled = storyboardBusy;
   $('empty-add-scene').disabled = storyboardBusy;
@@ -513,10 +515,11 @@ $('reset-scene-draft').addEventListener('click', () => {
   render();
 });
 $('create-storyboard').addEventListener('click', () => {
-  if (!state.project || state.project.scenes.length) return;
+  if (!state.project || state.project.scenes.length || !$('storyboard-max-scenes').reportValidity()) return;
   const id = state.projectId;
-  perform(`storyboard:${id}`, () => request(`/api/projects/${encodeURIComponent(id)}/storyboard`, {
-    method: 'POST', body: { expected_revision: state.project.revision },
+  const { path, body } = createStoryboardRequest(state.project, $('storyboard-max-scenes').valueAsNumber);
+  perform(`storyboard:${id}`, () => request(path, {
+    method: 'POST', body,
   }), () => success('拆分任务已提交，镜头准备好后会出现在左侧。'));
 });
 $('feedback').addEventListener('input', () => { feedbacks.set(draftKey(), $('feedback').value); updateGenerationButtons(); });

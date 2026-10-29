@@ -43,7 +43,7 @@
           <section class="scenes-panel" aria-labelledby="scenes-heading">
             <div class="panel-heading"><div><h2 id="scenes-heading">分镜</h2><span id="scene-count">0 个镜头</span></div><button class="icon-button bordered" id="add-scene" aria-label="新增镜头" title="新增镜头" type="button" data-testid="add-scene">＋</button></div>
             <div id="scene-list" class="scene-list" aria-label="镜头列表" data-testid="scene-list"></div>
-            <div class="scenes-empty" id="scenes-empty" hidden><span class="empty-glyph" aria-hidden="true">▧</span><h3>先给内容安排镜头</h3><p>让 Agent 按文稿拆分镜头，<br>或手动添加第一个镜头。</p><button class="button primary" type="button" id="create-storyboard" data-testid="create-storyboard">按文稿拆分镜头</button><button class="text-button" type="button" id="empty-add-scene">手动添加镜头</button></div>
+            <div class="scenes-empty" id="scenes-empty" hidden><span class="empty-glyph" aria-hidden="true">▧</span><h3>先给内容安排镜头</h3><p>让 Agent 按文稿拆分镜头，<br>或手动添加第一个镜头。</p><label class="storyboard-limit">最多镜头<input id="storyboard-max-scenes" type="number" min="1" max="12" step="1" required value="12" data-testid="storyboard-max-scenes"></label><button class="button primary" type="button" id="create-storyboard" data-testid="create-storyboard">按文稿拆分镜头</button><button class="text-button" type="button" id="empty-add-scene">手动添加镜头</button></div>
           </section>
 
           <section class="scene-workspace" id="scene-workspace" aria-label="镜头制作" hidden>
