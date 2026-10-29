@@ -73,14 +73,14 @@ def factory(image_packages, monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize('profile', sorted(probe.PROFILES))
-def test_all_seven_candidate_factories_keep_exact_contract_tools_and_capabilities(factory, profile):
+def test_all_candidate_factories_keep_exact_contract_tools_and_capabilities(factory, profile):
     run = factory(profile)
     driver = run.driver
     expected = ('text', 'image') if profile in {'ppt.generate.v1', 'ppt.revise.v1'} else ('text',)
     assert driver.runtime.settings.model_input == expected
     assert driver.runtime.settings.model_api == 'openai-responses'
     assert driver.runtime.settings.model_env == {'AGENT_MODEL_API_KEY': 'offline-attempt-only-grant'}
-    academic = profile == 'research.generate.v1'
+    academic = profile in {'research.generate.v1', 'research.retrieve.v1'}
     assert driver.runtime.profile.extension_paths == (
         (Path(ACADEMIC_EXTENSION),) if academic else ())
     assert callable(getattr(driver, 'academic_observer', None)) is academic
@@ -98,7 +98,8 @@ def test_noninitial_stages_require_an_explicit_scenario_instead_of_fabricated_hi
     assert failure.value.code == 'candidate_scenario_required'
 
 
-@pytest.mark.parametrize('profile', ['research.generate.v1', 'research.revise.v1', 'ppt.generate.v1'])
+@pytest.mark.parametrize('profile', ['research.generate.v1', 'research.retrieve.v1', 'research.plan.v1',
+                                    'research.outline.v1', 'research.draft.v1', 'research.revise.v1', 'ppt.generate.v1'])
 def test_only_research_generation_proxy_gets_public_https_for_fixed_academic_bridge(image_packages, profile):
     value = config(profile)
     rendered = probe.render_probe(value, name='candidate-academic',
@@ -107,7 +108,7 @@ def test_only_research_generation_proxy_gets_public_https_for_fixed_academic_bri
     policy = next(item for item in rendered['items'] if item['kind'] == 'NetworkPolicy')
     public = [destination['ipBlock'] for rule in policy['spec']['egress']
               for destination in rule['to'] if 'ipBlock' in destination]
-    if profile == 'research.generate.v1':
+    if profile in {'research.generate.v1', 'research.retrieve.v1'}:
         assert len(public) == 1 and public[0]['cidr'] == '0.0.0.0/0'
         assert {'10.0.0.0/8', '127.0.0.0/8', '169.254.0.0/16', '192.168.0.0/16'} <= set(public[0]['except'])
         assert policy['spec']['egress'][-1]['ports'] == [{'protocol': 'TCP', 'port': 443}]

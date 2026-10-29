@@ -34,7 +34,8 @@ from agent_service.worker_entry import (CapsuleScope, HostConfig, HostSecrets,
 
 PROFILES = {'ppt.' + stage + '.v1' for stage in (
     'plan_initial', 'plan_options', 'prepare', 'generate', 'revise')} | {
-    'research.generate.v1', 'research.revise.v1'}
+    'research.generate.v1', 'research.revise.v1', 'research.plan.v1',
+    'research.retrieve.v1', 'research.outline.v1', 'research.draft.v1'}
 FIXTURE_PROFILES = {'ppt.plan_initial.v1', 'research.revise.v1'}
 CONTROL = Path('/run/agent-control')
 WORK = Path('/work')
@@ -462,7 +463,7 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
     from agent_service.pi_cage import ACADEMIC_EXTENSION
     from agent_service.engines import PiDriver
     extensions = ((Path(ACADEMIC_EXTENSION),)
-                  if policy.name == 'research.generate.v1' else ())
+                  if policy.name in {'research.generate.v1', 'research.retrieve.v1'} else ())
     profile = DomainExecutionProfile(policy, policy.execution_binding.bundle_revision, extensions=extensions)
     profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL
     settings = RuntimeSettings(command=(NODE, PI_CLI), node_command=(NODE,), provider=config.model.provider,
@@ -497,7 +498,7 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
             'candidate_request_deadline_mismatch')
         return {**profile.make_wire(request), '_runtime_uid': scope.agent_uid}
     driver = PiDriver(runtime, stopper, wire_builder=wire, enabled=True)
-    if policy.name == 'research.generate.v1':
+    if policy.name in {'research.generate.v1', 'research.retrieve.v1'}:
         driver.academic_observer = lambda workspace: __import__(
             'agent_service.tool_client', fromlist=['save_academic_observations']).save_academic_observations(
                 config.model.proxy_base_url, credentials.model_proxy_token.get_secret_value(), workspace)
@@ -577,7 +578,7 @@ def render_probe(config, *, name, worker_image, node, uid_start, bootstrap_secre
             {'to': [dict(namespaceSelector={'matchLabels': {'kubernetes.io/metadata.name': 'llm'}},
                 podSelector={'matchLabels': {'app': 'llm-service'}})],
              'ports': [dict(protocol='TCP', port=80), dict(protocol='TCP', port=8000)]}])))
-    if policy.name == 'research.generate.v1':
+    if policy.name in {'research.generate.v1', 'research.retrieve.v1'}:
         # Same public HTTPS boundary as the production academic proxy. The
         # native Agent still has only its task-proxy network access; fixed
         # academic bridge code controls destinations, redirects and payloads.

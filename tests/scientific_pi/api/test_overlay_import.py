@@ -19,13 +19,14 @@ PROBE = textwrap.dedent(r'''
         package_path = image / 'scientific_agent'
         package_path.mkdir(parents=True)
         (package_path / '__init__.py').write_text('', encoding='utf-8')
-        for name in ('pi_contracts.py', 'pi_client.py', 'pi_projection.py', 'pi_citations.py', 'pi_sections.py', 'pi_report_versions.py', 'pi_revision_contracts.py', 'pi_revision_validation.py', 'agent_config.py', 'agent_client.py', 'agent_projection.py', 'academic_observations.py'):
+        for name in ('pi_contracts.py', 'pi_client.py', 'pi_projection.py', 'pi_citations.py', 'pi_sections.py', 'pi_report_versions.py', 'pi_revision_contracts.py', 'pi_revision_validation.py', 'agent_config.py', 'agent_client.py', 'agent_projection.py', 'academic_observations.py', 'workspace.py', 'workspace_execution.py', 'workspace_materials.py', 'workflow_contracts.py'):
             if mode != 'missing-dependency' or name != 'pi_contracts.py':
                 shutil.copyfile(root / 'scientific_agent' / name, package_path / name)
         for name in ('app', 'app/api', 'tools'):
             (image / name).mkdir(exist_ok=True)
             (image / name / '__init__.py').write_text('',encoding='utf-8')
         shutil.copyfile(root / 'app/api/scientific_agent.py',image / 'app/api/scientific_agent.py')
+        shutil.copyfile(root / 'app/api/scientific_workspace.py',image / 'app/api/scientific_workspace.py')
         shutil.copyfile(root / 'tools/sqlite_client.py',image / 'tools/sqlite_client.py')
         sys.path.insert(0, str(image))
         package = importlib.import_module('scientific_agent')

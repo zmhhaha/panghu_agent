@@ -32,7 +32,7 @@ from scientific_agent.academic_observations import (
 def execution(tmp_path):
     opened = []
 
-    def make(*, engine='pi', profile='workspace-task.v1', allocation=True, **settings):
+    def make(*, engine='pi', profile='workspace-task.v1', allocation=True, task_document=None, **settings):
         configured = make_catalog(engine, True)
         registry = DeploymentRegistry.from_config(**{
             key: value for key, value in configured.items() if key != 'schema_version'})
@@ -50,7 +50,7 @@ def execution(tmp_path):
         store.initialize()
         opened.append(store)
         request = dict(api_version='1', profile=profile, profile_revision='v1',
-            business_ref='offline-task', task={'prompt': 'offline'}, inputs=[], timeout_seconds=600)
+            business_ref='offline-task', task=task_document or {'prompt': 'offline'}, inputs=[], timeout_seconds=600)
         store.submit('tenant', 'business', 'one', request, policy.pins())
         claimed = store.claim(lease_seconds=300, provisioning={engine: 'kubernetes_per_attempt'})
         with store.engine.connect() as db:
@@ -698,6 +698,46 @@ def test_tool_bridge_rejects_non_research_profile_without_calling_it(execution, 
     run = execution()
     monkeypatch.setattr('agent_service.profiles.research.academic_tool',
         lambda *args: pytest.fail('Workspace profile cannot access the research bridge'))
+    error('research_tool_not_authorized', lambda: run.proxy.academic(run.token, observed_search()[0]), 403)
+    with run.store.engine.connect() as db:
+        assert not db.execute(select(observations)).first()
+
+
+def test_staged_retrieval_budget_counts_admission_but_replays_without_spending_again(execution, monkeypatch):
+    run = execution(profile='research.retrieve.v1',
+        task_document={'source_policy': {'max_search_calls': 1}})
+    request, result = observed_search()
+    calls = []
+    monkeypatch.setattr('agent_service.profiles.research.academic_tool',
+        lambda *args: calls.append(args) or result)
+    assert run.proxy.academic(run.token, request) == result
+    assert run.proxy.academic(run.token, request) == result
+    changed = deepcopy(request)
+    changed['payload']['query'] = 'A second bounded query'
+    error('research_tool_budget_exhausted', lambda: run.proxy.academic(run.token, changed), 429)
+    assert len(calls) == 1
+
+
+def test_uncertain_staged_search_consumes_budget_and_no_new_request_is_admitted(execution, monkeypatch):
+    run = execution(profile='research.retrieve.v1',
+        task_document={'source_policy': {'max_search_calls': 1}})
+    request, _ = observed_search()
+    def interrupted(*args):
+        raise RuntimeError('offline interruption')
+    monkeypatch.setattr('agent_service.profiles.research.academic_tool', interrupted)
+    with pytest.raises(RuntimeError):
+        run.proxy.academic(run.token, request)
+    changed = deepcopy(request)
+    changed['payload']['query'] = 'Another attempted query'
+    error('research_tool_budget_exhausted', lambda: run.proxy.academic(run.token, changed), 429)
+    error('tool_observation_uncertain', lambda: run.proxy.academic(run.token, request), 409)
+
+
+@pytest.mark.parametrize('profile', ['research.plan.v1', 'research.outline.v1', 'research.draft.v1'])
+def test_readonly_stages_cannot_use_academic_tools(execution, monkeypatch, profile):
+    run = execution(profile=profile)
+    monkeypatch.setattr('agent_service.profiles.research.academic_tool',
+        lambda *args: pytest.fail('Read-only stage cannot call an academic source'))
     error('research_tool_not_authorized', lambda: run.proxy.academic(run.token, observed_search()[0]), 403)
     with run.store.engine.connect() as db:
         assert not db.execute(select(observations)).first()

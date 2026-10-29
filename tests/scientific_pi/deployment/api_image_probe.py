@@ -214,6 +214,29 @@ def main():
         assert health['model_probe_performed'] is False
         checks.append('api_health_uses_worker_without_direct_model_configuration')
 
+        workspace = '/api/v1/research/projects'
+        code, _ = request('GET', workspace, user='')
+        assert code == 401
+        payload = {'requirements': {'question': 'Image workspace persistence check'}}
+        code, raw = request('POST', workspace, payload, key='image-workspace-create')
+        project = json.loads(raw)
+        assert code == 201 and project['stage'] == 'goal' and project['jobs'] == [], raw
+        project_path = workspace + '/' + project['id']
+        code, replay = request('POST', workspace, payload, key='image-workspace-create')
+        assert code == 201 and json.loads(replay)['id'] == project['id']
+        code, _ = request('GET', project_path, user='different-user')
+        assert code == 404
+        code, raw = request('PATCH', project_path, {'expected_revision': project['revision'],
+            'requirements': {'purpose': 'Saved without starting a model'}}, key='image-workspace-save')
+        project = json.loads(raw)
+        assert code == 200 and project['revision'] == 1 and project['jobs'] == [], raw
+        code, raw = request('POST', project_path + '/actions/confirm_evidence',
+            {'expected_revision': project['revision']}, key='image-forbidden-draft')
+        assert code == 409 and json.loads(raw)['detail']['code'] == 'plan_confirmation_required', raw
+        code, raw = request('GET', project_path)
+        assert code == 200 and json.loads(raw)['requirements']['purpose'] == 'Saved without starting a model'
+        checks.append('workspace_real_image_persistence_idempotency_ownership_and_no_ungated_draft')
+
         code, _ = request('POST', '/scientific-research', dict(topic='Rejected old engine', engine='crewai'))
         assert code == 422
         checks.append('new_crewai_request_rejected')

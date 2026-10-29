@@ -229,7 +229,9 @@ def load_scenario(path, source_dir, parent_dir, policy):
     _source_members(source_dir, expected)
     task, parent = value['task'], value['parent']
     continuation = policy.name.startswith('ppt.') and policy.name != 'ppt.plan_initial.v1'
-    require(not (continuation or policy.name == 'research.revise.v1') or export is not None,
+    workflow = policy.name in {'research.plan.v1', 'research.retrieve.v1',
+                              'research.outline.v1', 'research.draft.v1'}
+    require(not (continuation or policy.name == 'research.revise.v1' or workflow) or export is not None,
         'candidate_business_export_required')
     require((parent is not None) == (continuation or policy.name == 'research.revise.v1'),
         'candidate_parent_required')
@@ -289,11 +291,12 @@ def load_scenario(path, source_dir, parent_dir, policy):
             # A revision is a new business task. This candidate export carries
             # no published version-to-source mapping for a previous revision,
             # so only a directly verified generation can be its parent.
-            require(original.profile == 'research.generate.v1',
+            require(original.profile in {'research.generate.v1', 'research.draft.v1'},
                 'candidate_research_revision_parent_unsupported')
             require(task['root_report_id'] == original.task['business_task_id']
                 and task['business_task_id'] != original.task['business_task_id']
-                and original.task['topic'] == task['topic'], 'candidate_parent_lineage_invalid')
+                and (original.profile == 'research.draft.v1' or
+                     original.task['topic'] == task['topic']), 'candidate_parent_lineage_invalid')
             require('report.md' in data and files.get('input-report.md') == data['report.md'],
                 'candidate_parent_lineage_invalid')
             require(task['base_sha256'] == hashlib.sha256(data['report.md']).hexdigest(),
@@ -312,6 +315,13 @@ def load_scenario(path, source_dir, parent_dir, policy):
                 'candidate_source_snapshot_mismatch')
     elif policy.name == 'research.generate.v1':
         require(not files)
+    elif workflow:
+        require(set(files) == {'context.json'}, 'candidate_workflow_context_required')
+        from scientific_agent.workflow_contracts import validate_context, WorkflowContractError
+        try:
+            validate_context(_json(files['context.json']), task)
+        except WorkflowContractError:
+            raise ServiceError('candidate_workflow_context_invalid', 422) from None
     else:
         require(set(files) == {'revision-materials.json', 'input-report.md', 'input-section.md',
                               'papers.jsonl', 'evidence.jsonl', 'claims.jsonl', 'references.json'})

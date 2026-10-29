@@ -167,7 +167,7 @@ def context_archive(service, target, destination):
     ordinary = ['pi_worker/__init__.py', 'scientific_agent/__init__.py', 'tools/__init__.py']
     ordinary += ['scientific_agent/' + name for name in ('pi_contracts.py', 'pi_citations.py',
         'pi_sections.py', 'pi_revision_contracts.py', 'pi_revision_validation.py',
-        'academic_observations.py')]
+        'academic_observations.py', 'workflow_contracts.py')]
     for name in ordinary:
         files[name] = read_regular(root / name)
     for prefix in ('pi_worker/research_tools', 'tools/academic'):

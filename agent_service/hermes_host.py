@@ -187,7 +187,8 @@ class HermesHostDriver:
             outcome = replace(outcome, output=None)
             if outcome.stopped:
                 self.profile.after_stopped(workspace)
-            if outcome.stopped and outcome.status == 'completed' and self.policy.name == 'research.generate.v1':
+            if outcome.stopped and outcome.status == 'completed' and self.policy.name in {
+                    'research.generate.v1', 'research.retrieve.v1'}:
                 from .tool_client import save_academic_observations
                 save_academic_observations(self.config.model.proxy_base_url,
                     self.credentials.model_proxy_token.get_secret_value(), workspace)

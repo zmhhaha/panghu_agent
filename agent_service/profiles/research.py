@@ -155,7 +155,11 @@ def academic_tool(name, payload, task):
     Runs inside the platform's approved tool boundary. The existing bridge pins
     public academic destinations and preserves real failed requests/counts.
     """
-    ResearchProfile().validate_task(task)
+    if task.get('stage') == 'retrieve':
+        from .research_workflow import ResearchWorkflowProfile
+        ResearchWorkflowProfile('retrieve').validate_task(task)
+    else:
+        ResearchProfile().validate_task(task)
     _require(type(payload) is dict)
     from pi_worker.research_tools.bridge import search, verify_identifier
     if name == 'academic_search':
