@@ -83,3 +83,46 @@ kubectl apply --dry-run=server -f .runtime/video-workbench/deployment.json
 ```sh
 python -m pytest tests/video_workbench/test_deploy.py -q
 ```
+
+## 工作台独立登录代理
+
+用户已经确定工作台域名为 `video-service.panghuer.top`。域名对外开放、Cloudflare 后台配置和 Casdoor 回调 `https://video-service.panghuer.top/oauth2/callback` 由用户在 WebUI 手动添加；这里的程序仅生成内部登录代理和会话存储，不创建 TunnelRoute、Ingress、Casdoor 应用或 Secret，也不应用资源。
+
+内部入口为 `http://oauth2-proxy-video-workbench.oauth.svc.cluster.local:4180`，由用户将公开入口指向它。代理转发到 `http://video-workbench.video-workbench.svc.cluster.local:8089`。工作台主生成器应使用 `--allowed-host video-service.panghuer.top --proxy-namespace oauth --proxy-label app=oauth2-proxy-video-workbench`。
+
+共享 Redis 的已登记 DB 没有工作台专用预留，未认证的数据库数量与占用查询返回 NOAUTH；没有读取密码来猜测空闲编号。因此代理使用独立的小 Redis 实例 `oauth/video-workbench-session-redis`，仅保存该工作台的登录会话，使用自己的 DB0，不竞争共享 Redis 的 DB 编号。Redis 请求 10m CPU / 16 MiB 内存，上限 100m / 96 MiB，数据内存上限 32 MiB；无 PVC，Redis 重启后重新登录即可，项目与历史版本仍保存在工作台 PVC。
+
+所需凭据引用如下；先通过现有 Vault 管理流程准备独立会话凭据及投影，生成器不会读取或创建它们：
+
+| 命名空间 / Secret | 所需键 | 用途 |
+| --- | --- | --- |
+| `oauth/oauth2-proxy-secret` | `OIDC_CLIENT_ID`、`OIDC_CLIENT_SECRET`、`OIDC_ISSUER_URL`、`ALLOWED_DOMAINS` | 复用现有 OIDC 应用，仅按键引用；不导入它的共享 Cookie 凭据。 |
+| `oauth/video-workbench-oauth-runtime` | `COOKIE_SECRET` | 工作台独立 Cookie 加密凭据；使用 32 个随机字节的 base64 文本。 |
+| `oauth/video-workbench-oauth-runtime` | `REDIS_PASSWORD` | 独立 Redis 的认证凭据；使用 32 至 128 位随机字母或数字，例如 64 位随机十六进制文本。 |
+
+建议由 Vault 中独立的 `secret/video-workbench/oauth` 记录保存 `COOKIE_SECRET` 和 `REDIS_PASSWORD`，再投影到上述会话 Secret，避免复制共享 Cookie 密钥。Cookie 使用 `__Host-video_workbench`，仅限当前 Host，带 Secure、Path=/ 和登录 CSRF 校验，不设置共享父域 Cookie。凭据通过 Secret 引用注入环境，不写入生成的命令参数或公开 ConfigMap；Redis 在私有 `/tmp` 配置文件中加载密码，不将密码放入进程参数。凭据轮换后需要按既有流程重启代理和 Redis。
+
+渲染示例（两个镜像均需先按 `latest` 发布并取得实际摘要；oauth2-proxy 使用 v7.8 或经过兼容性验证的版本，Redis 镜像需含 `/bin/sh` 和 `redis-server`）：
+
+```sh
+python -m video_workbench.deploy.oauth \
+  --host video-service.panghuer.top \
+  --proxy-image registry.example.com/oauth2-proxy:latest \
+  --proxy-image-digest "$VIDEO_PROXY_DIGEST" \
+  --redis-image registry.example.com/redis:latest \
+  --redis-image-digest "$VIDEO_REDIS_DIGEST" \
+  --release-id "$VIDEO_RELEASE_ID" \
+  --oidc-secret oauth2-proxy-secret \
+  --session-secret video-workbench-oauth-runtime \
+  --output .runtime/video-workbench/oauth.json
+```
+
+默认仅允许线上现有 `default` 命名空间、标签 `app=cloudflared,tunnel=main` 的 Tunnel Pod 进入代理；若用户选择另一 Tunnel，需要显式修改 `--entry-namespace` 和 `--entry-label`。代理可出站到 DNS、工作台、独立 Redis，以及用于现有公开 OIDC issuer 的公网 HTTPS。公网 HTTPS 规则排除私有网段，但属于 IP/端口范围规则，不能表达 Casdoor 域名专属允许列表；普通 Kubernetes NetworkPolicy 不支持按域名过滤。独立 Redis 仅允许该代理入站且无出站权限。
+
+输出包含两个 Deployment、两个内部 Service、两条 NetworkPolicy，均在 `oauth` 命名空间。代理以非 root 和只读根文件系统运行，清洗并重新设置用户身份头；实际登录后仍需验证用户标识、伪造身份头拒绝、Cookie、CSRF 和会话隔离。`/ping` 探针只证明代理进程可响应，不能代替真实登录和文稿试做。
+
+离线验证：
+
+```sh
+python -m pytest tests/video_workbench/test_oauth_deploy.py -q
+```
