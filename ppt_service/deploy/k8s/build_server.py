@@ -23,7 +23,8 @@ SERVER_FILES = (
 WEB_FILES = (
     'index.html', 'package.json', 'pnpm-lock.yaml', 'vite.config.ts', 'tsconfig.json',
     'src/main.tsx', 'src/App.tsx', 'src/SourceFiles.tsx', 'src/JobTiming.tsx', 'src/api.ts', 'src/domain.ts', 'src/parse.ts',
-    'src/planning.ts', 'src/styles.css', 'src/useJob.ts', 'src/useParsePolling.ts',
+    'src/planning.ts', 'src/DirectionChooser.tsx', 'src/directionPresentation.ts', 'src/direction-choice.css',
+    'src/styles.css', 'src/useJob.ts', 'src/useParsePolling.ts',
     'src/acceptance/index.ts', 'src/acceptance/AcceptancePanel.tsx',
     'src/acceptance/acceptance.css', 'src/acceptance/client.ts',
     'src/acceptance/contracts.ts', 'src/acceptance/drafts.ts',
