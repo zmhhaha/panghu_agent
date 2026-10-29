@@ -104,6 +104,7 @@ def create_app(*, api_base=None, public_origin=None, static_root=None, transport
         full_path = '/' + path
         workspace = full_path == '/api/v1/research' or full_path.startswith('/api/v1/research/')
         legacy = any(full_path == prefix or full_path.startswith(prefix + '/') for prefix in READ_ROUTES)
+        legacy = legacy or bool(re.fullmatch(r'/scientific-research/[0-9a-f-]{36}/citations', full_path))
         if workspace or legacy:
             user = authenticated_user(request)
             if legacy and request.method not in {'GET', 'HEAD'}:
