@@ -57,6 +57,7 @@ def generate(**changes):
 def test_dual_engine_catalog_matches_real_domain_schemas_and_limits(image_packages):
     public, hosts, summary = generate()
     _Public.model_validate(public)
+    assert public['api']['max_input_bytes'] == 25 * 1024**2
     assert len(public['task_contracts']) == 7
     assert len(public['capability_bundles']) == 2
     assert len(public['execution_bindings']) == len(public['kubernetes_workers']) == len(hosts) == 14
