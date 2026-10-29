@@ -15,6 +15,7 @@ from agent_service.engines import EngineRequest, StopEvidence
 from agent_service import resources, runtime, tool_client, worker_entry
 from agent_service.pi_cage import ACADEMIC_EXTENSION
 from agent_service.registry import DeploymentRegistry, binding_fingerprint
+from agent_service.model_timeouts import buffered_model_idle_timeout
 from test_acceptance_probe import config
 from test_catalog import image_packages
 
@@ -100,13 +101,10 @@ def factory(image_packages, monkeypatch, tmp_path):
 
 @pytest.mark.parametrize('production', [False, True], ids=['candidate', 'production'])
 @pytest.mark.parametrize('profile', sorted(probe.PROFILES))
-def test_real_factories_allow_buffered_ppt_waits_without_changing_research_idle(factory, production, profile):
+def test_real_factories_preserve_shared_buffered_waits_and_original_deadline_policy(factory, production, profile):
     run = factory(profile, production=production)
     settings = run.driver.runtime.settings
-    if profile.startswith('ppt.'):
-        assert settings.idle_timeout_seconds == run.config.profile.max_timeout_seconds
-    else:
-        assert settings.idle_timeout_seconds == 120.0
+    assert settings.idle_timeout_seconds == buffered_model_idle_timeout(run.config.profile.max_timeout_seconds)
     assert run.driver.runtime.profile.policy.max_timeout_seconds == run.config.profile.max_timeout_seconds
 
 
@@ -117,6 +115,8 @@ def test_all_candidate_factories_keep_exact_contract_tools_and_capabilities(fact
     expected = ('text', 'image') if profile in {'ppt.generate.v1', 'ppt.revise.v1'} else ('text',)
     assert driver.runtime.settings.model_input == expected
     assert driver.runtime.settings.model_api == 'openai-responses'
+    assert driver.runtime.settings.idle_timeout_seconds == buffered_model_idle_timeout(
+        driver.runtime.profile.policy.max_timeout_seconds)
     assert driver.runtime.settings.model_env == {'AGENT_MODEL_API_KEY': 'offline-attempt-only-grant'}
     academic = profile in {'research.generate.v1', 'research.retrieve.v1'}
     assert driver.runtime.profile.extension_paths == (

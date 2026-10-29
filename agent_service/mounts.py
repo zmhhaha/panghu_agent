@@ -65,29 +65,41 @@ class ReadOnlyInputs:
             for source, target_name in sources:
                 if source is None:
                     continue
-                source = Path(source)
-                # Domain paths carry a canonical inputs/ or base/ prefix. Mount
-                # that subtree, not a second nested inputs/inputs directory.
-                children = list(source.iterdir())
-                if len(children) != 1 or children[0].name != target_name:
-                    raise ServiceError('input_mount_layout_invalid', 422)
-                child = children[0]
-                info = child.lstat()
-                if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o222:
-                    raise ServiceError('unsafe_input_staging', 503)
-                target = self.workspace / target_name
-                target.mkdir(mode=0o555)
-                if libc.mount(os.fsencode(child), os.fsencode(target), None, MS_BIND, None) != 0:
-                    raise ServiceError('read_only_mount_failed', 503)
-                self.targets.append(target)
-                flags = MS_BIND | MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC
-                if libc.mount(None, os.fsencode(target), None, flags, None) != 0:
-                    raise ServiceError('read_only_mount_failed', 503)
-                if not verified_read_only_mount(target):
-                    raise ServiceError('read_only_mount_unverified', 503)
+                self._mount(libc, source, target_name, target_name)
         except BaseException:
             self.close()
             raise
+
+    def mount_context_view(self, staged):
+        """Fixed host-derived research view; no request-selected mount target."""
+        try:
+            self._mount(self._libc(), staged.root, 'inputs', 'context-view')
+        except BaseException:
+            self.close()
+            raise
+
+    def _mount(self, libc, source, source_name, target_name):
+        source = Path(source)
+        # Domain paths carry a canonical inputs/ or base/ prefix. Mount that
+        # subtree, not a second nested inputs/inputs directory. A derived view
+        # uses the same protected staging primitive with a fixed separate target.
+        children = list(source.iterdir())
+        if len(children) != 1 or children[0].name != source_name:
+            raise ServiceError('input_mount_layout_invalid', 422)
+        child = children[0]
+        info = child.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o222:
+            raise ServiceError('unsafe_input_staging', 503)
+        target = self.workspace / target_name
+        target.mkdir(mode=0o555)
+        if libc.mount(os.fsencode(child), os.fsencode(target), None, MS_BIND, None) != 0:
+            raise ServiceError('read_only_mount_failed', 503)
+        self.targets.append(target)
+        flags = MS_BIND | MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC
+        if libc.mount(None, os.fsencode(target), None, flags, None) != 0:
+            raise ServiceError('read_only_mount_failed', 503)
+        if not verified_read_only_mount(target):
+            raise ServiceError('read_only_mount_unverified', 503)
 
     def close(self):
         if not self.targets:

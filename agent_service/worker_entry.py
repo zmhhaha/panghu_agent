@@ -29,6 +29,7 @@ from .confinement import ensure_controller_confinement
 from .engine_profiles import WorkspaceTaskProfile
 from .engines import NativeOutcome, PiDriver
 from .linux_stop import AGENT_UID, LinuxUidStopController, private_kernel_scope
+from .model_timeouts import buffered_model_idle_timeout
 from .runtime import PiRuntime, RuntimeSettings
 from .pi_cage import PI_CLI, ACADEMIC_EXTENSION
 from .worker_api import WorkerHost, create_worker_app
@@ -381,17 +382,15 @@ def _check_bound_pi(config, policy, resource_hash):
 
 
 def build_pi_runtime_settings(policy: ProfilePolicy, **values) -> RuntimeSettings:
-    """Keep buffered PPT model calls inside their original execution budget.
+    """Share buffered-model tolerance across production and candidate drivers.
 
     The task proxy persists a complete response before Pi receives its events.
-    A valid PPT inference can therefore produce no child output for more than
+    A valid inference can therefore produce no child output for more than
     the general 120-second idle limit. The runtime still checks the immutable
     per-job absolute deadline first; this ceiling never grants extra time.
-    Other domains retain RuntimeSettings' existing idle default.
+    Preserve the shared service's timeout policy for research as well as PPT.
     """
-    if policy.name in {'ppt.' + phase + '.v1' for phase in
-            ('plan_initial', 'plan_options', 'prepare', 'generate', 'revise')}:
-        values['idle_timeout_seconds'] = policy.max_timeout_seconds
+    values['idle_timeout_seconds'] = buffered_model_idle_timeout(policy.max_timeout_seconds)
     return RuntimeSettings(**values)
 
 

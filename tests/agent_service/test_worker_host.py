@@ -12,6 +12,7 @@ import pytest
 
 from agent_service.contracts import ExecutionEnvelope, ProfilePolicy, ServiceError
 from agent_service.engines import EngineRequest
+from agent_service.model_timeouts import buffered_model_idle_timeout
 from agent_service.linux_stop import KernelScope, LinuxUidStopController, StopScopeError, private_kernel_scope
 from agent_service.worker_entry import (CapsuleScope, HostConfig, HostSecrets, ProxyModel,
                                        ScopedWorkerHost, WorkerConfigError, accepted_host, build_pi_driver)
@@ -166,7 +167,8 @@ def test_proxy_credentials_cannot_be_partial_or_printed():
     assert value.model_proxy_token.get_secret_value() not in repr(value)
 
 
-def test_pinned_pi_configuration_keeps_control_credentials_out_of_agent(monkeypatch):
+@pytest.mark.parametrize('max_timeout_seconds', [60, 600, 1800, 3600])
+def test_pinned_pi_configuration_keeps_control_credentials_out_of_agent(monkeypatch, max_timeout_seconds):
     captured = {}
     class Runtime:
         def __init__(self, settings, *, profile):
@@ -176,11 +178,14 @@ def test_pinned_pi_configuration_keeps_control_credentials_out_of_agent(monkeypa
     class Stopper:
         consumed = False
     monkeypatch.setattr('agent_service.worker_entry.PiRuntime', Runtime)
-    driver = build_pi_driver(config(), credentials(), scope(), Stopper(), acceptance=True, now=lambda: 100)
+    value = config()
+    value = config(profile={**value.profile.model_dump(), 'max_timeout_seconds': max_timeout_seconds})
+    driver = build_pi_driver(value, credentials(), scope(), Stopper(), acceptance=True, now=lambda: 100)
     s = captured['settings']
     assert s.command == ('/usr/local/bin/node', '/usr/local/lib/pi-cage/worker-cli.mjs')
     assert s.model_api == 'openai-responses' and s.fixture_mode is False
     assert s.model_max_tokens == 8192
+    assert s.idle_timeout_seconds == buffered_model_idle_timeout(max_timeout_seconds)
     assert set(s.model_env) == {'AGENT_MODEL_API_KEY'}
     assert TOKEN not in str(s.model_env) and 'c' * 64 not in str(s.model_env)
     assert s.run_uid_start == RUNTIME_UID and s.run_gid == RUNTIME_UID

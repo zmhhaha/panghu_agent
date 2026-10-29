@@ -62,6 +62,18 @@ bash scientific_agent/deploy.sh --kubeconfig /etc/kubernetes/super-admin.conf --
 不要使用旧 `scripts/deploy-ui.sh scientific_agent` 覆盖新 UI，也不要用缺省 Pi 部署脚本
 把业务执行后端改回独立 Worker。
 
+模型代理先完整保存单次 Responses 响应，再将同一响应交给任务执行器。代理的网络读
+等待上限为 600 秒；持续收到数据时，完整缓冲可能更久。使用该代理的 Pi 驱动按合同的
+阶段总时限设置无输出容差，且不低于 630 秒；科研阶段仍先受 1800 秒绝对截止时间和
+取消检查约束。直接连接模型的原生驱动仍默认 120 秒。较长的单次模型等待不会延长整个
+阶段的时限，不要只调业务 HTTP 超时来处理此类问题。
+
+首次真实业务验收曾在检索完成三个学术调用后，等待下一次模型响应时触发
+`runtime_idle_timeout`：代理允许的等待时间大于执行器原来的 120 秒无输出时限。
+修复需要重新构建执行镜像，并为四个新阶段取得新镜像的独立验收；不能沿用旧镜像的
+验收记录。已失败任务和不确定模型请求账本保留，用户明确重试会创建新的有限任务，
+不会再次提交原来那个不确定模型请求。
+
 需要回退时，用本次 `rendered/deploy-*/api-rollback.json` 和 `ui-rollback.json`
 执行 `kubectl patch --type=json --patch-file …`。新入口网络策略可保留，它允许同一个
 既有 SSO 代理访问恢复后的旧页面；回退不删除新项目或旧报告。

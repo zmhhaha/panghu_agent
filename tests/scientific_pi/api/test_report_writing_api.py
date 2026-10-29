@@ -67,6 +67,32 @@ class ReportWritingAPITests(unittest.TestCase):
         self.assertEqual(response.json()['source_sha256'], self.index['report_sha256'])
         self.assertEqual(len(self.database.sql), before)
 
+    def test_report_and_version_download_headers_reject_topic_control_characters(self):
+        topics = ('Synthetic\r\nHeader: injected', 'Synthetic\t title\nsecond line',
+                  'Synthetic\x00\x1f\x7f title', '科研报告', '', 'a' * 80)
+        for number, topic in enumerate(topics):
+            with self.subTest(number=number):
+                self.database.connection.execute('UPDATE scientific_reports SET topic=? WHERE id=?',
+                    (topic, self.task_id))
+                self.database.connection.commit()
+                # Version creation already rejects NUL; legacy SQL rows can
+                # still contain it. Both paths must emit bounded safe headers.
+                version = self.app.state.versions.ensure_base('trusted-user',
+                    str(uuid.uuid4()), self.REPORT, topic.replace('\x00', ''))
+                for path in ('/scientific-download/' + self.task_id,
+                             '/scientific-report-versions/' + version['version_id'] + '/download'):
+                    response = self.client.get(path)
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertEqual(response.content, self.REPORT.encode('utf-8'))
+                    header = response.headers['content-disposition']
+                    self.assertRegex(header, r'^attachment; filename=[A-Za-z0-9_-]{1,40}\.md$')
+                    self.assertTrue(all(32 <= ord(char) < 127 for char in header))
+                    self.assertNotIn('header', response.headers)
+        self.database.connection.execute('UPDATE scientific_reports SET topic=? WHERE id=?', ('', self.task_id))
+        self.database.connection.commit()
+        self.assertEqual(self.client.get('/scientific-download/' + self.task_id).headers['content-disposition'],
+                         'attachment; filename=review.md')
+
     def test_preparation_persists_exact_input_and_never_dispatches(self):
         response = self.prepare()
         self.assertEqual(response.status_code, 200, response.text)

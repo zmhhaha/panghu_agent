@@ -608,7 +608,8 @@ def create_app(database=None, worker=None, projection=None, start_reconciler=Tru
     return app
 
 def _safe_filename(topic):
-    safe = re.sub(r'[^\x00-\x7F]+','',topic)
-    return (re.sub(r'[^\w\s-]','',safe).strip()[:40].replace(' ','_') or 'review')+'.md'
+    safe = re.sub(r'\s+', '_', (topic or '').strip())
+    safe = re.sub(r'[^A-Za-z0-9_-]', '', safe)[:40]
+    return (safe or 'review')+'.md'
 
 app = create_app()

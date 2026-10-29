@@ -1,12 +1,19 @@
 """Pinned repository entry and identity gates; no model or production acceptance."""
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 import sys
+import threading
+import time
+from uuid import uuid4
 
 import pytest
 
 from agent_service.engine_profiles import WorkspaceTaskProfile
+from agent_service.engines import EngineRequest
+from agent_service.model_timeouts import buffered_model_idle_timeout
 from agent_service.pi_cage import PI_CLI, PI_PACKAGE, PI_VERSION
 from agent_service.runtime import PiRuntime, RuntimeExecutionError, RuntimeSettings
 from agent_service.runtime import adapter
@@ -31,6 +38,40 @@ def runtime(**changes):
         **changes)
     return PiRuntime(settings, profile=WorkspaceTaskProfile(
         runtime_revision='fixture-runtime', skill_bundle_revision='fixture-bundle'))
+
+
+@pytest.mark.parametrize('maximum,expected', [(60, 630.0), (600, 630.0), (1800, 1800.0), (3600, 3600.0)])
+def test_buffered_proxy_wait_follows_policy_without_changing_native_idle_default(maximum, expected):
+    assert RuntimeSettings().idle_timeout_seconds == 120.0
+    assert buffered_model_idle_timeout(maximum) == expected
+
+
+@pytest.mark.parametrize('stop', ['deadline', 'cancel'])
+def test_buffered_proxy_idle_does_not_extend_execution_deadline_or_delay_cancel(tmp_path, stop):
+    """Run a silent subprocess; no real model, proxy grant or network access."""
+    fake = Path(__file__).with_name('fixtures') / 'fake_pi.py'
+    skill = tmp_path / 'SKILL.md'
+    skill.write_text('# Offline fixture skill\n', encoding='utf-8')
+    value = runtime(fixture_mode=True, idle_timeout_seconds=buffered_model_idle_timeout(1800),
+                    term_grace_seconds=.1, kill_grace_seconds=1)
+    value.settings = replace(value.settings,
+        command=(sys.executable, str(fake), 'idle'), node_command=(sys.executable, str(fake), 'node'),
+        skill_paths=(skill,), skill_hashes=(hashlib.sha256(skill.read_bytes()).hexdigest(),))
+    cancel, launched = threading.Event(), threading.Event()
+    def emit(event):
+        if event['type'] == 'runtime_started':
+            launched.set()
+            if stop == 'cancel':
+                cancel.set()
+    request = EngineRequest(str(uuid4()), 'workspace-task.v1', {'prompt': 'Offline bounded fixture'}, 30,
+        datetime.now(timezone.utc) + timedelta(seconds=.8 if stop == 'deadline' else 30))
+    started = time.monotonic()
+    with pytest.raises(RuntimeExecutionError) as failed:
+        value.execute(value.profile.make_wire(request), tmp_path / 'attempt', emit, cancel)
+    assert launched.is_set()
+    assert failed.value.code == ('timed_out' if stop == 'deadline' else 'cancelled')
+    assert time.monotonic() - started < 5
+    assert not list((tmp_path / 'attempt' / '.home').glob('runtime-*.json'))
 
 
 @pytest.mark.parametrize('command', [
