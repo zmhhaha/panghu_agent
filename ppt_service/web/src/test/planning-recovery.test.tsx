@@ -115,7 +115,7 @@ describe('planning failure recovery from server history',()=>{
   vi.mocked(api.job).mockResolvedValue(finished);
   await act(async()=>event({seq:3,type:'job.succeeded',payload:{}}));
   await screen.findByRole('radio',{name:'选择方案 B'});
-  expect(screen.getByText(/规划完成不会自动制作演示稿/)).toBeInTheDocument();
+  expect(screen.getByRole('region',{name:'比较设计方案'})).toBeVisible();
   for(const radio of screen.getAllByRole('radio'))expect(radio).not.toBeChecked();
   expect(screen.getByRole('button',{name:'确认所选完整方案'})).toBeDisabled();expect(screen.queryByRole('button',{name:'生成演示稿'})).not.toBeInTheDocument();
   expect(api.confirm).not.toHaveBeenCalled();expect(api.generate).not.toHaveBeenCalled();expect(api.plan).not.toHaveBeenCalled();
