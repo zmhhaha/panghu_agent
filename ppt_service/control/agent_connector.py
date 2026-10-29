@@ -300,6 +300,14 @@ class AgentConnector:
             out, job, _, _ = self._fenced(s, jid)
             task = copy.deepcopy(out.request['task'])
             target = self.config.data_root / f'projects/{job.project_id}/agent-results/{jid}/{out.fencing_token}'
+        # Only complete files enter the candidate tree. A killed controller may
+        # leave this private scratch file; it is outside the measured project
+        # roster and is discarded before resuming the same remote download.
+        pending = target.with_name('.' + target.name + '-download')
+        if pending.exists() or pending.is_symlink():
+            with open_regular(pending.parent, pending.name, 64 * 1024**2):
+                pass
+            pending.unlink()
         require_storage(self.config, listing.get('total_bytes', 256 * 1024**2))
         target.mkdir(parents=True, exist_ok=True)
         total = 0
@@ -314,8 +322,18 @@ class AgentConnector:
                 require(len(raw) == row['size'] and hashlib.sha256(raw).hexdigest() == row['sha256'], 'agent_artifact_integrity_invalid')
                 path.parent.mkdir(parents=True, exist_ok=True)
                 # The private controller tree is inaccessible to the remote worker.
-                with path.open('xb') as stream:
+                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, 'O_NOFOLLOW', 0)
+                with os.fdopen(os.open(pending, flags, 0o600), 'wb') as stream:
                     stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+                require(not path.exists() and not path.is_symlink(), 'agent_snapshot_changed')
+                os.replace(pending, path)
+                if os.name == 'posix':
+                    for directory in (path.parent, pending.parent):
+                        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                        try:
+                            os.fsync(descriptor)
+                        finally:
+                            os.close(descriptor)
             require(len(raw) == row['size'] and hashlib.sha256(raw).hexdigest() == row['sha256'], 'agent_artifact_integrity_invalid')
         require(total == listing['total_bytes'], 'agent_artifact_integrity_invalid')
         cp = read_json(target / 'result', 'checkpoint.json')

@@ -9,6 +9,7 @@ import copy
 from datetime import timedelta, timezone
 import hashlib
 import json
+import os
 import time
 from types import SimpleNamespace
 from uuid import uuid4
@@ -235,6 +236,65 @@ def test_planning_roundtrip_uses_two_database_confirmations_and_artifact_replay(
     assert all('engine' not in body for body in service.submissions)
     assert all(row['decision'] == 'candidate_received' for row in service.acks)
     assert len(service.submissions) == 2
+
+
+def test_interrupted_artifact_write_resumes_download_without_resubmitting_model_job(database, monkeypatch):
+    control, service = connector(database)
+    assert control.tick()['status'] == 'uploading'
+    assert control.tick()['status'] == 'submitted'
+    with database.sessions() as session:
+        out = session.get(AgentOutbox, database.job_id)
+        remote_id = out.remote_job_id
+        deadline = session.get(Job, database.job_id).deadline
+        target = database.root / f'projects/{database.project_id}/agent-results/{database.job_id}/{out.fencing_token}'
+    first = service.artifact_manifest(remote_id)['files'][0]
+    downloaded = []
+    download = service.download_artifact
+
+    def observed_download(artifact_id):
+        downloaded.append(artifact_id)
+        return download(artifact_id)
+
+    monkeypatch.setattr(service, 'download_artifact', observed_download)
+    fsync = os.fsync
+
+    def interrupted_write(descriptor):
+        # Simulate process death after a partial local write reached storage.
+        # No ordinary exception handler can turn this into a rejected result.
+        os.ftruncate(descriptor, 1)
+        fsync(descriptor)
+        raise SystemExit('synthetic controller interruption')
+
+    with monkeypatch.context() as interrupted:
+        interrupted.setattr(os, 'fsync', interrupted_write)
+        with pytest.raises(SystemExit, match='synthetic controller interruption'):
+            control.tick()
+    pending = target.with_name('.' + target.name + '-download')
+    assert pending.is_file() and pending.stat().st_size == 1
+    assert not (target / first['name']).exists()
+    with database.sessions() as session:
+        job = session.get(Job, database.job_id)
+        assert job.stopped is True and job.status == 'collecting'
+        assert session.get(ExecutionSlot, 1).job_id == job.id
+        assert not session.scalars(select(Plan)).all()
+
+    restarted = AgentConnector(database.sessions, RuntimeConfig(database.root), service, PlanningValidator(),
+        settings=AgentConnectorSettings(enabled=True))
+    assert restarted.tick()['status'] == 'mapped'
+    assert restarted.tick()['status'] == 'acknowledged'
+    assert not pending.exists()
+    assert downloaded.count(first['artifact_id']) == 2
+    assert len(service.submissions) == len(service.acks) == 1
+    for row in service.artifact_manifest(remote_id)['files']:
+        raw = (target / row['name']).read_bytes()
+        assert len(raw) == row['size'] and hashlib.sha256(raw).hexdigest() == row['sha256']
+    with database.sessions() as session:
+        job = session.get(Job, database.job_id)
+        out = session.get(AgentOutbox, job.id)
+        assert job.status == 'succeeded' and job.deadline == deadline
+        assert out.remote_job_id == remote_id and out.state == 'mapped' and out.acked is True
+        assert session.get(ExecutionSlot, 1).job_id is None
+        assert len(session.scalars(select(Plan)).all()) == len(session.scalars(select(Checkpoint)).all()) == 1
 
 
 @pytest.mark.parametrize('changed', ['unconfirmed', 'selection', 'snapshot'])
