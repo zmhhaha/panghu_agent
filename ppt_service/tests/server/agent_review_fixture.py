@@ -120,7 +120,7 @@ def seed_agent_review(app, owner, engine='pi'):
             'attempt': {'attempt_id': attempt_id, 'fence': 2},
             'stop_proof': {'attempt_id': attempt_id, 'fence': 2, 'stop_proven': True, 'resource_ids': ['synthetic-pod']}}
         remote_hash = put(source_key + '/remote-job.json', {'remote': remote, 'artifact_manifest_sha256': 'd' * 64})['sha256']
-        service_ref = {'checkpoint_id': str(uuid4()), 'sha256': 'e' * 64, 'format': 'artifact-tree-v1'}
+        service_ref = {'checkpoint_id': str(uuid4()), 'sha256': 'e' * 64, 'format': 'workspace-tree.v1'}
         meta = {'schema_version': 1, 'checkpoint_format': 'ppt-agent-artifacts-v1', 'agent_checkpoint': cp,
             'service_checkpoint_ref': service_ref, 'project_root': 'deck', 'input_snapshot_sha256': snapshot['hash'],
             'status': 'review', 'eligible_as_revision_base': False,
@@ -157,7 +157,7 @@ def seed_agent_review(app, owner, engine='pi'):
         session.flush()
         session.add(Version(id=vid, project_id=pid, issuer=owner.issuer, subject=owner.sub, job_id=jid,
                             checkpoint_id=cid, status='review', manifest=public, artifact_root=artifact_key))
-        task = {'phase': 'generate', 'business_job_id': jid, 'project_id': pid,
+        task = {'schema_version': 'ppt-generate.v1', 'phase': 'generate', 'business_job_id': jid, 'project_id': pid,
                 'input_snapshot_sha256': snapshot['hash'], 'input_snapshot': {key: snapshot[key]
                     for key in ('project_id', 'title', 'settings', 'assets')}, 'confirmations': confirmations}
         session.add(AgentOutbox(job_id=jid, attempt=1, fencing_token=fence, business_ref=business_ref,

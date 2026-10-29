@@ -343,6 +343,12 @@ class ReviewContextResolver:
                 and out.result.get('status') == 'review' and out.result.get('version_id') == version.id
                 and out.remote_job_id == cp['source_job_id'] == job.run_id
                 and out.checkpoint_ref == meta['service_checkpoint_ref'])
+        reference = meta['service_checkpoint_ref']
+        require(isinstance(reference, dict) and set(reference) == {'checkpoint_id', 'sha256', 'format'}
+                and isinstance(reference['checkpoint_id'], str)
+                and str(UUID(reference['checkpoint_id'])) == reference['checkpoint_id']
+                and isinstance(reference['sha256'], str) and SHA.fullmatch(reference['sha256'])
+                and reference['format'] == 'workspace-tree.v1')
         pins = out.remote_pins
         require(isinstance(pins, dict) and pins.get('engine') in ('pi', 'hermes')
                 and pins.get('profile') == 'ppt.' + job.kind + '.v1'
@@ -353,6 +359,7 @@ class ReviewContextResolver:
         task = out.request['task']
         require(out.request.get('profile') == pins['profile']
                 and out.request.get('business_ref') == out.business_ref
+                and task.get('schema_version') == 'ppt-' + job.kind + '.v1'
                 and task.get('phase') == job.kind and task.get('business_job_id') == job.id
                 and task.get('project_id') == project.id
                 and task.get('input_snapshot_sha256') == job.input_snapshot['hash']
