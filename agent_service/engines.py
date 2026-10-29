@@ -314,6 +314,10 @@ class PiDriver(_BaseDriver):
         if not proof.all_writers_stopped:
             raise ValueError('Cannot unmount inputs before all writers stop')
         profile = getattr(self.runtime, 'profile', None)
+        release_inputs = getattr(profile, 'release_inputs', None)
+        if callable(release_inputs):
+            release_inputs()
+            return
         if getattr(profile, '_mounts', None) is not None:
             profile._mounts.close()
             profile._mounts = None

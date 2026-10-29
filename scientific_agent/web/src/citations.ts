@@ -1,6 +1,24 @@
 // Change citation text nodes only. Code, existing links and source definitions
 // retain their original Markdown meaning and never become citation controls.
 interface MarkdownNode {type:string;value?:string;url?:string;children?:MarkdownNode[];}
+
+// Hide only canonical trace comments in the rendered tree. Code and escaped
+// examples are different Markdown node types; the stored report stays intact.
+export function remarkClaimMarkers(){
+  return (tree:MarkdownNode)=>{
+    function walk(node:MarkdownNode){
+      if(!node.children)return;
+      node.children=node.children.filter(child=>{
+        if(child.type!=='html'||!child.value)return true;
+        const marker=/^<!-- claim:([^<>\r\n]+?) -->$/.exec(child.value.trim());
+        return !marker||!marker[1].trim();
+      });
+      node.children.forEach(walk);
+    }
+    walk(tree);
+  };
+}
+
 export function remarkCitations(){
   return (tree:MarkdownNode)=>{
     function walk(node:MarkdownNode){

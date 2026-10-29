@@ -131,3 +131,152 @@ papers/evidence/references 均未变化；这项仍仅是离线兼容验证。
 该目录下 `verified-revision/summary.json`。五个候选验证本身不改生产配置。正式 Jobs
 HTTP、默认检索策略、从新 Draft 发起修订及远端 delivery ack 仍须独立验收，不能由本页
 的隔离数据库发布结果替代。
+
+## r3：正式输入读取与全文披露误判修复（实际验收待完成）
+
+r1、r2 的候选和失败记录继续保留。之后两个浏览器大纲任务
+`f6db7b0b-6f6e-4598-b075-e9dd6b02b47c`、
+`83705d37-558e-49ba-af3f-9cc8e9bf7c0b`，以及正式 HTTP Draft 任务
+`1fb50167-0cc8-4f26-931f-9463e0d4c178` 均停止于 `worker_output_invalid`。
+诊断阶段停止新增模型重试，使用受保护的原 context、模型返回与落盘输出在精确 r2
+镜像中离线复验；没有覆盖失败历史、改写已确认快照或放宽引用校验。
+
+两类真因已通过实际失败输入确认：
+
+- **大纲输入无法完整读取。** 两次 context 分别为 84,195、85,186 字节，均只有一行。
+  Pi 0.99.2 的 `read` 每次最多 50 KiB 或 2,000 行，只支持按行 offset；大于 50 KiB 的
+  单行无法靠继续读取下一行恢复。将纳入来源由 20 条缩为 7 条仍保留历史检索批次与
+  观测，因而没有消除该问题。实际输出的 gaps 明确记录读取上限和无法读取，evidence
+  与 sections 均为空；契约按原规则拒绝空 sections。
+- **全文披露检测跨越了语法分句。** 实际 Draft 引用行中的技术短语为
+  `已获取摘要，无全文`；旧正则将“获取”与逗号后的“全文”连在一起，误判为已取得全文。
+  新匹配要求获取/阅读动作与全文对象处于同一分句；否定语句也仅作用于其本地分句，
+  转折或分号之后的真实全文获取断言仍被拒绝。没有跳过 References，也没有把所有
+  包含“无”的句子全局放行。完整 claims、citations、访问级别与来源校验保持原规则。
+
+提交 `94bac87670d96d40ee27eb80de0880ed81d27f02` 保留唯一传输文件
+`inputs/context.json` 的原字节、已确认对象与 digest。
+Controller 先只读挂载并校验它，再生成独立的 `context-view/`：
+
+- `START.json`、brief 和来源索引引导当前阶段读取；纳入来源单独保留最新完整原记录，
+  不合并字段、不替换来源，也不提升访问级别。完整结构视图保留历史与排除来源。
+- 结构 JSON 使用 `indent=0`，按行分页时不会因嵌套缩进产生体积放大。长字符串使用
+  `$readable_string`，每块不超过 16 KiB UTF-8 与 1,024 行，并记录顺序、大小和哈希。
+  长 key、过长 JSON pointer、深层或过宽的不透明 JSON 使用 `$readable_json`，在进入
+  不可读 key 前将原子树的 canonical JSON 分块；按序连接、解析后恢复原对象。
+  原内容中的同名保留标签作为原始数据编码，不冒充 host 描述符。
+- 派生文件在构造和迭代编码时即检查 64 MiB 单文件、128 MiB 总量与 40,000 文件预算，
+  先于 InlineFile/base64 创建；不依赖最后的 staging 检查才发现超限。manifest 记录
+  原文件字节哈希、context digest 与派生文件/字符串/子树映射。
+- 派生来源经原有受保护 staging 创建，固定 bind 到 `context-view/`，独立核验
+  `ro,nosuid,nodev,noexec`。该目录进入 protected_paths，避免任务 UID 接管其所有权。
+  Pi 与 Hermes 的生产释放入口统一先证明 writers 已停止、成功卸载，再清理 backing；
+  失败保留引用与不确定状态。没有新增 Agent 工具、shell、网络出口或 capability。
+
+AppArmor 只追加以下三条固定规则；原 inputs/base 规则及其拒绝项保留。节点必须解析、
+装载后用实际新镜像验证，文件存在或构建完成不代表内核已允许该挂载：
+
+```text
+mount options=(bind) /run/agent-control/research-context-views/*/inputs/ -> /work/*/context-view/,
+remount options=(ro,bind,nosuid,nodev,noexec) /work/*/context-view/,
+umount /work/*/context-view/,
+```
+
+模型提示补充了非空 sections、未记录方法应标为 unknown、claim 段落与访问披露要求，
+并要求新大纲标题使用单行、无首尾或重复空白的纯文本。**本次未修改标题 schema、
+未规范化已确认标题、未重写历史快照。** 现有大纲校验仍可能接受带换行或不规范空白
+的旧标题，而 Markdown 章节索引会折叠空白；这种输入的后续 draft 仍可能触发
+`workflow_draft_outline_mismatch`。统一用户编辑约束和历史标题匹配规则需要独立修复，
+不能由本次提示词改进宣称已解决。
+
+本机最终定向验证为 **147 passed、4 项 Windows 平台跳过、30 subtests passed**；
+`git diff --check` 通过。覆盖完整 UTF-8/换行材料重组、50 KiB 以上单行摘要、原 digest
+保持、60,000 字符 key、400 层嵌套与 85,000 个短数组元素、原始保留标签、来源 ID 碰撞、
+构造期预算、固定挂载与失败清理、生产 Pi/Hermes 释放入口，以及披露语句正反转折。
+这组测试没有运行模型，也不证明 Linux 内核挂载或线上任务已通过。
+
+服务器已使用正常构建入口完成以下精确镜像的构建与推送：
+
+- control：`arm-cluster-master:5000/agent-service-control@sha256:7bc5dc06e7ddff9beacf4fcf7fd731bc70e5b55e7e51a38851ead53ed716f619`。
+- Pi：`arm-cluster-master:5000/agent-service-pi@sha256:8ceb1ce6c95db2255b15b0b176aa97124e165de8022f3c9d402e1f57bdc6e26b`。
+
+本条记录时，r3 的节点规则实际装载、新镜像降权只读挂载探针、真实旧输出离线复验、
+新原生候选、正式 HTTP 与浏览器全流程仍待完成；尚不能登记新 acceptance 或将这些
+步骤标记为通过。后续需在保留本节诊断和全部失败历史的基础上追加实际证据。
+
+### r3 后续：五项原生候选与离线独立保留审查
+
+上述待验收状态之后，r3 的 plan/retrieve/outline/draft 与独立 revise 五项真实原生候选
+均已通过。下表仅转录四阶段摘要中的 Job/Attempt 前八位；完整 UUID、固定镜像、
+执行绑定、结果摘要与模型账本见服务器 `evidence/candidate-wf-<stage>-r3/` 及
+`scientific-workflow-candidate-canary-r3/<stage>/verified-summary.json`。
+
+| 合同 | Job 前八位 | Attempt 前八位 | 模型请求 |
+| --- | --- | --- | --- |
+| plan | `0da9870f` | `1b26ab06` | 5 |
+| retrieve | `87962966` | `5bdb2a17` | 8 |
+| outline | `6b407744` | `871959b4` | 6 |
+| draft | `f577d17e` | `9081cac7` | 6 |
+
+四阶段共 25 条模型请求，隔离项目按明确标记的运维测试身份推进两个确认门，停写产物
+经独立合同校验后入隔离业务库并读回。该验证没有冒充用户确认，没有使用生产业务库，
+也没有伪造远端 delivery ack；总摘要为
+`scientific-workflow-candidate-canary-r3/summary.json`。
+
+独立 revise 又执行 4 条模型请求，五项合计 **29 条**。其永久消费 UID 为
+`42000142–42000144`；证据为 `evidence/candidate-wf-revise-r3/`，独立发布摘要为
+`research-business-r4/revision-candidate-workflow-r3/verified-revision/summary.json`。
+这次新修订仍以既有真实生成 `evidence/candidate-pi-research-r4/` 为父报告；它不能被
+记录成“从 r3 Draft 发起了第五次真实修订”。r3 Draft 的离线 compose 兼容检查与这项
+真实 revise 具有不同父输入和验收范围。
+
+新镜像的候选证据已经过离线独立导入，并审查生产目录替换方案的历史保留范围，
+结果位于 `scientific-workflow-promotion-r3/final/`：
+
+- `config.public.json` SHA256：
+  `1822a9d342e3f0e35c6583cb2d6340059d8a42a3e0c2ed154e9c8847fb9614b3`。
+- 独立 preservation review SHA256：
+  `4811c21850d0f3a4c91750892ed2a9a43cc5d65789fa42e0b6eb4c91150437bf`。
+
+原 generate 与旧执行绑定、历史池和宿主按保留审查范围继续留存，不通过覆盖历史
+ConfigMap 或修改旧任务的 pins 完成切换。离线导入和原生候选结果尚不能证明正式
+Jobs HTTP、业务发布/接收回执、从新 Draft 修订及浏览器操作均已通过；这些实际发布
+验证仍须继续追加独立记录。
+
+### r3 后续：正式部署与历史保留核对
+
+审定目录 `scientific-workflow-promotion-r3/final/` 已完成正式部署。运行中的 control
+镜像为
+`arm-cluster-master:5000/agent-service-control@sha256:7bc5dc06e7ddff9beacf4fcf7fd731bc70e5b55e7e51a38851ead53ed716f619`，
+plan/retrieve/outline/draft/revise 五条科研路由使用本节记录的精确 Pi 镜像
+`sha256:8ceb1ce6c95db2255b15b0b176aa97124e165de8022f3c9d402e1f57bdc6e26b`。
+业务 API 也已正常部署新独立镜像（摘要前缀 `dd211ece`；完整摘要以本轮 rollout 记录为准），
+UI 保留此前镜像（摘要前缀 `a0a20`），没有借本次控制层切换替换界面。
+
+部署前后独立核对的控制层历史账本完全一致；原执行 binding、历史池和宿主保留。
+切换核对时全局执行槽为 free、next fence 为 15；这是新业务恢复前的核对时点，后续
+正常接收新任务会推进 fence 和槽状态。没有通过清空账本、重建历史绑定或丢弃不确定
+任务完成切换。
+
+历史业务数据只读审计结果位于
+`evidence/scientific-existing-data-readonly-r3.json`，结果为 passed：
+
+- 11 个科研表中的原有 60 行全部保留；10 个非 workspace 表与基线完全一致。
+  workspace 中原有记录完整保留，允许新增工作台项目，不把新增行误计为历史丢失。
+- 原 SQLite 备份 SHA256 为
+  `df9da72c21e7fae156d60a5c922ceaa5adb075229dbaaf715f182dec7f62b0fa`。
+  备份的独立恢复、完整性检查和原行核对通过；只读审计未将恢复副本写回生产。
+- 16 份历史报告与 4 个版本共完成 72 项 HTTP 检查，均为 200，正文哈希匹配。
+  其中 68 项使用记录中的真实归属身份，另 4 项明确标记为旧 shared 数据的运维检查，
+  没有为 ownerless 旧记录伪造用户归属。
+
+正式 HTTP 恢复已接收新的 Draft（Job ID 前八位 `5f67793b`），并保留此前两条 failed
+历史。该尝试随后以 `worker_output_invalid` 结束：远端 Job 为
+`8506cc3f-e83e-403f-b311-64af1706b2a7`，Attempt 为
+`ca208d5b-05e1-4ff1-94d2-176b921942fd`，5 条模型请求均返回 200 SSE。浏览器重新整理
+大纲的另一次尝试（远端 Job 前八位 `5e960200`）在 1 条 200 SSE 模型请求后以
+`model_error` 结束。HTTP 200 只说明传输返回，不证明模型输出或领域成果校验通过。
+
+两项失败记录和原始响应均保留，正在进行离线诊断；不盲目重放相同模型请求，不把
+r3 原生候选通过记成这些实际业务尝试通过。成稿、后续修订、业务发布/接收回执和
+浏览器全流程尚未完成，后续修复及新的独立验收仍须追加记录。

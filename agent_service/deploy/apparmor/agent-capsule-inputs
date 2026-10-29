@@ -1,5 +1,6 @@
 # Candidate node profile: load on each eligible Linux node before enabling a
-# read_only_mounts pool. The two bind mounts and matching remount/unmount are
+# read_only_mounts pool. The fixed input/base/derived-view bind mounts and
+# matching remount/unmount are
 # the only mount operations allowed; no generic mount permission is present.
 # Verify parser/kernel support during the deferred real-host acceptance.
 #include <tunables/global>
@@ -19,10 +20,13 @@ profile agent-capsule-inputs flags=(attach_disconnected,mediate_deleted) {
   capability sys_admin,
   mount options=(bind) /run/agent-control/input-sources/*/inputs/ -> /work/*/inputs/,
   mount options=(bind) /run/agent-control/checkpoint-sources/*/base/ -> /work/*/base/,
+  mount options=(bind) /run/agent-control/research-context-views/*/inputs/ -> /work/*/context-view/,
   remount options=(ro,bind,nosuid,nodev,noexec) /work/*/inputs/,
   remount options=(ro,bind,nosuid,nodev,noexec) /work/*/base/,
+  remount options=(ro,bind,nosuid,nodev,noexec) /work/*/context-view/,
   umount /work/*/inputs/,
   umount /work/*/base/,
+  umount /work/*/context-view/,
   deny mount fstype=proc,
   deny mount fstype=sysfs,
   deny mount fstype=cgroup,

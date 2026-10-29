@@ -213,10 +213,7 @@ class HermesHostDriver:
         proof = self.stop_controller.prove_stopped(request.execution_id)
         if not proof.all_writers_stopped:
             raise ServiceError('writers_not_stopped', 503)
-        if self.profile._mounts is not None:
-            self.profile._mounts.close()
-            self.profile._mounts = None
-        self.profile._context = None
+        self.profile.release_inputs()
 
 
 def build_hermes_driver(config, credentials, scope, stopper, *, acceptance=False):
