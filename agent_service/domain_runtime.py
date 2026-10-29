@@ -82,6 +82,9 @@ class DomainExecutionProfile(ExecutionProfile):
             raise ServiceError('input_staging_not_ready', 503)
         self._mounts = ReadOnlyInputs(workspace, self._context)
         self._mounts.prepare()
+        validate_inputs = getattr(self.impl, 'validate_inputs', None)
+        if validate_inputs is not None:
+            validate_inputs(workspace, wire['task'])
         # All writable output is fresh; an engine session/HOME is never restored.
         (workspace / 'result').mkdir(mode=0o700)
         if self.policy.name.startswith('ppt.'):

@@ -79,7 +79,7 @@ def service(tmp_path):
              'tools/academic/__init__.py', 'scientific_agent/__init__.py']
     names += ['scientific_agent/' + name for name in ('pi_contracts.py', 'pi_citations.py',
         'pi_sections.py', 'pi_revision_contracts.py', 'pi_revision_validation.py',
-        'academic_observations.py')]
+        'academic_observations.py', 'workflow_contracts.py')]
     names += ['scientific_skills/' + name for name in
               ('manifest.json', 'LICENSE', 'task-template.md', 'research-procedure/SKILL.md')]
     for name in names:

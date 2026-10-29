@@ -31,7 +31,8 @@ RESEARCH_REVISION = 'local-procedures-v2'
 RESEARCH_MANIFEST_SHA256 = '34645ae7322a971bc79da2006d8d4faa65ab59075d9720e410be740b0abebd41'
 PPT_PROFILES = tuple('ppt.' + stage + '.v1' for stage in (
     'plan_initial', 'plan_options', 'prepare', 'generate', 'revise'))
-RESEARCH_PROFILES = ('research.generate.v1', 'research.revise.v1')
+RESEARCH_PROFILES = ('research.generate.v1', 'research.revise.v1', 'research.plan.v1',
+                     'research.retrieve.v1', 'research.outline.v1', 'research.draft.v1')
 CATALOG_KEYS = ('task_contracts', 'capability_bundles', 'tool_environments',
                 'execution_bindings', 'routes')
 MAX_FILE_BYTES = 16 * 1024 * 1024

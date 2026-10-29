@@ -19,7 +19,8 @@ from .profiles import implementation
 Tool = Literal['read', 'write', 'bash', 'image', 'academic_search', 'academic_verify']
 OutputSchema = Literal['text-output.v1', 'ppt-plan_initial-output.v1', 'ppt-plan_options-output.v1',
     'ppt-generate-output.v1', 'ppt-revise-output.v1', 'ppt-prepare-output.v1',
-    'research-output.v1', 'research-revision-output.v1']
+    'research-output.v1', 'research-revision-output.v1', 'research-plan-output.v1',
+    'research-retrieve-output.v1', 'research-outline-output.v1', 'research-draft-output.v1']
 
 NAME = r'^[a-z][a-z0-9_.-]{0,79}$'
 REVISION = r'^[A-Za-z0-9_.-]{1,100}$'
@@ -131,7 +132,7 @@ class ToolEnvironment(_Record):
     name: str = Field(pattern=NAME)
     revision: str = Field(pattern=REVISION)
     tools: tuple[Tool, ...] = Field(min_length=2, max_length=6)
-    capabilities: tuple[OutputSchema, ...] = Field(min_length=1, max_length=8)
+    capabilities: tuple[OutputSchema, ...] = Field(min_length=1, max_length=12)
     image_digest: str = Field(pattern=r'^sha256:[0-9a-f]{64}$')
     runtime_revision: str = Field(pattern=REVISION)
 

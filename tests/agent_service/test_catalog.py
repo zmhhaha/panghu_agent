@@ -57,11 +57,11 @@ def generate(**changes):
 def test_dual_engine_catalog_matches_real_domain_schemas_and_limits(image_packages):
     public, hosts, summary = generate()
     _Public.model_validate(public)
-    assert len(public['task_contracts']) == 7
+    assert len(public['task_contracts']) == 11
     assert len(public['capability_bundles']) == 2
-    assert len(public['execution_bindings']) == len(public['kubernetes_workers']) == len(hosts) == 14
+    assert len(public['execution_bindings']) == len(public['kubernetes_workers']) == len(hosts) == 22
     assert len(public['tool_environments']) == 8
-    assert len(public['routes']) == 7
+    assert len(public['routes']) == 11
     assert summary['routes_enabled'] is summary['acceptance_created'] is False
     assert summary['network_requests'] == 0
     assert summary['pi_runtime_requirement']['repository'] == 'https://github.com/zmhhaha/pi-cage'
@@ -94,7 +94,7 @@ def test_dual_engine_catalog_matches_real_domain_schemas_and_limits(image_packag
 
 def test_hermes_only_catalog_never_requires_a_pi_image(image_packages):
     public, hosts, _ = catalog.generate(hermes_image=HERMES, engine='hermes', runtime_revision='runtime-v1')
-    assert len(hosts) == 7
+    assert len(hosts) == 11
     assert all(host['engine'] == 'hermes' for host in hosts.values())
     assert all(route['binding_id'].endswith('-hermes') for route in public['routes'])
 
@@ -146,7 +146,7 @@ def test_public_output_is_complete_and_cannot_replace_an_existing_catalog(image_
     catalog.write_catalog(directory, public, hosts, summary)
     assert json.loads((directory / 'config.public.json').read_bytes()) == public
     assert json.loads((directory / 'summary.json').read_bytes()) == summary
-    assert len(list((directory / 'worker-configs').glob('*/config.json'))) == 14
+    assert len(list((directory / 'worker-configs').glob('*/config.json'))) == 22
     assert summary['public_config_sha256'] == hashlib.sha256(catalog.canonical_bytes(public)).hexdigest()
     with pytest.raises(catalog.CatalogError, match='catalog_output_must_be_empty'):
         catalog.write_catalog(directory, public, hosts, summary)

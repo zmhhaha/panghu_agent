@@ -1,0 +1,19 @@
+ARG NODE_IMAGE=node@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e
+ARG PYTHON_IMAGE=python@sha256:cf50a4f6ac4f026458b08d5222023d700ac806410dff5e9ca8728fa44f2b850f
+FROM ${NODE_IMAGE} AS web
+WORKDIR /build
+COPY scientific_agent/web/package.json scientific_agent/web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY scientific_agent/web/ ./
+RUN npm run build
+
+FROM ${PYTHON_IMAGE}
+WORKDIR /app
+COPY scientific_agent/requirements-api.lock /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt && pip check
+COPY scientific_agent/__init__.py scientific_agent/workbench_server.py /app/scientific_agent/
+COPY --from=web /build/dist/ /app/scientific_agent/web/dist/
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+USER 10000:10000
+EXPOSE 7860
+CMD ["python", "-m", "uvicorn", "scientific_agent.workbench_server:app", "--host", "0.0.0.0", "--port", "7860", "--no-proxy-headers", "--no-access-log"]

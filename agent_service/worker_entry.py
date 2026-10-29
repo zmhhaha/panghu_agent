@@ -413,7 +413,7 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
         resource_root, manifest, manifest_hash, skills, hashes = measured_package(config, policy, CONTROL_ROOT)
         bundle_revision = policy.execution_binding.bundle_revision
         extensions = ((Path(ACADEMIC_EXTENSION),)
-                      if policy.name == 'research.generate.v1' else ())
+                      if policy.name in {'research.generate.v1', 'research.retrieve.v1'} else ())
         profile = DomainExecutionProfile(policy, bundle_revision, extensions=extensions)
         profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL_ROOT
     settings = RuntimeSettings(command=(NODE, PI_CLI), node_command=(NODE,),
@@ -442,7 +442,7 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
             raise ServiceError('model_proxy_grant_invalid', 503)
         return {**profile.make_wire(request), '_runtime_uid': scope.agent_uid}
     driver = PiDriver(runtime, stop_controller, wire_builder=wire, enabled=True)
-    if policy.name == 'research.generate.v1':
+    if policy.name in {'research.generate.v1', 'research.retrieve.v1'}:
         driver.academic_observer = lambda workspace: __import__(
             'agent_service.tool_client', fromlist=['save_academic_observations']).save_academic_observations(
                 config.model.proxy_base_url, secrets.model_proxy_token.get_secret_value(), workspace)

@@ -81,6 +81,39 @@ def write_scenario(root, profile, task, files, *, parent=None, export=False):
     return path, sources, value
 
 
+@pytest.mark.parametrize('stage', ['plan', 'retrieve', 'outline', 'draft'])
+def test_staged_research_candidate_requires_exact_context_and_business_export(image_packages, tmp_path, stage):
+    from test_research_workflow import context, plan_context, outline_context, draft_context, task
+    from scientific_agent.workflow_contracts import canonical_bytes as workflow_bytes
+    ctx = {'plan': context, 'retrieve': plan_context, 'outline': outline_context, 'draft': draft_context}[stage]()
+    profile = 'research.' + stage + '.v1'
+    request = task(stage, ctx)
+    path, sources, _ = write_scenario(tmp_path / 'workspace-candidate', profile, request,
+        {'context.json': workflow_bytes(ctx)}, export=True)
+    policy = host_policy(config(profile))
+    loaded = scenario.load_scenario(path, sources, None, policy)
+    assert loaded.files == {'context.json': workflow_bytes(ctx)}
+    assert loaded.metadata['production_acceptance_created'] is False
+    assert loaded.metadata['business_export_sha256']
+
+
+def test_staged_candidate_without_business_export_or_with_changed_context_is_rejected(image_packages, tmp_path):
+    from test_research_workflow import context, task
+    from scientific_agent.workflow_contracts import canonical_bytes as workflow_bytes
+    ctx = context()
+    profile = 'research.plan.v1'
+    request = task('plan', ctx)
+    path, sources, _ = write_scenario(tmp_path / 'missing-export', profile, request,
+        {'context.json': workflow_bytes(ctx)})
+    with pytest.raises(ServiceError, match='candidate_business_export_required'):
+        scenario.load_scenario(path, sources, None, host_policy(config(profile)))
+    ctx['requirements']['question'] = 'Changed context after freezing task'
+    path, sources, _ = write_scenario(tmp_path / 'changed-context', profile, request,
+        {'context.json': workflow_bytes(ctx)}, export=True)
+    with pytest.raises(ServiceError, match='candidate_workflow_context_invalid'):
+        scenario.load_scenario(path, sources, None, host_policy(config(profile)))
+
+
 def record_stopped_parent(run, artifacts):
     """Synthetic signed result/Pod evidence; never real execution or publication."""
     pod_uid = str(uuid4())

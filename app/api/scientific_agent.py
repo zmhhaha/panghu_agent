@@ -108,7 +108,7 @@ def _send_notification(email, topic, task_id):
     if not send_email(to=email, subject=f'🔬 综述完成: {topic[:30]}', body=f'研究报告已完成。报告 ID: {task_id}。请访问研究助手查看或下载。'):
         raise RuntimeError('Notification delivery was not confirmed')
 
-def create_app(database=None, worker=None, projection=None, start_reconciler=True, versions=None):
+def create_app(database=None, worker=None, projection=None, start_reconciler=True, versions=None, workspace=None):
     database = database if database is not None else getattr(projection, 'db', db)
     if worker is None:
         worker = getattr(projection, 'worker', None)
@@ -132,6 +132,10 @@ def create_app(database=None, worker=None, projection=None, start_reconciler=Tru
             projection = PiProjection(database,worker,os.getenv('SCIENTIFIC_PI_SKILL_BUNDLE_REVISION',''),os.getenv('SCIENTIFIC_PI_RUNTIME_REVISION',''),_send_notification)
     versions = versions if versions is not None else ReportVersionStore(database)
     projection.versions = versions
+    if workspace is None:
+        from scientific_agent.workspace import WorkspaceStore
+        from scientific_agent.workspace_execution import WorkspaceService
+        workspace = WorkspaceService(WorkspaceStore(database), worker)
     stop = threading.Event()
     def reconcile_loop():
         while not stop.is_set():
@@ -142,6 +146,8 @@ def create_app(database=None, worker=None, projection=None, start_reconciler=Tru
             # and idempotency tombstones in one atomic statement.
             try: versions.cleanup_expired()
             except Exception: log.exception('Report evidence cleanup deferred')
+            try: workspace.reconcile_all()
+            except Exception: log.exception('Research workspace reconciliation deferred')
             stop.wait(10)
     @asynccontextmanager
     async def lifespan(app):
@@ -150,6 +156,7 @@ def create_app(database=None, worker=None, projection=None, start_reconciler=Tru
         # rewrite their status. Pi owns recovery through its durable projection.
         projection.initialize()
         versions.initialize()
+        workspace.store.initialize()
         thread = None
         if start_reconciler:
             thread = threading.Thread(target=reconcile_loop,daemon=True)
@@ -161,6 +168,9 @@ def create_app(database=None, worker=None, projection=None, start_reconciler=Tru
     app.add_middleware(CORSMiddleware,allow_origins=['*'],allow_methods=['*'],allow_headers=['*'])
     app.state.projection, app.state.worker = projection, worker
     app.state.versions = versions
+    app.state.workspace = workspace
+    from app.api.scientific_workspace import create_router
+    app.include_router(create_router(workspace))
 
     def worker_error(exc, task_id=None, ambiguous=False):
         raise HTTPException(503 if ambiguous else exc.status,detail={'code':exc.code,'message':str(exc),

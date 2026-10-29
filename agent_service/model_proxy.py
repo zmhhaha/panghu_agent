@@ -296,7 +296,7 @@ class ModelProxy:
             raise ServiceError('research_tool_not_authorized', 403)
         with self.store.engine.connect() as db:
             job = db.execute(select(jobs).where(jobs.c.id == grant['job'])).mappings().one()
-        if job['request']['profile'] != 'research.generate.v1':
+        if job['request']['profile'] not in {'research.generate.v1', 'research.retrieve.v1'}:
             raise ServiceError('research_tool_not_authorized', 403)
         identity = digest(value)
         key = (observations.c.attempt_id == grant['attempt']) & (observations.c.call_sha256 == identity)
@@ -311,6 +311,15 @@ class ModelProxy:
                 observations.c.attempt_id == grant['attempt'])).scalar_one()
             if count >= 100:
                 raise ServiceError('research_tool_budget_exhausted', 429)
+            if job['request']['profile'] == 'research.retrieve.v1' and value['tool'] == 'academic_search':
+                # Admission, including an uncertain prior call, consumes budget.
+                # The attempt lock above serializes the check with insertion.
+                recorded = db.execute(select(observations.c.request).where(
+                    observations.c.attempt_id == grant['attempt'])).scalars().all()
+                searches = sum(json.loads(raw)['tool'] == 'academic_search' for raw in recorded)
+                maximum = job['request']['task']['source_policy']['max_search_calls']
+                if searches >= maximum:
+                    raise ServiceError('research_tool_budget_exhausted', 429)
             db.execute(insert(observations).values(attempt_id=grant['attempt'], call_sha256=identity,
                 created_at=time.time(), state='admitted', request=canonical_bytes(value)))
         from .profiles.research import academic_tool

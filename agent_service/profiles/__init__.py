@@ -12,4 +12,7 @@ def implementation(name):
     if name in {'research.generate.v1', 'research.revise.v1'}:
         from .research import ResearchProfile, ResearchRevisionProfile
         return ResearchProfile() if name == 'research.generate.v1' else ResearchRevisionProfile()
+    if name in {'research.plan.v1', 'research.retrieve.v1', 'research.outline.v1', 'research.draft.v1'}:
+        from .research_workflow import ResearchWorkflowProfile
+        return ResearchWorkflowProfile(name.split('.')[1])
     raise ValueError('No reviewed profile implementation')
