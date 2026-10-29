@@ -94,7 +94,7 @@ class ManifestContracts(unittest.TestCase):
         self.assertEqual(set(owner_data), {'emails'})
         self.assertIsInstance(owner_data['emails'], str)
         self.assertIn('REQUIRED_', self.auth['OIDC_AUDIENCE'])
-        self.assertEqual(self.auth['ALLOWED_ORIGINS'], 'https://ppt.panghuer.top')
+        self.assertEqual(self.auth['ALLOWED_ORIGINS'], 'https://ppt-service.panghuer.top')
         text = yaml.safe_dump(self.all).lower()
         self.assertNotIn('control.dev_site', text)
         self.assertNotIn('llm-service', text)
