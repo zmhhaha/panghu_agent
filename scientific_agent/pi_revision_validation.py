@@ -395,11 +395,21 @@ def _disclosures(report, parsed):
                 # same clause must not inherit an earlier absence statement.
                 direct_absence = (assertion.group().startswith("已") and
                                   re.search(r"无(?:\s*摘要\s*(?:或者|或))?\s*$", prefix))
+                not_equivalent = (assertion.group().startswith("已") and
+                                  re.search(r"不等于\s*$", prefix))
                 if direct_absence:
                     # An outer denial can reverse the absence assertion.
                     # Ambiguous nested negation is not eligible for this narrow
                     # exception, even if it could satisfy the legacy rule.
                     denied = not re.search(r"非|没有|未|不|无法", prefix)
+                elif not_equivalent:
+                    # A link is not acquired full text. Deliberately limit this
+                    # exception to an adjacent, clause-final predicate; do not
+                    # interpret arbitrary suffixes or nested Chinese negation.
+                    outer = prefix[:not_equivalent.start()]
+                    denied = (not re.search(r"非|没有|未|不|无法|否认|否定|"
+                                             r"\b(?:no|not|without|never)\b", outer, re.I)
+                              and not clause[assertion.end():].strip())
                 else:
                     denied = re.search(r"\b(?:no|not|without|never)\b|未|没有", clause, re.I)
                 _require(denied, "missing_evidence_disclosure")

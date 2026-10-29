@@ -24,6 +24,10 @@ def recorded_abstract_only():
     '全部来源均无摘要或者已获取全文。',
     '全部来源均无摘要或已经获取全文。',
     '全部来源均无 摘要 或 已获取全文。',
+    '链接也不等于已获取全文。',
+    '链接并不等于已获取全文。',
+    '链接并不等于已经获取全文。',
+    '链接不等于 已阅读全文。',
 ])
 def test_honest_abstract_access_and_local_fulltext_denials_pass(wording):
     _disclosures('摘要 / abstract evidence only.\n' + wording, recorded_abstract_only())
@@ -79,6 +83,26 @@ def test_honest_abstract_access_and_local_fulltext_denials_pass(wording):
     '没有均无摘要或已获取全文的情况。',
     '未必均无摘要或者已获取全文。',
     '不能断言均无摘要或已获取全文。',
+    '并非链接不等于已获取全文。',
+    '不是不等于已获取全文。',
+    '不能断言链接不等于已获取全文。',
+    '没有链接不等于已获取全文的情况。',
+    '未必链接不等于已获取全文。',
+    '否认链接不等于已获取全文。',
+    '链接不等于已获取全文的说法不成立。',
+    '链接不等于已获取全文并不属实。',
+    '链接不等于已获取全文且本报告已阅读全文。',
+    '链接不等于已获取全文，但随后已获取全文。',
+    '链接不等于摘要且本报告已获取全文。',
+    '链接不等于本报告已获取全文。',
+    '链接不等于，已获取全文。',
+    '链接不等于；已获取全文。',
+    '链接不等于\n已获取全文。',
+    '链接不等于但是已获取全文。',
+    '链接不等于。已获取全文。',
+    '链接不等于已获取全文，另一来源已阅读全文。',
+    '链接不等于已获取全文。已获取全文。',
+    'A link is not 不等于已获取全文。',
 ])
 def test_unsupported_fulltext_assertions_remain_rejected_across_local_contrasts(wording):
     with pytest.raises(RevisionValidationError) as failure:
