@@ -1,4 +1,5 @@
 """Owner-scoped review draft access, without revision or publication authority."""
+import hashlib
 import pytest
 from sqlalchemy import select
 
@@ -13,10 +14,24 @@ def seed_review(app, p):
         v = s.get(Version, vid); v.status = 'review'
         v.manifest = {**v.manifest, 'status': 'review', 'publication_authorization': False,
                       'eligible_as_revision_base': False,
+                      'pptx_sha256': hashlib.sha256((folder / 'deck.pptx').read_bytes()).hexdigest(),
+                      'slides': [{'preview_key': v.manifest['slides'][0]['preview_key'],
+                                  'preview_sha256': hashlib.sha256((folder / '1.png').read_bytes()).hexdigest()}],
                       'required_pending_gates': ['independent_export_build_contract', 'independent_visual_review',
                                                  'powerpoint_open_edit_save_reopen', '/private/internal-file'],
                       'review_evidence': {'storage_key': '/private/diagnostics', 'controller_nonce': 'PRIVATE-NONCE'}}
     return vid, folder
+
+
+@pytest.mark.parametrize('artifact', ['deck.pptx', '1.png'])
+def test_review_download_rejects_changed_bytes_even_when_file_signature_is_valid(ctx, artifact):
+    app, client, _ = ctx
+    current = project(client)
+    version_id, folder = seed_review(app, current)
+    path = folder / artifact
+    path.write_bytes(path.read_bytes() + b' changed after validation')
+    route = '/download' if artifact.endswith('.pptx') else '/slides/1/preview'
+    assert client.get('/api/v1/versions/' + version_id + route).status_code == 404
 
 
 def test_review_list_download_and_preview_keep_owner_acl_and_hide_evidence(ctx):
