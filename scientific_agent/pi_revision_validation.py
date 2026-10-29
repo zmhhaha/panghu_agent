@@ -389,10 +389,12 @@ def _disclosures(report, parsed):
             for assertion in re.finditer(positive, clause, re.I):
                 prefix = clause[:assertion.start()]
                 # "来源均无已获取全文" denies this acquisition predicate.
+                # Also allow the adjacent coordination "无摘要或已获取全文";
+                # no other text, subject or conjunction can bridge the denial.
                 # Apply it per assertion: a later positive acquisition in the
                 # same clause must not inherit an earlier absence statement.
                 direct_absence = (assertion.group().startswith("已") and
-                                  re.search(r"无\s*$", prefix))
+                                  re.search(r"无(?:\s*摘要\s*(?:或者|或))?\s*$", prefix))
                 if direct_absence:
                     # An outer denial can reverse the absence assertion.
                     # Ambiguous nested negation is not eligible for this narrow

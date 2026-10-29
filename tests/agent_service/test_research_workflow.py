@@ -197,8 +197,12 @@ def test_supplemental_batch_selects_latest_whole_observed_record_like_business_t
     assert contracts.source_papers(ctx['evidence_snapshot']) == [changed]
 
 
-def test_draft_collection_produces_fixed_evidence_revision_compatible_bytes(tmp_path):
+@pytest.mark.parametrize('access_note', ['', '》（2025）均无摘要或已获取全文。',
+    '全部来源均无摘要或者已获取全文。'])
+def test_draft_collection_produces_fixed_evidence_revision_compatible_bytes(tmp_path, access_note):
     ctx, output = draft_context(), draft()
+    if access_note:
+        output['report_markdown'] += '\n[1] Synthetic source; ' + access_note + '\n'
     (tmp_path / 'inputs').mkdir()
     (tmp_path / 'result').mkdir()
     (tmp_path / 'inputs/context.json').write_bytes(contracts.canonical_bytes(ctx))
@@ -272,7 +276,8 @@ def test_prelaunch_input_check_rejects_mutated_context_before_tools(tmp_path):
         implementation('research.retrieve.v1').validate_inputs(tmp_path, request)
 
 
-@pytest.mark.parametrize('access_note', ['已获取摘要，无全文。', '全部十项来源均无已获取全文。'])
+@pytest.mark.parametrize('access_note', ['已获取摘要，无全文。', '全部十项来源均无已获取全文。',
+    '》（2025）均无摘要或已获取全文。', '全部来源均无摘要或者已获取全文。'])
 def test_draft_reference_access_notes_do_not_claim_fulltext_acquisition(access_note):
     ctx, output = draft_context(), draft()
     output['report_markdown'] += '\n[1] Synthetic source; ' + access_note + '\n'

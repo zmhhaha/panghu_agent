@@ -20,6 +20,10 @@ def recorded_abstract_only():
     '全部来源均无已经获取全文。',
     '这些来源无已阅读全文的记录。',
     '这些来源均无已获取部分全文。',
+    '》（2025）均无摘要或已获取全文。',
+    '全部来源均无摘要或者已获取全文。',
+    '全部来源均无摘要或已经获取全文。',
+    '全部来源均无 摘要 或 已获取全文。',
 ])
 def test_honest_abstract_access_and_local_fulltext_denials_pass(wording):
     _disclosures('摘要 / abstract evidence only.\n' + wording, recorded_abstract_only())
@@ -61,6 +65,20 @@ def test_honest_abstract_access_and_local_fulltext_denials_pass(wording):
     '均无已经获取全文且已经阅读全文。',
     '无已获取全文且已分析全文。',
     '全部来源均无已获取全文且已获取全文。',
+    '无摘要或本报告已获取全文。',
+    '无摘要或者另一来源已获取全文。',
+    '无其他摘要或已获取全文。',
+    '无摘要及已获取全文。',
+    '无摘要和已获取全文。',
+    '无摘要与已获取全文。',
+    '无摘要或已获取全文且本报告已阅读全文。',
+    '无摘要或者已获取全文且已获取全文。',
+    '无摘要或已获取全文；已阅读全文。',
+    '无摘要但已获取全文。',
+    '并非均无摘要或已获取全文。',
+    '没有均无摘要或已获取全文的情况。',
+    '未必均无摘要或者已获取全文。',
+    '不能断言均无摘要或已获取全文。',
 ])
 def test_unsupported_fulltext_assertions_remain_rejected_across_local_contrasts(wording):
     with pytest.raises(RevisionValidationError) as failure:
