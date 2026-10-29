@@ -51,6 +51,7 @@ def pi_stage_instructions(phase):
     text = stage_instructions(phase)
     text = text.replace("read_file/write_file/patch/search_files/terminal/skill_view", "read/bash/edit/write")
     text = text.replace("write_file/patch", "write/edit").replace("write_file", "write")
+    text = text.replace("read_file/search_files", "read")
     return text + "\nPi 本阶段仅使用 read、bash、edit、write；不得启动后台进程。Agent建议不能代替任何用户确认。\n"
 
 
