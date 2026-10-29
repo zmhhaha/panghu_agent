@@ -11,11 +11,12 @@ import os
 import re
 import stat
 from pathlib import Path
+from uuid import UUID
 
 from pydantic import ValidationError
 from sqlalchemy import select
 
-from ..models import Checkpoint, Job, Project, Version
+from ..models import AgentOutbox, Checkpoint, Job, Project, Version
 from ..repository import Repository
 from ..storage import Storage, safe_key
 from .contracts import PageDescriptor, RuntimeBinding, SourceBinding
@@ -30,6 +31,9 @@ COMPLETED = frozenset(('independent_raster_regeneration_and_binding',
                        'independent_postflight_source_and_quality'))
 SHA = re.compile(r'[a-f0-9]{64}\Z')
 IMAGE = re.compile(r'[^@\s]+@sha256:([a-f0-9]{64})\Z')
+AGENT_FORMAT = 'ppt-agent-artifacts-v1'
+AGENT_PENDING = frozenset(('independent_visual_review', 'independent_postflight_and_delivery'))
+AGENT_COMPLETED = COMPLETED - {'independent_postflight_source_and_quality'}
 
 
 def fingerprint(value):
@@ -171,6 +175,10 @@ class ReviewContextResolver:
 
     def _resolve(self, session, owner, project, version, job, checkpoint):
         public, meta = version.manifest, checkpoint.manifest
+        # Only the explicit portable format enters this path. Historical Hermes
+        # delivery/session checks below retain their complete native contract.
+        if isinstance(meta, dict) and meta.get('checkpoint_format') == AGENT_FORMAT:
+            return self._resolve_agent(session, owner, project, version, job, checkpoint)
         require(isinstance(public, dict) and isinstance(meta, dict)
                 and public.get('status') == meta.get('status') == 'review'
                 and public.get('publication_authorization') is False
@@ -286,3 +294,205 @@ class ReviewContextResolver:
                              current_input_snapshot_sha256=Repository(session).snapshot(project)['hash'],
                              current_source_fingerprint_sha256=receipt['source_fingerprint_sha256'],
                              origin_status='candidate', phase=job.kind)
+
+    def _resolve_agent(self, session, owner, project, version, job, checkpoint):
+        """Bind portable source, remote stop proof and independent validator bytes.
+
+        This web-only reader has no controller/Agent SDK dependency. No report,
+        human observation or generic completed state can authorize publication.
+        """
+        public, meta = version.manifest, checkpoint.manifest
+        require(isinstance(public, dict) and public.get('status') == meta.get('status') == 'review'
+                and public.get('publication_authorization') is False
+                and public.get('eligible_as_revision_base') is meta.get('eligible_as_revision_base') is False
+                and meta.get('schema_version') == 1
+                and meta.get('input_snapshot_sha256') == job.input_snapshot.get('hash'))
+        require(checkpoint.storage_key.startswith(f'projects/{project.id}/checkpoints/')
+                and len(safe_key(checkpoint.storage_key)) == 4)
+        stored, _ = self._json(checkpoint.storage_key + '/checkpoint.json')
+        require(stored == meta)
+        cp = meta['agent_checkpoint']
+        fields = {'schema_version', 'ppt_master_revision', 'project_id', 'source_business_job_id',
+                  'source_job_id', 'source_attempt_id', 'phase', 'input_snapshot_sha256',
+                  'project_root', 'files', 'total_bytes', 'publication_authorized', 'sha256'}
+        require(isinstance(cp, dict) and set(cp) == fields
+                and cp['schema_version'] == 'ppt-artifact-checkpoint.v1'
+                and cp['ppt_master_revision'] == 'c350bc31e6d43b7bcf5234183d650ba8f9f4c9d7'
+                and cp['project_id'] == project.id and cp['source_business_job_id'] == job.id
+                and cp['phase'] == job.kind and cp['input_snapshot_sha256'] == job.input_snapshot['hash']
+                and cp['publication_authorized'] is False
+                and fingerprint({key: value for key, value in cp.items() if key != 'sha256'}) == cp['sha256'])
+        project_root = '/'.join(safe_key(cp['project_root']))
+        require(project_root == meta['project_root'])
+        for identifier in ('project_id', 'source_business_job_id', 'source_job_id', 'source_attempt_id'):
+            require(isinstance(cp[identifier], str) and str(UUID(cp[identifier])) == cp[identifier])
+        rows = self._tree(checkpoint.storage_key + '/project', cp['files'], 256 * 1024**2)
+        require(0 < len(rows) <= 2046 and type(cp['total_bytes']) is int
+                and sum(row['bytes'] for row in rows) == cp['total_bytes']
+                and all(row['path'].startswith(project_root + '/') for row in rows))
+        retained_cp, _ = self._json(checkpoint.storage_key + '/result/checkpoint.json')
+        require(retained_cp == cp)
+        checkpoint_rows = [dict(row, path='project/' + row['path']) for row in rows]
+        checkpoint_rows.extend({'path': key, **self._hash(checkpoint.storage_key + '/' + key)}
+                               for key in ('checkpoint.json', 'result/checkpoint.json'))
+        self._tree(checkpoint.storage_key, checkpoint_rows, 256 * 1024**2 + 8 * 1024**2)
+
+        out = session.get(AgentOutbox, job.id)
+        require(out is not None and out.attempt == job.attempt and out.fencing_token == job.fencing_token
+                and out.state == 'mapped' and isinstance(out.result, dict)
+                and out.result.get('status') == 'review' and out.result.get('version_id') == version.id
+                and out.remote_job_id == cp['source_job_id'] == job.run_id
+                and out.checkpoint_ref == meta['service_checkpoint_ref'])
+        pins = out.remote_pins
+        require(isinstance(pins, dict) and pins.get('engine') in ('pi', 'hermes')
+                and pins.get('profile') == 'ppt.' + job.kind + '.v1'
+                and pins.get('profile_revision') == out.request.get('profile_revision')
+                and isinstance(pins.get('runtime_revision'), str) and bool(pins['runtime_revision'])
+                and isinstance(pins.get('image_digest'), str)
+                and re.fullmatch(r'sha256:[a-f0-9]{64}', pins['image_digest']))
+        task = out.request['task']
+        require(out.request.get('profile') == pins['profile']
+                and out.request.get('business_ref') == out.business_ref
+                and task.get('phase') == job.kind and task.get('business_job_id') == job.id
+                and task.get('project_id') == project.id
+                and task.get('input_snapshot_sha256') == job.input_snapshot['hash']
+                and fingerprint(task['input_snapshot']) == job.input_snapshot['hash'])
+        source_ref = meta['agent_source']
+        require(isinstance(source_ref, dict) and set(source_ref) == {
+                    'storage_key', 'remote_job_sha256', 'artifact_manifest_sha256'})
+        source_key = f'projects/{project.id}/agent-results/{job.id}/{out.fencing_token}'
+        require(source_ref['storage_key'] == source_key)
+        remote_record, remote_hash = self._json(source_key + '/remote-job.json')
+        require(remote_hash == source_ref['remote_job_sha256']
+                and isinstance(source_ref['artifact_manifest_sha256'], str)
+                and SHA.fullmatch(source_ref['artifact_manifest_sha256'])
+                and remote_record.get('artifact_manifest_sha256') == source_ref['artifact_manifest_sha256']
+                == out.result.get('artifact_manifest_sha256'))
+        remote = remote_record['remote']
+        proof, attempt = remote.get('stop_proof'), remote.get('attempt')
+        require(remote.get('job_id') == out.remote_job_id and remote.get('business_ref') == out.business_ref
+                and remote.get('state') == 'completed' and remote.get('pins') == pins
+                and isinstance(attempt, dict) and attempt.get('attempt_id') == cp['source_attempt_id']
+                and isinstance(proof, dict) and proof.get('stop_proven') is True
+                and proof.get('attempt_id') == attempt['attempt_id']
+                and type(attempt.get('fence')) is int and proof.get('fence') == attempt['fence']
+                and bool(proof.get('resource_ids')))
+        self._tree(source_key + '/project', rows, 256 * 1024**2)
+        original_cp, _ = self._json(source_key + '/result/checkpoint.json')
+        manifest, manifest_hash = self._json(source_key + '/result/manifest.json')
+        require(original_cp == cp and manifest.get('phase') == job.kind and manifest.get('status') == 'candidate'
+                and manifest.get('input_snapshot_sha256') == job.input_snapshot['hash']
+                and manifest.get('project_root') == project_root)
+        source_files = [dict(row, path='project/' + row['path']) for row in rows]
+        source_files.extend({'path': key, **self._hash(source_key + '/' + key)}
+                            for key in ('result/manifest.json', 'result/checkpoint.json', 'remote-job.json'))
+        self._tree(source_key, source_files, 256 * 1024**2 + 12 * 1024**2)
+        originals = {row['path'][len(project_root) + 1:]: dict(
+            row, path=row['path'][len(project_root) + 1:]) for row in rows}
+        artifacts = manifest['artifacts']
+        require(isinstance(artifacts, list) and len(artifacts) == len(originals)
+                and len({row['path'] for row in artifacts}) == len(artifacts)
+                and {row['path'] for row in artifacts} == set(originals))
+        for artifact in artifacts:
+            require(all(artifact[name] == originals[artifact['path']][name] for name in ('sha256', 'bytes')))
+
+        evidence = public['review_evidence']
+        require(isinstance(evidence, dict) and evidence.get('kind') == 'agent-validation.v1')
+        nonce = evidence['controller_nonce']
+        require(isinstance(nonce, str) and str(UUID(nonce)) == nonce)
+        evidence_key = (f'projects/{project.id}/agent-results/{job.id}/'
+                        f'agent-validation-{out.fencing_token}-{manifest_hash[:16]}')
+        require(evidence['storage_key'] == evidence_key and evidence['source_manifest_sha256'] == manifest_hash)
+        report, report_hash = self._json(evidence_key + '/validated.json')
+        require(report_hash == evidence['receipt_sha256'] and report.get('manifest') == manifest
+                and report.get('source_manifest_sha256') == manifest_hash
+                and report.get('input_snapshot_sha256') == job.input_snapshot['hash']
+                and report.get('phase') == job.kind and report.get('validation_nonce') == nonce
+                and report.get('status') == 'candidate' and report.get('accepted') is False
+                and report.get('publication_authorized') is False and report.get('programmatic_checks_passed') is True
+                and report.get('evidence', {}).get('official_gates_verified') is True
+                and AGENT_PENDING.issubset(report.get('required_pending_gates', []))
+                and public.get('required_pending_gates') == report.get('required_pending_gates'))
+        transport, _ = self._json(evidence_key + '/transport-manifest.json')
+        require(transport.get('schema_version') == 'ppt-agent-validation-transport.v1'
+                and transport.get('source_manifest_sha256') == manifest_hash
+                and transport.get('validation_nonce') == nonce
+                and transport.get('writers_stopped') is True and transport.get('transport_verified') is True
+                and type(transport.get('sandbox_exit_code')) is int and transport['sandbox_exit_code'] == 0
+                and isinstance(transport.get('sandbox_pod_uid'), str) and bool(transport['sandbox_pod_uid'])
+                and isinstance(transport.get('validation_request_sha256'), str)
+                and SHA.fullmatch(transport['validation_request_sha256'])
+                and isinstance(transport.get('execution_image'), str) and IMAGE.fullmatch(transport['execution_image'])
+                and transport['execution_image'] == evidence['execution_image'])
+        retained = self._tree(evidence_key, transport['files'], exclude=('transport-manifest.json',))
+        require(type(transport.get('bytes')) is int and sum(row['bytes'] for row in retained) == transport['bytes'])
+        programmatic = report['independent_programmatic_evidence']
+        require(isinstance(programmatic, dict))
+        validation_id = programmatic['validation_id']
+        require(isinstance(validation_id, str) and str(UUID(validation_id)) == validation_id)
+        programmatic_key = evidence_key + '/independent/' + validation_id
+        persisted, _ = self._json(programmatic_key + '/programmatic-evidence.json')
+        require(persisted == programmatic and programmatic.get('schema_version') == 1
+                and programmatic.get('issuer') == 'ppt-service-independent-programmatic-runtime-v1'
+                and programmatic.get('controller_nonce') == nonce
+                and programmatic.get('preview_group_stopped') is True and programmatic.get('command_groups_stopped') is True
+                and type(programmatic.get('render_exit_code')) is int and programmatic['render_exit_code'] == 0
+                and type(programmatic.get('delivery_exit_code')) is int and programmatic['delivery_exit_code'] == 0
+                and programmatic.get('independent_visual_review') is False
+                and programmatic.get('full_exporter_postflight_verified') is False
+                and AGENT_COMPLETED.issubset(programmatic.get('completed_programmatic_gates', [])))
+        source = programmatic['source']
+        source_rows = sorted((row for row in originals.values()
+                              if row['path'].split('/', 1)[0] not in CACHE_ROOTS), key=lambda row: row['path'])
+        source_fingerprint = fingerprint(source_rows)
+        require(source_rows and source.get('copied_source_fingerprint') == source_fingerprint
+                == evidence['source_fingerprint_sha256'] and source.get('project_root') == project_root
+                and source.get('source_manifest_sha256') == manifest_hash
+                and source.get('input_snapshot_sha256') == job.input_snapshot['hash'])
+        stored_source, _ = self._json(programmatic_key + '/source-binding.json')
+        require(stored_source == source)
+        pptxs = [row for row in artifacts if row.get('role') == 'pptx']
+        require(len(pptxs) == 1 and source['pptx'] == originals[pptxs[0]['path']])
+        artifact_key = f'projects/{project.id}/versions/{version.id}/review'
+        require(version.artifact_root == artifact_key and public['pptx_key'] == artifact_key + '/presentation.pptx'
+                and public['pptx_sha256'] == source['pptx']['sha256'])
+        delivered = [{'path': 'presentation.pptx', **self._hash(public['pptx_key'])}]
+        require(all(delivered[0][name] == source['pptx'][name] for name in ('sha256', 'bytes')))
+        pages = []
+        require(3 <= len(public['slides']) <= 20 and len(public['slides']) == len(manifest['slides'])
+                == len(source['svg_sources']) == len(programmatic['pngs'])
+                == task['input_snapshot']['settings'].get('page_count', 8))
+        for ordinal, (slide, original, svg, png) in enumerate(zip(
+                public['slides'], manifest['slides'], source['svg_sources'], programmatic['pngs']), 1):
+            require(original['ordinal'] == svg['ordinal'] == png['ordinal'] == ordinal
+                    and original['svg_path'] == svg['path'] == png['svg_path']
+                    and all(svg[name] == originals[svg['path']][name] for name in ('sha256', 'bytes'))
+                    and svg['sha256'] == png['svg_sha256'] == slide['source_sha256']
+                    and slide['preview_key'] == artifact_key + f'/{ordinal}.png'
+                    and slide['title'] == str(original.get('title', ''))[:200]
+                    and slide['preview_sha256'] == png['sha256'])
+            png_key = '/'.join(safe_key(png['relative_path']))
+            actual_png = self._hash(programmatic_key + '/' + png_key)
+            actual = {'path': f'{ordinal}.png', **self._hash(slide['preview_key'])}
+            require(actual_png == {name: png[name] for name in ('sha256', 'bytes')}
+                    and actual_png == {name: actual[name] for name in ('sha256', 'bytes')})
+            delivered.append(actual)
+            pages.append(PageDescriptor(number=ordinal, title=slide['title'],
+                         preview_sha256=actual['sha256'], source_sha256=svg['sha256']))
+        self._tree(artifact_key, delivered, 128 * 1024**2)
+        native = programmatic['native']
+        stored_native, _ = self._json(programmatic_key + '/native-inspection.json')
+        require(stored_native == native)
+        require(type(native.get('chart_count')) is int and native['chart_count'] >= 0
+                and native.get('slide_count') == len(pages)
+                and (not native['chart_count'] or native.get('chart_data_verified') is True))
+        binding = SourceBinding(project_id=project.id, version_id=version.id, source_revision=project.revision,
+            manifest_sha256=manifest_hash, input_snapshot_sha256=job.input_snapshot['hash'],
+            pptx_sha256=public['pptx_sha256'], source_fingerprint_sha256=source_fingerprint,
+            evidence_id=nonce, evidence_sha256=report_hash,
+            runtime=RuntimeBinding(engine=pins['engine'], runtime_revision=fingerprint(pins),
+                                   profile=pins['profile'], checkpoint_format=AGENT_FORMAT))
+        return ReviewContext(owner=owner, binding=binding, source_revision=project.revision, pages=tuple(pages),
+            native_chart_count=native['chart_count'],
+            current_input_snapshot_sha256=Repository(session).snapshot(project)['hash'],
+            current_source_fingerprint_sha256=source_fingerprint, origin_status='candidate', phase=job.kind)

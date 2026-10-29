@@ -177,6 +177,32 @@ def _confirmation(value, stage, snapshot_hash, page_count):
                  and bool(value['design']['production_parameters']), 'ppt_production_parameters_required')
 
 
+def _revision_base(base, project_id, checkpoint_sha256):
+    fields = {'version_id', 'project_id', 'checkpoint_sha256', 'manifest_sha256',
+              'status', 'eligible_as_revision_base'}
+    _require(type(base) is dict, 'ppt_base_version_required')
+    review = base.get('status') == 'review'
+    _require(set(base) == fields | ({'review_authority'} if review else set())
+             and base['project_id'] == project_id
+             and base['checkpoint_sha256'] == checkpoint_sha256,
+             'ppt_base_version_required')
+    _uuid(base['version_id']); _sha(base['manifest_sha256'])
+    if review:
+        authority = base['review_authority']
+        _require(base['eligible_as_revision_base'] is False
+                 and type(authority) is dict
+                 and set(authority) == {'schema', 'target_status', 'checkpoint_manifest_sha256',
+                     'review_binding_sha256', 'review_revision'}
+                 and authority['schema'] == 'ppt-review-authority.v1'
+                 and authority['target_status'] == 'review'
+                 and type(authority['review_revision']) is int and authority['review_revision'] >= 0,
+                 'ppt_review_authority_required')
+        _sha(authority['checkpoint_manifest_sha256']); _sha(authority['review_binding_sha256'])
+    else:
+        _require(base['status'] == 'published' and base['eligible_as_revision_base'] is True,
+                 'ppt_base_version_required')
+
+
 def _manifest_example(task):
     """Concrete JSON field shapes; example file hashes must be measured anew."""
     phase = task['phase']
@@ -223,7 +249,7 @@ def _manifest_example(task):
 
 class PPTProfile:
     supports_inputs = True
-    limits = ProfileLimits(max_input_bytes=16 * 1024**2, max_input_total_bytes=256 * 1024**2,
+    limits = ProfileLimits(max_input_bytes=25 * 1024**2, max_input_total_bytes=256 * 1024**2,
                            max_input_files=2048, max_artifact_bytes=256 * 1024**2,
                            max_artifact_file_bytes=64 * 1024**2, max_artifact_files=2048)
 
@@ -278,13 +304,7 @@ class PPTProfile:
         else:
             cp = validate_checkpoint_descriptor(task['checkpoint'], task)
             if self.phase == 'revise':
-                base = task['base_version']
-                _require(type(base) is dict and set(base) == {'version_id', 'project_id', 'checkpoint_sha256',
-                         'manifest_sha256', 'status', 'eligible_as_revision_base'}
-                         and base['project_id'] == task['project_id'] and base['status'] == 'published'
-                         and base['eligible_as_revision_base'] is True
-                         and base['checkpoint_sha256'] == cp['sha256'], 'ppt_base_version_required')
-                _uuid(base['version_id']); _sha(base['manifest_sha256'])
+                _revision_base(task['base_version'], task['project_id'], cp['sha256'])
                 _require(bool(task['feedback'].strip()), 'ppt_revision_feedback_required')
             else:
                 _require(task['base_version'] is None)
@@ -296,7 +316,7 @@ class PPTProfile:
             'plan_options': 'Use the genuine supplied Stage1 confirmation. Produce exactly three complete design directions, a full ordered N-page plan and complete production parameters. Stop at the second user confirmation. No formal spec/lock or slides.',
             'prepare': 'Use both genuine confirmations and the selected direction. Produce complete design_spec.md, real Gate1 evidence, spec_lock.md, real Gate2/validate evidence and resources. Stop at the official split checkpoint; do not generate SVG.',
             'generate': 'Replay the supplied prepared project from base/project into project. Verify the approved spec and lock without changing them. Complete every SVG, native chart metadata/fallback, actual PNG, final checks, visual review, finalize, native export and postflight. A candidate remains unpublished.',
-            'revise': 'Replay only the explicitly bound published base_version; never select latest. Preserve the base files, edit a new project copy, apply requested pages and dependencies, and rerun required visual/chart/final/export/postflight gates. Do not overwrite the base version.',
+            'revise': 'Replay only the explicitly bound base_version; never select latest. A published base is eligible for revision; a review draft requires the exact website review_authority and remains unpublished and ineligible as a general published base. Preserve the base files, edit a new project copy, apply requested pages and dependencies, and rerun required visual/chart/final/export/postflight gates. Do not overwrite or publish the base version.',
         }[self.phase]
         return (
             'Run the full reviewed PPT Master Default workflow. Read the fixed image-owned '

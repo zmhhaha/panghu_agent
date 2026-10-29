@@ -14,7 +14,7 @@ from sqlalchemy import select
 from .acceptance.contracts import SourceBinding
 from .acceptance.store import AcceptanceStream, _scope
 from .auth import Identity
-from .models import Checkpoint, Job, Plan, Project, Version
+from .models import AgentOutbox, Checkpoint, Job, Plan, Project, Version
 from .repository import digest, fail
 
 SCHEMA = 'ppt-service.review-revision.v1'
@@ -22,6 +22,8 @@ SCHEMA = 'ppt-service.review-revision.v1'
 # contract. Historical records may describe other profiles, but cannot execute.
 SUPPORTED_PROFILE = 'ppt-master:c350bc31e6d43b7bcf5234183d650ba8f9f4c9d7'
 SUPPORTED_CHECKPOINT_FORMAT = 'hermes-home-project-v1'
+AGENT_CHECKPOINT_FORMAT = 'ppt-agent-artifacts-v1'
+AGENT_PROFILES = frozenset(('ppt.generate.v1', 'ppt.revise.v1'))
 AUTHORITY_KEYS = {'schema', 'target_status', 'base_version_id', 'base_job_id',
                   'checkpoint_id', 'checkpoint_manifest_sha256', 'review_binding',
                   'review_revision', 'control_context', 'external_model_acknowledged'}
@@ -32,6 +34,66 @@ def has_review_base(snapshot):
     return isinstance(snapshot, dict) and 'review_base' in snapshot
 
 
+def _supported_runtime(runtime):
+    if runtime.checkpoint_format == AGENT_CHECKPOINT_FORMAT:
+        return runtime.engine in ('pi', 'hermes') and runtime.profile in AGENT_PROFILES
+    return (runtime.engine == 'hermes' and runtime.profile == SUPPORTED_PROFILE
+            and runtime.checkpoint_format == SUPPORTED_CHECKPOINT_FORMAT)
+
+
+def _agent_confirmation_context(session, job, checkpoint):
+    """Check both stored website decisions against their original database rows.
+
+    The web image intentionally has no controller/Agent SDK. This projection
+    matches the connector's immutable request, including the original plan hash;
+    worker checkpoint files cannot create or replace a website confirmation.
+    """
+    identifiers = checkpoint.manifest.get('confirmation_plan_ids')
+    out = session.get(AgentOutbox, job.id)
+    if (not isinstance(identifiers, dict) or set(identifiers) != {'stage1', 'stage2'}
+            or not out or not isinstance(out.request, dict)
+            or not isinstance(out.request.get('task'), dict)):
+        fail('review_checkpoint_unavailable')
+    expected = out.request.get('task', {}).get('confirmations')
+    context = {}
+    for stage, phase in (('stage1', 'plan_initial'), ('stage2', 'plan_options')):
+        plan = session.get(Plan, identifiers[stage])
+        if (not plan or plan.project_id != job.project_id or plan.phase != phase
+                or not plan.confirmed_at or plan.input_snapshot_hash != job.input_snapshot.get('hash')
+                or not isinstance(plan.outline, dict) or not isinstance(plan.design, dict)
+                or not isinstance(plan.confirmation_selection, dict) or not plan.confirmation_selection):
+            fail('review_checkpoint_unavailable')
+        confirmation = {'channel': 'website_database', 'plan_id': plan.id,
+            'plan_revision': plan.revision, 'input_snapshot_sha256': plan.input_snapshot_hash,
+            'confirmed_at': plan.confirmed_at.isoformat(), 'selection': plan.confirmation_selection,
+            'outline': plan.outline, 'design': {key: value for key, value in plan.design.items()
+                if key not in {'source_plan', 'source_projection', 'recommendation'}},
+            'plan_sha256': digest({'id': plan.id, 'phase': plan.phase, 'revision': plan.revision,
+                'input_snapshot_sha256': plan.input_snapshot_hash, 'outline': plan.outline,
+                'design': plan.design, 'selection': plan.confirmation_selection,
+                'confirmed_at': plan.confirmed_at.isoformat()})}
+        if stage == 'stage2':
+            directions = plan.design.get('directions', plan.design.get('options', []))
+            selected = [row for row in directions if isinstance(row, dict)
+                        and row.get('id') == plan.confirmation_selection.get('direction_id')]
+            if len(selected) != 1:
+                fail('review_checkpoint_unavailable')
+            chosen = selected[0]
+            semantic = {key: value for key, value in chosen.items()
+                        if key not in {'page_plan', 'production_parameters', 'source_pointer'}}
+            outline = chosen.get('page_plan', plan.outline)
+            confirmation.update(outline={'pages': outline} if isinstance(outline, list) else outline,
+                design={'directions': [semantic], 'production_parameters': chosen.get(
+                    'production_parameters', plan.design.get('production_parameters'))},
+                selected_direction=semantic)
+        if not isinstance(expected, dict) or expected.get(stage) != confirmation:
+            fail('review_checkpoint_unavailable')
+        context[stage + '_confirmation'] = confirmation
+    if set(expected) != {'stage1', 'stage2'}:
+        fail('review_checkpoint_unavailable')
+    return copy.deepcopy(context)
+
+
 def _confirmation_context(session, job, checkpoint):
     """Recover only a real website confirmation, including pre-integration drafts.
 
@@ -39,6 +101,8 @@ def _confirmation_context(session, job, checkpoint):
     source job still references the actual prepared checkpoint. It is never
     reconstructed from worker files or from a human review request.
     """
+    if checkpoint.manifest.get('checkpoint_format') == AGENT_CHECKPOINT_FORMAT:
+        return _agent_confirmation_context(session, job, checkpoint)
     context = checkpoint.manifest.get('control_context')
     if not isinstance(context, dict) or not context.get('stage2_confirmation'):
         previous = session.get(Checkpoint, job.checkpoint_id) if job.checkpoint_id else None
@@ -80,7 +144,8 @@ def _require_base(job, version, checkpoint):
             or checkpoint.manifest.get('status') != 'review'
             or checkpoint.manifest.get('eligible_as_revision_base') is not False
             or checkpoint.manifest.get('input_snapshot_sha256') != job.input_snapshot.get('hash')
-            or checkpoint.manifest.get('engine', 'hermes') != 'hermes'
+            or (checkpoint.manifest.get('checkpoint_format') != AGENT_CHECKPOINT_FORMAT
+                and checkpoint.manifest.get('engine', 'hermes') != 'hermes')
             or version.manifest.get('eligible_as_revision_base') is not False
             or version.manifest.get('publication_authorization') is not False):
         fail('review_checkpoint_unavailable')
@@ -95,8 +160,7 @@ def admit_review_revision(session, storage, owner, project, version, binding, re
     context = ReviewContextResolver(storage)(session, owner, project.id, version.id, for_update=True)
     if not context.reviewable or context.binding != binding:
         fail('review_source_changed')
-    if (binding.runtime.engine != 'hermes' or binding.runtime.profile != SUPPORTED_PROFILE
-            or binding.runtime.checkpoint_format != SUPPORTED_CHECKPOINT_FORMAT):
+    if not _supported_runtime(binding.runtime):
         fail('review_checkpoint_unavailable')
     stream = session.scalar(select(AcceptanceStream).where(
         AcceptanceStream.scope == _scope(owner, project.id, version.id)).with_for_update())
@@ -144,9 +208,9 @@ def validate_review_base(session, job, version, checkpoint):
     evidence = version.manifest.get('review_evidence', {})
     if (binding.project_id != job.project_id or binding.version_id != version.id
             or binding.input_snapshot_sha256 != job.input_snapshot.get('hash')
-            or binding.runtime.engine != 'hermes'
-            or binding.runtime.profile != SUPPORTED_PROFILE
-            or binding.runtime.checkpoint_format != SUPPORTED_CHECKPOINT_FORMAT
+            or not _supported_runtime(binding.runtime)
+            or (binding.runtime.checkpoint_format == AGENT_CHECKPOINT_FORMAT) != (
+                checkpoint.manifest.get('checkpoint_format') == AGENT_CHECKPOINT_FORMAT)
             or binding.manifest_sha256 != evidence.get('source_manifest_sha256')
             or binding.evidence_sha256 != evidence.get('receipt_sha256')
             or binding.evidence_id != evidence.get('controller_nonce')
@@ -161,6 +225,13 @@ def validate_review_base(session, job, version, checkpoint):
             or source_job.input_snapshot.get('hash') != binding.input_snapshot_sha256
             or _confirmation_context(session, source_job, checkpoint) != authority['control_context']):
         fail('review_checkpoint_unavailable')
+    if binding.runtime.checkpoint_format == AGENT_CHECKPOINT_FORMAT:
+        out = session.get(AgentOutbox, source_job.id)
+        if (not out or not isinstance(out.remote_pins, dict)
+                or binding.runtime.engine != out.remote_pins.get('engine')
+                or binding.runtime.profile != out.remote_pins.get('profile')
+                or binding.runtime.runtime_revision != digest(out.remote_pins)):
+            fail('review_checkpoint_unavailable')
     return copy.deepcopy(authority['control_context'])
 
 

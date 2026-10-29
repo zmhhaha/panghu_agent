@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 from uuid import UUID, uuid4, uuid5, NAMESPACE_URL
 
+from fastapi import HTTPException
 from sqlalchemy import select
 
 from agent_service.artifacts import read_output, relative_path, unique_paths
@@ -23,6 +24,7 @@ from agent_service.client import AgentClient
 from agent_service.contracts import JobRequest, ServiceError, TERMINAL_STATES, canonical_bytes, digest
 from agent_service.profiles.ppt import (PPTProfile, checkpoint_descriptor, validate_checkpoint)
 from ppt_service.server.models import AgentOutbox, Checkpoint, ExecutionSlot, Job, Plan, Project, Version
+from ppt_service.server.phase_limits import phase_timeout_seconds
 from ppt_service.server.repository import Repository
 from .execution import ControlError
 from .staging import EXT, atomic_json, copy_file, copy_tree, make_readonly, open_regular, read_json, require_storage
@@ -31,6 +33,63 @@ from .staging import EXT, atomic_json, copy_file, copy_tree, make_readonly, open
 def require(value, code):
     if not value:
         raise ControlError(code)
+
+
+def _execution_deadline(job):
+    require(isinstance(job.deadline, datetime), 'invalid_execution_deadline')
+    # PostgreSQL preserves the timezone; SQLite fixtures return UTC as naive.
+    deadline = job.deadline
+    return deadline.replace(tzinfo=timezone.utc) if deadline.tzinfo is None else deadline.astimezone(timezone.utc)
+
+
+def _checked_progress_page(page, remote_id, after):
+    """Validate the complete cursor page before committing any business events."""
+    require(isinstance(page, dict) and isinstance(page.get('items'), list) and len(page['items']) <= 100
+            and type(page.get('next_cursor')) is int and type(page.get('has_more')) is bool
+            and page['next_cursor'] == after + len(page['items'])
+            and page['next_cursor'] <= 2**63 - 1
+            and (not page['has_more'] or bool(page['items'])), 'agent_event_cursor_invalid')
+    checked = []
+    for seq, item in enumerate(page['items'], after + 1):
+        require(isinstance(item, dict) and type(item.get('seq')) is int and item['seq'] == seq
+                and item.get('job_id', remote_id) == remote_id
+                and isinstance(item.get('type'), str) and isinstance(item.get('payload'), dict),
+                'agent_event_cursor_invalid')
+        # Copy only known metadata. Worker prose, tools, counts, phase names and
+        # apparent completion/validation claims never cross this boundary.
+        event = item['payload'].get('event')
+        activity = event if isinstance(event, str) and event in ('pi_event', 'engine_started', 'engine_progress') else None
+        checked.append((seq, item['type'], activity))
+    return checked
+
+
+def _project_progress(repo, job, kind, activity):
+    if job.stopped or job.status not in ('starting', 'running'):
+        return
+    stages = {'job.queued': 'execution_queued', 'job.starting': 'execution_starting',
+              'job.running': 'execution_running'}
+    stage = stages.get(kind)
+    if kind == 'engine.progress' and activity is not None:
+        stage = 'execution_running'
+    if stage is None:
+        return
+    order = {'execution_queued': 1, 'execution_starting': 2, 'execution_running': 3}
+    if order[stage] < order.get(job.stage, 0):
+        return
+    # A known engine activity is a real update, including when its broad stage
+    # is unchanged. It says nothing about page counts or percentage complete.
+    if job.stage != stage or kind == 'engine.progress':
+        job.stage = stage
+        repo.event(job, 'stage.changed', {'stage': stage})
+
+
+def _trusted_progress(repo, job, stage):
+    require(job.stopped and stage in ('collecting', 'validating'), 'stop_proof_required')
+    if stage == 'collecting' and job.stage == 'validating':
+        return
+    if job.stage != stage or job.status != stage:
+        repo.event(job, 'stage.changed', {'stage': stage})
+        job.stage = job.status = stage
 
 
 @dataclass(frozen=True)
@@ -87,12 +146,27 @@ def build_agent_task(session, job):
     snapshot = copy.deepcopy(job.input_snapshot)
     body = {k: snapshot[k] for k in ('project_id', 'title', 'settings', 'assets')}
     require(digest(body) == snapshot['hash'], 'input_snapshot_mismatch')
-    checkpoint, base = None, None
+    from ppt_service.server.review_revisions import has_review_base, validate_review_base
+    checkpoint, base, review_authority = None, None, None
     if job.kind == 'revise':
         base = session.get(Version, job.base_version_id) if job.base_version_id else None
-        require(base is not None and base.status == 'published'
+        require(base is not None
                 and (base.project_id, base.issuer, base.subject) == (job.project_id, job.issuer, job.subject)
                 and base.checkpoint_id == job.checkpoint_id, 'base_version_mismatch')
+        if has_review_base(snapshot):
+            try:
+                validate_review_base(session, job, base, session.get(Checkpoint, job.checkpoint_id))
+            except (HTTPException, ValueError, TypeError):
+                raise ControlError('review_checkpoint_unavailable') from None
+            authority = snapshot['review_base']
+            review_authority = {'schema': 'ppt-review-authority.v1', 'target_status': 'review',
+                'checkpoint_manifest_sha256': authority['checkpoint_manifest_sha256'],
+                'review_binding_sha256': digest(authority['review_binding']),
+                'review_revision': authority['review_revision']}
+        else:
+            require(base.status == 'published', 'base_version_mismatch')
+    elif has_review_base(snapshot):
+        raise ControlError('review_phase_invalid')
     if job.checkpoint_id:
         checkpoint = session.get(Checkpoint, job.checkpoint_id)
         require(checkpoint is not None and (checkpoint.project_id, checkpoint.issuer, checkpoint.subject)
@@ -120,8 +194,10 @@ def build_agent_task(session, job):
                     'confirmation_lineage_mismatch')
             confirmations['stage1' if job.kind == 'plan_options' else 'stage2'] = _confirmation(plan)
     base_binding = None if base is None else {'version_id': base.id, 'project_id': base.project_id,
-         'status': base.status, 'eligible_as_revision_base': True,
+         'status': base.status, 'eligible_as_revision_base': review_authority is None,
          'manifest_sha256': digest(base.manifest), 'checkpoint_sha256': cp['sha256']}
+    if review_authority is not None:
+        base_binding['review_authority'] = review_authority
     task = {'schema_version': profile.task_schema, 'phase': job.kind, 'project_id': job.project_id,
             'business_job_id': job.id, 'input_snapshot_sha256': snapshot['hash'], 'input_snapshot': body,
             'feedback': snapshot.get('feedback', ''), 'revision_pages': snapshot.get('pages', []),
@@ -140,16 +216,33 @@ class AgentConnector:
     def _fenced(self, s, job_id, *, allow_cancel=True):
         out = s.get(AgentOutbox, job_id)
         require(out is not None, 'agent_outbox_missing')
+        # Match review HTTP locking: slot -> terminal source -> job -> project.
+        s.get(ExecutionSlot, 1, with_for_update=True)
+        current = s.get(Job, job_id)
+        if current is not None and 'review_base' in current.input_snapshot:
+            base = s.get(Version, current.base_version_id)
+            require(base is not None, 'base_version_mismatch')
+            s.get(Job, base.job_id, with_for_update=True)
         job, project, slot = Repository(s).fenced(job_id, out.attempt, out.fencing_token, allow_cancel=allow_cancel)
         out = s.get(AgentOutbox, job_id, with_for_update=True)
         require(out.business_ref == out.request['business_ref'], 'agent_outbox_binding_invalid')
         return out, job, project, slot
 
+    def _recheck_review_source(self, session, job):
+        if 'review_base' not in job.input_snapshot:
+            return
+        from ppt_service.server.review_revisions import recheck_review_source
+        from ppt_service.server.storage import Storage
+        try:
+            recheck_review_source(session, Storage(self.config.data_root), job)
+        except (HTTPException, ValueError, TypeError, OSError):
+            raise ControlError('review_source_changed') from None
+
     def _reject_stopped_candidate(self, jid, code='quality_gate_failed'):
         """Only before validator launch or after its independent stop proof."""
         with self.sessions.begin() as s:
             out, job, _, _ = self._fenced(s, jid)
-            require(job.stopped and job.status == 'validating', 'stop_proof_required')
+            require(job.stopped and job.status in ('collecting', 'validating'), 'stop_proof_required')
             Repository(s).finish_failed(jid, out.attempt, out.fencing_token, error_code=code)
             out.state = 'mapped'; out.result = {'status': 'failed', 'error_code': code}
         return {'status': 'failed', 'job_id': jid}
@@ -166,11 +259,13 @@ class AgentConnector:
             if job is None:
                 return None
             try:
+                self._recheck_review_source(s, job)
                 task, cp_ref = build_agent_task(s, job)
                 business_ref = f'ppt:{job.id}:{job.attempt}:{job.fencing_token}'
                 request = JobRequest(profile='ppt.' + job.kind + '.v1', profile_revision=self.settings.profile_revision,
                           business_ref=business_ref, task=task, checkpoint_ref=cp_ref,
-                          timeout_seconds=600 if job.kind.startswith('plan') else 1800).model_dump(mode='json')
+                          timeout_seconds=phase_timeout_seconds(job.kind),
+                          execution_deadline_at=_execution_deadline(job).timestamp()).model_dump(mode='json')
                 uploads = []
                 for asset in task['input_snapshot']['assets']:
                     require(asset['media_type'] in EXT, 'unsupported_media_type')
@@ -270,7 +365,10 @@ class AgentConnector:
             checkpoint = {'schema_version': 1, 'checkpoint_format': 'ppt-agent-artifacts-v1',
                 'agent_checkpoint': cp, 'service_checkpoint_ref': ref,
                 'confirmation_plan_ids': {stage: value['plan_id'] for stage, value in task['confirmations'].items()},
-                'project_root': cp['project_root'], 'input_snapshot_sha256': cp['input_snapshot_sha256']}
+                'project_root': cp['project_root'], 'input_snapshot_sha256': cp['input_snapshot_sha256'],
+                'agent_source': {'storage_key': Path(snapshot).absolute().relative_to(self.config.data_root.absolute()).as_posix(),
+                    'remote_job_sha256': hashlib.sha256(read_output(snapshot, 'remote-job.json', limit=4 * 1024**2)).hexdigest(),
+                    'artifact_manifest_sha256': read_json(snapshot, 'remote-job.json')['artifact_manifest_sha256']}}
             repo = Repository(s)
             if job.kind in ('plan_initial', 'plan_options'):
                 require(validated.get('accepted') is True, 'agent_candidate_unaccepted')
@@ -307,13 +405,33 @@ class AgentConnector:
                     require(row['ordinal'] == n and row['svg_path'] == slide['svg_path'], 'agent_independent_preview_binding_invalid')
                     evidence_key = 'independent/' + rendered['validation_id'] + '/' + relative_path(row['relative_path'])
                     copy_file(evidence_path, evidence_key, artifact / f'{n}.png', expected_hash=row['sha256'])
-                    slides.append({'preview_key': artifact_key + f'/{n}.png', 'title': slide.get('title', ''),
-                                   'summary': slide.get('summary', '')})
+                    slides.append({'preview_key': artifact_key + f'/{n}.png',
+                                   'preview_sha256': row['sha256'], 'source_sha256': row['svg_sha256'],
+                                   'title': str(slide.get('title', ''))[:200],
+                                   'summary': str(slide.get('summary', ''))[:2000]})
+                evidence_path = Path(evidence_path).absolute()
+                require(evidence_path.is_relative_to(self.config.data_root.absolute()), 'review_transport_scope_invalid')
+                receipt = read_output(evidence_path, 'validated.json', limit=4 * 1024**2)
+                require(read_json(evidence_path, 'validated.json') == validated, 'agent_validator_evidence_changed')
+                transport = read_json(evidence_path, 'transport-manifest.json')
+                require(transport.get('writers_stopped') is True and transport.get('transport_verified') is True
+                        and transport.get('sandbox_exit_code') == 0
+                        and isinstance(transport.get('execution_image'), str)
+                        and transport.get('validation_request_sha256') is not None,
+                        'review_transport_unverified')
                 checkpoint.update(status='review', eligible_as_revision_base=False)
                 atomic_json(target / 'checkpoint.json', checkpoint); make_readonly(target); make_readonly(artifact)
-                public = {'status': 'review', 'eligible_as_revision_base': False, 'publication_authorization': False,
-                          'pptx_key': artifact_key + '/presentation.pptx', 'slides': slides,
-                          'required_pending_gates': validated['required_pending_gates']}
+                public = {'status': 'review', 'validation_status': 'gate_pending',
+                          'eligible_as_revision_base': False, 'publication_authorization': False,
+                          'pptx_key': artifact_key + '/presentation.pptx', 'pptx_sha256': pptxs[0]['sha256'],
+                          'slides': slides, 'required_pending_gates': validated['required_pending_gates'],
+                          'review_evidence': {'kind': 'agent-validation.v1',
+                              'storage_key': evidence_path.relative_to(self.config.data_root.absolute()).as_posix(),
+                              'receipt_sha256': hashlib.sha256(receipt).hexdigest(),
+                              'controller_nonce': validated['validation_nonce'],
+                              'execution_image': transport['execution_image'],
+                              'source_manifest_sha256': source,
+                              'source_fingerprint_sha256': rendered['source']['copied_source_fingerprint']}}
                 repo.save_review_version(jid, out.attempt, out.fencing_token, version_id=version_id,
                     manifest=public, artifact_root=artifact_key, checkpoint_key=key,
                     checkpoint_manifest=checkpoint, review_validated=True)
@@ -347,11 +465,9 @@ class AgentConnector:
             return {'status': 'idle' if self.settings.enabled else 'disabled'}
         with self.sessions.begin() as s:
             out, job, project, slot = self._fenced(s, jid)
-            deadline = job.deadline
-            if deadline is not None and deadline.tzinfo is None:
-                deadline = deadline.replace(tzinfo=timezone.utc)
+            deadline = _execution_deadline(job)
             cancelled = (job.status == 'cancelling' or project.deletion_requested or not self.settings.enabled
-                         or not project.external_model_ack or (deadline is not None and deadline <= datetime.now(timezone.utc)))
+                         or not project.external_model_ack or deadline <= datetime.now(timezone.utc))
             if cancelled and not out.submission_started:
                 # No request was issued. Do not invent process-stop evidence.
                 job.status = 'cancelled'; project.active_job_id = None; slot.job_id = None
@@ -359,12 +475,17 @@ class AgentConnector:
                 out.state = 'mapped'; out.acked = True; out.result = {'status': 'cancelled_before_submission'}
                 Repository(s).event(job, 'job.cancelled')
                 return {'status': 'cancelled', 'job_id': jid}
+            if cancelled and job.status != 'cancelling':
+                job.status = 'cancelling'
+                Repository(s).event(job, 'job.cancelling')
             pending = next((copy.deepcopy(row) for row in out.inputs if row['ref'] is None), None)
             remote_id = out.remote_job_id
+            submission_started = out.submission_started
             request, key = copy.deepcopy(out.request), out.idempotency_key
         if pending is not None and not cancelled:
-            with open_regular(self.config.data_root, pending['storage_key'], 16 * 1024**2) as stream:
-                content = stream.read(16 * 1024**2 + 1)
+            limit = PPTProfile.limits.max_input_bytes
+            with open_regular(self.config.data_root, pending['storage_key'], limit) as stream:
+                content = stream.read(limit + 1)
             require(len(content) == pending['bytes'] and hashlib.sha256(content).hexdigest() == pending['sha256'], 'source_hash_mismatch')
             uploaded = self.client.upload_input(pending['name'], content)
             require(uploaded.get('name') == pending['name'] and uploaded.get('sha256') == pending['sha256'], 'agent_input_binding_invalid')
@@ -374,15 +495,46 @@ class AgentConnector:
                               if row['name'] == pending['name'] else row for row in out.inputs]
             return {'status': 'uploading', 'job_id': jid}
         if remote_id is None:
+            remote = None
+            if submission_started:
+                try:
+                    remote = self.client.lookup_job(key)
+                except ServiceError as exc:
+                    if exc.status != 404:
+                        raise
+                    if cancelled:
+                        # A 404 cannot exclude an in-flight POST. Keep the slot
+                        # until the original cutoff makes late execution impossible.
+                        with self.sessions.begin() as s:
+                            out, job, project, slot = self._fenced(s, jid)
+                            if _execution_deadline(job) > datetime.now(timezone.utc):
+                                Repository(s).heartbeat(jid, out.attempt, out.fencing_token, self.settings.lease_seconds)
+                                return {'status': 'cancelling', 'job_id': jid}
+                            job.status = 'cancelled'; project.active_job_id = None; slot.job_id = None
+                            project.stage = 'ready' if project.latest_version_id else 'draft'
+                            project.cleanup_ready = project.deletion_requested
+                            out.state = 'mapped'; out.acked = True
+                            out.result = {'status': 'submission_not_found_after_deadline'}
+                            Repository(s).event(job, 'job.cancelled')
+                        return {'status': 'cancelled', 'job_id': jid}
             with self.sessions.begin() as s:
                 out, job, project, _ = self._fenced(s, jid)
+                if remote is None and (job.status == 'cancelling' or project.deletion_requested
+                        or not self.settings.enabled or not project.external_model_ack
+                        or _execution_deadline(job) <= datetime.now(timezone.utc)):
+                    # Recheck after the HTTP lookup: cancellation may have
+                    # arrived while the previous request was in flight.
+                    return {'status': 'cancelling', 'job_id': jid}
+                if remote is None:
+                    self._recheck_review_source(s, job)
                 # An identical persisted request resolves any uncertain POST.
-                if not out.submission_started:
+                if remote is None and not out.submission_started:
                     require(all(row['ref'] is not None for row in out.inputs), 'agent_input_upload_incomplete')
                     out.request = dict(out.request, inputs=[row['ref'] for row in out.inputs])
                     out.submission_started = True
                 request, key = copy.deepcopy(out.request), out.idempotency_key
-            remote = self.client.submit(request, idempotency_key=key)
+            if remote is None:
+                remote = self.client.submit(request, idempotency_key=key)
             require(remote.get('business_ref') == request['business_ref'], 'agent_job_binding_invalid')
             remote_id = str(UUID(remote['job_id']))
             with self.sessions.begin() as s:
@@ -400,15 +552,22 @@ class AgentConnector:
             out, _, _, _ = self._fenced(s, jid)
             after = out.event_cursor
         page = self.client.events(remote_id, after=after, limit=100)
-        require(type(page.get('next_cursor')) is int and page['next_cursor'] >= after, 'agent_event_cursor_invalid')
+        checked = _checked_progress_page(page, remote_id, after)
         with self.sessions.begin() as s:
-            out, _, _, _ = self._fenced(s, jid)
-            # Untrusted free-form worker text never becomes a public PPT event.
+            out, job, _, _ = self._fenced(s, jid)
+            require(out.remote_pins == remote.get('pins'), 'agent_execution_binding_changed')
+            repo = Repository(s)
+            for seq, kind, activity in checked:
+                if seq > out.event_cursor:
+                    _project_progress(repo, job, kind, activity)
+            # Cursor and sanitized business events commit together. Restarting
+            # or overlapping reads cannot duplicate an already projected event.
             out.event_cursor = max(out.event_cursor, page['next_cursor'])
-        if remote.get('state') not in TERMINAL_STATES:
-            with self.sessions.begin() as s:
-                out, job, _, _ = self._fenced(s, jid)
-                Repository(s).heartbeat(jid, out.attempt, out.fencing_token, self.settings.lease_seconds)
+            if remote.get('state') not in TERMINAL_STATES or page['has_more']:
+                repo.heartbeat(jid, out.attempt, out.fencing_token, self.settings.lease_seconds)
+        if remote.get('state') not in TERMINAL_STATES or page['has_more']:
+            # Drain real event pages before accepting a terminal remote result;
+            # a page boundary never launches or resubmits another paid attempt.
             return {'status': 'running', 'job_id': jid}
         proof, attempt = remote.get('stop_proof'), remote.get('attempt')
         if (remote.get('not_started') is True and attempt is None
@@ -443,6 +602,7 @@ class AgentConnector:
                 Repository(s).finish_failed(jid, out.attempt, out.fencing_token, error_code=code)
                 out.state = 'mapped'; out.result = {'status': 'failed', 'error_code': code}
                 return {'status': 'failed', 'job_id': jid}
+            _trusted_progress(Repository(s), stopped, 'collecting')
             request = copy.deepcopy(out.request)
         try:
             snapshot, cp, rows = self._snapshot(jid, remote)
@@ -450,6 +610,9 @@ class AgentConnector:
             # Remote model writers are proven stopped and no validator has
             # started. A malformed stopped candidate is a permanent failure.
             return self._reject_stopped_candidate(jid)
+        with self.sessions.begin() as s:
+            _, job, _, _ = self._fenced(s, jid)
+            _trusted_progress(Repository(s), job, 'validating')
         check_request = {'execution_contract': 'ppt-agent.v1', 'task': request['task'], 'phase': request['task']['phase'],
                          'job_id': jid, 'input_snapshot_sha256': cp['input_snapshot_sha256'],
                          'pages': request['task']['input_snapshot']['settings'].get('page_count', 8)}

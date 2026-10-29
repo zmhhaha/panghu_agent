@@ -1,5 +1,5 @@
 from __future__ import annotations
-import hashlib,json
+import hashlib,json,os
 from datetime import datetime,timedelta,timezone
 from fastapi import HTTPException
 from sqlalchemy import select,func,text
@@ -86,7 +86,7 @@ class Repository:
         payload=payload or {}
         clean={k:v for k,v in payload.items() if k in EVENT_FIELDS[type]}
         # Values are server business identifiers, never free-form Worker messages.
-        if 'stage' in clean and clean['stage'] not in ('plan_initial','plan_options','prepare','generate','revise','parse','collecting','validating'):raise ValueError('invalid stage')
+        if 'stage' in clean and clean['stage'] not in ('plan_initial','plan_options','prepare','generate','revise','parse','collecting','validating','execution_queued','execution_starting','execution_running'):raise ValueError('invalid stage')
         if 'error_code' in clean and clean['error_code'] not in ('parse_failed','model_unavailable','execution_timeout','quality_gate_failed','render_failed','export_failed','execution_interrupted','storage_full'):raise ValueError('invalid error')
         if 'revision' in clean and (not isinstance(clean['revision'],int) or isinstance(clean['revision'],bool) or clean['revision']<1):raise ValueError('invalid revision')
         for k in ('version_id',):
@@ -94,10 +94,27 @@ class Repository:
         if 'phase' in clean and clean['phase'] not in ('plan_initial','plan_options'):raise ValueError('invalid phase')
         j.event_cursor+=1
         self.s.add(JobEvent(job_id=j.id,seq=j.event_cursor,type=type,payload=clean))
+    def require_checkpoint_backend(self,p,kind,checkpoint_id):
+        """Reject native recovery only for new intents after the service cutover.
+
+        Keep this inside the idempotent action, never its authorization callback:
+        an existing request must continue returning its original queued job.
+        Read/download routes and restarting initial planning do not enter here.
+        Full portable checkpoint validation remains the controller's job.
+        """
+        if os.getenv('PPT_EXECUTION_BACKEND')!='agent-service' or kind not in ('plan_options','prepare','revise'):return
+        checkpoint=self.s.get(Checkpoint,checkpoint_id) if checkpoint_id else None
+        if checkpoint and (checkpoint.project_id,checkpoint.issuer,checkpoint.subject)!=(p.id,p.issuer,p.subject):fail('not_found',404)
+        manifest=checkpoint.manifest if checkpoint else None
+        if (not isinstance(manifest,dict) or manifest.get('checkpoint_format')!='ppt-agent-artifacts-v1'
+                or not isinstance(manifest.get('agent_checkpoint'),dict)
+                or not isinstance(manifest.get('service_checkpoint_ref'),dict)):
+            fail('legacy_checkpoint_requires_replan')
     def enqueue(self,p,owner,kind,expected,extra=None):
         self.revision(p,expected)
         if not p.external_model_ack:fail('external_model_ack_required',422)
         if p.active_job_id:fail('project_busy')
+        self.require_checkpoint_backend(p,kind,(extra or {}).get('checkpoint_id'))
         waiting=self.s.scalar(select(func.count()).select_from(Job).where(Job.status=='queued'))
         own=self.s.scalar(select(func.count()).select_from(Job).where(Job.status=='queued',Job.issuer==owner.issuer,Job.subject==owner.sub))
         if waiting>=20 or own>=2:fail('queue_full',429)

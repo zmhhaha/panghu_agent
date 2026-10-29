@@ -12,7 +12,7 @@ import jwt
 from sqlalchemy import create_engine, select, func, inspect, text
 from sqlalchemy.pool import StaticPool
 from ppt_service.server.auth import Settings
-from ppt_service.server.migrate import migrate
+from ppt_service.server.migrate import REVISION, migrate
 from ppt_service.server.models import Job
 from ppt_service.server.site import create_site
 import ppt_service.server.site as site_module
@@ -34,7 +34,7 @@ def main():
     engine = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
     migrate(engine)
     with engine.connect() as db:
-        assert db.scalar(text('SELECT max(revision) FROM api_schema_revision')) == 3
+        assert db.scalar(text('SELECT max(revision) FROM api_schema_revision')) == REVISION == 4
     assert {'ppt_acceptance_entries', 'ppt_acceptance_streams'}.issubset(inspect(engine).get_table_names())
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     token = jwt.encode({'iss': 'https://p1.test', 'sub': 'p1-owner', 'aud': 'p1',
@@ -78,7 +78,7 @@ def main():
     engine.dispose()
     print(json.dumps({'installed_image': True, 'runtime_inputs_verified': len(inputs),
                       'bundled_http_assets': asset_count, 'real_signed_jwt': True,
-                      'review_schema_revision': 3, 'review_routes_authenticated': True,
+                      'review_schema_revision': REVISION, 'review_routes_authenticated': True,
                       'execution_disabled': True, 'model_requests': 0, 'production_ready': False}))
 
 

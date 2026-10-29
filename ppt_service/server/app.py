@@ -249,6 +249,7 @@ def create_app(settings:Settings|None=None,engine=None):
             v=r.version(body.base_version_id,owner)
             if v.project_id!=pid:fail('not_found',404)
             if len(set(body.pages))!=len(body.pages) or any(n<1 or n>len(v.manifest.get('slides',[])) for n in body.pages):fail('invalid_slide_number',422)
+            r.require_checkpoint_backend(p,'revise',v.checkpoint_id)
             try:
                 authority=admit_review_revision(s,app.state.storage,owner,p,v,body.review_binding,body.review_revision)
             except AcceptanceError as exc:

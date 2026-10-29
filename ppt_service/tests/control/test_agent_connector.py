@@ -6,6 +6,7 @@ claims a live acceptance record, or contacts a model/provider.
 from __future__ import annotations
 
 import copy
+from datetime import timedelta, timezone
 import hashlib
 import json
 import time
@@ -25,7 +26,7 @@ from ppt_service.control.agent_validation import AgentValidationReceipt, validat
 from ppt_service.control.execution import ControlError, RuntimeConfig
 from ppt_service.server.auth import Identity
 from ppt_service.server.migrate import migrate
-from ppt_service.server.models import AgentOutbox, Asset, Checkpoint, ExecutionSlot, Job, Plan, Project, Version, now
+from ppt_service.server.models import AgentOutbox, Asset, Checkpoint, ExecutionSlot, Job, JobEvent, Plan, Project, Version, now
 from ppt_service.server.repository import Repository
 
 
@@ -117,6 +118,7 @@ class PlanningService:
         self.root = root
         self.uploads, self.jobs, self.by_key, self.artifacts, self.checkpoints = {}, {}, {}, {}, {}
         self.submissions, self.acks = [], []
+        self.lookups, self.cancellations = [], []
 
     def upload_input(self, name, content):
         result = dict(input_id=identifier(), name=name, sha256=hashlib.sha256(content).hexdigest())
@@ -145,6 +147,16 @@ class PlanningService:
 
     def get_job(self, job_id):
         return copy.deepcopy(self.jobs[job_id])
+
+    def lookup_job(self, idempotency_key):
+        self.lookups.append(idempotency_key)
+        if idempotency_key not in self.by_key:
+            raise ServiceError('job_not_found', 404)
+        return self.get_job(self.by_key[idempotency_key])
+
+    def cancel(self, job_id):
+        self.cancellations.append(job_id)
+        return self.get_job(job_id)
 
     def events(self, job_id, *, after, limit):
         return {'items': [], 'next_cursor': after, 'has_more': False}
@@ -314,7 +326,110 @@ def test_uncertain_submission_recovers_same_outbox_request_without_duplicate_exe
     assert control.tick()['status'] == 'submitted'
     assert control.tick()['status'] == 'mapped'
     assert len(service.jobs) == 1 and len(service.uploads) == 1
-    assert len(service.submissions) == 2 and service.submissions[0] == service.submissions[1]
+    assert len(service.submissions) == 1 and len(service.lookups) == 1
+
+
+def test_claim_request_keeps_original_absolute_deadline_and_phase_budget(database):
+    control, service = connector(database)
+    assert control.tick()['status'] == 'uploading'
+    with database.sessions() as session:
+        job = session.get(Job, database.job_id)
+        cutoff = job.deadline.replace(tzinfo=timezone.utc).timestamp()
+        request = copy.deepcopy(session.get(AgentOutbox, database.job_id).request)
+        assert request['execution_deadline_at'] == cutoff
+        assert request['timeout_seconds'] == 600
+    assert control.tick()['status'] == 'submitted'
+    assert service.submissions[0]['execution_deadline_at'] == cutoff
+    assert control.tick()['status'] == 'mapped'
+    assert control.tick()['status'] == 'acknowledged'
+    following = confirm_and_enqueue(database, 'plan_options')
+    assert control.tick()['status'] == 'uploading'
+    with database.sessions() as session:
+        job = session.get(Job, following)
+        request = session.get(AgentOutbox, following).request
+        assert request['timeout_seconds'] == 1200
+        assert request['execution_deadline_at'] == job.deadline.replace(tzinfo=timezone.utc).timestamp()
+
+
+def test_replay_after_unreached_post_keeps_same_deadline_and_request(database, monkeypatch):
+    control, service = connector(database)
+    assert control.tick()['status'] == 'uploading'
+    submit = service.submit
+    attempts = []
+
+    def lose_before_submission(body, *, idempotency_key):
+        attempts.append((copy.deepcopy(body), idempotency_key))
+        if len(attempts) == 1:
+            raise ServiceError('synthetic_request_lost', 503)
+        return submit(body, idempotency_key=idempotency_key)
+
+    monkeypatch.setattr(service, 'submit', lose_before_submission)
+    with pytest.raises(ControlError, match='agent_service_unavailable'):
+        control.tick()
+    assert control.tick()['status'] == 'submitted'
+    assert attempts[0] == attempts[1]
+    assert len(service.jobs) == 1 and len(service.lookups) == 1
+
+
+def test_cancel_during_uncertain_unreached_submission_never_reposts(database, monkeypatch):
+    control, service = connector(database)
+    assert control.tick()['status'] == 'uploading'
+    attempts = []
+
+    def unreachable(body, *, idempotency_key):
+        attempts.append((copy.deepcopy(body), idempotency_key))
+        raise ServiceError('synthetic_request_lost', 503)
+
+    monkeypatch.setattr(service, 'submit', unreachable)
+    with pytest.raises(ControlError, match='agent_service_unavailable'):
+        control.tick()
+    with database.sessions.begin() as session:
+        Repository(session).cancel(session.get(Job, database.job_id))
+    assert control.tick()['status'] == 'cancelling'
+    with database.sessions() as session:
+        assert session.get(ExecutionSlot, 1).job_id == database.job_id
+        assert session.get(Job, database.job_id).stopped is False
+    with database.sessions.begin() as session:
+        session.get(Job, database.job_id).deadline = now() - timedelta(seconds=1)
+    assert control.tick()['status'] == 'cancelled'
+    with database.sessions() as session:
+        assert session.get(ExecutionSlot, 1).job_id is None
+        assert session.get(Job, database.job_id).stopped is False
+    assert len(attempts) == 1 and not service.jobs
+
+
+def test_cancel_after_lost_reply_recovers_and_cancels_existing_remote(database, monkeypatch):
+    control, service = connector(database)
+    assert control.tick()['status'] == 'uploading'
+    submit = service.submit
+
+    def lose_reply(body, *, idempotency_key):
+        submit(body, idempotency_key=idempotency_key)
+        raise ServiceError('synthetic_response_lost', 503)
+
+    monkeypatch.setattr(service, 'submit', lose_reply)
+    with pytest.raises(ControlError, match='agent_service_unavailable'):
+        control.tick()
+    with database.sessions.begin() as session:
+        Repository(session).cancel(session.get(Job, database.job_id))
+    assert control.tick()['status'] == 'submitted'
+    assert control.tick()['status'] == 'cancelled'
+    assert len(service.submissions) == len(service.cancellations) == 1
+
+
+def test_connector_uploads_supported_25_mib_source(database):
+    raw = b'x' * (25 * 1024**2)
+    with database.sessions.begin() as session:
+        asset = session.scalar(select(Asset))
+        write(database.root, asset.storage_key, raw)
+        asset.bytes, asset.sha256 = len(raw), hashlib.sha256(raw).hexdigest()
+        session.flush()
+        job = session.get(Job, database.job_id)
+        job.input_snapshot = Repository(session).snapshot(session.get(Project, database.project_id))
+    control, service = connector(database)
+    assert control.tick()['status'] == 'uploading'
+    assert len(service.uploads) == 1
+    assert next(iter(service.uploads.values()))['sha256'] == hashlib.sha256(raw).hexdigest()
 
 
 def test_plain_accepted_dictionary_cannot_replace_independent_validator_receipt(database):
@@ -388,3 +503,147 @@ def test_revision_requires_exact_published_base_checkpoint_and_owner(database):
             else: version.checkpoint_id = identifier()
         with database.sessions() as session, pytest.raises(ControlError, match='base_version_mismatch'):
             build_agent_task(session, session.get(Job, jid))
+
+
+def running_progress(database, monkeypatch, records):
+    control, service = connector(database)
+    assert control.tick()['status'] == 'uploading'
+    assert control.tick()['status'] == 'submitted'
+    remote = next(iter(service.jobs.values()))
+    remote['state'] = 'running'
+    rows = [dict(seq=n, job_id=remote['job_id'], type=kind, payload=payload)
+            for n, (kind, payload) in enumerate(records, 1)]
+
+    def page(job_id, *, after, limit):
+        assert job_id == remote['job_id']
+        selected = [row for row in rows if row['seq'] > after][:limit]
+        return dict(items=copy.deepcopy(selected), next_cursor=selected[-1]['seq'] if selected else after,
+                    has_more=False)
+
+    monkeypatch.setattr(service, 'events', page)
+    return control, service, remote, rows
+
+
+def test_agent_progress_is_sanitized_replayable_and_cannot_finish_a_business_job(database, monkeypatch):
+    control, service, _, rows = running_progress(database, monkeypatch, [
+        ('job.queued', {}), ('job.starting', {}),
+        ('engine.progress', {'event': 'engine_started', 'phase': 'validating', 'count': 100,
+                             'raw': 'secret model text /work/private'}),
+        ('engine.progress', {'event': 'pi_event', 'phase': 'collecting'}),
+        ('engine.progress', {'event': 'runtime_finished'}), ('job.completed', {}),
+    ])
+    assert control.tick()['status'] == 'running'
+    with database.sessions() as session:
+        job = session.get(Job, database.job_id)
+        events = session.scalars(select(JobEvent).where(JobEvent.job_id == job.id,
+                        JobEvent.type == 'stage.changed').order_by(JobEvent.seq)).all()
+        assert [event.payload for event in events] == [
+            {'stage': 'execution_queued'}, {'stage': 'execution_starting'},
+            {'stage': 'execution_running'}, {'stage': 'execution_running'}]
+        assert job.status == 'running' and job.stage == 'execution_running' and job.stopped is False
+        assert session.get(AgentOutbox, job.id).event_cursor == len(rows)
+        assert session.get(ExecutionSlot, 1).job_id == job.id
+        assert not session.scalars(select(Plan)).all()
+        cursor = job.event_cursor
+    assert control.tick()['status'] == 'running'
+    with database.sessions() as session:
+        assert session.get(Job, database.job_id).event_cursor == cursor
+    assert len(service.submissions) == 1
+
+
+@pytest.mark.parametrize('fault', ['cursor', 'sequence', 'job', 'payload', 'empty_more'])
+def test_malformed_agent_progress_page_commits_neither_cursor_nor_event(database, monkeypatch, fault):
+    control, service, _, rows = running_progress(database, monkeypatch, [('job.running', {})])
+    page = dict(items=copy.deepcopy(rows), next_cursor=1, has_more=False)
+    if fault == 'cursor': page['next_cursor'] = True
+    elif fault == 'sequence': page['items'][0]['seq'] = 2
+    elif fault == 'job': page['items'][0]['job_id'] = identifier()
+    elif fault == 'payload': page['items'][0]['payload'] = 'not an object'
+    else: page.update(items=[], next_cursor=0, has_more=True)
+    monkeypatch.setattr(service, 'events', lambda *args, **kwargs: page)
+    with pytest.raises(ControlError, match='agent_event_cursor_invalid'):
+        control.tick()
+    with database.sessions() as session:
+        job = session.get(Job, database.job_id)
+        assert session.get(AgentOutbox, job.id).event_cursor == 0
+        assert job.stage == 'plan_initial' and job.stopped is False
+        assert not session.scalars(select(JobEvent).where(JobEvent.type == 'stage.changed')).all()
+
+
+def test_agent_progress_rolls_back_business_events_with_its_upstream_cursor(database, monkeypatch):
+    control, _, _, _ = running_progress(database, monkeypatch, [('job.queued', {}), ('job.starting', {})])
+    original = Repository.event
+
+    def fail_mid_page(repo, job, kind, payload=None):
+        if kind == 'stage.changed' and payload == {'stage': 'execution_starting'}:
+            raise RuntimeError('synthetic transaction interruption')
+        return original(repo, job, kind, payload)
+
+    monkeypatch.setattr(Repository, 'event', fail_mid_page)
+    with pytest.raises(RuntimeError, match='synthetic transaction interruption'):
+        control.tick()
+    with database.sessions() as session:
+        assert session.get(AgentOutbox, database.job_id).event_cursor == 0
+        assert session.get(Job, database.job_id).stage == 'plan_initial'
+        assert not session.scalars(select(JobEvent).where(JobEvent.type == 'stage.changed')).all()
+    monkeypatch.setattr(Repository, 'event', original)
+    assert control.tick()['status'] == 'running'
+    with database.sessions() as session:
+        assert session.get(AgentOutbox, database.job_id).event_cursor == 2
+        assert len(session.scalars(select(JobEvent).where(JobEvent.type == 'stage.changed')).all()) == 2
+
+
+def test_terminal_progress_pages_are_drained_before_trusted_collection_and_validation(database, monkeypatch):
+    control, service, remote, rows = running_progress(database, monkeypatch,
+        [('job.running', {}), ('engine.progress', {'event': 'runtime_finished'})])
+    remote['state'] = 'completed'
+
+    def page(job_id, *, after, limit):
+        selected = [row for row in rows if row['seq'] > after][:1]
+        return dict(items=selected, next_cursor=selected[-1]['seq'] if selected else after,
+                    has_more=after == 0)
+
+    monkeypatch.setattr(service, 'events', page)
+    collect = service.artifact_manifest
+
+    def collect_after_stop(job_id):
+        with database.sessions() as session:
+            job = session.get(Job, database.job_id)
+            assert job.stopped is True and job.stage == job.status == 'collecting'
+        return collect(job_id)
+
+    monkeypatch.setattr(service, 'artifact_manifest', collect_after_stop)
+    validate = control.validator.validate
+
+    def validate_after_collection(snapshot, request):
+        with database.sessions() as session:
+            job = session.get(Job, database.job_id)
+            assert job.stopped is True and job.stage == job.status == 'validating'
+        return validate(snapshot, request)
+
+    monkeypatch.setattr(control.validator, 'validate', validate_after_collection)
+    assert control.tick()['status'] == 'running'
+    with database.sessions() as session:
+        assert session.get(Job, database.job_id).stopped is False
+        assert not session.scalars(select(Plan)).all()
+    assert control.tick()['status'] == 'mapped'
+    with database.sessions() as session:
+        stages = session.scalars(select(JobEvent).where(JobEvent.type == 'stage.changed').order_by(JobEvent.seq)).all()
+        assert [event.payload['stage'] for event in stages] == ['execution_running', 'collecting', 'validating']
+        assert session.get(Job, database.job_id).status == 'succeeded'
+    assert len(service.submissions) == 1
+
+
+def test_agent_activity_cannot_undo_cancellation_or_release_its_execution_slot(database, monkeypatch):
+    control, service, _, _ = running_progress(database, monkeypatch,
+        [('job.running', {}), ('engine.progress', {'event': 'engine_progress'})])
+    with database.sessions.begin() as session:
+        Repository(session).cancel(session.get(Job, database.job_id))
+    assert control.tick()['status'] == 'running'
+    with database.sessions() as session:
+        job = session.get(Job, database.job_id)
+        assert job.status == 'cancelling' and job.stopped is False and job.stage == 'plan_initial'
+        assert session.get(ExecutionSlot, 1).job_id == job.id
+        assert session.get(AgentOutbox, job.id).event_cursor == 2
+        assert not session.scalars(select(JobEvent).where(JobEvent.type == 'stage.changed')).all()
+    assert len(service.cancellations) == len(service.submissions) == 1

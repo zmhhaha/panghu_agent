@@ -6,12 +6,25 @@ from uuid import uuid4
 
 import pytest
 
-from agent_service.contracts import ServiceError, canonical_bytes
+from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.deploy.acceptance_probe import fixture
 from agent_service.engines import StopEvidence
 from agent_service.profiles.ppt import PPTProfile, _manifest_example
 from ppt_service.control.planning import project_planning
 from ppt_service.worker.candidate_validation import validate_manifest
+
+
+def test_ppt_sources_allow_25_mib_without_increasing_aggregate_limit():
+    task, _ = fixture('ppt.plan_initial.v1')
+    profile = PPTProfile('plan_initial')
+    task['input_snapshot']['assets'][0]['bytes'] = 25 * 1024**2
+    task['input_snapshot_sha256'] = digest(task['input_snapshot'])
+    profile.validate_task(task)
+    assert profile.limits.max_input_total_bytes == 256 * 1024**2
+    task['input_snapshot']['assets'][0]['bytes'] += 1
+    task['input_snapshot_sha256'] = digest(task['input_snapshot'])
+    with pytest.raises(ServiceError):
+        profile.validate_task(task)
 
 
 @pytest.fixture

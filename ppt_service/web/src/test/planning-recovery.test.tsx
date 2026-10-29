@@ -134,6 +134,7 @@ describe('planning recovery errors',()=>{
   ['stale_input_snapshot','SNAPSHOT_MISMATCH','材料快照'],
   ['initial_confirmation_required','INITIAL_CONFIRMATION_REQUIRED','重新确认沟通内容'],
   ['options_confirmation_required','OPTIONS_CONFIRMATION_REQUIRED','选择一个设计方向'],
+  ['legacy_checkpoint_requires_replan','LEGACY_CHECKPOINT_REQUIRES_REPLAN','重新开始初步沟通'],
  ])('explains %s without falling back to an unknown service error', (raw,code,message)=>{
   const error=new ApiError(raw,409);expect(error.code).toBe(code);expect(safeError(error)).toContain(message);expect(safeError(error)).not.toContain('SERVICE_ERROR');
  });
