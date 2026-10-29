@@ -375,10 +375,19 @@ def _disclosures(report, parsed):
     if not any(row["availability"]["full_text"]["available"] for row in parsed["papers"]):
         positive = (r"(?:reviewed|read|analy[sz]ed|examined|accessed|acquired)\s+(?:the\s+)?full[- ]texts?|"
                     r"full[- ]texts?\s+(?:(?:were|was)\s+)?(?:reviewed|read|analy[sz]ed|examined|accessed|acquired)|"
-                    r"已(?:获取|阅读|审阅|分析).{0,8}全文")
-        for sentence in re.split(r"[.!?。！？\r\n]", report):
-            _require(not re.search(positive, sentence, re.I) or
-                     re.search(r"\b(?:no|not|without|never)\b|未|没有", sentence, re.I),
+                    r"已(?:经)?(?:获取|阅读|审阅|分析)[^，,;；:：。！？!?\r\n]{0,8}全文")
+        # The acquisition verb must govern full text in the same clause:
+        # "已获取摘要，无全文" records acquired abstracts and absent full text.
+        # A denial about another object/clause must not license a later actual
+        # full-text assertion. Do not exempt bibliography lines or globally
+        # accept the character 无. Ordinary English parenthetical commas keep
+        # their negation ("not, to date, reviewed full texts").
+        boundaries = (r"[.!?。！？\r\n;；，]|"
+                      r",(?=\s*(?:[^\x00-\x7f]|we\b|I\b|this\b))|"
+                      r"\b(?:but|however|yet|nevertheless)\b|但是|然而|不过|反而|可是|却|但")
+        for clause in re.split(boundaries, report, flags=re.I):
+            _require(not re.search(positive, clause, re.I) or
+                     re.search(r"\b(?:no|not|without|never)\b|未|没有", clause, re.I),
                      "missing_evidence_disclosure")
 
 

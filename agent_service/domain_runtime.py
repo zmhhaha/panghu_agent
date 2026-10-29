@@ -30,8 +30,8 @@ class DomainExecutionProfile(ExecutionProfile):
         # and a revision must not acquire a new search workflow.
         self.load_skills = not policy.name.startswith('research.')
         self.extension_paths = tuple(Path(p) for p in extensions)
-        self.protected_paths = ('inputs', 'base', '.preview-home', '.preview-tmp')
-        self._context, self._mounts = None, None
+        self.protected_paths = ('inputs', 'base', 'context-view', '.preview-home', '.preview-tmp')
+        self._context, self._mounts, self._context_view = None, None, None
         self._preview = None
         self.shared_project = policy.name.startswith('ppt.')
         self.agent_uid = self.preview_uid = self.control_root = None
@@ -44,11 +44,19 @@ class DomainExecutionProfile(ExecutionProfile):
         try:
             yield
         finally:
-            try:
-                if self._mounts is not None:
-                    self._mounts.close()
-            finally:
-                self._context, self._mounts = None, None
+            self.release_inputs()
+
+    def release_inputs(self):
+        """Shared by contextual Pi/Hermes release, after proven writer stop."""
+        if self._mounts is not None:
+            self._mounts.close()
+            self._mounts = None
+        # Never remove backing files before the kernel confirms that their view
+        # was unmounted. A failed release retains references and remains busy.
+        if self._context_view is not None:
+            self._context_view.cleanup()
+            self._context_view = None
+        self._context = None
 
     def make_wire(self, request):
         if request.profile != self.policy.name:
@@ -85,6 +93,13 @@ class DomainExecutionProfile(ExecutionProfile):
         validate_inputs = getattr(self.impl, 'validate_inputs', None)
         if validate_inputs is not None:
             validate_inputs(workspace, wire['task'])
+        prepare_context_view = getattr(self.impl, 'prepare_context_view', None)
+        if prepare_context_view is not None:
+            if self.control_root is None:
+                raise ServiceError('input_staging_not_ready', 503)
+            self._context_view = prepare_context_view(workspace, wire['task'],
+                Path(self.control_root) / 'research-context-views', wire['task_id'])
+            self._mounts.mount_context_view(self._context_view)
         # All writable output is fresh; an engine session/HOME is never restored.
         (workspace / 'result').mkdir(mode=0o700)
         if self.policy.name.startswith('ppt.'):

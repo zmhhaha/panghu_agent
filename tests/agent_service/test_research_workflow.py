@@ -272,6 +272,15 @@ def test_prelaunch_input_check_rejects_mutated_context_before_tools(tmp_path):
         implementation('research.retrieve.v1').validate_inputs(tmp_path, request)
 
 
+def test_draft_reference_access_notes_do_not_claim_fulltext_acquisition():
+    ctx, output = draft_context(), draft()
+    output['report_markdown'] += '\n[1] Synthetic source; 已获取摘要，无全文。\n'
+    contracts.validate_stage_output('draft', output, ctx)
+    output['report_markdown'] += '\n[1] Synthetic source; 已获取全文。\n'
+    with pytest.raises(contracts.WorkflowContractError, match='draft_trace_invalid'):
+        contracts.validate_stage_output('draft', output, ctx)
+
+
 def test_explicit_user_materials_preserve_honest_access_and_no_public_url():
     ctx = outline_context()
     material = dict(material_id=uid(110), name='Provided notes', kind='markdown', sha256='e' * 64,

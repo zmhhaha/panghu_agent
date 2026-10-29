@@ -11,6 +11,8 @@ import pytest
 from agent_service.contracts import ServiceError, canonical_bytes
 from agent_service import mounts, tool_client
 from agent_service.domain_runtime import DomainExecutionProfile
+from agent_service.engines import PiDriver, StopEvidence
+from agent_service.hermes_host import HermesHostDriver
 from agent_service.preview import TrustedPreview
 from test_binding_handoff import policy
 
@@ -195,6 +197,54 @@ def test_mount_verification_failure_requires_real_unmount_and_retains_uncertaint
     assert staged.boundary.targets == []
 
 
+def prepare_simulated_view(staged, monkeypatch):
+    root = staged.source.parent / 'derived'
+    child = root / 'inputs'
+    child.mkdir(parents=True)
+    (child / 'START.json').write_bytes(b'{"derived":true}')
+    original_lstat = Path.lstat
+
+    def lstat(path, *args, **kwargs):
+        if path == child:
+            return SimpleNamespace(st_mode=stat.S_IFDIR | 0o555, st_uid=0)
+        return original_lstat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'lstat', lstat)
+    return SimpleNamespace(root=root, child=child)
+
+
+def test_derived_view_uses_fixed_verified_read_only_bind_and_reverse_unmount_order(simulated_mount, monkeypatch):
+    staged = simulated_mount
+    view = prepare_simulated_view(staged, monkeypatch)
+    libc = FakeLibc()
+    monkeypatch.setattr(mounts.ReadOnlyInputs, '_libc', staticmethod(lambda: libc))
+    monkeypatch.setattr(mounts, 'verified_read_only_mount', lambda path: True)
+    staged.boundary.prepare()
+    staged.boundary.mount_context_view(view)
+    assert staged.boundary.targets == [staged.workspace / 'inputs', staged.workspace / 'context-view']
+    assert libc.mounts[2][:2] == (os.fsencode(view.child), os.fsencode(staged.workspace / 'context-view'))
+    assert libc.mounts[3][3] == (mounts.MS_BIND | mounts.MS_REMOUNT | mounts.MS_RDONLY |
+        mounts.MS_NOSUID | mounts.MS_NODEV | mounts.MS_NOEXEC)
+    # A successful simulated syscall never copies view bytes into a writable directory.
+    assert not (staged.workspace / 'context-view/START.json').exists()
+    staged.boundary.close()
+    assert [target for target, flags in libc.unmounts] == [
+        os.fsencode(staged.workspace / 'context-view'), os.fsencode(staged.workspace / 'inputs')]
+    assert all(flags == 0 for _, flags in libc.unmounts)
+
+
+def test_failed_derived_remount_unmounts_all_inputs_and_preserves_backing_bytes(simulated_mount, monkeypatch):
+    staged = simulated_mount
+    view = prepare_simulated_view(staged, monkeypatch)
+    libc = FakeLibc([0, 0, 0, -1])
+    monkeypatch.setattr(mounts.ReadOnlyInputs, '_libc', staticmethod(lambda: libc))
+    monkeypatch.setattr(mounts, 'verified_read_only_mount', lambda path: True)
+    staged.boundary.prepare()
+    fails('read_only_mount_failed', lambda: staged.boundary.mount_context_view(view))
+    assert len(libc.unmounts) == 2 and staged.boundary.targets == []
+    assert (view.child / 'START.json').read_bytes() == b'{"derived":true}'
+
+
 def test_mountinfo_accepts_same_filesystem_bind_without_ismount_heuristic():
     # Captured mountinfo form: the bind has the same device as its parent, but
     # Linux records a separate exact mountpoint with the required VFS flags.
@@ -231,6 +281,67 @@ def test_domain_workspace_requires_staging_context_and_rejects_overlapping_conte
         assert (tmp_path / 'result').is_dir()
         assert not (tmp_path / 'base').exists() and not (tmp_path / 'inputs').exists()
     assert runtime._context is None and runtime._mounts is None
+
+
+@pytest.mark.parametrize('unmount_error', [False, True])
+def test_domain_derives_only_after_validation_and_removes_view_only_after_unmount(tmp_path, monkeypatch, unmount_error):
+    runtime = DomainExecutionProfile(policy(), 'offline-bundle')
+    runtime.control_root = tmp_path / 'controller'
+    events = []
+    derived = SimpleNamespace(cleanup=lambda: events.append('cleanup'))
+    runtime.impl = SimpleNamespace(validate_task=lambda task: None,
+        validate_inputs=lambda workspace, task: events.append('validate'),
+        prepare_context_view=lambda *args: events.append('derive') or derived)
+    wire = dict(schema_version='1', task_id='00000000-0000-0000-0000-000000000001',
+        runtime_revision=runtime.policy.runtime_revision, skill_bundle_revision='offline-bundle',
+        timeout_seconds=30, execution_deadline_at='2026-10-26T12:00:00+00:00', task={'prompt': 'offline'})
+    monkeypatch.setattr(mounts.ReadOnlyInputs, 'prepare', lambda self: events.append('input-mount'))
+    monkeypatch.setattr(mounts.ReadOnlyInputs, 'mount_context_view',
+        lambda self, view: events.append('view-mount') if view is derived else pytest.fail('Unexpected view'))
+    def close(self):
+        events.append('unmount')
+        if unmount_error:
+            raise ServiceError('input_unmount_unverified', 503)
+    monkeypatch.setattr(mounts.ReadOnlyInputs, 'close', close)
+    context = SimpleNamespace(input_root=None, checkpoint_root=None)
+    def execute():
+        with runtime.execution_context(context):
+            runtime.prepare_workspace(wire, tmp_path)
+            assert 'context-view' in runtime.protected_paths
+            assert events == ['input-mount', 'validate', 'derive', 'view-mount']
+    if unmount_error:
+        fails('input_unmount_unverified', execute)
+        assert events[-1] == 'unmount' and 'cleanup' not in events
+        assert runtime._context is context and runtime._context_view is derived
+    else:
+        execute()
+        assert events[-2:] == ['unmount', 'cleanup']
+
+
+@pytest.mark.parametrize('engine', ['pi', 'hermes'])
+@pytest.mark.parametrize('stopped', [False, True])
+def test_production_driver_release_cleans_derived_view_only_after_proven_stop(engine, stopped):
+    events = []
+    profile = DomainExecutionProfile(policy(), 'offline-bundle')
+    profile._context = object()
+    profile._mounts = SimpleNamespace(close=lambda: events.append('unmount'))
+    profile._context_view = SimpleNamespace(cleanup=lambda: events.append('cleanup'))
+    stopper = SimpleNamespace(prove_stopped=lambda execution_id:
+        StopEvidence(execution_id, stopped, ('offline-isolated-writer',)))
+    if engine == 'pi':
+        driver = PiDriver(SimpleNamespace(profile=profile), stopper)
+    else:
+        driver = HermesHostDriver.__new__(HermesHostDriver)
+        driver.profile, driver.stop_controller = profile, stopper
+    request = SimpleNamespace(execution_id='00000000-0000-0000-0000-000000000001')
+    if not stopped:
+        with pytest.raises((ValueError, ServiceError)):
+            driver.release_context(request)
+        assert events == [] and profile._context_view is not None
+    else:
+        driver.release_context(request)
+        assert events == ['unmount', 'cleanup']
+        assert profile._context is None and profile._context_view is None and profile._mounts is None
 
 
 @pytest.fixture
