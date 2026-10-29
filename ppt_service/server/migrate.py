@@ -3,10 +3,10 @@ API startup never implicitly migrates production databases.
 """
 import os
 from sqlalchemy import create_engine,text,select,inspect
-from .models import Base,ExecutionSlot
+from .models import Base,ExecutionSlot,AgentOutbox
 from .acceptance.store import AcceptanceBase
 from sqlalchemy.orm import Session
-REVISION=3
+REVISION=4
 
 def migrate(engine):
     with engine.begin() as c:
@@ -14,8 +14,10 @@ def migrate(engine):
         c.execute(text('CREATE TABLE IF NOT EXISTS api_schema_revision (revision INTEGER PRIMARY KEY)'))
         current=c.scalar(text('SELECT max(revision) FROM api_schema_revision')) or 0
         if current>REVISION:raise RuntimeError('database schema newer than application')
+        if current>=3 and not set(AcceptanceBase.metadata.tables)<=set(inspect(c).get_table_names()):
+            raise RuntimeError('schema revision 3 requires the existing review tables; preserve and inspect this conflicting database')
         if current<1:
-            Base.metadata.create_all(c)
+            Base.metadata.create_all(c,tables=[table for table in Base.metadata.sorted_tables if table is not AgentOutbox.__table__])
             c.execute(ExecutionSlot.__table__.insert().values(id=1,fencing_token=0))
             c.execute(text('INSERT INTO api_schema_revision (revision) VALUES (1)'))
         if current<2:
@@ -34,6 +36,9 @@ def migrate(engine):
                 raise RuntimeError('review tables exist before schema revision 3; preserve and inspect the conflicting installation')
             AcceptanceBase.metadata.create_all(c)
             c.execute(text('INSERT INTO api_schema_revision (revision) VALUES (3)'))
+        if current<4:
+            AgentOutbox.__table__.create(c,checkfirst=True)
+            c.execute(text('INSERT INTO api_schema_revision (revision) VALUES (4)'))
         if engine.dialect.name=='postgresql':
             # Baselines and immutable input snapshots cannot silently change after publication.
             c.execute(text("""CREATE OR REPLACE FUNCTION ppt_immutable_record() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'immutable record'; END $$"""))

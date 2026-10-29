@@ -334,8 +334,9 @@ def test_initial_owner_list_is_applied_when_absent():
     assert sum(d['metadata']['name'] == 'ppt-owner' for d in instance.applied) == 1
 
 
-def test_migration_and_site_use_the_same_manifest_digest():
-    instance = Scenario(revision=1, existing_site=0)
+@pytest.mark.parametrize('revision', [0, 1, 2, 3])
+def test_migration_and_site_use_the_same_manifest_digest(revision):
+    instance = Scenario(revision=revision, existing_site=0)
     instance.deploy(image=IMAGE)
     assert {job['spec']['template']['spec']['containers'][0]['image'] for job in instance.jobs} == {IMAGE}
     site = next(d for d in instance.applied if d['kind'] == 'Deployment')
@@ -350,8 +351,21 @@ def test_current_schema_skips_migration_job():
     assert not any(job['metadata']['name'].startswith('ppt-migrate-') for job in instance.jobs)
 
 
-def test_schema2_is_upgraded_before_runtime_access():
-    instance = Scenario(revision=2)
+def test_incomplete_migration_does_not_release_the_website():
+    instance = Scenario(revision=3)
+    instance.revisions = [3, 3]
+    with pytest.raises(deploy.DeployError, match='not at schema revision 4'):
+        instance.deploy(image=IMAGE)
+    assert len(instance.jobs) == 1
+    assert instance.jobs[0]['metadata']['name'].startswith('ppt-migrate-')
+    assert not any(document['kind'] == 'Deployment' for document in instance.applied)
+    assert ('kube', ('-n', NS, 'scale', 'deployment/ppt-site', '--replicas=0'), None) in instance.events
+    assert instance.events[-1] == ('unlock',)
+
+
+@pytest.mark.parametrize('revision', [2, 3])
+def test_older_schema_is_upgraded_before_runtime_access(revision):
+    instance = Scenario(revision=revision)
     instance.deploy(image=IMAGE)
     assert instance.jobs[0]['metadata']['name'].startswith('ppt-migrate-')
     assert instance.job_options[0] == {'rerun_completed': True}
@@ -492,7 +506,7 @@ def test_init_passwords_are_only_in_sql_stdin_and_failures_hide_stderr(capsys):
     assert capsys.readouterr() == ('', '')
 
 
-@pytest.mark.parametrize('revision', [0, 1, 2, 3])
+@pytest.mark.parametrize('revision', [0, 1, 2, 3, 4])
 def test_supported_schema_revisions(revision):
     runner = Runner(['t', str(revision)])
     instance = deploy.Deployment(runner=runner)
@@ -506,7 +520,7 @@ def test_absent_schema_revision_table_is_initial_revision_zero():
     assert instance.revision() == 0
 
 
-@pytest.mark.parametrize('revision', [4, -1])
+@pytest.mark.parametrize('revision', [5, -1])
 def test_unsupported_schema_revision_is_rejected(revision):
     instance = deploy.Deployment(runner=Runner(['t', str(revision)]))
     instance.db_state = database_state
@@ -986,7 +1000,7 @@ def test_website_release_rejects_unknown_enabled_backend():
     original = instance.get
     instance.get = lambda kind, name, **kwargs: ({'data': {'PPT_EXECUTION_ENABLED': 'true'}}
         if (kind, name) == ('configmap', 'ppt-site') else original(kind, name, **kwargs))
-    with pytest.raises(deploy.DeployError, match='Kubernetes|kubernetes'):
+    with pytest.raises(deploy.DeployError, match='isolated configured backend'):
         instance.deploy(image=IMAGE)
 
 

@@ -10,15 +10,15 @@ from sqlalchemy import create_engine, inspect, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
-from ppt_service.server.acceptance.store import AcceptanceEntry, AcceptanceStream
+from ppt_service.server.acceptance.store import AcceptanceBase, AcceptanceEntry, AcceptanceStream
 from ppt_service.server.migrate import migrate, REVISION
-from ppt_service.server.models import Base, ExecutionSlot, Project
+from ppt_service.server.models import AgentOutbox, Base, ExecutionSlot, Project
 
 
 def legacy_schema(engine):
     """A real prior schema with an unrelated owner's durable data."""
     with engine.begin() as connection:
-        Base.metadata.create_all(connection)
+        Base.metadata.create_all(connection,tables=[table for table in Base.metadata.sorted_tables if table is not AgentOutbox.__table__])
         connection.execute(text('CREATE TABLE api_schema_revision (revision INTEGER PRIMARY KEY)'))
         connection.execute(text('INSERT INTO api_schema_revision(revision) VALUES (1), (2)'))
         connection.execute(ExecutionSlot.__table__.insert().values(id=1, fencing_token=7))
@@ -38,17 +38,26 @@ def append_synthetic_entry(engine):
                                    binding={'fixture_only': True}, payload={'fixture_only': True}))
 
 
+def review_schema3(engine):
+    """The deployed mainline schema 3, before the Agent Outbox migration."""
+    legacy_schema(engine)
+    with engine.begin() as connection:
+        AcceptanceBase.metadata.create_all(connection)
+        connection.execute(text('INSERT INTO api_schema_revision(revision) VALUES (3)'))
+    append_synthetic_entry(engine)
+
+
 def test_fresh_schema_and_repeated_migration_preserve_review_history(tmp_path):
     engine = create_engine('sqlite:///' + str(tmp_path / 'review-migration.sqlite'))
     try:
         migrate(engine)
-        assert {'ppt_acceptance_entries', 'ppt_acceptance_streams'}.issubset(inspect(engine).get_table_names())
+        assert {'ppt_acceptance_entries', 'ppt_acceptance_streams', 'ppt_agent_outbox'}.issubset(inspect(engine).get_table_names())
         append_synthetic_entry(engine)
         migrate(engine)
         with Session(engine) as session:
             assert session.get(AcceptanceEntry, 'synthetic-entry').payload == {'fixture_only': True}
             assert session.get(AcceptanceStream, 'synthetic-scope').revision == 1
-            assert session.scalar(text('SELECT max(revision) FROM api_schema_revision')) == REVISION == 3
+            assert session.scalar(text('SELECT max(revision) FROM api_schema_revision')) == REVISION == 4
             assert session.get(ExecutionSlot, 1).fencing_token == 0
     finally:
         engine.dispose()
@@ -64,7 +73,45 @@ def test_schema2_upgrade_preserves_existing_projects_and_execution_slot(tmp_path
             assert (project.title, project.revision, project.subject) == ('Retained source project', 19, 'retained-owner')
             assert session.get(ExecutionSlot, 1).fencing_token == 7
             assert session.scalars(select(AcceptanceEntry)).all() == []
+            assert session.scalar(text('SELECT max(revision) FROM api_schema_revision')) == REVISION
+            assert session.scalars(select(AgentOutbox)).all() == []
+    finally:
+        engine.dispose()
+
+
+def test_mainline_schema3_upgrade_adds_outbox_and_preserves_review_history(tmp_path):
+    engine = create_engine('sqlite:///' + str(tmp_path / 'schema3.sqlite'))
+    try:
+        review_schema3(engine)
+        assert 'ppt_agent_outbox' not in inspect(engine).get_table_names()
+        migrate(engine)
+        migrate(engine)
+        with Session(engine) as session:
+            assert session.get(AcceptanceEntry, 'synthetic-entry').payload == {'fixture_only': True}
+            assert session.get(AcceptanceStream, 'synthetic-scope').revision == 1
+            assert session.get(Project, 'retained-project').revision == 19
+            assert session.get(ExecutionSlot, 1).fencing_token == 7
+            assert session.scalars(select(AgentOutbox)).all() == []
+            assert list(session.scalars(text('SELECT revision FROM api_schema_revision ORDER BY revision'))) == [1, 2, 3, 4]
+    finally:
+        engine.dispose()
+
+
+def test_old_agent_only_schema3_is_preserved_and_rejected(tmp_path):
+    engine = create_engine('sqlite:///' + str(tmp_path / 'old-agent-test-schema3.sqlite'))
+    try:
+        legacy_schema(engine)
+        with engine.begin() as connection:
+            AgentOutbox.__table__.create(connection)
+            connection.execute(text('INSERT INTO api_schema_revision(revision) VALUES (3)'))
+        with pytest.raises(RuntimeError, match='schema revision 3 requires the existing review tables'):
+            migrate(engine)
+        assert 'ppt_agent_outbox' in inspect(engine).get_table_names()
+        assert 'ppt_acceptance_entries' not in inspect(engine).get_table_names()
+        with Session(engine) as session:
             assert session.scalar(text('SELECT max(revision) FROM api_schema_revision')) == 3
+            assert session.get(Project, 'retained-project').revision == 19
+            assert session.get(ExecutionSlot, 1).fencing_token == 7
     finally:
         engine.dispose()
 
@@ -113,11 +160,16 @@ def postgres_schema():
         base.dispose()
 
 
-def test_postgres_review_entries_reject_update_and_delete_but_stream_revision_advances(postgres_schema):
+@pytest.mark.parametrize('source_revision', [2, 3])
+def test_postgres_review_entries_reject_update_and_delete_but_stream_revision_advances(postgres_schema, source_revision):
     engine = postgres_schema
-    legacy_schema(engine)
+    if source_revision == 3:
+        review_schema3(engine)
+    else:
+        legacy_schema(engine)
     migrate(engine)
-    append_synthetic_entry(engine)
+    if source_revision == 2:
+        append_synthetic_entry(engine)
     for statement in (
         "UPDATE ppt_acceptance_entries SET payload='{}' WHERE id='synthetic-entry'",
         "DELETE FROM ppt_acceptance_entries WHERE id='synthetic-entry'",
@@ -132,3 +184,5 @@ def test_postgres_review_entries_reject_update_and_delete_but_stream_revision_ad
         assert session.get(AcceptanceEntry, 'synthetic-entry').payload == {'fixture_only': True}
         assert session.get(AcceptanceStream, 'synthetic-scope').revision == 2
         assert session.get(Project, 'retained-project').revision == 19
+        assert session.scalar(text('SELECT max(revision) FROM api_schema_revision')) == REVISION
+        assert session.scalars(select(AgentOutbox)).all() == []

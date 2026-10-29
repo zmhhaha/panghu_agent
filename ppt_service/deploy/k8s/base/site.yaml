@@ -96,10 +96,11 @@ spec:
                 - -c
                 - >-
                   import os, urllib.request; from sqlalchemy import create_engine, text;
+                  from ppt_service.server.migrate import REVISION;
                   urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).read();
                   engine = create_engine(os.environ['DATABASE_URL'], connect_args={'connect_timeout': 3});
                   connection = engine.connect();
-                  assert connection.scalar(text('SELECT max(revision) FROM api_schema_revision')) == 3;
+                  assert connection.scalar(text('SELECT max(revision) FROM api_schema_revision')) == REVISION;
                   connection.close(); engine.dispose()
             periodSeconds: 10
             timeoutSeconds: 8

@@ -106,6 +106,8 @@ runtime has SELECT/INSERT only on entries and SELECT/INSERT/UPDATE on streams,
 with no DELETE/TRUNCATE/REFERENCES/TRIGGER on either review table. A PostgreSQL
 trigger also rejects entry UPDATE/DELETE for the migration owner. Runtime retains
 no schema ownership, DDL, superuser, role creation or database creation privileges.
+Schema revision 4 adds `ppt_agent_outbox` with runtime CRUD privileges while
+preserving the revision 3 review tables, entries and append-only constraints.
 The deployment applies migration grants before rolling
 out the website. Secret synchronization is not a substitute for these database
 checks.

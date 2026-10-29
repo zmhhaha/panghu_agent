@@ -1,0 +1,186 @@
+# Render with deploy/render.py. Image, config and private network values are
+# validated inputs; credentials are supplied exclusively by External Secrets.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: __CONFIG_NAME__
+  namespace: agent-service
+immutable: true
+data:
+  config.json: __PUBLIC_CONFIG_JSON__
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-service
+  namespace: agent-service
+spec:
+  selector:
+    app.kubernetes.io/name: agent-execution-service
+    component: api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-model-proxy
+  namespace: agent-service
+spec:
+  selector:
+    app.kubernetes.io/name: agent-execution-service
+    component: model-proxy
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-service-api
+  namespace: agent-service
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-execution-service
+      component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agent-execution-service
+        app: agent-service
+        component: api
+    spec:
+      serviceAccountName: agent-service-api
+      terminationGracePeriodSeconds: 30
+      securityContext: {runAsNonRoot: true, runAsUser: 10000, runAsGroup: 10000, fsGroup: 10000}
+      containers:
+        - name: api
+          image: __CONTROL_IMAGE__
+          imagePullPolicy: IfNotPresent
+          args: [--config, /etc/agent-service/config.json, --secrets, /run/agent-service/secrets.json, api]
+          ports: [{name: http, containerPort: 8080}]
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi, ephemeral-storage: 128Mi}
+            limits: {cpu: '2', memory: 2Gi, ephemeral-storage: 1Gi}
+          readinessProbe: {httpGet: {path: /healthz, port: 8080}, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /healthz, port: 8080}, initialDelaySeconds: 20, periodSeconds: 20}
+          volumeMounts:
+            - {name: config, mountPath: /etc/agent-service/config.json, subPath: config.json, readOnly: true}
+            - {name: secrets, mountPath: /run/agent-service/secrets.json, subPath: secrets.json, readOnly: true}
+            - {name: temporary, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap: {name: __CONFIG_NAME__}
+        - name: secrets
+          secret: {secretName: agent-service-runtime, defaultMode: 0440}
+        - name: temporary
+          emptyDir: {sizeLimit: 512Mi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-service-dispatcher
+  namespace: agent-service
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-execution-service
+      component: dispatcher
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agent-execution-service
+        app: agent-service
+        component: dispatcher
+    spec:
+      serviceAccountName: agent-service-dispatcher
+      terminationGracePeriodSeconds: 60
+      securityContext: {runAsNonRoot: true, runAsUser: 10000, runAsGroup: 10000, fsGroup: 10000}
+      containers:
+        - name: dispatcher
+          image: __CONTROL_IMAGE__
+          imagePullPolicy: IfNotPresent
+          args: [--config, /etc/agent-service/config.json, --secrets, /run/agent-service/secrets.json, dispatch]
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi, ephemeral-storage: 128Mi}
+            limits: {cpu: '2', memory: 2Gi, ephemeral-storage: 1Gi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/agent-service/config.json, subPath: config.json, readOnly: true}
+            - {name: secrets, mountPath: /run/agent-service/secrets.json, subPath: secrets.json, readOnly: true}
+            - {name: temporary, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap: {name: __CONFIG_NAME__}
+        - name: secrets
+          secret: {secretName: agent-service-runtime, defaultMode: 0440}
+        - name: temporary
+          emptyDir: {sizeLimit: 512Mi}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-model-proxy
+  namespace: agent-service
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-execution-service
+      component: model-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agent-execution-service
+        app: agent-model-proxy
+        component: model-proxy
+        llm-client: 'true'
+    spec:
+      serviceAccountName: agent-model-proxy
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 45
+      securityContext: {runAsNonRoot: true, runAsUser: 10000, runAsGroup: 10000, fsGroup: 10000}
+      containers:
+        - name: model-proxy
+          image: __CONTROL_IMAGE__
+          imagePullPolicy: IfNotPresent
+          args: [--config, /etc/agent-service/config.json, --secrets, /run/agent-service/secrets.json, model-proxy]
+          ports: [{name: http, containerPort: 8080}]
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi, ephemeral-storage: 64Mi}
+            limits: {cpu: '2', memory: 1Gi, ephemeral-storage: 512Mi}
+          readinessProbe: {tcpSocket: {port: 8080}, periodSeconds: 10}
+          volumeMounts:
+            - {name: config, mountPath: /etc/agent-service/config.json, subPath: config.json, readOnly: true}
+            - {name: secrets, mountPath: /run/agent-service/secrets.json, subPath: secrets.json, readOnly: true}
+            - {name: temporary, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap: {name: __CONFIG_NAME__}
+        - name: secrets
+          secret: {secretName: agent-service-runtime, defaultMode: 0440}
+        - name: temporary
+          emptyDir: {sizeLimit: 256Mi}

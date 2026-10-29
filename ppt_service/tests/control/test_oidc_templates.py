@@ -44,7 +44,7 @@ class OidcTemplateTests(unittest.TestCase):
         self.assertNotIn('allowed-emails', self.maps['ppt-oidc'])
         self.assertEqual(set(self.maps['ppt-owner']), {'emails'})
         self.assertIsInstance(self.maps['ppt-owner']['emails'], str)
-        self.assertEqual(self.auth['ALLOWED_ORIGINS'], 'https://ppt-service.panghuer.top')
+        self.assertEqual(self.auth['ALLOWED_ORIGINS'], 'https://ppt.panghuer.top')
         self.assertEqual(self.proxy['redirect_url'], self.auth['ALLOWED_ORIGINS'] + '/oauth2/callback')
         self.assertEqual(self.proxy['authenticated_emails_file'], '/owner/emails')
         self.assertEqual(self.auth['INVITATION_EMAILS_FILE'], self.proxy['authenticated_emails_file'])

@@ -109,7 +109,7 @@ def seed(root):
 def runtime_permissions():
     engine = connect("ppt_p1_restore_fixture", "ppt_runtime")
     table_names = ("assets", "checkpoints", "execution_slots", "idempotency_keys", "job_events", "jobs",
-                   "plans", "projects", "usage_records", "user_quotas", "versions")
+                   "plans", "ppt_agent_outbox", "projects", "usage_records", "user_quotas", "versions")
     with engine.connect() as connection:
         revision = connection.scalar(text("SELECT max(revision) FROM public.api_schema_revision"))
         assert revision == REVISION

@@ -1,0 +1,49 @@
+# PI_CAGE_IMAGE is built from the pinned zmhhaha/pi-cage repository, using its
+# normal build.sh. The fixed Worker entry and package identity are measured below.
+ARG PI_CAGE_IMAGE
+ARG PYTHON_BASE_IMAGE
+ARG PPT_DONOR_IMAGE
+FROM ${PI_CAGE_IMAGE} AS pi_cage
+FROM ${PPT_DONOR_IMAGE} AS neutral_runtime
+USER 0:0
+# Keep the reviewed donor fixed. This dependency stage is identical in both
+# Worker Dockerfiles and remains cached when only application sources change.
+COPY agent_service/requirements.txt /tmp/agent-service-requirements.txt
+RUN /opt/hermes/.venv/bin/python -m venv /opt/agent-service/.venv \
+    && /opt/agent-service/.venv/bin/python -m pip install --no-cache-dir -r /tmp/agent-service-requirements.txt \
+    && /opt/agent-service/.venv/bin/python -m pip check \
+    && rm /tmp/agent-service-requirements.txt \
+    && chown -R 0:0 /opt/ppt-master \
+    && chmod -R a+rX,go-w /opt/ppt-master
+FROM neutral_runtime
+ARG PI_CAGE_REVISION
+LABEL io.panghu.agent.pi-cage.source="https://github.com/zmhhaha/pi-cage" \
+      io.panghu.agent.pi-cage.revision="${PI_CAGE_REVISION}"
+RUN if [ "$(dpkg-query -W -f='${Status}\n' ca-certificates libstdc++6 fd-find ripgrep 2>/dev/null | grep -cx 'install ok installed')" != 4 ]; then \
+      apt-get update && apt-get install -y --no-install-recommends ca-certificates libstdc++6 fd-find ripgrep \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi && ln -sf /usr/bin/fdfind /usr/local/bin/fd && fd --version && rg --version
+COPY --from=pi_cage /usr/local/bin/node /usr/local/bin/node
+COPY --from=pi_cage /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/ /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/
+COPY --from=pi_cage /usr/local/lib/pi-cage/worker-cli.mjs /usr/local/lib/pi-cage/worker-cli.mjs
+COPY --from=pi_cage /usr/local/lib/pi-cage/runtime.json /usr/local/lib/pi-cage/runtime.json
+COPY agent_service/ /opt/agent-service/agent_service/
+COPY agent_service/academic_extension.mjs /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/agent-service-academic.mjs
+COPY scientific_agent/ /opt/agent-service/scientific_agent/
+COPY pi_worker/ /opt/agent-service/pi_worker/
+COPY tools/ /opt/agent-service/tools/
+COPY scientific_skills/ /opt/agent-service/scientific_skills/
+RUN mkdir -p /run/agent-control /run/agent-secrets /work \
+    && chmod 0700 /run/agent-control /run/agent-secrets \
+    && chmod 0711 /work \
+    && chmod -R a+rX /opt/agent-service \
+    && /opt/agent-service/.venv/bin/python /opt/agent-service/agent_service/pi_cage.py \
+    && /usr/local/bin/node /usr/local/lib/pi-cage/worker-cli.mjs --version
+ENV PYTHONPATH=/opt/agent-service PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOME=/run/agent-control
+WORKDIR /opt/agent-service
+EXPOSE 8090
+# Python must be PID 1 in a private Pod PID namespace. The trusted controller
+# needs CHOWN, DAC_OVERRIDE, KILL, SETUID, SETGID only; the child launcher clears
+# all capabilities and sets no_new_privs. No model credential is baked in.
+ENTRYPOINT ["/opt/agent-service/.venv/bin/python", "-m", "agent_service.worker_entry"]
+CMD []

@@ -1,4 +1,4 @@
-"""Scientific research API: Pi execution with read access to legacy reports.
+"""Scientific research API with neutral execution and legacy report access.
 
 Internal callers pass X-Forwarded-User from the existing authenticated UI proxy.
 This service is not a public identity-verifying gateway.
@@ -18,6 +18,7 @@ from scientific_agent.pi_report_versions import VersionError, ReportVersionStore
 from tools import sqlite_client as db
 from scientific_agent.pi_client import PiClient, WorkerError
 from scientific_agent.pi_projection import PiProjection, sql
+from scientific_agent.agent_config import AgentServiceSettings, execution_backend
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class ResearchRequest(BaseModel):
     topic: str = Field(..., min_length=1, max_length=500)
     email: str = Field(default='', max_length=200)
     user_id: str = Field(default='', max_length=200)
-    engine: Literal['pi'] | None = None
+    engine: Literal['pi', 'agent-service'] | None = None
     mode: Literal['brief', 'review'] = 'review'
     timeout_seconds: int = Field(default=1800, ge=60, le=3600, strict=True)
 
@@ -112,9 +113,23 @@ def create_app(database=None, worker=None, projection=None, start_reconciler=Tru
     if worker is None:
         worker = getattr(projection, 'worker', None)
     if worker is None:
-        worker = PiClient(os.getenv('SCIENTIFIC_PI_WORKER_URL',''),os.getenv('SCIENTIFIC_PI_WORKER_TOKEN',''))
+        if execution_backend() == 'agent-service':
+            from scientific_agent.agent_client import ScientificAgentClient
+            settings = AgentServiceSettings.from_env()
+            legacy = None
+            if os.getenv('SCIENTIFIC_PI_WORKER_URL') and os.getenv('SCIENTIFIC_PI_WORKER_TOKEN'):
+                legacy = PiClient(os.environ['SCIENTIFIC_PI_WORKER_URL'], os.environ['SCIENTIFIC_PI_WORKER_TOKEN'])
+            worker = ScientificAgentClient(database, settings.base_url, settings.token,
+                generation_revision=settings.generation_revision, revision_revision=settings.revision_revision,
+                legacy_worker=legacy)
+        else:
+            worker = PiClient(os.getenv('SCIENTIFIC_PI_WORKER_URL',''),os.getenv('SCIENTIFIC_PI_WORKER_TOKEN',''))
     if projection is None:
-        projection = PiProjection(database,worker,os.getenv('SCIENTIFIC_PI_SKILL_BUNDLE_REVISION',''),os.getenv('SCIENTIFIC_PI_RUNTIME_REVISION',''),_send_notification)
+        if getattr(worker, 'backend', None) == 'agent-service':
+            from scientific_agent.agent_projection import ScientificAgentProjection
+            projection = ScientificAgentProjection(database, worker, _send_notification)
+        else:
+            projection = PiProjection(database,worker,os.getenv('SCIENTIFIC_PI_SKILL_BUNDLE_REVISION',''),os.getenv('SCIENTIFIC_PI_RUNTIME_REVISION',''),_send_notification)
     versions = versions if versions is not None else ReportVersionStore(database)
     projection.versions = versions
     stop = threading.Event()
@@ -254,7 +269,7 @@ def create_app(database=None, worker=None, projection=None, start_reconciler=Tru
         # reads its model credentials nor performs a live upstream model probe.
         return {'status':'ok' if ready else 'degraded','llm_configured':None,
                 'llm_configuration_source':'worker','model_probe_performed':False,
-                'backend':'pi','worker_ready':ready,'capabilities':capabilities}
+                'backend':getattr(worker,'backend','pi'),'worker_ready':ready,'capabilities':capabilities}
 
     @app.post('/scientific-research',response_model=TaskResponse)
     def submit_research(req:ResearchRequest, idempotency_key:str|None=Header(default=None),
@@ -266,6 +281,9 @@ def create_app(database=None, worker=None, projection=None, start_reconciler=Tru
             raise HTTPException(422,'Request user_id does not match authenticated user')
         if idempotency_key is not None and (not 1<=len(idempotency_key)<=128 or any(not 32<=ord(c)<=126 for c in idempotency_key)):
             raise HTTPException(422,'Invalid Idempotency-Key')
+        # The engine field is retained in the historical business descriptor.
+        # Server configuration selects the backend; requests cannot route an
+        # Agent Job to a native engine or override its execution/model pins.
         payload = dict(topic=topic,user_id=user_id,engine='pi',mode=req.mode,timeout_seconds=req.timeout_seconds)
         try: row = projection.prepare(payload,req.email,idempotency_key)
         except WorkerError as exc: worker_error(exc)
@@ -300,7 +318,7 @@ def create_app(database=None, worker=None, projection=None, start_reconciler=Tru
     @app.post('/scientific-research/{task_id}/cancel',response_model=TaskResponse)
     def cancel(task_id:str,x_forwarded_user:str|None=Header(default=None)):
         row = require_owner(pi_row(task_id),x_forwarded_user)
-        if not row: raise HTTPException(409,'Cancellation is supported for Pi tasks only')
+        if not row: raise HTTPException(409,'Cancellation requires a managed scientific task')
         if row['dispatch']=='rejected': return get_task(task_id,x_forwarded_user)
         try:
             if projection.is_revision(row):

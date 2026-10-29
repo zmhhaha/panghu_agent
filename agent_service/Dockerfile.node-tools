@@ -1,0 +1,12 @@
+# One-shot node administration tool, never an Agent/Worker runtime image.
+# The parser and its include files are installed inside this image only.
+ARG PYTHON_BASE_IMAGE=python@sha256:cf50a4f6ac4f026458b08d5222023d700ac806410dff5e9ca8728fa44f2b850f
+FROM ${PYTHON_BASE_IMAGE}
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends apparmor \
+    && test -x /usr/sbin/apparmor_parser \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+USER 0:0
+WORKDIR /tmp
+ENTRYPOINT ["/usr/sbin/apparmor_parser"]
+CMD ["--version"]

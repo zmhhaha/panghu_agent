@@ -1,0 +1,24 @@
+# Base identity is shared with the reviewed Pi Python runtime; overrides must
+# remain repository@sha256 references and are validated by build_image.py.
+ARG PYTHON_BASE_IMAGE=python@sha256:cf50a4f6ac4f026458b08d5222023d700ac806410dff5e9ca8728fa44f2b850f
+FROM ${PYTHON_BASE_IMAGE}
+USER 0:0
+WORKDIR /opt/agent-service
+COPY agent_service/requirements.txt /opt/agent-service/agent_service/requirements.txt
+RUN python -m pip install --no-cache-dir -r /opt/agent-service/agent_service/requirements.txt \
+    && python -m pip check
+COPY agent_service/ /opt/agent-service/agent_service/
+COPY scientific_agent/ /opt/agent-service/scientific_agent/
+COPY pi_worker/ /opt/agent-service/pi_worker/
+COPY tools/ /opt/agent-service/tools/
+COPY scientific_skills/ /opt/agent-service/scientific_skills/
+RUN mkdir -p /run/agent-control \
+    && chown 10000:10000 /run/agent-control \
+    && chmod 0700 /run/agent-control
+ENV PYTHONPATH=/opt/agent-service PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOME=/run/agent-control
+USER 10000:10000
+EXPOSE 8080
+# API and dispatcher are deterministic control processes. The command is chosen
+# explicitly by deployment; no Agent is launched inside the API process.
+ENTRYPOINT ["python", "-m", "agent_service"]
+CMD []

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -64,18 +65,116 @@ class DeploymentTests(unittest.TestCase):
         self.assertIn('app.api.scientific_agent:app', container['command'])
         values = {item['name']: item.get('value') for item in container['env']}
         self.assertEqual(values['SCIENTIFIC_DEFAULT_ENGINE'], 'pi')
+        self.assertEqual(values['SCIENTIFIC_EXECUTION_BACKEND'], 'pi')
         self.assertNotIn('SCIENTIFIC_PI_MODEL_API_KEY', values)
         self.assertTrue(values['SCIENTIFIC_PI_WORKER_URL'].startswith('http://scientific-pi-worker.'))
         removed_env = {item['name'] for item in container['env'] if item.get('$patch') == 'delete'}
         self.assertTrue({'LLM_BASE_URL', 'LLM_MODEL', 'LLM_SERVICE_TOKEN'} <= removed_env)
         self.assertEqual({item['mountPath'] for item in container['volumeMounts'] if item.get('$patch') == 'delete'},
-                         {'/app/scientific_agent', '/app/app/api/agent.py'})
+                         {'/app/scientific_agent', '/app/app/api/agent.py', renderer.AGENT_TOKEN_PATH})
         self.assertEqual({item['name'] for item in pod['volumes'] if item.get('$patch') == 'delete'},
-                         {'source', 'scientific-workflow'})
+                         {'source', 'scientific-workflow', renderer.AGENT_TOKEN_VOLUME})
+        self.assertTrue({'SCIENTIFIC_AGENT_SERVICE_URL', 'SCIENTIFIC_AGENT_SERVICE_TOKEN_FILE',
+                         'SCIENTIFIC_AGENT_GENERATION_REVISION', 'SCIENTIFIC_AGENT_REVISION_REVISION',
+                         'SCIENTIFIC_AGENT_SERVICE_TOKEN'} <= removed_env)
         self.assertEqual(pod['initContainers'], [{'name': 'rag-sync', '$patch': 'delete'}])
         self.assertIsNone(template['metadata']['labels']['llm-client'])
         # API migration never replaces the verified worker spec or evidence flags.
         self.assertNotIn('SCIENTIFIC_PI_MODEL_VERIFIED', values)
+
+    def test_agent_api_uses_business_token_file_and_preserves_historical_worker_connection(self):
+        patch_value = renderer.api_patch('scientific-agent', IMAGE, execution_backend='agent-service')
+        self.assertEqual(set(patch_value), {'spec'})
+        pod = patch_value['spec']['template']['spec']
+        container = pod['containers'][0]
+        values = {item['name']: item.get('value') for item in container['env']}
+        self.assertEqual(values['SCIENTIFIC_EXECUTION_BACKEND'], 'agent-service')
+        self.assertEqual(values['SCIENTIFIC_AGENT_SERVICE_URL'],
+                         'http://agent-service.agent-service.svc.cluster.local:8080')
+        self.assertEqual(values['SCIENTIFIC_AGENT_SERVICE_TOKEN_FILE'], renderer.AGENT_TOKEN_PATH)
+        self.assertEqual(values['SCIENTIFIC_AGENT_GENERATION_REVISION'], 'v1')
+        self.assertEqual(values['SCIENTIFIC_AGENT_REVISION_REVISION'], 'v1')
+        self.assertEqual([entry for entry in pod['volumes'] if entry.get('$patch') != 'delete'], [{
+            'name': renderer.AGENT_TOKEN_VOLUME, 'secret': {'secretName': 'scientific-agent-service',
+            'defaultMode': 0o444, 'items': [{'key': 'token', 'path': 'token'}]}}])
+        mount = next(entry for entry in container['volumeMounts'] if entry.get('$patch') != 'delete')
+        self.assertEqual(mount, {'name': renderer.AGENT_TOKEN_VOLUME, 'mountPath': renderer.AGENT_TOKEN_PATH,
+                                'subPath': 'token', 'readOnly': True})
+        credentials = [entry for entry in container['env'] if 'valueFrom' in entry]
+        self.assertEqual(credentials, [{'name': 'SCIENTIFIC_PI_WORKER_TOKEN', 'valueFrom': {
+            'secretKeyRef': {'name': 'scientific-pi-worker', 'key': 'SCIENTIFIC_PI_WORKER_TOKEN'}}}])
+        self.assertEqual(values['SCIENTIFIC_PI_WORKER_URL'],
+                         'http://scientific-pi-worker.scientific-agent.svc.cluster.local:8080')
+        self.assertFalse(any('MODEL_API_KEY' in name or name.endswith('_VERIFIED') for name in values))
+        self.assertNotIn('envFrom', container)
+        self.assertNotIn('items', patch_value)
+
+    def test_agent_api_customizes_only_operator_owned_endpoint_and_contracts(self):
+        result = renderer.api_patch('science', IMAGE, execution_backend='agent-service',
+            agent_namespace='agents', agent_caller_secret='science.agent-token', agent_caller_secret_key='caller',
+            agent_generation_revision='generate-v2', agent_revision_revision='revise-v3')
+        pod = result['spec']['template']['spec']
+        values = {item['name']: item.get('value') for item in pod['containers'][0]['env']}
+        self.assertEqual(values['SCIENTIFIC_AGENT_SERVICE_URL'], 'http://agent-service.agents.svc.cluster.local:8080')
+        self.assertEqual(values['SCIENTIFIC_AGENT_GENERATION_REVISION'], 'generate-v2')
+        self.assertEqual(values['SCIENTIFIC_AGENT_REVISION_REVISION'], 'revise-v3')
+        secret = next(item['secret'] for item in pod['volumes'] if 'secret' in item)
+        self.assertEqual(secret['secretName'], 'science.agent-token')
+        self.assertEqual(secret['items'], [{'key': 'caller', 'path': 'token'}])
+
+    def test_agent_network_review_selects_both_namespace_and_exact_api_pods(self):
+        policy = renderer.api_egress_policy('scientific-agent', execution_backend='agent-service')
+        self.assertEqual(policy['metadata'], {'name': 'scientific-api-to-agent-service', 'namespace': 'scientific-agent'})
+        self.assertEqual(policy['spec'], {
+            'podSelector': {'matchLabels': {'app': 'research-api'}}, 'policyTypes': ['Egress'],
+            'egress': [{'to': [{'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'agent-service'}},
+                'podSelector': {'matchLabels': {'app.kubernetes.io/name': 'agent-execution-service', 'component': 'api'}}}],
+                'ports': [{'protocol': 'TCP', 'port': 8080}]}]})
+        _, old_policy = self.resources()
+        self.assertEqual(old_policy, renderer.api_egress_policy('scientific-agent'))
+        self.assertNotIn('ipBlock', json.dumps(policy))
+
+    def test_agent_deployment_configuration_rejects_unusable_names_and_revisions(self):
+        for overrides in ({'agent_namespace': '../agents'}, {'agent_namespace': 'a' * 64},
+                          {'agent_caller_secret': '../token'}, {'agent_caller_secret': 'a' * 64},
+                          {'agent_caller_secret': 'a..b'}, {'agent_caller_secret_key': '/token'},
+                          {'agent_caller_secret_key': ''}, {'agent_generation_revision': '../v1'},
+                          {'agent_revision_revision': ''}, {'agent_generation_revision': 'a' * 101}):
+            with self.subTest(overrides=overrides), self.assertRaises(ValueError):
+                renderer.api_patch('scientific-agent', IMAGE, execution_backend='agent-service', **overrides)
+        for method in (renderer.api_patch, renderer.api_egress_policy):
+            args = ('bad namespace', IMAGE) if method == renderer.api_patch else ('bad namespace',)
+            with self.assertRaises(ValueError):
+                method(*args, execution_backend='agent-service')
+            args = ('scientific-agent', IMAGE) if method == renderer.api_patch else ('scientific-agent',)
+            with self.assertRaises(ValueError):
+                method(*args, execution_backend='unreviewed')
+
+    def test_agent_cli_renders_api_patch_and_network_review_without_worker_image_or_cluster(self):
+        for arguments in (['--api-patch', '--api-image', IMAGE], ['--api-egress-policy']):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run([sys.executable, str(ROOT / 'k8s/scientific-pi/render.py'),
+                    '--execution-backend', 'agent-service', *arguments], cwd=ROOT,
+                    capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                parsed = json.loads(result.stdout)
+                self.assertNotIn('items', parsed)
+                self.assertNotIn('scientific-pi-worker', result.stdout if '--api-egress-policy' in arguments else '')
+                if '--api-patch' in arguments:
+                    self.assertEqual(parsed['spec']['template']['spec']['containers'][0]['image'], IMAGE)
+                else:
+                    self.assertEqual(parsed['kind'], 'NetworkPolicy')
+
+    def test_agent_cli_rejects_worker_deployment_and_dedicated_worker_verification_flags(self):
+        for arguments in ([], ['--worker-image', IMAGE], ['--api-patch'],
+                          ['--api-egress-policy', '--assert-verified-runtime'],
+                          ['--api-patch', '--api-egress-policy', '--api-image', IMAGE]):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run([sys.executable, str(ROOT / 'k8s/scientific-pi/render.py'),
+                    '--execution-backend', 'agent-service', *arguments], cwd=ROOT,
+                    capture_output=True, text=True, timeout=20)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, '')
 
     def test_factory_cannot_enable_fixture_or_inherit_control_secret(self):
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {

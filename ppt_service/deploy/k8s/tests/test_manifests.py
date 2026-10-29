@@ -65,7 +65,7 @@ class ManifestContracts(unittest.TestCase):
         cls.all = cls.base + cls.migration + cls.shared
         cls.index = {(d['kind'], d['metadata']['name']): d for d in cls.all}
         cls.site = cls.index['Deployment', 'ppt-site']
-        cls.job = cls.index['Job', 'ppt-migrate-schema3']
+        cls.job = cls.index['Job', 'ppt-migrate-schema4']
         cls.site_container, cls.proxy = pod_spec(cls.site)['containers']
         cls.migrator = pod_spec(cls.job)['containers'][0]
         cls.config = cls.index['ConfigMap', 'ppt-site']['data']
@@ -94,7 +94,7 @@ class ManifestContracts(unittest.TestCase):
         self.assertEqual(set(owner_data), {'emails'})
         self.assertIsInstance(owner_data['emails'], str)
         self.assertIn('REQUIRED_', self.auth['OIDC_AUDIENCE'])
-        self.assertEqual(self.auth['ALLOWED_ORIGINS'], 'https://ppt-service.panghuer.top')
+        self.assertEqual(self.auth['ALLOWED_ORIGINS'], 'https://ppt.panghuer.top')
         text = yaml.safe_dump(self.all).lower()
         self.assertNotIn('control.dev_site', text)
         self.assertNotIn('llm-service', text)
@@ -220,7 +220,8 @@ class ManifestContracts(unittest.TestCase):
         self.assertIn('/healthz', live)
         self.assertNotIn('api_schema_revision', live)
         self.assertIn('api_schema_revision', ready)
-        self.assertIn('== 3', ready)
+        self.assertIn('from ppt_service.server.migrate import REVISION', ready)
+        self.assertIn('== REVISION', ready)
         self.assertIn("os.environ['DATABASE_URL']", ready)
         self.assertNotIn('Authorization', ready)
         self.assertEqual(self.proxy['readinessProbe']['httpGet']['path'], '/ready')

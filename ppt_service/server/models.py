@@ -152,3 +152,23 @@ class UsageRecord(Base):
     currency: Mapped[str|None]=mapped_column(String(10))
     cost_status: Mapped[str]=mapped_column(String(20),default='unknown')
     outcome: Mapped[str]=mapped_column(String(30))
+
+
+class AgentOutbox(Base):
+    """Durable internal service delivery, independent of the selected engine."""
+    __tablename__='ppt_agent_outbox'
+    job_id: Mapped[str]=mapped_column(ForeignKey('jobs.id'),primary_key=True)
+    attempt: Mapped[int]=mapped_column(Integer)
+    fencing_token: Mapped[int]=mapped_column(BigInteger)
+    business_ref: Mapped[str]=mapped_column(String(160),unique=True)
+    idempotency_key: Mapped[str]=mapped_column(String(128),unique=True)
+    request: Mapped[dict]=mapped_column(JSON)
+    inputs: Mapped[list]=mapped_column(JSON,default=list)
+    submission_started: Mapped[bool]=mapped_column(Boolean,default=False)
+    remote_job_id: Mapped[str|None]=mapped_column(String(36),unique=True)
+    remote_pins: Mapped[dict|None]=mapped_column(JSON)
+    state: Mapped[str]=mapped_column(String(32),default='pending')
+    event_cursor: Mapped[int]=mapped_column(BigInteger,default=0)
+    checkpoint_ref: Mapped[dict|None]=mapped_column(JSON)
+    result: Mapped[dict|None]=mapped_column(JSON)
+    acked: Mapped[bool]=mapped_column(Boolean,default=False)

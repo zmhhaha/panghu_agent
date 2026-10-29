@@ -28,7 +28,7 @@ POSTGRES_NAMESPACE = 'data'
 POSTGRES_POD = 'postgres-0'
 POSTGRES_ADMIN = 'appuser'
 POSTGRES_HOST = 'postgres.data.svc.cluster.local'
-TARGET_SCHEMA_REVISION = 3
+TARGET_SCHEMA_REVISION = 4
 SECRET_NAMES = ('ppt-database-migrator', 'ppt-database-runtime', 'ppt-oidc')
 BOOTSTRAP_MARKER = 'ppt-service-bootstrap-v1'
 IMAGE_PATTERN = re.compile(r'[^\s@]+@sha256:[0-9a-f]{64}\Z')
@@ -37,7 +37,9 @@ from sqlalchemy import create_engine, text
 engine = create_engine(os.environ['DATABASE_URL'], connect_args={'connect_timeout': 5})
 with engine.connect() as db:
     assert db.scalar(text('SELECT current_user')) == 'ppt_runtime'
-    assert db.scalar(text('SELECT max(revision) FROM public.api_schema_revision')) == 3
+    assert db.scalar(text('SELECT max(revision) FROM public.api_schema_revision')) == __SCHEMA_REVISION__
+    for privilege in ('SELECT', 'INSERT', 'UPDATE', 'DELETE'):
+        assert db.scalar(text("SELECT has_table_privilege(current_user, 'public.ppt_agent_outbox', :privilege)"), {'privilege': privilege})
     assert not db.scalar(text("SELECT has_schema_privilege(current_user, 'public', 'CREATE')"))
     assert not db.scalar(text("SELECT has_table_privilege(current_user, 'public.api_schema_revision', 'INSERT')"))
     assert not db.scalar(text("SELECT has_table_privilege(current_user, 'public.api_schema_revision', 'UPDATE')"))
@@ -50,7 +52,7 @@ with engine.connect() as db:
     assert db.scalar(text("SELECT has_table_privilege(current_user, 'public.ppt_acceptance_streams', 'UPDATE')"))
     assert not db.scalar(text("SELECT has_table_privilege(current_user, 'public.ppt_acceptance_entries', 'UPDATE')"))
 engine.dispose()
-"""
+""".replace('__SCHEMA_REVISION__', str(TARGET_SCHEMA_REVISION))
 STORAGE_STATE = 'ppt-service.panghuer.top/state-layout'
 STORAGE_UID = 'ppt-service.panghuer.top/state-claim-uid'
 LEGACY_STORAGE_STATE = 'ppt.panghuer.top/state-layout'
@@ -532,10 +534,11 @@ class Deployment:
             # A routine website release preserves that operator choice.
             current_config = self.get('configmap', 'ppt-site')
             if current_config and current_config.get('data', {}).get('PPT_EXECUTION_ENABLED') == 'true':
-                if current_config['data'].get('PPT_EXECUTION_BACKEND') != 'kubernetes':
-                    raise DeployError('Enabled website execution requires PPT_EXECUTION_BACKEND=kubernetes')
+                selected_backend=current_config['data'].get('PPT_EXECUTION_BACKEND')
+                if selected_backend not in ('kubernetes','agent-service'):
+                    raise DeployError('Enabled website execution requires an isolated configured backend')
                 site_config = next(doc for doc in base if doc['kind'] == 'ConfigMap' and doc['metadata']['name'] == 'ppt-site')
-                site_config['data'].update(PPT_EXECUTION_ENABLED='true', PPT_EXECUTION_BACKEND='kubernetes')
+                site_config['data'].update(PPT_EXECUTION_ENABLED='true', PPT_EXECUTION_BACKEND=selected_backend)
             target_replicas = max(1, (existing_site or {}).get('spec', {}).get('replicas', 1))
             owner_path = os.getenv('PPT_OWNER_CONFIG')
             try:

@@ -45,6 +45,8 @@ bash deploy.sh
 
 同一命令用于后续发布。脚本默认先构建、验证并推送站点镜像，再同步凭据，使用操作端对 `data/postgres-0` 的管理连接处理专用逻辑库初始化或 schema 升级，检查运行角色与数据目录，最后发布网站。不会重新启动旧的 `ppt-postgres`，也不会修改共享 PostgreSQL 的其他数据库。已存在的目标库不因重复部署被清空；异常的部分初始化状态会停止部署并要求排查。
 
+当前目标为 schema 4，包含通用 Agent 接入的 `AgentOutbox`。普通 `bash deploy.sh` 会将已有 schema 0/1/2/3 升到 4，已为 4 时跳过迁移；迁移后未达到目标或发现比应用更新的版本时停止发布。网站就绪检查跟随镜像内的迁移版本。数据库升级会保留既有执行后端，业务切换仍按 [通用 Agent 接线](../agent/README.md) 单独完成。
+
 如需先完成镜像构建，再发布：
 
 ```bash
@@ -67,14 +69,17 @@ bash deploy.sh --skip-build
 
 应用数据库为共享 `data/postgres` 中的 `ppt_service`，使用 `ppt_migrator` 和 `ppt_runtime` 两个独立低权角色；不复用公共 `appdb/appuser` 作为应用连接。两份 `DATABASE_URL` 必须使用 `postgresql+psycopg://`，目标为 `postgres.data.svc.cluster.local:5432/ppt_service`。共享实例管理员仅由服务器部署操作端使用，不投射给 PPT 容器。迁移角色负责 schema，网站和可信控制器使用运行角色，只能访问所需数据且不能修改 schema revision。
 
-当前目标为 schema revision 3。正式迁移在事务内新增 `ppt_acceptance_streams` 和
-`ppt_acceptance_entries`，保留原项目、附件、版本和检查点；不会重写历史业务行。
+当前目标为 schema revision 4。revision 3 在事务内新增 `ppt_acceptance_streams` 和
+`ppt_acceptance_entries`，revision 4 新增 `ppt_agent_outbox`。保留原项目、附件、版本、
+检查点和审核历史，不会重写历史业务行。
 若旧 revision 中已经存在同名审核表，迁移停止并保留冲突对象，不能将独立演示数据自动接入正式服务。
 审核记录只允许追加；PostgreSQL 触发器拒绝修改、删除旧 entry，运行角色也没有这些操作和
 `TRUNCATE` 的权限。撤销通过新增记录实现，stream 的 `UPDATE` 仅供正常审核修订 CAS。
-部署运行检查必须确认 revision 3 及以上权限边界后才启动新站点。
+早期 Agent 分支测试库的另一种 revision 3 缺少正式审核表，会停止迁移并保留原库待检查；
+不得通过改写正式库 revision 或自动补造审核历史绕过检查。
+部署运行检查必须确认 revision 4、Outbox CRUD 权限及上述审核权限边界后才启动新站点。
 
-回滚应用镜像不能删除新增审核历史或降低 schema revision。若需要回滚，选择能够读取 schema 3
+回滚应用镜像不能删除新增审核历史或降低 schema revision。若需要回滚，选择能够读取 schema 4
 的兼容镜像，并保留当前表和记录；旧版部署脚本会拒绝它不认识的新 revision。
 当前项目删除为撤权/软删除与停写协调，不物理清理审核记录；将来的彻底清理必须另有明确流程。
 
