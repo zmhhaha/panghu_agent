@@ -38,6 +38,14 @@ describe('actual official stage-2 projection',()=>{
   expect(screen.getByRole('button',{name:'确认所选完整方案'})).toBeDisabled();
   expect(api.confirm).not.toHaveBeenCalled();expect(api.generate).not.toHaveBeenCalled();
  });
+ it('keeps returned clarification questions available without placing them ahead of the initial comparison',async()=>{
+  await open();const questions=adaptProject(raw()).plan!.questions!;
+  expect(questions.length).toBeGreaterThan(0);
+  for(const question of questions)expect(screen.getByText(question)).not.toBeVisible();
+  await userEvent.click(screen.getByText(/待核对的信息/,{selector:'summary'}));
+  for(const question of questions)expect(screen.getByText(question)).toBeVisible();
+  expect(api.confirm).not.toHaveBeenCalled();expect(api.generate).not.toHaveBeenCalled();
+ });
  it('opens one full inspection without selecting and preserves all pages, visual expressions and raw design fields',async()=>{
   const user=userEvent.setup();await open();
   await user.click(card(0).getByRole('button',{name:'查看内容与完整方案'}));
