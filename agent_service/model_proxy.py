@@ -23,6 +23,7 @@ from sqlalchemy import (Column, Float, ForeignKey, Integer, LargeBinary, String,
 
 from .contracts import ServiceError, canonical_bytes, digest
 from .diagnostics import log_execution_failure
+from .model_timeouts import MODEL_PROXY_IO_TIMEOUT_SECONDS
 from .store import metadata, jobs, attempts, worker_allocations
 
 
@@ -369,7 +370,7 @@ class ModelProxy:
         upstream_status = upstream_media = None
         try:
             self.authorize(token)
-            remaining = max(.1, min(600., grant['exp'] - time.time()))
+            remaining = max(.1, min(MODEL_PROXY_IO_TIMEOUT_SECONDS, grant['exp'] - time.time()))
             # No retry, no redirect, no client/discovery URL, no environment proxy.
             diagnostic_stage = 'open_upstream'
             with self.client.stream('POST', self.settings.upstream_base_url.rstrip('/') + '/responses',

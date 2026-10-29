@@ -28,6 +28,7 @@ from fastapi import Request
 from agent_service.contracts import (ExecutionEnvelope, InlineFile, JobRequest, ServiceError,
     WorkerResult, canonical_bytes, digest, verify_receipt)
 from agent_service.confinement import ensure_controller_confinement
+from agent_service.model_timeouts import buffered_model_idle_timeout
 from agent_service.worker_entry import (CapsuleScope, HostConfig, HostSecrets,
     _read_operator_json, host_policy, PI_ADAPTER_REVISION)
 
@@ -469,6 +470,7 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
     settings = RuntimeSettings(command=(NODE, PI_CLI), node_command=(NODE,), provider=config.model.provider,
         model=config.model.model, model_base_url=config.model.proxy_base_url, model_api=config.model.api,
         model_max_tokens=8192,
+        idle_timeout_seconds=buffered_model_idle_timeout(policy.max_timeout_seconds),
         model_input=('text', 'image') if 'vision' in binding.model_policy.capabilities else ('text',),
         model_env={'AGENT_MODEL_API_KEY': credentials.model_proxy_token.get_secret_value()},
         tool_proxy_base_url=config.model.proxy_base_url, runtime_revision=policy.runtime_revision,

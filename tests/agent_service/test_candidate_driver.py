@@ -14,6 +14,7 @@ from agent_service.deploy import acceptance_probe as probe
 from agent_service.engines import EngineRequest, StopEvidence
 from agent_service import resources, runtime, tool_client
 from agent_service.pi_cage import ACADEMIC_EXTENSION
+from agent_service.model_timeouts import buffered_model_idle_timeout
 from test_acceptance_probe import config
 from test_catalog import image_packages
 
@@ -79,6 +80,8 @@ def test_all_candidate_factories_keep_exact_contract_tools_and_capabilities(fact
     expected = ('text', 'image') if profile in {'ppt.generate.v1', 'ppt.revise.v1'} else ('text',)
     assert driver.runtime.settings.model_input == expected
     assert driver.runtime.settings.model_api == 'openai-responses'
+    assert driver.runtime.settings.idle_timeout_seconds == buffered_model_idle_timeout(
+        driver.runtime.profile.policy.max_timeout_seconds)
     assert driver.runtime.settings.model_env == {'AGENT_MODEL_API_KEY': 'offline-attempt-only-grant'}
     academic = profile in {'research.generate.v1', 'research.retrieve.v1'}
     assert driver.runtime.profile.extension_paths == (

@@ -29,6 +29,7 @@ from .confinement import ensure_controller_confinement
 from .engine_profiles import WorkspaceTaskProfile
 from .engines import NativeOutcome, PiDriver
 from .linux_stop import AGENT_UID, LinuxUidStopController, private_kernel_scope
+from .model_timeouts import buffered_model_idle_timeout
 from .runtime import PiRuntime, RuntimeSettings
 from .pi_cage import PI_CLI, ACADEMIC_EXTENSION
 from .worker_api import WorkerHost, create_worker_app
@@ -420,6 +421,7 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
         provider=config.model.provider, model=config.model.model,
         model_base_url=config.model.proxy_base_url, model_api=config.model.api,
         model_max_tokens=8192,
+        idle_timeout_seconds=buffered_model_idle_timeout(policy.max_timeout_seconds),
         model_env={'AGENT_MODEL_API_KEY': secrets.model_proxy_token.get_secret_value()},
         tool_proxy_base_url=config.model.proxy_base_url,
         model_input=('text', 'image') if 'vision' in (
