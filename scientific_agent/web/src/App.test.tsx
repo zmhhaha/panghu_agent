@@ -41,6 +41,14 @@ describe('project workflow',()=>{
     const write=backend.calls.find(call=>call.init.method==='PATCH')!;expect(write.body.expected_revision).toBe(4);expect((write.body.requirements as {question:string}).question).toBe('自动保存后的研究问题');
     expect(backend.calls.some(call=>call.path.includes('/actions/'))).toBe(false);await screen.findByText('要求已自动保存');
   });
+  it('retains unsaved requirements when navigation interrupts the autosave debounce',async()=>{
+    const backend=server(project());render(<App/>);const question=await screen.findByRole('textbox',{name:'研究问题'});
+    await userEvent.clear(question);await userEvent.type(question,'切换阶段仍保留的研究问题');
+    const beforeUnload=new Event('beforeunload',{cancelable:true});window.dispatchEvent(beforeUnload);expect(beforeUnload.defaultPrevented).toBe(true);
+    await userEvent.click(screen.getByRole('button',{name:'2 研究方案'}));await screen.findByRole('heading',{name:'研究方案尚未生成'});
+    await userEvent.click(screen.getByRole('button',{name:'1 研究目标'}));expect(await screen.findByRole('textbox',{name:'研究问题'})).toHaveValue('切换阶段仍保留的研究问题');
+    expect(backend.calls.some(call=>call.path.includes('/actions/'))).toBe(false);
+  });
   it('requires explicit plan confirmation and sends the frozen project revision',async()=>{
     const backend=server(project({stage:'plan',plan:{id:'plan-1',revision:4,output:planOutput}}));render(<App/>);
     const submit=await screen.findByRole('button',{name:/确认方案并检索/});expect(submit).toBeDisabled();expect(backend.calls.some(call=>call.path.includes('/actions/'))).toBe(false);
@@ -97,6 +105,11 @@ describe('project workflow',()=>{
     server(p,call=>call.path.includes('/versions/')?response({id:call.path.endsWith('v2')?'v2':'v1',report_markdown:'# 报告',sources:[],references:[],parent_version_id:call.path.endsWith('v2')?'v1':undefined}):undefined);
     render(<App/>);const selector=await screen.findByRole('combobox',{name:'报告版本'});fireEvent.change(selector,{target:{value:'v2'}});await screen.findByText(/当前选择的是候选版本/);
     await userEvent.click(screen.getByRole('checkbox',{name:/我已审阅这个明确版本/}));expect(screen.getByRole('button',{name:/确认为定稿/})).toBeDisabled();
+  });
+  it('blocks revisions of a report from an earlier input revision even without a stale flag',async()=>{
+    server(project({stage:'review',input_revision:8,current_version_id:'v1',versions:[{id:'v1'}]}),call=>call.path.endsWith('/versions/v1')?response({id:'v1',input_revision:3,stale:false,report_markdown:'# 历史报告',sources:[],references:[],revision_sections:[{section_id:'s1',title:'历史章节'}]}):undefined);
+    render(<App/>);await screen.findByText(/该版本依据已不是当前方案或证据/);await userEvent.type(screen.getByRole('textbox',{name:'修改意见'}),'请润色');
+    expect(screen.getByRole('button',{name:/生成修改候选/})).toBeDisabled();
   });
   it('opens actual legacy history and renders its saved content and citation evidence',async()=>{
     const backend=server(null,call=>{

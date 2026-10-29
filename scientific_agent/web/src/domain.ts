@@ -32,6 +32,7 @@ export interface Annotation { id:string; version_id:string; section_id?:string; 
 export interface Finalization { id:string; version_id:string; created_at?:string; }
 export interface ProjectSummary { id:string; title:string; revision:number; stage:Stage; updated_at?:string; active_job_id?:string|null; }
 export interface Project extends ProjectSummary {
+  input_revision?:number;
   requirements:Requirements; materials:Material[]; plan:Plan|null; confirmations:{plan:Record<string,unknown>|null;evidence:Record<string,unknown>|null};
   search_batches:SearchBatch[]; evidence:EvidenceSnapshot|null; outline:{id?:string;output:OutlineOutput}|null;
   selections?:Selection[]; versions:Version[]; current_version_id:string|null; finalizations:Finalization[]; annotations:Annotation[]; jobs:Job[];

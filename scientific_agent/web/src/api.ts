@@ -16,6 +16,7 @@ export class ApiError extends Error {
   constructor(public code:string,public status=0){super(messages[code.toLowerCase()]??(status===409?messages.revision_conflict:status===401?messages.authentication_required:'操作未完成，请刷新状态；若持续失败，请联系管理员。'));}
 }
 const keys=new Map<string,string>();
+function normalizeJob(job:Record<string,unknown>){const state=String(job.status??job.state??'');const status=job.cancel_requested&&!['completed','succeeded','failed','timed_out','invalid_result','cancelled','canceled'].includes(state)?'cancel_requested':state;return {...job,status,error:job.error??job.error_code};}
 function intentKey(route:string,payload:unknown){const signature=JSON.stringify([route,payload]);let key=keys.get(signature);if(!key){key=crypto.randomUUID();keys.set(signature,key);}return {key,signature};}
 export async function request<T>(path:string,init:RequestInit={},prefix=ROOT):Promise<T>{
   const controller=new AbortController();const abort=()=>controller.abort();init.signal?.addEventListener('abort',abort,{once:true});
@@ -30,7 +31,7 @@ export async function request<T>(path:string,init:RequestInit={},prefix=ROOT):Pr
     if(response.redirected||response.headers.get('content-type')?.includes('text/html'))throw new ApiError('authentication_required',401);
     if(!response.ok){let code=response.status===401?'authentication_required':response.status===403?'forbidden':response.status===404?'not_found':'service_error';try{const body=await response.json();code=body.detail?.code??body.error?.code??body.code??code;}catch{}throw new ApiError(code,response.status);}
     if(response.status===204)return undefined as T;
-    try{const raw=await response.json();if(raw?.requirements&&Array.isArray(raw.jobs)&&Array.isArray(raw.versions))return {...raw,jobs:raw.jobs.map((job:Record<string,unknown>)=>({...job,status:job.status??job.state,error:job.error??job.error_code})),materials:(raw.materials??[]).map((material:Record<string,unknown>)=>({...material,id:material.id??material.material_id,error:material.error??material.parse_error})),search_batches:(raw.search_batches??[]).map((batch:Record<string,unknown>)=>({...batch,id:batch.id??batch.batch_id}))} as T;return raw as T;}catch{throw new ApiError('invalid_response');}
+    try{const raw=await response.json();if(raw?.requirements&&Array.isArray(raw.jobs)&&Array.isArray(raw.versions))return {...raw,jobs:raw.jobs.map(normalizeJob),materials:(raw.materials??[]).map((material:Record<string,unknown>)=>({...material,id:material.id??material.material_id,error:material.error??material.parse_error})),search_batches:(raw.search_batches??[]).map((batch:Record<string,unknown>)=>({...batch,id:batch.id??batch.batch_id}))} as T;return raw as T;}catch{throw new ApiError('invalid_response');}
   }catch(error){if(error instanceof ApiError)throw error;if(controller.signal.aborted)throw new ApiError('request_timeout');throw new ApiError('network_error');}
   finally{clearTimeout(timer);init.signal?.removeEventListener('abort',abort);}
 }

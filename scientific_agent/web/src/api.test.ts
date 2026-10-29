@@ -22,4 +22,8 @@ describe('API delivery semantics',()=>{
     vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({id:'p',requirements:emptyRequirements,versions:[],search_batches:[],materials:[{material_id:'m',status:'metadata_only'}],jobs:[{id:'job',state:'admission_uncertain',error_code:null}]}),{headers:{'content-type':'application/json'}})));
     const p=await api.project('p');expect(p.jobs[0].status).toBe('admission_uncertain');expect(p.jobs[0].progress).toBeUndefined();expect(p.materials[0].id).toBe('m');expect(p.materials[0].status).toBe('metadata_only');
   });
+  it('uses the persisted cancel flag while keeping terminal outcomes authoritative',async()=>{
+    vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({id:'p',requirements:emptyRequirements,versions:[],search_batches:[],materials:[],jobs:[{id:'pending-cancel',state:'running',cancel_requested:true},{id:'finished',state:'completed',cancel_requested:true}]}),{headers:{'content-type':'application/json'}})));
+    const p=await api.project('p');expect(p.jobs[0].status).toBe('cancel_requested');expect(p.jobs[1].status).toBe('completed');
+  });
 });
