@@ -15,6 +15,22 @@ renderer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(renderer)
 
 
+def readiness_assertion():
+    """Code run in the already packaged API, using its projected caller token.
+
+    Capability entries are revision-specific. A ready later revision cannot
+    satisfy this business coordinator's fixed v1 input/output contracts.
+    """
+    required = ('research.plan.v1', 'research.retrieve.v1', 'research.outline.v1',
+                'research.draft.v1', 'research.revise.v1')
+    return ("required=" + repr(required) + "\n"
+        "assert type(p) is list and all(any(type(r) is dict and r.get('profile') == name "
+        "and r.get('profile_revision') == 'v1' and r.get('ready') is True "
+        "and r.get('supports_inputs') is True and type(r.get('max_timeout_seconds')) is int "
+        "and r['max_timeout_seconds'] >= 1800 for r in p) for name in required), "
+        "'Scientific v1 stages unavailable'\n")
+
+
 def resources(namespace, api_image, ui_image):
     renderer.namespace_name(namespace)
     renderer.pinned_image(ui_image)
@@ -84,11 +100,9 @@ def main():
         run('rollout', 'status', 'deployment/api', '--timeout=180s')
         # Gate public cutover on actual current Agent readiness. This call uses
         # the API's projected caller credential without printing it.
-        check = ("from app.api.scientific_agent import app; "
-            "p=app.state.worker._request('GET','/v1/capabilities')['profiles']; "
-            "required={'research.plan.v1','research.retrieve.v1','research.outline.v1','research.draft.v1','research.revise.v1'}; "
-            "assert required <= {r['profile'] for r in p if r.get('ready') is True}, 'Scientific stages unavailable'; "
-            "print('All scientific stages ready')")
+        check = ("from app.api.scientific_agent import app\n"
+            "p=app.state.worker._request('GET','/v1/capabilities')['profiles']\n"
+            + readiness_assertion() + "print('All scientific stages ready')")
         run('exec', 'deployment/api', '-c', 'api', '--', 'python', '-c', check)
         run('apply', '-f', str(output / 'ingress-policies.json'))
         run('patch', 'deployment/ui', '--type', 'strategic', '--patch-file', str(output / 'ui-patch.json'))

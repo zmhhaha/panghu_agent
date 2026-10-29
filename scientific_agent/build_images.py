@@ -16,6 +16,8 @@ from agent_service.build_image import (BuildError, tagged_image, native_platform
     native_push, read_regular)
 
 DOCKERFILES = {'api': 'Dockerfile.scientific-pi-api', 'ui': 'Dockerfile.scientific-workbench'}
+UI_FILES = ('package.json', 'package-lock.json', 'tsconfig.json', 'vite.config.ts', 'index.html')
+SKILL_FILES = ('manifest.json', 'research-procedure/SKILL.md', 'task-template.md', 'LICENSE')
 
 
 def build_context(target, destination):
@@ -23,11 +25,12 @@ def build_context(target, destination):
     if target == 'ui':
         files |= {'scientific_agent/__init__.py', 'scientific_agent/workbench_server.py',
                   'scientific_agent/requirements-api.lock'}
-        for source in (ROOT / 'scientific_agent/web').rglob('*'):
+        files |= {'scientific_agent/web/' + name for name in UI_FILES}
+        for source in (ROOT / 'scientific_agent/web/src').rglob('*'):
             relative = source.relative_to(ROOT)
             if (source.is_file() and not any(p in {'node_modules', 'dist', '.vite', 'coverage'}
                     or p.startswith('.') for p in relative.parts)
-                    and source.suffix in {'.ts', '.tsx', '.css', '.json', '.html'}):
+                    and source.suffix in {'.ts', '.tsx', '.css'}):
                 files.add(relative.as_posix())
     else:
         # COPY sources only: no operator rendered files, model credentials,
@@ -36,7 +39,7 @@ def build_context(target, destination):
             for source in (ROOT / directory).glob('*.py'):
                 files.add(source.relative_to(ROOT).as_posix())
         files |= {'app/__init__.py', 'pi_worker/__init__.py', 'scientific_agent/requirements-api.lock'}
-        files |= {p.relative_to(ROOT).as_posix() for p in (ROOT / 'scientific_skills').rglob('*') if p.is_file()}
+        files |= {'scientific_skills/' + name for name in SKILL_FILES}
     with tarfile.open(destination, 'w') as archive:
         for name in sorted(files):
             raw = read_regular(ROOT / name, 4 * 1024 * 1024)
