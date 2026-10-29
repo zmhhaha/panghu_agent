@@ -23,6 +23,7 @@ import uuid
 from .hermes_client import HermesClient, HermesError, safe_id
 from .prompts import PHASES, input_message, stage_instructions
 from .preview import OfficialPreview
+from .runtime_context import ExecutionBudget, installed_workflow_instructions, parse_execution_deadline
 
 TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
@@ -155,6 +156,8 @@ def read_task(path: Path) -> dict:
         raise ValueError("Slide count must be between 3 and 20")
     if not requirements.get("external_model_acknowledged"):
         raise ValueError("External model acknowledgement is required")
+    if 'execution_deadline' in task:
+        parse_execution_deadline(task['execution_deadline'])
     return task
 
 
@@ -254,6 +257,7 @@ def run(task: dict | None, *, probe_only: bool, deadline_seconds: int) -> int:
             env.pop(name)
     log_path = result / "gateway.private.log"
     started = time.monotonic()
+    budget = None if probe_only else ExecutionBudget.create(task, deadline_seconds, started, time.time())
     process = None
     preview = None
     client = HermesClient("http://127.0.0.1:8642", key, timeout=10)
@@ -311,6 +315,18 @@ def run(task: dict | None, *, probe_only: bool, deadline_seconds: int) -> int:
                 state["preview_ready"] = True
             if interrupted:
                 raise RuntimeError("Execution interrupted before model admission")
+            # The task carries the original controller claim deadline. Startup,
+            # restored sessions and status polling never allocate another budget.
+            workflow_context = installed_workflow_instructions()
+            admission_time = time.monotonic()
+            remaining = budget.remaining(admission_time)
+            if remaining < 1:
+                state['status'] = 'deadline_exceeded'
+                return 3
+            instructions += budget.instructions(admission_time) + workflow_context
+            state.update({'execution_deadline': budget.cutoff_epoch,
+                          'remaining_at_admission_seconds': math.floor(remaining)})
+            client.timeout = min(10, remaining)
             admission = client.admit(session_id, input_message(task), f"ppt-{task['job_id']}-{task['attempt']}-{task['phase']}", instructions=instructions)
             run_id = admission.get("run_id", "")
             safe_id(run_id)
@@ -318,8 +334,8 @@ def run(task: dict | None, *, probe_only: bool, deadline_seconds: int) -> int:
             atomic_json(result / "execution.json", state)
             stop_sent = False
             status_retries = 0
-            while time.monotonic() - started < deadline_seconds:
-                remaining = deadline_seconds - (time.monotonic() - started)
+            while budget.remaining(time.monotonic()) > 0:
+                remaining = budget.remaining(time.monotonic())
                 if remaining <= 0:
                     break
                 # A poll never receives a fresh phase deadline. In particular,
@@ -328,7 +344,7 @@ def run(task: dict | None, *, probe_only: bool, deadline_seconds: int) -> int:
                 if interrupted and not stop_sent:
                     client.stop(run_id)
                     stop_sent = True
-                remaining = deadline_seconds - (time.monotonic() - started)
+                remaining = budget.remaining(time.monotonic())
                 if remaining <= 0:
                     break
                 client.timeout = min(10, remaining)
@@ -341,7 +357,7 @@ def run(task: dict | None, *, probe_only: bool, deadline_seconds: int) -> int:
                                  and (exc.status is None or exc.status in (502, 503, 504)))
                     if not transient or process.poll() is not None or status_retries >= 3:
                         raise
-                    remaining = deadline_seconds - (time.monotonic() - started)
+                    remaining = budget.remaining(time.monotonic())
                     if remaining <= 0:
                         break
                     if interrupted and not stop_sent:
@@ -375,7 +391,7 @@ def run(task: dict | None, *, probe_only: bool, deadline_seconds: int) -> int:
                     return 0
                 if process.poll() is not None:
                     raise RuntimeError("Gateway exited during task execution")
-                time.sleep(min(2, max(0, deadline_seconds - (time.monotonic() - started))))
+                time.sleep(min(2, budget.remaining(time.monotonic())))
             try:
                 client.stop(run_id)
             except HermesError:

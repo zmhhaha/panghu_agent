@@ -3,6 +3,7 @@ import copy,hashlib,json,os,sqlite3,uuid,zipfile
 from datetime import timedelta
 from pathlib import Path
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import create_engine,select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -134,6 +135,58 @@ def test_cancel_running_stops_before_slot_release(store):
         assert s.get(Job,jid).status=='cancelled';assert s.get(ExecutionSlot,1).job_id is None
         assert not s.scalars(select(Checkpoint).where(Checkpoint.project_id==pid)).all()
     assert backend.stops==1
+
+def test_controller_progress_is_stopped_fenced_and_records_real_work_once(store):
+    sessions,owner,pid,jid,root=store;backend=FakeBackend()
+    controller=Dispatcher(sessions,configured(root),backend,TestSandbox())
+    assert controller.tick()['status']=='started'
+    a,h=controller.owned[jid]
+    with pytest.raises(ControlError,match='stop_proof_required'):
+        controller.progress(jid,a.attempt,a.token,'collecting')
+    with pytest.raises(HTTPException) as stale:
+        controller.progress(jid,a.attempt,a.token+1,'collecting')
+    assert stale.value.detail['code']=='stale_execution'
+    original_collect=controller.stager.collect
+    original_validate=controller.publisher.validate
+    def collect(attempt,layout):
+        with sessions() as s:
+            j=s.get(Job,jid)
+            assert j.stopped and not backend.running
+            assert (j.status,j.stage)==('collecting','collecting')
+        controller.progress(jid,a.attempt,a.token,'collecting')
+        return original_collect(attempt,layout)
+    def validate(snapshot,request):
+        with sessions() as s:
+            j=s.get(Job,jid)
+            assert j.stopped and not backend.running
+            assert (j.status,j.stage)==('validating','validating')
+        controller.progress(jid,a.attempt,a.token,'validating')
+        with pytest.raises(ControlError,match='invalid_progress'):
+            controller.progress(jid,a.attempt,a.token,'collecting')
+        return original_validate(snapshot,request)
+    controller.stager.collect=collect;controller.publisher.validate=validate
+    assert controller.tick()['status']=='succeeded'
+    with sessions() as s:
+        events=s.scalars(select(JobEvent).where(JobEvent.job_id==jid).order_by(JobEvent.seq)).all()
+        assert [e.type for e in events]==['job.queued','job.started','stage.changed','stage.changed','plan.ready','job.succeeded']
+        assert [e.payload for e in events if e.type=='stage.changed']==[{'stage':'collecting'},{'stage':'validating'}]
+
+def test_cancelled_attempt_cannot_emit_progress_or_release_writers_early(store):
+    sessions,owner,pid,jid,root=store;backend=FakeBackend(hold=True)
+    controller=Dispatcher(sessions,configured(root),backend,TestSandbox())
+    assert controller.tick()['status']=='started';a,h=controller.owned[jid]
+    with sessions.begin() as s:Repository(s).cancel(s.get(Job,jid))
+    with pytest.raises(HTTPException) as cancelled:
+        controller.progress(jid,a.attempt,a.token,'collecting')
+    assert cancelled.value.detail['code']=='execution_revoked'
+    with sessions() as s:
+        assert s.get(Job,jid).status=='cancelling' and not s.get(Job,jid).stopped
+        assert s.get(ExecutionSlot,1).job_id==jid
+        assert not s.scalars(select(JobEvent).where(JobEvent.job_id==jid,JobEvent.type=='stage.changed')).all()
+    assert controller.tick()['status']=='stopped'
+    with sessions() as s:
+        assert s.get(Job,jid).status=='cancelled'
+        assert s.get(ExecutionSlot,1).job_id is None
 
 def test_expired_lease_reconciles_never_reexecutes(store):
     sessions,owner,pid,jid,root=store;backend=FakeBackend(hold=True);controller=Dispatcher(sessions,configured(root),backend,TestSandbox());controller.tick()

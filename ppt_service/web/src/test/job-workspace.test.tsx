@@ -3,6 +3,7 @@ import { beforeEach,describe,expect,it,vi } from 'vitest';
 import App from '../App';
 import { api,consumeEvents } from '../api';
 import { defaultSettings,type Job,type Project } from '../domain';
+import { JobTiming } from '../JobTiming';
 
 vi.mock('../api',async original=>({...await original<typeof import('../api')>(),api:{me:vi.fn(),projects:vi.fn(),project:vi.fn(),versions:vi.fn(),job:vi.fn(),generate:vi.fn()},consumeEvents:vi.fn()}));
 const project:Project={id:'p',title:'运行中的规划项目',revision:2,stage:'planning',settings:defaultSettings,assets:[],input_snapshot_hash:'hash',active_job_id:'j',external_model_ack:true};
@@ -14,6 +15,34 @@ beforeEach(()=>{
 });
 
 describe('workspace job synchronization',()=>{
+ it('shows queue and recorded deadline timing from refreshed server snapshots without inventing progress',async()=>{
+  const created='2026-10-29T01:00:00+00:00',deadline='2026-10-29T01:30:00+00:00';
+  vi.mocked(api.job).mockResolvedValueOnce({...queued,created_at:created,deadline:null,phase_timeout_seconds:600})
+   .mockResolvedValue({...queued,status:'validating',stage:'validating',last_event_seq:3,created_at:created,deadline,phase_timeout_seconds:600});
+  render(<App/>);await screen.findByText('正在排队，尚未开始本阶段计时。');
+  let timing=within(screen.getByRole('group',{name:'任务时间'}));
+  expect(timing.getByText('当前阶段配置时限：10 分钟，不是预计完成时间。')).toBeInTheDocument();
+  expect(timing.queryByText(/执行截止时间/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button',{name:'刷新状态'}));
+  await waitFor(()=>expect(within(screen.getByRole('region',{name:'当前任务'})).getByRole('status')).toHaveTextContent('检查与渲染'));
+  timing=within(screen.getByRole('group',{name:'任务时间'}));
+  expect(timing.queryByText(/正在排队/)).not.toBeInTheDocument();
+  expect(timing.getByText(/本阶段执行截止时间/)).toBeInTheDocument();
+  expect(screen.getByRole('group',{name:'任务时间'}).querySelectorAll('time')[1]).toHaveAttribute('datetime','2026-10-29T01:30:00.000Z');
+  expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+ });
+
+ it('keeps legacy and malformed timing optional and labels a terminal deadline as historical',()=>{
+  const view=render(<JobTiming job={queued}/>);
+  expect(screen.queryByRole('group',{name:'任务时间'})).not.toBeInTheDocument();
+  view.rerender(<JobTiming job={{...queued,created_at:'not-a-date',deadline:'invalid',phase_timeout_seconds:-1}}/>);
+  expect(screen.queryByRole('group',{name:'任务时间'})).not.toBeInTheDocument();
+  view.rerender(<JobTiming job={{...queued,status:'failed',kind:'generate',created_at:'2026-10-28T15:46:15+00:00',deadline:'2026-10-28T16:16:17+00:00',phase_timeout_seconds:1800}}/>);
+  expect(screen.getByText(/本阶段原执行截止时间/)).toBeInTheDocument();
+  expect(screen.getByText('当前阶段配置时限：30 分钟，不是预计完成时间。')).toBeInTheDocument();
+  expect(screen.queryByText(/正在排队/)).not.toBeInTheDocument();
+ });
+
  it('manual refresh reads the active job as well as project and versions',async()=>{
   vi.mocked(api.job).mockResolvedValueOnce(queued).mockResolvedValue({...queued,status:'running',last_event_seq:2});
   render(<App/>);await screen.findByText('排队中');
@@ -46,7 +75,7 @@ describe('workspace job synchronization',()=>{
 
  it('keeps the failed generate task after an automatic prepare handoff clears the active job',async()=>{
   let currentProject:Project={...project,active_job_id:null,stage:'awaiting_confirmation',confirmed_plan_revision:'2',plan:{revision:'2',stage:'directions',input_snapshot_hash:'hash',confirmed_direction_id:'direction-a',directions:['a','b','c'].map(id=>({id:`direction-${id}`,title:`方向 ${id}`,description:'已确认方案',pages:[{number:1,title:'第一页'}],production_settings:{}}))}};
-  const jobs:Record<string,Job>={prepare:{...queued,id:'prepare',kind:'prepare',stage:'prepare',status:'running'},generate:{...queued,id:'generate',kind:'generate',stage:'generate',status:'running'}};
+  const jobs:Record<string,Job>={prepare:{...queued,id:'prepare',kind:'prepare',stage:'prepare',status:'running',created_at:'2026-10-29T01:00:00Z',deadline:'2026-10-29T01:30:00Z',phase_timeout_seconds:1800},generate:{...queued,id:'generate',kind:'generate',stage:'generate',status:'running',created_at:'2026-10-29T01:20:00Z',deadline:'2026-10-29T01:50:00Z',phase_timeout_seconds:1800}};
   const receivers=new Map<string,Parameters<typeof consumeEvents>[3]>();
   vi.mocked(api.project).mockImplementation(async()=>currentProject);
   vi.mocked(api.job).mockImplementation(async id=>jobs[id]);
@@ -57,12 +86,15 @@ describe('workspace job synchronization',()=>{
   expect(screen.queryByRole('checkbox',{name:/我同意将本项目必要/})).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button',{name:'生成演示稿'}));
   await screen.findByText('任务 prepare');expect(screen.getByText('制作准备')).toBeInTheDocument();
+  expect(screen.getByText('制作准备完成后会自动进入演示稿制作，新阶段使用新的任务号。')).toBeInTheDocument();
   await waitFor(()=>expect(receivers.has('prepare')).toBe(true));
 
   jobs.prepare={...jobs.prepare,status:'succeeded',last_event_seq:2};
   currentProject={...currentProject,revision:4,active_job_id:'generate'};
   await act(async()=>receivers.get('prepare')!({seq:2,type:'job.succeeded',payload:{}}));
   await screen.findByText('任务 generate');expect(screen.getByText('制作演示稿')).toBeInTheDocument();
+  expect(screen.queryByText(/制作准备完成后会自动进入/)).not.toBeInTheDocument();
+  expect(screen.getByRole('group',{name:'任务时间'}).querySelectorAll('time')[1]).toHaveAttribute('datetime','2026-10-29T01:50:00.000Z');
   await waitFor(()=>expect(receivers.has('generate')).toBe(true));
 
   jobs.generate={...jobs.generate,status:'failed',last_event_seq:2,error_code:'render_failed'};

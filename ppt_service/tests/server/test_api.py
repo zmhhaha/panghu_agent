@@ -1,5 +1,6 @@
 """HTTP ACL and transaction-state checks (SQLite); PG concurrency is separate."""
 import os,uuid
+from datetime import datetime,timezone
 from pathlib import Path
 import pytest
 from sqlalchemy import create_engine,select
@@ -44,6 +45,60 @@ def test_two_owners_projects_jobs_events(ctx):
         assert c.get('/api/v1'+route).status_code==404
     assert c.get('/api/v1/projects').json()==[]
     who[0]=Identity('https://other-issuer','alice');assert c.get('/api/v1/projects/'+p['id']).status_code==404
+
+
+@pytest.mark.parametrize('database', ['sqlite','postgres'])
+def test_job_timing_survives_terminal_refresh_without_leaking_private_fields(tmp_path,database):
+    url=os.getenv('TEST_DATABASE_URL') if database=='postgres' else 'sqlite://'
+    if not url:pytest.skip('Dedicated PostgreSQL integration database not configured')
+    options={'connect_args':{'check_same_thread':False},'poolclass':StaticPool} if database=='sqlite' else {}
+    engine=create_engine(url,**options);migrate(engine)
+    app=create_app(Settings(url,str(tmp_path)),engine)
+    who=[Identity('https://timing.test',str(uuid.uuid4()))]
+    app.dependency_overrides[authenticate]=lambda:who[0]
+    c=TestClient(app)
+    try:
+        p=project(c);queued=plan(c,p).json();jid=queued['id']
+        submitted=datetime.fromisoformat(queued['created_at'])
+        assert submitted.tzinfo is not None
+        assert queued['deadline'] is None and queued['phase_timeout_seconds']==600
+        with app.state.sessions.begin() as s:
+            r=Repository(s);j=r.claim_next();assert j.id==jid
+            token=j.fencing_token
+            r.attach_execution(jid,j.attempt,token,job_uid='timing-worker',session_id='private-session',run_id='private-run')
+            original_deadline=j.deadline
+        running=c.get('/api/v1/jobs/'+jid).json()
+        assert datetime.fromisoformat(running['deadline'])==original_deadline
+        assert datetime.fromisoformat(running['created_at'])==submitted
+        assert running['status']=='running'
+        for forbidden in ('session_id','run_id','lease_until','input_snapshot','issuer','subject'):
+            assert forbidden not in running
+        with app.state.sessions.begin() as s:
+            r=Repository(s);j=s.get(Job,jid)
+            r.prove_stopped(jid,j.attempt,token,job_uid='timing-worker',all_writers_stopped=True)
+            r.finish_failed(jid,j.attempt,token,error_code='execution_timeout')
+        refreshed=c.get('/api/v1/jobs/'+jid).json()
+        assert refreshed['status']=='failed'
+        assert refreshed['deadline']==running['deadline']
+        assert refreshed['phase_timeout_seconds']==600
+        assert getp(c,p)['latest_job']['deadline']==running['deadline']
+        who[0]=Identity('https://timing.test',str(uuid.uuid4()))
+        assert c.get('/api/v1/jobs/'+jid).status_code==404
+    finally:
+        c.close();engine.dispose()
+
+
+def test_job_timing_keeps_historical_deadline_independent_of_current_phase_cap(ctx):
+    app,c,_=ctx;p=project(c);jid=plan(c,p).json()['id']
+    historical=datetime(2026,10,1,9,10,tzinfo=timezone.utc)
+    with app.state.sessions.begin() as s:
+        j=s.get(Job,jid);j.kind='plan_options';j.stage='plan_options';j.status='failed'
+        j.deadline=historical;j.error_code='execution_timeout'
+        s.get(Project,p['id']).active_job_id=None
+    actual=c.get('/api/v1/jobs/'+jid).json()
+    assert datetime.fromisoformat(actual['deadline'])==historical
+    assert actual['phase_timeout_seconds']==1200
+    assert 'claimed_at' not in actual and 'started_at' not in actual
 
 def test_idempotency_is_original_and_conflict(ctx):
     app,c,_=ctx;p=project(c)

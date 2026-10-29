@@ -1,8 +1,13 @@
 """Shared attempt builder tests with fake session records; no database."""
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+import tempfile
 import unittest
 
 from ppt_service.control.attempt_builder import build_attempt
-from ppt_service.control.execution import ControlError
+from ppt_service.control.execution import ControlError, RuntimeConfig
+from ppt_service.control.staging import Stager, atomic_json, read_json
 
 PID = '11111111-1111-4111-8111-111111111111'
 JID = '22222222-2222-4222-8222-222222222222'
@@ -53,6 +58,57 @@ class BuilderTests(unittest.TestCase):
         self.assertIsNone(attempt.checkpoint_key)
         self.assertIsNone(manifest)
         self.assertEqual(attempt.snapshot['control_context'], {})
+        self.assertIsNone(attempt.execution_deadline)
+
+    def test_original_claim_deadline_is_normalized_without_changing_the_job(self):
+        original = datetime(2026, 10, 29, 12, 30, tzinfo=timezone(timedelta(hours=8)))
+        record = job(deadline=original)
+        attempt, _ = build_attempt(FakeSession(), record)
+        self.assertEqual(attempt.execution_deadline.isoformat(), '2026-10-29T04:30:00+00:00')
+        self.assertIs(record.deadline, original)
+        self.assertNotIn('control_context', record.input_snapshot)
+        self.assertEqual(record.input_snapshot['hash'], HASH)
+
+    def test_sqlite_naive_claim_deadline_keeps_existing_utc_interpretation(self):
+        original = datetime(2026, 10, 29, 4, 30)
+        record = job(deadline=original)
+        attempt, _ = build_attempt(FakeSession(), record)
+        self.assertEqual(attempt.execution_deadline, original.replace(tzinfo=timezone.utc))
+        self.assertIsNone(record.deadline.tzinfo)
+
+    def test_invalid_claim_deadlines_fail_before_staging(self):
+        for value in ('2026-10-29T04:30:00+00:00', True, 1800):
+            with self.subTest(value=value), self.assertRaisesRegex(ControlError, 'invalid_execution_deadline'):
+                build_attempt(FakeSession(), job(deadline=value))
+        attempt, _ = build_attempt(FakeSession(), job())
+        with self.assertRaisesRegex(ControlError, 'invalid_execution_deadline'):
+            replace(attempt, execution_deadline=datetime(2026, 10, 29, 4, 30))
+
+    def staged_task(self, record):
+        attempt, _ = build_attempt(FakeSession(), record)
+        with tempfile.TemporaryDirectory() as directory:
+            stager = Stager(RuntimeConfig(Path(directory)))
+            layout = stager.layout(attempt)
+            for name in ('inputs', 'task', 'home', 'project', 'result', 'audit', 'base'):
+                getattr(layout, name).mkdir(parents=True)
+            atomic_json(layout.inputs / 'inventory.json', {'sources': []})
+            stager.finish_inputs(attempt, layout, {'input_snapshot_sha256': HASH, 'sources': []})
+            return read_json(layout.task, 'task.json')
+
+    def test_readonly_task_contains_only_the_original_claim_deadline(self):
+        original = datetime(2026, 10, 29, 4, 30, tzinfo=timezone.utc)
+        record = job(deadline=original, input_snapshot={
+            'hash': HASH, 'execution_deadline': '2099-01-01T00:00:00+00:00',
+            'settings': {'page_count': 3},
+        })
+        task = self.staged_task(record)
+        self.assertEqual(task['execution_deadline'], original.isoformat())
+        self.assertEqual(task['input_snapshot_sha256'], HASH)
+        self.assertEqual(record.input_snapshot['execution_deadline'], '2099-01-01T00:00:00+00:00')
+
+    def test_legacy_attempt_does_not_invent_or_copy_a_snapshot_deadline(self):
+        record = job(input_snapshot={'hash': HASH, 'execution_deadline': '2099-01-01T00:00:00+00:00'})
+        self.assertNotIn('execution_deadline', self.staged_task(record))
 
     def test_unsupported_phase_is_refused(self):
         with self.assertRaisesRegex(ControlError, 'unsupported_phase'):

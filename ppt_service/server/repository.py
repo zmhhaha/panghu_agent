@@ -1,6 +1,6 @@
 from __future__ import annotations
 import hashlib,json
-from datetime import timedelta
+from datetime import datetime,timedelta,timezone
 from fastapi import HTTPException
 from sqlalchemy import select,func,text
 from .models import *
@@ -9,7 +9,18 @@ ACTIVE=('queued','starting','running','collecting','validating','cancelling')
 TERMINAL=('succeeded','failed','cancelled','interrupted')
 def fail(code,status=409): raise HTTPException(status,detail={'code':code})
 def digest(value): return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()).hexdigest()
-def job_dto(j): return {k:getattr(j,k) for k in ('id','project_id','kind','status','stage','event_cursor','attempt','error_code','base_version_id')}|{'job_id':j.id}
+def _iso_time(value):
+    if not isinstance(value,datetime):return None
+    return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat()
+
+def job_dto(j):
+    try:budget=phase_timeout_seconds(j.kind)
+    except ValueError:budget=None
+    return {k:getattr(j,k) for k in ('id','project_id','kind','status','stage','event_cursor','attempt','error_code','base_version_id')}|{
+        'job_id':j.id,'created_at':_iso_time(j.created_at),'deadline':_iso_time(j.deadline),
+        # Current phase configuration, not a completion estimate or a historical
+        # claim timestamp. The persisted deadline is never recalculated here.
+        'phase_timeout_seconds':budget}
 EVENT_FIELDS={'job.queued':{'stage'},'job.started':{'stage'},'stage.changed':{'stage'},'plan.ready':{'revision','phase'},'artifact.ready':{'version_id'},'job.succeeded':set(),'job.failed':{'error_code'},'job.cancelled':set(),'job.cancelling':set()}
 class Repository:
     """All methods run in caller's session.begin(); control methods are trusted-only.
