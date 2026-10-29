@@ -113,7 +113,8 @@ class PptProfile(ExecutionProfile):
         task = wire["task"]
         task_fields = set(_TASK_FIELDS)
         if context is not None:
-            task_fields.update(key for key in ('stage1_confirmation', 'stage2_confirmation') if key in context.task)
+            task_fields.update(key for key in ('stage1_confirmation', 'stage2_confirmation', 'execution_deadline')
+                               if key in context.task)
         if type(task) is not dict or set(task) != task_fields:
             _reject('invalid_ppt_job', 'Invalid PPT task payload fields')
         if context is not None and wire['phase'] != 'plan_initial':

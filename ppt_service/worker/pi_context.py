@@ -1,6 +1,7 @@
 """Immutable controller-prepared values, not wire-selectable execution authority."""
 from __future__ import annotations
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -52,7 +53,8 @@ class PreparedPptContext:
         require(layout == stager.layout(attempt) and layout.root in stager._staged, 'unstaged_attempt')
         snapshot, inventory, identity = stager._staged[layout.root]
         require(exact_json(snapshot, attempt.snapshot) and identity == (
-            attempt.phase, attempt.session_id, attempt.checkpoint_key, attempt.base_version_id), 'unstaged_attempt')
+            attempt.phase, attempt.session_id, attempt.checkpoint_key, attempt.base_version_id,
+            attempt.execution_deadline), 'unstaged_attempt')
         sources = stager._sources(attempt)
         require(exact_json(inventory, {'schema_version': 1, 'input_snapshot_sha256': snapshot['hash'],
                                      'sources': sources}), 'input_inventory_changed')
@@ -78,6 +80,8 @@ class PreparedPptContext:
                     'assets': [row | {'path': '/work/inputs/' + row['path'],
                         'display_name': row['id'] + EXT[row['media_type']]} for row in sources],
                     'feedback': snapshot.get('feedback', ''), 'base_version_id': attempt.base_version_id}
+        if attempt.execution_deadline is not None:
+            expected['execution_deadline'] = attempt.execution_deadline.astimezone(timezone.utc).isoformat()
         for key in ('stage1_confirmation', 'stage2_confirmation'):
             if snapshot.get('control_context', {}).get(key):
                 expected[key] = snapshot['control_context'][key]
@@ -196,8 +200,18 @@ class PreparedPptContext:
         task_fields = {'schema_version', 'job_id', 'attempt', 'phase', 'session_id', 'input_snapshot_sha256',
                        'requirements', 'assets', 'feedback', 'base_version_id'}
         confirmations = {'stage1_confirmation', 'stage2_confirmation'}
-        require(type(task) is dict and task_fields <= set(task) <= task_fields | confirmations
+        require(type(task) is dict and task_fields <= set(task) <= task_fields | confirmations | {'execution_deadline'}
                 and type(task['schema_version']) is int and task['schema_version'] == 1, 'prepared_task_mismatch')
+        deadline = None
+        if 'execution_deadline' in task:
+            require(type(task['execution_deadline']) is str, 'invalid_execution_deadline')
+            try:
+                deadline = datetime.fromisoformat(task['execution_deadline'])
+            except ValueError:
+                require(False, 'invalid_execution_deadline')
+            require(deadline.utcoffset() is not None
+                    and deadline.astimezone(timezone.utc).isoformat() == task['execution_deadline'],
+                    'invalid_execution_deadline')
         for key in ('job_id', 'attempt', 'phase', 'session_id', 'input_snapshot_sha256', 'base_version_id'):
             require(type(task[key]) is type(receipt[key]) and task[key] == receipt[key], 'prepared_task_mismatch')
         requirements = task['requirements']
@@ -242,7 +256,8 @@ class PreparedPptContext:
             snapshot.update(plan_revision=confirmation.get('plan_revision'),
                             confirmation_selection=confirmation.get('selection'))
         attempt = Attempt(identity.job_id, identity.project_id, identity.attempt, identity.token,
-                          identity.phase, snapshot, receipt['session_id'], receipt['checkpoint_key'], receipt['base_version_id'])
+                          identity.phase, snapshot, receipt['session_id'], receipt['checkpoint_key'], receipt['base_version_id'],
+                          execution_deadline=deadline)
         checkpoint = (PiCheckpoint.validate(bundle['checkpoint'], attempt, runtime_revision,
                                            skill_bundle_revision, 512 * 1024**2)
                       if bundle['checkpoint'] is not None else None)
