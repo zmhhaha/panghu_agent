@@ -39,8 +39,9 @@ describe('actual official stage-2 projection',()=>{
   expect(api.confirm).not.toHaveBeenCalled();expect(api.generate).not.toHaveBeenCalled();
  });
  it('keeps returned clarification questions available without placing them ahead of the initial comparison',async()=>{
-  await open();const questions=adaptProject(raw()).plan!.questions!;
-  expect(questions.length).toBeGreaterThan(0);
+  const source=raw();const questions=['请核对资料范围。','请核对目标受众。'];
+  vi.mocked(api.project).mockResolvedValue(adaptProject({...source,plans:[{...source.plans[0],questions}]}));
+  await open();
   for(const question of questions)expect(screen.getByText(question)).not.toBeVisible();
   await userEvent.click(screen.getByText(/待核对的信息/,{selector:'summary'}));
   for(const question of questions)expect(screen.getByText(question)).toBeVisible();
