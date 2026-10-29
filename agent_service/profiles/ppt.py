@@ -54,7 +54,11 @@ def artifact_path(value):
         _require(name not in PRIVATE and not name.startswith(('.env', 'credentials.', 'secrets.'))
                  and not name.endswith(('.db', '.sqlite', '.sqlite3', '.jsonl', '.pem', '.key')),
                  'ppt_native_state_forbidden')
-    _require(Path(key).suffix.casefold() in EXTENSIONS, 'ppt_artifact_type_forbidden')
+    # PPT Master's project manager appends this portable audit file during
+    # init/import. Keep it in the measured checkpoint without admitting other
+    # runtime logs, session stores, or engine HOME files.
+    workflow_log = key == 'validation/workflow.log' or key.endswith('/validation/workflow.log')
+    _require(Path(key).suffix.casefold() in EXTENSIONS or workflow_log, 'ppt_artifact_type_forbidden')
     return key
 
 
@@ -355,6 +359,8 @@ class PPTProfile:
             'report paths are relative to that child (for example planning-notes.md), without repeating '
             'project_root. Declare exactly every ordinary file under that child, including files '
             'created by official scripts and unchanged replayed files, and no inputs/base/native state. '
+            'Keep the official validation/workflow.log in that measured roster; other runtime logs '
+            'and native session state are not portable project artifacts. '
             'Measure SHA256 and bytes after all writes finish; examples below are shape examples, '
             'not real measurements. Replace every placeholder and bytes=0 with actual values.\n'
             'quality is ONLY a tree of report references: {}, {"reports":[{"path":"reports/gates.json"}]} '
