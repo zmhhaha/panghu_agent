@@ -380,6 +380,21 @@ def _check_bound_pi(config, policy, resource_hash):
         raise WorkerConfigError()
 
 
+def build_pi_runtime_settings(policy: ProfilePolicy, **values) -> RuntimeSettings:
+    """Keep buffered PPT model calls inside their original execution budget.
+
+    The task proxy persists a complete response before Pi receives its events.
+    A valid PPT inference can therefore produce no child output for more than
+    the general 120-second idle limit. The runtime still checks the immutable
+    per-job absolute deadline first; this ceiling never grants extra time.
+    Other domains retain RuntimeSettings' existing idle default.
+    """
+    if policy.name in {'ppt.' + phase + '.v1' for phase in
+            ('plan_initial', 'plan_options', 'prepare', 'generate', 'revise')}:
+        values['idle_timeout_seconds'] = policy.max_timeout_seconds
+    return RuntimeSettings(**values)
+
+
 def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScope,
                     stop_controller, *, acceptance=False, now=time.time):
     policy = host_policy(config)
@@ -416,7 +431,7 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
                       if policy.name in {'research.generate.v1', 'research.retrieve.v1'} else ())
         profile = DomainExecutionProfile(policy, bundle_revision, extensions=extensions)
         profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL_ROOT
-    settings = RuntimeSettings(command=(NODE, PI_CLI), node_command=(NODE,),
+    settings = build_pi_runtime_settings(policy, command=(NODE, PI_CLI), node_command=(NODE,),
         provider=config.model.provider, model=config.model.model,
         model_base_url=config.model.proxy_base_url, model_api=config.model.api,
         model_max_tokens=8192,
