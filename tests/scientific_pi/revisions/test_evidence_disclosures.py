@@ -28,6 +28,10 @@ def recorded_abstract_only():
     '链接并不等于已获取全文。',
     '链接并不等于已经获取全文。',
     '链接不等于 已阅读全文。',
+    '不能据链接声称已阅读全文。',
+    '本文不能据链接声称已经获取全文。',
+    '不能据此声称已审阅全文。',
+    '不能声称已分析全文。',
 ])
 def test_honest_abstract_access_and_local_fulltext_denials_pass(wording):
     _disclosures('摘要 / abstract evidence only.\n' + wording, recorded_abstract_only())
@@ -103,6 +107,26 @@ def test_honest_abstract_access_and_local_fulltext_denials_pass(wording):
     '链接不等于已获取全文，另一来源已阅读全文。',
     '链接不等于已获取全文。已获取全文。',
     'A link is not 不等于已获取全文。',
+    '并非不能据链接声称已阅读全文。',
+    '不是不能据链接声称已阅读全文。',
+    '没有不能据链接声称已阅读全文的情况。',
+    '未必不能据链接声称已阅读全文。',
+    '否认不能据链接声称已阅读全文。',
+    '不能不声称已阅读全文。',
+    '不能据链接声称已阅读全文的说法不成立。',
+    '不能据链接声称已阅读全文并不属实。',
+    '不能据链接声称已阅读全文且本报告已阅读全文。',
+    '不能据链接声称已阅读全文且已获取全文。',
+    '不能据链接声称已阅读全文，但随后已获取全文。',
+    '不能据链接声称本报告已阅读全文。',
+    '不能据链接声称，已阅读全文。',
+    '不能据链接声称；已阅读全文。',
+    '不能据链接声称\n已阅读全文。',
+    '不能据链接声称。已阅读全文。',
+    '不能据链接声称但是已阅读全文。',
+    '不能据链接声称已阅读全文，另一来源已获取全文。',
+    '不能据链接声称已阅读全文。已获取全文。',
+    'No evidence means not 不能据链接声称已阅读全文。',
 ])
 def test_unsupported_fulltext_assertions_remain_rejected_across_local_contrasts(wording):
     with pytest.raises(RevisionValidationError) as failure:
