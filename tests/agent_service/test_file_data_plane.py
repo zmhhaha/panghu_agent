@@ -99,8 +99,13 @@ def test_binary_checkpoint_owner_hash_and_transitive_retention_survive_restart(s
 ])
 def test_checkpoint_stage_graph_and_bundle_identity_are_enforced(source, target, allowed, revision):
     initial = binding(profile=source, profile_revision=revision, contract_sha256='1' * 64)
+    # A new immutable runtime/binding may continue the same reviewed PPT stage
+    # family. Changing the profile revision would invalidate stored checkpoints.
     changed = binding(profile=target, profile_revision=revision, engine='hermes',
-        binding_id='target-hermes', contract_sha256='1' * 64 if source == target else '7' * 64)
+        binding_id='target-hermes', binding_revision='binding-after-runtime-update',
+        tool_environment_revision='tools-after-runtime-update', tool_environment_sha256='9' * 64,
+        runtime_revision='runtime-after-update', image_digest='sha256:' + 'a' * 64,
+        contract_sha256='1' * 64 if source == target else '7' * 64)
     manifest = checkpoint_manifest(job_id=str(uuid.uuid4()), attempt_id=str(uuid.uuid4()),
         profile=source, profile_revision=revision, contract_sha256=initial.contract_sha256,
         execution_binding=initial.model_dump(mode='json'), artifacts=[])
