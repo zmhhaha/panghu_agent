@@ -6,12 +6,25 @@ from uuid import uuid4
 
 import pytest
 
-from agent_service.contracts import ServiceError, canonical_bytes
+from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.deploy.acceptance_probe import fixture
 from agent_service.engines import StopEvidence
-from agent_service.profiles.ppt import PPTProfile, _manifest_example
+from agent_service.profiles.ppt import PPTProfile, _manifest_example, artifact_path, validate_checkpoint
 from ppt_service.control.planning import project_planning
 from ppt_service.worker.candidate_validation import validate_manifest
+
+
+def test_ppt_sources_allow_25_mib_without_increasing_aggregate_limit():
+    task, _ = fixture('ppt.plan_initial.v1')
+    profile = PPTProfile('plan_initial')
+    task['input_snapshot']['assets'][0]['bytes'] = 25 * 1024**2
+    task['input_snapshot_sha256'] = digest(task['input_snapshot'])
+    profile.validate_task(task)
+    assert profile.limits.max_input_total_bytes == 256 * 1024**2
+    task['input_snapshot']['assets'][0]['bytes'] += 1
+    task['input_snapshot_sha256'] = digest(task['input_snapshot'])
+    with pytest.raises(ServiceError):
+        profile.validate_task(task)
 
 
 @pytest.fixture
@@ -66,6 +79,30 @@ def test_direction_example_passes_existing_business_projection_with_full_page_pl
     directions = projection['design']['directions']
     assert len(directions) == 3 and len({row['id'] for row in directions}) == 3
     assert all(len(row['page_plan']['pages']) == 3 and row['production_parameters'] for row in directions)
+
+
+def test_official_workflow_log_survives_collection_and_checkpoint_validation(initial):
+    workspace, manifest, envelope = initial
+    path = workspace / 'project' / manifest['project_root'] / 'validation/workflow.log'
+    path.parent.mkdir()
+    raw = b'2026-10-29 project init; source import\n'
+    path.write_bytes(raw)
+    manifest['artifacts'].append(dict(role='workflow_audit', path='validation/workflow.log',
+        sha256=hashlib.sha256(raw).hexdigest(), bytes=len(raw), media_type='text/plain'))
+    files = {file.name: file for file in collect(initial)}
+    assert files['project/deck/validation/workflow.log'].content() == raw
+    checkpoint = json.loads(files['result/checkpoint.json'].content())
+    validate_checkpoint(checkpoint, project_id=envelope.task['project_id'],
+                        snapshot_hash=envelope.task['input_snapshot_sha256'])
+    assert any(row['path'] == 'deck/validation/workflow.log' for row in checkpoint['files'])
+
+
+@pytest.mark.parametrize('path', ['worker.log', 'validation/runtime.log',
+    '.pi/validation/workflow.log', 'sessions/validation/workflow.log'])
+def test_workflow_log_exception_does_not_admit_other_logs_or_native_state(path):
+    with pytest.raises(ServiceError) as caught:
+        artifact_path(path)
+    assert caught.value.code in {'ppt_artifact_type_forbidden', 'ppt_native_state_forbidden'}
 
 
 def test_prompt_places_explicit_machine_example_before_untrusted_task_data():

@@ -106,6 +106,27 @@ def test_same_review_intent_replays_once_and_checks_current_ownership(draft):
     assert revise(client, data).status_code == 404
 
 
+@pytest.mark.parametrize('legacy_ack', [None, False, True], ids=['omitted', 'false', 'true'])
+def test_review_revision_reuses_saved_project_model_consent(draft, legacy_ack):
+    app, client, _, data = draft
+    body = copy.deepcopy(data['body'])
+    if legacy_ack is None:
+        body.pop('external_model_ack')
+    else:
+        body['external_model_ack'] = legacy_ack
+    response = client.post(f"/api/v1/projects/{data['pid']}/review-revisions", json=body,
+                           headers={'Idempotency-Key': 'saved-project-consent'})
+    assert response.status_code == 202, response.text
+    duplicate = client.post(f"/api/v1/projects/{data['pid']}/review-revisions", json=body,
+                            headers={'Idempotency-Key': 'saved-project-consent'})
+    assert duplicate.status_code == 202 and duplicate.json() == response.json()
+    assert client.get(f"/api/v1/projects/{data['pid']}").json()['external_model_ack'] is True
+    with app.state.sessions() as session:
+        jobs = session.scalars(select(Job).where(Job.kind == 'revise')).all()
+        assert len(jobs) == 1
+        assert jobs[0].input_snapshot['review_base']['external_model_acknowledged'] is True
+
+
 @pytest.mark.parametrize('change,status,code', [
     ('project_revision', 409, 'stale_project_revision'),
     ('source_binding', 409, 'review_source_changed'),
@@ -114,7 +135,6 @@ def test_same_review_intent_replays_once_and_checks_current_ownership(draft):
     ('pages', 422, 'invalid_slide_number'),
     ('duplicate_pages', 422, 'invalid_slide_number'),
     ('consent', 422, 'external_model_ack_required'),
-    ('fresh_consent', 422, 'external_model_ack_required'),
     ('active_job', 409, 'project_busy'),
     ('input_changed', 409, 'review_source_changed'),
     ('missing_confirmation', 409, 'review_checkpoint_unavailable'),
@@ -131,7 +151,6 @@ def test_review_branch_fails_closed_before_queueing(draft, change, status, code)
     elif change == 'feedback':body['feedback'] = '   '
     elif change == 'pages':body['pages'] = [4]
     elif change == 'duplicate_pages':body['pages'] = [2, 2]
-    elif change == 'fresh_consent':body['external_model_ack'] = False
     elif change == 'source_bytes':
         (app.state.storage.root / data['cp_key'] / 'project/deck/spec_lock.md').write_bytes(b'Changed bytes')
     elif change == 'other_owner':owner[0] = Identity('https://issuer', 'another-owner')

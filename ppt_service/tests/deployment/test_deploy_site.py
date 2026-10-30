@@ -52,7 +52,7 @@ def secret_url(url):
 
 
 def dedicated_url(role='ppt_migrator', password='synthetic%27password%5Cvalue'):
-    return f'postgresql+psycopg://{role}:{password}@ppt-postgres.ppt-service.svc.cluster.local:5432/ppt_service'
+    return f'postgresql+psycopg://{role}:{password}@postgres.data.svc.cluster.local:5432/ppt_service'
 
 
 def database_state():
@@ -64,7 +64,7 @@ def database_state():
 
 class Scenario(deploy.Deployment):
     """Fake orchestration, while preserving the real deploy() control flow."""
-    def __init__(self, *, revision=deploy.TARGET_SCHEMA_REVISION, existing_site=3, owner=True, fail_bootstrap=False):
+    def __init__(self, *, revision=deploy.TARGET_SCHEMA_REVISION, existing_site=3, owner=True, fail_secrets=False):
         super().__init__(runner=Runner())
         self.events = []
         self.applied = []
@@ -73,7 +73,7 @@ class Scenario(deploy.Deployment):
         self.revisions = [revision, deploy.TARGET_SCHEMA_REVISION]
         self.owner = owner
         self.existing_site = existing_site
-        self.fail_bootstrap = fail_bootstrap
+        self.fail_secrets = fail_secrets
 
     def apply(self, documents):
         self.applied.extend(copy.deepcopy(documents))
@@ -93,8 +93,8 @@ class Scenario(deploy.Deployment):
 
     def wait_secrets(self, *names):
         self.events.append(('wait-secrets', names))
-        if self.fail_bootstrap:
-            raise deploy.DeployError('Synthetic unavailable bootstrap')
+        if self.fail_secrets:
+            raise deploy.DeployError('Synthetic unavailable Vault credentials')
 
     def kube(self, *args, input=None):
         self.events.append(('kube', args, input))
@@ -127,7 +127,7 @@ class Scenario(deploy.Deployment):
     def initialize_database(self):
         self.events.append(('initialize-database',))
 
-    def psql(self, sql, database='postgres', user='ppt_bootstrap'):
+    def psql(self, sql, database='postgres', user='appuser'):
         self.events.append(('psql', database, user, sql))
         return ''
 
@@ -167,9 +167,9 @@ def test_failed_lock_is_not_claimed_or_deleted():
     assert len(runner.calls) == 1
 
 
-@pytest.mark.parametrize('owner', [None, [], [{'kind': 'ExternalSecret', 'name': 'ppt-postgres-bootstrap', 'uid': 'wrong'}]])
+@pytest.mark.parametrize('owner', [None, [], [{'kind': 'ExternalSecret', 'name': 'ppt-database-migrator', 'uid': 'wrong'}]])
 def test_secret_owner_preflight_refuses_takeover(owner):
-    metadata = {'name': 'ppt-postgres-bootstrap'}
+    metadata = {'name': 'ppt-database-migrator'}
     if owner is not None:
         metadata['ownerReferences'] = owner
     runner = Runner([metadata, {'metadata': {'uid': 'expected'}}])
@@ -181,9 +181,9 @@ def test_secret_owner_preflight_refuses_takeover(owner):
 
 
 def test_secret_owner_matching_current_eso_uid_is_allowed():
-    name = 'ppt-postgres-bootstrap'
+    name = 'ppt-database-migrator'
     runner = Runner([{'ownerReferences': [{'kind': 'ExternalSecret', 'name': name, 'uid': 'expected'}]},
-                     {'metadata': {'uid': 'expected'}}, '', '', ''])
+                     {'metadata': {'uid': 'expected'}}, '', ''])
     deploy.Deployment(runner=runner).check_secret_owners()
     assert not runner.replies
 
@@ -193,8 +193,8 @@ def eso_status(refresh, ready=True):
 
 
 @pytest.mark.parametrize(('names', 'required'), [
-    (('ppt-postgres-bootstrap',), {
-        'ppt-postgres-bootstrap': ('secret/ppt-service/postgres-bootstrap', 'POSTGRES_PASSWORD'),
+    (('ppt-database-runtime',), {
+        'ppt-database-runtime': ('secret/ppt-service/database-runtime', 'DATABASE_URL'),
     }),
     (('ppt-database-migrator', 'ppt-database-runtime', 'ppt-oidc'), {
         'ppt-database-migrator': ('secret/ppt-service/database-migrator', 'DATABASE_URL'),
@@ -226,16 +226,16 @@ def test_secret_wait_failure_explains_required_vault_inputs_without_exposing_std
 def test_main_prints_controlled_secret_wait_guidance_without_provider_values(monkeypatch, capsys):
     marker = 'synthetic-private-provider-value-do-not-print'
     instance = deploy.Deployment(runner=Runner([eso_status('old'), '', (1, marker, marker + dedicated_url())]))
-    instance.deploy = lambda **kwargs: instance.wait_secrets('ppt-postgres-bootstrap')
+    instance.deploy = lambda **kwargs: instance.wait_secrets('ppt-database-runtime')
     monkeypatch.setattr(deploy, 'Deployment', lambda: instance)
     monkeypatch.setenv('PPT_SITE_IMAGE', IMAGE)
     assert deploy.main(['--skip-build']) == 1
     captured = capsys.readouterr()
     assert captured.out == ''
     assert 'ERROR: ExternalSecret readiness wait failed' in captured.err
-    assert 'ExternalSecret/ppt-postgres-bootstrap' in captured.err
-    assert 'secret/ppt-service/postgres-bootstrap' in captured.err
-    assert 'POSTGRES_PASSWORD' in captured.err
+    assert 'ExternalSecret/ppt-database-runtime' in captured.err
+    assert 'secret/ppt-service/database-runtime' in captured.err
+    assert 'DATABASE_URL' in captured.err
     assert 'vault/inventory/PPT-SERVICE.md' in captured.err
     assert marker not in captured.err and dedicated_url() not in captured.err
 
@@ -293,24 +293,32 @@ def test_secret_refresh_timeout_rejects_stale_or_unready_status(monkeypatch,late
         instance.wait_secrets('ppt-oidc')
 
 
-def test_deploy_requires_all_four_secrets_before_starting_postgres():
+def test_deploy_requires_three_secrets_before_shared_database_initialization():
     instance = Scenario()
     instance.deploy(image=IMAGE)
+    assert deploy.SECRET_NAMES == ('ppt-database-migrator', 'ppt-database-runtime', 'ppt-oidc')
     waits = [event for event in instance.events if event[0] == 'wait-secrets']
     assert waits == [('wait-secrets', deploy.SECRET_NAMES)]
     wait_index = instance.events.index(waits[0])
-    pg_index = next(i for i, event in enumerate(instance.events)
-                    if event[0] == 'apply' and ('StatefulSet', 'ppt-postgres') in event[1])
-    assert wait_index < pg_index
-    assert ('initialize-database',) in instance.events
+    assert wait_index < instance.events.index(('initialize-database',))
+    assert any(document['kind'] == 'Deployment' and document['metadata']['name'] == 'ppt-site'
+               for document in instance.applied)
+    assert not any(document['kind'] == 'StatefulSet' or document['metadata'].get('namespace') == 'data'
+                   or document['metadata']['name'] in ('ppt-postgres', 'ppt-postgres-bootstrap')
+                   for document in instance.applied)
+    commands = [event[1] for event in instance.events if event[0] == 'kube']
+    assert not any('statefulset/ppt-postgres' in command or 'statefulset/postgres' in command
+                   or 'data' in command for command in commands)
     assert instance.events[-1] == ('unlock',)
 
 
-def test_deployment_failure_releases_lock_before_database_start():
-    instance = Scenario(fail_bootstrap=True)
+def test_secret_failure_releases_lock_before_database_initialization():
+    instance = Scenario(fail_secrets=True)
     with pytest.raises(deploy.DeployError):
         instance.deploy(image=IMAGE)
     assert not any(document['kind'] == 'StatefulSet' for document in instance.applied)
+    assert ('initialize-database',) not in instance.events
+    assert not any(event[0] == 'psql' for event in instance.events)
     assert instance.events[-1] == ('unlock',)
 
 
@@ -378,12 +386,17 @@ def test_existing_site_replica_count_is_preserved():
 
 
 @pytest.mark.parametrize('replacement', [
-    'postgresql://ppt_migrator:synthetic@ppt-postgres.ppt-service.svc.cluster.local:5432/ppt_service',
+    'postgresql://ppt_migrator:synthetic@postgres.data.svc.cluster.local:5432/ppt_service',
     dedicated_url().replace('ppt_migrator:', 'ppt_runtime:'), dedicated_url().replace(':5432/', ':5433/'),
-    dedicated_url().replace('ppt-postgres.', 'other-postgres.'), dedicated_url().replace('/ppt_service', '/other'),
+    dedicated_url().replace('postgres.data.', 'other-postgres.data.'),
+    dedicated_url().replace('postgres.data.', 'postgres.other.'),
+    dedicated_url().replace('postgres.data.svc.cluster.local', 'ppt-postgres.ppt-service.svc.cluster.local'),
+    dedicated_url().replace('/ppt_service', '/other'), dedicated_url().replace('/ppt_service', '/appdb'),
+    dedicated_url().replace('ppt_migrator:', 'appuser:'),
     dedicated_url() + '?sslmode=disable', dedicated_url() + '#fragment', dedicated_url(password=''),
     dedicated_url(password='synthetic%00password'), dedicated_url(password='synthetic%0Apassword'),
-], ids=['driver','role','port','host','database','query','fragment','empty-password','nul','encoded-newline'])
+], ids=['driver','role','port','host','namespace','legacy-host','database','shared-default-database',
+        'shared-admin-role','query','fragment','empty-password','nul','encoded-newline'])
 def test_database_url_rejects_noncontract_targets(replacement):
     with pytest.raises(deploy.DeployError):
         deploy.database_password(secret_url(replacement), 'ppt_migrator')
@@ -398,6 +411,24 @@ def test_database_url_rejects_raw_control_characters(character):
 def test_database_password_decodes_reserved_characters_without_logging(capsys):
     assert deploy.database_password(secret_url(dedicated_url()), 'ppt_migrator') == "synthetic'password\\value"
     assert capsys.readouterr() == ('', '')
+
+
+@pytest.mark.parametrize(('database', 'user'), [('postgres', 'appuser'), ('ppt_service', 'ppt_migrator')])
+def test_operator_psql_uses_existing_shared_pod_and_stdin(database, user):
+    runner = Runner(['synthetic-query-result'])
+    instance = deploy.Deployment(runner=runner)
+    sql = 'SELECT current_database();'
+    if user == 'appuser':
+        result = instance.psql(sql)
+    else:
+        result = instance.psql(sql, database, user)
+    assert result == 'synthetic-query-result'
+    args, kwargs = runner.calls[0]
+    assert args == [instance.kubectl, '-n', 'data', 'exec', '-i', 'postgres-0', '--',
+                    'psql', '-X', '--no-password', '--quiet', '--no-align', '--tuples-only',
+                    '-v', 'ON_ERROR_STOP=1', '-U', user, '-d', database]
+    assert kwargs['input'] == sql
+    assert sql not in args
 
 
 @pytest.mark.parametrize('state', [
@@ -425,12 +456,16 @@ def test_automatic_init_creates_new_database_and_roles_from_vault_urls():
     instance.get = lambda _kind, name: secret_url(dedicated_url(role='ppt_runtime' if name.endswith('runtime') else 'ppt_migrator'))
     assert instance.initialize_database() is True
     args, kwargs = runner.calls[0]
+    assert args[1:7] == ['-n', 'data', 'exec', '-i', 'postgres-0', '--']
+    assert args[-4:-2] == ['-U', 'appuser']
     assert args[-2:] == ['-d', 'postgres']
     assert 'CREATE DATABASE "ppt_service" OWNER "ppt_migrator";' in kwargs['input']
     sql = kwargs['input']
     assert 'CREATE ROLE "ppt_runtime" LOGIN' in sql
     assert sql.count("PASSWORD 'synthetic''password\\value'") == 2
     assert 'ALTER ROLE' not in sql
+    assert 'appdb' not in sql and 'appuser' not in sql
+    assert 'synthetic' not in ' '.join(args)
     assert ":'migrator_password'" not in sql and ":'runtime_password'" not in sql
     assert sql.rstrip().endswith("COMMENT ON DATABASE \"ppt_service\" IS 'ppt-service-bootstrap-v1';")
     assert sql.index('SET standard_conforming_strings = on;') < sql.index('CREATE ROLE')

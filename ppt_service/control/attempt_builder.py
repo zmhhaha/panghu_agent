@@ -7,6 +7,7 @@ I/O beyond the supplied session and never starts a writer.
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timezone
 import uuid
 
 from fastapi import HTTPException
@@ -92,6 +93,17 @@ def build_attempt(session, job, *, engine='hermes'):
             confirmation['selected_direction'] = selected
         context['stage1_confirmation' if job.kind == 'plan_options' else 'stage2_confirmation'] = confirmation
     snapshot['control_context'] = context
+    # Keep the original claim cutoff outside user-controlled snapshot/settings.
+    # SQLite returns naive values in isolated tests; its stored timestamps, like
+    # the controller's existing deadline comparisons, are interpreted as UTC.
+    deadline = getattr(job, 'deadline', None)
+    if deadline is not None:
+        if not isinstance(deadline, datetime):
+            raise ControlError('invalid_execution_deadline')
+        if deadline.utcoffset() is None:
+            deadline = deadline.replace(tzinfo=timezone.utc)
+        deadline = deadline.astimezone(timezone.utc)
     attempt = Attempt(job.id, job.project_id, job.attempt, job.fencing_token, job.kind, snapshot,
-                      session_id, checkpoint.storage_key if checkpoint else None, job.base_version_id)
+                      session_id, checkpoint.storage_key if checkpoint else None, job.base_version_id,
+                      execution_deadline=deadline)
     return attempt, (checkpoint.manifest if checkpoint else None)

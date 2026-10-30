@@ -151,20 +151,20 @@ def render(*, controller_image, worker_image, kube_api_cidr, kube_api_port=(6443
     # dns-egress selector, so no worker/proxy/sandbox inherits DNS access.
     documents.append(policy('dns-egress', namespace, {'matchExpressions': [{
         'key': 'app.kubernetes.io/name', 'operator': 'In',
-        'values': ['ppt-site', 'ppt-migrator', 'ppt-postgres', CONTROLLER]}]}, egress=[{
+        'values': ['ppt-site', 'ppt-migrator', CONTROLLER]}]}, egress=[{
             'to': [{'namespaceSelector': {'matchLabels': {
                 'kubernetes.io/metadata.name': 'kube-system'}},
                 'podSelector': {'matchLabels': {'k8s-app': 'kube-dns'}}}],
             'ports': [{'protocol': 'UDP', 'port': 53}, {'protocol': 'TCP', 'port': 53}]}]))
     documents.append(policy('hermes-controller-egress', namespace, {'matchLabels': {'app': CONTROLLER}},
-        egress=[{'to': [{'podSelector': {'matchLabels': {'app.kubernetes.io/name': 'ppt-postgres'}}}],
+        egress=[{'to': [{'namespaceSelector': {'matchLabels': {
+                            'kubernetes.io/metadata.name': 'data'}},
+                        'podSelector': {'matchLabels': {'app': 'postgres'}}}],
                  'ports': [{'protocol': 'TCP', 'port': 5432}]},
                 {'to': [{'ipBlock': {'cidr': network}} for network in sorted(set(networks))],
                  'ports': [{'protocol': 'TCP', 'port': port} for port in ports]}]))
-    documents.append(policy('hermes-controller-postgres-ingress', namespace,
-        {'matchLabels': {'app.kubernetes.io/name': 'ppt-postgres'}}, ingress=[{
-            'from': [{'podSelector': {'matchLabels': {'app': CONTROLLER}}}],
-            'ports': [{'protocol': 'TCP', 'port': 5432}]}]))
+    # Shared data/postgres owns its ingress policy. Never replace that policy
+    # or give workers/proxies database access through this execution extension.
     documents.append(policy('hermes-task-default-deny', namespace, {'matchExpressions': [{
         'key': 'app', 'operator': 'In',
         'values': ['ppt-hermes-worker', 'ppt-model-proxy', 'ppt-sandbox']}]}, ingress=[], egress=[]))

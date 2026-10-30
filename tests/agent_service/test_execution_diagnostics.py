@@ -96,6 +96,12 @@ class DiagnosticTests(unittest.TestCase):
             self.assertEqual(record['code'], code if code != SECRET else 'unclassified_error')
             self.assertEqual(record['stage'], 'collect_output')
 
+    def test_ppt_artifact_rejection_reports_fixed_code_without_file_paths(self):
+        for code in ('ppt_artifact_type_forbidden', 'ppt_native_state_forbidden'):
+            with self.subTest(code=code), self.assertLogs(LOGGER, level='WARNING') as capture:
+                log_execution_failure('worker_host', 'collect_output', ServiceError(code, 422))
+            self.assertEqual(self.records(capture)[0]['code'], code)
+
     def test_profile_validation_logs_reviewed_code_and_keeps_public_error(self):
         runtime = PiRuntime(self.settings, profile=Profile(
             validation_error=ProfileError('invalid_native_request', SECRET)))

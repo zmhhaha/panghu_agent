@@ -51,7 +51,7 @@ beforeEach(() => {
 });
 
 describe('review drafts in the real version workspace', () => {
-  it('loads review only after explicit selection and shows one preview with independent model consent', async () => {
+  it('loads review only after explicit selection and reuses project consent without starting a revision', async () => {
     const user = userEvent.setup(); render(<App />);
     await screen.findByRole('heading', { name: project.title });
     await user.click(screen.getByRole('tab', { name: /预览与修改/ }));
@@ -62,18 +62,21 @@ describe('review drafts in the real version workspace', () => {
     expect(screen.getAllByRole('img')).toHaveLength(1);
     expect(screen.queryByRole('img', { name: '第 1 页静态预览' })).not.toBeInTheDocument();
     const form = within(screen.getByRole('region', { name: '审核稿修改' }));
-    expect(form.getByRole('checkbox')).not.toBeChecked();
-    fireEvent.change(form.getByLabelText('整份修改意见'), { target: { value: '调整标题间距' } });
+    expect(form.queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(form.getByText(/本项目已同意使用外部模型/)).toBeInTheDocument();
     expect(form.getByRole('button', { name: '创建新审核稿修改任务' })).toBeDisabled();
+    fireEvent.change(form.getByLabelText('整份修改意见'), { target: { value: '调整标题间距' } });
+    expect(form.getByRole('button', { name: '创建新审核稿修改任务' })).toBeEnabled();
     expect(api.reviewRevise).not.toHaveBeenCalled(); expect(api.revise).not.toHaveBeenCalled();
   });
 
   it('submits a manual draft revision with the exact saved binding and does not use published revision API', async () => {
     const user = await selectReview(); const form = within(screen.getByRole('region', { name: '审核稿修改' }));
-    await user.type(form.getByLabelText('整份修改意见'), '调整标题间距'); await user.click(form.getByRole('checkbox'));
+    await user.type(form.getByLabelText('整份修改意见'), '调整标题间距');
+    expect(api.reviewRevise).not.toHaveBeenCalled();
     await user.click(form.getByRole('button', { name: '创建新审核稿修改任务' }));
     await waitFor(() => expect(api.reviewRevise).toHaveBeenCalledOnce());
-    expect(api.reviewRevise).toHaveBeenCalledWith(project, draft.id, [], '调整标题间距', snapshot().binding, 0, true);
+    expect(api.reviewRevise).toHaveBeenCalledWith(project, draft.id, [], '调整标题间距', snapshot().binding, 0);
     expect(api.revise).not.toHaveBeenCalled(); expect(api.plan).not.toHaveBeenCalled(); expect(api.generate).not.toHaveBeenCalled();
     expect(screen.getByText('待审核草稿 · 尚未正式发布')).toBeInTheDocument();
   });
@@ -85,9 +88,9 @@ describe('review drafts in the real version workspace', () => {
     expect(form.getByLabelText('指定页面')).toBeChecked();
     expect(form.getByLabelText('第 2 页 · 审核页二')).toBeChecked(); expect(form.getByLabelText('第 1 页 · 审核页一')).not.toBeChecked();
     expect(form.getByLabelText('共同修改意见（可选）')).toHaveValue('第 2 页：审核页二\n- 文字 / 重要：标题与正文发生重叠');
-    expect(form.getByRole('checkbox', { name: /我同意/ })).not.toBeChecked(); expect(api.reviewRevise).not.toHaveBeenCalled();
-    await user.click(form.getByRole('checkbox', { name: /我同意/ })); await user.click(form.getByRole('button', { name: '创建新审核稿修改任务' }));
-    await waitFor(() => expect(api.reviewRevise).toHaveBeenCalledWith(project, draft.id, [2], expect.stringContaining('标题与正文发生重叠'), snapshot().binding, 1, true));
+    expect(form.queryByRole('checkbox', { name: /我同意/ })).not.toBeInTheDocument(); expect(api.reviewRevise).not.toHaveBeenCalled();
+    await user.click(form.getByRole('button', { name: '创建新审核稿修改任务' }));
+    await waitFor(() => expect(api.reviewRevise).toHaveBeenCalledWith(project, draft.id, [2], expect.stringContaining('标题与正文发生重叠'), snapshot().binding, 1));
   });
 
   it('keeps historical issues visible but blocks draft modification when the source is stale', async () => {
@@ -98,13 +101,20 @@ describe('review drafts in the real version workspace', () => {
     expect(screen.queryByRole('region', { name: '审核稿修改' })).not.toBeInTheDocument(); expect(api.reviewRevise).not.toHaveBeenCalled();
   });
 
-  it('clears pending revision feedback and consent when the same version returns a changed source binding', async () => {
+  it('clears pending feedback and page scope after source binding changes while preserving project consent', async () => {
     const user=await selectReview();const form=within(screen.getByRole('region',{name:'审核稿修改'}));
-    await user.type(form.getByLabelText('整份修改意见'),'旧来源的未提交意见');await user.click(form.getByRole('checkbox'));
+    await user.click(form.getByLabelText('指定页面'));await user.click(form.getByLabelText('第 2 页 · 审核页二'));
+    await user.type(form.getByLabelText('共同修改意见（可选）'),'旧来源的未提交意见');
     const changed=snapshot();changed.source_revision+=1;changed.binding={...changed.binding,source_revision:changed.source_revision,input_snapshot_sha256:'f'.repeat(64)};
     vi.mocked(acceptanceClient.load).mockResolvedValue(changed);await user.click(screen.getByRole('button',{name:'重新读取记录'}));
     await screen.findByText('审核稿来源已变化，未提交的修改意见已清空，请核对当前来源后重新填写。');
-    expect(form.getByLabelText('整份修改意见')).toHaveValue('');expect(form.getByRole('checkbox')).not.toBeChecked();
+    expect(form.getByLabelText('整份修改意见')).toHaveValue('');expect(form.getByLabelText('整份演示稿')).toBeChecked();
+    expect(form.queryByRole('checkbox',{name:/我同意/})).not.toBeInTheDocument();
+    expect(form.getByText(/本项目已同意使用外部模型/)).toBeInTheDocument();
+    expect(form.getByRole('button',{name:'创建新审核稿修改任务'})).toBeDisabled();
+    await user.click(form.getByLabelText('指定页面'));
+    expect(form.getByLabelText('第 2 页 · 审核页二')).not.toBeChecked();
+    expect(form.getByLabelText('共同修改意见（可选）')).toHaveValue('');
     expect(api.reviewRevise).not.toHaveBeenCalled();
   });
 
@@ -115,16 +125,17 @@ describe('review drafts in the real version workspace', () => {
     expect(screen.getByRole('button',{name:'重新读取记录'})).toBeEnabled();
   });
 
-  it('reloads saved records after remount and never carries consent or draft feedback to another base', async () => {
+  it('reloads saved records and clears draft feedback when changing base while reusing project consent', async () => {
     const user = await selectReview(); const form = within(screen.getByRole('region', { name: '审核稿修改' }));
-    await user.type(form.getByLabelText('整份修改意见'), '尚未提交的意见'); await user.click(form.getByRole('checkbox'));
+    await user.type(form.getByLabelText('整份修改意见'), '尚未提交的意见');
     await user.click(screen.getAllByRole('radio')[1]);
     expect(screen.queryByRole('region', { name: /的验收工作台/ })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '基于所选版本创建修改任务' })).toBeInTheDocument();
     vi.mocked(acceptanceClient.load).mockResolvedValue(savedIssue()); await user.click(screen.getAllByRole('radio')[0]);
     await screen.findByLabelText('第 1 页检查结论');
     const fresh = within(screen.getByRole('region', { name: '审核稿修改' }));
-    expect(fresh.getByLabelText('整份修改意见')).toHaveValue(''); expect(fresh.getByRole('checkbox')).not.toBeChecked();
+    expect(fresh.getByLabelText('整份修改意见')).toHaveValue(''); expect(fresh.queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(fresh.getByText(/本项目已同意使用外部模型/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '将已保存问题带入修改' })).toBeEnabled();
     expect(acceptanceClient.load).toHaveBeenCalledTimes(2); expect(api.reviewRevise).not.toHaveBeenCalled();
   });

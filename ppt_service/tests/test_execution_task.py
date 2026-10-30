@@ -37,6 +37,15 @@ class TaskTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.read()
 
+    def test_task_deadline_requires_a_timezone_and_is_not_user_prompt_data(self):
+        self.task['execution_deadline'] = '2026-10-29T12:30:00+08:00'
+        self.assertEqual(self.read()['execution_deadline'], self.task['execution_deadline'])
+        self.assertNotIn('execution_deadline', input_message(self.task))
+        for value in ('tomorrow', '2026-10-29T12:30:00', None, True):
+            self.task['execution_deadline'] = value
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.read()
+
     def test_pages_are_bounded_and_cannot_be_boolean(self):
         for value in (2, 21, True, "6"):
             self.task["requirements"]["pages"] = value

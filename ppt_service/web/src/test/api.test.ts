@@ -16,26 +16,26 @@ describe('profile and CSRF recovery lifecycle',()=>{
  it('binds review-only revision to the explicit draft and current saved review without a project PATCH',async()=>{
   const fetcher=vi.fn().mockResolvedValueOnce(response({csrf_token:'fixture-token'})).mockResolvedValueOnce(response({job_id:'new-review-job'},202));
   vi.stubGlobal('fetch',fetcher);await client.api.me();
-  const project:Project={id:'p',title:'fixture',stage:'awaiting_review',revision:7,input_snapshot_hash:'snapshot',settings:defaultSettings,assets:[]};
+  const project:Project={id:'p',title:'fixture',stage:'awaiting_review',revision:7,input_snapshot_hash:'snapshot',settings:defaultSettings,assets:[],external_model_ack:true};
   const binding={...syntheticSnapshot('review-1').binding,project_id:'p'};
-  await expect(client.api.reviewRevise(project,'review-1',[2],'修正标题重叠',binding,3,true)).resolves.toEqual({job_id:'new-review-job'});
+  await expect(client.api.reviewRevise(project,'review-1',[2],'修正标题重叠',binding,3)).resolves.toEqual({job_id:'new-review-job'});
   expect(fetcher.mock.calls.map(([url])=>url)).toEqual(['/api/v1/me','/api/v1/projects/p/review-revisions']);
   const request=fetcher.mock.calls[1][1];expect(request.method).toBe('POST');
-  expect(JSON.parse(request.body)).toEqual({expected_revision:7,base_version_id:'review-1',pages:[2],feedback:'修正标题重叠',review_binding:binding,review_revision:3,external_model_ack:true});
+  expect(JSON.parse(request.body)).toEqual({expected_revision:7,base_version_id:'review-1',pages:[2],feedback:'修正标题重叠',review_binding:binding,review_revision:3});
   expect(request.headers.get('X-CSRF-Token')).toBe('fixture-token');expect(request.headers.get('Idempotency-Key')).toBeTruthy();
  });
 
- it('never sends a review revision without fresh explicit external-model consent',async()=>{
+ it.each([false,undefined])('never sends a review revision when the project has no saved external-model consent (%s)',async(external_model_ack)=>{
   const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);
-  const project:Project={id:'p',title:'fixture',stage:'awaiting_review',revision:7,input_snapshot_hash:'snapshot',settings:defaultSettings,assets:[],external_model_ack:true};
-  await expect(client.api.reviewRevise(project,'review-1',[],'调整布局',syntheticSnapshot('review-1').binding,0,false)).rejects.toMatchObject({code:'CONSENT_REQUIRED'});
+  const project:Project={id:'p',title:'fixture',stage:'awaiting_review',revision:7,input_snapshot_hash:'snapshot',settings:defaultSettings,assets:[],external_model_ack};
+  await expect(client.api.reviewRevise(project,'review-1',[],'调整布局',syntheticSnapshot('review-1').binding,0)).rejects.toMatchObject({code:'CONSENT_REQUIRED'});
   expect(fetcher).not.toHaveBeenCalled();
  });
 
  it('keeps a stale review error safe and never retries a write or substitutes a newer review binding',async()=>{
   const fetcher=vi.fn().mockResolvedValue(response({detail:{code:'review_records_changed'}},409));vi.stubGlobal('fetch',fetcher);
-  const project:Project={id:'p',title:'fixture',stage:'awaiting_review',revision:7,input_snapshot_hash:'snapshot',settings:defaultSettings,assets:[]};
-  await expect(client.api.reviewRevise(project,'review-1',[],'调整布局',syntheticSnapshot('review-1').binding,2,true)).rejects.toMatchObject({code:'REVIEW_RECORDS_CHANGED',status:409});
+  const project:Project={id:'p',title:'fixture',stage:'awaiting_review',revision:7,input_snapshot_hash:'snapshot',settings:defaultSettings,assets:[],external_model_ack:true};
+  await expect(client.api.reviewRevise(project,'review-1',[],'调整布局',syntheticSnapshot('review-1').binding,2)).rejects.toMatchObject({code:'REVIEW_RECORDS_CHANGED',status:409});
   expect(fetcher).toHaveBeenCalledOnce();expect(client.safeError(new client.ApiError('review_records_changed',409))).toContain('重新读取记录');
  });
 

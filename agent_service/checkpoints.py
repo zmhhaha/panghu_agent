@@ -50,7 +50,7 @@ def compatible_checkpoint(manifest, pins):
         and manifest.get('profile_revision') == pins.get('profile_revision')
         and manifest.get('contract_sha256') == target['contract_sha256'])
     stage_edge = ((manifest.get('profile'), pins.get('profile')) in PPT_STAGE_EDGES
-        and manifest.get('profile_revision') == pins.get('profile_revision') == 'v1')
+        and manifest.get('profile_revision') == pins.get('profile_revision'))
     if (manifest.get('format') != CHECKPOINT_FORMAT or not same_bundle
             or source['profile'] != manifest.get('profile')
             or source['profile_revision'] != manifest.get('profile_revision')

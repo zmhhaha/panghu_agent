@@ -288,7 +288,8 @@ def build(target="control", *, push=True, service=SERVICE, environ=None, runner=
     if tag != 'latest' or image.rsplit(':', 1)[1] != 'latest':
         raise BuildError('latest_image_tag_required')
     source_revision = environ.get('SOURCE_REVISION')
-    if source_revision is not None and not re.fullmatch(r'[0-9a-f]{7,64}', source_revision):
+    if source_revision is not None and (not isinstance(source_revision, str)
+            or not re.fullmatch(r'[0-9a-f]{40}(?:[0-9a-f]{24})?', source_revision)):
         raise BuildError('invalid_source_revision')
     platform = environ.get("PLATFORM", "linux/arm64")
     if platform not in {"linux/arm64", "linux/amd64"}:
@@ -306,10 +307,17 @@ def build(target="control", *, push=True, service=SERVICE, environ=None, runner=
     with tempfile.TemporaryDirectory(prefix="agent-service-build-") as temporary:
         archive, metadata = Path(temporary) / "context.tar", Path(temporary) / "metadata.json"
         context_archive(service, target, archive)
-        arguments += ['--label', 'org.opencontainers.image.created=' + datetime.now(timezone.utc).isoformat(),
-                      '--label', 'agent-service.panghuer.top/source-sha256=' + hashlib.sha256(archive.read_bytes()).hexdigest()]
+        context_sha256 = hashlib.sha256(archive.read_bytes()).hexdigest()
+        labels = {
+            'org.opencontainers.image.created': datetime.now(timezone.utc).isoformat(),
+            'org.opencontainers.image.source': 'https://github.com/zmhhaha/panghu_agent',
+            'io.panghu.source.context-sha256': context_sha256,
+            'agent-service.panghuer.top/source-sha256': context_sha256,
+        }
         if source_revision is not None:
-            arguments += ['--label', 'org.opencontainers.image.revision=' + source_revision]
+            labels['org.opencontainers.image.revision'] = source_revision
+        for key, value in labels.items():
+            arguments += ['--label', key + '=' + value]
         probe = runner(['docker', 'buildx', 'version'], stdout=subprocess.PIPE,
                        stderr=subprocess.PIPE, check=False)
         use_buildx = probe.returncode == 0

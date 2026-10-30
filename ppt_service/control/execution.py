@@ -1,6 +1,7 @@
 """Execution contracts. No model call occurs without explicit configured admission."""
 from __future__ import annotations
 from dataclasses import dataclass,field
+from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
@@ -85,9 +86,14 @@ class Attempt:
     session_id:str
     checkpoint_key:str|None=None
     base_version_id:str|None=None
+    execution_deadline:datetime|None=None
     def __post_init__(self):
         uuid.UUID(self.job_id);uuid.UUID(self.project_id)
         if self.phase not in PHASES or self.attempt<1 or self.token<1:raise ControlError('invalid_attempt')
+        if (self.execution_deadline is not None
+                and (not isinstance(self.execution_deadline,datetime)
+                     or self.execution_deadline.utcoffset() is None)):
+            raise ControlError('invalid_execution_deadline')
     @property
     def uid(self):return str(uuid.uuid5(uuid.NAMESPACE_URL,f'ppt:{self.job_id}:{self.attempt}:{self.token}'))
 @dataclass(frozen=True)

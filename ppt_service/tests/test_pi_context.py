@@ -1,6 +1,7 @@
 """Prepared-context contracts using actual staging and fake commands only."""
 import copy
 import dataclasses
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -25,7 +26,7 @@ class ContextTests(unittest.TestCase):
         self.skill = self.root / 'SKILL.md'
         self.skill.write_text('Offline placeholder, not production evidence', encoding='utf-8')
 
-    def prepare(self, phase='plan_initial', assets=True):
+    def prepare(self, phase='plan_initial', assets=True, execution_deadline=None):
         f = self.fixture
         if assets:
             f.asset()
@@ -33,6 +34,7 @@ class ContextTests(unittest.TestCase):
             attempt, manifest = f.a, None
         else:
             attempt, _, manifest = f.checkpoint(phase)
+        attempt = dataclasses.replace(attempt, execution_deadline=execution_deadline)
         layout, inventory = f.stager.stage(attempt, manifest)
         task = f.stager.finish_inputs(attempt, layout, {'input_snapshot_sha256': attempt.snapshot['hash'], 'sources': []})
         context = PreparedPptContext.from_stager(f.stager, attempt, layout, checkpoint_manifest=manifest)
@@ -87,6 +89,36 @@ class ContextTests(unittest.TestCase):
                     other.reject_before_probe(bad)
                 finally:
                     other.doCleanups()
+
+    def test_original_deadline_is_bound_and_profile_rejects_extensions(self):
+        deadline = datetime(2026, 10, 29, 12, 30, tzinfo=timezone(timedelta(hours=8)))
+        context, attempt, layout, _ = self.prepare(execution_deadline=deadline)
+        self.assertEqual(context.task['execution_deadline'], '2026-10-29T04:30:00+00:00')
+        self.profile.validate(self.job)
+        for value in ('2099-01-01T00:00:00+00:00', None):
+            with self.subTest(deadline=value):
+                bad = copy.deepcopy(self.job)
+                if value is None:
+                    del bad['task']['execution_deadline']
+                else:
+                    bad['task']['execution_deadline'] = value
+                self.reject_before_probe(bad)
+        with self.assertRaisesRegex(ControlError, 'unstaged_attempt'):
+            PreparedPptContext.from_stager(self.fixture.stager,
+                dataclasses.replace(attempt, execution_deadline=deadline + timedelta(hours=1)), layout)
+
+    def test_staged_deadline_cannot_change_before_finishing_inputs(self):
+        fixture = self.fixture
+        deadline = datetime(2026, 10, 29, 4, 30, tzinfo=timezone.utc)
+        attempt = dataclasses.replace(fixture.a, execution_deadline=deadline)
+        layout, _ = fixture.stager.stage(attempt)
+        parsed = {'input_snapshot_sha256': attempt.snapshot['hash'], 'sources': []}
+        with self.assertRaisesRegex(ControlError, 'unstaged_attempt'):
+            fixture.stager.finish_inputs(
+                dataclasses.replace(attempt, execution_deadline=deadline + timedelta(hours=1)), layout, parsed)
+        fixture.stager.finish_inputs(attempt, layout, parsed)
+        self.assertEqual(PreparedPptContext.from_stager(fixture.stager, attempt, layout).task[
+            'execution_deadline'], deadline.isoformat())
 
     def test_bound_identity_pins_checkpoint_base_and_extras_rejected_before_probe(self):
         self.prepare('revise')

@@ -205,7 +205,8 @@ def _video_bundle():
 def _image(value):
     _require(type(value) is str and IMAGE.fullmatch(value) is not None
         and value.rsplit(':', 1)[-1] != '0' * 64, 'immutable_worker_image_required')
-    origin = value.rsplit('@', 1)[0].removesuffix(':latest').split('/', 1)[0]
+    reference = value.rsplit('@', 1)[0]
+    origin = reference.split('/', 1)[0] if '/' in reference else ''
     if ':' in origin:
         _require(1 <= int(origin.rsplit(':', 1)[1]) <= 65535, 'immutable_worker_image_required')
     return value
@@ -317,7 +318,7 @@ def generate(*, pi_image=None, hermes_image=None, engine='pi', runtime_revision,
              token_ref='scientific-service'),
         dict(tenant='internal', caller='video-workbench', profiles=list(VIDEO_PROFILES),
              token_ref='video-workbench')], **catalog, workers=[], kubernetes_workers=pools,
-        api=dict(host='0.0.0.0', port=8080, max_request_bytes=1024 * 1024, max_input_bytes=16 * 1024 * 1024),
+        api=dict(host='0.0.0.0', port=8080, max_request_bytes=1024 * 1024, max_input_bytes=25 * 1024 * 1024),
         dispatcher=dict(poll_seconds=1.0, lease_seconds=60), store=dict(max_events=1000, max_queue=1000),
         model_proxy=dict(upstream_base_url=upstream_base_url, upstream_token_ref='model-upstream',
             signing_key_ref='model-signing', max_calls_per_attempt=128, max_output_tokens=32768))

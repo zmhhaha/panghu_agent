@@ -47,6 +47,7 @@ class ReviewRevise(Revise):
     review_binding:SourceBinding
     review_revision:int=Field(ge=0,strict=True)
     pages:list[StrictInt]=Field(default_factory=list,max_length=20)
+    # Retained for older clients; the saved project consent authorizes execution.
     external_model_ack:bool=Field(default=False,strict=True)
 def asset_dto(a):return {k:getattr(a,k) for k in ('id','display_name','media_type','bytes','sha256','parse_status','text_summary','parse_error')}
 def plan_dto(a):return {k:getattr(a,k) for k in ('revision','phase','input_snapshot_hash','outline','design','confirmation_selection','confirmed_at')}|{'options':a.design.get('directions',a.design.get('options',[]))}
@@ -112,7 +113,9 @@ def create_app(settings:Settings|None=None,engine=None):
     def patch(pid:str,body:ProjectPatch,owner=Depends(authenticate),s=Depends(session)):
         r=Repository(s);p=r.project(pid,owner,True);r.revision(p,body.expected_revision)
         if p.active_job_id:fail('project_busy')
-        data=body.model_dump(exclude={'expected_revision'});p.title=data.pop('title');p.external_model_ack=data.pop('external_model_ack');p.settings=data;p.revision+=1;p.confirmed_plan_revision=None;p.stage='draft'
+        data=body.model_dump(exclude={'expected_revision'});p.title=data.pop('title');ack=data.pop('external_model_ack')
+        if 'external_model_ack' in body.model_fields_set:p.external_model_ack=ack
+        p.settings=data;p.revision+=1;p.confirmed_plan_revision=None;p.stage='draft'
         return project_dto(p,s)
     @app.post('/api/v1/projects/{pid}/assets',status_code=201)
     async def upload(pid:str,file:UploadFile=File(...),owner=Depends(authenticate),s=Depends(session)):
@@ -241,11 +244,12 @@ def create_app(settings:Settings|None=None,engine=None):
         def action():
             p=r.project(pid,owner,True);r.revision(p,body.expected_revision)
             if p.active_job_id:fail('project_busy')
-            if body.external_model_ack is not True:fail('external_model_ack_required',422)
+            if not p.external_model_ack:fail('external_model_ack_required',422)
             if not body.feedback.strip():fail('review_feedback_required',422)
             v=r.version(body.base_version_id,owner)
             if v.project_id!=pid:fail('not_found',404)
             if len(set(body.pages))!=len(body.pages) or any(n<1 or n>len(v.manifest.get('slides',[])) for n in body.pages):fail('invalid_slide_number',422)
+            r.require_checkpoint_backend(p,'revise',v.checkpoint_id)
             try:
                 authority=admit_review_revision(s,app.state.storage,owner,p,v,body.review_binding,body.review_revision)
             except AcceptanceError as exc:

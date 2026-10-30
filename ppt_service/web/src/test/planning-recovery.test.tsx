@@ -51,14 +51,14 @@ describe('planning failure recovery from server history',()=>{
   expect(vi.mocked(api.job).mock.calls.map(([id])=>id)).toEqual([running.id]);expect(api.plan).not.toHaveBeenCalled();
  });
 
- it('requires explicit retry consent and keeps the newly submitted job ahead of an old project snapshot',async()=>{
+ it('reuses saved project consent for an explicit retry and keeps the new job ahead of an old project snapshot',async()=>{
   const user=await planning();const retry=screen.getByRole('button',{name:'生成三套设计方向'});
-  expect(screen.getByRole('checkbox')).not.toBeChecked();expect(retry).toBeDisabled();expect(api.plan).not.toHaveBeenCalled();
+  expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();expect(retry).toBeEnabled();expect(api.plan).not.toHaveBeenCalled();
   vi.mocked(api.plan).mockImplementation(async()=>{
    // Simulate a project GET still carrying a previous active ID and revision.
    current={...current,active_job_id:'old-active'};return {job_id:running.id};
   });
-  await user.click(screen.getByRole('checkbox'));await user.click(retry);await screen.findByText('任务 new-options');
+  await user.click(retry);await screen.findByText('任务 new-options');
   await waitFor(()=>expect(consumeEvents).toHaveBeenCalledOnce());
   expect(api.plan).toHaveBeenCalledTimes(1);expect(vi.mocked(api.job).mock.calls.map(([id])=>id)).toEqual([running.id]);
   expect(screen.queryByText('任务 old-options')).not.toBeInTheDocument();expect(screen.queryByText('任务 old-active')).not.toBeInTheDocument();
@@ -70,25 +70,25 @@ describe('planning failure recovery from server history',()=>{
   vi.mocked(api.project).mockImplementationOnce(()=>new Promise(resolve=>{resolveOld=resolve;})).mockImplementation(async()=>current);
   fireEvent.click(screen.getByRole('button',{name:'刷新状态'}));
   vi.mocked(api.plan).mockImplementation(async()=>{current={...current,revision:35,active_job_id:running.id,latest_job:running};return {job_id:running.id};});
-  await user.click(screen.getByRole('checkbox'));await user.click(screen.getByRole('button',{name:'生成三套设计方向'}));
+  await user.click(screen.getByRole('button',{name:'生成三套设计方向'}));
   await screen.findByText('任务 new-options');await act(async()=>resolveOld(initial));
   expect(screen.getByText('任务 new-options')).toBeInTheDocument();expect(screen.queryByText('三套设计方向规划超时')).not.toBeInTheDocument();
   expect(vi.mocked(api.job).mock.calls.map(([id])=>id)).toEqual([running.id]);expect(api.plan).toHaveBeenCalledOnce();
  });
 
- it('requires re-confirmation for legacy cleared pointers without silently re-planning or granting consent',async()=>{
+ it('requires re-confirmation for legacy cleared pointers while retaining project consent without silently re-planning',async()=>{
   current={...current,confirmed_plan_revision:null};const user=userEvent.setup();await open();
   await user.click(screen.getByRole('button',{name:'查看规划与重试'}));
   expect(screen.getByText('初步沟通需要重新确认')).toBeInTheDocument();expect(screen.getByRole('button',{name:'请先确认沟通内容'})).toBeDisabled();
-  expect(screen.queryByRole('button',{name:'生成三套设计方向'})).not.toBeInTheDocument();expect(screen.getByRole('checkbox')).not.toBeChecked();
+  expect(screen.queryByRole('button',{name:'生成三套设计方向'})).not.toBeInTheDocument();expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
   vi.mocked(api.confirm).mockImplementation(async()=>{current={...current,revision:35,confirmed_plan_revision:'1'};return current;});
   await user.click(screen.getByRole('button',{name:'确认沟通内容与设计方式'}));
   await screen.findByRole('button',{name:'生成三套设计方向'});
   expect(api.confirm).toHaveBeenCalledWith(expect.objectContaining({confirmed_plan_revision:null}),{design_mode:'free_design',template_id:null});
-  expect(screen.getByRole('checkbox')).not.toBeChecked();expect(screen.getByRole('button',{name:'生成三套设计方向'})).toBeDisabled();
+  expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();await waitFor(()=>expect(screen.getByRole('button',{name:'生成三套设计方向'})).toBeEnabled());
   expect(api.plan).not.toHaveBeenCalled();expect(api.generate).not.toHaveBeenCalled();
   vi.mocked(api.plan).mockImplementation(async()=>{current={...current,revision:36,active_job_id:running.id,latest_job:running};return {job_id:running.id};});
-  await user.click(screen.getByRole('checkbox'));await user.click(screen.getByRole('button',{name:'生成三套设计方向'}));
+  await user.click(screen.getByRole('button',{name:'生成三套设计方向'}));
   await screen.findByText('任务 new-options');expect(api.plan).toHaveBeenCalledTimes(1);expect(api.generate).not.toHaveBeenCalled();
  });
 
@@ -97,8 +97,8 @@ describe('planning failure recovery from server history',()=>{
   expect(screen.getByText(/当前方案确认已失效/)).toBeInTheDocument();
   expect(screen.getByRole('button',{name:'确认沟通内容与设计方式'})).toBeDisabled();
   expect(screen.queryByText('初步沟通需要重新确认')).not.toBeInTheDocument();
-  const restart=screen.getByRole('button',{name:'依据最新资料重新规划'});expect(restart).toBeDisabled();
-  await user.click(screen.getByRole('checkbox'));expect(restart).toBeEnabled();
+  const restart=screen.getByRole('button',{name:'依据最新资料重新规划'});expect(restart).toBeEnabled();
+  expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();expect(api.plan).not.toHaveBeenCalled();
   vi.mocked(api.plan).mockImplementation(()=>new Promise(()=>{}));await user.click(restart);
   expect(api.plan).toHaveBeenCalledWith(expect.objectContaining({input_snapshot_hash:'new-materials',confirmed_plan_revision:null}),'',true);
   expect(api.confirm).not.toHaveBeenCalled();expect(api.generate).not.toHaveBeenCalled();
@@ -115,14 +115,14 @@ describe('planning failure recovery from server history',()=>{
   vi.mocked(api.job).mockResolvedValue(finished);
   await act(async()=>event({seq:3,type:'job.succeeded',payload:{}}));
   await screen.findByRole('radio',{name:'选择方案 B'});
-  expect(screen.getByText(/规划完成不会自动制作演示稿/)).toBeInTheDocument();
+  expect(screen.getByRole('region',{name:'比较设计方案'})).toBeVisible();
   for(const radio of screen.getAllByRole('radio'))expect(radio).not.toBeChecked();
   expect(screen.getByRole('button',{name:'确认所选完整方案'})).toBeDisabled();expect(screen.queryByRole('button',{name:'生成演示稿'})).not.toBeInTheDocument();
   expect(api.confirm).not.toHaveBeenCalled();expect(api.generate).not.toHaveBeenCalled();expect(api.plan).not.toHaveBeenCalled();
   vi.mocked(api.confirm).mockImplementation(async()=>{current={...current,revision:37,confirmed_plan_revision:'2',plan:{...current.plan!,confirmed_at:'2026-10-27T00:00:00Z',confirmed_direction_id:'B'}};return current;});
   await user.click(screen.getByRole('radio',{name:'选择方案 B'}));await user.click(screen.getByRole('button',{name:'确认所选完整方案'}));
-  await screen.findByRole('button',{name:'生成演示稿'});expect(screen.getByRole('button',{name:'生成演示稿'})).toBeDisabled();
-  expect(screen.getByRole('checkbox')).not.toBeChecked();expect(api.generate).not.toHaveBeenCalled();
+  await screen.findByRole('button',{name:'生成演示稿'});await waitFor(()=>expect(screen.getByRole('button',{name:'生成演示稿'})).toBeEnabled());
+  expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();expect(api.generate).not.toHaveBeenCalled();
   expect(api.project).toHaveBeenCalledTimes(3);expect(api.job).toHaveBeenCalledTimes(2);
  });
 });
@@ -134,6 +134,7 @@ describe('planning recovery errors',()=>{
   ['stale_input_snapshot','SNAPSHOT_MISMATCH','材料快照'],
   ['initial_confirmation_required','INITIAL_CONFIRMATION_REQUIRED','重新确认沟通内容'],
   ['options_confirmation_required','OPTIONS_CONFIRMATION_REQUIRED','选择一个设计方向'],
+  ['legacy_checkpoint_requires_replan','LEGACY_CHECKPOINT_REQUIRES_REPLAN','重新开始初步沟通'],
  ])('explains %s without falling back to an unknown service error', (raw,code,message)=>{
   const error=new ApiError(raw,409);expect(error.code).toBe(code);expect(safeError(error)).toContain(message);expect(safeError(error)).not.toContain('SERVICE_ERROR');
  });

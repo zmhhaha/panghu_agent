@@ -396,7 +396,8 @@ class PiStager:
             self._sources(a)
             make_readonly(layout.inputs); make_readonly(layout.base)
             self._staged[layout.root] = (json_clone(a.snapshot), json_clone(inventory),
-                                         (a.phase, a.session_id, a.checkpoint_key, a.base_version_id))
+                                         (a.phase, a.session_id, a.checkpoint_key, a.base_version_id,
+                                          a.execution_deadline))
             return layout, inventory
         except BaseException:
             # Retain only this freshly-created directory at a quarantine name.
@@ -409,7 +410,8 @@ class PiStager:
         require(layout == self.layout(a) and layout.root in self._staged, 'unstaged_attempt')
         snapshot, inventory, identity = self._staged[layout.root]
         require(exact_json(snapshot, a.snapshot)
-                and identity == (a.phase, a.session_id, a.checkpoint_key, a.base_version_id), 'unstaged_attempt')
+                and identity == (a.phase, a.session_id, a.checkpoint_key, a.base_version_id,
+                                 a.execution_deadline), 'unstaged_attempt')
         require(type(parsed) is dict and parsed.get('input_snapshot_sha256') == a.snapshot['hash'], 'parse_snapshot_mismatch')
         parsed = json_clone(parsed)
         roster(layout.inputs, {'inventory.json'} | {r['path'] for r in inventory['sources']}, set())

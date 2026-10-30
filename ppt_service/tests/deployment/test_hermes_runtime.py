@@ -117,7 +117,7 @@ def test_additive_dns_policy_no_longer_permits_task_dns():
     dns = resource(result, 'NetworkPolicy', 'dns-egress')['spec']
     expression = dns['podSelector']['matchExpressions'][0]
     assert expression['key'] == 'app.kubernetes.io/name' and expression['operator'] == 'In'
-    assert expression['values'] == ['ppt-site', 'ppt-migrator', 'ppt-postgres', runtime.CONTROLLER]
+    assert expression['values'] == ['ppt-site', 'ppt-migrator', runtime.CONTROLLER]
     egress = resource(result, 'NetworkPolicy', 'hermes-controller-egress')['spec']['egress']
     api = egress[1]
     assert api['to'] == [{'ipBlock': {'cidr': '10.96.0.1/32'}},
@@ -127,6 +127,31 @@ def test_additive_dns_policy_no_longer_permits_task_dns():
     assert denied['egress'] == [] and denied['ingress'] == []
     # Per-attempt exact policies come from the controller, never broad static grants.
     assert all('0.0.0.0/0' not in json.dumps(row) for row in result['items'])
+
+
+def test_only_controller_reaches_shared_postgres_without_managing_database_ingress():
+    result = manifest()
+    policies = {row['metadata']['name']: row for row in result['items'] if row['kind'] == 'NetworkPolicy'}
+    controller = policies['hermes-controller-egress']['spec']
+    assert controller['podSelector'] == {'matchLabels': {'app': runtime.CONTROLLER}}
+    assert controller['policyTypes'] == ['Egress']
+    assert controller['egress'][0] == {'to': [{
+        'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'data'}},
+        'podSelector': {'matchLabels': {'app': 'postgres'}},
+    }], 'ports': [{'protocol': 'TCP', 'port': 5432}]}
+    database_grants = [name for name, row in policies.items()
+                       if any(port['port'] == 5432 for rule in row['spec'].get('egress', [])
+                              for port in rule.get('ports', []))]
+    assert database_grants == ['hermes-controller-egress']
+    assert 'hermes-controller-postgres-ingress' not in policies
+    assert all(row['metadata']['namespace'] == 'ppt-service' for row in result['items'])
+    assert not any(rule.get('ports') for row in policies.values() for rule in row['spec'].get('ingress', []))
+    denied = policies['hermes-task-default-deny']['spec']
+    assert denied['podSelector']['matchExpressions'] == [{
+        'key': 'app', 'operator': 'In',
+        'values': ['ppt-hermes-worker', 'ppt-model-proxy', 'ppt-sandbox'],
+    }]
+    assert denied['egress'] == denied['ingress'] == []
 
 
 @pytest.mark.parametrize('changes', [
@@ -231,6 +256,26 @@ def test_wrong_repository_digest_is_rejected_without_writing_receipt(tmp_path):
             controller_tag='registry/controller:review', worker_tag='registry/worker:review',
             push=True, output=tmp_path, runner=runner)
     assert not (tmp_path / 'build.json').exists()
+
+
+def test_latest_runtime_tags_keep_exact_source_labels(tmp_path, monkeypatch):
+    calls = []
+    revision = 'e' * 40
+    monkeypatch.setenv('SOURCE_REVISION', revision)
+
+    def runner(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(stdout='')
+
+    receipt = build.build(site_base=CONTROLLER_IMAGE, worker_base=WORKER_IMAGE,
+        controller_tag='registry/controller:latest', worker_tag='registry/worker:latest',
+        output=tmp_path, runner=runner)
+    assert {row['tag'] for row in receipt.values()} == {'registry/controller:latest', 'registry/worker:latest'}
+    for row in receipt.values():
+        assert row['labels']['org.opencontainers.image.revision'] == revision
+        assert len(row['labels']['io.panghu.source.context-sha256']) == 64
+    assert all('org.opencontainers.image.revision=' + revision in args
+               for args in calls if args[:2] == ['docker', 'build'])
 
 
 def test_preflight_failure_makes_no_mutation_and_discloses_no_credentials():

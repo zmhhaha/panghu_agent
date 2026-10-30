@@ -22,8 +22,9 @@ SERVER_FILES = (
 )
 WEB_FILES = (
     'index.html', 'package.json', 'pnpm-lock.yaml', 'vite.config.ts', 'tsconfig.json',
-    'src/main.tsx', 'src/App.tsx', 'src/SourceFiles.tsx', 'src/api.ts', 'src/domain.ts', 'src/parse.ts',
-    'src/planning.ts', 'src/styles.css', 'src/useJob.ts', 'src/useParsePolling.ts',
+    'src/main.tsx', 'src/App.tsx', 'src/SourceFiles.tsx', 'src/JobTiming.tsx', 'src/api.ts', 'src/domain.ts', 'src/parse.ts',
+    'src/planning.ts', 'src/DirectionChooser.tsx', 'src/directionPresentation.ts', 'src/direction-choice.css',
+    'src/styles.css', 'src/useJob.ts', 'src/useParsePolling.ts',
     'src/acceptance/index.ts', 'src/acceptance/AcceptancePanel.tsx',
     'src/acceptance/acceptance.css', 'src/acceptance/client.ts',
     'src/acceptance/contracts.ts', 'src/acceptance/drafts.ts',
@@ -137,6 +138,17 @@ def build(image: str, platform: str, *, push: bool, service: Path = SERVICE) -> 
         archive = Path(temporary) / 'context.tar'
         context_hash = write_context(archive, inputs)
         arguments = ['build', '--platform', platform, '--file', 'Dockerfile.site.server', '--tag', image]
+        labels = {
+            'org.opencontainers.image.source': 'https://github.com/zmhhaha/panghu_agent',
+            'io.panghu.source.context-sha256': context_hash,
+        }
+        revision = os.environ.get('SOURCE_REVISION')
+        if revision is not None:
+            if not re.fullmatch(r'[0-9a-f]{40}(?:[0-9a-f]{24})?', revision):
+                raise ValueError('invalid_source_revision')
+            labels['org.opencontainers.image.revision'] = revision
+        for key, value in labels.items():
+            arguments.extend(('--label', key + '=' + value))
         for variable, default in (
             ('NODE_BUILD_IMAGE', 'node:22.20.0-bookworm-slim'),
             ('PYTHON_RUNTIME_IMAGE', 'python:3.13.5-slim-bookworm'),
@@ -173,6 +185,7 @@ def build(image: str, platform: str, *, push: bool, service: Path = SERVICE) -> 
         provenance = {
             'image': digest, 'tag': image, 'local_image_id': image_id, 'platform': platform,
             'context_sha256': context_hash,
+            'labels': labels,
             'sources': json.loads(inputs['build-info/source-inputs.json']),
             'verification': 'verify_image.py; network=none; uid=10000; read_only=true',
             'model_requests': 0, 'production_ready': False,
@@ -186,7 +199,7 @@ def build(image: str, platform: str, *, push: bool, service: Path = SERVICE) -> 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--image', required=True)
+    parser.add_argument('--image', default='arm-cluster-master:5000/ppt-service-site:latest')
     parser.add_argument('--platform', default='linux/arm64')
     parser.add_argument('--no-push', action='store_true')
     args = parser.parse_args()

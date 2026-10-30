@@ -37,7 +37,7 @@ Docker 和私人 Registry，不在本机代构建。
 ```bash
 export REGISTRY=arm-cluster-master:5000
 export PLATFORM=linux/arm64
-export IMAGE_TAG="workflow-$(git rev-parse --short=12 HEAD)"
+export IMAGE_TAG=latest
 bash scientific_agent/build.sh --target api
 bash scientific_agent/build.sh --target ui
 ```

@@ -1,5 +1,6 @@
 """Controller evidence transported to real mapped mounts; no model or services."""
 import dataclasses
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -17,7 +18,7 @@ from ppt_service.worker.pi_context import PreparedPptContext, bounded_json
 
 
 class MountedContextTests(unittest.TestCase):
-    def prepare(self, phase='plan_initial'):
+    def prepare(self, phase='plan_initial', execution_deadline=None):
         fixture = staging_fixtures.PiStagingTests()
         fixture.setUp()
         self.addCleanup(fixture.doCleanups)
@@ -25,6 +26,7 @@ class MountedContextTests(unittest.TestCase):
         attempt, manifest = fixture.a, None
         if phase != 'plan_initial':
             attempt, _, manifest = fixture.checkpoint(phase)
+        attempt = dataclasses.replace(attempt, execution_deadline=execution_deadline)
         layout, inventory = fixture.stager.stage(attempt, manifest)
         parsed = parse_inputs(layout.inputs, inventory)
         fixture.stager.finish_inputs(attempt, layout, parsed)
@@ -58,6 +60,30 @@ class MountedContextTests(unittest.TestCase):
                 parsed = json.loads((root/'inputs/parsed.json').read_text(encoding='utf-8'))
                 self.assertIn('real markdown source', parsed['sources'][0]['text'])
                 self.assertNotIn(str(root), bounded_json(mounted.export_for_mounts(), 4 * 1024**2))
+
+    def test_original_execution_deadline_roundtrips_all_phases(self):
+        deadline = datetime(2026, 10, 29, 4, 30, tzinfo=timezone.utc)
+        for phase in ('plan_initial', 'plan_options', 'prepare', 'generate', 'revise'):
+            with self.subTest(phase=phase):
+                context, identity, root = self.prepare(phase, execution_deadline=deadline)
+                mounted = self.mount(context, identity, root)
+                self.assertEqual(mounted.task['execution_deadline'], deadline.isoformat())
+                task = context.task
+                task['execution_deadline'] = '2099-01-01T00:00:00+00:00'
+                self.write_json(root/'task/task.json', task)
+                with self.assertRaisesRegex(ControlError, 'mounted_content_mismatch'):
+                    self.mount(context, identity, root)
+
+    def test_deadline_requires_a_canonical_utc_timestamp_even_with_rehashed_evidence(self):
+        for value in (True, 'not-a-timestamp', '2026-10-29T04:30:00', '2026-10-29T12:30:00+08:00'):
+            with self.subTest(deadline=value):
+                context, identity, root = self.prepare()
+                task = context.task | {'execution_deadline': value}
+                self.write_json(root/'task/task.json', task)
+                bundle = context.export_for_mounts()
+                self.rehash(bundle, 'task_sha256', task)
+                with self.assertRaisesRegex(ControlError, 'invalid_execution_deadline'):
+                    self.mount(context, identity, root, bundle)
 
     def test_host_original_source_unavailable_and_semantic_json_hashing(self):
         context, identity, root = self.prepare()

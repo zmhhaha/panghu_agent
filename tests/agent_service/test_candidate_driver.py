@@ -13,8 +13,9 @@ import pytest
 from agent_service.contracts import ServiceError, canonical_bytes
 from agent_service.deploy import acceptance_probe as probe
 from agent_service.engines import EngineRequest, StopEvidence
-from agent_service import resources, runtime, tool_client
+from agent_service import resources, runtime, tool_client, worker_entry
 from agent_service.pi_cage import ACADEMIC_EXTENSION
+from agent_service.registry import DeploymentRegistry, binding_fingerprint
 from agent_service.model_timeouts import buffered_model_idle_timeout
 from test_acceptance_probe import config
 from test_catalog import image_packages
@@ -58,21 +59,55 @@ def factory(image_packages, monkeypatch, tmp_path):
         tmp_path, tmp_path / 'synthetic-manifest.json', 'c' * 64,
         (tmp_path / 'SKILL.md',), ('d' * 64,)))
     monkeypatch.setattr(runtime, 'PiRuntime', OfflineRuntime)
+    monkeypatch.setattr(worker_entry, 'PiRuntime', OfflineRuntime)
 
-    def build(profile, *, stopper=None):
+    def build(profile, *, stopper=None, production=False):
         value = config(profile)
+        if production:
+            # An explicit synthetic acceptance exercises the actual enabled
+            # host factory; it proves settings wiring, never native readiness.
+            wire = value.model_dump(mode='json')
+            registry = DeploymentRegistry.from_config(**wire['execution_catalog'])
+            binding = registry.binding(value.binding_id, value.binding_revision)
+            contract = registry.contract(binding.profile, binding.profile_revision)
+            bundle = registry.bundle(binding.bundle.name, binding.bundle.revision)
+            environment = registry.environment(binding.tool_environment.name, binding.tool_environment.revision)
+            selected = next(row for row in wire['execution_catalog']['execution_bindings']
+                            if (row['id'], row['revision']) == (binding.id, binding.revision))
+            selected['acceptance'] = dict(combination_sha256=binding_fingerprint(
+                contract, bundle, environment, binding), suite=profile.replace('.v1', '-contract.v1'),
+                report_sha256='e' * 64)
+            wire['profile']['enabled'] = True
+            for row in wire['execution_catalog']['routes']:
+                if row['profile'] == profile:
+                    row['enabled'] = True
+            value = worker_entry.HostConfig.model_validate(wire)
         credentials = SimpleNamespace(model_proxy_token=SecretStr('offline-attempt-only-grant'),
-                                      model_proxy_expires_at=time.time() + 300)
+                                      model_proxy_expires_at=time.time() + 300,
+                                      model_proxy_request_sha256='f' * 64)
         scope = SimpleNamespace(attempt_id=str(uuid4()), agent_uid=2100000000,
-                                preview_uid=2100000001)
+                                preview_uid=2100000001, request_sha256='f' * 64,
+                                execution_binding_sha256=worker_entry.host_policy(value).execution_binding.sha256)
+        credentials.model_proxy_attempt_id = scope.attempt_id
         observations = dict(model_round_trip={'status': 200}, isolation=dict.fromkeys(
             ('control_unreadable', 'input_write_denied', 'caps_empty', 'no_new_privileges',
              'read_only_mount_measured', 'arbitrary_mount_denied', 'detached_writers_stopped',
              'private_kernel_scope'), True))
-        driver = probe.build_candidate_driver(value, credentials, scope, stopper or Stopper(), observations)
+        driver = (worker_entry.build_pi_driver(value, credentials, scope, stopper or Stopper(), acceptance=True)
+                  if production else probe.build_candidate_driver(
+                      value, credentials, scope, stopper or Stopper(), observations))
         return SimpleNamespace(driver=driver, config=value, credentials=credentials,
                                scope=scope, observations=observations)
     return build
+
+
+@pytest.mark.parametrize('production', [False, True], ids=['candidate', 'production'])
+@pytest.mark.parametrize('profile', sorted(probe.PROFILES))
+def test_real_factories_preserve_shared_buffered_waits_and_original_deadline_policy(factory, production, profile):
+    run = factory(profile, production=production)
+    settings = run.driver.runtime.settings
+    assert settings.idle_timeout_seconds == buffered_model_idle_timeout(run.config.profile.max_timeout_seconds)
+    assert run.driver.runtime.profile.policy.max_timeout_seconds == run.config.profile.max_timeout_seconds
 
 
 @pytest.mark.parametrize('profile', sorted(probe.PROFILES))

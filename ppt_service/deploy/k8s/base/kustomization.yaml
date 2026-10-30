@@ -6,6 +6,5 @@ resources:
   - serviceaccounts.yaml
   - config.yaml
   - storage.yaml
-  - postgres.yaml
   - site.yaml
   - networkpolicy.yaml

@@ -109,6 +109,18 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(provenance['local_image_id'], LOCAL_ID)
         self.assertNotEqual(provenance['image'], LOCAL_ID)
 
+    def test_source_labels_bind_the_latest_site_build(self):
+        fake = FakeDocker()
+        revision = 'e' * 40
+        with patch.dict(os.environ, {'SOURCE_REVISION': revision}):
+            self.run_build(fake)
+        command = next(call for call in fake.calls if call[0] == 'build')
+        labels = [command[index + 1] for index, value in enumerate(command) if value == '--label']
+        self.assertIn('org.opencontainers.image.revision=' + revision, labels)
+        provenance = json.loads((self.service / 'rendered/source.json').read_text())
+        self.assertIn('io.panghu.source.context-sha256=' + provenance['context_sha256'], labels)
+        self.assertEqual(provenance['labels']['org.opencontainers.image.revision'], revision)
+
     def test_build_failure_stops_before_verification_and_push(self):
         fake = FakeDocker(fail='build')
         with self.assertRaises(subprocess.CalledProcessError):

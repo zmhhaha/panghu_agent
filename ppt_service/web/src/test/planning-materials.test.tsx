@@ -9,7 +9,7 @@ import { PARSE_POLL_INTERVAL } from '../useParsePolling';
 vi.mock('../api',async original=>({...await original<typeof import('../api')>(),api:{
  me:vi.fn(),projects:vi.fn(),project:vi.fn(),versions:vi.fn(),plan:vi.fn(),generate:vi.fn(),confirm:vi.fn(),removeAsset:vi.fn(),job:vi.fn(),
 }}));
-const project:Project={id:'parse-blocked',title:'资料解析前置检查',revision:1,stage:'draft',
+const project:Project={id:'parse-blocked',title:'资料解析前置检查',revision:1,stage:'draft',external_model_ack:true,
  settings:defaultSettings,input_snapshot_hash:'snapshot',assets:[
   {id:'source',display_name:'学习资料.pdf',bytes:1000,parse_status:'failed',parse_error:'pdf_page_limit'},
  ]};
@@ -24,7 +24,6 @@ async function openPlanning() {
  const user=userEvent.setup();render(<App/>);
  await screen.findByRole('heading',{name:project.title});
  await user.click(screen.getByRole('tab',{name:/沟通与方案/}));
- await user.click(screen.getByRole('checkbox'));
  return user;
 }
 
@@ -79,7 +78,7 @@ describe('planning requires completed source parsing',()=>{
   expect(screen.queryByRole('region',{name:'待处理资料解析状态'})).not.toBeInTheDocument();
  });
 
- it('polls pending sources in planning and requires consent plus an explicit click after they become ready',async()=>{
+ it('polls pending sources and reuses saved consent while still requiring an explicit planning click',async()=>{
   vi.useFakeTimers();
   vi.mocked(api.project).mockResolvedValue({...project,assets:[{...project.assets[0],parse_status:'parsing',parse_error:null}]});
   vi.mocked(api.plan).mockImplementation(()=>new Promise<{job_id:string}>(()=>{}));
@@ -92,11 +91,9 @@ describe('planning requires completed source parsing',()=>{
    await act(async()=>{await vi.advanceTimersByTimeAsync(PARSE_POLL_INTERVAL);});
    expect(screen.getByRole('status',{name:'学习资料.pdf解析状态'})).toHaveTextContent('解析完成');
    expect(screen.queryByRole('region',{name:'待处理资料解析状态'})).not.toBeInTheDocument();
-   expect(screen.getByRole('button',{name:'开始规划'})).toBeDisabled();
-   expect(api.plan).not.toHaveBeenCalled();expect(api.generate).not.toHaveBeenCalled();expect(api.confirm).not.toHaveBeenCalled();
-   fireEvent.click(screen.getByRole('checkbox'));
    expect(screen.getByRole('button',{name:'开始规划'})).toBeEnabled();
-   expect(api.plan).not.toHaveBeenCalled();
+   expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+   expect(api.plan).not.toHaveBeenCalled();expect(api.generate).not.toHaveBeenCalled();expect(api.confirm).not.toHaveBeenCalled();
    fireEvent.click(screen.getByRole('button',{name:'开始规划'}));
    expect(api.plan).toHaveBeenCalledTimes(1);
    expect(screen.getByRole('button',{name:'开始规划'})).toBeDisabled();

@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -71,8 +72,8 @@ def build(*, site_base, worker_base, controller_tag, worker_tag, push=False,
     if not (DIGEST.fullmatch(worker_base) or IMAGE_ID.fullmatch(worker_base)):
         raise ValueError('worker_base_requires_explicit_image_id_or_registry_digest')
     for tag in (controller_tag, worker_tag):
-        if not TAG.fullmatch(tag) or tag.rsplit(':', 1)[1] == 'latest':
-            raise ValueError('explicit_non_latest_tags_required')
+        if not TAG.fullmatch(tag):
+            raise ValueError('explicit_image_tags_required')
     if controller_tag == worker_tag:
         raise ValueError('distinct_image_tags_required')
     resolved_worker_base = worker_base
@@ -87,14 +88,26 @@ def build(*, site_base, worker_base, controller_tag, worker_tag, push=False,
         resolved_worker_base = 'ppt-hermes-build-base:' + worker_base.split(':')[1][:20]
         runner(['docker', 'tag', worker_base, resolved_worker_base], check=True)
     receipt = {}
+    revision = os.environ.get('SOURCE_REVISION')
+    if revision is not None and not re.fullmatch(r'[0-9a-f]{40}(?:[0-9a-f]{24})?', revision):
+        raise ValueError('invalid_source_revision')
     for role, base, tag, argument in (
         ('worker', resolved_worker_base, worker_tag, 'PPT_HERMES_BASE_IMAGE'),
         ('controller', site_base, controller_tag, 'PPT_SITE_BASE_IMAGE'),
     ):
         context, source_hash = source_context(HERE / ('Dockerfile.' + role))
-        runner(['docker', 'build', '--platform', 'linux/arm64', '--file', 'Dockerfile',
-                '--build-arg', argument + '=' + base, '--tag', tag, '-'], input=context, check=True)
-        receipt[role] = {'tag': tag, 'source_manifest_sha256': source_hash}
+        labels = {
+            'org.opencontainers.image.source': 'https://github.com/zmhhaha/panghu_agent',
+            'io.panghu.source.context-sha256': hashlib.sha256(context).hexdigest(),
+        }
+        if revision is not None:
+            labels['org.opencontainers.image.revision'] = revision
+        command = ['docker', 'build', '--platform', 'linux/arm64', '--file', 'Dockerfile',
+                   '--build-arg', argument + '=' + base, '--tag', tag]
+        for key, value in labels.items():
+            command += ['--label', key + '=' + value]
+        runner(command + ['-'], input=context, check=True)
+        receipt[role] = {'tag': tag, 'source_manifest_sha256': source_hash, 'labels': labels}
         if push:
             runner(['docker', 'push', tag], check=True)
             result = runner(['docker', 'image', 'inspect', tag, '--format', '{{json .RepoDigests}}'],
@@ -119,8 +132,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--site-base', required=True)
     parser.add_argument('--worker-base', required=True)
-    parser.add_argument('--controller-tag', required=True)
-    parser.add_argument('--worker-tag', required=True)
+    parser.add_argument('--controller-tag', default='arm-cluster-master:5000/ppt-agent-controller:latest')
+    parser.add_argument('--worker-tag', default='arm-cluster-master:5000/ppt-agent-validator:latest')
     parser.add_argument('--push', action='store_true')
     parser.add_argument('--output', type=Path, default=HERE / 'rendered')
     args = parser.parse_args()

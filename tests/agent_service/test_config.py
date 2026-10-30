@@ -13,7 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from agent_service import __main__ as cli
-from agent_service.config import ConfigurationError, load_configuration
+from agent_service.config import ConfigurationError, load_configuration, _KubernetesWorker
 from agent_service.contracts import JobRequest, ServiceError
 from registry_fixtures import make_catalog
 
@@ -65,6 +65,15 @@ def test_loading_is_offline_and_defaults_execution_to_disabled(tmp_path, monkeyp
                       task={'prompt': 'trusted text only'})
     with pytest.raises(ServiceError, match='profile_not_ready'):
         config.registry.resolve(principal, task)
+
+
+@pytest.mark.parametrize('repository', ['registry:5000/agent-pi', 'agent-pi'])
+def test_latest_worker_reference_requires_a_fixed_digest(repository):
+    pinned = repository + ':latest@sha256:' + 'a' * 64
+    assert _KubernetesWorker.pinned_image(pinned) == pinned
+    for unsafe in (repository + ':latest', repository + ':version@sha256:' + 'a' * 64):
+        with pytest.raises(ValueError, match='fixed Worker repository and digest'):
+            _KubernetesWorker.pinned_image(unsafe)
 
 
 def test_only_reviewed_validator_and_static_engine_route_are_loaded(tmp_path):

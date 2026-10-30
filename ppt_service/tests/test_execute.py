@@ -207,6 +207,7 @@ class HandoffTests(unittest.TestCase):
         real_path = Path
         with (patch.object(execute, "Path", side_effect=lambda p: self.root / real_path(p).name),
               patch.object(execute, "configure", side_effect=configure) as configured,
+              patch.object(execute, "installed_workflow_instructions", return_value="\nfixed-image-entrypoints"),
               patch.object(execute, "HermesClient", return_value=client),
               patch.object(execute, "OfficialPreview", return_value=preview) as preview_factory,
               patch.object(execute.subprocess, "Popen", side_effect=start),
@@ -231,8 +232,10 @@ class HandoffTests(unittest.TestCase):
             if preview_error or startup_interrupted:
                 client.admit.assert_not_called()
                 preview.instructions.assert_not_called()
-            else:
-                self.assertTrue(client.admit.call_args.kwargs["instructions"].endswith("worker-ready-url"))
+            elif client.admit.called:
+                self.assertIn("worker-ready-url", client.admit.call_args.kwargs["instructions"])
+                self.assertIn("有效绝对截止时间", client.admit.call_args.kwargs["instructions"])
+                self.assertIn("fixed-image-entrypoints", client.admit.call_args.kwargs["instructions"])
         else:
             preview_factory.assert_not_called()
             preview.start.assert_not_called()
@@ -332,6 +335,32 @@ class HandoffTests(unittest.TestCase):
                 self.assertEqual(state["status"], expected_status)
                 self.assertTrue(state["preview_ready"])
                 self.assertTrue(state["preview_stopped"])
+
+    def test_expired_original_deadline_never_admits_even_with_fresh_relative_budget(self):
+        self.task['execution_deadline'] = '2000-01-01T00:00:00+00:00'
+        code, state = self.run_worker()
+        self.assertEqual(code, 3)
+        self.assertEqual(state['status'], 'deadline_exceeded')
+        self.last_client.admit.assert_not_called()
+        self.assertTrue(state['gateway_stopped'] and state['preview_stopped'])
+
+    def test_original_deadline_shortens_status_poll_without_new_admission(self):
+        from datetime import datetime, timezone
+        clock = PollClock()
+        epoch = 1700000000
+        self.task['execution_deadline'] = datetime.fromtimestamp(epoch + 7, timezone.utc).isoformat()
+        timeouts = []
+        def running(run_id, process, handlers, client):
+            timeouts.append(client.timeout)
+            clock.seconds += client.timeout
+            return {'status': 'running'}
+        with patch.object(execute.time, 'time', return_value=epoch):
+            code, state = self.run_worker(poll_clock=clock, status_effect=running)
+        self.assertEqual(code, 3)
+        self.assertEqual(timeouts, [7])
+        self.assertEqual(state['remaining_at_admission_seconds'], 7)
+        self.last_client.admit.assert_called_once()
+        self.last_client.stop.assert_called_once_with('run_1')
 
     def test_private_status_failure_retains_safe_route_category_and_http_status(self):
         code, state = self.run_worker(request_failure=(

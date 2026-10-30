@@ -37,6 +37,7 @@ _CODES = frozenset({'cancelled', 'timed_out', 'runtime_not_ready', 'runtime_busy
     'ppt_three_directions_required', 'ppt_production_parameters_required',
     'ppt_formal_spec_required', 'ppt_quality_reports_required', 'ppt_candidate_incomplete',
     'ppt_approved_spec_changed', 'ppt_checkpoint_binding_mismatch', 'ppt_checkpoint_roster_mismatch',
+    'ppt_artifact_type_forbidden', 'ppt_native_state_forbidden',
     'ppt_checkpoint_integrity_invalid', 'unsafe_artifact', 'artifact_size_limit',
     'artifact_changed', 'duplicate_file_path', 'file_path_collision',
     'invalid_research_artifact', 'invalid_research_json', 'research_output_invalid',

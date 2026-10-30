@@ -381,6 +381,19 @@ def _check_bound_pi(config, policy, resource_hash):
         raise WorkerConfigError()
 
 
+def build_pi_runtime_settings(policy: ProfilePolicy, **values) -> RuntimeSettings:
+    """Share buffered-model tolerance across production and candidate drivers.
+
+    The task proxy persists a complete response before Pi receives its events.
+    A valid inference can therefore produce no child output for more than
+    the general 120-second idle limit. The runtime still checks the immutable
+    per-job absolute deadline first; this ceiling never grants extra time.
+    Preserve the shared service's timeout policy for research as well as PPT.
+    """
+    values['idle_timeout_seconds'] = buffered_model_idle_timeout(policy.max_timeout_seconds)
+    return RuntimeSettings(**values)
+
+
 def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScope,
                     stop_controller, *, acceptance=False, now=time.time):
     policy = host_policy(config)
@@ -417,11 +430,10 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
                       if policy.name in {'research.generate.v1', 'research.retrieve.v1'} else ())
         profile = DomainExecutionProfile(policy, bundle_revision, extensions=extensions)
         profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL_ROOT
-    settings = RuntimeSettings(command=(NODE, PI_CLI), node_command=(NODE,),
+    settings = build_pi_runtime_settings(policy, command=(NODE, PI_CLI), node_command=(NODE,),
         provider=config.model.provider, model=config.model.model,
         model_base_url=config.model.proxy_base_url, model_api=config.model.api,
         model_max_tokens=8192,
-        idle_timeout_seconds=buffered_model_idle_timeout(policy.max_timeout_seconds),
         model_env={'AGENT_MODEL_API_KEY': secrets.model_proxy_token.get_secret_value()},
         tool_proxy_base_url=config.model.proxy_base_url,
         model_input=('text', 'image') if 'vision' in (

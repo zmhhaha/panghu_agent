@@ -28,9 +28,8 @@ from fastapi import Request
 from agent_service.contracts import (ExecutionEnvelope, InlineFile, JobRequest, ServiceError,
     WorkerResult, canonical_bytes, digest, verify_receipt)
 from agent_service.confinement import ensure_controller_confinement
-from agent_service.model_timeouts import buffered_model_idle_timeout
 from agent_service.worker_entry import (CapsuleScope, HostConfig, HostSecrets,
-    _read_operator_json, host_policy, PI_ADAPTER_REVISION)
+    _read_operator_json, build_pi_runtime_settings, host_policy, PI_ADAPTER_REVISION)
 
 
 PROFILES = {'ppt.' + stage + '.v1' for stage in (
@@ -460,7 +459,7 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
         observations['capability'] = dict(engine='hermes', executable_measured=True, package_measured=True,
             allowed_tools=list(driver.impl.required_tools))
         return driver
-    from agent_service.runtime import PiRuntime, RuntimeSettings
+    from agent_service.runtime import PiRuntime
     from agent_service.worker_entry import NODE, PI_CLI
     from agent_service.pi_cage import ACADEMIC_EXTENSION
     from agent_service.engines import PiDriver
@@ -468,10 +467,9 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
                   if policy.name in {'research.generate.v1', 'research.retrieve.v1'} else ())
     profile = DomainExecutionProfile(policy, policy.execution_binding.bundle_revision, extensions=extensions)
     profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL
-    settings = RuntimeSettings(command=(NODE, PI_CLI), node_command=(NODE,), provider=config.model.provider,
+    settings = build_pi_runtime_settings(policy, command=(NODE, PI_CLI), node_command=(NODE,), provider=config.model.provider,
         model=config.model.model, model_base_url=config.model.proxy_base_url, model_api=config.model.api,
         model_max_tokens=8192,
-        idle_timeout_seconds=buffered_model_idle_timeout(policy.max_timeout_seconds),
         model_input=('text', 'image') if 'vision' in binding.model_policy.capabilities else ('text',),
         model_env={'AGENT_MODEL_API_KEY': credentials.model_proxy_token.get_secret_value()},
         tool_proxy_base_url=config.model.proxy_base_url, runtime_revision=policy.runtime_revision,

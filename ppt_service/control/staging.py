@@ -1,6 +1,7 @@
 """No-follow immutable copies and server-only attempt/task construction."""
 from __future__ import annotations
 import hashlib,json,os,stat,uuid
+from datetime import timezone
 from pathlib import Path
 from .execution import Attempt,Layout,RuntimeConfig,ControlError
 
@@ -161,6 +162,8 @@ class Stager:
         inventory=read_json(layout.inputs,'inventory.json')
         assets=[{**source,'path':'/work/inputs/'+source['path'],'display_name':source['id']+EXT[source['media_type']]} for source in inventory['sources']]
         task={'schema_version':1,'job_id':a.job_id,'attempt':a.attempt,'phase':a.phase,'session_id':a.session_id,'input_snapshot_sha256':a.snapshot['hash'],'requirements':settings|{'pages':settings.get('page_count',8),'external_model_acknowledged':True},'assets':assets,'feedback':a.snapshot.get('feedback',''),'base_version_id':a.base_version_id}
+        if a.execution_deadline is not None:
+            task['execution_deadline']=a.execution_deadline.astimezone(timezone.utc).isoformat()
         if context.get('stage1_confirmation'):task['stage1_confirmation']=context['stage1_confirmation']
         if context.get('stage2_confirmation'):task['stage2_confirmation']=context['stage2_confirmation']
         if a.phase=='plan_options' and not task.get('stage1_confirmation'):raise ControlError('stage1_confirmation_required')

@@ -58,8 +58,13 @@ class Dispatcher:
     def progress(self,jid,attempt,token,stage):
         with self.sessions.begin() as s:
             r=Repository(s);j,p,slot=r.fenced(jid,attempt,token)
-            if stage not in (j.kind,'collecting','validating'):raise ControlError('invalid_progress')
-            r.event(j,'stage.changed',{'stage':stage});j.stage=stage
+            if stage not in ('collecting','validating'):raise ControlError('invalid_progress')
+            if not j.stopped:raise ControlError('stop_proof_required')
+            # Progress describes trusted controller work after writers stopped,
+            # never an Agent's assertion about pages or quality gates.
+            if stage=='collecting' and j.stage=='validating':raise ControlError('invalid_progress')
+            if j.stage==stage and j.status==stage:return
+            r.event(j,'stage.changed',{'stage':stage});j.stage=stage;j.status=stage
     def _usage(self,a,layout):
         ledger=layout.audit/'proxy-ledger'
         if not ledger.exists() or not (ledger/'usage.jsonl').exists():return
@@ -153,6 +158,7 @@ class Dispatcher:
             layout=self.stager.layout(a)
             self._usage(a,layout)
             if status=='cancelled':self.backend.cleanup(h);self.owned.pop(a.job_id,None);return {'status':'cancelled','job_id':a.job_id}
+            self.progress(a.job_id,a.attempt,a.token,'collecting')
             snapshot,indexes=self.stager.collect(a,layout)
             request={'job_id':a.job_id,'attempt':a.attempt,'phase':a.phase,'session_id':a.session_id,'input_snapshot_sha256':a.snapshot['hash'],'pages':a.snapshot.get('settings',{}).get('page_count',8)}
             if hasattr(self.backend,'execution_image'):
@@ -170,6 +176,7 @@ class Dispatcher:
                 request['trusted_oracle']=oracle
                 request['authorized_source_sha256']=sorted(authorized)
             atomic_json(layout.audit/'validation-request.json',request)
+            self.progress(a.job_id,a.attempt,a.token,'validating')
             validated=self.publisher.validate(snapshot,request)
             atomic_json(layout.audit/'validation-result.json',validated)
             if validated.get('review_candidate') is True and a.phase in ('generate','revise'):

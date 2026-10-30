@@ -153,7 +153,8 @@ class _KubernetesWorker(_Model):
                 r'[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*'
                 r'(?::latest)?@sha256:[0-9a-f]{64}', value):
             raise ValueError('A fixed Worker repository and digest are required')
-        registry = value.rsplit('@', 1)[0].removesuffix(':latest').split('/', 1)[0]
+        reference = value.rsplit('@', 1)[0]
+        registry = reference.split('/', 1)[0] if '/' in reference else ''
         if ':' in registry:
             if not 1 <= int(registry.rsplit(':', 1)[1]) <= 65535:
                 raise ValueError('Invalid registry port')
