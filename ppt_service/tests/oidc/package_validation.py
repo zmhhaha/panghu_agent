@@ -54,6 +54,8 @@ def main():
         shutil.copyfile(HERE / filename, inputs / filename)
     (inputs / "oauth2-proxy.cfg").write_text(config, encoding="utf-8", newline="\n")
     receipt = {"synthetic": True, "canonical": "oauth/k8s/ppt-proxy-configmap.yaml",
+        "proxy_image_id": "sha256:c410cd2f0b69eadd73498ede45579e847177e1fd45947fe3500091409c532867",
+        "proxy_binary_sha256": "01f5b2b357b8f79dfcaf6c156deb02e2001f0c9162e9af9bbb0ad46b34af5a67",
         "canonical_sha256": digest(CANONICAL), "proxy_config_sha256": digest(inputs / "oauth2-proxy.cfg"),
         "runtime_source_sha256": {"ppt_service/server/auth.py": digest(HERE.parents[1] / "server/auth.py")},
         "protocol_executed": False,

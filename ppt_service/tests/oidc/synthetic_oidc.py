@@ -47,6 +47,8 @@ SUBJECT = "synthetic-first-subject"
 EMAIL = "synthetic-first@example.invalid"
 NEW_SUBJECT = "synthetic-new-subject"
 NEW_EMAIL = "synthetic-unlisted@example.invalid"
+PROXY_IMAGE_ID = "sha256:c410cd2f0b69eadd73498ede45579e847177e1fd45947fe3500091409c532867"
+PROXY_BINARY_SHA256 = "01f5b2b357b8f79dfcaf6c156deb02e2001f0c9162e9af9bbb0ad46b34af5a67"
 
 
 def sha(path):
@@ -233,6 +235,10 @@ def main():
 
     try:
         receipt=json.loads((args.template.parent / "source.json").read_text(encoding="utf-8"))
+        check("proxy_binary_matches_pinned_deployed_image",
+              result["proxy_binary_sha256"] == PROXY_BINARY_SHA256 and
+              receipt.get("proxy_image_id") == PROXY_IMAGE_ID and
+              receipt.get("proxy_binary_sha256") == PROXY_BINARY_SHA256)
         actual_auth=Path(auth_module.__file__)
         result["runtime_auth_sha256"]=sha(actual_auth)
         result["runtime_auth_matches_package"]=(
@@ -275,7 +281,8 @@ def main():
         check("packaged_real_site_started", server.started)
         version = subprocess.run([str(args.binary), "--version"], capture_output=True, text=True, check=True).stdout.strip()
         result["proxy_version"] = version
-        check("proxy_version_7_8_0", "v7.8.0" in version)
+        # This deployed image has a blank linker version. Pin the measured image
+        # and binary instead; retain raw output without inventing a version.
         proxy_env = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
             "SSL_CERT_FILE": str(work / "ca.pem"), "OAUTH2_PROXY_CLIENT_SECRET": fixture.client_secret,
             "OAUTH2_PROXY_COOKIE_SECRET": base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()}

@@ -1,10 +1,21 @@
 # P2 isolated OAuth protocol validation
 
-`synthetic_oidc.py` runs the **real pinned oauth2-proxy v7.8.0 binary** against
+`synthetic_oidc.py` runs the **exact deployed oauth2-proxy binary** against
 the rebuilt website with its real authenticated-access dependency. It uses
 an HTTPS loopback issuer, an authorization-code/token endpoint, RSA JWKS,
 an explicitly trusted temporary CA and an isolated SQLite fixture. All keys,
 credentials, subjects, email addresses, codes and sessions are synthetic.
+
+Proxy identity is pinned to image config `sha256:c410cd2f0b69eadd73498ede45579e847177e1fd45947fe3500091409c532867`
+and binary SHA256 `01f5b2b357b8f79dfcaf6c156deb02e2001f0c9162e9af9bbb0ad46b34af5a67`.
+That cached image has the upstream repository digest
+`quay.io/oauth2-proxy/oauth2-proxy@sha256:d73ce980a96ec1143901a4676eaf0d148ae1dc965a59d3a3e5cf626cc84350aa`,
+OCI version `v7.8.0` and source `https://github.com/oauth2-proxy/oauth2-proxy`.
+The runner verifies the config ID, OCI labels and extracted binary hash.
+Its actual `--version` output is `oauth2-proxy  (built with go1.22.10)`;
+the linker version field is blank. The test records that raw value and checks
+exact binary identity rather than inferring a version string. This does not
+replace or upgrade the production proxy.
 
 This is an HTTP-client protocol check. It does not replace browser, live
 Casdoor, actual claim/cookie size, public TLS/DNS, FRP, Vault or enforcing CNI
