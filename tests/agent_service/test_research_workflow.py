@@ -13,7 +13,8 @@ from agent_service.engines import StopEvidence
 from agent_service.profiles import implementation
 from agent_service.profiles import research_workflow as profiles
 from scientific_agent import workflow_contracts as contracts
-from scientific_agent.pi_revision_validation import validate_revision_input
+from scientific_agent.pi_revision_validation import (RevisionValidationError,
+    compose_revision, validate_revision_candidate, validate_revision_input)
 from scientific_agent.pi_sections import index_sections
 
 
@@ -197,8 +198,13 @@ def test_supplemental_batch_selects_latest_whole_observed_record_like_business_t
     assert contracts.source_papers(ctx['evidence_snapshot']) == [changed]
 
 
-def test_draft_collection_produces_fixed_evidence_revision_compatible_bytes(tmp_path):
+@pytest.mark.parametrize('access_note', ['', '》（2025）均无摘要或已获取全文。',
+    '全部来源均无摘要或者已获取全文。', '链接也不等于已获取全文。',
+    '链接并不等于已经获取全文。'])
+def test_draft_collection_produces_fixed_evidence_revision_compatible_bytes(tmp_path, access_note):
     ctx, output = draft_context(), draft()
+    if access_note:
+        output['report_markdown'] += '\n[1] Synthetic source; ' + access_note + '\n'
     (tmp_path / 'inputs').mkdir()
     (tmp_path / 'result').mkdir()
     (tmp_path / 'inputs/context.json').write_bytes(contracts.canonical_bytes(ctx))
@@ -217,6 +223,26 @@ def test_draft_collection_produces_fixed_evidence_revision_compatible_bytes(tmp_
     checked = validate_revision_input(output['report_markdown'], stage['artifacts'], artifacts,
         section['section_id'], hashlib.sha256(result['report.md']).hexdigest())
     assert checked['material_policy'] == 'recorded_evidence_only'
+    revision_output = dict(schema_version='1', claims=deepcopy(output['claims']),
+        section_markdown=checked['section']['text'].replace('A bounded claim [1].',
+            'A bounded claim within recorded abstract access [1].'))
+    base_sha = hashlib.sha256(result['report.md']).hexdigest()
+    revised = compose_revision(output['report_markdown'], stage['artifacts'], artifacts,
+        section['section_id'], base_sha, revision_output)
+    validate_revision_candidate(output['report_markdown'], stage['artifacts'], artifacts,
+        section['section_id'], base_sha, revised['report_markdown'], revised['items'],
+        revised['artifacts'], output=revision_output)
+    assert revised['validation']['valid'] is True
+    if access_note:
+        assert access_note in revised['report_markdown']
+    for name in ('papers', 'evidence', 'references'):
+        assert revised['artifacts'][name] == artifacts[name]
+    unsupported = dict(revision_output,
+        section_markdown=revision_output['section_markdown'] + '\n已获取全文。\n')
+    with pytest.raises(RevisionValidationError) as rejected:
+        compose_revision(output['report_markdown'], stage['artifacts'], artifacts,
+            section['section_id'], base_sha, unsupported)
+    assert rejected.value.code == 'missing_evidence_disclosure'
 
 
 def test_retrieval_cannot_accept_agent_owned_observation_file(tmp_path):
@@ -272,13 +298,37 @@ def test_prelaunch_input_check_rejects_mutated_context_before_tools(tmp_path):
         implementation('research.retrieve.v1').validate_inputs(tmp_path, request)
 
 
-def test_draft_reference_access_notes_do_not_claim_fulltext_acquisition():
+@pytest.mark.parametrize('access_note', ['已获取摘要，无全文。', '全部十项来源均无已获取全文。',
+    '》（2025）均无摘要或已获取全文。', '全部来源均无摘要或者已获取全文。',
+    '链接也不等于已获取全文。', '链接并不等于已经获取全文。'])
+def test_draft_reference_access_notes_do_not_claim_fulltext_acquisition(access_note):
     ctx, output = draft_context(), draft()
-    output['report_markdown'] += '\n[1] Synthetic source; 已获取摘要，无全文。\n'
+    output['report_markdown'] += '\n[1] Synthetic source; ' + access_note + '\n'
     contracts.validate_stage_output('draft', output, ctx)
     output['report_markdown'] += '\n[1] Synthetic source; 已获取全文。\n'
     with pytest.raises(contracts.WorkflowContractError, match='draft_trace_invalid'):
         contracts.validate_stage_output('draft', output, ctx)
+
+
+@pytest.mark.parametrize('access_note', [
+    '并非链接不等于已获取全文。',
+    '链接不等于已获取全文的说法不成立。',
+    '链接不等于已获取全文且本报告已阅读全文。',
+    '链接不等于已获取全文，但随后已获取全文。',
+    '链接不等于本报告已获取全文。',
+])
+def test_draft_collector_rejects_reversed_or_unscoped_link_denials(tmp_path, access_note):
+    ctx, output = draft_context(), draft()
+    output['report_markdown'] += '\n' + access_note + '\n'
+    (tmp_path / 'inputs').mkdir()
+    (tmp_path / 'result').mkdir()
+    (tmp_path / 'inputs/context.json').write_bytes(contracts.canonical_bytes(ctx))
+    (tmp_path / 'result/output.json').write_bytes(contracts.canonical_bytes(output))
+    execution = envelope('draft', ctx)
+    with pytest.raises(ServiceError) as rejected:
+        implementation(execution.profile).collect_output(tmp_path, execution,
+            StopEvidence(execution.attempt_id, True, ('offline-stopped-writer',)))
+    assert rejected.value.code == 'workflow_draft_trace_invalid'
 
 
 def test_explicit_user_materials_preserve_honest_access_and_no_public_url():

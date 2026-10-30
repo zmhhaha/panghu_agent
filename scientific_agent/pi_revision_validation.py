@@ -375,7 +375,7 @@ def _disclosures(report, parsed):
     if not any(row["availability"]["full_text"]["available"] for row in parsed["papers"]):
         positive = (r"(?:reviewed|read|analy[sz]ed|examined|accessed|acquired)\s+(?:the\s+)?full[- ]texts?|"
                     r"full[- ]texts?\s+(?:(?:were|was)\s+)?(?:reviewed|read|analy[sz]ed|examined|accessed|acquired)|"
-                    r"已(?:经)?(?:获取|阅读|审阅|分析)[^，,;；:：。！？!?\r\n]{0,8}全文")
+                    r"已(?:经)?(?:获取|阅读|审阅|分析)[^，,;；:：。！？!?\r\n]{0,8}?全文")
         # The acquisition verb must govern full text in the same clause:
         # "已获取摘要，无全文" records acquired abstracts and absent full text.
         # A denial about another object/clause must not license a later actual
@@ -386,9 +386,33 @@ def _disclosures(report, parsed):
                       r",(?=\s*(?:[^\x00-\x7f]|we\b|I\b|this\b))|"
                       r"\b(?:but|however|yet|nevertheless)\b|但是|然而|不过|反而|可是|却|但")
         for clause in re.split(boundaries, report, flags=re.I):
-            _require(not re.search(positive, clause, re.I) or
-                     re.search(r"\b(?:no|not|without|never)\b|未|没有", clause, re.I),
-                     "missing_evidence_disclosure")
+            for assertion in re.finditer(positive, clause, re.I):
+                prefix = clause[:assertion.start()]
+                # "来源均无已获取全文" denies this acquisition predicate.
+                # Also allow the adjacent coordination "无摘要或已获取全文";
+                # no other text, subject or conjunction can bridge the denial.
+                # Apply it per assertion: a later positive acquisition in the
+                # same clause must not inherit an earlier absence statement.
+                direct_absence = (assertion.group().startswith("已") and
+                                  re.search(r"无(?:\s*摘要\s*(?:或者|或))?\s*$", prefix))
+                not_equivalent = (assertion.group().startswith("已") and
+                                  re.search(r"不等于\s*$", prefix))
+                if direct_absence:
+                    # An outer denial can reverse the absence assertion.
+                    # Ambiguous nested negation is not eligible for this narrow
+                    # exception, even if it could satisfy the legacy rule.
+                    denied = not re.search(r"非|没有|未|不|无法", prefix)
+                elif not_equivalent:
+                    # A link is not acquired full text. Deliberately limit this
+                    # exception to an adjacent, clause-final predicate; do not
+                    # interpret arbitrary suffixes or nested Chinese negation.
+                    outer = prefix[:not_equivalent.start()]
+                    denied = (not re.search(r"非|没有|未|不|无法|否认|否定|"
+                                             r"\b(?:no|not|without|never)\b", outer, re.I)
+                              and not clause[assertion.end():].strip())
+                else:
+                    denied = re.search(r"\b(?:no|not|without|never)\b|未|没有", clause, re.I)
+                _require(denied, "missing_evidence_disclosure")
 
 
 def compose_revision(report, items, artifacts, section_id, base_sha256, output):

@@ -1,11 +1,19 @@
 # 科研业务接入通用 Agent 服务
 
+本页记录旧一轮式 `research.generate.v1` / `research.revise.v1` 接口的接入与维护路径。
+项目式工作台的六阶段流程、双确认门和 API/UI 构建部署请使用
+[WORKBENCH.md](WORKBENCH.md)。新流程使用 plan/retrieve/outline/draft 四个独立合同，
+再复用固定证据 revise；下面“两条路由/两项权限”的说明仅描述旧接口，不能照抄来覆盖
+工作台已审定的五项权限或绑定。新组合的候选、正式 HTTP 与浏览器验收分别记录在
+[工作流验证记录](../agent_service/docs/SCIENTIFIC_WORKFLOW_CANDIDATES_20261029.md)，
+候选通过不等于业务发布和用户流程全部通过。
+
 科研公开 API、用户归属、报告列表、引用追溯、版本、章节修订、比较和采用接口保持不变。
 业务后端提交 `research.generate.v1` 或 `research.revise.v1`，由通用服务的已验收执行绑定
 选择 Pi/Hermes。业务配置不包含模型供应商密钥、原生命令、镜像或 Agent 会话。
 
-2026-10-29 科研生产 API 已接入通用服务，科研生成和固定证据修订均使用用户的 pi-cage。
-只开放两个科研 Pi 路由，全局执行并发为 1；PPT 与 Hermes 尚未切换。精确 Worker 镜像、
+2026-10-29 最初接入时，科研生产 API 的一轮生成和固定证据修订均使用用户的 pi-cage。
+该次接入只开放两个科研 Pi 路由，全局执行并发为 1；PPT 与 Hermes 未包含在该次切换中。精确 Worker 镜像、
 正式 Jobs HTTP 与生产科研 HTTP 的生成、修订、下载、发布和接收回执均已验收。
 实际镜像、任务与证据见 [科研生产接入记录](../agent_service/docs/SCIENTIFIC_CUTOVER_20261029.md)。
 
@@ -79,9 +87,10 @@ git rev-parse HEAD > "$SCIENTIFIC_DEPLOY_DIR/source-revision.txt"
 已有旧 Worker、PVC 和历史连接凭据继续用于历史任务恢复及回退，不随本次 API 更新删除。
 保留历史资源不表示新任务仍提交给旧 Worker；新任务后端由本次 API 补丁明确指定。
 
-## Pi 优先的单任务试接
+## 旧一轮接口的 Pi 单任务试接
 
-PPT 与科研共享通用服务的一个全局执行槽，同一时刻只运行一次 Agent 尝试；并发提交进入队列。
+已接入通用服务的业务共享一个全局执行槽，同一时刻只运行一次 Agent 尝试；并发提交进入队列。
+PPT 未切换到该通用服务时，其原有独立 Worker 不计入这里的执行槽。以下步骤针对旧一轮接口。
 Pod 按一次生成或修订创建，所有写进程停止且证据持久化后按清理流程回收。用户查看报告、等待确认
 或决定下一次修订时不占用运行 Pod；下次修订创建新的尝试并读取已保存的基线。
 

@@ -1,8 +1,10 @@
 # 科研工作台分阶段执行合同
 
-2026-10-29：代码已提供下列四个独立合同，尚未获得新合同/镜像/引擎组合的生产验收。
+2026-10-29：代码提供下列四个独立合同；r3 的四阶段与独立 revise 已通过真实原生候选验证。
+正式 Jobs HTTP、业务交接与浏览器流程的完成情况须分别查看
+[工作流验证记录](SCIENTIFIC_WORKFLOW_CANDIDATES_20261029.md)，不能由候选结果代替。
 目录生成器为所有新路由和池输出 `enabled: false`。已有科研生成/修订的验收不能
-作为这四个合同的验收记录。
+作为这四个合同或新镜像的验收记录。
 
 | Profile | 实际工作 | 工具 | 交付物 |
 | --- | --- | --- | --- |
@@ -11,7 +13,15 @@
 | `research.outline.v1` | 对固定文献选择整理证据和大纲 | read/write | 证据记录、章节与证据关联、缺口 |
 | `research.draft.v1` | 按已确认证据和大纲写作 | read/write | 报告、claims、references、固定文献和证据 |
 
-每次任务只挂载一份只读 `inputs/context.json`。任务字段为 `schema_version`、
+每次任务只上传一份权威 `inputs/context.json`，其只读原字节、冻结对象与 digest 保持不变。
+Controller 在校验该输入后另行生成并只读挂载 `context-view/`：brief、纳入来源索引、
+完整结构和有序 UTF-8 分块让 Pi 的 `read` 能按行读取大输入。长 key 或深层不透明 JSON
+采用 canonical JSON 分块；manifest 记录原输入与派生数据的大小、哈希及 JSON pointer。
+派生视图不构成新增业务输入，不丢弃历史观测，不合并或替换来源，也不提升访问范围。
+它与原输入同样使用固定的 `ro,nosuid,nodev,noexec` bind；停止写入并卸载成功后才清理。
+Agent 工具仍只有表中列出的能力，没有为读取大输入添加 shell 或网络权限。
+
+任务字段为 `schema_version`、
 `business_task_id`、`project_id`、`stage`、`context_sha256`、`created_at`、
 `execution_deadline_at`、`source_policy`。来源策略固定 providers、每次最大结果数
 `max_results` 和本次最大搜索调用数 `max_search_calls`；后者最多 20。代理在数据库

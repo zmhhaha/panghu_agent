@@ -151,13 +151,13 @@ worker-hosts/
 
 ## 4. 节点上的只读输入挂载
 
-具有文件/检查点输入的候选池需设置 `read_only_mounts: true`，并在所有可调度执行节点装载本目录 `apparmor/agent-capsule-inputs` 配置。示例供后续真实 Linux 验收，当前未运行解析器或装载验证。
+具有文件/检查点输入的候选池需设置 `read_only_mounts: true`，并在所有可调度执行节点装载本目录 `apparmor/agent-capsule-inputs` 配置。配置模板本身不代表目标节点已就绪；既有节点隔离与后续科研输入视图验证分别见[节点记录](../docs/NODE_ISOLATION_VALIDATION_20261027.md)和[工作流记录](../docs/SCIENTIFIC_WORKFLOW_CANDIDATES_20261029.md)。
 
 宿主缺少解析器时，使用[一次性节点管理工具镜像](../docs/NODE_APPARMOR_TOOLS.md)装载：解析器仅安装在容器内，不要求宿主安装额外软件。工具只添加 `MAC_ADMIN`，规则只读挂载，写入权限限于 AppArmor 的 securityfs 子目录；Worker 的 Localhost AppArmor 和默认 seccomp 保持启用。该文档同时说明逐节点验收、重启后重新加载，以及尚待实现的 pool 节点选择方案。
 
-控制器只允许将 `/run/agent-control/input-sources/<attempt>/inputs` 和 `checkpoint-sources/<attempt>/base` bind 到对应 `/work/<attempt>/inputs`、`base`，重新挂载为 `ro,nosuid,nodev,noexec`，并验证实际只读挂载。仅 chmod 不算隔离，失败不降级为可写复制。Agent 子进程会清除能力、切换独立 UID，控制器确认进程停止、收集文件、完成非懒卸载后才冻结和签署结果。
+控制器只允许三类固定 bind：`/run/agent-control/input-sources/<attempt>/inputs` 到 `/work/<attempt>/inputs`、`/run/agent-control/checkpoint-sources/<attempt>/base` 到 `/work/<attempt>/base`，以及科研派生视图 `/run/agent-control/research-context-views/<attempt>/inputs` 到 `/work/<attempt>/context-view`。三者均重新挂载为 `ro,nosuid,nodev,noexec`，并验证内核中的实际只读挂载。仅 chmod 不算隔离，失败不降级为可写复制。Agent 子进程会清除能力、切换独立 UID，控制器确认进程停止、收集文件、完成非懒卸载及派生文件清理后才冻结和签署结果。
 
-静态阅读确认 `mounts.py` 的两个 source/target 与 AppArmor bind/umount 路径模式相符。第二次调用使用空 source 和 `MS_BIND | MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC`，策略以目标路径上的 `remount options=(ro,bind,nosuid,nodev,noexec)` 表达相同意图。尚未确认目标节点的 `apparmor_parser` 是否接受该组合、内核如何匹配 bind-remount/尾随斜杠，以及具体容器运行时的 `RuntimeDefault` seccomp 是否放行所需 mount/umount 系统调用；这些必须在真实节点验收时核对。不能仅凭本次静态路径一致就认定挂载可用，也不能通过开放任意 mount 或移除 AppArmor/seccomp 来绕过失败。
+科研派生视图要求在原策略上追加其固定 bind、remount、umount 三条规则；仅更新镜像不会更新节点内核策略。部署前先核对实际执行节点和当前任务，按[节点工具说明](../docs/NODE_APPARMOR_TOOLS.md)解析、装载审定规则，并以精确 Worker 镜像复验降权后的读取、写入/替换拒绝及非懒卸载。remount 使用空 source 和 `MS_BIND | MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC`，策略对应 `remount options=(ro,bind,nosuid,nodev,noexec)`。每个目标节点都须核实解析器、尾随斜杠匹配、实际 enforce 标签及 RuntimeDefault seccomp；不能仅凭静态路径一致认定可用，也不能通过开放任意 mount 或移除 AppArmor/seccomp 绕过失败。
 
 `agent-workers` 是唯一采用 Pod Security `enforce: privileged` 准入级别的专用命名空间，因为 `baseline` 禁止只读 bind 操作所需的 `SYS_ADMIN`。这不等于 Worker 容器以 `privileged: true` 运行：实际 Pod 禁止宿主 PID/IPC/网络，禁用 service-account token，根文件系统只读，drop ALL 后仅添加控制器所需能力；仅输入池添加 `SYS_ADMIN` 和固定 Localhost AppArmor。执行命名空间的 create 权限只授予受信任 Dispatcher，不向业务 API、Agent 或站点开放。
 
