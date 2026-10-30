@@ -42,6 +42,8 @@ Kokoro 的[官方排错说明](https://github.com/remsky/Kokoro-FastAPI#known-is
 Kokoro 原模型仓库 [hexgrad/kokoro](https://github.com/hexgrad/kokoro) 为 9,790 Star，模型为 82M。
 Star 衡量关注度，不等同于中文质量、稳定性或本机成本；未采用 README 的特定 GPU 性能作为用户机器的指标。
 
+用户补充服务器 NPU 后，已实查两台均为 RK3588，进一步发现 Matcha+Vocos 和 Kokoro ConvOnly 的社区中文 NPU 路径，详见 [RK3588 NPU 调研](SPEECH_NPU_RESEARCH.md)。本表的 ARM64/CPU 支持不能据此改称为 NPU 支持；NPU 路径仍需匹配运行时、模型包和真实试听验证。
+
 ## 接入需要确定的参数
 
 1. API base URL（例如集群内部 `http://speech.<namespace>.svc.cluster.local:8880/v1`）与是否需要鉴权。
