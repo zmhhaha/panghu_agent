@@ -47,13 +47,13 @@ SVG_ATTRS = frozenset(name.lower() for name in ('id class style role aria-label 
     'operator k1 k2 k3 k4 slope intercept amplitude exponent tableValues '
     'flood-color flood-opacity color color-interpolation color-interpolation-filters '
     'overflow vector-effect visibility display').split())
-HTML_TAGS = frozenset('html head body title style div span p h1 h2 h3 h4 h5 h6 '
+HTML_TAGS = frozenset('html head body title style meta div span p h1 h2 h3 h4 h5 h6 '
     'section article header footer main aside figure figcaption strong b em i small '
     'br hr ul ol li dl dt dd table thead tbody tfoot tr th td caption colgroup col '
     'sup sub code pre blockquote'.split())
 HTML_ATTRS = frozenset('id class style title role aria-label aria-hidden lang dir '
     'width height colspan rowspan scope'.split())
-VOID_TAGS = frozenset({'br', 'hr', 'col'})
+VOID_TAGS = frozenset({'br', 'hr', 'col', 'meta'})
 
 
 def _require(value, code='invalid_video_contract'):
@@ -146,8 +146,17 @@ class _StaticHTML(HTMLParser):
         _require(not self.stack or self.stack[-1] != 'style', 'unsafe_video_source')
         names = [name for name, _ in attrs]
         _require(len(names) == len(set(names)), 'unsafe_video_source')
-        for name, value in attrs:
-            _attribute(name, value, svg=in_svg)
+        if tag == 'meta':
+            # Only a UTF-8 declaration in the document head is metadata we
+            # accept. Do not grant other elements charset or allow redirect,
+            # policy, viewport, resource or event attributes on this void tag.
+            _require(not in_svg and self.stack in (['head'], ['html', 'head'])
+                and len(attrs) == 1 and attrs[0][0] == 'charset'
+                and type(attrs[0][1]) is str and attrs[0][1].lower() == 'utf-8',
+                'unsafe_video_source')
+        else:
+            for name, value in attrs:
+                _attribute(name, value, svg=in_svg)
         if tag not in VOID_TAGS:
             self.stack.append(tag)
 

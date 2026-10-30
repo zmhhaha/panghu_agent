@@ -181,6 +181,60 @@ def test_local_svg_gradient_and_inline_html_svg_are_accepted():
     assert video.validate_scene_source(html, 'html') == html
 
 
+@pytest.mark.parametrize('declaration', [
+    '<meta charset="UTF-8">',
+    '<meta charset="utf-8"/>',
+    '<META CHARSET="uTf-8">',
+])
+def test_utf8_html_metadata_survives_collection_unchanged(tmp_path, declaration):
+    source = HTML.replace('<head>', '<head>' + declaration)
+    result = dict(output('scene', 'html'), source=source)
+    profile, envelope = prepare(tmp_path, scene('html'), result)
+    files = collect(profile, tmp_path, envelope)
+    saved = video.decode_video_json(files[0].content())
+    assert saved['output'] == result
+
+
+@pytest.mark.parametrize('metadata', [
+    '<meta>',
+    '<meta charset>',
+    '<meta charset="">',
+    '<meta charset="UTF-7">',
+    '<meta charset="UTF-16">',
+    '<meta charset="utf8">',
+    '<meta charset=" UTF-8 ">',
+    '<meta charset="UTF-8" charset="UTF-8">',
+    '<meta charset="UTF-8" CHARSET="UTF-7">',
+    '<meta http-equiv="refresh" content="0;url=https://example.com">',
+    '<meta charset="UTF-8" http-equiv="refresh" content="0;url=https://example.com">',
+    '<meta charset="UTF-8" name="viewport" content="width=device-width">',
+    '<meta charset="UTF-8" onload="alert(1)">',
+    '<meta charset="UTF-8" style="color:red">',
+    '<meta name="viewport" content="width=device-width,initial-scale=1">',
+    '<meta name="referrer" content="unsafe-url">',
+    '<meta http-equiv="Content-Security-Policy" content="script-src *">',
+])
+def test_other_html_metadata_is_rejected_inside_valid_head(metadata):
+    source = HTML.replace('<head>', '<head>' + metadata)
+    with pytest.raises(ServiceError, match='unsafe_video_source'):
+        video.validate_scene_source(source, 'html')
+
+
+@pytest.mark.parametrize('source', [
+    '<meta charset="UTF-8">',
+    '<html><body><meta charset="UTF-8"></body></html>',
+    '<html><body><head><meta charset="UTF-8"></head></body></html>',
+    '<html><head><div><meta charset="UTF-8"></div></head></html>',
+    '<html><head><svg><meta charset="UTF-8"/></svg></head></html>',
+    '<html><head><meta charset="UTF-8"></meta></head></html>',
+    '<div charset="UTF-8">text</div>',
+    '<svg><text charset="UTF-8">text</text></svg>',
+])
+def test_charset_does_not_expand_metadata_context_or_other_attributes(source):
+    with pytest.raises(ServiceError, match='unsafe_video_source'):
+        video.validate_scene_source(source, 'html')
+
+
 @pytest.mark.parametrize('raw', [b'{"x":1,"x":2}', b'{"x":NaN}', b'{"x":Infinity}', b'\xff'])
 def test_duplicate_nonfinite_and_non_utf8_json_rejected(raw):
     with pytest.raises(ServiceError, match='invalid_video_json'):
