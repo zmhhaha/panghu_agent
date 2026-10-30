@@ -4,7 +4,7 @@ set -euo pipefail
 case_dir=${1:?absolute dedicated case directory required}
 [[ "$case_dir" == /root/ppt-service-p2-oidc-20261023-r* ]]
 [[ -d "$case_dir/input" && ! -e "$case_dir/output" ]]
-site_id=${PPT_SITE_IMAGE_ID:?set the rebuilt email-admission site image config ID explicitly}
+site_id=${PPT_SITE_IMAGE_ID:?set the rebuilt authenticated-access site image config ID explicitly}
 [[ "$site_id" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'PPT_SITE_IMAGE_ID must be an immutable sha256 image config ID' >&2; exit 2; }
 proxy_id=sha256:c410cd2f0b69eadd73498ede45579e847177e1fd45947fe3500091409c532867
 owner=ppt-p2-oidc-20261023
@@ -19,6 +19,8 @@ done
 [[ "$(docker image inspect --format '{{.Id}}' "$site_id")" == "$site_id" ]]
 [[ "$(docker image inspect --format '{{.Architecture}}' "$site_id")" == arm64 ]]
 docker image inspect "$proxy_id" >/dev/null
+[[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$proxy_id")" == v7.8.0 ]]
+[[ "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.source"}}' "$proxy_id")" == https://github.com/oauth2-proxy/oauth2-proxy ]]
 mkdir "$case_dir/output" "$case_dir/bin"
 chown 10000:10000 "$case_dir/output"
 chmod 0700 "$case_dir/output"
@@ -48,6 +50,7 @@ docker create --name "$extract_name" --network none --label "ppt-service.panghue
 docker cp "$extract_name:/bin/oauth2-proxy" "$case_dir/bin/oauth2-proxy"
 docker rm "$extract_name" >/dev/null
 chmod 0555 "$case_dir/bin/oauth2-proxy"
+[[ "$(sha256sum "$case_dir/bin/oauth2-proxy" | cut -d ' ' -f 1)" == 01f5b2b357b8f79dfcaf6c156deb02e2001f0c9162e9af9bbb0ad46b34af5a67 ]]
 sha256sum "$case_dir/bin/oauth2-proxy" "$case_dir/input/synthetic_oidc.py" "$case_dir/input/oauth2-proxy.cfg" > "$case_dir/output/input-sha256.txt"
 set +e
 docker run --rm --name "$test_name" --pull=never --network none --read-only \

@@ -41,11 +41,8 @@ def main():
                         'email': 'p1-owner@ppt.test',
                         'iat': datetime.now(timezone.utc), 'exp': datetime.now(timezone.utc) + timedelta(minutes=5)}, key, algorithm='RS256')
     with tempfile.TemporaryDirectory() as scratch:
-        emails = Path(scratch) / 'emails'
-        emails.write_text('p1-owner@ppt.test\n', encoding='utf-8')
         settings = Settings('sqlite://', scratch, oidc_issuer='https://p1.test', oidc_audience='p1',
-                            trusted_proxy_cidrs=('127.0.0.1/32',), allowed_origins=('https://ppt.test',),
-                            invitation_emails_file=str(emails))
+                            trusted_proxy_cidrs=('127.0.0.1/32',), allowed_origins=('https://ppt.test',))
         site = create_site(settings, engine, str(root / 'web/dist'))
         site.state.jwks = SimpleNamespace(get_signing_key_from_jwt=lambda unused: SimpleNamespace(key=key.public_key()))
         client = TestClient(site, base_url='https://ppt.test', client=('127.0.0.1', 1234))

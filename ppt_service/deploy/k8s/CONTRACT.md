@@ -34,10 +34,11 @@ not a substitute for completed initialization. A deployment lock prevents
 overlapping helper runs.
 
 `PPT_CLIENT_ID` or `PPT_AUTH_CONFIG` supplies the public authentication settings;
-a later deployment may reuse valid settings already in the cluster. An existing
-owner list is preserved unless `PPT_OWNER_CONFIG` explicitly supplies its
-replacement. Casdoor and Cloudflare are configured by the operator in their
-respective dashboards.
+a later deployment may reuse valid settings already in the cluster. Upgrading
+from email-list admission requires regenerated settings: legacy membership fields
+are rejected. `PPT_OWNER_CONFIG` is obsolete and stops deployment before cluster
+changes. Casdoor and Cloudflare are configured by the operator in their respective
+dashboards.
 
 The `base` and `migrate-job` directories are helper inputs, not a separate
 environment. The helper coordinates resource ordering and the one-off migration;
@@ -63,17 +64,15 @@ the runtime connection to read the current schema revision. oauth2-proxy uses
 `/ping` and `/ready`. Website and proxy share a network namespace, so network
 policy cannot isolate those two containers from each other.
 
-Both containers mount the independent `ppt-owner` ConfigMap directory read-only
-at `/owner`, without `subPath`. `INVITATION_EMAILS_FILE` and
-`authenticated_emails_file` point to the same `/owner/emails`. Membership uses
-exact emails, one per line; resource ownership remains bound to the
-verified issuer and stable subject. The API reads the list on each authenticated
-request. Empty denies everyone, while unreadable or malformed lists return 503.
-Projection updates take time and do not terminate existing streams.
+Both containers admit all valid Casdoor-authenticated users. The proxy uses
+`email_domains = ["*"]` and the API has no email-list membership check. Neither
+container mounts or reads `ppt-owner`; old cluster ConfigMaps are left unused.
+Resource ownership remains bound to the verified issuer and stable subject,
+so opening admission does not expose one user's projects to another.
 
 Casdoor enforces email verification through its registration and login policies.
 The API does not additionally require or evaluate an `email_verified` claim.
-It still requires a valid signed email and exact allowlist membership, alongside
+It still requires a valid signed email, alongside
 signature, issuer, audience and token-time checks. The proxy's OIDC security
 settings remain in effect.
 

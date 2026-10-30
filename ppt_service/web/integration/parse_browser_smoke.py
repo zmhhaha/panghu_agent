@@ -62,7 +62,7 @@ def main():
         page.route(PUBLIC + '/**', forward)
         page.goto(PUBLIC, wait_until='networkidle')
         expect(page.get_by_text('本地开发测试账户 · 正式 SSO 未接通；制稿执行器尚未接通，不会调用模型')).to_be_visible()
-        expect(page.get_by_text('PowerPoint 人工验收待完成，正式发布与邀请尚未开放。')).to_be_visible()
+        expect(page.get_by_text('当前为试用版本，欢迎反馈使用问题与改进建议。')).to_be_visible()
         check('actual_parse_bundle_loaded_with_sso_test_and_powerpoint_gates')
         page.evaluate('(id)=>localStorage.setItem("ppt:selected-project",id)', EXISTING_PROJECT)
         page.reload(wait_until='networkidle')

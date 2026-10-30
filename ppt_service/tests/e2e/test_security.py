@@ -98,11 +98,25 @@ class SecurityHTTPTests(E2ECase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['sub'], 'bob')
         for claims in ({'iss': 'https://untrusted.example.test'}, {'aud': 'some-other-client'},
-                       {'exp': int(time.time()) - 60}, {'email': 'uninvited@ppt.test'}):
+                       {'exp': int(time.time()) - 60}, {'email': 'not-an-email'}):
             with self.subTest(claims=claims):
                 response = self.client.get('/api/v1/projects', headers={
                     'Authorization': 'Bearer ' + self.token('alice', **claims)})
                 self.assertEqual(response.status_code, 401)
+
+    def test_new_authenticated_account_needs_no_invitation_and_keeps_ownership(self):
+        original = self.create_project()
+        headers = self.headers('new-feedback-user')
+        me = self.client.get('/api/v1/me', headers=headers)
+        self.assertEqual(me.status_code, 200)
+        self.assertEqual(me.json()['sub'], 'new-feedback-user')
+        self.assertEqual(self.client.get('/api/v1/projects', headers=headers).json(), [])
+        self.assertEqual(self.client.get('/api/v1/projects/' + original['id'], headers=headers).status_code, 404)
+        response = self.client.post('/api/v1/projects', json={'title': 'New participant feedback'},
+            headers=headers | {'X-CSRF-Token': me.json()['csrf_token']})
+        self.assertEqual(response.status_code, 201, response.text)
+        created = response.json()['id']
+        self.assertEqual(self.client.get('/api/v1/projects/' + created, headers=self.headers()).status_code, 404)
 
     def test_valid_token_from_untrusted_peer_is_rejected(self):
         with TestClient(self.app, base_url='https://ppt-e2e.test',

@@ -36,7 +36,7 @@ def main():
         expect(page.get_by_role('heading', name='我的项目')).to_be_visible()
         expect(page.get_by_text('开发测试中', exact=True)).to_be_visible()
         expect(page.get_by_text('本地开发测试账户 · 正式 SSO 未接通；执行器尚未接通，不会调用模型')).to_be_visible()
-        expect(page.get_by_text('PowerPoint 人工验收待完成，正式发布与邀请尚未开放。')).to_be_visible()
+        expect(page.get_by_text('当前为试用版本，欢迎反馈使用问题与改进建议。')).to_be_visible()
         check('hydration_and_explicit_development_release_gate')
         page.get_by_role('button', name='新建项目', exact=True).click()
         page.get_by_label('项目名称', exact=True).fill(result['fixture_title'])

@@ -121,11 +121,9 @@ def verify(evidence):
         check.assertEqual(metadata_snapshot(engine), manifest['metadata'])
         check.assertEqual(files_inventory(restored), manifest['files'])
         assert_quiescent(sessionmaker(engine))
-        emails = evidence / 'restore-emails'
-        emails.write_text('alice@ppt.test\nbob@ppt.test\n', encoding='utf-8')
         settings = Settings(database_url, str(restored), oidc_issuer=ISSUER,
                             oidc_audience=AUDIENCE, trusted_proxy_cidrs=('127.0.0.1/32',),
-                            allowed_origins=(ORIGIN,), invitation_emails_file=str(emails))
+                            allowed_origins=(ORIGIN,))
         app = create_app(settings, engine)
         key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         app.state.jwks = SimpleNamespace(get_signing_key_from_jwt=lambda _token: SimpleNamespace(key=key.public_key()))

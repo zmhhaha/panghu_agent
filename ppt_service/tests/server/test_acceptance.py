@@ -70,12 +70,9 @@ class AcceptanceTests(unittest.TestCase):
         self.resolve = resolve
         self.service = AcceptanceService(self.sessions, self.resolve)
         self.app = FastAPI()
-        emails = Path(self.temp.name) / 'emails'
-        emails.write_text('alice@ppt.test\nbob@ppt.test\n', encoding='utf-8')
         self.app.state.settings = Settings(
             self.db_url, self.temp.name, oidc_issuer=OWNER.issuer, oidc_audience="ppt",
             trusted_proxy_cidrs=("127.0.0.1/32",), allowed_origins=("https://ppt.test",),
-            invitation_emails_file=str(emails),
         )
         self.app.state.jwks = SimpleNamespace(get_signing_key_from_jwt=lambda _: SimpleNamespace(key=self.signing_key.public_key()))
         self.app.include_router(create_acceptance_router(self.service))
@@ -140,7 +137,7 @@ class AcceptanceTests(unittest.TestCase):
             self.assertEqual(response.status_code, 401)
 
     def test_signed_claims_wrong_issuer_audience_expiry_reject(self):
-        for claims in ({"iss": "https://wrong.test"}, {"aud": "wrong"}, {"email": "uninvited@ppt.test"}, {"exp": datetime.now(timezone.utc) - timedelta(seconds=60)}):
+        for claims in ({"iss": "https://wrong.test"}, {"aud": "wrong"}, {"email": "not-an-email"}, {"exp": datetime.now(timezone.utc) - timedelta(seconds=60)}):
             with self.subTest(claims=claims):
                 self.assertEqual(self.client.get(ROOT, headers=self.headers(**claims)).status_code, 401)
 

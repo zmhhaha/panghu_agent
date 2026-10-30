@@ -1,8 +1,6 @@
-"""Signed JWT, proxy-peer, issuer/sub and Origin/CSRF boundary checks."""
+"""Signed JWT, authenticated access, issuer/sub and Origin/CSRF boundaries."""
 from types import SimpleNamespace
 from datetime import datetime,timedelta,timezone
-import os
-from pathlib import Path
 import jwt,pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from sqlalchemy import create_engine
@@ -15,9 +13,7 @@ from ppt_service.server.migrate import migrate
 @pytest.fixture
 def auth_client(tmp_path):
     engine=create_engine('sqlite://',connect_args={'check_same_thread':False},poolclass=StaticPool);migrate(engine)
-    emails=tmp_path/'allowed-emails'
-    emails.write_text('alice@example.test\n',encoding='utf-8')
-    config=Settings('sqlite://',str(tmp_path),oidc_issuer='https://casdoor.test',oidc_audience='ppt',trusted_proxy_cidrs=('127.0.0.1/32',),allowed_origins=('https://ppt.test',),invitation_emails_file=str(emails))
+    config=Settings('sqlite://',str(tmp_path),oidc_issuer='https://casdoor.test',oidc_audience='ppt',trusted_proxy_cidrs=('127.0.0.1/32',),allowed_origins=('https://ppt.test',))
     app=create_app(config,engine)
     key=rsa.generate_private_key(public_exponent=65537,key_size=2048)
     app.state.jwks=SimpleNamespace(get_signing_key_from_jwt=lambda token:SimpleNamespace(key=key.public_key()))
@@ -28,6 +24,7 @@ def auth_client(tmp_path):
     c=TestClient(app,base_url='https://ppt.test',client=('127.0.0.1',12345))
     return app,c,token
 
+
 def test_signed_identity_and_csrf(auth_client):
     app,c,token=auth_client;headers={'Authorization':'Bearer '+token(),'X-Auth-Request-User':'mallory'}
     me=c.get('/api/v1/me',headers=headers);assert me.status_code==200;assert me.json()['sub']=='stable-alice'
@@ -37,9 +34,10 @@ def test_signed_identity_and_csrf(auth_client):
     assert c.post('/api/v1/projects',json={'title':'bad'},headers=mutation|{'Origin':'https://evil.test'}).status_code==403
     assert c.post('/api/v1/projects',json={'title':'bad'},headers=mutation|{'X-CSRF-Token':'wrong'}).status_code==403
 
-@pytest.mark.parametrize('claims',[{'iss':'https://other.test'},{'email':'unlisted@example.test'},
+@pytest.mark.parametrize('claims',[{'iss':'https://other.test'},
     {'sub':''},{'sub':123},{'sub':'x'*257},{'aud':'other'},{'exp':datetime.now(timezone.utc)-timedelta(seconds=60)},
-    {'omit':('email',)},
+    {'omit':('email',)},{'omit':('exp',)},{'omit':('iat',)},{'omit':('iss',)},
+    {'omit':('sub',)},{'omit':('aud',)},
     {'email':None},{'email':123},{'email':'not-an-email'},{'email':' alice@example.test'}])
 def test_invalid_claims_reject(auth_client,claims):
     app,c,token=auth_client
@@ -53,81 +51,68 @@ def test_casdoor_email_verification_claim_does_not_control_admission(auth_client
     assert response.status_code==200
     assert response.json()['sub']=='stable-alice'
 
+
 def test_untrusted_peer_rejects_even_valid_jwt(auth_client):
     app,c,token=auth_client
     other=TestClient(app,base_url='https://ppt.test',client=('192.0.2.3',12345))
     assert other.get('/api/v1/me',headers={'Authorization':'Bearer '+token(),'X-Forwarded-For':'127.0.0.1'}).status_code==401
 
-def test_forwarded_email_cannot_authorize_unlisted_token(auth_client):
+
+def test_forwarded_email_cannot_replace_invalid_signed_email(auth_client):
     _,c,token=auth_client
-    response=c.get('/api/v1/me',headers={'Authorization':'Bearer '+token(email='unlisted@example.test'),
+    response=c.get('/api/v1/me',headers={'Authorization':'Bearer '+token(email='not-an-email'),
         'X-Forwarded-Email':'alice@example.test','X-Auth-Request-Email':'alice@example.test'})
     assert response.status_code==401
 
-def test_casefold_comments_and_dynamic_allowlist_updates(auth_client):
-    app,c,token=auth_client
-    path=Path(app.state.settings.invitation_emails_file)
-    headers={'Authorization':'Bearer '+token(email='ALICE@EXAMPLE.TEST')}
-    path.write_text('# owner-approved users\n\n  Alice@Example.Test  \n',encoding='utf-8')
-    assert c.get('/api/v1/me',headers=headers).status_code==200
-    path.write_text('bob@example.test\n',encoding='utf-8')
-    assert c.get('/api/v1/me',headers=headers).status_code==401
-    path.write_text('alice@example.test\n',encoding='utf-8')
-    assert c.get('/api/v1/me',headers=headers).status_code==200
-    path.unlink()
+
+@pytest.mark.parametrize('email',['new-user@community.example','Second.User@ANOTHER.TEST'])
+def test_signed_accounts_from_other_email_domains_can_use_the_service(auth_client,email):
+    _,c,token=auth_client
+    headers={'Authorization':'Bearer '+token(sub='new-community-user',email=email)}
     response=c.get('/api/v1/me',headers=headers)
-    assert response.status_code==503
-    assert response.json()['detail']['code']=='invitation_configuration_unavailable'
+    assert response.status_code==200
+    assert response.json()['sub']=='new-community-user'
+    created=c.post('/api/v1/projects',json={'title':'Community feedback'},headers=headers|{
+        'Origin':'https://ppt.test','X-CSRF-Token':response.json()['csrf_token']})
+    assert created.status_code==201
+    assert c.get('/api/v1/projects',headers=headers).json()[0]['id']==created.json()['id']
 
-@pytest.mark.parametrize('contents',[b'*@example.test\n',b'alice@*.test\n',b'alice?@example.test\n',
-    b'Alice <alice@example.test>\n',b'alice@example.test # inline comment\n',b'\xff\n',b'a'*(64*1024+1)],
-    ids=['local-wildcard','domain-wildcard','question-wildcard','display-name','inline-comment','invalid-utf8','oversize'])
-def test_invalid_allowlist_fails_closed_with_503(auth_client,contents):
-    app,c,token=auth_client
-    Path(app.state.settings.invitation_emails_file).write_bytes(contents)
-    assert c.get('/api/v1/me',headers={'Authorization':'Bearer '+token()}).status_code==503
 
-@pytest.mark.parametrize('contents',['','# comments only\n\n'])
-def test_empty_allowlist_denies_everyone(auth_client,contents):
-    app,c,token=auth_client
-    Path(app.state.settings.invitation_emails_file).write_text(contents,encoding='utf-8')
-    assert c.get('/api/v1/me',headers={'Authorization':'Bearer '+token()}).status_code==401
-
-def test_unconfigured_allowlist_denies_everyone(auth_client):
-    app,c,token=auth_client
-    app.state.settings.invitation_emails_file=''
-    assert c.get('/api/v1/me',headers={'Authorization':'Bearer '+token()}).status_code==401
-
-def test_unreadable_allowlist_is_503(auth_client,monkeypatch):
-    import ppt_service.server.auth as auth
-    app,c,token=auth_client
-    original=auth.os.open
-    def unreadable(path,*args,**kwargs):
-        if str(path)==app.state.settings.invitation_emails_file:raise PermissionError()
-        return original(path,*args,**kwargs)
-    monkeypatch.setattr(auth.os,'open',unreadable)
-    assert c.get('/api/v1/me',headers={'Authorization':'Bearer '+token()}).status_code==503
-
-def test_configmap_projection_symlink_reloads(auth_client,tmp_path):
-    app,c,token=auth_client
-    v1=tmp_path/'version-1';v1.mkdir()
-    v2=tmp_path/'version-2';v2.mkdir()
-    (v1/'emails').write_text('alice@example.test\n',encoding='utf-8')
-    (v2/'emails').write_text('bob@example.test\n',encoding='utf-8')
-    data=tmp_path/'..data'
-    try:
-        data.symlink_to(v1,target_is_directory=True)
-        projected=tmp_path/'projected-emails';projected.symlink_to(data/'emails')
-    except OSError as exc:
-        if os.name=='nt' and getattr(exc,'winerror',None)==1314:
-            pytest.skip('Windows account cannot create symlinks; real ConfigMap projection requires Linux validation')
-        raise
-    app.state.settings.invitation_emails_file=str(projected)
-    headers={'Authorization':'Bearer '+token()}
-    assert c.get('/api/v1/me',headers=headers).status_code==200
-    replacement=tmp_path/'..next';replacement.symlink_to(v2,target_is_directory=True)
-    replacement.replace(data)
+@pytest.mark.parametrize('authorization',[None,'','Bearer ','Bearer not-a-jwt','Basic ignored'])
+def test_missing_or_malformed_token_still_rejects(auth_client,authorization):
+    _,c,_=auth_client
+    headers={'X-Auth-Request-Email':'anyone@example.test','X-Auth-Request-User':'anyone'}
+    if authorization is not None:headers['Authorization']=authorization
     assert c.get('/api/v1/me',headers=headers).status_code==401
+
+
+def test_wrong_signature_is_rejected_for_an_otherwise_valid_account(auth_client):
+    _,c,token=auth_client
+    claims=jwt.decode(token(email='new-user@community.example'),options={'verify_signature':False})
+    other_key=rsa.generate_private_key(public_exponent=65537,key_size=2048)
+    forged=jwt.encode(claims,other_key,algorithm='RS256')
+    assert c.get('/api/v1/me',headers={'Authorization':'Bearer '+forged}).status_code==401
+
+
+def test_new_email_account_can_create_only_its_own_projects(auth_client):
+    _,c,token=auth_client
+    alice={'Authorization':'Bearer '+token()}
+    me=c.get('/api/v1/me',headers=alice).json()
+    response=c.post('/api/v1/projects',json={'title':'Alice private project'},headers=alice|{
+        'Origin':'https://ppt.test','X-CSRF-Token':me['csrf_token']})
+    assert response.status_code==201
+    project=response.json()['id']
+    newcomer={'Authorization':'Bearer '+token(sub='stable-newcomer',email='newcomer@another.test')}
+    newcomer_me=c.get('/api/v1/me',headers=newcomer)
+    assert newcomer_me.status_code==200
+    assert c.get('/api/v1/projects',headers=newcomer).json()==[]
+    assert c.get('/api/v1/projects/'+project,headers=newcomer).status_code==404
+    created=c.post('/api/v1/projects',json={'title':'Newcomer private project'},headers=newcomer|{
+        'Origin':'https://ppt.test','X-CSRF-Token':newcomer_me.json()['csrf_token']})
+    assert created.status_code==201
+    assert c.get('/api/v1/projects/'+created.json()['id'],headers=alice).status_code==404
+    assert c.get('/api/v1/projects/'+project,headers=alice).status_code==200
+
 
 def test_same_email_does_not_merge_subject_ownership(auth_client):
     _,c,token=auth_client
@@ -143,6 +128,7 @@ def test_same_email_does_not_merge_subject_ownership(auth_client):
     assert c.get('/api/v1/projects/'+project,headers=other).status_code==404
     assert c.get('/api/v1/projects/'+project,headers=alice).status_code==200
 
+
 def test_same_email_and_sub_does_not_merge_issuer_ownership(auth_client):
     app,c,token=auth_client
     alice={'Authorization':'Bearer '+token()}
@@ -157,13 +143,17 @@ def test_same_email_and_sub_does_not_merge_issuer_ownership(auth_client):
     assert c.get('/api/v1/projects',headers=other).json()==[]
     assert c.get('/api/v1/projects/'+project,headers=other).status_code==404
 
-def test_nonregular_allowlist_is_503(auth_client,tmp_path):
-    app,c,token=auth_client
-    app.state.settings.invitation_emails_file=str(tmp_path)
-    assert c.get('/api/v1/me',headers={'Authorization':'Bearer '+token()}).status_code==503
 
-def test_environment_uses_owner_email_file(monkeypatch):
+def test_obsolete_invitation_environment_cannot_block_valid_login(auth_client,monkeypatch,tmp_path):
+    app,c,token=auth_client
     monkeypatch.setenv('DATABASE_URL','postgresql+psycopg://unused@localhost/unused')
-    monkeypatch.setenv('DATA_ROOT','/unused')
-    monkeypatch.setenv('INVITATION_EMAILS_FILE','/owner/emails')
-    assert Settings.env().invitation_emails_file=='/owner/emails'
+    monkeypatch.setenv('DATA_ROOT',str(tmp_path))
+    monkeypatch.setenv('OIDC_ISSUER','https://casdoor.test')
+    monkeypatch.setenv('OIDC_AUDIENCE','ppt')
+    monkeypatch.setenv('TRUSTED_PROXY_CIDRS','127.0.0.1/32')
+    monkeypatch.setenv('ALLOWED_ORIGINS','https://ppt.test')
+    monkeypatch.setenv('INVITATION_EMAILS_FILE',str(tmp_path/'does-not-exist'))
+    app.state.settings=Settings.env()
+    response=c.get('/api/v1/me',headers={'Authorization':'Bearer '+token(email='new-user@community.example')})
+    assert response.status_code==200
+    assert response.json()['sub']=='stable-alice'

@@ -1,7 +1,7 @@
 # 用 Hermes 接通 PPT 执行
 
 本目录为现有正式 `ppt-service` 网站添加独立执行控制器。先用 Hermes 跑通 PPT；通用 Agent
-接口层后续再做。网站、OAuth、白名单、PostgreSQL 和 Ceph 数据卷沿用现有部署。
+接口层后续再做。网站、OAuth、PostgreSQL 和 Ceph 数据卷沿用现有部署。
 这是部署资产和操作入口，离线测试通过不等于已完成线上生成验收。
 
 ## 组件和权限
@@ -86,7 +86,7 @@ bash deploy/hermes/deploy.sh \
 检查 SA/RBAC、两个镜像 digest、PVC、上游 Secret 引用和 NetworkPolicy。
 默认 Controller 的执行准入为 disabled，不会新增付费任务；重复上述命令加 `--apply` 才应用。
 部署 helper 校验正式 namespace、已有网站、Bound RWX PVC、runtime/upstream Secret 的必要键，
-执行 server dry-run 并等待 controller rollout。它不创建/迁移数据库、不替换网站和 owner。
+执行 server dry-run 并等待 controller rollout。它不创建/迁移数据库、不替换网站认证配置。
 
 现有 `dns-egress` 原本匹配所有 Pod，NetworkPolicy 规则会叠加，因此清单将它收窄到网站、
 迁移、PostgreSQL 和 Controller。任务 Pod 没有 DNS egress：Worker 通过本次代理 PodIP
@@ -104,7 +104,7 @@ Worker 无互联网/数据库/API/DNS访问，沙箱无网络，Controller 无�
 可再显式加 `--enable-site`：它只在 `--apply` 和 Controller 已开启时有效，等待 Controller
 rollout 后仅更新网站 ConfigMap 的 `PPT_EXECUTION_ENABLED=true`、
 `PPT_EXECUTION_BACKEND=kubernetes` 两项并重启/等待网站 rollout。默认不改网站准入，
-不会修改 OAuth、白名单或数据库连接；disabled 状态不会先入队再自动执行。
+不会修改 OAuth 或数据库连接；disabled 状态不会先入队再自动执行。
 
 MaterialParser 和 dispatcher 在同一个 Controller 进程循环中运行，共用 Kubernetes
 backend、素材解析 scope 和任务单槽，不另建常驻 parser Deployment。

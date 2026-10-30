@@ -205,11 +205,9 @@ class E2ECase(unittest.TestCase):
         self.addCleanup(self.engine.dispose)
         self.database_kind = self.engine.dialect.name
         migrate(self.engine)
-        emails = self.temp_root / 'emails'
-        emails.write_text('alice@ppt.test\nbob@ppt.test\n', encoding='utf-8')
         self.settings = Settings(str(self.engine.url), str(self.data_root), oidc_issuer=ISSUER,
                                  oidc_audience=AUDIENCE, trusted_proxy_cidrs=('127.0.0.1/32',),
-                                 allowed_origins=(ORIGIN,), invitation_emails_file=str(emails))
+                                 allowed_origins=(ORIGIN,))
         self.key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         self.app = create_app(self.settings, self.engine)
         self.app.state.jwks = SimpleNamespace(get_signing_key_from_jwt=lambda _token: SimpleNamespace(key=self.key.public_key()))

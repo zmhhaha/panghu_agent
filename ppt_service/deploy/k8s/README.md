@@ -33,7 +33,7 @@ Casdoor 和 Cloudflare 由用户在后台配置。公开认证配置集中在仓
 
 服务器需要 Docker、kubectl、Python 3.11+ 和 PyYAML，使用 Linux ARM64。kubectl 默认读取 `/etc/kubernetes/super-admin.conf`，可通过 `KUBECONFIG` 指定其他配置。构建主机及各节点应能访问 `arm-cluster-master:5000`；构建还需下载固定基础镜像和锁定依赖，无需宿主机 Node/pnpm 或旧 API 开发镜像。
 
-先在后台创建专属 Casdoor 应用，填写 [邮箱名单](../../../../oauth/k8s/ppt-owner-configmap.yaml)，在 Vault 准备 [三条凭据](../../../../vault/inventory/PPT-SERVICE.md#路径和消费者)，并按 Cloudflare 文档配置 Tunnel、缓存与实际 Connector 的双端网络策略。两份数据库 URL 使用各自计划的 migrator/runtime 密码。共享 `data/postgres` 必须已就绪；PPT 部署不会创建或重配它的 StatefulSet、管理员登录或 PVC。
+先在后台创建专属 Casdoor 应用，在 Vault 准备 [三条凭据](../../../../vault/inventory/PPT-SERVICE.md#路径和消费者)，并按 Cloudflare 文档配置 Tunnel、缓存与实际 Connector 的双端网络策略。有效 Casdoor 登录账号均可访问，无需配置邮箱名单。两份数据库 URL 使用各自计划的 migrator/runtime 密码。共享 `data/postgres` 必须已就绪；PPT 部署不会创建或重配它的 StatefulSet、管理员登录或 PVC。
 
 首次部署：
 
@@ -60,8 +60,9 @@ bash deploy.sh --skip-build
 
 - `PPT_CLIENT_ID`：公开 client ID，首次部署需要；后续未提供时可复用线上已有的有效公开配置。
 - `PPT_AUTH_CONFIG`：由 `oauth/k8s/configure-ppt.py` 生成的两份公开 ConfigMap 文件，可代替 `PPT_CLIENT_ID`。
-- `PPT_OWNER_CONFIG`：显式应用替换后的邮箱名单。普通部署保留线上已有名单，首次才从源文件创建；增删用户也可单独应用名单 ConfigMap。
 - `PPT_SITE_IMAGE`：已推送、经过核对的站点完整 registry digest。
+
+`PPT_OWNER_CONFIG` 已废弃，设置它会在集群变更前终止发布，请先清除。由白名单版本升级时，必须提供 `PPT_CLIENT_ID` 或更新后的 `PPT_AUTH_CONFIG`，替换旧的代理/API 认证字段；旧配置会被校验拒绝。新 Pod 不挂载 `ppt-owner`，集群里的旧名单不参与访问判断。
 
 构建可通过 `REGISTRY`、`IMAGE_TAG` 或完整 `IMAGE` 指定仓库和 tag，完整选项见 `bash build.sh --help`。`bash deploy.sh --dry-run` 只列部署计划。原 Hermes Worker 镜像入口为 `build_worker.sh`，网站发布不启动执行器。
 
