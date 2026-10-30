@@ -118,7 +118,17 @@ def test_native_image_and_model_policy_are_part_of_combination_identity(image_pa
     assert not set(before) & set(after)
 
 
+def test_latest_worker_tag_preserves_fixed_digest_and_loads_public_config(image_packages):
+    tagged = PI.replace('@', ':latest@')
+    public, hosts, _ = catalog.generate(pi_image=tagged, engine='pi', runtime_revision='runtime-v1')
+    _Public.model_validate(public)
+    assert all(pool['image'] == tagged for pool in public['kubernetes_workers'])
+    assert all(host['profile']['image_digest'] == tagged.split('@')[1] for host in hosts.values())
+    assert catalog._image('agent-pi:latest@sha256:' + 'a' * 64) == 'agent-pi:latest@sha256:' + 'a' * 64
+
+
 @pytest.mark.parametrize('field,value', [('pi_image', 'registry.invalid/agent:latest'),
+    ('pi_image', 'registry.invalid/agent:version@sha256:' + 'a' * 64),
     ('pi_image', 'registry.invalid/agent@sha256:' + '0' * 64),
     ('engine', 'hermes'), ('runtime_revision', '../runtime'),
     ('pod_cidrs', ('0.0.0.0/0',)), ('pod_cidrs', ('8.8.8.0/24',)),

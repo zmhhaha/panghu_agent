@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import hashlib
 import io
 import json
@@ -81,7 +80,7 @@ def immutable_image(value):
     if not isinstance(value, str) or value.count("@") != 1:
         raise BuildError("immutable_base_required")
     name, checksum = value.split("@")
-    repository(name)
+    repository(name.removesuffix(':latest'))
     if not SHA256.fullmatch(checksum):
         raise BuildError("immutable_base_required")
     return value
@@ -255,7 +254,7 @@ def build(target="control", *, push=True, service=SERVICE, environ=None, runner=
     environ = os.environ if environ is None else environ
     runner = subprocess.run if runner is None else runner
     registry = environ.get("REGISTRY", "arm-cluster-master:5000")
-    tag = environ.get("IMAGE_TAG", datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ"))
+    tag = environ.get("IMAGE_TAG", "latest")
     image = environ.get("IMAGE", registry + "/agent-service-" + target + ":" + tag)
     name = tagged_image(image)
     platform = environ.get("PLATFORM", "linux/arm64")
@@ -274,6 +273,17 @@ def build(target="control", *, push=True, service=SERVICE, environ=None, runner=
     with tempfile.TemporaryDirectory(prefix="agent-service-build-") as temporary:
         archive, metadata = Path(temporary) / "context.tar", Path(temporary) / "metadata.json"
         context_archive(service, target, archive)
+        labels = {
+            'org.opencontainers.image.source': 'https://github.com/zmhhaha/panghu_agent',
+            'io.panghu.source.context-sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
+        }
+        revision = environ.get('SOURCE_REVISION')
+        if revision is not None:
+            if not isinstance(revision, str) or not re.fullmatch(r'[0-9a-f]{40}(?:[0-9a-f]{24})?', revision):
+                raise BuildError('invalid_source_revision')
+            labels['org.opencontainers.image.revision'] = revision
+        for key, value in labels.items():
+            arguments += ['--label', key + '=' + value]
         probe = runner(['docker', 'buildx', 'version'], stdout=subprocess.PIPE,
                        stderr=subprocess.PIPE, check=False)
         use_buildx = probe.returncode == 0

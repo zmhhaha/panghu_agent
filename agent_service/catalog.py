@@ -42,7 +42,7 @@ REVISION = re.compile(r'[A-Za-z0-9_.-]{1,100}\Z')
 IMAGE = re.compile(
     r'(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?/)?'
     r'[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*'
-    r'@sha256:[0-9a-f]{64}\Z')
+    r'(?::latest)?@sha256:[0-9a-f]{64}\Z')
 
 
 class CatalogError(RuntimeError):
@@ -182,7 +182,8 @@ def _research_bundle():
 def _image(value):
     _require(type(value) is str and IMAGE.fullmatch(value) is not None
         and value.rsplit(':', 1)[-1] != '0' * 64, 'immutable_worker_image_required')
-    origin = value.rsplit('@', 1)[0].split('/', 1)[0]
+    reference = value.rsplit('@', 1)[0]
+    origin = reference.split('/', 1)[0] if '/' in reference else ''
     if ':' in origin:
         _require(1 <= int(origin.rsplit(':', 1)[1]) <= 65535, 'immutable_worker_image_required')
     return value

@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent_service.build_image import BuildError, PYTHON_BASE, build
+from agent_service.build_image import BuildError, PYTHON_BASE, build, immutable_image
 
 
 def dockerfile_text(name):
@@ -158,6 +158,34 @@ def test_no_push_removes_previous_deployable_digest_and_does_not_query_registry(
     assert not receipt.exists()
     assert len(runner.calls) == 1
     assert "--load" in runner.calls[0] and "--push" not in runner.calls[0]
+
+
+def test_default_latest_build_retains_source_identity_in_labels(service):
+    runner = DockerFixture()
+    revision = 'a' * 40
+    build(push=False, service=service, environ={'SOURCE_REVISION': revision}, runner=runner)
+    command = runner.calls[0]
+    assert command[command.index('--tag') + 1] == 'arm-cluster-master:5000/agent-service-control:latest'
+    labels = [command[index + 1] for index, value in enumerate(command) if value == '--label']
+    assert 'org.opencontainers.image.revision=' + revision in labels
+    assert 'org.opencontainers.image.source=https://github.com/zmhhaha/panghu_agent' in labels
+    assert len(next(value.removeprefix('io.panghu.source.context-sha256=') for value in labels
+                    if value.startswith('io.panghu.source.context-sha256='))) == 64
+
+
+def test_invalid_source_revision_never_reaches_docker(service):
+    runner = DockerFixture()
+    with pytest.raises(BuildError, match='invalid_source_revision'):
+        build(service=service, environ={'SOURCE_REVISION': 'unverified-branch'}, runner=runner)
+    assert not runner.calls
+
+
+def test_latest_base_still_requires_an_exact_digest():
+    value = 'registry:5000/base:latest@sha256:' + 'a' * 64
+    assert immutable_image(value) == value
+    for unsafe in ('registry:5000/base:latest', 'registry:5000/base:version@sha256:' + 'a' * 64):
+        with pytest.raises(BuildError):
+            immutable_image(unsafe)
 
 
 @pytest.mark.parametrize("failure", ["build", "inspect"])

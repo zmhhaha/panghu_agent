@@ -258,6 +258,26 @@ def test_wrong_repository_digest_is_rejected_without_writing_receipt(tmp_path):
     assert not (tmp_path / 'build.json').exists()
 
 
+def test_latest_runtime_tags_keep_exact_source_labels(tmp_path, monkeypatch):
+    calls = []
+    revision = 'e' * 40
+    monkeypatch.setenv('SOURCE_REVISION', revision)
+
+    def runner(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(stdout='')
+
+    receipt = build.build(site_base=CONTROLLER_IMAGE, worker_base=WORKER_IMAGE,
+        controller_tag='registry/controller:latest', worker_tag='registry/worker:latest',
+        output=tmp_path, runner=runner)
+    assert {row['tag'] for row in receipt.values()} == {'registry/controller:latest', 'registry/worker:latest'}
+    for row in receipt.values():
+        assert row['labels']['org.opencontainers.image.revision'] == revision
+        assert len(row['labels']['io.panghu.source.context-sha256']) == 64
+    assert all('org.opencontainers.image.revision=' + revision in args
+               for args in calls if args[:2] == ['docker', 'build'])
+
+
 def test_preflight_failure_makes_no_mutation_and_discloses_no_credentials():
     calls = []
 
