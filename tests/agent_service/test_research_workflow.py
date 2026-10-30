@@ -200,7 +200,7 @@ def test_supplemental_batch_selects_latest_whole_observed_record_like_business_t
 
 @pytest.mark.parametrize('access_note', ['', '》（2025）均无摘要或已获取全文。',
     '全部来源均无摘要或者已获取全文。', '链接也不等于已获取全文。',
-    '链接并不等于已经获取全文。'])
+    '链接并不等于已经获取全文。', '不能据链接声称已阅读全文。'])
 def test_draft_collection_produces_fixed_evidence_revision_compatible_bytes(tmp_path, access_note):
     ctx, output = draft_context(), draft()
     if access_note:
@@ -300,7 +300,8 @@ def test_prelaunch_input_check_rejects_mutated_context_before_tools(tmp_path):
 
 @pytest.mark.parametrize('access_note', ['已获取摘要，无全文。', '全部十项来源均无已获取全文。',
     '》（2025）均无摘要或已获取全文。', '全部来源均无摘要或者已获取全文。',
-    '链接也不等于已获取全文。', '链接并不等于已经获取全文。'])
+    '链接也不等于已获取全文。', '链接并不等于已经获取全文。',
+    '不能据链接声称已阅读全文。'])
 def test_draft_reference_access_notes_do_not_claim_fulltext_acquisition(access_note):
     ctx, output = draft_context(), draft()
     output['report_markdown'] += '\n[1] Synthetic source; ' + access_note + '\n'
@@ -316,8 +317,13 @@ def test_draft_reference_access_notes_do_not_claim_fulltext_acquisition(access_n
     '链接不等于已获取全文且本报告已阅读全文。',
     '链接不等于已获取全文，但随后已获取全文。',
     '链接不等于本报告已获取全文。',
+    '并非不能据链接声称已阅读全文。',
+    '不能据链接声称已阅读全文的说法不成立。',
+    '不能据链接声称已阅读全文且本报告已阅读全文。',
+    '不能据链接声称已阅读全文，但随后已获取全文。',
+    '不能据链接声称本报告已阅读全文。',
 ])
-def test_draft_collector_rejects_reversed_or_unscoped_link_denials(tmp_path, access_note):
+def test_draft_collector_rejects_reversed_or_unscoped_access_denials(tmp_path, access_note):
     ctx, output = draft_context(), draft()
     output['report_markdown'] += '\n' + access_note + '\n'
     (tmp_path / 'inputs').mkdir()

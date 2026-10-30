@@ -397,6 +397,8 @@ def _disclosures(report, parsed):
                                   re.search(r"无(?:\s*摘要\s*(?:或者|或))?\s*$", prefix))
                 not_equivalent = (assertion.group().startswith("已") and
                                   re.search(r"不等于\s*$", prefix))
+                prohibited_claim = (assertion.group().startswith("已") and
+                                    re.search(r"不能(?:据(?:链接|此))?声称\s*$", prefix))
                 if direct_absence:
                     # An outer denial can reverse the absence assertion.
                     # Ambiguous nested negation is not eligible for this narrow
@@ -407,6 +409,14 @@ def _disclosures(report, parsed):
                     # exception to an adjacent, clause-final predicate; do not
                     # interpret arbitrary suffixes or nested Chinese negation.
                     outer = prefix[:not_equivalent.start()]
+                    denied = (not re.search(r"非|没有|未|不|无法|否认|否定|"
+                                             r"\b(?:no|not|without|never)\b", outer, re.I)
+                              and not clause[assertion.end():].strip())
+                elif prohibited_claim:
+                    # "不能据链接声称已阅读全文" prohibits a claim; it does not
+                    # assert access. Keep the prohibition adjacent and final,
+                    # so a reversed denial or another acquisition is rejected.
+                    outer = prefix[:prohibited_claim.start()]
                     denied = (not re.search(r"非|没有|未|不|无法|否认|否定|"
                                              r"\b(?:no|not|without|never)\b", outer, re.I)
                               and not clause[assertion.end():].strip())
