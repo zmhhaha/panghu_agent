@@ -1,6 +1,6 @@
 # 分支验证记录
 
-更新：2026-10-30。分支 `codex/svg-video-workbench`，未合入主线。当前结果见 [CURRENT_STATUS.md](CURRENT_STATUS.md)，剩余工作见 [NEXT_STEPS.md](NEXT_STEPS.md)。各批次结果分别记录，不能相加称为一次全量回归，也不能用离线检查代替真实模型、部署或浏览器验收。
+更新：2026-10-30。开发分支 `codex/svg-video-workbench` 已获用户批准并快进合入 `panghu_agent` 的 `main`。当前结果见 [CURRENT_STATUS.md](CURRENT_STATUS.md)，后续优化见 [NEXT_STEPS.md](NEXT_STEPS.md)。各批次结果分别记录，不能相加称为一次全量回归，也不能用离线检查代替真实模型、部署或浏览器验收。合并前已核对主线祖先关系、差异格式与应用代码树；合入的应用代码和已部署 `f90ba1c` 一致，仅验收与合并记录更新，没有再次调用模型或部署。
 
 ## 当前真实环境结果：截至 r8
 

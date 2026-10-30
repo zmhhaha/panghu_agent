@@ -1,6 +1,6 @@
 # 视频工作台当前状态
 
-更新：2026-10-30。工作树 `.video-workbench-worktree`，分支 `codex/svg-video-workbench`。**没有合入主线；真实制作功能链路、浏览器控制、最终备份、证据归档和验收环境清理已完成，固定画布裁切限制已记录。**
+更新：2026-10-30。工作树 `.video-workbench-worktree`，开发分支 `codex/svg-video-workbench`。**用户已批准，功能已快进合入 `panghu_agent` 的 `main`；真实制作功能链路、浏览器控制、最终备份、证据归档和验收环境清理已完成，固定画布裁切限制已记录。**
 
 入口：[video-service.panghuer.top](https://video-service.panghuer.top)。本期制作静态、可编辑的 SVG／HTML 和审阅 ZIP。工作台保存项目与审阅状态，现有通用 Agent 执行任务。配音、动画时间轴、MP4、图片生成尚未实现。
 
@@ -86,4 +86,4 @@ r5 对该失败 operation 做受控人工修复，再验证新的固定镜像窗
 - 旧备份 `94d3790bb9b147c1866fbf5614c93f13` 包含 versions 2，`ebe8a19a037a4386942ea99451822fc9` 包含 versions 1，`6afaef201238429784818b4d9ae91c7e` 包含 versions 0，均为历史快照。
 - 登录：本地私有记录 `.runtime/video-release/authenticated-browser-receipt-r3.json`。
 
-OpenSpec 服务中的规格、设计与任务记录已整合，18 项任务完成，验证通过且无问题；未执行规格 apply 或 archive。后续优化和合并决定看 [NEXT_STEPS.md](NEXT_STEPS.md)，固定项目和版本见 [CHECKPOINT.md](CHECKPOINT.md)，各批次验证见 [VALIDATION.md](VALIDATION.md)。
+OpenSpec 服务中的规格、设计与任务记录已整合，18 项任务完成，验证通过且无问题；未执行规格 apply 或 archive。后续优化看 [NEXT_STEPS.md](NEXT_STEPS.md)，固定项目和版本见 [CHECKPOINT.md](CHECKPOINT.md)，各批次验证见 [VALIDATION.md](VALIDATION.md)。本次主线合并保留已验收的应用代码树，没有新增模型调用或部署。

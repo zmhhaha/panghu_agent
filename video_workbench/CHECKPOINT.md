@@ -5,7 +5,7 @@
 ## 工作位置与当前进度
 
 - 工作树：`D:\github\armbianbegin\.video-workbench-worktree`。
-- 分支：`codex/svg-video-workbench`。未合入主线；全部任务结束并校验后才请用户决定是否合并。
+- 开发分支：`codex/svg-video-workbench`。用户已批准，功能已快进合入 `panghu_agent` 的 `main`，保留已验收的应用代码树。
 - 服务器独立目录：`/root/video-workbench-release-20261029/`，证据位于 `evidence/`。不把共享科研源码目录当作本次固定构建来源。
 - 已部署工作台能真实登录；登录隔离、重启持久化、备份／离线恢复已验证。
 - r7 已完成 SVG 修订与 V2 采用、独立运行中取消；原 HTML 失败记录保留。r8 新 HTML 完成并明确采用，已导出 SVG V2 与新 HTML 的正式 ZIP，源码／预览／播放器结构核对通过。
