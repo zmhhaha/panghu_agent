@@ -1,6 +1,8 @@
 # 独立候选的真实执行探针
 
-`deploy/acceptance_probe.py` 是管理员的一次性候选工具，仅支持 `ppt.plan_initial.v1` 和 `research.revise.v1`，分别可选择 Pi 或 Hermes。它不接入生产队列，不创建 `acceptance.json`，不启用 route/pool，也不发布业务产物。
+`deploy/acceptance_probe.py` 是管理员的一次性候选工具，支持 PPT 五阶段、科研生成／修订及 plan、retrieve、outline、draft 阶段，以及 `video.storyboard.v1`、`video.scene.v1`，可选择对应配置中的 Pi 或 Hermes。它不接入生产队列，不创建 `acceptance.json`，不启用 route/pool，也不发布业务产物。
+
+仅 `ppt.plan_initial.v1` 和 `research.revise.v1` 提供内置合成 fixture。视频候选必须显式提供 `--scenario` 和 `--source-dir`；使用 canonical UTF-8 `video-input.json`，上传角色为 `video_input`，task 仅含该文件的 `input_sha256`。拆镜候选可设 `max_scenes=2` 控制样本规模，单镜候选使用简单 SVG。其他阶段的真实执行也应使用该阶段要求的明确输入，不把仅渲染兼容性当作无输入即可运行。
 
 探针协调器在 `agent-service` 中运行，持有独立 SQLite、临时签名 key 和专用 llm-service 调用方 token。Worker 在 `agent-workers` 中运行，只得到一次尝试的模型 grant、结果签名 key 和临时 bootstrap token。两个 Pod 使用同一个固定候选镜像和同一份脚本；脚本可以通过不可变 ConfigMap 挂载，无须为了执行探针再构建镜像。
 

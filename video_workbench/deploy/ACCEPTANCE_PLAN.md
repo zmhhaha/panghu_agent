@@ -56,7 +56,7 @@ ARM 本地镜像、禁网容器启动、合成文件凭据、项目和镜头重�
 
 管理员根据真实能力、模型往返、隔离和模型代理租约结果补齐正式验收记录，并将报告绑定到准确组合。探针输出里 `production_acceptance_created=false` 和 `production_routes_changed=false` 是预期边界；不能直接改成 true，或编一份全 true 的文件来启用路由。只开启此次验收的两个视觉组合，核对现有科研路由和 caller 未改变。
 
-当前 [候选探针说明](../../agent_service/docs/CANDIDATE_ACCEPTANCE_PROBE.md) 的开头仍写仅支持 PPT／科研，落后于已支持视频场景的源码；执行时需采用本分支实际 `--help` 和视频输入要求。该文档差异尚需修正。
+[候选探针说明](../../agent_service/docs/CANDIDATE_ACCEPTANCE_PROBE.md) 已补充视频场景及明确输入要求。执行时采用本分支实际 `--help`；视频必须显式提供 `--scenario` 和 `--source-dir`。
 
 ## 最少真实任务矩阵
 

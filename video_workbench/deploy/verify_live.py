@@ -89,6 +89,8 @@ class Settings:
     run_id: str = ''
     poll_interval: float = 2.0
     poll_timeout: float = 660.0
+    pause_for_faults: bool = False
+    checkpoint_timeout: float = 900.0
 
     def __post_init__(self):
         for value in (self.workbench_url, self.origin, self.agent_url):
@@ -102,11 +104,14 @@ class Settings:
             canonical_uuid(self.project_id)
         if self.execute and self.project_id is not None:
             raise ValueError('Execute creates a new marked project; project-id is read-only')
+        if self.pause_for_faults and not self.execute:
+            raise ValueError('Operator checkpoints require explicit execution')
         marker = self.run_id or str(uuid4())
         if not re.fullmatch(r'[a-zA-Z0-9_-]{8,64}', marker):
             raise ValueError('An ordinary unique run identifier is required')
         object.__setattr__(self, 'run_id', marker)
-        for value, minimum, maximum in ((self.poll_interval, .1, 10), (self.poll_timeout, 1, 900)):
+        for value, minimum, maximum in ((self.poll_interval, .1, 10), (self.poll_timeout, 1, 900),
+                                        (self.checkpoint_timeout, 1, 1800)):
             if type(value) not in (int, float) or not math.isfinite(value) or not minimum <= value <= maximum:
                 raise ValueError('Bounded polling settings are required')
 
@@ -154,6 +159,10 @@ class EvidenceAgentClient(AgentClient):
         self.last_manifest = super().artifact_manifest(job_id)
         return self.last_manifest
 
+    def download_artifact(self, artifact_id):
+        self.last_artifact = super().download_artifact(artifact_id)
+        return self.last_artifact
+
 
 class Runner:
     def __init__(self, settings, *, workbench_transport=None, agent_transport=None,
@@ -161,7 +170,7 @@ class Runner:
         self.settings = settings
         self.clock, self.sleep = monotonic, sleep
         self.token = read_token(settings.agent_token_file)
-        self.secrets = [self.token.encode()]
+        self.secrets = [self.token.encode(), json.dumps(self.token, ensure_ascii=False)[1:-1].encode()]
         self.csrf = None
         self.http = httpx.Client(base_url=origin(settings.workbench_url), timeout=10,
             follow_redirects=False, trust_env=False, transport=workbench_transport,
@@ -197,6 +206,31 @@ class Runner:
     def flush(self):
         self.report['elapsed_seconds'] = round(self.clock() - self.started, 3)
         self.save('report.json', self.report)
+
+    def checkpoint(self, name, document=None):
+        """An operator gate; a release file proves intent, not fault acceptance."""
+        if not self.settings.pause_for_faults:
+            return
+        content = dict(schema_version='video-operator-checkpoint.v1', run_id=self.settings.run_id,
+                       project_id=self.report['project_id'], checkpoint=name, document=document)
+        checksum = digest(content)
+        self.save(name + '-checkpoint.json', content)
+        release = self.settings.output / (name + '-continue.json')
+        self.report['waiting_for_operator'] = dict(checkpoint=name, checkpoint_sha256=checksum)
+        self.flush()
+        deadline = self.clock() + self.settings.checkpoint_timeout
+        while True:
+            if release.exists():
+                require(release.is_file() and release.stat().st_size <= 4096, 'operator_release_invalid')
+                approved = decode_object(release.read_bytes())
+                require(approved == dict(checkpoint_sha256=checksum, run_id=self.settings.run_id),
+                        'operator_release_invalid')
+                self.report['waiting_for_operator'] = None
+                self.flush()
+                return
+            if self.clock() >= deadline:
+                raise VerificationFailure('operator_checkpoint_timeout')
+            self.sleep(min(self.settings.poll_interval, max(0, deadline - self.clock())))
 
     @contextmanager
     def step(self, name):
@@ -346,6 +380,7 @@ class Runner:
                 'publication_authorized', 'artifact_manifest_sha256', 'pins', 'attempt', 'stop_proven', 'stop_proof')})
             self.save(label + '-manifest.json', manifest)
             self.save(label + '-result.json', result)
+            self.save(label + '-artifact.json', self.agent.last_artifact)
             output = result['output']
             if kind == 'storyboard':
                 scenes = self.project['scenes']
@@ -441,7 +476,9 @@ class Runner:
             self.save('project-created.json', self.project)
         self.generate('storyboard', 'storyboard')
         svg_id, html_id = self.edit_formats()
+        self.checkpoint('before-svg', self.input_document('scene', svg_id))
         svg = self.generate('svg', 'scene', scene_id=svg_id)
+        self.checkpoint('after-svg', dict(version_id=svg['id'], source_sha256=svg['source_sha256']))
         html = self.generate('html', 'scene', scene_id=html_id)
         with self.step('explicit_adoption_and_initial_export'):
             rejected = self.request('GET', '/api/projects/' + self.report['project_id'] + '/export', expected=(409,))
@@ -449,6 +486,7 @@ class Runner:
             self.adopt(svg_id, svg['id'], None)
             self.adopt(html_id, html['id'], None)
             initial = self.export('export-initial', [svg, html])
+        self.checkpoint('before-revision', dict(svg_version_id=svg['id'], html_version_id=html['id']))
         original = self.request('GET', '/api/versions/' + svg['id'] + '/source', raw=True)
         revised = self.generate('revision', 'scene', scene_id=svg_id, base_version=svg['id'],
             base_source=original.decode('utf-8'), instruction='保留现有内容，把主要流程的连线和重点色改成橙色，提高文字可读性。')
@@ -506,6 +544,9 @@ def main(argv=None):
     parser.add_argument('--execute', action='store_true', help='Create a marked project; at most four generation POSTs')
     parser.add_argument('--poll-interval', type=float, default=2)
     parser.add_argument('--poll-timeout', type=float, default=660)
+    parser.add_argument('--pause-for-faults', action='store_true',
+                        help='Wait for bound operator release files before SVG, after SVG, and before revision')
+    parser.add_argument('--checkpoint-timeout', type=float, default=900)
     args = parser.parse_args(argv)
     try:
         report = Runner(Settings(**vars(args))).run()
