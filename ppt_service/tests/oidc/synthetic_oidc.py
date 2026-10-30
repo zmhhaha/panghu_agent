@@ -221,6 +221,7 @@ def main():
     work = Path("/tmp/p2-oidc")
     work.mkdir(mode=0o700)
     proxy = None
+    proxy_log = None
     server = None
     issuer = None
     result = {"synthetic": True, "browser_acceptance": False, "casdoor_acceptance": False,
@@ -286,18 +287,23 @@ def main():
         proxy_env = {"PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
             "SSL_CERT_FILE": str(work / "ca.pem"), "OAUTH2_PROXY_CLIENT_SECRET": fixture.client_secret,
             "OAUTH2_PROXY_COOKIE_SECRET": base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()}
+        proxy_log = args.output.with_name("proxy-private.log").open("x", encoding="utf-8")
+        os.chmod(proxy_log.name, 0o600)
         proxy = subprocess.Popen([str(args.binary), "--config", str(work / "oauth2-proxy.cfg")],
-                                 env=proxy_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                 env=proxy_env, stdout=proxy_log, stderr=proxy_log)
+        proxy_ready = False
         for _ in range(100):
             if proxy.poll() is not None:
                 break
             try:
                 if http(opener, PROXY + "/ping")[0] == 200:
+                    proxy_ready = http(opener, PROXY + "/ready")[0] == 200
                     break
             except (OSError, error.URLError):
                 pass
             time.sleep(0.05)
-        check("real_proxy_config_parsed_and_started", proxy.poll() is None and http(opener, PROXY + "/ready")[0] == 200)
+        result["proxy_startup_exit_code"] = proxy.poll()
+        check("real_proxy_config_parsed_and_started", proxy.poll() is None and proxy_ready)
         status, headers, _ = http(opener, PROXY + "/api/v1/me")
         check("anonymous_api_401_no_redirect", status == 401 and "Location" not in headers)
         check("inbound_bearer_alone_not_authenticated",
@@ -398,6 +404,8 @@ def main():
             issuer.shutdown()
             issuer.server_close()
         result["proxy_process_stopped"] = proxy is None or proxy.poll() is not None
+        if proxy_log:
+            proxy_log.close()
         result["checks_passed"] = sum(checks.values())
         result["checks_total"] = len(checks)
         args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
