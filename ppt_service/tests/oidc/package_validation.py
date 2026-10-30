@@ -58,7 +58,7 @@ def main():
         "runtime_source_sha256": {"ppt_service/server/auth.py": digest(HERE.parents[1] / "server/auth.py")},
         "protocol_executed": False,
         "fixture_replacements": ["http_address", "https_address", "oidc_issuer_url", "redirect_url",
-                                 "client_id", "upstreams", "authenticated_emails_file", "tls_cert_file", "tls_key_file"],
+                                 "client_id", "upstreams", "tls_cert_file", "tls_key_file"],
         "input_sha256": {p.name: digest(p) for p in sorted(inputs.iterdir())}}
     (inputs / "source.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     packet = args.output / "input.tar"

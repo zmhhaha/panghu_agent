@@ -144,41 +144,30 @@ def validate_auth(documents):
         'cookie_name': '__Host-ppt', 'cookie_path': '/', 'cookie_secure': True,
         'cookie_httponly': True, 'cookie_samesite': 'lax',
         'cookie_csrf_per_request': True, 'request_logging': False, 'cookie_expire': '8h',
+        'email_domains': ['*'],
     }
     allowed_proxy_keys = set(required_proxy) | {
         'oidc_issuer_url', 'redirect_url', 'client_id', 'scope',
-        'authenticated_emails_file', 'cookie_expire', 'skip_provider_button',
+        'cookie_expire', 'skip_provider_button',
     }
     if (not isinstance(client, str) or not client or 'REQUIRED_' in client or proxy.get('client_id') != client
-            or set(auth) != {'OIDC_ISSUER', 'OIDC_JWKS_URL', 'OIDC_AUDIENCE', 'ALLOWED_ORIGINS', 'INVITATION_EMAILS_FILE'}
+            or set(auth) != {'OIDC_ISSUER', 'OIDC_JWKS_URL', 'OIDC_AUDIENCE', 'ALLOWED_ORIGINS'}
             or auth.get('OIDC_JWKS_URL') != 'https://auth.panghuer.top/.well-known/jwks'
             or any(type(proxy.get(key)) is not type(value) or proxy.get(key) != value
                    for key, value in required_proxy.items())
             or set(proxy) - allowed_proxy_keys
             or proxy.get('scope') != 'openid email profile'
-            or auth.get('INVITATION_EMAILS_FILE') != '/owner/emails'
-            or proxy.get('authenticated_emails_file') != '/owner/emails'
             or 'INVITATION_SUBJECTS' in auth
             or auth.get('OIDC_ISSUER') != 'https://auth.panghuer.top'
             or proxy.get('oidc_issuer_url') != auth['OIDC_ISSUER']
             or auth.get('ALLOWED_ORIGINS') != 'https://ppt-service.panghuer.top'
             or proxy.get('redirect_url') != 'https://ppt-service.panghuer.top/oauth2/callback'
             or proxy.get('pass_authorization_header') is not True
-            or proxy.get('email_domains')
             or any(proxy.get(key) for key in ('ssl_insecure_skip_verify',
                 'insecure_oidc_skip_issuer_verification', 'insecure_oidc_allow_unverified_email'))):
         raise DeployError('PPT authentication configuration is incomplete or violates the shared contract')
     return [{'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {
         'name': doc['metadata']['name'], 'namespace': NAMESPACE}, 'data': doc['data']} for doc in documents]
-
-
-def validate_owner(documents):
-    if (len(documents) != 1 or documents[0].get('kind') != 'ConfigMap'
-            or documents[0].get('metadata', {}).get('name') != 'ppt-owner'
-            or documents[0]['metadata'].get('namespace') != NAMESPACE
-            or not isinstance(documents[0].get('data', {}).get('emails'), str)):
-        raise DeployError('PPT_OWNER_CONFIG must contain ppt-owner.data.emails in ppt-service')
-    return documents
 
 
 def database_password(secret, role):
@@ -523,6 +512,8 @@ class Deployment:
         raise DeployError('Set PPT_CLIENT_ID or PPT_AUTH_CONFIG for the first website deployment')
 
     def deploy(self, *, image):
+        if os.getenv('PPT_OWNER_CONFIG'):
+            raise DeployError('PPT_OWNER_CONFIG is obsolete; PPT now admits all authenticated Casdoor users')
         base = load_base()
         self.apply([doc for doc in base if doc['kind'] == 'Namespace'])
         self.lock()
@@ -540,11 +531,6 @@ class Deployment:
                 site_config = next(doc for doc in base if doc['kind'] == 'ConfigMap' and doc['metadata']['name'] == 'ppt-site')
                 site_config['data'].update(PPT_EXECUTION_ENABLED='true', PPT_EXECUTION_BACKEND=selected_backend)
             target_replicas = max(1, (existing_site or {}).get('spec', {}).get('replicas', 1))
-            owner_path = os.getenv('PPT_OWNER_CONFIG')
-            try:
-                owner = validate_owner(load_documents(owner_path or REPOSITORY / 'oauth/k8s/ppt-owner-configmap.yaml'))
-            except (DeployError, OSError, ValueError, KeyError, TypeError, AttributeError, yaml.YAMLError):
-                raise DeployError('PPT_OWNER_CONFIG or its default oauth/k8s/ppt-owner-configmap.yaml could not be read or parsed as the required owner ConfigMap') from None
             data_claim = next(doc for doc in base if doc['kind'] == 'PersistentVolumeClaim' and doc['metadata']['name'] == 'ppt-data')
             claim_uid, initialize_volume = self.storage_claim(data_claim, existing_site=existing_site)
             self.apply([doc for doc in base if doc['kind'] not in ('Namespace', 'Deployment', 'StatefulSet')
@@ -578,8 +564,6 @@ class Deployment:
                 raise DeployError('Storage initialization failed; retry deploy after resolving the Job/CSI error. Existing state must retain UID/GID 10000 and mode 0700; existing files are never changed') from None
             self.patch_storage(claim_uid, {STORAGE_STATE: 'ready-v1', STORAGE_UID: claim_uid})
             self.apply(auth)
-            if owner_path or not self.get('configmap', 'ppt-owner'):
-                self.apply(owner)
             self.apply(load_documents(REPOSITORY / 'oauth/k8s/ppt-oidc-egress.yaml'))
             site = next(doc for doc in base if doc['kind'] == 'Deployment')
             site['spec']['replicas'] = target_replicas

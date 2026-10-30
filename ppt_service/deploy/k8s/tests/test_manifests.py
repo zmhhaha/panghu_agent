@@ -61,7 +61,6 @@ class ManifestContracts(unittest.TestCase):
         cls.base_config, cls.base = load_target('base')
         cls.migration_config, cls.migration = load_target('migrate-job')
         cls.shared = list(yaml.load_all((COMMON / 'oauth/k8s/ppt-proxy-configmap.yaml').read_text(encoding='utf-8'), Loader=UniqueLoader))
-        cls.shared.extend(yaml.load_all((COMMON / 'oauth/k8s/ppt-owner-configmap.yaml').read_text(encoding='utf-8'), Loader=UniqueLoader))
         cls.all = cls.base + cls.migration + cls.shared
         cls.index = {(d['kind'], d['metadata']['name']): d for d in cls.all}
         cls.site = cls.index['Deployment', 'ppt-site']
@@ -90,9 +89,8 @@ class ManifestContracts(unittest.TestCase):
         self.assertNotIn('PPT_LOCAL_TEST_ONLY', self.config)
         self.assertNotIn('INVITATION_SUBJECTS', self.auth)
         self.assertNotIn('allowed-emails', self.oauth_data)
-        owner_data = self.index['ConfigMap', 'ppt-owner']['data']
-        self.assertEqual(set(owner_data), {'emails'})
-        self.assertIsInstance(owner_data['emails'], str)
+        self.assertNotIn(('ConfigMap', 'ppt-owner'), self.index)
+        self.assertNotIn('INVITATION_EMAILS_FILE', self.auth)
         self.assertIn('REQUIRED_', self.auth['OIDC_AUDIENCE'])
         self.assertEqual(self.auth['ALLOWED_ORIGINS'], 'https://ppt-service.panghuer.top')
         text = yaml.safe_dump(self.all).lower()
@@ -124,14 +122,15 @@ class ManifestContracts(unittest.TestCase):
         self.assertEqual(self.oauth['upstreams'], ['http://127.0.0.1:8000/'])
         self.assertEqual(self.config['TRUSTED_PROXY_CIDRS'], '127.0.0.1/32,::1/128')
 
-    def test_proxy_and_site_share_refreshable_email_whitelist(self):
-        self.assertEqual(self.auth['INVITATION_EMAILS_FILE'], '/owner/emails')
-        self.assertEqual(self.oauth['authenticated_emails_file'], self.auth['INVITATION_EMAILS_FILE'])
-        volume = next(volume for volume in pod_spec(self.site)['volumes'] if volume['name'] == 'owner')
-        self.assertEqual(volume['configMap'], {'name': 'ppt-owner'})
+    def test_proxy_and_site_admit_authenticated_users_without_membership_files(self):
+        self.assertEqual(self.oauth['email_domains'], ['*'])
+        self.assertNotIn('authenticated_emails_file', self.oauth)
+        self.assertNotIn('INVITATION_EMAILS_FILE', self.auth)
+        self.assertNotIn('skip_auth_routes', self.oauth)
+        self.assertNotIn('owner', {volume['name'] for volume in pod_spec(self.site)['volumes']})
         for container in (self.site_container, self.proxy):
-            mount = next(mount for mount in container['volumeMounts'] if mount['name'] == 'owner')
-            self.assertEqual(mount, {'name': 'owner', 'mountPath': '/owner', 'readOnly': True})
+            self.assertFalse(any(mount['name'] == 'owner' or mount['mountPath'] == '/owner'
+                                 for mount in container['volumeMounts']))
 
     def test_packaged_runtime_paths_are_explicit(self):
         self.assertEqual(self.site_container['command'], ['/usr/local/bin/python'])

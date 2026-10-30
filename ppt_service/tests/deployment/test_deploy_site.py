@@ -64,14 +64,13 @@ def database_state():
 
 class Scenario(deploy.Deployment):
     """Fake orchestration, while preserving the real deploy() control flow."""
-    def __init__(self, *, revision=deploy.TARGET_SCHEMA_REVISION, existing_site=3, owner=True, fail_secrets=False):
+    def __init__(self, *, revision=deploy.TARGET_SCHEMA_REVISION, existing_site=3, fail_secrets=False):
         super().__init__(runner=Runner())
         self.events = []
         self.applied = []
         self.jobs = []
         self.job_options = []
         self.revisions = [revision, deploy.TARGET_SCHEMA_REVISION]
-        self.owner = owner
         self.existing_site = existing_site
         self.fail_secrets = fail_secrets
 
@@ -105,8 +104,6 @@ class Scenario(deploy.Deployment):
             return secret_url(dedicated_url(role='ppt_runtime' if name.endswith('runtime') else 'ppt_migrator'))
         if kind == 'deployment' and name == 'ppt-site' and self.existing_site is not None:
             return {'spec': {'replicas': self.existing_site}}
-        if kind == 'configmap' and name == 'ppt-owner' and self.owner:
-            return {'data': {'emails': 'existing-owner@example.invalid\n'}}
         return None
 
     def revision(self):
@@ -322,16 +319,19 @@ def test_secret_failure_releases_lock_before_database_initialization():
     assert instance.events[-1] == ('unlock',)
 
 
-def test_existing_owner_list_is_preserved_without_override():
+def test_deploy_does_not_create_or_update_retired_owner_list():
     instance = Scenario()
     instance.deploy(image=IMAGE)
     assert not any(d['metadata']['name'] == 'ppt-owner' for d in instance.applied)
 
 
-def test_initial_owner_list_is_applied_when_absent():
-    instance = Scenario(owner=False)
-    instance.deploy(image=IMAGE)
-    assert sum(d['metadata']['name'] == 'ppt-owner' for d in instance.applied) == 1
+def test_legacy_owner_override_is_rejected_before_cluster_changes(monkeypatch):
+    instance = Scenario()
+    monkeypatch.setenv('PPT_OWNER_CONFIG', '/synthetic/private-owner.yaml')
+    with pytest.raises(deploy.DeployError, match='PPT_OWNER_CONFIG is obsolete'):
+        instance.deploy(image=IMAGE)
+    assert instance.events == []
+    assert not instance.runner.calls
 
 
 @pytest.mark.parametrize('revision', [0, 1, 2, 3])
@@ -947,10 +947,10 @@ def test_owner_input_diagnostic_names_override_without_echoing_private_path_or_e
     captured = capsys.readouterr()
     assert captured.out == ''
     assert 'ERROR: PPT_OWNER_CONFIG' in captured.err
-    assert 'could not be read or parsed' in captured.err
+    assert 'is obsolete' in captured.err
     assert marker not in captured.err and str(path) not in captured.err
     assert '@example.invalid' not in captured.err and 'Traceback' not in captured.err
-    assert instance.events[-1] == ('unlock',)
+    assert instance.events == []
 
 
 @pytest.mark.parametrize('failure', ['missing', 'permission', 'encoding'])
@@ -1009,7 +1009,8 @@ def test_dry_run_never_instantiates_command_runner(monkeypatch):
     assert deploy.main(['--dry-run'])==0
 
 
-@pytest.mark.parametrize('change', ['cookie','bypass-route','upstream','cookie-domain','access-token','jwks','extra-env'])
+@pytest.mark.parametrize('change', ['cookie','bypass-route','upstream','cookie-domain','access-token','jwks','extra-env',
+                                  'email-domain', 'email-file', 'invitation-env'])
 def test_auth_config_rejects_relaxed_security_fields(change):
     documents=deploy.load_documents(deploy.REPOSITORY/'oauth/k8s/ppt-proxy-configmap.yaml')
     by_name={doc['metadata']['name']:doc for doc in documents}
@@ -1022,6 +1023,9 @@ def test_auth_config_rejects_relaxed_security_fields(change):
     elif change=='access-token':proxy=proxy.replace('pass_access_token = false','pass_access_token = true')
     elif change=='jwks':by_name['ppt-auth']['data']['OIDC_JWKS_URL']='https://external.example.invalid/jwks'
     elif change=='extra-env':by_name['ppt-auth']['data']['PPT_LOCAL_TEST_ONLY']='1'
+    elif change=='email-domain':proxy=proxy.replace('email_domains = ["*"]', 'email_domains = ["example.invalid"]')
+    elif change=='email-file':proxy+='\nauthenticated_emails_file = "/owner/emails"\n'
+    elif change=='invitation-env':by_name['ppt-auth']['data']['INVITATION_EMAILS_FILE']='/owner/emails'
     by_name['ppt-oidc']['data']['oauth2-proxy.cfg']=proxy
     with pytest.raises(deploy.DeployError):
         deploy.validate_auth(documents)

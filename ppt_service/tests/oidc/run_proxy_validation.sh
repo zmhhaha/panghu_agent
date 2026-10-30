@@ -4,7 +4,7 @@ set -euo pipefail
 case_dir=${1:?absolute dedicated case directory required}
 [[ "$case_dir" == /root/ppt-service-p2-oidc-20261023-r* ]]
 [[ -d "$case_dir/input" && ! -e "$case_dir/output" ]]
-site_id=${PPT_SITE_IMAGE_ID:?set the rebuilt email-admission site image config ID explicitly}
+site_id=${PPT_SITE_IMAGE_ID:?set the rebuilt authenticated-access site image config ID explicitly}
 [[ "$site_id" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo 'PPT_SITE_IMAGE_ID must be an immutable sha256 image config ID' >&2; exit 2; }
 proxy_id=sha256:c410cd2f0b69eadd73498ede45579e847177e1fd45947fe3500091409c532867
 owner=ppt-p2-oidc-20261023

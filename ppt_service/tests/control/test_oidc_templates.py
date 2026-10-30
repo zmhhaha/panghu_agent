@@ -13,7 +13,6 @@ class OidcTemplateTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         objects = list(yaml.safe_load_all((COMMON / 'oauth/k8s/ppt-proxy-configmap.yaml').read_text(encoding='utf-8')))
-        objects.extend(yaml.safe_load_all((COMMON / 'oauth/k8s/ppt-owner-configmap.yaml').read_text(encoding='utf-8')))
         cls.namespaces = {obj['metadata']['namespace'] for obj in objects}
         cls.maps = {obj['metadata']['name']: obj['data'] for obj in objects}
         cls.proxy = tomllib.loads(cls.maps['ppt-oidc']['oauth2-proxy.cfg'])
@@ -34,20 +33,19 @@ class OidcTemplateTests(unittest.TestCase):
         self.assertEqual(self.proxy['upstreams'], ['http://127.0.0.1:8000/'])
         self.assertEqual(self.proxy['api_routes'], ['^/api/'])
         self.assertNotIn('skip_auth_routes', self.proxy)
-        self.assertNotIn('email_domains', self.proxy)
+        self.assertEqual(self.proxy['email_domains'], ['*'])
 
-    def test_dedicated_client_and_independent_owner_list(self):
+    def test_dedicated_client_and_authenticated_admission(self):
         self.assertEqual(self.namespaces, {'ppt-service'})
         self.assertEqual(self.proxy['client_id'], 'REQUIRED_DEDICATED_PPT_CLIENT_ID')
         self.assertEqual(self.proxy['client_id'], self.auth['OIDC_AUDIENCE'])
         self.assertNotIn('INVITATION_SUBJECTS', self.auth)
         self.assertNotIn('allowed-emails', self.maps['ppt-oidc'])
-        self.assertEqual(set(self.maps['ppt-owner']), {'emails'})
-        self.assertIsInstance(self.maps['ppt-owner']['emails'], str)
+        self.assertNotIn('ppt-owner', self.maps)
         self.assertEqual(self.auth['ALLOWED_ORIGINS'], 'https://ppt-service.panghuer.top')
         self.assertEqual(self.proxy['redirect_url'], self.auth['ALLOWED_ORIGINS'] + '/oauth2/callback')
-        self.assertEqual(self.proxy['authenticated_emails_file'], '/owner/emails')
-        self.assertEqual(self.auth['INVITATION_EMAILS_FILE'], self.proxy['authenticated_emails_file'])
+        self.assertNotIn('authenticated_emails_file', self.proxy)
+        self.assertNotIn('INVITATION_EMAILS_FILE', self.auth)
 
     def test_public_settings_have_no_credentials_or_validation_bypass(self):
         self.assertEqual(self.auth['OIDC_ISSUER'], 'https://auth.panghuer.top')

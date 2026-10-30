@@ -115,9 +115,6 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/ppt-service
-            - name: owner
-              mountPath: /owner
-              readOnly: true
             - name: tmp
               mountPath: /tmp
         - name: oauth2-proxy
@@ -170,9 +167,6 @@ spec:
             - name: oidc-config
               mountPath: /etc/ppt-oidc
               readOnly: true
-            - name: owner
-              mountPath: /owner
-              readOnly: true
             - name: proxy-tmp
               mountPath: /tmp
       volumes:
@@ -182,9 +176,6 @@ spec:
         - name: oidc-config
           configMap:
             name: ppt-oidc
-        - name: owner
-          configMap:
-            name: ppt-owner
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
