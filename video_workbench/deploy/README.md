@@ -97,7 +97,7 @@ python -m pytest tests/video_workbench/test_deploy.py -q
 | 命名空间 / Secret | 所需键 | 用途 |
 | --- | --- | --- |
 | `oauth/oauth2-proxy-secret` | `OIDC_CLIENT_ID`、`OIDC_CLIENT_SECRET`、`OIDC_ISSUER_URL`、`ALLOWED_DOMAINS` | 复用现有 OIDC 应用，仅按键引用；不导入它的共享 Cookie 凭据。 |
-| `oauth/video-workbench-oauth-runtime` | `COOKIE_SECRET` | 工作台独立 Cookie 加密凭据；使用 32 个随机字节的 base64 文本。 |
+| `oauth/video-workbench-oauth-runtime` | `COOKIE_SECRET` | 工作台独立 Cookie 加密凭据；使用 32 个随机字节的 URL-safe base64 文本（字母表使用 `-`、`_`，保留填充）。oauth2-proxy v7.8 不接受含 `+`、`/` 的标准 base64 编码。 |
 | `oauth/video-workbench-oauth-runtime` | `REDIS_PASSWORD` | 独立 Redis 的认证凭据；使用 32 至 128 位随机字母或数字，例如 64 位随机十六进制文本。 |
 
 建议由 Vault 中独立的 `secret/video-workbench/oauth` 记录保存 `COOKIE_SECRET` 和 `REDIS_PASSWORD`，再投影到上述会话 Secret，避免复制共享 Cookie 密钥。Cookie 使用 `__Host-video_workbench`，仅限当前 Host，带 Secure、Path=/ 和登录 CSRF 校验，不设置共享父域 Cookie。凭据通过 Secret 引用注入环境，不写入生成的命令参数或公开 ConfigMap；Redis 在私有 `/tmp` 配置文件中加载密码，不将密码放入进程参数。凭据轮换后需要按既有流程重启代理和 Redis。
