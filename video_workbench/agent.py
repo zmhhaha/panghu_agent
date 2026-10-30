@@ -101,14 +101,26 @@ class VideoAgentGateway:
         self.client = client
         self.profile_revision = profile_revision
 
+    @staticmethod
+    def _remote(call, *args, **kwargs):
+        """Normalize upstream outages without retrying or catching video validation."""
+        try:
+            return call(*args, **kwargs)
+        except ServiceError as error:
+            if error.status >= 500:
+                # Upstreams may choose their own error codes. Reconciliation
+                # must retain an uncertain admission regardless of that code.
+                raise ServiceError('service_unavailable', error.status) from None
+            raise
+
     def capabilities(self) -> dict:
-        return self.client.capabilities()
+        return self._remote(self.client.capabilities)
 
     def upload(self, document: dict) -> dict:
         """Upload exact canonical bytes; the caller persists this returned ref."""
         raw = _document_bytes(document)
         checksum = hashlib.sha256(raw).hexdigest()
-        uploaded = self.client.upload_input(INPUT_NAME, raw)
+        uploaded = self._remote(self.client.upload_input, INPUT_NAME, raw)
         _require(type(uploaded) is dict and _uuid(uploaded.get('input_id'))
                  and uploaded.get('name') == INPUT_NAME and uploaded.get('sha256') == checksum
                  and type(uploaded.get('size')) is int and uploaded['size'] == len(raw))
@@ -154,17 +166,17 @@ class VideoAgentGateway:
                        business_ref='video:' + operation_id, task={'input_sha256': checksum},
                        inputs=[dict(input_ref)], execution_deadline_at=deadline_at,
                        timeout_seconds=min(600, route['max_timeout_seconds'], math.ceil(remaining)))
-        return self.client.submit(request, idempotency_key='video-' + operation_id)
+        return self._remote(self.client.submit, request, idempotency_key='video-' + operation_id)
 
     def lookup(self, operation_id: str) -> dict:
         """Read-only recovery of an admission whose POST response was lost."""
-        return self.client.lookup_job('video-' + _operation(operation_id))
+        return self._remote(self.client.lookup_job, 'video-' + _operation(operation_id))
 
     def poll(self, job_id: str) -> dict:
-        return self.client.get_job(job_id)
+        return self._remote(self.client.get_job, job_id)
 
     def cancel(self, job_id: str) -> dict:
-        return self.client.cancel(job_id)
+        return self._remote(self.client.cancel, job_id)
 
     def collect(self, job_id: str, kind: VideoKind, input_sha256: str) -> dict:
         """Independently validate the service's stopped, hash-bound candidate."""
@@ -191,7 +203,7 @@ class VideoAgentGateway:
                          for item in proof['resource_ids'])
                  and len(set(proof['resource_ids'])) == len(proof['resource_ids'])
                  and _finite_number(proof.get('observed_at')) and proof['observed_at'] > 0)
-        manifest = self.client.artifact_manifest(job_id)
+        manifest = self._remote(self.client.artifact_manifest, job_id)
         _require(type(manifest) is dict and set(manifest) == {
             'schema_version', 'job_id', 'attempt_id', 'files', 'total_bytes',
             'publication_authorized', 'sha256'})
@@ -213,7 +225,7 @@ class VideoAgentGateway:
                  and _sha(item.get('sha256')) and type(item.get('size')) is int
                  and 1 <= item['size'] <= MAX_RESULT_BYTES
                  and type(manifest['total_bytes']) is int and manifest['total_bytes'] == item['size'])
-        raw = self.client.download_artifact(item['artifact_id'])
+        raw = self._remote(self.client.download_artifact, item['artifact_id'])
         _require(type(raw) is bytes and len(raw) == item['size']
                  and hashlib.sha256(raw).hexdigest() == item['sha256'], 'video_artifact_digest_mismatch')
         from agent_service.profiles.video import validate_video_result

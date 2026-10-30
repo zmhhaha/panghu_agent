@@ -11,6 +11,8 @@ from agent_service.artifacts import frozen_manifest
 from agent_service.client import AgentClient
 from agent_service.contracts import ServiceError, canonical_bytes
 from video_workbench.agent import VideoAgentGateway
+from video_workbench.service import Workflow
+from video_workbench.store import Store
 
 
 JOB, ATTEMPT, INPUT, ARTIFACT = (str(UUID(int=index)) for index in (10, 11, 12, 13))
@@ -40,6 +42,8 @@ class Peer:
         self.job = None
         self.upload_mutation = None
         self.lose_submit_response = False
+        self.submit_failure = None
+        self.http_errors = {}
         self.preflight_failure = None
         self.profiles = [dict(profile='video.' + kind + '.v1', profile_revision='1',
             configured=True, ready=True, supports_inputs=True, max_timeout_seconds=600)
@@ -48,6 +52,9 @@ class Peer:
     def __call__(self, request):
         self.calls.append(request)
         path, method = request.url.path, request.method
+        if (method, path) in self.http_errors:
+            status, code = self.http_errors[method, path]
+            return httpx.Response(status, json={'detail': {'code': code}})
         if path == '/v1/capabilities':
             if self.preflight_failure == 'timeout':
                 raise httpx.ReadTimeout('Capabilities response lost', request=request)
@@ -67,6 +74,9 @@ class Peer:
                             publication_authorized=False, private_future_field={'preserved': True})
             if self.lose_submit_response:
                 raise httpx.ReadTimeout('Response lost after admission', request=request)
+            if self.submit_failure is not None:
+                status, code = self.submit_failure
+                return httpx.Response(status, json={'detail': {'code': code}})
             return httpx.Response(202, json=self.job)
         if path.startswith('/v1/jobs/by-idempotency/') or path == '/v1/jobs/' + JOB:
             if self.job is None:
@@ -114,6 +124,24 @@ def wire(monkeypatch):
 
 def ref():
     return dict(input_id=INPUT, sha256=INPUT_SHA256, path='video-input.json', role='video_input')
+
+
+@pytest.fixture
+def wire_operation(wire, tmp_path):
+    gateway, peer = wire
+    store = Store(tmp_path / 'state.db')
+    project = store.create_project('alice', dict(title='真实协议回归', script='输入文稿', style='蓝色信息图'))
+    project = store.save_scene('alice', project['id'], result_document()['output']['scenes'][0])
+    operation = store.start('alice', project['id'], 'generate',
+        dict(expected_revision=project['revision']), 'wire-scene', scene_id=project['scenes'][0]['id'])
+    return gateway, peer, store, Workflow(store, gateway), project, operation
+
+
+def complete_operation(peer, operation):
+    document = result_document('scene')
+    document['input_sha256'] = operation['input_sha256']
+    peer.complete('scene', raw=canonical_bytes(document))
+    peer.job['business_ref'] = 'video:' + operation['id']
 
 
 def test_upload_uses_exact_canonical_bytes_and_returns_persistable_ref(wire):
@@ -220,6 +248,142 @@ def test_lost_submit_response_recovers_with_get_and_never_reposts(wire):
     assert recovered == peer.job
     assert peer.count('POST', '/v1/jobs') == 1
     assert peer.count('GET', '/v1/jobs/by-idempotency/video-operation-1') == 1
+
+
+@pytest.mark.parametrize('stage,method,path', [
+    ('capabilities', 'GET', '/v1/capabilities'),
+    ('upload', 'POST', '/v1/inputs'),
+    ('submit', 'POST', '/v1/jobs'),
+    ('lookup', 'GET', '/v1/jobs/by-idempotency/video-operation-1'),
+    ('poll', 'GET', '/v1/jobs/' + JOB),
+    ('cancel', 'POST', '/v1/jobs/' + JOB + '/cancel'),
+    ('manifest', 'GET', '/v1/jobs/' + JOB + '/artifact-manifest'),
+    ('download', 'GET', '/v1/artifacts/' + ARTIFACT + '/content'),
+])
+@pytest.mark.parametrize('status,code', [
+    (500, 'upstream_internal_failure'), (503, 'relay_restart_gate_closed'),
+])
+def test_custom_upstream_5xx_is_recoverable_without_implicit_retry(wire, stage, method, path, status, code):
+    gateway, peer = wire
+    peer.complete('scene')
+    peer.http_errors[method, path] = status, code
+    calls = dict(capabilities=gateway.capabilities, upload=lambda: gateway.upload(INPUT_DOCUMENT),
+        submit=lambda: gateway.submit('operation-1', 'scene', INPUT_DOCUMENT, 1200, ref()),
+        lookup=lambda: gateway.lookup('operation-1'), poll=lambda: gateway.poll(JOB),
+        cancel=lambda: gateway.cancel(JOB), manifest=lambda: gateway.collect(JOB, 'scene', INPUT_SHA256),
+        download=lambda: gateway.collect(JOB, 'scene', INPUT_SHA256))
+    with pytest.raises(ServiceError) as failure:
+        calls[stage]()
+    assert (failure.value.code, failure.value.status) == ('service_unavailable', status)
+    assert peer.count(method, path) == 1
+
+
+def test_custom_capability_outage_is_definite_preflight_failure(wire):
+    gateway, peer = wire
+    peer.http_errors['GET', '/v1/capabilities'] = 503, 'relay_restart_gate_closed'
+    with pytest.raises(ServiceError) as failure:
+        gateway.submit('operation-1', 'scene', INPUT_DOCUMENT, 1200, ref())
+    assert (failure.value.code, failure.value.status) == ('video_preflight_unavailable', 503)
+    assert peer.count('POST', '/v1/jobs') == 0
+
+
+@pytest.mark.parametrize('lost_response', ['timeout', 'custom_503'])
+def test_custom_lookup_outage_survives_restart_with_one_admission_and_candidate(wire_operation, lost_response):
+    gateway, peer, store, workflow, project, operation = wire_operation
+    if lost_response == 'timeout':
+        peer.lose_submit_response = True
+    else:
+        # The backend accepted the paid Job before returning its own 503 code.
+        peer.submit_failure = 503, 'admission_receipt_unavailable'
+    workflow.tick()
+    pending = store.operation(operation['id'])
+    assert pending['status'] == 'submitting' and pending['error'] == 'submission_uncertain'
+    assert pending['submit_attempted'] is True and pending['job_id'] is None
+    assert peer.job['job_id'] == JOB
+    path = '/v1/jobs/by-idempotency/video-' + operation['id']
+    peer.http_errors['GET', path] = 503, 'relay_restart_gate_closed'
+    workflow.tick()
+    workflow.tick()
+    pending = Store(store.path).operation(operation['id'])
+    assert pending['status'] == 'submitting' and pending['error'] == 'service_unavailable'
+    assert pending['job_id'] is None
+    assert store.project('alice', project['id'])['scenes'][0]['versions'] == []
+
+    # Recreate the HTTP client and durable reconciler, just as on service restart.
+    with AgentClient('http://agent.invalid', TOKEN, transport=httpx.MockTransport(peer)) as client:
+        recovered = Workflow(Store(store.path), VideoAgentGateway(client))
+        del peer.http_errors['GET', path]
+        complete_operation(peer, pending)
+        recovered.tick()
+        recovered.tick()
+    finished = Store(store.path).operation(operation['id'])
+    assert finished['status'] == 'completed' and finished['error'] is None
+    assert finished['job_id'] == JOB and finished['input_ref'] == pending['input_ref']
+    assert finished['deadline_at'] == pending['deadline_at']
+    scene = store.project('alice', project['id'])['scenes'][0]
+    assert len(scene['versions']) == 1 and scene['head_version_id'] is None
+    assert peer.count('POST', '/v1/jobs') == 1
+    assert peer.count('POST', '/v1/inputs') == 1
+    assert peer.count('GET', path) == 3
+
+
+@pytest.mark.parametrize('stage,status,code', [
+    ('submit', 422, 'invalid_request'), ('lookup', 403, 'caller_forbidden'),
+    ('poll', 401, 'caller_unauthorized'),
+])
+def test_upstream_4xx_remains_terminal_without_reposting(wire_operation, stage, status, code):
+    gateway, peer, store, workflow, project, operation = wire_operation
+    if stage == 'lookup':
+        peer.lose_submit_response = True
+        workflow.tick()
+        method, path = 'GET', '/v1/jobs/by-idempotency/video-' + operation['id']
+    else:
+        method, path = ('POST', '/v1/jobs') if stage == 'submit' else ('GET', '/v1/jobs/' + JOB)
+    peer.http_errors[method, path] = status, code
+    workflow.tick()
+    workflow.tick()
+    failed = store.operation(operation['id'])
+    assert failed['status'] == 'failed' and failed['error'] == code
+    assert peer.count('POST', '/v1/jobs') == 1
+    assert store.project('alice', project['id'])['scenes'][0]['versions'] == []
+
+
+def test_lookup_404_remains_pending_and_never_reposts(wire_operation):
+    gateway, peer, store, workflow, project, operation = wire_operation
+    peer.lose_submit_response = True
+    workflow.tick()
+    path = '/v1/jobs/by-idempotency/video-' + operation['id']
+    peer.http_errors['GET', path] = 404, 'job_not_found'
+    recovered = Workflow(Store(store.path), gateway)
+    recovered.tick()
+    pending = store.operation(operation['id'])
+    assert pending['status'] == 'submitting' and pending['job_id'] is None
+    del peer.http_errors['GET', path]
+    complete_operation(peer, pending)
+    recovered.tick()
+    recovered.tick()
+    assert store.operation(operation['id'])['status'] == 'completed'
+    assert peer.count('POST', '/v1/jobs') == 1
+    assert len(store.project('alice', project['id'])['scenes'][0]['versions']) == 1
+
+
+@pytest.mark.parametrize('failure,code', [
+    ('profile', 'video_profile_unavailable'), ('artifact', 'video_artifact_digest_mismatch'),
+])
+def test_local_video_validation_is_terminal_and_never_publishes(wire_operation, failure, code):
+    gateway, peer, store, workflow, project, operation = wire_operation
+    if failure == 'profile':
+        peer.profiles[1]['ready'] = False
+    else:
+        workflow.tick()
+        complete_operation(peer, store.operation(operation['id']))
+        peer.content += b' '
+    workflow.tick()
+    workflow.tick()
+    failed = store.operation(operation['id'])
+    assert failed['status'] == 'failed' and failed['error'] == code
+    assert peer.count('POST', '/v1/jobs') == (0 if failure == 'profile' else 1)
+    assert store.project('alice', project['id'])['scenes'][0]['versions'] == []
 
 
 def test_capabilities_poll_and_cancel_preserve_service_states(wire):
