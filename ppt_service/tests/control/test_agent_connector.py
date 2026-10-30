@@ -238,6 +238,99 @@ def test_planning_roundtrip_uses_two_database_confirmations_and_artifact_replay(
     assert len(service.submissions) == 2
 
 
+def test_prepare_preserves_rich_database_confirmations_above_default_task_bound(database, monkeypatch):
+    original_stage1, original_stage2 = stage1_plan, stage2_plan
+
+    def rich_stage1():
+        plan = original_stage1()
+        plan['audience']['value'] = ('结合上传资料区分主题背景、基础概念和适用场景，面向初次学习系统架构的工程师。' * 90)
+        return plan
+
+    def rich_stage2():
+        plan = original_stage2()
+        for direction in plan['design']['directions']:
+            direction['note'] = ('按概念、机制、示例和局限组织讲解，逐页对应原始资料并标明证据来源。' * 120)
+        return plan
+
+    monkeypatch.setitem(globals(), 'stage1_plan', rich_stage1)
+    monkeypatch.setitem(globals(), 'stage2_plan', rich_stage2)
+    control, service = connector(database)
+    complete_plan(control)
+    confirm_and_enqueue(database, 'plan_options')
+    complete_plan(control)
+    prepare_id = confirm_and_enqueue(database, 'prepare')
+    with database.sessions() as session:
+        task, ref = build_agent_task(session, session.get(Job, prepare_id))
+        assert 32768 < len(canonical_bytes(task)) < 256 * 1024
+        confirmations = copy.deepcopy(task['confirmations'])
+        assert confirmations['stage1']['outline']['communication'] == rich_stage1()
+        assert confirmations['stage2']['selected_direction']['note'] == rich_stage2()['design']['directions'][1]['note']
+        assert confirmations['stage2']['selection'] == {'direction_id': 'B'}
+
+    # Claim plus upload uses the real connector and durable outbox, but does not
+    # submit prepare to even the synthetic transport. Both wire validators must
+    # accept the exact same, unabridged database confirmations.
+    assert control.tick() == {'status': 'uploading', 'job_id': prepare_id}
+    with database.sessions() as session:
+        out = session.get(AgentOutbox, prepare_id)
+        assert out.request['task'] == task
+        assert out.request['checkpoint_ref'] == ref
+        request = JobRequest.model_validate(out.request)
+        assert envelope(request.task).task['confirmations'] == confirmations
+        assert out.remote_job_id is None and out.submission_started is False
+        assert session.get(Project, database.project_id).confirmed_plan_revision == confirmations['stage2']['plan_revision']
+        assert len(session.scalars(select(Checkpoint)).all()) == 2
+        assert not session.scalars(select(Version)).all()
+    assert len(service.submissions) == 2
+
+
+@pytest.mark.parametrize('failure', ['task_too_large', 'request_invalid'])
+def test_prepare_rejection_before_dispatch_has_safe_error_and_retains_confirmations(database, monkeypatch, failure):
+    if failure == 'task_too_large':
+        original_stage2 = stage2_plan
+
+        def oversized_stage2():
+            plan = original_stage2()
+            for page in plan['page_plan']['pages']:
+                page['body'] = '详细说明资料中的概念与证据。' * 2500
+            return plan
+
+        monkeypatch.setitem(globals(), 'stage2_plan', oversized_stage2)
+    control, service = connector(database)
+    complete_plan(control)
+    confirm_and_enqueue(database, 'plan_options')
+    complete_plan(control)
+    prepare_id = confirm_and_enqueue(database, 'prepare')
+    with database.sessions() as session:
+        task, _ = build_agent_task(session, session.get(Job, prepare_id))
+        confirmations = copy.deepcopy(task['confirmations'])
+        if failure == 'task_too_large':
+            assert len(canonical_bytes(task)) > 256 * 1024
+    if failure == 'request_invalid':
+        def invalid_request(**fields):
+            return JobRequest(**dict(fields, timeout_seconds=0))
+        monkeypatch.setattr('ppt_service.control.agent_connector.JobRequest', invalid_request)
+
+    assert control._claim() is None
+    code = 'execution_task_too_large' if failure == 'task_too_large' else 'execution_request_invalid'
+    with database.sessions() as session:
+        job = session.get(Job, prepare_id)
+        assert job.status == 'failed' and job.error_code == code
+        assert job.run_id is None and job.job_uid is None and job.stopped is False
+        assert session.get(AgentOutbox, prepare_id) is None
+        assert session.get(ExecutionSlot, 1).job_id is None
+        project = session.get(Project, database.project_id)
+        assert project.active_job_id is None and project.stage == 'draft' and project.latest_version_id is None
+        assert project.confirmed_plan_revision == confirmations['stage2']['plan_revision']
+        rebuilt, _ = build_agent_task(session, job)
+        assert rebuilt['confirmations'] == confirmations
+        assert len(session.scalars(select(Checkpoint)).all()) == 2
+        assert not session.scalars(select(Version)).all()
+        failed = session.scalar(select(JobEvent).where(JobEvent.job_id == prepare_id, JobEvent.type == 'job.failed'))
+        assert failed.payload == {'error_code': code}
+    assert len(service.submissions) == 2
+
+
 def test_interrupted_artifact_write_resumes_download_without_resubmitting_model_job(database, monkeypatch):
     control, service = connector(database)
     assert control.tick()['status'] == 'uploading'

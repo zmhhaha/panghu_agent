@@ -10,6 +10,8 @@ let pendingProfile: Promise<Profile> | null = null;
 function clearAuthentication() { csrfToken=null;authenticationEpoch++;pendingProfile=null; }
 export const errors: Record<string,string> = {
   EXECUTION_NOT_CONNECTED:'执行器尚未接通，当前仅可测试项目、资料和设置；不会调用模型。',
+  EXECUTION_TASK_TOO_LARGE:'制作请求超过服务容量，尚未启动制作。项目资料和已确认方案仍保留，请联系管理员核对后重试。',
+  EXECUTION_REQUEST_INVALID:'制作请求在提交前未通过校验，尚未启动制作。项目资料和已确认方案仍保留，请联系管理员核对后重试。',
   CSRF_REJECTED:'页面安全校验已失效，请刷新页面后重试。',
   REQUEST_TIMEOUT:'等待请求超时。操作可能已完成，请先刷新状态核对，再决定是否重试。',
   REQUEST_CANCELLED:'已停止等待请求。操作可能已完成，请先刷新状态核对。',

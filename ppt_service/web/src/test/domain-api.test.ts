@@ -40,6 +40,11 @@ describe('immutable confirmation',()=>{
  });
 });
 describe('retry and safety',()=>{
+ it.each(['execution_task_too_large','execution_request_invalid'])('explains pre-dispatch rejection %s without claiming an interrupted model job',code=>{
+  const message=safeError(new ApiError(code));
+  expect(message).toContain('尚未启动制作');expect(message).toContain('已确认方案仍保留');
+  expect(message).toContain(code.toUpperCase());expect(message).not.toContain('EXECUTION_INTERRUPTED');
+ });
  it('acknowledges with required title and preserves all configured project fields',async()=>{const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({id:'p',plans:[]})));vi.stubGlobal('fetch',fetcher);const configured={...project,settings:{...defaultSettings,pages:12,audience:'实际受众',purpose:'实际用途'}};await api.acknowledge(configured);expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({title:'项目',page_count:12,language:'zh',audience:'实际受众',purpose:'实际用途',style:defaultSettings.style,requirements:'',external_model_ack:true,expected_revision:2});});
  it('keeps acknowledged consent while saving settings with required title',async()=>{const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({id:'p',plans:[]})));vi.stubGlobal('fetch',fetcher);await api.update({...project,external_model_ack:true},{...defaultSettings,pages:9});expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({title:'项目',page_count:9,external_model_ack:true,expected_revision:2});});
  it('keeps stable keys for same action and changes on changed payload or successful new intent',()=>{const keys=new IntentKeys();const a=keys.key('plan',{feedback:'a'});expect(keys.key('plan',{feedback:'a'})).toBe(a);expect(keys.key('plan',{feedback:'b'})).not.toBe(a);keys.complete('plan',{feedback:'a'});expect(keys.key('plan',{feedback:'a'})).not.toBe(a);});

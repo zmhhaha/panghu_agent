@@ -21,7 +21,8 @@ from sqlalchemy import select
 
 from agent_service.artifacts import read_output, relative_path, unique_paths
 from agent_service.client import AgentClient
-from agent_service.contracts import JobRequest, ServiceError, TERMINAL_STATES, canonical_bytes, digest
+from agent_service.contracts import (JobRequest, ServiceError, TERMINAL_STATES, canonical_bytes, digest,
+                                     task_byte_limit)
 from agent_service.profiles.ppt import (PPTProfile, checkpoint_descriptor, validate_checkpoint)
 from ppt_service.server.models import AgentOutbox, Checkpoint, ExecutionSlot, Job, Plan, Project, Version
 from ppt_service.server.phase_limits import phase_timeout_seconds
@@ -262,7 +263,9 @@ class AgentConnector:
                 self._recheck_review_source(s, job)
                 task, cp_ref = build_agent_task(s, job)
                 business_ref = f'ppt:{job.id}:{job.attempt}:{job.fencing_token}'
-                request = JobRequest(profile='ppt.' + job.kind + '.v1', profile_revision=self.settings.profile_revision,
+                profile_name = 'ppt.' + job.kind + '.v1'
+                require(len(canonical_bytes(task)) <= task_byte_limit(profile_name), 'execution_task_too_large')
+                request = JobRequest(profile=profile_name, profile_revision=self.settings.profile_revision,
                           business_ref=business_ref, task=task, checkpoint_ref=cp_ref,
                           timeout_seconds=phase_timeout_seconds(job.kind),
                           execution_deadline_at=_execution_deadline(job).timestamp()).model_dump(mode='json')
@@ -272,10 +275,14 @@ class AgentConnector:
                     uploads.append({'name': 'inputs/' + asset['id'] + EXT[asset['media_type']],
                                     'storage_key': asset['storage_key'], 'sha256': asset['sha256'],
                                     'bytes': asset['bytes'], 'ref': None})
-            except (ControlError, ServiceError, ValueError, TypeError, KeyError, AttributeError):
+            except (ControlError, ServiceError, ValueError, TypeError, KeyError, AttributeError) as exc:
                 # Claim construction performed no HTTP request or writer launch.
+                # Publish fixed business codes only, never a validation exception
+                # that can contain the task, uploaded text or private paths.
+                code = ('execution_task_too_large' if isinstance(exc, ControlError)
+                        and exc.code == 'execution_task_too_large' else 'execution_request_invalid')
                 project = s.get(Project, job.project_id, with_for_update=True)
-                job.status = 'failed'; job.error_code = 'execution_interrupted'
+                job.status = 'failed'; job.error_code = code
                 project.active_job_id = None; project.stage = 'ready' if project.latest_version_id else 'draft'
                 slot.job_id = None
                 Repository(s).event(job, 'job.failed', {'error_code': job.error_code})

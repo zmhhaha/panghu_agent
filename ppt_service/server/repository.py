@@ -87,7 +87,7 @@ class Repository:
         clean={k:v for k,v in payload.items() if k in EVENT_FIELDS[type]}
         # Values are server business identifiers, never free-form Worker messages.
         if 'stage' in clean and clean['stage'] not in ('plan_initial','plan_options','prepare','generate','revise','parse','collecting','validating','execution_queued','execution_starting','execution_running'):raise ValueError('invalid stage')
-        if 'error_code' in clean and clean['error_code'] not in ('parse_failed','model_unavailable','execution_timeout','quality_gate_failed','render_failed','export_failed','execution_interrupted','storage_full'):raise ValueError('invalid error')
+        if 'error_code' in clean and clean['error_code'] not in ('parse_failed','model_unavailable','execution_timeout','quality_gate_failed','render_failed','export_failed','execution_interrupted','execution_task_too_large','execution_request_invalid','storage_full'):raise ValueError('invalid error')
         if 'revision' in clean and (not isinstance(clean['revision'],int) or isinstance(clean['revision'],bool) or clean['revision']<1):raise ValueError('invalid revision')
         for k in ('version_id',):
             if k in clean:uuid.UUID(clean[k])

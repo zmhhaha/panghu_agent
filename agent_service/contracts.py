@@ -18,6 +18,21 @@ MAX_INPUT_BYTES = 64 * 1024 * 1024
 MAX_ARTIFACT_BYTES = 256 * 1024 * 1024
 MAX_FILES = 2048
 TERMINAL_STATES = frozenset({'completed', 'needs_input', 'failed', 'cancelled', 'timed_out', 'quarantined'})
+_PPT_TASK_PROFILES = frozenset({
+    'ppt.plan_initial.v1', 'ppt.plan_options.v1', 'ppt.prepare.v1',
+    'ppt.generate.v1', 'ppt.revise.v1',
+})
+
+
+def task_byte_limit(profile: str) -> int:
+    """Bound confirmed PPT plans without relaxing other task contracts.
+
+    PPT carries both authenticated confirmation records through later phases;
+    these are structured instructions, independent of uploaded input bytes.
+    Keep this server-owned allowance identical at submission and worker handoff.
+    An unknown profile, including a future PPT name, retains the default bound.
+    """
+    return 256 * 1024 if profile in _PPT_TASK_PROFILES else 32 * 1024
 
 
 class ServiceError(RuntimeError):
@@ -164,7 +179,7 @@ class JobRequest(WireModel):
     def bounded_task(self):
         if self.execution_deadline_at is not None and not math.isfinite(self.execution_deadline_at):
             raise ValueError('A finite absolute execution deadline is required')
-        if len(canonical_bytes(self.task)) > 32768:
+        if len(canonical_bytes(self.task)) > task_byte_limit(self.profile):
             raise ValueError('Task exceeds its bound')
         def depth(value, level=0):
             if level > 10:
@@ -258,7 +273,7 @@ class ExecutionEnvelope(WireModel):
         if (not all(math.isfinite(x) and x > 0 for x in (self.deadline_at, self.lease_expires_at))
                 or self.lease_expires_at > self.deadline_at + 45):
             raise ValueError('Invalid bounded execution clocks')
-        if len(canonical_bytes(self.task)) > 32768:
+        if len(canonical_bytes(self.task)) > task_byte_limit(self.profile):
             raise ValueError('Task exceeds its bound')
         if self.execution_binding is not None and not self.execution_binding.matches_base(self.model_dump()):
             raise ValueError('Execution binding does not match its envelope')
