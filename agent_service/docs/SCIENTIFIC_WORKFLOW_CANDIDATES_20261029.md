@@ -1,9 +1,17 @@
-# 科研项目工作台：四阶段真实候选验证
+# 科研项目工作台：候选、发布与流程验收
+
+当前进度（2026-10-30）：新科研工作台和五个已验收阶段已上线。原 HTTP 项目完整
+链路、独立来源与账本审计、失败历史保留及最终集群健康检查均已通过，任务 6.3、6.5
+已完成。本文保留历次验证与失败，文末记录本轮最终镜像、交付与证据；不将旧候选或
+其他项目替代原项目验收。
+
+## 首轮候选验证（历史记录）
 
 2026-10-29，新科研 plan/retrieve/outline/draft 已在实际 Kubernetes 节点上依次执行，
 使用用户的 `zmhhaha/pi-cage` 和受限 Responses 模型代理。四阶段均完成停写、成果
 独立校验、隔离业务数据库保存与读回。没有将旧 generate/revise 的 acceptance
-复制给新合同。本页记录候选验证，不表示正式 Jobs HTTP 或业务发布已完成。
+复制给新合同。以下首轮记录仅证明当时的候选范围，不表示当时已完成正式 Jobs HTTP
+或业务发布；后续发布证据另列。
 
 ## 固定来源
 
@@ -623,16 +631,17 @@ free，next fence 为 22，Worker Pod 为 0，21/21 项 allocation 已 retired�
 r6 重试。已经启动的正常部署和只读服务/执行槽检查已完成。原五条 HTTP 失败、
 确认关系和恢复 checkpoint 均保留；API 替换前的受保护 checkpoint 备份为
 `evidence/recovery-pre-api-d8f5932/scientific-workflow-scientific-http-20261029-a.json`。
-原 HTTP r6 在本轮既未 restore，也未 retry，未产生新的模型请求；接续步骤留待下次，
+原 HTTP r6 在当时结工前既未 restore，也未 retry，未产生新的模型请求；当时接续步骤留待下次，
 不重置原项目或借用浏览器项目的成功链路。
 
-OpenSpec 服务已按真实完成项更新并通过验证，**24/26** 项完成、validation **0 issues**，
+当时 OpenSpec 服务按真实完成项更新并通过验证，**24/26** 项完成、validation **0 issues**，
 revision 为 `fcb76a686389c4e83fa098eba82010ed32f617b2`。本次新勾选 4.3、5.2、5.3、
 6.2，6.3 和 6.5 保留待办。整个 change 尚未完成，未 apply 或 archive。
 
-### 下次接续：原 HTTP r6 恢复、显式重试与独立审计
+### r6 结工时的接续计划（历史，后续 r9 已完成）
 
-以下为下次工作命令，本轮结工时未执行。依次核对 restore 成功、retry 明确 accepted，
+以下为当时计划的历史命令，r6 结工时未执行；后续已完成，不用于重跑当前项目。
+当时要求依次核对 restore 成功、retry 明确 accepted，
 再启动有限恢复进程；使用保留的原 r5 checkpoint 和本轮明确的完整 Pi digest。
 若请求已发送但响应不明确，继续按恢复脚本的 GET/intent 状态核对，不重发 POST。
 
@@ -665,15 +674,191 @@ Job/Attempt/镜像绑定，逐条验证停写证明；不通过改写历史或�
 
 ### 六项任务的阶段证据矩阵
 
-以下要求逐字对应 OpenSpec 变更 `redesign-scientific-project-workflow` 本轮导出时
-六个未勾选任务。服务状态列对应上述 revision 的真实更新；文档本身不修改任务
-状态，也不声称整个 change 验收完成、apply 或 archive。
+以下要求对应 OpenSpec 变更 `redesign-scientific-project-workflow` 曾待办的六项任务，
+状态已按本轮最终证据更新。各次历史运行保留自己的镜像与验收范围；未将旧运行
+改写为本轮精确镜像的成功记录。
 
 | 任务 | OpenSpec 状态 | 原验收要求 | 已有实际证据及剩余范围 |
 | --- | --- | --- | --- |
 | 4.3 | 已完成 | 对新草稿完成固定证据 research.revise.v1 兼容验收，保留明确父版本、选区外字节、候选比较与显式采用。 | 浏览器新 Draft 的真实 revise 已通过独立账本与字节审计：明确父版本、固定来源/trace、选区外字节、比较、采用、批注及私有定稿均核对；历史 generate 原生 revise 单列。 |
-| 5.2 | 已完成 | 为新 plan/retrieve/outline/draft 组合建立独立权限/模型/工具/输入/成果/停止验收，逐组合开放路由。 | r6 五项原生候选共 35 次请求、逐组合独立导入/保留审查和正式 rollout 全部通过，最新源码、完整镜像/合同 pins 与审定目录已留证。 |
-| 5.3 | 已完成 | 验证全局单槽、按有限任务启动清理Pod，等待确认/阅读/离线不占运行Pod。 | 排队/单执行、浏览器五阶段实际 Pod/双签名停止/退役及恢复均有证据；最终槽 free、next fence 22、Worker Pod 0、21/21 allocation retired，恢复/阅读未发新模型任务。 |
+| 5.2 | 已完成 | 为新 plan/retrieve/outline/draft 组合建立独立权限/模型/工具/输入/成果/停止验收，逐组合开放路由。 | r7 五项原生候选共 39 次请求，逐组合独立导入与历史保留审查通过；精确 Pi537、API8c669 已上线，保留并发 PPT/视频发布。 |
+| 5.3 | 已完成 | 验证全局单槽、按有限任务启动清理Pod，等待确认/阅读/离线不占运行Pod。 | 最终健康证据为 scientific-final-health-r9-concurrent-control.json：槽 free、next fence 31、Worker Pod 0、30/30 allocation retired，非终态任务和未确认停写均为 0。 |
 | 6.2 | 已完成 | 完成真实登录浏览器桌面/手机全流程及刷新/退出重进恢复验收，不用静态原型替代。 | 真实桌面完整链路、用户手机确认、375px 页面与引用检查、刷新/离开重进及升级后 v1/v2/current v2/定稿/下载按钮恢复已记录；范围如正文，不声称另在手机重复所有模型阶段或退出认证重登。 |
-| 6.3 | 待办 | 用真实研究主题完成规划→第一确认→检索/证据整理→第二确认→成稿→修订比较/采用→定稿导出，并独立核对账本和产物。 | 浏览器 35 次请求与下载链已独立核对；原 HTTP r5 再次失败后，尚未进行 r6 restore/retry/恢复，需下次取得其完整 checkpoint 及五失败历史独立审计。科研结论尚未人工审核。 |
-| 6.5 | 待办 | 保存固定源码、镜像/合同pins、真实验收和部署证据后替换科研页面入口，更新OpenSpec状态。 | 页面、r6 发布、审定配置、历史保留、模型/执行证据和本轮阶段收尾均已记录；仍待原 HTTP 完整验收及最终汇总，整个 change 未完成，未 apply/archive。 |
+| 6.3 | 已完成 | 用真实研究主题完成规划→第一确认→检索/证据整理→第二确认→成稿→修订比较/采用→定稿导出，并独立核对账本和产物。 | 原 HTTP run r9 完整 checkpoint、两版报告、比较/采用/批注/定稿和下载核对通过；ledger-audit-r9-idle 独立验证五个成功阶段及八次失败、原确认和重试链、来源/选区外字节与双停止签名。科研结论仍需人工审核。 |
+| 6.5 | 已完成 | 保存固定源码、镜像/合同pins、真实验收和部署证据后替换科研页面入口，更新OpenSpec状态。 | API8c669/UI56、五个科研 Pi537 绑定已部署；固定源码6492、真实验收、并发配置保留及最终健康证据已保存，OpenSpec 据最终证据收尾。 |
+
+### 2026-10-30 r7 续做：模型流失败、披露修复与并发发布保留
+
+恢复原 HTTP run 后执行了一次有持久意图和幂等键的显式草稿重试，沿用两道原确认，
+没有重跑规划、检索或大纲。新增业务 Job 为
+`7d7b4b64-cf33-408d-a783-fbedb0dc2d38`，Agent Job 为
+`3d50bf7c-cfd8-43de-8e38-09c9e1517264`，Attempt 为
+`2bb50a05-a4d5-4ad1-94a3-3c0d3f882fac`，执行镜像仍是原 r6 Pi 摘要。
+该任务实际以 `model_error` 失败：前四条 Responses 完成，最后一条虽返回 HTTP 200，
+但流内终结事件为 `upstream_error`，不能当作模型成功。五条请求及失败状态均保留。
+完整恢复日志和 checkpoint 在 `evidence/scientific-http-recovery-r6/`，真实失败诊断
+在 `evidence/scientific-http-model-failure-r6/`。
+
+对已保存的 `write` 候选另做离线检查时，发现真实措辞
+`不能据链接声称已阅读全文` 被全文访问断言检查误判。源码
+`6492a283ae8c7d86dc298fcff12f728433c2012d` 仅识别紧邻、位于子句末尾的明确禁止
+声称；外层反转、双重否定、后续独立获取断言和跨子句仍拒绝。定向验证为
+**190 passed、15 subtests passed**，另有独立复核通过，没有扩大提示词或关闭校验。
+代码已提交、推送并由服务器拉取。
+
+候选输出 SHA256 为
+`98290b125d91cfcf1f94c29ca1cd5156e78f4f5967fc2d861943b8657eb0e1cf`，context SHA256
+仍为 `644c70b0bad7826de6966c4e8112803d515a58c9aa64e61b9974ddd636739457`。
+同一候选在新精确 Pi 镜像内通过 context、stage result、trace 与 disclosure 离线
+检查，新增模型调用为 0，证据为 `evidence/scientific-preserved-r6-regression-r7/`。
+这是从持久 Responses 的写出参数重建的候选，不冒称原 Pod 磁盘产物或已成功任务。
+
+正常 `latest` 构建得到以下不可变镜像：
+
+| 组件 | 镜像摘要 | 本轮用途 |
+| --- | --- | --- |
+| 科研 API | `sha256:8c669f1a5bec7430e194922f87f3fce6fcb891fba5b6beb00e2d3b77686397aa` | 已部署；原 HTTP 验收单独记录 |
+| Pi 执行镜像 | `sha256:5372e60ee7080fe0a32e8e13c036d844cf754feae88d834bb5231b57bfee4d0c` | 五阶段新资格验收通过 |
+| 本分支 control 构建 | `sha256:136f0719e080433b4f92c39af6aa899d78099df88090fd00da82152321574ebb` | 已构建，未覆盖并发上线的更新版本 |
+
+五项真实原生候选依次通过：
+
+| 阶段 | Agent Job | 模型调用 |
+| --- | --- | --- |
+| plan | `e7e54c4d-46c3-4e2e-b2e1-aaa211887fe7` | 7 |
+| retrieve | `6710f57f-91a0-4f49-9904-4980ce8e6d81` | 6 |
+| outline | `03c333f3-a949-4bc7-8dd2-7710692d7c07` | 10 |
+| draft | `d092a988-4432-4016-a048-819353365a71` | 6 |
+| revise | 见 `evidence/candidate-wf-revise-r7/` | 10 |
+
+合计 **39 次**，不与原 HTTP 新失败的五次、r6 原生或浏览器链混记。独立 revise
+仍使用 genuine 历史父版本，不代替原 HTTP 新草稿的修订。候选使用共享锁和永久 UID
+记录，没有修改节点隔离策略。完整证据为 `scientific-workflow-five-candidates-r7.json`
+及 `scientific-workflow-r7-pipeline-status.json`。独立导入和全历史保留审查已通过，
+原资格目录 `scientific-workflow-promotion-r7/final/` 的 config SHA256 为
+`aa75bfe0734b2382a88574c85f5058eed1148b45c86ba6dcee6b2c534fc915a0`，保留审查摘要为
+`eaba3ba1ccecd22575250226705b0d44d23f42d679cd43727c505a1ab0102195`。
+
+发布前发现 Secret `subPath` 持有可读但 `nlink=0` 的旧 inode，严格配置加载器正确
+拒绝重读；并非 Vault 凭据缺失，也未证明它导致模型流错误。当前 Secret 仅新增其他
+业务令牌，旧调用令牌及签名密钥未变。临时诊断使用 Pod 内受限临时副本并立即清理；
+生产加载器没有放宽。运维脚本最初只接受目录 `0700`，又因 Kubernetes `fsGroup`
+产生的 `02700` 停在部署前；新副本仅补充接受该无组/其他访问权限的继承位，仍拒绝
+`02710` 等开放权限，旧失败脚本及回执保留。
+
+期间另一项正常发布新增五条 PPT v2 路由，并将 control 更新为
+`sha256:956a42131a23e9443774584292cd15cdc72811f8e782d0d35db283dfee791c03`。
+旧 r7 发布驱动被保护性检查阻止，未将其改回旧 control 或覆盖新配置。新的只读快照
+是 `scientific-workflow-production-before-r7-concurrent/`。后续发布以此为基线，
+只移植已资格验收的五个科研组合及原字节 host；保留当前 control、PPT 路由、所有
+非科研行、调用方、Secret、RBAC 和网络配置。
+
+原 HTTP 最新检查点还备份在
+`evidence/recovery-pre-api-6492a28/scientific-workflow-scientific-http-20261029-a.json`。
+新 r7 恢复和六失败历史审计 helper 已离线验证并独立复核：账本启动器 **515 项**、
+真实原生/外层签名回归 **98 项**通过；旧 r6/r2 脚本原字节保留。
+
+受保护的配置合并与上线已完成。仅切换三个 control Deployment 的配置卷引用，保留
+并发发布的 control `956a…`、PPT v2 和其他业务配置。部署前后完整执行账本一致，
+50 份历史 host ConfigMap 原字节保留；当前 control 精确镜像离线解析通过 55 份 host
+和 11 条已启用路由。独立复核为 **105 项检查、38 种拒绝场景、5 项历史 host 检查**。
+实际 ConfigMap 为 `agent-service-config-a9dac488b1f071db1631`，配置 SHA256 为
+`a9dac488b1f071db16315d5d40bd16721fc48cdb4e7e8aa63f67c9f83c54b430`。证据为
+`scientific-workflow-promotion-r7-scoped/deployment-evidence/summary.json`。
+随后按正常科研部署入口更新 API，UI 仍为原 `56c116…`；部署日志为
+`scientific-workflow-r7-api-rollout.log`，没有用本分支较旧的 control 构建覆盖线上版本。
+
+原 HTTP r7 重试沿用两次确认和六条既有失败历史，但新业务 Job
+`cb9e3441-f148-4da3-b9b3-12ed58ee5eed` / Agent Job
+`5c8b2e2b-2585-4661-977b-16863d5120ba` / Attempt
+`2b4a7a80-57fd-4c62-99c6-cfbad665b526` 再次以 `model_error` 结束。
+这次实际使用 Pi `5372e6…`，前三次 Responses 正常完成，第四次只有
+`error / upstream_error` 事件，未写出初稿。模型账本 `complete` 表示响应字节已完整
+保存，不表示模型成功；Pi 正确终止了阶段。llm-service 的通用错误来自上游明确失败
+事件，现有日志不足以区分供应商具体原因，不据此认定密钥失效。
+证据为 `evidence/scientific-http-model-failure-r7/diagnosis-summary.json`，checkpoint
+为 `evidence/scientific-http-recovery-r7/latest-checkpoint.json`。该次失败继续保留；
+在该 r7 检查点，原 HTTP 完整验收与最终健康检查当时仍需完成；后续 r9 完成见下文。
+
+### r8 原项目恢复：草稿已入库，修订候选正确拒绝
+
+原项目两次确认、三个成功阶段和六条 retired 失败字典保持不变，再将 r7 失败作为
+第七条历史追加。r8 仅显式重试草稿，仍使用已验收的 Pi `5372e6…`，未更换供应商、
+Key、模型别名、提示词或校验器。持久 POST 意图与原 checkpoint 先落盘；歧义恢复仅 GET。
+本轮草稿业务 Job `30729883-596a-485a-bd94-f9cb3ea79dd0` / Agent Job
+`67f55894-bbe0-45bb-bf75-a814a35073cb` 已完成，业务独立校验、保存与 delivery ack 为真，
+结果摘要为 `a538a390007ac7db1dc888f99a486c61ab93ccac8d9a629d7114feede0b4b642`。
+
+针对这份新草稿的修订业务 Job `4bdd6e2b-0de4-4cef-a065-271a41b5ceaf` / Agent Job
+`be484697-d54d-4ee8-ad7d-2e8b56b78624` / Attempt
+`72c7c19a-7b16-4326-97e4-abfdabc6da2f` 在四次正常完成的 Responses 后返回
+`worker_output_invalid`。精确 Pi 镜像离线检查确认：输入和候选 JSON 格式均有效，
+但新增 `revision_scope_access` claim 关联的证据要求引用 `[1]`，对应段落没有引用，
+因此 `compose_revision` 正确拒绝 `claim_citation_mismatch`。不放宽此规则、不手工修补
+候选为成功，也未覆盖已保存初稿。诊断使用持久模型写出参数重建候选，不冒充原 Pod
+磁盘产物；新增模型调用为 0。证据为
+`evidence/scientific-http-revision-failure-r8/diagnosis-summary.json`。
+
+只读独立审计另行固定七份科研验证源码，取自提交 `6492a28…` 的 Git 原始 blob，
+逐份与精确 Pi 镜像 SHA256 核对，使用私有命名包，不覆盖并发发布的 control 内置模块。
+这是 Windows CRLF 与镜像 LF 的原字节核对，不是替换验证语义。双签名、来源和退役
+检查继续保留；旧 disabled 组合与本轮同一 enabled 组合分别如实核验。
+
+### r9 原 HTTP 完整业务链路
+
+对失败的修订执行一次有界显式重试，保留同一父版本、选区、固定材料和原指令。
+未修改业务源码、模型、提示词、校验器或已部署镜像。两道确认、四个成功阶段及
+七条既有历史原样保留，失败修订作为第八条追加；仅将已接受的修订步骤映射到新任务。
+恢复助手和单 POST/丢响应 GET 恢复/Pod 替换防回退均通过针对性离线检查和独立复核。
+
+新修订业务 Job 为 `267d790c-0129-4abb-a8b0-8cc9c5d31a65`，Agent Job 为
+`ea5a4e67-8571-4d20-bb63-499cc75721c0`，结果摘要为
+`b7084de344822ba16e3186c4721e4161f57e803c31bd634e6be1d72fc6cead89`。
+它已成功修订 r8 新草稿，并通过业务发布与交付确认。原 HTTP run
+`scientific-http-20261029-a` / 项目 `b72e4cb7-a548-5bb6-a763-c8123f9012ad` 随后完成
+真实差异比较、明确采用、批注、私有定稿，以及 Markdown 和来源文件下载字节核对。
+整个 run 保留 **13 个任务、2 个报告版本、8 次真实失败**，没有用其他项目替代原链。
+
+| 交付对象 | 固定身份或摘要 |
+| --- | --- |
+| 原草稿版本 | `7d1dbbf3-a16c-4909-b8a9-de5213010dfc` |
+| 已采用修订版本 | `57440e0c-49d5-4e96-bcec-4e7836762d58` |
+| 私有定稿记录 | `90cd144a-0008-4620-a692-ef5e89a02495` |
+| Markdown SHA256 | `480839ef2cd7ce098d555bd94e0d0ae0c071fbae1cf473940ebf99a79e3ae43a` |
+| 来源记录 SHA256 | `050debb6df40ecca56053120d7649838313fc2889f42e105b34ea843edb8095b` |
+
+完整 checkpoint 与恢复日志为 `evidence/scientific-http-recovery-r9/`，
+`resume-status.json` 记录 `complete=true`、退出码 0。技术流程验收不代表科研结论
+已经人工审核；私有定稿的 `publication_authorized=false`，没有公开发布或投稿。
+
+### 最终独立审计与健康检查
+
+`evidence/scientific-http-recovery-r9/ledger-audit-r9-idle/summary.json` 已通过：五个
+成功阶段、八条失败身份和各自的镜像/尝试、完整重试链、来源快照、新草稿父版本、
+固定材料、选区外字节、原生与外层停止签名均独立核对。审计使用 PostgreSQL 只读
+事务，未新增 Job 或模型请求；验证源码为固定 `6492a28…` 的独立命名包。首份
+`ledger-audit-r9/` 因当时全局槽未空闲而停止，原证据保留，未放宽空闲条件。
+
+期间并发视频发布将共享 control 更新为
+`arm-cluster-master:5000/agent-service-video-control:latest@sha256:aff85fcb5233e5cf0881e16df8e62ce73a3d07e739c52713beeb21f7e26596cd`，
+OCI source revision 为 `323b9430475355bb01716fc04228d47404104bfb`。本轮不回退该发布。
+当前共享配置为 `agent-service-config-fdb5a936de57ca2c12e3`，SHA256 为
+`fdb5a936de57ca2c12e36897372227a9671aff1110f783a3b16545e41e507d43`。相对 r7 scoped
+基线，全部既有行和公共参数保留，仅追加其他业务配置；50 份历史 host 和五份新
+科研 host 的内容摘要仍一致。保留证明为
+`evidence/scientific-final-preservation-r9-current-control/preservation-summary.json`，
+SHA256 `c1286c7f8b56df1d866dfea0ad2f4f02fe2ac9e873966f3ebe14ba98bdaef8b3`。
+并发 control 仍带有旧 image/source 注解，本记录以实际 Deployment 镜像与 OCI 标签
+标明其身份，没有改动其他发布的注解或触发额外 rollout；科研 API 自身注解仍正确。
+
+旧健康预期针对 control956，因此保留其不匹配结果；新固定预期只更新为实际并发
+control 镜像，全部健康谓词不变。最终
+`evidence/scientific-final-health-r9-concurrent-control.json` 为 `passed=true`，SHA256
+`0fbc565b4b1f37e7f60d6f2d57ee45be87d62362830d74ef85efaf86c43d0443`：五个部署均
+1/1 就绪，API8c669/UI56/当前 control 摘要正确，Worker Pod 0，全局槽空闲，
+next fence 31，30/30 allocation 退役，非终态、隔离和未确认停写任务均为 0。
+配置与凭据挂载链接正常，检查使用 REPEATABLE READ/READ ONLY；未输出凭据或修改生产。
+
+OpenSpec 最终 **26/26** 项完成，validation **0 issues**，变更已归档为
+`2026-10-30-redesign-scientific-project-workflow`，12 项规格已更新到项目主规格。
+服务存储 revision 为 `03131b1260edc4c07ae05ece4e177deaa6e51f18`；无需再单独 apply。
