@@ -44,6 +44,9 @@ class Peer:
         self.calls, self.agent_calls, self.inputs, self.paid = [], [], [], []
         self.project = None
         self.sources, self.jobs, self.results, self.manifests, self.artifacts = {}, {}, {}, {}, {}
+        self.job_events = {}
+        self.fence, self.event_count, self.events_behavior = 1, 4, None
+        self.events_read = False
         self.serial = 100
         self.attack = None
         self.lost_post = False
@@ -101,10 +104,16 @@ class Peer:
             size=len(raw), sha256=hashlib.sha256(raw).hexdigest())])
         job = dict(job_id=job_id, state='completed', business_ref='video:' + op_id, publication_authorized=False,
             artifact_manifest_sha256=manifest['sha256'], pins={'profile': 'video.' + result['kind'] + '.v1', 'profile_revision': '1'},
-            attempt=dict(attempt_id=attempt_id, fence=1), stop_proven=True,
-            stop_proof=dict(stop_proven=True, attempt_id=attempt_id, fence=1,
+            attempt=dict(attempt_id=attempt_id, fence=self.fence), stop_proven=True,
+            stop_proof=dict(stop_proven=True, attempt_id=attempt_id, fence=self.fence,
                 request_sha256='a' * 64, result_sha256='b' * 64, resource_ids=['offline-only'], observed_at=1000.0),
             future_private_field={'credential': TOKEN})
+        kinds = ['job.queued', 'job.starting', 'job.running'] + ['engine.progress'] * (self.event_count - 4) + ['job.completed']
+        if self.events_behavior == 'multiple_starts':
+            kinds.insert(-1, 'job.starting')
+        self.job_events[job_id] = [dict(seq=i, type=kind, payload={}, created_at=1000.0 + i)
+                                   for i, kind in enumerate(kinds, 1)]
+        job['event_cursor'] = len(kinds)
         if self.attack == 'stop':
             job['stop_proof']['fence'] = 2
         if self.attack == 'manifest':
@@ -223,8 +232,27 @@ class Peer:
                 for kind in ('storyboard', 'scene')]))
         if path.endswith('/artifact-manifest'):
             return self.response(self.manifests[path.split('/')[3]])
+        if path.endswith('/events'):
+            job_id = path.split('/')[3]
+            after, limit = int(request.url.params['after']), int(request.url.params['limit'])
+            assert limit == 100
+            rows = copy.deepcopy([v for v in self.job_events[job_id] if v['seq'] > after][:limit])
+            page = dict(items=rows, next_cursor=rows[-1]['seq'] if rows else after,
+                        has_more=bool(rows and rows[-1]['seq'] < self.jobs[job_id]['event_cursor']))
+            if self.events_behavior == 'duplicate': page['items'].insert(1, copy.deepcopy(rows[0]))
+            if self.events_behavior == 'gap': page['items'].pop(1)
+            if self.events_behavior == 'unordered': page['items'][1:3] = reversed(page['items'][1:3])
+            if self.events_behavior == 'cursor': page['next_cursor'] += 1
+            if self.events_behavior == 'truncated': page['items'] = page['items'][:2]; page['next_cursor'] = 2; page['has_more'] = False
+            if self.events_behavior == 'empty_more': page = dict(items=[], next_cursor=after, has_more=True)
+            self.events_read = True
+            return self.response(page)
         if path.startswith('/v1/jobs/'):
-            return self.response(self.jobs[path.split('/')[3]])
+            value = copy.deepcopy(self.jobs[path.split('/')[3]])
+            if self.events_read and self.events_behavior == 'attempt_changed':
+                value['attempt']['attempt_id'] = str(UUID(int=9999))
+            if self.events_read and self.events_behavior == 'fence_changed': value['attempt']['fence'] += 1
+            return self.response(value)
         if path.startswith('/v1/artifacts/'):
             return httpx.Response(200, content=self.artifacts[path.split('/')[3]])
         raise AssertionError(path)
@@ -285,6 +313,7 @@ def test_four_tasks_bind_real_saved_types_and_explicit_adoption_exports(setup, o
         saved = json.loads((settings.output / (label + '-input.json')).read_bytes())
         assert canonical_bytes(saved) == canonical_bytes(document)
         assert (settings.output / (label + '-manifest.json')).is_file()
+        assert (settings.output / (label + '-events.json')).is_file()
         job = json.loads((settings.output / (label + '-job.json')).read_bytes())
         assert 'future_private_field' not in job
     initial = json.loads((settings.output / 'export-initial-manifest.json').read_bytes())
@@ -339,6 +368,46 @@ def test_pending_polling_is_bounded_and_keeps_known_operation_and_job(setup):
     assert report['intents'][0]['operation_id']
     assert report['intents'][0]['job_id']
     assert report['running_cancellation'] == 'not_run'
+
+
+def test_completed_events_cover_multiple_pages_and_accept_global_fence_above_one(setup):
+    settings, peer, clock = setup
+    peer.fence, peer.event_count = 47, 205
+    report = run(setup)
+    assert report['status'] == 'passed', report
+    assert report['generation_posts'] == 4
+    for label in ('storyboard', 'svg', 'html', 'revision'):
+        document = json.loads((settings.output / (label + '-events.json')).read_bytes())
+        assert document['complete'] is True
+        assert document['binding']['attempt']['fence'] == 47
+        assert document['binding']['event_cursor'] == 205
+        assert [v['after'] for v in document['pages']] == [0, 100, 200]
+        rows = [item for page in document['pages'] for item in page['response']['items']]
+        assert [v['seq'] for v in rows] == list(range(1, 206))
+        assert sum(v['type'] == 'job.starting' for v in rows) == 1
+        assert document['pages'][-1]['response']['has_more'] is False
+    assert_no_secrets(settings.output)
+
+
+@pytest.mark.parametrize('behavior', ['duplicate', 'gap', 'unordered', 'cursor', 'truncated',
+    'empty_more', 'multiple_starts', 'attempt_changed', 'fence_changed'])
+def test_incomplete_duplicate_or_changed_attempt_event_evidence_stops_later_tasks(setup, behavior):
+    settings, peer, clock = setup
+    peer.events_behavior = behavior
+    report = run(setup)
+    assert report['status'] == 'stopped', report
+    assert report['generation_posts'] == len(peer.paid) == 1
+    assert report['completed_generation_tasks'] == 0
+    assert not (settings.output / 'storyboard-events.json').exists()
+
+
+def test_event_collection_refuses_unbounded_history_without_reading_pages(setup):
+    settings, peer, clock = setup
+    peer.event_count = 1001
+    report = run(setup)
+    assert report['error'] == 'events_job_cursor_invalid'
+    assert report['generation_posts'] == 1
+    assert not any(r.url.path.endswith('/events') for r in peer.agent_calls)
 
 
 def test_existing_output_refuses_execution_before_any_http(setup):

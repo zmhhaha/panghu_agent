@@ -215,7 +215,9 @@ def paused_svg_run(setup):
     return settings, peer, clock, report
 
 
-def test_recovery_checker_binds_single_post_same_job_restart_and_single_candidate(setup, tmp_path):
+@pytest.mark.parametrize('fence', [1, 37])
+def test_recovery_checker_binds_single_post_same_job_restart_and_single_candidate(setup, tmp_path, fence):
+    setup[1].fence = fence
     settings, peer, _, report = paused_svg_run(setup)
     svg = report['intents'][1]
     def upstream(request):
@@ -240,7 +242,22 @@ def test_recovery_checker_binds_single_post_same_job_restart_and_single_candidat
         result = recovery_evidence(settings.output, relay.output, before, after)
         assert result['status'] == 'passed' and result['jobs_posts'] == result['candidate_versions'] == 1
         assert result['job_id'] == svg['job_id']
+        assert result['attempt']['fence'] == fence
+        assert result['job_starting_events'] == 1
         assert result['restart']['new_pod_uid'] == NEW_POD
+        events_path = settings.output / 'svg-events.json'
+        correct_events = read_json(events_path)
+        changed = copy.deepcopy(correct_events)
+        changed['binding']['attempt']['attempt_id'] = str(UUID(int=99999))
+        events_path.write_bytes(canonical_bytes(changed))
+        with pytest.raises(VerificationFailure, match='job_events_binding_invalid'):
+            recovery_evidence(settings.output, relay.output, before, after)
+        changed = copy.deepcopy(correct_events)
+        changed['pages'][0]['response']['items'][2]['type'] = 'job.starting'
+        events_path.write_bytes(canonical_bytes(changed))
+        with pytest.raises(VerificationFailure, match='job_multiple_or_missing_starts'):
+            recovery_evidence(settings.output, relay.output, before, after)
+        events_path.write_bytes(canonical_bytes(correct_events))
         # A second rejected POST is still a failed recovery experiment.
         relay.handle('POST', '/v1/jobs', headers(svg['operation_id']),
                      canonical_bytes(submission(svg['operation_id'], svg['input_sha256'])))

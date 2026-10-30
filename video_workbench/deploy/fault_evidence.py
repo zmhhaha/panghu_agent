@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 from agent_service.contracts import ServiceError, canonical_bytes, digest
-from .verify_live import VerificationFailure, canonical_uuid, decode_object, require
+from .verify_live import VerificationFailure, canonical_uuid, decode_object, require, validate_completed_events
 
 
 SHA = re.compile(r'[a-f0-9]{64}')
@@ -195,7 +195,9 @@ def recovery_evidence(run_dir, proxy_dir, before, after):
     operation_id, job_id = canonical_uuid(intent['operation_id']), canonical_uuid(intent['job_id'])
     job = read_json(Path(run_dir) / 'svg-job.json')
     attempt, proof = stopped_job(job, operation_id, states=('completed',))
-    require(job['job_id'] == job_id and attempt['fence'] == 1, 'recovery_attempt_identity_invalid')
+    require(job['job_id'] == job_id, 'recovery_attempt_identity_invalid')
+    event_evidence = read_json(Path(run_dir) / 'svg-events.json')
+    job_events = validate_completed_events(event_evidence, job)
     trace = read_json(Path(proxy_dir) / 'trace.json')
     require(trace['run_id'] == report['run_id'], 'recovery_run_mismatch')
     events = trace_events(trace)
@@ -239,6 +241,8 @@ def recovery_evidence(run_dir, proxy_dir, before, after):
     return dict(schema_version='video-recovery-evidence.v1', status='passed', run_id=report['run_id'],
         operation_id=operation_id, job_id=job_id, attempt=attempt, input_sha256=intent['input_sha256'],
         source_sha256=hashlib_sha(source), jobs_posts=1, candidate_versions=1, restart=restarted,
+        job_starting_events=sum(v['type'] == 'job.starting' for v in job_events),
+        events_sha256=digest(event_evidence), event_cursor=job['event_cursor'],
         stop_proof=proof, scope='submission_response_loss_and_workbench_pod_restart',
         worker_pod_observation='not_checked_here', cost='unknown')
 

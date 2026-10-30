@@ -72,7 +72,9 @@ python -m video_workbench.deploy.fault_evidence release-relay \
 
 放行要求同一 namespace、同一 PVC、同一镜像内容、新的就绪 Pod UID，且新 Pod 创建在响应丢失之后。文件只含必要元数据，不保存 Pod 环境、凭据、原始 spec 或日志。重启只使用同一 PVC；不能用重新建库来假装恢复。
 
-到 `after-svg` 操作点，先核对脱敏 trace、唯一受理 Job、fence=1、停止证明、manifest 原始字节摘要、工作台唯一未采用 SVG 候选：
+到 `after-svg` 操作点，先核对脱敏 trace、唯一受理 Job、同一 attempt 与合法正整数 fence、停止证明、manifest 原始字节摘要、工作台唯一未采用 SVG 候选。fence 来自 Agent 全局槽位计数，不代表这一个 Job 的尝试次数，也不要求从 1 开始。
+
+四步工具在每个完成 Job 后只读分页获取 `/events`，保存 `svg-events.json` 等记录：从 seq=1 连续读到已完成 Job 的 `event_cursor`，最后一页必须 `has_more=false`，不得缺页、乱序或重复，且只能有一次 `job.starting`。最多采集 1000 条事件／11 页；超出边界会停止验收，不把截断日志当完整证据。公开事件本身没有 attempt/fence 字段，工具以分页前后同一稳定 Job 的身份、attempt/fence、cursor 和停止证明绑定整段日志；恢复检查再离线核对这些绑定及唯一启动。
 
 ```sh
 python -m video_workbench.deploy.fault_evidence check-recovery \

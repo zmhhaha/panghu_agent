@@ -34,6 +34,10 @@ from video_workbench.agent import VideoAgentGateway
 
 
 MAX_RESPONSE = 8 * 1024 * 1024
+MAX_EVENT_ITEMS = 1000
+MAX_EVENT_PAGES = 11
+EVENT_TYPES = {'job.queued', 'job.starting', 'job.running', 'job.cancelling', 'job.completed',
+               'job.needs_input', 'job.failed', 'job.cancelled', 'job.timed_out', 'job.quarantined', 'engine.progress'}
 SCENE_FIELDS = ('title', 'narration', 'visual_description', 'duration_seconds', 'format')
 SCRIPT = ('请恰好用两个镜头解释：文稿先拆成镜头，每个镜头生成可编辑的静态图形；'
           '审阅者比较候选，明确采用后导出素材。第一镜展示文稿到镜头，第二镜展示审阅到导出。')
@@ -146,6 +150,73 @@ def decode_object(raw):
         return value
     except (ValueError, UnicodeError, RecursionError):
         raise VerificationFailure('response_json_invalid') from None
+
+
+def completed_event_binding(job):
+    """Public events omit attempt/fence; bind the full log to a stable Job."""
+    require(type(job) is dict and job.get('state') == 'completed', 'events_job_not_completed')
+    job_id = canonical_uuid(job.get('job_id'))
+    attempt, pins, reference = job.get('attempt'), job.get('pins'), job.get('business_ref')
+    require(type(attempt) is dict and type(attempt.get('fence')) is int and attempt['fence'] >= 1
+            and type(pins) is dict and pins.get('profile') in {'video.scene.v1', 'video.storyboard.v1'}
+            and pins.get('profile_revision') == '1' and type(reference) is str and reference.startswith('video:'),
+            'events_job_identity_invalid')
+    canonical_uuid(attempt.get('attempt_id'))
+    canonical_uuid(reference[6:])
+    require(type(job.get('event_cursor')) is int and 1 <= job['event_cursor'] <= MAX_EVENT_ITEMS,
+            'events_job_cursor_invalid')
+    return dict(job_id=job_id, business_ref=reference, state='completed', event_cursor=job['event_cursor'],
+                attempt=dict(attempt_id=attempt['attempt_id'], fence=attempt['fence']),
+                profile=pins['profile'], profile_revision=pins['profile_revision'])
+
+
+def checked_event_page(page, after):
+    require(type(page) is dict and set(page) == {'items', 'next_cursor', 'has_more'}
+            and type(page['items']) is list and len(page['items']) <= 100
+            and type(page['next_cursor']) is int and type(page['has_more']) is bool,
+            'job_events_page_invalid')
+    cursor = after
+    for item in page['items']:
+        require(type(item) is dict and set(item) == {'seq', 'type', 'payload', 'created_at'}
+                and type(item['seq']) is int and item['seq'] == cursor + 1
+                and type(item['type']) is str and item['type'] in EVENT_TYPES and type(item['payload']) is dict
+                and set(item['payload']) <= {'state', 'error_code', 'engine', 'event', 'phase', 'code', 'count'}
+                and type(item['created_at']) in (int, float) and 0 < item['created_at'] <= 253402300799,
+                'job_events_sequence_invalid')
+        for key, value in item['payload'].items():
+            require(type(value) is int and 0 <= value <= 2**31 - 1 if key == 'count' else
+                    type(value) is str and re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', value), 'job_events_payload_invalid')
+        cursor = item['seq']
+    require(page['next_cursor'] == cursor and (not page['has_more'] or cursor > after),
+            'job_events_cursor_invalid')
+    return cursor
+
+
+def validate_completed_events(document, job):
+    require(type(document) is dict and set(document) == {'schema_version', 'binding', 'pages', 'complete'}
+            and document.get('schema_version') == 'video-agent-events.v1' and document.get('complete') is True
+            and document.get('binding') == completed_event_binding(job)
+            and type(document.get('pages')) is list and 1 <= len(document['pages']) <= MAX_EVENT_PAGES,
+            'job_events_binding_invalid')
+    cursor, items = 0, []
+    for index, saved in enumerate(document['pages']):
+        require(type(saved) is dict and set(saved) == {'after', 'response'}
+                and type(saved['after']) is int and saved['after'] == cursor, 'job_events_page_order_invalid')
+        page = saved['response']
+        cursor = checked_event_page(page, cursor)
+        items.extend(page['items'])
+        require(len(items) <= MAX_EVENT_ITEMS and page['has_more'] is (index < len(document['pages']) - 1),
+                'job_events_pagination_incomplete')
+    require(cursor == job['event_cursor'], 'job_events_pagination_incomplete')
+    require(sum(v['type'] == 'job.starting' for v in items) == 1, 'job_multiple_or_missing_starts')
+    terminals = [v for v in items if v['type'] in {'job.completed', 'job.needs_input', 'job.failed',
+                 'job.cancelled', 'job.timed_out', 'job.quarantined'}]
+    starting = next(v['seq'] for v in items if v['type'] == 'job.starting')
+    require(items[0]['type'] == 'job.queued' and sum(v['type'] == 'job.queued' for v in items) == 1
+            and len(terminals) == 1 and terminals[0] == items[-1] and items[-1]['type'] == 'job.completed'
+            and any(v['type'] == 'job.running' and starting < v['seq'] < cursor for v in items),
+            'job_events_lifecycle_invalid')
+    return items
 
 
 class EvidenceAgentClient(AgentClient):
@@ -287,6 +358,28 @@ class Runner:
         require(len(found) == 1, 'scene_identity_mismatch')
         return found[0]
 
+    def collect_completed_events(self, label, job):
+        binding = completed_event_binding(job)
+        pages, cursor = [], 0
+        for _ in range(MAX_EVENT_PAGES):
+            page = self.agent.events(job['job_id'], after=cursor, limit=100)
+            after, cursor = cursor, checked_event_page(page, cursor)
+            pages.append(dict(after=after, response=page))
+            require(cursor <= MAX_EVENT_ITEMS, 'job_events_limit')
+            if not page['has_more']:
+                break
+        else:
+            raise VerificationFailure('job_events_limit')
+        document = dict(schema_version='video-agent-events.v1', binding=binding, pages=pages, complete=True)
+        validate_completed_events(document, job)
+        observed = self.agent.get_job(job['job_id'])
+        require(completed_event_binding(observed) == binding
+                and observed.get('stop_proof') == job.get('stop_proof')
+                and observed.get('artifact_manifest_sha256') == job.get('artifact_manifest_sha256'),
+                'job_changed_during_event_collection')
+        self.save(label + '-events.json', document)
+        return document
+
     def preflight(self):
         with self.step('read_only_preflight'):
             session = self.request('GET', '/api/session')
@@ -377,10 +470,12 @@ class Runner:
             manifest = self.agent.last_manifest
             # Save only the public proof fields, never an arbitrary future Job payload.
             self.save(label + '-job.json', {k: job.get(k) for k in ('job_id', 'state', 'business_ref',
-                'publication_authorized', 'artifact_manifest_sha256', 'pins', 'attempt', 'stop_proven', 'stop_proof')})
+                'publication_authorized', 'artifact_manifest_sha256', 'pins', 'attempt', 'stop_proven', 'stop_proof',
+                'event_cursor')})
             self.save(label + '-manifest.json', manifest)
             self.save(label + '-result.json', result)
             self.save(label + '-artifact.json', self.agent.last_artifact)
+            self.collect_completed_events(label, job)
             output = result['output']
             if kind == 'storyboard':
                 scenes = self.project['scenes']
