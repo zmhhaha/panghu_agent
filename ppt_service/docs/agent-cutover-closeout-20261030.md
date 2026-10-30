@@ -201,3 +201,132 @@ substitute the fixed echo checks for them.
 OpenSpec project `ec663f5a-53d3-4a0e-9037-933eb788d183`, change
 `add-hermes-ppt-workbench`, remains open. PA4 remains incomplete until actual full
 domain workflow acceptance is recorded.
+
+## Post-cutover workflow continuation, 2026-10-30
+
+The owner requested continuation toward real generation, a review-bound page
+revision and download. All execution/checks/builds remain on the server. Fresh
+synthetic task identities are used; the earlier expired failed generations are
+not resumed or extended. No existing PPT project or production business row is
+edited.
+
+### Upstream failure diagnostics
+
+Read-only investigation verified the live LLM gateway was still the independent
+native Responses source `e5351c4`, digest `4090cb323de19140b07983f8b8e9fe812d2f1f3085136df2270e9a4ba7e96c86`.
+The PPT outer checkout lacks that native history change and was not used to
+rebuild the gateway. The original two provider error codes cannot be recovered
+from the retained normalized SSE/usage records; their root cause remains unknown.
+
+The narrowly scoped diagnostic fix was committed and pushed on platform branch
+`codex/agent-native-responses` as
+`16114dd29f0e02a217030fdfdbec5bb554023a1a`. The server fetched that exact Git
+commit into `/root/llm-stream-diagnostics-16114dd-20261030-r2/source`.
+Failure logs now include only fixed allowlisted event/code/type categories and
+HTTP status, never the provider's free-form message, body or tool arguments.
+Public SSE, retry policy and usage behavior are unchanged.
+
+- Source and final immutable image each ran 147 server-only tests: 146 passed,
+  one skipped for the optional official OpenAI SDK. These are overlapping runs,
+  not 292 distinct tests. The final image test mounted only tests/fixtures,
+  retaining the actual image-owned application modules.
+- All eight image-owned Python module hashes matched exact Git. OCI source,
+  revision and context labels were verified.
+- Built/pushed `latest`, deployed
+  `arm-cluster-master:5000/llm-service:latest@sha256:b667ece8367f3082e946c1a1556f42e71159285dafbd3d4bfb18911ef42ef873`.
+  The resourceVersion-tested patch changed only image and provenance annotations;
+  actual template comparison retained live model routes/config/Secret references.
+- Rollout completed Ready at `2026-10-30T08:38:18Z`, deployment UID
+  `d71e991d-211b-4da4-9c96-68812c01fc95`, generation 27. The owned ready Pod's
+  actual imageID matched the pushed digest. No model request was made by release
+  checks. Evidence: `/root/llm-stream-diagnostics-16114dd-20261030-r2`.
+- The first source-test attempt failed before test discovery because Git obeyed
+  the private operator umask. The fresh second operator exposed only the
+  read-only source mount to the test UID; the passing tests and final artifact
+  checks above were performed after that correction.
+
+### Real HTTP workflow acceptance in progress
+
+The independent operator now drives initial/options/prepare/generate/revise via
+the actual Agent HTTP connector, per-phase immutable deadlines, exact Pi v2
+binding, remote artifact downloads, independent Kubernetes validation and real
+candidate-received ACK. Confirmations and page revision use the actual handlers
+of a private SQLite synthetic app. They are not confirmations in a user project.
+It permits one paid submission per phase, stops on failure, and does not import
+old candidates or automatically resume.
+
+Server operator checks: 24 passed. Installed immutable operator set:
+`/root/agent-service-deploy-20261026/ppt-agent-operators-20261030-r18`.
+The initial test fixture omitted the top-level stop flag; tests were corrected
+without weakening runtime proof, and additional negative checks passed. A first
+readiness-only launch counted disabled historical v1 rows together with v2 and
+stopped before any model submission/database/validator environment. Its private
+caller copy was removed. The shared capability inventory remains intact; the
+operator now selects exactly five ready v2 rows and rejects duplicate/missing
+profiles or mismatched images.
+
+The shared Agent control had advanced through the independent video workflow to
+`agent-service-video-control:latest@sha256:aff85fcb5233e5cf0881e16df8e62ce73a3d07e739c52713beeb21f7e26596cd`,
+OCI revision `323b9430475355bb01716fc04228d47404104bfb`. Its actual ready
+dispatcher UID/template hash was reviewed and bound explicitly; the old control
+image was not restored. All PPT Pi bindings remain on the exact e9ad build.
+
+Fresh private workflow root:
+`/root/agent-service-deploy-20261026/ppt-http-e9ad-20261030-r2`;
+separate driver and validator roots have the same suffix. Namespace
+`agent-candidate-ppt-http-e9ad-1030-r2` and its local PV/PVC were absent before
+creation; their actual UIDs were captured. They map only the private synthetic
+business root, with no production storage or secret RBAC.
+
+Initial planning passed real HTTP submission, independent validation, stopped
+worker proof, business mapping and ACK. Business job
+`4147ffdf-4d20-47bb-89f1-6c3b1b4c66f0`, remote job
+`9b6f4453-40e7-4b58-b928-85fe445a93df`; six downloaded files, 13641 bytes.
+Receipt `phases/plan_initial/http-receipt.json` SHA256
+`43a4120cd574e2eacae030d69628197b2d40129a0c4bc61e19964310924eaaa2`.
+Plan revision 1 was confirmed using the real synthetic HTTP handler; options
+job `72ff5fc3-eb9a-4bf7-8f7d-a8c540b41553` was then submitted once.
+Later phases, visual/PowerPoint acceptance and full PA4/PA5 completion are still
+pending at this checkpoint.
+
+### Fresh workflow stopped at upstream failure
+
+The options job did not pass. Remote job
+`70dbb30f-ad93-43fd-a186-f690c77d56a3`, attempt
+`9dee32c7-34e0-434c-8766-ebf2785e7dde`, fence 30, returned `failed` with
+`error_code=model_error`. The business connector mapped it to `failed` /
+`execution_interrupted`. Its original deadline `1793351230.695109` was retained;
+the failure occurred before that cutoff. The workflow stopped immediately, with
+no prepare/generate/revise submission and no paid retry.
+
+The new LLM diagnostic captured HTTP200 followed by `response.failed`, category
+`provider_error`, alias `llm-trusted`, caller `agent-execution`. Provider code/type
+were both `unknown` under the explicit vocabulary. This establishes the observed
+upstream failure event, not its deeper cause. The custom route forwards through
+the VPS to the separately operated external provider. Do not claim a context,
+image, quota or timeout cause from these records, and do not silently substitute
+another provider/model.
+
+`phases/plan_options/failure-reconciliation.json` verifies the exact remote
+business reference and pins, terminal state, attempt/fence-bound stop proof and
+owned worker Pod resource. It records `paid_retry=false`,
+`cancellation_requested=false`, `stop_proven=true`. The successful initial stage
+retains its independent validation, actual ACK and HTTP confirmation. Neither
+the failed stage nor the infrastructure cutover is full workflow acceptance.
+
+Before resource cleanup, the read-only cleanup operator verified both submitted
+tasks through the actual API against saved request hashes, original deadlines,
+pins and physical stop proofs. It verified namespace/PV/PVC UIDs, local storage
+path/claim, no validator Pods, no other claimants, volume attachments or
+overlapping local volumes. Evidence:
+`/root/agent-service-deploy-20261026/ppt-http-driver-e9ad-20261030-r2/cleanup-evidence-verify-r1`.
+The cleanup preserves all business files, receipts, failed/native evidence and
+permanent UID history. Full generation, page revision, download, visual and
+PowerPoint acceptance remain pending; `domain_workflow_verified=false`.
+
+The explicit cleanup then completed with UID-preconditioned Foreground deletion:
+the owned validator namespace/PVC/PV are absent and both temporary caller/token
+copies were removed only after renewed stop/storage checks. No job was cancelled
+and no model request was submitted by cleanup. Production resources and business
+rows were unchanged. Receipt:
+`/root/agent-service-deploy-20261026/ppt-http-driver-e9ad-20261030-r2/cleanup-evidence-apply-r1/completed.json`.
