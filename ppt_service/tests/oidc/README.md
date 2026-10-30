@@ -17,11 +17,11 @@ the linker version field is blank. The test records that raw value and checks
 exact binary identity rather than inferring a version string. This does not
 replace or upgrade the production proxy.
 
-The Python HTTP client in this isolated fixture explicitly negotiates TLS 1.2
-with `ECDHE-RSA-CHACHA20-POLY1305`, retaining CA and hostname verification.
-The default Go/Python loopback handshake produced `bad record MAC` in this
-server environment. This test does not change or validate production ingress
-TLS negotiation, browser TLS policy, or the deeper cause of that fixture error.
+The generated CA and leaf include subject/authority key identifiers, critical
+key usage and the leaf's server-auth purpose, supporting strict X.509 validation
+in the packaged Python runtime. The HTTP client uses system TLS defaults and
+retains CA and hostname verification. This fixture does not change or validate
+production ingress TLS negotiation or browser TLS policy.
 
 This is an HTTP-client protocol check. It does not replace browser, live
 Casdoor, actual claim/cookie size, public TLS/DNS, FRP, Vault or enforcing CNI
