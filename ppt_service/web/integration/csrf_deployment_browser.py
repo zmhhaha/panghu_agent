@@ -56,7 +56,7 @@ def main():
   assert result['me_issued_real_token']
   assert result['resource_hashes']['/assets/index-C66NMsHg.js']==EXPECTED_JS
   expect(page.get_by_text('本地开发测试账户 · 正式 SSO 未接通；制稿执行器尚未接通，不会调用模型')).to_be_visible()
-  expect(page.get_by_text('PowerPoint 人工验收待完成，正式发布与邀请尚未开放。')).to_be_visible()
+  expect(page.get_by_text('当前为试用版本，欢迎反馈使用问题与改进建议。')).to_be_visible()
   result['checks'].append('actual_new_resource_hash_and_me_token_test_sso_powerpoint_gates')
   old_status=page.evaluate("async()=> (await fetch('/assets/index-Cb8shtpo.js')).status")
   assert old_status==200

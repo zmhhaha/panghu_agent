@@ -66,7 +66,7 @@ Older records remain available with derived `stale`/`revoked` flags.
 The host must inject `AcceptanceService(sessionmaker, resolver)` into
 `create_acceptance_router(service)` and mount that router deliberately. The
 router uses the existing `server.auth.authenticate`, including signed RS256 JWT,
-trusted proxy peer, issuer/audience/invitation checks and mutation Origin/CSRF
+trusted proxy peer, issuer/audience/signed-email checks and mutation Origin/CSRF
 checks. No development identity or new auth bypass is installed. A different
 `issuer` or `sub`, project, or version is a 404 after authentication.
 
