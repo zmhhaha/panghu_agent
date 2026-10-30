@@ -20,6 +20,11 @@ REDIS = 'video-workbench-session-redis'
 PROXY_LABELS = {'app': PROXY}
 REDIS_LABELS = {'app': REDIS}
 WORKBENCH_LABELS = {'app.kubernetes.io/name': 'video-workbench'}
+OIDC_INGRESS_LABELS = {
+    'app.kubernetes.io/name': 'ingress-nginx',
+    'app.kubernetes.io/instance': 'ingress-nginx',
+    'app.kubernetes.io/component': 'controller',
+}
 
 # The password is never placed in process arguments or a public ConfigMap. The
 # operator provisions an independent 32..128-character alphanumeric credential.
@@ -51,6 +56,9 @@ class OAuthSettings:
     upstream_labels: Mapping[str, str] = field(default_factory=lambda: dict(WORKBENCH_LABELS))
     entry_namespace: str = 'default'
     entry_labels: Mapping[str, str] = field(default_factory=lambda: {'app': 'cloudflared', 'tunnel': 'main'})
+    oidc_egress_namespace: str = 'ingress-nginx'
+    oidc_egress_labels: Mapping[str, str] = field(default_factory=lambda: dict(OIDC_INGRESS_LABELS))
+    oidc_egress_port: int = 443
 
 
 def render(settings: OAuthSettings) -> dict:
@@ -58,6 +66,7 @@ def render(settings: OAuthSettings) -> dict:
     upstream_namespace = _dns_name(settings.upstream_namespace, 'upstream namespace', namespace=True)
     upstream_service = _dns_name(settings.upstream_service, 'upstream Service', namespace=True)
     entry_namespace = _dns_name(settings.entry_namespace, 'entry namespace', namespace=True)
+    oidc_namespace = _dns_name(settings.oidc_egress_namespace, 'OIDC egress namespace', namespace=True)
     oidc_secret = _dns_name(settings.oidc_secret, 'OIDC Secret')
     session_secret = _dns_name(settings.session_secret, 'session Secret')
     if oidc_secret == session_secret:
@@ -67,10 +76,13 @@ def render(settings: OAuthSettings) -> dict:
         raise ValueError('Login host must be an explicit DNS hostname')
     if type(settings.upstream_port) is not int or not 1 <= settings.upstream_port <= 65535:
         raise ValueError('Invalid upstream port')
+    if type(settings.oidc_egress_port) is not int or not 1 <= settings.oidc_egress_port <= 65535:
+        raise ValueError('Invalid OIDC egress port')
     if not isinstance(settings.release_id, str) or not re.fullmatch(r'[A-Za-z0-9](?:[-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?', settings.release_id):
         raise ValueError('Release ID must be a nonempty Kubernetes label value')
     entry_labels = _labels(settings.entry_labels, 'entry labels')
     upstream_labels = _labels(settings.upstream_labels, 'upstream labels')
+    oidc_labels = _labels(settings.oidc_egress_labels, 'OIDC egress labels')
     proxy_image = _image(settings.proxy_image, settings.proxy_image_digest)
     redis_image = _image(settings.redis_image, settings.redis_image_digest)
     upstream = f'http://{upstream_service}.{upstream_namespace}.svc.cluster.local:{settings.upstream_port}'
@@ -147,9 +159,6 @@ def render(settings: OAuthSettings) -> dict:
     services = [obj('v1', 'Service', name, {'type': 'ClusterIP', 'selector': labels,
                 'ports': [{'name': port_name, 'port': port, 'targetPort': port_name}]})
                 for name, labels, port_name, port in ((PROXY, PROXY_LABELS, 'http', 4180), (REDIS, REDIS_LABELS, 'redis', 6379))]
-    public_https = {'ipBlock': {'cidr': '0.0.0.0/0', 'except': [
-        '0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8', '169.254.0.0/16',
-        '172.16.0.0/12', '192.168.0.0/16', '198.18.0.0/15', '224.0.0.0/4', '240.0.0.0/4']}}
     proxy_policy = obj('networking.k8s.io/v1', 'NetworkPolicy', PROXY, {
         'podSelector': {'matchLabels': dict(PROXY_LABELS)}, 'policyTypes': ['Ingress', 'Egress'],
         'ingress': [{'from': [peer(entry_namespace, entry_labels)], 'ports': [{'protocol': 'TCP', 'port': 4180}]}],
@@ -158,9 +167,11 @@ def render(settings: OAuthSettings) -> dict:
              'ports': [{'protocol': 'UDP', 'port': 53}, {'protocol': 'TCP', 'port': 53}]},
             {'to': [peer(upstream_namespace, upstream_labels)], 'ports': [{'protocol': 'TCP', 'port': settings.upstream_port}]},
             {'to': [peer(namespace, dict(REDIS_LABELS))], 'ports': [{'protocol': 'TCP', 'port': 6379}]},
-            # The existing public issuer uses HTTPS. Plain Kubernetes policies
-            # cannot restrict public HTTPS by DNS hostname; this is explicit.
-            {'to': [public_https], 'ports': [{'protocol': 'TCP', 'port': 443}]},
+            # CoreDNS resolves the unchanged HTTPS issuer to this internal TLS
+            # ingress. Select its destination Pods after Service DNAT, rather
+            # than permitting every private address or all public HTTPS.
+            {'to': [peer(oidc_namespace, oidc_labels)],
+             'ports': [{'protocol': 'TCP', 'port': settings.oidc_egress_port}]},
         ],
     })
     redis_policy = obj('networking.k8s.io/v1', 'NetworkPolicy', REDIS, {
@@ -188,6 +199,12 @@ def main(argv=None):
     parser.add_argument('--entry-namespace', default='default')
     parser.add_argument('--entry-label', action='append', help='Repeat KEY=VALUE; overrides cloudflared/main selectors')
     parser.add_argument('--upstream-label', action='append', help='Repeat KEY=VALUE; overrides workbench selectors')
+    parser.add_argument('--oidc-egress-namespace', default='ingress-nginx',
+                        help='Namespace of the existing internal TLS ingress for the OIDC issuer')
+    parser.add_argument('--oidc-egress-label', action='append',
+                        help='Repeat KEY=VALUE; overrides internal ingress controller selectors')
+    parser.add_argument('--oidc-egress-port', type=int, default=443,
+                        help='Actual destination Pod TCP port after Service translation')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args(argv)
     from .render import _parse_labels
@@ -196,10 +213,13 @@ def main(argv=None):
         destination = values.pop('output')
         entry = values.pop('entry_label')
         upstream = values.pop('upstream_label')
+        oidc = values.pop('oidc_egress_label')
         if entry is not None:
             values['entry_labels'] = _parse_labels(entry)
         if upstream is not None:
             values['upstream_labels'] = _parse_labels(upstream)
+        if oidc is not None:
+            values['oidc_egress_labels'] = _parse_labels(oidc)
         text = json.dumps(render(OAuthSettings(**values)), ensure_ascii=False, indent=2) + '\n'
     except ValueError as exc:
         parser.error(str(exc))

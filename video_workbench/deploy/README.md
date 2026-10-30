@@ -117,7 +117,9 @@ python -m video_workbench.deploy.oauth \
   --output .runtime/video-workbench/oauth.json
 ```
 
-默认仅允许线上现有 `default` 命名空间、标签 `app=cloudflared,tunnel=main` 的 Tunnel Pod 进入代理；若用户选择另一 Tunnel，需要显式修改 `--entry-namespace` 和 `--entry-label`。代理可出站到 DNS、工作台、独立 Redis，以及用于现有公开 OIDC issuer 的公网 HTTPS。公网 HTTPS 规则排除私有网段，但属于 IP/端口范围规则，不能表达 Casdoor 域名专属允许列表；普通 Kubernetes NetworkPolicy 不支持按域名过滤。独立 Redis 仅允许该代理入站且无出站权限。
+默认仅允许线上现有 `default` 命名空间、标签 `app=cloudflared,tunnel=main` 的 Tunnel Pod 进入代理；若用户选择另一 Tunnel，需要显式修改 `--entry-namespace` 和 `--entry-label`。代理可出站到 DNS、工作台、独立 Redis，以及现有 OIDC 的集群内 TLS 入口。当前 CoreDNS 将 `auth.panghuer.top` 解析到 `ingress-nginx/ingress-nginx-controller` Service；其 TCP443 后端 Pod 必须同时满足 `app.kubernetes.io/name=ingress-nginx`、`app.kubernetes.io/instance=ingress-nginx`、`app.kubernetes.io/component=controller`。策略按目标命名空间和这三个标签选择 TLS 入口，不开放公网 HTTPS 或整个私网网段。
+
+OIDC issuer 仍为 `https://auth.panghuer.top`，保留证书与 issuer 校验；现有 `auth-internal` Ingress 将 TLS 请求转发到 Casdoor。部署前核对该 Service 的 EndpointSlice、目标 Pod 标签及实际后端端口；环境不同可显式设置 `--oidc-egress-namespace`、重复 `--oidc-egress-label` 和 `--oidc-egress-port`，并验证实际 CNI 的 Service 转换行为。生成器不会修改 CoreDNS、已有 TLS Ingress、证书或 Casdoor。独立 Redis 仅允许该代理入站且无出站权限。
 
 输出包含两个 Deployment、两个内部 Service、两条 NetworkPolicy，均在 `oauth` 命名空间。代理以非 root 和只读根文件系统运行，清洗并重新设置用户身份头；实际登录后仍需验证用户标识、伪造身份头拒绝、Cookie、CSRF 和会话隔离。`/ping` 探针只证明代理进程可响应，不能代替真实登录和文稿试做。
 

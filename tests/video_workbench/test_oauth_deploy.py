@@ -114,9 +114,60 @@ def test_network_allows_only_tunnel_to_proxy_and_proxy_to_redis(settings):
     assert peer['podSelector']['matchLabels'] == proxy['podSelector']['matchLabels']
     assert redis['ingress'][0]['ports'] == [{'protocol': 'TCP', 'port': 6379}]
     assert proxy['egress'][-1]['ports'] == [{'protocol': 'TCP', 'port': 443}]
-    assert proxy['egress'][-1]['to'][0]['ipBlock']['except']
     assert all('namespaceSelector' in p and 'podSelector' in p
-               for rule in proxy['egress'][:-1] for p in rule['to'])
+               for rule in proxy['egress'] for p in rule['to'])
+
+
+def permits_egress(document, namespace, labels, port):
+    """Evaluate the rendered AND selectors for a concrete destination Pod.
+
+    This checks the access boundary independently of list order and object
+    spelling; real Service translation and CNI enforcement need a live probe.
+    """
+    spec = item(document, 'NetworkPolicy', 'oauth2-proxy-video-workbench')['spec']
+    for rule in spec['egress']:
+        if not any(p.get('protocol', 'TCP') == 'TCP' and p['port'] == port for p in rule['ports']):
+            continue
+        for peer in rule['to']:
+            ns = peer.get('namespaceSelector', {}).get('matchLabels', {})
+            pods = peer.get('podSelector', {}).get('matchLabels', {})
+            if (ns == {'kubernetes.io/metadata.name': namespace}
+                    and pods and all(labels.get(k) == v for k, v in pods.items())):
+                return True
+    return False
+
+
+def test_split_horizon_oidc_reaches_only_verified_tls_controller(settings):
+    document = render(settings)
+    tls = {'app.kubernetes.io/name': 'ingress-nginx',
+           'app.kubernetes.io/instance': 'ingress-nginx',
+           'app.kubernetes.io/component': 'controller'}
+    assert permits_egress(document, 'ingress-nginx', tls, 443)
+    assert not permits_egress(document, 'other', tls, 443)
+    for key in tls:
+        assert not permits_egress(document, 'ingress-nginx', {k: v for k, v in tls.items() if k != key}, 443)
+    for port in [80, 8000, 8443]:
+        assert not permits_egress(document, 'ingress-nginx', tls, port)
+    assert not permits_egress(document, 'oauth', {'app': 'casdoor'}, 443)
+    assert not permits_egress(document, 'unrelated', {'app': 'unrelated'}, 443)
+    assert not any('ipBlock' in peer for r in document['items'] if r['kind'] == 'NetworkPolicy'
+                   for rule in r['spec'].get('egress', []) for peer in rule['to'])
+    assert permits_egress(document, 'video-workbench', {'app.kubernetes.io/name': 'video-workbench'}, 8089)
+    assert permits_egress(document, 'oauth', {'app': 'video-workbench-session-redis'}, 6379)
+    assert not any('insecure-skip-verify' in arg
+                   for arg in container(document, 'oauth2-proxy-video-workbench')['args'])
+
+
+def test_custom_oidc_destination_does_not_also_allow_default_controller(settings):
+    document = render(replace(settings, oidc_egress_namespace='identity-edge',
+                              oidc_egress_labels={'app': 'identity-tls'}, oidc_egress_port=8443))
+    assert permits_egress(document, 'identity-edge', {'app': 'identity-tls'}, 8443)
+    assert not permits_egress(document, 'identity-edge', {'app': 'identity-tls'}, 443)
+    assert not permits_egress(document, 'identity-edge', {'app': 'unrelated'}, 8443)
+    assert not permits_egress(document, 'ingress-nginx', {
+        'app.kubernetes.io/name': 'ingress-nginx',
+        'app.kubernetes.io/instance': 'ingress-nginx',
+        'app.kubernetes.io/component': 'controller'}, 443)
 
 
 def test_custom_upstream_and_entry_selectors_remain_consistent(settings):
@@ -137,6 +188,8 @@ def test_custom_upstream_and_entry_selectors_remain_consistent(settings):
     {'host': '127.0.0.1'}, {'host': '[::1]'}, {'host': 'localhost'},
     {'oidc_secret': 'same', 'session_secret': 'same'}, {'session_secret': '../secret'},
     {'namespace': 'a.b'}, {'entry_labels': {}}, {'upstream_labels': {}},
+    {'oidc_egress_namespace': 'a.b'}, {'oidc_egress_labels': {}},
+    {'oidc_egress_port': True}, {'oidc_egress_port': 0}, {'oidc_egress_port': 65536},
     {'upstream_port': True}, {'upstream_port': 0},
     {'proxy_image': 'registry.example.com/oauth2-proxy:v7.8.0'},
     {'redis_image_digest': 'sha256:fake'}, {'release_id': 'a' * 64},
@@ -155,3 +208,16 @@ def test_cli_generates_only_reviewable_resources(tmp_path):
     document = json.loads(destination.read_text(encoding='utf-8'))
     assert len(document['items']) == 6
     assert list(tmp_path.iterdir()) == [destination]
+
+
+def test_cli_selects_the_actual_internal_oidc_destination(tmp_path):
+    destination = tmp_path / 'auth.json'
+    main(['--host', 'video-service.panghuer.top', '--proxy-image', 'example.com/oauth:latest',
+          '--proxy-image-digest', 'sha256:' + 'a' * 64, '--redis-image', 'example.com/redis:latest',
+          '--redis-image-digest', 'sha256:' + 'b' * 64, '--release-id', 'abcdef',
+          '--oidc-egress-namespace', 'identity-edge', '--oidc-egress-label', 'app=identity-tls',
+          '--oidc-egress-label', 'role=controller', '--oidc-egress-port', '8443',
+          '--output', str(destination)])
+    document = json.loads(destination.read_text(encoding='utf-8'))
+    assert permits_egress(document, 'identity-edge', {'app': 'identity-tls', 'role': 'controller'}, 8443)
+    assert not permits_egress(document, 'identity-edge', {'app': 'identity-tls'}, 8443)
