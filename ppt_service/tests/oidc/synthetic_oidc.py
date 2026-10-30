@@ -82,7 +82,13 @@ def certificates(work):
     (work / "leaf.pem").write_bytes(leaf.public_bytes(serialization.Encoding.PEM))
     write_private(work / "leaf.key", leaf_key.private_bytes(
         serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
-    return ssl.create_default_context(cafile=str(work / "ca.pem"))
+    context = ssl.create_default_context(cafile=str(work / "ca.pem"))
+    # Keep certificate and hostname validation. The isolated Go/Python loopback
+    # fixture uses an explicit modern TLS 1.2 suite after default handshakes
+    # reported bad-record-MAC; this does not alter production ingress TLS.
+    context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_2
+    context.set_ciphers("ECDHE-RSA-CHACHA20-POLY1305")
+    return context
 
 
 def configure(source, work):
@@ -226,6 +232,7 @@ def main():
     issuer = None
     result = {"synthetic": True, "browser_acceptance": False, "casdoor_acceptance": False,
               "external_network": False, "model_requests": 0, "production_ready": False,
+              "fixture_client_tls": "TLSv1.2/ECDHE-RSA-CHACHA20-POLY1305; certificate verification enabled",
               "proxy_binary_sha256": sha(args.binary), "template_sha256": sha(args.template), "checks": checks}
 
     def check(name, condition):
