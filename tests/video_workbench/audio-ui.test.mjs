@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
   acceptProjectRead, activeOperations, audioPath, chooseAudioVersion, chooseVersion,
-  createCaptionDraft, createIntentKeys, createWorkspaceState, issueProjectRead,
+  createCaptionDraft, createIntentKeys, createWorkspaceState, issueProjectRead, deliveryIssues,
   parsePronunciation, pronunciationText, selectProject, selectedAudioVersion,
   selectedVersion, timelinePosition, validateCaptionCues,
 } from '../../video_workbench/web/model.mjs';
@@ -136,6 +136,38 @@ test('stale audio never plays and immutable audio paths encode untrusted identif
     audio_version_id: 'old', audio_duration_seconds: 4, audio_stale: true }] };
   assert.equal(timelinePosition(timeline, 1).speaking, false);
   assert.equal(audioPath('../other?a=1'), '/api/audio-versions/..%2Fother%3Fa%3D1/audio');
+});
+
+test('delivery issues identify scene order, titles and missing or stale adopted resources', () => {
+  const project = { scenes: [
+    { id: 'missing', title: '<原始标题>' },
+    { id: 'old', title: '需更新', head_version_id: 'v', head_audio_version_id: 'a', audio_stale: true,
+      captions: { audio_version_id: 'a', cues: [{ start: 0, end: 1, text: '旧字幕' }] } },
+    { id: 'timing', title: '留白变化', head_version_id: 'v', head_audio_version_id: 'b',
+      captions: { timing_stale: true, audio_version_id: 'b', cues: [{ start: 0, end: 1, text: '字幕' }] } },
+    { id: 'ready', head_version_id: 'v', head_audio_version_id: 'c',
+      captions: { requires_review: true, audio_version_id: 'c', cues: [{ start: 0, end: 1, text: '估算字幕' }] } },
+  ] };
+  assert.deepEqual(deliveryIssues(project), [
+    { sceneId: 'missing', number: 1, title: '<原始标题>', reasons: ['missing_visual', 'missing_audio', 'missing_captions'] },
+    { sceneId: 'old', number: 2, title: '需更新', reasons: ['stale_audio', 'stale_captions'] },
+    { sceneId: 'timing', number: 3, title: '留白变化', reasons: ['stale_captions'] },
+  ]);
+  assert.deepEqual(deliveryIssues(project, { subtitles: false }).map(issue => issue.reasons),
+    [['missing_visual', 'missing_audio'], ['stale_audio']]);
+  assert.deepEqual(deliveryIssues(project, { silent: true }),
+    [{ sceneId: 'missing', number: 1, title: '<原始标题>', reasons: ['missing_visual'] }]);
+});
+
+test('delivery issues follow audio adoption changes and distinguish empty captions from an old binding', () => {
+  const scene = { id: 's', title: '镜头', head_version_id: 'v', head_audio_version_id: 'new',
+    captions: { audio_version_id: 'old', cues: [{ start: 0, end: 1, text: '旧' }] } };
+  assert.deepEqual(deliveryIssues({ scenes: [scene] })[0].reasons, ['stale_captions']);
+  scene.captions = { cues: [] };
+  assert.deepEqual(deliveryIssues({ scenes: [scene] })[0].reasons, ['missing_captions']);
+  scene.captions = { audio_version_id: 'new', cues: [{ start: 0, end: 1, text: '新' }] };
+  assert.deepEqual(deliveryIssues({ scenes: [scene] }), []);
+  assert.deepEqual(deliveryIssues({ scenes: [] }), []);
 });
 
 test('uncertain raw uploads retain intent only for matching content and revision', () => {

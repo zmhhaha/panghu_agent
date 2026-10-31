@@ -4,7 +4,7 @@ import {
   selectProject, selectScene, selectedScene, selectedVersion, statusLabel, syncSceneDraft,
   updateProjectSummary, versionPath,
   audioPath, chooseAudioVersion, createCaptionDraft, orderedAudioVersions, parsePronunciation,
-  pronunciationText, selectedAudioVersion, timelinePosition, validateCaptionCues,
+  pronunciationText, selectedAudioVersion, timelinePosition, validateCaptionCues, deliveryIssues,
 } from './model.mjs';
 
 const $ = id => document.getElementById(id);
@@ -180,7 +180,9 @@ function renderScenes(project) {
     const bottom = node('div', undefined, 'scene-card-bottom');
     bottom.append(node('span', scene.format === 'html' ? 'HTML' : 'SVG'),
       node('span', isActiveOperation(scene.operation) ? statusLabel(scene.operation.status)
-        : scene.head_version_id ? '已采用画面' : scene.versions?.length ? '有候选版本' : '待制作'));
+        : scene.head_version_id ? '已采用画面' : scene.versions?.length ? '有候选版本' : '待制作'),
+      node('span', scene.audio_stale ? '配音已过期' : scene.head_audio_version_id ? '已采用配音' : '未采用配音',
+        `scene-audio-status${scene.audio_stale ? ' stale' : ''}`));
     button.append(top, node('h3', scene.title), node('p', scene.narration || scene.visual_description || '还没有旁白'), bottom);
     button.addEventListener('click', () => {
       selectScene(state, scene.id);
@@ -484,6 +486,24 @@ function renderDelivery(project) {
   const visualCount = scenes.filter(scene => scene.head_version_id).length;
   const audioCount = scenes.filter(scene => scene.head_audio_version_id && !scene.audio_stale).length;
   $('delivery-summary').textContent = `已采用画面 ${visualCount}/${scenes.length} · 可用配音 ${audioCount}/${scenes.length}。预览和成片使用已采用的版本。`;
+  const issues = deliveryIssues(project, { silent: $('render-silent').checked, subtitles: $('render-subtitles').checked });
+  const reasons = { missing_visual: '未采用画面', missing_audio: '未采用配音', stale_audio: '配音已过期',
+    missing_captions: '缺少字幕', stale_captions: '字幕已过期' };
+  const issueList = document.createDocumentFragment();
+  for (const issue of issues) {
+    const item = node('li');
+    const button = node('button', undefined, 'delivery-issue'); button.type = 'button';
+    button.append(node('strong', `镜头 ${String(issue.number).padStart(2, '0')} · ${issue.title || '未命名镜头'}`),
+      node('span', issue.reasons.map(reason => reasons[reason]).join(' · ')));
+    button.addEventListener('click', () => {
+      selectScene(state, issue.sceneId); editor = null; render();
+      $('scene-workspace').scrollIntoView({ block: 'start' });
+      $('toggle-scene-editor').focus({ preventScroll: true });
+    });
+    item.append(button); issueList.append(item);
+  }
+  $('delivery-issues').replaceChildren(issueList);
+  $('delivery-issues').hidden = !issues.length;
   $('preview-project').disabled = !scenes.length || pending.has(`preview:${project.id}`);
   $('render-project').disabled = !scenes.length || !sessionSettings.media_configured || pending.has(`render:${project.id}`);
   $('download-subtitles').disabled = !scenes.length || pending.has(`subtitles:${project.id}`);
@@ -1053,6 +1073,9 @@ $('render-project').addEventListener('click', () => {
     () => success('成片导出已开始，可在项目预览与成片中查看进度。'));
 });
 $('preview-project').addEventListener('click', openProjectPlayer);
+for (const id of ['render-silent', 'render-subtitles']) $(id).addEventListener('change', () => {
+  if (state.project) renderDelivery(state.project);
+});
 $('close-project-player').addEventListener('click', closeProjectPlayer);
 $('project-player-dialog').addEventListener('cancel', event => { event.preventDefault(); closeProjectPlayer(); });
 $('project-player-toggle').addEventListener('click', () => {

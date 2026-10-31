@@ -205,6 +205,27 @@ export function audioPath(versionId) {
   return `/api/audio-versions/${encodeURIComponent(versionId)}/audio`;
 }
 
+/** Name the scenes that still need resources for the selected delivery mode. */
+export function deliveryIssues(project, { silent = false, subtitles = true } = {}) {
+  return (project?.scenes ?? []).flatMap((scene, index) => {
+    const reasons = [];
+    if (!scene.head_version_id) reasons.push('missing_visual');
+    if (!silent) {
+      if (!scene.head_audio_version_id) reasons.push('missing_audio');
+      else if (scene.audio_stale) reasons.push('stale_audio');
+      if (subtitles) {
+        const captions = scene.captions;
+        if (!captions?.cues?.length) reasons.push('missing_captions');
+        else if (captions.stale || captions.timing_stale || scene.audio_stale
+            || (captions.audio_version_id && captions.audio_version_id !== scene.head_audio_version_id)) {
+          reasons.push('stale_captions');
+        }
+      }
+    }
+    return reasons.length ? [{ sceneId: scene.id, number: index + 1, title: scene.title ?? '', reasons }] : [];
+  });
+}
+
 /** One pronunciation override per line; duplicates are refused instead of lost. */
 export function parsePronunciation(value) {
   const pairs = [];
