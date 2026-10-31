@@ -50,6 +50,18 @@ def collect(case):
         StopEvidence(envelope.attempt_id, True, ('offline-synthetic-stop',)))
 
 
+@pytest.fixture
+def blocked_initial(tmp_path):
+    task, _ = fixture('ppt.plan_initial.v1')
+    manifest = _needs_input_manifest_example(task)
+    manifest['plan']['blocker'] = 'Synthetic fixture is missing a caller-provided source fact.'
+    manifest['questions'] = ['Provide the missing source fact before continuing this synthetic fixture.']
+    (tmp_path / 'project' / manifest['project_root']).mkdir(parents=True)
+    (tmp_path / 'result').mkdir()
+    envelope = SimpleNamespace(task=task, profile='ppt.plan_initial.v1', job_id=str(uuid4()), attempt_id=str(uuid4()))
+    return tmp_path, manifest, envelope
+
+
 @pytest.mark.parametrize('quality', [{}, {'reports': [{'path': 'planning-notes.md'}]}])
 def test_initial_example_is_accepted_by_stopped_collector_and_business_parsers(initial, quality):
     workspace, manifest, envelope = initial
@@ -135,7 +147,10 @@ def test_blocked_prompt_example_keeps_complete_schema_without_claiming_success(p
     assert example['schema_version'] == 1 and example['phase'] == phase
     assert example['status'] == 'needs_input' and example['questions']
     assert example['input_snapshot_sha256'] == task['input_snapshot_sha256']
-    assert example['artifacts'] == example['slides'] == []
+    assert example['artifacts'] == [dict(path='blocker-note.md', role='blocker_note',
+        media_type='text/markdown',
+        sha256='<actual 64 lowercase hexadecimal SHA256 of the written blocker note>', bytes=0)]
+    assert example['slides'] == []
     assert example['quality'] == example['provenance'] == {}
 
 
@@ -144,14 +159,47 @@ def test_blocked_example_with_measured_existing_files_crosses_strict_handoff(ini
     manifest = _needs_input_manifest_example(envelope.task)
     manifest['plan']['blocker'] = 'Synthetic fixture needs a source fact the caller has not provided.'
     manifest['questions'] = ['Provide the missing source fact before continuing this synthetic fixture.']
-    # The blocked example supplies no fabricated file or gate. Populate its
-    # roster only from the fixture's already measured ordinary source file.
+    # A blocker note is unnecessary when an ordinary measured project file
+    # already exists. Declare that real file, not the unwritten note template.
     manifest['artifacts'] = existing['artifacts']
     files = {row.name: row for row in collect((workspace, manifest, envelope))}
     assert json.loads(files['result/manifest.json'].content()) == manifest
     checkpoint = json.loads(files['result/checkpoint.json'].content())
     validate_checkpoint(checkpoint, project_id=envelope.task['project_id'],
         snapshot_hash=envelope.task['input_snapshot_sha256'])
+    assert checkpoint['publication_authorized'] is False
+    report = validate_manifest(workspace / 'project', manifest)
+    assert report['published'] is False and report['quality_reports_verified'] is False
+
+
+def test_empty_blocked_roster_cannot_form_valid_checkpoint_after_collection(blocked_initial):
+    workspace, manifest, envelope = blocked_initial
+    manifest['artifacts'] = []
+    files = {row.name: row for row in collect(blocked_initial)}
+    checkpoint = json.loads(files['result/checkpoint.json'].content())
+    assert checkpoint['files'] == [] and checkpoint['total_bytes'] == 0
+    with pytest.raises(ServiceError) as caught:
+        validate_checkpoint(checkpoint, project_id=envelope.task['project_id'],
+            snapshot_hash=envelope.task['input_snapshot_sha256'])
+    assert caught.value.code == 'invalid_ppt_checkpoint'
+
+
+def test_real_blocker_note_without_prior_files_crosses_strict_handoff(blocked_initial):
+    workspace, manifest, envelope = blocked_initial
+    artifact = manifest['artifacts'][0]
+    note = (b'# Synthetic blocker note\n\nThis fixture cannot proceed because a caller-provided '
+            b'source fact is absent. No source facts or successful gates are asserted.\n')
+    path = workspace / 'project' / manifest['project_root'] / artifact['path']
+    path.write_bytes(note)
+    artifact.update(sha256=hashlib.sha256(note).hexdigest(), bytes=len(note))
+    files = {row.name: row for row in collect(blocked_initial)}
+    assert set(files) == {'project/deck/blocker-note.md', 'result/manifest.json', 'result/checkpoint.json'}
+    assert files['project/deck/blocker-note.md'].content() == note
+    assert json.loads(files['result/manifest.json'].content()) == manifest
+    checkpoint = json.loads(files['result/checkpoint.json'].content())
+    validate_checkpoint(checkpoint, project_id=envelope.task['project_id'],
+        snapshot_hash=envelope.task['input_snapshot_sha256'])
+    assert checkpoint['files'] == [dict(path='deck/blocker-note.md', sha256=artifact['sha256'], bytes=len(note))]
     assert checkpoint['publication_authorized'] is False
     report = validate_manifest(workspace / 'project', manifest)
     assert report['published'] is False and report['quality_reports_verified'] is False
@@ -167,7 +215,7 @@ def test_prompt_explains_blocked_roster_before_success_example_and_task_data():
     task, _ = fixture('ppt.plan_initial.v1')
     prompt = PPTProfile('plan_initial').build_prompt(task)
     blocked_marker = 'Blocked handoff JSON shape (needs_input also requires EVERY typed field):\n'
-    text = prompt.split(blocked_marker, 1)[1].split('\nThe empty artifacts/slides/quality', 1)[0]
+    text = prompt.split(blocked_marker, 1)[1].split('\nThe blocker-note.md artifact above', 1)[0]
     assert json.loads(text) == _needs_input_manifest_example(task)
     assert prompt.index(blocked_marker) < prompt.index('Manifest JSON shape for this exact phase and page count:')
     assert 'including restored files' in prompt
@@ -175,6 +223,14 @@ def test_prompt_explains_blocked_roster_before_success_example_and_task_data():
     assert 'replace artifacts with files' in prompt
     assert 'Preserve the checkpoint project_root when supplied' in prompt
     assert 'Every roster entry still needs role,path,sha256,bytes,media_type' in prompt
+    assert 'Every needs_input handoff requires at least one real artifact' in prompt
+    assert 'an empty artifacts roster cannot form a valid checkpoint' in prompt
+    assert 'write a truthful blocker-note.md' in prompt
+    assert 'writing is available and permitted' in prompt
+    assert 'not evidence that the note exists' in prompt
+    assert 'replace its SHA256 and bytes=0 with the actual digest and byte count' in prompt
+    assert 'tasks must retain and declare every existing file' in prompt
+    assert 'Do not invent source facts or successful gates' in prompt
 
 
 def test_execution_guidance_closes_only_redundant_confirmation_and_retains_real_gates():

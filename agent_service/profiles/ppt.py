@@ -252,14 +252,16 @@ def _manifest_example(task):
 
 
 def _needs_input_manifest_example(task):
-    """Complete blocked-handoff shape, without fictional artifacts or gate passes."""
+    """Blocked-handoff template; its note must really be written and measured."""
     checkpoint = task.get('checkpoint')
     root = checkpoint['project_root'] if type(checkpoint) is dict else 'deck'
     return dict(schema_version=1, phase=task['phase'], status='needs_input',
         input_snapshot_sha256=task['input_snapshot_sha256'], project_root=root,
         plan={'blocker': '<specific unresolved prerequisite and observed evidence>'},
         questions=['<specific missing information, authorization or decision needed to continue>'],
-        artifacts=[], slides=[], quality={}, provenance={})
+        artifacts=[dict(path='blocker-note.md', role='blocker_note', media_type='text/markdown',
+            sha256='<actual 64 lowercase hexadecimal SHA256 of the written blocker note>', bytes=0)],
+        slides=[], quality={}, provenance={})
 
 
 class PPTProfile:
@@ -413,21 +415,32 @@ class PPTProfile:
             'observations in the actual report file or plan/provenance. Planning may use quality={} '
             'when it has no report. prepare/generate/revise require real declared report references. '
             'A report reference is structural evidence only, never a publication or human review.\n'
-            'For needs_input keep the same typed fields and actual file roster; set status=needs_input '
-            'and questions to a nonempty array of honest questions. Do not invent files or successful '
-            'gates to fill the example. For planning, slides must be []; no formal specs/lock or '
+            'For needs_input keep the same typed fields and a nonempty actual file roster; set '
+            'status=needs_input and questions to a nonempty array of honest questions. If no ordinary '
+            'project file exists and writing is available and permitted, write a truthful blocker-note.md '
+            'under the actual project_root with only the observed blocker and missing prerequisite; '
+            'measure and declare that real file. Every needs_input handoff requires at least one real '
+            'artifact; an empty artifacts roster cannot form a valid checkpoint. Do not bypass a '
+            'required write approval or pretend an unwritten note exists. Do not invent source facts '
+            'or successful gates to fill the example. For planning, slides must be []; no formal specs/lock or '
             'slides/PPTX may exist yet. For prepare, slides must be [] and no SVG/PPTX may exist yet. '
             'Generation examples must be extended with actual chart artifacts/references only when '
             'the authorized source and approved design require them.\n'
             'Blocked handoff JSON shape (needs_input also requires EVERY typed field):\n'
             + canonical_bytes(_needs_input_manifest_example(task)).decode('utf-8') + '\n'
-            'The empty artifacts/slides/quality above claim no output or successful gate. Replace '
-            'them with the complete measured roster of files that really exist, including restored '
-            'files, actual slide references and any real declared report references. Preserve the '
-            'checkpoint project_root when supplied; otherwise replace deck with the actual child '
+            'The blocker-note.md artifact above is a template, not evidence that the note exists. '
+            'Use it only after writing and measuring the real note; replace its SHA256 and bytes=0 '
+            'with the actual digest and byte count. If ordinary project files already exist, declare '
+            'those instead; no extra blocker note is required. Always supply the complete measured '
+            'roster of files that really exist, including restored files; restored generate/revise '
+            'tasks must retain and declare every existing file, never replace that roster with only '
+            'a blocker note. Supply actual slide references and any real declared report references. '
+            'Preserve the checkpoint project_root when supplied; otherwise replace deck with the actual child '
             'initialized under project/. Every roster entry still needs role,path,sha256,bytes,media_type '
-            'measured from the existing file, and known source provenance must be retained. Keep empty '
-            'containers only when no corresponding item exists; never omit artifacts or provenance, '
+            'measured from the existing file, and known source provenance must be retained. The empty '
+            'slides/quality/provenance containers claim no corresponding item or successful gate; '
+            'retain real corresponding items when present. Never return an empty artifacts roster; '
+            'never omit artifacts or provenance, '
             'replace artifacts with files, put prose inside quality, or fabricate unavailable PPTX/PNG. '
             'State only the real blocker in plan/questions; a routine request to confirm finalize '
             'or export of the already-approved solution is not a missing prerequisite.\n'
