@@ -1,5 +1,51 @@
 # 视频工作台交接记录
 
+更新：2026-10-31（Asia/Shanghai）。八镜头真实配音、206 秒 MP4 独立技术检查及工作台 rollout restart 后持久化均已通过；最终证据已下载校验，OpenSpec 已同步并验证通过。下方 2026-10-30 内容保留为历史，禁止按旧脚本重复生成任务。完整稿听感尚未获用户认可。
+
+## 音频阶段工作位置和部署
+
+- 应用工作树：`D:\github\armbianbegin\.video-audio-worktree`；分支 `codex/video-audio-production`；部署源码 `e5b375b02e8b639b0b4a0eecaa17c67145c005bc`，尚未合主线。
+- 语音独立工作树：`D:\github\armbianbegin\.speech-service-worktree`；分支 `codex/speech-service-rk3588`；不要把语音服务源码塞进视频应用目录。
+- 工作台镜像：`arm-cluster-master:5000/video-workbench:latest@sha256:ccd2509379ad55029760cf5229d09dd33b0577213172a20e791d9818ad06c6fe`；主动重建后最终 Pod `video-workbench-6454f4845f-bj52n` Ready、实际 imageID 不变、异常重启 0，替换旧 `video-workbench-7889b8d5b5-ml22n`。
+- 线上语音：`http://speech-service.speech-service.svc.cluster.local/v1`，模型 `kokoro-rk3588`，男声 `zm_yunjian`；修复源码 `c506bb3c105c81200bc3b86577b65fb96f3361e8`，latest digest `sha256:adb9d87b15b461db56a2f4aca5fd6999221fe4c715ee3751250b3a4b21423634`。Pod `speech-service-758cbd54f9-bfczb` Ready，PID1 capabilities 五组全 0、NNP=1。只记录 Secret 名称／挂载位置，不输出 token；不静默 CPU generator 回退。
+- 本地运行脚本：`D:\github\armbianbegin\.runtime\video-audio-production`；master 发布／证据目录：`/root/video-audio-release-20261031`。后台执行 kubectl 必须显式带 `KUBECONFIG=/etc/kubernetes/admin.conf`。
+- 用户已授权自主完成修复、部署和验收；不改 DNS／Casdoor，不新增付费视觉调用，音频分支不合主线。
+
+## 音频真实验收：继续已有副本
+
+| 对象 | 当前固定值 |
+| --- | --- |
+| 原 DSH 项目 | `cdad4be8-3e51-44ff-98df-3d7500d147d3`，revision 27，8 张 SVG 已采用，原项目未改 |
+| 音频验收副本 | `1e2a822d-c4c1-45de-a8b9-b72a82f714bc`，名称 `[配音验收] DSH 架构解析（复用已有画面）`，属于原用户 |
+| 八镜配音 | 8 镜均已真实合成、明确采用；复用已有画面，新增视觉 Agent 调用 0 |
+| 已完成 MP4 | render `5641dc62-01d7-4540-8e79-501ec801cced`，206 秒、H.264／AAC、1280×720@24fps、4944 帧 |
+| MP4 SHA-256 | `75ab83eba053d20b0d8beee8687709ee5aadd10eabef8549dfc4b55122358c31` |
+| 冻结与项目 revision | render 冻结 revision 67；后续编辑恢复 revision 69，局部失效验证通过 |
+| 第三镜原失败 | `0f99c230-d5b4-414c-8c4e-8175e464ea67`，`--patch` 的 U+002D 不在 Kokoro 词表，旧 failed 保留 |
+| 第六镜原失败 | `03d700c9-e71d-4dd7-bbff-fa608acc82c1`，D=181→200 的 snap 约 10.497% 超 10%，旧 failed 保留 |
+| 重启后持久化 | 8 条采用音频逐一 SHA 匹配，上传 A2 历史保留，MP4 SHA 匹配，SQLite integrity ok，原 DSH revision 27 不变 |
+| 尚未完成 | 整稿自然度／术语人工试听、字幕人工校正、BGM／混音与容量管理后续 |
+
+第三镜通过工作台显式读音修正处理第 3／5／6 镜 CLI、路径与文件名，原旁白不改。第六镜通过完整无损 NPU 分段规划修复，保留原语速、文稿及 10% 限制，无 CPU generator 回退；新 intent 已完成剩余真实配音，两次旧失败不反写。**不要原样重跑 `workbench_audio_live_acceptance.py` 或续跑脚本：八镜与成片均已完成，无需重复创建项目或合成。**
+
+工作台重启、8 配音／MP4 hash、SQLite integrity、原项目 revision 27 与进程权限检查均通过；PID1 五组 capabilities 全 0、NNP=1，PVC 当时可用 988,618,752B。speech Pod `speech-service-758cbd54f9-bfczb` 仍 Running、异常重启 0。回执位于 master `/root/video-audio-release-20261031/postflight.json`。`fetch_workbench_audio_evidence.py` 只取媒体和报告，不下载数据库／Secret。VPS 视频上传上限已改为 34m；浏览器已完成第二镜 1,248,044B／26 秒 WAV 上传 A2、采用、恢复 A1，A2 历史保留；真实 audio clock 第 1→2 镜播放已通过。
+
+## 音频阶段已确认的证据和边界
+
+Python **471 passed、1 skipped**（Windows Secret 符号链接权限）、Node **25 passed**。最终镜像 ARM 组件验收通过 10 张 1280×720 PNG 和 7 秒 H.264／AAC MP4，归档 SHA-256 `2816556a9a469ca438b61afd82389bb137990c95589c3034f3be609ebd7e42fe`。后续完整 206 秒 MP4 也已独立检查：完整解码、8 镜音频首尾匹配（全片相关系数 0.9999445、NRMSE 0.010601）、8 张参考 PNG 与顺序，以及 44 条 estimated 字幕时间／文本与 timeline 一致均通过。ZIP 19 文件含 8 source、其他 owner 404、损坏 WAV 422 且项目不变均通过。
+
+生产 SQLite 升级前备份为 `workbench-before-audio.db`，258048 字节，integrity ok，SHA-256 `16d90ce340321dec66193729d046176305a2c4609f3f884c7677561c225805b1`；只保存在 master，不输出 owner／凭据。构建下载超时和首轮 ARM host 脚本 `Path.chown` 失败记录保留。
+
+最终证据归档 19,122,821B，SHA-256 `64cbe74652f62513504df98d4fa2ea483d5400fdfecd69fe02d2409b7269bec0`，已下载校验并安全解包至 `D:\github\armbianbegin\.runtime\video-audio-production\evidence-final\`；成片为 `live-audio/dsh-narrated.mp4`。第 03／06 镜中心帧已目视检查，中文正常；媒体归档不代替数据库备份。
+
+OpenSpec 变更 `add-video-workbench-audio-production` 已同步至 revision `49692535c5004b27a6fc4132900185422bb75f3d`，验证 `valid=true`、无 issues；19 项完成 14 项，剩余 1.1 整稿听感、4.2 术语人工试听与 5.1–5.3 BGM。未执行 apply／archive，独立分支未合主线。
+
+静态 WeasyPrint 不保留 CSS 动画；字幕仅估算、需要人工检查；BGM／混音未做；完整稿声音自然度与术语发音未经用户认可。PVC 1Gi，未完成全服务音频容量管理与删除流程。
+
+## 历史记录：2026-10-30 静态素材首版
+
+以下是当时静态素材首版的项目、发布、验证与合并记录；不要将其中的“当前”理解为音频阶段状态。
+
 更新：2026-10-30（Asia/Shanghai）。本文件列出继续工作必须保持的项目、版本和边界；当前结果见 [CURRENT_STATUS.md](CURRENT_STATUS.md)，执行顺序见 [NEXT_STEPS.md](NEXT_STEPS.md)。
 
 ## 工作位置与当前进度

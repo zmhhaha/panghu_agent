@@ -1,5 +1,34 @@
 # 视频工作台当前状态
 
+更新：2026-10-31（Asia/Shanghai）。音频第一阶段代码位于 `D:\github\armbianbegin\.video-audio-worktree`，分支 `codex/video-audio-production`，**已部署并完成八镜头配音、206 秒 MP4 独立技术验证和重启后持久化检查，尚未合入主线**。完整稿听感尚未获用户认可。下方 2026-10-30 记录保留为静态素材首版历史。
+
+入口：[video-service.panghuer.top](https://video-service.panghuer.top/?entry=vps-20261030)。本阶段新增逐镜头配音、WAV 上传、试听、明确采用、实测音频时长、字幕编辑、音画预览和 MP4 导出；原 SVG／HTML／ZIP 功能保留。配音使用已部署的语音服务与用户选择的中文男声云健 `zm_yunjian`。
+
+## 音频阶段当前结果
+
+- 工作台使用 `arm-cluster-master:5000/video-workbench:latest@sha256:ccd2509379ad55029760cf5229d09dd33b0577213172a20e791d9818ad06c6fe`，应用源码 `e5b375b02e8b639b0b4a0eecaa17c67145c005bc`。主动 rollout restart 后新 Pod `video-workbench-6454f4845f-bj52n` Ready，实际 imageID 不变、异常重启 0；PID1 五组 capabilities 均为 0、NoNewPrivs=1。
+- 真实验收副本 `1e2a822d-c4c1-45de-a8b9-b72a82f714bc` 已完成并采用全部 8 镜 TTS，复用已有 DSH 画面，新增视觉 Agent 调用 0。MP4 render `5641dc62-01d7-4540-8e79-501ec801cced` 已完成，时长 206 秒，H.264／AAC、1280×720、24fps、4944 帧，完整解码通过；SHA-256 `75ab83eba053d20b0d8beee8687709ee5aadd10eabef8549dfc4b55122358c31`。
+- 独立检查通过 8 镜音频首尾匹配（全片相关系数 0.9999445、NRMSE 0.010601）、8 张参考 PNG 的画面与顺序、44 条字幕与 timeline 的时间和文本一致性。字幕仍为 estimated，不能据此认定人工校对或听感通过。成片冻结于 revision 67；后续编辑与恢复到 revision 69 的局部失效检查通过。
+- 语音分段修复 `c506bb3c105c81200bc3b86577b65fb96f3361e8` 已部署：`speech-service:latest` digest `sha256:adb9d87b15b461db56a2f4aca5fd6999221fe4c715ee3751250b3a4b21423634`，Pod `speech-service-758cbd54f9-bfczb` Ready，实际 PID1 五组 capabilities 均为 0、NoNewPrivs=1。修复保留原语速、文稿、10% snap 限制与禁止 CPU generator 回退。
+- 原 DSH 项目 `cdad4be8-3e51-44ff-98df-3d7500d147d3` 保持 revision 27、8 张已采用 SVG；验收在副本中进行。
+- 最终镜像的 ARM 禁网媒体检查通过：10 张既有 SVG／HTML 画面输出可解码的 1280×720 PNG；两镜共 7 秒的 H.264／AAC MP4 完整解码通过，真实云健片段的 PCM 旁白与留白核对通过。这是媒体组件验收，不能代替八镜头真实制作验收。
+- 本地相关 Python 测试 **471 passed、1 skipped**（Windows Secret 符号链接权限），前端 Node 测试 **25 passed**。生产浏览器已验证第二镜真实 WAV 上传 A2 候选、明确采用、恢复 A1 且保留 A2 历史，以及真实音频时钟驱动第 1→2 镜播放。视频 VPS 上传上限已调整为 34m；未改 DNS／Casdoor。
+- 回归检查通过：ZIP 19 个文件含 8 个画面源文件、其他 owner 读取返回 404、损坏 WAV 返回 422 且项目不变。重启后 8 条采用音频逐一 SHA 匹配、上传 A2 历史保留、MP4 摘要匹配、SQLite integrity ok、原 DSH revision 27 不变；当时 PVC 可用 988,618,752B。回执为 master `/root/video-audio-release-20261031/postflight.json`。
+- 最终证据已下载、校验并安全解包至 `D:\github\armbianbegin\.runtime\video-audio-production\evidence-final\`；归档 19,122,821B，SHA-256 `64cbe74652f62513504df98d4fa2ea483d5400fdfecd69fe02d2409b7269bec0`。成片位于其中 `live-audio/dsh-narrated.mp4`，已目视检查第 03／06 镜中心帧，中文显示正常。
+- OpenSpec 变更 `add-video-workbench-audio-production` 已同步，验证 `valid=true`、无 issues；19 项中完成 14 项。剩余 5 项为整稿听感、术语人工试听，以及 BGM 的 3 项任务；不把估算字幕或可解码媒体当成人工听感认可。
+
+第三镜原 operation `0f99c230-d5b4-414c-8c4e-8175e464ea67` 因 `--patch` 中 U+002D 不在 Kokoro 词表失败；通过工作台显式读音修正处理第 3／5／6 镜 CLI、路径及文件名，原旁白不改。第六镜原 operation `03d700c9-e71d-4dd7-bbff-fa608acc82c1` 因首段 D=181→200 的 snap 约 10.497% 超过 10% 而失败；完整分段规划修复后以新 intent 成功。两次旧 failed 均保留，未自动重试，不反写为首次全部成功。
+
+## 音频阶段边界
+
+估算字幕明确标注 `alignment=estimated`、`requires_review=true`；人工保存后才标为手工字幕，不宣称自动强制对齐。静态 WeasyPrint 渲染不保留 CSS 动画，可能与 Chromium 的 HTML／CSS 排版不同。BGM／混音尚未实现，整稿听感、术语发音与声音自然度仍需用户试听认可。
+
+音频与画面分别采用；修改旁白会使对应音频和字幕过期，保留历史候选。取消不代表上游已物理停止，提交结果不确定时不自动重复 POST。PVC 为 1Gi，虽已设单文件、单项目和成片限额，尚无全服务音频总限额及删除流程，长期容量管理未验收。具体接口和限制见 [AUDIO_PRODUCTION.md](AUDIO_PRODUCTION.md)。
+
+## 历史记录：2026-10-30 静态素材首版
+
+以下是静态素材首版当时的发布、合并和验证记录；其中“配音／MP4 尚未实现”等描述仅适用于当时的版本。
+
 更新：2026-10-30。工作树 `.video-workbench-worktree`，开发分支 `codex/svg-video-workbench`。**用户已批准，功能已快进合入 `panghu_agent` 的 `main`；真实制作功能链路、浏览器控制、最终备份、证据归档和验收环境清理已完成，固定画布裁切限制已记录。**
 
 入口：[video-service.panghuer.top](https://video-service.panghuer.top)。本期制作静态、可编辑的 SVG／HTML 和审阅 ZIP。工作台保存项目与审阅状态，现有通用 Agent 执行任务。配音、动画时间轴、MP4、图片生成尚未实现。

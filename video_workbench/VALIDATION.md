@@ -1,5 +1,46 @@
 # 分支验证记录
 
+更新：2026-10-31（Asia/Shanghai）。以下先记录 `codex/video-audio-production` 的音频阶段证据；该分支尚未合主线。历史静态素材首版结果留在后半部分，不将历史测试累计为本次回归，也不以组件检查代替完整制作验收。
+
+## 音频阶段已确认结果
+
+| 检查 | 已确认结果与边界 |
+| --- | --- |
+| 本地 Python 测试 | **471 passed、1 skipped**；跳过项为 Windows Secret 符号链接权限；包括工作台、音频、媒体、构建与部署测试，部署定向项已计入，不重复相加 |
+| 前端 Node 测试 | **25 passed**；本地浏览器检查候选不自动采用、明确采用、估算字幕保存、上传采用后时长和字幕失效、音频时钟驱动播放，无 console error |
+| 线上部署 | 工作台源码 `e5b375b02e8b639b0b4a0eecaa17c67145c005bc`，latest digest `sha256:ccd2509379ad55029760cf5229d09dd33b0577213172a20e791d9818ad06c6fe`；主动 rollout restart 后新 Pod `video-workbench-6454f4845f-bj52n` Ready、实际 imageID 不变、异常重启 0 |
+| 语音修复部署 | 源码 `c506bb3c105c81200bc3b86577b65fb96f3361e8`，latest digest `sha256:adb9d87b15b461db56a2f4aca5fd6999221fe4c715ee3751250b3a4b21423634`；Pod `speech-service-758cbd54f9-bfczb` Ready，实际 PID1 capabilities 五组全 0、NoNewPrivs=1 |
+| ARM 静态画面 | 最终镜像在非 root、只读根、capdrop ALL、NNP、禁网、2CPU／1536MiB 环境中，10 张已有 SVG／HTML 输出均为可解码 1280×720 PNG；已目视检查旧 HTML 和 DSH 第一镜的中文、图示、箭头 |
+| ARM 带声音 MP4 | 两镜共 7 秒，H.264／AAC，全文件解码通过；真实云健录音片段的主 PCM 旁白逐字节匹配，前后留白正确；MP4 SHA-256 `736fb742ea80ded66b8892865e47ed51a272ce95db5e521434f9168d74bc074b`；这不是八镜头整稿验收 |
+| 静态渲染资源限制 | data／file／http 图片资源 URI 三个反例均以 78 退出且无 PDF；不加载外部资源 |
+| 生产浏览器 | 新界面、原 DSH revision 27 与缺资源镜头定位通过；真实 audio clock 驱动第 1→2 镜播放通过；原项目内容未修改 |
+| 生产上传与历史 | VPS 视频上限 34m；第二镜真实 WAV（1,248,044B、26 秒）上传为 A2 候选、明确采用、恢复 A1 全部通过，A2 历史保留 |
+| 八镜真实 TTS | 副本 `1e2a822d-c4c1-45de-a8b9-b72a82f714bc` 的 8 镜真实合成并明确采用完成；复用 8 张 SVG，新增视觉 Agent 调用 0；保留两次旧失败 |
+| 完整 MP4 | render `5641dc62-01d7-4540-8e79-501ec801cced`，206 秒，H.264／AAC、1280×720@24fps、4944 帧；完整解码通过；SHA-256 `75ab83eba053d20b0d8beee8687709ee5aadd10eabef8549dfc4b55122358c31` |
+| 音频与画面独立检查 | 8 镜音频首尾匹配通过，全片相关系数 0.9999445、NRMSE 0.010601；8 张参考 PNG 匹配画面与镜头顺序通过；第 03／06 镜中心帧已目视检查，中文正常 |
+| 字幕 | 44 条字幕时间／文本与 timeline 一致；仍为 estimated，需人工复核，不记作强制对齐或听感认可 |
+| 冻结与局部失效 | render 冻结 revision 67；编辑后恢复 revision 69，局部失效检查通过，冻结成片不随编辑改写 |
+| ZIP／owner／坏文件 | ZIP 19 个文件含 8 个画面 source；其他 owner 返回 404；损坏 WAV 返回 422 且项目不变 |
+| 重启持久化 | 旧 Pod `video-workbench-7889b8d5b5-ml22n` 已替换；8 条采用音频逐一 SHA 匹配、上传 A2 历史保留、MP4 SHA 匹配、SQLite integrity ok、原 DSH revision 27 保留，全部通过 |
+| 重启后权限与容量快照 | 实际 PID1 CapInh／Prm／Eff／Bnd／Amb 全 0、NoNewPrivs=1；PVC 当时可用 988,618,752B，只作该时刻快照；speech Pod `speech-service-758cbd54f9-bfczb` 仍 Running、异常重启 0 |
+| 人工质量边界 | 完整稿声音自然度、术语发音及 estimated 字幕的人工复核尚未获用户认可 |
+
+ARM 媒体验收总耗时 159.823 秒，其中编码 32.076 秒；这不用于估计整部制作速度。ARM 归档位于 `.runtime/video-audio-production/evidence-arm.tar.gz`，2285355 字节，SHA-256 `2816556a9a469ca438b61afd82389bb137990c95589c3034f3be609ebd7e42fe`；不含生产数据库或 Secret。服务器证据目录为 `/root/video-audio-release-20261031/`。
+
+重启最终回执为 master `/root/video-audio-release-20261031/postflight.json`。完整媒体与回执归档 19,122,821B，SHA-256 `64cbe74652f62513504df98d4fa2ea483d5400fdfecd69fe02d2409b7269bec0`，已下载校验并安全解包至 `D:\github\armbianbegin\.runtime\video-audio-production\evidence-final\`；成片为其中 `live-audio/dsh-narrated.mp4`。
+
+OpenSpec 变更 `add-video-workbench-audio-production` 已同步至 revision `49692535c5004b27a6fc4132900185422bb75f3d`，验证 `valid=true`、issues 为空。19 项任务完成 14 项，保留未完成的 1.1 整稿听感、4.2 术语人工试听、5.1–5.3 BGM；未执行 apply／archive。
+
+构建曾因 Debian／PyPI 下载超过 900 秒而失败两次，改用可配置 TUNA 镜像后成功；失败日志保留。首轮 ARM 验收在启动容器前因 host 脚本使用不存在的 `Path.chown` 失败，改用 `os.chown` 后再次验收通过；不写成首次全自动成功。
+
+第三镜历史 operation `0f99c230-d5b4-414c-8c4e-8175e464ea67` 因 CLI 文本 `--patch` 中 U+002D 不在 Kokoro 词表失败，工作台映射为 `speech_upstream_unavailable`；实际前端 probe 排除了“空标点误拒”的猜测。通过显式读音修正处理第 3／5／6 镜 CLI、文件名和路径，原旁白不变。第六镜历史 operation `03d700c9-e71d-4dd7-bbff-fa608acc82c1` 因首段 D=181→target 200 的 snap 约 10.497% 超过 10% 而失败；分段规划修复经 82 项单元测试及隔离 CPU probe，再部署后完成真实第 6–8 镜。修复只有限调整文本分段边界，不改文稿、语速、10% 阈值或 CPU generator 禁止策略。两个旧 operation 保持 failed，以新 intent 取得后续成功，不声称首次全程成功。
+
+语音固定为中文男声 `zm_yunjian`，实际 NPU 路径不允许静默 CPU generator 回退。估算字幕必须保留 `alignment=estimated`、`requires_review=true`，用户人工保存后才记作 manual。完整稿声音自然度和发音质量未经用户认可；静态 WeasyPrint 不保留 CSS 动画，BGM／混音尚未实现。
+
+## 历史记录：2026-10-30 静态素材首版
+
+以下是当时静态素材首版的验证与主线合并记录，适用于对应历史镜像和项目。
+
 更新：2026-10-30。开发分支 `codex/svg-video-workbench` 已获用户批准并快进合入 `panghu_agent` 的 `main`。当前结果见 [CURRENT_STATUS.md](CURRENT_STATUS.md)，后续优化见 [NEXT_STEPS.md](NEXT_STEPS.md)。各批次结果分别记录，不能相加称为一次全量回归，也不能用离线检查代替真实模型、部署或浏览器验收。合并前已核对主线祖先关系、差异格式与应用代码树；合入的应用代码和已部署 `f90ba1c` 一致，仅验收与合并记录更新，没有再次调用模型或部署。
 
 ## 当前真实环境结果：截至 r8
