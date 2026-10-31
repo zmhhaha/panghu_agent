@@ -73,6 +73,11 @@ class WorkspaceService:
     def _set_job(self, owner, project_id, task_id, **fields):
         def change(project):
             job = _job(project, task_id)
+            # Request and background reconcilers can observe different remote
+            # states. Check the durable state inside the CAS retry, while still
+            # permitting delivery acknowledgements and diagnostic timestamps.
+            if job['state'] in TERMINAL and ('state' in fields or 'error_code' in fields):
+                return False
             if all(job.get(key) == value for key, value in fields.items()):
                 return False
             job.update(copy.deepcopy(fields), updated_at=utc_now())
@@ -347,8 +352,18 @@ class WorkspaceService:
     def _ingest(self, owner, project_id, task_id, result, manifest_hash):
         def change(project):
             job = _job(project, task_id)
-            if job['state'] == 'completed':
-                require(job['result_digest'] == result['result_digest'], 'stage_publication_conflict', 409)
+            # The output and both receipt hashes commit in one project CAS.
+            # A legacy status regression must never append the output again.
+            if job.get('result_digest') is not None or job.get('manifest_sha256') is not None:
+                require(job['result_digest'] == result['result_digest']
+                    and job['manifest_sha256'] == manifest_hash, 'stage_publication_conflict', 409)
+                if job['state'] == 'completed':
+                    return False
+                job.update(state='completed', error_code=None, updated_at=utc_now())
+                if project['active_job_id'] == task_id:
+                    project['active_job_id'] = None
+                return
+            if job['state'] in TERMINAL:
                 return False
             stale = job['input_revision'] != project['input_revision'] or job['cancel_requested']
             job.update(state='completed', stale=stale, result=copy.deepcopy(result),
@@ -452,6 +467,13 @@ class WorkspaceService:
             task_id = initial['id']
             latest = self.store.raw(owner, project_id)
             job = _job(latest, task_id)
+            if job['state'] != 'completed' and (job.get('result_digest') is not None
+                    or job.get('manifest_sha256') is not None):
+                # A pre-upgrade reconciler may have regressed only the status.
+                # Restore the atomic local receipt before any remote artifact
+                # lookup: acknowledged remote bytes may already be retired.
+                self._ingest(owner, project_id, task_id, job['result'], job['manifest_sha256'])
+                job = _job(self.store.raw(owner, project_id), task_id)
             if job['state'] == 'completed':
                 if not job['delivery_ack']:
                     self._ack(owner, project_id, job)
@@ -509,11 +531,15 @@ class WorkspaceService:
                                 and saved['manifest_sha256'] == manifest_hash,
                                 'stage_publication_conflict', 409)
                             return False
+                        if saved['state'] in TERMINAL:
+                            return False
                         saved.update(state='receiving', error_code=code, updated_at=utc_now())
                     recovered = self.store.internal(owner, project_id, record_reception_failure)
                     if _job(recovered, task_id)['state'] != 'completed':
                         continue
-                self._ack(owner, project_id, _job(self.store.raw(owner, project_id), task_id))
+                saved = _job(self.store.raw(owner, project_id), task_id)
+                if saved['state'] == 'completed':
+                    self._ack(owner, project_id, saved)
             elif state in {'failed', 'cancelled', 'timed_out', 'needs_input'}:
                 self._set_job(owner, project_id, task_id,
                     state='failed' if state == 'needs_input' else state,
