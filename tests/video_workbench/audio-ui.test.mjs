@@ -68,7 +68,10 @@ test('pronunciation edits preserve explicit word mappings and reject silently lo
   const value = parsePronunciation('SDK=艾斯迪开\n\nCordis = 科迪斯');
   assert.deepEqual(value, { SDK: '艾斯迪开', Cordis: '科迪斯' });
   assert.deepEqual(parsePronunciation(pronunciationText(value)), value);
-  for (const input of ['SDK', '=读法', 'SDK=', 'SDK=读法\nSDK=另一读法', `${'词'.repeat(101)}=读法`]) {
+  assert.deepEqual(parsePronunciation(`${'词'.repeat(80)}=${'音'.repeat(200)}`),
+    { ['词'.repeat(80)]: '音'.repeat(200) });
+  for (const input of ['SDK', '=读法', 'SDK=', 'SDK=读法\nSDK=另一读法',
+    `${'词'.repeat(81)}=读法`, `词=${'音'.repeat(201)}`]) {
     assert.throws(() => parsePronunciation(input));
   }
   assert.throws(() => parsePronunciation(Array.from({ length: 33 }, (_, i) => `词${i}=读法`).join('\n')));
@@ -103,6 +106,10 @@ test('caption validation rejects overlap, reversed time, missing text and out of
     { leadingSeconds: 2, audioSeconds: 4 }), false);
   assert.equal(validateCaptionCues([{ start: 2, end: 7, text: '超出旁白' }], 9,
     { leadingSeconds: 2, audioSeconds: 4 }), false);
+  const maximum = Array.from({ length: 200 }, (_, i) => ({ start: i, end: i + 1, text: '一句' }));
+  assert.equal(validateCaptionCues(maximum, 201), true);
+  assert.equal(validateCaptionCues([...maximum, { start: 200, end: 201, text: '超额' }], 201), false);
+  assert.equal(validateCaptionCues([], 201), false);
 });
 
 test('playback captions use scene time while speech offset excludes leading silence', () => {

@@ -215,8 +215,8 @@ export function parsePronunciation(value) {
     const word = line.slice(0, position).trim();
     const replacement = line.slice(position + 1).trim();
     if (position < 1 || !word || !replacement || seen.has(word)
-        || pairs.length >= 32 || word.length > 100 || replacement.length > 200) {
-      throw new Error('每行填写「原词=读法」，原词不能重复，最多32条。');
+        || pairs.length >= 32 || word.length > 80 || replacement.length > 200) {
+      throw new Error('每行填写「原词=读法」，原词不能重复；原词最多80字、读法最多200字，最多32条。');
     }
     seen.add(word);
     pairs.push([word, replacement]);
@@ -237,7 +237,7 @@ export function createCaptionDraft(scene, revision) {
 }
 
 export function validateCaptionCues(cues, duration, { leadingSeconds = 0, audioSeconds = null } = {}) {
-  if (!Array.isArray(cues) || cues.length > 500 || !Number.isFinite(duration) || duration <= 0) return false;
+  if (!Array.isArray(cues) || cues.length < 1 || cues.length > 200 || !Number.isFinite(duration) || duration <= 0) return false;
   const endLimit = audioSeconds === null ? duration : Math.min(duration, leadingSeconds + audioSeconds);
   let previous = leadingSeconds;
   let characters = 0;

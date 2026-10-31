@@ -389,7 +389,7 @@ function updateCaptionButtons() {
   const needsReview = Boolean(scene.captions?.requires_review);
   $('save-captions').disabled = (!draft?.dirty && !needsReview) || !valid || pending.has(`captions:${scene.id}`);
   $('save-captions').textContent = needsReview ? '确认并保存字幕' : '保存校正字幕';
-  $('add-caption').disabled = !matches || !audio || (draft?.cues.length ?? 0) >= 500;
+  $('add-caption').disabled = !matches || !audio || (draft?.cues.length ?? 0) >= 200;
   $('captions-draft-note').textContent = !matches && draft?.dirty ? '采用配音或留白已变化，请重新载入后校正。'
     : draft?.dirty && !valid ? '检查时间顺序、音频边界与字幕内容。' : draft?.dirty ? '有未保存的校正'
       : needsReview ? '试听后可确认当前时间，或直接修改。' : '';
@@ -1024,7 +1024,7 @@ $('estimate-captions').addEventListener('click', () => {
 $('add-caption').addEventListener('click', () => {
   const scene = selectedScene(state); const head = adoptedAudio(scene);
   const draft = captionDrafts.get(draftKey(scene?.id));
-  if (!head || !draft) return;
+  if (!head || !draft || draft.cues.length >= 200) return;
   const duration = Number(scene.leading_seconds ?? 0) + head.duration_seconds;
   const start = Math.min(draft.cues.at(-1)?.end ?? Number(scene.leading_seconds ?? 0), Math.max(0, duration - 0.1));
   draft.cues.push({ start, end: Math.min(start + 2, duration), text: '' });

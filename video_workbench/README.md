@@ -1,10 +1,10 @@
 # SVG / HTML 视频素材工作台
 
-这是首版可运行的静态 SVG / HTML 素材工作台。文稿拆镜、单镜头生成和修订通过已有通用 Agent 服务执行；工作台负责项目、候选版本、人工采用、隔离预览与素材导出。模型完成任务后只产生候选，采用版本需要用户明确操作。
+这是可运行的 SVG / HTML 视频工作台。文稿拆镜、单镜头生成和修订通过已有通用 Agent 服务执行；工作台负责项目、候选版本、明确采用、隔离预览与导出。音频制作增量支持中文配音、录音上传、试听采用、时长与字幕校正，以及带旁白的静态画面 MP4，见 [AUDIO_PRODUCTION.md](AUDIO_PRODUCTION.md)。
 
-当前不运行 ComfyUI 或图片生成模型，不启动本地 Agent，也不包含 TTS、MP4 编码、音画同步和帧精确动画时间轴。ZIP 导出包含已采用版本的 SVG / HTML 源码、manifest、预览页面和按镜头时长切换的顺序审阅播放器。
+当前画面使用 SVG / HTML，配音调用独立内部语音服务；成片由静态渲染器与 FFmpeg 编码。MP4 不保留 CSS 动画，背景音乐与混音留待第二阶段。ZIP 导出继续包含已采用版本的 SVG / HTML 源码、manifest、预览页面和顺序审阅播放器。
 
-代码位于独立工作树 `.video-workbench-worktree`，分支为 `codex/svg-video-workbench`。以下“仓库根目录”指该工作树根目录。
+本次音频增量位于独立工作树 `.video-audio-worktree`，分支 `codex/video-audio-production`；静态素材首版已在主线。以下“仓库根目录”指当前代码工作树根目录。
 
 后续要做的事情见 [NEXT_STEPS.md](NEXT_STEPS.md)。
 
