@@ -3,10 +3,13 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime
-import json
+import os
 from pathlib import Path
+import shlex
+import stat
+import tempfile
 
-from .contracts import ServiceError
+from .contracts import ServiceError, canonical_bytes, digest
 from .mounts import ReadOnlyInputs
 from .profiles import implementation
 from .runtime.profiles import CommonExecution, ExecutionProfile, ProfileError
@@ -33,6 +36,7 @@ class DomainExecutionProfile(ExecutionProfile):
         self.protected_paths = ('inputs', 'base', 'context-view', '.preview-home', '.preview-tmp')
         self._context, self._mounts, self._context_view = None, None, None
         self._preview = None
+        self._handoff_inputs = self._handoff_workspace = self._handoff_task_digest = None
         self.shared_project = policy.name.startswith('ppt.')
         self.agent_uid = self.preview_uid = self.control_root = None
 
@@ -56,7 +60,46 @@ class DomainExecutionProfile(ExecutionProfile):
         if self._context_view is not None:
             self._context_view.cleanup()
             self._context_view = None
+        if self._handoff_inputs is not None:
+            # Only these host-created entries are removed, never a recursive
+            # walk into an Agent-owned workspace. Retain the reference if any
+            # cleanup fails, just as for a failed unmount above.
+            (self._handoff_inputs / 'task.json').unlink(missing_ok=True)
+            self._handoff_inputs.rmdir()
+            self._handoff_inputs = self._handoff_workspace = self._handoff_task_digest = None
         self._context = None
+
+    def _export_handoff_task(self, workspace, task):
+        """Export the actual task outside the tree later chowned to the Agent.
+
+        Production /work is owned by the controller and mode 0711. A separate
+        host-owned sibling makes the read-only file resistant to directory-entry
+        replacement by the workspace owner. It is only advisory input: the
+        collector never consumes it instead of its original envelope task.
+        """
+        if self._handoff_inputs is not None:
+            raise ServiceError('runtime_busy', 409)
+        workspace = Path(workspace).absolute()
+        parent = workspace.parent
+        info = parent.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode)
+                or getattr(info, 'st_file_attributes', 0) & 0x400
+                or info.st_uid != os.geteuid() or info.st_mode & 0o022
+                or not info.st_mode & 0o001
+                or self.agent_uid == os.geteuid()):
+            raise ServiceError('ppt_handoff_export_unavailable', 503)
+        directory = Path(tempfile.mkdtemp(prefix='.ppt-handoff-', dir=parent))
+        self._handoff_inputs = directory
+        path = directory / 'task.json'
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL
+                             | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+        with os.fdopen(descriptor, 'wb') as stream:
+            stream.write(canonical_bytes(task))
+            stream.flush()
+            os.fsync(stream.fileno())
+        path.chmod(0o444)
+        directory.chmod(0o711)
+        self._handoff_workspace, self._handoff_task_digest = workspace, digest(task)
 
     def make_wire(self, request):
         if request.profile != self.policy.name:
@@ -105,6 +148,7 @@ class DomainExecutionProfile(ExecutionProfile):
         if self.policy.name.startswith('ppt.'):
             (workspace / 'project').mkdir(mode=0o700)
             project = self.impl.prepare_project(workspace, wire['task'])
+            self._export_handoff_task(workspace, wire['task'])
             if self.policy.name in {'ppt.generate.v1', 'ppt.revise.v1'}:
                 if project is None:
                     raise ServiceError('ppt_prepared_checkpoint_required', 422)
@@ -118,11 +162,34 @@ class DomainExecutionProfile(ExecutionProfile):
         self.validate(wire)
         text = self.impl.build_prompt(wire['task'])
         if self.policy.name.startswith('ppt.'):
+            if (self._handoff_inputs is None or self._handoff_workspace is None
+                    or self._handoff_task_digest != digest(wire['task'])):
+                raise ServiceError('ppt_handoff_export_unavailable', 503)
             text += ('\nFixed tool environment: /opt/hermes/.venv/bin/python, '
                      '/opt/ppt-master/skills/ppt-master/; use those interpreter/script paths, '
                      'inspect actual --help and never install dependencies or fetch code. '
+                     'The separate handoff preflight below is an explicitly supplied host tool and '
+                     'uses its own fixed /opt/agent-service/.venv/bin/python. '
                      'Exclude ephemeral live_preview/lock.json and .live_preview.lock from the manifest; '
                      'the host removes its own stopped-preview locks before freezing files.\n')
+            command = shlex.join(['/opt/agent-service/.venv/bin/python', '-I', '-B',
+                '/opt/agent-service/agent_service/ppt_handoff.py',
+                '--workspace', str(self._handoff_workspace),
+                '--task-file', str(self._handoff_inputs / 'task.json')])
+            text += ('\nBefore ending this execution, finish all project/report writes, write the actual '
+                'result/manifest.json, then run this exact image-owned read-only handoff preflight:\n'
+                + command + '\n'
+                'Use the supplied host-exported task file; never reconstruct, replace or edit it. '
+                'The command checks actual files, measured hashes, project_root, literal PPTX role, '
+                'report references, the complete roster and the approved specification binding. '
+                'If it reports a contract error, correct only the actual authorized project/manifest '
+                'and rerun the same command until it returns exit 0. It never writes or repairs files. '
+                'Do not fabricate a successful command result. If a real blocker prevents a valid '
+                'handoff, provide the truthful needs_input handoff under the same contract. '
+                'This check is advisory contract validation only: it does not perform visual review, '
+                'prove writer stop, create a checkpoint or candidate, pass business acceptance or '
+                'authorize publication. The host independently re-reads and collects after physical '
+                'writer stop; all later gates remain required.\n')
         if self._preview is not None:
             text += self._preview.instructions()
         return text

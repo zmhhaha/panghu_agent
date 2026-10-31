@@ -172,16 +172,16 @@ def test_blocked_example_with_measured_existing_files_crosses_strict_handoff(ini
     assert report['published'] is False and report['quality_reports_verified'] is False
 
 
-def test_empty_blocked_roster_cannot_form_valid_checkpoint_after_collection(blocked_initial):
+def test_empty_blocked_roster_is_rejected_by_preflight_and_stopped_collection(blocked_initial):
     workspace, manifest, envelope = blocked_initial
     manifest['artifacts'] = []
-    files = {row.name: row for row in collect(blocked_initial)}
-    checkpoint = json.loads(files['result/checkpoint.json'].content())
-    assert checkpoint['files'] == [] and checkpoint['total_bytes'] == 0
-    with pytest.raises(ServiceError) as caught:
-        validate_checkpoint(checkpoint, project_id=envelope.task['project_id'],
-            snapshot_hash=envelope.task['input_snapshot_sha256'])
-    assert caught.value.code == 'invalid_ppt_checkpoint'
+    (workspace / 'result/manifest.json').write_bytes(canonical_bytes(manifest))
+    with pytest.raises(ServiceError) as advisory:
+        PPTProfile('plan_initial').preflight_output(workspace, envelope.task)
+    with pytest.raises(ServiceError) as collector:
+        collect(blocked_initial)
+    assert advisory.value.code == collector.value.code == 'ppt_artifact_roster_mismatch'
+    assert not (workspace / 'result/checkpoint.json').exists()
 
 
 def test_real_blocker_note_without_prior_files_crosses_strict_handoff(blocked_initial):

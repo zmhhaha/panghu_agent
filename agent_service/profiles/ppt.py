@@ -7,6 +7,7 @@ caller. A structurally collected candidate never authorizes publication.
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -28,6 +29,18 @@ PRIVATE = {'.git', '.ssh', '.pi', '.hermes', '.aws', '.azure', 'home',
 EXTENSIONS = {'.md', '.txt', '.json', '.yaml', '.yml', '.svg', '.png', '.jpg',
               '.jpeg', '.webp', '.gif', '.pptx', '.pdf', '.csv', '.tsv', '.xml',
               '.html', '.css', '.woff', '.woff2', '.ttf', '.otf'}
+PREVIEW_LOCKS = frozenset({'live_preview/lock.json', '.live_preview.lock'})
+
+
+@dataclass
+class _MeasuredPPTOutput:
+    """Private read result; no stop, checkpoint, signature or acceptance authority."""
+    raw: bytes
+    manifest: dict
+    root: str
+    files: list
+    rows: list
+    total_bytes: int
 
 
 def _require(condition, code='invalid_ppt_task'):
@@ -246,8 +259,10 @@ def _manifest_example(task):
                     preview_path=png, source_refs=[], native_chart_keys=[]))
     status = ('awaiting_confirmation' if phase.startswith('plan_') else
               'prepared' if phase == 'prepare' else 'candidate')
+    checkpoint = task.get('checkpoint')
+    root = checkpoint['project_root'] if type(checkpoint) is dict else 'deck'
     return dict(schema_version=1, phase=phase, status=status,
-        input_snapshot_sha256=task['input_snapshot_sha256'], project_root='deck',
+        input_snapshot_sha256=task['input_snapshot_sha256'], project_root=root,
         plan=plan, questions=[], artifacts=artifacts, slides=slides, quality=quality, provenance={})
 
 
@@ -379,7 +394,9 @@ class PPTProfile:
             'Every artifact has role,path,sha256,bytes,media_type, relative to project_root. Every slide '
             'has id,ordinal,title,svg_path,preview_path,source_refs,native_chart_keys. Declare all files, '
             'including unchanged restored files. Quality contains real declared report references, '
-            'never a bare passed claim. Generation needs one PPTX, all SVG/PNG slides and actual final '
+            'never a bare passed claim. Generation needs exactly one artifact whose role is exactly '
+            '"pptx" (not "candidate_pptx"); "candidate" is the manifest status, not the PPTX role. '
+            'Generation needs one PPTX, all SVG/PNG slides and actual final '
             'and postflight report references. PNG rendering alone is not a visual pass. '
             'Perform the explicitly required visual review by reading the actual rendered PNGs and '
             'applying the official rubric. When delegation is unavailable, the official visual-review '
@@ -507,19 +524,22 @@ class PPTProfile:
         _require(total == checkpoint['total_bytes'], 'ppt_checkpoint_integrity_invalid')
         return target / checkpoint['project_root']
 
-    def collect_output(self, workspace, envelope, proof):
-        require_stop(proof, envelope)
-        self.validate_task(envelope.task)
-        _require(envelope.profile == self.name, 'ppt_profile_mismatch')
+    def _read_output_contract(self, workspace, task, *, active_preview=False):
+        """Measure actual files and validate the handoff without creating records.
+
+        The advisory caller can omit only the two host-owned live-preview locks
+        while that writer is active. The stopped collector always uses the
+        default, after trusted preview cleanup, and re-reads the original task.
+        """
+        self.validate_task(task)
         workspace = Path(workspace).absolute()
-        if envelope.task['checkpoint'] is not None:
+        if task['checkpoint'] is not None:
             restored = _object(read_output(workspace, 'base/result/checkpoint.json', limit=4 * 1024**2))
-            validate_checkpoint(restored, project_id=envelope.task['project_id'],
-                                snapshot_hash=envelope.task['input_snapshot_sha256'], phase=self.phase)
-            _require(checkpoint_descriptor(restored) == envelope.task['checkpoint'], 'ppt_checkpoint_binding_mismatch')
+            validate_checkpoint(restored, project_id=task['project_id'],
+                                snapshot_hash=task['input_snapshot_sha256'], phase=self.phase)
+            _require(checkpoint_descriptor(restored) == task['checkpoint'], 'ppt_checkpoint_binding_mismatch')
         raw = read_output(workspace, 'result/manifest.json', limit=4 * 1024**2)
         manifest = _object(raw)
-        task = envelope.task
         statuses = {'plan_initial': 'awaiting_confirmation', 'plan_options': 'awaiting_confirmation',
                     'prepare': 'prepared', 'generate': 'candidate', 'revise': 'candidate'}
         _require(manifest.get('schema_version') == 1 and manifest.get('phase') == self.phase
@@ -531,13 +551,27 @@ class PPTProfile:
         files, rows, total = [], [], len(raw)
         project = workspace / 'project' / root
         _require(project.is_dir() and not project.is_symlink(), 'invalid_ppt_output')
-        for folder, dirs, names in os.walk(project, followlinks=False):
+        def unreadable(_):
+            # An active Agent has fewer filesystem privileges than the host;
+            # a failed scan must not silently omit a subtree from preflight.
+            raise ServiceError('ppt_artifact_unreadable', 422) from None
+        for folder, dirs, names in os.walk(project, followlinks=False, onerror=unreadable):
             for name in dirs:
                 info = (Path(folder) / name).lstat()
                 _require(stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode)
                          and not getattr(info, 'st_file_attributes', 0) & 0x400, 'ppt_linked_artifact')
             for name in sorted(names):
-                key = (Path(folder) / name).relative_to(workspace / 'project').as_posix()
+                path = Path(folder) / name
+                key = path.relative_to(workspace / 'project').as_posix()
+                if (active_preview and self.phase in ('generate', 'revise')
+                        and path.relative_to(project).as_posix() in PREVIEW_LOCKS):
+                    # Match the stopped host cleanup's ordinary-file boundary;
+                    # an ignored path cannot hide a symlink or hardlinked file.
+                    info = path.lstat()
+                    _require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+                             and not getattr(info, 'st_file_attributes', 0) & 0x400,
+                             'ppt_linked_artifact')
+                    continue
                 artifact_path(key)
                 data = read_output(workspace, 'project/' + key, limit=self.limits.max_artifact_file_bytes)
                 total += len(data)
@@ -548,7 +582,10 @@ class PPTProfile:
         unique_paths(item.name for item in files)
         measured = {row['path'][len(root) + 1:]: row for row in rows}
         declared = manifest.get('artifacts')
-        _require(type(declared) is list and len(declared) == len(rows), 'ppt_artifact_roster_mismatch')
+        # Every portable checkpoint requires at least one measured file, even
+        # for needs_input. Fail here so advisory success cannot promise a tree
+        # the later host checkpoint validation is certain to reject.
+        _require(type(declared) is list and 0 < len(declared) == len(rows), 'ppt_artifact_roster_mismatch')
         index = {}
         for row in declared:
             _require(type(row) is dict and type(row.get('role')) is str
@@ -624,6 +661,31 @@ class PPTProfile:
                     approved = task['checkpoint']['approved_specs']
                     _require(all(k in approved and measured[k]['sha256'] == approved[k]
                                  for k in ('design_spec.md', 'spec_lock.md')), 'ppt_approved_spec_changed')
+        return _MeasuredPPTOutput(raw, manifest, root, files, rows, total)
+
+    def preflight_output(self, workspace, task):
+        """Advisory contract check only; it cannot collect or authorize a candidate.
+
+        No file is changed and no StopEvidence, checkpoint, version or business
+        acceptance is created. A later host collection must prove writer stop
+        and independently re-read the actual tree against its trusted envelope.
+        The byte summary covers project files and the manifest; only the host
+        can account for its final checkpoint bytes and enforce that last quota.
+        """
+        measured = self._read_output_contract(workspace, task, active_preview=True)
+        return dict(schema='ppt-handoff-preflight.v1', status='valid',
+            scope='handoff_contract_only', advisory_only=True,
+            host_collection_required=True, publication_authorized=False,
+            phase=self.phase, file_count=len(measured.rows),
+            total_bytes=measured.total_bytes,
+            total_bytes_basis='project_files_and_manifest_only',
+            manifest_sha256=hashlib.sha256(measured.raw).hexdigest())
+
+    def collect_output(self, workspace, envelope, proof):
+        require_stop(proof, envelope)
+        _require(envelope.profile == self.name, 'ppt_profile_mismatch')
+        measured = self._read_output_contract(workspace, envelope.task)
+        task, root, rows = envelope.task, measured.root, measured.rows
         checkpoint = {'schema_version': CHECKPOINT_SCHEMA, 'ppt_master_revision': PPT_MASTER_REVISION,
                       'project_id': task['project_id'], 'source_business_job_id': task['business_job_id'],
                       'source_job_id': envelope.job_id, 'source_attempt_id': envelope.attempt_id,
@@ -632,6 +694,6 @@ class PPTProfile:
                       'total_bytes': sum(r['bytes'] for r in rows), 'publication_authorized': False}
         checkpoint['sha256'] = digest(checkpoint)
         cp_raw = canonical_bytes(checkpoint)
-        _require(total + len(cp_raw) <= self.limits.max_artifact_bytes, 'ppt_artifact_size_limit')
-        return sorted(files + [InlineFile.from_bytes('result/manifest.json', raw),
+        _require(measured.total_bytes + len(cp_raw) <= self.limits.max_artifact_bytes, 'ppt_artifact_size_limit')
+        return sorted(measured.files + [InlineFile.from_bytes('result/manifest.json', measured.raw),
                                InlineFile.from_bytes('result/checkpoint.json', cp_raw)], key=lambda f: f.name)
