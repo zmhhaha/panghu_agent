@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from agent_service.contracts import ServiceError, digest
 from agent_service.profiles.video import validate_video_input
+from .audio_store import AudioStoreMixin
 
 ACTIVE = {'queued', 'submitting', 'running', 'cancelling'}
 
@@ -21,7 +22,7 @@ def uid():
     return str(uuid4())
 
 
-class Store:
+class Store(AudioStoreMixin):
     def __init__(self, path):
         self.path = str(Path(path).resolve())
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
@@ -39,6 +40,7 @@ class Store:
                     UNIQUE(owner, idem));
                 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             ''')
+            self._init_audio_schema(db)
             db.execute('INSERT OR IGNORE INTO metadata VALUES (?, ?)', ('csrf_secret', secrets.token_hex(32)))
             self.csrf_secret = db.execute('SELECT value FROM metadata WHERE key=?', ('csrf_secret',)).fetchone()[0]
 
@@ -119,7 +121,7 @@ class Store:
                     project['storyboard_operation'] = self._op_public(op)
                 else:
                     self._scene(project, op['scene_id'])['operation'] = self._op_public(op)
-            return project
+            return self._attach_audio(db, project)
 
     def scene_project(self, owner, scene_id):
         with self.transaction() as db:

@@ -10,7 +10,7 @@ const STATUS_LABELS = {
   publishing: '保存结果', cancelling: '正在取消', cancel_requested: '已申请取消',
   completed: '已完成', succeeded: '已完成', failed: '制作失败', cancelled: '已取消',
   timed_out: '执行超时', rejected: '未能提交', needs_input: '需要补充内容',
-  quarantined: '等待服务处理', stopped: '已停止',
+  quarantined: '等待服务处理', stopped: '已停止', uncertain: '提交结果待确认',
 };
 
 export function statusLabel(status) {
@@ -23,7 +23,7 @@ export function isActiveOperation(operation) {
 
 export function activeOperations(project) {
   const candidates = [project?.storyboard_operation,
-    ...(project?.scenes ?? []).map(scene => scene.operation)];
+    ...(project?.scenes ?? []).flatMap(scene => [scene.operation, scene.audio_operation])];
   const seen = new Set();
   return candidates.filter(operation => {
     if (!isActiveOperation(operation) || seen.has(operation.id)) return false;
@@ -35,7 +35,7 @@ export function activeOperations(project) {
 export function createWorkspaceState() {
   return {
     projectId: null, epoch: 0, requestSequence: 0, appliedRequest: 0,
-    project: null, sceneId: null, selectedVersions: new Map(),
+    project: null, sceneId: null, selectedVersions: new Map(), selectedAudioVersions: new Map(),
   };
 }
 
@@ -46,6 +46,7 @@ export function selectProject(state, projectId) {
   state.project = null;
   state.sceneId = null;
   state.selectedVersions.clear();
+  state.selectedAudioVersions.clear();
 }
 
 /** Project detail reads also refresh the matching sidebar summary. */
@@ -88,6 +89,11 @@ export function acceptProjectRead(state, ticket, project) {
     if (!versions.some(version => version.id === selected)) {
       const head = versions.find(version => version.id === scene.head_version_id);
       state.selectedVersions.set(scene.id, head?.id ?? versions.at(-1)?.id ?? null);
+    }
+    const audio = orderedAudioVersions(scene);
+    if (!audio.some(version => version.id === state.selectedAudioVersions.get(scene.id))) {
+      state.selectedAudioVersions.set(scene.id,
+        audio.find(version => version.id === scene.head_audio_version_id)?.id ?? audio.at(-1)?.id ?? null);
     }
   }
   return true;
@@ -178,4 +184,91 @@ export function createIntentKeys(makeKey = randomIntentKey) {
 export function versionPath(versionId, action = 'preview') {
   if (!['preview', 'source'].includes(action)) throw new Error('Unsupported version action');
   return `/api/versions/${encodeURIComponent(versionId)}/${action}`;
+}
+
+export function orderedAudioVersions(scene) {
+  return [...(scene?.audio_versions ?? [])].sort((a, b) => (a.number ?? 0) - (b.number ?? 0));
+}
+
+export function selectedAudioVersion(state, scene = selectedScene(state)) {
+  return scene?.audio_versions?.find(version => version.id === state.selectedAudioVersions.get(scene.id)) ?? null;
+}
+
+export function chooseAudioVersion(state, sceneId, versionId) {
+  const scene = state.project?.scenes?.find(candidate => candidate.id === sceneId);
+  if (!scene?.audio_versions?.some(version => version.id === versionId)) return false;
+  state.selectedAudioVersions.set(sceneId, versionId);
+  return true;
+}
+
+export function audioPath(versionId) {
+  return `/api/audio-versions/${encodeURIComponent(versionId)}/audio`;
+}
+
+/** One pronunciation override per line; duplicates are refused instead of lost. */
+export function parsePronunciation(value) {
+  const pairs = [];
+  const seen = new Set();
+  for (const line of String(value).split('\n')) {
+    if (!line.trim()) continue;
+    const position = line.indexOf('=');
+    const word = line.slice(0, position).trim();
+    const replacement = line.slice(position + 1).trim();
+    if (position < 1 || !word || !replacement || seen.has(word)
+        || pairs.length >= 32 || word.length > 100 || replacement.length > 200) {
+      throw new Error('每行填写「原词=读法」，原词不能重复，最多32条。');
+    }
+    seen.add(word);
+    pairs.push([word, replacement]);
+  }
+  return Object.fromEntries(pairs);
+}
+
+export function pronunciationText(value = {}) {
+  return Object.entries(value).map(([word, replacement]) => `${word}=${replacement}`).join('\n');
+}
+
+/** Caption edits stay bound to the exact adopted audio and concurrency revision. */
+export function createCaptionDraft(scene, revision) {
+  return { expected_revision: revision, audio_version_id: scene.head_audio_version_id,
+    leading_seconds: Number(scene.leading_seconds ?? 0), trailing_seconds: Number(scene.trailing_seconds ?? 0),
+    cues: (scene.captions?.cues ?? []).map(cue => ({ start: cue.start, end: cue.end, text: cue.text })),
+    dirty: false };
+}
+
+export function validateCaptionCues(cues, duration, { leadingSeconds = 0, audioSeconds = null } = {}) {
+  if (!Array.isArray(cues) || cues.length > 500 || !Number.isFinite(duration) || duration <= 0) return false;
+  const endLimit = audioSeconds === null ? duration : Math.min(duration, leadingSeconds + audioSeconds);
+  let previous = leadingSeconds;
+  let characters = 0;
+  return cues.every(cue => {
+    characters += typeof cue.text === 'string' ? cue.text.length : 0;
+    const valid = Number.isFinite(cue.start) && Number.isFinite(cue.end)
+      && cue.start >= previous && cue.start >= leadingSeconds && cue.end > cue.start
+      && Math.round(cue.end * 1000) > Math.round(cue.start * 1000)
+      && cue.end <= endLimit && typeof cue.text === 'string'
+      && cue.text.trim().length > 0 && cue.text.length <= 500 && characters <= 10000
+      && !cue.text.replace(/\r\n?/g, '\n').includes('\n\n');
+    previous = cue.end;
+    return valid;
+  });
+}
+
+/** Playback follows the server's measured timeline; audio is never cut to a shorter scene. */
+export function timelinePosition(timeline, seconds) {
+  if (!Array.isArray(timeline?.scenes) || !Number.isFinite(seconds) || seconds < 0) return null;
+  for (const scene of timeline.scenes) {
+    const start = Number(scene.start_seconds);
+    const duration = Number(scene.duration_seconds);
+    if (Number.isFinite(start) && Number.isFinite(duration) && duration > 0
+        && seconds >= start && seconds < start + duration) {
+      const sceneTime = seconds - start;
+      const audioTime = sceneTime - Number(scene.leading_seconds ?? 0);
+      const audioDuration = Number(scene.audio_duration_seconds ?? 0);
+      return { scene, sceneTime, audioTime,
+        speaking: Boolean(scene.audio_version_id && !scene.audio_stale && audioTime >= 0 && audioTime < audioDuration),
+        caption: (scene.cues ?? []).find(cue => sceneTime >= cue.start && sceneTime < cue.end)?.text ?? '' };
+    }
+  }
+  return null;
 }

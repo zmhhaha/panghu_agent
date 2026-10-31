@@ -3,6 +3,8 @@ import {
   acceptProjectRead, isActiveOperation, issueProjectRead, latestVersion, orderedVersions,
   selectProject, selectScene, selectedScene, selectedVersion, statusLabel, syncSceneDraft,
   updateProjectSummary, versionPath,
+  audioPath, chooseAudioVersion, createCaptionDraft, orderedAudioVersions, parsePronunciation,
+  pronunciationText, selectedAudioVersion, timelinePosition, validateCaptionCues,
 } from './model.mjs';
 
 const $ = id => document.getElementById(id);
@@ -12,6 +14,17 @@ const drafts = new Map();
 const feedbacks = new Map();
 const pending = new Set();
 const cancelRequests = new Set();
+const speechDrafts = new Map();
+const timingDrafts = new Map();
+const captionDrafts = new Map();
+const renderHistories = new Map();
+let sessionSettings = {};
+let displayedAudioVersion = null;
+let displayedAudioScene = null;
+let uploadSelection = null;
+let renderedCaptionDraft = null;
+let player = null;
+let playerAnimation = null;
 let csrfToken = null;
 let projects = [];
 let listSequence = 0;
@@ -39,6 +52,30 @@ const ERROR_LABELS = {
   service_unavailable: 'Agent 服务暂时不可用，请稍后重试。',
   idempotency_conflict: '这个操作与先前提交的内容不一致，请刷新后重试。',
   not_found: '内容不存在或你没有访问权限。',
+  speech_not_configured: '配音服务尚未连接，可以先上传自己的 WAV 配音。',
+  audio_stale: '旁白或配音设置已更新，请生成或上传匹配当前旁白的配音。',
+  audio_version_stale: '这条历史配音已不匹配当前旁白，请重新制作。',
+  audio_head_conflict: '采用的配音已发生变化，请重新读取项目。',
+  invalid_audio: '音频未通过校验，请上传完整、非静音的 PCM WAV。',
+  narration_required: '请先填写并保存这个镜头的旁白。',
+  speech_busy: '配音服务正在处理其他任务，请稍后重新提交。',
+  submission_uncertain: '配音提交结果未确认。请检查已有任务，系统不会自动重复生成。',
+  media_not_configured: '视频导出暂时不可用，仍可导出项目素材。',
+  captions_stale: '配音已变化，请重新整理并校正字幕。',
+  missing_audio: '部分镜头缺少可用的已采用配音，请先处理提示的镜头。',
+  missing_visual: '部分镜头尚未采用画面，请先选择画面版本。',
+  missing_current_audio: '部分镜头缺少当前旁白的已采用配音，请先生成或上传并采用。',
+  unadopted_scenes: '请先为每个镜头采用一个画面版本。',
+  missing_captions: '部分镜头还没有字幕，请先估算并校正，或取消「显示字幕」。',
+  stale_captions: '配音或留白已变化，请重新整理相关镜头的字幕。',
+  invalid_captions: '请检查字幕时间是否位于配音范围内，保持先后顺序，并填写字幕内容。',
+  render_not_configured: '视频导出服务尚未连接，仍可导出项目素材。',
+  render_in_progress: '已有成片正在导出，请等待完成或取消后再试。',
+  audio_operation_in_progress: '这个镜头已有配音任务，请等待完成或取消后再试。',
+  audio_narration_too_long: '这个镜头的旁白超过单次配音限制，请拆成更短的镜头。',
+  speech_invalid_audio: '音频未通过校验，请使用完整、可解码的 PCM WAV。',
+  speech_invalid_input: '请检查语速、读音修正与旁白长度。',
+  audio_upload_too_large: '配音文件过大，单个文件最多 32 MiB。',
 };
 
 class ApiError extends Error {
@@ -54,18 +91,18 @@ class ApiError extends Error {
   }
 }
 
-async function request(path, { method = 'GET', body, signal, output = 'json' } = {}) {
+async function request(path, { method = 'GET', body, signal, output = 'json', raw = false, intentBody } = {}) {
   const headers = { Accept: output === 'json' ? 'application/json' : '*/*' };
   const mutating = !['GET', 'HEAD'].includes(method);
   if (mutating) {
     if (!csrfToken) throw new ApiError(401, {});
     headers['X-CSRF-Token'] = csrfToken;
-    headers['Idempotency-Key'] = intentKeys.get(method, path, body);
-    headers['Content-Type'] = 'application/json';
+    headers['Idempotency-Key'] = intentKeys.get(method, path, intentBody ?? body);
+    headers['Content-Type'] = raw ? 'audio/wav' : 'application/json';
   }
   const response = await fetch(path, {
     method, headers, signal, credentials: 'same-origin', redirect: 'error',
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(body === undefined ? {} : { body: raw ? body : JSON.stringify(body) }),
   });
   if (!response.ok) {
     const detail = await response.json().catch(() => ({}));
@@ -73,7 +110,7 @@ async function request(path, { method = 'GET', body, signal, output = 'json' } =
   }
   const result = response.status === 204 ? null : output === 'blob' ? await response.blob()
     : output === 'text' ? await response.text() : await response.json();
-  if (mutating) intentKeys.complete(method, path, body);
+  if (mutating) intentKeys.complete(method, path, intentBody ?? body);
   return result;
 }
 
@@ -266,6 +303,214 @@ function updateGenerationButtons() {
     : '根据镜头说明制作候选画面，确认后可采用。';
 }
 
+function adoptedAudio(scene) {
+  return scene?.audio_versions?.find(version => version.id === scene.head_audio_version_id) ?? null;
+}
+
+function effectiveSceneSeconds(scene) {
+  const audio = adoptedAudio(scene);
+  return Math.ceil(24 * Math.max(Number(scene.duration_seconds), Number(audio?.duration_seconds ?? 0)
+    + Number(scene.leading_seconds ?? 0) + Number(scene.trailing_seconds ?? 0))) / 24;
+}
+
+function validSceneCaptions(scene, cues) {
+  return validateCaptionCues(cues, effectiveSceneSeconds(scene), {
+    leadingSeconds: Number(scene.leading_seconds ?? 0), audioSeconds: Number(adoptedAudio(scene)?.duration_seconds ?? 0),
+  });
+}
+
+function audioDraft(map, scene, factory) {
+  const key = draftKey(scene.id);
+  const previous = map.get(key);
+  if (previous?.dirty) return previous;
+  const draft = factory();
+  map.set(key, draft);
+  return draft;
+}
+
+function seconds(value) {
+  return Number.isFinite(Number(value)) ? Number(value).toFixed(2).replace(/\.?0+$/, '') : '—';
+}
+
+function renderAudioOperation(operation) {
+  const banner = $('audio-status');
+  const active = isActiveOperation(operation);
+  banner.hidden = !operation;
+  if (!operation) return;
+  banner.classList.toggle('active', active);
+  banner.classList.toggle('failed', ['failed', 'timed_out', 'uncertain'].includes(operation.status));
+  $('audio-status-text').textContent = `制作配音 · ${statusLabel(operation.status)}${operation.error ? ` · ${ERROR_LABELS[operation.error] ?? '请检查任务后重新提交。'}` : ''}`;
+  $('cancel-audio-operation').hidden = !active;
+  $('cancel-audio-operation').disabled = pending.has(`audio-cancel:${operation.id}`)
+    || cancelRequests.has(operation.id) || operation.status === 'cancelling';
+}
+
+function renderCaptionRows(draft) {
+  if (renderedCaptionDraft === draft) return;
+  renderedCaptionDraft = draft;
+  const fragment = document.createDocumentFragment();
+  draft.cues.forEach((cue, index) => {
+    const row = node('div', undefined, 'caption-cue');
+    for (const field of ['start', 'end', 'text']) {
+      const control = node(field === 'text' ? 'textarea' : 'input');
+      control.value = cue[field];
+      control.setAttribute('aria-label', `第${index + 1}条字幕${field === 'text' ? '内容' : field === 'start' ? '开始秒数' : '结束秒数'}`);
+      if (field === 'text') { control.rows = 2; control.maxLength = 500; }
+      else { control.type = 'number'; control.min = '0'; control.step = '0.01'; }
+      control.addEventListener('input', () => {
+        cue[field] = field === 'text' ? control.value : control.valueAsNumber;
+        draft.dirty = true;
+        updateCaptionButtons();
+      });
+      row.append(control);
+    }
+    const remove = node('button', '×', 'icon-button');
+    remove.type = 'button';
+    remove.setAttribute('aria-label', `删除第${index + 1}条字幕`);
+    remove.addEventListener('click', () => {
+      draft.cues.splice(index, 1); draft.dirty = true;
+      renderedCaptionDraft = null;
+      renderCaptionRows(draft); updateCaptionButtons();
+    });
+    row.append(remove); fragment.append(row);
+  });
+  $('caption-cues').replaceChildren(fragment);
+}
+
+function updateCaptionButtons() {
+  const scene = selectedScene(state);
+  if (!scene) return;
+  const draft = captionDrafts.get(draftKey(scene.id));
+  const audio = adoptedAudio(scene);
+  const matches = draft?.audio_version_id === scene.head_audio_version_id && !scene.audio_stale
+    && draft?.leading_seconds === Number(scene.leading_seconds ?? 0)
+    && draft?.trailing_seconds === Number(scene.trailing_seconds ?? 0);
+  const valid = matches && audio && draft?.cues.length > 0 && validSceneCaptions(scene, draft.cues);
+  const needsReview = Boolean(scene.captions?.requires_review);
+  $('save-captions').disabled = (!draft?.dirty && !needsReview) || !valid || pending.has(`captions:${scene.id}`);
+  $('save-captions').textContent = needsReview ? '确认并保存字幕' : '保存校正字幕';
+  $('add-caption').disabled = !matches || !audio || (draft?.cues.length ?? 0) >= 500;
+  $('captions-draft-note').textContent = !matches && draft?.dirty ? '采用配音或留白已变化，请重新载入后校正。'
+    : draft?.dirty && !valid ? '检查时间顺序、音频边界与字幕内容。' : draft?.dirty ? '有未保存的校正'
+      : needsReview ? '试听后可确认当前时间，或直接修改。' : '';
+}
+
+function renderAudio(scene, project) {
+  const settings = scene.speech_settings ?? {};
+  const speech = audioDraft(speechDrafts, scene, () => ({
+    speed: settings.speed ?? 1, pronunciation: pronunciationText(settings.pronunciation),
+    expected_revision: project.revision, dirty: false,
+  }));
+  setValue('speech-speed', speech.speed);
+  setValue('speech-pronunciation', speech.pronunciation);
+  $('speech-draft-note').textContent = speech.dirty ? '配音设置尚未保存' : '使用当前已保存的配音设置';
+  $('save-speech-settings').disabled = !speech.dirty || pending.has(`speech:${scene.id}`);
+  const voice = settings.voice ?? sessionSettings.speech_voice ?? 'zm_yunjian';
+  $('audio-voice-label').textContent = voice === 'zm_yunjian' ? '云健 · 中文男声' : voice;
+  $('audio-provider-note').textContent = sessionSettings.speech_configured ? '使用当前镜头已保存的旁白制作，生成完成后可试听比较。'
+    : '配音服务尚未连接，可以先上传自己的 WAV 配音。';
+  const dirty = drafts.get(draftKey(scene.id))?.dirty;
+  const busy = isActiveOperation(scene.audio_operation) || pending.has(`audio-generate:${scene.id}`);
+  $('generate-audio').disabled = !sessionSettings.speech_configured || !scene.narration?.trim()
+    || dirty || speech.dirty || busy;
+  $('audio-generation-hint').textContent = dirty ? '请先保存镜头旁白。' : speech.dirty ? '请先保存语速与读音设置。'
+    : busy ? '配音任务进行中，可以继续查看其他镜头。' : '生成后先试听，再选择采用。';
+  renderAudioOperation(scene.audio_operation);
+  const versions = orderedAudioVersions(scene);
+  const candidate = selectedAudioVersion(state, scene);
+  const options = versions.map(version => {
+    const option = node('option', `A${version.number}${version.id === scene.head_audio_version_id ? ' · 已采用' : ' · 候选'}${version.stale ? ' · 需更新' : ''}`);
+    option.value = version.id;
+    return option;
+  });
+  $('audio-version-select').replaceChildren(...(options.length ? options : [node('option', '尚无配音')]));
+  $('audio-version-select').disabled = !versions.length;
+  if (candidate) $('audio-version-select').value = candidate.id;
+  if (displayedAudioScene !== scene.id) {
+    $('audio-preview').pause(); $('audio-upload-file').value = '';
+    uploadSelection = null; displayedAudioScene = scene.id;
+  }
+  if (displayedAudioVersion !== candidate?.id) {
+    $('audio-preview').pause();
+    if (candidate) $('audio-preview').src = audioPath(candidate.id);
+    else $('audio-preview').removeAttribute('src');
+    $('audio-preview').load(); displayedAudioVersion = candidate?.id ?? null;
+  }
+  $('audio-preview').hidden = !candidate;
+  const adopted = candidate?.id === scene.head_audio_version_id;
+  $('audio-version-badge').hidden = !candidate;
+  $('audio-version-badge').textContent = candidate?.stale ? '需更新' : adopted ? '已采用配音' : '候选配音';
+  $('audio-version-summary').textContent = candidate
+    ? `A${candidate.number} · ${candidate.source === 'upload' ? '上传配音' : '生成配音'} · ${seconds(candidate.duration_seconds)} 秒`
+    : '生成或上传配音后，可以在这里试听。';
+  $('audio-stale-note').hidden = !candidate?.stale;
+  $('audio-adoption-note').textContent = adopted ? scene.audio_stale ? '当前采用的配音需要更新。' : '这条配音将用于项目预览与成片。'
+    : '确认试听效果后再采用，画面采用保持独立。';
+  $('adopt-audio').disabled = !candidate || candidate.stale || adopted || pending.has(`audio-adopt:${scene.id}`);
+  $('adopt-audio').textContent = adopted ? '当前采用配音' : '采用此配音';
+  $('download-audio').disabled = !candidate;
+  $('upload-audio').disabled = !uploadSelection || pending.has(`audio-upload:${scene.id}`) || dirty || speech.dirty;
+  const timing = audioDraft(timingDrafts, scene, () => ({
+    leading_seconds: scene.leading_seconds ?? 0, trailing_seconds: scene.trailing_seconds ?? 0,
+    expected_revision: project.revision, dirty: false,
+  }));
+  setValue('leading-seconds', timing.leading_seconds); setValue('trailing-seconds', timing.trailing_seconds);
+  $('save-timing').disabled = !timing.dirty || pending.has(`timing:${scene.id}`);
+  $('timing-draft-note').textContent = timing.dirty ? '留白尚未保存' : '';
+  const head = adoptedAudio(scene);
+  const duration = head && !scene.audio_stale ? Math.max(Number(scene.duration_seconds), Number(head.duration_seconds)
+    + Number(scene.leading_seconds ?? 0) + Number(scene.trailing_seconds ?? 0)) : Number(scene.duration_seconds);
+  $('timing-summary').textContent = head && !scene.audio_stale
+    ? `配音 ${seconds(head.duration_seconds)} 秒 · 原设定 ${seconds(scene.duration_seconds)} 秒 · 含留白后镜头 ${seconds(duration)} 秒。完整保留旁白。`
+    : scene.audio_stale ? '采用配音已过期，更新后重新安排时长与字幕。' : '采用配音后按实际音频时长安排，不截断旁白。';
+  const previous = captionDrafts.get(draftKey(scene.id));
+  let captions = previous;
+  const signature = JSON.stringify([scene.head_audio_version_id, scene.leading_seconds, scene.trailing_seconds, scene.captions]);
+  if (!captions?.dirty && captions?.signature !== signature) {
+    captions = { ...createCaptionDraft(scene, project.revision), signature };
+    captionDrafts.set(draftKey(scene.id), captions);
+  }
+  if (captions && !captions.dirty) captions.expected_revision = project.revision;
+  renderCaptionRows(captions);
+  const stale = scene.captions?.stale || scene.captions?.timing_stale || scene.audio_stale;
+  $('captions-status').textContent = stale ? '旁白、配音或留白已变化，字幕需要重新整理。' : !scene.captions ? '采用配音后，先估算时间，再试听校正。'
+    : scene.captions.requires_review ? '字幕时间为估算，需结合试听校正。' : '已保存校正字幕。更换配音后需重新校正。';
+  $('estimate-captions').disabled = !head || scene.audio_stale || pending.has(`captions:${scene.id}`);
+  updateCaptionButtons();
+}
+
+function renderDelivery(project) {
+  const scenes = project.scenes ?? [];
+  const visualCount = scenes.filter(scene => scene.head_version_id).length;
+  const audioCount = scenes.filter(scene => scene.head_audio_version_id && !scene.audio_stale).length;
+  $('delivery-summary').textContent = `已采用画面 ${visualCount}/${scenes.length} · 可用配音 ${audioCount}/${scenes.length}。预览和成片使用已采用的版本。`;
+  $('preview-project').disabled = !scenes.length || pending.has(`preview:${project.id}`);
+  $('render-project').disabled = !scenes.length || !sessionSettings.media_configured || pending.has(`render:${project.id}`);
+  $('download-subtitles').disabled = !scenes.length || pending.has(`subtitles:${project.id}`);
+  $('render-hint').textContent = sessionSettings.media_configured ? '导出在后台进行，过程中可以继续编辑；结果保留导出开始时的版本。'
+    : '视频导出暂时不可用，仍可预览并导出原项目素材。';
+  const fragment = document.createDocumentFragment();
+  for (const item of renderHistories.get(project.id) ?? []) {
+    const row = node('div', undefined, 'render-item');
+    const label = node('div');
+    label.append(node('strong', `${item.silent ? '静音视频' : '带声音视频'} · ${statusLabel(item.status)}`),
+      node('small', `文稿版本 ${item.project_revision ?? '—'}${item.project_revision !== project.revision ? ' · 项目已有后续修改' : ''}${item.error ? ` · ${ERROR_LABELS[item.error] ?? '导出未完成，请检查资源后重试。'}` : ''}`));
+    row.append(label);
+    if (['completed', 'succeeded'].includes(item.status)) {
+      const button = node('button', '下载 MP4 ↓', 'button secondary'); button.type = 'button';
+      button.addEventListener('click', () => download(`/api/renders/${encodeURIComponent(item.id)}/video`,
+        `video-${item.id}.mp4`, `render-download:${item.id}`)); row.append(button);
+    } else if (isActiveOperation(item)) {
+      const button = node('button', '申请取消', 'text-button'); button.type = 'button';
+      button.disabled = pending.has(`render-cancel:${item.id}`) || cancelRequests.has(item.id) || item.status === 'cancelling';
+      button.addEventListener('click', () => perform(`render-cancel:${item.id}`, () => request(`/api/renders/${encodeURIComponent(item.id)}/cancel`,
+        { method: 'POST', body: {} }), () => { cancelRequests.add(item.id); success('已申请取消导出。'); })); row.append(button);
+    }
+    fragment.append(row);
+  }
+  $('render-history').replaceChildren(fragment);
+}
+
 function render() {
   const project = state.project;
   $('loading-view').hidden = !loading || Boolean(project);
@@ -288,6 +533,7 @@ function render() {
   $('add-scene').disabled = storyboardBusy;
   $('empty-add-scene').disabled = storyboardBusy;
   renderScenes(project);
+  renderDelivery(project);
   const scene = selectedScene(state);
   $('scene-workspace').hidden = !scene && editor !== 'new';
   $('select-scene-empty').hidden = Boolean(scene) || editor === 'new';
@@ -302,12 +548,14 @@ function render() {
   renderOperation(scene.operation, 'scene');
   setValue('feedback', feedbacks.get(draftKey()) ?? '');
   updateGenerationButtons();
+  renderAudio(scene, project);
 }
 
 function stopPolling() { clearTimeout(pollTimer); pollTimer = null; }
 function schedulePolling() {
   stopPolling();
-  if (document.hidden || !state.projectId || !activeOperations(state.project).length) return;
+  if (document.hidden || !state.projectId || (!activeOperations(state.project).length
+      && !(renderHistories.get(state.projectId) ?? []).some(isActiveOperation))) return;
   pollTimer = setTimeout(() => loadProject().catch(showError), 3500);
 }
 
@@ -317,6 +565,14 @@ async function loadProjects() {
   if (sequence !== listSequence) return;
   projects = result.projects ?? [];
   renderProjects();
+}
+
+async function loadRenders(projectId, epoch) {
+  if (!sessionSettings.media_configured) return;
+  const result = await request(`/api/projects/${encodeURIComponent(projectId)}/renders`);
+  if (state.projectId !== projectId || state.epoch !== epoch) return;
+  renderHistories.set(projectId, result.renders ?? []);
+  renderDelivery(state.project);
 }
 
 async function loadProject() {
@@ -330,6 +586,7 @@ async function loadProject() {
       projects = updateProjectSummary(projects, project);
       loading = false;
       render();
+      await loadRenders(ticket.projectId, ticket.epoch);
     }
   } catch (error) {
     if (ticket.epoch === state.epoch && error.name !== 'AbortError') {
@@ -351,6 +608,8 @@ async function openProject(id) {
   loading = true;
   previewMode = 'preview';
   clearPreview();
+  $('audio-preview').pause();
+  closeProjectPlayer();
   $('global-error').hidden = true;
   render();
   await loadProject().catch(showError);
@@ -460,6 +719,125 @@ async function download(path, filename, key) {
   finally { pending.delete(key); render(); }
 }
 
+function clockLabel(value) {
+  const whole = Math.max(0, Math.floor(value));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+}
+
+function playerSeconds() {
+  if (!player) return 0;
+  if (player.playing && player.speakingScene && !player.silent) {
+    const audio = $('project-player-audio');
+    const scene = player.speakingScene;
+    const position = audio.readyState < 1 ? player.position : Number(scene.start_seconds)
+      + Number(scene.leading_seconds ?? 0) + (audio.ended ? Number(scene.audio_duration_seconds) : audio.currentTime);
+    return Math.min(player.timeline.duration_seconds, position);
+  }
+  return Math.min(player.timeline.duration_seconds,
+    player.position + (player.playing ? (performance.now() - player.startedAt) / 1000 : 0));
+}
+
+function pauseProjectPlayer() {
+  if (!player) return;
+  player.position = playerSeconds(); player.playing = false;
+  player.speakingScene = null;
+  cancelAnimationFrame(playerAnimation); playerAnimation = null;
+  $('project-player-audio').pause();
+  $('project-player-toggle').textContent = '播放';
+}
+
+function closeProjectPlayer() {
+  pauseProjectPlayer(); player = null;
+  $('project-player-audio').removeAttribute('src'); $('project-player-audio').load();
+  $('project-player-frame').removeAttribute('src');
+  if ($('project-player-dialog').open) $('project-player-dialog').close();
+}
+
+function updatePlayerFrame() {
+  if (!player) return;
+  const position = playerSeconds();
+  const current = timelinePosition(player.timeline, position);
+  const audio = $('project-player-audio');
+  $('project-player-seek').value = position;
+  $('project-player-clock').textContent = `${clockLabel(position)} / ${clockLabel(player.timeline.duration_seconds)}`;
+  if (!current) {
+    audio.pause();
+    $('project-player-caption').textContent = ''; $('project-player-caption').hidden = true;
+    if (position >= player.timeline.duration_seconds) pauseProjectPlayer();
+    return;
+  }
+  const { scene } = current;
+  if (player.sceneId !== scene.id) {
+    audio.pause();
+    $('project-player-frame').src = versionPath(scene.visual_version_id);
+    if (scene.audio_version_id && !player.silent) audio.src = audioPath(scene.audio_version_id);
+    else audio.removeAttribute('src');
+    audio.load(); player.sceneId = scene.id; player.speakingScene = null;
+  }
+  $('project-player-scene').textContent = `${scene.title ?? '镜头'} · ${seconds(current.sceneTime)} / ${seconds(scene.duration_seconds)} 秒${player.silent ? ' · 静音预览' : ''}`;
+  const subtitle = player.subtitles ? current.caption : '';
+  $('project-player-caption').textContent = subtitle;
+  $('project-player-caption').hidden = !subtitle;
+  if (player.playing && current.speaking && !player.silent) {
+    if (!player.speakingScene) {
+      player.position = position; player.startedAt = performance.now();
+      player.speakingScene = scene; player.audioTarget = current.audioTime;
+    }
+    if (audio.readyState >= 1 && Math.abs(audio.currentTime - current.audioTime) > 0.35) audio.currentTime = current.audioTime;
+    if (audio.paused && !player.audioStarting) {
+      const snapshot = player;
+      snapshot.audioStarting = true;
+      audio.play().catch(error => {
+        if (error.name === 'AbortError' || !snapshot.playing) return;
+        if (player !== snapshot) return;
+        pauseProjectPlayer();
+        $('project-player-note').textContent = '配音未能开始播放，请检查连接后重新播放。';
+      }).finally(() => { snapshot.audioStarting = false; });
+    }
+  } else {
+    audio.pause();
+    if (player.speakingScene) {
+      player.position = position; player.startedAt = performance.now(); player.speakingScene = null;
+    }
+  }
+  if (player.playing) playerAnimation = requestAnimationFrame(updatePlayerFrame);
+}
+
+async function openProjectPlayer() {
+  if (!state.project) return;
+  const projectId = state.projectId;
+  const epoch = state.epoch;
+  const silent = $('render-silent').checked;
+  const subtitles = $('render-subtitles').checked;
+  await perform(`preview:${projectId}`, () => request(`/api/projects/${encodeURIComponent(projectId)}/timeline?silent=${silent}&subtitles=${subtitles}`), timeline => {
+    if (state.projectId !== projectId || state.epoch !== epoch) return;
+    closeProjectPlayer();
+    player = { timeline, silent, subtitles, position: 0, playing: false, startedAt: 0, sceneId: null, audioStarting: false };
+    $('audio-preview').pause();
+    $('project-player-heading').textContent = state.project.title;
+    $('project-player-seek').max = timeline.duration_seconds;
+    $('project-player-note').textContent = '预览使用打开时的采用版本。调整项目后，重新打开预览查看最新内容。';
+    $('project-player-dialog').showModal();
+    updatePlayerFrame();
+  });
+}
+
+function captureSpeechDraft() {
+  const scene = selectedScene(state);
+  if (!scene) return;
+  const draft = speechDrafts.get(draftKey(scene.id));
+  Object.assign(draft, { speed: $('speech-speed').value, pronunciation: $('speech-pronunciation').value, dirty: true });
+  $('speech-draft-note').textContent = '配音设置尚未保存';
+  $('save-speech-settings').disabled = false;
+  $('generate-audio').disabled = true;
+  $('upload-audio').disabled = true;
+  $('audio-generation-hint').textContent = '请先保存语速与读音设置。';
+}
+
+function showInputError(message) {
+  showError(new ApiError(422, { detail: { message } }));
+}
+
 function openCreateDialog() {
   $('create-error').hidden = true;
   if (!$('create-project-dialog').open) $('create-project-dialog').showModal();
@@ -505,6 +883,9 @@ $('scene-form').addEventListener('input', () => {
   });
   $('draft-status').textContent = '有未保存的修改';
   updateGenerationButtons();
+  $('generate-audio').disabled = true;
+  $('upload-audio').disabled = true;
+  $('audio-generation-hint').textContent = '请先保存镜头中的修改。';
 });
 $('toggle-scene-editor').addEventListener('click', () => { editor = editor ? null : 'existing'; render(); });
 $('cancel-scene-edit').addEventListener('click', () => { editor = null; render(); });
@@ -553,12 +934,159 @@ $('download-source').addEventListener('click', () => {
 $('export-project').addEventListener('click', () => {
   if (state.projectId) download(`/api/projects/${encodeURIComponent(state.projectId)}/export`, 'video-workbench-project.zip', `export:${state.projectId}`);
 });
+
+for (const id of ['speech-speed', 'speech-pronunciation']) $(id).addEventListener('input', captureSpeechDraft);
+$('save-speech-settings').addEventListener('click', () => {
+  const scene = selectedScene(state); if (!scene || !$('speech-speed').reportValidity()) return;
+  const key = draftKey(scene.id); const draft = speechDrafts.get(key);
+  let pronunciation;
+  try { pronunciation = parsePronunciation(draft.pronunciation); }
+  catch (error) { showInputError(error.message); return; }
+  const body = { expected_revision: draft.expected_revision, speed: Number(draft.speed), pronunciation };
+  perform(`speech:${scene.id}`, () => request(`/api/scenes/${encodeURIComponent(scene.id)}/speech`, { method: 'PATCH', body }),
+    () => { speechDrafts.delete(key); success('配音设置已保存，已有配音的适用状态会同步更新。'); });
+});
+for (const [id, map] of [['reset-speech-settings', speechDrafts], ['reset-timing', timingDrafts], ['reset-captions', captionDrafts]]) {
+  $(id).addEventListener('click', () => {
+    const scene = selectedScene(state); if (!scene) return;
+    const key = draftKey(scene.id);
+    if (map.get(key)?.dirty && !window.confirm('重新载入会清除这里尚未保存的修改，继续吗？')) return;
+    map.delete(key); renderedCaptionDraft = null; render();
+  });
+}
+$('generate-audio').addEventListener('click', () => {
+  const scene = selectedScene(state); if (!scene) return;
+  const body = { expected_revision: state.project.revision };
+  perform(`audio-generate:${scene.id}`, () => request(`/api/scenes/${encodeURIComponent(scene.id)}/audio/generate`,
+    { method: 'POST', body }), () => success('配音任务已提交，完成后会保存为候选。'));
+});
+$('cancel-audio-operation').addEventListener('click', () => {
+  const operation = selectedScene(state)?.audio_operation;
+  if (!isActiveOperation(operation)) return;
+  perform(`audio-cancel:${operation.id}`, () => request(`/api/audio-operations/${encodeURIComponent(operation.id)}/cancel`,
+    { method: 'POST', body: {} }), () => { cancelRequests.add(operation.id); success('配音取消请求已提交。'); });
+});
+$('audio-version-select').addEventListener('change', event => {
+  chooseAudioVersion(state, state.sceneId, event.target.value); render();
+});
+$('adopt-audio').addEventListener('click', () => {
+  const scene = selectedScene(state); const version = selectedAudioVersion(state, scene);
+  if (!scene || !version || version.stale || version.id === scene.head_audio_version_id) return;
+  const body = { version_id: version.id, expected_head_audio_version_id: scene.head_audio_version_id ?? null };
+  perform(`audio-adopt:${scene.id}`, () => request(`/api/scenes/${encodeURIComponent(scene.id)}/audio/adopt`,
+    { method: 'POST', body }), () => success(`已采用配音 A${version.number}，请检查时长与字幕。`));
+});
+$('download-audio').addEventListener('click', () => {
+  const version = selectedAudioVersion(state);
+  if (version) download(audioPath(version.id), `narration-a${version.number}.wav`, `audio-download:${version.id}`);
+});
+$('audio-upload-file').addEventListener('change', event => {
+  const file = event.target.files?.[0];
+  if (file && (!file.size || file.size > 32 * 1024 * 1024 || !/\.wav$/i.test(file.name))) {
+    event.target.value = ''; uploadSelection = null;
+    showInputError('请选择非空的 WAV 文件，最大 32 MiB。');
+  } else uploadSelection = file ? { projectId: state.projectId, sceneId: state.sceneId, file } : null;
+  render();
+});
+$('upload-audio').addEventListener('click', () => {
+  const selection = uploadSelection; const scene = selectedScene(state);
+  if (!selection || !scene || selection.projectId !== state.projectId || selection.sceneId !== scene.id) return;
+  const revision = state.project.revision;
+  const path = `/api/scenes/${encodeURIComponent(scene.id)}/audio/upload?expected_revision=${revision}`;
+  perform(`audio-upload:${scene.id}`, async () => {
+    const bytes = await selection.file.arrayBuffer();
+    const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(value => value.toString(16).padStart(2, '0')).join('');
+    return request(path, { method: 'POST', body: selection.file, raw: true,
+      intentBody: { expected_revision: revision, audio_sha256: sha, bytes: selection.file.size } });
+  }, () => { uploadSelection = null; $('audio-upload-file').value = ''; success('配音已上传为候选，请试听后采用。'); });
+});
+for (const id of ['leading-seconds', 'trailing-seconds']) $(id).addEventListener('input', () => {
+  const scene = selectedScene(state); if (!scene) return;
+  const draft = timingDrafts.get(draftKey(scene.id));
+  Object.assign(draft, { leading_seconds: $('leading-seconds').valueAsNumber,
+    trailing_seconds: $('trailing-seconds').valueAsNumber, dirty: true });
+  $('save-timing').disabled = false; $('timing-draft-note').textContent = '留白尚未保存';
+});
+$('save-timing').addEventListener('click', () => {
+  const scene = selectedScene(state);
+  if (!scene || !$('leading-seconds').reportValidity() || !$('trailing-seconds').reportValidity()) return;
+  const key = draftKey(scene.id); const { dirty, ...body } = timingDrafts.get(key);
+  perform(`timing:${scene.id}`, () => request(`/api/scenes/${encodeURIComponent(scene.id)}/timing`, { method: 'PATCH', body }),
+    () => { timingDrafts.delete(key); success('镜头留白已保存。'); });
+});
+$('estimate-captions').addEventListener('click', () => {
+  const scene = selectedScene(state); if (!scene) return;
+  const key = draftKey(scene.id); const body = { expected_revision: state.project.revision };
+  if (captionDrafts.get(key)?.dirty && !window.confirm('重新估算会替换这里尚未保存的字幕校正，继续吗？')) return;
+  perform(`captions:${scene.id}`, () => request(`/api/scenes/${encodeURIComponent(scene.id)}/captions/estimate`,
+    { method: 'POST', body }), () => { captionDrafts.delete(key); renderedCaptionDraft = null; success('已生成估算时间，请试听并校正。'); });
+});
+$('add-caption').addEventListener('click', () => {
+  const scene = selectedScene(state); const head = adoptedAudio(scene);
+  const draft = captionDrafts.get(draftKey(scene?.id));
+  if (!head || !draft) return;
+  const duration = Number(scene.leading_seconds ?? 0) + head.duration_seconds;
+  const start = Math.min(draft.cues.at(-1)?.end ?? Number(scene.leading_seconds ?? 0), Math.max(0, duration - 0.1));
+  draft.cues.push({ start, end: Math.min(start + 2, duration), text: '' });
+  draft.dirty = true; renderedCaptionDraft = null; renderCaptionRows(draft); updateCaptionButtons();
+});
+$('save-captions').addEventListener('click', () => {
+  const scene = selectedScene(state); const draft = captionDrafts.get(draftKey(scene?.id));
+  const head = adoptedAudio(scene);
+  if (!scene || !draft || !head || !validSceneCaptions(scene, draft.cues)) return;
+  const key = draftKey(scene.id);
+  const body = { expected_revision: draft.expected_revision, audio_version_id: draft.audio_version_id,
+    cues: draft.cues.map(cue => ({ ...cue })) };
+  perform(`captions:${scene.id}`, () => request(`/api/scenes/${encodeURIComponent(scene.id)}/captions`,
+    { method: 'PUT', body }), () => { captionDrafts.delete(key); renderedCaptionDraft = null; success('校正字幕已保存。'); });
+});
+$('download-subtitles').addEventListener('click', () => {
+  if (state.projectId) download(`/api/projects/${encodeURIComponent(state.projectId)}/subtitles`,
+    'video-subtitles.srt', `subtitles:${state.projectId}`);
+});
+$('render-project').addEventListener('click', () => {
+  if (!state.project) return;
+  const id = state.projectId;
+  const body = { expected_revision: state.project.revision, silent: $('render-silent').checked,
+    subtitles: $('render-subtitles').checked };
+  perform(`render:${id}`, () => request(`/api/projects/${encodeURIComponent(id)}/renders`, { method: 'POST', body }),
+    () => success('成片导出已开始，可在项目预览与成片中查看进度。'));
+});
+$('preview-project').addEventListener('click', openProjectPlayer);
+$('close-project-player').addEventListener('click', closeProjectPlayer);
+$('project-player-dialog').addEventListener('cancel', event => { event.preventDefault(); closeProjectPlayer(); });
+$('project-player-toggle').addEventListener('click', () => {
+  if (!player) return;
+  if (player.playing) pauseProjectPlayer();
+  else {
+    if (player.position >= player.timeline.duration_seconds) { player.position = 0; player.sceneId = null; }
+    player.startedAt = performance.now(); player.playing = true;
+    $('project-player-toggle').textContent = '暂停'; updatePlayerFrame();
+  }
+});
+$('project-player-seek').addEventListener('input', event => {
+  if (!player) return;
+  const playing = player.playing; const position = event.target.valueAsNumber;
+  pauseProjectPlayer(); player.position = position; player.sceneId = null;
+  player.startedAt = performance.now(); player.playing = playing;
+  $('project-player-toggle').textContent = playing ? '暂停' : '播放'; updatePlayerFrame();
+});
+$('project-player-audio').addEventListener('loadedmetadata', () => {
+  if (player?.speakingScene && Number.isFinite(player.audioTarget)) {
+    $('project-player-audio').currentTime = Math.min(player.audioTarget, $('project-player-audio').duration);
+  }
+});
+$('project-player-audio').addEventListener('error', () => {
+  if (!player) return;
+  pauseProjectPlayer(); $('project-player-note').textContent = '配音读取失败，请检查连接后重新打开项目预览。';
+});
 $('dismiss-error').addEventListener('click', () => { $('global-error').hidden = true; });
 async function refresh() {
   $('global-error').hidden = true;
   try {
     const session = await request('/api/session');
     csrfToken = session.csrf_token;
+    sessionSettings = session;
     $('session-label').textContent = session.user_id ? '已连接工作台' : '已连接';
     await loadProjects();
     if (state.projectId) await loadProject();
@@ -572,9 +1100,11 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) { stopPolling(); readController?.abort(); }
   else if (state.projectId) loadProject().catch(showError);
 });
-window.addEventListener('pagehide', () => { stopPolling(); readController?.abort(); sourceController?.abort(); });
+window.addEventListener('pagehide', () => { stopPolling(); readController?.abort(); sourceController?.abort(); $('audio-preview').pause(); pauseProjectPlayer(); });
 window.addEventListener('beforeunload', event => {
-  if ([...drafts.values()].some(draft => draft.dirty)) { event.preventDefault(); event.returnValue = ''; }
+  if ([...drafts.values(), ...speechDrafts.values(), ...timingDrafts.values(), ...captionDrafts.values()].some(draft => draft.dirty)) {
+    event.preventDefault(); event.returnValue = '';
+  }
 });
 
 refresh();

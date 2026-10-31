@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, Header, Request
+from fastapi import Depends, FastAPI, Header, Request, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -27,13 +27,16 @@ from .agent import VideoAgentGateway
 from .config import AgentSettings
 from .service import Workflow
 from .store import Store
+from .speech import SpeechClient, SpeechSettings, MAX_AUDIO_BYTES
+from .audio_workflow import AudioWorkflow
+from .production import Production
 
 WEB = Path(__file__).parent / 'web'
 PREVIEW_CSP = ("sandbox; default-src 'none'; script-src 'none'; "
                "style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; "
                "object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'")
 UI_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
-          "frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+          "media-src 'self'; frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 
 MESSAGES = {
     'not_found': '项目或资源不存在。', 'revision_conflict': '项目已更新，请核对最新内容后重试。',
@@ -46,6 +49,17 @@ MESSAGES = {
     'unadopted_scenes': '请先为每个镜头采用一个版本，再导出素材。',
     'authentication_required': '请通过已配置身份认证的入口访问。',
     'csrf_rejected': '会话校验失败，请刷新页面后重试。',
+    'speech_not_configured': '尚未配置配音服务，可以先上传 WAV 录音。',
+    'missing_current_audio': '请为每个镜头采用与当前旁白一致的配音。',
+    'audio_stale': '这条配音对应旧版旁白或设置，请重新生成或上传。',
+    'audio_head_conflict': '采用的配音已变化，请刷新后重试。',
+    'stale_captions': '字幕已过期，请重新生成或校正。',
+    'missing_captions': '请先生成并检查各镜头字幕。',
+    'render_not_configured': '成片导出服务尚未启用。',
+    'render_in_progress': '已有成片导出任务，请等待或取消后再试。',
+    'render_not_ready': '成片尚未完成。',
+    'project_audio_limit': '项目配音总量超过当前导出限制。',
+    'audio_upload_too_large': '录音文件过大，最多支持 32 MiB。',
 }
 
 
@@ -95,6 +109,67 @@ class Generation(Revision):
 class Adoption(Fields):
     version_id: str = Field(min_length=1, max_length=100)
     expected_head_version_id: str | None = Field(max_length=100)
+
+
+class SpeechEdit(Revision):
+    speed: float = Field(default=1, ge=0.5, le=2, allow_inf_nan=False)
+    pronunciation: dict[str, str] = Field(default_factory=dict, max_length=32)
+
+    @field_validator('pronunciation')
+    @classmethod
+    def pronunciation_values(cls, value):
+        if any(not 1 <= len(k) <= 80 or not 1 <= len(v) <= 200
+               or any(ord(c) < 32 or ord(c) == 127 or 0xD800 <= ord(c) <= 0xDFFF for c in k + v)
+               for k, v in value.items()):
+            raise ValueError('Invalid pronunciation')
+        return value
+
+
+class AudioAdoption(Fields):
+    version_id: str = Field(min_length=1, max_length=100)
+    expected_head_audio_version_id: str | None = Field(max_length=100)
+
+
+class TimingEdit(Revision):
+    leading_seconds: float = Field(default=0, ge=0, le=10, allow_inf_nan=False)
+    trailing_seconds: float = Field(default=0, ge=0, le=10, allow_inf_nan=False)
+
+
+class Cue(Fields):
+    start: float = Field(ge=0, le=1800, allow_inf_nan=False)
+    end: float = Field(gt=0, le=1800, allow_inf_nan=False)
+    text: str = Field(min_length=1, max_length=500)
+
+
+class CaptionEdit(Revision):
+    audio_version_id: str = Field(min_length=1, max_length=100)
+    cues: list[Cue] = Field(min_length=1, max_length=200)
+
+
+class RenderRequest(Revision):
+    silent: bool = Field(default=False, strict=True)
+    subtitles: bool = Field(default=True, strict=True)
+
+
+def media_response(data, request, media_type, filename):
+    """Serve one bounded byte range so the authenticated player can seek."""
+    headers = {'Accept-Ranges': 'bytes', 'Content-Disposition': f'inline; filename="{filename}"'}
+    value = request.headers.get('range')
+    if value:
+        matched = re.fullmatch(r'bytes=([0-9]{0,12})-([0-9]{0,12})', value)
+        if not matched or not any(matched.groups()):
+            return Response(status_code=416, headers={'Content-Range': f'bytes */{len(data)}'})
+        left, right = matched.groups()
+        if left:
+            start, end = int(left), min(int(right) if right else len(data) - 1, len(data) - 1)
+        else:
+            length = int(right)
+            start, end = max(0, len(data) - length), len(data) - 1
+        if start > end or start >= len(data):
+            return Response(status_code=416, headers={'Content-Range': f'bytes */{len(data)}'})
+        headers['Content-Range'] = f'bytes {start}-{end}/{len(data)}'
+        return Response(data[start:end + 1], media_type=media_type, status_code=206, headers=headers)
+    return Response(data, media_type=media_type, headers=headers)
 
 
 def preview_html(source, format):
@@ -149,27 +224,45 @@ def export_project(store, owner, project):
     return buffer.getvalue()
 
 
-def create_app(*, db_path=None, gateway=None, local_mode=False, background=True, trusted_hosts=None):
+def create_app(*, db_path=None, gateway=None, local_mode=False, background=True, trusted_hosts=None,
+               speech_client=None, renderer=None, render_enabled=None):
     owned_client = None
+    owned_speech_client = None
     if gateway is None:
         settings = AgentSettings.from_env()
         if settings:
             owned_client = AgentClient(settings.base_url, settings.token)
             gateway = VideoAgentGateway(owned_client, settings.revision)
     store = Store(db_path or os.environ.get('VIDEO_WORKBENCH_DB', '.runtime/video-workbench/workbench.db'))
+    if speech_client is None:
+        speech_settings = SpeechSettings.from_env()
+        if speech_settings:
+            speech_client = owned_speech_client = SpeechClient(speech_settings)
+    if speech_client:
+        store.configure_speech_provider(speech_client.settings.model, speech_client.settings.voice)
     workflow = Workflow(store, gateway)
+    audio_workflow = AudioWorkflow(store, speech_client)
+    production = Production(store, renderer=renderer,
+        enabled=render_enabled if render_enabled is not None else os.environ.get('VIDEO_RENDER_ENABLED') == '1')
 
     @asynccontextmanager
     async def lifespan(app):
         if background:
             workflow.start()
+            audio_workflow.start()
+            production.start()
         yield
+        production.stop()
+        audio_workflow.stop()
         workflow.stop()
         if owned_client:
             owned_client.close()
+        if owned_speech_client:
+            owned_speech_client.close()
 
     app = FastAPI(title='SVG / HTML 视频工作台', lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.store, app.state.workflow = store, workflow
+    app.state.audio_workflow, app.state.production = audio_workflow, production
     # Proxy mode must be bound behind an authenticated, header-scrubbing proxy.
     app.state.trusted_hosts = set(trusted_hosts or {'127.0.0.1', 'localhost', '[::1]'})
 
@@ -251,7 +344,11 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
 
     @app.get('/api/session')
     def session(owner=Depends(identity)):
-        return dict(user_id=owner, csrf_token=csrf(owner), agent_configured=gateway is not None)
+        return dict(user_id=owner, csrf_token=csrf(owner), agent_configured=gateway is not None,
+                    speech_configured=speech_client is not None,
+                    speech_model=speech_client.settings.model if speech_client else None,
+                    speech_voice=speech_client.settings.voice if speech_client else None,
+                    media_configured=production.enabled)
 
     @app.get('/api/projects')
     def projects(owner=Depends(identity)):
@@ -299,6 +396,80 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     @app.post('/api/operations/{operation_id}/cancel')
     def cancel(operation_id: str, owner=Depends(mutation)):
         return store.cancel(owner, operation_id)
+
+    @app.patch('/api/scenes/{scene_id}/speech')
+    def speech_settings(scene_id: str, body: SpeechEdit, owner=Depends(mutation)):
+        return store.save_speech_settings(owner, scene_id, body.model_dump())
+
+    @app.post('/api/scenes/{scene_id}/audio/generate', status_code=202)
+    def generate_audio(scene_id: str, body: Revision, owner=Depends(mutation), idempotency_key: str | None = Header(default=None)):
+        if speech_client is None:
+            raise ServiceError('speech_not_configured', 503)
+        return store.start_audio(owner, scene_id, body.model_dump(), idempotency(idempotency_key))
+
+    @app.post('/api/scenes/{scene_id}/audio/upload')
+    async def upload_audio(scene_id: str, request: Request, expected_revision: int = Query(ge=1),
+                           owner=Depends(mutation), idempotency_key: str | None = Header(default=None)):
+        store.scene_project(owner, scene_id)
+        idem = idempotency(idempotency_key)
+        raw = bytearray()
+        async for part in request.stream():
+            if len(raw) + len(part) > MAX_AUDIO_BYTES:
+                raise ServiceError('audio_upload_too_large', 413)
+            raw.extend(part)
+        # Only actual decoded PCM WAV enters storage, regardless of filename.
+        return store.upload_audio(owner, scene_id, {'expected_revision': expected_revision}, idem, bytes(raw), source_name='upload.wav')
+
+    @app.post('/api/scenes/{scene_id}/audio/adopt')
+    def adopt_audio(scene_id: str, body: AudioAdoption, owner=Depends(mutation)):
+        return store.adopt_audio(owner, scene_id, body.version_id, body.expected_head_audio_version_id)
+
+    @app.post('/api/audio-operations/{operation_id}/cancel')
+    def cancel_audio(operation_id: str, owner=Depends(mutation)):
+        return store.cancel_audio(owner, operation_id)
+
+    @app.get('/api/audio-versions/{version_id}/audio')
+    def audio(version_id: str, request: Request, owner=Depends(identity)):
+        version = store.audio_version(owner, version_id)
+        return media_response(version['data'], request, 'audio/wav', f'audio-{version_id}.wav')
+
+    @app.patch('/api/scenes/{scene_id}/timing')
+    def timing(scene_id: str, body: TimingEdit, owner=Depends(mutation)):
+        return production.timing(owner, scene_id, body.model_dump(), body.expected_revision)
+
+    @app.post('/api/scenes/{scene_id}/captions/estimate')
+    def estimate_captions(scene_id: str, body: Revision, owner=Depends(mutation)):
+        return production.captions(owner, scene_id, body.expected_revision)
+
+    @app.put('/api/scenes/{scene_id}/captions')
+    def save_captions(scene_id: str, body: CaptionEdit, owner=Depends(mutation)):
+        return production.captions(owner, scene_id, body.expected_revision,
+                                   cues=[cue.model_dump() for cue in body.cues], audio_version_id=body.audio_version_id)
+
+    @app.get('/api/projects/{project_id}/timeline')
+    def timeline(project_id: str, silent: bool = False, subtitles: bool = True, owner=Depends(identity)):
+        return production.timeline(owner, project_id, silent=silent, subtitles=subtitles)
+
+    @app.get('/api/projects/{project_id}/subtitles')
+    def subtitles(project_id: str, owner=Depends(identity)):
+        return Response(production.subtitles(owner, project_id).encode('utf-8'), media_type='application/x-subrip',
+                        headers={'Content-Disposition': f'attachment; filename="video-{project_id}.srt"'})
+
+    @app.post('/api/projects/{project_id}/renders', status_code=202)
+    def render(project_id: str, body: RenderRequest, owner=Depends(mutation), idempotency_key: str | None = Header(default=None)):
+        return production.start_render(owner, project_id, body.model_dump(), idempotency(idempotency_key))
+
+    @app.get('/api/projects/{project_id}/renders')
+    def renders(project_id: str, owner=Depends(identity)):
+        return {'renders': production.renders(owner, project_id)}
+
+    @app.post('/api/renders/{render_id}/cancel')
+    def cancel_render(render_id: str, owner=Depends(mutation)):
+        return production.cancel(owner, render_id)
+
+    @app.get('/api/renders/{render_id}/video')
+    def video(render_id: str, request: Request, owner=Depends(identity)):
+        return media_response(production.video(owner, render_id), request, 'video/mp4', f'video-{render_id}.mp4')
 
     @app.get('/api/versions/{version_id}/preview')
     def preview(version_id: str, owner=Depends(identity)):

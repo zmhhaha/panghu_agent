@@ -219,3 +219,146 @@ def test_invalid_cli_never_creates_partial_output(tmp_path, extra):
         main(cli_args() + extra + ['--output', str(output)])
     assert exc.value.code == 2
     assert not output.parent.exists()
+
+
+@pytest.mark.parametrize('speech_enabled,render_enabled', [
+    (False, False), (True, False), (False, True), (True, True),
+])
+def test_media_features_are_independent_explicit_opt_ins(settings, speech_enabled, render_enabled):
+    baseline = render(settings)
+    document = render(replace(settings, speech_enabled=speech_enabled, render_enabled=render_enabled))
+    template = resource(document, 'Deployment')['spec']['template']
+    pod = template['spec']
+    container, = pod['containers']
+    env = {item['name']: item['value'] for item in container['env']}
+    speech_env = {'VIDEO_TTS_URL', 'VIDEO_TTS_MODEL', 'VIDEO_TTS_VOICE', 'VIDEO_TTS_TOKEN_FILE'}
+    assert (speech_env <= env.keys()) is speech_enabled
+    assert bool(speech_env & env.keys()) is speech_enabled
+    assert (template['metadata']['labels'].get('speech-client') == 'true') is speech_enabled
+    assert any(volume['name'] == 'speech-token' for volume in pod['volumes']) is speech_enabled
+    assert ('VIDEO_RENDER_ENABLED' in env) is render_enabled
+    assert ('VIDEO_STATIC_RENDERER' in env) is render_enabled
+    if render_enabled:
+        assert env['VIDEO_RENDER_ENABLED'] == '1'
+        assert env['VIDEO_STATIC_RENDERER'] == 'weasyprint'
+    policy = resource(document, 'NetworkPolicy')['spec']
+    assert len(policy['egress']) == (3 if speech_enabled else 2)
+    assert pod['terminationGracePeriodSeconds'] == (150 if speech_enabled else 30)
+    # Enabling one rendered manifest cannot mutate Settings or future defaults.
+    assert render(settings) == baseline
+
+
+def test_speech_uses_readonly_local_secret_and_only_the_selected_backend_peer(settings):
+    configured = replace(settings, speech_enabled=True, speech_namespace='voice-lab',
+                         speech_service='voice-api', speech_model='technical-voice',
+                         speech_voice='male-v2', speech_token_secret='studio-speech-caller')
+    document = render(configured)
+    pod = resource(document, 'Deployment')['spec']['template']['spec']
+    container, = pod['containers']
+    env = {item['name']: item['value'] for item in container['env']}
+    assert env['VIDEO_TTS_URL'] == 'http://voice-api.voice-lab.svc.cluster.local/v1'
+    assert env['VIDEO_TTS_MODEL'] == 'technical-voice'
+    assert env['VIDEO_TTS_VOICE'] == 'male-v2'
+    assert env['VIDEO_TTS_TOKEN_FILE'] == '/run/secrets/video-speech/token'
+    assert 'VIDEO_TTS_TOKEN' not in env
+    mount, = [item for item in container['volumeMounts'] if item['name'] == 'speech-token']
+    assert mount == {'name': 'speech-token', 'mountPath': '/run/secrets/video-speech', 'readOnly': True}
+    secret, = [item['secret'] for item in pod['volumes'] if item['name'] == 'speech-token']
+    assert secret == {'secretName': 'studio-speech-caller', 'defaultMode': 0o440,
+                      'items': [{'key': 'token', 'path': 'token'}]}
+    speech_rule = resource(document, 'NetworkPolicy')['spec']['egress'][-1]
+    assert speech_rule == {'to': [{
+        'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'voice-lab'}},
+        'podSelector': {'matchLabels': {'app': 'speech-service'}},
+    }], 'ports': [{'protocol': 'TCP', 'port': 8092}]}
+    assert not any(item['kind'] in {'Secret', 'ExternalSecret'} for item in document['items'])
+    assert all(item['metadata'].get('namespace', configured.namespace) == configured.namespace
+               for item in document['items'])
+
+
+@pytest.mark.parametrize('speech_enabled', [False, True])
+def test_render_limits_stay_bounded_without_public_network_or_extra_privileges(settings, speech_enabled):
+    document = render(replace(settings, speech_enabled=speech_enabled, render_enabled=True))
+    pod = resource(document, 'Deployment')['spec']['template']['spec']
+    container, = pod['containers']
+    assert container['resources'] == {
+        'requests': {'cpu': '250m', 'memory': '256Mi', 'ephemeral-storage': '128Mi'},
+        'limits': {'cpu': '2', 'memory': '1536Mi', 'ephemeral-storage': '2Gi'},
+    }
+    assert next(volume for volume in pod['volumes'] if volume['name'] == 'temporary') == {
+        'name': 'temporary', 'emptyDir': {'sizeLimit': '1Gi'}}
+    assert pod['automountServiceAccountToken'] is False
+    assert pod['securityContext']['runAsNonRoot'] is True
+    assert pod['securityContext']['runAsUser'] == 10001
+    assert pod['securityContext']['seccompProfile'] == {'type': 'RuntimeDefault'}
+    assert container['securityContext'] == {
+        'readOnlyRootFilesystem': True, 'allowPrivilegeEscalation': False, 'capabilities': {'drop': ['ALL']}}
+    assert not any('hostPath' in volume for volume in pod['volumes'])
+    assert not pod.get('hostNetwork')
+    policy = resource(document, 'NetworkPolicy')['spec']
+    assert policy == resource(render(replace(settings, speech_enabled=speech_enabled)), 'NetworkPolicy')['spec']
+    for rule in policy['egress']:
+        assert set(rule) == {'to', 'ports'}
+        assert all(set(peer) == {'namespaceSelector', 'podSelector'}
+                   and peer['namespaceSelector']['matchLabels'] and peer['podSelector']['matchLabels']
+                   for peer in rule['to'])
+
+
+@pytest.mark.parametrize('change', [
+    {'speech_enabled': 1}, {'speech_enabled': 0}, {'speech_enabled': 'true'},
+    {'speech_enabled': None}, {'render_enabled': 1}, {'render_enabled': 'false'},
+    {'render_enabled': None}, {'speech_enabled': True, 'speech_namespace': 'bad/namespace'},
+    {'speech_enabled': True, 'speech_namespace': 'voice.lab'},
+    {'speech_enabled': True, 'speech_service': 'https://voice-api'},
+    {'speech_enabled': True, 'speech_token_secret': 'secret/token'},
+    {'speech_enabled': True, 'speech_model': ''},
+    {'speech_enabled': True, 'speech_model': 'request model'},
+    {'speech_enabled': True, 'speech_model': 'x' * 201},
+    {'speech_enabled': True, 'speech_voice': 'male\nvoice'},
+    {'speech_enabled': True, 'speech_voice': True},
+])
+def test_media_feature_inputs_fail_closed_without_coercion(settings, change):
+    with pytest.raises(ValueError):
+        render(replace(settings, **change))
+
+
+def test_media_release_preserves_latest_digest_and_identity_metadata(settings):
+    document = render(replace(settings, speech_enabled=True, render_enabled=True))
+    deployment = resource(document, 'Deployment')
+    template = deployment['spec']['template']
+    container, = template['spec']['containers']
+    assert container['image'] == settings.image + '@' + settings.image_digest
+    assert container['image'].split('@')[0].endswith(':latest')
+    assert container['imagePullPolicy'] == 'Always'
+    for metadata in (deployment['metadata'], template['metadata']):
+        assert metadata['annotations']['org.opencontainers.image.ref.name'] == settings.image
+        assert metadata['annotations']['org.opencontainers.image.digest'] == settings.image_digest
+        assert metadata['annotations']['org.opencontainers.image.revision'] == settings.release_id
+
+
+def test_cli_media_flags_emit_parseable_manifest_and_no_credentials(capsys):
+    main(cli_args() + ['--speech-enabled', '--render-enabled', '--speech-namespace', 'voice-lab',
+                      '--speech-service', 'voice-api', '--speech-model', 'technical-voice',
+                      '--speech-voice', 'male-v2', '--speech-token-secret', 'studio-speech-caller'])
+    document = json.loads(capsys.readouterr().out)
+    pod = resource(document, 'Deployment')['spec']['template']['spec']
+    container, = pod['containers']
+    env = {item['name']: item['value'] for item in container['env']}
+    assert env['VIDEO_TTS_URL'] == 'http://voice-api.voice-lab.svc.cluster.local/v1'
+    assert env['VIDEO_RENDER_ENABLED'] == '1'
+    assert next(volume for volume in pod['volumes'] if volume['name'] == 'speech-token')['secret']['secretName'] == 'studio-speech-caller'
+    assert not any(item['kind'] == 'Secret' for item in document['items'])
+
+
+@pytest.mark.parametrize('extra', [
+    ['--speech-enabled', '--speech-service', 'bad/name'],
+    ['--speech-enabled', '--speech-token-secret', 'bad/name'],
+    ['--speech-enabled', '--speech-voice', 'male voice'],
+    ['--render-enabled', '--image', 'registry.example.com/video:v2'],
+])
+def test_invalid_media_cli_does_not_write_partial_manifest(tmp_path, extra):
+    output = tmp_path / 'rendered' / 'media.json'
+    with pytest.raises(SystemExit) as exc:
+        main(cli_args() + extra + ['--output', str(output)])
+    assert exc.value.code == 2
+    assert not output.parent.exists()

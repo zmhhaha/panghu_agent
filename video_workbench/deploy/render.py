@@ -118,6 +118,13 @@ class Settings:
     external_secret_store_kind: str = 'ClusterSecretStore'
     external_secret_remote_key: str | None = None
     external_secret_property: str | None = None
+    speech_enabled: bool = False
+    speech_namespace: str = 'speech-service'
+    speech_service: str = 'speech-service'
+    speech_model: str = 'kokoro-rk3588'
+    speech_voice: str = 'zm_yunjian'
+    speech_token_secret: str = 'video-speech-service'
+    render_enabled: bool = False
 
 
 def render(settings: Settings) -> dict:
@@ -243,6 +250,39 @@ def render(settings: Settings) -> dict:
         ],
     })
     items = [obj('v1', 'Namespace', namespace, target_namespace=None), pvc, deployment, service, policy]
+    if type(settings.speech_enabled) is not bool or type(settings.render_enabled) is not bool:
+        raise ValueError('Media feature switches must be booleans')
+    if settings.speech_enabled:
+        speech_namespace = _dns_name(settings.speech_namespace, 'speech namespace', namespace=True)
+        speech_service = _dns_name(settings.speech_service, 'speech Service', namespace=True)
+        speech_secret = _dns_name(settings.speech_token_secret, 'speech Secret')
+        for value in (settings.speech_model, settings.speech_voice):
+            if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,200}', value):
+                raise ValueError('Invalid speech model or voice')
+        template = deployment['spec']['template']
+        template['metadata']['labels']['speech-client'] = 'true'
+        container = template['spec']['containers'][0]
+        container['env'].extend([
+            {'name': 'VIDEO_TTS_URL', 'value': f'http://{speech_service}.{speech_namespace}.svc.cluster.local/v1'},
+            {'name': 'VIDEO_TTS_MODEL', 'value': settings.speech_model},
+            {'name': 'VIDEO_TTS_VOICE', 'value': settings.speech_voice},
+            {'name': 'VIDEO_TTS_TOKEN_FILE', 'value': '/run/secrets/video-speech/token'},
+        ])
+        container['volumeMounts'].append({'name': 'speech-token', 'mountPath': '/run/secrets/video-speech', 'readOnly': True})
+        template['spec']['volumes'].append({'name': 'speech-token', 'secret': {
+            'secretName': speech_secret, 'defaultMode': 0o440, 'items': [{'key': 'token', 'path': 'token'}]}})
+        policy['spec']['egress'].append({'to': [peer(speech_namespace, {'app': 'speech-service'})],
+                                        'ports': [{'protocol': 'TCP', 'port': 8092}]})
+        template['spec']['terminationGracePeriodSeconds'] = 150
+    if settings.render_enabled:
+        container = deployment['spec']['template']['spec']['containers'][0]
+        container['env'].extend([{'name': 'VIDEO_RENDER_ENABLED', 'value': '1'},
+                                 {'name': 'VIDEO_STATIC_RENDERER', 'value': 'weasyprint'}])
+        container['resources'] = {'requests': {'cpu': '250m', 'memory': '256Mi', 'ephemeral-storage': '128Mi'},
+                                  'limits': {'cpu': '2', 'memory': '1536Mi', 'ephemeral-storage': '2Gi'}}
+        for volume in deployment['spec']['template']['spec']['volumes']:
+            if volume['name'] == 'temporary':
+                volume['emptyDir']['sizeLimit'] = '1Gi'
     if settings.external_secret_store is not None:
         items.append(obj('external-secrets.io/v1', 'ExternalSecret', secret, {
             'refreshInterval': '5m',
@@ -300,6 +340,13 @@ def main(argv=None):
                         choices=('ClusterSecretStore', 'SecretStore'))
     parser.add_argument('--external-secret-remote-key')
     parser.add_argument('--external-secret-property')
+    parser.add_argument('--speech-enabled', action='store_true')
+    parser.add_argument('--speech-namespace', default='speech-service')
+    parser.add_argument('--speech-service', default='speech-service')
+    parser.add_argument('--speech-model', default='kokoro-rk3588')
+    parser.add_argument('--speech-voice', default='zm_yunjian')
+    parser.add_argument('--speech-token-secret', default='video-speech-service')
+    parser.add_argument('--render-enabled', action='store_true')
     parser.add_argument('--output', type=Path, help='Write JSON (also valid Kubernetes YAML); default: stdout')
     args = parser.parse_args(argv)
     try:
