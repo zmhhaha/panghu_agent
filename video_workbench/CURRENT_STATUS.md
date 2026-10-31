@@ -1,5 +1,9 @@
 # 视频工作台当前状态
 
+2026-10-31 用户效果复核：完整稿仍有明显机械感，原字幕叠加遮挡画面，效果验收未通过。用户已选定“取消字幕，把关键点融入画面”。本轮默认关闭附加字幕，并为新项目提供可编辑的口语图解制作指引；原八镜头成片保留为技术流程证据，不作为满意成片。具体样稿与后续验收见 [PRESENTATION_REFINEMENT.md](PRESENTATION_REFINEMENT.md)。
+
+2026-11-01 更新：前端改进 `31cb29d` 已上线，当前 Pod 为 `video-workbench-6cb86d7ccf-jxblm`，镜像 digest `sha256:0ab44a7e62464e000247f138462bb663ff6047f42519fa2f3d2b27e9534bded3`。真实浏览器已验证默认无字幕、保留旁白及可编辑指引；18 秒口语图解样片已生成并通过媒体与助手目视检查，声音仍待用户判断。以下保留此前音频首版的技术记录，旧 Pod/镜像不代表本轮当前发布。
+
 更新：2026-10-31（Asia/Shanghai）。音频第一阶段代码位于 `D:\github\armbianbegin\.video-audio-worktree`，分支 `codex/video-audio-production`，**已部署并完成八镜头配音、206 秒 MP4 独立技术验证和重启后持久化检查，尚未合入主线**。完整稿听感尚未获用户认可。下方 2026-10-30 记录保留为静态素材首版历史。
 
 入口：[video-service.panghuer.top](https://video-service.panghuer.top/?entry=vps-20261030)。本阶段新增逐镜头配音、WAV 上传、试听、明确采用、实测音频时长、字幕编辑、音画预览和 MP4 导出；原 SVG／HTML／ZIP 功能保留。配音使用已部署的语音服务与用户选择的中文男声云健 `zm_yunjian`。

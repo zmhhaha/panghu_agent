@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+<defs><linearGradient id="background" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0d1a2b"/><stop offset="1" stop-color="#091422"/></linearGradient></defs>
+<rect width="1280" height="720" fill="#0d1a2b"/>
+<text x="64" y="51" fill="#9db1c4" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="20" font-weight="normal" text-anchor="start">会话日志 · 两类记录</text>
+<text x="1216" y="51" fill="#67e3c5" font-family="Consolas, monospace" font-size="18" font-weight="normal" text-anchor="end">06 / SESSION MEMORY</text>
+<text x="64" y="119" fill="#edf5fb" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="48" font-weight="bold" text-anchor="start">哪些信息会成为下一轮记忆？</text>
+<line x1="64" y1="153" x2="1216" y2="153" stroke="#263a4e" stroke-width="1" stroke-linecap="round"/>
+<rect x="64" y="186" width="1152" height="181" rx="18" fill="#102436" stroke="#284455" stroke-width="1"/>
+<text x="88" y="218" fill="#67e3c5" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="18" font-weight="normal" text-anchor="start">01  完整回答</text>
+<rect x="88" y="236" width="280" height="102" rx="12" fill="#163b46" stroke="#3b8e89" stroke-width="1"/>
+<rect x="468" y="236" width="304" height="102" rx="12" fill="#122f40" stroke="#326476" stroke-width="1"/>
+<rect x="872" y="236" width="320" height="102" rx="12" fill="#17483f" stroke="#4aab8e" stroke-width="1"/>
+<text x="228" y="275" fill="#edf5fb" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="30" font-weight="bold" text-anchor="middle">完整回答</text>
+<text x="228" y="312" fill="#b9e5db" font-family="Consolas, monospace" font-size="22" font-weight="normal" text-anchor="middle">assistant/message</text>
+<line x1="389" y1="287" x2="437" y2="287" stroke="#67e3c5" stroke-width="3" stroke-linecap="round"/>
+<polygon points="447,287 435,280 435,294" fill="#67e3c5"/>
+<text x="620" y="277" fill="#67e3c5" font-family="Consolas, monospace" font-size="30" font-weight="normal" text-anchor="middle">deriveMessages</text>
+<text x="620" y="312" fill="#9db1c4" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="normal" text-anchor="middle">投影模型历史</text>
+<line x1="793" y1="287" x2="841" y2="287" stroke="#67e3c5" stroke-width="3" stroke-linecap="round"/>
+<polygon points="851,287 839,280 839,294" fill="#67e3c5"/>
+<text x="1032" y="275" fill="#edf5fb" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="32" font-weight="bold" text-anchor="middle">模型历史</text>
+<text x="1032" y="312" fill="#b9e5db" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="normal" text-anchor="middle">用于下一轮请求</text>
+<rect x="64" y="400" width="1152" height="181" rx="18" fill="#0f2031" stroke="#263b50" stroke-width="1"/>
+<text x="88" y="432" fill="#9db1c4" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="18" font-weight="normal" text-anchor="start">02  尝试记录</text>
+<rect x="88" y="450" width="280" height="102" rx="12" fill="#162c40" stroke="#3b5268" stroke-width="1"/>
+<rect x="468" y="450" width="304" height="102" rx="12" fill="#142d3a" stroke="#3e6270" stroke-width="1"/>
+<rect x="872" y="450" width="320" height="102" rx="12" fill="#112232" stroke="#35495b" stroke-width="1"/>
+<text x="228" y="489" fill="#edf5fb" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="26" font-weight="bold" text-anchor="middle">失败 / 重试 / 取消</text>
+<text x="228" y="526" fill="#9db1c4" font-family="Consolas, monospace" font-size="22" font-weight="normal" text-anchor="middle">assistant/attempt</text>
+<line x1="389" y1="501" x2="437" y2="501" stroke="#7696a6" stroke-width="3" stroke-linecap="round"/>
+<polygon points="447,501 435,494 435,508" fill="#7696a6"/>
+<text x="620" y="489" fill="#edf5fb" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="32" font-weight="bold" text-anchor="middle">保留记录</text>
+<text x="620" y="526" fill="#9db1c4" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="normal" text-anchor="middle">尝试仍可回看</text>
+<line x1="793" y1="501" x2="816" y2="501" stroke="#536f82" stroke-width="2" stroke-linecap="round"/>
+<circle cx="831" cy="501" r="12" fill="#112232" stroke="#78909f" stroke-width="2"/>
+<line x1="825" y1="507" x2="837" y2="495" stroke="#9db1c4" stroke-width="2" stroke-linecap="round"/>
+<text x="1032" y="489" fill="#edf5fb" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="28" font-weight="bold" text-anchor="middle">不加入模型历史</text>
+<text x="1032" y="526" fill="#9db1c4" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="21" font-weight="normal" text-anchor="middle">留在会话日志中</text>
+<rect x="64" y="621" width="1152" height="64" rx="12" fill="#10343c" stroke="#245e62" stroke-width="1"/>
+<text x="640" y="663" fill="#c8f4e7" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-size="29" font-weight="bold" text-anchor="middle">下一轮依据已提交的会话日志组装上下文</text>
+</svg>
