@@ -16,6 +16,8 @@ class PaperRecord(TypedDict, total=False):
     url: str
     doi: str
     authors: str
+    authors_list: list[str]
+    bibliography: dict[str, Any]
     venue: str
     cited_by_count: int
     abstract: str
@@ -41,6 +43,12 @@ def make_paper(provider: str, **values: Any) -> PaperRecord:
     except (TypeError, ValueError):
         cited_by_count = 0
 
+    supplied_authors = values.get("authors_list")
+    if isinstance(supplied_authors, list):
+        authors_list = [str(name).strip() for name in supplied_authors if str(name).strip()]
+    else:
+        authors_list = [name.strip() for name in str(values.get("authors") or "").split(",") if name.strip()]
+    bibliography = dict(values.get("bibliography") or {})
     return PaperRecord(
         provider=provider,
         providers=[provider],
@@ -49,7 +57,9 @@ def make_paper(provider: str, **values: Any) -> PaperRecord:
         date=str(values.get("date") or "")[:10],
         url=str(values.get("url") or "").strip(),
         doi=doi,
-        authors=str(values.get("authors") or "").strip(),
+        authors=", ".join(authors_list),
+        authors_list=authors_list,
+        bibliography=bibliography,
         venue=str(values.get("venue") or "").strip(),
         cited_by_count=cited_by_count,
         abstract=str(values.get("abstract") or "").strip(),
@@ -88,6 +98,37 @@ def _merge(existing: PaperRecord, incoming: PaperRecord) -> PaperRecord:
     for field in ("title", "date", "url", "doi", "authors", "venue", "pdf_url"):
         if not existing.get(field) and incoming.get(field):
             existing[field] = incoming[field]  # type: ignore[literal-required]
+
+    # Preserve each provider's complete ordered list. Do not combine authors
+    # from two records: that can turn a mistaken DOI/title match into authorship.
+    incoming_authors = incoming.get("authors_list") or []
+    existing_authors = existing.get("authors_list") or []
+    incoming_bib = incoming.get("bibliography") or {}
+    original_bib = existing.get("bibliography") or {}
+    existing_bib = dict(original_bib or incoming_bib)
+    incoming_complete = incoming_bib.get("author_list_status") == "complete"
+    existing_complete = original_bib.get("author_list_status") == "complete"
+    if incoming_authors and ((incoming_complete and not existing_complete)
+            or not existing_authors or (not existing_complete and len(incoming_authors) > len(existing_authors))):
+        existing["authors_list"] = list(incoming_authors)
+        existing["authors"] = ", ".join(incoming_authors)
+        if incoming_bib:
+            for key in ("author_list_status", "author_count"):
+                existing_bib[key] = incoming_bib.get(key)
+        elif existing_bib:
+            existing_bib.update(author_list_status="not_confirmed", author_count=None)
+    if not existing_bib:
+        existing_bib = dict(incoming_bib)
+    elif incoming_bib:
+        dates = dict(existing_bib.get("dates") or {})
+        for key, value in (incoming_bib.get("dates") or {}).items():
+            if value and not dates.get(key):
+                dates[key] = value
+        existing_bib["dates"] = dates
+        for key in ("version", "journal_reference"):
+            if not existing_bib.get(key) and incoming_bib.get(key):
+                existing_bib[key] = incoming_bib[key]
+    existing["bibliography"] = existing_bib
 
     if len(str(incoming.get("abstract") or "")) > len(str(existing.get("abstract") or "")):
         existing["abstract"] = str(incoming.get("abstract") or "")

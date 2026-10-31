@@ -46,10 +46,10 @@ PLAN = dict(questions=[], research_questions=['What does the supplied evidence s
 def retrieval(task, attempt_id, request_sha256):
     stamp = task['created_at']
     av = lambda value: dict(available=value, obtained_at=stamp if value else None)
-    paper = dict(paper_id='doi:10.1234/fixture', title='Synthetic recorded source',
+    paper = dict(paper_id='doi:10.1234/fixture', title='Synthetic recorded source on reproducible builds',
         authors=['Fixture Author'], year=2026, doi='10.1234/fixture', pmid=None,
         url='https://example.invalid/fixture', sources=['crossref'], retrieved_at=stamp,
-        abstract='Synthetic recorded abstract; not scientific evidence.', full_text_path=None,
+        abstract='Synthetic recorded abstract about reproducible builds; not scientific evidence.', full_text_path=None,
         availability=dict(metadata=av(True), abstract=av(True), full_text=av(False)),
         verification=dict(status='unknown', checked_at=None, source=None, error=None))
     search = dict(source='crossref', query='reproducible build methods', searched_at=stamp,
@@ -74,7 +74,7 @@ def outline():
 def draft():
     return dict(report_markdown='# Findings\n<!-- claim:c1 -->\nSynthetic recorded finding [1].\n'
         '# Limitations\nAbstract only; identifier verification is unknown.\n'
-        '# References\n[1] Synthetic recorded source. https://example.invalid/fixture\n',
+        '# References\n[1] Synthetic recorded source on reproducible builds. https://example.invalid/fixture\n',
         claims=[dict(claim_id='c1', marker='<!-- claim:c1 -->', evidence_ids=['e1'],
                      assessment='supported', explanation='Only synthetic recorded access')],
         references=[dict(n=1, paper_id='doi:10.1234/fixture')])
@@ -332,7 +332,9 @@ def test_requirements_and_selection_invalidate_appropriate_gate(setup):
     project = store.patch('alice', project['id'], dict(expected_revision=project['revision'],
         selections=[dict(source_id='doi:10.1234/fixture', included=False, reason='Out of scope')]), 'exclude')
     assert project['confirmations']['plan'] == old_confirmation
-    assert project['evidence'] is None and project['outline'] is None
+    assert project['evidence']['stale'] and project['outline']['stale']
+    with pytest.raises(WorkspaceError, match='stale_evidence_requires_update'):
+        action(store, project, 'confirm_evidence')
     project = store.patch('alice', project['id'], dict(expected_revision=project['revision'],
         requirements=dict(question='A materially different question')), 'question')
     assert project['confirmations']['plan'] is None and project['stage'] == 'goal'

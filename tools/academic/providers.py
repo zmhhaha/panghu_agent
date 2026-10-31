@@ -6,6 +6,7 @@ import html
 import re
 import time
 import xml.etree.ElementTree as ET
+from datetime import date as calendar_date
 from typing import Any
 
 from .http_client import request_json, request_text
@@ -15,6 +16,37 @@ from .models import PaperRecord, make_paper, normalize_doi
 def _strip_markup(value: Any) -> str:
     text = html.unescape(str(value or ""))
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text)).strip()
+
+
+def _bibliography(authors, *, status="complete", count=None, source_type="other",
+                  version=None, journal_reference=None, **dates):
+    """Describe received metadata without conflating preprint and journal dates."""
+    if not authors:
+        status = "not_confirmed"
+    return dict(author_list_status=status,
+        author_count=(len(authors) if status == "complete" else count),
+        source_type=source_type,
+        dates={key: _metadata_date(dates.get(key)) for key in
+            ("first_posted", "version_updated", "journal_published", "online_published", "print_published")},
+        version=version or None, journal_reference=journal_reference or None)
+
+
+def _metadata_date(value):
+    match = re.match(r"(\d{4}(?:-\d{2}(?:-\d{2})?)?)", str(value or "").strip())
+    if not match:
+        return None
+    text = match.group(1)
+    parts = [int(part) for part in text.split('-')]
+    try:
+        calendar_date(*((parts + [1, 1])[:3]))
+    except ValueError:
+        return None
+    return text
+
+
+def _crossref_date(value):
+    parts = (value or {}).get("date-parts") or []
+    return "-".join(str(part).zfill(2) for part in parts[0][:3]) if parts and parts[0] else None
 
 
 def search_openalex(
@@ -71,17 +103,24 @@ def search_openalex(
         )
         abstract = " ".join(str(word) for position, word in positions)
         doi = normalize_doi(item.get("doi"))
+        authors = [str(authorship.get("author", {}).get("display_name") or "").strip()
+                   for authorship in item.get("authorships", [])
+                   if authorship.get("author", {}).get("display_name")]
+        # OpenAlex can explicitly flag a truncated authorships array. Absence
+        # of that flag is not proof that its list is complete.
+        truncated = item.get("is_authors_truncated")
+        status = "incomplete" if truncated is True else "complete" if truncated is False else "not_confirmed"
         records.append(make_paper(
             "OpenAlex",
             title=title,
             date=item.get("publication_date"),
             url=landing_url or item.get("id") or (f"https://doi.org/{doi}" if doi else ""),
             doi=doi,
-            authors=", ".join(
-                str(authorship.get("author", {}).get("display_name") or "")
-                for authorship in item.get("authorships", [])[:8]
-                if authorship.get("author", {}).get("display_name")
-            ),
+            authors_list=authors,
+            bibliography=_bibliography(authors, status=status,
+                source_type="preprint" if item.get("type") == "preprint" else "journal" if item.get("type") == "article" else "other",
+                journal_published=item.get("publication_date") if item.get("type") != "preprint" else None,
+                first_posted=item.get("publication_date") if item.get("type") == "preprint" else None),
             venue=source.get("display_name"),
             cited_by_count=item.get("cited_by_count"),
             abstract=abstract,
@@ -125,6 +164,10 @@ def search_crossref(query: str, limit: int, *, email: str = "", offset: int = 0)
         if date_parts and date_parts[0]:
             date = "-".join(str(part).zfill(2) for part in date_parts[0][:3])
         doi = normalize_doi(item.get("DOI"))
+        authors = [" ".join(filter(None, (author.get("given"), author.get("family")))) or str(author.get("name") or "")
+                   for author in item.get("author", [])]
+        authors = [name.strip() for name in authors if name.strip()]
+        source_type = "preprint" if item.get("type") == "posted-content" else "journal" if item.get("type") == "journal-article" else "other"
         pdf_url = ""
         pdf_urls: list[str] = []
         for link in item.get("link") or []:
@@ -143,10 +186,12 @@ def search_crossref(query: str, limit: int, *, email: str = "", offset: int = 0)
             date=date,
             url=item.get("URL") or (f"https://doi.org/{doi}" if doi else ""),
             doi=doi,
-            authors=", ".join(
-                " ".join(filter(None, (author.get("given"), author.get("family"))))
-                for author in item.get("author", [])[:8]
-            ),
+            authors_list=authors,
+            bibliography=_bibliography(authors, source_type=source_type,
+                first_posted=_crossref_date(item.get("posted")),
+                online_published=_crossref_date(item.get("published-online")),
+                print_published=_crossref_date(item.get("published-print")),
+                journal_published=_crossref_date(item.get("published")) if source_type == "journal" else None),
             venue=((item.get("container-title") or [""])[0]),
             cited_by_count=item.get("is-referenced-by-count"),
             abstract=_strip_markup(item.get("abstract")),
@@ -187,13 +232,16 @@ def search_semantic_scholar(
         identifiers = item.get("externalIds") or {}
         doi = normalize_doi(identifiers.get("DOI"))
         pdf_url = str((item.get("openAccessPdf") or {}).get("url") or "")
+        authors = [str(author.get("name") or "").strip() for author in item.get("authors", []) if str(author.get("name") or "").strip()]
         records.append(make_paper(
             "Semantic Scholar",
             title=title,
             date=item.get("publicationDate") or item.get("year"),
             url=item.get("url") or pdf_url or (f"https://doi.org/{doi}" if doi else ""),
             doi=doi,
-            authors=", ".join(str(author.get("name") or "") for author in item.get("authors", [])[:8]),
+            authors_list=authors,
+            bibliography=_bibliography(authors, status="not_confirmed",
+                journal_published=item.get("publicationDate") if item.get("venue") else None),
             venue=item.get("venue"),
             cited_by_count=item.get("citationCount"),
             abstract=item.get("abstract"),
@@ -247,16 +295,22 @@ def search_arxiv(
                 pdf_url = str(link.get("href") or "")
                 break
         category = entry.find("arxiv:primary_category", ns)
+        authors = [str(author.findtext("atom:name", default="", namespaces=ns) or "").strip()
+                   for author in entry.findall("atom:author", ns)]
+        authors = [name for name in authors if name]
+        version_match = re.search(r"v\d+$", arxiv_id)
         records.append(make_paper(
             "arXiv",
             title=title,
             date=entry.findtext("atom:published", default="", namespaces=ns),
             url=entry_url,
             doi=doi,
-            authors=", ".join(
-                str(author.findtext("atom:name", default="", namespaces=ns) or "").strip()
-                for author in entry.findall("atom:author", ns)[:8]
-            ),
+            authors_list=authors,
+            bibliography=_bibliography(authors, source_type="preprint",
+                first_posted=entry.findtext("atom:published", default="", namespaces=ns),
+                version_updated=entry.findtext("atom:updated", default="", namespaces=ns),
+                version=version_match.group(0) if version_match else None,
+                journal_reference=entry.findtext("arxiv:journal_ref", default="", namespaces=ns)),
             venue=f"arXiv:{category.get('term', '')}" if category is not None else "arXiv",
             abstract=_strip_markup(entry.findtext("atom:summary", default="", namespaces=ns)),
             pdf_url=pdf_url,
@@ -310,7 +364,7 @@ def search_pubmed(
             if text:
                 abstract_parts.append(f"{label}: {text}" if label else text)
         authors = []
-        for author in article.findall(".//Author")[:8]:
+        for author in article.findall(".//Article/AuthorList/Author"):
             collective = author.findtext("CollectiveName", default="")
             name = " ".join(filter(None, (
                 author.findtext("ForeName", default=""),
@@ -341,7 +395,11 @@ def search_pubmed(
             date=date,
             url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else "",
             doi=doi,
-            authors=", ".join(authors),
+            authors_list=authors,
+            bibliography=_bibliography(authors, source_type="journal",
+                status="incomplete" if (article.find(".//Article/AuthorList") is not None and
+                    article.find(".//Article/AuthorList").get("CompleteYN") == "N") else "complete",
+                journal_published=date),
             venue=_element_text(article.find(".//Journal/Title")),
             abstract="\n".join(abstract_parts),
             identifiers=extra_ids,

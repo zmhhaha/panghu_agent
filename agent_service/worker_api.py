@@ -394,7 +394,10 @@ class WorkerHost:
                     if not context_released:
                         self._release_context(request, context)
                         context_released = True
-                    result = WorkerResult(state='failed', error_code='worker_output_invalid')
+                    from .diagnostics import SAFE_OUTPUT_CODES
+                    code = getattr(error, 'code', None)
+                    result = WorkerResult(state='failed', error_code=(
+                        code if type(code) is str and code in SAFE_OUTPUT_CODES else 'worker_output_invalid'))
                     result = result.model_copy(update={'stop_receipt': sign_receipt(envelope, result,
                         self.receipt_key, native.resource_ids, self.clock())})
                 except Exception as release_error:

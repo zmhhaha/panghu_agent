@@ -32,13 +32,13 @@ def normalize_paper(record, timestamp=None):
         raise ValueError("provider record missing title")
     identity = f"doi:{doi}" if doi else f"pmid:{pmid}" if pmid else "title:" + re.sub(r"\W+", "", title.casefold())
     paper_id = "paper-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
-    authors = record.get("authors") or []
+    authors = record.get("authors_list") or record.get("authors") or []
     if isinstance(authors, str):
         authors = [author.strip() for author in authors.split(",") if author.strip()]
     abstract = str(record.get("abstract") or "").strip() or None
     date_match = re.match(r"(\d{4})", str(record.get("date") or ""))
     sources = record.get("providers") or [record.get("provider") or "unknown"]
-    return {
+    result = {
         "paper_id": paper_id, "title": title, "authors": authors,
         "year": int(date_match.group(1)) if date_match else None,
         "doi": doi, "pmid": pmid, "url": url, "sources": sources,
@@ -50,6 +50,11 @@ def normalize_paper(record, timestamp=None):
         "verification": {"status": "unknown", "checked_at": None, "source": None,
                          "error": "Provider search metadata has not been independently verified"},
     }
+    # New metadata is measured at the same bridge boundary and stays inside the
+    # protected observation. Historical records without this field stay exact.
+    if record.get("bibliography"):
+        result["bibliography"] = record["bibliography"]
+    return result
 
 
 @scoped_academic_transport

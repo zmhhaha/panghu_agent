@@ -24,6 +24,14 @@ VERIFICATION = obj({
     "status": {"enum": ["verified", "unknown", "failed"]},
     "checked_at": NULL_TIME, "source": NULL_TEXT, "error": NULL_TEXT,
 })
+BIBLIOGRAPHY = obj({
+    "author_list_status": {"enum": ["complete", "incomplete", "not_confirmed"]},
+    "author_count": {"type": ["integer", "null"], "minimum": 0},
+    "source_type": {"enum": ["preprint", "journal", "other"]},
+    "dates": obj({key: NULL_TEXT for key in ("first_posted", "version_updated",
+        "journal_published", "online_published", "print_published")}),
+    "version": NULL_TEXT, "journal_reference": NULL_TEXT,
+})
 RECORD_SCHEMAS = {
     "searches": obj({
         "source": TEXT, "query": TEXT, "searched_at": TIME,
@@ -39,8 +47,9 @@ RECORD_SCHEMAS = {
         "availability": obj({"metadata": AVAILABILITY, "abstract": AVAILABILITY,
                              "full_text": AVAILABILITY}),
         "abstract": NULL_TEXT, "full_text_path": NULL_TEXT,
-        "verification": VERIFICATION,
-    }),
+        "verification": VERIFICATION, "bibliography": BIBLIOGRAPHY,
+    }, required=("paper_id", "title", "authors", "year", "doi", "pmid", "url",
+        "sources", "retrieved_at", "availability", "abstract", "full_text_path", "verification")),
     "screening": obj({
         "paper_id": TEXT, "decision": {"enum": ["include", "exclude", "uncertain"]},
         "reason": TEXT, "criteria": arr(TEXT),

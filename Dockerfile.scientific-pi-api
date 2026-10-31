@@ -11,6 +11,7 @@ COPY scientific_agent/__init__.py scientific_agent/pi_contracts.py scientific_ag
 COPY scientific_agent/pi_revision_contracts.py scientific_agent/pi_revision_validation.py /app/scientific_agent/
 COPY scientific_agent/agent_client.py scientific_agent/agent_projection.py scientific_agent/agent_config.py scientific_agent/academic_observations.py /app/scientific_agent/
 COPY scientific_agent/workspace.py scientific_agent/workspace_execution.py scientific_agent/workspace_materials.py scientific_agent/workflow_contracts.py /app/scientific_agent/
+COPY scientific_agent/workspace_recovery.py scientific_agent/workspace_diagnostics.py scientific_agent/source_quality.py /app/scientific_agent/
 # Business projection validates neutral Agent artifacts offline. Only these
 # framework-neutral helpers are packaged; no Pi runtime/worker process is started.
 COPY pi_worker/__init__.py /app/pi_worker/__init__.py
