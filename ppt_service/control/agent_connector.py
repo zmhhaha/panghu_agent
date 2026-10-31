@@ -27,6 +27,7 @@ from agent_service.profiles.ppt import (PPTProfile, checkpoint_descriptor, valid
 from ppt_service.server.models import AgentOutbox, Checkpoint, ExecutionSlot, Job, Plan, Project, Version
 from ppt_service.server.phase_limits import phase_timeout_seconds
 from ppt_service.server.repository import Repository
+from ppt_service.server.needs_input import normalize_questions
 from .execution import ControlError
 from .staging import EXT, atomic_json, copy_file, copy_tree, make_readonly, open_regular, read_json, require_storage
 
@@ -379,8 +380,9 @@ class AgentConnector:
             require(validated.get('phase') == job.kind and validated.get('publication_authorized') is False,
                     'agent_validation_binding_invalid')
             if validated.get('status') == 'needs_input':
-                Repository(s).finish_failed(jid, out.attempt, out.fencing_token, error_code='execution_interrupted')
-                out.state = 'mapped'; out.result = {'status': 'needs_input', 'questions': validated.get('questions', [])}
+                Repository(s).finish_failed(jid, out.attempt, out.fencing_token, error_code='execution_needs_input')
+                out.state = 'mapped'; out.result = {'status': 'needs_input',
+                    'questions': normalize_questions(validated.get('questions'))}
                 return
             key = f'projects/{project.id}/checkpoints/{uuid4()}'
             target = self.config.data_root / key

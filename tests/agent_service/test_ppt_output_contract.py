@@ -71,6 +71,15 @@ def test_quality_descriptions_are_rejected_without_weakening_the_collector(initi
     assert caught.value.code == 'invalid_ppt_quality_refs'
 
 
+@pytest.mark.parametrize('missing', ['artifacts', 'provenance'])
+def test_needs_input_still_requires_complete_file_handoff_fields(initial, missing):
+    initial[1].update(status='needs_input', questions=['An actual blocker needs attention.'])
+    initial[1].pop(missing)
+    with pytest.raises(ServiceError) as caught:
+        collect(initial)
+    assert caught.value.code in {'invalid_ppt_output', 'ppt_artifact_roster_mismatch'}
+
+
 def test_direction_example_passes_existing_business_projection_with_full_page_plans():
     task, _ = fixture('ppt.plan_initial.v1')
     task['phase'] = 'plan_options'

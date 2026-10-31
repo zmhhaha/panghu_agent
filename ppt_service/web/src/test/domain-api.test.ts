@@ -1,5 +1,5 @@
 import { describe,it,expect,vi,afterEach } from 'vitest';
-import { adaptProject,api,ApiError,consumeEvents,IntentKeys,request,safeError } from '../api';
+import { adaptJob,adaptProject,api,ApiError,consumeEvents,IntentKeys,request,safeError } from '../api';
 import { canGenerate,defaultSettings,usageCost,validateFiles,type Project } from '../domain';
 const project:Project={id:'p',title:'项目',revision:2,stage:'awaiting_confirmation',settings:defaultSettings,assets:[],input_snapshot_hash:'hash',confirmed_plan_revision:'2',plan:{revision:'2',stage:'directions',input_snapshot_hash:'hash',confirmed_direction_id:'B'}};
 afterEach(()=>vi.unstubAllGlobals());
@@ -40,6 +40,23 @@ describe('immutable confirmation',()=>{
  });
 });
 describe('retry and safety',()=>{
+ it('adapts only bounded plain text needs-input questions for the reported terminal error',()=>{
+  const raw={id:'needs',project_id:'p',kind:'generate',status:'failed',error_code:'execution_needs_input',event_cursor:5,
+   needs_input:{questions:['请核对讲解重点。',{question:'not-public'},false,...Array(30).fill('x'.repeat(2000))],private_result:'private'}};
+  const job=adaptJob(raw);expect(job.needs_input?.questions[0]).toBe('请核对讲解重点。');
+  expect(job.needs_input?.questions.every(value=>typeof value==='string'&&value.length<=1000)).toBe(true);
+  expect(job.needs_input!.questions.length).toBeLessThanOrEqual(20);
+  expect(job.needs_input!.questions.reduce((total,value)=>total+value.length,0)).toBeLessThanOrEqual(10000);
+  expect(JSON.stringify(job.needs_input)).not.toMatch(/private|not-public/);
+  expect(adaptJob({...raw,error_code:'execution_interrupted'}).needs_input).toBeUndefined();
+  expect(adaptJob({...raw,status:'running'}).needs_input).toBeUndefined();
+ });
+ it('explains needs-input without claiming a successful version or automatically retrying',()=>{
+  const message=safeError(new ApiError('execution_needs_input'));
+  expect(message).toContain('任务已停止');expect(message).toContain('执行器报告的问题');
+  expect(message).toContain('已确认方案仍保留');expect(message).toContain('EXECUTION_NEEDS_INPUT');
+  expect(message).not.toMatch(/连接失败|额度|上下文|超时/);
+ });
  it('explains a failed model response without guessing its underlying cause',()=>{
   const error=new ApiError('model_response_failed');const message=safeError(error);
   expect(error.code).toBe('MODEL_RESPONSE_FAILED');expect(message).toContain('模型服务未能完成本次请求');

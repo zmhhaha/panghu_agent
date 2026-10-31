@@ -47,6 +47,93 @@ def test_two_owners_projects_jobs_events(ctx):
     who[0]=Identity('https://other-issuer','alice');assert c.get('/api/v1/projects/'+p['id']).status_code==404
 
 
+def needs_input_job(app,c,questions):
+    """A stopped synthetic executor report, never an accepted PPT candidate."""
+    p=project(c);jid=plan(c,p).json()['id']
+    with app.state.sessions.begin() as s:
+        r=Repository(s);j=r.claim_next();assert j.id==jid
+        r.attach_execution(jid,j.attempt,j.fencing_token,job_uid='synthetic-needs-input')
+        r.prove_stopped(jid,j.attempt,j.fencing_token,job_uid=j.job_uid,all_writers_stopped=True)
+        r.finish_failed(jid,j.attempt,j.fencing_token,error_code='execution_needs_input')
+        ref=f'ppt:{jid}:{j.attempt}:{j.fencing_token}'
+        s.add(AgentOutbox(job_id=jid,attempt=j.attempt,fencing_token=j.fencing_token,
+            business_ref=ref,idempotency_key='fixture:'+jid,state='mapped',
+            request={'business_ref':ref,'task':{'business_job_id':jid,'project_id':p['id']},
+                     'private_configuration':'private-configuration'},
+            result={'status':'needs_input','questions':questions,'private_result':'private-result'}))
+    return p,jid
+
+
+def test_needs_input_questions_survive_read_only_job_and_project_refresh_with_owner_isolation(ctx):
+    app,c,who=ctx
+    p,jid=needs_input_job(app,c,['  请补充讲解重点。  ',
+        {'question':'请管理员核对可用预览工具。','internal':'private-details'},
+        {'message':'private-object'},False])
+    expected={'questions':['请补充讲解重点。','请管理员核对可用预览工具。']}
+    first=c.get('/api/v1/jobs/'+jid).json()
+    assert first['status']=='failed' and first['error_code']=='execution_needs_input'
+    assert first['needs_input']==expected
+    for _ in range(2):
+        assert c.get('/api/v1/jobs/'+jid).json()==first
+        assert getp(c,p)['latest_job']==first
+    for private in ('private-configuration','private-result','private-details','private-object','business_ref','fencing_token'):
+        assert private not in str(first)
+    with app.state.sessions() as s:
+        assert s.get(Job,jid).status=='failed'
+        assert s.get(ExecutionSlot,1).job_id is None
+        assert not s.scalars(select(Version)).all()
+        assert len(s.scalars(select(Job)).all())==1
+    who[0]=Identity('https://issuer','bob')
+    assert c.get('/api/v1/jobs/'+jid).status_code==404
+    assert c.get('/api/v1/projects/'+p['id']).status_code==404
+    who[0]=Identity('https://other-issuer','alice')
+    assert c.get('/api/v1/jobs/'+jid).status_code==404
+    who[0]=Identity('https://issuer','alice')
+    with app.state.sessions.begin() as s:s.get(Project,p['id']).deletion_requested=True
+    assert c.get('/api/v1/jobs/'+jid).status_code==404
+
+
+@pytest.mark.parametrize('changed',['legacy_error','active','not_stopped','outbox_state',
+    'outbox_status','attempt','fence','project','job','business_ref','missing_outbox'])
+def test_needs_input_dto_requires_exact_terminal_job_and_outbox_binding(ctx,changed):
+    app,c,_=ctx;p,jid=needs_input_job(app,c,['Do not expose an unbound question.'])
+    with app.state.sessions.begin() as s:
+        j=s.get(Job,jid);out=s.get(AgentOutbox,jid)
+        if changed=='legacy_error':j.error_code='execution_interrupted'
+        elif changed=='active':j.status='running'
+        elif changed=='not_stopped':j.stopped=False
+        elif changed=='outbox_state':out.state='submitted'
+        elif changed=='outbox_status':out.result={'status':'failed','questions':['not-needs-input']}
+        elif changed=='attempt':out.attempt+=1
+        elif changed=='fence':out.fencing_token+=1
+        elif changed=='project':out.request={**out.request,'task':{**out.request['task'],'project_id':str(uuid.uuid4())}}
+        elif changed=='job':out.request={**out.request,'task':{**out.request['task'],'business_job_id':str(uuid.uuid4())}}
+        elif changed=='business_ref':out.request={**out.request,'business_ref':'another-job'}
+        else:s.delete(out)
+        original=(j.status,j.error_code,j.deadline)
+    assert 'needs_input' not in c.get('/api/v1/jobs/'+jid).json()
+    assert 'needs_input' not in getp(c,p)['latest_job']
+    with app.state.sessions() as s:
+        j=s.get(Job,jid);assert (j.status,j.error_code,j.deadline)==original
+
+
+def test_needs_input_dto_bounds_questions_and_ignores_unknown_shapes(ctx):
+    from ppt_service.server.needs_input import normalize_questions
+    app,c,_=ctx
+    p,jid=needs_input_job(app,c,[{'unknown':'private-object'},None,9,
+        {'question':'\x00请核对\u202e内容\x7f。','raw':'private-raw'}]+['x'*2000 for _ in range(30)])
+    questions=c.get('/api/v1/jobs/'+jid).json()['needs_input']['questions']
+    assert questions[0]=='请核对内容。'
+    assert 1<=len(questions)<=20 and all(type(q) is str and len(q)<=1000 for q in questions)
+    assert sum(map(len,questions))<=10000
+    assert 'private-' not in str(questions)
+    assert getp(c,p)['latest_job']['needs_input']['questions']==questions
+    assert len(normalize_questions([str(n) for n in range(100)]))==20
+    assert normalize_questions({'question':'not-a-list'})==[]
+    assert normalize_questions([False,{},' \x00 ',{'question':[]}])==[]
+    assert normalize_questions(['safe\ud800question'])==['safequestion']
+
+
 @pytest.mark.parametrize('database', ['sqlite','postgres'])
 def test_job_timing_survives_terminal_refresh_without_leaking_private_fields(tmp_path,database):
     url=os.getenv('TEST_DATABASE_URL') if database=='postgres' else 'sqlite://'

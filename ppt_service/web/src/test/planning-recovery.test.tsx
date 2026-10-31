@@ -28,6 +28,31 @@ async function open() {const view=render(<App/>);await screen.findByRole('headin
 async function planning() {const user=userEvent.setup();await open();await user.click(screen.getByRole('tab',{name:/沟通与方案/}));return user;}
 
 describe('planning failure recovery from server history',()=>{
+ it('restores executor questions after refresh and reopening without submitting another task',async()=>{
+  const reported:Job={...failed,id:'needs-generation',kind:'generate',stage:'generate',error_code:'execution_needs_input',
+   needs_input:{questions:['请管理员核对预览工具。','<img src=x onerror="alert(1)">']}};
+  current={...current,latest_job:reported};
+  const view=await open();
+  const notice=within(screen.getByRole('region',{name:'本次制作需要处理的问题'}));
+  expect(notice.getByText('请管理员核对预览工具。')).toBeVisible();
+  expect(notice.getByText('<img src=x onerror="alert(1)">')).toBeVisible();
+  expect(screen.getByRole('region',{name:'本次制作需要处理的问题'}).querySelector('img')).toBeNull();
+  expect(notice.getByText(/本次尚未形成新的可预览版本/)).toBeVisible();
+  fireEvent.click(screen.getByRole('button',{name:'刷新状态'}));await waitFor(()=>expect(api.project).toHaveBeenCalledTimes(2));
+  expect(screen.getByText('请管理员核对预览工具。')).toBeVisible();
+  fireEvent.click(screen.getByRole('button',{name:'查看沟通与方案'}));
+  expect(screen.getByRole('tab',{name:/沟通与方案/})).toHaveAttribute('aria-selected','true');
+  view.unmount();await open();expect(screen.getByText('请管理员核对预览工具。')).toBeVisible();
+  expect(api.job).not.toHaveBeenCalled();expect(consumeEvents).not.toHaveBeenCalled();
+  expect(api.plan).not.toHaveBeenCalled();expect(api.generate).not.toHaveBeenCalled();expect(api.confirm).not.toHaveBeenCalled();
+ });
+
+ it('shows a fixed missing-explanation message when the executor supplies no displayable questions',async()=>{
+  current={...current,latest_job:{...failed,kind:'generate',error_code:'execution_needs_input',needs_input:{questions:[]}}};
+  await open();expect(screen.getByText('执行器未返回可显示的问题说明，请联系管理员并提供任务号。')).toBeVisible();
+  expect(api.plan).not.toHaveBeenCalled();expect(api.generate).not.toHaveBeenCalled();
+ });
+
  it('restores a terminal failure on reopen without job reads, event streams or a settled refresh loop',async()=>{
   // Each manual GET returns a new DTO object; object identity must not re-settle history.
   vi.mocked(api.project).mockImplementation(async()=>({...current,latest_job:{...failed}}));

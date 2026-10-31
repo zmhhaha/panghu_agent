@@ -14,6 +14,7 @@ export const errors: Record<string,string> = {
   EXECUTION_REQUEST_INVALID:'制作请求在提交前未通过校验，尚未启动制作。项目资料和已确认方案仍保留，请联系管理员核对后重试。',
   MODEL_RESPONSE_FAILED:'模型服务未能完成本次请求，任务已停止。项目资料和已确认方案仍保留，请稍后重试；若持续发生，请联系管理员。',
   EXECUTION_INTERRUPTED:'本次任务未能正常完成。请刷新状态核对，项目资料和已有版本仍保留；若持续发生，请联系管理员。',
+  EXECUTION_NEEDS_INPUT:'本次任务已停止，需要处理执行器报告的问题后再尝试。项目资料和已确认方案仍保留。',
   CSRF_REJECTED:'页面安全校验已失效，请刷新页面后重试。',
   REQUEST_TIMEOUT:'等待请求超时。操作可能已完成，请先刷新状态核对，再决定是否重试。',
   REQUEST_CANCELLED:'已停止等待请求。操作可能已完成，请先刷新状态核对。',
@@ -133,7 +134,13 @@ export function adaptProject(raw: RecordValue): Project {
  return { ...raw, settings:raw.settings??{pages:raw.page_count??8,language:raw.language==='zh'?'简体中文':raw.language??'简体中文',audience:raw.audience??'',purpose:raw.purpose??'',style:raw.style??'',requirements:raw.requirements??''}, assets:raw.assets??[], plan,
  input_snapshot_hash:raw.input_snapshot_hash??'', confirmed_plan_revision:raw.confirmed_plan_revision==null?null:String(raw.confirmed_plan_revision), latest_job:raw.latest_job?adaptJob(raw.latest_job):null } as Project;
 }
-export function adaptJob(raw:RecordValue):Job {return {...raw,id:raw.id??raw.job_id,last_event_seq:raw.event_cursor??raw.last_event_seq??0} as Job;}
+export function adaptJob(raw:RecordValue):Job {
+ const {needs_input:reported,...fields}=raw;
+ let remaining=10000;
+ const questions=Array.isArray(reported?.questions)?reported.questions.slice(0,100).filter((value:unknown):value is string=>typeof value==='string'&&!!value.trim()).slice(0,20).map((value:string)=>{const text=value.slice(0,Math.min(1000,remaining));remaining-=text.length;return text;}).filter(Boolean):[];
+ return {...fields,id:raw.id??raw.job_id,last_event_seq:raw.event_cursor??raw.last_event_seq??0,
+  ...(raw.status==='failed'&&raw.error_code==='execution_needs_input'&&reported?{needs_input:{questions}}:{})} as Job;
+}
 const flatSettings=(s:Project['settings'])=>({page_count:s.pages,language:s.language==='简体中文'?'zh':s.language,audience:s.audience,purpose:s.purpose,style:s.style,requirements:s.requirements});
 export const api = {
   me: readProfile, projects: async () => (await request<RecordValue[]>('/projects')).map(adaptProject), project: async (projectId:string, signal?:AbortSignal) => adaptProject(await request<RecordValue>(`/projects/${id(projectId)}`,{signal})),

@@ -12,6 +12,17 @@ import { SourceFiles } from './SourceFiles';
 import { AcceptancePanel, type AcceptanceSnapshot, type SavedReviewFeedback } from './acceptance';
 import './styles.css';
 function ErrorBox({error,onRetry}:{error:unknown;onRetry?:()=>void}) { if(!error)return null;return <div className="notice error" role="alert"><CircleAlert size={18}/><div>{safeError(error)} {error instanceof ApiError&&error.status===401?<a href="/oauth2/start">重新登录</a>:onRetry&&<button className="link" onClick={onRetry}>重试读取</button>}</div></div>; }
+function NeedsInputNotice({job,onOpen}:{job:Job;onOpen:()=>void}) {
+ if(job.status!=='failed'||job.error_code!=='execution_needs_input')return null;
+ const questions=job.needs_input?.questions??[];
+ return <section className="notice warning" aria-label="本次制作需要处理的问题"><div>
+  <strong>本次制作需要处理的问题</strong>
+  <p>以下内容来自执行器，本次尚未形成新的可预览版本。</p>
+  {questions.length?<ul>{questions.map((question,index)=><li className="plain-text" key={index}>{question}</li>)}</ul>:<p>执行器未返回可显示的问题说明，请联系管理员并提供任务号。</p>}
+  <p>涉及工具或服务环境的问题，请联系管理员；涉及内容的问题，可返回资料或沟通页面补充。处理后由你重新提交任务。</p>
+  <button className="secondary compact" onClick={onOpen}>查看沟通与方案</button>
+ </div></section>;
+}
 function Empty({title,children}:{title:string;children?:React.ReactNode}) {return <div className="empty"><FolderClosed size={30}/><h3>{title}</h3><p>{children}</p></div>;}
 function PlainPlanValue({value}:{value:unknown}) {return <pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere',fontFamily:'inherit',fontSize:'11px',margin:0}}>{typeof value==='string'?value:JSON.stringify(value,null,2)??'未指定'}</pre>;}
 function PlanDetails({title,data}:{title:string;data?:Record<string,unknown>}) {if(!data||!Object.keys(data).length)return null;return <details><summary>{title}</summary><dl>{Object.entries(data).map(([key,value])=><div key={key}><dt>{planningLabels[key]??key}</dt><dd><PlainPlanValue value={value}/></dd></div>)}</dl></details>;}
@@ -71,6 +82,7 @@ function UploadStatus({state,onCancel}:{state:UploadState;onCancel:()=>void}) {
  return <div className={`upload-status ${state.phase==='stopped'?'upload-stopped':''}`}><div className="upload-feedback" role="status" aria-live="polite" aria-atomic="true">{pending?<LoaderCircle className="spin" size={19}/>:state.phase==='complete'?<Check size={19}/>:<CircleAlert size={19}/>}<div><strong>{heading}</strong>{state.fileName&&pending&&<span className="upload-file">{state.fileName}</span>}<small>{state.received} / {state.total} 个文件已确认收到{state.phase==='stopped'?'；请刷新状态核对后再继续。':state.phase==='syncing'?'；正在同步项目状态。':state.phase==='uploading'?'；请等待服务器确认。':''}</small></div></div>{pending&&<button className="secondary compact" type="button" onClick={onCancel}><X size={14}/>取消等待</button>}</div>;
 }
 function PlanningJobNotice({job,project,onOpen}:{job:Job;project:Project;onOpen:()=>void}) {
+ if(job.error_code==='execution_needs_input')return null;
  if(job.kind!=='plan_options')return null;
  if(activeStatuses.has(job.status))return <p>正在规划三套设计方向，尚未制作演示稿。单次执行上限为 20 分钟；完成后仍需选择并确认一个方向，再生成演示稿。</p>;
  if(!['failed','interrupted','cancelled'].includes(job.status))return null;
@@ -137,7 +149,7 @@ function Workspace({id,profile,onBack,onChanged}:{id:string;profile:Profile;onBa
  const setConsent=(value:boolean)=>{if(value&&!consent)void perform(async()=>{setProject(await api.acknowledge(project));});};
  const disabled=busy||active;
  return <><button className="back link" onClick={onBack}><ArrowLeft size={15}/>全部项目</button><div className="page-heading"><div><span className="eyebrow">PRIVATE PROJECT</span><h1>{project.title}</h1><p><span className="pill">{label(project.stage)}</span><span className="metadata">项目修订 {project.revision}</span></p></div><button className="secondary compact" disabled={busy} onClick={()=>void Promise.all([refresh(),refreshJob()])}><RefreshCw size={16}/>刷新状态</button></div><ErrorBox error={error}/>{parsePanel&&<ErrorBox error={parsePollingError}/>}
- {job&&<section className="job-panel" aria-label="当前任务"><div><span className={`status-dot ${active?'pulse':''}`}/><strong role="status">{label(job.status)}</strong><span>{job.stage?label(job.stage):'等待服务状态'}</span><small>{trackedJobId?connection:''}</small></div><div><code>任务 {job.id}</code>{activeStatuses.has(job.status)&&<button className="secondary compact" disabled={busy||job.status==='cancelling'} onClick={()=>void perform(async()=>{setJob(await api.cancel(job.id));})}>{job.status==='cancelling'?'正在停止…':'取消任务'}</button>}</div>{job.error_code&&<ErrorBox error={new ApiError(job.error_code)}/>}<ErrorBox error={trackedJobId?jobError:null}/><PlanningJobNotice job={job} project={project} onOpen={()=>setTab('planning')}/><JobTiming job={job}/><p>{active?'关闭页面后任务继续执行，返回时会恢复服务端记录。':'最近一次任务的服务端记录；刷新页面后仍可查看结果。'}</p></section>}
+ {job&&<section className="job-panel" aria-label="当前任务"><div><span className={`status-dot ${active?'pulse':''}`}/><strong role="status">{label(job.status)}</strong><span>{job.stage?label(job.stage):'等待服务状态'}</span><small>{trackedJobId?connection:''}</small></div><div><code>任务 {job.id}</code>{activeStatuses.has(job.status)&&<button className="secondary compact" disabled={busy||job.status==='cancelling'} onClick={()=>void perform(async()=>{setJob(await api.cancel(job.id));})}>{job.status==='cancelling'?'正在停止…':'取消任务'}</button>}</div>{job.error_code&&<ErrorBox error={new ApiError(job.error_code)}/>}<ErrorBox error={trackedJobId?jobError:null}/><NeedsInputNotice job={job} onOpen={()=>setTab('planning')}/><PlanningJobNotice job={job} project={project} onOpen={()=>setTab('planning')}/><JobTiming job={job}/><p>{active?'关闭页面后任务继续执行，返回时会恢复服务端记录。':'最近一次任务的服务端记录；刷新页面后仍可查看结果。'}</p></section>}
  {uploadState&&<UploadStatus state={uploadState} onCancel={()=>uploadController.current?.abort()}/>}
  <div className="tabs" role="tablist" aria-label="项目工作区">{[['materials','资料与要求'],['planning','沟通与方案'],['versions','预览与修改']].map(([key,text],n)=><button key={key} role="tab" aria-selected={tab===key} aria-controls={`panel-${key}`} id={`tab-${key}`} onClick={()=>setTab(key)}><span>0{n+1}</span>{text}{key==='versions'&&<small>{versions.length}</small>}</button>)}</div>
  <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>

@@ -66,7 +66,7 @@ def project_dto(p,s,detail=False):
         d['assets']=[asset_dto(a) for a in s.scalars(select(Asset).where(Asset.project_id==p.id,Asset.removed==False))]
         d['plans']=[plan_dto(a) for a in s.scalars(select(Plan).where(Plan.project_id==p.id).order_by(Plan.revision))]
         latest=s.scalar(select(Job).where(Job.project_id==p.id,Job.issuer==p.issuer,Job.subject==p.subject).order_by(Job.created_at.desc(),Job.id.desc()).limit(1))
-        d['latest_job']=job_dto(latest) if latest else None
+        d['latest_job']=job_dto(latest,s) if latest else None
     return d
 def create_app(settings:Settings|None=None,engine=None):
     settings=settings or Settings.env()
@@ -259,7 +259,7 @@ def create_app(settings:Settings|None=None,engine=None):
             return job_dto(j)
         return r.idempotent(owner,f'projects/{pid}/review-revisions',key,body.model_dump(mode='json'),action,authorize=authorize)
     @app.get('/api/v1/jobs/{jid}')
-    def job(jid:str,owner=Depends(authenticate),s=Depends(session)):return job_dto(Repository(s).job(jid,owner))
+    def job(jid:str,owner=Depends(authenticate),s=Depends(session)):return job_dto(Repository(s).job(jid,owner),s)
     @app.post('/api/v1/jobs/{jid}/cancel')
     def cancel(jid:str,key:str|None=Header(None,alias='Idempotency-Key'),owner=Depends(authenticate),s=Depends(session)):
         r=Repository(s)

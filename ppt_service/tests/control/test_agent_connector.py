@@ -19,7 +19,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from agent_service.artifacts import frozen_manifest
-from agent_service.contracts import ExecutionEnvelope, JobRequest, ServiceError, canonical_bytes, digest
+from agent_service.contracts import ExecutionEnvelope, InlineFile, JobRequest, ServiceError, canonical_bytes, digest
 from agent_service.engines import StopEvidence
 from agent_service.profiles.ppt import PPTProfile
 from ppt_service.control.agent_connector import AgentConnector, AgentConnectorSettings, build_agent_task
@@ -523,6 +523,46 @@ def test_requested_cancellation_takes_precedence_over_remote_model_failure(datab
         assert not session.scalars(select(JobEvent).where(
             JobEvent.job_id == job.id, JobEvent.type == 'job.failed')).all()
     assert len(service.submissions) == len(service.cancellations) == 1
+
+
+def test_valid_needs_input_stops_without_a_version_and_retains_bounded_questions(database):
+    from ppt_service.server.repository import job_dto
+    control, service = connector(database)
+    assert control.tick()['status'] == 'uploading'
+    assert control.tick()['status'] == 'submitted'
+    remote = next(iter(service.jobs.values()))
+    remote['state'] = 'needs_input'
+    questions = [' 请补充讲解重点。 ', {'question': '请管理员核对预览工具。', 'internal': 'private'},
+                 {'raw': 'private'}, False]
+    files = []
+    for file in service.artifacts[remote['job_id']]:
+        if file.name == 'result/manifest.json':
+            manifest = json.loads(file.content())
+            manifest.update(status='needs_input', questions=questions)
+            file = InlineFile.from_bytes(file.name, canonical_bytes(manifest))
+        files.append(file)
+    service.artifacts[remote['job_id']] = files
+    with database.sessions() as session:
+        original = session.get(Job, database.job_id)
+        deadline, snapshot = original.deadline, copy.deepcopy(original.input_snapshot)
+    assert control.tick() == {'status': 'mapped', 'job_id': database.job_id}
+    with database.sessions() as session:
+        job = session.get(Job, database.job_id)
+        out = session.get(AgentOutbox, job.id)
+        expected = ['请补充讲解重点。', '请管理员核对预览工具。']
+        assert job.status == 'failed' and job.error_code == 'execution_needs_input' and job.stopped is True
+        assert job.deadline == deadline and job.input_snapshot == snapshot
+        assert out.state == 'mapped' and out.result == {'status': 'needs_input', 'questions': expected}
+        assert job_dto(job, session)['needs_input'] == {'questions': expected}
+        assert session.get(ExecutionSlot, 1).job_id is None
+        assert session.get(Project, database.project_id).active_job_id is None
+        assert not session.scalars(select(Plan)).all()
+        assert not session.scalars(select(Version)).all()
+        failed = session.scalar(select(JobEvent).where(JobEvent.job_id == job.id, JobEvent.type == 'job.failed'))
+        assert failed.payload == {'error_code': 'execution_needs_input'}
+    assert control.tick()['status'] == 'acknowledged'
+    assert control.tick()['status'] == 'idle'
+    assert len(service.submissions) == 1
 
 
 def test_collector_requires_exact_stopped_attempt_before_inspecting_output(database):

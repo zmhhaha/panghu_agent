@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from sqlalchemy import select,func,text
 from .models import *
 from .phase_limits import phase_timeout_seconds
+from .needs_input import normalize_questions
 ACTIVE=('queued','starting','running','collecting','validating','cancelling')
 TERMINAL=('succeeded','failed','cancelled','interrupted')
 def fail(code,status=409): raise HTTPException(status,detail={'code':code})
@@ -13,14 +14,26 @@ def _iso_time(value):
     if not isinstance(value,datetime):return None
     return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat()
 
-def job_dto(j):
+def job_dto(j,s=None):
     try:budget=phase_timeout_seconds(j.kind)
     except ValueError:budget=None
-    return {k:getattr(j,k) for k in ('id','project_id','kind','status','stage','event_cursor','attempt','error_code','base_version_id')}|{
+    result={k:getattr(j,k) for k in ('id','project_id','kind','status','stage','event_cursor','attempt','error_code','base_version_id')}|{
         'job_id':j.id,'created_at':_iso_time(j.created_at),'deadline':_iso_time(j.deadline),
         # Current phase configuration, not a completion estimate or a historical
         # claim timestamp. The persisted deadline is never recalculated here.
         'phase_timeout_seconds':budget}
+    if s is not None and j.status=='failed' and j.error_code=='execution_needs_input' and j.stopped is True:
+        out=s.get(AgentOutbox,j.id)
+        if (out is not None and out.state=='mapped' and out.attempt==j.attempt
+                and out.fencing_token==j.fencing_token and type(out.result) is dict
+                and out.result.get('status')=='needs_input' and type(out.request) is dict):
+            task=out.request.get('task')
+            if (type(task) is dict and task.get('project_id')==j.project_id
+                    and task.get('business_job_id')==j.id
+                    and out.business_ref==f'ppt:{j.id}:{j.attempt}:{j.fencing_token}'
+                    and out.request.get('business_ref')==out.business_ref):
+                result['needs_input']={'questions':normalize_questions(out.result.get('questions'))}
+    return result
 EVENT_FIELDS={'job.queued':{'stage'},'job.started':{'stage'},'stage.changed':{'stage'},'plan.ready':{'revision','phase'},'artifact.ready':{'version_id'},'job.succeeded':set(),'job.failed':{'error_code'},'job.cancelled':set(),'job.cancelling':set()}
 class Repository:
     """All methods run in caller's session.begin(); control methods are trusted-only.
@@ -87,7 +100,7 @@ class Repository:
         clean={k:v for k,v in payload.items() if k in EVENT_FIELDS[type]}
         # Values are server business identifiers, never free-form Worker messages.
         if 'stage' in clean and clean['stage'] not in ('plan_initial','plan_options','prepare','generate','revise','parse','collecting','validating','execution_queued','execution_starting','execution_running'):raise ValueError('invalid stage')
-        if 'error_code' in clean and clean['error_code'] not in ('parse_failed','model_unavailable','model_response_failed','execution_timeout','quality_gate_failed','render_failed','export_failed','execution_interrupted','execution_task_too_large','execution_request_invalid','storage_full'):raise ValueError('invalid error')
+        if 'error_code' in clean and clean['error_code'] not in ('parse_failed','model_unavailable','model_response_failed','execution_timeout','quality_gate_failed','render_failed','export_failed','execution_interrupted','execution_needs_input','execution_task_too_large','execution_request_invalid','storage_full'):raise ValueError('invalid error')
         if 'revision' in clean and (not isinstance(clean['revision'],int) or isinstance(clean['revision'],bool) or clean['revision']<1):raise ValueError('invalid revision')
         for k in ('version_id',):
             if k in clean:uuid.UUID(clean[k])
@@ -141,7 +154,7 @@ class Repository:
             self.event(j,'job.cancelled')
         elif j.status in ACTIVE and j.status!='cancelling':
             j.status='cancelling';self.event(j,'job.cancelling')
-        return job_dto(j)
+        return job_dto(j,self.s)
     # Trusted controller integration. Slot must be initialized by migration.
     def claim_next(self,lease_seconds=60):
         slot=self.s.get(ExecutionSlot,1,with_for_update=True)
