@@ -13,7 +13,8 @@ RUN sed -i "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}|g" /etc/apt/sources.
     && apt-get install -y --no-install-recommends ffmpeg poppler-utils libpango-1.0-0 libpangoft2-1.0-0 fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 COPY video_workbench/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt \
+ARG PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+RUN pip install --no-cache-dir --index-url "${PYPI_INDEX_URL}" -r /app/requirements.txt \
     && python -m pip check \
     && groupadd --gid 10001 workbench \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin workbench \
