@@ -40,6 +40,18 @@ describe('immutable confirmation',()=>{
  });
 });
 describe('retry and safety',()=>{
+ it('explains a failed model response without guessing its underlying cause',()=>{
+  const error=new ApiError('model_response_failed');const message=safeError(error);
+  expect(error.code).toBe('MODEL_RESPONSE_FAILED');expect(message).toContain('模型服务未能完成本次请求');
+  expect(message).toContain('任务已停止');expect(message).toContain('已确认方案仍保留');
+  expect(message).not.toMatch(/EXECUTION_INTERRUPTED|连接失败|额度|上下文|超时/);
+ });
+ it('gives an explicit explanation for an otherwise unclassified interrupted task',()=>{
+  const message=safeError(new ApiError('execution_interrupted'));
+  expect(message).toContain('本次任务未能正常完成');expect(message).toContain('请刷新状态核对');
+  expect(message).toContain('已有版本仍保留');expect(message).toContain('EXECUTION_INTERRUPTED');
+  expect(message).not.toContain('模型服务未能完成');
+ });
  it.each(['execution_task_too_large','execution_request_invalid'])('explains pre-dispatch rejection %s without claiming an interrupted model job',code=>{
   const message=safeError(new ApiError(code));
   expect(message).toContain('尚未启动制作');expect(message).toContain('已确认方案仍保留');

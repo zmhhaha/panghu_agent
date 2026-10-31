@@ -406,12 +406,14 @@ def test_following_phase_cannot_fabricate_or_rebind_confirmation(database, chang
         build_agent_task(session, session.get(Job, jid))
 
 
+@pytest.mark.parametrize('state', ['completed', 'failed'])
 @pytest.mark.parametrize('changed', ['attempt', 'fence', 'resources', 'quarantine', 'pins'])
-def test_terminal_remote_without_matching_stop_binding_retains_slot(database, changed):
+def test_terminal_remote_without_matching_stop_binding_retains_slot(database, changed, state):
     control, service = connector(database)
     assert control.tick()['status'] == 'uploading'
     assert control.tick()['status'] == 'submitted'
     remote = next(iter(service.jobs.values()))
+    remote.update(state=state, error_code='model_error')
     if changed == 'attempt': remote['stop_proof']['attempt_id'] = identifier()
     elif changed == 'fence': remote['stop_proof']['fence'] = 2
     elif changed == 'resources': remote['stop_proof']['resource_ids'] = []
@@ -423,6 +425,104 @@ def test_terminal_remote_without_matching_stop_binding_retains_slot(database, ch
         assert session.get(ExecutionSlot, 1).job_id == database.job_id
         assert session.get(Job, database.job_id).stopped is False
         assert not session.scalars(select(Checkpoint)).all()
+
+
+@pytest.mark.parametrize(('state', 'remote_code', 'expected'), [
+    ('failed', 'model_error', 'model_response_failed'),
+    ('failed', 'model_http_transient', 'model_response_failed'),
+    ('failed', 'engine_error', 'execution_interrupted'),
+    ('failed', None, 'execution_interrupted'),
+    ('failed', 503, 'execution_interrupted'),
+    ('failed', ['model_error'], 'execution_interrupted'),
+    ('failed', {'code': 'model_error'}, 'execution_interrupted'),
+    ('failed', 'MODEL_ERROR', 'execution_interrupted'),
+    ('failed', 'model_error private-material /work/private', 'execution_interrupted'),
+    ('timed_out', 'model_error', 'execution_timeout'),
+    ('timed_out', 'model_http_transient', 'execution_timeout'),
+])
+def test_remote_failure_persists_only_fixed_business_error_without_retry(
+        database, monkeypatch, state, remote_code, expected):
+    control, service = connector(database)
+    assert control.tick()['status'] == 'uploading'
+    assert control.tick()['status'] == 'submitted'
+    remote = next(iter(service.jobs.values()))
+    remote.update(state=state, error_code=remote_code,
+                  message='private-material /work/private', details={'token': 'private-token'})
+    if remote_code is None:
+        remote.pop('error_code')  # Older service responses may omit the code.
+    with database.sessions() as session:
+        deadline = session.get(Job, database.job_id).deadline
+        request = copy.deepcopy(session.get(AgentOutbox, database.job_id).request)
+
+    def forbidden_collection(*args, **kwargs):
+        pytest.fail('failed execution must not collect or validate artifacts')
+
+    monkeypatch.setattr(service, 'artifact_manifest', forbidden_collection)
+    monkeypatch.setattr(control.validator, 'validate', forbidden_collection)
+    assert control.tick() == {'status': 'failed', 'job_id': database.job_id}
+    with database.sessions() as session:
+        job = session.get(Job, database.job_id)
+        out = session.get(AgentOutbox, database.job_id)
+        project = session.get(Project, database.project_id)
+        assert job.status == 'failed' and job.error_code == expected and job.stopped is True
+        assert job.deadline == deadline and out.request == request
+        assert out.remote_job_id == remote['job_id'] and out.state == 'mapped'
+        assert out.result == {'status': 'failed', 'error_code': expected}
+        assert project.active_job_id is None and project.stage == 'draft'
+        assert session.get(ExecutionSlot, 1).job_id is None
+        assert not session.scalars(select(Checkpoint)).all()
+        assert not session.scalars(select(Version)).all()
+        event = session.scalar(select(JobEvent).where(
+            JobEvent.job_id == job.id, JobEvent.type == 'job.failed'))
+        assert event.payload == {'error_code': expected}
+    assert control.tick()['status'] == 'acknowledged'
+    assert control.tick()['status'] == 'idle'
+    assert len(service.submissions) == len(service.jobs) == 1
+    assert not service.acks and not service.cancellations
+
+
+def test_model_failure_retains_existing_confirmed_plan_and_checkpoint(database):
+    control, service = connector(database)
+    complete_plan(control)
+    jid = confirm_and_enqueue(database, 'plan_options')
+    assert control.tick()['status'] == 'uploading'
+    assert control.tick()['status'] == 'submitted'
+    with database.sessions() as session:
+        out = session.get(AgentOutbox, jid)
+        remote = service.jobs[out.remote_job_id]
+        confirmations = copy.deepcopy(out.request['task']['confirmations'])
+        checkpoints = [(row.id, copy.deepcopy(row.manifest)) for row in session.scalars(select(Checkpoint))]
+        deadline = session.get(Job, jid).deadline
+    remote.update(state='failed', error_code='model_error')
+    assert control.tick() == {'status': 'failed', 'job_id': jid}
+    with database.sessions() as session:
+        job = session.get(Job, jid)
+        rebuilt, _ = build_agent_task(session, job)
+        assert job.error_code == 'model_response_failed' and job.deadline == deadline
+        assert rebuilt['confirmations'] == confirmations
+        assert session.get(Project, database.project_id).confirmed_plan_revision == confirmations['stage1']['plan_revision']
+        assert [(row.id, row.manifest) for row in session.scalars(select(Checkpoint))] == checkpoints
+        assert not session.scalars(select(Version)).all()
+    assert len(service.submissions) == 2
+
+
+def test_requested_cancellation_takes_precedence_over_remote_model_failure(database):
+    control, service = connector(database)
+    assert control.tick()['status'] == 'uploading'
+    assert control.tick()['status'] == 'submitted'
+    next(iter(service.jobs.values())).update(state='failed', error_code='model_error')
+    with database.sessions.begin() as session:
+        Repository(session).cancel(session.get(Job, database.job_id))
+        deadline = session.get(Job, database.job_id).deadline
+    assert control.tick() == {'status': 'cancelled', 'job_id': database.job_id}
+    with database.sessions() as session:
+        job = session.get(Job, database.job_id)
+        assert job.status == 'cancelled' and job.error_code is None and job.stopped is True
+        assert job.deadline == deadline and session.get(ExecutionSlot, 1).job_id is None
+        assert session.get(AgentOutbox, job.id).result == {'status': 'cancelled'}
+        assert not session.scalars(select(JobEvent).where(
+            JobEvent.job_id == job.id, JobEvent.type == 'job.failed')).all()
+    assert len(service.submissions) == len(service.cancellations) == 1
 
 
 def test_collector_requires_exact_stopped_attempt_before_inspecting_output(database):

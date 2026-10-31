@@ -623,7 +623,15 @@ class AgentConnector:
                 out.state = 'mapped'; out.result = {'status': 'cancelled'}
                 return {'status': 'cancelled', 'job_id': jid}
             if remote['state'] not in ('completed', 'needs_input'):
-                code = 'execution_timeout' if remote['state'] == 'timed_out' else 'execution_interrupted'
+                if remote['state'] == 'timed_out':
+                    code = 'execution_timeout'
+                elif (remote['state'] == 'failed' and type(remote.get('error_code')) is str
+                        and remote['error_code'] in ('model_error', 'model_http_transient')):
+                    # These fixed Agent codes establish a failed model request,
+                    # not a provider-specific cause or permission to retry.
+                    code = 'model_response_failed'
+                else:
+                    code = 'execution_interrupted'
                 Repository(s).finish_failed(jid, out.attempt, out.fencing_token, error_code=code)
                 out.state = 'mapped'; out.result = {'status': 'failed', 'error_code': code}
                 return {'status': 'failed', 'job_id': jid}

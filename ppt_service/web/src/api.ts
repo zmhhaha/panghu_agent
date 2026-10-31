@@ -12,6 +12,8 @@ export const errors: Record<string,string> = {
   EXECUTION_NOT_CONNECTED:'执行器尚未接通，当前仅可测试项目、资料和设置；不会调用模型。',
   EXECUTION_TASK_TOO_LARGE:'制作请求超过服务容量，尚未启动制作。项目资料和已确认方案仍保留，请联系管理员核对后重试。',
   EXECUTION_REQUEST_INVALID:'制作请求在提交前未通过校验，尚未启动制作。项目资料和已确认方案仍保留，请联系管理员核对后重试。',
+  MODEL_RESPONSE_FAILED:'模型服务未能完成本次请求，任务已停止。项目资料和已确认方案仍保留，请稍后重试；若持续发生，请联系管理员。',
+  EXECUTION_INTERRUPTED:'本次任务未能正常完成。请刷新状态核对，项目资料和已有版本仍保留；若持续发生，请联系管理员。',
   CSRF_REJECTED:'页面安全校验已失效，请刷新页面后重试。',
   REQUEST_TIMEOUT:'等待请求超时。操作可能已完成，请先刷新状态核对，再决定是否重试。',
   REQUEST_CANCELLED:'已停止等待请求。操作可能已完成，请先刷新状态核对。',
