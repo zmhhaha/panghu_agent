@@ -7,7 +7,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     VIDEO_WORKBENCH_DB=/data/workbench.db
 
 WORKDIR /app
-RUN apt-get update \
+ARG DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
+RUN sed -i "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg poppler-utils libpango-1.0-0 libpangoft2-1.0-0 fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 COPY video_workbench/requirements.txt /app/requirements.txt
