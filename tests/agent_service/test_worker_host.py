@@ -15,7 +15,8 @@ from agent_service.engines import EngineRequest
 from agent_service.model_timeouts import buffered_model_idle_timeout
 from agent_service.linux_stop import KernelScope, LinuxUidStopController, StopScopeError, private_kernel_scope
 from agent_service.worker_entry import (CapsuleScope, HostConfig, HostSecrets, ProxyModel,
-                                       ScopedWorkerHost, WorkerConfigError, accepted_host, build_pi_driver)
+                                       ScopedWorkerHost, WorkerConfigError, accepted_host, build_pi_driver,
+                                       build_pi_runtime_settings)
 
 
 ATTEMPT = str(uuid.UUID(int=1))
@@ -167,6 +168,24 @@ def test_proxy_credentials_cannot_be_partial_or_printed():
     assert value.model_proxy_token.get_secret_value() not in repr(value)
 
 
+@pytest.mark.parametrize(('profile', 'process_limit'), [
+    ('ppt.generate.v1', 128), ('ppt.revise.v1', 128),
+    ('ppt.prepare.v1', 64), ('ppt.plan_initial.v1', 64), ('ppt.plan_options.v1', 64),
+    ('research.generate.v1', 64), ('research.retrieve.v1', 64), ('workspace-task.v1', 64),
+    ('ppt.generate.v2', 64), ('ppt.revise.v2', 64),
+    ('ppt.generate.v1-extra', 64), ('ppt.revise.v1-extra', 64),
+])
+def test_only_exact_ppt_rendering_profiles_receive_the_bounded_thread_allowance(profile, process_limit):
+    policy = ProfilePolicy(profile, 'v1', 'pi', 'runtime-v1', IMAGE, max_timeout_seconds=1800)
+    settings = build_pi_runtime_settings(policy, run_uid_start=RUNTIME_UID, run_gid=RUNTIME_UID,
+        denied_paths=(Path('/run/agent-secrets/worker.json'),), isolation_verified=True)
+    assert settings.max_processes == process_limit
+    assert settings.idle_timeout_seconds == buffered_model_idle_timeout(policy.max_timeout_seconds)
+    assert settings.run_uid_start == settings.run_gid == RUNTIME_UID
+    assert settings.denied_paths == (Path('/run/agent-secrets/worker.json'),)
+    assert settings.isolation_verified is True
+
+
 @pytest.mark.parametrize('max_timeout_seconds', [60, 600, 1800, 3600])
 def test_pinned_pi_configuration_keeps_control_credentials_out_of_agent(monkeypatch, max_timeout_seconds):
     captured = {}
@@ -185,6 +204,7 @@ def test_pinned_pi_configuration_keeps_control_credentials_out_of_agent(monkeypa
     assert s.command == ('/usr/local/bin/node', '/usr/local/lib/pi-cage/worker-cli.mjs')
     assert s.model_api == 'openai-responses' and s.fixture_mode is False
     assert s.model_max_tokens == 8192
+    assert s.max_processes == 64
     assert s.idle_timeout_seconds == buffered_model_idle_timeout(max_timeout_seconds)
     assert set(s.model_env) == {'AGENT_MODEL_API_KEY'}
     assert TOKEN not in str(s.model_env) and 'c' * 64 not in str(s.model_env)

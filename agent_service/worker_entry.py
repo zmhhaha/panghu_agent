@@ -391,6 +391,10 @@ def build_pi_runtime_settings(policy: ProfilePolicy, **values) -> RuntimeSetting
     Preserve the shared service's timeout policy for research as well as PPT.
     """
     values['idle_timeout_seconds'] = buffered_model_idle_timeout(policy.max_timeout_seconds)
+    # Linux RLIMIT_NPROC counts threads. Pi plus Playwright/Chromium rendering
+    # exceeds 64; production and candidate drivers share this bounded allowance.
+    if policy.name in {'ppt.generate.v1', 'ppt.revise.v1'}:
+        values['max_processes'] = 128
     return RuntimeSettings(**values)
 
 
