@@ -358,7 +358,12 @@ raise SystemExit(ppt_handoff.main(["--workspace", sys.argv[2], "--task-file", sy
         task_file = parent / 'host-handoff/task.json'
         write_file(task_file, case.task_file.read_bytes())
         for path in parent.rglob('*'):
-            path.chmod(0o711 if path.is_dir() else 0o444)
+            if path.is_dir():
+                # The dropped UID must enumerate actual project directories.
+                # The host task directory only needs path traversal.
+                path.chmod(0o755 if path.is_relative_to(workspace) else 0o711)
+            else:
+                path.chmod(0o444)
         def run_cli(denied=''):
             result = subprocess.run([sys.executable, '-I', '-B', '-c', bootstrap,
                 str(module_root), str(workspace), str(task_file), str(denied)],
@@ -391,7 +396,7 @@ raise SystemExit(ppt_handoff.main(["--workspace", sys.argv[2], "--task-file", sy
                 assert private not in failure.stdout + failure.stderr
             assert 'Traceback' not in failure.stdout + failure.stderr
         finally:
-            denied.chmod(0o711)
+            denied.chmod(0o755)
         assert tree_snapshot(parent) == before
 
 
