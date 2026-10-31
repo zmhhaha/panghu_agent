@@ -66,7 +66,7 @@ const ERROR_LABELS = {
   missing_visual: '部分镜头尚未采用画面，请先选择画面版本。',
   missing_current_audio: '部分镜头缺少当前旁白的已采用配音，请先生成或上传并采用。',
   unadopted_scenes: '请先为每个镜头采用一个画面版本。',
-  missing_captions: '部分镜头还没有字幕，请先估算并校正，或取消「显示字幕」。',
+  missing_captions: '部分镜头还没有字幕，请先估算并校正，或取消「附加字幕」。',
   stale_captions: '配音或留白已变化，请重新整理相关镜头的字幕。',
   invalid_captions: '请检查字幕时间是否位于配音范围内，保持先后顺序，并填写字幕内容。',
   render_not_configured: '视频导出服务尚未连接，仍可导出项目素材。',
@@ -513,7 +513,8 @@ function renderDelivery(project) {
   for (const item of renderHistories.get(project.id) ?? []) {
     const row = node('div', undefined, 'render-item');
     const label = node('div');
-    label.append(node('strong', `${item.silent ? '静音视频' : '带声音视频'} · ${statusLabel(item.status)}`),
+    const subtitleLabel = item.subtitles === true ? '有字幕' : item.subtitles === false ? '无字幕' : '字幕状态未记录';
+    label.append(node('strong', `${item.silent ? '静音视频' : '有声视频'} · ${subtitleLabel} · ${statusLabel(item.status)}`),
       node('small', `文稿版本 ${item.project_revision ?? '—'}${item.project_revision !== project.revision ? ' · 项目已有后续修改' : ''}${item.error ? ` · ${ERROR_LABELS[item.error] ?? '导出未完成，请检查资源后重试。'}` : ''}`));
     row.append(label);
     if (['completed', 'succeeded'].includes(item.status)) {
@@ -836,7 +837,8 @@ async function openProjectPlayer() {
     $('audio-preview').pause();
     $('project-player-heading').textContent = state.project.title;
     $('project-player-seek').max = timeline.duration_seconds;
-    $('project-player-note').textContent = '预览使用打开时的采用版本。调整项目后，重新打开预览查看最新内容。';
+    const modeLabel = silent ? '静音 · 无字幕' : subtitles ? '保留旁白 · 有字幕' : '保留旁白 · 无字幕';
+    $('project-player-note').textContent = `本次预览：${modeLabel}。使用打开时的采用版本；调整项目后，重新打开预览查看最新内容。`;
     $('project-player-dialog').showModal();
     updatePlayerFrame();
   });
