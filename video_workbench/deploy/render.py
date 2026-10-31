@@ -123,6 +123,7 @@ class Settings:
     speech_service: str = 'speech-service'
     speech_model: str = 'kokoro-rk3588'
     speech_voice: str = 'zm_yunjian'
+    speech_voice_discovery: bool = False
     speech_token_secret: str = 'video-speech-service'
     render_enabled: bool = False
 
@@ -250,7 +251,8 @@ def render(settings: Settings) -> dict:
         ],
     })
     items = [obj('v1', 'Namespace', namespace, target_namespace=None), pvc, deployment, service, policy]
-    if type(settings.speech_enabled) is not bool or type(settings.render_enabled) is not bool:
+    if any(type(value) is not bool for value in
+           (settings.speech_enabled, settings.render_enabled, settings.speech_voice_discovery)):
         raise ValueError('Media feature switches must be booleans')
     if settings.speech_enabled:
         speech_namespace = _dns_name(settings.speech_namespace, 'speech namespace', namespace=True)
@@ -268,6 +270,8 @@ def render(settings: Settings) -> dict:
             {'name': 'VIDEO_TTS_VOICE', 'value': settings.speech_voice},
             {'name': 'VIDEO_TTS_TOKEN_FILE', 'value': '/run/secrets/video-speech/token'},
         ])
+        if settings.speech_voice_discovery:
+            container['env'].append({'name': 'VIDEO_TTS_VOICE_DISCOVERY', 'value': 'true'})
         container['volumeMounts'].append({'name': 'speech-token', 'mountPath': '/run/secrets/video-speech', 'readOnly': True})
         template['spec']['volumes'].append({'name': 'speech-token', 'secret': {
             'secretName': speech_secret, 'defaultMode': 0o440, 'items': [{'key': 'token', 'path': 'token'}]}})
@@ -345,6 +349,7 @@ def main(argv=None):
     parser.add_argument('--speech-service', default='speech-service')
     parser.add_argument('--speech-model', default='kokoro-rk3588')
     parser.add_argument('--speech-voice', default='zm_yunjian')
+    parser.add_argument('--speech-voice-discovery', action='store_true')
     parser.add_argument('--speech-token-secret', default='video-speech-service')
     parser.add_argument('--render-enabled', action='store_true')
     parser.add_argument('--output', type=Path, help='Write JSON (also valid Kubernetes YAML); default: stdout')

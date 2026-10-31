@@ -87,6 +87,38 @@ def test_generate_is_candidate_and_replay_never_synthesizes_twice(env):
     assert p['scenes'][0]['head_audio_version_id'] is None
 
 
+def test_project_voice_endpoint_applies_one_voice_to_all_scene_requests(env):
+    client, app, calls, _ = env
+    speech = app.state.audio_workflow.speech_client
+    speech._voices.append(dict(id='zm_yunxi', name='云希', language='zh-CN', gender='male', default=False))
+    app.state.store.configure_speech_provider('kokoro-rk3588', 'zm_yunjian', ['zm_yunjian', 'zm_yunxi'])
+    p, sid = scene(env)
+    p = client.post(f'/api/projects/{p["id"]}/scenes', json=dict(FIELDS, title='第二镜')).json()
+    endpoint = f'/api/projects/{p["id"]}/speech'
+    body = dict(expected_revision=p['revision'], voice='zm_yunxi')
+    assert client.patch(endpoint, json=body, headers={'X-CSRF-Token': 'wrong'}).status_code == 403
+    changed = client.patch(endpoint, json=body)
+    assert changed.status_code == 200, changed.text
+    p = changed.json()
+    assert p['speech_settings']['voice'] == 'zm_yunxi'
+    assert client.patch(endpoint, json=body).status_code == 409
+    assert client.get('/api/session').json()['speech_voices'][1]['name'] == '云希'
+    for s in p['scenes']:
+        result = client.post(f'/api/scenes/{s["id"]}/audio/generate', json=dict(expected_revision=p['revision']),
+                             headers={'Idempotency-Key': 'project-voice-' + s['id']})
+        assert result.status_code == 202, result.text
+        app.state.audio_workflow.tick()
+        p = client.get(f'/api/projects/{p["id"]}').json()
+    assert [c['voice'] for c in calls] == ['zm_yunxi', 'zm_yunxi']
+    assert all(s['audio_versions'][0]['voice'] == 'zm_yunxi' for s in p['scenes'])
+    # Scene endpoints cannot override the common project voice.
+    assert client.patch(f'/api/scenes/{sid}/speech',
+        json=dict(expected_revision=p['revision'], voice='zm_yunjian')).status_code == 422
+    client.headers['X-Forwarded-User'] = 'bob'
+    client.headers['X-CSRF-Token'] = client.get('/api/session').json()['csrf_token']
+    assert client.patch(endpoint, json=dict(expected_revision=p['revision'], voice='zm_yunjian')).status_code == 404
+
+
 def test_upload_playback_ranges_and_owner_boundary(env):
     client, _, _, _ = env
     p, sid, aid = uploaded(env)

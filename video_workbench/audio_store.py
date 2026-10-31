@@ -77,6 +77,7 @@ def _wav(data):
 class AudioStoreMixin:
     def _init_audio_schema(self, db):
         self.speech_provider = dict(model='kokoro-rk3588', voice='zm_yunjian')
+        self.speech_voices = frozenset({'zm_yunjian'})
         db.executescript('''
             CREATE TABLE IF NOT EXISTS audio_versions (
                 id TEXT PRIMARY KEY, project_id TEXT NOT NULL,
@@ -89,11 +90,29 @@ class AudioStoreMixin:
                 document TEXT NOT NULL, UNIQUE(owner, idem));
         ''')
 
-    def configure_speech_provider(self, model, voice):
+    def configure_speech_provider(self, model, voice, voices=None):
         if (not _text(model, 200) or not _text(voice, 200)
                 or any(ord(c) < 32 for c in model + voice)):
             raise ValueError('An explicit speech model and voice are required')
         self.speech_provider = dict(model=model, voice=voice)
+        self.speech_voices = frozenset([voice] if voices is None else voices)
+
+    def _project_speech_provider(self, project):
+        # Keep the binding shape of already generated legacy narration.
+        voice = project.get('speech_settings', {}).get('voice', self.speech_provider['voice'])
+        return dict(self.speech_provider, voice=voice)
+
+    def save_project_speech_settings(self, owner, project_id, request):
+        with self.transaction() as db:
+            project = self._project(db, owner, project_id)
+            self._revision(project, request['expected_revision'])
+            voice = request.get('voice')
+            if not _text(voice, 200) or voice not in self.speech_voices:
+                raise ServiceError('speech_voice_unavailable', 422)
+            if self._project_speech_provider(project)['voice'] != voice:
+                project['speech_settings'] = dict(voice=voice)
+                self._save(db, project)
+        return self.project(owner, project_id)
 
     @staticmethod
     def _audio_public(op):
@@ -109,10 +128,12 @@ class AudioStoreMixin:
         raise ServiceError('not_found', 404)
 
     def _attach_audio(self, db, project):
+        provider = self._project_speech_provider(project)
+        project['speech_settings'] = dict(voice=provider['voice'])
         operations = [json.loads(row[0]) for row in db.execute(
             'SELECT document FROM audio_operations WHERE project_id=? ORDER BY rowid', (project['id'],))]
         for scene in project['scenes']:
-            document = narration_document(scene, self.speech_provider)
+            document = narration_document(scene, provider)
             binding = narration_binding(document)
             scene['speech_settings'] = document['settings']
             scene['audio_input_sha256'] = binding
@@ -166,7 +187,9 @@ class AudioStoreMixin:
                                   (project_id, scene_id)):
                 if json.loads(row[0])['status'] in AUDIO_ACTIVE:
                     raise ServiceError('audio_operation_in_progress', 409)
-            document = narration_document(self._scene(project, scene_id), self.speech_provider)
+            document = narration_document(self._scene(project, scene_id), self._project_speech_provider(project))
+            if document['settings']['voice'] not in self.speech_voices:
+                raise ServiceError('speech_voice_unavailable', 422)
             if len(document['spoken_text']) > 2000 or len(document['spoken_text'].encode()) > 16 * 1024:
                 raise ServiceError('audio_narration_too_long', 422)
             now = time.time()
@@ -222,7 +245,7 @@ class AudioStoreMixin:
                 project_id = self._audio_scene_project(db, owner, scene_id)
                 project = self._project(db, owner, project_id)
                 self._revision(project, request['expected_revision'])
-                document = narration_document(self._scene(project, scene_id), self.speech_provider)
+                document = narration_document(self._scene(project, scene_id), self._project_speech_provider(project))
                 # A replacement recording binds to original text and settings;
                 # it does not need a potentially expanded synthesis string.
                 document.pop('spoken_text', None)
@@ -259,7 +282,7 @@ class AudioStoreMixin:
             if row is None:
                 raise ServiceError('not_found', 404)
             metadata = json.loads(row[0])
-            if metadata['input_sha256'] != narration_binding(narration_document(scene, self.speech_provider)):
+            if metadata['input_sha256'] != narration_binding(narration_document(scene, self._project_speech_provider(project))):
                 raise ServiceError('audio_stale', 409)
             scene['head_audio_version_id'] = version_id
             self._save(db, project)

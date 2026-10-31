@@ -251,7 +251,8 @@ def test_media_features_are_independent_explicit_opt_ins(settings, speech_enable
 def test_speech_uses_readonly_local_secret_and_only_the_selected_backend_peer(settings):
     configured = replace(settings, speech_enabled=True, speech_namespace='voice-lab',
                          speech_service='voice-api', speech_model='technical-voice',
-                         speech_voice='male-v2', speech_token_secret='studio-speech-caller')
+                         speech_voice='male-v2', speech_token_secret='studio-speech-caller',
+                         speech_voice_discovery=True)
     document = render(configured)
     pod = resource(document, 'Deployment')['spec']['template']['spec']
     container, = pod['containers']
@@ -259,6 +260,7 @@ def test_speech_uses_readonly_local_secret_and_only_the_selected_backend_peer(se
     assert env['VIDEO_TTS_URL'] == 'http://voice-api.voice-lab.svc.cluster.local/v1'
     assert env['VIDEO_TTS_MODEL'] == 'technical-voice'
     assert env['VIDEO_TTS_VOICE'] == 'male-v2'
+    assert env['VIDEO_TTS_VOICE_DISCOVERY'] == 'true'
     assert env['VIDEO_TTS_TOKEN_FILE'] == '/run/secrets/video-speech/token'
     assert 'VIDEO_TTS_TOKEN' not in env
     mount, = [item for item in container['volumeMounts'] if item['name'] == 'speech-token']

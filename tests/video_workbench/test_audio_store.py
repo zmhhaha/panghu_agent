@@ -34,6 +34,10 @@ class FakeSpeech:
         self.bad_binding = False
         self.silent = False
 
+    @property
+    def voice_catalog(self):
+        return [{'id': self.settings.voice}]
+
     def synthesize(self, text, *, voice, speed, cancel_event):
         self.requests.append(dict(text=text, voice=voice, speed=speed))
         if self.callback:
@@ -307,6 +311,67 @@ def test_queued_old_voice_is_rejected_before_calling_reconfigured_provider(setup
     worker.tick()
     assert speech.requests == []
     assert store.audio_operation(op['id'])['error'] == 'speech_provider_changed'
+
+
+def test_project_voice_switch_invalidates_all_audio_without_touching_other_projects(setup):
+    store, project, speech, worker = setup
+    project = store.save_scene('alice', project['id'], dict(SCENE, title='第二镜'))
+    for index in range(2):
+        begin(store, project, f'voice-baseline-{index}', index)
+        worker.tick()
+        project = store.project('alice', project['id'])
+        scene = project['scenes'][index]
+        project = store.adopt_audio('alice', scene['id'], scene['audio_versions'][0]['id'], None)
+    other = store.create_project('alice', dict(title='另一视频', script='稿件', style=''))
+    store.configure_speech_provider('kokoro-rk3588', 'zm_yunjian', ['zm_yunjian', 'zm_yunxi'])
+    # The expanded catalog preserves every legacy binding.
+    assert not any(s['audio_stale'] for s in store.project('alice', project['id'])['scenes'])
+    changed = store.save_project_speech_settings('alice', project['id'],
+        dict(expected_revision=project['revision'], voice='zm_yunxi'))
+    assert changed['speech_settings'] == dict(voice='zm_yunxi')
+    assert all(s['audio_stale'] and s['speech_settings']['voice'] == 'zm_yunxi' for s in changed['scenes'])
+    assert all(s['audio_versions'][0]['voice'] == 'zm_yunjian' for s in changed['scenes'])
+    assert store.project('alice', other['id'])['speech_settings']['voice'] == 'zm_yunjian'
+    with pytest.raises(ServiceError, match='audio_stale'):
+        store.adopt_audio('alice', changed['scenes'][0]['id'], changed['scenes'][0]['audio_versions'][0]['id'],
+                          changed['scenes'][0]['head_audio_version_id'])
+    # Speed/pronunciation edits never override the project voice.
+    changed = store.save_speech_settings('alice', changed['scenes'][0]['id'],
+        dict(expected_revision=changed['revision'], speed=1.1))
+    assert all(s['speech_settings']['voice'] == 'zm_yunxi' for s in changed['scenes'])
+    # A later voice removal preserves readable histories but rejects new synthesis.
+    store.configure_speech_provider('kokoro-rk3588', 'zm_yunjian')
+    history = store.project('alice', project['id'])
+    assert history['speech_settings']['voice'] == 'zm_yunxi'
+    with pytest.raises(ServiceError, match='speech_voice_unavailable'):
+        begin(store, history, 'removed-voice-request')
+
+
+def test_project_voice_preserves_late_result_identity_and_requires_fresh_adoption(setup):
+    store, project, speech, worker = setup
+    store.configure_speech_provider('kokoro-rk3588', 'zm_yunjian', ['zm_yunjian', 'zm_yunxi'])
+    op = begin(store, project)
+    def change_voice(_):
+        latest = store.project('alice', project['id'])
+        store.save_project_speech_settings('alice', project['id'],
+            dict(expected_revision=latest['revision'], voice='zm_yunxi'))
+    speech.callback = change_voice
+    worker.tick()
+    scene = store.project('alice', project['id'])['scenes'][0]
+    assert scene['audio_versions'][0]['voice'] == 'zm_yunjian'
+    assert scene['audio_versions'][0]['stale'] and scene['head_audio_version_id'] is None
+    assert store.audio_operation(op['id'])['status'] == 'completed'
+
+
+def test_project_voice_mutations_are_owner_revision_and_availability_guarded(setup):
+    store, project, *_ = setup
+    body = dict(expected_revision=project['revision'], voice='unknown')
+    for owner, request, code in [('bob', body, 'not_found'),
+                                  ('alice', dict(body, expected_revision=999), 'revision_conflict'),
+                                  ('alice', body, 'speech_voice_unavailable')]:
+        with pytest.raises(ServiceError, match=code):
+            store.save_project_speech_settings(owner, project['id'], request)
+    assert store.project('alice', project['id'])['revision'] == project['revision']
 
 
 def test_shutdown_interruption_does_not_claim_remote_cancellation(setup):

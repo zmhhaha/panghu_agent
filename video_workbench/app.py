@@ -111,6 +111,10 @@ class Adoption(Fields):
     expected_head_version_id: str | None = Field(max_length=100)
 
 
+class ProjectSpeechEdit(Revision):
+    voice: str = Field(min_length=1, max_length=200)
+
+
 class SpeechEdit(Revision):
     speed: float = Field(default=1, ge=0.5, le=2, allow_inf_nan=False)
     pronunciation: dict[str, str] = Field(default_factory=dict, max_length=32)
@@ -239,7 +243,10 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         if speech_settings:
             speech_client = owned_speech_client = SpeechClient(speech_settings)
     if speech_client:
-        store.configure_speech_provider(speech_client.settings.model, speech_client.settings.voice)
+        if speech_client.settings.voice_discovery:
+            speech_client.discover_voices()
+        store.configure_speech_provider(speech_client.settings.model, speech_client.settings.voice,
+                                        [v['id'] for v in speech_client.voice_catalog])
     workflow = Workflow(store, gateway)
     audio_workflow = AudioWorkflow(store, speech_client)
     production = Production(store, renderer=renderer,
@@ -348,6 +355,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     speech_configured=speech_client is not None,
                     speech_model=speech_client.settings.model if speech_client else None,
                     speech_voice=speech_client.settings.voice if speech_client else None,
+                    speech_voices=speech_client.voice_catalog if speech_client else [],
                     media_configured=production.enabled)
 
     @app.get('/api/projects')
@@ -396,6 +404,12 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     @app.post('/api/operations/{operation_id}/cancel')
     def cancel(operation_id: str, owner=Depends(mutation)):
         return store.cancel(owner, operation_id)
+
+    @app.patch('/api/projects/{project_id}/speech')
+    def project_speech_settings(project_id: str, body: ProjectSpeechEdit, owner=Depends(mutation)):
+        if speech_client is None:
+            raise ServiceError('speech_not_configured', 503)
+        return store.save_project_speech_settings(owner, project_id, body.model_dump())
 
     @app.patch('/api/scenes/{scene_id}/speech')
     def speech_settings(scene_id: str, body: SpeechEdit, owner=Depends(mutation)):

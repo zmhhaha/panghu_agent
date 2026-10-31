@@ -5,6 +5,8 @@ import {
   updateProjectSummary, versionPath,
   audioPath, chooseAudioVersion, createCaptionDraft, orderedAudioVersions, parsePronunciation,
   pronunciationText, selectedAudioVersion, timelinePosition, validateCaptionCues, deliveryIssues,
+  speechVoices, speechVoiceName, projectSpeechVoice, syncProjectSpeechDraft, projectVoiceOptions,
+  projectSpeechCanGenerate, audioVoiceLabel,
 } from './model.mjs';
 
 const $ = id => document.getElementById(id);
@@ -15,6 +17,7 @@ const feedbacks = new Map();
 const pending = new Set();
 const cancelRequests = new Set();
 const speechDrafts = new Map();
+const projectSpeechDrafts = new Map();
 const timingDrafts = new Map();
 const captionDrafts = new Map();
 const renderHistories = new Map();
@@ -42,7 +45,7 @@ const ERROR_LABELS = {
   unauthorized: '登录已失效，请重新登录。', authentication_required: '请先登录工作台。',
   csrf_invalid: '登录状态已更新，请刷新后重试。', invalid_csrf: '登录状态已更新，请刷新后重试。',
   csrf_rejected: '登录状态已更新，请刷新后重试。',
-  revision_conflict: '项目已有更新。你的草稿已保留，请重新载入最新镜头后再保存。',
+  revision_conflict: '项目已有更新。你的草稿已保留，请重新载入最新内容后再保存。',
   head_conflict: '采用的版本已发生变化，请刷新项目后重试。',
   operation_in_progress: '这个镜头还有正在执行的任务，请等待任务结束。',
   active_operation: '当前任务尚未结束，请稍后重试。',
@@ -53,6 +56,8 @@ const ERROR_LABELS = {
   idempotency_conflict: '这个操作与先前提交的内容不一致，请刷新后重试。',
   not_found: '内容不存在或你没有访问权限。',
   speech_not_configured: '配音服务尚未连接，可以先上传自己的 WAV 配音。',
+  speech_voice_unavailable: '这个音色当前不可用，请刷新并在项目配音中选择可用音色。历史配音仍可试听。',
+  speech_voice_catalog_unavailable: '暂时无法读取可用音色，请稍后刷新；历史配音仍可试听。',
   audio_stale: '旁白或配音设置已更新，请生成或上传匹配当前旁白的配音。',
   audio_version_stale: '这条历史配音已不匹配当前旁白，请重新制作。',
   audio_head_conflict: '采用的配音已发生变化，请重新读取项目。',
@@ -334,6 +339,34 @@ function seconds(value) {
   return Number.isFinite(Number(value)) ? Number(value).toFixed(2).replace(/\.?0+$/, '') : '—';
 }
 
+function projectSpeechDraft(project = state.project) {
+  if (!project) return null;
+  const draft = syncProjectSpeechDraft(projectSpeechDrafts.get(project.id), project, sessionSettings);
+  projectSpeechDrafts.set(project.id, draft);
+  return draft;
+}
+
+function renderProjectSpeech(project) {
+  const draft = projectSpeechDraft(project);
+  const busy = pending.has(`project-speech:${project.id}`);
+  const catalog = speechVoices(sessionSettings);
+  const options = projectVoiceOptions(draft.voice, sessionSettings).map(item => {
+    const option = node('option', item.label); option.value = item.value; option.disabled = item.disabled;
+    return option;
+  });
+  $('project-speech-voice').replaceChildren(...options);
+  $('project-speech-voice').value = draft.voice;
+  $('project-speech-voice').disabled = busy || !sessionSettings.speech_configured || !catalog.length;
+  $('save-project-speech').disabled = busy || !draft.dirty || !sessionSettings.speech_configured
+    || !catalog.some(voice => voice.id === draft.voice);
+  $('reset-project-speech').disabled = busy;
+  const saved = projectSpeechVoice(project, sessionSettings);
+  $('project-speech-status').textContent = draft.dirty ? '项目音色尚未保存，请先保存后再生成配音。'
+    : !sessionSettings.speech_configured ? '配音服务尚未连接，历史配音仍可试听或下载。'
+      : !catalog.some(voice => voice.id === saved) ? '当前项目音色暂不可用，请选择可用音色并保存。历史配音仍可试听。'
+        : `已保存项目音色：${speechVoiceName(saved, sessionSettings)}。`;
+}
+
 function renderAudioOperation(operation) {
   const banner = $('audio-status');
   const active = isActiveOperation(operation);
@@ -407,21 +440,26 @@ function renderAudio(scene, project) {
   setValue('speech-pronunciation', speech.pronunciation);
   $('speech-draft-note').textContent = speech.dirty ? '配音设置尚未保存' : '使用当前已保存的配音设置';
   $('save-speech-settings').disabled = !speech.dirty || pending.has(`speech:${scene.id}`);
-  const voice = settings.voice ?? sessionSettings.speech_voice ?? 'zm_yunjian';
-  $('audio-voice-label').textContent = voice === 'zm_yunjian' ? '云健 · 中文男声' : voice;
+  const voice = projectSpeechVoice(project, sessionSettings);
+  $('audio-voice-label').textContent = `项目音色 · ${speechVoiceName(voice, sessionSettings)}`;
   $('audio-provider-note').textContent = sessionSettings.speech_configured ? '使用当前镜头已保存的旁白制作，生成完成后可试听比较。'
     : '配音服务尚未连接，可以先上传自己的 WAV 配音。';
   const dirty = drafts.get(draftKey(scene.id))?.dirty;
   const busy = isActiveOperation(scene.audio_operation) || pending.has(`audio-generate:${scene.id}`);
-  $('generate-audio').disabled = !sessionSettings.speech_configured || !scene.narration?.trim()
+  const projectVoiceDraft = projectSpeechDraft(project);
+  const projectVoiceBusy = pending.has(`project-speech:${project.id}`);
+  const voiceReady = projectSpeechCanGenerate(project, sessionSettings, projectVoiceDraft);
+  $('generate-audio').disabled = !voiceReady || projectVoiceBusy || !scene.narration?.trim()
     || dirty || speech.dirty || busy;
-  $('audio-generation-hint').textContent = dirty ? '请先保存镜头旁白。' : speech.dirty ? '请先保存语速与读音设置。'
+  $('audio-generation-hint').textContent = projectVoiceDraft.dirty || projectVoiceBusy ? '请先保存项目音色。'
+    : sessionSettings.speech_configured && !voiceReady ? '当前项目音色不可用，请在项目配音中选择并保存。'
+      : dirty ? '请先保存镜头旁白。' : speech.dirty ? '请先保存语速与读音设置。'
     : busy ? '配音任务进行中，可以继续查看其他镜头。' : '生成后先试听，再选择采用。';
   renderAudioOperation(scene.audio_operation);
   const versions = orderedAudioVersions(scene);
   const candidate = selectedAudioVersion(state, scene);
   const options = versions.map(version => {
-    const option = node('option', `A${version.number}${version.id === scene.head_audio_version_id ? ' · 已采用' : ' · 候选'}${version.stale ? ' · 需更新' : ''}`);
+    const option = node('option', `A${version.number} · ${audioVoiceLabel(version, sessionSettings)}${version.id === scene.head_audio_version_id ? ' · 已采用' : ' · 候选'}${version.stale ? ' · 需更新' : ''}`);
     option.value = version.id;
     return option;
   });
@@ -443,7 +481,7 @@ function renderAudio(scene, project) {
   $('audio-version-badge').hidden = !candidate;
   $('audio-version-badge').textContent = candidate?.stale ? '需更新' : adopted ? '已采用配音' : '候选配音';
   $('audio-version-summary').textContent = candidate
-    ? `A${candidate.number} · ${candidate.source === 'upload' ? '上传配音' : '生成配音'} · ${seconds(candidate.duration_seconds)} 秒`
+    ? `A${candidate.number} · ${audioVoiceLabel(candidate, sessionSettings)} · ${seconds(candidate.duration_seconds)} 秒`
     : '生成或上传配音后，可以在这里试听。';
   $('audio-stale-note').hidden = !candidate?.stale;
   $('audio-adoption-note').textContent = adopted ? scene.audio_stale ? '当前采用的配音需要更新。' : '这条配音将用于项目预览与成片。'
@@ -555,6 +593,7 @@ function render() {
   $('empty-add-scene').disabled = storyboardBusy;
   renderScenes(project);
   renderDelivery(project);
+  renderProjectSpeech(project);
   const scene = selectedScene(state);
   $('scene-workspace').hidden = !scene && editor !== 'new';
   $('select-scene-empty').hidden = Boolean(scene) || editor === 'new';
@@ -957,6 +996,27 @@ $('export-project').addEventListener('click', () => {
   if (state.projectId) download(`/api/projects/${encodeURIComponent(state.projectId)}/export`, 'video-workbench-project.zip', `export:${state.projectId}`);
 });
 
+$('project-speech-voice').addEventListener('change', () => {
+  const draft = projectSpeechDraft();
+  if (!draft) return;
+  Object.assign(draft, { voice: $('project-speech-voice').value, dirty: true });
+  render();
+});
+$('save-project-speech').addEventListener('click', () => {
+  const project = state.project; const draft = projectSpeechDraft();
+  if (!project || !draft?.dirty || !sessionSettings.speech_configured
+      || !speechVoices(sessionSettings).some(voice => voice.id === draft.voice)) return;
+  const body = { expected_revision: draft.expected_revision, voice: draft.voice };
+  perform(`project-speech:${project.id}`, () => request(`/api/projects/${encodeURIComponent(project.id)}/speech`,
+    { method: 'PATCH', body }), () => { projectSpeechDrafts.delete(project.id);
+    success('项目音色已保存。请检查各镜头配音，重新生成并试听后再采用。'); });
+});
+$('reset-project-speech').addEventListener('click', () => {
+  const project = state.project;
+  if (!project || pending.has(`project-speech:${project.id}`)) return;
+  if (projectSpeechDrafts.get(project.id)?.dirty && !window.confirm('重新载入会清除尚未保存的项目音色，继续吗？')) return;
+  projectSpeechDrafts.delete(project.id); render();
+});
 for (const id of ['speech-speed', 'speech-pronunciation']) $(id).addEventListener('input', captureSpeechDraft);
 $('save-speech-settings').addEventListener('click', () => {
   const scene = selectedScene(state); if (!scene || !$('speech-speed').reportValidity()) return;
@@ -978,6 +1038,8 @@ for (const [id, map] of [['reset-speech-settings', speechDrafts], ['reset-timing
 }
 $('generate-audio').addEventListener('click', () => {
   const scene = selectedScene(state); if (!scene) return;
+  if (!projectSpeechCanGenerate(state.project, sessionSettings, projectSpeechDraft())
+      || pending.has(`project-speech:${state.projectId}`)) return;
   const body = { expected_revision: state.project.revision };
   perform(`audio-generate:${scene.id}`, () => request(`/api/scenes/${encodeURIComponent(scene.id)}/audio/generate`,
     { method: 'POST', body }), () => success('配音任务已提交，完成后会保存为候选。'));
@@ -1127,7 +1189,7 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('pagehide', () => { stopPolling(); readController?.abort(); sourceController?.abort(); $('audio-preview').pause(); pauseProjectPlayer(); });
 window.addEventListener('beforeunload', event => {
-  if ([...drafts.values(), ...speechDrafts.values(), ...timingDrafts.values(), ...captionDrafts.values()].some(draft => draft.dirty)) {
+  if ([...drafts.values(), ...projectSpeechDrafts.values(), ...speechDrafts.values(), ...timingDrafts.values(), ...captionDrafts.values()].some(draft => draft.dirty)) {
     event.preventDefault(); event.returnValue = '';
   }
 });

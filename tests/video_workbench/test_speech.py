@@ -51,6 +51,45 @@ def test_unconfigured_and_internal_service_without_key():
     assert config.token is None and config.voice is None
 
 
+def test_verified_voice_discovery_is_authenticated_bounded_and_does_not_synthesize():
+    seen = []
+    def upstream(request):
+        seen.append(request)
+        return httpx.Response(200, stream=httpx.ByteStream(json.dumps(dict(model='kokoro', data=[
+            dict(id='male-one', name='男声一', language='zh-CN', gender='male'),
+            dict(id='male-two', name='男声二', language='zh-CN', gender='male')])).encode()))
+    config = SpeechSettings('http://speech/v1', 'kokoro', token='test-credential',
+                             voice='male-one', voice_discovery=True)
+    with SpeechClient(config, transport=httpx.MockTransport(upstream)) as client:
+        client.discover_voices()
+        assert len(seen) == 1 and seen[0].method == 'GET'
+        assert seen[0].url.path == '/v1/voices'
+        assert seen[0].headers['Authorization'] == 'Bearer test-credential'
+        assert [v['id'] for v in client.voice_catalog] == ['male-one', 'male-two']
+        assert [v['default'] for v in client.voice_catalog] == [True, False]
+        copied = client.voice_catalog
+        copied[0]['id'] = 'tampered'
+        assert client.voice_catalog[0]['id'] == 'male-one'
+
+
+@pytest.mark.parametrize('payload,status', [
+    (dict(model='wrong', data=[]), 200),
+    (dict(model='kokoro', data=[dict(id='other', name='其他', language='zh-CN', gender='male')]), 200),
+    (dict(model='kokoro', data=[dict(id='voice', name='男声', language='zh-CN', gender='male')] * 2), 200),
+    ({}, 302), ({}, 401), ({}, 503), ('x' * 65537, 200),
+], ids=['wrong-model', 'missing-default', 'duplicate-id', 'redirect', 'unauthorized', 'unavailable', 'oversize'])
+def test_bad_voice_catalog_fails_closed_without_redirect_retry_or_body_leak(payload, status):
+    requests = []
+    def upstream(request):
+        requests.append(request)
+        return httpx.Response(status, stream=httpx.ByteStream(json.dumps(payload).encode()))
+    with SpeechClient(SpeechSettings('http://speech/v1', 'kokoro', voice='voice', voice_discovery=True),
+                      transport=httpx.MockTransport(upstream)) as client:
+        with pytest.raises(SpeechError, match='speech_voice_catalog_unavailable'):
+            client.discover_voices()
+    assert len(requests) == 1
+
+
 @pytest.mark.parametrize('env', [
     {'VIDEO_TTS_URL': 'http://speech'}, {'VIDEO_TTS_MODEL': 'model'},
     {'VIDEO_TTS_VOICE': 'voice'}, {'VIDEO_TTS_TOKEN': 'secret'},

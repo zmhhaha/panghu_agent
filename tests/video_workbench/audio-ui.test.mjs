@@ -6,6 +6,8 @@ import {
   createCaptionDraft, createIntentKeys, createWorkspaceState, issueProjectRead, deliveryIssues,
   parsePronunciation, pronunciationText, selectProject, selectedAudioVersion,
   selectedVersion, timelinePosition, validateCaptionCues,
+  speechVoices, speechVoiceName, projectSpeechVoice, syncProjectSpeechDraft, projectVoiceOptions,
+  projectSpeechCanGenerate, audioVoiceLabel,
 } from '../../video_workbench/web/model.mjs';
 
 function fixture(revision = 1) {
@@ -20,6 +22,69 @@ function open(state, project) {
   selectProject(state, project.id);
   acceptProjectRead(state, issueProjectRead(state), project);
 }
+
+const voiceSession = { speech_configured: true, speech_voice: 'male-default', speech_voices: [
+  { id: 'male-default', name: '默认男声', language: 'zh-CN', gender: 'male', default: true },
+  { id: 'male-other', name: '另一男声', language: 'zh-CN', gender: 'male', default: false },
+] };
+
+test('voice choices use only the supplied catalog without inventing unavailable defaults', () => {
+  assert.deepEqual(speechVoices({}), []);
+  assert.deepEqual(projectVoiceOptions('', {}), [{ value: '', label: '暂无可用音色', disabled: true }]);
+  assert.equal(projectVoiceOptions('male-default', voiceSession)[0].label, '默认男声 · 默认');
+  const generic = { speech_voices: [{ id: 'custom', name: '自定义声音' }, { id: 'custom', name: '重复' }, null] };
+  assert.deepEqual(speechVoices(generic).map(item => item.id), ['custom']);
+  assert.equal(speechVoiceName('removed-voice', voiceSession), 'removed-voice');
+});
+
+test('one saved project voice applies across scenes and uses the server default for older projects', () => {
+  const project = fixture();
+  project.scenes[0].speech_settings = { voice: 'ignored-scene-voice' };
+  assert.equal(projectSpeechVoice(project, voiceSession), 'male-default');
+  project.speech_settings = { voice: 'male-other' };
+  assert.equal(projectSpeechVoice(project, voiceSession), 'male-other');
+  assert.equal(syncProjectSpeechDraft(null, project, voiceSession).voice, 'male-other');
+  assert.equal(project.scenes[0].head_audio_version_id, null);
+});
+
+test('project voice drafts preserve unsaved selection and original revision across polling and scene changes', () => {
+  const project = { ...fixture(3), speech_settings: { voice: 'male-default' } };
+  const draft = syncProjectSpeechDraft(null, project, voiceSession);
+  Object.assign(draft, { voice: 'male-other', dirty: true });
+  const newer = { ...project, revision: 8 };
+  assert.equal(syncProjectSpeechDraft(draft, newer, voiceSession), draft);
+  assert.equal(draft.expected_revision, 3);
+  assert.equal(projectSpeechCanGenerate(newer, voiceSession, draft), false);
+  const reloaded = syncProjectSpeechDraft(null, newer, voiceSession);
+  assert.equal(reloaded.voice, 'male-default');
+  assert.equal(reloaded.expected_revision, 8);
+  assert.equal(projectSpeechCanGenerate(newer, voiceSession, reloaded), true);
+  assert.equal(syncProjectSpeechDraft(draft, { ...newer, id: 'other-project' }, voiceSession).voice, 'male-default');
+});
+
+test('catalog withdrawal preserves selected project voice while preventing new synthesis', () => {
+  const project = { ...fixture(), speech_settings: { voice: 'removed-voice' } };
+  const draft = syncProjectSpeechDraft(null, project, voiceSession);
+  const options = projectVoiceOptions(draft.voice, voiceSession);
+  assert.equal(options[0].value, 'removed-voice');
+  assert.equal(options[0].disabled, true);
+  assert.equal(projectSpeechCanGenerate(project, voiceSession, draft), false);
+  assert.equal(projectSpeechCanGenerate(project, { ...voiceSession, speech_voices: [] }, draft), false);
+  assert.equal(projectSpeechCanGenerate({ ...project, speech_settings: { voice: 'male-default' } },
+    { ...voiceSession, speech_configured: false }), false);
+  assert.equal(project.scenes[0].audio_versions[0].id, 'audio-1');
+});
+
+test('historical audio labels retain the actual voice and never infer an uploaded recording voice', () => {
+  const original = { voice: 'male-default', source: 'generate' };
+  assert.equal(audioVoiceLabel(original, voiceSession), '默认男声');
+  const project = { speech_settings: { voice: 'male-other' } };
+  assert.equal(projectSpeechVoice(project, voiceSession), 'male-other');
+  assert.equal(audioVoiceLabel(original, voiceSession), '默认男声');
+  assert.equal(audioVoiceLabel({ ...original, source: 'upload' }, voiceSession), '上传录音');
+  assert.equal(audioVoiceLabel({ voice: 'removed-voice', source: 'generate' }, voiceSession), 'removed-voice');
+  assert.equal(audioVoiceLabel({}, voiceSession), '未记录音色');
+});
 
 test('audio selection is independent of visuals and completion never adopts audio', () => {
   const state = createWorkspaceState();

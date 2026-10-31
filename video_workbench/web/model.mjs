@@ -205,6 +205,52 @@ export function audioPath(versionId) {
   return `/api/audio-versions/${encodeURIComponent(versionId)}/audio`;
 }
 
+/** The operator's verified catalog is the only source of selectable voices. */
+export function speechVoices(session = {}) {
+  const seen = new Set();
+  return (Array.isArray(session.speech_voices) ? session.speech_voices : []).filter(voice => {
+    if (typeof voice?.id !== 'string' || !voice.id.trim() || seen.has(voice.id)) return false;
+    seen.add(voice.id);
+    return true;
+  }).map(voice => ({ ...voice, name: typeof voice.name === 'string' && voice.name.trim() ? voice.name : voice.id }));
+}
+
+export function speechVoiceName(voiceId, session = {}) {
+  return speechVoices(session).find(voice => voice.id === voiceId)?.name
+    ?? (typeof voiceId === 'string' && voiceId ? voiceId : '未记录音色');
+}
+
+export function projectSpeechVoice(project, session = {}) {
+  return project?.speech_settings?.voice ?? session.speech_voice ?? '';
+}
+
+export function syncProjectSpeechDraft(draft, project, session = {}) {
+  if (draft?.dirty && draft.project_id === project.id) return draft;
+  return { project_id: project.id, voice: projectSpeechVoice(project, session),
+    expected_revision: project.revision, dirty: false };
+}
+
+export function projectVoiceOptions(voiceId, session = {}) {
+  const options = speechVoices(session).map(voice => ({ value: voice.id,
+    label: `${voice.name}${voice.default ? ' · 默认' : ''}`, disabled: false }));
+  if (!options.some(option => option.value === voiceId)) {
+    options.unshift({ value: voiceId, label: voiceId ? `${speechVoiceName(voiceId, session)} · 当前不可用`
+      : options.length ? '请选择项目音色' : '暂无可用音色', disabled: true });
+  }
+  return options;
+}
+
+export function projectSpeechCanGenerate(project, session = {}, draft = null) {
+  return Boolean(session.speech_configured && !draft?.dirty
+    && speechVoices(session).some(voice => voice.id === projectSpeechVoice(project, session)));
+}
+
+/** Historical audio describes its own voice; uploads have no inferred voice. */
+export function audioVoiceLabel(version, session = {}) {
+  return version?.source === 'upload' || version?.origin === 'upload' ? '上传录音'
+    : speechVoiceName(version?.voice, session);
+}
+
 /** Name the scenes that still need resources for the selected delivery mode. */
 export function deliveryIssues(project, { silent = false, subtitles = true } = {}) {
   return (project?.scenes ?? []).flatMap((scene, index) => {

@@ -60,9 +60,11 @@ class AudioWorkflow:
                 if op is None:
                     continue
                 try:
+                    available = {v['id'] for v in getattr(self.speech_client, 'voice_catalog',
+                                 [{'id': self.speech_client.settings.voice}])}
                     if (op['input']['settings']['model'] != self.speech_client.settings.model
-                            or self.speech_client.settings.voice is not None
-                            and op['input']['settings']['voice'] != self.speech_client.settings.voice):
+                            or op['input']['settings']['voice'] not in self.store.speech_voices
+                            or op['input']['settings']['voice'] not in available):
                         raise ServiceError('speech_provider_changed', 409)
                     settings = op['input']['settings']
                     result = self.speech_client.synthesize(op['input']['spoken_text'],

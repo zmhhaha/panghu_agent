@@ -73,8 +73,11 @@ class SpeechSettings:
     total_timeout: float = 120.0
     max_audio_bytes: int = MAX_AUDIO_BYTES
     max_audio_seconds: float = MAX_AUDIO_SECONDS
+    voice_discovery: bool = False
 
     def __post_init__(self):
+        if type(self.voice_discovery) is not bool:
+            raise ValueError('Invalid speech voice discovery setting')
         object.__setattr__(self, 'base_url', _origin_prefix(self.base_url))
         if not _plain(self.model, 200) or self.voice is not None and not _plain(self.voice, 200):
             raise ValueError('An explicit speech model and valid optional voice are required')
@@ -94,7 +97,10 @@ class SpeechSettings:
         env = os.environ if env is None else env
         url, model, voice, token, token_file = (env.get(name, '') for name in
             ('VIDEO_TTS_URL', 'VIDEO_TTS_MODEL', 'VIDEO_TTS_VOICE', 'VIDEO_TTS_TOKEN', 'VIDEO_TTS_TOKEN_FILE'))
-        if not any((url, model, voice, token, token_file)):
+        discovery = env.get('VIDEO_TTS_VOICE_DISCOVERY', 'false')
+        if discovery not in {'true', 'false'}:
+            raise ValueError('Invalid speech voice discovery setting')
+        if not any((url, model, voice, token, token_file, discovery == 'true')):
             return None
         if not url or not model or token and token_file:
             raise ValueError('Configure speech URL and model with at most one credential source')
@@ -114,7 +120,7 @@ class SpeechSettings:
                     raise ValueError()
             except (OSError, ValueError, UnicodeError):
                 raise ValueError('Speech credential file is unavailable') from None
-        return cls(url, model, token or None, voice or None)
+        return cls(url, model, token or None, voice or None, voice_discovery=discovery == 'true')
 
 
 @dataclass(frozen=True)
@@ -203,6 +209,59 @@ class SpeechClient:
         self.settings = settings
         self._owned = client is None
         self._client = client or httpx.Client(transport=transport, follow_redirects=False, trust_env=False)
+        self._voices = [dict(id=settings.voice, name=settings.voice, language='und',
+                             gender='unspecified', default=True)] if settings.voice else []
+
+    @property
+    def voice_catalog(self):
+        return [dict(voice) for voice in self._voices]
+
+    def discover_voices(self):
+        """One bounded startup GET; only verified upstream IDs enable synthesis.
+
+        Opt-in for providers implementing this catalog. Failure rejects startup
+        instead of silently advertising an unverified list or default voice.
+        """
+        headers = {'Accept': 'application/json', 'Accept-Encoding': 'identity'}
+        if self.settings.token is not None:
+            headers['Authorization'] = 'Bearer ' + self.settings.token
+        timeout = httpx.Timeout(min(5, self.settings.read_timeout),
+                                connect=min(5, self.settings.connect_timeout))
+        request = httpx.Request('GET', self.settings.base_url + '/voices', headers=headers,
+                                extensions={'timeout': timeout.as_dict()})
+        response = None
+        try:
+            response = self._client.send(request, stream=True, auth=None, follow_redirects=False)
+            if (response.status_code != 200
+                    or response.headers.get('Content-Encoding', 'identity').strip().lower() not in {'', 'identity'}):
+                raise ValueError()
+            raw = bytearray()
+            deadline = monotonic() + 10
+            for chunk in response.iter_raw():
+                raw.extend(chunk)
+                if len(raw) > 64 * 1024 or monotonic() > deadline:
+                    raise ValueError()
+            catalog = json.loads(raw)
+            if (type(catalog) is not dict or catalog.get('model') != self.settings.model
+                    or type(catalog.get('data')) is not list or not 1 <= len(catalog['data']) <= 64):
+                raise ValueError()
+            voices = []
+            for item in catalog['data']:
+                if (type(item) is not dict
+                        or any(not _plain(item.get(key), limit) for key, limit in
+                               [('id', 200), ('name', 200), ('language', 40), ('gender', 40)])):
+                    raise ValueError()
+                voices.append({key: item[key] for key in ('id', 'name', 'language', 'gender')})
+                voices[-1]['default'] = item['id'] == self.settings.voice
+            ids = [v['id'] for v in voices]
+            if len(set(ids)) != len(ids) or self.settings.voice not in ids:
+                raise ValueError()
+            self._voices = voices
+        except (httpx.HTTPError, ValueError, TypeError, UnicodeError):
+            raise SpeechError('speech_voice_catalog_unavailable', 503) from None
+        finally:
+            if response is not None:
+                response.close()
 
     def close(self):
         if self._owned:
