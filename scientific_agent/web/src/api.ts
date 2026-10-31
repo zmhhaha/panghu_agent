@@ -3,6 +3,7 @@ const ROOT='/api/v1/research';
 let csrfToken:string|null=null;
 let identityRead:Promise<{user_id:string;csrf_token:string}>|null=null;
 const messages:Record<string,string>={
+  stale_evidence_requires_update:'当前证据基于上一版筛选。请更新证据整理，或按当前来源保存人工证据版本。',source_review_required:'请先明确核对稿件来源。',import_review_required:'请先完成人工恢复稿审阅确认，再采用或定稿。',imported_report_requires_review:'请先审阅并确认导入稿的来源与限制。',invalid_workflow_evidence:'每项证据必须填写来源、发现、方法、限制、访问范围和原文位置；摘要来源的位置需注明摘要。',workflow_evidence_source_mismatch:'证据来源或访问范围不属于当前纳入集合，请核对来源并避免将摘要标为全文。',report_too_large:'稿件超过 2 MiB UTF-8 字节限制，请缩减后导入。',invalid_report:'稿件为空、过大或包含不可接受的文本，请核对后重新导入。',
   authentication_required:'登录已过期，请重新登录后继续。',unauthenticated:'登录已过期，请重新登录后继续。',
   revision_conflict:'项目已在另一页面更新。已重新读取，请核对后再提交。',stale_revision:'项目已在另一页面更新。已重新读取，请核对后再提交。',
   stale_confirmation:'资料或方案已改变，请重新确认。',plan_confirmation_required:'请先确认研究方案。',evidence_confirmation_required:'请先确认证据与大纲。',
@@ -61,6 +62,9 @@ export const api={
   compare:(projectId:string,base:string,candidate:string,signal?:AbortSignal)=>request<Record<string,unknown>>(`/projects/${id(projectId)}/compare?base_version_id=${id(base)}&candidate_version_id=${id(candidate)}`,{signal}),
   annotate:(project:Project,versionId:string,text:string,sectionId?:string)=>mutation<Project>(`/projects/${id(project.id)}/annotations`,{expected_revision:project.revision,version_id:versionId,text,...(sectionId?{section_id:sectionId}:{})}),
   download:(projectId:string,versionId:string,format:'markdown'|'sources')=>`${ROOT}/projects/${id(projectId)}/versions/${id(versionId)}/download?format=${format}`
+  ,diagnostic:(projectId:string,jobId:string)=>`${ROOT}/projects/${id(projectId)}/jobs/${id(jobId)}/diagnostic`,
+  evidence:(projectId:string,evidenceId:string)=>request<import('./domain').EvidenceSnapshot>(`/projects/${id(projectId)}/evidence/${id(evidenceId)}`),
+  evidenceDownload:(projectId:string,evidenceId:string,format:'json'|'markdown')=>`${ROOT}/projects/${id(projectId)}/evidence/${id(evidenceId)}/download?format=${format}`
   ,legacyList:(query:string,offset:number,signal?:AbortSignal)=>request<LegacyReport[]>(`/scientific-reports?q=${id(query)}&offset=${offset}&limit=20`,{signal},''),
   legacyReport:(reportId:string,signal?:AbortSignal)=>request<LegacyReport>(`/scientific-reports/${id(reportId)}`,{signal},''),
   legacyCitations:(reportId:string,signal?:AbortSignal)=>request<{status?:string;availability?:string;citations?:Record<string,unknown>[];warnings?:unknown[]}>(`/scientific-research/${id(reportId)}/citations`,{signal},'')

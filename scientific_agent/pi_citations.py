@@ -161,12 +161,16 @@ def _safe_url(value):
 
 
 def _paper(row):
-    _object(row, ("paper_id", "title", "authors", "year", "doi", "pmid", "url",
+    fields = ("paper_id", "title", "authors", "year", "doi", "pmid", "url",
                   "sources", "retrieved_at", "availability", "abstract",
-                  "full_text_path", "verification"))
+                  "full_text_path", "verification")
+    _require(isinstance(row, dict) and set(fields) <= set(row)
+             and set(row) <= set(fields) | {"bibliography"})
     _text(row["paper_id"])
     _text(row["title"])
     _strings(row["authors"])
+    if "bibliography" in row:
+        _bibliography(row["bibliography"], row["authors"])
     _strings(row["sources"])
     _require(bool(row["sources"]))
     year = row["year"]
@@ -192,6 +196,26 @@ def _paper(row):
     _text(verification["error"], nullable=True, nonempty=False)
     if verification["status"] == "verified":
         _require(bool(verification["checked_at"] and verification["source"]))
+
+
+def _bibliography(value, authors):
+    _object(value, ("author_list_status", "author_count", "source_type", "dates", "version", "journal_reference"))
+    status, count = value["author_list_status"], value["author_count"]
+    _require(status in ("complete", "incomplete", "not_confirmed")
+        and (count is None or type(count) is int and len(authors) <= count <= MAX_INTEGER))
+    _require(status != "complete" or count == len(authors))
+    _require(value["source_type"] in ("preprint", "journal", "other"))
+    _object(value["dates"], ("first_posted", "version_updated", "journal_published", "online_published", "print_published"))
+    for date in value["dates"].values():
+        _text(date, nullable=True)
+        if date is not None:
+            _require(re.fullmatch(r"\d{4}(?:-\d{2}(?:-\d{2})?)?", date) is not None)
+            try:
+                datetime.fromisoformat(date + ("-01-01" if len(date) == 4 else "-01" if len(date) == 7 else ""))
+            except ValueError as exc:
+                raise TraceUnavailable("invalid_trace") from exc
+    _text(value["version"], nullable=True)
+    _text(value["journal_reference"], nullable=True)
 
 
 def _evidence(row):

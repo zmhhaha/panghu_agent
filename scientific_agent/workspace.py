@@ -99,6 +99,8 @@ def _event(project, action, details=None):
 
 
 def _invalidate(project, plan=False):
+    from .workspace_recovery import retain_evidence
+    retain_evidence(project)
     project['input_revision'] += 1
     if plan:
         project['search_batch_history'].extend(copy.deepcopy(project['search_batches']))
@@ -110,8 +112,8 @@ def _invalidate(project, plan=False):
     else:
         project['stage'] = 'evidence' if project['confirmations']['plan'] else 'plan'
     project['confirmations']['evidence'] = None
-    project['evidence'] = None
-    project['outline'] = None
+    # The last published snapshot stays readable until its replacement has
+    # passed validation. Its stale marker prevents use under the new scope.
 
 
 def _stage_output(stage, output):
@@ -125,6 +127,7 @@ def _material_context(project):
               'doi', 'status', 'parse_error', 'recorded_at')
     return [{key: copy.deepcopy(item.get(key)) for key in fields}
             for item in project['materials'] if not item.get('excluded')
+            and item.get('material_role', item.get('classification')) != 'draft'
             and item.get('status') in {'ready', 'metadata_only'}]
 
 
@@ -145,10 +148,21 @@ def _all_sources(project):
 
 
 def _fill_selections(project):
+    from .source_quality import assess_source
     known = {item['source_id']: item for item in project['selections']}
-    project['selections'] = [known.get(source_id, dict(source_id=source_id,
-        included=True, reason='Suggested inclusion; awaiting evidence confirmation.'))
-        for source_id in _all_sources(project)]
+    result = []
+    queries = project.get('plan', {}).get('content', {}).get('search_queries', []) if project.get('plan') else []
+    for source_id, source in _all_sources(project).items():
+        if source_id in known:
+            result.append(known[source_id])
+            continue
+        quality = assess_source(source, project['requirements'], queries) if 'paper_id' in source else dict(
+            default_included=True, reasons=[])
+        reasons = quality.get('reasons', [])
+        result.append(dict(source_id=source_id, included=quality['default_included'],
+            reason='; '.join(item['message'] for item in reasons) if reasons else
+                'Suggested inclusion; awaiting evidence confirmation.'))
+    project['selections'] = result
 
 
 def _new_job(project, stage, *, feedback='', source_policy=None, revision=None):
@@ -225,6 +239,8 @@ class WorkspaceStore:
                 and project['owner'] == owner, 'project_integrity_error', 409)
         except (ValueError, KeyError, TypeError):
             raise WorkspaceError('project_integrity_error', status=409) from None
+        from .workspace_recovery import hydrate_evidence
+        hydrate_evidence(project)
         return project
 
     def raw(self, owner, project_id):
@@ -233,20 +249,33 @@ class WorkspaceStore:
     @staticmethod
     def public(project, summary=False):
         result = copy.deepcopy(project)
+        from .source_quality import assess_source, retrieval_summary
+        from .workspace_materials import material_display, materials_summary
+        result['retrieval_summary'] = retrieval_summary(project)
+        result['materials_summary'] = materials_summary(project['materials'])
+        queries = (project.get('plan') or {}).get('content', {}).get('search_queries', [])
+        result['selection_assessments'] = {source_id: assess_source(source, project['requirements'], queries)
+            for source_id, source in _all_sources(project).items() if 'paper_id' in source}
         result.pop('_receipts', None)
         result.pop('owner', None)
         result.pop('_internal_mutation', None)
         for job in result['jobs']:
+            from .workspace_diagnostics import diagnostic
+            job['diagnostic'] = diagnostic(job)
+            job['error_code'] = job['diagnostic']['code']
             for key in ('frozen_context', 'task', 'request', 'input_refs', 'revision_material',
                         'revision_job', 'admission_claim', 'result'):
                 job.pop(key, None)
         for material in result['materials']:
+            material.update(material_display(material))
             original = material.pop('text', '')
             material['text_preview'] = original[:2000]
         for version in result['versions']:
             version['stale'] = bool(version.get('stale') or
                                     version['input_revision'] != result['input_revision'])
-            for key in ('report_markdown', 'trace_artifacts', 'trace_manifest'):
+            version.setdefault('origin', 'website_generated')
+            version.setdefault('model_trace_available', bool(version.get('trace_artifacts')))
+            for key in ('report_markdown', 'trace_artifacts', 'trace_manifest', 'source_snapshot'):
                 version.pop(key, None)
         for batch in result['search_batches'] + result.get('search_batch_history', []):
             batch.pop('observations', None)
@@ -263,6 +292,10 @@ class WorkspaceStore:
 
     def get(self, owner, project_id):
         return self.public(self._load(owner, project_id))
+
+    def evidence(self, owner, project_id, evidence_id):
+        from .workspace_recovery import evidence_detail
+        return evidence_detail(self._load(owner, project_id), evidence_id)
 
     def list(self, owner):
         rows = self.db._query('SELECT document FROM scientific_workspace_projects WHERE owner='
@@ -399,16 +432,10 @@ class WorkspaceStore:
                     project['selections'] = updated
             if 'outline' in payload:
                 require(project['outline'] and project['evidence'], 'outline_required', 409)
+                require(not project['evidence'].get('stale'), 'stale_evidence_requires_update', 409)
                 output = copy.deepcopy(payload['outline'])
-                from .workflow_contracts import validate_stage_output
-                validate_stage_output('outline', output,
-                                      {'evidence_snapshot': project['evidence']['snapshot']})
-                project['input_revision'] += 1
-                project['outline'] = dict(id=str(uuid4()), revision=project['input_revision'],
-                    content=output, output=output, snapshot_sha256=project['evidence']['sha256'],
-                    created_at=utc_now(), edited=True)
-                project['confirmations']['evidence'] = None
-                project['stage'] = 'evidence'
+                from .workspace_recovery import save_manual_evidence
+                save_manual_evidence(project, output, allow_limited=True)
             _event(project, 'project_updated', dict(fields=sorted(set(payload) - {'expected_revision'})))
         return self.mutate(owner, project_id, payload.get('expected_revision'), key,
                            'patch', payload, change)
@@ -464,11 +491,18 @@ class WorkspaceStore:
             max(item['start_byte'], reference['start_byte']) < min(item['end_byte'], reference['end_byte'])
             for reference in bibliography)]
         artifacts = version.get('trace_artifacts', {})
-        version['references'] = json.loads(base64.b64decode(artifacts['references']))
-        for role in ('evidence', 'claims'):
-            version[role] = [json.loads(line) for line in
-                base64.b64decode(artifacts[role]).decode('utf-8').splitlines() if line]
-        for field in ('trace_artifacts', 'trace_manifest'):
+        version.setdefault('origin', 'website_generated')
+        version.setdefault('model_trace_available', bool(artifacts))
+        if artifacts:
+            version['references'] = json.loads(base64.b64decode(artifacts['references']))
+            for role in ('evidence', 'claims'):
+                version[role] = [json.loads(line) for line in
+                    base64.b64decode(artifacts[role]).decode('utf-8').splitlines() if line]
+        else:
+            version['revision_sections'] = []
+            for role in ('references', 'evidence', 'claims'):
+                version.setdefault(role, [])
+        for field in ('trace_artifacts', 'trace_manifest', 'source_snapshot'):
             version.pop(field, None)
         version['finalized'] = any(f['version_id'] == version_id for f in project['finalizations'])
         return version
@@ -505,7 +539,9 @@ class WorkspaceStore:
 
     def action(self, owner, project_id, action, payload, key, *, source_policy=None):
         require(type(payload) is dict and set(payload) <= {'expected_revision', 'feedback',
-            'version_id', 'section_ids', 'job_id', 'allow_limited_evidence', 'unresolved_notes'})
+            'version_id', 'section_ids', 'job_id', 'allow_limited_evidence', 'unresolved_notes',
+            'outline', 'report_markdown', 'origin', 'parent_version_id', 'source_reviewed',
+            'material_id', 'classification', 'declared_sources'})
         def change(project):
             feedback = text(payload.get('feedback', ''), 2000)
             if action == 'plan':
@@ -533,6 +569,9 @@ class WorkspaceStore:
             elif action == 'confirm_evidence':
                 require(project['confirmations']['plan'], 'plan_confirmation_required', 409)
                 require(project['evidence'] and project['outline'], 'evidence_outline_required', 409)
+                require(not project['evidence'].get('stale') and not project['outline'].get('stale')
+                    and project['evidence'].get('input_revision') == project['input_revision'],
+                    'stale_evidence_requires_update', 409)
                 gaps = project['outline']['content'].get('gaps', [])
                 limited = payload.get('allow_limited_evidence', False)
                 require(type(limited) is bool)
@@ -551,8 +590,34 @@ class WorkspaceStore:
                 require(project['confirmations']['plan'] and project['plan'], 'plan_confirmation_required', 409)
                 _invalidate(project)
                 _new_job(project, 'retrieve', feedback=feedback, source_policy=project['plan']['source_policy'])
+            elif action == 'manual_evidence':
+                from .workspace_recovery import save_manual_evidence
+                save_manual_evidence(project, copy.deepcopy(payload.get('outline')),
+                    allow_limited=payload.get('allow_limited_evidence', False))
+            elif action == 'classify_material':
+                from .workspace_materials import configure_material
+                material_id = identifier(payload.get('material_id'))
+                material = next((item for item in project['materials']
+                    if item['material_id'] == material_id), None)
+                require(material is not None, 'material_not_found', 404)
+                configuration = {key: payload[key] for key in ('classification', 'declared_sources')
+                                 if key in payload}
+                updated = configure_material(material, configuration)
+                if updated != material:
+                    material.clear()
+                    material.update(updated)
+                    _invalidate(project, plan=not bool(project['confirmations']['plan']))
+                    _fill_selections(project)
+            elif action == 'import_report':
+                from .workspace_recovery import import_report
+                import_report(project, payload)
+            elif action == 'confirm_import':
+                from .workspace_recovery import confirm_import
+                confirm_import(project, self._version(project, payload.get('version_id')), payload)
             elif action == 'revise':
                 version = self._version(project, payload.get('version_id'))
+                require(version.get('model_trace_available', bool(version.get('trace_artifacts'))),
+                    'imported_report_requires_manual_revision', 409)
                 require(not version.get('stale') and version['input_revision'] == project['input_revision']
                     and project['confirmations']['evidence'] is not None,
                     'stale_version_requires_reconfirmation', 409)
@@ -570,8 +635,13 @@ class WorkspaceStore:
                 version = self._version(project, payload.get('version_id'))
                 require(not version.get('stale') and version['input_revision'] == project['input_revision'],
                         'stale_version_requires_reconfirmation', 409)
-                require(project['confirmations']['evidence'] is not None,
-                        'evidence_confirmation_required', 409)
+                imported = version.get('model_trace_available') is False
+                if imported:
+                    require(version.get('import_review') is not None,
+                            'import_review_confirmation_required', 409)
+                else:
+                    require(project['confirmations']['evidence'] is not None,
+                            'evidence_confirmation_required', 409)
                 if action == 'adopt':
                     require(not version.get('parent_version_id') or
                         version['parent_version_id'] == project['current_version_id'],

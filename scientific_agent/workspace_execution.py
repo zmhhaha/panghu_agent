@@ -190,6 +190,72 @@ class WorkspaceService:
             self._bind(owner, project_id, job, value)
         return value
 
+    def _observe(self, owner, project_id, job, remote):
+        """Persist real engine event times; a status poll is never progress."""
+        from .workspace_diagnostics import observed_time
+        cursor = job.get('observed_event_cursor', 0)
+        if type(remote.get('event_cursor')) is not int or remote['event_cursor'] <= cursor:
+            return
+        def read_page(after):
+            try:
+                page = self._request('GET', '/v1/jobs/' + remote['job_id']
+                    + '/events?after=' + str(after) + '&limit=100')
+                items = page.get('items') if type(page) is dict else None
+                return items[:100] if type(items) is list else None
+            except Exception:
+                # Timing is supplementary; a diagnostic transport/parser
+                # failure cannot block reception of a valid stopped result.
+                return None
+        events = read_page(cursor)
+        if events is None:
+            return
+        fields = {}
+        def consume(items):
+            nonlocal cursor
+            for event in items:
+                if type(event) is not dict:
+                    continue
+                seq, kind = event.get('seq'), event.get('type')
+                stamp = observed_time(event.get('created_at'))
+                if type(seq) is not int or seq <= cursor or not stamp:
+                    continue
+                cursor = seq
+                if kind == 'job.queued':
+                    fields['queued_at'] = stamp
+                if kind == 'job.running' and not job.get('started_at') and 'started_at' not in fields:
+                    fields['started_at'] = stamp
+                if kind in {'job.running', 'engine.progress', 'job.completed',
+                            'job.failed', 'job.timed_out', 'job.cancelled', 'job.needs_input'}:
+                    fields.update(last_progress_at=stamp, last_event=kind)
+                if kind in {'job.completed', 'job.failed', 'job.timed_out', 'job.cancelled', 'job.needs_input'}:
+                    fields['finished_at'] = stamp
+        consume(events)
+        if remote.get('state') in {'completed', 'failed', 'timed_out', 'cancelled', 'needs_input'} \
+                and remote['event_cursor'] > cursor:
+            # Finished jobs will not be polled by the reconciler again. Bound
+            # diagnostics to two pages while still observing their actual final
+            # event. Missing start events in the skipped middle stay unknown.
+            tail = read_page(max(cursor, remote['event_cursor'] - 100))
+            if tail is not None:
+                consume(tail)
+        if cursor > job.get('observed_event_cursor', 0):
+            try:
+                self._set_job(owner, project_id, job['id'], observed_event_cursor=cursor, **fields)
+            except Exception:
+                log.warning('research task diagnostic timing deferred (task=%s)', job['id'])
+
+    def job_diagnostic(self, owner, project_id, task_id):
+        from .workspace_diagnostics import diagnostic_download
+        project = self.store.raw(owner, project_id)
+        job = _job(project, task_id)
+        if job.get('remote_job_id'):
+            try:
+                self._observe(owner, project_id, job, self._remote(owner, project_id, job))
+            except WorkerError:
+                pass
+        job = _job(self.store.raw(owner, project_id), task_id)
+        return diagnostic_download(project_id, job)
+
     def _candidate(self, job, remote):
         """Recheck stopped attempt, manifest, bytes and business provenance."""
         require(remote.get('state') == 'completed', 'result_not_ready', 409)
@@ -409,6 +475,7 @@ class WorkspaceService:
                 continue
             job = _job(self.store.raw(owner, project_id), task_id)
             state = remote.get('state')
+            self._observe(owner, project_id, job, remote)
             if job['cancel_requested'] and state not in {'completed', 'failed', 'cancelled', 'timed_out'}:
                 # The cancellation intent is already durable. Reissuing this
                 # idempotent cancel operation never creates another execution.
@@ -418,13 +485,34 @@ class WorkspaceService:
             if state == 'completed':
                 try:
                     result, manifest_hash = self._candidate(job, remote)
-                    self._ingest(owner, project_id, task_id, result, manifest_hash)
                 except (ValueError, KeyError, TypeError, UnicodeError) as exc:
                     # The completed attempt is stopped; an invalid candidate is
                     # retained as a failure, never substituted into the project.
                     code = getattr(exc, 'code', 'stage_result_invalid')
                     self._set_job(owner, project_id, task_id, state='invalid_result', error_code=code)
                     continue
+                try:
+                    self._ingest(owner, project_id, task_id, result, manifest_hash)
+                except Exception as exc:
+                    # A valid stopped result that could not be committed is a
+                    # storage failure, never a fabricated validation failure.
+                    code = getattr(exc, 'code', 'workspace_storage_unavailable')
+                    if code not in {'project_storage_limit', 'project_revision_conflict'}:
+                        code = 'workspace_storage_unavailable'
+                    def record_reception_failure(project):
+                        saved = _job(project, task_id)
+                        # A write may have committed before its response was
+                        # lost. Never demote that completed receipt: doing so
+                        # would publish the same output/version a second time.
+                        if saved['state'] == 'completed':
+                            require(saved['result_digest'] == result['result_digest']
+                                and saved['manifest_sha256'] == manifest_hash,
+                                'stage_publication_conflict', 409)
+                            return False
+                        saved.update(state='receiving', error_code=code, updated_at=utc_now())
+                    recovered = self.store.internal(owner, project_id, record_reception_failure)
+                    if _job(recovered, task_id)['state'] != 'completed':
+                        continue
                 self._ack(owner, project_id, _job(self.store.raw(owner, project_id), task_id))
             elif state in {'failed', 'cancelled', 'timed_out', 'needs_input'}:
                 self._set_job(owner, project_id, task_id,

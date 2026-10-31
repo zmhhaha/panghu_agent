@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -77,6 +78,14 @@ def main():
         api_image = args.api_image or (directory / 'api-image.txt').read_text().strip()
         ui_image = args.ui_image or (directory / 'ui-image.txt').read_text().strip()
         api, ui, policies = resources(args.namespace, api_image, ui_image)
+        revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+        if re.fullmatch(r'[0-9a-f]{40}', revision) is None:
+            raise ValueError('source_revision_required')
+        for patch, image in ((api, api_image), (ui, ui_image)):
+            annotations = {'panghu.io/source-revision': revision,
+                           'panghu.io/image-digest': image.rsplit('@', 1)[-1]}
+            patch.setdefault('metadata', {}).setdefault('annotations', {}).update(annotations)
+            patch['spec']['template'].setdefault('metadata', {}).setdefault('annotations', {}).update(annotations)
         output = args.output or directory / datetime.now(timezone.utc).strftime('deploy-%Y%m%dT%H%M%S%fZ')
         output.mkdir(parents=True, exist_ok=False)
         for name, value in (('api-patch', api), ('ui-patch', ui), ('ingress-policies', policies)):

@@ -351,3 +351,45 @@ def test_explicit_user_materials_preserve_honest_access_and_no_public_url():
     assert paper['availability']['full_text']['obtained_at'] == STAMP
     assert paper['url'] is None and paper['verification']['status'] == 'unknown'
     assert paper['sources'] == ['user_provided_material']
+
+
+def test_outline_prompt_binds_materials_to_paper_id_and_forbids_array_or_extra_evidence_fields():
+    prompt = implementation('research.outline.v1').build_prompt(task('outline', outline_context()))
+    assert 'Keep original paper_id/material_id in evidence' not in prompt
+    assert 'Always use the field paper_id' in prompt
+    assert 'NEVER output a material_id' in prompt
+    assert 'EXACTLY seven nonempty STRING fields' in prompt
+    assert 'limitations is one string, not an array or object' in prompt
+    assert 'access_level=metadata ONLY' in prompt
+    assert 'retain supported evidence from other' in prompt
+    assert 'does not mean that every cited paper' in prompt
+    schema = json.loads(prompt.split('Exact evidence row schema (seven string fields; no extra fields): ', 1)[1]
+        .split('\nAll other fields', 1)[0])
+    assert schema['additionalProperties'] is False
+    assert set(schema['required']) == {'evidence_id', 'paper_id', 'finding', 'method',
+        'limitations', 'access_level', 'locator'}
+
+
+@pytest.mark.parametrize('bad_shape', ['replace_id', 'extra_material_id', 'extra_source_type', 'array_limits'])
+def test_reported_material_evidence_shape_errors_remain_rejected(bad_shape):
+    ctx = outline_context()
+    material = dict(material_id=uid(110), name='Uploaded DSH official documentation', kind='markdown',
+        sha256='e' * 64, text='Actual uploaded documentation.', access_level='full_text',
+        doi=None, status='ready', parse_error=None, recorded_at=STAMP)
+    ctx['materials'] = [material]
+    ctx['evidence_snapshot']['materials'] = [deepcopy(material)]
+    ctx['evidence_snapshot']['selections'].append(dict(source_id=uid(110), included=True, reason=''))
+    output = outline()
+    row = output['evidence'][0]
+    row.update(paper_id=uid(110), access_level='full_text', locator='Uploaded file, first paragraph')
+    contracts.validate_stage_output('outline', output, ctx)
+    if bad_shape == 'replace_id':
+        row['material_id'] = row.pop('paper_id')
+    elif bad_shape == 'extra_material_id':
+        row['material_id'] = row['paper_id']
+    elif bad_shape == 'extra_source_type':
+        row['source_type'] = 'official_documentation'
+    else:
+        row['limitations'] = ['Only an uploaded file was read.']
+    with pytest.raises(contracts.WorkflowContractError, match='invalid_workflow_evidence'):
+        contracts.validate_stage_output('outline', output, ctx)

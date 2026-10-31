@@ -134,6 +134,66 @@ def test_view_is_deterministic_and_does_not_upgrade_an_abstract_to_full_text():
     assert paper['full_text_path'] is None
 
 
+def test_material_uuid_has_explicit_paper_id_binding_and_exact_seven_string_template():
+    ctx = outline_context()
+    ctx['materials'] = [material('Actual supplied engineering document.\nA recorded detail.')]
+    snapshot = ctx['evidence_snapshot']
+    snapshot['materials'] = deepcopy(ctx['materials'])
+    snapshot['selections'].append(dict(source_id=uid(120), included=True, reason='Provided document'))
+    before = deepcopy(ctx)
+    _, files = render(ctx, 'outline')
+    rows = [json.loads(line) for line in files['selected-sources/index.jsonl'].splitlines()]
+    binding = next(row for row in rows if row['kind'] == 'material')
+    assert binding['source_id'] == binding['paper_id'] == uid(120)
+    assert binding['allowed_access_levels'] == ['metadata', 'full_text']
+    template = binding['evidence_template']
+    assert set(template) == {'evidence_id', 'paper_id', 'finding', 'method',
+        'limitations', 'access_level', 'locator'}
+    assert all(type(value) is str and value.strip() for value in template.values())
+    assert template['paper_id'] == uid(120) and template['access_level'] == 'full_text'
+    assert 'material_id' not in template
+    assert binding['evidence_template_is_example'] is True
+    assert 'does not acquire' in binding['access_note']
+    assert json.loads(files[binding['path']]) == ctx['materials'][0]
+    output = dict(evidence=[dict(template, finding='The supplied document records one detail.',
+        method='Document inspection', locator='Uploaded file, line 2')],
+        sections=[dict(section_id='document', title='Recorded document', questions=[],
+                       evidence_ids=[template['evidence_id']])], gaps=[])
+    contracts.validate_stage_output('outline', output, ctx)
+    assert ctx == before
+
+
+def test_metadata_only_binding_never_suggests_abstract_and_partial_source_gap_is_valid():
+    ctx = outline_context()
+    batch = ctx['evidence_snapshot']['search_batches'][0]
+    metadata_only = deepcopy(batch['papers'][0])
+    metadata_only['abstract'] = None
+    metadata_only['availability']['abstract'] = dict(available=False, obtained_at=None)
+    batch['papers'][0] = metadata_only
+    batch['observations']['observations'][0]['response']['papers'][0] = deepcopy(metadata_only)
+    ctx['materials'] = [material('Actual readable source body.')]
+    ctx['evidence_snapshot']['materials'] = deepcopy(ctx['materials'])
+    ctx['evidence_snapshot']['selections'].append(dict(source_id=uid(120), included=True, reason=''))
+    _, files = render(ctx, 'outline')
+    rows = [json.loads(line) for line in files['selected-sources/index.jsonl'].splitlines()]
+    paper_binding = next(row for row in rows if row['kind'] == 'paper')
+    assert paper_binding['allowed_access_levels'] == ['metadata']
+    assert paper_binding['evidence_template']['access_level'] == 'metadata'
+    assert paper_binding['evidence_template']['locator'].startswith('Metadata:')
+    assert 'No abstract or full text was acquired' in paper_binding['access_note']
+    usable = next(row for row in rows if row['kind'] == 'material')['evidence_template']
+    output = dict(evidence=[dict(usable, finding='The readable supplied file records a detail.',
+        method='Document inspection', locator='Uploaded file, first paragraph')],
+        sections=[dict(section_id='findings', title='Recorded details', questions=[],
+                       evidence_ids=[usable['evidence_id']])],
+        gaps=['The metadata-only paper supplies no abstract; its scientific findings remain unknown.'])
+    contracts.validate_stage_output('outline', output, ctx)
+    invalid = deepcopy(output)
+    invalid['evidence'][0].update(paper_id=metadata_only['paper_id'], access_level='abstract', locator='Abstract')
+    with pytest.raises(contracts.WorkflowContractError, match='workflow_evidence_source_mismatch'):
+        contracts.validate_stage_output('outline', invalid, ctx)
+
+
 def test_outline_source_with_a_single_abstract_over_native_read_limit_is_fully_readable():
     ctx = outline_context()
     batch = ctx['evidence_snapshot']['search_batches'][0]

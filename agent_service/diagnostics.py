@@ -60,6 +60,16 @@ _NAMED_CATEGORIES = {'RuntimeExecutionError': 'runtime_error', 'ProfileError': '
                      'TransportError': 'http_transport_error', 'ProtocolError': 'http_protocol_error',
                      'RequestError': 'http_request_error', 'HTTPStatusError': 'http_status_error'}
 
+# These invariant codes contain no model text, source IDs or credentials. Keep
+# them through the signed failed handoff so business callers can distinguish
+# malformed evidence from a recorded source/access mismatch.
+SAFE_OUTPUT_CODES = frozenset({'invalid_workflow_evidence',
+    'workflow_evidence_source_mismatch', 'workflow_observation_mismatch',
+    'workflow_full_text_not_acquired', 'workflow_search_budget_exhausted',
+    'invalid_workflow_paper', 'invalid_workflow_contract',
+    'invalid_research_json', 'research_artifact_too_large'})
+_CODES = _CODES | SAFE_OUTPUT_CODES
+
 
 def log_pi_model_failure(message: dict) -> None:
     """Describe the pinned SDK's error shape without logging its native text.

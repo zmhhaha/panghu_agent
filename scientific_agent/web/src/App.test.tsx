@@ -27,6 +27,24 @@ function server(initial:Project|null,handler?:(call:Call)=>Response|Promise<Resp
 beforeEach(()=>{localStorage.clear();});
 
 describe('project workflow',()=>{
+  it('keeps old evidence visible but blocks writing from a stale screening version',async()=>{
+    const outline={evidence:[{evidence_id:'e1',paper_id:'p1',finding:'筛选变更前的证据',access_level:'abstract'}],sections:[{section_id:'s1',title:'上一版大纲',questions:['原问题'],evidence_ids:['e1']}],gaps:[]};
+    server(project({stage:'evidence',input_revision:5,evidence:{id:'old-evidence',input_revision:4,stale:true,content:outline},outline:{id:'old-outline',stale:true,output:outline},jobs:[{id:'failed',stage:'outline',status:'failed',diagnostic:{reason:'结构校验失败'}}]}));render(<App/>);
+    expect(await screen.findByText('筛选变更前的证据')).toBeInTheDocument();expect(screen.getByRole('textbox',{name:'第1节标题'})).toBeDisabled();
+    await userEvent.click(screen.getByRole('checkbox',{name:/我已核对资料/}));expect(screen.getByRole('button',{name:/确认证据与大纲并写作/})).toBeDisabled();
+    expect(screen.getByRole('button',{name:/证据版本 1.*待更新/})).toBeInTheDocument();
+  });
+  it('allows import without earlier model success and requires review before adoption',async()=>{
+    const imported={id:'manual-v1',origin:'user_import',model_trace_available:false,report_markdown:'# 手动恢复稿',sources:[],references:[],revision_sections:[]};
+    const p=project({stage:'review',current_version_id:null,versions:[imported]});
+    const backend=server(p,call=>call.path.endsWith('/versions/manual-v1')?response(imported):call.path.endsWith('/actions/confirm_import')?response({...p,revision:5,versions:[{...imported,import_review:{source_reviewed:true}}]}):undefined);
+    render(<App/>);await screen.findByRole('heading',{name:'手动恢复稿'});
+    expect(screen.getByRole('button',{name:/生成修改候选/})).toBeDisabled();expect(screen.getByRole('button',{name:/采用此修改候选/})).toBeDisabled();
+    await userEvent.click(screen.getByRole('checkbox',{name:/我已审阅这个版本/}));await userEvent.click(screen.getByRole('checkbox',{name:/我理解并接受已记录/}));await userEvent.click(screen.getByRole('button',{name:'确认人工恢复稿审阅'}));
+    await waitFor(()=>expect(screen.getByRole('button',{name:/采用此修改候选/})).toBeEnabled());
+    expect(backend.calls.find(call=>call.path.endsWith('/actions/confirm_import'))?.body).toEqual({expected_revision:4,version_id:'manual-v1',source_reviewed:true,allow_limited_evidence:true,unresolved_notes:''});
+    expect(backend.calls.some(call=>/actions\/(?:outline|draft|revise)$/.test(call.path))).toBe(false);
+  });
   it('creates and persists a project from one question without starting a model job',async()=>{
     const backend=server(null);render(<App/>);await screen.findByRole('button',{name:/开始一项研究/});await userEvent.click(screen.getByRole('button',{name:/开始一项研究/}));
     await userEvent.type(screen.getByRole('textbox',{name:'研究问题'}),'编译缓存有哪些一致性保证？');await userEvent.click(screen.getByRole('button',{name:/建立项目/}));

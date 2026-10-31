@@ -23,18 +23,27 @@ export interface OutlineSection { section_id:string; title:string; questions:str
 export interface OutlineOutput { evidence:Evidence[]; sections:OutlineSection[]; gaps:string[]; }
 export interface Material { id:string; name?:string; filename?:string; doi?:string; status?:string; parse_status?:string; access_level?:string; error?:string; included?:boolean;excluded?:boolean; }
 export interface SearchBatch { id:string; output?:{papers?:Paper[];gaps?:string[]}; papers?:Paper[]; created_at?:string; }
-export interface EvidenceSnapshot { id:string; output?:OutlineOutput; content?:OutlineOutput; papers?:Paper[]; evidence?:Evidence[]; selections?:Selection[]; gaps?:string[]; [key:string]:unknown; }
+export interface EvidenceSnapshot { id:string; output?:OutlineOutput; content?:OutlineOutput; papers?:Paper[]; evidence?:Evidence[]; selections?:Selection[]; gaps?:string[]; stale?:boolean;input_revision?:number;origin?:string;created_at?:string; [key:string]:unknown; }
 export interface Selection { source_id:string; included:boolean; reason:string; }
+export interface QualityAssessment {default_included:boolean;reasons:{code:string;message:string}[];warnings:{code:string;message:string}[];matched_terms:string[];year_range:(number|null)[]|null;assessed_years:number[];method:string;}
+export interface Bibliography {author_list_status:'complete'|'incomplete'|'not_confirmed';author_count:number|null;source_type:'preprint'|'journal'|'other';dates:{first_posted:string|null;version_updated:string|null;journal_published:string|null;online_published:string|null;print_published:string|null};version:string|null;journal_reference:string|null;}
+export interface Paper {bibliography?:Bibliography;source_quality?:QualityAssessment;quality_assessment?:QualityAssessment;}
+export interface Material {file_status?:string;material_role?:string;source_count?:number;paper_count?:number;document_count?:number;source_count_basis?:string;file_read_scope?:string;access_note?:string;declared_sources?:{title?:string;source_id?:string;access_level?:string;source_type?:string;locator?:string;start_line?:number;end_line?:number;doi?:string}[];}
+export interface RetrievalSummary {calls_used:number;call_budget:number;budget_exhausted:boolean;providers:{provider:string;query:string;status:string;result_count:number}[];topics_without_evidence:string[];gaps:string[];}
+export interface SearchBatch {retrieval_summary?:RetrievalSummary;search_summary?:RetrievalSummary;}
+export interface Project {retrieval_summary?:RetrievalSummary;source_quality?:Record<string,QualityAssessment>;selection_assessments?:Record<string,QualityAssessment>;}
+export interface Project {materials_summary?:{file_count:number;read_file_count:number;unique_file_count:number;draft_count:number;undeclared_file_count:number;declared_source_count:number;paper_count:number;document_count:number;abstract_count:number;full_text_count:number;count_basis:string};}
 export interface Section { section_id?:string; id?:string; title:string; start?:number; end?:number; editable?:boolean;kind?:string; }
 export interface Version { id:string; title?:string; created_at?:string; status?:string; parent_version_id?:string; report_markdown?:string; section_index?:Section[]|{schema_version?:string;sections:Section[]}; revision_sections?:Section[]; sections?:Section[]; citations?:unknown; sources?:Paper[]; [key:string]:unknown; }
-export interface Job { id:string; stage?:string; action?:string; status:string; progress?:string; message?:string; error?:string|{code?:string}; created_at?:string; [key:string]:unknown; }
+export interface JobDiagnostic {category?:string;code?:string;reason?:string;step?:string;retryable?:boolean;suggested_action?:string;correlation_id?:string;started_at?:string|null;last_progress_at?:string|null;}
+export interface Job { id:string; stage?:string; action?:string; status:string; progress?:string; message?:string; error?:string|{code?:string}; created_at?:string;updated_at?:string;remote_job_id?:string|null;diagnostic?:JobDiagnostic; [key:string]:unknown; }
 export interface Annotation { id:string; version_id:string; section_id?:string; text:string; resolved?:boolean; }
 export interface Finalization { id:string; version_id:string; created_at?:string; }
 export interface ProjectSummary { id:string; title:string; revision:number; stage:Stage; updated_at?:string; active_job_id?:string|null; }
 export interface Project extends ProjectSummary {
   input_revision?:number;
   requirements:Requirements; materials:Material[]; plan:Plan|null; confirmations:{plan:Record<string,unknown>|null;evidence:Record<string,unknown>|null};
-  search_batches:SearchBatch[]; evidence:EvidenceSnapshot|null; outline:{id?:string;output:OutlineOutput}|null;
+  search_batches:SearchBatch[]; evidence:EvidenceSnapshot|null;evidence_history?:EvidenceSnapshot[]; outline:{id?:string;output:OutlineOutput;stale?:boolean;input_revision?:number}|null;
   selections?:Selection[]; versions:Version[]; current_version_id:string|null; finalizations:Finalization[]; annotations:Annotation[]; jobs:Job[];
   history:Record<string,unknown>[];
 }
@@ -42,7 +51,7 @@ export const isActiveJob = (job:Job) => ['queued','running','pending','accepted'
 export function papersFor(project:Project):Paper[] {
   const map=new Map<string,Paper>();
   for(const batch of project.search_batches??[]) for(const paper of batch.output?.papers??batch.papers??[]) map.set(paper.paper_id,paper);
-  for(const paper of project.evidence?.papers??[]) map.set(paper.paper_id,paper);
+  if(!project.evidence?.stale&&(project.evidence?.input_revision===undefined||project.evidence.input_revision===project.input_revision))for(const paper of project.evidence?.papers??[]) map.set(paper.paper_id,paper);
   return Array.from(map.values());
 }
 export function sectionList(version:Version|null):Section[] {

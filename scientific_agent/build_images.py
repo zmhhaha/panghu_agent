@@ -58,10 +58,18 @@ def main():
     receipt = rendered / (args.target + '-image.txt')
     receipt.unlink(missing_ok=True)
     try:
-        tag = os.getenv('IMAGE_TAG', datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'))
+        tag = os.getenv('IMAGE_TAG', 'latest')
+        if tag != 'latest':
+            raise BuildError('latest_image_tag_required')
         registry = os.getenv('REGISTRY', 'arm-cluster-master:5000')
         image = os.getenv('IMAGE', registry + '/scientific-' + ('api' if args.target == 'api' else 'workbench') + ':' + tag)
+        if not image.endswith(':latest'):
+            raise BuildError('latest_image_tag_required')
         name = tagged_image(image)
+        revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+        import re
+        if re.fullmatch(r'[0-9a-f]{40}', revision) is None:
+            raise BuildError('source_revision_required')
         platform = os.getenv('PLATFORM', 'linux/arm64')
         if platform not in {'linux/arm64', 'linux/amd64'}:
             raise BuildError('invalid_build_platform')
@@ -71,6 +79,8 @@ def main():
             build_context(args.target, archive)
             with archive.open('rb') as source:
                 subprocess.run(['docker', 'build', '--platform', platform, '--file', DOCKERFILES[args.target],
+                    '--label', 'org.opencontainers.image.revision=' + revision,
+                    '--label', 'org.opencontainers.image.source=https://github.com/zmhhaha/panghu_agent',
                     '--tag', image, '-'], stdin=source, check=True,
                     env={**os.environ, 'DOCKER_BUILDKIT': '0'})
         if not args.no_push:

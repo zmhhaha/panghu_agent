@@ -69,11 +69,30 @@ class ResearchWorkflowProfile:
                 'The host independently supplies protected observations after all writers stop.',
             'outline': 'Organize ONLY included sources in the immutable evidence_snapshot. '
                 'A source is available only when selections has included=true for its ID. '
-                'Keep original paper_id/material_id in evidence; never add a source, upgrade access '
-                'or claim a fresh search. Extract bounded findings with method, limitations and '
+                'Every evidence row has EXACTLY seven nonempty STRING fields: evidence_id, paper_id, '
+                'finding, method, limitations, access_level, locator. Always use the field paper_id, '
+                'including for uploaded files: copy paper_id from the controller selected-source index, '
+                'where an uploaded file maps its material UUID to paper_id. NEVER output a material_id '
+                'field in evidence, replace paper_id with material_id, or add title, source_type, '
+                'source_id, citation, provenance or other extra fields to an evidence row. '
+                'limitations is one string, not an array or object. '
+                'Use each controller index row\'s allowed_access_levels and evidence_template. '
+                'Templates fix identity and recorded access; replace their finding/locator placeholders '
+                'with actual supported content and location, and give every finding a unique evidence_id. '
+                'A metadata-only record allows access_level=metadata ONLY and bibliographic facts ONLY; '
+                'a title, DOI, URL or PDF link is not an abstract and must never be labelled abstract. '
+                'If no abstract or full text is recorded, do not reconstruct it or invent findings. '
+                'Never add a source, upgrade access or claim a fresh search. Extract bounded findings '
+                'with method, limitations and '
                 'precise locator (abstract evidence must name Abstract/摘要). Propose sections '
                 'bound to evidence IDs; return 1 to 100 sections even when evidence is insufficient, '
                 'using empty evidence_ids and explicit gaps rather than an empty sections list. '
+                'If one source is unreadable or insufficient, retain supported evidence from other '
+                'readable sources and record the specific unavailable source and unsupported questions '
+                'in gaps. A single source problem is not a reason to discard the entire stage. '
+                'For an uploaded evidence pack, full_text means only that the supplied file was read; '
+                'it does not mean that every cited paper\'s full text was acquired. State when embedded '
+                'paper content is only an abstract. '
                 'Every evidence method/finding/limitations/locator must be nonempty; say unknown '
                 'when a method is not recorded rather than inventing it. Section titles must be '
                 'single-line plain text with no Markdown heading markers, leading/trailing '
@@ -102,6 +121,10 @@ class ResearchWorkflowProfile:
             from pi_worker.research_tools.schemas import RECORD_SCHEMAS
             schema = '\nExact bridge record schemas: ' + canonical_bytes({
                 key: RECORD_SCHEMAS[key] for key in ('searches', 'papers')}).decode('utf-8')
+        elif self.stage == 'outline':
+            from pi_worker.research_tools.schemas import RECORD_SCHEMAS
+            schema = '\nExact evidence row schema (seven string fields; no extra fields): ' \
+                + canonical_bytes(RECORD_SCHEMAS['evidence']).decode('utf-8')
         # Select only this stage's relevant portions from the measured original
         # procedure. Never load its historical one-shot CLI workflow wholesale.
         procedure = resources['research-procedure/SKILL.md']
