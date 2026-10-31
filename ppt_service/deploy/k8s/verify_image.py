@@ -16,6 +16,7 @@ from ppt_service.server.migrate import REVISION, migrate
 from ppt_service.server.models import Job
 from ppt_service.server.site import create_site
 import ppt_service.server.site as site_module
+import ppt_service.server.needs_input as questions_module
 
 
 def main():
@@ -26,6 +27,8 @@ def main():
     assert os.getuid() == 10000 and os.getgid() == 10000
     assert not (root / 'ppt_service/control').exists()
     inputs = json.loads((root / 'build-info/site-inputs.json').read_text())
+    assert 'code/ppt_service/server/needs_input.py' in inputs
+    assert str(questions_module.__file__) == str(root / 'ppt_service/server/needs_input.py')
     for key, expected in inputs.items():
         path = root / key.removeprefix('code/')
         data = path.read_bytes()

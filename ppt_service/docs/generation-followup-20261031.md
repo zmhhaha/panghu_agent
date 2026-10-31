@@ -88,3 +88,37 @@ requires the final PostgreSQL PID 1 and successful SQL before testing the guard.
 
 Full generation, review/revision/download and owner PowerPoint acceptance remain
 pending. Do not archive the OpenSpec change or claim complete domain acceptance.
+
+## Follow-up fixes under server verification
+
+Application `b821cb5346cb28c37786cfa2f435f3b36fa6214e` adds bounded plain-text
+questions only for independently validated, stopped `needs_input` results.
+The job remains failed with `execution_needs_input`; API/job history and the
+project's latest-job projection use the same attempt/fence and business binding.
+Reloading or opening the guidance does not submit a model task. Existing
+`worker_output_invalid` records cannot enter that path and remain unchanged.
+All 218 focused Linux checks passed without failures or skips; evidence:
+`/root/ppt-prepare-task-b821cb5346cb-dd7be8dd09-checks/summary.private.json`.
+
+The actual site build then refused a missing import: the new helper was absent
+from the explicit package roster. No image was published or deployed by that
+failed build. Both site packagers now include it, packaged-image verification
+requires its installed path/hash entry, and isolated import tests exercise the
+actual packaged source rather than the repository Python path.
+
+Read-only AST inspection of the retained final tool request found a
+`needs_input` manifest literal with nonempty questions, missing `artifacts` and
+`provenance`, and no subsequent mutations in that heredoc. This is request
+evidence; it does not reconstruct tool results or the removed worker files.
+The pinned PPT Master 6.7.2 workflow (revision `c350bc31`) permits continued
+execution through finalization/export after the selected plan is confirmed.
+Its live-preview step explicitly does not wait for another user confirmation;
+the main agent may inspect actual PNGs sequentially when delegation is absent.
+
+The live Pi profile instructions now explain that execution scope, retain real
+approval/tool/failed-gate/needs-human blockers, and supply a complete typed
+`needs_input` example with the real checkpoint project root and measured-file
+roster requirements. Actual PNG review, independent checks, later website review
+and owner PowerPoint acceptance remain required. Collection rules are unchanged.
+Activating these instructions requires a new Pi worker image and exact runtime
+bindings; a site/controller release alone cannot activate them.

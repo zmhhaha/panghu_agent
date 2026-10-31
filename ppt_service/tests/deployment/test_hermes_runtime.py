@@ -177,6 +177,7 @@ def test_source_context_excludes_private_data_and_pins_reviewed_current_sources(
         assert 'code/control/dispatcher.py' in names
         assert 'code/server/repository.py' in names
         assert 'code/server/review_revisions.py' in names
+        assert 'code/server/needs_input.py' in names
         assert 'code/server/acceptance/resolver.py' in names
         assert 'code/server/acceptance/store.py' in names
         assert not any('.env' in name or '/.venv/' in name or 'HOME' in name or '/tests/' in name for name in names)
@@ -184,6 +185,8 @@ def test_source_context_excludes_private_data_and_pins_reviewed_current_sources(
         assert not any('/contracts/' in name or '/demo' in name or 'generate_contract' in name for name in names)
         receipt = json.load(archive.extractfile('source-manifest.json'))
         assert receipt['worker/execute.py']
+        questions = archive.extractfile('code/server/needs_input.py').read()
+        assert receipt['server/needs_input.py'] == hashlib.sha256(questions).hexdigest()
     assert len(digest) == 64
 
 

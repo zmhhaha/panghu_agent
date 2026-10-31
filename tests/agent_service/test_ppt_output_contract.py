@@ -9,7 +9,8 @@ import pytest
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.deploy.acceptance_probe import fixture
 from agent_service.engines import StopEvidence
-from agent_service.profiles.ppt import PPTProfile, _manifest_example, artifact_path, validate_checkpoint
+from agent_service.profiles.ppt import (PPTProfile, _manifest_example,
+    _needs_input_manifest_example, artifact_path, validate_checkpoint)
 from ppt_service.control.planning import project_planning
 from ppt_service.worker.candidate_validation import validate_manifest
 
@@ -122,3 +123,73 @@ def test_prompt_places_explicit_machine_example_before_untrusted_task_data():
     assert 'quality is ONLY a tree of report references' in prompt
     assert 'without repeating project_root' in prompt
     assert 'Do not write result/checkpoint.json' in prompt
+
+
+@pytest.mark.parametrize('phase', ['plan_initial', 'plan_options', 'prepare', 'generate', 'revise'])
+def test_blocked_prompt_example_keeps_complete_schema_without_claiming_success(phase):
+    task, _ = fixture('ppt.plan_initial.v1')
+    task['phase'] = phase
+    example = _needs_input_manifest_example(task)
+    assert set(example) == {'schema_version', 'phase', 'status', 'input_snapshot_sha256',
+        'project_root', 'plan', 'questions', 'artifacts', 'slides', 'quality', 'provenance'}
+    assert example['schema_version'] == 1 and example['phase'] == phase
+    assert example['status'] == 'needs_input' and example['questions']
+    assert example['input_snapshot_sha256'] == task['input_snapshot_sha256']
+    assert example['artifacts'] == example['slides'] == []
+    assert example['quality'] == example['provenance'] == {}
+
+
+def test_blocked_example_with_measured_existing_files_crosses_strict_handoff(initial):
+    workspace, existing, envelope = initial
+    manifest = _needs_input_manifest_example(envelope.task)
+    manifest['plan']['blocker'] = 'Synthetic fixture needs a source fact the caller has not provided.'
+    manifest['questions'] = ['Provide the missing source fact before continuing this synthetic fixture.']
+    # The blocked example supplies no fabricated file or gate. Populate its
+    # roster only from the fixture's already measured ordinary source file.
+    manifest['artifacts'] = existing['artifacts']
+    files = {row.name: row for row in collect((workspace, manifest, envelope))}
+    assert json.loads(files['result/manifest.json'].content()) == manifest
+    checkpoint = json.loads(files['result/checkpoint.json'].content())
+    validate_checkpoint(checkpoint, project_id=envelope.task['project_id'],
+        snapshot_hash=envelope.task['input_snapshot_sha256'])
+    assert checkpoint['publication_authorized'] is False
+    report = validate_manifest(workspace / 'project', manifest)
+    assert report['published'] is False and report['quality_reports_verified'] is False
+
+
+def test_blocked_example_preserves_bound_checkpoint_root():
+    task, _ = fixture('ppt.plan_initial.v1')
+    task['checkpoint'] = {'project_root': 'existing/restored-deck'}
+    assert _needs_input_manifest_example(task)['project_root'] == 'existing/restored-deck'
+
+
+def test_prompt_explains_blocked_roster_before_success_example_and_task_data():
+    task, _ = fixture('ppt.plan_initial.v1')
+    prompt = PPTProfile('plan_initial').build_prompt(task)
+    blocked_marker = 'Blocked handoff JSON shape (needs_input also requires EVERY typed field):\n'
+    text = prompt.split(blocked_marker, 1)[1].split('\nThe empty artifacts/slides/quality', 1)[0]
+    assert json.loads(text) == _needs_input_manifest_example(task)
+    assert prompt.index(blocked_marker) < prompt.index('Manifest JSON shape for this exact phase and page count:')
+    assert 'including restored files' in prompt
+    assert 'never omit artifacts or provenance' in prompt
+    assert 'replace artifacts with files' in prompt
+    assert 'Preserve the checkpoint project_root when supplied' in prompt
+    assert 'Every roster entry still needs role,path,sha256,bytes,media_type' in prompt
+
+
+def test_execution_guidance_closes_only_redundant_confirmation_and_retains_real_gates():
+    task, _ = fixture('ppt.plan_initial.v1')
+    prompt = PPTProfile('plan_initial').build_prompt(task)
+    assert 'both database confirmations and the prepared checkpoint already authorize' in prompt
+    assert 'Do not request another confirmation merely to continue, finalize or export' in prompt
+    assert 'pending or denied tool approval' in prompt
+    assert 'unresolved needs_human decision still blocks' in prompt
+    assert 'Do not change an approved specification or fake any approval' in prompt
+    assert 'an optional user-facing preview URL or a separate human browser session is not itself a blocker' in prompt
+    assert 'to produce and visually inspect the actual required PNGs, is a blocker' in prompt
+    assert 'never invent a successful render or inspection' in prompt
+    assert 'If a required tool/approval/preview is unavailable' not in prompt
+    assert 'reading the actual rendered PNGs' in prompt
+    assert 'main agent to process the same batches sequentially' in prompt
+    assert 'later website draft review and owner PowerPoint acceptance remain separate' in prompt
+    assert 'never count as already passed or authorize publication' in prompt

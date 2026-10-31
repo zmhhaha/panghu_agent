@@ -16,7 +16,7 @@ import tempfile
 SERVICE = Path(__file__).resolve().parents[2]
 SERVER_FILES = (
     '__init__.py', 'app.py', 'auth.py', 'middleware.py', 'migrate.py',
-    'models.py', 'phase_limits.py', 'repository.py', 'review_revisions.py', 'site.py', 'storage.py',
+    'models.py', 'needs_input.py', 'phase_limits.py', 'repository.py', 'review_revisions.py', 'site.py', 'storage.py',
     'acceptance/__init__.py', 'acceptance/contracts.py', 'acceptance/domain.py',
     'acceptance/router.py', 'acceptance/store.py', 'acceptance/resolver.py',
 )

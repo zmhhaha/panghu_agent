@@ -11,6 +11,7 @@ import posixpath
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -28,6 +29,7 @@ def load(name, path):
 
 
 BUILD = load('ppt_server_build_test', DEPLOY / 'build_server.py')
+PACKAGE = load('ppt_site_package_test', DEPLOY / 'package_site.py')
 MANIFEST = load('ppt_site_manifest_test', DEPLOY / 'write_site_manifest.py')
 IMAGE = 'private.example:5000/team/ppt-service-site:test'
 REPOSITORY = IMAGE.rsplit(':', 1)[0]
@@ -188,8 +190,45 @@ class BuildTests(unittest.TestCase):
                              or '/control/' in name or '.git' in name for name in names))
         self.assertIn('code/ppt_service/server/review_revisions.py', names)
         self.assertIn('code/ppt_service/server/phase_limits.py', names)
+        self.assertIn('code/ppt_service/server/needs_input.py', names)
         self.assertIn('code/ppt_service/server/acceptance/resolver.py', names)
         self.assertIn('web/src/acceptance/AcceptancePanel.tsx', names)
+
+    def test_both_site_packagers_include_the_hashed_importable_question_module(self):
+        # Exercise the actual packaged subtree with isolated Python imports;
+        # repository PYTHONPATH must not hide a missing runtime dependency.
+        built = BUILD.context_inputs(self.service)
+        dist = self.service / 'web/dist'
+        (dist / 'assets').mkdir(parents=True)
+        (dist / 'index.html').write_bytes(b'<html>synthetic compiled fixture</html>')
+        with patch.object(PACKAGE, 'SERVICE', self.service):
+            PACKAGE.package(self.root / 'offline-package')
+        with tarfile.open(self.root / 'offline-package/context.tar') as archive:
+            packaged = {member.name: archive.extractfile(member).read()
+                        for member in archive.getmembers() if member.isfile()}
+        name = 'code/ppt_service/server/needs_input.py'
+        expected = (SERVICE / 'server/needs_input.py').read_bytes()
+        for label, context, receipt in (
+                ('server-build', built, 'build-info/source-inputs.json'),
+                ('offline-package', packaged, 'build-info/site-inputs.json')):
+            with self.subTest(packager=label):
+                self.assertEqual(context[name], expected)
+                measured = json.loads(context[receipt])[name]
+                self.assertEqual(measured['sha256'], MANIFEST.describe(SERVICE / 'server/needs_input.py')['sha256'])
+                self.assertEqual(measured['bytes'], len(expected))
+                isolated = self.root / label
+                for path, raw in context.items():
+                    if path.startswith('code/'):
+                        target = isolated / path
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(raw)
+                result = subprocess.run([sys.executable, '-I', '-c',
+                    'import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); '
+                    'from ppt_service.server import needs_input; '
+                    'assert Path(needs_input.__file__).is_relative_to(Path(sys.argv[1])); '
+                    'assert callable(needs_input.normalize_questions)',
+                    str(isolated / 'code')], cwd=isolated, capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_all_relative_frontend_imports_resolve_inside_allowlist(self):
         inputs = BUILD.context_inputs(self.service)

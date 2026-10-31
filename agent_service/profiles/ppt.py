@@ -251,6 +251,17 @@ def _manifest_example(task):
         plan=plan, questions=[], artifacts=artifacts, slides=slides, quality=quality, provenance={})
 
 
+def _needs_input_manifest_example(task):
+    """Complete blocked-handoff shape, without fictional artifacts or gate passes."""
+    checkpoint = task.get('checkpoint')
+    root = checkpoint['project_root'] if type(checkpoint) is dict else 'deck'
+    return dict(schema_version=1, phase=task['phase'], status='needs_input',
+        input_snapshot_sha256=task['input_snapshot_sha256'], project_root=root,
+        plan={'blocker': '<specific unresolved prerequisite and observed evidence>'},
+        questions=['<specific missing information, authorization or decision needed to continue>'],
+        artifacts=[], slides=[], quality={}, provenance={})
+
+
 class PPTProfile:
     supports_inputs = True
     limits = ProfileLimits(max_input_bytes=25 * 1024**2, max_input_total_bytes=256 * 1024**2,
@@ -342,9 +353,23 @@ class PPTProfile:
             'or manufacture a confirmation URL, running confirmation surface, browser session or '
             'receipt within the planning execution. A trusted preview URL is not required to propose '
             'either planning stage. This never authorizes continuing into the next stage. '
+            'For generate, both database confirmations and the prepared checkpoint already authorize '
+            'the unchanged selected solution through Steps 6–7, including finalize and native PPTX '
+            'export. For revise, the bound version and website feedback authorize that revision '
+            'through the same required checks and export. Do not request another confirmation merely '
+            'to continue, finalize or export work inside that authorized scope. Step 6 design-parameter '
+            'confirmation is a compact statement of the approved parameters, not a new user gate; '
+            'the official live-preview step explicitly does not wait for user confirmation. '
+            'A genuine scope change, pending or denied tool approval, missing required source, '
+            'failed prerequisite, or unresolved needs_human decision still blocks the affected work. '
+            'Do not change an approved specification or fake any approval to proceed. '
             'No image generation, narration or animations. Preserve editable text/shapes and native charts '
-            'for supported source data. If a required tool/approval/preview is unavailable, stop and return '
-            'needs_input with honest questions and existing files; do not bypass the restriction.\n'
+            'for supported source data. An unavailable required tool or real approval, or an inability '
+            'to produce and visually inspect the actual required PNGs, is a blocker: return needs_input '
+            'with honest questions and existing files; do not bypass the restriction. The absence of '
+            'an optional user-facing preview URL or a separate human browser session is not itself '
+            'a blocker. Use the trusted rendering context and keep actual rendering and visual-review '
+            'requirements intact; never invent a successful render or inspection.\n'
             + guidance + '\n'
             'Manifest schema_version is 1; phase and input_snapshot_sha256 must equal the task. Include '
             'status (awaiting_confirmation for planning, prepared for prepare, candidate for generation, '
@@ -354,6 +379,14 @@ class PPTProfile:
             'including unchanged restored files. Quality contains real declared report references, '
             'never a bare passed claim. Generation needs one PPTX, all SVG/PNG slides and actual final '
             'and postflight report references. PNG rendering alone is not a visual pass. '
+            'Perform the explicitly required visual review by reading the actual rendered PNGs and '
+            'applying the official rubric. When delegation is unavailable, the official visual-review '
+            'host-compatibility rule permits the main agent to process the same batches sequentially; '
+            'do not wait for a separate human browser session just to inspect those images. '
+            'If actual review finds a needs_human brand or structure decision, or rendering remains '
+            'unavailable, report that concrete blocker honestly. A clean visual review continues to '
+            'Step 7; later website draft review and owner PowerPoint acceptance remain separate '
+            'from execution and never count as already passed or authorize publication. '
             'Do not write result/checkpoint.json; the stopped collector creates it.\n'
             'Planning Stage1 plan requires stage=stage1,status=awaiting_confirmation and value objects '
             'for title,primary_language,audience,communication_intent,template_choice; template_choice '
@@ -386,6 +419,18 @@ class PPTProfile:
             'slides/PPTX may exist yet. For prepare, slides must be [] and no SVG/PPTX may exist yet. '
             'Generation examples must be extended with actual chart artifacts/references only when '
             'the authorized source and approved design require them.\n'
+            'Blocked handoff JSON shape (needs_input also requires EVERY typed field):\n'
+            + canonical_bytes(_needs_input_manifest_example(task)).decode('utf-8') + '\n'
+            'The empty artifacts/slides/quality above claim no output or successful gate. Replace '
+            'them with the complete measured roster of files that really exist, including restored '
+            'files, actual slide references and any real declared report references. Preserve the '
+            'checkpoint project_root when supplied; otherwise replace deck with the actual child '
+            'initialized under project/. Every roster entry still needs role,path,sha256,bytes,media_type '
+            'measured from the existing file, and known source provenance must be retained. Keep empty '
+            'containers only when no corresponding item exists; never omit artifacts or provenance, '
+            'replace artifacts with files, put prose inside quality, or fabricate unavailable PPTX/PNG. '
+            'State only the real blocker in plan/questions; a routine request to confirm finalize '
+            'or export of the already-approved solution is not a missing prerequisite.\n'
             'Manifest JSON shape for this exact phase and page count:\n'
             + canonical_bytes(_manifest_example(task)).decode('utf-8') + '\nTask JSON:\n'
             + canonical_bytes(task).decode('utf-8') + '\n'
