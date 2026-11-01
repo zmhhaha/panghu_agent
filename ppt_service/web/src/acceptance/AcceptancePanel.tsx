@@ -11,7 +11,7 @@ const severities: Record<IssueSeverity, string> = { minor: '轻微', major: '重
 const checkLabels = { opened: '在桌面 PowerPoint 中打开', content_edited: '实际编辑文字或其他可编辑内容', native_chart_edited: '编辑原生图表并核对数据', saved: '保存修改后的演示稿', reopened: '关闭后重新打开并核对结果' };
 const kindLabels = { visual_review: '逐页视觉检查', powerpoint_review: 'PowerPoint 桌面检查', revoke: '撤销记录', publish: '正式发布' };
 const reasons: Record<string, string> = {
-  independent_postflight_integration_pending: '独立程序检查尚未接入，完整验收保持待完成。',
+  independent_postflight_integration_pending: '独立程序验收尚待完成；后台空闲后检查，可稍后刷新查看。',
   independent_programmatic_pending: '独立程序验收尚未完成。',
   independent_programmatic_needs_changes: '独立程序检查发现问题，需要修复后重新核验。',
   independent_export_build_contract: '完整导出核验尚未完成。',

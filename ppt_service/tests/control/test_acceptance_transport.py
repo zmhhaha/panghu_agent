@@ -185,6 +185,56 @@ def test_exact_stop_freezes_complete_roster_without_publication(transport_case):
     assert invoke(case)["status"] == "already_attempted" and len(case.runs) == 1
 
 
+@pytest.mark.parametrize("rename_fails", [False, True])
+def test_cross_parent_install_keeps_private_root_writable_until_real_rename(
+        transport_case, monkeypatch, rename_fails):
+    """Run the real rename so uid262/server runs exercise Linux permissions.
+
+    Checking the modes also keeps a root-run suite from concealing the original
+    failure: root could move a 0555 staging directory that uid262 cannot move.
+    """
+    from ppt_service.control import agent_validation
+
+    case = transport_case
+    real_replace = os.replace
+    observed = []
+
+    def observe_replace(source, destination):
+        source, destination = Path(source), Path(destination)
+        if source.name == ".acceptance-pending-" + case.request["evidence_id"]:
+            observed.append((source, destination))
+            assert source.parent == case.base and destination == case.target
+            assert source.parent != destination.parent
+            assert stat.S_IMODE(source.stat().st_mode) == 0o700
+            assert not destination.exists()
+            assert not list(destination.parent.glob("*"))
+            for node in source.rglob("*"):
+                assert stat.S_IMODE(node.stat().st_mode) & 0o222 == 0
+            if rename_fails:
+                raise PermissionError("Synthetic install failure before atomic rename")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(agent_validation.os, "replace", observe_replace)
+    if rename_fails:
+        with pytest.raises(PermissionError, match="Synthetic install failure"):
+            invoke(case)
+        assert_no_bundle(case)
+        assert stat.S_IMODE(observed[0][0].stat().st_mode) == 0o700
+        assert read_json(case.attempted.parent, case.attempted.name)["status"] == "stopped_pending_inspection"
+        assert invoke(case)["status"] == "already_attempted" and len(case.runs) == 1
+        assert not case.discarded
+    else:
+        assert invoke(case)["status"] == "acceptance_validated"
+        assert not observed[0][0].exists()
+        assert stat.S_IMODE(case.target.stat().st_mode) == 0o555
+        for node in case.target.rglob("*"):
+            assert stat.S_IMODE(node.stat().st_mode) & 0o222 == 0
+        body = read_json(case.target, "transport-manifest.json")
+        _measured_tree(case.target, body["files"], max_files=8192,
+            exclude=("transport-manifest.json",))
+    assert len(observed) == 1
+
+
 @pytest.mark.parametrize("fault", ["nonzero", "transport_failure"])
 def test_failed_stopped_attempt_is_private_and_not_repeated(transport_case, fault):
     case = transport_case

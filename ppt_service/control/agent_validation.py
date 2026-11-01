@@ -341,8 +341,13 @@ class AgentKubernetesSandbox:
                 'validator_exit_code': code, 'writers_stopped': True, 'transport_verified': True,
                 **inventory})
             make_readonly(pending)
+            # A non-root cross-parent rename must update this directory's '..'
+            # entry. Keep only the private staging root owner-writable; every
+            # evidence file and descendant directory remains frozen.
+            pending.chmod(0o700)
             target.parent.mkdir(parents=True, exist_ok=True)
             os.replace(pending, target)
+            target.chmod(0o555)
             atomic_json(attempted, {'schema': 'ppt-service.acceptance-attempt.v1',
                 'binding_sha256': signature, 'status': result['status'], 'evidence_path': str(target),
                 'scope_uid': scope, 'pod_uid': pod['api_uid'], 'writers_stopped': True})

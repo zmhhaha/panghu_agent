@@ -156,7 +156,7 @@ def test_separate_bundle_preserves_old_binding_and_human_checks_remain_pending(a
     page = snapshot["programmatic"]["rendered_pages"][0]
     response = client.get(page["preview_url"])
     assert response.status_code == 200 and response.headers["content-type"] == "image/png"
-    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["cache-control"] == "no-store"
     assert hashlib.sha256(response.content).hexdigest() == page["preview_sha256"]
     assert (app.state.storage.root / data["evidence_key"] / "validated.json").is_file()
 
