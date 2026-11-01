@@ -64,6 +64,76 @@ def needs_input_job(app,c,questions):
     return p,jid
 
 
+def quality_failure_job(app,c):
+    p,jid=needs_input_job(app,c,[])
+    with app.state.sessions.begin() as s:
+        j=s.get(Job,jid);out=s.get(AgentOutbox,jid)
+        j.error_code='quality_gate_failed'
+        request=dict(out.request);task=dict(request['task'],input_snapshot_sha256='a'*64)
+        out.request=dict(request,task=task)
+        out.result={'status':'failed','error_code':'quality_gate_failed','quality_diagnostics':{
+            'schema_version':1,'error_code':'external_svg_resource','publication_authorized':False,
+            'project_id':j.project_id,'job_id':jid,'attempt':j.attempt,'fencing_token':j.fencing_token,
+            'input_snapshot_sha256':'a'*64,'source_manifest_sha256':'b'*64,
+            'private_log':'private-log-token','message':'<script>private-user-text</script>',
+            'evidence_path':'/private/path/secret','diagnostic_download_url':'https://private.test/secret'}}
+    return p,jid
+
+
+def test_quality_diagnostics_survive_refresh_download_safely_and_preserve_owner_acl(ctx):
+    app,c,who=ctx;p,jid=quality_failure_job(app,c)
+    dto=c.get('/api/v1/jobs/'+jid).json()
+    details=dto['quality_diagnostics']
+    assert details['error_code']=='external_svg_resource'
+    assert details['publication_authorized'] is False
+    assert details['diagnostic_download_url']==f'/api/v1/jobs/{jid}/diagnostics'
+    assert getp(c,p)['latest_job']['quality_diagnostics']==details
+    response=c.get(details['diagnostic_download_url'])
+    assert response.status_code==200 and response.json()==details
+    assert 'attachment;' in response.headers['content-disposition']
+    assert 'no-store' in response.headers['cache-control']
+    for secret in ('private-log-token','private-user-text','/private/path','private.test','fencing_token'):
+        assert secret not in str(dto)+response.text
+    with app.state.sessions() as s:
+        assert s.get(Job,jid).status=='failed' and s.get(Job,jid).stopped is True
+        assert not s.scalars(select(Version)).all()
+    who[0]=Identity('https://issuer','bob')
+    assert c.get(details['diagnostic_download_url']).status_code==404
+    who[0]=Identity('https://other-issuer','alice')
+    assert c.get(details['diagnostic_download_url']).status_code==404
+    who[0]=Identity('https://issuer','alice')
+    with app.state.sessions.begin() as s:s.get(Project,p['id']).deletion_requested=True
+    assert c.get(details['diagnostic_download_url']).status_code==404
+
+
+@pytest.mark.parametrize('changed',['legacy','active','not_stopped','outbox_state','outbox_status',
+    'attempt','fence','project','job','business_ref','snapshot','source','unknown_code','publication','schema'])
+def test_quality_diagnostics_require_exact_terminal_attempt_and_safe_code(ctx,changed):
+    app,c,_=ctx;p,jid=quality_failure_job(app,c)
+    with app.state.sessions.begin() as s:
+        j=s.get(Job,jid);out=s.get(AgentOutbox,jid)
+        result=dict(out.result);details=dict(result['quality_diagnostics'])
+        if changed=='legacy':j.error_code='execution_interrupted'
+        elif changed=='active':j.status='validating'
+        elif changed=='not_stopped':j.stopped=False
+        elif changed=='outbox_state':out.state='submitted'
+        elif changed=='outbox_status':result['status']='succeeded'
+        elif changed=='attempt':details['attempt']=j.attempt+1
+        elif changed=='fence':details['fencing_token']=j.fencing_token+1
+        elif changed=='project':details['project_id']=str(uuid.uuid4())
+        elif changed=='job':details['job_id']=str(uuid.uuid4())
+        elif changed=='business_ref':out.business_ref='unbound'
+        elif changed=='snapshot':details['input_snapshot_sha256']='c'*64
+        elif changed=='source':details['source_manifest_sha256']='private-source'
+        elif changed=='unknown_code':details['error_code']='private-unknown-code'
+        elif changed=='publication':details['publication_authorized']=True
+        elif changed=='schema':details['schema_version']=True
+        result['quality_diagnostics']=details;out.result=result
+    assert 'quality_diagnostics' not in c.get('/api/v1/jobs/'+jid).json()
+    assert 'quality_diagnostics' not in getp(c,p)['latest_job']
+    assert c.get('/api/v1/jobs/'+jid+'/diagnostics').status_code==404
+
+
 def test_needs_input_questions_survive_read_only_job_and_project_refresh_with_owner_isolation(ctx):
     app,c,who=ctx
     p,jid=needs_input_job(app,c,['  请补充讲解重点。  ',

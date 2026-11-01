@@ -17,6 +17,7 @@ from ppt_service.server.models import Job
 from ppt_service.server.site import create_site
 import ppt_service.server.site as site_module
 import ppt_service.server.needs_input as questions_module
+import ppt_service.server.quality_diagnostics as quality_module
 
 
 def main():
@@ -29,6 +30,8 @@ def main():
     inputs = json.loads((root / 'build-info/site-inputs.json').read_text())
     assert 'code/ppt_service/server/needs_input.py' in inputs
     assert str(questions_module.__file__) == str(root / 'ppt_service/server/needs_input.py')
+    assert 'code/ppt_service/server/quality_diagnostics.py' in inputs
+    assert str(quality_module.__file__) == str(root / 'ppt_service/server/quality_diagnostics.py')
     for key, expected in inputs.items():
         path = root / key.removeprefix('code/')
         data = path.read_bytes()

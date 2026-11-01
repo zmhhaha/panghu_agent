@@ -356,3 +356,104 @@ def test_independent_preview_evidence_cannot_be_rebound(candidate, changed):
 def test_unobserved_validator_failure_cannot_mint_stop_authority():
     with pytest.raises(TypeError):
         AgentValidationFailure('validation_failed')
+
+
+def rejected_transport(case, monkeypatch, *, changed=None):
+    """Only synthetic output; the double explicitly records its own Pod stop."""
+    from ppt_service.control.staging import atomic_json
+    from ppt_service.control.kubernetes_sandbox import KubernetesSandbox
+    sandbox=object.__new__(AgentKubernetesSandbox)
+    root=case.root/'failed-runtime';output=root/'output';output.mkdir(parents=True)
+    name='synthetic-validator';uid='synthetic-validator-pod-uid'
+    authority={'resources':[{'resource':'pods','name':name,'api_uid':uid,'deleted':True,
+                            'stop_receipt':{'terminated':True,'api_uid':uid}}]}
+    if changed=='stop':authority['resources'][0]['stop_receipt']['api_uid']='different-pod'
+    handle=SimpleNamespace(uid='synthetic-scope')
+    backend=SimpleNamespace(subpath=lambda _:None,register_sandbox_scope=lambda _:handle,
+                            _read=lambda _:authority)
+    def run(module,mounts,envelope,filename,timeout):
+        report={'schema_version':1,'accepted':False,'publication_authorized':False,
+            'error_code':'external_svg_resource','validation_nonce':envelope['validation_nonce'],
+            'source_manifest_sha256':case.source,'job_id':case.request['job_id'],
+            'project_id':case.request['task']['project_id'],'phase':case.request['phase'],
+            'input_snapshot_sha256':case.request['input_snapshot_sha256']}
+        if changed=='nonce':report['validation_nonce']=str(uuid4())
+        if changed=='source':report['source_manifest_sha256']='b'*64
+        if changed=='unknown':report['error_code']='private-provider-message'
+        atomic_json(output/'validated.json',report)
+        (output/'private-check.log').write_text('Administrator-only source text and token.\n')
+        return root,output,report,2,None,changed!='running',handle,name
+    sandbox.config=SimpleNamespace(data_root=case.root,validation_timeout=30)
+    sandbox.transport=SimpleNamespace(backend=backend,settings=SimpleNamespace(worker_image=IMAGE),
+        _run=run,_discard=KubernetesSandbox._discard)
+    return sandbox,root
+
+
+def test_failed_validator_freezes_private_evidence_and_preserves_bound_reason(candidate,monkeypatch):
+    case=candidate;sandbox,root=rejected_transport(case,monkeypatch)
+    with pytest.raises(AgentValidationFailure) as captured:sandbox.validate(case.snapshot,case.request)
+    failure=captured.value
+    assert failure.validator_stopped is True and failure.code=='external_svg_resource'
+    details=failure.diagnostic(case.request)
+    assert details['error_code']=='external_svg_resource' and details['source_manifest_sha256']==case.source
+    assert details['publication_authorized'] is False
+    assert 'Administrator-only' not in str(details)
+    rejected=case.snapshot.parent/('agent-validation-failure-'+case.snapshot.name+'-'+case.source[:16])
+    assert (rejected/'private-check.log').read_text().startswith('Administrator-only')
+    assert not root.exists()
+    with pytest.raises(AgentValidationFailure) as replay:sandbox.validate(case.snapshot,case.request)
+    assert replay.value.diagnostic(case.request)==details
+    changed=copy.deepcopy(case.request);changed['pages']+=1
+    assert failure.diagnostic(changed) is None
+    failure._diagnostic['error_code']='unsafe_svg_source'
+    assert failure.diagnostic(case.request) is None
+
+
+@pytest.mark.parametrize('changed',['nonce','source','unknown'])
+def test_unbound_failed_report_is_retained_but_never_projected(candidate,monkeypatch,changed):
+    sandbox,_=rejected_transport(candidate,monkeypatch,changed=changed)
+    with pytest.raises(AgentValidationFailure) as captured:sandbox.validate(candidate.snapshot,candidate.request)
+    assert captured.value.code=='agent_independent_validation_failed'
+    assert captured.value.diagnostic(candidate.request) is None
+    assert list(candidate.root.glob('agent-validation-failure-*'))
+
+
+@pytest.mark.parametrize('changed',['stop','running'])
+def test_failure_evidence_cannot_replace_its_own_physical_stop(candidate,monkeypatch,changed):
+    sandbox,root=rejected_transport(candidate,monkeypatch,changed=changed)
+    with pytest.raises(ControlError):sandbox.validate(candidate.snapshot,candidate.request)
+    assert root.exists()
+    assert not list(candidate.root.glob('agent-validation-failure-*'))
+
+
+def test_validator_main_emits_fixed_bound_reason_without_exception_text(candidate,monkeypatch,tmp_path):
+    import ppt_service.control.agent_validation as module
+    request=dict(candidate.request,source_manifest_sha256=candidate.source,validation_nonce=str(uuid4()))
+    path=tmp_path/'request.json';json_file(tmp_path,path.name,request)
+    output=tmp_path/'output/validated.json'
+    def reject(*args,**kwargs):raise ControlError('external_svg_resource')
+    monkeypatch.setattr(module,'validate_private_candidate',reject)
+    assert module.main(['--snapshot',str(candidate.snapshot),'--request',str(path),'--output',str(output)])==2
+    report=module.read_json(output.parent,output.name)
+    assert report['error_code']=='external_svg_resource' and report['source_manifest_sha256']==candidate.source
+    assert report['validation_nonce']==request['validation_nonce']
+    assert report['project_id']==request['task']['project_id']
+    def private_error(*args,**kwargs):raise ValueError('SECRET token path and source text')
+    monkeypatch.setattr(module,'validate_private_candidate',private_error)
+    assert module.main(['--snapshot',str(candidate.snapshot),'--request',str(path),'--output',str(output)])==2
+    report=module.read_json(output.parent,output.name)
+    assert report['error_code']=='quality_gate_failed' and 'SECRET' not in str(report)
+
+
+def test_official_failure_logs_survive_disposable_source_copy(prepared_candidate,monkeypatch,tmp_path):
+    from ppt_service.control.publisher import OfficialGates
+    case=prepared_candidate;evidence=tmp_path/'retained-independent'
+    def reject(gates,project,phase,pages):
+        assert project != case.project and project.is_dir()
+        (gates.output/'project_validate.private.log').write_text('private check explanation\n')
+        raise ControlError('independent_quality_gate_failed')
+    monkeypatch.setattr(OfficialGates,'run',reject)
+    with pytest.raises(ControlError,match='independent_quality_gate_failed'):
+        validate_private_candidate(case.snapshot,case.request,evidence_root=evidence)
+    assert (evidence/'official-gates/project_validate.private.log').read_text()=='private check explanation\n'
+    assert not (case.snapshot/'project'/'evidence').exists()

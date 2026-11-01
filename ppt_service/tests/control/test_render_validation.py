@@ -1,6 +1,7 @@
 """Programmatic gate failures and evidence transport; no fake full acceptance."""
 import copy,hashlib,json,os,sys,time,uuid
 from pathlib import Path
+from xml.sax.saxutils import quoteattr
 import pytest
 from ppt_service.control.execution import RuntimeConfig,ControlError
 from ppt_service.control.staging import atomic_json,read_json
@@ -25,6 +26,114 @@ def inputs(tmp_path):
     manifest={'phase':'generate','status':'candidate','project_root':'deck','input_snapshot_sha256':'a'*64,'slides':slides,'artifacts':rows}
     atomic_json(snapshot/'result/manifest.json',manifest)
     return snapshot,root,manifest,{'phase':'generate','pages':3,'input_snapshot_sha256':'a'*64,'expected_charts':[]}
+
+def replace_bound_svg(inputs,body):
+    snapshot,root,manifest,_=inputs;key='svg_output/01.svg'
+    source=('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+            'viewBox="0 0 1280 720">'+body+'</svg>')
+    (root/key).write_text(source,encoding='utf-8')
+    row=next(row for row in manifest['artifacts'] if row['path']==key);row.update(hash_file(root,key))
+    atomic_json(snapshot/'result/manifest.json',manifest)
+    return (root/key).read_bytes()
+
+
+@pytest.mark.parametrize('target',[
+    'https://github.com/deepseek-ai/deepseek-harness',
+    'https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md',
+])
+@pytest.mark.parametrize('attribute',['href','xlink:href','link:href'])
+def test_svg_https_navigation_is_not_a_loaded_resource_or_source_rewrite(inputs,target,attribute):
+    snapshot,root,manifest,request=inputs
+    original=replace_bound_svg(inputs,
+        '<defs><marker id="arrow"><path d="M0 0 L5 5"/></marker></defs>'
+        f'<a xmlns:link="http://www.w3.org/1999/xlink" {attribute}={quoteattr(target)}>'
+        '<path d="M0 0 L20 20" marker-end="url(#arrow)"/><text>Reference</text></a>')
+    original_manifest=(snapshot/'result/manifest.json').read_bytes()
+    binding,_,_=source_binding(snapshot,manifest,request)
+    assert binding['local_resources']==[]
+    assert binding['svg_sources'][0]['sha256']==hashlib.sha256(original).hexdigest()
+    assert (root/'svg_output/01.svg').read_bytes()==original
+    assert (snapshot/'result/manifest.json').read_bytes()==original_manifest
+
+
+def test_svg_internal_navigation_remains_local(inputs):
+    snapshot,_,manifest,request=inputs
+    replace_bound_svg(inputs,'<a href="#references"><text>References</text></a><g id="references"/>')
+    binding,_,_=source_binding(snapshot,manifest,request)
+    assert binding['local_resources']==[]
+
+
+def test_svg_navigation_preserves_hash_bound_local_and_embedded_rasters(inputs):
+    import base64,io
+    from PIL import Image
+    snapshot,root,manifest,request=inputs;buffer=io.BytesIO()
+    Image.new('RGB',(1,1),'red').save(buffer,format='PNG');data=buffer.getvalue()
+    (root/'images').mkdir();(root/'images/chart.png').write_bytes(data)
+    local=hash_file(root,'images/chart.png');manifest['artifacts'].append({**local,'role':'resource'})
+    embedded='data:image/png;base64,'+base64.b64encode(data).decode('ascii')
+    replace_bound_svg(inputs,'<a href="https://example.com/"><image href="../images/chart.png"/>'
+        f'<image xlink:href={quoteattr(embedded)}/></a>')
+    binding,_,_=source_binding(snapshot,manifest,request)
+    assert binding['local_resources']==[
+        {'path':'embedded-data/'+hashlib.sha256(data).hexdigest(),'sha256':hashlib.sha256(data).hexdigest(),'bytes':len(data),'embedded':True},
+        local,
+    ]
+
+
+@pytest.mark.parametrize('target',[
+    '', 'relative.svg', '../other.svg', '/other.svg', '//example.com/path',
+    'http://example.com/path', 'javascript:alert(1)', 'file:///etc/passwd',
+    'data:image/png;base64,iVBORw0KGgo=', 'data:text/html;base64,PHNjcmlwdD4=',
+    'https://user:password@example.com/path', 'https://user@example.com/path',
+    'https://@example.com/path', 'https:///missing-host', 'https://',
+    'https://[invalid]/path', 'https://example.com:invalid/path',
+    'https://example.com:65536/path', 'https://example.com\\path',
+    ' https://example.com/path', 'https://example.com/path ',
+    'https://example.com/a b', 'https://example.com/\tpath',
+    'https://example.com/\npath', 'https://example.com/\rpath',
+    'https://example.com/\x7fpath', 'https://example.com/\x85path',
+    'https://example.com/%not-an-escape',
+])
+@pytest.mark.parametrize('attribute',['href','xlink:href'])
+def test_svg_navigation_rejects_unsafe_or_malformed_href(inputs,target,attribute):
+    snapshot,_,manifest,request=inputs
+    replace_bound_svg(inputs,f'<a {attribute}={quoteattr(target)}><text>Reference</text></a>')
+    with pytest.raises(ControlError,match='external_svg_resource'):
+        source_binding(snapshot,manifest,request)
+
+
+@pytest.mark.parametrize('body',[
+    '<a xmlns="" href="https://example.com/">Reference</a>',
+    '<a xmlns="http://www.w3.org/1999/xhtml" href="https://example.com/">Reference</a>',
+    '<fake:a xmlns:fake="urn:fake-svg" href="https://example.com/">Reference</fake:a>',
+    '<a xmlns:fake="urn:fake-xlink" fake:href="https://example.com/">Reference</a>',
+    '<a xmlns:xlink="urn:fake-xlink" xlink:href="https://example.com/">Reference</a>',
+])
+def test_svg_navigation_exception_requires_exact_element_and_attribute_namespaces(inputs,body):
+    snapshot,_,manifest,request=inputs;replace_bound_svg(inputs,body)
+    with pytest.raises(ControlError,match='external_svg_resource'):
+        source_binding(snapshot,manifest,request)
+
+
+@pytest.mark.parametrize('body,code',[
+    ('<image href="https://example.com/image.png"/>','external_svg_resource'),
+    ('<use xlink:href="https://example.com/icons.svg#icon"/>','external_svg_resource'),
+    ('<a href="https://example.com/" src="https://example.com/image.png"/>','external_svg_resource'),
+    ('<a href="https://example.com/" style="fill:url(https://example.com/paint.svg)"/>','external_svg_resource'),
+    ('<a href="https://example.com/" fill="url(https://example.com/paint.svg)"/>','external_svg_resource'),
+    ('<a href="https://example.com/" xlink:href="javascript:alert(1)"/>','external_svg_resource'),
+    ('<a href="https://example.com/"><image href="https://example.com/image.png"/></a>','external_svg_resource'),
+    ('<a href="https://example.com/"><style>@import "https://example.com/style.css";</style></a>','external_svg_resource'),
+    ('<a href="https://example.com/"><style>@font-face {src:url(https://example.com/font.woff)}</style></a>','external_svg_resource'),
+    ('<a href="https://example.com/"><foreignObject/></a>','unsafe_svg_source'),
+    ('<a href="https://example.com/"><script/></a>','unsafe_svg_source'),
+    ('<a href="https://example.com/" onclick="alert(1)"/>','unsafe_svg_source'),
+    ('<a href="https://example.com/url(remote)"/>','external_svg_resource'),
+])
+def test_svg_navigation_does_not_bypass_other_resource_or_active_content_checks(inputs,body,code):
+    snapshot,_,manifest,request=inputs;replace_bound_svg(inputs,body)
+    with pytest.raises(ControlError,match=code):source_binding(snapshot,manifest,request)
+
 
 def test_hash_bound_copy_excludes_old_previews_reviews_and_locks(inputs,tmp_path):
     snapshot,root,manifest,request=inputs;binding,source,index=source_binding(snapshot,manifest,request)

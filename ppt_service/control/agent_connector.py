@@ -240,13 +240,30 @@ class AgentConnector:
         except (HTTPException, ValueError, TypeError, OSError):
             raise ControlError('review_source_changed') from None
 
-    def _reject_stopped_candidate(self, jid, code='quality_gate_failed'):
+    def _reject_stopped_candidate(self, jid, code='quality_gate_failed', *, diagnostic=None):
         """Only before validator launch or after its independent stop proof."""
         with self.sessions.begin() as s:
             out, job, _, _ = self._fenced(s, jid)
             require(job.stopped and job.status in ('collecting', 'validating'), 'stop_proof_required')
             Repository(s).finish_failed(jid, out.attempt, out.fencing_token, error_code=code)
             out.state = 'mapped'; out.result = {'status': 'failed', 'error_code': code}
+            if diagnostic is not None:
+                from ppt_service.server.quality_diagnostics import known_code
+                task = out.request.get('task') if type(out.request) is dict else None
+                require(type(diagnostic) is dict and diagnostic.get('schema_version') == 1
+                        and diagnostic.get('publication_authorized') is False
+                        and known_code(diagnostic.get('error_code')) and type(task) is dict
+                        and diagnostic.get('input_snapshot_sha256') == task.get('input_snapshot_sha256')
+                        and isinstance(diagnostic.get('source_manifest_sha256'), str)
+                        and re.fullmatch('[0-9a-f]{64}', diagnostic['source_manifest_sha256'])
+                        and task.get('business_job_id') == job.id and task.get('project_id') == job.project_id,
+                        'agent_validator_binding_changed')
+                out.result = dict(out.result, quality_diagnostics={
+                    'schema_version': 1, 'error_code': diagnostic['error_code'],
+                    'publication_authorized': False, 'project_id': job.project_id,
+                    'job_id': job.id, 'attempt': job.attempt, 'fencing_token': job.fencing_token,
+                    'input_snapshot_sha256': task['input_snapshot_sha256'],
+                    'source_manifest_sha256': diagnostic['source_manifest_sha256']})
         return {'status': 'failed', 'job_id': jid}
 
     def _claim(self):
@@ -664,7 +681,7 @@ class AgentConnector:
             validated = self.validator.validate(snapshot, check_request)
         except AgentValidationFailure as exc:
             require(exc.validator_stopped is True, 'agent_validation_writers_not_stopped')
-            return self._reject_stopped_candidate(jid)
+            return self._reject_stopped_candidate(jid, diagnostic=exc.diagnostic(check_request))
         with self.sessions.begin() as s:
             out, _, _, _ = self._fenced(s, jid)
             ref = copy.deepcopy(out.checkpoint_ref)

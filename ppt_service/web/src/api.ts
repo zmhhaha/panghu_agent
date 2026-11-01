@@ -1,4 +1,4 @@
-import { hasConfirmedCommunication, type Job, type Profile, type Project, type Version } from './domain';
+import { hasConfirmedCommunication, type Job, type Profile, type Project, type QualityDiagnostic, type Version } from './domain';
 import type { AcceptanceBinding } from './acceptance/contracts';
 import { adaptCommunication, adaptDirections, adaptPlanQuestions } from './planning';
 const root = '/api/v1';
@@ -39,7 +39,7 @@ export const errors: Record<string,string> = {
   OPTIONS_CONFIRMATION_REQUIRED:'请在“沟通与方案”主动选择一个设计方向，确认所选完整方案后，再生成演示稿。',
   LEGACY_CHECKPOINT_REQUIRES_REPLAN:'此项目的旧方案无法继续制作或修改。请返回“沟通与方案”重新开始初步沟通，再确认新的设计方向；已有演示稿仍可预览和下载。',
   CONSENT_REQUIRED:'请先确认外部模型数据传输，再重试此操作。', UPLOAD_LIMIT:'文件超出上传限额，请检查单文件 25 MiB、项目 10 文件 / 100 MiB 限制。',
-  UNAUTHENTICATED:'登录已过期，请重新登录。', FORBIDDEN:'当前账号无法执行此操作。', NOT_FOUND:'资源不可用或已删除，请返回项目列表。', STALE_REVISION:'资料或设置已变更，请刷新项目并重新确认方案。', STALE_PLAN:'确认已失效，请重新规划并确认。', SNAPSHOT_MISMATCH:'材料快照已变化，请重新规划。', ACTIVE_JOB_EXISTS:'项目已有活动任务，请等待完成或取消。', QUEUE_FULL:'任务队列已满，请稍后重试。', PARSE_FAILED:'资料解析未通过，请返回“资料与要求”查看各文件的解析状态和具体原因。', MODEL_CONNECTION_FAILED:'模型连接失败，请稍后重新提交。', TIMEOUT:'任务超时，已有版本仍可使用。请减少资料或页数后重试。', QUALITY_GATE_FAILED:'产物未通过质量检查，请调整要求后重试。', RENDER_FAILED:'预览渲染失败，请重试或联系管理员。', EXPORT_FAILED:'PPTX 导出失败，请重试或联系管理员。', STORAGE_LIMIT:'存储空间不足，请清理不再需要的项目后重试。', QUOTA_EXCEEDED:'当前可用额度不足，请联系服务管理员。', NETWORK_ERROR:'无法连接服务，请检查网络并重试。', INVALID_RESPONSE:'服务响应暂不可用，请刷新或联系管理员。', CURSOR_EXPIRED:'进度记录已过期，正在重新读取任务状态。'
+  UNAUTHENTICATED:'登录已过期，请重新登录。', FORBIDDEN:'当前账号无法执行此操作。', NOT_FOUND:'资源不可用或已删除，请返回项目列表。', STALE_REVISION:'资料或设置已变更，请刷新项目并重新确认方案。', STALE_PLAN:'确认已失效，请重新规划并确认。', SNAPSHOT_MISMATCH:'材料快照已变化，请重新规划。', ACTIVE_JOB_EXISTS:'项目已有活动任务，请等待完成或取消。', QUEUE_FULL:'任务队列已满，请稍后重试。', PARSE_FAILED:'资料解析未通过，请返回“资料与要求”查看各文件的解析状态和具体原因。', MODEL_CONNECTION_FAILED:'模型连接失败，请稍后重新提交。', TIMEOUT:'任务超时，已有版本仍可使用。请减少资料或页数后重试。', QUALITY_GATE_FAILED:'产物尚未通过质量检查，请查看本次任务的诊断信息；原资料和已确认方案仍保留。', RENDER_FAILED:'预览渲染失败，请重试或联系管理员。', EXPORT_FAILED:'PPTX 导出失败，请重试或联系管理员。', STORAGE_LIMIT:'存储空间不足，请清理不再需要的项目后重试。', QUOTA_EXCEEDED:'当前可用额度不足，请联系服务管理员。', NETWORK_ERROR:'无法连接服务，请检查网络并重试。', INVALID_RESPONSE:'服务响应暂不可用，请刷新或联系管理员。', CURSOR_EXPIRED:'进度记录已过期，正在重新读取任务状态。'
 };
 const errorAliases: Record<string,string> = { EVENT_CURSOR_EXPIRED:'CURSOR_EXPIRED', REVISION_CONFLICT:'STALE_REVISION', PROJECT_REVISION_MISMATCH:'STALE_REVISION', STALE_PROJECT_REVISION:'STALE_REVISION', STALE_PLAN_REVISION:'STALE_PLAN', STALE_INPUT_SNAPSHOT:'SNAPSHOT_MISMATCH', PLAN_STALE:'STALE_PLAN', INPUT_SNAPSHOT_MISMATCH:'SNAPSHOT_MISMATCH', JOB_ALREADY_ACTIVE:'ACTIVE_JOB_EXISTS', PROJECT_BUSY:'ACTIVE_JOB_EXISTS', EXTERNAL_MODEL_ACK_REQUIRED:'CONSENT_REQUIRED', PARSE_ERROR:'PARSE_FAILED', MATERIAL_PARSE_FAILED:'PARSE_FAILED', FILE_TOO_LARGE:'UPLOAD_LIMIT', TOO_MANY_FILES:'UPLOAD_LIMIT', PROJECT_STORAGE_LIMIT:'STORAGE_LIMIT', MODEL_UNAVAILABLE:'MODEL_CONNECTION_FAILED', EXECUTION_TIMEOUT:'TIMEOUT', QUALITY_FAILED:'QUALITY_GATE_FAILED' };
 errorAliases.LEGACY_CHECKPOINT_REQUIRES_REPLAN='LEGACY_CHECKPOINT_REQUIRES_REPLAN';
@@ -134,12 +134,26 @@ export function adaptProject(raw: RecordValue): Project {
  return { ...raw, settings:raw.settings??{pages:raw.page_count??8,language:raw.language==='zh'?'简体中文':raw.language??'简体中文',audience:raw.audience??'',purpose:raw.purpose??'',style:raw.style??'',requirements:raw.requirements??''}, assets:raw.assets??[], plan,
  input_snapshot_hash:raw.input_snapshot_hash??'', confirmed_plan_revision:raw.confirmed_plan_revision==null?null:String(raw.confirmed_plan_revision), latest_job:raw.latest_job?adaptJob(raw.latest_job):null } as Project;
 }
+const diagnosticCodes=new Set(['external_svg_resource','unsafe_svg_source','unsafe_svg_data_resource','candidate_integrity_failed','independent_quality_gate_failed','quality_report_roster_unverified','approved_spec_lock_changed','render_source_hash_mismatch','render_resource_hash_mismatch','render_roster_mismatch','invalid_svg_canvas','independent_command_timeout','independent_render_failed','quality_gate_failed']);
+function adaptQualityDiagnostic(value:unknown, jobId:unknown):QualityDiagnostic|undefined {
+ if(!value||typeof value!=='object'||Array.isArray(value)||typeof jobId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(jobId))return;
+ const raw=value as RecordValue;
+ const text=(field:string,limit:number)=>typeof raw[field]==='string'&&!!raw[field].trim()&&raw[field].length<=limit&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(raw[field]);
+ if(raw.schema_version!==1||raw.publication_authorized!==false||!diagnosticCodes.has(raw.error_code)
+  ||!text('title',160)||!text('message',2000)||!text('suggestion',2000)
+  ||typeof raw.stage!=='string'||!/^[a-z_]{1,60}$/.test(raw.stage)
+  ||!['validation','generation'].includes(raw.retry_stage)
+  ||raw.diagnostic_download_url!==`/api/v1/jobs/${jobId}/diagnostics`)return;
+ return {schema_version:1,error_code:raw.error_code,stage:raw.stage,title:raw.title,message:raw.message,suggestion:raw.suggestion,retry_stage:raw.retry_stage,publication_authorized:false,diagnostic_download_url:raw.diagnostic_download_url};
+}
 export function adaptJob(raw:RecordValue):Job {
- const {needs_input:reported,...fields}=raw;
+ const {needs_input:reported,quality_diagnostics:reportedDiagnostic,...fields}=raw;
+ const quality_diagnostics=raw.status==='failed'&&raw.error_code==='quality_gate_failed'?adaptQualityDiagnostic(reportedDiagnostic,raw.id??raw.job_id):undefined;
  let remaining=10000;
  const questions=Array.isArray(reported?.questions)?reported.questions.slice(0,100).filter((value:unknown):value is string=>typeof value==='string'&&!!value.trim()).slice(0,20).map((value:string)=>{const text=value.slice(0,Math.min(1000,remaining));remaining-=text.length;return text;}).filter(Boolean):[];
  return {...fields,id:raw.id??raw.job_id,last_event_seq:raw.event_cursor??raw.last_event_seq??0,
-  ...(raw.status==='failed'&&raw.error_code==='execution_needs_input'&&reported?{needs_input:{questions}}:{})} as Job;
+  ...(raw.status==='failed'&&raw.error_code==='execution_needs_input'&&reported?{needs_input:{questions}}:{}),
+  ...(quality_diagnostics?{quality_diagnostics}:{})} as Job;
 }
 const flatSettings=(s:Project['settings'])=>({page_count:s.pages,language:s.language==='简体中文'?'zh':s.language,audience:s.audience,purpose:s.purpose,style:s.style,requirements:s.requirements});
 export const api = {

@@ -6,6 +6,7 @@ scripts execute; copied project programs, reports and cached PNGs are not used.
 from __future__ import annotations
 import copy,hashlib,json,os,posixpath,re,signal,subprocess,time,uuid,zipfile
 from pathlib import Path
+from urllib.parse import urlsplit
 import xml.etree.ElementTree as ET
 from .execution import ControlError,PINNED_WORKER,PPT_MASTER_COMMIT
 from .staging import relative,open_regular,copy_file,atomic_json,read_json,make_writable
@@ -17,6 +18,8 @@ DELIVERY_GATE='independent_delivery_audit'
 NATIVE_GATE='independent_native_ooxml_and_chart_data'
 _ISSUER=object()
 CACHE_ROOTS=frozenset(('.preview','.review','live_preview','.live_preview.lock','validation'))
+SVG_ANCHOR='{http://www.w3.org/2000/svg}a'
+SVG_NAVIGATION_HREFS=frozenset(('href','{http://www.w3.org/1999/xlink}href'))
 
 def hash_file(root,key,limit=64*1024**2):
     h=hashlib.sha256();size=0
@@ -36,6 +39,20 @@ def embedded_raster(value):
         image.verify()
     digest=hashlib.sha256(data).hexdigest()
     return {'path':'embedded-data/'+digest,'sha256':digest,'bytes':len(data),'embedded':True}
+
+def check_svg_navigation_href(value):
+    """Allow passive HTTPS navigation without treating it as a loaded resource."""
+    if (not value or '\\' in value or any(c.isspace() or ord(c)<32 or 127<=ord(c)<160 for c in value)
+            or re.search(r'%(?![0-9a-fA-F]{2})',value)):
+        raise ControlError('external_svg_resource')
+    if value.startswith('#'):return
+    try:
+        url=urlsplit(value)
+        # Accessing port also rejects malformed and out-of-range authorities.
+        url.port
+    except ValueError:raise ControlError('external_svg_resource') from None
+    if url.scheme!='https' or not url.hostname or '@' in url.netloc:
+        raise ControlError('external_svg_resource')
 
 class ProgrammaticEvidence:
     """An in-process issuer-bound result, never deserialized from request JSON."""
@@ -73,15 +90,18 @@ def source_binding(snapshot,manifest,request):
             if count>100000 or node.tag.rsplit('}',1)[-1] in ('script','foreignObject','iframe','object','embed'):raise ControlError('unsafe_svg_source')
             for attr,value in node.attrib.items():
                 if attr.rsplit('}',1)[-1].lower().startswith('on'):raise ControlError('unsafe_svg_source')
-                if attr.rsplit('}',1)[-1] in ('href','src') and value.startswith('data:'):
-                    resource=embedded_raster(value);resources[resource['path']]=resource
-                if attr.rsplit('}',1)[-1] in ('href','src') and value and not value.startswith(('#','data:')):
-                    if value.startswith('/') or any(x in value for x in (':','\\','?','#','%')):raise ControlError('external_svg_resource')
-                    reference=relative(posixpath.normpath(posixpath.join('svg_output',value)))
-                    resource=hash_file(root,reference)
-                    recorded=declared.get(reference,index.get(reference))
-                    if not recorded or resource['sha256']!=recorded.get('sha256') or resource['bytes']!=recorded.get('bytes'):raise ControlError('render_resource_hash_mismatch')
-                    resources[reference]=resource
+                if node.tag==SVG_ANCHOR and attr in SVG_NAVIGATION_HREFS:
+                    check_svg_navigation_href(value)
+                else:
+                    if attr.rsplit('}',1)[-1] in ('href','src') and value.startswith('data:'):
+                        resource=embedded_raster(value);resources[resource['path']]=resource
+                    if attr.rsplit('}',1)[-1] in ('href','src') and value and not value.startswith(('#','data:')):
+                        if value.startswith('/') or any(x in value for x in (':','\\','?','#','%')):raise ControlError('external_svg_resource')
+                        reference=relative(posixpath.normpath(posixpath.join('svg_output',value)))
+                        resource=hash_file(root,reference)
+                        recorded=declared.get(reference,index.get(reference))
+                        if not recorded or resource['sha256']!=recorded.get('sha256') or resource['bytes']!=recorded.get('bytes'):raise ControlError('render_resource_hash_mismatch')
+                        resources[reference]=resource
                 for token in re.findall(r'url\(([^)]*)\)',value,re.I):
                     reference=token.strip().strip('\"\x27')
                     if reference.startswith('data:'):

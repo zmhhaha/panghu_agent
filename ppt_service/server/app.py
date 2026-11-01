@@ -260,6 +260,14 @@ def create_app(settings:Settings|None=None,engine=None):
         return r.idempotent(owner,f'projects/{pid}/review-revisions',key,body.model_dump(mode='json'),action,authorize=authorize)
     @app.get('/api/v1/jobs/{jid}')
     def job(jid:str,owner=Depends(authenticate),s=Depends(session)):return job_dto(Repository(s).job(jid,owner),s)
+    @app.get('/api/v1/jobs/{jid}/diagnostics')
+    def job_diagnostics(jid:str,owner=Depends(authenticate),s=Depends(session)):
+        value=job_dto(Repository(s).job(jid,owner),s).get('quality_diagnostics')
+        if value is None:fail('quality_diagnostics_unavailable',404)
+        return Response(content=json.dumps(value,ensure_ascii=False,sort_keys=True),
+            media_type='application/json',headers={'Cache-Control':'private, no-store',
+                'Content-Disposition':f'attachment; filename="quality-diagnostics-{jid}.json"',
+                'X-Content-Type-Options':'nosniff'})
     @app.post('/api/v1/jobs/{jid}/cancel')
     def cancel(jid:str,key:str|None=Header(None,alias='Idempotency-Key'),owner=Depends(authenticate),s=Depends(session)):
         r=Repository(s)

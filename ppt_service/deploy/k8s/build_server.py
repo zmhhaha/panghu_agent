@@ -16,13 +16,13 @@ import tempfile
 SERVICE = Path(__file__).resolve().parents[2]
 SERVER_FILES = (
     '__init__.py', 'app.py', 'auth.py', 'middleware.py', 'migrate.py',
-    'models.py', 'needs_input.py', 'phase_limits.py', 'repository.py', 'review_revisions.py', 'site.py', 'storage.py',
+    'models.py', 'needs_input.py', 'quality_diagnostics.py', 'phase_limits.py', 'repository.py', 'review_revisions.py', 'site.py', 'storage.py',
     'acceptance/__init__.py', 'acceptance/contracts.py', 'acceptance/domain.py',
     'acceptance/router.py', 'acceptance/store.py', 'acceptance/resolver.py',
 )
 WEB_FILES = (
     'index.html', 'package.json', 'pnpm-lock.yaml', 'vite.config.ts', 'tsconfig.json',
-    'src/main.tsx', 'src/App.tsx', 'src/SourceFiles.tsx', 'src/JobTiming.tsx', 'src/api.ts', 'src/domain.ts', 'src/parse.ts',
+    'src/main.tsx', 'src/App.tsx', 'src/SourceFiles.tsx', 'src/JobTiming.tsx', 'src/QualityDiagnosticNotice.tsx', 'src/api.ts', 'src/domain.ts', 'src/parse.ts',
     'src/planning.ts', 'src/DirectionChooser.tsx', 'src/directionPresentation.ts', 'src/direction-choice.css',
     'src/styles.css', 'src/useJob.ts', 'src/useParsePolling.ts',
     'src/acceptance/index.ts', 'src/acceptance/AcceptancePanel.tsx',

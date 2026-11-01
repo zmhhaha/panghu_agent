@@ -6,6 +6,7 @@ from sqlalchemy import select,func,text
 from .models import *
 from .phase_limits import phase_timeout_seconds
 from .needs_input import normalize_questions
+from .quality_diagnostics import public_diagnostic
 ACTIVE=('queued','starting','running','collecting','validating','cancelling')
 TERMINAL=('succeeded','failed','cancelled','interrupted')
 def fail(code,status=409): raise HTTPException(status,detail={'code':code})
@@ -33,6 +34,29 @@ def job_dto(j,s=None):
                     and out.business_ref==f'ppt:{j.id}:{j.attempt}:{j.fencing_token}'
                     and out.request.get('business_ref')==out.business_ref):
                 result['needs_input']={'questions':normalize_questions(out.result.get('questions'))}
+    if s is not None and j.status=='failed' and j.error_code=='quality_gate_failed' and j.stopped is True:
+        out=s.get(AgentOutbox,j.id)
+        if (out is not None and out.state=='mapped' and out.attempt==j.attempt
+                and out.fencing_token==j.fencing_token and type(out.result) is dict
+                and out.result.get('status')=='failed' and out.result.get('error_code')=='quality_gate_failed'
+                and type(out.request) is dict and type(out.request.get('task')) is dict):
+            task=out.request['task'];details=out.result.get('quality_diagnostics')
+            if (type(details) is dict and task.get('project_id')==j.project_id
+                    and task.get('business_job_id')==j.id
+                    and out.business_ref==f'ppt:{j.id}:{j.attempt}:{j.fencing_token}'
+                    and out.request.get('business_ref')==out.business_ref
+                    and details.get('project_id')==j.project_id and details.get('job_id')==j.id
+                    and type(details.get('attempt')) is int and details['attempt']==j.attempt
+                    and type(details.get('fencing_token')) is int and details['fencing_token']==j.fencing_token
+                    and type(details.get('input_snapshot_sha256')) is str
+                    and len(details['input_snapshot_sha256'])==64
+                    and all(c in '0123456789abcdef' for c in details['input_snapshot_sha256'])
+                    and details['input_snapshot_sha256']==task.get('input_snapshot_sha256')
+                    and type(details.get('source_manifest_sha256')) is str
+                    and len(details['source_manifest_sha256'])==64
+                    and all(c in '0123456789abcdef' for c in details['source_manifest_sha256'])):
+                safe=public_diagnostic(details,job_id=j.id)
+                if safe is not None:result['quality_diagnostics']=safe
     return result
 EVENT_FIELDS={'job.queued':{'stage'},'job.started':{'stage'},'stage.changed':{'stage'},'plan.ready':{'revision','phase'},'artifact.ready':{'version_id'},'job.succeeded':set(),'job.failed':{'error_code'},'job.cancelled':set(),'job.cancelling':set()}
 class Repository:

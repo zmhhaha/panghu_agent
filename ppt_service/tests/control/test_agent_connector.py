@@ -740,6 +740,67 @@ def test_plain_accepted_dictionary_cannot_replace_independent_validator_receipt(
         assert session.get(ExecutionSlot, 1).job_id == database.job_id
 
 
+def test_stopped_validator_rejection_is_bound_persisted_and_never_published(database):
+    from ppt_service.control.agent_validation import AgentValidationFailure, _ISSUER
+    from ppt_service.server.repository import job_dto
+    control, service = connector(database)
+
+    def reject(snapshot, request):
+        source = hashlib.sha256((snapshot / 'result/manifest.json').read_bytes()).hexdigest()
+        raise AgentValidationFailure('external_svg_resource', _issuer=_ISSUER,
+            request_sha256=digest(request), diagnostic={
+                'schema_version': 1, 'error_code': 'external_svg_resource',
+                'publication_authorized': False, 'source_manifest_sha256': source,
+                'input_snapshot_sha256': request['input_snapshot_sha256'],
+                'private_log': '/work/private-source SECRET text',
+                'message': 'Model-authored text must not become a diagnosis'})
+
+    control.validator = SimpleNamespace(validate=reject)
+    assert control.tick()['status'] == 'uploading'
+    assert control.tick()['status'] == 'submitted'
+    assert control.tick()['status'] == 'failed'
+    with database.sessions() as session:
+        job = session.get(Job, database.job_id)
+        assert job.status == 'failed' and job.error_code == 'quality_gate_failed' and job.stopped is True
+        assert session.get(ExecutionSlot, 1).job_id is None
+        assert not session.scalars(select(Plan)).all()
+        assert not session.scalars(select(Checkpoint)).all()
+        assert not session.scalars(select(Version)).all()
+        stored = session.get(AgentOutbox, job.id).result
+        assert stored['quality_diagnostics']['error_code'] == 'external_svg_resource'
+        assert stored['quality_diagnostics']['job_id'] == job.id
+        assert 'SECRET' not in str(stored) and 'Model-authored' not in str(stored)
+        public = job_dto(job, session)['quality_diagnostics']
+        assert public['error_code'] == 'external_svg_resource'
+        assert public['publication_authorized'] is False
+        assert public['diagnostic_download_url'] == f'/api/v1/jobs/{job.id}/diagnostics'
+        assert 'source_manifest_sha256' not in public
+    # A restart reads the same bounded diagnostic; acknowledging a failed
+    # candidate never turns it into a preview or a published presentation.
+    assert control.tick()['status'] == 'acknowledged'
+    assert service.acks == []
+
+
+def test_unbound_stopped_validator_failure_has_no_public_diagnostic(database):
+    from ppt_service.control.agent_validation import AgentValidationFailure, _ISSUER
+    from ppt_service.server.repository import job_dto
+    control, _ = connector(database)
+
+    def reject(snapshot, request):
+        raise AgentValidationFailure('agent_independent_validation_failed', _issuer=_ISSUER)
+
+    control.validator = SimpleNamespace(validate=reject)
+    assert control.tick()['status'] == 'uploading'
+    assert control.tick()['status'] == 'submitted'
+    assert control.tick()['status'] == 'failed'
+    with database.sessions() as session:
+        job = session.get(Job, database.job_id)
+        assert job.status == 'failed' and job.error_code == 'quality_gate_failed'
+        assert 'quality_diagnostics' not in job_dto(job, session)
+        assert 'quality_diagnostics' not in session.get(AgentOutbox, job.id).result
+        assert not session.scalars(select(Version)).all()
+
+
 def test_prepare_rejects_stage1_checkpoint_even_with_supplied_stage2_confirmation(database):
     control, _ = connector(database); complete_plan(control)
     jid = confirm_and_enqueue(database, 'plan_options')

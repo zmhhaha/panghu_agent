@@ -40,6 +40,29 @@ describe('immutable confirmation',()=>{
  });
 });
 describe('retry and safety',()=>{
+ it('adapts a bounded quality diagnosis and drops private report fields',()=>{
+  const id='43133abb-2e94-4560-860a-2c1504f8ed42';
+  const diagnostic={schema_version:1,error_code:'external_svg_resource',stage:'source_binding',title:'页面引用检查未通过',message:'页面包含不允许的资源引用。',suggestion:'请管理员核对引用类型与校验规则。',retry_stage:'validation',publication_authorized:false,diagnostic_download_url:`/api/v1/jobs/${id}/diagnostics`,private_logs:'/private/check.log',raw_report:'SECRET',resource_url:'https://private.invalid'};
+  const job=adaptJob({id,project_id:'p',kind:'generate',status:'failed',error_code:'quality_gate_failed',quality_diagnostics:diagnostic});
+  expect(job.quality_diagnostics).toEqual({schema_version:1,error_code:'external_svg_resource',stage:'source_binding',title:'页面引用检查未通过',message:'页面包含不允许的资源引用。',suggestion:'请管理员核对引用类型与校验规则。',retry_stage:'validation',publication_authorized:false,diagnostic_download_url:`/api/v1/jobs/${id}/diagnostics`});
+  expect(JSON.stringify(job.quality_diagnostics)).not.toMatch(/private|SECRET|raw_report|resource_url/);
+  expect(adaptProject({id:'p',latest_job:{...job}}).latest_job?.quality_diagnostics).toEqual(job.quality_diagnostics);
+  expect(safeError(new ApiError('quality_gate_failed'))).not.toContain('调整要求');
+ });
+ it('rejects malformed, unrelated or unsafe quality diagnoses instead of rendering raw fields',()=>{
+  const id='43133abb-2e94-4560-860a-2c1504f8ed42';
+  const diagnostic={schema_version:1,error_code:'external_svg_resource',stage:'source_binding',title:'检查未通过',message:'资源检查失败',suggestion:'核对检查记录',retry_stage:'validation',publication_authorized:false,diagnostic_download_url:`/api/v1/jobs/${id}/diagnostics`};
+  const raw={id,project_id:'p',kind:'generate',status:'failed',error_code:'quality_gate_failed',quality_diagnostics:diagnostic};
+  for(const value of [null,[],false,'PRIVATE',{...diagnostic,schema_version:true},{...diagnostic,publication_authorized:true},{...diagnostic,error_code:'private_raw_failure'},
+   {...diagnostic,stage:'<img>'},{...diagnostic,retry_stage:'publish'},{...diagnostic,title:''},{...diagnostic,title:'x'.repeat(161)},
+   {...diagnostic,message:'x'.repeat(2001)},{...diagnostic,suggestion:'private\u0000text'},
+   ...['https://evil.invalid/report','//evil.invalid/report','javascript:alert(1)',`/api/v1/jobs/${id}/diagnostics?token=SECRET`,'/api/v1/jobs/00000000-0000-0000-0000-000000000000/diagnostics'].map(diagnostic_download_url=>({...diagnostic,diagnostic_download_url}))]) {
+   expect(adaptJob({...raw,quality_diagnostics:value}).quality_diagnostics).toBeUndefined();
+  }
+  expect(adaptJob({...raw,status:'running'}).quality_diagnostics).toBeUndefined();
+  expect(adaptJob({...raw,error_code:'execution_interrupted'}).quality_diagnostics).toBeUndefined();
+  expect(adaptJob({...raw,id:'../../private'}).quality_diagnostics).toBeUndefined();
+ });
  it('adapts only bounded plain text needs-input questions for the reported terminal error',()=>{
   const raw={id:'needs',project_id:'p',kind:'generate',status:'failed',error_code:'execution_needs_input',event_cursor:5,
    needs_input:{questions:['请核对讲解重点。',{question:'not-public'},false,...Array(30).fill('x'.repeat(2000))],private_result:'private'}};

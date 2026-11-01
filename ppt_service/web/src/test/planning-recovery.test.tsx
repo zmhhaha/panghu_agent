@@ -28,6 +28,42 @@ async function open() {const view=render(<App/>);await screen.findByRole('headin
 async function planning() {const user=userEvent.setup();await open();await user.click(screen.getByRole('tab',{name:/沟通与方案/}));return user;}
 
 describe('planning failure recovery from server history',()=>{
+ it('restores a quality diagnosis and same-origin download after refresh and reopening',async()=>{
+  const id='43133abb-2e94-4560-860a-2c1504f8ed42';
+  current={...current,latest_job:{...failed,id,kind:'generate',stage:'validating',error_code:'quality_gate_failed',quality_diagnostics:{schema_version:1,error_code:'external_svg_resource',stage:'source_binding',title:'页面引用检查未通过',message:'页面含有不允许的外部资源引用。',suggestion:'请管理员核对引用类型，无需重写整份要求。',retry_stage:'validation',publication_authorized:false,diagnostic_download_url:`/api/v1/jobs/${id}/diagnostics`}}};
+  const view=await open();
+  const notice=within(screen.getByRole('region',{name:'质量检查诊断'}));
+  expect(notice.getByText('页面引用检查未通过')).toBeVisible();
+  expect(notice.getByText('页面含有不允许的外部资源引用。')).toBeVisible();
+  expect(notice.getByText('请管理员核对引用类型，无需重写整份要求。')).toBeVisible();
+  expect(notice.getByText(/尚未形成新的可预览或下载版本/)).toBeVisible();
+  const download=notice.getByRole('link',{name:'下载诊断报告（JSON）'});
+  expect(download).toHaveAttribute('href',`/api/v1/jobs/${id}/diagnostics`);
+  expect(download).toHaveAttribute('download',`ppt-quality-diagnostic-${id}.json`);
+  fireEvent.click(screen.getByRole('button',{name:'刷新状态'}));await waitFor(()=>expect(api.project).toHaveBeenCalledTimes(2));
+  expect(screen.getByText('页面引用检查未通过')).toBeVisible();
+  view.unmount();await open();expect(screen.getByText('页面引用检查未通过')).toBeVisible();
+  expect(api.job).not.toHaveBeenCalled();expect(consumeEvents).not.toHaveBeenCalled();
+  expect(api.plan).not.toHaveBeenCalled();expect(api.generate).not.toHaveBeenCalled();expect(api.confirm).not.toHaveBeenCalled();
+ });
+
+ it('explains missing historical quality evidence without blaming the user requirements',async()=>{
+  current={...current,latest_job:{...failed,kind:'generate',error_code:'quality_gate_failed'}};
+  await open();const notice=within(screen.getByRole('region',{name:'质量检查诊断'}));
+  expect(notice.getByText(/此任务尚无可显示的具体诊断/)).toBeVisible();
+  expect(notice.getByText(/联系管理员并提供上方任务号/)).toBeVisible();
+  expect(notice.queryByRole('link')).not.toBeInTheDocument();expect(screen.queryByText(/请调整要求后重试/)).not.toBeInTheDocument();
+  expect(api.plan).not.toHaveBeenCalled();expect(api.generate).not.toHaveBeenCalled();
+ });
+
+ it('renders diagnostic text literally rather than injecting HTML or creating report links from text',async()=>{
+  const id='43133abb-2e94-4560-860a-2c1504f8ed42';
+  current={...current,latest_job:{...failed,id,kind:'generate',error_code:'quality_gate_failed',quality_diagnostics:{schema_version:1,error_code:'external_svg_resource',stage:'source_binding',title:'资源检查未通过',message:'<img src=x onerror="alert(1)">',suggestion:'https://example.invalid/private-log',retry_stage:'validation',publication_authorized:false,diagnostic_download_url:`/api/v1/jobs/${id}/diagnostics`}}};
+  await open();const region=screen.getByRole('region',{name:'质量检查诊断'});const notice=within(region);
+  expect(notice.getByText('<img src=x onerror="alert(1)">')).toBeVisible();expect(region.querySelector('img')).toBeNull();
+  expect(notice.getAllByRole('link')).toHaveLength(1);expect(notice.getByText('https://example.invalid/private-log')).toBeVisible();
+ });
+
  it('restores executor questions after refresh and reopening without submitting another task',async()=>{
   const reported:Job={...failed,id:'needs-generation',kind:'generate',stage:'generate',error_code:'execution_needs_input',
    needs_input:{questions:['请管理员核对预览工具。','<img src=x onerror="alert(1)">']}};

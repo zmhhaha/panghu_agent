@@ -19,11 +19,13 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from agent_service.artifacts import read_output
 from agent_service.contracts import digest
 from agent_service.profiles.ppt import PPTProfile, validate_checkpoint
+from ppt_service.server.quality_diagnostics import known_code
 from .execution import ControlError
 from .staging import atomic_json, copy_tree, make_readonly, read_json, relative
 
 _ISSUER = object()
 TRANSPORT_SCHEMA = 'ppt-agent-validation-transport.v1'
+FAILURE_TRANSPORT_SCHEMA = 'ppt-agent-validation-failure-transport.v1'
 
 
 def _measured_tree(root, rows, *, limit=512 * 1024**2, max_files=4096, exclude=()):
@@ -104,11 +106,24 @@ def require(value, code):
 
 class AgentValidationFailure(ControlError):
     """Known rejected output after the validator's own physical stop proof."""
-    def __init__(self, code, *, _issuer=None):
+    def __init__(self, code, *, _issuer=None, diagnostic=None, request_sha256=None):
         if _issuer is not _ISSUER:
             raise TypeError('A stopped validator must issue this failure')
         super().__init__(code)
         self.validator_stopped = True
+        import copy
+        self._issuer = _issuer
+        self._diagnostic = copy.deepcopy(diagnostic)
+        self._request_sha256 = request_sha256
+        self._seal = digest(self._diagnostic)
+
+    def diagnostic(self, request):
+        """Only a bound frozen rejection can supply a public explanation."""
+        import copy
+        if (self._issuer is _ISSUER and self._request_sha256 == digest(request)
+                and digest(self._diagnostic) == self._seal):
+            return copy.deepcopy(self._diagnostic)
+        return None
 
 
 class AgentValidationReceipt:
@@ -180,7 +195,10 @@ def validate_private_candidate(snapshot, request, *, gate_runner=None, evidence_
             # output directory is absent after transport. Recreate only this
             # known empty structure in the disposable validation copy.
             (project / 'svg_output').mkdir(exist_ok=True)
-        gates = gate_runner or OfficialGates(scratch / 'evidence')
+        # Keep image-owned check output outside the disposable source copy.
+        # This remains private administrator evidence, never browser content.
+        gate_output = Path(evidence_root) / 'official-gates' if evidence_root is not None else scratch / 'evidence'
+        gates = gate_runner or OfficialGates(gate_output)
         evidence = gates.run(project, task['phase'], request['pages'])
     require(evidence.get('official_gates_verified') is True, 'independent_quality_gate_failed')
     if task['phase'] == 'prepare':
@@ -300,15 +318,71 @@ class AgentKubernetesSandbox:
             require(persisted == evidence, 'agent_validator_evidence_changed')
         return AgentValidationReceipt._issue(report, source, final)
 
+    def _read_failure_verified(self, final, source, snapshot, request):
+        """Read a rejected, stopped sandbox without issuing acceptance authority."""
+        transport = read_json(final, 'transport-manifest.json')
+        require(transport.get('schema_version') == FAILURE_TRANSPORT_SCHEMA
+                and transport.get('writers_stopped') is True and transport.get('transport_verified') is True
+                and transport.get('source_manifest_sha256') == source
+                and transport.get('validation_request_sha256') == digest(request)
+                and transport.get('execution_image') == self.transport.settings.worker_image
+                and type(transport.get('sandbox_exit_code')) is int and transport['sandbox_exit_code'] != 0
+                and isinstance(transport.get('sandbox_pod_uid'), str) and bool(transport['sandbox_pod_uid']),
+                'agent_validator_transport_unverified')
+        _, total = _measured_tree(final, transport.get('files'), exclude=('transport-manifest.json',))
+        require(type(transport.get('bytes')) is int and transport['bytes'] == total,
+                'agent_validator_transport_invalid')
+        _candidate_snapshot(snapshot, request['task'], source)
+        report = read_json(final, 'validated.json', 8 * 1024**2)
+        task = request['task']
+        require(type(report) is dict and report.get('accepted') is False
+                and report.get('publication_authorized') is False
+                and type(report.get('schema_version')) is int and report['schema_version'] == 1
+                and report.get('source_manifest_sha256') == source
+                and report.get('validation_nonce') == transport['validation_nonce']
+                and report.get('job_id') == request['job_id'] == task['business_job_id']
+                and report.get('project_id') == task['project_id']
+                and report.get('phase') == request['phase'] == task['phase']
+                and report.get('input_snapshot_sha256') == request['input_snapshot_sha256'] == task['input_snapshot_sha256']
+                and known_code(report.get('error_code')), 'agent_validator_binding_changed')
+        diagnostic = {'schema_version': 1, 'error_code': report['error_code'],
+            'publication_authorized': False, 'source_manifest_sha256': source,
+            'input_snapshot_sha256': request['input_snapshot_sha256']}
+        return AgentValidationFailure(report['error_code'], _issuer=_ISSUER,
+            diagnostic=diagnostic, request_sha256=digest(request))
+
+    def _freeze_output(self, output, final, source, request, nonce, code, handle, name, *, failed=False):
+        """No output is retained as trusted until this sandbox's stop is checked."""
+        require(not (output / 'transport-manifest.json').exists(), 'reserved_validation_output')
+        authority = self.transport.backend._read(handle)
+        pods = [row for row in authority['resources'] if row['resource'] == 'pods' and row['name'] == name]
+        require(len(pods) == 1, 'agent_validator_stop_unverified')
+        pod = pods[0]
+        require(pod.get('deleted') and pod.get('stop_receipt', {}).get('terminated') is True
+                and pod['stop_receipt'].get('api_uid') == pod.get('api_uid')
+                and isinstance(pod.get('api_uid'), str) and bool(pod['api_uid']), 'agent_validator_stop_unverified')
+        pending = final.with_name('.pending-' + final.name + '-' + nonce)
+        inventory = copy_tree(output, pending, max_total=512 * 1024**2, max_files=4096)
+        atomic_json(pending / 'transport-manifest.json', {
+            'schema_version': FAILURE_TRANSPORT_SCHEMA if failed else TRANSPORT_SCHEMA,
+            'source_manifest_sha256': source, 'validation_nonce': nonce,
+            'sandbox_pod_uid': pod['api_uid'], 'validation_request_sha256': digest(request),
+            'execution_image': self.transport.settings.worker_image,
+            'sandbox_exit_code': code, 'writers_stopped': True, 'transport_verified': True, **inventory})
+        make_readonly(pending); os.replace(pending, final)
+
     def validate(self, snapshot, request):
         require(os.name == 'posix', 'agent_kubernetes_validator_requires_linux')
         snapshot = Path(snapshot).absolute(); self.transport.backend.subpath(snapshot)
         source = hashlib.sha256(read_output(snapshot, 'result/manifest.json', limit=4 * 1024**2)).hexdigest()
         scope = str(uuid5(NAMESPACE_URL, 'ppt-agent-validator:' + request['job_id'] + ':' + source))
         final = snapshot.parent / ('agent-validation-' + snapshot.name + '-' + source[:16])
+        rejected = snapshot.parent / ('agent-validation-failure-' + snapshot.name + '-' + source[:16])
         with _exclusive(self.config.data_root / 'agent-validator-locks' / (scope + '.lock')):
             if final.exists():
                 return self._read_verified(final, source, snapshot, request)
+            if rejected.exists():
+                raise self._read_failure_verified(rejected, source, snapshot, request)
             backend = self.transport.backend
             h = backend.register_sandbox_scope(scope)
             self.transport.scope_uid = scope
@@ -323,20 +397,21 @@ class AgentKubernetesSandbox:
                 'validated.json', self.config.validation_timeout)
             require(stopped, 'agent_validation_writers_not_stopped')
             if failure is not None or code != 0:
+                if failure is None and type(code) is int and code != 0:
+                    # Freeze administrator evidence even for a malformed result;
+                    # only the strict bound reader can issue detailed diagnostics.
+                    self._freeze_output(output, rejected, source, request, nonce, code, handle, name, failed=True)
+                    self.transport._discard(root)
+                    try:
+                        rejection = self._read_failure_verified(rejected, source, snapshot, request)
+                    except (ControlError, OSError, ValueError, TypeError, KeyError):
+                        # Stop was observed here, so finish as a failed candidate;
+                        # an unbound/malformed report supplies no diagnostics.
+                        rejection = AgentValidationFailure('agent_independent_validation_failed', _issuer=_ISSUER)
+                    raise rejection
                 error = failure.code if isinstance(failure, ControlError) else 'agent_independent_validation_failed'
                 raise AgentValidationFailure(error, _issuer=_ISSUER)
-            require(not (output / 'transport-manifest.json').exists(), 'reserved_validation_output')
-            pending = final.with_name('.pending-' + final.name + '-' + nonce)
-            inventory = copy_tree(output, pending, max_total=512 * 1024**2, max_files=4096)
-            authority = backend._read(handle)
-            pod = next(row for row in authority['resources'] if row['resource'] == 'pods' and row['name'] == name)
-            require(pod.get('deleted') and pod.get('stop_receipt', {}).get('terminated') is True
-                    and pod['stop_receipt'].get('api_uid') == pod.get('api_uid'), 'agent_validator_stop_unverified')
-            atomic_json(pending / 'transport-manifest.json', {'schema_version': TRANSPORT_SCHEMA,
-                'source_manifest_sha256': source, 'validation_nonce': nonce, 'sandbox_pod_uid': pod['api_uid'],
-                'validation_request_sha256': digest(request), 'execution_image': self.transport.settings.worker_image,
-                'sandbox_exit_code': code, 'writers_stopped': True, 'transport_verified': True, **inventory})
-            make_readonly(pending); os.replace(pending, final)
+            self._freeze_output(output, final, source, request, nonce, code, handle, name)
             self.transport._discard(root)
             return self._read_verified(final, source, snapshot, request)
 
@@ -352,8 +427,14 @@ def main(argv=None):
         result = validate_private_candidate(args.snapshot, request, evidence_root=args.output.parent / 'independent')
         atomic_json(args.output, result); return 0
     except Exception as exc:
-        atomic_json(args.output, {'accepted': False, 'publication_authorized': False,
-                    'error_code': exc.code if isinstance(exc, ControlError) else 'quality_gate_failed',
+        from ppt_service.worker.candidate_validation import ValidationError
+        request = request if type(request) is dict else {}
+        code = ('candidate_integrity_failed' if isinstance(exc, ValidationError) else
+                exc.code if isinstance(exc, ControlError) and known_code(exc.code) else 'quality_gate_failed')
+        task = request.get('task') if type(request.get('task')) is dict else {}
+        atomic_json(args.output, {'schema_version': 1, 'accepted': False, 'publication_authorized': False,
+                    'error_code': code, 'job_id': request.get('job_id'), 'project_id': task.get('project_id'),
+                    'phase': request.get('phase'), 'input_snapshot_sha256': request.get('input_snapshot_sha256'),
                     'validation_nonce': request.get('validation_nonce'),
                     'source_manifest_sha256': request.get('source_manifest_sha256')})
         return 2

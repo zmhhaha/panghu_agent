@@ -191,10 +191,11 @@ class BuildTests(unittest.TestCase):
         self.assertIn('code/ppt_service/server/review_revisions.py', names)
         self.assertIn('code/ppt_service/server/phase_limits.py', names)
         self.assertIn('code/ppt_service/server/needs_input.py', names)
+        self.assertIn('code/ppt_service/server/quality_diagnostics.py', names)
         self.assertIn('code/ppt_service/server/acceptance/resolver.py', names)
         self.assertIn('web/src/acceptance/AcceptancePanel.tsx', names)
 
-    def test_both_site_packagers_include_the_hashed_importable_question_module(self):
+    def test_both_site_packagers_include_hashed_importable_diagnostic_modules(self):
         # Exercise the actual packaged subtree with isolated Python imports;
         # repository PYTHONPATH must not hide a missing runtime dependency.
         built = BUILD.context_inputs(self.service)
@@ -206,16 +207,18 @@ class BuildTests(unittest.TestCase):
         with tarfile.open(self.root / 'offline-package/context.tar') as archive:
             packaged = {member.name: archive.extractfile(member).read()
                         for member in archive.getmembers() if member.isfile()}
-        name = 'code/ppt_service/server/needs_input.py'
-        expected = (SERVICE / 'server/needs_input.py').read_bytes()
         for label, context, receipt in (
                 ('server-build', built, 'build-info/source-inputs.json'),
                 ('offline-package', packaged, 'build-info/site-inputs.json')):
             with self.subTest(packager=label):
-                self.assertEqual(context[name], expected)
-                measured = json.loads(context[receipt])[name]
-                self.assertEqual(measured['sha256'], MANIFEST.describe(SERVICE / 'server/needs_input.py')['sha256'])
-                self.assertEqual(measured['bytes'], len(expected))
+                for module in ('needs_input', 'quality_diagnostics'):
+                    source = SERVICE / f'server/{module}.py'
+                    name = f'code/ppt_service/server/{module}.py'
+                    expected = source.read_bytes()
+                    self.assertEqual(context[name], expected)
+                    measured = json.loads(context[receipt])[name]
+                    self.assertEqual(measured['sha256'], MANIFEST.describe(source)['sha256'])
+                    self.assertEqual(measured['bytes'], len(expected))
                 isolated = self.root / label
                 for path, raw in context.items():
                     if path.startswith('code/'):
@@ -224,9 +227,11 @@ class BuildTests(unittest.TestCase):
                         target.write_bytes(raw)
                 result = subprocess.run([sys.executable, '-I', '-c',
                     'import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); '
-                    'from ppt_service.server import needs_input; '
+                    'from ppt_service.server import needs_input, quality_diagnostics; '
                     'assert Path(needs_input.__file__).is_relative_to(Path(sys.argv[1])); '
-                    'assert callable(needs_input.normalize_questions)',
+                    'assert callable(needs_input.normalize_questions); '
+                    'assert Path(quality_diagnostics.__file__).is_relative_to(Path(sys.argv[1])); '
+                    'assert quality_diagnostics.known_code("external_svg_resource")',
                     str(isolated / 'code')], cwd=isolated, capture_output=True, text=True, timeout=20)
                 self.assertEqual(result.returncode, 0, result.stderr)
 
