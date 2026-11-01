@@ -31,7 +31,7 @@ def source_context(dockerfile: Path) -> tuple[bytes, str]:
     # The dispatcher revalidates review-only revision authority against the
     # server-owned resolver. Include that production subpackage explicitly;
     # generated fixtures, demo assets and tests do not enter the overlay.
-    for name in ('__init__.py', 'contracts.py', 'domain.py', 'router.py', 'store.py', 'resolver.py'):
+    for name in ('__init__.py', 'contracts.py', 'domain.py', 'router.py', 'store.py', 'resolver.py', 'evidence.py'):
         files.append(SERVICE / 'server/acceptance' / name)
     output = io.BytesIO()
     manifest = {}
