@@ -380,7 +380,8 @@ def rejected_transport(case, monkeypatch, *, changed=None):
         if changed=='nonce':report['validation_nonce']=str(uuid4())
         if changed=='source':report['source_manifest_sha256']='b'*64
         if changed=='unknown':report['error_code']='private-provider-message'
-        atomic_json(output/'validated.json',report)
+        if changed=='malformed':(output/'validated.json').write_bytes(b'{not-json')
+        elif changed!='missing':atomic_json(output/'validated.json',report)
         (output/'private-check.log').write_text('Administrator-only source text and token.\n')
         return root,output,report,2,None,changed!='running',handle,name
     sandbox.config=SimpleNamespace(data_root=case.root,validation_timeout=30)
@@ -409,13 +410,45 @@ def test_failed_validator_freezes_private_evidence_and_preserves_bound_reason(ca
     assert failure.diagnostic(case.request) is None
 
 
-@pytest.mark.parametrize('changed',['nonce','source','unknown'])
+@pytest.mark.parametrize('changed',['nonce','source','unknown','missing','malformed'])
 def test_unbound_failed_report_is_retained_but_never_projected(candidate,monkeypatch,changed):
     sandbox,_=rejected_transport(candidate,monkeypatch,changed=changed)
     with pytest.raises(AgentValidationFailure) as captured:sandbox.validate(candidate.snapshot,candidate.request)
     assert captured.value.code=='agent_independent_validation_failed'
     assert captured.value.diagnostic(candidate.request) is None
     assert list(candidate.root.glob('agent-validation-failure-*'))
+    # Simulate a restart between freezing evidence and committing business
+    # failure. Cached reads must finish the same generic stopped rejection.
+    def never_launch(*args,**kwargs):raise AssertionError('A frozen failure must not launch another sandbox')
+    sandbox.transport._run=never_launch
+    with pytest.raises(AgentValidationFailure) as replay:sandbox.validate(candidate.snapshot,candidate.request)
+    assert replay.value.code==captured.value.code
+    assert replay.value.validator_stopped is True
+    assert replay.value.diagnostic(candidate.request) is None
+
+
+@pytest.mark.parametrize('changed',['stop','request','tree','source','transport_source'])
+def test_cached_failure_never_mints_generic_authority_for_changed_trust_evidence(candidate,monkeypatch,changed):
+    from ppt_service.control.staging import atomic_json,read_json
+    sandbox,_=rejected_transport(candidate,monkeypatch,changed='unknown')
+    with pytest.raises(AgentValidationFailure):sandbox.validate(candidate.snapshot,candidate.request)
+    rejected=candidate.snapshot.parent/('agent-validation-failure-'+candidate.snapshot.name+'-'+candidate.source[:16])
+    request=copy.deepcopy(candidate.request)
+    if changed in ('stop','transport_source'):
+        body=read_json(rejected,'transport-manifest.json')
+        if changed=='stop':body['writers_stopped']=False
+        else:body['source_manifest_sha256']='e'*64
+        rejected.chmod(0o700)
+        atomic_json(rejected/'transport-manifest.json',body)
+    elif changed=='request':request['pages']+=1
+    elif changed=='tree':
+        log=rejected/'private-check.log';log.chmod(0o600);log.write_bytes(b'Changed after freezing')
+    else:
+        (candidate.snapshot/'project/deck/planning-notes.md').write_bytes(b'Changed source after freezing')
+    def never_launch(*args,**kwargs):raise AssertionError('Changed trust evidence must not launch another sandbox')
+    sandbox.transport._run=never_launch
+    with pytest.raises(ControlError) as captured:sandbox.validate(candidate.snapshot,request)
+    assert not isinstance(captured.value,AgentValidationFailure)
 
 
 @pytest.mark.parametrize('changed',['stop','running'])

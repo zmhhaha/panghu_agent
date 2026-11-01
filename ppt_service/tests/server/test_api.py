@@ -4,6 +4,7 @@ from datetime import datetime,timezone
 from pathlib import Path
 import pytest
 from sqlalchemy import create_engine,select
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.pool import StaticPool
 from fastapi.testclient import TestClient
 from ppt_service.server.app import create_app
@@ -129,6 +130,9 @@ def test_quality_diagnostics_require_exact_terminal_attempt_and_safe_code(ctx,ch
         elif changed=='publication':details['publication_authorized']=True
         elif changed=='schema':details['schema_version']=True
         result['quality_diagnostics']=details;out.result=result
+        # Python considers True equal to 1, so SQLAlchemy otherwise sees no
+        # JSON change in the malformed schema case. Persist the exact fixture.
+        flag_modified(out,'result')
     assert 'quality_diagnostics' not in c.get('/api/v1/jobs/'+jid).json()
     assert 'quality_diagnostics' not in getp(c,p)['latest_job']
     assert c.get('/api/v1/jobs/'+jid+'/diagnostics').status_code==404

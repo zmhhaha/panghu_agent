@@ -333,9 +333,16 @@ class AgentKubernetesSandbox:
         require(type(transport.get('bytes')) is int and transport['bytes'] == total,
                 'agent_validator_transport_invalid')
         _candidate_snapshot(snapshot, request['task'], source)
-        report = read_json(final, 'validated.json', 8 * 1024**2)
+        # Only the report is optional/untrusted here. Stop, frozen output,
+        # request and source checks above must fail closed on every read.
+        # Replaying a malformed report after a controller restart has the same
+        # stopped, generic rejection as the initial frozen-output read.
+        try:
+            report = read_json(final, 'validated.json', 8 * 1024**2)
+        except (ControlError, OSError, ValueError, TypeError):
+            return AgentValidationFailure('agent_independent_validation_failed', _issuer=_ISSUER)
         task = request['task']
-        require(type(report) is dict and report.get('accepted') is False
+        bound = (type(report) is dict and report.get('accepted') is False
                 and report.get('publication_authorized') is False
                 and type(report.get('schema_version')) is int and report['schema_version'] == 1
                 and report.get('source_manifest_sha256') == source
@@ -344,7 +351,9 @@ class AgentKubernetesSandbox:
                 and report.get('project_id') == task['project_id']
                 and report.get('phase') == request['phase'] == task['phase']
                 and report.get('input_snapshot_sha256') == request['input_snapshot_sha256'] == task['input_snapshot_sha256']
-                and known_code(report.get('error_code')), 'agent_validator_binding_changed')
+                and known_code(report.get('error_code')))
+        if not bound:
+            return AgentValidationFailure('agent_independent_validation_failed', _issuer=_ISSUER)
         diagnostic = {'schema_version': 1, 'error_code': report['error_code'],
             'publication_authorized': False, 'source_manifest_sha256': source,
             'input_snapshot_sha256': request['input_snapshot_sha256']}
@@ -402,13 +411,7 @@ class AgentKubernetesSandbox:
                     # only the strict bound reader can issue detailed diagnostics.
                     self._freeze_output(output, rejected, source, request, nonce, code, handle, name, failed=True)
                     self.transport._discard(root)
-                    try:
-                        rejection = self._read_failure_verified(rejected, source, snapshot, request)
-                    except (ControlError, OSError, ValueError, TypeError, KeyError):
-                        # Stop was observed here, so finish as a failed candidate;
-                        # an unbound/malformed report supplies no diagnostics.
-                        rejection = AgentValidationFailure('agent_independent_validation_failed', _issuer=_ISSUER)
-                    raise rejection
+                    raise self._read_failure_verified(rejected, source, snapshot, request)
                 error = failure.code if isinstance(failure, ControlError) else 'agent_independent_validation_failed'
                 raise AgentValidationFailure(error, _issuer=_ISSUER)
             self._freeze_output(output, final, source, request, nonce, code, handle, name)
