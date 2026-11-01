@@ -255,6 +255,21 @@ class KubernetesBackend:
                             'launch_not_started': True, 'resources': []})
         return h
 
+    def prove_sandbox_scope_absent(self, uid):
+        """Read-only absence check when no scope journal has ever been indexed.
+
+        This cannot replace a missing indexed journal or issue a Pod-stop
+        receipt. Query both supported metadata schemes; an untracked object,
+        incomplete LIST or API failure blocks creation of a replacement scope.
+        """
+        self._path(uid)  # Canonical UUID only; no caller-provided authority path.
+        for prefix in (METADATA_PREFIX, LEGACY_METADATA_PREFIX):
+            result = self.client.request('GET', 'pods', query={'labelSelector': prefix + 'attempt=' + uid})
+            require(isinstance(result.get('items'), list)
+                    and not result.get('metadata', {}).get('continue'), 'incomplete_execution_inventory')
+            require(not result['items'], 'acceptance_scope_authority_missing')
+        return True
+
     def _metadata(self, h, name, role):
         scope_key, role_key, intent_key, _ = metadata_keys(self._read(h))
         return {'name': name, 'namespace': self.settings.namespace,

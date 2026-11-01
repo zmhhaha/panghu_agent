@@ -17,7 +17,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 import pytest
 
 from agent_service.contracts import digest
-from ppt_service.control.agent_validation import AgentKubernetesSandbox, _measured_tree
+from ppt_service.control.agent_validation import AgentKubernetesSandbox, _measured_tree, _acceptance_runtime_scope
 from ppt_service.control.execution import ControlError
 from ppt_service.control.staging import atomic_json, read_json
 
@@ -42,13 +42,19 @@ def transport_case(tmp_path):
         "attempt": 1, "fencing_token": 40, "execution_image": IMAGE,
         "original_request_sha256": digest(original)}
     signature = digest(binding)
-    scope = str(uuid5(NAMESPACE_URL, "ppt-acceptance:" + signature))
+    legacy_scope = str(uuid5(NAMESPACE_URL, "ppt-acceptance:" + signature))
+    runtime_pins = {"execution_image": IMAGE, "namespace": "ppt-service", "pvc_name": "ppt-data",
+        "pvc_data_prefix": "state", "worker_service_account": "ppt-worker",
+        "provider_secret": "ppt-model-upstream", "provider_secret_key": "PPT_UPSTREAM_API_KEY"}
+    scope = _acceptance_runtime_scope(signature, runtime_pins)
     snapshot = tmp_path / "snapshot"
     snapshot.mkdir()
     atomic_json(snapshot / "original-receipt.json", original)
     base = tmp_path / "projects" / project / "versions" / version
     state = SimpleNamespace(root=tmp_path, snapshot=snapshot, original=original, request=request,
-        signature=signature, scope=scope, base=base, target=base / "acceptance-evidence" / evidence,
+        signature=signature, scope=scope, legacy_scope=legacy_scope, pins=runtime_pins,
+        index=tmp_path / "acceptance-scopes" / (signature + ".json"), scopes={},
+        base=base, target=base / "acceptance-evidence" / evidence,
         attempted=tmp_path / "acceptance-attempts" / signature, runs=[], registrations=[],
         discarded=[], fault=None, output=None, runtime=None)
     pod_uid, pod_name = "synthetic-physical-pod-uid", "synthetic-validator-pod"
@@ -58,11 +64,18 @@ def transport_case(tmp_path):
 
     def register(uid):
         state.registrations.append(uid)
-        return SimpleNamespace(uid=uid)
+        state.scopes[uid] = SimpleNamespace(uid=uid)
+        return state.scopes[uid]
+
+    def handle_for_scope(uid):
+        if uid not in state.scopes:
+            raise FileNotFoundError(uid)
+        return state.scopes[uid]
 
     def authority(handle):
         if not state.runs:
-            return {"resources": [], "launch_not_started": True}
+            return {"resources": [], "launch_not_started": True,
+                "sandbox_only": True, "runtime": runtime_pins}
         if state.fault in ("launch_rejected", "launch_uncertain", "launch_missing_flag", "launch_unexplained"):
             record = {"resources": [{"resource": "networkpolicies", "name": pod_name + "-net", "deleted": True}],
                 "launch_not_started": state.fault != "launch_uncertain"}
@@ -88,6 +101,8 @@ def transport_case(tmp_path):
         return {"resources": [row]}
 
     def run(module, mounts, envelope, filename, timeout):
+        registry = read_json(state.index.parent, state.index.name)
+        assert registry["scopes"] == [{"scope_uid": scope, "runtime": runtime_pins}]
         state.runs.append(module)
         assert module == "ppt_service.control.acceptance_validation"
         assert mounts == [(snapshot.absolute(), "/snapshot", True)]
@@ -143,7 +158,11 @@ def transport_case(tmp_path):
                 else ControlError("synthetic_failure") if state.fault == "transport_failure" else None),
             state.fault != "running", handle, pod_name)
 
-    backend = SimpleNamespace(subpath=subpath, register_sandbox_scope=register, _read=authority)
+    backend = SimpleNamespace(subpath=subpath, register_sandbox_scope=register, _read=authority,
+        runtime_pins=lambda: copy.deepcopy(runtime_pins), handle_for_scope=handle_for_scope,
+        prove_sandbox_scope_absent=lambda uid: True,
+        prove_stopped=lambda h: SimpleNamespace(uid=h.uid, all_writers_stopped=True),
+        remove_sandbox_policy=lambda *args: None)
     sandbox = object.__new__(AgentKubernetesSandbox)
     sandbox.config = SimpleNamespace(data_root=tmp_path, validation_timeout=30)
     sandbox.transport = SimpleNamespace(backend=backend, settings=SimpleNamespace(worker_image=IMAGE),
@@ -159,6 +178,276 @@ def invoke(case):
 def assert_no_bundle(case):
     assert not case.target.exists()
     assert not list((case.base / "acceptance-evidence").glob("*"))
+
+
+def real_acceptance_sandbox(case, image, api):
+    from ppt_service.control.execution import RuntimeConfig
+    from ppt_service.control.kubernetes import KubeSettings
+    settings = KubeSettings(worker_image=image, stop_timeout=0.1, poll_seconds=0.001)
+    return AgentKubernetesSandbox(RuntimeConfig(case.root), settings, client=api)
+
+
+def install_acceptance_api_result(case, api, *, before_pod=None, exit_code=0):
+    """Only synthetic output; real backend lifecycle code observes the API."""
+    def on_pod(obj):
+        container = obj["spec"]["containers"][0]
+        assert container["args"] == ["-m", "ppt_service.control.acceptance_validation"]
+        if before_pod:
+            before_pod(obj)
+        mounts = {row["mountPath"]: row for row in container["volumeMounts"]}
+        prefix = case.sandbox.transport.settings.pvc_data_prefix + "/"
+        paths = {}
+        for name in ("/request", "/output"):
+            assert mounts[name]["subPath"].startswith(prefix)
+            paths[name] = case.root / mounts[name]["subPath"][len(prefix):]
+        envelope = read_json(paths["/request"], "request.json")
+        request = envelope["acceptance_request"]
+        assert request == case.request
+        # The registry must already be durable and reference a real journal at
+        # the point the actual backend reaches the Pod POST.
+        backend = case.sandbox.transport.backend
+        scope = _acceptance_runtime_scope(case.signature, backend.runtime_pins())
+        registry = read_json(case.index.parent, case.index.name)
+        assert {"scope_uid": scope, "runtime": backend.runtime_pins()} in registry["scopes"]
+        assert backend.handle_for_scope(scope).uid == scope
+        atomic_json(paths["/output"] / "request.json", request)
+        atomic_json(paths["/output"] / "receipt.json", {
+            "schema": "ppt-service.acceptance-evidence.v1", "status": "pending",
+            "evidence_id": request["evidence_id"], "binding_sha256": case.signature,
+            "request_sha256": digest(request), "execution_image": container["image"],
+            "publication_authorized": False})
+        api.terminal(obj, exit_code=exit_code)
+    api.on_pod = on_pod
+
+
+def index_existing_scope(case, backend, handle):
+    from ppt_service.control.agent_validation import _save_acceptance_scope_index
+    case.index.parent.mkdir(mode=0o700, exist_ok=True)
+    _save_acceptance_scope_index(case.index, case.signature,
+        [{"scope_uid": handle.uid, "runtime": backend.runtime_pins()}])
+
+
+@pytest.mark.parametrize("kind", ["legacy", "indexed_runtime"])
+def test_new_image_recovers_prelaunch_scope_without_repinning_its_journal(transport_case, kind):
+    from test_kubernetes import FakeAPI
+    case, api = transport_case, FakeAPI()
+    old_image = "registry.fixture/validator@sha256:" + "1" * 64
+    old = real_acceptance_sandbox(case, old_image, api).transport.backend
+    old_uid = (case.legacy_scope if kind == "legacy"
+        else _acceptance_runtime_scope(case.signature, old.runtime_pins()))
+    handle = old.register_sandbox_scope(old_uid)
+    policy = "prelaunch-stale-policy"
+    old.create_resource(handle, "networkpolicies", old.policy(handle, policy, "sandbox"), sandbox=True)
+    if kind == "indexed_runtime":
+        index_existing_scope(case, old, handle)
+    identity, runtime = copy.deepcopy(old._read(handle)["identity"]), copy.deepcopy(old._read(handle)["runtime"])
+    case.base.mkdir(parents=True)
+    case.sandbox = real_acceptance_sandbox(case, IMAGE, api)
+    install_acceptance_api_result(case, api)
+    assert invoke(case)["status"] == "acceptance_validated"
+    preserved = old._read(handle)
+    assert preserved["identity"] == identity and preserved["runtime"] == runtime
+    assert preserved["launch_not_started"] is True and old._path(handle.uid).exists()
+    assert next(row for row in preserved["resources"] if row["name"] == policy)["deleted"] is True
+    assert ("networkpolicies", policy) not in api.objects
+    assert all(call[3]["spec"]["containers"][0]["image"] == IMAGE
+        for call in api.calls if call[:2] == ("POST", "pods"))
+    assert (case.root / "agent-validator-locks" / (case.legacy_scope + ".lock")).exists()
+
+
+@pytest.mark.parametrize("kind", ["legacy", "indexed_runtime"])
+def test_old_image_pod_is_physically_stopped_before_new_runtime_post(transport_case, kind):
+    from test_kubernetes import FakeAPI
+    case, api = transport_case, FakeAPI()
+    old = real_acceptance_sandbox(case, "registry.fixture/validator@sha256:" + "1" * 64, api).transport.backend
+    uid = case.legacy_scope if kind == "legacy" else _acceptance_runtime_scope(case.signature, old.runtime_pins())
+    handle = old.register_sandbox_scope(uid)
+    old_name = "old-runtime-validator"
+    body = old.pod(handle, old_name, "sandbox", "ppt_service.control.acceptance_validation",
+        [(case.snapshot, "/snapshot", True)])
+    old.create_resource(handle, "pods", body, sandbox=True)
+    old_api_uid = old._read(handle)["resources"][0]["api_uid"]
+    if kind == "indexed_runtime":
+        index_existing_scope(case, old, handle)
+    case.base.mkdir(parents=True)
+    case.sandbox = real_acceptance_sandbox(case, IMAGE, api)
+
+    def before_new_post(obj):
+        assert ("pods", old_name) not in api.objects
+        row = old._read(handle)["resources"][0]
+        assert row["deleted"] is True and row["stop_receipt"]["terminated"] is True
+        assert row["api_uid"] == row["stop_receipt"]["api_uid"] == old_api_uid
+        assert obj["spec"]["containers"][0]["image"] == IMAGE
+    install_acceptance_api_result(case, api, before_pod=before_new_post)
+    assert invoke(case)["status"] == "acceptance_validated"
+    posts = [i for i, call in enumerate(api.calls) if call[:2] == ("POST", "pods")]
+    stop = next(i for i, call in enumerate(api.calls)
+        if call[:3] == ("DELETE", "pods", old_name))
+    assert len(posts) == 2 and posts[0] < stop < posts[1]
+    assert old._read(handle)["runtime"]["execution_image"] != IMAGE
+
+
+@pytest.mark.parametrize("kind", ["legacy", "indexed_runtime"])
+def test_missing_old_pod_without_stop_receipt_blocks_new_image(transport_case, kind):
+    from test_kubernetes import FakeAPI
+    case, api = transport_case, FakeAPI()
+    old = real_acceptance_sandbox(case, "registry.fixture/validator@sha256:" + "1" * 64, api).transport.backend
+    uid = case.legacy_scope if kind == "legacy" else _acceptance_runtime_scope(case.signature, old.runtime_pins())
+    handle = old.register_sandbox_scope(uid)
+    old.create_resource(handle, "pods", old.pod(handle, "missing-validator", "sandbox",
+        "ppt_service.control.acceptance_validation", [(case.snapshot, "/snapshot", True)]), sandbox=True)
+    if kind == "indexed_runtime":
+        index_existing_scope(case, old, handle)
+    del api.objects["pods", "missing-validator"]
+    case.base.mkdir(parents=True)
+    case.sandbox = real_acceptance_sandbox(case, IMAGE, api)
+    with pytest.raises(ControlError, match="execution_writer_missing"):
+        invoke(case)
+    assert_no_bundle(case)
+    assert not case.attempted.exists()
+    assert len([call for call in api.calls if call[:2] == ("POST", "pods")]) == 1
+    assert "stop_receipt" not in old._read(handle)["resources"][0]
+
+
+def test_index_survives_restart_before_launch_and_recovers_prior_runtime(transport_case):
+    from test_kubernetes import FakeAPI
+    case, api = transport_case, FakeAPI()
+    case.base.mkdir(parents=True)
+    old_image = "registry.fixture/validator@sha256:" + "1" * 64
+    first = real_acceptance_sandbox(case, old_image, api)
+    old_runtime = first.transport.backend.runtime_pins()
+    old_scope = _acceptance_runtime_scope(case.signature, old_runtime)
+    case.request["execution_image"] = old_image
+    case.sandbox = first
+
+    def restart_before_post(*args, **kwargs):
+        assert read_json(case.index.parent, case.index.name)["scopes"] == [
+            {"scope_uid": old_scope, "runtime": old_runtime}]
+        assert first.transport.backend.handle_for_scope(old_scope).uid == old_scope
+        raise RuntimeError("Synthetic controller restart before Pod POST")
+    first.transport._run = restart_before_post
+    with pytest.raises(RuntimeError, match="Synthetic controller restart"):
+        invoke(case)
+    assert not case.attempted.exists() and not any(call[0] == "POST" for call in api.calls)
+    # A fresh backend/controller reads the persisted index, not in-memory state.
+    case.sandbox = real_acceptance_sandbox(case, IMAGE, api)
+    case.request["execution_image"] = IMAGE
+    install_acceptance_api_result(case, api)
+    assert invoke(case)["status"] == "acceptance_validated"
+    rows = read_json(case.index.parent, case.index.name)["scopes"]
+    new_runtime = case.sandbox.transport.backend.runtime_pins()
+    assert rows == [{"scope_uid": old_scope, "runtime": old_runtime},
+        {"scope_uid": _acceptance_runtime_scope(case.signature, new_runtime), "runtime": new_runtime}]
+    assert first.transport.backend.handle_for_scope(old_scope).uid == old_scope
+
+
+def test_binding_cache_prevents_failed_attempt_retry_after_image_change(transport_case):
+    from test_kubernetes import FakeAPI
+    case, api = transport_case, FakeAPI()
+    case.base.mkdir(parents=True)
+    case.sandbox = real_acceptance_sandbox(case, IMAGE, api)
+    install_acceptance_api_result(case, api, exit_code=2)
+    assert invoke(case)["status"] == "acceptance_failed"
+    before = copy.deepcopy(api.calls)
+    newer = "registry.fixture/validator@sha256:" + "2" * 64
+    case.sandbox = real_acceptance_sandbox(case, newer, api)
+    case.request["execution_image"] = newer
+    assert invoke(case)["status"] == "already_attempted"
+    assert api.calls == before and len(read_json(case.index.parent, case.index.name)["scopes"]) == 1
+    assert_no_bundle(case)
+
+
+@pytest.mark.parametrize("fault", ["foreign_uid", "duplicate", "missing_journal", "pins_mismatch", "too_many",
+    "file_symlink", "directory_symlink", "file_hardlink", "partial_index", "malformed_json"])
+def test_registry_never_forgets_or_substitutes_historical_authority(transport_case, fault):
+    from test_kubernetes import FakeAPI
+    case, api = transport_case, FakeAPI()
+    case.base.mkdir(parents=True)
+    case.sandbox = real_acceptance_sandbox(case, IMAGE, api)
+    backend = case.sandbox.transport.backend
+    pins = backend.runtime_pins()
+    scope = _acceptance_runtime_scope(case.signature, pins)
+    if fault != "missing_journal":
+        backend.register_sandbox_scope(scope)
+    row = {"scope_uid": scope, "runtime": copy.deepcopy(pins)}
+    if fault == "foreign_uid":
+        row["scope_uid"] = str(uuid4())
+    if fault == "pins_mismatch":
+        row["runtime"]["pvc_name"] = "different-data"
+        row["scope_uid"] = _acceptance_runtime_scope(case.signature, row["runtime"])
+        backend.register_sandbox_scope(row["scope_uid"])
+    rows = [row, copy.deepcopy(row)] if fault == "duplicate" else [row] * 33 if fault == "too_many" else [row]
+    case.index.parent.mkdir(mode=0o700)
+    atomic_json(case.index, {"schema": "ppt-service.acceptance-scopes.v1",
+        "binding_sha256": case.signature, "scopes": rows})
+    if fault == "partial_index":
+        atomic_json(case.index, {"schema": "ppt-service.acceptance-scopes.v1", "binding_sha256": case.signature})
+    if fault == "malformed_json":
+        case.index.write_bytes(b'{"schema":"ppt-service.acceptance-scopes.v1",')
+    if fault == "file_hardlink":
+        os.link(case.index, case.root / "index-linked.json")
+    if fault == "file_symlink":
+        real = case.root / "index-original.json"
+        case.index.rename(real)
+        case.index.symlink_to(real)
+    if fault == "directory_symlink":
+        real = case.root / "index-original-directory"
+        case.index.parent.rename(real)
+        case.index.parent.symlink_to(real, target_is_directory=True)
+    with pytest.raises((ControlError, OSError, ValueError)):
+        invoke(case)
+    assert_no_bundle(case)
+    assert not case.attempted.exists() and not any(call[0] == "POST" for call in api.calls)
+
+
+def test_scope_index_byte_limit_preserves_existing_history(transport_case):
+    from ppt_service.control.agent_validation import _save_acceptance_scope_index
+    case = transport_case
+    case.index.parent.mkdir(mode=0o700)
+    _save_acceptance_scope_index(case.index, case.signature,
+        [{"scope_uid": case.scope, "runtime": case.pins}])
+    original = case.index.read_bytes()
+    # Row/string count limits alone do not bound a UTF-8 document's bytes.
+    pins = {key: "\U0001f9ea" * 512 for key in case.pins}
+    rows = [{"scope_uid": _acceptance_runtime_scope(case.signature, dict(pins, namespace=str(n))),
+        "runtime": dict(pins, namespace=str(n))} for n in range(32)]
+    with pytest.raises(ControlError, match="acceptance_scope_registry_limit"):
+        _save_acceptance_scope_index(case.index, case.signature, rows)
+    assert case.index.read_bytes() == original
+
+
+@pytest.mark.parametrize("prefix", ["ppt-service.panghuer.top/", "ppt.panghuer.top/"])
+def test_absent_legacy_journal_never_hides_untracked_pod_under_either_metadata_scheme(transport_case, prefix):
+    from test_kubernetes import FakeAPI
+    case, api = transport_case, FakeAPI()
+    case.base.mkdir(parents=True)
+    case.sandbox = real_acceptance_sandbox(case, IMAGE, api)
+    api.objects["pods", "untracked-old-validator"] = {"metadata": {
+        "name": "untracked-old-validator", "labels": {prefix + "attempt": case.legacy_scope}}}
+    with pytest.raises(ControlError, match="acceptance_scope_authority_missing"):
+        invoke(case)
+    assert not case.sandbox.transport.backend._path(case.legacy_scope).exists()
+    assert not case.attempted.exists() and not any(call[0] == "POST" for call in api.calls)
+    assert_no_bundle(case)
+
+
+def test_absent_legacy_scope_requires_complete_api_inventory(transport_case, monkeypatch):
+    from test_kubernetes import FakeAPI
+    case, api = transport_case, FakeAPI()
+    case.base.mkdir(parents=True)
+    case.sandbox = real_acceptance_sandbox(case, IMAGE, api)
+    request = api.request
+
+    def incomplete(method, resource, name=None, body=None, query=None):
+        if method == "GET" and resource == "pods" and name is None:
+            return {"metadata": {"continue": "unread-next-page"}, "items": []}
+        return request(method, resource, name, body, query)
+    monkeypatch.setattr(api, "request", incomplete)
+    with pytest.raises(ControlError, match="incomplete_execution_inventory"):
+        invoke(case)
+    assert not case.sandbox.transport.backend._path(case.legacy_scope).exists()
+    assert not case.attempted.exists() and not any(call[0] == "POST" for call in api.calls)
+    assert_no_bundle(case)
 
 
 def test_exact_stop_freezes_complete_roster_without_publication(transport_case):
@@ -205,6 +494,7 @@ def test_acceptance_uses_real_backend_entrypoint_journal_and_exact_stop(transpor
     api = FakeAPI()
     case.base.mkdir(parents=True)
     case.sandbox = AgentKubernetesSandbox(config, settings, client=api)
+    case.scope = _acceptance_runtime_scope(case.signature, case.sandbox.transport.backend.runtime_pins())
 
     def observe_pod(obj):
         container = obj["spec"]["containers"][0]

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 from contextlib import contextmanager
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -230,6 +231,91 @@ def _exclusive(path):
         os.close(fd)
 
 
+_ACCEPTANCE_RUNTIME_KEYS = frozenset(('execution_image', 'namespace', 'pvc_name',
+    'pvc_data_prefix', 'worker_service_account', 'provider_secret', 'provider_secret_key'))
+_ACCEPTANCE_SCOPE_LIMIT = 32
+
+
+def _acceptance_runtime_scope(signature, runtime):
+    return str(uuid5(NAMESPACE_URL, 'ppt-acceptance-runtime:' + signature + ':' + digest(runtime)))
+
+
+def _acceptance_scope_index(data_root, signature):
+    """Read only a bounded, no-link index of derived scope IDs and full pins."""
+    folder = data_root / 'acceptance-scopes'
+    folder.mkdir(mode=0o700, exist_ok=True)
+    info = folder.lstat()
+    require(stat.S_ISDIR(info.st_mode) and not folder.is_symlink()
+            and not getattr(info, 'st_file_attributes', 0) & 0x400, 'acceptance_scope_registry_invalid')
+    folder.chmod(0o700)
+    path = folder / (signature + '.json')
+    if not path.exists() and not path.is_symlink():
+        return path, []
+    body = read_json(folder, path.name, 128 * 1024)
+    require(isinstance(body, dict) and set(body) == {'schema', 'binding_sha256', 'scopes'}
+            and body['schema'] == 'ppt-service.acceptance-scopes.v1'
+            and body['binding_sha256'] == signature and isinstance(body['scopes'], list)
+            and len(body['scopes']) <= _ACCEPTANCE_SCOPE_LIMIT, 'acceptance_scope_registry_invalid')
+    seen = set()
+    for row in body['scopes']:
+        require(isinstance(row, dict) and set(row) == {'scope_uid', 'runtime'}
+                and isinstance(row['runtime'], dict) and set(row['runtime']) == _ACCEPTANCE_RUNTIME_KEYS
+                and all(isinstance(value, str) and 0 < len(value) <= 512 for value in row['runtime'].values()),
+                'acceptance_scope_registry_invalid')
+        expected = _acceptance_runtime_scope(signature, row['runtime'])
+        require(row['scope_uid'] == expected and expected not in seen, 'acceptance_scope_registry_invalid')
+        seen.add(expected)
+    return path, body['scopes']
+
+
+def _save_acceptance_scope_index(path, signature, rows):
+    body = {'schema': 'ppt-service.acceptance-scopes.v1',
+        'binding_sha256': signature, 'scopes': rows}
+    require(len(json.dumps(body, ensure_ascii=False, sort_keys=True, allow_nan=False).encode()) <= 128 * 1024,
+            'acceptance_scope_registry_limit')
+    atomic_json(path, body)
+    path.chmod(0o600)
+    # Persist both the index rename and (on its first run) its parent entry
+    # before any Pod POST intent. A registered journal always precedes indexing.
+    for folder in (path.parent, path.parent.parent):
+        fd = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
+def _recover_acceptance_scope(backend, scope, *, runtime=None, allow_absent=False):
+    """Retire only a derived sandbox scope, preserving its original journal."""
+    try:
+        handle = backend.handle_for_scope(scope)
+    except FileNotFoundError:
+        require(allow_absent, 'acceptance_scope_authority_missing')
+        require(backend.prove_sandbox_scope_absent(scope) is True, 'acceptance_scope_authority_missing')
+        return
+    require(handle.uid == scope, 'acceptance_validator_scope_mismatch')
+    record = backend._read(handle)
+    require(record.get('sandbox_only') is True
+            and (runtime is None or record.get('runtime') == runtime)
+            and all(row.get('role') == 'sandbox' and row.get('resource') in ('pods', 'networkpolicies')
+                    for row in record['resources']), 'acceptance_scope_registry_invalid')
+    # First reconcile a durable finalizer-release receipt whose Pod has already
+    # disappeared; a missing Pod without that authority remains unprovable.
+    backend.prove_stopped(handle)
+    record = backend._read(handle)
+    for row in record['resources']:
+        if row['resource'] == 'pods' and not row.get('deleted'):
+            backend.finish_sandbox(handle, row['name'])
+    proof = backend.prove_stopped(handle)
+    require(proof.uid == scope and proof.all_writers_stopped is True, 'acceptance_prior_scope_stop_unverified')
+    record = backend._read(handle)
+    require(all(row.get('deleted') is True for row in record['resources'] if row['resource'] == 'pods'),
+            'acceptance_prior_scope_stop_unverified')
+    for row in record['resources']:
+        if row['resource'] == 'networkpolicies' and not row.get('deleted'):
+            backend.remove_sandbox_policy(handle, row['name'])
+
+
 class AgentKubernetesSandbox:
     """Reuse only the reviewed sandbox transport, never its Hermes-model checks."""
     def __init__(self, config, settings, *, client=None):
@@ -267,11 +353,11 @@ class AgentKubernetesSandbox:
         except (ValueError, AttributeError):
             raise ControlError('acceptance_request_binding_invalid') from None
         signature = digest(binding.model_dump(mode='json'))
-        scope = str(uuid5(NAMESPACE_URL, 'ppt-acceptance:' + signature))
+        legacy_scope = str(uuid5(NAMESPACE_URL, 'ppt-acceptance:' + signature))
         base = self.config.data_root / 'projects' / binding.project_id / 'versions' / binding.version_id
         target = base / 'acceptance-evidence' / acceptance_request['evidence_id']
         attempted = self.config.data_root / 'acceptance-attempts' / signature
-        with _exclusive(self.config.data_root / 'agent-validator-locks' / (scope + '.lock')):
+        with _exclusive(self.config.data_root / 'agent-validator-locks' / (legacy_scope + '.lock')):
             if attempted.exists():
                 return {'status': 'already_attempted', 'binding_sha256': signature}
             require(acceptance_request['execution_image'] == self.transport.settings.worker_image
@@ -280,12 +366,26 @@ class AgentKubernetesSandbox:
             self.transport.backend.subpath(snapshot)
             self.transport.backend.subpath(base)
             backend = self.transport.backend
+            runtime = backend.runtime_pins()
+            require(isinstance(runtime, dict) and set(runtime) == _ACCEPTANCE_RUNTIME_KEYS
+                    and all(isinstance(value, str) and 0 < len(value) <= 512 for value in runtime.values())
+                    and runtime['execution_image'] == self.transport.settings.worker_image,
+                    'acceptance_scope_registry_invalid')
+            scope = _acceptance_runtime_scope(signature, runtime)
+            index, rows = _acceptance_scope_index(self.config.data_root, signature)
+            _recover_acceptance_scope(backend, legacy_scope, allow_absent=True)
+            for row in rows:
+                _recover_acceptance_scope(backend, row['scope_uid'], runtime=row['runtime'])
+            if not any(row['scope_uid'] == scope for row in rows):
+                require(len(rows) < _ACCEPTANCE_SCOPE_LIMIT, 'acceptance_scope_registry_limit')
+                _recover_acceptance_scope(backend, scope, runtime=runtime, allow_absent=True)
             handle = backend.register_sandbox_scope(scope)
+            require(handle.uid == scope and backend._read(handle).get('runtime') == runtime,
+                    'acceptance_scope_registry_invalid')
+            if not any(row['scope_uid'] == scope for row in rows):
+                rows = [*rows, {'scope_uid': scope, 'runtime': runtime}]
+                _save_acceptance_scope_index(index, signature, rows)
             self.transport.scope_uid = scope
-            record = backend._read(handle)
-            for entry in record['resources']:
-                if entry['resource'] == 'pods' and not entry.get('deleted'):
-                    backend.finish_sandbox(handle, entry['name'])
             root, output, result, code, failure, stopped, handle, name = self.transport._run(
                 'ppt_service.control.acceptance_validation', [(snapshot, '/snapshot', True)],
                 {'original_request': original_request, 'acceptance_request': acceptance_request},
