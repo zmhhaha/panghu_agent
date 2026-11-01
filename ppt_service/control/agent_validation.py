@@ -294,6 +294,23 @@ class AgentKubernetesSandbox:
             require(handle.uid == scope, 'acceptance_validator_scope_mismatch')
             authority = backend._read(handle)
             pods = [row for row in authority['resources'] if row['resource'] == 'pods' and row['name'] == name]
+            if (not pods and isinstance(failure, ControlError)
+                    and authority.get('launch_not_started') is True
+                    and not any(row['resource'] == 'pods' for row in authority['resources'])):
+                # _run can reject a fixed entrypoint/mount before writing a Pod
+                # POST intent. The private journal proves no writer was launched;
+                # this is not a physical Pod-stop receipt or acceptance evidence.
+                error = failure.code
+                if not isinstance(error, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,79}', error):
+                    error = 'acceptance_launch_rejected'
+                atomic_json(attempted, {'schema': 'ppt-service.acceptance-attempt.v1',
+                    'binding_sha256': signature, 'status': 'launch_rejected',
+                    'scope_uid': scope, 'launch_not_started': True, 'pod_post_intents': 0,
+                    'evidence_path': str(root), 'writers_stopped': True,
+                    'error_code': error})
+                make_readonly(root)
+                return {'status': 'acceptance_failed', 'binding_sha256': signature,
+                        'error_code': error}
             require(len(pods) == 1, 'acceptance_validator_stop_unverified')
             pod = pods[0]
             require(pod.get('deleted') and pod.get('stop_receipt', {}).get('terminated') is True

@@ -346,6 +346,7 @@ class KubernetesBackend:
                            'ppt_service.control.parsing', 'ppt_service.control.publisher',
                            'ppt_service.control.hermes_delivery',
                            'ppt_service.control.agent_validation',
+                           'ppt_service.control.acceptance_validation',
                            'ppt_service.control.kubernetes_preflight'), 'unapproved_kubernetes_entrypoint')
         require(not any(row.get('name') == 'PPT_RUNTIME_WORKER_IMAGE' for row in env),
                 'reserved_kubernetes_environment')

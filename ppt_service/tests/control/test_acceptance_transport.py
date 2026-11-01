@@ -62,7 +62,13 @@ def transport_case(tmp_path):
 
     def authority(handle):
         if not state.runs:
-            return {"resources": []}
+            return {"resources": [], "launch_not_started": True}
+        if state.fault in ("launch_rejected", "launch_uncertain", "launch_missing_flag", "launch_unexplained"):
+            record = {"resources": [{"resource": "networkpolicies", "name": pod_name + "-net", "deleted": True}],
+                "launch_not_started": state.fault != "launch_uncertain"}
+            if state.fault == "launch_missing_flag":
+                record.pop("launch_not_started")
+            return record
         row = {"resource": "pods", "name": pod_name, "api_uid": pod_uid, "deleted": True,
             "stop_receipt": {"terminated": True, "api_uid": pod_uid}}
         if state.fault == "missing_pod":
@@ -132,7 +138,9 @@ def transport_case(tmp_path):
         handle = SimpleNamespace(uid="different-private-scope" if state.fault == "scope" else scope)
         return (root, output, None if state.fault == "missing_result" else result,
             2 if state.fault == "nonzero" else 0,
-            ControlError("synthetic_failure") if state.fault == "transport_failure" else None,
+            (ControlError("unapproved_kubernetes_entrypoint")
+                if state.fault in ("launch_rejected", "launch_uncertain", "launch_missing_flag")
+                else ControlError("synthetic_failure") if state.fault == "transport_failure" else None),
             state.fault != "running", handle, pod_name)
 
     backend = SimpleNamespace(subpath=subpath, register_sandbox_scope=register, _read=authority)
@@ -183,6 +191,60 @@ def test_exact_stop_freezes_complete_roster_without_publication(transport_case):
     assert read_json(case.attempted.parent, case.attempted.name)["status"] == "pending"
     assert case.discarded == [case.runtime]
     assert invoke(case)["status"] == "already_attempted" and len(case.runs) == 1
+
+
+def test_acceptance_uses_real_backend_entrypoint_journal_and_exact_stop(transport_case):
+    """API-shaped observations exercise the actual backend and _run together."""
+    from test_kubernetes import FakeAPI
+    from ppt_service.control.execution import RuntimeConfig
+    from ppt_service.control.kubernetes import KubeSettings
+
+    case = transport_case
+    config = RuntimeConfig(case.root)
+    settings = KubeSettings(worker_image=IMAGE, stop_timeout=0.1, poll_seconds=0.001)
+    api = FakeAPI()
+    case.base.mkdir(parents=True)
+    case.sandbox = AgentKubernetesSandbox(config, settings, client=api)
+
+    def observe_pod(obj):
+        container = obj["spec"]["containers"][0]
+        assert container["args"] == ["-m", "ppt_service.control.acceptance_validation"]
+        mounts = {row["mountPath"]: row for row in container["volumeMounts"]}
+        assert mounts["/snapshot"]["readOnly"] is True
+        assert mounts["/request"]["readOnly"] is True
+        assert mounts["/output"]["readOnly"] is False
+        prefix = settings.pvc_data_prefix + "/"
+        paths = {}
+        for name in ("/request", "/output"):
+            assert mounts[name]["subPath"].startswith(prefix)
+            paths[name] = case.root / mounts[name]["subPath"][len(prefix):]
+        envelope = read_json(paths["/request"], "request.json")
+        assert envelope == {"original_request": case.original, "acceptance_request": case.request}
+        atomic_json(paths["/output"] / "request.json", case.request)
+        atomic_json(paths["/output"] / "receipt.json", {
+            "schema": "ppt-service.acceptance-evidence.v1", "status": "pending",
+            "evidence_id": case.request["evidence_id"], "binding_sha256": case.signature,
+            "request_sha256": digest(case.request), "execution_image": IMAGE,
+            "publication_authorized": False})
+        api.terminal(obj)
+
+    api.on_pod = observe_pod
+    assert invoke(case)["status"] == "acceptance_validated"
+    backend = case.sandbox.transport.backend
+    handle = backend.handle_for_scope(case.scope)
+    authority = backend._read(handle)
+    pods = [row for row in authority["resources"] if row["resource"] == "pods"]
+    assert len(pods) == 1 and authority["launch_not_started"] is False
+    pod = pods[0]
+    assert pod["deleted"] is True and pod["finalizer_release_requested"] is True
+    assert pod["stop_receipt"]["terminated"] is True
+    assert pod["stop_receipt"]["api_uid"] == pod["api_uid"]
+    body = read_json(case.target, "transport-manifest.json")
+    assert body["validator_pod_uid"] == pod["api_uid"]
+    assert body["validator_scope_uid"] == case.scope
+    assert not api.objects
+    assert len([call for call in api.calls if call[:2] == ("POST", "pods")]) == 1
+    assert read_json(case.attempted.parent, case.attempted.name)["status"] == "pending"
 
 
 @pytest.mark.parametrize("rename_fails", [False, True])
@@ -248,6 +310,31 @@ def test_failed_stopped_attempt_is_private_and_not_repeated(transport_case, faul
     assert (case.output / "private/check.log").exists()
     assert stat.S_IMODE(case.runtime.stat().st_mode) & 0o222 == 0
     assert invoke(case)["status"] == "already_attempted" and len(case.runs) == 1
+
+
+def test_journal_proven_launch_rejection_retains_original_reason_without_pod_stop_claim(transport_case):
+    case = transport_case
+    case.fault = "launch_rejected"
+    assert invoke(case) == {"status": "acceptance_failed", "binding_sha256": case.signature,
+        "error_code": "unapproved_kubernetes_entrypoint"}
+    assert_no_bundle(case)
+    cache = read_json(case.attempted.parent, case.attempted.name)
+    assert cache["status"] == "launch_rejected" and cache["error_code"] == "unapproved_kubernetes_entrypoint"
+    assert cache["launch_not_started"] is True and cache["pod_post_intents"] == 0
+    assert not {"pod_uid", "validator_pod_uid", "stop_receipt", "transport_verified"} & set(cache)
+    assert not case.discarded
+    assert stat.S_IMODE(case.runtime.stat().st_mode) == 0o555
+    assert invoke(case)["status"] == "already_attempted" and len(case.runs) == 1
+
+
+@pytest.mark.parametrize("fault", ["launch_uncertain", "launch_missing_flag", "launch_unexplained"])
+def test_no_pod_row_alone_never_proves_no_launch(transport_case, fault):
+    case = transport_case
+    case.fault = fault
+    with pytest.raises(ControlError, match="acceptance_validator_stop_unverified"):
+        invoke(case)
+    assert_no_bundle(case)
+    assert not case.attempted.exists() and not case.discarded
 
 
 @pytest.mark.parametrize("fault", ["receipt_schema", "receipt_id", "receipt_binding", "receipt_request",

@@ -115,6 +115,30 @@ def test_reconcile_prelaunch_is_durable_and_does_not_break_staging(runtime):
     assert all(call[0] == 'GET' for call in api.calls)
 
 
+@pytest.mark.parametrize('module', ['ppt_service.control.acceptance_validation',
+    'ppt_service.control.acceptance_validation_extra', 'os'])
+def test_real_backend_admits_only_exact_acceptance_entrypoint(runtime, module):
+    config, settings, api, backend, attempt = runtime
+    scope = backend.register_sandbox_scope(str(uuid.uuid4()))
+    source = config.data_root / 'acceptance-fixture'
+    source.mkdir()
+    mounts = [(source, '/snapshot', True)]
+    if module != 'ppt_service.control.acceptance_validation':
+        with pytest.raises(ControlError, match='unapproved_kubernetes_entrypoint'):
+            backend.pod(scope, 'acceptance-validator', 'sandbox', module, mounts)
+    else:
+        body = backend.pod(scope, 'acceptance-validator', 'sandbox', module, mounts)
+        container = body['spec']['containers'][0]
+        assert container['args'] == ['-m', module]
+        assert container['name'] == 'sandbox' and container['image'] == settings.worker_image
+        snapshot = next(row for row in container['volumeMounts'] if row['mountPath'] == '/snapshot')
+        assert snapshot['readOnly'] is True
+        assert container['securityContext']['readOnlyRootFilesystem'] is True
+    assert backend._read(scope)['launch_not_started'] is True
+    assert not backend._read(scope)['resources']
+    assert not any(call[0] == 'POST' for call in api.calls)
+
+
 def test_legacy_authority_keeps_exact_resource_keys_and_can_finish_after_restart(runtime):
     config, settings, api, backend, attempt = runtime
     layout = staged(runtime)
