@@ -1,0 +1,14 @@
+# Build with the immutable current validator as PPT_VALIDATOR_BASE_IMAGE.
+# Source overlays are built separately from Git and must preserve this runtime.
+ARG PPT_VALIDATOR_BASE_IMAGE
+FROM ${PPT_VALIDATOR_BASE_IMAGE}
+USER 0:0
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libreoffice-impress poppler-utils fontconfig fonts-noto-cjk \
+    && mkdir -p /opt/ppt-service/build-info \
+    && dpkg-query -W > /opt/ppt-service/build-info/office-packages.txt \
+    && libreoffice --version > /opt/ppt-service/build-info/libreoffice.version \
+    && pdftoppm -v 2> /opt/ppt-service/build-info/poppler.version \
+    && fc-cache -f \
+    && rm -rf /var/lib/apt/lists/*
+USER 10000:10000
