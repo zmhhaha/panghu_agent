@@ -154,9 +154,57 @@ artifact:
 `19d9e26451ebb621f4cfa9452edaa7b5381c2a075d0c26bbf587933937e3207d`.
 The server measured 53,959 bytes, clean ZIP CRC, ten slides and ten notes.
 This resolves the zero-preview/no-download incident through the normal product
-workflow. Visual and desktop PowerPoint checks remain unsubmitted, and the
-version remains `review/gate_pending`; no formal publication is claimed.
+workflow. At that checkpoint visual and desktop PowerPoint checks were
+unsubmitted, and the version remained `review/gate_pending`. The owner's later
+review below updates the human visual status; no formal publication is claimed.
 
 Private production evidence:
 `/root/ppt-quality-version-b6b02806-20261101.private.json` and
 `/root/ppt-quality-version-b6b02806-artifact-check-20261101.json`.
+
+## Owner post-delivery review
+
+The owner supplied `PPT服务-修复后产物核查-2026-11-01.md` and the renamed
+`DSH架构解析（网站审核稿）.pptx` from the existing output directory. A read-only
+SHA-256 measurement of that file matches the delivered artifact above. No new
+generation, revision or desktop test was initiated for this follow-up.
+
+The supplied audit records ten native slides in 16:9, 220 native shapes,
+147 shapes with nonempty native text, no picture nodes or whole-slide images,
+and ten Chinese speaker notes. All ten 1280×720 SVG previews were inspected;
+text, arrows, diagram relationships and page numbers were readable, with no
+obvious clipping or overlap. Key source facts and the two separate reference
+links were checked. These are owner-reported structural/content/visual checks,
+not evidence of desktop PowerPoint editing.
+
+The report records visual revision 1 saved at `2026-11-01T15:10:04+08:00`,
+with all ten pages passed, and read back after refresh and version reselection.
+Desktop revision 2, saved at `2026-11-01T15:11:06+08:00`, leaves actual opening,
+content editing, saving and reopening unchecked. The explicit zero-native-chart
+“not applicable” selection only applies to chart editing.
+
+The supplied desktop attempt failed during PowerPoint COM activation with
+`0x80070520` (specified logon session does not exist). No desktop rendering or
+open/edit/save/reopen evidence was produced. This identifies a local validation
+environment blocker; it does not establish a defect in the downloaded PPTX.
+
+The current acceptance service records human observations, but complete
+programmatic acceptance and formal publication are still pending. Even a
+completed desktop record alone cannot promote this draft: the independent full
+postflight evidence and authorized publication path remain to be implemented.
+The immutable earlier validator receipt still lists its original pending gates;
+the later saved human visual record is separate evidence. The draft remains
+`review/gate_pending`, with no claimed formal acceptance or OpenSpec archive.
+
+Follow-up priorities from the supplied audit:
+
+1. Complete independent final-PPTX/export-build/postflight evidence and connect
+   version-bound acceptance to an authorized formal-publication operation.
+2. Add final-PPTX rendering with the renderer/environment identified, alongside
+   the existing source-SVG previews.
+3. Distinguish editable arrow shapes from semantic connectors that follow moved
+   modules; the current deck has editable shapes, not `p:cxnSp` connectors.
+4. In a future content revision, clarify “plugin id” as plugin configuration-row
+   id where patch targeting is described.
+5. Verify failed-diagnostic download and targeted recovery with dedicated fault
+   cases. This successful deck alone does not verify every failure path.
