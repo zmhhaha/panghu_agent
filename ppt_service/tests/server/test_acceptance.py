@@ -21,7 +21,8 @@ from sqlalchemy.orm import sessionmaker
 
 from ppt_service.server.auth import Identity, Settings
 from ppt_service.server.acceptance import AcceptanceBase, AcceptanceError, AcceptanceService, ReviewContext, create_acceptance_router
-from ppt_service.server.acceptance.contracts import PageDescriptor, ReviewCommand, SourceBinding
+from ppt_service.server.acceptance.contracts import PageDescriptor, PublishCommand, ReviewCommand, SourceBinding
+from ppt_service.server.acceptance.domain import ProgrammaticContext, RenderedPage, REQUIRED_PROGRAMMATIC_GATES
 from ppt_service.server.acceptance.store import AcceptanceEntry, AcceptanceStream
 
 
@@ -183,6 +184,127 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(result.acceptance_status, "pending")
         self.assertFalse(result.publication_authorized)
         self.assertEqual(result.pending_reasons, ["independent_postflight_integration_pending"])
+
+    def trusted_programmatic(self, **changes):
+        return ProgrammaticContext(**({
+            "binding": self.context.binding, "receipt_sha256": "a" * 64,
+            "completed_gates": tuple(sorted(REQUIRED_PROGRAMMATIC_GATES)), "pending_gates": (),
+            "renderer": "Synthetic LibreOffice fixture, not a real render", "status": "passed",
+            "rendered_pages": tuple(RenderedPage(number=page.number, preview_sha256="c" * 64,
+                bytes=20, storage_key=f"fixture-only/{page.number}.png") for page in self.context.pages),
+        } | changes))
+
+    def publish_command(self, revision):
+        return PublishCommand(kind="publish", expected_revision=revision,
+                              binding=self.context.binding, confirm=True)
+
+    def pass_all_gates(self):
+        self.context = replace(self.context, programmatic=self.trusted_programmatic())
+        self.append(self.visual())
+        return self.append(self.powerpoint(1), "powerpoint")
+
+    def test_programmatic_evidence_does_not_complete_pending_desktop_checks(self):
+        self.context = replace(self.context, programmatic=self.trusted_programmatic())
+        result = self.append(self.visual())
+        self.assertEqual(result.programmatic_status, "passed")
+        self.assertEqual(result.powerpoint_status, "pending")
+        self.assertFalse(result.can_publish)
+        with self.assertRaisesRegex(AcceptanceError, "publication_requirements_pending"):
+            self.service.publish(OWNER, "project-one", "version-one", self.publish_command(1), "premature")
+        self.assertEqual(self.count(), 1)
+
+    def test_all_gates_require_a_separate_explicit_publication_decision(self):
+        result = self.pass_all_gates()
+        self.assertEqual(result.acceptance_status, "passed")
+        self.assertTrue(result.can_publish)
+        self.assertFalse(result.publication_authorized)
+        self.assertEqual(result.publication.status, "draft")
+        before = [record.payload for record in result.records]
+        command = self.publish_command(2)
+        published = self.service.publish(OWNER, "project-one", "version-one", command, "publish")
+        self.assertEqual(published.revision, 3)
+        self.assertTrue(published.publication_authorized)
+        self.assertFalse(published.can_publish)
+        self.assertEqual(published.publication.record_id, published.records[-1].id)
+        self.assertEqual(published.records[-1].kind, "publish")
+        self.assertEqual(published.records[-1].payload, {
+            "visual_record_id": published.records[0].id,
+            "powerpoint_record_id": published.records[1].id,
+            "programmatic_receipt_sha256": "a" * 64,
+        })
+        self.assertEqual([record.payload for record in published.records[:2]], before)
+        self.assertEqual(self.service.publish(OWNER, "project-one", "version-one", command, "publish").model_dump(), published.model_dump())
+        self.assertEqual(self.count(), 3)
+
+    def test_publication_http_requires_auth_csrf_and_strict_confirmation(self):
+        self.pass_all_gates()
+        payload = self.publish_command(2).model_dump(mode="json")
+        self.assertEqual(self.client.post(ROOT + "/publication", json=payload).status_code, 401)
+        headers = self.headers()
+        headers.pop("X-CSRF-Token")
+        self.assertEqual(self.client.post(ROOT + "/publication", json=payload, headers=headers).status_code, 403)
+        for value in (False, 1, "true", None):
+            response = self.client.post(ROOT + "/publication", json=payload | {"confirm": value}, headers=self.headers())
+            self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(self.post(payload).status_code, 422)
+        for name, value in (("accepted", True), ("programmatic_status", "passed"), ("receipt", {})):
+            response = self.client.post(ROOT + "/publication", json=payload | {name: value}, headers=self.headers())
+            self.assertEqual(response.status_code, 422, response.text)
+        self.assertEqual(self.count(), 2)
+
+    def test_programmatic_binding_and_required_gate_roster_fail_closed(self):
+        for gates in ((), ("independent_final_pptx_rendering",)):
+            with self.assertRaises(ValueError):
+                self.trusted_programmatic(completed_gates=gates)
+        with self.assertRaises(ValueError):
+            self.trusted_programmatic(pending_gates=("independent_export_build_contract",))
+        mismatch = self.context.binding.model_copy(update={"pptx_sha256": "b" * 64})
+        self.context = replace(self.context, programmatic=self.trusted_programmatic(binding=mismatch))
+        self.append(self.visual())
+        result = self.append(self.powerpoint(1), "powerpoint")
+        self.assertEqual(result.programmatic_status, "pending")
+        self.assertFalse(result.can_publish)
+
+    def test_publication_invalidates_after_human_revocation_or_evidence_change(self):
+        self.pass_all_gates()
+        published = self.service.publish(OWNER, "project-one", "version-one", self.publish_command(2), "publish")
+        self.context = replace(self.context, programmatic=self.trusted_programmatic(receipt_sha256="b" * 64))
+        changed = self.snapshot()
+        self.assertFalse(changed.publication_authorized)
+        self.assertTrue(changed.can_publish)
+        self.context = replace(self.context, programmatic=self.trusted_programmatic())
+        revoke = {"kind": "revoke", "expected_revision": 3, "binding": self.context.binding.model_dump(),
+                  "record_id": published.records[0].id, "reason": "Wrong visual conclusion"}
+        result = self.append(revoke, "revoke-visual")
+        self.assertFalse(result.publication_authorized)
+        self.assertFalse(result.can_publish)
+        self.assertEqual(result.visual_status, "pending")
+        self.assertEqual(result.records[2].payload, published.records[2].payload)
+
+    def test_publication_revocation_requires_a_new_explicit_decision(self):
+        self.pass_all_gates()
+        published = self.service.publish(OWNER, "project-one", "version-one", self.publish_command(2), "publish")
+        revoke = {"kind": "revoke", "expected_revision": 3, "binding": self.context.binding.model_dump(),
+                  "record_id": published.publication.record_id, "reason": "Withdraw this release"}
+        result = self.append(revoke, "withdraw")
+        self.assertEqual(result.acceptance_status, "passed")
+        self.assertFalse(result.publication_authorized)
+        self.assertTrue(result.can_publish)
+        result = self.service.publish(OWNER, "project-one", "version-one", self.publish_command(4), "republish")
+        self.assertTrue(result.publication_authorized)
+        self.assertNotEqual(result.publication.record_id, published.publication.record_id)
+        self.assertTrue(result.records[2].revoked)
+
+    def test_publication_cannot_race_an_active_task_or_stale_source(self):
+        self.pass_all_gates()
+        self.context = replace(self.context, publication_blocked_reason="project_busy")
+        self.assertFalse(self.snapshot().can_publish)
+        with self.assertRaisesRegex(AcceptanceError, "publication_requirements_pending"):
+            self.service.publish(OWNER, "project-one", "version-one", self.publish_command(2), "busy")
+        self.context = replace(self.context, publication_blocked_reason=None, current_input_snapshot_sha256="f" * 64)
+        with self.assertRaisesRegex(AcceptanceError, "source_stale"):
+            self.service.publish(OWNER, "project-one", "version-one", self.publish_command(2), "stale")
+        self.assertEqual(self.count(), 2)
 
     def test_partial_visual_and_powerpoint_are_retained_pending(self):
         payload = self.visual()

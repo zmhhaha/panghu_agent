@@ -2,6 +2,8 @@
 
 此目录的人工验收界面已由 `App.tsx` 的版本页接入，选择具体审核草稿后读取其真实服务端记录。保存、撤销和读取检查记录均不触发模型调用或发布；版本页另提供需要明确同意和提交的审核稿修改操作。
 
+完整验收与明确发布已接入此组件。独立程序证据、人工逐页检查、PowerPoint 实际操作分别展示；仅在服务端返回 `can_publish=true` 且当前表单没有未保存修改时，所有者才可勾选并确认发布。发布是新的、绑定当时有效检查与独立凭据的历史记录，不修改原审核稿字节，也不把审核稿自动提升为修改基线。
+
 ```tsx
 import { AcceptancePanel } from './acceptance';
 
@@ -16,8 +18,12 @@ import { AcceptancePanel } from './acceptance';
 
 - `GET /api/v1/projects/{project_id}/versions/{version_id}/acceptance`
 - `POST /api/v1/projects/{project_id}/versions/{version_id}/acceptance/records`
+- `POST /api/v1/projects/{project_id}/versions/{version_id}/acceptance/publication`
+- `GET /api/v1/projects/{project_id}/versions/{version_id}/acceptance/rendered-slides/{number}/preview?receipt_sha256={receipt}`
 
-提交完整 `binding` 和 `expected_revision`。逐页检查提交完整页列表；浏览器加载 PNG 后才能选择“检查通过”。桌面检查要求填写实际 PowerPoint 版本和平台，并分别记录打开、编辑内容、编辑原生图表、保存、重新打开五项结果；无图表仅允许图表编辑“不适用”，内容编辑仍须实际验证。新增或撤销均由服务端返回完整快照。前端展示服务端结论；当前独立模块的 `programmatic_status` 固定 `pending`，`publication_authorized` 固定 `false`。人工通过不会变成完整验收通过。
+提交完整 `binding` 和 `expected_revision`。逐页检查提交完整页列表；浏览器加载 PNG 后才能选择“检查通过”。桌面检查要求填写实际 PowerPoint 版本和平台，并分别记录打开、编辑内容、编辑原生图表、保存、重新打开五项结果；无图表仅允许图表编辑“不适用”，内容编辑仍须实际验证。新增、撤销及发布均由服务端返回完整快照。前端只展示服务端结论；程序通过必须有完整导出、独立交付及最终 PPTX 渲染三类门禁的绑定凭据，人工通过不能补齐缺失的程序证据。发布还要求独立的显式确认，保存检查不会自动发布。
+
+最终 PPTX 图片与原 SVG 的静态预览分别展示。最终图片 URL 必须严格匹配当前项目、版本、页号和独立凭据摘要；检查证据变化后旧 URL 会失效，须重新读取记录。查看最终 PPTX 渲染不会加载原 SVG 页的“检查通过”条件，也不会改写已有的逐页结论。渲染环境不能替代 PowerPoint 打开、实际编辑、保存与重开。
 
 选择不同版本时会清空未保存草稿，并忽略上一版本在途请求的晚到结果。同来源刷新会保留未保存的草稿并提示核对最新记录；来源修订改变时清空旧来源草稿并说明原因。撤销最新记录后不会恢复更早的通过结论，也不会清空另一种检查的草稿。来源失效时保留历史但禁止新检查；可撤销已有记录。预览只接受所选版本的固定同源 PNG 路由，不接受任意 URL、SVG、data URL 或带查询参数的替代地址。
 

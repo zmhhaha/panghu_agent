@@ -10,6 +10,7 @@ import json
 import os
 import re
 import stat
+from dataclasses import replace
 from pathlib import Path
 from uuid import UUID
 
@@ -21,6 +22,7 @@ from ..repository import Repository
 from ..storage import Storage, safe_key
 from .contracts import PageDescriptor, RuntimeBinding, SourceBinding
 from .domain import AcceptanceError, ReviewContext
+from .evidence import read_acceptance_evidence
 
 SCHEMA = 'ppt-service.hermes-review-delivery.v1'
 CACHE_ROOTS = frozenset(('.preview', '.review', 'live_preview', '.live_preview.lock', 'validation'))
@@ -167,11 +169,31 @@ class ReviewContextResolver:
             require(v.project_id == job.project_id == checkpoint.project_id == project.id
                     and v.status == 'review' and job.status == 'succeeded' and job.stopped is True
                     and job.kind in ('generate', 'revise') and job.stage == 'review')
-            return self._resolve(session, owner, project, v, job, checkpoint)
+            context = self._resolve(session, owner, project, v, job, checkpoint)
+            additional = read_acceptance_evidence(self, context, job, v, fingerprint)
+            return replace(context, programmatic=additional,
+                           publication_blocked_reason='active_job_exists' if project.active_job_id else None)
         except AcceptanceError:
             raise
         except (OSError, ValueError, TypeError, KeyError, AttributeError, ValidationError, RecursionError):
             raise AcceptanceError('review_evidence_unavailable', 503) from None
+
+    def rendered_preview(self, context, number):
+        """Serve only a freshly measured, owner-resolved final-PPTX PNG."""
+        evidence = context.programmatic
+        page = next((row for row in evidence.rendered_pages if row.number == number), None) if evidence else None
+        if page is None:
+            raise AcceptanceError('rendered_preview_unavailable', 404)
+        prefix = (f'projects/{context.binding.project_id}/versions/{context.binding.version_id}'
+                  '/acceptance-evidence/')
+        try:
+            require(page.storage_key.startswith(prefix))
+            data = self._read(page.storage_key, 8 * 1024**2)
+            require(len(data) == page.bytes and hashlib.sha256(data).hexdigest() == page.preview_sha256
+                    and data[:8] == b'\x89PNG\r\n\x1a\n')
+            return data
+        except (OSError, ValueError, TypeError):
+            raise AcceptanceError('rendered_preview_unavailable', 503) from None
 
     def _resolve(self, session, owner, project, version, job, checkpoint):
         public, meta = version.manifest, checkpoint.manifest

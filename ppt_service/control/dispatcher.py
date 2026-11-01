@@ -274,6 +274,10 @@ def build_controller(sessions,config):
             return oracle(SimpleNamespace(snapshot=snapshot))
         controller=AgentConnector(sessions,config,client,sandbox,
             settings=AgentConnectorSettings.env(),oracle_provider=oracle_for_task)
+        from .acceptance_coordinator import AcceptanceCoordinator
+        controller.acceptance=AcceptanceCoordinator(sessions,config,sandbox,
+            oracle_provider=oracle_for_task,
+            enabled=os.getenv('PPT_ACCEPTANCE_ENABLED','false')=='true')
         materials=MaterialParser(sessions,config,sandbox,KubernetesParseScopes(sandbox.transport.backend),lease_seconds=300)
         return controller,materials
     elif mode=='kubernetes':
@@ -316,6 +320,9 @@ def main():
                 if materials is not None and result['status'] in ('idle','disabled'):
                     parsed=materials.tick()
                     if parsed['status']!='idle':result={'status':'material','result':parsed}
+                if result['status']=='idle' and getattr(controller,'acceptance',None) is not None:
+                    checked=controller.acceptance.tick()
+                    if checked['status']!='idle':result=checked
             except ControlError as exc:
                 # Preserve unresolved scopes and the DB slot. API error bodies,
                 # credentials and model output are never written to stdout.

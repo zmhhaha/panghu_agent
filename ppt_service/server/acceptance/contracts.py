@@ -1,9 +1,9 @@
-"""Strict, engine-neutral HTTP contracts for human review (not publication)."""
+"""Strict, engine-neutral HTTP contracts for review and explicit publication."""
 from __future__ import annotations
 
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Digest = Annotated[str, Field(pattern=r"^[a-f0-9]{64}$")]
 Identifier = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,80}$")]
@@ -118,6 +118,18 @@ class RevokeCommand(Command):
     reason: str = Field(min_length=1, max_length=2000)
 
 
+class PublishCommand(Command):
+    kind: Literal["publish"]
+    confirm: Literal[True]
+
+    @field_validator("confirm", mode="before")
+    @classmethod
+    def explicit_confirmation(cls, value):
+        if value is not True:
+            raise ValueError("Explicit publication confirmation is required")
+        return value
+
+
 ReviewCommand = Annotated[Union[VisualReviewCommand, PowerPointReviewCommand, RevokeCommand], Field(discriminator="kind")]
 
 
@@ -129,13 +141,35 @@ class Reviewer(Strict):
 class ReviewRecord(Strict):
     id: Identifier
     revision: int
-    kind: Literal["visual_review", "powerpoint_review", "revoke"]
+    kind: Literal["visual_review", "powerpoint_review", "revoke", "publish"]
     created_at: str
     reviewer: Reviewer
     binding: SourceBinding
     payload: dict
     revoked: bool
     stale: bool
+
+
+class RenderedPageView(Strict):
+    number: int = Field(ge=1, le=100)
+    preview_url: str
+    preview_sha256: Digest
+
+
+class ProgrammaticView(Strict):
+    status: HumanStatus
+    receipt_sha256: Digest | None = None
+    completed_gates: list[str]
+    pending_gates: list[str]
+    renderer: str | None = None
+    detail: str
+    rendered_pages: list[RenderedPageView] = Field(default_factory=list)
+
+
+class PublicationView(Strict):
+    status: Literal["draft", "published"]
+    record_id: Identifier | None = None
+    published_at: str | None = None
 
 
 class AcceptanceSnapshot(Strict):
@@ -146,13 +180,16 @@ class AcceptanceSnapshot(Strict):
     binding: SourceBinding
     pages: list[PageView]
     native_chart_count: int
-    programmatic_status: Literal["pending"]
+    programmatic_status: HumanStatus
+    programmatic: ProgrammaticView
     visual_status: HumanStatus
     powerpoint_status: HumanStatus
     human_status: HumanStatus
-    acceptance_status: Literal["pending", "stale", "unreviewable"]
+    acceptance_status: Literal["pending", "passed", "stale", "unreviewable"]
     pending_reasons: list[str]
     can_review: bool
     can_revoke: bool
-    publication_authorized: Literal[False] = False
+    can_publish: bool = False
+    publication_authorized: bool = False
+    publication: PublicationView
     records: list[ReviewRecord]

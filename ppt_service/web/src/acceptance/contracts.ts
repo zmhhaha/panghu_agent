@@ -33,14 +33,34 @@ export interface PowerPointReview {
   note: string;
 }
 export interface Revocation { record_id: string; reason: string }
+export interface RenderedPptxPage { number: number; preview_url: string; preview_sha256: string }
+export interface ProgrammaticAcceptance {
+  status: ReviewStatus;
+  receipt_sha256: string | null;
+  completed_gates: string[];
+  pending_gates: string[];
+  renderer: string | null;
+  detail: string;
+  rendered_pages?: RenderedPptxPage[];
+}
+export interface PublicationState {
+  status: 'draft' | 'published';
+  record_id: string | null;
+  published_at: string | null;
+}
+export interface PublicationRecord {
+  visual_record_id: string;
+  powerpoint_record_id: string;
+  programmatic_receipt_sha256: string;
+}
 export interface AcceptanceRecord {
   id: string;
   revision: number;
-  kind: 'visual_review' | 'powerpoint_review' | 'revoke';
+  kind: 'visual_review' | 'powerpoint_review' | 'revoke' | 'publish';
   created_at: string;
   reviewer: { issuer: string; sub: string };
   binding: AcceptanceBinding;
-  payload: VisualReview | PowerPointReview | Revocation;
+  payload: VisualReview | PowerPointReview | Revocation | PublicationRecord;
   revoked: boolean;
   stale: boolean;
 }
@@ -51,15 +71,18 @@ export interface AcceptanceSnapshot {
   source_revision: number;
   can_review: boolean;
   can_revoke: boolean;
-  publication_authorized: false;
+  publication_authorized: boolean;
+  can_publish?: boolean;
+  publication?: PublicationState;
+  programmatic?: ProgrammaticAcceptance;
   binding: AcceptanceBinding;
   pages: AcceptancePage[];
   native_chart_count: number;
-  programmatic_status: 'pending';
+  programmatic_status: ReviewStatus;
   visual_status: ReviewStatus;
   powerpoint_status: ReviewStatus;
   human_status: ReviewStatus;
-  acceptance_status: 'pending' | 'stale' | 'unreviewable';
+  acceptance_status: 'pending' | 'passed' | 'stale' | 'unreviewable';
   pending_reasons: string[];
   records: AcceptanceRecord[];
 }
@@ -68,7 +91,9 @@ export type AcceptanceCommand = { expected_revision: number; binding: Acceptance
   { kind: 'powerpoint_review' } & PowerPointReview |
   { kind: 'revoke'; record_id: string; reason: string }
 );
+export interface PublicationCommand { kind: 'publish'; expected_revision: number; binding: AcceptanceBinding; confirm: true }
 export interface AcceptanceClient {
   load(projectId: string, versionId: string, signal?: AbortSignal): Promise<AcceptanceSnapshot>;
   save(projectId: string, versionId: string, command: AcceptanceCommand): Promise<AcceptanceSnapshot>;
+  publish?(projectId: string, versionId: string, command: PublicationCommand): Promise<AcceptanceSnapshot>;
 }

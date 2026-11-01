@@ -248,6 +248,107 @@ class AgentKubernetesSandbox:
     def scope_uid(self, value):
         self.transport.scope_uid = value
 
+    def validate_acceptance(self, snapshot, original_request, acceptance_request):
+        """Append separate per-Version evidence after this sandbox's exact stop.
+
+        No model task, original validation receipt, Version or human record is
+        changed. A stopped failed attempt is retained and is never blindly
+        repeated by the idle coordinator across restarts.
+        """
+        from ppt_service.server.acceptance.contracts import SourceBinding
+        require(os.name == 'posix', 'acceptance_validator_requires_linux')
+        snapshot = Path(snapshot).absolute()
+        binding = SourceBinding.model_validate(acceptance_request['binding'])
+        evidence_id = acceptance_request.get('evidence_id')
+        try:
+            require(isinstance(evidence_id, str) and str(UUID(evidence_id)) == evidence_id
+                    and acceptance_request.get('validation_nonce') == evidence_id,
+                    'acceptance_request_binding_invalid')
+        except (ValueError, AttributeError):
+            raise ControlError('acceptance_request_binding_invalid') from None
+        signature = digest(binding.model_dump(mode='json'))
+        scope = str(uuid5(NAMESPACE_URL, 'ppt-acceptance:' + signature))
+        base = self.config.data_root / 'projects' / binding.project_id / 'versions' / binding.version_id
+        target = base / 'acceptance-evidence' / acceptance_request['evidence_id']
+        attempted = self.config.data_root / 'acceptance-attempts' / signature
+        with _exclusive(self.config.data_root / 'agent-validator-locks' / (scope + '.lock')):
+            if attempted.exists():
+                return {'status': 'already_attempted', 'binding_sha256': signature}
+            require(acceptance_request['execution_image'] == self.transport.settings.worker_image
+                    and acceptance_request['original_request_sha256'] == digest(original_request),
+                    'acceptance_request_binding_invalid')
+            self.transport.backend.subpath(snapshot)
+            self.transport.backend.subpath(base)
+            backend = self.transport.backend
+            handle = backend.register_sandbox_scope(scope)
+            self.transport.scope_uid = scope
+            record = backend._read(handle)
+            for entry in record['resources']:
+                if entry['resource'] == 'pods' and not entry.get('deleted'):
+                    backend.finish_sandbox(handle, entry['name'])
+            root, output, result, code, failure, stopped, handle, name = self.transport._run(
+                'ppt_service.control.acceptance_validation', [(snapshot, '/snapshot', True)],
+                {'original_request': original_request, 'acceptance_request': acceptance_request},
+                'receipt.json', 300)
+            require(stopped, 'acceptance_validation_writers_not_stopped')
+            require(handle.uid == scope, 'acceptance_validator_scope_mismatch')
+            authority = backend._read(handle)
+            pods = [row for row in authority['resources'] if row['resource'] == 'pods' and row['name'] == name]
+            require(len(pods) == 1, 'acceptance_validator_stop_unverified')
+            pod = pods[0]
+            require(pod.get('deleted') and pod.get('stop_receipt', {}).get('terminated') is True
+                    and isinstance(pod.get('api_uid'), str) and bool(pod['api_uid'])
+                    and pod['stop_receipt'].get('api_uid') == pod['api_uid'],
+                    'acceptance_validator_stop_unverified')
+            attempted.parent.mkdir(parents=True, exist_ok=True)
+            # A deterministic stopped result, including malformed receipts and
+            # copy failures, must never cause a fresh expensive idle-loop retry.
+            atomic_json(attempted, {'schema': 'ppt-service.acceptance-attempt.v1',
+                'binding_sha256': signature, 'status': 'stopped_pending_inspection',
+                'scope_uid': scope, 'pod_uid': pod['api_uid'], 'sandbox_exit_code': code,
+                'evidence_path': str(root), 'writers_stopped': True})
+            if failure is not None or code != 0:
+                # Keep the output beneath its private sandbox; this is not a
+                # successful bundle and cannot become publication evidence.
+                atomic_json(attempted, {'schema': 'ppt-service.acceptance-attempt.v1',
+                    'binding_sha256': signature, 'status': 'failed', 'scope_uid': scope,
+                    'pod_uid': pod['api_uid'], 'sandbox_exit_code': code,
+                    'evidence_path': str(root), 'writers_stopped': True,
+                    'error_code': 'acceptance_validation_failed'})
+                make_readonly(root)
+                return {'status': 'acceptance_failed', 'binding_sha256': signature}
+            require(isinstance(result, dict) and result.get('schema') == 'ppt-service.acceptance-evidence.v1'
+                    and result.get('status') in ('passed', 'pending', 'needs_changes')
+                    and result.get('evidence_id') == acceptance_request['evidence_id']
+                    and result.get('binding_sha256') == signature
+                    and result.get('request_sha256') == digest(acceptance_request)
+                    and result.get('execution_image') == self.transport.settings.worker_image
+                    and result.get('publication_authorized') is False,
+                    'acceptance_receipt_binding_invalid')
+            require(read_json(output, 'receipt.json') == result
+                    and read_json(output, 'request.json') == acceptance_request
+                    and not (output / 'transport-manifest.json').exists(), 'acceptance_output_binding_invalid')
+            # Pending copies live outside the discoverable UUID bundle root.
+            pending = base / ('.acceptance-pending-' + acceptance_request['evidence_id'])
+            require(not pending.exists() and not target.exists(), 'acceptance_output_not_fresh')
+            inventory = copy_tree(output, pending, max_total=512 * 1024**2, max_files=8192)
+            atomic_json(pending / 'transport-manifest.json', {
+                'schema': 'ppt-service.acceptance-transport.v1',
+                'evidence_id': acceptance_request['evidence_id'], 'binding_sha256': signature,
+                'request_sha256': digest(acceptance_request),
+                'execution_image': self.transport.settings.worker_image,
+                'validator_scope_uid': scope, 'validator_pod_uid': pod['api_uid'],
+                'validator_exit_code': code, 'writers_stopped': True, 'transport_verified': True,
+                **inventory})
+            make_readonly(pending)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(pending, target)
+            atomic_json(attempted, {'schema': 'ppt-service.acceptance-attempt.v1',
+                'binding_sha256': signature, 'status': result['status'], 'evidence_path': str(target),
+                'scope_uid': scope, 'pod_uid': pod['api_uid'], 'writers_stopped': True})
+            self.transport._discard(root)
+            return {'status': 'acceptance_validated', 'binding_sha256': signature}
+
     def _read_verified(self, final, source, snapshot, request):
         transport = read_json(final, 'transport-manifest.json')
         require(transport.get('schema_version') == TRANSPORT_SCHEMA

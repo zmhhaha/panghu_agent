@@ -1,16 +1,24 @@
 import { ApiError, mutate, request } from '../api';
-import type { AcceptanceClient, AcceptanceRecord, AcceptanceSnapshot, PowerPointReview, VisualReview } from './contracts';
+import type { AcceptanceClient, AcceptanceRecord, AcceptanceSnapshot, PowerPointReview, PublicationRecord, VisualReview } from './contracts';
 
 const path = (project: string, version: string) => `/projects/${encodeURIComponent(project)}/versions/${encodeURIComponent(version)}/acceptance`;
 export const acceptanceClient: AcceptanceClient = {
   load: (project, version, signal) => request(path(project, version), { signal }),
   save: (project, version, command) => mutate(`${path(project, version)}/records`, command),
+  publish: (project, version, command) => mutate(`${path(project, version)}/publication`, command),
 };
 
 /** An authenticated image route only; source SVG, arbitrary URLs and redirects are not UI inputs. */
 export function rasterPreviewUrl(versionId: string, page: number, candidate: string): string | null {
   if (!Number.isSafeInteger(page) || page < 1 || page > 100) return null;
   const expected = `/api/v1/versions/${encodeURIComponent(versionId)}/slides/${page}/preview`;
+  return candidate === expected ? expected : null;
+}
+
+/** The receipt in the URL pins this PNG to the displayed independent evidence. */
+export function renderedPptxPreviewUrl(projectId: string, versionId: string, page: number, receipt: string | null, candidate: string): string | null {
+  if (!Number.isSafeInteger(page) || page < 1 || page > 100 || !receipt || !/^[a-f0-9]{64}$/.test(receipt)) return null;
+  const expected = `/api/v1/projects/${encodeURIComponent(projectId)}/versions/${encodeURIComponent(versionId)}/acceptance/rendered-slides/${page}/preview?receipt_sha256=${receipt}`;
   return candidate === expected ? expected : null;
 }
 
@@ -22,22 +30,65 @@ export function assertSnapshot(value: AcceptanceSnapshot, project: string, versi
     !['manifest_sha256', 'input_snapshot_sha256', 'pptx_sha256', 'source_fingerprint_sha256', 'evidence_sha256'].every(k => sha.test((value.binding as unknown as Record<string, string>)[k])) ||
     value.binding.project_id !== project || value.binding.version_id !== version || value.binding.source_revision !== value.source_revision || typeof value.binding.evidence_id !== 'string' ||
     !value.binding.runtime || !['engine', 'runtime_revision', 'profile', 'checkpoint_format'].every(k => typeof (value.binding.runtime as Record<string, string>)[k] === 'string') ||
-    !Number.isSafeInteger(value.source_revision) || value.source_revision < 0 || typeof value.can_review !== 'boolean' || typeof value.can_revoke !== 'boolean' || value.publication_authorized !== false ||
+    !Number.isSafeInteger(value.source_revision) || value.source_revision < 0 || typeof value.can_review !== 'boolean' || typeof value.can_revoke !== 'boolean' || typeof value.publication_authorized !== 'boolean' ||
     !Array.isArray(value.pages) || !value.pages.length || value.pages.length > 100 ||
     !value.pages.every((p, index) => p && p.number === index + 1 && typeof p.title === 'string' && typeof p.preview_url === 'string' && sha.test(p.preview_sha256) && sha.test(p.source_sha256)) ||
     new Set(value.pages.map(p => p.number)).size !== value.pages.length ||
     !Number.isSafeInteger(value.native_chart_count) || value.native_chart_count < 0 ||
-    value.programmatic_status !== 'pending' || !states.includes(value.visual_status) || !states.includes(value.powerpoint_status) || !states.includes(value.human_status) ||
-    !['pending', 'stale', 'unreviewable'].includes(value.acceptance_status) ||
+    !states.includes(value.programmatic_status) || !states.includes(value.visual_status) || !states.includes(value.powerpoint_status) || !states.includes(value.human_status) ||
+    !['pending', 'passed', 'stale', 'unreviewable'].includes(value.acceptance_status) ||
     !Array.isArray(value.pending_reasons) || !value.pending_reasons.every(r => typeof r === 'string') ||
     !Array.isArray(value.records) || !value.records.every(r => r && typeof r.id === 'string' && Number.isSafeInteger(r.revision) &&
-      ['visual_review', 'powerpoint_review', 'revoke'].includes(r.kind) && typeof r.created_at === 'string' && r.reviewer &&
+      ['visual_review', 'powerpoint_review', 'revoke', 'publish'].includes(r.kind) && typeof r.created_at === 'string' && r.reviewer &&
       typeof r.reviewer.sub === 'string' && typeof r.reviewer.issuer === 'string' && r.binding && r.payload &&
-      typeof r.revoked === 'boolean' && typeof r.stale === 'boolean' && r.binding.project_id === project && r.binding.version_id === version && validPayload(r))) throw new ApiError('INVALID_RESPONSE');
+      typeof r.revoked === 'boolean' && typeof r.stale === 'boolean' && r.binding.project_id === project && r.binding.version_id === version && validPayload(r)) ||
+    !validPublication(value)) throw new ApiError('INVALID_RESPONSE');
   return value;
 }
 
+function validPublication(value: AcceptanceSnapshot): boolean {
+  const sha = /^[a-f0-9]{64}$/;
+  const programmatic = value.programmatic;
+  const publication = value.publication;
+  if (value.can_publish !== undefined && typeof value.can_publish !== 'boolean') return false;
+  if (programmatic && (!['pending', 'passed', 'needs_changes'].includes(programmatic.status) || programmatic.status !== value.programmatic_status ||
+    !(programmatic.receipt_sha256 === null || typeof programmatic.receipt_sha256 === 'string' && sha.test(programmatic.receipt_sha256)) ||
+    !Array.isArray(programmatic.completed_gates) || !programmatic.completed_gates.every(gate => typeof gate === 'string') ||
+    !Array.isArray(programmatic.pending_gates) || !programmatic.pending_gates.every(gate => typeof gate === 'string') ||
+    !(programmatic.renderer === null || typeof programmatic.renderer === 'string') || typeof programmatic.detail !== 'string' ||
+    (programmatic.rendered_pages !== undefined && (!Array.isArray(programmatic.rendered_pages) || programmatic.rendered_pages.length > 100 ||
+      !programmatic.rendered_pages.every((page, index) => page && page.number === index + 1 && typeof page.preview_url === 'string' && sha.test(page.preview_sha256)))))) return false;
+  if (publication && (!['draft', 'published'].includes(publication.status) ||
+    !(publication.record_id === null || typeof publication.record_id === 'string') ||
+    !(publication.published_at === null || typeof publication.published_at === 'string' && Number.isFinite(Date.parse(publication.published_at))))) return false;
+  if (value.programmatic_status === 'passed' && (!programmatic || !programmatic.receipt_sha256 || programmatic.pending_gates.length ||
+    !programmatic.renderer || programmatic.rendered_pages?.length !== value.pages.length ||
+    !['independent_export_build_contract', 'independent_postflight_and_delivery', 'independent_final_pptx_rendering'].every(gate => programmatic.completed_gates.includes(gate)))) return false;
+  const complete = value.programmatic_status === 'passed' && value.visual_status === 'passed' && value.powerpoint_status === 'passed' && value.human_status === 'passed';
+  if (value.acceptance_status === 'passed' && !complete) return false;
+  if (value.can_publish && (!value.can_review || value.acceptance_status !== 'passed' || !complete || value.pending_reasons.length || value.publication_authorized || publication?.status !== 'draft')) return false;
+  if (value.publication_authorized !== (publication?.status === 'published')) return false;
+  if (publication?.status === 'published') {
+    const record = value.records.find(record => record.id === publication.record_id);
+    if (!publication.record_id || !publication.published_at || !record || record.kind !== 'publish' || record.revoked || record.stale ||
+      record.created_at !== publication.published_at || JSON.stringify(record.binding) !== JSON.stringify(value.binding)) return false;
+    const payload = record.payload as PublicationRecord;
+    if (payload.programmatic_receipt_sha256 !== programmatic?.receipt_sha256 || !complete || value.acceptance_status !== 'passed' || value.pending_reasons.length) return false;
+    for (const [kind, id] of [['visual_review', payload.visual_record_id], ['powerpoint_review', payload.powerpoint_record_id]]) {
+      const latest = value.records.slice().reverse().find(record => record.kind === kind);
+      if (!latest || latest.id !== id || latest.revoked || latest.stale) return false;
+    }
+  } else if (publication && (publication.record_id !== null || publication.published_at !== null)) return false;
+  return true;
+}
+
 function validPayload(record: AcceptanceRecord): boolean {
+  if (record.kind === 'publish') {
+    const payload = record.payload as PublicationRecord;
+    return typeof payload.visual_record_id === 'string' && !!payload.visual_record_id &&
+      typeof payload.powerpoint_record_id === 'string' && !!payload.powerpoint_record_id &&
+      typeof payload.programmatic_receipt_sha256 === 'string' && /^[a-f0-9]{64}$/.test(payload.programmatic_receipt_sha256);
+  }
   if (record.kind === 'visual_review') {
     const payload = record.payload as VisualReview;
     return typeof payload.note === 'string' && Array.isArray(payload.pages) && payload.pages.length > 0 && payload.pages.length <= 100 && payload.pages.every(page =>

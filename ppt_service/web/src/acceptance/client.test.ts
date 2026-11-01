@@ -81,4 +81,21 @@ describe('P4 shared Python/TypeScript contract', () => {
     await cancelled;
     expect(fetcher).toHaveBeenCalledOnce();
   });
+
+  it('uses the dedicated authenticated publication route with explicit confirmation and stable retry intent', async () => {
+    const fetcher = vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify(url.endsWith('/me') ? { sub: 'reviewer', csrf_token: 'synthetic-csrf-token' } : pendingFixture)));
+    vi.stubGlobal('fetch', fetcher); await api.me();
+    const command = { kind: 'publish' as const, expected_revision: 2, binding: (pendingFixture as AcceptanceSnapshot).binding, confirm: true as const };
+    fetcher.mockRejectedValueOnce(Error('transport interrupted'));
+    await expect(acceptanceClient.publish!('contract-project', 'contract-version', command)).rejects.toMatchObject({ code: 'NETWORK_ERROR' });
+    await acceptanceClient.publish!('contract-project', 'contract-version', command);
+    const writes = fetcher.mock.calls.slice(1) as [string, RequestInit][];
+    expect(writes).toHaveLength(2); const keys = writes.map(([, init]) => new Headers(init.headers).get('Idempotency-Key'));
+    expect(keys[0]).toBeTruthy(); expect(keys[1]).toBe(keys[0]);
+    for (const [url, init] of writes) {
+      expect(url).toBe('/api/v1/projects/contract-project/versions/contract-version/acceptance/publication');
+      expect(init.method).toBe('POST'); expect(init.credentials).toBe('same-origin');
+      expect(new Headers(init.headers).get('X-CSRF-Token')).toBe('synthetic-csrf-token'); expect(JSON.parse(String(init.body))).toEqual(command);
+    }
+  });
 });

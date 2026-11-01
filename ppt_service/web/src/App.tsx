@@ -194,7 +194,8 @@ function Versions({project,versions,disabled,consent,setConsent,start,perform}:{
  const version=versions.find(v=>v.id===base);const review=version?.status==='review';
  const canRevise=!!version&&!review&&version.can_revise!==false;
  const currentReview=reviewSnapshot?.project_id===project.id&&reviewSnapshot.version_id===base?reviewSnapshot:null;
- const canReviewRevise=!!review&&currentReview?.can_review===true;
+ const reviewPublished=!!review&&currentReview?.publication_authorized===true;
+ const canReviewRevise=!!review&&currentReview?.can_review===true&&!reviewPublished;
  const observeReview=useCallback((value:AcceptanceSnapshot|null)=>{
   if(value&&(value.project_id!==project.id||value.version_id!==base))return;
   const previous=lastReview.current;
@@ -221,19 +222,20 @@ function Versions({project,versions,disabled,consent,setConsent,start,perform}:{
    </div>)}</div>
    {!version?<p className="notice">选择一个版本查看预览；新版本到达不会替换你的选择。</p>:<>
     <div className="selected-base">{review?'当前预览':'当前基线'} <code>{version.id}</code></div>
-    {review&&<div className="notice warning" role="status"><div>
+    {review&&!reviewPublished&&<div className="notice warning" role="status"><div>
      <strong>待审核草稿 · 尚未正式发布</strong>
      <p>已完成独立程序检查，可以预览和下载审核。仍需完成以下审核：</p>
      <ul>{(version.required_pending_gates?.length?version.required_pending_gates:['independent_export_build_contract','independent_visual_review','powerpoint_open_edit_save_reopen']).map(gate=><li key={gate}>{gateLabels[gate]??'其他审核待完成'}</li>)}</ul>
      <p>可保存检查问题，并基于本草稿创建新的审核稿；这不会发布演示稿，也不会替代正式版本验收。</p>
     </div></div>}
-    <p className="hint">预览为源 SVG 的静态 PNG 栅格图，PowerPoint 的字体、换行与布局可能有所不同。</p>
-    {review?<AcceptancePanel projectId={project.id} versionId={version.id} onSnapshot={observeReview} onUseFeedback={useSavedFeedback}/>:<div className="slide-grid">{version.slides.map(slide=><article className="slide" key={slide.number}>
+    {reviewPublished&&<p className="notice" role="status">此版本已完成验收并正式发布。原审核稿与检查记录保留，可在下方核对发布依据。</p>}
+    <p className="hint">逐页视觉检查使用源 SVG 的静态 PNG；最终 PPTX 的独立渲染另列于文件核验中。PowerPoint 的实际编辑效果仍需桌面检查。</p>
+    {review?<AcceptancePanel projectId={project.id} versionId={version.id} onSnapshot={observeReview} onUseFeedback={useSavedFeedback} onPublished={()=>void perform(async()=>undefined)}/>:<div className="slide-grid">{version.slides.map(slide=><article className="slide" key={slide.number}>
      <Preview key={version.id+':'+slide.number} versionId={version.id} page={slide.number}/>
      <div><span className="page-number">{slide.number.toString().padStart(2,'0')}</span><strong>{slide.title}</strong></div>
      {(slide.summary??slide.purpose)&&<p>{slide.summary??slide.purpose}</p>}
     </article>)}</div>}
-    {review&&!canReviewRevise&&<p className="hint">读取到当前有效的检查记录与来源后，才可提交审核稿修改；来源失效时请先处理资料或重新生成。</p>}
+    {review&&!canReviewRevise&&!reviewPublished&&<p className="hint">读取到当前有效的检查记录与来源后，才可提交审核稿修改；来源失效时请先处理资料或重新生成。</p>}
     {(canRevise||canReviewRevise)&&<section ref={revisionForm} className="revision-form" aria-label={review?'审核稿修改':'正式版本修改'}><h3>{review?'基于所选草稿创建新审核稿':'提交修改意见'}</h3>{review&&<><p className="hint">可手动填写，或在上方将已保存问题带入。提交会调用外部模型；原草稿与检查记录保留，新结果仍需独立检查与人工审核。</p>{reviewNotice&&<p className="notice" role="status">{reviewNotice}</p>}</>}<fieldset disabled={disabled}>
      <legend className="sr-only">修改范围</legend>
      <div className="inline-radios"><label><input type="radio" name="scope" checked={scope==='whole'} onChange={()=>setScope('whole')}/>整份演示稿</label><label><input type="radio" name="scope" checked={scope==='pages'} onChange={()=>setScope('pages')}/>指定页面</label></div>

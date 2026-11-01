@@ -12,8 +12,9 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from ..auth import Identity
-from .contracts import ReviewCommand, ReviewRecord, SourceBinding
-from .domain import AcceptanceError, ContextResolver, ReviewContext, project_snapshot, validate_command
+from .contracts import PublishCommand, ReviewCommand, ReviewRecord, SourceBinding
+from .domain import (AcceptanceError, ContextResolver, ReviewContext, project_snapshot,
+                     publication_payload, validate_command)
 
 
 class AcceptanceBase(DeclarativeBase):
@@ -103,7 +104,34 @@ class AcceptanceService:
             records = self._records(session, scope)
             return project_snapshot(context, records[-1].revision if records else 0, records)
 
+    def rendered_preview(self, owner, project_id, version_id, number, receipt_sha256):
+        if type(number) is not int or not 1 <= number <= 100 or not isinstance(receipt_sha256, str) or not re.fullmatch(r"[a-f0-9]{64}", receipt_sha256):
+            raise AcceptanceError("rendered_preview_unavailable", 404)
+        with self.sessions.begin() as session:
+            context = self._context(session, owner, project_id, version_id, for_update=True)
+            if context.stale or not context.reviewable:
+                raise AcceptanceError("source_stale" if context.stale else "source_unreviewable")
+            evidence = context.programmatic
+            if evidence is None or evidence.binding != context.binding:
+                raise AcceptanceError("rendered_preview_unavailable", 404)
+            if evidence.receipt_sha256 != receipt_sha256:
+                raise AcceptanceError("acceptance_evidence_changed")
+            reader = getattr(self.resolve, "rendered_preview", None)
+            if not callable(reader):
+                raise AcceptanceError("rendered_preview_unavailable", 404)
+            return reader(context, number)
+
     def append(self, owner: Identity, project_id: str, version_id: str, command: ReviewCommand, request_key: str):
+        if isinstance(command, PublishCommand):
+            raise AcceptanceError("publication_route_required", 422)
+        return self._append(owner, project_id, version_id, command, request_key)
+
+    def publish(self, owner: Identity, project_id: str, version_id: str, command: PublishCommand, request_key: str):
+        if type(command) is not PublishCommand or command.confirm is not True:
+            raise AcceptanceError("publication_confirmation_required", 422)
+        return self._append(owner, project_id, version_id, command, request_key)
+
+    def _append(self, owner, project_id, version_id, command, request_key):
         if not isinstance(request_key, str) or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", request_key):
             raise AcceptanceError("idempotency_key_required", 422)
         try:
@@ -133,6 +161,9 @@ class AcceptanceService:
                 if stream.revision != command.expected_revision:
                     raise AcceptanceError("acceptance_revision_changed")
                 records = self._records(session, scope)
+                payload = command.model_dump(mode="json", exclude={"kind", "expected_revision", "binding"})
+                if isinstance(command, PublishCommand):
+                    payload = publication_payload(context, project_snapshot(context, stream.revision, records))
                 if command.kind == "revoke":
                     target = next((r for r in records if r.id == command.record_id and r.kind != "revoke"), None)
                     if target is None:
@@ -149,7 +180,7 @@ class AcceptanceService:
                     request_key=request_key, request_sha256=digest, kind=command.kind,
                     created_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                     issuer=owner.issuer, subject=owner.sub, binding=context.binding.model_dump(mode="json"),
-                    payload=command.model_dump(mode="json", exclude={"kind", "expected_revision", "binding"}),
+                    payload=payload,
                 )
                 session.add(row)
                 session.flush()

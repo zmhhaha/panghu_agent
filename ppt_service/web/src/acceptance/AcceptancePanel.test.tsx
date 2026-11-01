@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import { describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../api';
 import { AcceptancePanel } from './AcceptancePanel';
-import { assertSnapshot, rasterPreviewUrl } from './client';
+import { assertSnapshot, rasterPreviewUrl, renderedPptxPreviewUrl } from './client';
 import type { AcceptanceClient, AcceptanceCommand, AcceptanceSnapshot, VisualReview } from './contracts';
 import { powerpointDraft, powerpointValidation, visualDraft } from './drafts';
 import { syntheticSnapshot } from './fixtures';
@@ -16,6 +16,86 @@ function recordVisual(snapshot: AcceptanceSnapshot, command: AcceptanceCommand):
   if (command.kind !== 'visual_review') throw Error('test expected visual command');
   return { ...snapshot, revision: snapshot.revision + 1, can_revoke: true, records: [...snapshot.records, { id: `review-${snapshot.revision + 1}`, revision: snapshot.revision + 1, kind: 'visual_review', created_at: '2026-10-22T12:00:00Z', reviewer: { issuer: 'test-issuer', sub: 'test-reviewer' }, binding: snapshot.binding, payload: { pages: command.pages, note: command.note }, revoked: false, stale: false }] };
 }
+
+function completeSnapshot(): AcceptanceSnapshot {
+  const initial = syntheticSnapshot();
+  const visual = recordVisual(initial, { kind: 'visual_review', expected_revision: 0, binding: initial.binding,
+    pages: visualDraft(initial).pages.map(page => ({ ...page, verdict: 'pass' })), note: '' });
+  const desktop = { application_version: 'Microsoft 365 2509', platform: 'Windows 11', note: '',
+    checks: { opened: 'pass', content_edited: 'pass', native_chart_edited: 'pass', saved: 'pass', reopened: 'pass' } } as const;
+  return { ...visual, revision: 2, programmatic_status: 'passed', visual_status: 'passed', powerpoint_status: 'passed', human_status: 'passed', acceptance_status: 'passed',
+    programmatic: { status: 'passed', receipt_sha256: 'f'.repeat(64), completed_gates: ['independent_export_build_contract', 'independent_postflight_and_delivery', 'independent_final_pptx_rendering'], pending_gates: [], renderer: 'LibreOffice 24.2', detail: '最终文件独立核验通过。',
+      rendered_pages: initial.pages.map(page => ({ number: page.number, preview_sha256: `${page.number + 4}`.repeat(64), preview_url: `/api/v1/projects/demo-project/versions/demo-v1/acceptance/rendered-slides/${page.number}/preview?receipt_sha256=${'f'.repeat(64)}` })) },
+    can_publish: true, publication: { status: 'draft', record_id: null, published_at: null }, pending_reasons: [], records: [...visual.records,
+      { id: 'desktop-2', revision: 2, kind: 'powerpoint_review', created_at: '2026-11-01T07:00:00Z', reviewer: { issuer: 'test', sub: 'owner' }, binding: initial.binding, payload: desktop, revoked: false, stale: false }] };
+}
+
+function publishedSnapshot(initial = completeSnapshot()): AcceptanceSnapshot {
+  const record = { id: 'publish-3', revision: 3, kind: 'publish' as const, created_at: '2026-11-01T07:10:00Z', reviewer: { issuer: 'test', sub: 'owner' }, binding: initial.binding,
+    payload: { visual_record_id: initial.records[0].id, powerpoint_record_id: 'desktop-2', programmatic_receipt_sha256: 'f'.repeat(64) }, revoked: false, stale: false };
+  return { ...initial, revision: 3, can_publish: false, publication_authorized: true, publication: { status: 'published', record_id: record.id, published_at: record.created_at }, records: [...initial.records, record] };
+}
+
+describe('explicit version publication', () => {
+  it('shows receipt-bound final PPTX renders separately without rewriting source preview reviews', async () => {
+    const complete = completeSnapshot(); const initial: AcceptanceSnapshot = { ...syntheticSnapshot(), programmatic: { ...complete.programmatic!, status: 'pending', completed_gates: ['independent_final_pptx_rendering'], pending_gates: ['independent_export_build_contract', 'independent_postflight_and_delivery'] } };
+    const client = clientFor(initial); setup(client); await ready();
+    const rendered = within(screen.getByRole('region', { name: 'PPTX 导出效果' }));
+    const first = rendered.getByRole('img', { name: '最终 PPTX 第 1 页独立渲染' });
+    expect(first).toHaveAttribute('src', initial.programmatic!.rendered_pages![0].preview_url); fireEvent.load(first);
+    expect(screen.getByRole('option', { name: '检查通过' })).toBeDisabled();
+    fireEvent.click(rendered.getByRole('button', { name: /导出第 2 页/ }));
+    expect(rendered.getByRole('img', { name: '最终 PPTX 第 2 页独立渲染' })).toHaveAttribute('src', initial.programmatic!.rendered_pages![1].preview_url);
+    expect(screen.getByLabelText('第 1 页检查结论')).toHaveValue('pending'); expect(screen.getByRole('img', { name: /第 1 页静态 PNG/ })).toHaveAttribute('src', '/api/v1/versions/demo-v1/slides/1/preview');
+    expect(client.save).not.toHaveBeenCalled();
+  });
+
+  it('keeps publish disabled while any gate is pending and never equates rendering with desktop editing', async () => {
+    const initial = syntheticSnapshot(); const client = { ...clientFor(initial), publish: vi.fn<NonNullable<AcceptanceClient['publish']>>() };
+    setup(client); await ready();
+    expect(screen.getByRole('button', { name: '确认发布此版本' })).toBeDisabled();
+    expect(screen.getByLabelText(/我已核对此版本的完整验收记录/)).toBeDisabled();
+    expect(screen.getByLabelText(/实际编辑文字或其他可编辑内容/)).toHaveValue('pending');
+    expect(client.publish).not.toHaveBeenCalled();
+  });
+
+  it('requires an explicit current-version confirmation and sends only the bound publication command', async () => {
+    const initial = completeSnapshot(); const client = { ...clientFor(initial), publish: vi.fn<NonNullable<AcceptanceClient['publish']>>().mockResolvedValue(publishedSnapshot(initial)) };
+    const onPublished = vi.fn(); render(<AcceptancePanel projectId="demo-project" versionId="demo-v1" client={client} onPublished={onPublished} />); await ready();
+    const button = screen.getByRole('button', { name: '确认发布此版本' }); expect(button).toBeDisabled();
+    fireEvent.click(screen.getByLabelText(/我已核对此版本的完整验收记录/)); fireEvent.click(button);
+    await screen.findByText('此版本已正式发布，发布决定和所依据的检查记录已保存。');
+    expect(client.publish).toHaveBeenCalledOnce(); expect(client.publish).toHaveBeenCalledWith('demo-project', 'demo-v1', { kind: 'publish', expected_revision: 2, binding: initial.binding, confirm: true });
+    expect(onPublished).toHaveBeenCalledWith(publishedSnapshot(initial)); expect(client.save).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: '确认发布此版本' })).not.toBeInTheDocument();
+  });
+
+  it('blocks publication of unsaved edits and clears confirmation after authoritative refresh', async () => {
+    const initial = completeSnapshot(); const client = { ...clientFor(initial), publish: vi.fn<NonNullable<AcceptanceClient['publish']>>() };
+    setup(client); await ready();
+    fireEvent.click(screen.getByLabelText(/我已核对此版本的完整验收记录/));
+    fireEvent.change(screen.getByLabelText('桌面检查备注'), { target: { value: '尚未保存的新问题' } });
+    expect(screen.getByRole('button', { name: '确认发布此版本' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: '重新读取记录' }));
+    await waitFor(() => expect(client.load).toHaveBeenCalledTimes(2));
+    expect(screen.getByLabelText(/我已核对此版本的完整验收记录/)).not.toBeChecked();
+    expect(screen.getByLabelText('桌面检查备注')).toHaveValue('尚未保存的新问题'); expect(client.publish).not.toHaveBeenCalled();
+  });
+
+  it('requires reloading after publication conflict and ignores late results from a previous version', async () => {
+    const initial = completeSnapshot(); const client = { ...clientFor(initial), publish: vi.fn<NonNullable<AcceptanceClient['publish']>>().mockRejectedValueOnce(new ApiError('revision_conflict', 409)) };
+    const view = setup(client); await ready();
+    fireEvent.click(screen.getByLabelText(/我已核对此版本的完整验收记录/)); fireEvent.click(screen.getByRole('button', { name: '确认发布此版本' }));
+    await screen.findByRole('alert'); expect(screen.getByRole('button', { name: '确认发布此版本' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: '重新读取记录' })); await waitFor(() => expect(client.load).toHaveBeenCalledTimes(2));
+    let resolvePublish!: (value: AcceptanceSnapshot) => void; client.publish.mockImplementationOnce(() => new Promise(resolve => { resolvePublish = resolve; }));
+    fireEvent.click(screen.getByLabelText(/我已核对此版本的完整验收记录/)); fireEvent.click(screen.getByRole('button', { name: '确认发布此版本' }));
+    client.load.mockResolvedValueOnce(syntheticSnapshot('demo-v2')); view.rerender(<AcceptancePanel projectId="demo-project" versionId="demo-v2" client={client} />); await ready();
+    await act(async () => resolvePublish(publishedSnapshot(initial)));
+    expect(screen.queryByText('此版本已正式发布，发布决定和所依据的检查记录已保存。')).not.toBeInTheDocument();
+    expect(screen.getByRole('region', { name: '版本 demo-v2 的验收工作台' })).toBeInTheDocument();
+  });
+});
 
 describe('P4 version-bound review workspace', () => {
   it('reports loaded snapshots and only offers saved current problems to the host revision form', async () => {
@@ -227,10 +307,25 @@ describe('P4 client contract', () => {
     const expected = '/api/v1/versions/v1/slides/1/preview'; expect(rasterPreviewUrl('v1', 1, expected)).toBe(expected);
     for (const bad of ['https://host' + expected, '//host' + expected, expected + '?format=svg', expected.replace('v1/slides', 'v2/slides'), 'data:image/svg+xml,<svg/>', 'javascript:alert(1)']) expect(rasterPreviewUrl('v1', 1, bad)).toBeNull();
   });
+  it('only permits final render URLs for the selected project, version, page and exact receipt', () => {
+    const receipt = 'f'.repeat(64); const route = `/api/v1/projects/p/versions/v/acceptance/rendered-slides/1/preview?receipt_sha256=${receipt}`;
+    expect(renderedPptxPreviewUrl('p', 'v', 1, receipt, route)).toBe(route);
+    for (const bad of ['https://host' + route, route.replace('/p/', '/other/'), route.replace('/v/', '/other/'), route.replace('/1/', '/2/'), route.replace(receipt, 'e'.repeat(64)), route + '&format=svg', route.replace('receipt_sha256', 'evidence_sha256')]) expect(renderedPptxPreviewUrl('p', 'v', 1, receipt, bad)).toBeNull();
+  });
   it('fails closed for a malformed history payload and forged publication result', () => {
     const snapshot = syntheticSnapshot(); const saved = recordVisual(snapshot, { expected_revision: 0, binding: snapshot.binding, kind: 'visual_review', ...visualDraft(snapshot) });
     saved.records[0].payload = { pages: null, note: '' } as unknown as VisualReview;
     expect(() => assertSnapshot(saved, 'demo-project', 'demo-v1')).toThrow(ApiError);
     expect(() => assertSnapshot({ ...snapshot, publication_authorized: true } as unknown as AcceptanceSnapshot, 'demo-project', 'demo-v1')).toThrow(ApiError);
+  });
+  it('rejects contradictory completed gates and publication that no longer binds the current reviews', () => {
+    const complete = completeSnapshot();
+    expect(assertSnapshot(complete, 'demo-project', 'demo-v1').can_publish).toBe(true);
+    expect(() => assertSnapshot({ ...complete, programmatic: { ...complete.programmatic!, receipt_sha256: null } }, 'demo-project', 'demo-v1')).toThrow(ApiError);
+    expect(() => assertSnapshot({ ...complete, powerpoint_status: 'pending' }, 'demo-project', 'demo-v1')).toThrow(ApiError);
+    const published = publishedSnapshot();
+    expect(assertSnapshot(published, 'demo-project', 'demo-v1').publication_authorized).toBe(true);
+    published.records[0].revoked = true;
+    expect(() => assertSnapshot(published, 'demo-project', 'demo-v1')).toThrow(ApiError);
   });
 });
