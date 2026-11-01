@@ -1,5 +1,25 @@
 # 项目统一配音音色
 
+## 2026-11-01：四个女声已上线，保持项目统一音色
+
+新增晓贝 `zf_xiaobei`、晓妮 `zf_xiaoni`、晓晓 `zf_xiaoxiao`、晓伊 `zf_xiaoyi`。连同原有四男声共八项，默认仍是云健；一个项目统一选择一个音色，所有镜头继承。更换音色后旧候选保留实际音色并标记需更新，不自动生成或采用。
+
+- 语音源码 `e811a5f97df54efc6eb01878f5876d31c1fea1ff`，镜像 `arm-cluster-master:5000/speech-service:latest@sha256:5ff9a472792aaf0e931cc6c61be30a14246a4397687b0ef253546358a303c0bc`；Pod `speech-service-77fb679896-tmpsr`，Ready、0 重启。官方固定 revision `f3ff3571791e39611d31c381e3a41a3af07b4987` 四女声经 SHA、严格 ZIP/descriptor、finite float32 表和 worker 八资产重验，发布前再校验；未执行 pickle/Torch。
+- 工作台镜像保持 `arm-cluster-master:5000/video-workbench:latest@sha256:e5e5aff8c1d94ad237bf035268dfd192db79bd8c39c216998dfb4df7eea5bb77`，只刷新启动目录；新 Pod `video-workbench-5c69474df6-9l6rv`，Ready、0 重启。语音只改镜像、发布身份与 `SPEECH_VOICES`，工作台只改目录刷新注解，其他 Deployment spec 比对一致。
+- 真实登录浏览器确认八选项、项目保存与镜头继承、未保存禁生成和刷新持久化。独立项目「女声音色对比（项目统一音色验收）」`54ab2134-fdc7-4cd8-9006-e48084a23c2f`，revision 14，仅一个镜头；同稿 speed=1.0，四女声各一次成功，无自动重试，均未采用。新增视觉 Agent 调用 0、整片渲染 0。
+- 语音单元测试 92 passed，测量工具测试 15 passed，前端 30 passed；发布脚本独立只读审查通过。复用单模型、串行 NPU 请求，保持原规划与禁止 CPU 波形静默回退；实际仍含 CPU 文本前端和混合计算。
+
+| 音色 | 实测时长 | WAV SHA256 |
+| --- | ---: | --- |
+| zf_xiaobei | 7 秒 | `8a96b26ece1e0ea35e46c9090c39a998a4c30a6b8f03d526a307c793421135bb` |
+| zf_xiaoni | 6 秒 | `27cc1c29338c9d0c62ab7913593f27748e342cfb7309c06eadacb1c711635605` |
+| zf_xiaoxiao | 6 秒 | `7887b81878c19da43fbbe3ae5b31a437690ba073b094e9d6ebb45926127bc9d4` |
+| zf_xiaoyi | 6 秒 | `78ae8ae68a1d559af697312c61ad4f80483999503d07649db6ad99c1ed6bf27e` |
+
+四 WAV 均完整 PCM16、24kHz、单声道，候选与不可变请求音色绑定通过。原 DSH r27、八镜副本 r69 及八条采用录音非过期检查通过。证据在 `D:/github/armbianbegin/.runtime/video-audio-production/multi-female-voices/`，包括发布与浏览器回执、四 WAV 和取回回执；归档 SHA256 `2701e65148ee6bc3d90cd08388a75aea3030bd0ab58969b6bb0dc70cc73e8b16`。取回过程只读数据库，不合成或采用；不把未另行采集的逐段 NPU metadata 记作本轮外部证据。
+
+增加音色不代表自然度已改善或获得用户认可，完整稿听感与术语确认仍待完成。保持无字幕默认、原项目和云健默认值；两开发分支独立保存，不合主线、不 apply/archive。以下此前记录为历史。
+
 一个项目只选择一个音色，所有镜头的新配音继承它。云健仍为默认；其他选项来自语音服务实际启用并校验成功的目录，不在浏览器硬编码。
 
 在项目的「项目配音」选择音色并保存，再到镜头生成、试听和明确采用。选择或保存不会自动生成。切换项目音色后，旧配音仍可试听下载，但不能作为当前音色采用或直接混入新成片；需要逐镜重新生成或上传对应录音。不同项目互不影响。上传录音单独标注，不推断其音色。

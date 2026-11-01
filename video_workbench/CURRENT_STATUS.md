@@ -1,5 +1,7 @@
 # 视频工作台当前状态
 
+2026-11-01 最新：四女声晓贝、晓妮、晓晓、晓伊已加入，现有四男声保留，共八项，默认云健；一个项目统一一个音色。四次短句真实生成均成功且未采用，原项目不变。语音 Pod `speech-service-77fb679896-tmpsr`、工作台 Pod `video-workbench-5c69474df6-9l6rv` 均 Ready；工作台镜像不变。详细身份、测试和证据见 [PROJECT_VOICES.md](PROJECT_VOICES.md)。自然度仍需用户试听；以下更早部署身份保留为历史。
+
 2026-11-01 当前更新：项目统一男声音色已上线，四选项为云健（默认）、云希、云夏、云扬。工作台 `cbca832` / Pod `video-workbench-5fff98c4d8-wlv86` / digest `sha256:e5e5aff8c1d94ad237bf035268dfd192db79bd8c39c216998dfb4df7eea5bb77`；语音 Pod `speech-service-d97d54fb6-8vbb2`。三种新增男声各一次真实短句成功，历史原项目 r27/r69 及八条采用录音仍有效。完整能力、测试和发布身份见 [PROJECT_VOICES.md](PROJECT_VOICES.md)。听感仍待用户确认；以下更早部署身份是历史。
 
 2026-10-31 用户效果复核：完整稿仍有明显机械感，原字幕叠加遮挡画面，效果验收未通过。用户已选定“取消字幕，把关键点融入画面”。本轮默认关闭附加字幕，并为新项目提供可编辑的口语图解制作指引；原八镜头成片保留为技术流程证据，不作为满意成片。具体样稿与后续验收见 [PRESENTATION_REFINEMENT.md](PRESENTATION_REFINEMENT.md)。
