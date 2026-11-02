@@ -126,6 +126,8 @@ class Settings:
     speech_voice_discovery: bool = False
     speech_token_secret: str = 'video-speech-service'
     render_enabled: bool = False
+    explanation_enabled: bool = False
+    explanation_profile_revision: str = '1'
 
 
 def render(settings: Settings) -> dict:
@@ -148,6 +150,11 @@ def render(settings: Settings) -> dict:
         raise ValueError('Invalid caller Secret key')
     if not isinstance(settings.profile_revision, str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', settings.profile_revision):
         raise ValueError('Invalid profile revision')
+    if type(settings.explanation_enabled) is not bool:
+        raise ValueError('Explanation gate must be a boolean')
+    if (type(settings.explanation_profile_revision) is not str
+            or not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', settings.explanation_profile_revision)):
+        raise ValueError('Invalid explanation profile revision')
     if not isinstance(settings.storage_size, str) or not re.fullmatch(r'[1-9][0-9]*(?:Mi|Gi|Ti)', settings.storage_size):
         raise ValueError('Storage size must be a positive whole Mi, Gi or Ti quantity')
     external_values = (settings.external_secret_store, settings.external_secret_remote_key,
@@ -278,6 +285,12 @@ def render(settings: Settings) -> dict:
         policy['spec']['egress'].append({'to': [peer(speech_namespace, {'app': 'speech-service'})],
                                         'ports': [{'protocol': 'TCP', 'port': 8092}]})
         template['spec']['terminationGracePeriodSeconds'] = 150
+    if settings.explanation_enabled:
+        container = deployment['spec']['template']['spec']['containers'][0]
+        container['env'].extend([
+            {'name': 'VIDEO_EXPLANATION_ENABLED', 'value': '1'},
+            {'name': 'VIDEO_EXPLANATION_PROFILE_REVISION', 'value': settings.explanation_profile_revision},
+        ])
     if settings.render_enabled:
         container = deployment['spec']['template']['spec']['containers'][0]
         container['env'].extend([{'name': 'VIDEO_RENDER_ENABLED', 'value': '1'},
@@ -352,6 +365,8 @@ def main(argv=None):
     parser.add_argument('--speech-voice-discovery', action='store_true')
     parser.add_argument('--speech-token-secret', default='video-speech-service')
     parser.add_argument('--render-enabled', action='store_true')
+    parser.add_argument('--explanation-enabled', action='store_true')
+    parser.add_argument('--explanation-profile-revision', default='1')
     parser.add_argument('--output', type=Path, help='Write JSON (also valid Kubernetes YAML); default: stdout')
     args = parser.parse_args(argv)
     try:

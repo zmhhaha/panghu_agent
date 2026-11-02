@@ -12,6 +12,7 @@ from uuid import uuid4
 from agent_service.contracts import ServiceError, digest
 from agent_service.profiles.video_motion import validate_motion_input, validate_motion_result
 from .motion import make_beats
+from .explanation_store import visual_generation_description
 
 
 ACTIVE = frozenset({'queued', 'submitting', 'running', 'cancelling'})
@@ -33,7 +34,7 @@ def _require(condition, code='invalid_motion_request', status=422):
 def semantic_binding(project, scene):
     """The scene's intended explanation; pronunciations are resolved later."""
     return digest(dict(schema='video.motion-semantic-binding.v1', title=scene['title'],
-        narration=scene['narration'], visual_description=scene['visual_description'],
+        narration=scene['narration'], visual_description=visual_generation_description(scene),
         style=project.get('style', '')))
 
 
@@ -186,7 +187,7 @@ class MotionStore:
                 _require(base['scene_id'] == scene_id and base['project_id'] == project_id, 'not_found', 404)
                 _require(base['semantic_binding_sha256'] == binding, 'motion_base_stale', 409)
             document = dict(schema='video.motion-input.v1', title=scene['title'], style=project.get('style', ''),
-                visual_description=scene['visual_description'], beats=make_beats(scene['narration']),
+                visual_description=visual_generation_description(scene), beats=make_beats(scene['narration']),
                 instruction=request.get('instruction', ''), base_plan=base['plan'] if base else None)
             validate_motion_input(document)
             now = time.time()

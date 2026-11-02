@@ -14,6 +14,7 @@ from uuid import uuid4
 from agent_service.contracts import ServiceError, digest
 from agent_service.profiles.video import validate_video_input
 from .audio_store import AudioStoreMixin
+from .explanation_store import visual_generation_description
 
 ACTIVE = {'queued', 'submitting', 'running', 'cancelling'}
 
@@ -181,7 +182,7 @@ class Store(AudioStoreMixin):
                     if base['format'] != scene['format']:
                         raise ServiceError('base_format_conflict', 409)
                 document = dict(schema_version='1', kind='scene', title=scene['title'], narration=scene['narration'],
-                                visual_description=scene['visual_description'], style=project['style'], format=scene['format'],
+                                visual_description=visual_generation_description(scene), style=project['style'], format=scene['format'],
                                 width=1280, height=720, duration_seconds=scene['duration_seconds'],
                                 base_source=base['source'] if base else None, instruction=request.get('instruction', ''))
             validate_video_input(document, 'storyboard' if kind == 'storyboard' else 'scene')

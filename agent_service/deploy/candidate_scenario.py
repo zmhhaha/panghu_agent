@@ -314,6 +314,14 @@ def load_scenario(path, source_dir, parent_dir, policy):
             raw = files[asset['id'] + extensions[asset['media_type']]]
             require(len(raw) == asset['bytes'] and hashlib.sha256(raw).hexdigest() == asset['sha256'],
                 'candidate_source_snapshot_mismatch')
+    elif policy.name == 'video.explanation-plan.v1':
+        require(set(files) == {'explanation-input.json'}, 'candidate_explanation_input_required')
+        from agent_service.profiles.video import decode_video_json
+        from agent_service.profiles.video_explanation import validate_explanation_input
+        raw = files['explanation-input.json']
+        document = validate_explanation_input(decode_video_json(raw))
+        require(canonical_bytes(document) == raw and hashlib.sha256(raw).hexdigest() == task['input_sha256'],
+            'candidate_explanation_input_mismatch')
     elif policy.name == 'video.motion-plan.v1':
         require(set(files) == {'motion-input.json'}, 'candidate_motion_input_required')
         from agent_service.profiles.video import decode_video_json

@@ -8,6 +8,23 @@ import re
 from urllib.parse import urlsplit
 
 
+@dataclass(frozen=True)
+class ExplanationSettings:
+    enabled: bool = False
+    revision: str = '1'
+
+    @classmethod
+    def from_env(cls, env=None):
+        env = os.environ if env is None else env
+        enabled = env.get('VIDEO_EXPLANATION_ENABLED', '0')
+        revision = env.get('VIDEO_EXPLANATION_PROFILE_REVISION', '1')
+        if enabled not in {'0', '1'}:
+            raise ValueError('VIDEO_EXPLANATION_ENABLED must be 0 or 1')
+        if not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', revision):
+            raise ValueError('Invalid explanation task contract revision')
+        return cls(enabled == '1', revision)
+
+
 @dataclass(frozen=True, repr=False)
 class AgentSettings:
     base_url: str

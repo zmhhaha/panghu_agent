@@ -24,12 +24,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from agent_service.client import AgentClient
 from agent_service.contracts import ServiceError
 from .agent import VideoAgentGateway
-from .config import AgentSettings
+from .config import AgentSettings, ExplanationSettings
 from .service import Workflow
 from .store import Store
 from .speech import SpeechClient, SpeechSettings, MAX_AUDIO_BYTES
 from .audio_workflow import AudioWorkflow
 from .production import Production
+from .explanation_gateway import ExplanationAgentGateway
+from .explanation_store import ExplanationStore
+from .explanation_workflow import ExplanationWorkflow
 
 WEB = Path(__file__).parent / 'web'
 PREVIEW_CSP = ("sandbox; default-src 'none'; script-src 'none'; "
@@ -60,6 +63,21 @@ MESSAGES = {
     'render_not_ready': '成片尚未完成。',
     'project_audio_limit': '项目配音总量超过当前导出限制。',
     'audio_upload_too_large': '录音文件过大，最多支持 32 MiB。',
+    'explanation_not_enabled': '讲解方案尚未启用。',
+    'explanation_disabled': '讲解方案尚未启用。',
+    'explanation_operation_in_progress': '项目已有讲解方案任务，请等待完成或申请取消。',
+    'explanation_profile_unavailable': '通用 Agent 尚未启用讲解统筹任务。',
+    'explanation_preflight_unavailable': '未能确认讲解统筹能力，尚未提交任务，请稍后再试。',
+    'explanation_requires_scenes': '请先拆分或添加镜头，再统筹整片讲解。',
+    'explanation_plan_stale': '镜头或配音设置已变化，请基于当前内容重新生成讲解方案。',
+    'explanation_head_conflict': '已采用的讲解方案发生变化，请重新读取后核对。',
+    'explanation_storage_limit': '讲解方案记录已达到当前存储限制。',
+    'explanation_queue_limit': '讲解方案任务较多，请等待已有任务完成。',
+    'explanation_candidate_limit': '本项目的讲解方案候选数量已达到限制。',
+    'explanation_operation_limit': '本项目的讲解方案任务记录已达到限制。',
+    'explanation_narration_requires_split': '这段旁白或读音展开后超过配音长度限制，请拆成更短的镜头后重新整理。',
+    'audio_operation_in_progress': '项目有配音任务正在执行，请等待结束后再采用方案。',
+    'motion_operation_in_progress': '项目有动画方案正在生成，请等待结束后再采用讲解方案。',
 }
 
 
@@ -99,6 +117,22 @@ class Revision(Fields):
 
 class Storyboard(Revision):
     max_scenes: int = Field(default=12, ge=1, le=12, strict=True)
+
+
+class ExplanationBrief(Fields):
+    audience: str = Field(default='', max_length=300)
+    goal: str = Field(default='', max_length=1200)
+    tone: Literal['conversational', 'precise', 'storytelling'] = 'conversational'
+
+
+class ExplanationRequest(Revision):
+    brief: ExplanationBrief = Field(default_factory=ExplanationBrief)
+    instruction: str = Field(default='', max_length=2000)
+
+
+class ExplanationAdoption(Revision):
+    version_id: str = Field(min_length=1, max_length=100)
+    expected_head_version_id: str | None = Field(max_length=100)
 
 
 class Generation(Revision):
@@ -229,7 +263,12 @@ def export_project(store, owner, project):
 
 
 def create_app(*, db_path=None, gateway=None, local_mode=False, background=True, trusted_hosts=None,
-               speech_client=None, renderer=None, render_enabled=None):
+               speech_client=None, renderer=None, render_enabled=None,
+               explanation_gateway=None, explanation_enabled=None):
+    explanation_settings = ExplanationSettings.from_env()
+    enabled = explanation_settings.enabled if explanation_enabled is None else explanation_enabled
+    if type(enabled) is not bool:
+        raise ValueError('An explicit boolean explanation feature gate is required')
     owned_client = None
     owned_speech_client = None
     if gateway is None:
@@ -248,6 +287,12 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         store.configure_speech_provider(speech_client.settings.model, speech_client.settings.voice,
                                         [v['id'] for v in speech_client.voice_catalog])
     workflow = Workflow(store, gateway)
+    # Keep an Agent handle for reconciling already admitted work even when new
+    # explanation generation is disabled. The public admission gate stays shut.
+    if explanation_gateway is None and isinstance(gateway, VideoAgentGateway):
+        explanation_gateway = ExplanationAgentGateway(gateway.client, explanation_settings.revision)
+    explanation_store = ExplanationStore(store)
+    explanation_workflow = ExplanationWorkflow(explanation_store, explanation_gateway, enabled=enabled)
     audio_workflow = AudioWorkflow(store, speech_client)
     production = Production(store, renderer=renderer,
         enabled=render_enabled if render_enabled is not None else os.environ.get('VIDEO_RENDER_ENABLED') == '1')
@@ -256,12 +301,14 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     async def lifespan(app):
         if background:
             workflow.start()
+            explanation_workflow.start()
             audio_workflow.start()
             production.start()
         yield
         production.stop()
         audio_workflow.stop()
         workflow.stop()
+        explanation_workflow.stop()
         if owned_client:
             owned_client.close()
         if owned_speech_client:
@@ -270,6 +317,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     app = FastAPI(title='SVG / HTML 视频工作台', lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.store, app.state.workflow = store, workflow
     app.state.audio_workflow, app.state.production = audio_workflow, production
+    app.state.explanation_store, app.state.explanation_workflow = explanation_store, explanation_workflow
     # Proxy mode must be bound behind an authenticated, header-scrubbing proxy.
     app.state.trusted_hosts = set(trusted_hosts or {'127.0.0.1', 'localhost', '[::1]'})
 
@@ -356,7 +404,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     speech_model=speech_client.settings.model if speech_client else None,
                     speech_voice=speech_client.settings.voice if speech_client else None,
                     speech_voices=speech_client.voice_catalog if speech_client else [],
-                    media_configured=production.enabled)
+                    media_configured=production.enabled,
+                    explanation_configured=enabled and explanation_gateway is not None)
 
     @app.get('/api/projects')
     def projects(owner=Depends(identity)):
@@ -370,6 +419,26 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     @app.get('/api/projects/{project_id}')
     def project(project_id: str, owner=Depends(identity)):
         return store.project(owner, project_id)
+
+    @app.get('/api/projects/{project_id}/explanation')
+    def explanation(project_id: str, owner=Depends(identity)):
+        return explanation_store.project(owner, project_id)
+
+    @app.post('/api/projects/{project_id}/explanation', status_code=202)
+    def generate_explanation(project_id: str, body: ExplanationRequest, owner=Depends(mutation),
+                             idempotency_key: str | None = Header(default=None)):
+        explanation_workflow.require_gateway()
+        return explanation_store.start(owner, project_id, body.model_dump(), idempotency(idempotency_key))
+
+    @app.post('/api/projects/{project_id}/explanation/adopt')
+    def adopt_explanation(project_id: str, body: ExplanationAdoption, owner=Depends(mutation)):
+        explanation_workflow.require_gateway()
+        return explanation_store.adopt(owner, project_id, body.model_dump())
+
+    @app.post('/api/explanation-operations/{operation_id}/cancel')
+    def cancel_explanation(operation_id: str, owner=Depends(mutation)):
+        # Even after disabling new generation, an owner can cancel existing work.
+        return explanation_store.cancel(owner, operation_id)
 
     @app.post('/api/projects/{project_id}/scenes')
     def create_scene(project_id: str, body: SceneFields, owner=Depends(mutation)):

@@ -5,7 +5,24 @@ import pytest
 from fastapi.testclient import TestClient
 
 from video_workbench.app import create_app
-from video_workbench.config import AgentSettings
+from video_workbench.config import AgentSettings, ExplanationSettings
+
+
+def test_explanation_is_opt_in_with_an_independent_contract_revision():
+    assert ExplanationSettings.from_env({}) == ExplanationSettings(False, '1')
+    assert ExplanationSettings.from_env({'VIDEO_EXPLANATION_ENABLED': '1',
+                                        'VIDEO_EXPLANATION_PROFILE_REVISION': 'review-2'}) == ExplanationSettings(True, 'review-2')
+
+
+@pytest.mark.parametrize('env', [
+    {'VIDEO_EXPLANATION_ENABLED': 'true'},
+    {'VIDEO_EXPLANATION_ENABLED': ''},
+    {'VIDEO_EXPLANATION_PROFILE_REVISION': 'bad revision'},
+    {'VIDEO_EXPLANATION_PROFILE_REVISION': ''},
+])
+def test_invalid_explanation_configuration_is_rejected(env):
+    with pytest.raises(ValueError):
+        ExplanationSettings.from_env(env)
 
 
 def test_unconfigured_is_editable_but_not_ready(tmp_path, monkeypatch):

@@ -8,6 +8,8 @@
 
 后续要做的事情见 [NEXT_STEPS.md](NEXT_STEPS.md)。
 
+2026-11-02 开发分支新增可选的[项目级讲解方案](EXPLANATION.md)：统一整理旁白、读音、画面重点和展开步骤，生成候选后审阅采用，再沿用现有制作入口。代码在 `codex/video-hyperframes-motion`，默认关闭、尚未上线；不是强制旁白优先流程。动态制作实验和实际上线范围见 [HYPERFRAMES.md](HYPERFRAMES.md) 与 [CURRENT_STATUS.md](CURRENT_STATUS.md)。
+
 ## 本地启动
 
 在仓库根目录使用 Python 3.12 或更新版本：

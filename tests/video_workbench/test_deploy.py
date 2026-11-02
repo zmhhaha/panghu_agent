@@ -25,6 +25,26 @@ def resource(document, kind, namespace='video-workbench'):
                 and item['metadata'].get('namespace') == namespace)
 
 
+def test_explanation_deployment_is_explicit_and_shares_existing_agent_boundary(settings):
+    original = resource(render(settings), 'Deployment')['spec']['template']['spec']
+    changed = resource(render(replace(settings, explanation_enabled=True,
+                              explanation_profile_revision='review-2')), 'Deployment')['spec']['template']['spec']
+    before, after = original['containers'][0], changed['containers'][0]
+    assert not any(e['name'].startswith('VIDEO_EXPLANATION_') for e in before['env'])
+    env = {e['name']: e.get('value') for e in after['env']}
+    assert env['VIDEO_EXPLANATION_ENABLED'] == '1'
+    assert env['VIDEO_EXPLANATION_PROFILE_REVISION'] == 'review-2'
+    assert before['volumeMounts'] == after['volumeMounts']
+    assert original['volumes'] == changed['volumes']
+
+
+@pytest.mark.parametrize('changes', [dict(explanation_enabled='1'),
+    dict(explanation_profile_revision=''), dict(explanation_profile_revision='bad revision')])
+def test_invalid_explanation_deployment_fails_before_rendering(settings, changes):
+    with pytest.raises(ValueError):
+        render(replace(settings, **changes))
+
+
 def test_sqlite_is_single_coordinator_with_durable_writable_data(settings):
     document = render(settings)
     deployment = resource(document, 'Deployment')['spec']

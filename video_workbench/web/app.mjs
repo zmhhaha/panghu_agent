@@ -8,6 +8,7 @@ import {
   speechVoices, speechVoiceName, projectSpeechVoice, syncProjectSpeechDraft, projectVoiceOptions,
   projectSpeechCanGenerate, audioVoiceLabel,
 } from './model.mjs';
+import { createExplanationPanel, explanationErrorLabel } from './explanation.mjs';
 
 const $ = id => document.getElementById(id);
 const state = createWorkspaceState();
@@ -40,6 +41,22 @@ let previewMode = 'preview';
 let displayedVersion = null;
 let sourceVersion = null;
 let loading = false;
+
+const explanationPanel = createExplanationPanel({
+  document, request, refresh: () => loadProject(), onError: showError, onSuccess: success,
+  getContext: () => ({ project: state.project, epoch: state.epoch,
+    configured: sessionSettings.explanation_configured === true,
+    unsaved: projectHasUnsavedEdits(state.projectId),
+    projectBusy: activeOperations(state.project).length > 0 || pending.size > 0
+      || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
+  }),
+});
+
+function projectHasUnsavedEdits(projectId) {
+  return Boolean(projectSpeechDrafts.get(projectId)?.dirty)
+    || [drafts, speechDrafts, timingDrafts, captionDrafts].some(map =>
+      [...map.entries()].some(([key, draft]) => key.startsWith(`${projectId}:`) && draft.dirty));
+}
 
 const ERROR_LABELS = {
   unauthorized: '登录已失效，请重新登录。', authentication_required: '请先登录工作台。',
@@ -81,6 +98,9 @@ const ERROR_LABELS = {
   speech_invalid_audio: '音频未通过校验，请使用完整、可解码的 PCM WAV。',
   speech_invalid_input: '请检查语速、读音修正与旁白长度。',
   audio_upload_too_large: '配音文件过大，单个文件最多 32 MiB。',
+  explanation_not_configured: '讲解方案服务尚未启用，仍可使用现有镜头编辑与制作功能。',
+  explanation_version_stale: '项目内容已变化，请重新生成匹配当前镜头的讲解方案。',
+  explanation_in_progress: '项目已有讲解方案任务，请等待结束或申请取消。',
 };
 
 class ApiError extends Error {
@@ -88,7 +108,7 @@ class ApiError extends Error {
     const detail = body?.detail;
     const code = typeof detail === 'object' && !Array.isArray(detail) ? detail?.code : null;
     const message = typeof detail?.message === 'string' ? detail.message : null;
-    super(ERROR_LABELS[code] ?? message ?? (status === 401 ? '请先登录工作台。'
+    super(ERROR_LABELS[code] ?? (code?.startsWith('explanation_') ? explanationErrorLabel(code) : null) ?? message ?? (status === 401 ? '请先登录工作台。'
       : status === 409 ? '项目已更新或已有任务执行中，请刷新后重试。'
         : status === 422 ? '请检查填写的内容和长度。' : `请求未完成（${status}），请稍后重试。`));
     this.status = status;
@@ -576,6 +596,7 @@ function render() {
   $('welcome').hidden = Boolean(state.projectId);
   $('workspace').hidden = !project;
   renderProjects();
+  explanationPanel.render();
   if (!project) return;
   project.scenes ??= [];
   $('project-title').textContent = project.title;
@@ -615,7 +636,8 @@ function stopPolling() { clearTimeout(pollTimer); pollTimer = null; }
 function schedulePolling() {
   stopPolling();
   if (document.hidden || !state.projectId || (!activeOperations(state.project).length
-      && !(renderHistories.get(state.projectId) ?? []).some(isActiveOperation))) return;
+      && !(renderHistories.get(state.projectId) ?? []).some(isActiveOperation)
+      && !explanationPanel.hasActiveOperation())) return;
   pollTimer = setTimeout(() => loadProject().catch(showError), 3500);
 }
 
@@ -646,7 +668,10 @@ async function loadProject() {
       projects = updateProjectSummary(projects, project);
       loading = false;
       render();
-      await loadRenders(ticket.projectId, ticket.epoch);
+      const related = await Promise.allSettled([
+        loadRenders(ticket.projectId, ticket.epoch), explanationPanel.load(ticket.projectId, ticket.epoch),
+      ]);
+      for (const result of related) if (result.status === 'rejected') throw result.reason;
     }
   } catch (error) {
     if (ticket.epoch === state.epoch && error.name !== 'AbortError') {
@@ -1189,9 +1214,17 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('pagehide', () => { stopPolling(); readController?.abort(); sourceController?.abort(); $('audio-preview').pause(); pauseProjectPlayer(); });
 window.addEventListener('beforeunload', event => {
-  if ([...drafts.values(), ...projectSpeechDrafts.values(), ...speechDrafts.values(), ...timingDrafts.values(), ...captionDrafts.values()].some(draft => draft.dirty)) {
+  if (explanationPanel.hasDrafts() || [...drafts.values(), ...projectSpeechDrafts.values(), ...speechDrafts.values(), ...timingDrafts.values(), ...captionDrafts.values()].some(draft => draft.dirty)) {
     event.preventDefault(); event.returnValue = '';
   }
 });
+
+for (const eventName of ['input', 'change']) {
+  $('workspace').addEventListener(eventName, event => {
+    // The panel owns its controls. In particular a native select emits input
+    // before change; rebuilding it here would undo the new review selection.
+    if (!$('explanation-panel').contains(event.target)) explanationPanel.render();
+  });
+}
 
 refresh();

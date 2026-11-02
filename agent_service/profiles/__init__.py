@@ -21,4 +21,7 @@ def implementation(name):
     if name == 'video.motion-plan.v1':
         from .video_motion import VideoMotionProfile
         return VideoMotionProfile()
+    if name == 'video.explanation-plan.v1':
+        from .video_explanation import VideoExplanationProfile
+        return VideoExplanationProfile()
     raise ValueError('No reviewed profile implementation')
