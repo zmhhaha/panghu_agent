@@ -1,6 +1,12 @@
 import { readFileSync, lstatSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 export const sha=raw=>createHash('sha256').update(raw).digest('hex');
+// Verified against the pinned v0.8.149 CLI: delivery is its high quality preset.
+export function renderQuality(value='draft'){
+ if(value==='draft')return {quality:'draft',cli_quality:'draft'};
+ if(value==='final')return {quality:'final',cli_quality:'delivery'};
+ throw Error('quality_outside_range');
+}
 export const inputFiles=['index.html','plan.json','beats.json','alignment.json','timeline.json'];
 export const runtimeKeys=['schema','hyperframes','hyperframes_source','node','browser','ffmpeg','gsap',
  'gsap_sha256','font_sha256','dpkg_sha256','npm_lock_sha256'];

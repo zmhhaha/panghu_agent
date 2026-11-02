@@ -9,6 +9,7 @@ import {
   projectSpeechCanGenerate, audioVoiceLabel,
 } from './model.mjs';
 import { createExplanationPanel, explanationErrorLabel } from './explanation.mjs';
+import { createMotionPanel, createMotionRenderRequest, hasMotionScenes, motionErrorLabel } from './motion.mjs';
 
 const $ = id => document.getElementById(id);
 const state = createWorkspaceState();
@@ -52,8 +53,21 @@ const explanationPanel = createExplanationPanel({
   }),
 });
 
-function projectHasUnsavedEdits(projectId) {
+const motionPanel = createMotionPanel({
+  document, request, refresh: () => loadProject(), onError: showError, onSuccess: success,
+  getContext: () => ({ project: state.project, scene: editor === 'new' ? null : selectedScene(state), epoch: state.epoch,
+    enabled: sessionSettings.motion_enabled === true,
+    configured: sessionSettings.motion_configured === true,
+    renderConfigured: sessionSettings.motion_render_configured === true,
+    unsaved: projectHasUnsavedEdits(state.projectId, false),
+    projectBusy: activeOperations(state.project).length > 0 || pending.size > 0 || explanationPanel.hasActiveOperation()
+      || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
+  }),
+});
+
+function projectHasUnsavedEdits(projectId, includeMotion = true) {
   return Boolean(projectSpeechDrafts.get(projectId)?.dirty)
+    || Boolean(includeMotion && motionPanel.hasProjectDrafts(projectId))
     || [drafts, speechDrafts, timingDrafts, captionDrafts].some(map =>
       [...map.entries()].some(([key, draft]) => key.startsWith(`${projectId}:`) && draft.dirty));
 }
@@ -108,7 +122,8 @@ class ApiError extends Error {
     const detail = body?.detail;
     const code = typeof detail === 'object' && !Array.isArray(detail) ? detail?.code : null;
     const message = typeof detail?.message === 'string' ? detail.message : null;
-    super(ERROR_LABELS[code] ?? (code?.startsWith('explanation_') ? explanationErrorLabel(code) : null) ?? message ?? (status === 401 ? '请先登录工作台。'
+    super(ERROR_LABELS[code] ?? (code?.startsWith('explanation_') ? explanationErrorLabel(code) : null)
+      ?? (code?.startsWith('motion_') ? motionErrorLabel(code) : null) ?? message ?? (status === 401 ? '请先登录工作台。'
       : status === 409 ? '项目已更新或已有任务执行中，请刷新后重试。'
         : status === 422 ? '请检查填写的内容和长度。' : `请求未完成（${status}），请稍后重试。`));
     this.status = status;
@@ -203,16 +218,19 @@ function renderScenes(project) {
     const top = node('div', undefined, 'scene-card-top');
     top.append(node('span', `镜头 ${String(index + 1).padStart(2, '0')}`), node('span', `${scene.duration_seconds} 秒`));
     const bottom = node('div', undefined, 'scene-card-bottom');
-    bottom.append(node('span', scene.format === 'html' ? 'HTML' : 'SVG'),
+    bottom.append(node('span', scene.motion?.mode === 'motion' ? '动态图解' : scene.format === 'html' ? 'HTML' : 'SVG'),
       node('span', isActiveOperation(scene.operation) ? statusLabel(scene.operation.status)
-        : scene.head_version_id ? '已采用画面' : scene.versions?.length ? '有候选版本' : '待制作'),
+        : scene.motion?.mode === 'motion' ? scene.motion.head_stale ? '图解已过期' : '已采用图解'
+          : scene.head_version_id ? '已采用画面' : scene.versions?.length ? '有候选版本' : '待制作'),
       node('span', scene.audio_stale ? '配音已过期' : scene.head_audio_version_id ? '已采用配音' : '未采用配音',
         `scene-audio-status${scene.audio_stale ? ' stale' : ''}`));
     button.append(top, node('h3', scene.title), node('p', scene.narration || scene.visual_description || '还没有旁白'), bottom);
     button.addEventListener('click', () => {
+      motionPanel.pause();
       selectScene(state, scene.id);
       editor = null;
       render();
+      motionPanel.load(project.id, state.epoch);
     });
     fragment.append(button);
   }
@@ -274,6 +292,8 @@ function clearPreview() {
 }
 
 function renderVersion(scene) {
+  const dynamic = scene.motion?.mode === 'motion';
+  $('preview-tab').textContent = dynamic ? '静态候选预览' : '画面预览';
   const version = selectedVersion(state, scene);
   const versions = orderedVersions(scene);
   const select = $('version-select');
@@ -297,8 +317,10 @@ function renderVersion(scene) {
   $('download-source').disabled = !version;
   const adopted = version?.id === scene.head_version_id;
   $('adopt-version').disabled = !version || adopted || pending.has(`adopt:${scene.id}`);
-  $('adopt-version').textContent = adopted ? '当前采用版本' : '采用此版本';
-  $('adoption-note').textContent = adopted ? '这个版本将用于项目导出。'
+  $('adopt-version').textContent = dynamic ? adopted ? '当前静态采用版本' : '设为静态采用版本'
+    : adopted ? '当前采用版本' : '采用此版本';
+  $('adoption-note').textContent = dynamic ? '本镜头当前使用动态图解。此处审阅静态候选；在动态图解面板切回静态后，才用于项目导出。'
+    : adopted ? '这个版本将用于项目导出。'
     : version ? '候选版本已保存，确认效果后可采用。' : '制作完成后，可以预览并选择采用的版本。';
   const latest = latestVersion(scene);
   const newer = version && latest && latest.number > version.number;
@@ -541,12 +563,15 @@ function renderAudio(scene, project) {
 
 function renderDelivery(project) {
   const scenes = project.scenes ?? [];
-  const visualCount = scenes.filter(scene => scene.head_version_id).length;
+  const dynamic = hasMotionScenes(project);
+  const visualCount = scenes.filter(scene => scene.motion?.mode === 'motion'
+    ? scene.motion.head_version_id && !scene.motion.head_stale : scene.head_version_id).length;
   const audioCount = scenes.filter(scene => scene.head_audio_version_id && !scene.audio_stale).length;
   $('delivery-summary').textContent = `已采用画面 ${visualCount}/${scenes.length} · 可用配音 ${audioCount}/${scenes.length}。预览和成片使用已采用的版本。`;
-  const issues = deliveryIssues(project, { silent: $('render-silent').checked, subtitles: $('render-subtitles').checked });
+  const issues = deliveryIssues(project, { silent: dynamic ? false : $('render-silent').checked,
+    subtitles: dynamic ? false : $('render-subtitles').checked });
   const reasons = { missing_visual: '未采用画面', missing_audio: '未采用配音', stale_audio: '配音已过期',
-    missing_captions: '缺少字幕', stale_captions: '字幕已过期' };
+    missing_captions: '缺少字幕', stale_captions: '字幕已过期', stale_motion: '动态图解已过期' };
   const issueList = document.createDocumentFragment();
   for (const issue of issues) {
     const item = node('li');
@@ -557,25 +582,38 @@ function renderDelivery(project) {
       selectScene(state, issue.sceneId); editor = null; render();
       $('scene-workspace').scrollIntoView({ block: 'start' });
       $('toggle-scene-editor').focus({ preventScroll: true });
+      motionPanel.load(project.id, state.epoch);
     });
     item.append(button); issueList.append(item);
   }
   $('delivery-issues').replaceChildren(issueList);
   $('delivery-issues').hidden = !issues.length;
-  $('preview-project').disabled = !scenes.length || pending.has(`preview:${project.id}`);
-  $('render-project').disabled = !scenes.length || !sessionSettings.media_configured || pending.has(`render:${project.id}`);
+  $('preview-project').disabled = dynamic || !scenes.length || pending.has(`preview:${project.id}`);
+  $('preview-project').textContent = dynamic ? '动态模式请制作镜头 MP4 草稿' : '预览整个项目';
+  $('render-project').disabled = dynamic || !scenes.length || !sessionSettings.media_configured || pending.has(`render:${project.id}`);
+  $('render-motion-project').hidden = !dynamic;
+  $('motion-delivery-note').hidden = !dynamic;
+  $('render-motion-project').disabled = !dynamic || !sessionSettings.motion_render_configured || projectHasUnsavedEdits(project.id)
+    || pending.has(`render:${project.id}`) || issues.length > 0 || !scenes.length
+    || (renderHistories.get(project.id) ?? []).some(isActiveOperation);
+  $('render-silent').disabled = dynamic;
+  $('render-subtitles').disabled = dynamic;
   $('download-subtitles').disabled = !scenes.length || pending.has(`subtitles:${project.id}`);
-  $('render-hint').textContent = sessionSettings.media_configured ? '导出在后台进行，过程中可以继续编辑；结果保留导出开始时的版本。'
+  $('render-hint').textContent = dynamic ? '动态图解请制作镜头 MP4 草稿审阅，再导出整片；本入口保留旁白且不附加字幕。'
+    : sessionSettings.media_configured ? '导出在后台进行，过程中可以继续编辑；结果保留导出开始时的版本。'
     : '视频导出暂时不可用，仍可预览并导出原项目素材。';
   const fragment = document.createDocumentFragment();
   for (const item of renderHistories.get(project.id) ?? []) {
     const row = node('div', undefined, 'render-item');
     const label = node('div');
     const subtitleLabel = item.subtitles === true ? '有字幕' : item.subtitles === false ? '无字幕' : '字幕状态未记录';
-    label.append(node('strong', `${item.silent ? '静音视频' : '有声视频'} · ${subtitleLabel} · ${statusLabel(item.status)}`),
-      node('small', `文稿版本 ${item.project_revision ?? '—'}${item.project_revision !== project.revision ? ' · 项目已有后续修改' : ''}${item.error ? ` · ${ERROR_LABELS[item.error] ?? '导出未完成，请检查资源后重试。'}` : ''}`));
+    const kind = item.purpose === 'draft' ? '镜头 MP4 草稿' : item.visual_mode === 'mixed' ? '动态成片' : item.silent ? '静音视频' : '有声视频';
+    label.append(node('strong', `${kind} · ${subtitleLabel} · ${statusLabel(item.status)}`),
+      node('small', `文稿版本 ${item.project_revision ?? '—'}${item.project_revision !== project.revision ? ' · 项目已有后续修改' : ''}${item.error ? ` · ${ERROR_LABELS[item.error] ?? (item.error.startsWith('motion_') ? motionErrorLabel(item.error) : '导出未完成，请检查资源后重试。')}` : ''}`));
     row.append(label);
     if (['completed', 'succeeded'].includes(item.status)) {
+      const play = node('button', '播放 MP4', 'button secondary'); play.type = 'button';
+      play.addEventListener('click', () => openMotionRender(item)); row.append(play);
       const button = node('button', '下载 MP4 ↓', 'button secondary'); button.type = 'button';
       button.addEventListener('click', () => download(`/api/renders/${encodeURIComponent(item.id)}/video`,
         `video-${item.id}.mp4`, `render-download:${item.id}`)); row.append(button);
@@ -597,6 +635,7 @@ function render() {
   $('workspace').hidden = !project;
   renderProjects();
   explanationPanel.render();
+  motionPanel.render();
   if (!project) return;
   project.scenes ??= [];
   $('project-title').textContent = project.title;
@@ -637,7 +676,7 @@ function schedulePolling() {
   stopPolling();
   if (document.hidden || !state.projectId || (!activeOperations(state.project).length
       && !(renderHistories.get(state.projectId) ?? []).some(isActiveOperation)
-      && !explanationPanel.hasActiveOperation())) return;
+      && !explanationPanel.hasActiveOperation() && !motionPanel.hasActiveOperation())) return;
   pollTimer = setTimeout(() => loadProject().catch(showError), 3500);
 }
 
@@ -650,7 +689,6 @@ async function loadProjects() {
 }
 
 async function loadRenders(projectId, epoch) {
-  if (!sessionSettings.media_configured) return;
   const result = await request(`/api/projects/${encodeURIComponent(projectId)}/renders`);
   if (state.projectId !== projectId || state.epoch !== epoch) return;
   renderHistories.set(projectId, result.renders ?? []);
@@ -670,6 +708,7 @@ async function loadProject() {
       render();
       const related = await Promise.allSettled([
         loadRenders(ticket.projectId, ticket.epoch), explanationPanel.load(ticket.projectId, ticket.epoch),
+        motionPanel.load(ticket.projectId, ticket.epoch),
       ]);
       for (const result of related) if (result.status === 'rejected') throw result.reason;
     }
@@ -694,7 +733,9 @@ async function openProject(id) {
   previewMode = 'preview';
   clearPreview();
   $('audio-preview').pause();
+  motionPanel.pause();
   closeProjectPlayer();
+  closeMotionRender();
   $('global-error').hidden = true;
   render();
   await loadProject().catch(showError);
@@ -740,6 +781,7 @@ async function perform(key, action, after) {
 
 function startNewScene() {
   if (!state.project) return;
+  motionPanel.pause();
   editor = 'new';
   const key = draftKey(null);
   if (!drafts.has(key)) drafts.set(key, createSceneDraft({}, state.project.revision));
@@ -838,6 +880,22 @@ function closeProjectPlayer() {
   if ($('project-player-dialog').open) $('project-player-dialog').close();
 }
 
+function closeMotionRender() {
+  const video = $('motion-render-video');
+  video.pause(); video.removeAttribute('src'); video.load();
+  if ($('motion-render-dialog').open) $('motion-render-dialog').close();
+}
+
+function openMotionRender(item) {
+  closeMotionRender(); closeProjectPlayer(); motionPanel.pause(); $('audio-preview').pause();
+  $('motion-render-heading').textContent = item.purpose === 'draft' ? '镜头 MP4 草稿' : '视频成片';
+  $('motion-render-note').textContent = item.purpose === 'draft'
+    ? `文稿版本 ${item.project_revision ?? '—'} 的候选草稿。画面变化可能基于待核对的估算时序；播放不代表采用或已核对。`
+    : `文稿版本 ${item.project_revision ?? '—'} 的采用版本快照。项目后续修改不会改变这条成片。`;
+  $('motion-render-video').src = `/api/renders/${encodeURIComponent(item.id)}/video`;
+  $('motion-render-dialog').showModal();
+}
+
 function updatePlayerFrame() {
   if (!player) return;
   const position = playerSeconds();
@@ -889,7 +947,7 @@ function updatePlayerFrame() {
 }
 
 async function openProjectPlayer() {
-  if (!state.project) return;
+  if (!state.project || hasMotionScenes(state.project)) return;
   const projectId = state.projectId;
   const epoch = state.epoch;
   const silent = $('render-silent').checked;
@@ -897,6 +955,7 @@ async function openProjectPlayer() {
   await perform(`preview:${projectId}`, () => request(`/api/projects/${encodeURIComponent(projectId)}/timeline?silent=${silent}&subtitles=${subtitles}`), timeline => {
     if (state.projectId !== projectId || state.epoch !== epoch) return;
     closeProjectPlayer();
+    closeMotionRender(); motionPanel.pause();
     player = { timeline, silent, subtitles, position: 0, playing: false, startedAt: 0, sceneId: null, audioStarting: false };
     $('audio-preview').pause();
     $('project-player-heading').textContent = state.project.title;
@@ -1154,13 +1213,24 @@ $('download-subtitles').addEventListener('click', () => {
     'video-subtitles.srt', `subtitles:${state.projectId}`);
 });
 $('render-project').addEventListener('click', () => {
-  if (!state.project) return;
+  if (!state.project || hasMotionScenes(state.project)) return;
   const id = state.projectId;
   const body = { expected_revision: state.project.revision, silent: $('render-silent').checked,
     subtitles: $('render-subtitles').checked };
   perform(`render:${id}`, () => request(`/api/projects/${encodeURIComponent(id)}/renders`, { method: 'POST', body }),
     () => success('成片导出已开始，可在项目预览与成片中查看进度。'));
 });
+$('render-motion-project').addEventListener('click', () => {
+  if (!state.project || !hasMotionScenes(state.project) || !sessionSettings.motion_render_configured
+      || projectHasUnsavedEdits(state.projectId) || deliveryIssues(state.project, { silent: false, subtitles: false }).length
+      || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation)) return;
+  const intent = createMotionRenderRequest(state.project, { purpose: 'delivery' });
+  perform(`render:${state.projectId}`, () => request(intent.path, { method: 'POST', body: intent.body }),
+    () => success('动态成片导出已开始，使用已采用版本和已人工核对的时序。'));
+});
+$('close-motion-render').addEventListener('click', closeMotionRender);
+$('motion-render-dialog').addEventListener('cancel', event => { event.preventDefault(); closeMotionRender(); });
+$('motion-render-video').addEventListener('error', () => showInputError('视频暂时无法播放，请重新读取导出状态后再试。'));
 $('preview-project').addEventListener('click', openProjectPlayer);
 for (const id of ['render-silent', 'render-subtitles']) $(id).addEventListener('change', () => {
   if (state.project) renderDelivery(state.project);
@@ -1209,12 +1279,12 @@ async function refresh() {
 $('retry-read').addEventListener('click', refresh);
 $('refresh-all').addEventListener('click', refresh);
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { stopPolling(); readController?.abort(); }
+  if (document.hidden) { stopPolling(); readController?.abort(); motionPanel.pause(); $('motion-render-video').pause(); }
   else if (state.projectId) loadProject().catch(showError);
 });
-window.addEventListener('pagehide', () => { stopPolling(); readController?.abort(); sourceController?.abort(); $('audio-preview').pause(); pauseProjectPlayer(); });
+window.addEventListener('pagehide', () => { stopPolling(); readController?.abort(); sourceController?.abort(); $('audio-preview').pause(); pauseProjectPlayer(); motionPanel.pause(); $('motion-render-video').pause(); });
 window.addEventListener('beforeunload', event => {
-  if (explanationPanel.hasDrafts() || [...drafts.values(), ...projectSpeechDrafts.values(), ...speechDrafts.values(), ...timingDrafts.values(), ...captionDrafts.values()].some(draft => draft.dirty)) {
+  if (explanationPanel.hasDrafts() || motionPanel.hasDrafts() || [...drafts.values(), ...projectSpeechDrafts.values(), ...speechDrafts.values(), ...timingDrafts.values(), ...captionDrafts.values()].some(draft => draft.dirty)) {
     event.preventDefault(); event.returnValue = '';
   }
 });
@@ -1224,6 +1294,7 @@ for (const eventName of ['input', 'change']) {
     // The panel owns its controls. In particular a native select emits input
     // before change; rebuilding it here would undo the new review selection.
     if (!$('explanation-panel').contains(event.target)) explanationPanel.render();
+    if (!$('motion-panel').contains(event.target)) motionPanel.render();
   });
 }
 

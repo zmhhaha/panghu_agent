@@ -3,7 +3,7 @@
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
-import { sha, readRegular, verifyInput, verifyRuntime, validateProbe, muxAudioFilter, inputFiles } from './contract.mjs';
+import { sha, readRegular, verifyInput, verifyRuntime, validateProbe, muxAudioFilter, inputFiles, renderQuality } from './contract.mjs';
 import { collectRuntime } from './runtime.mjs';
 const root='/work', source='/input', mode=process.argv[2]||'render';
 const started=performance.now(),children=new Set();
@@ -31,6 +31,7 @@ async function execute(command,args,{capture=false}={}){
 }
 try{
  mkdirSync(root,{recursive:true});mkdirSync('/tmp/renderer',{recursive:true,mode:0o700});persist();
+ Object.assign(receipt,renderQuality(process.env.MOTION_QUALITY||'draft'));
  if(!['render','observe'].includes(mode))throw Error('mode_not_allowed');
  const {manifest,timeline}=verifyInput(source,process.env.MOTION_MANIFEST_SHA256);
  receipt.timeline_sha256=manifest.timeline_sha256;receipt.input_manifest_sha256=process.env.MOTION_MANIFEST_SHA256;
@@ -50,7 +51,7 @@ try{
   const cli='/opt/renderer/node_modules/hyperframes/bin/hyperframes.mjs';
   receipt.status='rendering';persist();
   await execute(process.execPath,[cli,'render',root,'--output',root+'/silent.mp4','--fps','24',
-   '--workers','1','--quality','draft','--no-browser-gpu','--low-memory-mode','--strict','--no-best-effort']);
+   '--workers','1','--quality',receipt.cli_quality,'--no-browser-gpu','--low-memory-mode','--strict','--no-best-effort']);
   receipt.status='muxing';persist();
   await execute('ffmpeg',['-v','error','-nostdin','-y','-i',root+'/silent.mp4','-i',root+'/audio.wav',
    '-filter_complex',muxAudioFilter(timeline),

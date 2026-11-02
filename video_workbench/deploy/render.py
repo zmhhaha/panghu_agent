@@ -128,6 +128,12 @@ class Settings:
     render_enabled: bool = False
     explanation_enabled: bool = False
     explanation_profile_revision: str = '1'
+    motion_enabled: bool = False
+    motion_profile_revision: str = '1'
+    motion_executor_namespace: str = 'video-motion-executor'
+    motion_executor_service: str = 'video-motion-executor'
+    motion_token_secret: str = 'video-motion-renderer'
+    motion_runtime_config_map: str = 'video-motion-runtime'
 
 
 def render(settings: Settings) -> dict:
@@ -155,6 +161,13 @@ def render(settings: Settings) -> dict:
     if (type(settings.explanation_profile_revision) is not str
             or not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', settings.explanation_profile_revision)):
         raise ValueError('Invalid explanation profile revision')
+    if type(settings.motion_enabled) is not bool:
+        raise ValueError('Motion gate must be a boolean')
+    if (type(settings.motion_profile_revision) is not str
+            or not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', settings.motion_profile_revision)):
+        raise ValueError('Invalid motion profile revision')
+    if settings.motion_enabled and settings.render_enabled is not True:
+        raise ValueError('Motion production requires render_enabled')
     if not isinstance(settings.storage_size, str) or not re.fullmatch(r'[1-9][0-9]*(?:Mi|Gi|Ti)', settings.storage_size):
         raise ValueError('Storage size must be a positive whole Mi, Gi or Ti quantity')
     external_values = (settings.external_secret_store, settings.external_secret_remote_key,
@@ -300,6 +313,35 @@ def render(settings: Settings) -> dict:
         for volume in deployment['spec']['template']['spec']['volumes']:
             if volume['name'] == 'temporary':
                 volume['emptyDir']['sizeLimit'] = '1Gi'
+    if settings.motion_enabled:
+        executor_namespace = _dns_name(settings.motion_executor_namespace, 'motion executor namespace', namespace=True)
+        executor_service = _dns_name(settings.motion_executor_service, 'motion executor Service', namespace=True)
+        motion_secret = _dns_name(settings.motion_token_secret, 'motion caller Secret')
+        motion_runtime = _dns_name(settings.motion_runtime_config_map, 'motion runtime ConfigMap')
+        template = deployment['spec']['template']
+        template['metadata']['labels']['motion-client'] = 'true'
+        container = template['spec']['containers'][0]
+        container['env'].extend([
+            {'name': 'VIDEO_MOTION_ENABLED', 'value': '1'},
+            {'name': 'VIDEO_MOTION_PROFILE_REVISION', 'value': settings.motion_profile_revision},
+            {'name': 'VIDEO_MOTION_RUNTIME_FILE', 'value': '/etc/video-motion/runtime.json'},
+            {'name': 'VIDEO_MOTION_RENDER_URL', 'value': f'http://{executor_service}.{executor_namespace}.svc.cluster.local:8001'},
+            {'name': 'VIDEO_MOTION_RENDER_TOKEN_FILE', 'value': '/run/secrets/video-motion/token'},
+        ])
+        container['volumeMounts'].extend([
+            {'name': 'motion-token', 'mountPath': '/run/secrets/video-motion', 'readOnly': True},
+            {'name': 'motion-runtime', 'mountPath': '/etc/video-motion', 'readOnly': True},
+        ])
+        template['spec']['volumes'].extend([
+            {'name': 'motion-token', 'secret': {'secretName': motion_secret, 'defaultMode': 0o440,
+                'items': [{'key': 'token', 'path': 'token'}]}},
+            {'name': 'motion-runtime', 'configMap': {'name': motion_runtime, 'defaultMode': 0o444,
+                'items': [{'key': 'runtime.json', 'path': 'runtime.json'}]}},
+        ])
+        policy['spec']['egress'].append({
+            'to': [peer(executor_namespace, {'app.kubernetes.io/name': 'video-motion-executor'})],
+            'ports': [{'protocol': 'TCP', 'port': 8001}],
+        })
     if settings.external_secret_store is not None:
         items.append(obj('external-secrets.io/v1', 'ExternalSecret', secret, {
             'refreshInterval': '5m',
@@ -367,6 +409,12 @@ def main(argv=None):
     parser.add_argument('--render-enabled', action='store_true')
     parser.add_argument('--explanation-enabled', action='store_true')
     parser.add_argument('--explanation-profile-revision', default='1')
+    parser.add_argument('--motion-enabled', action='store_true')
+    parser.add_argument('--motion-profile-revision', default='1')
+    parser.add_argument('--motion-executor-namespace', default='video-motion-executor')
+    parser.add_argument('--motion-executor-service', default='video-motion-executor')
+    parser.add_argument('--motion-token-secret', default='video-motion-renderer')
+    parser.add_argument('--motion-runtime-config-map', default='video-motion-runtime')
     parser.add_argument('--output', type=Path, help='Write JSON (also valid Kubernetes YAML); default: stdout')
     args = parser.parse_args(argv)
     try:

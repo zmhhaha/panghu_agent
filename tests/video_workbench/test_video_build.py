@@ -138,7 +138,13 @@ def test_packaged_runtime_imports_and_opens_its_database_without_repository_acce
             'from video_workbench.app import create_app;'
             'a=create_app(db_path=sys.argv[2],local_mode=True,background=False);'
             'assert a.state.store.list_projects("local-developer")==[];'
-            'assert "agent_service.store" not in sys.modules;print("packaged-runtime-ok")')
+            'assert "agent_service.store" not in sys.modules;'
+            'assert "video_workbench.motion_render_k8s" not in sys.modules;'
+            'assert "video_workbench.motion_render_service" not in sys.modules;'
+            'from video_workbench.motion_render_adapter import configured_motion_renderer;'
+            'assert configured_motion_renderer({}) is None;'
+            'from video_workbench.motion_render_service import app_factory;'
+            'assert callable(app_factory);print("packaged-runtime-ok")')
     result = subprocess.run([sys.executable, '-I', '-c', code, str(isolated), str(tmp_path / 'state.db')],
                             cwd=isolated, capture_output=True, check=True,
                             env={key: value for key, value in os.environ.items() if not key.startswith('VIDEO_')})

@@ -255,7 +255,10 @@ export function audioVoiceLabel(version, session = {}) {
 export function deliveryIssues(project, { silent = false, subtitles = true } = {}) {
   return (project?.scenes ?? []).flatMap((scene, index) => {
     const reasons = [];
-    if (!scene.head_version_id) reasons.push('missing_visual');
+    if (scene.motion?.mode === 'motion') {
+      if (!scene.motion.head_version_id) reasons.push('missing_visual');
+      else if (scene.motion.head_stale) reasons.push('stale_motion');
+    } else if (!scene.head_version_id) reasons.push('missing_visual');
     if (!silent) {
       if (!scene.head_audio_version_id) reasons.push('missing_audio');
       else if (scene.audio_stale) reasons.push('stale_audio');

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { sha, verifyInput, verifyRuntime, validateProbe, encodedDuration, muxAudioFilter } from '../../video_workbench/motion_renderer/contract.mjs';
+import { sha, verifyInput, verifyRuntime, validateProbe, encodedDuration, muxAudioFilter, renderQuality } from '../../video_workbench/motion_renderer/contract.mjs';
 import { runtimeArtifact, withObservationPage, observationSeekConfig, seekPageExact, screenshotObservation } from '../../video_workbench/motion_renderer/observe.mjs';
 function fixture({compiler='motion-compiler-1',template='technical-diagrams-1',timelineCompiler=compiler}={}){
  const path=mkdtempSync(join(tmpdir(),'motion-contract-'));
@@ -34,6 +34,12 @@ test('a rehashed timeline cannot claim a different compiler from its frozen mani
  }
 });
 const goodProbe=()=>({streams:[{codec_type:'video',codec_name:'h264',width:1280,height:720,avg_frame_rate:'24/1',duration:'15',nb_frames:'360'},{codec_type:'audio',codec_name:'aac',duration:'15'}]});
+
+test('business quality binds the actual pinned CLI preset',()=>{
+ assert.deepEqual(renderQuality('draft'),{quality:'draft',cli_quality:'draft'});
+ assert.deepEqual(renderQuality('final'),{quality:'final',cli_quality:'delivery'});
+ for(const value of ['high','delivery','unknown',null,42])assert.throws(()=>renderQuality(value),/quality_outside_range/);
+});
 test('requires actual video and complete audio',()=>{assert.doesNotThrow(()=>validateProbe(goodProbe(),{duration_seconds:15}));for(const change of [p=>p.streams.pop(),p=>p.streams[0].width=1920,p=>p.streams[0].nb_frames='1',p=>p.streams[0].avg_frame_rate='30/1',p=>p.streams[1].duration='14',p=>delete p.streams[1].duration]){const p=goodProbe();change(p);assert.throws(()=>validateProbe(p,{duration_seconds:15}));}});
 const installedRuntime=()=>({schema:'video.motion-runtime.v1',hyperframes:'0.8.149',
  hyperframes_source:'2905162d925fc87fb8242e24ed0bbf025d307ea1',node:'22.20.0',browser:'HeadlessChrome/149',

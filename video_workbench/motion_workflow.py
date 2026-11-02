@@ -25,8 +25,21 @@ class MotionWorkflow:
         self.stopping = threading.Event()
         self.thread = None
 
+    def require_gateway(self):
+        if not self.enabled:
+            raise ServiceError('motion_disabled', 503)
+        if self.gateway is None:
+            raise ServiceError('agent_not_configured', 503)
+        return self.gateway
+
     def start(self):
-        if self.enabled and self.gateway is not None and self.thread is None:
+        active = self.store.active_operations()
+        if not self.enabled:
+            for op in active:
+                if not op['submit_attempted'] and not op['job_id']:
+                    self.store.update_operation(op['id'], status='cancelled', error='motion_disabled')
+        admitted = any(op['submit_attempted'] or op['job_id'] for op in active)
+        if self.gateway is not None and self.thread is None and (self.enabled or admitted):
             self.thread = threading.Thread(target=self._run, name='video-motion-reconcile', daemon=True)
             self.thread.start()
 
@@ -41,7 +54,7 @@ class MotionWorkflow:
             self.stopping.wait(2)
 
     def tick(self):
-        if not self.enabled or self.gateway is None or not self.lock.acquire(blocking=False):
+        if self.gateway is None or not self.lock.acquire(blocking=False):
             return
         try:
             for op in self.store.active_operations():
@@ -62,6 +75,9 @@ class MotionWorkflow:
         gateway = self.gateway
         op = self.store.operation(op['id'])
         if op['status'] not in ACTIVE:
+            return
+        if not self.enabled and not op['submit_attempted'] and not op['job_id']:
+            self.store.update_operation(op['id'], status='cancelled', error='motion_disabled')
             return
         if not op['job_id']:
             if not op['submit_attempted']:
@@ -97,8 +113,8 @@ class MotionWorkflow:
         op = self.store.operation(op['id'])
         state = job['state']
         if state == 'completed':
-            result = gateway.collect(op['job_id'], op['input_sha256'], op['document']['beats'])
-            validate_motion_result(result, op['input_sha256'], op['document']['beats'])
+            result = None if op['cancel_requested'] or time.time() >= op['deadline_at'] else gateway.collect(
+                op['job_id'], op['input_sha256'], op['document']['beats'])
             self.store.complete(op['id'], result)
         elif state in {'failed', 'needs_input', 'cancelled', 'timed_out', 'quarantined'}:
             self.store.update_operation(op['id'], status='failed' if state == 'quarantined' else state,

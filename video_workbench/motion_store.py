@@ -75,7 +75,11 @@ class MotionStore:
             'FROM motion_operations' + clause, args).fetchone()
         versions = db.execute('SELECT COALESCE(SUM(length(CAST(document AS BLOB))),0) '
                               'FROM motion_versions' + clause, args).fetchone()[0]
-        return operations[0] + versions + operations[1] * OUTPUT_RESERVE_BYTES
+        alignments = 0
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='motion_alignments'").fetchone():
+            alignments = db.execute('SELECT COALESCE(SUM(length(CAST(document AS BLOB))),0) '
+                                    'FROM motion_alignments' + clause, args).fetchone()[0]
+        return operations[0] + versions + alignments + operations[1] * OUTPUT_RESERVE_BYTES
 
     def _capacity(self, db, project_id, *, extra_bytes=0, active_delta=0):
         extra = extra_bytes + active_delta * OUTPUT_RESERVE_BYTES
@@ -281,7 +285,6 @@ class MotionStore:
             op = self._op(db, operation_id)
             if op['status'] not in ACTIVE:
                 return self._public(op)
-            validate_motion_result(result, op['input_sha256'], op['document']['beats'])
             old_op_size = _size(op)
             project = self.store._project(db, op['owner'], op['project_id'])
             self.store._scene(project, op['scene_id'])
@@ -289,7 +292,10 @@ class MotionStore:
                 # Upstream completion won the race. Do not misreport a proven
                 # cancellation or keep a candidate the user asked to discard.
                 op.update(status='completed', error='cancel_arrived_after_completion')
+            elif time.time() >= op['deadline_at']:
+                op.update(status='timed_out', error='motion_result_after_deadline')
             else:
+                validate_motion_result(result, op['input_sha256'], op['document']['beats'])
                 version = dict(id=str(uuid4()), project_id=op['project_id'], scene_id=op['scene_id'],
                     operation_id=op['id'], created_at=time.time(), parent_version_id=op['parent_version_id'],
                     input_sha256=op['input_sha256'], semantic_binding_sha256=op['semantic_binding_sha256'],

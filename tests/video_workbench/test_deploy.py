@@ -45,6 +45,44 @@ def test_invalid_explanation_deployment_fails_before_rendering(settings, changes
         render(replace(settings, **changes))
 
 
+def test_motion_uses_http_executor_without_cluster_credentials(settings):
+    document = render(replace(settings, motion_enabled=True, render_enabled=True,
+                              motion_executor_namespace='render-control', motion_executor_service='execute',
+                              motion_token_secret='motion-caller', motion_runtime_config_map='pinned-motion'))
+    pod = resource(document, 'Deployment')['spec']['template']['spec']
+    container, = pod['containers']
+    env = {item['name']: item['value'] for item in container['env']}
+    assert env['VIDEO_MOTION_RENDER_URL'] == 'http://execute.render-control.svc.cluster.local:8001'
+    assert env['VIDEO_MOTION_RENDER_TOKEN_FILE'] == '/run/secrets/video-motion/token'
+    assert env['VIDEO_MOTION_RUNTIME_FILE'] == '/etc/video-motion/runtime.json'
+    assert not any(key.startswith('VIDEO_MOTION_K8S_') for key in env)
+    assert pod['automountServiceAccountToken'] is False
+    assert not any('projected' in volume or 'hostPath' in volume for volume in pod['volumes'])
+    token = next(v for v in pod['volumes'] if v['name'] == 'motion-token')
+    assert token['secret']['secretName'] == 'motion-caller'
+    assert token['secret']['items'] == [{'key': 'token', 'path': 'token'}]
+    runtime = next(v for v in pod['volumes'] if v['name'] == 'motion-runtime')
+    assert runtime['configMap']['name'] == 'pinned-motion'
+    rule = resource(document, 'NetworkPolicy')['spec']['egress'][-1]
+    assert rule == {'to': [{
+        'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'render-control'}},
+        'podSelector': {'matchLabels': {'app.kubernetes.io/name': 'video-motion-executor'}},
+    }], 'ports': [{'protocol': 'TCP', 'port': 8001}]}
+    assert not any(item['kind'] in {'Secret', 'Role', 'RoleBinding', 'ServiceAccount'} for item in document['items'])
+    baseline = resource(render(settings), 'Deployment')['spec']['template']['spec']['containers'][0]
+    assert not any(e['name'].startswith('VIDEO_MOTION_') for e in baseline['env'])
+
+
+@pytest.mark.parametrize('changes', [dict(motion_enabled='1'), dict(motion_enabled=True),
+    dict(motion_profile_revision='bad revision'),
+    dict(motion_enabled=True, render_enabled=True, motion_executor_namespace='bad/name'),
+    dict(motion_enabled=True, render_enabled=True, motion_token_secret='secret/token'),
+    dict(motion_enabled=True, render_enabled=True, motion_runtime_config_map='bad/name')])
+def test_invalid_motion_deployment_is_rejected(settings, changes):
+    with pytest.raises(ValueError):
+        render(replace(settings, **changes))
+
+
 def test_sqlite_is_single_coordinator_with_durable_writable_data(settings):
     document = render(settings)
     deployment = resource(document, 'Deployment')['spec']

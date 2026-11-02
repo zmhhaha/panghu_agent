@@ -13,18 +13,26 @@ from uuid import uuid4
 
 from agent_service.contracts import ServiceError, digest
 from . import media
+from .motion_snapshot import SCHEMA as MOTION_SCHEMA, freeze_snapshot_v2, verify_snapshot_v2
 
 ACTIVE = {'queued', 'running', 'cancelling'}
 MAX_PROJECT_AUDIO_BYTES = 64 * 1024 * 1024
 MAX_RENDER_BYTES = 256 * 1024 * 1024
 MAX_STORED_RENDER_BYTES = 256 * 1024 * 1024
+MAX_MOTION_SCENE_SECONDS = 60
+MAX_MOTION_AUDIO_BYTES = 8 * 1024 * 1024
 
 
 class Production:
-    def __init__(self, store, *, renderer=None, enabled=False):
+    def __init__(self, store, *, renderer=None, enabled=False, motion_store=None,
+                 motion_timing=None, motion_renderer=None, motion_enabled=False,
+                 runtime_fingerprint=None):
         self.store = store
         self.renderer = renderer or media.render_snapshot
         self.enabled = enabled
+        self.motion_store, self.motion_timing = motion_store, motion_timing
+        self.motion_renderer, self.motion_enabled = motion_renderer, motion_enabled
+        self.runtime_fingerprint = runtime_fingerprint
         self.lock = threading.Lock()
         self.stopping = threading.Event()
         self.current_cancel = None
@@ -185,6 +193,101 @@ class Production:
                 (job['id'], owner, project_id, idem, fingerprint, json.dumps(job), json.dumps(packed)))
         return self._public(job)
 
+    def snapshot_v2(self, owner, project_id, request):
+        """Resolve owner-scoped exact candidates and freeze one consistent view."""
+        if self.motion_store is None or self.motion_timing is None or self.runtime_fingerprint is None:
+            raise ServiceError('motion_runtime_not_configured', 503)
+        purpose = request['purpose']
+        selection = [request.get(key) for key in ('scene_id', 'motion_version_id', 'audio_version_id')]
+        if purpose not in {'draft', 'delivery'} or any(selection) and (purpose != 'draft' or not all(selection)):
+            raise ServiceError('invalid_motion_render_selection', 422)
+        with self.store.lock:
+            project = self.motion_store.project(owner, project_id)
+            self.store._revision(project, request['expected_revision'])
+            scenes = project['scenes']
+            if all(selection):
+                scenes = [self.store._scene(project, request['scene_id'])]
+            if not scenes:
+                raise ServiceError('unadopted_scenes', 409)
+            resolved, adopted, total = [], {}, 0
+            for scene in scenes:
+                mode = 'motion' if all(selection) else scene['motion']['mode']
+                audio_id = request['audio_version_id'] if all(selection) else scene.get('head_audio_version_id')
+                if not audio_id:
+                    raise ServiceError('missing_current_audio', 409)
+                audio = self.store.audio_version(owner, audio_id)
+                if audio['project_id'] != project_id or audio['scene_id'] != scene['id']:
+                    raise ServiceError('not_found', 404)
+                if audio['input_sha256'] != scene['audio_input_sha256']:
+                    raise ServiceError('audio_stale', 409)
+                total += len(audio['data'])
+                if total > MAX_PROJECT_AUDIO_BYTES:
+                    raise ServiceError('project_audio_limit', 413)
+                item = dict(id=scene['id'], title=scene['title'], narration=scene['narration'], audio=audio,
+                    visual_mode=mode, duration_seconds=scene['duration_seconds'],
+                    leading_seconds=scene.get('leading_seconds', 0), trailing_seconds=scene.get('trailing_seconds', 0),
+                    captions=scene.get('captions'))
+                if mode == 'motion':
+                    if len(audio['data']) > MAX_MOTION_AUDIO_BYTES:
+                        raise ServiceError('motion_audio_size_exceeded', 413)
+                    version_id = request['motion_version_id'] if all(selection) else scene['motion']['head_version_id']
+                    if not version_id:
+                        raise ServiceError('missing_motion_plan', 409)
+                    version = self.motion_store.version(owner, version_id)
+                    if version['project_id'] != project_id or version['scene_id'] != scene['id']:
+                        raise ServiceError('not_found', 404)
+                    timing = self.motion_timing.get(owner, version_id, audio_id)
+                    if timing['timeline']['duration_seconds'] > MAX_MOTION_SCENE_SECONDS:
+                        raise ServiceError('motion_scene_duration_exceeded', 422)
+                    item['motion'] = dict(id=version_id, plan=version['plan'], beats=timing['beats'],
+                                          alignment=timing['alignment'], stale=version['stale'])
+                else:
+                    version_id = scene.get('head_version_id')
+                    if not version_id:
+                        raise ServiceError('unadopted_scenes', 409)
+                    item['visual'] = self.store.version(owner, version_id)
+                adopted[scene['id']] = dict(visual_mode=mode, visual_version_id=version_id,
+                                            audio_version_id=scene.get('head_audio_version_id'))
+                resolved.append(item)
+            return freeze_snapshot_v2(project_id, project['revision'], project['title'], resolved,
+                runtime_fingerprint=self.runtime_fingerprint, purpose=purpose,
+                quality='final' if purpose == 'delivery' else 'draft', subtitles=request.get('subtitles', False),
+                current_adoptions=adopted if purpose == 'delivery' else None)
+
+    def start_motion_render(self, owner, project_id, request, idem):
+        if not self.motion_enabled:
+            raise ServiceError('motion_disabled', 503)
+        if self.motion_renderer is None:
+            raise ServiceError('motion_render_not_configured', 503)
+        fingerprint = digest(dict(project_id=project_id, request=request, schema=MOTION_SCHEMA))
+        with self.store.transaction() as db:
+            row = db.execute('SELECT document,request_hash FROM video_renders WHERE owner=? AND idem=?', (owner, idem)).fetchone()
+            if row:
+                if row['request_hash'] != fingerprint:
+                    raise ServiceError('idempotency_conflict', 409)
+                return self._public(json.loads(row['document']))
+        snapshot = self.snapshot_v2(owner, project_id, request)
+        with self.store.transaction() as db:
+            project = self.store._project(db, owner, project_id)
+            self.store._revision(project, snapshot['project_revision'])
+            row = db.execute('SELECT document,request_hash FROM video_renders WHERE owner=? AND idem=?', (owner, idem)).fetchone()
+            if row:
+                if row['request_hash'] != fingerprint:
+                    raise ServiceError('idempotency_conflict', 409)
+                return self._public(json.loads(row['document']))
+            for row in db.execute('SELECT document FROM video_renders WHERE owner=?', (owner,)):
+                if json.loads(row['document'])['status'] in ACTIVE:
+                    raise ServiceError('render_in_progress', 409)
+            job = dict(id=str(uuid4()), owner=owner, project_id=project_id, project_revision=project['revision'],
+                status='queued', error=None, silent=False, subtitles=snapshot['subtitles'],
+                schema=MOTION_SCHEMA, purpose=snapshot['purpose'], quality=snapshot['quality'], visual_mode='mixed',
+                created_at=time.time(), snapshot_sha256=snapshot['sha256'], cancel_requested=False, render_attempted=False)
+            packed = dict(snapshot, scenes=[dict(s, audio={key: value for key, value in s['audio'].items()
+                if key != 'data_base64'}) for s in snapshot['scenes']])
+            db.execute('INSERT INTO video_renders VALUES (?, ?, ?, ?, ?, ?, ?, NULL)',
+                (job['id'], owner, project_id, idem, fingerprint, json.dumps(job), json.dumps(packed)))
+        return self._public(job)
+
     def renders(self, owner, project_id):
         self.store.project(owner, project_id)
         with self.store.transaction() as db:
@@ -198,7 +301,8 @@ class Production:
                 raise ServiceError('not_found', 404)
             job = json.loads(row[0])
             if job['status'] in ACTIVE:
-                job.update(cancel_requested=True, status='cancelled' if job['status'] == 'queued' else 'cancelling')
+                never_admitted = job['status'] == 'queued' and not (job.get('schema') == MOTION_SCHEMA and job.get('render_attempted'))
+                job.update(cancel_requested=True, status='cancelled' if never_admitted else 'cancelling')
                 db.execute('UPDATE video_renders SET document=? WHERE id=?', (json.dumps(job), job_id))
                 if self.current_id == job_id and self.current_cancel:
                     self.current_cancel.set()
@@ -214,13 +318,21 @@ class Production:
                 raise ServiceError('render_not_ready', 409)
             return row['data']
 
-    def start(self):
+    def _recover(self):
         with self.store.transaction() as db:
             for row in db.execute('SELECT id,document FROM video_renders'):
                 job = json.loads(row['document'])
                 if job['status'] in {'running', 'cancelling'}:
-                    job.update(status='cancelled' if job['cancel_requested'] else 'failed', error='render_interrupted')
+                    if job.get('schema') == MOTION_SCHEMA:
+                        # The parent renderer restores its journal using this
+                        # same business id; recovery must never create a new job.
+                        job.update(status='queued', error='render_recovering')
+                    else:
+                        job.update(status='cancelled' if job['cancel_requested'] else 'failed', error='render_interrupted')
                     db.execute('UPDATE video_renders SET document=? WHERE id=?', (json.dumps(job), row['id']))
+
+    def start(self):
+        self._recover()
         self.thread = threading.Thread(target=self._run, name='video-render', daemon=True)
         self.thread.start()
 
@@ -237,18 +349,29 @@ class Production:
             self.stopping.wait(1)
 
     def tick(self):
-        if not self.enabled or not self.lock.acquire(blocking=False):
+        if not (self.enabled or self.motion_renderer is not None) or not self.lock.acquire(blocking=False):
             return
         job = None
         try:
             with self.store.transaction() as db:
                 for row in db.execute('SELECT id,document,snapshot FROM video_renders ORDER BY rowid'):
                     candidate = json.loads(row['document'])
-                    if candidate['status'] == 'queued':
+                    if candidate['status'] == 'queued' or (candidate['status'] == 'cancelling' and candidate.get('schema') == MOTION_SCHEMA):
+                        motion = candidate.get('schema') == MOTION_SCHEMA
+                        if motion and not self.motion_enabled and not candidate.get('render_attempted'):
+                            candidate.update(status='cancelled', error='motion_disabled')
+                            db.execute('UPDATE video_renders SET document=? WHERE id=?', (json.dumps(candidate), candidate['id']))
+                            continue
+                        if (motion and self.motion_renderer is None) or (not motion and not self.enabled):
+                            continue
                         job, snapshot = candidate, json.loads(row['snapshot'])
                         job.update(status='running')
+                        if motion:
+                            job['render_attempted'] = True
                         db.execute('UPDATE video_renders SET document=? WHERE id=?', (json.dumps(job), job['id']))
                         self.current_id, self.current_cancel = job['id'], threading.Event()
+                        if job['cancel_requested']:
+                            self.current_cancel.set()
                         break
             if job is None:
                 return
@@ -259,9 +382,15 @@ class Production:
                         if candidate['sha256'] != scene['audio']['sha256']:
                             raise ServiceError('media_snapshot_corrupt', 409)
                         scene['audio']['data_base64'] = base64.b64encode(candidate['data']).decode('ascii')
-                media.verify_snapshot(snapshot)
+                motion = snapshot.get('schema') == MOTION_SCHEMA
+                (verify_snapshot_v2 if motion else media.verify_snapshot)(snapshot)
                 with tempfile.TemporaryDirectory(prefix='video-render-') as directory:
-                    result = self.renderer(snapshot, Path(directory), cancel_event=self.current_cancel)
+                    if motion:
+                        render = getattr(self.motion_renderer, 'render', self.motion_renderer)
+                        result = render(snapshot, Path(directory), cancel_event=self.current_cancel,
+                                        operation_id=job['id'], owner=job['owner'])
+                    else:
+                        result = self.renderer(snapshot, Path(directory), cancel_event=self.current_cancel)
                     path = Path(result['path']).resolve()
                     if not path.is_relative_to(Path(directory).resolve()) or not 1 <= path.stat().st_size <= MAX_RENDER_BYTES:
                         raise ServiceError('render_invalid_output', 502)
@@ -282,8 +411,15 @@ class Production:
             except Exception as exc:
                 with self.store.transaction() as db:
                     latest = json.loads(db.execute('SELECT document FROM video_renders WHERE id=?', (job['id'],)).fetchone()[0])
-                    latest.update(status='cancelled' if latest['cancel_requested'] or self.stopping.is_set() else 'failed',
-                                  error=exc.code if isinstance(exc, ServiceError) else 'render_failed')
+                    if (job.get('schema') == MOTION_SCHEMA and isinstance(exc, ServiceError) and exc.status >= 500
+                            and (exc.code.startswith(('service_', 'http_'))
+                                 or exc.code == 'motion_render_service_unavailable')):
+                        # The parent service may already own work. Keep the
+                        # exact id for lookup/cancel after a transient outage.
+                        latest.update(status='queued', error=exc.code)
+                    else:
+                        latest.update(status='cancelled' if latest['cancel_requested'] or self.stopping.is_set() else 'failed',
+                                      error=exc.code if isinstance(exc, ServiceError) else 'render_failed')
                     db.execute('UPDATE video_renders SET document=?,data=NULL WHERE id=?', (json.dumps(latest), job['id']))
         finally:
             self.current_id, self.current_cancel = None, None

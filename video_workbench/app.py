@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from agent_service.client import AgentClient
 from agent_service.contracts import ServiceError
 from .agent import VideoAgentGateway
-from .config import AgentSettings, ExplanationSettings
+from .config import AgentSettings, ExplanationSettings, MotionSettings
 from .service import Workflow
 from .store import Store
 from .speech import SpeechClient, SpeechSettings, MAX_AUDIO_BYTES
@@ -33,6 +33,10 @@ from .production import Production
 from .explanation_gateway import ExplanationAgentGateway
 from .explanation_store import ExplanationStore
 from .explanation_workflow import ExplanationWorkflow
+from .motion_store import MotionStore
+from .motion_timing import MotionTiming
+from .motion_workflow import MotionWorkflow
+from .motion_gateway import MotionAgentGateway
 
 WEB = Path(__file__).parent / 'web'
 PREVIEW_CSP = ("sandbox; default-src 'none'; script-src 'none'; "
@@ -72,6 +76,18 @@ MESSAGES = {
     'explanation_plan_stale': '镜头或配音设置已变化，请基于当前内容重新生成讲解方案。',
     'explanation_head_conflict': '已采用的讲解方案发生变化，请重新读取后核对。',
     'explanation_storage_limit': '讲解方案记录已达到当前存储限制。',
+    'motion_disabled': '动态图解尚未启用，仍可查看历史和取消在途任务。',
+    'motion_plan_stale': '这份动态图解对应旧内容，请重新生成。',
+    'motion_head_conflict': '采用的动态图解已变化，请刷新核对。',
+    'motion_alignment_conflict': '录音时间已被修改，请重新读取后核对。',
+    'motion_timing_needs_review': '正式导出前，请试听并核对每个动态镜头的录音时间。',
+    'motion_runtime_not_configured': '动态图解渲染环境尚未配置。',
+    'motion_render_not_configured': '动态图解导出服务尚未配置。',
+    'missing_motion_plan': '请先生成并采用动态图解。',
+    'motion_beats_need_explicit_mapping': '发音设置改变了分句，请保持原分句标点后重新配音。',
+    'motion_operation_in_progress': '该镜头已有动态图解任务，请等待或取消。',
+    'motion_scene_duration_exceeded': '当前动态镜头最长支持 60 秒，请缩短旁白或拆分镜头。',
+    'motion_audio_size_exceeded': '动态镜头的录音超过当前 8 MiB 限制，请降低采样率或拆分镜头。',
     'explanation_queue_limit': '讲解方案任务较多，请等待已有任务完成。',
     'explanation_candidate_limit': '本项目的讲解方案候选数量已达到限制。',
     'explanation_operation_limit': '本项目的讲解方案任务记录已达到限制。',
@@ -189,6 +205,39 @@ class RenderRequest(Revision):
     subtitles: bool = Field(default=True, strict=True)
 
 
+class MotionAdoption(Revision):
+    version_id: str = Field(min_length=1, max_length=100)
+    expected_head_version_id: str | None = Field(max_length=100)
+
+
+class VisualMode(Revision):
+    mode: Literal['static', 'motion']
+
+
+class MotionAnchor(Fields):
+    beat_id: str = Field(min_length=1, max_length=100)
+    start: float = Field(ge=0, le=300, allow_inf_nan=False)
+    end: float = Field(gt=0, le=300, allow_inf_nan=False)
+
+
+class MotionTimingReview(Revision):
+    audio_version_id: str = Field(min_length=1, max_length=100)
+    expected_alignment_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+
+
+class MotionTimingEdit(MotionTimingReview):
+    segments: list[MotionAnchor] = Field(min_length=1, max_length=24)
+    correction_reason: str = Field(default='Manually adjusted audio anchors', min_length=1, max_length=240)
+
+
+class MotionRenderRequest(Revision):
+    purpose: Literal['draft', 'delivery'] = 'draft'
+    subtitles: bool = Field(default=False, strict=True)
+    scene_id: str | None = Field(default=None, min_length=1, max_length=100)
+    motion_version_id: str | None = Field(default=None, min_length=1, max_length=100)
+    audio_version_id: str | None = Field(default=None, min_length=1, max_length=100)
+
+
 def media_response(data, request, media_type, filename):
     """Serve one bounded byte range so the authenticated player can seek."""
     headers = {'Accept-Ranges': 'bytes', 'Content-Disposition': f'inline; filename="{filename}"'}
@@ -264,11 +313,16 @@ def export_project(store, owner, project):
 
 def create_app(*, db_path=None, gateway=None, local_mode=False, background=True, trusted_hosts=None,
                speech_client=None, renderer=None, render_enabled=None,
-               explanation_gateway=None, explanation_enabled=None):
+               explanation_gateway=None, explanation_enabled=None, motion_gateway=None,
+               motion_enabled=None, motion_renderer=None, motion_runtime=None):
     explanation_settings = ExplanationSettings.from_env()
     enabled = explanation_settings.enabled if explanation_enabled is None else explanation_enabled
     if type(enabled) is not bool:
         raise ValueError('An explicit boolean explanation feature gate is required')
+    motion_settings = MotionSettings.from_env()
+    motion_gate = motion_settings.enabled if motion_enabled is None else motion_enabled
+    if type(motion_gate) is not bool:
+        raise ValueError('An explicit boolean motion feature gate is required')
     owned_client = None
     owned_speech_client = None
     if gateway is None:
@@ -293,15 +347,28 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         explanation_gateway = ExplanationAgentGateway(gateway.client, explanation_settings.revision)
     explanation_store = ExplanationStore(store)
     explanation_workflow = ExplanationWorkflow(explanation_store, explanation_gateway, enabled=enabled)
+    motion_store = MotionStore(store)
+    motion_timing = MotionTiming(motion_store)
+    if motion_gateway is None and isinstance(gateway, VideoAgentGateway):
+        motion_gateway = MotionAgentGateway(gateway.client, motion_settings.revision)
+    motion_workflow = MotionWorkflow(motion_store, motion_gateway, enabled=motion_gate)
+    owned_motion_renderer = None
+    if motion_renderer is None and os.environ.get('VIDEO_MOTION_RENDER_URL'):
+        from .motion_render_adapter import configured_motion_renderer
+        motion_renderer = owned_motion_renderer = configured_motion_renderer()
+    runtime = motion_settings.runtime_fingerprint if motion_runtime is None else motion_runtime
     audio_workflow = AudioWorkflow(store, speech_client)
     production = Production(store, renderer=renderer,
-        enabled=render_enabled if render_enabled is not None else os.environ.get('VIDEO_RENDER_ENABLED') == '1')
+        enabled=render_enabled if render_enabled is not None else os.environ.get('VIDEO_RENDER_ENABLED') == '1',
+        motion_store=motion_store, motion_timing=motion_timing, motion_renderer=motion_renderer,
+        motion_enabled=motion_gate, runtime_fingerprint=runtime)
 
     @asynccontextmanager
     async def lifespan(app):
         if background:
             workflow.start()
             explanation_workflow.start()
+            motion_workflow.start()
             audio_workflow.start()
             production.start()
         yield
@@ -309,6 +376,9 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         audio_workflow.stop()
         workflow.stop()
         explanation_workflow.stop()
+        motion_workflow.stop()
+        if owned_motion_renderer is not None and hasattr(owned_motion_renderer, 'close'):
+            owned_motion_renderer.close()
         if owned_client:
             owned_client.close()
         if owned_speech_client:
@@ -318,6 +388,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     app.state.store, app.state.workflow = store, workflow
     app.state.audio_workflow, app.state.production = audio_workflow, production
     app.state.explanation_store, app.state.explanation_workflow = explanation_store, explanation_workflow
+    app.state.motion_store, app.state.motion_workflow, app.state.motion_timing = motion_store, motion_workflow, motion_timing
     # Proxy mode must be bound behind an authenticated, header-scrubbing proxy.
     app.state.trusted_hosts = set(trusted_hosts or {'127.0.0.1', 'localhost', '[::1]'})
 
@@ -405,7 +476,9 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     speech_voice=speech_client.settings.voice if speech_client else None,
                     speech_voices=speech_client.voice_catalog if speech_client else [],
                     media_configured=production.enabled,
-                    explanation_configured=enabled and explanation_gateway is not None)
+                    explanation_configured=enabled and explanation_gateway is not None,
+                    motion_enabled=motion_gate, motion_configured=motion_gate and motion_gateway is not None,
+                    motion_render_configured=motion_gate and motion_renderer is not None and runtime is not None)
 
     @app.get('/api/projects')
     def projects(owner=Depends(identity)):
@@ -418,7 +491,60 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
 
     @app.get('/api/projects/{project_id}')
     def project(project_id: str, owner=Depends(identity)):
-        return store.project(owner, project_id)
+        return motion_store.project(owner, project_id)
+
+    def require_motion():
+        if not motion_gate:
+            raise ServiceError('motion_disabled', 503)
+
+    @app.get('/api/projects/{project_id}/motion')
+    def motion_project(project_id: str, owner=Depends(identity)):
+        return motion_store.project(owner, project_id)
+
+    @app.post('/api/scenes/{scene_id}/motion', status_code=202)
+    def generate_motion(scene_id: str, body: Generation, owner=Depends(mutation),
+                        idempotency_key: str | None = Header(default=None)):
+        motion_workflow.require_gateway()
+        return motion_store.start(owner, scene_id, body.model_dump(), idempotency(idempotency_key))
+
+    @app.get('/api/motion-versions/{version_id}')
+    def motion_version(version_id: str, owner=Depends(identity)):
+        return motion_store.version(owner, version_id)
+
+    @app.post('/api/scenes/{scene_id}/motion/adopt')
+    def adopt_motion(scene_id: str, body: MotionAdoption, owner=Depends(mutation)):
+        require_motion()
+        return motion_store.adopt(owner, scene_id, body.version_id, body.expected_head_version_id, body.expected_revision)
+
+    @app.post('/api/scenes/{scene_id}/visual-mode')
+    def visual_mode(scene_id: str, body: VisualMode, owner=Depends(mutation)):
+        if body.mode != 'static':
+            require_motion()
+        return motion_store.set_mode(owner, scene_id, body.mode, body.expected_revision)
+
+    @app.post('/api/motion-operations/{operation_id}/cancel')
+    def cancel_motion(operation_id: str, owner=Depends(mutation)):
+        return motion_store.cancel(owner, operation_id)
+
+    @app.get('/api/motion-versions/{version_id}/timing')
+    def motion_recording_timing(version_id: str, audio_version_id: str = Query(min_length=1, max_length=100),
+                                owner=Depends(identity)):
+        return motion_timing.get(owner, version_id, audio_version_id)
+
+    @app.patch('/api/motion-versions/{version_id}/timing')
+    def edit_motion_timing(version_id: str, body: MotionTimingEdit, owner=Depends(mutation)):
+        require_motion()
+        return motion_timing.save(owner, version_id, body.model_dump())
+
+    @app.post('/api/motion-versions/{version_id}/timing/verify')
+    def verify_motion_timing(version_id: str, body: MotionTimingReview, owner=Depends(mutation)):
+        require_motion()
+        return motion_timing.save(owner, version_id, body.model_dump(), verify=True)
+
+    @app.post('/api/projects/{project_id}/motion-renders', status_code=202)
+    def render_motion(project_id: str, body: MotionRenderRequest, owner=Depends(mutation),
+                      idempotency_key: str | None = Header(default=None)):
+        return production.start_motion_render(owner, project_id, body.model_dump(), idempotency(idempotency_key))
 
     @app.get('/api/projects/{project_id}/explanation')
     def explanation(project_id: str, owner=Depends(identity)):

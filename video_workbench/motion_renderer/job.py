@@ -39,7 +39,8 @@ def _ordinary(path, limit):
     return path.read_bytes()
 
 
-def freeze_input(directory, *, allow_unbound_experiment=False, image_digest=None):
+def freeze_input(directory, *, allow_unbound_experiment=False, image_digest=None,
+                 max_payload_bytes=900 * 1024):
     directory = Path(directory)
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError('input_directory_invalid')
@@ -77,7 +78,9 @@ def freeze_input(directory, *, allow_unbound_experiment=False, image_digest=None
             member.mode = 0o444
             archive.addfile(member, io.BytesIO(files[name]))
     compressed = gzip.compress(payload.getvalue(), mtime=0)
-    if len(compressed) > 900 * 1024:
+    if type(max_payload_bytes) is not int or not 1 <= max_payload_bytes <= 16 * 1024 * 1024:
+        raise ValueError('bundle_budget_invalid')
+    if len(compressed) > max_payload_bytes:
         raise ValueError('configmap_payload_limit')
     return dict(payload=compressed, bundle_sha256=hashlib.sha256(compressed).hexdigest(),
                 manifest_sha256=hashlib.sha256(files['manifest.json']).hexdigest(),
