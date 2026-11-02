@@ -37,7 +37,7 @@ async function selectReview() {
   await screen.findByRole('heading', { name: project.title });
   await user.click(screen.getByRole('tab', { name: /预览与修改/ }));
   await user.click(screen.getAllByRole('radio')[0]);
-  await screen.findByLabelText('第 1 页检查结论');
+  await screen.findByRole('region', { name: '演示稿预览' });
   return user;
 }
 beforeEach(() => {
@@ -47,6 +47,7 @@ beforeEach(() => {
   vi.mocked(api.versions).mockResolvedValue([draft, published]);
   vi.mocked(acceptanceClient.load).mockImplementation(async (_project, version) => snapshot(version));
   vi.mocked(api.reviewRevise).mockResolvedValue({ job_id: 'review-job' });
+  vi.mocked(api.revise).mockResolvedValue({ job_id: 'review-job' });
   vi.mocked(api.job).mockResolvedValue({ id: 'review-job', project_id: project.id, kind: 'revise', status: 'succeeded', stage: 'review', last_event_seq: 1 });
 });
 
@@ -57,7 +58,7 @@ describe('review drafts in the real version workspace', () => {
     await user.click(screen.getByRole('tab', { name: /预览与修改/ }));
     expect(acceptanceClient.load).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: '创建新审核稿修改任务' })).not.toBeInTheDocument();
-    await user.click(screen.getAllByRole('radio')[0]); await screen.findByLabelText('第 1 页检查结论');
+    await user.click(screen.getAllByRole('radio')[0]); await screen.findByRole('region', { name: '演示稿预览' });
     expect(acceptanceClient.load).toHaveBeenCalledWith(project.id, draft.id, expect.any(AbortSignal));
     expect(screen.getAllByRole('img')).toHaveLength(1);
     expect(screen.queryByRole('img', { name: '第 1 页静态预览' })).not.toBeInTheDocument();
@@ -65,18 +66,18 @@ describe('review drafts in the real version workspace', () => {
     expect(form.queryByRole('checkbox')).not.toBeInTheDocument();
     expect(form.getByText(/本项目已同意使用外部模型/)).toBeInTheDocument();
     expect(form.getByRole('button', { name: '创建新审核稿修改任务' })).toBeDisabled();
-    fireEvent.change(form.getByLabelText('整份修改意见'), { target: { value: '调整标题间距' } });
+    fireEvent.change(form.getByLabelText('第 1 条修改意见'), { target: { value: '调整标题间距' } });
     expect(form.getByRole('button', { name: '创建新审核稿修改任务' })).toBeEnabled();
     expect(api.reviewRevise).not.toHaveBeenCalled(); expect(api.revise).not.toHaveBeenCalled();
   });
 
   it('submits a manual draft revision with the exact saved binding and does not use published revision API', async () => {
     const user = await selectReview(); const form = within(screen.getByRole('region', { name: '审核稿修改' }));
-    await user.type(form.getByLabelText('整份修改意见'), '调整标题间距');
+    await user.type(form.getByLabelText('第 1 条修改意见'), '调整标题间距');
     expect(api.reviewRevise).not.toHaveBeenCalled();
     await user.click(form.getByRole('button', { name: '创建新审核稿修改任务' }));
     await waitFor(() => expect(api.reviewRevise).toHaveBeenCalledOnce());
-    expect(api.reviewRevise).toHaveBeenCalledWith(project, draft.id, [], '调整标题间距', snapshot().binding, 0);
+    expect(api.reviewRevise).toHaveBeenCalledWith(project, draft.id, [], '1. 整份演示稿：调整标题间距', snapshot().binding, 0);
     expect(api.revise).not.toHaveBeenCalled(); expect(api.plan).not.toHaveBeenCalled(); expect(api.generate).not.toHaveBeenCalled();
     expect(screen.getByText('待审核草稿 · 尚未正式发布')).toBeInTheDocument();
   });
@@ -85,9 +86,8 @@ describe('review drafts in the real version workspace', () => {
     vi.mocked(acceptanceClient.load).mockResolvedValue(savedIssue()); const user = await selectReview();
     await user.click(screen.getByRole('button', { name: '将已保存问题带入修改' }));
     const form = within(screen.getByRole('region', { name: '审核稿修改' }));
-    expect(form.getByLabelText('指定页面')).toBeChecked();
-    expect(form.getByLabelText('第 2 页 · 审核页二')).toBeChecked(); expect(form.getByLabelText('第 1 页 · 审核页一')).not.toBeChecked();
-    expect(form.getByLabelText('共同修改意见（可选）')).toHaveValue('第 2 页：审核页二\n- 文字 / 重要：标题与正文发生重叠');
+    expect(form.getByLabelText('第 1 条意见适用范围')).toHaveValue('2');
+    expect((form.getByLabelText('第 1 条修改意见') as HTMLTextAreaElement).value).toContain('标题与正文发生重叠');
     expect(form.queryByRole('checkbox', { name: /我同意/ })).not.toBeInTheDocument(); expect(api.reviewRevise).not.toHaveBeenCalled();
     await user.click(form.getByRole('button', { name: '创建新审核稿修改任务' }));
     await waitFor(() => expect(api.reviewRevise).toHaveBeenCalledWith(project, draft.id, [2], expect.stringContaining('标题与正文发生重叠'), snapshot().binding, 1));
@@ -96,6 +96,7 @@ describe('review drafts in the real version workspace', () => {
   it('keeps historical issues visible but blocks draft modification when the source is stale', async () => {
     const stale = savedIssue(); stale.can_review = false; stale.acceptance_status = 'stale'; stale.records[0].stale = true;
     vi.mocked(acceptanceClient.load).mockResolvedValue(stale); await selectReview();
+    fireEvent.click(screen.getByText('验收与发布'));
     expect(screen.getByText('标题与正文发生重叠', { exact: false })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '将已保存问题带入修改' })).toBeDisabled();
     expect(screen.queryByRole('region', { name: '审核稿修改' })).not.toBeInTheDocument(); expect(api.reviewRevise).not.toHaveBeenCalled();
@@ -103,18 +104,16 @@ describe('review drafts in the real version workspace', () => {
 
   it('clears pending feedback and page scope after source binding changes while preserving project consent', async () => {
     const user=await selectReview();const form=within(screen.getByRole('region',{name:'审核稿修改'}));
-    await user.click(form.getByLabelText('指定页面'));await user.click(form.getByLabelText('第 2 页 · 审核页二'));
-    await user.type(form.getByLabelText('共同修改意见（可选）'),'旧来源的未提交意见');
+    await user.selectOptions(form.getByLabelText('第 1 条意见适用范围'),'2');
+    await user.type(form.getByLabelText('第 1 条修改意见'),'旧来源的未提交意见');
     const changed=snapshot();changed.source_revision+=1;changed.binding={...changed.binding,source_revision:changed.source_revision,input_snapshot_sha256:'f'.repeat(64)};
     vi.mocked(acceptanceClient.load).mockResolvedValue(changed);await user.click(screen.getByRole('button',{name:'重新读取记录'}));
     await screen.findByText('审核稿来源已变化，未提交的修改意见已清空，请核对当前来源后重新填写。');
-    expect(form.getByLabelText('整份修改意见')).toHaveValue('');expect(form.getByLabelText('整份演示稿')).toBeChecked();
+    expect(form.getByLabelText('第 1 条修改意见')).toHaveValue('');expect(form.getByLabelText('第 1 条意见适用范围')).toHaveValue('');
     expect(form.queryByRole('checkbox',{name:/我同意/})).not.toBeInTheDocument();
     expect(form.getByText(/本项目已同意使用外部模型/)).toBeInTheDocument();
     expect(form.getByRole('button',{name:'创建新审核稿修改任务'})).toBeDisabled();
-    await user.click(form.getByLabelText('指定页面'));
-    expect(form.getByLabelText('第 2 页 · 审核页二')).not.toBeChecked();
-    expect(form.getByLabelText('共同修改意见（可选）')).toHaveValue('');
+    expect(form.queryByLabelText('第 2 条修改意见')).not.toBeInTheDocument();
     expect(api.reviewRevise).not.toHaveBeenCalled();
   });
 
@@ -125,16 +124,40 @@ describe('review drafts in the real version workspace', () => {
     expect(screen.getByRole('button',{name:'重新读取记录'})).toBeEnabled();
   });
 
+  it('submits mixed scope rows once without losing their individual targets', async () => {
+    const user=await selectReview();const form=within(screen.getByRole('region',{name:'审核稿修改'}));
+    await user.type(form.getByLabelText('第 1 条修改意见'),'统一标题字体');
+    await user.click(form.getByRole('button',{name:'添加一条意见'}));
+    await user.selectOptions(form.getByLabelText('第 2 条意见适用范围'),'2');
+    await user.type(form.getByLabelText('第 2 条修改意见'),'简化连线');
+    await user.click(form.getByRole('button',{name:'创建新审核稿修改任务'}));
+    await waitFor(()=>expect(api.reviewRevise).toHaveBeenCalledOnce());
+    expect(api.reviewRevise).toHaveBeenCalledWith(project,draft.id,[],
+      '1. 整份演示稿：统一标题字体\n\n2. 第 2 页：简化连线',snapshot().binding,0);
+  });
+
+  it('uses the same list for a published base and sends only populated page targets', async () => {
+    const user=await selectReview();await user.click(screen.getAllByRole('radio')[1]);
+    const form=within(screen.getByRole('region',{name:'正式版本修改'}));
+    await user.selectOptions(form.getByLabelText('第 1 条意见适用范围'),'2');
+    await user.type(form.getByLabelText('第 1 条修改意见'),'放大图表标注');
+    await user.click(form.getByRole('button',{name:'添加一条意见'}));
+    await user.click(form.getByRole('button',{name:'基于所选版本创建修改任务'}));
+    await waitFor(()=>expect(api.revise).toHaveBeenCalledWith(project,published.id,[2],
+      '1. 第 2 页：放大图表标注',{},true));
+    expect(api.reviewRevise).not.toHaveBeenCalled();
+  });
+
   it('reloads saved records and clears draft feedback when changing base while reusing project consent', async () => {
     const user = await selectReview(); const form = within(screen.getByRole('region', { name: '审核稿修改' }));
-    await user.type(form.getByLabelText('整份修改意见'), '尚未提交的意见');
+    await user.type(form.getByLabelText('第 1 条修改意见'), '尚未提交的意见');
     await user.click(screen.getAllByRole('radio')[1]);
     expect(screen.queryByRole('region', { name: /的验收工作台/ })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: '基于所选版本创建修改任务' })).toBeInTheDocument();
     vi.mocked(acceptanceClient.load).mockResolvedValue(savedIssue()); await user.click(screen.getAllByRole('radio')[0]);
-    await screen.findByLabelText('第 1 页检查结论');
+    await screen.findByRole('region', { name: '演示稿预览' });
     const fresh = within(screen.getByRole('region', { name: '审核稿修改' }));
-    expect(fresh.getByLabelText('整份修改意见')).toHaveValue(''); expect(fresh.queryByRole('checkbox')).not.toBeInTheDocument();
+    expect(fresh.getByLabelText('第 1 条修改意见')).toHaveValue(''); expect(fresh.queryByRole('checkbox')).not.toBeInTheDocument();
     expect(fresh.getByText(/本项目已同意使用外部模型/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '将已保存问题带入修改' })).toBeEnabled();
     expect(acceptanceClient.load).toHaveBeenCalledTimes(2); expect(api.reviewRevise).not.toHaveBeenCalled();

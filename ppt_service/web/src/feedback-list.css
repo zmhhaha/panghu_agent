@@ -1,0 +1,15 @@
+.feedback-list ol { list-style: none; padding: 0; margin: 18px 0 14px; display: grid; gap: 12px; }
+.feedback-list-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) minmax(155px, 210px) 32px; align-items: start; gap: 10px; padding: 14px 12px; border: 1px solid var(--line, #dfe5ec); border-radius: 12px; background: #fff; }
+.feedback-row-number { padding-top: 12px; font-size: 12px; font-weight: 700; color: #8a96a6; }
+.feedback-list-row label { margin: 0; min-width: 0; }
+.feedback-list-row textarea { margin: 0; resize: vertical; min-height: 76px; }
+.feedback-list-row select { margin: 0; max-width: 100%; }
+.feedback-remove { width: 32px; height: 38px; padding: 0; border: 0; border-radius: 7px; display: grid; place-items: center; color: #7f8c9c; background: transparent; }
+.feedback-remove:hover { color: #b33f49; background: #fff0f1; }
+.feedback-remove:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+@media (max-width: 760px) {
+  .feedback-list-row { grid-template-columns: 24px minmax(0, 1fr) 32px; }
+  .feedback-row-content { grid-column: 2; grid-row: 1; }
+  .feedback-row-scope { grid-column: 2; grid-row: 2; }
+  .feedback-remove { grid-column: 3; grid-row: 1; }
+}

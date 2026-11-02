@@ -11,7 +11,8 @@ function clientFor(snapshot = syntheticSnapshot()) {
   return { load: vi.fn<AcceptanceClient['load']>().mockResolvedValue(snapshot), save: vi.fn<AcceptanceClient['save']>() };
 }
 function setup(client = clientFor()) { const view = render(<AcceptancePanel projectId="demo-project" versionId="demo-v1" client={client} />); return { ...view, client }; }
-async function ready() { await screen.findByLabelText('第 1 页检查结论'); }
+async function ready() { await screen.findByRole('region', { name: '演示稿预览' }); const summary = screen.getByText('验收与发布'); if (!summary.closest('details')?.open) fireEvent.click(summary); }
+function confirmVisual() { fireEvent.click(screen.getByLabelText(/我已检查此版本全部/)); }
 function recordVisual(snapshot: AcceptanceSnapshot, command: AcceptanceCommand): AcceptanceSnapshot {
   if (command.kind !== 'visual_review') throw Error('test expected visual command');
   return { ...snapshot, revision: snapshot.revision + 1, can_revoke: true, records: [...snapshot.records, { id: `review-${snapshot.revision + 1}`, revision: snapshot.revision + 1, kind: 'visual_review', created_at: '2026-10-22T12:00:00Z', reviewer: { issuer: 'test-issuer', sub: 'test-reviewer' }, binding: snapshot.binding, payload: { pages: command.pages, note: command.note }, revoked: false, stale: false }] };
@@ -37,17 +38,47 @@ function publishedSnapshot(initial = completeSnapshot()): AcceptanceSnapshot {
 }
 
 describe('explicit version publication', () => {
-  it('shows receipt-bound final PPTX renders separately without rewriting source preview reviews', async () => {
+  it('uses one receipt-bound final PPTX preview and never records acceptance by viewing it', async () => {
     const complete = completeSnapshot(); const initial: AcceptanceSnapshot = { ...syntheticSnapshot(), programmatic: { ...complete.programmatic!, status: 'pending', completed_gates: ['independent_final_pptx_rendering'], pending_gates: ['independent_export_build_contract', 'independent_postflight_and_delivery'] } };
     const client = clientFor(initial); setup(client); await ready();
-    const rendered = within(screen.getByRole('region', { name: 'PPTX 导出效果' }));
+    const rendered = within(screen.getByRole('region', { name: '演示稿预览' }));
     const first = rendered.getByRole('img', { name: '最终 PPTX 第 1 页独立渲染' });
     expect(first).toHaveAttribute('src', initial.programmatic!.rendered_pages![0].preview_url); fireEvent.load(first);
-    expect(screen.getByRole('option', { name: '检查通过' })).toBeDisabled();
-    fireEvent.click(rendered.getByRole('button', { name: /导出第 2 页/ }));
+    expect(screen.getAllByRole('img')).toHaveLength(1);
+    expect(screen.queryByRole('region', { name: 'PPTX 导出效果' })).not.toBeInTheDocument();
+    fireEvent.click(rendered.getByRole('button', { name: /让每一步都可核验/ }));
     expect(rendered.getByRole('img', { name: '最终 PPTX 第 2 页独立渲染' })).toHaveAttribute('src', initial.programmatic!.rendered_pages![1].preview_url);
-    expect(screen.getByLabelText('第 1 页检查结论')).toHaveValue('pending'); expect(screen.getByRole('img', { name: /第 1 页静态 PNG/ })).toHaveAttribute('src', '/api/v1/versions/demo-v1/slides/1/preview');
+    expect(screen.getByLabelText(/我已检查此版本全部/)).not.toBeChecked();
+    expect(screen.queryByRole('img', { name: /静态 PNG/ })).not.toBeInTheDocument();
     expect(client.save).not.toHaveBeenCalled();
+  });
+
+  it('starts with technical acceptance collapsed and labels the source fallback honestly', async () => {
+    const client = clientFor(); setup(client); await screen.findByRole('region', { name: '演示稿预览' });
+    expect(screen.getByText('验收与发布').closest('details')).not.toHaveAttribute('open');
+    expect(screen.getByText('源文件参考预览 · 最终 PPTX 渲染尚未就绪')).toBeInTheDocument();
+    expect(screen.getAllByRole('img')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: '确认视觉检查通过' })).not.toBeInTheDocument();
+    expect(client.save).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for an invalid final-render URL and does not silently show the source as final output', async () => {
+    const initial = completeSnapshot(); initial.programmatic!.rendered_pages![0].preview_url = 'https://other.example/render.png';
+    const client = clientFor(initial); const view = setup(client); await ready();
+    expect(view.container.querySelector('img')).toBeNull();
+    expect(screen.getByText('此页 PPTX 渲染地址不可用，请重新读取记录。')).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: /静态 PNG/ })).not.toBeInTheDocument();
+    expect(client.save).not.toHaveBeenCalled();
+  });
+
+  it('keeps final-render image digests separate from the source roster in a human confirmation', async () => {
+    const complete = completeSnapshot(); const initial = { ...syntheticSnapshot(), programmatic: { ...complete.programmatic!, status: 'pending' as const, pending_gates: ['independent_export_build_contract'] } };
+    const client = clientFor(initial); client.save.mockImplementation(async (_p, _v, command) => recordVisual(initial, command)); setup(client); await ready();
+    fireEvent.load(screen.getByRole('img')); confirmVisual(); fireEvent.click(screen.getByRole('button', { name: '确认视觉检查通过' }));
+    await waitFor(() => expect(client.save).toHaveBeenCalledOnce());
+    const command = client.save.mock.calls[0][2];
+    expect(command).toMatchObject({ kind: 'visual_review', pages: initial.pages.map(page => ({ number: page.number, preview_sha256: page.preview_sha256, verdict: 'pass' })) });
+    expect(command).not.toMatchObject({ pages: [{ preview_sha256: complete.programmatic!.rendered_pages![0].preview_sha256 }] });
   });
 
   it('keeps publish disabled while any gate is pending and never equates rendering with desktop editing', async () => {
@@ -98,18 +129,16 @@ describe('explicit version publication', () => {
 });
 
 describe('P4 version-bound review workspace', () => {
-  it('reports loaded snapshots and only offers saved current problems to the host revision form', async () => {
-    const initial=syntheticSnapshot(); const client=clientFor(initial); const onSnapshot=vi.fn(),onUseFeedback=vi.fn();
-    client.save.mockImplementation(async(_p,_v,command)=>recordVisual(initial,command));
+  it('reports snapshots and imports structured historical feedback without creating a new human decision', async () => {
+    const initial=syntheticSnapshot(); const visual=visualDraft(initial); visual.pages[0]={...visual.pages[0],verdict:'needs_changes',issues:[{category:'layout',severity:'major',description:'标题重叠'}]};
+    const saved=recordVisual(initial,{expected_revision:0,binding:initial.binding,kind:'visual_review',...visual});
+    const client=clientFor(saved); const onSnapshot=vi.fn(),onUseFeedback=vi.fn();
     render(<AcceptancePanel projectId="demo-project" versionId="demo-v1" client={client} onSnapshot={onSnapshot} onUseFeedback={onUseFeedback}/>);await ready();
-    expect(onSnapshot).toHaveBeenLastCalledWith(initial);
-    fireEvent.click(screen.getByRole('button',{name:'添加问题'}));fireEvent.change(screen.getByLabelText('问题 1 说明'),{target:{value:'标题重叠'}});
-    expect(screen.getByRole('button',{name:'将已保存问题带入修改'})).toBeDisabled();expect(onUseFeedback).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button',{name:'保存视觉检查记录'}));await screen.findByText('检查记录已保存至服务端。');
-    fireEvent.change(screen.getByLabelText('问题 1 说明'),{target:{value:'尚未保存的新问题'}});
+    expect(onSnapshot).toHaveBeenLastCalledWith(saved);
+    fireEvent.change(screen.getByLabelText('视觉检查备注'),{target:{value:'尚未保存的新备注'}});
     fireEvent.click(screen.getByRole('button',{name:'将已保存问题带入修改'}));
-    expect(onUseFeedback).toHaveBeenCalledWith({binding:initial.binding,reviewRevision:1,pages:[1],feedback:expect.stringContaining('标题重叠')});
-    expect(onUseFeedback.mock.calls[0][0].feedback).not.toContain('尚未保存');expect(onSnapshot.mock.calls.at(-1)?.[0].revision).toBe(1);
+    expect(onUseFeedback).toHaveBeenCalledWith({binding:initial.binding,reviewRevision:1,pages:[1],feedback:expect.stringContaining('标题重叠'),items:[{page:1,feedback:'版式 / 重要：标题重叠'}]});
+    expect(onUseFeedback.mock.calls[0][0].feedback).not.toContain('尚未保存');expect(client.save).not.toHaveBeenCalled();
   });
 
   it('never revives an earlier problem record when the latest saved visual record is revoked', async () => {
@@ -120,26 +149,25 @@ describe('P4 version-bound review workspace', () => {
     expect(screen.getByRole('button',{name:'将已保存问题带入修改'})).toBeDisabled();expect(onUseFeedback).not.toHaveBeenCalled();
   });
 
-  it('starts every human check pending and shows complete acceptance pending', async () => {
+  it('starts every human check pending without requiring a verdict widget for each page', async () => {
     setup(); await ready();
-    expect(screen.getByLabelText('第 1 页检查结论')).toHaveValue('pending');
+    expect(screen.getByLabelText(/我已检查此版本全部/)).not.toBeChecked();
+    expect(screen.getByRole('button',{name:'确认视觉检查通过'})).toBeDisabled();
+    expect(screen.queryByLabelText('第 1 页检查结论')).not.toBeInTheDocument();
     for (const label of ['在桌面 PowerPoint 中打开', '实际编辑文字或其他可编辑内容', '编辑原生图表并核对数据', '保存修改后的演示稿', '关闭后重新打开并核对结果']) expect(screen.getByLabelText(new RegExp(label))).toHaveValue('pending');
     expect(screen.getByText('完整验收待完成')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /发布/ })).not.toBeInTheDocument();
   });
 
-  it('saves an issue with full roster, immutable binding and expected revision; server controls displayed status', async () => {
-    const snapshot = syntheticSnapshot(); const client = clientFor(snapshot);
-    client.save.mockImplementation(async (_p, _v, command) => recordVisual(snapshot, command));
-    setup(client); await ready();
-    fireEvent.click(screen.getByRole('button', { name: '添加问题' }));
-    fireEvent.change(screen.getByLabelText('问题 1 说明'), { target: { value: '右侧图表标签被裁切' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存视觉检查记录' }));
-    await screen.findByText('检查记录已保存至服务端。');
-    const command = client.save.mock.calls[0][2];
-    expect(command).toMatchObject({ expected_revision: 0, binding: snapshot.binding, kind: 'visual_review', pages: [{ number: 1, preview_sha256: '1'.repeat(64), verdict: 'needs_changes', issues: [{ category: 'layout', severity: 'major', description: '右侧图表标签被裁切' }] }, { number: 2, verdict: 'pending', issues: [] }] });
-    expect(screen.getByText('检查人 test-reviewer', { exact: false })).toBeInTheDocument();
-    expect(within(screen.getByLabelText('服务端验收状态')).queryByText('需修改')).not.toBeInTheDocument();
+  it('saves an explicitly confirmed whole-deck decision with the original full roster and binding', async () => {
+    const snapshot=syntheticSnapshot(); const client=clientFor(snapshot);
+    client.save.mockImplementation(async(_p,_v,command)=>recordVisual(snapshot,command));setup(client);await ready();
+    fireEvent.load(screen.getByRole('img'));expect(client.save).not.toHaveBeenCalled();
+    confirmVisual();expect(client.save).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button',{name:'确认视觉检查通过'}));await screen.findByText('检查记录已保存至服务端。');
+    expect(client.save.mock.calls[0][2]).toEqual({expected_revision:0,binding:snapshot.binding,kind:'visual_review',pages:snapshot.pages.map(page=>({number:page.number,preview_sha256:page.preview_sha256,verdict:'pass',issues:[]})),note:''});
+    expect(screen.getByLabelText(/我已检查此版本全部/)).not.toBeChecked();
+    expect(within(screen.getByLabelText('服务端验收状态')).queryByText('已通过')).not.toBeInTheDocument();
   });
 
   it('retains unfinished desktop steps and requires actual application details before successful checks', async () => {
@@ -164,19 +192,13 @@ describe('P4 version-bound review workspace', () => {
     value.checks.opened = 'pass'; expect(powerpointValidation(value, 0)).toContain('保存检查');
   });
 
-  it('blocks stale source reviews, retaining history without copying stale passing decisions', async () => {
-    const snapshot = syntheticSnapshot();
-    const saved = recordVisual(snapshot, { expected_revision: 0, binding: snapshot.binding, kind: 'visual_review', pages: visualDraft(snapshot).pages.map(p => ({ ...p, verdict: 'pass' })), note: '旧版结论' });
-    saved.can_review = false; saved.acceptance_status = 'stale'; saved.records[0].stale = true;
-    setup(clientFor(saved)); await ready();
-    expect(screen.getByRole('button', { name: '保存视觉检查记录' })).toBeDisabled();
-    expect(screen.getByLabelText('第 1 页检查结论')).toHaveValue('pending');
-    expect(screen.getByText('来源已失效')).toBeInTheDocument();
-    expect(screen.getByText('旧版结论')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /让每一步都可核验/ }));
-    expect(screen.getByLabelText('第 2 页检查结论')).toBeDisabled();
-    expect(screen.getByRole('img', { name: /第 2 页静态 PNG/ })).toBeInTheDocument();
-    fireEvent.error(screen.getByRole('img')); expect(screen.getByRole('button', { name: '重试预览' })).toBeEnabled();
+  it('blocks stale source confirmation, retaining history and the browsable preview', async () => {
+    const snapshot=syntheticSnapshot(); const saved=recordVisual(snapshot,{expected_revision:0,binding:snapshot.binding,kind:'visual_review',pages:visualDraft(snapshot).pages.map(p=>({...p,verdict:'pass'})),note:'旧版结论'});
+    saved.can_review=false;saved.acceptance_status='stale';saved.records[0].stale=true;setup(clientFor(saved));await ready();
+    expect(screen.getByRole('button',{name:'确认视觉检查通过'})).toBeDisabled();expect(screen.getByLabelText(/我已检查此版本全部/)).not.toBeChecked();
+    expect(screen.getByText('来源已失效')).toBeInTheDocument();expect(screen.getByText('旧版结论')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:/让每一步都可核验/}));expect(screen.getByRole('img',{name:/第 2 页静态 PNG/})).toBeInTheDocument();
+    fireEvent.error(screen.getByRole('img'));expect(screen.getByRole('button',{name:'重试预览'})).toBeEnabled();
   });
 
   it('revokes explicitly with a reason and never resurrects an older successful review', async () => {
@@ -193,7 +215,7 @@ describe('P4 version-bound review workspace', () => {
     fireEvent.click(screen.getByRole('button', { name: '确认撤销记录' }));
     await screen.findByText('已保存撤销记录，历史检查仍可查看。');
     expect(client.save.mock.calls[0][2]).toMatchObject({ kind: 'revoke', record_id: 'review-2', expected_revision: 2, reason: '实际 PowerPoint 字体不正确，需要重查' });
-    expect(screen.getByLabelText('第 1 页检查结论')).toHaveValue('pending');
+    expect(screen.getByLabelText(/我已检查此版本全部/)).not.toBeChecked();
     expect(screen.getByLabelText('PowerPoint 版本')).toHaveValue('尚未保存的桌面版本');
   });
 
@@ -207,29 +229,20 @@ describe('P4 version-bound review workspace', () => {
     expect(screen.getByLabelText('视觉检查备注')).toHaveValue('未保存的视觉备注'); expect(screen.getByLabelText('PowerPoint 版本')).toHaveValue('未保存的应用版本');
   });
 
-  it('clears dirty drafts with an explanation after a source revision changes', async () => {
-    const client = clientFor(); setup(client); await ready();
-    const oldImage = screen.getByRole('img'); fireEvent.load(oldImage);
-    fireEvent.change(screen.getByLabelText('视觉检查备注'), { target: { value: '旧来源的草稿' } });
-    const next = syntheticSnapshot(); next.source_revision += 1; next.binding.source_revision += 1; client.load.mockResolvedValue(next);
-    fireEvent.click(screen.getByRole('button', { name: '重新读取记录' }));
-    await screen.findByText('版本来源已变化，旧来源的未保存草稿已清空，请重新检查。');
-    expect(screen.getByLabelText('视觉检查备注')).toHaveValue('');
-    expect(screen.getByRole('img')).not.toBe(oldImage);
-    expect(within(screen.getByLabelText('第 1 页检查结论')).getByRole('option', { name: '检查通过' })).toBeDisabled();
-    fireEvent.load(screen.getByRole('img'));
-    expect(within(screen.getByLabelText('第 1 页检查结论')).getByRole('option', { name: '检查通过' })).toBeEnabled();
+  it('clears draft notes and explicit confirmation after a source revision changes', async () => {
+    const client=clientFor();setup(client);await ready();const oldImage=screen.getByRole('img');fireEvent.load(oldImage);confirmVisual();
+    fireEvent.change(screen.getByLabelText('视觉检查备注'),{target:{value:'旧来源的草稿'}});
+    const next=syntheticSnapshot();next.source_revision+=1;next.binding.source_revision+=1;client.load.mockResolvedValue(next);
+    fireEvent.click(screen.getByRole('button',{name:'重新读取记录'}));await screen.findByText('版本来源已变化，旧来源的未保存草稿已清空，请重新检查。');
+    expect(screen.getByLabelText('视觉检查备注')).toHaveValue('');expect(screen.getByRole('img')).not.toBe(oldImage);
+    expect(screen.getByLabelText(/我已检查此版本全部/)).not.toBeChecked();expect(screen.getByRole('button',{name:'确认视觉检查通过'})).toBeDisabled();
   });
 
-  it('requires a loaded raster before a passing page conclusion and blocks saving after raster failure', async () => {
-    setup(); await ready();
-    const conclusion = screen.getByLabelText('第 1 页检查结论');
-    expect(within(conclusion).getByRole('option', { name: '检查通过' })).toBeDisabled();
-    fireEvent.change(conclusion, { target: { value: 'pass' } }); expect(conclusion).toHaveValue('pending');
-    fireEvent.load(screen.getByRole('img')); fireEvent.change(conclusion, { target: { value: 'pass' } });
-    expect(conclusion).toHaveValue('pass'); expect(screen.getByRole('button', { name: '保存视觉检查记录' })).toBeEnabled();
-    fireEvent.error(screen.getByRole('img')); expect(screen.getByRole('button', { name: '保存视觉检查记录' })).toBeDisabled();
-    expect(screen.getByText('请先加载并查看所有选择“检查通过”的页面预览，再保存视觉检查。')).toBeInTheDocument();
+  it('never treats a successful or failed preview load as an acceptance decision', async () => {
+    const client=clientFor();setup(client);await ready();const image=screen.getByRole('img');fireEvent.load(image);
+    expect(screen.getByLabelText(/我已检查此版本全部/)).not.toBeChecked();expect(screen.getByRole('button',{name:'确认视觉检查通过'})).toBeDisabled();
+    fireEvent.error(image);expect(screen.getByRole('button',{name:'重试预览'})).toBeEnabled();expect(client.save).not.toHaveBeenCalled();
+    expect(screen.getByRole('button',{name:'确认视觉检查通过'})).toBeDisabled();
   });
 
   it('keeps content-editing pending for chartless presentations even when the other desktop steps pass', async () => {
@@ -265,26 +278,26 @@ describe('P4 version-bound review workspace', () => {
     let resolveSave!: (value: AcceptanceSnapshot) => void;
     const client = clientFor(); client.load.mockImplementation(async (_p, version) => syntheticSnapshot(version)); client.save.mockImplementation(() => new Promise(resolve => { resolveSave = resolve; }));
     const view = setup(client); await ready(); fireEvent.change(screen.getByLabelText('视觉检查备注'), { target: { value: '旧版本私有备注' } });
-    fireEvent.click(screen.getByRole('button', { name: '保存视觉检查记录' }));
+    confirmVisual(); fireEvent.click(screen.getByRole('button', { name: '确认视觉检查通过' }));
     view.rerender(<AcceptancePanel projectId="demo-project" versionId="demo-v2" client={client} />); await ready();
     await act(async () => resolveSave(recordVisual(syntheticSnapshot(), client.save.mock.calls[0][2])));
     expect(screen.getByLabelText('视觉检查备注')).toHaveValue(''); expect(screen.queryByText('检查记录已保存至服务端。')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '保存视觉检查记录' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '确认视觉检查通过' })).toBeDisabled();
   });
 
   it('keeps a draft on revision conflict and does not expose server details', async () => {
     const client = clientFor(); client.save.mockRejectedValue(new ApiError('source_binding_changed', 409)); setup(client); await ready();
-    fireEvent.change(screen.getByLabelText('视觉检查备注'), { target: { value: '需要保留的草稿' } }); fireEvent.click(screen.getByRole('button', { name: '保存视觉检查记录' }));
+    fireEvent.change(screen.getByLabelText('视觉检查备注'), { target: { value: '需要保留的草稿' } }); confirmVisual(); fireEvent.click(screen.getByRole('button', { name: '确认视觉检查通过' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('重新读取记录'); expect(screen.getByLabelText('视觉检查备注')).toHaveValue('需要保留的草稿');
   });
 
   it('resets an in-flight operation when an injected client changes for the same version', async () => {
     let resolveOld!: (value: AcceptanceSnapshot) => void;
     const oldClient = clientFor(); oldClient.save.mockImplementation(() => new Promise(resolve => { resolveOld = resolve; }));
-    const view = setup(oldClient); await ready(); fireEvent.click(screen.getByRole('button', { name: '保存视觉检查记录' }));
+    const view = setup(oldClient); await ready(); confirmVisual(); fireEvent.click(screen.getByRole('button', { name: '确认视觉检查通过' }));
     const newClient = clientFor(); view.rerender(<AcceptancePanel projectId="demo-project" versionId="demo-v1" client={newClient} />); await ready();
     await act(async () => resolveOld({ ...syntheticSnapshot(), revision: 1 }));
-    expect(newClient.load).toHaveBeenCalledOnce(); expect(screen.getByRole('button', { name: '保存视觉检查记录' })).toBeEnabled(); expect(screen.queryByText('检查记录已保存至服务端。')).not.toBeInTheDocument();
+    expect(newClient.load).toHaveBeenCalledOnce(); expect(screen.getByRole('button', { name: '确认视觉检查通过' })).toBeDisabled(); expect(screen.queryByText('检查记录已保存至服务端。')).not.toBeInTheDocument();
   });
 
   it('shows safe auth errors, supports retry, and rejects unsafe image URLs without rendering them', async () => {

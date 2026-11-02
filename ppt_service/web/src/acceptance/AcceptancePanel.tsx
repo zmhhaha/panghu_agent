@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, safeError } from '../api';
 import { acceptanceClient, assertSnapshot, rasterPreviewUrl, renderedPptxPreviewUrl } from './client';
 import { powerpointDraft, powerpointValidation, visualDraft } from './drafts';
-import type { AcceptanceBinding, AcceptanceClient, AcceptanceCommand, AcceptancePage, AcceptanceRecord, AcceptanceSnapshot, CheckVerdict, IssueCategory, IssueSeverity, PageReview, PageVerdict, PowerPointReview, PublicationRecord, RenderedPptxPage, VisualReview } from './contracts';
+import type { AcceptanceBinding, AcceptanceClient, AcceptanceCommand, AcceptancePage, AcceptanceRecord, AcceptanceSnapshot, CheckVerdict, IssueCategory, IssueSeverity, PowerPointReview, PublicationRecord, RenderedPptxPage, VisualReview } from './contracts';
 import './acceptance.css';
 
 const reviewLabels = { pending: '待检查', passed: '已通过', needs_changes: '需修改' };
@@ -42,7 +42,7 @@ function errorText(error: unknown): string {
   return safeError(error);
 }
 
-export interface SavedReviewFeedback { binding: AcceptanceBinding; reviewRevision: number; pages: number[]; feedback: string }
+export interface SavedReviewFeedback { binding: AcceptanceBinding; reviewRevision: number; pages: number[]; feedback: string; items?: { page: number; feedback: string }[] }
 export interface AcceptancePanelProps {
   projectId: string;
   versionId: string;
@@ -64,12 +64,12 @@ function AcceptanceWorkspace({ projectId, versionId, client, onSnapshot, onUseFe
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [publishConfirmed, setPublishConfirmed] = useState(false);
+  const [visualConfirmed, setVisualConfirmed] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [notice, setNotice] = useState('');
   const [selectedPage, setSelectedPage] = useState(0);
   const [revokeId, setRevokeId] = useState('');
   const [revokeReason, setRevokeReason] = useState('');
-  const [loadedPreviews, setLoadedPreviews] = useState<Record<string, boolean>>({});
   const generation = useRef(0);
   const busy = useRef(false);
   const mounted = useRef(false);
@@ -87,10 +87,10 @@ function AcceptanceWorkspace({ projectId, versionId, client, onSnapshot, onUseFe
     if (changed || kind === 'visual_review' || (!kind && !visualDirty)) setVisual(visualDraft(next));
     if (changed || kind === 'powerpoint_review' || (!kind && !powerpointDirty)) setPowerpoint(powerpointDraft(next));
     if (changed) {
-      setSelectedPage(0); setLoadedPreviews({});
+      setSelectedPage(0);
       if (previous && (visualDirty || powerpointDirty)) setNotice('版本来源已变化，旧来源的未保存草稿已清空，请重新检查。');
     } else if (!kind && (visualDirty || powerpointDirty)) setNotice('已重新读取服务端记录，未保存草稿已保留。请核对最新记录后再保存。');
-    snapshotRef.current = next; setSnapshot(next); setPublishConfirmed(false); snapshotObserver.current?.(next);
+    snapshotRef.current = next; setSnapshot(next); setPublishConfirmed(false); setVisualConfirmed(false); snapshotObserver.current?.(next);
   }, []);
 
   const load = useCallback(async () => {
@@ -108,8 +108,8 @@ function AcceptanceWorkspace({ projectId, versionId, client, onSnapshot, onUseFe
   }, [accept, client, projectId, versionId]);
 
   useEffect(() => {
-    mounted.current = true; busy.current = false; setSaving(false); setPublishing(false); setPublishConfirmed(false);
-    snapshotRef.current = null; setSnapshot(null); setVisual(null); setPowerpoint(null); setLoadedPreviews({});
+    mounted.current = true; busy.current = false; setSaving(false); setPublishing(false); setPublishConfirmed(false); setVisualConfirmed(false);
+    snapshotRef.current = null; setSnapshot(null); setVisual(null); setPowerpoint(null);
     snapshotObserver.current?.(null);
     void load();
     return () => { mounted.current = false; ++generation.current; controller.current?.abort(); };
@@ -148,16 +148,12 @@ function AcceptanceWorkspace({ projectId, versionId, client, onSnapshot, onUseFe
     } finally { if (mounted.current && generation.current === attempt) { busy.current = false; setSaving(false); setPublishing(false); } }
   }
 
-  const blocked = loading || saving || !snapshot?.can_review;
+  const blocked = loading || saving || error != null || !snapshot?.can_review;
   const page = snapshot?.pages[selectedPage];
-  const pageReview = visual?.pages[selectedPage];
+  const renderedPage = snapshot?.programmatic?.rendered_pages?.find(item => item.number === page?.number);
   const commandBase = snapshot && { expected_revision: snapshot.revision, binding: snapshot.binding };
-  const draftsDirty = !!snapshot && (JSON.stringify(visual) !== JSON.stringify(visualDraft(snapshot)) || JSON.stringify(powerpoint) !== JSON.stringify(powerpointDraft(snapshot)));
-  function updatePage(value: PageReview) { setVisual(old => old && { ...old, pages: old.pages.map(p => p.number === value.number ? value : p) }); }
-  const invalidIssues = visual?.pages.some(p => (p.verdict === 'pass' && p.issues.length > 0) || (p.verdict === 'needs_changes' && !p.issues.length) || p.issues.some(issue => !issue.description.trim()));
+  const draftsDirty = !!snapshot && (visualConfirmed || JSON.stringify(visual) !== JSON.stringify(visualDraft(snapshot)) || JSON.stringify(powerpoint) !== JSON.stringify(powerpointDraft(snapshot)));
   const powerpointError = powerpoint && snapshot ? powerpointValidation(powerpoint, snapshot.native_chart_count) : '';
-  const currentPreviewLoaded = page && loadedPreviews[`${page.number}:${page.preview_sha256}`] && !!rasterPreviewUrl(versionId, page.number, page.preview_url);
-  const unseenPassingPages = visual?.pages.some(review => review.verdict === 'pass' && !loadedPreviews[`${review.number}:${review.preview_sha256}`]);
   // The latest saved observation owns the conclusion; revocation never revives
   // an older record. Unsaved form edits are deliberately excluded from feedback.
   const latestVisual = snapshot?.records.slice().reverse().find(record => record.kind === 'visual_review');
@@ -166,17 +162,27 @@ function AcceptanceWorkspace({ projectId, versionId, client, onSnapshot, onUseFe
   const useSavedFeedback = () => {
     if (!snapshot || error != null || !savedChanges.length || !onUseFeedback) return;
     onUseFeedback({ binding: snapshot.binding, reviewRevision: snapshot.revision, pages: savedChanges.map(review => review.number),
-      feedback: savedChanges.map(review => `第 ${review.number} 页：${snapshot.pages.find(page => page.number === review.number)?.title ?? ''}\n${review.issues.map(issue => `- ${categories[issue.category]} / ${severities[issue.severity]}：${issue.description}`).join('\n')}`).join('\n\n') });
+      feedback: savedChanges.map(review => `第 ${review.number} 页：${snapshot.pages.find(page => page.number === review.number)?.title ?? ''}\n${review.issues.map(issue => `- ${categories[issue.category]} / ${severities[issue.severity]}：${issue.description}`).join('\n')}`).join('\n\n'),
+      items: savedChanges.map(review => ({ page: review.number, feedback: review.issues.map(issue => `${categories[issue.category]} / ${severities[issue.severity]}：${issue.description}`).join('\n') })) });
   };
 
   return <section className="ppt-acceptance" aria-label={`版本 ${versionId} 的验收工作台`}>
-    <header className="acceptance-heading"><div><span className="acceptance-kicker">VERSION REVIEW</span><h2>逐页检查与验收记录</h2><p>查看预览、记录问题，再在桌面 PowerPoint 中验证可编辑性。</p></div><button type="button" className="acceptance-secondary" onClick={() => void load()} disabled={loading || saving}>重新读取记录</button></header>
+    <header className="acceptance-heading"><div><span className="acceptance-kicker">PREVIEW</span><h2>预览演示稿</h2><p>浏览页面，在下方意见清单中逐条写下想调整的地方。</p></div><button type="button" className="acceptance-secondary" onClick={() => void load()} disabled={loading || saving}>重新读取记录</button></header>
     <p className="acceptance-version">当前版本 <code>{versionId}</code> · 每次记录绑定此版本及其来源</p>
     {error != null && <div role="alert" className="acceptance-alert">{errorText(error)} {error instanceof ApiError && error.status === 401 && <a href="/oauth2/start">重新登录</a>}</div>}
     {notice && <p role="status" className="acceptance-notice">{notice}</p>}
     {loading && <p role="status">正在读取版本验收记录…</p>}
     {!loading && !snapshot && <p>暂时无法读取验收记录，请重试。</p>}
     {snapshot && visual && powerpoint && <>
+      <section className="acceptance-main-preview" aria-label="演示稿预览">
+        <div className="acceptance-review-layout"><nav className="acceptance-page-list" aria-label="选择预览页面">{snapshot.pages.map((item, index) => <button key={item.number} type="button" aria-current={index === selectedPage ? 'page' : undefined} onClick={() => setSelectedPage(index)}><span>{String(item.number).padStart(2, '0')}</span><span>{item.title}</span></button>)}</nav>
+          {page && <div className="acceptance-page-workspace">{renderedPage ? <RenderedPptxPreview key={JSON.stringify([snapshot.binding, snapshot.programmatic?.receipt_sha256, renderedPage])} projectId={projectId} versionId={versionId} receipt={snapshot.programmatic?.receipt_sha256 ?? null} page={renderedPage} /> : <RasterPreview key={JSON.stringify([snapshot.binding, page.number, page.preview_sha256])} versionId={versionId} page={page} />}<h3>第 {page.number} 页 · {page.title}</h3><p className="acceptance-preview-origin">{renderedPage ? '最终 PPTX 渲染预览' : '源文件参考预览 · 最终 PPTX 渲染尚未就绪'}</p></div>}
+        </div>
+        <p className="acceptance-help">有问题直接添加一条意见，页码可选。浏览预览不会自动记录验收通过。</p>
+      </section>
+      {onUseFeedback && <div className="acceptance-save-row"><button type="button" className="acceptance-secondary" disabled={loading || saving || error != null || !savedChanges.length} onClick={useSavedFeedback}>将已保存问题带入修改</button><span>带入此版本仍有效的历史问题，核对后统一提交。</span></div>}
+      {!snapshot.can_review && <p role="status" className="acceptance-alert">当前版本来源已失效或暂不具备检查条件。请重新读取记录；历史记录保留供核对。</p>}
+      <details className="acceptance-formal"><summary>验收与发布</summary><p className="acceptance-help">需要正式发布时，再确认整份演示稿的视觉效果，并记录桌面 PowerPoint 的实际操作。修改意见可直接在下方提交。</p>
       <div className="acceptance-status-grid" aria-label="服务端验收状态">
         <Status title="独立程序验收" value={reviewLabels[snapshot.programmatic_status]} />
         <Status title="逐页视觉" value={reviewLabels[snapshot.visual_status]} />
@@ -184,31 +190,21 @@ function AcceptanceWorkspace({ projectId, versionId, client, onSnapshot, onUseFe
         <Status title="完整验收" value={snapshot.acceptance_status === 'passed' ? '已通过' : snapshot.acceptance_status === 'stale' ? '来源已变化' : snapshot.acceptance_status === 'unreviewable' ? '暂不可检查' : '待完成'} />
       </div>
       <div className="acceptance-notice"><strong>{snapshot.publication_authorized ? '此版本已正式发布' : snapshot.acceptance_status === 'passed' ? '完整验收已通过，请确认发布' : '完整验收待完成'}</strong><p>{snapshot.publication_authorized ? '发布记录绑定此版本、独立程序证据和人工检查记录，可在下方核对。' : '独立程序检查、逐页视觉检查和桌面实际操作均由服务端核对。保存检查记录后，还需明确确认发布。'}</p>{snapshot.pending_reasons.map(reason => <p key={reason}>{reasons[reason] ?? '仍有检查未完成，请核对下方验收状态；若原因不明，请联系管理员。'}</p>)}</div>
-      {!snapshot.can_review && <p role="status" className="acceptance-alert">当前版本来源已失效或暂不具备检查条件。请重新读取记录；历史记录保留供核对。</p>}
       <details className="acceptance-binding"><summary>查看版本与来源绑定</summary><dl><dt>项目修订</dt><dd>{snapshot.source_revision}</dd><dt>验收记录修订</dt><dd>{snapshot.revision}</dd><dt>执行后端</dt><dd>{snapshot.binding.runtime.engine} · {snapshot.binding.runtime.profile}</dd><dt>PPTX 指纹</dt><dd><code>{snapshot.binding.pptx_sha256}</code></dd><dt>输入快照</dt><dd><code>{snapshot.binding.input_snapshot_sha256}</code></dd><dt>源文件指纹</dt><dd><code>{snapshot.binding.source_fingerprint_sha256}</code></dd><dt>产物清单</dt><dd><code>{snapshot.binding.manifest_sha256}</code></dd><dt>检查证据</dt><dd><code>{snapshot.binding.evidence_id} · {snapshot.binding.evidence_sha256}</code></dd></dl></details>
 
       <section className="acceptance-programmatic" aria-label="独立程序检查证据"><div className="acceptance-section-heading"><div><span className="acceptance-kicker">INDEPENDENT CHECKS</span><h3>最终文件核验</h3></div><span>{reviewLabels[snapshot.programmatic_status]}</span></div><p className="acceptance-help">独立检查直接核对当前 PPTX 与来源。PPTX 渲染用于核对导出结果；桌面编辑、保存和重开仍需实际操作。</p>
-        {snapshot.programmatic ? <><p>{snapshot.programmatic.detail}</p>{snapshot.programmatic.renderer && <p className="acceptance-help">PPTX 渲染环境：{snapshot.programmatic.renderer}</p>}{snapshot.programmatic.completed_gates.length > 0 && <ul className="acceptance-gates" aria-label="已完成的独立检查">{snapshot.programmatic.completed_gates.map(gate => <li key={gate}><span aria-hidden="true">✓</span> {gateLabels[gate] ?? '独立程序检查项已完成'}</li>)}</ul>}{snapshot.programmatic.pending_gates.length > 0 && <ul className="acceptance-gates acceptance-gates-pending" aria-label="待完成的独立检查">{snapshot.programmatic.pending_gates.map(gate => <li key={gate}><span aria-hidden="true">○</span> {gateLabels[gate] ?? '独立程序检查项待完成'}</li>)}</ul>}{snapshot.programmatic.receipt_sha256 && <details className="acceptance-binding"><summary>查看独立检查凭据</summary><code>{snapshot.programmatic.receipt_sha256}</code></details>}{!!snapshot.programmatic.rendered_pages?.length && <FinalPptxPreviews key={`${versionId}:${snapshot.programmatic.receipt_sha256}`} projectId={projectId} versionId={versionId} receipt={snapshot.programmatic.receipt_sha256} pages={snapshot.programmatic.rendered_pages} titles={snapshot.pages} />}</> : <p className="acceptance-help">尚无完整独立验收凭据，当前仍可保存人工检查记录。</p>}
+        {snapshot.programmatic ? <><p>{snapshot.programmatic.detail}</p>{snapshot.programmatic.renderer && <p className="acceptance-help">PPTX 渲染环境：{snapshot.programmatic.renderer}</p>}{snapshot.programmatic.completed_gates.length > 0 && <ul className="acceptance-gates" aria-label="已完成的独立检查">{snapshot.programmatic.completed_gates.map(gate => <li key={gate}><span aria-hidden="true">✓</span> {gateLabels[gate] ?? '独立程序检查项已完成'}</li>)}</ul>}{snapshot.programmatic.pending_gates.length > 0 && <ul className="acceptance-gates acceptance-gates-pending" aria-label="待完成的独立检查">{snapshot.programmatic.pending_gates.map(gate => <li key={gate}><span aria-hidden="true">○</span> {gateLabels[gate] ?? '独立程序检查项待完成'}</li>)}</ul>}{snapshot.programmatic.receipt_sha256 && <details className="acceptance-binding"><summary>查看独立检查凭据</summary><code>{snapshot.programmatic.receipt_sha256}</code></details>}</> : <p className="acceptance-help">尚无完整独立验收凭据，当前仍可保存人工检查记录。</p>}
       </section>
 
-      <form onSubmit={event => { event.preventDefault(); if (commandBase && !blocked && !invalidIssues && !unseenPassingPages) void save({ ...commandBase, kind: 'visual_review', ...visual }); }}>
-        <div className="acceptance-section-heading"><div><span className="acceptance-kicker">01 / VISUAL REVIEW</span><h3>逐页视觉检查</h3></div><span>{snapshot.pages.length} 页</span></div>
-        <p className="acceptance-help">本节使用源 SVG 的静态 PNG，并保留原有逐页检查记录。上方“PPTX 导出效果”来自最终文件的独立渲染；两者可对照核对，实际编辑效果仍需在 PowerPoint 中确认。</p>
-        <fieldset className="acceptance-fieldset"><legend className="acceptance-sr-only">逐页视觉检查表单</legend>
-          <div className="acceptance-review-layout"><nav className="acceptance-page-list" aria-label="选择检查页面">{snapshot.pages.map((item, index) => <button key={item.number} type="button" aria-current={index === selectedPage ? 'page' : undefined} onClick={() => setSelectedPage(index)}><span>{String(item.number).padStart(2, '0')}</span><span>{item.title}<small>{visual.pages[index]?.verdict === 'pass' ? '检查通过' : visual.pages[index]?.verdict === 'needs_changes' ? '需修改' : '待检查'}</small></span></button>)}</nav>
-            {page && pageReview && <div className="acceptance-page-workspace"><RasterPreview key={JSON.stringify([snapshot.binding, page.number, page.preview_sha256])} versionId={versionId} page={page} onAvailability={available => setLoadedPreviews(old => ({ ...old, [`${page.number}:${page.preview_sha256}`]: available }))} /><h4>第 {page.number} 页 · {page.title}</h4>
-              <label>第 {page.number} 页检查结论<select disabled={blocked} value={pageReview.verdict} onChange={event => { if (event.target.value !== "pass" || currentPreviewLoaded) updatePage({ ...pageReview, verdict: event.target.value as PageVerdict }); }}><option value="pending">待检查</option><option value="pass" disabled={!currentPreviewLoaded}>检查通过</option><option value="needs_changes">需要修改</option></select></label>
-              <div className="acceptance-issues-heading"><strong>问题记录</strong><button type="button" className="acceptance-secondary" disabled={blocked || pageReview.issues.length >= 50} onClick={() => updatePage({ ...pageReview, verdict: 'needs_changes', issues: [...pageReview.issues, { category: 'layout', severity: 'major', description: '' }] })}>添加问题</button></div>
-              {!pageReview.issues.length && <p className="acceptance-help">尚无问题记录。完成检查后，请主动选择本页结论。</p>}
-              {pageReview.issues.map((issue, index) => <div key={index} className="acceptance-issue"><div className="acceptance-issue-fields"><label>问题 {index + 1} 类型<select disabled={blocked} value={issue.category} onChange={event => updatePage({ ...pageReview, issues: pageReview.issues.map((current, i) => i === index ? { ...current, category: event.target.value as IssueCategory } : current) })}>{Object.entries(categories).map(([key, text]) => <option key={key} value={key}>{text}</option>)}</select></label><label>问题 {index + 1} 严重程度<select disabled={blocked} value={issue.severity} onChange={event => updatePage({ ...pageReview, issues: pageReview.issues.map((current, i) => i === index ? { ...current, severity: event.target.value as IssueSeverity } : current) })}>{Object.entries(severities).map(([key, text]) => <option key={key} value={key}>{text}</option>)}</select></label></div><label>问题 {index + 1} 说明<textarea disabled={blocked} rows={3} maxLength={2000} required value={issue.description} placeholder="例如：图表右侧标签被裁切，请增加右边距。" onChange={event => updatePage({ ...pageReview, issues: pageReview.issues.map((current, i) => i === index ? { ...current, description: event.target.value } : current) })} /></label><button type="button" className="acceptance-text-button" disabled={blocked} onClick={() => updatePage({ ...pageReview, verdict: 'pending', issues: pageReview.issues.filter((_, i) => i !== index) })}>移除问题 {index + 1}，重新检查本页</button></div>)}
-            </div>}
-          </div>
-          <label>视觉检查备注<textarea disabled={blocked} rows={2} maxLength={4000} value={visual.note} onChange={event => setVisual({ ...visual, note: event.target.value })} /></label>
-          {invalidIssues && <p className="acceptance-help">请填写每条问题说明；“需要修改”须有问题记录，“检查通过”须先解决所有问题。</p>}
-          {unseenPassingPages && <p className="acceptance-help">请先加载并查看所有选择“检查通过”的页面预览，再保存视觉检查。</p>}<div className="acceptance-save-row"><button className="acceptance-primary" disabled={blocked || invalidIssues || unseenPassingPages}>保存视觉检查记录</button><span>允许保存未完成的检查。其余页面保持待检查。</span></div>
+      <form onSubmit={event => { event.preventDefault(); if (commandBase && !blocked && visualConfirmed && snapshot.pages.length > 0) void save({ ...commandBase, kind: 'visual_review', pages: snapshot.pages.map(item => ({ number: item.number, preview_sha256: item.preview_sha256, verdict: 'pass', issues: [] })), note: visual.note }); }}>
+        <div className="acceptance-section-heading"><div><span className="acceptance-kicker">01 / VISUAL REVIEW</span><h3>整份视觉确认</h3></div><span>{reviewLabels[snapshot.visual_status]}</span></div>
+        <p className="acceptance-help">发现问题时先填写意见并修改。确认整份演示稿已符合要求后，只需一次明确确认；此操作不会提交修改或替代桌面检查。</p>
+        <fieldset disabled={blocked} className="acceptance-fieldset"><legend className="acceptance-sr-only">整份视觉确认表单</legend>
+          <label className="acceptance-confirm"><input type="checkbox" checked={visualConfirmed} onChange={event => setVisualConfirmed(event.target.checked)} /><span>我已检查此版本全部 {snapshot.pages.length} 页，确认视觉效果通过。</span></label>
+          <label>视觉检查备注<textarea rows={2} maxLength={4000} value={visual.note} onChange={event => setVisual({ ...visual, note: event.target.value })} /></label>
+          <div className="acceptance-save-row"><button className="acceptance-primary" disabled={blocked || !visualConfirmed || snapshot.pages.length === 0}>确认视觉检查通过</button><span>仅在明确确认并保存后，才记录整份视觉检查通过。</span></div>
         </fieldset>
       </form>
-
       <form onSubmit={event => { event.preventDefault(); if (commandBase && !blocked && !powerpointError) void save({ ...commandBase, kind: 'powerpoint_review', ...powerpoint }); }}>
         <div className="acceptance-section-heading"><div><span className="acceptance-kicker">02 / DESKTOP CHECK</span><h3>PowerPoint 桌面检查</h3></div></div><p className="acceptance-help">请用此版本的 PPTX 在桌面 PowerPoint 实际操作后逐项填写。浏览器预览无法验证原生编辑。</p>
         <fieldset disabled={blocked} className="acceptance-fieldset"><legend className="acceptance-sr-only">PowerPoint 桌面检查表单</legend><div className="acceptance-desktop-fields"><label>PowerPoint 版本<input maxLength={200} value={powerpoint.application_version} placeholder="例如：Microsoft 365，版本 2509" onChange={event => setPowerpoint({ ...powerpoint, application_version: event.target.value })} /></label><label>操作系统<input maxLength={100} value={powerpoint.platform} placeholder="例如：Windows 11" onChange={event => setPowerpoint({ ...powerpoint, platform: event.target.value })} /></label></div>
@@ -223,13 +219,13 @@ function AcceptanceWorkspace({ projectId, versionId, client, onSnapshot, onUseFe
       </section>}
 
       <section aria-label="验收历史" className="acceptance-history"><div className="acceptance-section-heading"><div><span className="acceptance-kicker">04 / SAVED HISTORY</span><h3>服务端检查记录</h3></div><span>{snapshot.records.length} 条</span></div><p className="acceptance-help">记录保留原始版本和来源。撤销最新检查后，该项恢复待检查，不会沿用更早的通过结果；发布决定失效时需重新核验并确认。</p>
-        {onUseFeedback && <div className="acceptance-save-row"><button type="button" className="acceptance-secondary" disabled={loading || saving || error != null || !savedChanges.length} onClick={useSavedFeedback}>将已保存问题带入修改</button><span>仅带入当前有效的已保存视觉问题；填写后还需明确提交修改任务。</span></div>}
         {!snapshot.records.length && <p>此版本还没有保存的检查记录。</p>}
         {[...snapshot.records].reverse().map(record => <article className="acceptance-history-row" key={record.id}><div><strong>{kindLabels[record.kind]}</strong><span className="acceptance-history-state">{record.revoked ? '已撤销' : record.stale ? '来源已失效' : '已记录'}</span></div><p><time dateTime={record.created_at}>{formatTime(record.created_at)}</time> · 检查人 {record.reviewer.sub} · 修订 {record.revision}</p><details><summary>查看记录内容与来源</summary><RecordDetails record={record} /><dl><dt>记录编号</dt><dd><code>{record.id}</code></dd><dt>版本</dt><dd><code>{record.binding.version_id}</code></dd><dt>PPTX 指纹</dt><dd><code>{record.binding.pptx_sha256}</code></dd></dl></details>
           {snapshot.can_revoke && record.kind !== 'revoke' && !record.revoked && <button type="button" className="acceptance-text-button" disabled={loading || saving} onClick={() => { setRevokeId(record.id); setRevokeReason(''); }}>撤销此记录</button>}
           {revokeId === record.id && <form className="acceptance-revoke" onSubmit={event => { event.preventDefault(); if (commandBase && revokeReason.trim()) void save({ ...commandBase, kind: 'revoke', record_id: record.id, reason: revokeReason.trim() }); }}><label>撤销原因<textarea required maxLength={2000} value={revokeReason} onChange={event => setRevokeReason(event.target.value)} /></label><div className="acceptance-save-row"><button className="acceptance-primary" disabled={loading || saving || !revokeReason.trim()}>确认撤销记录</button><button type="button" className="acceptance-secondary" disabled={saving} onClick={() => setRevokeId('')}>取消</button></div></form>}
         </article>)}
       </section>
+      </details>
       {saving && <p role="status">{publishing ? '正在核对验收记录并保存发布决定…' : '正在保存检查记录…'}</p>}
     </>}
   </section>;
@@ -238,22 +234,16 @@ function AcceptanceWorkspace({ projectId, versionId, client, onSnapshot, onUseFe
 function Status({ title, value }: { title: string; value: string }) { return <div><span>{title}</span><strong>{value}</strong></div>; }
 function formatTime(value: string) { const date = new Date(value); return Number.isNaN(date.getTime()) ? '时间待核对' : date.toLocaleString('zh-CN'); }
 
-function FinalPptxPreviews({ projectId, versionId, receipt, pages, titles }: { projectId: string; versionId: string; receipt: string | null; pages: RenderedPptxPage[]; titles: AcceptancePage[] }) {
-  const [selected, setSelected] = useState(0);
-  const page = pages[selected];
-  return <section className="acceptance-final-render" aria-label="PPTX 导出效果"><h4>PPTX 导出效果</h4><p className="acceptance-help">这些图片由最终 PPTX 独立渲染，便于发现导出后的字体、换行或布局差异。查看图片不会自动改写逐页视觉检查或桌面操作记录。</p><div className="acceptance-review-layout"><nav className="acceptance-page-list" aria-label="选择 PPTX 渲染页面">{pages.map((item, index) => <button key={item.number} type="button" aria-current={selected === index ? 'page' : undefined} onClick={() => setSelected(index)}><span>{String(item.number).padStart(2, '0')}</span><span>导出第 {item.number} 页<small>{titles.find(title => title.number === item.number)?.title}</small></span></button>)}</nav>{page && <div><RenderedPptxPreview key={`${receipt}:${page.number}:${page.preview_sha256}`} projectId={projectId} versionId={versionId} receipt={receipt} page={page} /><p className="acceptance-help">最终 PPTX · 第 {page.number} 页</p></div>}</div></section>;
-}
-
 function RenderedPptxPreview({ projectId, versionId, receipt, page }: { projectId: string; versionId: string; receipt: string | null; page: RenderedPptxPage }) {
   const [failed, setFailed] = useState(false); const [loaded, setLoaded] = useState(false); const [attempt, setAttempt] = useState(0);
   const url = renderedPptxPreviewUrl(projectId, versionId, page.number, receipt, page.preview_url);
   return <div className="acceptance-preview">{!url ? <p role="status">此页 PPTX 渲染地址不可用，请重新读取记录。</p> : failed ? <div role="status"><p>第 {page.number} 页 PPTX 渲染图暂不可用；若检查证据已更新，请重新读取记录。</p><button type="button" className="acceptance-secondary" onClick={() => { setFailed(false); setLoaded(false); setAttempt(value => value + 1); }}>重试 PPTX 渲染图</button></div> : <>{!loaded && <span role="status">正在读取第 {page.number} 页 PPTX 渲染图…</span>}<img key={attempt} src={url} alt={`最终 PPTX 第 ${page.number} 页独立渲染`} onLoad={() => setLoaded(true)} onError={() => setFailed(true)} /></>}</div>;
 }
 
-function RasterPreview({ versionId, page, onAvailability }: { versionId: string; page: AcceptancePage; onAvailability: (available: boolean) => void }) {
+function RasterPreview({ versionId, page }: { versionId: string; page: AcceptancePage }) {
   const [failed, setFailed] = useState(false); const [loaded, setLoaded] = useState(false); const [attempt, setAttempt] = useState(0);
   const url = rasterPreviewUrl(versionId, page.number, page.preview_url);
-  return <div className="acceptance-preview">{!url ? <p role="status">此页预览地址不可用，请重新读取记录。</p> : failed ? <div role="status"><p>第 {page.number} 页预览暂不可用。</p><button type="button" className="acceptance-secondary" onClick={() => { setFailed(false); setLoaded(false); setAttempt(value => value + 1); }}>重试预览</button></div> : <>{!loaded && <span role="status">正在读取第 {page.number} 页预览…</span>}<img key={attempt} src={url} alt={`第 ${page.number} 页静态 PNG 预览：${page.title}`} onLoad={() => { setLoaded(true); onAvailability(true); }} onError={() => { setFailed(true); onAvailability(false); }} /></>}</div>;
+  return <div className="acceptance-preview">{!url ? <p role="status">此页预览地址不可用，请重新读取记录。</p> : failed ? <div role="status"><p>第 {page.number} 页预览暂不可用。</p><button type="button" className="acceptance-secondary" onClick={() => { setFailed(false); setLoaded(false); setAttempt(value => value + 1); }}>重试预览</button></div> : <>{!loaded && <span role="status">正在读取第 {page.number} 页预览…</span>}<img key={attempt} src={url} alt={`第 ${page.number} 页静态 PNG 预览：${page.title}`} onLoad={() => setLoaded(true)} onError={() => setFailed(true)} /></>}</div>;
 }
 
 function RecordDetails({ record }: { record: AcceptanceRecord }) {
