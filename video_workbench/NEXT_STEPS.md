@@ -1,5 +1,18 @@
 # 视频工作台：后续事项
 
+2026-11-03 最新：独立分支 `codex/video-hyperframes-motion` 的最新应用源码为 `07bd6cab8a33ba62a5d6eb94aa10651d852197c0`，尚未合主线。第 1 部分共享 Agent r3 发布及两个真实业务任务已完成，两镜解释方案已原子采用。第 2 部分 r5／compiler v3 发布、真实 18 秒原声草稿、显式采用及 pending delivery 拒绝均已完成：完整解码、432 帧及原 PCM 首尾／四段核对通过，三个抽帧样本未见裁字；时间仍 estimated／pending，真人听感与整片质量未通过验收。原首次草稿和 r4 预检失败记录保留。完整证据见 [MOTION_PRODUCTION_VALIDATION.md](MOTION_PRODUCTION_VALIDATION.md)。
+
+本轮 **4 个上游任务／14 个模型回合已用完，TTS 0，不再提交 Agent**。共享 Agent 已按主仓库 `.research-temp/platform-slots-coordination-video.json` 交接其他聊天；后续只推进工作台／executor／renderer，不再修改共享 Agent 镜像、配置、运行池或 UID 预留，复用已有候选与原完整录音。
+
+1. r5 构建、固定 digest／runtime 绑定和真实禁网 observe／严格验证已完成，状态为 `exact_r5_image_layout_preflight_passed`；保留 r4 原失败与 v1／v2 冻结身份，不更改原失败 snapshot。
+2. r5 已完成发布及真实只读 postcheck：两个 Deployment 1/1 Ready、digest／runtime／鉴权匹配，旧 Pod 停止；原 7 项目／7 表旧行各列及历史媒体 SHA 保持，新增两个隔离验收项目后共 9 项目，active 0、八音色保持。未修改共享 Agent、迁移数据库或调用模型。
+3. 新草稿 `8b32626a-4956-4a4d-90c6-ac4a2b299448` 已完成媒体技术检查；revision 5 时候选未自动采用，原录音后经显式采用成为 revision 6、motion 显式采用成为 revision 7。真实正式 delivery 返回 HTTP 409 `motion_timing_needs_review`，`no_human_review_fabricated=true`，采用与门禁验收完成。不得以 PCM 保真、抽帧或离线核对控件代替真人旁白听审，不自动标记时间已核对。
+4. 本轮验收文档已同步至 OpenSpec `add-hyperframes-motion-video`，清单 13/21，格式校验 `valid=true`、`issues=[]`；记录随本次文档提交保存。人工复核真实旁白时序、动画节奏、讲解清楚程度与声音自然度，以及 60 秒资源、取消／超时／OOM／恢复清理、批量入口和操作负担，作为后续独立事项保留；主线合并另行记录。
+
+## 历史记录：本轮动态生产接线之前
+
+以下保留各日期的原始发布和待办语境；旧镜像、调用计数、尚未接入动画或默认关闭等叙述不用于判断上述本轮真实发布进度。
+
 2026-11-01 最新：四女声晓贝、晓妮、晓晓、晓伊已加入，现有四男声保留，共八项，默认云健；一个项目统一一个音色。四次短句真实生成均成功且未采用，原项目不变。语音 Pod `speech-service-77fb679896-tmpsr`、工作台 Pod `video-workbench-5c69474df6-9l6rv` 均 Ready；工作台镜像不变。详细身份、测试和证据见 [PROJECT_VOICES.md](PROJECT_VOICES.md)。自然度仍需用户试听；以下更早部署身份保留为历史。
 
 2026-11-01：项目统一音色选择已上线并实测，可选云健（默认）、云希、云夏、云扬，不需要再实施逐镜音色。独立项目「男声音色对比（项目统一音色验收）」保留三条同稿短句候选，可先试听比较；原完整稿仍未通过自然度验收。后续优先听感与讲解改进，再处理 BGM。当前发布与证据见 [PROJECT_VOICES.md](PROJECT_VOICES.md)，下方旧 Pod/镜像及任务状态按历史理解。

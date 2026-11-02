@@ -1,5 +1,17 @@
 # 视频工作台当前状态
 
+2026-11-03 最新：分支 `codex/video-hyperframes-motion` 的最新应用源码为 `07bd6cab8a33ba62a5d6eb94aa10651d852197c0`，尚未合主线。**第 1 部分已完成**：共享 Agent r3 的讲解统筹／单镜 motion 能力已发布并跑通两个真实业务任务；两镜解释方案已原子采用到 revision 6，原稿、项目音色和原 scene ID 保持。共享 Agent 已按主仓库 `.research-temp/platform-slots-coordination-video.json` 交接其他聊天，本轮不再修改其部署、配置或运行池。
+
+**第 2 部分的本轮发布、真实草稿与采用门禁验收已完成**：r5／compiler v3 已正式发布，工作台与 executor 均 1/1 Ready，实际 digest、鉴权及 runtime 绑定匹配，旧 Pod 已停止。新版原声草稿 `8b32626a-4956-4a4d-90c6-ac4a2b299448` 已 completed；18 秒／432 帧的 1280×720、24fps H.264／AAC MP4 完整解码通过，原完整录音无截断、整段 PCM 相关系数 0.9999526875、lag 0。三个实际抽帧样本未见文字裁切，移动及连线可见。草稿完成时 revision 5 的 motion／audio 均未自动采用；随后原录音显式采用至 revision 6、motion 显式采用至 revision 7。真实正式 delivery 返回 HTTP 409 `motion_timing_needs_review`，保持 estimated／pending，没有伪造真人核对。整片讲解、节奏、人工时序与声音自然度仍需后续验收。
+
+r5 发布后只读检查已确认原 7 项目／7 表的全部旧行各列及历史媒体摘要保持；另有两个隔离验收项目，总项目数 9，active 0，八音色保持。发布未修改共享 Agent、迁移数据库或调用模型。首个草稿的文字溢出失败、r4 严格预检拒绝及其修复过程均保留：v3 使用整数行高和明确留白，没有放宽检查或改写 v1／v2 冻结字节。
+
+本轮已使用 **4 个上游 Agent 任务／14 个模型回合，TTS 0**；任务预算已用完，不再提交 Agent，后续复用原候选和原完整录音。准确镜像、测试批次、失败证据及剩余事项见 [MOTION_PRODUCTION_VALIDATION.md](MOTION_PRODUCTION_VALIDATION.md)。离线 UI 的 18／36 秒请求复用 3 秒 MP4，只验证选择与门禁。项目统一音色及八个选项保留；真实旁白时间仍为 estimated／pending，声音自然度与整片效果仍待验收。
+
+## 历史记录：本轮动态生产接线之前
+
+下方保留接线前的开发、样片与既有静态／音频发布证据；其中“尚未发布／未连接”和各旧 Pod、镜像、测试计数只适用于相应日期和版本。
+
 2026-11-02 开发更新：独立分支 `codex/video-hyperframes-motion` 已增加项目级讲解方案，复用通用 Agent 生成整片旁白、读音、画面重点和语义步骤候选，支持逐镜对比与原子采用；采用后的指引进入原有视觉/motion 输入。页面与持久化链路已做离线验证，功能和新 profile 默认关闭，尚未发布到现网；不改变制作先后顺序，也未新增语音模型/情绪控制。详见 [EXPLANATION.md](EXPLANATION.md)。
 
 HyperFrames 的受控演示样片已获用户“比之前好了一大截”的反馈；生产动态渲染接线、真实 Agent 方案质量和整片主观效果仍需分别验收，不能把离线接口通过当作成片满意。以下部署记录是现有静态服务的历史证据。
