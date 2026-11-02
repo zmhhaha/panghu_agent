@@ -617,10 +617,12 @@ def test_model_failure_retains_existing_confirmed_plan_and_checkpoint(database):
 
 
 def test_requested_cancellation_takes_precedence_over_remote_model_failure(database):
+    from ppt_service.server.models import UsageRecord
     control, service = connector(database)
     assert control.tick()['status'] == 'uploading'
     assert control.tick()['status'] == 'submitted'
-    next(iter(service.jobs.values())).update(state='failed', error_code='model_error')
+    remote = next(iter(service.jobs.values()))
+    remote.update(state='failed', error_code='model_error')
     with database.sessions.begin() as session:
         Repository(session).cancel(session.get(Job, database.job_id))
         deadline = session.get(Job, database.job_id).deadline
@@ -629,7 +631,25 @@ def test_requested_cancellation_takes_precedence_over_remote_model_failure(datab
         job = session.get(Job, database.job_id)
         assert job.status == 'cancelled' and job.error_code is None and job.stopped is True
         assert job.deadline == deadline and session.get(ExecutionSlot, 1).job_id is None
-        assert session.get(AgentOutbox, job.id).result == {'status': 'cancelled'}
+        out = session.get(AgentOutbox, job.id)
+        assert {key: value for key, value in out.result.items() if key != 'accounting'} == {'status': 'cancelled'}
+        accounting = out.result['accounting']
+        source_id = remote['job_id'] + ':' + digest({'attempt': remote['attempt']})
+        assert accounting['schema'] == 'ppt-service.agent-usage.v1'
+        assert accounting['terminal_state'] == 'failed'
+        assert accounting['remote_job_id'] == out.remote_job_id == remote['job_id']
+        assert accounting['remote_attempt'] == remote['attempt']
+        assert accounting['provider_request_id'] == source_id
+        assert accounting['usage'] == {'input_tokens': None, 'output_tokens': None,
+            'reported_cost': None, 'currency': None, 'cost_status': 'unknown',
+            'tokens_complete': False, 'model': None}
+        rows = session.scalars(select(UsageRecord).where(UsageRecord.job_id == job.id)).all()
+        assert len(rows) == 1
+        receipt = rows[0]
+        assert receipt.provider == 'agent-service' and receipt.provider_request_id == source_id
+        assert receipt.attempt == out.attempt and receipt.outcome == 'failed'
+        assert receipt.input_tokens is receipt.output_tokens is receipt.reported_cost is None
+        assert receipt.cost_status == 'unknown'
         assert not session.scalars(select(JobEvent).where(
             JobEvent.job_id == job.id, JobEvent.type == 'job.failed')).all()
     assert len(service.submissions) == len(service.cancellations) == 1
