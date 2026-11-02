@@ -27,6 +27,7 @@ from agent_service.profiles.ppt import (PPTProfile, checkpoint_descriptor, valid
 from ppt_service.server.models import AgentOutbox, Checkpoint, ExecutionSlot, Job, Plan, Project, Version
 from ppt_service.server.phase_limits import phase_timeout_seconds
 from ppt_service.server.repository import Repository
+from ppt_service.server.usage import AGENT_PROVIDER, normalize_agent_usage, preserve_accounting
 from ppt_service.server.needs_input import normalize_questions
 from .execution import ControlError
 from .staging import EXT, atomic_json, copy_file, copy_tree, make_readonly, open_regular, read_json, require_storage
@@ -230,6 +231,41 @@ class AgentConnector:
         require(out.business_ref == out.request['business_ref'], 'agent_outbox_binding_invalid')
         return out, job, project, slot
 
+    def _record_terminal_usage(self, session, out, job, remote):
+        """Freeze one authenticated terminal snapshot in the stopped transaction.
+
+        The Agent job endpoint owns this snapshot. Event payloads, candidate
+        artifacts and private model logs are never accounting inputs. Existing
+        slot/job/outbox locks serialize restart/replay imports of this source.
+        """
+        require(remote.get('job_id') == out.remote_job_id
+                and remote.get('business_ref') == out.business_ref
+                and remote.get('pins') == out.remote_pins
+                and remote.get('state') in TERMINAL_STATES
+                and remote.get('state') != 'quarantined', 'agent_usage_binding_invalid')
+        attempt = remote.get('attempt')
+        not_started = remote.get('not_started') is True and attempt is None
+        require(not_started or job.stopped is True, 'agent_usage_stop_unverified')
+        identity = 'not-started' if not_started else digest({'attempt': attempt})
+        source_id = remote['job_id'] + ':' + identity
+        usage = normalize_agent_usage(remote.get('usage'))
+        frozen = {'schema': 'ppt-service.agent-usage.v1', 'provider_request_id': source_id,
+                  'remote_job_id': remote['job_id'], 'remote_attempt': copy.deepcopy(attempt),
+                  'terminal_state': remote['state'], 'usage': usage}
+        old = out.result.get('accounting') if type(out.result) is dict else None
+        require(old is None or old == frozen, 'agent_terminal_usage_changed')
+        # A NULL-valued receipt preserves an observed unknown result. It is
+        # distinct from a zero-token or zero-cost supplier measurement.
+        row = Repository(session).record_usage(job.id, out.attempt, phase=job.kind,
+            outcome=remote['state'], provider=AGENT_PROVIDER, provider_request_id=source_id,
+            model=usage['model'], input_tokens=usage['input_tokens'], output_tokens=usage['output_tokens'],
+            reported_cost=usage['reported_cost'], currency=usage['currency'])
+        require(all(getattr(row, key) == usage[key] for key in
+                    ('model', 'input_tokens', 'output_tokens', 'reported_cost', 'currency')),
+                'agent_terminal_usage_changed')
+        row.cost_status = usage['cost_status']
+        out.result = dict(out.result or {}, accounting=frozen)
+
     def _recheck_review_source(self, session, job):
         if 'review_base' not in job.input_snapshot:
             return
@@ -246,7 +282,7 @@ class AgentConnector:
             out, job, _, _ = self._fenced(s, jid)
             require(job.stopped and job.status in ('collecting', 'validating'), 'stop_proof_required')
             Repository(s).finish_failed(jid, out.attempt, out.fencing_token, error_code=code)
-            out.state = 'mapped'; out.result = {'status': 'failed', 'error_code': code}
+            out.state = 'mapped'; out.result = preserve_accounting(out, {'status': 'failed', 'error_code': code})
             if diagnostic is not None:
                 from ppt_service.server.quality_diagnostics import known_code
                 task = out.request.get('task') if type(out.request) is dict else None
@@ -398,8 +434,8 @@ class AgentConnector:
                     'agent_validation_binding_invalid')
             if validated.get('status') == 'needs_input':
                 Repository(s).finish_failed(jid, out.attempt, out.fencing_token, error_code='execution_needs_input')
-                out.state = 'mapped'; out.result = {'status': 'needs_input',
-                    'questions': normalize_questions(validated.get('questions'))}
+                out.state = 'mapped'; out.result = preserve_accounting(out, {'status': 'needs_input',
+                    'questions': normalize_questions(validated.get('questions'))})
                 return
             key = f'projects/{project.id}/checkpoints/{uuid4()}'
             target = self.config.data_root / key
@@ -420,13 +456,13 @@ class AgentConnector:
                 plan = repo.accept_plan(jid, out.attempt, out.fencing_token,
                         outline=validated['outline'], design=validated['design'], checkpoint_key=key,
                         checkpoint_manifest=checkpoint, independently_validated=True)
-                out.result = {'status': 'awaiting_confirmation', 'plan_revision': plan.revision}
+                out.result = preserve_accounting(out, {'status': 'awaiting_confirmation', 'plan_revision': plan.revision})
             elif job.kind == 'prepare':
                 require(validated.get('accepted') is True, 'agent_candidate_unaccepted')
                 atomic_json(target / 'checkpoint.json', checkpoint); make_readonly(target)
                 following = repo.accept_prepared(jid, out.attempt, out.fencing_token,
                         checkpoint_key=key, checkpoint_manifest=checkpoint, independently_validated=True)
-                out.result = {'status': 'prepared', 'generate_job_id': following.id}
+                out.result = preserve_accounting(out, {'status': 'prepared', 'generate_job_id': following.id})
             else:
                 # Even a completed generic job cannot bypass pending visual and
                 # delivery acceptance. Persist an owner-private review version.
@@ -479,7 +515,7 @@ class AgentConnector:
                 repo.save_review_version(jid, out.attempt, out.fencing_token, version_id=version_id,
                     manifest=public, artifact_root=artifact_key, checkpoint_key=key,
                     checkpoint_manifest=checkpoint, review_validated=True)
-                out.result = {'status': 'review', 'version_id': version_id}
+                out.result = preserve_accounting(out, {'status': 'review', 'version_id': version_id})
             out.result = dict(out.result, artifact_manifest_sha256=read_json(snapshot, 'remote-job.json')['artifact_manifest_sha256'])
             out.state = 'mapped'; out.checkpoint_ref = ref
 
@@ -618,13 +654,14 @@ class AgentConnector:
                 and remote.get('state') in ('cancelled', 'timed_out')):
             with self.sessions.begin() as s:
                 out, job, project, slot = self._fenced(s, jid)
+                self._record_terminal_usage(s, out, job, remote)
                 # The authenticated service has terminalized an unadmitted job.
                 # Keep stopped false: there was no process to observe.
                 job.status = 'cancelled' if cancelled else 'failed'
                 job.error_code = None if cancelled else 'execution_timeout'
                 project.active_job_id = None; project.stage = 'ready' if project.latest_version_id else 'draft'
                 project.cleanup_ready = project.deletion_requested; slot.job_id = None
-                out.state = 'mapped'; out.result = {'status': job.status}
+                out.state = 'mapped'; out.result = preserve_accounting(out, {'status': job.status})
                 Repository(s).event(job, 'job.cancelled' if cancelled else 'job.failed',
                                     {} if cancelled else {'error_code': job.error_code})
             return {'status': 'not_started_terminal', 'job_id': jid}
@@ -638,8 +675,9 @@ class AgentConnector:
             require(out.remote_pins == remote.get('pins'), 'agent_execution_binding_changed')
             stopped = Repository(s).prove_stopped(jid, out.attempt, out.fencing_token,
                         job_uid=job.job_uid, all_writers_stopped=True)
+            self._record_terminal_usage(s, out, stopped, remote)
             if stopped.status == 'cancelled':
-                out.state = 'mapped'; out.result = {'status': 'cancelled'}
+                out.state = 'mapped'; out.result = preserve_accounting(out, {'status': 'cancelled'})
                 return {'status': 'cancelled', 'job_id': jid}
             if remote['state'] not in ('completed', 'needs_input'):
                 if remote['state'] == 'timed_out':
@@ -652,7 +690,7 @@ class AgentConnector:
                 else:
                     code = 'execution_interrupted'
                 Repository(s).finish_failed(jid, out.attempt, out.fencing_token, error_code=code)
-                out.state = 'mapped'; out.result = {'status': 'failed', 'error_code': code}
+                out.state = 'mapped'; out.result = preserve_accounting(out, {'status': 'failed', 'error_code': code})
                 return {'status': 'failed', 'job_id': jid}
             _trusted_progress(Repository(s), stopped, 'collecting')
             request = copy.deepcopy(out.request)

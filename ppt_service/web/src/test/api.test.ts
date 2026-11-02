@@ -13,6 +13,16 @@ beforeEach(async()=>{vi.resetModules();client=await import('../api');});
 afterEach(()=>{vi.unstubAllGlobals();});
 
 describe('profile and CSRF recovery lifecycle',()=>{
+ it('reads only the authenticated account usage contract without exposing raw ledger fields or inventing a shared quota balance',async()=>{
+  const usage={scope:'account',input_tokens:123,output_tokens:null,tokens_status:'partial',reported_cost:null,currency:null,cost_status:'unknown',cost_breakdown:[],record_count:1,unknown_record_count:1};
+  const quota={enabled:true,period:'2026-11',generation_limit:5,revision_limit:8,generation_count:2,revision_count:3,generation_remaining:3,revision_remaining:5};
+  const fetcher=vi.fn().mockResolvedValue(response({sub:'owner',csrf_token:'fixture-token',usage:{...usage,private_ledger:'SECRET /work/private'},quota:{...quota,remaining:100,private_key:'SECRET'}}));
+  vi.stubGlobal('fetch',fetcher);const profile=await client.api.me();
+  expect(profile).toMatchObject({subject:'owner',usage,quota});expect(profile).not.toHaveProperty('csrf_token');
+  expect(JSON.stringify(profile.usage)).not.toMatch(/SECRET|private|ledger/);expect(profile.quota).not.toHaveProperty('remaining');
+  expect(profile.quota).not.toHaveProperty('private_key');
+ });
+
  it('binds review-only revision to the explicit draft and current saved review without a project PATCH',async()=>{
   const fetcher=vi.fn().mockResolvedValueOnce(response({csrf_token:'fixture-token'})).mockResolvedValueOnce(response({job_id:'new-review-job'},202));
   vi.stubGlobal('fetch',fetcher);await client.api.me();

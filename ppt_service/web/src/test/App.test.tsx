@@ -1,15 +1,56 @@
 import { act, fireEvent, render,screen,waitFor,within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach,describe,it,expect,vi } from 'vitest';
-import App from '../App';
+import App,{UsageView} from '../App';
 import { api } from '../api';
-import { defaultSettings,type Project } from '../domain';
+import { defaultSettings,type Job,type Profile,type Project } from '../domain';
 import { acceptanceClient } from '../acceptance/client';
 import { syntheticSnapshot } from '../acceptance/fixtures';
-vi.mock('../api',async original=>({...await original<typeof import('../api')>(),api:{me:vi.fn(),projects:vi.fn(),project:vi.fn(),versions:vi.fn(),create:vi.fn(),update:vi.fn(),acknowledge:vi.fn(),upload:vi.fn(),confirm:vi.fn(),plan:vi.fn(),generate:vi.fn(),revise:vi.fn(),preview:vi.fn(()=>'/api/v1/versions/v/slides/1/preview'),download:vi.fn()}}));
+vi.mock('../api',async original=>({...await original<typeof import('../api')>(),api:{me:vi.fn(),projects:vi.fn(),project:vi.fn(),versions:vi.fn(),job:vi.fn(),create:vi.fn(),update:vi.fn(),acknowledge:vi.fn(),upload:vi.fn(),confirm:vi.fn(),plan:vi.fn(),generate:vi.fn(),revise:vi.fn(),preview:vi.fn(()=>'/api/v1/versions/v/slides/1/preview'),download:vi.fn()}}));
 vi.mock('../acceptance/client',async original=>({...await original<typeof import('../acceptance/client')>(),acceptanceClient:{load:vi.fn(),save:vi.fn()}}));
 const base:Project={id:'p',title:'真实资料项目',revision:2,stage:'awaiting_confirmation',settings:defaultSettings,assets:[{id:'a',display_name:'资料.md',bytes:10,parse_status:'parsed'}],input_snapshot_hash:'hash',plan:{revision:'2',input_snapshot_hash:'hash',stage:'directions',directions:['A','B','C'].map(id=>({id,title:`方案 ${id}`,description:'来自服务的方向',pages:[{number:1,title:'封面'}],production_settings:{语言:'中文'}}))}};
 beforeEach(()=>{vi.clearAllMocks();localStorage.setItem('ppt:selected-project','p');vi.mocked(api.me).mockResolvedValue({subject:'sub',name:'测试账号',quota:{enabled:false},usage:{input_tokens:10,cost_status:'unknown'}});vi.mocked(api.projects).mockResolvedValue([base]);vi.mocked(api.project).mockResolvedValue(base);vi.mocked(api.versions).mockResolvedValue([]);vi.mocked(acceptanceClient.load).mockImplementation(async(_project,version)=>{const value=syntheticSnapshot(version);return {...value,project_id:'p',binding:{...value.binding,project_id:'p'},pages:[{...value.pages[0],title:'审核草稿封面'}]};});});
+describe('observed usage presentation',()=>{
+ const profile:Profile={subject:'usage-user',name:'测试账号',usage:{scope:'account',input_tokens:12000,output_tokens:8000,tokens_status:'known',reported_cost:'5.00',currency:'USD',cost_status:'reported'},quota:{enabled:false}};
+ const task:Job={id:'task',project_id:'p',kind:'generate',status:'failed',last_event_seq:4};
+ it('never labels account totals as the task usage when task observations are absent or mismatched',()=>{
+  const view=render(<UsageView profile={profile} job={task}/>);
+  const region=screen.getByRole('region',{name:'本任务用量'});
+  expect(region).toHaveTextContent('未知 / 未知 tokens');expect(region).toHaveTextContent('费用未知');expect(region).not.toHaveTextContent('12000');expect(region).not.toHaveTextContent('5.00 USD');
+  view.rerender(<UsageView profile={profile} job={{...task,usage:profile.usage}}/>);
+  expect(region).toHaveTextContent('未知 / 未知 tokens');expect(region).not.toHaveTextContent('12000');
+ });
+ it('identifies account totals and displays task partial observations without presenting them as complete cost',()=>{
+  const view=render(<UsageView profile={profile}/>);
+  expect(screen.getByRole('region',{name:'本人累计用量'})).toHaveTextContent('12000 / 8000 tokens');
+  view.rerender(<UsageView profile={profile} job={{...task,usage:{scope:'task',input_tokens:24,output_tokens:null,tokens_status:'partial',reported_cost:'0.25',currency:'USD',cost_status:'partial'}}}/>);
+  const region=screen.getByRole('region',{name:'本任务用量'});
+  expect(region).toHaveTextContent('24 / 未知 tokens');expect(region).toHaveTextContent('未报告部分未知');
+  expect(region).toHaveTextContent('0.25 USD（已报告部分，另有费用未知）');expect(region).toHaveTextContent('未报告费用不计为零');
+ });
+ it('refreshes account usage and distinct quota balances when project status is refreshed',async()=>{
+  const user=userEvent.setup();render(<App/>);await screen.findByRole('heading',{name:'真实资料项目'});
+  vi.mocked(api.me).mockResolvedValue({...profile,quota:{enabled:true,period:'2026-11',generation_count:2,revision_count:3,generation_remaining:4,revision_remaining:5}});
+  await user.click(screen.getByRole('button',{name:'刷新状态'}));
+  await waitFor(()=>expect(screen.getByRole('region',{name:'本人累计用量'})).toHaveTextContent('12000 / 8000 tokens'));
+  const region=screen.getByRole('region',{name:'本人累计用量'});
+  expect(region).toHaveTextContent('制作剩余 4 次 / 修改剩余 5 次');expect(region).toHaveTextContent('已用制作 2 / 修改 3 次');
+  expect(api.me).toHaveBeenCalledTimes(2);
+ });
+ it('refreshes the account totals and quota when a background job settles without a browser reload',async()=>{
+  const running:Job={...task,status:'running',last_event_seq:1};
+  const completed:Job={...task,status:'succeeded',last_event_seq:2,usage:{scope:'task',input_tokens:37,output_tokens:12,tokens_status:'partial',reported_cost:null,cost_status:'unknown'}};
+  vi.mocked(api.project).mockResolvedValueOnce({...base,active_job_id:task.id,latest_job:running}).mockResolvedValue({...base,active_job_id:null,latest_job:completed});
+  vi.mocked(api.job).mockResolvedValue(completed);
+  vi.mocked(api.me).mockResolvedValueOnce({...profile,quota:{enabled:false}}).mockResolvedValue({...profile,quota:{enabled:true,period:'2026-11',generation_count:1,revision_count:0,generation_remaining:4,revision_remaining:8}});
+  render(<App/>);
+  await waitFor(()=>expect(screen.getByRole('region',{name:'本任务用量'})).toHaveTextContent('37 / 12 tokens'));
+  await waitFor(()=>expect(screen.getByRole('region',{name:'本任务用量'})).toHaveTextContent('制作剩余 4 次 / 修改剩余 8 次'));
+  expect(api.me).toHaveBeenCalledTimes(2);
+  expect(api.generate).not.toHaveBeenCalled();expect(api.revise).not.toHaveBeenCalled();
+ });
+});
+
 describe('workbench business interactions',()=>{
  it('shows review records and download with outstanding gates and no published revision form',async()=>{
   const draft={id:'review-1',status:'review' as const,can_revise:false,created_at:'2026-10-24T00:00:00Z',required_pending_gates:['independent_export_build_contract','independent_visual_review','powerpoint_open_edit_save_reopen'],slides:[{number:1,title:'审核草稿封面'}]};

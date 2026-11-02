@@ -1,6 +1,6 @@
 import { describe,it,expect,vi,afterEach } from 'vitest';
-import { adaptJob,adaptProject,api,ApiError,consumeEvents,IntentKeys,request,safeError } from '../api';
-import { canGenerate,defaultSettings,usageCost,validateFiles,type Project } from '../domain';
+import { adaptJob,adaptProject,adaptQuota,adaptUsage,api,ApiError,consumeEvents,IntentKeys,request,safeError } from '../api';
+import { canGenerate,defaultSettings,quotaRemaining,usageCost,usageTokens,validateFiles,type Project } from '../domain';
 const project:Project={id:'p',title:'项目',revision:2,stage:'awaiting_confirmation',settings:defaultSettings,assets:[],input_snapshot_hash:'hash',confirmed_plan_revision:'2',plan:{revision:'2',stage:'directions',input_snapshot_hash:'hash',confirmed_direction_id:'B'}};
 afterEach(()=>vi.unstubAllGlobals());
 describe('immutable confirmation',()=>{
@@ -102,9 +102,51 @@ describe('retry and safety',()=>{
  it('keeps stable keys for same action and changes on changed payload or successful new intent',()=>{const keys=new IntentKeys();const a=keys.key('plan',{feedback:'a'});expect(keys.key('plan',{feedback:'a'})).toBe(a);expect(keys.key('plan',{feedback:'b'})).not.toBe(a);keys.complete('plan',{feedback:'a'});expect(keys.key('plan',{feedback:'a'})).not.toBe(a);});
  it('does not expose server detail, stack, paths, or HTML errors',async()=>{vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({detail:{code:'INTERNAL',message:'secret-token /work/private'}}),{status:500})));try{await request('/projects');throw new Error('expected failure');}catch(e){expect(safeError(e)).not.toContain('secret-token');expect(safeError(e)).not.toContain('/work');}});
  it('surfaces authentication and ownership errors with no project details',async()=>{vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response('',{status:403})));await expect(request('/projects/private')).rejects.toMatchObject({code:'FORBIDDEN'});});
- it('unknown supplier cost remains unknown instead of zero',()=>{expect(usageCost({input_tokens:12,reported_cost:null,cost_status:'unknown'})).toContain('未知');expect(usageCost({reported_cost:0,cost_status:'reported',currency:'USD'})).toBe('0 USD');});
+ it('unknown supplier cost remains unknown instead of zero',()=>{expect(usageCost({input_tokens:12,reported_cost:null,cost_status:'unknown'})).toContain('未知');expect(usageCost({reported_cost:'0',cost_status:'reported',currency:'USD'})).toBe('0 USD');});
  it('bounds uploads by per-file size, file count and project total',()=>{const file=new File(['text'],'text.md');expect(validateFiles([file],[])).toBe('');expect(validateFiles([new File(['x'],'x.svg')],[])).toContain('请选择');expect(validateFiles(Array(11).fill(file),[])).toContain('10');const huge={name:'big.pdf',size:26*1024**2} as File;expect(validateFiles([huge],[])).toContain('25');});
 });
+describe('observed usage and separate quota counts',()=>{
+ const observed={scope:'task',input_tokens:120,output_tokens:40,tokens_status:'known',reported_cost:'0.0001234567890123456789',currency:'USD',cost_status:'reported',cost_breakdown:[{currency:'USD',reported_cost:'0.0001234567890123456789'}],record_count:2,unknown_record_count:0};
+ it('preserves exact supplier decimals and task usage while dropping private ledger fields',()=>{
+  const job=adaptJob({id:'usage-job',status:'failed',kind:'generate',usage:{...observed,private_ledger:'/work/private',provider_key:'SECRET'}});
+  expect(job.usage).toEqual(observed);expect(usageTokens(job.usage)).toBe('120 / 40 tokens');
+  expect(usageCost(job.usage)).toBe('0.0001234567890123456789 USD');
+  expect(JSON.stringify(job.usage)).not.toMatch(/SECRET|private|ledger/);
+ });
+ it('keeps unknown and partially observed tokens or charges distinct from complete totals',()=>{
+  const usage=adaptUsage({...observed,input_tokens:120,output_tokens:null,tokens_status:'partial',reported_cost:'1.25',cost_status:'partial',unknown_record_count:1},'task');
+  expect(usageTokens(usage)).toBe('120 / 未知 tokens');
+  expect(usage?.tokens_status).toBe('partial');expect(usageCost(usage)).toBe('1.25 USD（已报告部分，另有费用未知）');
+  const unknown=adaptUsage({...observed,input_tokens:null,output_tokens:null,tokens_status:'unknown',reported_cost:null,currency:null,cost_status:'unknown',cost_breakdown:[],unknown_record_count:2},'task');
+  expect(usageTokens(unknown)).toBe('未知 / 未知 tokens');expect(usageCost(unknown)).toContain('费用未知');
+  expect(usageCost(unknown)).not.toContain('0 USD');
+ });
+ it('lists currencies separately instead of adding or converting them',()=>{
+  const usage=adaptUsage({...observed,reported_cost:null,currency:null,cost_status:'mixed_currency',cost_breakdown:[{currency:'EUR',reported_cost:'2.50'},{currency:'USD',reported_cost:'1.25'}],unknown_record_count:1},'task');
+  expect(usageCost(usage)).toBe('2.50 EUR；1.25 USD（不同币种分别列示，另有费用未知）');
+  expect(usage?.reported_cost).toBeNull();expect(usage?.currency).toBeNull();
+ });
+ it('does not infer unknown costs from incomplete tokens when every mixed-currency charge is reported',()=>{
+  const usage=adaptUsage({...observed,output_tokens:null,tokens_status:'partial',reported_cost:null,currency:null,cost_status:'mixed_currency',cost_breakdown:[{currency:'EUR',reported_cost:'2.50'},{currency:'USD',reported_cost:'1.25'}],unknown_record_count:0},'task');
+  expect(usageTokens(usage)).toBe('120 / 未知 tokens');expect(usage?.tokens_status).toBe('partial');
+  expect(usageCost(usage)).toBe('2.50 EUR；1.25 USD（不同币种分别列示）');
+  expect(usageCost(usage)).not.toContain('另有费用未知');
+ });
+ it('does not substitute an account total or malformed data for a task observation',()=>{
+  expect(adaptUsage({...observed,scope:'account'},'task')).toBeUndefined();
+  expect(adaptJob({id:'missing',usage:{...observed,scope:'account'}}).usage).toBeUndefined();
+  for(const value of [null,[],false,'raw'])expect(adaptUsage(value,'task')).toBeUndefined();
+  const malformed=adaptUsage({...observed,input_tokens:-1,output_tokens:Number.MAX_SAFE_INTEGER+1,reported_cost:'NaN',currency:'USD',cost_breakdown:[{currency:'<img>',reported_cost:'1'},{currency:'USD',reported_cost:'-1'}]},'task');
+  expect(usageTokens(malformed)).toBe('未知 / 未知 tokens');expect(usageCost(malformed)).toContain('未知');expect(malformed?.cost_breakdown).toEqual([]);
+ });
+ it('accepts only enabled, distinct server-reported making and revision quota balances',()=>{
+  const quota=adaptQuota({enabled:true,period:'2026-11',generation_limit:5,revision_limit:8,generation_count:2,revision_count:3,generation_remaining:3,revision_remaining:5,remaining:99,private_key:'SECRET'});
+  expect(quotaRemaining(quota)).toBe('制作剩余 3 次 / 修改剩余 5 次');expect(JSON.stringify(quota)).not.toMatch(/SECRET|private_key|"remaining"/);
+  expect(quotaRemaining(adaptQuota({enabled:false,generation_remaining:99,revision_remaining:99}))).toBe('未启用');
+  expect(quotaRemaining(adaptQuota({enabled:true,generation_remaining:-1,revision_remaining:2.5}))).toBe('制作剩余 待核对 / 修改剩余 待核对');
+ });
+});
+
 describe('durable business SSE',()=>{
  it('uses actual Last-Event-ID and ignores duplicate or malformed events and raw tool payload',async()=>{
  const encoder=new TextEncoder();const stream=new ReadableStream({start(c){c.enqueue(encoder.encode('id: 7\nevent: stage.changed\ndata: {"type":"stage.changed","payload":{"stage":"running","raw":"secret"},"seq":7}\n\nid: 7\ndata: {"type":"duplicate","seq":7}\n\nid: 9\ndata: {"type":"job.succeeded","payload":{"status":"succeeded"}}\n\n'));c.close();}});const fetcher=vi.fn().mockResolvedValue(new Response(stream));vi.stubGlobal('fetch',fetcher);const event=vi.fn();await consumeEvents('j',6,new AbortController().signal,event);expect(fetcher.mock.calls[0][1].headers['Last-Event-ID']).toBe('6');expect(event).toHaveBeenCalledTimes(2);expect(event.mock.calls[0][0]).toEqual({seq:7,type:'stage.changed',payload:{stage:'running',status:undefined}});expect(event.mock.calls[1][0].seq).toBe(9);

@@ -1,4 +1,4 @@
-import { hasConfirmedCommunication, type Job, type Profile, type Project, type QualityDiagnostic, type Version } from './domain';
+import { hasConfirmedCommunication, validUsageAmount, validUsageCount, validUsageCurrency, type Job, type Profile, type Project, type QualityDiagnostic, type Quota, type Usage, type Version } from './domain';
 import type { AcceptanceBinding } from './acceptance/contracts';
 import { adaptCommunication, adaptDirections, adaptPlanQuestions } from './planning';
 const root = '/api/v1';
@@ -112,7 +112,7 @@ function readProfile():Promise<Profile> {
     if(epoch!==authenticationEpoch)throw new ApiError('UNAUTHENTICATED',401);
     csrfToken=typeof raw.csrf_token==='string'&&raw.csrf_token?raw.csrf_token:null;
     const {csrf_token:_csrf,...profile}=raw;
-    return {...profile,subject:raw.sub??raw.subject,name:raw.name??raw.display_name??'我的账号'} as Profile;
+    return {...profile,subject:raw.sub??raw.subject,name:raw.name??raw.display_name??'我的账号',usage:adaptUsage(raw.usage,'account'),quota:adaptQuota(raw.quota)} as Profile;
   })();
   const pending=operation.finally(()=>{if(pendingProfile===pending)pendingProfile=null;});
   pendingProfile=pending;
@@ -121,6 +121,25 @@ function readProfile():Promise<Profile> {
 export async function mutate<T>(path:string,payload:unknown = {},method='POST',signal?:AbortSignal):Promise<T> { const key=intents.key(path,payload); const result=await request<T>(path,{method,body:JSON.stringify(payload),headers:{'Idempotency-Key':key},signal}); intents.complete(path,payload); return result; }
 const id = encodeURIComponent;
 type RecordValue = Record<string, any>;
+export function adaptUsage(raw: unknown, scope: 'task' | 'account'): Usage | undefined {
+ if(!raw||typeof raw!=='object'||Array.isArray(raw))return;
+ const value=raw as RecordValue;
+ if(value.scope!==scope)return;
+ const count=(field:string)=>validUsageCount(value[field])?value[field]:null;
+ const input_tokens=count('input_tokens'),output_tokens=count('output_tokens');
+ const tokens_status=value.tokens_status==='known'&&input_tokens!==null&&output_tokens!==null?'known':value.tokens_status==='partial'&&(input_tokens!==null||output_tokens!==null)?'partial':'unknown';
+ const cost_breakdown=Array.isArray(value.cost_breakdown)?value.cost_breakdown.slice(0,100).filter((row:unknown):row is RecordValue=>!!row&&typeof row==='object'&&!Array.isArray(row)&&validUsageCurrency((row as RecordValue).currency)&&validUsageAmount((row as RecordValue).reported_cost)).map(row=>({currency:row.currency,reported_cost:row.reported_cost})):[];
+ const knownCost=validUsageAmount(value.reported_cost)&&validUsageCurrency(value.currency);
+ const cost_status=(value.cost_status==='reported'||value.cost_status==='partial')&&knownCost?value.cost_status:value.cost_status==='mixed_currency'&&cost_breakdown.length?'mixed_currency':'unknown';
+ return {scope,input_tokens,output_tokens,tokens_status,reported_cost:knownCost&&cost_status!=='unknown'&&cost_status!=='mixed_currency'?value.reported_cost:null,currency:knownCost&&cost_status!=='unknown'&&cost_status!=='mixed_currency'?value.currency:null,cost_status,cost_breakdown,record_count:count('record_count')??0,unknown_record_count:count('unknown_record_count')??0};
+}
+export function adaptQuota(raw: unknown): Quota | undefined {
+ if(!raw||typeof raw!=='object'||Array.isArray(raw))return;
+ const value=raw as RecordValue;
+ const count=(field:string)=>validUsageCount(value[field])?value[field]:null;
+ const enabled=value.enabled===true;
+ return {enabled,period:typeof value.period==='string'&&value.period.length<=100&&!/[\u0000-\u001f\u007f]/.test(value.period)?value.period:null,generation_limit:count('generation_limit'),revision_limit:count('revision_limit'),generation_count:count('generation_count'),revision_count:count('revision_count'),generation_remaining:enabled?count('generation_remaining'):null,revision_remaining:enabled?count('revision_remaining'):null};
+}
 export function adaptProject(raw: RecordValue): Project {
  const plans = raw.plans ?? []; const latest = plans.length ? plans[plans.length-1] : raw.plan;
  const options = latest?.design?.directions ?? latest?.design?.options ?? latest?.directions;
@@ -147,11 +166,13 @@ function adaptQualityDiagnostic(value:unknown, jobId:unknown):QualityDiagnostic|
  return {schema_version:1,error_code:raw.error_code,stage:raw.stage,title:raw.title,message:raw.message,suggestion:raw.suggestion,retry_stage:raw.retry_stage,publication_authorized:false,diagnostic_download_url:raw.diagnostic_download_url};
 }
 export function adaptJob(raw:RecordValue):Job {
- const {needs_input:reported,quality_diagnostics:reportedDiagnostic,...fields}=raw;
+ const {needs_input:reported,quality_diagnostics:reportedDiagnostic,usage:reportedUsage,...fields}=raw;
+ const usage=adaptUsage(reportedUsage,'task');
  const quality_diagnostics=raw.status==='failed'&&raw.error_code==='quality_gate_failed'?adaptQualityDiagnostic(reportedDiagnostic,raw.id??raw.job_id):undefined;
  let remaining=10000;
  const questions=Array.isArray(reported?.questions)?reported.questions.slice(0,100).filter((value:unknown):value is string=>typeof value==='string'&&!!value.trim()).slice(0,20).map((value:string)=>{const text=value.slice(0,Math.min(1000,remaining));remaining-=text.length;return text;}).filter(Boolean):[];
  return {...fields,id:raw.id??raw.job_id,last_event_seq:raw.event_cursor??raw.last_event_seq??0,
+  ...(usage?{usage}:{}),
   ...(raw.status==='failed'&&raw.error_code==='execution_needs_input'&&reported?{needs_input:{questions}}:{}),
   ...(quality_diagnostics?{quality_diagnostics}:{})} as Job;
 }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Check, ChevronRight, CircleAlert, FileText, FolderClosed, Layers, LoaderCircle, LogOut, Plus, Presentation, RefreshCw, ShieldCheck, Upload, X } from 'lucide-react';
 import { api, ApiError, safeError } from './api';
-import { activeStatuses, canGenerate, defaultSettings, hasConfirmedCommunication, label, usageCost, validateFiles, type Communication, type Direction, type Job, type Profile, type Project, type Settings, type Version } from './domain';
+import { activeStatuses, canGenerate, defaultSettings, hasConfirmedCommunication, label, quotaRemaining, usageCost, usageTokens, validUsageCount, validateFiles, type Communication, type Direction, type Job, type Profile, type Project, type Settings, type Version } from './domain';
 import { useJob } from './useJob';
 import { JobTiming } from './JobTiming';
 import { QualityDiagnosticNotice } from './QualityDiagnosticNotice';
@@ -59,17 +59,30 @@ function Consent({checked,onChange,disabled=false}:{checked:boolean;onChange:(v:
  if(checked)return <p className="consent" role="status"><ShieldCheck size={18} aria-hidden="true"/><span>本项目已同意使用外部模型，上传、规划、生成和修改无需重复确认。</span></p>;
  return <label className="consent"><input type="checkbox" checked={false} disabled={disabled} onChange={e=>{if(e.target.checked)onChange(true);}}/><span>我同意将本项目必要的正文及图片发送给服务指定的外部模型，用于规划、生成与修改。本项目只需确认一次。请仅上传有权使用的资料。</span></label>;
 }
-function UsageView({profile,job}:{profile:Profile;job?:Job|null}) {const usage=job?.usage??profile.usage;return <div className="usage"><div><span>已观测输入 / 输出</span><strong>{usage?.input_tokens??'未知'} / {usage?.output_tokens??'未知'} tokens</strong></div><div><span>供应商费用</span><strong>{usageCost(usage)}</strong></div><div><span>用户额度</span><strong>{profile.quota?.enabled ? `剩余 ${profile.quota.remaining??'待核对'} · ${profile.quota.period??'当前周期'}`:'未启用'}</strong></div></div>;}
+export function UsageView({profile,job}:{profile:Profile;job?:Job|null}) {
+ const scope=job?'task':'account';
+ // An unavailable task observation must never inherit this account's totals.
+ const candidate=job?job.usage:profile.usage;
+ const usage=candidate?.scope&&candidate.scope!==scope?undefined:candidate;
+ const quota=profile.quota;
+ const count=(value:unknown)=>validUsageCount(value)?String(value):'待核对';
+ return <div className="usage" role="region" aria-label={job?'本任务用量':'本人累计用量'}>
+  <div><span>{job?'本任务':'本人累计'}已观测输入 / 输出</span><strong>{usageTokens(usage)}</strong>{usage?.tokens_status==='partial'?<small>仅包含已观测用量，未报告部分未知。</small>:(!usage||usage.tokens_status==='unknown')&&<small>尚无完整的供应商用量记录。</small>}</div>
+  <div><span>供应商已报告费用</span><strong>{usageCost(usage)}</strong><small>以供应商账单为准；未报告费用不计为零。</small></div>
+  <div><span>次数额度</span><strong>{quotaRemaining(quota)}</strong>{quota?.enabled&&<small>{quota.period??'周期待核对'} · 已用制作 {count(quota.generation_count)} / 修改 {count(quota.revision_count)} 次</small>}</div>
+ </div>;
+}
 export default function App() {
  const [profile,setProfile]=useState<Profile|null>(null);const [projects,setProjects]=useState<Project[]>([]);const [selected,setSelected]=useState<string|null>(()=>localStorage.getItem('ppt:selected-project'));const [error,setError]=useState<unknown>(null);const [loading,setLoading]=useState(true);const [creating,setCreating]=useState(false);const [title,setTitle]=useState('');const [busy,setBusy]=useState(false);
  const load=useCallback(async()=>{setLoading(true);setError(null);try{const user=await api.me();setProfile(user);setProjects(await api.projects());}catch(e){setError(e);}finally{setLoading(false);}},[]);
+ const changed=useCallback(()=>{void Promise.all([api.projects(),api.me()]).then(([items,user])=>{setProjects(items);setProfile(user);}).catch(setError);},[]);
  useEffect(()=>{void load();},[load]);
  const select=(id:string|null)=>{setSelected(id);if(id)localStorage.setItem('ppt:selected-project',id);else localStorage.removeItem('ppt:selected-project');};
  async function create(e:React.FormEvent){e.preventDefault();if(busy||!title.trim())return;setBusy(true);try{const p=await api.create(title.trim());setProjects(old=>[p,...old]);setCreating(false);setTitle('');select(p.id);}catch(e){setError(e);}finally{setBusy(false);}}
  return <div className="app"><header className="topbar"><a className="brand" href="/" onClick={e=>{e.preventDefault();select(null);}}><span className="brand-mark"><Presentation size={22}/></span><span>PPT 工作台<small>从资料到可编辑演示稿</small></span></a><div className="account"><span className="test-badge">开发测试中</span>{profile&&<><span className="user-name">{profile.name}</span><a className="icon-link" href="/oauth2/sign_out" aria-label="退出登录"><LogOut size={18}/></a></>}</div></header>
  <div className="release-banner"><ShieldCheck size={16}/><span>当前为试用版本，欢迎反馈使用问题与改进建议。</span></div>{profile?.issuer==='urn:ppt:development'&&<div className="development-notice" role="status">本地开发测试账户 · 正式 SSO 未接通；制稿执行器尚未接通，不会调用模型</div>}
  <div className="shell"><aside className="sidebar"><div className="sidebar-heading"><span>私有项目</span><button className="icon-button" aria-label="创建项目" onClick={()=>{setCreating(true);select(null);}}><Plus size={18}/></button></div><button className={`nav-item ${!selected?'selected':''}`} onClick={()=>select(null)}><FolderClosed size={18}/>全部项目 <span>{projects.length}</span></button><nav aria-label="项目列表">{projects.map(p=><button key={p.id} className={`project-link ${selected===p.id?'selected':''}`} onClick={()=>select(p.id)}><FileText size={16}/><span>{p.title}</span><ChevronRight size={14}/></button>)}</nav><div className="sidebar-foot"><ShieldCheck size={17}/><span>项目仅本人可见<br/>资料与版本保留到主动删除</span></div></aside>
- <main><ErrorBox error={error} onRetry={()=>void load()}/>{loading?<div className="loading" role="status"><LoaderCircle className="spin"/>正在读取账号与项目…</div>:!profile?<div className="welcome"><span className="eyebrow">PPT SERVICE</span><h1>让资料成为清晰的表达</h1><p>登录后创建私有项目、确认方案，再生成可编辑演示稿。</p><a className="button primary" href="/oauth2/start">登录工作台 <ArrowRight size={17}/></a></div>:selected?<Workspace key={selected} id={selected} profile={profile} onBack={()=>select(null)} onChanged={()=>void api.projects().then(setProjects).catch(setError)}/>:<>
+ <main><ErrorBox error={error} onRetry={()=>void load()}/>{loading?<div className="loading" role="status"><LoaderCircle className="spin"/>正在读取账号与项目…</div>:!profile?<div className="welcome"><span className="eyebrow">PPT SERVICE</span><h1>让资料成为清晰的表达</h1><p>登录后创建私有项目、确认方案，再生成可编辑演示稿。</p><a className="button primary" href="/oauth2/start">登录工作台 <ArrowRight size={17}/></a></div>:selected?<Workspace key={selected} id={selected} profile={profile} onBack={()=>select(null)} onChanged={changed}/>:<>
  <div className="page-heading"><div><span className="eyebrow">YOUR WORKSPACE</span><h1>我的项目</h1><p>整理资料，确认表达方向，逐步完成你的演示稿。</p></div><button className="primary" onClick={()=>setCreating(true)}><Plus size={18}/>新建项目</button></div>
  {creating&&<form className="panel create-form" onSubmit={create}><label>项目名称<input autoFocus required maxLength={120} placeholder="例如：季度产品进展汇报" value={title} onChange={e=>setTitle(e.target.value)}/></label><div className="actions"><button className="secondary" type="button" onClick={()=>setCreating(false)}>取消</button><button className="primary" disabled={busy||!title.trim()}>{busy?'正在创建…':'创建私有项目'}</button></div></form>}
  {projects.length?<div className="project-grid">{projects.map(p=><button className="project-card" key={p.id} onClick={()=>select(p.id)}><span className="card-icon"><Presentation size={24}/></span><span className="pill">{label(p.stage)}</span><h2>{p.title}</h2><p>{p.settings?.purpose||'添加资料，开始规划演示稿'}</p><div><span>{p.settings?.pages??8} 页目标</span><span>进入项目 <ArrowRight size={15}/></span></div></button>)}</div>:<Empty title="从第一个项目开始">上传真实资料，确认内容与设计后再启动生成。项目创建后不会自动调用模型。</Empty>}<UsageView profile={profile}/>
@@ -104,7 +117,7 @@ function Workspace({id,profile,onBack,onChanged}:{id:string;profile:Profile;onBa
  // The controller can replace prepare with generate without a browser action.
  // Keep that newest job after the project clears its active task at completion.
  useEffect(()=>{if(project?.active_job_id)setLocalJob(project.active_job_id);},[project?.active_job_id]);
- const settled=useCallback(()=>{void refresh();},[refresh]);
+ const settled=useCallback(()=>{void refresh();onChanged();},[refresh,onChanged]);
  // A just-accepted submission outranks a project read from before its admission.
  // Once the revision advances, the server owns prepare -> generate handoffs.
  const submittedPending=!!submittedJob&&!!project&&project.revision<=submittedJob.projectRevision;
@@ -149,7 +162,7 @@ function Workspace({id,profile,onBack,onChanged}:{id:string;profile:Profile;onBa
  const consent=project.external_model_ack===true;
  const setConsent=(value:boolean)=>{if(value&&!consent)void perform(async()=>{setProject(await api.acknowledge(project));});};
  const disabled=busy||active;
- return <><button className="back link" onClick={onBack}><ArrowLeft size={15}/>全部项目</button><div className="page-heading"><div><span className="eyebrow">PRIVATE PROJECT</span><h1>{project.title}</h1><p><span className="pill">{label(project.stage)}</span><span className="metadata">项目修订 {project.revision}</span></p></div><button className="secondary compact" disabled={busy} onClick={()=>void Promise.all([refresh(),refreshJob()])}><RefreshCw size={16}/>刷新状态</button></div><ErrorBox error={error}/>{parsePanel&&<ErrorBox error={parsePollingError}/>}
+ return <><button className="back link" onClick={onBack}><ArrowLeft size={15}/>全部项目</button><div className="page-heading"><div><span className="eyebrow">PRIVATE PROJECT</span><h1>{project.title}</h1><p><span className="pill">{label(project.stage)}</span><span className="metadata">项目修订 {project.revision}</span></p></div><button className="secondary compact" disabled={busy} onClick={()=>{void Promise.all([refresh(),refreshJob()]);onChanged();}}><RefreshCw size={16}/>刷新状态</button></div><ErrorBox error={error}/>{parsePanel&&<ErrorBox error={parsePollingError}/>}
  {job&&<section className="job-panel" aria-label="当前任务"><div><span className={`status-dot ${active?'pulse':''}`}/><strong role="status">{label(job.status)}</strong><span>{job.stage?label(job.stage):'等待服务状态'}</span><small>{trackedJobId?connection:''}</small></div><div><code>任务 {job.id}</code>{activeStatuses.has(job.status)&&<button className="secondary compact" disabled={busy||job.status==='cancelling'} onClick={()=>void perform(async()=>{setJob(await api.cancel(job.id));})}>{job.status==='cancelling'?'正在停止…':'取消任务'}</button>}</div>{job.error_code&&<ErrorBox error={new ApiError(job.error_code)}/>}<ErrorBox error={trackedJobId?jobError:null}/><NeedsInputNotice job={job} onOpen={()=>setTab('planning')}/><QualityDiagnosticNotice job={job}/><PlanningJobNotice job={job} project={project} onOpen={()=>setTab('planning')}/><JobTiming job={job}/><p>{active?'关闭页面后任务继续执行，返回时会恢复服务端记录。':'最近一次任务的服务端记录；刷新页面后仍可查看结果。'}</p></section>}
  {uploadState&&<UploadStatus state={uploadState} onCancel={()=>uploadController.current?.abort()}/>}
  <div className="tabs" role="tablist" aria-label="项目工作区">{[['materials','资料与要求'],['planning','沟通与方案'],['versions','预览与修改']].map(([key,text],n)=><button key={key} role="tab" aria-selected={tab===key} aria-controls={`panel-${key}`} id={`tab-${key}`} onClick={()=>setTab(key)}><span>0{n+1}</span>{text}{key==='versions'&&<small>{versions.length}</small>}</button>)}</div>

@@ -192,6 +192,7 @@ class BuildTests(unittest.TestCase):
         self.assertIn('code/ppt_service/server/phase_limits.py', names)
         self.assertIn('code/ppt_service/server/needs_input.py', names)
         self.assertIn('code/ppt_service/server/quality_diagnostics.py', names)
+        self.assertIn('code/ppt_service/server/usage.py', names)
         self.assertIn('code/ppt_service/server/acceptance/resolver.py', names)
         self.assertIn('web/src/acceptance/AcceptancePanel.tsx', names)
 
@@ -211,7 +212,7 @@ class BuildTests(unittest.TestCase):
                 ('server-build', built, 'build-info/source-inputs.json'),
                 ('offline-package', packaged, 'build-info/site-inputs.json')):
             with self.subTest(packager=label):
-                for module in ('needs_input', 'quality_diagnostics'):
+                for module in ('needs_input', 'quality_diagnostics', 'usage'):
                     source = SERVICE / f'server/{module}.py'
                     name = f'code/ppt_service/server/{module}.py'
                     expected = source.read_bytes()
@@ -227,11 +228,13 @@ class BuildTests(unittest.TestCase):
                         target.write_bytes(raw)
                 result = subprocess.run([sys.executable, '-I', '-c',
                     'import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); '
-                    'from ppt_service.server import needs_input, quality_diagnostics; '
+                    'from ppt_service.server import needs_input, quality_diagnostics, usage; '
                     'assert Path(needs_input.__file__).is_relative_to(Path(sys.argv[1])); '
                     'assert callable(needs_input.normalize_questions); '
                     'assert Path(quality_diagnostics.__file__).is_relative_to(Path(sys.argv[1])); '
-                    'assert quality_diagnostics.known_code("external_svg_resource")',
+                    'assert quality_diagnostics.known_code("external_svg_resource"); '
+                    'assert Path(usage.__file__).is_relative_to(Path(sys.argv[1])); '
+                    'assert callable(usage.usage_summary)',
                     str(isolated / 'code')], cwd=isolated, capture_output=True, text=True, timeout=20)
                 self.assertEqual(result.returncode, 0, result.stderr)
 

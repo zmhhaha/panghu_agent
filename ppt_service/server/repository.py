@@ -7,6 +7,7 @@ from .models import *
 from .phase_limits import phase_timeout_seconds
 from .needs_input import normalize_questions
 from .quality_diagnostics import public_diagnostic
+from .usage import usage_summary
 ACTIVE=('queued','starting','running','collecting','validating','cancelling')
 TERMINAL=('succeeded','failed','cancelled','interrupted')
 def fail(code,status=409): raise HTTPException(status,detail={'code':code})
@@ -22,7 +23,7 @@ def job_dto(j,s=None):
         'job_id':j.id,'created_at':_iso_time(j.created_at),'deadline':_iso_time(j.deadline),
         # Current phase configuration, not a completion estimate or a historical
         # claim timestamp. The persisted deadline is never recalculated here.
-        'phase_timeout_seconds':budget}
+        'phase_timeout_seconds':budget,'usage':usage_summary(s,job=j)}
     if s is not None and j.status=='failed' and j.error_code=='execution_needs_input' and j.stopped is True:
         out=s.get(AgentOutbox,j.id)
         if (out is not None and out.state=='mapped' and out.attempt==j.attempt

@@ -14,6 +14,7 @@ from .storage import Storage,MAX_PROJECT
 from .middleware import BodyLimitMiddleware
 from .acceptance.contracts import SourceBinding
 from .acceptance.domain import AcceptanceError
+from .usage import quota_summary, usage_summary
 CSRF_TOKEN_RE=re.compile(r'[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]\Z')
 class Strict(BaseModel):model_config=ConfigDict(extra='forbid')
 class ProjectCreate(Strict):
@@ -98,7 +99,8 @@ def create_app(settings:Settings|None=None,engine=None):
         if not CSRF_TOKEN_RE.fullmatch(token):token=secrets.token_urlsafe(32)
         response.set_cookie('ppt_csrf',token,secure=True,httponly=False,samesite='strict',path='/')
         q=s.get(UserQuota,(owner.issuer,owner.sub))
-        return {'issuer':owner.issuer,'sub':owner.sub,'csrf_token':token,'quota':{'enabled':bool(q and q.enabled),'period':q.period if q else None,'generation_limit':q.generation_limit if q else None,'revision_limit':q.revision_limit if q else None}}
+        return {'issuer':owner.issuer,'sub':owner.sub,'csrf_token':token,
+                'quota':quota_summary(q),'usage':usage_summary(s,owner=owner)}
     @app.post('/api/v1/projects',status_code=201)
     def create(body:ProjectCreate,owner=Depends(authenticate),s=Depends(session)):
         data=body.model_dump();title=data.pop('title');ack=data.pop('external_model_ack')

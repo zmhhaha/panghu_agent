@@ -31,6 +31,115 @@ from ppt_service.server.models import AgentOutbox, Asset, Checkpoint, ExecutionS
 from ppt_service.server.repository import Repository
 
 
+def test_agent_usage_survives_restart_and_receipt_replay_without_double_counting(database):
+    from ppt_service.server.models import UsageRecord
+    from ppt_service.server.repository import job_dto
+    control, service = connector(database)
+    assert control.tick()['status'] == 'uploading'
+    assert control.tick()['status'] == 'submitted'
+    remote = next(iter(service.jobs.values()))
+    remote['usage'] = {'input_tokens': 27, 'output_tokens': 13,
+                       'reported_cost': 0.125, 'currency': 'EUR', 'cost_status': 'known',
+                       'completeness': 'complete', 'private_text': 'must not cross accounting'}
+    original = control.validator
+    control.validator = SimpleNamespace(validate=lambda *_: (_ for _ in ()).throw(ControlError('synthetic_validator_restart')))
+    with pytest.raises(ControlError, match='synthetic_validator_restart'):
+        control.tick()
+    with database.sessions() as session:
+        rows = session.scalars(select(UsageRecord)).all()
+        assert len(rows) == 1 and rows[0].input_tokens == 27 and rows[0].reported_cost == '0.125'
+        assert session.get(Job, database.job_id).stopped is True
+        assert 'private_text' not in str(session.get(AgentOutbox, database.job_id).result)
+    restarted = AgentConnector(database.sessions, RuntimeConfig(database.root), service, original,
+                               settings=AgentConnectorSettings(enabled=True))
+    assert restarted.tick()['status'] == 'mapped'
+    assert restarted.tick()['status'] == 'acknowledged'
+    with database.sessions() as session:
+        assert len(session.scalars(select(UsageRecord)).all()) == 1
+        value = job_dto(session.get(Job, database.job_id), session)['usage']
+        assert value['input_tokens'] == 27 and value['output_tokens'] == 13
+        assert value['tokens_status'] == 'known'
+        assert value['cost_status'] == 'reported' and value['currency'] == 'EUR'
+
+
+@pytest.mark.parametrize('state', ['failed', 'timed_out', 'cancelled'])
+def test_failed_and_cancelled_agent_usage_is_durable_before_business_mapping(database, state):
+    from ppt_service.server.models import UsageRecord
+    from ppt_service.server.repository import job_dto
+    control, service = connector(database)
+    assert control.tick()['status'] == 'uploading'
+    assert control.tick()['status'] == 'submitted'
+    remote = next(iter(service.jobs.values()))
+    remote.update(state=state, usage={'input_tokens': 9, 'output_tokens': 4,
+                                     'reported_cost': None, 'cost_status': 'unknown'})
+    if state == 'cancelled':
+        with database.sessions.begin() as session:
+            Repository(session).cancel(session.get(Job, database.job_id))
+    assert control.tick()['status'] == ('cancelled' if state == 'cancelled' else 'failed')
+    with database.sessions() as session:
+        rows = session.scalars(select(UsageRecord)).all()
+        assert len(rows) == 1 and rows[0].outcome == state
+        value = job_dto(session.get(Job, database.job_id), session)['usage']
+        assert value['input_tokens'] == 9 and value['output_tokens'] == 4
+        assert value['tokens_status'] == 'partial'
+        assert value['reported_cost'] is None and value['cost_status'] == 'unknown'
+
+
+def test_unadmitted_terminal_receipt_keeps_unknown_without_fabricating_stop_or_zero(database):
+    from ppt_service.server.models import UsageRecord
+    control, service = connector(database)
+    assert control.tick()['status'] == 'uploading'
+    assert control.tick()['status'] == 'submitted'
+    remote = next(iter(service.jobs.values()))
+    remote.update(state='timed_out', attempt=None, not_started=True, usage=None)
+    assert control.tick()['status'] == 'not_started_terminal'
+    with database.sessions() as session:
+        row = session.scalar(select(UsageRecord))
+        assert row is not None and row.input_tokens is row.output_tokens is row.reported_cost is None
+        assert session.get(Job, database.job_id).stopped is False
+
+
+def test_unverified_terminal_stop_never_imports_accounting(database):
+    from ppt_service.server.models import UsageRecord
+    control, service = connector(database)
+    assert control.tick()['status'] == 'uploading'
+    assert control.tick()['status'] == 'submitted'
+    remote = next(iter(service.jobs.values()))
+    remote['stop_proof']['resource_ids'] = []
+    remote['usage'] = {'input_tokens': 123, 'output_tokens': 456}
+    with pytest.raises(ControlError, match='agent_remote_stop_unverified'):
+        control.tick()
+    with database.sessions() as session:
+        assert session.scalars(select(UsageRecord)).all() == []
+
+
+def test_accounting_rejects_changed_frozen_terminal_measurement(database):
+    control, service = connector(database)
+    assert control.tick()['status'] == 'uploading'
+    assert control.tick()['status'] == 'submitted'
+    remote = next(iter(service.jobs.values()))
+    remote['usage'] = {'input_tokens': 9}
+    original = control.validator
+    control.validator = SimpleNamespace(validate=lambda *_: (_ for _ in ()).throw(ControlError('synthetic_restart')))
+    with pytest.raises(ControlError, match='synthetic_restart'):
+        control.tick()
+    remote['usage'] = {'input_tokens': 9000}
+    control.validator = original
+    with pytest.raises(ControlError, match='agent_terminal_usage_changed'):
+        control.tick()
+
+
+def test_model_event_usage_is_not_accounting_evidence(database, monkeypatch):
+    from ppt_service.server.models import UsageRecord
+    control, _, _, _ = running_progress(database, monkeypatch, [
+        ('engine.progress', {'event': 'pi_event', 'usage': {'input_tokens': 99999,
+            'output_tokens': 99999, 'reported_cost': 0, 'currency': 'USD', 'cost_status': 'known'}}),
+    ])
+    assert control.tick()['status'] == 'running'
+    with database.sessions() as session:
+        assert session.scalars(select(UsageRecord)).all() == []
+
+
 def identifier():
     return str(uuid4())
 
@@ -467,7 +576,8 @@ def test_remote_failure_persists_only_fixed_business_error_without_retry(
         assert job.status == 'failed' and job.error_code == expected and job.stopped is True
         assert job.deadline == deadline and out.request == request
         assert out.remote_job_id == remote['job_id'] and out.state == 'mapped'
-        assert out.result == {'status': 'failed', 'error_code': expected}
+        assert {key: value for key, value in out.result.items() if key != 'accounting'} == {'status': 'failed', 'error_code': expected}
+        assert out.result['accounting']['schema'] == 'ppt-service.agent-usage.v1'
         assert project.active_job_id is None and project.stage == 'draft'
         assert session.get(ExecutionSlot, 1).job_id is None
         assert not session.scalars(select(Checkpoint)).all()
@@ -552,7 +662,8 @@ def test_valid_needs_input_stops_without_a_version_and_retains_bounded_questions
         expected = ['请补充讲解重点。', '请管理员核对预览工具。']
         assert job.status == 'failed' and job.error_code == 'execution_needs_input' and job.stopped is True
         assert job.deadline == deadline and job.input_snapshot == snapshot
-        assert out.state == 'mapped' and out.result == {'status': 'needs_input', 'questions': expected}
+        assert out.state == 'mapped' and {key: value for key, value in out.result.items() if key != 'accounting'} == {'status': 'needs_input', 'questions': expected}
+        assert out.result['accounting']['schema'] == 'ppt-service.agent-usage.v1'
         assert job_dto(job, session)['needs_input'] == {'questions': expected}
         assert session.get(ExecutionSlot, 1).job_id is None
         assert session.get(Project, database.project_id).active_job_id is None
