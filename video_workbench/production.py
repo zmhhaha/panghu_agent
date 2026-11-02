@@ -37,6 +37,7 @@ class Production:
         self.stopping = threading.Event()
         self.current_cancel = None
         self.current_id = None
+        self.current_motion = False
         self.thread = None
         with store.transaction() as db:
             db.execute('''CREATE TABLE IF NOT EXISTS video_renders (
@@ -338,7 +339,10 @@ class Production:
 
     def stop(self):
         self.stopping.set()
-        if self.current_cancel:
+        # A v2 render belongs to the durable remote journal. A workbench
+        # restart must not turn process shutdown into a user cancellation.
+        # Static rendering is local and retains its previous stop behaviour.
+        if self.current_cancel and not self.current_motion:
             self.current_cancel.set()
         if self.thread:
             self.thread.join(timeout=12)
@@ -369,7 +373,7 @@ class Production:
                         if motion:
                             job['render_attempted'] = True
                         db.execute('UPDATE video_renders SET document=? WHERE id=?', (json.dumps(job), job['id']))
-                        self.current_id, self.current_cancel = job['id'], threading.Event()
+                        self.current_id, self.current_cancel, self.current_motion = job['id'], threading.Event(), motion
                         if job['cancel_requested']:
                             self.current_cancel.set()
                         break
@@ -398,7 +402,7 @@ class Production:
                     sha = hashlib.sha256(data).hexdigest()
                     with self.store.transaction() as db:
                         latest = json.loads(db.execute('SELECT document FROM video_renders WHERE id=?', (job['id'],)).fetchone()[0])
-                        if latest['cancel_requested'] or self.stopping.is_set():
+                        if latest['cancel_requested'] or (self.stopping.is_set() and not motion):
                             latest.update(status='cancelled', error=None)
                             data = None
                         else:
@@ -418,9 +422,10 @@ class Production:
                         # exact id for lookup/cancel after a transient outage.
                         latest.update(status='queued', error=exc.code)
                     else:
-                        latest.update(status='cancelled' if latest['cancel_requested'] or self.stopping.is_set() else 'failed',
+                        latest.update(status='cancelled' if latest['cancel_requested'] or
+                                      (self.stopping.is_set() and job.get('schema') != MOTION_SCHEMA) else 'failed',
                                       error=exc.code if isinstance(exc, ServiceError) else 'render_failed')
                     db.execute('UPDATE video_renders SET document=?,data=NULL WHERE id=?', (json.dumps(latest), job['id']))
         finally:
-            self.current_id, self.current_cancel = None, None
+            self.current_id, self.current_cancel, self.current_motion = None, None, False
             self.lock.release()

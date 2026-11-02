@@ -2,8 +2,11 @@
 from copy import deepcopy
 import io
 import json
+import hashlib
+import threading
 import wave
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -13,6 +16,7 @@ from video_workbench.config import MotionSettings
 from video_workbench.motion import example_plan
 from video_workbench.motion_snapshot import SCHEMA, verify_snapshot_v2
 from video_workbench.production import Production
+from video_workbench.motion_render_adapter import RemoteMotionRenderer
 from video_workbench import production as production_module
 
 
@@ -366,6 +370,123 @@ def test_restart_restores_same_inflight_motion_identity_even_after_gate_is_close
     recovered.tick()
     assert len(renderer.calls) == 1 and renderer.calls[0]['operation_id'] == job['id']
     assert recovered.renders('alice', project['id'])[0]['status'] == 'completed'
+
+
+@pytest.mark.parametrize('outcome', ['completed', 'outage', 'failed', 'usercancel'])
+def test_normal_thread_shutdown_never_cancels_remote_motion_and_recovers_same_id(env, outcome):
+    client, app, *_ = env
+    project, sid, vid, aid = setup(env)
+    response = client.post(f'/api/projects/{project["id"]}/motion-renders',
+        json=draft_request(project, sid, vid, aid), headers={'Idempotency-Key': 'graceful-motion-restart'})
+    job = response.json()
+    entered, release = threading.Event(), threading.Event()
+    requests, state = [], {'exists': False, 'snapshot': None, 'interrupted': False}
+    video = b'synthetic-remote-video'
+
+    def transport(request):
+        requests.append((request.method, request.url.path))
+        if request.url.path.endswith('/video'):
+            return httpx.Response(200, content=video)
+        if request.method == 'PUT':
+            state['exists'] = True
+            state['snapshot'] = json.loads(request.content)['snapshot']
+            remote_state = 'running'
+        elif request.method == 'POST':
+            assert request.url.path.endswith('/cancel')
+            remote_state = 'cancelled'
+        elif not state['exists']:
+            return httpx.Response(404)
+        else:
+            if not state['interrupted']:
+                entered.set()
+                assert release.wait(4)
+                state['interrupted'] = True
+                if outcome == 'outage':
+                    return httpx.Response(503)
+            remote_state = 'running' if outcome == 'usercancel' else ('failed' if outcome == 'failed' else 'completed')
+        document = dict(operation_id=job['id'], snapshot_sha256=state['snapshot']['sha256'], state=remote_state)
+        if remote_state == 'completed':
+            document['result'] = dict(bytes=len(video), sha256=hashlib.sha256(video).hexdigest(),
+                snapshot_sha256=state['snapshot']['sha256'], duration_seconds=state['snapshot']['duration_seconds'])
+        if remote_state == 'failed':
+            document['error'] = 'motion_execution_failed'
+        return httpx.Response(200, json=document)
+
+    remote = RemoteMotionRenderer('http://motion.test', 'x' * 32,
+        client=httpx.Client(transport=httpx.MockTransport(transport)), poll_seconds=.001)
+    production = app.state.production
+    production.motion_renderer = remote
+    production.start()
+    stopper = None
+    try:
+        assert entered.wait(4)
+        stopper = threading.Thread(target=production.stop)
+        stopper.start()
+        assert production.stopping.wait(2)
+        assert not production.current_cancel.is_set()
+        if outcome == 'usercancel':
+            production.cancel('alice', job['id'])
+        release.set()
+        stopper.join(4)
+        assert not stopper.is_alive() and not production.thread.is_alive()
+        current = production.renders('alice', project['id'])[0]
+        if outcome == 'outage':
+            assert current['status'] == 'queued' and current['render_attempted']
+            recovered = Production(app.state.store, motion_enabled=False, motion_renderer=remote,
+                motion_store=app.state.motion_store, motion_timing=app.state.motion_timing, runtime_fingerprint=RUNTIME)
+            recovered._recover()
+            recovered.tick()
+            assert recovered.renders('alice', project['id'])[0]['status'] == 'completed'
+        else:
+            assert current['status'] == ('cancelled' if outcome == 'usercancel' else outcome)
+        assert sum(method == 'PUT' for method, _ in requests) == 1
+        assert sum(method == 'POST' for method, _ in requests) == (outcome == 'usercancel')
+        assert all('/' + job['id'] in path for _, path in requests)
+    finally:
+        release.set()
+        production.stop()
+        if stopper:
+            stopper.join(4)
+        remote.close()
+
+
+def test_normal_thread_shutdown_retains_static_local_cancellation(env):
+    client, app, *_ = env
+    project, *_ = setup(env)
+    response = client.post(f'/api/projects/{project["id"]}/renders',
+        json=dict(expected_revision=project['revision'], silent=True, subtitles=False),
+        headers={'Idempotency-Key': 'graceful-static-shutdown'})
+    assert response.status_code == 202, response.text
+    entered, release = threading.Event(), threading.Event()
+    captured = []
+
+    def renderer(snapshot, directory, *, cancel_event):
+        captured.append(cancel_event)
+        entered.set()
+        assert release.wait(4)
+        path = directory / 'static.mp4'
+        path.write_bytes(b'synthetic-static-video')
+        return dict(path=path, duration_seconds=1)
+
+    production = app.state.production
+    production.renderer = renderer
+    production.start()
+    stopper = None
+    try:
+        assert entered.wait(4)
+        stopper = threading.Thread(target=production.stop)
+        stopper.start()
+        assert production.stopping.wait(2)
+        assert captured[0].wait(2)
+        release.set()
+        stopper.join(4)
+        assert not stopper.is_alive() and not production.thread.is_alive()
+        assert production.renders('alice', project['id'])[0]['status'] == 'cancelled'
+    finally:
+        release.set()
+        production.stop()
+        if stopper:
+            stopper.join(4)
 
 
 def test_closed_motion_gate_still_cancels_admitted_agent_job_without_new_submission(env):
