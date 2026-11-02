@@ -130,8 +130,8 @@ def run(case):
 def test_initial_acceptance_binding_retains_failed_diagram_details_before_commands(case):
     key = 'svg_output/1.svg'
     (case.project / key).write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">'
-        '<rect id="peer" data-pptx-role="node" x="0" y="100" width="100" height="100" fill="blue"/>'
-        '<line id="wire" data-pptx-role="connector" x1="50" y1="50" x2="50" y2="250" stroke="white"/>'
+        '<rect id="peer" data-pptx-diagram="node" x="0" y="100" width="100" height="100" fill="blue"/>'
+        '<line id="wire" data-pptx-diagram="connector" x1="50" y1="50" x2="50" y2="250" stroke="white"/>'
         '</svg>')
     next(row for row in case.manifest['artifacts'] if row['path'] == key).update(hash_file(case.project, key))
     atomic_json(case.snapshot / 'result/manifest.json', case.manifest)

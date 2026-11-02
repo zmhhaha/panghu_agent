@@ -9,8 +9,8 @@ this without suggesting dependencies between the profiles.
 ## Independent geometry contract
 
 `control/diagram_geometry.py` reads actual SVG XML without changing it. Mark
-rectangular nodes with a stable `id` and `data-pptx-role="node"`, and line or
-polyline edges with `data-pptx-role="connector"`. Optional `data-pptx-source`
+rectangular nodes with a stable `id` and `data-pptx-diagram="node"`, and line or
+polyline edges with `data-pptx-diagram="connector"`. Optional `data-pptx-source`
 and `data-pptx-target` refer to those node IDs. Supported marked drawings are
 checked for unrelated-card crossings and declared endpoint attachment. Grid
 lines, backgrounds and decorative rules must not be marked as diagram edges.

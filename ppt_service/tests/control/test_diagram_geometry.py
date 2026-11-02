@@ -12,12 +12,12 @@ def inspect(body):
 
 
 def node(identifier, x, y, width=120, height=80, extra=""):
-    return (f'<rect id="{identifier}" data-pptx-role="node" x="{x}" y="{y}" '
+    return (f'<rect id="{identifier}" data-pptx-diagram="node" x="{x}" y="{y}" '
             f'width="{width}" height="{height}" fill="#123456" {extra}/>')
 
 
 def connector(points='x1="60" y1="80" x2="60" y2="300"', extra=""):
-    return (f'<line id="edge" data-pptx-role="connector" stroke="#0af" '
+    return (f'<line id="edge" data-pptx-diagram="connector" stroke="#0af" '
             f'{points} {extra}/>')
 
 
@@ -52,7 +52,7 @@ def test_explicit_route_through_unrelated_node_is_strict():
 def test_correct_peer_profiles_to_shared_base_have_no_intermediate_obstacles():
     cards = ''.join(node(f'profile{i}', 20 + i * 240, 180, 200, 100) for i in range(4))
     base = node('base', 20, 420, 920, 100)
-    links = ''.join(f'<line id="edge{i}" data-pptx-role="connector" '
+    links = ''.join(f'<line id="edge{i}" data-pptx-diagram="connector" '
         f'data-pptx-source="profile{i}" data-pptx-target="base" '
         f'x1="{120 + i * 240}" y1="280" x2="{120 + i * 240}" y2="420" stroke="cyan"/>' for i in range(4))
     report = inspect(cards + base + node('independent', 1000, 180, 200, 340) + links)
@@ -84,7 +84,7 @@ def test_grid_lines_and_decoration_do_not_become_strict_connectors():
 @pytest.mark.parametrize('extra', ['fill="none"', 'fill="transparent"', 'fill="#0000"', 'fill="#00000000"',
     'fill="red" fill-opacity="0"', 'fill="red" opacity="0"', 'fill="red" display="none"', 'fill="red" visibility="hidden"'])
 def test_invisible_cards_are_not_obstacles(extra):
-    report = inspect(f'<rect data-pptx-role="node" x="0" y="120" width="120" height="80" {extra}/>'
+    report = inspect(f'<rect data-pptx-diagram="node" x="0" y="120" width="120" height="80" {extra}/>'
         + connector())
     assert report['errors'] == []
 
@@ -93,7 +93,7 @@ def test_invisible_cards_are_not_obstacles(extra):
     'stroke="blue" stroke-width="0"', 'stroke="blue" opacity="0"', 'stroke="blue" display="none"'])
 def test_invisible_connectors_are_not_crossings(extra):
     report = inspect(node('obstacle', 0, 120)
-        + f'<line data-pptx-role="connector" x1="60" y1="80" x2="60" y2="300" {extra}/>' )
+        + f'<line data-pptx-diagram="connector" x1="60" y1="80" x2="60" y2="300" {extra}/>' )
     assert report['errors'] == []
 
 
@@ -132,7 +132,7 @@ def test_stylesheet_and_curve_do_not_claim_geometry_coverage():
     styled = inspect('<style>.wire { stroke:none }</style>' + node('obstacle', 0, 120) + connector())
     assert styled['status'] == 'unchecked'
     curved = inspect(node('obstacle', 0, 120)
-        + '<path id="curve" data-pptx-role="connector" d="M60 80 C60 180 80 250 60 300" stroke="cyan"/>')
+        + '<path id="curve" data-pptx-diagram="connector" d="M60 80 C60 180 80 250 60 300" stroke="cyan"/>')
     assert curved['status'] == 'unchecked'
     assert curved['coverage']['explicit_connectors'] == 1
     assert curved['coverage']['unchecked'][0]['code'] == 'svg_diagram_shape_unchecked'
@@ -140,9 +140,9 @@ def test_stylesheet_and_curve_do_not_claim_geometry_coverage():
 
 def test_polyline_can_route_around_obstacle_and_rejects_a_crossing_segment():
     obstacle = node('obstacle', 0, 120)
-    clear = inspect(obstacle + '<polyline data-pptx-role="connector" points="60,80 150,80 150,300 60,300" fill="none" stroke="cyan"/>')
+    clear = inspect(obstacle + '<polyline data-pptx-diagram="connector" points="60,80 150,80 150,300 60,300" fill="none" stroke="cyan"/>')
     assert clear['errors'] == []
-    crossed = inspect(obstacle + '<polyline data-pptx-role="connector" points="60,80 60,250 150,300" fill="none" stroke="cyan"/>')
+    crossed = inspect(obstacle + '<polyline data-pptx-diagram="connector" points="60,80 60,250 150,300" fill="none" stroke="cyan"/>')
     assert crossed['errors'][0]['code'] == 'svg_diagram_connector_crosses_node'
 
 
@@ -176,7 +176,7 @@ def test_missing_or_duplicate_reference_is_rejected_without_leaking_values():
 
 
 def test_reference_to_unsupported_node_is_unchecked_not_invalid():
-    report = inspect('<ellipse id="round" data-pptx-role="node" cx="60" cy="60" rx="20" ry="20"/>'
+    report = inspect('<ellipse id="round" data-pptx-diagram="node" cx="60" cy="60" rx="20" ry="20"/>'
         + connector(extra='data-pptx-source="round"'))
     assert report['errors'] == []
     assert any(row['code'] == 'svg_diagram_node_reference_unchecked' for row in report['coverage']['unchecked'])
@@ -226,7 +226,7 @@ def test_deep_svg_reports_coverage_limit_instead_of_recursing_unboundedly():
     '0' * 129 + ',0 1,1',
 ])
 def test_oversized_polyline_attribute_is_unchecked_without_unbounded_tokenization(points):
-    report = inspect('<polyline id="oversized" data-pptx-role="connector" '
+    report = inspect('<polyline id="oversized" data-pptx-diagram="connector" '
         f'points="{points}" fill="none" stroke="cyan"/>')
     assert report['status'] == 'unchecked'
     assert report['coverage']['checked_connectors'] == 0
@@ -237,7 +237,7 @@ def test_oversized_polyline_attribute_is_unchecked_without_unbounded_tokenizatio
 
 def test_bounded_polyline_at_supported_point_limit_is_checked():
     points = ' '.join(f'{i},10' for i in range(128))
-    report = inspect('<polyline data-pptx-role="connector" '
+    report = inspect('<polyline data-pptx-diagram="connector" '
         f'points="{points}" fill="none" stroke="cyan"/>')
     assert report['status'] == 'checked'
     assert report['coverage']['checked_connectors'] == 1

@@ -38,10 +38,10 @@ def replace_bound_svg(inputs,body):
 
 
 def marked_diagram(*, crossing=True):
-    middle = '<rect id="peer" data-pptx-role="node" x="20" y="160" width="120" height="60" fill="blue"/>' if crossing else ''
-    return ('<rect id="source" data-pptx-role="node" x="20" y="60" width="120" height="60" fill="blue"/>'
-        + middle + '<rect id="base" data-pptx-role="node" x="20" y="260" width="120" height="60" fill="blue"/>'
-        '<line id="shared" data-pptx-role="connector" data-pptx-source="source" data-pptx-target="base" '
+    middle = '<rect id="peer" data-pptx-diagram="node" x="20" y="160" width="120" height="60" fill="blue"/>' if crossing else ''
+    return ('<rect id="source" data-pptx-diagram="node" x="20" y="60" width="120" height="60" fill="blue"/>'
+        + middle + '<rect id="base" data-pptx-diagram="node" x="20" y="260" width="120" height="60" fill="blue"/>'
+        '<line id="shared" data-pptx-diagram="connector" data-pptx-source="source" data-pptx-target="base" '
         'x1="80" y1="120" x2="80" y2="260" stroke="white"/>')
 
 

@@ -1,6 +1,6 @@
 """Bounded, read-only checks for a deliberately small SVG diagram vocabulary.
 
-Explicit ``data-pptx-role=node`` rectangles and ``connector`` lines/polylines
+Explicit ``data-pptx-diagram=node`` rectangles and ``connector`` lines/polylines
 form the strict contract. Optional data-pptx-source/target attributes refer to
 those node IDs. Unannotated card diagrams get advisory findings only: a grid,
 rule or ordinary chart is not rejected by this heuristic. This is geometry,
@@ -283,7 +283,7 @@ def inspect_svg_diagram(svg: ET.Element):
             break
         stylesheet = stylesheet or element.tag == _SVG + "style" and bool((element.text or "").strip())
         raw_id = element.get("id")
-        if element.get("data-pptx-role") == "node" and raw_id:
+        if element.get("data-pptx-diagram") == "node" and raw_id:
             node_ids[raw_id] = node_ids.get(raw_id, 0) + 1
     defaults = {"fill": "black", "stroke": "none", "fill-opacity": "1", "stroke-opacity": "1",
                 "stroke-width": "1", "stroke-dasharray": "none", "visibility": "visible", "displayed": True,
@@ -305,7 +305,7 @@ def inspect_svg_diagram(svg: ET.Element):
             unsupported("svg_diagram_depth_limit", identifier)
             return
         tag = element.tag.removeprefix(_SVG) if isinstance(element.tag, str) else ""
-        explicit = element.get("data-pptx-role")
+        explicit = element.get("data-pptx-diagram")
         try:
             properties = _properties(element, inherited)
             transform = _multiply(parent_transform, _transform(element.get("transform")))
