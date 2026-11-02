@@ -33,6 +33,9 @@ PROFILE_RESOURCE = "resources/workspace-text-v1/"
 VIDEO_RESOURCE = "resources/video-workbench-v1/"
 VIDEO_MANIFEST_SHA256 = "d5a5fcb5081d65acce5783f72effe3fafe1954613e62d6dc5471cbfe2cd8a681"
 VIDEO_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'video-procedure/SKILL.md'})
+MOTION_RESOURCE = "resources/video-motion-v1/"
+MOTION_MANIFEST_SHA256 = "4eba854c6f858a6ec18eb01687a87865dca53efc1346eb4456e6a47bd9dac104"
+MOTION_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'PLAN.schema.json', 'motion-procedure/SKILL.md'})
 
 
 class BuildError(RuntimeError):
@@ -188,6 +191,28 @@ def context_archive(service, target, destination):
         except (ValueError, TypeError, KeyError, AttributeError):
             raise BuildError('invalid_video_resource_manifest') from None
         files['agent_service/' + VIDEO_RESOURCE + 'manifest.json'] = manifest
+        manifest = read_regular(service / (MOTION_RESOURCE + 'manifest.json'), 65536)
+        try:
+            resource = json.loads(manifest, object_pairs_hook=unique_pairs)
+            if (hashlib.sha256(manifest).hexdigest() != MOTION_MANIFEST_SHA256
+                    or resource.get('bundle_revision') != 'video-motion-v1'
+                    or resource.get('automatic_updates') is not False
+                    or resource.get('upstream_content_vendored') is not False
+                    or resource.get('license') != 'MIT'):
+                raise ValueError()
+            rows = resource['local_files']
+            if (type(rows) is not list or len(rows) != len(MOTION_FILES)
+                    or any(type(row) is not dict or set(row) != {'path', 'sha256'} for row in rows)
+                    or {row['path'] for row in rows} != MOTION_FILES):
+                raise ValueError()
+            for row in rows:
+                raw = read_regular(service / (MOTION_RESOURCE + row['path']), 128 * 1024)
+                if hashlib.sha256(raw).hexdigest() != row['sha256']:
+                    raise ValueError()
+                files['agent_service/' + MOTION_RESOURCE + row['path']] = raw
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise BuildError('invalid_motion_resource_manifest') from None
+        files['agent_service/' + MOTION_RESOURCE + 'manifest.json'] = manifest
     root = service.parent
     # Explicit framework-neutral dependencies of the reviewed collectors. No
     # business API/database/publisher, sessions or private Agent HOME is copied.

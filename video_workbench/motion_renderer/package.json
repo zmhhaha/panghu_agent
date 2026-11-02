@@ -1,0 +1,11 @@
+{
+  "name": "video-motion-renderer",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "hyperframes": "0.8.149",
+    "playwright-core": "1.61.1",
+    "gsap": "3.14.2"
+  }
+}

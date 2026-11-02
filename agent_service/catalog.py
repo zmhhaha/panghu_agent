@@ -21,6 +21,8 @@ from .profiles import implementation
 from .profiles.video import (BUNDLE_ROOT as VIDEO_ROOT, BUNDLE_REVISION as VIDEO_REVISION,
                              BUNDLE_MANIFEST_SHA256 as VIDEO_MANIFEST_SHA256,
                              BUNDLE_FILES as VIDEO_FILES)
+from .profiles.video_motion import (BUNDLE_ROOT as MOTION_ROOT, BUNDLE_REVISION as MOTION_REVISION,
+    BUNDLE_MANIFEST_SHA256 as MOTION_MANIFEST_SHA256, BUNDLE_FILES as MOTION_FILES)
 from .pi_cage import PI_CAGE_REPOSITORY, PI_CAGE_REVISION, PI_PACKAGE, PI_VERSION
 from .registry import (CapabilityBundle, DeploymentRegistry, ExecutionBinding,
                        ModelPolicy, TaskContract, ToolEnvironment, binding_fingerprint)
@@ -37,6 +39,7 @@ PPT_PROFILES = tuple('ppt.' + stage + '.v1' for stage in (
 RESEARCH_PROFILES = ('research.generate.v1', 'research.revise.v1', 'research.plan.v1',
                      'research.retrieve.v1', 'research.outline.v1', 'research.draft.v1')
 VIDEO_PROFILES = ('video.storyboard.v1', 'video.scene.v1')
+MOTION_PROFILES = ('video.motion-plan.v1',)
 CATALOG_KEYS = ('task_contracts', 'capability_bundles', 'tool_environments',
                 'execution_bindings', 'routes')
 MAX_FILE_BYTES = 16 * 1024 * 1024
@@ -202,6 +205,25 @@ def _video_bundle():
         required_tools=['read', 'write'])), total
 
 
+def _motion_bundle():
+    raw = _read(MOTION_ROOT / 'manifest.json', 65536)
+    _require(hashlib.sha256(raw).hexdigest() == MOTION_MANIFEST_SHA256, 'motion_bundle_integrity')
+    manifest = _json(raw)
+    _require(type(manifest) is dict and manifest.get('bundle_revision') == MOTION_REVISION
+        and manifest.get('license') == 'MIT' and manifest.get('automatic_updates') is False
+        and manifest.get('upstream_content_vendored') is False, 'motion_bundle_integrity')
+    rows = manifest.get('local_files')
+    _require(type(rows) is list and len(rows) == len(MOTION_FILES)
+        and all(type(row) is dict and set(row) == {'path', 'sha256'} for row in rows)
+        and {row['path'] for row in rows} == MOTION_FILES, 'motion_bundle_integrity')
+    resources, total = _measure(MOTION_ROOT, ['manifest.json', *sorted(MOTION_FILES)])
+    measured = {row['name']: row['sha256'] for row in resources}
+    _require(all(measured[row['path']] == row['sha256'] for row in rows), 'motion_bundle_integrity')
+    return CapabilityBundle.model_validate(dict(name='video-motion', revision=MOTION_REVISION,
+        resources=resources, source='original-local-video-motion-procedures-v1', license='MIT',
+        required_tools=['read', 'write'])), total
+
+
 def _image(value):
     _require(type(value) is str and IMAGE.fullmatch(value) is not None
         and value.rsplit(':', 1)[-1] != '0' * 64, 'immutable_worker_image_required')
@@ -215,7 +237,7 @@ def _image(value):
 def _contract(name):
     handler = implementation(name)
     capabilities = ['text', 'tool_calls'] + (['vision'] if 'image' in handler.required_tools else [])
-    return TaskContract.model_validate(dict(name=name, revision='1' if name in VIDEO_PROFILES else 'v1', task_schema=handler.task_schema,
+    return TaskContract.model_validate(dict(name=name, revision='1' if name in (*VIDEO_PROFILES, *MOTION_PROFILES) else 'v1', task_schema=handler.task_schema,
         output_schema=handler.output_schema, required_tools=list(handler.required_tools),
         required_model_capabilities=capabilities, max_timeout_seconds=3600,
         **handler.limits.as_dict()))
@@ -238,9 +260,10 @@ def generate(*, pi_image=None, hermes_image=None, engine='pi', runtime_revision,
              model='llm-trusted', provider='task-model',
              model_proxy_url='http://agent-model-proxy.agent-service.svc.cluster.local:8080/v1',
              upstream_base_url='http://llm-service.llm.svc.cluster.local/v1',
-             pod_cidrs=('10.244.0.0/16',)):
+             pod_cidrs=('10.244.0.0/16',), include_motion=False):
     """Return public catalog/hosts/summary without model, network or database I/O."""
     _require(os.name == 'posix' and os.geteuid() == 0, 'run_inside_root_owned_worker_image')
+    _require(type(include_motion) is bool, 'invalid_motion_catalog_option')
     _require(type(runtime_revision) is str and REVISION.fullmatch(runtime_revision),
              'runtime_revision_required')
     images = {key: _image(value) for key, value in (('pi', pi_image), ('hermes', hermes_image))
@@ -258,7 +281,9 @@ def generate(*, pi_image=None, hermes_image=None, engine='pi', runtime_revision,
     ppt_bundle, ppt_bytes = _ppt_bundle()
     research_bundle, research_bytes = _research_bundle()
     video_bundle, video_bytes = _video_bundle()
-    contracts = [_contract(name) for name in (*PPT_PROFILES, *RESEARCH_PROFILES, *VIDEO_PROFILES)]
+    motion_bundle, motion_bytes = _motion_bundle() if include_motion else (None, 0)
+    video_profiles = (*VIDEO_PROFILES, *(MOTION_PROFILES if include_motion else ()))
+    contracts = [_contract(name) for name in (*PPT_PROFILES, *RESEARCH_PROFILES, *video_profiles)]
     environments, bindings, routes, pools = [], [], [], []
     host_selections = []
     for native, image in sorted(images.items()):
@@ -276,6 +301,7 @@ def generate(*, pi_image=None, hermes_image=None, engine='pi', runtime_revision,
             environment_by_tools[tools] = environment
         for contract in contracts:
             bundle = (ppt_bundle if contract.name.startswith('ppt.') else
+                      motion_bundle if contract.name in MOTION_PROFILES else
                       video_bundle if contract.name in VIDEO_PROFILES else research_bundle)
             environment = environment_by_tools[tuple(sorted(contract.required_tools))]
             model_data = dict(api_mode='openai-responses', model=model, provider=provider,
@@ -308,15 +334,16 @@ def generate(*, pi_image=None, hermes_image=None, engine='pi', runtime_revision,
             if native == engine:
                 routes.append(dict(profile=contract.name, profile_revision=contract.revision,
                     binding_id=binding.id, binding_revision=binding.revision, enabled=False))
+    bundles = (ppt_bundle, research_bundle, video_bundle) + ((motion_bundle,) if include_motion else ())
     catalog = dict(task_contracts=[item.model_dump(mode='json') for item in contracts],
-        capability_bundles=[item.model_dump(mode='json') for item in (ppt_bundle, research_bundle, video_bundle)],
+        capability_bundles=[item.model_dump(mode='json') for item in bundles],
         tool_environments=environments, execution_bindings=bindings, routes=routes)
     registry = DeploymentRegistry.from_config(**catalog)
     public = dict(schema_version=2, callers=[
         dict(tenant='internal', caller='ppt-service', profiles=list(PPT_PROFILES), token_ref='ppt-service'),
         dict(tenant='internal', caller='scientific-service', profiles=list(RESEARCH_PROFILES),
              token_ref='scientific-service'),
-        dict(tenant='internal', caller='video-workbench', profiles=list(VIDEO_PROFILES),
+        dict(tenant='internal', caller='video-workbench', profiles=list(video_profiles),
              token_ref='video-workbench')], **catalog, workers=[], kubernetes_workers=pools,
         api=dict(host='0.0.0.0', port=8080, max_request_bytes=1024 * 1024, max_input_bytes=25 * 1024 * 1024),
         dispatcher=dict(poll_seconds=1.0, lease_seconds=60), store=dict(max_events=1000, max_queue=1000),
@@ -360,6 +387,10 @@ def generate(*, pi_image=None, hermes_image=None, engine='pi', runtime_revision,
         summary['pi_runtime_requirement'] = dict(repository=PI_CAGE_REPOSITORY,
             revision=PI_CAGE_REVISION, package=PI_PACKAGE, version=PI_VERSION,
             adapter_revision='pi-cage-adapter-v1', verification_required_at=['worker_build', 'worker_readiness'])
+    if include_motion:
+        summary['packages'].append(dict(name=motion_bundle.name, revision=motion_bundle.revision,
+            resources=len(motion_bundle.resources), measured_bytes=motion_bytes,
+            scope='original_local_bounded_motion_plans_no_executable_source'))
     return public, hosts, summary
 
 
@@ -410,13 +441,15 @@ def main(argv=None):
     parser.add_argument('--model-proxy-url', default='http://agent-model-proxy.agent-service.svc.cluster.local:8080/v1')
     parser.add_argument('--upstream-base-url', default='http://llm-service.llm.svc.cluster.local/v1')
     parser.add_argument('--pod-cidr', action='append', help='Actual private worker Pod CIDR; default 10.244.0.0/16')
+    parser.add_argument('--include-motion', action='store_true',
+        help='Prepare an additional disabled video.motion-plan.v1 candidate; does not publish it')
     parser.add_argument('--output', required=True, help='New or empty public output directory')
     args = parser.parse_args(argv)
     try:
         public, hosts, summary = generate(pi_image=args.pi_image, hermes_image=args.hermes_image,
             engine=args.engine, runtime_revision=args.runtime_revision, model=args.model, provider=args.provider,
             model_proxy_url=args.model_proxy_url, upstream_base_url=args.upstream_base_url,
-            pod_cidrs=tuple(args.pod_cidr or ('10.244.0.0/16',)))
+            pod_cidrs=tuple(args.pod_cidr or ('10.244.0.0/16',)), include_motion=args.include_motion)
         write_catalog(args.output, public, hosts, summary)
     except (RuntimeError, OSError, ValueError, TypeError, KeyError, RecursionError):
         print('ERROR: Invalid or unavailable image package/catalog input; no model or deployment was started')

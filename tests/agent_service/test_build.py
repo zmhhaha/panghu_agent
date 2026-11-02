@@ -77,6 +77,11 @@ def service(tmp_path):
         target = root / 'resources/video-workbench-v1' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((BUNDLE_ROOT / name).read_bytes())
+    from agent_service.profiles.video_motion import BUNDLE_ROOT as MOTION_ROOT, BUNDLE_FILES as MOTION_FILES
+    for name in ('manifest.json', *MOTION_FILES):
+        target = root / 'resources/video-motion-v1' / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((MOTION_ROOT / name).read_bytes())
     # Only reviewed framework-neutral helpers may cross the package allowlist;
     # business API/database/runtime files must still remain outside it.
     names = ['pi_worker/__init__.py', 'pi_worker/research_tools/__init__.py',
@@ -384,7 +389,12 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
         "agent_service/resources/video-workbench-v1/manifest.json",
         "agent_service/resources/video-workbench-v1/CONTRACT.md",
         "agent_service/resources/video-workbench-v1/LICENSE",
-        "agent_service/resources/video-workbench-v1/video-procedure/SKILL.md"}
+        "agent_service/resources/video-workbench-v1/video-procedure/SKILL.md",
+        "agent_service/resources/video-motion-v1/manifest.json",
+        "agent_service/resources/video-motion-v1/CONTRACT.md",
+        "agent_service/resources/video-motion-v1/LICENSE",
+        "agent_service/resources/video-motion-v1/PLAN.schema.json",
+        "agent_service/resources/video-motion-v1/motion-procedure/SKILL.md"}
     assert not any(name.endswith(("credentials.json", "NOT_ALLOWED.md", "private.py")) for name in runner.names)
 
 
@@ -447,6 +457,16 @@ def test_modified_video_resource_fails_before_docker(service, changed):
     path.write_bytes(path.read_bytes() + b' ')
     receipt, runner = old_receipt(service), DockerFixture()
     with pytest.raises(BuildError, match='invalid_video_resource_manifest'):
+        build(service=service, environ={}, runner=runner)
+    assert not receipt.exists() and not runner.calls
+
+
+@pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'PLAN.schema.json', 'motion-procedure/SKILL.md'])
+def test_modified_motion_resource_fails_before_docker(service, changed):
+    path = service / 'resources/video-motion-v1' / changed
+    path.write_bytes(path.read_bytes() + b' ')
+    receipt, runner = old_receipt(service), DockerFixture()
+    with pytest.raises(BuildError, match='invalid_motion_resource_manifest'):
         build(service=service, environ={}, runner=runner)
     assert not receipt.exists() and not runner.calls
 

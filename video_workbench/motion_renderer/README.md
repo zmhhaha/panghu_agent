@@ -1,0 +1,94 @@
+# Isolated HyperFrames experiment
+
+This directory is an experimental renderer, not a public service or the
+workbench production export backend. The coordinator recompiles and compares
+the trusted input bytes, freezes its manifest hash, and generates a separate
+Kubernetes Job. No user-authored HTML is admitted.
+
+`package-lock.json` fixes the installed npm artifacts (registry mirror URLs and
+integrity included). `runtime.json` records Node, Chrome, FFmpeg, GSAP, font,
+package-lock and dpkg identities inside the image. `hyperframes_source` names
+the source revision reviewed during design; it is a source reference, not a
+claim that the registry tarball was built from that exact Git checkout. The
+image's digest and source-context hash belong in an external build receipt.
+At execution, `collectRuntime()` probes the installed binaries and hashes
+again; the build-time JSON alone is not trusted as proof of the running files.
+Every key of a non-null frozen fingerprint must match those measurements.
+The coordinator pins the image and passes `MOTION_IMAGE_DIGEST` separately;
+that value must equal the frozen image digest. The image's runtime data must
+not contain or claim its own registry digest. Confirming the Pod's actual
+imageID remains the coordinator's responsibility.
+
+An unbound (`runtime_fingerprint: null`) project is rejected by default.
+Experiments must explicitly pass `allow_unbound_experiment=True` to
+`resources()`; only then does the Job set
+`MOTION_ALLOW_UNBOUND_EXPERIMENT=1`. Its receipt remains
+`runtime_binding.status=unbound_experiment`, never `matched`. This exception
+does not skip validation for a project that supplies a frozen fingerprint.
+
+Build and push only `video-motion-renderer:latest`. Record a release ID and the
+actual source/context hashes as image labels. The final Job must receive
+`registry/video-motion-renderer:latest@sha256:<actual digest>`.
+
+`resources()` in `job.py` generates a dedicated namespace, deny-all network
+policy, immutable input ConfigMap, and one Job. Its init container verifies and
+unpacks a bounded tar of generated files into one 4Gi scratch volume. The
+renderer has no token, secrets, host filesystem or devices. It runs as UID
+10001, drops all capabilities, uses RuntimeDefault seccomp and a read-only root
+filesystem. This containment is necessary because upstream Chrome disables
+its browser sandbox; HyperFrames itself does not provide a security boundary.
+
+Use API create or `kubectl apply --server-side` for the immutable input
+ConfigMap. Client-side `kubectl apply` copies its large audio payload into the
+last-applied annotation, which can exceed Kubernetes' 256KiB annotation limit
+even when the ConfigMap payload itself is valid. Create the input successfully
+before admitting its Job; a missing input must not start a render.
+
+The first experiment uses CPU request/limit 1/2 and memory 2/4Gi with one Chrome
+worker, 1280×720, 24fps, strict lint, no best-effort, software capture and no
+runtime downloads. A 300-second render budget does not include the independent
+observation pass or brief artifact collection; the full Job deadline is 390
+seconds. A later 60-second experiment can explicitly request the 600-second
+budget. There are no automatic Job retries.
+
+`experiment.py` runs encoding, full decode, and a separate HyperFrames core
+observation pass. The CLI uses producer's `__hf.seek` bridge during actual
+rendering. The standalone observer injects the checksummed core runtime with
+24fps render configuration and calls its native
+`__player.renderSeek(time, {exact:true})`, the method that bridge delegates to.
+It waits for player/render readiness with timer polling, awaits native seek
+completion and captures a JPEG (quality 75) without a custom rAF wait. Every
+before/middle/after DOM observation remains present; frame hashes identify the
+corresponding JPEG bytes. Observations
+record `seek_protocol=hyperframes-core-renderSeek-exact` and actual player time.
+They sample exact semantic action times, not encoded frame byte equivalence.
+An enumerable `__hf.seek` property alone is insufficient: core can install an
+accessor while its value is still undefined, as the real debug Job confirmed.
+`encoded_pending_validation` and
+`observed_pending_validation` are intermediate evidence, not publication or
+visual acceptance. Audio is padded with `whole_dur` to
+the compiler's frame-ceiled duration, so a fractional final frame has an audio
+track without cutting or stretching the original recording. The renderer
+checks that duration against `ceil((leading + audio + trailing) * 24) / 24`
+and tolerates decimal serialization of a complete frame without ceiling it
+again to an extra frame.
+The caller verifies action observations with
+`video_workbench.motion_review.verify_observations`, reviews actual frames and
+the audio/video together, then records technical and user quality judgments
+separately. Estimated alignment remains pending.
+
+To retrieve results, capture `kubectl logs` to a local file, parse the single
+`VIDEO_MOTION_ARTIFACT_BASE64=` line, enforce the 6MiB compressed and 32MiB
+uncompressed limits and ordinary relative tar members before extraction.
+Observation frame members end in `.jpg`. If either artifact budget is exceeded,
+the harness emits a bounded failure archive containing
+`experiment.status=artifact_budget_exceeded`, available receipts and bounded log
+tails. It excludes partial MP4 and frame files and exits unsuccessfully; even
+two successful stage exit codes cannot promote that collection failure.
+Never print that payload into a chat. Save the Pod/Job status, imageID and logs
+before deleting only the experiment Job/ConfigMap/namespace. Deleting the Pod
+removes its input, intermediates, Chrome processes and scratch volume. Failed,
+cancelled and timed-out partial outputs must not be published as success.
+
+OOM, timeout and cancellation handling still require actual cluster tests;
+source tests alone cannot certify those failure boundaries.

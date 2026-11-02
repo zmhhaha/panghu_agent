@@ -314,6 +314,15 @@ def load_scenario(path, source_dir, parent_dir, policy):
             raw = files[asset['id'] + extensions[asset['media_type']]]
             require(len(raw) == asset['bytes'] and hashlib.sha256(raw).hexdigest() == asset['sha256'],
                 'candidate_source_snapshot_mismatch')
+    elif policy.name == 'video.motion-plan.v1':
+        require(set(files) == {'motion-input.json'}, 'candidate_motion_input_required')
+        from agent_service.profiles.video import decode_video_json
+        from agent_service.profiles.video_motion import validate_motion_input
+        raw = files['motion-input.json']
+        document = decode_video_json(raw)
+        validate_motion_input(document)
+        require(canonical_bytes(document) == raw and hashlib.sha256(raw).hexdigest() == task['input_sha256'],
+            'candidate_motion_input_mismatch')
     elif policy.name in {'video.storyboard.v1', 'video.scene.v1'}:
         require(set(files) == {'video-input.json'}, 'candidate_video_input_required')
         from agent_service.profiles.video import decode_video_json, validate_video_input
