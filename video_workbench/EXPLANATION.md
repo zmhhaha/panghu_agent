@@ -27,7 +27,7 @@ flowchart LR
     S --> R
 ```
 
-`explanation_store.py` 保存输入、单次任务、不可变候选和采用指针；`explanation_workflow.py` 协调持久任务；`explanation_gateway.py` 复用现有 AgentClient。模型输出经过独立 schema 和输入摘要校验后才能成为候选。一次意图只提交一次模型请求；提交结果不明确时查询原任务，重启不重复提交。取消有界重试，不把“已申请取消”伪装成已停止上游。
+`explanation_store.py` 保存输入、单次任务、不可变候选和采用指针；`explanation_workflow.py` 协调持久任务；`explanation_gateway.py` 复用现有 AgentClient。模型输出经过独立 schema 和输入摘要校验后才能成为候选。一次意图只提交一次通用 Agent 任务；提交结果不明确时查询原任务，重启不重复提交。一个 Agent 任务内部可能有多轮模型调用。取消有界重试，不把“已申请取消”伪装成已停止上游。
 
 逐镜关键点和变化步骤在采用时成为镜头的视觉生成说明，送入原有视觉任务；它们是语义建议，不是可执行脚本或最终动画时间轴。已有 HyperFrames 底座仍通过独立 motion 契约编译与真实音频绑定，生产动态渲染接线、代表样片及有限整片批量协调继续单独验收。
 
