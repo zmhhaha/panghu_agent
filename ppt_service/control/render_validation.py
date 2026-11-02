@@ -133,7 +133,7 @@ def source_binding(snapshot,manifest,request,*,diagram_reports=None):
     return {'source_manifest_sha256':hash_file(snapshot/'result','manifest.json',4*1024**2)['sha256'],'input_snapshot_sha256':request['input_snapshot_sha256'],'project_root':project,'svg_sources':svg_rows,'local_resources':[resources[k] for k in sorted(resources)],'pptx':pptx,'expected_charts_canonical_sha256':fingerprint(request.get('expected_charts'))},root,index
 
 
-def source_binding_with_diagram_audit(snapshot,manifest,request,output):
+def source_binding_with_diagram_audit(snapshot,manifest,request,output,*,retain_success=True):
     """Retain partial geometry evidence, never treating a failed scan as complete."""
     diagrams=[];complete=False
     try:
@@ -141,7 +141,7 @@ def source_binding_with_diagram_audit(snapshot,manifest,request,output):
         complete=True
         return result
     finally:
-        if diagrams:
+        if diagrams and (not complete or retain_success):
             atomic_json(output/'diagram-geometry.json',{'schema':'ppt-service.diagram-audit.v1','slides':diagrams,
                 'scan_complete':complete and len(diagrams)==request.get('pages'),
                 'relationship_semantics_verified':False,'publication_authorized':False})

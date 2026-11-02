@@ -159,7 +159,12 @@ def run_acceptance(snapshot, original_request, acceptance_request, output):
         for name in ("design_spec.md", "spec_lock.md"):
             require(hash_file(root, name, 4 * 1024**2)["sha256"] ==
                 task["checkpoint"]["approved_specs"].get(name), "approved_spec_lock_changed")
-    measured, _, index = source_binding_with_diagram_audit(snapshot, manifest, request, output)
+    # A successful preliminary scan must not write evidence before the full
+    # trusted PPTX/fingerprint binding has been verified below. Strict geometry
+    # rejection still retains its bounded diagnostic. The later independent
+    # programmatic pass writes the complete successful geometry audit.
+    measured, _, index = source_binding_with_diagram_audit(snapshot, manifest, request, output,
+        retain_success=False)
     require(measured["pptx"]["sha256"] == binding.pptx_sha256,
         "acceptance_pptx_changed")
     rows = sorted(({key: row[key] for key in ("path", "sha256", "bytes")}
