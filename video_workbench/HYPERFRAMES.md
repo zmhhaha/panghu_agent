@@ -1,7 +1,8 @@
 # 动态图解实现与验收
 
 2026-11-02。用户已授权按 HyperFrames 设计实施。代码位于独立分支
-`codex/video-hyperframes-motion`，基于已提交的视频应用 `de705b5`。
+`codex/video-hyperframes-motion`，基于已提交的视频应用 `de705b5`，`5e63150` 为前一 R8 底座检查点。
+本轮演示改动保存在同一独立分支，最终提交号由关闭记录/OpenSpec记录。
 先前暂停的 `codex/video-narration-first` 工作树及未提交草稿保持原样。
 
 规格来源是 OpenSpec 项目 `ec663f5a-53d3-4a0e-9037-933eb788d183` 中的
@@ -68,7 +69,7 @@ python -m pytest tests/video_workbench/test_motion.py tests/video_workbench/test
 生产工作台 `video-workbench-5c69474df6-9l6rv` 在检查时仍为 Running、重启数 0；
 该状态观察不等于完整的业务性能验收。
 
-已构建并推送 `video-motion-renderer:latest`，当前实验镜像固定为
+已构建并推送 `video-motion-renderer:latest`，A/B-r8 使用的实验镜像固定为
 `sha256:54cfd9182d9384cf9bdac96d0c7234ecbbc879d909c93f65bd4ea5f7765e2dc9`，
 release 为 `motion-experiment-20261102-r7`，构建输入清单摘要为
 `72fe3a0f3719c54a9bef54312530e3ef0f874e9e88c46785b3f41a73c4a5e27a`。
@@ -124,8 +125,8 @@ Agent 取消请求采用持久化的最多 4 次有界退避；网络失败、�
 
 | 任务 | render+observe | render | 累计CPU | 峰值内存 |
 | --- | ---: | ---: | ---: | ---: |
-| 动态 B-r8 | 70.737 s | 64.652 s | 108.793 s | 398020608 B |
-| 静态 B-r8 | 69.217 s | 63.097 s | 107.623 s | 410038272 B |
+| 动态 B-r8 | 70.736895 s | 64.652252 s | 108.793470 s | 398020608 B |
+| 静态 B-r8 | 69.217364 s | 63.097388 s | 107.622690 s | 410038272 B |
 
 表中不含 K8s 排队、容器准备及操作者收集时间。动态任务首次 client-side apply
 因 last-applied 注解超过 256 KiB 而未创建 ConfigMap；单独 create 输入后原 Job 完成，
@@ -135,3 +136,64 @@ Agent 取消请求采用持久化的最多 4 次有界退避；网络失败、�
 这是本轮真实效果反馈，不能记为满意或批准上线。继续先改样片：用受控的日志／记录／
 上下文图形表现保存、复制与筛选过程，改善分阶段布局和重点变化；工作台接入与 60 秒组合仍待后续验证。
 语音自然度未因本次改动提升，精确句段对齐仍未验收。
+
+两版音频 SHA-256 同为
+`3fa64b4a6800984b4b87719adca38a2eee533d19a5616d7a79305c08b566bce8`；
+独立技术审查 passed，时序仍为 `estimated / pending`。工作清单仅新增动静对照一项，
+当前为 11/21；用户尚未认可效果，不能勾选效果验收。
+
+## 受控演示：R9 误报与 R10 技术通过
+
+`motion_demo.py` 提供独立的 `resolve_demo_timeline` / `compile_demo_project`；
+版本对为 `motion-demo-compiler-1` / `record-demonstration-1`。
+本地实验须显式启用 demonstration；默认 Agent 契约与既有 snapshot 入口仍只接受流程、
+对照、结构聚焦三模板，未发布新 profile。原 `motion.py` 未修改，R8 三份工程的六项
+编译产物已分别重编译并逐字节核对一致。
+
+这版用大纸面日志接收完整回答和尝试记录，随后让日志与两条记录同步左移，
+再将完整回答的副本移入右侧“下一轮历史（局部）”；原回答和橙色尝试记录都留在日志。
+受限动作只有 reveal/hide/move，`relations=[]`，不使用连接线或改变橙色记录的颜色，
+计划不能输入任意代码、URL、CSS、坐标、摄像机或音频秒数。
+
+本地生成器：
+
+```powershell
+python -m video_workbench.examples.build_motion_demo --output D:/github/armbianbegin/.runtime/video-motion-demo-next --speech-wav D:/github/armbianbegin/.runtime/video-audio-production/presentation-redesign/narration-sample.wav
+```
+
+生成器要求新目录；示例目录名不表示它已运行。真实 R10 绑定输入为
+`D:/github/armbianbegin/.runtime/video-motion-demo-r4-bound-r9`，结果为
+`D:/github/armbianbegin/.runtime/video-motion-demo-r10-result`。
+
+R9 已渲染，但独立技术审查拒绝 `motion_text_overflow`：结果说明的空 detail 被
+`display:none` 隐藏，返回 (0,0) box，子节点严格边界检查把它误测为父元素以外。
+失败记录保留在 `video-motion-demo-r9-result`，编码成功未被写作技术通过。
+修复为不生成空或纯空白 detail，保留所有非空文字的 scroll 尺寸和四边界检查。
+
+R10 使用新输入，沿用 R9 镜像而未重建：release `motion-experiment-20261102-r9`，
+digest `sha256:43964c72bebb96b12e2cf57248120f6a1e4eeeccd7206508f4f360948fb80932`。
+其独立技术审查已真实通过：
+
+| 项目 | R10 实测结果 |
+| --- | --- |
+| 媒体 | 1280×720、24fps、21秒、504帧；音视频流均21.000秒，完整解码通过。 |
+| 音频 | 原完整18秒录音加1秒片头、2秒片尾；不裁断、不加速。原段相关系数0.9999584194。 |
+| 动作 | 11个动作窗口，共33个前/中/后采样时刻，每个时刻核对全部7对象。 |
+| 墙钟 | render+observe 63.709151641秒，render 57.650607502秒；Job生命周期69秒。 |
+| 资源 | cgroup峰值403398656 B，同容器累计CPU97.433442秒，阶段累计值不相加。 |
+
+墙钟渲染数据不含排队和容器准备。R10 临时盘采样启动早于 renderer 就绪，失败后退出，
+日志只有首时间戳，没有有效样本；不能记为 0 或沿用 R9 数据，亦未为此重跑。
+R9 的 work 约21036 KiB、tmp 约21012 KiB、input 约884 KiB 仅是该失败实验的采样观察值，
+不是精确峰值，也不填补 R10 临时盘证据的缺口。
+
+独立 review 增加了全场景状态检查，复制之后原回答或尝试记录在晚期消失、移位均会被拒绝。
+最新联合本地回归为 281 passed / 1 skipped、Node 17 passed，与历史集合重叠，不相加。
+Agent/TTS 调用仍为 0，时序 `estimated / pending`。用户已看到新版但尚未评价，
+主观效果仍 pending，清单保持 11/21，不新增效果勾选。
+演示改动继续保存在独立 feature 分支；生产/UI与整片入口、新 profile 发布、60秒容量、
+真实取消/OOM/超时及清理仍待验收，没有生产接入、主线合并或 apply/archive。
+
+本轮两个实验 Job 及对应 ConfigMap 已按精确名称删除，namespace 与 deny-all 策略保留。
+生产工作台在收尾检查时仍 Running、Ready=true、restart=0；正常实验结束的清理已完成，
+故障取消/OOM/超时自动回收及完整业务性能验收仍待验证。

@@ -6,6 +6,8 @@ export const runtimeKeys=['schema','hyperframes','hyperframes_source','node','br
  'gsap_sha256','font_sha256','dpkg_sha256','npm_lock_sha256'];
 const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const exactKeys=(value,keys)=>object(value)&&JSON.stringify(Object.keys(value).sort())===JSON.stringify([...keys].sort());
+const projectPair=(compiler,template)=>(compiler==='motion-compiler-1'&&template==='technical-diagrams-1')
+ ||(compiler==='motion-demo-compiler-1'&&template==='record-demonstration-1');
 function validateRuntimeShape(value,keys){
  if(!exactKeys(value,keys)||Object.values(value).some(v=>typeof v!=='string'||v.length<1||v.length>2000||/[\x00-\x1f\x7f]/.test(v)))
   throw Error('runtime_fingerprint_invalid');
@@ -60,14 +62,15 @@ export function verifyInput(root,expected){
  const bytes=readRegular(root+'/manifest.json');
  if(sha(bytes)!==expected)throw Error('manifest_binding_mismatch');
  const manifest=JSON.parse(bytes);
- if(manifest.schema!=='video.motion-project.v1'||manifest.compiler!=='motion-compiler-1'
-  ||manifest.template!=='technical-diagrams-1'||manifest.hyperframes!=='0.8.149'
+ if(manifest.schema!=='video.motion-project.v1'||!projectPair(manifest.compiler,manifest.template)
+  ||manifest.hyperframes!=='0.8.149'
   ||manifest.gsap!=='3.14.2'||manifest.width!==1280||manifest.height!==720||manifest.fps!==24)
   throw Error('project_contract_mismatch');
  if(JSON.stringify(Object.keys(manifest.files).sort())!==JSON.stringify([...inputFiles].sort()))throw Error('project_files_mismatch');
  for(const name of inputFiles){if(sha(readRegular(root+'/'+name))!==manifest.files[name])throw Error('input_digest_mismatch:'+name);}
  const timeline=JSON.parse(readRegular(root+'/timeline.json'));
- if(timeline.schema!=='video.motion-timeline.v1'||timeline.audio_sha256!==manifest.audio_sha256
+ if(timeline.schema!=='video.motion-timeline.v1'||timeline.compiler!==manifest.compiler
+  ||timeline.audio_sha256!==manifest.audio_sha256
   ||timeline.plan_sha256!==manifest.plan_sha256||manifest.files['plan.json']!==manifest.plan_sha256
   ||manifest.files['timeline.json']!==manifest.timeline_sha256
   ||!Number.isFinite(timeline.duration_seconds)||timeline.duration_seconds<=0||timeline.duration_seconds>60)

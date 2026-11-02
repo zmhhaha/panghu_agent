@@ -7,6 +7,8 @@ import subprocess
 import pytest
 
 from video_workbench.motion import compile_project, example_plan, estimated_alignment, make_beats
+from video_workbench.motion_demo import compile_demo_project
+from video_workbench.motion_renderer import job as renderer_job
 from video_workbench.motion_renderer.job import freeze_input, resources
 from agent_service.contracts import ServiceError
 
@@ -24,6 +26,64 @@ def project(tmp_path):
 
 def test_configmap_freeze_is_deterministic(project):
     assert freeze_input(project, allow_unbound_experiment=True) == freeze_input(project, allow_unbound_experiment=True)
+
+
+@pytest.mark.parametrize('template', ['flow', 'compare', 'focus'])
+def test_original_templates_keep_the_original_compiler_and_all_input_bytes(tmp_path, monkeypatch, template):
+    beats = make_beats('首先提交请求。然后进入任务队列。最后执行并返回结果。')
+    audio = b'RIFF original template bytes'
+    alignment = estimated_alignment(beats, hashlib.sha256(audio).hexdigest(), 15)
+    originals = compile_project(example_plan(beats, template=template), beats, alignment)
+    for name, raw in originals.items():
+        (tmp_path / name).write_bytes(raw)
+    (tmp_path / 'audio.wav').write_bytes(audio)
+    monkeypatch.setattr(renderer_job, 'compile_demo_project', lambda *a, **kw: pytest.fail('wrong compiler'))
+    freeze_input(tmp_path, allow_unbound_experiment=True)
+    assert {name: (tmp_path / name).read_bytes() for name in originals} == originals
+
+
+@pytest.fixture
+def demo_project(tmp_path):
+    beats = make_beats('先看一份日志。把日志保留在左侧。最后展示上下文。')
+    audio = b'RIFF demonstration bytes'
+    plan = dict(schema='video.motion-plan.v1', template='demonstration', title='记录怎样进入上下文？',
+                takeaway='源记录仍然保留。', relations=[],
+                elements=[dict(id='paper', kind='document', label='运行日志', detail='', slot='log_center')],
+                actions=[dict(beat_id=beats['segments'][1]['id'], target='paper', kind='move',
+                              placement='middle', pace='slow', to_slot='log_left')])
+    for name, raw in compile_demo_project(plan, beats,
+            estimated_alignment(beats, hashlib.sha256(audio).hexdigest(), 15)).items():
+        (tmp_path / name).write_bytes(raw)
+    (tmp_path / 'audio.wav').write_bytes(audio)
+    return tmp_path
+
+
+def test_demo_is_recompiled_only_by_explicit_demo_entry(demo_project, monkeypatch):
+    monkeypatch.setattr(renderer_job, 'compile_project', lambda *a, **kw: pytest.fail('wrong compiler'))
+    assert freeze_input(demo_project, allow_unbound_experiment=True)['manifest_sha256'] == hashlib.sha256(
+        (demo_project / 'manifest.json').read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize('compiler,template', [
+    ('motion-demo-compiler-1', 'technical-diagrams-1'),
+    ('motion-compiler-1', 'record-demonstration-1'),
+    ('arbitrary-compiler', 'record-demonstration-1'),
+])
+def test_mixed_or_unknown_compiler_pairs_cannot_dispatch(project, compiler, template):
+    manifest = json.loads((project / 'manifest.json').read_bytes())
+    manifest.update(compiler=compiler, template=template)
+    (project / 'manifest.json').write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match='project_contract_mismatch'):
+        freeze_input(project, allow_unbound_experiment=True)
+
+
+def test_demo_rehashed_arbitrary_page_is_still_rejected(demo_project):
+    (demo_project / 'index.html').write_text('<script>arbitrary_code()</script>')
+    manifest = json.loads((demo_project / 'manifest.json').read_bytes())
+    manifest['files']['index.html'] = hashlib.sha256((demo_project / 'index.html').read_bytes()).hexdigest()
+    (demo_project / 'manifest.json').write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match='input_not_compiler_output'):
+        freeze_input(demo_project, allow_unbound_experiment=True)
 
 
 def test_job_has_no_credentials_network_host_devices_or_automatic_retry(project):

@@ -11,7 +11,8 @@ from agent_service.contracts import InlineFile, ServiceError, canonical_bytes
 from agent_service.engines import StopEvidence
 from agent_service.profiles import implementation
 from agent_service.profiles import video, video_motion as motion
-from agent_service.profiles.video_motion_contract import validate_beats, validate_motion_plan
+from agent_service.profiles.video_motion_contract import (DEFAULT_TEMPLATES, DEMONSTRATION_TEMPLATES,
+    TEMPLATE_SLOTS, validate_beats, validate_motion_plan)
 from agent_service.registry import TaskContract
 from test_catalog import image_packages
 
@@ -128,6 +129,122 @@ def test_three_bounded_template_plans_have_no_audio_timing_dependency(template):
     result = validate_motion_plan(value, beats())
     assert result == value and result is not value and result['elements'] is not value['elements']
     assert 'audio' not in canonical_bytes(result).decode()
+
+
+def demonstration_plan():
+    def element(identity, kind, slot, label):
+        return dict(id=identity, kind=kind, label=label, detail='', slot=slot)
+
+    def action(target, kind, slot=None, placement='start'):
+        return dict(beat_id=BEAT, target=target, kind=kind, placement=placement,
+                    pace='normal', to_slot=slot)
+
+    return dict(schema='video.motion-plan.v1', template='demonstration', title='回答如何进入历史',
+        takeaway='复制完整回答，尝试记录保留在日志中', elements=[
+            element('log', 'document', 'log_center', '执行日志'),
+            element('answer', 'record', 'answer_center', '完整回答'),
+            element('attempt', 'attempt', 'attempt_center', '尝试记录'),
+            element('copy', 'record', 'answer_left', '完整回答'),
+            element('context', 'terminal', 'context_right', '对话历史'),
+            element('retained', 'label', 'result_left', '尝试保留'),
+            element('projected', 'label', 'result_right', '回答进入历史')], relations=[], actions=[
+            action('log', 'move', 'log_left'), action('answer', 'move', 'answer_left'),
+            action('attempt', 'move', 'attempt_left'), action('context', 'reveal'),
+            action('copy', 'reveal', placement='middle'),
+            action('copy', 'move', 'answer_right', placement='end'),
+            action('retained', 'reveal', placement='end'),
+            action('projected', 'reveal', placement='end')])
+
+
+def test_demonstration_requires_explicit_experimental_template_selection():
+    value = demonstration_plan()
+    with pytest.raises(ServiceError, match='invalid_motion_plan'):
+        validate_motion_plan(value, beats())
+    result = validate_motion_plan(value, beats(), allowed_templates=DEMONSTRATION_TEMPLATES)
+    assert result == value and result is not value and result['elements'] is not value['elements']
+    result['elements'][0]['label'] = 'changed'
+    assert value['elements'][0]['label'] == '执行日志'
+    assert DEFAULT_TEMPLATES == frozenset({'flow', 'compare', 'focus'})
+    assert set(TEMPLATE_SLOTS) == DEFAULT_TEMPLATES | DEMONSTRATION_TEMPLATES
+
+
+@pytest.mark.parametrize('template', ['flow', 'compare', 'focus'])
+def test_experiment_opt_in_does_not_change_original_template_results(template):
+    value = plan(template)
+    assert validate_motion_plan(value, beats()) == validate_motion_plan(value, beats(),
+        allowed_templates=DEFAULT_TEMPLATES | DEMONSTRATION_TEMPLATES)
+    with pytest.raises(ServiceError, match='invalid_motion_plan'):
+        validate_motion_plan(value, beats(), allowed_templates=DEMONSTRATION_TEMPLATES)
+    # Opting in to a new template never makes card movement valid in an old one.
+    value['actions'][0]['target'] = 'input'
+    with pytest.raises(ServiceError, match='invalid_motion_plan'):
+        validate_motion_plan(value, beats(), allowed_templates=DEFAULT_TEMPLATES | DEMONSTRATION_TEMPLATES)
+
+
+@pytest.mark.parametrize('allowed', [(), [], {}, 'demonstration', True, ['unknown'], [True]],
+                         ids=['empty-tuple', 'empty-list', 'mapping', 'string', 'bool', 'unknown', 'non-string'])
+def test_template_opt_in_is_a_bounded_trusted_caller_option(allowed):
+    with pytest.raises(ServiceError, match='invalid_motion_plan'):
+        validate_motion_plan(demonstration_plan(), beats(), allowed_templates=allowed)
+
+
+@pytest.mark.parametrize('change', ['unknown_kind', 'cross_kind_slot', 'unknown_slot', 'coordinates',
+    'relation', 'draw', 'highlight', 'copy_action', 'terminal_move', 'label_move', 'record_to_document',
+    'document_to_record', 'attempt_to_record', 'token_slot', 'scale', 'schema', 'copy_of', 'model_opt_in'])
+def test_demonstration_rejects_unbounded_shapes_and_unsupported_actions(change):
+    value = demonstration_plan()
+    if change == 'unknown_kind':
+        value['elements'][0]['kind'] = 'browser'
+    elif change == 'cross_kind_slot':
+        value['elements'][0]['slot'] = 'answer_right'
+    elif change == 'unknown_slot':
+        value['elements'][0]['slot'] = 'free_canvas'
+    elif change == 'coordinates':
+        value['elements'][0]['x'] = 20
+    elif change == 'relation':
+        value['relations'].append(dict(id='link', source='answer', target='context', label='复制'))
+    elif change in {'draw', 'highlight', 'copy_action'}:
+        value['actions'][0]['kind'] = {'draw': 'draw', 'highlight': 'highlight', 'copy_action': 'copy'}[change]
+        value['actions'][0]['to_slot'] = None
+    elif change in {'terminal_move', 'label_move'}:
+        value['actions'][0]['target'] = 'context' if change == 'terminal_move' else 'retained'
+        value['actions'][0]['to_slot'] = 'context_right' if change == 'terminal_move' else 'result_right'
+    elif change == 'record_to_document':
+        value['actions'][1]['to_slot'] = 'log_left'
+    elif change == 'document_to_record':
+        value['actions'][0]['to_slot'] = 'answer_left'
+    elif change == 'attempt_to_record':
+        value['actions'][2]['to_slot'] = 'answer_left'
+    elif change == 'token_slot':
+        value['actions'][1]['to_slot'] = 'token_queue'
+    elif change == 'scale':
+        value['actions'][0]['scale'] = 2
+    elif change == 'schema':
+        value['schema'] = 'video.motion-plan.v2'
+    elif change == 'copy_of':
+        value['elements'][3]['copy_of'] = 'answer'
+    else:
+        value['allowed_templates'] = ['demonstration']
+    with pytest.raises(ServiceError, match='invalid_motion_plan'):
+        validate_motion_plan(value, beats(), allowed_templates=DEMONSTRATION_TEMPLATES)
+
+
+def test_published_motion_profile_never_accepts_demonstration_input_or_output(tmp_path):
+    handler, envelope = prepare(tmp_path)
+    value = demonstration_plan()
+    assert 'demonstration' not in handler.build_prompt(envelope.task)
+    (tmp_path / 'output.json').write_bytes(canonical_bytes(value))
+    with pytest.raises(ServiceError, match='invalid_motion_plan'):
+        collect(handler, tmp_path, envelope)
+    with pytest.raises(ServiceError, match='invalid_motion_plan'):
+        motion.validate_motion_result(dict(schema='video.motion-result.v1',
+            input_sha256=envelope.task['input_sha256'], plan=value), envelope.task['input_sha256'], beats())
+    changed_input = document()
+    changed_input['base_plan'] = value
+    with pytest.raises(ServiceError, match='invalid_motion_plan'):
+        motion.validate_motion_input(changed_input)
+    assert hashlib.sha256((motion.BUNDLE_ROOT / 'manifest.json').read_bytes()).hexdigest() == (
+        '4eba854c6f858a6ec18eb01687a87865dca53efc1346eb4456e6a47bd9dac104')
 
 
 @pytest.mark.parametrize('change', ['code', 'url', 'timestamp', 'dangling_beat', 'dangling_target',

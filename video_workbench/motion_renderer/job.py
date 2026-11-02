@@ -15,6 +15,7 @@ import re
 import tarfile
 
 from video_workbench.motion import compile_project
+from video_workbench.motion_demo import compile_demo_project
 from video_workbench.motion_snapshot import _runtime as validate_runtime_fingerprint
 
 NAMESPACE = 'video-motion-experiment'
@@ -45,6 +46,13 @@ def freeze_input(directory, *, allow_unbound_experiment=False, image_digest=None
     files = {name: _ordinary(directory / name, 8 * 1024 * 1024 if name == 'audio.wav' else 1024 * 1024)
              for name in FILES}
     manifest, timeline = (json.loads(files[name]) for name in ('manifest.json', 'timeline.json'))
+    pair = manifest.get('compiler'), manifest.get('template')
+    if pair == ('motion-compiler-1', 'technical-diagrams-1'):
+        compiler = compile_project
+    elif pair == ('motion-demo-compiler-1', 'record-demonstration-1'):
+        compiler = compile_demo_project
+    else:
+        raise ValueError('project_contract_mismatch')
     fingerprint = manifest.get('runtime_fingerprint')
     if fingerprint is None:
         if allow_unbound_experiment is not True or 'runtime_fingerprint' not in manifest:
@@ -53,7 +61,7 @@ def freeze_input(directory, *, allow_unbound_experiment=False, image_digest=None
         validate_runtime_fingerprint(fingerprint)
         if image_digest is not None and fingerprint['image_digest'] != image_digest:
             raise ValueError('runtime_image_digest_mismatch')
-    expected = compile_project(json.loads(files['plan.json']), json.loads(files['beats.json']),
+    expected = compiler(json.loads(files['plan.json']), json.loads(files['beats.json']),
                                json.loads(files['alignment.json']), animated=manifest['animated'],
                                leading_seconds=timeline['leading_seconds'], trailing_seconds=timeline['trailing_seconds'],
                                runtime_fingerprint=manifest['runtime_fingerprint'])

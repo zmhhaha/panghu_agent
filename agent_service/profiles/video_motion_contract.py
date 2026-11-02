@@ -11,6 +11,10 @@ import re
 from ..contracts import ServiceError, canonical_bytes
 
 
+# The published Agent contract retains its original template vocabulary. Local
+# experiments must opt in explicitly; registering slots cannot expand defaults.
+DEFAULT_TEMPLATES = frozenset({'flow', 'compare', 'focus'})
+DEMONSTRATION_TEMPLATES = frozenset({'demonstration'})
 TEMPLATE_SLOTS = {
     'flow': {'card': frozenset({'source', 'queue', 'worker', 'note'}),
              'token': frozenset({'token_source', 'token_queue', 'token_worker'}),
@@ -21,6 +25,13 @@ TEMPLATE_SLOTS = {
     'focus': {'card': frozenset({'top', 'left', 'center', 'right', 'note'}),
               'token': frozenset({'token_top', 'token_left', 'token_center', 'token_right'}),
               'label': frozenset({'caption'})},
+    'demonstration': {
+        'document': frozenset({'log_center', 'log_left'}),
+        'record': frozenset({'answer_center', 'answer_left', 'answer_right'}),
+        'attempt': frozenset({'attempt_center', 'attempt_left'}),
+        'terminal': frozenset({'context_right'}),
+        'label': frozenset({'result_left', 'result_right'}),
+    },
 }
 PLAN_MAX_BYTES = 128 * 1024
 BEATS_MAX_BYTES = 256 * 1024
@@ -73,8 +84,18 @@ def validate_beats(beats):
     return deepcopy(beats)
 
 
-def validate_motion_plan(plan, beats):
-    """Return a fresh validated data plan; reject unknown and executable fields."""
+def validate_motion_plan(plan, beats, *, allowed_templates=None):
+    """Validate bounded data; experiments never widen the Agent defaults.
+
+    ``allowed_templates`` is a trusted caller option, never a model field. The
+    demonstration slots of each movable kind have equal compiler-owned sizes;
+    they do not enable arbitrary coordinates, scaling or cross-kind moves.
+    """
+    if allowed_templates is None:
+        allowed_templates = DEFAULT_TEMPLATES
+    _require(type(allowed_templates) in (tuple, list, set, frozenset)
+             and 1 <= len(allowed_templates) <= len(TEMPLATE_SLOTS)
+             and all(type(name) is str and name in TEMPLATE_SLOTS for name in allowed_templates))
     if type(beats) is dict:
         rows = validate_beats(beats)['segments']
     else:
@@ -86,7 +107,8 @@ def validate_motion_plan(plan, beats):
              and len(set(beat_ids)) == len(beat_ids))
     _fields(plan, {'schema', 'template', 'title', 'takeaway', 'elements', 'relations', 'actions'})
     _require(plan['schema'] == 'video.motion-plan.v1'
-             and type(plan['template']) is str and plan['template'] in TEMPLATE_SLOTS)
+             and type(plan['template']) is str and plan['template'] in allowed_templates)
+    demonstration = plan['template'] == 'demonstration'
     for key, maximum in (('title', 50), ('takeaway', 90)):
         _text(plan[key], maximum)
     slots = TEMPLATE_SLOTS[plan['template']]
@@ -94,6 +116,7 @@ def validate_motion_plan(plan, beats):
     _require(type(elements) is list and 1 <= len(elements) <= 9
              and type(relations) is list and len(relations) <= 12
              and type(actions) is list and 1 <= len(actions) <= 48)
+    _require(not demonstration or not relations)
     by_id, occupied = {}, set()
     for item in elements:
         _fields(item, {'id', 'kind', 'label', 'detail', 'slot'})
@@ -118,6 +141,8 @@ def validate_motion_plan(plan, beats):
     conflicts = set()
     properties = {'reveal': 'visibility', 'hide': 'visibility', 'highlight': 'highlight',
                   'move': 'position', 'draw': 'stroke'}
+    if demonstration:
+        properties = {kind: properties[kind] for kind in ('reveal', 'hide', 'move')}
     for item in actions:
         _fields(item, {'beat_id', 'target', 'kind', 'placement', 'pace', 'to_slot'})
         beat, target, kind = item['beat_id'], item['target'], item['kind']
@@ -130,8 +155,10 @@ def validate_motion_plan(plan, beats):
         else:
             _require(target in by_id)
         if kind == 'move':
-            _require(by_id[target]['kind'] == 'token' and type(item['to_slot']) is str
-                     and item['to_slot'] in slots['token'])
+            target_kind = by_id[target]['kind']
+            movable_kinds = {'document', 'record', 'attempt'} if demonstration else {'token'}
+            _require(target_kind in movable_kinds and type(item['to_slot']) is str
+                     and item['to_slot'] in slots[target_kind])
         else:
             _require(item['to_slot'] is None)
         conflict = (beat, target, properties[kind])

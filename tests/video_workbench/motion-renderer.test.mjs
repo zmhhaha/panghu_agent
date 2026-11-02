@@ -5,12 +5,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sha, verifyInput, verifyRuntime, validateProbe, encodedDuration, muxAudioFilter } from '../../video_workbench/motion_renderer/contract.mjs';
 import { runtimeArtifact, withObservationPage, observationSeekConfig, seekPageExact, screenshotObservation } from '../../video_workbench/motion_renderer/observe.mjs';
-function fixture(){
+function fixture({compiler='motion-compiler-1',template='technical-diagrams-1',timelineCompiler=compiler}={}){
  const path=mkdtempSync(join(tmpdir(),'motion-contract-'));
  const plan=Buffer.from('{}'),audio=Buffer.from('RIFF');
- const timeline=Buffer.from(JSON.stringify({schema:'video.motion-timeline.v1',audio_sha256:sha(audio),plan_sha256:sha(plan),duration_seconds:15}));
+ const timeline=Buffer.from(JSON.stringify({schema:'video.motion-timeline.v1',compiler:timelineCompiler,audio_sha256:sha(audio),plan_sha256:sha(plan),duration_seconds:15}));
  const files={'index.html':Buffer.from('compiler page'),'beats.json':Buffer.from('{}'),'alignment.json':Buffer.from('{}'),'plan.json':plan,'timeline.json':timeline};
- const manifest=Buffer.from(JSON.stringify({schema:'video.motion-project.v1',compiler:'motion-compiler-1',template:'technical-diagrams-1',hyperframes:'0.8.149',gsap:'3.14.2',width:1280,height:720,fps:24,
+ const manifest=Buffer.from(JSON.stringify({schema:'video.motion-project.v1',compiler,template,hyperframes:'0.8.149',gsap:'3.14.2',width:1280,height:720,fps:24,
   files:Object.fromEntries(Object.entries(files).map(([k,v])=>[k,sha(v)])),plan_sha256:sha(plan),timeline_sha256:sha(timeline),audio_sha256:sha(audio)}));
  for(const [name,data] of Object.entries({...files,'manifest.json':manifest,'audio.wav':audio}))writeFileSync(join(path,name),data);
  return {path,expected:sha(manifest),close:()=>rmSync(path,{recursive:true,force:true})};
@@ -18,6 +18,21 @@ function fixture(){
 test('verified manifest requires externally frozen digest',()=>{const f=fixture();try{assert.throws(()=>verifyInput(f.path),/expected_manifest/);assert.throws(()=>verifyInput(f.path,'a'.repeat(64)),/binding/);assert.equal(verifyInput(f.path,f.expected).timeline.duration_seconds,15);}finally{f.close();}});
 test('tampered source cannot execute',()=>{const f=fixture();try{writeFileSync(join(f.path,'index.html'),'tampered');assert.throws(()=>verifyInput(f.path,f.expected),/input_digest/);}finally{f.close();}});
 test('recording is bound independently',()=>{const f=fixture();try{writeFileSync(join(f.path,'audio.wav'),'different');assert.throws(()=>verifyInput(f.path,f.expected),/audio_binding/);}finally{f.close();}});
+test('only the original and isolated demonstration compiler/template pairs are admitted',()=>{
+ for(const options of [{},{compiler:'motion-demo-compiler-1',template:'record-demonstration-1'}]){
+  const f=fixture(options);try{assert.doesNotThrow(()=>verifyInput(f.path,f.expected));}finally{f.close();}
+ }
+ for(const options of [{compiler:'motion-demo-compiler-1'},{template:'record-demonstration-1'},
+  {compiler:'arbitrary-compiler',template:'record-demonstration-1'}]){
+  const f=fixture(options);try{assert.throws(()=>verifyInput(f.path,f.expected),/project_contract_mismatch/);}finally{f.close();}
+ }
+});
+test('a rehashed timeline cannot claim a different compiler from its frozen manifest',()=>{
+ for(const options of [{timelineCompiler:'motion-demo-compiler-1'},
+  {compiler:'motion-demo-compiler-1',template:'record-demonstration-1',timelineCompiler:'motion-compiler-1'}]){
+  const f=fixture(options);try{assert.throws(()=>verifyInput(f.path,f.expected),/timeline_contract_mismatch/);}finally{f.close();}
+ }
+});
 const goodProbe=()=>({streams:[{codec_type:'video',codec_name:'h264',width:1280,height:720,avg_frame_rate:'24/1',duration:'15',nb_frames:'360'},{codec_type:'audio',codec_name:'aac',duration:'15'}]});
 test('requires actual video and complete audio',()=>{assert.doesNotThrow(()=>validateProbe(goodProbe(),{duration_seconds:15}));for(const change of [p=>p.streams.pop(),p=>p.streams[0].width=1920,p=>p.streams[0].nb_frames='1',p=>p.streams[0].avg_frame_rate='30/1',p=>p.streams[1].duration='14',p=>delete p.streams[1].duration]){const p=goodProbe();change(p);assert.throws(()=>validateProbe(p,{duration_seconds:15}));}});
 const installedRuntime=()=>({schema:'video.motion-runtime.v1',hyperframes:'0.8.149',

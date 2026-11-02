@@ -10,7 +10,9 @@ import math
 import re
 
 from agent_service.contracts import ServiceError
+from agent_service.profiles.video_motion_contract import validate_motion_plan
 from .motion import FPS, HEIGHT, WIDTH, LAYOUTS, action_windows, sha256
+from .motion_demo import DEMO_COMPILER_VERSION, DEMO_LAYOUT
 
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
 
@@ -31,6 +33,40 @@ def _digest(value):
 
 def _visible(state):
     return _number(state.get('opacity')) >= .98
+
+
+def _demo_expected_states(plan, timeline, time):
+    """Evaluate the pinned demo compiler's GSAP 3.14.2 property schedule.
+
+    ``power2.inOut`` is cubic in GSAP (Power1 is quadratic). fromTo tweens
+    use explicit previous endpoints and immediateRender=False; future tweens
+    must not move or reveal a declared copy ahead of their start. The compiler
+    owns the ease and all coordinates, and same-property windows cannot overlap.
+    """
+    states = {row['id']: dict(x=DEMO_LAYOUT[row['slot']][0], y=DEMO_LAYOUT[row['slot']][1], opacity=1.0)
+              for row in plan['elements']}
+    first_visibility = set()
+    for action in timeline['actions']:
+        identity = action['target']
+        if action['kind'] in {'reveal', 'hide'} and identity not in first_visibility:
+            first_visibility.add(identity)
+            states[identity]['opacity'] = 0.0 if action['kind'] == 'reveal' else 1.0
+    for action in timeline['actions']:
+        start, duration = _number(action.get('start')), _number(action.get('duration'))
+        _require(start >= 0 and duration > 0, 'motion_demo_contract_mismatch')
+        if time < start:
+            continue
+        progress = min(1.0, (time - start) / duration)
+        eased = 4 * progress ** 3 if progress < .5 else 1 - (-2 * progress + 2) ** 3 / 2
+        state = states[action['target']]
+        if action['kind'] == 'move':
+            x, y = DEMO_LAYOUT[action['to_slot']][:2]
+            state['x'] += (x - state['x']) * eased
+            state['y'] += (y - state['y']) * eased
+        else:
+            opacity = 1.0 if action['kind'] == 'reveal' else 0.0
+            state['opacity'] += (opacity - state['opacity']) * eased
+    return states
 
 
 def _layout(observation):
@@ -80,9 +116,35 @@ def verify_observations(plan, timeline, observations):
     _require(observations.get('seek_protocol') == 'hyperframes-core-renderSeek-exact'
              and type(observations.get('render_fps')) is int and observations['render_fps'] == FPS,
              'motion_seek_protocol_invalid')
+    demonstration = plan.get('template') == 'demonstration'
+    if demonstration:
+        _require(timeline.get('compiler') == DEMO_COMPILER_VERSION,
+                 'motion_demo_contract_mismatch')
+        beat_rows = timeline.get('beats')
+        _require(type(beat_rows) is list and all(type(row) is dict and 'beat_id' in row for row in beat_rows),
+                 'motion_demo_contract_mismatch')
+        validate_motion_plan(plan, [dict(id=row['beat_id']) for row in beat_rows],
+                             allowed_templates={'demonstration'})
+        # A timeline cannot smuggle a different verb/destination into a valid
+        # plan. Ordinals retain the plan's original order after time sorting.
+        actions = timeline.get('actions')
+        _require(type(actions) is list and len(actions) == len(plan['actions'])
+                 and all(type(row) is dict and type(row.get('ordinal')) is int for row in actions)
+                 and {row['ordinal'] for row in actions} == set(range(len(actions))),
+                 'motion_demo_contract_mismatch')
+        for row in actions:
+            _require(type(row) is dict and type(row.get('ordinal')) is int
+                     and all(row.get(key) == value for key, value in plan['actions'][row['ordinal']].items()),
+                     'motion_demo_contract_mismatch')
+        layout = DEMO_LAYOUT
+    else:
+        _require(plan.get('template') in LAYOUTS)
+        layout = LAYOUTS[plan['template']]
     element_ids = {row['id'] for row in plan['elements']}
     relation_ids = {row['id'] for row in plan['relations']}
-    positions = {row['id']: LAYOUTS[plan['template']][row['slot']][:2] for row in plan['elements']}
+    positions = {row['id']: layout[row['slot']][:2] for row in plan['elements']}
+    dimensions = {row['id']: layout[row['slot']][2:] for row in plan['elements']}
+    fixed_ids = {row['id'] for row in plan['elements'] if row['kind'] in {'terminal', 'label'}}
     rows = observations.get('windows')
     _require(type(rows) is list and len(rows) == len(timeline['actions']))
     by_ordinal = {}
@@ -105,6 +167,24 @@ def verify_observations(plan, timeline, observations):
             _require(set(sample['elements']) == element_ids
                      and type(sample.get('relations')) is dict and set(sample['relations']) == relation_ids,
                      'motion_observation_objects_missing')
+            if demonstration:
+                # Moving document/record/attempt windows keep their declared
+                # size; this applies to every element, including hidden copies.
+                expected_states = _demo_expected_states(plan, timeline, times[label])
+                for identity, state in sample['elements'].items():
+                    width, height = dimensions[identity]
+                    _require(abs(_number(state.get('width')) - width) < 1
+                             and abs(_number(state.get('height')) - height) < 1,
+                             'motion_demo_size_mismatch')
+                    if identity in fixed_ids:
+                        _require(math.dist((_number(state['x']), _number(state['y'])), positions[identity]) < 1,
+                                 'motion_demo_fixed_window_moved')
+                    expected = expected_states[identity]
+                    _require(math.dist((_number(state['x']), _number(state['y'])),
+                                       (expected['x'], expected['y'])) < 1,
+                             'motion_demo_position_mismatch')
+                    _require(abs(_number(state['opacity']) - expected['opacity']) <= .01,
+                             'motion_demo_opacity_mismatch')
             labels = sample['layout']['relations']
             _require({item.get('id') for item in labels} == relation_ids
                      and len(labels) == len(relation_ids), 'motion_observation_objects_missing')
@@ -134,7 +214,10 @@ def verify_observations(plan, timeline, observations):
                              and values[2] < values[1] < values[0], 'motion_expected_hide_missing')
             elif kind == 'move':
                 _require(_visible(a) and _visible(b) and _visible(c), 'motion_invisible_move')
-                x, y = LAYOUTS[plan['template']][action['to_slot']][:2]
+                x, y = layout[action['to_slot']][:2]
+                if demonstration:
+                    _require(layout[action['to_slot']][2:] == dimensions[target],
+                             'motion_demo_size_mismatch')
                 start = (_number(a['x']), _number(a['y']))
                 mid = (_number(b['x']), _number(b['y']))
                 end = (_number(c['x']), _number(c['y']))
