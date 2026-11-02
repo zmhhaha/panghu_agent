@@ -14,7 +14,7 @@ from pathlib import Path
 import re
 import tarfile
 
-from video_workbench.motion import compile_project
+from video_workbench.motion import COMPILER_TEMPLATES, compile_project
 from video_workbench.motion_demo import compile_demo_project
 from video_workbench.motion_snapshot import _runtime as validate_runtime_fingerprint
 
@@ -48,8 +48,10 @@ def freeze_input(directory, *, allow_unbound_experiment=False, image_digest=None
              for name in FILES}
     manifest, timeline = (json.loads(files[name]) for name in ('manifest.json', 'timeline.json'))
     pair = manifest.get('compiler'), manifest.get('template')
-    if pair == ('motion-compiler-1', 'technical-diagrams-1'):
+    options = {}
+    if type(pair[0]) is str and COMPILER_TEMPLATES.get(pair[0]) == pair[1]:
         compiler = compile_project
+        options['compiler_version'] = pair[0]
     elif pair == ('motion-demo-compiler-1', 'record-demonstration-1'):
         compiler = compile_demo_project
     else:
@@ -65,7 +67,7 @@ def freeze_input(directory, *, allow_unbound_experiment=False, image_digest=None
     expected = compiler(json.loads(files['plan.json']), json.loads(files['beats.json']),
                                json.loads(files['alignment.json']), animated=manifest['animated'],
                                leading_seconds=timeline['leading_seconds'], trailing_seconds=timeline['trailing_seconds'],
-                               runtime_fingerprint=manifest['runtime_fingerprint'])
+                               runtime_fingerprint=manifest['runtime_fingerprint'], **options)
     if any(expected[name] != files[name] for name in expected):
         raise ValueError('input_not_compiler_output')
     if hashlib.sha256(files['audio.wav']).hexdigest() != manifest['audio_sha256']:

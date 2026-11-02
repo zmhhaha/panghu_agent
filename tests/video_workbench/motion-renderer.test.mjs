@@ -18,17 +18,21 @@ function fixture({compiler='motion-compiler-1',template='technical-diagrams-1',t
 test('verified manifest requires externally frozen digest',()=>{const f=fixture();try{assert.throws(()=>verifyInput(f.path),/expected_manifest/);assert.throws(()=>verifyInput(f.path,'a'.repeat(64)),/binding/);assert.equal(verifyInput(f.path,f.expected).timeline.duration_seconds,15);}finally{f.close();}});
 test('tampered source cannot execute',()=>{const f=fixture();try{writeFileSync(join(f.path,'index.html'),'tampered');assert.throws(()=>verifyInput(f.path,f.expected),/input_digest/);}finally{f.close();}});
 test('recording is bound independently',()=>{const f=fixture();try{writeFileSync(join(f.path,'audio.wav'),'different');assert.throws(()=>verifyInput(f.path,f.expected),/audio_binding/);}finally{f.close();}});
-test('only the original and isolated demonstration compiler/template pairs are admitted',()=>{
- for(const options of [{},{compiler:'motion-demo-compiler-1',template:'record-demonstration-1'}]){
+test('only exact v1, v2 and isolated demonstration compiler/template pairs are admitted',()=>{
+ for(const options of [{},{compiler:'motion-compiler-2',template:'technical-diagrams-2'},
+  {compiler:'motion-demo-compiler-1',template:'record-demonstration-1'}]){
   const f=fixture(options);try{assert.doesNotThrow(()=>verifyInput(f.path,f.expected));}finally{f.close();}
  }
  for(const options of [{compiler:'motion-demo-compiler-1'},{template:'record-demonstration-1'},
+  {compiler:'motion-compiler-2'},{template:'technical-diagrams-2'},
   {compiler:'arbitrary-compiler',template:'record-demonstration-1'}]){
   const f=fixture(options);try{assert.throws(()=>verifyInput(f.path,f.expected),/project_contract_mismatch/);}finally{f.close();}
  }
 });
 test('a rehashed timeline cannot claim a different compiler from its frozen manifest',()=>{
  for(const options of [{timelineCompiler:'motion-demo-compiler-1'},
+  {timelineCompiler:'motion-compiler-2'},
+  {compiler:'motion-compiler-2',template:'technical-diagrams-2',timelineCompiler:'motion-compiler-1'},
   {compiler:'motion-demo-compiler-1',template:'record-demonstration-1',timelineCompiler:'motion-compiler-1'}]){
   const f=fixture(options);try{assert.throws(()=>verifyInput(f.path,f.expected),/timeline_contract_mismatch/);}finally{f.close();}
  }

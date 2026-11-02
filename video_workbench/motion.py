@@ -19,8 +19,10 @@ from agent_service.contracts import ServiceError
 from agent_service.profiles.video_motion_contract import validate_beats, validate_motion_plan
 
 
-COMPILER_VERSION = 'motion-compiler-1'
-TEMPLATE_VERSION = 'technical-diagrams-1'
+COMPILER_VERSION = 'motion-compiler-2'
+TEMPLATE_VERSION = 'technical-diagrams-2'
+COMPILER_TEMPLATES = {'motion-compiler-1': 'technical-diagrams-1',
+                      COMPILER_VERSION: TEMPLATE_VERSION}
 HYPERFRAMES_VERSION = '0.8.149'
 GSAP_VERSION = '3.14.2'
 WIDTH, HEIGHT, FPS = 1280, 720, 24
@@ -240,8 +242,11 @@ def manual_alignment(beats, audio_sha256, audio_seconds, anchors, *,
     return validate_alignment(result, beats)
 
 
-def resolve_timeline(plan, beats, alignment, *, leading_seconds=0, trailing_seconds=0):
+def resolve_timeline(plan, beats, alignment, *, leading_seconds=0, trailing_seconds=0,
+                     compiler_version=COMPILER_VERSION):
     """Resolve semantic actions against this recording, without stretching it."""
+    _require(type(compiler_version) is str and compiler_version in COMPILER_TEMPLATES,
+             'motion_compiler_version_unsupported')
     beats = validate_beats(beats)
     plan = validate_motion_plan(plan, beats)
     alignment = validate_alignment(alignment, beats)
@@ -266,7 +271,7 @@ def resolve_timeline(plan, beats, alignment, *, leading_seconds=0, trailing_seco
         key = row['target'], prop
         _require(row['start'] >= ends.get(key, -1), 'conflicting_motion_actions')
         ends[key] = row['start'] + row['duration']
-    return dict(schema='video.motion-timeline.v1', compiler=COMPILER_VERSION,
+    return dict(schema='video.motion-timeline.v1', compiler=compiler_version,
                 plan_sha256=sha256(plan), semantic_sha256=semantic_digest(beats),
                 alignment_sha256=sha256(alignment), audio_sha256=alignment['audio_sha256'],
                 spoken_sha256=alignment['spoken_sha256'], audio_seconds=alignment['audio_seconds'],
@@ -318,7 +323,7 @@ def _relation_label(source, target, path):
 
 
 def compile_project(plan, beats, alignment, *, animated=True, runtime_fingerprint=None,
-                    leading_seconds=0, trailing_seconds=0):
+                    leading_seconds=0, trailing_seconds=0, compiler_version=COMPILER_VERSION):
     """Return deterministic project files as bytes; assets are supplied by renderer.
 
     ``assets/gsap.min.js`` and the Noto font are immutable renderer assets.
@@ -330,7 +335,7 @@ def compile_project(plan, beats, alignment, *, animated=True, runtime_fingerprin
     alignment = validate_alignment(alignment, beats)
     _require(type(animated) is bool, 'invalid_motion_options')
     timeline = resolve_timeline(plan, beats, alignment, leading_seconds=leading_seconds,
-                                trailing_seconds=trailing_seconds)
+                                trailing_seconds=trailing_seconds, compiler_version=compiler_version)
     layout = LAYOUTS[plan['template']]
     elements = {row['id']: row for row in plan['elements']}
     boxes = {row['id']: layout[row['slot']] for row in plan['elements']}
@@ -445,6 +450,46 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
   tl.seek(0,false);
 })();
 </script></body></html>'''
+    if compiler_version == COMPILER_VERSION:
+        # Keep the v1 page byte-for-byte reproducible. This bounded v2 layout
+        # changes only compiler-owned typography, never candidate text, geometry,
+        # actions or audio. Text that still does not fit remains a hard failure.
+        page = page.replace('</style>', '''
+.card{padding:14px}.card .element-label{font-size:26px;line-height:1.25}
+.card .element-detail{font-size:18px;line-height:1.35;margin-top:6px}
+.card.slot-top{padding:12px 14px}.card.slot-note{padding:10px 14px}
+.card.slot-note .element-copy{display:block}
+.card.slot-note .element-detail{margin-top:4px;flex-shrink:1}
+</style>''')
+        # Centered flex content can extend above a clipped parent's scroll box.
+        # Check each text box against the actual padded content area as well as
+        # retaining all original parent scroll/canvas checks.
+        page = page.replace('const metrics=el=>{', '''const metrics=el=>{
+    const textBoxes={};let textArea=null;
+    if(el.classList.contains('element')){
+      const parent=el.getBoundingClientRect(),css=getComputedStyle(el),px=key=>parseFloat(css[key])||0;
+      const area={left:parent.left+px('borderLeftWidth')+px('paddingLeft'),
+        top:parent.top+px('borderTopWidth')+px('paddingTop'),
+        right:parent.right-px('borderRightWidth')-px('paddingRight'),
+        bottom:parent.bottom-px('borderBottomWidth')-px('paddingBottom')};
+      textArea=area;
+      for(const [key,selector] of [['copy','.element-copy'],['label','.element-label'],['detail','.element-detail']]){
+        const child=el.querySelector(selector);
+        if(!child||getComputedStyle(child).display==='none')continue;
+        const box=child.getBoundingClientRect();
+        textBoxes[key]={x:box.x,y:box.y,width:box.width,height:box.height,
+          scrollWidth:child.scrollWidth,clientWidth:child.clientWidth,
+          scrollHeight:child.scrollHeight,clientHeight:child.clientHeight,
+          overflow:child.scrollWidth>child.clientWidth||child.scrollHeight>child.clientHeight||
+            box.left<area.left-1e-6||box.top<area.top-1e-6||
+            box.right>area.right+1e-6||box.bottom>area.bottom+1e-6};
+      }
+    }''')
+        page = page.replace('overflow:el.scrollWidth>el.clientWidth||el.scrollHeight>el.clientHeight};',
+                            '''text_area:textArea,text_boxes:textBoxes,
+      overflow:el.scrollWidth>el.clientWidth||el.scrollHeight>el.clientHeight||
+        Object.values(textBoxes).some(box=>box.overflow)};''')
+        page = page.replace("version:'motion-compiler-1'", "version:'motion-compiler-2'")
     replacements = {
         '__DURATION__': str(timeline['duration_seconds']),
         '__EYEBROW__': {'flow': '流程与路由', 'compare': '前后对照', 'focus': '结构聚焦'}[plan['template']],
@@ -459,8 +504,8 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
     files = {'index.html': page.encode('utf-8'), 'plan.json': canonical(plan),
              'beats.json': canonical(beats), 'alignment.json': canonical(alignment),
              'timeline.json': canonical(timeline)}
-    manifest = dict(schema='video.motion-project.v1', compiler=COMPILER_VERSION,
-                    template=TEMPLATE_VERSION, hyperframes=HYPERFRAMES_VERSION, gsap=GSAP_VERSION,
+    manifest = dict(schema='video.motion-project.v1', compiler=compiler_version,
+                    template=COMPILER_TEMPLATES[compiler_version], hyperframes=HYPERFRAMES_VERSION, gsap=GSAP_VERSION,
                     width=WIDTH, height=HEIGHT, fps=FPS, animated=animated,
                     plan_sha256=sha256(plan), semantic_sha256=semantic_digest(beats),
                     timeline_sha256=sha256(timeline), audio_sha256=alignment['audio_sha256'],

@@ -24,7 +24,7 @@ import zlib
 import httpx
 
 from agent_service.contracts import ServiceError, canonical_bytes
-from .motion import compile_project
+from .motion import COMPILER_TEMPLATES, compile_project
 from .motion_review import verify_observations
 from .motion_renderer.job import FILES, INIT, freeze_input
 from .motion_render_adapter import UNAVAILABLE
@@ -161,7 +161,7 @@ def production_resources(directory, *, image, release_id, namespace, name, bindi
             'motion_job_budget_invalid', 422)
     frozen = freeze_input(directory, image_digest=image.rsplit('@', 1)[1], max_payload_bytes=BUNDLE_BYTES)
     manifest = json.loads((Path(directory) / 'manifest.json').read_bytes())
-    require((manifest['compiler'], manifest['template']) == ('motion-compiler-1', 'technical-diagrams-1'),
+    require(COMPILER_TEMPLATES.get(manifest['compiler']) == manifest['template'],
             'motion_production_template_not_supported', 422)
     labels = {'app': 'video-motion-renderer', LABEL + 'execution': binding[:32]}
     annotations = {ANNOTATION: binding, LABEL + 'bundle-sha256': frozen['bundle_sha256'],
@@ -419,7 +419,7 @@ class KubeSceneRenderer:
         motion = scene['motion']
         files = compile_project(motion['plan'], motion['beats'], motion['alignment'],
             runtime_fingerprint=self.runtime, leading_seconds=scene['timing']['leading_seconds'],
-            trailing_seconds=scene['timing']['trailing_seconds'])
+            trailing_seconds=scene['timing']['trailing_seconds'], compiler_version=motion['timeline']['compiler'])
         require({name: sha(raw) for name, raw in files.items()} == motion['project_files_sha256'],
                 'motion_frozen_project_mismatch', 409)
         require(0 < scene['timing']['duration_seconds'] <= 60, 'motion_scene_duration_exceeded', 422)

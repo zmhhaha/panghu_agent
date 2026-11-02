@@ -11,7 +11,7 @@ import re
 
 from agent_service.contracts import ServiceError
 from agent_service.profiles.video_motion_contract import validate_motion_plan
-from .motion import FPS, HEIGHT, WIDTH, LAYOUTS, action_windows, sha256
+from .motion import COMPILER_TEMPLATES, FPS, HEIGHT, WIDTH, LAYOUTS, action_windows, sha256
 from .motion_demo import DEMO_COMPILER_VERSION, DEMO_LAYOUT
 
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
@@ -69,7 +69,28 @@ def _demo_expected_states(plan, timeline, time):
     return states
 
 
-def _layout(observation):
+def _text_bounds(state, kind):
+    """V2 requires visible text boxes even when parent scroll metrics look safe."""
+    boxes, area = state.get('text_boxes'), state.get('text_area')
+    required = {'copy', 'label', 'detail'} if kind == 'card' else {'copy', 'label'}
+    _require(type(boxes) is dict and set(boxes) == required and type(area) is dict
+             and set(area) == {'left', 'top', 'right', 'bottom'}, 'motion_text_bounds_missing')
+    left, top, right, bottom = (_number(area.get(key)) for key in ('left', 'top', 'right', 'bottom'))
+    _require(state['x'] <= left < right <= state['x'] + state['width']
+             and state['y'] <= top < bottom <= state['y'] + state['height'], 'motion_text_overflow')
+    for box in boxes.values():
+        _require(type(box) is dict and box.get('overflow') is False, 'motion_text_overflow')
+        x, y, width, height = (_number(box.get(key)) for key in ('x', 'y', 'width', 'height'))
+        # The tiny epsilon covers floating-point subtraction of DOMRect edges;
+        # the original integer parent scroll checks remain exact and unchanged.
+        _require(width >= 0 and height >= 0 and x >= left - 1e-6 and y >= top - 1e-6
+                 and x + width <= right + 1e-6 and y + height <= bottom + 1e-6,
+                 'motion_text_overflow')
+        for scroll, client in (('scrollWidth', 'clientWidth'), ('scrollHeight', 'clientHeight')):
+            _require(0 <= _number(box.get(scroll)) <= _number(box.get(client)), 'motion_text_overflow')
+
+
+def _layout(observation, *, text_kinds=None):
     layout = observation.get('layout')
     _require(type(layout) is dict and layout.get('fontReady') is True,
              'motion_fonts_not_ready')
@@ -91,7 +112,7 @@ def _layout(observation):
                  'motion_layout_outside_canvas')
     elements = observation.get('elements')
     _require(type(elements) is dict)
-    for state in elements.values():
+    for identity, state in elements.items():
         _require(type(state) is dict and state.get('overflow') is False, 'motion_text_overflow')
         x, y, width, height = (_number(state.get(k)) for k in ('x', 'y', 'width', 'height'))
         opacity = _number(state.get('opacity'))
@@ -99,6 +120,8 @@ def _layout(observation):
         _require(x >= -1 and y >= -1 and width > 0 and height > 0
                  and x + width <= WIDTH + 1 and y + height <= HEIGHT + 1,
                  'motion_layout_outside_canvas')
+        if text_kinds is not None and identity in text_kinds:
+            _text_bounds(state, text_kinds[identity])
     return elements
 
 
@@ -139,7 +162,11 @@ def verify_observations(plan, timeline, observations):
         layout = DEMO_LAYOUT
     else:
         _require(plan.get('template') in LAYOUTS)
+        _require(type(timeline.get('compiler')) is str and timeline['compiler'] in COMPILER_TEMPLATES,
+                 'motion_compiler_version_unsupported')
         layout = LAYOUTS[plan['template']]
+    text_kinds = ({row['id']: row['kind'] for row in plan['elements']}
+                  if timeline.get('compiler') == 'motion-compiler-2' else None)
     element_ids = {row['id'] for row in plan['elements']}
     relation_ids = {row['id'] for row in plan['relations']}
     positions = {row['id']: layout[row['slot']][:2] for row in plan['elements']}
@@ -163,7 +190,7 @@ def verify_observations(plan, timeline, observations):
                      and abs(_number(sample.get('actual_time')) - times[label]) < .00001,
                      'motion_seek_time_mismatch')
             _digest(sample.get('frame_sha256'))
-            _layout(sample)
+            _layout(sample, text_kinds=text_kinds)
             _require(set(sample['elements']) == element_ids
                      and type(sample.get('relations')) is dict and set(sample['relations']) == relation_ids,
                      'motion_observation_objects_missing')

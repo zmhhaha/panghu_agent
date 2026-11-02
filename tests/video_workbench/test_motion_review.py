@@ -20,7 +20,8 @@ def fixture():
     plan['relations'] = []
     plan['actions'] = [dict(beat_id=beats['segments'][0]['id'], target='request',
                             kind='move', placement='middle', pace='slow', to_slot='token_queue')]
-    timeline = resolve_timeline(plan, beats, estimated_alignment(beats, 'a' * 64, 15))
+    timeline = resolve_timeline(plan, beats, estimated_alignment(beats, 'a' * 64, 15),
+                                compiler_version='motion-compiler-1')
     times = action_windows(timeline)[0]
     rows = dict(ordinal=0)
     for label, x, stamp in [('before', 162, 'a'), ('middle', 371, 'b'), ('after', 580, 'c')]:
@@ -114,6 +115,57 @@ def test_snapshot_inputs_are_not_modified_by_review():
     original = deepcopy(args)
     verify_observations(*args)
     assert args == original
+
+
+def v2_text_fixture():
+    plan, timeline, observations = fixture()
+    plan['elements'].append(dict(id='proof', kind='card', label='完整回答', detail='原记录继续保留', slot='source'))
+    timeline.update(compiler='motion-compiler-2', plan_sha256=sha256(plan))
+    observations['timeline_sha256'] = sha256(timeline)
+    for label in ('before', 'middle', 'after'):
+        sample = observations['windows'][0][label]
+        sample['elements']['proof'] = dict(opacity=1, x=72, y=292, width=300, height=156, overflow=False)
+        for identity, state in sample['elements'].items():
+            x, y, width, height = (state[k] for k in ('x', 'y', 'width', 'height'))
+            area = dict(left=x + 14, top=y + 10, right=x + width - 14, bottom=y + height - 10)
+            state['text_area'] = area
+            keys = ('copy', 'label', 'detail') if identity == 'proof' else ('copy', 'label')
+            state['text_boxes'] = {key: dict(x=x + 14, y=y + 12, width=width - 28, height=20,
+                scrollWidth=width - 28, clientWidth=width - 28,
+                scrollHeight=20, clientHeight=20, overflow=False) for key in keys}
+    return plan, timeline, observations
+
+
+def test_v2_requires_all_text_boxes_without_changing_v1_observations():
+    assert verify_observations(*fixture())['technical_status'] == 'passed'
+    assert verify_observations(*v2_text_fixture())['technical_status'] == 'passed'
+    args = v2_text_fixture()
+    del args[2]['windows'][0]['before']['elements']['proof']['text_boxes']['detail']
+    with pytest.raises(ServiceError, match='motion_text_bounds_missing'):
+        verify_observations(*args)
+
+
+@pytest.mark.parametrize('key', ['copy', 'label', 'detail'])
+@pytest.mark.parametrize('failure', ['above', 'below', 'left', 'right', 'scroll', 'reported_overflow'])
+def test_v2_rejects_cropped_child_text_when_parent_claims_no_overflow(key, failure):
+    args = v2_text_fixture()
+    state = args[2]['windows'][0]['before']['elements']['proof']
+    box, area = state['text_boxes'][key], state['text_area']
+    if failure == 'above':
+        box['y'] = area['top'] - 1
+    elif failure == 'below':
+        box['y'] = area['bottom'] - box['height'] + 1
+    elif failure == 'left':
+        box['x'] = area['left'] - 1
+    elif failure == 'right':
+        box['x'] = area['right'] - box['width'] + 1
+    elif failure == 'scroll':
+        box['scrollHeight'] = box['clientHeight'] + 1
+    else:
+        box['overflow'] = True
+    assert state['overflow'] is False
+    with pytest.raises(ServiceError, match='motion_text_overflow'):
+        verify_observations(*args)
 
 
 def demonstration_fixture(kind='document', action_kind='move'):

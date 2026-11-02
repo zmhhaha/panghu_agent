@@ -16,7 +16,8 @@ import re
 
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from . import media
-from .motion import compile_project, resolve_timeline, validate_alignment, semantic_digest
+from .motion import (COMPILER_VERSION, compile_project, resolve_timeline, validate_alignment,
+                     semantic_digest)
 from .speech import inspect_wav
 from .audio_store import narration_document, narration_binding
 
@@ -136,6 +137,14 @@ def freeze_snapshot_v2(project_id, revision, title, scenes, *, runtime_fingerpri
                      'motion_timing_needs_review', 409)
             options = dict(leading_seconds=source.get('leading_seconds', 0),
                            trailing_seconds=source.get('trailing_seconds', 0))
+            # New candidates have no frozen timeline and use the current
+            # compiler. Rebuilding immutable inputs must retain their version;
+            # replacing it with the new default would silently alter old bytes.
+            if 'timeline' in motion:
+                _require(type(motion['timeline']) is dict, 'motion_snapshot_corrupt', 409)
+                options['compiler_version'] = motion['timeline'].get('compiler')
+            else:
+                options['compiler_version'] = COMPILER_VERSION
             timeline = resolve_timeline(plan, beats, alignment, **options)
             project = compile_project(plan, beats, alignment, runtime_fingerprint=fingerprint, **options)
             duration = timeline['duration_seconds']
@@ -152,7 +161,8 @@ def freeze_snapshot_v2(project_id, revision, title, scenes, *, runtime_fingerpri
                 motion=dict(id=visual_id, plan=deepcopy(plan), beats=deepcopy(beats), alignment=alignment,
                     timeline=timeline, semantic_sha256=semantic_digest(beats),
                     project_files_sha256={name: hashlib.sha256(data).hexdigest() for name, data in sorted(project.items())}),
-                timing=dict(duration_seconds=duration, **options))
+                timing=dict(duration_seconds=duration, leading_seconds=options['leading_seconds'],
+                            trailing_seconds=options['trailing_seconds']))
         # Provider-generated narration must retain one project voice. Uploaded
         # recordings remain explicitly uploaded; their audible voice is unknown.
         candidate = source['audio']
