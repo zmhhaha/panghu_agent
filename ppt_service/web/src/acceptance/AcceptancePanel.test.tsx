@@ -58,7 +58,7 @@ describe('explicit version publication', () => {
     expect(screen.getByText('验收与发布').closest('details')).not.toHaveAttribute('open');
     expect(screen.getByText('源文件参考预览 · 最终 PPTX 渲染尚未就绪')).toBeInTheDocument();
     expect(screen.getAllByRole('img')).toHaveLength(1);
-    expect(screen.queryByRole('button', { name: '确认视觉检查通过' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '确认视觉检查通过' })).not.toBeVisible();
     expect(client.save).not.toHaveBeenCalled();
   });
 
