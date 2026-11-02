@@ -29,7 +29,7 @@ def test_configmap_freeze_is_deterministic(project):
 
 
 @pytest.mark.parametrize('template', ['flow', 'compare', 'focus'])
-@pytest.mark.parametrize('compiler_version', ['motion-compiler-1', 'motion-compiler-2'])
+@pytest.mark.parametrize('compiler_version', ['motion-compiler-1', 'motion-compiler-2', 'motion-compiler-3'])
 def test_exact_compiler_versions_keep_all_input_bytes(tmp_path, monkeypatch, template, compiler_version):
     beats = make_beats('首先提交请求。然后进入任务队列。最后执行并返回结果。')
     audio = b'RIFF original template bytes'
@@ -72,6 +72,8 @@ def test_demo_is_recompiled_only_by_explicit_demo_entry(demo_project, monkeypatc
     ('arbitrary-compiler', 'record-demonstration-1'),
     ('motion-compiler-1', 'technical-diagrams-2'),
     ('motion-compiler-2', 'technical-diagrams-1'),
+    ('motion-compiler-3', 'technical-diagrams-2'),
+    ('motion-compiler-2', 'technical-diagrams-3'),
 ])
 def test_mixed_or_unknown_compiler_pairs_cannot_dispatch(project, compiler, template):
     manifest = json.loads((project / 'manifest.json').read_bytes())

@@ -70,7 +70,7 @@ def _demo_expected_states(plan, timeline, time):
 
 
 def _text_bounds(state, kind):
-    """V2 requires visible text boxes even when parent scroll metrics look safe."""
+    """Require visible text boxes even when parent scroll metrics look safe."""
     boxes, area = state.get('text_boxes'), state.get('text_area')
     required = {'copy', 'label', 'detail'} if kind == 'card' else {'copy', 'label'}
     _require(type(boxes) is dict and set(boxes) == required and type(area) is dict
@@ -166,7 +166,7 @@ def verify_observations(plan, timeline, observations):
                  'motion_compiler_version_unsupported')
         layout = LAYOUTS[plan['template']]
     text_kinds = ({row['id']: row['kind'] for row in plan['elements']}
-                  if timeline.get('compiler') == 'motion-compiler-2' else None)
+                  if timeline.get('compiler') in {'motion-compiler-2', 'motion-compiler-3'} else None)
     element_ids = {row['id'] for row in plan['elements']}
     relation_ids = {row['id'] for row in plan['relations']}
     positions = {row['id']: layout[row['slot']][:2] for row in plan['elements']}

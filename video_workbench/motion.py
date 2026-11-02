@@ -19,9 +19,10 @@ from agent_service.contracts import ServiceError
 from agent_service.profiles.video_motion_contract import validate_beats, validate_motion_plan
 
 
-COMPILER_VERSION = 'motion-compiler-2'
-TEMPLATE_VERSION = 'technical-diagrams-2'
+COMPILER_VERSION = 'motion-compiler-3'
+TEMPLATE_VERSION = 'technical-diagrams-3'
 COMPILER_TEMPLATES = {'motion-compiler-1': 'technical-diagrams-1',
+                      'motion-compiler-2': 'technical-diagrams-2',
                       COMPILER_VERSION: TEMPLATE_VERSION}
 HYPERFRAMES_VERSION = '0.8.149'
 GSAP_VERSION = '3.14.2'
@@ -450,7 +451,7 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
   tl.seek(0,false);
 })();
 </script></body></html>'''
-    if compiler_version == COMPILER_VERSION:
+    if compiler_version in {'motion-compiler-2', 'motion-compiler-3'}:
         # Keep the v1 page byte-for-byte reproducible. This bounded v2 layout
         # changes only compiler-owned typography, never candidate text, geometry,
         # actions or audio. Text that still does not fit remains a hard failure.
@@ -490,6 +491,18 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
       overflow:el.scrollWidth>el.clientWidth||el.scrollHeight>el.clientHeight||
         Object.values(textBoxes).some(box=>box.overflow)};''')
         page = page.replace("version:'motion-compiler-1'", "version:'motion-compiler-2'")
+        if compiler_version == 'motion-compiler-3':
+            # Integral line boxes leave room for the pinned CJK font's glyphs;
+            # fractional v2 line heights can report a one-pixel scroll overflow
+            # even when the outer card fits. Preserve both prior versions and
+            # all strict parent/child checks instead of tolerating that overflow.
+            page = page.replace('</style>', '''
+.card .element-label{line-height:38px}.card .element-detail{line-height:27px}
+.card.slot-top{padding:7px 14px}.card.slot-note{padding:8px 14px}
+.token{padding:6px 10px}.token .element-label{line-height:27px}
+.label .element-label{line-height:31px}
+</style>''')
+            page = page.replace("version:'motion-compiler-2'", "version:'motion-compiler-3'")
     replacements = {
         '__DURATION__': str(timeline['duration_seconds']),
         '__EYEBROW__': {'flow': '流程与路由', 'compare': '前后对照', 'focus': '结构聚焦'}[plan['template']],

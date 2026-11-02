@@ -117,10 +117,10 @@ def test_snapshot_inputs_are_not_modified_by_review():
     assert args == original
 
 
-def v2_text_fixture():
+def v2_text_fixture(compiler='motion-compiler-2'):
     plan, timeline, observations = fixture()
     plan['elements'].append(dict(id='proof', kind='card', label='完整回答', detail='原记录继续保留', slot='source'))
-    timeline.update(compiler='motion-compiler-2', plan_sha256=sha256(plan))
+    timeline.update(compiler=compiler, plan_sha256=sha256(plan))
     observations['timeline_sha256'] = sha256(timeline)
     for label in ('before', 'middle', 'after'):
         sample = observations['windows'][0][label]
@@ -136,10 +136,11 @@ def v2_text_fixture():
     return plan, timeline, observations
 
 
-def test_v2_requires_all_text_boxes_without_changing_v1_observations():
+@pytest.mark.parametrize('compiler', ['motion-compiler-2', 'motion-compiler-3'])
+def test_versioned_text_checks_require_all_text_boxes_without_changing_v1_observations(compiler):
     assert verify_observations(*fixture())['technical_status'] == 'passed'
-    assert verify_observations(*v2_text_fixture())['technical_status'] == 'passed'
-    args = v2_text_fixture()
+    assert verify_observations(*v2_text_fixture(compiler))['technical_status'] == 'passed'
+    args = v2_text_fixture(compiler)
     del args[2]['windows'][0]['before']['elements']['proof']['text_boxes']['detail']
     with pytest.raises(ServiceError, match='motion_text_bounds_missing'):
         verify_observations(*args)
@@ -147,8 +148,9 @@ def test_v2_requires_all_text_boxes_without_changing_v1_observations():
 
 @pytest.mark.parametrize('key', ['copy', 'label', 'detail'])
 @pytest.mark.parametrize('failure', ['above', 'below', 'left', 'right', 'scroll', 'reported_overflow'])
-def test_v2_rejects_cropped_child_text_when_parent_claims_no_overflow(key, failure):
-    args = v2_text_fixture()
+@pytest.mark.parametrize('compiler', ['motion-compiler-2', 'motion-compiler-3'])
+def test_versioned_text_checks_reject_cropped_child_text_when_parent_claims_no_overflow(key, failure, compiler):
+    args = v2_text_fixture(compiler)
     state = args[2]['windows'][0]['before']['elements']['proof']
     box, area = state['text_boxes'][key], state['text_area']
     if failure == 'above':
