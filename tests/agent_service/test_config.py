@@ -56,6 +56,9 @@ def test_loading_is_offline_and_defaults_execution_to_disabled(tmp_path, monkeyp
     policy = config.registry.policy('workspace-task.v1', 'v1')
     assert policy.enabled is False and policy.engine == 'pi'
     assert config.poll_seconds == 1.0 and config.lease_seconds == 60
+    assert config.execution_slots == 1
+    assert config.summary()['execution_slot_count'] == 1
+    assert config.summary()['execution_isolation'] == 'global'
     assert config.database_kind == 'postgresql'
     assert config.worker_endpoints[0].receipt_key == base64.b64decode(RECEIPT)
     assert TOKEN_SENTINEL not in repr(config) and 'private-database-password' not in repr(config)
@@ -65,6 +68,62 @@ def test_loading_is_offline_and_defaults_execution_to_disabled(tmp_path, monkeyp
                       task={'prompt': 'trusted text only'})
     with pytest.raises(ServiceError, match='profile_not_ready'):
         config.registry.resolve(principal, task)
+
+
+@pytest.mark.parametrize('slots', [1, 5, 16])
+def test_shared_execution_slots_are_bounded_and_forwarded_to_store(tmp_path, monkeypatch, slots):
+    import agent_service.store
+    cfg = public()
+    cfg['workers'] = []
+    cfg['dispatcher'] = {'execution_slots': slots}
+    loaded = load_configuration(*files(tmp_path, cfg))
+    assert loaded.execution_slots == slots
+    observed = {}
+    sentinel = object()
+    def build(database_url, **kwargs):
+        observed.update(kwargs)
+        assert database_url == DATABASE_SENTINEL
+        return sentinel
+    monkeypatch.setattr(agent_service.store, 'Store', build)
+    assert loaded.build_store() is sentinel
+    assert observed['execution_slots'] == slots
+    summary = loaded.summary()
+    assert summary['execution_slot_count'] == slots
+    assert summary['execution_isolation'] == ('shared' if slots > 1 else 'global')
+    assert summary['model_requests'] == 0
+    output = json.dumps(summary)
+    assert TOKEN_SENTINEL not in output and WORKER_TOKEN not in output
+    assert 'private-database-password' not in output
+
+
+def test_shared_execution_slots_support_per_attempt_kubernetes_workers(tmp_path):
+    cfg = public()
+    cfg['workers'] = []
+    cfg['dispatcher'] = {'execution_slots': 5}
+    cfg['kubernetes_workers'] = [{
+        'pool_id': 'pi-workspace', 'engine': 'pi', 'namespace': 'agent-workers',
+        'image': 'registry.internal/agent-worker:latest@sha256:' + 'a' * 64,
+        'host_config_map': 'agent-pi-host', 'pod_cidrs': ['10.244.0.0/16'],
+        'token_ref': 'pi-worker', 'receipt_key_ref': 'pi-worker'}]
+    loaded = load_configuration(*files(tmp_path, cfg))
+    assert loaded.execution_slots == 5
+    assert loaded.summary()['worker_provisioning'] == 'kubernetes_per_attempt'
+
+
+@pytest.mark.parametrize('slots', [0, -1, 17, True, False, 5.0, '5', None, []])
+def test_shared_execution_slots_require_a_strict_bounded_integer(tmp_path, slots):
+    cfg = public()
+    cfg['workers'] = []
+    cfg['dispatcher'] = {'execution_slots': slots}
+    with pytest.raises(ConfigurationError, match='configuration_invalid'):
+        load_configuration(*files(tmp_path, cfg))
+
+
+def test_shared_execution_slots_reject_shared_static_worker_capsules(tmp_path):
+    cfg = public()
+    cfg['dispatcher'] = {'execution_slots': 5}
+    with pytest.raises(ConfigurationError, match='configuration_invalid'):
+        load_configuration(*files(tmp_path, cfg))
 
 
 @pytest.mark.parametrize('repository', ['registry:5000/agent-pi', 'agent-pi'])

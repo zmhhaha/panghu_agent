@@ -2,7 +2,7 @@
 
 PostgreSQL is the supported service database. SQLite is available only when a
 trusted test/development caller explicitly opts in. No database is touched on
-import. A quarantined attempt retains the global slot; a lease is not stop proof.
+import. A quarantined attempt retains its execution slot; a lease is not stop proof.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ import uuid
 
 from sqlalchemy import (Boolean, Column, Float, ForeignKey, Integer, JSON,
                         LargeBinary, MetaData, String, Table, UniqueConstraint,
-                        create_engine, func, insert, inspect, or_, select, text, update)
+                        create_engine, delete, func, insert, inspect, or_, select, text, update)
 from sqlalchemy.engine import make_url
 from sqlalchemy.pool import StaticPool
 from pydantic import ValidationError
@@ -127,6 +127,11 @@ slot = Table(
     Column("job_id", String(36), ForeignKey("agent_jobs.id")),
     Column("next_fence", Integer, nullable=False, default=1),
 )
+scheduler_config = Table(
+    "agent_scheduler_config", metadata,
+    Column("id", Integer, primary_key=True),
+    Column("execution_slots", Integer, nullable=False),
+)
 file_tables = define_tables(metadata)
 
 ACTIVE = frozenset({"starting", "running", "cancelling"})
@@ -173,7 +178,10 @@ def _input(row, content=False):
 class Store(FileStoreMixin):
     def __init__(self, database_url: str, *, allow_sqlite=False, clock=time.time,
                  max_blob_bytes=MAX_INPUT_BYTES, max_artifact_bytes=MAX_ARTIFACT_BYTES,
-                 max_events=1000, max_queue=1000):
+                 max_events=1000, max_queue=1000, execution_slots=1):
+        if type(execution_slots) is not int or not 1 <= execution_slots <= 16:
+            raise ValueError('Invalid execution slot count')
+        self.execution_slots = execution_slots
         dialect = make_url(database_url).get_backend_name()
         if dialect not in {"postgresql", "sqlite"} or (dialect == "sqlite" and allow_sqlite is not True):
             raise ServiceError("postgresql_required", 503)
@@ -206,8 +214,8 @@ class Store(FileStoreMixin):
                 conn.exec_driver_sql("BEGIN IMMEDIATE")
             else:
                 conn.begin()
-                # One global slot initially: a DB-wide transaction lock also
-                # serializes admission/cancel/finish with cross-process claim.
+                # Short database transactions remain serialized across callers.
+                # The execution slots and physical Workers can run independently.
                 conn.execute(text("SELECT pg_advisory_xact_lock(73124001)"))
             try:
                 yield conn
@@ -232,6 +240,7 @@ class Store(FileStoreMixin):
                 conn.execute(text("ALTER TABLE agent_artifacts ALTER COLUMN name TYPE VARCHAR(1024)"))
             if conn.execute(select(slot.c.id).where(slot.c.id == 1)).first() is None:
                 conn.execute(insert(slot).values(id=1, job_id=None, next_fence=1))
+            self._initialize_scheduler(conn)
             # Backfill reference ownership for pre-data-plane jobs. Explicitly
             # released retention never gets reattached on control restart.
             for historical in conn.execute(select(jobs)).mappings():
@@ -246,6 +255,52 @@ class Store(FileStoreMixin):
 
     def close(self):
         self.engine.dispose()
+
+    def _initialize_scheduler(self, conn):
+        saved = conn.execute(select(scheduler_config).where(
+            scheduler_config.c.id == 1).with_for_update()).mappings().first()
+        previous = 1 if saved is None else saved['execution_slots']
+        if type(previous) is not int or not 1 <= previous <= 16:
+            raise ServiceError('scheduler_configuration_mismatch', 503)
+        current = conn.execute(select(slot).order_by(slot.c.id).with_for_update()).mappings().all()
+        wanted_ids = set(range(1, self.execution_slots + 1))
+        if previous != self.execution_slots or any(row['id'] not in wanted_ids for row in current):
+            if any(row['job_id'] is not None for row in current):
+                raise ServiceError('scheduler_busy', 409)
+        if saved is None:
+            conn.execute(insert(scheduler_config).values(id=1, execution_slots=self.execution_slots))
+        elif previous != self.execution_slots:
+            conn.execute(update(scheduler_config).where(
+                scheduler_config.c.id == 1).values(execution_slots=self.execution_slots))
+        # The first row is also the host-global fence allocator. Never recreate
+        # it or reset its counter when resizing the shared execution capacity.
+        conn.execute(delete(slot).where(slot.c.id.not_in(wanted_ids)))
+        present_ids = {row['id'] for row in current}
+        for identifier in sorted(wanted_ids - present_ids):
+            conn.execute(insert(slot).values(id=identifier, job_id=None, next_fence=1))
+
+    def _check_scheduler(self, conn):
+        saved = conn.execute(select(scheduler_config.c.execution_slots).where(
+            scheduler_config.c.id == 1)).first()
+        if saved is None:
+            raise ServiceError('store_not_initialized', 503)
+        matches = saved.execution_slots == self.execution_slots
+        identifiers = conn.execute(select(slot.c.id)).scalars().all()
+        if not matches or set(identifiers) != set(range(1, self.execution_slots + 1)):
+            raise ServiceError('scheduler_configuration_mismatch', 503)
+
+    def _slot_id(self, slot_id):
+        if slot_id is not None and (type(slot_id) is not int or not 1 <= slot_id <= self.execution_slots):
+            raise ValueError('Invalid execution slot identifier')
+        return slot_id
+
+    @staticmethod
+    def _occupied_slot(conn, job_id):
+        rows = conn.execute(select(slot).where(
+            slot.c.job_id == job_id).with_for_update()).mappings().all()
+        if len(rows) != 1:
+            raise ServiceError('stale_attempt', 409)
+        return rows[0]
 
     def _find(self, conn, job_id, tenant=None, caller=None):
         query = select(jobs).where(jobs.c.id == job_id)
@@ -481,19 +536,30 @@ class Store(FileStoreMixin):
                 count += 1
         return count
 
-    def active(self):
+    def active(self, slot_id=None):
         """Trusted controller recovery lookup, never an unauthenticated route.
 
         Quarantine is intentionally returned, retaining the unresolved resource
         binding. Callers must not replace or re-submit this physical attempt.
         """
+        identifier = self._slot_id(slot_id)
         with self._tx() as conn:
-            current = conn.execute(select(slot.c.job_id).where(slot.c.id == 1)).first()
-            if current is None:
-                raise ServiceError("store_not_initialized", 503)
-            return None if current.job_id is None else _job(self._find(conn, current.job_id))
+            self._check_scheduler(conn)
+            query = select(slot.c.job_id).where(slot.c.job_id.is_not(None))
+            if identifier is not None:
+                query = query.where(slot.c.id == identifier)
+            current = conn.execute(query.order_by(slot.c.id)).first()
+            return None if current is None else _job(self._find(conn, current.job_id))
 
-    def claim(self, lease_seconds=60, *, provisioning=None):
+    def active_jobs(self):
+        """Return every occupied slot, including unresolved quarantines."""
+        with self._tx() as conn:
+            self._check_scheduler(conn)
+            identifiers = conn.execute(select(slot.c.job_id).where(
+                slot.c.job_id.is_not(None)).order_by(slot.c.id)).scalars().all()
+            return [_job(self._find(conn, identifier)) for identifier in identifiers]
+
+    def claim(self, lease_seconds=60, *, provisioning=None, slot_id=None):
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 300:
             raise ValueError("Invalid lease interval")
         provisioning = {} if provisioning is None else provisioning
@@ -501,16 +567,30 @@ class Store(FileStoreMixin):
                 or any(not isinstance(value, str) or value not in {"external_static", "kubernetes_per_attempt"}
                        for value in provisioning.values())):
             raise ValueError("Invalid server-owned worker provisioning")
+        identifier = self._slot_id(slot_id)
         with self._tx() as conn:
-            control = conn.execute(select(slot).where(slot.c.id == 1).with_for_update()).mappings().first()
-            if control is None:
+            self._check_scheduler(conn)
+            allocator = conn.execute(select(slot).where(slot.c.id == 1).with_for_update()).mappings().first()
+            if allocator is None:
                 raise ServiceError("store_not_initialized", 503)
-            if control["job_id"]:
-                old = self._find(conn, control["job_id"])
-                if old["state"] in ACTIVE and old["lease_expires_at"] <= self.clock():
-                    self._quarantine(conn, old, "lease_expired")
+            slots = select(slot)
+            if identifier is not None:
+                slots = slots.where(slot.c.id == identifier)
+            controls = conn.execute(slots.order_by(slot.c.id).with_for_update()).mappings().all()
+            control = None
+            for candidate in controls:
+                if candidate['job_id'] is None:
+                    if control is None:
+                        control = candidate
+                else:
+                    old = self._find(conn, candidate['job_id'])
+                    if old['state'] in ACTIVE and old['lease_expires_at'] <= self.clock():
+                        self._quarantine(conn, old, 'lease_expired')
+            if control is None:
                 return None
-            rows = conn.execute(select(jobs).where(jobs.c.state == "queued").order_by(jobs.c.created_at, jobs.c.id)).mappings().all()
+            rows = conn.execute(select(jobs).where(jobs.c.state == 'queued').order_by(
+                jobs.c.created_at, jobs.c.id)).mappings().all()
+            heads = {}
             for raw in rows:
                 row = dict(raw)
                 if row["deadline_at"] <= self.clock():
@@ -521,24 +601,34 @@ class Store(FileStoreMixin):
                         state=row["state"], outcome=row["outcome"]))
                     self._event(conn, row, "job.timed_out", {"error_code": "deadline_before_launch"})
                     continue
-                attempt_id = str(uuid.uuid4())
-                fence = control["next_fence"]
-                # The execution deadline is immutable. An extra bounded window
-                # keeps control ownership alive only for stop and handoff.
-                lease = min(self.clock() + lease_seconds, row["deadline_at"] + 45)
-                intent = {"job_id": row["id"], "attempt_id": attempt_id, "fence": fence,
-                          "pins": row["pins"], "deadline_at": row["deadline_at"],
-                          "provisioning": provisioning.get(row["pins"]["engine"], "external_static")}
-                conn.execute(insert(attempts).values(id=attempt_id, job_id=row["id"], fence=fence,
-                             state="starting", created_at=self.clock(), lease_expires_at=lease,
-                             deadline_at=row["deadline_at"], dispatch_intent=intent, outcome=None))
-                conn.execute(update(slot).where(slot.c.id == 1).values(job_id=row["id"], next_fence=fence + 1))
-                row.update(state="starting", attempt_id=attempt_id, fence=fence, lease_expires_at=lease)
-                conn.execute(update(jobs).where(jobs.c.id == row["id"]).values(
-                    state="starting", attempt_id=attempt_id, fence=fence, lease_expires_at=lease))
-                self._event(conn, row, "job.starting")
-                return _job(row)
-            return None
+                heads.setdefault((row['tenant'], row['caller']), row)
+            if not heads:
+                return None
+            # FIFO within each caller; the globally increasing fence records
+            # the last admission, so waiting callers take turns across slots.
+            history = {(tenant, caller): fence for tenant, caller, fence in conn.execute(
+                select(jobs.c.tenant, jobs.c.caller, func.max(jobs.c.fence)).group_by(
+                    jobs.c.tenant, jobs.c.caller))}
+            row = min(heads.values(), key=lambda item: (
+                history.get((item['tenant'], item['caller']), 0), item['created_at'], item['id']))
+            attempt_id = str(uuid.uuid4())
+            fence = allocator['next_fence']
+            # The execution deadline is immutable. An extra bounded window
+            # keeps control ownership alive only for stop and handoff.
+            lease = min(self.clock() + lease_seconds, row['deadline_at'] + 45)
+            intent = {'job_id': row['id'], 'attempt_id': attempt_id, 'fence': fence,
+                      'pins': row['pins'], 'deadline_at': row['deadline_at'],
+                      'provisioning': provisioning.get(row['pins']['engine'], 'external_static')}
+            conn.execute(insert(attempts).values(id=attempt_id, job_id=row['id'], fence=fence,
+                         state='starting', created_at=self.clock(), lease_expires_at=lease,
+                         deadline_at=row['deadline_at'], dispatch_intent=intent, outcome=None))
+            conn.execute(update(slot).where(slot.c.id == control['id']).values(job_id=row['id']))
+            conn.execute(update(slot).where(slot.c.id == 1).values(next_fence=fence + 1))
+            row.update(state='starting', attempt_id=attempt_id, fence=fence, lease_expires_at=lease)
+            conn.execute(update(jobs).where(jobs.c.id == row['id']).values(
+                state='starting', attempt_id=attempt_id, fence=fence, lease_expires_at=lease))
+            self._event(conn, row, 'job.starting')
+            return _job(row)
 
     def _current(self, conn, job_id, attempt_id, fence):
         row = self._find(conn, job_id)
@@ -744,7 +834,7 @@ class Store(FileStoreMixin):
                 return _job(row)
             if allocation is not None and allocation["retired"]:
                 return None
-            control = conn.execute(select(slot).where(slot.c.id == 1).with_for_update()).mappings().first()
+            control = self._occupied_slot(conn, row['id'])
             if (row["state"] not in ACTIVE | {"quarantined"}
                     or control is None or control["job_id"] != row["id"]):
                 raise ServiceError("stale_attempt", 409)
@@ -760,7 +850,7 @@ class Store(FileStoreMixin):
             conn.execute(update(attempts).where(attempts.c.id == envelope.attempt_id,
                          attempts.c.fence == envelope.fence).values(state=state, outcome=outcome))
             self._event(conn, row, "job." + state, {"error_code": code})
-            conn.execute(update(slot).where(slot.c.id == 1, slot.c.job_id == row["id"]).values(job_id=None))
+            conn.execute(update(slot).where(slot.c.id == control['id'], slot.c.job_id == row["id"]).values(job_id=None))
             return _job(row)
 
     def claim_worker_start(self, attempt_id, request_sha256):
@@ -905,7 +995,7 @@ class Store(FileStoreMixin):
             if (row["state"] in {"cancelled", "timed_out", "failed"}
                     and isinstance(resolved, dict) and resolved.get("error_code") == "quarantine_stopped"):
                 return _job(row)
-            control = conn.execute(select(slot).where(slot.c.id == 1).with_for_update()).mappings().first()
+            control = self._occupied_slot(conn, job_id)
             if row["state"] != "quarantined" or control is None or control["job_id"] != job_id:
                 raise ServiceError("stale_attempt", 409)
             state = ("cancelled" if row["cancel_requested"] else
@@ -919,7 +1009,7 @@ class Store(FileStoreMixin):
             conn.execute(update(attempts).where(attempts.c.id == attempt_id,
                          attempts.c.fence == fence).values(state=state, outcome=outcome))
             self._event(conn, row, "job." + state, {"error_code": "quarantine_stopped"})
-            conn.execute(update(slot).where(slot.c.id == 1, slot.c.job_id == job_id).values(job_id=None))
+            conn.execute(update(slot).where(slot.c.id == control['id'], slot.c.job_id == job_id).values(job_id=None))
             return _job(row)
 
     def worker_event_cursor(self, job_id, attempt_id, fence):
@@ -1039,6 +1129,7 @@ class Store(FileStoreMixin):
             row = self._current(conn, job_id, attempt_id, fence)
             if row is None:
                 raise ServiceError("stale_attempt", 409)
+            control = self._occupied_slot(conn, job_id)
             if (len(checked) > row['pins'].get('max_artifact_files', 32)
                     or total > row['pins'].get('max_artifact_bytes', self.max_artifact_bytes)
                     or any(item['size'] > row['pins'].get('max_artifact_file_bytes', self.max_artifact_bytes)
@@ -1074,7 +1165,7 @@ class Store(FileStoreMixin):
             payload = {"error_code": final["error_code"]} if final.get("error_code") else {}
             self._event(conn, row, "job." + state, payload)
             if state != "quarantined":
-                conn.execute(update(slot).where(slot.c.id == 1, slot.c.job_id == job_id).values(job_id=None))
+                conn.execute(update(slot).where(slot.c.id == control['id'], slot.c.job_id == job_id).values(job_id=None))
             return _job(row)
 
     def get_artifacts(self, tenant, caller, job_id):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
 import re
@@ -38,19 +39,43 @@ def _output(value, *, error=False):
 
 def _dispatch(config, store, adapters, once):
     from .dispatcher import Dispatcher
-    dispatcher = Dispatcher(store, adapters, lease_seconds=config.lease_seconds)
+    dispatchers = [Dispatcher(store, adapters, lease_seconds=config.lease_seconds,
+                              slot_id=slot_id)
+                   for slot_id in range(1, config.execution_slots + 1)]
     stopping = threading.Event()
     previous = {}
     if threading.current_thread() is threading.main_thread():
         for signum in (signal.SIGINT, signal.SIGTERM):
             previous[signum] = signal.signal(signum, lambda *_: stopping.set())
     try:
-        while not stopping.is_set():
-            result = dispatcher.tick()
-            if once:
-                _output({'status': 'dispatch_tick_complete', 'state': result['state'] if result else 'idle'})
-                break
-            stopping.wait(config.poll_seconds)
+        def run(dispatcher):
+            try:
+                while not stopping.is_set():
+                    result = dispatcher.tick()
+                    if once:
+                        return result
+                    stopping.wait(config.poll_seconds)
+            except BaseException:
+                # Unexpected control failures restart the supervised process.
+                # Normal Worker transport failures are handled within poll().
+                stopping.set()
+                raise
+
+        if len(dispatchers) == 1:
+            results = [run(dispatchers[0])]
+        else:
+            # A stalled HTTP request in one slot must not delay another slot's
+            # launch, lease renewal, cancellation, or stop recovery.
+            with ThreadPoolExecutor(max_workers=len(dispatchers),
+                                    thread_name_prefix='agent-dispatch') as executor:
+                futures = [executor.submit(run, dispatcher) for dispatcher in dispatchers]
+                results = [future.result() for future in futures]
+        if once:
+            states = [result['state'] if result else 'idle' for result in results]
+            value = {'status': 'dispatch_tick_complete', 'state': states[0]}
+            if len(states) > 1:
+                value = {'status': 'dispatch_tick_complete', 'states': states}
+            _output(value)
     finally:
         for signum, handler in previous.items():
             signal.signal(signum, handler)

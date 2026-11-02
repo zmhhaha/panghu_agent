@@ -202,6 +202,7 @@ class _Api(_Model):
 class _Dispatch(_Model):
     poll_seconds: float = Field(default=1.0, gt=0, le=5)
     lease_seconds: int = Field(default=60, ge=15, le=300)
+    execution_slots: int = Field(default=1, ge=1, le=16)
 
     @field_validator('poll_seconds')
     @classmethod
@@ -255,6 +256,8 @@ class _Public(_Model):
         if (len(set(engines)) != len(engines) or set(engines) & kube_engines
                 or len(set(caller_keys)) != len(caller_keys) or len(set(pools)) != len(pools)):
             raise ValueError('Duplicate configured identity or route')
+        if self.dispatcher.execution_slots > 1 and self.workers:
+            raise ValueError('Shared execution slots require per-attempt Kubernetes workers')
         return self
 
 
@@ -285,6 +288,7 @@ class ServiceConfiguration:
     api_port: int = 8080
     poll_seconds: float = 1.0
     lease_seconds: int = 60
+    execution_slots: int = 1
     max_events: int = 1000
     max_queue: int = 1000
     allow_sqlite: bool = False
@@ -295,7 +299,8 @@ class ServiceConfiguration:
         try:
             return Store(self.database_url, allow_sqlite=self.allow_sqlite,
                          max_blob_bytes=self.api_settings.max_input_bytes,
-                         max_events=self.max_events, max_queue=self.max_queue)
+                         max_events=self.max_events, max_queue=self.max_queue,
+                         execution_slots=self.execution_slots)
         except Exception:
             raise ConfigurationError('database_configuration_unavailable') from None
 
@@ -349,6 +354,8 @@ class ServiceConfiguration:
         return {'status': 'configuration_valid', 'schema_version': 2,
                 'database_kind': self.database_kind,
                 'caller_count': len(self.api_settings.principals),
+                'execution_slot_count': self.execution_slots,
+                'execution_isolation': 'shared' if self.execution_slots > 1 else 'global',
                 'worker_engines': engines, 'worker_provisioning': mode, 'model_requests': 0,
                 'catalog': self.deployment_registry.summary() if self.deployment_registry is not None else None}
 
@@ -484,6 +491,7 @@ def load_configuration(config_path, secrets_path, *, allow_sqlite=False) -> Serv
         model_proxy_settings=proxy_settings,
         api_host=public.api.host, api_port=public.api.port,
         poll_seconds=public.dispatcher.poll_seconds, lease_seconds=public.dispatcher.lease_seconds,
+        execution_slots=public.dispatcher.execution_slots,
         max_events=public.store.max_events, max_queue=public.store.max_queue,
         allow_sqlite=allow_sqlite, database_kind='sqlite-development' if dialect == 'sqlite' else 'postgresql')
 

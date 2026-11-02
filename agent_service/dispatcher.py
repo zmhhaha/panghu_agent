@@ -9,11 +9,17 @@ from .storage import execution_fields
 
 
 class Dispatcher:
-    def __init__(self, store, adapters: dict, *, clock=time.time, lease_seconds=60):
+    def __init__(self, store, adapters: dict, *, clock=time.time, lease_seconds=60,
+                 slot_id=None):
         if not 15 <= lease_seconds <= 300:
             raise ValueError('Invalid dispatcher lease')
         self.store, self.adapters = store, dict(adapters)
         self.clock, self.lease_seconds = clock, lease_seconds
+        self.slot_id = slot_id
+        if getattr(store, 'execution_slots', 1) > 1 and any(
+                getattr(adapter, 'provisioning', 'external_static') != 'kubernetes_per_attempt'
+                for adapter in self.adapters.values()):
+            raise ValueError('Shared slots require per-attempt Workers')
 
     def _envelope(self, job):
         pins, request = job['pins'], job['request']
@@ -58,7 +64,7 @@ class Dispatcher:
         self.store.reconcile_expired()
         job = self.store.claim(lease_seconds=self.lease_seconds, provisioning={
             engine: getattr(adapter, 'provisioning', 'external_static')
-            for engine, adapter in self.adapters.items()})
+            for engine, adapter in self.adapters.items()}, slot_id=self.slot_id)
         if job is None:
             return None
         adapter = self.adapters.get(job['pins']['engine'])
@@ -184,12 +190,12 @@ class Dispatcher:
     def reconcile(self):
         """On control restart, reconcile the persisted attempt; never re-submit."""
         self.store.reconcile_expired()
-        active = self.store.active()
+        active = self.store.active(slot_id=self.slot_id)
         return None if active is None else self.poll(active)
 
     def tick(self):
         self.store.reconcile_expired()
-        active = self.store.active()
+        active = self.store.active(slot_id=self.slot_id)
         if active is not None:
             return self.poll(active)
         return self.dispatch_once()

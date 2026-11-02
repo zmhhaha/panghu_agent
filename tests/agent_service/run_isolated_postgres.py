@@ -166,7 +166,7 @@ def validate_source(code_root, suite='postgres'):
                      'tools/__init__.py', 'tools/academic', 'scientific_skills',
                      'tests/scientific_pi/revisions/test_revision_validation.py']
     if suite == 'connectors':
-        relative += ['app/api/scientific_agent.py', 'tools/sqlite_client.py',
+        relative += ['app/api/scientific_agent.py', 'app/api/scientific_workspace.py', 'tools/sqlite_client.py',
             'ppt_service/__init__.py', 'ppt_service/control', 'ppt_service/server',
             'ppt_service/worker', 'tests/scientific_pi/api',
             'ppt_service/tests/control/test_agent_connector.py',
