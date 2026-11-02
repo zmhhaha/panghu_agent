@@ -212,6 +212,19 @@ class BuildTests(unittest.TestCase):
                 ('server-build', built, 'build-info/source-inputs.json'),
                 ('offline-package', packaged, 'build-info/site-inputs.json')):
             with self.subTest(packager=label):
+                for name, content in context.items():
+                    if not name.startswith('code/') or not name.endswith('.py'):
+                        continue
+                    parts = name.removeprefix('code/').removesuffix('.py').split('/')
+                    for node in ast.walk(ast.parse(content, filename=name)):
+                        if not isinstance(node, ast.ImportFrom) or not node.level:
+                            continue
+                        base = parts[:-node.level]
+                        modules = [node.module] if node.module else [item.name for item in node.names]
+                        for module in modules:
+                            target = 'code/' + '/'.join(base + module.split('.'))
+                            self.assertTrue(target + '.py' in context or target + '/__init__.py' in context,
+                                            label + ': ' + name + ' imports missing ' + target)
                 for module in ('needs_input', 'quality_diagnostics', 'usage'):
                     source = SERVICE / f'server/{module}.py'
                     name = f'code/ppt_service/server/{module}.py'
@@ -220,6 +233,10 @@ class BuildTests(unittest.TestCase):
                     measured = json.loads(context[receipt])[name]
                     self.assertEqual(measured['sha256'], MANIFEST.describe(source)['sha256'])
                     self.assertEqual(measured['bytes'], len(expected))
+                evidence_name = 'code/ppt_service/server/acceptance/evidence.py'
+                evidence_source = SERVICE / 'server/acceptance/evidence.py'
+                self.assertEqual(context[evidence_name], evidence_source.read_bytes())
+                self.assertEqual(json.loads(context[receipt])[evidence_name], MANIFEST.describe(evidence_source))
                 isolated = self.root / label
                 for path, raw in context.items():
                     if path.startswith('code/'):
