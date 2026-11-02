@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 import xml.etree.ElementTree as ET
 from .execution import ControlError,PINNED_WORKER,PPT_MASTER_COMMIT
 from .staging import relative,open_regular,copy_file,atomic_json,read_json,make_writable
+from .diagram_geometry import inspect_svg_diagram
 
 SCRIPTS=Path('/opt/ppt-master/skills/ppt-master/scripts')
 PYTHON='/opt/hermes/.venv/bin/python'
@@ -65,7 +66,7 @@ class ProgrammaticEvidence:
     def report(self):return copy.deepcopy(self._payload)
 
 
-def source_binding(snapshot,manifest,request):
+def source_binding(snapshot,manifest,request,*,diagram_reports=None):
     raw=read_json(snapshot/'result','manifest.json')
     if raw.get('phase')!=request['phase'] or raw.get('input_snapshot_sha256')!=request['input_snapshot_sha256']:raise ControlError('render_source_identity_mismatch')
     project=relative(raw['project_root'])
@@ -119,6 +120,9 @@ def source_binding(snapshot,manifest,request):
         except ValueError:raise ControlError('invalid_svg_canvas') from None
         import math
         if len(canvas)!=4 or any(not math.isfinite(v) for v in canvas) or canvas[2]<=0 or canvas[3]<=0 or canvas[2]*canvas[3]>20_000_000:raise ControlError('invalid_svg_canvas')
+        diagram=inspect_svg_diagram(svg)
+        if diagram_reports is not None:diagram_reports.append({'ordinal':i,'source_sha256':actual['sha256'],'report':diagram})
+        if diagram['errors']:raise ControlError('diagram_geometry_failed')
         svg_rows.append({**actual,'ordinal':i,'png_width':math.ceil(canvas[2]),'png_height':math.ceil(canvas[3])})
     actual_names=sorted(p.name for p in (root/'svg_output').iterdir() if p.suffix.lower()=='.svg')
     if set(actual_names)!=set(names) or len(actual_names)!=len(names):raise ControlError('render_roster_mismatch')
@@ -242,7 +246,14 @@ def verify_programmatic(snapshot,manifest,request,output,validation_id,*,command
     if output.exists():raise ControlError('render_output_not_fresh')
     output.mkdir(parents=True)
     commands=commands or OfficialCommands();preview_factory=preview_factory or OfficialPreview
-    binding,source,index=source_binding(snapshot,manifest,request)
+    diagrams=[]
+    try:
+        binding,source,index=source_binding(snapshot,manifest,request,diagram_reports=diagrams)
+    finally:
+        if diagrams:
+            atomic_json(output/'diagram-geometry.json',{'schema':'ppt-service.diagram-audit.v1','slides':diagrams,
+                'scan_complete':len(diagrams)==request.get('pages') and not any(row['report']['errors'] for row in diagrams),
+                'relationship_semantics_verified':False,'publication_authorized':False})
     atomic_json(output/'source-binding.json',binding)
     parent=output/'scratch-projects';parent.mkdir();project=parent/binding['project_root']
     rows=fresh_project(source,project,index);binding['copied_source_fingerprint']=fingerprint(rows)

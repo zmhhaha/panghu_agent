@@ -11,6 +11,9 @@ from uuid import UUID
 # stage, title, description, recovery advice, retry stage. These are explanations,
 # not a claim that a retry is authorized or that any presentation was accepted.
 _RULES = {
+    'diagram_geometry_failed': ('diagram_geometry', '图示连线检查未通过',
+        '图示中有明确标记的连线穿过无关节点，或声明的连接端点不符合要求。',
+        '请核对已确认方案中的关系，调整对应页面的节点与连线路径后重新检查；原资料与版本可保留。', 'generation'),
     'external_svg_resource': ('source_binding', '页面引用检查未通过',
         '页面包含校验器不允许的外部资源引用。',
         '管理员应核对引用的类型与校验规则；参考链接和加载图片需分别处理，无需据此重写整份要求。', 'validation'),

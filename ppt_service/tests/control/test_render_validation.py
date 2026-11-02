@@ -37,6 +37,52 @@ def replace_bound_svg(inputs,body):
     return (root/key).read_bytes()
 
 
+def marked_diagram(*, crossing=True):
+    middle = '<rect id="peer" data-pptx-role="node" x="20" y="160" width="120" height="60" fill="blue"/>' if crossing else ''
+    return ('<rect id="source" data-pptx-role="node" x="20" y="60" width="120" height="60" fill="blue"/>'
+        + middle + '<rect id="base" data-pptx-role="node" x="20" y="260" width="120" height="60" fill="blue"/>'
+        '<line id="shared" data-pptx-role="connector" data-pptx-source="source" data-pptx-target="base" '
+        'x1="80" y1="120" x2="80" y2="260" stroke="white"/>')
+
+
+def test_source_binding_rejects_marked_connector_through_unrelated_node(inputs):
+    snapshot,root,manifest,request=inputs
+    original=replace_bound_svg(inputs,marked_diagram())
+    original_manifest=(snapshot/'result/manifest.json').read_bytes()
+    reports=[]
+    with pytest.raises(ControlError,match='diagram_geometry_failed'):
+        source_binding(snapshot,manifest,request,diagram_reports=reports)
+    assert reports[0]['ordinal']==1 and reports[0]['report']['errors']
+    assert reports[0]['source_sha256']==hashlib.sha256(original).hexdigest()
+    assert (root/'svg_output/01.svg').read_bytes()==original
+    assert (snapshot/'result/manifest.json').read_bytes()==original_manifest
+
+
+def test_valid_marked_diagram_preserves_bound_source_and_explicit_coverage(inputs):
+    snapshot,root,manifest,request=inputs
+    original=replace_bound_svg(inputs,marked_diagram(crossing=False))
+    reports=[]
+    binding,_,_=source_binding(snapshot,manifest,request,diagram_reports=reports)
+    assert len(reports)==3 and not reports[0]['report']['errors']
+    assert binding['svg_sources'][0]['sha256']==hashlib.sha256(original).hexdigest()
+    assert (root/'svg_output/01.svg').read_bytes()==original
+
+
+def test_marked_geometry_rejection_retains_private_bound_report_before_render(inputs,tmp_path):
+    from ppt_service.control.render_validation import verify_programmatic
+    snapshot,_,manifest,request=inputs
+    replace_bound_svg(inputs,marked_diagram())
+    output=tmp_path/'independent'
+    with pytest.raises(ControlError,match='diagram_geometry_failed'):
+        verify_programmatic(snapshot,manifest,request,output,'geometry-check')
+    report=read_json(output,'diagram-geometry.json')
+    assert report['scan_complete'] is False
+    assert report['relationship_semantics_verified'] is False
+    assert report['publication_authorized'] is False
+    assert report['slides'][0]['report']['errors']
+    assert not (output/'scratch-projects').exists()
+
+
 @pytest.mark.parametrize('target',[
     'https://github.com/deepseek-ai/deepseek-harness',
     'https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md',
