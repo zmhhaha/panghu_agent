@@ -218,3 +218,54 @@ def test_deep_svg_reports_coverage_limit_instead_of_recursing_unboundedly():
     assert report['status'] == 'unchecked'
     assert report['coverage']['truncated'] is True
     assert any(row['code'] == 'svg_diagram_depth_limit' for row in report['coverage']['unchecked'])
+
+
+@pytest.mark.parametrize('points', [
+    '0,0 ' * 200_000,
+    ' '.join(str(i) for i in range(258)),
+    '0' * 129 + ',0 1,1',
+])
+def test_oversized_polyline_attribute_is_unchecked_without_unbounded_tokenization(points):
+    report = inspect('<polyline id="oversized" data-pptx-role="connector" '
+        f'points="{points}" fill="none" stroke="cyan"/>')
+    assert report['status'] == 'unchecked'
+    assert report['coverage']['checked_connectors'] == 0
+    assert report['errors'] == []
+    assert report['coverage']['unchecked'] == [
+        {'code': 'svg_diagram_geometry_unchecked', 'element_id': 'oversized'}]
+
+
+def test_bounded_polyline_at_supported_point_limit_is_checked():
+    points = ' '.join(f'{i},10' for i in range(128))
+    report = inspect('<polyline data-pptx-role="connector" '
+        f'points="{points}" fill="none" stroke="cyan"/>')
+    assert report['status'] == 'checked'
+    assert report['coverage']['checked_connectors'] == 1
+    assert report['coverage']['unsupported_elements'] == 0
+
+
+@pytest.mark.parametrize('transform', [
+    'translate(0 0) ' * 1000,
+    'translate(0 0) ' * 33,
+    'matrix(' + '0 ' * 100 + ')',
+    'translate(' + '0' * 129 + ' 0)',
+])
+def test_transform_size_operation_and_argument_budgets_are_explicitly_unchecked(transform):
+    report = inspect(f'<g id="oversized" transform="{transform}">'
+        + node('obstacle', 0, 120) + connector() + '</g>')
+    assert report['status'] == 'unchecked'
+    assert report['coverage']['checked_connectors'] == 0
+    assert report['errors'] == []
+    assert report['coverage']['unchecked'] == [
+        {'code': 'svg_diagram_transform_or_style_unchecked', 'element_id': 'oversized'}]
+
+
+def test_scalar_and_inline_style_budgets_are_checked_before_parsing():
+    scalar = inspect(node('obstacle', 0, 120)
+        + connector('x1="' + '0' * 200_000 + '" y1="80" x2="60" y2="300"'))
+    assert scalar['status'] == 'unchecked'
+    assert scalar['coverage']['checked_connectors'] == 0
+    styled = inspect('<g id="oversized" style="' + 'fill:red;' * 1000 + '">'
+        + node('obstacle', 0, 120) + connector() + '</g>')
+    assert styled['status'] == 'unchecked'
+    assert styled['coverage']['checked_connectors'] == 0

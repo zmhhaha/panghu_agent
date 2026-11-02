@@ -25,16 +25,33 @@ _MAX_DEPTH = 64
 _MAX_SHAPES = 512
 _MAX_COMPARISONS = 65536
 _MAX_FINDINGS = 64
+_MAX_NUMBER_LIST_CHARS = 8192
+_MAX_NUMBERS = 256
+_MAX_SCALAR_CHARS = 128
+_MAX_TRANSFORM_CHARS = 4096
+_MAX_TRANSFORM_OPERATIONS = 32
+_MAX_TRANSFORM_ARGUMENT_CHARS = 256
+_MAX_INLINE_STYLE_CHARS = 4096
 _TOLERANCE = 2.0
 _EPS = 1e-7
 
 
-def _numbers(value):
-    matches = list(_NUM_RE.finditer(value))
-    if not matches or re.sub(_NUMBER, "", value).strip(" ,\t\r\n"):
+def _numbers(value, *, max_values=_MAX_NUMBERS, max_chars=_MAX_NUMBER_LIST_CHARS):
+    # Reject attribute size before tokenization. In particular, never build a
+    # list of millions of regex Match objects from one untrusted points value.
+    if not value or len(value) > max_chars:
         raise ValueError
-    values = [float(match.group()) for match in matches]
-    if not all(math.isfinite(v) and abs(v) <= 1e8 for v in values):
+    values, position = [], 0
+    for match in _NUM_RE.finditer(value):
+        if (len(values) >= max_values or match.end() - match.start() > _MAX_SCALAR_CHARS
+                or value[position:match.start()].strip(" ,\t\r\n")):
+            raise ValueError
+        number = float(match.group())
+        if not math.isfinite(number) or abs(number) > 1e8:
+            raise ValueError
+        values.append(number)
+        position = match.end()
+    if not values or value[position:].strip(" ,\t\r\n"):
         raise ValueError
     return values
 
@@ -42,10 +59,12 @@ def _numbers(value):
 def _length(value, default=0.0):
     if value is None:
         return default
+    if len(value) > _MAX_SCALAR_CHARS:
+        raise ValueError
     value = value.strip()
     if value.endswith("px"):
         value = value[:-2]
-    values = _numbers(value)
+    values = _numbers(value, max_values=1, max_chars=_MAX_SCALAR_CHARS)
     if len(values) != 1:
         raise ValueError
     return values[0]
@@ -62,14 +81,19 @@ def _multiply(left, right):
 
 def _transform(value):
     result = (1.0, 1.0, 0.0, 0.0)
+    if value is not None and len(value) > _MAX_TRANSFORM_CHARS:
+        raise ValueError
     if not value or not value.strip():
         return result
-    position = 0
+    position, operations = 0, 0
     for match in re.finditer(r"([A-Za-z]+)\s*\(([^()]*)\)", value):
+        operations += 1
+        if operations > _MAX_TRANSFORM_OPERATIONS:
+            raise ValueError
         if value[position:match.start()].strip(" ,\t\r\n"):
             raise ValueError
         name, raw = match.groups()
-        values = _numbers(raw)
+        values = _numbers(raw, max_values=6, max_chars=_MAX_TRANSFORM_ARGUMENT_CHARS)
         if name == "translate" and len(values) in (1, 2):
             operation = (1, 1, values[0], values[1] if len(values) == 2 else 0)
         elif name == "scale" and len(values) in (1, 2):
@@ -114,6 +138,8 @@ def _properties(element, inherited):
     result = dict(inherited)
     values = dict(element.attrib)
     raw_style = element.get("style", "")
+    if len(raw_style) > _MAX_INLINE_STYLE_CHARS:
+        raise ValueError
     for declaration in raw_style.split(";"):
         if declaration.strip():
             key, separator, value = declaration.partition(":")

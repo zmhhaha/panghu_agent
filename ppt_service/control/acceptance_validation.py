@@ -26,6 +26,7 @@ from .postflight_validation import PostflightEvidence, SOURCE_GATE, run_postflig
 from .render_validation import (
     DELIVERY_GATE, NATIVE_GATE, RASTER_GATE, fingerprint, hash_file,
     ProgrammaticEvidence, source_binding, unchanged, verify_programmatic,
+    source_binding_with_diagram_audit,
 )
 from .staging import atomic_json, read_json, relative
 
@@ -158,7 +159,7 @@ def run_acceptance(snapshot, original_request, acceptance_request, output):
         for name in ("design_spec.md", "spec_lock.md"):
             require(hash_file(root, name, 4 * 1024**2)["sha256"] ==
                 task["checkpoint"]["approved_specs"].get(name), "approved_spec_lock_changed")
-    measured, _, index = source_binding(snapshot, manifest, request)
+    measured, _, index = source_binding_with_diagram_audit(snapshot, manifest, request, output)
     require(measured["pptx"]["sha256"] == binding.pptx_sha256,
         "acceptance_pptx_changed")
     rows = sorted(({key: row[key] for key in ("path", "sha256", "bytes")}

@@ -83,6 +83,18 @@ def test_marked_geometry_rejection_retains_private_bound_report_before_render(in
     assert not (output/'scratch-projects').exists()
 
 
+def test_geometry_audit_does_not_claim_complete_scan_after_later_hash_failure(inputs,tmp_path):
+    from ppt_service.control.render_validation import source_binding_with_diagram_audit
+    snapshot,root,manifest,request=inputs
+    (root/'deck.pptx').write_bytes(b'changed after the manifest was frozen')
+    output=tmp_path/'audit'
+    with pytest.raises(ControlError,match='delivery_source_hash_mismatch'):
+        source_binding_with_diagram_audit(snapshot,manifest,request,output)
+    report=read_json(output,'diagram-geometry.json')
+    assert len(report['slides'])==3 and report['scan_complete'] is False
+    assert report['relationship_semantics_verified'] is False
+
+
 @pytest.mark.parametrize('target',[
     'https://github.com/deepseek-ai/deepseek-harness',
     'https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.md',

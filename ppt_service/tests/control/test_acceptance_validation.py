@@ -127,6 +127,27 @@ def run(case):
     return validation.run_acceptance(case.snapshot, case.original, case.acceptance, case.output)
 
 
+def test_initial_acceptance_binding_retains_failed_diagram_details_before_commands(case):
+    key = 'svg_output/1.svg'
+    (case.project / key).write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">'
+        '<rect id="peer" data-pptx-role="node" x="0" y="100" width="100" height="100" fill="blue"/>'
+        '<line id="wire" data-pptx-role="connector" x1="50" y1="50" x2="50" y2="250" stroke="white"/>'
+        '</svg>')
+    next(row for row in case.manifest['artifacts'] if row['path'] == key).update(hash_file(case.project, key))
+    atomic_json(case.snapshot / 'result/manifest.json', case.manifest)
+    digest = hash_file(case.snapshot / 'result', 'manifest.json')['sha256']
+    case.original['source_manifest_sha256'] = digest
+    case.acceptance['binding']['manifest_sha256'] = digest
+    case.acceptance['original_request_sha256'] = fingerprint(case.original)
+    with pytest.raises(ControlError, match='diagram_geometry_failed'):
+        run(case)
+    report = read_json(case.output, 'diagram-geometry.json')
+    assert report['scan_complete'] is False
+    assert report['slides'][0]['report']['errors'][0]['code'] == 'svg_diagram_connector_crosses_node'
+    assert case.calls == []
+    assert not (case.output / 'receipt.json').exists()
+
+
 def test_complete_checks_issue_bound_receipt_without_publication_or_original_changes(case):
     before = {path.relative_to(case.snapshot): path.read_bytes() for path in case.snapshot.rglob("*") if path.is_file()}
     original = copy.deepcopy(case.original)

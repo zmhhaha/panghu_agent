@@ -133,6 +133,20 @@ def source_binding(snapshot,manifest,request,*,diagram_reports=None):
     return {'source_manifest_sha256':hash_file(snapshot/'result','manifest.json',4*1024**2)['sha256'],'input_snapshot_sha256':request['input_snapshot_sha256'],'project_root':project,'svg_sources':svg_rows,'local_resources':[resources[k] for k in sorted(resources)],'pptx':pptx,'expected_charts_canonical_sha256':fingerprint(request.get('expected_charts'))},root,index
 
 
+def source_binding_with_diagram_audit(snapshot,manifest,request,output):
+    """Retain partial geometry evidence, never treating a failed scan as complete."""
+    diagrams=[];complete=False
+    try:
+        result=source_binding(snapshot,manifest,request,diagram_reports=diagrams)
+        complete=True
+        return result
+    finally:
+        if diagrams:
+            atomic_json(output/'diagram-geometry.json',{'schema':'ppt-service.diagram-audit.v1','slides':diagrams,
+                'scan_complete':complete and len(diagrams)==request.get('pages'),
+                'relationship_semantics_verified':False,'publication_authorized':False})
+
+
 def fresh_project(root,target,index):
     """Copy actual source into a new tree, excluding every old preview/review cache."""
     if target.exists():raise ControlError('render_scratch_not_fresh')
@@ -246,14 +260,7 @@ def verify_programmatic(snapshot,manifest,request,output,validation_id,*,command
     if output.exists():raise ControlError('render_output_not_fresh')
     output.mkdir(parents=True)
     commands=commands or OfficialCommands();preview_factory=preview_factory or OfficialPreview
-    diagrams=[]
-    try:
-        binding,source,index=source_binding(snapshot,manifest,request,diagram_reports=diagrams)
-    finally:
-        if diagrams:
-            atomic_json(output/'diagram-geometry.json',{'schema':'ppt-service.diagram-audit.v1','slides':diagrams,
-                'scan_complete':len(diagrams)==request.get('pages') and not any(row['report']['errors'] for row in diagrams),
-                'relationship_semantics_verified':False,'publication_authorized':False})
+    binding,source,index=source_binding_with_diagram_audit(snapshot,manifest,request,output)
     atomic_json(output/'source-binding.json',binding)
     parent=output/'scratch-projects';parent.mkdir();project=parent/binding['project_root']
     rows=fresh_project(source,project,index);binding['copied_source_fingerprint']=fingerprint(rows)
