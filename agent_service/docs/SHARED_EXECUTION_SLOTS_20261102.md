@@ -58,3 +58,41 @@ python3 tests/agent_service/run_isolated_postgres.py \
 ```
 
 测试器使用已缓存固定镜像、禁网临时PG及独立schema，多进程验证真实锁竞争。测试结果与生产启用状态分别记录；本地通过不等于线上已启用五槽。
+
+### 2026-11-03 验证记录
+
+调度代码来源为 `a8cb04ea66f8a653f07089b6952839404c45c350`。独立 Linux / PostgreSQL 回归：Agent Service **1575 passed、1 skipped**，PPT 连接器 **62 passed**、迁移 **8 passed**，科研连接器 **22 passed**；去重合计 **1667 passed、1 skipped**，无剩余失败。跳过的是现有需要 root 才能实际切换 UID 的 DAC 用例，测试容器使用非 root。测试器缺少科研 workspace 挂载及测试镜像缺 `python-multipart` 的首次收集错误保留原记录，修复后科研专项通过；没有把重跑结果重复计数。
+
+最终候选镜像另在禁网、只读根文件系统、非 root、无凭据和无生产数据库的临时容器内验证真实 CLI / Store / Dispatcher。显式合成的 Worker 适配器证明五次 start 同时进入、第六排队、同平台占满五槽、新调用方获得下一空槽、单槽隔离、其余四槽继续、精确取消/完成和重启不重复启动；全局 fence 持续至 11。该验证不代表五次真实模型生成。上线脚本另有 **11 项离线检查通过**，覆盖配置保留、Service 选择器、迁移失败、响应丢失及正常新任务不会触发误停调度。
+
+公开证据位于 `192.168.137.101`：
+
+- `/root/platform-slots-validation-20261102-r2-evidence/{report.json,postgres-tests.log}`
+- `/root/platform-slots-validation-20261102-r4-scientific-evidence/{report.json,postgres-tests.log}`
+- `/root/platform-slots-image-smoke-20261103-r1/report.json`
+
+上述隔离验证的模型调用数均为 0。
+
+只读容量核对：每个 Worker 固定请求 `100m CPU / 128Mi`，五个合计 `500m / 640Mi`。实际 90 个池的节点约束为未指定或主节点；主节点当时按 requests 计算尚余 `3.5 CPU / 3472.6Mi`，Pod 数为 `74/110`，`agent-workers` 没有 ResourceQuota，因此没有发现五个任务的调度准入阻挡。三个约 1Gi 的 NanoPC 节点有内存保护污点，未计为可用容量。单 Worker 上限仍为 `1 CPU / 2Gi / 4Gi ephemeral-storage`；本次没有验证五个 Worker 同时到达全部资源上限或上游模型的五路峰值负载。公开容量记录：`/root/platform-slots-capacity-20261103.json`。
+
+### 2026-11-03 生产启用
+
+用户授权协调并上线后，视频与 PPT 均交出公共控制面发布窗口。已暂停并排空旧 dispatcher，使用独立 init-db Job 扩为五槽，再升级 API、model-proxy 和 dispatcher。Job 不匹配两个线上 Service 的选择器。仅公开配置的 `dispatcher.execution_slots` 从缺省 1 改为 5，保留全部 **20 条路由、90 个 Worker 池、既有绑定和 Worker 镜像**。
+
+| 项目 | 已读回结果 |
+| --- | --- |
+| 调度代码来源 | `a8cb04ea66f8a653f07089b6952839404c45c350` |
+| 保留的视频控制面基底 | `arm-cluster-master:5000/agent-service-video-control:latest@sha256:4ad2742ca9cb551bfb856eaaa02c3a0e46869c0469d01c605b563d6e2b762eac` |
+| 上线控制镜像 | `arm-cluster-master:5000/agent-service-control:latest@sha256:eff3ade9c08bb297c27a69e4015a8ab28bdb326a7b78b4217292a8d1e2785c13` |
+| 补丁文件清单 SHA-256 | `377152f4229e4577f5851f7dc5e885cba36f7f17bbf8d8c61fb3851d531ce450` |
+| ConfigMap | `agent-service-config-slots5-e0f0eb750a9c4671ffab` |
+| 公开配置 SHA-256（规范 JSON） | `e0f0eb750a9c4671ffab974c20f96080e69a154bd76325e80741f63420c5e25b` |
+| 持久布局 | `agent_slot` id=1…5；`agent_scheduler_config.execution_slots=5` |
+| 全局序号 | id=1 的 `next_fence` 切换前后均为 **79**；其他行不分配全局序号 |
+| 调度进程 | 配置 5 槽；6 个进程线程（主线程及五个调度线程） |
+| 控制组件 | API、model-proxy、dispatcher 均 1/1 Ready，实际镜像摘要相同 |
+| 切换后即时占用 | 五槽均空、未退休 allocation 为 0；未新增业务任务 |
+
+镜像仅覆盖经过验证的四个调度文件，继承当前视频基底的其余代码；源文件 `root:root / 0644`，运行用户继续为 `10000:10000`。构建核对基底文件哈希、非 root 可读性、继承层与入口、推送 manifest 摘要；没有用较旧 main 全量重建去覆盖视频动态合同。发布使用 `latest` 并以摘要固定，来源记录在镜像标签和 Deployment 注解中。
+
+最终收据：`192.168.137.101:/root/platform-slots-rollout-20261103-r1/verified-state.json`；同目录保存原工作负载、公开配置、迁移前状态及 Job。构建收据：`/root/platform-slots-overlay-prepared-20261102-r1/receipt.json`。生产读回确认配置、布局、调度线程和组件就绪；并发、故障与隔离行为由前述独立 PG 和候选镜像合成验证支撑。本次上线没有发起真实模型生成或重新验收各平台成品质量。
