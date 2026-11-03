@@ -19,7 +19,7 @@ const project: Project = { id: 'p', title: '待审核演示项目', revision: 7,
   assets: [], input_snapshot_hash: 'b'.repeat(64), external_model_ack: true };
 const draft: Version = { id: 'review-1', status: 'review', can_revise: false, created_at: '2026-10-27T00:00:00Z',
   slides: [{ number: 1, title: '审核页一' }, { number: 2, title: '审核页二' }] };
-const published: Version = { ...draft, id: 'published-1', status: 'published', can_revise: true };
+const published: Version = { ...draft, id: 'published-1', status: 'published', can_revise: true, created_at: '2026-10-26T00:00:00Z' };
 function snapshot(version = draft.id): AcceptanceSnapshot {
   const value = syntheticSnapshot(version);
   return { ...value, project_id: project.id, binding: { ...value.binding, project_id: project.id },

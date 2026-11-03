@@ -271,3 +271,86 @@ def test_preview_owner_digest_and_source_checks_are_required(accepted_bundle):
     with app.state.sessions.begin() as session:
         session.get(Project, data["pid"]).revision += 1
     assert client.get(url).status_code in (404, 409)
+
+
+def attach_text_layout(bundle, *, incomplete=False):
+    """Synthetic new receipt without rewriting the fixture's original source."""
+    final = bundle["final"]
+    pdf = bundle["put"]("final-pptx/pdf/presentation.pdf", b"%PDF-1.5\nSynthetic contract-only PDF")
+    final["pdf"] = dict(pdf, path="pdf/presentation.pdf")
+    final["schema"] = "ppt-service.final-pptx-render.v2"
+    coverage = {"native_text_shapes": 3, "matched_text_shapes": 2 if incomplete else 3,
+        "checked_text_shapes": 2 if incomplete else 3, "rendered_glyphs": 30,
+        "geometry_limited_shapes": 1 if incomplete else 0, "unmatched_text_shapes": 0,
+        "collision_shape_pairs": 0, "collision_glyph_pairs": 0}
+    layout = {"schema": "ppt-service.final-text-layout.v1", "status": "incomplete" if incomplete else "passed",
+        "publication_authorized": False, "human_visual_acceptance": False, "powerpoint_acceptance": "pending",
+        "method": "final-pdf-glyphs-and-native-pptx-frames", "engine": {"name": "PyMuPDF", "version": "synthetic"},
+        "scope": "conservative_text_geometry_checks_only", "coverage": coverage,
+        "pages": [{"ordinal": n, "native_text_shapes": 1,
+                   "matched_text_shapes": 0 if incomplete and n == 1 else 1, "issue_count": 0} for n in range(1, 4)],
+        "issues": [], "issue_count": 0, "issues_truncated": False,
+        "advisories": [{"code": "rotated_text_not_checked", "page": 1, "shape_id": 19}] if incomplete else [],
+        "binding": {"controller_nonce": final["controller_nonce"],
+            "source_manifest_sha256": final["source_manifest_sha256"],
+            "input_snapshot_sha256": final["input_snapshot_sha256"],
+            "pptx_sha256": final["pptx"]["sha256"], "pdf_sha256": pdf["sha256"]}}
+    return layout
+
+
+def resign_text_layout(bundle, layout):
+    row = bundle["put"]("final-pptx/text-layout.json", layout)
+    bundle["final"]["text_layout"] = dict(row, path="text-layout.json", status=layout["status"],
+        coverage=layout["coverage"], human_visual_acceptance=False)
+    final_row = bundle["put"]("final-pptx/final-pptx-evidence.json", bundle["final"])
+    bundle["receipt"]["final_pptx_report"] = {key: final_row[key] for key in ("path", "sha256")}
+    bundle["put"]("receipt.json", bundle["receipt"])
+    bundle["freeze"]()
+
+
+@pytest.mark.parametrize("incomplete", [False, True])
+def test_new_measured_text_receipt_keeps_actual_visual_and_desktop_acceptance_pending(accepted_bundle, incomplete):
+    _, client, _, _, bundle = accepted_bundle
+    layout = attach_text_layout(bundle, incomplete=incomplete)
+    resign_text_layout(bundle, layout)
+    response = client.get(bundle["url"])
+    assert response.status_code == 200, response.text
+    snapshot = response.json()
+    assert snapshot["programmatic_status"] == "passed"
+    assert snapshot["visual_status"] == snapshot["powerpoint_status"] == "pending"
+    assert snapshot["can_publish"] is False and snapshot["publication_authorized"] is False
+
+
+@pytest.mark.parametrize("fault", ["nonce", "pptx", "pdf", "source", "human", "finding",
+    "failed", "coverage", "truncated", "missing", "path", "no_descriptor"])
+def test_new_text_receipt_requires_exact_file_binding_and_safe_known_semantics_even_after_resigning(accepted_bundle, fault):
+    _, client, _, _, bundle = accepted_bundle
+    layout = attach_text_layout(bundle)
+    if fault == "nonce": layout["binding"]["controller_nonce"] = str(uuid4())
+    elif fault == "pptx": layout["binding"]["pptx_sha256"] = "0" * 64
+    elif fault == "pdf": layout["binding"]["pdf_sha256"] = "0" * 64
+    elif fault == "source": layout["binding"]["source_manifest_sha256"] = "0" * 64
+    elif fault == "human": layout["human_visual_acceptance"] = True
+    elif fault == "finding": layout["issues"] = [{"code": "text_collision", "page": 1, "shape_id": 1}]
+    elif fault == "failed": layout["status"] = "failed"
+    elif fault == "coverage": layout["coverage"]["checked_text_shapes"] = 0
+    elif fault == "truncated": layout["issues_truncated"] = True
+    resign_text_layout(bundle, layout)
+    if fault == "missing":
+        (bundle["root"] / "final-pptx/text-layout.json").unlink()
+        bundle["freeze"]()
+    elif fault in ("path", "no_descriptor"):
+        if fault == "path": bundle["final"]["text_layout"]["path"] = "../text-layout.json"
+        else: del bundle["final"]["text_layout"]
+        row = bundle["put"]("final-pptx/final-pptx-evidence.json", bundle["final"])
+        bundle["receipt"]["final_pptx_report"] = {key: row[key] for key in ("path", "sha256")}
+        bundle["put"]("receipt.json", bundle["receipt"])
+        bundle["freeze"]()
+    assert client.get(bundle["url"]).status_code == 503
+
+
+def test_text_diagnostic_bytes_are_covered_by_stopped_transport_roster(accepted_bundle):
+    _, client, _, _, bundle = accepted_bundle
+    resign_text_layout(bundle, attach_text_layout(bundle))
+    (bundle["root"] / "final-pptx/text-layout.json").write_bytes(b"altered after stop")
+    assert client.get(bundle["url"]).status_code == 503

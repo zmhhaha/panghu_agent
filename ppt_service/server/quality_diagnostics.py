@@ -11,6 +11,12 @@ from uuid import UUID
 # stage, title, description, recovery advice, retry stage. These are explanations,
 # not a claim that a retry is authorized or that any presentation was accepted.
 _RULES = {
+    'final_pptx_text_layout_failed': ('final_pptx_text_layout', 'PPTX 文字排版检查未通过',
+        '最终 PPTX 渲染中检测到文字重叠、出框或异常断词的风险。',
+        '请根据最终 PPTX 预览调整对应页面的文本框、字号和换行后重新制作；原资料与已确认方案可保留。', 'generation'),
+    'final_pptx_text_extraction_failed': ('final_pptx_text_extraction', 'PPTX 文字测量未完成',
+        '最终 PPTX 的文字测量未能完成，尚不能判断排版是否通过。',
+        '请管理员核对渲染与文字测量工具，再重新运行检查；无需因此改写用户内容。', 'validation'),
     'diagram_geometry_failed': ('diagram_geometry', '图示连线检查未通过',
         '图示中有明确标记的连线穿过无关节点，或声明的连接端点不符合要求。',
         '请核对已确认方案中的关系，调整对应页面的节点与连线路径后重新检查；原资料与版本可保留。', 'generation'),

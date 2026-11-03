@@ -197,6 +197,8 @@ def test_packaged_agent_sources_import_without_the_checkout(tmp_path, dockerfile
         receipt = json.load(archive.extractfile('source-manifest.json'))
         diagnostics = archive.extractfile('agent-code/agent_service/diagnostics.py').read()
         assert receipt['agent_service/diagnostics.py'] == hashlib.sha256(diagnostics).hexdigest()
+        text_layout = archive.extractfile('agent-code/agent_service/profiles/ppt_text_layout.py').read()
+        assert receipt['agent_service/profiles/ppt_text_layout.py'] == hashlib.sha256(text_layout).hexdigest()
         assert digest == hashlib.sha256(json.dumps(receipt, sort_keys=True).encode()).hexdigest()
         # Reproduce only the explicit Agent COPY subtree. Do not let the source
         # checkout or PYTHONPATH hide a missing transitive runtime dependency.
@@ -209,6 +211,9 @@ def test_packaged_agent_sources_import_without_the_checkout(tmp_path, dockerfile
     result = subprocess.run([sys.executable, '-I', '-c',
         'import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); '
         'from agent_service import engines, client; from agent_service.profiles import ppt; '
+        'from agent_service.profiles import ppt_text_layout; '
+        'assert ppt.TEXT_LAYOUT_GUIDANCE == ppt_text_layout.TEXT_LAYOUT_GUIDANCE; '
+        'assert Path(ppt_text_layout.__file__).is_relative_to(Path(sys.argv[1])); '
         'assert Path(engines.__file__).is_relative_to(Path(sys.argv[1])); '
         'assert Path(engines.log_execution_failure.__code__.co_filename).is_relative_to(Path(sys.argv[1]))',
         str(tmp_path / 'agent-code')], cwd=tmp_path, capture_output=True, text=True, timeout=20)

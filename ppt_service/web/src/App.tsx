@@ -200,11 +200,14 @@ function Planning({project,disabled,consent,setConsent,perform,start}:{project:P
  {plan.stage==='communication'?<div className="communication"><CommunicationReview communication={plan.communication}/><fieldset disabled={disabled||stale}><legend>设计方式</legend><label className="radio-card"><input type="radio" name="design" checked={designMode==='free'} onChange={()=>setDesignMode('free')}/><span><strong>自由设计</strong><small>依据资料与要求提出三套完整方向</small></span></label><label className="radio-card"><input type="radio" name="design" checked={designMode==='template'} onChange={()=>setDesignMode('template')} disabled={!plan.communication?.template_options?.length}/><span><strong>服务内置模板</strong><small>{plan.communication?.template_options?.length?'从服务提供的已验收模板选择':'当前方案没有可用模板'}</small></span></label>{designMode==='template'&&<label>选择模板<select value={template} onChange={e=>setTemplate(e.target.value)}><option value="">请选择</option>{plan.communication?.template_options.map(t=><option key={t}>{t}</option>)}</select></label>}<button className="primary" disabled={disabled||stale||(designMode==='template'&&!template)} onClick={()=>void perform(()=>api.confirm(project,{design_mode:designMode==='free'?'free_design':'managed_template',template_id:designMode==='template'?template:null}))}><Check size={17}/>确认沟通内容与设计方式</button></fieldset></div>:<>{!validDirections?<div className="notice warning">服务尚未返回三套完整方向，暂不能完成第二次确认。</div>:<DirectionChooser key={`${plan.revision}-${plan.input_snapshot_hash}-${project.input_snapshot_hash}`} directions={plan.directions!} selectedId={direction} onSelect={setDirection} disabled={disabled||stale} recommendation={plan.recommendation} renderDetails={candidate=><DirectionDetails direction={candidate}/>}/>}<div className="actions"><button className="primary" disabled={disabled||stale||!validDirections||!direction} onClick={()=>void perform(()=>api.confirm(project,{direction_id:direction}))}><Check size={17}/>确认所选完整方案</button><span className="direction-confirm-context">{direction?<>将确认：<strong>{plan.directions?.find(candidate=>candidate.id===direction)?.title}</strong></>:"请先选择一个方案"}</span>{canGenerate(project)&&<span className="confirmed"><Check size={16}/>服务端已确认当前修订</span>}</div></> }</>}
   <div className="planning-feedback"><label>{plan?'补充信息或规划反馈':'规划补充要求'}<textarea rows={3} value={feedback} maxLength={10000} onChange={e=>setFeedback(e.target.value)} placeholder="回答缺失信息，或说明需要调整的大纲与风格…" disabled={disabled}/></label><div className="actions"><button className={canGenerate(project)?'secondary':'primary'} disabled={disabled||!consent||!(project.assets?.length)||parseBlocked||needsConfirmation} onClick={()=>{if(!parseBlocked&&!needsConfirmation)void start(()=>api.plan(project,feedback,consent));}}>{stale?'依据最新资料重新规划':needsConfirmation?'请先确认沟通内容':communicationConfirmed&&!feedback.trim()?'生成三套设计方向':plan?'提交反馈并重新规划':'开始规划'}<ArrowRight size={16}/></button>{canGenerate(project)&&<button className="primary" disabled={disabled||!consent} onClick={()=>void start(()=>api.generate(project,consent))}><Presentation size={17}/>生成演示稿</button>}</div><p className="hint">{disabled?'项目有活动任务或正在提交，请等待当前操作完成。':!consent?'需要先同意外部模型数据传输。':!project.assets?.length?'请先上传源资料。':parseBlocked?'请先等待资料解析完成，或处理失败材料，再开始规划。':stale?'将依据当前资料重新进行初步沟通，无需确认过期方案。':needsConfirmation?'请先确认沟通内容与设计方式，或填写反馈重新规划。':canGenerate(project)?'已确认的输入快照可用于生成。':'生成前须完成两次确认。'}</p></div></section></div>;
 }
+function versionCreatedLabel(value:string) {const date=new Date(value);return Number.isFinite(date.getTime())?date.toLocaleString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}):'时间未记录';}
+function versionStateLabel(version:Version) {return version.status==='review'?'待审核草稿':version.status==='published'?'已发布':'演示稿';}
 function Versions({project,versions,disabled,consent,setConsent,start,perform}:{project:Project;versions:Version[];disabled:boolean;consent:boolean;setConsent:(v:boolean)=>void;start:Starter;perform:Performer}) {
  const [base,setBase]=useState('');const [feedbackRows,setFeedbackRows]=useState<FeedbackRow[]>(emptyFeedbackRows);
  const [reviewSnapshot,setReviewSnapshot]=useState<AcceptanceSnapshot|null>(null);
  const [reviewNotice,setReviewNotice]=useState('');const revisionForm=useRef<HTMLElement|null>(null);
  const lastReview=useRef<AcceptanceSnapshot|null>(null);
+ const orderedVersions=[...versions].sort((left,right)=>(Date.parse(right.created_at)||0)-(Date.parse(left.created_at)||0)||left.id.localeCompare(right.id));
  const version=versions.find(v=>v.id===base);const review=version?.status==='review';
  const canRevise=!!version&&!review&&version.can_revise!==false;
  const currentReview=reviewSnapshot?.project_id===project.id&&reviewSnapshot.version_id===base?reviewSnapshot:null;
@@ -229,15 +232,16 @@ function Versions({project,versions,disabled,consent,setConsent,start,perform}:{
  return <div className="panel">
   <div className="section-title"><div><h2>预览与修改</h2><p>查看演示稿，把需要调整的内容逐条写进意见清单，再统一提交。</p></div><Layers size={21}/></div>
   {!versions.length?<Empty title="还没有可预览版本">完成方案确认并生成后，通过独立程序检查的草稿会出现在这里。</Empty>:<>
-   <div className="version-list">{versions.map((v,i)=><div key={v.id} className={'version-row '+(base===v.id?'chosen':'')}>
+   <div className="version-list" role="group" aria-label="版本列表">{orderedVersions.map((v,i)=><div key={v.id} className={'version-row '+(base===v.id?'chosen':'')}>
     <label><input name="base" type="radio" checked={base===v.id} onChange={()=>changeBase(v.id)}/><span>
-     <strong>{v.status==='review'?'待审核草稿':'版本'} {versions.length-i}</strong><code>{v.id}</code>
-     <small>{new Date(v.created_at).toLocaleString('zh-CN')}{v.parent_version_id&&' · 基于 '+v.parent_version_id}</small>
+     <strong>{i===0?'最新版本':'历史版本'} · <time dateTime={v.created_at}>{versionCreatedLabel(v.created_at)}</time></strong>
+     <small className="version-status">{base===v.id&&reviewPublished?'已发布':versionStateLabel(v)}</small><code>{v.id}</code>
+     {v.parent_version_id&&<small>基于 {v.parent_version_id}</small>}
     </span></label>
-    <button className="secondary compact" disabled={disabled} onClick={()=>void perform(()=>api.download(v.id))}>{v.status==='review'?'下载审核草稿':'下载 PPTX'}</button>
+    <button className="secondary compact" aria-label={`下载${i===0?'最新版本':'历史版本'} · ${versionCreatedLabel(v.created_at)}`} disabled={disabled} onClick={()=>void perform(()=>api.download(v.id))}>下载此版本</button>
    </div>)}</div>
    {!version?<p className="notice">选择一个版本查看预览；新版本到达不会替换你的选择。</p>:<>
-    <div className="selected-base">{review?'当前预览':'当前基线'} <code>{version.id}</code></div>
+    <section className="selected-base selected-version" aria-label="当前选择的版本"><div><small>当前选择 · {reviewPublished?'已发布':versionStateLabel(version)}</small><strong>{orderedVersions[0]?.id===version.id?'最新版本':'历史版本'} · <time dateTime={version.created_at}>{versionCreatedLabel(version.created_at)}</time></strong><code>{version.id}</code></div><button className="primary" disabled={disabled} onClick={()=>void perform(()=>api.download(version.id))}>下载当前版本</button></section>
     {review&&!reviewPublished&&<div className="notice warning" role="status"><div>
      <strong>待审核草稿 · 尚未正式发布</strong>
      <p>已完成独立程序检查，可以预览和下载审核。仍需完成以下审核：</p>

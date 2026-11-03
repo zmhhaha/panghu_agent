@@ -40,6 +40,21 @@ describe('immutable confirmation',()=>{
  });
 });
 describe('retry and safety',()=>{
+ it.each([
+  ['final_pptx_text_layout_failed','final_pptx_text_layout','generation'],
+  ['final_pptx_text_extraction_failed','final_pptx_text_extraction','validation'],
+ ])('retains the safe final-PPTX diagnosis %s without raw report data or publication authority',(error_code,stage,retry_stage)=>{
+  const id='43133abb-2e94-4560-860a-2c1504f8ed42';
+  const diagnostic={schema_version:1,error_code,stage,title:'PPTX 文字检查',message:'检查未通过，请核对固定说明。',suggestion:'保留原资料，先处理对应检查问题。',retry_stage,publication_authorized:false,diagnostic_download_url:`/api/v1/jobs/${id}/diagnostics`,raw_report:'PRIVATE-CANDIDATE-TEXT',path:'/private/secret.log'};
+  const raw={id,project_id:'p',kind:'generate',status:'failed',error_code:'quality_gate_failed',quality_diagnostics:diagnostic};
+  const job=adaptJob(raw);
+  expect(job.quality_diagnostics).toMatchObject({error_code,stage,retry_stage,publication_authorized:false});
+  expect(job.quality_diagnostics?.diagnostic_download_url).toBe(`/api/v1/jobs/${id}/diagnostics`);
+  expect(JSON.stringify(job.quality_diagnostics)).not.toMatch(/PRIVATE|private|secret|raw_report/);
+  expect(adaptProject({id:'p',latest_job:raw}).latest_job?.quality_diagnostics).toEqual(job.quality_diagnostics);
+  expect(adaptJob({...raw,quality_diagnostics:{...diagnostic,publication_authorized:true}}).quality_diagnostics).toBeUndefined();
+  expect(adaptJob({...raw,quality_diagnostics:{...diagnostic,diagnostic_download_url:'https://private.invalid/report'}}).quality_diagnostics).toBeUndefined();
+ });
  it('adapts a bounded quality diagnosis and drops private report fields',()=>{
   const id='43133abb-2e94-4560-860a-2c1504f8ed42';
   const diagnostic={schema_version:1,error_code:'external_svg_resource',stage:'source_binding',title:'页面引用检查未通过',message:'页面包含不允许的资源引用。',suggestion:'请管理员核对引用类型与校验规则。',retry_stage:'validation',publication_authorized:false,diagnostic_download_url:`/api/v1/jobs/${id}/diagnostics`,private_logs:'/private/check.log',raw_report:'SECRET',resource_url:'https://private.invalid'};

@@ -67,7 +67,14 @@ class FakeCommands:
         if "--convert-to" in args:
             step = "export"
             folder = Path(args[args.index("--outdir") + 1])
-            (folder / "presentation.pdf").write_bytes(b"%PDF-1.5\nOffline synthetic PDF, never rendered")
+            # A structurally real synthetic PDF exercises the pinned glyph
+            # reader. It is still not LibreOffice or real export acceptance.
+            import fitz
+            with fitz.open() as document:
+                for _ in range(3):
+                    page = document.new_page(width=960, height=540)
+                    page.insert_text((50, 50), "Offline fixture", fontsize=20)
+                document.save(folder / "presentation.pdf")
         elif args[0] == final.PDFINFO and "-v" not in args:
             step = "info"
             stdout.write_text(f"Pages:          {self.pages}\n" + "".join(
@@ -131,6 +138,12 @@ def test_final_pptx_evidence_is_source_bound_and_separate_from_human_acceptance(
     assert any(arg.startswith("-env:UserInstallation=file:") for args in fake.calls for arg in args)
     assert all(args[0] in {final.LIBREOFFICE, final.PDFINFO, final.PDFTOPPM, final.FONTLIST} for args in fake.calls)
     assert report["validator_stop_proof_requires_controller"] is True
+    assert report["text_layout"]["path"] == "text-layout.json"
+    layout = read_json(values["output"], "text-layout.json")
+    assert layout["binding"]["pptx_sha256"] == report["pptx"]["sha256"]
+    assert layout["binding"]["pdf_sha256"] == report["pdf"]["sha256"]
+    assert layout["human_visual_acceptance"] is False
+    assert layout["status"] == "incomplete"  # fixture intentionally has no native frames
 
 
 @pytest.mark.parametrize("key,value", [("validation_nonce", "bad"), ("pages", True), ("pages", 2),
@@ -201,5 +214,32 @@ def test_absent_tool_is_not_optional_success(case, monkeypatch):
         raise FileNotFoundError("offline missing-tool fixture")
     monkeypatch.setattr(final, "_tool_identity", absent)
     with pytest.raises(ControlError, match="final_pptx_renderer_unavailable"):
+        final.verify_final_pptx(**values)
+    assert not (values["output"] / "final-pptx-evidence.json").exists()
+
+
+def test_detected_final_text_defect_retains_bound_actionable_failure_without_success_receipt(case, monkeypatch):
+    values, _ = case
+    def failed_layout(pptx, pdf, deck, binding):
+        return {"schema": "ppt-service.final-text-layout.v1", "status": "failed",
+            "binding": binding, "human_visual_acceptance": False, "publication_authorized": False,
+            "coverage": {"checked_text_shapes": 1}, "issues": [
+                {"code": "short_token_unplanned_wrap", "page": 2, "shape_id": 17}]}
+    monkeypatch.setattr(final, "verify_text_layout", failed_layout)
+    with pytest.raises(ControlError, match="final_pptx_text_layout_failed"):
+        final.verify_final_pptx(**values)
+    report = read_json(values["output"], "text-layout.json")
+    assert report["binding"]["controller_nonce"] == values["request"]["validation_nonce"]
+    assert report["binding"]["pptx_sha256"] == values["expected_pptx"]["sha256"]
+    assert report["issues"] == [{"code": "short_token_unplanned_wrap", "page": 2, "shape_id": 17}]
+    assert not (values["output"] / "final-pptx-evidence.json").exists()
+
+
+def test_unreadable_actual_pdf_cannot_receive_final_rendering_success(case, monkeypatch):
+    values, _ = case
+    def broken_reader(*args):
+        raise ControlError("final_pptx_text_extraction_failed")
+    monkeypatch.setattr(final, "verify_text_layout", broken_reader)
+    with pytest.raises(ControlError, match="final_pptx_text_extraction_failed"):
         final.verify_final_pptx(**values)
     assert not (values["output"] / "final-pptx-evidence.json").exists()

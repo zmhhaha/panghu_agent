@@ -65,7 +65,7 @@ def needs_input_job(app,c,questions):
     return p,jid
 
 
-def quality_failure_job(app,c):
+def quality_failure_job(app,c,error_code='external_svg_resource'):
     p,jid=needs_input_job(app,c,[])
     with app.state.sessions.begin() as s:
         j=s.get(Job,jid);out=s.get(AgentOutbox,jid)
@@ -73,7 +73,7 @@ def quality_failure_job(app,c):
         request=dict(out.request);task=dict(request['task'],input_snapshot_sha256='a'*64)
         out.request=dict(request,task=task)
         out.result={'status':'failed','error_code':'quality_gate_failed','quality_diagnostics':{
-            'schema_version':1,'error_code':'external_svg_resource','publication_authorized':False,
+            'schema_version':1,'error_code':error_code,'publication_authorized':False,
             'project_id':j.project_id,'job_id':jid,'attempt':j.attempt,'fencing_token':j.fencing_token,
             'input_snapshot_sha256':'a'*64,'source_manifest_sha256':'b'*64,
             'private_log':'private-log-token','message':'<script>private-user-text</script>',
@@ -81,11 +81,24 @@ def quality_failure_job(app,c):
     return p,jid
 
 
-def test_quality_diagnostics_survive_refresh_download_safely_and_preserve_owner_acl(ctx):
-    app,c,who=ctx;p,jid=quality_failure_job(app,c)
+@pytest.mark.parametrize(('error_code','retry_stage','stage','title'),[
+    ('external_svg_resource','validation','source_binding','页面引用检查未通过'),
+    ('final_pptx_text_layout_failed','generation','final_pptx_text_layout','PPTX 文字排版检查未通过'),
+    ('final_pptx_text_extraction_failed','validation','final_pptx_text_extraction','PPTX 文字测量未完成'),
+])
+def test_quality_diagnostics_survive_refresh_download_safely_and_preserve_owner_acl(ctx,error_code,retry_stage,stage,title):
+    app,c,who=ctx;p,jid=quality_failure_job(app,c,error_code)
     dto=c.get('/api/v1/jobs/'+jid).json()
     details=dto['quality_diagnostics']
-    assert details['error_code']=='external_svg_resource'
+    assert details['error_code']==error_code
+    assert details['retry_stage']==retry_stage and details['stage']==stage
+    assert details['title']==title
+    if error_code=='final_pptx_text_layout_failed':
+        assert '重叠' in details['message'] and '出框' in details['message'] and '断词' in details['message']
+        assert '重新制作' in details['suggestion']
+    elif error_code=='final_pptx_text_extraction_failed':
+        assert '未能完成' in details['message'] and '尚不能判断' in details['message']
+        assert '管理员' in details['suggestion'] and '改写用户内容' in details['suggestion']
     assert details['publication_authorized'] is False
     assert details['diagnostic_download_url']==f'/api/v1/jobs/{jid}/diagnostics'
     assert getp(c,p)['latest_job']['quality_diagnostics']==details

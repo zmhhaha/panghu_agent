@@ -153,7 +153,7 @@ export function adaptProject(raw: RecordValue): Project {
  return { ...raw, settings:raw.settings??{pages:raw.page_count??8,language:raw.language==='zh'?'简体中文':raw.language??'简体中文',audience:raw.audience??'',purpose:raw.purpose??'',style:raw.style??'',requirements:raw.requirements??''}, assets:raw.assets??[], plan,
  input_snapshot_hash:raw.input_snapshot_hash??'', confirmed_plan_revision:raw.confirmed_plan_revision==null?null:String(raw.confirmed_plan_revision), latest_job:raw.latest_job?adaptJob(raw.latest_job):null } as Project;
 }
-const diagnosticCodes=new Set(['external_svg_resource','unsafe_svg_source','unsafe_svg_data_resource','candidate_integrity_failed','independent_quality_gate_failed','quality_report_roster_unverified','approved_spec_lock_changed','render_source_hash_mismatch','render_resource_hash_mismatch','render_roster_mismatch','invalid_svg_canvas','independent_command_timeout','independent_render_failed','quality_gate_failed']);
+const diagnosticCodes=new Set(['final_pptx_text_layout_failed','final_pptx_text_extraction_failed','external_svg_resource','unsafe_svg_source','unsafe_svg_data_resource','candidate_integrity_failed','independent_quality_gate_failed','quality_report_roster_unverified','approved_spec_lock_changed','render_source_hash_mismatch','render_resource_hash_mismatch','render_roster_mismatch','invalid_svg_canvas','independent_command_timeout','independent_render_failed','quality_gate_failed']);
 function adaptQualityDiagnostic(value:unknown, jobId:unknown):QualityDiagnostic|undefined {
  if(!value||typeof value!=='object'||Array.isArray(value)||typeof jobId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(jobId))return;
  const raw=value as RecordValue;

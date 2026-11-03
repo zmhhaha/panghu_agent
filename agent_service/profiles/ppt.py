@@ -18,6 +18,7 @@ from uuid import UUID
 from ..artifacts import read_output, relative_path, require_stop, unique_paths
 from ..contracts import InlineFile, ServiceError, canonical_bytes, digest
 from .base import ProfileLimits
+from .ppt_text_layout import TEXT_LAYOUT_GUIDANCE
 
 PHASES = ('plan_initial', 'plan_options', 'prepare', 'generate', 'revise')
 PPT_MASTER_REVISION = 'c350bc31e6d43b7bcf5234183d650ba8f9f4c9d7'
@@ -409,6 +410,7 @@ class PPTProfile:
             '</svg>\n</diagram-syntax-example>\n'
             'Metadata and geometry do not prove relationship meaning: inspect the actual source PNG '
             'and final export for misleading arrows, crossing cards, truncated labels and wrapping. '
+            + TEXT_LAYOUT_GUIDANCE +
             'An unavailable required tool or real approval, or an inability '
             'to produce and visually inspect the actual required PNGs, is a blocker: return needs_input '
             'with honest questions and existing files; do not bypass the restriction. The absence of '

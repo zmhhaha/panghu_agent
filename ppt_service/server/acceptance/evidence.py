@@ -58,9 +58,77 @@ def _report(reader, prefix, receipt, name, expected):
     return report
 
 
+def _text_layout(reader, prefix, final, request, context, pptx):
+    """New Office receipts bind measured text evidence; old v1 stays immutable.
+
+    Incomplete heuristic coverage is explicitly allowed as a limit of the
+    rendering check. It never completes the separate human visual gate.
+    """
+    if final["schema"] == "ppt-service.final-pptx-render.v1" and "text_layout" not in final:
+        return
+    descriptor = final.get("text_layout")
+    require(isinstance(descriptor, dict)
+        and set(descriptor) == {"path", "sha256", "bytes", "status", "coverage", "human_visual_acceptance"}
+        and descriptor.get("path") == "text-layout.json"
+        and descriptor.get("status") in ("passed", "incomplete")
+        and descriptor.get("human_visual_acceptance") is False
+        and isinstance(descriptor.get("sha256"), str) and SHA.fullmatch(descriptor["sha256"])
+        and type(descriptor.get("bytes")) is int and 0 < descriptor["bytes"] <= 8 * 1024**2)
+    key = prefix + "/final-pptx/text-layout.json"
+    layout, digest = reader._json(key)
+    require(digest == descriptor["sha256"]
+        and reader._hash(key) == {name: descriptor[name] for name in ("sha256", "bytes")})
+    pdf = final.get("pdf")
+    require(isinstance(pdf, dict) and set(pdf) == {"path", "sha256", "bytes"}
+        and pdf.get("path") == "pdf/presentation.pdf"
+        and isinstance(pdf.get("sha256"), str) and SHA.fullmatch(pdf["sha256"])
+        and type(pdf.get("bytes")) is int and 0 < pdf["bytes"] <= 64 * 1024**2
+        and reader._hash(prefix + "/final-pptx/pdf/presentation.pdf")
+            == {name: pdf[name] for name in ("sha256", "bytes")})
+    expected_binding = {"controller_nonce": request["validation_nonce"],
+        "source_manifest_sha256": context.binding.manifest_sha256,
+        "input_snapshot_sha256": context.binding.input_snapshot_sha256,
+        "pptx_sha256": pptx["sha256"], "pdf_sha256": pdf["sha256"]}
+    require(layout.get("schema") == "ppt-service.final-text-layout.v1"
+        and layout.get("binding") == expected_binding
+        and layout.get("status") == descriptor["status"]
+        and layout.get("publication_authorized") is False
+        and layout.get("human_visual_acceptance") is False
+        and layout.get("powerpoint_acceptance") == "pending"
+        and layout.get("method") == "final-pdf-glyphs-and-native-pptx-frames"
+        and layout.get("scope") == "conservative_text_geometry_checks_only"
+        and isinstance(layout.get("engine"), dict)
+        and layout.get("engine", {}).get("name") == "PyMuPDF"
+        and isinstance(layout.get("engine", {}).get("version"), str)
+        and 0 < len(layout["engine"]["version"]) <= 100
+        and layout.get("issues") == [] and type(layout.get("issue_count")) is int
+        and layout["issue_count"] == 0 and layout.get("issues_truncated") is False)
+    coverage = layout.get("coverage")
+    keys = {"native_text_shapes", "matched_text_shapes", "checked_text_shapes", "rendered_glyphs",
+        "geometry_limited_shapes", "unmatched_text_shapes", "collision_shape_pairs", "collision_glyph_pairs"}
+    require(isinstance(coverage, dict) and set(coverage) == keys
+        and coverage == descriptor["coverage"]
+        and all(type(value) is int and 0 <= value <= 4_000_020 for value in coverage.values())
+        and coverage["native_text_shapes"] == coverage["checked_text_shapes"]
+            + coverage["geometry_limited_shapes"] + coverage["unmatched_text_shapes"]
+        and coverage["checked_text_shapes"] == coverage["matched_text_shapes"])
+    advisories, pages = layout.get("advisories"), layout.get("pages")
+    require(isinstance(advisories, list) and len(advisories) <= 40000
+        and (layout["status"] == "incomplete") == bool(advisories)
+        and isinstance(pages, list) and len(pages) == len(context.pages))
+    for ordinal, page in enumerate(pages, 1):
+        require(isinstance(page, dict) and set(page) == {"ordinal", "native_text_shapes", "matched_text_shapes", "issue_count"}
+            and type(page.get("ordinal")) is int and page["ordinal"] == ordinal
+            and type(page.get("issue_count")) is int and page["issue_count"] == 0
+            and type(page.get("native_text_shapes")) is int and 0 <= page["native_text_shapes"] <= 2000
+            and type(page.get("matched_text_shapes")) is int and 0 <= page["matched_text_shapes"] <= page["native_text_shapes"])
+    require(sum(row["native_text_shapes"] for row in pages) == coverage["native_text_shapes"]
+        and sum(row["matched_text_shapes"] for row in pages) == coverage["matched_text_shapes"])
+
+
 def _final(reader, prefix, report, request, context, pptx, fingerprint):
     _bound(report, request, context)
-    require(report.get("schema") == "ppt-service.final-pptx-render.v1"
+    require(report.get("schema") in ("ppt-service.final-pptx-render.v1", "ppt-service.final-pptx-render.v2")
         and report.get("status") == "passed" and report.get("publication_authorized") is False
         and report.get("human_visual_acceptance") is False
         and report.get("powerpoint_acceptance") == "pending"
@@ -70,6 +138,7 @@ def _final(reader, prefix, report, request, context, pptx, fingerprint):
         and type(report.get("export_exit_code")) is int and report["export_exit_code"] == 0
         and type(report.get("raster_exit_code")) is int and report["raster_exit_code"] == 0
         and report.get("pptx") == pptx and _gates(report.get("completed_programmatic_gates")) == {FINAL_GATE})
+    _text_layout(reader, prefix, report, request, context, pptx)
     renderer = report["renderer"]
     require(isinstance(renderer, dict) and renderer.get("name") == "LibreOffice Impress"
         and isinstance(renderer.get("version"), str) and 0 < len(renderer["version"]) <= 2000

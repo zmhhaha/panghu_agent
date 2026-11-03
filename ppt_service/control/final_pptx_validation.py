@@ -21,8 +21,9 @@ import zipfile
 from .execution import ControlError
 from .render_validation import fingerprint, hash_file, stop_group
 from .staging import atomic_json, copy_file, open_regular
+from .text_layout_validation import verify_text_layout
 
-SCHEMA = "ppt-service.final-pptx-render.v1"
+SCHEMA = "ppt-service.final-pptx-render.v2"
 FINAL_PPTX_GATE = "independent_final_pptx_rendering"
 LIBREOFFICE = "/usr/bin/libreoffice"
 PDFINFO = "/usr/bin/pdfinfo"
@@ -263,9 +264,19 @@ def verify_final_pptx(pptx, expected_pptx, request, output, *, commands_factory=
         copy_file(raw_pngs, path.name, output / target, expected_hash=row["sha256"])
         result_pages.append({"ordinal": ordinal, "path": target, "sha256": row["sha256"],
                              "bytes": row["bytes"], "width": deck["width"], "height": deck["height"]})
+    # Measure the actual Office-rendered characters, not source-SVG bounds or
+    # successful PNG rasterisation. The private report is useful for a targeted
+    # repair but cannot accept a human review or desktop PowerPoint operation.
+    text_layout = verify_text_layout(source, pdf, deck, {
+        "controller_nonce": nonce, "source_manifest_sha256": request["source_manifest_sha256"],
+        "input_snapshot_sha256": request["input_snapshot_sha256"],
+        "pptx_sha256": before["sha256"], "pdf_sha256": pdf_row["sha256"],
+    })
     _require(hash_file(pptx.parent, pptx.name) == before
              and hash_file(source.parent, source.name)["sha256"] == before["sha256"]
              and hash_file(pdf_dir, pdf.name, 128 * 1024**2) == pdf_row, "final_pptx_source_changed")
+    atomic_json(output / "text-layout.json", text_layout)
+    _require(text_layout["status"] != "failed", "final_pptx_text_layout_failed")
     payload = {
         "schema": SCHEMA, "status": "passed", "publication_authorized": False,
         "full_exporter_postflight_verified": False, "human_visual_acceptance": False,
@@ -280,6 +291,9 @@ def verify_final_pptx(pptx, expected_pptx, request, output, *, commands_factory=
             "pipeline": "PPTX → LibreOffice PDF → Poppler PNG", "isolated_profile": True},
         "deck": deck, "pdf": {**pdf_row, "path": "pdf/presentation.pdf"},
         "pages": result_pages, "page_roster_sha256": fingerprint(result_pages),
+        "text_layout": {"path": "text-layout.json", **hash_file(output, "text-layout.json"),
+                        "status": text_layout["status"], "coverage": text_layout["coverage"],
+                        "human_visual_acceptance": False},
         "export_exit_code": 0, "raster_exit_code": 0, "command_groups_stopped": True,
         "completed_programmatic_gates": [FINAL_PPTX_GATE],
         "source_unchanged": True, "validator_stop_proof_requires_controller": True,

@@ -52,13 +52,53 @@ describe('observed usage presentation',()=>{
 });
 
 describe('workbench business interactions',()=>{
+ it('lists newest first without mutating API order and binds row and selected downloads to their exact versions',async()=>{
+  const older={id:'older-review',status:'review' as const,can_revise:false,created_at:'2026-11-01T06:48:31Z',slides:[{number:1,title:'旧审核稿封面'}]};
+  const newer={id:'newer-review',status:'review' as const,can_revise:false,created_at:'2026-11-02T14:28:12Z',slides:[{number:1,title:'新审核稿封面'}]};
+  const source=[older,newer];Object.freeze(source);vi.mocked(api.versions).mockResolvedValue(source);
+  const user=userEvent.setup();render(<App/>);await screen.findByRole('heading',{name:'真实资料项目'});
+  await user.click(screen.getByRole('tab',{name:/预览与修改/}));
+  const list=within(screen.getByRole('group',{name:'版本列表'}));const choices=list.getAllByRole('radio');
+  expect(choices[0].closest('label')).toHaveTextContent('最新版本');expect(choices[0].closest('label')).toHaveTextContent(newer.id);
+  expect(choices[1].closest('label')).toHaveTextContent('历史版本');expect(choices[1].closest('label')).toHaveTextContent(older.id);
+  expect(choices[0].closest('label')?.querySelector('time')).toHaveAttribute('datetime',newer.created_at);
+  expect(choices[1].closest('label')?.querySelector('time')).toHaveAttribute('datetime',older.created_at);
+  expect(list.getAllByText('待审核草稿')).toHaveLength(2);expect(list.queryByText(/待审核草稿\s+[12]/)).not.toBeInTheDocument();
+  expect(source.map(version=>version.id)).toEqual([older.id,newer.id]);expect(choices.every(choice=>!(choice as HTMLInputElement).checked)).toBe(true);
+  await user.click(list.getAllByRole('button',{name:/下载历史版本/})[0]);
+  await waitFor(()=>expect(api.download).toHaveBeenLastCalledWith(older.id));
+  expect(screen.queryByRole('button',{name:'下载当前版本'})).not.toBeInTheDocument();
+  await user.click(choices[0]);await screen.findByRole('region',{name:'演示稿预览'});
+  const current=within(screen.getByRole('region',{name:'当前选择的版本'}));expect(current.getByText(newer.id)).toBeInTheDocument();
+  await user.click(current.getByRole('button',{name:'下载当前版本'}));
+  await waitFor(()=>expect(api.download).toHaveBeenLastCalledWith(newer.id));
+  await user.click(choices[1]);await screen.findByRole('region',{name:'演示稿预览'});
+  await user.click(screen.getByRole('button',{name:'下载当前版本'}));
+  await waitFor(()=>expect(api.download).toHaveBeenLastCalledWith(older.id));
+  expect(api.download).toHaveBeenCalledTimes(3);expect(api.generate).not.toHaveBeenCalled();expect(api.revise).not.toHaveBeenCalled();
+ });
+ it('preserves the selected historical version and unsent feedback when a newer version arrives',async()=>{
+  const old={id:'selected-old',created_at:'2026-11-01T06:48:31Z',slides:[{number:1,title:'保留选择的封面'}]};
+  const newer={id:'arriving-new',created_at:'2026-11-02T14:28:12Z',slides:[{number:1,title:'新到版本封面'}]};
+  vi.mocked(api.versions).mockResolvedValue([old]);const user=userEvent.setup();render(<App/>);
+  await screen.findByRole('heading',{name:'真实资料项目'});await user.click(screen.getByRole('tab',{name:/预览与修改/}));
+  await user.click(screen.getByRole('radio'));await user.type(screen.getByLabelText('第 1 条修改意见'),'保留当前修改意见');
+  vi.mocked(api.versions).mockResolvedValue([old,newer]);await user.click(screen.getByRole('button',{name:'刷新状态'}));
+  await screen.findByText(newer.id);
+  const list=within(screen.getByRole('group',{name:'版本列表'}));const choices=list.getAllByRole('radio');
+  expect(choices[0]).not.toBeChecked();expect(choices[1]).toBeChecked();
+  const current=within(screen.getByRole('region',{name:'当前选择的版本'}));expect(current.getByText(old.id)).toBeInTheDocument();expect(current.getByText(/历史版本/)).toBeInTheDocument();
+  expect(screen.getByLabelText('第 1 条修改意见')).toHaveValue('保留当前修改意见');expect(screen.queryByText('新到版本封面')).not.toBeInTheDocument();
+  await user.click(current.getByRole('button',{name:'下载当前版本'}));
+  await waitFor(()=>expect(api.download).toHaveBeenCalledWith(old.id));expect(api.revise).not.toHaveBeenCalled();
+ });
  it('shows review records and download with outstanding gates and no published revision form',async()=>{
   const draft={id:'review-1',status:'review' as const,can_revise:false,created_at:'2026-10-24T00:00:00Z',required_pending_gates:['independent_export_build_contract','independent_visual_review','powerpoint_open_edit_save_reopen'],slides:[{number:1,title:'审核草稿封面'}]};
   vi.mocked(api.versions).mockResolvedValue([draft]);const user=userEvent.setup();render(<App/>);
   await screen.findByRole('heading',{name:'真实资料项目'});await user.click(screen.getByRole('tab',{name:/预览与修改/}));await user.click(screen.getByRole('radio'));
   expect(screen.getByText('待审核草稿 · 尚未正式发布')).toBeInTheDocument();expect(screen.getByText('完整导出核验')).toBeInTheDocument();expect(screen.getByText('逐页视觉审核')).toBeInTheDocument();expect(screen.getByText('PowerPoint 打开、编辑、保存与重开验收')).toBeInTheDocument();
   await screen.findByRole('region',{name:'演示稿预览'});expect(screen.getByText('审核草稿封面')).toBeInTheDocument();expect(screen.queryByRole('button',{name:'基于所选版本创建修改任务'})).not.toBeInTheDocument();expect(screen.getByRole('button',{name:'创建新审核稿修改任务'})).toBeDisabled();
-  await user.click(screen.getByRole('button',{name:'下载审核草稿'}));await waitFor(()=>expect(api.download).toHaveBeenCalledWith('review-1'));expect(api.revise).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button',{name:'下载当前版本'}));await waitFor(()=>expect(api.download).toHaveBeenCalledWith('review-1'));expect(api.revise).not.toHaveBeenCalled();
  });
  it('restores published revision controls when switching away from a review draft and resets preview errors',async()=>{
   const draft={id:'review-1',status:'review' as const,can_revise:false,created_at:'2026-10-24T00:00:00Z',slides:[{number:1,title:'审核草稿封面'}]};

@@ -27,7 +27,7 @@ def source_context(dockerfile: Path) -> tuple[bytes, str]:
     # business images. No service credentials, runtime HOME or engine vendor copy.
     agent = SERVICE.parent / 'agent_service'
     agent_names = ('__init__.py', 'artifacts.py', 'client.py', 'contracts.py', 'diagnostics.py', 'engines.py',
-                   'profiles/__init__.py', 'profiles/base.py', 'profiles/ppt.py')
+                   'profiles/__init__.py', 'profiles/base.py', 'profiles/ppt.py', 'profiles/ppt_text_layout.py')
     # The dispatcher revalidates review-only revision authority against the
     # server-owned resolver. Include that production subpackage explicitly;
     # generated fixtures, demo assets and tests do not enter the overlay.
