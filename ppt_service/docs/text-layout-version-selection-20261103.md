@@ -41,6 +41,40 @@ regression, the actual exporter/Office positive and negative samples, the known
 bad ten-page deck, exact image builds and runtime activation. Those results are
 recorded below as they complete; this document does not imply deployment.
 
+## Actual exporter and final rendering samples
+
+Server evidence for application `48dc05e929252af5d4469c832e086e261342deb5`:
+`/root/ppt-text-layout-20261103/native-evidence-48dc05e92925-20261103T054004Z-93e368`.
+It used the retained validator digest
+`sha256:f061cd9ca3539269071fa6c2df4c5de7a5001c28253fcc627566a64b42a293bb`,
+its actual fixed native exporter, LibreOffice and PyMuPDF 1.26.7, without a
+network, model, database or production credential. All three cases completed:
+
+- The exact reported ten-page PPTX failed the new text-layout gate. All 148
+  text objects matched actual final-PDF glyphs, with zero unmatched or limited
+  objects. It found 57 rule issues, including each reported page 2/5/6/8/9.
+  All ten final-page PNGs and the bound report are retained. Multiple issues may
+  describe the same visible defect; this is not 57 independent user complaints.
+- Three pages exported from the corrected explicit-frame fixture passed with
+  33 editable text objects, zero layout issues and all five test identifiers
+  intact on one actual rendered line. No text was rasterized.
+- Three pages with a deliberately undersized identifier frame were rejected
+  for text extending beyond that frame. They retain their own final PDF/PNGs.
+
+The positive page and the original page 5 were also visually inspected as
+server-produced PNGs. The original card labels wrap over their descriptions;
+the corrected bilingual fixture gives identifiers and body text separate space.
+These are actual offline exporter/renderer observations, not an owner-project
+revision, full workflow equivalence evidence or desktop PowerPoint acceptance.
+
+The subsequent 32-stage run executed 1,269 tests with zero skips and one failure:
+an older App test expected a legacy Version gate label after the UI had correctly
+switched to the authoritative acceptance snapshot. That assertion is updated to
+wait for and verify the actual pending programmatic state. This failed run is
+retained at `/root/ppt-prepare-task-48dc05e92925-00d887d952-checks`; it is not a
+passing release receipt. All other stages, including actual native export,
+asynchronous transport, owner API and diagnostic client/panel tests, passed.
+
 ## Remaining owner-deck verification
 
 Prepared feedback retains the ten-page scope, theme and repaired page-3
