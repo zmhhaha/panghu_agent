@@ -1,6 +1,20 @@
 # 视频工作台当前状态
 
-## 本轮：渲染恢复与项目加载修复（已发布）
+## 本轮：恢复故障验证、播放互斥与存储维护
+
+2026-11-03：源码 `f8db329e00a3da582a77f82d68177f68619897d0` 已提交并发布，独立分支尚未合主线；新增五种原生媒体互斥、历史项目预览缺失导入及标准库存储维护 CLI，源码打包精确清单为 57 文件。六个前端文件 93 passed、打包 30 passed、存储 Windows 28 passed／1 skipped、Linux 隔离 apply 9 passed；只读容量 collector 最终 master SQLite 3.40.1 合成 23 组及 Windows 11 组 passed。不同范围不相加；完整 typed 值与 BLOB SHA 比较不以文件物理变化或 BLOB 长度代替。
+
+真实独立故障 r2 的执行子进程 SIGKILL 恢复和专用 TLS 连接中断后的 `cleanup_pending` 恢复已分别通过，用时 39.066197／20.137954 秒，均保持原 Job 身份并精确清理。r2 第三个 Job 的 OOM 及另行审阅的 r3 单 Job 仍是 `Error`／exit 137、一般 502；r3 内核已精确证明容器 cgroup OOM，但 Kubernetes／CRI 未给出 `OOMKilled`，专用 `motion_execution_oom` 归因仍未通过，两个原 failed 保留。两轮合计 4 Job，全部所属 Kubernetes 资源无残留，0 Agent／0 TTS，无业务数据库写入。
+
+工作台已发布为 `latest@sha256:8f9c91199307c3573651749a48462230397ea5db3d871e2762f80736cbc90439`，executor／renderer／runtime 保持。兼容构建保留原 125 层及逐层 SHA／RootFS／runtime／history，仅改 Labels 且不新增层；原层数错误和 OCI 兼容拒绝保留。发布后 17 表全部 schema、旧 typed 值和媒体 BLOB SHA 保持，零新增、active 0、八音色、health／ready 200、匿名 401、七项依赖 UID／spec 保持。两份服务器备份为 20,766,720／8,015,872 B，未下载。两轮确切 `/tmp` 根和全部所属子进程已完成收尾，未调用 Kubernetes DELETE 或访问数据库。
+
+生产只读容量最终报告四来源 complete、blockers 为空，采样为 21:24:59.360–21:25:02.319（Asia/Shanghai，约 2.959 秒）：业务 15 表／11 项目，音频候选 19 条共 14,832,836 B、MP4 7 条共 5,094,193 B；executor 2 表／8 operation／10 scene。执行树 106 文件／40 目录，logical 9,225,471 B、allocated 9,482,240 B，边界计数均 0；两在线库均无 sidecar。音频 19／11 adopted／8 retained、静态 19／18／1、动态 3／3／0、讲解 1／1／0，missing 0，不把未采用内容当垃圾。两次 incomplete（sidecar、SQLite 首次 pragma 授权拒绝）及 locale 失败保留；新副本完整保持通过，最小 immutable 预热未放宽 authorizer。实际预算为 20,000 条目／32 层／30 秒，只读采样且跨来源一致性为 false。
+
+54 个精确证据源文件＋manifest 已安全导出、下载并逐文件校验通过，共 55 成员／63,849 B 压缩／276,707 B 解包；归档 SHA `25436e2f13dd48bedd23c23bcfe39b1faf7a3daa2d256eb62fa2631a883c6755`，保存在本地 `.runtime/video-recovery-r2/evidence/verified/`，source 文件保持。归档不含数据库／凭据，数据库未下载；发布后业务行零新增和历史媒体保持。
+
+存储 CLI 不删业务行／媒体 BLOB，未执行生产 apply。全服务媒体删除、compact 和 executor 128 条记录回收仍未做。浏览器真实播放、人工时序／听感／整片效果 pending。详见 [RECOVERY_OPERATIONS_VALIDATION.md](RECOVERY_OPERATIONS_VALIDATION.md)。下方保留此前各轮原始记录，其“尚未做”和预算只对应当轮，不覆盖本轮结果。
+
+## 此前：渲染恢复与项目加载修复（已发布）
 
 2026-11-03：源码 `9cd39e84aba496b81fda231383411259525835a3` 已发布，工作台和 executor 使用 `latest@sha256:7fc022866ad35f0c06d7078998a6fe58f7b91ca2fb59802d3a1e79b7a14efbc2`，renderer／runtime 保持。项目加载的跨面板递归已修复；磁盘写入错误、未确认清理与重启恢复使用持久意图，确认精确 Job／Pod／ConfigMap 清理后才终态，已有句柄恢复优先于新任务。
 
