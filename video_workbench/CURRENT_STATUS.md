@@ -1,5 +1,17 @@
 # 视频工作台当前状态
 
+## 本轮：动态视频成为默认流程（已发布）
+
+2026-11-03：用户已决定全面转向动态视频。独立分支 `codex/video-hyperframes-motion` 的本轮应用源码为 `cbd08136ca0dc694ceeada3afdfdb55de65e62bf`，尚未合主线。新项目默认动态制作，新增分镜保留待制作动态意图；动态图解成为主操作区，静态素材与历史版本默认折叠，MP4 操作入口统一。旧项目可显式转动态，保留已采用画面、配音及历史，有制作任务时禁止转换；动态项目不能绕过 v2 成片校验，历史 MP4 仍可下载。
+
+新增动态测试 17 项、最终 API 回归集合 42 项、前端 Node 测试 70 项均通过，统计范围可能重叠，不相加为总量。发布工具离线 smoke 通过。本地 HTTP 页面返回 200；浏览器 js、重置与重试均在页面操作前遇到 `failed to write kernel assets`／`os error 3`，**本轮浏览器点击、截图及可视验收尚未完成**。本轮不增加 Agent／TTS 调用，不把人工时序标记为已核对。
+
+**构建、工作台发布与隔离 API 验收已完成**：release 为 `video-dynamic-default-20261103-r1`，工作台 `latest` digest 为 `sha256:1701f36bc8bb25eb683fd65e5e33afacf42f172ceb848ad55f6b89f5d499f4c2`，Pod `video-workbench-557fb55b99-vdsvh` 为 1/1 Running、0 重启，旧 Pod 已停止。只更新工作台，executor、renderer、共享 Agent、speech、认证、域名、PVC 与数据库 schema 未改；所有依赖 spec 保持。
+
+发布后原 9 个项目／14 张表全部旧行与历史媒体保持，active 0、八音色、health／ready 200、匿名 401。隔离 owner 新增项目 `268d3431-3277-4736-b215-884fafa532d3` 与一个手动镜头，revision 2，省略模式时默认 motion、采用 heads 为空；静态 timeline／render 返回 409 `dynamic_workflow_required`，v2 delivery 返回 409 `missing_motion_plan`，任务和候选表无新增。验收后共 10 项目，旧行／媒体及依赖保持，未转换真实旧项目，Agent／TTS／render 均 0。本轮浏览器操作及人工时序、整片效果核对仍待完成；完整回执位置、行为与边界见 [DYNAMIC_DEFAULT.md](DYNAMIC_DEFAULT.md)。
+
+## 此前已发布：动态生产接线
+
 2026-11-03 最新：分支 `codex/video-hyperframes-motion` 的最新应用源码为 `07bd6cab8a33ba62a5d6eb94aa10651d852197c0`，尚未合主线。**第 1 部分已完成**：共享 Agent r3 的讲解统筹／单镜 motion 能力已发布并跑通两个真实业务任务；两镜解释方案已原子采用到 revision 6，原稿、项目音色和原 scene ID 保持。共享 Agent 已按主仓库 `.research-temp/platform-slots-coordination-video.json` 交接其他聊天，本轮不再修改其部署、配置或运行池。
 
 **第 2 部分的本轮发布、真实草稿与采用门禁验收已完成**：r5／compiler v3 已正式发布，工作台与 executor 均 1/1 Ready，实际 digest、鉴权及 runtime 绑定匹配，旧 Pod 已停止。新版原声草稿 `8b32626a-4956-4a4d-90c6-ac4a2b299448` 已 completed；18 秒／432 帧的 1280×720、24fps H.264／AAC MP4 完整解码通过，原完整录音无截断、整段 PCM 相关系数 0.9999526875、lag 0。三个实际抽帧样本未见文字裁切，移动及连线可见。草稿完成时 revision 5 的 motion／audio 均未自动采用；随后原录音显式采用至 revision 6、motion 显式采用至 revision 7。真实正式 delivery 返回 HTTP 409 `motion_timing_needs_review`，保持 estimated／pending，没有伪造真人核对。整片讲解、节奏、人工时序与声音自然度仍需后续验收。

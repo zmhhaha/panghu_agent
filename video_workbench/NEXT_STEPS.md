@@ -1,5 +1,17 @@
 # 视频工作台：后续事项
 
+## 本轮：动态默认流程
+
+2026-11-03：用户已决定全面转向动态视频。应用源码 `cbd08136ca0dc694ceeada3afdfdb55de65e62bf` 已实现动态默认、新分镜继承、旧项目显式转换、静态区域折叠和统一 MP4 入口；新增动态测试 17 项、最终 API 回归集合 42 项、Node 测试 70 项通过，范围可能重叠。工作台发布与隔离 API 验收已完成，独立分支尚未合主线。完整说明见 [DYNAMIC_DEFAULT.md](DYNAMIC_DEFAULT.md)。
+
+已完成发布 `video-dynamic-default-20261103-r1`：工作台 `latest` digest `sha256:1701f36bc8bb25eb683fd65e5e33afacf42f172ceb848ad55f6b89f5d499f4c2`，Pod `video-workbench-557fb55b99-vdsvh` 1/1 Running、0 重启，旧 Pod 已停止。原 9 项目／14 表旧行与媒体保持，active 0、八音色、health／ready 200、匿名 401；隔离新增 1 项目／1 手动镜头后共 10 项目，默认 motion、空采用 heads 和三个导出拒绝路径均验证通过，任务和候选表无新增，所有依赖 spec 保持。未转换真实旧项目，本轮 Agent／TTS／render 均 0，无需重做这些已完成验收。
+
+1. 补充真实浏览器检查。本轮浏览器控制在页面操作前因 `failed to write kernel assets`／`os error 3` 失败，js、重置与重试均无效。仅本地 HTTP 200 和 Node DOM 单测通过，浏览器点击、截图与可视验收仍待完成，不写为已通过；本地 8098 fixture 已正常停止并确认无监听。
+2. 保留人工试听、旁白时序、动画节奏、整片理解效果和声音自然度核对；沿用已有候选和完整录音，不自动确认人工时序，也不增加原四任务预算。
+3. 独立分支保持未合主线，合并另行处理。executor、renderer、共享 Agent、speech、认证、域名、PVC 与数据库 schema 未改；远端发布回执位置见 [DYNAMIC_DEFAULT.md](DYNAMIC_DEFAULT.md)。
+
+## 此前已发布：动态生产接线
+
 2026-11-03 最新：独立分支 `codex/video-hyperframes-motion` 的最新应用源码为 `07bd6cab8a33ba62a5d6eb94aa10651d852197c0`，尚未合主线。第 1 部分共享 Agent r3 发布及两个真实业务任务已完成，两镜解释方案已原子采用。第 2 部分 r5／compiler v3 发布、真实 18 秒原声草稿、显式采用及 pending delivery 拒绝均已完成：完整解码、432 帧及原 PCM 首尾／四段核对通过，三个抽帧样本未见裁字；时间仍 estimated／pending，真人听感与整片质量未通过验收。原首次草稿和 r4 预检失败记录保留。完整证据见 [MOTION_PRODUCTION_VALIDATION.md](MOTION_PRODUCTION_VALIDATION.md)。
 
 本轮 **4 个上游任务／14 个模型回合已用完，TTS 0，不再提交 Agent**。共享 Agent 已按主仓库 `.research-temp/platform-slots-coordination-video.json` 交接其他聊天；后续只推进工作台／executor／renderer，不再修改共享 Agent 镜像、配置、运行池或 UID 预留，复用已有候选与原完整录音。
