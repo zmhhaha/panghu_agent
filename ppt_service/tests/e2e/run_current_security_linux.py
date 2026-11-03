@@ -55,6 +55,7 @@ SUITES = {
         'ppt_service/tests/ops/test_storage_readiness.py',
         'ppt_service/tests/ops/test_storage_capacity.py',
         'ppt_service/tests/ops/test_upload_boundaries.py',
+        'ppt_service/tests/ops/test_parser_matrix.py',
         'ppt_service/tests/control/test_parse_failures.py',
         'ppt_service/tests/control/test_control.py::test_docx_bomb_active_external_and_plaintext',
     ],
