@@ -96,7 +96,7 @@ describe('workbench business interactions',()=>{
   const draft={id:'review-1',status:'review' as const,can_revise:false,created_at:'2026-10-24T00:00:00Z',required_pending_gates:['independent_export_build_contract','independent_visual_review','powerpoint_open_edit_save_reopen'],slides:[{number:1,title:'审核草稿封面'}]};
   vi.mocked(api.versions).mockResolvedValue([draft]);const user=userEvent.setup();render(<App/>);
   await screen.findByRole('heading',{name:'真实资料项目'});await user.click(screen.getByRole('tab',{name:/预览与修改/}));await user.click(screen.getByRole('radio'));
-  expect(screen.getByText('待审核草稿 · 尚未正式发布')).toBeInTheDocument();await screen.findByText(/独立程序验收尚未完成/);expect(screen.getByText('独立程序验收')).toBeInTheDocument();expect(screen.queryByText('完整导出核验')).not.toBeInTheDocument();expect(screen.getByText('逐页视觉审核')).toBeInTheDocument();expect(screen.getByText('PowerPoint 打开、编辑、保存与重开验收')).toBeInTheDocument();
+  const notice=within(screen.getByText('待审核草稿 · 尚未正式发布').closest('[role="status"]') as HTMLElement);await notice.findByText(/独立程序验收尚未完成/);expect(notice.getByText('独立程序验收')).toBeInTheDocument();expect(notice.queryByText('完整导出核验')).not.toBeInTheDocument();expect(notice.getByText('逐页视觉审核')).toBeInTheDocument();expect(notice.getByText('PowerPoint 打开、编辑、保存与重开验收')).toBeInTheDocument();
   await screen.findByRole('region',{name:'演示稿预览'});expect(screen.getByText('审核草稿封面')).toBeInTheDocument();expect(screen.queryByRole('button',{name:'基于所选版本创建修改任务'})).not.toBeInTheDocument();expect(screen.getByRole('button',{name:'创建新审核稿修改任务'})).toBeDisabled();
   await user.click(screen.getByRole('button',{name:'下载当前版本'}));await waitFor(()=>expect(api.download).toHaveBeenCalledWith('review-1'));expect(api.revise).not.toHaveBeenCalled();
  });
