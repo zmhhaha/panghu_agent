@@ -9,10 +9,12 @@ import {
   projectSpeechCanGenerate, audioVoiceLabel,
 } from './model.mjs';
 import { createExplanationPanel, explanationErrorLabel } from './explanation.mjs';
-import { createMotionPanel, createMotionRenderRequest, createDynamicProjectRequest, usesDynamicVideo, motionMetadata, motionErrorLabel } from './motion.mjs';
+import { createMotionPanel, createMotionRenderRequest, createDynamicProjectRequest, hasMotionScenes, usesDynamicVideo, motionMetadata, motionErrorLabel } from './motion.mjs';
 import { createBatchPanel, batchErrorLabel } from './batch.mjs';
 
 const $ = id => document.getElementById(id);
+const nativeMediaIds = ['audio-preview', 'motion-timing-audio', 'batch-audio-preview',
+  'project-player-audio', 'motion-render-video'];
 const state = createWorkspaceState();
 const intentKeys = createIntentKeys();
 const drafts = new Map();
@@ -972,6 +974,14 @@ function pauseProjectPlayer() {
   $('project-player-toggle').textContent = '播放';
 }
 
+function pauseOtherMedia(activeId) {
+  // Stop controller state as well as native playback, including a project's
+  // silent lead-in and a timing audition's pending end boundary.
+  if (activeId !== 'motion-timing-audio') motionPanel.pause();
+  if (activeId !== 'project-player-audio') pauseProjectPlayer();
+  for (const id of nativeMediaIds) if (id !== activeId) $(id).pause();
+}
+
 function closeProjectPlayer() {
   pauseProjectPlayer(); player = null;
   $('project-player-audio').removeAttribute('src'); $('project-player-audio').load();
@@ -1348,8 +1358,7 @@ $('render-motion-project').addEventListener('click', () => {
     () => success('动态成片导出已开始，使用已采用版本和已人工核对的时序。'));
 });
 $('close-motion-render').addEventListener('click', closeMotionRender);
-$('audio-preview').addEventListener('play', () => batchPanel.pause());
-$('motion-timing-audio').addEventListener('play', () => batchPanel.pause());
+for (const id of nativeMediaIds) $(id).addEventListener('play', () => pauseOtherMedia(id));
 $('motion-render-dialog').addEventListener('cancel', event => { event.preventDefault(); closeMotionRender(); });
 $('motion-render-video').addEventListener('error', () => showInputError('视频暂时无法播放，请重新读取导出状态后再试。'));
 $('preview-project').addEventListener('click', () => {
