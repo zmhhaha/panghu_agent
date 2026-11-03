@@ -13,6 +13,8 @@ PPT_COMMIT = 'c350bc31e6d43b7bcf5234183d650ba8f9f4c9d7'
 PPT_ROOT = Path('/opt/ppt-master')
 RESEARCH_ROOT = Path(__file__).resolve().parent.parent / 'scientific_skills'
 VIDEO_ROOT = Path(__file__).resolve().parent / 'resources' / 'video-workbench-v1'
+MOTION_ROOT = Path(__file__).resolve().parent / 'resources' / 'video-motion-v1'
+EXPLANATION_ROOT = Path(__file__).resolve().parent / 'resources' / 'video-explanation-v1'
 
 
 def measured_package(config, policy, control_root):
@@ -33,7 +35,17 @@ def measured_package(config, policy, control_root):
         mandatory = {'research-procedure/SKILL.md', 'task-template.md', 'LICENSE'}
         from .profiles.research import verified_bundle
         verified_bundle()
-    elif policy.name.startswith('video.'):
+    elif policy.name == 'video.explanation-plan.v1':
+        root = EXPLANATION_ROOT
+        mandatory = {'explanation-procedure/SKILL.md', 'CONTRACT.md', 'RESULT.schema.json', 'LICENSE'}
+        from .profiles.video_explanation import verified_bundle
+        verified_bundle()
+    elif policy.name == 'video.motion-plan.v1':
+        root = MOTION_ROOT
+        mandatory = {'motion-procedure/SKILL.md', 'CONTRACT.md', 'PLAN.schema.json', 'LICENSE'}
+        from .profiles.video_motion import verified_bundle
+        verified_bundle()
+    elif policy.name in {'video.storyboard.v1', 'video.scene.v1'}:
         root = VIDEO_ROOT
         mandatory = {'video-procedure/SKILL.md', 'CONTRACT.md', 'LICENSE'}
         from .profiles.video import verified_bundle

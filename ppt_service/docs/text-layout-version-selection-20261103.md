@@ -36,10 +36,66 @@ with zero skips, failures or errors. Receipt:
 This baseline does not yet establish the two added actual-text/native-export
 stages or the subsequent failure-diagnostics extension.
 
-The final release must retain separate evidence for the complete final source
-regression, the actual exporter/Office positive and negative samples, the known
-bad ten-page deck, exact image builds and runtime activation. Those results are
-recorded below as they complete; this document does not imply deployment.
+## Verified final source and website rollout
+
+Final tested application commit: `7d361e82eab12c5ff7915f2693550413cba10c86`.
+All 32 server-only stages and 1,269 tests passed with zero skips, failures or
+errors. The selectors include the actual native exporter/Office tests, the
+rendered-text policy, asynchronous failure transport, owner API, strict browser
+response contract, preview interactions, version selection and feedback list.
+Receipt: `/root/ppt-prepare-task-7d361e82eab1-1a2bb5c4d2-checks/summary.private.json`.
+
+The server fetched the pushed source through Git and built all images as
+`latest`, retaining revision/context labels and exact registry digests. Website,
+controller and validator build receipt:
+`/root/ppt-diagram-7d361e82eab1-build-20261103T063851Z-97e5ca6b/receipt.json`.
+Worker-only build receipt:
+`/root/ppt-authoring-worker-7d361e82eab1-build-20261103T063851Z-1041f425/receipt.json`.
+The latter verifies the image-owned `ppt.py` and `ppt_text_layout.py` imports and
+their exact Git-source hashes, without rebuilding shared Agent control.
+
+Website/controller/validator deployment completed with exact image/source
+checks, both Deployments Ready and the original Office/PyMuPDF dependency prefix
+preserved. Public ping returns 200, root redirects to authentication, and owner
+endpoints return 401 without authentication. The idle/read-only admission lock
+and deployment lock were released. No migration or business-row write occurred;
+auth, database/PVC, quotas, RBAC/resources and shared Agent configuration were
+preserved. Release receipt:
+`/root/ppt-diagram-site-controller-validator-7d361e82eab1-20261103T064029Z-8024d03c/release-receipt.json`.
+
+Immutable image references (all prefixed `arm-cluster-master:5000/`):
+
+| Role | Repository and retained latest digest |
+| --- | --- |
+| Website | `ppt-service-site:latest@sha256:3641bdf243ee2fdc103fcedd429d920f2d077fe4d2736ce68664f208de71e5a9` |
+| Controller | `ppt-agent-controller:latest@sha256:345338fa565e288b06063665a01ca2979ac4a6aa8f52cd1068b37d17e5b6a492` |
+| Validator | `ppt-agent-validator:latest@sha256:4492a878db0d575f20542379a61986500a1c5263b5ecc5460026a87937549bc9` |
+| Pi Worker, built; activation pending | `agent-service-pi:latest@sha256:33cb5a55dbd90553d7026abeb453569ae6b5b6f95c09ffb9aef69cc58bd6989e` |
+
+The Worker candidate is undergoing five isolated runtime prerequisite probes.
+Its shared-catalog activation is recorded separately after completion. These
+prerequisites are not a normal ten-page business revision or human acceptance.
+
+### Shared-catalog compatibility checkpoint
+
+The five probes for Worker `33cb5a55...` completed successfully, including
+physical resource cleanup and restoration of the original dispatcher replicas.
+Evidence is retained at
+`/root/agent-service-deploy-20261026/ppt-text-layout-runtime-7d361e8-r1`.
+The first publication plan stopped before creating its public snapshot: the
+shared live catalog contains the already released `video.motion-plan.v1` and
+`video.explanation-plan.v1` contracts, which this PPT branch's older strict
+registry could not parse. `_Public` accepted the public configuration, while
+Registry rejected `output_schema` with `literal_error`. No Worker binding was
+published. The guarded maintenance operator restored the dispatcher and its
+rollout was observed Ready; the failed plan directory remains retained.
+
+The repair inherits the two existing reviewed video implementations, their fixed
+resource bundles and build allowlists from Git. It preserves the current PPT
+text-layout/handoff changes and shared execution-slot support. Catalog generation
+and existing video routes are unchanged. A new Worker must pass server regression,
+full live-catalog/host parsing and five probes for its own exact image before
+publication. The earlier five probes remain evidence for the earlier image only.
 
 ## Actual exporter and final rendering samples
 

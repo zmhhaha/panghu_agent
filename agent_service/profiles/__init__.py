@@ -18,4 +18,10 @@ def implementation(name):
     if name in {'video.storyboard.v1', 'video.scene.v1'}:
         from .video import VideoProfile
         return VideoProfile(name.split('.')[1])
+    if name == 'video.motion-plan.v1':
+        from .video_motion import VideoMotionProfile
+        return VideoMotionProfile()
+    if name == 'video.explanation-plan.v1':
+        from .video_explanation import VideoExplanationProfile
+        return VideoExplanationProfile()
     raise ValueError('No reviewed profile implementation')

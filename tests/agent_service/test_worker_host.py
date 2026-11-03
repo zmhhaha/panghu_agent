@@ -1,5 +1,6 @@
 """Offline capsule configuration and Linux supervision contracts; no model I/O."""
 from datetime import datetime, timedelta, timezone
+from copy import deepcopy
 import hashlib
 import json
 import os
@@ -17,6 +18,7 @@ from agent_service.linux_stop import KernelScope, LinuxUidStopController, StopSc
 from agent_service.worker_entry import (CapsuleScope, HostConfig, HostSecrets, ProxyModel,
                                        ScopedWorkerHost, WorkerConfigError, accepted_host, build_pi_driver,
                                        build_pi_runtime_settings)
+from test_catalog import image_packages
 
 
 ATTEMPT = str(uuid.UUID(int=1))
@@ -35,6 +37,104 @@ def config(**changes):
                    proxy_base_url='http://task-proxy.agent-service.svc.cluster.local:8080/v1'))
     value.update(changes)
     return HostConfig.model_validate(value)
+
+
+def mixed_video_catalog():
+    """Real reviewed handlers plus an additive, disabled synthetic catalog.
+
+    The existing generator intentionally retains its original domain roster.
+    This mirrors a newer shared live catalog without changing its routes or
+    borrowing the older video branch's PPT/task/concurrency implementations.
+    """
+    from agent_service import catalog
+    from agent_service.profiles import implementation, video_motion, video_explanation
+    from agent_service.registry import CapabilityBundle, TaskContract, ToolEnvironment
+
+    public, hosts, _ = catalog.generate(pi_image='registry.invalid/pi@' + IMAGE,
+                                      runtime_revision='runtime-v1')
+    existing = {key: deepcopy(public[key]) for key in catalog.CATALOG_KEYS}
+    mixed = deepcopy(existing)
+    profiles = ((video_motion, 'video-motion', 'original-local-video-motion-procedures-v1'),
+                (video_explanation, 'video-explanation', 'original-local-video-explanation-procedures-v1'))
+    contracts = []
+    for module, name, source in profiles:
+        handler = implementation('video.' + ('motion-plan.v1' if name == 'video-motion' else 'explanation-plan.v1'))
+        contract = TaskContract.model_validate(dict(name=handler.name, revision='1',
+            task_schema=handler.task_schema, output_schema=handler.output_schema,
+            required_tools=list(handler.required_tools), required_model_capabilities=['text', 'tool_calls'],
+            max_timeout_seconds=600, **handler.limits.as_dict()))
+        assert module.verified_bundle()
+        resources = [dict(name=key, sha256=hashlib.sha256((module.BUNDLE_ROOT / key).read_bytes()).hexdigest())
+                     for key in ('manifest.json', *sorted(module.BUNDLE_FILES))]
+        bundle = CapabilityBundle.model_validate(dict(name=name, revision=module.BUNDLE_REVISION,
+            source=source, license='MIT', required_tools=['read', 'write'], resources=resources))
+        mixed['task_contracts'].append(contract.model_dump(mode='json'))
+        mixed['capability_bundles'].append(bundle.model_dump(mode='json'))
+        contracts.append((contract, bundle))
+    environment = ToolEnvironment.model_validate(dict(name='mixed-video-planning-tools', revision='test-v1',
+        tools=['read', 'write'], capabilities=[row.output_schema for row, _ in contracts],
+        image_digest=IMAGE, runtime_revision='runtime-v1'))
+    mixed['tool_environments'].append(environment.model_dump(mode='json'))
+    for contract, bundle in contracts:
+        binding = dict(id=contract.name.replace('.', '-') + '-pi', revision='test-v1',
+            profile=contract.name, profile_revision='1',
+            bundle=dict(name=bundle.name, revision=bundle.revision),
+            tool_environment=dict(name=environment.name, revision=environment.revision),
+            engine='pi', adapter_revision='pi-cage-adapter-v1',
+            model_policy=deepcopy(public['execution_bindings'][0]['model_policy']))
+        mixed['execution_bindings'].append(binding)
+        mixed['routes'].append(dict(profile=contract.name, profile_revision='1',
+            binding_id=binding['id'], binding_revision=binding['revision'], enabled=False))
+    host = next(value for value in hosts.values() if value['profile']['name'] == 'ppt.generate.v1')
+    return existing, mixed, {**deepcopy(host), 'execution_catalog': mixed}
+
+
+def test_ppt_host_reads_the_complete_mixed_catalog_without_losing_reviewed_contracts(image_packages):
+    from agent_service.contracts import task_byte_limit
+    from agent_service.profiles import implementation
+    from agent_service.profiles.ppt_text_layout import TEXT_LAYOUT_GUIDANCE, TEXT_LAYOUT_SVG
+    from agent_service.registry import DeploymentRegistry
+    from agent_service.worker_entry import host_policy
+    from test_ppt_diagram_authoring import prompt_task
+
+    existing, mixed, wire = mixed_video_catalog()
+    for key, rows in existing.items():
+        assert mixed[key][:len(rows)] == rows
+    registry = DeploymentRegistry.from_config(**mixed)
+    resolved = host_policy(HostConfig.model_validate(wire))
+    assert resolved.execution_binding == registry.binding_policy(wire['binding_id'], wire['binding_revision']).execution_binding
+    assert resolved.name == 'ppt.generate.v1' and resolved.enabled is False
+    for name in ('video.motion-plan.v1', 'video.explanation-plan.v1'):
+        handler = implementation(name)
+        contract = registry.contract(name, '1')
+        assert contract.task_schema == handler.task_schema and contract.output_schema == handler.output_schema
+        binding = next(row for row in mixed['execution_bindings'] if row['profile'] == name)
+        selected = deepcopy(wire)
+        selected.update(binding_id=binding['id'], binding_revision=binding['revision'])
+        selected['profile'].update(name=name, revision='1', max_timeout_seconds=contract.max_timeout_seconds)
+        assert host_policy(HostConfig.model_validate(selected)).name == name
+    prompt = implementation('ppt.generate.v1').build_prompt(prompt_task('generate'))
+    assert TEXT_LAYOUT_GUIDANCE in prompt and TEXT_LAYOUT_SVG in prompt
+    assert task_byte_limit('ppt.generate.v1') == task_byte_limit('ppt.revise.v1') == 256 * 1024
+    assert task_byte_limit('video.motion-plan.v1') == 32 * 1024
+    assert all(row['enabled'] is False for row in mixed['routes'])
+
+
+@pytest.mark.parametrize('defect', ['unknown_output_schema', 'unknown_environment_schema', 'mismatched_task_schema'])
+def test_mixed_catalog_keeps_strict_schema_rejection_for_ppt_hosts(image_packages, defect):
+    from agent_service.worker_entry import host_policy
+
+    _, _, wire = mixed_video_catalog()
+    broken = deepcopy(wire)
+    catalog = broken['execution_catalog']
+    if defect == 'unknown_output_schema':
+        catalog['task_contracts'][-1]['output_schema'] = 'video-unreviewed-output.v1'
+    elif defect == 'unknown_environment_schema':
+        catalog['tool_environments'][-1]['capabilities'][0] = 'video-unreviewed-output.v1'
+    else:
+        catalog['task_contracts'][-1]['task_schema'] = 'video-unreviewed-input.v1'
+    with pytest.raises(WorkerConfigError):
+        host_policy(HostConfig.model_validate(broken))
 
 
 def scope():
