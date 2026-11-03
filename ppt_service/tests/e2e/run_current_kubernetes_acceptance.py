@@ -386,7 +386,8 @@ class KubernetesRun:
             'metadata': self.metadata('acceptance-bounds'), 'spec': {'hard': {
                 'pods': '3', 'requests.cpu': '30m', 'requests.memory': '96Mi',
                 'limits.cpu': '750m', 'limits.memory': '288Mi',
-                'count/configmaps': '1', 'count/secrets': '0',
+                # Kubernetes also injects the public kube-root-ca.crt CM.
+                'count/configmaps': '2', 'count/secrets': '0',
                 'persistentvolumeclaims': '0', 'services': '0',
                 'count/networkpolicies.networking.k8s.io': '3'}}})
         self.create({'apiVersion': 'v1', 'kind': 'ConfigMap',
