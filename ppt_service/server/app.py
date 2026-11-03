@@ -78,7 +78,7 @@ def create_app(settings:Settings|None=None,engine=None):
     app.add_middleware(BodyLimitMiddleware)
     app.state.settings=settings;app.state.engine=engine
     app.state.sessions=sessionmaker(engine,expire_on_commit=False)
-    app.state.storage=Storage(settings.data_root)
+    app.state.storage=Storage(settings.data_root,min_free_bytes=settings.upload_min_free_bytes)
     app.state.jwks=jwt.PyJWKClient(settings.jwks_url,cache_keys=True,lifespan=300) if settings.jwks_url.startswith('https://') else None
     def session():
         with app.state.sessions() as s:

@@ -90,7 +90,9 @@ def main():
         for case, program in PROGRAMS.items():
             name = owner + '-' + case
             owned.append(name)
-            call(['docker', 'run', '-d', '--pull=never', '--name', name,
+            # Namespace PID 1 has special signal/OOM semantics. Give the
+            # Python probe a normal child PID and reap it with Docker's init.
+            call(['docker', 'run', '-d', '--init', '--pull=never', '--name', name,
                 '--label', LABEL + '=' + owner, '--network', 'none', '--read-only',
                 '--user', '10000:10000', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
                 '--memory', '64m', '--memory-swap', '64m', '--pids-limit', '16', '--cpus', '1',

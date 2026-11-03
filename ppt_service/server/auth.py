@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import os,ipaddress,re,secrets
 from fastapi import Request,HTTPException
 import jwt
+from .storage import DEFAULT_UPLOAD_MIN_FREE_BYTES,validate_upload_reserve
 @dataclass(frozen=True)
 class Identity:
     issuer:str
@@ -19,10 +20,13 @@ class Settings:
     event_retention_days:int=30
     raw_log_retention_days:int=7
     staging_retention_days:int=7
+    upload_min_free_bytes:int=DEFAULT_UPLOAD_MIN_FREE_BYTES
+    def __post_init__(self):
+        validate_upload_reserve(self.upload_min_free_bytes)
     @classmethod
     def env(cls):
         def items(k):return tuple(x.strip() for x in os.getenv(k,'').split(',') if x.strip())
-        return cls(database_url=os.environ['DATABASE_URL'],data_root=os.environ['DATA_ROOT'],oidc_issuer=os.getenv('OIDC_ISSUER',''),oidc_audience=os.getenv('OIDC_AUDIENCE',''),jwks_url=os.getenv('OIDC_JWKS_URL',''),trusted_proxy_cidrs=items('TRUSTED_PROXY_CIDRS'),allowed_origins=items('ALLOWED_ORIGINS'),max_storage_bytes=int(os.getenv('MAX_STORAGE_BYTES',str(20*1024**3))),event_retention_days=int(os.getenv('EVENT_RETENTION_DAYS','30')),raw_log_retention_days=int(os.getenv('RAW_LOG_RETENTION_DAYS','7')),staging_retention_days=int(os.getenv('STAGING_RETENTION_DAYS','7')))
+        return cls(database_url=os.environ['DATABASE_URL'],data_root=os.environ['DATA_ROOT'],oidc_issuer=os.getenv('OIDC_ISSUER',''),oidc_audience=os.getenv('OIDC_AUDIENCE',''),jwks_url=os.getenv('OIDC_JWKS_URL',''),trusted_proxy_cidrs=items('TRUSTED_PROXY_CIDRS'),allowed_origins=items('ALLOWED_ORIGINS'),max_storage_bytes=int(os.getenv('MAX_STORAGE_BYTES',str(20*1024**3))),event_retention_days=int(os.getenv('EVENT_RETENTION_DAYS','30')),raw_log_retention_days=int(os.getenv('RAW_LOG_RETENTION_DAYS','7')),staging_retention_days=int(os.getenv('STAGING_RETENTION_DAYS','7')),upload_min_free_bytes=int(os.getenv('PPT_UPLOAD_MIN_FREE_BYTES',str(DEFAULT_UPLOAD_MIN_FREE_BYTES))))
 
 EMAIL_LOCAL=re.compile(r"[A-Za-z0-9.!#$%&'+/=^_`{|}~-]+\Z")
 EMAIL_LABEL=re.compile(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\Z')
