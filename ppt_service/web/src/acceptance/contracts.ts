@@ -34,6 +34,24 @@ export interface PowerPointReview {
 }
 export interface Revocation { record_id: string; reason: string }
 export interface RenderedPptxPage { number: number; preview_url: string; preview_sha256: string }
+export type LayoutDiagnosticCode = 'short_token_unplanned_wrap' | 'short_token_orphan_fragment' | 'short_label_orphan_line' | 'text_outside_frame' | 'text_outside_slide' | 'text_collision';
+export interface LayoutDiagnosticItem {
+  page: number;
+  code: LayoutDiagnosticCode;
+  shape_id: number;
+  other_shape_id?: number | null;
+  message: string;
+  suggestion: string;
+}
+export interface LayoutFailureDiagnostic {
+  error_code: 'final_pptx_text_layout_failed';
+  title: string;
+  message: string;
+  suggestion: string;
+  items: LayoutDiagnosticItem[];
+  total_issue_count: number;
+  truncated: boolean;
+}
 export interface ProgrammaticAcceptance {
   status: ReviewStatus;
   receipt_sha256: string | null;
@@ -42,6 +60,7 @@ export interface ProgrammaticAcceptance {
   renderer: string | null;
   detail: string;
   rendered_pages?: RenderedPptxPage[];
+  diagnostics?: LayoutFailureDiagnostic | null;
 }
 export interface PublicationState {
   status: 'draft' | 'published';

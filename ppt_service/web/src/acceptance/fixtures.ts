@@ -10,3 +10,19 @@ export function syntheticSnapshot(versionId = 'demo-v1'): AcceptanceSnapshot {
     native_chart_count: 1, programmatic_status: 'pending', visual_status: 'pending', powerpoint_status: 'pending', human_status: 'pending', acceptance_status: 'pending', pending_reasons: ['independent_postflight_integration_pending', 'visual_review_pending', 'powerpoint_review_pending'], can_review: true, can_revoke: false, publication_authorized: false, records: [],
   };
 }
+
+/** Contract fixture only; no document was rendered or checked. */
+export function syntheticLayoutFailure(versionId = 'demo-v1'): AcceptanceSnapshot {
+  const value = syntheticSnapshot(versionId);
+  return { ...value, programmatic_status: 'needs_changes',
+    pending_reasons: ['independent_programmatic_needs_changes', ...value.pending_reasons],
+    programmatic: { status: 'needs_changes', receipt_sha256: 'f'.repeat(64), completed_gates: [],
+      pending_gates: ['independent_final_pptx_rendering', 'independent_export_build_contract', 'independent_postflight_and_delivery'],
+      renderer: 'LibreOffice Impress', detail: '最终 PPTX 的文字排版检查未通过，以下页项需要修复；原审核稿仍可查看。', rendered_pages: [],
+      diagnostics: { error_code: 'final_pptx_text_layout_failed', title: 'PPTX 文字排版需要修复',
+        message: '最终 PPTX 的实际文字检查发现以下页面存在排版问题。',
+        suggestion: '请在修改意见中说明这些页面需要调整的内容；原资料、方案与审核稿仍保留。',
+        items: [{ page: 2, code: 'text_collision', shape_id: 17, other_shape_id: 22,
+          message: '两个文字区域出现明显重叠。', suggestion: '拉开两个文字区域，检查标题与正文之间的间距。' }],
+        total_issue_count: 1, truncated: false } } };
+}

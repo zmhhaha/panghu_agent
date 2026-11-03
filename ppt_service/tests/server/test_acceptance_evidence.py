@@ -12,7 +12,7 @@ from test_api import ctx
 from ppt_service.server.acceptance.evidence import BASE_GATES, SOURCE_GATE, FINAL_GATE, EXPORT_GATE, DELIVERY_GATE
 from ppt_service.server.acceptance.resolver import fingerprint
 from ppt_service.server.auth import Identity
-from ppt_service.server.models import Checkpoint, Project, Version
+from ppt_service.server.models import Checkpoint, Job, Project, Version
 
 
 def seed_acceptance_bundle(app, client, data, *, passed=True, issued="2026-11-01T10:00:00Z"):
@@ -354,3 +354,140 @@ def test_text_diagnostic_bytes_are_covered_by_stopped_transport_roster(accepted_
     resign_text_layout(bundle, attach_text_layout(bundle))
     (bundle["root"] / "final-pptx/text-layout.json").write_bytes(b"altered after stop")
     assert client.get(bundle["url"]).status_code == 503
+
+
+def seed_layout_failure(app, data, bundle, *, issued="2026-11-03T10:00:00Z"):
+    """Synthetic stopped failure, deliberately separate from success bundles."""
+    request = json.loads((bundle["root"] / "request.json").read_text())
+    root = bundle["root"].parent.parent / "acceptance-failures" / bundle["eid"]
+
+    def put(name, value):
+        raw = value if isinstance(value, bytes) else json.dumps(value, sort_keys=True, ensure_ascii=False).encode()
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+        return {"path": name, "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
+
+    request_row = put("request.json", request)
+    pptx = put("final-pptx/input/presentation.pptx",
+        (app.state.storage.root / data["artifact_key"] / "presentation.pptx").read_bytes())
+    pdf = put("final-pptx/pdf/presentation.pdf", b"%PDF-1.5\nSynthetic failed-render contract fixture")
+    source = bundle["final"]
+    layout = {"schema": "ppt-service.final-text-layout.v1", "status": "failed",
+        "binding": {"controller_nonce": source["controller_nonce"],
+            "source_manifest_sha256": source["source_manifest_sha256"],
+            "input_snapshot_sha256": source["input_snapshot_sha256"],
+            "pptx_sha256": pptx["sha256"], "pdf_sha256": pdf["sha256"]},
+        "publication_authorized": False, "human_visual_acceptance": False, "powerpoint_acceptance": "pending",
+        "method": "final-pdf-glyphs-and-native-pptx-frames", "scope": "conservative_text_geometry_checks_only",
+        "engine": {"name": "PyMuPDF", "version": "synthetic"},
+        "issues": [{"code": "text_collision", "severity": "error", "page": 2, "shape_id": 17,
+            "other_shape_id": 22, "message": "secret source text /private/path", "suggestion": "https://private.invalid"}],
+        "issue_count": 1, "issues_truncated": False,
+        "pages": [{"ordinal": n, "issue_count": int(n == 2)} for n in range(1, 4)]}
+    row = put("final-pptx/text-layout.json", layout)
+    error = {"schema": "ppt-service.acceptance-error.v1", "publication_authorized": False,
+        "error_code": "final_pptx_text_layout_failed", "error_type": "ControlError"}
+    put("acceptance-error.json", error)
+    receipt = {"schema": "ppt-service.acceptance-failure.v1", "status": "failed",
+        "error_code": "final_pptx_text_layout_failed", "evidence_id": request["evidence_id"],
+        "request_sha256": request_row["sha256"], "binding_sha256": fingerprint(request["binding"]),
+        "execution_image": request["execution_image"], "issued_at": issued,
+        "accepted": False, "publication_authorized": False, "human_visual_acceptance": False,
+        "powerpoint_acceptance": "pending", "pptx": pptx, "pdf": pdf, "text_layout_report": row}
+    put("failure-receipt.json", receipt)
+    transport = {"schema": "ppt-service.acceptance-failure-transport.v1", "evidence_id": request["evidence_id"],
+        "request_sha256": request_row["sha256"], "binding_sha256": receipt["binding_sha256"],
+        "execution_image": request["execution_image"], "validator_scope_uid": str(uuid4()),
+        "validator_pod_uid": str(uuid4()), "validator_exit_code": 2, "writers_stopped": True, "transport_verified": True}
+
+    def freeze():
+        files = [{"path": path.relative_to(root).as_posix(), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                  "bytes": path.stat().st_size} for path in sorted(root.rglob("*"))
+                 if path.is_file() and path.name != "transport-manifest.json"]
+        put("transport-manifest.json", transport | {"files": files, "bytes": sum(row["bytes"] for row in files)})
+
+    freeze()
+    return {"root": root, "put": put, "freeze": freeze, "request": request, "receipt": receipt,
+            "transport": transport, "layout": layout, "error": error}
+
+
+@pytest.mark.parametrize("existing_success", [False, True])
+def test_measured_async_failure_is_visible_on_owner_acceptance_refresh_with_specific_safe_pages(accepted_bundle, existing_success):
+    app, client, owners, data, bundle = accepted_bundle
+    seed_layout_failure(app, data, bundle)
+    if not existing_success:
+        # Keep the synthetic bytes privately without installing a success
+        # receipt: this is the real first failed asynchronous-check shape.
+        bundle["root"].rename(bundle["root"].parent.parent / "private-success-fixture")
+    for _ in range(2):
+        response = client.get(bundle["url"])
+        assert response.status_code == 200, response.text
+        snapshot = response.json()
+        assert snapshot["programmatic_status"] == "needs_changes"
+        assert snapshot["visual_status"] == snapshot["powerpoint_status"] == "pending"
+        assert snapshot["can_publish"] is snapshot["publication_authorized"] is False
+        diagnostic = snapshot["programmatic"]["diagnostics"]
+        assert diagnostic["error_code"] == "final_pptx_text_layout_failed"
+        assert diagnostic["items"][0]["page"] == 2
+        assert diagnostic["items"][0]["shape_id"] == 17
+        assert diagnostic["items"][0]["other_shape_id"] == 22
+        assert diagnostic["items"][0]["code"] == "text_collision"
+        assert diagnostic["items"][0]["message"] == "两个文字区域出现明显重叠。"
+        assert "secret source" not in response.text and "/private/" not in response.text
+        assert "private.invalid" not in response.text and "acceptance-failures" not in response.text
+    with app.state.sessions() as session:
+        assert session.get(Job, data["jid"]).status == "succeeded"
+        assert session.get(Version, data["vid"]).status == "review"
+        assert session.get(Project, data["pid"]).revision == 8
+    owners[0] = Identity("https://issuer", "different-owner")
+    assert client.get(bundle["url"]).status_code == 404
+
+
+@pytest.mark.parametrize("fault", ["nonce", "pptx", "pdf", "page", "boolean_page", "shape", "boolean_shape",
+    "other_self", "code", "stopped", "exit_zero", "wrong_image", "request", "accepted", "path", "count",
+    "page_count", "wrong_page_count", "conflicting_success", "tampered_bytes", "missing"])
+def test_failure_projection_rejects_bad_bindings_stop_semantics_and_unbounded_items(accepted_bundle, fault):
+    app, client, _, data, bundle = accepted_bundle
+    failure = seed_layout_failure(app, data, bundle)
+    layout, receipt, transport = failure["layout"], failure["receipt"], failure["transport"]
+    if fault == "nonce": layout["binding"]["controller_nonce"] = str(uuid4())
+    elif fault == "pptx": layout["binding"]["pptx_sha256"] = "0" * 64
+    elif fault == "pdf": layout["binding"]["pdf_sha256"] = "0" * 64
+    elif fault == "page": layout["issues"][0]["page"] = 4
+    elif fault == "boolean_page": layout["issues"][0]["page"] = True
+    elif fault == "shape": layout["issues"][0]["shape_id"] = "/private/path"
+    elif fault == "boolean_shape": layout["issues"][0]["shape_id"] = True
+    elif fault == "other_self": layout["issues"][0]["other_shape_id"] = layout["issues"][0]["shape_id"]
+    elif fault == "code": layout["issues"][0]["code"] = "candidate_controlled_rule"
+    elif fault == "stopped": transport["writers_stopped"] = False
+    elif fault == "exit_zero": transport["validator_exit_code"] = 0
+    elif fault == "wrong_image": transport["execution_image"] = "other@sha256:" + "0" * 64
+    elif fault == "request": receipt["request_sha256"] = "0" * 64
+    elif fault == "accepted": receipt["accepted"] = True
+    elif fault == "count": layout["issue_count"] = 1000001
+    elif fault == "page_count": layout["pages"][1]["issue_count"] = 0
+    elif fault == "wrong_page_count":
+        layout["pages"][0]["issue_count"], layout["pages"][1]["issue_count"] = 1, 0
+    elif fault == "conflicting_success": failure["put"]("receipt.json", {"status": "passed"})
+    row = failure["put"]("final-pptx/text-layout.json", layout)
+    receipt["text_layout_report"] = row
+    if fault == "path": receipt["text_layout_report"]["path"] = "../text-layout.json"
+    failure["put"]("failure-receipt.json", receipt)
+    failure["freeze"]()
+    if fault == "tampered_bytes":
+        (failure["root"] / "final-pptx/text-layout.json").write_bytes(b"changed after stop")
+    elif fault == "missing":
+        (failure["root"] / "final-pptx/text-layout.json").unlink()
+    assert client.get(bundle["url"]).status_code == 503
+
+
+def test_later_valid_acceptance_supersedes_older_failure_without_mutating_either(accepted_bundle):
+    app, client, _, data, bundle = accepted_bundle
+    failure = seed_layout_failure(app, data, bundle, issued="2026-11-01T09:00:00Z")
+    original = (failure["root"] / "failure-receipt.json").read_bytes()
+    response = client.get(bundle["url"])
+    assert response.status_code == 200, response.text
+    assert response.json()["programmatic_status"] == "passed"
+    assert response.json()["programmatic"]["diagnostics"] is None
+    assert (failure["root"] / "failure-receipt.json").read_bytes() == original

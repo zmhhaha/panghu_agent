@@ -5,7 +5,7 @@ import { AcceptancePanel } from './AcceptancePanel';
 import { assertSnapshot, rasterPreviewUrl, renderedPptxPreviewUrl } from './client';
 import type { AcceptanceClient, AcceptanceCommand, AcceptanceSnapshot, VisualReview } from './contracts';
 import { powerpointDraft, powerpointValidation, visualDraft } from './drafts';
-import { syntheticSnapshot } from './fixtures';
+import { syntheticLayoutFailure, syntheticSnapshot } from './fixtures';
 
 function clientFor(snapshot = syntheticSnapshot()) {
   return { load: vi.fn<AcceptanceClient['load']>().mockResolvedValue(snapshot), save: vi.fn<AcceptanceClient['save']>() };
@@ -38,6 +38,36 @@ function publishedSnapshot(initial = completeSnapshot()): AcceptanceSnapshot {
 }
 
 describe('explicit version publication', () => {
+  it('shows measured problem pages above preview and retains them on refresh without recording a human decision', async () => {
+    const failure = syntheticLayoutFailure(); const client = { ...clientFor(failure), publish: vi.fn() };
+    setup(client); await screen.findByRole('region', { name: '演示稿预览' });
+    const diagnostics = screen.getByRole('region', { name: '文字排版检查发现的问题' });
+    expect(within(diagnostics).getByText('PPTX 文字排版需要修复')).toBeVisible();
+    expect(within(diagnostics).getByText('两个文字区域出现明显重叠。')).toBeVisible();
+    expect(within(diagnostics).getByText('拉开两个文字区域，检查标题与正文之间的间距。')).toBeVisible();
+    expect(diagnostics.compareDocumentPosition(screen.getByRole('region', { name: '演示稿预览' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText('验收与发布').closest('details')).not.toHaveAttribute('open');
+    fireEvent.click(within(diagnostics).getByRole('button', { name: '查看第 2 页的问题 1' }));
+    const image = screen.getByRole('img', { name: /第 2 页静态 PNG 预览/ }); fireEvent.load(image);
+    expect(client.load).toHaveBeenCalledOnce(); expect(client.save).not.toHaveBeenCalled(); expect(client.publish).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/我已检查此版本全部/)).not.toBeChecked();
+    fireEvent.click(screen.getByRole('button', { name: '重新读取记录' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '重新读取记录' })).toBeEnabled());
+    expect(client.load).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('region', { name: '文字排版检查发现的问题' })).toHaveTextContent('两个文字区域出现明显重叠。');
+    expect(screen.getByText('验收与发布').closest('details')).not.toHaveAttribute('open');
+    expect(client.save).not.toHaveBeenCalled(); expect(client.publish).not.toHaveBeenCalled();
+  });
+
+  it('rejects injected diagnostic prose before it can become a preview message or link', async () => {
+    const invalid = syntheticLayoutFailure(); invalid.programmatic!.diagnostics!.items[0].message = '<a href="https://private.invalid">secret source</a>';
+    const client = clientFor(invalid); const view = setup(client);
+    await screen.findByRole('alert');
+    expect(screen.queryByRole('region', { name: '文字排版检查发现的问题' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/secret source/)).not.toBeInTheDocument(); expect(view.container.querySelector('a[href*="private.invalid"]')).toBeNull();
+    expect(client.save).not.toHaveBeenCalled();
+  });
+
   it('uses one receipt-bound final PPTX preview and never records acceptance by viewing it', async () => {
     const complete = completeSnapshot(); const initial: AcceptanceSnapshot = { ...syntheticSnapshot(), programmatic: { ...complete.programmatic!, status: 'pending', completed_gates: ['independent_final_pptx_rendering'], pending_gates: ['independent_export_build_contract', 'independent_postflight_and_delivery'] } };
     const client = clientFor(initial); setup(client); await ready();

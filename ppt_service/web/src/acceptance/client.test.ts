@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api } from '../api';
+import { api, ApiError } from '../api';
 import pendingFixture from '../../../server/acceptance/contracts/pending.fixture.json';
 import passedFixture from '../../../server/acceptance/contracts/human-passed.fixture.json';
 import visualFixture from '../../../server/acceptance/contracts/visual-review.fixture.json';
@@ -8,10 +8,53 @@ import revokeFixture from '../../../server/acceptance/contracts/revoke.fixture.j
 import { acceptanceClient, assertSnapshot } from './client';
 import type { AcceptanceCommand, AcceptanceSnapshot } from './contracts';
 import { powerpointDraft, visualDraft } from './drafts';
+import { syntheticLayoutFailure } from './fixtures';
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('P4 shared Python/TypeScript contract', () => {
+  it('accepts bounded measured-failure diagnostics without promoting any human or publication result', () => {
+    const failure = syntheticLayoutFailure();
+    const value = assertSnapshot(failure, failure.project_id, failure.version_id);
+    expect(value.programmatic?.diagnostics?.items[0]).toMatchObject({ page: 2, code: 'text_collision', shape_id: 17, other_shape_id: 22 });
+    expect(value.visual_status).toBe('pending'); expect(value.powerpoint_status).toBe('pending'); expect(value.publication_authorized).toBe(false);
+    value.programmatic!.diagnostics!.items[0].other_shape_id = null;
+    assertSnapshot(value, value.project_id, value.version_id);
+    delete value.programmatic!.diagnostics!.items[0].other_shape_id;
+    assertSnapshot(value, value.project_id, value.version_id);
+    value.programmatic!.diagnostics!.total_issue_count = 101; value.programmatic!.diagnostics!.truncated = true;
+    assertSnapshot(value, value.project_id, value.version_id);
+  });
+
+  it.each(['unknown_code', 'prototype_code', 'page_zero', 'page_overflow', 'boolean_page', 'string_shape', 'boolean_shape',
+    'other_self', 'message_injection', 'suggestion_url', 'title_injection', 'raw_source_path', 'count_overflow', 'count_zero',
+    'truncation', 'too_many_items', 'no_final_gate', 'completed_gate', 'rendered_roster', 'no_receipt'])('rejects unsafe layout diagnostic %s', fault => {
+    const value = syntheticLayoutFailure(); const programmatic = value.programmatic!;
+    const diagnostic = programmatic.diagnostics!;
+    const row = diagnostic.items[0] as unknown as Record<string, unknown>;
+    if (fault === 'unknown_code') row.code = 'candidate_rule';
+    else if (fault === 'prototype_code') row.code = '__proto__';
+    else if (fault === 'page_zero') row.page = 0;
+    else if (fault === 'page_overflow') row.page = value.pages.length + 1;
+    else if (fault === 'boolean_page') row.page = true;
+    else if (fault === 'string_shape') row.shape_id = '17';
+    else if (fault === 'boolean_shape') row.shape_id = true;
+    else if (fault === 'other_self') row.other_shape_id = row.shape_id;
+    else if (fault === 'message_injection') row.message = '<img src=x onerror=alert(1)>';
+    else if (fault === 'suggestion_url') row.suggestion = 'https://private.invalid/secret';
+    else if (fault === 'title_injection') diagnostic.title = '<script>private source</script>';
+    else if (fault === 'raw_source_path') row.source_path = '/private/customer/deck';
+    else if (fault === 'count_overflow') diagnostic.total_issue_count = 1000001;
+    else if (fault === 'count_zero') diagnostic.total_issue_count = 0;
+    else if (fault === 'truncation') diagnostic.truncated = true;
+    else if (fault === 'too_many_items') { diagnostic.items = Array.from({ length: 101 }, () => ({ ...diagnostic.items[0] })); diagnostic.total_issue_count = 101; }
+    else if (fault === 'no_final_gate') programmatic.pending_gates = [];
+    else if (fault === 'completed_gate') programmatic.completed_gates = ['independent_final_pptx_rendering'];
+    else if (fault === 'rendered_roster') programmatic.rendered_pages = [{ number: 1, preview_sha256: '1'.repeat(64), preview_url: '/private/fake.png' }];
+    else if (fault === 'no_receipt') programmatic.receipt_sha256 = null;
+    expect(() => assertSnapshot(value, value.project_id, value.version_id)).toThrowError(new ApiError('INVALID_RESPONSE'));
+  });
+
   it('accepts actual backend-generated pending and human-passed snapshots while publication stays unauthorized', () => {
     const pending = assertSnapshot(pendingFixture as AcceptanceSnapshot, 'contract-project', 'contract-version');
     const passed = assertSnapshot(passedFixture as AcceptanceSnapshot, 'contract-project', 'contract-version');

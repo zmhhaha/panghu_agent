@@ -17,7 +17,7 @@ from ..auth import Identity
 from .contracts import (
     AcceptanceSnapshot, PageDescriptor, PageView, PowerPointReviewCommand,
     ProgrammaticView, PublicationView, RenderedPageView, ReviewCommand, ReviewRecord,
-    SourceBinding, VisualReviewCommand,
+    SourceBinding, VisualReviewCommand, LayoutFailureDiagnostic,
 )
 
 
@@ -69,6 +69,8 @@ class ProgrammaticContext:
     status: Literal["pending", "passed", "needs_changes"]
     detail: str = ""
     rendered_pages: tuple[RenderedPage, ...] = ()
+    diagnostics: LayoutFailureDiagnostic | None = None
+    issued_key: tuple[str, str] = ("", "")
 
     def __post_init__(self):
         if type(self.binding) is not SourceBinding or not re.fullmatch(r"[a-f0-9]{64}", self.receipt_sha256):
@@ -90,6 +92,12 @@ class ProgrammaticContext:
         if self.status == "passed" and (self.pending_gates or not self.renderer or not self.rendered_pages
                 or not REQUIRED_PROGRAMMATIC_GATES.issubset(self.completed_gates)):
             raise ValueError("Incomplete evidence cannot pass programmatic acceptance")
+        if self.diagnostics is not None and (type(self.diagnostics) is not LayoutFailureDiagnostic
+                or self.status != "needs_changes" or "independent_final_pptx_rendering" not in self.pending_gates):
+            raise ValueError("Failure diagnostics cannot complete programmatic acceptance")
+        if (not isinstance(self.issued_key, tuple) or len(self.issued_key) != 2
+                or any(type(value) is not str for value in self.issued_key)):
+            raise ValueError("Invalid evidence ordering")
 
 
 @dataclass(frozen=True)
@@ -225,7 +233,7 @@ def project_snapshot(context: ReviewContext, revision: int, records: list[Review
     if trusted is not None and trusted.binding == context.binding:
         programmatic = ProgrammaticView(status=trusted.status, receipt_sha256=trusted.receipt_sha256,
             completed_gates=list(trusted.completed_gates), pending_gates=list(trusted.pending_gates),
-            renderer=trusted.renderer or None, detail=trusted.detail,
+            renderer=trusted.renderer or None, detail=trusted.detail, diagnostics=trusted.diagnostics,
             rendered_pages=[RenderedPageView(number=page.number, preview_sha256=page.preview_sha256,
                 preview_url=(f"/api/v1/projects/{context.binding.project_id}/versions/{context.binding.version_id}"
                              f"/acceptance/rendered-slides/{page.number}/preview?receipt_sha256={trusted.receipt_sha256}"))

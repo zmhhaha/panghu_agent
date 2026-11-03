@@ -187,6 +187,12 @@ def test_source_context_excludes_private_data_and_pins_reviewed_current_sources(
         assert receipt['worker/execute.py']
         questions = archive.extractfile('code/server/needs_input.py').read()
         assert receipt['server/needs_input.py'] == hashlib.sha256(questions).hexdigest()
+        for name, symbol in (('control/agent_validation.py', b'def _install_layout_failure'),
+                             ('server/acceptance/evidence.py', b'def read_acceptance_failure'),
+                             ('server/acceptance/contracts.py', b'class LayoutFailureDiagnostic')):
+            source = archive.extractfile('code/' + name).read()
+            assert receipt[name] == hashlib.sha256(source).hexdigest()
+            assert symbol in source
     assert len(digest) == 64
 
 

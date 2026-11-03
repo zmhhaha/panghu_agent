@@ -174,6 +174,16 @@ function AcceptanceWorkspace({ projectId, versionId, client, onSnapshot, onUseFe
     {loading && <p role="status">正在读取版本验收记录…</p>}
     {!loading && !snapshot && <p>暂时无法读取验收记录，请重试。</p>}
     {snapshot && visual && powerpoint && <>
+      {snapshot.programmatic?.diagnostics && <section className="acceptance-layout-diagnostics" aria-label="文字排版检查发现的问题">
+        <div><strong>{snapshot.programmatic.diagnostics.title}</strong><span>{snapshot.programmatic.diagnostics.total_issue_count} 项待调整</span></div>
+        <p>{snapshot.programmatic.diagnostics.message}</p>
+        <ul>{snapshot.programmatic.diagnostics.items.map((item, index) => <li key={`${item.page}-${item.shape_id}-${item.code}-${index}`}>
+          <button type="button" className="acceptance-text-button" aria-label={`查看第 ${item.page} 页的问题 ${index + 1}`} onClick={() => setSelectedPage(item.page - 1)}>第 {item.page} 页</button>
+          <div><strong>{item.message}</strong><small>{item.suggestion}</small></div>
+        </li>)}</ul>
+        {snapshot.programmatic.diagnostics.truncated && <p>当前展示前 {snapshot.programmatic.diagnostics.items.length} 项，共 {snapshot.programmatic.diagnostics.total_issue_count} 项。</p>}
+        <p>{snapshot.programmatic.diagnostics.suggestion}</p>
+      </section>}
       <section className="acceptance-main-preview" aria-label="演示稿预览">
         <div className="acceptance-review-layout"><nav className="acceptance-page-list" aria-label="选择预览页面">{snapshot.pages.map((item, index) => <button key={item.number} type="button" aria-current={index === selectedPage ? 'page' : undefined} onClick={() => setSelectedPage(index)}><span>{String(item.number).padStart(2, '0')}</span><span>{item.title}</span></button>)}</nav>
           {page && <div className="acceptance-page-workspace">{renderedPage ? <RenderedPptxPreview key={JSON.stringify([snapshot.binding, snapshot.programmatic?.receipt_sha256, renderedPage])} projectId={projectId} versionId={versionId} receipt={snapshot.programmatic?.receipt_sha256 ?? null} page={renderedPage} /> : <RasterPreview key={JSON.stringify([snapshot.binding, page.number, page.preview_sha256])} versionId={versionId} page={page} />}<h3>第 {page.number} 页 · {page.title}</h3><p className="acceptance-preview-origin">{renderedPage ? '最终 PPTX 渲染预览' : '源文件参考预览 · 最终 PPTX 渲染尚未就绪'}</p></div>}

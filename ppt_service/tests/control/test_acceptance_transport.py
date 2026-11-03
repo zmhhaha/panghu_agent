@@ -16,7 +16,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import pytest
 
-from agent_service.contracts import digest
+from agent_service.contracts import canonical_bytes, digest
 from ppt_service.control.agent_validation import AgentKubernetesSandbox, _measured_tree, _acceptance_runtime_scope
 from ppt_service.control.execution import ControlError
 from ppt_service.control.staging import atomic_json, read_json
@@ -32,7 +32,7 @@ def transport_case(tmp_path):
     project, version, evidence = (str(uuid4()) for _ in range(3))
     binding = {"project_id": project, "version_id": version, "source_revision": 2,
         "manifest_sha256": "a" * 64, "input_snapshot_sha256": "b" * 64,
-        "pptx_sha256": "c" * 64, "source_fingerprint_sha256": "e" * 64,
+        "pptx_sha256": hashlib.sha256(b"Synthetic layout source").hexdigest(), "source_fingerprint_sha256": "e" * 64,
         "evidence_id": str(uuid4()), "evidence_sha256": "f" * 64,
         "runtime": {"engine": "pi", "runtime_revision": "fixture", "profile": "ppt.generate.v1",
             "checkpoint_format": "ppt-agent-artifacts-v1"}}
@@ -56,7 +56,8 @@ def transport_case(tmp_path):
         index=tmp_path / "acceptance-scopes" / (signature + ".json"), scopes={},
         base=base, target=base / "acceptance-evidence" / evidence,
         attempted=tmp_path / "acceptance-attempts" / signature, runs=[], registrations=[],
-        discarded=[], fault=None, output=None, runtime=None)
+        discarded=[], fault=None, output=None, runtime=None, layout_output=False,
+        layout_pod_uid=str(uuid4()), layout_fault=None)
     pod_uid, pod_name = "synthetic-physical-pod-uid", "synthetic-validator-pod"
 
     def subpath(path):
@@ -82,8 +83,9 @@ def transport_case(tmp_path):
             if state.fault == "launch_missing_flag":
                 record.pop("launch_not_started")
             return record
-        row = {"resource": "pods", "name": pod_name, "api_uid": pod_uid, "deleted": True,
-            "stop_receipt": {"terminated": True, "api_uid": pod_uid}}
+        observed_uid = state.layout_pod_uid if state.layout_output else pod_uid
+        row = {"resource": "pods", "name": pod_name, "api_uid": observed_uid, "deleted": True,
+            "stop_receipt": {"terminated": True, "api_uid": observed_uid}}
         if state.fault == "missing_pod":
             return {"resources": []}
         if state.fault == "duplicate_pod":
@@ -150,12 +152,43 @@ def transport_case(tmp_path):
             (output / "linked.log").symlink_to(output / "private/check.log")
         if state.fault == "fifo":
             os.mkfifo(output / "pipe")
+        if state.layout_output:
+            (output / "receipt.json").unlink()
+            (output / "request.json").write_bytes(canonical_bytes(request))
+            atomic_json(output / "original-validator-request.json", original)
+            raw_pptx, raw_pdf = b"Synthetic layout source", b"%PDF-1.5\nSynthetic final Office PDF only"
+            native = output / "final-pptx/input/presentation.pptx"
+            native.parent.mkdir(parents=True)
+            native.write_bytes(raw_pptx)
+            pdf = output / "final-pptx/pdf/presentation.pdf"
+            pdf.parent.mkdir(parents=True)
+            pdf.write_bytes(raw_pdf)
+            report = {"schema": "ppt-service.final-text-layout.v1", "status": "failed",
+                "binding": {"controller_nonce": request["validation_nonce"],
+                    "source_manifest_sha256": binding["manifest_sha256"],
+                    "input_snapshot_sha256": binding["input_snapshot_sha256"],
+                    "pptx_sha256": binding["pptx_sha256"], "pdf_sha256": hashlib.sha256(raw_pdf).hexdigest()},
+                "publication_authorized": False, "human_visual_acceptance": False, "powerpoint_acceptance": "pending",
+                "method": "final-pdf-glyphs-and-native-pptx-frames", "scope": "conservative_text_geometry_checks_only",
+                "engine": {"name": "PyMuPDF", "version": "synthetic"}, "issue_count": 1, "issues_truncated": False,
+                "issues": [{"code": "short_token_orphan_fragment", "severity": "error", "page": 2, "shape_id": 17,
+                    "message": "private source text /private/path"}],
+                "pages": [{"ordinal": n, "issue_count": int(n == 2)} for n in range(1, 4)]}
+            if state.layout_fault == "nonce": report["binding"]["controller_nonce"] = str(uuid4())
+            if state.layout_fault == "page": report["issues"][0]["page"] = 99
+            if state.layout_fault == "pptx": native.write_bytes(b"different deck")
+            if state.layout_fault == "code": report["issues"][0]["code"] = "candidate_controlled_rule"
+            atomic_json(output / "final-pptx/text-layout.json", report)
+            atomic_json(output / "acceptance-error.json", {"schema": "ppt-service.acceptance-error.v1",
+                "publication_authorized": False, "error_code": "final_pptx_text_layout_failed", "error_type": "ControlError"})
         handle = SimpleNamespace(uid="different-private-scope" if state.fault == "scope" else scope)
-        return (root, output, None if state.fault == "missing_result" else result,
-            2 if state.fault == "nonzero" else 0,
+        from ppt_service.control.kubernetes_sandbox import _MissingSandboxResult
+        return (root, output, None if state.fault == "missing_result" or state.layout_output else result,
+            2 if state.fault == "nonzero" or state.layout_output else 0,
             (ControlError("unapproved_kubernetes_entrypoint")
                 if state.fault in ("launch_rejected", "launch_uncertain", "launch_missing_flag")
-                else ControlError("synthetic_failure") if state.fault == "transport_failure" else None),
+                else ControlError("synthetic_failure") if state.fault == "transport_failure"
+                else _MissingSandboxResult("receipt.json") if state.layout_output else None),
             state.fault != "running", handle, pod_name)
 
     backend = SimpleNamespace(subpath=subpath, register_sandbox_scope=register, _read=authority,
@@ -706,3 +739,80 @@ def test_complete_frozen_roster_detects_later_tampering(transport_case, change):
     with pytest.raises(ControlError):
         _measured_tree(case.target, body["files"], max_files=8192,
             exclude=("transport-manifest.json",))
+
+
+def configure_measured_layout_failure(case, monkeypatch):
+    from ppt_service.control import agent_validation
+    case.layout_output = True
+    case.original.update(task={"synthetic_only": True}, pages=3)
+    case.request["original_request_sha256"] = digest(case.original)
+    project = case.snapshot / "project/deck"
+    project.mkdir(parents=True)
+    (project / "presentation.pptx").write_bytes(b"Synthetic layout source")
+    manifest = {"project_root": "deck", "artifacts": [{"role": "pptx", "path": "presentation.pptx",
+        "sha256": case.request["binding"]["pptx_sha256"], "bytes": len(b"Synthetic layout source")}]}
+
+    def source(snapshot, task, sha):
+        assert snapshot == case.snapshot and task == case.original["task"]
+        assert sha == case.request["binding"]["manifest_sha256"]
+        return manifest, {}
+
+    monkeypatch.setattr(agent_validation, "_candidate_snapshot", source)
+    return case.base / "acceptance-failures" / case.request["evidence_id"]
+
+
+def test_actual_async_stop_path_installs_distinct_bound_layout_failure_and_never_repeats_office(transport_case, monkeypatch):
+    case = transport_case
+    target = configure_measured_layout_failure(case, monkeypatch)
+    before = (case.snapshot / "project/deck/presentation.pptx").read_bytes()
+    result = invoke(case)
+    assert result == {"status": "acceptance_failed", "binding_sha256": case.signature,
+                      "error_code": "final_pptx_text_layout_failed"}
+    assert_no_bundle(case)
+    assert target.exists()
+    receipt = read_json(target, "failure-receipt.json")
+    transport = read_json(target, "transport-manifest.json")
+    assert receipt["schema"] == "ppt-service.acceptance-failure.v1"
+    assert receipt["accepted"] is receipt["publication_authorized"] is False
+    assert receipt["human_visual_acceptance"] is False and receipt["powerpoint_acceptance"] == "pending"
+    assert receipt["pptx"]["sha256"] == case.request["binding"]["pptx_sha256"]
+    assert transport["schema"] == "ppt-service.acceptance-failure-transport.v1"
+    assert transport["writers_stopped"] is transport["transport_verified"] is True
+    assert transport["validator_exit_code"] == 2
+    assert transport["validator_pod_uid"] == case.layout_pod_uid
+    assert transport["validator_scope_uid"] == case.scope
+    roster, total = _measured_tree(target, transport["files"], max_files=8192,
+        exclude=("transport-manifest.json",))
+    assert total == transport["bytes"] and "final-pptx/text-layout.json" in roster
+    assert "receipt.json" not in roster
+    for node in [target, *target.rglob("*")]:
+        assert stat.S_IMODE(node.stat().st_mode) & 0o222 == 0
+    assert read_json(case.attempted.parent, case.attempted.name)["error_code"] == "final_pptx_text_layout_failed"
+    assert (case.snapshot / "project/deck/presentation.pptx").read_bytes() == before
+    assert case.discarded == [case.runtime]
+    assert invoke(case)["status"] == "already_attempted" and len(case.runs) == 1
+
+
+@pytest.mark.parametrize("fault", ["nonce", "page", "pptx", "code"])
+def test_bad_measured_layout_report_remains_private_without_owner_diagnostic(transport_case, monkeypatch, fault):
+    case = transport_case
+    target = configure_measured_layout_failure(case, monkeypatch)
+    case.layout_fault = fault
+    assert invoke(case)["status"] == "acceptance_failed"
+    assert not target.exists() and not case.discarded
+    assert read_json(case.attempted.parent, case.attempted.name)["error_code"] == "acceptance_validation_failed"
+    assert (case.output / "final-pptx/text-layout.json").exists()
+    assert invoke(case)["status"] == "already_attempted" and len(case.runs) == 1
+
+
+@pytest.mark.parametrize("fault", ["running", "not_terminated", "mismatched_uid", "transport_failure"])
+def test_layout_failure_diagnostic_never_replaces_missing_stop_or_lifecycle_failure(transport_case, monkeypatch, fault):
+    case = transport_case
+    target = configure_measured_layout_failure(case, monkeypatch)
+    case.fault = fault
+    if fault == "transport_failure":
+        assert invoke(case)["status"] == "acceptance_failed"
+    else:
+        with pytest.raises(ControlError):
+            invoke(case)
+    assert not target.exists() and not case.discarded

@@ -156,6 +156,26 @@ class RenderedPageView(Strict):
     preview_sha256: Digest
 
 
+class LayoutDiagnosticItem(Strict):
+    page: int = Field(ge=1, le=100)
+    code: Literal["short_token_unplanned_wrap", "short_token_orphan_fragment", "short_label_orphan_line",
+                  "text_outside_frame", "text_outside_slide", "text_collision"]
+    shape_id: int = Field(ge=1, le=2147483647)
+    other_shape_id: int | None = Field(default=None, ge=1, le=2147483647)
+    message: str = Field(min_length=1, max_length=200)
+    suggestion: str = Field(min_length=1, max_length=400)
+
+
+class LayoutFailureDiagnostic(Strict):
+    error_code: Literal["final_pptx_text_layout_failed"]
+    title: str = Field(min_length=1, max_length=200)
+    message: str = Field(min_length=1, max_length=400)
+    suggestion: str = Field(min_length=1, max_length=400)
+    items: list[LayoutDiagnosticItem] = Field(min_length=1, max_length=100)
+    total_issue_count: int = Field(ge=1, le=1000000)
+    truncated: bool
+
+
 class ProgrammaticView(Strict):
     status: HumanStatus
     receipt_sha256: Digest | None = None
@@ -164,6 +184,7 @@ class ProgrammaticView(Strict):
     renderer: str | None = None
     detail: str
     rendered_pages: list[RenderedPageView] = Field(default_factory=list)
+    diagnostics: LayoutFailureDiagnostic | None = None
 
 
 class PublicationView(Strict):

@@ -22,7 +22,7 @@ from ..repository import Repository
 from ..storage import Storage, safe_key
 from .contracts import PageDescriptor, RuntimeBinding, SourceBinding
 from .domain import AcceptanceError, ReviewContext
-from .evidence import read_acceptance_evidence
+from .evidence import read_acceptance_evidence, read_acceptance_failure
 
 SCHEMA = 'ppt-service.hermes-review-delivery.v1'
 CACHE_ROOTS = frozenset(('.preview', '.review', 'live_preview', '.live_preview.lock', 'validation'))
@@ -171,6 +171,9 @@ class ReviewContextResolver:
                     and job.kind in ('generate', 'revise') and job.stage == 'review')
             context = self._resolve(session, owner, project, v, job, checkpoint)
             additional = read_acceptance_evidence(self, context, job, v, fingerprint)
+            failure = read_acceptance_failure(self, context, job, v, fingerprint)
+            if failure is not None and (additional is None or failure.issued_key > additional.issued_key):
+                additional = failure
             return replace(context, programmatic=additional,
                            publication_blocked_reason='active_job_exists' if project.active_job_id else None)
         except AcceptanceError:

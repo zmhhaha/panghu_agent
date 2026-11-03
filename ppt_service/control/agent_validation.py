@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import contextmanager
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -148,6 +149,75 @@ class AgentValidationReceipt:
     def report(self):
         import copy
         return copy.deepcopy(self._report)
+
+
+def _install_layout_failure(snapshot, output, base, original, request, scope, pod_uid, code):
+    """Install a measured rejection only after the caller proves exact stop.
+
+    This distinct receipt cannot become an acceptance-success certificate. No
+    user-controlled path or arbitrary report prose enters its public projection.
+    """
+    from ppt_service.server.acceptance.contracts import SourceBinding
+    from ppt_service.server.acceptance.evidence import layout_failure_diagnostic
+    from .render_validation import hash_file
+
+    if type(code) is not int or code == 0:
+        return None
+    error = read_json(output, 'acceptance-error.json', 16384)
+    if (error.get('schema') != 'ppt-service.acceptance-error.v1'
+            or error.get('publication_authorized') is not False
+            or error.get('error_code') != 'final_pptx_text_layout_failed'):
+        return None
+    require(not (output / 'receipt.json').exists()
+            and not (output / 'final-pptx/final-pptx-evidence.json').exists(),
+            'acceptance_failure_conflicting_output')
+    binding = SourceBinding.model_validate(request['binding'])
+    require(read_json(output, 'request.json') == request
+            and read_json(output, 'original-validator-request.json') == original
+            and request.get('original_request_sha256') == digest(original), 'acceptance_failure_binding_invalid')
+    manifest, _ = _candidate_snapshot(snapshot, original['task'], binding.manifest_sha256)
+    pptxs = [row for row in manifest['artifacts'] if row.get('role') == 'pptx']
+    require(len(pptxs) == 1 and pptxs[0].get('sha256') == binding.pptx_sha256,
+            'acceptance_failure_binding_invalid')
+    source = snapshot / 'project' / relative(manifest['project_root'])
+    require(hash_file(source, pptxs[0]['path'])['sha256'] == binding.pptx_sha256,
+            'acceptance_failure_binding_invalid')
+    pptx = hash_file(output, 'final-pptx/input/presentation.pptx')
+    pdf = hash_file(output, 'final-pptx/pdf/presentation.pdf')
+    report_row = hash_file(output, 'final-pptx/text-layout.json', 4 * 1024**2)
+    require(pptx['sha256'] == binding.pptx_sha256 and pptx['bytes'] == pptxs[0]['bytes']
+            and type(original.get('pages')) is int and 3 <= original['pages'] <= 20,
+            'acceptance_failure_binding_invalid')
+    layout = read_json(output, 'final-pptx/text-layout.json', 4 * 1024**2)
+    layout_failure_diagnostic(layout, binding, request['validation_nonce'], pdf['sha256'], original['pages'])
+    require(not (output / 'failure-receipt.json').exists() and not (output / 'failure-receipt.json').is_symlink()
+            and not (output / 'transport-manifest.json').exists(), 'reserved_acceptance_failure_output')
+    request_hash = hash_file(output, 'request.json')['sha256']
+    require(request_hash == digest(request), 'acceptance_failure_binding_invalid')
+    atomic_json(output / 'failure-receipt.json', {
+        'schema': 'ppt-service.acceptance-failure.v1', 'status': 'failed',
+        'evidence_id': request['evidence_id'], 'request_sha256': request_hash,
+        'binding_sha256': digest(request['binding']), 'execution_image': request['execution_image'],
+        'issued_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'accepted': False, 'publication_authorized': False, 'human_visual_acceptance': False,
+        'powerpoint_acceptance': 'pending', 'error_code': 'final_pptx_text_layout_failed',
+        'pptx': pptx, 'pdf': pdf, 'text_layout_report': report_row})
+    pending = base / ('.acceptance-failure-pending-' + request['evidence_id'])
+    target = base / 'acceptance-failures' / request['evidence_id']
+    require(not pending.exists() and not target.exists(), 'acceptance_output_not_fresh')
+    inventory = copy_tree(output, pending, max_total=512 * 1024**2, max_files=8192)
+    atomic_json(pending / 'transport-manifest.json', {
+        'schema': 'ppt-service.acceptance-failure-transport.v1', 'evidence_id': request['evidence_id'],
+        'binding_sha256': digest(request['binding']), 'request_sha256': request_hash,
+        'execution_image': request['execution_image'], 'validator_scope_uid': scope,
+        'validator_pod_uid': pod_uid, 'validator_exit_code': code,
+        'writers_stopped': True, 'transport_verified': True, **inventory})
+    make_readonly(pending)
+    pending.chmod(0o700)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(pending, target)
+    target.chmod(0o555)
+    return target
 
 
 def validate_private_candidate(snapshot, request, *, gate_runner=None, evidence_root=None):
@@ -425,6 +495,28 @@ class AgentKubernetesSandbox:
                 'scope_uid': scope, 'pod_uid': pod['api_uid'], 'sandbox_exit_code': code,
                 'evidence_path': str(root), 'writers_stopped': True})
             if failure is not None or code != 0:
+                installed = None
+                # Missing receipt.json is normal for a failed validator. The
+                # caller has already proved this exact Pod stopped above; only
+                # a bound measured-layout failure may get an owner projection.
+                from .kubernetes_sandbox import _MissingSandboxResult
+                from ppt_service.server.acceptance.domain import AcceptanceError
+                if (type(code) is int and code != 0 and (failure is None
+                        or isinstance(failure, _MissingSandboxResult) and failure.output_name == 'receipt.json')):
+                    try:
+                        installed = _install_layout_failure(snapshot, output, base, original_request,
+                            acceptance_request, scope, pod['api_uid'], code)
+                    except (AcceptanceError, ControlError, OSError, ValueError, TypeError, KeyError, AttributeError):
+                        installed = None
+                if installed is not None:
+                    atomic_json(attempted, {'schema': 'ppt-service.acceptance-attempt.v1',
+                        'binding_sha256': signature, 'status': 'failed', 'scope_uid': scope,
+                        'pod_uid': pod['api_uid'], 'sandbox_exit_code': code,
+                        'evidence_path': str(installed), 'writers_stopped': True,
+                        'error_code': 'final_pptx_text_layout_failed'})
+                    self.transport._discard(root)
+                    return {'status': 'acceptance_failed', 'binding_sha256': signature,
+                            'error_code': 'final_pptx_text_layout_failed'}
                 # Keep the output beneath its private sandbox; this is not a
                 # successful bundle and cannot become publication evidence.
                 atomic_json(attempted, {'schema': 'ppt-service.acceptance-attempt.v1',

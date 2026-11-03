@@ -228,7 +228,12 @@ function Versions({project,versions,disabled,consent,setConsent,start,perform}:{
  const revisionRequest=collectFeedback(feedbackRows,version?.slides.map(slide=>slide.number)??[]);
  const feedbackLimit=review?12000:10000;
  const feedbackInvalid=!revisionRequest.count||revisionRequest.invalidPage||revisionRequest.feedback.length>feedbackLimit;
- const gateLabels:Record<string,string>={independent_export_build_contract:'完整导出核验',independent_visual_review:'逐页视觉审核',powerpoint_open_edit_save_reopen:'PowerPoint 打开、编辑、保存与重开验收',postflight_warnings_review:'质量提示复核'};
+ const gateLabels:Record<string,string>={independent_programmatic_pending:'独立程序验收',independent_programmatic_needs_changes:'独立程序检查问题修复',independent_export_build_contract:'完整导出核验',independent_visual_review:'逐页视觉审核',powerpoint_open_edit_save_reopen:'PowerPoint 打开、编辑、保存与重开验收',postflight_warnings_review:'质量提示复核'};
+ const pendingReviewGates=currentReview?[
+  ...(currentReview.programmatic_status==='passed'?[]:[currentReview.programmatic_status==='needs_changes'?'independent_programmatic_needs_changes':'independent_programmatic_pending']),
+  ...(currentReview.visual_status==='passed'?[]:['independent_visual_review']),
+  ...(currentReview.powerpoint_status==='passed'?[]:['powerpoint_open_edit_save_reopen']),
+ ]:version?.required_pending_gates?.length?version.required_pending_gates:['independent_export_build_contract','independent_visual_review','powerpoint_open_edit_save_reopen'];
  return <div className="panel">
   <div className="section-title"><div><h2>预览与修改</h2><p>查看演示稿，把需要调整的内容逐条写进意见清单，再统一提交。</p></div><Layers size={21}/></div>
   {!versions.length?<Empty title="还没有可预览版本">完成方案确认并生成后，通过独立程序检查的草稿会出现在这里。</Empty>:<>
@@ -244,8 +249,8 @@ function Versions({project,versions,disabled,consent,setConsent,start,perform}:{
     <section className="selected-base selected-version" aria-label="当前选择的版本"><div><small>当前选择 · {reviewPublished?'已发布':versionStateLabel(version)}</small><strong>{orderedVersions[0]?.id===version.id?'最新版本':'历史版本'} · <time dateTime={version.created_at}>{versionCreatedLabel(version.created_at)}</time></strong><code>{version.id}</code></div><button className="primary" disabled={disabled} onClick={()=>void perform(()=>api.download(version.id))}>下载当前版本</button></section>
     {review&&!reviewPublished&&<div className="notice warning" role="status"><div>
      <strong>待审核草稿 · 尚未正式发布</strong>
-     <p>已完成独立程序检查，可以预览和下载审核。仍需完成以下审核：</p>
-     <ul>{(version.required_pending_gates?.length?version.required_pending_gates:['independent_export_build_contract','independent_visual_review','powerpoint_open_edit_save_reopen']).map(gate=><li key={gate}>{gateLabels[gate]??'其他审核待完成'}</li>)}</ul>
+     <p>{currentReview?.programmatic_status==='needs_changes'?'独立程序检查发现待修复问题，请查看下方具体页面并添加修改意见。':currentReview?.programmatic_status==='passed'?'独立程序验收已通过，可以预览和下载审核。':currentReview?'独立程序验收尚未完成，当前可预览和下载审核稿。':'正在读取此版本的独立检查状态。'}{pendingReviewGates.length?'仍需完成以下审核：':currentReview?.can_publish?'完整验收已通过，可在“验收与发布”中确认发布。':'请核对下方版本验收记录。'}</p>
+     <ul>{pendingReviewGates.map(gate=><li key={gate}>{gateLabels[gate]??'其他审核待完成'}</li>)}</ul>
      <p>可保存检查问题，并基于本草稿创建新的审核稿；这不会发布演示稿，也不会替代正式版本验收。</p>
     </div></div>}
     {reviewPublished&&<p className="notice" role="status">此版本已完成验收并正式发布。原审核稿与检查记录保留，可在下方核对发布依据。</p>}

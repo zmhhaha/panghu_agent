@@ -14,7 +14,7 @@ import re
 import stat
 from uuid import UUID
 
-from .contracts import SourceBinding
+from .contracts import SourceBinding, LayoutDiagnosticItem, LayoutFailureDiagnostic
 from .domain import AcceptanceError, ProgrammaticContext, RenderedPage, REQUIRED_PROGRAMMATIC_GATES
 
 SHA = re.compile(r"[a-f0-9]{64}\Z")
@@ -26,6 +26,15 @@ FINAL_GATE = "independent_final_pptx_rendering"
 EXPORT_GATE = "independent_export_build_contract"
 DELIVERY_GATE = "independent_postflight_and_delivery"
 PPT_MASTER = "c350bc31e6d43b7bcf5234183d650ba8f9f4c9d7"
+LAYOUT_FAILURE = "final_pptx_text_layout_failed"
+_LAYOUT_MESSAGES = {
+    "short_token_unplanned_wrap": ("短词被拆成了多行。", "加宽文字框或调整字距，保持短词完整。"),
+    "short_token_orphan_fragment": ("短词末尾出现了单独一行的字母。", "合并被拆开的短词，并为文字框留出足够宽度。"),
+    "short_label_orphan_line": ("短标签末尾有一个字单独换行。", "加宽文字框，或重新安排标签的行分布。"),
+    "text_outside_frame": ("文字超出了对应文本框。", "调整文字框的宽高、内边距或字号。"),
+    "text_outside_slide": ("文字超出了页面边界。", "移动或缩小文字区域，使内容完整位于页面内。"),
+    "text_collision": ("两个文字区域出现明显重叠。", "拉开两个文字区域，检查标题与正文之间的间距。"),
+}
 
 
 def require(value):
@@ -35,6 +44,56 @@ def require(value):
 
 def _uuid(value):
     return isinstance(value, str) and str(UUID(value)) == value
+
+
+def layout_failure_diagnostic(layout, binding, nonce, pdf_sha256, pages):
+    """Project only known rules and bounded integers from a measured failure.
+
+    Callers separately prove exact stopped transport and all retained bytes.
+    Arbitrary report messages, excerpts, names, paths and URLs never cross this
+    projection even if a trusted report happens to contain them.
+    """
+    expected = {"controller_nonce": nonce, "source_manifest_sha256": binding.manifest_sha256,
+        "input_snapshot_sha256": binding.input_snapshot_sha256, "pptx_sha256": binding.pptx_sha256,
+        "pdf_sha256": pdf_sha256}
+    require(isinstance(layout, dict) and layout.get("schema") == "ppt-service.final-text-layout.v1"
+        and layout.get("status") == "failed" and layout.get("binding") == expected
+        and layout.get("publication_authorized") is False and layout.get("human_visual_acceptance") is False
+        and layout.get("powerpoint_acceptance") == "pending"
+        and layout.get("method") == "final-pdf-glyphs-and-native-pptx-frames"
+        and layout.get("scope") == "conservative_text_geometry_checks_only"
+        and isinstance(layout.get("engine"), dict) and layout["engine"].get("name") == "PyMuPDF"
+        and isinstance(layout["engine"].get("version"), str) and 0 < len(layout["engine"]["version"]) <= 100)
+    rows, count = layout.get("issues"), layout.get("issue_count")
+    require(isinstance(rows, list) and 1 <= len(rows) <= 100
+        and type(count) is int and len(rows) <= count <= 1000000
+        and type(layout.get("issues_truncated")) is bool and layout["issues_truncated"] == (count > len(rows)))
+    page_rows = layout.get("pages")
+    require(isinstance(page_rows, list) and len(page_rows) == pages)
+    page_counts = {}
+    for number, row in enumerate(page_rows, 1):
+        require(isinstance(row, dict) and type(row.get("ordinal")) is int and row["ordinal"] == number
+            and type(row.get("issue_count")) is int and 0 <= row["issue_count"] <= count)
+        page_counts[number] = row["issue_count"]
+    require(sum(page_counts.values()) == count)
+    items = []
+    shown_counts = {page: 0 for page in page_counts}
+    for row in rows:
+        require(isinstance(row, dict) and row.get("code") in _LAYOUT_MESSAGES
+            and row.get("severity") == "error" and type(row.get("page")) is int and 1 <= row["page"] <= pages
+            and page_counts[row["page"]] > 0 and type(row.get("shape_id")) is int and 1 <= row["shape_id"] <= 2147483647)
+        other = row.get("other_shape_id")
+        require(other is None or (type(other) is int and 1 <= other <= 2147483647 and other != row["shape_id"]))
+        message, suggestion = _LAYOUT_MESSAGES[row["code"]]
+        shown_counts[row["page"]] += 1
+        items.append(LayoutDiagnosticItem(page=row["page"], code=row["code"], shape_id=row["shape_id"],
+            other_shape_id=other, message=message, suggestion=suggestion))
+    require(all(shown_counts[page] <= page_counts[page] for page in page_counts)
+        and (layout["issues_truncated"] or shown_counts == page_counts))
+    return LayoutFailureDiagnostic(error_code=LAYOUT_FAILURE, title="PPTX 文字排版需要修复",
+        message="最终 PPTX 的实际文字检查发现以下页面存在排版问题。",
+        suggestion="请在修改意见中说明这些页面需要调整的内容；原资料、方案与审核稿仍保留。",
+        items=items, total_issue_count=count, truncated=count > len(rows))
 
 
 def _gates(value):
@@ -338,7 +397,7 @@ def read_acceptance_evidence(reader, context, job, version, fingerprint):
         candidates.append((issued, entry.name, key, request, request_hash, receipt, receipt_hash))
     if not candidates:
         return None
-    _, _, key, request, request_hash, receipt, receipt_hash = max(candidates, key=lambda row: row[:2])
+    issued, evidence_id, key, request, request_hash, receipt, receipt_hash = max(candidates, key=lambda row: row[:2])
     transport, _ = reader._json(key + "/transport-manifest.json")
     require(transport.get("schema") == "ppt-service.acceptance-transport.v1"
         and transport.get("evidence_id") == request["evidence_id"]
@@ -369,4 +428,90 @@ def read_acceptance_evidence(reader, context, job, version, fingerprint):
               if status == "passed" else "最终 PPTX 已独立渲染；完整导出与交付验收仍有待完成项目。")
     return ProgrammaticContext(binding=context.binding, receipt_sha256=receipt_hash,
         completed_gates=tuple(sorted(completed)), pending_gates=tuple(sorted(pending)),
-        renderer=renderer, status=status, detail=detail, rendered_pages=pages)
+        renderer=renderer, status=status, detail=detail, rendered_pages=pages,
+        issued_key=(issued, evidence_id))
+
+
+def read_acceptance_failure(reader, context, job, version, fingerprint):
+    """Read a controller-installed failure; this can only keep gates pending.
+
+    Failed outputs have a distinct directory, receipt and nonzero stopped
+    transport. They never masquerade as a passing acceptance certificate.
+    """
+    prefix = f"projects/{context.binding.project_id}/versions/{context.binding.version_id}/acceptance-failures"
+    folder = reader.storage.root
+    for part in prefix.split("/"):
+        folder /= part
+        try:
+            info = folder.lstat()
+        except FileNotFoundError:
+            return None
+        require(stat.S_ISDIR(info.st_mode) and not folder.is_symlink() and not folder.is_junction())
+    entries = list(os.scandir(folder))
+    require(len(entries) <= 16)
+    candidates = []
+    for entry in entries:
+        require(not entry.is_symlink() and entry.is_dir(follow_symlinks=False) and _uuid(entry.name))
+        key = prefix + "/" + entry.name
+        request, request_hash = reader._json(key + "/request.json")
+        require(request.get("schema") == "ppt-service.acceptance-request.v1"
+            and request.get("evidence_id") == request.get("validation_nonce") == entry.name
+            and isinstance(request.get("execution_image"), str) and IMAGE.fullmatch(request["execution_image"]))
+        binding = SourceBinding.model_validate(request["binding"])
+        require(binding.project_id == context.binding.project_id and binding.version_id == context.binding.version_id)
+        if binding != context.binding:
+            continue
+        require(request.get("job_id") == job.id
+            and type(request.get("attempt")) is int and request["attempt"] == job.attempt
+            and type(request.get("fencing_token")) is int and request["fencing_token"] == job.fencing_token)
+        receipt, receipt_hash = reader._json(key + "/failure-receipt.json")
+        require(receipt.get("schema") == "ppt-service.acceptance-failure.v1"
+            and receipt.get("status") == "failed" and receipt.get("error_code") == LAYOUT_FAILURE
+            and receipt.get("evidence_id") == entry.name and receipt.get("request_sha256") == request_hash
+            and receipt.get("binding_sha256") == fingerprint(binding.model_dump(mode="json"))
+            and receipt.get("execution_image") == request["execution_image"]
+            and receipt.get("publication_authorized") is False and receipt.get("accepted") is False
+            and receipt.get("human_visual_acceptance") is False and receipt.get("powerpoint_acceptance") == "pending")
+        issued = receipt.get("issued_at")
+        require(isinstance(issued, str) and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", issued))
+        datetime.strptime(issued, "%Y-%m-%dT%H:%M:%SZ")
+        candidates.append((issued, entry.name, key, request, request_hash, receipt, receipt_hash))
+    if not candidates:
+        return None
+    issued, evidence_id, key, request, request_hash, receipt, receipt_hash = max(candidates, key=lambda row: row[:2])
+    transport, _ = reader._json(key + "/transport-manifest.json")
+    require(transport.get("schema") == "ppt-service.acceptance-failure-transport.v1"
+        and transport.get("evidence_id") == evidence_id and transport.get("request_sha256") == request_hash
+        and transport.get("binding_sha256") == receipt["binding_sha256"]
+        and transport.get("execution_image") == request["execution_image"]
+        and transport.get("writers_stopped") is True and transport.get("transport_verified") is True
+        and type(transport.get("validator_exit_code")) is int and transport["validator_exit_code"] != 0
+        and _uuid(transport.get("validator_scope_uid")) and _uuid(transport.get("validator_pod_uid"))
+        and transport["validator_scope_uid"] != transport["validator_pod_uid"])
+    roster = reader._tree(key, transport["files"], exclude=("transport-manifest.json",))
+    require(type(transport.get("bytes")) is int and sum(row["bytes"] for row in roster) == transport["bytes"])
+    require(not {"receipt.json", "final-pptx/final-pptx-evidence.json"}.intersection(row["path"] for row in roster))
+    error, _ = reader._json(key + "/acceptance-error.json")
+    require(error.get("schema") == "ppt-service.acceptance-error.v1"
+        and error.get("publication_authorized") is False and error.get("error_code") == LAYOUT_FAILURE)
+    measured = {}
+    for name, expected in (("pptx", "final-pptx/input/presentation.pptx"), ("pdf", "final-pptx/pdf/presentation.pdf"),
+                           ("text_layout_report", "final-pptx/text-layout.json")):
+        row = receipt.get(name)
+        require(isinstance(row, dict) and set(row) == {"path", "sha256", "bytes"}
+            and row.get("path") == expected and isinstance(row.get("sha256"), str) and SHA.fullmatch(row["sha256"])
+            and type(row.get("bytes")) is int and 0 < row["bytes"] <= 64 * 1024**2
+            and reader._hash(key + "/" + expected) == {field: row[field] for field in ("sha256", "bytes")})
+        measured[name] = row
+    current_pptx = reader._hash(version.manifest["pptx_key"])
+    require(measured["pptx"]["sha256"] == context.binding.pptx_sha256 == current_pptx["sha256"]
+        and measured["pptx"]["bytes"] == current_pptx["bytes"])
+    layout, digest = reader._json(key + "/final-pptx/text-layout.json")
+    require(digest == measured["text_layout_report"]["sha256"])
+    diagnostic = layout_failure_diagnostic(layout, context.binding, request["validation_nonce"],
+        measured["pdf"]["sha256"], len(context.pages))
+    return ProgrammaticContext(binding=context.binding, receipt_sha256=receipt_hash,
+        completed_gates=(), pending_gates=tuple(sorted(REQUIRED_PROGRAMMATIC_GATES)),
+        renderer="LibreOffice Impress", status="needs_changes",
+        detail="最终 PPTX 的文字排版检查未通过，以下页项需要修复；原审核稿仍可查看。",
+        diagnostics=diagnostic, issued_key=(issued, evidence_id))

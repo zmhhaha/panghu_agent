@@ -251,7 +251,12 @@ class BuildTests(unittest.TestCase):
                     'assert Path(quality_diagnostics.__file__).is_relative_to(Path(sys.argv[1])); '
                     'assert quality_diagnostics.known_code("external_svg_resource"); '
                     'assert Path(usage.__file__).is_relative_to(Path(sys.argv[1])); '
-                    'assert callable(usage.usage_summary)',
+                    'assert callable(usage.usage_summary); '
+                    'from ppt_service.server.acceptance import evidence, contracts; '
+                    'assert Path(evidence.__file__).is_relative_to(Path(sys.argv[1])); '
+                    'assert callable(evidence.read_acceptance_failure); '
+                    'assert callable(evidence.layout_failure_diagnostic); '
+                    'assert "diagnostics" in contracts.ProgrammaticView.model_fields',
                     str(isolated / 'code')], cwd=isolated, capture_output=True, text=True, timeout=20)
                 self.assertEqual(result.returncode, 0, result.stderr)
 

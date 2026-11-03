@@ -1,5 +1,5 @@
 import { ApiError, mutate, request } from '../api';
-import type { AcceptanceClient, AcceptanceRecord, AcceptanceSnapshot, PowerPointReview, PublicationRecord, VisualReview } from './contracts';
+import type { AcceptanceClient, AcceptanceRecord, AcceptanceSnapshot, LayoutDiagnosticCode, PowerPointReview, PublicationRecord, VisualReview } from './contracts';
 
 const path = (project: string, version: string) => `/projects/${encodeURIComponent(project)}/versions/${encodeURIComponent(version)}/acceptance`;
 export const acceptanceClient: AcceptanceClient = {
@@ -42,8 +42,45 @@ export function assertSnapshot(value: AcceptanceSnapshot, project: string, versi
       ['visual_review', 'powerpoint_review', 'revoke', 'publish'].includes(r.kind) && typeof r.created_at === 'string' && r.reviewer &&
       typeof r.reviewer.sub === 'string' && typeof r.reviewer.issuer === 'string' && r.binding && r.payload &&
       typeof r.revoked === 'boolean' && typeof r.stale === 'boolean' && r.binding.project_id === project && r.binding.version_id === version && validPayload(r)) ||
-    !validPublication(value)) throw new ApiError('INVALID_RESPONSE');
+    !validPublication(value) || !validLayoutDiagnostics(value)) throw new ApiError('INVALID_RESPONSE');
   return value;
+}
+
+const layoutMessages: Record<LayoutDiagnosticCode, readonly [string, string]> = {
+  short_token_unplanned_wrap: ['短词被拆成了多行。', '加宽文字框或调整字距，保持短词完整。'],
+  short_token_orphan_fragment: ['短词末尾出现了单独一行的字母。', '合并被拆开的短词，并为文字框留出足够宽度。'],
+  short_label_orphan_line: ['短标签末尾有一个字单独换行。', '加宽文字框，或重新安排标签的行分布。'],
+  text_outside_frame: ['文字超出了对应文本框。', '调整文字框的宽高、内边距或字号。'],
+  text_outside_slide: ['文字超出了页面边界。', '移动或缩小文字区域，使内容完整位于页面内。'],
+  text_collision: ['两个文字区域出现明显重叠。', '拉开两个文字区域，检查标题与正文之间的间距。'],
+};
+
+/** Only the server's fixed, bounded failure projection is a public UI input. */
+function validLayoutDiagnostics(value: AcceptanceSnapshot): boolean {
+  const programmatic = value.programmatic;
+  const diagnostic = programmatic?.diagnostics;
+  if (diagnostic === undefined || diagnostic === null) return true;
+  const object = (item: unknown): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item);
+  const integer = (item: unknown, max: number): item is number => typeof item === 'number' && Number.isSafeInteger(item) && item >= 1 && item <= max;
+  const exactKeys = (item: Record<string, unknown>, keys: readonly string[]) => Object.keys(item).length === keys.length && keys.every(key => Object.hasOwn(item, key));
+  if (!programmatic || programmatic.status !== 'needs_changes' || !programmatic.receipt_sha256 ||
+      !programmatic.pending_gates.includes('independent_final_pptx_rendering') || programmatic.completed_gates.length > 0 ||
+      !!programmatic.rendered_pages?.length || value.can_publish || value.publication_authorized ||
+      !object(diagnostic) || !exactKeys(diagnostic, ['error_code', 'title', 'message', 'suggestion', 'items', 'total_issue_count', 'truncated']) ||
+      diagnostic.error_code !== 'final_pptx_text_layout_failed' || diagnostic.title !== 'PPTX 文字排版需要修复' ||
+      diagnostic.message !== '最终 PPTX 的实际文字检查发现以下页面存在排版问题。' ||
+      diagnostic.suggestion !== '请在修改意见中说明这些页面需要调整的内容；原资料、方案与审核稿仍保留。' ||
+      !Array.isArray(diagnostic.items) || !diagnostic.items.length || diagnostic.items.length > 100 ||
+      !integer(diagnostic.total_issue_count, 1000000) || diagnostic.total_issue_count < diagnostic.items.length ||
+      typeof diagnostic.truncated !== 'boolean' || diagnostic.truncated !== (diagnostic.total_issue_count > diagnostic.items.length)) return false;
+  return diagnostic.items.every(item => {
+    if (!object(item) || !exactKeys(item, ['page', 'code', 'shape_id', 'message', 'suggestion', ...(Object.hasOwn(item, 'other_shape_id') ? ['other_shape_id'] : [])]) ||
+        !integer(item.page, value.pages.length) || !integer(item.shape_id, 2147483647) ||
+        !(item.other_shape_id === undefined || item.other_shape_id === null || integer(item.other_shape_id, 2147483647) && item.other_shape_id !== item.shape_id) ||
+        typeof item.code !== 'string' || !Object.hasOwn(layoutMessages, item.code)) return false;
+    const expected = layoutMessages[item.code as LayoutDiagnosticCode];
+    return item.message === expected[0] && item.suggestion === expected[1];
+  });
 }
 
 function validPublication(value: AcceptanceSnapshot): boolean {
