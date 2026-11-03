@@ -60,6 +60,7 @@ SUITES = {
     'platform-catalog-capacity': [
         'tests/agent_service/test_catalog_capacity.py',
         'tests/agent_service/test_capacity_overlay.py',
+        'tests/agent_service/test_capacity_reader.py',
         'tests/agent_service/test_config_registry.py',
         'tests/agent_service/test_deployment.py',
     ],
