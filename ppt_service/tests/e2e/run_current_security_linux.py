@@ -54,6 +54,31 @@ SUITES = {
     'r2-r5-offline-ops': [
         'ppt_service/tests/ops/test_storage_readiness.py',
         'ppt_service/tests/ops/test_upload_boundaries.py',
+        'ppt_service/tests/control/test_parse_failures.py',
+        'ppt_service/tests/control/test_control.py::test_docx_bomb_active_external_and_plaintext',
+    ],
+    'platform-catalog-capacity': [
+        'tests/agent_service/test_catalog_capacity.py',
+        'tests/agent_service/test_capacity_overlay.py',
+        'tests/agent_service/test_config_registry.py',
+        'tests/agent_service/test_deployment.py',
+    ],
+    'r5-offline-recovery': ['ppt_service/tests/e2e/test_recovery.py'] + [
+        'ppt_service/tests/control/test_agent_connector.py::' + name for name in (
+            'test_prepare_rejection_before_dispatch_has_safe_error_and_retains_confirmations',
+            'test_interrupted_artifact_write_resumes_download_without_resubmitting_model_job',
+            'test_terminal_remote_without_matching_stop_binding_retains_slot',
+            'test_remote_failure_persists_only_fixed_business_error_without_retry',
+            'test_model_failure_retains_existing_confirmed_plan_and_checkpoint',
+            'test_requested_cancellation_takes_precedence_over_remote_model_failure',
+            'test_collector_requires_exact_stopped_attempt_before_inspecting_output',
+            'test_uncertain_submission_recovers_same_outbox_request_without_duplicate_execution',
+            'test_claim_request_keeps_original_absolute_deadline_and_phase_budget',
+            'test_replay_after_unreached_post_keeps_same_deadline_and_request',
+            'test_cancel_during_uncertain_unreached_submission_never_reposts',
+            'test_cancel_after_lost_reply_recovers_and_cancels_existing_remote',
+            'test_plain_accepted_dictionary_cannot_replace_independent_validator_receipt',
+        )
     ],
 }
 
@@ -274,6 +299,7 @@ def main():
     write_json(evidence / 'scope.json', {'transport': 'in-process ASGI HTTP; no live socket or browser',
         'identities': 'temporary RSA-signed JWT, synthetic issuer/users', 'data': 'new isolated PostgreSQL/tmpfs',
         'models_started': 0, 'r4_scope': 'offline contract checks, simulated Pod/mount/proc/stop boundaries',
+        'r5_scope': 'real durable rows; FakeWorker/FakeSandbox and in-memory Agent-service/validator substitutes',
         'not_proven': ['Casdoor/Ingress browser sessions', 'actual Kubernetes network/UID/mount isolation',
                        'real process stop/OOM', 'PPT rendering or PowerPoint editing', 'production backup/restore']})
     run = Run(args, evidence, snapshot)

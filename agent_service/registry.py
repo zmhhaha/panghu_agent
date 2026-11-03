@@ -15,6 +15,8 @@ from pydantic import Field, field_validator, model_validator
 from .contracts import (ExecutionBindingPins, ProfilePolicy, ProfileRegistry,
                         WireModel, digest, safe_relative_path)
 from .profiles import implementation
+from .catalog_limits import (CATALOG_READER_MAX_BYTES, CONTRACT_RECORD_LIMIT, HISTORY_RECORD_LIMIT,
+                             validate_catalog_budget)
 
 Tool = Literal['read', 'write', 'bash', 'image', 'academic_search', 'academic_verify']
 OutputSchema = Literal['text-output.v1', 'ppt-plan_initial-output.v1', 'ppt-plan_options-output.v1',
@@ -228,7 +230,8 @@ def binding_fingerprint(contract, bundle, environment, binding):
 
 
 def _index(cls, values, *, binding=False):
-    if type(values) not in (tuple, list) or len(values) > 100:
+    maximum = CONTRACT_RECORD_LIMIT if cls is TaskContract else HISTORY_RECORD_LIMIT
+    if type(values) not in (tuple, list) or len(values) > maximum:
         raise ValueError('Invalid bounded registry')
     result = {}
     for value in values:
@@ -252,6 +255,9 @@ class DeploymentRegistry:
     @classmethod
     def from_config(cls, task_contracts, capability_bundles, tool_environments,
                     execution_bindings, routes):
+        validate_catalog_budget(dict(task_contracts=task_contracts,
+            capability_bundles=capability_bundles, tool_environments=tool_environments,
+            execution_bindings=execution_bindings, routes=routes))
         contracts = _index(TaskContract, task_contracts)
         bundles = _index(CapabilityBundle, capability_bundles)
         environments = _index(ToolEnvironment, tool_environments)
@@ -272,7 +278,7 @@ class DeploymentRegistry:
                      else c.name.replace('.v1', '-contract.v1'))
             if binding.acceptance is not None and binding.acceptance.suite != suite:
                 raise ValueError('Acceptance suite does not cover the actual domain contract')
-        if type(routes) not in (list, tuple) or len(routes) > 100:
+        if type(routes) not in (list, tuple) or len(routes) > CONTRACT_RECORD_LIMIT:
             raise ValueError('Invalid bounded routes')
         policies, seen = [], set()
         for raw in routes:
@@ -340,6 +346,9 @@ class DeploymentRegistry:
         return dict(task_contracts=len(self._contracts), capability_bundles=len(self._bundles),
                     tool_environments=len(self._environments), execution_bindings=len(self._bindings),
                     routes=len(self._profiles.policies()),
+                    reader_capacity=dict(history_records=HISTORY_RECORD_LIMIT,
+                        contracts_and_routes=CONTRACT_RECORD_LIMIT,
+                        catalog_bytes=CATALOG_READER_MAX_BYTES),
                     combinations=[dict(binding_id=k[0], binding_revision=k[1], combination_sha256=v,
                                        approval_record_present=self._bindings[k].acceptance is not None)
                                   for k, v in self._fingerprints.items()])

@@ -11,12 +11,11 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
-from ppt_service.control.agent_connector import _confirmation
 from ppt_service.server.app import create_app
-from ppt_service.server.models import AgentOutbox, Job, JobEvent, Plan, Project, Version
+from ppt_service.server.models import AgentOutbox, Job, JobEvent, Project, Version
 from ppt_service.server.acceptance.store import AcceptanceEntry
 from ppt_service.server.repository import Repository
-from ppt_service.tests.server.agent_review_fixture import seed_agent_review
+from .current_review_fixture import seed_agent_review
 from .harness import E2ECase, ORIGIN
 
 
@@ -27,15 +26,6 @@ class CurrentMultiuserTests(E2ECase):
         self.backend.start()
         self.addCleanup(self.backend.stop)
         self.data = seed_agent_review(self.app, self.owner())
-        # The historical fixture serializes naive dates before commit. Use the
-        # actual persisted representation (PG timestamptz returns aware values)
-        # to construct synthetic confirmations, as the real connector does.
-        # Confirmed Plan rows are immutable and are never edited here.
-        with self.sessions.begin() as session:
-            confirmations = {stage: _confirmation(session.get(Plan, plan_id))
-                            for stage, plan_id in self.data['plan_ids'].items()}
-            outbox = session.get(AgentOutbox, self.data['jid'])
-            outbox.request = dict(outbox.request, task=dict(outbox.request['task'], confirmations=confirmations))
         self.pid, self.vid = self.data['pid'], self.data['vid']
         self.url = f'/api/v1/projects/{self.pid}/versions/{self.vid}/acceptance'
         self.assertFalse(self.app.dependency_overrides)

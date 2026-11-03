@@ -20,6 +20,7 @@ Python 测试镜像必须具有 Python 3.11+，以及 `cryptography`、`fastapi`
 - R3 当前 Agent 审核：使用明确标记为 synthetic 的 portable review fixture；两个独立 cookie jar 与不同签名身份，审核意见/修改/发布/诊断/文件权限，双文档 CSRF 稳定、审核修订冲突与刷新恢复、取消去重、预览及 PPTX 篡改拒绝。所有人工验收保持 pending，不能据合成文件发布。
 - R4 离线契约：绑定与真实仓库 bundle 字节、Kubernetes manifest 约束、运行时预检、模拟所有权、只读挂载失败闭合、停止后清理、AppArmor/NNP/seccomp 的观测解析。挂载与内核状态使用显式替身，不能据此声称线上隔离验收完成。
 - R2/R5 离线上传/运维契约：容量探针拒绝行为、25 MiB 边界、分块与不合法上传、取消/断开清理，依赖本轮 `tests/ops` 和 `deploy/ops` 新源码已一起提交。
+- R5 离线恢复：现有 `test_recovery.py` 的 durable DB、lease/fencing、取消/删除、检查点与接管；Agent connector 的失败、绝对 deadline、提交响应丢失、停止绑定和导入中断。Worker/Sandbox、Agent-service 客户端和 validator 均为明确替身，不启动真实工作进程，不证明真实进程崩溃、OOM 或 Pod 停止。
 
 ASGI 请求由 FastAPI `TestClient` 在进程内执行，实际 JWT 签名校验、数据库事务和文件读取生效；没有监听真实 HTTP socket。部分 SSE 时序直接驱动 generator，双文档场景按请求顺序模拟。它们都不能替代真实浏览器、反向代理或断网验收。
 

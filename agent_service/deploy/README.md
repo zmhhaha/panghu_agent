@@ -109,6 +109,8 @@ bash agent_service/build.sh --target hermes
 
 ## 3. 生成并审定公开目录
 
+共享目录按 [有限扩容与容量预检](../docs/CATALOG_CAPACITY_20261103.md) 管理。历史数组读取上限为 256，但缺少四类消费端的实际不可变镜像/报告兼容证明时，发布有效上限仍为 100。部署渲染支持 `--catalog-compatibility` 并在写文件前检查实际 ConfigMap wrapper 的完整字节，输出 `catalog-capacity.json`；不删除历史或回收永久 UID。
+
 优先使用本服务的目录生成器准备 PPT 五阶段和科研合同，保持全部路由关闭。生成器的参数以 `python -m agent_service.catalog --help` 为准；不能拿示例中的零摘要当作候选运行。目录生成不产生验收报告、不调用模型、不启用业务路由。
 
 公开配置中必须包含以下部署设置；其余合同/绑定由受审定的目录提供：

@@ -22,6 +22,7 @@ from sqlalchemy.engine import make_url
 from .api import ApiSettings
 from .contracts import Principal, ProfileRegistry, ServiceError
 from .transport import WorkerEndpoint
+from .catalog_limits import HISTORY_RECORD_LIMIT
 
 
 class ConfigurationError(ServiceError):
@@ -229,12 +230,12 @@ class _Public(_Model):
     schema_version: Literal[2]
     callers: list[_Caller] = Field(min_length=1, max_length=100)
     task_contracts: list[dict] = Field(default_factory=list, max_length=100)
-    capability_bundles: list[dict] = Field(default_factory=list, max_length=100)
-    tool_environments: list[dict] = Field(default_factory=list, max_length=100)
-    execution_bindings: list[dict] = Field(default_factory=list, max_length=100)
+    capability_bundles: list[dict] = Field(default_factory=list, max_length=HISTORY_RECORD_LIMIT)
+    tool_environments: list[dict] = Field(default_factory=list, max_length=HISTORY_RECORD_LIMIT)
+    execution_bindings: list[dict] = Field(default_factory=list, max_length=HISTORY_RECORD_LIMIT)
     routes: list[dict] = Field(default_factory=list, max_length=100)
     workers: list[_Worker] = Field(default_factory=list, max_length=2)
-    kubernetes_workers: list[_KubernetesWorker] = Field(default_factory=list, max_length=100)
+    kubernetes_workers: list[_KubernetesWorker] = Field(default_factory=list, max_length=HISTORY_RECORD_LIMIT)
     api: _Api = Field(default_factory=_Api)
     dispatcher: _Dispatch = Field(default_factory=_Dispatch)
     store: _Store = Field(default_factory=_Store)

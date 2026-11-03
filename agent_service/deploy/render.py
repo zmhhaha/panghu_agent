@@ -96,7 +96,7 @@ def output_file(directory, name, content):
 
 def render(*, config_path, control_image, output_dir, host_config_dir=None,
            kubernetes_api_cidrs=(), kubernetes_api_ports=(443, 6443),
-           database_cidrs=(), database_port=5432):
+           database_cidrs=(), database_port=5432, catalog_compatibility=None):
     config = read_json(config_path)
     no_secrets(config)
     if (set(config) - PUBLIC_FIELDS or config.get('schema_version') != 2
@@ -172,6 +172,11 @@ def render(*, config_path, control_image, output_dir, host_config_dir=None,
                 raise RenderError('enabled_worker_acceptance_required')
         hosts.append(dict(apiVersion='v1', kind='ConfigMap', immutable=True,
             metadata=dict(name=name, namespace='agent-workers'), data=data))
+    from agent_service.deploy.catalog_capacity import render_capacity
+    capacity = render_capacity(config, hosts, compatibility=catalog_compatibility,
+                               control_image=control_image)
+    if capacity['status'] != 'ready':
+        raise RenderError('catalog_publication_capacity_blocked')
     directory = Path(output_dir).absolute()
     for part in (*reversed(directory.parents), directory):
         if part.exists() and (part.is_symlink() or getattr(part.lstat(), 'st_file_attributes', 0) & 0x400):
@@ -215,6 +220,7 @@ def render(*, config_path, control_image, output_dir, host_config_dir=None,
     output_file(directory, 'control-network-policy.yaml', network)
     output_file(directory, 'worker-hosts.json', canonical(dict(apiVersion='v1', kind='List', items=hosts)))
     output_file(directory, 'init-db.json', canonical(job))
+    output_file(directory, 'catalog-capacity.json', canonical(capacity))
     output_file(directory, 'deployment.json', canonical(dict(init_job=job_name, config_name=config_name)))
     return dict(init_job=job_name, config_name=config_name, output_dir=directory)
 
@@ -224,6 +230,7 @@ def arguments(parser):
     parser.add_argument('--control-image')
     parser.add_argument('--output-dir', default=str(SERVICE / 'rendered/deployment'))
     parser.add_argument('--host-config-dir', default=str(SERVICE / 'worker-hosts'))
+    parser.add_argument('--catalog-compatibility', help='Verified consumer image/report references; default retains legacy 100')
     parser.add_argument('--kubernetes-api-cidr', action='append', default=[])
     parser.add_argument('--kubernetes-api-port', action='append', type=int, default=[])
     parser.add_argument('--database-cidr', action='append', default=[])
@@ -237,7 +244,8 @@ def from_arguments(args):
     return render(config_path=args.config, control_image=image, output_dir=args.output_dir,
         host_config_dir=args.host_config_dir, kubernetes_api_cidrs=args.kubernetes_api_cidr,
         kubernetes_api_ports=args.kubernetes_api_port or (443, 6443),
-        database_cidrs=args.database_cidr, database_port=args.database_port)
+        database_cidrs=args.database_cidr, database_port=args.database_port,
+        catalog_compatibility=read_json(args.catalog_compatibility) if args.catalog_compatibility else None)
 
 
 def main(argv=None):

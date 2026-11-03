@@ -10,6 +10,7 @@ import pytest
 
 from agent_service.api import create_app
 from agent_service.config import ConfigurationError, load_configuration
+from agent_service.catalog_limits import SECTION_LIMITS
 from registry_fixtures import make_catalog
 
 
@@ -163,7 +164,7 @@ def test_old_acceptance_is_invalid_after_any_execution_resource_changes(tmp_path
                                     'execution_bindings', 'routes'])
 def test_catalog_arrays_are_bounded_before_registry_resolution(tmp_path, section):
     wire = public()
-    wire[section] = [{} for _ in range(101)]
+    wire[section] = [{} for _ in range(SECTION_LIMITS[section] + 1)]
     with pytest.raises(ConfigurationError, match='configuration_invalid'):
         load_configuration(*files(tmp_path, wire))
 
