@@ -149,7 +149,7 @@ def slides(revised):
     chart += lines(['明确的合成数据', '类别：A、B、C', '数值：12、18、25', '不代表真实测量',
                     '修订前后数据相同'], 962, 190, 220, size=20, step=65)
     image = ('<image x="80" y="172" width="720" height="400" href="schematic.png"'
-             ' xlink:href="schematic.png" preserveAspectRatio="xMidYMid meet"/>'
+             ' preserveAspectRatio="xMidYMid meet"/>'
              + lines(['左侧图片由固定几何构造。', '不使用外部素材或网络。', '图片应作为图片保留。',
                       '右侧说明应仍可编辑。', '图形只作流程示意。'], 846, 190, 360, size=23, step=70))
     caveats = card(80, 150, 1120, 410, '#F1F5F9')

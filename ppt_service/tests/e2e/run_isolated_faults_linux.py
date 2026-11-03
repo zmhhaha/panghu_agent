@@ -111,6 +111,15 @@ def main():
                     if not state['Running']:
                         break
                     time.sleep(.1)
+            # Wait for Docker's terminal-state publication as well as the
+            # kernel process exit; an early inspect can still show exit 0 and
+            # OOMKilled=false while the daemon is finalizing a killed process.
+            waited = call(['docker', 'wait', name], timeout=15)
+            for _ in range(30):
+                state = stopped(name)
+                if state.get('Status') == 'exited' and state['ExitCode'] == int(waited.stdout.strip()):
+                    break
+                time.sleep(.1)
             logs = call(['docker', 'logs', name], check=False).stdout
             (root / (case + '.log')).write_text(logs, encoding='utf-8')
             terminal = not state['Running'] and state['Pid'] == 0
