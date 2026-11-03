@@ -18,26 +18,20 @@ function fixture({compiler='motion-compiler-1',template='technical-diagrams-1',t
 test('verified manifest requires externally frozen digest',()=>{const f=fixture();try{assert.throws(()=>verifyInput(f.path),/expected_manifest/);assert.throws(()=>verifyInput(f.path,'a'.repeat(64)),/binding/);assert.equal(verifyInput(f.path,f.expected).timeline.duration_seconds,15);}finally{f.close();}});
 test('tampered source cannot execute',()=>{const f=fixture();try{writeFileSync(join(f.path,'index.html'),'tampered');assert.throws(()=>verifyInput(f.path,f.expected),/input_digest/);}finally{f.close();}});
 test('recording is bound independently',()=>{const f=fixture();try{writeFileSync(join(f.path,'audio.wav'),'different');assert.throws(()=>verifyInput(f.path,f.expected),/audio_binding/);}finally{f.close();}});
-test('only exact v1, v2, v3 and isolated demonstration compiler/template pairs are admitted',()=>{
- for(const options of [{},{compiler:'motion-compiler-2',template:'technical-diagrams-2'},
-  {compiler:'motion-compiler-3',template:'technical-diagrams-3'},
-  {compiler:'motion-demo-compiler-1',template:'record-demonstration-1'}]){
+const compilerPairs=[1,2,3,4].map(version=>({compiler:`motion-compiler-${version}`,template:`technical-diagrams-${version}`}));
+compilerPairs.push({compiler:'motion-demo-compiler-1',template:'record-demonstration-1'});
+test('only exact v1 through v4 and isolated demonstration compiler/template pairs are admitted',()=>{
+ for(const options of compilerPairs){
   const f=fixture(options);try{assert.doesNotThrow(()=>verifyInput(f.path,f.expected));}finally{f.close();}
  }
- for(const options of [{compiler:'motion-demo-compiler-1'},{template:'record-demonstration-1'},
-  {compiler:'motion-compiler-2'},{template:'technical-diagrams-2'},
-  {compiler:'motion-compiler-3',template:'technical-diagrams-2'},
-  {compiler:'motion-compiler-2',template:'technical-diagrams-3'},
-  {compiler:'arbitrary-compiler',template:'record-demonstration-1'}]){
+ const crossed=compilerPairs.flatMap(({compiler,template})=>compilerPairs.filter(pair=>pair.template!==template).map(pair=>({compiler,template:pair.template})));
+ for(const options of [...crossed,{compiler:'arbitrary-compiler',template:'record-demonstration-1'}]){
   const f=fixture(options);try{assert.throws(()=>verifyInput(f.path,f.expected),/project_contract_mismatch/);}finally{f.close();}
  }
 });
 test('a rehashed timeline cannot claim a different compiler from its frozen manifest',()=>{
- for(const options of [{timelineCompiler:'motion-demo-compiler-1'},
-  {timelineCompiler:'motion-compiler-2'},
-  {compiler:'motion-compiler-2',template:'technical-diagrams-2',timelineCompiler:'motion-compiler-1'},
-  {compiler:'motion-compiler-3',template:'technical-diagrams-3',timelineCompiler:'motion-compiler-2'},
-  {compiler:'motion-demo-compiler-1',template:'record-demonstration-1',timelineCompiler:'motion-compiler-1'}]){
+ const crossed=compilerPairs.flatMap(pair=>compilerPairs.filter(other=>other.compiler!==pair.compiler).map(other=>({...pair,timelineCompiler:other.compiler})));
+ for(const options of crossed){
   const f=fixture(options);try{assert.throws(()=>verifyInput(f.path,f.expected),/timeline_contract_mismatch/);}finally{f.close();}
  }
 });

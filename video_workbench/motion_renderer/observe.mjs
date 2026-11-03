@@ -90,6 +90,7 @@ export async function observeProject(chromium,{root='/work',dist='/opt/renderer/
    writeFileSync(root+'/observations.json',JSON.stringify({schema:'video.motion-observations.v1',
     seek_protocol:'hyperframes-core-renderSeek-exact',render_fps:24,
     timeline_sha256:sha(readRegular(root+'/timeline.json')),windows,
+    ...(timeline.compiler==='motion-compiler-4'?{initial:first,repeated_initial:repeat}:{}),
     reverse_seek:{first_sha256:first.frame_sha256,last_sha256:last.frame_sha256,repeated_first_sha256:repeat.frame_sha256,repeat_state_equal:state(first)===state(repeat)}},null,2));
   });
  }finally{await new Promise(done=>server.close(done));}

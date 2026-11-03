@@ -35,6 +35,48 @@ def _visible(state):
     return _number(state.get('opacity')) >= .98
 
 
+def _connector_states(plan, timeline, time):
+    """Evaluate compiler 4's explicit draw endpoints and cubic GSAP ease."""
+    states = {row['id']: dict(opacity=0.0, labelOpacity=0.0,
+                              markerOpacity=0.0, strokeDashoffset=1.0)
+              for row in plan['relations']}
+
+    def progress(start, duration):
+        value = min(1.0, max(0.0, (time - start) / duration))
+        return 4 * value ** 3 if value < .5 else 1 - (-2 * value + 2) ** 3 / 2
+
+    for action in timeline['actions']:
+        if action['kind'] != 'draw':
+            continue
+        start, duration = _number(action.get('start')), _number(action.get('duration'))
+        _require(start >= 0 and duration > 0)
+        if time < start:
+            continue
+        eased = progress(start, duration)
+        state = states[action['target']]
+        state.update(opacity=eased, labelOpacity=eased, strokeDashoffset=1 - eased)
+        tip_start = start + .85 * duration
+        if time >= tip_start:
+            state['markerOpacity'] = progress(tip_start, .15 * duration)
+    return states
+
+
+def _connectors(sample, plan, timeline, time):
+    """Check every connector, including future and never drawn relations."""
+    for identity, expected in _connector_states(plan, timeline, time).items():
+        state = sample['relations'][identity]
+        _require(type(state) is dict and _number(state.get('length')) > 0
+                 and type(state.get('baseCount')) is int and state['baseCount'] == 0,
+                 'motion_connector_base_visible')
+        for key, value in expected.items():
+            actual = _number(state.get(key))
+            _require(0 <= actual <= 1, 'motion_connector_state_invalid')
+            # A future stroke must be fully hidden; the numerical allowance
+            # during a tween covers browser CSS serialization, not early lines.
+            tolerance = 1e-6 if value == 0 else .01
+            _require(abs(actual - value) <= tolerance, 'motion_connector_state_mismatch')
+
+
 def _demo_expected_states(plan, timeline, time):
     """Evaluate the pinned demo compiler's GSAP 3.14.2 property schedule.
 
@@ -166,7 +208,8 @@ def verify_observations(plan, timeline, observations):
                  'motion_compiler_version_unsupported')
         layout = LAYOUTS[plan['template']]
     text_kinds = ({row['id']: row['kind'] for row in plan['elements']}
-                  if timeline.get('compiler') in {'motion-compiler-2', 'motion-compiler-3'} else None)
+                  if timeline.get('compiler') in {'motion-compiler-2', 'motion-compiler-3', 'motion-compiler-4'} else None)
+    hidden_connectors = timeline.get('compiler') == 'motion-compiler-4'
     element_ids = {row['id'] for row in plan['elements']}
     relation_ids = {row['id'] for row in plan['relations']}
     positions = {row['id']: layout[row['slot']][:2] for row in plan['elements']}
@@ -194,6 +237,8 @@ def verify_observations(plan, timeline, observations):
             _require(set(sample['elements']) == element_ids
                      and type(sample.get('relations')) is dict and set(sample['relations']) == relation_ids,
                      'motion_observation_objects_missing')
+            if hidden_connectors:
+                _connectors(sample, plan, timeline, times[label])
             if demonstration:
                 # Moving document/record/attempt windows keep their declared
                 # size; this applies to every element, including hidden copies.
@@ -224,7 +269,7 @@ def verify_observations(plan, timeline, observations):
                 _require(type(relations) is dict and target in relations)
                 state = relations[target]
                 _require(type(state) is dict and _number(state.get('length')) > 0
-                         and _visible(state))
+                         and (hidden_connectors or _visible(state)))
                 states.append(_number(state.get('strokeDashoffset')))
             _require(states[0] >= .98 and states[2] <= .02
                      and states[2] < states[1] < states[0], 'motion_expected_draw_missing')
@@ -274,6 +319,21 @@ def verify_observations(plan, timeline, observations):
         _digest(reverse.get(key))
     _require(reverse['first_sha256'] == reverse['repeated_first_sha256']
              and reverse['first_sha256'] != reverse['last_sha256'], 'motion_reverse_seek_failed')
+    if hidden_connectors:
+        for key, digest_key in (('initial', 'first_sha256'), ('repeated_initial', 'repeated_first_sha256')):
+            sample = observations.get(key)
+            _require(type(sample) is dict and _number(sample.get('time')) == 0
+                     and _number(sample.get('actual_time')) == 0
+                     and sample.get('frame_sha256') == reverse[digest_key],
+                     'motion_connector_initial_missing')
+            _layout(sample, text_kinds=text_kinds)
+            _require(set(sample['elements']) == element_ids
+                     and type(sample.get('relations')) is dict and set(sample['relations']) == relation_ids,
+                     'motion_observation_objects_missing')
+            labels = sample['layout']['relations']
+            _require({item.get('id') for item in labels} == relation_ids and len(labels) == len(relation_ids),
+                     'motion_observation_objects_missing')
+            _connectors(sample, plan, timeline, 0)
     return dict(schema='video.motion-review.v1', technical_status='passed', checks=checks,
                 seek_protocol=observations['seek_protocol'], render_fps=observations['render_fps'],
                 timeline_sha256=sha256(timeline), timing_review_status=timeline['review_status'],

@@ -237,7 +237,7 @@ def test_vertical_history_label_uses_the_available_gap_between_connection_ports(
 def test_line_drawing_keeps_fractional_dash_values_and_defers_each_arrow_tip():
     args = fixture()
     page = compile_project(*args)['index.html'].decode()
-    assert 'strokeDashoffset:0,duration,autoRound:false' in page
+    assert 'strokeDashoffset:0,opacity:1,duration,autoRound:false' in page
     assert '.arrow-tip{opacity:0}' in page
     for relation in args[0]['relations']:
         identity = relation['id']
@@ -248,6 +248,18 @@ def test_line_drawing_keeps_fractional_dash_values_and_defers_each_arrow_tip():
     assert "document.getElementById('tip-'+a.target),{opacity:0}" in page
     assert 'duration:duration*.15,immediateRender:false},when+duration*.85)' in page
     assert "markerOpacity:Number(getComputedStyle(document.getElementById('tip-'+r.id)).opacity)" in page
+
+
+@pytest.mark.parametrize('template', ['flow', 'compare', 'focus'])
+def test_new_connector_pages_have_no_base_paths_and_hide_active_strokes_before_draw(template):
+    beats = make_beats('请求到达。请求进入队列。执行节点开始工作。')
+    args = example_plan(beats, template=template), beats, estimated_alignment(beats, 'a' * 64, 15)
+    page = compile_project(*args)['index.html'].decode()
+    assert not re.findall(r'<path\b[^>]*class="relation-base"', page)
+    active = re.search(r'\.relation-active\{([^}]+)\}', page).group(1)
+    assert re.search(r'(?:^|;)opacity:0(?:;|$)', active)
+    assert len(re.findall(r'<path\b[^>]*class="relation-active"', page)) == len(args[0]['relations'])
+    assert '{strokeDashoffset:1,opacity:0},{strokeDashoffset:0,opacity:1,' in page
 
 
 def test_text_cannot_close_script_or_become_template_interpolation():

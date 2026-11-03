@@ -19,10 +19,11 @@ from agent_service.contracts import ServiceError
 from agent_service.profiles.video_motion_contract import validate_beats, validate_motion_plan
 
 
-COMPILER_VERSION = 'motion-compiler-3'
-TEMPLATE_VERSION = 'technical-diagrams-3'
+COMPILER_VERSION = 'motion-compiler-4'
+TEMPLATE_VERSION = 'technical-diagrams-4'
 COMPILER_TEMPLATES = {'motion-compiler-1': 'technical-diagrams-1',
                       'motion-compiler-2': 'technical-diagrams-2',
+                      'motion-compiler-3': 'technical-diagrams-3',
                       COMPILER_VERSION: TEMPLATE_VERSION}
 HYPERFRAMES_VERSION = '0.8.149'
 GSAP_VERSION = '3.14.2'
@@ -349,7 +350,8 @@ def compile_project(plan, beats, alignment, *, animated=True, runtime_fingerprin
         arrows.append(f'<marker id="arrow-{row["id"]}" viewBox="0 0 10 10" refX="9" refY="5" '
                       f'markerWidth="5" markerHeight="5" orient="auto-start-reverse">'
                       f'<path id="tip-{row["id"]}" class="arrow-tip" d="M 0 0 L 10 5 L 0 10 z" fill="#67ded0"/></marker>')
-        markup.append(f'<path class="relation-base" d="{path}"/>'
+        base = '' if compiler_version == 'motion-compiler-4' else f'<path class="relation-base" d="{path}"/>'
+        markup.append(base +
                       f'<path id="rel-{row["id"]}" class="relation-active" d="{path}" pathLength="1" marker-end="url(#arrow-{row["id"]})"/>'
                       f'<text id="label-{row["id"]}" data-motion-relation="{row["id"]}" class="relation-label" x="{lx}" y="{ly}" text-anchor="middle">{html.escape(row["label"])}</text>')
     connections = ''.join(markup)
@@ -451,7 +453,7 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
   tl.seek(0,false);
 })();
 </script></body></html>'''
-    if compiler_version in {'motion-compiler-2', 'motion-compiler-3'}:
+    if compiler_version in {'motion-compiler-2', 'motion-compiler-3', 'motion-compiler-4'}:
         # Keep the v1 page byte-for-byte reproducible. This bounded v2 layout
         # changes only compiler-owned typography, never candidate text, geometry,
         # actions or audio. Text that still does not fit remains a hard failure.
@@ -491,7 +493,7 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
       overflow:el.scrollWidth>el.clientWidth||el.scrollHeight>el.clientHeight||
         Object.values(textBoxes).some(box=>box.overflow)};''')
         page = page.replace("version:'motion-compiler-1'", "version:'motion-compiler-2'")
-        if compiler_version == 'motion-compiler-3':
+        if compiler_version in {'motion-compiler-3', 'motion-compiler-4'}:
             # Integral line boxes leave room for the pinned CJK font's glyphs;
             # fractional v2 line heights can report a one-pixel scroll overflow
             # even when the outer card fits. Preserve both prior versions and
@@ -503,6 +505,20 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
 .label .element-label{line-height:31px}
 </style>''')
             page = page.replace("version:'motion-compiler-2'", "version:'motion-compiler-3'")
+    if compiler_version == 'motion-compiler-4':
+        # Undrawn relations have no visible guide underneath. Hide the actual
+        # stroke before JS/bootstrap too, and animate opacity with the draw so
+        # exact forward and reverse seeks restore the same blank initial state.
+        page = page.replace('.relation-active{fill:none;', '.relation-active{opacity:0;fill:none;')
+        page = page.replace(
+            '{strokeDashoffset:1},{strokeDashoffset:0,duration,autoRound:false,immediateRender:false}',
+            '{strokeDashoffset:1,opacity:0},{strokeDashoffset:0,opacity:1,duration,autoRound:false,immediateRender:false}')
+        page = page.replace(
+            'markerOpacity:Number(getComputedStyle(document.getElementById(\'tip-\'+r.id)).opacity)',
+            'markerOpacity:Number(getComputedStyle(document.getElementById(\'tip-\'+r.id)).opacity),'
+            'labelOpacity:Number(getComputedStyle(document.getElementById(\'label-\'+r.id)).opacity),'
+            'baseCount:document.querySelectorAll(\'.relation-base\').length')
+        page = page.replace("version:'motion-compiler-3'", "version:'motion-compiler-4'")
     replacements = {
         '__DURATION__': str(timeline['duration_seconds']),
         '__EYEBROW__': {'flow': '流程与路由', 'compare': '前后对照', 'focus': '结构聚焦'}[plan['template']],

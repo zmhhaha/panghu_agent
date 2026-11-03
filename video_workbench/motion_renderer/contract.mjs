@@ -15,6 +15,7 @@ const exactKeys=(value,keys)=>object(value)&&JSON.stringify(Object.keys(value).s
 const projectPair=(compiler,template)=>(compiler==='motion-compiler-1'&&template==='technical-diagrams-1')
  ||(compiler==='motion-compiler-2'&&template==='technical-diagrams-2')
  ||(compiler==='motion-compiler-3'&&template==='technical-diagrams-3')
+ ||(compiler==='motion-compiler-4'&&template==='technical-diagrams-4')
  ||(compiler==='motion-demo-compiler-1'&&template==='record-demonstration-1');
 function validateRuntimeShape(value,keys){
  if(!exactKeys(value,keys)||Object.values(value).some(v=>typeof v!=='string'||v.length<1||v.length>2000||/[\x00-\x1f\x7f]/.test(v)))

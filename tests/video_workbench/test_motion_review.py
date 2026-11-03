@@ -9,7 +9,7 @@ import pytest
 
 from agent_service.contracts import ServiceError
 from video_workbench.motion import make_beats, example_plan, estimated_alignment, resolve_timeline, sha256, action_windows
-from video_workbench.motion_review import _demo_expected_states, verify_observations
+from video_workbench.motion_review import _connector_states, _demo_expected_states, verify_observations
 from video_workbench.motion_demo import DEMO_LAYOUT, resolve_demo_timeline
 
 
@@ -133,10 +133,19 @@ def v2_text_fixture(compiler='motion-compiler-2'):
             state['text_boxes'] = {key: dict(x=x + 14, y=y + 12, width=width - 28, height=20,
                 scrollWidth=width - 28, clientWidth=width - 28,
                 scrollHeight=20, clientHeight=20, overflow=False) for key in keys}
+    if compiler == 'motion-compiler-4':
+        add_initial_evidence(observations)
     return plan, timeline, observations
 
 
-@pytest.mark.parametrize('compiler', ['motion-compiler-2', 'motion-compiler-3'])
+def add_initial_evidence(observations):
+    initial = deepcopy(observations['windows'][0]['before'])
+    initial.update(time=0, actual_time=0)
+    observations['initial'] = initial
+    observations['repeated_initial'] = deepcopy(initial)
+
+
+@pytest.mark.parametrize('compiler', ['motion-compiler-2', 'motion-compiler-3', 'motion-compiler-4'])
 def test_versioned_text_checks_require_all_text_boxes_without_changing_v1_observations(compiler):
     assert verify_observations(*fixture())['technical_status'] == 'passed'
     assert verify_observations(*v2_text_fixture(compiler))['technical_status'] == 'passed'
@@ -148,7 +157,7 @@ def test_versioned_text_checks_require_all_text_boxes_without_changing_v1_observ
 
 @pytest.mark.parametrize('key', ['copy', 'label', 'detail'])
 @pytest.mark.parametrize('failure', ['above', 'below', 'left', 'right', 'scroll', 'reported_overflow'])
-@pytest.mark.parametrize('compiler', ['motion-compiler-2', 'motion-compiler-3'])
+@pytest.mark.parametrize('compiler', ['motion-compiler-2', 'motion-compiler-3', 'motion-compiler-4'])
 def test_versioned_text_checks_reject_cropped_child_text_when_parent_claims_no_overflow(key, failure, compiler):
     args = v2_text_fixture(compiler)
     state = args[2]['windows'][0]['before']['elements']['proof']
@@ -168,6 +177,174 @@ def test_versioned_text_checks_reject_cropped_child_text_when_parent_claims_no_o
     assert state['overflow'] is False
     with pytest.raises(ServiceError, match='motion_text_overflow'):
         verify_observations(*args)
+
+
+def draw_fixture(compiler='motion-compiler-4'):
+    """Independent DOM samples for a single planned connector being drawn."""
+    plan, _, observations = v2_text_fixture(compiler)
+    beats = make_beats('请求到达。请求进入队列。执行节点开始工作。')
+    plan['relations'] = [dict(id='link', source='request', target='proof', label='处理')]
+    plan['actions'] = [dict(beat_id=beats['segments'][1]['id'], target='link', kind='draw',
+                            placement='middle', pace='slow', to_slot=None)]
+    timeline = resolve_timeline(plan, beats, estimated_alignment(beats, 'a' * 64, 15),
+                                compiler_version=compiler)
+    observations['timeline_sha256'] = sha256(timeline)
+    times = action_windows(timeline)[0]
+    elements = deepcopy(observations['windows'][0]['before']['elements'])
+    for label, opacity, dash, marker in [('before', 0, 1, 0), ('middle', .5, .5, 0), ('after', 1, 0, 1)]:
+        sample = observations['windows'][0][label]
+        sample.update(time=times[label], actual_time=times[label])
+        sample['elements'] = deepcopy(elements)
+        sample['relations']['link'] = dict(length=200, strokeDashoffset=dash,
+            opacity=opacity, labelOpacity=opacity, markerOpacity=marker, baseCount=0)
+        sample['layout']['relations'] = [dict(id='link', opacity=opacity,
+            x=200, y=200, width=36, height=25, overflow=False)]
+        if compiler != 'motion-compiler-4':
+            sample['relations']['link']['opacity'] = 1
+            del sample['relations']['link']['baseCount']
+            del sample['relations']['link']['labelOpacity']
+    if compiler == 'motion-compiler-4':
+        add_initial_evidence(observations)
+    return plan, timeline, observations
+
+
+@pytest.mark.parametrize('compiler', ['motion-compiler-1', 'motion-compiler-2', 'motion-compiler-3',
+                                     'motion-compiler-4'])
+def test_draw_review_preserves_legacy_evidence_and_admits_hidden_v4_connectors(compiler):
+    assert verify_observations(*draw_fixture(compiler))['technical_status'] == 'passed'
+
+
+def test_v4_draw_review_accepts_fade_progress_alongside_fractional_dash_progress():
+    args = draw_fixture()
+    assert args[2]['windows'][0]['middle']['relations']['link']['opacity'] == .5
+    assert verify_observations(*args)['technical_status'] == 'passed'
+
+
+@pytest.mark.parametrize('key', ['opacity', 'labelOpacity', 'markerOpacity'])
+@pytest.mark.parametrize('label,value', [('before', .001), ('before', 1),
+                                        ('after', .97), ('after', 0)])
+def test_v4_connectors_labels_and_arrowheads_cannot_leak_before_or_remain_faded_after_draw(key, label, value):
+    args = draw_fixture()
+    args[2]['windows'][0][label]['relations']['link'][key] = value
+    with pytest.raises(ServiceError):
+        verify_observations(*args)
+
+
+@pytest.mark.parametrize('key', ['opacity', 'labelOpacity', 'markerOpacity'])
+@pytest.mark.parametrize('value', [-.001, 1.001, None, '0.5', True])
+def test_v4_connector_midpoint_evidence_requires_finite_bounded_opacity(key, value):
+    args = draw_fixture()
+    args[2]['windows'][0]['middle']['relations']['link'][key] = value
+    with pytest.raises(ServiceError):
+        verify_observations(*args)
+
+
+@pytest.mark.parametrize('label', ['before', 'middle', 'after'])
+@pytest.mark.parametrize('value', [None, False, 1, -1, '0'])
+def test_v4_review_requires_absence_of_base_paths_as_explicit_browser_evidence(label, value):
+    args = draw_fixture()
+    state = args[2]['windows'][0][label]['relations']['link']
+    if value is None:
+        del state['baseCount']
+    else:
+        state['baseCount'] = value
+    with pytest.raises(ServiceError):
+        verify_observations(*args)
+
+
+@pytest.mark.parametrize('key', ['opacity', 'labelOpacity', 'markerOpacity'])
+@pytest.mark.parametrize('label', ['before', 'middle', 'after'])
+def test_v4_review_requires_all_connector_visibility_fields_in_every_sample(key, label):
+    args = draw_fixture()
+    del args[2]['windows'][0][label]['relations']['link'][key]
+    with pytest.raises(ServiceError):
+        verify_observations(*args)
+
+
+@pytest.mark.parametrize('label', ['initial', 'repeated_initial'])
+@pytest.mark.parametrize('failure', ['missing', 'time', 'actual_time', 'frame_sha256',
+                                   'line_visible', 'label_visible', 'marker_visible', 'base_path'])
+def test_v4_zero_frame_and_reverse_seek_evidence_cannot_be_omitted_or_show_connectors(label, failure):
+    args = draw_fixture()
+    observations = args[2]
+    if failure == 'missing':
+        del observations[label]
+    elif failure in {'time', 'actual_time'}:
+        observations[label][failure] = .04
+    elif failure == 'frame_sha256':
+        observations[label]['frame_sha256'] = 'd' * 64
+    else:
+        key = {'line_visible': 'opacity', 'label_visible': 'labelOpacity',
+               'marker_visible': 'markerOpacity', 'base_path': 'baseCount'}[failure]
+        observations[label]['relations']['link'][key] = 1
+    with pytest.raises(ServiceError):
+        verify_observations(*args)
+
+
+def with_undrawn_relation():
+    plan, timeline, observations = draw_fixture()
+    plan['relations'].append(dict(id='future', source='request', target='proof', label='以后再展示'))
+    timeline['plan_sha256'] = sha256(plan)
+    observations['timeline_sha256'] = sha256(timeline)
+    samples = [observations['initial'], observations['repeated_initial'],
+               *(observations['windows'][0][label] for label in ('before', 'middle', 'after'))]
+    for sample in samples:
+        sample['relations']['future'] = dict(length=200, strokeDashoffset=1,
+            opacity=0, labelOpacity=0, markerOpacity=0, baseCount=0)
+        sample['layout']['relations'].append(dict(id='future', opacity=0,
+            x=200, y=250, width=120, height=25, overflow=False))
+    return plan, timeline, observations
+
+
+def test_v4_relations_without_draw_actions_stay_hidden_while_other_relations_animate():
+    assert verify_observations(*with_undrawn_relation())['technical_status'] == 'passed'
+
+
+@pytest.mark.parametrize('label', ['before', 'middle', 'after'])
+@pytest.mark.parametrize('key', ['opacity', 'labelOpacity', 'markerOpacity', 'baseCount'])
+def test_v4_review_checks_every_relation_in_each_window_including_undrawn_non_targets(label, key):
+    args = with_undrawn_relation()
+    args[2]['windows'][0][label]['relations']['future'][key] = 1
+    with pytest.raises(ServiceError):
+        verify_observations(*args)
+
+
+def test_v4_connector_expected_states_match_pinned_gsap_across_delays_tips_redraws_and_reverse_seeks():
+    gsap_path = Path('D:/github/research/.cache/hyperframes/registry/blocks/orbit-card/assets/gsap-3.14.2.min.js')
+    node = shutil.which('node')
+    if not node or not gsap_path.is_file():
+        pytest.skip('Offline GSAP 3.14.2 reference is unavailable')
+    plan = dict(relations=[dict(id=identity) for identity in ('link', 'future', 'undrawn')])
+    timeline = dict(actions=[dict(kind='draw', target=identity, start=start, duration=duration)
+        for identity, start, duration in [('link', 1, 1), ('future', 2.4, .65), ('link', 4, .35)]])
+    times = [0, 1, 1.04166667, 1.25, 1.5, 1.85, 1.925, 2, 2.4, 2.5625,
+             2.95, 3.001, 4, 4.175, 4.35, 5, 0, 1.5]
+    script = r"""
+const fs=require('node:fs'),vm=require('node:vm');
+const sandbox={exports:{},module:{},setTimeout,clearTimeout,console};
+vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),sandbox);
+const gsap=sandbox.exports.gsap;if(gsap.version!=='3.14.2')throw Error('reference_version');
+const d=JSON.parse(fs.readFileSync(0,'utf8')),nodes={};
+for(const r of d.plan.relations)nodes[r.id]={line:{opacity:0,strokeDashoffset:1},label:{opacity:0},marker:{opacity:0}};
+const tl=gsap.timeline({paused:true,defaults:{ease:'power2.inOut'}});
+for(const a of d.timeline.actions){const n=nodes[a.target],duration=a.duration,when=a.start;
+tl.fromTo(n.line,{strokeDashoffset:1,opacity:0},{strokeDashoffset:0,opacity:1,duration,autoRound:false,immediateRender:false},when);
+tl.fromTo(n.label,{opacity:0},{opacity:1,duration,immediateRender:false},when);
+tl.fromTo(n.marker,{opacity:0},{opacity:1,duration:duration*.15,immediateRender:false},when+duration*.85);}
+tl.set({},{},6);
+const rows=d.times.map(time=>{tl.seek(time,false);return Object.fromEntries(Object.entries(nodes).map(([id,n])=>[id,
+{opacity:n.line.opacity,strokeDashoffset:n.line.strokeDashoffset,labelOpacity:n.label.opacity,markerOpacity:n.marker.opacity}]));});
+console.log(JSON.stringify(rows));gsap.ticker.sleep();
+"""
+    result = subprocess.run([node, '-e', script, str(gsap_path)],
+        input=json.dumps(dict(plan=plan, timeline=timeline, times=times)),
+        capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    for time, actual in zip(times, json.loads(result.stdout)):
+        expected = _connector_states(plan, timeline, time)
+        for identity, state in expected.items():
+            for property_name, value in state.items():
+                assert abs(actual[identity][property_name] - value) < .00001, (time, identity, property_name)
 
 
 def demonstration_fixture(kind='document', action_kind='move'):
