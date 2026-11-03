@@ -157,7 +157,7 @@ def serve_api(value):
     from agent_service.api import ApiSettings, create_app
     from agent_service.contracts import Principal, ProfileRegistry
     from agent_service.__main__ import _logging_configuration
-    measured_sources(value['sources'])
+    measured_sources(value['sources']['control'])
     store, adapter = chain(value)
     try:
         app = create_app(ApiSettings({value['caller_token']: Principal('synthetic-recovery',
@@ -171,7 +171,7 @@ def serve_api(value):
 
 def dispatch(value):
     from agent_service.dispatcher import Dispatcher
-    measured_sources(value['sources'])
+    measured_sources(value['sources']['control'])
     store, adapter = chain(value)
     try:
         actual = Dispatcher(store, {'pi': adapter}, lease_seconds=30)
@@ -232,7 +232,7 @@ def worker(value):
     from agent_service.__main__ import _logging_configuration
     from agent_service.runtime import launcher
 
-    source_observation = measured_sources(value['sources'])
+    source_observation = measured_sources(value['sources']['worker'])
     private_kernel_scope()
     config = HostConfig.model_validate(_read_operator_json(Path('/etc/agent-worker/config.json')))
     scope = CapsuleScope.from_env(config)
@@ -355,11 +355,10 @@ def coordinator(value):
 
     STATE.mkdir(mode=0o700, exist_ok=True)
     os.chmod(STATE, 0o700)
-    source = measured_sources(value['sources'])
-    store, adapter = chain(value)
+    store = adapter = None
     children = []
     rows = []
-    status = {'passed': False, 'phase': 'initializing', 'sources': source,
+    status = {'passed': False, 'phase': 'initializing', 'sources': {},
         'scope': 'real Agent control/provider/WorkerHost; synthetic Python workload; no model or PPT Version',
         'run_id': value['run_id'], 'model_requests': 0, 'scenarios': rows}
     api = scheduler = None
@@ -516,6 +515,9 @@ def coordinator(value):
         return result
 
     try:
+        status['sources'] = measured_sources(value['sources']['control'])
+        status['source_role'] = 'control'
+        store, adapter = chain(value)
         store.initialize()
         api = start('api')
         wait(lambda: client.get('/healthz').status_code == 200 if api.poll() is None else False)
@@ -658,8 +660,10 @@ def coordinator(value):
                     process.kill()
                     process.wait(timeout=3)
         client.close()
-        adapter.close()
-        store.engine.dispose()
+        if adapter is not None:
+            adapter.close()
+        if store is not None:
+            store.engine.dispose()
         atomic(STATE / 'status.json', status)
     # Keep private synthetic evidence readable until the outer operator copies
     # it and has positively observed/cleaned all owned container lifecycles.

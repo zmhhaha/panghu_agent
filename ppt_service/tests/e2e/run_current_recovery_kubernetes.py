@@ -24,6 +24,8 @@ import time
 
 CONTROL_IMAGE = 'arm-cluster-master:5000/agent-service-control:latest@sha256:7b8e4c4b8b6a620adb9842dbfa311b49de9be684e145e9892e4520e2308a3717'
 WORKER_IMAGE = 'arm-cluster-master:5000/agent-service-pi:latest@sha256:8a3e77253c7f2f75c998b22adef7e0151ca7e2797ac5d341b782e8426dd75a21'
+CONTROL_WORKER_ENTRY_BLOB = '0500563e0117570964089a9b5e8ba135c78c3224'
+CONTROL_WORKER_ENTRY_SHA256 = '993f2b8dffccb698291c907a3bcb7bc840fb0c49b669fd46f0735325c94b2782'
 OWNER = 'ppt.panghuer.top/recovery-owner'
 ROLE = 'ppt.panghuer.top/recovery-role'
 FINALIZER = 'agent-service.panghuer.top/observed-stop'
@@ -37,6 +39,7 @@ BOUNDARIES = [
     'Legacy synthetic manifest changes only entry/script mounts, owner labels and smaller resources; not production Worker entry acceptance.',
     'Preserved baseline is an actual synthetic Agent artifact, not a PPT business Version or an owner-reviewed deck.',
     'Bad output is a real WorkerHost schema/collection rejection; not a PPT renderer/quality-gate drill.',
+    'Exact default control image retains one explicitly pinned historical Git blob; role-specific hashes record mixed Git provenance.',
     'No real node failure, OOM, input bind/AppArmor matrix, production PVC or offsite disaster recovery.',
 ]
 
@@ -137,7 +140,7 @@ def reserve(receipt, output):
     return value
 
 
-def source(root):
+def source(root, *, control_image=CONTROL_IMAGE):
     own = Path(__file__).resolve()
     payload = own.with_name('recovery_kubernetes_capsule.py')
     commit = command(['git', '-C', str(root), 'rev-parse', 'HEAD']).stdout.decode().strip()
@@ -152,8 +155,35 @@ def source(root):
         frozen = command(['git', '-C', str(root), 'show', commit + ':agent_service/' + name]).stdout
         require(frozen == read(path), 'selected_agent_source_is_dirty')
         found[name] = sha(frozen)
+    control_sources = found.copy()
+    historical = None
+    if control_image == CONTROL_IMAGE:
+        # This exact deployed control image retains a reviewed historical Git
+        # blob for the shared HostConfig module. Keep exact byte proof rather
+        # than deleting the module from the control's verification roster.
+        old = command(['git', '-C', str(root), 'cat-file', 'blob', CONTROL_WORKER_ENTRY_BLOB]).stdout
+        require(sha(old) == CONTROL_WORKER_ENTRY_SHA256
+            and hashlib.sha1(b'blob ' + str(len(old)).encode() + b'\0' + old).hexdigest()
+                == CONTROL_WORKER_ENTRY_BLOB, 'historical_control_git_blob_mismatch')
+        current = read(root / 'agent_service' / 'worker_entry.py')
+        added = (b'    # Linux RLIMIT_NPROC counts threads. Pi plus Playwright/Chromium rendering\n'
+            b'    # exceeds 64; production and candidate drivers share this bounded allowance.\n'
+            b"    if policy.name in {'ppt.generate.v1', 'ppt.revise.v1'}:\n"
+            b"        values['max_processes'] = 128\n")
+        require(current.count(added) == 1 and current.replace(added, b'', 1) == old,
+            'historical_control_difference_exceeds_reviewed_block')
+        control_sources['worker_entry.py'] = CONTROL_WORKER_ENTRY_SHA256
+        historical = {'role': 'control', 'image': CONTROL_IMAGE, 'path': 'agent_service/worker_entry.py',
+            'git_blob': CONTROL_WORKER_ENTRY_BLOB, 'sha256': CONTROL_WORKER_ENTRY_SHA256,
+            'current_checkout_sha256': found['worker_entry.py'],
+            'difference': 'Historical build_pi_runtime_settings lacks only the reviewed four-line PPT max_processes=128 block; HostConfig/host_policy unchanged.',
+            'production_image_changed': False}
     return {'commit': commit, 'runner_sha256': sha(read(own)),
-        'payload_sha256': sha(read(payload)), 'agent_sources': found}, read(payload)
+        'payload_sha256': sha(read(payload)), 'agent_sources': found,
+        'agent_sources_scope': 'Current checkout hashes; role-specific expected bytes are recorded separately.',
+        'role_agent_sources': {'control': control_sources, 'worker': found.copy()},
+        'historical_control_source': historical,
+        'all_selected_image_sources_from_current_commit': historical is None}, read(payload)
 
 
 def terminated(pod):
@@ -219,7 +249,7 @@ def main():
         require(not parent.is_symlink(), 'linked_output_directory')
     require(not output.exists() and output.parent.is_dir()
         and args.source.resolve() not in output.parents, 'fresh_external_output_required')
-    provenance, code = source(args.source.resolve())
+    provenance, code = source(args.source.resolve(), control_image=args.control_image)
     output.mkdir(mode=0o700)
     reservation = reserve(args.reservation_receipt, output)
     namespace = 'ppt-recovery-' + reservation['run_id']
@@ -233,12 +263,39 @@ def main():
     created_policy = None
     pod_history = {}
     diagnostic_count = 0
+    command_failure_count = 0
+    private_strings = set()
     started = time.monotonic()
     write(output / 'source.json', provenance)
     write(output / 'boundaries.json', BOUNDARIES)
 
     def kube(arguments, payload=None, *, check=True, timeout=30):
-        return command(kubectl + arguments, payload=payload, check=check, timeout=timeout)
+        nonlocal command_failure_count
+        category = next((item for item in arguments
+            if item in {'get', 'create', 'patch', 'delete', 'exec', 'logs'}), 'other')
+
+        def failure_evidence(stderr, *, returncode=None, timed_out=False):
+            nonlocal command_failure_count
+            command_failure_count += 1
+            redacted = stderr or b''
+            for value in sorted(private_strings, key=len, reverse=True):
+                redacted = redacted.replace(value, b'[REDACTED]')
+            write(output / ('kubectl-error-' + str(command_failure_count) + '.private.json'), {
+                'command_category': 'kubectl:' + category, 'returncode': returncode,
+                'timed_out': timed_out, 'stderr_bytes': len(redacted),
+                'stderr_truncated': len(redacted) > 131072,
+                'stderr': redacted[:131072].decode(errors='replace'),
+                'stdin_recorded': False, 'argv_recorded': False})
+
+        try:
+            result = command(kubectl + arguments, payload=payload, check=False, timeout=timeout)
+        except subprocess.TimeoutExpired as error:
+            failure_evidence(error.stderr, timed_out=True)
+            raise Failure('operator_command_timeout:kubectl:' + category) from None
+        if check and result.returncode:
+            failure_evidence(result.stderr, returncode=result.returncode)
+            raise Failure('operator_command_failed:kubectl:' + category)
+        return result
 
     def get(kind, name=None, *, ns=True, absent=False):
         args2 = (['-n', namespace] if ns else []) + ['get', kind] + ([name] if name else []) + ['-o', 'json']
@@ -255,6 +312,25 @@ def main():
         if value['kind'] != 'Secret':
             write(output / ('create-' + value['kind'].lower() + '-' + value['metadata']['name'] + '.json'), value)
         else:
+            def remember(item):
+                if isinstance(item, str) and len(item) >= 16:
+                    private_strings.add(item.encode())
+                elif isinstance(item, dict):
+                    for child in item.values():
+                        remember(child)
+                elif isinstance(item, list):
+                    for child in item:
+                        remember(child)
+
+            for encoded in value['data'].values():
+                remember(encoded)
+                decoded = base64.b64decode(encoded)
+                if decoded:
+                    private_strings.add(decoded)
+                try:
+                    remember(json.loads(decoded))
+                except (ValueError, UnicodeDecodeError):
+                    pass
             write(output / ('create-secret-' + value['metadata']['name'] + '.json'), {
                 'kind': 'Secret', 'metadata': value['metadata'],
                 'keys_sha256': {key: sha(base64.b64decode(data)) for key, data in value['data'].items()}})
@@ -358,7 +434,19 @@ def main():
         kube(['delete', '--raw', path, '-f', '-'], canonical(body))
 
     def exec_control(mode, payload=None, *, check=True):
-        own_pod('control', role='control')
+        pod = own_pod('control', role='control')
+        if (pod.get('status', {}).get('phase') in {'Failed', 'Succeeded'}
+                or any(row.get('state', {}).get('terminated')
+                    for row in pod.get('status', {}).get('containerStatuses', []))):
+            diagnose_pod(pod, 'control-status', 'control_container_terminated')
+            logs = kube(['-n', namespace, 'logs', 'control', '--tail=200'], check=False)
+            redacted = logs.stdout
+            for value in sorted(private_strings, key=len, reverse=True):
+                redacted = redacted.replace(value, b'[REDACTED]')
+            write(output / ('control-terminated-log-' + str(diagnostic_count) + '.private.json'), {
+                'returncode': logs.returncode, 'stdout': redacted[:131072].decode(errors='replace'),
+                'stdout_truncated': len(redacted) > 131072, 'stderr_sha256': sha(logs.stderr)})
+            raise Failure('control_container_terminated_before_status')
         return kube(['-n', namespace, 'exec', '-i', 'control', '--', args.control_python,
             '-B', '/probe/recovery.py', mode], payload, check=check)
 
@@ -501,7 +589,7 @@ def main():
         settings = {**{key: reservation[key] for key in ('run_id', 'node', 'uid_start', 'uid_count')},
             'namespace': namespace, 'script_sha256': provenance['payload_sha256'],
             'worker_image': args.worker_image, 'worker_python': args.worker_python,
-            'sources': provenance['agent_sources'], 'pod_cidrs': cidrs,
+            'sources': provenance['role_agent_sources'], 'pod_cidrs': cidrs,
             'caller_token': secrets.token_urlsafe(48), 'pool_token': secrets.token_urlsafe(48),
             'receipt_key_hex': secrets.token_hex(48)}
         public = {key: settings[key] for key in ('run_id', 'node', 'uid_start', 'uid_count', 'namespace',
@@ -624,9 +712,17 @@ def main():
                     current = own_pod(name, initial['metadata']['uid'])
                     write(output / ('cleanup-before-' + name + '.json'), current)
                     logs = kube(['-n', namespace, 'logs', name, '--tail=200'], check=False)
+                    safe_log = logs.stdout
+                    for value in sorted(private_strings, key=len, reverse=True):
+                        safe_log = safe_log.replace(value, b'[REDACTED]')
                     write(output / ('cleanup-log-' + name + '.json'), {
-                        'returncode': logs.returncode, 'stdout': logs.stdout.decode(errors='replace'),
+                        'returncode': logs.returncode, 'stdout': safe_log[:131072].decode(errors='replace'),
+                        'stdout_truncated': len(safe_log) > 131072,
                         'stderr_sha256': sha(logs.stderr)})
+                    # Log collection may span a kubelet status transition.
+                    # Observe the exact same Pod again before generating the
+                    # UID/resourceVersion CAS; never blindly replay a stale CAS.
+                    current = own_pod(name, initial['metadata']['uid'])
                     is_worker = current['metadata'].get('labels', {}).get(ROLE) == 'worker'
                     finalizers = current['metadata'].get('finalizers', [])
                     require(finalizers in ([], [FINALIZER])
@@ -684,7 +780,7 @@ def main():
         for signum, handler in previous.items():
             signal.signal(signum, handler)
         try:
-            end_source, _ = source(args.source.resolve())
+            end_source, _ = source(args.source.resolve(), control_image=args.control_image)
             require(end_source == provenance, 'git_source_changed_during_run')
         except Exception as error:
             errors.append(str(error) if type(error) is Failure else type(error).__name__)

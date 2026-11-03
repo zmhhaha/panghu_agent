@@ -18,7 +18,19 @@ FakeKubernetes、伪造停止回执或管理员修改业务状态来制造恢复
 入口拒绝未提交/被修改的 runner 和所选 Agent 源文件，不上传应用源码压缩包，不安装依赖。
 所用 immutable registry digest 必须已存在；只允许 `repository@sha256:...`，不接受本机
 image ID、可变 tag 或运行时安装依赖。Control/Worker 镜像内所选应用源码的实际 SHA256
-必须与该次 Git 源一致；不匹配即失败，不把旧镜像报告改绑到新提交。
+必须与各自明确记录的 Git 来源一致；不匹配即失败，不把旧镜像报告改绑到新提交。
+
+默认 Control digest `7b8e4c4b...08a3717` 中共享的 `worker_entry.py` 使用已存在的历史
+Git blob `0500563e0117570964089a9b5e8ba135c78c3224`，实际 SHA256 固定为
+`993f2b8dffccb698291c907a3bcb7bc840fb0c49b669fd46f0735325c94b2782`。入口从 Git
+对象库读取该 blob、校验 blob ID/SHA256，并要求与当前文件的差异恰好只有
+`build_pi_runtime_settings()` 的四行 PPT `max_processes=128` 设置及注释；共享的
+`HostConfig/host_policy` 没有变化且继续校验。这个例外只绑定上述完整默认镜像 digest，
+不能转移到其他镜像。其他所选 Control 文件和全部所选 Worker 文件仍逐字节匹配当前 Git。
+`source.json` 的 `role_agent_sources` 分别记录运行时必须匹配的完整清单，
+`historical_control_source` 保存旧 blob/实际 hash/语义边界，
+`all_selected_image_sources_from_current_commit:false` 明确表示混合 Git 来源。没有改变生产
+镜像或把旧模块冒称当前提交；Control 和 Worker 启动时分别验证各自清单。
 
 要求管理员事先在平台永久 UID 总账中预留 **32 个 UID**，并核对总账、passwd/group、
 实际进程和其他预留。失败也消费整段。回执为 root-owned、单硬链接、0600 普通 JSON：
@@ -75,6 +87,9 @@ pull、build 或改 tag。Docker 中已存在镜像并不保证 Kubernetes 使�
 启动遇到 `ErrImagePull`、`ImagePullBackOff`、无效镜像或容器配置错误会提前失败；启动超时
 也会保存 `pod-diagnostic-*.json`，包含原 Pod 状态及按精确 Pod UID 筛选的结构化 Events。
 这些启动诊断不属于 Worker 停止证明或业务恢复通过证据。
+失败的 kubectl 命令另外保存私有 `kubectl-error-*.private.json`，仅记录命令类别及有限、
+脱敏后的 stderr，不记录 argv/stdin。Control 已终止时保存实际 Pod 和日志诊断；源码
+校验失败也会写明确 `phase:failed`，不会把仍未初始化的 `starting` 当作运行结果。
 
 ## 实际联合场景
 
@@ -126,6 +141,8 @@ SYS_ADMIN、hostPath、hostPID/network 或输入 bind。本次不声称生产 Ap
 运行历史的可信 PG/control；单独记录 `never_started_trusted_helpers_removed` 且明确
 `runtime_stop_proof:false`，仅表示 helper 清理，不证明执行停止。Worker 及已经带 finalizer
 的任何 Pod 不使用这个例外，也不会补回丢失的 Worker finalizer 来伪造连续观察。
+清理日志采集结束后会重新读取同 UID 的 Pod，再以新 resourceVersion 生成清理 CAS；
+CAS 失败保留诊断并停止，不盲目重试或删去身份/版本约束。
 任何清理不确定、镜像/源码不符、旧基线改变或未完成场景均使结果失败。UID 消费标记和证据
 目录永久保留。`status.json.passed=true` 必须同时有联合场景、镜像/来源和 cleanup 成功证据。
 
