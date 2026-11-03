@@ -253,3 +253,23 @@ No real node failure, production PVC/offsite restore, production AppArmor/input
 mount matrix or Pi/Hermes business execution is claimed. The joint recovery and
 separate real final-validator probes complete C8's scoped component evidence;
 parent R5 and normal owner-deck checks remain pending.
+
+## Final Git and verification handoff
+
+Commit `6cdfbed29706b6b0a4540dfc32db8853f271694e` bounds finalizer-conflict
+handling to three fresh, fully revalidated exact-UID/RV CAS operations. Same-RV
+failure, changed ownership/image/state, unknown finalizers and exhausted attempts
+remain fail-closed. Seven standard-library tests call the actual extracted
+cleanup/identity/termination functions with finite in-memory API observations;
+all passed on the server, including refusal and no-replay cases. Receipt:
+`/root/ppt-p0p1-closeout-checks-6cdfbed-r1/receipt.json`.
+The independent source arrived through Git and remained clean. These are focused
+operator-safety tests, not another live recovery drill.
+
+Current readback confirms website, PPT controller and all three shared Agent
+controls Ready. No production application source changed after tested `6f6b5ac`;
+later commits contain acceptance tools and evidence only, so this closeout does
+not require another application image rebuild. Exact main commits and the outer
+submodule-pointer delivery are recorded in the OpenSpec completion entry.
+The browser active-page tool was retried after recovery cleanup and still failed
+before page access with the same Windows error 3. C5/C10/TL7 remain pending.
