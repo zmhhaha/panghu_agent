@@ -174,6 +174,24 @@ def terminated(pod):
     return bool(pod['spec'].get('containers'))
 
 
+def never_started_observation(pod):
+    """A Pending trusted helper, without any observed runtime/container identity.
+
+    This is a cleanup classification only, never Worker stop proof. Missing
+    Kubernetes status cannot establish stopped writers for an execution.
+    """
+    status = pod.get('status', {})
+    if status.get('phase') != 'Pending':
+        return False
+    for field in ('containerStatuses', 'initContainerStatuses', 'ephemeralContainerStatuses'):
+        for row in status.get(field, []):
+            if (row.get('restartCount', 0) != 0 or row.get('containerID') or row.get('imageID')
+                    or row.get('started') is True or row.get('lastState')
+                    or type(row.get('state', {}).get('waiting')) is not dict):
+                return False
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, default=Path(__file__).resolve().parents[3])
@@ -213,6 +231,8 @@ def main():
     errors = []
     handled = set()
     created_policy = None
+    pod_history = {}
+    diagnostic_count = 0
     started = time.monotonic()
     write(output / 'source.json', provenance)
     write(output / 'boundaries.json', BOUNDARIES)
@@ -261,7 +281,62 @@ def main():
             require(row.get('restartCount') == 0 and (image_id.endswith(expected.rsplit('@', 1)[1])
                 if image_id else type(row.get('state', {}).get('waiting')) is dict),
                 'actual_image_digest_or_restart_mismatch')
+        history = pod_history.setdefault(pod['metadata']['uid'], {'never_started_observations_only': True})
+        history['never_started_observations_only'] &= never_started_observation(pod)
         return pod
+
+    def diagnose_pod(pod, phase, category):
+        nonlocal diagnostic_count
+        diagnostic_count += 1
+        uid = pod['metadata']['uid']
+        response = kube(['-n', namespace, 'get', 'events',
+            '--field-selector=involvedObject.uid=' + uid, '-o', 'json'], check=False)
+        events = []
+        if response.returncode == 0:
+            values = json.loads(response.stdout)
+            events = [row for row in values.get('items', [])
+                if row.get('involvedObject', {}).get('uid') == uid
+                and row.get('involvedObject', {}).get('namespace') == namespace]
+        write(output / ('pod-diagnostic-' + str(diagnostic_count) + '-' + pod['metadata']['name'] + '.json'), {
+            'category': category, 'phase': phase, 'pod': pod,
+            'events_query_returncode': response.returncode,
+            'events_query_stderr_sha256': sha(response.stderr), 'events': events,
+            'runtime_stop_proof': False})
+
+    def startup_ok(pod):
+        failed = {'ErrImagePull', 'ImagePullBackOff', 'InvalidImageName',
+            'CreateContainerConfigError', 'CreateContainerError', 'RunContainerError'}
+        for field in ('containerStatuses', 'initContainerStatuses'):
+            for row in pod.get('status', {}).get(field, []):
+                reason = row.get('state', {}).get('waiting', {}).get('reason')
+                if reason in failed:
+                    diagnose_pod(pod, 'startup', reason)
+                    raise Failure('pod_startup_failed:' + pod['metadata']['name'] + ':' + reason)
+        if pod.get('status', {}).get('phase') == 'Failed':
+            diagnose_pod(pod, 'startup', 'PodFailed')
+            raise Failure('pod_startup_failed:' + pod['metadata']['name'] + ':PodFailed')
+
+    def startup_ready(name, role, seconds=120):
+        latest = None
+        diagnosed = diagnostic_count
+
+        def observe():
+            nonlocal latest
+            latest = own_pod(name, role=role)
+            startup_ok(latest)
+            rows = latest.get('status', {}).get('containerStatuses', [])
+            return latest if (latest.get('status', {}).get('podIP')
+                and len(rows) == len(latest['spec']['containers'])
+                and all(row.get('ready') is True for row in rows)) else None
+
+        try:
+            return wait(observe, seconds)
+        except Failure as error:
+            if latest is not None and diagnosed == diagnostic_count:
+                diagnose_pod(latest, 'startup', 'readiness_timeout_or_observation_failure')
+            if str(error) == 'bounded_operator_observation_timeout':
+                raise Failure('pod_startup_timeout:' + name) from None
+            raise
 
     def wait(test, seconds=60):
         until = time.monotonic() + seconds
@@ -482,10 +557,13 @@ def main():
         # before the control Secret is frozen, using a second separate Secret.
         create(secret_body)
         create(db)
-        db_live = wait(lambda: (live if (live := own_pod('postgres', role='database')).get('status', {}).get('podIP')
-            and any(row.get('ready') for row in live.get('status', {}).get('containerStatuses', [])) else None), 120)
-        wait(lambda: kube(['-n', namespace, 'exec', 'postgres', '--', 'pg_isready', '-U',
-            'ppt_recovery', '-d', 'ppt_recovery'], check=False).returncode == 0, 60)
+        db_live = startup_ready('postgres', 'database')
+        try:
+            wait(lambda: kube(['-n', namespace, 'exec', 'postgres', '--', 'pg_isready', '-U',
+                'ppt_recovery', '-d', 'ppt_recovery'], check=False).returncode == 0, 60)
+        except Failure:
+            diagnose_pod(own_pod('postgres', role='database'), 'database-initialization', 'pg_isready_timeout')
+            raise
         db_ip = db_live['status']['podIP']
         settings['database_url'] = 'postgresql+psycopg://ppt_recovery:' + password + '@' + (
             '[' + db_ip + ']' if ':' in db_ip else db_ip) + ':5432/ppt_recovery'
@@ -508,10 +586,18 @@ def main():
         control['spec']['serviceAccountName'] = 'recovery-control'
         create(control)
         del settings, secret_body
-        wait(lambda: any(row.get('ready') for row in own_pod('control', role='control').get('status', {}).get('containerStatuses', [])), 120)
+        startup_ready('control', 'control')
         while time.monotonic() - started < 1050:
             result = exec_control('status')
             final_status = json.loads(result.stdout)
+            for candidate in get('pods')['items']:
+                if (candidate['metadata'].get('labels', {}).get(ROLE) == 'worker'
+                        and candidate['metadata'].get('labels', {}).get(OWNER) == reservation['run_id']
+                        and candidate.get('status', {}).get('phase') == 'Pending'):
+                    # A list snapshot may outlive normal Worker collection.
+                    # Diagnose only Pending startup; expected fault-scenario
+                    # terminated Pods must reach their original reconciler.
+                    startup_ok(candidate)
             if final_status.get('action') and final_status['action']['id'] not in handled:
                 handle(final_status['action'])
             if final_status.get('phase') in {'complete', 'failed'}:
@@ -526,7 +612,7 @@ def main():
         if final_status is not None and not (output / 'joint-recovery.json').exists():
             write(output / 'joint-recovery.json', final_status)
         cleanup = {'passed': False, 'namespace': namespace, 'namespace_uid': namespace_uid,
-            'containers_terminated': [], 'errors': []}
+            'containers_terminated': [], 'never_started_trusted_helpers_removed': [], 'errors': []}
         try:
             require(namespace_uid is not None or not namespace_create_issued,
                 'namespace_creation_outcome_not_observed')
@@ -541,12 +627,32 @@ def main():
                     write(output / ('cleanup-log-' + name + '.json'), {
                         'returncode': logs.returncode, 'stdout': logs.stdout.decode(errors='replace'),
                         'stderr_sha256': sha(logs.stderr)})
+                    is_worker = current['metadata'].get('labels', {}).get(ROLE) == 'worker'
+                    finalizers = current['metadata'].get('finalizers', [])
+                    require(finalizers in ([], [FINALIZER])
+                        and (not is_worker or finalizers == [FINALIZER]),
+                        'worker_finalizer_missing_or_unexpected_cleanup_finalizer')
+                    never_started_helper = (not is_worker and not finalizers
+                        and name in {'postgres', 'control'} and never_started_observation(current)
+                        and pod_history[current['metadata']['uid']]['never_started_observations_only'])
+                    if not never_started_helper and not finalizers:
+                        # Keep actual termination status observable for a
+                        # trusted helper that has run (or whose runtime state
+                        # is uncertain), just as for every Worker. Add only
+                        # this finalizer, before deletion, with exact UID/RV CAS.
+                        require(not current['metadata'].get('deletionTimestamp'),
+                            'started_helper_already_deleting_without_stop_observation')
+                        patch = [{'op': 'test', 'path': '/metadata/uid', 'value': current['metadata']['uid']},
+                            {'op': 'test', 'path': '/metadata/resourceVersion', 'value': current['metadata']['resourceVersion']},
+                            {'op': 'add', 'path': '/metadata/finalizers', 'value': [FINALIZER]}]
+                        kube(['-n', namespace, 'patch', 'pod', name, '--type=json', '-p', json.dumps(patch)])
+                        current = own_pod(name, initial['metadata']['uid'])
                     if not current['metadata'].get('deletionTimestamp'):
                         delete_resource('pods', current, grace=5)
-                    # Worker finalizer retains positive termination evidence.
-                    # Ordinary DB/control Pods have no finalizer and may be
-                    # removed immediately after kubelet stop; they have no
-                    # authority over any external/production resources.
+                    # Every Worker and every already-finalized helper still
+                    # needs full positive terminated evidence. Only a Pending
+                    # trusted PG/control with no observed image/container/run
+                    # identity may use the explicit non-stop-proof category.
                     if FINALIZER in current['metadata'].get('finalizers', []):
                         stopped = wait(lambda: (live if terminated(live := own_pod(
                             name, initial['metadata']['uid'])) else None), 60)
@@ -559,7 +665,14 @@ def main():
                             {'op': 'test', 'path': '/metadata/resourceVersion', 'value': stopped['metadata']['resourceVersion']},
                             {'op': 'replace', 'path': '/metadata/finalizers', 'value': []}]
                         kube(['-n', namespace, 'patch', 'pod', name, '--type=json', '-p', json.dumps(patch)])
+                    else:
+                        require(never_started_helper, 'nonfinalized_cleanup_is_not_never_started_helper')
                     wait(lambda: get('pod', name, absent=True) is None, 45)
+                    if never_started_helper:
+                        cleanup['never_started_trusted_helpers_removed'].append({'pod': name,
+                            'uid': initial['metadata']['uid'], 'observed_pending_without_runtime_identity': True,
+                            'exact_uid_delete_and_absence': True, 'runtime_stop_proof': False,
+                            'scope': 'trusted PG/control cleanup only; never an execution stop receipt'})
                 own_namespace()
                 kube(['delete', '--raw', '/api/v1/namespaces/' + namespace, '-f', '-'], canonical({
                     'apiVersion': 'v1', 'kind': 'DeleteOptions', 'preconditions': {'uid': namespace_uid}}))

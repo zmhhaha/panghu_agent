@@ -70,6 +70,12 @@ Pod CIDR；默认使用选定节点的 `spec.podCIDRs`。Calico 地址规划与�
 显式提供实际 CIDR；不要用全网段兜底。Python 路径和 control/worker digest 可显式参数化，
 但实际 Pod imageID 与镜像内源码仍须吻合。
 
+管理员可在运行前自行将这些固定 digest 预拉到实际 Kubernetes runtime；本 runner 不自动
+pull、build 或改 tag。Docker 中已存在镜像并不保证 Kubernetes 使用的 runtime 已缓存。
+启动遇到 `ErrImagePull`、`ImagePullBackOff`、无效镜像或容器配置错误会提前失败；启动超时
+也会保存 `pod-diagnostic-*.json`，包含原 Pod 状态及按精确 Pod UID 筛选的结构化 Events。
+这些启动诊断不属于 Worker 停止证明或业务恢复通过证据。
+
 ## 实际联合场景
 
 1. 通过真实 API 生成、收集并下载一个 synthetic Agent artifact；保留完整 bytes/SHA256。
@@ -114,6 +120,12 @@ SYS_ADMIN、hostPath、hostPID/network 或输入 bind。本次不声称生产 Ap
 异常也只清理本次 owner 和精确 UID 的资源。未终止 Worker 保留 finalizer，直到完整
 `terminated` 正证保存后再以 UID/resourceVersion CAS 删除该项 finalizer；不强制删除未知
 资源或所有 finalizer。随后确认 Pod 消失，再以 namespace UID precondition 删除 namespace。
+已经运行或运行身份不确定的 PG/control helper，在删除前以精确 UID/resourceVersion CAS
+保留相同观测 finalizer，仍要求实际完整 `terminated`。唯一可走精确 UID 删除后观察 404
+的例外，是未带任何 finalizer、始终只观察到 Pending 且无 imageID/containerID、重启或
+运行历史的可信 PG/control；单独记录 `never_started_trusted_helpers_removed` 且明确
+`runtime_stop_proof:false`，仅表示 helper 清理，不证明执行停止。Worker 及已经带 finalizer
+的任何 Pod 不使用这个例外，也不会补回丢失的 Worker finalizer 来伪造连续观察。
 任何清理不确定、镜像/源码不符、旧基线改变或未完成场景均使结果失败。UID 消费标记和证据
 目录永久保留。`status.json.passed=true` 必须同时有联合场景、镜像/来源和 cleanup 成功证据。
 
