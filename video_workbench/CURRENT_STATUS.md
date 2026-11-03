@@ -1,5 +1,17 @@
 # 视频工作台当前状态
 
+## 本轮：渲染恢复与项目加载修复（已发布）
+
+2026-11-03：源码 `9cd39e84aba496b81fda231383411259525835a3` 已发布，工作台和 executor 使用 `latest@sha256:7fc022866ad35f0c06d7078998a6fe58f7b91ca2fb59802d3a1e79b7a14efbc2`，renderer／runtime 保持。项目加载的跨面板递归已修复；磁盘写入错误、未确认清理与重启恢复使用持久意图，确认精确 Job／Pod／ConfigMap 清理后才终态，已有句柄恢复优先于新任务。
+
+本地 Python 广回归 503 passed／1 skipped，最后 execution 集合 44 passed（范围重叠不相加），Node 106 passed；精确镜像禁网两镜预检通过。发布后两个新 Pod Ready、0 重启。受控验收后最终核对工作台 15 表与 executor 2 表的旧 schema、真实主键、全部旧 typed 值及历史媒体保持，`additional_rows=0`、active 0、八音色和所有依赖保持；生产两数据库没有写入或下载。
+
+**真实 60 秒容量技术组合、运行中取消、注入超时及其精确资源清理已通过。** flow／compare／focus 各 20 秒、共 3 个正常 Job，从调度到渲染／observe／合成用时 241.583171 秒，含独立媒体检查 252.787027 秒；成片为 1440 帧、1280×720、24fps、H.264／24kHz mono AAC、无字幕，774167 B，完整 decode／count_frames 通过。三个容量镜头各有 25 个 kubelet 样本；renderer cgroup 累计 CPU 277.299919 秒、记录最大内存约 396 MiB，scratch 采样峰值 43171840 B。该组合在 600 秒总预算内完成，不能推广为任意内容和并发容量保证。
+
+续接共使用 6 个 Job，预算已用完：运行取消用例 17.763496 秒、`MOTION_TIMEOUT_SECONDS=1` 注入超时用例 7.777219 秒，均通过。最后一个注入用例实际 exit 137／reason `Error`，返回 `motion_execution_failed`／502，**没有 OOMKilled，OOM 专用归因未通过，原整轮 failed 保留**；未追加 Job。最终全部所属 Job／Pod／ConfigMap 消失。首轮 0 Job 的重复 `case` 脚本错误和恢复首试 ConfigMap LIST 的 RBAC 拒绝均保留，唯一遗留 ConfigMap 后续按原 UID／binding 精确 GET／DELETE 清理，没有扩大 RBAC。
+
+真实强杀 executor／API 中断仍未做；官方浏览器无实例／内核错误，真实点击与播放仍未验收；人工旁白时序、听感及表现力继续 pending。容量使用技术提示音，不代表真人旁白质量通过。两个专用 `/tmp` 夹具根已精确清理，84 文件无数据库／凭据归档已下载并逐文件校验通过。详见 [RENDER_LIFECYCLE_VALIDATION.md](RENDER_LIFECYCLE_VALIDATION.md)。本轮 0 Agent／0 TTS，独立分支未合主线；下方各轮历史记录保留，其旧待办以本轮实际结果更新。
+
 ## 本轮：连接线按动画时序出现（已发布）
 
 2026-11-03：默认编译器升级为 `motion-compiler-4`／`technical-diagrams-4`，移除动画开始前始终可见的灰色连接底线。实际线条在 CSS 初始状态隐藏，到对应动作时才绘制；标签和箭头按原时序出现。原编译器 1／2／3 的输出及旧快照保持可复现。源码 `a5350a3c2a1b7f4f5fd8626dc129e617b4c7747e`，独立分支尚未合主线。
