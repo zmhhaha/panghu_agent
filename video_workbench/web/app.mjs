@@ -342,7 +342,7 @@ function renderVersion(scene) {
   $('adopt-version').disabled = !version || adopted || pending.has(`adopt:${scene.id}`);
   $('adopt-version').textContent = dynamic ? adopted ? '当前静态采用版本' : '设为静态采用版本'
     : adopted ? '当前采用版本' : '采用此版本';
-  $('adoption-note').textContent = dynamic ? '本镜头当前使用动态图解。此处审阅静态候选；在动态图解面板切回静态后，才用于项目导出。'
+  $('adoption-note').textContent = dynamic ? '本镜头当前使用动态图解。此处审阅静态候选；需要用于成片时，请点击“复用静态素材”。'
     : adopted ? '这个版本将用于项目导出。'
     : version ? '候选版本已保存，确认效果后可采用。' : '制作完成后，可以预览并选择采用的版本。';
   const latest = latestVersion(scene);
