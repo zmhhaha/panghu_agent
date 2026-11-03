@@ -1,6 +1,12 @@
 # 视频工作台：后续事项
 
-## 本轮：整片批量制作
+## 本轮：连接线初始状态修复
+
+2026-11-03：默认 compiler4 已发布，去掉始终可见的连接底线，绘制前隐藏实际线条；旧 compiler1／2／3 与媒体保留。两镜真实禁网预检、全部关系的初始／动作／返回首帧核验及发布只读回归已通过，详见 [CONNECTOR_VISIBILITY_VALIDATION.md](CONNECTOR_VISIBILITY_VALIDATION.md)。本轮只复用原两镜文稿、计划与云健录音，0 Agent、0 TTS，最多一条新整片 draft。新样片需由用户确认效果，人工旁白时序和听感继续待审，不自动标记正式交付。
+
+独立分支继续保持未合主线。此前批量入口、动态默认和讲解统筹的已完成结果保留；后续仍需完善浏览器完整播放验收、节奏／表现力、60 秒容量及故障清理等原待办。
+
+## 此前：整片批量制作
 
 2026-11-03：源码 `0e4958019f18ece75ae1390a4de505fdc296a47b` 已发布为 `video-batch-production-20261103-r1`，独立分支 `codex/video-hyperframes-motion` 尚未合主线。工作台 `latest` digest 为 `sha256:a7b3e071ce035d855a5d34f15e06411bfbb37680c5ed7864a333483ac9d86701`，Pod `video-workbench-6f98849df7-r655m` Ready、0 重启。批量范围预览、明确启动、全局串行与恢复、确切候选复用、选定失败步骤补做及集中采用已接入；操作说明见 [BATCH_PRODUCTION.md](BATCH_PRODUCTION.md)。
 
