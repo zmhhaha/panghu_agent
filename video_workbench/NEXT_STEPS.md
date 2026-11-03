@@ -1,20 +1,30 @@
 # 视频工作台：后续事项
 
-## 本轮：动态默认流程
+## 本轮：整片批量制作
+
+2026-11-03：源码 `0e4958019f18ece75ae1390a4de505fdc296a47b` 已发布为 `video-batch-production-20261103-r1`，独立分支 `codex/video-hyperframes-motion` 尚未合主线。工作台 `latest` digest 为 `sha256:a7b3e071ce035d855a5d34f15e06411bfbb37680c5ed7864a333483ac9d86701`，Pod `video-workbench-6f98849df7-r655m` Ready、0 重启。批量范围预览、明确启动、全局串行与恢复、确切候选复用、选定失败步骤补做及集中采用已接入；操作说明见 [BATCH_PRODUCTION.md](BATCH_PRODUCTION.md)。
+
+真实技术验收已完成：独立两镜项目 `1c60d406-688b-415d-9572-a99ec5f28724`、批次 `89e9d4fc-b5f0-44b4-9799-600c610a67f4` 在 263.719 秒内完成 6/6 步骤；revision 11 时未自动采用，确切候选随后原子采用至 revision 12。19 秒／456 帧的原声无字幕整片草稿 `a141b04b-e841-4f33-98e9-6910e532d7b1` 已完成解码和 14 项 PCM 检查，整片相关系数 0.9999565535、lag 0；正式 delivery 实际返回 409 `motion_timing_needs_review`，未核准人工时序。实际使用 2 次 motion Agent＋2 次 TTS＋2 个镜头草稿＋1 个整片草稿，无重试，模型回合／金额未测。最终原 10 项目／15 表旧行各列及媒体保持，仅新增该隔离项目和对应任务／候选，共 11 项目、active 0、人工 alignment 0，所有依赖 spec 保持。完整证据见 [BATCH_PRODUCTION_VALIDATION.md](BATCH_PRODUCTION_VALIDATION.md)。
+
+1. 补充浏览器可视检查。浏览器控制仍受 `failed to write kernel assets`／`os error 3` 阻碍；前端单测和接口结果不能替代真实点击、截图与播放验收。已目视检查两镜中段与末帧共 4 张抽帧，所查文字未裁出画布、标题和要点可读，第二镜保留原回答并显现历史回答；仍以卡片为主，关系线标签对比偏弱、第二镜偏密、镜头硬切，完整节奏与用户效果仍待核对。
+2. 人工核对旁白时序、动画节奏、讲解清晰度和声音自然度后，才能确认正式交付；保留无字幕旁白和项目统一音色，不自动标记真人核对。60 秒资源与故障清理等未完成边界沿用 [MOTION_PRODUCTION_VALIDATION.md](MOTION_PRODUCTION_VALIDATION.md)。
+3. 独立分支保持未合主线，合并另行处理；下方各轮发布、预算及验收记录保留为历史。
+
+## 此前已发布：动态默认流程
 
 2026-11-03：用户已决定全面转向动态视频。应用源码 `cbd08136ca0dc694ceeada3afdfdb55de65e62bf` 已实现动态默认、新分镜继承、旧项目显式转换、静态区域折叠和统一 MP4 入口；新增动态测试 17 项、最终 API 回归集合 42 项、Node 测试 70 项通过，范围可能重叠。工作台发布与隔离 API 验收已完成，独立分支尚未合主线。完整说明见 [DYNAMIC_DEFAULT.md](DYNAMIC_DEFAULT.md)。
 
 已完成发布 `video-dynamic-default-20261103-r1`：工作台 `latest` digest `sha256:1701f36bc8bb25eb683fd65e5e33afacf42f172ceb848ad55f6b89f5d499f4c2`，Pod `video-workbench-557fb55b99-vdsvh` 1/1 Running、0 重启，旧 Pod 已停止。原 9 项目／14 表旧行与媒体保持，active 0、八音色、health／ready 200、匿名 401；隔离新增 1 项目／1 手动镜头后共 10 项目，默认 motion、空采用 heads 和三个导出拒绝路径均验证通过，任务和候选表无新增，所有依赖 spec 保持。未转换真实旧项目，本轮 Agent／TTS／render 均 0，无需重做这些已完成验收。
 
 1. 补充真实浏览器检查。本轮浏览器控制在页面操作前因 `failed to write kernel assets`／`os error 3` 失败，js、重置与重试均无效。仅本地 HTTP 200 和 Node DOM 单测通过，浏览器点击、截图与可视验收仍待完成，不写为已通过；本地 8098 fixture 已正常停止并确认无监听。
-2. 保留人工试听、旁白时序、动画节奏、整片理解效果和声音自然度核对；沿用已有候选和完整录音，不自动确认人工时序，也不增加原四任务预算。
+2. 保留人工试听、旁白时序、动画节奏、整片理解效果和声音自然度核对；当轮沿用已有候选和完整录音、不增加此前四任务历史预算，不自动确认人工时序。新的批量验收使用上方另行授权预算。
 3. 独立分支保持未合主线，合并另行处理。executor、renderer、共享 Agent、speech、认证、域名、PVC 与数据库 schema 未改；远端发布回执位置见 [DYNAMIC_DEFAULT.md](DYNAMIC_DEFAULT.md)。
 
 ## 此前已发布：动态生产接线
 
 2026-11-03 最新：独立分支 `codex/video-hyperframes-motion` 的最新应用源码为 `07bd6cab8a33ba62a5d6eb94aa10651d852197c0`，尚未合主线。第 1 部分共享 Agent r3 发布及两个真实业务任务已完成，两镜解释方案已原子采用。第 2 部分 r5／compiler v3 发布、真实 18 秒原声草稿、显式采用及 pending delivery 拒绝均已完成：完整解码、432 帧及原 PCM 首尾／四段核对通过，三个抽帧样本未见裁字；时间仍 estimated／pending，真人听感与整片质量未通过验收。原首次草稿和 r4 预检失败记录保留。完整证据见 [MOTION_PRODUCTION_VALIDATION.md](MOTION_PRODUCTION_VALIDATION.md)。
 
-本轮 **4 个上游任务／14 个模型回合已用完，TTS 0，不再提交 Agent**。共享 Agent 已按主仓库 `.research-temp/platform-slots-coordination-video.json` 交接其他聊天；后续只推进工作台／executor／renderer，不再修改共享 Agent 镜像、配置、运行池或 UID 预留，复用已有候选与原完整录音。
+此前动态生产接线的历史预算为 **4 个上游任务／14 个模型回合已用完，TTS 0，当轮不再提交 Agent**；不限制上方另行授权的新批量验收预算。共享 Agent 已按主仓库 `.research-temp/platform-slots-coordination-video.json` 交接其他聊天；后续只推进工作台／executor／renderer，不再修改共享 Agent 镜像、配置、运行池或 UID 预留，当轮复用已有候选与原完整录音。
 
 1. r5 构建、固定 digest／runtime 绑定和真实禁网 observe／严格验证已完成，状态为 `exact_r5_image_layout_preflight_passed`；保留 r4 原失败与 v1／v2 冻结身份，不更改原失败 snapshot。
 2. r5 已完成发布及真实只读 postcheck：两个 Deployment 1/1 Ready、digest／runtime／鉴权匹配，旧 Pod 停止；原 7 项目／7 表旧行各列及历史媒体 SHA 保持，新增两个隔离验收项目后共 9 项目，active 0、八音色保持。未修改共享 Agent、迁移数据库或调用模型。
