@@ -38,7 +38,7 @@ stages or the subsequent failure-diagnostics extension.
 
 ## Verified final source and website rollout
 
-Final tested application commit: `7d361e82eab12c5ff7915f2693550413cba10c86`.
+Website/controller/validator source: `7d361e82eab12c5ff7915f2693550413cba10c86`.
 All 32 server-only stages and 1,269 tests passed with zero skips, failures or
 errors. The selectors include the actual native exporter/Office tests, the
 rendered-text policy, asynchronous failure transport, owner API, strict browser
@@ -49,7 +49,7 @@ The server fetched the pushed source through Git and built all images as
 `latest`, retaining revision/context labels and exact registry digests. Website,
 controller and validator build receipt:
 `/root/ppt-diagram-7d361e82eab1-build-20261103T063851Z-97e5ca6b/receipt.json`.
-Worker-only build receipt:
+Initial Worker-only build receipt (superseded before activation):
 `/root/ppt-authoring-worker-7d361e82eab1-build-20261103T063851Z-1041f425/receipt.json`.
 The latter verifies the image-owned `ppt.py` and `ppt_text_layout.py` imports and
 their exact Git-source hashes, without rebuilding shared Agent control.
@@ -70,11 +70,12 @@ Immutable image references (all prefixed `arm-cluster-master:5000/`):
 | Website | `ppt-service-site:latest@sha256:3641bdf243ee2fdc103fcedd429d920f2d077fe4d2736ce68664f208de71e5a9` |
 | Controller | `ppt-agent-controller:latest@sha256:345338fa565e288b06063665a01ca2979ac4a6aa8f52cd1068b37d17e5b6a492` |
 | Validator | `ppt-agent-validator:latest@sha256:4492a878db0d575f20542379a61986500a1c5263b5ecc5460026a87937549bc9` |
-| Pi Worker, built; activation pending | `agent-service-pi:latest@sha256:33cb5a55dbd90553d7026abeb453569ae6b5b6f95c09ffb9aef69cc58bd6989e` |
+| Pi Worker, active | `agent-service-pi:latest@sha256:8a3e77253c7f2f75c998b22adef7e0151ca7e2797ac5d341b782e8426dd75a21` |
 
-The Worker candidate is undergoing five isolated runtime prerequisite probes.
-Its shared-catalog activation is recorded separately after completion. These
-prerequisites are not a normal ten-page business revision or human acceptance.
+The active Worker uses source `6bc5624b9084e25521488ebeceb28ec35789cddb`.
+Its own five isolated runtime prerequisite probes passed, with physical cleanup
+and dispatcher restoration. Activation is verified below. These prerequisites
+are not a normal ten-page business revision or human acceptance.
 
 ### Shared-catalog compatibility checkpoint
 
@@ -93,9 +94,49 @@ rollout was observed Ready; the failed plan directory remains retained.
 The repair inherits the two existing reviewed video implementations, their fixed
 resource bundles and build allowlists from Git. It preserves the current PPT
 text-layout/handoff changes and shared execution-slot support. Catalog generation
-and existing video routes are unchanged. A new Worker must pass server regression,
-full live-catalog/host parsing and five probes for its own exact image before
-publication. The earlier five probes remain evidence for the earlier image only.
+and existing video routes are unchanged. The repaired Worker passed its own
+server regression, full live-catalog/host parsing and five probes before
+activation. The earlier five probes remain evidence for the earlier image only.
+
+### Worker activation and final verification
+
+Worker source `6bc5624b9084e25521488ebeceb28ec35789cddb` was committed/pushed and
+fetched through Git. All 32 server stages passed: 1,273 tests, zero skips,
+failures or errors. Receipt:
+`/root/ppt-prepare-task-6bc5624b9084-830f732373-checks/summary.private.json`.
+A separate server-only offline run of `tests/agent_service/test_build.py` passed
+all 64 tests, including resource packaging and tamper rejection.
+
+The Worker-only build retained both fixed donor images and the new text guidance:
+`/root/ppt-authoring-worker-6bc5624b9084-build-20261103T073159Z-cb8c2cd4/receipt.json`.
+The current complete catalog and all 90 existing immutable host configurations
+were strictly parsed by both the Git checkout and the exact candidate image.
+Every policy pin matched; 71 image-owned source files and all ten new bundle
+files matched their Git hashes. Read-only receipt:
+`/root/ppt-current-catalog-compatibility-6bc5624-r1.json`.
+The initial diagnostic probe's source-identity failure came from the legitimate
+`agent_service.deploy` namespace package having no `__file__`; the corrected
+probe verifies its exact Git directory, loader, search path and permissions.
+Its unsuccessful result is not used as passing evidence.
+
+Five probes for the final Worker and their complete physical cleanup are under
+`/root/agent-service-deploy-20261026/ppt-text-layout-runtime-6bc5624-r1`.
+The separately inspected publication plan changed only the three control
+ConfigMap pointers, added five immutable PPT hosts/bindings and permanently
+reserved UID range `[47120384, 47185920)`. The control images and their source
+annotations, shared five slots, non-PPT catalog, and historical hosts were
+preserved. All three controls are Ready and the dispatcher was restored.
+Final verification receipt:
+`/root/agent-service-deploy-20261026/ppt-text-layout-publication-6bc5624-r1/final-runtime.json`.
+New catalog: `agent-service-config-f78661ea19a3a6be3c57`.
+
+Public observations after activation remain ping 200, root 302 and anonymous
+owner/project API 401. Receipt:
+`/root/ppt-text-layout-live-closeout-6bc5624-r1.json`.
+No business database write, user impersonation or owner-deck revision was used.
+The live catalog now retains 95 binding/pool entries under the existing bound of
+100; plan a bounded historical-catalog lifecycle before further additions would
+exceed that limit. No historical entry was pruned in this release.
 
 ## Actual exporter and final rendering samples
 
