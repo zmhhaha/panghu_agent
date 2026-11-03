@@ -9,7 +9,7 @@ import {
   projectSpeechCanGenerate, audioVoiceLabel,
 } from './model.mjs';
 import { createExplanationPanel, explanationErrorLabel } from './explanation.mjs';
-import { createMotionPanel, createMotionRenderRequest, createDynamicProjectRequest, hasMotionScenes, usesDynamicVideo, motionMetadata, motionErrorLabel } from './motion.mjs';
+import { createMotionPanel, createMotionRenderRequest, createProjectMotionDraftRequest, createDynamicProjectRequest, hasMotionScenes, usesDynamicVideo, motionMetadata, motionErrorLabel } from './motion.mjs';
 import { createBatchPanel, batchErrorLabel } from './batch.mjs';
 
 const $ = id => document.getElementById(id);
@@ -101,7 +101,7 @@ const batchPanel = createBatchPanel({
   onPlayRender: item => openMotionRender(item),
   onProjectDraft: () => {
     if (!state.project || batchPanel.hasUnresolvedOperation(state.projectId) || projectHasUnsavedEdits(state.projectId)) return;
-    const intent = createMotionRenderRequest(state.project, { purpose: 'draft' });
+    const intent = createProjectMotionDraftRequest(state.project);
     perform(`render:${state.projectId}`, () => request(intent.path, { method: 'POST', body: intent.body }),
       () => success('整片草稿制作已开始，使用当前已采用版本；不会确认人工时序或替你正式导出。'));
   },

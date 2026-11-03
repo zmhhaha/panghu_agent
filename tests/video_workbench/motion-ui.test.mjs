@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
-  createMotionPanel, createMotionRequest, createMotionAdoption, createMotionRenderRequest,
+  createMotionPanel, createMotionRequest, createMotionAdoption, createMotionRenderRequest, createProjectMotionDraftRequest,
   currentMotionAudio, hasMotionScenes, usesDynamicVideo, createDynamicProjectRequest, motionMetadata, motionErrorLabel, motionSelection, validateMotionSegments,
 } from '../../video_workbench/web/motion.mjs';
 import { deliveryIssues, isActiveOperation, isUnresolvedProductionOperation } from '../../video_workbench/web/model.mjs';
@@ -104,6 +104,17 @@ test('generation, adoption and draft requests bind exact reviewed candidate, rev
     { expected_revision: 1, purpose: 'delivery', subtitles: false });
   assert.throws(() => createMotionRenderRequest(p, { scene, candidate, audio: null }));
   assert.throws(() => createMotionRenderRequest(p, { scene, candidate: { ...candidate, stale: true }, audio: currentMotionAudio(scene) }));
+  assert.throws(() => createMotionRenderRequest(p, { purpose: 'draft' }), /请选择|请先选择/,
+    'A missing single-scene selection must never silently become a whole-project draft');
+});
+
+test('whole-project drafts explicitly use adopted versions and leave timing confirmation to delivery', () => {
+  assert.deepEqual(createProjectMotionDraftRequest(project('../p?')), {
+    path: '/api/projects/..%2Fp%3F/motion-renders',
+    body: { expected_revision: 1, purpose: 'draft', subtitles: false } });
+  for (const p of [null, {}, { id: 'p1' }, { id: 'p1', revision: '1' }]) {
+    assert.throws(() => createProjectMotionDraftRequest(p), /读取项目/);
+  }
 });
 
 test('timing validation rejects nonfinite, overlap, reordered, too short and out of recording segments', () => {

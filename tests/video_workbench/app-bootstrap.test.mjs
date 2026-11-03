@@ -73,6 +73,14 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
       { id: 'first', source_text: '先说明问题。', spoken_text: '先说明问题。' },
       { id: 'second', source_text: '再解释原因。', spoken_text: '再解释原因。' },
     ] } };
+  auditionScene.motion.head_version_id = auditionVersion.id;
+  const secondDraftScene = structuredClone(auditionScene);
+  secondDraftScene.id = 'audition-second-scene'; secondDraftScene.title = '第二个已采用镜头';
+  secondDraftScene.audio_versions[0].id = 'audition-second-audio';
+  secondDraftScene.head_audio_version_id = 'audition-second-audio';
+  secondDraftScene.motion.versions[0].id = 'audition-second-motion';
+  secondDraftScene.motion.head_version_id = 'audition-second-motion';
+  audition.scenes.push(secondDraftScene);
   motionBusy.scenes[0].motion.operation = { id: 'motion-op', status: 'running' };
   const all = [idle, motionBusy, explanationBusy, batchBusy, historical, audition];
   let listedProjects = [];
@@ -81,9 +89,17 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
     motion_enabled: true, motion_configured: true, motion_render_configured: true,
     batch_enabled: true, explanation_configured: true, speech_configured: true,
     speech_voice: 'test-voice', speech_voices: [{ id: 'test-voice', name: '测试音色', default: true }] };
+  const writes = [];
+  let allowProjectDraft = false;
   const fetchFixture = async (path, options) => {
-    assert.equal(options.method, 'GET', `Bootstrap and switching must never submit: ${path}`);
     calls.push(path);
+    if (options.method !== 'GET') {
+      assert.equal(allowProjectDraft, true, `Bootstrap and switching must never submit: ${path}`);
+      assert.equal(options.method, 'POST');
+      assert.equal(path, '/api/projects/audition/motion-renders');
+      writes.push({ path, body: JSON.parse(options.body) });
+      return { ok: true, status: 202, json: async () => ({ id: 'whole-project-draft', purpose: 'draft', status: 'queued' }) };
+    }
     let result;
     if (path === '/api/session') result = settings;
     else if (path === '/api/projects') result = { projects: listedProjects.map(p => ({ id: p.id, title: p.title, scene_count: p.scenes.length })) };
@@ -262,6 +278,28 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
       await audio.play(); audio.currentTime = 3; await audio.emit('timeupdate');
       assert.equal(audio.paused, false, 'Taking over with another player clears the old segment boundary');
       assert.equal($('audio-preview').paused, true);
+    });
+    await t.test('the real whole-project draft button submits all adopted scenes without verifying estimated timing', async () => {
+      await clickProject(audition.id); healthy(audition.id);
+      assert.equal(audition.scenes.length, 2, 'This action must not become a selected-scene draft');
+      assert.equal($('preview-batch-project').disabled, false);
+      assert.match($('motion-timing-status').textContent, /待人工核对|估算/);
+      assert.equal($('confirm-motion-timing').checked, false);
+      assert.equal(writes.length, 0, 'Reading candidates and estimated timing must remain read-only');
+      allowProjectDraft = true;
+      await $('preview-batch-project').emit('click');
+      await nextTurn();
+      allowProjectDraft = false;
+      assert.deepEqual(writes, [{ path: '/api/projects/audition/motion-renders',
+        body: { expected_revision: 1, purpose: 'draft', subtitles: false } }]);
+      assert.equal($('global-error').hidden, true, $('error-text').textContent);
+      assert.match($('success-message').textContent, /整片草稿制作已开始/);
+      assert.match($('motion-timing-status').textContent, /待人工核对|估算/,
+        'Rendering a draft must not mark its recording-bound timing as verified');
+      assert.equal($('confirm-motion-timing').checked, false);
+      for (const [id, timer] of timers) if (timer.duration === 5000) {
+        timers.delete(id); timer.callback();
+      }
     });
     await windowEvents.emit('pagehide');
     assert.equal(timers.size, 0, 'Project switch and page teardown clear polling');

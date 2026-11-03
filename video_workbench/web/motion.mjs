@@ -111,6 +111,12 @@ export function createMotionRenderRequest(project, { purpose = 'draft', scene, c
   return { path: `/api/projects/${encodeURIComponent(project.id)}/motion-renders`, body };
 }
 
+export function createProjectMotionDraftRequest(project) {
+  if (!project?.id || !Number.isInteger(project.revision)) throw new Error('请先读取项目。');
+  return { path: `/api/projects/${encodeURIComponent(project.id)}/motion-renders`,
+    body: { expected_revision: project.revision, purpose: 'draft', subtitles: false } };
+}
+
 export function createMotionPanel({ document, getContext, request, refresh, onError, onSuccess, onPreviewStateChange = () => {} }) {
   const $ = id => document.getElementById(id);
   const metadata = new Map(), versions = new Map(), timings = new Map(), drafts = new Map();

@@ -284,5 +284,5 @@ test('all controls are unique and the app integrates reads, polling, exact navig
   assert.match(app, /!batchPanel\.hasActiveOperation\(state.projectId\)/);
   assert.match(app, /batchPanel\.hasUnresolvedOperation\(state.projectId\)/);
   assert.match(app, /motionPanel\.select\(state.projectId, sceneId, motionVersionId\)/);
-  assert.match(app, /createMotionRenderRequest\(state.project, \{ purpose: 'draft' \}\)/);
+  assert.match(app, /createProjectMotionDraftRequest\(state.project\)/);
 });
