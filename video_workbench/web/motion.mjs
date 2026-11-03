@@ -119,6 +119,12 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
   let draftSequence = 0, auditionEnd = null;
   const draftIdentities = new WeakMap();
   const context = () => getContext();
+  // Explicit project reads must not rebuild the parent context: its busy checks
+  // query the other panels. Keep scene fallback before metadata has loaded.
+  const operationScenes = (projectId, fallbackScenes) => {
+    const project = projectId === undefined ? context().project : { id: projectId, scenes: fallbackScenes };
+    return metadata.get(project?.id)?.scenes ?? project?.scenes ?? [];
+  };
   const same = value => context().project?.id === value.project?.id && context().epoch === value.epoch;
   const keyFor = value => `${value.project?.id}:${value.scene?.id}`;
   const timingKey = (id, audioId) => `${id}:${audioId}`;
@@ -440,8 +446,8 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     select: (projectId, sceneId, versionId) => {
       if (projectId && sceneId && versionId) selections.set(`${projectId}:${sceneId}`, versionId);
     },
-    hasActiveOperation: () => [...(metadata.get(context().project?.id)?.scenes ?? context().project?.scenes ?? [])].some(scene => isActiveOperation(scene.motion?.operation)),
-    hasUnresolvedOperation: () => [...(metadata.get(context().project?.id)?.scenes ?? context().project?.scenes ?? [])].some(scene => isUnresolvedProductionOperation(scene.motion?.operation)),
+    hasActiveOperation: (projectId, fallbackScenes) => operationScenes(projectId, fallbackScenes).some(scene => isActiveOperation(scene.motion?.operation)),
+    hasUnresolvedOperation: (projectId, fallbackScenes) => operationScenes(projectId, fallbackScenes).some(scene => isUnresolvedProductionOperation(scene.motion?.operation)),
     hasDrafts: () => [...drafts.values()].some(row => row.dirty),
     hasProjectDrafts: projectId => [...drafts.values()].some(row => row.dirty && row.project_id === projectId),
     pause: () => { auditionEnd = null; $('motion-timing-audio').pause(); },

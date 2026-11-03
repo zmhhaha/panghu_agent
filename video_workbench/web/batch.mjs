@@ -414,8 +414,8 @@ export function createBatchPanel({ document, getContext, request, refresh, onErr
   $('reload-batch').addEventListener('click', async () => { const value = context(); if (value.project) await load(value.project.id, value.epoch); });
   $('preview-batch-project').addEventListener('click', () => { if (!$('preview-batch-project').disabled) onProjectDraft(); });
   return { render, load, preview, start, cancel, retry, adopt,
-    hasActiveOperation: () => batches(context().project?.id).some(unresolved),
-    hasUnresolvedOperation: () => batches(context().project?.id).some(unresolved),
+    hasActiveOperation: (projectId = context().project?.id) => batches(projectId).some(unresolved),
+    hasUnresolvedOperation: (projectId = context().project?.id) => batches(projectId).some(unresolved),
     hasDrafts: () => [...reviewed.values()].some(rows => rows.size > 0) || plans.size > 0,
     hasProjectDrafts: projectId => Boolean(plans.has(projectId)
       || [...reviewed.entries()].some(([key, rows]) => key.startsWith(`${projectId}:`) && rows.size > 0)),

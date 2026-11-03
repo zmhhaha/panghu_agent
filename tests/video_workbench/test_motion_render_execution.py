@@ -1,12 +1,14 @@
 """Production owner boundary, recovery and actual PCM composition regressions."""
 import base64
 from copy import deepcopy
+import errno
 import hashlib
 import io
 import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import tarfile
 import threading
 from types import SimpleNamespace
@@ -21,7 +23,7 @@ from video_workbench.motion_render_adapter import RemoteMotionRenderer, UNAVAILA
 from video_workbench.motion_render_k8s import (ANNOTATION, ExecutionJournal, KubeSceneRenderer,
     operation_key, production_resources, unpack_artifacts, validate_artifacts)
 from video_workbench.motion_render_service import (MixedMotionRenderer, MotionExecutionService,
-    create_app, verify_media)
+    create_app, public_operation, verify_media)
 from video_workbench.deploy.motion_renderer import Settings, render as deployment
 from video_workbench.motion import compile_project, estimated_alignment, make_beats, example_plan
 from test_motion_snapshot import RUNTIME, freeze, motion_scene, static_scene
@@ -52,6 +54,8 @@ class FakeKube:
             state = {'running': {}}
             if self.phase == 'oom':
                 state = {'terminated': {'reason': 'OOMKilled', 'exitCode': 137}}
+            elif self.phase == 'succeeded':
+                state = {'terminated': {'exitCode': 0}}
             return {'items': [{'metadata': {'name': job['metadata']['name'] + '-pod',
                 'annotations': job['metadata']['annotations']},
                 'status': {'containerStatuses': [{'name': 'renderer', 'state': state,
@@ -62,7 +66,9 @@ class FakeKube:
             value = deepcopy(body)
             value['metadata']['uid'] = 'uid-' + body['metadata']['name']
             if resource == 'jobs':
-                value['status'] = {'active': 1}
+                value['status'] = ({'succeeded': 1} if self.phase == 'succeeded' else
+                    {'conditions': [{'type': 'Failed', 'status': 'True', 'reason': 'DeadlineExceeded'}]}
+                    if self.phase == 'timed_out' else {'active': 1})
             self.resources[resource, body['metadata']['name']] = value
             if resource == 'jobs' and self.lose_create:
                 self.lose_create = False
@@ -84,6 +90,184 @@ def scene_renderer(tmp_path, kube):
 def render_scene(renderer, *, cancel_event=None):
     return renderer.render(freeze()['scenes'][0], key=operation_key(OWNER, 'operation-one'),
                            scene_index=0, quality='draft', cancel_event=cancel_event)
+
+
+def successful_kube(monkeypatch):
+    """Synthetic bounded artifacts; no render, Agent or speech API is called."""
+    import video_workbench.motion_render_k8s as module
+    kube = FakeKube(phase='succeeded')
+    original = kube.request
+    def request(method, resource, *args, **kwargs):
+        if kwargs.get('logs'):
+            kube.calls.append((method, resource, args[0] if args else None))
+            return b'synthetic-artifacts'
+        return original(method, resource, *args, **kwargs)
+    kube.request = request
+    monkeypatch.setattr(module, 'unpack_artifacts', lambda logs: {'output.mp4': b'mp4'})
+    monkeypatch.setattr(module, 'validate_artifacts', lambda *args: {'media_sha256': module.sha(b'mp4')})
+    return kube
+
+
+@pytest.mark.parametrize('filename', ['output.pending', 'evidence.json'])
+def test_disk_full_output_or_evidence_cleans_before_terminal_state(tmp_path, monkeypatch, filename):
+    kube = successful_kube(monkeypatch)
+    renderer = scene_renderer(tmp_path, kube)
+    scene_key = operation_key(OWNER, 'operation-one') + ':0'
+    original_write, original_request = Path.write_bytes, kube.request
+    def write(path, data):
+        if path.name == filename:
+            original_write(path, data[:1])
+            raise OSError(errno.ENOSPC, 'synthetic disk full')
+        return original_write(path, data)
+    def request(method, resource, *args, **kwargs):
+        if method == 'DELETE':
+            assert renderer.journal.scene(scene_key)['state'] == 'cleanup_pending'
+        return original_request(method, resource, *args, **kwargs)
+    monkeypatch.setattr(Path, 'write_bytes', write)
+    kube.request = request
+    with pytest.raises(ServiceError, match='motion_execution_storage_error') as failure:
+        render_scene(renderer)
+    assert failure.value.status == 507
+    assert not kube.resources
+    assert renderer.journal.scene(scene_key)['state'] == 'failed'
+    assert not list((tmp_path / 'runs').rglob('output*'))
+    assert not list((tmp_path / 'runs').rglob('evidence.json'))
+
+
+def test_disk_failure_cleanup_outage_restart_only_cleans_same_job(tmp_path, monkeypatch):
+    kube = successful_kube(monkeypatch)
+    renderer = scene_renderer(tmp_path, kube)
+    original_write, original_request = Path.write_bytes, kube.request
+    blocked = True
+    def write(path, data):
+        if path.name == 'output.pending':
+            raise OSError(errno.ENOSPC, 'synthetic disk full')
+        return original_write(path, data)
+    def request(method, resource, *args, **kwargs):
+        if blocked and method == 'DELETE':
+            raise ServiceError(UNAVAILABLE, 503)
+        return original_request(method, resource, *args, **kwargs)
+    monkeypatch.setattr(Path, 'write_bytes', write)
+    kube.request = request
+    with pytest.raises(ServiceError, match=UNAVAILABLE):
+        render_scene(renderer)
+    scene_key = operation_key(OWNER, 'operation-one') + ':0'
+    assert renderer.journal.scene(scene_key)['state'] == 'cleanup_pending'
+    assert any(kind == 'jobs' for kind, _ in kube.resources)
+    # PVC writes remain unavailable on restart. Resource reconstruction uses
+    # bounded temporary storage and does not rerun artifact collection.
+    def no_pvc_write(path, data):
+        if (tmp_path / 'runs') in path.parents:
+            raise OSError(errno.ENOSPC, 'PVC still full')
+        return original_write(path, data)
+    monkeypatch.setattr(Path, 'write_bytes', no_pvc_write)
+    blocked = False
+    with pytest.raises(ServiceError, match='motion_execution_storage_error') as failure:
+        render_scene(scene_renderer(tmp_path, kube))
+    assert failure.value.status == 507 and not kube.resources
+    assert renderer.journal.scene(scene_key)['state'] == 'failed'
+    assert sum(m == 'POST' and r == 'jobs' for m, r, _ in kube.calls) == 1
+    assert sum(bool(r == 'pods' and n and n.endswith('-pod')) for _, r, n in kube.calls) == 1
+
+
+def test_success_cleanup_outage_resumes_and_preserves_verified_output(tmp_path, monkeypatch):
+    kube = successful_kube(monkeypatch)
+    renderer = scene_renderer(tmp_path, kube)
+    original = kube.request
+    blocked = True
+    def request(method, resource, *args, **kwargs):
+        if blocked and method == 'DELETE':
+            raise ServiceError(UNAVAILABLE, 503)
+        return original(method, resource, *args, **kwargs)
+    kube.request = request
+    with pytest.raises(ServiceError, match=UNAVAILABLE):
+        render_scene(renderer)
+    key = operation_key(OWNER, 'operation-one')
+    assert renderer.journal.scene(key + ':0')['state'] == 'cleanup_pending'
+    blocked = False
+    result = render_scene(scene_renderer(tmp_path, kube))
+    assert Path(result['path']).read_bytes() == b'mp4'
+    assert Path(result['path']).with_name('evidence.json').is_file()
+    assert renderer.journal.scene(key + ':0')['state'] == 'completed'
+    assert not kube.resources
+    assert sum(m == 'POST' and r == 'jobs' for m, r, _ in kube.calls) == 1
+
+
+def test_corrupt_completed_pending_media_fails_after_cleanup_without_recreation(tmp_path, monkeypatch):
+    kube = successful_kube(monkeypatch)
+    renderer = scene_renderer(tmp_path, kube)
+    original, blocked = kube.request, True
+    def request(method, resource, *args, **kwargs):
+        if blocked and method == 'DELETE':
+            raise ServiceError(UNAVAILABLE, 503)
+        return original(method, resource, *args, **kwargs)
+    kube.request = request
+    with pytest.raises(ServiceError, match=UNAVAILABLE):
+        render_scene(renderer)
+    output = next((tmp_path / 'runs').rglob('output.mp4'))
+    output.write_bytes(b'corrupt media')
+    blocked = False
+    with pytest.raises(ServiceError, match='motion_cached_media_corrupt'):
+        render_scene(scene_renderer(tmp_path, kube))
+    assert not kube.resources and not output.exists()
+    assert renderer.journal.scene(operation_key(OWNER, 'operation-one') + ':0')['state'] == 'failed'
+    assert sum(m == 'POST' and r == 'jobs' for m, r, _ in kube.calls) == 1
+
+
+def test_configmap_delete_requires_observed_absence_before_terminal_success(tmp_path, monkeypatch):
+    kube = successful_kube(monkeypatch)
+    renderer = scene_renderer(tmp_path, kube)
+    original, blocked = kube.request, True
+    def request(method, resource, *args, **kwargs):
+        if blocked and method == 'DELETE' and resource == 'configmaps':
+            return {'status': 'Success'}  # Admission is not deletion observation.
+        return original(method, resource, *args, **kwargs)
+    kube.request = request
+    with pytest.raises(ServiceError, match=UNAVAILABLE):
+        render_scene(renderer)
+    assert renderer.journal.scene(operation_key(OWNER, 'operation-one') + ':0')['state'] == 'cleanup_pending'
+    assert any(kind == 'configmaps' for kind, _ in kube.resources)
+    blocked = False
+    assert Path(render_scene(scene_renderer(tmp_path, kube))['path']).read_bytes() == b'mp4'
+    assert not kube.resources
+
+
+@pytest.mark.parametrize('failure_kind', ['foreign_job', 'foreign_configmap', 'uid_conflict'])
+def test_cleanup_conflicts_keep_recoverable_intent_and_refuse_foreign_deletion(tmp_path, failure_kind):
+    kube = FakeKube(phase='oom')
+    renderer = scene_renderer(tmp_path, kube)
+    original = kube.request
+    def request(method, resource, *args, **kwargs):
+        if method == 'GET' and resource == 'pods':
+            result = original(method, resource, *args, **kwargs)
+            if result['items'] and failure_kind != 'uid_conflict':
+                kind = 'jobs' if failure_kind == 'foreign_job' else 'configmaps'
+                target = next(value for (resource_kind, _), value in kube.resources.items() if resource_kind == kind)
+                target['metadata']['annotations'][ANNOTATION] = 'f' * 64
+            return result
+        if method == 'DELETE' and failure_kind == 'uid_conflict':
+            raise ServiceError('motion_k8s_conflict', 409)
+        return original(method, resource, *args, **kwargs)
+    kube.request = request
+    with pytest.raises(ServiceError, match=UNAVAILABLE):
+        render_scene(renderer)
+    assert renderer.journal.scene(operation_key(OWNER, 'operation-one') + ':0')['state'] == 'cleanup_pending'
+    assert kube.resources
+    if failure_kind != 'uid_conflict':
+        kind = 'jobs' if failure_kind == 'foreign_job' else 'configmaps'
+        assert not any(m == 'DELETE' and r == kind for m, r, _ in kube.calls)
+
+
+def test_deadline_failure_cleans_then_retains_timeout_status_on_restart(tmp_path):
+    kube = FakeKube(phase='timed_out')
+    renderer = scene_renderer(tmp_path, kube)
+    for _ in range(2):
+        with pytest.raises(ServiceError, match='motion_execution_timed_out') as failure:
+            render_scene(renderer)
+        assert failure.value.status == 504
+    assert not kube.resources
+    assert renderer.journal.scene(operation_key(OWNER, 'operation-one') + ':0')['state'] == 'timed_out'
+    assert sum(m == 'POST' and r == 'jobs' for m, r, _ in kube.calls) == 1
 
 
 def test_uncertain_create_queries_exact_job_and_cancel_confirms_cleanup(tmp_path):
@@ -372,6 +556,187 @@ def test_service_restart_transient_failure_keeps_same_operation_id(tmp_path):
     second.tick()
     row = second.journal.operation(OWNER, 'stable-operation')
     assert row['state'] == 'queued' and seen == [row['key'], row['key']]
+
+
+@pytest.mark.parametrize('scene_state', ['submitting', 'running', 'cleanup_pending'])
+def test_recoverable_scene_handle_precedes_other_queued_operations_after_restart(tmp_path, scene_state):
+    seen = []
+    def render(snapshot, root, **kwargs):
+        seen.append(kwargs['key'])
+        raise ServiceError(UNAVAILABLE, 503)
+    renderer = SimpleNamespace(render=render)
+    first = make_service(tmp_path, renderer)
+    active = first.submit(OWNER, 'active-operation', freeze())
+    first.journal.scene_intent(active['key'] + ':0', 'a' * 64, 'vm-test')
+    first.journal.scene_update(active['key'] + ':0', scene_state)
+    queued = first.submit(OWNER, 'queued-operation', freeze())
+    # A transient API failure requeues the active handle after the other row.
+    first.journal.update(active['key'], state='queued')
+    restarted = make_service(tmp_path, renderer)
+    restarted.tick()
+    restarted.tick()
+    assert seen == [active['key'], active['key']]
+    assert restarted.journal.operation(OWNER, 'queued-operation')['state'] == 'queued'
+    assert queued['key'] not in seen
+
+
+def test_pending_operation_cleanup_blocks_new_queued_render_after_restart(tmp_path):
+    calls = []
+    def cleanup(snapshot, *, key, **kwargs):
+        calls.append(('cleanup', key))
+        raise ServiceError(UNAVAILABLE, 503)
+    renderer = SimpleNamespace(render=lambda *args, **kwargs: pytest.fail('new operation started during cleanup'),
+                               cleanup=cleanup)
+    service = make_service(tmp_path, renderer)
+    active = service.submit(OWNER, 'cleanup-operation', freeze())
+    queued = service.submit(OWNER, 'queued-operation', freeze())
+    service.journal.update(active['key'], state='queued', result=json.dumps({'cleanup_pending': dict(
+        state='failed', error='motion_execution_failed', status=502)}))
+    restarted = make_service(tmp_path, renderer)
+    restarted.tick()
+    restarted.tick()
+    assert calls == [('cleanup', active['key']), ('cleanup', active['key'])]
+    assert restarted.journal.operation(OWNER, 'queued-operation')['state'] == 'queued'
+    assert queued['key'] != active['key']
+
+
+@pytest.mark.parametrize('code,status,state', [
+    ('motion_execution_storage_error', 507, 'failed'),
+    ('media_render_cancelled', 409, 'cancelled'),
+    ('motion_execution_timed_out', 504, 'timed_out')])
+def test_service_cleanup_outage_is_private_and_restart_never_calls_render(tmp_path, code, status, state):
+    calls, blocked = [], True
+    def render(snapshot, root, **kwargs):
+        calls.append('render')
+        (root / 'assets').mkdir(parents=True)
+        (root / 'assets' / 'master.wav').write_bytes(b'owned scratch')
+        (root / 'video.mp4').write_bytes(b'partial video')
+        (root / 'report.json').write_bytes(b'partial report')
+        if status == 507:
+            raise OSError(errno.ENOSPC, 'private filesystem detail')
+        raise ServiceError(code, status)
+    def cleanup(snapshot, *, key, **pending):
+        calls.append('cleanup')
+        assert pending == dict(state=state, error=code, status=status)
+        if blocked:
+            raise ServiceError(UNAVAILABLE, 503)
+    renderer = SimpleNamespace(render=render, cleanup=cleanup)
+    service = make_service(tmp_path, renderer)
+    service.submit(OWNER, 'cleanup-operation', freeze())
+    unrelated = service.root / 'other-operation' / 'result'
+    unrelated.mkdir(parents=True)
+    (unrelated / 'video.mp4').write_bytes(b'previous success')
+    service.tick()
+    row = service.journal.operation(OWNER, 'cleanup-operation')
+    assert row['state'] == 'queued' and 'cleanup_pending' in json.loads(row['result'])
+    assert public_operation(row) == dict(operation_id='cleanup-operation', snapshot_sha256=freeze()['sha256'], state='queued')
+    blocked = False
+    restarted = make_service(tmp_path, renderer)
+    restarted.tick()
+    row = restarted.journal.operation(OWNER, 'cleanup-operation')
+    assert row['state'] == state and row['error'] == code and row['result'] is None
+    assert calls == ['render', 'cleanup', 'cleanup']
+    assert not list((service.root / row['key'] / 'result').rglob('*'))
+    assert (unrelated / 'video.mp4').read_bytes() == b'previous success'
+
+
+def test_service_disk_error_with_real_scene_handle_restarts_cleanup_only(tmp_path, monkeypatch):
+    kube = successful_kube(monkeypatch)
+    scene = scene_renderer(tmp_path, kube)
+    calls, blocked = [], True
+    original_write, original_request = Path.write_bytes, kube.request
+    def write(path, data):
+        if path.name == 'output.pending':
+            raise OSError(errno.ENOSPC, 'synthetic full PVC')
+        return original_write(path, data)
+    def request(method, resource, *args, **kwargs):
+        if blocked and method == 'DELETE':
+            raise ServiceError(UNAVAILABLE, 503)
+        return original_request(method, resource, *args, **kwargs)
+    def render(snapshot, root, *, key, cancel_event):
+        calls.append('render')
+        # This models an unexpected composer exception after a durable scene
+        # handle exists. The outer operation must still drain that handle.
+        try:
+            scene.render(snapshot['scenes'][0], key=key, scene_index=0, quality=snapshot['quality'])
+        except ServiceError:
+            raise RuntimeError('synthetic composer fault')
+    def cleanup(snapshot, *, key, **pending):
+        calls.append('cleanup')
+        scene.cleanup_operation(snapshot, key, **pending)
+    monkeypatch.setattr(Path, 'write_bytes', write)
+    kube.request = request
+    renderer = SimpleNamespace(render=render, cleanup=cleanup)
+    service = make_service(tmp_path, renderer)
+    service.submit(OWNER, 'cleanup-operation', freeze())
+    service.tick()
+    assert service.journal.operation(OWNER, 'cleanup-operation')['state'] == 'queued'
+    blocked = False
+    restarted = make_service(tmp_path, renderer)
+    restarted.tick()
+    row = restarted.journal.operation(OWNER, 'cleanup-operation')
+    assert row['state'] == 'failed' and row['error'] == 'motion_execution_internal_error'
+    assert not kube.resources and calls == ['render', 'cleanup', 'cleanup']
+    assert sum(m == 'POST' and r == 'jobs' for m, r, _ in kube.calls) == 1
+
+
+def test_full_journal_retains_running_identity_until_storage_recovers(tmp_path, monkeypatch):
+    kube = successful_kube(monkeypatch)
+    scene = scene_renderer(tmp_path, kube)
+    original_write = Path.write_bytes
+    original_scene_update, original_update = ExecutionJournal.scene_update, ExecutionJournal.update
+    blocked = True
+    def write(path, data):
+        if path.name == 'output.pending':
+            raise OSError(errno.ENOSPC, 'synthetic full PVC')
+        return original_write(path, data)
+    def scene_update(journal, key, state, **kwargs):
+        if blocked and state == 'cleanup_pending':
+            raise sqlite3.OperationalError('database or disk is full')
+        return original_scene_update(journal, key, state, **kwargs)
+    def update(journal, key, **values):
+        if blocked and values.get('result') and 'cleanup_pending' in values['result']:
+            raise sqlite3.OperationalError('database or disk is full')
+        return original_update(journal, key, **values)
+    def render(snapshot, root, *, key, **kwargs):
+        return scene.render(snapshot['scenes'][0], key=key, scene_index=0, quality=snapshot['quality'])
+    renderer = SimpleNamespace(render=render,
+        cleanup=lambda snapshot, *, key, **pending: scene.cleanup_operation(snapshot, key, **pending))
+    monkeypatch.setattr(Path, 'write_bytes', write)
+    monkeypatch.setattr(ExecutionJournal, 'scene_update', scene_update)
+    monkeypatch.setattr(ExecutionJournal, 'update', update)
+    service = make_service(tmp_path, renderer)
+    service.submit(OWNER, 'full-journal-operation', freeze())
+    with pytest.raises(sqlite3.OperationalError):
+        service.tick()
+    row = service.journal.operation(OWNER, 'full-journal-operation')
+    assert row['state'] == 'running' and row['result'] is None
+    assert scene.journal.scene(row['key'] + ':0')['state'] == 'running'
+    assert any(kind == 'jobs' for kind, _ in kube.resources)
+    blocked = False
+    make_service(tmp_path, renderer).tick()
+    row = service.journal.operation(OWNER, 'full-journal-operation')
+    assert row['state'] == 'failed' and row['error'] == 'motion_execution_storage_error'
+    assert not kube.resources
+    assert sum(m == 'POST' and r == 'jobs' for m, r, _ in kube.calls) == 1
+
+
+def test_service_success_preserves_final_video_and_report(tmp_path):
+    def render(snapshot, root, **kwargs):
+        root.mkdir(parents=True)
+        output = root / 'video.mp4'
+        output.write_bytes(b'completed media')
+        (root / 'report.json').write_bytes(b'completed report')
+        return dict(path=str(output), bytes=output.stat().st_size)
+    renderer = SimpleNamespace(render=render, cleanup=lambda *args, **kwargs: pytest.fail('success was cleaned'))
+    service = make_service(tmp_path, renderer)
+    service.submit(OWNER, 'success-operation', freeze())
+    service.tick()
+    row = service.journal.operation(OWNER, 'success-operation')
+    root = service.root / row['key'] / 'result'
+    assert row['state'] == 'completed'
+    assert (root / 'video.mp4').read_bytes() == b'completed media'
+    assert (root / 'report.json').read_bytes() == b'completed report'
 
 
 def test_cancel_before_composition_drains_existing_scene_handle(tmp_path):

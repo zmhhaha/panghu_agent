@@ -45,13 +45,15 @@ let sourceVersion = null;
 let loading = false;
 let staticMaterialsScene = null;
 
+// Pass project identity to status queries so peer-panel busy checks never
+// re-enter a context builder while that same context is being constructed.
 const explanationPanel = createExplanationPanel({
   document, request, refresh: () => loadProject(), onError: showError, onSuccess: success,
   getContext: () => ({ project: state.project, epoch: state.epoch,
     configured: sessionSettings.explanation_configured === true,
     unsaved: projectHasUnsavedEdits(state.projectId),
     projectBusy: activeOperations(state.project).length > 0 || pending.size > 0
-      || batchPanel.hasUnresolvedOperation()
+      || batchPanel.hasUnresolvedOperation(state.projectId)
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
   }),
 });
@@ -66,8 +68,8 @@ const motionPanel = createMotionPanel({
     configured: sessionSettings.motion_configured === true,
     renderConfigured: sessionSettings.motion_render_configured === true,
     unsaved: projectHasUnsavedEdits(state.projectId, false),
-    projectBusy: activeOperations(state.project).length > 0 || pending.size > 0 || explanationPanel.hasActiveOperation()
-      || batchPanel.hasUnresolvedOperation()
+    projectBusy: activeOperations(state.project).length > 0 || pending.size > 0 || explanationPanel.hasActiveOperation(state.projectId)
+      || batchPanel.hasUnresolvedOperation(state.projectId)
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
   }),
 });
@@ -81,7 +83,7 @@ const batchPanel = createBatchPanel({
     renderConfigured: sessionSettings.motion_render_configured === true,
     unsaved: projectHasUnsavedEdits(state.projectId),
     projectBusy: activeOperations(state.project).length > 0 || pending.size > 0
-      || explanationPanel.hasUnresolvedOperation() || motionPanel.hasUnresolvedOperation()
+      || explanationPanel.hasUnresolvedOperation(state.projectId) || motionPanel.hasUnresolvedOperation(state.projectId, state.project?.scenes)
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
   }),
   onOpenScene: (sceneId, { motionVersionId, audioVersionId } = {}) => {
@@ -96,7 +98,7 @@ const batchPanel = createBatchPanel({
   },
   onPlayRender: item => openMotionRender(item),
   onProjectDraft: () => {
-    if (!state.project || batchPanel.hasUnresolvedOperation() || projectHasUnsavedEdits(state.projectId)) return;
+    if (!state.project || batchPanel.hasUnresolvedOperation(state.projectId) || projectHasUnsavedEdits(state.projectId)) return;
     const intent = createMotionRenderRequest(state.project, { purpose: 'draft' });
     perform(`render:${state.projectId}`, () => request(intent.path, { method: 'POST', body: intent.body }),
       () => success('整片草稿制作已开始，使用当前已采用版本；不会确认人工时序或替你正式导出。'));
@@ -115,8 +117,9 @@ function productionTransitionBusy(project) {
   const operations = [project?.storyboard_operation, ...(project?.scenes ?? []).flatMap(scene =>
     [scene.operation, scene.audio_operation, scene.motion?.operation]), ...(renderHistories.get(project?.id) ?? [])];
   return pending.size > 0 || operations.some(isUnresolvedProductionOperation)
-    || motionPanel.hasUnresolvedOperation() || explanationPanel.hasUnresolvedOperation()
-    || batchPanel.hasUnresolvedOperation() || batchPanel.hasProjectDrafts(project?.id);
+    || motionPanel.hasUnresolvedOperation(project?.id ?? null, project?.scenes)
+    || explanationPanel.hasUnresolvedOperation(project?.id ?? null)
+    || batchPanel.hasUnresolvedOperation(project?.id ?? null) || batchPanel.hasProjectDrafts(project?.id);
 }
 
 function renderProductionTransition(project) {
@@ -339,7 +342,7 @@ function renderEditor(scene, project) {
   $('draft-status').textContent = draft.dirty ? '有未保存的修改'
     : dynamic ? '保存后制作动态图解；动态片段最多 60 秒，长旁白建议拆镜。'
       : editor === 'new' ? '保存后即可制作镜头' : '已载入当前镜头';
-  $('save-scene').disabled = pending.has(`save:${project.id}`) || batchPanel.hasUnresolvedOperation();
+  $('save-scene').disabled = pending.has(`save:${project.id}`) || batchPanel.hasUnresolvedOperation(state.projectId);
   $('save-scene').textContent = pending.has(`save:${project.id}`) ? '正在保存…' : '保存镜头';
 }
 
@@ -450,7 +453,7 @@ function projectSpeechDraft(project = state.project) {
 
 function renderProjectSpeech(project) {
   const draft = projectSpeechDraft(project);
-  const batchBusy = batchPanel.hasUnresolvedOperation();
+  const batchBusy = batchPanel.hasUnresolvedOperation(state.projectId);
   const busy = pending.has(`project-speech:${project.id}`) || batchBusy;
   const catalog = speechVoices(sessionSettings);
   const options = projectVoiceOptions(draft.voice, sessionSettings).map(item => {
@@ -535,7 +538,7 @@ function updateCaptionButtons() {
 }
 
 function renderAudio(scene, project) {
-  const batchBusy = batchPanel.hasUnresolvedOperation();
+  const batchBusy = batchPanel.hasUnresolvedOperation(state.projectId);
   const settings = scene.speech_settings ?? {};
   const speech = audioDraft(speechDrafts, scene, () => ({
     speed: settings.speed ?? 1, pronunciation: pronunciationText(settings.pronunciation),
@@ -558,7 +561,7 @@ function renderAudio(scene, project) {
   const projectVoiceBusy = pending.has(`project-speech:${project.id}`);
   const voiceReady = projectSpeechCanGenerate(project, sessionSettings, projectVoiceDraft);
   $('generate-audio').disabled = !voiceReady || projectVoiceBusy || !scene.narration?.trim()
-    || dirty || speech.dirty || busy || batchPanel.hasUnresolvedOperation();
+    || dirty || speech.dirty || busy || batchPanel.hasUnresolvedOperation(state.projectId);
   $('audio-generation-hint').textContent = projectVoiceDraft.dirty || projectVoiceBusy ? '请先保存项目音色。'
     : sessionSettings.speech_configured && !voiceReady ? '当前项目音色不可用，请在项目配音中选择并保存。'
       : dirty ? '请先保存镜头旁白。' : speech.dirty ? '请先保存语速与读音设置。'
@@ -670,7 +673,7 @@ function renderDelivery(project) {
   $('captions-section').hidden = dynamic;
   $('render-motion-project').disabled = !dynamic || !sessionSettings.motion_render_configured || projectHasUnsavedEdits(project.id)
     || pending.has(`render:${project.id}`) || issues.length > 0 || !scenes.length
-    || batchPanel.hasUnresolvedOperation()
+    || batchPanel.hasUnresolvedOperation(state.projectId)
     || (renderHistories.get(project.id) ?? []).some(isActiveOperation);
   $('render-silent').disabled = dynamic;
   $('render-subtitles').disabled = dynamic;
@@ -770,7 +773,7 @@ function schedulePolling() {
   stopPolling();
   if (document.hidden || !state.projectId || (!activeOperations(state.project).length
       && !(renderHistories.get(state.projectId) ?? []).some(isActiveOperation)
-      && !explanationPanel.hasActiveOperation() && !motionPanel.hasActiveOperation() && !batchPanel.hasActiveOperation())) return;
+      && !explanationPanel.hasActiveOperation(state.projectId) && !motionPanel.hasActiveOperation(state.projectId, state.project?.scenes) && !batchPanel.hasActiveOperation(state.projectId))) return;
   pollTimer = setTimeout(() => loadProject().catch(showError), 3500);
 }
 
@@ -887,7 +890,7 @@ function startNewScene() {
 
 async function saveScene(event) {
   event.preventDefault();
-  if (batchPanel.hasUnresolvedOperation() || !$('scene-form').reportValidity() || !state.project) return;
+  if (batchPanel.hasUnresolvedOperation(state.projectId) || !$('scene-form').reportValidity() || !state.project) return;
   const projectId = state.projectId;
   const sceneId = editor === 'new' ? null : state.sceneId;
   const key = draftKey(sceneId);
@@ -1064,7 +1067,7 @@ async function openProjectPlayer() {
 }
 
 function captureSpeechDraft() {
-  if (batchPanel.hasUnresolvedOperation()) return;
+  if (batchPanel.hasUnresolvedOperation(state.projectId)) return;
   const scene = selectedScene(state);
   if (!scene) return;
   const draft = speechDrafts.get(draftKey(scene.id));
@@ -1190,7 +1193,7 @@ $('export-project').addEventListener('click', () => {
 });
 
 $('project-speech-voice').addEventListener('change', () => {
-  if (batchPanel.hasUnresolvedOperation()) return;
+  if (batchPanel.hasUnresolvedOperation(state.projectId)) return;
   const draft = projectSpeechDraft();
   if (!draft) return;
   Object.assign(draft, { voice: $('project-speech-voice').value, dirty: true });
@@ -1199,7 +1202,7 @@ $('project-speech-voice').addEventListener('change', () => {
 $('save-project-speech').addEventListener('click', () => {
   const project = state.project; const draft = projectSpeechDraft();
   if (!project || !draft?.dirty || !sessionSettings.speech_configured
-      || batchPanel.hasUnresolvedOperation()
+      || batchPanel.hasUnresolvedOperation(state.projectId)
       || !speechVoices(sessionSettings).some(voice => voice.id === draft.voice)) return;
   const body = { expected_revision: draft.expected_revision, voice: draft.voice };
   perform(`project-speech:${project.id}`, () => request(`/api/projects/${encodeURIComponent(project.id)}/speech`,
@@ -1208,13 +1211,13 @@ $('save-project-speech').addEventListener('click', () => {
 });
 $('reset-project-speech').addEventListener('click', () => {
   const project = state.project;
-  if (!project || batchPanel.hasUnresolvedOperation() || pending.has(`project-speech:${project.id}`)) return;
+  if (!project || batchPanel.hasUnresolvedOperation(state.projectId) || pending.has(`project-speech:${project.id}`)) return;
   if (projectSpeechDrafts.get(project.id)?.dirty && !window.confirm('重新载入会清除尚未保存的项目音色，继续吗？')) return;
   projectSpeechDrafts.delete(project.id); render();
 });
 for (const id of ['speech-speed', 'speech-pronunciation']) $(id).addEventListener('input', captureSpeechDraft);
 $('save-speech-settings').addEventListener('click', () => {
-  if (batchPanel.hasUnresolvedOperation()) return;
+  if (batchPanel.hasUnresolvedOperation(state.projectId)) return;
   const scene = selectedScene(state); if (!scene || !$('speech-speed').reportValidity()) return;
   const key = draftKey(scene.id); const draft = speechDrafts.get(key);
   let pronunciation;
@@ -1226,7 +1229,7 @@ $('save-speech-settings').addEventListener('click', () => {
 });
 for (const [id, map] of [['reset-speech-settings', speechDrafts], ['reset-timing', timingDrafts], ['reset-captions', captionDrafts]]) {
   $(id).addEventListener('click', () => {
-    if (id !== 'reset-captions' && batchPanel.hasUnresolvedOperation()) return;
+    if (id !== 'reset-captions' && batchPanel.hasUnresolvedOperation(state.projectId)) return;
     const scene = selectedScene(state); if (!scene) return;
     const key = draftKey(scene.id);
     if (map.get(key)?.dirty && !window.confirm('重新载入会清除这里尚未保存的修改，继续吗？')) return;
@@ -1235,7 +1238,7 @@ for (const [id, map] of [['reset-speech-settings', speechDrafts], ['reset-timing
 }
 $('generate-audio').addEventListener('click', () => {
   const scene = selectedScene(state); if (!scene) return;
-  if (batchPanel.hasUnresolvedOperation()) return;
+  if (batchPanel.hasUnresolvedOperation(state.projectId)) return;
   if (!projectSpeechCanGenerate(state.project, sessionSettings, projectSpeechDraft())
       || pending.has(`project-speech:${state.projectId}`)) return;
   const body = { expected_revision: state.project.revision };
@@ -1283,7 +1286,7 @@ $('upload-audio').addEventListener('click', () => {
   }, () => { uploadSelection = null; $('audio-upload-file').value = ''; success('配音已上传为候选，请试听后采用。'); });
 });
 for (const id of ['leading-seconds', 'trailing-seconds']) $(id).addEventListener('input', () => {
-  if (batchPanel.hasUnresolvedOperation()) return;
+  if (batchPanel.hasUnresolvedOperation(state.projectId)) return;
   const scene = selectedScene(state); if (!scene) return;
   const draft = timingDrafts.get(draftKey(scene.id));
   Object.assign(draft, { leading_seconds: $('leading-seconds').valueAsNumber,
@@ -1291,7 +1294,7 @@ for (const id of ['leading-seconds', 'trailing-seconds']) $(id).addEventListener
   $('save-timing').disabled = false; $('timing-draft-note').textContent = '留白尚未保存';
 });
 $('save-timing').addEventListener('click', () => {
-  if (batchPanel.hasUnresolvedOperation()) return;
+  if (batchPanel.hasUnresolvedOperation(state.projectId)) return;
   const scene = selectedScene(state);
   if (!scene || !$('leading-seconds').reportValidity() || !$('trailing-seconds').reportValidity()) return;
   const key = draftKey(scene.id); const { dirty, ...body } = timingDrafts.get(key);
@@ -1338,7 +1341,7 @@ $('render-project').addEventListener('click', () => {
 });
 $('render-motion-project').addEventListener('click', () => {
   if (!state.project || !usesDynamicVideo(state.project) || !sessionSettings.motion_render_configured
-      || batchPanel.hasUnresolvedOperation() || projectHasUnsavedEdits(state.projectId) || deliveryIssues(state.project, { silent: false, subtitles: false }).length
+      || batchPanel.hasUnresolvedOperation(state.projectId) || projectHasUnsavedEdits(state.projectId) || deliveryIssues(state.project, { silent: false, subtitles: false }).length
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation)) return;
   const intent = createMotionRenderRequest(state.project, { purpose: 'delivery' });
   perform(`render:${state.projectId}`, () => request(intent.path, { method: 'POST', body: intent.body }),

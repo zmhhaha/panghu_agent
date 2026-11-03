@@ -374,7 +374,7 @@ test('all controls exist once; app wires motion reads, MP4 playback, polling and
   for (const [, id] of source.matchAll(/\$\('([^']+)'\)/g)) assert.ok(ids.includes(id), id);
   assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML|eval\(/);
   assert.match(app, /motionPanel\.load\(ticket.projectId, ticket.epoch\)/);
-  assert.match(app, /!motionPanel\.hasActiveOperation\(\)/); assert.match(app, /motionPanel\.hasDrafts\(\)/);
+  assert.match(app, /!motionPanel\.hasActiveOperation\(state.projectId, state.project\?\.scenes\)/); assert.match(app, /motionPanel\.hasDrafts\(\)/);
   assert.match(app, /createMotionRenderRequest\(state.project, \{ purpose: 'delivery' \}\)/);
   assert.match(app, /function openMotionRender\(item\)/);
   assert.match(app, /!\$\('motion-panel'\)\.contains\(event.target\) && !\$\('motion-timing-section'\)\.contains\(event.target\)/);

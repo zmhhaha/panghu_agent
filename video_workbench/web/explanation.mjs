@@ -356,7 +356,7 @@ export function createExplanationPanel({ document, getContext, request, refresh,
   });
   return { render, load, generate, adopt, cancel,
     hasDrafts: () => [...drafts.values()].some(draft => draft.dirty),
-    hasActiveOperation: () => isActiveOperation(dataFor(current().project?.id)?.operation),
-    hasUnresolvedOperation: () => isUnresolvedProductionOperation(dataFor(current().project?.id)?.operation),
+    hasActiveOperation: (projectId = current().project?.id) => isActiveOperation(dataFor(projectId)?.operation),
+    hasUnresolvedOperation: (projectId = current().project?.id) => isUnresolvedProductionOperation(dataFor(projectId)?.operation),
   };
 }

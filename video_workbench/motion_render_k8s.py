@@ -14,10 +14,12 @@ import io
 import json
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 import ssl
 import tarfile
 import threading
+import tempfile
 import time
 import zlib
 
@@ -120,7 +122,15 @@ class ExecutionJournal:
 
     def next_operation(self):
         with self.lock, self.connect() as db:
-            row = db.execute("SELECT * FROM motion_operations WHERE state IN ('queued','running') ORDER BY updated,created LIMIT 1").fetchone()
+            # A lost API response must not let a queued operation start another
+            # Job while an earlier exact handle is still running or draining.
+            row = db.execute("""SELECT operation.* FROM motion_operations AS operation
+                WHERE operation.state IN ('queued','running')
+                ORDER BY CASE WHEN operation.result IS NOT NULL OR EXISTS(
+                    SELECT 1 FROM motion_scenes AS scene
+                    WHERE scene.key LIKE operation.key || ':%'
+                    AND scene.state IN ('submitting','running','cleanup_pending'))
+                    THEN 0 ELSE 1 END,operation.updated,operation.created LIMIT 1""").fetchone()
         return dict(row) if row else None
 
     def cancelled(self, key):
@@ -372,6 +382,9 @@ class KubeSceneRenderer:
                 self._bound(config, current)
                 self.kube.request('DELETE', 'configmaps', config['metadata']['name'], body={
                     'apiVersion': 'v1', 'kind': 'DeleteOptions', 'preconditions': {'uid': current['metadata']['uid']}})
+                require(self.kube.request('GET', 'configmaps', config['metadata']['name']) is None,
+                        UNAVAILABLE, 503)
+        return fenced
 
     def _submission_fence(self, expected):
         """Reserve the same name without executing, fencing a late original POST.
@@ -415,7 +428,7 @@ class KubeSceneRenderer:
             pass
         return ServiceError('motion_execution_failed', 502)
 
-    def render(self, scene, *, key, scene_index, quality, cancel_event=None):
+    def _context(self, scene, key, scene_index, quality):
         motion = scene['motion']
         files = compile_project(motion['plan'], motion['beats'], motion['alignment'],
             runtime_fingerprint=self.runtime, leading_seconds=scene['timing']['leading_seconds'],
@@ -428,34 +441,101 @@ class KubeSceneRenderer:
                 input=motion['project_files_sha256'], image=self.image, quality=quality)))
         scene_key, name = f'{key}:{scene_index}', 'vm-' + sha(f'{key}:{scene_index}'.encode())[:36]
         directory = self.root / key / f'scene-{scene_index:03d}'
-        directory.mkdir(parents=True, exist_ok=True)
-        input_dir = directory / 'input'
-        input_dir.mkdir(exist_ok=True)
-        for filename, raw in files.items():
-            (input_dir / filename).write_bytes(raw)
-        configs, expected = production_resources(input_dir, image=self.image, release_id=self.release_id,
-            namespace=self.kube.namespace, name=name, binding=binding, quality=quality, seconds=self.seconds)
+        # Resource recovery must not need another write to a full execution PVC.
+        # Frozen inputs already live in the journal; this bounded copy uses /tmp.
+        with tempfile.TemporaryDirectory(prefix='motion-input-') as scratch:
+            input_dir = Path(scratch)
+            for filename, raw in files.items():
+                (input_dir / filename).write_bytes(raw)
+            configs, expected = production_resources(input_dir, image=self.image, release_id=self.release_id,
+                namespace=self.kube.namespace, name=name, binding=binding, quality=quality, seconds=self.seconds)
+        return files, scene_key, binding, name, directory, configs, expected
+
+    def _local_cleanup(self, directory, *, preserve_media):
+        if not directory.exists():
+            return
+        require(directory.is_dir() and not directory.is_symlink(), 'motion_scratch_invalid')
+        inputs = directory / 'input'
+        if inputs.exists() or inputs.is_symlink():
+            require(inputs.is_dir() and not inputs.is_symlink(), 'motion_scratch_invalid')
+            shutil.rmtree(inputs)
+        names = ['output.pending'] + ([] if preserve_media else ['output.mp4', 'evidence.json'])
+        for name in names:
+            path = directory / name
+            require(not path.is_symlink(), 'motion_scratch_invalid')
+            path.unlink(missing_ok=True)
+
+    def _pending(self, scene_key, state, *, error=None, status=502, result=None):
+        record = self.journal.scene(scene_key)
+        pending = dict(state=state, error=error, status=status, result=result,
+                       fence_missing=record['state'] == 'submitting')
+        self.journal.scene_update(scene_key, 'cleanup_pending', result={'cleanup_pending': pending}, error=error)
+
+    def _finish_cleanup(self, scene_key, directory, configs, expected, binding, *, verify_output=True):
+        pending = json.loads(self.journal.scene(scene_key)['result'])['cleanup_pending']
+        try:
+            if pending['fence_missing'] and self.kube.request('GET', 'jobs', expected['metadata']['name']) is None:
+                self._submission_fence(expected)
+            fenced = self._cleanup(configs, expected, binding)
+            self._local_cleanup(directory, preserve_media=pending['state'] == 'completed')
+        except Exception:
+            # Keep the durable cleanup intent. Binding/UID conflicts are not
+            # permission to delete a foreign object or abandon live resources.
+            raise ServiceError(UNAVAILABLE, 503) from None
+        result = pending['result']
+        if fenced and result is None:
+            result = {'submission_fenced': True}
+        output = directory / 'output.mp4'
+        if pending['state'] == 'completed' and verify_output:
+            require(output.is_file() and not output.is_symlink() and output.stat().st_size <= ARCHIVE_BYTES
+                    and sha(output.read_bytes()) == result['media_sha256'], 'motion_cached_media_corrupt')
+        self.journal.scene_update(scene_key, pending['state'], result=result or {}, error=pending['error'])
+        if pending['state'] != 'completed':
+            raise ServiceError(pending['error'] or 'motion_execution_failed', pending['status'])
+        return {**result, 'path': str(output)}
+
+    def render(self, scene, *, key, scene_index, quality, cancel_event=None):
+        files, scene_key, binding, name, directory, configs, expected = self._context(scene, key, scene_index, quality)
         record = self.journal.scene_intent(scene_key, binding, name)
+        try:
+            if record['state'] == 'cleanup_pending':
+                return self._finish_cleanup(scene_key, directory, configs, expected, binding)
+            return self._execute(files, scene_key, directory, configs, expected, binding, record,
+                                 quality=quality, cancel_event=cancel_event)
+        except Exception as failure:
+            error = failure if isinstance(failure, ServiceError) else ServiceError(
+                'motion_execution_storage_error' if isinstance(failure, OSError) else 'motion_execution_internal_error',
+                507 if isinstance(failure, OSError) else 502)
+            if error.code == UNAVAILABLE:
+                raise error from None
+            current = self.journal.scene(scene_key)
+            if current['state'] in {'failed', 'cancelled', 'timed_out'} and current['error'] == error.code:
+                raise error from None
+            state = 'cancelled' if error.code == 'media_render_cancelled' else ('timed_out' if error.status == 504 else 'failed')
+            self._pending(scene_key, state, error=error.code, status=error.status)
+            return self._finish_cleanup(scene_key, directory, configs, expected, binding)
+
+    def _execute(self, files, scene_key, directory, configs, expected, binding, record, *, quality, cancel_event):
+        name = expected['metadata']['name']
         output, evidence = directory / 'output.mp4', directory / 'evidence.json'
         if record['state'] == 'completed':
             result = json.loads(record['result'])
+            self._cleanup(configs, expected, binding)
             require(output.is_file() and output.stat().st_size <= ARCHIVE_BYTES
                     and sha(output.read_bytes()) == result['media_sha256'], 'motion_cached_media_corrupt')
-            self._cleanup(configs, expected, binding)
+            self._local_cleanup(directory, preserve_media=True)
             return {**result, 'path': str(output)}
         if record['state'] in {'failed', 'cancelled', 'timed_out'}:
-            self._cleanup(configs, expected, binding)
-            raise ServiceError(record['error'] or 'motion_execution_failed', 502)
+            self._pending(scene_key, record['state'], error=record['error'],
+                          status=504 if record['state'] == 'timed_out' else (409 if record['state'] == 'cancelled' else 502))
+            return self._finish_cleanup(scene_key, directory, configs, expected, binding)
         self.check_policy()
         cancelled = lambda: cancel_event is not None and cancel_event.is_set()
         actual = self.kube.request('GET', 'jobs', name)
         if actual:
             self._bound(expected, actual)
             if actual['metadata'].get('annotations', {}).get(LABEL + 'submission-fence') == 'true':
-                self._cleanup(configs, expected, binding)
                 error = 'media_render_cancelled' if cancelled() else 'motion_submission_unconfirmed'
-                self.journal.scene_update(scene_key, 'cancelled' if cancelled() else 'failed',
-                                          error=error, result={'submission_fenced': True})
                 raise ServiceError(error, 409 if cancelled() else 502)
             self.journal.scene_update(scene_key, 'running')
         elif record['state'] == 'submitting':
@@ -463,18 +543,12 @@ class KubeSceneRenderer:
             # identity. A suspended name reservation safely fences a late POST
             # without submitting the rendering workload another time.
             actual = self._submission_fence(expected)
-            self._cleanup(configs, expected, binding)
-            state = 'cancelled' if cancelled() else 'failed'
             error = 'media_render_cancelled' if cancelled() else 'motion_submission_unconfirmed'
-            self.journal.scene_update(scene_key, state, error=error,
-                                      result={'submission_fenced': True})
             raise ServiceError(error, 409 if cancelled() else 502)
         elif record['state'] == 'running':
             # A previously observed Job already committed. It cannot be
             # recreated implicitly after TTL/manual removal on a later restart.
-            self._cleanup(configs, expected, binding)
             error = 'media_render_cancelled' if cancelled() else 'motion_execution_disappeared'
-            self.journal.scene_update(scene_key, 'cancelled' if cancelled() else 'failed', error=error)
             raise ServiceError(error, 409 if cancelled() else 502)
         else:
             for config in configs:
@@ -500,74 +574,75 @@ class KubeSceneRenderer:
                 self._bound(expected, actual)
                 self.journal.scene_update(scene_key, 'running')
         started = time.monotonic()
-        try:
-            while True:
-                if cancelled():
-                    self._cleanup(configs, expected, binding)
-                    self.journal.scene_update(scene_key, 'cancelled', error='media_render_cancelled')
-                    raise ServiceError('media_render_cancelled', 409)
-                require(time.monotonic() - started < self.seconds * 2 + 150, 'motion_execution_timed_out', 504)
-                actual = self.kube.request('GET', 'jobs', name)
-                require(actual is not None, 'motion_execution_disappeared')
-                self._bound(expected, actual)
-                pods = self._pods(name, binding)
-                for pod in pods:
-                    statuses = pod.get('status', {}).get('containerStatuses', []) + pod.get('status', {}).get('initContainerStatuses', [])
-                    for container in statuses:
-                        if container.get('imageID'):
-                            require(container['imageID'].endswith(self.runtime['image_digest']), 'motion_running_image_mismatch')
-                        terminated = container.get('state', {}).get('terminated', {})
-                        require(terminated.get('reason') != 'OOMKilled', 'motion_execution_oom')
-                        if terminated.get('exitCode', 0) != 0:
-                            raise (self._failure(pod) if container.get('name') == 'renderer'
-                                   else ServiceError('motion_execution_failed', 502))
-                conditions = actual.get('status', {}).get('conditions', [])
-                failed = next((c for c in conditions if c.get('type') == 'Failed' and c.get('status') == 'True'), None)
-                if failed:
-                    raise ServiceError('motion_execution_timed_out' if failed.get('reason') == 'DeadlineExceeded'
-                                       else 'motion_execution_failed', 504 if failed.get('reason') == 'DeadlineExceeded' else 502)
-                if actual.get('status', {}).get('succeeded') == 1:
-                    require(len(pods) == 1, 'motion_execution_pod_missing')
-                    statuses = pods[0].get('status', {}).get('containerStatuses', [])
-                    require(len(statuses) == 1 and statuses[0].get('name') == 'renderer'
-                            and statuses[0].get('imageID', '').endswith(self.runtime['image_digest'])
-                            and statuses[0].get('state', {}).get('terminated', {}).get('exitCode') == 0,
-                            'motion_running_image_mismatch')
-                    logs = self.kube.request('GET', 'pods', pods[0]['metadata']['name'], logs=True,
-                                             params={'container': 'renderer', 'limitBytes': 9 * 1024 * 1024})
-                    require(logs is not None, UNAVAILABLE, 503)
-                    entries = unpack_artifacts(logs)
-                    result = validate_artifacts(entries, files, self.runtime, quality)
-                    temporary = directory / 'output.pending'
-                    temporary.write_bytes(entries['output.mp4'])
-                    temporary.replace(output)
-                    evidence.write_bytes(canonical_bytes(result))
-                    self.journal.scene_update(scene_key, 'completed', result=result)
-                    self._cleanup(configs, expected, binding)
-                    return {**result, 'path': str(output)}
-                time.sleep(self.poll_seconds)
-        except ServiceError as error:
-            if error.code == UNAVAILABLE:
-                raise
-            self._cleanup(configs, expected, binding)
-            state = 'cancelled' if error.code == 'media_render_cancelled' else ('timed_out' if error.status == 504 else 'failed')
-            self.journal.scene_update(scene_key, state, error=error.code)
-            raise
+        while True:
+            if cancelled():
+                raise ServiceError('media_render_cancelled', 409)
+            require(time.monotonic() - started < self.seconds * 2 + 150, 'motion_execution_timed_out', 504)
+            actual = self.kube.request('GET', 'jobs', name)
+            require(actual is not None, 'motion_execution_disappeared')
+            self._bound(expected, actual)
+            pods = self._pods(name, binding)
+            for pod in pods:
+                statuses = pod.get('status', {}).get('containerStatuses', []) + pod.get('status', {}).get('initContainerStatuses', [])
+                for container in statuses:
+                    if container.get('imageID'):
+                        require(container['imageID'].endswith(self.runtime['image_digest']), 'motion_running_image_mismatch')
+                    terminated = container.get('state', {}).get('terminated', {})
+                    require(terminated.get('reason') != 'OOMKilled', 'motion_execution_oom')
+                    if terminated.get('exitCode', 0) != 0:
+                        raise (self._failure(pod) if container.get('name') == 'renderer'
+                               else ServiceError('motion_execution_failed', 502))
+            conditions = actual.get('status', {}).get('conditions', [])
+            failed = next((c for c in conditions if c.get('type') == 'Failed' and c.get('status') == 'True'), None)
+            if failed:
+                raise ServiceError('motion_execution_timed_out' if failed.get('reason') == 'DeadlineExceeded'
+                                   else 'motion_execution_failed', 504 if failed.get('reason') == 'DeadlineExceeded' else 502)
+            if actual.get('status', {}).get('succeeded') == 1:
+                require(len(pods) == 1, 'motion_execution_pod_missing')
+                statuses = pods[0].get('status', {}).get('containerStatuses', [])
+                require(len(statuses) == 1 and statuses[0].get('name') == 'renderer'
+                        and statuses[0].get('imageID', '').endswith(self.runtime['image_digest'])
+                        and statuses[0].get('state', {}).get('terminated', {}).get('exitCode') == 0,
+                        'motion_running_image_mismatch')
+                logs = self.kube.request('GET', 'pods', pods[0]['metadata']['name'], logs=True,
+                                         params={'container': 'renderer', 'limitBytes': 9 * 1024 * 1024})
+                require(logs is not None, UNAVAILABLE, 503)
+                entries = unpack_artifacts(logs)
+                result = validate_artifacts(entries, files, self.runtime, quality)
+                directory.mkdir(parents=True, exist_ok=True)
+                temporary = directory / 'output.pending'
+                temporary.write_bytes(entries['output.mp4'])
+                temporary.replace(output)
+                evidence.write_bytes(canonical_bytes(result))
+                self._pending(scene_key, 'completed', result=result)
+                return self._finish_cleanup(scene_key, directory, configs, expected, binding)
+            time.sleep(self.poll_seconds)
 
     def cancel_operation(self, snapshot, key, cancel_event):
         """Drain all durable scene handles before reporting a project cancel."""
+        self.cleanup_operation(snapshot, key, state='cancelled', error='media_render_cancelled', status=409)
+
+    def cleanup_operation(self, snapshot, key, *, state='failed', error='motion_execution_failed', status=502):
+        """Recover only recorded identities, without invoking the render path."""
         for index, scene in enumerate(snapshot['scenes']):
-            if scene['visual_mode'] != 'motion' or self.journal.scene(f'{key}:{index}') is None:
+            record = self.journal.scene(f'{key}:{index}')
+            if scene['visual_mode'] != 'motion' or record is None:
                 continue
+            _, scene_key, binding, name, directory, configs, expected = self._context(scene, key, index, snapshot['quality'])
+            require(record['binding'] == binding and record['name'] == name, UNAVAILABLE, 503)
+            if record['state'] != 'cleanup_pending':
+                if record['state'] == 'completed':
+                    self._pending(scene_key, 'completed', result=json.loads(record['result']))
+                elif record['state'] in {'failed', 'cancelled', 'timed_out'}:
+                    self._pending(scene_key, record['state'], error=record['error'],
+                                  status=504 if record['state'] == 'timed_out' else (409 if record['state'] == 'cancelled' else 502),
+                                  result=json.loads(record['result']) if record['result'] else None)
+                else:
+                    self._pending(scene_key, state, error=error, status=status)
             try:
-                self.render(scene, key=key, scene_index=index, quality=snapshot['quality'], cancel_event=cancel_event)
-            except ServiceError as error:
-                if error.code == UNAVAILABLE:
+                # Draining an operation preserves historical successful media;
+                # media validation belongs to the caller requesting that media.
+                self._finish_cleanup(scene_key, directory, configs, expected, binding, verify_output=False)
+            except ServiceError as failure:
+                if failure.code == UNAVAILABLE:
                     raise
-                record = self.journal.scene(f'{key}:{index}')
-                actual = self.kube.request('GET', 'jobs', record['name'])
-                safe_fence = (actual is not None and actual.get('spec', {}).get('suspend') is True
-                    and actual.get('metadata', {}).get('annotations', {}).get(ANNOTATION) == record['binding']
-                    and actual['metadata']['annotations'].get(LABEL + 'submission-fence') == 'true')
-                if (actual is not None and not safe_fence) or self._pods(record['name'], record['binding']):
-                    raise ServiceError(UNAVAILABLE, 503) from None

@@ -281,8 +281,8 @@ test('all controls are unique and the app integrates reads, polling, exact navig
   assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML|eval\(/);
   const app = await readFile(new URL('../../video_workbench/web/app.mjs', import.meta.url), 'utf8');
   assert.match(app, /batchPanel\.load\(ticket.projectId, ticket.epoch\)/);
-  assert.match(app, /!batchPanel\.hasActiveOperation\(\)/);
-  assert.match(app, /batchPanel\.hasUnresolvedOperation\(\)/);
+  assert.match(app, /!batchPanel\.hasActiveOperation\(state.projectId\)/);
+  assert.match(app, /batchPanel\.hasUnresolvedOperation\(state.projectId\)/);
   assert.match(app, /motionPanel\.select\(state.projectId, sceneId, motionVersionId\)/);
   assert.match(app, /createMotionRenderRequest\(state.project, \{ purpose: 'draft' \}\)/);
 });

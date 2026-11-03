@@ -167,6 +167,9 @@ class MixedMotionRenderer:
         shutil.rmtree(work)
         return result
 
+    def cleanup(self, snapshot, *, key, state, error, status):
+        self.scene_renderer.cleanup_operation(snapshot, key, state=state, error=error, status=status)
+
 
 class JournalCancellation:
     def __init__(self, journal, key):
@@ -220,6 +223,10 @@ class MotionExecutionService:
             key = row['key']
             self.journal.update(key, state='running')
             event = JournalCancellation(self.journal, key)
+            previous_result = json.loads(row['result']) if row['result'] else {}
+            if 'cleanup_pending' in previous_result:
+                self._finish_failure(row, previous_result['cleanup_pending'])
+                return True
             try:
                 result = self.renderer.render(json.loads(row['snapshot']), self.root / key / 'result',
                                                key=key, cancel_event=event)
@@ -228,8 +235,7 @@ class MotionExecutionService:
                 require(path == expected and not path.is_symlink() and path.is_file()
                         and path.stat().st_size == result['bytes'], 'motion_service_output_invalid')
                 if event.is_set():
-                    path.unlink(missing_ok=True)
-                    self.journal.update(key, state='cancelled', error='media_render_cancelled')
+                    raise ServiceError('media_render_cancelled', 409)
                 else:
                     public = {k: v for k, v in result.items() if k != 'path'}
                     self.journal.update(key, state='completed', result=json.dumps(public), error=None)
@@ -239,14 +245,43 @@ class MotionExecutionService:
                     self.journal.update(key, state='queued', error=None)
                 else:
                     state = 'cancelled' if error.code in {'media_render_cancelled', 'media_cancelled'} else ('timed_out' if error.status == 504 else 'failed')
-                    self.journal.update(key, state=state, error=error.code)
-            except Exception:
+                    self._begin_failure(row, state, error.code, error.status)
+            except Exception as error:
                 # Do not expose filesystem, credentials or exception text.
-                self.last_error = 'motion_execution_internal_error'
-                self.journal.update(key, state='failed', error=self.last_error)
+                self.last_error = 'motion_execution_storage_error' if isinstance(error, OSError) else 'motion_execution_internal_error'
+                self._begin_failure(row, 'failed', self.last_error, 507 if isinstance(error, OSError) else 502)
             return True
         finally:
             self.worker_lock.release()
+
+    def _begin_failure(self, row, state, error, status):
+        pending = dict(state=state, error=error, status=status)
+        # Persist cleanup intent before touching resources. A process restart
+        # takes this path directly, never renders/submits another scene Job.
+        self.journal.update(row['key'], result=json.dumps({'cleanup_pending': pending}), error=None)
+        self._finish_failure(row, pending)
+
+    def _finish_failure(self, row, pending):
+        key = row['key']
+        try:
+            cleanup = getattr(self.renderer, 'cleanup', None)
+            if cleanup is not None:
+                cleanup(json.loads(row['snapshot']), key=key, **pending)
+            root = self.root / key / 'result'
+            require(not root.is_symlink(), 'motion_scratch_invalid')
+            work = root / 'assets'
+            if work.exists() or work.is_symlink():
+                require(work.is_dir() and not work.is_symlink(), 'motion_scratch_invalid')
+                shutil.rmtree(work)
+            for name in ('video.mp4', 'report.json'):
+                path = root / name
+                require(not path.is_symlink(), 'motion_scratch_invalid')
+                path.unlink(missing_ok=True)
+        except Exception:
+            self.last_error = 'motion_cleanup_pending'
+            self.journal.update(key, state='queued', error=None)
+            return
+        self.journal.update(key, state=pending['state'], error=pending['error'], result=None)
 
     def run(self):
         while not self.stopping.is_set():
@@ -272,7 +307,7 @@ class MotionExecutionService:
 
 def public_operation(row):
     result = dict(operation_id=row['operation_id'], snapshot_sha256=row['snapshot_sha256'], state=row['state'])
-    if row['result']:
+    if row['state'] == 'completed' and row['result']:
         result['result'] = json.loads(row['result'])
     if row['error']:
         result['error'] = row['error']

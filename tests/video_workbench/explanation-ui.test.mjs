@@ -317,7 +317,7 @@ test('all new controls exist once and the app includes explanation reads in norm
   for (const [, id] of source.matchAll(/\$\('([^']+)'\)/g)) assert.ok(ids.includes(id), id);
   assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML|eval\(/);
   assert.match(app, /explanationPanel\.load\(ticket.projectId, ticket.epoch\)/);
-  assert.match(app, /!explanationPanel\.hasActiveOperation\(\)/);
+  assert.match(app, /!explanationPanel\.hasActiveOperation\(state.projectId\)/);
   assert.match(app, /explanationPanel\.hasDrafts\(\)/);
   assert.match(html, /id="explanation-audience" maxlength="300"/);
   assert.match(html, /id="explanation-goal"[^>]*maxlength="1200"/);
