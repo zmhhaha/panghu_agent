@@ -10,6 +10,7 @@ import {
 } from './model.mjs';
 import { createExplanationPanel, explanationErrorLabel } from './explanation.mjs';
 import { createMotionPanel, createMotionRenderRequest, createDynamicProjectRequest, usesDynamicVideo, motionMetadata, motionErrorLabel } from './motion.mjs';
+import { createBatchPanel, batchErrorLabel } from './batch.mjs';
 
 const $ = id => document.getElementById(id);
 const state = createWorkspaceState();
@@ -50,6 +51,7 @@ const explanationPanel = createExplanationPanel({
     configured: sessionSettings.explanation_configured === true,
     unsaved: projectHasUnsavedEdits(state.projectId),
     projectBusy: activeOperations(state.project).length > 0 || pending.size > 0
+      || batchPanel.hasUnresolvedOperation()
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
   }),
 });
@@ -65,8 +67,41 @@ const motionPanel = createMotionPanel({
     renderConfigured: sessionSettings.motion_render_configured === true,
     unsaved: projectHasUnsavedEdits(state.projectId, false),
     projectBusy: activeOperations(state.project).length > 0 || pending.size > 0 || explanationPanel.hasActiveOperation()
+      || batchPanel.hasUnresolvedOperation()
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
   }),
+});
+
+const batchPanel = createBatchPanel({
+  document, request, refresh: () => loadProject(), onError: showError, onSuccess: success,
+  getContext: () => ({ project: state.project, epoch: state.epoch,
+    enabled: sessionSettings.batch_enabled === true && sessionSettings.motion_enabled === true,
+    motionConfigured: sessionSettings.motion_configured === true,
+    audioConfigured: sessionSettings.speech_configured === true,
+    renderConfigured: sessionSettings.motion_render_configured === true,
+    unsaved: projectHasUnsavedEdits(state.projectId),
+    projectBusy: activeOperations(state.project).length > 0 || pending.size > 0
+      || explanationPanel.hasUnresolvedOperation() || motionPanel.hasUnresolvedOperation()
+      || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
+  }),
+  onOpenScene: (sceneId, { motionVersionId, audioVersionId } = {}) => {
+    if (!state.project?.scenes.some(scene => scene.id === sceneId)) return;
+    batchPanel.pause(); motionPanel.pause(); $('audio-preview').pause();
+    selectScene(state, sceneId); editor = null;
+    if (motionVersionId) motionPanel.select(state.projectId, sceneId, motionVersionId);
+    if (audioVersionId) chooseAudioVersion(state, sceneId, audioVersionId);
+    render(); motionPanel.load(state.projectId, state.epoch);
+    $('scene-workspace').scrollIntoView({ block: 'start' });
+    $('motion-panel').open = true;
+  },
+  onPlayRender: item => openMotionRender(item),
+  onProjectDraft: () => {
+    if (!state.project || batchPanel.hasUnresolvedOperation() || projectHasUnsavedEdits(state.projectId)) return;
+    const intent = createMotionRenderRequest(state.project, { purpose: 'draft' });
+    perform(`render:${state.projectId}`, () => request(intent.path, { method: 'POST', body: intent.body }),
+      () => success('整片草稿制作已开始，使用当前已采用版本；不会确认人工时序或替你正式导出。'));
+  },
+  onMediaPlay: () => { motionPanel.pause(); $('audio-preview').pause(); closeMotionRender(); pauseProjectPlayer(); },
 });
 
 function projectHasUnsavedEdits(projectId, includeMotion = true) {
@@ -80,7 +115,8 @@ function productionTransitionBusy(project) {
   const operations = [project?.storyboard_operation, ...(project?.scenes ?? []).flatMap(scene =>
     [scene.operation, scene.audio_operation, scene.motion?.operation]), ...(renderHistories.get(project?.id) ?? [])];
   return pending.size > 0 || operations.some(isUnresolvedProductionOperation)
-    || motionPanel.hasUnresolvedOperation() || explanationPanel.hasUnresolvedOperation();
+    || motionPanel.hasUnresolvedOperation() || explanationPanel.hasUnresolvedOperation()
+    || batchPanel.hasUnresolvedOperation() || batchPanel.hasProjectDrafts(project?.id);
 }
 
 function renderProductionTransition(project) {
@@ -139,6 +175,7 @@ class ApiError extends Error {
     const code = typeof detail === 'object' && !Array.isArray(detail) ? detail?.code : null;
     const message = typeof detail?.message === 'string' ? detail.message : null;
     super(ERROR_LABELS[code] ?? (code?.startsWith('explanation_') ? explanationErrorLabel(code) : null)
+      ?? (code?.startsWith('batch_') ? batchErrorLabel(code) : null)
       ?? (code?.startsWith('motion_') ? motionErrorLabel(code) : null) ?? message ?? (status === 401 ? '请先登录工作台。'
       : status === 409 ? '项目已更新或已有任务执行中，请刷新后重试。'
         : status === 422 ? '请检查填写的内容和长度。' : `请求未完成（${status}），请稍后重试。`));
@@ -302,7 +339,7 @@ function renderEditor(scene, project) {
   $('draft-status').textContent = draft.dirty ? '有未保存的修改'
     : dynamic ? '保存后制作动态图解；动态片段最多 60 秒，长旁白建议拆镜。'
       : editor === 'new' ? '保存后即可制作镜头' : '已载入当前镜头';
-  $('save-scene').disabled = pending.has(`save:${project.id}`);
+  $('save-scene').disabled = pending.has(`save:${project.id}`) || batchPanel.hasUnresolvedOperation();
   $('save-scene').textContent = pending.has(`save:${project.id}`) ? '正在保存…' : '保存镜头';
 }
 
@@ -413,7 +450,8 @@ function projectSpeechDraft(project = state.project) {
 
 function renderProjectSpeech(project) {
   const draft = projectSpeechDraft(project);
-  const busy = pending.has(`project-speech:${project.id}`);
+  const batchBusy = batchPanel.hasUnresolvedOperation();
+  const busy = pending.has(`project-speech:${project.id}`) || batchBusy;
   const catalog = speechVoices(sessionSettings);
   const options = projectVoiceOptions(draft.voice, sessionSettings).map(item => {
     const option = node('option', item.label); option.value = item.value; option.disabled = item.disabled;
@@ -426,7 +464,8 @@ function renderProjectSpeech(project) {
     || !catalog.some(voice => voice.id === draft.voice);
   $('reset-project-speech').disabled = busy;
   const saved = projectSpeechVoice(project, sessionSettings);
-  $('project-speech-status').textContent = draft.dirty ? '项目音色尚未保存，请先保存后再生成配音。'
+  $('project-speech-status').textContent = batchBusy ? '批量制作尚未结束，项目音色暂不可更改。已有配音仍可试听或下载。'
+    : draft.dirty ? '项目音色尚未保存，请先保存后再生成配音。'
     : !sessionSettings.speech_configured ? '配音服务尚未连接，历史配音仍可试听或下载。'
       : !catalog.some(voice => voice.id === saved) ? '当前项目音色暂不可用，请选择可用音色并保存。历史配音仍可试听。'
         : `已保存项目音色：${speechVoiceName(saved, sessionSettings)}。`;
@@ -496,6 +535,7 @@ function updateCaptionButtons() {
 }
 
 function renderAudio(scene, project) {
+  const batchBusy = batchPanel.hasUnresolvedOperation();
   const settings = scene.speech_settings ?? {};
   const speech = audioDraft(speechDrafts, scene, () => ({
     speed: settings.speed ?? 1, pronunciation: pronunciationText(settings.pronunciation),
@@ -503,8 +543,11 @@ function renderAudio(scene, project) {
   }));
   setValue('speech-speed', speech.speed);
   setValue('speech-pronunciation', speech.pronunciation);
-  $('speech-draft-note').textContent = speech.dirty ? '配音设置尚未保存' : '使用当前已保存的配音设置';
-  $('save-speech-settings').disabled = !speech.dirty || pending.has(`speech:${scene.id}`);
+  $('speech-speed').disabled = batchBusy; $('speech-pronunciation').disabled = batchBusy;
+  $('reset-speech-settings').disabled = batchBusy;
+  $('speech-draft-note').textContent = batchBusy ? '批量制作期间保持当前语速与读音设置。'
+    : speech.dirty ? '配音设置尚未保存' : '使用当前已保存的配音设置';
+  $('save-speech-settings').disabled = batchBusy || !speech.dirty || pending.has(`speech:${scene.id}`);
   const voice = projectSpeechVoice(project, sessionSettings);
   $('audio-voice-label').textContent = `项目音色 · ${speechVoiceName(voice, sessionSettings)}`;
   $('audio-provider-note').textContent = sessionSettings.speech_configured ? '使用当前镜头已保存的旁白制作，生成完成后可试听比较。'
@@ -515,7 +558,7 @@ function renderAudio(scene, project) {
   const projectVoiceBusy = pending.has(`project-speech:${project.id}`);
   const voiceReady = projectSpeechCanGenerate(project, sessionSettings, projectVoiceDraft);
   $('generate-audio').disabled = !voiceReady || projectVoiceBusy || !scene.narration?.trim()
-    || dirty || speech.dirty || busy;
+    || dirty || speech.dirty || busy || batchPanel.hasUnresolvedOperation();
   $('audio-generation-hint').textContent = projectVoiceDraft.dirty || projectVoiceBusy ? '请先保存项目音色。'
     : sessionSettings.speech_configured && !voiceReady ? '当前项目音色不可用，请在项目配音中选择并保存。'
       : dirty ? '请先保存镜头旁白。' : speech.dirty ? '请先保存语速与读音设置。'
@@ -560,8 +603,10 @@ function renderAudio(scene, project) {
     expected_revision: project.revision, dirty: false,
   }));
   setValue('leading-seconds', timing.leading_seconds); setValue('trailing-seconds', timing.trailing_seconds);
-  $('save-timing').disabled = !timing.dirty || pending.has(`timing:${scene.id}`);
-  $('timing-draft-note').textContent = timing.dirty ? '留白尚未保存' : '';
+  $('leading-seconds').disabled = batchBusy; $('trailing-seconds').disabled = batchBusy;
+  $('reset-timing').disabled = batchBusy;
+  $('save-timing').disabled = batchBusy || !timing.dirty || pending.has(`timing:${scene.id}`);
+  $('timing-draft-note').textContent = batchBusy ? '批量制作期间保持当前镜头留白。' : timing.dirty ? '留白尚未保存' : '';
   const head = adoptedAudio(scene);
   const duration = head && !scene.audio_stale ? Math.max(Number(scene.duration_seconds), Number(head.duration_seconds)
     + Number(scene.leading_seconds ?? 0) + Number(scene.trailing_seconds ?? 0)) : Number(scene.duration_seconds);
@@ -625,6 +670,7 @@ function renderDelivery(project) {
   $('captions-section').hidden = dynamic;
   $('render-motion-project').disabled = !dynamic || !sessionSettings.motion_render_configured || projectHasUnsavedEdits(project.id)
     || pending.has(`render:${project.id}`) || issues.length > 0 || !scenes.length
+    || batchPanel.hasUnresolvedOperation()
     || (renderHistories.get(project.id) ?? []).some(isActiveOperation);
   $('render-silent').disabled = dynamic;
   $('render-subtitles').disabled = dynamic;
@@ -638,7 +684,7 @@ function renderDelivery(project) {
     const row = node('div', undefined, 'render-item');
     const label = node('div');
     const subtitleLabel = item.subtitles === true ? '有字幕' : item.subtitles === false ? '无字幕' : '字幕状态未记录';
-    const kind = item.purpose === 'draft' ? '镜头 MP4 草稿' : item.visual_mode === 'mixed' ? '动态成片' : item.silent ? '静音视频' : '有声视频';
+    const kind = item.purpose === 'draft' ? 'MP4 草稿' : item.visual_mode === 'mixed' ? '动态成片' : item.silent ? '静音视频' : '有声视频';
     label.append(node('strong', `${kind} · ${subtitleLabel} · ${statusLabel(item.status)}`),
       node('small', `文稿版本 ${item.project_revision ?? '—'}${item.project_revision !== project.revision ? ' · 项目已有后续修改' : ''}${item.error ? ` · ${ERROR_LABELS[item.error] ?? (item.error.startsWith('motion_') ? motionErrorLabel(item.error) : '导出未完成，请检查资源后重试。')}` : ''}`));
     row.append(label);
@@ -667,6 +713,7 @@ function render() {
   renderProjects();
   explanationPanel.render();
   motionPanel.render();
+  batchPanel.render();
   if (!project) return;
   project.scenes ??= [];
   $('project-title').textContent = project.title;
@@ -723,7 +770,7 @@ function schedulePolling() {
   stopPolling();
   if (document.hidden || !state.projectId || (!activeOperations(state.project).length
       && !(renderHistories.get(state.projectId) ?? []).some(isActiveOperation)
-      && !explanationPanel.hasActiveOperation() && !motionPanel.hasActiveOperation())) return;
+      && !explanationPanel.hasActiveOperation() && !motionPanel.hasActiveOperation() && !batchPanel.hasActiveOperation())) return;
   pollTimer = setTimeout(() => loadProject().catch(showError), 3500);
 }
 
@@ -755,10 +802,10 @@ async function loadProject() {
       render();
       const related = await Promise.allSettled([
         loadRenders(ticket.projectId, ticket.epoch), explanationPanel.load(ticket.projectId, ticket.epoch),
-        motionPanel.load(ticket.projectId, ticket.epoch),
+        motionPanel.load(ticket.projectId, ticket.epoch), batchPanel.load(ticket.projectId, ticket.epoch),
       ]);
       for (const result of related) if (result.status === 'rejected') throw result.reason;
-      if (state.projectId === ticket.projectId && state.epoch === ticket.epoch) renderProductionTransition(state.project);
+      if (state.projectId === ticket.projectId && state.epoch === ticket.epoch) render();
     }
   } catch (error) {
     if (ticket.epoch === state.epoch && error.name !== 'AbortError') {
@@ -782,6 +829,7 @@ async function openProject(id) {
   clearPreview();
   $('audio-preview').pause();
   motionPanel.pause();
+  batchPanel.pause();
   closeProjectPlayer();
   closeMotionRender();
   $('global-error').hidden = true;
@@ -839,7 +887,7 @@ function startNewScene() {
 
 async function saveScene(event) {
   event.preventDefault();
-  if (!$('scene-form').reportValidity() || !state.project) return;
+  if (batchPanel.hasUnresolvedOperation() || !$('scene-form').reportValidity() || !state.project) return;
   const projectId = state.projectId;
   const sceneId = editor === 'new' ? null : state.sceneId;
   const key = draftKey(sceneId);
@@ -935,8 +983,8 @@ function closeMotionRender() {
 }
 
 function openMotionRender(item) {
-  closeMotionRender(); closeProjectPlayer(); motionPanel.pause(); $('audio-preview').pause();
-  $('motion-render-heading').textContent = item.purpose === 'draft' ? '镜头 MP4 草稿' : '视频成片';
+  closeMotionRender(); closeProjectPlayer(); motionPanel.pause(); batchPanel.pause(); $('audio-preview').pause();
+  $('motion-render-heading').textContent = item.purpose === 'draft' ? 'MP4 草稿' : '视频成片';
   $('motion-render-note').textContent = item.purpose === 'draft'
     ? `文稿版本 ${item.project_revision ?? '—'} 的候选草稿。画面变化可能基于待核对的估算时序；播放不代表采用或已核对。`
     : `文稿版本 ${item.project_revision ?? '—'} 的采用版本快照。项目后续修改不会改变这条成片。`;
@@ -1016,6 +1064,7 @@ async function openProjectPlayer() {
 }
 
 function captureSpeechDraft() {
+  if (batchPanel.hasUnresolvedOperation()) return;
   const scene = selectedScene(state);
   if (!scene) return;
   const draft = speechDrafts.get(draftKey(scene.id));
@@ -1141,6 +1190,7 @@ $('export-project').addEventListener('click', () => {
 });
 
 $('project-speech-voice').addEventListener('change', () => {
+  if (batchPanel.hasUnresolvedOperation()) return;
   const draft = projectSpeechDraft();
   if (!draft) return;
   Object.assign(draft, { voice: $('project-speech-voice').value, dirty: true });
@@ -1149,6 +1199,7 @@ $('project-speech-voice').addEventListener('change', () => {
 $('save-project-speech').addEventListener('click', () => {
   const project = state.project; const draft = projectSpeechDraft();
   if (!project || !draft?.dirty || !sessionSettings.speech_configured
+      || batchPanel.hasUnresolvedOperation()
       || !speechVoices(sessionSettings).some(voice => voice.id === draft.voice)) return;
   const body = { expected_revision: draft.expected_revision, voice: draft.voice };
   perform(`project-speech:${project.id}`, () => request(`/api/projects/${encodeURIComponent(project.id)}/speech`,
@@ -1157,12 +1208,13 @@ $('save-project-speech').addEventListener('click', () => {
 });
 $('reset-project-speech').addEventListener('click', () => {
   const project = state.project;
-  if (!project || pending.has(`project-speech:${project.id}`)) return;
+  if (!project || batchPanel.hasUnresolvedOperation() || pending.has(`project-speech:${project.id}`)) return;
   if (projectSpeechDrafts.get(project.id)?.dirty && !window.confirm('重新载入会清除尚未保存的项目音色，继续吗？')) return;
   projectSpeechDrafts.delete(project.id); render();
 });
 for (const id of ['speech-speed', 'speech-pronunciation']) $(id).addEventListener('input', captureSpeechDraft);
 $('save-speech-settings').addEventListener('click', () => {
+  if (batchPanel.hasUnresolvedOperation()) return;
   const scene = selectedScene(state); if (!scene || !$('speech-speed').reportValidity()) return;
   const key = draftKey(scene.id); const draft = speechDrafts.get(key);
   let pronunciation;
@@ -1174,6 +1226,7 @@ $('save-speech-settings').addEventListener('click', () => {
 });
 for (const [id, map] of [['reset-speech-settings', speechDrafts], ['reset-timing', timingDrafts], ['reset-captions', captionDrafts]]) {
   $(id).addEventListener('click', () => {
+    if (id !== 'reset-captions' && batchPanel.hasUnresolvedOperation()) return;
     const scene = selectedScene(state); if (!scene) return;
     const key = draftKey(scene.id);
     if (map.get(key)?.dirty && !window.confirm('重新载入会清除这里尚未保存的修改，继续吗？')) return;
@@ -1182,6 +1235,7 @@ for (const [id, map] of [['reset-speech-settings', speechDrafts], ['reset-timing
 }
 $('generate-audio').addEventListener('click', () => {
   const scene = selectedScene(state); if (!scene) return;
+  if (batchPanel.hasUnresolvedOperation()) return;
   if (!projectSpeechCanGenerate(state.project, sessionSettings, projectSpeechDraft())
       || pending.has(`project-speech:${state.projectId}`)) return;
   const body = { expected_revision: state.project.revision };
@@ -1229,6 +1283,7 @@ $('upload-audio').addEventListener('click', () => {
   }, () => { uploadSelection = null; $('audio-upload-file').value = ''; success('配音已上传为候选，请试听后采用。'); });
 });
 for (const id of ['leading-seconds', 'trailing-seconds']) $(id).addEventListener('input', () => {
+  if (batchPanel.hasUnresolvedOperation()) return;
   const scene = selectedScene(state); if (!scene) return;
   const draft = timingDrafts.get(draftKey(scene.id));
   Object.assign(draft, { leading_seconds: $('leading-seconds').valueAsNumber,
@@ -1236,6 +1291,7 @@ for (const id of ['leading-seconds', 'trailing-seconds']) $(id).addEventListener
   $('save-timing').disabled = false; $('timing-draft-note').textContent = '留白尚未保存';
 });
 $('save-timing').addEventListener('click', () => {
+  if (batchPanel.hasUnresolvedOperation()) return;
   const scene = selectedScene(state);
   if (!scene || !$('leading-seconds').reportValidity() || !$('trailing-seconds').reportValidity()) return;
   const key = draftKey(scene.id); const { dirty, ...body } = timingDrafts.get(key);
@@ -1282,13 +1338,15 @@ $('render-project').addEventListener('click', () => {
 });
 $('render-motion-project').addEventListener('click', () => {
   if (!state.project || !usesDynamicVideo(state.project) || !sessionSettings.motion_render_configured
-      || projectHasUnsavedEdits(state.projectId) || deliveryIssues(state.project, { silent: false, subtitles: false }).length
+      || batchPanel.hasUnresolvedOperation() || projectHasUnsavedEdits(state.projectId) || deliveryIssues(state.project, { silent: false, subtitles: false }).length
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation)) return;
   const intent = createMotionRenderRequest(state.project, { purpose: 'delivery' });
   perform(`render:${state.projectId}`, () => request(intent.path, { method: 'POST', body: intent.body }),
     () => success('动态成片导出已开始，使用已采用版本和已人工核对的时序。'));
 });
 $('close-motion-render').addEventListener('click', closeMotionRender);
+$('audio-preview').addEventListener('play', () => batchPanel.pause());
+$('motion-timing-audio').addEventListener('play', () => batchPanel.pause());
 $('motion-render-dialog').addEventListener('cancel', event => { event.preventDefault(); closeMotionRender(); });
 $('motion-render-video').addEventListener('error', () => showInputError('视频暂时无法播放，请重新读取导出状态后再试。'));
 $('preview-project').addEventListener('click', () => {
@@ -1343,12 +1401,12 @@ async function refresh() {
 $('retry-read').addEventListener('click', refresh);
 $('refresh-all').addEventListener('click', refresh);
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { stopPolling(); readController?.abort(); motionPanel.pause(); $('motion-render-video').pause(); }
+  if (document.hidden) { stopPolling(); readController?.abort(); motionPanel.pause(); batchPanel.pause(); $('motion-render-video').pause(); }
   else if (state.projectId) loadProject().catch(showError);
 });
-window.addEventListener('pagehide', () => { stopPolling(); readController?.abort(); sourceController?.abort(); $('audio-preview').pause(); pauseProjectPlayer(); motionPanel.pause(); $('motion-render-video').pause(); });
+window.addEventListener('pagehide', () => { stopPolling(); readController?.abort(); sourceController?.abort(); $('audio-preview').pause(); pauseProjectPlayer(); motionPanel.pause(); batchPanel.pause(); $('motion-render-video').pause(); });
 window.addEventListener('beforeunload', event => {
-  if (explanationPanel.hasDrafts() || motionPanel.hasDrafts() || [...drafts.values(), ...projectSpeechDrafts.values(), ...speechDrafts.values(), ...timingDrafts.values(), ...captionDrafts.values()].some(draft => draft.dirty)) {
+  if (explanationPanel.hasDrafts() || motionPanel.hasDrafts() || batchPanel.hasDrafts() || [...drafts.values(), ...projectSpeechDrafts.values(), ...speechDrafts.values(), ...timingDrafts.values(), ...captionDrafts.values()].some(draft => draft.dirty)) {
     event.preventDefault(); event.returnValue = '';
   }
 });
@@ -1359,6 +1417,7 @@ for (const eventName of ['input', 'change']) {
     // before change; rebuilding it here would undo the new review selection.
     if (!$('explanation-panel').contains(event.target)) explanationPanel.render();
     if (!$('motion-panel').contains(event.target) && !$('motion-timing-section').contains(event.target)) motionPanel.render();
+    if (!$('batch-panel').contains(event.target)) batchPanel.render();
   });
 }
 

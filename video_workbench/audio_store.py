@@ -328,21 +328,30 @@ class AudioStoreMixin:
             db.execute('UPDATE audio_operations SET document=? WHERE id=?', (json.dumps(op), operation_id))
             return claimed
 
-    def finish_audio(self, operation_id, *, audio=None, error=None, interrupted=False):
+    def finish_audio(self, operation_id, *, audio=None, error=None, interrupted=False,
+                     submission_not_started=False):
+        # This is explicit control-flow evidence from before synthesize(), not
+        # an inference from an exception code or an HTTP/transport failure.
+        if type(submission_not_started) is not bool or submission_not_started and audio is not None:
+            raise ValueError('No-submission evidence cannot accompany an audio result')
         info = _wav(audio.data) if audio is not None else None
         with self.transaction() as db:
             op = json.loads(db.execute('SELECT document FROM audio_operations WHERE id=?', (operation_id,)).fetchone()[0])
             if op['status'] not in AUDIO_ACTIVE:
                 return
             project = self._project(db, op['owner'], op['project_id'])
+            if submission_not_started:
+                op['submission_not_started'] = True
             if op['cancel_requested']:
-                op.update(status='cancelled', error='speech_upstream_stop_unconfirmed', upstream_stop_confirmed=False)
+                op.update(status='cancelled', error=None if submission_not_started else 'speech_upstream_stop_unconfirmed',
+                          upstream_stop_confirmed=submission_not_started)
             elif interrupted:
-                op.update(status='failed', error='speech_submission_uncertain', upstream_stop_confirmed=False)
+                op.update(status='failed', error='speech_interrupted_before_submission' if submission_not_started else 'speech_submission_uncertain',
+                          upstream_stop_confirmed=submission_not_started)
             elif error:
-                op.update(status='failed', error=error, upstream_stop_confirmed=False)
+                op.update(status='failed', error=error, upstream_stop_confirmed=submission_not_started)
             elif time.time() >= op['deadline_at']:
-                op.update(status='timed_out', error='speech_timeout', upstream_stop_confirmed=False)
+                op.update(status='timed_out', error='speech_timeout', upstream_stop_confirmed=submission_not_started)
             elif audio is not None:
                 if audio.input_sha256 != op['provider_input_sha256'] or hashlib.sha256(audio.data).hexdigest() != audio.sha256:
                     raise ServiceError('speech_input_mismatch', 502)

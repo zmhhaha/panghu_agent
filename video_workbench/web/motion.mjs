@@ -437,6 +437,9 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     if (Number.isFinite(auditionEnd) && audio.currentTime >= auditionEnd) { audio.pause(); auditionEnd = null; }
   });
   return { render, load, generate, adopt, mode, cancel, saveTiming, preview,
+    select: (projectId, sceneId, versionId) => {
+      if (projectId && sceneId && versionId) selections.set(`${projectId}:${sceneId}`, versionId);
+    },
     hasActiveOperation: () => [...(metadata.get(context().project?.id)?.scenes ?? context().project?.scenes ?? [])].some(scene => isActiveOperation(scene.motion?.operation)),
     hasUnresolvedOperation: () => [...(metadata.get(context().project?.id)?.scenes ?? context().project?.scenes ?? [])].some(scene => isUnresolvedProductionOperation(scene.motion?.operation)),
     hasDrafts: () => [...drafts.values()].some(row => row.dirty),

@@ -60,6 +60,27 @@
 
         <section class="project-speech-panel" aria-labelledby="project-speech-heading"><div><h2 id="project-speech-heading">项目配音</h2><p>整个项目统一使用一个音色。更换并保存后，旧配音需重新生成；历史仍可试听。选择音色不会自动生成或采用。</p></div><div class="project-speech-controls"><label>项目音色<select id="project-speech-voice" required disabled><option value="">正在读取音色…</option></select></label><button class="text-button" id="reset-project-speech" type="button">重新载入</button><button class="button secondary" id="save-project-speech" type="button" disabled>保存音色</button></div><p id="project-speech-status" class="field-note" role="status"></p></section>
 
+        <details class="batch-panel" id="batch-panel" hidden open>
+          <summary><span>整片批量制作</span><small>核对范围 → 制作候选 → 集中审阅</small><span aria-hidden="true">⌄</span></summary>
+          <div class="batch-content">
+            <p class="field-note">选择本次处理的镜头与步骤。制作只保存候选；采用和人工时序核对由你分别确认。</p>
+            <div id="batch-scenes" class="batch-scenes" aria-label="本次制作镜头"></div>
+            <fieldset class="batch-steps"><legend>本次制作步骤</legend><label class="checkbox-label"><input type="checkbox" id="batch-step-motion" checked>动态图解</label><label class="checkbox-label"><input type="checkbox" id="batch-step-audio" checked>项目统一音色配音</label><label class="checkbox-label"><input type="checkbox" id="batch-step-draft" checked>镜头 MP4 草稿</label></fieldset>
+            <div class="inline-actions"><p class="field-note" id="batch-form-note"></p><button class="button secondary" id="preview-batch" type="button">核对制作范围与任务上限</button></div>
+            <p class="field-note" id="batch-provider-note" hidden></p>
+            <section class="batch-plan" id="batch-plan" hidden aria-label="本次制作范围"><p id="batch-plan-summary"></p><ul id="batch-plan-items"></ul><div class="motion-confirmation"><label class="checkbox-label"><input id="confirm-batch-start" type="checkbox">我已核对镜头、步骤和任务上限，确认启动本批次</label><button class="button primary" id="start-batch" type="button" disabled>开始批量制作</button></div></section>
+            <div class="batch-history-heading"><label>制作批次<select id="batch-select" disabled><option>尚无制作批次</option></select></label><button class="text-button" id="reload-batch" type="button">重新读取</button></div>
+            <p id="batch-status" class="field-note" role="status"></p><p id="batch-read-error" class="message error-message" role="alert" hidden></p>
+            <div id="batch-progress-rows" class="batch-progress-rows" aria-label="逐镜制作进度" aria-live="polite"></div>
+            <p class="field-note" id="batch-retry-note"></p><div class="inline-actions"><button class="text-button" id="cancel-batch" type="button" hidden>停止后续任务并申请取消</button><button class="button secondary" id="retry-batch" type="button" disabled>补做勾选步骤</button></div>
+            <h3>集中审阅候选</h3><p class="field-note">试听和草稿始终对应本批次列出的确切版本。勾选需要采用的镜头，再统一确认；未勾选的镜头保持原采用版本。</p>
+            <p class="field-note" id="batch-audio-label"></p><audio id="batch-audio-preview" controls preload="none" hidden></audio>
+            <div id="batch-review" class="batch-review"></div>
+            <p id="batch-adoption-note" class="field-note"></p><div class="motion-confirmation"><label class="checkbox-label"><input id="confirm-batch-adoption" type="checkbox" disabled>我已审阅，确认采用勾选镜头的确切候选</label><button class="button secondary" id="adopt-batch" type="button" disabled>采用所选候选</button></div>
+            <div class="batch-project-draft"><p class="field-note">全部采用后可制作整片草稿，检查连贯性。草稿可使用估算时序；正式导出仍需逐镜人工核对。</p><button class="button secondary" id="preview-batch-project" type="button" disabled>制作整片 MP4 草稿</button></div>
+          </div>
+        </details>
+
         <div class="production-grid">
           <section class="scenes-panel" aria-labelledby="scenes-heading">
             <div class="panel-heading"><div><h2 id="scenes-heading">分镜</h2><span id="scene-count">0 个镜头</span></div><button class="icon-button bordered" id="add-scene" aria-label="新增镜头" title="新增镜头" type="button" data-testid="add-scene">＋</button></div>

@@ -65,7 +65,12 @@ class AudioWorkflow:
                     if (op['input']['settings']['model'] != self.speech_client.settings.model
                             or op['input']['settings']['voice'] not in self.store.speech_voices
                             or op['input']['settings']['voice'] not in available):
-                        raise ServiceError('speech_provider_changed', 409)
+                        # The dispatch was claimed, but this branch has never
+                        # entered synthesize(). Persist that precise evidence;
+                        # exception codes after the call cannot establish it.
+                        self.store.finish_audio(op['id'], error='speech_provider_changed',
+                            interrupted=self.stopping.is_set(), submission_not_started=True)
+                        break
                     settings = op['input']['settings']
                     result = self.speech_client.synthesize(op['input']['spoken_text'],
                         voice=settings['voice'], speed=settings['speed'],

@@ -37,6 +37,8 @@ from .motion_store import MotionStore
 from .motion_timing import MotionTiming
 from .motion_workflow import MotionWorkflow
 from .motion_gateway import MotionAgentGateway
+from .batch_store import BatchStore
+from .batch_workflow import BatchWorkflow
 
 WEB = Path(__file__).parent / 'web'
 PREVIEW_CSP = ("sandbox; default-src 'none'; script-src 'none'; "
@@ -90,6 +92,10 @@ MESSAGES = {
     'motion_operation_in_progress': '该镜头已有动态图解任务，请等待或取消。',
     'motion_scene_duration_exceeded': '当前动态镜头最长支持 60 秒，请缩短旁白或拆分镜头。',
     'motion_audio_size_exceeded': '动态镜头的录音超过当前 8 MiB 限制，请降低采样率或拆分镜头。',
+    'batch_in_progress': '项目已有批量制作任务，请先等待或申请取消。',
+    'batch_inputs_changed': '批次所依据的内容或设置已变化，请核对后重新安排未完成部分。',
+    'batch_plan_changed': '本次制作清单已变化，请重新预览并确认。',
+    'batch_retry_uncertain': '原任务的执行结果尚未确认，请先重新读取状态，避免重复生成。',
     'explanation_queue_limit': '讲解方案任务较多，请等待已有任务完成。',
     'explanation_candidate_limit': '本项目的讲解方案候选数量已达到限制。',
     'explanation_operation_limit': '本项目的讲解方案任务记录已达到限制。',
@@ -136,6 +142,32 @@ class Revision(Fields):
 
 class ProjectProductionMode(Revision):
     mode: Literal['motion']
+
+
+class BatchRequest(Revision):
+    scene_ids: list[str] = Field(min_length=1, max_length=12)
+    steps: list[Literal['motion', 'audio', 'draft']] = Field(min_length=1, max_length=3)
+    reuse_current: bool = Field(default=True, strict=True)
+
+
+class BatchStart(BatchRequest):
+    plan_sha256: str = Field(pattern=r'^[0-9a-f]{64}$')
+
+
+class BatchRetry(Revision):
+    item_ids: list[str] = Field(min_length=1, max_length=36)
+
+
+class BatchSelection(Fields):
+    scene_id: str = Field(min_length=1, max_length=100)
+    motion_version_id: str | None = Field(default=None, min_length=1, max_length=100)
+    audio_version_id: str | None = Field(default=None, min_length=1, max_length=100)
+    expected_motion_head_version_id: str | None = Field(default=None, max_length=100)
+    expected_audio_head_version_id: str | None = Field(default=None, max_length=100)
+
+
+class BatchAdoption(Revision):
+    selections: list[BatchSelection] = Field(min_length=1, max_length=12)
 
 
 class Storyboard(Revision):
@@ -369,6 +401,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         enabled=render_enabled if render_enabled is not None else os.environ.get('VIDEO_RENDER_ENABLED') == '1',
         motion_store=motion_store, motion_timing=motion_timing, motion_renderer=motion_renderer,
         motion_enabled=motion_gate, runtime_fingerprint=runtime)
+    batch_store = BatchStore(store, motion_store, production)
+    batch_workflow = BatchWorkflow(batch_store, enabled=motion_gate)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -378,7 +412,9 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
             motion_workflow.start()
             audio_workflow.start()
             production.start()
+            batch_workflow.start()
         yield
+        batch_workflow.stop()
         production.stop()
         audio_workflow.stop()
         workflow.stop()
@@ -391,11 +427,12 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         if owned_speech_client:
             owned_speech_client.close()
 
-    app = FastAPI(title='SVG / HTML 视频工作台', lifespan=lifespan, docs_url=None, redoc_url=None)
+    app = FastAPI(title='动态视频工作台', lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.store, app.state.workflow = store, workflow
     app.state.audio_workflow, app.state.production = audio_workflow, production
     app.state.explanation_store, app.state.explanation_workflow = explanation_store, explanation_workflow
     app.state.motion_store, app.state.motion_workflow, app.state.motion_timing = motion_store, motion_workflow, motion_timing
+    app.state.batch_store, app.state.batch_workflow = batch_store, batch_workflow
     # Proxy mode must be bound behind an authenticated, header-scrubbing proxy.
     app.state.trusted_hosts = set(trusted_hosts or {'127.0.0.1', 'localhost', '[::1]'})
 
@@ -485,6 +522,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     media_configured=production.enabled,
                     explanation_configured=enabled and explanation_gateway is not None,
                     motion_enabled=motion_gate, motion_configured=motion_gate and motion_gateway is not None,
+                    batch_enabled=motion_gate,
                     default_production_mode='motion' if motion_gate else 'static',
                     motion_render_configured=motion_gate and motion_renderer is not None and runtime is not None)
 
@@ -508,6 +546,51 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     def require_motion():
         if not motion_gate:
             raise ServiceError('motion_disabled', 503)
+
+    def require_batch_steps(steps):
+        if 'motion' in steps:
+            motion_workflow.require_gateway()
+        if 'audio' in steps:
+            audio_workflow.require_client()
+        if 'draft' in steps and (motion_renderer is None or runtime is None):
+            raise ServiceError('motion_render_not_configured', 503)
+
+    @app.post('/api/projects/{project_id}/batches/preview')
+    def preview_batch(project_id: str, body: BatchRequest, owner=Depends(mutation)):
+        require_motion()
+        return batch_store.preview(owner, project_id, body.model_dump())
+
+    @app.post('/api/projects/{project_id}/batches', status_code=202)
+    def start_batch(project_id: str, body: BatchStart, owner=Depends(mutation),
+                    idempotency_key: str | None = Header(default=None)):
+        require_motion()
+        require_batch_steps(body.steps)
+        return batch_store.start(owner, project_id, body.model_dump(), idempotency(idempotency_key))
+
+    @app.get('/api/projects/{project_id}/batches')
+    def project_batches(project_id: str, owner=Depends(identity)):
+        return dict(batches=batch_store.list(owner, project_id))
+
+    @app.get('/api/batches/{batch_id}')
+    def read_batch(batch_id: str, owner=Depends(identity)):
+        return batch_store.get(owner, batch_id)
+
+    @app.post('/api/batches/{batch_id}/cancel')
+    def cancel_batch(batch_id: str, owner=Depends(mutation)):
+        return batch_store.cancel(owner, batch_id)
+
+    @app.post('/api/batches/{batch_id}/retry', status_code=202)
+    def retry_batch(batch_id: str, body: BatchRetry, owner=Depends(mutation),
+                    idempotency_key: str | None = Header(default=None)):
+        require_motion()
+        return batch_store.retry(owner, batch_id, body.expected_revision, body.item_ids,
+                                 idempotency(idempotency_key))
+
+    @app.post('/api/projects/{project_id}/batch-adopt')
+    def adopt_batch(project_id: str, body: BatchAdoption, owner=Depends(mutation)):
+        require_motion()
+        return batch_store.adopt(owner, project_id, body.expected_revision,
+                                 [item.model_dump(exclude_unset=True) for item in body.selections])
 
     @app.patch('/api/projects/{project_id}/production-mode')
     def project_production_mode(project_id: str, body: ProjectProductionMode, owner=Depends(mutation)):

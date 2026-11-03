@@ -144,6 +144,15 @@ test('native candidate selection survives input then change and new candidates d
   assert.equal(motionSelection(h.state.data.scenes[0], 'missing').id, 'v3');
 });
 
+test('project review navigation selects an exact motion candidate without adopting or generating', async () => {
+  const h = harness(); h.state.data.scenes[0].motion.versions.push({ id: 'v2', stale: false });
+  await h.load(); assert.equal(h.$('motion-version').value, 'v2');
+  h.panel.select('p1', 'scene-1', 'v1'); await h.load();
+  assert.equal(h.$('motion-version').value, 'v1');
+  assert.equal(h.state.context.scene.motion.head_version_id, null);
+  assert.equal(posts(h).length, 0);
+});
+
 test('primary draft availability follows async timing, unsaved correction and scene selection', async () => {
   const h = harness(); h.panel.render();
   assert.equal(h.state.previewStates.at(-1), false);

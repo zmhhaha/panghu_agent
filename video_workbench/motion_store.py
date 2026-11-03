@@ -161,9 +161,10 @@ class MotionStore:
             tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             terminal = {'completed', 'failed', 'cancelled', 'timed_out', 'needs_input'}
             for table in ('operations', 'motion_operations', 'audio_operations',
-                          'explanation_operations', 'video_renders'):
+                          'explanation_operations', 'video_renders', 'video_batches'):
                 if table in tables:
-                    _require(all(json.loads(row[0]).get('status') in terminal for row in db.execute(
+                    allowed = {'completed', 'partial_failed', 'cancelled'} if table == 'video_batches' else terminal
+                    _require(all(json.loads(row[0]).get('status') in allowed for row in db.execute(
                         'SELECT document FROM ' + table + ' WHERE project_id=?', (project_id,))),
                         'project_production_mode_busy', 409)
             changed = project.get('production_mode', 'static') != 'motion'
