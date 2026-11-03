@@ -21,7 +21,25 @@ import uuid
 LABEL = 'ppt.disposable-fault.owner'
 PROGRAMS = {
     'sigkill': 'import os,signal; os.kill(os.getpid(),signal.SIGKILL)',
-    'oom': 'import time; blocks=[]\nwhile True:\n blocks.append(bytearray(4*1024*1024)); time.sleep(.01)',
+    'oom': '''import json,os,signal,time
+from pathlib import Path
+events=Path('/sys/fs/cgroup/memory.events')
+def counters():return {k:int(v) for k,v in (line.split() for line in events.read_text().splitlines())}
+before=counters()
+limit=int(Path('/sys/fs/cgroup/memory.max').read_text())
+assert limit==64*1024**2
+child=os.fork()
+if child==0:
+ blocks=[]
+ while True:
+  blocks.append(bytearray(4*1024*1024)); time.sleep(.01)
+_,status=os.waitpid(child,0)
+after=counters()
+assert os.WIFSIGNALED(status) and os.WTERMSIG(status)==signal.SIGKILL
+assert after['oom']>before['oom'] and after['oom_kill']>before['oom_kill']
+print(json.dumps({'kernel_cgroup_oom_verified':True,'memory_max':limit,
+ 'child_signal':os.WTERMSIG(status),'before':before,'after':after}))
+''',
     'timeout': 'import os,time\nif os.fork()==0:\n os.setsid(); time.sleep(600)\ntime.sleep(600)',
     'disk-full': '''import errno,json,os
 try:
@@ -126,7 +144,19 @@ def main():
             (root / (case + '.log')).write_text(logs, encoding='utf-8')
             terminal = not state['Running'] and state['Pid'] == 0
             if case == 'oom':
-                passed = terminal and state['OOMKilled'] and state['ExitCode'] == 137 and not deadline_fired
+                # Docker's OOMKilled flag may stay false when a child, rather
+                # than the container init, is selected. Require the actual
+                # private cgroup kernel counters and the child's wait status.
+                try:
+                    proof = json.loads(logs)
+                    kernel_oom = (proof['kernel_cgroup_oom_verified'] is True
+                        and proof['memory_max'] == 64*1024**2
+                        and proof['child_signal'] == 9
+                        and proof['after']['oom'] > proof['before']['oom']
+                        and proof['after']['oom_kill'] > proof['before']['oom_kill'])
+                except (ValueError,KeyError,TypeError):
+                    proof, kernel_oom = None, False
+                passed = terminal and kernel_oom and state['ExitCode'] == 0 and not deadline_fired
             elif case == 'sigkill':
                 passed = terminal and not state['OOMKilled'] and state['ExitCode'] == 137 and not deadline_fired
             elif case == 'timeout':
@@ -136,6 +166,8 @@ def main():
             rows[case] = {'passed': passed, 'exit_code': state['ExitCode'],
                 'oom_killed': state['OOMKilled'], 'deadline_kill': deadline_fired,
                 'container_stopped': terminal, 'log_sha256': hashlib.sha256(logs.encode()).hexdigest()}
+            if case == 'oom':
+                rows[case]['kernel_oom_evidence'] = proof
             if hashlib.sha256(original.read_bytes()).hexdigest() != digest:
                 raise RuntimeError('retained_synthetic_input_changed')
     except Exception as exc:
