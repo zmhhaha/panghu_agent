@@ -12,7 +12,7 @@ vi.mock('../api',async original=>({...await original<typeof import('../api')>(),
 
 const oldId='43133abb-2e94-4560-860a-2c1504f8ed42';
 const failed:Job={id:oldId,project_id:'p',kind:'generate',stage:'validating',status:'failed',last_event_seq:17,error_code:'quality_gate_failed',created_at:'2026-11-03T01:00:00Z',deadline:'2026-11-03T01:30:00Z',phase_timeout_seconds:1800,quality_diagnostics:{schema_version:1,error_code:'external_svg_resource',stage:'source_binding',title:'页面引用检查未通过',message:'<img src=x onerror="alert(1)">',suggestion:'请管理员核对引用类型。',retry_stage:'validation',publication_authorized:false,diagnostic_download_url:`/api/v1/jobs/${oldId}/diagnostics`}};
-const running:Job={id:'current-job',project_id:'p',kind:'revision',stage:'execution_running',status:'running',last_event_seq:2};
+const running:Job={id:'current-job',project_id:'p',kind:'revise',stage:'revise',status:'running',last_event_seq:2};
 const project:Project={id:'p',title:'查看过往制作记录',revision:9,stage:'revising',settings:defaultSettings,assets:[],input_snapshot_hash:'snapshot',external_model_ack:true,active_job_id:running.id,latest_job:running};
 
 beforeEach(()=>{
@@ -54,9 +54,15 @@ describe('read-only recent task history',()=>{
   localStorage.setItem('ppt:selected-project','p');vi.mocked(api.jobs).mockResolvedValue([running,failed]);
   render(<App/>);await screen.findByRole('heading',{name:project.title});
   await waitFor(()=>expect(consumeEvents).toHaveBeenCalledOnce());
-  await expand();await userEvent.click(screen.getByRole('button',{name:`查看制作演示稿任务 ${oldId}`}));
+  await expand();
+  const revisionRow=screen.getByRole('button',{name:`查看按反馈修改任务 ${running.id}`});
+  expect(revisionRow).toHaveTextContent('按反馈修改');
+  await userEvent.click(revisionRow);
+  expect(within(screen.getByRole('region',{name:'所选任务详情'})).getByRole('heading',{name:'按反馈修改 · 执行中'})).toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button',{name:`查看制作演示稿任务 ${oldId}`}));
   const current=within(screen.getByRole('region',{name:'当前任务'}));
   expect(current.getByText(`任务 ${running.id}`)).toBeInTheDocument();expect(current.getByRole('status')).toHaveTextContent('执行中');
+  expect(current.getByText('按反馈修改')).toBeInTheDocument();
   expect(current.getByRole('button',{name:'取消任务'})).toBeEnabled();
   expect(within(screen.getByRole('region',{name:'所选任务详情'})).queryByRole('button')).not.toBeInTheDocument();
   expect(vi.mocked(api.job).mock.calls.map(([id])=>id)).toEqual([running.id]);
