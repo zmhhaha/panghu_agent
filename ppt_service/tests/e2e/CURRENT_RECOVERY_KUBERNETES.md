@@ -142,7 +142,13 @@ SYS_ADMIN、hostPath、hostPID/network 或输入 bind。本次不声称生产 Ap
 `runtime_stop_proof:false`，仅表示 helper 清理，不证明执行停止。Worker 及已经带 finalizer
 的任何 Pod 不使用这个例外，也不会补回丢失的 Worker finalizer 来伪造连续观察。
 清理日志采集结束后会重新读取同 UID 的 Pod，再以新 resourceVersion 生成清理 CAS；
-CAS 失败保留诊断并停止，不盲目重试或删去身份/版本约束。
+添加 helper finalizer 和解除停止 finalizer 均最多尝试三次。失败后必须重新 GET 精确
+同 UID，复核 owner、镜像、重启次数、角色、finalizer 集合及操作状态；解除仍须完整
+`terminated` 和删除状态。只有确认 resourceVersion 已变化且这些条件仍成立，才重新
+观察并生成新的 CAS；不会重放旧 patch。已观察目标状态则单独记录为失败响应后的确认，
+不再次提交。身份变化、未知 finalizer、缺失 Pod、相同 RV 的失败或用尽次数均停止清理并
+保留失败结果。每次观察和脱敏错误写入 `cleanup-finalizer-*-observed.json` 与
+`*-result.private.json`，包括实际 RV 变化及确认方式；不会通过取消 UID/RV 约束解决冲突。
 任何清理不确定、镜像/源码不符、旧基线改变或未完成场景均使结果失败。UID 消费标记和证据
 目录永久保留。`status.json.passed=true` 必须同时有联合场景、镜像/来源和 cleanup 成功证据。
 

@@ -34,6 +34,8 @@ is written by an administrator and no browser credential is extracted.
 | Real disposable Kubernetes at `9c68792` | `/root/ppt-p0p1-kubernetes-9c68792-r2/status.json` | Three synthetic Pods; actual non-root/caps/NNP/seccomp, read-only root/input, no SA token, independent memory outputs, TCP ingress/egress allow→deny→restore on the same Pod UIDs/IPs, child SIGTERM/reap and owned namespace cleanup passed. Not a production Worker/Agent/SA admission or full recovery matrix. |
 | Schema-4 consistent restore at `c3fa925` | `/root/ppt-p0p1-backup-c3fa925-r1/evidence/status.json` | Real pg_dump/pg_restore, all 15 tables, file bytes/metadata, append-only history and runtime privileges matched. Disposable, quiescent synthetic source; not a production/PVC/offsite recovery claim. |
 | Complex editable content at `d446fd4` | `/root/ppt-p0p1-complex-d446fd4-r2/receipt.json` | Initial and revised six-page synthetic decks, actual native exporter and final PPTX-derived renders. Long Chinese text, PNG, editable data chart, embedded XLSX and speaker notes checked. Not an owner Agent generation or publication. |
+| Real final-validator rejection/recovery at `d34bd8d` | `/root/ppt-p0p1-final-failure-d34bd8d-r3/receipt.json` | Actual rendered glyph collision rejected; healthy follow-up passed; fixed-tool unavailability rejected; a separate healthy container passed. All three containers stopped and removed, old PPTX/PDF/layout/six previews unchanged. Git-mounted application code and image-owned tools, not a complete PPT business recovery workflow. |
+| Real joint Agent recovery at `791a1d0` | `/root/ppt-p0p1-joint-recovery-791a1d0-r3/joint-recovery.json` and `cleanup-reconciled-20261103.json` | All eight actual Agent/API/PostgreSQL/Dispatcher/Kubernetes/WorkerHost scenarios passed. Original runner overall status stays false because final helper cleanup CAS failed; supplemental exact-owned cleanup passed and namespace is absent. Synthetic Python payload, no Pi/Hermes/model or production PPT Version. |
 
 The 472-test matrix includes 26 existing signed-JWT API tests, seven current
 review/concurrency tests, 178 execution-isolation contracts, 135 operations/parser
@@ -166,3 +168,88 @@ actual retained historical catalog. The corrected operator raises only that
 specific list budget from 8 MiB to 32 MiB, keeps other reads bounded at 8 MiB,
 and binds its own exact hashes in the separate r2 build and successful plan.
 Failed and passing evidence directories were not overwritten.
+
+## Actual final-validator rejection and recovery
+
+The independent synthetic baseline was mounted read-only. The quality probe
+changed only two text frames in a separate candidate's first slide, preserving
+all other native package parts. The real LibreOffice/Poppler/Fitz pipeline
+reported the exact two-shape `text_collision`, returned
+`final_pptx_text_layout_failed`, and created no successful final-render receipt
+for that bad candidate. It then rendered the original healthy baseline
+successfully in a fresh output directory.
+
+A second container mounted an administrator-owned non-executable file
+read-only over `/usr/bin/pdfinfo`. The original validator rejected the actually
+unavailable fixed tool with `final_pptx_renderer_unavailable`. A third container
+without that fault rendered the healthy baseline successfully. This is a real
+tool-availability rejection, not a claim about every mid-render failure mode.
+
+Exact Git source `d34bd8d4c8b9df5cf3fe8e20bc2938d31ad9b98c` was loaded explicitly
+from `/src` read-only, while tools/dependencies came from immutable validator
+`latest@sha256:4492a878db0d575f20542379a61986500a1c5263b5ecc5460026a87937549bc9`.
+The enclosing operator records this mixed code/tool origin rather than claiming
+image-owned application imports. All capsules had no network, read-only root,
+UID/GID 10000, no capabilities, NNP and finite CPU/memory/PID/tmpfs budgets.
+The image's declared `/opt/data` volume was explicitly replaced with a tiny
+read-only tmpfs; no anonymous volume was allowed. Each actual image identity,
+exit status, PID-zero stop, exact-ID removal and absence was verified.
+
+The original baseline bytes, PDF, text-layout diagnostics and all six preview
+hashes stayed unchanged throughout. The first attempt was stopped before
+execution because Docker had created the image-declared anonymous volume; its
+three image-populated HOME files and exact owned volume were subsequently
+recorded and removed in
+`/root/ppt-p0p1-final-failure-d34bd8d-r1/anonymous-volume-cleanup-20261103.json`.
+The second attempt passed quality rejection but exposed the administrator stub's
+umask-restricted read permission. Both failed attempts remain separate; r3 fixes
+the stub's exact 0444 mode and passes all three cases. No production image,
+business Version, owner review or model task was changed.
+
+## Actual joint Agent recovery and reconciled cleanup
+
+Git-frozen source `791a1d0798c43cd0efb03c5bdc7d6fd446af1a6b` exercised the real
+Agent API, PostgreSQL Store, a separate Dispatcher process, Kubernetes provider,
+RemoteWorkerAdapter, WorkerHost journal/lease watchdog and Linux UID stopper.
+The eight scenarios were baseline artifact/download, dispatcher SIGKILL/reap and
+recovery of the same execution, exact-UID Worker interruption, absolute deadline,
+real control-to-Worker network denial and lease expiry, actual WorkerHost output
+schema rejection, tmpfs ENOSPC and a successful following job. Each retained one
+durable attempt/allocation; post-baseline cases retained the same downloadable
+baseline artifact bytes/hash. Restart also checked the same request, fence,
+Pod UID and native nonce and one artifact PUT. Stop observation preceded slot
+release. No model request occurred.
+
+Evidence directory:
+`/root/ppt-p0p1-joint-recovery-791a1d0-r3`.
+`joint-recovery.json` has `phase=complete`, `passed=true`, eight scenarios.
+The original `status.json.passed=false` remains unchanged: only final trusted
+PostgreSQL helper cleanup hit a resourceVersion/CAS conflict after both helper
+containers had positively terminated. Supplemental exact-UID/fresh-RV cleanup
+removed the stopped helper, verified zero Pods and deleted the exact owned
+namespace; `cleanup-reconciled-20261103.json` is passing. It retains SHA256 of
+the original status, cleanup and joint receipts. The first supplemental operator
+stopped after removing PostgreSQL because an empty kubectl list decoded as null;
+the next read verified zero Pods before namespace deletion. Neither failure was
+rewritten as a passing original run.
+
+Exact images were control `latest@sha256:7b8e4c4b8b6a620adb9842dbfa311b49de9be684e145e9892e4520e2308a3717`,
+Worker `latest@sha256:8a3e77253c7f2f75c998b22adef7e0151ca7e2797ac5d341b782e8426dd75a21`
+and acceptance PostgreSQL `latest@sha256:f586fed48e5b6f937c746a090170e8be142285906b245cf961416d99b22a11fa`.
+The control image has one explicitly pinned historical `worker_entry.py` blob
+`0500563e0117570964089a9b5e8ba135c78c3224`, SHA256
+`993f2b8dffccb698291c907a3bcb7bc840fb0c49b669fd46f0735325c94b2782`.
+The exact difference from current Git is the reviewed four-line PPT
+`max_processes=128` block; HostConfig/host_policy are unchanged. Other selected
+control files and all selected Worker files match current Git. `source.json`
+records per-role hashes and `all_selected_image_sources_from_current_commit=false`.
+Production control was not rebuilt to hide this lineage.
+
+Two earlier failed attempts remain separate: r1 could not pull the initial
+PostgreSQL digest; r2 rejected the historical control-source mismatch. Their
+owned namespaces were removed with separate reconciliation evidence. All three
+32-UID ranges remain permanently reserved; no reservation marker was removed.
+No real node failure, production PVC/offsite restore, production AppArmor/input
+mount matrix or Pi/Hermes business execution is claimed. The joint recovery and
+separate real final-validator probes complete C8's scoped component evidence;
+parent R5 and normal owner-deck checks remain pending.

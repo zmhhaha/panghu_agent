@@ -342,10 +342,9 @@ def main():
             and current['metadata'].get('labels', {}).get(OWNER) == reservation['run_id'], 'owned_namespace_changed')
         return current
 
-    def own_pod(name, uid=None, role=None):
-        own_namespace()
-        pod = get('pod', name)
-        require(pod['metadata'].get('labels', {}).get(OWNER) == reservation['run_id']
+    def validate_owned_pod(pod, name, uid=None, role=None):
+        require(pod['metadata']['name'] == name and pod['metadata'].get('namespace') == namespace
+            and pod['metadata'].get('labels', {}).get(OWNER) == reservation['run_id']
             and (uid is None or pod['metadata']['uid'] == uid)
             and (role is None or pod['metadata'].get('labels', {}).get(ROLE) == role), 'owned_pod_identity_mismatch')
         expected = args.worker_image if pod['metadata'].get('labels', {}).get(ROLE) == 'worker' else (
@@ -360,6 +359,10 @@ def main():
         history = pod_history.setdefault(pod['metadata']['uid'], {'never_started_observations_only': True})
         history['never_started_observations_only'] &= never_started_observation(pod)
         return pod
+
+    def own_pod(name, uid=None, role=None):
+        own_namespace()
+        return validate_owned_pod(get('pod', name), name, uid, role)
 
     def diagnose_pod(pod, phase, category):
         nonlocal diagnostic_count
@@ -432,6 +435,83 @@ def main():
         group = '/apis/networking.k8s.io/v1' if kind == 'networkpolicies' else '/api/v1'
         path = group + '/namespaces/' + namespace + '/' + kind + '/' + metadata['name']
         kube(['delete', '--raw', path, '-f', '-'], canonical(body))
+
+    def cleanup_finalizer(name, uid, *, adding, attempts=3):
+        """Retry only after a new exact-UID observation and full revalidation.
+
+        A failed patch is never replayed. The next candidate must have a new
+        resourceVersion; an already-observed target is recorded separately.
+        Missing/unknown objects and unrelated failures remain fail-closed.
+        """
+        action = 'add' if adding else 'remove'
+        target = [FINALIZER] if adding else []
+        expected = [] if adding else [FINALIZER]
+
+        def eligible(pod, *, allow_target=False):
+            role = pod['metadata'].get('labels', {}).get(ROLE)
+            helper = name in {'control', 'postgres'} and role == (
+                'control' if name == 'control' else 'database')
+            require(helper if adding else helper or role == 'worker', 'cleanup_finalizer_role_invalid')
+            finalizers = pod['metadata'].get('finalizers', [])
+            require(finalizers == expected or allow_target and finalizers == target,
+                'cleanup_finalizer_set_changed')
+            if adding:
+                require(not pod['metadata'].get('deletionTimestamp'), 'helper_started_deleting_before_finalizer')
+            else:
+                require(pod['metadata'].get('deletionTimestamp') and terminated(pod),
+                    'finalizer_removal_without_full_actual_termination')
+
+        for number in range(1, attempts + 1):
+            current = own_pod(name, uid)
+            eligible(current, allow_target=number > 1)
+            prefix = 'cleanup-finalizer-' + name + '-' + action + '-' + str(number)
+            write(output / (prefix + '-observed.json'), current)
+            if current['metadata'].get('finalizers', []) == target:
+                write(output / (prefix + '-result.private.json'), {
+                    'outcome': 'target_observed_after_prior_failed_patch', 'pod_uid': uid,
+                    'resource_version': current['metadata']['resourceVersion'], 'patch_replayed': False})
+                return current
+            patch = [{'op': 'test', 'path': '/metadata/uid', 'value': uid},
+                {'op': 'test', 'path': '/metadata/resourceVersion', 'value': current['metadata']['resourceVersion']}]
+            if not adding:
+                patch.append({'op': 'test', 'path': '/metadata/finalizers', 'value': [FINALIZER]})
+            patch.append({'op': 'add' if adding else 'replace', 'path': '/metadata/finalizers', 'value': target})
+            result = kube(['-n', namespace, 'patch', 'pod', name, '--type=json', '-p', json.dumps(patch),
+                '-o', 'json'], check=False)
+            stderr = result.stderr
+            for value in sorted(private_strings, key=len, reverse=True):
+                stderr = stderr.replace(value, b'[REDACTED]')
+            evidence = {'pod_uid': uid, 'operation': action, 'attempt': number,
+                'input_resource_version': current['metadata']['resourceVersion'],
+                'returncode': result.returncode, 'stderr': stderr[:131072].decode(errors='replace'),
+                'stderr_truncated': len(stderr) > 131072, 'stdout_sha256': sha(result.stdout),
+                'patch_replayed': False, 'outcome': 'unresolved'}
+            try:
+                if result.returncode == 0:
+                    acknowledged = validate_owned_pod(json.loads(result.stdout), name, uid)
+                    eligible(acknowledged, allow_target=True)
+                    require(acknowledged['metadata'].get('finalizers', []) == target,
+                        'cleanup_finalizer_patch_target_not_acknowledged')
+                    evidence.update(outcome='exact_uid_patch_acknowledged',
+                        output_resource_version=acknowledged['metadata']['resourceVersion'])
+                    return acknowledged
+                # Never infer a conflict from generic kubectl text alone. A
+                # fresh GET must prove the same owned Pod and valid operation
+                # state, then an actual RV change, before another fresh CAS.
+                fresh = own_pod(name, uid)
+                eligible(fresh, allow_target=True)
+                evidence['observed_resource_version'] = fresh['metadata']['resourceVersion']
+                if fresh['metadata'].get('finalizers', []) == target:
+                    evidence['outcome'] = 'target_observed_after_failed_response'
+                    return fresh
+                require(fresh['metadata']['resourceVersion'] != current['metadata']['resourceVersion'],
+                    'cleanup_finalizer_failed_without_resource_version_change')
+                evidence['observed_resource_version_change'] = True
+                require(number < attempts, 'cleanup_finalizer_conflict_attempts_exhausted')
+                evidence['outcome'] = 'reobserve_and_revalidate_before_next_cas'
+            finally:
+                write(output / (prefix + '-result.private.json'), evidence)
+        raise Failure('cleanup_finalizer_attempts_exhausted')
 
     def exec_control(mode, payload=None, *, check=True):
         pod = own_pod('control', role='control')
@@ -738,11 +818,7 @@ def main():
                         # this finalizer, before deletion, with exact UID/RV CAS.
                         require(not current['metadata'].get('deletionTimestamp'),
                             'started_helper_already_deleting_without_stop_observation')
-                        patch = [{'op': 'test', 'path': '/metadata/uid', 'value': current['metadata']['uid']},
-                            {'op': 'test', 'path': '/metadata/resourceVersion', 'value': current['metadata']['resourceVersion']},
-                            {'op': 'add', 'path': '/metadata/finalizers', 'value': [FINALIZER]}]
-                        kube(['-n', namespace, 'patch', 'pod', name, '--type=json', '-p', json.dumps(patch)])
-                        current = own_pod(name, initial['metadata']['uid'])
+                        current = cleanup_finalizer(name, initial['metadata']['uid'], adding=True)
                     if not current['metadata'].get('deletionTimestamp'):
                         delete_resource('pods', current, grace=5)
                     # Every Worker and every already-finalized helper still
@@ -757,10 +833,7 @@ def main():
                             'uid': stopped['metadata']['uid'], 'statuses': stopped['status']['containerStatuses']})
                         finalizers = stopped['metadata'].get('finalizers', [])
                         require(finalizers == [FINALIZER], 'unexpected_owned_worker_finalizers')
-                        patch = [{'op': 'test', 'path': '/metadata/uid', 'value': stopped['metadata']['uid']},
-                            {'op': 'test', 'path': '/metadata/resourceVersion', 'value': stopped['metadata']['resourceVersion']},
-                            {'op': 'replace', 'path': '/metadata/finalizers', 'value': []}]
-                        kube(['-n', namespace, 'patch', 'pod', name, '--type=json', '-p', json.dumps(patch)])
+                        cleanup_finalizer(name, initial['metadata']['uid'], adding=False)
                     else:
                         require(never_started_helper, 'nonfinalized_cleanup_is_not_never_started_helper')
                     wait(lambda: get('pod', name, absent=True) is None, 45)
