@@ -1,6 +1,6 @@
 import {
   activeOperations, chooseVersion, createIntentKeys, createSceneDraft, createStoryboardRequest, createWorkspaceState,
-  acceptProjectRead, isActiveOperation, issueProjectRead, latestVersion, orderedVersions,
+  acceptProjectRead, isActiveOperation, isUnresolvedProductionOperation, issueProjectRead, latestVersion, orderedVersions,
   selectProject, selectScene, selectedScene, selectedVersion, statusLabel, syncSceneDraft,
   updateProjectSummary, versionPath,
   audioPath, chooseAudioVersion, createCaptionDraft, orderedAudioVersions, parsePronunciation,
@@ -9,7 +9,7 @@ import {
   projectSpeechCanGenerate, audioVoiceLabel,
 } from './model.mjs';
 import { createExplanationPanel, explanationErrorLabel } from './explanation.mjs';
-import { createMotionPanel, createMotionRenderRequest, hasMotionScenes, motionErrorLabel } from './motion.mjs';
+import { createMotionPanel, createMotionRenderRequest, createDynamicProjectRequest, usesDynamicVideo, motionMetadata, motionErrorLabel } from './motion.mjs';
 
 const $ = id => document.getElementById(id);
 const state = createWorkspaceState();
@@ -42,6 +42,7 @@ let previewMode = 'preview';
 let displayedVersion = null;
 let sourceVersion = null;
 let loading = false;
+let staticMaterialsScene = null;
 
 const explanationPanel = createExplanationPanel({
   document, request, refresh: () => loadProject(), onError: showError, onSuccess: success,
@@ -55,6 +56,9 @@ const explanationPanel = createExplanationPanel({
 
 const motionPanel = createMotionPanel({
   document, request, refresh: () => loadProject(), onError: showError, onSuccess: success,
+  onPreviewStateChange: ready => {
+    if (usesDynamicVideo(state.project)) $('preview-project').disabled = !ready;
+  },
   getContext: () => ({ project: state.project, scene: editor === 'new' ? null : selectedScene(state), epoch: state.epoch,
     enabled: sessionSettings.motion_enabled === true,
     configured: sessionSettings.motion_configured === true,
@@ -70,6 +74,18 @@ function projectHasUnsavedEdits(projectId, includeMotion = true) {
     || Boolean(includeMotion && motionPanel.hasProjectDrafts(projectId))
     || [drafts, speechDrafts, timingDrafts, captionDrafts].some(map =>
       [...map.entries()].some(([key, draft]) => key.startsWith(`${projectId}:`) && draft.dirty));
+}
+
+function productionTransitionBusy(project) {
+  const operations = [project?.storyboard_operation, ...(project?.scenes ?? []).flatMap(scene =>
+    [scene.operation, scene.audio_operation, scene.motion?.operation]), ...(renderHistories.get(project?.id) ?? [])];
+  return pending.size > 0 || operations.some(isUnresolvedProductionOperation)
+    || motionPanel.hasUnresolvedOperation() || explanationPanel.hasUnresolvedOperation();
+}
+
+function renderProductionTransition(project) {
+  $('convert-project-motion').disabled = !sessionSettings.motion_enabled || projectHasUnsavedEdits(project.id)
+    || productionTransitionBusy(project);
 }
 
 const ERROR_LABELS = {
@@ -211,6 +227,7 @@ function renderProjects() {
 function renderScenes(project) {
   const fragment = document.createDocumentFragment();
   for (const [index, scene] of project.scenes.entries()) {
+    const motion = motionMetadata(scene);
     const button = node('button', undefined, `scene-card${scene.id === state.sceneId && editor !== 'new' ? ' selected' : ''}`);
     button.type = 'button';
     button.dataset.sceneId = scene.id;
@@ -218,9 +235,11 @@ function renderScenes(project) {
     const top = node('div', undefined, 'scene-card-top');
     top.append(node('span', `镜头 ${String(index + 1).padStart(2, '0')}`), node('span', `${scene.duration_seconds} 秒`));
     const bottom = node('div', undefined, 'scene-card-bottom');
-    bottom.append(node('span', scene.motion?.mode === 'motion' ? '动态图解' : scene.format === 'html' ? 'HTML' : 'SVG'),
-      node('span', isActiveOperation(scene.operation) ? statusLabel(scene.operation.status)
-        : scene.motion?.mode === 'motion' ? scene.motion.head_stale ? '图解已过期' : '已采用图解'
+    bottom.append(node('span', motion.mode === 'motion' ? '动态图解' : scene.format === 'html' ? 'HTML' : 'SVG'),
+      node('span', isActiveOperation(motion.operation) ? statusLabel(motion.operation.status)
+        : isActiveOperation(scene.operation) ? statusLabel(scene.operation.status)
+        : motion.mode === 'motion' ? !motion.head_version_id ? '动态图解待制作'
+          : motion.head_stale ? '图解已过期' : '已采用图解'
           : scene.head_version_id ? '已采用画面' : scene.versions?.length ? '有候选版本' : '待制作'),
       node('span', scene.audio_stale ? '配音已过期' : scene.head_audio_version_id ? '已采用配音' : '未采用配音',
         `scene-audio-status${scene.audio_stale ? ' stale' : ''}`));
@@ -277,8 +296,12 @@ function renderEditor(scene, project) {
   setValue('scene-visual', draft.visual_description);
   setValue('scene-duration', draft.duration_seconds);
   setValue('scene-format', draft.format);
+  const dynamic = editor === 'new' ? project.production_mode === 'motion' : motionMetadata(scene).mode === 'motion';
+  $('scene-duration').max = dynamic ? String(Math.max(60, Number(scene?.duration_seconds ?? 0))) : '120';
+  $('scene-static-settings').hidden = dynamic && editor === 'new';
   $('draft-status').textContent = draft.dirty ? '有未保存的修改'
-    : editor === 'new' ? '保存后即可制作画面' : '已载入当前镜头';
+    : dynamic ? '保存后制作动态图解；动态片段最多 60 秒，长旁白建议拆镜。'
+      : editor === 'new' ? '保存后即可制作镜头' : '已载入当前镜头';
   $('save-scene').disabled = pending.has(`save:${project.id}`);
   $('save-scene').textContent = pending.has(`save:${project.id}`) ? '正在保存…' : '保存镜头';
 }
@@ -292,7 +315,7 @@ function clearPreview() {
 }
 
 function renderVersion(scene) {
-  const dynamic = scene.motion?.mode === 'motion';
+  const dynamic = motionMetadata(scene).mode === 'motion';
   $('preview-tab').textContent = dynamic ? '静态候选预览' : '画面预览';
   const version = selectedVersion(state, scene);
   const versions = orderedVersions(scene);
@@ -563,15 +586,16 @@ function renderAudio(scene, project) {
 
 function renderDelivery(project) {
   const scenes = project.scenes ?? [];
-  const dynamic = hasMotionScenes(project);
-  const visualCount = scenes.filter(scene => scene.motion?.mode === 'motion'
-    ? scene.motion.head_version_id && !scene.motion.head_stale : scene.head_version_id).length;
+  const dynamic = usesDynamicVideo(project);
+  const visualCount = scenes.filter(scene => motionMetadata(scene).mode === 'motion'
+    ? motionMetadata(scene).head_version_id && !motionMetadata(scene).head_stale : scene.head_version_id).length;
   const audioCount = scenes.filter(scene => scene.head_audio_version_id && !scene.audio_stale).length;
   $('delivery-summary').textContent = `已采用画面 ${visualCount}/${scenes.length} · 可用配音 ${audioCount}/${scenes.length}。预览和成片使用已采用的版本。`;
   const issues = deliveryIssues(project, { silent: dynamic ? false : $('render-silent').checked,
     subtitles: dynamic ? false : $('render-subtitles').checked });
   const reasons = { missing_visual: '未采用画面', missing_audio: '未采用配音', stale_audio: '配音已过期',
-    missing_captions: '缺少字幕', stale_captions: '字幕已过期', stale_motion: '动态图解已过期' };
+    missing_captions: '缺少字幕', stale_captions: '字幕已过期', stale_motion: '动态图解已过期',
+    missing_motion_plan: '动态图解待制作或采用' };
   const issueList = document.createDocumentFragment();
   for (const issue of issues) {
     const item = node('li');
@@ -588,18 +612,25 @@ function renderDelivery(project) {
   }
   $('delivery-issues').replaceChildren(issueList);
   $('delivery-issues').hidden = !issues.length;
-  $('preview-project').disabled = dynamic || !scenes.length || pending.has(`preview:${project.id}`);
-  $('preview-project').textContent = dynamic ? '动态模式请制作镜头 MP4 草稿' : '预览整个项目';
+  $('preview-project').disabled = dynamic ? $('preview-motion').disabled
+    : !scenes.length || pending.has(`preview:${project.id}`);
+  $('preview-project').textContent = dynamic ? '制作当前镜头草稿' : '预览整个项目';
+  $('render-project').hidden = dynamic;
   $('render-project').disabled = dynamic || !scenes.length || !sessionSettings.media_configured || pending.has(`render:${project.id}`);
   $('render-motion-project').hidden = !dynamic;
   $('motion-delivery-note').hidden = !dynamic;
+  $('delivery-legacy-options').hidden = dynamic;
+  $('delivery-options-note').textContent = dynamic ? '关键点由画面逐步表达，保留旁白，不附加字幕。'
+    : '关键点默认由画面表达。关闭附加字幕仍保留旁白，预览与导出使用同一选择。';
+  $('captions-section').hidden = dynamic;
   $('render-motion-project').disabled = !dynamic || !sessionSettings.motion_render_configured || projectHasUnsavedEdits(project.id)
     || pending.has(`render:${project.id}`) || issues.length > 0 || !scenes.length
     || (renderHistories.get(project.id) ?? []).some(isActiveOperation);
   $('render-silent').disabled = dynamic;
   $('render-subtitles').disabled = dynamic;
   $('download-subtitles').disabled = !scenes.length || pending.has(`subtitles:${project.id}`);
-  $('render-hint').textContent = dynamic ? '动态图解请制作镜头 MP4 草稿审阅，再导出整片；本入口保留旁白且不附加字幕。'
+  $('download-subtitles').hidden = dynamic;
+  $('render-hint').textContent = dynamic ? '先制作当前镜头的 MP4 草稿，确认后再导出整片。草稿不会自动采用；成片使用已采用版本与已核对时序，保留旁白且不附加字幕。'
     : sessionSettings.media_configured ? '导出在后台进行，过程中可以继续编辑；结果保留导出开始时的版本。'
     : '视频导出暂时不可用，仍可预览并导出原项目素材。';
   const fragment = document.createDocumentFragment();
@@ -643,7 +674,17 @@ function render() {
   $('project-meta').textContent = `${project.scenes.length} 个镜头 · 预计 ${duration} 秒 · 文稿版本 ${project.revision}`;
   $('project-script').textContent = project.script;
   $('project-style').textContent = project.style || '还没有指定视觉方向。';
-  $('export-project').disabled = pending.has(`export:${project.id}`);
+  const dynamicIntent = project.production_mode === 'motion';
+  $('production-mode-label').textContent = dynamicIntent ? '动态视频制作' : '历史项目 · 素材保留';
+  $('production-mode-note').textContent = dynamicIntent
+    ? '新镜头按动态图解制作。已有画面与录音保留，可作为静态片段混合使用。'
+    : '原有画面、录音和导出保持可用。转为动态制作后，未完成镜头按动态制作，已有素材继续保留。';
+  $('convert-project-motion').hidden = dynamicIntent;
+  renderProductionTransition(project);
+  const staticExportReady = project.scenes.length > 0 && project.scenes.every(scene => Boolean(scene.head_version_id));
+  $('export-project').disabled = !staticExportReady || pending.has(`export:${project.id}`);
+  $('static-export-note').textContent = staticExportReady ? '包含整个项目已采用的静态 SVG/HTML 素材。'
+    : '静态 ZIP 需要每个镜头都有已采用的静态素材；动态视频请使用项目 MP4 导出。';
   renderOperation(project.storyboard_operation, 'storyboard');
   const storyboardBusy = isActiveOperation(project.storyboard_operation) || pending.has(`storyboard:${project.id}`);
   $('create-storyboard').disabled = storyboardBusy || project.scenes.length > 0;
@@ -663,6 +704,12 @@ function render() {
     renderEditor(scene, project);
   }
   if (!scene || editor === 'new') return;
+  const materialsKey = `${project.id}:${scene.id}`;
+  if (staticMaterialsScene !== materialsKey) {
+    staticMaterialsScene = materialsKey;
+    $('static-assets-panel').open = false;
+    $('motion-panel').open = true;
+  }
   $('scene-narration-text').textContent = scene.narration || '还没有旁白，可在编辑镜头中添加。';
   renderVersion(scene);
   renderOperation(scene.operation, 'scene');
@@ -711,6 +758,7 @@ async function loadProject() {
         motionPanel.load(ticket.projectId, ticket.epoch),
       ]);
       for (const result of related) if (result.status === 'rejected') throw result.reason;
+      if (state.projectId === ticket.projectId && state.epoch === ticket.epoch) renderProductionTransition(state.project);
     }
   } catch (error) {
     if (ticket.epoch === state.epoch && error.name !== 'AbortError') {
@@ -1003,19 +1051,31 @@ $('create-project-form').addEventListener('submit', async event => {
   if (pending.has('create-project') || !$('create-project-form').reportValidity()) return;
   pending.add('create-project');
   $('submit-create-project').disabled = true;
-  const body = { title: $('new-title').value.trim(), script: $('new-script').value.trim(), style: $('new-style').value.trim() };
+  const body = { title: $('new-title').value.trim(), script: $('new-script').value.trim(), style: $('new-style').value.trim(),
+    production_mode: 'motion' };
   try {
     const project = await request('/api/projects', { method: 'POST', body });
     $('create-project-dialog').close();
     $('create-project-form').reset();
     await loadProjects();
     await openProject(project.id);
-    success('项目已创建。可以拆分镜头或手动添加。');
+    success('动态视频项目已创建。可以拆分镜头或手动添加，再制作图解与配音。');
   } catch (error) { showError(error); }
   finally { pending.delete('create-project'); $('submit-create-project').disabled = false; }
 });
 
 $('add-scene').addEventListener('click', startNewScene);
+$('convert-project-motion').addEventListener('click', () => {
+  const project = state.project;
+  if (!project || project.production_mode === 'motion' || !sessionSettings.motion_enabled) return;
+  let intent;
+  try {
+    intent = createDynamicProjectRequest(project, { unsaved: projectHasUnsavedEdits(project.id),
+      busy: productionTransitionBusy(project) });
+  } catch (error) { showInputError(error.message); return; }
+  perform(`production-mode:${project.id}`, () => request(intent.path, { method: 'PATCH', body: intent.body }),
+    () => success('项目已转为动态制作。已有画面与录音保留，未完成镜头按动态图解制作。'));
+});
 $('empty-add-scene').addEventListener('click', startNewScene);
 $('scene-form').addEventListener('submit', saveScene);
 $('scene-form').addEventListener('input', () => {
@@ -1213,7 +1273,7 @@ $('download-subtitles').addEventListener('click', () => {
     'video-subtitles.srt', `subtitles:${state.projectId}`);
 });
 $('render-project').addEventListener('click', () => {
-  if (!state.project || hasMotionScenes(state.project)) return;
+  if (!state.project || usesDynamicVideo(state.project)) return;
   const id = state.projectId;
   const body = { expected_revision: state.project.revision, silent: $('render-silent').checked,
     subtitles: $('render-subtitles').checked };
@@ -1221,7 +1281,7 @@ $('render-project').addEventListener('click', () => {
     () => success('成片导出已开始，可在项目预览与成片中查看进度。'));
 });
 $('render-motion-project').addEventListener('click', () => {
-  if (!state.project || !hasMotionScenes(state.project) || !sessionSettings.motion_render_configured
+  if (!state.project || !usesDynamicVideo(state.project) || !sessionSettings.motion_render_configured
       || projectHasUnsavedEdits(state.projectId) || deliveryIssues(state.project, { silent: false, subtitles: false }).length
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation)) return;
   const intent = createMotionRenderRequest(state.project, { purpose: 'delivery' });
@@ -1231,7 +1291,11 @@ $('render-motion-project').addEventListener('click', () => {
 $('close-motion-render').addEventListener('click', closeMotionRender);
 $('motion-render-dialog').addEventListener('cancel', event => { event.preventDefault(); closeMotionRender(); });
 $('motion-render-video').addEventListener('error', () => showInputError('视频暂时无法播放，请重新读取导出状态后再试。'));
-$('preview-project').addEventListener('click', openProjectPlayer);
+$('preview-project').addEventListener('click', () => {
+  if (usesDynamicVideo(state.project)) {
+    if (!$('preview-project').disabled) motionPanel.preview();
+  } else openProjectPlayer();
+});
 for (const id of ['render-silent', 'render-subtitles']) $(id).addEventListener('change', () => {
   if (state.project) renderDelivery(state.project);
 });
@@ -1294,7 +1358,7 @@ for (const eventName of ['input', 'change']) {
     // The panel owns its controls. In particular a native select emits input
     // before change; rebuilding it here would undo the new review selection.
     if (!$('explanation-panel').contains(event.target)) explanationPanel.render();
-    if (!$('motion-panel').contains(event.target)) motionPanel.render();
+    if (!$('motion-panel').contains(event.target) && !$('motion-timing-section').contains(event.target)) motionPanel.render();
   });
 }
 

@@ -21,6 +21,12 @@ export function isActiveOperation(operation) {
   return Boolean(operation?.id && ACTIVE_STATUSES.has(operation.status));
 }
 
+// Production-mode conversion waits for a confirmed terminal result, including
+// when submission is uncertain. This does not change polling or cancellation.
+export function isUnresolvedProductionOperation(operation) {
+  return Boolean(operation?.id && !['completed', 'failed', 'cancelled', 'timed_out', 'needs_input'].includes(operation.status));
+}
+
 export function activeOperations(project) {
   const candidates = [project?.storyboard_operation,
     ...(project?.scenes ?? []).flatMap(scene => [scene.operation, scene.audio_operation])];
@@ -255,8 +261,8 @@ export function audioVoiceLabel(version, session = {}) {
 export function deliveryIssues(project, { silent = false, subtitles = true } = {}) {
   return (project?.scenes ?? []).flatMap((scene, index) => {
     const reasons = [];
-    if (scene.motion?.mode === 'motion') {
-      if (!scene.motion.head_version_id) reasons.push('missing_visual');
+    if ((scene.motion?.mode ?? scene.production_mode) === 'motion') {
+      if (!scene.motion?.head_version_id) reasons.push('missing_motion_plan');
       else if (scene.motion.head_stale) reasons.push('stale_motion');
     } else if (!scene.head_version_id) reasons.push('missing_visual');
     if (!silent) {

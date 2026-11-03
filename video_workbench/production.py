@@ -127,13 +127,22 @@ class Production:
                 captions=captions))
         return results
 
+    def _static_project(self, owner, project_id):
+        project = (self.motion_store.project(owner, project_id) if self.motion_store is not None
+                   else self.store.project(owner, project_id))
+        if project.get('production_mode') == 'motion' or any(
+                scene.get('motion', {}).get('mode', scene.get('production_mode', 'static')) == 'motion'
+                for scene in project['scenes']):
+            raise ServiceError('dynamic_workflow_required', 409)
+        return project
+
     def snapshot(self, owner, project_id, *, silent=False, subtitles=True):
-        project = self.store.project(owner, project_id)
+        project = self._static_project(owner, project_id)
         return media.freeze_snapshot(project_id, project['revision'], project['title'],
             self._scenes(owner, project, silent=silent, subtitles=subtitles), silent=silent, subtitles=subtitles)
 
     def timeline(self, owner, project_id, *, silent=False, subtitles=True):
-        project = self.store.project(owner, project_id)
+        project = self._static_project(owner, project_id)
         scenes = self._scenes(owner, project, silent=silent, subtitles=False)
         cursor = 0.0
         result = []
@@ -213,6 +222,10 @@ class Production:
             resolved, adopted, total = [], {}, 0
             for scene in scenes:
                 mode = 'motion' if all(selection) else scene['motion']['mode']
+                version_id = (request['motion_version_id'] if all(selection)
+                              else scene['motion']['head_version_id']) if mode == 'motion' else None
+                if mode == 'motion' and not version_id:
+                    raise ServiceError('missing_motion_plan', 409)
                 audio_id = request['audio_version_id'] if all(selection) else scene.get('head_audio_version_id')
                 if not audio_id:
                     raise ServiceError('missing_current_audio', 409)
@@ -231,9 +244,6 @@ class Production:
                 if mode == 'motion':
                     if len(audio['data']) > MAX_MOTION_AUDIO_BYTES:
                         raise ServiceError('motion_audio_size_exceeded', 413)
-                    version_id = request['motion_version_id'] if all(selection) else scene['motion']['head_version_id']
-                    if not version_id:
-                        raise ServiceError('missing_motion_plan', 409)
                     version = self.motion_store.version(owner, version_id)
                     if version['project_id'] != project_id or version['scene_id'] != scene['id']:
                         raise ServiceError('not_found', 404)

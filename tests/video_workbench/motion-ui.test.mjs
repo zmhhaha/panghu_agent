@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
   createMotionPanel, createMotionRequest, createMotionAdoption, createMotionRenderRequest,
-  currentMotionAudio, hasMotionScenes, motionErrorLabel, motionSelection, validateMotionSegments,
+  currentMotionAudio, hasMotionScenes, usesDynamicVideo, createDynamicProjectRequest, motionMetadata, motionErrorLabel, motionSelection, validateMotionSegments,
 } from '../../video_workbench/web/motion.mjs';
-import { deliveryIssues } from '../../video_workbench/web/model.mjs';
+import { deliveryIssues, isActiveOperation, isUnresolvedProductionOperation } from '../../video_workbench/web/model.mjs';
 
 const html = await readFile(new URL('../../video_workbench/web/index.html', import.meta.url), 'utf8');
 class Element {
@@ -62,7 +62,7 @@ function harness() {
   const state = { context: { project: p, scene: p.scenes[0], epoch: 1, configured: true,
     enabled: true, renderConfigured: true, unsaved: false, projectBusy: false },
     data: structuredClone(p), calls: [], errors: [], successes: [], refreshes: 0, transport: null, refreshAction: null,
-    timing: null };
+    timing: null, previewStates: [] };
   const fallback = async path => {
     if (path.endsWith('/motion')) return structuredClone(state.data);
     const match = path.match(/\/motion-versions\/([^/]+)(\/timing)?/);
@@ -76,7 +76,8 @@ function harness() {
       state.calls.push({ path, options });
       return state.transport ? state.transport(path, options, fallback) : fallback(path);
     }, refresh: async () => { state.refreshes += 1; if (state.refreshAction) await state.refreshAction(); },
-    onError: error => state.errors.push(error), onSuccess: message => state.successes.push(message) });
+    onError: error => state.errors.push(error), onSuccess: message => state.successes.push(message),
+    onPreviewStateChange: ready => state.previewStates.push(ready) });
   const setProject = (p, epoch = state.context.epoch) => {
     state.context = { ...state.context, project: p, scene: p.scenes[0], epoch }; state.data = structuredClone(p);
   };
@@ -141,6 +142,20 @@ test('native candidate selection survives input then change and new candidates d
   h.$('confirm-motion-adoption').checked = true;
   await h.load(); assert.equal(h.$('motion-version').value, 'v1');
   assert.equal(motionSelection(h.state.data.scenes[0], 'missing').id, 'v3');
+});
+
+test('primary draft availability follows async timing, unsaved correction and scene selection', async () => {
+  const h = harness(); h.panel.render();
+  assert.equal(h.state.previewStates.at(-1), false);
+  await h.load();
+  assert.equal(h.state.previewStates.at(-1), true);
+  const input = timingInput(h, 0, 1); input.value = '1.9'; await input.emit('input');
+  assert.equal(h.state.previewStates.at(-1), false);
+  await h.$('reset-motion-timing').emit('click');
+  assert.equal(h.state.previewStates.at(-1), true);
+  h.state.context.scene = null; h.panel.render();
+  assert.equal(h.state.previewStates.at(-1), false);
+  assert.equal(posts(h).length, 0);
 });
 
 test('adoption requires explicit confirmation, loaded current candidate and no dirty external changes', async () => {
@@ -324,7 +339,7 @@ test('static delivery readiness stays intact and mixed projects use only their c
   assert.deepEqual(deliveryIssues(p, { subtitles: false })[0].reasons, ['missing_visual']);
   p.scenes[0].head_version_id = 'static-image'; assert.deepEqual(deliveryIssues(p, { subtitles: false }), []);
   p.scenes[0].motion.mode = 'motion'; assert.equal(hasMotionScenes(p), true);
-  assert.deepEqual(deliveryIssues(p, { subtitles: false })[0].reasons, ['missing_visual']);
+  assert.deepEqual(deliveryIssues(p, { subtitles: false })[0].reasons, ['missing_motion_plan']);
   p.scenes[0].head_version_id = null; p.scenes[0].motion.head_version_id = 'v1';
   assert.deepEqual(deliveryIssues(p, { subtitles: false }), []);
   p.scenes[0].motion.head_stale = true;
@@ -353,7 +368,80 @@ test('all controls exist once; app wires motion reads, MP4 playback, polling and
   assert.match(app, /!motionPanel\.hasActiveOperation\(\)/); assert.match(app, /motionPanel\.hasDrafts\(\)/);
   assert.match(app, /createMotionRenderRequest\(state.project, \{ purpose: 'delivery' \}\)/);
   assert.match(app, /function openMotionRender\(item\)/);
-  assert.match(app, /if \(!\$\('motion-panel'\)\.contains\(event.target\)\) motionPanel.render\(\)/);
+  assert.match(app, /!\$\('motion-panel'\)\.contains\(event.target\) && !\$\('motion-timing-section'\)\.contains\(event.target\)/);
   assert.match(html, /id="motion-render-video"[^>]*controls/);
   assert.doesNotMatch(html, /id="render-subtitles"[^>]*checked/);
+});
+
+test('a dynamic project keeps the video workflow before any plan exists without adopting a candidate', () => {
+  const p = project(); p.production_mode = 'motion'; p.scenes[0].motion.mode = 'motion';
+  p.scenes[0].motion.versions = [];
+  const original = structuredClone(p);
+  assert.equal(usesDynamicVideo(p), true);
+  assert.deepEqual(deliveryIssues(p, { subtitles: false })[0].reasons, ['missing_motion_plan']);
+  assert.deepEqual(p, original);
+  const legacy = project(); legacy.scenes[0].head_version_id = 'old-static';
+  assert.equal(usesDynamicVideo(legacy), false);
+  legacy.scenes[0].motion.mode = 'motion';
+  assert.equal(usesDynamicVideo(legacy), true);
+});
+
+test('explicit transition binds the reviewed project revision and rejects unsaved or active work', () => {
+  const p = project('../legacy?');
+  assert.deepEqual(createDynamicProjectRequest(p), {
+    path: '/api/projects/..%2Flegacy%3F/production-mode', body: { mode: 'motion', expected_revision: 1 },
+  });
+  assert.throws(() => createDynamicProjectRequest(p, { unsaved: true }), /未保存/);
+  assert.throws(() => createDynamicProjectRequest(p, { busy: true }), /任务结束/);
+  assert.throws(() => createDynamicProjectRequest(null));
+  assert.equal(p.production_mode, undefined);
+  assert.equal(p.scenes[0].head_version_id, null);
+});
+
+test('transition waits for uncertain and unknown visible work without changing polling semantics', async () => {
+  const p = project();
+  const uncertain = { id: 'unconfirmed', status: 'uncertain' };
+  assert.equal(isActiveOperation(uncertain), false);
+  assert.equal(isUnresolvedProductionOperation(uncertain), true);
+  for (const field of ['operation', 'audio_operation']) {
+    p.scenes[0][field] = uncertain;
+    assert.throws(() => createDynamicProjectRequest(p), /任务结束/);
+    delete p.scenes[0][field];
+  }
+  p.storyboard_operation = { id: 'new-status', status: 'unknown' };
+  assert.throws(() => createDynamicProjectRequest(p), /任务结束/);
+  p.storyboard_operation.status = 'completed';
+  assert.ok(createDynamicProjectRequest(p));
+  const h = harness(); h.state.data.scenes[0].motion.operation = uncertain;
+  await h.load();
+  assert.equal(h.panel.hasActiveOperation(), false);
+  assert.equal(h.panel.hasUnresolvedOperation(), true);
+  assert.equal(posts(h).length, 0);
+});
+
+test('raw scene intent remains pending motion while an explicit static choice takes priority', async () => {
+  const p = project(); p.scenes[0].production_mode = 'motion';
+  delete p.scenes[0].motion;
+  assert.equal(hasMotionScenes(p), true);
+  assert.equal(motionMetadata(p.scenes[0]).head_version_id, null);
+  assert.deepEqual(deliveryIssues(p, { subtitles: false })[0].reasons, ['missing_motion_plan']);
+  const h = harness(); h.setProject(p); await h.load();
+  assert.equal(h.$('motion-mode-label').textContent, '动态图解待制作');
+  p.scenes[0].motion = { mode: 'static', head_version_id: null, versions: [] };
+  p.scenes[0].head_version_id = 'legacy-static'; h.setProject(p); await h.load();
+  assert.equal(hasMotionScenes(p), false);
+  assert.equal(motionMetadata(p.scenes[0]).mode, 'static');
+  assert.deepEqual(deliveryIssues(p, { subtitles: false }), []);
+  assert.match(h.$('motion-mode-label').textContent, /当前复用静态素材/);
+});
+
+test('pending dynamic intent is shown as unmade instead of adopted and has no timing section', async () => {
+  const h = harness(); const p = project(); p.production_mode = 'motion';
+  p.scenes[0].motion.mode = 'motion'; p.scenes[0].motion.versions = [];
+  h.setProject(p); await h.load();
+  assert.equal(h.$('motion-mode-label').textContent, '动态图解待制作');
+  assert.equal(h.$('motion-timing-section').hidden, true);
+  assert.equal(h.$('adopt-motion').disabled, true);
+  assert.equal(h.$('preview-motion').disabled, true);
+  assert.equal(posts(h).length, 0);
 });

@@ -1,5 +1,5 @@
 /** Optional project explanation planning; generation never starts media work. */
-import { isActiveOperation, statusLabel } from './model.mjs';
+import { isActiveOperation, isUnresolvedProductionOperation, statusLabel } from './model.mjs';
 
 export const EXPLANATION_TONES = new Set(['conversational', 'precise', 'storytelling']);
 const STRATEGIES = { flow: '流程与路由', compare: '前后对照', focus: '结构聚焦' };
@@ -357,5 +357,6 @@ export function createExplanationPanel({ document, getContext, request, refresh,
   return { render, load, generate, adopt, cancel,
     hasDrafts: () => [...drafts.values()].some(draft => draft.dirty),
     hasActiveOperation: () => isActiveOperation(dataFor(current().project?.id)?.operation),
+    hasUnresolvedOperation: () => isUnresolvedProductionOperation(dataFor(current().project?.id)?.operation),
   };
 }

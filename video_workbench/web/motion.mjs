@@ -1,5 +1,5 @@
 /** Semantic motion proposals and recording-bound timing; no executable model HTML. */
-import { isActiveOperation, statusLabel } from './model.mjs';
+import { isActiveOperation, isUnresolvedProductionOperation, statusLabel } from './model.mjs';
 
 const STRATEGIES = { flow: '流程推演', compare: '前后对比', focus: '结构聚焦' };
 const ACTIONS = { reveal: '出现', hide: '隐藏', highlight: '强调', move: '移动', draw: '连线展开' };
@@ -35,8 +35,20 @@ export function motionErrorLabel(code) {
     : '动态图解处理未完成，请重新读取状态并检查当前内容、配音和时序。';
 }
 
-export const hasMotionScenes = project => Boolean(project?.scenes?.some(scene => scene.motion?.mode === 'motion'));
-export const motionMetadata = scene => scene?.motion ?? { mode: 'static', versions: [], head_version_id: null };
+export const hasMotionScenes = project => Boolean(project?.scenes?.some(scene => motionMetadata(scene).mode === 'motion'));
+export const usesDynamicVideo = project => project?.production_mode === 'motion' || hasMotionScenes(project);
+export function createDynamicProjectRequest(project, { unsaved = false, busy = false } = {}) {
+  if (!project?.id || !Number.isInteger(project.revision)) throw new Error('请先读取项目。');
+  if (unsaved) throw new Error('请先保存或重新载入未保存的修改，再切换制作方式。');
+  const operations = [project.storyboard_operation, ...(project.scenes ?? []).flatMap(scene =>
+    [scene.operation, scene.audio_operation, scene.motion?.operation])];
+  if (busy || operations.some(isUnresolvedProductionOperation)) throw new Error('请等待当前制作任务结束，再切换制作方式。');
+  return { path: `/api/projects/${encodeURIComponent(project.id)}/production-mode`,
+    body: { mode: 'motion', expected_revision: project.revision } };
+}
+export const motionMetadata = scene => scene?.motion ?? {
+  mode: scene?.production_mode === 'motion' ? 'motion' : 'static', versions: [], head_version_id: null,
+};
 export function motionSelection(scene, selectedId) {
   const data = motionMetadata(scene), rows = data.versions ?? [];
   return rows.find(row => row.id === selectedId) ?? rows.find(row => row.id === data.head_version_id) ?? rows.at(-1) ?? null;
@@ -99,7 +111,7 @@ export function createMotionRenderRequest(project, { purpose = 'draft', scene, c
   return { path: `/api/projects/${encodeURIComponent(project.id)}/motion-renders`, body };
 }
 
-export function createMotionPanel({ document, getContext, request, refresh, onError, onSuccess }) {
+export function createMotionPanel({ document, getContext, request, refresh, onError, onSuccess, onPreviewStateChange = () => {} }) {
   const $ = id => document.getElementById(id);
   const metadata = new Map(), versions = new Map(), timings = new Map(), drafts = new Map();
   const selections = new Map(), instructions = new Map(), busy = new Set(), readErrors = new Map();
@@ -197,14 +209,17 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     const value = current(), { project, scene, selected, audio, timing, draft } = value;
     const data = motionMetadata(scene), active = isActiveOperation(data.operation), inFlight = busy.has(value.key);
     $('motion-panel').hidden = !scene || (!value.enabled && !data.versions?.length && !data.operation && data.mode !== 'motion');
-    if (!project || !scene) return;
+    $('motion-timing-section').hidden = !scene || !selected;
+    if (!project || !scene) { $('preview-motion').disabled = true; onPreviewStateChange(false); return; }
     const blocked = !value.fresh || value.unsaved || value.projectBusy || inFlight;
     const signature = JSON.stringify([value.key, project.revision, selected?.id, data.head_version_id,
       timing?.alignment_sha256, audio?.id]);
     if (confirmation !== signature) {
       confirmation = signature; $('confirm-motion-adoption').checked = false; $('confirm-motion-timing').checked = false;
     }
-    $('motion-mode-label').textContent = data.mode === 'motion' ? '本镜头使用动态图解' : '本镜头使用静态画面';
+    $('motion-mode-label').textContent = data.mode === 'motion'
+      ? data.head_version_id ? data.head_stale ? '已采用图解需要更新' : '已采用动态图解' : '动态图解待制作'
+      : scene.head_version_id ? '当前复用静态素材，可制作动态图解替换' : '为本镜头制作动态图解';
     $('motion-use-static').disabled = blocked || data.mode !== 'motion';
     $('motion-use-motion').disabled = blocked || !value.enabled || !data.head_version_id || data.head_stale || data.mode === 'motion';
     $('motion-instruction').value = instructions.get(value.key) ?? '';
@@ -262,6 +277,7 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     $('motion-correction-reason').value = draft?.correction_reason ?? '';
     $('motion-correction-reason').disabled = !draft || !value.enabled || inFlight;
     $('preview-motion').disabled = !value.renderConfigured || blocked || !selected || selected.stale || !audio || !timing || draft?.dirty;
+    onPreviewStateChange(!$('preview-motion').disabled);
     const player = $('motion-timing-audio');
     const audioPath = audio ? `/api/audio-versions/${encodeURIComponent(audio.id)}/audio` : null;
     if (player.dataset?.audioId !== (audio?.id ?? '')) {
@@ -352,7 +368,7 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     const data = motionMetadata(value.scene);
     if (data.mode === mode || (mode === 'motion' && (!data.head_version_id || data.head_stale))) return;
     await mutate(value, () => request(`/api/scenes/${encodeURIComponent(value.scene.id)}/visual-mode`,
-      { method: 'POST', body: { expected_revision: value.project.revision, mode } }), () => onSuccess(mode === 'static' ? '已切回静态画面，动态图解历史仍保留。' : '本镜头已切换为已采用的动态图解。'));
+      { method: 'POST', body: { expected_revision: value.project.revision, mode } }), () => onSuccess(mode === 'static' ? '本镜头将复用静态素材，动态图解历史仍保留。' : '本镜头已切换为已采用的动态图解。'));
   }
   async function cancel() {
     const value = current(), op = motionMetadata(value.scene).operation;
@@ -422,6 +438,7 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
   });
   return { render, load, generate, adopt, mode, cancel, saveTiming, preview,
     hasActiveOperation: () => [...(metadata.get(context().project?.id)?.scenes ?? context().project?.scenes ?? [])].some(scene => isActiveOperation(scene.motion?.operation)),
+    hasUnresolvedOperation: () => [...(metadata.get(context().project?.id)?.scenes ?? context().project?.scenes ?? [])].some(scene => isUnresolvedProductionOperation(scene.motion?.operation)),
     hasDrafts: () => [...drafts.values()].some(row => row.dirty),
     hasProjectDrafts: projectId => [...drafts.values()].some(row => row.dirty && row.project_id === projectId),
     pause: () => { auditionEnd = null; $('motion-timing-audio').pause(); },

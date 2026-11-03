@@ -1,4 +1,4 @@
-"""Optional motion candidates beside the existing static Store.
+"""Dynamic authoring intent and candidates beside historical static state.
 
 These tables never reinterpret static source/format, rewrite a static head, or
 adopt Agent output. Semantic dependencies intentionally exclude voice and audio.
@@ -102,10 +102,10 @@ class MotionStore:
         db.execute('UPDATE motion_operations SET document=? WHERE id=?', (_json(op), op['id']))
 
     @staticmethod
-    def _head(db, owner, project_id, scene_id):
+    def _head(db, owner, project_id, scene_id, *, default_mode='static'):
         row = db.execute('SELECT version_id,mode FROM motion_heads WHERE owner=? AND project_id=? AND scene_id=?',
                          (owner, project_id, scene_id)).fetchone()
-        return dict(row) if row else dict(version_id=None, mode='static')
+        return dict(row) if row else dict(version_id=None, mode=default_mode)
 
     @staticmethod
     def _version(db, owner, version_id):
@@ -131,7 +131,8 @@ class MotionStore:
             with self.store.transaction() as db:
                 for scene in project['scenes']:
                     binding = semantic_binding(project, scene)
-                    head = self._head(db, owner, project_id, scene['id'])
+                    head = self._head(db, owner, project_id, scene['id'],
+                                      default_mode=scene.get('production_mode', 'static'))
                     versions = [json.loads(r['document']) for r in db.execute(
                         'SELECT document FROM motion_versions WHERE owner=? AND project_id=? AND scene_id=? ORDER BY rowid',
                         (owner, project_id, scene['id']))]
@@ -145,6 +146,38 @@ class MotionStore:
                         semantic_binding_sha256=binding, versions=metadata,
                         operation=self._public(ops[-1]) if ops else None)
             return project
+
+    def enable_project_motion(self, owner, project_id, expected_revision):
+        """Change future/pending intent without replacing any selected media.
+
+        Old scenes with an adopted static version or an explicit visual mode
+        keep their existing selection. Unselected scenes can become pending
+        motion, which has a null plan head until the user explicitly adopts one.
+        """
+        _require(type(expected_revision) is int and expected_revision >= 1)
+        with self.store.transaction() as db:
+            project = self.store._project(db, owner, project_id)
+            self.store._revision(project, expected_revision)
+            tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            terminal = {'completed', 'failed', 'cancelled', 'timed_out', 'needs_input'}
+            for table in ('operations', 'motion_operations', 'audio_operations',
+                          'explanation_operations', 'video_renders'):
+                if table in tables:
+                    _require(all(json.loads(row[0]).get('status') in terminal for row in db.execute(
+                        'SELECT document FROM ' + table + ' WHERE project_id=?', (project_id,))),
+                        'project_production_mode_busy', 409)
+            changed = project.get('production_mode', 'static') != 'motion'
+            project['production_mode'] = 'motion'
+            for scene in project['scenes']:
+                selected = scene.get('head_version_id') or db.execute(
+                    'SELECT 1 FROM motion_heads WHERE owner=? AND project_id=? AND scene_id=?',
+                    (owner, project_id, scene['id'])).fetchone()
+                if not selected and scene.get('production_mode', 'static') != 'motion':
+                    scene['production_mode'] = 'motion'
+                    changed = True
+            if changed:
+                self.store._save(db, project)
+        return self.project(owner, project_id)
 
     def version(self, owner, version_id):
         with self.store.transaction() as db:

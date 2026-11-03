@@ -100,7 +100,10 @@ def env(tmp_path):
 
 def setup(env):
     client, app, *_ = env
-    project = client.post('/api/projects', json=dict(title='混合视频', script=FIELDS['narration'], style='清晰图解')).json()
+    # This fixture represents an existing static project adopting one motion
+    # scene; fresh projects now default to motion when that capability is on.
+    project = client.post('/api/projects', json=dict(title='混合视频', script=FIELDS['narration'],
+                                                   style='清晰图解', production_mode='static')).json()
     store = app.state.store
     for i in range(2):
         project = store.save_scene('alice', project['id'], dict(FIELDS, title=f'第{i + 1}镜'))

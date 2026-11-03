@@ -1,4 +1,4 @@
-"""SVG/HTML authoring workbench; trusted proxy authentication or explicit loopback mode."""
+"""Video authoring workbench; trusted proxy authentication or explicit loopback mode."""
 from __future__ import annotations
 
 import hashlib
@@ -77,6 +77,8 @@ MESSAGES = {
     'explanation_head_conflict': '已采用的讲解方案发生变化，请重新读取后核对。',
     'explanation_storage_limit': '讲解方案记录已达到当前存储限制。',
     'motion_disabled': '动态图解尚未启用，仍可查看历史和取消在途任务。',
+    'project_production_mode_busy': '项目有制作任务正在执行，请等待完成或取消后再转为动态制作。',
+    'dynamic_workflow_required': '请使用动态视频的预览与导出入口，先完成动态图解并核对配音时序。',
     'motion_plan_stale': '这份动态图解对应旧内容，请重新生成。',
     'motion_head_conflict': '采用的动态图解已变化，请刷新核对。',
     'motion_alignment_conflict': '录音时间已被修改，请重新读取后核对。',
@@ -113,6 +115,7 @@ class ProjectFields(Fields):
     title: str = Field(min_length=1, max_length=300)
     script: str = Field(min_length=1, max_length=50000)
     style: str = Field(default='', max_length=4000)
+    production_mode: Literal['static', 'motion'] | None = None
 
 
 class SceneFields(Fields):
@@ -129,6 +132,10 @@ class SceneEdit(SceneFields):
 
 class Revision(Fields):
     expected_revision: int = Field(ge=1, strict=True)
+
+
+class ProjectProductionMode(Revision):
+    mode: Literal['motion']
 
 
 class Storyboard(Revision):
@@ -478,6 +485,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     media_configured=production.enabled,
                     explanation_configured=enabled and explanation_gateway is not None,
                     motion_enabled=motion_gate, motion_configured=motion_gate and motion_gateway is not None,
+                    default_production_mode='motion' if motion_gate else 'static',
                     motion_render_configured=motion_gate and motion_renderer is not None and runtime is not None)
 
     @app.get('/api/projects')
@@ -486,8 +494,12 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
 
     @app.post('/api/projects')
     def create_project(body: ProjectFields, owner=Depends(mutation)):
-        project = store.create_project(owner, body.model_dump())
-        return store.project(owner, project['id'])
+        fields = body.model_dump()
+        fields['production_mode'] = body.production_mode or ('motion' if motion_gate else 'static')
+        if fields['production_mode'] == 'motion' and not motion_gate:
+            raise ServiceError('motion_disabled', 503)
+        project = store.create_project(owner, fields)
+        return motion_store.project(owner, project['id'])
 
     @app.get('/api/projects/{project_id}')
     def project(project_id: str, owner=Depends(identity)):
@@ -496,6 +508,11 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     def require_motion():
         if not motion_gate:
             raise ServiceError('motion_disabled', 503)
+
+    @app.patch('/api/projects/{project_id}/production-mode')
+    def project_production_mode(project_id: str, body: ProjectProductionMode, owner=Depends(mutation)):
+        require_motion()
+        return motion_store.enable_project_motion(owner, project_id, body.expected_revision)
 
     @app.get('/api/projects/{project_id}/motion')
     def motion_project(project_id: str, owner=Depends(identity)):
@@ -568,12 +585,14 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
 
     @app.post('/api/projects/{project_id}/scenes')
     def create_scene(project_id: str, body: SceneFields, owner=Depends(mutation)):
-        return store.save_scene(owner, project_id, body.model_dump())
+        store.save_scene(owner, project_id, body.model_dump())
+        return motion_store.project(owner, project_id)
 
     @app.patch('/api/scenes/{scene_id}')
     def edit_scene(scene_id: str, body: SceneEdit, owner=Depends(mutation)):
-        return store.save_scene(owner, store.scene_project(owner, scene_id), body.model_dump(exclude={'expected_revision'}),
-                                scene_id, body.expected_revision)
+        project_id = store.scene_project(owner, scene_id)
+        store.save_scene(owner, project_id, body.model_dump(exclude={'expected_revision'}), scene_id, body.expected_revision)
+        return motion_store.project(owner, project_id)
 
     @app.post('/api/projects/{project_id}/storyboard', status_code=202)
     def storyboard(project_id: str, body: Storyboard, owner=Depends(mutation), idempotency_key: str | None = Header(default=None)):

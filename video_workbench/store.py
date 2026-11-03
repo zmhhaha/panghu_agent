@@ -100,7 +100,10 @@ class Store(AudioStoreMixin):
                 raise ServiceError('operation_in_progress', 409)
 
     def create_project(self, owner, fields):
-        project = dict(fields, id=uid(), revision=1, updated_at=time.time(), scenes=[])
+        mode = fields.get('production_mode', 'static')
+        if type(mode) is not str or mode not in {'static', 'motion'}:
+            raise ServiceError('invalid_production_mode', 422)
+        project = dict(fields, production_mode=mode, id=uid(), revision=1, updated_at=time.time(), scenes=[])
         with self.transaction() as db:
             db.execute('INSERT INTO projects VALUES (?, ?, ?)', (project['id'], owner, json.dumps(project)))
         return project
@@ -108,12 +111,15 @@ class Store(AudioStoreMixin):
     def list_projects(self, owner):
         with self.transaction() as db:
             projects = [json.loads(r[0]) for r in db.execute('SELECT document FROM projects WHERE owner=?', (owner,))]
-        return [dict(id=p['id'], title=p['title'], updated_at=p['updated_at'], scene_count=len(p['scenes']))
+        return [dict(id=p['id'], title=p['title'], updated_at=p['updated_at'], scene_count=len(p['scenes']),
+                     production_mode=p.get('production_mode', 'static'))
                 for p in sorted(projects, key=lambda p: p['updated_at'], reverse=True)]
 
     def project(self, owner, project_id):
         with self.transaction() as db:
             project = self._project(db, owner, project_id)
+            # This is a read projection, never a migration of old JSON rows.
+            project.setdefault('production_mode', 'static')
             project['storyboard_operation'] = None
             for scene in project['scenes']:
                 scene['operation'] = None
@@ -142,7 +148,8 @@ class Store(AudioStoreMixin):
             else:
                 if len(project['scenes']) >= 24:
                     raise ServiceError('scene_limit', 422)
-                project['scenes'].append(dict(fields, id=uid(), head_version_id=None, versions=[]))
+                project['scenes'].append(dict(fields, production_mode=project.get('production_mode', 'static'),
+                                              id=uid(), head_version_id=None, versions=[]))
             self._save(db, project)
         return self.project(owner, project_id)
 
@@ -255,7 +262,8 @@ class Store(AudioStoreMixin):
             elif op['kind'] == 'storyboard':
                 if project['scenes']:
                     raise ServiceError('storyboard_requires_empty_project', 409)
-                project['scenes'] = [dict(s, id=uid(), head_version_id=None, versions=[]) for s in output['scenes']]
+                project['scenes'] = [dict(s, production_mode=project.get('production_mode', 'static'),
+                    id=uid(), head_version_id=None, versions=[]) for s in output['scenes']]
                 op.update(status='completed', error=None)
             else:
                 scene = self._scene(project, op['scene_id'])
