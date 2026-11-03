@@ -12,6 +12,22 @@ function deferred<T>() {
 beforeEach(async()=>{vi.resetModules();client=await import('../api');});
 afterEach(()=>{vi.unstubAllGlobals();});
 
+describe('read-only project task history contract',()=>{
+ it('uses a project-scoped GET and adapts existing job cursors and safe diagnostic fields',async()=>{
+  const jobId='43133abb-2e94-4560-860a-2c1504f8ed42';
+  const diagnostic={schema_version:1,error_code:'external_svg_resource',stage:'source_binding',title:'页面引用检查未通过',message:'页面包含不允许的资源引用。',suggestion:'请管理员核对引用类型。',retry_stage:'validation',publication_authorized:false,diagnostic_download_url:`/api/v1/jobs/${jobId}/diagnostics`,raw_report:'SECRET /work/private'};
+  const fetcher=vi.fn().mockResolvedValue(response([{id:jobId,project_id:'project with spaces',kind:'generate',status:'failed',event_cursor:17,error_code:'quality_gate_failed',quality_diagnostics:diagnostic,created_at:'2026-11-03T01:00:00Z'}]));
+  vi.stubGlobal('fetch',fetcher);const controller=new AbortController();
+  const records=await client.api.jobs('project with spaces',controller.signal);
+  expect(fetcher).toHaveBeenCalledOnce();expect(fetcher.mock.calls[0][0]).toBe('/api/v1/projects/project%20with%20spaces/jobs');
+  expect(fetcher.mock.calls[0][1]).toMatchObject({credentials:'same-origin',signal:expect.any(AbortSignal)});
+  expect(new Headers(fetcher.mock.calls[0][1].headers).has('X-CSRF-Token')).toBe(false);
+  expect(fetcher.mock.calls[0][1].method??'GET').toBe('GET');expect(fetcher.mock.calls[0][1].body).toBeUndefined();
+  expect(records[0]).toMatchObject({id:jobId,last_event_seq:17,created_at:'2026-11-03T01:00:00Z',quality_diagnostics:{diagnostic_download_url:`/api/v1/jobs/${jobId}/diagnostics`}});
+  expect(records[0].quality_diagnostics).not.toHaveProperty('raw_report');expect(JSON.stringify(records)).not.toMatch(/SECRET|\/work\/private/);
+ });
+});
+
 describe('profile and CSRF recovery lifecycle',()=>{
  it('reads only the authenticated account usage contract without exposing raw ledger fields or inventing a shared quota balance',async()=>{
   const usage={scope:'account',input_tokens:123,output_tokens:null,tokens_status:'partial',reported_cost:null,currency:null,cost_status:'unknown',cost_breakdown:[],record_count:1,unknown_record_count:1};

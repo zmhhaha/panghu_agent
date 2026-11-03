@@ -1,6 +1,6 @@
 """HTTP ACL and transaction-state checks (SQLite); PG concurrency is separate."""
 import os,uuid
-from datetime import datetime,timezone
+from datetime import datetime,timedelta,timezone
 from pathlib import Path
 import pytest
 from sqlalchemy import create_engine,select
@@ -423,3 +423,106 @@ def test_storage_rejects_traversal_and_symlink(ctx,tmp_path):
     try:target.symlink_to(folder/'deck.pptx')
     except OSError:pytest.skip('symlink permission unavailable on Windows')
     assert c.get('/api/v1/versions/'+vid+'/slides/1/preview').status_code==404
+
+
+def _history_route(project_id):
+    return '/api/v1/projects/' + project_id + '/jobs'
+
+
+@pytest.mark.parametrize('has_jobs', [False, True])
+def test_recent_jobs_authorizes_empty_history_and_rejects_foreign_deleted_or_missing_projects(ctx, has_jobs):
+    app, client, who = ctx
+    current = project(client)
+    if has_jobs:
+        with app.state.sessions.begin() as session:
+            session.add(Job(project_id=current['id'], issuer='https://issuer', subject='alice',
+                kind='generate', stage='generate', status='failed', input_snapshot={'private': 'owner-data'}))
+    owned = client.get(_history_route(current['id']))
+    assert owned.status_code == 200 and len(owned.json()) == int(has_jobs)
+    for identity in (Identity('https://issuer', 'bob'), Identity('https://other-issuer', 'alice')):
+        who[0] = identity
+        response = client.get(_history_route(current['id']))
+        assert response.status_code == 404
+        assert response.json() == {'detail': {'code': 'not_found'}}
+    who[0] = Identity('https://issuer', 'alice')
+    assert client.get(_history_route(str(uuid.uuid4()))).status_code == 404
+    with app.state.sessions.begin() as session:
+        session.get(Project, current['id']).deletion_requested = True
+    assert client.get(_history_route(current['id'])).status_code == 404
+    app.dependency_overrides.clear()
+    assert client.get(_history_route(current['id'])).status_code == 401
+
+
+def test_recent_jobs_bounds_and_stably_orders_only_current_owner_project(ctx):
+    app, client, _ = ctx
+    current, other = project(client), project(client)
+    start = datetime(2026, 11, 3, 1, tzinfo=timezone.utc)
+    rows = []
+    with app.state.sessions.begin() as session:
+        for number in range(25):
+            # Equal times must still have a deterministic descending ID order.
+            job = Job(id=str(uuid.UUID(int=number + 1)), project_id=current['id'],
+                issuer='https://issuer', subject='alice', kind='generate', stage='generate',
+                status='failed', error_code='execution_interrupted', stopped=True,
+                created_at=start + timedelta(seconds=number // 2), input_snapshot={})
+            session.add(job)
+            rows.append((job.created_at, job.id))
+        for pid, issuer, subject in ((other['id'], 'https://issuer', 'alice'),
+                (current['id'], 'https://issuer', 'bob'),
+                (current['id'], 'https://other-issuer', 'alice')):
+            session.add(Job(project_id=pid, issuer=issuer, subject=subject,
+                kind='generate', stage='generate', status='succeeded', input_snapshot={},
+                created_at=start + timedelta(days=1)))
+    expected = [jid for _, jid in sorted(rows, reverse=True)[:20]]
+    for suffix in ('', '?limit=200&cursor=untrusted&status=all'):
+        response = client.get(_history_route(current['id']) + suffix)
+        assert response.status_code == 200
+        assert response.headers['cache-control'] == 'no-store'
+        assert [value['id'] for value in response.json()] == expected
+        assert all(value['project_id'] == current['id'] for value in response.json())
+
+
+def test_recent_failed_diagnostics_keep_existing_safe_dto_and_do_not_change_live_task(ctx):
+    app, client, _ = ctx
+    current, failed_id = quality_failure_job(app, client, 'final_pptx_text_layout_failed')
+    created = datetime(2026, 11, 3, 1, tzinfo=timezone.utc)
+    deadline = created + timedelta(minutes=30)
+    active_id = str(uuid.uuid4())
+    with app.state.sessions.begin() as session:
+        failed = session.get(Job, failed_id)
+        failed.created_at, failed.deadline = created, deadline
+        failed.session_id, failed.run_id = 'private-session', 'private-run'
+        failed.input_snapshot = {'private-material': 'not-public'}
+        session.add(Job(id=active_id, project_id=current['id'], issuer='https://issuer', subject='alice',
+            kind='revise', stage='revise', status='running', input_snapshot={'private-task': 'not-public'},
+            created_at=created + timedelta(hours=1), deadline=created + timedelta(hours=2)))
+        live = session.get(Project, current['id'])
+        live.active_job_id, live.stage = active_id, 'revising'
+
+    def state():
+        with app.state.sessions() as session:
+            jobs = [(j.id, j.status, j.stage, j.attempt, j.fencing_token, j.deadline,
+                j.input_snapshot, j.error_code, j.stopped) for j in session.scalars(select(Job).order_by(Job.id))]
+            live = session.get(Project, current['id'])
+            return (jobs, live.revision, live.active_job_id, live.stage,
+                len(session.scalars(select(JobEvent)).all()),
+                len(session.scalars(select(AgentOutbox)).all()))
+
+    before = state()
+    failed_dto = client.get('/api/v1/jobs/' + failed_id).json()
+    for _ in range(2):
+        response = client.get(_history_route(current['id']))
+        assert response.status_code == 200
+        values = response.json()
+        assert [value['id'] for value in values] == [active_id, failed_id]
+        assert values[1] == failed_dto
+        assert values[1]['quality_diagnostics']['error_code'] == 'final_pptx_text_layout_failed'
+        assert datetime.fromisoformat(values[1]['deadline']) == deadline
+        assert values[1]['phase_timeout_seconds'] == 600
+        for forbidden in ('private-session', 'private-run', 'private-material', 'private-task',
+                'private-log-token', 'private-user-text', '/private/path', 'private.test',
+                'fencing_token', 'lease_until', 'session_id', 'input_snapshot', 'issuer', 'subject'):
+            assert forbidden not in response.text
+        detail = client.get('/api/v1/projects/' + current['id']).json()
+        assert detail['active_job_id'] == active_id and detail['latest_job']['id'] == active_id
+        assert state() == before

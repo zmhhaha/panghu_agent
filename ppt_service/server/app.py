@@ -111,6 +111,9 @@ def create_app(settings:Settings|None=None,engine=None):
     @app.get('/api/v1/projects/{pid}')
     def project(pid:str,owner=Depends(authenticate),s=Depends(session)):
         return project_dto(Repository(s).project(pid,owner),s,True)
+    @app.get('/api/v1/projects/{pid}/jobs')
+    def recent_jobs(pid:str,owner=Depends(authenticate),s=Depends(session)):
+        return [job_dto(j,s) for j in Repository(s).recent_jobs(pid,owner)]
     @app.patch('/api/v1/projects/{pid}')
     def patch(pid:str,body:ProjectPatch,owner=Depends(authenticate),s=Depends(session)):
         r=Repository(s);p=r.project(pid,owner,True);r.revision(p,body.expected_revision)

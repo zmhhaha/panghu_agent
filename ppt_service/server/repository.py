@@ -81,6 +81,14 @@ class Repository:
         j=self.s.scalar(q)
         if not j:fail('not_found',404)
         return j
+    def recent_jobs(self,pid,owner):
+        # Authorize even an empty history, then retain both project and job
+        # ownership predicates in the bounded read. No caller-controlled limit.
+        self.project(pid,owner)
+        return self.s.scalars(select(Job).join(Project,Project.id==Job.project_id).where(
+            Job.project_id==pid,Job.issuer==owner.issuer,Job.subject==owner.sub,
+            Project.issuer==owner.issuer,Project.subject==owner.sub,
+            Project.deletion_requested==False).order_by(Job.created_at.desc(),Job.id.desc()).limit(20)).all()
     def version(self,vid,owner):
         v=self.s.scalar(select(Version).join(Project).where(Version.id==vid,Project.issuer==owner.issuer,Project.subject==owner.sub,Project.deletion_requested==False,Version.status.in_(('published','review'))))
         if not v:fail('not_found',404)
