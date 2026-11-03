@@ -242,10 +242,10 @@ def test_execution_guidance_closes_only_redundant_confirmation_and_retains_real_
     assert 'unresolved needs_human decision still blocks' in prompt
     assert 'Do not change an approved specification or fake any approval' in prompt
     assert 'an optional user-facing preview URL or a separate human browser session is not itself a blocker' in prompt
-    assert 'to produce and visually inspect the actual required PNGs, is a blocker' in prompt
+    assert 'to produce and visually inspect the actual required source PNGs, is a blocker' in prompt
     assert 'never invent a successful render or inspection' in prompt
     assert 'If a required tool/approval/preview is unavailable' not in prompt
-    assert 'reading the actual rendered PNGs' in prompt
+    assert 'reading the actual rendered source PNGs' in prompt
     assert 'main agent to process the same batches sequentially' in prompt
     assert 'later website draft review and owner PowerPoint acceptance remain separate' in prompt
     assert 'never count as already passed or authorize publication' in prompt
