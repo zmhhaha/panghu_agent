@@ -64,7 +64,8 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
   const batchBusy = project('batch-busy'), historical = project('historical', 'static');
   const audition = project('audition');
   const auditionScene = audition.scenes[0];
-  const auditionAudio = { id: 'audition-audio', number: 1, sha256: 'a'.repeat(64), duration_seconds: 4 };
+  const auditionAudio = { id: 'audition-audio', number: 1, sha256: 'a'.repeat(64), duration_seconds: 4,
+    voice: 'test-voice', source: 'tts', operation_id: 'original-audio-op', stale: false };
   auditionScene.audio_versions = [auditionAudio]; auditionScene.head_audio_version_id = auditionAudio.id;
   auditionScene.motion.versions = [{ id: 'audition-motion', number: 1, plan_sha256: 'b'.repeat(64) }];
   const auditionVersion = { id: 'audition-motion', plan: { template: 'flow', title: '逐段试听',
@@ -88,12 +89,24 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
   const settings = { user_id: 'offline-bootstrap-test', csrf_token: 'offline-only',
     motion_enabled: true, motion_configured: true, motion_render_configured: true,
     batch_enabled: true, explanation_configured: true, speech_configured: true,
-    speech_voice: 'test-voice', speech_voices: [{ id: 'test-voice', name: '测试音色', default: true }] };
-  const writes = [];
-  let allowProjectDraft = false;
+    speech_voice: 'test-voice', speech_voices: [{ id: 'test-voice', name: '测试音色', default: true },
+      { id: 'other-voice', name: '另一音色' }] };
+  const writes = [], voiceWrites = [];
+  let allowProjectDraft = false, allowVoiceSave = false;
   const fetchFixture = async (path, options) => {
     calls.push(path);
     if (options.method !== 'GET') {
+      if (allowVoiceSave && path === '/api/projects/audition/speech' && options.method === 'PATCH') {
+        const body = JSON.parse(options.body);
+        assert.equal(body.expected_revision, audition.revision);
+        assert.equal(body.voice, 'other-voice');
+        voiceWrites.push(body);
+        audition.speech_settings.voice = body.voice; audition.revision++;
+        for (const scene of audition.scenes) {
+          scene.audio_versions.forEach(audio => { audio.stale = true; }); scene.audio_stale = true;
+        }
+        return { ok: true, status: 200, json: async () => structuredClone(audition) };
+      }
       assert.equal(allowProjectDraft, true, `Bootstrap and switching must never submit: ${path}`);
       assert.equal(options.method, 'POST');
       assert.equal(path, '/api/projects/audition/motion-renders');
@@ -297,10 +310,121 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
       assert.match($('motion-timing-status').textContent, /待人工核对|估算/,
         'Rendering a draft must not mark its recording-bound timing as verified');
       assert.equal($('confirm-motion-timing').checked, false);
-      for (const [id, timer] of timers) if (timer.duration === 5000) {
-        timers.delete(id); timer.callback();
-      }
     });
+    await t.test('completed narration has an explicit exact-result audition without adopting or replacing playback on refresh', async () => {
+      await clickProject(audition.id);
+      const audio = $('audio-preview'), button = $('audition-operation-audio');
+      const originalMotion = structuredClone(auditionScene.motion);
+      const originalAudio = structuredClone(auditionAudio);
+      await audio.play(); audio.currentTime = 1.25;
+      $('project-speech-voice').value = 'other-voice'; await $('project-speech-voice').emit('change');
+      assert.equal($('generate-audio').disabled, true, 'An unsaved project voice still blocks synthesis');
+      allowVoiceSave = true;
+      await $('save-project-speech').emit('click'); await nextTurn();
+      allowVoiceSave = false;
+      assert.deepEqual(voiceWrites, [{ expected_revision: 1, voice: 'other-voice' }]);
+      assert.match($('success-message').textContent, /有效的动态图解可继续使用.*再核对画面时序/);
+      assert.equal($('audio-version-select').value, auditionAudio.id);
+      assert.equal(audio.paused, false); assert.equal(audio.currentTime, 1.25);
+      const completed = { id: 'voice-change-op', kind: 'speech', status: 'completed', candidate_id: 'changed-audio' };
+      const changed = { ...auditionAudio, id: completed.candidate_id, number: 2,
+        operation_id: completed.id, voice: 'other-voice', stale: false };
+      const unrelated = { ...changed, id: 'unrelated-newer-audio', number: 3,
+        operation_id: 'another-op', source: 'upload' };
+      auditionScene.audio_versions.push(changed, unrelated);
+      auditionScene.audio_operation = completed; audition.revision++;
+      await $('refresh-all').emit('click');
+      assert.equal($('audio-version-select').value, auditionAudio.id, 'Completion preserves the historical audition');
+      assert.equal(audio.src, '/api/audio-versions/audition-audio/audio');
+      assert.equal(audio.paused, false); assert.equal(audio.currentTime, 1.25);
+      assert.equal(button.hidden, false); assert.equal(button.disabled, false);
+      assert.equal(button.textContent, '试听本次配音 A2 · 另一音色');
+      assert.match($('audio-status-text').textContent, /当前试听版本保持不变/);
+      assert.doesNotMatch(button.textContent, /最新|A3/);
+      await $('motion-timing-audio').play();
+      await button.emit('click');
+      assert.equal($('audio-version-select').value, changed.id);
+      assert.equal(audio.src, '/api/audio-versions/changed-audio/audio');
+      assert.equal(audio.paused, false); assert.equal(audio.currentTime, 0);
+      assert.equal($('motion-timing-audio').paused, true, 'The existing media mutex handles explicit audition');
+      assert.equal(button.hidden, true);
+      assert.match($('audio-version-summary').textContent, /^A2 · 另一音色/);
+      assert.match($('audio-status-text').textContent, /已选为试听版本/);
+      assert.equal(auditionScene.head_audio_version_id, auditionAudio.id, 'Audition is never adoption');
+      assert.deepEqual(auditionScene.motion, originalMotion, 'Existing diagram versions and adoption stay intact');
+      assert.deepEqual(auditionAudio, { ...originalAudio, stale: true }, 'The original recording identity stays intact');
+      assert.equal($('confirm-motion-timing').checked, false);
+      assert.equal(writes.length, 1, 'Only the earlier explicit draft POST exists; audition issues no POST');
+
+      $('audio-version-select').value = auditionAudio.id; await $('audio-version-select').emit('change');
+      $('project-speech-voice').value = 'test-voice'; await $('project-speech-voice').emit('change');
+      await $('refresh-all').emit('click');
+      assert.equal($('project-speech-voice').value, 'test-voice', 'Refresh preserves the unsaved voice');
+      assert.equal($('generate-audio').disabled, true);
+      assert.match($('audio-status-text').textContent, /音色尚未保存.*已保存的设置/);
+      await button.emit('click');
+      assert.equal($('project-speech-voice').value, 'test-voice', 'Audition never saves a voice draft');
+      assert.equal(audition.speech_settings.voice, 'other-voice');
+      assert.equal(voiceWrites.length, 1); assert.equal(writes.length, 1);
+    });
+    await t.test('invalid, stale and other-scene operation results never expose or activate the completion audition', async () => {
+      const button = $('audition-operation-audio'), audio = $('audio-preview');
+      const completed = structuredClone(auditionScene.audio_operation);
+      const changed = auditionScene.audio_versions.find(row => row.id === completed.candidate_id);
+      $('audio-version-select').value = auditionAudio.id; await $('audio-version-select').emit('change');
+      const currentSource = audio.src;
+      for (const operation of [null,
+        ...['running', 'failed', 'cancelled', 'timed_out'].map(status => ({ ...completed, status })),
+        { ...completed, candidate_id: null }, { ...completed, candidate_id: 'missing' },
+        { ...completed, candidate_id: secondDraftScene.audio_versions[0].id },
+        { ...completed, id: 'mismatched-operation' },
+        { ...completed, kind: 'unrecognized' },
+      ]) {
+        auditionScene.audio_operation = operation; audition.revision++;
+        await $('refresh-all').emit('click');
+        assert.equal(button.hidden, true, `No shortcut for ${JSON.stringify(operation)}`);
+        assert.equal(button.disabled, true);
+        await button.emit('click'); assert.equal(audio.src, currentSource);
+      }
+      auditionScene.audio_operation = completed; changed.stale = true; audition.revision++;
+      await $('refresh-all').emit('click');
+      assert.equal(button.hidden, true); assert.match($('audio-status-text').textContent, /本次配音 A2 · 另一音色.*需更新/);
+      await button.emit('click'); assert.equal($('audio-version-select').value, auditionAudio.id);
+      assert.equal($('adopt-audio').disabled, true, 'The preserved stale audition remains ineligible for adoption');
+      changed.stale = false; audition.revision++;
+      await $('refresh-all').emit('click'); assert.equal(button.hidden, false);
+      auditionScene.audio_operation = { id: 'another-op', kind: 'audio_upload', status: 'completed',
+        candidate_id: 'unrelated-newer-audio' }; audition.revision++;
+      await $('refresh-all').emit('click');
+      assert.equal(button.textContent, '试听本次配音 A3 · 上传录音', 'A later operation resolves its own exact recording without inferring a voice');
+      assert.match($('audio-status-text').textContent, /^上传配音/);
+      await button.emit('click'); assert.equal(audio.src, '/api/audio-versions/unrelated-newer-audio/audio');
+      assert.equal(auditionScene.head_audio_version_id, auditionAudio.id);
+      $('audio-version-select').value = auditionAudio.id; await $('audio-version-select').emit('change');
+      auditionScene.audio_operation = completed; audition.revision++;
+      await $('refresh-all').emit('click');
+      const play = audio.play;
+      audio.play = async () => { throw new Error('Offline autoplay rejection'); };
+      await button.emit('click'); audio.play = play;
+      assert.equal(audio.src, '/api/audio-versions/changed-audio/audio');
+      assert.match($('success-message').textContent, /已切换到配音 A2.*点击播放/);
+      assert.equal($('global-error').hidden, true);
+      $('audio-version-select').value = auditionAudio.id; await $('audio-version-select').emit('change');
+      const secondSceneButton = $('scene-list').children.find(row => row.dataset.sceneId === secondDraftScene.id);
+      await secondSceneButton.emit('click'); await nextTurn();
+      assert.equal(button.hidden, true); assert.equal(audio.paused, true);
+      assert.equal(audio.src, '/api/audio-versions/audition-second-audio/audio');
+      assert.equal($('project-speech-voice').value, 'test-voice', 'Scene switches preserve the unsaved project voice');
+      const firstSceneButton = $('scene-list').children.find(row => row.dataset.sceneId === auditionScene.id);
+      await firstSceneButton.emit('click'); await nextTurn();
+      assert.equal(button.hidden, false); assert.equal($('audio-version-select').value, auditionAudio.id);
+      await clickProject(idle.id);
+      assert.equal(button.hidden, true); await button.emit('click');
+      assert.equal(audio.src, undefined); assert.equal(writes.length, 1); assert.equal(voiceWrites.length, 1);
+    });
+    for (const [id, timer] of timers) if (timer.duration === 5000) {
+      timers.delete(id); timer.callback();
+    }
     await windowEvents.emit('pagehide');
     assert.equal(timers.size, 0, 'Project switch and page teardown clear polling');
   } finally {

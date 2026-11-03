@@ -6,7 +6,7 @@ import {
   audioPath, chooseAudioVersion, createCaptionDraft, orderedAudioVersions, parsePronunciation,
   pronunciationText, selectedAudioVersion, timelinePosition, validateCaptionCues, deliveryIssues,
   speechVoices, speechVoiceName, projectSpeechVoice, syncProjectSpeechDraft, projectVoiceOptions,
-  projectSpeechCanGenerate, audioVoiceLabel,
+  projectSpeechCanGenerate, audioVoiceLabel, audioOperationCandidate,
 } from './model.mjs';
 import { createExplanationPanel, explanationErrorLabel } from './explanation.mjs';
 import { createMotionPanel, createMotionRenderRequest, createProjectMotionDraftRequest, createDynamicProjectRequest, hasMotionScenes, usesDynamicVideo, motionMetadata, motionErrorLabel } from './motion.mjs';
@@ -476,14 +476,33 @@ function renderProjectSpeech(project) {
         : `已保存项目音色：${speechVoiceName(saved, sessionSettings)}。`;
 }
 
-function renderAudioOperation(operation) {
+function renderAudioOperation(scene, unsavedVoice) {
+  const operation = scene.audio_operation;
   const banner = $('audio-status');
   const active = isActiveOperation(operation);
+  const audition = $('audition-operation-audio');
+  audition.hidden = true;
+  audition.disabled = true;
   banner.hidden = !operation;
   if (!operation) return;
   banner.classList.toggle('active', active);
   banner.classList.toggle('failed', ['failed', 'timed_out', 'uncertain'].includes(operation.status));
-  $('audio-status-text').textContent = `制作配音 · ${statusLabel(operation.status)}${operation.error ? ` · ${ERROR_LABELS[operation.error] ?? '请检查任务后重新提交。'}` : ''}`;
+  let text = `${operation.kind === 'audio_upload' ? '上传配音' : '制作配音'} · ${statusLabel(operation.status)}${operation.error ? ` · ${ERROR_LABELS[operation.error] ?? '请检查任务后重新提交。'}` : ''}`;
+  if (operation.status === 'completed') {
+    const candidate = audioOperationCandidate(scene);
+    const selected = selectedAudioVersion(state, scene);
+    if (candidate) {
+      const label = `A${candidate.number} · ${audioVoiceLabel(candidate, sessionSettings)}`;
+      text += ` · 本次配音 ${label}`;
+      text += candidate.stale ? ' · 设置已变化，需更新；历史配音仍可从试听版本查看。'
+        : candidate.id === selected?.id ? ' · 已选为试听版本。'
+          : ' · 当前试听版本保持不变，可点击试听本次配音。';
+      audition.textContent = `试听本次配音 ${label}`;
+      audition.hidden = audition.disabled = candidate.stale || candidate.id === selected?.id;
+    } else text += ' · 请刷新后在试听版本中查看本次结果。';
+    if (unsavedVoice) text += ' 项目音色尚未保存，本次配音对应已保存的设置。';
+  }
+  $('audio-status-text').textContent = text;
   $('cancel-audio-operation').hidden = !active;
   $('cancel-audio-operation').disabled = pending.has(`audio-cancel:${operation.id}`)
     || cancelRequests.has(operation.id) || operation.status === 'cancelling';
@@ -568,7 +587,7 @@ function renderAudio(scene, project) {
     : sessionSettings.speech_configured && !voiceReady ? '当前项目音色不可用，请在项目配音中选择并保存。'
       : dirty ? '请先保存镜头旁白。' : speech.dirty ? '请先保存语速与读音设置。'
     : busy ? '配音任务进行中，可以继续查看其他镜头。' : '生成后先试听，再选择采用。';
-  renderAudioOperation(scene.audio_operation);
+  renderAudioOperation(scene, projectVoiceDraft.dirty);
   const versions = orderedAudioVersions(scene);
   const candidate = selectedAudioVersion(state, scene);
   const options = versions.map(version => {
@@ -1217,7 +1236,7 @@ $('save-project-speech').addEventListener('click', () => {
   const body = { expected_revision: draft.expected_revision, voice: draft.voice };
   perform(`project-speech:${project.id}`, () => request(`/api/projects/${encodeURIComponent(project.id)}/speech`,
     { method: 'PATCH', body }), () => { projectSpeechDrafts.delete(project.id);
-    success('项目音色已保存。请检查各镜头配音，重新生成并试听后再采用。'); });
+    success('项目音色已保存。有效的动态图解可继续使用；请重新生成并试听采用配音，再核对画面时序。'); });
 });
 $('reset-project-speech').addEventListener('click', () => {
   const project = state.project;
@@ -1263,6 +1282,22 @@ $('cancel-audio-operation').addEventListener('click', () => {
 });
 $('audio-version-select').addEventListener('change', event => {
   chooseAudioVersion(state, state.sceneId, event.target.value); render();
+});
+$('audition-operation-audio').addEventListener('click', async () => {
+  const scene = selectedScene(state);
+  const candidate = audioOperationCandidate(scene);
+  if (!candidate || candidate.stale || candidate.id === selectedAudioVersion(state, scene)?.id) return;
+  const epoch = state.epoch;
+  if (!chooseAudioVersion(state, scene.id, candidate.id)) return;
+  render();
+  const audio = $('audio-preview');
+  audio.currentTime = 0;
+  try { await audio.play(); }
+  catch {
+    if (state.epoch === epoch && state.sceneId === scene.id && selectedAudioVersion(state)?.id === candidate.id) {
+      success(`已切换到配音 A${candidate.number}，请在音频播放器中点击播放。`);
+    }
+  }
 });
 $('adopt-audio').addEventListener('click', () => {
   const scene = selectedScene(state); const version = selectedAudioVersion(state, scene);

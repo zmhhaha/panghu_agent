@@ -200,6 +200,15 @@ export function selectedAudioVersion(state, scene = selectedScene(state)) {
   return scene?.audio_versions?.find(version => version.id === state.selectedAudioVersions.get(scene.id)) ?? null;
 }
 
+/** Resolve this scene's completed operation, never the newest history entry. */
+export function audioOperationCandidate(scene) {
+  const operation = scene?.audio_operation;
+  if (operation?.status !== 'completed' || !['speech', 'audio_upload'].includes(operation.kind)
+      || !operation.id || !operation.candidate_id) return null;
+  return scene.audio_versions?.find(version => version.id === operation.candidate_id
+    && version.operation_id === operation.id) ?? null;
+}
+
 export function chooseAudioVersion(state, sceneId, versionId) {
   const scene = state.project?.scenes?.find(candidate => candidate.id === sceneId);
   if (!scene?.audio_versions?.some(version => version.id === versionId)) return false;
