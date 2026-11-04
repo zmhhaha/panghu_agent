@@ -380,6 +380,59 @@ def safe_extract(archive_path, destination):
     return rows
 
 
+def inspect_restore_container(identity):
+    result = command(['docker', 'inspect', identity], check=False)
+    if result.returncode:
+        message = result.stderr.decode(errors='replace').strip()
+        missing = 'No such object: ' + identity
+        require(message in (missing, 'Error: ' + missing, 'Error response from daemon: ' + missing)
+                and result.stdout.strip() in (b'', b'[]'), 'database_inspect_failure_not_absence')
+        # A dead/unreachable daemon must never count as proof of absence.
+        command(['docker', 'info', '--format', '{{.ID}}'])
+        return None
+    rows = json.loads(result.stdout)
+    require(type(rows) is list and len(rows) == 1, 'database_identity_ambiguous')
+    return rows[0]
+
+
+def validate_restore_container(actual, run_id, container):
+    require(re.fullmatch(r'[0-9a-f]{64}', actual.get('Id', ''))
+            and (container is None or actual['Id'] == container)
+            and actual.get('Name') == '/' + run_id
+            and actual['Config'].get('Labels', {}).get(OWNER) == run_id,
+            'database_cleanup_owner_changed')
+    require(actual['HostConfig']['NetworkMode'] == 'none'
+            and actual['HostConfig']['ReadonlyRootfs'] is True
+            and actual['Config']['User'] == '70:70'
+            and all(m['Type'] == 'tmpfs' for m in actual['Mounts']),
+            'database_cleanup_scope_changed')
+    return actual
+
+
+def remove_restore_container(run_id, container):
+    # Recover only the exact reserved creation when the run response was lost.
+    actual = inspect_restore_container(run_id)
+    if actual is None:
+        require(container is None, 'database_disappeared_before_cleanup')
+        return {'created': False, 'removed': True, 'stop_proven': False}
+    validate_restore_container(actual, run_id, container)
+    identity = actual['Id']
+    if actual['State']['Running']:
+        command(['docker', 'stop', '--time=10', identity], timeout=30)
+    command(['docker', 'wait', identity], timeout=30)
+    stopped = inspect_restore_container(identity)
+    require(stopped is not None, 'database_disappeared_before_stop_proof')
+    validate_restore_container(stopped, run_id, identity)
+    require(stopped['State']['Running'] is False and stopped['State']['Pid'] == 0
+            and not stopped['State'].get('Restarting', False), 'database_stop_not_proven')
+    # Never force-remove a container before observing the exact process stopped.
+    command(['docker', 'rm', identity])
+    require(inspect_restore_container(identity) is None
+            and inspect_restore_container(run_id) is None, 'database_removal_not_proven')
+    return {'created': True, 'id': identity, 'stop_proven': True,
+            'state': stopped['State'], 'removed': True}
+
+
 def restore(backup, output, image):
     backup, output = private_directory(backup, new=False), private_directory(output)
     require(IMAGE.fullmatch(image), 'immutable_postgres_image_required')
@@ -397,6 +450,8 @@ def restore(backup, output, image):
     try:
         inspected = json.loads(command(['docker', 'image', 'inspect', image]).stdout)[0]
         require(inspected['Os'] == 'linux', 'linux_database_image_required')
+        require(set(inspected['Config'].get('Volumes') or {}) <= {'/var/lib/postgresql/data'},
+                'unaccounted_database_image_volume')
         receipt['postgres_image'] = {'requested': image, 'image_id': inspected['Id']}
         launched = command(['docker', 'run', '-d', '--name', run_id, '--label', OWNER + '=' + run_id,
             '--network', 'none', '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges',
@@ -406,7 +461,10 @@ def restore(backup, output, image):
             '--tmpfs', '/var/lib/postgresql/data:rw,nosuid,nodev,size=2g,uid=70,gid=70,mode=700',
             '-e', 'POSTGRES_USER=appuser', '-e', 'POSTGRES_DB=postgres', '-e', 'POSTGRES_HOST_AUTH_METHOD=trust',
             image, '-c', 'listen_addresses=', '-c', 'unix_socket_directories=/var/run/postgresql'])
-        container = launched.stdout.decode().strip()
+        identity = launched.stdout.decode().strip()
+        require(re.fullmatch(r'[0-9a-f]{64}', identity), 'database_run_identity_invalid')
+        container = identity
+        validate_restore_container(inspect_restore_container(container), run_id, container)
         deadline = time.monotonic() + 90
         while command(['docker', 'exec', run_id, 'pg_isready', '-U', 'appuser', '-d', 'postgres'], check=False).returncode:
             require(time.monotonic() < deadline, 'disposable_postgres_not_ready')
@@ -457,18 +515,8 @@ def restore(backup, output, image):
     finally:
         cleaned = False
         try:
-            # Resolve by the reserved random name even if `docker run` created
-            # the container but its response/ID was lost to an interruption.
-            inspection = command(['docker', 'inspect', run_id], check=False)
-            if inspection.returncode != 0:
-                require(container is None, 'database_disappeared_before_cleanup')
-                cleaned = True
-            else:
-                actual = json.loads(inspection.stdout)[0]
-                require((container is None or actual['Id'] == container) and
-                        actual['Config']['Labels'].get(OWNER) == run_id, 'database_cleanup_owner_changed')
-                command(['docker', 'rm', '-f', run_id])
-                cleaned = command(['docker', 'inspect', run_id], check=False).returncode != 0
+            receipt['database_cleanup'] = remove_restore_container(run_id, container)
+            cleaned = receipt['database_cleanup']['removed'] is True
         except Exception as error:
             receipt['cleanup_error_type'] = type(error).__name__
         receipt.update(disposable_database_removed=cleaned,

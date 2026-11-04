@@ -195,3 +195,112 @@ def test_preflight_failure_precedes_every_production_mutation(monkeypatch, tmp_p
     assert calls == []
     receipt = json.loads((tmp_path / 'receipt.json').read_text())
     assert receipt['passed'] is False and receipt['writer_specs_restored'] is True
+
+
+def restore_container(*, running=True):
+    return {'Id': 'a' * 64, 'Name': '/ppt-restore-fixture',
+        'Config': {'User': '70:70', 'Labels': {backup.OWNER: 'ppt-restore-fixture'}},
+        'HostConfig': {'NetworkMode': 'none', 'ReadonlyRootfs': True},
+        'Mounts': [{'Type': 'tmpfs', 'Destination': '/var/lib/postgresql/data'}],
+        'State': {'Running': running, 'Pid': 12345 if running else 0, 'Restarting': False}}
+
+
+@pytest.mark.parametrize('known_id', [None, 'a' * 64])
+def test_restore_cleanup_binds_stop_wait_zero_pid_and_remove_to_exact_id(monkeypatch, known_id):
+    initial, stopped = restore_container(), restore_container(running=False)
+    observations = iter([initial, stopped, None, None])
+    identities, calls = [], []
+    def inspect(identity):
+        identities.append(identity)
+        return next(observations)
+    monkeypatch.setattr(backup, 'inspect_restore_container', inspect)
+    monkeypatch.setattr(backup, 'command', lambda args, **kw: calls.append(args))
+    receipt = backup.remove_restore_container('ppt-restore-fixture', known_id)
+    assert receipt['removed'] and receipt['stop_proven'] and receipt['state']['Pid'] == 0
+    assert calls == [['docker', 'stop', '--time=10', 'a' * 64],
+                     ['docker', 'wait', 'a' * 64], ['docker', 'rm', 'a' * 64]]
+    assert identities == ['ppt-restore-fixture', 'a' * 64, 'a' * 64, 'ppt-restore-fixture']
+
+
+@pytest.mark.parametrize('change', ['id', 'name', 'label', 'network', 'readonly', 'user', 'volume'])
+def test_restore_cleanup_refuses_replaced_or_out_of_scope_container(monkeypatch, change):
+    actual, calls = restore_container(), []
+    if change == 'id':
+        actual['Id'] = 'b' * 64
+    elif change == 'name':
+        actual['Name'] = '/other'
+    elif change == 'label':
+        actual['Config']['Labels'][backup.OWNER] = 'other'
+    elif change == 'network':
+        actual['HostConfig']['NetworkMode'] = 'host'
+    elif change == 'readonly':
+        actual['HostConfig']['ReadonlyRootfs'] = False
+    elif change == 'user':
+        actual['Config']['User'] = '0:0'
+    else:
+        actual['Mounts'] = [{'Type': 'volume', 'Name': 'unowned-anonymous-volume'}]
+    monkeypatch.setattr(backup, 'inspect_restore_container', lambda identity: actual)
+    monkeypatch.setattr(backup, 'command', lambda args, **kw: calls.append(args))
+    with pytest.raises(RuntimeError, match='database_cleanup_'):
+        backup.remove_restore_container('ppt-restore-fixture', 'a' * 64)
+    assert calls == []
+
+
+@pytest.mark.parametrize('state', ['running', 'pid', 'restarting', 'missing'])
+def test_restore_cleanup_never_removes_without_physical_stop_receipt(monkeypatch, state):
+    initial, stopped, calls = restore_container(), restore_container(running=False), []
+    if state == 'running':
+        stopped['State']['Running'] = True
+    elif state == 'pid':
+        stopped['State']['Pid'] = 12345
+    elif state == 'restarting':
+        stopped['State']['Restarting'] = True
+    else:
+        stopped = None
+    observations = iter([initial, stopped])
+    monkeypatch.setattr(backup, 'inspect_restore_container', lambda identity: next(observations))
+    monkeypatch.setattr(backup, 'command', lambda args, **kw: calls.append(args))
+    with pytest.raises(RuntimeError, match='database_(stop_not_proven|disappeared_before_stop_proof)'):
+        backup.remove_restore_container('ppt-restore-fixture', 'a' * 64)
+    assert all(args[1] != 'rm' for args in calls)
+
+
+def test_restore_known_container_cannot_disappear_before_stop_proof(monkeypatch):
+    monkeypatch.setattr(backup, 'inspect_restore_container', lambda identity: None)
+    with pytest.raises(RuntimeError, match='disappeared_before_cleanup'):
+        backup.remove_restore_container('ppt-restore-fixture', 'a' * 64)
+    assert backup.remove_restore_container('ppt-restore-fixture', None) == {
+        'created': False, 'removed': True, 'stop_proven': False}
+
+
+@pytest.mark.parametrize('message,stdout', [
+    (b'Cannot connect to the Docker daemon', b''),
+    (b'permission denied', b''),
+    (b'Error: No such object: other', b'[]'),
+    (b'Error: No such object: ppt-restore-fixture', b'not-json')])
+def test_docker_errors_cannot_be_mistaken_for_database_absence(monkeypatch, message, stdout):
+    monkeypatch.setattr(backup, 'command', lambda args, **kw: SimpleNamespace(
+        returncode=1, stderr=message, stdout=stdout))
+    with pytest.raises(RuntimeError, match='inspect_failure_not_absence'):
+        backup.inspect_restore_container('ppt-restore-fixture')
+
+
+def test_exact_docker_not_found_also_requires_healthy_daemon(monkeypatch):
+    calls = []
+    def command(args, **kw):
+        calls.append(args)
+        if args[1] == 'inspect':
+            return SimpleNamespace(returncode=1, stderr=b'Error: No such object: ppt-restore-fixture', stdout=b'[]')
+        raise RuntimeError('daemon_unavailable')
+    monkeypatch.setattr(backup, 'command', command)
+    with pytest.raises(RuntimeError, match='daemon_unavailable'):
+        backup.inspect_restore_container('ppt-restore-fixture')
+    assert calls[-1] == ['docker', 'info', '--format', '{{.ID}}']
+
+
+def test_restore_cleanup_checks_name_and_id_absence_after_removal(monkeypatch):
+    observations = iter([restore_container(), restore_container(running=False), None, restore_container(running=False)])
+    monkeypatch.setattr(backup, 'inspect_restore_container', lambda identity: next(observations))
+    monkeypatch.setattr(backup, 'command', lambda args, **kw: None)
+    with pytest.raises(RuntimeError, match='database_removal_not_proven'):
+        backup.remove_restore_container('ppt-restore-fixture', 'a' * 64)
