@@ -54,6 +54,29 @@ physical-stop/cleanup evidence. API dry-run does not by itself prove worker
 network/mount enforcement, actual create/observe/cancel, parser deadlines,
 business recovery, owner authorization or publication acceptance.
 
+For initial runtime CEL validation, `--policy-name` can give the inert policy a
+unique run name and `--audit-label r4-<nonce>` renders a Binding with an exact
+objectSelector. Only this operator's subsequently labelled dry-run objects
+match; unlabelled production Pods are unaffected. `--render-only` discovers the
+current public configuration and writes review inputs without running the
+admission matrix or claiming success. Installation remains a separate reviewed
+operation. The label selector is a temporary test boundary, not global
+enforcement; a shadow-matrix pass does not mean normal production requests have
+become protected.
+
+The parameter ConfigMap name is also derived from the unique policy name, with
+a hash suffix; the Binding uses that exact name. Shadow installation must use
+create-not-apply, reject any existing object with the same name, verify no
+ordinary Pod has the run nonce and recheck the live public configuration hash
+before and after. Record created object UIDs/resourceVersions and require UID
+preconditions when removing owned audit resources. These are operator release
+requirements, not actions performed by the render/dry-run script itself.
+
+The typed EmptyDir schema on this cluster omits its Quantity `sizeLimit`, which
+caused a retained inert-policy type-check warning. The revised expression uses
+CEL `dyn` for that field while preserving its actual bound; prove its runtime
+evaluation against all positive controls before enabling ordinary requests.
+
 Any later catalog publication introducing a new image/host or UID reservation
 must update the admission parameters through the same guarded review path before
 activating that pool. An unregistered pool must fail closed. Historical

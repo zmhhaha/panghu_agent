@@ -15,6 +15,7 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import types
@@ -30,7 +31,11 @@ OBSERVER = 'system:serviceaccount:agent-service:agent-service-api'
 WORKER = 'system:serviceaccount:agent-workers:default'
 
 
-def admission_documents(parameters):
+def parameter_name(policy_name):
+    return policy_name[:42] + '-params-' + hashlib.sha256(policy_name.encode()).hexdigest()[:12]
+
+
+def admission_documents(parameters, *, policy_name=POLICY, audit_label=None):
     """Render a deny policy preserving each retained pool's measured public pins.
 
     This intentionally does not change Pod Security Admission to restricted:
@@ -62,13 +67,20 @@ def admission_documents(parameters):
         ('Fixed mount names and locations', "variables.worker.volumeMounts.size() == 5 && variables.worker.volumeMounts.all(m, !has(m.subPath) && !has(m.subPathExpr) && (!has(m.mountPropagation) || m.mountPropagation == 'None') && (m.name == 'config' && m.mountPath == '/etc/agent-worker' && m.readOnly || m.name == 'credentials' && m.mountPath == '/run/agent-secrets' && m.readOnly || m.name == 'control' && m.mountPath == '/run/agent-control' && (!has(m.readOnly) || !m.readOnly) || m.name == 'work' && m.mountPath == '/work' && (!has(m.readOnly) || !m.readOnly) || m.name == 'tmp' && m.mountPath == '/tmp' && (!has(m.readOnly) || !m.readOnly)))"),
         ('Only fixed WorkerHost port, no host port', "variables.worker.ports.size() == 1 && variables.worker.ports[0].name == 'worker' && variables.worker.ports[0].containerPort == 8090 && (!has(variables.worker.ports[0].protocol) || variables.worker.ports[0].protocol == 'TCP') && (!has(variables.worker.ports[0].hostPort) || variables.worker.ports[0].hostPort == 0) && (!has(variables.worker.ports[0].hostIP) || variables.worker.ports[0].hostIP == '')"),
         ('Retained node selector', "variables.nodes.size() == 0 ? (!has(object.spec.nodeSelector) || object.spec.nodeSelector.size() == 0) : has(object.spec.nodeSelector) && object.spec.nodeSelector.size() == variables.nodes.size() && variables.nodes.all(n, n.split('=')[0] in object.spec.nodeSelector && object.spec.nodeSelector[n.split('=')[0]] == n.split('=')[1])"),
+        ('No alternate scheduling or runtime boundary', "(oldObject != null || !has(object.spec.nodeName) || object.spec.nodeName == '') && (!has(object.spec.affinity)) && (!has(object.spec.schedulerName) || object.spec.schedulerName == 'default-scheduler') && (!has(object.spec.runtimeClassName)) && (!has(object.spec.topologySpreadConstraints) || object.spec.topologySpreadConstraints.size() == 0) && (!has(object.spec.schedulingGates) || object.spec.schedulingGates.size() == 0) && (!has(object.spec.tolerations) || object.spec.tolerations.all(t, t.key in ['node.kubernetes.io/not-ready','node.kubernetes.io/unreachable'] && t.operator == 'Exists' && t.effect == 'NoExecute' && t.tolerationSeconds == 300 && (!has(t.value) || t.value == '')))"),
+        ('Only cluster DNS with no injected aliases', "(!has(object.spec.dnsPolicy) || object.spec.dnsPolicy == 'ClusterFirst') && !has(object.spec.dnsConfig) && (!has(object.spec.hostAliases) || object.spec.hostAliases.size() == 0)"),
+        ('No security-changing annotations or identity relabeling', "object.metadata.annotations.all(k, k in ['agent-service.panghuer.top/request','agent-service.panghuer.top/credentials','cni.projectcalico.org/containerID','cni.projectcalico.org/podIP','cni.projectcalico.org/podIPs']) && object.metadata.annotations['agent-service.panghuer.top/credentials'].matches('^[0-9a-f]{64}$') && object.metadata.labels.all(k, k in ['app','agent-service.panghuer.top/pool','agent-service.panghuer.top/attempt','agent-service.panghuer.top/admission-audit']) && (oldObject == null || object.metadata.labels == oldObject.metadata.labels && object.metadata.annotations['agent-service.panghuer.top/request'] == oldObject.metadata.annotations['agent-service.panghuer.top/request'] && object.metadata.annotations['agent-service.panghuer.top/credentials'] == oldObject.metadata.annotations['agent-service.panghuer.top/credentials'])"),
         ('Pod execution plan is immutable after admission', 'oldObject == null || object.spec == oldObject.spec'),
     ]
     # Requiring every mandatory name and the exact optional-name count also
     # excludes duplicates, without a quadratic CEL uniqueness expression.
     checks = [(message, expression.replace("variables.names.size() == variables.names.unique().size()", "variables.names.size() == 10 + ('AGENT_EXECUTION_BINDING_SHA256' in variables.names ? 1 : 0) + (variables.pin[4] == '1' ? 1 : 0)")) for message, expression in checks]
+    # The live API's typed EmptyDir schema omits Quantity sizeLimit. Preserve the
+    # actual value check through CEL dyn instead of discarding the bound.
+    checks = [(message, expression.replace('v.emptyDir.sizeLimit', 'dyn(v.emptyDir).sizeLimit'))
+              for message, expression in checks]
     policy = dict(apiVersion='admissionregistration.k8s.io/v1', kind='ValidatingAdmissionPolicy',
-        metadata=dict(name=POLICY), spec=dict(failurePolicy='Fail',
+        metadata=dict(name=policy_name), spec=dict(failurePolicy='Fail',
             paramKind=dict(apiVersion='v1', kind='ConfigMap'),
             matchConstraints=dict(namespaceSelector=dict(matchLabels={
                 'kubernetes.io/metadata.name': NAMESPACE}), resourceRules=[dict(
@@ -77,9 +89,13 @@ def admission_documents(parameters):
             variables=variables, validations=[dict(expression=expression, message=message,
                 reason='Forbidden') for message, expression in checks]))
     binding = dict(apiVersion='admissionregistration.k8s.io/v1', kind='ValidatingAdmissionPolicyBinding',
-        metadata=dict(name=POLICY), spec=dict(policyName=POLICY,
-            paramRef=dict(name=PARAMS, namespace=NAMESPACE, parameterNotFoundAction='Deny'),
+        metadata=dict(name=policy_name), spec=dict(policyName=policy_name,
+            paramRef=dict(name=parameters['metadata']['name'], namespace=NAMESPACE,
+                          parameterNotFoundAction='Deny'),
             validationActions=['Deny']))
+    if audit_label:
+        binding['spec']['matchResources'] = dict(objectSelector=dict(matchLabels={
+            PREFIX + 'admission-audit': audit_label}))
     return [parameters, policy, binding]
 
 
@@ -163,10 +179,12 @@ class Audit:
                 sorted(pool.get('node_selector', {}).items()))
             self.pools.append((pool, binding, tool, contract))
         self.parameters = dict(apiVersion='v1', kind='ConfigMap', metadata=dict(
-            name=PARAMS, namespace=NAMESPACE, labels={PREFIX + 'purpose': 'capsule-admission'}), data=data)
+            name=parameter_name(self.args.policy_name), namespace=NAMESPACE,
+            labels={PREFIX + 'purpose': 'capsule-admission'}), data=data)
         save(self.output / 'discovery.json', self.identity)
         save(self.output / 'admission-parameters.json', self.parameters)
-        for document in admission_documents(self.parameters):
+        for document in admission_documents(self.parameters, policy_name=self.args.policy_name,
+                                             audit_label=self.args.audit_label):
             save(self.output / (document['kind'] + '.json'), document)
 
     def real_manifest(self, pool_row):
@@ -204,6 +222,9 @@ class Audit:
         return pod
 
     def dry_run(self, pod, identity, label, expected):
+        if self.args.audit_label:
+            pod = copy.deepcopy(pod)
+            pod['metadata']['labels'][PREFIX + 'admission-audit'] = self.args.audit_label
         result = self.run(['--as', identity, '-n', NAMESPACE, 'create', '--dry-run=server',
                           '-f', '-', '-o', 'json'], document=pod, check=False)
         accepted = result.returncode == 0
@@ -244,6 +265,13 @@ class Audit:
             'wrong-runtime-uid': lambda p: next(e for e in p['spec']['containers'][0]['env'] if e['name']=='AGENT_RUNTIME_UID').update(value='0'),
             'unbounded-resources': lambda p: p['spec']['containers'][0].update(resources={}),
             'oversized-memory': lambda p: p['spec']['containers'][0]['resources']['limits'].update(memory='64Gi'),
+            'direct-node-name': lambda p: p['spec'].update(nodeName='admission-probe-never-created'),
+            'alternate-scheduler': lambda p: p['spec'].update(schedulerName='unreviewed-scheduler'),
+            'alternate-runtime': lambda p: p['spec'].update(runtimeClassName='unreviewed-runtime'),
+            'custom-dns': lambda p: p['spec'].update(dnsPolicy='None', dnsConfig=dict(nameservers=['1.1.1.1'])),
+            'host-alias': lambda p: p['spec'].update(hostAliases=[dict(ip='127.0.0.1', hostnames=['model-proxy'])]),
+            'broad-toleration': lambda p: p['spec'].update(tolerations=[dict(operator='Exists')]),
+            'alternate-apparmor-annotation': lambda p: p['metadata']['annotations'].update({'container.apparmor.security.beta.kubernetes.io/worker':'unconfined'}),
         }
         for name, mutate in mutations.items():
             pod = copy.deepcopy(baseline)
@@ -251,6 +279,8 @@ class Audit:
             results.append(self.dry_run(pod, CONTROLLER, name, False))
         save(self.output / 'admission-probes.json', results)
         summary = dict(passed=all(r['passed'] for r in results), cases=len(results),
+            audit_label=self.args.audit_label, policy_name=self.args.policy_name,
+            parameter_config_map=self.parameters['metadata']['name'],
             retained_pool_count=len(self.public['kubernetes_workers']),
             provisionable_pools_tested=len(self.pools),
             disabled_unprovisionable_pools=self.unprovisionable,
@@ -269,10 +299,23 @@ def main():
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--kubeconfig', type=Path)
+    parser.add_argument('--policy-name', default=POLICY)
+    parser.add_argument('--audit-label')
+    parser.add_argument('--render-only', action='store_true')
     args = parser.parse_args()
     require(sys.platform.startswith('linux'), 'server_linux_required')
+    require(re.fullmatch(r'[a-z0-9][a-z0-9-]{0,62}', args.policy_name) is not None,
+            'invalid_policy_name')
+    require(args.audit_label is None or re.fullmatch(r'r4-[a-z0-9]{8,40}', args.audit_label)
+            is not None, 'invalid_audit_label')
     audit = Audit(args)
     audit.discover()
+    if args.render_only:
+        print(json.dumps(dict(status='rendered_only', admission_matrix_executed=False,
+            production_resources_created=False, policy_name=args.policy_name,
+            parameter_config_map=audit.parameters['metadata']['name'],
+            audit_label=args.audit_label, config_sha256=audit.identity['config_sha256'])))
+        return 0
     return audit.probe()
 
 
