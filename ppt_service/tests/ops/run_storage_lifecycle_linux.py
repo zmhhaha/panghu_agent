@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -96,6 +97,9 @@ def main():
         images[image] = {'id': value['Id'],
                          'declared_volumes': value['Config'].get('Volumes')}
     output.mkdir(mode=0o700)
+    results = output / 'results'
+    results.mkdir(mode=0o700)
+    os.chown(results, 10000, 10000)
     owner = 'ppt-life-' + uuid.uuid4().hex
     volume, pg, tests = owner + '-socket', owner + '-pg', owner + '-tests'
     containers = []
@@ -138,21 +142,22 @@ def main():
             '--tmpfs', '/opt/data:ro,nosuid,nodev,size=1m',
             '--mount', 'type=volume,source=' + volume + ',target=/ppt-lifecycle-socket',
             '--mount', 'type=bind,source=' + str(source) + ',target=/src,readonly',
+            '--mount', 'type=bind,source=' + str(results) + ',target=/evidence',
             '-w', '/src', '-e', 'PYTHONPATH=/src', '-e', 'PYTHONDONTWRITEBYTECODE=1',
             '-e', 'PPT_LIFECYCLE_TEST_ADMIN_URL=postgresql+psycopg://appuser@/postgres?host=/ppt-lifecycle-socket',
             '--entrypoint', 'python', args.test_image, '-m', 'pytest', '-q', '-p', 'no:cacheprovider',
-            '--junitxml=/tmp/lifecycle.xml', 'ppt_service/tests/ops/test_storage_lifecycle.py'], timeout=300, check=False)
+            '--junitxml=/evidence/lifecycle.xml', 'ppt_service/tests/ops/test_storage_lifecycle.py'], timeout=300, check=False)
         (output / 'pytest.stdout').write_bytes(result.stdout)
         (output / 'pytest.stderr.private').write_bytes(result.stderr)
         require(result.returncode == 0, 'lifecycle_tests_failed')
-        xml = call(['docker', 'cp', tests + ':/tmp/lifecycle.xml', '-']).stdout
-        # docker cp emits a tar; extract its one ordinary XML member only.
-        import io, tarfile
-        with tarfile.open(fileobj=io.BytesIO(xml), mode='r:') as archive:
-            members = archive.getmembers()
-            require(len(members) == 1 and members[0].isfile() and members[0].size < 1024**2,
-                    'bounded_junit_member_required')
-            junit = archive.extractfile(members[0]).read()
+        descriptor = os.open(results / 'lifecycle.xml', os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, 'rb') as stream:
+            info = os.fstat(stream.fileno())
+            require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1
+                    and info.st_uid == 10000 and 0 < info.st_size < 1024**2,
+                    'bounded_private_junit_required')
+            junit = stream.read(1024**2)
+        (results / 'lifecycle.xml').chmod(0o600)
         (output / 'lifecycle.xml').write_bytes(junit)
         suites = list(ET.fromstring(junit).iter('testsuite'))
         count = sum(int(s.attrib.get('tests', 0)) for s in suites)
