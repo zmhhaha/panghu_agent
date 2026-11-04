@@ -298,6 +298,19 @@ def test_exact_docker_not_found_also_requires_healthy_daemon(monkeypatch):
     assert calls[-1] == ['docker', 'info', '--format', '{{.ID}}']
 
 
+@pytest.mark.parametrize('prefix', ['Error: No such object: ', 'error: no such object: '])
+def test_docker_not_found_case_formats_preserve_exact_identity_and_daemon_check(monkeypatch, prefix):
+    calls = []
+    def command(args, **kw):
+        calls.append(args)
+        if args[1] == 'inspect':
+            return SimpleNamespace(returncode=1, stderr=(prefix + args[-1]).encode(), stdout=b'[]\n')
+        return SimpleNamespace(returncode=0, stdout=b'daemon-id\n')
+    monkeypatch.setattr(backup, 'command', command)
+    assert backup.inspect_restore_container('ppt-restore-fixture') is None
+    assert calls[-1] == ['docker', 'info', '--format', '{{.ID}}']
+
+
 def test_restore_cleanup_checks_name_and_id_absence_after_removal(monkeypatch):
     observations = iter([restore_container(), restore_container(running=False), None, restore_container(running=False)])
     monkeypatch.setattr(backup, 'inspect_restore_container', lambda identity: next(observations))

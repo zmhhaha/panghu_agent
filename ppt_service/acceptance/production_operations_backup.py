@@ -385,7 +385,8 @@ def inspect_restore_container(identity):
     if result.returncode:
         message = result.stderr.decode(errors='replace').strip()
         missing = 'No such object: ' + identity
-        require(message in (missing, 'Error: ' + missing, 'Error response from daemon: ' + missing)
+        require(message in (missing, 'Error: ' + missing, 'Error response from daemon: ' + missing,
+                            'error: no such object: ' + identity)
                 and result.stdout.strip() in (b'', b'[]'), 'database_inspect_failure_not_absence')
         # A dead/unreachable daemon must never count as proof of absence.
         command(['docker', 'info', '--format', '{{.ID}}'])
