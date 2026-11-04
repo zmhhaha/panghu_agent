@@ -76,7 +76,7 @@ describe('research feedback workflow',()=>{
     expect(screen.getByText(/6 次/)).toHaveTextContent('已记录 2 批');
     expect(screen.getByRole('heading',{name:'检索批次 1 · 历史记录'})).toBeInTheDocument();
     expect(screen.getByRole('heading',{name:'检索批次 2 · 当前批'})).toBeInTheDocument();
-    expect(screen.queryByText('当前计划尚无成功结果的查询')).not.toBeInTheDocument();
+    expect(screen.queryByText('当前计划仍待补检的查询')).not.toBeInTheDocument();
     expect(screen.getByText('历史首批没有 AutoGen 记录')).toBeInTheDocument();
   });
 
