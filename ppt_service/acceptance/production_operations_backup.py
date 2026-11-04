@@ -32,6 +32,11 @@ NAMESPACE = 'ppt-service'
 WRITERS = ('ppt-site', 'ppt-hermes-controller')
 OWNER = 'ppt-service.panghuer.top/backup-owner'
 IMAGE = re.compile(r'[^\s@]+@sha256:[0-9a-f]{64}\Z')
+CAPACITY_CODE = """import json,os
+v=os.statvfs('/var/lib/ppt-service')
+print(json.dumps(dict(total_bytes=v.f_blocks*v.f_frsize,available_bytes=v.f_bavail*v.f_frsize,
+inodes_total=v.f_files,free_inodes=v.f_favail)))
+"""
 # ACLs/capabilities/xattrs must never be silently omitted by this logical copy.
 # Filesystems needing them require a separate native snapshot procedure.
 FILE_CODE = legacy.FILE_CODE.replace('info=path.lstat()',
@@ -114,6 +119,30 @@ def source_psql(sql, database='ppt_service'):
                 data=sql.encode(), namespace='data').stdout.decode()
 
 
+def validate_capacity(value):
+    """Keep unreported inode accounting distinct from measured headroom."""
+    require(type(value) is dict and set(value) == {'total_bytes', 'available_bytes', 'inodes_total', 'free_inodes'}
+            and all(type(value[k]) is int and value[k] >= 0 for k in ('total_bytes', 'available_bytes'))
+            and all(type(value[k]) is int and value[k] >= -1 for k in ('inodes_total', 'free_inodes')),
+            'production_pvc_capacity_measurement_invalid')
+    require(value['total_bytes'] > 0 and value['available_bytes'] <= value['total_bytes']
+            and value['available_bytes'] > 128 * 1024**2, 'production_pvc_capacity_below_capture_floor')
+    # CephFS reports the number of existing objects as f_files, and -1 for
+    # f_ffree/f_favail when no finite inode ceiling is available. Preserve the
+    # raw sentinel; treating it as zero falsely turns "unknown" into "full".
+    reported = value['inodes_total'] > 0 and value['free_inodes'] >= 0
+    require(not reported or (100 < value['free_inodes'] <= value['inodes_total']),
+            'production_pvc_inodes_below_capture_floor')
+    return dict(value, inode_capacity_status='measured' if reported else 'not_reported',
+                inode_headroom_verified=reported)
+
+
+def capacity_preflight():
+    # Discover byte/inode measurement failures before touching writer replicas.
+    raw = kube('exec', 'deployment/ppt-site', '-c', 'site', '--', '/usr/local/bin/python', '-c', CAPACITY_CODE)
+    return validate_capacity(json.loads(raw.stdout))
+
+
 def idle():
     actual = json.loads(source_psql(IDLE_SQL))
     require(actual == dict(active_jobs=0, active_projects=0, busy_parses=0, occupied_slots=0,
@@ -182,6 +211,8 @@ def capture(output):
     captured = False
     try:
         idle()
+        receipt['capacity_before_writer_drain'] = capacity_preflight()
+        save(output / 'capacity-preflight.json', receipt['capacity_before_writer_drain'])
         before_preserved = preserve()
         save(output / 'preserved-before.json', before_preserved)
         lock = {'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'ppt-deploy-lock',
@@ -238,10 +269,7 @@ def capture(output):
         kube('wait', '--for=condition=Ready', 'pod/' + name, '--timeout=150s', timeout=170)
         def index():
             return json.loads(kube('exec', name, '--', '/usr/local/bin/python', '-c', FILE_CODE, 'index', timeout=300).stdout)
-        capacity = json.loads(kube('exec', name, '--', '/usr/local/bin/python', '-c',
-            "import json,os;v=os.statvfs('/var/lib/ppt-service');print(json.dumps(dict(total_bytes=v.f_blocks*v.f_frsize,available_bytes=v.f_bavail*v.f_frsize,free_inodes=v.f_favail)))").stdout)
-        require(capacity['available_bytes'] > 128 * 1024**2 and capacity['free_inodes'] > 100,
-                'production_pvc_capacity_below_capture_floor')
+        capacity = validate_capacity(json.loads(kube('exec', name, '--', '/usr/local/bin/python', '-c', CAPACITY_CODE).stdout))
         save(output / 'capacity.json', capacity)
         receipt['production_pvc_capacity'] = capacity
         files = index()

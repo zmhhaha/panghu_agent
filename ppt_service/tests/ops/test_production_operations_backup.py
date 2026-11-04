@@ -127,3 +127,71 @@ def test_idle_checks_all_writers_and_stop_proofs(monkeypatch, changed):
 def test_outputs_cannot_target_other_paths(path):
     with pytest.raises(RuntimeError, match='private_root_output'):
         backup.private_directory(Path(path))
+
+
+def capacity(**changes):
+    return dict(total_bytes=20 * 1024**3, available_bytes=19 * 1024**3,
+                inodes_total=1000, free_inodes=900) | changes
+
+
+@pytest.mark.parametrize('total,free', [(0, 0), (18541, -1), (-1, -1)])
+def test_unknown_inode_accounting_is_preserved_and_never_claimed_sufficient(total, free):
+    original = capacity(inodes_total=total, free_inodes=free)
+    actual = backup.validate_capacity(original)
+    assert actual['inode_capacity_status'] == 'not_reported'
+    assert actual['inode_headroom_verified'] is False
+    assert actual['inodes_total'] == total and actual['free_inodes'] == free
+    assert 'inode_capacity_status' not in original
+
+
+def test_measured_inode_and_byte_headroom_are_recorded():
+    actual = backup.validate_capacity(capacity())
+    assert actual['inode_capacity_status'] == 'measured'
+    assert actual['inode_headroom_verified'] is True
+
+
+@pytest.mark.parametrize('changes', [dict(free_inodes=0), dict(free_inodes=100), dict(free_inodes=1001)])
+def test_reported_inode_exhaustion_or_inconsistent_measurement_is_refused(changes):
+    with pytest.raises(RuntimeError, match='inodes_below_capture_floor'):
+        backup.validate_capacity(capacity(**changes))
+
+
+@pytest.mark.parametrize('changes', [dict(available_bytes=128 * 1024**2), dict(available_bytes=0),
+    dict(total_bytes=0), dict(available_bytes=21 * 1024**3)])
+def test_unknown_inodes_never_bypass_real_byte_budget(changes):
+    with pytest.raises(RuntimeError, match='capacity_below_capture_floor'):
+        backup.validate_capacity(capacity(inodes_total=0, free_inodes=0, **changes))
+
+
+@pytest.mark.parametrize('changes', [dict(available_bytes=True), dict(inodes_total=-2), dict(free_inodes=-2)])
+def test_invalid_capacity_fields_are_not_an_unknown_inode_escape(changes):
+    with pytest.raises(RuntimeError, match='capacity_measurement_invalid'):
+        backup.validate_capacity(capacity(**changes))
+
+
+def test_capacity_preflight_only_executes_inside_existing_site(monkeypatch):
+    calls = []
+    def kube(*args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(stdout=json.dumps(capacity(inodes_total=18541, free_inodes=-1)).encode())
+    monkeypatch.setattr(backup, 'kube', kube)
+    result = backup.capacity_preflight()
+    assert result['inode_headroom_verified'] is False
+    assert len(calls) == 1 and calls[0][:5] == ('exec', 'deployment/ppt-site', '-c', 'site', '--')
+
+
+def test_preflight_failure_precedes_every_production_mutation(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(backup, 'private_directory', lambda path: tmp_path)
+    monkeypatch.setattr(backup, 'source_proof', lambda: {'test_only': True})
+    monkeypatch.setattr(backup, 'idle', lambda: {})
+    def refuse():
+        raise RuntimeError('capacity_preflight_refused')
+    monkeypatch.setattr(backup, 'capacity_preflight', refuse)
+    monkeypatch.setattr(backup, 'kube', lambda *args, **kwargs: calls.append(args))
+    monkeypatch.setattr(backup, 'preserve', lambda: pytest.fail('must preflight before lock or writer discovery'))
+    with pytest.raises(RuntimeError, match='capacity_preflight_refused'):
+        backup.capture(tmp_path)
+    assert calls == []
+    receipt = json.loads((tmp_path / 'receipt.json').read_text())
+    assert receipt['passed'] is False and receipt['writer_specs_restored'] is True
