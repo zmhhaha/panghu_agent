@@ -1,5 +1,10 @@
 """Production packaging allowlists and exact stage cutover capability checks."""
+from pathlib import PurePosixPath
+import shlex
+import subprocess
+import sys
 import tarfile
+import textwrap
 
 import pytest
 
@@ -32,6 +37,60 @@ def test_api_build_context_excludes_private_skill_and_operator_files(tmp_path, m
         'scientific_skills/' + name for name in build_images.SKILL_FILES}
     assert 'scientific_agent/workspace.py' in names and 'app/api/scientific_workspace.py' in names
     assert not any('private' in name or 'secret' in name or '.env' in name for name in names)
+
+
+def test_api_docker_copy_packages_working_retrieval_projection(tmp_path):
+    # A source can be present in the tar and still absent from the image when
+    # the production Dockerfile uses an explicit COPY allowlist.
+    target = tmp_path / 'api.tar'
+    app_root = tmp_path / 'app'
+    build_images.build_context('api', target)
+    with tarfile.open(target) as archive:
+        names = set(archive.getnames())
+        dockerfile = archive.extractfile(build_images.DOCKERFILES['api']).read().decode('utf-8')
+        for line in dockerfile.replace('\\\n', ' ').splitlines():
+            arguments = shlex.split(line, comments=True)
+            if not arguments or arguments[0].upper() != 'COPY':
+                continue
+            # Keep this simulation explicit if the Dockerfile changes COPY
+            # forms; silently skipping a new form could mask missing modules.
+            assert len(arguments) >= 3 and not arguments[1].startswith(('--', '['))
+            sources, destination = arguments[1:-1], arguments[-1]
+            for source in sources:
+                if not source.endswith('.py'):
+                    continue
+                assert source in names, f'Docker COPY source missing from API build context: {source}'
+                copied = PurePosixPath(destination)
+                if destination.endswith('/') or len(sources) > 1:
+                    copied /= PurePosixPath(source).name
+                relative = copied.relative_to('/app')
+                installed = app_root.joinpath(*relative.parts)
+                installed.parent.mkdir(parents=True, exist_ok=True)
+                installed.write_bytes(archive.extractfile(source).read())
+
+    # The isolated interpreter cannot fall back to the checkout for an omitted
+    # relative import. Invoke the public projection, not just its import: its
+    # dependencies are loaded lazily when project responses are assembled.
+    result = subprocess.run([sys.executable, '-I', '-B', '-c', textwrap.dedent('''
+        from pathlib import Path
+        import sys
+        root = Path(sys.argv[1])
+        sys.path.insert(0, str(root))
+        from scientific_agent import source_quality
+        assert Path(source_quality.__file__).is_relative_to(root)
+        planned = '"AutoGen" AND ("multi-agent" OR "agent framework" OR "AgentChat")'
+        project = dict(plan=dict(content=dict(search_queries=[planned])), selections=[],
+            search_batches=[dict(batch_id='packaging-smoke', papers=[], searches=[
+                dict(source='arxiv', query='AutoGen', result_count=4, status='success')])])
+        summary = source_quality.retrieval_summary(project)
+        outcome, = summary['query_outcomes']
+        assert outcome['planned_query'] == planned
+        assert outcome['status'] == 'relaxed_result'
+        assert outcome['matched_searches'] == [dict(query='AutoGen', provider='arxiv',
+            result_count=4, batch_id='packaging-smoke', match='named_entity')]
+        assert summary['topics_without_evidence'] == []
+    '''), str(app_root)], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_ui_build_context_uses_reviewed_root_files_and_source_code_only(tmp_path, monkeypatch):
