@@ -3,9 +3,57 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+import json
 from pathlib import Path
 import re
 from urllib.parse import urlsplit
+
+
+@dataclass(frozen=True)
+class MotionSettings:
+    enabled: bool = False
+    revision: str = '1'
+    runtime_fingerprint: dict | None = None
+
+    @classmethod
+    def from_env(cls, env=None):
+        env = os.environ if env is None else env
+        enabled = env.get('VIDEO_MOTION_ENABLED', '0')
+        revision = env.get('VIDEO_MOTION_PROFILE_REVISION', '1')
+        if enabled not in {'0', '1'} or not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', revision):
+            raise ValueError('Invalid motion feature settings')
+        runtime = None
+        if name := env.get('VIDEO_MOTION_RUNTIME_FILE', ''):
+            try:
+                path = Path(name)
+                if not path.is_absolute() or not path.is_file():
+                    raise ValueError()
+                with path.open('rb') as source:
+                    raw = source.read(16385)
+                if len(raw) > 16384:
+                    raise ValueError()
+                from .motion_snapshot import _runtime
+                runtime = _runtime(json.loads(raw))
+            except Exception:
+                raise ValueError('Motion runtime fingerprint is unavailable or invalid') from None
+        return cls(enabled == '1', revision, runtime)
+
+
+@dataclass(frozen=True)
+class ExplanationSettings:
+    enabled: bool = False
+    revision: str = '1'
+
+    @classmethod
+    def from_env(cls, env=None):
+        env = os.environ if env is None else env
+        enabled = env.get('VIDEO_EXPLANATION_ENABLED', '0')
+        revision = env.get('VIDEO_EXPLANATION_PROFILE_REVISION', '1')
+        if enabled not in {'0', '1'}:
+            raise ValueError('VIDEO_EXPLANATION_ENABLED must be 0 or 1')
+        if not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', revision):
+            raise ValueError('Invalid explanation task contract revision')
+        return cls(enabled == '1', revision)
 
 
 @dataclass(frozen=True, repr=False)

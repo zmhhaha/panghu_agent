@@ -138,11 +138,41 @@ def test_packaged_runtime_imports_and_opens_its_database_without_repository_acce
             'from video_workbench.app import create_app;'
             'a=create_app(db_path=sys.argv[2],local_mode=True,background=False);'
             'assert a.state.store.list_projects("local-developer")==[];'
-            'assert "agent_service.store" not in sys.modules;print("packaged-runtime-ok")')
+            'assert "agent_service.store" not in sys.modules;'
+            'assert "video_workbench.motion_render_k8s" not in sys.modules;'
+            'assert "video_workbench.motion_render_service" not in sys.modules;'
+            'from video_workbench.motion_render_adapter import configured_motion_renderer;'
+            'assert configured_motion_renderer({}) is None;'
+            'from video_workbench.motion_render_service import app_factory;'
+            'assert callable(app_factory);print("packaged-runtime-ok")')
     result = subprocess.run([sys.executable, '-I', '-c', code, str(isolated), str(tmp_path / 'state.db')],
                             cwd=isolated, capture_output=True, check=True,
                             env={key: value for key, value in os.environ.items() if not key.startswith('VIDEO_')})
     assert result.stdout.strip() == b'packaged-runtime-ok'
+
+
+def test_packaged_storage_operator_runs_with_only_stdlib_and_no_state_access(source, tmp_path):
+    archive, isolated = tmp_path / 'operator-context.tar', tmp_path / 'operator-isolated'
+    builder.context_archive(source, archive)
+    isolated.mkdir()
+    with tarfile.open(archive) as package:
+        name = 'video_workbench/storage_maintenance.py'
+        assert package.extractfile(name).read() == (builder.ROOT / name).read_bytes()
+        package.extractall(isolated, filter='data')
+    before = {path.relative_to(isolated) for path in isolated.rglob('*')}
+    code = ('import sys;sys.path.insert(0,sys.argv[1]);'
+            'from video_workbench import storage_maintenance as operator;'
+            'assert operator.SCHEMA=="video.storage-maintenance.v1";'
+            'assert not {"httpx","fastapi","video_workbench.store",'
+            '"video_workbench.motion_render_k8s"}.intersection(sys.modules);'
+            'sys.argv=["storage_maintenance","--help"];operator.main()')
+    # -S excludes site-packages, proving the deployed operator needs only the
+    # packaged module and the inherited standard library. -B prevents pyc writes.
+    result = subprocess.run([sys.executable, '-I', '-S', '-B', '-c', code, str(isolated)],
+                            cwd=isolated, capture_output=True, check=True,
+                            env={key: value for key, value in os.environ.items() if not key.startswith('VIDEO_')})
+    assert b'usage:' in result.stdout and b'--help' in result.stdout
+    assert {path.relative_to(isolated) for path in isolated.rglob('*')} == before
 
 
 def test_reviewed_resource_modification_is_rejected_before_writing_context(source, tmp_path):

@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>帧序 · 画面制作工作台</title>
+  <title>帧序 · 动态视频工作台</title>
   <link rel="stylesheet" href="/assets/styles.css">
   <script type="module" src="/assets/app.mjs"></script>
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/" aria-label="帧序工作台首页"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span>帧序<small>画面制作工作台</small></span></a>
+    <a class="brand" href="/" aria-label="帧序工作台首页"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span><span>帧序<small>动态视频工作台</small></span></a>
     <div class="topbar-right"><span class="session-label" id="session-label">正在连接…</span><button class="icon-button" id="refresh-all" type="button" aria-label="刷新工作台" title="刷新工作台">↻</button></div>
   </header>
 
@@ -19,7 +19,7 @@
       <div class="sidebar-label"><span>项目</span><span class="count" id="project-count">—</span></div>
       <button class="button new-project-button" id="new-project" type="button" data-testid="new-project"><span aria-hidden="true">＋</span>新建项目</button>
       <nav id="project-list" aria-label="项目列表" data-testid="project-list"><p class="sidebar-empty">正在读取项目…</p></nav>
-      <p class="sidebar-note">从一份文稿开始，<br>把每个镜头慢慢做好。</p>
+      <p class="sidebar-note">从一份文稿开始，<br>让讲解随画面展开。</p>
     </aside>
 
     <main id="main-content">
@@ -27,17 +27,75 @@
       <div class="message success-message" id="success-message" role="status" hidden></div>
 
       <section class="welcome" id="welcome" data-testid="welcome">
-        <div class="eyebrow">把想法变成清晰的画面</div>
-        <h1>一份文稿，<br><span>从第一个镜头开始。</span></h1>
-        <p>拆解内容、制作画面，再通过预览和批注逐步完善。<br>SVG 与 HTML 源码始终跟随版本保存。</p>
+        <div class="eyebrow">让画面跟着讲解展开</div>
+        <h1>一份文稿，<br><span>做一段看得懂的视频。</span></h1>
+        <p>先梳理讲解，再制作动态图解与配音。<br>用视频草稿检查表达，确认后导出成片。</p>
         <button class="button primary" id="welcome-create" type="button">创建第一个项目 <span aria-hidden="true">↗</span></button>
-        <div class="welcome-steps"><div><b>01</b><span>准备文稿</span><small>明确想讲什么</small></div><div><b>02</b><span>拆成镜头</span><small>安排每一段表达</small></div><div><b>03</b><span>看效果，再修改</span><small>保留满意的版本</small></div></div>
+        <div class="welcome-steps"><div><b>01</b><span>准备文稿</span><small>明确想讲什么</small></div><div><b>02</b><span>图解与配音</span><small>让重点逐步展开</small></div><div><b>03</b><span>预览与交付</span><small>先审阅草稿，再导出</small></div></div>
       </section>
 
       <section class="workspace" id="workspace" hidden data-testid="workspace">
-        <div class="workspace-heading"><div><div class="eyebrow">制作中的项目</div><h1 id="project-title"></h1><p id="project-meta"></p></div><button class="button secondary" id="export-project" type="button" data-testid="export-project">导出项目 <span aria-hidden="true">↗</span></button></div>
+        <div class="workspace-heading"><div><div class="eyebrow">制作中的项目</div><h1 id="project-title"></h1><p id="project-meta"></p></div></div>
+        <section class="production-mode-panel" id="production-mode-panel" aria-label="项目制作方式"><div><strong id="production-mode-label">动态视频制作</strong><p id="production-mode-note"></p></div><button class="button secondary" id="convert-project-motion" type="button" hidden>转为动态制作</button></section>
         <details class="brief-panel"><summary><span>文稿与视觉方向</span><small>查看项目原稿</small><span aria-hidden="true">⌄</span></summary><div class="brief-content"><div><h3>原始文稿</h3><p class="preserve-whitespace" id="project-script"></p></div><div><h3>视觉方向</h3><p class="preserve-whitespace" id="project-style"></p></div></div></details>
         <div class="operation-banner" id="storyboard-status" role="status" hidden><span class="status-dot"></span><span id="storyboard-status-text"></span><button class="text-button" id="cancel-storyboard" type="button">申请取消</button></div>
+
+        <details class="explanation-panel" id="explanation-panel" hidden open><summary><span>项目讲解方案</span><small>统筹旁白、画面重点与展开方式</small><span aria-hidden="true">⌄</span></summary><div class="explanation-content">
+          <p class="field-note">把各镜头的旁白、画面重点和展开步骤整理成一致的讲解。先审阅方案，再决定采用；也可以直接编辑镜头。生成方案不会自动启动配音或视频制作。</p>
+          <form id="explanation-form">
+            <div class="explanation-brief-grid"><label>讲给谁听 <span class="optional">选填</span><input id="explanation-audience" maxlength="300" placeholder="例如：第一次接触这个概念的开发者"></label><label>讲述方式<select id="explanation-tone"><option value="conversational">自然口语 · 便于理解</option><option value="precise">严谨说明 · 清楚准确</option><option value="storytelling">循序讲述 · 用过程解释</option></select></label></div>
+            <label>希望观众理解什么 <span class="optional">选填</span><textarea id="explanation-goal" rows="3" maxlength="1200" placeholder="例如：讲清两类记录的区别，以及为什么下一轮要采用不同的处理方式。"></textarea></label>
+            <label>这次额外调整 <span class="optional">选填</span><textarea id="explanation-instruction" rows="2" maxlength="2000" placeholder="例如：减少术语堆叠，用一个连贯例子讲完整个过程。"></textarea></label>
+            <div class="explanation-actions"><p class="field-note" id="explanation-form-note"></p><button class="text-button" id="reload-explanation" type="button">重新读取方案</button><button class="button secondary" id="generate-explanation" type="submit" disabled>生成一份讲解方案</button></div>
+          </form>
+          <p class="explanation-read-error" id="explanation-read-error" role="alert" hidden></p>
+          <div class="operation-banner" id="explanation-status" role="status" hidden><span class="status-dot"></span><span id="explanation-status-text"></span><button class="text-button" id="cancel-explanation" type="button" hidden>申请取消</button></div>
+          <div class="explanation-version-row"><label>审阅版本<select id="explanation-version" disabled><option>尚无讲解方案</option></select></label><button class="text-button" id="explanation-new-candidate" type="button" hidden>查看最新候选 →</button></div>
+          <p class="field-note" id="explanation-empty">方案完成后，可以查看整体建议，并逐镜比较新旧内容。生成完成不会自动采用。</p>
+          <div id="explanation-review" class="explanation-review" aria-live="polite"></div>
+          <div class="explanation-adoption" id="explanation-adoption" hidden><p id="explanation-adoption-note" class="field-note"></p><label class="checkbox-label"><input id="confirm-explanation-adoption" type="checkbox">我已审阅，确认采用全部镜头的讲解方案</label><button class="button primary" id="adopt-explanation" type="button" disabled>采用整份方案</button></div>
+        </div></details>
+
+        <details class="delivery-panel" id="delivery-panel"><summary><span>项目预览与成片</span><small>审阅草稿、核对时序，再交付成片</small><span aria-hidden="true">⌄</span></summary><div class="delivery-content"><p id="delivery-summary">逐镜头确认画面和配音，再预览完整项目。</p><div class="delivery-options" id="delivery-legacy-options"><label class="checkbox-label"><input id="render-subtitles" type="checkbox">附加字幕</label><label class="checkbox-label"><input id="render-silent" type="checkbox">本次明确输出静音视频</label></div><div class="delivery-options" id="delivery-end-options" hidden><label class="checkbox-label"><input id="render-end-hold" type="checkbox" checked>最后画面停留至少 4 秒，便于读完要点或来源</label></div><p class="field-note" id="delivery-options-note">关键点默认由画面表达。关闭附加字幕仍保留旁白，预览与导出使用同一选择。</p><ul id="delivery-issues" class="delivery-issues" aria-label="需要补齐的镜头，可点击定位" aria-live="polite" hidden></ul><div class="delivery-actions"><button class="button secondary" id="preview-project" type="button">预览整个项目</button><button class="button secondary" id="download-subtitles" type="button">下载字幕 SRT</button><button class="button primary" id="render-project" type="button">导出 MP4 <span aria-hidden="true">↗</span></button><button class="button primary" id="render-motion-project" type="button" hidden disabled>导出 MP4 <span aria-hidden="true">↗</span></button></div><p class="field-note" id="render-hint"></p><p class="field-note" id="motion-delivery-note" hidden>动态图解使用实际配音与已人工核对的时序，静态镜头可混合。默认不附加字幕；本入口保留声音。</p><div id="render-history" class="render-history" aria-live="polite"></div></div></details>
+
+        <section class="project-speech-panel" aria-labelledby="project-speech-heading"><div><h2 id="project-speech-heading">项目配音</h2><p>整个项目统一使用一个音色。换声后，有效的动态图解可继续使用；配音需重新生成、试听采用，再核对画面时序。历史配音仍可试听，选择音色不会自动生成或采用。</p></div><div class="project-speech-controls"><label>项目音色<select id="project-speech-voice" required disabled><option value="">正在读取音色…</option></select></label><button class="text-button" id="reset-project-speech" type="button">重新载入</button><button class="button secondary" id="save-project-speech" type="button" disabled>保存音色</button></div><p id="project-speech-status" class="field-note" role="status"></p></section>
+
+        <details class="batch-panel" id="batch-panel" hidden open>
+          <summary><span>整片批量制作</span><small>核对范围 → 制作候选 → 集中审阅</small><span aria-hidden="true">⌄</span></summary>
+          <div class="batch-content">
+            <p class="field-note">选择本次处理的镜头与步骤。制作只保存候选；采用和人工时序核对由你分别确认。</p>
+            <div id="batch-scenes" class="batch-scenes" aria-label="本次制作镜头"></div>
+            <fieldset class="batch-steps"><legend>本次制作步骤</legend><label class="checkbox-label"><input type="checkbox" id="batch-step-motion" checked>动态图解</label><label class="checkbox-label"><input type="checkbox" id="batch-step-audio" checked>项目统一音色配音</label><label class="checkbox-label"><input type="checkbox" id="batch-step-draft" checked>镜头 MP4 草稿</label></fieldset>
+            <div class="inline-actions"><p class="field-note" id="batch-form-note"></p><button class="button secondary" id="preview-batch" type="button">核对制作范围与任务上限</button></div>
+            <p class="field-note" id="batch-provider-note" hidden></p>
+            <section class="batch-plan" id="batch-plan" hidden aria-label="本次制作范围"><p id="batch-plan-summary"></p><ul id="batch-plan-items"></ul><div class="motion-confirmation"><label class="checkbox-label"><input id="confirm-batch-start" type="checkbox">我已核对镜头、步骤和任务上限，确认启动本批次</label><button class="button primary" id="start-batch" type="button" disabled>开始批量制作</button></div></section>
+            <div class="batch-history-heading"><label>制作批次<select id="batch-select" disabled><option>尚无制作批次</option></select></label><button class="text-button" id="reload-batch" type="button">重新读取</button></div>
+            <p id="batch-status" class="field-note" role="status"></p><p id="batch-read-error" class="message error-message" role="alert" hidden></p>
+            <div id="batch-progress-rows" class="batch-progress-rows" aria-label="逐镜制作进度" aria-live="polite"></div>
+            <p class="field-note" id="batch-retry-note"></p><div class="inline-actions"><button class="text-button" id="cancel-batch" type="button" hidden>停止后续任务并申请取消</button><button class="button secondary" id="retry-batch" type="button" disabled>补做勾选步骤</button></div>
+            <h3>集中审阅候选</h3><p class="field-note">试听和草稿始终对应本批次列出的确切版本。勾选需要采用的镜头，再统一确认；未勾选的镜头保持原采用版本。</p>
+            <p class="field-note" id="batch-audio-label"></p><audio id="batch-audio-preview" controls preload="none" hidden></audio>
+            <div id="batch-review" class="batch-review"></div>
+            <p id="batch-adoption-note" class="field-note"></p><div class="motion-confirmation"><label class="checkbox-label"><input id="confirm-batch-adoption" type="checkbox" disabled>我已审阅，确认采用勾选镜头的确切候选</label><button class="button secondary" id="adopt-batch" type="button" disabled>采用所选候选</button></div>
+            <div class="batch-project-draft"><p class="field-note">全部采用后可制作整片草稿，检查连贯性。草稿可使用估算时序；正式导出仍需逐镜人工核对。</p><button class="button secondary" id="preview-batch-project" type="button" disabled>制作整片 MP4 草稿</button></div>
+          </div>
+        </details>
+
+        <details class="batch-panel" id="continuity-panel" hidden open>
+          <summary><span>跨镜连续图解</span><small>规划衔接 → 审阅采用 → 连续草稿</small><span aria-hidden="true">⌄</span></summary>
+          <div class="batch-content">
+            <p id="continuity-note" class="field-note"></p>
+            <ul id="continuity-issues" class="field-note" aria-label="连续图解需要补齐的内容" hidden></ul>
+            <div class="inline-actions"><button class="text-button" id="reload-continuity" type="button">重新读取连续方案</button><button class="button secondary" id="propose-continuity" type="button" disabled>规划一份连续方案</button></div>
+            <p id="continuity-read-error" class="message error-message" role="alert" hidden></p>
+            <div class="batch-history-heading"><label>审阅连续方案<select id="continuity-version" disabled></select></label></div>
+            <div id="continuity-review" class="batch-review" aria-live="polite"></div>
+            <div class="inline-actions"><button class="text-button" id="reset-continuity-changes" type="button" disabled>撤回未保存的衔接修改</button><button class="button secondary" id="save-continuity-changes" type="button" disabled>将修改保存为新候选</button></div>
+            <p id="continuity-adoption-note" class="field-note"></p>
+            <div class="motion-confirmation"><label class="checkbox-label"><input id="confirm-continuity-adoption" type="checkbox" disabled>我已逐边界审阅，确认采用这份对象衔接方案</label><button class="button secondary" id="adopt-continuity" type="button" disabled>采用连续方案</button></div>
+            <div class="batch-project-draft"><p id="continuity-render-note" class="field-note"></p><button class="button secondary" id="preview-continuity" type="button" disabled>用已采用录音制作连续草稿</button><button class="button primary" id="deliver-continuity" type="button" disabled>导出连续 MP4</button></div>
+          </div>
+        </details>
 
         <div class="production-grid">
           <section class="scenes-panel" aria-labelledby="scenes-heading">
@@ -53,12 +111,39 @@
               <label>镜头标题<input name="title" id="scene-title-input" required maxlength="300" placeholder="例如：CPU 与 GPU 的分工" data-testid="scene-title-input"></label>
               <label>旁白<textarea name="narration" id="scene-narration" rows="3" maxlength="10000" required placeholder="这个镜头对应的讲解内容"></textarea></label>
               <label>画面说明<textarea name="visual_description" id="scene-visual" rows="3" maxlength="10000" required placeholder="希望出现什么图形、关系、布局或动效" data-testid="scene-visual"></textarea></label>
-              <div class="form-row"><label>预计时长 <span class="optional">秒</span><input name="duration_seconds" id="scene-duration" type="number" min="1" max="120" step="0.5" required value="8"></label><label>画面格式<select name="format" id="scene-format"><option value="svg">SVG · 矢量画面</option><option value="html">HTML · 网页画面</option></select></label></div>
+              <div class="form-row"><label>预计时长 <span class="optional">秒</span><input name="duration_seconds" id="scene-duration" type="number" min="1" max="120" step="0.5" required value="8"></label><details class="static-format-settings" id="scene-static-settings"><summary>静态素材格式（兼容设置）</summary><label>画面格式<select name="format" id="scene-format"><option value="svg">SVG · 矢量画面</option><option value="html">HTML · 网页画面</option></select></label></details></div>
               <div class="form-actions"><span class="draft-status" id="draft-status"></span><button type="button" class="button secondary" id="cancel-scene-edit">取消</button><button class="button primary" type="submit" id="save-scene" data-testid="save-scene">保存镜头</button></div>
             </form>
 
             <div id="scene-detail">
               <div class="narration-strip"><span>旁白</span><p id="scene-narration-text"></p></div>
+              <details class="motion-panel" id="motion-panel" hidden open><summary><span>动态图解</span><small id="motion-mode-label">本镜头使用静态画面</small></summary><div class="motion-content">
+                <p class="field-note">用图形的出现、移动和关系变化解释旁白。先审阅方案，再用实际配音校正时间；历史静态画面仍保留。</p>
+                <div class="inline-actions"><button class="text-button" id="motion-use-motion" type="button">使用已采用动态图解</button><button class="text-button" id="reload-motion" type="button">重新读取</button></div>
+                <label>动态图解要求 <span class="optional">选填，修改时作为批注</span><textarea id="motion-instruction" rows="3" maxlength="8000" placeholder="例如：先让任务进入队列，再突出工作节点取走任务的过程。"></textarea></label>
+                <p class="field-note" id="motion-form-note"></p><div class="inline-actions"><button class="button secondary" id="generate-motion" type="button" disabled>生成动态图解方案</button><button class="button secondary" id="revise-motion" type="button" disabled>按要求修改所选方案</button></div>
+                <p class="message error-message" id="motion-read-error" role="alert" hidden></p><div class="operation-banner" id="motion-status" role="status" hidden><span id="motion-status-text"></span><button class="text-button" id="cancel-motion" type="button">申请取消</button></div>
+                <label>审阅动态图解<select id="motion-version" disabled><option>尚无动态图解</option></select></label><div id="motion-review" class="motion-review"></div>
+                <p class="field-note" id="motion-adoption-note"></p><div class="motion-confirmation"><label class="checkbox-label"><input id="confirm-motion-adoption" type="checkbox">我已审阅，确认本镜头采用所选动态图解</label><button class="button secondary" id="adopt-motion" type="button" disabled>采用此动态图解</button></div>
+
+              </div></details>
+
+              <section class="audio-panel" id="audio-panel" aria-labelledby="audio-heading"><div class="section-heading"><div><span class="eyebrow">给这个镜头配音</span><h3 id="audio-heading">旁白与声音</h3></div><span id="audio-voice-label" class="voice-label">项目音色</span></div><p class="field-note" id="audio-provider-note"></p>
+                <details class="speech-settings"><summary>语速与读音</summary><div class="speech-settings-body"><label>语速 <span class="optional">1 为正常语速</span><input id="speech-speed" type="number" min="0.5" max="2" step="0.05" value="1" required></label><label>词语读音修正 <span class="optional">选填，每行一条</span><textarea id="speech-pronunciation" rows="3" maxlength="10000" placeholder="例如：SDK=艾斯迪开"></textarea><small class="field-note">填写「原词=读法」，保留原旁白，只改变发音。</small></label><div class="inline-actions"><span class="field-note" id="speech-draft-note"></span><button class="text-button" id="reset-speech-settings" type="button">重新载入</button><button class="button secondary" id="save-speech-settings" type="button">保存配音设置</button></div></div></details>
+                <div class="audio-create-actions"><button class="button primary" id="generate-audio" type="button">生成配音</button><span class="field-note" id="audio-generation-hint">生成后先试听，再选择采用。</span></div>
+                <div class="operation-banner" id="audio-status" role="status" hidden><span class="status-dot"></span><span id="audio-status-text"></span><button class="text-button" id="audition-operation-audio" type="button" hidden disabled>试听本次配音</button><button class="text-button" id="cancel-audio-operation" type="button" hidden>申请取消</button></div>
+                <div class="audio-review"><div class="audio-version-row"><label for="audio-version-select">试听版本<select id="audio-version-select" disabled><option>尚无配音</option></select></label><span class="version-badge" id="audio-version-badge" hidden></span></div><audio id="audio-preview" controls preload="none" hidden></audio><p class="field-note" id="audio-version-summary">生成或上传配音后，可以在这里试听。</p><div class="audio-stale-note" id="audio-stale-note" hidden>旁白或配音设置已变化，这条配音需要更新；历史音频仍可试听。</div><div class="inline-actions"><span class="field-note" id="audio-adoption-note">配音采用独立于画面采用。</span><button class="button secondary" id="download-audio" type="button" disabled>下载配音 ↓</button><button class="button secondary" id="adopt-audio" type="button" disabled>采用此配音</button></div></div>
+                <details class="audio-upload"><summary>上传自己的配音</summary><div class="audio-upload-body"><label>WAV 文件<input id="audio-upload-file" type="file" accept=".wav,audio/wav,audio/x-wav"></label><p class="field-note">上传完整 WAV，最多 32 MiB。校验后会保存为候选，试听后再采用。</p><button class="button secondary" id="upload-audio" type="button" disabled>上传为候选配音</button></div></details>
+                <section class="timing-section" aria-labelledby="timing-heading"><h3 id="timing-heading">镜头时长</h3><p class="field-note" id="timing-summary">采用配音后按实际音频时长安排，不截断旁白。</p><div class="form-row"><label>开头留白 <span class="optional">秒</span><input id="leading-seconds" type="number" min="0" max="10" step="0.1" value="0" required></label><label>结尾留白 <span class="optional">秒</span><input id="trailing-seconds" type="number" min="0" max="10" step="0.1" value="0" required></label></div><div class="inline-actions"><span class="field-note" id="timing-draft-note"></span><button class="text-button" id="reset-timing" type="button">重新载入</button><button class="button secondary" id="save-timing" type="button">保存留白</button></div></section>
+                <details class="captions-section" id="captions-section"><summary>字幕与时间校正</summary><div class="captions-body"><p class="field-note" id="captions-status">先采用当前旁白的配音，再整理字幕。</p><button class="button secondary" id="estimate-captions" type="button" disabled>按旁白估算字幕时间</button><p class="field-note">初始时间为估算，请结合试听校正后保存。时间从镜头开头计时，包含开头留白。</p><div class="caption-column-labels" aria-hidden="true"><span>开始 / 秒</span><span>结束 / 秒</span><span>字幕内容</span></div><div id="caption-cues" class="caption-cues"></div><div class="inline-actions"><button class="text-button" id="add-caption" type="button" disabled>＋ 添加一条</button><span class="field-note" id="captions-draft-note"></span><button class="text-button" id="reset-captions" type="button">重新载入</button><button class="button secondary" id="save-captions" type="button" disabled>保存校正字幕</button></div></div></details>
+              </section>
+                <section id="motion-timing-section" class="motion-timing-section" hidden><h4>结合实际配音校正时序</h4><p class="field-note" id="motion-timing-status"></p><audio id="motion-timing-audio" controls preload="metadata" hidden></audio><p class="field-note" id="motion-timing-note"></p><div id="motion-timing-rows"></div>
+                  <label>本次校正说明 <span class="optional">选填</span><input id="motion-correction-reason" maxlength="240" placeholder="例如：按实际换气位置调整第二段开始时间"></label>
+                  <div class="inline-actions"><button class="text-button" id="reset-motion-timing" type="button">重新载入，放弃本镜头未保存校正</button><button class="button secondary" id="save-motion-timing" type="button" disabled>保存手工时序</button></div>
+                  <div class="motion-confirmation"><label class="checkbox-label"><input id="confirm-motion-timing" type="checkbox">我已试听这条配音并逐段核对，确认画面变化时序</label><button class="button secondary" id="verify-motion-timing" type="button" disabled>确认人工核对</button></div>
+                  <p class="field-note">估算时序可制作草稿；正式动态导出要求人工核对。保存手工时间不会自动标记已核对，也不会重新合成语音。</p><button class="button primary" id="preview-motion" type="button" disabled>制作本镜头 MP4 草稿</button>
+                </section>
+              <details class="static-assets-panel" id="static-assets-panel"><summary><span>静态素材与历史版本</span><small>查看、下载，或作为静态镜头复用</small><span aria-hidden="true">⌄</span></summary><div class="static-assets-content"><div class="static-export-actions"><p class="field-note" id="static-export-note"></p><button class="button secondary" id="export-project" type="button" data-testid="export-project">导出项目静态素材 ZIP</button></div><p class="field-note">静态素材独立保留。采用静态候选不会替换动态图解；需要用于成片时，请明确选择复用静态素材。</p><div class="inline-actions"><button class="text-button" id="motion-use-static" type="button">复用静态素材</button></div>
               <div class="preview-panel">
                 <div class="preview-toolbar"><div class="preview-tabs" role="tablist" aria-label="预览方式"><button type="button" role="tab" aria-selected="true" id="preview-tab">画面预览</button><button type="button" role="tab" aria-selected="false" id="source-tab">查看源码</button></div><div class="version-tools"><label class="sr-only" for="version-select">选择预览版本</label><select id="version-select" data-testid="version-select" disabled><option>尚无版本</option></select><span class="version-badge" id="version-badge" hidden></span></div></div>
                 <div class="preview-stage" id="preview-stage"><div class="preview-empty" id="preview-empty"><span aria-hidden="true">▱</span><h3>这个镜头还没有画面</h3><p>检查旁白和画面说明，<br>然后生成第一个候选版本。</p></div><iframe id="scene-preview" title="镜头画面预览" sandbox="" referrerpolicy="no-referrer" hidden data-testid="scene-preview"></iframe><pre id="source-view" hidden aria-label="镜头源码" tabindex="0"></pre></div>
@@ -68,16 +153,25 @@
               <div class="version-actions"><span id="adoption-note">制作完成后，可以预览并选择采用的版本。</span><button class="button secondary" id="adopt-version" type="button" disabled data-testid="adopt-version">采用此版本</button></div>
               <div class="operation-banner" id="scene-status" role="status" hidden><span class="status-dot"></span><span id="scene-status-text"></span><button class="text-button" id="cancel-operation" type="button" hidden data-testid="cancel-operation">申请取消</button></div>
               <section class="feedback-panel" aria-labelledby="feedback-heading"><div class="feedback-heading"><h3 id="feedback-heading">让画面更接近你的想法</h3><span id="revision-base"></span></div><label class="sr-only" for="feedback">修改意见</label><textarea id="feedback" rows="3" maxlength="8000" placeholder="例如：用两组芯片表现并行计算，把右侧的说明文字放大。" data-testid="feedback"></textarea><div class="feedback-actions"><p id="generation-hint">根据当前镜头说明生成画面。</p><button class="button secondary" type="button" id="generate-scene" data-testid="generate-scene">生成镜头</button><button class="button primary" type="button" id="revise-scene" disabled data-testid="revise-scene">按批注修改 <span aria-hidden="true">↗</span></button></div></section>
+
+              </div></details>
             </div>
           </section>
 
-          <div class="select-scene-empty" id="select-scene-empty"><span class="empty-glyph" aria-hidden="true">▧</span><h2>每个镜头，都可以单独打磨。</h2><p>先安排分镜，再在这里查看画面、<br>比较版本，写下修改意见。</p></div>
+          <div class="select-scene-empty" id="select-scene-empty"><span class="empty-glyph" aria-hidden="true">▧</span><h2>让每段讲解，逐步展开。</h2><p>先安排镜头，再制作动态图解和配音，<br>通过视频草稿比较和修改。</p></div>
         </div>
       </section>
       <div class="loading-view" id="loading-view" role="status" hidden><span class="loader"></span><p>正在读取项目…</p></div>
     </main>
   </div>
 
-  <dialog id="create-project-dialog" aria-labelledby="create-project-heading" data-testid="create-project-dialog"><form id="create-project-form"><div class="dialog-heading"><div><span class="eyebrow">开始一个新作品</span><h2 id="create-project-heading">从文稿开始</h2></div><button class="icon-button" id="close-project-dialog" type="button" aria-label="关闭新建项目">×</button></div><label>项目名称<input id="new-title" name="title" required maxlength="300" placeholder="例如：CPU 与 GPU，究竟如何分工？" data-testid="new-title"></label><label>文稿<textarea id="new-script" name="script" rows="8" required maxlength="50000" placeholder="粘贴你已经准备好的讲解文稿。" data-testid="new-script"></textarea></label><label>视觉方向 <span class="optional">选填</span><textarea id="new-style" name="style" rows="3" maxlength="4000" placeholder="例如：深色背景、橙色重点、清晰的方块与连线；文字简洁。" data-testid="new-style"></textarea></label><p class="message error-message" id="create-error" role="alert" hidden></p><p class="dialog-hint">先保存文稿，再拆分镜头和制作画面。</p><div class="dialog-actions"><button class="button secondary" id="cancel-create-project" type="button">取消</button><button class="button primary" id="submit-create-project" type="submit" data-testid="submit-create-project">创建项目 <span aria-hidden="true">→</span></button></div></form></dialog>
+  <dialog id="create-project-dialog" aria-labelledby="create-project-heading" data-testid="create-project-dialog"><form id="create-project-form"><div class="dialog-heading"><div><span class="eyebrow">开始一个新作品</span><h2 id="create-project-heading">从文稿开始</h2></div><button class="icon-button" id="close-project-dialog" type="button" aria-label="关闭新建项目">×</button></div><label>项目名称<input id="new-title" name="title" required maxlength="300" placeholder="例如：CPU 与 GPU，究竟如何分工？" data-testid="new-title"></label><label>文稿<textarea id="new-script" name="script" rows="8" required maxlength="50000" placeholder="粘贴你已经准备好的讲解文稿。" data-testid="new-script"></textarea></label><label>视觉与讲解方向 <span class="optional">可编辑，也可清空</span><textarea id="new-style" name="style" rows="6" maxlength="4000" placeholder="按本期内容填写自己的视觉与讲解方向。" data-testid="new-style">用图解做讲解，每个镜头只讲一个重点。
+把关键词、关系图和准确标识融入画面，不要把整段旁白放到画面上。
+旁白使用口语短句，先解释再引入术语，必要时用贴切类比；技术路径和代码标识不逐字念。
+保持原文事实和术语含义，密集内容拆成多个镜头，不凭空补充结论。
+使用清晰布局和大字号，让图形、对象与关系随讲解逐步展开。
+每个变化都服务于理解，不堆叠装饰动画，不把整段旁白逐字展示。</textarea></label><p class="message error-message" id="create-error" role="alert" hidden></p><p class="dialog-hint">新项目使用动态视频制作。先保存文稿，再安排镜头、制作图解与配音；不会自动提交生成任务。</p><div class="dialog-actions"><button class="button secondary" id="cancel-create-project" type="button">取消</button><button class="button primary" id="submit-create-project" type="submit" data-testid="submit-create-project">创建项目 <span aria-hidden="true">→</span></button></div></form></dialog>
+  <dialog id="project-player-dialog" class="project-player-dialog" aria-labelledby="project-player-heading"><div class="dialog-heading"><div><span class="eyebrow">项目预览</span><h2 id="project-player-heading">音画与字幕</h2></div><button class="icon-button" id="close-project-player" type="button" aria-label="关闭项目预览">×</button></div><div class="project-player-stage"><iframe id="project-player-frame" title="项目画面预览" sandbox="" referrerpolicy="no-referrer"></iframe><p id="project-player-caption" hidden></p></div><audio id="project-player-audio" preload="auto" hidden></audio><p class="field-note" id="project-player-scene"></p><div class="project-player-controls"><button class="button primary" id="project-player-toggle" type="button">播放</button><label class="sr-only" for="project-player-seek">播放进度</label><input id="project-player-seek" type="range" min="0" max="1" step="0.05" value="0"><span id="project-player-clock">0:00 / 0:00</span></div><p class="field-note" id="project-player-note">预览使用打开时的采用版本。调整项目后，重新打开预览查看最新内容。</p></dialog>
+<dialog id="motion-render-dialog" class="motion-render-player" aria-labelledby="motion-render-heading"><div class="dialog-heading"><h2 id="motion-render-heading">视频草稿</h2><button class="icon-button" id="close-motion-render" type="button" aria-label="关闭视频播放">×</button></div><video id="motion-render-video" class="motion-draft-video" controls preload="metadata"></video><p class="field-note" id="motion-render-note"></p></dialog>
 </body>
 </html>

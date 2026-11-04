@@ -1,5 +1,122 @@
 # 视频工作台当前状态
 
+## 当前：2026-11-04 已完成能力合入主线
+
+用户已授权合入已完成任务：配音及项目统一音色、HyperFrames动态默认、讲解方案统筹、批量制作与集中采用、工作台体验及反馈修复、跨镜连续图解。最新生产应用源码为 `e08bc8b4a98e52af73c4757e8c25e1c663309231`；连续草稿 `9be6b7f1-05cb-4925-bace-76fbc4bcba0a` 已完成19.625秒真实浏览器和原声验收，用户明确评价跨镜衔接流畅。合并过程、最新测试及范围见 [主线合并记录](docs/mainline-merge-20261104.md)。
+
+本次仅合并源码和更新记录，不重新部署或提交制作任务，不改采用状态和人工时序。声音自然度、准确旁白时序、复杂长内容表现、OOM专用归因及生产存储回收等仍按各自清单跟踪，不因合并一并标记完成。下方保留历轮原始记录，“未合主线”“仍待浏览器”等旧表述只对应当时；最新连续功能和验收见 [跨镜连续图解](docs/cross-scene-continuity-20261104.md)。
+
+## 此前：恢复故障验证、播放互斥与存储维护
+
+2026-11-03：源码 `f8db329e00a3da582a77f82d68177f68619897d0` 已提交并发布，独立分支尚未合主线；新增五种原生媒体互斥、历史项目预览缺失导入及标准库存储维护 CLI，源码打包精确清单为 57 文件。六个前端文件 93 passed、打包 30 passed、存储 Windows 28 passed／1 skipped、Linux 隔离 apply 9 passed；只读容量 collector 最终 master SQLite 3.40.1 合成 23 组及 Windows 11 组 passed。不同范围不相加；完整 typed 值与 BLOB SHA 比较不以文件物理变化或 BLOB 长度代替。
+
+真实独立故障 r2 的执行子进程 SIGKILL 恢复和专用 TLS 连接中断后的 `cleanup_pending` 恢复已分别通过，用时 39.066197／20.137954 秒，均保持原 Job 身份并精确清理。r2 第三个 Job 的 OOM 及另行审阅的 r3 单 Job 仍是 `Error`／exit 137、一般 502；r3 内核已精确证明容器 cgroup OOM，但 Kubernetes／CRI 未给出 `OOMKilled`，专用 `motion_execution_oom` 归因仍未通过，两个原 failed 保留。两轮合计 4 Job，全部所属 Kubernetes 资源无残留，0 Agent／0 TTS，无业务数据库写入。
+
+工作台已发布为 `latest@sha256:8f9c91199307c3573651749a48462230397ea5db3d871e2762f80736cbc90439`，executor／renderer／runtime 保持。兼容构建保留原 125 层及逐层 SHA／RootFS／runtime／history，仅改 Labels 且不新增层；原层数错误和 OCI 兼容拒绝保留。发布后 17 表全部 schema、旧 typed 值和媒体 BLOB SHA 保持，零新增、active 0、八音色、health／ready 200、匿名 401、七项依赖 UID／spec 保持。两份服务器备份为 20,766,720／8,015,872 B，未下载。两轮确切 `/tmp` 根和全部所属子进程已完成收尾，未调用 Kubernetes DELETE 或访问数据库。
+
+生产只读容量最终报告四来源 complete、blockers 为空，采样为 21:24:59.360–21:25:02.319（Asia/Shanghai，约 2.959 秒）：业务 15 表／11 项目，音频候选 19 条共 14,832,836 B、MP4 7 条共 5,094,193 B；executor 2 表／8 operation／10 scene。执行树 106 文件／40 目录，logical 9,225,471 B、allocated 9,482,240 B，边界计数均 0；两在线库均无 sidecar。音频 19／11 adopted／8 retained、静态 19／18／1、动态 3／3／0、讲解 1／1／0，missing 0，不把未采用内容当垃圾。两次 incomplete（sidecar、SQLite 首次 pragma 授权拒绝）及 locale 失败保留；新副本完整保持通过，最小 immutable 预热未放宽 authorizer。实际预算为 20,000 条目／32 层／30 秒，只读采样且跨来源一致性为 false。
+
+54 个精确证据源文件＋manifest 已安全导出、下载并逐文件校验通过，共 55 成员／63,849 B 压缩／276,707 B 解包；归档 SHA `25436e2f13dd48bedd23c23bcfe39b1faf7a3daa2d256eb62fa2631a883c6755`，保存在本地 `.runtime/video-recovery-r2/evidence/verified/`，source 文件保持。归档不含数据库／凭据，数据库未下载；发布后业务行零新增和历史媒体保持。
+
+存储 CLI 不删业务行／媒体 BLOB，未执行生产 apply。全服务媒体删除、compact 和 executor 128 条记录回收仍未做。浏览器真实播放、人工时序／听感／整片效果 pending。详见 [RECOVERY_OPERATIONS_VALIDATION.md](RECOVERY_OPERATIONS_VALIDATION.md)。下方保留此前各轮原始记录，其“尚未做”和预算只对应当轮，不覆盖本轮结果。
+
+## 此前：渲染恢复与项目加载修复（已发布）
+
+2026-11-03：源码 `9cd39e84aba496b81fda231383411259525835a3` 已发布，工作台和 executor 使用 `latest@sha256:7fc022866ad35f0c06d7078998a6fe58f7b91ca2fb59802d3a1e79b7a14efbc2`，renderer／runtime 保持。项目加载的跨面板递归已修复；磁盘写入错误、未确认清理与重启恢复使用持久意图，确认精确 Job／Pod／ConfigMap 清理后才终态，已有句柄恢复优先于新任务。
+
+本地 Python 广回归 503 passed／1 skipped，最后 execution 集合 44 passed（范围重叠不相加），Node 106 passed；精确镜像禁网两镜预检通过。发布后两个新 Pod Ready、0 重启。受控验收后最终核对工作台 15 表与 executor 2 表的旧 schema、真实主键、全部旧 typed 值及历史媒体保持，`additional_rows=0`、active 0、八音色和所有依赖保持；生产两数据库没有写入或下载。
+
+**真实 60 秒容量技术组合、运行中取消、注入超时及其精确资源清理已通过。** flow／compare／focus 各 20 秒、共 3 个正常 Job，从调度到渲染／observe／合成用时 241.583171 秒，含独立媒体检查 252.787027 秒；成片为 1440 帧、1280×720、24fps、H.264／24kHz mono AAC、无字幕，774167 B，完整 decode／count_frames 通过。三个容量镜头各有 25 个 kubelet 样本；renderer cgroup 累计 CPU 277.299919 秒、记录最大内存约 396 MiB，scratch 采样峰值 43171840 B。该组合在 600 秒总预算内完成，不能推广为任意内容和并发容量保证。
+
+续接共使用 6 个 Job，预算已用完：运行取消用例 17.763496 秒、`MOTION_TIMEOUT_SECONDS=1` 注入超时用例 7.777219 秒，均通过。最后一个注入用例实际 exit 137／reason `Error`，返回 `motion_execution_failed`／502，**没有 OOMKilled，OOM 专用归因未通过，原整轮 failed 保留**；未追加 Job。最终全部所属 Job／Pod／ConfigMap 消失。首轮 0 Job 的重复 `case` 脚本错误和恢复首试 ConfigMap LIST 的 RBAC 拒绝均保留，唯一遗留 ConfigMap 后续按原 UID／binding 精确 GET／DELETE 清理，没有扩大 RBAC。
+
+真实强杀 executor／API 中断仍未做；官方浏览器无实例／内核错误，真实点击与播放仍未验收；人工旁白时序、听感及表现力继续 pending。容量使用技术提示音，不代表真人旁白质量通过。两个专用 `/tmp` 夹具根已精确清理，84 文件无数据库／凭据归档已下载并逐文件校验通过。详见 [RENDER_LIFECYCLE_VALIDATION.md](RENDER_LIFECYCLE_VALIDATION.md)。本轮 0 Agent／0 TTS，独立分支未合主线；下方各轮历史记录保留，其旧待办以本轮实际结果更新。
+
+## 本轮：连接线按动画时序出现（已发布）
+
+2026-11-03：默认编译器升级为 `motion-compiler-4`／`technical-diagrams-4`，移除动画开始前始终可见的灰色连接底线。实际线条在 CSS 初始状态隐藏，到对应动作时才绘制；标签和箭头按原时序出现。原编译器 1／2／3 的输出及旧快照保持可复现。源码 `a5350a3c2a1b7f4f5fd8626dc129e617b4c7747e`，独立分支尚未合主线。
+
+两个真实镜头的禁网预检已通过，首帧及返回首帧、18 个动作窗口均核验全部 4＋2 条关系；另目视初始与绘制前后共 6 帧，未见提前露线。新工作台与执行器 Ready、0 重启，发布回归确认业务 15 表和执行器 2 表全部旧行与媒体保持、零新增，八音色与 health／ready 200 保持。
+
+本轮复用原文稿和原配音，仅新增一次整片 draft `b1ee94ad-b55f-4f72-b40b-9729c10eb584`，已 completed：19 秒／456 帧，完整解码和 14 项原 PCM 检查通过。目视全部 10 张实际 MP4 关键帧，两镜起始未见提前连接线，之后随动作出现。最终业务仅新增该 render，执行器仅新增它的一条 operation 与两条 scene 记录；原项目 revision 12、采用 heads、所有旧行与媒体、人工时序 pending 保持，0 Agent／0 TTS。抽帧不代替完整播放、人工听感或用户效果确认。完整身份与证据见 [CONNECTOR_VISIBILITY_VALIDATION.md](CONNECTOR_VISIBILITY_VALIDATION.md)。
+
+## 此前：整片批量制作（已发布，真实技术验收完成）
+
+2026-11-03：独立分支 `codex/video-hyperframes-motion` 已发布整片批量制作，应用源码为 `0e4958019f18ece75ae1390a4de505fdc296a47b`，尚未合主线。每批最多选择 12 个镜头，先核对动态图解、配音和镜头草稿的任务上限，再明确启动；全部批次之间串行安排子任务，支持重启恢复、精确候选复用、明确失败步骤补做及集中审阅采用。整片草稿保留旁白、不附加字幕；正式成片仍要求人工核对真实配音时序。项目统一一个已保存音色，制作期间锁定相关编辑。操作与接口见 [BATCH_PRODUCTION.md](BATCH_PRODUCTION.md)。
+
+release 为 `video-batch-production-20261103-r1`，工作台 `latest` digest 为 `sha256:a7b3e071ce035d855a5d34f15e06411bfbb37680c5ed7864a333483ac9d86701`，Pod `video-workbench-6f98849df7-r655m` Ready、0 重启。发布后只读检查确认原 10 个项目／14 张表的全部旧行各列及历史媒体保持，唯一新增表 `video_batches` 在检查时为空；八音色、health／ready 200、匿名 401 及所有依赖 spec 保持。
+
+**真实两镜批次、集中采用、整片原声草稿及正式成片门禁的技术验收已完成**：独立项目 `1c60d406-688b-415d-9572-a99ec5f28724` 的批次 `89e9d4fc-b5f0-44b4-9799-600c610a67f4` 在 263.719 秒内完成 6/6 步骤，完成时 revision 11、两镜 motion／audio heads 均为 `null`；之后按确切的两镜候选原子采用至 revision 12，未核准人工时序。
+
+整片草稿 `a141b04b-e841-4f33-98e9-6910e532d7b1` 已 completed，为 19 秒／456 帧、1280×720、24fps 的 H.264／AAC MP4，有旁白、无字幕。完整解码及两段 12 秒＋7 秒原始 PCM 的首尾、beat 和镜头边界共 14 项检查通过，整片相关系数 0.9999565535、lag 0；正式 delivery 实际返回 HTTP 409 `motion_timing_needs_review`。本轮实际使用 2 次 motion Agent＋2 次 TTS＋2 个镜头草稿＋1 个整片草稿，无重试；模型回合与金额未测，不沿用此前四任务历史预算。
+
+最终只读检查确认原 10 项目／15 表的全部旧行各列及历史媒体保持，仅新增上述隔离项目及其候选／任务，共 11 项目、active 0，人工 alignment 核准仍为 0，所有依赖 spec 保持。已目视检查两镜中段与末帧共 4 张抽帧，所查文字未裁出画布、标题和要点可读；第二镜保留原回答并显现历史回答。画面仍以卡片为主，关系线标签对比偏弱、第二镜偏密、镜头硬切，完整节奏与用户效果仍待核对；浏览器仍遇到 `failed to write kernel assets`／`os error 3`。媒体技术核对不代表听感、人工时序或整片主观效果通过。完整身份、媒体摘要和验收证据见 [BATCH_PRODUCTION_VALIDATION.md](BATCH_PRODUCTION_VALIDATION.md)。
+
+## 此前已发布：动态视频成为默认流程
+
+2026-11-03：用户已决定全面转向动态视频。独立分支 `codex/video-hyperframes-motion` 的本轮应用源码为 `cbd08136ca0dc694ceeada3afdfdb55de65e62bf`，尚未合主线。新项目默认动态制作，新增分镜保留待制作动态意图；动态图解成为主操作区，静态素材与历史版本默认折叠，MP4 操作入口统一。旧项目可显式转动态，保留已采用画面、配音及历史，有制作任务时禁止转换；动态项目不能绕过 v2 成片校验，历史 MP4 仍可下载。
+
+新增动态测试 17 项、最终 API 回归集合 42 项、前端 Node 测试 70 项均通过，统计范围可能重叠，不相加为总量。发布工具离线 smoke 通过。本地 HTTP 页面返回 200；浏览器 js、重置与重试均在页面操作前遇到 `failed to write kernel assets`／`os error 3`，**本轮浏览器点击、截图及可视验收尚未完成**。本轮不增加 Agent／TTS 调用，不把人工时序标记为已核对。
+
+**构建、工作台发布与隔离 API 验收已完成**：release 为 `video-dynamic-default-20261103-r1`，工作台 `latest` digest 为 `sha256:1701f36bc8bb25eb683fd65e5e33afacf42f172ceb848ad55f6b89f5d499f4c2`，Pod `video-workbench-557fb55b99-vdsvh` 为 1/1 Running、0 重启，旧 Pod 已停止。只更新工作台，executor、renderer、共享 Agent、speech、认证、域名、PVC 与数据库 schema 未改；所有依赖 spec 保持。
+
+发布后原 9 个项目／14 张表全部旧行与历史媒体保持，active 0、八音色、health／ready 200、匿名 401。隔离 owner 新增项目 `268d3431-3277-4736-b215-884fafa532d3` 与一个手动镜头，revision 2，省略模式时默认 motion、采用 heads 为空；静态 timeline／render 返回 409 `dynamic_workflow_required`，v2 delivery 返回 409 `missing_motion_plan`，任务和候选表无新增。验收后共 10 项目，旧行／媒体及依赖保持，未转换真实旧项目，Agent／TTS／render 均 0。本轮浏览器操作及人工时序、整片效果核对仍待完成；完整回执位置、行为与边界见 [DYNAMIC_DEFAULT.md](DYNAMIC_DEFAULT.md)。
+
+## 此前已发布：动态生产接线
+
+2026-11-03 最新：分支 `codex/video-hyperframes-motion` 的最新应用源码为 `07bd6cab8a33ba62a5d6eb94aa10651d852197c0`，尚未合主线。**第 1 部分已完成**：共享 Agent r3 的讲解统筹／单镜 motion 能力已发布并跑通两个真实业务任务；两镜解释方案已原子采用到 revision 6，原稿、项目音色和原 scene ID 保持。共享 Agent 已按主仓库 `.research-temp/platform-slots-coordination-video.json` 交接其他聊天，本轮不再修改其部署、配置或运行池。
+
+**第 2 部分的本轮发布、真实草稿与采用门禁验收已完成**：r5／compiler v3 已正式发布，工作台与 executor 均 1/1 Ready，实际 digest、鉴权及 runtime 绑定匹配，旧 Pod 已停止。新版原声草稿 `8b32626a-4956-4a4d-90c6-ac4a2b299448` 已 completed；18 秒／432 帧的 1280×720、24fps H.264／AAC MP4 完整解码通过，原完整录音无截断、整段 PCM 相关系数 0.9999526875、lag 0。三个实际抽帧样本未见文字裁切，移动及连线可见。草稿完成时 revision 5 的 motion／audio 均未自动采用；随后原录音显式采用至 revision 6、motion 显式采用至 revision 7。真实正式 delivery 返回 HTTP 409 `motion_timing_needs_review`，保持 estimated／pending，没有伪造真人核对。整片讲解、节奏、人工时序与声音自然度仍需后续验收。
+
+r5 发布后只读检查已确认原 7 项目／7 表的全部旧行各列及历史媒体摘要保持；另有两个隔离验收项目，总项目数 9，active 0，八音色保持。发布未修改共享 Agent、迁移数据库或调用模型。首个草稿的文字溢出失败、r4 严格预检拒绝及其修复过程均保留：v3 使用整数行高和明确留白，没有放宽检查或改写 v1／v2 冻结字节。
+
+此前动态生产接线的历史预算已使用 **4 个上游 Agent 任务／14 个模型回合，TTS 0**；该轮预算已用完，当轮停止提交 Agent 并复用原候选和原完整录音，不限制上方另行授权的批量验收预算。准确镜像、测试批次、失败证据及剩余事项见 [MOTION_PRODUCTION_VALIDATION.md](MOTION_PRODUCTION_VALIDATION.md)。离线 UI 的 18／36 秒请求复用 3 秒 MP4，只验证选择与门禁。项目统一音色及八个选项保留；真实旁白时间仍为 estimated／pending，声音自然度与整片效果仍待验收。
+
+## 历史记录：本轮动态生产接线之前
+
+下方保留接线前的开发、样片与既有静态／音频发布证据；其中“尚未发布／未连接”和各旧 Pod、镜像、测试计数只适用于相应日期和版本。
+
+2026-11-02 开发更新：独立分支 `codex/video-hyperframes-motion` 已增加项目级讲解方案，复用通用 Agent 生成整片旁白、读音、画面重点和语义步骤候选，支持逐镜对比与原子采用；采用后的指引进入原有视觉/motion 输入。页面与持久化链路已做离线验证，功能和新 profile 默认关闭，尚未发布到现网；不改变制作先后顺序，也未新增语音模型/情绪控制。详见 [EXPLANATION.md](EXPLANATION.md)。
+
+HyperFrames 的受控演示样片已获用户“比之前好了一大截”的反馈；生产动态渲染接线、真实 Agent 方案质量和整片主观效果仍需分别验收，不能把离线接口通过当作成片满意。以下部署记录是现有静态服务的历史证据。
+
+2026-11-01 最新：四女声晓贝、晓妮、晓晓、晓伊已加入，现有四男声保留，共八项，默认云健；一个项目统一一个音色。四次短句真实生成均成功且未采用，原项目不变。语音 Pod `speech-service-77fb679896-tmpsr`、工作台 Pod `video-workbench-5c69474df6-9l6rv` 均 Ready；工作台镜像不变。详细身份、测试和证据见 [PROJECT_VOICES.md](PROJECT_VOICES.md)。自然度仍需用户试听；以下更早部署身份保留为历史。
+
+2026-11-01 当前更新：项目统一男声音色已上线，四选项为云健（默认）、云希、云夏、云扬。工作台 `cbca832` / Pod `video-workbench-5fff98c4d8-wlv86` / digest `sha256:e5e5aff8c1d94ad237bf035268dfd192db79bd8c39c216998dfb4df7eea5bb77`；语音 Pod `speech-service-d97d54fb6-8vbb2`。三种新增男声各一次真实短句成功，历史原项目 r27/r69 及八条采用录音仍有效。完整能力、测试和发布身份见 [PROJECT_VOICES.md](PROJECT_VOICES.md)。听感仍待用户确认；以下更早部署身份是历史。
+
+2026-10-31 用户效果复核：完整稿仍有明显机械感，原字幕叠加遮挡画面，效果验收未通过。用户已选定“取消字幕，把关键点融入画面”。本轮默认关闭附加字幕，并为新项目提供可编辑的口语图解制作指引；原八镜头成片保留为技术流程证据，不作为满意成片。具体样稿与后续验收见 [PRESENTATION_REFINEMENT.md](PRESENTATION_REFINEMENT.md)。
+
+2026-11-01 更新：前端改进 `31cb29d` 已上线，当前 Pod 为 `video-workbench-6cb86d7ccf-jxblm`，镜像 digest `sha256:0ab44a7e62464e000247f138462bb663ff6047f42519fa2f3d2b27e9534bded3`。真实浏览器已验证默认无字幕、保留旁白及可编辑指引；18 秒口语图解样片已生成并通过媒体与助手目视检查，声音仍待用户判断。以下保留此前音频首版的技术记录，旧 Pod/镜像不代表本轮当前发布。
+
+更新：2026-10-31（Asia/Shanghai）。音频第一阶段代码位于 `D:\github\armbianbegin\.video-audio-worktree`，分支 `codex/video-audio-production`，**已部署并完成八镜头配音、206 秒 MP4 独立技术验证和重启后持久化检查，尚未合入主线**。完整稿听感尚未获用户认可。下方 2026-10-30 记录保留为静态素材首版历史。
+
+入口：[video-service.panghuer.top](https://video-service.panghuer.top/?entry=vps-20261030)。本阶段新增逐镜头配音、WAV 上传、试听、明确采用、实测音频时长、字幕编辑、音画预览和 MP4 导出；原 SVG／HTML／ZIP 功能保留。配音使用已部署的语音服务与用户选择的中文男声云健 `zm_yunjian`。
+
+## 音频阶段当前结果
+
+- 工作台使用 `arm-cluster-master:5000/video-workbench:latest@sha256:ccd2509379ad55029760cf5229d09dd33b0577213172a20e791d9818ad06c6fe`，应用源码 `e5b375b02e8b639b0b4a0eecaa17c67145c005bc`。主动 rollout restart 后新 Pod `video-workbench-6454f4845f-bj52n` Ready，实际 imageID 不变、异常重启 0；PID1 五组 capabilities 均为 0、NoNewPrivs=1。
+- 真实验收副本 `1e2a822d-c4c1-45de-a8b9-b72a82f714bc` 已完成并采用全部 8 镜 TTS，复用已有 DSH 画面，新增视觉 Agent 调用 0。MP4 render `5641dc62-01d7-4540-8e79-501ec801cced` 已完成，时长 206 秒，H.264／AAC、1280×720、24fps、4944 帧，完整解码通过；SHA-256 `75ab83eba053d20b0d8beee8687709ee5aadd10eabef8549dfc4b55122358c31`。
+- 独立检查通过 8 镜音频首尾匹配（全片相关系数 0.9999445、NRMSE 0.010601）、8 张参考 PNG 的画面与顺序、44 条字幕与 timeline 的时间和文本一致性。字幕仍为 estimated，不能据此认定人工校对或听感通过。成片冻结于 revision 67；后续编辑与恢复到 revision 69 的局部失效检查通过。
+- 语音分段修复 `c506bb3c105c81200bc3b86577b65fb96f3361e8` 已部署：`speech-service:latest` digest `sha256:adb9d87b15b461db56a2f4aca5fd6999221fe4c715ee3751250b3a4b21423634`，Pod `speech-service-758cbd54f9-bfczb` Ready，实际 PID1 五组 capabilities 均为 0、NoNewPrivs=1。修复保留原语速、文稿、10% snap 限制与禁止 CPU generator 回退。
+- 原 DSH 项目 `cdad4be8-3e51-44ff-98df-3d7500d147d3` 保持 revision 27、8 张已采用 SVG；验收在副本中进行。
+- 最终镜像的 ARM 禁网媒体检查通过：10 张既有 SVG／HTML 画面输出可解码的 1280×720 PNG；两镜共 7 秒的 H.264／AAC MP4 完整解码通过，真实云健片段的 PCM 旁白与留白核对通过。这是媒体组件验收，不能代替八镜头真实制作验收。
+- 本地相关 Python 测试 **471 passed、1 skipped**（Windows Secret 符号链接权限），前端 Node 测试 **25 passed**。生产浏览器已验证第二镜真实 WAV 上传 A2 候选、明确采用、恢复 A1 且保留 A2 历史，以及真实音频时钟驱动第 1→2 镜播放。视频 VPS 上传上限已调整为 34m；未改 DNS／Casdoor。
+- 回归检查通过：ZIP 19 个文件含 8 个画面源文件、其他 owner 读取返回 404、损坏 WAV 返回 422 且项目不变。重启后 8 条采用音频逐一 SHA 匹配、上传 A2 历史保留、MP4 摘要匹配、SQLite integrity ok、原 DSH revision 27 不变；当时 PVC 可用 988,618,752B。回执为 master `/root/video-audio-release-20261031/postflight.json`。
+- 最终证据已下载、校验并安全解包至 `D:\github\armbianbegin\.runtime\video-audio-production\evidence-final\`；归档 19,122,821B，SHA-256 `64cbe74652f62513504df98d4fa2ea483d5400fdfecd69fe02d2409b7269bec0`。成片位于其中 `live-audio/dsh-narrated.mp4`，已目视检查第 03／06 镜中心帧，中文显示正常。
+- OpenSpec 变更 `add-video-workbench-audio-production` 已同步，验证 `valid=true`、无 issues；19 项中完成 14 项。剩余 5 项为整稿听感、术语人工试听，以及 BGM 的 3 项任务；不把估算字幕或可解码媒体当成人工听感认可。
+
+第三镜原 operation `0f99c230-d5b4-414c-8c4e-8175e464ea67` 因 `--patch` 中 U+002D 不在 Kokoro 词表失败；通过工作台显式读音修正处理第 3／5／6 镜 CLI、路径及文件名，原旁白不改。第六镜原 operation `03d700c9-e71d-4dd7-bbff-fa608acc82c1` 因首段 D=181→200 的 snap 约 10.497% 超过 10% 而失败；完整分段规划修复后以新 intent 成功。两次旧 failed 均保留，未自动重试，不反写为首次全部成功。
+
+## 音频阶段边界
+
+估算字幕明确标注 `alignment=estimated`、`requires_review=true`；人工保存后才标为手工字幕，不宣称自动强制对齐。静态 WeasyPrint 渲染不保留 CSS 动画，可能与 Chromium 的 HTML／CSS 排版不同。BGM／混音尚未实现，整稿听感、术语发音与声音自然度仍需用户试听认可。
+
+音频与画面分别采用；修改旁白会使对应音频和字幕过期，保留历史候选。取消不代表上游已物理停止，提交结果不确定时不自动重复 POST。PVC 为 1Gi，虽已设单文件、单项目和成片限额，尚无全服务音频总限额及删除流程，长期容量管理未验收。具体接口和限制见 [AUDIO_PRODUCTION.md](AUDIO_PRODUCTION.md)。
+
+## 历史记录：2026-10-30 静态素材首版
+
+以下是静态素材首版当时的发布、合并和验证记录；其中“配音／MP4 尚未实现”等描述仅适用于当时的版本。
+
 更新：2026-10-30。工作树 `.video-workbench-worktree`，开发分支 `codex/svg-video-workbench`。**用户已批准，功能已快进合入 `panghu_agent` 的 `main`；真实制作功能链路、浏览器控制、最终备份、证据归档和验收环境清理已完成，固定画布裁切限制已记录。**
 
 入口：[video-service.panghuer.top](https://video-service.panghuer.top)。本期制作静态、可编辑的 SVG／HTML 和审阅 ZIP。工作台保存项目与审阅状态，现有通用 Agent 执行任务。配音、动画时间轴、MP4、图片生成尚未实现。
