@@ -67,3 +67,41 @@ native PPTX, real Pi model execution or a production project deletion. Actual
 test outcome is recorded only by the generated private `receipt.json` and
 JUnit file. No production file reclamation has been performed by adding this
 operator or its tests.
+# Server evidence, 2026-11-05
+
+Git source `4acd98aaf1e8d9e2ae794fa9b4f9fac74352a8e8` passed the isolated
+current-schema4 PostgreSQL suite: **25 tests, 0 failures, 0 errors, 0 skipped**,
+9.85 seconds in pytest. The operator parsed the retained JUnit and returned
+`passed=true`, `owned_resources_removed=true`, `cleanup_errors=[]`.
+
+Private server evidence (not published business material):
+
+- `/root/ppt-lifecycle-acceptance-4acd98a-20261105-r2/receipt.json`
+- `/root/ppt-lifecycle-acceptance-4acd98a-20261105-r2/lifecycle.xml`
+- `/root/ppt-lifecycle-acceptance-4acd98a-20261105-r2/pytest.stdout`
+
+Each case created/dropped only its random `ppt_lifecycle_<uuid>` database in a
+new PostgreSQL container and used synthetic temporary file trees. The suite
+exercised terminal scratch reclamation, explicit owner-soft-deleted project
+reclamation, preservation of old versions/checkpoints/Agent-source lineage,
+lease/outbox/parser stop refusals, positive original parser-journal consumption,
+and revision/hash/path-identity drift and link denial. The parser journal case
+uses new synthetic IDs and an explicitly substituted absence observer; it is
+not live Kubernetes stop proof. API-owner soft deletion is exercised through
+the repository contract, not an external authenticated browser.
+
+Both containers ran with `network=none`. The test UID was 10000 and PostgreSQL
+UID 70. Only an owner-labelled temporary socket volume and private result bind
+were shared; PostgreSQL data used bounded tmpfs, and declared image volumes
+were explicitly covered. Cleanup checked owner identity and mount inventory,
+stop/wait/PID0, exact container-ID/volume absence and a healthy daemon. No
+production DB/PVC/project, real parser/Agent, model or supplier was accessed;
+no production files were reclaimed.
+
+The earlier run at Git `f4d5408`, evidence
+`/root/ppt-lifecycle-acceptance-f4d5408-20261104-r1/`, truthfully remains failed:
+pytest passed 25 cases, but the operator attempted to copy JUnit from an already
+unmounted container tmpfs. Its resources were removed. Commit `1796c13` moved
+JUnit to a private bind directory; only the fresh r2 receipt supplies complete
+passing evidence. This suite does not close the separate R6 capacity-exhaustion
+and admission-pause matrix, nor does it establish complete R5 fault recovery.
