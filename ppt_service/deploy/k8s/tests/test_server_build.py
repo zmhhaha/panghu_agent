@@ -374,8 +374,9 @@ class ShellEntryTests(unittest.TestCase):
                        PPT_TEST_LOG=bash_path(root / 'arguments.txt'))
             env.pop('IMAGE', None)
             env.pop('IMAGE_TAG', None)
-            subprocess.run([self.bash, '-c', 'PATH="$PPT_FAKE_BIN:$PATH"; export PATH; bash "$PPT_SCRIPT" --no-push'],
-                           check=True, capture_output=True, text=True, env=env)
+            result = subprocess.run([self.bash, '-c', 'PATH="$PPT_FAKE_BIN:$PATH"; export PATH; bash "$PPT_SCRIPT" --no-push'],
+                                    check=False, capture_output=True, text=True, env=env)
+            self.assertEqual(result.returncode, 0, result.stderr)
             arguments = (root / 'arguments.txt').read_text().splitlines()
             self.assertIn('override.example:6000/ppt-service-site:20261023T123456123456Z', arguments)
             self.assertIn('--no-push', arguments)
