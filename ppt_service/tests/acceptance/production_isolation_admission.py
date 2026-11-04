@@ -35,23 +35,31 @@ def parameter_name(policy_name):
     return policy_name[:42] + '-params-' + hashlib.sha256(policy_name.encode()).hexdigest()[:12]
 
 
-def admission_documents(parameters, *, policy_name=POLICY, audit_label=None):
+def admission_documents(parameters, *, policy_name=POLICY, audit_label=None,
+                        embedded_pins=False):
     """Render a deny policy preserving each retained pool's measured public pins.
 
     This intentionally does not change Pod Security Admission to restricted:
     the trusted WorkerHost must retain its reviewed root/mount helper boundary.
     """
+    data = 'variables.catalog' if embedded_pins else 'params.data'
+    present = '' if embedded_pins else 'params != null && '
     variables = [
         dict(name='key', expression="has(object.metadata.labels) && 'agent-service.panghuer.top/pool' in object.metadata.labels ? 'pool.' + object.metadata.labels['agent-service.panghuer.top/pool'] : ''"),
-        dict(name='pin', expression="params != null && variables.key in params.data ? params.data[variables.key].split('|') : []"),
+        dict(name='pin', expression=present + f"variables.key in {data} ? {data}[variables.key].split('|') : []"),
         dict(name='worker', expression='object.spec.containers[0]'),
         dict(name='env', expression='has(variables.worker.env) ? variables.worker.env : []'),
         dict(name='names', expression='variables.env.map(e, e.name)'),
         dict(name='nodekey', expression="'nodes.' + object.metadata.labels['agent-service.panghuer.top/pool']"),
-        dict(name='nodes', expression="params != null && variables.nodekey in params.data && params.data[variables.nodekey] != '' ? params.data[variables.nodekey].split('\\n') : []"),
+        dict(name='nodes', expression=present + f"variables.nodekey in {data} && {data}[variables.nodekey] != '' ? {data}[variables.nodekey].split('\\n') : []"),
     ]
+    if embedded_pins:
+        # The values remain quoted CEL string literals, never executable source
+        # supplied by a pool. These are the same reviewed public ConfigMap pins.
+        variables.insert(0, dict(name='catalog', expression=json.dumps(
+            parameters['data'], sort_keys=True, separators=(',', ':'))))
     checks = [
-        ('Registered retained execution pool', "params != null && variables.pin.size() == 11"),
+        ('Registered retained execution pool', present + "variables.pin.size() == 11"),
         ('Fixed capsule identity', "object.metadata.labels['app'] == 'agent-capsule' && object.metadata.labels['agent-service.panghuer.top/attempt'].matches('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') && object.metadata.name == 'agent-' + object.metadata.labels['agent-service.panghuer.top/attempt']"),
         ('No host namespaces, injected containers or service-account token', "object.spec.automountServiceAccountToken == false && object.spec.restartPolicy == 'Never' && object.spec.enableServiceLinks == false && (!has(object.spec.hostPID) || !object.spec.hostPID) && (!has(object.spec.hostIPC) || !object.spec.hostIPC) && (!has(object.spec.hostNetwork) || !object.spec.hostNetwork) && (!has(object.spec.shareProcessNamespace) || !object.spec.shareProcessNamespace) && (!has(object.spec.serviceAccountName) || object.spec.serviceAccountName == 'default') && (!has(object.spec.initContainers) || object.spec.initContainers.size() == 0) && (!has(object.spec.ephemeralContainers) || object.spec.ephemeralContainers.size() == 0)"),
         ('One pinned WorkerHost entrypoint', "object.spec.containers.size() == 1 && variables.worker.name == 'worker' && variables.worker.image == variables.pin[0] && variables.worker.command == ['/opt/agent-service/.venv/bin/python', '-m', 'agent_service.worker_entry'] && variables.worker.args == ['--config', '/etc/agent-worker/config.json', '--secrets', '/run/agent-secrets/worker.json'] && variables.worker.imagePullPolicy == 'IfNotPresent'"),
@@ -81,7 +89,6 @@ def admission_documents(parameters, *, policy_name=POLICY, audit_label=None):
               for message, expression in checks]
     policy = dict(apiVersion='admissionregistration.k8s.io/v1', kind='ValidatingAdmissionPolicy',
         metadata=dict(name=policy_name), spec=dict(failurePolicy='Fail',
-            paramKind=dict(apiVersion='v1', kind='ConfigMap'),
             matchConstraints=dict(namespaceSelector=dict(matchLabels={
                 'kubernetes.io/metadata.name': NAMESPACE}), resourceRules=[dict(
                 apiGroups=[''], apiVersions=['v1'], operations=['CREATE', 'UPDATE'],
@@ -90,13 +97,18 @@ def admission_documents(parameters, *, policy_name=POLICY, audit_label=None):
                 reason='Forbidden') for message, expression in checks]))
     binding = dict(apiVersion='admissionregistration.k8s.io/v1', kind='ValidatingAdmissionPolicyBinding',
         metadata=dict(name=policy_name), spec=dict(policyName=policy_name,
-            paramRef=dict(name=parameters['metadata']['name'], namespace=NAMESPACE,
-                          parameterNotFoundAction='Deny'),
             validationActions=['Deny']))
+    if embedded_pins:
+        policy['metadata']['annotations'] = {
+            PREFIX + 'public-pins-sha256': hashlib.sha256(canonical(parameters['data'])).hexdigest()}
+    else:
+        policy['spec']['paramKind'] = dict(apiVersion='v1', kind='ConfigMap')
+        binding['spec']['paramRef'] = dict(name=parameters['metadata']['name'],
+            namespace=NAMESPACE, parameterNotFoundAction='Deny')
     if audit_label:
         binding['spec']['matchResources'] = dict(objectSelector=dict(matchLabels={
             PREFIX + 'admission-audit': audit_label}))
-    return [parameters, policy, binding]
+    return ([policy, binding] if embedded_pins else [parameters, policy, binding])
 
 
 def canonical(value):
@@ -182,9 +194,13 @@ class Audit:
             name=parameter_name(self.args.policy_name), namespace=NAMESPACE,
             labels={PREFIX + 'purpose': 'capsule-admission'}), data=data)
         save(self.output / 'discovery.json', self.identity)
-        save(self.output / 'admission-parameters.json', self.parameters)
+        if self.args.embedded_pins:
+            save(self.output / 'embedded-public-pins.json', dict(data=data,
+                sha256=hashlib.sha256(canonical(data)).hexdigest()))
+        else:
+            save(self.output / 'admission-parameters.json', self.parameters)
         for document in admission_documents(self.parameters, policy_name=self.args.policy_name,
-                                             audit_label=self.args.audit_label):
+                audit_label=self.args.audit_label, embedded_pins=self.args.embedded_pins):
             save(self.output / (document['kind'] + '.json'), document)
 
     def real_manifest(self, pool_row):
@@ -283,7 +299,8 @@ class Audit:
         save(self.output / 'admission-probes.json', results)
         summary = dict(passed=all(r['passed'] for r in results), cases=len(results),
             audit_label=self.args.audit_label, policy_name=self.args.policy_name,
-            parameter_config_map=self.parameters['metadata']['name'],
+            parameter_mode='embedded' if self.args.embedded_pins else 'configmap',
+            parameter_config_map=None if self.args.embedded_pins else self.parameters['metadata']['name'],
             retained_pool_count=len(self.public['kubernetes_workers']),
             provisionable_pools_tested=len(self.pools),
             disabled_unprovisionable_pools=self.unprovisionable,
@@ -305,6 +322,8 @@ def main():
     parser.add_argument('--policy-name', default=POLICY)
     parser.add_argument('--audit-label')
     parser.add_argument('--render-only', action='store_true')
+    parser.add_argument('--embedded-pins', action='store_true',
+                        help='Embed the same public pins; render no parameter ConfigMap or paramRef')
     args = parser.parse_args()
     require(sys.platform.startswith('linux'), 'server_linux_required')
     require(re.fullmatch(r'[a-z0-9][a-z0-9-]{0,62}', args.policy_name) is not None,
@@ -316,7 +335,8 @@ def main():
     if args.render_only:
         print(json.dumps(dict(status='rendered_only', admission_matrix_executed=False,
             production_resources_created=False, policy_name=args.policy_name,
-            parameter_config_map=audit.parameters['metadata']['name'],
+            parameter_mode='embedded' if args.embedded_pins else 'configmap',
+            parameter_config_map=None if args.embedded_pins else audit.parameters['metadata']['name'],
             audit_label=args.audit_label, config_sha256=audit.identity['config_sha256'])))
         return 0
     return audit.probe()

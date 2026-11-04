@@ -88,6 +88,25 @@ the failed matrix; the automatic mirror's existence was not inferred from
 successful type checking. Explicit unbounded and oversized emptyDir cases also
 exercise the dynamic Quantity checks at runtime.
 
+Kubernetes v1.31.2 later returned `no params found` for new parameter ConfigMaps
+even after 20 bounded positive/negative warm-up pairs. Preserve those failed
+runs. Both created-object receipts prove identical pin data, correct names and
+`agent-workers` namespace, and dispatcher `get configmaps` authorization. The
+version's policy source cancels an orphaned parameter informer; its typed shared
+factory marks an informer started permanently and reuses it on a subsequent
+start. This is a source-supported explanation for the observed stale cache,
+not direct observation of the API server's private informer state.
+
+`--embedded-pins` renders the same publicly discovered pins as a quoted CEL map
+variable and records its SHA256. That variant has no `paramKind`, `paramRef` or
+parameter ConfigMap resource; all pool/security validations remain the same.
+`embedded-public-pins.json` is evidence data, not an API object. Review the
+rendered policy size and real asynchronous CEL type checking before installing
+its unique nonce Binding. Require a legitimate baseline to pass and a wrong
+command to fail explicitly under that VAP before measuring the complete matrix.
+This avoids changing the control plane, API permissions or production policy.
+The usual current-configuration guards and UID-precondition cleanup still apply.
+
 Any later catalog publication introducing a new image/host or UID reservation
 must update the admission parameters through the same guarded review path before
 activating that pool. An unregistered pool must fail closed. Historical
