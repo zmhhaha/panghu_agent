@@ -37,10 +37,24 @@ v=os.statvfs('/var/lib/ppt-service')
 print(json.dumps(dict(total_bytes=v.f_blocks*v.f_frsize,available_bytes=v.f_bavail*v.f_frsize,
 inodes_total=v.f_files,free_inodes=v.f_favail)))
 """
-# ACLs/capabilities/xattrs must never be silently omitted by this logical copy.
-# Filesystems needing them require a separate native snapshot procedure.
+# The root-only Ceph subvolume marker belongs to the storage provisioner, not
+# the application tree. Record its hash separately and verify it stayed fixed;
+# never transplant it into a new filesystem. All other xattrs (including this
+# name on a child) still require a native snapshot rather than silent omission.
+FILESYSTEM_CODE = """import hashlib,json,os
+p='/var/lib/ppt-service';name='user.ceph.subvolume.earmark'
+names=os.listxattr(p,follow_symlinks=False)
+if set(names)-{name}:raise RuntimeError('extended_attributes_require_native_snapshot')
+value=os.getxattr(p,name,follow_symlinks=False) if name in names else None
+if value is not None and len(value)>4096:raise RuntimeError('filesystem_marker_budget')
+print(json.dumps(dict(root_storage_marker=None if value is None else
+ dict(name=name,bytes=len(value),sha256=hashlib.sha256(value).hexdigest()),
+ marker_scope='storage-provisioner-only; record without transplanting')))
+"""
 FILE_CODE = legacy.FILE_CODE.replace('info=path.lstat()',
-    "info=path.lstat()\n  if os.listxattr(path,follow_symlinks=False):raise RuntimeError('extended_attributes_require_native_snapshot')")
+    "info=path.lstat()\n  xattrs=set(os.listxattr(path,follow_symlinks=False))\n"
+    "  if path==root:xattrs.discard('user.ceph.subvolume.earmark')\n"
+    "  if xattrs:raise RuntimeError('extended_attributes_require_native_snapshot')")
 IDLE_SQL = """BEGIN READ ONLY;
 SELECT json_build_object(
  'active_jobs',(SELECT count(*) FROM jobs WHERE status IN ('queued','starting','running','collecting','validating','cancelling')),
@@ -143,6 +157,11 @@ def capacity_preflight():
     return validate_capacity(json.loads(raw.stdout))
 
 
+def filesystem_metadata():
+    raw = kube('exec', 'deployment/ppt-site', '-c', 'site', '--', '/usr/local/bin/python', '-c', FILESYSTEM_CODE)
+    return json.loads(raw.stdout)
+
+
 def idle():
     actual = json.loads(source_psql(IDLE_SQL))
     require(actual == dict(active_jobs=0, active_projects=0, busy_parses=0, occupied_slots=0,
@@ -213,6 +232,7 @@ def capture(output):
         idle()
         receipt['capacity_before_writer_drain'] = capacity_preflight()
         save(output / 'capacity-preflight.json', receipt['capacity_before_writer_drain'])
+        receipt['filesystem_metadata'] = filesystem_metadata()
         before_preserved = preserve()
         save(output / 'preserved-before.json', before_preserved)
         lock = {'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'ppt-deploy-lock',
@@ -269,6 +289,9 @@ def capture(output):
         kube('wait', '--for=condition=Ready', 'pod/' + name, '--timeout=150s', timeout=170)
         def index():
             return json.loads(kube('exec', name, '--', '/usr/local/bin/python', '-c', FILE_CODE, 'index', timeout=300).stdout)
+        def marker():
+            return json.loads(kube('exec', name, '--', '/usr/local/bin/python', '-c', FILESYSTEM_CODE).stdout)
+        require(marker() == receipt['filesystem_metadata'], 'filesystem_marker_changed')
         capacity = validate_capacity(json.loads(kube('exec', name, '--', '/usr/local/bin/python', '-c', CAPACITY_CODE).stdout))
         save(output / 'capacity.json', capacity)
         receipt['production_pvc_capacity'] = capacity
@@ -291,7 +314,8 @@ def capture(output):
                 os.fsync(stream.fileno())
         restorable = {k: v for k, v in files.items() if v['kind'] != 'socket'}
         require(legacy.archive_index(output / 'files.tar') == restorable, 'archive_not_equal_to_frozen_pvc')
-        require(index() == files and fingerprints.fingerprint(source_psql) == before and
+        require(index() == files and marker() == receipt['filesystem_metadata']
+                and fingerprints.fingerprint(source_psql) == before and
                 json.loads(source_psql(transfer.METADATA_SQL, 'postgres')) == metadata, 'quiesced_source_changed')
         require(preserve() == before_preserved, 'shared_resources_or_claims_changed')
         receipt.update(captured=True, source_unchanged=True, tables=len(before['tables']),
@@ -446,6 +470,8 @@ def restore(backup, output, image):
     receipt = {'format': 'ppt-production-restore-v1', 'passed': False, 'source': source_proof(),
                'backup': str(backup), 'backup_receipt_sha256': digest(backup / 'receipt.json'),
                'production_database_or_files_modified': False, 'network': 'none', 'model_requests': 0}
+    receipt['source_filesystem_metadata'] = captured.get('filesystem_metadata')
+    receipt['storage_provisioner_marker_transplanted'] = False
     run_id = 'ppt-restore-' + uuid.uuid4().hex
     container = None
     try:

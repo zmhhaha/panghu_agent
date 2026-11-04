@@ -2,6 +2,8 @@
 import io
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 import tarfile
 from types import SimpleNamespace
@@ -317,3 +319,37 @@ def test_restore_cleanup_checks_name_and_id_absence_after_removal(monkeypatch):
     monkeypatch.setattr(backup, 'command', lambda args, **kw: None)
     with pytest.raises(RuntimeError, match='database_removal_not_proven'):
         backup.remove_restore_container('ppt-restore-fixture', 'a' * 64)
+
+
+def index_fixture(root):
+    code = backup.FILE_CODE.replace("Path('/var/lib/ppt-service')", 'Path(' + repr(str(root)) + ')')
+    return subprocess.run([sys.executable, '-c', code, 'index'], capture_output=True)
+
+
+def test_root_only_ceph_marker_is_recorded_separately_without_transplant(tmp_path):
+    root = tmp_path / 'data'
+    root.mkdir()
+    (root / 'file').write_bytes(b'unchanged application file')
+    os.setxattr(root, 'user.ceph.subvolume.earmark', b'test-provisioner-marker')
+    result = index_fixture(root)
+    assert result.returncode == 0 and 'data/file' in json.loads(result.stdout)
+    code = backup.FILESYSTEM_CODE.replace("p='/var/lib/ppt-service'", 'p=' + repr(str(root)))
+    metadata = subprocess.run([sys.executable, '-c', code], capture_output=True, check=True)
+    marker = json.loads(metadata.stdout)['root_storage_marker']
+    assert marker['name'] == 'user.ceph.subvolume.earmark' and marker['bytes'] == 23
+    assert len(marker['sha256']) == 64
+    assert os.getxattr(root, 'user.ceph.subvolume.earmark') == b'test-provisioner-marker'
+
+
+@pytest.mark.parametrize('on_child,name', [(True, 'user.ceph.subvolume.earmark'),
+                                         (False, 'user.application-attribute')])
+def test_ceph_exception_cannot_hide_application_or_child_xattrs(tmp_path, on_child, name):
+    root = tmp_path / 'data'
+    root.mkdir()
+    child = root / 'file'
+    child.write_bytes(b'preserve me')
+    target = child if on_child else root
+    os.setxattr(target, name, b'must not disappear')
+    result = index_fixture(root)
+    assert result.returncode != 0 and b'extended_attributes_require_native_snapshot' in result.stderr
+    assert os.getxattr(target, name) == b'must not disappear'
