@@ -64,13 +64,13 @@ def build_material(path):
     with zipfile.ZipFile(path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         archive.writestr('[Content_Types].xml', types)
         archive.writestr('word/document.xml', document)
-        for index in range(40):
+        for index in range(64):
             entropy = rng.randbytes(65000).hex().encode('ascii')
             xml = b'<root><entropy>' + entropy + b'</entropy>' + b'<a/>' * 90000 + b'</root>'
             archive.writestr(f'word/extra-{index:02d}.xml', xml)
     with zipfile.ZipFile(path) as archive:
         entries = archive.infolist()
-        assert len(entries) == 42
+        assert len(entries) == 66
         assert sum(x.file_size for x in entries) <= 64 * 1024**2
         assert all(x.file_size <= 8 * 1024**2 and x.file_size <= max(1, x.compress_size) * 100 for x in entries)
     assert path.stat().st_size <= 25 * 1024**2
@@ -233,7 +233,8 @@ def identity():
 before = identity()
 result = dict(before, signal_sent=False)
 if request['action'] in ('pause', 'resume'):
-    assert before['starttime_ticks'] == request['expected_starttime']
+    if request['action'] == 'resume':
+        assert before['starttime_ticks'] == request['expected_starttime']
     # A pidfd binds the signal to this process even if a PID is later recycled.
     # Require it on the actual node; never fall back to a numeric-PID signal.
     process_fd = os.pidfd_open(pid, 0)
@@ -290,20 +291,31 @@ def pause_exact_parser(pod):
     if runtime not in ('docker', 'containerd') or not re.fullmatch(r'[a-f0-9]{64}', cid):
         raise RuntimeError('unexpected_container_runtime_identity')
     binding = node_binding(spec['nodeName'])
-    request = {'action': 'inspect', 'runtime': runtime, 'container_id': cid, 'pod_uid': metadata['uid']}
-    identity = invoke_node(binding, request)
-    if identity.get('not_running'):
-        return None
+    request = {'action': 'pause', 'runtime': runtime, 'container_id': cid, 'pod_uid': metadata['uid']}
     latest = json.loads(kube('get', 'pod', metadata['name'], '-o', 'json').stdout)
     if latest['metadata']['uid'] != metadata['uid'] or latest['status']['containerStatuses'][0]['containerID'] != containers[0]['containerID']:
         raise RuntimeError('parser_identity_changed_before_fault')
-    after = invoke_node(binding, dict(request, action='pause', expected_starttime=identity['starttime_ticks']))
+    # Inspect, pidfd-open, identity recheck and signal share one node helper.
+    # A prior separate SSH inspection needlessly consumed the real parse window.
+    after = invoke_node(binding, request)
+    if after.get('not_running'):
+        raise RuntimeError('test_parser_completed_before_bound_pause')
     if after.get('signal') != 'SIGSTOP' or after.get('process_state') not in ('T', 't'):
         raise RuntimeError('parser_stop_signal_not_observed')
-    return {'pod_name': metadata['name'], 'pod_uid': metadata['uid'], 'container_id': cid,
+    fault = {'pod_name': metadata['name'], 'pod_uid': metadata['uid'], 'container_id': cid,
             'runtime': runtime, 'node': binding, 'host_pid': after['host_pid'],
             'starttime_ticks': after['starttime_ticks'], 'cmdline': after['cmdline'], 'signal': 'SIGSTOP',
-            'process_state_after_signal': after['process_state'], 'fault_monotonic': time.monotonic()}
+            'process_state_after_signal': after['process_state'], 'fault_monotonic': time.monotonic(),
+            'pod_identity_after_signal_verified': False}
+    try:
+        latest = json.loads(kube('get', 'pod', metadata['name'], '-o', 'json').stdout)
+        fault['pod_identity_after_signal_verified'] = (
+            latest['metadata']['uid'] == metadata['uid']
+            and latest['status']['containerStatuses'][0]['containerID'] == containers[0]['containerID'])
+    except Exception as exc:
+        # Retain the exact signal identity so finally can safely resume it.
+        fault['post_signal_check_error'] = type(exc).__name__
+    return fault
 
 
 def outer(args):
@@ -382,6 +394,8 @@ def outer(args):
                     if fault:
                         output(out / 'fault.json', fault)
                         output(out / 'fault-pod.json', candidates[0])
+                        if not fault['pod_identity_after_signal_verified']:
+                            raise RuntimeError('parser_pod_identity_not_verified_after_fault')
             if time.monotonic() > deadline:
                 raise RuntimeError('operator_deadline_exceeded')
     except Exception as exc:

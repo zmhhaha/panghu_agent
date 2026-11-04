@@ -13,7 +13,7 @@ sudo python3 ppt_service/tests/acceptance/current_parser_lifecycle.py \
 
 只在生产PVC `state/.acceptance/ppt-r2-life-<随机20位hex>` 创建新的合成资料和私有authority journal，不操作任何 `projects/` 内容、业务行或用户文件。沿用正常的 `ppt-worker` ServiceAccount、UID10000、网络拒绝策略、只读输入/根和任务子路径挂载，由原SDK创建及停止真实parser Pod。
 
-运行顺序为健康解析 → 实际parser进程暂停 → 原30秒期限超时及物理停止 → 同资料健康后续解析。合成DOCX包含40个合法XML部分、360万个节点，未超过实际单项节点/展开/压缩比/文件限制；用于给外部观察器足够的真实解析时间。初始健康解析必须成功，否则不注入故障。
+运行顺序为健康解析 → 实际parser进程暂停 → 原30秒期限超时及物理停止 → 同资料健康后续解析。合成DOCX包含64个合法XML部分、576万个节点，未超过实际单项节点/展开/压缩比/文件限制；用于给外部观察器足够的真实解析时间。初始健康解析必须成功，否则不注入故障。节点内inspect、打开pidfd、身份复核与暂停在同一个helper调用完成，避免两次SSH核验消耗正常解析窗口；信号前后均复核PodUID与containerID，未观察到真实暂停时仍拒绝通过。
 
 故障只对本随机scope的单个sandbox Pod生效：逐项核对 Pod UID、Docker或containerd完整container ID、运行时的Pod UID、host PID、`/proc`启动时间、UID10000、精确 `python -m ppt_service.control.parsing` 命令及cgroup容器归属，重新读取Pod和PID绑定后才发送 SIGSTOP。目标Node由Pod明确的nodeName解析，绑定Node UID和192.168.137.0/24内唯一InternalIP；每次操作重验Node绑定。若不是master本机，仅通过已有SSH密钥和严格known_hosts执行同一份固定Git helper，不增加信任/修改SSH，不向worker挂SSH凭据。观察到实际 `T` 状态才算注入成功。没有向controller、非测试Pod或其他用户进程发信号。SDK自身的30秒 `wait_pod` 必须返回 `sandbox_timeout`，并由原 `finish_sandbox` 在精确API UID保留的finalizer下观察全部container terminated、保存stop receipt，再删除Pod/策略；仅收到DELETE成功或Pod不见不能通过。
 
