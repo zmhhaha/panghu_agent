@@ -107,6 +107,52 @@ command to fail explicitly under that VAP before measuring the complete matrix.
 This avoids changing the control plane, API permissions or production policy.
 The usual current-configuration guards and UID-precondition cleanup still apply.
 
+## Recorded scoped evidence
+
+The embedded variant from Git commit `fd6fd92` passed the complete `r7` nonce
+experiment on the operator host. Public configuration SHA256 remained
+`ca09c7e5c2e694c089e5a4fcd52c9b8cad81b0016d743808f29cce1c489c90f5`, with
+the same configuration UID and resourceVersion before and after. All 93
+provisionable historical/current pools among 105 retained pools were admitted;
+12 disabled historical pools without UID reservations were recorded separately.
+The complete matrix had 126 cases: 93 positive controls, 2 unauthorized
+ServiceAccounts and 31 dangerous mutations. There were no rejected baselines
+or accepted unsafe cases. Of the 33 denials, 27 explicitly named this VAP,
+4 came from built-in Pod validation and 2 from RBAC. Those sources must remain
+distinct when interpreting coverage.
+
+The 54,319-byte inert policy (37,694-byte quoted public catalog) had actual
+`observedGeneration: 1` and empty `typeChecking`, with no expression warnings.
+Its pins were compared byte-for-value against the previous ConfigMap data.
+Before running the complete matrix, a normal baseline succeeded and a changed
+command was explicitly denied by this policy on the first warm-up pair.
+No real Pod, Secret or parameter ConfigMap was created. The unique Binding and
+inert policy were removed using saved UID/resourceVersion preconditions and
+subsequent NotFound checks. No production Binding was installed.
+
+Private operator evidence is retained under
+`/root/ppt-r4-admission-fd6fd92-render-r7` (guards, created/deleted UIDs,
+type-checking, denial sources and cleanup) and
+`/root/ppt-r4-admission-fd6fd92-shadow-r7` (complete original matrix). Earlier
+failed runs remain retained, including all-baseline metadata rejection in
+`b15650c`/r4 and parameter-resolution failures in `cad1bfe`/r5-r6.
+
+Separately, the committed `production_isolation_network.py` ran once in the
+explicitly authorized disposable NASA generation capsule, tied by read-only
+business/Agent DB metadata to business job
+`21ee2edb-17ca-49ce-b5a4-d2e878200d3f` and attempt
+`9438a752-9928-4e1a-95d8-e5f035952a6b`. Model-proxy TCP succeeded; direct Agent
+API, PostgreSQL, Vault, Kubernetes API, upstream LLM and node SSH were denied
+with healthy operator-side controls. Metadata-address refusal had no healthy
+positive control and is observation only. The probe had zero capabilities,
+NoNewPrivs=1 and seccomp=2, exited before collection, and retained the same Pod
+identity before/after. No application payload or business write was sent.
+Evidence is `/root/ppt-r4-network-nasa-9438a752-r1`.
+
+These results prove the scoped Agent experiment, not production-wide admission
+enforcement. They also do not close the separate PPT parser/validator
+ServiceAccount, pinned image/entrypoint/mount and actual network-denial matrix.
+
 Any later catalog publication introducing a new image/host or UID reservation
 must update the admission parameters through the same guarded review path before
 activating that pool. An unregistered pool must fail closed. Historical
