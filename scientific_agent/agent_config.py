@@ -36,7 +36,9 @@ class AgentServiceSettings:
 
 def execution_backend(env=None):
     env = os.environ if env is None else env
-    value = env.get('SCIENTIFIC_EXECUTION_BACKEND', 'pi')
-    if value not in {'pi', 'agent-service'}:
+    value = env.get('SCIENTIFIC_EXECUTION_BACKEND', 'agent-service')
+    if value == 'pi':
+        raise ValueError('The dedicated scientific Pi worker is retired; use agent-service')
+    if value != 'agent-service':
         raise ValueError('Unsupported scientific execution backend')
     return value

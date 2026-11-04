@@ -1,6 +1,7 @@
 """Neutral scientific admission/publication with durable SQL and an offline wire peer."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import threading
@@ -282,11 +283,30 @@ class ScientificAgentTests(unittest.TestCase):
             self.assertEqual(response.json()['status'], 'done')
             self.assertEqual(response.json()['engine'], 'agent-service')
 
+    def test_api_factory_defaults_to_agent_service_without_a_worker_dependency(self):
+        with patch.dict(os.environ, {}, clear=True):
+            app = create_app(self.db, start_reconciler=False)
+        self.assertIsInstance(app.state.worker, ScientificAgentClient)
+        self.assertEqual(app.state.worker.backend, 'agent-service')
+
+    def test_api_factory_refuses_retired_backend_but_accepts_injected_workers(self):
+        with patch.dict(os.environ, {'SCIENTIFIC_EXECUTION_BACKEND': 'pi'}, clear=True):
+            with self.assertRaisesRegex(ValueError, 'retired'):
+                create_app(self.db, start_reconciler=False)
+            # Injection remains an offline-test boundary, not another production
+            # backend. It must not read or accept an operator's retired setting.
+            with patch('app.api.scientific_agent.execution_backend') as config:
+                app = create_app(self.db, self.worker, self.projection, start_reconciler=False)
+            config.assert_not_called()
+        self.assertIs(app.state.worker, self.worker)
+
 
 class ScientificAgentConfigTests(unittest.TestCase):
     def test_operator_selects_backend_and_config_has_no_provider_credentials(self):
-        self.assertEqual(execution_backend({}), 'pi')
+        self.assertEqual(execution_backend({}), 'agent-service')
         self.assertEqual(execution_backend({'SCIENTIFIC_EXECUTION_BACKEND': 'agent-service'}), 'agent-service')
+        with self.assertRaisesRegex(ValueError, 'retired'):
+            execution_backend({'SCIENTIFIC_EXECUTION_BACKEND': 'pi'})
         with self.assertRaises(ValueError):
             execution_backend({'SCIENTIFIC_EXECUTION_BACKEND': 'unknown'})
         with tempfile.TemporaryDirectory() as temporary:

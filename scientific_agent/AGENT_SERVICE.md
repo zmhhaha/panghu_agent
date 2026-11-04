@@ -1,5 +1,8 @@
 # 科研业务接入通用 Agent 服务
 
+旧科研专用 Worker 不再作为运行或回退服务保留；历史读取使用静态业务档案。
+资源移除及原四项未验收任务的处置见 [旧服务清理与规格对账](LEGACY_RETIREMENT_20261104.md)。
+
 本页记录旧一轮式 `research.generate.v1` / `research.revise.v1` 接口的接入与维护路径。
 项目式工作台的六阶段流程、双确认门和 API/UI 构建部署请使用
 [WORKBENCH.md](WORKBENCH.md)。新流程使用 plan/retrieve/outline/draft 四个独立合同，
@@ -31,8 +34,8 @@ SCIENTIFIC_AGENT_REVISION_REVISION=v1
 
 该 token 是科研业务调用 Agent 服务的身份凭据，授予上述两个 profile 的权限；它不是模型
 API Key。模型凭据、Responses 协议、工具环境、能力包和引擎路由统一由通用服务管理。
-代码缺省仍为 `pi`，本次生产部署通过审定补丁显式选择 `agent-service`。后续更新沿用部署目录
-中的实际配置；不得用缺省值覆盖已部署后端，也不得在完成环境验收之前启用新的执行组合。
+代码缺省为 `agent-service`，显式旧 `pi` 部署后端会被拒绝。后续更新沿用部署目录
+中的实际配置，不得在完成环境验收之前启用新的执行组合。
 
 业务凭据复用 [平台 ExternalSecret 清单](../agent_service/deploy/platform/vault/agent-service-externalsecret.yaml)：
 Vault `secret/data/agent-service/runtime` 的 `SCIENTIFIC_SERVICE_TOKEN` 同步为
@@ -137,8 +140,9 @@ Pod 按一次生成或修订创建，所有写进程停止且证据持久化后�
    然后一次只提交一个新研究任务，验证真实搜索、报告和引用，再对已发布基线执行一次固定证据修订，
    检查取消、重启恢复、产物校验及接收回执。全部业务检查通过后再恢复常规提交。
 
-恢复旧后端时使用保存的 Deployment/网络策略，或以默认 `--execution-backend pi` 生成并审查补丁；
-先停止新提交并处理通用服务中的活动任务，不能通过回退配置丢弃不确定任务或绕过执行槽。
+更新失败时回到已验收的 Agent 后端 API 版本，不能恢复旧专用 Worker 或使用
+`--execution-backend pi`。先停止新提交并处理通用服务中的活动任务，不能通过回退配置
+丢弃不确定任务或绕过执行槽；回退镜像也必须具备静态历史档案读取能力。
 
 ## 结果接收与恢复
 
@@ -162,8 +166,9 @@ lineage 和选中范围外字节不变校验。报告与版本提交并读回后
 获取全文或增补参考文献。结构和引用一致性校验不会证明科学结论正确。
 
 数据库保留原 `scientific_pi_index` 和既有版本记录的历史格式；连接器将其转换为中立任务，
-不会把其中的历史 engine/runtime 字段交给通用服务选路。若需要排空已有 Pi 任务，可保留
-原 `SCIENTIFIC_PI_WORKER_URL/TOKEN`，仅供历史记录恢复；新任务使用独立幂等命名空间。
+不会把其中的历史 engine/runtime 字段交给通用服务选路。原 Pi 任务均终结后，其状态、
+结果和可用公开附件迁入静态档案；不再配置 `SCIENTIFIC_PI_WORKER_URL/TOKEN`，也不保留
+旧 Worker/PVC 用于等待或回退。新任务使用独立幂等命名空间。
 
 本页提供接入和常规更新步骤。实际部署与验收范围以验证记录及对应任务、产物、停止证明和业务
 接收证据为准；科研已通过的组合不会自动使 PPT、Hermes 或其他技能组合获得验收。

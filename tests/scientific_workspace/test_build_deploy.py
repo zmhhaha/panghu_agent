@@ -11,6 +11,27 @@ import pytest
 from scientific_agent import build_images, deploy_workbench
 
 
+def test_workbench_update_removes_retired_worker_secret_and_keeps_agent_caller():
+    image = 'example.invalid/scientific@sha256:' + 'a' * 64
+    api, ui, policies = deploy_workbench.resources('scientific-agent', image, image)
+    pod = api['spec']['template']['spec']
+    container = pod['containers'][0]
+    retired = {'SCIENTIFIC_PI_WORKER_URL', 'SCIENTIFIC_PI_WORKER_TOKEN',
+               'SCIENTIFIC_PI_RUNTIME_REVISION', 'SCIENTIFIC_PI_SKILL_BUNDLE_REVISION'}
+    assert {entry['name'] for entry in container['env']
+            if entry.get('$patch') == 'delete'} >= retired
+    # A valueFrom on the obsolete Secret would leave the new API unable to
+    # start after retirement, even though no worker Deployment is rendered.
+    assert not any('valueFrom' in entry for entry in container['env'])
+    assert [entry['secret']['secretName'] for entry in pod['volumes']
+            if 'secret' in entry] == ['scientific-agent-service']
+    assert not any(item['kind'] in {'Deployment', 'PersistentVolumeClaim'}
+                   for item in policies['items'])
+    assert all(item['kind'] == 'NetworkPolicy' for item in policies['items'])
+    assert ui['spec']['template']['spec']['containers'][0]['command'][3] == \
+        'scientific_agent.workbench_server:app'
+
+
 def write(root, name, content='fixture'):
     path = root / name
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -39,7 +60,7 @@ def test_api_build_context_excludes_private_skill_and_operator_files(tmp_path, m
     assert not any('private' in name or 'secret' in name or '.env' in name for name in names)
 
 
-def test_api_docker_copy_packages_working_retrieval_projection(tmp_path):
+def test_api_docker_copy_packages_working_business_projections(tmp_path):
     # A source can be present in the tar and still absent from the image when
     # the production Dockerfile uses an explicit COPY allowlist.
     target = tmp_path / 'api.tar'
@@ -89,6 +110,43 @@ def test_api_docker_copy_packages_working_retrieval_projection(tmp_path):
         assert outcome['matched_searches'] == [dict(query='AutoGen', provider='arxiv',
             result_count=4, batch_id='packaging-smoke', match='named_entity')]
         assert summary['topics_without_evidence'] == []
+        # The retired Worker must be removable without losing existing task
+        # history or adding a lazy dependency on an omitted archive module.
+        import json, os, sqlite3
+        from scientific_agent.retired_pi_archive import RetiredPiArchive, archive_from_worker
+        from scientific_agent.pi_client import WorkerError
+        class Database:
+            def __init__(self):
+                self.connection = sqlite3.connect(':memory:')
+                self.connection.row_factory = sqlite3.Row
+            def _query(self, sql):
+                return [dict(row) for row in self.connection.execute(sql)]
+            def _execute(self, sql):
+                self.connection.execute(sql)
+                self.connection.commit()
+        database = Database()
+        database._execute('CREATE TABLE scientific_pi_index(id TEXT,user_id TEXT,job TEXT)')
+        task_id = '00000000-0000-0000-0000-000000000001'
+        job = dict(task_id=task_id,user_id='owner',topic='Packaging fixture',mode='brief',
+            runtime_revision='former-worker',created_at='2026-10-22T00:00:00Z',
+            execution_deadline_at='2026-10-22T00:10:00Z')
+        database.connection.execute('INSERT INTO scientific_pi_index VALUES (?,?,?)',
+            (task_id, 'owner', json.dumps(job)))
+        database.connection.commit()
+        class Source:
+            def get(self, task):
+                return dict(id=task,state='cancelled',error=None,error_code=None,
+                    **{key:job[key] for key in ('topic','mode','created_at','execution_deadline_at')})
+            def result(self, task):
+                raise WorkerError(409,'result_not_ready','No validated result')
+            artifacts = result
+        receipt = archive_from_worker(database, Source(), [task_id])
+        assert receipt['task_count'] == 1
+        assert RetiredPiArchive(database).get(task_id)['state'] == 'cancelled'
+        os.environ['SCIENTIFIC_EXECUTION_BACKEND'] = 'agent-service'
+        os.environ['SCIENTIFIC_AGENT_SERVICE_TOKEN_FILE'] = ''
+        from app.api.scientific_agent import app
+        assert isinstance(app.state.worker.legacy_worker, RetiredPiArchive)
     '''), str(app_root)], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
 

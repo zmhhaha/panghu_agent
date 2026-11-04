@@ -1,7 +1,7 @@
-"""Render dedicated scientific worker resources or the existing API strategic patch.
+"""Render the active Agent-backed scientific API patch and network review.
 
 No cluster calls or credentials. JSON is valid Kubernetes YAML. Images MUST use
-content digests; acceptance flags are operator evidence assertions, not probes.
+content digests. Historical dedicated-worker helpers are not deployment entrypoints.
 """
 from __future__ import annotations
 import argparse
@@ -99,7 +99,7 @@ def render(namespace, worker_image, model_endpoint, model, verified=False):
         egress.append({'to': [{'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'llm'}}, 'podSelector': {'matchLabels': {'app': 'llm-service'}}}], 'ports': [{'protocol': 'TCP', 'port': 8000}]})
     policy = obj('networking.k8s.io/v1', 'NetworkPolicy', WORKER, {'podSelector': {'matchLabels': labels}, 'policyTypes': ['Ingress', 'Egress'],
         'ingress': [{'from': [source_api], 'ports': [{'protocol': 'TCP', 'port': 8080}]}], 'egress': egress})
-    api_egress = api_egress_policy(namespace)
+    api_egress = api_egress_policy(namespace, execution_backend='pi')
     # Do not create an Egress-only policy if existing API has no other egress policy:
     # NetworkPolicy union would newly isolate it and break SQLite/mail.
     # The deployment script applies worker resources only; API egress patch is
@@ -107,7 +107,7 @@ def render(namespace, worker_image, model_endpoint, model, verified=False):
     return {'apiVersion': 'v1', 'kind': 'List', 'items': [pvc, deployment, service, policy]}, api_egress
 
 
-def api_egress_policy(namespace, *, execution_backend='pi', agent_namespace='agent-service'):
+def api_egress_policy(namespace, *, execution_backend='agent-service', agent_namespace='agent-service'):
     """Review separately; applying this alone can newly isolate the business API."""
     namespace_name(namespace)
     backend_name(execution_backend)
@@ -123,7 +123,7 @@ def api_egress_policy(namespace, *, execution_backend='pi', agent_namespace='age
                      'egress': [{'to': [target], 'ports': [{'protocol': 'TCP', 'port': 8080}]}]}}
 
 
-def api_patch(namespace, image, *, execution_backend='pi', agent_namespace='agent-service',
+def api_patch(namespace, image, *, execution_backend='agent-service', agent_namespace='agent-service',
               agent_caller_secret='scientific-agent-service', agent_caller_secret_key='token',
               agent_generation_revision='v1', agent_revision_revision='v1'):
     namespace_name(namespace)
@@ -132,6 +132,8 @@ def api_patch(namespace, image, *, execution_backend='pi', agent_namespace='agen
     def value(name, text): return {'name': name, 'value': text}
     agent_env = ('SCIENTIFIC_AGENT_SERVICE_URL', 'SCIENTIFIC_AGENT_SERVICE_TOKEN_FILE',
                  'SCIENTIFIC_AGENT_GENERATION_REVISION', 'SCIENTIFIC_AGENT_REVISION_REVISION')
+    worker_env = ('SCIENTIFIC_PI_WORKER_URL', 'SCIENTIFIC_PI_WORKER_TOKEN',
+                  'SCIENTIFIC_PI_RUNTIME_REVISION', 'SCIENTIFIC_PI_SKILL_BUNDLE_REVISION')
     volumes = [{'name': name, '$patch': 'delete'} for name in ('source', 'scientific-workflow')]
     mounts = [{'mountPath': path, '$patch': 'delete'} for path in ('/app/app/api/agent.py', '/app/scientific_agent')]
     if execution_backend == 'agent-service':
@@ -150,11 +152,21 @@ def api_patch(namespace, image, *, execution_backend='pi', agent_namespace='agen
         agent_values = [value(name, text) for name, text in zip(agent_env, (
             f'http://agent-service.{agent_namespace}.svc.cluster.local:8080', AGENT_TOKEN_PATH,
             agent_generation_revision, agent_revision_revision))]
+        # The dedicated worker has been retired. Remove its existing Secret
+        # reference as well as its endpoint, so normal workbench updates do not
+        # require a deleted Secret or resume calls to the obsolete service.
+        worker_values = [{'name': name, '$patch': 'delete'} for name in worker_env]
     else:
         # Explicit rollback removes only this renderer's Agent configuration.
         volumes.append({'name': AGENT_TOKEN_VOLUME, '$patch': 'delete'})
         mounts.append({'mountPath': AGENT_TOKEN_PATH, '$patch': 'delete'})
         agent_values = [{'name': name, '$patch': 'delete'} for name in agent_env]
+        worker_values = [
+            value('SCIENTIFIC_PI_WORKER_URL', f'http://{WORKER}.{namespace}.svc.cluster.local:8080'),
+            {'name': 'SCIENTIFIC_PI_WORKER_TOKEN', 'valueFrom': {'secretKeyRef': {
+                'name': WORKER, 'key': 'SCIENTIFIC_PI_WORKER_TOKEN'}}},
+            value('SCIENTIFIC_PI_RUNTIME_REVISION', REVISION),
+            value('SCIENTIFIC_PI_SKILL_BUNDLE_REVISION', BUNDLE)]
     return {'spec': {'template': {
         'metadata': {'labels': {'llm-client': None, 'rag-client': None}},
         'spec': {
@@ -167,10 +179,7 @@ def api_patch(namespace, image, *, execution_backend='pi', agent_namespace='agen
         'volumeMounts': mounts,
         'env': [value('SCIENTIFIC_EXECUTION_BACKEND', execution_backend), *agent_values,
                 {'name': 'SCIENTIFIC_AGENT_SERVICE_TOKEN', '$patch': 'delete'},
-                # Retain the old worker connection for historical task recovery.
-                value('SCIENTIFIC_DEFAULT_ENGINE', 'pi'), value('SCIENTIFIC_PI_WORKER_URL', f'http://{WORKER}.{namespace}.svc.cluster.local:8080'),
-                value('SCIENTIFIC_PI_RUNTIME_REVISION', REVISION), value('SCIENTIFIC_PI_SKILL_BUNDLE_REVISION', BUNDLE),
-                {'name': 'SCIENTIFIC_PI_WORKER_TOKEN', 'valueFrom': {'secretKeyRef': {'name': WORKER, 'key': 'SCIENTIFIC_PI_WORKER_TOKEN'}}},
+                value('SCIENTIFIC_DEFAULT_ENGINE', 'pi'), *worker_values,
                 *[{'name': name, '$patch': 'delete'} for name in ('LLM_BASE_URL', 'LLM_MODEL', 'LLM_SERVICE_TOKEN', 'RAG_URL', 'RAG_TOKEN')]]}]}}}}
 
 
@@ -179,7 +188,7 @@ def main():
     parser.add_argument('--namespace', default='scientific-agent')
     parser.add_argument('--worker-image')
     parser.add_argument('--api-image')
-    parser.add_argument('--execution-backend', choices=('pi', 'agent-service'), default='pi')
+    parser.add_argument('--execution-backend', choices=('pi', 'agent-service'), default='agent-service')
     parser.add_argument('--agent-namespace', default='agent-service')
     parser.add_argument('--agent-caller-secret', default='scientific-agent-service')
     parser.add_argument('--agent-caller-secret-key', default='token')
@@ -194,7 +203,9 @@ def main():
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
     try:
-        if args.execution_backend == 'agent-service' and args.assert_verified_runtime:
+        if args.execution_backend != 'agent-service' or args.worker_image:
+            raise ValueError('The dedicated scientific Pi worker is retired; use scientific_agent/deploy.sh')
+        if args.assert_verified_runtime:
             raise ValueError('--assert-verified-runtime applies only to the dedicated Pi worker')
         if args.api_patch:
             if not args.api_image: raise ValueError('--api-image required with --api-patch')
@@ -206,10 +217,8 @@ def main():
             output = api_egress_policy(args.namespace, execution_backend=args.execution_backend,
                                        agent_namespace=args.agent_namespace)
         else:
-            if args.execution_backend != 'pi':
-                raise ValueError('Agent service mode requires --api-patch or --api-egress-policy')
-            if not args.worker_image: raise ValueError('--worker-image required for dedicated Pi worker resources')
-            output, _ = render(args.namespace, args.worker_image, args.model_endpoint, args.model, args.assert_verified_runtime)
+            raise ValueError('Dedicated worker resource deployment is retired; use scientific_agent/deploy.sh, '
+                             'or render --api-patch / --api-egress-policy for review')
         text = json.dumps(output, ensure_ascii=False, indent=2) + '\n'
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)

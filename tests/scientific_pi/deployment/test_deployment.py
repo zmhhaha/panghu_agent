@@ -58,7 +58,7 @@ class DeploymentTests(unittest.TestCase):
             renderer.render('bad namespace', IMAGE, 'https://example.invalid/v1', 'model')
 
     def test_pi_api_removes_legacy_execution_credentials_and_source_overlays(self):
-        patch_value = renderer.api_patch('scientific-agent', IMAGE)
+        patch_value = renderer.api_patch('scientific-agent', IMAGE, execution_backend='pi')
         template = patch_value['spec']['template']
         pod = template['spec']
         container = pod['containers'][0]
@@ -82,7 +82,7 @@ class DeploymentTests(unittest.TestCase):
         # API migration never replaces the verified worker spec or evidence flags.
         self.assertNotIn('SCIENTIFIC_PI_MODEL_VERIFIED', values)
 
-    def test_agent_api_uses_business_token_file_and_preserves_historical_worker_connection(self):
+    def test_agent_api_uses_business_token_file_and_removes_retired_worker_dependency(self):
         patch_value = renderer.api_patch('scientific-agent', IMAGE, execution_backend='agent-service')
         self.assertEqual(set(patch_value), {'spec'})
         pod = patch_value['spec']['template']['spec']
@@ -101,10 +101,12 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(mount, {'name': renderer.AGENT_TOKEN_VOLUME, 'mountPath': renderer.AGENT_TOKEN_PATH,
                                 'subPath': 'token', 'readOnly': True})
         credentials = [entry for entry in container['env'] if 'valueFrom' in entry]
-        self.assertEqual(credentials, [{'name': 'SCIENTIFIC_PI_WORKER_TOKEN', 'valueFrom': {
-            'secretKeyRef': {'name': 'scientific-pi-worker', 'key': 'SCIENTIFIC_PI_WORKER_TOKEN'}}}])
-        self.assertEqual(values['SCIENTIFIC_PI_WORKER_URL'],
-                         'http://scientific-pi-worker.scientific-agent.svc.cluster.local:8080')
+        self.assertEqual(credentials, [])
+        for name in ('SCIENTIFIC_PI_WORKER_URL', 'SCIENTIFIC_PI_WORKER_TOKEN',
+                     'SCIENTIFIC_PI_RUNTIME_REVISION', 'SCIENTIFIC_PI_SKILL_BUNDLE_REVISION'):
+            self.assertEqual(next(entry for entry in container['env'] if entry['name'] == name),
+                             {'name': name, '$patch': 'delete'})
+        self.assertNotIn('scientific-pi-worker', json.dumps(patch_value))
         self.assertFalse(any('MODEL_API_KEY' in name or name.endswith('_VERIFIED') for name in values))
         self.assertNotIn('envFrom', container)
         self.assertNotIn('items', patch_value)
@@ -131,7 +133,8 @@ class DeploymentTests(unittest.TestCase):
                 'podSelector': {'matchLabels': {'app.kubernetes.io/name': 'agent-execution-service', 'component': 'api'}}}],
                 'ports': [{'protocol': 'TCP', 'port': 8080}]}]})
         _, old_policy = self.resources()
-        self.assertEqual(old_policy, renderer.api_egress_policy('scientific-agent'))
+        self.assertEqual(old_policy, renderer.api_egress_policy('scientific-agent', execution_backend='pi'))
+        self.assertEqual(policy, renderer.api_egress_policy('scientific-agent'))
         self.assertNotIn('ipBlock', json.dumps(policy))
 
     def test_agent_deployment_configuration_rejects_unusable_names_and_revisions(self):
@@ -174,6 +177,25 @@ class DeploymentTests(unittest.TestCase):
                     '--execution-backend', 'agent-service', *arguments], cwd=ROOT,
                     capture_output=True, text=True, timeout=20)
                 self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, '')
+
+    def test_cli_defaults_to_agent_service_and_cannot_recreate_dedicated_worker(self):
+        result = subprocess.run([sys.executable, str(ROOT / 'k8s/scientific-pi/render.py'),
+            '--api-patch', '--api-image', IMAGE], cwd=ROOT,
+            capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        container = json.loads(result.stdout)['spec']['template']['spec']['containers'][0]
+        values = {entry['name']: entry.get('value') for entry in container['env']}
+        self.assertEqual(values['SCIENTIFIC_EXECUTION_BACKEND'], 'agent-service')
+        self.assertNotIn('scientific-pi-worker', result.stdout)
+        self.assertEqual(json.loads(result.stdout), renderer.api_patch('scientific-agent', IMAGE))
+        for arguments in ([], ['--worker-image', IMAGE], ['--execution-backend', 'pi'],
+                          ['--execution-backend', 'pi', '--api-patch', '--api-image', IMAGE]):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run([sys.executable, str(ROOT / 'k8s/scientific-pi/render.py'),
+                    *arguments], cwd=ROOT, capture_output=True, text=True, timeout=20)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('scientific_agent/deploy.sh', result.stderr)
                 self.assertEqual(result.stdout, '')
 
     def test_factory_cannot_enable_fixture_or_inherit_control_secret(self):
@@ -227,40 +249,24 @@ esac
         return subprocess.run([str(self.bash), (ROOT / 'scripts/deploy-scientific-pi.sh').as_posix(), mode, self.out.as_posix()],
                               env=self.env, cwd=ROOT, text=True, encoding='utf-8', capture_output=True, timeout=20)
 
-    def test_render_never_connects_to_cluster(self):
-        result = self.run_script('--render')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(self.log.exists())
-        self.assertEqual({path.name for path in self.out.iterdir()},
-                         {'worker.json', 'api-patch.json', 'api-egress-review.json'})
+    def test_retired_worker_entrypoint_cannot_render_or_apply_resources(self):
+        for mode in ('--dry-run', '--render', '--apply', '--apply-api'):
+            with self.subTest(mode=mode):
+                result = self.run_script(mode)
+                self.assertEqual(result.returncode, 64, result.stderr)
+                self.assertIn('scientific_agent/deploy.sh', result.stderr)
+                self.assertFalse(self.log.exists())
+                self.assertFalse(self.out.exists())
 
-    def test_api_only_preserves_worker_and_saves_full_rollback_spec(self):
-        result = self.run_script('--apply-api')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        calls = self.log.read_text().splitlines()
-        self.assertFalse(any(' apply ' in ' ' + call + ' ' for call in calls))
-        patch_calls = [call for call in calls if ' patch deployment/api ' in ' ' + call + ' ']
-        self.assertEqual(len(patch_calls), 2)
-        self.assertIn('--dry-run=server', patch_calls[0])
-        self.assertNotIn('--dry-run=server', patch_calls[1])
-        before = json.loads((self.out / 'api-before.json').read_text())
-        rollback = json.loads((self.out / 'api-rollback.json').read_text())
-        self.assertEqual(rollback, [{'op': 'replace', 'path': '/spec', 'value': before['spec']}])
-        # A repeated invocation must not replace the original rollback with the
-        # already-migrated Deployment and silently lose the old configuration.
-        repeated = self.run_script('--apply-api')
-        self.assertNotEqual(repeated.returncode, 0)
-        self.assertIn('rollback evidence already exists', repeated.stderr)
-        self.assertEqual(json.loads((self.out / 'api-rollback.json').read_text()), rollback)
-        self.assertEqual(len([call for call in self.log.read_text().splitlines()
-                             if ' patch deployment/api ' in ' ' + call + ' ']), 2)
-
-    def test_api_rollout_refuses_to_interrupt_legacy_work(self):
-        result = self.run_script('--apply-api', active='1')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('active legacy research tasks', result.stderr)
-        self.assertNotIn('patch deployment/api', self.log.read_text())
-        self.assertFalse((self.out / 'api-before.json').exists())
+    def test_generic_entrypoints_refuse_to_overwrite_current_scientific_services(self):
+        for script in ('deploy-api.sh', 'deploy-ui.sh'):
+            for name in ('scientific_agent', 'scientific-agent'):
+                with self.subTest(script=script, name=name):
+                    result = subprocess.run([str(self.bash), (ROOT / 'scripts' / script).as_posix(), name],
+                        env=self.env, cwd=ROOT, text=True, encoding='utf-8', capture_output=True, timeout=20)
+                    self.assertEqual(result.returncode, 64, result.stderr)
+                    self.assertIn('scientific_agent/deploy.sh', result.stderr)
+                    self.assertFalse(self.log.exists())
 
 
 if __name__ == '__main__':
