@@ -1,6 +1,6 @@
 # 旧科研服务移除与历史规格对账
 
-日期：2026-11-04，Asia/Shanghai。
+记录批次：2026-11-04；清理完成：2026-11-05，Asia/Shanghai。
 
 用户要求移除不再使用的旧服务。现役科研入口使用 React 网关、科研 API 和共享
 agent-service，不再使用旧 Gradio 或科研专用常驻 Pi Worker 接收新任务。
@@ -96,5 +96,6 @@ Secret、PVC 及对应 PV；同时删除未使用的旧直连 `llm-token` Extern
 
 删除后的真实 HTTP 验收通过：14 个旧任务及下载均返回 404；现役 3 个任务可读、
 2 份现役报告下载字节与数据库一致；10 个当前项目均可读，其他身份访问返回 404。
-后端为 `agent-service`，旧 fallback/归档模块与归档表均不存在，API/UI 均 1/1 Ready，
+后端为 `agent-service`，五个科研 v1 阶段实际均 ready；旧 fallback/归档模块与归档表
+均不存在，API/UI 均 1/1 Ready，
 旧服务资源不存在。结果为 `final-status.json` 和 `final-http-smoke.stdout`。
