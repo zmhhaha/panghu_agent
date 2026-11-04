@@ -24,7 +24,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from agent_service.contracts import ServiceError, canonical_bytes
 from . import media
 from .motion_snapshot import _runtime, verify_snapshot_v2
-from .motion_render_adapter import read_secret, UNAVAILABLE
+from .motion_render_adapter import read_secret, safe_progress, safe_diagnostic, UNAVAILABLE
 from .motion_render_k8s import ExecutionJournal, KubeHTTP, KubeSceneRenderer, operation_key, require
 
 MAX_REQUEST_BYTES = 192 * 1024 * 1024
@@ -89,12 +89,18 @@ class MixedMotionRenderer:
         common = [ffmpeg, '-v', 'error', '-nostdin', '-y', '-threads', '2', '-filter_threads', '2',
                   '-filter_complex_threads', '2']
         started, concat, checks = time.monotonic(), [], []
+        total = len(snapshot['scenes'])
+        def progress(stage, index=None, completed=0):
+            report = getattr(cancel_event, 'report_progress', None)
+            if report is not None:
+                report(stage, scene_index=index, completed_scenes=completed)
         def run(args, timeout=180):
             return media._run(args, cwd=work, timeout=timeout, cancel_event=cancel_event)
         with wave.open(str(work / 'master.wav'), 'wb') as master:
             master.setparams((1, 2, media.AUDIO_RATE, 0, 'NONE', 'not compressed'))
             for index, scene in enumerate(snapshot['scenes']):
                 media._cancel(cancel_event)
+                progress('preparing_scene', index, index)
                 seconds, name = scene['timing']['duration_seconds'], f'scene-{index:03d}'
                 if scene['visual_mode'] == 'motion':
                     result = self.scene_renderer.render(scene, key=key, scene_index=index,
@@ -113,6 +119,7 @@ class MixedMotionRenderer:
                     frozen['sha256'] = media._sha(media._canonical({k: v for k, v in frozen.items() if k != 'sha256'}))
                     result = self.static_renderer(frozen, work / (name + '-static'), cancel_event=cancel_event)
                     source = Path(result['path']).resolve()
+                progress('validating_scene', index, index)
                 verify_media(source, seconds, cwd=work, cancel_event=cancel_event)
                 filters = ['fps=24']
                 if snapshot['subtitles'] and scene['captions']['cues']:
@@ -120,6 +127,7 @@ class MixedMotionRenderer:
                     filters.append(f"subtitles={name}.srt:force_style='FontName=Noto Sans CJK SC,FontSize=22,Outline=1,MarginV=18'")
                 # Normalize every clip's H264 profile/timebase before concat;
                 # disregard AAC from per-scene validation encodes completely.
+                progress('normalizing_scene', index, index)
                 run(common + ['-i', str(source), '-map', '0:v:0', '-an', '-vf', ','.join(filters),
                     '-t', f'{seconds:.9f}', '-c:v', 'libx264', '-preset', 'veryfast', '-crf',
                     '18' if snapshot['quality'] == 'final' else '25', '-pix_fmt', 'yuv420p',
@@ -131,6 +139,7 @@ class MixedMotionRenderer:
                 (work / (name + '-original.wav')).write_bytes(raw)
                 samples = round(seconds * media.AUDIO_RATE)
                 delay = round(scene['timing']['leading_seconds'] * media.AUDIO_RATE)
+                progress('preparing_audio', index, index)
                 run(common + ['-i', name + '-original.wav', '-map', '0:a:0', '-vn', '-af',
                     f'aresample={media.AUDIO_RATE},adelay={delay}S:all=1,apad=whole_len={samples}',
                     '-t', f'{seconds:.9f}', '-ac', '1', '-ar', str(media.AUDIO_RATE),
@@ -141,12 +150,15 @@ class MixedMotionRenderer:
                             'motion_audio_timing_failed')
                     while chunk := segment.readframes(65536):
                         master.writeframesraw(chunk)
+                progress('preparing_audio', index, index + 1)
         (work / 'concat.txt').write_text('\n'.join(concat) + '\n', encoding='ascii')
         seconds = snapshot['duration_seconds']
+        progress('compositing', completed=total)
         run(common + ['-protocol_whitelist', 'file,pipe', '-f', 'concat', '-safe', '1', '-i', 'concat.txt',
             '-i', 'master.wav', '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac',
             '-b:a', '128k', '-ar', str(media.AUDIO_RATE), '-ac', '1', '-t', f'{seconds:.9f}',
             '-movflags', '+faststart', 'combined.mp4'])
+        progress('validating_video', completed=total)
         probe = verify_media(work / 'combined.mp4', seconds, cwd=work, cancel_event=cancel_event)
         audio = next(v for v in probe['streams'] if v['codec_type'] == 'audio')
         require(audio.get('channels') == 1 and int(audio.get('sample_rate', 0)) == media.AUDIO_RATE,
@@ -172,10 +184,13 @@ class MixedMotionRenderer:
 
 
 class JournalCancellation:
-    def __init__(self, journal, key):
-        self.journal, self.key = journal, key
+    def __init__(self, journal, key, total_scenes=1):
+        self.journal, self.key, self.total_scenes = journal, key, total_scenes
     def is_set(self):
         return self.journal.cancelled(self.key)
+    def report_progress(self, stage, *, scene_index=None, completed_scenes=0):
+        self.journal.progress(self.key, stage, scene_index=scene_index,
+                              completed_scenes=completed_scenes, total_scenes=self.total_scenes)
 
 
 class MotionExecutionService:
@@ -222,7 +237,7 @@ class MotionExecutionService:
                 return False
             key = row['key']
             self.journal.update(key, state='running')
-            event = JournalCancellation(self.journal, key)
+            event = JournalCancellation(self.journal, key, len(json.loads(row['snapshot'])['scenes']))
             previous_result = json.loads(row['result']) if row['result'] else {}
             if 'cleanup_pending' in previous_result:
                 self._finish_failure(row, previous_result['cleanup_pending'])
@@ -238,6 +253,9 @@ class MotionExecutionService:
                     raise ServiceError('media_render_cancelled', 409)
                 else:
                     public = {k: v for k, v in result.items() if k != 'path'}
+                    event.report_progress('completed', completed_scenes=event.total_scenes)
+                    latest = self.journal.operation(row['owner'], row['operation_id'])
+                    public['progress'] = json.loads(latest['result'])['progress']
                     self.journal.update(key, state='completed', result=json.dumps(public), error=None)
             except ServiceError as error:
                 self.last_error = error.code
@@ -258,7 +276,12 @@ class MotionExecutionService:
         pending = dict(state=state, error=error, status=status)
         # Persist cleanup intent before touching resources. A process restart
         # takes this path directly, never renders/submits another scene Job.
-        self.journal.update(row['key'], result=json.dumps({'cleanup_pending': pending}), error=None)
+        latest = self.journal.operation(row['owner'], row['operation_id'])
+        result = json.loads(latest['result']) if latest['result'] else {}
+        progress = safe_progress(result.get('progress'))
+        diagnostic = failure_diagnostic(row['key'], error, progress)
+        self.journal.update(row['key'], result=json.dumps({**result,
+            'cleanup_pending': pending, 'diagnostic': diagnostic}), error=None)
         self._finish_failure(row, pending)
 
     def _finish_failure(self, row, pending):
@@ -281,7 +304,11 @@ class MotionExecutionService:
             self.last_error = 'motion_cleanup_pending'
             self.journal.update(key, state='queued', error=None)
             return
-        self.journal.update(key, state=pending['state'], error=pending['error'], result=None)
+        latest = self.journal.operation(row['owner'], row['operation_id'])
+        result = json.loads(latest['result']) if latest['result'] else {}
+        result.pop('cleanup_pending', None)
+        self.journal.update(key, state=pending['state'], error=pending['error'],
+                            result=json.dumps(result) if result else None)
 
     def run(self):
         while not self.stopping.is_set():
@@ -305,12 +332,40 @@ class MotionExecutionService:
             uncertain_submission='same_name_suspended_fence_no_pods_no_audio_configmaps')
 
 
+def failure_diagnostic(key, code, progress=None):
+    category = ('resource' if code == 'motion_execution_oom' else
+        'timeout' if code in {'motion_execution_timed_out', 'media_render_timed_out'} else
+        'artifact_budget' if code == 'motion_artifact_budget_exceeded' else
+        'render' if code in {'motion_render_stage_failed', 'motion_audio_mux_failed'} else
+        'observation' if code == 'motion_observation_stage_failed' else
+        'storage' if code in {'motion_execution_storage_error', 'motion_render_storage_exceeded'} else
+        'submission' if code in {'motion_submission_unconfirmed', 'motion_execution_disappeared'} else
+        'cancelled' if code in {'media_render_cancelled', 'media_cancelled'} else
+        'validation' if code in {'motion_media_output_invalid', 'motion_observation_invalid',
+            'motion_artifact_invalid', 'motion_cached_media_corrupt', 'motion_text_overflow',
+            'motion_expected_highlight_missing', 'motion_invisible_highlight',
+            'motion_expected_draw_missing', 'motion_expected_reveal_missing', 'motion_expected_hide_missing',
+            'motion_invisible_move', 'motion_expected_move_missing', 'motion_frozen_frames',
+            'motion_seek_time_mismatch', 'motion_reverse_seek_failed'} else 'execution')
+    return dict(code=code, category=category, stage=progress['stage'] if progress else None,
+        scene_index=progress['scene_index'] if progress else None,
+        diagnostic_id='MR-' + hashlib.sha256((key + ':' + code).encode()).hexdigest()[:16])
+
+
 def public_operation(row):
     result = dict(operation_id=row['operation_id'], snapshot_sha256=row['snapshot_sha256'], state=row['state'])
+    details = json.loads(row['result']) if row['result'] else {}
+    if progress := safe_progress(details.get('progress')):
+        if 'cleanup_pending' in details:
+            progress['stage'] = 'cleanup'
+        result['progress'] = progress
     if row['state'] == 'completed' and row['result']:
-        result['result'] = json.loads(row['result'])
+        result['result'] = {k: v for k, v in details.items() if k not in {'progress', 'diagnostic'}}
     if row['error']:
         result['error'] = row['error']
+        diagnostic = safe_diagnostic(details.get('diagnostic'))
+        if diagnostic:
+            result['diagnostic'] = diagnostic
     return result
 
 

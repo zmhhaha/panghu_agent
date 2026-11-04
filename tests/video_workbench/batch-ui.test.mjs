@@ -49,7 +49,7 @@ function harness() {
   const nodes = new Map([...html.matchAll(/\bid="([^"]+)"/g)].map(match => [match[1], new Element()]));
   const document = { createElement: tag => new Element(tag), getElementById: id => { assert.ok(nodes.has(id), id); return nodes.get(id); } };
   const state = { context: { project: project(), epoch: 1, enabled: true, unsaved: false, projectBusy: false },
-    batches: [batch()], calls: [], errors: [], successes: [], opens: [], plays: [], projectDrafts: 0,
+    batches: [batch()], calls: [], errors: [], inputErrors: [], successes: [], opens: [], plays: [], projectDrafts: 0,
     refreshes: 0, transport: null, versions: new Map() };
   let panel;
   const fallback = async (path, options) => {
@@ -74,7 +74,8 @@ function harness() {
       return state.transport ? state.transport(path, options, fallback) : fallback(path, options);
     },
     refresh: async () => { state.refreshes += 1; await panel.load(state.context.project.id, state.context.epoch); },
-    onError: error => state.errors.push(error), onSuccess: message => state.successes.push(message),
+    onError: error => state.errors.push(error), onInputError: message => state.inputErrors.push(message),
+    onSuccess: message => state.successes.push(message),
     onOpenScene: (...args) => state.opens.push(args), onPlayRender: item => state.plays.push(item),
     onProjectDraft: () => { state.projectDrafts += 1; },
   });
@@ -114,6 +115,8 @@ test('range preview shows task caps and requires an explicit second confirmation
   const h = harness(); h.state.batches = []; await h.load(); await h.panel.preview();
   assert.equal(writes(h).length, 1); assert.ok(writes(h)[0].path.endsWith('/preview'));
   assert.match(h.$('batch-plan-summary').textContent, /动态图解 1 次，配音 1 次，镜头草稿 1 次/);
+  assert.match(h.$('batch-plan-items').textContent, /待制作（尚未启动）/);
+  assert.doesNotMatch(h.$('batch-plan-items').textContent, /排队中|制作中/);
   await h.panel.start(); assert.equal(writes(h).length, 1);
   h.$('confirm-batch-start').checked = true; await h.$('confirm-batch-start').emit('change');
   await Promise.all([h.panel.start(), h.panel.start()]);
@@ -121,6 +124,65 @@ test('range preview shows task caps and requires an explicit second confirmation
   assert.equal(starts.length, 1); assert.equal(starts[0].options.body.plan_sha256, 'a'.repeat(64));
   assert.equal(h.panel.hasActiveOperation(), true);
   assert.equal(h.state.context.project.scenes[0].head_audio_version_id, null);
+});
+
+test('empty scene or step selection is local validation; choosing valid input enables a clean range preview', async () => {
+  const h = harness(); h.state.batches = []; await h.load();
+  let sceneCheck = inputIn(h.$('batch-scenes').children[0]);
+  sceneCheck.checked = false; await sceneCheck.emit('change');
+  assert.equal(h.$('preview-batch').disabled, true);
+  assert.match(h.$('batch-form-note').textContent, /请至少选择一个镜头/);
+  await h.panel.preview();
+  assert.equal(writes(h).length, 0);
+  assert.equal(h.state.errors.length, 0, 'A missing selection must not reach the network-error handler');
+  assert.match(h.state.inputErrors.at(-1), /选择.*镜头/);
+  sceneCheck = inputIn(h.$('batch-scenes').children[0]);
+  sceneCheck.checked = true; await sceneCheck.emit('change');
+  assert.equal(h.$('preview-batch').disabled, false);
+  assert.doesNotMatch(h.$('batch-form-note').textContent, /请选择|请至少选择|连接中断/);
+  for (const step of ['motion', 'audio', 'draft']) {
+    h.$(`batch-step-${step}`).checked = false; await h.$(`batch-step-${step}`).emit('change');
+  }
+  assert.equal(h.$('preview-batch').disabled, true);
+  await h.panel.preview();
+  assert.match(h.state.inputErrors.at(-1), /至少选择一个制作步骤/);
+  assert.equal(writes(h).length, 0); assert.equal(h.state.errors.length, 0);
+  h.$('batch-step-draft').checked = true; await h.$('batch-step-draft').emit('change');
+  await h.panel.preview();
+  assert.deepEqual(writes(h)[0].options.body.scene_ids, ['s1']);
+  assert.deepEqual(writes(h)[0].options.body.steps, ['draft']);
+  assert.match(h.$('batch-form-note').textContent, /核对范围只计算任务上限/);
+  assert.equal(h.$('start-batch').disabled, true);
+});
+
+test('transport failures still use the network-error handler and never create a startable plan', async () => {
+  const h = harness(); h.state.batches = []; await h.load();
+  h.state.transport = async () => { throw new Error('offline'); };
+  await h.panel.preview();
+  assert.equal(h.state.errors.length, 1); assert.equal(h.state.inputErrors.length, 0);
+  assert.equal(h.$('batch-plan').hidden, true); assert.equal(h.$('start-batch').disabled, true);
+  assert.equal(writes(h).length, 1);
+  h.state.transport = null; await h.panel.preview();
+  assert.match(h.state.successes.at(-1), /尚未启动生成/);
+  assert.equal(writes(h).filter(row => row.path === '/api/projects/p1/batches').length, 0);
+});
+
+test('known render failures explain recovery without exposing raw diagnostics or repeating successful work', async () => {
+  const h = harness(); h.state.batches[0].status = 'partial_failed';
+  Object.assign(h.state.batches[0].items[2], { status: 'failed', render_id: null, error: 'motion_execution_oom' });
+  await h.load();
+  assert.match(h.$('batch-progress-rows').textContent, /内存不足/);
+  assert.match(h.$('batch-progress-rows').textContent, /仅补做草稿/);
+  assert.doesNotMatch(h.$('batch-progress-rows').textContent, /motion_execution_oom/);
+  assert.equal(writes(h).length, 0);
+  assert.equal(h.state.batches[0].items[0].version_id, 'm1');
+  assert.equal(h.state.batches[0].items[1].version_id, 'a1');
+  assert.match(batchErrorLabel('motion_execution_timed_out'), /超过时间上限/);
+  assert.match(batchErrorLabel('motion_render_stage_failed'), /画面渲染阶段/);
+  assert.match(batchErrorLabel('motion_observation_stage_failed'), /画面检查阶段/);
+  assert.match(batchErrorLabel('motion_audio_mux_failed'), /音画合成阶段/);
+  assert.match(batchErrorLabel('motion_relation_layout_unavailable'), /减少节点.*配音/);
+  assert.match(batchErrorLabel('untrusted backend traceback'), /本步骤未完成/);
 });
 
 test('changed steps, dirty content, unavailable providers and revision updates invalidate start', async () => {
@@ -284,5 +346,5 @@ test('all controls are unique and the app integrates reads, polling, exact navig
   assert.match(app, /!batchPanel\.hasActiveOperation\(state.projectId\)/);
   assert.match(app, /batchPanel\.hasUnresolvedOperation\(state.projectId\)/);
   assert.match(app, /motionPanel\.select\(state.projectId, sceneId, motionVersionId\)/);
-  assert.match(app, /createProjectMotionDraftRequest\(state.project\)/);
+  assert.match(app, /createProjectMotionDraftRequest\(state.project,/);
 });

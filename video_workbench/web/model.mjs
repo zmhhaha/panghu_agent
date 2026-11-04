@@ -17,6 +17,39 @@ export function statusLabel(status) {
   return STATUS_LABELS[status] ?? '状态待确认';
 }
 
+export function renderSourceLabel(item) {
+  const scenes = item?.scenes;
+  if (!Array.isArray(scenes) || !scenes.length) return '制作范围未记录';
+  if (scenes.length > 1) return `整片 · ${scenes.length} 镜头`;
+  const scene = scenes[0];
+  return [scene.title || '单镜头',
+    scene.visual_version_number ? `图解 ${scene.visual_version_number}` : null,
+    scene.audio_version_number ? `配音 A${scene.audio_version_number}` : null].filter(Boolean).join(' · ');
+}
+
+const RENDER_STAGES = {
+  preparing_scene: '准备镜头', waiting_scene: '等待镜头开始', rendering_scene: '渲染动态画面',
+  observing_scene: '检查动画关键帧', validating_scene: '校验镜头产物', normalizing_scene: '整理镜头视频',
+  preparing_audio: '准备原始配音', compositing: '合成整片', validating_video: '检查完整视频',
+  completed: '视频制作完成', cleanup: '清理制作资源',
+};
+
+export function renderProgressLabel(item, now = Date.now() / 1000) {
+  const progress = item?.progress, diagnostic = item?.diagnostic;
+  const parts = [];
+  if (progress && RENDER_STAGES[progress.stage]) {
+    parts.push(RENDER_STAGES[progress.stage]);
+    if (Number.isInteger(progress.scene_index)) parts.push(`第 ${progress.scene_index + 1}/${progress.total_scenes} 镜`);
+    parts.push(`已完成 ${progress.completed_scenes}/${progress.total_scenes} 镜`);
+  }
+  if (isActiveOperation(item) && Number.isFinite(item.created_at)) {
+    const seconds = Math.max(0, Math.floor(now - item.created_at));
+    parts.push(`已等待 ${Math.floor(seconds / 60)}分${seconds % 60}秒`);
+  }
+  if (/^MR-[0-9a-f]{16}$/.test(diagnostic?.diagnostic_id ?? '')) parts.push(`问题编号 ${diagnostic.diagnostic_id}`);
+  return parts.join(' · ');
+}
+
 export function isActiveOperation(operation) {
   return Boolean(operation?.id && ACTIVE_STATUSES.has(operation.status));
 }
@@ -127,12 +160,13 @@ export function chooseVersion(state, sceneId, versionId) {
 }
 
 export function createSceneDraft(scene = {}, revision = 0) {
-  return {
+  const fields = {
     title: scene.title ?? '', narration: scene.narration ?? '',
     visual_description: scene.visual_description ?? '',
     duration_seconds: scene.duration_seconds ?? 8,
-    format: scene.format ?? 'svg', expected_revision: revision, dirty: false,
+    format: scene.format ?? 'svg',
   };
+  return { ...fields, expected_revision: revision, base_fields: { ...fields }, dirty: false };
 }
 
 export function syncSceneDraft(draft, scene, revision) {

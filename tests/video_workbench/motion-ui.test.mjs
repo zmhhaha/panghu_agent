@@ -377,6 +377,27 @@ test('read failures retain review and drafts, error names stay inert and nontech
   }
 });
 
+test('known rendering failures distinguish resource, duration and uncertain state recovery', () => {
+  assert.match(motionErrorLabel('motion_execution_oom'), /内存不足/);
+  assert.match(motionErrorLabel('motion_execution_timed_out'), /超过时间上限/);
+  assert.match(motionErrorLabel('motion_render_storage_exceeded'), /存储空间不足/);
+  assert.match(motionErrorLabel('motion_artifact_budget_exceeded'), /大小上限/);
+  assert.match(motionErrorLabel('motion_scene_duration_exceeded'), /60 秒/);
+  assert.match(motionErrorLabel('motion_submission_unconfirmed'), /尚未确认.*避免重复/);
+  assert.match(motionErrorLabel('motion_execution_failed'), /原因尚未确认/);
+  assert.match(motionErrorLabel('motion_render_stage_failed'), /画面渲染阶段/);
+  assert.match(motionErrorLabel('motion_observation_stage_failed'), /画面检查阶段/);
+  assert.match(motionErrorLabel('motion_audio_mux_failed'), /音画合成阶段/);
+  assert.match(motionErrorLabel('motion_relation_layout_unavailable'), /减少节点.*缩短关系标签.*已有配音/);
+  for (const code of ['motion_execution_oom', 'motion_execution_failed', 'motion_execution_internal_error',
+    'motion_execution_disappeared', 'motion_execution_pod_missing', 'motion_execution_storage_error',
+    'motion_audio_size_exceeded', 'motion_audio_timing_failed', 'motion_render_capacity_exceeded',
+    'motion_render_stage_failed', 'motion_observation_stage_failed', 'motion_audio_mux_failed',
+    'motion_relation_layout_unavailable']) {
+    assert.doesNotMatch(motionErrorLabel(code), /Traceback|\/data\/|https?:|motion_/);
+  }
+});
+
 test('all controls exist once; app wires motion reads, MP4 playback, polling and unload drafts', async () => {
   const source = await readFile(new URL('../../video_workbench/web/motion.mjs', import.meta.url), 'utf8');
   const app = await readFile(new URL('../../video_workbench/web/app.mjs', import.meta.url), 'utf8');
@@ -386,7 +407,7 @@ test('all controls exist once; app wires motion reads, MP4 playback, polling and
   assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML|eval\(/);
   assert.match(app, /motionPanel\.load\(ticket.projectId, ticket.epoch\)/);
   assert.match(app, /!motionPanel\.hasActiveOperation\(state.projectId, state.project\?\.scenes\)/); assert.match(app, /motionPanel\.hasDrafts\(\)/);
-  assert.match(app, /createMotionRenderRequest\(state.project, \{ purpose: 'delivery' \}\)/);
+  assert.match(app, /createMotionRenderRequest\(state.project, \{ purpose: 'delivery',/);
   assert.match(app, /function openMotionRender\(item\)/);
   assert.match(app, /!\$\('motion-panel'\)\.contains\(event.target\) && !\$\('motion-timing-section'\)\.contains\(event.target\)/);
   assert.match(html, /id="motion-render-video"[^>]*controls/);

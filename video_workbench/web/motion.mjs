@@ -5,7 +5,32 @@ const STRATEGIES = { flow: '流程推演', compare: '前后对比', focus: '结�
 const ACTIONS = { reveal: '出现', hide: '隐藏', highlight: '强调', move: '移动', draw: '连线展开' };
 const PLACEMENTS = { start: '本段开始', middle: '本段中间', end: '本段末尾' };
 const PACES = { quick: '较快', normal: '正常', slow: '较慢' };
+const RENDER_ERRORS = {
+  motion_text_overflow: '图解文字超出可读区域。请缩短节点说明或把内容拆到更多镜头，再制作该镜头草稿；已有配音保留。',
+  motion_expected_highlight_missing: '图解的强调动画未通过检查。请调整该镜头的强调动作后制作草稿；已有配音保留。',
+  motion_invisible_highlight: '强调动作发生时，对象还不可见。请先显现对象再强调，或调整动作时间后制作草稿；已有配音保留。',
+  motion_execution_failed: '镜头渲染未完成，原因尚未确认。请重新读取任务状态并检查这份图解；只补做失败镜头的草稿，已有图解和配音会保留。',
+  motion_execution_timed_out: '镜头渲染超过时间上限。可简化这份图解的节点或动作后，仅补做该镜头草稿；已有配音可继续使用。',
+  motion_execution_oom: '镜头渲染时内存不足。可简化这份图解后仅补做草稿；已有图解和配音会保留。',
+  motion_artifact_budget_exceeded: '镜头渲染产物超过大小上限。可减少图解内容或缩短镜头，再仅补做该镜头草稿。',
+  motion_execution_storage_error: '渲染时无法写入文件。请等待存储恢复后，再手动补做失败镜头草稿；无需重做已有配音。',
+  motion_render_storage_exceeded: '渲染存储空间不足。请等待空间恢复后重新读取状态，再手动补做失败项。',
+  motion_execution_internal_error: '渲染服务处理异常。请重新读取原任务状态；若仍失败，可联系维护者并提供任务编号。',
+  motion_execution_disappeared: '未能找到这次渲染的执行记录。请先重新读取原任务状态，确认终态后再手动补做。',
+  motion_execution_pod_missing: '未能读取这次渲染的执行状态。请先重新读取原任务，避免重复制作。',
+  motion_submission_unconfirmed: '这次渲染是否已提交尚未确认。请重新读取原任务状态，避免重复制作。',
+  motion_render_capacity_exceeded: '待处理的渲染任务已达到上限。请等待已有任务结束后，再手动提交。',
+  motion_scene_duration_exceeded: '单个动态镜头超过 60 秒上限。请拆分该镜头并重新核对配音与图解，再制作草稿。',
+  motion_audio_size_exceeded: '镜头配音文件超过大小上限。请缩短该段旁白或上传更小的录音，再制作草稿。',
+  motion_audio_timing_failed: '镜头配音与时长不匹配。请试听该镜头的当前配音并检查分段时间，再制作草稿。',
+  motion_render_stage_failed: '镜头画面渲染阶段未完成。请检查这份图解，并提供任务编号供维护者排查；已有配音保留，可仅补做该镜头草稿。',
+  motion_observation_stage_failed: '镜头画面检查阶段未通过。请检查这份图解的布局、文字和动画，再仅补做该镜头草稿；已有配音保留。',
+  motion_audio_mux_failed: '镜头音画合成阶段未完成。请重新读取原任务状态，并提供任务编号供维护者排查；无需重新生成图解或配音。',
+  motion_relation_layout_unavailable: '图解关系过于密集，当前无法安排清晰的连线。请减少节点或缩短关系标签后重新制作图解，已有配音可继续使用。',
+  media_render_cancelled: '本次渲染已取消，已有图解和配音继续保留。',
+};
 const ERRORS = {
+  ...RENDER_ERRORS,
   motion_disabled: '动态图解暂未启用，历史仍可查看，正在执行的任务仍可取消。',
   motion_profile_unavailable: '动态图解生成服务尚未准备就绪，当前镜头会保留。',
   motion_render_not_configured: '动态图解渲染服务尚未连接，候选与时序仍会保留。',
@@ -29,6 +54,10 @@ const ERRORS = {
   cancellation_uncertain: '取消结果尚未确认，正在继续查询真实状态。',
   cancellation_retry_exhausted: '重复取消申请已停止，仍会继续查询真实状态。',
 };
+
+export function motionRenderErrorLabel(code) {
+  return typeof code === 'string' && Object.hasOwn(RENDER_ERRORS, code) ? RENDER_ERRORS[code] : undefined;
+}
 
 export function motionErrorLabel(code) {
   return typeof code === 'string' && Object.hasOwn(ERRORS, code) ? ERRORS[code]
@@ -97,11 +126,12 @@ export function motionTimingDraft(timing) {
     segments: timing.alignment.segments.map(row => ({ ...row })), correction_reason: '', dirty: false };
 }
 
-export function createMotionRenderRequest(project, { purpose = 'draft', scene, candidate, audio } = {}) {
+export function createMotionRenderRequest(project, { purpose = 'draft', scene, candidate, audio, endHoldSeconds = 0 } = {}) {
   if (!project?.id || !Number.isInteger(project.revision) || !['draft', 'delivery'].includes(purpose)) {
     throw new Error('请先读取项目。');
   }
   const body = { expected_revision: project.revision, purpose, subtitles: false };
+  if (endHoldSeconds) body.end_hold_seconds = endHoldSeconds;
   if (purpose === 'draft') {
     if (!scene?.id || !candidate?.id || candidate.stale || !audio?.id || audio.stale) {
       throw new Error('请先选择有效动态图解，并采用匹配当前旁白的配音。');
@@ -111,10 +141,11 @@ export function createMotionRenderRequest(project, { purpose = 'draft', scene, c
   return { path: `/api/projects/${encodeURIComponent(project.id)}/motion-renders`, body };
 }
 
-export function createProjectMotionDraftRequest(project) {
+export function createProjectMotionDraftRequest(project, { endHoldSeconds = 0 } = {}) {
   if (!project?.id || !Number.isInteger(project.revision)) throw new Error('请先读取项目。');
   return { path: `/api/projects/${encodeURIComponent(project.id)}/motion-renders`,
-    body: { expected_revision: project.revision, purpose: 'draft', subtitles: false } };
+    body: { expected_revision: project.revision, purpose: 'draft', subtitles: false,
+      ...(endHoldSeconds ? { end_hold_seconds: endHoldSeconds } : {}) } };
 }
 
 export function createMotionPanel({ document, getContext, request, refresh, onError, onSuccess, onPreviewStateChange = () => {} }) {

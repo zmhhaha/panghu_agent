@@ -132,8 +132,15 @@ class SceneFields(Fields):
     format: Literal['svg', 'html'] = 'svg'
 
 
+class SceneBaseFields(SceneFields):
+    # Generated scenes can contain meaningful original whitespace. The editor
+    # base is an exact comparison value, not a new editable payload to trim.
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=False)
+
+
 class SceneEdit(SceneFields):
     expected_revision: int = Field(ge=1, strict=True)
+    base_fields: SceneBaseFields | None = None
 
 
 class Revision(Fields):
@@ -275,6 +282,7 @@ class MotionRenderRequest(Revision):
     scene_id: str | None = Field(default=None, min_length=1, max_length=100)
     motion_version_id: str | None = Field(default=None, min_length=1, max_length=100)
     audio_version_id: str | None = Field(default=None, min_length=1, max_length=100)
+    end_hold_seconds: int = Field(default=0, ge=0, le=5, strict=True)
 
 
 def media_response(data, request, media_type, filename):
@@ -674,7 +682,9 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     @app.patch('/api/scenes/{scene_id}')
     def edit_scene(scene_id: str, body: SceneEdit, owner=Depends(mutation)):
         project_id = store.scene_project(owner, scene_id)
-        store.save_scene(owner, project_id, body.model_dump(exclude={'expected_revision'}), scene_id, body.expected_revision)
+        store.save_scene(owner, project_id, body.model_dump(exclude={'expected_revision', 'base_fields'}),
+                         scene_id, body.expected_revision,
+                         base_fields=body.base_fields.model_dump() if body.base_fields else None)
         return motion_store.project(owner, project_id)
 
     @app.post('/api/projects/{project_id}/storyboard', status_code=202)

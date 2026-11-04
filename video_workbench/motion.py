@@ -17,13 +17,15 @@ import re
 
 from agent_service.contracts import ServiceError
 from agent_service.profiles.video_motion_contract import validate_beats, validate_motion_plan
+from .motion_geometry import connection_geometry
 
 
-COMPILER_VERSION = 'motion-compiler-4'
-TEMPLATE_VERSION = 'technical-diagrams-4'
+COMPILER_VERSION = 'motion-compiler-5'
+TEMPLATE_VERSION = 'technical-diagrams-5'
 COMPILER_TEMPLATES = {'motion-compiler-1': 'technical-diagrams-1',
                       'motion-compiler-2': 'technical-diagrams-2',
                       'motion-compiler-3': 'technical-diagrams-3',
+                      'motion-compiler-4': 'technical-diagrams-4',
                       COMPILER_VERSION: TEMPLATE_VERSION}
 HYPERFRAMES_VERSION = '0.8.149'
 GSAP_VERSION = '3.14.2'
@@ -341,20 +343,50 @@ def compile_project(plan, beats, alignment, *, animated=True, runtime_fingerprin
     layout = LAYOUTS[plan['template']]
     elements = {row['id']: row for row in plan['elements']}
     boxes = {row['id']: layout[row['slot']] for row in plan['elements']}
-    markup, arrows = [], []
+    geometry = None
+    if compiler_version == 'motion-compiler-5':
+        try:
+            reserved = [(72, 74, 1136, 112)]
+            if not any(row['slot'] == 'caption' for row in plan['elements']):
+                reserved.append((72, 636, 1136, 72))
+            moving, positions = [], dict(boxes)
+            for action in timeline['actions']:
+                if action['kind'] != 'move':
+                    continue
+                origin, destination = positions[action['target']], layout[action['to_slot']]
+                left, top = min(origin[0], destination[0]), min(origin[1], destination[1])
+                right, bottom = max(origin[0] + origin[2], destination[0] + destination[2]), max(origin[1] + origin[3], destination[1] + destination[3])
+                moving.append((left, top, right - left, bottom - top))
+                positions[action['target']] = destination
+            geometry = connection_geometry(plan['relations'], boxes, reserved, moving)
+        except ValueError as error:
+            raise ServiceError('motion_relation_layout_unavailable', 422) from error
+    markup, arrows, relation_labels = [], [], []
     for row in plan['relations']:
-        path = _relation_path(boxes[row['source']], boxes[row['target']],
-                              [b for key, b in boxes.items() if key not in {row['source'], row['target']}])
-        a, b = boxes[row['source']], boxes[row['target']]
-        lx, ly = _relation_label(a, b, path)
+        if geometry is None:
+            path = _relation_path(boxes[row['source']], boxes[row['target']],
+                                  [b for key, b in boxes.items() if key not in {row['source'], row['target']}])
+            a, b = boxes[row['source']], boxes[row['target']]
+            lx, ly = _relation_label(a, b, path)
+        else:
+            path = geometry[row['id']]['path']
         arrows.append(f'<marker id="arrow-{row["id"]}" viewBox="0 0 10 10" refX="9" refY="5" '
                       f'markerWidth="5" markerHeight="5" orient="auto-start-reverse">'
                       f'<path id="tip-{row["id"]}" class="arrow-tip" d="M 0 0 L 10 5 L 0 10 z" fill="#67ded0"/></marker>')
-        base = '' if compiler_version == 'motion-compiler-4' else f'<path class="relation-base" d="{path}"/>'
-        markup.append(base +
-                      f'<path id="rel-{row["id"]}" class="relation-active" d="{path}" pathLength="1" marker-end="url(#arrow-{row["id"]})"/>'
-                      f'<text id="label-{row["id"]}" data-motion-relation="{row["id"]}" class="relation-label" x="{lx}" y="{ly}" text-anchor="middle">{html.escape(row["label"])}</text>')
-    connections = ''.join(markup)
+        base = '' if compiler_version in {'motion-compiler-4', 'motion-compiler-5'} else f'<path class="relation-base" d="{path}"/>'
+        stroke = base + f'<path id="rel-{row["id"]}" class="relation-active" d="{path}" pathLength="1" marker-end="url(#arrow-{row["id"]})"/>'
+        if geometry is None:
+            markup.append(stroke + f'<text id="label-{row["id"]}" data-motion-relation="{row["id"]}" class="relation-label" x="{lx}" y="{ly}" text-anchor="middle">{html.escape(row["label"])}</text>')
+        else:
+            markup.append(stroke)
+            x, y, width, height = geometry[row['id']]['box']
+            cx = x + width / 2
+            rows = ''.join(f'<tspan x="{cx:g}" y="{y + 24 + index * 26:g}">{html.escape(line)}</tspan>'
+                           for index, line in enumerate(geometry[row['id']]['lines']))
+            relation_labels.append(f'<g id="label-{row["id"]}" data-motion-relation="{row["id"]}" class="relation-label">'
+                f'<rect class="relation-plate" x="{x:g}" y="{y:g}" width="{width:g}" height="{height:g}" rx="7"/>'
+                f'<text text-anchor="middle">{rows}</text></g>')
+    connections = ''.join(markup + relation_labels)
     markup = []
     for index, row in enumerate(plan['elements']):
         x, y, w, h = boxes[row['id']]
@@ -453,7 +485,7 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
   tl.seek(0,false);
 })();
 </script></body></html>'''
-    if compiler_version in {'motion-compiler-2', 'motion-compiler-3', 'motion-compiler-4'}:
+    if compiler_version in {'motion-compiler-2', 'motion-compiler-3', 'motion-compiler-4', 'motion-compiler-5'}:
         # Keep the v1 page byte-for-byte reproducible. This bounded v2 layout
         # changes only compiler-owned typography, never candidate text, geometry,
         # actions or audio. Text that still does not fit remains a hard failure.
@@ -493,7 +525,7 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
       overflow:el.scrollWidth>el.clientWidth||el.scrollHeight>el.clientHeight||
         Object.values(textBoxes).some(box=>box.overflow)};''')
         page = page.replace("version:'motion-compiler-1'", "version:'motion-compiler-2'")
-        if compiler_version in {'motion-compiler-3', 'motion-compiler-4'}:
+        if compiler_version in {'motion-compiler-3', 'motion-compiler-4', 'motion-compiler-5'}:
             # Integral line boxes leave room for the pinned CJK font's glyphs;
             # fractional v2 line heights can report a one-pixel scroll overflow
             # even when the outer card fits. Preserve both prior versions and
@@ -505,7 +537,7 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
 .label .element-label{line-height:31px}
 </style>''')
             page = page.replace("version:'motion-compiler-2'", "version:'motion-compiler-3'")
-    if compiler_version == 'motion-compiler-4':
+    if compiler_version in {'motion-compiler-4', 'motion-compiler-5'}:
         # Undrawn relations have no visible guide underneath. Hide the actual
         # stroke before JS/bootstrap too, and animate opacity with the draw so
         # exact forward and reverse seeks restore the same blank initial state.
@@ -519,6 +551,39 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
             'labelOpacity:Number(getComputedStyle(document.getElementById(\'label-\'+r.id)).opacity),'
             'baseCount:document.querySelectorAll(\'.relation-base\').length')
         page = page.replace("version:'motion-compiler-3'", "version:'motion-compiler-4'")
+    if compiler_version == 'motion-compiler-5':
+        # Label plates are above *all* strokes, so the ink is never crossed by
+        # an earlier relation. Later relations also route around reserved plates.
+        page = page.replace('</style>', '''
+.relation-label{font-size:18px;fill:#d6e8f5}.relation-plate{fill:#0b1728;stroke:#344c64;stroke-width:1}
+.element{outline:0 solid #79e4d5;outline-offset:-4px}
+</style>''')
+        page = page.replace("{borderColor:'#79e4d5',backgroundColor:'#21434e',duration,immediateRender:false},when);",
+            """{borderColor:'#79e4d5',backgroundColor:'#21434e',duration,immediateRender:false},when);
+      tl.fromTo(node(a.target),{outlineWidth:0},{outlineWidth:8,duration:duration/2,autoRound:false,immediateRender:false},when);
+      tl.fromTo(node(a.target),{outlineWidth:8},{outlineWidth:0,duration:duration/2,autoRound:false,immediateRender:false},when+duration/2);""")
+        page = page.replace('borderColor:style.borderColor,backgroundColor:style.backgroundColor,',
+            'borderColor:style.borderColor,backgroundColor:style.backgroundColor,highlightWidth:parseFloat(style.outlineWidth),highlightColor:style.outlineColor,')
+        page = page.replace("version:'motion-compiler-4'", "version:'motion-compiler-5'")
+        page = page.replace('window.__videoMotion={', '''const relationLayout=el=>{
+    const plain=box=>({x:box.x,y:box.y,width:box.width,height:box.height});
+    const plate=el.querySelector('rect').getBBox(),text=el.querySelector('text');
+    const intersects=box=>plate.width>0&&plate.height>0&&box.width>0&&box.height>0&&
+      plate.x<box.x+box.width&&box.x<plate.x+plate.width&&plate.y<box.y+box.height&&box.y<plate.y+plate.height;
+    return {plate:plain(plate),ink:text.textContent?plain(text.getBBox()):null,
+      overlapsNodes:Object.keys(data.boxes).filter(id=>intersects(node(id).getBoundingClientRect())),
+      overlapsLabels:Array.from(document.querySelectorAll('.relation-plate')).filter(other=>other.parentNode!==el&&intersects(other.getBBox())).map(other=>other.parentNode.dataset.motionRelation)};
+  };
+  window.__videoMotion={''')
+        page = page.replace('id:el.dataset.motionRelation,text:el.textContent,...metrics(el),',
+                            'id:el.dataset.motionRelation,text:el.textContent,...metrics(el),...relationLayout(el),')
+        page = page.replace('el.getBBox().y<0||el.getBBox().y+el.getBBox().height>720',
+            '''el.getBBox().y<0||el.getBBox().y+el.getBBox().height>720||
+          Array.from(el.querySelectorAll('text')).some(text=>{
+            if(!text.textContent)return false;
+            const ink=text.getBBox(),plate=el.querySelector('rect').getBBox();
+            return ink.x<plate.x||ink.y<plate.y||ink.x+ink.width>plate.x+plate.width||ink.y+ink.height>plate.y+plate.height;
+          })''')
     replacements = {
         '__DURATION__': str(timeline['duration_seconds']),
         '__EYEBROW__': {'flow': '流程与路由', 'compare': '前后对照', 'focus': '结构聚焦'}[plan['template']],

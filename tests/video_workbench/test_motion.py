@@ -221,7 +221,8 @@ def test_header_and_takeaway_leave_room_for_real_cjk_font_line_metrics():
 def test_vertical_history_label_uses_the_available_gap_between_connection_ports():
     from video_workbench.examples.build_motion_samples import history_plan, SPOKEN_TEXT
     beats = make_beats(SPOKEN_TEXT)
-    page = compile_project(history_plan(beats), beats, estimated_alignment(beats, 'a' * 64, 18))['index.html'].decode()
+    page = compile_project(history_plan(beats), beats, estimated_alignment(beats, 'a' * 64, 18),
+                           compiler_version='motion-compiler-4')['index.html'].decode()
     label = re.search(r'<text id="label-attempt_log"[^>]* x="([0-9.]+)" y="([0-9.]+)"', page)
     assert label is not None
     x, baseline = map(float, label.groups())
@@ -315,3 +316,89 @@ def test_huge_padding_is_refused_as_input_instead_of_overflowing_float_conversio
     args = fixture()
     with pytest.raises(ServiceError):
         resolve_timeline(*args, leading_seconds=10 ** 1000)
+
+
+@pytest.mark.parametrize('template', ['flow', 'compare', 'focus'])
+def test_v5_orthogonal_routes_avoid_every_unrelated_slot_in_both_directions(template):
+    """Include the prior vertical-through-center failure and reverse arrows."""
+    from video_workbench.motion_geometry import inflate, route, segment_hits_box
+    slots = LAYOUTS[template]
+    for source_name, source in slots.items():
+        for target_name, target in slots.items():
+            if source_name == target_name:
+                continue
+            points = route(source, target, list(slots.values()))
+            assert len(points) >= 2
+            for start, end in zip(points, points[1:]):
+                assert start[0] == end[0] or start[1] == end[1]
+                assert all(not segment_hits_box(start, end, inflate(box, 4))
+                           for name, box in slots.items() if name not in {source_name, target_name})
+            # Ports attach to the corresponding object, not a nearby object.
+            for point, box in ((points[0], source), (points[-1], target)):
+                x, y, width, height = box
+                assert ((point[0] in {x, x + width} and y <= point[1] <= y + height)
+                        or (point[1] in {y, y + height} and x <= point[0] <= x + width))
+
+
+def test_v5_label_wrapping_and_reservation_preserve_text_and_avoid_other_objects():
+    from video_workbench.motion_geometry import connection_geometry, inflate, overlaps, segment_hits_box
+    boxes = {key: value for key, value in LAYOUTS['focus'].items() if key in {'top', 'left', 'center', 'right', 'note'}}
+    relations = [
+        dict(id='vertical', source='top', target='note', label='插件提供工具与执行环境'),
+        dict(id='across', source='left', target='right', label='没有待处理工作时才结束'),
+        dict(id='up', source='center', target='top', label='保留完整历史'),
+    ]
+    geometry = connection_geometry(relations, boxes)
+    previous = []
+    for relation in relations:
+        item = geometry[relation['id']]
+        assert ''.join(item['lines']) == relation['label']
+        assert len(item['lines']) >= 1
+        assert all(not overlaps(item['box'], inflate(box, 4)) for box in boxes.values())
+        assert all(not overlaps(item['box'], inflate(box, 8)) for box in previous)
+        assert all(not segment_hits_box(start, end, box)
+                   for start, end in zip(item['points'], item['points'][1:]) for box in previous)
+        previous.append(item['box'])
+    assert any(len(item['lines']) > 1 for item in geometry.values())
+    for identity, item in geometry.items():
+        assert all(not segment_hits_box(start, end, other['box'])
+                   for start, end in zip(item['points'], item['points'][1:])
+                   for other_id, other in geometry.items() if other_id != identity)
+
+
+def test_v5_label_plates_are_above_all_strokes_and_follow_draw_visibility():
+    from video_workbench.examples.build_motion_samples import history_plan, SPOKEN_TEXT
+    beats = make_beats(SPOKEN_TEXT)
+    plan = history_plan(beats)
+    page = compile_project(plan, beats, estimated_alignment(beats, 'a' * 64, 18))['index.html'].decode()
+    assert "version:'motion-compiler-5'" in page
+    assert 'class="relation-base"' not in page
+    assert page.rfind('class="relation-active"') < page.index('class="relation-label"')
+    assert 'class="relation-plate"' in page
+    assert "el.querySelectorAll('text')" in page  # Real font ink must fit its plate.
+    assert 'strokeDashoffset:1,opacity:0' in page
+    for relation in plan['relations']:
+        assert f'<g id="label-{relation["id"]}"' in page
+    assert "document.getElementById('label-'+a.target),{opacity:0},{opacity:1" in page
+
+
+def test_v5_crowded_labels_fail_explicitly_instead_of_drawing_over_text():
+    from video_workbench.motion_geometry import place_label
+    with pytest.raises(ValueError, match='motion_relation_layout_unavailable'):
+        place_label('关系', [(100, 200), (1100, 200)], [(0, 0, 1280, 720)])
+
+
+def test_v5_relationship_labels_avoid_the_entire_moving_token_sweep():
+    from video_workbench.examples.build_motion_samples import history_plan, SPOKEN_TEXT
+    from video_workbench.motion_geometry import connection_geometry, inflate, overlaps
+    beats = make_beats(SPOKEN_TEXT)
+    plan = history_plan(beats)
+    boxes = {row['id']: LAYOUTS[plan['template']][row['slot']] for row in plan['elements']}
+    sweep = (162, 302, 956, 44)
+    geometry = connection_geometry(plan['relations'], boxes,
+        [(72, 74, 1136, 112), (72, 636, 1136, 72)], [sweep])
+    assert all(not overlaps(item['box'], inflate(sweep, 4)) for item in geometry.values())
+    page = compile_project(plan, beats, estimated_alignment(beats, 'a' * 64, 18))['index.html'].decode()
+    assert 'overlapsNodes:Object.keys(data.boxes)' in page
+    assert '...relationLayout(el)' in page
+    assert 'if(!text.textContent)return false;' in page

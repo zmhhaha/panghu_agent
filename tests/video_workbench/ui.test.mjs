@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   acceptProjectRead, activeOperations, chooseVersion, createIntentKeys, createSceneDraft,
   createStoryboardRequest, createWorkspaceState, intentFingerprint, issueProjectRead, selectProject, selectScene,
-  selectedVersion, syncSceneDraft, updateProjectSummary, versionPath,
+  selectedVersion, syncSceneDraft, updateProjectSummary, versionPath, renderSourceLabel, renderProgressLabel,
 } from '../../video_workbench/web/model.mjs';
 
 function project(id = 'a', revision = 1, versions = []) {
@@ -92,9 +92,24 @@ test('dirty drafts keep user input and their original concurrency revision on po
   assert.equal(result, draft);
   assert.equal(result.title, '我还在写');
   assert.equal(result.expected_revision, 1);
+  assert.equal(result.base_fields.title, scene.title);
+  assert.notEqual(result.base_fields.title, result.title);
   const clean = syncSceneDraft(createSceneDraft(scene, 1), { ...scene, title: '新标题' }, 9);
   assert.equal(clean.title, '新标题');
   assert.equal(clean.expected_revision, 9);
+  assert.equal(clean.base_fields.title, '新标题');
+});
+
+test('render provenance identifies a scene candidate and progress uses recorded stages', () => {
+  assert.equal(renderSourceLabel({ scenes: [{ title: '文件调用', visual_version_number: 2, audio_version_number: 1 }] }),
+    '文件调用 · 图解 2 · 配音 A1');
+  assert.equal(renderSourceLabel({ scenes: [{}, {}] }), '整片 · 2 镜头');
+  assert.equal(renderSourceLabel({}), '制作范围未记录');
+  const item = { id: 'render', status: 'running', created_at: 60,
+    progress: { stage: 'observing_scene', scene_index: 3, total_scenes: 8, completed_scenes: 3 },
+    diagnostic: { diagnostic_id: 'MR-' + 'a'.repeat(16) } };
+  assert.equal(renderProgressLabel(item, 150), '检查动画关键帧 · 第 4/8 镜 · 已完成 3/8 镜 · 已等待 1分30秒 · 问题编号 MR-aaaaaaaaaaaaaaaa');
+  assert.equal(renderProgressLabel({ progress: { stage: 'private_path' }, diagnostic: { diagnostic_id: '/secret' } }), '');
 });
 
 test('uncertain retries reuse intent keys and confirmed success retires them', () => {

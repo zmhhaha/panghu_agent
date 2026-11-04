@@ -152,6 +152,78 @@ def draft_request(project, sid, version_id, audio_id):
                 scene_id=sid, motion_version_id=version_id, audio_version_id=audio_id)
 
 
+def test_optional_project_end_hold_keeps_original_audio_and_action_times(env):
+    client, app, _, _ = env
+    project, sid, vid, aid = setup(env)
+    project = adopt(env, project, sid, vid)
+    body = dict(expected_revision=project['revision'], purpose='draft', subtitles=False)
+    original = app.state.production.snapshot_v2('alice', project['id'], body)
+    held = app.state.production.snapshot_v2('alice', project['id'], dict(body, end_hold_seconds=4))
+    assert held['duration_seconds'] == original['duration_seconds'] + 4
+    assert held['scenes'][0] == original['scenes'][0]
+    assert held['scenes'][-1]['audio'] == original['scenes'][-1]['audio']
+    assert held['scenes'][-1]['motion']['timeline']['actions'] == original['scenes'][-1]['motion']['timeline']['actions']
+    assert held['scenes'][-1]['timing']['trailing_seconds'] == 4
+    verify_snapshot_v2(held)
+    response = client.post(f'/api/projects/{project["id"]}/motion-renders', json=dict(body, end_hold_seconds=4),
+                           headers={'Idempotency-Key': 'project-end-hold'})
+    assert response.status_code == 202, response.text
+    item = client.get(f'/api/projects/{project["id"]}/renders').json()['renders'][0]
+    assert item['end_hold_seconds'] == 4 and item['content_state'] == 'current'
+
+
+def test_render_history_provenance_is_read_only_and_ignores_unrelated_scene_updates(env):
+    client, app, _, _ = env
+    project, sid, vid, aid = setup(env)
+    response = client.post(f'/api/projects/{project["id"]}/motion-renders',
+        json=draft_request(project, sid, vid, aid), headers={'Idempotency-Key': 'history-provenance'})
+    assert response.status_code == 202, response.text
+    job_id = response.json()['id']
+    with app.state.store.transaction() as db:
+        before = tuple(db.execute('SELECT document,snapshot,data FROM video_renders WHERE id=?', (job_id,)).fetchone())
+        raw = app.state.store._project(db, 'alice', project['id'])
+        raw['scenes'][0]['title'] = '无关镜头的新标题'
+        app.state.store._save(db, raw)
+    item = client.get(f'/api/projects/{project["id"]}/renders').json()['renders'][0]
+    assert item['content_state'] == 'current'
+    assert (item['width'], item['height'], item['fps']) == (1280, 720, 24)
+    assert item['scenes'] == [dict(scene_id=sid, title='第2镜', visual_mode='motion',
+        visual_version_id=vid, audio_version_id=aid, visual_version_number=1, audio_version_number=1)]
+    with app.state.store.transaction() as db:
+        after = tuple(db.execute('SELECT document,snapshot,data FROM video_renders WHERE id=?', (job_id,)).fetchone())
+        assert before == after
+        raw = app.state.store._project(db, 'alice', project['id'])
+        app.state.store._scene(raw, sid)['narration'] = '本镜头旁白真的改变了。'
+        app.state.store._save(db, raw)
+    assert client.get(f'/api/projects/{project["id"]}/renders').json()['renders'][0]['content_state'] == 'changed'
+
+
+def test_remote_progress_and_safe_diagnostics_survive_business_reload(env):
+    client, app, _, renderer = env
+    project, sid, vid, aid = setup(env)
+    response = client.post(f'/api/projects/{project["id"]}/motion-renders',
+        json=draft_request(project, sid, vid, aid), headers={'Idempotency-Key': 'progress-provenance'})
+    assert response.status_code == 202, response.text
+    progress = dict(stage='observing_scene', scene_index=0, completed_scenes=0, total_scenes=1, updated_at=100)
+    diagnostic = dict(code='motion_observation_stage_failed', category='observation', stage='observing_scene',
+                      scene_index=0, diagnostic_id='MR-' + 'a' * 16)
+    def failing(snapshot, directory, *, progress_callback, **kwargs):
+        progress_callback(dict(progress=dict(progress, private_path='/secret'), diagnostic=dict(diagnostic, stderr='secret')))
+        raise ServiceError('motion_observation_stage_failed', 502)
+    renderer.supports_progress = True
+    renderer.render = failing
+    app.state.production.tick()
+    item = client.get(f'/api/projects/{project["id"]}/renders').json()['renders'][0]
+    assert item['status'] == 'failed' and item['error'] == diagnostic['code']
+    assert item['progress'] == progress and item['diagnostic'] == diagnostic
+    restarted = Production(app.state.store, motion_store=app.state.motion_store)
+    assert restarted.renders('alice', project['id'])[0] == item
+    # Late callbacks never change a terminal job or its original snapshot.
+    app.state.production._render_progress(item['id'], item['snapshot_sha256'],
+        dict(progress=dict(progress, stage='completed', completed_scenes=1)))
+    assert restarted.renders('alice', project['id'])[0] == item
+
+
 def test_http_generation_replay_uses_one_agent_submit_and_keeps_candidate_unadopted(env):
     client, app, gateway, _ = env
     project, sid, version_id, aid = setup(env)

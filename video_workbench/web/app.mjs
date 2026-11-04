@@ -2,7 +2,7 @@ import {
   activeOperations, chooseVersion, createIntentKeys, createSceneDraft, createStoryboardRequest, createWorkspaceState,
   acceptProjectRead, isActiveOperation, isUnresolvedProductionOperation, issueProjectRead, latestVersion, orderedVersions,
   selectProject, selectScene, selectedScene, selectedVersion, statusLabel, syncSceneDraft,
-  updateProjectSummary, versionPath,
+  updateProjectSummary, versionPath, renderSourceLabel, renderProgressLabel,
   audioPath, chooseAudioVersion, createCaptionDraft, orderedAudioVersions, parsePronunciation,
   pronunciationText, selectedAudioVersion, timelinePosition, validateCaptionCues, deliveryIssues,
   speechVoices, speechVoiceName, projectSpeechVoice, syncProjectSpeechDraft, projectVoiceOptions,
@@ -26,6 +26,7 @@ const projectSpeechDrafts = new Map();
 const timingDrafts = new Map();
 const captionDrafts = new Map();
 const renderHistories = new Map();
+let motionRenderSequence = 0;
 let sessionSettings = {};
 let displayedAudioVersion = null;
 let displayedAudioScene = null;
@@ -77,7 +78,7 @@ const motionPanel = createMotionPanel({
 });
 
 const batchPanel = createBatchPanel({
-  document, request, refresh: () => loadProject(), onError: showError, onSuccess: success,
+  document, request, refresh: () => loadProject(), onError: showError, onInputError: showInputError, onSuccess: success,
   getContext: () => ({ project: state.project, epoch: state.epoch,
     enabled: sessionSettings.batch_enabled === true && sessionSettings.motion_enabled === true,
     motionConfigured: sessionSettings.motion_configured === true,
@@ -101,7 +102,7 @@ const batchPanel = createBatchPanel({
   onPlayRender: item => openMotionRender(item),
   onProjectDraft: () => {
     if (!state.project || batchPanel.hasUnresolvedOperation(state.projectId) || projectHasUnsavedEdits(state.projectId)) return;
-    const intent = createProjectMotionDraftRequest(state.project);
+    const intent = createProjectMotionDraftRequest(state.project, { endHoldSeconds: $('render-end-hold').checked ? 4 : 0 });
     perform(`render:${state.projectId}`, () => request(intent.path, { method: 'POST', body: intent.body }),
       () => success('整片草稿制作已开始，使用当前已采用版本；不会确认人工时序或替你正式导出。'));
   },
@@ -134,6 +135,9 @@ const ERROR_LABELS = {
   csrf_invalid: '登录状态已更新，请刷新后重试。', invalid_csrf: '登录状态已更新，请刷新后重试。',
   csrf_rejected: '登录状态已更新，请刷新后重试。',
   revision_conflict: '项目已有更新。你的草稿已保留，请重新载入最新内容后再保存。',
+  scene_edit_conflict: '当前镜头的原始内容已被修改。你的草稿已保留，请重新载入并核对后再保存。',
+  motion_relation_layout_unavailable: '图解关系过密，暂时无法清晰排布。请减少节点或缩短关系标签后重新生成图解，已有配音可以保留。',
+  motion_tail_hold_exceeds_limit: '最后一个镜头加上片尾停留会超过 60 秒。请缩短最后一镜，或关闭片尾停留后再制作。',
   head_conflict: '采用的版本已发生变化，请刷新项目后重试。',
   operation_in_progress: '这个镜头还有正在执行的任务，请等待任务结束。',
   active_operation: '当前任务尚未结束，请稍后重试。',
@@ -225,6 +229,8 @@ function showError(error) {
 }
 
 function success(message) {
+  $('global-error').hidden = true;
+  $('login-link').hidden = true;
   clearTimeout(successTimer);
   $('success-message').textContent = message;
   $('success-message').hidden = false;
@@ -689,6 +695,7 @@ function renderDelivery(project) {
   $('render-motion-project').hidden = !dynamic;
   $('motion-delivery-note').hidden = !dynamic;
   $('delivery-legacy-options').hidden = dynamic;
+  $('delivery-end-options').hidden = !dynamic;
   $('delivery-options-note').textContent = dynamic ? '关键点由画面逐步表达，保留旁白，不附加字幕。'
     : '关键点默认由画面表达。关闭附加字幕仍保留旁白，预览与导出使用同一选择。';
   $('captions-section').hidden = dynamic;
@@ -700,7 +707,7 @@ function renderDelivery(project) {
   $('render-subtitles').disabled = dynamic;
   $('download-subtitles').disabled = !scenes.length || pending.has(`subtitles:${project.id}`);
   $('download-subtitles').hidden = dynamic;
-  $('render-hint').textContent = dynamic ? '先制作当前镜头的 MP4 草稿，确认后再导出整片。草稿不会自动采用；成片使用已采用版本与已核对时序，保留旁白且不附加字幕。'
+  $('render-hint').textContent = dynamic ? '当前草稿与正式视频均为 1280×720（16:9）、24 fps；草稿用于先看效果，正式导出还需核对录音时序。保留旁白，不附加字幕。'
     : sessionSettings.media_configured ? '导出在后台进行，过程中可以继续编辑；结果保留导出开始时的版本。'
     : '视频导出暂时不可用，仍可预览并导出原项目素材。';
   const fragment = document.createDocumentFragment();
@@ -709,8 +716,10 @@ function renderDelivery(project) {
     const label = node('div');
     const subtitleLabel = item.subtitles === true ? '有字幕' : item.subtitles === false ? '无字幕' : '字幕状态未记录';
     const kind = item.purpose === 'draft' ? 'MP4 草稿' : item.visual_mode === 'mixed' ? '动态成片' : item.silent ? '静音视频' : '有声视频';
-    label.append(node('strong', `${kind} · ${subtitleLabel} · ${statusLabel(item.status)}`),
-      node('small', `文稿版本 ${item.project_revision ?? '—'}${item.project_revision !== project.revision ? ' · 项目已有后续修改' : ''}${item.error ? ` · ${ERROR_LABELS[item.error] ?? (item.error.startsWith('motion_') ? motionErrorLabel(item.error) : '导出未完成，请检查资源后重试。')}` : ''}`));
+    label.append(node('strong', `${kind} · ${renderSourceLabel(item)} · ${subtitleLabel} · ${statusLabel(item.status)}`),
+      node('small', `文稿版本 ${item.project_revision ?? '未记录'}${item.content_state === 'changed' ? ' · 此产物对应的内容或采用版本已有变化' : item.content_state === 'current' ? ' · 对应内容仍有效' : ''}${item.width && item.height ? ` · ${item.width}×${item.height} · ${item.fps} fps` : ''}${item.created_at ? ` · ${new Date(item.created_at * 1000).toLocaleString('zh-CN')}` : ''}${item.error ? ` · ${ERROR_LABELS[item.error] ?? (item.error.startsWith('motion_') ? motionErrorLabel(item.error) : '导出未完成，请检查资源后重试。')}` : ''}`));
+    const progress = renderProgressLabel(item);
+    if (progress) label.append(node('small', progress));
     row.append(label);
     if (['completed', 'succeeded'].includes(item.status)) {
       const play = node('button', '播放 MP4', 'button secondary'); play.type = 'button';
@@ -916,8 +925,8 @@ async function saveScene(event) {
   const sceneId = editor === 'new' ? null : state.sceneId;
   const key = draftKey(sceneId);
   const draft = drafts.get(key);
-  const { expected_revision, dirty, ...fields } = draft;
-  const payload = sceneId ? { ...fields, expected_revision } : fields;
+  const { expected_revision, base_fields, dirty, ...fields } = draft;
+  const payload = sceneId ? { ...fields, expected_revision, base_fields } : fields;
   await perform(`save:${projectId}`, () => request(sceneId ? `/api/scenes/${encodeURIComponent(sceneId)}`
     : `/api/projects/${encodeURIComponent(projectId)}/scenes`, { method: sceneId ? 'PATCH' : 'POST', body: payload }), result => {
     drafts.delete(key);
@@ -1009,17 +1018,32 @@ function closeProjectPlayer() {
 }
 
 function closeMotionRender() {
+  motionRenderSequence++;
   const video = $('motion-render-video');
   video.pause(); video.removeAttribute('src'); video.load();
   if ($('motion-render-dialog').open) $('motion-render-dialog').close();
 }
 
-function openMotionRender(item) {
+async function openMotionRender(item) {
+  const sequence = ++motionRenderSequence;
+  // Batch rows carry a render ID, not a historical project revision. Resolve
+  // the original record rather than substituting the current project's data.
+  if (item.project_revision == null) {
+    const projectId = state.projectId, epoch = state.epoch;
+    try {
+      const recorded = (renderHistories.get(projectId) ?? []).find(row => row.id === item.id);
+      const rows = recorded ? null : (await request(`/api/projects/${encodeURIComponent(projectId)}/renders`)).renders;
+      if (state.projectId !== projectId || state.epoch !== epoch || sequence !== motionRenderSequence) return;
+      if (rows) renderHistories.set(projectId, rows);
+      item = recorded ?? rows?.find(row => row.id === item.id);
+      if (!item) { showInputError('未找到这条视频的原始制作记录，请重新读取状态。'); return; }
+    } catch (error) { if (sequence === motionRenderSequence) showError(error); return; }
+  }
   closeMotionRender(); closeProjectPlayer(); motionPanel.pause(); batchPanel.pause(); $('audio-preview').pause();
   $('motion-render-heading').textContent = item.purpose === 'draft' ? 'MP4 草稿' : '视频成片';
   $('motion-render-note').textContent = item.purpose === 'draft'
-    ? `文稿版本 ${item.project_revision ?? '—'} 的候选草稿。画面变化可能基于待核对的估算时序；播放不代表采用或已核对。`
-    : `文稿版本 ${item.project_revision ?? '—'} 的采用版本快照。项目后续修改不会改变这条成片。`;
+    ? `${renderSourceLabel(item)} · 文稿版本 ${item.project_revision ?? '未记录'} 的候选草稿。画面变化可能基于待核对的估算时序；播放不代表采用或已核对。`
+    : `${renderSourceLabel(item)} · 文稿版本 ${item.project_revision ?? '未记录'} 的采用版本快照。项目后续修改不会改变这条成片。`;
   $('motion-render-video').src = `/api/renders/${encodeURIComponent(item.id)}/video`;
   $('motion-render-dialog').showModal();
 }
@@ -1388,7 +1412,7 @@ $('render-motion-project').addEventListener('click', () => {
   if (!state.project || !usesDynamicVideo(state.project) || !sessionSettings.motion_render_configured
       || batchPanel.hasUnresolvedOperation(state.projectId) || projectHasUnsavedEdits(state.projectId) || deliveryIssues(state.project, { silent: false, subtitles: false }).length
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation)) return;
-  const intent = createMotionRenderRequest(state.project, { purpose: 'delivery' });
+  const intent = createMotionRenderRequest(state.project, { purpose: 'delivery', endHoldSeconds: $('render-end-hold').checked ? 4 : 0 });
   perform(`render:${state.projectId}`, () => request(intent.path, { method: 'POST', body: intent.body }),
     () => success('动态成片导出已开始，使用已采用版本和已人工核对的时序。'));
 });

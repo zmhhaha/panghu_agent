@@ -133,7 +133,7 @@ def v2_text_fixture(compiler='motion-compiler-2'):
             state['text_boxes'] = {key: dict(x=x + 14, y=y + 12, width=width - 28, height=20,
                 scrollWidth=width - 28, clientWidth=width - 28,
                 scrollHeight=20, clientHeight=20, overflow=False) for key in keys}
-    if compiler == 'motion-compiler-4':
+    if compiler in {'motion-compiler-4', 'motion-compiler-5'}:
         add_initial_evidence(observations)
     return plan, timeline, observations
 
@@ -145,7 +145,7 @@ def add_initial_evidence(observations):
     observations['repeated_initial'] = deepcopy(initial)
 
 
-@pytest.mark.parametrize('compiler', ['motion-compiler-2', 'motion-compiler-3', 'motion-compiler-4'])
+@pytest.mark.parametrize('compiler', ['motion-compiler-2', 'motion-compiler-3', 'motion-compiler-4', 'motion-compiler-5'])
 def test_versioned_text_checks_require_all_text_boxes_without_changing_v1_observations(compiler):
     assert verify_observations(*fixture())['technical_status'] == 'passed'
     assert verify_observations(*v2_text_fixture(compiler))['technical_status'] == 'passed'
@@ -157,7 +157,7 @@ def test_versioned_text_checks_require_all_text_boxes_without_changing_v1_observ
 
 @pytest.mark.parametrize('key', ['copy', 'label', 'detail'])
 @pytest.mark.parametrize('failure', ['above', 'below', 'left', 'right', 'scroll', 'reported_overflow'])
-@pytest.mark.parametrize('compiler', ['motion-compiler-2', 'motion-compiler-3', 'motion-compiler-4'])
+@pytest.mark.parametrize('compiler', ['motion-compiler-2', 'motion-compiler-3', 'motion-compiler-4', 'motion-compiler-5'])
 def test_versioned_text_checks_reject_cropped_child_text_when_parent_claims_no_overflow(key, failure, compiler):
     args = v2_text_fixture(compiler)
     state = args[2]['windows'][0]['before']['elements']['proof']
@@ -199,17 +199,22 @@ def draw_fixture(compiler='motion-compiler-4'):
             opacity=opacity, labelOpacity=opacity, markerOpacity=marker, baseCount=0)
         sample['layout']['relations'] = [dict(id='link', opacity=opacity,
             x=200, y=200, width=36, height=25, overflow=False)]
-        if compiler != 'motion-compiler-4':
+        if compiler == 'motion-compiler-5':
+            sample['layout']['relations'] = [dict(id='link', text='处理', opacity=opacity,
+                x=400, y=200, width=54, height=34, overflow=False,
+                plate=dict(x=400, y=200, width=54, height=34),
+                ink=dict(x=409, y=209, width=36, height=20), overlapsNodes=[], overlapsLabels=[])]
+        if compiler not in {'motion-compiler-4', 'motion-compiler-5'}:
             sample['relations']['link']['opacity'] = 1
             del sample['relations']['link']['baseCount']
             del sample['relations']['link']['labelOpacity']
-    if compiler == 'motion-compiler-4':
+    if compiler in {'motion-compiler-4', 'motion-compiler-5'}:
         add_initial_evidence(observations)
     return plan, timeline, observations
 
 
 @pytest.mark.parametrize('compiler', ['motion-compiler-1', 'motion-compiler-2', 'motion-compiler-3',
-                                     'motion-compiler-4'])
+                                     'motion-compiler-4', 'motion-compiler-5'])
 def test_draw_review_preserves_legacy_evidence_and_admits_hidden_v4_connectors(compiler):
     assert verify_observations(*draw_fixture(compiler))['technical_status'] == 'passed'
 
@@ -218,6 +223,115 @@ def test_v4_draw_review_accepts_fade_progress_alongside_fractional_dash_progress
     args = draw_fixture()
     assert args[2]['windows'][0]['middle']['relations']['link']['opacity'] == .5
     assert verify_observations(*args)['technical_status'] == 'passed'
+
+
+@pytest.mark.parametrize('when', ['before', 'middle', 'after', 'initial', 'repeated_initial'])
+@pytest.mark.parametrize('failure', ['missing_plate', 'missing_ink', 'missing_label', 'ink_outside',
+                                     'reported_overflow', 'reported_overlap', 'actual_node_overlap'])
+def test_v5_requires_real_label_bounds_and_no_collision_at_every_seek(when, failure):
+    args = draw_fixture('motion-compiler-5')
+    sample = args[2][when] if when in {'initial', 'repeated_initial'} else args[2]['windows'][0][when]
+    label = sample['layout']['relations'][0]
+    if failure == 'missing_plate':
+        del label['plate']
+    elif failure == 'missing_ink':
+        del label['ink']
+    elif failure == 'missing_label':
+        sample['layout']['relations'] = []
+    elif failure == 'ink_outside':
+        label['ink']['x'] = label['plate']['x'] - 1
+    elif failure == 'reported_overflow':
+        label['overflow'] = True
+    elif failure == 'reported_overlap':
+        label['overlapsLabels'] = ['other']
+    else:
+        # A false "no overlap" flag must not bypass the measured rectangles.
+        label['plate'].update(x=162, y=220)
+        label['ink'].update(x=171, y=229)
+    with pytest.raises(ServiceError):
+        verify_observations(*args)
+
+
+def test_v5_empty_relation_text_has_no_invented_ink_bounds():
+    args = draw_fixture('motion-compiler-5')
+    args[0]['relations'][0]['label'] = ''
+    args[1]['plan_sha256'] = sha256(args[0])
+    args[2]['timeline_sha256'] = sha256(args[1])
+    samples = [args[2]['initial'], args[2]['repeated_initial'],
+               *(args[2]['windows'][0][key] for key in ('before', 'middle', 'after'))]
+    for sample in samples:
+        label = sample['layout']['relations'][0]
+        label.update(text='', width=0, height=0, ink=None)
+        label['plate'].update(width=0, height=0)
+    assert verify_observations(*args)['technical_status'] == 'passed'
+
+
+def highlight_fixture(*, reveal_together=False, hidden_during_highlights=False):
+    plan, _, observations = v2_text_fixture('motion-compiler-5')
+    beats = make_beats('请求到达。请求进入队列。执行节点开始工作。')
+    def action(beat, kind):
+        return dict(beat_id=beats['segments'][beat]['id'], target='proof', kind=kind,
+                    placement='start', pace='normal', to_slot=None)
+    plan['actions'] = [action(0, 'highlight'), action(1, 'highlight')]
+    if reveal_together:
+        plan['actions'].append(action(0, 'reveal'))
+    if hidden_during_highlights:
+        plan['actions'].append(action(2, 'reveal'))
+    timeline = resolve_timeline(plan, beats, estimated_alignment(beats, 'a' * 64, 15),
+                                compiler_version='motion-compiler-5')
+    observations['timeline_sha256'] = sha256(timeline)
+    base = deepcopy(observations['windows'][0]['before'])
+    def colors(sample, *, opacity, pulse, active):
+        sample['elements']['proof'].update(opacity=opacity, highlightWidth=pulse,
+            highlightColor='rgb(121, 228, 213)',
+            borderColor='rgb(121, 228, 213)' if active else 'rgb(51, 68, 94)',
+            backgroundColor='rgb(33, 67, 78)' if active else 'rgb(22, 36, 58)')
+    initial = deepcopy(base)
+    initial.update(time=0, actual_time=0)
+    colors(initial, opacity=0 if reveal_together or hidden_during_highlights else 1, pulse=0, active=False)
+    observations['initial'] = initial
+    observations['repeated_initial'] = deepcopy(initial)
+    observations['windows'] = []
+    for item, times in zip(timeline['actions'], action_windows(timeline)):
+        row = dict(ordinal=item['ordinal'])
+        first_window = item['beat_id'] == beats['segments'][0]['id']
+        for key, index, pulse in [('before', 0, 0), ('middle', 1, 8), ('after', 2, 0)]:
+            sample = deepcopy(base)
+            sample.update(time=times[key], actual_time=times[key], frame_sha256='abc'[index] * 64)
+            visible = 1
+            if hidden_during_highlights:
+                visible = [0, .5, 1][index] if item['kind'] == 'reveal' else 0
+            elif reveal_together and first_window:
+                visible = [0, .5, 1][index]
+            actual_pulse = pulse if item['kind'] == 'highlight' or first_window and reveal_together else 0
+            colors(sample, opacity=visible, pulse=actual_pulse, active=not first_window or index > 0)
+            row[key] = sample
+        observations['windows'].append(row)
+    return plan, timeline, observations
+
+
+@pytest.mark.parametrize('reveal_together', [False, True])
+def test_v5_repeated_highlights_use_real_pulses_and_accept_concurrent_reveal(reveal_together):
+    args = highlight_fixture(reveal_together=reveal_together)
+    second = next(row for row in args[2]['windows'] if row['ordinal'] == 1)
+    assert second['before']['elements']['proof']['borderColor'] == second['after']['elements']['proof']['borderColor']
+    report = verify_observations(*args)
+    assert report['technical_status'] == 'passed'
+    assert report['timing_review_status'] == 'pending'
+
+
+def test_v5_a_target_hidden_throughout_highlights_still_fails():
+    with pytest.raises(ServiceError, match='motion_invisible_highlight'):
+        verify_observations(*highlight_fixture(hidden_during_highlights=True))
+
+
+@pytest.mark.parametrize('when', ['before', 'middle', 'after', 'initial', 'repeated_initial'])
+def test_v5_pulse_cannot_be_missing_or_leak_outside_its_window(when):
+    args = highlight_fixture()
+    sample = args[2][when] if when in {'initial', 'repeated_initial'} else args[2]['windows'][0][when]
+    sample['elements']['proof']['highlightWidth'] = 0 if when == 'middle' else 8
+    with pytest.raises(ServiceError, match='motion_expected_highlight_missing'):
+        verify_observations(*args)
 
 
 @pytest.mark.parametrize('key', ['opacity', 'labelOpacity', 'markerOpacity'])

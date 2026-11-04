@@ -138,13 +138,26 @@ class Store(AudioStoreMixin):
                     return p['id']
         raise ServiceError('not_found', 404)
 
-    def save_scene(self, owner, project_id, fields, scene_id=None, expected_revision=None):
+    def save_scene(self, owner, project_id, fields, scene_id=None, expected_revision=None, *, base_fields=None):
         with self.transaction() as db:
             project = self._project(db, owner, project_id)
             self._busy(db, project_id, scene_id)
             if scene_id:
-                self._revision(project, expected_revision)
-                self._scene(project, scene_id).update(fields)
+                scene = self._scene(project, scene_id)
+                if project['revision'] != expected_revision:
+                    # A background result on another scene changes the project
+                    # revision, but must not invalidate an unchanged editor base.
+                    # Old clients retain strict revision checks. Compare the
+                    # entire editable base inside this write transaction; never
+                    # overwrite a concurrent edit or accept a future revision.
+                    keys = {'title', 'narration', 'visual_description', 'duration_seconds', 'format'}
+                    if (type(expected_revision) is not int or not 1 <= expected_revision < project['revision']
+                            or type(base_fields) is not dict or set(base_fields) != keys):
+                        raise ServiceError('revision_conflict', 409)
+                    if any(scene.get(key, 'svg' if key == 'format' else None) != value
+                           for key, value in base_fields.items()):
+                        raise ServiceError('scene_edit_conflict', 409)
+                scene.update(fields)
             else:
                 if len(project['scenes']) >= 24:
                     raise ServiceError('scene_limit', 422)
@@ -176,6 +189,10 @@ class Store(AudioStoreMixin):
                     raise ServiceError('storyboard_requires_empty_project', 409)
                 document = dict(schema_version='1', kind=kind, title=project['title'], script=project['script'],
                                 style=project['style'], max_scenes=request.get('max_scenes', 12))
+                if project.get('production_mode') == 'motion':
+                    document['style'] = ('当前制作模式：随旁白逐步展开的动态图解，1280×720、24fps；关键点融入画面，'
+                        '不附加字幕。分镜画面说明应描述对象、关系和展开顺序，不要求静态SVG、1080p或底部字幕区域。\n'
+                        + project['style'])[:4000]
             else:
                 scene = self._scene(project, scene_id)
                 base_id = request.get('base_version_id')

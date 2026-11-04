@@ -14,6 +14,8 @@ from uuid import uuid4
 from agent_service.contracts import ServiceError, digest
 from . import media
 from .motion_snapshot import SCHEMA as MOTION_SCHEMA, freeze_snapshot_v2, verify_snapshot_v2
+from .render_metadata import render_metadata
+from .motion_render_adapter import safe_progress, safe_diagnostic
 
 ACTIVE = {'queued', 'running', 'cancelling'}
 MAX_PROJECT_AUDIO_BYTES = 64 * 1024 * 1024
@@ -259,6 +261,10 @@ class Production:
                     item['visual'] = self.store.version(owner, version_id)
                 adopted[scene['id']] = dict(visual_mode=mode, visual_version_id=version_id,
                                             audio_version_id=scene.get('head_audio_version_id'))
+                if scene is scenes[-1] and not all(selection) and request.get('end_hold_seconds', 0):
+                    item['trailing_seconds'] = max(item['trailing_seconds'], request['end_hold_seconds'])
+                    if mode == 'motion' and audio['duration_seconds'] + item['leading_seconds'] + item['trailing_seconds'] > MAX_MOTION_SCENE_SECONDS:
+                        raise ServiceError('motion_tail_hold_exceeds_limit', 422)
                 resolved.append(item)
             return freeze_snapshot_v2(project_id, project['revision'], project['title'], resolved,
                 runtime_fingerprint=self.runtime_fingerprint, purpose=purpose,
@@ -270,7 +276,10 @@ class Production:
             raise ServiceError('motion_disabled', 503)
         if self.motion_renderer is None:
             raise ServiceError('motion_render_not_configured', 503)
-        fingerprint = digest(dict(project_id=project_id, request=request, schema=MOTION_SCHEMA))
+        fingerprint_request = dict(request)
+        if not fingerprint_request.get('end_hold_seconds'):
+            fingerprint_request.pop('end_hold_seconds', None)
+        fingerprint = digest(dict(project_id=project_id, request=fingerprint_request, schema=MOTION_SCHEMA))
         with self.store.transaction() as db:
             row = db.execute('SELECT document,request_hash FROM video_renders WHERE owner=? AND idem=?', (owner, idem)).fetchone()
             if row:
@@ -293,6 +302,8 @@ class Production:
                 status='queued', error=None, silent=False, subtitles=snapshot['subtitles'],
                 schema=MOTION_SCHEMA, purpose=snapshot['purpose'], quality=snapshot['quality'], visual_mode='mixed',
                 created_at=time.time(), snapshot_sha256=snapshot['sha256'], cancel_requested=False, render_attempted=False)
+            if request.get('end_hold_seconds') and not request.get('scene_id'):
+                job['end_hold_seconds'] = request['end_hold_seconds']
             packed = dict(snapshot, scenes=[dict(s, audio={key: value for key, value in s['audio'].items()
                 if key != 'data_base64'}) for s in snapshot['scenes']])
             db.execute('INSERT INTO video_renders VALUES (?, ?, ?, ?, ?, ?, ?, NULL)',
@@ -300,10 +311,40 @@ class Production:
         return self._public(job)
 
     def renders(self, owner, project_id):
-        self.store.project(owner, project_id)
+        with self.store.lock:
+            project = (self.motion_store or self.store).project(owner, project_id)
+            with self.store.transaction() as db:
+                alignments = {(row['motion_version_id'], row['audio_version_id']): json.loads(row['document'])
+                              for row in db.execute('SELECT motion_version_id,audio_version_id,document '
+                                  'FROM motion_alignments WHERE owner=? AND project_id=?', (owner, project_id))} if self.motion_store else {}
+                # Old immutable snapshots gain presentation metadata without
+                # rewriting their documents, media, hashes or original inputs.
+                result = []
+                for row in db.execute('SELECT document,snapshot FROM video_renders '
+                        'WHERE owner=? AND project_id=? ORDER BY rowid DESC', (owner, project_id)):
+                    job = self._public(json.loads(row['document']))
+                    result.append(dict(job, **render_metadata(json.loads(row['snapshot']), project,
+                        alignments, end_hold_seconds=job.get('end_hold_seconds', 0))))
+                return result
+
+    def _render_progress(self, job_id, snapshot_sha256, payload):
+        if not isinstance(payload, dict):
+            return
+        values = {key: value for key, cleaner in (('progress', safe_progress), ('diagnostic', safe_diagnostic))
+                  if (value := cleaner(payload.get(key))) is not None}
+        if not values:
+            return
         with self.store.transaction() as db:
-            return [self._public(json.loads(r[0])) for r in db.execute(
-                'SELECT document FROM video_renders WHERE owner=? AND project_id=? ORDER BY rowid DESC', (owner, project_id))]
+            row = db.execute('SELECT document FROM video_renders WHERE id=?', (job_id,)).fetchone()
+            if row is None:
+                return
+            latest = json.loads(row[0])
+            if latest['status'] not in ACTIVE or latest['snapshot_sha256'] != snapshot_sha256:
+                return
+            if all(latest.get(key) == value for key, value in values.items()):
+                return
+            latest.update(values)
+            db.execute('UPDATE video_renders SET document=? WHERE id=?', (json.dumps(latest), job_id))
 
     def cancel(self, owner, job_id):
         with self.store.transaction() as db:
@@ -401,8 +442,12 @@ class Production:
                 with tempfile.TemporaryDirectory(prefix='video-render-') as directory:
                     if motion:
                         render = getattr(self.motion_renderer, 'render', self.motion_renderer)
+                        options = {}
+                        if getattr(self.motion_renderer, 'supports_progress', False):
+                            options['progress_callback'] = lambda payload: self._render_progress(
+                                job['id'], job['snapshot_sha256'], payload)
                         result = render(snapshot, Path(directory), cancel_event=self.current_cancel,
-                                        operation_id=job['id'], owner=job['owner'])
+                                        operation_id=job['id'], owner=job['owner'], **options)
                     else:
                         result = self.renderer(snapshot, Path(directory), cancel_event=self.current_cancel)
                     path = Path(result['path']).resolve()

@@ -1,4 +1,4 @@
-"""Frozen v1/v2/v3 recordings stay reproducible with hidden-connector v4."""
+"""Frozen v1 through v4 recordings stay reproducible with routed compiler v5."""
 from copy import deepcopy
 import hashlib
 import io
@@ -20,11 +20,12 @@ from video_workbench.motion_snapshot import freeze_snapshot_v2, verify_snapshot_
 
 
 TEXT = '请求到达。进入队列。执行节点开始工作。'
-V1, V2, V3, V4 = (f'motion-compiler-{version}' for version in range(1, 5))
-VERSIONS = (V1, V2, V3, V4)
+V1, V2, V3, V4, V5 = (f'motion-compiler-{version}' for version in range(1, 6))
+VERSIONS = (V1, V2, V3, V4, V5)
 PROJECT_PAIRS = (
     (V1, 'technical-diagrams-1'), (V2, 'technical-diagrams-2'),
     (V3, 'technical-diagrams-3'), (V4, 'technical-diagrams-4'),
+    (V5, 'technical-diagrams-5'),
     ('motion-demo-compiler-1', 'record-demonstration-1'),
 )
 RUNTIME = dict(schema='video.motion-runtime.v1', hyperframes='0.8.149',
@@ -117,6 +118,33 @@ V3_GOLDEN = {
     },
 }
 V3_SNAPSHOT_SHA = '186bf455c7c36a72daa4cb252b159a8f340178cb0e89ad029003f73b44c8695e'
+V4_GOLDEN = {
+    'flow': {
+        'index.html': '0ebb910efcc5648d7b19d150718cba3c39e6a8ae6b981a3c4d988792accf7082',
+        'plan.json': 'eca6d25d23a51a9975732c78adc3d81ce80cb46a0db0c5df3506007bee842021',
+        'beats.json': 'f2554954f85093f930e87d66d21ea560fcb6757fddfc43a95186f2757adb9ca1',
+        'alignment.json': '0e0a99eeb59363992660e441afa0885a06c5fe2275d32abffda09913ba603349',
+        'timeline.json': '99592e11a60d122243729b74c3d8580106d4b6b2c61b5857b35c46486a942bfc',
+        'manifest.json': '8a90ea156cd6cd28fe8db0b251e71b80445d99c63bfc7c37e49dee2624e8a1c4',
+    },
+    'compare': {
+        'index.html': 'c6788bbc26a5c09ce08ba10014ec5148566ebc00e18a85f118966983dc14e92b',
+        'plan.json': 'ae176a19fa0cdb4d6e10f473fc091c48f5dfad49effba2cd97404853b3fd1754',
+        'beats.json': 'f2554954f85093f930e87d66d21ea560fcb6757fddfc43a95186f2757adb9ca1',
+        'alignment.json': '0e0a99eeb59363992660e441afa0885a06c5fe2275d32abffda09913ba603349',
+        'timeline.json': '7ba6f672cd5fdbd70fd500ae5eb059a265e7440b312ceec8cce148ee8f11e335',
+        'manifest.json': '62e6f9411a4502d3c70256e208870c059e54cf3aeb840603694e2f038ed3fd01',
+    },
+    'focus': {
+        'index.html': '41b6e2d0f3300e74fdd0dd16629a6699be169565c6714b62fc950561cc6eb44b',
+        'plan.json': '422a8b788b849b86e7c2b0adf086104ac013dfb30ad2a7df278fa228968d707a',
+        'beats.json': 'f2554954f85093f930e87d66d21ea560fcb6757fddfc43a95186f2757adb9ca1',
+        'alignment.json': '0e0a99eeb59363992660e441afa0885a06c5fe2275d32abffda09913ba603349',
+        'timeline.json': '20c5b476a99f35e1e1b32f7dcf0d6627f594d333762d0668ec9eb3cacf7047de',
+        'manifest.json': '2898d5ca3be97c3b57c03218fce67b21954110700f4d11d080fe9c3110906d6c',
+    },
+}
+V4_SNAPSHOT_SHA = '56f6978964b2ec12dd4a03f7fcad932aa4ed086b15bca4eec8c27b2793172201'
 
 
 def arguments(template='focus', *, audio_sha='a' * 64, seconds=15):
@@ -151,7 +179,7 @@ def snapshot(source):
 
 
 @pytest.mark.parametrize('template', ['flow', 'compare', 'focus'])
-@pytest.mark.parametrize('compiler,golden', [(V1, V1_GOLDEN), (V2, V2_GOLDEN), (V3, V3_GOLDEN)])
+@pytest.mark.parametrize('compiler,golden', [(V1, V1_GOLDEN), (V2, V2_GOLDEN), (V3, V3_GOLDEN), (V4, V4_GOLDEN)])
 def test_explicit_legacy_version_reproduces_all_pre_upgrade_bytes(template, compiler, golden):
     args = arguments(template)
     files = compile_project(*args, compiler_version=compiler)
@@ -160,26 +188,26 @@ def test_explicit_legacy_version_reproduces_all_pre_upgrade_bytes(template, comp
 
 
 @pytest.mark.parametrize('template', ['flow', 'compare', 'focus'])
-@pytest.mark.parametrize('compiler,template_version', PROJECT_PAIRS[:3])
-def test_default_v4_preserves_candidate_text_audio_and_actions(template, compiler, template_version):
+@pytest.mark.parametrize('compiler,template_version', PROJECT_PAIRS[:4])
+def test_default_v5_preserves_candidate_text_audio_and_actions(template, compiler, template_version):
     args = arguments(template)
     original = deepcopy(args)
     legacy = compile_project(*args, compiler_version=compiler)
     current = compile_project(*args)
-    assert COMPILER_VERSION == V4
-    assert TEMPLATE_VERSION == 'technical-diagrams-4'
+    assert COMPILER_VERSION == V5
+    assert TEMPLATE_VERSION == 'technical-diagrams-5'
     assert compile_project(*args) == current
     assert args == original
     for name in ('plan.json', 'beats.json', 'alignment.json'):
         assert current[name] == legacy[name]
     old_timeline, new_timeline = (json.loads(files['timeline.json']) for files in (legacy, current))
     assert old_timeline.pop('compiler') == compiler
-    assert new_timeline.pop('compiler') == V4
+    assert new_timeline.pop('compiler') == V5
     assert new_timeline == old_timeline
     assert current['index.html'] != legacy['index.html']
     old_manifest, new_manifest = (json.loads(files['manifest.json']) for files in (legacy, current))
     assert (old_manifest['compiler'], old_manifest['template']) == (compiler, template_version)
-    assert (new_manifest['compiler'], new_manifest['template']) == (V4, 'technical-diagrams-4')
+    assert (new_manifest['compiler'], new_manifest['template']) == (V5, 'technical-diagrams-5')
     assert new_manifest['audio_sha256'] == old_manifest['audio_sha256']
     assert new_manifest['semantic_sha256'] == old_manifest['semantic_sha256']
 
@@ -193,7 +221,7 @@ def test_generic_compiler_cannot_select_unknown_or_demo_implementations(compiler
 
 
 @pytest.mark.parametrize('compiler,golden_sha', [(V1, V1_SNAPSHOT_SHA), (V2, V2_SNAPSHOT_SHA),
-                                               (V3, V3_SNAPSHOT_SHA)])
+                                               (V3, V3_SNAPSHOT_SHA), (V4, V4_SNAPSHOT_SHA)])
 def test_old_snapshot_keeps_pre_upgrade_hash_and_new_snapshot_has_new_identity(compiler, golden_sha):
     source = scene(compiler=compiler)
     original = deepcopy(source)
@@ -203,7 +231,7 @@ def test_old_snapshot_keeps_pre_upgrade_hash_and_new_snapshot_has_new_identity(c
     assert verify_snapshot_v2(legacy) == legacy
     current = snapshot(scene())
     assert verify_snapshot_v2(current) == current
-    assert current['scenes'][0]['motion']['timeline']['compiler'] == V4
+    assert current['scenes'][0]['motion']['timeline']['compiler'] == V5
     assert current['sha256'] != legacy['sha256']
     for name in ('plan', 'beats', 'alignment', 'id', 'semantic_sha256'):
         assert current['scenes'][0]['motion'][name] == legacy['scenes'][0]['motion'][name]

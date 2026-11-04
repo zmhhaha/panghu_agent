@@ -451,7 +451,15 @@ def test_archive_decompression_is_bounded_before_extension_headers(monkeypatch):
 @pytest.mark.parametrize('entries,code', [
     ([('experiment.json', b'{"status":"artifact_budget_exceeded"}')], 'motion_artifact_budget_exceeded'),
     ([('experiment.json', b'{"status":"failed"}'), ('render-receipt.json', b'{"status":"timed_out"}')],
-     'motion_execution_timed_out')])
+     'motion_execution_timed_out'),
+    ([('experiment.json', b'{"status":"failed"}'), ('render-receipt.json', b'{"status":"failed","stage":"rendering_scene","error":"private path"}')],
+     'motion_render_stage_failed'),
+    ([('experiment.json', b'{"status":"failed"}'), ('render-receipt.json', b'{"status":"failed","stage":"preparing_audio"}')],
+     'motion_audio_mux_failed'),
+    ([('experiment.json', b'{"status":"failed"}'), ('render-receipt.json', b'{"status":"failed","stage":"validating_scene"}')],
+     'motion_media_output_invalid'),
+    ([('experiment.json', b'{"status":"failed"}'), ('observe-receipt.json', b'{"status":"failed","stage":"observing_scene"}')],
+     'motion_observation_stage_failed')])
 def test_failed_pod_diagnostics_preserve_budget_or_timeout_reason(tmp_path, entries, code):
     kube = FakeKube()
     kube.request = lambda *args, **kwargs: archive(entries)
@@ -634,7 +642,11 @@ def test_service_cleanup_outage_is_private_and_restart_never_calls_render(tmp_pa
     restarted = make_service(tmp_path, renderer)
     restarted.tick()
     row = restarted.journal.operation(OWNER, 'cleanup-operation')
-    assert row['state'] == state and row['error'] == code and row['result'] is None
+    assert row['state'] == state and row['error'] == code
+    details = json.loads(row['result'])
+    assert set(details) == {'diagnostic'} and details['diagnostic']['code'] == code
+    assert public_operation(row)['diagnostic'] == details['diagnostic']
+    assert 'private filesystem detail' not in json.dumps(public_operation(row))
     assert calls == ['render', 'cleanup', 'cleanup']
     assert not list((service.root / row['key'] / 'result').rglob('*'))
     assert (unrelated / 'video.mp4').read_bytes() == b'previous success'
@@ -830,11 +842,18 @@ def test_real_ffmpeg_mixed_output_uses_original_pcm_one_aac_track(tmp_path):
         clip(path, snapshot['duration_seconds'], 'red')
         return {'path': str(path)}
     snapshot = freeze([static_scene(), motion_scene()])
-    result = MixedMotionRenderer(Scene(), static_renderer=static).render(snapshot, tmp_path / 'result', key='local-test')
+    stages = []
+    event = SimpleNamespace(is_set=lambda: False,
+        report_progress=lambda stage, **details: stages.append((stage, details)))
+    result = MixedMotionRenderer(Scene(), static_renderer=static).render(snapshot, tmp_path / 'result',
+        key='local-test', cancel_event=event)
     assert result['fps'] == 24 and result['duration_seconds'] == 3
     assert result['visual_mode'] == 'mixed' and result['snapshot_sha256'] == snapshot['sha256']
     assert Path(result['path']).is_file()
     assert not (tmp_path / 'result' / 'assets').exists()
+    assert stages[-2:] == [('compositing', {'scene_index': None, 'completed_scenes': 2}),
+                          ('validating_video', {'scene_index': None, 'completed_scenes': 2})]
+    assert [details['scene_index'] for stage, details in stages if stage == 'preparing_scene'] == [0, 1]
     # Inputs' per-scene video audio above was silence; nonzero original PCM must
     # survive in the final AAC. This catches concatenation of per-scene AAC.
     decoded = tmp_path / 'decoded.wav'
@@ -844,3 +863,104 @@ def test_real_ffmpeg_mixed_output_uses_original_pcm_one_aac_track(tmp_path):
     with wave.open(str(decoded), 'rb') as wav:
         assert wav.getnchannels() == 1 and wav.getframerate() == 24000
         assert any(wav.readframes(wav.getnframes()))
+
+
+def test_progress_survives_service_restart_and_failure_cleanup_without_private_details(tmp_path):
+    calls = []
+    def render(snapshot, root, *, key, cancel_event):
+        calls.append(key)
+        cancel_event.report_progress('observing_scene', scene_index=0)
+        if len(calls) == 1:
+            raise ServiceError(UNAVAILABLE, 503)
+        raise ServiceError('motion_observation_stage_failed', 502)
+    service = make_service(tmp_path, SimpleNamespace(render=render))
+    original = service.submit(OWNER, 'status-operation', freeze())
+    service.tick()
+    first = public_operation(service.journal.operation(OWNER, 'status-operation'))
+    assert first['state'] == 'queued' and first['progress']['stage'] == 'observing_scene'
+    restarted = make_service(tmp_path, SimpleNamespace(render=render))
+    assert public_operation(restarted.journal.operation(OWNER, 'status-operation')) == first
+    restarted.tick()
+    failed = public_operation(restarted.journal.operation(OWNER, 'status-operation'))
+    assert failed['state'] == 'failed' and failed['progress']['scene_index'] == 0
+    assert failed['diagnostic']['category'] == 'observation'
+    assert failed['diagnostic']['stage'] == 'observing_scene'
+    assert failed['diagnostic']['diagnostic_id'].startswith('MR-')
+    assert calls == [original['key'], original['key']]
+    assert 'cleanup_pending' not in json.dumps(failed) and 'snapshot' not in failed
+    assert restarted.journal.operation(OTHER, 'status-operation') is None
+
+
+def test_progress_updates_do_not_replace_persisted_cleanup_intent(tmp_path):
+    journal = ExecutionJournal(tmp_path / 'journal.db')
+    row = journal.submit(OWNER, 'status-operation', freeze())
+    pending = {'cleanup_pending': {'state': 'failed', 'error': 'motion_execution_failed', 'status': 502}}
+    journal.update(row['key'], state='queued', result=json.dumps(pending))
+    journal.progress(row['key'], 'rendering_scene', scene_index=0)
+    assert json.loads(journal.operation(OWNER, 'status-operation')['result']) == pending
+
+
+def test_renderer_status_callback_filters_private_fields_and_preserves_failure_code(tmp_path):
+    snapshot, seen = freeze(), []
+    progress = dict(stage='observing_scene', scene_index=0, completed_scenes=0, total_scenes=1,
+                    updated_at=1234, path='/private/path', token=TOKEN)
+    diagnostic = dict(code='motion_observation_stage_failed', category='observation',
+        stage='observing_scene', scene_index=0, diagnostic_id='MR-' + 'a' * 16, stderr='secret')
+    response = dict(operation_id='operation', snapshot_sha256=snapshot['sha256'], state='failed',
+                    error='motion_observation_stage_failed', progress=progress, diagnostic=diagnostic)
+    renderer = RemoteMotionRenderer('http://internal', TOKEN,
+        client=httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=response))))
+    with pytest.raises(ServiceError, match='motion_observation_stage_failed'):
+        renderer.render(snapshot, tmp_path / 'out', operation_id='operation', owner='owner-one',
+                        progress_callback=seen.append)
+    assert len(seen) == 1 and seen[0]['progress']['stage'] == 'observing_scene'
+    assert 'token' not in seen[0]['progress'] and 'path' not in seen[0]['progress']
+    assert 'stderr' not in seen[0]['diagnostic']
+
+
+@pytest.mark.parametrize('progress', [
+    {'stage': '/private/path'},
+    {'stage': ['rendering_scene']},
+    {'stage': 'compositing', 'scene_index': 999, 'completed_scenes': 0, 'total_scenes': 1, 'updated_at': 1},
+    {'stage': 'compositing', 'scene_index': None, 'completed_scenes': 3, 'total_scenes': 1, 'updated_at': 1},
+    {'stage': 'compositing', 'scene_index': None, 'completed_scenes': 0, 'total_scenes': 1, 'updated_at': float('nan')},
+])
+def test_invalid_remote_progress_is_not_forwarded(progress):
+    from video_workbench.motion_render_adapter import safe_progress
+    assert safe_progress(progress) is None
+
+
+@pytest.mark.parametrize('field,value', [('category', []), ('stage', {}), ('scene_index', True),
+                                       ('diagnostic_id', '/private/path')])
+def test_invalid_remote_diagnostic_is_not_forwarded(field, value):
+    from video_workbench.motion_render_adapter import safe_diagnostic
+    diagnostic = dict(code='motion_execution_failed', category='execution', stage=None,
+                      scene_index=0, diagnostic_id='MR-' + 'a' * 16)
+    diagnostic[field] = value
+    assert safe_diagnostic(diagnostic) is None
+
+
+def test_stage_marker_is_bounded_and_does_not_interpret_unstructured_logs(tmp_path):
+    kube = FakeKube()
+    values = [b'private stderr observe failed',
+              b'VIDEO_MOTION_PROGRESS={"schema":"video.motion-progress.v1","stage":"observing_scene"}\n',
+              b'VIDEO_MOTION_PROGRESS={"schema":"video.motion-progress.v1","stage":"private-token"}\n']
+    def request(*args, **kwargs):
+        assert kwargs['params'] == {'container': 'renderer', 'limitBytes': 4096, 'tailLines': 8}
+        return values.pop(0)
+    kube.request = request
+    renderer = scene_renderer(tmp_path, kube)
+    pod = {'metadata': {'name': 'owned-pod'}}
+    assert renderer._progress_stage(pod) is None
+    assert renderer._progress_stage(pod) == 'observing_scene'
+    assert renderer._progress_stage(pod) is None
+
+
+@pytest.mark.parametrize('code', ['motion_expected_highlight_missing', 'motion_invisible_highlight',
+                                 'motion_text_overflow'])
+def test_real_feedback_validation_codes_remain_specific_and_classified(code):
+    from video_workbench.motion_render_service import failure_diagnostic
+    result = failure_diagnostic('a' * 64, code,
+        dict(stage='validating_scene', scene_index=0))
+    assert result['code'] == code and result['category'] == 'validation'
+    assert result['stage'] == 'validating_scene' and result['scene_index'] == 0

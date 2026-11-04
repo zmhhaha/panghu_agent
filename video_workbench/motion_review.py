@@ -77,6 +77,49 @@ def _connectors(sample, plan, timeline, time):
             _require(abs(actual - value) <= tolerance, 'motion_connector_state_mismatch')
 
 
+def _ease(value):
+    value = min(1.0, max(0.0, value))
+    return 4 * value ** 3 if value < .5 else 1 - (-2 * value + 2) ** 3 / 2
+
+
+def _highlight_widths(plan, timeline, time):
+    """Compiler 5's independent pulse can repeat on an already green object."""
+    result = {row['target']: 0.0 for row in timeline['actions'] if row['kind'] == 'highlight'}
+    for action in timeline['actions']:
+        if action['kind'] != 'highlight' or time < action['start']:
+            continue
+        progress = (time - action['start']) / action['duration']
+        result[action['target']] = (8 * _ease(progress * 2) if progress <= .5
+                                    else 8 * (1 - _ease((progress - .5) * 2)))
+    return result
+
+
+def _element_opacity(timeline, identity, time):
+    actions = [row for row in timeline['actions'] if row['target'] == identity and row['kind'] in {'reveal', 'hide'}]
+    initial = 0.0 if actions and actions[0]['kind'] == 'reveal' else 1.0
+    opacity = initial
+    for action in actions:
+        if time < action['start']:
+            continue
+        target = 1.0 if action['kind'] == 'reveal' else 0.0
+        opacity += (target - opacity) * _ease((time - action['start']) / action['duration'])
+    return opacity
+
+
+def _highlights(sample, plan, timeline, time):
+    for identity, width in _highlight_widths(plan, timeline, time).items():
+        state = sample['elements'].get(identity)
+        _require(type(state) is dict and state.get('highlightColor') == 'rgb(121, 228, 213)',
+                 'motion_expected_highlight_missing')
+        actual = _number(state.get('highlightWidth'))
+        # Chromium may quantize computed outline widths to a CSS pixel; exact
+        # zero stays exact and a peak still has to measure at least seven px.
+        _require(0 <= actual <= 8 and abs(actual - width) <= (1e-6 if width == 0 else 1.001),
+                 'motion_expected_highlight_missing')
+        _require(abs(_number(state.get('opacity')) - _element_opacity(timeline, identity, time)) <= .01,
+                 'motion_highlight_visibility_mismatch')
+
+
 def _demo_expected_states(plan, timeline, time):
     """Evaluate the pinned demo compiler's GSAP 3.14.2 property schedule.
 
@@ -132,7 +175,7 @@ def _text_bounds(state, kind):
             _require(0 <= _number(box.get(scroll)) <= _number(box.get(client)), 'motion_text_overflow')
 
 
-def _layout(observation, *, text_kinds=None):
+def _layout(observation, *, text_kinds=None, relation_plates=False):
     layout = observation.get('layout')
     _require(type(layout) is dict and layout.get('fontReady') is True,
              'motion_fonts_not_ready')
@@ -147,11 +190,17 @@ def _layout(observation, *, text_kinds=None):
     labels = layout.get('relations')
     _require(type(labels) is list and all(type(row) is dict and row.get('overflow') is False
                                         for row in labels), 'motion_text_overflow')
+    if relation_plates:
+        _require(type(observation.get('relations')) is dict and len(labels) == len(observation['relations'])
+                 and {item.get('id') for item in labels} == set(observation['relations']),
+                 'motion_relation_bounds_missing')
     for item in labels:
         x, y, width, height = (_number(item.get(k)) for k in ('x', 'y', 'width', 'height'))
         _require(x >= -1 and y >= -1 and width >= 0 and height >= 0
                  and x + width <= WIDTH + 1 and y + height <= HEIGHT + 1,
                  'motion_layout_outside_canvas')
+        if relation_plates:
+            _relation_plate(item, observation.get('elements'), labels)
     elements = observation.get('elements')
     _require(type(elements) is dict)
     for identity, state in elements.items():
@@ -165,6 +214,36 @@ def _layout(observation, *, text_kinds=None):
         if text_kinds is not None and identity in text_kinds:
             _text_bounds(state, text_kinds[identity])
     return elements
+
+
+def _relation_plate(item, elements, labels):
+    """Compiler 5 must provide real SVG plate/ink and collision evidence."""
+    plate = item.get('plate')
+    _require(type(plate) is dict and set(plate) == {'x', 'y', 'width', 'height'},
+             'motion_relation_bounds_missing')
+    x, y, width, height = (_number(plate.get(key)) for key in ('x', 'y', 'width', 'height'))
+    _require(x >= 0 and y >= 0 and width >= 0 and height >= 0
+             and x + width <= WIDTH and y + height <= HEIGHT,
+             'motion_layout_outside_canvas')
+    _require(item.get('overlapsNodes') == [] and item.get('overlapsLabels') == [],
+             'motion_relation_overlap')
+    _require(type(elements) is dict and type(item.get('text')) is str, 'motion_relation_bounds_missing')
+    for box in [*elements.values(), *(other.get('plate') for other in labels if other is not item)]:
+        _require(type(box) is dict, 'motion_relation_bounds_missing')
+        bx, by, bw, bh = (_number(box.get(key)) for key in ('x', 'y', 'width', 'height'))
+        _require(not (width > 0 and height > 0 and bw > 0 and bh > 0 and
+                     x < bx + bw and bx < x + width and y < by + bh and by < y + height),
+                 'motion_relation_overlap')
+    if item.get('text'):
+        ink = item.get('ink')
+        _require(type(ink) is dict and set(ink) == {'x', 'y', 'width', 'height'},
+                 'motion_relation_bounds_missing')
+        ix, iy, iw, ih = (_number(ink.get(key)) for key in ('x', 'y', 'width', 'height'))
+        _require(iw >= 0 and ih >= 0 and ix >= x - 1e-6 and iy >= y - 1e-6
+                 and ix + iw <= x + width + 1e-6 and iy + ih <= y + height + 1e-6,
+                 'motion_text_overflow')
+    else:
+        _require(item.get('ink') is None, 'motion_relation_bounds_missing')
 
 
 def verify_observations(plan, timeline, observations):
@@ -208,8 +287,8 @@ def verify_observations(plan, timeline, observations):
                  'motion_compiler_version_unsupported')
         layout = LAYOUTS[plan['template']]
     text_kinds = ({row['id']: row['kind'] for row in plan['elements']}
-                  if timeline.get('compiler') in {'motion-compiler-2', 'motion-compiler-3', 'motion-compiler-4'} else None)
-    hidden_connectors = timeline.get('compiler') == 'motion-compiler-4'
+                  if timeline.get('compiler') in {'motion-compiler-2', 'motion-compiler-3', 'motion-compiler-4', 'motion-compiler-5'} else None)
+    hidden_connectors = timeline.get('compiler') in {'motion-compiler-4', 'motion-compiler-5'}
     element_ids = {row['id'] for row in plan['elements']}
     relation_ids = {row['id'] for row in plan['relations']}
     positions = {row['id']: layout[row['slot']][:2] for row in plan['elements']}
@@ -233,12 +312,14 @@ def verify_observations(plan, timeline, observations):
                      and abs(_number(sample.get('actual_time')) - times[label]) < .00001,
                      'motion_seek_time_mismatch')
             _digest(sample.get('frame_sha256'))
-            _layout(sample, text_kinds=text_kinds)
+            _layout(sample, text_kinds=text_kinds, relation_plates=timeline.get('compiler') == 'motion-compiler-5')
             _require(set(sample['elements']) == element_ids
                      and type(sample.get('relations')) is dict and set(sample['relations']) == relation_ids,
                      'motion_observation_objects_missing')
             if hidden_connectors:
                 _connectors(sample, plan, timeline, times[label])
+            if timeline.get('compiler') == 'motion-compiler-5':
+                _highlights(sample, plan, timeline, times[label])
             if demonstration:
                 # Moving document/record/attempt windows keep their declared
                 # size; this applies to every element, including hidden copies.
@@ -300,13 +381,24 @@ def verify_observations(plan, timeline, observations):
                          'motion_expected_move_missing')
                 positions[target] = (x, y)
             elif kind == 'highlight':
-                _require(_visible(a) and _visible(b) and _visible(c), 'motion_invisible_highlight')
-                keys = ('borderColor', 'backgroundColor')
-                colors = [tuple(state.get(k) for k in keys) for state in (a, b, c)]
-                _require(all(type(v) is str for group in colors for v in group))
-                _require(colors[0] != colors[2] and colors[1] != colors[0]
-                         and colors[2] == ('rgb(121, 228, 213)', 'rgb(33, 67, 78)'),
-                         'motion_expected_highlight_missing')
+                if timeline.get('compiler') == 'motion-compiler-5':
+                    # Concurrent reveal legitimately starts hidden. Require
+                    # measured opacity to match its own timeline, and a real
+                    # pulse while the target is sufficiently visible.
+                    _require(max(_number(state.get('opacity')) * _number(state.get('highlightWidth'))
+                                 for state in (a, b, c)) >= 2,
+                             'motion_invisible_highlight')
+                    _require(c.get('borderColor') == 'rgb(121, 228, 213)'
+                             and c.get('backgroundColor') == 'rgb(33, 67, 78)',
+                             'motion_expected_highlight_missing')
+                else:
+                    _require(_visible(a) and _visible(b) and _visible(c), 'motion_invisible_highlight')
+                    keys = ('borderColor', 'backgroundColor')
+                    colors = [tuple(state.get(k) for k in keys) for state in (a, b, c)]
+                    _require(all(type(v) is str for group in colors for v in group))
+                    _require(colors[0] != colors[2] and colors[1] != colors[0]
+                             and colors[2] == ('rgb(121, 228, 213)', 'rgb(33, 67, 78)'),
+                             'motion_expected_highlight_missing')
             else:
                 raise ServiceError('motion_observation_invalid', 422)
         _require(len({sample['frame_sha256'] for sample in (before, middle, after)}) >= 2,
@@ -326,7 +418,7 @@ def verify_observations(plan, timeline, observations):
                      and _number(sample.get('actual_time')) == 0
                      and sample.get('frame_sha256') == reverse[digest_key],
                      'motion_connector_initial_missing')
-            _layout(sample, text_kinds=text_kinds)
+            _layout(sample, text_kinds=text_kinds, relation_plates=timeline.get('compiler') == 'motion-compiler-5')
             _require(set(sample['elements']) == element_ids
                      and type(sample.get('relations')) is dict and set(sample['relations']) == relation_ids,
                      'motion_observation_objects_missing')
@@ -334,6 +426,8 @@ def verify_observations(plan, timeline, observations):
             _require({item.get('id') for item in labels} == relation_ids and len(labels) == len(relation_ids),
                      'motion_observation_objects_missing')
             _connectors(sample, plan, timeline, 0)
+            if timeline.get('compiler') == 'motion-compiler-5':
+                _highlights(sample, plan, timeline, 0)
     return dict(schema='video.motion-review.v1', technical_status='passed', checks=checks,
                 seek_protocol=observations['seek_protocol'], render_fps=observations['render_fps'],
                 timeline_sha256=sha256(timeline), timing_review_status=timeline['review_status'],

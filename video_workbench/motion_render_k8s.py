@@ -120,6 +120,23 @@ class ExecutionJournal:
             db.execute('UPDATE motion_operations SET ' + ','.join(k + '=?' for k in values) + ' WHERE key=?',
                        (*values.values(), key))
 
+    def progress(self, key, stage, *, scene_index=None, completed_scenes=0, total_scenes=1):
+        from .motion_render_adapter import safe_progress
+        progress = safe_progress(dict(stage=stage, scene_index=scene_index,
+            completed_scenes=completed_scenes, total_scenes=total_scenes, updated_at=time.time()))
+        require(progress is not None, 'motion_progress_invalid')
+        with self.lock, self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT result,state FROM motion_operations WHERE key=?', (key,)).fetchone()
+            if row is None or row['state'] not in {'running', 'queued'}:
+                return
+            result = json.loads(row['result']) if row['result'] else {}
+            if 'cleanup_pending' in result:
+                return
+            result['progress'] = progress
+            db.execute('UPDATE motion_operations SET result=?,updated=? WHERE key=?',
+                       (json.dumps(result), progress['updated_at'], key))
+
     def next_operation(self):
         with self.lock, self.connect() as db:
             # A lost API response must not let a queued operation start another
@@ -407,7 +424,7 @@ class KubeSceneRenderer:
         self._bound(expected, actual)
         return actual
 
-    def _failure(self, pod):
+    def _failure(self, pod, report=None):
         """Preserve bounded known failure reasons; never publish diagnostic media."""
         try:
             logs = self.kube.request('GET', 'pods', pod['metadata']['name'], logs=True,
@@ -419,14 +436,50 @@ class KubeSceneRenderer:
                 return ServiceError('motion_artifact_budget_exceeded', 413)
             for name in ('render-receipt.json', 'observe-receipt.json'):
                 receipt = json.loads(entries.get(name, b'{}'))
+                stage = receipt.get('stage')
+                if report is not None and stage in {'rendering_scene', 'observing_scene',
+                                                    'preparing_audio', 'validating_scene'}:
+                    report(stage)
                 if receipt.get('status') == 'timed_out':
                     return ServiceError('motion_execution_timed_out', 504)
+                if receipt.get('status') == 'failed':
+                    code = ('motion_observation_stage_failed' if name == 'observe-receipt.json' else
+                            'motion_audio_mux_failed' if stage == 'preparing_audio' else
+                            'motion_media_output_invalid' if stage == 'validating_scene' else
+                            'motion_render_stage_failed')
+                    return ServiceError(code, 502)
         except ServiceError as error:
             if error.code == UNAVAILABLE:
                 raise
         except (ValueError, KeyError, TypeError, UnicodeError, RecursionError):
             pass
         return ServiceError('motion_execution_failed', 502)
+
+    def _progress_stage(self, pod):
+        """Read only our bounded stage marker, never infer progress from stderr."""
+        try:
+            logs = self.kube.request('GET', 'pods', pod['metadata']['name'], logs=True,
+                params={'container': 'renderer', 'limitBytes': 4096, 'tailLines': 8})
+        except ServiceError:
+            # Telemetry is optional. Missing logs must never fail or rerun a
+            # valid Job; execution/cancellation are checked independently.
+            return None
+        if not isinstance(logs, (str, bytes)):
+            return None
+        logs = logs[-4096:]
+        text = logs.decode('utf-8', errors='replace') if isinstance(logs, bytes) else logs
+        for line in reversed(text.splitlines()):
+            if not line.startswith('VIDEO_MOTION_PROGRESS='):
+                continue
+            try:
+                value = json.loads(line[len('VIDEO_MOTION_PROGRESS='):])
+            except (ValueError, TypeError):
+                continue
+            if (isinstance(value, dict) and value.get('schema') == 'video.motion-progress.v1'
+                    and isinstance(value.get('stage'), str)
+                    and value.get('stage') in {'rendering_scene', 'observing_scene'}):
+                return value['stage']
+        return None
 
     def _context(self, scene, key, scene_index, quality):
         motion = scene['motion']
@@ -517,6 +570,14 @@ class KubeSceneRenderer:
 
     def _execute(self, files, scene_key, directory, configs, expected, binding, record, *, quality, cancel_event):
         name = expected['metadata']['name']
+        report = getattr(cancel_event, 'report_progress', None)
+        scene_index = int(scene_key.rsplit(':', 1)[1])
+        last_stage = None
+        def progress(stage):
+            nonlocal last_stage
+            if report is not None and last_stage != stage:
+                report(stage, scene_index=scene_index, completed_scenes=scene_index)
+                last_stage = stage
         output, evidence = directory / 'output.mp4', directory / 'evidence.json'
         if record['state'] == 'completed':
             result = json.loads(record['result'])
@@ -530,6 +591,7 @@ class KubeSceneRenderer:
                           status=504 if record['state'] == 'timed_out' else (409 if record['state'] == 'cancelled' else 502))
             return self._finish_cleanup(scene_key, directory, configs, expected, binding)
         self.check_policy()
+        progress('waiting_scene')
         cancelled = lambda: cancel_event is not None and cancel_event.is_set()
         actual = self.kube.request('GET', 'jobs', name)
         if actual:
@@ -590,14 +652,20 @@ class KubeSceneRenderer:
                     terminated = container.get('state', {}).get('terminated', {})
                     require(terminated.get('reason') != 'OOMKilled', 'motion_execution_oom')
                     if terminated.get('exitCode', 0) != 0:
-                        raise (self._failure(pod) if container.get('name') == 'renderer'
+                        raise (self._failure(pod, progress) if container.get('name') == 'renderer'
                                else ServiceError('motion_execution_failed', 502))
+                if report is not None and any(status.get('name') == 'renderer'
+                    and 'running' in status.get('state', {}) for status in statuses):
+                    # Older immutable images have no marker; rendering_scene
+                    # describes a running scene Job without inventing a phase.
+                    progress(self._progress_stage(pod) or 'rendering_scene')
             conditions = actual.get('status', {}).get('conditions', [])
             failed = next((c for c in conditions if c.get('type') == 'Failed' and c.get('status') == 'True'), None)
             if failed:
                 raise ServiceError('motion_execution_timed_out' if failed.get('reason') == 'DeadlineExceeded'
                                    else 'motion_execution_failed', 504 if failed.get('reason') == 'DeadlineExceeded' else 502)
             if actual.get('status', {}).get('succeeded') == 1:
+                progress('validating_scene')
                 require(len(pods) == 1, 'motion_execution_pod_missing')
                 statuses = pods[0].get('status', {}).get('containerStatuses', [])
                 require(len(statuses) == 1 and statuses[0].get('name') == 'renderer'

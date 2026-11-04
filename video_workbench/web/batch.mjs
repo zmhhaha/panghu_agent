@@ -1,6 +1,6 @@
 /** Project batches submit bounded work and keep review separate from adoption. */
 import { statusLabel } from './model.mjs';
-import { motionMetadata, usesDynamicVideo } from './motion.mjs';
+import { motionMetadata, motionRenderErrorLabel, usesDynamicVideo } from './motion.mjs';
 
 const STEPS = ['motion', 'audio', 'draft'];
 const STEP_LABELS = { motion: '动态图解', audio: '配音', draft: '镜头草稿' };
@@ -14,18 +14,19 @@ const successful = item => Boolean(item?.version_id && ['completed', 'reused', '
 const projectPath = id => `/api/projects/${encodeURIComponent(id)}`;
 const batchPath = id => `/api/batches/${encodeURIComponent(id)}`;
 const keyFor = value => `${value.project?.id}:${value.epoch}`;
+class BatchInputError extends Error {}
 
 export function createBatchRequest(project, { sceneIds, steps, unsaved = false, busy = false } = {}) {
-  if (!project?.id || !Number.isInteger(project.revision)) throw new Error('请先读取项目。');
-  if (unsaved) throw new Error('请先保存或重新载入未保存的修改。');
-  if (busy) throw new Error('请等待当前制作任务结束。');
+  if (!project?.id || !Number.isInteger(project.revision)) throw new BatchInputError('请先读取项目。');
+  if (unsaved) throw new BatchInputError('请先保存或重新载入未保存的修改。');
+  if (busy) throw new BatchInputError('请等待当前制作任务结束。');
   if (!Array.isArray(sceneIds) || !sceneIds.length || sceneIds.length > 12
       || new Set(sceneIds).size !== sceneIds.length
       || sceneIds.some(id => !project.scenes?.some(scene => scene.id === id))) {
-    throw new Error('请选择本项目的 1 至 12 个镜头。');
+    throw new BatchInputError('请选择本项目的 1 至 12 个镜头。');
   }
   if (!Array.isArray(steps) || !steps.length || new Set(steps).size !== steps.length
-      || steps.some(step => !STEPS.includes(step))) throw new Error('请至少选择一个制作步骤。');
+      || steps.some(step => !STEPS.includes(step))) throw new BatchInputError('请至少选择一个制作步骤。');
   return { path: `${projectPath(project.id)}/batches/preview`, body: {
     expected_revision: project.revision,
     scene_ids: project.scenes.filter(scene => sceneIds.includes(scene.id)).map(scene => scene.id),
@@ -58,13 +59,13 @@ export function batchSceneResults(batch) {
 }
 
 export function createBatchAdoption(project, selections, { unsaved = false, busy = false } = {}) {
-  if (!project?.id || !Number.isInteger(project.revision)) throw new Error('请先读取项目。');
-  if (unsaved || busy) throw new Error('请先保存修改并等待制作任务结束，再采用。');
+  if (!project?.id || !Number.isInteger(project.revision)) throw new BatchInputError('请先读取项目。');
+  if (unsaved || busy) throw new BatchInputError('请先保存修改并等待制作任务结束，再采用。');
   if (!Array.isArray(selections) || !selections.length || selections.length > 12
-      || new Set(selections.map(row => row.scene_id)).size !== selections.length) throw new Error('请明确选择已审阅的候选。');
+      || new Set(selections.map(row => row.scene_id)).size !== selections.length) throw new BatchInputError('请明确选择已审阅的候选。');
   const rows = selections.map(selection => {
     const scene = project.scenes.find(row => row.id === selection.scene_id);
-    if (!scene || (!selection.motion_version_id && !selection.audio_version_id)) throw new Error('所选候选不属于当前项目。');
+    if (!scene || (!selection.motion_version_id && !selection.audio_version_id)) throw new BatchInputError('所选候选不属于当前项目。');
     const row = { scene_id: scene.id };
     if (selection.motion_version_id) Object.assign(row, {
       motion_version_id: selection.motion_version_id,
@@ -80,11 +81,11 @@ export function createBatchAdoption(project, selections, { unsaved = false, busy
 }
 
 export function createBatchPanel({ document, getContext, request, refresh, onError, onSuccess,
-  onOpenScene = () => {}, onPlayRender = () => {}, onProjectDraft = () => {}, onMediaPlay = () => {} }) {
+  onInputError = () => {}, onOpenScene = () => {}, onPlayRender = () => {}, onProjectDraft = () => {}, onMediaPlay = () => {} }) {
   const $ = id => document.getElementById(id);
   const lists = new Map(), selected = new Map(), forms = new Map(), plans = new Map();
   const candidates = new Map(), reviewed = new Map(), retries = new Map(), expanded = new Map();
-  const busy = new Set(), errors = new Map();
+  const busy = new Set(), errors = new Map(), inputErrors = new Map();
   let sequence = 0, latestRead = 0, formSignature = null, rowSignature = null, confirmation = null, mediaProject = null;
   const context = () => getContext();
   const same = value => keyFor(context()) === keyFor(value);
@@ -109,7 +110,11 @@ export function createBatchPanel({ document, getContext, request, refresh, onErr
     element.addEventListener('click', action); return element;
   };
   function clearPlan(projectId) {
-    plans.delete(projectId); $('confirm-batch-start').checked = false;
+    plans.delete(projectId); inputErrors.delete(projectId); $('confirm-batch-start').checked = false;
+  }
+  function inputError(value, error) {
+    const message = error instanceof BatchInputError ? error.message : '请核对镜头和制作步骤后再试。';
+    inputErrors.set(value.project?.id, message); render(); onInputError(message);
   }
   function selectionMap(map, value) {
     const key = selectionKey(value);
@@ -167,7 +172,7 @@ export function createBatchPanel({ document, getContext, request, refresh, onErr
       : `本次任务上限：动态图解 ${Number(plan.data.estimated_tasks?.motion ?? 0)} 次，配音 ${Number(plan.data.estimated_tasks?.audio ?? 0)} 次，镜头草稿 ${Number(plan.data.estimated_tasks?.draft ?? 0)} 次。`;
     const list = $('batch-plan-items'); list.replaceChildren();
     for (const item of plan?.data.items ?? []) list.append(text('li',
-      `${item.scene_title ?? '镜头'} · ${STEP_LABELS[item.step] ?? '制作步骤'} · ${item.reuse ? '复用已有版本' : item.status ? batchStatus(item.status) : '按核对范围制作'}`));
+      `${item.scene_title ?? '镜头'} · ${STEP_LABELS[item.step] ?? '制作步骤'} · ${item.reuse ? '复用已有版本' : '待制作（尚未启动）'}`));
     $('confirm-batch-start').disabled = blocked || !current || unavailable;
     $('start-batch').disabled = $('confirm-batch-start').disabled || !$('confirm-batch-start').checked;
   }
@@ -225,7 +230,7 @@ export function createBatchPanel({ document, getContext, request, refresh, onErr
         onMediaPlay(); const player = $('batch-audio-preview'); player.pause();
         player.src = `/api/audio-versions/${encodeURIComponent(row.audio_version_id)}/audio`; player.hidden = false;
         $('batch-audio-label').textContent = `${row.title ?? '镜头'} · 当前审阅配音`;
-        try { await player.play(); } catch { onError(new Error('请在音频播放器中点击播放。')); }
+        try { await player.play(); } catch { onInputError('请在音频播放器中点击播放。'); }
       }));
       if (row.render_id) actions.append(button('播放对应草稿', () => onPlayRender({ id: row.render_id, purpose: 'draft' })));
       actions.append(button(info.unchanged ? '逐镜试听与校时' : '打开此候选审阅', () => onOpenScene(row.scene_id, {
@@ -257,15 +262,19 @@ export function createBatchPanel({ document, getContext, request, refresh, onErr
     const batch = batchFor(value), inFlight = batches(project.id).some(unresolved);
     const blocked = !value.enabled || value.unsaved || value.projectBusy || busy.has(project.id);
     renderForm(value, blocked || inFlight);
-    $('batch-form-note').textContent = value.unsaved ? '请先保存或重新载入未保存的镜头、音色和时序修改。'
+    const form = formFor(project);
+    const selectedSceneIds = [...form.sceneIds].filter(id => project.scenes.some(scene => scene.id === id));
+    const selectionIssue = !selectedSceneIds.length ? '请至少选择一个镜头。'
+      : !form.steps.size ? '请至少选择一个制作步骤。' : '';
+    $('batch-form-note').textContent = inputErrors.get(project.id) || (value.unsaved ? '请先保存或重新载入未保存的镜头、音色和时序修改。'
       : inFlight ? '当前批次尚未结束，可以审阅进度、试听和申请取消。'
-        : '每批最多 12 个镜头。复用当前可用版本；核对范围只计算任务上限，不提交生成。';
+        : selectionIssue || '每批最多 12 个镜头。复用当前可用版本；核对范围只计算任务上限，不提交生成。');
     const configured = { motion: value.motionConfigured, audio: value.audioConfigured, draft: value.renderConfigured };
     const unavailable = [...formFor(project).steps].filter(step => configured[step] === false);
     $('batch-provider-note').hidden = !unavailable.length;
     $('batch-provider-note').textContent = unavailable.length
       ? `${unavailable.map(step => STEP_LABELS[step]).join('、')}服务暂未连接。可先取消这些步骤，或等待服务恢复后再启动。` : '';
-    $('preview-batch').disabled = blocked || inFlight || !project.scenes.length;
+    $('preview-batch').disabled = blocked || inFlight || Boolean(selectionIssue);
     renderPlan(value, blocked || inFlight);
     const optionsKey = JSON.stringify([project.id, batches(project.id).map(row => [row.id, row.status])]);
     if ($('batch-select').dataset.optionsKey !== optionsKey) {
@@ -339,13 +348,14 @@ export function createBatchPanel({ document, getContext, request, refresh, onErr
     }
   }
   async function preview() {
-    const value = context(); if (!value.enabled || batches(value.project?.id).some(unresolved)) return;
+    const value = context(); if (!value.project || !value.enabled || batches(value.project.id).some(unresolved)) return;
     let intent;
     try { const form = formFor(value.project); intent = createBatchRequest(value.project, {
       sceneIds: [...form.sceneIds], steps: [...form.steps], unsaved: value.unsaved, busy: value.projectBusy }); }
-    catch (error) { onError(error); return; }
+    catch (error) { inputError(value, error); return; }
     await mutate(value, () => request(intent.path, { method: 'POST', body: intent.body }), data => {
       plans.set(value.project.id, { body: intent.body, data }); $('confirm-batch-start').checked = false;
+      inputErrors.delete(value.project.id);
       onSuccess('已核对本次制作范围与任务上限，尚未启动生成。');
     });
   }
@@ -392,7 +402,7 @@ export function createBatchPanel({ document, getContext, request, refresh, onErr
       || checks.get(row.scene_id) !== resultSignature(value.project, row))) return;
     let intent;
     try { intent = createBatchAdoption(value.project, rows, { unsaved: value.unsaved, busy: value.projectBusy }); }
-    catch (error) { onError(error); return; }
+    catch (error) { inputError(value, error); return; }
     await mutate(value, () => request(intent.path, { method: 'POST', body: intent.body }), () => {
       checks.clear(); $('confirm-batch-adoption').checked = false;
       onSuccess('已采用所选确切候选。请逐镜试听并核对时序，再正式导出整片。');
@@ -439,5 +449,6 @@ export function batchErrorLabel(code) {
     submission_uncertain: '提交结果待确认，请重新读取原任务，不要重复提交。',
     cancelled: '已取消，已有成功候选继续保留。',
   };
-  return Object.hasOwn(labels, code) ? labels[code] : '本步骤未完成，请检查已有结果后手动补做。';
+  return Object.hasOwn(labels, code) ? labels[code] : motionRenderErrorLabel(code)
+    ?? '本步骤未完成，请检查已有结果后手动补做。';
 }

@@ -97,6 +97,8 @@ def main():
     root = Path('/work')
     started, codes = time.monotonic(), {}
     for mode in ('render', 'observe'):
+        print('VIDEO_MOTION_PROGRESS=' + json.dumps(dict(schema='video.motion-progress.v1',
+            stage='rendering_scene' if mode == 'render' else 'observing_scene')), flush=True)
         with (root / (mode + '.log')).open('wb') as log:
             process = subprocess.run(['node', '/opt/renderer/run.mjs', mode], stdout=log, stderr=log)
         codes[mode] = process.returncode

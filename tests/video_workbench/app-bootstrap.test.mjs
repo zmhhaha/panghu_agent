@@ -37,6 +37,7 @@ class Element {
   close() { this.open = false; }
   contains(target) { return this === target || this.children.some(child => child.contains(target)); }
   scrollIntoView() {}
+  reportValidity() { return true; }
 }
 
 function project(id, mode = 'motion') {
@@ -91,11 +92,18 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
     batch_enabled: true, explanation_configured: true, speech_configured: true,
     speech_voice: 'test-voice', speech_voices: [{ id: 'test-voice', name: '测试音色', default: true },
       { id: 'other-voice', name: '另一音色' }] };
-  const writes = [], voiceWrites = [];
-  let allowProjectDraft = false, allowVoiceSave = false;
+  const writes = [], voiceWrites = [], sceneWrites = [];
+  let allowProjectDraft = false, allowVoiceSave = false, allowSceneSave = false;
   const fetchFixture = async (path, options) => {
     calls.push(path);
     if (options.method !== 'GET') {
+      if (allowSceneSave && path === '/api/scenes/audition-scene' && options.method === 'PATCH') {
+        const body = JSON.parse(options.body);
+        sceneWrites.push(body);
+        const { expected_revision, base_fields, ...fields } = body;
+        Object.assign(auditionScene, fields); audition.revision++;
+        return { ok: true, status: 200, json: async () => structuredClone(audition) };
+      }
       if (allowVoiceSave && path === '/api/projects/audition/speech' && options.method === 'PATCH') {
         const body = JSON.parse(options.body);
         assert.equal(body.expected_revision, audition.revision);
@@ -299,12 +307,13 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
       assert.match($('motion-timing-status').textContent, /待人工核对|估算/);
       assert.equal($('confirm-motion-timing').checked, false);
       assert.equal(writes.length, 0, 'Reading candidates and estimated timing must remain read-only');
+      $('render-end-hold').checked = true;
       allowProjectDraft = true;
       await $('preview-batch-project').emit('click');
       await nextTurn();
       allowProjectDraft = false;
       assert.deepEqual(writes, [{ path: '/api/projects/audition/motion-renders',
-        body: { expected_revision: 1, purpose: 'draft', subtitles: false } }]);
+        body: { expected_revision: 1, purpose: 'draft', subtitles: false, end_hold_seconds: 4 } }]);
       assert.equal($('global-error').hidden, true, $('error-text').textContent);
       assert.match($('success-message').textContent, /整片草稿制作已开始/);
       assert.match($('motion-timing-status').textContent, /待人工核对|估算/,
@@ -421,6 +430,25 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
       await clickProject(idle.id);
       assert.equal(button.hidden, true); await button.emit('click');
       assert.equal(audio.src, undefined); assert.equal(writes.length, 1); assert.equal(voiceWrites.length, 1);
+    });
+    await t.test('saving a dirty scene submits its original editable base after an unrelated refresh', async () => {
+      await clickProject(audition.id);
+      const originalNarration = auditionScene.narration, originalRevision = audition.revision;
+      await $('toggle-scene-editor').emit('click');
+      $('scene-narration').value = '这段旁白正在编辑。';
+      await $('scene-form').emit('input');
+      audition.scenes[1].title = '另一镜头更新'; audition.revision++;
+      await $('refresh-all').emit('click');
+      assert.equal($('scene-narration').value, '这段旁白正在编辑。');
+      $('global-error').hidden = false; $('error-text').textContent = '旧的错误提示';
+      allowSceneSave = true;
+      await $('scene-form').emit('submit'); allowSceneSave = false;
+      assert.equal(sceneWrites.length, 1);
+      assert.equal(sceneWrites[0].expected_revision, originalRevision);
+      assert.equal(sceneWrites[0].base_fields.narration, originalNarration);
+      assert.equal(sceneWrites[0].narration, '这段旁白正在编辑。');
+      assert.equal(sceneWrites[0].dirty, undefined);
+      assert.equal($('global-error').hidden, true);
     });
     for (const [id, timer] of timers) if (timer.duration === 5000) {
       timers.delete(id); timer.callback();

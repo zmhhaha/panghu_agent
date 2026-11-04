@@ -22,6 +22,41 @@ from .motion_snapshot import verify_snapshot_v2
 UNAVAILABLE = 'motion_render_service_unavailable'
 TERMINAL = {'completed', 'failed', 'cancelled', 'timed_out'}
 IDENTITY = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{0,99}\Z')
+PROGRESS_STAGES = frozenset({'preparing_scene', 'waiting_scene', 'rendering_scene',
+    'observing_scene', 'validating_scene', 'normalizing_scene', 'preparing_audio',
+    'compositing', 'validating_video', 'completed', 'cleanup'})
+
+
+def safe_progress(value):
+    """Only bounded presentation metadata crosses the renderer boundary."""
+    if (not isinstance(value, dict) or not isinstance(value.get('stage'), str)
+            or value['stage'] not in PROGRESS_STAGES):
+        return None
+    total, completed, index = (value.get(key) for key in ('total_scenes', 'completed_scenes', 'scene_index'))
+    updated = value.get('updated_at')
+    if (type(total) is not int or not 1 <= total <= 24 or type(completed) is not int
+            or not 0 <= completed <= total or index is not None and
+            (type(index) is not int or not 0 <= index < total)
+            or type(updated) not in {int, float} or not 0 <= updated < 1e12):
+        return None
+    return dict(stage=value['stage'], scene_index=index, completed_scenes=completed,
+                total_scenes=total, updated_at=updated)
+
+
+def safe_diagnostic(value):
+    if not isinstance(value, dict):
+        return None
+    code, identity = value.get('code'), value.get('diagnostic_id')
+    category, stage, index = (value.get(key) for key in ('category', 'stage', 'scene_index'))
+    if (not isinstance(code, str) or not re.fullmatch(r'[a-z0-9_]{1,100}', code)
+            or not isinstance(identity, str) or not re.fullmatch(r'MR-[0-9a-f]{16}', identity)
+            or not isinstance(category, str)
+            or category not in {'resource', 'timeout', 'artifact_budget', 'render', 'observation',
+                                'validation', 'storage', 'submission', 'cancelled', 'execution'}
+            or stage is not None and (not isinstance(stage, str) or stage not in PROGRESS_STAGES)
+            or index is not None and (type(index) is not int or not 0 <= index < 24)):
+        return None
+    return dict(code=code, category=category, stage=stage, scene_index=index, diagnostic_id=identity)
 
 
 def read_secret(path):
@@ -35,6 +70,8 @@ def read_secret(path):
 
 
 class RemoteMotionRenderer:
+    supports_progress = True
+
     def __init__(self, url, token, *, client=None, poll_seconds=1, wait_seconds=1800):
         parsed = urlsplit(url)
         if (parsed.scheme not in {'http', 'https'} or not parsed.hostname or parsed.username
@@ -67,7 +104,7 @@ class RemoteMotionRenderer:
             raise ServiceError(code, response.status_code)
         return response
 
-    def render(self, snapshot, output_dir, *, operation_id, owner, cancel_event=None):
+    def render(self, snapshot, output_dir, *, operation_id, owner, cancel_event=None, progress_callback=None):
         verify_snapshot_v2(snapshot)
         if not isinstance(owner, str) or not owner or not IDENTITY.fullmatch(operation_id):
             raise ServiceError('motion_render_identity_invalid', 422)
@@ -96,6 +133,13 @@ class RemoteMotionRenderer:
                 state = result['state']
             except (ValueError, KeyError, TypeError):
                 raise ServiceError('motion_render_response_invalid', 502) from None
+            status = {}
+            if progress := safe_progress(result.get('progress')):
+                status['progress'] = progress
+            if diagnostic := safe_diagnostic(result.get('diagnostic')):
+                status['diagnostic'] = diagnostic
+            if status and progress_callback is not None:
+                progress_callback(status)
             wants_cancel = cancel_event is not None and cancel_event.is_set()
             if wants_cancel and not cancelling and state not in TERMINAL:
                 response = self._request('POST', path + '/cancel', owner_hash)
