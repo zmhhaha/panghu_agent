@@ -15,10 +15,12 @@ sudo python3 ppt_service/tests/acceptance/current_parser_lifecycle.py \
 
 运行顺序为健康解析 → 实际parser进程暂停 → 原30秒期限超时及物理停止 → 同资料健康后续解析。合成DOCX包含40个合法XML部分、360万个节点，未超过实际单项节点/展开/压缩比/文件限制；用于给外部观察器足够的真实解析时间。初始健康解析必须成功，否则不注入故障。
 
-故障只对本随机scope的单个sandbox Pod生效：逐项核对 Pod UID、containerd完整container ID、CRI的Pod UID、host PID、`/proc`启动时间、精确 `python -m ppt_service.control.parsing` 命令、cgroup容器归属和本节点，重新读取Pod和PID绑定后才发送 SIGSTOP。观察到实际 `T` 状态才算注入成功。没有向controller、非测试Pod或其他用户进程发信号。SDK自身的30秒 `wait_pod` 必须返回 `sandbox_timeout`，并由原 `finish_sandbox` 在精确API UID保留的finalizer下观察全部container terminated、保存stop receipt，再删除Pod/策略；仅收到DELETE成功或Pod不见不能通过。
+故障只对本随机scope的单个sandbox Pod生效：逐项核对 Pod UID、Docker或containerd完整container ID、运行时的Pod UID、host PID、`/proc`启动时间、UID10000、精确 `python -m ppt_service.control.parsing` 命令及cgroup容器归属，重新读取Pod和PID绑定后才发送 SIGSTOP。目标Node由Pod明确的nodeName解析，绑定Node UID和192.168.137.0/24内唯一InternalIP；每次操作重验Node绑定。若不是master本机，仅通过已有SSH密钥和严格known_hosts执行同一份固定Git helper，不增加信任/修改SSH，不向worker挂SSH凭据。观察到实际 `T` 状态才算注入成功。没有向controller、非测试Pod或其他用户进程发信号。SDK自身的30秒 `wait_pod` 必须返回 `sandbox_timeout`，并由原 `finish_sandbox` 在精确API UID保留的finalizer下观察全部container terminated、保存stop receipt，再删除Pod/策略；仅收到DELETE成功或Pod不见不能通过。
 
 健康后续必须保留相同输入snapshot/来源hash并成功返回正文。所有阶段均核对输入hash不变与scope所有writer已停止。最后只有在每个Pod有terminated stop receipt、Pod/策略删除、同scope清单为空、私有owner marker匹配之后，才能删除本轮唯一 `.acceptance/run-id`；共享 `.acceptance` 父目录保留。controller UID与镜像必须不变，不重启服务。
 
-证据保存 source.json、controller.log、events.json、fault.json、fault-pod.json、controller-result.json（含原authority journal和stop receipts）、status.json。证据目录保留；故障/停止不确定时不宣称通过、不对真实项目补写状态，也不按猜测清除finalizer。
+信号通过节点内 `pidfd_open` / `pidfd_send_signal` 绑定真实进程；打开pidfd后再次核对启动时间，系统不支持时拒绝执行，不降级为易受PID复用影响的数字PID信号。
+
+证据保存 source.json、controller.log、events.json、fault.json、fault-pod.json、fault-final-state.json、controller-result.json（含原authority journal和stop receipts）、status.json。证据目录保留；故障/停止不确定时不宣称通过、不对真实项目补写状态，也不按猜测清除finalizer。
 
 范围是实际当前生产namespace/PVC/解析SDK的期限/停止/后续健康路径，工作资料完全合成；它不是生产用户业务行的解析回收、完整Agent模型故障矩阵、所有者上传交互、PowerPoint验收或正式发布。

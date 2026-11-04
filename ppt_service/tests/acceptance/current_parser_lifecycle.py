@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -18,6 +19,7 @@ import queue
 import random
 import re
 import shutil
+import shlex
 import signal
 import socket
 import subprocess
@@ -190,12 +192,93 @@ def kube(*args, **kwargs):
     return command(['kubectl', '-n', NAMESPACE, *args], **kwargs)
 
 
-def proc_identity(pid):
-    raw = Path(f'/proc/{pid}/stat').read_text()
-    fields = raw.rsplit(')', 1)[1].split()
-    return {'pid': pid, 'state': fields[0], 'starttime_ticks': fields[19],
-            'cmdline': Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\x00')[:-1],
-            'cgroup': Path(f'/proc/{pid}/cgroup').read_text()}
+NODE_HELPER = r'''import json, os, re, signal, socket, subprocess, sys, time
+from pathlib import Path
+
+request = json.loads(sys.argv[1])
+assert request['action'] in ('inspect', 'pause', 'resume')
+assert socket.gethostname() == request['node_name']
+assert re.fullmatch(r'[a-f0-9]{64}', request['container_id'])
+assert re.fullmatch(r'[a-f0-9-]{36}', request['pod_uid'])
+assert request['runtime'] in ('docker', 'containerd')
+cid = request['container_id']
+args = ['docker', 'inspect', cid] if request['runtime'] == 'docker' else ['crictl', 'inspect', cid]
+run = subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=10)
+if run.returncode:
+    assert request['action'] == 'resume'
+    print(json.dumps({'absent': True, 'signal_sent': False}))
+    raise SystemExit(0)
+data = json.loads(run.stdout)
+if request['runtime'] == 'docker':
+    row = data[0]
+    assert row['Config']['Labels'].get('io.kubernetes.pod.uid') == request['pod_uid']
+    pid, running = row['State']['Pid'], row['State']['Running']
+else:
+    assert data['status']['labels'].get('io.kubernetes.pod.uid') == request['pod_uid']
+    pid, running = data['info'].get('pid'), data['status'].get('state') == 'CONTAINER_RUNNING'
+if not running or type(pid) is not int or pid <= 1:
+    print(json.dumps({'not_running': True, 'signal_sent': False}))
+    raise SystemExit(0)
+
+def identity():
+    raw = Path('/proc/' + str(pid) + '/stat').read_text().rsplit(')', 1)[1].split()
+    command = Path('/proc/' + str(pid) + '/cmdline').read_bytes().split(b'\0')[:-1]
+    assert command == [b'/opt/hermes/.venv/bin/python', b'-m', b'ppt_service.control.parsing']
+    assert cid in Path('/proc/' + str(pid) + '/cgroup').read_text()
+    uid = next(x for x in Path('/proc/' + str(pid) + '/status').read_text().splitlines() if x.startswith('Uid:')).split()[1:]
+    assert uid == ['10000'] * 4
+    return {'host_pid': pid, 'starttime_ticks': raw[19], 'process_state': raw[0],
+            'cmdline': [x.decode() for x in command]}
+
+before = identity()
+result = dict(before, signal_sent=False)
+if request['action'] in ('pause', 'resume'):
+    assert before['starttime_ticks'] == request['expected_starttime']
+    # A pidfd binds the signal to this process even if a PID is later recycled.
+    # Require it on the actual node; never fall back to a numeric-PID signal.
+    process_fd = os.pidfd_open(pid, 0)
+    try:
+        assert identity()['starttime_ticks'] == before['starttime_ticks']
+        if request['action'] == 'pause':
+            signal.pidfd_send_signal(process_fd, signal.SIGSTOP)
+            until = time.monotonic() + 1
+            after = identity()
+            while after['process_state'] not in ('T', 't') and time.monotonic() < until:
+                time.sleep(0.01)
+                after = identity()
+            assert after['starttime_ticks'] == before['starttime_ticks'] and after['process_state'] in ('T', 't')
+            result.update(after, signal_sent=True, signal='SIGSTOP')
+        elif before['process_state'] in ('T', 't'):
+            signal.pidfd_send_signal(process_fd, signal.SIGCONT)
+            result.update(signal_sent=True, signal='SIGCONT')
+    finally:
+        os.close(process_fd)
+print(json.dumps(result))
+'''
+
+
+def node_binding(name):
+    node = json.loads(command(['kubectl', 'get', 'node', name, '-o', 'json']).stdout)
+    addresses = [x['address'] for x in node['status']['addresses'] if x['type'] == 'InternalIP']
+    if (node['metadata']['name'] != name or len(addresses) != 1
+            or ipaddress.ip_address(addresses[0]) not in ipaddress.ip_network('192.168.137.0/24')):
+        raise RuntimeError('target_node_identity_not_allowed')
+    return {'name': name, 'uid': node['metadata']['uid'], 'internal_ip': addresses[0]}
+
+
+def invoke_node(binding, request):
+    if node_binding(binding['name']) != binding:
+        raise RuntimeError('target_node_identity_changed')
+    data = dict(request, node_name=binding['name'])
+    if binding['name'] == socket.gethostname():
+        args = [sys.executable, '-c', NODE_HELPER, json.dumps(data)]
+    else:
+        # Fixed Git-owned helper and JSON identities only; no shell interpolation
+        # of a command supplied by a user or a Pod. Never accept a new host key.
+        remote = '/usr/bin/python3 -c ' + shlex.quote(NODE_HELPER) + ' ' + shlex.quote(json.dumps(data))
+        args = ['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
+                '-o', 'ConnectTimeout=5', 'root@' + binding['internal_ip'], remote]
+    return json.loads(command(args, timeout=25).stdout)
 
 
 def pause_exact_parser(pod):
@@ -203,38 +286,24 @@ def pause_exact_parser(pod):
     containers = status.get('containerStatuses', [])
     if len(containers) != 1 or containers[0]['name'] != 'sandbox' or not containers[0].get('state', {}).get('running'):
         return None
-    if spec.get('nodeName') != socket.gethostname():
-        raise RuntimeError('test_parser_not_on_this_operator_node')
-    cid = containers[0]['containerID'].removeprefix('containerd://')
-    if not re.fullmatch(r'[a-f0-9]{64}', cid):
+    runtime, cid = containers[0]['containerID'].split('://', 1)
+    if runtime not in ('docker', 'containerd') or not re.fullmatch(r'[a-f0-9]{64}', cid):
         raise RuntimeError('unexpected_container_runtime_identity')
-    inspect = json.loads(command(['crictl', 'inspect', cid]).stdout)
-    if inspect['status']['labels'].get('io.kubernetes.pod.uid') != metadata['uid']:
-        raise RuntimeError('cri_pod_uid_mismatch')
-    pid = inspect['info'].get('pid')
-    if type(pid) is not int or pid <= 1:
+    binding = node_binding(spec['nodeName'])
+    request = {'action': 'inspect', 'runtime': runtime, 'container_id': cid, 'pod_uid': metadata['uid']}
+    identity = invoke_node(binding, request)
+    if identity.get('not_running'):
         return None
-    identity = proc_identity(pid)
-    expected = [b'/opt/hermes/.venv/bin/python', b'-m', b'ppt_service.control.parsing']
-    if identity['cmdline'] != expected or cid not in identity['cgroup']:
-        raise RuntimeError('host_parser_process_not_exactly_bound')
     latest = json.loads(kube('get', 'pod', metadata['name'], '-o', 'json').stdout)
     if latest['metadata']['uid'] != metadata['uid'] or latest['status']['containerStatuses'][0]['containerID'] != containers[0]['containerID']:
         raise RuntimeError('parser_identity_changed_before_fault')
-    if proc_identity(pid)['starttime_ticks'] != identity['starttime_ticks']:
-        raise RuntimeError('parser_pid_reused_before_fault')
-    os.kill(pid, signal.SIGSTOP)
-    after = proc_identity(pid)
-    until = time.monotonic() + 1
-    while after['starttime_ticks'] == identity['starttime_ticks'] and after['state'] not in ('T', 't') and time.monotonic() < until:
-        time.sleep(0.01)
-        after = proc_identity(pid)
-    if after['starttime_ticks'] != identity['starttime_ticks'] or after['state'] not in ('T', 't'):
+    after = invoke_node(binding, dict(request, action='pause', expected_starttime=identity['starttime_ticks']))
+    if after.get('signal') != 'SIGSTOP' or after.get('process_state') not in ('T', 't'):
         raise RuntimeError('parser_stop_signal_not_observed')
     return {'pod_name': metadata['name'], 'pod_uid': metadata['uid'], 'container_id': cid,
-            'host_pid': pid, 'starttime_ticks': identity['starttime_ticks'],
-            'cmdline': [x.decode() for x in expected], 'signal': 'SIGSTOP',
-            'process_state_after_signal': after['state'], 'fault_monotonic': time.monotonic()}
+            'runtime': runtime, 'node': binding, 'host_pid': after['host_pid'],
+            'starttime_ticks': after['starttime_ticks'], 'cmdline': after['cmdline'], 'signal': 'SIGSTOP',
+            'process_state_after_signal': after['process_state'], 'fault_monotonic': time.monotonic()}
 
 
 def outer(args):
@@ -273,15 +342,19 @@ def outer(args):
     process.stdin.write(script)
     process.stdin.close()
     events, lines, inbox = [], [], queue.Queue()
+    reader_done = threading.Event()
     def reader():
-        for line in process.stdout:
-            inbox.put(line)
+        try:
+            for line in process.stdout:
+                inbox.put(line)
+        finally:
+            reader_done.set()
     thread = threading.Thread(target=reader, daemon=True)
     thread.start()
     phase, fault, failure, final = None, None, None, None
     deadline = time.monotonic() + 600
     try:
-        while process.poll() is None or not inbox.empty():
+        while process.poll() is None or not reader_done.is_set() or not inbox.empty():
             try:
                 line = inbox.get(timeout=0.1)
                 lines.append(line)
@@ -318,11 +391,12 @@ def outer(args):
         # controller can finish its bounded parse/stop path; never signal a new PID.
         if fault is not None:
             try:
-                current = proc_identity(fault['host_pid'])
-                if current['starttime_ticks'] == fault['starttime_ticks'] and current['state'] in ('T', 't'):
-                    os.kill(fault['host_pid'], signal.SIGCONT)
-            except FileNotFoundError:
-                pass
+                resumed = invoke_node(fault['node'], {'action': 'resume', 'runtime': fault['runtime'],
+                    'container_id': fault['container_id'], 'pod_uid': fault['pod_uid'],
+                    'expected_starttime': fault['starttime_ticks']})
+                output(out / 'fault-final-state.json', resumed)
+            except (FileNotFoundError, RuntimeError) as exc:
+                failure = failure or 'fault_identity_final_check_failed:' + type(exc).__name__
         if process.poll() is None:
             try:
                 process.wait(timeout=150)
