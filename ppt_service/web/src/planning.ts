@@ -34,8 +34,9 @@ export function adaptPlanPages(value:unknown):Page[] {
 }
 function sourceCharts(raw:ObjectValue):{source_charts?:SourceChartData[];source_chart_error?:boolean} {
  if(raw.source_chart_binding===undefined)return Array.isArray(raw.native_chart_specs)&&raw.native_chart_specs.length?{source_chart_error:true}:{};
- const binding=object(raw.source_chart_binding),charts=binding.charts;
- if(binding.schema_version!==1||binding.direction_id!==raw.id||!Array.isArray(charts)||charts.length>8)return {source_chart_error:true};
+ const binding=object(raw.source_chart_binding),charts=binding.charts,specs=raw.native_chart_specs??[];
+ if(binding.schema_version!==1||binding.direction_id!==raw.id||!Array.isArray(charts)||charts.length>8
+  ||!Array.isArray(specs)||specs.length!==charts.length)return {source_chart_error:true};
  const projected:SourceChartData[]=[];
  const cell=(value:unknown):value is string=>typeof value==='string'&&value.length<=500&&!/[\u0000-\u001f\u007f]/.test(value);
  for(const value of charts){

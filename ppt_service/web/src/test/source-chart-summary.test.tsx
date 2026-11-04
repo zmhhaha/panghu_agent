@@ -56,6 +56,9 @@ describe('source data in the existing direction confirmation',()=>{
   const invalid=sourceDirection();invalid.source_chart_binding.charts[0].series_columns=[8];
   view.rerender(<SourceChartSummary direction={adaptDirections([invalid])![0]}/>);
   expect(screen.queryByRole('table')).not.toBeInTheDocument();expect(screen.getByRole('alert')).toBeVisible();
+  const empty=sourceDirection();empty.source_chart_binding.charts=[];
+  view.rerender(<SourceChartSummary direction={adaptDirections([empty])![0]}/>);
+  expect(screen.getByRole('alert')).toHaveTextContent('图表数据尚未准备好');
  });
 
  it('renders passive data as escaped text and never a resource or HTML node',()=>{
