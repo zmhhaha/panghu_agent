@@ -18,6 +18,7 @@ const projectPair=(compiler,template)=>(compiler==='motion-compiler-1'&&template
  ||(compiler==='motion-compiler-4'&&template==='technical-diagrams-4')
  ||(compiler==='motion-compiler-5'&&template==='technical-diagrams-5')
  ||(compiler==='motion-continuity-compiler-1'&&template==='continuous-diagrams-1')
+ ||(compiler==='motion-continuity-compiler-2'&&template==='continuous-diagrams-2')
  ||(compiler==='motion-demo-compiler-1'&&template==='record-demonstration-1');
 function validateRuntimeShape(value,keys){
  if(!exactKeys(value,keys)||Object.values(value).some(v=>typeof v!=='string'||v.length<1||v.length>2000||/[\x00-\x1f\x7f]/.test(v)))

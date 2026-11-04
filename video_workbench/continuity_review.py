@@ -6,7 +6,7 @@ import math
 import re
 
 from agent_service.contracts import ServiceError
-from .continuity import CONTINUITY_COMPILER_VERSION, TEXT_COORDINATE_EPSILON
+from .continuity import CONTINUITY_COMPILER_TEMPLATES, TEXT_COORDINATE_EPSILON
 from .motion import FPS, HEIGHT, WIDTH, action_windows, sha256
 
 
@@ -204,7 +204,7 @@ def verify_continuity_observations(plan_document, timeline, observations):
     _require(type(plan_document) is dict and plan_document.get('schema') == 'video.continuity-scene.v1')
     segment = plan_document['segment']
     expected_timeline = dict(segment['timeline'],plan_sha256=sha256(plan_document))
-    _require(timeline == expected_timeline and timeline.get('compiler') == CONTINUITY_COMPILER_VERSION,
+    _require(timeline == expected_timeline and timeline.get('compiler') in CONTINUITY_COMPILER_TEMPLATES,
              'continuity_timeline_mismatch')
     _require(type(observations) is dict and observations.get('schema') == 'video.motion-observations.v1'
              and observations.get('seek_protocol') == 'hyperframes-core-renderSeek-exact'

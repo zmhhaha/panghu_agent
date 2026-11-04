@@ -8,7 +8,8 @@ import json
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from . import media
 from .motion_snapshot import SCHEMA as SOURCE_SCHEMA, verify_snapshot_v2
-from .continuity import resolve_continuity, compile_continuity_project
+from .continuity import (CONTINUITY_COMPILER_TEMPLATES, CONTINUITY_COMPILER_VERSION,
+                         resolve_continuity, compile_continuity_project)
 
 SCHEMA = 'video.render-snapshot.v3'
 MOTION_SCHEMAS = frozenset({SOURCE_SCHEMA, SCHEMA})
@@ -19,7 +20,7 @@ def _require(value, code='invalid_continuity_snapshot', status=422):
         raise ServiceError(code, status)
 
 
-def freeze_continuity_snapshot(source, version):
+def freeze_continuity_snapshot(source, version, *, compiler_version=CONTINUITY_COMPILER_VERSION):
     """Freeze a reviewed visual candidate without changing its source media."""
     verify_snapshot_v2(source)
     _require(not source['subtitles'], 'continuity_subtitles_not_supported')
@@ -27,7 +28,9 @@ def freeze_continuity_snapshot(source, version):
              'continuity_requires_motion', 409)
     _require(type(version) is dict and type(version.get('id')) is str
              and type(version.get('plan')) is dict)
-    resolution = json.loads(canonical_bytes(resolve_continuity(source['scenes'], version['plan'])))
+    _require(type(compiler_version) is str and compiler_version in CONTINUITY_COMPILER_TEMPLATES)
+    resolution = json.loads(canonical_bytes(resolve_continuity(source['scenes'], version['plan'],
+                                                              compiler_version=compiler_version)))
     _require(len(resolution['segments']) == len(source['scenes']))
     result = deepcopy(source)
     result.update(schema=SCHEMA, visual_mode='continuous', source_snapshot_sha256=source['sha256'],
@@ -63,6 +66,9 @@ def verify_continuity_snapshot(snapshot):
     try:
         source = deepcopy(snapshot)
         continuity = source.pop('continuity')
+        compiler_version = continuity['resolution']['compiler']
+        _require(type(compiler_version) is str and compiler_version in CONTINUITY_COMPILER_TEMPLATES,
+                 'continuity_snapshot_corrupt', 409)
         source_sha = source.pop('source_snapshot_sha256')
         source.update(schema=SOURCE_SCHEMA, visual_mode='mixed')
         cursor = 0.0
@@ -74,7 +80,8 @@ def verify_continuity_snapshot(snapshot):
             cursor = scene['end_seconds']
         source.update(duration_seconds=cursor, sha256=source_sha)
         verify_snapshot_v2(source)
-        rebuilt = freeze_continuity_snapshot(source, dict(id=continuity['version_id'], plan=continuity['plan']))
+        rebuilt = freeze_continuity_snapshot(source, dict(id=continuity['version_id'], plan=continuity['plan']),
+                                             compiler_version=compiler_version)
         _require(rebuilt == snapshot, 'continuity_snapshot_corrupt', 409)
     except (KeyError, TypeError, ValueError, RecursionError):
         raise ServiceError('continuity_snapshot_corrupt', 409) from None

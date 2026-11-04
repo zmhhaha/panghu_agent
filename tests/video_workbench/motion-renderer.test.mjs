@@ -18,9 +18,10 @@ function fixture({compiler='motion-compiler-1',template='technical-diagrams-1',t
 test('verified manifest requires externally frozen digest',()=>{const f=fixture();try{assert.throws(()=>verifyInput(f.path),/expected_manifest/);assert.throws(()=>verifyInput(f.path,'a'.repeat(64)),/binding/);assert.equal(verifyInput(f.path,f.expected).timeline.duration_seconds,15);}finally{f.close();}});
 test('tampered source cannot execute',()=>{const f=fixture();try{writeFileSync(join(f.path,'index.html'),'tampered');assert.throws(()=>verifyInput(f.path,f.expected),/input_digest/);}finally{f.close();}});
 test('recording is bound independently',()=>{const f=fixture();try{writeFileSync(join(f.path,'audio.wav'),'different');assert.throws(()=>verifyInput(f.path,f.expected),/audio_binding/);}finally{f.close();}});
-const compilerPairs=[1,2,3,4].map(version=>({compiler:`motion-compiler-${version}`,template:`technical-diagrams-${version}`}));
+const compilerPairs=[1,2,3,4,5].map(version=>({compiler:`motion-compiler-${version}`,template:`technical-diagrams-${version}`}));
 compilerPairs.push({compiler:'motion-demo-compiler-1',template:'record-demonstration-1'});
-test('only exact v1 through v4 and isolated demonstration compiler/template pairs are admitted',()=>{
+compilerPairs.push(...[1,2].map(version=>({compiler:`motion-continuity-compiler-${version}`,template:`continuous-diagrams-${version}`})));
+test('only exact legacy, demonstration and continuity compiler/template pairs are admitted',()=>{
  for(const options of compilerPairs){
   const f=fixture(options);try{assert.doesNotThrow(()=>verifyInput(f.path,f.expected));}finally{f.close();}
  }

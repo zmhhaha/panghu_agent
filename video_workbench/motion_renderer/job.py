@@ -16,7 +16,7 @@ import tarfile
 
 from video_workbench.motion import COMPILER_TEMPLATES, compile_project
 from video_workbench.motion_demo import compile_demo_project
-from video_workbench.continuity import (CONTINUITY_COMPILER_VERSION, CONTINUITY_TEMPLATE_VERSION,
+from video_workbench.continuity import (CONTINUITY_COMPILER_TEMPLATES,
                                        recompile_continuity_project)
 from video_workbench.motion_snapshot import _runtime as validate_runtime_fingerprint
 
@@ -56,7 +56,7 @@ def freeze_input(directory, *, allow_unbound_experiment=False, image_digest=None
         options['compiler_version'] = pair[0]
     elif pair == ('motion-demo-compiler-1', 'record-demonstration-1'):
         compiler = compile_demo_project
-    elif pair == (CONTINUITY_COMPILER_VERSION, CONTINUITY_TEMPLATE_VERSION):
+    elif type(pair[0]) is str and CONTINUITY_COMPILER_TEMPLATES.get(pair[0]) == pair[1]:
         compiler = recompile_continuity_project
     else:
         raise ValueError('project_contract_mismatch')
@@ -68,7 +68,7 @@ def freeze_input(directory, *, allow_unbound_experiment=False, image_digest=None
         validate_runtime_fingerprint(fingerprint)
         if image_digest is not None and fingerprint['image_digest'] != image_digest:
             raise ValueError('runtime_image_digest_mismatch')
-    if pair == (CONTINUITY_COMPILER_VERSION, CONTINUITY_TEMPLATE_VERSION):
+    if type(pair[0]) is str and CONTINUITY_COMPILER_TEMPLATES.get(pair[0]) == pair[1]:
         expected = compiler(json.loads(files['plan.json']), json.loads(files['beats.json']),
                             json.loads(files['alignment.json']), animated=manifest['animated'],
                             runtime_fingerprint=manifest['runtime_fingerprint'])

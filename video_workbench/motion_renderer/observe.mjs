@@ -87,7 +87,7 @@ export async function observeProject(chromium,{root='/work',dist='/opt/renderer/
    }
    const first=await capture(0,'seek-first'),last=await capture(timeline.duration_seconds-1/24,'seek-last'),repeat=await capture(0,'seek-repeat');
    let continuityBoundary;
-   if(timeline.compiler==='motion-continuity-compiler-1'){
+   if(['motion-continuity-compiler-1','motion-continuity-compiler-2'].includes(timeline.compiler)){
     const plan=JSON.parse(readRegular(join(root,'plan.json')));
     continuityBoundary={initial:first,final:last,repeated_initial:repeat,
      ...(plan.segment.index?{transition_middle:await capture(.375,'continuity-transition-middle'),

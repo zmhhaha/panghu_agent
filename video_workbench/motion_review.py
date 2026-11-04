@@ -253,7 +253,7 @@ def verify_observations(plan, timeline, observations):
     requirement for every adjacent frame to differ. Returned quality statuses
     preserve the need for timing, visual comprehension and voice review.
     """
-    if timeline.get('compiler') == 'motion-continuity-compiler-1':
+    if timeline.get('compiler') in {'motion-continuity-compiler-1', 'motion-continuity-compiler-2'}:
         from .continuity_review import verify_continuity_observations
         return verify_continuity_observations(plan, timeline, observations)
     _require(type(observations) is dict

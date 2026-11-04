@@ -17,8 +17,12 @@ from .motion import (FPS, GSAP_VERSION, HYPERFRAMES_VERSION, WIDTH, HEIGHT,
                      semantic_digest, sha256, _safe_script_json)
 from .motion_geometry import BOUNDS, connection_geometry, inflate, overlaps, path_text, segment_hits_box
 
-CONTINUITY_COMPILER_VERSION = 'motion-continuity-compiler-1'
-CONTINUITY_TEMPLATE_VERSION = 'continuous-diagrams-1'
+CONTINUITY_COMPILER_VERSION = 'motion-continuity-compiler-2'
+CONTINUITY_TEMPLATE_VERSION = 'continuous-diagrams-2'
+CONTINUITY_COMPILER_TEMPLATES = {
+    'motion-continuity-compiler-1': 'continuous-diagrams-1',
+    CONTINUITY_COMPILER_VERSION: CONTINUITY_TEMPLATE_VERSION,
+}
 TRANSITION_SECONDS = .6
 TEXT_COORDINATE_EPSILON = .001
 SCHEMA = 'video.continuity-plan.v1'
@@ -197,7 +201,9 @@ def _event(events, scope, target, start, duration, before, after, *, reason='sce
                        after=deepcopy(after), reason=reason))
 
 
-def resolve_continuity(scenes, plan):
+def resolve_continuity(scenes, plan, *, compiler_version=CONTINUITY_COMPILER_VERSION):
+    _require(type(compiler_version) is str and compiler_version in CONTINUITY_COMPILER_TEMPLATES,
+             'continuity_compiler_version_unsupported')
     plan = validate_continuity_plan(plan, scenes)
     segments, previous, previous_map, frame = [], None, {}, 0
     for index, scene in enumerate(scenes):
@@ -332,9 +338,9 @@ def resolve_continuity(scenes, plan):
             _event(events, 'header', 'current', .15, .45, {'opacity':0.0}, {'opacity':1.0}, reason='chapter_transition')
         checkpoint = _checkpoint(states, final_relations, base_plan['title'], base_plan['takeaway'])
         initial_checkpoint = deepcopy(previous) if previous else _checkpoint(initial, relations, base_plan['title'], base_plan['takeaway'])
-        timeline = dict(base_timeline, compiler=CONTINUITY_COMPILER_VERSION, plan_sha256=sha256(plan),
+        timeline = dict(base_timeline, compiler=compiler_version, plan_sha256=sha256(plan),
                         actions=sorted(events, key=lambda row:(row['start'],row['ordinal'])))
-        segment = dict(schema='video.continuity-segment.v1', compiler=CONTINUITY_COMPILER_VERSION,
+        segment = dict(schema='video.continuity-segment.v1', compiler=compiler_version,
             scene_id=scene['id'], index=index, plan_sha256=sha256(plan), source_binding_sha256=_source_binding(scene,base),
             base_timing=base, leading_transition_seconds=transition, global_start_frame=frame,
             global_end_frame=frame+round(duration*FPS), entity_map=entity_map, copy_lineage=copies,
@@ -344,13 +350,14 @@ def resolve_continuity(scenes, plan):
         segment['sha256'] = sha256(segment)
         segments.append(segment)
         previous, previous_map, frame = checkpoint, entity_map, segment['global_end_frame']
-    return dict(schema='video.continuity-resolution.v1', compiler=CONTINUITY_COMPILER_VERSION,
+    return dict(schema='video.continuity-resolution.v1', compiler=compiler_version,
                 plan_sha256=sha256(plan), duration_seconds=frame/FPS, total_frames=frame, segments=segments)
 
 
 def _validate_segment(scene, segment):
     _require(type(segment) is dict and segment.get('schema') == 'video.continuity-segment.v1'
-             and segment.get('compiler') == CONTINUITY_COMPILER_VERSION and segment.get('scene_id') == scene['id']
+             and type(segment.get('compiler')) is str and segment['compiler'] in CONTINUITY_COMPILER_TEMPLATES
+             and segment.get('scene_id') == scene['id']
              and segment.get('sha256') == sha256({key:value for key,value in segment.items() if key != 'sha256'}),
              'continuity_segment_invalid')
     _require(segment['source_binding_sha256'] == _source_binding(scene,_base_timing(scene,segment)),
@@ -359,7 +366,7 @@ def _validate_segment(scene, segment):
              and segment['timeline']['duration_seconds'] <= 60, 'continuity_segment_budget_exceeded')
     timeline = segment['timeline']
     _require(timeline.get('schema') == 'video.motion-timeline.v1'
-             and timeline.get('compiler') == CONTINUITY_COMPILER_VERSION
+             and timeline.get('compiler') == segment['compiler']
              and timeline.get('audio_sha256') == scene['audio']['sha256'] == scene['motion']['alignment']['audio_sha256']
              and timeline.get('audio_seconds') == scene['motion']['alignment']['audio_seconds']
              and timeline.get('leading_seconds') == segment['base_timing']['leading_seconds']+segment['leading_transition_seconds']
@@ -487,7 +494,9 @@ def _compile(wrapper, beats, alignment, runtime_fingerprint):
     old = segment['initial_checkpoint']
     headers = (f'<div id="header-previous"><h1>{html.escape(old["title"])}</h1><div class="takeaway">{html.escape(old["takeaway"])}</div></div>'
                f'<div id="header-current"><h1>{html.escape(wrapper["base_plan"]["title"])}</h1><div class="takeaway">{html.escape(wrapper["base_plan"]["takeaway"])}</div></div>')
-    script = (_CONTINUITY_JS.replace('__PAYLOAD__', _safe_script_json(payload))
+    compiler_version = segment['compiler']
+    source_script = _CONTINUITY_JS_V1 if compiler_version == 'motion-continuity-compiler-1' else _CONTINUITY_JS
+    script = (source_script.replace('__PAYLOAD__', _safe_script_json(payload))
               .replace('__TIMELINE_SHA__',sha256(timeline))
               .replace('__TEXT_COORDINATE_EPSILON__',str(TEXT_COORDINATE_EPSILON)))
     page = ('<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=1280,height=720">'
@@ -498,8 +507,8 @@ def _compile(wrapper, beats, alignment, runtime_fingerprint):
             ''.join(rows)+'</div><script>'+script+'</script></body></html>')
     files = {'index.html':page.encode(),'plan.json':canonical(wrapper),'beats.json':canonical(beats),
              'alignment.json':canonical(alignment),'timeline.json':canonical(timeline)}
-    manifest = dict(schema='video.motion-project.v1',compiler=CONTINUITY_COMPILER_VERSION,
-        template=CONTINUITY_TEMPLATE_VERSION,hyperframes=HYPERFRAMES_VERSION,gsap=GSAP_VERSION,width=WIDTH,height=HEIGHT,fps=FPS,
+    manifest = dict(schema='video.motion-project.v1',compiler=compiler_version,
+        template=CONTINUITY_COMPILER_TEMPLATES[compiler_version],hyperframes=HYPERFRAMES_VERSION,gsap=GSAP_VERSION,width=WIDTH,height=HEIGHT,fps=FPS,
         animated=True,plan_sha256=sha256(wrapper),semantic_sha256=semantic_digest(beats),timeline_sha256=sha256(timeline),
         audio_sha256=alignment['audio_sha256'],runtime_fingerprint=runtime_fingerprint,
         files={name:sha256(raw) for name,raw in sorted(files.items())},
@@ -520,7 +529,7 @@ _CONTINUITY_CSS = '''
 .token .detail-transition,.label .detail-transition{display:none}
 '''
 
-_CONTINUITY_JS = r'''
+_CONTINUITY_JS_V1 = r'''
 'use strict';
 (()=>{
 const data=__PAYLOAD__,segment=data.segment,tl=gsap.timeline({paused:true,defaults:{ease:'power2.inOut'}});
@@ -617,3 +626,11 @@ window.__videoMotion={version:'motion-continuity-compiler-1',planSha256:data.tim
 duration:data.timeline.duration_seconds,inspect,inspectRelations,inspectLayout,ready};
 })();
 '''
+
+# Compiler 1 is immutable, including the early registration rejected by strict
+# encoding. New output is admitted only after the asynchronous build finishes.
+_TIMELINE_REGISTRATION = "window.__timelines=window.__timelines||{};window.__timelines['video-motion']=tl;"
+_CONTINUITY_JS = (_CONTINUITY_JS_V1.replace(_TIMELINE_REGISTRATION+'\n','')
+    .replace(' tl.set({}, {}, data.timeline.duration_seconds);tl.seek(0,false);\n',
+             ' tl.set({}, {}, data.timeline.duration_seconds);tl.seek(0,false);\n '+_TIMELINE_REGISTRATION+'\n')
+    .replace("version:'motion-continuity-compiler-1'", "version:'motion-continuity-compiler-2'"))
