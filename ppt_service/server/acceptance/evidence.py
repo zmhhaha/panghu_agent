@@ -12,9 +12,10 @@ import hashlib
 import os
 import re
 import stat
+from pathlib import PurePosixPath
 from uuid import UUID
 
-from .contracts import SourceBinding, LayoutDiagnosticItem, LayoutFailureDiagnostic
+from .contracts import SourceBinding, LayoutDiagnosticItem, LayoutFailureDiagnostic, SourceQualityItem, SourceQualityDiagnostic
 from .domain import AcceptanceError, ProgrammaticContext, RenderedPage, REQUIRED_PROGRAMMATIC_GATES
 
 SHA = re.compile(r"[a-f0-9]{64}\Z")
@@ -100,6 +101,64 @@ def _gates(value):
     require(isinstance(value, list) and len(value) == len(set(value))
         and all(isinstance(item, str) and re.fullmatch(r"[a-z0-9_]{1,100}", item) for item in value))
     return set(value)
+
+
+def _source_quality_diagnostic(report, svg_rows):
+    """Count verified source warnings without publishing report-controlled prose.
+
+    The caller has checked the retained bytes, fingerprint and report bindings.
+    Older or unfamiliar file mappings remain undisclosed rather than assigning
+    warnings to guessed pages. This optional projection never changes a gate.
+    """
+    target = report.get("target")
+    if (not isinstance(target, str) or not 0 < len(target) <= 2000
+            or not target.startswith("/") or target.startswith("//") or "\\" in target
+            or ".." in PurePosixPath(target).parts or str(PurePosixPath(target)) != target):
+        return None
+    files, summary = report.get("files"), report.get("summary")
+    if not isinstance(files, list) or len(files) != len(svg_rows) or not isinstance(summary, dict):
+        return None
+    indexed = {}
+    for number, source in enumerate(svg_rows, 1):
+        relative = source["path"]
+        if (type(source.get("ordinal")) is not int or source["ordinal"] != number
+                or "\\" in relative or str(PurePosixPath(relative)) != relative
+                or ".." in PurePosixPath(relative).parts):
+            return None
+        indexed[target + "/" + relative] = (number, source["sha256"])
+    if len(indexed) != len(svg_rows):
+        return None
+    seen, items = set(), []
+    for row in files:
+        if not isinstance(row, dict):
+            return None
+        path, warnings = row.get("path"), row.get("warnings")
+        if (not isinstance(path, str) or path not in indexed or path in seen
+                or row.get("exists") is not True or row.get("source_sha256") != indexed[path][1]
+                or row.get("errors") != [] or not isinstance(warnings, list)
+                or len(warnings) > 1000000 or any(not isinstance(warning, str) for warning in warnings)):
+            return None
+        seen.add(path)
+        if warnings:
+            items.append(SourceQualityItem(page=indexed[path][0], warning_count=len(warnings)))
+    project_issues = report.get("project_issues")
+    groups = {"template", "animation", "illustration", "communication_trace", "pptx_structure"}
+    if not isinstance(project_issues, dict) or set(project_issues) != groups:
+        return None
+    project_count = 0
+    for issues in project_issues.values():
+        if (not isinstance(issues, list) or len(issues) > 1000000
+                or any(not isinstance(issue, dict) or issue.get("severity") != "warning" for issue in issues)):
+            return None
+        project_count += len(issues)
+    # Upstream summary.warnings counts warning-bearing pages, not each string.
+    expected = {"total": len(files), "passed": len(files) - len(items),
+                "errors": 0, "warnings": len(items) + project_count}
+    if (project_count > 1000000 or not (items or project_count)
+            or any(type(summary.get(name)) is not int or summary[name] != count for name, count in expected.items())):
+        return None
+    return SourceQualityDiagnostic(error_code="source_quality_warnings",
+        items=sorted(items, key=lambda item: item.page), project_warning_count=project_count)
 
 
 def _bound(report, request, context):
@@ -246,7 +305,7 @@ def _postflight(reader, prefix, report, request, context):
     completed = _gates(report.get("completed_programmatic_gates"))
     require(completed.issubset({SOURCE_GATE}))
     if not completed:
-        return False
+        return False, None
     require(report.get("source_and_quality_verified") is True and report.get("source_unchanged") is True)
     source = report["source"]
     require(source.get("source_manifest_sha256") == context.binding.manifest_sha256
@@ -311,7 +370,8 @@ def _postflight(reader, prefix, report, request, context):
             and audit.get("images", {}).get("external") == 0
             and audit.get("images", {}).get("external_references") == [])
     clean = clean and delivery.get("status") == "passed" and delivery.get("advisories") == [] and type(delivery.get("advisory_count")) is int and delivery["advisory_count"] == 0
-    return clean
+    diagnostic = _source_quality_diagnostic(raw_quality, svg_rows) if quality["warnings_pending"] else None
+    return clean, diagnostic
 
 
 def _equivalence(reader, prefix, report, request, context, postflight_clean, fingerprint):
@@ -415,7 +475,7 @@ def read_acceptance_evidence(reader, context, job, version, fingerprint):
     equivalence = _report(reader, key, receipt, "equivalence_report", "equivalence/export-contract.json")
     pptx = reader._hash(version.manifest["pptx_key"])
     pages, renderer = _final(reader, key, final, request, context, pptx, fingerprint)
-    clean = _postflight(reader, key, postflight, request, context)
+    clean, source_diagnostic = _postflight(reader, key, postflight, request, context)
     verified = set(BASE_GATES) | {FINAL_GATE}
     if clean:
         verified.add(SOURCE_GATE)
@@ -424,11 +484,14 @@ def read_acceptance_evidence(reader, context, job, version, fingerprint):
     require(completed == verified and pending == REQUIRED_PROGRAMMATIC_GATES - completed)
     status = receipt.get("status")
     require(status in ("passed", "pending", "needs_changes") and (status == "passed") == (not pending))
+    if status != "needs_changes" or SOURCE_GATE in completed:
+        source_diagnostic = None
     detail = ("最终 PPTX 已独立渲染，源文件、导出内容及交付检查均通过；仍需完成实际 PowerPoint 操作验收。"
               if status == "passed" else "最终 PPTX 已独立渲染；完整导出与交付验收仍有待完成项目。")
     return ProgrammaticContext(binding=context.binding, receipt_sha256=receipt_hash,
         completed_gates=tuple(sorted(completed)), pending_gates=tuple(sorted(pending)),
         renderer=renderer, status=status, detail=detail, rendered_pages=pages,
+        source_diagnostics=source_diagnostic,
         issued_key=(issued, evidence_id))
 
 

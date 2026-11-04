@@ -29,6 +29,10 @@ const reasons: Record<string, string> = {
 const gateLabels: Record<string, string> = {
   independent_export_build_contract: '完整导出核验', independent_postflight_and_delivery: '独立导出与交付检查',
   independent_raster_regeneration: '源文件预览重建', independent_native_inspection: '原生文字、形状与图表检查',
+  independent_raster_regeneration_and_binding: '源文件预览重建与版本核对',
+  independent_delivery_audit: '交付文件完整性检查',
+  independent_native_ooxml_and_chart_data: '原生文字、形状与图表数据检查',
+  independent_postflight_source_and_quality: '源文件与质量检查',
   final_pptx_render: '最终 PPTX 独立渲染', independent_final_pptx_render: '最终 PPTX 独立渲染',
   independent_final_pptx_rendering: '最终 PPTX 独立渲染',
   postflight_warnings_review: '质量提示复核',
@@ -183,6 +187,16 @@ function AcceptanceWorkspace({ projectId, versionId, client, onSnapshot, onUseFe
         </li>)}</ul>
         {snapshot.programmatic.diagnostics.truncated && <p>当前展示前 {snapshot.programmatic.diagnostics.items.length} 项，共 {snapshot.programmatic.diagnostics.total_issue_count} 项。</p>}
         <p>{snapshot.programmatic.diagnostics.suggestion}</p>
+      </section>}
+      {snapshot.programmatic?.source_diagnostics && <section className="acceptance-layout-diagnostics" aria-label="源文件结构检查提示">
+        <div><strong>源文件结构提示需要复核</strong><span>{snapshot.programmatic.source_diagnostics.items.reduce((count, item) => count + item.warning_count, snapshot.programmatic.source_diagnostics.project_warning_count)} 项提示</span></div>
+        <p>源文件结构检查仍有提示，完整导出与交付检查尚未通过。结构提示不等于最终 PPTX 存在视觉错误，请结合预览核对。</p>
+        {snapshot.programmatic.source_diagnostics.items.length > 0 && <ul>{snapshot.programmatic.source_diagnostics.items.map(item => <li key={item.page}>
+          <button type="button" className="acceptance-text-button" aria-label={`查看第 ${item.page} 页的结构提示`} onClick={() => setSelectedPage(item.page - 1)}>第 {item.page} 页</button>
+          <div><strong>{item.warning_count} 项结构提示</strong><small>请核对文字组织与分组是否符合原意；若需要调整，可在下方意见清单中说明。</small></div>
+        </li>)}</ul>}
+        {snapshot.programmatic.source_diagnostics.project_warning_count > 0 && <p>整份演示稿另有 {snapshot.programmatic.source_diagnostics.project_warning_count} 项结构提示，未关联到具体页码。</p>}
+        <p>若预览正常但提示仍存在，请联系管理员复核；查看提示或切换页面不会保存验收结果或发起修改任务。</p>
       </section>}
       <section className="acceptance-main-preview" aria-label="演示稿预览">
         <div className="acceptance-review-layout"><nav className="acceptance-page-list" aria-label="选择预览页面">{snapshot.pages.map((item, index) => <button key={item.number} type="button" aria-current={index === selectedPage ? 'page' : undefined} onClick={() => setSelectedPage(index)}><span>{String(item.number).padStart(2, '0')}</span><span>{item.title}</span></button>)}</nav>

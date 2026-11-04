@@ -5,7 +5,7 @@ import { AcceptancePanel } from './AcceptancePanel';
 import { assertSnapshot, rasterPreviewUrl, renderedPptxPreviewUrl } from './client';
 import type { AcceptanceClient, AcceptanceCommand, AcceptanceSnapshot, VisualReview } from './contracts';
 import { powerpointDraft, powerpointValidation, visualDraft } from './drafts';
-import { syntheticLayoutFailure, syntheticSnapshot } from './fixtures';
+import { syntheticLayoutFailure, syntheticSnapshot, syntheticSourceWarnings } from './fixtures';
 
 function clientFor(snapshot = syntheticSnapshot()) {
   return { load: vi.fn<AcceptanceClient['load']>().mockResolvedValue(snapshot), save: vi.fn<AcceptanceClient['save']>() };
@@ -38,6 +38,60 @@ function publishedSnapshot(initial = completeSnapshot()): AcceptanceSnapshot {
 }
 
 describe('explicit version publication', () => {
+  it('shows source page counts and project warnings with navigation only, preserving the distinction from visual errors', async () => {
+    const source = syntheticSourceWarnings(), client = { ...clientFor(source), publish: vi.fn() }, onUseFeedback = vi.fn();
+    render(<AcceptancePanel projectId="demo-project" versionId="demo-v1" client={client} onUseFeedback={onUseFeedback} />);
+    await screen.findByRole('region', { name: '演示稿预览' });
+    const diagnostics = screen.getByRole('region', { name: '源文件结构检查提示' });
+    expect(within(diagnostics).getByText('源文件结构提示需要复核')).toBeVisible();
+    expect(within(diagnostics).getByText('3 项提示')).toBeVisible();
+    expect(within(diagnostics).getByText('2 项结构提示')).toBeVisible();
+    expect(within(diagnostics).getByText(/结构提示不等于最终 PPTX 存在视觉错误/)).toBeVisible();
+    expect(within(diagnostics).getByText('整份演示稿另有 1 项结构提示，未关联到具体页码。')).toBeVisible();
+    expect(screen.getByText('验收与发布').closest('details')).not.toHaveAttribute('open');
+    fireEvent.click(within(diagnostics).getByRole('button', { name: '查看第 2 页的结构提示' }));
+    expect(screen.getByRole('img', { name: '最终 PPTX 第 2 页独立渲染' })).toHaveAttribute('src', source.programmatic!.rendered_pages![1].preview_url);
+    fireEvent.click(screen.getByRole('button', { name: '重新读取记录' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '重新读取记录' })).toBeEnabled());
+    expect(screen.getByRole('region', { name: '源文件结构检查提示' })).toHaveTextContent('2 项结构提示');
+    expect(client.load).toHaveBeenCalledTimes(2); expect(client.save).not.toHaveBeenCalled(); expect(client.publish).not.toHaveBeenCalled(); expect(onUseFeedback).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/我已检查此版本全部/)).not.toBeChecked();
+  });
+
+  it('shows project-only source warnings without inventing a page target', async () => {
+    const source = syntheticSourceWarnings(); source.programmatic!.source_diagnostics!.items = [];
+    setup(clientFor(source)); await screen.findByRole('region', { name: '演示稿预览' });
+    const diagnostics = screen.getByRole('region', { name: '源文件结构检查提示' });
+    expect(within(diagnostics).queryByRole('button')).not.toBeInTheDocument();
+    expect(within(diagnostics).getByText('整份演示稿另有 1 项结构提示，未关联到具体页码。')).toBeVisible();
+  });
+
+  it('labels every actual independent gate in Chinese', async () => {
+    const value = syntheticSourceWarnings(); value.programmatic_status = 'passed';
+    value.programmatic = { ...value.programmatic!, status: 'passed', source_diagnostics: null, pending_gates: [],
+      completed_gates: [...value.programmatic!.completed_gates, 'independent_export_build_contract', 'independent_postflight_and_delivery', 'independent_postflight_source_and_quality'] };
+    setup(clientFor(value)); await ready();
+    const complete = within(screen.getByRole('list', { name: '已完成的独立检查' }));
+    for (const label of ['源文件预览重建与版本核对', '交付文件完整性检查', '原生文字、形状与图表数据检查', '最终 PPTX 独立渲染', '完整导出核验', '独立导出与交付检查', '源文件与质量检查']) expect(complete.getByText(label)).toBeInTheDocument();
+    expect(screen.queryByText('独立程序检查项已完成')).not.toBeInTheDocument();
+  });
+
+  it('discards old source warnings when switching to a new passing version', async () => {
+    const source = syntheticSourceWarnings(), client = clientFor(source);
+    const view = setup(client); await screen.findByRole('region', { name: '源文件结构检查提示' });
+    const passing = syntheticSourceWarnings('demo-v2'); passing.programmatic_status = 'passed';
+    passing.programmatic = { ...passing.programmatic!, status: 'passed', source_diagnostics: null, pending_gates: [],
+      completed_gates: [...passing.programmatic!.completed_gates, 'independent_export_build_contract', 'independent_postflight_and_delivery', 'independent_postflight_source_and_quality'] };
+    passing.pending_reasons = ['visual_review_pending', 'powerpoint_review_pending'];
+    client.load.mockResolvedValueOnce(passing);
+    view.rerender(<AcceptancePanel projectId="demo-project" versionId="demo-v2" client={client} />);
+    await screen.findByRole('region', { name: '演示稿预览' });
+    expect(screen.queryByRole('region', { name: '源文件结构检查提示' })).not.toBeInTheDocument();
+    expect(screen.queryByText('源文件结构提示需要复核')).not.toBeInTheDocument();
+    expect(screen.getByRole('img', { name: '最终 PPTX 第 1 页独立渲染' })).toHaveAttribute('src', passing.programmatic.rendered_pages![0].preview_url);
+    expect(client.save).not.toHaveBeenCalled();
+  });
+
   it('shows measured problem pages above preview and retains them on refresh without recording a human decision', async () => {
     const failure = syntheticLayoutFailure(); const client = { ...clientFor(failure), publish: vi.fn() };
     setup(client); await screen.findByRole('region', { name: '演示稿预览' });

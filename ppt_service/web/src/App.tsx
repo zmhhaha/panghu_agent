@@ -251,7 +251,7 @@ function Versions({project,versions,disabled,consent,setConsent,start,perform}:{
     <section className="selected-base selected-version" aria-label="当前选择的版本"><div><small>当前选择 · {reviewPublished?'已发布':versionStateLabel(version)}</small><strong>{orderedVersions[0]?.id===version.id?'最新版本':'历史版本'} · <time dateTime={version.created_at}>{versionCreatedLabel(version.created_at)}</time></strong><code>{version.id}</code></div><button className="primary" disabled={disabled} onClick={()=>void perform(()=>api.download(version.id))}>下载当前版本</button></section>
     {review&&!reviewPublished&&<div className="notice warning" role="status"><div>
      <strong>待审核草稿 · 尚未正式发布</strong>
-     <p>{currentReview?.programmatic_status==='needs_changes'?'独立程序检查发现待修复问题，请查看下方具体页面并添加修改意见。':currentReview?.programmatic_status==='passed'?'独立程序验收已通过，可以预览和下载审核。':currentReview?'独立程序验收尚未完成，当前可预览和下载审核稿。':'正在读取此版本的独立检查状态。'}{pendingReviewGates.length?'仍需完成以下审核：':currentReview?.can_publish?'完整验收已通过，可在“验收与发布”中确认发布。':'请核对下方版本验收记录。'}</p>
+     <p>{currentReview?.programmatic_status==='needs_changes'?'独立程序检查发现待修复问题，请查看下方检查说明后添加修改意见；未提供具体原因时，请联系管理员。':currentReview?.programmatic_status==='passed'?'独立程序验收已通过，可以预览和下载审核。':currentReview?'独立程序验收尚未完成，当前可预览和下载审核稿。':'正在读取此版本的独立检查状态。'}{pendingReviewGates.length?'仍需完成以下审核：':currentReview?.can_publish?'完整验收已通过，可在“验收与发布”中确认发布。':'请核对下方版本验收记录。'}</p>
      <ul>{pendingReviewGates.map(gate=><li key={gate}>{gateLabels[gate]??'其他审核待完成'}</li>)}</ul>
      <p>可保存检查问题，并基于本草稿创建新的审核稿；这不会发布演示稿，也不会替代正式版本验收。</p>
     </div></div>}

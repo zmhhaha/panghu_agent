@@ -8,11 +8,56 @@ import revokeFixture from '../../../server/acceptance/contracts/revoke.fixture.j
 import { acceptanceClient, assertSnapshot } from './client';
 import type { AcceptanceCommand, AcceptanceSnapshot } from './contracts';
 import { powerpointDraft, visualDraft } from './drafts';
-import { syntheticLayoutFailure } from './fixtures';
+import { syntheticLayoutFailure, syntheticSourceWarnings } from './fixtures';
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe('P4 shared Python/TypeScript contract', () => {
+  it('accepts bounded source counts and project-only warnings without promoting acceptance', () => {
+    const value = syntheticSourceWarnings();
+    expect(assertSnapshot(value, value.project_id, value.version_id).programmatic?.source_diagnostics?.items).toEqual([{ page: 2, warning_count: 2 }]);
+    expect(value.programmatic?.pending_gates).not.toContain('independent_postflight_source_and_quality');
+    value.programmatic!.source_diagnostics!.items = [];
+    expect(assertSnapshot(value, value.project_id, value.version_id).programmatic?.source_diagnostics?.project_warning_count).toBe(1);
+    expect(value.visual_status).toBe('pending'); expect(value.powerpoint_status).toBe('pending'); expect(value.publication_authorized).toBe(false);
+    value.programmatic!.source_diagnostics = null;
+    assertSnapshot(value, value.project_id, value.version_id);
+  });
+
+  it.each(['unknown_code', 'raw_text', 'raw_path', 'page_zero', 'page_overflow', 'boolean_page', 'duplicate_page', 'unsorted_pages',
+    'zero_count', 'negative_count', 'boolean_count', 'count_overflow', 'project_negative', 'project_boolean', 'project_overflow',
+    'no_warnings', 'too_many_items', 'no_final_gate', 'source_completed', 'delivery_completed', 'no_delivery_pending', 'no_receipt', 'missing_roster', 'short_roster', 'passed', 'pending', 'published'])('rejects unsafe source diagnostic %s', fault => {
+    const value = syntheticSourceWarnings(), programmatic = value.programmatic!, diagnostic = programmatic.source_diagnostics!;
+    const raw = diagnostic as unknown as Record<string, unknown>, row = diagnostic.items[0] as unknown as Record<string, unknown>;
+    if (fault === 'unknown_code') raw.error_code = 'unknown_source_message';
+    else if (fault === 'raw_text') row.message = 'private customer source';
+    else if (fault === 'raw_path') raw.path = '/private/customer/source.svg';
+    else if (fault === 'page_zero') row.page = 0;
+    else if (fault === 'page_overflow') row.page = value.pages.length + 1;
+    else if (fault === 'boolean_page') row.page = true;
+    else if (fault === 'duplicate_page') diagnostic.items.push({ ...diagnostic.items[0] });
+    else if (fault === 'unsorted_pages') diagnostic.items.push({ page: 1, warning_count: 1 });
+    else if (fault === 'zero_count') row.warning_count = 0;
+    else if (fault === 'negative_count') row.warning_count = -1;
+    else if (fault === 'boolean_count') row.warning_count = true;
+    else if (fault === 'count_overflow') row.warning_count = 1000001;
+    else if (fault === 'project_negative') raw.project_warning_count = -1;
+    else if (fault === 'project_boolean') raw.project_warning_count = true;
+    else if (fault === 'project_overflow') raw.project_warning_count = 1000001;
+    else if (fault === 'no_warnings') { diagnostic.items = []; diagnostic.project_warning_count = 0; }
+    else if (fault === 'too_many_items') diagnostic.items = Array.from({ length: 101 }, () => ({ page: 1, warning_count: 1 }));
+    else if (fault === 'no_final_gate') programmatic.completed_gates = programmatic.completed_gates.filter(gate => gate !== 'independent_final_pptx_rendering');
+    else if (fault === 'source_completed') programmatic.completed_gates.push('independent_postflight_source_and_quality');
+    else if (fault === 'delivery_completed') programmatic.completed_gates.push('independent_postflight_and_delivery');
+    else if (fault === 'no_delivery_pending') programmatic.pending_gates = [];
+    else if (fault === 'no_receipt') programmatic.receipt_sha256 = null;
+    else if (fault === 'missing_roster') delete programmatic.rendered_pages;
+    else if (fault === 'short_roster') programmatic.rendered_pages = programmatic.rendered_pages!.slice(0, 1);
+    else if (fault === 'passed' || fault === 'pending') { value.programmatic_status = fault; programmatic.status = fault; }
+    else if (fault === 'published') value.publication_authorized = true;
+    expect(() => assertSnapshot(value, value.project_id, value.version_id)).toThrowError(new ApiError('INVALID_RESPONSE'));
+  });
+
   it('accepts bounded measured-failure diagnostics without promoting any human or publication result', () => {
     const failure = syntheticLayoutFailure();
     const value = assertSnapshot(failure, failure.project_id, failure.version_id);

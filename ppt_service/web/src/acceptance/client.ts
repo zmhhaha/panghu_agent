@@ -42,7 +42,7 @@ export function assertSnapshot(value: AcceptanceSnapshot, project: string, versi
       ['visual_review', 'powerpoint_review', 'revoke', 'publish'].includes(r.kind) && typeof r.created_at === 'string' && r.reviewer &&
       typeof r.reviewer.sub === 'string' && typeof r.reviewer.issuer === 'string' && r.binding && r.payload &&
       typeof r.revoked === 'boolean' && typeof r.stale === 'boolean' && r.binding.project_id === project && r.binding.version_id === version && validPayload(r)) ||
-    !validPublication(value) || !validLayoutDiagnostics(value)) throw new ApiError('INVALID_RESPONSE');
+    !validPublication(value) || !validLayoutDiagnostics(value) || !validSourceDiagnostics(value)) throw new ApiError('INVALID_RESPONSE');
   return value;
 }
 
@@ -80,6 +80,34 @@ function validLayoutDiagnostics(value: AcceptanceSnapshot): boolean {
         typeof item.code !== 'string' || !Object.hasOwn(layoutMessages, item.code)) return false;
     const expected = layoutMessages[item.code as LayoutDiagnosticCode];
     return item.message === expected[0] && item.suggestion === expected[1];
+  });
+}
+
+/** Source reports expose counts only; report text and paths are never UI inputs. */
+function validSourceDiagnostics(value: AcceptanceSnapshot): boolean {
+  const programmatic = value.programmatic;
+  const diagnostic = programmatic?.source_diagnostics;
+  if (diagnostic === undefined || diagnostic === null) return true;
+  const object = (item: unknown): item is Record<string, unknown> => !!item && typeof item === 'object' && !Array.isArray(item);
+  const integer = (item: unknown, min: number, max: number): item is number => typeof item === 'number' && Number.isSafeInteger(item) && item >= min && item <= max;
+  const exactKeys = (item: Record<string, unknown>, keys: readonly string[]) => Object.keys(item).length === keys.length && keys.every(key => Object.hasOwn(item, key));
+  if (!programmatic || programmatic.status !== 'needs_changes' || !programmatic.receipt_sha256 ||
+      !programmatic.completed_gates.includes('independent_final_pptx_rendering') ||
+      programmatic.completed_gates.includes('independent_postflight_source_and_quality') ||
+      programmatic.completed_gates.includes('independent_postflight_and_delivery') ||
+      !programmatic.pending_gates.includes('independent_postflight_and_delivery') ||
+      programmatic.rendered_pages?.length !== value.pages.length ||
+      value.can_publish || value.publication_authorized || !object(diagnostic) ||
+      !exactKeys(diagnostic, ['error_code', 'items', 'project_warning_count']) || diagnostic.error_code !== 'source_quality_warnings' ||
+      !Array.isArray(diagnostic.items) || diagnostic.items.length > 100 ||
+      !integer(diagnostic.project_warning_count, 0, 1000000) || !diagnostic.items.length && !diagnostic.project_warning_count) return false;
+  let previous = 0;
+  return diagnostic.items.every(item => {
+    if (!object(item) || !exactKeys(item, ['page', 'warning_count']) ||
+        !integer(item.page, 1, value.pages.length) || item.page <= previous ||
+        !integer(item.warning_count, 1, 1000000)) return false;
+    previous = item.page;
+    return true;
   });
 }
 

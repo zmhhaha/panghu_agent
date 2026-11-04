@@ -52,6 +52,11 @@ export interface LayoutFailureDiagnostic {
   total_issue_count: number;
   truncated: boolean;
 }
+export interface SourceQualityDiagnostic {
+  error_code: 'source_quality_warnings';
+  items: { page: number; warning_count: number }[];
+  project_warning_count: number;
+}
 export interface ProgrammaticAcceptance {
   status: ReviewStatus;
   receipt_sha256: string | null;
@@ -61,6 +66,7 @@ export interface ProgrammaticAcceptance {
   detail: string;
   rendered_pages?: RenderedPptxPage[];
   diagnostics?: LayoutFailureDiagnostic | null;
+  source_diagnostics?: SourceQualityDiagnostic | null;
 }
 export interface PublicationState {
   status: 'draft' | 'published';

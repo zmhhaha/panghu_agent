@@ -176,6 +176,24 @@ class LayoutFailureDiagnostic(Strict):
     truncated: bool
 
 
+class SourceQualityItem(Strict):
+    page: int = Field(ge=1, le=100)
+    warning_count: int = Field(ge=1, le=1000000)
+
+
+class SourceQualityDiagnostic(Strict):
+    error_code: Literal["source_quality_warnings"]
+    items: list[SourceQualityItem] = Field(max_length=100)
+    project_warning_count: int = Field(ge=0, le=1000000)
+
+    @model_validator(mode="after")
+    def ordered_warning_pages(self):
+        numbers = [item.page for item in self.items]
+        if numbers != sorted(set(numbers)) or not (numbers or self.project_warning_count):
+            raise ValueError("Source warnings require ordered unique pages or project warnings")
+        return self
+
+
 class ProgrammaticView(Strict):
     status: HumanStatus
     receipt_sha256: Digest | None = None
@@ -185,6 +203,7 @@ class ProgrammaticView(Strict):
     detail: str
     rendered_pages: list[RenderedPageView] = Field(default_factory=list)
     diagnostics: LayoutFailureDiagnostic | None = None
+    source_diagnostics: SourceQualityDiagnostic | None = None
 
 
 class PublicationView(Strict):

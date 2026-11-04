@@ -17,7 +17,7 @@ from ..auth import Identity
 from .contracts import (
     AcceptanceSnapshot, PageDescriptor, PageView, PowerPointReviewCommand,
     ProgrammaticView, PublicationView, RenderedPageView, ReviewCommand, ReviewRecord,
-    SourceBinding, VisualReviewCommand, LayoutFailureDiagnostic,
+    SourceBinding, VisualReviewCommand, LayoutFailureDiagnostic, SourceQualityDiagnostic,
 )
 
 
@@ -70,6 +70,7 @@ class ProgrammaticContext:
     detail: str = ""
     rendered_pages: tuple[RenderedPage, ...] = ()
     diagnostics: LayoutFailureDiagnostic | None = None
+    source_diagnostics: SourceQualityDiagnostic | None = None
     issued_key: tuple[str, str] = ("", "")
 
     def __post_init__(self):
@@ -95,6 +96,13 @@ class ProgrammaticContext:
         if self.diagnostics is not None and (type(self.diagnostics) is not LayoutFailureDiagnostic
                 or self.status != "needs_changes" or "independent_final_pptx_rendering" not in self.pending_gates):
             raise ValueError("Failure diagnostics cannot complete programmatic acceptance")
+        if self.source_diagnostics is not None and (type(self.source_diagnostics) is not SourceQualityDiagnostic
+                or self.status != "needs_changes" or not self.rendered_pages
+                or "independent_postflight_source_and_quality" in self.completed_gates
+                or "independent_final_pptx_rendering" not in self.completed_gates
+                or "independent_postflight_and_delivery" not in self.pending_gates
+                or any(item.page > len(self.rendered_pages) for item in self.source_diagnostics.items)):
+            raise ValueError("Source warnings cannot complete programmatic acceptance")
         if (not isinstance(self.issued_key, tuple) or len(self.issued_key) != 2
                 or any(type(value) is not str for value in self.issued_key)):
             raise ValueError("Invalid evidence ordering")
@@ -234,6 +242,7 @@ def project_snapshot(context: ReviewContext, revision: int, records: list[Review
         programmatic = ProgrammaticView(status=trusted.status, receipt_sha256=trusted.receipt_sha256,
             completed_gates=list(trusted.completed_gates), pending_gates=list(trusted.pending_gates),
             renderer=trusted.renderer or None, detail=trusted.detail, diagnostics=trusted.diagnostics,
+            source_diagnostics=trusted.source_diagnostics,
             rendered_pages=[RenderedPageView(number=page.number, preview_sha256=page.preview_sha256,
                 preview_url=(f"/api/v1/projects/{context.binding.project_id}/versions/{context.binding.version_id}"
                              f"/acceptance/rendered-slides/{page.number}/preview?receipt_sha256={trusted.receipt_sha256}"))

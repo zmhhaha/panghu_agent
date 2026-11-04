@@ -26,3 +26,18 @@ export function syntheticLayoutFailure(versionId = 'demo-v1'): AcceptanceSnapsho
           message: '两个文字区域出现明显重叠。', suggestion: '拉开两个文字区域，检查标题与正文之间的间距。' }],
         total_issue_count: 1, truncated: false } } };
 }
+
+/** Contract fixture only; counts do not represent a real quality inspection. */
+export function syntheticSourceWarnings(versionId = 'demo-v1'): AcceptanceSnapshot {
+  const value = syntheticSnapshot(versionId);
+  const receipt = 'f'.repeat(64);
+  return { ...value, programmatic_status: 'needs_changes',
+    pending_reasons: ['independent_programmatic_needs_changes', 'visual_review_pending', 'powerpoint_review_pending'],
+    programmatic: { status: 'needs_changes', receipt_sha256: receipt,
+      completed_gates: ['independent_raster_regeneration_and_binding', 'independent_delivery_audit', 'independent_native_ooxml_and_chart_data', 'independent_final_pptx_rendering'],
+      pending_gates: ['independent_export_build_contract', 'independent_postflight_and_delivery'],
+      renderer: 'LibreOffice Impress', detail: '最终 PPTX 已独立渲染；完整导出与交付验收仍有待完成项目。',
+      rendered_pages: value.pages.map(page => ({ number: page.number, preview_sha256: page.preview_sha256,
+        preview_url: `/api/v1/projects/${value.project_id}/versions/${versionId}/acceptance/rendered-slides/${page.number}/preview?receipt_sha256=${receipt}` })),
+      source_diagnostics: { error_code: 'source_quality_warnings', items: [{ page: 2, warning_count: 2 }], project_warning_count: 1 } } };
+}

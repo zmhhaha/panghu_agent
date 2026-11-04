@@ -145,6 +145,122 @@ def accepted_bundle(ctx):
     return app, client, owners, data, bundle
 
 
+def retain_source_quality_warnings(bundle, *, page_warnings=None, project_warnings=1):
+    """Synthetic fixed-report warning case; no checker or real rendering ran."""
+    raw = json.loads((bundle["root"] / "postflight/source/deck/validation/svg_quality_report.json").read_bytes())
+    raw["target"] = "/private/source/deck"
+    if page_warnings is None:
+        page_warnings = {2: ["private.invalid /private/ source excerpt", "<script>private source</script>"],
+                         3: ["Different independent source label warning"]}
+    sources = bundle["postflight"]["source"]["svg_sources"]
+    raw["files"] = [{"path": raw["target"] + "/" + source["path"], "exists": True,
+        "source_sha256": source["sha256"], "errors": [], "warnings": page_warnings.get(source["ordinal"], [])}
+        for source in reversed(sources)]
+    raw["project_issues"]["template"] = [{"severity": "warning", "message": "/private/project secret"}
+                                           for _ in range(project_warnings)]
+    warning_pages = sum(bool(row["warnings"]) for row in raw["files"])
+    raw["summary"] = {"total": len(sources), "passed": len(sources) - warning_pages,
+                      "errors": 0, "warnings": warning_pages + project_warnings}
+    introduced = [warning for row in raw["files"] for warning in row["warnings"]] + raw["project_issues"]["template"]
+    raw["categories"]["introduced"] = {"count": len(introduced), "issues": introduced}
+    postflight, equivalence, receipt = bundle["postflight"], bundle["equivalence"], bundle["receipt"]
+    postflight["quality"].update(warnings_pending=True, summary=raw["summary"],
+        category_counts={name: category["count"] for name, category in raw["categories"].items()})
+    equivalence.update(status="needs_changes", export_build_equivalence_verified=False,
+        completed_programmatic_gates=[], error_code="export_equivalence_source_warnings")
+    receipt.update(status="needs_changes", completed_programmatic_gates=sorted(set(BASE_GATES) | {FINAL_GATE}),
+                   required_pending_gates=sorted((EXPORT_GATE, DELIVERY_GATE)))
+    retain_source_quality_report(bundle, raw)
+    return raw
+
+
+def retain_source_quality_report(bundle, raw):
+    """Re-freeze synthetic report bytes without changing the acceptance gate result."""
+    row = bundle["put"]("postflight/source/deck/validation/svg_quality_report.json", raw)
+    postflight = bundle["postflight"]
+    postflight["quality"]["summary"] = raw["summary"]
+    postflight["reports"]["quality"] = dict(row, path="svg_quality_report.json")
+    for name, field, path in (("postflight", "postflight_report", "postflight/postflight-evidence.json"),
+                              ("equivalence", "equivalence_report", "equivalence/export-contract.json")):
+        row = bundle["put"](path, bundle[name])
+        bundle["receipt"][field] = {key: row[key] for key in ("path", "sha256")}
+    bundle["put"]("receipt.json", bundle["receipt"])
+    bundle["freeze"]()
+
+
+@pytest.mark.parametrize("project_only", [False, True])
+def test_source_warning_pages_are_bound_safe_and_survive_owner_refresh_without_promoting_any_gate(accepted_bundle, project_only):
+    app, client, owners, data, bundle = accepted_bundle
+    retain_source_quality_warnings(bundle, page_warnings={} if project_only else None)
+    original_receipt = (bundle["root"] / "receipt.json").read_bytes()
+    for _ in range(2):
+        response = client.get(bundle["url"])
+        assert response.status_code == 200, response.text
+        snapshot = response.json()
+        assert snapshot["programmatic_status"] == "needs_changes"
+        assert snapshot["programmatic"]["source_diagnostics"] == {
+            "error_code": "source_quality_warnings", "project_warning_count": 1,
+            "items": [] if project_only else [{"page": 2, "warning_count": 2}, {"page": 3, "warning_count": 1}]}
+        assert snapshot["programmatic"]["diagnostics"] is None
+        assert len(snapshot["programmatic"]["rendered_pages"]) == 3
+        assert SOURCE_GATE not in snapshot["programmatic"]["completed_gates"]
+        assert snapshot["programmatic"]["pending_gates"] == sorted((EXPORT_GATE, DELIVERY_GATE))
+        assert snapshot["visual_status"] == snapshot["powerpoint_status"] == "pending"
+        assert snapshot["can_publish"] is snapshot["publication_authorized"] is False
+        assert snapshot["records"] == []
+        assert "/private/" not in response.text and "private.invalid" not in response.text and "private source" not in response.text
+    assert (bundle["root"] / "receipt.json").read_bytes() == original_receipt
+    with app.state.sessions() as session:
+        assert session.get(Job, data["jid"]).status == "succeeded"
+        assert session.get(Version, data["vid"]).status == "review"
+        assert session.get(Project, data["pid"]).revision == 8
+    owners[0] = Identity("https://issuer", "different-owner")
+    assert client.get(bundle["url"]).status_code == 404
+
+
+@pytest.mark.parametrize("fault", ["missing_target", "relative_target", "parent_target", "wrong_path", "duplicate_path",
+    "missing_page", "source_hash", "exists", "errors", "warning_object", "summary_count", "boolean_count",
+    "project_error", "project_shape", "unknown_project_group"])
+def test_unsafe_source_warning_mapping_is_not_guessed_and_does_not_complete_any_gate(accepted_bundle, fault):
+    _, client, _, _, bundle = accepted_bundle
+    raw = retain_source_quality_warnings(bundle)
+    if fault == "missing_target": raw.pop("target")
+    elif fault == "relative_target": raw["target"] = "source/deck"
+    elif fault == "parent_target": raw["target"] = "/private/source/../deck"
+    elif fault == "wrong_path": raw["files"][0]["path"] = "/private/another/svg_output/03.svg"
+    elif fault == "duplicate_path": raw["files"][0] = copy.deepcopy(raw["files"][1])
+    elif fault == "missing_page": raw["files"].pop()
+    elif fault == "source_hash": raw["files"][0]["source_sha256"] = "0" * 64
+    elif fault == "exists": raw["files"][0]["exists"] = False
+    elif fault == "errors": raw["files"][0]["errors"] = ["not a warning"]
+    elif fault == "warning_object": raw["files"][0]["warnings"] = [{"arbitrary": "not a known warning contract"}]
+    elif fault == "summary_count": raw["summary"]["warnings"] += 1
+    elif fault == "boolean_count": raw["summary"]["errors"] = False
+    elif fault == "project_error": raw["project_issues"]["template"][0]["severity"] = "error"
+    elif fault == "project_shape": raw["project_issues"]["template"] = "private arbitrary prose"
+    else: raw["project_issues"]["unexpected"] = []
+    retain_source_quality_report(bundle, raw)
+    response = client.get(bundle["url"])
+    assert response.status_code == 200, response.text
+    snapshot = response.json()
+    assert snapshot["programmatic"]["source_diagnostics"] is None
+    assert snapshot["programmatic_status"] == "needs_changes"
+    assert snapshot["programmatic"]["pending_gates"] == sorted((EXPORT_GATE, DELIVERY_GATE))
+    assert snapshot["can_publish"] is snapshot["publication_authorized"] is False
+    assert "/private/" not in response.text and "private.invalid" not in response.text
+
+
+def test_pending_warning_report_does_not_claim_a_measured_source_failure(accepted_bundle):
+    _, client, _, _, bundle = accepted_bundle
+    raw = retain_source_quality_warnings(bundle)
+    bundle["receipt"]["status"] = bundle["equivalence"]["status"] = "pending"
+    retain_source_quality_report(bundle, raw)
+    response = client.get(bundle["url"])
+    assert response.status_code == 200, response.text
+    assert response.json()["programmatic_status"] == "pending"
+    assert response.json()["programmatic"]["source_diagnostics"] is None
+
+
 def test_separate_bundle_preserves_old_binding_and_human_checks_remain_pending(accepted_bundle):
     app, client, _, data, bundle = accepted_bundle
     snapshot = client.get(bundle["url"]).json()
@@ -152,6 +268,7 @@ def test_separate_bundle_preserves_old_binding_and_human_checks_remain_pending(a
     assert snapshot["programmatic_status"] == "passed"
     assert snapshot["powerpoint_status"] == snapshot["visual_status"] == "pending"
     assert snapshot["acceptance_status"] == "pending" and snapshot["can_publish"] is False
+    assert snapshot["programmatic"]["source_diagnostics"] is None
     assert len(snapshot["programmatic"]["rendered_pages"]) == 3
     page = snapshot["programmatic"]["rendered_pages"][0]
     response = client.get(page["preview_url"])
@@ -203,6 +320,7 @@ def test_full_evidence_and_human_reviews_need_separate_append_only_publication(a
 
 @pytest.mark.parametrize("target", ["receipt.json", "request.json", "transport-manifest.json",
     "final-pptx/final-pptx-evidence.json", "final-pptx/pages/2.png", "postflight/postflight-evidence.json",
+    "postflight/source/deck/validation/svg_quality_report.json", "postflight/official/resources.json",
     "equivalence/export-contract.json", "equivalence/rebuilt/presentation.pptx"])
 def test_bundle_byte_mutations_fail_closed(accepted_bundle, target):
     _, client, _, _, bundle = accepted_bundle

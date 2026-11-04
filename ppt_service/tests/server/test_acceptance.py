@@ -21,7 +21,7 @@ from sqlalchemy.orm import sessionmaker
 
 from ppt_service.server.auth import Identity, Settings
 from ppt_service.server.acceptance import AcceptanceBase, AcceptanceError, AcceptanceService, ReviewContext, create_acceptance_router
-from ppt_service.server.acceptance.contracts import PageDescriptor, PublishCommand, ReviewCommand, SourceBinding
+from ppt_service.server.acceptance.contracts import PageDescriptor, PublishCommand, ReviewCommand, SourceBinding, SourceQualityDiagnostic
 from ppt_service.server.acceptance.domain import ProgrammaticContext, RenderedPage, REQUIRED_PROGRAMMATIC_GATES
 from ppt_service.server.acceptance.store import AcceptanceEntry, AcceptanceStream
 
@@ -193,6 +193,45 @@ class AcceptanceTests(unittest.TestCase):
             "rendered_pages": tuple(RenderedPage(number=page.number, preview_sha256="c" * 64,
                 bytes=20, storage_key=f"fixture-only/{page.number}.png") for page in self.context.pages),
         } | changes))
+
+    def test_source_warning_counts_require_a_bounded_ordered_contract_without_prose(self):
+        valid = {"error_code": "source_quality_warnings", "items": [{"page": 1, "warning_count": 2}],
+                 "project_warning_count": 0}
+        self.assertEqual(SourceQualityDiagnostic.model_validate(valid).items[0].warning_count, 2)
+        self.assertEqual(SourceQualityDiagnostic.model_validate(valid | {"items": [], "project_warning_count": 1}).items, [])
+        invalid = [valid | {"error_code": "arbitrary"}, valid | {"message": "/private/report"},
+                   valid | {"items": []}, valid | {"items": valid["items"] * 2},
+                   valid | {"items": [{"page": 2, "warning_count": 1}, {"page": 1, "warning_count": 1}]}]
+        for field, values in (("page", [True, 0, 101]), ("warning_count", [True, 0, 1000001])):
+            invalid.extend(valid | {"items": [{**valid["items"][0], field: value}]} for value in values)
+        invalid.extend(valid | {"project_warning_count": value} for value in (True, -1, 1000001))
+        for value in invalid:
+            with self.subTest(value=value), self.assertRaises(ValidationError):
+                SourceQualityDiagnostic.model_validate(value)
+
+    def test_source_diagnostic_never_promotes_programmatic_or_human_gates(self):
+        diagnostic = SourceQualityDiagnostic(error_code="source_quality_warnings",
+            items=[{"page": 2, "warning_count": 3}], project_warning_count=1)
+        state = {"status": "needs_changes", "completed_gates": ("independent_final_pptx_rendering",),
+                 "pending_gates": ("independent_export_build_contract", "independent_postflight_and_delivery"),
+                 "source_diagnostics": diagnostic}
+        self.context = replace(self.context, programmatic=self.trusted_programmatic(**state))
+        for _ in range(2):
+            snapshot = self.snapshot()
+            self.assertEqual(snapshot.programmatic.source_diagnostics, diagnostic)
+            self.assertEqual(snapshot.programmatic_status, "needs_changes")
+            self.assertEqual(snapshot.visual_status, "pending")
+            self.assertEqual(snapshot.powerpoint_status, "pending")
+            self.assertFalse(snapshot.can_publish)
+            self.assertEqual(snapshot.records, [])
+        self.assertEqual(self.count(), 0)
+        for changes in ({"status": "pending"}, {"status": "passed", "pending_gates": ()},
+                {"rendered_pages": ()}, {"completed_gates": ("independent_final_pptx_rendering", "independent_postflight_source_and_quality")},
+                {"completed_gates": ()}, {"pending_gates": ("independent_export_build_contract",)},
+                {"source_diagnostics": SourceQualityDiagnostic(error_code="source_quality_warnings",
+                    items=[{"page": 3, "warning_count": 1}], project_warning_count=0)}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                self.trusted_programmatic(**(state | changes))
 
     def publish_command(self, revision):
         return PublishCommand(kind="publish", expected_revision=revision,

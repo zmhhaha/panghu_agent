@@ -5,7 +5,7 @@ import App from '../App';
 import { api, ApiError } from '../api';
 import { acceptanceClient } from '../acceptance/client';
 import type { AcceptanceSnapshot, VisualReview } from '../acceptance/contracts';
-import { syntheticLayoutFailure, syntheticSnapshot } from '../acceptance/fixtures';
+import { syntheticLayoutFailure, syntheticSnapshot, syntheticSourceWarnings } from '../acceptance/fixtures';
 import { defaultSettings, type Project, type Version } from '../domain';
 
 vi.mock('../api', async original => ({ ...await original<typeof import('../api')>(), api: {
@@ -52,13 +52,35 @@ beforeEach(() => {
 });
 
 describe('review drafts in the real version workspace', () => {
+  it('navigates source warnings without adding opinions, starting jobs, or erasing manual feedback on refresh', async () => {
+    const measured = syntheticSourceWarnings(draft.id);
+    const warning: AcceptanceSnapshot = { ...snapshot(), programmatic: { ...measured.programmatic!,
+      rendered_pages: measured.programmatic!.rendered_pages!.map(page => ({ ...page, preview_url: page.preview_url.replace('/demo-project/', `/${project.id}/`) })) },
+      programmatic_status: 'needs_changes', pending_reasons: measured.pending_reasons };
+    vi.mocked(acceptanceClient.load).mockResolvedValue(warning);
+    const user = await selectReview();
+    const form = within(screen.getByRole('region', { name: '审核稿修改' }));
+    expect(form.getByLabelText('第 1 条修改意见')).toHaveValue('');
+    await user.type(form.getByLabelText('第 1 条修改意见'), '保留原有标题');
+    await user.click(screen.getByRole('button', { name: '查看第 2 页的结构提示' }));
+    expect(screen.getByRole('img', { name: '最终 PPTX 第 2 页独立渲染' })).toBeInTheDocument();
+    expect(form.getAllByRole('textbox')).toHaveLength(1);
+    expect(form.getByLabelText('第 1 条修改意见')).toHaveValue('保留原有标题');
+    await user.click(screen.getByRole('button', { name: '重新读取记录' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '重新读取记录' })).toBeEnabled());
+    expect(screen.getByRole('region', { name: '源文件结构检查提示' })).toHaveTextContent('2 项结构提示');
+    expect(form.getByLabelText('第 1 条修改意见')).toHaveValue('保留原有标题');
+    expect(acceptanceClient.save).not.toHaveBeenCalled(); expect(api.reviewRevise).not.toHaveBeenCalled();
+    expect(api.revise).not.toHaveBeenCalled(); expect(api.plan).not.toHaveBeenCalled(); expect(api.generate).not.toHaveBeenCalled();
+  });
+
   it('keeps measured layout problems visible after refresh and offers the existing manual opinion list without claiming checks passed', async () => {
     const measured = syntheticLayoutFailure(draft.id);
     const failure: AcceptanceSnapshot = { ...snapshot(), programmatic: measured.programmatic,
       programmatic_status: 'needs_changes', pending_reasons: measured.pending_reasons };
     vi.mocked(acceptanceClient.load).mockResolvedValue(failure);
     const user = await selectReview();
-    expect(screen.getByText(/独立程序检查发现待修复问题，请查看下方具体页面并添加修改意见/)).toBeVisible();
+    expect(screen.getByText(/独立程序检查发现待修复问题，请查看下方检查说明后添加修改意见/)).toBeVisible();
     expect(screen.queryByText(/已完成独立程序检查|独立程序验收已通过/)).not.toBeInTheDocument();
     expect(screen.getByRole('region', { name: '文字排版检查发现的问题' })).toHaveTextContent('两个文字区域出现明显重叠。');
     const form = within(screen.getByRole('region', { name: '审核稿修改' }));
