@@ -143,7 +143,7 @@ def _confirmation(plan):
     return result
 
 
-def build_agent_task(session, job):
+def build_agent_task(session, job, *, data_root=None):
     """Resolve only exact DB records; no latest-version or caller confirmation."""
     profile = PPTProfile(job.kind)
     snapshot = copy.deepcopy(job.input_snapshot)
@@ -206,6 +206,14 @@ def build_agent_task(session, job):
             'feedback': snapshot.get('feedback', ''), 'revision_pages': snapshot.get('pages', []),
             'confirmations': confirmations, 'checkpoint': None if cp is None else checkpoint_descriptor(cp),
             'base_version': base_binding}
+    if job.kind == 'plan_options' and data_root is not None:
+        from .source_tables import discover_tables
+        task['source_table_catalog'] = discover_tables(data_root, snapshot)
+    if job.kind in ('prepare', 'generate', 'revise'):
+        from .chart_oracle import task_chart_oracle
+        # Reject old declared charts without a genuine service binding before
+        # any model preparation/generation is admitted. Never infer new authority.
+        task_chart_oracle(task)
     profile.validate_task(task)
     return task, copy.deepcopy(ref)
 
@@ -315,7 +323,7 @@ class AgentConnector:
                 return None
             try:
                 self._recheck_review_source(s, job)
-                task, cp_ref = build_agent_task(s, job)
+                task, cp_ref = build_agent_task(s, job, data_root=self.config.data_root)
                 business_ref = f'ppt:{job.id}:{job.attempt}:{job.fencing_token}'
                 profile_name = 'ppt.' + job.kind + '.v1'
                 require(len(canonical_bytes(task)) <= task_byte_limit(profile_name), 'execution_task_too_large')
@@ -437,6 +445,31 @@ class AgentConnector:
                 out.state = 'mapped'; out.result = preserve_accounting(out, {'status': 'needs_input',
                     'questions': normalize_questions(validated.get('questions'))})
                 return
+            design = None
+            if job.kind in ('plan_initial', 'plan_options'):
+                require(validated.get('accepted') is True, 'agent_candidate_unaccepted')
+                from .source_tables import bind_planning, discover_tables, strip_reserved
+                design = strip_reserved(validated['design'])
+                if job.kind == 'plan_options':
+                    try:
+                        catalog = discover_tables(self.config.data_root, job.input_snapshot)
+                        if 'source_table_catalog' in task:
+                            require(catalog == task['source_table_catalog'], 'source_hash_mismatch')
+                        design = bind_planning(design, self.config.data_root, job.input_snapshot, catalog=catalog)
+                    except (ControlError, KeyError, ValueError, TypeError, OSError):
+                        # This trusted collector runs after the independent
+                        # validator's stopped receipt. A malformed reference is
+                        # terminal and cannot cause repeated collection/model work.
+                        Repository(s).finish_failed(jid, out.attempt, out.fencing_token,
+                                                    error_code='quality_gate_failed')
+                        out.state = 'mapped'
+                        out.result = preserve_accounting(out, {'status': 'failed', 'error_code': 'quality_gate_failed',
+                            'quality_diagnostics': {'schema_version': 1, 'error_code': 'source_chart_binding_invalid',
+                                'publication_authorized': False, 'project_id': job.project_id, 'job_id': job.id,
+                                'attempt': job.attempt, 'fencing_token': job.fencing_token,
+                                'input_snapshot_sha256': task['input_snapshot_sha256'],
+                                'source_manifest_sha256': source}})
+                        return
             key = f'projects/{project.id}/checkpoints/{uuid4()}'
             target = self.config.data_root / key
             target.mkdir(parents=True, exist_ok=False)
@@ -451,10 +484,9 @@ class AgentConnector:
                     'artifact_manifest_sha256': read_json(snapshot, 'remote-job.json')['artifact_manifest_sha256']}}
             repo = Repository(s)
             if job.kind in ('plan_initial', 'plan_options'):
-                require(validated.get('accepted') is True, 'agent_candidate_unaccepted')
                 atomic_json(target / 'checkpoint.json', checkpoint); make_readonly(target)
                 plan = repo.accept_plan(jid, out.attempt, out.fencing_token,
-                        outline=validated['outline'], design=validated['design'], checkpoint_key=key,
+                        outline=strip_reserved(validated['outline']), design=design, checkpoint_key=key,
                         checkpoint_manifest=checkpoint, independently_validated=True)
                 out.result = preserve_accounting(out, {'status': 'awaiting_confirmation', 'plan_revision': plan.revision})
             elif job.kind == 'prepare':

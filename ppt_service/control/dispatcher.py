@@ -267,11 +267,8 @@ def build_controller(sessions,config):
             token=stream.read(513).decode('ascii').strip()
         client=AgentClient(os.environ['PPT_AGENT_SERVICE_URL'],token)
         sandbox=AgentKubernetesSandbox(config,KubeSettings.env())
-        oracle=ChartOracle.env()
-        def oracle_for_task(task):
-            from types import SimpleNamespace
-            snapshot=dict(task['input_snapshot'],hash=task['input_snapshot_sha256'])
-            return oracle(SimpleNamespace(snapshot=snapshot))
+        from .chart_oracle import task_chart_oracle
+        oracle_for_task=task_chart_oracle
         controller=AgentConnector(sessions,config,client,sandbox,
             settings=AgentConnectorSettings.env(),oracle_provider=oracle_for_task)
         from .acceptance_coordinator import AcceptanceCoordinator

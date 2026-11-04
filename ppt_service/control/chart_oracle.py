@@ -13,6 +13,30 @@ from .staging import read_json
 
 SHA = re.compile(r'[0-9a-f]{64}\Z')
 
+
+def task_chart_oracle(task):
+    """Read the exact website-owned direction frozen into this outbox task.
+
+    Historical Agent tasks without a binding/spec declaration remain chart-free.
+    Nonempty deployment mappings are not silently migrated into dispatched Agent
+    tasks. The explicit legacy ChartOracle below remains available to the legacy
+    Dispatcher and dependency-injected integrations.
+    """
+    from .source_tables import validate_direction_binding
+    try:
+        snapshot = dict(task['input_snapshot'], hash=task['input_snapshot_sha256'])
+        confirmation = task.get('confirmations', {}).get('stage2')
+        if confirmation is None:
+            return {'expected_charts': [], 'source_sha256': []}
+        selected = confirmation['selected_direction']
+        if (confirmation['channel'] != 'website_database'
+                or confirmation['input_snapshot_sha256'] != snapshot['hash']
+                or selected['id'] != confirmation['selection']['direction_id']):
+            raise ControlError('source_chart_binding_invalid')
+        return validate_direction_binding(selected, snapshot)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise ControlError('source_chart_binding_invalid') from None
+
 class ChartOracle:
     def __init__(self, path: Path | None = None):
         self.entries = {}

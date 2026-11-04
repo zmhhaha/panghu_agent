@@ -204,6 +204,10 @@ def create_app(settings:Settings|None=None,engine=None):
                 directions=plan.design.get('directions',plan.design.get('options',[]))
                 selected=next((d for d in directions if isinstance(d,dict) and d.get('id')==selection.get('direction_id')),None)
                 if not selected:fail('unknown_direction',422)
+                from ppt_service.control.source_tables import validate_direction_binding
+                from ppt_service.control.execution import ControlError
+                try:validate_direction_binding(selected,r.snapshot(p))
+                except ControlError as exc:fail(exc.code,409)
                 for field in ('page_plan','production_parameters'):
                     if field in selection and selection[field]!=selected.get(field,plan.design.get(field)):fail('replanning_required',409)
             if plan.confirmed_at and plan.confirmation_selection!=selection:fail('already_confirmed_different_selection')
@@ -220,6 +224,13 @@ def create_app(settings:Settings|None=None,engine=None):
             plan=s.scalar(select(Plan).where(Plan.project_id==pid,Plan.revision==body.plan_revision,Plan.phase=='plan_options',Plan.confirmed_at!=None))
             if not plan or p.confirmed_plan_revision!=body.plan_revision:fail('options_confirmation_required')
             if plan.input_snapshot_hash!=r.snapshot(p)['hash']:fail('stale_input_snapshot')
+            selected=next((d for d in plan.design.get('directions',plan.design.get('options',[]))
+                if isinstance(d,dict) and d.get('id')==(plan.confirmation_selection or {}).get('direction_id')),None)
+            if selected is None:fail('source_chart_binding_invalid')
+            from ppt_service.control.source_tables import validate_direction_binding
+            from ppt_service.control.execution import ControlError
+            try:validate_direction_binding(selected,r.snapshot(p))
+            except ControlError as exc:fail(exc.code,409)
             j=r.enqueue(p,owner,'prepare',body.expected_revision,{'plan_revision':plan.revision,'checkpoint_id':plan.checkpoint_id,'confirmation_selection':plan.confirmation_selection});j.checkpoint_id=plan.checkpoint_id
             return job_dto(j)
         return r.idempotent(owner,f'projects/{pid}/generations',key,body.model_dump(),action,

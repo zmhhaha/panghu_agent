@@ -154,6 +154,8 @@ class AcceptanceCoordinator:
         if candidate is None:
             return {"status": "idle", "reason": state}
         context, task = candidate["context"], candidate["task"]
+        # ``task`` is copied from this version's original immutable outbox, not
+        # from the latest plan, source catalog, Actor output or deployment map.
         oracle = self.oracle_provider(task)
         require(isinstance(oracle, dict) and isinstance(oracle.get("expected_charts"), list)
             and isinstance(oracle.get("source_sha256", []), list), "trusted_chart_oracle_required")

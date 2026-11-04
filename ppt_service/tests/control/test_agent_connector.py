@@ -347,6 +347,80 @@ def test_planning_roundtrip_uses_two_database_confirmations_and_artifact_replay(
     assert len(service.submissions) == 2
 
 
+def test_source_chart_catalog_and_binding_follow_exact_database_confirmation_lineage(database, monkeypatch):
+    from ppt_service.control.source_tables import discover_tables
+    from ppt_service.control.chart_oracle import task_chart_oracle
+    raw = b'| Category | Value |\n| --- | --- |\n| A | 0.98 |\n| B | 1.28 |\n'
+    with database.sessions.begin() as session:
+        asset = session.scalar(select(Asset).where(Asset.project_id == database.project_id))
+        write(database.root, asset.storage_key, raw)
+        asset.bytes, asset.sha256 = len(raw), hashlib.sha256(raw).hexdigest()
+        job = session.get(Job, database.job_id)
+        job.input_snapshot = Repository(session).snapshot(session.get(Project, database.project_id))
+        catalog = discover_tables(database.root, job.input_snapshot)
+    original = stage2_plan
+
+    def source_plan():
+        plan = original()
+        for row in plan['design']['directions']:
+            row['native_chart_specs'] = [{'table_id': catalog['tables'][0]['table_id'], 'category_column': 0,
+                'series_columns': [1], 'slide': 2, 'type': 'column'}]
+            row['source_chart_binding'] = {'expected_charts': [{'forged': True}]}
+        return plan
+
+    monkeypatch.setitem(globals(), 'stage2_plan', source_plan)
+    control, service = connector(database)
+    complete_plan(control)
+    options_id = confirm_and_enqueue(database, 'plan_options')
+    complete_plan(control)
+    prepare_id = confirm_and_enqueue(database, 'prepare')
+    with database.sessions() as session:
+        options = session.get(AgentOutbox, options_id)
+        assert options.request['task']['source_table_catalog'] == catalog
+        task, _ = build_agent_task(session, session.get(Job, prepare_id))
+        frozen = task_chart_oracle(task)
+        assert 'source_table_catalog' not in task and task['confirmations']['stage2']['selected_direction']['id'] == 'B'
+        assert frozen['expected_charts'][0]['series'] == [{'name': 'Value', 'values': [0.98, 1.28]}]
+        assert len(session.scalars(select(Plan)).all()) == 2 and not session.scalars(select(Version)).all()
+    assert control.tick()['status'] == 'uploading'
+    with database.sessions() as session:
+        dispatched = copy.deepcopy(session.get(AgentOutbox, prepare_id).request['task'])
+        assert task_chart_oracle(dispatched) == frozen
+    # A process restart reads the existing outbox instead of current files/maps.
+    write(database.root, catalog['tables'][0]['asset_id'] + '.unrelated', b'ignored')
+    restarted = AgentConnector(database.sessions, RuntimeConfig(database.root), service, PlanningValidator(),
+                               settings=AgentConnectorSettings(enabled=True))
+    assert restarted._claim() == prepare_id
+    with database.sessions() as session:
+        assert session.get(AgentOutbox, prepare_id).request['task'] == dispatched
+
+
+def test_actor_invalid_source_chart_reference_is_terminal_and_preserves_prior_plan(database, monkeypatch):
+    original = stage2_plan
+
+    def invalid_chart_plan():
+        plan = original()
+        for row in plan['design']['directions']:
+            row['native_chart_specs'] = [{'table_id': 'forged', 'category_column': 0,
+                'series_columns': [1], 'slide': 2, 'type': 'column'}]
+        return plan
+
+    monkeypatch.setitem(globals(), 'stage2_plan', invalid_chart_plan)
+    control, service = connector(database)
+    complete_plan(control)
+    options_id = confirm_and_enqueue(database, 'plan_options')
+    complete_plan(control)
+    with database.sessions() as session:
+        job = session.get(Job, options_id)
+        out = session.get(AgentOutbox, options_id)
+        assert job.status == 'failed' and job.stopped and job.error_code == 'quality_gate_failed'
+        assert out.result['quality_diagnostics']['error_code'] == 'source_chart_binding_invalid'
+        assert len(session.scalars(select(Plan)).all()) == 1
+        assert session.get(ExecutionSlot, 1).job_id is None
+    assert control.tick()['status'] == 'idle'
+    assert len(service.submissions) == 2
+
+
 def test_prepare_preserves_rich_database_confirmations_above_default_task_bound(database, monkeypatch):
     original_stage1, original_stage2 = stage1_plan, stage2_plan
 
