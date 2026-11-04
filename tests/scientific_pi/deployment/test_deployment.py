@@ -236,10 +236,14 @@ class DeploymentScriptTests(unittest.TestCase):
 printf '%s\\n' "$*" >> "$SCIENTIFIC_DEPLOY_TEST_LOG"
 case " $* " in
   *" exec "*) printf '%s\\n' "${SCIENTIFIC_DEPLOY_TEST_ACTIVE:-0}" ;;
+  *" get secret llm-token "*) printf '%s\\n' 'synthetic-ready-marker' ;;
   *" get deployment/api -o json "*) printf '%s\\n' '{"spec":{"template":{"spec":{"containers":[{"name":"api","image":"old-image"}]}}}}' ;;
 esac
 ''', encoding='utf-8', newline='\n')
         kubectl.chmod(0o755)
+        sleep = self.root / 'sleep'
+        sleep.write_text('#!/usr/bin/env bash\nexit 0\n', encoding='utf-8', newline='\n')
+        sleep.chmod(0o755)
         self.env = dict(os.environ, SCIENTIFIC_PI_WORKER_IMAGE=IMAGE, SCIENTIFIC_PI_API_IMAGE=IMAGE,
                         SCIENTIFIC_DEPLOY_TEST_LOG=self.log.as_posix(),
                         PATH=str(self.root) + os.pathsep + os.environ.get('PATH', ''))
@@ -267,6 +271,45 @@ esac
                     self.assertEqual(result.returncode, 64, result.stderr)
                     self.assertIn('scientific_agent/deploy.sh', result.stderr)
                     self.assertFalse(self.log.exists())
+
+    def test_token_sync_defaults_exclude_retired_scientific_caller(self):
+        result = subprocess.run([str(self.bash), (ROOT / 'scripts/sync-llm-token.sh').as_posix()],
+            env=self.env, cwd=ROOT, text=True, encoding='utf-8', capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.log.read_text().splitlines()
+        expected = {'research-agent', 'daofaziran-agent', 'fofawubian-agent', 'yimaneili-agent',
+                    'zhenzhuzhida-agent', 'zhongkuifumo-agent', 'zhougongjiemeng-agent',
+                    'xiaotanrenjian-agent', 'bingbichunqiu-agent', 'game-review-agent',
+                    'literature-downloader'}
+        # Inspect actual command execution, including reads, so the removed
+        # caller cannot survive in a second sync/restart list.
+        self.assertEqual(len(calls), len(expected) * 2)
+        self.assertTrue(all('scientific' not in call for call in calls))
+        for namespace in expected:
+            self.assertEqual(sum('-n ' + namespace + ' ' in call + ' ' for call in calls), 2)
+        self.assertTrue(all(' rollout ' not in ' ' + call + ' ' for call in calls))
+
+    def test_token_sync_rejects_explicit_retired_caller_before_any_cluster_call(self):
+        for name in ('scientific-agent', 'scientific_agent'):
+            with self.subTest(name=name):
+                result = subprocess.run([str(self.bash), (ROOT / 'scripts/sync-llm-token.sh').as_posix(),
+                    'research-agent', '--restart', name], env=self.env, cwd=ROOT,
+                    text=True, encoding='utf-8', capture_output=True, timeout=20)
+                self.assertEqual(result.returncode, 64, result.stderr)
+                self.assertIn('retired', result.stderr)
+                self.assertIn('agent-service', result.stderr)
+                self.assertFalse(self.log.exists())
+
+    def test_token_sync_preserves_other_callers_and_restart_behavior(self):
+        result = subprocess.run([str(self.bash), (ROOT / 'scripts/sync-llm-token.sh').as_posix(),
+            'research-agent', '--restart'], env=self.env, cwd=ROOT,
+            text=True, encoding='utf-8', capture_output=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.log.read_text().splitlines()
+        self.assertEqual(len(calls), 4)
+        self.assertTrue(all('-n research-agent ' in call + ' ' for call in calls))
+        self.assertEqual(sum(' rollout restart ' in ' ' + call + ' ' for call in calls), 1)
+        self.assertEqual(sum(' rollout status ' in ' ' + call + ' ' for call in calls), 1)
 
 
 if __name__ == '__main__':

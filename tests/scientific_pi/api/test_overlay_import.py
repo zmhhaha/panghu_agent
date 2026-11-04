@@ -19,7 +19,7 @@ PROBE = textwrap.dedent(r'''
         package_path = image / 'scientific_agent'
         package_path.mkdir(parents=True)
         (package_path / '__init__.py').write_text('', encoding='utf-8')
-        for name in ('pi_contracts.py', 'pi_client.py', 'pi_projection.py', 'pi_citations.py', 'pi_sections.py', 'pi_report_versions.py', 'pi_revision_contracts.py', 'pi_revision_validation.py', 'agent_config.py', 'agent_client.py', 'agent_projection.py', 'retired_pi_archive.py', 'academic_observations.py', 'workspace.py', 'workspace_execution.py', 'workspace_materials.py', 'workflow_contracts.py'):
+        for name in ('pi_contracts.py', 'pi_client.py', 'pi_projection.py', 'pi_citations.py', 'pi_sections.py', 'pi_report_versions.py', 'pi_revision_contracts.py', 'pi_revision_validation.py', 'agent_config.py', 'agent_client.py', 'agent_projection.py', 'academic_observations.py', 'workspace.py', 'workspace_execution.py', 'workspace_materials.py', 'workflow_contracts.py'):
             if mode != 'missing-dependency' or name != 'pi_contracts.py':
                 shutil.copyfile(root / 'scientific_agent' / name, package_path / name)
         for name in ('app', 'app/api', 'tools'):
@@ -58,7 +58,7 @@ PROBE = textwrap.dedent(r'''
                 agent_projection = importlib.import_module('scientific_agent.agent_projection')
                 observations = importlib.import_module('scientific_agent.academic_observations')
                 assert api.ContractError is client.ContractError is contracts.ContractError
-                assert api.PiClient is client.PiClient
+                assert api.WorkerError is client.WorkerError
                 assert api.PiProjection is projection.PiProjection
                 assert agent_client.WorkerError is client.WorkerError
                 assert issubclass(agent_projection.ScientificAgentProjection, projection.PiProjection)

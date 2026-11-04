@@ -27,10 +27,9 @@ set -euo pipefail
 
 K="--kubeconfig=/etc/kubernetes/super-admin.conf"
 
-# 所有 agent namespace
+# 现役 llm-service 直连调用方。科研已通过 agent-service 执行，不再维护直连令牌。
 ALL_NS=(
   research-agent
-  scientific-agent
   daofaziran-agent
   fofawubian-agent
   yimaneili-agent
@@ -49,6 +48,10 @@ TARGETS=()
 for arg in "$@"; do
   case "$arg" in
     --restart) DO_RESTART=1 ;;
+    scientific-agent|scientific_agent)
+      printf '%s\n' 'The scientific direct llm-service token is retired; scientific-agent uses the agent-service caller managed by Vault/ESO.' >&2
+      exit 64
+      ;;
     *) TARGETS+=("$arg") ;;
   esac
 done

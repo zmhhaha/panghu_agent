@@ -110,43 +110,15 @@ def test_api_docker_copy_packages_working_business_projections(tmp_path):
         assert outcome['matched_searches'] == [dict(query='AutoGen', provider='arxiv',
             result_count=4, batch_id='packaging-smoke', match='named_entity')]
         assert summary['topics_without_evidence'] == []
-        # The retired Worker must be removable without losing existing task
-        # history or adding a lazy dependency on an omitted archive module.
-        import json, os, sqlite3
-        from scientific_agent.retired_pi_archive import RetiredPiArchive, archive_from_worker
-        from scientific_agent.pi_client import WorkerError
-        class Database:
-            def __init__(self):
-                self.connection = sqlite3.connect(':memory:')
-                self.connection.row_factory = sqlite3.Row
-            def _query(self, sql):
-                return [dict(row) for row in self.connection.execute(sql)]
-            def _execute(self, sql):
-                self.connection.execute(sql)
-                self.connection.commit()
-        database = Database()
-        database._execute('CREATE TABLE scientific_pi_index(id TEXT,user_id TEXT,job TEXT)')
-        task_id = '00000000-0000-0000-0000-000000000001'
-        job = dict(task_id=task_id,user_id='owner',topic='Packaging fixture',mode='brief',
-            runtime_revision='former-worker',created_at='2026-10-22T00:00:00Z',
-            execution_deadline_at='2026-10-22T00:10:00Z')
-        database.connection.execute('INSERT INTO scientific_pi_index VALUES (?,?,?)',
-            (task_id, 'owner', json.dumps(job)))
-        database.connection.commit()
-        class Source:
-            def get(self, task):
-                return dict(id=task,state='cancelled',error=None,error_code=None,
-                    **{key:job[key] for key in ('topic','mode','created_at','execution_deadline_at')})
-            def result(self, task):
-                raise WorkerError(409,'result_not_ready','No validated result')
-            artifacts = result
-        receipt = archive_from_worker(database, Source(), [task_id])
-        assert receipt['task_count'] == 1
-        assert RetiredPiArchive(database).get(task_id)['state'] == 'cancelled'
+        # The image now constructs only the neutral service client, without
+        # initializing an archive or reviving a former Worker connection.
+        import os
         os.environ['SCIENTIFIC_EXECUTION_BACKEND'] = 'agent-service'
         os.environ['SCIENTIFIC_AGENT_SERVICE_TOKEN_FILE'] = ''
         from app.api.scientific_agent import app
-        assert isinstance(app.state.worker.legacy_worker, RetiredPiArchive)
+        from scientific_agent.agent_client import ScientificAgentClient
+        assert isinstance(app.state.worker, ScientificAgentClient)
+        assert not hasattr(app.state.worker, 'legacy_worker')
     '''), str(app_root)], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
 

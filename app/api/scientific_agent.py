@@ -16,10 +16,9 @@ from scientific_agent.pi_citations import TraceUnavailable, validate_manifest, b
 from scientific_agent.pi_sections import SectionError, index_sections, select_section
 from scientific_agent.pi_report_versions import VersionError, ReportVersionStore
 from tools import sqlite_client as db
-from scientific_agent.pi_client import PiClient, WorkerError
+from scientific_agent.pi_client import WorkerError
 from scientific_agent.pi_projection import PiProjection, sql
 from scientific_agent.agent_config import AgentServiceSettings, execution_backend
-from scientific_agent.retired_pi_archive import RetiredPiArchive
 
 log = logging.getLogger(__name__)
 
@@ -114,14 +113,11 @@ def create_app(database=None, worker=None, projection=None, start_reconciler=Tru
     if worker is None:
         worker = getattr(projection, 'worker', None)
     if worker is None:
-        if execution_backend() == 'agent-service':
-            from scientific_agent.agent_client import ScientificAgentClient
-            settings = AgentServiceSettings.from_env()
-            worker = ScientificAgentClient(database, settings.base_url, settings.token,
-                generation_revision=settings.generation_revision, revision_revision=settings.revision_revision,
-                legacy_worker=RetiredPiArchive(database))
-        else:
-            worker = PiClient(os.getenv('SCIENTIFIC_PI_WORKER_URL',''),os.getenv('SCIENTIFIC_PI_WORKER_TOKEN',''))
+        execution_backend()
+        from scientific_agent.agent_client import ScientificAgentClient
+        settings = AgentServiceSettings.from_env()
+        worker = ScientificAgentClient(database, settings.base_url, settings.token,
+            generation_revision=settings.generation_revision, revision_revision=settings.revision_revision)
     if projection is None:
         if getattr(worker, 'backend', None) == 'agent-service':
             from scientific_agent.agent_projection import ScientificAgentProjection
@@ -150,12 +146,9 @@ def create_app(database=None, worker=None, projection=None, start_reconciler=Tru
     @asynccontextmanager
     async def lifespan(app):
         database.init_db('scientific')
-        # Legacy tasks remain historical records; switching execution must not
-        # rewrite their status. Pi owns recovery through its durable projection.
+        # Initialize current business publication state; execution belongs to
+        # the neutral Agent service, not an embedded or fallback Worker.
         projection.initialize()
-        archive = getattr(worker, 'legacy_worker', None)
-        if isinstance(archive, RetiredPiArchive):
-            archive.initialize()
         versions.initialize()
         workspace.store.initialize()
         thread = None

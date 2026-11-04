@@ -70,7 +70,7 @@ class ScientificAgentClient:
     backend = 'agent-service'
 
     def __init__(self, database, base_url='', token='', *, timeout=15, transport=None,
-                 generation_revision='v1', revision_revision='v1', legacy_worker=None,
+                 generation_revision='v1', revision_revision='v1',
                  providers=('crossref', 'pubmed', 'arxiv'), max_results=10):
         if base_url:
             parsed = urlsplit(base_url)
@@ -85,7 +85,7 @@ class ScientificAgentClient:
         self.db, self.base_url, self.token = database, base_url.rstrip('/'), token
         self.timeout, self.transport = timeout, transport
         self.generation_revision, self.revision_revision = generation_revision, revision_revision
-        self.legacy_worker, self.versions = legacy_worker, None
+        self.versions = None
         self.providers, self.max_results = tuple(providers), max_results
         _require(self.providers and len(set(self.providers)) == len(self.providers)
             and set(self.providers) <= {'crossref', 'pubmed', 'arxiv', 'openalex', 'semantic_scholar'}
@@ -152,15 +152,16 @@ class ScientificAgentClient:
         rows = self.db._query('SELECT * FROM scientific_agent_dispatch WHERE task_id=' + sql(task_id))
         return rows[0] if rows else None
 
+    def _required_row(self, task_id):
+        row = self._row(task_id)
+        if row is None:
+            raise WorkerError(404, 'task_not_found', 'No execution mapping exists')
+        return row
+
     def _update(self, task_id, **values):
         values['updated_at'] = utc_now()
         self.db._execute('UPDATE scientific_agent_dispatch SET ' +
             ','.join(key + '=' + sql(value) for key, value in values.items()) + ' WHERE task_id=' + sql(task_id))
-
-    def _legacy(self, operation, task_id, *args, **kwargs):
-        if self.legacy_worker is None:
-            raise WorkerError(404, 'task_not_found', 'No execution mapping exists')
-        return getattr(self.legacy_worker, operation)(task_id, *args, **kwargs)
 
     def _task(self, job):
         revision = job.get('task_kind') == 'revision'
@@ -289,15 +290,9 @@ class ScientificAgentClient:
         return self._snapshot(row, response)
 
     def put(self, job):
-        if job.get('runtime_revision') != LOGICAL_RUNTIME:
-            _require(self.legacy_worker is not None, 'legacy_execution_unavailable', 503)
-            return self.legacy_worker.put(job)
         return self._submit(self._prepare(job))
 
     def put_revision(self, job, material):
-        if job.get('runtime_revision') != LOGICAL_RUNTIME:
-            _require(self.legacy_worker is not None, 'legacy_execution_unavailable', 503)
-            return self.legacy_worker.put_revision(job, material)
         return self._submit(self._prepare(job), material)
 
     def _snapshot(self, row, remote=None):
@@ -326,13 +321,7 @@ class ScientificAgentClient:
             error='Execution needs additional input' if remote and remote.get('state') == 'needs_input' else None)
 
     def get(self, task_id):
-        row = self._row(task_id)
-        if row is None:
-            # A new prepared business record is not a legacy worker task.
-            index = self.db._query('SELECT job FROM scientific_pi_index WHERE id=' + sql(task_id))
-            if index and _json(index[0]['job']).get('runtime_revision') == LOGICAL_RUNTIME:
-                raise WorkerError(404, 'task_not_found', 'Execution has not been admitted')
-            return self._legacy('get', task_id)
+        row = self._required_row(task_id)
         if row['local_cancelled'] or row['terminal_state']:
             return self._snapshot(row)
         if not row['admission_started'] and not row['job_id']:
@@ -364,7 +353,7 @@ class ScientificAgentClient:
         if row is None:
             index = self.db._query('SELECT job FROM scientific_pi_index WHERE id=' + sql(task_id))
             if not index or _json(index[0]['job']).get('runtime_revision') != LOGICAL_RUNTIME:
-                return self._legacy('cancel', task_id)
+                raise WorkerError(404, 'task_not_found', 'No execution mapping exists')
             row = self._prepare(_json(index[0]['job']))
         self._update(task_id, cancel_requested=1)
         row = self._row(task_id)
@@ -457,9 +446,7 @@ class ScientificAgentClient:
         return result, indexed, entries
 
     def result(self, task_id):
-        row = self._row(task_id)
-        if row is None:
-            return self._legacy('result', task_id)
+        row = self._required_row(task_id)
         result, indexed, _ = self._candidate(row)
         contents = {role: self._download(item)[0] for role, item in indexed.items()}
         _require(len(contents['report']) <= 2 * MIB)
@@ -515,16 +502,12 @@ class ScientificAgentClient:
         return dict(result, report_markdown=report)
 
     def artifacts(self, task_id):
-        row = self._row(task_id)
-        if row is None:
-            return self._legacy('artifacts', task_id)
+        row = self._required_row(task_id)
         result, _, _ = self._candidate(row)
         return {'items': result['artifacts']}
 
     def artifact(self, task_id, artifact_id, max_bytes=None):
-        row = self._row(task_id)
-        if row is None:
-            return self._legacy('artifact', task_id, artifact_id, max_bytes=max_bytes)
+        row = self._required_row(task_id)
         _, indexed, entries = self._candidate(row)
         if artifact_id == 'manifest':
             item, media = entries['research-result.json'], 'application/json'
@@ -537,9 +520,7 @@ class ScientificAgentClient:
         return raw, {'Content-Type': media}
 
     def ack(self, task_id, payload):
-        row = self._row(task_id)
-        if row is None:
-            return self._legacy('ack', task_id, payload)
+        row = self._required_row(task_id)
         _require(type(payload) is dict and set(payload) == {'attempt', 'result_digest', 'report_id'}
             and payload['report_id'] == task_id and payload['attempt'] == row['result_attempt']
             and payload['result_digest'] == row['result_digest'] and bool(row['result_digest']),
@@ -585,8 +566,6 @@ class ScientificAgentClient:
                 self._update(row['task_id'])
 
     def pending(self, cursor=None):
-        if cursor and cursor.startswith('legacy:'):
-            return self._legacy_pending(cursor.removeprefix('legacy:') or None)
         if cursor:
             validate_task_id(cursor)
         condition = '(job_id IS NOT NULL OR admission_started=1) AND publication_ack IS NULL'
@@ -606,14 +585,7 @@ class ScientificAgentClient:
                     raise
         if len(rows) == 50:
             return {'items': items, 'next_cursor': rows[-1]['task_id']}
-        legacy = self._legacy_pending(None)
-        return {'items': items + legacy['items'], 'next_cursor': legacy.get('next_cursor')}
-
-    def _legacy_pending(self, cursor):
-        if self.legacy_worker is None:
-            return {'items': [], 'next_cursor': None}
-        page = self.legacy_worker.pending(cursor)
-        return dict(page, next_cursor='legacy:' + page['next_cursor'] if page.get('next_cursor') else None)
+        return {'items': items, 'next_cursor': None}
 
     def health(self):
         value = self._request('GET', '/v1/capabilities')

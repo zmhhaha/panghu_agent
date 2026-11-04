@@ -288,6 +288,42 @@ class ScientificAgentTests(unittest.TestCase):
             app = create_app(self.db, start_reconciler=False)
         self.assertIsInstance(app.state.worker, ScientificAgentClient)
         self.assertEqual(app.state.worker.backend, 'agent-service')
+        self.assertFalse(hasattr(app.state.worker, 'legacy_worker'))
+
+    def test_missing_execution_cannot_query_or_mutate_a_former_worker(self):
+        task_id = str(UUID(int=999))
+        operations = ((self.worker.get, (task_id,)), (self.worker.cancel, (task_id,)),
+            (self.worker.result, (task_id,)), (self.worker.artifacts, (task_id,)),
+            (self.worker.artifact, (task_id, 'report')), (self.worker.ack, (task_id, {})))
+        for operation, args in operations:
+            with self.subTest(operation=operation.__name__):
+                with self.assertRaises(WorkerError) as caught:
+                    operation(*args)
+                self.assertEqual((caught.exception.status, caught.exception.code), (404, 'task_not_found'))
+        self.assertEqual(self.worker.pending(), {'items': [], 'next_cursor': None})
+        self.assertEqual(self.peer.calls, [])
+
+    def test_old_runtime_descriptors_cannot_revive_a_worker(self):
+        job = self.prepare()
+        job['runtime_revision'] = 'pi-jsonl-0.73.1-v1'
+        for operation, args in ((self.worker.put, (job,)), (self.worker.put_revision, (job, {}))):
+            with self.subTest(operation=operation.__name__):
+                with self.assertRaises(WorkerError) as caught:
+                    operation(*args)
+                self.assertEqual((caught.exception.status, caught.exception.code), (409, 'task_conflict'))
+        self.assertEqual(self.peer.calls, [])
+
+    def test_obsolete_url_and_credentials_do_not_initialize_a_worker_or_archive(self):
+        env = dict(SCIENTIFIC_EXECUTION_BACKEND='agent-service',
+            SCIENTIFIC_PI_WORKER_URL='http://retired.invalid', SCIENTIFIC_PI_WORKER_TOKEN='retired-token')
+        with patch.dict(os.environ, env, clear=True), patch('scientific_agent.pi_client.PiClient',
+                side_effect=AssertionError('former Worker constructed')):
+            app = create_app(self.db, start_reconciler=False)
+            with TestClient(app):
+                pass
+        self.assertIsInstance(app.state.worker, ScientificAgentClient)
+        self.assertFalse(hasattr(app.state.worker, 'legacy_worker'))
+        self.assertEqual(self.db._query("SELECT name FROM sqlite_master WHERE name LIKE 'scientific_retired_pi_%'"), [])
 
     def test_api_factory_refuses_retired_backend_but_accepts_injected_workers(self):
         with patch.dict(os.environ, {'SCIENTIFIC_EXECUTION_BACKEND': 'pi'}, clear=True):
