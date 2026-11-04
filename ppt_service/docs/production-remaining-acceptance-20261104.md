@@ -87,6 +87,17 @@ the remaining admission and isolation matrix.
 
 ## Authorization boundaries
 
+The two public malformed-callback cases still fail the original HTTP400/403
+expectation with HTTP500. Upstream oauth2-proxy v7.8.0 `OAuthCallback` explicitly
+maps `decodeState` errors to HTTP500 (oauthproxy.go lines 875–879); `decodeState`
+requires a `nonce:redirect` pair (lines 1254–1265). This explains the two measured
+inputs; it does not turn their receipts into passes. The missing/invalid CSRF
+cookie branch for a syntactically valid pair returns HTTP403 (lines 884–892).
+The public operator now measures those two branches separately without using
+any cookies, following redirects or redeeming a real authorization code. The
+upstream source/hash is retained in the private server directory
+`/root/ppt-public-callback-code-review-20261104-r1`.
+
 The DSH Version `6f7c220f-01a6-4ab0-8703-180f091658d9` was published only
 after the owner's separate explicit visual and publication confirmations.
 No other version inherits those declarations. Usage/fees/eligibility work

@@ -60,6 +60,11 @@ def main():
         ('forged-and-unsigned', project, forged | {'Authorization': 'Bearer ' + unsigned_token()}, {401}),
         ('callback-without-state', '/oauth2/callback', {}, {400, 403}),
         ('callback-forged-state', '/oauth2/callback?code=public-invalid-code&state=public-invalid-state', {}, {400, 403}),
+        # Keep malformed-state failures above separate from a syntactically
+        # valid nonce:redirect pair with no legitimate CSRF cookie. The pinned
+        # upstream proxy uses different rejection branches for these inputs.
+        ('callback-shaped-without-csrf', '/oauth2/callback?code=public-invalid-code&state=public-invalid-state%3A%2F', {}, {403}),
+        ('callback-shaped-external-redirect', '/oauth2/callback?code=public-invalid-code&state=public-invalid-state%3Ahttps%3A%2F%2Fexample.invalid%2F', {}, {403}),
         ('callback-unrequested-error', '/oauth2/callback?error=access_denied&state=public-invalid-state', {}, {400, 403}),
         ('anonymous-root-login', '/', {}, {302}),
     ]
