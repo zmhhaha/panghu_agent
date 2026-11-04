@@ -188,7 +188,12 @@ def _confirmation(value, stage, snapshot_hash, page_count):
         _require(type(selected) is dict and selected.get('id') == value['selection'].get('direction_id'),
                  'ppt_direction_confirmation_mismatch')
         options = value['design'].get('directions', value['design'].get('options', []))
-        _require(type(options) is list and sum(x == selected for x in options) == 1,
+        # The website sends full frozen chart authority only in selected_direction.
+        # Accept precisely that omission in the display copy, while retaining
+        # compatibility with earlier confirmations that copied the full object.
+        compact = {key: item for key, item in selected.items() if key != 'source_chart_binding'}
+        _require(type(options) is list and sum(type(x) is dict and (x == selected or x == compact)
+                                             for x in options) == 1,
                  'ppt_direction_confirmation_mismatch')
         _pages(value['outline'], page_count)
         _require(type(value['design'].get('production_parameters')) is dict

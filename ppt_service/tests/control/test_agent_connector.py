@@ -356,6 +356,14 @@ def test_planning_roundtrip_uses_two_database_confirmations_and_artifact_replay(
         assert len(session.scalars(select(Checkpoint)).all()) == 2
         assert session.get(Project, database.project_id).latest_version_id is None
         assert session.get(ExecutionSlot, 1).job_id is None
+        # Earlier chart-free confirmations included the same shallow binding
+        # in both places. They remain readable without changing the wire limit.
+        legacy = copy.deepcopy(task)
+        legacy['confirmations']['stage2']['design']['directions'] = [copy.deepcopy(
+            legacy['confirmations']['stage2']['selected_direction'])]
+        PPTProfile('prepare').validate_task(legacy)
+        JobRequest(profile='ppt.prepare.v1', profile_revision='v1', business_ref='legacy-prepare',
+                   task=legacy, checkpoint_ref=ref)
     assert all('engine' not in body for body in service.submissions)
     assert all(row['decision'] == 'candidate_received' for row in service.acks)
     assert len(service.submissions) == 2
@@ -391,10 +399,23 @@ def test_source_chart_catalog_and_binding_follow_exact_database_confirmation_lin
     with database.sessions() as session:
         options = session.get(AgentOutbox, options_id)
         assert options.request['task']['source_table_catalog'] == catalog
-        task, _ = build_agent_task(session, session.get(Job, prepare_id))
+        task, ref = build_agent_task(session, session.get(Job, prepare_id))
         frozen = task_chart_oracle(task)
         assert 'source_table_catalog' not in task and task['confirmations']['stage2']['selected_direction']['id'] == 'B'
         assert frozen['expected_charts'][0]['series'] == [{'name': 'Value', 'values': [0.98, 1.28]}]
+        selected = task['confirmations']['stage2']['selected_direction']
+        compact = task['confirmations']['stage2']['design']['directions'][0]
+        assert 'source_chart_binding' not in compact
+        assert compact == {key: value for key, value in selected.items() if key != 'source_chart_binding'}
+        assert compact['native_chart_specs'] == selected['native_chart_specs']
+        wire = JobRequest(profile='ppt.prepare.v1', profile_revision='v1', business_ref='source-chart-prepare',
+                          task=task, checkpoint_ref=ref)
+        assert task_chart_oracle(wire.task) == frozen and wire.checkpoint_ref.model_dump() == ref
+        assert envelope(wire.task).task['confirmations']['stage2']['selected_direction'] == selected
+        mismatched = copy.deepcopy(task)
+        mismatched['confirmations']['stage2']['design']['directions'][0]['note'] = 'different unconfirmed design'
+        with pytest.raises(ServiceError, match='ppt_direction_confirmation_mismatch'):
+            PPTProfile('prepare').validate_task(mismatched)
         assert len(session.scalars(select(Plan)).all()) == 2 and not session.scalars(select(Version)).all()
     assert control.tick()['status'] == 'uploading'
     with database.sessions() as session:

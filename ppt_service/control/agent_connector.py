@@ -137,7 +137,11 @@ def _confirmation(plan):
                     if key not in {'page_plan', 'production_parameters', 'source_pointer'}}
         result['outline'] = copy.deepcopy(chosen.get('page_plan', plan.outline))
         if isinstance(result['outline'], list): result['outline'] = {'pages': result['outline']}
-        result['design'] = {'directions': [semantic], 'production_parameters': copy.deepcopy(
+        # Carry the authoritative cells once. Nesting the same binding below
+        # design.directions would exceed the platform's unchanged depth budget.
+        compact = {key: copy.deepcopy(value) for key, value in semantic.items()
+                   if key != 'source_chart_binding'}
+        result['design'] = {'directions': [compact], 'production_parameters': copy.deepcopy(
                             chosen.get('production_parameters', plan.design.get('production_parameters')))}
         result['selected_direction'] = copy.deepcopy(semantic)
     return result
