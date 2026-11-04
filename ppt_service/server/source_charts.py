@@ -163,5 +163,5 @@ def _validate_direction_binding(direction, snapshot, *, page_count=None):
         expectations.append(expected)
         if asset['sha256'] not in sources:
             sources.append(asset['sha256'])
-    require(expectations == binding['expected_charts'])
+    require(canonical_bytes(expectations) == canonical_bytes(binding['expected_charts']))
     return {'expected_charts': copy.deepcopy(expectations), 'source_sha256': sources}

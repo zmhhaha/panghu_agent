@@ -198,6 +198,18 @@ def test_frozen_binding_rejects_corruption_and_mapping_changes(tmp_path, changed
         validate_direction_binding(selected, snapshot)
 
 
+def test_boolean_cannot_impersonate_an_integer_chart_value_even_with_a_new_digest(tmp_path):
+    snapshot = original(tmp_path, TABLE.replace('0.98', '1'))
+    catalog = discover_tables(tmp_path, snapshot)
+    selected = bind_direction(direction(catalog['tables'][0]['table_id']), snapshot, catalog)
+    binding = selected['source_chart_binding']
+    assert type(binding['expected_charts'][0]['series'][0]['values'][0]) is int
+    binding['expected_charts'][0]['series'][0]['values'][0] = True
+    binding['binding_sha256'] = digest({k: v for k, v in binding.items() if k != 'binding_sha256'})
+    with pytest.raises(ControlError, match='source_chart_binding_invalid'):
+        validate_direction_binding(selected, snapshot)
+
+
 def test_generation_revision_and_acceptance_resolve_identical_frozen_values(tmp_path, monkeypatch):
     snapshot, _, selected = bound_case(tmp_path)
     frozen = task(snapshot, selected)
