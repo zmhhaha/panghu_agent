@@ -20,7 +20,7 @@ def render_metadata(snapshot, project, alignments=None, *, end_hold_seconds=0):
                  or visual is None or visual.get('stale', False)
                  or bool(audio_id and (audio is None or audio.get('stale', False))))
         if scene:
-            timing = frozen.get('timing') or {}
+            timing = frozen.get('continuity_base_timing', frozen.get('timing')) or {}
             expected_trailing = max(scene.get('trailing_seconds', 0), end_hold_seconds) if frozen is snapshot['scenes'][-1] else scene.get('trailing_seconds', 0)
             stale = stale or float(timing.get('leading_seconds', 0)) != float(scene.get('leading_seconds', 0))
             stale = stale or float(timing.get('trailing_seconds', 0)) != float(expected_trailing)
@@ -46,6 +46,9 @@ def render_metadata(snapshot, project, alignments=None, *, end_hold_seconds=0):
             visual_version_number=(visual or {}).get('number') or
                 (next((i + 1 for i, item in enumerate(visual_versions) if item['id'] == visual_id), None)),
             audio_version_number=(audio or {}).get('number')))
+    continuity = snapshot.get('continuity')
+    if continuity and snapshot.get('purpose') == 'delivery':
+        changed = changed or project.get('continuity_head_version_id') != continuity['version_id']
     return dict(scenes=sources, width=snapshot.get('width'), height=snapshot.get('height'),
                 fps=snapshot.get('fps'), duration_seconds=snapshot.get('duration_seconds'),
                 content_state='changed' if changed else 'current')

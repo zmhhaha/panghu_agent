@@ -86,10 +86,18 @@ export async function observeProject(chromium,{root='/work',dist='/opt/renderer/
     windows.push({ordinal:action.ordinal,before:await capture(before,`a${action.ordinal}-before`),middle:await capture(middle,`a${action.ordinal}-middle`),after:await capture(after,`a${action.ordinal}-after`)});
    }
    const first=await capture(0,'seek-first'),last=await capture(timeline.duration_seconds-1/24,'seek-last'),repeat=await capture(0,'seek-repeat');
+   let continuityBoundary;
+   if(timeline.compiler==='motion-continuity-compiler-1'){
+    const plan=JSON.parse(readRegular(join(root,'plan.json')));
+    continuityBoundary={initial:first,final:last,repeated_initial:repeat,
+     ...(plan.segment.index?{transition_middle:await capture(.375,'continuity-transition-middle'),
+       transition_end:await capture(.6,'continuity-transition-end')}:{})};
+   }
    const state=x=>JSON.stringify([x.elements,x.relations,x.layout]);
    writeFileSync(root+'/observations.json',JSON.stringify({schema:'video.motion-observations.v1',
     seek_protocol:'hyperframes-core-renderSeek-exact',render_fps:24,
     timeline_sha256:sha(readRegular(root+'/timeline.json')),windows,
+    ...(continuityBoundary?{continuity_boundary:continuityBoundary}:{}),
     ...(['motion-compiler-4','motion-compiler-5'].includes(timeline.compiler)?{initial:first,repeated_initial:repeat}:{}),
     reverse_seek:{first_sha256:first.frame_sha256,last_sha256:last.frame_sha256,repeated_first_sha256:repeat.frame_sha256,repeat_state_equal:state(first)===state(repeat)}},null,2));
   });

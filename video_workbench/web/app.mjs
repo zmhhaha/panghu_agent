@@ -11,6 +11,7 @@ import {
 import { createExplanationPanel, explanationErrorLabel } from './explanation.mjs';
 import { createMotionPanel, createMotionRenderRequest, createProjectMotionDraftRequest, createDynamicProjectRequest, hasMotionScenes, usesDynamicVideo, motionMetadata, motionErrorLabel } from './motion.mjs';
 import { createBatchPanel, batchErrorLabel } from './batch.mjs';
+import { createContinuityPanel, createContinuityDraftRequest, continuityErrorLabel } from './continuity.mjs';
 
 const $ = id => document.getElementById(id);
 const nativeMediaIds = ['audio-preview', 'motion-timing-audio', 'batch-audio-preview',
@@ -57,6 +58,7 @@ const explanationPanel = createExplanationPanel({
     unsaved: projectHasUnsavedEdits(state.projectId),
     projectBusy: activeOperations(state.project).length > 0 || pending.size > 0
       || batchPanel.hasUnresolvedOperation(state.projectId)
+      || continuityPanel.hasUnresolvedOperation(state.projectId)
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
   }),
 });
@@ -73,6 +75,7 @@ const motionPanel = createMotionPanel({
     unsaved: projectHasUnsavedEdits(state.projectId, false),
     projectBusy: activeOperations(state.project).length > 0 || pending.size > 0 || explanationPanel.hasActiveOperation(state.projectId)
       || batchPanel.hasUnresolvedOperation(state.projectId)
+      || continuityPanel.hasUnresolvedOperation(state.projectId)
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
   }),
 });
@@ -87,6 +90,7 @@ const batchPanel = createBatchPanel({
     unsaved: projectHasUnsavedEdits(state.projectId),
     projectBusy: activeOperations(state.project).length > 0 || pending.size > 0
       || explanationPanel.hasUnresolvedOperation(state.projectId) || motionPanel.hasUnresolvedOperation(state.projectId, state.project?.scenes)
+      || continuityPanel.hasUnresolvedOperation(state.projectId)
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
   }),
   onOpenScene: (sceneId, { motionVersionId, audioVersionId } = {}) => {
@@ -109,9 +113,40 @@ const batchPanel = createBatchPanel({
   onMediaPlay: () => { motionPanel.pause(); $('audio-preview').pause(); closeMotionRender(); pauseProjectPlayer(); },
 });
 
-function projectHasUnsavedEdits(projectId, includeMotion = true) {
+const continuityPanel = createContinuityPanel({
+  document, request, refresh: () => loadProject(), onError: showError, onInputError: showInputError, onSuccess: success,
+  getContext: () => ({ project: state.project, epoch: state.epoch,
+    enabled: sessionSettings.continuity_enabled === true,
+    renderConfigured: sessionSettings.motion_render_configured === true,
+    deliveryReady: !deliveryIssues(state.project, { silent: false, subtitles: false }).length,
+    unsaved: projectHasUnsavedEdits(state.projectId, true, false),
+    projectBusy: activeOperations(state.project).length > 0 || pending.size > 0
+      || explanationPanel.hasUnresolvedOperation(state.projectId)
+      || motionPanel.hasUnresolvedOperation(state.projectId, state.project?.scenes)
+      || batchPanel.hasUnresolvedOperation(state.projectId)
+      || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
+  }),
+  onDraft: version => {
+    if (!state.project) return;
+    const intent = createContinuityDraftRequest(state.project, version,
+      { endHoldSeconds: $('render-end-hold').checked ? 4 : 0 });
+    return perform(`render:${state.projectId}`, () => request(intent.path, { method: 'POST', body: intent.body }),
+      () => success('连续草稿已开始制作，复用已采用录音。请在「项目预览与成片」查看进度。'));
+  },
+  onDelivery: version => {
+    if (!state.project || version.id !== continuityPanel.adoptedVersionId(state.projectId)) return;
+    const intent = createMotionRenderRequest(state.project, { purpose: 'delivery',
+      endHoldSeconds: $('render-end-hold').checked ? 4 : 0 });
+    intent.body.continuity_version_id = version.id;
+    return perform(`render:${state.projectId}`, () => request(intent.path, { method: 'POST', body: intent.body }),
+      () => success('连续成片导出已开始，使用明确采用的连续方案、图解、录音及已核准时序。'));
+  },
+});
+
+function projectHasUnsavedEdits(projectId, includeMotion = true, includeContinuity = true) {
   return Boolean(projectSpeechDrafts.get(projectId)?.dirty)
     || Boolean(includeMotion && motionPanel.hasProjectDrafts(projectId))
+    || Boolean(includeContinuity && continuityPanel.hasProjectDrafts(projectId))
     || [drafts, speechDrafts, timingDrafts, captionDrafts].some(map =>
       [...map.entries()].some(([key, draft]) => key.startsWith(`${projectId}:`) && draft.dirty));
 }
@@ -122,6 +157,7 @@ function productionTransitionBusy(project) {
   return pending.size > 0 || operations.some(isUnresolvedProductionOperation)
     || motionPanel.hasUnresolvedOperation(project?.id ?? null, project?.scenes)
     || explanationPanel.hasUnresolvedOperation(project?.id ?? null)
+    || continuityPanel.hasUnresolvedOperation(project?.id ?? null)
     || batchPanel.hasUnresolvedOperation(project?.id ?? null) || batchPanel.hasProjectDrafts(project?.id);
 }
 
@@ -185,6 +221,7 @@ class ApiError extends Error {
     const message = typeof detail?.message === 'string' ? detail.message : null;
     super(ERROR_LABELS[code] ?? (code?.startsWith('explanation_') ? explanationErrorLabel(code) : null)
       ?? (code?.startsWith('batch_') ? batchErrorLabel(code) : null)
+      ?? (code?.startsWith('continuity_') || code === 'invalid_continuity_plan' ? continuityErrorLabel(code) : null)
       ?? (code?.startsWith('motion_') ? motionErrorLabel(code) : null) ?? message ?? (status === 401 ? '请先登录工作台。'
       : status === 409 ? '项目已更新或已有任务执行中，请刷新后重试。'
         : status === 422 ? '请检查填写的内容和长度。' : `请求未完成（${status}），请稍后重试。`));
@@ -715,7 +752,8 @@ function renderDelivery(project) {
     const row = node('div', undefined, 'render-item');
     const label = node('div');
     const subtitleLabel = item.subtitles === true ? '有字幕' : item.subtitles === false ? '无字幕' : '字幕状态未记录';
-    const kind = item.purpose === 'draft' ? 'MP4 草稿' : item.visual_mode === 'mixed' ? '动态成片' : item.silent ? '静音视频' : '有声视频';
+    const kind = item.continuity_version_id ? (item.purpose === 'draft' ? '连续 MP4 草稿' : '连续动态成片')
+      : item.purpose === 'draft' ? 'MP4 草稿' : item.visual_mode === 'mixed' ? '动态成片' : item.silent ? '静音视频' : '有声视频';
     label.append(node('strong', `${kind} · ${renderSourceLabel(item)} · ${subtitleLabel} · ${statusLabel(item.status)}`),
       node('small', `文稿版本 ${item.project_revision ?? '未记录'}${item.content_state === 'changed' ? ' · 此产物对应的内容或采用版本已有变化' : item.content_state === 'current' ? ' · 对应内容仍有效' : ''}${item.width && item.height ? ` · ${item.width}×${item.height} · ${item.fps} fps` : ''}${item.created_at ? ` · ${new Date(item.created_at * 1000).toLocaleString('zh-CN')}` : ''}${item.error ? ` · ${ERROR_LABELS[item.error] ?? (item.error.startsWith('motion_') ? motionErrorLabel(item.error) : '导出未完成，请检查资源后重试。')}` : ''}`));
     const progress = renderProgressLabel(item);
@@ -747,6 +785,7 @@ function render() {
   explanationPanel.render();
   motionPanel.render();
   batchPanel.render();
+  continuityPanel.render();
   if (!project) return;
   project.scenes ??= [];
   $('project-title').textContent = project.title;
@@ -836,6 +875,7 @@ async function loadProject() {
       const related = await Promise.allSettled([
         loadRenders(ticket.projectId, ticket.epoch), explanationPanel.load(ticket.projectId, ticket.epoch),
         motionPanel.load(ticket.projectId, ticket.epoch), batchPanel.load(ticket.projectId, ticket.epoch),
+        continuityPanel.load(ticket.projectId, ticket.epoch),
       ]);
       for (const result of related) if (result.status === 'rejected') throw result.reason;
       if (state.projectId === ticket.projectId && state.epoch === ticket.epoch) render();
@@ -1477,7 +1517,7 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('pagehide', () => { stopPolling(); readController?.abort(); sourceController?.abort(); $('audio-preview').pause(); pauseProjectPlayer(); motionPanel.pause(); batchPanel.pause(); $('motion-render-video').pause(); });
 window.addEventListener('beforeunload', event => {
-  if (explanationPanel.hasDrafts() || motionPanel.hasDrafts() || batchPanel.hasDrafts() || [...drafts.values(), ...projectSpeechDrafts.values(), ...speechDrafts.values(), ...timingDrafts.values(), ...captionDrafts.values()].some(draft => draft.dirty)) {
+  if (explanationPanel.hasDrafts() || motionPanel.hasDrafts() || batchPanel.hasDrafts() || continuityPanel.hasDrafts() || [...drafts.values(), ...projectSpeechDrafts.values(), ...speechDrafts.values(), ...timingDrafts.values(), ...captionDrafts.values()].some(draft => draft.dirty)) {
     event.preventDefault(); event.returnValue = '';
   }
 });
@@ -1489,6 +1529,7 @@ for (const eventName of ['input', 'change']) {
     if (!$('explanation-panel').contains(event.target)) explanationPanel.render();
     if (!$('motion-panel').contains(event.target) && !$('motion-timing-section').contains(event.target)) motionPanel.render();
     if (!$('batch-panel').contains(event.target)) batchPanel.render();
+    if (!$('continuity-panel').contains(event.target)) continuityPanel.render();
   });
 }
 

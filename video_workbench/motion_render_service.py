@@ -23,7 +23,8 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from agent_service.contracts import ServiceError, canonical_bytes
 from . import media
-from .motion_snapshot import _runtime, verify_snapshot_v2
+from .motion_snapshot import _runtime
+from .continuity_snapshot import verify_motion_snapshot
 from .motion_render_adapter import read_secret, safe_progress, safe_diagnostic, UNAVAILABLE
 from .motion_render_k8s import ExecutionJournal, KubeHTTP, KubeSceneRenderer, operation_key, require
 
@@ -70,7 +71,7 @@ class MixedMotionRenderer:
         self.static_renderer = static_renderer or media.render_snapshot
 
     def render(self, snapshot, output_dir, *, key, cancel_event=None):
-        verify_snapshot_v2(snapshot)
+        verify_motion_snapshot(snapshot)
         require(snapshot['runtime_fingerprint'] == self.scene_renderer.runtime,
                 'motion_render_runtime_conflict', 409)
         if cancel_event is not None and cancel_event.is_set():
@@ -171,7 +172,7 @@ class MixedMotionRenderer:
         result = dict(path=str(destination), sha256=checksum,
             bytes=destination.stat().st_size, duration_seconds=float(probe['format']['duration']),
             expected_duration_seconds=seconds, width=1280, height=720, fps=24, video_codec='h264', audio_codec='aac',
-            silent=False, subtitles=snapshot['subtitles'], visual_mode='mixed', static_renderer='per-scene',
+            silent=False, subtitles=snapshot['subtitles'], visual_mode=snapshot['visual_mode'], static_renderer='per-scene',
             snapshot_sha256=snapshot['sha256'], quality=snapshot['quality'],
             runtime_fingerprint=snapshot['runtime_fingerprint'], motion_checks=checks,
             elapsed_seconds=time.monotonic() - started)
@@ -217,7 +218,7 @@ class MotionExecutionService:
             return previous
         raw = canonical_bytes(snapshot)
         require(len(raw) <= self.max_request_bytes, 'motion_render_input_too_large', 413)
-        verify_snapshot_v2(snapshot)
+        verify_motion_snapshot(snapshot)
         require(snapshot['runtime_fingerprint'] == self.runtime, 'motion_render_runtime_conflict', 409)
         require(all(s['visual_mode'] != 'motion' or s['timing']['duration_seconds'] <= 60 for s in snapshot['scenes']),
                 'motion_scene_duration_exceeded', 422)

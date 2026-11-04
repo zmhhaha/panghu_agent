@@ -17,7 +17,7 @@ import httpx
 
 from agent_service.contracts import ServiceError
 from . import media
-from .motion_snapshot import verify_snapshot_v2
+from .continuity_snapshot import verify_motion_snapshot
 
 UNAVAILABLE = 'motion_render_service_unavailable'
 TERMINAL = {'completed', 'failed', 'cancelled', 'timed_out'}
@@ -105,7 +105,7 @@ class RemoteMotionRenderer:
         return response
 
     def render(self, snapshot, output_dir, *, operation_id, owner, cancel_event=None, progress_callback=None):
-        verify_snapshot_v2(snapshot)
+        verify_motion_snapshot(snapshot)
         if not isinstance(owner, str) or not owner or not IDENTITY.fullmatch(operation_id):
             raise ServiceError('motion_render_identity_invalid', 422)
         owner_hash = hashlib.sha256(owner.encode()).hexdigest()

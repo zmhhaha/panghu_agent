@@ -81,6 +81,22 @@
           </div>
         </details>
 
+        <details class="batch-panel" id="continuity-panel" hidden open>
+          <summary><span>跨镜连续图解</span><small>规划衔接 → 审阅采用 → 连续草稿</small><span aria-hidden="true">⌄</span></summary>
+          <div class="batch-content">
+            <p id="continuity-note" class="field-note"></p>
+            <ul id="continuity-issues" class="field-note" aria-label="连续图解需要补齐的内容" hidden></ul>
+            <div class="inline-actions"><button class="text-button" id="reload-continuity" type="button">重新读取连续方案</button><button class="button secondary" id="propose-continuity" type="button" disabled>规划一份连续方案</button></div>
+            <p id="continuity-read-error" class="message error-message" role="alert" hidden></p>
+            <div class="batch-history-heading"><label>审阅连续方案<select id="continuity-version" disabled></select></label></div>
+            <div id="continuity-review" class="batch-review" aria-live="polite"></div>
+            <div class="inline-actions"><button class="text-button" id="reset-continuity-changes" type="button" disabled>撤回未保存的衔接修改</button><button class="button secondary" id="save-continuity-changes" type="button" disabled>将修改保存为新候选</button></div>
+            <p id="continuity-adoption-note" class="field-note"></p>
+            <div class="motion-confirmation"><label class="checkbox-label"><input id="confirm-continuity-adoption" type="checkbox" disabled>我已逐边界审阅，确认采用这份对象衔接方案</label><button class="button secondary" id="adopt-continuity" type="button" disabled>采用连续方案</button></div>
+            <div class="batch-project-draft"><p id="continuity-render-note" class="field-note"></p><button class="button secondary" id="preview-continuity" type="button" disabled>用已采用录音制作连续草稿</button><button class="button primary" id="deliver-continuity" type="button" disabled>导出连续 MP4</button></div>
+          </div>
+        </details>
+
         <div class="production-grid">
           <section class="scenes-panel" aria-labelledby="scenes-heading">
             <div class="panel-heading"><div><h2 id="scenes-heading">分镜</h2><span id="scene-count">0 个镜头</span></div><button class="icon-button bordered" id="add-scene" aria-label="新增镜头" title="新增镜头" type="button" data-testid="add-scene">＋</button></div>

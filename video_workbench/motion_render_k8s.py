@@ -27,6 +27,8 @@ import httpx
 
 from agent_service.contracts import ServiceError, canonical_bytes
 from .motion import COMPILER_TEMPLATES, compile_project
+from .continuity import (CONTINUITY_COMPILER_VERSION, CONTINUITY_TEMPLATE_VERSION,
+                         compile_continuity_project)
 from .motion_review import verify_observations
 from .motion_renderer.job import FILES, INIT, freeze_input
 from .motion_render_adapter import UNAVAILABLE
@@ -188,7 +190,9 @@ def production_resources(directory, *, image, release_id, namespace, name, bindi
             'motion_job_budget_invalid', 422)
     frozen = freeze_input(directory, image_digest=image.rsplit('@', 1)[1], max_payload_bytes=BUNDLE_BYTES)
     manifest = json.loads((Path(directory) / 'manifest.json').read_bytes())
-    require(COMPILER_TEMPLATES.get(manifest['compiler']) == manifest['template'],
+    require(COMPILER_TEMPLATES.get(manifest['compiler']) == manifest['template'] or
+            (manifest['compiler'], manifest['template']) ==
+            (CONTINUITY_COMPILER_VERSION, CONTINUITY_TEMPLATE_VERSION),
             'motion_production_template_not_supported', 422)
     labels = {'app': 'video-motion-renderer', LABEL + 'execution': binding[:32]}
     annotations = {ANNOTATION: binding, LABEL + 'bundle-sha256': frozen['bundle_sha256'],
@@ -338,6 +342,12 @@ def validate_artifacts(entries, files, runtime, quality):
                                 ('seek-repeat', 'repeated_first_sha256')):
             require(sha(entries[f'observations/{filename}.jpg']) == observations['reverse_seek'][field],
                     'motion_observation_frame_mismatch')
+        if boundary := observations.get('continuity_boundary'):
+            for key in ('transition_middle', 'transition_end'):
+                if key in boundary:
+                    filename = 'observations/continuity-' + key.replace('_', '-') + '.jpg'
+                    require(sha(entries[filename]) == boundary[key]['frame_sha256'],
+                            'motion_observation_frame_mismatch')
         review = verify_observations(json.loads(files['plan.json']), json.loads(files['timeline.json']), observations)
         return {'technical_review': review, 'media_sha256': sha(entries['output.mp4']),
                 'manifest_sha256': manifest_sha, 'runtime_fingerprint': runtime, 'quality': quality}
@@ -483,15 +493,20 @@ class KubeSceneRenderer:
 
     def _context(self, scene, key, scene_index, quality):
         motion = scene['motion']
-        files = compile_project(motion['plan'], motion['beats'], motion['alignment'],
-            runtime_fingerprint=self.runtime, leading_seconds=scene['timing']['leading_seconds'],
-            trailing_seconds=scene['timing']['trailing_seconds'], compiler_version=motion['timeline']['compiler'])
-        require({name: sha(raw) for name, raw in files.items()} == motion['project_files_sha256'],
+        if 'continuity' in scene:
+            files = compile_continuity_project(scene, scene['continuity'], runtime_fingerprint=self.runtime)
+            expected_files = scene['continuity_project_files_sha256']
+        else:
+            files = compile_project(motion['plan'], motion['beats'], motion['alignment'],
+                runtime_fingerprint=self.runtime, leading_seconds=scene['timing']['leading_seconds'],
+                trailing_seconds=scene['timing']['trailing_seconds'], compiler_version=motion['timeline']['compiler'])
+            expected_files = motion['project_files_sha256']
+        require({name: sha(raw) for name, raw in files.items()} == expected_files,
                 'motion_frozen_project_mismatch', 409)
         require(0 < scene['timing']['duration_seconds'] <= 60, 'motion_scene_duration_exceeded', 422)
         files['audio.wav'] = base64.b64decode(scene['audio']['data_base64'], validate=True)
         binding = sha(canonical_bytes(dict(operation=key, scene=scene_index,
-                input=motion['project_files_sha256'], image=self.image, quality=quality)))
+                input=expected_files, image=self.image, quality=quality)))
         scene_key, name = f'{key}:{scene_index}', 'vm-' + sha(f'{key}:{scene_index}'.encode())[:36]
         directory = self.root / key / f'scene-{scene_index:03d}'
         # Resource recovery must not need another write to a full execution PVC.

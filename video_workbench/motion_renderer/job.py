@@ -16,6 +16,8 @@ import tarfile
 
 from video_workbench.motion import COMPILER_TEMPLATES, compile_project
 from video_workbench.motion_demo import compile_demo_project
+from video_workbench.continuity import (CONTINUITY_COMPILER_VERSION, CONTINUITY_TEMPLATE_VERSION,
+                                       recompile_continuity_project)
 from video_workbench.motion_snapshot import _runtime as validate_runtime_fingerprint
 
 NAMESPACE = 'video-motion-experiment'
@@ -54,6 +56,8 @@ def freeze_input(directory, *, allow_unbound_experiment=False, image_digest=None
         options['compiler_version'] = pair[0]
     elif pair == ('motion-demo-compiler-1', 'record-demonstration-1'):
         compiler = compile_demo_project
+    elif pair == (CONTINUITY_COMPILER_VERSION, CONTINUITY_TEMPLATE_VERSION):
+        compiler = recompile_continuity_project
     else:
         raise ValueError('project_contract_mismatch')
     fingerprint = manifest.get('runtime_fingerprint')
@@ -64,10 +68,15 @@ def freeze_input(directory, *, allow_unbound_experiment=False, image_digest=None
         validate_runtime_fingerprint(fingerprint)
         if image_digest is not None and fingerprint['image_digest'] != image_digest:
             raise ValueError('runtime_image_digest_mismatch')
-    expected = compiler(json.loads(files['plan.json']), json.loads(files['beats.json']),
-                               json.loads(files['alignment.json']), animated=manifest['animated'],
-                               leading_seconds=timeline['leading_seconds'], trailing_seconds=timeline['trailing_seconds'],
-                               runtime_fingerprint=manifest['runtime_fingerprint'], **options)
+    if pair == (CONTINUITY_COMPILER_VERSION, CONTINUITY_TEMPLATE_VERSION):
+        expected = compiler(json.loads(files['plan.json']), json.loads(files['beats.json']),
+                            json.loads(files['alignment.json']), animated=manifest['animated'],
+                            runtime_fingerprint=manifest['runtime_fingerprint'])
+    else:
+        expected = compiler(json.loads(files['plan.json']), json.loads(files['beats.json']),
+                                   json.loads(files['alignment.json']), animated=manifest['animated'],
+                                   leading_seconds=timeline['leading_seconds'], trailing_seconds=timeline['trailing_seconds'],
+                                   runtime_fingerprint=manifest['runtime_fingerprint'], **options)
     if any(expected[name] != files[name] for name in expected):
         raise ValueError('input_not_compiler_output')
     if hashlib.sha256(files['audio.wav']).hexdigest() != manifest['audio_sha256']:

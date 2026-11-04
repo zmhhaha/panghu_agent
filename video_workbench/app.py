@@ -37,6 +37,7 @@ from .motion_store import MotionStore
 from .motion_timing import MotionTiming
 from .motion_workflow import MotionWorkflow
 from .motion_gateway import MotionAgentGateway
+from .continuity_store import ContinuityStore
 from .batch_store import BatchStore
 from .batch_workflow import BatchWorkflow
 
@@ -102,6 +103,22 @@ MESSAGES = {
     'explanation_narration_requires_split': '这段旁白或读音展开后超过配音长度限制，请拆成更短的镜头后重新整理。',
     'audio_operation_in_progress': '项目有配音任务正在执行，请等待结束后再采用方案。',
     'motion_operation_in_progress': '项目有动画方案正在生成，请等待结束后再采用讲解方案。',
+    'continuity_plan_stale': '连续方案所依据的镜头或图解已变化，请重新规划。',
+    'continuity_head_conflict': '已采用的连续方案发生变化，请刷新核对。',
+    'continuity_requires_motion': '请先为各镜头采用有效的动态图解，再规划整片连续关系。',
+    'continuity_requires_scenes': '连续图解至少需要两个镜头。',
+    'continuity_copy_space_unavailable': '复制后没有安全的原件保留位置，请减少画面对象或改为延续。',
+    'continuity_copy_archive_unavailable': '复制后没有安全的原件保留位置，请减少画面对象或改为延续。',
+    'continuity_transition_path_unavailable': '跨镜移动路径没有足够空间，请减少同屏对象或取消该对象关联。',
+    'continuity_candidate_limit': '本项目的连续方案候选已达到数量限制。',
+    'continuity_storage_limit': '连续方案记录已达到当前存储限制。',
+    'continuity_inputs_unavailable': '请先为至少两个镜头采用有效动态图解，再规划连续关系。',
+    'continuity_missing_motion': '请先为全部镜头采用有效动态图解。',
+    'continuity_motion_stale': '已采用的动态图解对应旧内容，请先更新图解。',
+    'continuity_ambiguous_link': '对象关联不明确，请检查是否重复选择了同一来源或目标。',
+    'continuity_not_configured': '连续图解服务尚未配置。',
+    'invalid_continuity_render_selection': '连续制作需要整片图解和配音，并关闭字幕。',
+    'invalid_continuity_plan': '连续关系不符合要求，请重新核对相邻镜头的对象。',
 }
 
 
@@ -283,6 +300,24 @@ class MotionRenderRequest(Revision):
     motion_version_id: str | None = Field(default=None, min_length=1, max_length=100)
     audio_version_id: str | None = Field(default=None, min_length=1, max_length=100)
     end_hold_seconds: int = Field(default=0, ge=0, le=5, strict=True)
+    continuity_version_id: str | None = Field(default=None, min_length=1, max_length=100)
+
+
+class ContinuityLink(Fields):
+    from_scene_id: str = Field(min_length=1, max_length=100)
+    from_element_id: str = Field(pattern=r'^[a-z][a-z0-9_-]{0,31}$')
+    to_scene_id: str = Field(min_length=1, max_length=100)
+    to_element_id: str = Field(pattern=r'^[a-z][a-z0-9_-]{0,31}$')
+    mode: Literal['retain', 'copy']
+
+
+class ContinuityProposal(Revision):
+    links: list[ContinuityLink] | None = Field(default=None, max_length=207)
+
+
+class ContinuityAdoption(Revision):
+    version_id: str = Field(min_length=1, max_length=100)
+    expected_head_version_id: str | None = Field(default=None, max_length=100)
 
 
 def media_response(data, request, media_type, filename):
@@ -395,6 +430,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     explanation_store = ExplanationStore(store)
     explanation_workflow = ExplanationWorkflow(explanation_store, explanation_gateway, enabled=enabled)
     motion_store = MotionStore(store)
+    continuity_store = ContinuityStore(store, motion_store)
     motion_timing = MotionTiming(motion_store)
     if motion_gateway is None and isinstance(gateway, VideoAgentGateway):
         motion_gateway = MotionAgentGateway(gateway.client, motion_settings.revision)
@@ -408,7 +444,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     production = Production(store, renderer=renderer,
         enabled=render_enabled if render_enabled is not None else os.environ.get('VIDEO_RENDER_ENABLED') == '1',
         motion_store=motion_store, motion_timing=motion_timing, motion_renderer=motion_renderer,
-        motion_enabled=motion_gate, runtime_fingerprint=runtime)
+        motion_enabled=motion_gate, runtime_fingerprint=runtime, continuity_store=continuity_store)
     batch_store = BatchStore(store, motion_store, production)
     batch_workflow = BatchWorkflow(batch_store, enabled=motion_gate)
 
@@ -440,6 +476,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     app.state.audio_workflow, app.state.production = audio_workflow, production
     app.state.explanation_store, app.state.explanation_workflow = explanation_store, explanation_workflow
     app.state.motion_store, app.state.motion_workflow, app.state.motion_timing = motion_store, motion_workflow, motion_timing
+    app.state.continuity_store = continuity_store
     app.state.batch_store, app.state.batch_workflow = batch_store, batch_workflow
     # Proxy mode must be bound behind an authenticated, header-scrubbing proxy.
     app.state.trusted_hosts = set(trusted_hosts or {'127.0.0.1', 'localhost', '[::1]'})
@@ -530,7 +567,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     media_configured=production.enabled,
                     explanation_configured=enabled and explanation_gateway is not None,
                     motion_enabled=motion_gate, motion_configured=motion_gate and motion_gateway is not None,
-                    batch_enabled=motion_gate,
+                    batch_enabled=motion_gate, continuity_enabled=motion_gate,
                     default_production_mode='motion' if motion_gate else 'static',
                     motion_render_configured=motion_gate and motion_renderer is not None and runtime is not None)
 
@@ -554,6 +591,23 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     def require_motion():
         if not motion_gate:
             raise ServiceError('motion_disabled', 503)
+
+    @app.get('/api/projects/{project_id}/continuity')
+    def project_continuity(project_id: str, owner=Depends(identity)):
+        return continuity_store.project_projection(owner, project_id)
+
+    @app.post('/api/projects/{project_id}/continuity/proposals', status_code=201)
+    def propose_continuity(project_id: str, body: ContinuityProposal, owner=Depends(mutation)):
+        require_motion()
+        return continuity_store.propose(owner, project_id, body.expected_revision,
+            links=None if body.links is None else [link.model_dump() for link in body.links])
+
+    @app.post('/api/projects/{project_id}/continuity/adopt')
+    def adopt_continuity(project_id: str, body: ContinuityAdoption, owner=Depends(mutation)):
+        require_motion()
+        continuity_store.adopt(owner, project_id, body.version_id, body.expected_revision,
+                               body.expected_head_version_id)
+        return motion_store.project(owner, project_id)
 
     def require_batch_steps(steps):
         if 'motion' in steps:
