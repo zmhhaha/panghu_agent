@@ -7,7 +7,7 @@ PVC，不读取 Secret、用户身份或项目资料，不启动模型，也不�
 ```bash
 python3 ppt_service/tests/acceptance/current_postgres_concurrency.py \
   --source "$PWD" --output /root/ppt-current-pg-<commit>-r1 \
-  --test-image sha256:075abcca8db33c3c4ad5d4560391b938255948a077808538193e7fca02d54208 \
+  --test-image sha256:a936002387e9b050014e224b923a0e030e4ff72640128bc2c326c32457c71a23 \
   --postgres-image postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
 ```
 
@@ -15,6 +15,10 @@ python3 ppt_service/tests/acceptance/current_postgres_concurrency.py \
 写入器，以及现有安全验收入口的 Git 快照校验。新快照只读挂载，移除 `.git`，
 不把 Git 凭据带入测试容器。应用模块来自显式记录的当前 Git，镜像提供依赖；
 不声称应用模块来自生产 site 镜像。
+
+使用先前完整 API 安全验收保留的 `a9360023...` 依赖镜像。运维专用
+`075abcca...` 镜像缺少 `cryptography`，不能执行此处真实 JWT 验证用例；
+不能因缺少依赖而跳过测试。对应 collection 失败证据必须保留。
 
 PostgreSQL 使用已缓存不可变 PG16 镜像，UID/GID70、只读根、768MiB 临时内存
 数据目录；数据库名是随机 `ppt_p5_*`，只共享本轮所有者标签绑定的 `/pgsocket`
