@@ -28,8 +28,8 @@ def original(root, text=TABLE, *, media_type='text/markdown'):
     return dict(body, hash=digest(body))
 
 
-def direction(table_id, **overrides):
-    spec = dict(table_id=table_id, category_column=0, series_columns=[1, 2], slide=2, type='column')
+def direction(catalog_table_id, **overrides):
+    spec = dict(table_id=catalog_table_id, category_column=0, series_columns=[1, 2], slide=2, type='column')
     spec.update(overrides)
     return {'id': 'A', 'name': 'Source chart', 'page_plan': {'pages': [{}, {}, {}]}, 'native_chart_specs': [spec]}
 

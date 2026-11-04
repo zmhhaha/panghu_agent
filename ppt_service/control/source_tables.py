@@ -209,7 +209,10 @@ def _strip_display_chart_data(value):
     fields = {'categories', 'values', 'series', 'chart_series', 'chart_data',
               'native_chart_data', 'expected_charts', 'data_points', 'datasets'}
     if isinstance(value, dict):
-        return {key: _strip_display_chart_data(item) for key, item in value.items() if key not in fields}
+        # References are a strict input contract, not display payloads. Keep
+        # even unknown fields intact so SPEC_FIELDS rejects attempted values.
+        return {key: copy.deepcopy(item) if key == 'native_chart_specs' else _strip_display_chart_data(item)
+                for key, item in value.items() if key not in fields}
     if isinstance(value, list):
         return [_strip_display_chart_data(item) for item in value]
     return copy.deepcopy(value)

@@ -25,6 +25,7 @@ from agent_service.profiles.ppt import PPTProfile
 from ppt_service.control.agent_connector import AgentConnector, AgentConnectorSettings, build_agent_task
 from ppt_service.control.agent_validation import AgentValidationReceipt, validate_private_candidate
 from ppt_service.control.execution import ControlError, RuntimeConfig
+from ppt_service.control.staging import EXT
 from ppt_service.server.auth import Identity
 from ppt_service.server.migrate import migrate
 from ppt_service.server.models import AgentOutbox, Asset, Checkpoint, ExecutionSlot, Job, JobEvent, Plan, Project, Version, now
@@ -176,13 +177,16 @@ def envelope(task, *, engine='pi'):
         output_schema=profile.output_schema, **profile.limits.as_dict())
 
 
-def plan_artifacts(workspace, task, *, checkpoint_files=(), engine='pi'):
+def plan_artifacts(workspace, task, *, checkpoint_files=(), engine='pi', input_contents=None):
     profile = PPTProfile(task['phase'])
     for item in checkpoint_files:
         write(workspace / 'base', item.name, item.content())
     (workspace / 'project').mkdir(parents=True)
     for asset in task['input_snapshot']['assets']:
-        write(workspace, 'inputs/' + asset['id'] + '.md', b'# Public source\n')
+        name = 'inputs/' + asset['id'] + EXT[asset['media_type']]
+        content = b'# Public source\n' if input_contents is None else input_contents[name]
+        assert len(content) == asset['bytes'] and hashlib.sha256(content).hexdigest() == asset['sha256']
+        write(workspace, name, content)
     profile.prepare_project(workspace, task)
     write(workspace, 'project/deck/source.md', b'# Public source\n')
     content = (workspace / 'project/deck/source.md').read_bytes()
@@ -227,12 +231,14 @@ class PlanningService:
     def __init__(self, root):
         self.root = root
         self.uploads, self.jobs, self.by_key, self.artifacts, self.checkpoints = {}, {}, {}, {}, {}
+        self.upload_content = {}
         self.submissions, self.acks = [], []
         self.lookups, self.cancellations = [], []
 
     def upload_input(self, name, content):
         result = dict(input_id=identifier(), name=name, sha256=hashlib.sha256(content).hexdigest())
         self.uploads[result['input_id']] = result
+        self.upload_content[result['input_id']] = bytes(content)
         return result
 
     def submit(self, body, *, idempotency_key):
@@ -242,7 +248,15 @@ class PlanningService:
             return copy.deepcopy(self.jobs[self.by_key[idempotency_key]])
         checkpoint = body.get('checkpoint_ref')
         base = () if checkpoint is None else self.checkpoints[checkpoint['checkpoint_id']]
-        env, files = plan_artifacts(self.root / identifier(), body['task'], checkpoint_files=base)
+        inputs = {}
+        for ref in body['inputs']:
+            uploaded = self.uploads[ref['input_id']]
+            content = self.upload_content[ref['input_id']]
+            assert ref['sha256'] == uploaded['sha256'] == hashlib.sha256(content).hexdigest()
+            assert ref['path'] == uploaded['name']
+            inputs[ref['path']] = content
+        env, files = plan_artifacts(self.root / identifier(), body['task'], checkpoint_files=base,
+                                    input_contents=inputs)
         pins = {'profile': env.profile, 'profile_revision': 'v1', 'engine': env.engine,
                 'runtime_revision': 'synthetic-v1', 'image_digest': env.image_digest}
         proof = dict(stop_proven=True, attempt_id=env.attempt_id, fence=1,
