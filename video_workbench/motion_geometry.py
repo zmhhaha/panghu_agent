@@ -162,7 +162,7 @@ def wrap_label(text, maximum):
     return lines
 
 
-def place_label(text, points, boxes, previous_labels=(), previous_paths=()):
+def place_label(text, points, boxes, previous_labels=(), previous_paths=(), *, accept=None):
     """Keep label ink and its plate clear of cards, tokens and other labels.
 
     The plate is painted after every connector; the underlying own line is
@@ -174,7 +174,18 @@ def place_label(text, points, boxes, previous_labels=(), previous_paths=()):
     lengths = [abs(a[0] - b[0]) + abs(a[1] - b[1]) for a, b in zip(points, points[1:])]
     total = sum(lengths)
     obstacles = [inflate(box, 4) for box in boxes] + [inflate(box, 8) for box in previous_labels]
-    choices, elapsed = [], 0
+    choices, elapsed, checked = [], 0, set()
+
+    def choose(candidates):
+        for _, x, y, width, height, lines in sorted(set(candidates)):
+            box = x, y, width, height
+            if box in checked:
+                continue
+            checked.add(box)
+            if accept is None or accept(box):
+                return dict(box=box, lines=list(lines))
+        return None
+
     for start, end, length in zip(points, points[1:], lengths):
         for ratio in (.5, .25, .75):
             cx, cy = start[0] + (end[0] - start[0]) * ratio, start[1] + (end[1] - start[1]) * ratio
@@ -197,7 +208,11 @@ def place_label(text, points, boxes, previous_labels=(), previous_paths=()):
                     score = abs(offset) + abs(elapsed + length * ratio - total / 2) * .18 + (len(lines) - 1) * 12
                     choices.append((score, x, y, width, height, tuple(lines)))
         elapsed += length
-    if not choices:
+    selected = choose(choices)
+    if selected is not None:
+        return selected
+    choices = []
+    if selected is None:
         # A moving token can occupy the entire nearest gap. Try the bounded
         # empty cells between object edges instead of placing a label under it.
         xs = sorted({BOUNDS[0], BOUNDS[2], *(value for x, _, width, _ in obstacles
@@ -223,10 +238,10 @@ def place_label(text, points, boxes, previous_labels=(), previous_paths=()):
                                + abs(cy - min(max(cy, min(a[1], b[1])), max(a[1], b[1])))
                                for a, b in zip(points, points[1:]))
                 choices.append((distance + (len(lines) - 1) * 12, x, y, width, height, tuple(lines)))
-    if not choices:
+    selected = choose(choices)
+    if selected is None:
         raise ValueError('motion_relation_layout_unavailable')
-    _, x, y, width, height, lines = min(choices)
-    return dict(box=(x, y, width, height), lines=list(lines))
+    return selected
 
 
 def connection_geometry(relations, boxes, reserved_boxes=(), label_obstacles=()):
@@ -234,7 +249,30 @@ def connection_geometry(relations, boxes, reserved_boxes=(), label_obstacles=())
     obstacles = [*boxes.values(), *reserved_boxes]
     for relation in relations:
         points = route(boxes[relation['source']], boxes[relation['target']], obstacles, labels)
-        label = place_label(relation['label'], points, [*obstacles, *label_obstacles], labels)
+
+        def preserves_connections(candidate):
+            # A plate can fit a narrow gap yet close the only exit of a card
+            # or token. Keep every relation reachable while reserving labels;
+            # already placed labels must also retain their own anchor routes.
+            placements = {identity: item['box'] for identity, item in result.items() if item['lines']}
+            placements[relation['id']] = candidate
+            try:
+                for pending in relations:
+                    other_labels = [box for identity, box in placements.items() if identity != pending['id']]
+                    source, target = boxes[pending['source']], boxes[pending['target']]
+                    if pending['id'] in placements:
+                        x, y, width, height = placements[pending['id']]
+                        anchor = x + width / 2, y + height / 2, 0, 0
+                        route(source, anchor, obstacles, other_labels)
+                        route(anchor, target, obstacles, other_labels)
+                    else:
+                        route(source, target, obstacles, other_labels)
+            except ValueError:
+                return False
+            return True
+
+        label = place_label(relation['label'], points, [*obstacles, *label_obstacles], labels,
+                            accept=preserves_connections)
         result[relation['id']] = dict(points=points, path=path_text(points), **label)
         if label['lines']:
             labels.append(label['box'])

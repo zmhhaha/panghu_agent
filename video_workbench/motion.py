@@ -60,6 +60,30 @@ LAYOUTS = {
 }
 
 
+def compiler_layout(plan, compiler_version):
+    """Keep labels readable in v5 without changing historical slot geometry.
+
+    Tokens use one shared width so a move between named slots retains its size.
+    A conservative 18px-per-character allowance keeps the normal text size;
+    actual font and overflow validation still runs in the isolated browser.
+    """
+    layout = LAYOUTS[plan['template']]
+    if compiler_version != 'motion-compiler-5':
+        return layout
+    width = min(300, max([120, *(18 * len(row['label']) + 28 for row in plan['elements']
+                                if row['kind'] == 'token')]))
+    if width == 120:
+        return layout
+    result = dict(layout)
+    for slot, (x, y, _, height) in layout.items():
+        if slot.startswith('token_'):
+            left = x + 60 - width / 2
+            if plan['template'] == 'focus' and slot == 'token_top':
+                left = max(left, layout['top'][0] + layout['top'][2] + 12)
+            result[slot] = (left, y, width, height)
+    return result
+
+
 def _require(condition, code='invalid_motion_alignment'):
     if not condition:
         raise ServiceError(code, 422)
@@ -340,7 +364,7 @@ def compile_project(plan, beats, alignment, *, animated=True, runtime_fingerprin
     _require(type(animated) is bool, 'invalid_motion_options')
     timeline = resolve_timeline(plan, beats, alignment, leading_seconds=leading_seconds,
                                 trailing_seconds=trailing_seconds, compiler_version=compiler_version)
-    layout = LAYOUTS[plan['template']]
+    layout = compiler_layout(plan, compiler_version)
     elements = {row['id']: row for row in plan['elements']}
     boxes = {row['id']: layout[row['slot']] for row in plan['elements']}
     geometry = None
@@ -557,6 +581,7 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
         page = page.replace('</style>', '''
 .relation-label{font-size:18px;fill:#d6e8f5}.relation-plate{fill:#0b1728;stroke:#344c64;stroke-width:1}
 .element{outline:0 solid #79e4d5;outline-offset:-4px}
+.token .element-label{white-space:nowrap}
 </style>''')
         page = page.replace("{borderColor:'#79e4d5',backgroundColor:'#21434e',duration,immediateRender:false},when);",
             """{borderColor:'#79e4d5',backgroundColor:'#21434e',duration,immediateRender:false},when);

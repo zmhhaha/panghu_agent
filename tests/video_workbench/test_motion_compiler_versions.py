@@ -212,6 +212,31 @@ def test_default_v5_preserves_candidate_text_audio_and_actions(template, compile
     assert new_manifest['semantic_sha256'] == old_manifest['semantic_sha256']
 
 
+def test_long_token_label_keeps_readable_type_and_consistent_move_geometry():
+    plan, beats, alignment = arguments('flow')
+    token = next(row for row in plan['elements'] if row['kind'] == 'token')
+    token['label'] = '文件不存在：相应结果'
+    original = deepcopy(plan)
+    current = compile_project(plan, beats, alignment)
+    legacy = compile_project(plan, beats, alignment, compiler_version=V4)
+
+    def payload(files):
+        page = files['index.html'].decode()
+        return json.loads(page.split('const data = ', 1)[1].split(';\n', 1)[0])
+
+    new, old = payload(current), payload(legacy)
+    identity = token['id']
+    assert new['boxes'][identity][2] >= 18 * len(token['label']) + 24
+    assert new['boxes'][identity][2] > old['boxes'][identity][2] == 120
+    for slot, box in new['layout'].items():
+        if slot.startswith('token_'):
+            assert box[2:] == new['boxes'][identity][2:]
+            assert box[0] + box[2] / 2 == old['layout'][slot][0] + 60
+    assert '.token .element-label{white-space:nowrap}' in current['index.html'].decode()
+    assert new['timeline']['actions'] == old['timeline']['actions']
+    assert current['plan.json'] == legacy['plan.json'] and plan == original
+
+
 @pytest.mark.parametrize('compiler', ['motion-compiler-99', 'motion-demo-compiler-1', None])
 def test_generic_compiler_cannot_select_unknown_or_demo_implementations(compiler):
     args = arguments()

@@ -366,6 +366,51 @@ def test_v5_label_wrapping_and_reservation_preserve_text_and_avoid_other_objects
                    for other_id, other in geometry.items() if other_id != identity)
 
 
+def test_v5_branching_results_keep_every_connection_reachable_when_placing_labels():
+    """A fitting plate must not seal the only corridor to another result token."""
+    from video_workbench.motion import compiler_layout
+    from video_workbench.motion_geometry import connection_geometry, inflate, overlaps, segment_hits_box
+    rows = [
+        ('model', 'card', 'top', '模型'),
+        ('pipeline', 'card', 'left', '执行管线'),
+        ('checks', 'card', 'center', '权限与策略检查'),
+        ('file_impl', 'card', 'right', '文件能力实现'),
+        ('session', 'card', 'note', '回到会话'),
+        ('file_content', 'token', 'token_right', '读取成功：文件内容'),
+        ('missing_result', 'token', 'token_center', '文件不存在：相应结果'),
+        ('fact_boundary', 'label', 'caption', '未读到的内容，不能当事实'),
+    ]
+    plan = dict(template='focus', elements=[dict(id=identity, kind=kind, slot=slot, label=label)
+                                           for identity, kind, slot, label in rows])
+    layout = compiler_layout(plan, 'motion-compiler-5')
+    boxes = {row['id']: layout[row['slot']] for row in plan['elements']}
+    relations = [dict(id=identity, source=source, target=target, label=label)
+                 for identity, source, target, label in [
+                     ('call_to_pipeline', 'model', 'pipeline', '读取调用'),
+                     ('pipeline_to_checks', 'pipeline', 'checks', '经过检查'),
+                     ('checks_to_file', 'checks', 'file_impl', '调用实现'),
+                     ('success_branch', 'file_impl', 'file_content', '读取成功'),
+                     ('success_to_session', 'file_content', 'session', '返回内容'),
+                     ('missing_branch', 'file_impl', 'missing_result', '若文件不存在'),
+                     ('missing_to_session', 'missing_result', 'session', '记录相应结果'),
+                     ('session_to_model', 'session', 'model', '下一次请求的依据'),
+                 ]]
+    reserved = [(72, 74, 1136, 112)]
+    geometry = connection_geometry(relations, boxes, reserved)
+    assert set(geometry) == {relation['id'] for relation in relations}
+    for relation in relations:
+        item = geometry[relation['id']]
+        assert ''.join(item['lines']) == relation['label']
+        assert all(not overlaps(item['box'], inflate(box, 4)) for box in [*boxes.values(), *reserved])
+        assert all(not overlaps(item['box'], inflate(other['box'], 8))
+                   for identity, other in geometry.items() if identity != relation['id'])
+        for start, end in zip(item['points'], item['points'][1:]):
+            assert all(not segment_hits_box(start, end, inflate(box, 4))
+                       for identity, box in boxes.items() if identity not in {relation['source'], relation['target']})
+            assert all(not segment_hits_box(start, end, inflate(other['box'], 6))
+                       for identity, other in geometry.items() if identity != relation['id'])
+
+
 def test_v5_label_plates_are_above_all_strokes_and_follow_draw_visibility():
     from video_workbench.examples.build_motion_samples import history_plan, SPOKEN_TEXT
     beats = make_beats(SPOKEN_TEXT)

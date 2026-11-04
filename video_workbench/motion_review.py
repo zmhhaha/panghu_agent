@@ -11,7 +11,7 @@ import re
 
 from agent_service.contracts import ServiceError
 from agent_service.profiles.video_motion_contract import validate_motion_plan
-from .motion import COMPILER_TEMPLATES, FPS, HEIGHT, WIDTH, LAYOUTS, action_windows, sha256
+from .motion import COMPILER_TEMPLATES, FPS, HEIGHT, WIDTH, LAYOUTS, action_windows, compiler_layout, sha256
 from .motion_demo import DEMO_COMPILER_VERSION, DEMO_LAYOUT
 
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
@@ -285,7 +285,7 @@ def verify_observations(plan, timeline, observations):
         _require(plan.get('template') in LAYOUTS)
         _require(type(timeline.get('compiler')) is str and timeline['compiler'] in COMPILER_TEMPLATES,
                  'motion_compiler_version_unsupported')
-        layout = LAYOUTS[plan['template']]
+        layout = compiler_layout(plan, timeline['compiler'])
     text_kinds = ({row['id']: row['kind'] for row in plan['elements']}
                   if timeline.get('compiler') in {'motion-compiler-2', 'motion-compiler-3', 'motion-compiler-4', 'motion-compiler-5'} else None)
     hidden_connectors = timeline.get('compiler') in {'motion-compiler-4', 'motion-compiler-5'}
