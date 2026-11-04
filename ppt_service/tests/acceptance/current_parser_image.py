@@ -406,7 +406,7 @@ def outer(args):
                  '--mount', f'type=bind,src={snapshot},dst=/harness,readonly',
                  '--mount', f'type=bind,src={evidence},dst=/evidence',
                  '--env', 'PYTHONDONTWRITEBYTECODE=1', '--env', 'PYTHONPATH=/opt/ppt-service',
-                 '--env', 'HOME=/tmp', '--workdir', '/', '--entrypoint', '/usr/local/bin/python',
+                 '--env', 'HOME=/tmp', '--workdir', '/', '--entrypoint', '/opt/hermes/.venv/bin/python',
                  args.image, '/harness/ppt_service/tests/acceptance/current_parser_image.py',
                  '--inner', '--output', '/evidence'])
         result = command(['docker', 'start', '--attach', run_id], timeout=900, check=False)

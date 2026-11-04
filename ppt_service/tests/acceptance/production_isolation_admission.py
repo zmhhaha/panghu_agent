@@ -140,11 +140,17 @@ class Audit:
         tools = {(x['name'], x['revision']): x for x in self.public['tool_environments']}
         contracts = {(x['name'], x['revision']): x for x in self.public['task_contracts']}
         self.pools = []
+        self.unprovisionable = []
         data = {}
         for pool in pools:
             binding = bindings[(pool['binding_id'], pool['binding_revision'])]
             tool = tools[(binding['tool_environment']['name'], binding['tool_environment']['revision'])]
             contract = contracts[(binding['profile'], binding['profile_revision'])]
+            if pool.get('uid_start') is None or pool.get('uid_count', 65536) < 2:
+                require(pool.get('enabled') is False, 'enabled_pool_has_no_runtime_uid_range')
+                self.unprovisionable.append(dict(pool=pool['pool_id'], enabled=False,
+                    reason='provider_refuses_unreserved_runtime_uid', uid_start=pool.get('uid_start')))
+                continue
             row = [pool['image'], pool['host_config_map'], str(pool['uid_start']),
                 str(pool['uid_count']), '1' if pool['read_only_mounts'] else '0',
                 binding['profile'], binding['profile_revision'], tool['runtime_revision'],
@@ -242,6 +248,9 @@ class Audit:
             results.append(self.dry_run(pod, CONTROLLER, name, False))
         save(self.output / 'admission-probes.json', results)
         summary = dict(passed=all(r['passed'] for r in results), cases=len(results),
+            retained_pool_count=len(self.public['kubernetes_workers']),
+            provisionable_pools_tested=len(self.pools),
+            disabled_unprovisionable_pools=self.unprovisionable,
             accepted_unsafe=[r['case'] for r in results if not r['expected_accepted'] and r['accepted']],
             rejected_baselines=[r['case'] for r in results if r['expected_accepted'] and not r['accepted']],
             production_resources_created=False, operator='server-side-dry-run-only',
