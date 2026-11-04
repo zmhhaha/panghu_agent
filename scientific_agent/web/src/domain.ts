@@ -30,13 +30,20 @@ export interface Bibliography {author_list_status:'complete'|'incomplete'|'not_c
 export interface Paper {bibliography?:Bibliography;source_quality?:QualityAssessment;quality_assessment?:QualityAssessment;}
 export interface Material {file_status?:string;material_role?:string;source_count?:number;paper_count?:number;document_count?:number;source_count_basis?:string;file_read_scope?:string;access_note?:string;declared_sources?:{title?:string;source_id?:string;access_level?:string;source_type?:string;locator?:string;start_line?:number;end_line?:number;doi?:string}[];}
 export interface RetrievalSummary {calls_used:number;call_budget:number;budget_exhausted:boolean;providers:{provider:string;query:string;status:string;result_count:number}[];topics_without_evidence:string[];gaps:string[];}
+export interface RetrievalSummary {current_batch_id?:string;cumulative_calls?:number;batch_count?:number;batches?:{batch_id:string;calls_used:number;call_budget:number;budget_exhausted?:boolean;providers:RetrievalSummary['providers'];topics_without_evidence?:string[];gaps?:string[]}[];}
 export interface SearchBatch {retrieval_summary?:RetrievalSummary;search_summary?:RetrievalSummary;}
 export interface Project {retrieval_summary?:RetrievalSummary;source_quality?:Record<string,QualityAssessment>;selection_assessments?:Record<string,QualityAssessment>;}
 export interface Project {materials_summary?:{file_count:number;read_file_count:number;unique_file_count:number;draft_count:number;undeclared_file_count:number;declared_source_count:number;paper_count:number;document_count:number;abstract_count:number;full_text_count:number;count_basis:string};}
 export interface Section { section_id?:string; id?:string; title:string; start?:number; end?:number; editable?:boolean;kind?:string; }
 export interface Version { id:string; title?:string; created_at?:string; status?:string; parent_version_id?:string; report_markdown?:string; section_index?:Section[]|{schema_version?:string;sections:Section[]}; revision_sections?:Section[]; sections?:Section[]; citations?:unknown; sources?:Paper[]; [key:string]:unknown; }
+export interface WritingQualitySummary {actual_length:number;parent_length?:number;length_delta?:number;target_length?:number;unit?:string;warnings?:string[];missing_requirements?:string[];}
+export interface Version {writing_quality?:WritingQualitySummary;}
+export interface ImportCitation {n:number;text:string;body_occurrences:number;source_id:string|null;match_status:'manually_matched'|'unmatched';}
+export interface Version {import_citations?:{references:ImportCitation[];unmatched_numbers:number[];validation:'user_matched_not_machine_claim_validated'};}
 export interface JobDiagnostic {category?:string;code?:string;reason?:string;step?:string;retryable?:boolean;suggested_action?:string;correlation_id?:string;started_at?:string|null;last_progress_at?:string|null;}
 export interface Job { id:string; stage?:string; action?:string; status:string; progress?:string; message?:string; error?:string|{code?:string}; created_at?:string;updated_at?:string;remote_job_id?:string|null;diagnostic?:JobDiagnostic; [key:string]:unknown; }
+export interface Job {result_version_id?:string;}
+export interface Material {retrieval?:{input_url:string;final_url:string;fetched_at:string;access_scope:string;version?:string|null;content_sha256?:string;github?:{repository:string;commit:string;requested_ref:string;files:{path:string;[key:string]:unknown}[]}|null;gaps?:{path:string;code:string}[]};}
 export interface Annotation { id:string; version_id:string; section_id?:string; text:string; resolved?:boolean; }
 export interface Finalization { id:string; version_id:string; created_at?:string; }
 export interface ProjectSummary { id:string; title:string; revision:number; stage:Stage; updated_at?:string; active_job_id?:string|null; }

@@ -1,8 +1,9 @@
-import {useState} from 'react';
+import {useEffect,useState} from 'react';
 import {api} from './api';
 import {isActiveJob, taskStageNames, type Job} from './domain';
+import {researchTime} from './time';
 
-const timestamp=(value?:string|null)=>value?new Date(value).toLocaleString('zh-CN'):'尚未记录';
+const timestamp=researchTime;
 const categoryNames:Record<string,string>={timeout:'执行超时',source_failed:'来源获取失败',generation_failed:'模型生成失败',validation_failed:'结构或来源校验失败',save_failed:'成果保存失败',submission_uncertain:'提交状态待核对',execution_failed:'任务执行失败',source_fetch:'来源获取失败',generation:'模型生成失败',validation:'结构或来源校验失败',storage:'成果保存失败',input:'输入装配失败',execution:'任务执行失败'};
 const fallback=(job:Job)=>{
   const raw=typeof job.error==='string'?job.error:job.error?.code;
@@ -13,9 +14,13 @@ const fallback=(job:Job)=>{
 };
 
 export function JobTiming({job}:{job:Job}){
+  const [now,setNow]=useState(Date.now());
+  useEffect(()=>{if(!isActiveJob(job))return;const timer=setInterval(()=>setNow(Date.now()),30000);return()=>clearInterval(timer);},[job.id,job.status]);
   const diagnostic=job.diagnostic;
-  const queued=['queued','pending','admitting','admission_uncertain','starting'].includes(job.status);
-  return <div className="job-timing"><span>{queued?'提交时间':'创建时间'}：{timestamp(job.created_at)}</span><span>实际开始：{diagnostic?.started_at?timestamp(diagnostic.started_at):queued?'尚未开始':'尚未记录'}</span><span>最近进展：{timestamp(diagnostic?.last_progress_at)}</span>{diagnostic?.step&&<span>当前子步骤：{diagnostic.step}</span>}</div>;
+  const queued=['queued','pending','admitting','admission_uncertain','starting','submitted','accepted'].includes(job.status)&&!diagnostic?.started_at;
+  const elapsedFrom=Date.parse(diagnostic?.started_at??job.created_at??'');
+  const elapsed=Number.isFinite(elapsedFrom)&&now>=elapsedFrom?Math.floor((now-elapsedFrom)/60000):null;
+  return <div className="job-timing">{isActiveJob(job)&&<span>{queued?'等待执行安排，尚未记录实际开始。':'任务正在执行或接收成果，请以当前子步骤为准。'}</span>}<span>{queued?'提交时间':'创建时间'}：{timestamp(job.created_at)}</span><span>实际开始：{diagnostic?.started_at?timestamp(diagnostic.started_at):queued?'尚未开始':'尚未记录'}</span>{isActiveJob(job)&&elapsed!==null&&<span>{queued?'已等待':'距实际开始'}：{elapsed<1?'不足 1 分钟':`${elapsed} 分钟`}（按真实时间计算，并非预计完成时间）</span>}<span>最近进展：{timestamp(diagnostic?.last_progress_at)}</span>{diagnostic?.step&&<span>当前子步骤：{diagnostic.step}</span>}</div>;
 }
 
 export default function JobDetails({projectId,job}:{projectId:string;job:Job}){

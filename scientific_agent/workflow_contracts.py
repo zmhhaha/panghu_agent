@@ -194,6 +194,9 @@ def validate_snapshot(snapshot, project_id):
 def validate_context(context, task):
     validate_task(task)
     fields = {'schema_version', 'project_id', 'requirements', 'materials'}
+    if type(context) is dict and 'confirmed_plan' in context:
+        _require(task['stage'] in ('outline', 'draft'))
+        fields.add('confirmed_plan')
     if type(context) is dict and 'feedback' in context:
         fields.add('feedback')
         _text(context['feedback'], 4000, empty=True)
@@ -214,6 +217,12 @@ def validate_context(context, task):
         _text(value, empty=key != 'question')
     _require(requirements['depth'] in ('overview', 'review', 'comparison'))
     _materials(context['materials'])
+    if 'confirmed_plan' in context:
+        confirmed_plan = context['confirmed_plan']
+        _object(confirmed_plan, {'plan_id', 'content', 'confirmation_id'})
+        _uuid(confirmed_plan['plan_id'])
+        _uuid(confirmed_plan['confirmation_id'])
+        _plan(confirmed_plan['content'])
     if task['stage'] == 'retrieve':
         _object(context['plan'], {'plan_id', 'content'})
         _uuid(context['plan']['plan_id'])
@@ -357,6 +366,9 @@ def _draft(output, context):
              'workflow_draft_outline_mismatch')
     _require(not context['outline']['content']['gaps'] or
              re.search(r'limitations?|局限|限制|证据缺口', report, re.I), 'workflow_missing_limitations')
+    from .writing_requirements import assess_writing
+    writing = assess_writing(report, context['requirements'], context.get('confirmed_plan'))
+    _require(not writing['missing_requirements'], 'workflow_writing_requirement_missing')
 
 
 def validate_stage_output(stage, output, context, *, observations=None, attempt_id=None,

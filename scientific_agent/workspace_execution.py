@@ -32,6 +32,18 @@ def revision_input(project, version, section, feedback):
     """Reuse the already accepted fixed-evidence revision contract unchanged."""
     from .pi_revision_contracts import (RevisionJob, revision_input_digest,
                                        revision_material_digest, validate_revision_materials)
+    from .writing_requirements import assess_writing
+    plan = project.get('plan') or {}
+    quality = assess_writing(version['report_markdown'], project['requirements'],
+        dict(content=plan.get('content', {})))
+    guidance = '保持未选章节逐字不变；阅读全文，只在选区内补充和精炼。'
+    if quality.get('target_length'):
+        guidance += '全文目标约' + str(quality['target_length']) + quality.get('unit', '') + '；当前' + str(quality['actual_length']) + '。'
+    missing = quality.get('missing_requirements') or []
+    if missing:
+        guidance += '原要求尚需核对：' + '、'.join(missing) + '。'
+    if len(feedback) + len(guidance) + 2 <= 2000:
+        feedback += '\n\n' + guidance
     task_id, intent_id, now = str(uuid4()), str(uuid4()), utc_now()
     material = dict(report=version['report_markdown'], items=copy.deepcopy(version['trace_manifest']),
                     artifacts=copy.deepcopy(version['trace_artifacts']))
@@ -446,7 +458,14 @@ class WorkspaceService:
             section_index=index_sections(report), trace_manifest=items, trace_artifacts=artifacts,
             sources=sources, evidence_snapshot_id=snapshot_id, confirmation_id=confirmation_id,
             result_digest=result['result_digest'], created_at=utc_now())
+        from .writing_requirements import assess_writing
+        frozen = job.get('frozen_context', {})
+        plan = frozen.get('confirmed_plan')
+        parent_report = next((item['report_markdown'] for item in project['versions'] if item['id'] == parent_id), None)
+        version['writing_quality'] = assess_writing(report,
+            frozen.get('requirements', {}), plan, parent_report)
         project['versions'].append(version)
+        job['result_version_id'] = version_id
         if project['current_version_id'] is None and not stale:
             project['current_version_id'] = version_id
 

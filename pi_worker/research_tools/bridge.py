@@ -94,11 +94,13 @@ def search(query, *, providers=None, limit=10):
             row["error"] = f"{type(exc).__name__}: provider request/response failed"
         searches.append(row)
     merged = deduplicate_papers(records)
+    from scientific_agent.retrieval_guidance import low_result_notes
+    suggestions = low_result_notes(query, len(merged))
     return {"schema_version": "1", "searches": searches,
             "papers": [normalize_paper(record) for record in merged],
             "database_total": None,
             "notes": ["result_count is records returned by each adapter, not database total",
-                      "A PDF URL is not acquired full text; identifier verification remains unknown"]}
+                      "A PDF URL is not acquired full text; identifier verification remains unknown"] + suggestions}
 
 
 @scoped_academic_transport

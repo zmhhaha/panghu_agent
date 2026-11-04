@@ -11,6 +11,7 @@ import re
 from .pi_contracts import parse_timestamp
 
 _DETAILS = {
+    'workflow_writing_requirement_missing': ('validation_failed', 'output_validation', '初稿遗漏了已确认的固定文件名或案例要求。', True, '保留原方案和证据，重新生成或人工补齐明确要求；无需重新检索。'),
     'runtime_idle_timeout': ('timeout', 'generation', '模型响应长时间没有进展，执行已停止。', True, '稍后明确重试；若持续发生，请提供任务标识给管理员。'),
     'deadline_exceeded': ('timeout', 'execution', '本阶段已达到执行时限。', True, '缩小研究范围或来源数量后，明确重试。'),
     'timed_out': ('timeout', 'execution', '本阶段已达到执行时限。', True, '缩小研究范围或来源数量后，明确重试。'),
