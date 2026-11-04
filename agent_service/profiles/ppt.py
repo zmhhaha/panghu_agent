@@ -280,6 +280,59 @@ def _needs_input_manifest_example(task):
         slides=[], quality={}, provenance={})
 
 
+def _source_table_catalog(value, task):
+    """Bounded passive source context; it cannot confirm a direction or a gate."""
+    _require(type(value) is dict and set(value) == {
+        'schema_version', 'input_snapshot_sha256', 'tables', 'unsupported'}
+        and type(value['schema_version']) is int and value['schema_version'] == 1
+        and value['input_snapshot_sha256'] == task['input_snapshot_sha256'],
+        'ppt_source_table_catalog_invalid')
+    try:
+        encoded = canonical_bytes(value)
+    except (TypeError, ValueError, RecursionError):
+        _require(False, 'ppt_source_table_catalog_invalid')
+    _require(len(encoded) <= 8192, 'ppt_source_table_catalog_too_large')
+    assets = {asset['id']: asset for asset in task['input_snapshot']['assets']}
+    tables, unsupported = value['tables'], value['unsupported']
+    _require(type(tables) is list and len(tables) <= 32
+        and type(unsupported) is list and len(unsupported) <= 64,
+        'ppt_source_table_catalog_invalid')
+    identifiers = set()
+    def cell(item, limit, empty=True):
+        return (type(item) is str and len(item) <= limit and (empty or bool(item.strip()))
+            and not any(ord(ch) < 32 or ord(ch) == 127 for ch in item))
+    for table in tables:
+        _require(type(table) is dict and set(table) == {'table_id', 'asset_id',
+            'asset_sha256', 'source_label', 'line_start', 'headers', 'rows', 'column_types'},
+            'ppt_source_table_catalog_invalid')
+        key = table['table_id']
+        _require(type(key) is str and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,159}', key)
+            and key not in identifiers, 'ppt_source_table_catalog_invalid')
+        identifiers.add(key)
+        _require(type(table['asset_id']) is str, 'ppt_source_table_catalog_invalid')
+        asset = assets.get(table['asset_id'])
+        _require(asset is not None and asset['media_type'] == 'text/markdown'
+            and table['asset_sha256'] == asset['sha256']
+            and cell(table['source_label'], 200, empty=False)
+            and type(table['line_start']) is int and table['line_start'] >= 1,
+            'ppt_source_table_catalog_invalid')
+        headers, rows, kinds = table['headers'], table['rows'], table['column_types']
+        _require(type(headers) is list and 2 <= len(headers) <= 8
+            and all(cell(header, 200, empty=False) for header in headers)
+            and len(set(headers)) == len(headers)
+            and type(kinds) is list and len(kinds) == len(headers)
+            and all(kind in ('number', 'text', 'unsupported') for kind in kinds)
+            and type(rows) is list and 1 <= len(rows) <= 40
+            and all(type(row) is list and len(row) == len(headers)
+                and all(cell(item, 500) for item in row) for row in rows),
+            'ppt_source_table_catalog_invalid')
+    for row in unsupported:
+        _require(type(row) is dict and set(row) == {'asset_id', 'reason'}
+            and type(row['asset_id']) is str and row['asset_id'] in assets and type(row['reason']) is str
+            and re.fullmatch(r'[a-z][a-z0-9_]{0,79}', row['reason']),
+            'ppt_source_table_catalog_invalid')
+
+
 class PPTProfile:
     supports_inputs = True
     limits = ProfileLimits(max_input_bytes=25 * 1024**2, max_input_total_bytes=256 * 1024**2,
@@ -299,7 +352,7 @@ class PPTProfile:
         fields = {'schema_version', 'phase', 'project_id', 'business_job_id',
                   'input_snapshot_sha256', 'input_snapshot', 'feedback', 'revision_pages',
                   'confirmations', 'checkpoint', 'base_version'}
-        _require(type(task) is dict and set(task) == fields
+        _require(type(task) is dict and set(task) in (fields, fields | {'source_table_catalog'})
                  and task['schema_version'] == self.task_schema and task['phase'] == self.phase)
         _uuid(task['project_id']); _uuid(task['business_job_id']); _sha(task['input_snapshot_sha256'])
         snap = task['input_snapshot']
@@ -322,6 +375,9 @@ class PPTProfile:
                          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
                          'image/png', 'image/jpeg'})
             ids.add(asset['id'])
+        if 'source_table_catalog' in task:
+            _require(self.phase == 'plan_options', 'ppt_source_table_catalog_phase_invalid')
+            _source_table_catalog(task['source_table_catalog'], task)
         _require(type(task['feedback']) is str and len(task['feedback']) <= 12000
                  and type(task['revision_pages']) is list and len(task['revision_pages']) <= count
                  and all(type(n) is int and 1 <= n <= count for n in task['revision_pages'])
@@ -442,6 +498,23 @@ class PPTProfile:
             'is free_design or templates. Stage2 plan requires page_plan.pages and design.directions '
             '(exactly three stable unique ids, names and distinct designs), with complete '
             'production_parameters and each direction covering all N pages.\n'
+            'When source_table_catalog is supplied, it is a server-derived catalog of complete '
+            'tables from the authorized Markdown sources, not a permission or confirmation. '
+            'Its unsupported entries concern numeric-table authority only; other authorized '
+            'documents and images remain available for their ordinary source/reference use. '
+            'For every required native editable data chart, each applicable direction must declare '
+            'native_chart_specs:[{"table_id":"<actual catalog table_id>","category_column":0,'
+            '"series_columns":[1],"slide":4,"type":"column"}]. Column indexes are zero-based; '
+            'slide is one-based and type is column, line or pie. Select actual catalog table/columns '
+            'and preserve all ordered rows and source header labels/units. Do not supply chart '
+            'categories/values as authority, transform/aggregate/impute values, or write '
+            'source_chart_binding. The business service derives and displays the exact source cells '
+            'before the existing direction confirmation. If required numeric source data is absent '
+            'or unsupported, return an honest needs_input instead of inventing data. '
+            'For prepare/generate/revise, use the frozen source_chart_binding in the selected '
+            'Stage2 direction. Its expected_charts fixes slide/type/category/series order and values; '
+            'preserve embedded workbook and cache data. It is numeric verification input, not '
+            'a passed gate or publication. Moving/remapping a chart needs a new confirmed plan.\n'
             'Exact file handoff contract: result/manifest.json is outside project/. project_root is '
             'the child path relative to project/ (for example deck), not an absolute path and not '
             'project/deck. All artifacts[].path, slides[].svg_path, slides[].preview_path and quality '

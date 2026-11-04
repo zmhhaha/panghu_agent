@@ -82,6 +82,9 @@ def quality_failure_job(app,c,error_code='external_svg_resource'):
 
 
 @pytest.mark.parametrize(('error_code','retry_stage','stage','title'),[
+    ('native_chart_not_verified','planning','native_chart_data','图表源数据尚未核验'),
+    ('source_chart_binding_required','planning','native_chart_data','请先确认图表使用的数据'),
+    ('source_chart_binding_invalid','planning','native_chart_data','图表数据绑定需要更新'),
     ('external_svg_resource','validation','source_binding','页面引用检查未通过'),
     ('final_pptx_text_layout_failed','generation','final_pptx_text_layout','PPTX 文字排版检查未通过'),
     ('final_pptx_text_extraction_failed','validation','final_pptx_text_extraction','PPTX 文字测量未完成'),

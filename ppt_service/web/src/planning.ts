@@ -1,4 +1,4 @@
-import type { Communication, Direction, Page, Project } from './domain';
+import type { Communication, Direction, Page, Project, SourceChartData } from './domain';
 type ObjectValue = Record<string, unknown>;
 const object = (value:unknown):ObjectValue => value!==null&&typeof value==='object'&&!Array.isArray(value)?value as ObjectValue:{};
 const text = (value:unknown) => typeof value==='string'?value:'';
@@ -32,12 +32,30 @@ export function adaptPlanPages(value:unknown):Page[] {
   return {number:Number(number),title:text(raw.title),purpose:text(raw.purpose)||text(raw.core_message),points:Array.isArray(raw.points)?strings(raw.points):content,sources:strings(raw.sources??raw.source_refs),details:remainder(raw,['number','ordinal','title','purpose','core_message','points','sources','source_refs'])} as Page;
  }).filter((page):page is Page=>page!==null);
 }
+function sourceCharts(raw:ObjectValue):{source_charts?:SourceChartData[];source_chart_error?:boolean} {
+ if(raw.source_chart_binding===undefined)return Array.isArray(raw.native_chart_specs)&&raw.native_chart_specs.length?{source_chart_error:true}:{};
+ const binding=object(raw.source_chart_binding),charts=binding.charts;
+ if(binding.schema_version!==1||binding.direction_id!==raw.id||!Array.isArray(charts)||charts.length>8)return {source_chart_error:true};
+ const projected:SourceChartData[]=[];
+ const cell=(value:unknown):value is string=>typeof value==='string'&&value.length<=500&&!/[\u0000-\u001f\u007f]/.test(value);
+ for(const value of charts){
+  const chart=object(value),headers=chart.headers,rows=chart.rows,series=chart.series_columns,category=chart.category_column;
+  if(!Number.isInteger(chart.slide)||Number(chart.slide)<1||Number(chart.slide)>20||!['column','line','pie'].includes(text(chart.type))||typeof chart.asset_id!=='string'
+   ||!Array.isArray(headers)||headers.length<2||headers.length>8||!headers.every(cell)||!headers.every(value=>value.trim())||new Set(headers).size!==headers.length
+   ||!Array.isArray(rows)||!rows.length||rows.length>40||!rows.every(row=>Array.isArray(row)&&row.length===headers.length&&row.every(cell))
+   ||!Number.isInteger(category)||Number(category)<0||Number(category)>=headers.length
+   ||!Array.isArray(series)||!series.length||series.length>4||new Set(series).size!==series.length||!series.every(col=>Number.isInteger(col)&&col>=0&&col<headers.length&&col!==category)
+   ||(chart.type==='pie'&&series.length!==1))return {source_chart_error:true};
+  projected.push({slide:Number(chart.slide),type:chart.type as SourceChartData['type'],asset_id:chart.asset_id,headers:headers.slice(),rows:rows.map(row=>row.slice()),category_column:Number(category),series_columns:series.slice()});
+ }
+ return {source_charts:projected};
+}
 export function adaptDirections(value:unknown):Direction[]|undefined {
  if(!Array.isArray(value))return undefined;
  return value.map(item=>{
   const raw=object(item);const id=text(raw.id)||text(raw.direction_id);
   if(!id)return null;
-  return {id,title:text(raw.title)||text(raw.name),description:text(raw.description)||text(raw.note),pages:adaptPlanPages(raw.pages??raw.page_plan),production_settings:object(raw.production_settings??raw.production_parameters),page_expression:expressionTexts(raw.page_expression),details:remainder(raw,['id','direction_id','name','title','note','description','pages','page_plan','production_settings','production_parameters','page_expression'])} as Direction;
+  return {id,title:text(raw.title)||text(raw.name),description:text(raw.description)||text(raw.note),pages:adaptPlanPages(raw.pages??raw.page_plan),production_settings:object(raw.production_settings??raw.production_parameters),page_expression:expressionTexts(raw.page_expression),...sourceCharts(raw),details:remainder(raw,['id','direction_id','name','title','note','description','pages','page_plan','production_settings','production_parameters','page_expression','native_chart_specs','source_chart_binding'])} as Direction;
  }).filter((direction):direction is Direction=>direction!==null);
 }
 export function restoredDirection(project:Project) {

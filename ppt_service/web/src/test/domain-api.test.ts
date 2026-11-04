@@ -41,6 +41,9 @@ describe('immutable confirmation',()=>{
 });
 describe('retry and safety',()=>{
  it.each([
+  ['native_chart_not_verified','native_chart_data','planning'],
+  ['source_chart_binding_required','native_chart_data','planning'],
+  ['source_chart_binding_invalid','native_chart_data','planning'],
   ['final_pptx_text_layout_failed','final_pptx_text_layout','generation'],
   ['final_pptx_text_extraction_failed','final_pptx_text_extraction','validation'],
  ])('retains the safe final-PPTX diagnosis %s without raw report data or publication authority',(error_code,stage,retry_stage)=>{

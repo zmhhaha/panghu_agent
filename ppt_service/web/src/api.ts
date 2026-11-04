@@ -37,6 +37,8 @@ export const errors: Record<string,string> = {
   REVIEW_CHECKPOINT_UNAVAILABLE:'审核草稿暂时无法恢复修改，请联系管理员。',
   INITIAL_CONFIRMATION_REQUIRED:'初步沟通尚未确认或确认已失效。请在“沟通与方案”重新确认沟通内容与设计方式，再生成三套设计方向。',
   OPTIONS_CONFIRMATION_REQUIRED:'请在“沟通与方案”主动选择一个设计方向，确认所选完整方案后，再生成演示稿。',
+  SOURCE_CHART_BINDING_REQUIRED:'图表尚未绑定资料数据表，请重新生成并确认设计方案后再制作。',
+  SOURCE_CHART_BINDING_INVALID:'图表的数据来源、数据列或页码需要重新核对，请重新生成并确认设计方案。',
   LEGACY_CHECKPOINT_REQUIRES_REPLAN:'此项目的旧方案无法继续制作或修改。请返回“沟通与方案”重新开始初步沟通，再确认新的设计方向；已有演示稿仍可预览和下载。',
   CONSENT_REQUIRED:'请先确认外部模型数据传输，再重试此操作。', UPLOAD_LIMIT:'文件超出上传限额，请检查单文件 25 MiB、项目 10 文件 / 100 MiB 限制。',
   STORAGE_CAPACITY_LOW:'服务器可用存储不足，上传未完成。请稍后重试，或联系管理员清理服务器空间。',
@@ -155,7 +157,7 @@ export function adaptProject(raw: RecordValue): Project {
  return { ...raw, settings:raw.settings??{pages:raw.page_count??8,language:raw.language==='zh'?'简体中文':raw.language??'简体中文',audience:raw.audience??'',purpose:raw.purpose??'',style:raw.style??'',requirements:raw.requirements??''}, assets:raw.assets??[], plan,
  input_snapshot_hash:raw.input_snapshot_hash??'', confirmed_plan_revision:raw.confirmed_plan_revision==null?null:String(raw.confirmed_plan_revision), latest_job:raw.latest_job?adaptJob(raw.latest_job):null } as Project;
 }
-const diagnosticCodes=new Set(['final_pptx_text_layout_failed','final_pptx_text_extraction_failed','external_svg_resource','unsafe_svg_source','unsafe_svg_data_resource','candidate_integrity_failed','independent_quality_gate_failed','quality_report_roster_unverified','approved_spec_lock_changed','render_source_hash_mismatch','render_resource_hash_mismatch','render_roster_mismatch','invalid_svg_canvas','independent_command_timeout','independent_render_failed','quality_gate_failed']);
+const diagnosticCodes=new Set(['native_chart_not_verified','source_chart_binding_required','source_chart_binding_invalid','final_pptx_text_layout_failed','final_pptx_text_extraction_failed','external_svg_resource','unsafe_svg_source','unsafe_svg_data_resource','candidate_integrity_failed','independent_quality_gate_failed','quality_report_roster_unverified','approved_spec_lock_changed','render_source_hash_mismatch','render_resource_hash_mismatch','render_roster_mismatch','invalid_svg_canvas','independent_command_timeout','independent_render_failed','quality_gate_failed']);
 function adaptQualityDiagnostic(value:unknown, jobId:unknown):QualityDiagnostic|undefined {
  if(!value||typeof value!=='object'||Array.isArray(value)||typeof jobId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(jobId))return;
  const raw=value as RecordValue;
@@ -163,7 +165,7 @@ function adaptQualityDiagnostic(value:unknown, jobId:unknown):QualityDiagnostic|
  if(raw.schema_version!==1||raw.publication_authorized!==false||!diagnosticCodes.has(raw.error_code)
   ||!text('title',160)||!text('message',2000)||!text('suggestion',2000)
   ||typeof raw.stage!=='string'||!/^[a-z_]{1,60}$/.test(raw.stage)
-  ||!['validation','generation'].includes(raw.retry_stage)
+  ||!['validation','generation','planning'].includes(raw.retry_stage)
   ||raw.diagnostic_download_url!==`/api/v1/jobs/${jobId}/diagnostics`)return;
  return {schema_version:1,error_code:raw.error_code,stage:raw.stage,title:raw.title,message:raw.message,suggestion:raw.suggestion,retry_stage:raw.retry_stage,publication_authorized:false,diagnostic_download_url:raw.diagnostic_download_url};
 }

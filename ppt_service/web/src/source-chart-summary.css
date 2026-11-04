@@ -1,0 +1,5 @@
+.source-chart-summary{margin:1.25rem 0;padding:1.25rem;border:1px solid var(--line,#dce3df);border-radius:14px;background:var(--surface,#fff)}
+.source-chart-heading h4{margin:0 0 .4rem;font-size:1rem}.source-chart-heading p,.source-chart-origin{margin:.4rem 0 .8rem;color:var(--muted,#5f7067);font-size:.875rem;overflow-wrap:anywhere}
+.source-chart-item{padding:1rem 0}.source-chart-item+.source-chart-item{border-top:1px solid var(--line,#dce3df)}
+.source-chart-title{display:flex;gap:.6rem 1rem;flex-wrap:wrap;align-items:baseline;justify-content:space-between}.source-chart-title span{font-size:.8rem;color:var(--muted,#5f7067)}
+.source-chart-table{overflow-x:auto}.source-chart-table table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:.875rem}.source-chart-table th,.source-chart-table td{padding:.55rem .75rem;text-align:left;border-bottom:1px solid var(--line,#dce3df);overflow-wrap:anywhere}.source-chart-table th{background:#f3f6f4;font-weight:600}.source-chart-item details{margin-top:.75rem}.source-chart-item summary{font-size:.875rem;color:var(--muted,#5f7067);cursor:pointer}

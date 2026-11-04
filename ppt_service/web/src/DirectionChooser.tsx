@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { ArrowDown, Check, ChevronRight, Palette, Sparkles, X } from 'lucide-react';
-import type { Direction, Plan } from './domain';
+import type { Asset, Direction, Plan } from './domain';
 import { presentDirection } from './directionPresentation';
+import { SourceChartSummary } from './SourceChartSummary';
 import './direction-choice.css';
 
 interface Props {
@@ -11,6 +12,7 @@ interface Props {
  disabled: boolean;
  recommendation?: Plan['recommendation'];
  renderDetails: (direction: Direction) => ReactNode;
+ assets?: Asset[];
 }
 
 function StyleSample({direction}:{direction:Direction}) {
@@ -31,7 +33,7 @@ function StyleSample({direction}:{direction:Direction}) {
  </span>;
 }
 
-export function DirectionChooser({directions,selectedId,onSelect,disabled,recommendation,renderDetails}:Props) {
+export function DirectionChooser({directions,selectedId,onSelect,disabled,recommendation,renderDetails,assets}:Props) {
  const [inspectedId,setInspectedId]=useState<string|null>(null);
  const inspector=useRef<HTMLElement|null>(null);
  useEffect(()=>{
@@ -64,6 +66,7 @@ export function DirectionChooser({directions,selectedId,onSelect,disabled,recomm
    </article>;
   })}</div>
   <div className="direction-choice-status"><p aria-live="polite">{selected?<><Check size={16}/><span>当前选择：<strong>{selected.title}</strong></span></>:<span>还未选择，点击上方任一方案即可。</span>}</p>{recommendation&&<small>系统推荐仅供参考，不代表用户确认</small>}</div>
+  {selected&&<SourceChartSummary direction={selected} assets={assets}/>}
   {inspected&&<section ref={inspector} id="direction-inspector" className="direction-inspector" aria-label={`${inspected.title}的完整方案`}>
    <div className="direction-inspector-heading"><div><span className="eyebrow">方案详情</span><h3>{inspected.title}</h3><p>{selectedId===inspected.id?'这也是你当前选择的方案。':'正在查看此方案；展开详情不会改变你的选择。'}</p></div><button className="secondary compact" onClick={()=>setInspectedId(null)}><X size={14}/>收起详情</button></div>
    {renderDetails(inspected)}

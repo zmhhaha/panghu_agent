@@ -11,6 +11,15 @@ from uuid import UUID
 # stage, title, description, recovery advice, retry stage. These are explanations,
 # not a claim that a retry is authorized or that any presentation was accepted.
 _RULES = {
+    'native_chart_not_verified': ('native_chart_data', '图表源数据尚未核验',
+        '本次原生图表缺少可核对的已确认源数据绑定，尚不能作为可下载版本交付。',
+        '请重新规划并确认带有资料数据表的方案，再制作图表；管理员可核对保留的图表检查证据。', 'planning'),
+    'source_chart_binding_required': ('native_chart_data', '请先确认图表使用的数据',
+        '方案中的原生图表尚未绑定到当前资料的数据表。',
+        '请提供包含明确类别和数值列的 Markdown 数据表，重新规划并确认图表页；无需重复上传其他资料。', 'planning'),
+    'source_chart_binding_invalid': ('native_chart_data', '图表数据绑定需要更新',
+        '图表引用的数据表、数据列或页面安排与当前已确认内容不一致。',
+        '请重新规划并确认图表的数据来源、列和页码，再继续制作；原版本和失败记录会保留。', 'planning'),
     'final_pptx_text_layout_failed': ('final_pptx_text_layout', 'PPTX 文字排版检查未通过',
         '最终 PPTX 渲染中检测到文字重叠、出框或异常断词的风险。',
         '请根据最终 PPTX 预览调整对应页面的文本框、字号和换行后重新制作；原资料与已确认方案可保留。', 'generation'),
