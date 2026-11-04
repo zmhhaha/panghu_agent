@@ -77,6 +77,17 @@ caused a retained inert-policy type-check warning. The revised expression uses
 CEL `dyn` for that field while preserving its actual bound; prove its runtime
 evaluation against all positive controls before enabling ordinary requests.
 
+The first warning-free nonce matrix still failed all 93 legitimate baselines:
+this cluster's API mirrors the fixed Localhost AppArmor field into
+`container.apparmor.security.beta.kubernetes.io/worker`. An unlabelled normal
+server dry-run measured its exact value as `localhost/agent-capsule-inputs`.
+The revised metadata rule permits only that one key when its value exactly
+matches the same pool's pinned Localhost profile. It does not permit arbitrary
+AppArmor annotations or relax the separately pinned securityContext. Preserve
+the failed matrix; the automatic mirror's existence was not inferred from
+successful type checking. Explicit unbounded and oversized emptyDir cases also
+exercise the dynamic Quantity checks at runtime.
+
 Any later catalog publication introducing a new image/host or UID reservation
 must update the admission parameters through the same guarded review path before
 activating that pool. An unregistered pool must fail closed. Historical
