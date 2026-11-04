@@ -60,7 +60,41 @@ agent-service，不再使用旧 Gradio 或科研专用常驻 Pi Worker 接收新
 清理按“核对旧数据关联和现役保留范围 → 构建并发布无兼容 API → 删除旧数据与专用资源”
 执行。共享 Agent、LLM、认证、数据库及其他业务不作为旧服务删除。
 
-## 执行记录
+## 执行结果
 
-归档、精确 API 镜像、线上移除清单与验收结果将在实际操作完成后记录；本段尚不声称
-旧 Worker/PVC 已删除。
+应用源码 `565a01bf5ac43deda3082da0821f70f1393918ed` 已推送至
+`codex/scientific-feedback-20261104`，服务器独立检出拉取并原生 ARM64 构建，使用
+`latest` 构建标签和以下精确镜像部署：
+
+`arm-cluster-master:5000/scientific-api@sha256:5132000a1af729b0cd976df7be2c3e50f8aa08814f667ece551b2c228d0c4056`
+
+精确镜像在禁网、只读、无 capabilities 的非 root 容器内导入真实 API，通过检查：
+只使用 Agent 服务、没有旧 Worker fallback 属性，也找不到静态归档模块。
+相关 API、实际 COPY/构建、部署和脚本回归为 47 passed、46 subtests passed；不与
+已撤除的归档方案测试累加。
+
+共享 SQLite 使用一个 `BEGIN IMMEDIATE` 事务精确删除：14 条旧 Pi 索引、10 份报告、
+1 条通知、2 个版本、1 份证据快照、4 个修订意图、2 条修订绑定、1 条采用记录。
+旧任务在 `scientific_tasks` 中没有对应行。删除两张本轮临时归档表，并逐表比对所有
+非目标行摘要；现役 3 个 Agent 任务和 10 个工作台项目均保留，无跨代依赖。
+
+已删除旧 `scientific-pi-worker` 的 Deployment、Service、NetworkPolicy、ExternalSecret、
+Secret、PVC 及对应 PV；同时删除未使用的旧直连 `llm-token` ExternalSecret/Secret、
+13 个废弃 API/Gradio ReplicaSet 和 9 个无引用源代码 ConfigMap。本次原始 tar 备份
+也已删除。现役科研命名空间仅保留 API/UI、对应 Service、Agent 调用凭据和两条入口
+网络策略等有效资源；共享 Agent Worker/成果存储和 UID 账本不在删除范围。
+
+规范 Vault 专用清单 `vault/inventory/scientific-pi-worker-externalsecret.yaml` 已从
+外层仓库删除，提交 `9e2e5ad`，保留并发远端更新后以 `0250c1b` 推送 main。
+共享 Vault callers 记录及其他业务令牌没有删除；科研专用旧令牌的运行 Secret 已清理，
+默认令牌同步也不再包含 `scientific-agent`。
+
+服务器证据目录：`192.168.137.101:/root/scientific-legacy-retirement-20261104/`。
+其中 `old-data-deletion-receipt.json` 记录单一事务及保留摘要，
+`resource-deletion-receipt.json` 记录资源移除清单，`final-image.json` 记录镜像身份。
+仅保留脱敏操作证据和源码，不保留这批旧任务的内容、附件或兼容备份。
+
+删除后的真实 HTTP 验收通过：14 个旧任务及下载均返回 404；现役 3 个任务可读、
+2 份现役报告下载字节与数据库一致；10 个当前项目均可读，其他身份访问返回 404。
+后端为 `agent-service`，旧 fallback/归档模块与归档表均不存在，API/UI 均 1/1 Ready，
+旧服务资源不存在。结果为 `final-status.json` 和 `final-http-smoke.stdout`。
