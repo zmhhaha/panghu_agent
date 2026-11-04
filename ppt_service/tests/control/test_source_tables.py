@@ -153,6 +153,22 @@ def test_expected_charts_are_derived_and_all_actor_authority_is_overwritten(tmp_
     assert task_chart_oracle(task(snapshot, actual)) == oracle
 
 
+def test_actor_typed_numeric_display_conflicts_are_removed_but_audit_source_is_preserved(tmp_path):
+    snapshot, catalog, _ = bound_case(tmp_path)
+    forged = direction(catalog['tables'][0]['table_id'])
+    forged.update(categories=['wrong'], series=[{'name': 'wrong', 'values': [9000]}])
+    forged['page_plan']['pages'][1]['visualization'] = {
+        'type': 'column', 'categories': ['wrong'], 'series': [{'name': 'wrong', 'values': [9000]}],
+        'caption': 'Source comparison'}
+    projected = bind_planning({'directions': [forged], 'source_plan': copy.deepcopy(forged)},
+                              tmp_path, snapshot)
+    shown = projected['directions'][0]
+    assert 'categories' not in shown and 'series' not in shown
+    assert shown['page_plan']['pages'][1]['visualization'] == {'type': 'column', 'caption': 'Source comparison'}
+    assert projected['source_plan']['categories'] == ['wrong']
+    assert shown['source_chart_binding']['expected_charts'][0]['categories'] == ['2019', '2024']
+
+
 @pytest.mark.parametrize('changes', [
     {'table_id': 'not-authorized'}, {'slide': True}, {'slide': 0}, {'slide': 4},
     {'category_column': True}, {'category_column': -1}, {'series_columns': [True]},

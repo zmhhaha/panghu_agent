@@ -17,6 +17,11 @@ formats cannot become chart values. Decimal/scientific values have explicit
 precision/exponent limits; formulas, percentages and thousands separators are
 never converted or evaluated.
 
+The site checks frozen bindings through the stdlib-only
+`server/source_charts.py`; it does not import the control process or Agent
+Service. Original source discovery stays in control. The total catalog has at
+most 32 tables, and each source has at most 8 discovered tables.
+
 Each Actor direction may declare only references:
 
 ```json
@@ -46,6 +51,11 @@ snapshot hash, direction ID, full source provenance/cells, verifier-shaped
 The digest detects corruption; website database/outbox lineage supplies authority.
 The existing direction confirmation covers the displayed source mapping. No
 additional per-chart or per-cell consent is introduced.
+
+Typed Actor chart categories, series and values are removed from the direction
+and page display projections so that they cannot conflict with the displayed
+source binding. The original source plan remains audit-only. Free prose numbers
+continue to require ordinary source-fidelity review.
 
 The selected frozen binding travels in
 `task.confirmations.stage2.selected_direction.source_chart_binding`. Production

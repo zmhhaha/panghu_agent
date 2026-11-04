@@ -7,7 +7,6 @@ complete source cells and the exact expectations reused by later validation.
 from __future__ import annotations
 
 import copy
-from decimal import Decimal, InvalidOperation
 import hashlib
 import os
 from pathlib import Path
@@ -15,6 +14,7 @@ import re
 from uuid import UUID
 
 from agent_service.contracts import canonical_bytes, digest
+from ppt_service.server import source_charts
 from .execution import ControlError
 from .staging import open_regular
 
@@ -27,7 +27,6 @@ MAX_COLUMNS = 8
 MAX_TABLES = 8
 MAX_CHARTS = 8
 SHA = re.compile(r'[a-f0-9]{64}\Z')
-NUMBER = re.compile(r'[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?\Z')
 SEPARATOR = re.compile(r':?-{3,}:?\Z')
 RESERVED = frozenset(('source_chart_binding', 'source_table_catalog'))
 SPEC_FIELDS = frozenset(('table_id', 'category_column', 'series_columns', 'slide', 'type'))
@@ -39,26 +38,11 @@ def require(value, code='source_chart_binding_invalid'):
 
 
 def plain(value, limit=160):
-    return (isinstance(value, str) and bool(value.strip()) and len(value) <= limit
-            and not any(ord(c) < 32 or ord(c) == 127 or c in '|\\`<>[]' for c in value))
+    return source_charts.plain(value, limit)
 
 
 def number(value):
-    """No inferred units, separators, formulas, missing data or rounding."""
-    if not isinstance(value, str) or len(value) > 64 or not NUMBER.fullmatch(value):
-        raise ValueError('unsupported_numeric_cell')
-    try:
-        parsed = Decimal(value)
-        digits, exponent = parsed.as_tuple().digits, parsed.as_tuple().exponent
-        significant = len(''.join(map(str, digits)).lstrip('0')) or 1
-        explicit_exponent = int(value.lower().split('e')[1]) if 'e' in value.lower() else 0
-        if (not parsed.is_finite() or significant > 15 or abs(exponent) > 30
-                or abs(explicit_exponent) > 12 or abs(parsed) > Decimal('1e12')
-                or parsed != 0 and abs(parsed) < Decimal('1e-12')):
-            raise ValueError('numeric_precision_limit')
-        return int(parsed) if parsed == parsed.to_integral_value() else float(parsed)
-    except (InvalidOperation, OverflowError):
-        raise ValueError('unsupported_numeric_cell') from None
+    return source_charts.number(value)
 
 
 def _cells(line):
@@ -73,19 +57,7 @@ def _cells(line):
 
 
 def _column(values):
-    numeric = []
-    for cell in values:
-        try:
-            number(cell)
-            numeric.append(True)
-        except ValueError:
-            numeric.append(False)
-    if all(numeric):
-        return 'number'
-    if any(numeric) or any(not plain(cell) or cell[:1] in '=+@'
-            or re.match(r'^[+-]?[0-9]+[,%]', cell) for cell in values):
-        return 'unsupported'
-    return 'text'
+    return source_charts.column_type(values)
 
 
 def _tables(text, asset):
@@ -153,10 +125,10 @@ def _tables(text, asset):
 
 
 def snapshot_body(snapshot):
-    body = {key: snapshot[key] for key in ('project_id', 'title', 'settings', 'assets')}
-    require(digest(body) == snapshot['hash'], 'input_snapshot_mismatch')
-    require(isinstance(body['assets'], list) and len(body['assets']) <= 10)
-    return body
+    try:
+        return source_charts.snapshot_body(snapshot)
+    except source_charts.SourceChartError as exc:
+        raise ControlError(exc.code) from None
 
 
 def discover_tables(root: Path, snapshot):
@@ -206,7 +178,9 @@ def discover_tables(root: Path, snapshot):
                             continue
                         candidate = dict(catalog, tables=catalog['tables'] + [table])
                         # Reserve space for at most ten bounded failure summaries.
-                        if len(canonical_bytes(candidate)) > MAX_WIRE - 1536:
+                        if len(catalog['tables']) >= 32:
+                            reasons.add('table_count_limit')
+                        elif len(canonical_bytes(candidate)) > MAX_WIRE - 1536:
                             reasons.add('table_catalog_limit')
                         else:
                             catalog['tables'].append(table)
@@ -226,37 +200,32 @@ def strip_reserved(value):
     return copy.deepcopy(value)
 
 
+def _strip_display_chart_data(value):
+    """Keep Actor prose/layout, remove typed numeric payloads from display.
+
+    Original source_plan is retained separately for audit. This does not claim
+    to verify every number inside free prose; ordinary fidelity review remains.
+    """
+    fields = {'categories', 'values', 'series', 'chart_series', 'chart_data',
+              'native_chart_data', 'expected_charts', 'data_points', 'datasets'}
+    if isinstance(value, dict):
+        return {key: _strip_display_chart_data(item) for key, item in value.items() if key not in fields}
+    if isinstance(value, list):
+        return [_strip_display_chart_data(item) for item in value]
+    return copy.deepcopy(value)
+
+
 def _chart(table, spec, page_count):
-    require(isinstance(spec, dict) and set(spec) == SPEC_FIELDS)
-    require(spec.get('table_id') == table['table_id'])
-    category, series = spec.get('category_column'), spec.get('series_columns')
-    require(type(category) is int and 0 <= category < len(table['headers'])
-            and isinstance(series, list) and 1 <= len(series) <= 4
-            and all(type(col) is int and 0 <= col < len(table['headers']) and col != category for col in series)
-            and len(set(series)) == len(series))
-    require(type(spec.get('slide')) is int and 1 <= spec['slide'] <= page_count
-            and spec.get('type') in ('column', 'line', 'pie')
-            and (spec['type'] != 'pie' or len(series) == 1))
-    require(all(table['column_types'][col] == 'number' for col in series)
-            and table['column_types'][category] != 'unsupported')
-    categories = [row[category] for row in table['rows']]
-    require(len(set(categories)) == len(categories))
     try:
-        expected = {'slide': spec['slide'], 'type': spec['type'], 'categories': categories,
-                    'series': [{'name': table['headers'][col], 'values': [number(row[col]) for row in table['rows']]}
-                               for col in series]}
-    except ValueError:
-        raise ControlError('source_chart_binding_invalid') from None
-    provenance = {key: copy.deepcopy(table[key]) for key in
-                  ('table_id', 'asset_id', 'asset_sha256', 'line_start', 'headers', 'rows')}
-    provenance.update(copy.deepcopy(spec))
-    return provenance, expected
+        return source_charts.chart_from_table(table, spec, page_count)
+    except source_charts.SourceChartError as exc:
+        raise ControlError(exc.code) from None
 
 
 def bind_direction(direction, snapshot, catalog):
     """Service-only construction, after the isolated planning projection passed."""
     require(catalog.get('input_snapshot_sha256') == snapshot['hash'])
-    selected = strip_reserved(direction)
+    selected = _strip_display_chart_data(strip_reserved(direction))
     specs = selected.get('native_chart_specs', [])
     require(isinstance(specs, list) and len(specs) <= MAX_CHARTS)
     tables = {row['table_id']: row for row in catalog['tables']}
@@ -282,6 +251,10 @@ def bind_direction(direction, snapshot, catalog):
 def bind_planning(design, root, snapshot, *, catalog=None):
     """Discard Actor authority everywhere and replace each direction binding."""
     clean = strip_reserved(design)
+    source_plan = clean.pop('source_plan', None)
+    clean = _strip_display_chart_data(clean)
+    if source_plan is not None:
+        clean['source_plan'] = source_plan
     catalog = discover_tables(root, snapshot) if catalog is None else catalog
     require(isinstance(clean.get('directions'), list))
     clean['directions'] = [bind_direction(row, snapshot, catalog) for row in clean['directions']]
@@ -290,55 +263,6 @@ def bind_planning(design, root, snapshot, *, catalog=None):
 
 def validate_direction_binding(direction, snapshot, *, page_count=None):
     try:
-        return _validate_direction_binding(direction, snapshot, page_count=page_count)
-    except (KeyError, TypeError, ValueError, AttributeError):
-        raise ControlError('source_chart_binding_invalid') from None
-
-
-def _validate_direction_binding(direction, snapshot, *, page_count=None):
-    """Resolve only DB/outbox direction metadata, never current source or mappings.
-
-    A digest is a corruption/binding check, not an Actor signature. Callers must
-    supply the website-owned plan or immutable DB task, never a candidate plan.
-    """
-    snapshot_body(snapshot)
-    specs = direction.get('native_chart_specs', [])
-    binding = direction.get('source_chart_binding')
-    require(isinstance(specs, list) and len(specs) <= MAX_CHARTS)
-    require(len({digest(spec) for spec in specs}) == len(specs))
-    if binding is None:
-        require(not specs, 'source_chart_binding_required')
-        return {'expected_charts': [], 'source_sha256': []}
-    require(isinstance(binding, dict) and set(binding) == {
-        'schema_version', 'input_snapshot_sha256', 'direction_id', 'charts', 'expected_charts', 'binding_sha256'})
-    require(type(binding['schema_version']) is int and binding['schema_version'] == 1
-            and binding['input_snapshot_sha256'] == snapshot['hash'] and binding['direction_id'] == direction.get('id')
-            and isinstance(binding['charts'], list) and len(binding['charts']) == len(specs)
-            and isinstance(binding['expected_charts'], list) and len(binding['expected_charts']) == len(specs)
-            and len(canonical_bytes(binding)) <= MAX_WIRE
-            and binding['binding_sha256'] == digest({k: v for k, v in binding.items() if k != 'binding_sha256'}))
-    page_count = snapshot['settings'].get('page_count', 8) if page_count is None else page_count
-    require(type(page_count) is int and 3 <= page_count <= 20)
-    assets = {row['id']: row for row in snapshot['assets']}
-    sources, expectations = [], []
-    for chart, spec in zip(binding['charts'], specs):
-        require(isinstance(chart, dict) and set(chart) == SPEC_FIELDS | {
-            'asset_id', 'asset_sha256', 'line_start', 'headers', 'rows'})
-        asset = assets.get(chart['asset_id'])
-        require(asset is not None and asset['sha256'] == chart['asset_sha256']
-                and asset['media_type'] == 'text/markdown'
-                and type(chart['line_start']) is int and chart['line_start'] >= 1)
-        headers, rows = chart['headers'], chart['rows']
-        require(isinstance(headers, list) and 2 <= len(headers) <= MAX_COLUMNS
-                and all(plain(h) for h in headers) and len(set(headers)) == len(headers)
-                and isinstance(rows, list) and 1 <= len(rows) <= MAX_ROWS
-                and all(isinstance(row, list) and len(row) == len(headers)
-                        and all(plain(cell) for cell in row) for row in rows))
-        table = {**chart, 'column_types': [_column([row[n] for row in rows]) for n in range(len(headers))]}
-        rebuilt, expected = _chart(table, spec, page_count)
-        require(rebuilt == chart)
-        expectations.append(expected)
-        if asset['sha256'] not in sources:
-            sources.append(asset['sha256'])
-    require(expectations == binding['expected_charts'])
-    return {'expected_charts': copy.deepcopy(expectations), 'source_sha256': sources}
+        return source_charts.validate_direction_binding(direction, snapshot, page_count=page_count)
+    except source_charts.SourceChartError as exc:
+        raise ControlError(exc.code) from None
