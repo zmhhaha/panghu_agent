@@ -46,6 +46,21 @@ def saved(path, value):
         os.fsync(stream.fileno())
 
 
+def absent(kind, name, result):
+    """Only exact Docker absence plus a healthy daemon proves no resource."""
+    noun = 'object' if kind == 'container' else 'volume'
+    message = 'No such ' + noun + ': ' + name
+    allowed = {message, 'Error: ' + message, 'Error response from daemon: ' + message,
+               'error: no such ' + noun + ': ' + name}
+    if kind == 'volume':
+        allowed.add('Error response from daemon: get ' + name + ': no such volume')
+    if (result.returncode != 1 or result.stdout.strip() not in (b'', b'[]')
+            or result.stderr.decode(errors='replace').strip() not in allowed):
+        return False
+    healthy = call(['docker', 'info', '--format', '{{.ID}}'], check=False)
+    return healthy.returncode == 0 and bool(healthy.stdout.strip()) and not healthy.stderr.strip()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True)
@@ -154,8 +169,7 @@ def main():
         for name in reversed(containers):
             found = call(['docker', 'inspect', name], check=False)
             if found.returncode:
-                missing = ('Error: No such object: ' + name).encode()
-                if found.returncode != 1 or found.stdout.strip() or found.stderr.strip() != missing:
+                if not absent('container', name, found):
                     clean.append(name + ':inspect_failure_not_absence')
                 continue
             value = json.loads(found.stdout)[0]
@@ -170,17 +184,20 @@ def main():
                 stopped = json.loads(call(['docker', 'inspect', value['Id']]).stdout)[0]
                 require(not stopped['State']['Running'] and stopped['State']['Pid'] == 0, 'container_stop_unproven')
                 call(['docker', 'rm', value['Id']])
+                require(absent('container', value['Id'], call(['docker', 'inspect', value['Id']], check=False)),
+                        'exact_container_removal_not_proven')
             except Exception as error:
-                clean.append(name + ':' + type(error).__name__)
+                clean.append(name + ':' + type(error).__name__ + ':' + str(error)[:120])
         found = call(['docker', 'volume', 'inspect', volume], check=False)
-        if found.returncode and (found.returncode != 1 or found.stdout.strip() not in (b'', b'[]')
-                or found.stderr.strip() != ('Error response from daemon: get ' + volume + ': no such volume').encode()):
+        if found.returncode and not absent('volume', volume, found):
             clean.append('volume_inspect_failure_not_absence')
         if not found.returncode:
             value = json.loads(found.stdout)[0]
             if value.get('Labels', {}).get(LABEL) == owner and not clean:
                 if call(['docker', 'volume', 'rm', volume], check=False).returncode:
                     clean.append('volume_remove_failed')
+                elif not absent('volume', volume, call(['docker', 'volume', 'inspect', volume], check=False)):
+                    clean.append('exact_volume_removal_not_proven')
             else:
                 clean.append('volume_retained_for_uncertain_cleanup')
         remaining = call(['docker', 'ps', '-aq', '--filter', 'label=' + LABEL + '=' + owner], check=False)

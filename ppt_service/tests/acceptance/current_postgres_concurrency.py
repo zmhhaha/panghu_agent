@@ -121,7 +121,12 @@ def main():
             messages = {expected, 'Error: ' + expected, 'Error response from daemon: ' + expected}
             if kind == 'volume':
                 messages.add('Error response from daemon: get ' + name + ': no such volume')
-            require(message in messages,
+            # Docker 29 emits lowercase "error: no such object". Accept case
+            # differences in fixed prose only; preserve the exact owned ID/name.
+            require(result.returncode == 1 and result.stdout.strip() in (b'', b'[]')
+                    and name in message and any(
+                    message.replace(name, '<owned-id>', 1).casefold()
+                    == expected.replace(name, '<owned-id>', 1).casefold() for expected in messages),
                     'docker_inspect_uncertain_failure')
             call(['docker', 'info', '--format', '{{.ID}}'])
             return None
