@@ -63,6 +63,49 @@ These checks were not weakened or relabeled as passed.
 One ordinary website revision, `4605df6a-fdb7-43a7-addd-8e3ad5f73d46`, was
 submitted against that explicit original draft to repair only those source
 structures while preserving visible content and the frozen chart binding.
-Its outcome is recorded below after completion. The two original drafts,
+Its completed outcome is recorded below. The two original drafts,
 uploaded files and existing evidence remain unchanged. No owner visual
 declaration or publication has been inferred from these operations.
+
+## Completed strict source-structure revision
+
+Website revision job `4605df6a-fdb7-43a7-addd-8e3ad5f73d46` succeeded and
+produced review Version `e81f58f1-f589-4236-b0d2-3ea04e0daedb`, parented by
+`24960dcf-55cf-46bf-a631-0ecc6590f302`. The exact downloaded PPTX SHA256 is
+`bf6521cec2c063e14b93315323208f13416f04d57ff73aee3151b8cf711c5b24`.
+All seven strict programmatic acceptance gates passed without weakening
+the checks. The earlier drafts and their original evidence remain retained.
+
+Read-only server comparison confirmed unchanged chart values, embedded workbook,
+uploaded PNG, notes, exact visible character sequences and all six final preview
+hashes. The initial paragraph-array comparison failed because the intended source
+repair combined each two-part footer into one paragraph. That original receipt
+remains unchanged; the separate structural comparison verifies this exact change:
+`/root/ppt-chart-artifact-read-cffb9fb26f9b/structure-preservation.json`,
+`passed=true`. No new generation or business-row writes were used for this readback.
+
+## Actual Office operation on the corrected Version
+
+The exact corrected download `e81f58f1` was opened in actual desktop
+PowerPoint 16.0. It has six pages and one native chart on page four. In an
+independent working copy, the embedded workbook's B2 changed from 0.98 to
+0.99, and the chart was rebound to its original source range.
+
+After saving, closing and reopening the working copy, the embedded workbook,
+native series and saved OOXML chart cache consistently contained 0.99 followed
+by the unchanged 1.01, 0.85, 0.89, 1.17 and 1.28. All three original cell-range
+formulas remained unchanged. The exact downloaded original retained the SHA256
+above, and the Office processes used for this operation exited.
+
+Receipt: outer workspace
+`.research-temp/ppt-nasa-office-e81-20261105-r1/receipt.json`, `passed=true`.
+This result belongs to the corrected Version itself; it does not rely on the
+earlier `24960dcf` Office result. The operation used a separate verification
+copy and is not a local application test, build or render.
+The actual desktop result was also saved through the normal website's desktop
+check form and read back as passed. No owner visual declaration was saved.
+
+All seven strict programmatic gates and actual Office operation now pass for
+this corrected review draft. The owner's NASA visual confirmation remains
+pending, no publication has been recorded, and the PPT parent remains 145/146
+with R1 open. Shared platform P1–P4 continue in their independent change.

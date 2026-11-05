@@ -147,3 +147,17 @@ since passed on an independent copy. The original download is unchanged.
 The source-warning repair, public-trial site release and platform responsibility
 transfer are recorded in [the current closeout](public-trial-closeout-20261105.md).
 Owner visual approval and publication remain version-specific.
+
+The subsequent website revision `4605df6a-fdb7-43a7-addd-8e3ad5f73d46`
+succeeded and produced corrected review Version
+`e81f58f1-f589-4236-b0d2-3ea04e0daedb`, parented by `24960dcf`.
+Its exact downloaded PPTX SHA256 is
+`bf6521cec2c063e14b93315323208f13416f04d57ff73aee3151b8cf711c5b24`.
+All seven strict programmatic gates passed. Actual PowerPoint 16.0 then
+edited the native chart data in a separate copy, rebound the original range,
+saved and reopened it; the workbook, native series and OOXML cache agreed,
+the three source formulas and original download hash remained unchanged,
+and the Office processes exited. Receipt:
+outer `.research-temp/ppt-nasa-office-e81-20261105-r1/receipt.json`,
+`passed=true`. The owner's visual confirmation is still pending and this
+Version remains unpublished. The PPT parent remains 145/146 with R1 open.
