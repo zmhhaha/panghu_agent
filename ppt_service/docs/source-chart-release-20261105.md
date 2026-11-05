@@ -6,17 +6,18 @@ current PPT v2 routes, removes 45 obsolete PPT binding references and reuses the
 existing execution UID ranges. Other services' routes and business records are
 unchanged. No business rows were manually rewritten.
 
-Application source was fetched on the server from Git commit
-`fefd714c7a9face373d08e592f6ceb37a845f1f8`; application source archives were not
+Application source was initially fetched on the server from Git commit
+`fefd714c7a9face373d08e592f6ceb37a845f1f8`; subsequent controller and review
+projection fixes also arrived through Git. Application source archives were not
 uploaded. All application builds and checks ran on the server. Each published
-image uses the `latest` tag, source labels and the following immutable digest:
+image uses the `latest` tag and source labels. Current deployed digests are:
 
 | Image repository at arm-cluster-master:5000 | Manifest SHA256 |
 | --- | --- |
 | agent-service-control | cf2f61033d5cbd9eb4036452d954afc15fb5d16ff284166163a340db0add5b21 |
 | agent-service-pi | 6ad6e332fcd37c7c05337e8208cd4c9ea3cb242d363f76af54299e73ac0c1926 |
-| ppt-service-site | 6290f3f263a67ece37e3147093152a624f6e8886f4bd73f0aa85a06dac18d236 |
-| ppt-agent-controller | 510b0fa903aeeb204f4a7d896a6d99fe7bfebbde4a9bd80b961a30837698c72e |
+| ppt-service-site | 727d8c9a400ce113638de2cd9d506a3d4a6422e0f6ef3ecffffe3cd9682886f4 |
+| ppt-agent-controller | 67d69b0267c80b689e44a7a95861387f60048e8fa30b250606eccae664149987 |
 | ppt-agent-validator | 86e1a59265c67ef97e2b8f15491c63f5e9ba47cda3079a2992f6530fcdeecab8 |
 
 The shared control and Pi images retain their immutable production donor layers,
@@ -75,9 +76,63 @@ A minimal two-file controller overlay completed from server Git. Its image is
 `arm-cluster-master:5000/ppt-agent-controller:latest@sha256:b342cab35697e94877046f92972c12c2cc424fa0425b6cfe55c6d007ffd3203a`;
 readiness passed with `PPT_WORKER_HOSTNAME=arm-cluster-master`. Receipt:
 `/root/ppt-chart-controller-worker-53206d2e/receipt.json`. No validator rebuild
-was required for this scheduling setting. The table above records the preceding
-deployment.
+was required for this scheduling setting. This controller digest was subsequently
+replaced by the review projection fix recorded below.
 
-Normal website generation and revision remain unverified. No completed chart
-draft, native-chart PowerPoint editing, owner visual approval or publication is
-claimed from the deployment or the late validator response.
+## First website-generated chart draft
+
+The normal website workflow subsequently completed initial planning
+`bb6c1238`, design planning `ae8528f9`, preparation `82382e4f`, and generation
+`f3eb2aa5`. It produced version `e2fe3c13-9a8f-4e0c-b79a-052246ca5a45`: six
+pages and an 88,411-byte PPTX. The website's download completed to
+`Downloads/presentation-e2fe…pptx`, and all six page previews were available.
+
+The frozen source chart binding is
+`802b8059ef591d5e59ba703a2c4299662e26c9f765b66591e4a1b62524938ea0`.
+Artifact readback checked the six source values, native chart and embedded XLSX,
+actual rendered PNGs and preview hashes, slide text, and speaker notes. Evidence:
+`/root/ppt-chart-artifact-read-5181ae3ef346/receipt.json`. These are artifact and
+data checks; they do not substitute for owner visual approval or actual chart
+editing in PowerPoint.
+
+## Review revision projection fix
+
+The first website review-revision request returned HTTP 409
+`REVIEW_CHECKPOINT_UNAVAILABLE` and created no revision job. The connector had
+correctly kept the complete `source_chart_binding` only in `selected_direction`
+to fit the existing request depth limit, but the site's confirmation projection
+still duplicated it in `design.directions`. Strict comparison therefore rejected
+the otherwise unchanged frozen confirmation.
+
+Commit `9a9f0a79f2539fc859985c5ae4d703bd02545234` synchronizes that pure
+projection in the site and controller. It retains the full selected binding and
+strict equality checks. Focused server checks passed 14/14:
+`/root/ppt-source-chart-regressions-9a9f0a79-d31085af/receipt.json`.
+The site and controller rollout succeeded:
+`/root/ppt-chart-review-projection-fb079bbc/receipt.json`.
+Their current digests appear in the table above; shared Agent and validator
+images did not change in this follow-up.
+
+Normal website revision `ae3f4d24-2d37-442c-b80f-89a29a84a2a3` succeeded and
+produced version `24960dcf-55cf-46bf-a631-0ecc6590f302`, whose parent is the
+first draft. The 88,231-byte PPTX downloaded through the website to
+`Downloads/presentation-24960dcf-55cf-46bf-a631-0ecc6590f302.pptx`.
+The original remained selected when the second version arrived; the new version
+was explicitly selected for preview and download.
+
+Readback receipt `/root/ppt-chart-artifact-read-b305ffc9b187/receipt.json`
+passed for both versions. The first five preview hashes are identical; only
+page six changed, including the exact requested title “读懂距平，也看清资料边界”
+and paragraph “本资料未提供置信区间、地区分解和未来预测；若需这些分析，应先补充资料。”
+Both PPTX files retain the exact six source values in their native chart cache
+and embedded XLSX, the uploaded PNG bytes, native text and all speaker notes.
+The original PPTX is unchanged from its first readback:
+`344499a3356650c23305512eb22ece69f794d0c960a39f85bbde59e0d1b061ac`.
+The revised PPTX SHA256 is
+`9593b42a0bedaaf91f9d8c7002972138abcae1ff90dcb14513c29941dcff6669`.
+
+The ordinary source-bound planning, generation, download and review-revision
+workflow is now demonstrated. All application checks/builds/rendering ran on
+the server; the browser was used for the actual UI, downloads and visual spot checks.
+Owner visual approval, actual native-chart editing in PowerPoint, and publication
+authorization have not been recorded for this chart draft.
