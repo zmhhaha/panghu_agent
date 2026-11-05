@@ -4,7 +4,7 @@
 #
 #  用法:
 #    bash scripts/deploy-ui.sh research_agent            # 部署研究助手
-#    bash scripts/deploy-ui.sh scientific_agent           # 部署科研综述
+#    科研工作台使用 scientific_agent/deploy.sh，本脚本不再部署科研旧 Gradio。
 #    bash scripts/deploy-ui.sh literature_downloader     # 复用通用 UI 镜像
 #
 #  约定:
@@ -16,6 +16,10 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 cd "$script_dir"
 
 NAME="${1:-research_agent}"
+if [[ "$NAME" == scientific_agent || "$NAME" == scientific-agent ]]; then
+  printf '%s\n' 'The legacy scientific Gradio deployment is retired; use bash scientific_agent/deploy.sh.' >&2
+  exit 64
+fi
 NAMESPACE="${NAME//_/-}"   # namespace
 K="--kubeconfig=/etc/kubernetes/super-admin.conf"
 SRC="../app/ui/${NAME}.py"

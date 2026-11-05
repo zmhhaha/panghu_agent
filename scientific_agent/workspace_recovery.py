@@ -138,6 +138,12 @@ def import_report(project, payload):
         source_snapshot=snapshot, import_review=None,
         references=[], evidence=[], claims=[])
     project['versions'].append(version)
+    from .writing_requirements import assess_writing
+    from .import_citations import citation_inventory
+    version['writing_quality'] = assess_writing(report, project['requirements'],
+        dict(content=(project.get('plan') or {}).get('content', {})),
+        parent['report_markdown'] if parent else None)
+    version['import_citations'] = citation_inventory(report)
     # An imported file is a candidate, including the first report. It only
     # becomes the active report after a separate review and explicit adoption.
     project['stage'] = 'review'

@@ -151,24 +151,31 @@ def retrieval_summary(project):
     # Multiple providers share one bridge invocation. attempt+query is a lower
     # bound when old protected rows are absent; expose the basis honestly.
     per_batch_calls = []
+    batch_summaries = []
     for batch in batches:
         observations = (batch.get('observations') or {}).get('observations')
         if isinstance(observations, list):
             per_batch_calls.append(sum(row.get('request', {}).get('tool') == 'academic_search' for row in observations))
         else:
             per_batch_calls.append(len({search.get('query') for search in batch.get('searches', [])}))
+        batch_providers = [dict(provider=search.get('source'), **{key: search.get(key) for key in
+            ('query', 'status', 'result_count', 'searched_at', 'error')}) for search in batch.get('searches', [])]
+        batch_budget = batch.get('call_budget', budget)
+        batch_summaries.append(dict(batch_id=batch.get('batch_id', batch.get('id', 'legacy-' + str(len(batch_summaries) + 1))),
+            calls_used=per_batch_calls[-1], call_budget=batch_budget,
+            budget_exhausted=per_batch_calls[-1] >= batch_budget, providers=batch_providers,
+            created_at=batch.get('created_at'), gaps=batch.get('gaps', [])))
     calls = per_batch_calls[-1] if per_batch_calls else 0
     providers = [{key: search.get(key) for key in ('source', 'query', 'status', 'result_count', 'searched_at', 'error')}
                  for search in searches]
     for row in providers:
         row['provider'] = row.pop('source')
     queries = output.get('search_queries') or []
-    missing = []
-    for query in queries:
-        successful = [search for search in searches if search.get('query') == query
-                      and search.get('status') in ('success', 'partial') and (search.get('result_count') or 0) > 0]
-        if not successful:
-            missing.append(query)
+    from .retrieval_guidance import relaxed_queries
+    from .retrieval_projection import query_outcomes
+    outcomes = query_outcomes(queries, batches)
+    missing = [row['planned_query'] for row in outcomes
+               if row['status'] in ('partial_relaxed_result', 'no_recorded_result')]
     selected = {row['source_id'] for row in project.get('selections', []) if row.get('included')}
     included_count = sum(identifier in selected for identifier in papers)
     gaps = []
@@ -177,9 +184,13 @@ def retrieval_summary(project):
     if any(search.get('status') == 'error' for search in searches):
         gaps.append('部分检索来源请求失败；其他已取得来源继续保留。')
     if calls >= budget and missing:
-        gaps.append('检索调用预算已用完；列出的计划检索词尚未取得可用结果，不代表已证明该主题没有文献。')
+        gaps.append('检索调用预算已用完；列出的计划查询仍需补检或核对，已有词法关联结果会单独列示；这不代表该主题没有文献。')
     return dict(calls_used=calls, call_budget=budget, budget_exhausted=calls >= budget,
         total_calls_used=sum(per_batch_calls), budget_scope='latest_retrieval_task',
-        providers=providers, topics_without_evidence=missing, gaps=gaps,
+        cumulative_calls=sum(per_batch_calls), batch_count=len(batches), batches=batch_summaries,
+        current_batch_id=batch_summaries[-1]['batch_id'] if batch_summaries else None,
+        suggested_queries=list(dict.fromkeys(suggestion for query in missing for suggestion in relaxed_queries(query))),
+        coverage_basis='recorded_exact_or_named_entity_query_results_not_semantic_coverage',
+        providers=providers, topics_without_evidence=missing, query_outcomes=outcomes, gaps=gaps,
         candidate_count=len(papers), included_count=included_count,
         relevance_method='lexical_screening_v1')

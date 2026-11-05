@@ -535,7 +535,7 @@ def test_private_finalization_annotations_and_real_formats(setup):
     url = '/api/v1/research/projects/' + project['id'] + '/versions/' + version_id
     assert client.get(url + '/download?format=markdown').text == version['report_markdown']
     assert client.get(url + '/download?format=sources').json()['status'] == 'final'
-    assert client.get(url + '/download?format=pdf').status_code == 422
+    assert client.get(url + '/download?format=epub').status_code == 422
     assert client.get(url, headers={'X-Forwarded-User': 'bob'}).status_code == 404
     assert client.get('/api/v1/research/projects', headers={'X-Forwarded-User': ''}).status_code == 401
 

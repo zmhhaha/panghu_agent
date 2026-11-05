@@ -176,6 +176,10 @@ def _new_job(project, stage, *, feedback='', source_policy=None, revision=None):
         requirements=copy.deepcopy(project['requirements']), materials=_material_context(project))
     if feedback:
         context['feedback'] = feedback
+    if stage == 'revise' and project.get('plan') and project['confirmations']['plan']:
+        context['confirmed_plan'] = dict(plan_id=project['plan']['id'],
+            content=copy.deepcopy(project['plan']['content']),
+            confirmation_id=project['confirmations']['plan']['id'])
     if stage == 'retrieve':
         plan = project['plan']
         require(plan and project['confirmations']['plan'], 'plan_confirmation_required', 409)
@@ -184,6 +188,9 @@ def _new_job(project, stage, *, feedback='', source_policy=None, revision=None):
                                       plan_sha256=digest(context['plan']))
     elif stage in {'outline', 'draft'}:
         require(project['confirmations']['plan'], 'plan_confirmation_required', 409)
+        context['confirmed_plan'] = dict(plan_id=project['plan']['id'],
+            content=copy.deepcopy(project['plan']['content']),
+            confirmation_id=project['confirmations']['plan']['id'])
         _fill_selections(project)
         context['evidence_snapshot'] = (_snapshot(project) if stage == 'outline'
             else copy.deepcopy(project['evidence']['snapshot']))
@@ -275,9 +282,16 @@ class WorkspaceStore:
                                     version['input_revision'] != result['input_revision'])
             version.setdefault('origin', 'website_generated')
             version.setdefault('model_trace_available', bool(version.get('trace_artifacts')))
+            if version['model_trace_available'] is False:
+                from .import_citations import citation_inventory
+                if 'import_citations' not in version:
+                    version['import_citations'] = citation_inventory(version['report_markdown'])
             for key in ('report_markdown', 'trace_artifacts', 'trace_manifest', 'source_snapshot'):
                 version.pop(key, None)
         for batch in result['search_batches'] + result.get('search_batch_history', []):
+            batch['retrieval_summary'] = retrieval_summary(dict(project,
+                search_batches=[next((source for source in project['search_batches']
+                    if source['batch_id'] == batch['batch_id']), batch)]))
             batch.pop('observations', None)
         for evidence in result['evidence_history']:
             evidence.pop('snapshot', None)
@@ -471,6 +485,31 @@ class WorkspaceStore:
         payload = dict(expected_revision=revision, material_id=material_id)
         return self.mutate(owner, project_id, revision, key, 'remove_material', payload, change)
 
+    def add_url_material(self, owner, project_id, revision, key, url):
+        """Check ownership, CAS and idempotency before bounded public reads."""
+        from .official_sources import fetch_official_material
+        key = key_id(key)
+        url = text(url, 2048, blank=False)
+        payload = dict(expected_revision=revision, url=url)
+        project = self._load(owner, project_id)
+        fingerprint = digest(dict(operation='add_url_material', payload=payload))
+        previous = project['_receipts'].get(key)
+        if previous is not None:
+            require(previous == fingerprint, 'idempotency_conflict', 409)
+            return self.public(project)
+        require(type(revision) is int and project['revision'] == revision,
+                'project_revision_conflict', 409)
+        require(len(project['materials']) < MAX_MATERIALS, 'project_material_limit', 409)
+        material = fetch_official_material(url)
+        def change(value):
+            require(len(value['materials']) < MAX_MATERIALS, 'project_material_limit', 409)
+            value['materials'].append(material)
+            _invalidate(value, plan=not bool(value['confirmations']['plan']))
+            _fill_selections(value)
+            _event(value, 'official_material_added', dict(material_id=material['material_id'],
+                status=material['status'], access_level=material['access_level']))
+        return self.mutate(owner, project_id, revision, key, 'add_url_material', payload, change)
+
     @staticmethod
     def _version(project, version_id):
         identifier(version_id)
@@ -505,6 +544,10 @@ class WorkspaceStore:
         for field in ('trace_artifacts', 'trace_manifest', 'source_snapshot'):
             version.pop(field, None)
         version['finalized'] = any(f['version_id'] == version_id for f in project['finalizations'])
+        if version['model_trace_available'] is False:
+            from .import_citations import citation_inventory
+            if 'import_citations' not in version:
+                version['import_citations'] = citation_inventory(version['report_markdown'])
         return version
 
     def compare(self, owner, project_id, base_id, candidate_id):
@@ -541,7 +584,7 @@ class WorkspaceStore:
         require(type(payload) is dict and set(payload) <= {'expected_revision', 'feedback',
             'version_id', 'section_ids', 'job_id', 'allow_limited_evidence', 'unresolved_notes',
             'outline', 'report_markdown', 'origin', 'parent_version_id', 'source_reviewed',
-            'material_id', 'classification', 'declared_sources'})
+            'material_id', 'classification', 'declared_sources', 'reference_mappings'})
         def change(project):
             feedback = text(payload.get('feedback', ''), 2000)
             if action == 'plan':
@@ -614,6 +657,10 @@ class WorkspaceStore:
             elif action == 'confirm_import':
                 from .workspace_recovery import confirm_import
                 confirm_import(project, self._version(project, payload.get('version_id')), payload)
+            elif action == 'map_import_references':
+                from .import_citations import map_references
+                map_references(project, self._version(project, payload.get('version_id')),
+                               payload.get('reference_mappings'))
             elif action == 'revise':
                 version = self._version(project, payload.get('version_id'))
                 require(version.get('model_trace_available', bool(version.get('trace_artifacts'))),

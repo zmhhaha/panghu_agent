@@ -1,5 +1,5 @@
 import {useState} from 'react';
-import type {Paper,Project,QualityAssessment} from './domain';
+import type {Paper,Project,QualityAssessment,QueryOutcome} from './domain';
 
 export function QualityNote({assessment}:{assessment?:QualityAssessment}){
   if(!assessment)return null;
@@ -15,8 +15,24 @@ export function BibliographicDetails({paper}:{paper:Paper}){
 
 export function RetrievalDetails({project}:{project:Project}){
   const summary=project.retrieval_summary;
-  const batches=project.search_batches;
-  const entries=summary?[summary]:batches.map(item=>item.retrieval_summary??item.search_summary).filter(item=>item!==undefined);
+  const recorded=project.search_batches.flatMap(batch=>{const value=batch.retrieval_summary??batch.search_summary;return value?[{...value,batch_id:batch.id}]:[];});
+  const entries=summary?.batches?.length?summary.batches:recorded.length?recorded:summary?[{...summary,batch_id:summary.current_batch_id??'current'}]:[];
   if(!entries.length)return null;
-  return <details className="card retrieval-details"><summary>实际检索与预算记录</summary>{entries.map((item,index)=><section key={index}><h4>{entries.length>1?`检索批次 ${index+1}`:'本次检索'}</h4><p>已用 {item.calls_used} / {item.call_budget} 次检索{item.budget_exhausted?' · 检索预算已用完':''}</p><div className="table-scroll"><table><thead><tr><th>提供方</th><th>实际检索词</th><th>结果</th></tr></thead><tbody>{item.providers.map((provider,i)=><tr key={i}><td>{provider.provider}</td><td>{provider.query}</td><td>{provider.status} · {provider.result_count} 项</td></tr>)}</tbody></table></div>{item.topics_without_evidence?.length>0&&<div className="message warning"><strong>仍缺少证据的主题</strong><ul>{item.topics_without_evidence.map((topic,i)=><li key={i}>{topic}</li>)}</ul></div>}{item.gaps?.map((gap,i)=><p className="muted" key={i}>{gap}</p>)}</section>)}</details>;
+  const current=entries.find(item=>item.batch_id===summary?.current_batch_id)??entries.at(-1)!;
+  const cumulative=summary?.cumulative_calls??(recorded.length===project.search_batches.length&&recorded.length?recorded.reduce((total,item)=>total+item.calls_used,0):undefined);
+  const missing=summary?.topics_without_evidence??current.topics_without_evidence??[];
+  return <details className="card retrieval-details"><summary>实际检索与预算记录</summary><div className="retrieval-overview"><p><strong>当前批预算</strong>：已用 {current.calls_used} / {current.call_budget} 次检索{current.budget_exhausted?' · 本批额度已用完':''}</p><p><strong>累计调用</strong>：{cumulative===undefined?'尚未提供':`${cumulative} 次`}；已记录 {summary?.batch_count??(project.search_batches.length||entries.length)} 批。</p><p className="muted small">预算按每批独立计算。累计调用、返回记录、去重来源与实际引用是不同数量，不代表主题已完整覆盖。</p></div>{summary?.query_outcomes?.length?<QueryOutcomes outcomes={summary.query_outcomes} batchIds={entries.map(item=>item.batch_id)}/>:null}{missing.length>0&&<div className="message warning"><strong>当前计划仍待补检的查询</strong><ul>{missing.map((topic,index)=><li key={index}>{topic}</li>)}</ul><p>这是检索记录中的待补范围；部分实体已有补检结果时，其余实体仍保留缺口，不等同于完整的主题覆盖评估。</p></div>}{entries.map((item,index)=><section key={item.batch_id}><h4>检索批次 {index+1}{item.batch_id===current.batch_id?' · 当前批':' · 历史记录'}</h4><p>本批已用 {item.calls_used} / {item.call_budget} 次检索{item.budget_exhausted?' · 检索预算已用完':''}</p><div className="table-scroll"><table><thead><tr><th>提供方</th><th>实际检索词</th><th>结果</th></tr></thead><tbody>{(item.providers??[]).map((provider,i)=><tr key={i}><td>{provider.provider}</td><td>{provider.query}</td><td>{provider.status} · {provider.result_count} 项</td></tr>)}</tbody></table></div>{(item.gaps??[]).length>0&&<details><summary>本批当时记录的缺口</summary>{item.gaps?.map((gap,i)=><p className="muted" key={i}>{gap}</p>)}<small>历史空结果保持可查，不能直接代表补检后的当前状态。</small></details>}</section>)}</details>;
+}
+
+function QueryOutcomes({outcomes,batchIds}:{outcomes:QueryOutcome[];batchIds:string[]}){
+  const statusNames:Record<QueryOutcome['status'],string>={
+    exact_result:'原查询已有返回记录',
+    relaxed_result:'简化检索已有返回记录（词法关联）',
+    partial_relaxed_result:'部分实体已有简化检索结果，仍有查询缺口',
+    no_recorded_result:'尚无关联的成功检索记录'
+  };
+  return <section aria-label="原计划查询与实际补检"><h4>原计划查询与实际补检</h4><p className="muted small">以下按已记录的查询文字关联原词与简化检索，不代表原查询的全部限定条件已满足，也不证明科学主题完整。各次返回记录仍需去重、筛选和证据核对。</p>{outcomes.map((item,index)=><article key={index} className="manual-entry" aria-label={`计划查询 ${index+1}`}><p><strong>原计划查询：</strong>{item.planned_query}</p><p className={item.status==='partial_relaxed_result'||item.status==='no_recorded_result'?'message warning':'muted'}>{statusNames[item.status]}</p>{item.matched_searches.map((search,i)=>{
+    const batchIndex=batchIds.indexOf(search.batch_id);
+    return <p key={i}>实际查询：<code>{search.query}</code> · {search.match==='exact'?'原词检索':'简化检索（词法关联）'} · {search.provider} · {batchIndex>=0?`检索批次 ${batchIndex+1}`:`批次 ${search.batch_id}`} · 返回 {search.result_count} 项</p>;
+  })}{item.unmatched_entities.length>0&&<p className="muted">尚无对应成功查询记录的实体：{item.unmatched_entities.join('、')}。已有实体的结果不替代这些缺口。</p>}</article>)}</section>;
 }

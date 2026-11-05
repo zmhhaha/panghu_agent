@@ -100,6 +100,16 @@ def create_router(service):
         return call(store.remove_material, user(x_forwarded_user), project_id, material_id,
                     expected_revision, idempotency_key)
 
+    @router.post('/projects/{project_id}/materials/url')
+    def official_url(project_id: str, payload: dict = Body(...),
+                     idempotency_key: str | None = Header(default=None),
+                     x_forwarded_user: str | None = Header(default=None)):
+        def add(owner):
+            require(set(payload) == {'expected_revision', 'url'})
+            return store.add_url_material(owner, project_id, payload['expected_revision'],
+                                          idempotency_key, payload['url'])
+        return call(add, user(x_forwarded_user))
+
     @router.get('/projects/{project_id}/versions/{version_id}')
     def version(project_id: str, version_id: str, x_forwarded_user: str | None = Header(default=None)):
         return call(store.version, user(x_forwarded_user), project_id, version_id)
@@ -148,7 +158,17 @@ def create_router(service):
     def download(project_id: str, version_id: str, format: str = Query(default='markdown'),
                  x_forwarded_user: str | None = Header(default=None)):
         value = call(store.version, user(x_forwarded_user), project_id, version_id)
-        if format == 'markdown':
+        if format in {'reading-markdown', 'docx', 'pdf'}:
+            from scientific_agent.report_exports import reading_markdown, docx, pdf
+            project = call(store.get, user(x_forwarded_user), project_id)
+            readable = reading_markdown(project, value)
+            if format == 'reading-markdown':
+                raw, media, filename = readable, 'text/markdown; charset=utf-8', 'report-reading.md'
+            elif format == 'docx':
+                raw, media, filename = call(docx, readable), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'report.docx'
+            else:
+                raw, media, filename = call(pdf, readable), 'application/pdf', 'report.pdf'
+        elif format == 'markdown':
             raw, media, filename = value['report_markdown'], 'text/markdown; charset=utf-8', 'report.md'
         elif format == 'sources':
             raw, media, filename = encode(dict(schema_version='1', version_id=version_id,
@@ -158,6 +178,7 @@ def create_router(service):
                 origin=value.get('origin', 'website_generated'),
                 model_trace_available=value.get('model_trace_available', True),
                 source_review=value.get('source_review'), import_review=value.get('import_review'),
+                import_citations=value.get('import_citations'), writing_quality=value.get('writing_quality'),
                 status='final' if value['finalized'] else 'draft', publication_authorized=False)), \
                 'application/json', 'sources.json'
         else:

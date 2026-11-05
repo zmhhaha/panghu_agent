@@ -65,6 +65,7 @@ _NAMED_CATEGORIES = {'RuntimeExecutionError': 'runtime_error', 'ProfileError': '
 # them through the signed failed handoff so business callers can distinguish
 # malformed evidence from a recorded source/access mismatch.
 SAFE_OUTPUT_CODES = frozenset({'invalid_workflow_evidence',
+    'workflow_writing_requirement_missing',
     'workflow_evidence_source_mismatch', 'workflow_observation_mismatch',
     'workflow_full_text_not_acquired', 'workflow_search_budget_exhausted',
     'invalid_workflow_paper', 'invalid_workflow_contract',

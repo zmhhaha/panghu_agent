@@ -4,7 +4,7 @@
 #
 #  用法:
 #    bash scripts/deploy-api.sh research_agent   # 研究助手
-#    bash scripts/deploy-api.sh scientific_agent  # 科研综述
+#    科研工作台使用 scientific_agent/deploy.sh，本脚本不再部署科研旧 API。
 #
 #  约定:
 #    - 源码 app/api/<name>.py → ConfigMap api-agent (key: agent.py)
@@ -17,6 +17,10 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 cd "$script_dir"
 
 NAME="${1:-research_agent}"
+if [[ "$NAME" == scientific_agent || "$NAME" == scientific-agent ]]; then
+  printf '%s\n' 'The legacy scientific API deployment is retired; use bash scientific_agent/deploy.sh.' >&2
+  exit 64
+fi
 NAMESPACE="${NAME//_/-}"   # namespace
 AGENT="${NAME%_agent}"     # 调用者名（与 RAG 的 RAG_TOKEN_<CALLER> / llm 的 LLM_TOKEN_<CALLER> 对应）
 VAULT_TOKEN_KEY="RAG_TOKEN_$(printf '%s' "$AGENT" | tr 'a-z-' 'A-Z_')"

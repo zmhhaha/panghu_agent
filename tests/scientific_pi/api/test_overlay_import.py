@@ -58,7 +58,7 @@ PROBE = textwrap.dedent(r'''
                 agent_projection = importlib.import_module('scientific_agent.agent_projection')
                 observations = importlib.import_module('scientific_agent.academic_observations')
                 assert api.ContractError is client.ContractError is contracts.ContractError
-                assert api.PiClient is client.PiClient
+                assert api.WorkerError is client.WorkerError
                 assert api.PiProjection is projection.PiProjection
                 assert agent_client.WorkerError is client.WorkerError
                 assert issubclass(agent_projection.ScientificAgentProjection, projection.PiProjection)

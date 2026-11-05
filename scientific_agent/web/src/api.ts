@@ -11,6 +11,9 @@ const messages:Record<string,string>={
   forbidden:'当前账号没有操作权限。',not_found:'项目或版本不可用，请刷新列表。',invalid_response:'服务未返回有效数据，请刷新状态。',
   network_error:'连接中断，操作可能已经提交。请先刷新状态核对，再决定是否重试。',request_timeout:'请求等待超时，操作可能已经提交。请先刷新状态核对。',
   file_too_large:'文件过大，请减少文件大小。',unsupported_file:'仅支持 PDF、Markdown 和 TXT 资料。'
+  ,official_source_url_invalid:'请填写受支持的公开 HTTPS 官方页面或仓库地址。',official_source_url_forbidden:'该地址不能作为公开资料读取，请使用公开官方页面或上传资料文件。',official_source_unavailable:'暂时无法读取该官方资料，请核对地址或下载后上传文件。',official_source_timeout:'读取官方资料超时，请稍后重试或下载后上传。',official_source_too_large:'官方资料超过单次读取上限，请改用具体页面或较小文件。',official_source_unsupported:'暂不支持读取该内容类型，请使用公开文本页面或上传 PDF、Markdown、TXT。',official_source_empty:'未取得可使用的正文。链接尚未保存为全文，请换用具体文档或上传资料。',official_source_fetch_failed:'获取官方正文失败，未将链接标记为全文；请核对地址或上传文件。'
+  ,official_source_invalid_url:'请填写公开 HTTPS 官方页面或受支持的仓库地址；带凭据或内部网络地址不能作为公开资料读取。',official_source_dns_unavailable:'暂时无法解析该资料域名，请核对地址，稍后重试或下载后上传。',official_source_redirect_not_allowed:'该资料地址发生了不受支持的跳转，请填写最终公开文档的直接地址。',official_source_byte_limit:'资料超过单次下载上限，请改用具体文档或上传较小的文件。',official_source_encoding_unsupported:'资料使用了暂不支持的传输编码，请下载为文本后上传。',official_source_not_found:'未找到该资料文件，请核对公开地址和文件路径。',official_source_rate_limited:'来源网站暂时限制读取频率，请稍后重试或下载后上传。',official_source_invalid_response:'来源未返回可读取的资料内容，请核对地址或上传文本文件。',official_source_github_url_unsupported:'请选择公开 GitHub 仓库或具体文本文件；暂不支持该类型的仓库页面。',official_source_file_type_unsupported:'该仓库文件类型暂不支持，请选择 Markdown、TXT、TOML 或支持的文本文件。',official_source_invalid_file:'仓库文件内容未通过读取校验，请核对原文件或下载后上传。',official_source_content_type_unsupported:'该页面的内容类型暂不支持，请使用正文页面或上传 PDF、Markdown、TXT。',official_source_utf8_required:'资料不是可读取的 UTF-8 文本，请转换后上传。',official_source_no_readable_text:'没有取得可用正文，未将链接标记为全文；请改用直接文档或上传文件。',official_source_text_limit:'提取正文超过上限，请选择更具体的页面或较小文件。'
+  ,finalized_version_is_immutable:'该版本已定稿，引用映射保持只读。请从当前工作版本手工修改并保存新候选，再匹配引用和重新审阅。',invalid_reference_mappings:'引用编号或来源不属于所选版本，请重新打开引用匹配并核对。',imported_version_required:'此操作仅用于用户导入或人工编辑稿件，请核对所选报告版本。',import_review_confirmation_required:'引用或稿件已更新，请重新确认人工恢复稿审阅后再采用或定稿。'
   ,unready_materials_must_be_excluded:'存在解析失败的材料，请先从当前研究剔除后再确认。',limited_evidence_confirmation_required:'当前证据仍有缺口，请明确确认按有限证据成稿。',job_already_active:'项目已有执行任务，请等待完成或取消。',stale_version_requires_reconfirmation:'该报告依据已过期。请重新确认证据并生成新草稿，旧报告仍可阅读。',candidate_parent_conflict:'候选的父版本已不是当前工作版本，请核对版本后重新修改。',finalize_current_version_required:'请先将所选版本明确采用为当前工作版本，再定稿。',material_upload_limit:'文件超过上传限制，请减少文件大小。',material_type_unsupported:'仅支持 PDF、Markdown 和 TXT 资料。',unsupported_material_type:'仅支持 PDF、Markdown 和 TXT 资料。',invalid_plan_output:'方案字段不完整，请检查问题、检索词和执行范围。',invalid_outline_output:'大纲或证据引用不完整，请检查后保存。'
 };
 export class ApiError extends Error {
@@ -22,7 +25,8 @@ function intentKey(route:string,payload:unknown){const signature=JSON.stringify(
 export async function request<T>(path:string,init:RequestInit={},prefix=ROOT):Promise<T>{
   const controller=new AbortController();const abort=()=>controller.abort();init.signal?.addEventListener('abort',abort,{once:true});
   if(init.signal?.aborted)controller.abort();
-  const timer=setTimeout(()=>controller.abort(),init.body instanceof FormData?120_000:30_000);
+  const timeout=init.body instanceof FormData?120_000:init.method==='POST'&&/^\/projects\/[^/]+\/materials\/url$/.test(path)?60_000:30_000;
+  const timer=setTimeout(()=>controller.abort(),timeout);
   try{
     const headers=new Headers(init.headers);
     if(init.body&&!(init.body instanceof FormData))headers.set('Content-Type','application/json');
@@ -56,12 +60,13 @@ export const api={
   patch:(project:Project,patch:Record<string,unknown>)=>mutation<Project>(`/projects/${id(project.id)}`,{expected_revision:project.revision,...patch},'PATCH'),
   action:(project:Project,action:string,payload:Record<string,unknown>={})=>mutation<Project>(`/projects/${id(project.id)}/actions/${id(action)}`,{expected_revision:project.revision,...payload}),
   doi:(project:Project,doi:string)=>mutation<Project>(`/projects/${id(project.id)}/materials/doi`,{expected_revision:project.revision,doi}),
+  url:(project:Project,url:string)=>mutation<Project>(`/projects/${id(project.id)}/materials/url`,{expected_revision:project.revision,url}),
   upload:async(project:Project,file:File)=>{const form=new FormData();form.append('file',file);form.append('expected_revision',String(project.revision));const intent=intentKey(`upload/${project.id}`,[project.revision,file.name,file.size,file.lastModified]);const result=await request<Project>(`/projects/${id(project.id)}/materials`,{method:'POST',body:form,headers:{'Idempotency-Key':intent.key}});keys.delete(intent.signature);return result;},
   removeMaterial:async(project:Project,materialId:string)=>{const path=`/projects/${id(project.id)}/materials/${id(materialId)}?expected_revision=${project.revision}`;const intent=intentKey(path,null);const result=await request<Project>(path,{method:'DELETE',headers:{'Idempotency-Key':intent.key}});keys.delete(intent.signature);return result;},
   version:(projectId:string,versionId:string,signal?:AbortSignal)=>request<Version>(`/projects/${id(projectId)}/versions/${id(versionId)}`,{signal}),
   compare:(projectId:string,base:string,candidate:string,signal?:AbortSignal)=>request<Record<string,unknown>>(`/projects/${id(projectId)}/compare?base_version_id=${id(base)}&candidate_version_id=${id(candidate)}`,{signal}),
   annotate:(project:Project,versionId:string,text:string,sectionId?:string)=>mutation<Project>(`/projects/${id(project.id)}/annotations`,{expected_revision:project.revision,version_id:versionId,text,...(sectionId?{section_id:sectionId}:{})}),
-  download:(projectId:string,versionId:string,format:'markdown'|'sources')=>`${ROOT}/projects/${id(projectId)}/versions/${id(versionId)}/download?format=${format}`
+  download:(projectId:string,versionId:string,format:'markdown'|'sources'|'reading-markdown'|'docx'|'pdf')=>`${ROOT}/projects/${id(projectId)}/versions/${id(versionId)}/download?format=${format}`
   ,diagnostic:(projectId:string,jobId:string)=>`${ROOT}/projects/${id(projectId)}/jobs/${id(jobId)}/diagnostic`,
   evidence:(projectId:string,evidenceId:string)=>request<import('./domain').EvidenceSnapshot>(`/projects/${id(projectId)}/evidence/${id(evidenceId)}`),
   evidenceDownload:(projectId:string,evidenceId:string,format:'json'|'markdown')=>`${ROOT}/projects/${id(projectId)}/evidence/${id(evidenceId)}/download?format=${format}`

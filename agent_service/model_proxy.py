@@ -325,6 +325,10 @@ class ModelProxy:
                 created_at=time.time(), state='admitted', request=canonical_bytes(value)))
         from .profiles.research import academic_tool
         result = academic_tool(value['tool'], value['payload'], job['request']['task'])
+        if job['request']['profile'] == 'research.retrieve.v1' and value['tool'] == 'academic_search':
+            from scientific_agent.retrieval_guidance import low_result_notes
+            result['notes'] = list(result.get('notes', [])) + low_result_notes(
+                value['payload']['query'], len(result.get('papers', [])), remaining=maximum - searches - 1)
         raw = canonical_bytes(result)
         if len(raw) > 2 * 1024 * 1024:
             raise ServiceError('research_tool_output_limit', 413)
