@@ -410,6 +410,33 @@ def test_failed_validator_freezes_private_evidence_and_preserves_bound_reason(ca
     assert failure.diagnostic(case.request) is None
 
 
+@pytest.mark.parametrize('stopped', [True, False])
+def test_stopped_validator_timeout_without_report_has_bound_safe_diagnostic(candidate,monkeypatch,stopped):
+    sandbox,root=rejected_transport(candidate,monkeypatch,changed='missing')
+    run=sandbox.transport._run
+    def timeout(*args,**kwargs):
+        root,output,_,_,_,_,handle,name=run(*args,**kwargs)
+        assert not (output/'validated.json').exists()
+        return root,output,None,0,ControlError('sandbox_timeout'),stopped,handle,name
+    sandbox.transport._run=timeout
+    with pytest.raises(ControlError) as captured:sandbox.validate(candidate.snapshot,candidate.request)
+    failure=captured.value
+    if not stopped:
+        assert not isinstance(failure,AgentValidationFailure)
+        assert failure.code=='agent_validation_writers_not_stopped'
+        return
+    assert isinstance(failure,AgentValidationFailure) and failure.validator_stopped is True
+    assert failure.code=='independent_command_timeout'
+    assert failure.diagnostic(candidate.request)=={
+        'schema_version':1,'error_code':'independent_command_timeout','publication_authorized':False,
+        'source_manifest_sha256':candidate.source,
+        'input_snapshot_sha256':candidate.request['input_snapshot_sha256']}
+    changed=copy.deepcopy(candidate.request);changed['pages']+=1
+    assert failure.diagnostic(changed) is None
+    assert not list(candidate.root.glob('agent-validation-*'))
+    assert root.exists()
+
+
 @pytest.mark.parametrize('changed',['nonce','source','unknown','missing','malformed'])
 def test_unbound_failed_report_is_retained_but_never_projected(candidate,monkeypatch,changed):
     sandbox,_=rejected_transport(candidate,monkeypatch,changed=changed)

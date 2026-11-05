@@ -728,6 +728,16 @@ class AgentKubernetesSandbox:
                     self.transport._discard(root)
                     raise self._read_failure_verified(rejected, source, snapshot, request)
                 error = failure.code if isinstance(failure, ControlError) else 'agent_independent_validation_failed'
+                if error == 'sandbox_timeout':
+                    # The sandbox deadline includes startup/image pulls. Its
+                    # own observed stop makes this fixed explanation safe even
+                    # when no validator report was produced. A late success
+                    # report cannot turn this timed-out transport into acceptance.
+                    diagnostic = {'schema_version': 1, 'error_code': 'independent_command_timeout',
+                        'publication_authorized': False, 'source_manifest_sha256': source,
+                        'input_snapshot_sha256': request['input_snapshot_sha256']}
+                    raise AgentValidationFailure('independent_command_timeout', _issuer=_ISSUER,
+                        diagnostic=diagnostic, request_sha256=digest(request))
                 raise AgentValidationFailure(error, _issuer=_ISSUER)
             self._freeze_output(output, final, source, request, nonce, code, handle, name)
             self.transport._discard(root)
