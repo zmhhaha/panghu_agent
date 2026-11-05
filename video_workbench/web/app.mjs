@@ -71,6 +71,7 @@ const motionPanel = createMotionPanel({
   getContext: () => ({ project: state.project, scene: editor === 'new' ? null : selectedScene(state), epoch: state.epoch,
     enabled: sessionSettings.motion_enabled === true,
     configured: sessionSettings.motion_configured === true,
+    processConfigured: sessionSettings.process_configured === true,
     renderConfigured: sessionSettings.motion_render_configured === true,
     unsaved: projectHasUnsavedEdits(state.projectId, false),
     projectBusy: activeOperations(state.project).length > 0 || pending.size > 0 || explanationPanel.hasActiveOperation(state.projectId)
@@ -222,7 +223,7 @@ class ApiError extends Error {
     super(ERROR_LABELS[code] ?? (code?.startsWith('explanation_') ? explanationErrorLabel(code) : null)
       ?? (code?.startsWith('batch_') ? batchErrorLabel(code) : null)
       ?? (code?.startsWith('continuity_') || code === 'invalid_continuity_plan' ? continuityErrorLabel(code) : null)
-      ?? (code?.startsWith('motion_') ? motionErrorLabel(code) : null) ?? message ?? (status === 401 ? '请先登录工作台。'
+      ?? (code?.startsWith('motion_') || code?.startsWith('process_') ? motionErrorLabel(code) : null) ?? message ?? (status === 401 ? '请先登录工作台。'
       : status === 409 ? '项目已更新或已有任务执行中，请刷新后重试。'
         : status === 422 ? '请检查填写的内容和长度。' : `请求未完成（${status}），请稍后重试。`));
     this.status = status;

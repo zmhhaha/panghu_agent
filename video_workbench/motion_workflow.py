@@ -6,8 +6,7 @@ import threading
 import time
 
 from agent_service.contracts import ServiceError
-from agent_service.profiles.video_motion import validate_motion_result
-from .motion_store import ACTIVE
+from .motion_store import ACTIVE, operation_diagram_kind
 
 
 LOG = logging.getLogger(__name__)
@@ -17,29 +16,42 @@ CANCEL_RETRY_DELAYS = (2.0, 5.0, 15.0, 30.0)
 
 
 class MotionWorkflow:
-    def __init__(self, store, gateway=None, *, enabled=False):
-        if type(enabled) is not bool:
+    def __init__(self, store, gateway=None, *, enabled=False, process_gateway=None, process_enabled=False):
+        if type(enabled) is not bool or type(process_enabled) is not bool:
             raise ValueError('An explicit boolean motion feature gate is required')
         self.store, self.gateway, self.enabled = store, gateway, enabled
+        self.process_gateway, self.process_enabled = process_gateway, process_enabled
         self.lock = threading.Lock()
         self.stopping = threading.Event()
         self.thread = None
 
-    def require_gateway(self):
+    def _enabled(self, diagram_kind):
+        return self.enabled and (diagram_kind == 'diagram' or self.process_enabled)
+
+    def _gateway(self, diagram_kind):
+        return self.process_gateway if diagram_kind == 'process' else self.gateway
+
+    def require_gateway(self, diagram_kind='diagram'):
+        if type(diagram_kind) is not str or diagram_kind not in {'diagram', 'process'}:
+            raise ServiceError('invalid_motion_request', 422)
         if not self.enabled:
             raise ServiceError('motion_disabled', 503)
-        if self.gateway is None:
+        if diagram_kind == 'process' and not self.process_enabled:
+            raise ServiceError('process_disabled', 503)
+        gateway = self._gateway(diagram_kind)
+        if gateway is None:
             raise ServiceError('agent_not_configured', 503)
-        return self.gateway
+        return gateway
 
     def start(self):
         active = self.store.active_operations()
-        if not self.enabled:
-            for op in active:
-                if not op['submit_attempted'] and not op['job_id']:
-                    self.store.update_operation(op['id'], status='cancelled', error='motion_disabled')
+        for op in active:
+            kind = operation_diagram_kind(op)
+            if not self._enabled(kind) and not op['submit_attempted'] and not op['job_id']:
+                self.store.update_operation(op['id'], status='cancelled',
+                    error='motion_disabled' if not self.enabled else 'process_disabled')
         admitted = any(op['submit_attempted'] or op['job_id'] for op in active)
-        if self.gateway is not None and self.thread is None and (self.enabled or admitted):
+        if (self.gateway is not None or self.process_gateway is not None) and self.thread is None and (self.enabled or admitted):
             self.thread = threading.Thread(target=self._run, name='video-motion-reconcile', daemon=True)
             self.thread.start()
 
@@ -54,7 +66,7 @@ class MotionWorkflow:
             self.stopping.wait(2)
 
     def tick(self):
-        if self.gateway is None or not self.lock.acquire(blocking=False):
+        if (self.gateway is None and self.process_gateway is None) or not self.lock.acquire(blocking=False):
             return
         try:
             for op in self.store.active_operations():
@@ -72,12 +84,19 @@ class MotionWorkflow:
             self.lock.release()
 
     def _step(self, op):
-        gateway = self.gateway
         op = self.store.operation(op['id'])
         if op['status'] not in ACTIVE:
             return
-        if not self.enabled and not op['submit_attempted'] and not op['job_id']:
-            self.store.update_operation(op['id'], status='cancelled', error='motion_disabled')
+        kind = operation_diagram_kind(op)
+        if not self._enabled(kind) and not op['submit_attempted'] and not op['job_id']:
+            self.store.update_operation(op['id'], status='cancelled',
+                error='motion_disabled' if not self.enabled else 'process_disabled')
+            return
+        gateway = self._gateway(kind)
+        if gateway is None:
+            # An admitted job retains its original profile after a gate or
+            # configuration change. Never look it up through another adapter.
+            self.store.update_operation(op['id'], error='agent_not_configured')
             return
         if not op['job_id']:
             if not op['submit_attempted']:

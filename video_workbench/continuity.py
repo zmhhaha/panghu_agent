@@ -47,6 +47,10 @@ def _scene_rows(scenes):
         _require(type(scene) is dict and type(scene.get('id')) is str and 0 < len(scene['id']) <= 100
                  and scene['id'] not in seen and type(scene.get('motion')) is dict)
         plan = scene['motion'].get('plan')
+        _require(not (type(plan) is dict and plan.get('schema') == 'video.process-plan.v1')
+                 and not (type(scene['motion'].get('timeline')) is dict
+                          and str(scene['motion']['timeline'].get('compiler', '')).startswith('motion-process-compiler-')),
+                 'process_continuity_not_supported')
         _require(type(plan) is dict and plan.get('template') in {'flow', 'compare', 'focus'}
                  and type(plan.get('elements')) is list and 1 <= len(plan['elements']) <= 9)
         elements = {row['id']: row for row in plan['elements']}
@@ -443,6 +447,7 @@ def _validate_segment(scene, segment):
 
 
 def compile_continuity_project(scene, continuity_segment, *, animated=True, runtime_fingerprint=None):
+    _scene_rows([scene])
     segment = deepcopy(continuity_segment)
     _validate_segment(scene, segment)
     _require(animated is True, 'continuity_requires_animation')

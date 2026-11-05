@@ -121,6 +121,8 @@
                 <p class="field-note">用图形的出现、移动和关系变化解释旁白。先审阅方案，再用实际配音校正时间；历史静态画面仍保留。</p>
                 <div class="inline-actions"><button class="text-button" id="motion-use-motion" type="button">使用已采用动态图解</button><button class="text-button" id="reload-motion" type="button">重新读取</button></div>
                 <label>动态图解要求 <span class="optional">选填，修改时作为批注</span><textarea id="motion-instruction" rows="3" maxlength="8000" placeholder="例如：先让任务进入队列，再突出工作节点取走任务的过程。"></textarea></label>
+                <label>图解方式<select id="motion-diagram-kind"><option value="diagram">通用图解</option><option value="process">过程演示</option></select></label>
+                <p class="field-note" id="motion-process-note"></p>
                 <p class="field-note" id="motion-form-note"></p><div class="inline-actions"><button class="button secondary" id="generate-motion" type="button" disabled>生成动态图解方案</button><button class="button secondary" id="revise-motion" type="button" disabled>按要求修改所选方案</button></div>
                 <p class="message error-message" id="motion-read-error" role="alert" hidden></p><div class="operation-banner" id="motion-status" role="status" hidden><span id="motion-status-text"></span><button class="text-button" id="cancel-motion" type="button">申请取消</button></div>
                 <label>审阅动态图解<select id="motion-version" disabled><option>尚无动态图解</option></select></label><div id="motion-review" class="motion-review"></div>

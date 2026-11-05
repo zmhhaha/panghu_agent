@@ -17,6 +17,7 @@ const projectPair=(compiler,template)=>(compiler==='motion-compiler-1'&&template
  ||(compiler==='motion-compiler-3'&&template==='technical-diagrams-3')
  ||(compiler==='motion-compiler-4'&&template==='technical-diagrams-4')
  ||(compiler==='motion-compiler-5'&&template==='technical-diagrams-5')
+ ||(compiler==='motion-process-compiler-2'&&template==='controlled-process-2')
  ||(compiler==='motion-continuity-compiler-1'&&template==='continuous-diagrams-1')
  ||(compiler==='motion-continuity-compiler-2'&&template==='continuous-diagrams-2')
  ||(compiler==='motion-demo-compiler-1'&&template==='record-demonstration-1');
@@ -87,6 +88,9 @@ export function verifyInput(root,expected){
   ||manifest.files['timeline.json']!==manifest.timeline_sha256
   ||!Number.isFinite(timeline.duration_seconds)||timeline.duration_seconds<=0||timeline.duration_seconds>60)
   throw Error('timeline_contract_mismatch');
+ const plan=JSON.parse(readRegular(root+'/plan.json'));
+ if((manifest.compiler==='motion-process-compiler-2')!==(plan?.schema==='video.process-plan.v1'))
+  throw Error('project_schema_compiler_mismatch');
  if(sha(readRegular(root+'/audio.wav',8*1024*1024))!==timeline.audio_sha256)throw Error('audio_binding_mismatch');
  return {manifest,timeline};
 }

@@ -45,6 +45,11 @@ def _validated(plan, scenes):
     return deepcopy(plan if result is None else result)
 
 
+def _require_supported(current):
+    _require(not any(issue['reason'] == 'process_continuity_not_supported' for issue in current['issues']),
+             'process_continuity_not_supported', 409)
+
+
 class ContinuityStore:
     def __init__(self, store, motion_store=None):
         self.store = store
@@ -103,6 +108,8 @@ class ContinuityStore:
                     if version['project_id'] != project_id or version['scene_id'] != scene_id:
                         reason = 'continuity_missing_motion'
                         version = None
+                    elif version['plan'].get('schema') == 'video.process-plan.v1':
+                        reason = 'process_continuity_not_supported'
                     elif (version['semantic_binding_sha256'] != binding
                           or digest(version['plan']) != version['plan_sha256']):
                         reason = 'continuity_motion_stale'
@@ -146,6 +153,7 @@ class ContinuityStore:
             project = self.store._project(db, owner, project_id)
             self.store._revision(project, expected_revision)
             current = self._current(db, owner, project_id, project)
+            _require_supported(current)
             _require(not current['issues'], 'continuity_inputs_unavailable', 409)
             if links is None:
                 from .continuity import build_continuity_plan
@@ -203,6 +211,7 @@ class ContinuityStore:
             head_id = self._head(db, owner, project_id)
             _require(head_id == expected_head_id, 'continuity_head_conflict', 409)
             current = self._current(db, owner, project_id, project)
+            _require_supported(current)
             _require(not current['issues'] and version['input_binding_sha256'] == current['input_binding_sha256'],
                      'continuity_plan_stale', 409)
             _require(digest(version['plan']) == version['plan_sha256'], 'continuity_plan_invalid', 409)
@@ -227,6 +236,7 @@ class ContinuityStore:
             version = self._version(db, owner, selected_id)
             _require(version['project_id'] == project_id, 'not_found', 404)
             current = self._current(db, owner, project_id, project)
+            _require_supported(current)
             _require(not current['issues'] and version['input_binding_sha256'] == current['input_binding_sha256'],
                      'continuity_plan_stale', 409)
             _require(digest(version['plan']) == version['plan_sha256'], 'continuity_plan_invalid', 409)

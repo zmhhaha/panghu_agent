@@ -23,6 +23,8 @@ from .profiles.video import (BUNDLE_ROOT as VIDEO_ROOT, BUNDLE_REVISION as VIDEO
                              BUNDLE_FILES as VIDEO_FILES)
 from .profiles.video_motion import (BUNDLE_ROOT as MOTION_ROOT, BUNDLE_REVISION as MOTION_REVISION,
     BUNDLE_MANIFEST_SHA256 as MOTION_MANIFEST_SHA256, BUNDLE_FILES as MOTION_FILES)
+from .profiles.video_process import (BUNDLE_ROOT as PROCESS_ROOT, BUNDLE_REVISION as PROCESS_REVISION,
+    BUNDLE_MANIFEST_SHA256 as PROCESS_MANIFEST_SHA256, BUNDLE_FILES as PROCESS_FILES)
 from .profiles.video_explanation import (BUNDLE_ROOT as EXPLANATION_ROOT, BUNDLE_REVISION as EXPLANATION_REVISION,
     BUNDLE_MANIFEST_SHA256 as EXPLANATION_MANIFEST_SHA256, BUNDLE_FILES as EXPLANATION_FILES)
 from .pi_cage import PI_CAGE_REPOSITORY, PI_CAGE_REVISION, PI_PACKAGE, PI_VERSION
@@ -42,6 +44,7 @@ RESEARCH_PROFILES = ('research.generate.v1', 'research.revise.v1', 'research.pla
                      'research.retrieve.v1', 'research.outline.v1', 'research.draft.v1')
 VIDEO_PROFILES = ('video.storyboard.v1', 'video.scene.v1')
 MOTION_PROFILES = ('video.motion-plan.v1',)
+PROCESS_PROFILES = ('video.process-plan.v1',)
 EXPLANATION_PROFILES = ('video.explanation-plan.v1',)
 CATALOG_KEYS = ('task_contracts', 'capability_bundles', 'tool_environments',
                 'execution_bindings', 'routes')
@@ -227,6 +230,25 @@ def _motion_bundle():
         required_tools=['read', 'write'])), total
 
 
+def _process_bundle():
+    raw = _read(PROCESS_ROOT / 'manifest.json', 65536)
+    _require(hashlib.sha256(raw).hexdigest() == PROCESS_MANIFEST_SHA256, 'process_bundle_integrity')
+    manifest = _json(raw)
+    _require(type(manifest) is dict and manifest.get('bundle_revision') == PROCESS_REVISION
+        and manifest.get('license') == 'MIT' and manifest.get('automatic_updates') is False
+        and manifest.get('upstream_content_vendored') is False, 'process_bundle_integrity')
+    rows = manifest.get('local_files')
+    _require(type(rows) is list and len(rows) == len(PROCESS_FILES)
+        and all(type(row) is dict and set(row) == {'path', 'sha256'} for row in rows)
+        and {row['path'] for row in rows} == PROCESS_FILES, 'process_bundle_integrity')
+    resources, total = _measure(PROCESS_ROOT, ['manifest.json', *sorted(PROCESS_FILES)])
+    measured = {row['name']: row['sha256'] for row in resources}
+    _require(all(measured[row['path']] == row['sha256'] for row in rows), 'process_bundle_integrity')
+    return CapabilityBundle.model_validate(dict(name='video-process', revision=PROCESS_REVISION,
+        resources=resources, source='original-local-video-process-procedures-v1', license='MIT',
+        required_tools=['read', 'write'])), total
+
+
 def _explanation_bundle():
     raw = _read(EXPLANATION_ROOT / 'manifest.json', 65536)
     _require(hashlib.sha256(raw).hexdigest() == EXPLANATION_MANIFEST_SHA256, 'explanation_bundle_integrity')
@@ -259,7 +281,7 @@ def _image(value):
 def _contract(name):
     handler = implementation(name)
     capabilities = ['text', 'tool_calls'] + (['vision'] if 'image' in handler.required_tools else [])
-    return TaskContract.model_validate(dict(name=name, revision='1' if name in (*VIDEO_PROFILES, *MOTION_PROFILES, *EXPLANATION_PROFILES) else 'v1', task_schema=handler.task_schema,
+    return TaskContract.model_validate(dict(name=name, revision='1' if name in (*VIDEO_PROFILES, *MOTION_PROFILES, *EXPLANATION_PROFILES, *PROCESS_PROFILES) else 'v1', task_schema=handler.task_schema,
         output_schema=handler.output_schema, required_tools=list(handler.required_tools),
         required_model_capabilities=capabilities, max_timeout_seconds=3600,
         **handler.limits.as_dict()))
@@ -282,11 +304,13 @@ def generate(*, pi_image=None, hermes_image=None, engine='pi', runtime_revision,
              model='llm-trusted', provider='task-model',
              model_proxy_url='http://agent-model-proxy.agent-service.svc.cluster.local:8080/v1',
              upstream_base_url='http://llm-service.llm.svc.cluster.local/v1',
-             pod_cidrs=('10.244.0.0/16',), include_motion=False, include_explanation=False):
+             pod_cidrs=('10.244.0.0/16',), include_motion=False, include_explanation=False,
+             include_process=False):
     """Return public catalog/hosts/summary without model, network or database I/O."""
     _require(os.name == 'posix' and os.geteuid() == 0, 'run_inside_root_owned_worker_image')
     _require(type(include_motion) is bool, 'invalid_motion_catalog_option')
     _require(type(include_explanation) is bool, 'invalid_explanation_catalog_option')
+    _require(type(include_process) is bool, 'invalid_process_catalog_option')
     _require(type(runtime_revision) is str and REVISION.fullmatch(runtime_revision),
              'runtime_revision_required')
     images = {key: _image(value) for key, value in (('pi', pi_image), ('hermes', hermes_image))
@@ -306,30 +330,35 @@ def generate(*, pi_image=None, hermes_image=None, engine='pi', runtime_revision,
     video_bundle, video_bytes = _video_bundle()
     motion_bundle, motion_bytes = _motion_bundle() if include_motion else (None, 0)
     explanation_bundle, explanation_bytes = _explanation_bundle() if include_explanation else (None, 0)
+    process_bundle, process_bytes = _process_bundle() if include_process else (None, 0)
     video_profiles = (*VIDEO_PROFILES, *(MOTION_PROFILES if include_motion else ()),
-                      *(EXPLANATION_PROFILES if include_explanation else ()))
+                      *(EXPLANATION_PROFILES if include_explanation else ()),
+                      *(PROCESS_PROFILES if include_process else ()))
     contracts = [_contract(name) for name in (*PPT_PROFILES, *RESEARCH_PROFILES, *video_profiles)]
     environments, bindings, routes, pools = [], [], [], []
     host_selections = []
     for native, image in sorted(images.items()):
         groups = {}
         for contract in contracts:
-            groups.setdefault(tuple(sorted(contract.required_tools)), []).append(contract)
+            scope = 'process' if contract.name in PROCESS_PROFILES else ''
+            groups.setdefault((tuple(sorted(contract.required_tools)), scope), []).append(contract)
         environment_by_tools = {}
-        for tools, members in sorted(groups.items()):
-            data = dict(name='tools-' + native + '-' + digest(list(tools))[:12],
+        for (tools, scope), members in sorted(groups.items()):
+            data = dict(name='tools-' + native + '-' + (scope + '-' if scope else '') + digest(list(tools))[:12],
                 tools=list(tools), capabilities=sorted({item.output_schema for item in members}),
                 image_digest=image.rsplit('@', 1)[1], runtime_revision=runtime_revision)
             data['revision'] = 'env-' + digest(data)[:20]
             environment = ToolEnvironment.model_validate(data)
             environments.append(environment.model_dump(mode='json'))
-            environment_by_tools[tools] = environment
+            environment_by_tools[(tools, scope)] = environment
         for contract in contracts:
             bundle = (ppt_bundle if contract.name.startswith('ppt.') else
                       motion_bundle if contract.name in MOTION_PROFILES else
+                      process_bundle if contract.name in PROCESS_PROFILES else
                       explanation_bundle if contract.name in EXPLANATION_PROFILES else
                       video_bundle if contract.name in VIDEO_PROFILES else research_bundle)
-            environment = environment_by_tools[tuple(sorted(contract.required_tools))]
+            scope = 'process' if contract.name in PROCESS_PROFILES else ''
+            environment = environment_by_tools[(tuple(sorted(contract.required_tools)), scope)]
             model_data = dict(api_mode='openai-responses', model=model, provider=provider,
                               capabilities=list(contract.required_model_capabilities))
             model_data['revision'] = 'model-' + digest(model_data)[:20]
@@ -362,7 +391,8 @@ def generate(*, pi_image=None, hermes_image=None, engine='pi', runtime_revision,
                     binding_id=binding.id, binding_revision=binding.revision, enabled=False))
     bundles = ((ppt_bundle, research_bundle, video_bundle)
                + ((motion_bundle,) if include_motion else ())
-               + ((explanation_bundle,) if include_explanation else ()))
+               + ((explanation_bundle,) if include_explanation else ())
+               + ((process_bundle,) if include_process else ()))
     catalog = dict(task_contracts=[item.model_dump(mode='json') for item in contracts],
         capability_bundles=[item.model_dump(mode='json') for item in bundles],
         tool_environments=environments, execution_bindings=bindings, routes=routes)
@@ -423,6 +453,10 @@ def generate(*, pi_image=None, hermes_image=None, engine='pi', runtime_revision,
         summary['packages'].append(dict(name=explanation_bundle.name, revision=explanation_bundle.revision,
             resources=len(explanation_bundle.resources), measured_bytes=explanation_bytes,
             scope='original_local_project_explanation_proposals_human_fact_review_required'))
+    if include_process:
+        summary['packages'].append(dict(name=process_bundle.name, revision=process_bundle.revision,
+            resources=len(process_bundle.resources), measured_bytes=process_bytes,
+            scope='explicit_three_node_one_object_process_candidates_no_executable_source'))
     return public, hosts, summary
 
 
@@ -477,6 +511,8 @@ def main(argv=None):
         help='Prepare an additional disabled video.motion-plan.v1 candidate; does not publish it')
     parser.add_argument('--include-explanation', action='store_true',
         help='Prepare an additional disabled video.explanation-plan.v1 candidate; does not publish it')
+    parser.add_argument('--include-process', action='store_true',
+        help='Prepare an additional disabled video.process-plan.v1 candidate; does not publish it')
     parser.add_argument('--output', required=True, help='New or empty public output directory')
     args = parser.parse_args(argv)
     try:
@@ -484,7 +520,7 @@ def main(argv=None):
             engine=args.engine, runtime_revision=args.runtime_revision, model=args.model, provider=args.provider,
             model_proxy_url=args.model_proxy_url, upstream_base_url=args.upstream_base_url,
             pod_cidrs=tuple(args.pod_cidr or ('10.244.0.0/16',)), include_motion=args.include_motion,
-            include_explanation=args.include_explanation)
+            include_explanation=args.include_explanation, include_process=args.include_process)
         write_catalog(args.output, public, hosts, summary)
     except (RuntimeError, OSError, ValueError, TypeError, KeyError, RecursionError):
         print('ERROR: Invalid or unavailable image package/catalog input; no model or deployment was started')

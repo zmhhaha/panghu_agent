@@ -45,6 +45,8 @@ SOURCE_FILES = frozenset({
     'video_workbench/explanation_store.py', 'video_workbench/explanation_workflow.py',
     'video_workbench/explanation_gateway.py',
     'video_workbench/motion.py', 'video_workbench/motion_snapshot.py',
+    'video_workbench/motion_dispatch.py', 'video_workbench/motion_process.py',
+    'video_workbench/process_review.py',
     'video_workbench/continuity.py', 'video_workbench/continuity_store.py',
     'video_workbench/continuity_snapshot.py', 'video_workbench/continuity_review.py',
     'video_workbench/motion_geometry.py',
@@ -70,6 +72,7 @@ SOURCE_FILES = frozenset({
     'agent_service/profiles/video_explanation.py',
     'agent_service/profiles/video_explanation_contract.py',
     'agent_service/profiles/video_motion.py', 'agent_service/profiles/video_motion_contract.py',
+    'agent_service/profiles/video_process.py', 'agent_service/profiles/video_process_contract.py',
     *(RESOURCE + name for name in VIDEO_FILES),
 })
 MAX_CONTEXT_BYTES = 8 * 1024 * 1024

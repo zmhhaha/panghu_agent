@@ -16,6 +16,7 @@ import tarfile
 
 from video_workbench.motion import COMPILER_TEMPLATES, compile_project
 from video_workbench.motion_demo import compile_demo_project
+from video_workbench.motion_dispatch import PRODUCTION_PROCESS_COMPILER, scene_compiler
 from video_workbench.continuity import (CONTINUITY_COMPILER_TEMPLATES,
                                        recompile_continuity_project)
 from video_workbench.motion_snapshot import _runtime as validate_runtime_fingerprint
@@ -56,6 +57,9 @@ def freeze_input(directory, *, allow_unbound_experiment=False, image_digest=None
         options['compiler_version'] = pair[0]
     elif pair == ('motion-demo-compiler-1', 'record-demonstration-1'):
         compiler = compile_demo_project
+    elif pair == (PRODUCTION_PROCESS_COMPILER, 'controlled-process-2'):
+        _, compiler, version = scene_compiler(json.loads(files['plan.json']), compiler_version=pair[0])
+        options['compiler_version'] = version
     elif type(pair[0]) is str and CONTINUITY_COMPILER_TEMPLATES.get(pair[0]) == pair[1]:
         compiler = recompile_continuity_project
     else:

@@ -2,7 +2,9 @@
 import { isActiveOperation, isUnresolvedProductionOperation, statusLabel } from './model.mjs';
 
 const STRATEGIES = { flow: '流程推演', compare: '前后对比', focus: '结构聚焦' };
-const ACTIONS = { reveal: '出现', hide: '隐藏', highlight: '强调', move: '移动', draw: '连线展开' };
+const ACTIONS = { reveal: '出现', hide: '隐藏', highlight: '强调', move: '移动', draw: '连线展开',
+  transfer: '沿关系传递', set_state: '状态变化' };
+const STATES = { idle: '待命', waiting: '等待', running: '处理中', completed: '完成', failed: '失败' };
 const PLACEMENTS = { start: '本段开始', middle: '本段中间', end: '本段末尾' };
 const PACES = { quick: '较快', normal: '正常', slow: '较慢' };
 const RENDER_ERRORS = {
@@ -32,6 +34,15 @@ const RENDER_ERRORS = {
 const ERRORS = {
   ...RENDER_ERRORS,
   motion_disabled: '动态图解暂未启用，历史仍可查看，正在执行的任务仍可取消。',
+  process_disabled: '过程演示暂未启用，已有候选和录音仍保留。',
+  process_profile_unavailable: '过程演示生成服务尚未就绪，请稍后重新读取；已有内容保留。',
+  process_continuity_not_supported: '过程演示暂不支持跨镜连续衔接。可分别制作镜头或普通整片草稿，已有画面和录音保留。',
+  process_base_kind_mismatch: '修改需要沿用所选方案的图解方式；切换方式时请生成新候选。',
+  motion_diagram_kind_mismatch: '修改需要沿用所选方案的图解方式；切换方式时请生成新候选。',
+  motion_base_kind_mismatch: '修改需要沿用所选方案的图解方式；切换方式时请生成新候选。',
+  process_path_obstructed: '请求的移动路径挡住了内容，请调整过程说明后生成新的候选，已有配音可继续使用。',
+  process_element_not_visible: '过程变化发生时对象还不可见，请先显现相关节点和请求，再进行传递或状态变化。',
+  process_state_transition_invalid: '过程中的状态衔接不成立，请明确等待、处理、失败重试及完成的先后关系后修改方案。',
   motion_profile_unavailable: '动态图解生成服务尚未准备就绪，当前镜头会保留。',
   motion_render_not_configured: '动态图解渲染服务尚未连接，候选与时序仍会保留。',
   motion_render_service_unavailable: '动态图解渲染服务暂时无法连接，请重新读取任务状态。',
@@ -87,13 +98,21 @@ export function currentMotionAudio(scene) {
   return scene?.audio_versions?.find(row => row.id === scene.head_audio_version_id && !row.stale) ?? null;
 }
 
-export function createMotionRequest(project, scene, instruction = '', base = null) {
+export function motionDiagramKind(candidate) {
+  return candidate?.plan?.schema === 'video.process-plan.v1' || candidate?.diagram_kind === 'process'
+    ? 'process' : 'diagram';
+}
+
+export function createMotionRequest(project, scene, instruction = '', base = null, diagramKind = 'diagram') {
   if (!project?.id || !scene?.id || !Number.isInteger(project.revision)
-      || typeof instruction !== 'string' || instruction.length > 8000 || base?.stale) {
+      || typeof instruction !== 'string' || instruction.length > 8000 || base?.stale
+      || !['diagram', 'process'].includes(diagramKind)
+      || (base && motionDiagramKind(base) !== diagramKind)) {
     throw new Error('请先保存镜头，并检查动态图解要求。');
   }
   return { path: `/api/scenes/${encodeURIComponent(scene.id)}/motion`, body: {
     expected_revision: project.revision, instruction: instruction.trim(), ...(base ? { base_version_id: base.id } : {}),
+    ...(diagramKind === 'process' ? { diagram_kind: 'process' } : {}),
   } };
 }
 
@@ -151,7 +170,7 @@ export function createProjectMotionDraftRequest(project, { endHoldSeconds = 0 } 
 export function createMotionPanel({ document, getContext, request, refresh, onError, onSuccess, onPreviewStateChange = () => {} }) {
   const $ = id => document.getElementById(id);
   const metadata = new Map(), versions = new Map(), timings = new Map(), drafts = new Map();
-  const selections = new Map(), instructions = new Map(), busy = new Set(), readErrors = new Map();
+  const selections = new Map(), instructions = new Map(), diagramKinds = new Map(), busy = new Set(), readErrors = new Map();
   let sequence = 0, latestRead = 0, renderedTiming = null, renderedReview = null, confirmation = null;
   let draftSequence = 0, auditionEnd = null;
   const draftIdentities = new WeakMap();
@@ -174,6 +193,7 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     const audio = currentMotionAudio(value.scene);
     const id = selected && !selected.stale && audio ? timingKey(selected.id, audio.id) : null;
     return { ...value, scene, selected, audio, key: keyFor(value), timingId: id,
+      diagramKind: diagramKinds.get(keyFor(value)) ?? motionDiagramKind(versions.get(selected?.id) ?? selected),
       version: versions.get(selected?.id), timing: timings.get(id), draft: drafts.get(id),
       fresh: Boolean(stored && stored.revision === value.project?.revision),
     };
@@ -199,14 +219,14 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     const names = new Map(beats.segments.map((row, index) => [row.id, `第 ${index + 1} 段` ]));
     const list = text('ol');
     for (const item of plan.elements) list.append(text('li', `${item.label}${item.detail ? `：${item.detail}` : ''}`));
-    target.append(text('h5', `画面结构 · ${STRATEGIES[plan.template] ?? '图解'}`), list);
+    target.append(text('h5', `画面结构 · ${motionDiagramKind(value.version) === 'process' ? '过程演示' : STRATEGIES[plan.template] ?? '图解'}`), list);
     if (relations.size) {
       const connections = text('ul');
       for (const label of relations.values()) connections.append(text('li', label));
       target.append(text('h5', '关系'), connections);
     }
     const actions = text('ol');
-    for (const action of plan.actions) actions.append(text('li', `${names.get(action.beat_id) ?? '语音分段'} · ${elements.get(action.target) ?? relations.get(action.target) ?? '图形关系'} · ${ACTIONS[action.kind] ?? '变化'} · ${PLACEMENTS[action.placement] ?? ''} · ${PACES[action.pace] ?? ''}`));
+    for (const action of plan.actions) actions.append(text('li', `${names.get(action.beat_id) ?? '语音分段'} · ${elements.get(action.target) ?? relations.get(action.target) ?? '图形关系'} · ${ACTIONS[action.kind] ?? '变化'}${action.kind === 'transfer' ? `：${relations.get(action.relation_id) ?? '关系待核对'}` : action.kind === 'set_state' ? `：${STATES[action.state] ?? '状态待核对'}` : ''} · ${PLACEMENTS[action.placement] ?? ''} · ${PACES[action.pace] ?? ''}`));
     target.append(text('h5', '随旁白展开的变化'), actions);
   }
 
@@ -266,11 +286,18 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     $('motion-use-static').disabled = blocked || data.mode !== 'motion';
     $('motion-use-motion').disabled = blocked || !value.enabled || !data.head_version_id || data.head_stale || data.mode === 'motion';
     $('motion-instruction').value = instructions.get(value.key) ?? '';
-    $('motion-instruction').disabled = !value.configured;
-    $('generate-motion').disabled = !value.configured || blocked || active;
-    $('revise-motion').disabled = !value.configured || blocked || active || !selected || selected.stale || !$('motion-instruction').value.trim();
+    const generationConfigured = value.diagramKind === 'process' ? value.processConfigured : value.configured;
+    const revisionConfigured = motionDiagramKind(value.version ?? selected) === 'process' ? value.processConfigured : value.configured;
+    $('motion-diagram-kind').value = value.diagramKind;
+    $('motion-diagram-kind').disabled = !value.enabled || blocked || active;
+    $('motion-process-note').textContent = value.diagramKind === 'process'
+      ? `${value.processConfigured ? '' : '过程演示生成尚未启用。'}适合三个环节之间的单个请求流转、失败返回和状态变化。修改沿用所选候选的方式；跨镜连续衔接暂不支持。`
+      : '适合一般流程、前后对比和结构聚焦。选择方式仅影响新候选，修改沿用所选候选的方式。';
+    $('motion-instruction').disabled = !generationConfigured && !revisionConfigured;
+    $('generate-motion').disabled = !value.enabled || !generationConfigured || blocked || active;
+    $('revise-motion').disabled = !value.enabled || !revisionConfigured || blocked || active || !selected || selected.stale || !$('motion-instruction').value.trim();
     $('motion-form-note').textContent = !value.enabled ? '动态图解生成与修改暂未启用；可以查看历史、试听和取消在途任务。'
-      : !value.configured ? '生成服务暂未连接；已有候选仍可审阅、采用与校正。'
+      : !generationConfigured ? '所选方式的生成服务暂未连接；已有候选仍可审阅、采用与校正。'
       : value.unsaved ? '先保存或重新载入未保存的镜头、配音和时序修改，再继续；草稿会保留。'
         : '生成只增加候选。审阅图形变化后明确采用，再结合实际配音核对时序。';
     $('motion-read-error').hidden = !readErrors.has(value.key);
@@ -280,11 +307,11 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     $('cancel-motion').hidden = !active;
     $('cancel-motion').disabled = inFlight || data.operation?.status === 'cancelling';
     const options = (data.versions ?? []).map((item, index) => {
-      const option = text('option', `图解 ${index + 1}${item.id === data.head_version_id ? ' · 已采用' : ' · 候选'}${item.stale ? ' · 已过期' : ''}`);
+      const option = text('option', `图解 ${index + 1}${motionDiagramKind(item) === 'process' ? ' · 过程演示' : ''}${item.id === data.head_version_id ? ' · 已采用' : ' · 候选'}${item.stale ? ' · 已过期' : ''}`);
       option.value = item.id; return option;
     });
     if (!options.length) options.push(text('option', '尚无动态图解'));
-    const optionKey = JSON.stringify([value.key, data.versions?.map(row => [row.id, row.stale]), data.head_version_id]);
+    const optionKey = JSON.stringify([value.key, data.versions?.map(row => [row.id, row.stale, row.diagram_kind]), data.head_version_id]);
     if ($('motion-version').dataset?.optionsKey !== optionKey) {
       $('motion-version').replaceChildren(...options);
       if ($('motion-version').dataset) $('motion-version').dataset.optionsKey = optionKey;
@@ -382,11 +409,13 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
   }
   async function generate(revise = false) {
     const value = current();
-    if (!value.scene || !value.configured || !value.fresh || value.unsaved || value.projectBusy
+    const kind = revise ? motionDiagramKind(value.version ?? value.selected) : value.diagramKind;
+    const configured = kind === 'process' ? value.processConfigured : value.configured;
+    if (!value.scene || !value.enabled || !configured || !value.fresh || value.unsaved || value.projectBusy
         || (revise && (!value.selected || value.selected.stale || !(instructions.get(value.key) ?? '').trim()))
         || isActiveOperation(motionMetadata(value.scene).operation)) return;
     let intent;
-    try { intent = createMotionRequest(value.project, value.scene, instructions.get(value.key) ?? '', revise ? value.selected : null); }
+    try { intent = createMotionRequest(value.project, value.scene, instructions.get(value.key) ?? '', revise ? value.selected : null, kind); }
     catch (error) { onError(error); return; }
     await mutate(value, () => request(intent.path, { method: 'POST', body: intent.body }), operation => {
       const scene = metadata.get(value.project.id)?.scenes.find(row => row.id === value.scene.id);
@@ -447,6 +476,12 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     await mutate(value, () => request(intent.path, { method: 'POST', body: intent.body }), () => onSuccess('已开始制作本镜头 MP4 草稿。在「项目预览与成片」中播放；这不会采用候选或确认时序。'));
   }
   $('motion-instruction').addEventListener('input', event => { instructions.set(current().key, event.target.value); render(); });
+  $('motion-diagram-kind').addEventListener('change', event => {
+    const value = current();
+    if (!['diagram', 'process'].includes(event.target.value) || !value.enabled || busy.has(value.key)
+        || value.unsaved || value.projectBusy || isActiveOperation(motionMetadata(value.scene).operation)) return;
+    diagramKinds.set(value.key, event.target.value); render();
+  });
   $('motion-version').addEventListener('change', async event => {
     const value = current(); selections.set(value.key, event.target.value); $('motion-timing-audio').pause();
     render(); await load(value.project.id, value.epoch);

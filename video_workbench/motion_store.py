@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from agent_service.contracts import ServiceError, digest
 from agent_service.profiles.video_motion import validate_motion_input, validate_motion_result
+from agent_service.profiles.video_process import validate_process_input, validate_process_result
 from .motion import make_beats
 from .explanation_store import visual_generation_description
 
@@ -24,6 +25,7 @@ MAX_TOTAL_JSON_BYTES = 128 * 1024 * 1024
 # Input beats (256KiB), plan (128KiB), and bounded coordinator metadata fit in
 # this reservation. JSON budgets do not claim to measure SQLite/WAL disk bytes.
 OUTPUT_RESERVE_BYTES = 512 * 1024
+PROCESS_CANDIDATE_COMPILER = 'motion-process-compiler-2'
 
 
 def _require(condition, code='invalid_motion_request', status=422):
@@ -36,6 +38,20 @@ def semantic_binding(project, scene):
     return digest(dict(schema='video.motion-semantic-binding.v1', title=scene['title'],
         narration=scene['narration'], visual_description=visual_generation_description(scene),
         style=project.get('style', '')))
+
+
+def plan_diagram_kind(plan):
+    _require(type(plan) is dict and type(plan.get('schema')) is str
+             and plan['schema'] in {'video.motion-plan.v1', 'video.process-plan.v1'},
+             'motion_candidate_schema_invalid')
+    return 'process' if plan['schema'] == 'video.process-plan.v1' else 'diagram'
+
+
+def operation_diagram_kind(operation):
+    document = operation.get('document')
+    _require(type(document) is dict and type(document.get('schema')) is str and document['schema'] in {
+        'video.motion-input.v1', 'video.process-input.v1'}, 'motion_operation_schema_invalid')
+    return 'process' if document['schema'] == 'video.process-input.v1' else 'diagram'
 
 
 def _json(value):
@@ -121,7 +137,9 @@ class MotionStore:
         return {k: version[k] for k in ('id', 'created_at', 'parent_version_id', 'input_sha256',
                                        'plan_sha256', 'semantic_binding_sha256')} | {
             'title': version['plan']['title'], 'template': version['plan']['template'],
-            'stale': version['semantic_binding_sha256'] != binding}
+            'stale': version['semantic_binding_sha256'] != binding,
+            'diagram_kind': plan_diagram_kind(version['plan'])} | (
+                {'compiler_version': version['compiler_version']} if 'compiler_version' in version else {})
 
     def project(self, owner, project_id):
         # The existing lock keeps the static and additive views on one revision,
@@ -190,8 +208,14 @@ class MotionStore:
 
     def start(self, owner, scene_id, request, idem, *, timeout=600):
         _require(type(request) is dict and {'expected_revision'} <= set(request)
-                 and set(request) <= {'expected_revision', 'instruction', 'base_version_id'}
+                 and set(request) <= {'expected_revision', 'instruction', 'base_version_id', 'diagram_kind'}
                  and type(request['expected_revision']) is int and request['expected_revision'] >= 1)
+        diagram_kind = request.get('diagram_kind', 'diagram')
+        _require(type(diagram_kind) is str and diagram_kind in {'diagram', 'process'})
+        if diagram_kind == 'diagram' and 'diagram_kind' in request:
+            # Only normalize this newly introduced default. Preserve the old
+            # instruction/base defaults and every historical request hash.
+            request = {key: value for key, value in request.items() if key != 'diagram_kind'}
         _require(type(idem) is str and 1 <= len(idem) <= 128
                  and all(33 <= ord(c) <= 126 for c in idem))
         _require(type(timeout) in (int, float) and 1 <= timeout <= 600)
@@ -224,13 +248,16 @@ class MotionStore:
                 base = self._version(db, owner, base_id)
                 _require(base['scene_id'] == scene_id and base['project_id'] == project_id, 'not_found', 404)
                 _require(base['semantic_binding_sha256'] == binding, 'motion_base_stale', 409)
-            document = dict(schema='video.motion-input.v1', title=scene['title'], style=project.get('style', ''),
+                _require(plan_diagram_kind(base['plan']) == diagram_kind, 'motion_base_kind_mismatch', 409)
+            document = dict(schema='video.process-input.v1' if diagram_kind == 'process' else 'video.motion-input.v1',
+                title=scene['title'], style=project.get('style', ''),
                 visual_description=visual_generation_description(scene), beats=make_beats(scene['narration']),
                 instruction=request.get('instruction', ''), base_plan=base['plan'] if base else None)
-            validate_motion_input(document)
+            (validate_process_input if diagram_kind == 'process' else validate_motion_input)(document)
             now = time.time()
             op = dict(id=str(uuid4()), owner=owner, project_id=project_id, scene_id=scene_id,
-                kind='motion-plan', document=document, input_sha256=digest(document),
+                kind='process-plan' if diagram_kind == 'process' else 'motion-plan',
+                document=document, input_sha256=digest(document),
                 semantic_binding_sha256=binding, parent_version_id=base_id, status='queued', error=None,
                 job_id=None, input_ref=None, submit_attempted=False, cancel_requested=False,
                 cancel_attempted=False, cancel_attempts=0, next_cancel_at=0.0,
@@ -329,11 +356,15 @@ class MotionStore:
             elif time.time() >= op['deadline_at']:
                 op.update(status='timed_out', error='motion_result_after_deadline')
             else:
-                validate_motion_result(result, op['input_sha256'], op['document']['beats'])
+                process = operation_diagram_kind(op) == 'process'
+                (validate_process_result if process else validate_motion_result)(
+                    result, op['input_sha256'], op['document']['beats'])
                 version = dict(id=str(uuid4()), project_id=op['project_id'], scene_id=op['scene_id'],
                     operation_id=op['id'], created_at=time.time(), parent_version_id=op['parent_version_id'],
                     input_sha256=op['input_sha256'], semantic_binding_sha256=op['semantic_binding_sha256'],
                     beats=op['document']['beats'], plan=result['plan'], plan_sha256=digest(result['plan']))
+                if process:
+                    version.update(diagram_kind='process', compiler_version=PROCESS_CANDIDATE_COMPILER)
                 _require(_size(version) <= OUTPUT_RESERVE_BYTES - 8192, 'motion_candidate_too_large', 413)
                 op.update(status='completed', error=None, version_id=version['id'])
                 self._capacity(db, op['project_id'],

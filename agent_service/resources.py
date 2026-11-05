@@ -15,6 +15,7 @@ RESEARCH_ROOT = Path(__file__).resolve().parent.parent / 'scientific_skills'
 VIDEO_ROOT = Path(__file__).resolve().parent / 'resources' / 'video-workbench-v1'
 MOTION_ROOT = Path(__file__).resolve().parent / 'resources' / 'video-motion-v1'
 EXPLANATION_ROOT = Path(__file__).resolve().parent / 'resources' / 'video-explanation-v1'
+PROCESS_ROOT = Path(__file__).resolve().parent / 'resources' / 'video-process-v1'
 
 
 def measured_package(config, policy, control_root):
@@ -39,6 +40,11 @@ def measured_package(config, policy, control_root):
         root = EXPLANATION_ROOT
         mandatory = {'explanation-procedure/SKILL.md', 'CONTRACT.md', 'RESULT.schema.json', 'LICENSE'}
         from .profiles.video_explanation import verified_bundle
+        verified_bundle()
+    elif policy.name == 'video.process-plan.v1':
+        root = PROCESS_ROOT
+        mandatory = {'process-procedure/SKILL.md', 'CONTRACT.md', 'PLAN.schema.json', 'LICENSE'}
+        from .profiles.video_process import verified_bundle
         verified_bundle()
     elif policy.name == 'video.motion-plan.v1':
         root = MOTION_ROOT

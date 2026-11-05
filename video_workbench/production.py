@@ -260,6 +260,8 @@ class Production:
                         raise ServiceError('motion_scene_duration_exceeded', 422)
                     item['motion'] = dict(id=version_id, plan=version['plan'], beats=timing['beats'],
                                           alignment=timing['alignment'], stale=version['stale'])
+                    if version['plan'].get('schema') == 'video.process-plan.v1':
+                        item['motion']['compiler_version'] = version.get('compiler_version')
                 else:
                     version_id = scene.get('head_version_id')
                     if not version_id:

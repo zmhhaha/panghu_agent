@@ -82,6 +82,11 @@ def service(tmp_path):
         target = root / 'resources/video-motion-v1' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((MOTION_ROOT / name).read_bytes())
+    from agent_service.profiles.video_process import BUNDLE_ROOT as PROCESS_ROOT, BUNDLE_FILES as PROCESS_FILES
+    for name in ('manifest.json', *PROCESS_FILES):
+        target = root / 'resources/video-process-v1' / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((PROCESS_ROOT / name).read_bytes())
     from agent_service.profiles.video_explanation import BUNDLE_ROOT as EXPLANATION_ROOT, BUNDLE_FILES as EXPLANATION_FILES
     for name in ('manifest.json', *EXPLANATION_FILES):
         target = root / 'resources/video-explanation-v1' / name
@@ -400,6 +405,11 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
         "agent_service/resources/video-motion-v1/LICENSE",
         "agent_service/resources/video-motion-v1/PLAN.schema.json",
         "agent_service/resources/video-motion-v1/motion-procedure/SKILL.md",
+        "agent_service/resources/video-process-v1/manifest.json",
+        "agent_service/resources/video-process-v1/CONTRACT.md",
+        "agent_service/resources/video-process-v1/LICENSE",
+        "agent_service/resources/video-process-v1/PLAN.schema.json",
+        "agent_service/resources/video-process-v1/process-procedure/SKILL.md",
         "agent_service/resources/video-explanation-v1/manifest.json",
         "agent_service/resources/video-explanation-v1/CONTRACT.md",
         "agent_service/resources/video-explanation-v1/LICENSE",
@@ -477,6 +487,16 @@ def test_modified_motion_resource_fails_before_docker(service, changed):
     path.write_bytes(path.read_bytes() + b' ')
     receipt, runner = old_receipt(service), DockerFixture()
     with pytest.raises(BuildError, match='invalid_motion_resource_manifest'):
+        build(service=service, environ={}, runner=runner)
+    assert not receipt.exists() and not runner.calls
+
+
+@pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'PLAN.schema.json', 'process-procedure/SKILL.md'])
+def test_modified_process_resource_fails_before_docker(service, changed):
+    path = service / 'resources/video-process-v1' / changed
+    path.write_bytes(path.read_bytes() + b' ')
+    receipt, runner = old_receipt(service), DockerFixture()
+    with pytest.raises(BuildError, match='invalid_process_resource_manifest'):
         build(service=service, environ={}, runner=runner)
     assert not receipt.exists() and not runner.calls
 

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "video.process-plan.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "template", "title", "takeaway", "elements", "relations", "actions"],
+  "properties": {
+    "schema": {"const": "video.process-plan.v1"},
+    "template": {"const": "flow"},
+    "title": {"type": "string", "minLength": 1, "maxLength": 34},
+    "takeaway": {"type": "string", "minLength": 1, "maxLength": 90},
+    "elements": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"$ref": "#/$defs/element"}},
+    "relations": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"$ref": "#/$defs/relation"}},
+    "actions": {"type": "array", "minItems": 2, "maxItems": 24, "items": {"$ref": "#/$defs/action"}}
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,31}$"},
+    "beat": {"type": "string", "pattern": "^beat_[0-9a-f]{16}$"},
+    "placement": {"enum": ["start", "middle", "end"]},
+    "pace": {"enum": ["quick", "normal", "slow"]},
+    "element": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "kind", "slot", "label", "detail"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "kind": {"enum": ["card", "token"]},
+        "slot": {"enum": ["source", "queue", "worker", "token_source", "token_queue", "token_worker"]},
+        "label": {"type": "string", "minLength": 1, "maxLength": 18},
+        "detail": {"type": "string", "maxLength": 28}},
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "card"}}},
+         "then": {"properties": {"slot": {"enum": ["source", "queue", "worker"]}}}},
+        {"if": {"properties": {"kind": {"const": "token"}}},
+         "then": {"properties": {"slot": {"enum": ["token_source", "token_queue", "token_worker"]},
+           "label": {"maxLength": 6}, "detail": {"const": ""}}}}
+      ]
+    },
+    "relation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "source", "target", "label"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "source": {"$ref": "#/$defs/id"},
+        "target": {"$ref": "#/$defs/id"}, "label": {"type": "string", "maxLength": 12}}
+    },
+    "action": {"oneOf": [
+      {"type": "object", "additionalProperties": false,
+       "required": ["kind", "target", "beat_id", "placement", "pace"],
+       "properties": {"kind": {"enum": ["reveal", "hide", "draw"]}, "target": {"$ref": "#/$defs/id"},
+         "beat_id": {"$ref": "#/$defs/beat"}, "placement": {"$ref": "#/$defs/placement"}, "pace": {"$ref": "#/$defs/pace"}}},
+      {"type": "object", "additionalProperties": false,
+       "required": ["kind", "target", "relation_id", "beat_id", "placement", "pace"],
+       "properties": {"kind": {"const": "transfer"}, "target": {"$ref": "#/$defs/id"}, "relation_id": {"$ref": "#/$defs/id"},
+         "beat_id": {"$ref": "#/$defs/beat"}, "placement": {"$ref": "#/$defs/placement"}, "pace": {"$ref": "#/$defs/pace"}}},
+      {"type": "object", "additionalProperties": false,
+       "required": ["kind", "target", "state", "beat_id", "placement", "pace"],
+       "properties": {"kind": {"const": "set_state"}, "target": {"$ref": "#/$defs/id"},
+         "state": {"enum": ["idle", "waiting", "running", "completed", "failed"]},
+         "beat_id": {"$ref": "#/$defs/beat"}, "placement": {"$ref": "#/$defs/placement"}, "pace": {"$ref": "#/$defs/pace"}}}
+    ]}
+  }
+}

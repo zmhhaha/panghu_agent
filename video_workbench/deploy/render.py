@@ -134,6 +134,8 @@ class Settings:
     motion_executor_service: str = 'video-motion-executor'
     motion_token_secret: str = 'video-motion-renderer'
     motion_runtime_config_map: str = 'video-motion-runtime'
+    process_enabled: bool = False
+    process_profile_revision: str = '1'
 
 
 def render(settings: Settings) -> dict:
@@ -168,6 +170,13 @@ def render(settings: Settings) -> dict:
         raise ValueError('Invalid motion profile revision')
     if settings.motion_enabled and settings.render_enabled is not True:
         raise ValueError('Motion production requires render_enabled')
+    if type(settings.process_enabled) is not bool:
+        raise ValueError('Process gate must be a boolean')
+    if (type(settings.process_profile_revision) is not str
+            or not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', settings.process_profile_revision)):
+        raise ValueError('Invalid process profile revision')
+    if settings.process_enabled and not settings.motion_enabled:
+        raise ValueError('Process production requires motion_enabled')
     if not isinstance(settings.storage_size, str) or not re.fullmatch(r'[1-9][0-9]*(?:Mi|Gi|Ti)', settings.storage_size):
         raise ValueError('Storage size must be a positive whole Mi, Gi or Ti quantity')
     external_values = (settings.external_secret_store, settings.external_secret_remote_key,
@@ -342,6 +351,11 @@ def render(settings: Settings) -> dict:
             'to': [peer(executor_namespace, {'app.kubernetes.io/name': 'video-motion-executor'})],
             'ports': [{'protocol': 'TCP', 'port': 8001}],
         })
+    if settings.process_enabled:
+        deployment['spec']['template']['spec']['containers'][0]['env'].extend([
+            {'name': 'VIDEO_PROCESS_ENABLED', 'value': '1'},
+            {'name': 'VIDEO_PROCESS_PROFILE_REVISION', 'value': settings.process_profile_revision},
+        ])
     if settings.external_secret_store is not None:
         items.append(obj('external-secrets.io/v1', 'ExternalSecret', secret, {
             'refreshInterval': '5m',
@@ -415,6 +429,8 @@ def main(argv=None):
     parser.add_argument('--motion-executor-service', default='video-motion-executor')
     parser.add_argument('--motion-token-secret', default='video-motion-renderer')
     parser.add_argument('--motion-runtime-config-map', default='video-motion-runtime')
+    parser.add_argument('--process-enabled', action='store_true')
+    parser.add_argument('--process-profile-revision', default='1')
     parser.add_argument('--output', type=Path, help='Write JSON (also valid Kubernetes YAML); default: stdout')
     args = parser.parse_args(argv)
     try:

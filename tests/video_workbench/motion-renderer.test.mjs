@@ -5,9 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sha, verifyInput, verifyRuntime, validateProbe, encodedDuration, muxAudioFilter, renderQuality } from '../../video_workbench/motion_renderer/contract.mjs';
 import { runtimeArtifact, withObservationPage, observationSeekConfig, seekPageExact, screenshotObservation } from '../../video_workbench/motion_renderer/observe.mjs';
-function fixture({compiler='motion-compiler-1',template='technical-diagrams-1',timelineCompiler=compiler}={}){
+function fixture({compiler='motion-compiler-1',template='technical-diagrams-1',timelineCompiler=compiler,
+ planSchema=compiler==='motion-process-compiler-2'?'video.process-plan.v1':undefined}={}){
  const path=mkdtempSync(join(tmpdir(),'motion-contract-'));
- const plan=Buffer.from('{}'),audio=Buffer.from('RIFF');
+ const plan=Buffer.from(JSON.stringify(planSchema===undefined?{}:{schema:planSchema})),audio=Buffer.from('RIFF');
  const timeline=Buffer.from(JSON.stringify({schema:'video.motion-timeline.v1',compiler:timelineCompiler,audio_sha256:sha(audio),plan_sha256:sha(plan),duration_seconds:15}));
  const files={'index.html':Buffer.from('compiler page'),'beats.json':Buffer.from('{}'),'alignment.json':Buffer.from('{}'),'plan.json':plan,'timeline.json':timeline};
  const manifest=Buffer.from(JSON.stringify({schema:'video.motion-project.v1',compiler,template,hyperframes:'0.8.149',gsap:'3.14.2',width:1280,height:720,fps:24,
@@ -21,13 +22,22 @@ test('recording is bound independently',()=>{const f=fixture();try{writeFileSync
 const compilerPairs=[1,2,3,4,5].map(version=>({compiler:`motion-compiler-${version}`,template:`technical-diagrams-${version}`}));
 compilerPairs.push({compiler:'motion-demo-compiler-1',template:'record-demonstration-1'});
 compilerPairs.push(...[1,2].map(version=>({compiler:`motion-continuity-compiler-${version}`,template:`continuous-diagrams-${version}`})));
-test('only exact legacy, demonstration and continuity compiler/template pairs are admitted',()=>{
+compilerPairs.push({compiler:'motion-process-compiler-2',template:'controlled-process-2'});
+test('only exact legacy, demonstration, continuity and process2 compiler/template pairs are admitted',()=>{
  for(const options of compilerPairs){
   const f=fixture(options);try{assert.doesNotThrow(()=>verifyInput(f.path,f.expected));}finally{f.close();}
  }
  const crossed=compilerPairs.flatMap(({compiler,template})=>compilerPairs.filter(pair=>pair.template!==template).map(pair=>({compiler,template:pair.template})));
- for(const options of [...crossed,{compiler:'arbitrary-compiler',template:'record-demonstration-1'}]){
+ for(const options of [...crossed,{compiler:'arbitrary-compiler',template:'record-demonstration-1'},
+   {compiler:'motion-process-compiler-1',template:'controlled-process-1'}]){
   const f=fixture(options);try{assert.throws(()=>verifyInput(f.path,f.expected),/project_contract_mismatch/);}finally{f.close();}
+ }
+});
+test('process2 schema cannot be crossed with a legacy compiler or arbitrary plan',()=>{
+ for(const options of [
+  {compiler:'motion-process-compiler-2',template:'controlled-process-2',planSchema:'video.motion-plan.v1'},
+  {compiler:'motion-compiler-5',template:'technical-diagrams-5',planSchema:'video.process-plan.v1'}]){
+  const f=fixture(options);try{assert.throws(()=>verifyInput(f.path,f.expected),/project_schema_compiler_mismatch/);}finally{f.close();}
  }
 });
 test('a rehashed timeline cannot claim a different compiler from its frozen manifest',()=>{

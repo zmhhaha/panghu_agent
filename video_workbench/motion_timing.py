@@ -9,6 +9,8 @@ from agent_service.contracts import ServiceError, digest
 from .audio_store import narration_document
 from .motion import (estimated_alignment, make_beats, manual_alignment,
                      resolve_timeline, semantic_digest, validate_alignment)
+from .motion_process import resolve_process_timeline
+from .motion_store import PROCESS_CANDIDATE_COMPILER, plan_diagram_kind
 
 
 MAX_PROJECT_ALIGNMENTS = 256
@@ -50,8 +52,15 @@ class MotionTiming:
                          estimated_alignment(beats, audio['sha256'], audio['duration_seconds']))
             _require(alignment['audio_sha256'] == audio['sha256'] and
                      alignment['audio_seconds'] == audio['duration_seconds'], 'motion_audio_binding_mismatch', 409)
-            timeline = resolve_timeline(version['plan'], beats, alignment,
-                leading_seconds=scene.get('leading_seconds', 0), trailing_seconds=scene.get('trailing_seconds', 0))
+            options = dict(leading_seconds=scene.get('leading_seconds', 0),
+                           trailing_seconds=scene.get('trailing_seconds', 0))
+            if plan_diagram_kind(version['plan']) == 'process':
+                _require(version.get('compiler_version') == PROCESS_CANDIDATE_COMPILER,
+                         'process_candidate_compiler_invalid', 409)
+                timeline = resolve_process_timeline(version['plan'], beats, alignment,
+                    compiler_version=PROCESS_CANDIDATE_COMPILER, **options)
+            else:
+                timeline = resolve_timeline(version['plan'], beats, alignment, **options)
             return dict(project_id=project['id'], project_revision=project['revision'], scene_id=scene['id'],
                 version_id=version_id, audio_version_id=audio_version_id, beats=beats, alignment=alignment,
                 alignment_sha256=digest(alignment), requires_review=alignment['review_status'] != 'verified',

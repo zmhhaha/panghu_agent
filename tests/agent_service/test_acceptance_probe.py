@@ -30,6 +30,7 @@ def config(profile='ppt.plan_initial.v1', engine='pi'):
     _, hosts, _ = catalog.generate(pi_image=IMAGE,
         hermes_image='registry.invalid/agent-hermes@sha256:' + 'b' * 64,
         engine='pi', runtime_revision='runtime-v1', include_motion=(profile == 'video.motion-plan.v1'),
+        include_process=(profile == 'video.process-plan.v1'),
         include_explanation=(profile == 'video.explanation-plan.v1'))
     return HostConfig.model_validate(next(value for value in hosts.values()
         if value['profile']['name'] == profile and value['engine'] == engine))
@@ -67,7 +68,7 @@ def test_fixture_matches_actual_profile_contract(profile):
 
 
 @pytest.mark.parametrize('profile', ['video.storyboard.v1', 'video.scene.v1', 'video.motion-plan.v1',
-                                   'video.explanation-plan.v1'])
+                                   'video.explanation-plan.v1', 'video.process-plan.v1'])
 def test_video_probe_requires_explicit_reviewed_scenario(image_packages, profile):
     with pytest.raises(ServiceError, match='candidate_scenario_required'):
         probe.fixture(profile)

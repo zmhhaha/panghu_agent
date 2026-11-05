@@ -30,6 +30,20 @@ function project(id = 'p1', revision = 1) {
     motion: { mode: 'motion', head_version_id: `m${index}`, versions: [{ id: `m${index}`, stale: false }], head_stale: false },
   })) };
 }
+
+test('process candidates visibly block continuity planning while preserving ordinary drafts', async () => {
+  const h = harness();
+  h.state.context.project.scenes[0].motion.versions[0].diagram_kind = 'process';
+  await h.load();
+  assert.match(continuityIssues(h.state.context.project)[0], /过程演示.*普通整片草稿/);
+  assert.equal(h.$('propose-continuity').disabled, true);
+  assert.equal(h.$('preview-continuity').disabled, true);
+  assert.match(h.$('continuity-issues').textContent, /过程演示.*普通整片草稿/);
+  await h.panel.propose();
+  assert.equal(h.state.calls.filter(row => row.options.method === 'POST').length, 0);
+  assert.match(continuityErrorLabel('process_continuity_not_supported'), /普通整片草稿/);
+  assert.equal(h.state.context.project.scenes[0].motion.head_version_id, 'm1');
+});
 function version(id = 'v1', links = [link()]) {
   return { id, stale: false, adoptable: true, plan: { schema: 'video.continuity-plan.v1', links },
     scene_summaries: [

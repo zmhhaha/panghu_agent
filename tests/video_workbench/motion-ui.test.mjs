@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
   createMotionPanel, createMotionRequest, createMotionAdoption, createMotionRenderRequest, createProjectMotionDraftRequest,
-  currentMotionAudio, hasMotionScenes, usesDynamicVideo, createDynamicProjectRequest, motionMetadata, motionErrorLabel, motionSelection, validateMotionSegments,
+  currentMotionAudio, hasMotionScenes, usesDynamicVideo, createDynamicProjectRequest, motionMetadata, motionDiagramKind, motionErrorLabel, motionSelection, validateMotionSegments,
 } from '../../video_workbench/web/motion.mjs';
 import { deliveryIssues, isActiveOperation, isUnresolvedProductionOperation } from '../../video_workbench/web/model.mjs';
 
@@ -86,6 +86,74 @@ function harness() {
 }
 const posts = h => h.state.calls.filter(row => ['POST', 'PATCH'].includes(row.options.method));
 const timingInput = (h, index, field = 0) => h.$('motion-timing-rows').children[index].children[field + 1].children[0];
+
+test('process requests are explicit, legacy requests stay identical and revisions cannot change kind', () => {
+  const p = project(), scene = p.scenes[0], base = { id: 'process-1', diagram_kind: 'process' };
+  assert.equal(motionDiagramKind(base), 'process');
+  assert.equal(motionDiagramKind({ plan: { schema: 'video.process-plan.v1' } }), 'process');
+  assert.deepEqual(createMotionRequest(p, scene, ' 失败返回 ', null, 'process').body,
+    { expected_revision: 1, instruction: '失败返回', diagram_kind: 'process' });
+  assert.deepEqual(createMotionRequest(p, scene, '再演示', base, 'process').body,
+    { expected_revision: 1, instruction: '再演示', base_version_id: base.id, diagram_kind: 'process' });
+  assert.throws(() => createMotionRequest(p, scene, '', base));
+  assert.throws(() => createMotionRequest(p, scene, '', scene.motion.versions[0], 'process'));
+  assert.throws(() => createMotionRequest(p, scene, '', null, 'arbitrary'));
+});
+
+test('process choice is per scene, opt-in and read-only until an explicit generation', async () => {
+  const h = harness(); await h.load();
+  h.$('motion-diagram-kind').value = 'process'; await h.$('motion-diagram-kind').emit('change');
+  assert.equal(h.$('generate-motion').disabled, true);
+  assert.match(h.$('motion-process-note').textContent, /尚未启用/);
+  await h.panel.generate(); assert.equal(posts(h).length, 0);
+  h.state.context.processConfigured = true; h.panel.render();
+  assert.equal(h.$('generate-motion').disabled, false);
+  h.setProject(project('p2'), 2); await h.load();
+  assert.equal(h.$('motion-diagram-kind').value, 'diagram');
+  h.setProject(project(), 3); await h.load();
+  assert.equal(h.$('motion-diagram-kind').value, 'process');
+  assert.equal(posts(h).length, 0);
+  h.state.transport = async () => ({ id: 'op-process', status: 'running' });
+  await h.panel.generate();
+  assert.equal(posts(h).length, 1);
+  assert.equal(posts(h)[0].options.body.diagram_kind, 'process');
+  assert.equal(h.state.context.scene.motion.head_version_id, null);
+});
+
+test('revision follows reviewed process candidate despite a different new-generation choice', async () => {
+  const h = harness(); h.state.context.processConfigured = true;
+  h.state.data.scenes[0].motion.versions[0].diagram_kind = 'process';
+  h.state.transport = async (path, options, fallback) => {
+    if (options.method === 'POST') return { id: 'revised', status: 'running' };
+    const row = await fallback(path);
+    if (path.endsWith('/motion-versions/v1')) {
+      row.plan.schema = 'video.process-plan.v1';
+      row.plan.relations = [{ id: 'return', source: 'queue', target: 'queue', label: '<svg>返回' }];
+      row.plan.actions = [
+        { beat_id: 'b1', target: 'queue', kind: 'transfer', relation_id: 'return', placement: 'middle', pace: 'normal' },
+        { beat_id: 'b2', target: 'queue', kind: 'set_state', state: 'failed', placement: 'start', pace: 'normal' }];
+    }
+    return row;
+  };
+  await h.load();
+  assert.match(h.$('motion-review').textContent, /过程演示/);
+  assert.match(h.$('motion-review').textContent, /沿关系传递.*<svg>返回/);
+  assert.match(h.$('motion-review').textContent, /状态变化：失败/);
+  h.$('motion-diagram-kind').value = 'diagram'; await h.$('motion-diagram-kind').emit('change');
+  h.$('motion-instruction').value = '重试后完成'; await h.$('motion-instruction').emit('input');
+  assert.equal(posts(h).length, 0);
+  await h.panel.generate(true);
+  assert.deepEqual(posts(h)[0].options.body, { expected_revision: 1, instruction: '重试后完成',
+    base_version_id: 'v1', diagram_kind: 'process' });
+});
+
+test('global motion gate still blocks process even with a stale configured capability', async () => {
+  const h = harness(); h.state.context.processConfigured = true;
+  await h.load(); h.$('motion-diagram-kind').value = 'process'; await h.$('motion-diagram-kind').emit('change');
+  h.state.context.enabled = false; h.panel.render();
+  assert.equal(h.$('generate-motion').disabled, true);
+  await h.panel.generate(); assert.equal(posts(h).length, 0);
+});
 
 test('generation, adoption and draft requests bind exact reviewed candidate, revision and adopted recording', () => {
   const p = project('../p?'), scene = p.scenes[0], candidate = scene.motion.versions[0];

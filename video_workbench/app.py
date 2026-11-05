@@ -36,7 +36,7 @@ from .explanation_workflow import ExplanationWorkflow
 from .motion_store import MotionStore
 from .motion_timing import MotionTiming
 from .motion_workflow import MotionWorkflow
-from .motion_gateway import MotionAgentGateway
+from .motion_gateway import MotionAgentGateway, ProcessAgentGateway
 from .continuity_store import ContinuityStore
 from .batch_store import BatchStore
 from .batch_workflow import BatchWorkflow
@@ -80,6 +80,11 @@ MESSAGES = {
     'explanation_head_conflict': '已采用的讲解方案发生变化，请重新读取后核对。',
     'explanation_storage_limit': '讲解方案记录已达到当前存储限制。',
     'motion_disabled': '动态图解尚未启用，仍可查看历史和取消在途任务。',
+    'process_disabled': '过程演示尚未启用，已有候选和录音仍可查看。',
+    'process_profile_unavailable': '过程演示生成服务尚未就绪，请稍后重新读取。',
+    'process_continuity_not_supported': '过程演示暂不支持跨镜连续衔接，可制作单镜或普通整片草稿。',
+    'motion_diagram_kind_mismatch': '修改应沿用所选方案的图解方式，切换方式请生成新候选。',
+    'motion_base_kind_mismatch': '修改应沿用所选方案的图解方式，切换方式请生成新候选。',
     'project_production_mode_busy': '项目有制作任务正在执行，请等待完成或取消后再转为动态制作。',
     'dynamic_workflow_required': '请使用动态视频的预览与导出入口，先完成动态图解并核对配音时序。',
     'motion_plan_stale': '这份动态图解对应旧内容，请重新生成。',
@@ -217,6 +222,10 @@ class ExplanationAdoption(Revision):
 class Generation(Revision):
     base_version_id: str | None = Field(default=None, max_length=100)
     instruction: str = Field(default='', max_length=8000)
+
+
+class MotionGeneration(Generation):
+    diagram_kind: Literal['diagram', 'process'] = 'diagram'
 
 
 class Adoption(Fields):
@@ -396,7 +405,8 @@ def export_project(store, owner, project):
 def create_app(*, db_path=None, gateway=None, local_mode=False, background=True, trusted_hosts=None,
                speech_client=None, renderer=None, render_enabled=None,
                explanation_gateway=None, explanation_enabled=None, motion_gateway=None,
-               motion_enabled=None, motion_renderer=None, motion_runtime=None):
+               motion_enabled=None, motion_renderer=None, motion_runtime=None,
+               process_gateway=None, process_enabled=None):
     explanation_settings = ExplanationSettings.from_env()
     enabled = explanation_settings.enabled if explanation_enabled is None else explanation_enabled
     if type(enabled) is not bool:
@@ -405,6 +415,10 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     motion_gate = motion_settings.enabled if motion_enabled is None else motion_enabled
     if type(motion_gate) is not bool:
         raise ValueError('An explicit boolean motion feature gate is required')
+    process_gate = motion_settings.process_enabled if process_enabled is None else process_enabled
+    if type(process_gate) is not bool:
+        raise ValueError('An explicit boolean process feature gate is required')
+    process_gate = process_gate and motion_gate
     owned_client = None
     owned_speech_client = None
     if gateway is None:
@@ -434,7 +448,10 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     motion_timing = MotionTiming(motion_store)
     if motion_gateway is None and isinstance(gateway, VideoAgentGateway):
         motion_gateway = MotionAgentGateway(gateway.client, motion_settings.revision)
-    motion_workflow = MotionWorkflow(motion_store, motion_gateway, enabled=motion_gate)
+    if process_gateway is None and isinstance(gateway, VideoAgentGateway):
+        process_gateway = ProcessAgentGateway(gateway.client, motion_settings.process_revision)
+    motion_workflow = MotionWorkflow(motion_store, motion_gateway, enabled=motion_gate,
+                                    process_gateway=process_gateway, process_enabled=process_gate)
     owned_motion_renderer = None
     if motion_renderer is None and os.environ.get('VIDEO_MOTION_RENDER_URL'):
         from .motion_render_adapter import configured_motion_renderer
@@ -567,6 +584,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     media_configured=production.enabled,
                     explanation_configured=enabled and explanation_gateway is not None,
                     motion_enabled=motion_gate, motion_configured=motion_gate and motion_gateway is not None,
+                    process_enabled=process_gate, process_configured=process_gate and process_gateway is not None,
                     batch_enabled=motion_gate, continuity_enabled=motion_gate,
                     default_production_mode='motion' if motion_gate else 'static',
                     motion_render_configured=motion_gate and motion_renderer is not None and runtime is not None)
@@ -664,10 +682,14 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         return motion_store.project(owner, project_id)
 
     @app.post('/api/scenes/{scene_id}/motion', status_code=202)
-    def generate_motion(scene_id: str, body: Generation, owner=Depends(mutation),
+    def generate_motion(scene_id: str, body: MotionGeneration, owner=Depends(mutation),
                         idempotency_key: str | None = Header(default=None)):
-        motion_workflow.require_gateway()
-        return motion_store.start(owner, scene_id, body.model_dump(), idempotency(idempotency_key))
+        motion_workflow.require_gateway(body.diagram_kind)
+        document = body.model_dump()
+        if document['diagram_kind'] == 'diagram':
+            # Preserve exact old generation request identities across upgrades.
+            document.pop('diagram_kind')
+        return motion_store.start(owner, scene_id, document, idempotency(idempotency_key))
 
     @app.get('/api/motion-versions/{version_id}')
     def motion_version(version_id: str, owner=Depends(identity)):

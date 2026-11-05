@@ -30,6 +30,8 @@ from .motion import COMPILER_TEMPLATES, compile_project
 from .continuity import (CONTINUITY_COMPILER_TEMPLATES,
                          compile_continuity_project)
 from .motion_review import verify_observations
+from .motion_dispatch import PROCESS_SCHEMA, PRODUCTION_PROCESS_COMPILER, scene_compiler
+from .process_review import verify_process_observations
 from .motion_renderer.job import FILES, INIT, freeze_input
 from .motion_render_adapter import UNAVAILABLE
 
@@ -191,7 +193,8 @@ def production_resources(directory, *, image, release_id, namespace, name, bindi
     frozen = freeze_input(directory, image_digest=image.rsplit('@', 1)[1], max_payload_bytes=BUNDLE_BYTES)
     manifest = json.loads((Path(directory) / 'manifest.json').read_bytes())
     require(COMPILER_TEMPLATES.get(manifest['compiler']) == manifest['template'] or
-            CONTINUITY_COMPILER_TEMPLATES.get(manifest['compiler']) == manifest['template'],
+            CONTINUITY_COMPILER_TEMPLATES.get(manifest['compiler']) == manifest['template'] or
+            (manifest['compiler'], manifest['template']) == (PRODUCTION_PROCESS_COMPILER, 'controlled-process-2'),
             'motion_production_template_not_supported', 422)
     labels = {'app': 'video-motion-renderer', LABEL + 'execution': binding[:32]}
     annotations = {ANNOTATION: binding, LABEL + 'bundle-sha256': frozen['bundle_sha256'],
@@ -347,7 +350,13 @@ def validate_artifacts(entries, files, runtime, quality):
                     filename = 'observations/continuity-' + key.replace('_', '-') + '.jpg'
                     require(sha(entries[filename]) == boundary[key]['frame_sha256'],
                             'motion_observation_frame_mismatch')
-        review = verify_observations(json.loads(files['plan.json']), json.loads(files['timeline.json']), observations)
+        plan, timeline = json.loads(files['plan.json']), json.loads(files['timeline.json'])
+        if plan.get('schema') == PROCESS_SCHEMA or timeline.get('compiler') == PRODUCTION_PROCESS_COMPILER:
+            scene_compiler(plan, compiler_version=timeline.get('compiler'))
+            reviewer = verify_process_observations
+        else:
+            reviewer = verify_observations
+        review = reviewer(plan, timeline, observations)
         return {'technical_review': review, 'media_sha256': sha(entries['output.mp4']),
                 'manifest_sha256': manifest_sha, 'runtime_fingerprint': runtime, 'quality': quality}
     except (KeyError, ValueError, TypeError, UnicodeError, RecursionError, OverflowError):
@@ -496,9 +505,10 @@ class KubeSceneRenderer:
             files = compile_continuity_project(scene, scene['continuity'], runtime_fingerprint=self.runtime)
             expected_files = scene['continuity_project_files_sha256']
         else:
-            files = compile_project(motion['plan'], motion['beats'], motion['alignment'],
+            _, compiler, version = scene_compiler(motion['plan'], compiler_version=motion['timeline']['compiler'])
+            files = compiler(motion['plan'], motion['beats'], motion['alignment'],
                 runtime_fingerprint=self.runtime, leading_seconds=scene['timing']['leading_seconds'],
-                trailing_seconds=scene['timing']['trailing_seconds'], compiler_version=motion['timeline']['compiler'])
+                trailing_seconds=scene['timing']['trailing_seconds'], compiler_version=version)
             expected_files = motion['project_files_sha256']
         require({name: sha(raw) for name, raw in files.items()} == expected_files,
                 'motion_frozen_project_mismatch', 409)

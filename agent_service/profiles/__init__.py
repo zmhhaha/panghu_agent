@@ -21,6 +21,9 @@ def implementation(name):
     if name == 'video.motion-plan.v1':
         from .video_motion import VideoMotionProfile
         return VideoMotionProfile()
+    if name == 'video.process-plan.v1':
+        from .video_process import VideoProcessProfile
+        return VideoProcessProfile()
     if name == 'video.explanation-plan.v1':
         from .video_explanation import VideoExplanationProfile
         return VideoExplanationProfile()

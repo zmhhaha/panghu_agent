@@ -16,8 +16,8 @@ import re
 
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from . import media
-from .motion import (COMPILER_VERSION, compile_project, resolve_timeline, validate_alignment,
-                     semantic_digest)
+from .motion import validate_alignment, semantic_digest
+from .motion_dispatch import scene_compiler
 from .speech import inspect_wav
 from .audio_store import narration_document, narration_binding
 
@@ -142,11 +142,16 @@ def freeze_snapshot_v2(project_id, revision, title, scenes, *, runtime_fingerpri
             # replacing it with the new default would silently alter old bytes.
             if 'timeline' in motion:
                 _require(type(motion['timeline']) is dict, 'motion_snapshot_corrupt', 409)
-                options['compiler_version'] = motion['timeline'].get('compiler')
+                resolver, compiler, version = scene_compiler(plan,
+                    compiler_version=motion['timeline'].get('compiler'))
+            elif 'compiler_version' in motion:
+                resolver, compiler, version = scene_compiler(plan,
+                    compiler_version=motion['compiler_version'])
             else:
-                options['compiler_version'] = COMPILER_VERSION
-            timeline = resolve_timeline(plan, beats, alignment, **options)
-            project = compile_project(plan, beats, alignment, runtime_fingerprint=fingerprint, **options)
+                resolver, compiler, version = scene_compiler(plan)
+            options['compiler_version'] = version
+            timeline = resolver(plan, beats, alignment, **options)
+            project = compiler(plan, beats, alignment, runtime_fingerprint=fingerprint, **options)
             duration = timeline['duration_seconds']
             captions = dict(audio_sha256=audio['sha256'], alignment='none', requires_review=False, cues=[])
             if subtitles:

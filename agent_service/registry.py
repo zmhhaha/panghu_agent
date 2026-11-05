@@ -24,7 +24,7 @@ OutputSchema = Literal['text-output.v1', 'ppt-plan_initial-output.v1', 'ppt-plan
     'research-output.v1', 'research-revision-output.v1', 'research-plan-output.v1',
     'research-retrieve-output.v1', 'research-outline-output.v1', 'research-draft-output.v1',
     'video-storyboard-output.v1', 'video-scene-output.v1', 'video-motion-plan-output.v1',
-    'video-explanation-plan-output.v1']
+    'video-explanation-plan-output.v1', 'video-process-plan-output.v1']
 
 NAME = r'^[a-z][a-z0-9_.-]{0,79}$'
 REVISION = r'^[A-Za-z0-9_.-]{1,100}$'

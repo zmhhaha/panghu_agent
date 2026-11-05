@@ -9,6 +9,7 @@ const linksSignature = links => JSON.stringify(copyLinks(links).sort((a, b) => k
 
 export function continuityErrorLabel(code) {
   const labels = {
+    process_continuity_not_supported: '过程演示暂不支持跨镜连续衔接，请使用单镜或普通整片草稿。',
     continuity_plan_stale: '镜头内容或已采用图解已变化，请重新规划连续方案。',
     continuity_head_conflict: '已采用的连续方案已变化，请重新读取并核对。',
     continuity_requires_scenes: '连续图解至少需要两个镜头。',
@@ -46,6 +47,9 @@ export function continuityIssues(project, { audio = false } = {}) {
     const head = motion?.versions?.find(row => row.id === motion.head_version_id);
     if (motion?.mode !== 'motion' || !motion.head_version_id || motion.head_stale || !head || head.stale) {
       issues.push(`${title}：请先采用有效动态图解。`);
+    }
+    if (head?.diagram_kind === 'process') {
+      issues.push(`${title}：过程演示暂不支持跨镜连续衔接，可制作普通整片草稿。`);
     }
     if (audio) {
       const recording = scene.audio_versions?.find(row => row.id === scene.head_audio_version_id);
