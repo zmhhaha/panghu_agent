@@ -161,3 +161,19 @@ and the Office processes exited. Receipt:
 outer `.research-temp/ppt-nasa-office-e81-20261105-r1/receipt.json`,
 `passed=true`. The owner's visual confirmation is still pending and this
 Version remains unpublished. The PPT parent remains 145/146 with R1 open.
+
+### Owner confirmation follow-up — 2026-11-05
+
+The owner subsequently replied “我已经视觉确认，还是不错的” for the six-page
+NASA review Version `e81f58f1-f589-4236-b0d2-3ea04e0daedb`. Together with its
+seven strict programmatic gates and actual PowerPoint result, this supplies
+the remaining R1 acceptance evidence and permits a 146/146 PPT closeout.
+The normal website saved the e81 visual check at
+`2026-11-05 20:02:47 Asia/Shanghai`, checker `27714443`, review revision 2;
+the original desktop-operation record at revision 1 remains retained.
+Independent programmatic, per-page visual, PowerPoint desktop and complete
+acceptance now display passed. The PPT parent passed validation at 146/146 and
+was archived as `2026-11-05-add-hermes-ppt-workbench`, with main specs updated
+at OpenSpec revision `92088c7c6cbcadceb76d17e5f65e3fc569fbbe96`. The shared
+platform P1–P4 remain open. The Version remains unpublished; visual confirmation
+is not formal publication authorization.

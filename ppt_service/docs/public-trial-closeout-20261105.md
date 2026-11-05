@@ -109,3 +109,28 @@ All seven strict programmatic gates and actual Office operation now pass for
 this corrected review draft. The owner's NASA visual confirmation remains
 pending, no publication has been recorded, and the PPT parent remains 145/146
 with R1 open. Shared platform P1–P4 continue in their independent change.
+
+## Owner visual confirmation — 2026-11-05
+
+After the preceding pending checkpoint, the owner explicitly replied
+“我已经视觉确认，还是不错的” to the request concerning the six-page NASA
+review Version `e81f58f1-f589-4236-b0d2-3ea04e0daedb`. This is the owner's
+actual visual confirmation for that Version, alongside its seven passing
+strict programmatic gates and exact-version PowerPoint operation above.
+The visual check was saved for this exact Version through the normal website
+at `2026-11-05 20:02:47 Asia/Shanghai`, checker `27714443`, review revision 2.
+The original desktop-operation record at revision 1 remains retained. The
+website shows independent programmatic, per-page visual, PowerPoint desktop
+and complete acceptance as passed.
+
+This completed R1 and the PPT parent's 146/146 tasks. OpenSpec validation passed
+without issues, and its normal archive operation succeeded as
+`2026-11-05-add-hermes-ppt-workbench`, with `specsUpdated=true` at revision
+`92088c7c6cbcadceb76d17e5f65e3fc569fbbe96`. The active change list no longer
+contains the parent. The shared platform change still has its four P1–P4 tasks
+open. The independent website readback is retained in outer workspace
+`.research-temp/ppt-nasa-owner-visual-20261105.txt`.
+
+The NASA Version remains unpublished. Visual confirmation does not authorize
+formal publication, and no such authorization is inferred. Shared platform
+P1–P4 remain independently incomplete.
