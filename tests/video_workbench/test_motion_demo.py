@@ -209,7 +209,11 @@ def test_r8_real_projects_remain_byte_identical_when_available():
         directory = root / name
         args = [json.loads((directory / f'{kind}.json').read_bytes()) for kind in ('plan', 'beats', 'alignment')]
         manifest, timeline = [json.loads((directory / f'{kind}.json').read_bytes()) for kind in ('manifest', 'timeline')]
+        # Rebuild the frozen artifact's compiler, not today's default. These
+        # local R8 projects predate compiler5 and retain their original bytes.
+        assert timeline['compiler'] == manifest['compiler']
         files = compile_project(*args, animated=manifest['animated'], runtime_fingerprint=manifest['runtime_fingerprint'],
-                                leading_seconds=timeline['leading_seconds'], trailing_seconds=timeline['trailing_seconds'])
+                                leading_seconds=timeline['leading_seconds'], trailing_seconds=timeline['trailing_seconds'],
+                                compiler_version=manifest['compiler'])
         for filename, content in files.items():
             assert content == (directory / filename).read_bytes(), (name, filename)
