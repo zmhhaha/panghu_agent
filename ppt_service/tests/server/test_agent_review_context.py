@@ -1,23 +1,67 @@
 """Portable Pi/Hermes review routes; synthetic bytes do not prove acceptance."""
 import copy
+import hashlib
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from ppt_service.control.agent_connector import build_agent_task
+from ppt_service.control.agent_connector import _confirmation, build_agent_task
+from ppt_service.control.chart_oracle import task_chart_oracle
+from ppt_service.control.source_tables import bind_direction, discover_tables
 from ppt_service.server.auth import Identity
 from ppt_service.server.acceptance.domain import AcceptanceError
-from ppt_service.server.models import AgentOutbox, Checkpoint, Job, Plan, Project, Version
+from ppt_service.server.models import AgentOutbox, Asset, Checkpoint, Job, Plan, Project, Version
 from ppt_service.server.repository import Repository, digest
 from ppt_service.server.review_revisions import recheck_review_source, validate_review_base
 from agent_review_fixture import seed_agent_review
+import agent_review_fixture
 from test_api import ctx
 
 
 @pytest.fixture(params=['pi', 'hermes'])
 def portable_review(ctx, request):
     app, client, owners = ctx
+    data = seed_agent_review(app, owners[0], request.param)
+    data['url'] = f"/api/v1/projects/{data['pid']}/versions/{data['vid']}/acceptance"
+    return app, client, owners, data
+
+
+@pytest.fixture(params=['pi', 'hermes'])
+def source_bound_review(ctx, request, monkeypatch):
+    """Bind actual uploaded Markdown bytes before the synthetic deck is seeded.
+
+    This exercises confirmation and revision authority, not rendered-chart
+    quality or publication acceptance for the synthetic fixture presentation.
+    """
+    app, client, owners = ctx
+    raw = b'| Year | Value |\n| --- | --- |\n| 2019 | 0.98 |\n| 2024 | 1.28 |\n'
+    frozen = {}
+
+    class SourceRepository(Repository):
+        def snapshot(self, project):
+            asset = self.s.scalar(select(Asset).where(Asset.project_id == project.id))
+            (app.state.storage.root / asset.storage_key).write_bytes(raw)
+            asset.bytes, asset.sha256 = len(raw), hashlib.sha256(raw).hexdigest()
+            self.s.flush()
+            snapshot = super().snapshot(project)
+            frozen['snapshot'] = snapshot
+            return snapshot
+
+    def source_confirmation(plan):
+        if plan.phase == 'plan_options':
+            snapshot = frozen['snapshot']
+            catalog = discover_tables(app.state.storage.root, snapshot)
+            design = copy.deepcopy(plan.design)
+            chosen = design['directions'][0]
+            chosen['native_chart_specs'] = [{'table_id': catalog['tables'][0]['table_id'],
+                'category_column': 0, 'series_columns': [1], 'slide': 2, 'type': 'column'}]
+            design['directions'][0] = bind_direction(chosen, snapshot, catalog)
+            plan.design = design
+        return _confirmation(plan)
+
+    monkeypatch.setattr(agent_review_fixture, 'Repository', SourceRepository)
+    monkeypatch.setattr(agent_review_fixture, '_confirmation', source_confirmation)
     data = seed_agent_review(app, owners[0], request.param)
     data['url'] = f"/api/v1/projects/{data['pid']}/versions/{data['vid']}/acceptance"
     return app, client, owners, data
@@ -32,6 +76,48 @@ def revision_body(snapshot, data):
 def queue_revision(client, data, body, key='portable-review-revision'):
     return client.post(f"/api/v1/projects/{data['pid']}/review-revisions", json=body,
                        headers={'Idempotency-Key': key})
+
+
+def test_source_bound_review_admits_compact_confirmation_and_preserves_frozen_cells(source_bound_review):
+    app, client, _, data = source_bound_review
+    response = client.get(data['url'])
+    assert response.status_code == 200, response.text
+    with app.state.sessions() as session:
+        confirmation = session.get(AgentOutbox, data['jid']).request['task']['confirmations']['stage2']
+        selected = copy.deepcopy(confirmation['selected_direction'])
+        compact = confirmation['design']['directions'][0]
+        assert 'source_chart_binding' not in compact
+        assert compact == {key: value for key, value in selected.items() if key != 'source_chart_binding'}
+        assert selected['source_chart_binding']['expected_charts'][0]['series'] == [
+            {'name': 'Value', 'values': [0.98, 1.28]}]
+    queued = queue_revision(client, data, revision_body(response.json(), data))
+    assert queued.status_code == 202, queued.text
+    with app.state.sessions.begin() as session:
+        job = Repository(session).claim_next()
+        assert job.id == queued.json()['job_id'] and job.kind == 'revise'
+        recheck_review_source(session, app.state.storage, job)
+        task, _ = build_agent_task(session, job)
+        assert task['confirmations']['stage2']['selected_direction'] == selected
+        assert task_chart_oracle(task)['expected_charts'] == selected['source_chart_binding']['expected_charts']
+        assert session.get(Version, data['vid']).status == 'review'
+        assert len(session.scalars(select(Version)).all()) == 1
+
+
+def test_source_bound_review_rejects_tampered_frozen_confirmation_before_queueing(source_bound_review):
+    app, client, _, data = source_bound_review
+    response = client.get(data['url'])
+    assert response.status_code == 200, response.text
+    with app.state.sessions.begin() as session:
+        out = session.get(AgentOutbox, data['jid'])
+        changed = copy.deepcopy(out.request)
+        binding = changed['task']['confirmations']['stage2']['selected_direction']['source_chart_binding']
+        binding['expected_charts'][0]['series'][0]['values'][0] = 999
+        out.request = changed
+    rejected = queue_revision(client, data, revision_body(response.json(), data))
+    assert rejected.status_code == 409, rejected.text
+    assert rejected.json()['detail']['code'] == 'review_checkpoint_unavailable'
+    with app.state.sessions() as session:
+        assert not session.scalars(select(Job).where(Job.kind == 'revise')).all()
 
 
 def test_portable_review_keeps_actual_engine_and_can_queue_only_private_revision(portable_review):

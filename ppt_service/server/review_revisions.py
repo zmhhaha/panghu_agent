@@ -81,9 +81,11 @@ def _agent_confirmation_context(session, job, checkpoint):
             chosen = selected[0]
             semantic = {key: value for key, value in chosen.items()
                         if key not in {'page_plan', 'production_parameters', 'source_pointer'}}
+            compact = {key: value for key, value in semantic.items()
+                       if key != 'source_chart_binding'}
             outline = chosen.get('page_plan', plan.outline)
             confirmation.update(outline={'pages': outline} if isinstance(outline, list) else outline,
-                design={'directions': [semantic], 'production_parameters': chosen.get(
+                design={'directions': [compact], 'production_parameters': chosen.get(
                     'production_parameters', plan.design.get('production_parameters'))},
                 selected_direction=semantic)
         if not isinstance(expected, dict) or expected.get(stage) != confirmation:
