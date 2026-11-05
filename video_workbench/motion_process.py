@@ -21,14 +21,26 @@ from .motion import (
 from agent_service.contracts import ServiceError
 
 
-PROCESS_COMPILER_VERSION = 'motion-process-compiler-1'
-PROCESS_TEMPLATE_VERSION = 'controlled-process-1'
-PROCESS_LAYOUT = {
+PROCESS_COMPILER_VERSION = 'motion-process-compiler-2'
+PROCESS_TEMPLATE_VERSION = 'controlled-process-2'
+PROCESS_COMPILER_TEMPLATES = {
+    'motion-process-compiler-1': 'controlled-process-1',
+    PROCESS_COMPILER_VERSION: PROCESS_TEMPLATE_VERSION,
+}
+PROCESS_COMPILER_VERSIONS = tuple(PROCESS_COMPILER_TEMPLATES)
+PROCESS_LAYOUT_V1 = {
     'source': (64, 452, 320, 188), 'queue': (480, 452, 320, 188),
     'worker': (896, 452, 320, 188),
     'token_source': (156, 306, 136, 44), 'token_queue': (572, 306, 136, 44),
     'token_worker': (988, 306, 136, 44),
 }
+PROCESS_LAYOUT_V2 = {
+    'source': (64, 260, 280, 268), 'queue': (500, 260, 280, 268),
+    'worker': (936, 260, 280, 268),
+    'token_source': (136, 470, 136, 44), 'token_queue': (572, 470, 136, 44),
+    'token_worker': (1008, 470, 136, 44),
+}
+PROCESS_LAYOUT = PROCESS_LAYOUT_V2
 STATE_PRESENTATIONS = {
     'idle': dict(label='待命', symbol='circle', path='M12 3 A9 9 0 1 1 11.99 3 Z', color='#a8b7cc'),
     'waiting': dict(label='等待', symbol='queue', path='M4 6 H20 M4 12 H20 M4 18 H20', color='#e5c875'),
@@ -36,10 +48,21 @@ STATE_PRESENTATIONS = {
     'completed': dict(label='完成', symbol='check', path='M4 12 L10 18 L21 5', color='#8ae0a3'),
     'failed': dict(label='失败', symbol='cross', path='M5 5 L19 19 M19 5 L5 19', color='#f49b92'),
 }
-_ROUTE_SPECS = {
+_ROUTE_SPECS_V1 = {
     ('source', 'queue'): ([[224, 328], [224, 240], [640, 240], [640, 328]], [312, 180, 240, 28]),
     ('queue', 'worker'): ([[640, 328], [640, 280], [1056, 280], [1056, 328]], [728, 220, 240, 28]),
     ('worker', 'queue'): ([[1056, 328], [1056, 384], [640, 384], [640, 328]], [728, 416, 240, 28]),
+}
+_ROUTE_SPECS_V2 = {
+    ('source', 'queue'): (
+        [[204, 492], [344, 492], [500, 492], [640, 492]],
+        [[344, 492], [500, 492]], [352, 410, 140, 44]),
+    ('queue', 'worker'): (
+        [[640, 492], [780, 492], [936, 492], [1076, 492]],
+        [[780, 492], [936, 492]], [788, 410, 140, 44]),
+    ('worker', 'queue'): (
+        [[1076, 492], [1076, 528], [1076, 598], [640, 598], [640, 528], [640, 492]],
+        [[1076, 528], [1076, 598], [640, 598], [640, 528]], [746, 634, 224, 24]),
 }
 
 
@@ -52,23 +75,53 @@ def _intersects(a, b):
     return a[0] < b[0] + b[2] and b[0] < a[0] + a[2] and a[1] < b[1] + b[3] and b[1] < a[1] + a[3]
 
 
-def process_paths(plan):
+def process_layout(compiler_version=PROCESS_COMPILER_VERSION):
+    """Select trusted, compiler-owned geometry; return no mutable registry alias."""
+    _require(type(compiler_version) is str and compiler_version in PROCESS_COMPILER_TEMPLATES,
+             'unknown_process_compiler')
+    return deepcopy(PROCESS_LAYOUT_V1 if compiler_version == 'motion-process-compiler-1' else PROCESS_LAYOUT_V2)
+
+
+def process_text_areas(compiler_version=PROCESS_COMPILER_VERSION):
+    """Forbidden token regions: whole v1 cards, fixed v2 text/state budgets."""
+    layout = process_layout(compiler_version)
+    if compiler_version == 'motion-process-compiler-1':
+        return {slot: {'card': layout[slot]} for slot in ('source', 'queue', 'worker')}
+    return {slot: {
+        'element-label': (layout[slot][0] + 22, layout[slot][1] + 22, 236, 64),
+        'element-detail': (layout[slot][0] + 22, layout[slot][1] + 92, 236, 48),
+        'state': (layout[slot][0] + 22, layout[slot][1] + 156, 236, 32),
+    } for slot in ('source', 'queue', 'worker')}
+
+
+def process_paths(plan, *, compiler_version=PROCESS_COMPILER_VERSION):
     """Return fixed center-line paths; never accept coordinates from a plan."""
+    layout = process_layout(compiler_version)
+    legacy = compiler_version == 'motion-process-compiler-1'
+    specs = _ROUTE_SPECS_V1 if legacy else _ROUTE_SPECS_V2
     by_id = {row['id']: row for row in plan['elements']}
     result = {}
     for row in plan['relations']:
         pair = by_id[row['source']]['slot'], by_id[row['target']]['slot']
-        _require(pair in _ROUTE_SPECS, 'process_relation_direction_invalid')
-        points, box = deepcopy(_ROUTE_SPECS[pair])
+        _require(pair in specs, 'process_relation_direction_invalid')
+        if legacy:
+            points, box = deepcopy(specs[pair])
+            relation_points = points
+        else:
+            points, relation_points, box = deepcopy(specs[pair])
         result[row['id']] = dict(points=points,
-            path='M ' + ' L '.join(f'{x} {y}' for x, y in points), label_box=box,
+            path='M ' + ' L '.join(f'{x} {y}' for x, y in relation_points), label_box=box,
             source_slot=pair[0], target_slot=pair[1],
             length=sum(math.dist(a, b) for a, b in zip(points, points[1:])))
+        if not legacy:
+            result[row['id']].update(relation_points=relation_points,
+                relation_length=sum(math.dist(a, b) for a, b in zip(relation_points, relation_points[1:])),
+                source_port=relation_points[0], target_port=relation_points[-1])
     # Check complete swept token boxes with an extra 8px margin, including all
     # other relation labels. Lines alone do not establish a clear token route.
     token = next(row for row in plan['elements'] if row['kind'] == 'token')
-    width, height = PROCESS_LAYOUT[token['slot']][2:]
-    obstacles = [PROCESS_LAYOUT[row['slot']] for row in plan['elements'] if row['kind'] == 'card']
+    width, height = layout[token['slot']][2:]
+    obstacles = [box for regions in process_text_areas(compiler_version).values() for box in regions.values()]
     obstacles += [result[row['id']]['label_box'] for row in plan['relations'] if row['label'].strip()]
     for path in result.values():
         for a, b in zip(path['points'], path['points'][1:]):
@@ -80,14 +133,15 @@ def process_paths(plan):
     return result
 
 
-def resolve_process_timeline(plan, beats, alignment, *, leading_seconds=0, trailing_seconds=0):
+def resolve_process_timeline(plan, beats, alignment, *, leading_seconds=0, trailing_seconds=0,
+                             compiler_version=PROCESS_COMPILER_VERSION):
     """Join the independent plan to one existing recording/fixture alignment."""
     beats = validate_beats(beats)
     plan = validate_process_plan(plan, beats)
     alignment = validate_alignment(alignment, beats)
     leading = _number(leading_seconds, 0, 10)
     trailing = _number(trailing_seconds, 0, 10)
-    paths = process_paths(plan)
+    paths = process_paths(plan, compiler_version=compiler_version)
     by_id = {row['id']: row for row in plan['elements']}
     anchors = {row['beat_id']: row for row in alignment['segments']}
     actions = []
@@ -152,7 +206,7 @@ def resolve_process_timeline(plan, beats, alignment, *, leading_seconds=0, trail
     duration_seconds = math.ceil((leading + alignment['audio_seconds'] + trailing) * FPS) / FPS
     _require(all(row['start'] + row['duration'] <= duration_seconds - 1 / FPS + .000001
                  for row in actions), 'process_final_hold_required')
-    return dict(schema='video.motion-timeline.v1', compiler=PROCESS_COMPILER_VERSION,
+    return dict(schema='video.motion-timeline.v1', compiler=compiler_version,
         plan_sha256=sha256(plan), semantic_sha256=semantic_digest(beats), alignment_sha256=sha256(alignment),
         audio_sha256=alignment['audio_sha256'], spoken_sha256=alignment['spoken_sha256'],
         audio_seconds=alignment['audio_seconds'], leading_seconds=leading, trailing_seconds=trailing,
@@ -173,20 +227,24 @@ def _state_markup(identity):
 
 
 def compile_process_project(plan, beats, alignment, *, animated=True, runtime_fingerprint=None,
-                            leading_seconds=0, trailing_seconds=0):
+                            leading_seconds=0, trailing_seconds=0, compiler_version=PROCESS_COMPILER_VERSION):
     """Compile bounded data into the ordinary six frozen project files."""
     beats = validate_beats(beats)
     plan = validate_process_plan(plan, beats)
     alignment = validate_alignment(alignment, beats)
     _require(type(animated) is bool, 'invalid_process_options')
     timeline = resolve_process_timeline(plan, beats, alignment, leading_seconds=leading_seconds,
-                                        trailing_seconds=trailing_seconds)
-    boxes = {row['id']: PROCESS_LAYOUT[row['slot']] for row in plan['elements']}
+                                        trailing_seconds=trailing_seconds, compiler_version=compiler_version)
+    layout = process_layout(compiler_version)
+    legacy = compiler_version == 'motion-process-compiler-1'
+    boxes = {row['id']: layout[row['slot']] for row in plan['elements']}
     markup = []
     for row in plan['elements']:
         x, y, width, height = boxes[row['id']]
         detail = f'<div class="element-detail">{html.escape(row["detail"])}</div>' if row['detail'] else ''
         badge = _state_markup(row['id']) if row['kind'] == 'card' else ''
+        if not legacy and row['kind'] == 'card':
+            badge += '<div class="docking-bay" aria-hidden="true"></div>'
         opacity = timeline['initial_visibility'][row['id']]
         markup.append(f'<div id="el-{row["id"]}" class="element {row["kind"]}" data-motion-element="{row["id"]}" '
             f'style="left:{x}px;top:{y}px;width:{width}px;height:{height}px;opacity:{opacity}">'
@@ -196,6 +254,16 @@ def compile_process_project(plan, beats, alignment, *, animated=True, runtime_fi
         path = timeline['paths'][row['id']]
         identity = row['id']
         x, y, width, height = path['label_box']
+        if legacy:
+            label_text = html.escape(row['label'])
+        else:
+            # Conservative 14px character cells fit even full-width CJK.
+            # SVG tspans make wrapping deterministic, independent of CSS.
+            limit = max(1, int((width - 16) // 14))
+            chunks = [row['label'][i:i + limit] for i in range(0, len(row['label']), limit)] or ['']
+            baseline = y + height / 2 - (len(chunks) - 1) * 9 + 5
+            label_text = ''.join(f'<tspan x="{x + width / 2}" y="{baseline + index * 18}">'
+                                 f'{html.escape(chunk)}</tspan>' for index, chunk in enumerate(chunks))
         connections.append(f'<g><defs><marker id="arrow-{identity}" markerWidth="10" markerHeight="10" '
             f'refX="8" refY="5" orient="auto" markerUnits="userSpaceOnUse">'
             f'<path id="tip-{identity}" d="M0 0 L10 5 L0 10 Z" fill="#72d9e2" opacity="0"/></marker></defs>'
@@ -204,9 +272,9 @@ def compile_process_project(plan, beats, alignment, *, animated=True, runtime_fi
             f'<g id="label-{identity}" class="relation-label" data-motion-relation="{identity}" '
             f'data-has-label="{1 if row["label"].strip() else 0}" opacity="0">'
             f'<rect x="{x}" y="{y}" width="{width}" height="{height}" rx="8"/>'
-            f'<text x="{x + width / 2}" y="{y + 20}" text-anchor="middle">{html.escape(row["label"])}</text></g></g>')
-    payload = dict(plan=plan, timeline=timeline, boxes=boxes, layout=PROCESS_LAYOUT, animated=animated)
-    page = _PAGE
+            f'<text x="{x + width / 2}" y="{y + 20}" text-anchor="middle">{label_text}</text></g></g>')
+    payload = dict(plan=plan, timeline=timeline, boxes=boxes, layout=layout, animated=animated)
+    page = _PAGE_V1 if legacy else _PAGE_V2
     replacements = dict(__DURATION__=str(timeline['duration_seconds']), __TITLE__=html.escape(plan['title']),
                         __TAKEAWAY__=html.escape(plan['takeaway']), __ELEMENTS__=''.join(markup),
                         __RELATIONS__=''.join(connections), __PAYLOAD__=_safe_script_json(payload),
@@ -214,8 +282,8 @@ def compile_process_project(plan, beats, alignment, *, animated=True, runtime_fi
     page = re.sub('|'.join(map(re.escape, replacements)), lambda match: replacements[match.group()], page)
     files = {'index.html': page.encode('utf-8'), 'plan.json': canonical(plan), 'beats.json': canonical(beats),
              'alignment.json': canonical(alignment), 'timeline.json': canonical(timeline)}
-    manifest = dict(schema='video.motion-project.v1', compiler=PROCESS_COMPILER_VERSION,
-        template=PROCESS_TEMPLATE_VERSION, hyperframes=HYPERFRAMES_VERSION, gsap=GSAP_VERSION,
+    manifest = dict(schema='video.motion-project.v1', compiler=compiler_version,
+        template=PROCESS_COMPILER_TEMPLATES[compiler_version], hyperframes=HYPERFRAMES_VERSION, gsap=GSAP_VERSION,
         width=WIDTH, height=HEIGHT, fps=FPS, animated=animated, plan_sha256=sha256(plan),
         semantic_sha256=semantic_digest(beats), timeline_sha256=sha256(timeline),
         audio_sha256=alignment['audio_sha256'], runtime_fingerprint=deepcopy(runtime_fingerprint),
@@ -225,7 +293,7 @@ def compile_process_project(plan, beats, alignment, *, animated=True, runtime_fi
     return files
 
 
-_PAGE = '''<!doctype html>
+_PAGE_V1 = '''<!doctype html>
 <html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=1280,height=720">
 <title>受控过程演示</title><script src="assets/gsap.min.js"></script><style>
 @font-face{font-family:VideoNoto;src:url('assets/NotoSansCJK-Regular.ttc');font-weight:100 900;font-display:block}
@@ -324,3 +392,31 @@ window.__videoMotion={version:'motion-process-compiler-1',planSha256:data.timeli
 tl.seek(0,false);
 })();
 </script></body></html>'''
+
+
+# The v1 page above is immutable compiler output. Changes to card internals,
+# relation wrapping or DOM observation apply only to this separately selected
+# v2 page; no metadata is injected into an explicitly rebuilt v1 project.
+_PAGE_V2 = (_PAGE_V1
+    .replace("version:'motion-process-compiler-1'", "version:'motion-process-compiler-2'")
+    .replace('</style>', '''
+.card{padding:0}
+.card .element-label{position:absolute;left:20px;top:20px;width:236px;height:64px;margin:0}
+.card .element-detail{position:absolute;left:20px;top:90px;width:236px;height:48px;margin:0;font-size:16px;line-height:24px}
+.state-badge{left:20px;right:auto;top:154px;bottom:auto;width:236px;height:32px}
+.docking-bay{position:absolute;left:12px;top:202px;width:252px;height:56px;border:1px solid #354d68;border-radius:12px;background:#122033;opacity:1}
+.relation-label text{font-size:14px}
+</style>''')
+    .replace('const layers=Array.from(el.querySelectorAll(\'.state-layer\'));',
+             "const layers=Array.from(el.querySelectorAll('.state-layer')),bay=el.querySelector('.docking-bay');")
+    .replace('left:box.x+20,top:box.y+18,right:box.x+box.width-20,bottom:box.y+box.height-18',
+             'left:box.x+22,top:box.y+22,right:box.x+258,bottom:box.y+188')
+    .replace('),stateOpacities:',
+             "),docking_bay:bay?{...rect(bay),owner:bay.closest('[data-motion-element]').dataset.motionElement,opacity:Number(getComputedStyle(bay).opacity)*Number(style.opacity)}:null,stateOpacities:")
+    .replace('window.__videoMotion=', '''const observedPort=(id,fraction)=>{
+ const path=relation(id),p=path.getPointAtLength(path.getTotalLength()*fraction),matrix=path.getScreenCTM();
+ const point=new DOMPoint(p.x,p.y).matrixTransform(matrix);return{x:point.x,y:point.y};
+};
+window.__videoMotion=''')
+    .replace('length:relation(r.id).getTotalLength(),markerOpacity:',
+             "length:relation(r.id).getTotalLength(),pathD:relation(r.id).getAttribute('d'),sourcePort:observedPort(r.id,0),targetPort:observedPort(r.id,1),middlePoint:observedPort(r.id,.5),markerOpacity:"))

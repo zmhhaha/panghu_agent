@@ -111,10 +111,11 @@ def _path_position(points, progress):
 
 
 def _timeline(plan, timeline):
-    from .motion_process import PROCESS_COMPILER_VERSION, process_paths
+    from .motion_process import PROCESS_COMPILER_VERSIONS, process_paths
 
     _require(type(timeline) is dict and timeline.get('schema') == 'video.motion-timeline.v1'
-             and timeline.get('compiler') == PROCESS_COMPILER_VERSION,
+             and type(timeline.get('compiler')) is str
+             and timeline['compiler'] in PROCESS_COMPILER_VERSIONS,
              'process_timeline_invalid')
     _require(timeline.get('plan_sha256') == sha256(plan), 'process_plan_binding_mismatch')
     for key in ('semantic_sha256', 'alignment_sha256', 'audio_sha256', 'spoken_sha256'):
@@ -145,7 +146,7 @@ def _timeline(plan, timeline):
         previous_end = end
         by_beat[row['beat_id']] = row
     validate_process_plan(plan, [dict(id=identity) for identity in by_beat])
-    expected_paths = process_paths(plan)
+    expected_paths = process_paths(plan, compiler_version=timeline['compiler'])
     _require(timeline.get('paths') == expected_paths, 'process_path_binding_mismatch')
 
     elements = {row['id']: row for row in plan['elements']}
@@ -242,9 +243,11 @@ def _timeline(plan, timeline):
 
 
 def _expected(plan, timeline, time):
-    from .motion_process import PROCESS_LAYOUT
+    from .motion_process import process_layout
 
-    states = {row['id']: dict(x=PROCESS_LAYOUT[row['slot']][0], y=PROCESS_LAYOUT[row['slot']][1],
+    geometry = process_layout(timeline['compiler'])
+
+    states = {row['id']: dict(x=geometry[row['slot']][0], y=geometry[row['slot']][1],
                              opacity=timeline['initial_visibility'][row['id']],
                              state='idle' if row['kind'] == 'card' else None)
               for row in plan['elements']}
@@ -261,7 +264,7 @@ def _expected(plan, timeline, time):
             state['opacity'] += (target - state['opacity']) * progress
         elif row['kind'] == 'transfer':
             center = _path_position(timeline['paths'][row['relation_id']]['points'], progress)
-            _, _, width, height = PROCESS_LAYOUT[row['from_slot']]
+            _, _, width, height = geometry[row['from_slot']]
             states[row['target']].update(x=center[0] - width / 2, y=center[1] - height / 2)
         elif row['kind'] == 'set_state':
             states[row['target']]['state'] = row['state']
@@ -285,8 +288,87 @@ def _overlap(left, right):
             and left[1] < right[1] + right[3] and right[1] < left[1] + left[3])
 
 
+def _inside(inner, outer):
+    return (inner[0] >= outer[0] - _EPSILON and inner[1] >= outer[1] - _EPSILON
+            and inner[0] + inner[2] <= outer[0] + outer[2] + _EPSILON
+            and inner[1] + inner[3] <= outer[1] + outer[3] + _EPSILON)
+
+
+def _v2_card(state, row, wanted):
+    """Bind the real card's text and docking bay to their separate purposes."""
+    from .motion_process import process_text_areas
+
+    x, y, width, height = _bounds(state)
+    areas = process_text_areas('motion-process-compiler-2')[row['slot']]
+    for name, box in state['text_boxes'].items():
+        area = areas['state' if name in {'state-label', 'state-symbol'} else name]
+        _require(_inside(_bounds(box), area), 'process_text_region_mismatch')
+    bay = state.get('docking_bay')
+    actual = _bounds(bay)
+    for value, expected in zip(actual, (x + 14, y + 204, 252, 56)):
+        _near(value, expected, code='process_docking_bay_mismatch')
+    _require(_inside(actual, (x, y, width, height)) and bay.get('owner') == row['id'],
+             'process_docking_bay_mismatch')
+    _near(bay.get('opacity'), wanted['opacity'], tolerance=.002, code='process_docking_bay_mismatch')
+
+
+def _v2_token_clear(plan, timeline, actual, layout, labels):
+    """Permit the docking channel, retain full-box clearance from all text.
+
+    Check every swept path segment against the measured text, including hidden
+    future text. Checking only three token centers could miss an obstruction.
+    """
+    token = next(row for row in plan['elements'] if row['kind'] == 'token')
+    state = actual[token['id']]
+    rectangle = _bounds(state)
+    obstacles = [_bounds(box) for row in plan['elements'] if row['kind'] == 'card'
+                 for box in actual[row['id']]['text_boxes'].values()]
+    obstacles += [_bounds(labels[row['id']]) for row in plan['relations'] if row['label'].strip()]
+    obstacles += [_bounds(layout[key]) for key in ('title', 'takeaway')]
+    width, height = rectangle[2:]
+    for path in timeline['paths'].values():
+        for a, b in zip(path['points'], path['points'][1:]):
+            swept = (min(a[0], b[0]) - width / 2 - 8, min(a[1], b[1]) - height / 2 - 8,
+                     abs(b[0] - a[0]) + width + 16, abs(b[1] - a[1]) + height + 16)
+            _require(not any(_overlap(swept, box) for box in obstacles), 'process_token_obstructed')
+    # An exact stationary dock establishes ownership. During transfer the same
+    # token is allowed to cross the reserved channel and its boundary ports.
+    center = rectangle[0] + width / 2, rectangle[1] + height / 2
+    for row in plan['elements']:
+        if row['kind'] == 'card':
+            bay = _bounds(actual[row['id']]['docking_bay'])
+            dock = bay[0] + bay[2] / 2, bay[1] + bay[3] / 2
+            if math.dist(center, dock) <= .06:
+                _require(_inside(rectangle, bay), 'process_docking_bay_mismatch')
+
+
+def _v2_relation(path, state, relation, elements, actual):
+    """Observe actual SVG endpoints on the actual node borders."""
+    _require(state.get('pathD') == path['path'], 'process_connection_geometry_mismatch')
+    source, target = actual[relation['source']], actual[relation['target']]
+    sx, sy, sw, sh = _bounds(source)
+    tx, ty, tw, th = _bounds(target)
+    is_return = elements[relation['source']]['slot'] == 'worker'
+    ports = ((sx + sw / 2, sy + sh), (tx + tw / 2, ty + th)) if is_return else (
+        (sx + sw, sy + 232), (tx, ty + 232))
+    for name, key, expected in zip(('sourcePort', 'targetPort'), ('source_port', 'target_port'), ports):
+        port = state.get(name)
+        _require(type(port) is dict and set(port) == {'x', 'y'}, 'process_connection_port_mismatch')
+        for axis, value, recorded in zip(('x', 'y'), expected, path[key]):
+            _near(port.get(axis), value, code='process_connection_port_mismatch')
+            _near(recorded, value, code='process_connection_port_mismatch')
+    middle = state.get('middlePoint')
+    _require(type(middle) is dict and set(middle) == {'x', 'y'}, 'process_connection_geometry_mismatch')
+    for axis, value in zip(('x', 'y'), _path_position(path['relation_points'], .5)):
+        _near(middle.get(axis), value, code='process_connection_geometry_mismatch')
+
+
 def _sample(plan, timeline, sample, time):
-    from .motion_process import PROCESS_LAYOUT, STATE_PRESENTATIONS
+    from .motion_process import process_layout, STATE_PRESENTATIONS
+
+    geometry = process_layout(timeline['compiler'])
+    v2 = timeline['compiler'] == 'motion-process-compiler-2'
+    elements = {row['id']: row for row in plan['elements']}
 
     _require(type(sample) is dict, 'process_observation_sample_missing')
     _near(sample.get('time'), time, tolerance=1e-5, code='process_seek_mismatch')
@@ -310,7 +392,7 @@ def _sample(plan, timeline, sample, time):
         wanted = expected[identity]
         for key in ('x', 'y', 'opacity'):
             _near(state.get(key), wanted[key])
-        for key, size in zip(('width', 'height'), PROCESS_LAYOUT[row['slot']][2:]):
+        for key, size in zip(('width', 'height'), geometry[row['slot']][2:]):
             _near(state.get(key), size)
         text = {'element-label'} | ({'element-detail'} if row['detail'] else set())
         if kind == 'card':
@@ -331,10 +413,16 @@ def _sample(plan, timeline, sample, time):
                      'process_state_presentation_mismatch')
             _require(state.get('stateOpacities') == {}, 'process_state_presentation_mismatch')
             # Validate the entire measured token, even when it is initially hidden.
-            obstacles = [PROCESS_LAYOUT[e['slot']] for e in plan['elements'] if e['kind'] == 'card']
-            obstacles += [timeline['paths'][r['id']]['label_box'] for r in plan['relations'] if r['label'].strip()]
-            _require(not any(_overlap(rectangle, box) for box in obstacles), 'process_token_obstructed')
+            if v2:
+                _require('docking_bay' in state and state['docking_bay'] is None,
+                         'process_docking_bay_mismatch')
+            else:
+                obstacles = [geometry[e['slot']] for e in plan['elements'] if e['kind'] == 'card']
+                obstacles += [timeline['paths'][r['id']]['label_box'] for r in plan['relations'] if r['label'].strip()]
+                _require(not any(_overlap(rectangle, box) for box in obstacles), 'process_token_obstructed')
         _text_bounds(state, text)
+        if v2 and kind == 'card':
+            _v2_card(state, row, wanted)
     label_rows = layout.get('relations')
     _require(type(label_rows) is list and len(label_rows) == len(plan['relations'])
              and all(type(row) is dict and type(row.get('id')) is str for row in label_rows)
@@ -347,7 +435,10 @@ def _sample(plan, timeline, sample, time):
                  'process_connection_visible_early')
         for key, value in wanted.items():
             _near(state.get(key), value, tolerance=.002, code='process_connection_schedule_mismatch')
-        _near(state.get('length'), path['length'], tolerance=.1, code='process_connection_geometry_mismatch')
+        _near(state.get('length'), path['relation_length'] if v2 else path['length'],
+              tolerance=.1, code='process_connection_geometry_mismatch')
+        if v2:
+            _v2_relation(path, state, row, elements, actual)
         _require(label.get('text') == row['label'] and label.get('overflow') is False,
                  'process_relation_text_overflow')
         _near(label.get('opacity'), wanted['labelOpacity'], tolerance=.002,
@@ -360,6 +451,8 @@ def _sample(plan, timeline, sample, time):
                  and ink[0] + ink[2] <= plate[0] + plate[2] + _EPSILON
                  and ink[1] + ink[3] <= plate[1] + plate[3] + _EPSILON,
                  'process_relation_text_overflow')
+    if v2:
+        _v2_token_clear(plan, timeline, actual, layout, labels)
 
 
 def verify_process_observations(plan, timeline, observations):
@@ -419,11 +512,15 @@ def verify_process_observations(plan, timeline, observations):
     _digest(reverse.get('last_sha256'))
     _require(all(initial.get(key) == repeated.get(key) for key in ('elements', 'relations', 'layout')),
              'process_reverse_seek_mismatch')
+    checks = ['native_exact_seek', 'complete_token_bounds', 'path_arc_length_progress',
+              'state_text_and_symbol', 'no_early_connections', 'font_and_text_bounds',
+              'reverse_seek', 'bound_plan_and_timeline']
+    if timeline['compiler'] == 'motion-process-compiler-2':
+        checks += ['actual_svg_node_border_ports', 'distinct_relation_and_transfer_paths',
+                   'docking_bay_ownership', 'swept_text_clearance_8px']
     return dict(schema='video.process-review.v1', technical_status='passed',
                 plan_sha256=sha256(plan), timeline_sha256=sha256(timeline),
                 observation_sha256=sha256(observations), checked_action_windows=len(windows),
                 timing_review_status=timeline['review_status'], visual_comprehension='pending_user_review',
                 voice_naturalness='pending_user_review',
-                checks=['native_exact_seek', 'complete_token_bounds', 'path_arc_length_progress',
-                        'state_text_and_symbol', 'no_early_connections', 'font_and_text_bounds',
-                        'reverse_seek', 'bound_plan_and_timeline'])
+                checks=checks)

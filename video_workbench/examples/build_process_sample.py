@@ -14,7 +14,9 @@ import wave
 
 from agent_service.profiles.video_process_contract import validate_process_plan
 from video_workbench.motion import canonical, estimated_alignment, make_beats
-from video_workbench.motion_process import compile_process_project
+from video_workbench.motion_process import (
+    PROCESS_COMPILER_VERSION, PROCESS_COMPILER_VERSIONS, compile_process_project,
+)
 
 
 SAMPLE_SECONDS = 24
@@ -138,14 +140,14 @@ window.addEventListener('resize',fit);requestAnimationFrame(tick);
 </script></html>'''.replace('__DATA__', payload)).encode('utf-8')
 
 
-def build(output):
+def build(output, *, compiler_version=PROCESS_COMPILER_VERSION):
     output = Path(output).absolute()
     if output.exists() or output.is_symlink():
         raise ValueError('Output directory already exists; use a fresh directory')
     audio = silent_fixture()
     beats = make_beats(SAMPLE_TEXT)
     alignment = estimated_alignment(beats, hashlib.sha256(audio).hexdigest(), SAMPLE_SECONDS)
-    files = compile_process_project(process_plan(beats), beats, alignment)
+    files = compile_process_project(process_plan(beats), beats, alignment, compiler_version=compiler_version)
     timeline = json.loads(files['timeline.json'])
     files['audio.wav'] = audio
     files['preview.html'] = preview_page(timeline)
@@ -166,8 +168,10 @@ def build(output):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', required=True)
+    parser.add_argument('--compiler-version', choices=PROCESS_COMPILER_VERSIONS,
+                        default=PROCESS_COMPILER_VERSION)
     options = parser.parse_args()
-    result = build(options.output)
+    result = build(options.output, compiler_version=options.compiler_version)
     print(json.dumps(dict(output=str(Path(options.output).absolute()),
                           compiler=result['compiler'], seconds=result['duration_seconds'],
                           audio_kind=result['audio_kind'], agent_calls=0, tts_calls=0)))

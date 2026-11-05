@@ -49,7 +49,8 @@ def fixture(*, first_beat_seconds=6, leading_seconds=0):
                 elements=elements, relations=[dict(id='forward', source='input', target='queue', label='排队')], actions=actions)
     alignment = estimated_alignment(beats, 'a' * 64, 18)
     alignment['segments'][0]['end'] = first_beat_seconds
-    timeline = resolve_process_timeline(plan, beats, alignment, leading_seconds=leading_seconds)
+    timeline = resolve_process_timeline(plan, beats, alignment, leading_seconds=leading_seconds,
+                                        compiler_version='motion-process-compiler-1')
     drawing_start, reveal_start = [round(leading_seconds + first_beat_seconds * fraction, 6)
                                    for fraction in (.03, .38)]
     drawing_duration, reveal_duration = [round(min(pace, first_beat_seconds * .24), 6) for pace in (.45, .25)]
@@ -118,6 +119,144 @@ def test_valid_observed_process_keeps_human_timing_and_quality_pending():
     assert report['timing_review_status'] == 'pending'
     assert report['visual_comprehension'] == report['voice_naturalness'] == 'pending_user_review'
     assert report['checked_action_windows'] == 6
+
+
+def fixture_v2():
+    """Independent straight-through bays and bottom return, not browser proof."""
+    plan, _, observations = fixture()
+    plan['relations'] += [dict(id='dispatch', source='queue', target='worker', label='交给执行节点'),
+                          dict(id='retry', source='worker', target='queue', label='失败后返回')]
+    beats = make_beats('请求输入。请求处理。请求完成。')
+    timeline = resolve_process_timeline(plan, beats, estimated_alignment(beats, 'a' * 64, 18),
+                                        compiler_version='motion-process-compiler-2')
+    observations['timeline_sha256'] = sha256(timeline)
+    samples = [observations['initial'], observations['repeated_initial']] + [
+        w[key] for w in observations['windows'] for key in ('before', 'middle', 'after')]
+    for sample in samples:
+        for identity, x in [('input', 64), ('queue', 500), ('worker', 936)]:
+            state = sample['elements'][identity]
+            state.update(_box(x, 260, 280, 268),
+                text_area=dict(left=x + 22, top=282, right=x + 258, bottom=448),
+                text_boxes={'element-label': _box(x + 22, 282, 236, 64),
+                            'element-detail': _box(x + 22, 352, 236, 48),
+                            'state-label': _box(x + 56, 418, 54, 28),
+                            'state-symbol': _box(x + 22, 420, 24, 24)},
+                docking_bay=dict(x=x + 14, y=464, width=252, height=56, owner=identity, opacity=1))
+        # Four collinear token points include two bay centers and two borders.
+        # Physical request travel is 436px; the visible external edge is 156px.
+        x, y = 136 + 436 * _cubic(sample['time'], 6.18, 1.44), 470
+        token = sample['elements']['token']
+        token.update(_box(x, y, 136, 44), docking_bay=None,
+            text_area=dict(left=x, top=y, right=x + 136, bottom=y + 44),
+            text_boxes={'element-label': _box(x + 50, y + 9, 36, 26)})
+        sample['layout']['relations'] = []
+        for identity, text, plate, ink, source, target, middle, distance, path in [
+            ('forward', '排队', (352, 410, 140, 44), (404, 422, 36, 20), (344, 492), (500, 492),
+             (422, 492), 156, 'M 344 492 L 500 492'),
+            ('dispatch', '交给执行节点', (788, 410, 140, 44), (812, 422, 84, 20), (780, 492), (936, 492),
+             (858, 492), 156, 'M 780 492 L 936 492'),
+            ('retry', '失败后返回', (746, 634, 224, 24), (818, 636, 70, 20), (1076, 528), (640, 528),
+             (858, 598), 576, 'M 1076 528 L 1076 598 L 640 598 L 640 528'),
+        ]:
+            state = sample['relations'].setdefault(identity, dict(opacity=0, labelOpacity=0, markerOpacity=0,
+                                                                  strokeDashoffset=1, baseCount=0))
+            state.update(length=distance, pathD=path, sourcePort=dict(zip(('x', 'y'), source)),
+                         targetPort=dict(zip(('x', 'y'), target)), middlePoint=dict(zip(('x', 'y'), middle)))
+            px, py, pw, ph = plate
+            ix, iy, iw, ih = ink
+            sample['layout']['relations'].append(dict(id=identity, text=text, x=px, y=py, width=pw, height=ph,
+                ink=dict(x=ix, y=iy, width=iw, height=ih), opacity=state['labelOpacity'], overflow=False))
+    return plan, timeline, observations
+
+
+def test_v2_docking_and_distinct_visible_edge_length_pass_without_promoting_quality():
+    args = fixture_v2()
+    report = verify_process_observations(*args)
+    assert report['technical_status'] == 'passed'
+    assert report['timing_review_status'] == 'pending'
+    assert report['visual_comprehension'] == 'pending_user_review'
+    assert 'actual_svg_node_border_ports' in report['checks']
+    assert 'swept_text_clearance_8px' in report['checks']
+    assert args[1]['paths']['forward']['length'] == 436
+    assert args[1]['paths']['forward']['relation_length'] == 156
+    assert verify_process_observations(*fixture())['technical_status'] == 'passed'
+
+
+@pytest.mark.parametrize('failure', ['source', 'target', 'return_port', 'return_middle', 'path', 'length',
+                                   'missing_port', 'same_length_floating_path', 'timeline_port'])
+def test_v2_real_svg_ports_and_visible_path_must_meet_actual_node_borders(failure):
+    plan, timeline, observations = fixture_v2()
+    sample = observations['windows'][2]['middle']
+    relation = sample['relations']['forward']
+    if failure == 'source':
+        relation['sourcePort']['x'] -= 10
+    elif failure == 'target':
+        relation['targetPort']['y'] -= 124
+    elif failure == 'return_port':
+        sample['relations']['retry']['targetPort']['x'] -= 140
+    elif failure == 'return_middle':
+        sample['relations']['retry']['middlePoint']['y'] = 458
+    elif failure == 'path':
+        relation['pathD'] = 'M 344 492 L 500 400'
+    elif failure == 'length':
+        relation['length'] = 436
+    elif failure == 'missing_port':
+        del relation['targetPort']
+    elif failure == 'same_length_floating_path':
+        relation.update(pathD='M 344 328 L 500 328', sourcePort=dict(x=344, y=328),
+                        targetPort=dict(x=500, y=328), middlePoint=dict(x=422, y=328))
+    else:
+        timeline['paths']['forward']['source_port'] = [344, 328]
+        observations['timeline_sha256'] = sha256(timeline)
+    with pytest.raises(ServiceError):
+        verify_process_observations(plan, timeline, observations)
+
+
+@pytest.mark.parametrize('failure', ['bay_missing', 'bay_owner', 'bay_bounds', 'bay_opacity', 'title_in_bay',
+                                   'detail_in_bay', 'state_in_bay', 'token_in_body', 'label_route', 'footer_route'])
+def test_v2_bay_permits_ownership_but_never_token_obstruction(failure):
+    args = fixture_v2()
+    sample = args[2]['windows'][2]['middle']
+    card = sample['elements']['queue']
+    if failure == 'bay_missing':
+        del card['docking_bay']
+    elif failure == 'bay_owner':
+        card['docking_bay']['owner'] = 'worker'
+    elif failure == 'bay_bounds':
+        card['docking_bay']['y'] -= 20
+    elif failure == 'bay_opacity':
+        card['docking_bay']['opacity'] = 0
+    elif failure in {'title_in_bay', 'detail_in_bay', 'state_in_bay'}:
+        key = {'title_in_bay': 'element-label', 'detail_in_bay': 'element-detail', 'state_in_bay': 'state-label'}[failure]
+        card['text_area']['bottom'] = 520
+        card['text_boxes'][key]['y'] = 470
+    elif failure == 'token_in_body':
+        sample['elements']['token']['y'] = 360
+    elif failure == 'label_route':
+        sample['layout']['relations'][0]['y'] = 470
+    else:
+        sample['layout']['takeaway']['y'] = 590
+    with pytest.raises(ServiceError):
+        verify_process_observations(*args)
+
+
+@pytest.mark.parametrize('to_v2', [True, False])
+def test_observations_cannot_mix_compiler_versions_or_geometry(to_v2):
+    plan, timeline, observations = fixture() if to_v2 else fixture_v2()
+    timeline['compiler'] = 'motion-process-compiler-2' if to_v2 else 'motion-process-compiler-1'
+    observations['timeline_sha256'] = sha256(timeline)
+    with pytest.raises(ServiceError, match='process_path_binding_mismatch'):
+        verify_process_observations(plan, timeline, observations)
+
+
+def test_v2_hidden_future_label_requires_full_eight_pixel_clearance():
+    args = fixture_v2()
+    sample = args[2]['windows'][0]['before']
+    # The return token's lower edge is 620; an eight-pixel buffer reaches 628.
+    # Moving the conclusion to627 overlaps even though its ink remains in-canvas.
+    sample['layout']['takeaway']['y'] = 627
+    with pytest.raises(ServiceError, match='process_token_obstructed'):
+        verify_process_observations(*args)
 
 
 @pytest.mark.parametrize('failure', ['frozen', 'midpoint', 'destination', 'size', 'bounds', 'hidden'])

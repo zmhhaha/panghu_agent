@@ -2,11 +2,14 @@
 import hashlib
 import io
 import json
+import subprocess
+import sys
 import wave
 
 import pytest
 
 from video_workbench.examples.build_process_sample import build, SAMPLE_SECONDS
+from video_workbench.motion_process import PROCESS_COMPILER_VERSION
 
 
 def test_sample_keeps_one_request_through_failure_return_and_retry(tmp_path):
@@ -27,6 +30,7 @@ def test_sample_keeps_one_request_through_failure_return_and_retry(tmp_path):
     assert timeline['review_status'] == 'pending'
     assert report['visual_comprehension'] == 'pending_user_review'
     assert report['agent_calls'] == report['tts_calls'] == 0
+    assert report['compiler'] == timeline['compiler'] == PROCESS_COMPILER_VERSION
 
 
 def test_timing_wav_is_explicitly_silence_and_bound_to_generated_inputs(tmp_path):
@@ -53,3 +57,34 @@ def test_build_refuses_to_overwrite_previous_evidence(tmp_path):
         build(target)
     assert before == {path.name: path.read_bytes() for path in target.iterdir()}
     assert json.loads((target / 'sample.json').read_bytes()) == first
+
+
+def test_explicit_old_sample_and_default_new_sample_share_the_same_recording(tmp_path):
+    old, new = tmp_path / 'old', tmp_path / 'new'
+    before = build(old, compiler_version='motion-process-compiler-1')
+    after = build(new)
+    assert before['compiler'] == 'motion-process-compiler-1'
+    assert after['compiler'] == 'motion-process-compiler-2'
+    for name in ('plan.json', 'beats.json', 'alignment.json', 'audio.wav'):
+        assert (old / name).read_bytes() == (new / name).read_bytes()
+    for name in ('index.html', 'timeline.json', 'manifest.json'):
+        assert (old / name).read_bytes() != (new / name).read_bytes()
+    assert before['audio_kind'] == after['audio_kind'] == 'synthetic_silence_not_narration'
+
+
+def test_cli_can_rebuild_an_explicit_historical_compiler(tmp_path):
+    target = tmp_path / 'cli-v1'
+    result = subprocess.run([sys.executable, '-m', 'video_workbench.examples.build_process_sample',
+                             '--output', str(target), '--compiler-version', 'motion-process-compiler-1'],
+                            capture_output=True, text=True, check=True)
+    assert json.loads(result.stdout)['compiler'] == 'motion-process-compiler-1'
+    assert json.loads((target / 'manifest.json').read_bytes())['template'] == 'controlled-process-1'
+
+
+def test_unknown_compiler_does_not_create_a_partial_sample(tmp_path):
+    from agent_service.contracts import ServiceError
+
+    target = tmp_path / 'unsupported'
+    with pytest.raises(ServiceError, match='unknown_process_compiler'):
+        build(target, compiler_version='motion-process-compiler-999')
+    assert not target.exists()

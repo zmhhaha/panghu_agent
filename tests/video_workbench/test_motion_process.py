@@ -15,10 +15,25 @@ from video_workbench.motion import (
 )
 from video_workbench.motion_demo import compile_demo_project, resolve_demo_timeline
 from video_workbench.motion_process import (
-    PROCESS_COMPILER_VERSION, PROCESS_LAYOUT, PROCESS_TEMPLATE_VERSION,
-    STATE_PRESENTATIONS, compile_process_project, process_paths,
+    PROCESS_COMPILER_VERSION, PROCESS_COMPILER_TEMPLATES, PROCESS_COMPILER_VERSIONS,
+    PROCESS_TEMPLATE_VERSION, STATE_PRESENTATIONS, compile_process_project,
+    process_layout, process_paths, process_text_areas,
     resolve_process_timeline,
 )
+
+
+V1 = 'motion-process-compiler-1'
+V2 = 'motion-process-compiler-2'
+# Captured before adding v2. These hashes cover every byte, including the
+# executable page, padded timing data and manifest; no local artifacts needed.
+V1_GOLDEN = {
+    'index.html': '28670d45d3f93ed5714102d902f9e718de280d0ad41b9e9c6e7416c3831a75af',
+    'plan.json': 'a729f66f562e809a4aded1d02453c656272f42a3671a8f2737eba1532f9ea9bf',
+    'beats.json': '6bdfd60143fde4cee42f4481e71003ece5da9e37f4a091fb32da2e79f5401ad4',
+    'alignment.json': 'f1466e7a974a257edd2d17280f1f7983438781edd89e5b1a84d389999ac37b6a',
+    'timeline.json': '258babcd569aa0f70bff5c89f5518ced5b55d64d725fa1fe4c4ad94a8f9d9004',
+    'manifest.json': 'e6d507e2f0acd6d9af4c0ccf532f000fc86209948a4c7a0f925fb561442fbdda',
+}
 
 
 def fixture():
@@ -73,15 +88,17 @@ def test_failure_return_and_retry_keep_one_identity_and_real_state_changes():
     assert timeline['alignment_method'] == 'estimated' and timeline['review_status'] == 'pending'
 
 
-def test_paths_use_exact_token_centers_and_clear_complete_swept_boxes():
+@pytest.mark.parametrize('compiler_version', PROCESS_COMPILER_VERSIONS)
+def test_paths_use_exact_token_centers_and_clear_complete_swept_boxes(compiler_version):
     plan, _, _ = fixture()
-    paths = process_paths(plan)
+    paths = process_paths(plan, compiler_version=compiler_version)
+    layout = process_layout(compiler_version)
     labels = [path['label_box'] for path in paths.values()]
-    cards = [PROCESS_LAYOUT[key] for key in ('source', 'queue', 'worker')]
-    width, height = PROCESS_LAYOUT['token_source'][2:]
+    forbidden = [box for areas in process_text_areas(compiler_version).values() for box in areas.values()]
+    width, height = layout['token_source'][2:]
     for path in paths.values():
         for index, slot in ((0, path['source_slot']), (-1, path['target_slot'])):
-            x, y, w, h = PROCESS_LAYOUT['token_' + slot]
+            x, y, w, h = layout['token_' + slot]
             assert path['points'][index] == [x + w / 2, y + h / 2]
         assert path['length'] == sum(math.dist(a, b) for a, b in zip(path['points'], path['points'][1:]))
         for before, after in zip(path['points'], path['points'][1:]):
@@ -90,7 +107,7 @@ def test_paths_use_exact_token_centers_and_clear_complete_swept_boxes():
             right = max(before[0], after[0]) + width / 2 + 8
             bottom = max(before[1], after[1]) + height / 2 + 8
             assert 0 <= left < right <= 1280 and 0 <= top < bottom <= 720
-            for x, y, w, h in cards + labels:
+            for x, y, w, h in forbidden + labels:
                 assert right <= x or x + w <= left or bottom <= y or y + h <= top
     assert paths['return']['source_slot'] == 'worker' and paths['return']['target_slot'] == 'queue'
     assert paths['return']['points'] != list(reversed(paths['dispatch']['points']))
@@ -265,24 +282,26 @@ def test_final_action_must_finish_before_actual_last_frame_or_use_explicit_paddi
                for row in padded['actions'])
 
 
-def test_six_files_are_deterministic_digest_bound_and_leave_inputs_untouched():
+@pytest.mark.parametrize('compiler_version', PROCESS_COMPILER_VERSIONS)
+def test_six_files_are_deterministic_digest_bound_and_leave_inputs_untouched(compiler_version):
     args = fixture()
     before = deepcopy(args)
     fingerprint = {'runtime': 'isolated-test'}
-    files = compile_process_project(*args, runtime_fingerprint=fingerprint)
-    assert files == compile_process_project(*args, runtime_fingerprint=fingerprint)
+    files = compile_process_project(*args, runtime_fingerprint=fingerprint, compiler_version=compiler_version)
+    assert files == compile_process_project(*args, runtime_fingerprint=fingerprint, compiler_version=compiler_version)
     assert args == before
     assert set(files) == {'index.html', 'plan.json', 'beats.json', 'alignment.json',
                           'timeline.json', 'manifest.json'}
     manifest, timeline = [json.loads(files[name]) for name in ('manifest.json', 'timeline.json')]
-    assert manifest['compiler'] == timeline['compiler'] == PROCESS_COMPILER_VERSION
-    assert manifest['template'] == PROCESS_TEMPLATE_VERSION
+    assert manifest['compiler'] == timeline['compiler'] == compiler_version
+    assert manifest['template'] == PROCESS_COMPILER_TEMPLATES[compiler_version]
     assert manifest['runtime_fingerprint'] == fingerprint
     assert manifest['plan_sha256'] == timeline['plan_sha256'] == sha256(args[0])
     assert manifest['timeline_sha256'] == sha256(files['timeline.json'])
     for name, digest in manifest['files'].items():
         assert sha256(files[name]) == digest
-    static = compile_process_project(*args, animated=False, runtime_fingerprint=fingerprint)
+    static = compile_process_project(*args, animated=False, runtime_fingerprint=fingerprint,
+                                     compiler_version=compiler_version)
     assert static['timeline.json'] == files['timeline.json']
     assert static['index.html'] != files['index.html']
 
@@ -317,3 +336,111 @@ def test_new_contract_cannot_enter_legacy_motion_or_demo_compilers():
     for call in (compile_project, resolve_timeline, compile_demo_project, resolve_demo_timeline):
         with pytest.raises(ServiceError, match='invalid_motion_plan'):
             call(*args)
+
+
+def test_explicit_v1_rebuild_preserves_every_frozen_file_byte():
+    files = compile_process_project(*fixture(), compiler_version=V1)
+    assert {name: sha256(raw) for name, raw in files.items()} == V1_GOLDEN
+    assert 'docking_bay:' not in files['index.html'].decode()
+    assert all('relation_points' not in row for row in json.loads(files['timeline.json'])['paths'].values())
+
+
+def test_default_is_v2_but_recording_semantics_and_alignment_stay_reusable():
+    args = fixture()
+    old = compile_process_project(*args, compiler_version=V1)
+    new = compile_process_project(*args)
+    assert new == compile_process_project(*args, compiler_version=V2)
+    assert PROCESS_COMPILER_VERSION == V2 and PROCESS_TEMPLATE_VERSION == 'controlled-process-2'
+    assert old['plan.json'] == new['plan.json']
+    assert old['beats.json'] == new['beats.json']
+    assert old['alignment.json'] == new['alignment.json']
+    assert json.loads(new['manifest.json'])['compiler'] == V2
+    assert json.loads(new['manifest.json'])['template'] == 'controlled-process-2'
+
+
+def test_v2_ports_touch_card_boundaries_and_token_shares_the_visible_external_route():
+    paths = process_paths(fixture()[0])
+    layout = process_layout()
+    for path in paths.values():
+        sx, sy, sw, sh = layout[path['source_slot']]
+        tx, ty, tw, th = layout[path['target_slot']]
+        if path['source_slot'] == 'worker':
+            assert path['source_port'] == [sx + sw / 2, sy + sh]
+            assert path['target_port'] == [tx + tw / 2, ty + th]
+            assert max(y for _, y in path['relation_points']) == 598
+        else:
+            assert path['source_port'] == [sx + sw, 492]
+            assert path['target_port'] == [tx, 492]
+        assert path['points'][1:-1] == path['relation_points']
+        assert path['relation_points'][0] == path['source_port']
+        assert path['relation_points'][-1] == path['target_port']
+        assert path['relation_length'] == sum(math.dist(a, b) for a, b in
+                                               zip(path['relation_points'], path['relation_points'][1:]))
+        assert path['relation_length'] < path['length']
+
+
+def test_v2_bays_contain_the_token_but_text_regions_remain_separate():
+    layout, regions = process_layout(), process_text_areas()
+    for slot in ('source', 'queue', 'worker'):
+        x, y, width, height = layout[slot]
+        tx, ty, tw, th = layout['token_' + slot]
+        bay = (x + 14, y + 204, 252, 56)
+        assert bay[0] < tx < tx + tw < bay[0] + bay[2]
+        assert bay[1] < ty < ty + th < bay[1] + bay[3]
+        assert x < bay[0] < bay[0] + bay[2] < x + width
+        assert y < bay[1] < bay[1] + bay[3] < y + height
+        assert regions[slot] == {
+            'element-label': (x + 22, y + 22, 236, 64),
+            'element-detail': (x + 22, y + 92, 236, 48),
+            'state': (x + 22, y + 156, 236, 32),
+        }
+
+
+@pytest.mark.parametrize('lane_y', [300, 370, 440, 432, -10])
+def test_v2_swept_box_guard_rejects_text_label_and_canvas_collisions(monkeypatch, lane_y):
+    from video_workbench import motion_process
+
+    routes = deepcopy(motion_process._ROUTE_SPECS_V2)
+    # Model data cannot choose these paths. This regression guard catches an
+    # accidental future edit to the trusted route table, including the full
+    # token footprint rather than checking a thin line alone.
+    routes[('source', 'queue')][0][:] = [[204, lane_y], [640, lane_y]]
+    monkeypatch.setattr(motion_process, '_ROUTE_SPECS_V2', routes)
+    with pytest.raises(ServiceError, match='process_path_obstructed'):
+        process_paths(fixture()[0])
+
+
+def test_v2_wrapped_svg_labels_and_real_dom_ports_are_observable():
+    args = fixture()
+    args[0]['relations'][0]['label'] = '一二三四五六七八九十甲乙'
+    page = compile_process_project(*args)['index.html'].decode()
+    group = re.search(r'<g id="label-enter".*?</g>', page, re.DOTALL).group()
+    assert re.findall(r'<tspan[^>]*>(.*?)</tspan>', group) == ['一二三四五六七八', '九十甲乙']
+    assert 'getPointAtLength(path.getTotalLength()*fraction)' in page
+    assert 'matrixTransform(matrix)' in page and 'getScreenCTM()' in page
+    assert 'sourcePort:observedPort(r.id,0)' in page and 'targetPort:observedPort(r.id,1)' in page
+    assert 'middlePoint:observedPort(r.id,.5)' in page
+    assert "pathD:relation(r.id).getAttribute('d')" in page
+    assert "owner:bay.closest('[data-motion-element]').dataset.motionElement" in page
+    assert 'opacity:Number(getComputedStyle(bay).opacity)*Number(style.opacity)' in page
+    assert '.card .element-label{position:absolute;left:20px;top:20px;width:236px;height:64px' in page
+
+
+@pytest.mark.parametrize('version', [None, False, 2, [], {}, 'motion-process-compiler-3', 'motion-compiler-2'])
+def test_unknown_compilers_cannot_fall_back_to_geometry_or_executable_pages(version):
+    args = fixture()
+    for call in (process_layout, process_text_areas):
+        with pytest.raises(ServiceError, match='unknown_process_compiler'):
+            call(version)
+    for call, inputs in ((process_paths, args[:1]), (resolve_process_timeline, args),
+                         (compile_process_project, args)):
+        with pytest.raises(ServiceError, match='unknown_process_compiler'):
+            call(*inputs, compiler_version=version)
+
+
+def test_selected_layouts_are_copies_and_cannot_mutate_the_frozen_registry():
+    for version in PROCESS_COMPILER_VERSIONS:
+        layout = process_layout(version)
+        expected = deepcopy(layout)
+        layout['source'] = (0, 0, 1, 1)
+        assert process_layout(version) == expected
