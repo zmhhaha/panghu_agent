@@ -16,6 +16,7 @@ import importlib
 import importlib.metadata
 import io
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -32,7 +33,7 @@ MAX_AUDIO_SECONDS = 60
 MAX_TEXT_BYTES = 40_000
 MAX_BACKEND_BYTES = 2 * 1024 * 1024
 MAX_REPORT_BYTES = 4 * 1024 * 1024
-_MODEL_REVISION = re.compile(r'[0-9a-f]{40}\Z')
+_MANIFEST_SHA = re.compile(r'[0-9a-f]{64}\Z')
 QWEN_SDK_SOURCE = ('https://raw.githubusercontent.com/QwenLM/Qwen3-ASR/main/'
                    'qwen_asr/inference/qwen3_forced_aligner.py')
 QWEN_SDK_SOURCE_PACKAGE_VERSION = '0.0.6'
@@ -141,7 +142,8 @@ def qwen_local_items(audio_path, spoken_text, model_path, *, threads=2):
 
 def align_recording(audio_path, spoken_text, *, source_text=None,
                     backend_items=None, source=None, model_path=None,
-                    model_revision=None, threads=2, qwen_runner=None):
+                    asset_manifest_sha256=None, threads=2, qwen_runner=None,
+                    backend_observer=None):
     """Return a report without writing files, adopting audio or granting review.
 
     An injected runner is explicitly labelled as an adapter test. Such a report
@@ -157,45 +159,59 @@ def align_recording(audio_path, spoken_text, *, source_text=None,
     beats = make_beats(original, spoken_text)
     started = time.perf_counter()
     if backend_items is not None:
-        _require(model_path is None and model_revision is None and qwen_runner is None,
+        _require(model_path is None and asset_manifest_sha256 is None and qwen_runner is None,
                  'alignment_lab_backend_conflict')
         _require(type(source) is dict, 'alignment_lab_source_required')
         items = backend_items
         execution = dict(mode='import', inference_executed=False,
                          runner_injected=False, sdk_runtime_verified=False)
     else:
-        _require(model_path is not None and type(model_revision) is str
-                 and _MODEL_REVISION.fullmatch(model_revision),
+        _require(model_path is not None and type(asset_manifest_sha256) is str
+                 and _MANIFEST_SHA.fullmatch(asset_manifest_sha256),
                  'alignment_lab_local_model_required')
         _require(source is None, 'alignment_lab_backend_conflict')
         _require(type(threads) is int and 1 <= threads <= 4, 'alignment_lab_threads')
         directory = Path(model_path).resolve(strict=True)
         _require(directory.is_dir() and (directory / 'config.json').is_file(),
                  'alignment_lab_local_model_required')
+        from .alignment_assets import verify_assets
+        assets = verify_assets(directory)
+        _require(assets['manifest_sha256'] == asset_manifest_sha256,
+                 'alignment_lab_model_identity_mismatch')
         runner = qwen_local_items if qwen_runner is None else qwen_runner
         items = runner(audio_path, spoken_text, directory, threads=threads)
+        _require(verify_assets(directory) == assets, 'alignment_lab_model_changed')
         try:
             package_version = importlib.metadata.version('qwen-asr')
         except importlib.metadata.PackageNotFoundError:
             package_version = 'not-installed'
         source = dict(kind='forced_alignment', provider='qwen',
                       model='Qwen3-ForcedAligner-0.6B',
-                      version='qwen-asr:' + package_version + ';model:' + model_revision)
+                      version='qwen-asr:' + package_version + ';assets-sha256:' + asset_manifest_sha256)
         execution = dict(mode='qwen-local-cpu', inference_executed=qwen_runner is None,
                          runner_injected=qwen_runner is not None,
-                         sdk_runtime_verified=False,
-                         adapter_status='source-reviewed-runtime-unverified',
+                         sdk_runtime_verified=qwen_runner is None,
+                         adapter_status=('real-sdk-call-completed' if qwen_runner is None
+                                         else 'injected-adapter-test'),
                          sdk_source_reference=QWEN_SDK_SOURCE,
                          sdk_source_reference_mutable=True,
                          sdk_source_package_version=QWEN_SDK_SOURCE_PACKAGE_VERSION,
                          model_timestamp_postprocessing='qwen-fix_timestamp-model-derived',
                          threads=threads,
-                         model_revision_claim=model_revision)
-    alignment = build_word_alignment(beats, recording['sha256'],
-                                     recording['duration_seconds'], items, source)
+                         model_assets=assets)
     # Never allow an audio replacement while the backend was running to leave
     # a successful receipt bound to the recording inspected before inference.
     _require(inspect_recording(audio_path) == recording, 'alignment_lab_audio_changed')
+    if backend_observer is not None:
+        # Preserve the real model response even if exact text or unit checks
+        # reject it. This raw evidence cannot certify a valid alignment.
+        backend_observer(dict(schema='video.alignment-raw-result.v1',
+            recording=recording, beats=beats, source=source,
+            backend_items=items, execution=execution,
+            structural_validation='not-yet-run', human_timing_verified=False,
+            production_state_modified=False))
+    alignment = build_word_alignment(beats, recording['sha256'],
+                                     recording['duration_seconds'], items, source)
     return dict(schema='video.alignment-lab-report.v1', recording=recording,
                 beats=beats, alignment=alignment,
                 beat_segments=beat_segments(alignment, beats), backend_items=items,
@@ -236,6 +252,25 @@ def write_report(path, report, *, input_paths=()):
         stream.write(data)
 
 
+def write_raw_report(path, report, *, input_paths=()):
+    """Preserve invalid numeric evidence in strict JSON without repairing it.
+
+    Tagged values are diagnostic only and cannot be imported as valid times.
+    The certified report path continues to reject all nonfinite numbers.
+    """
+    def encode(value):
+        if type(value) is float and not math.isfinite(value):
+            return dict(diagnostic_nonfinite_float=str(value))
+        if type(value) is dict:
+            return {key: encode(item) for key, item in value.items()}
+        if type(value) is list:
+            return [encode(item) for item in value]
+        return value
+    document = encode(report)
+    document['number_encoding'] = 'strict-json-with-tagged-nonfinite-floats'
+    write_report(path, document, input_paths=input_paths)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--audio', required=True, type=Path)
@@ -248,9 +283,11 @@ def main(argv=None):
     parser.add_argument('--provider')
     parser.add_argument('--model')
     parser.add_argument('--version')
-    parser.add_argument('--model-revision')
+    parser.add_argument('--asset-manifest-sha256')
     parser.add_argument('--threads', type=int, default=2)
     parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--raw-output', type=Path,
+                        help='Preserve backend response before strict text validation')
     args = parser.parse_args(argv)
     try:
         inputs = [args.audio, args.spoken_text]
@@ -259,13 +296,20 @@ def main(argv=None):
         if args.backend_json:
             inputs.append(args.backend_json)
         output = validate_report_path(args.output, input_paths=inputs)
+        raw_output = None
+        if args.raw_output is not None:
+            raw_output = validate_report_path(args.raw_output, input_paths=[*inputs, output])
+            _require(raw_output != output, 'alignment_lab_output_is_input')
         spoken = read_bounded(args.spoken_text, MAX_TEXT_BYTES).decode('utf-8')
         original = (read_bounded(args.source_text, MAX_TEXT_BYTES).decode('utf-8')
                     if args.source_text else None)
         options = dict(source_text=original, threads=args.threads)
+        if raw_output is not None:
+            options['backend_observer'] = lambda value: write_raw_report(
+                raw_output, value, input_paths=[*inputs, output])
         if args.backend_json:
             _require(all((args.source_kind, args.provider, args.model, args.version))
-                     and args.model_revision is None, 'alignment_lab_source_required')
+                     and args.asset_manifest_sha256 is None, 'alignment_lab_source_required')
             options.update(backend_items=json.loads(read_bounded(args.backend_json,
                                                                 MAX_BACKEND_BYTES)),
                            source=dict(kind=args.source_kind, provider=args.provider,
@@ -273,7 +317,8 @@ def main(argv=None):
         else:
             _require(not any((args.source_kind, args.provider, args.model, args.version)),
                      'alignment_lab_backend_conflict')
-            options.update(model_path=args.model_path, model_revision=args.model_revision)
+            options.update(model_path=args.model_path,
+                           asset_manifest_sha256=args.asset_manifest_sha256)
         report = align_recording(args.audio, spoken, **options)
         write_report(output, report, input_paths=inputs)
         print(json.dumps(dict(output=str(output),

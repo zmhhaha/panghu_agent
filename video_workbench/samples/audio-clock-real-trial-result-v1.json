@@ -1,0 +1,110 @@
+{
+  "schema": "video.alignment-real-trial-result.v1",
+  "date": "2026-11-05",
+  "case_id": "existing-yunjian-session-events-32s",
+  "plan_sha256": "7701a882b01660e4e64f4f3b85ebc8765dc9b69e976f1871bcec75c52b9c8b59",
+  "recording": {
+    "sha256": "e67c5a2e871aaf5928dc02e9569f51af31f3ae9aa3dd4bde401354da6bae3855",
+    "bytes": 1536044,
+    "duration_seconds": 32.0,
+    "sample_rate": 24000,
+    "channels": 1,
+    "sample_width": 2
+  },
+  "asset_manifest_sha256": "804a0b043891491014fe2fc410dc58904cea34c479845237e427273d1d710319",
+  "model_assets_reverified_after_attempt": true,
+  "audio_reverified_after_attempt": true,
+  "sdk_versions": {
+    "qwen-asr": "0.0.6",
+    "transformers": "4.57.6",
+    "accelerate": "1.12.0",
+    "torch": "2.7.1+cu118",
+    "numpy": "2.1.2",
+    "tokenizers": "0.22.2",
+    "safetensors": "0.8.0",
+    "librosa": "1.0.0",
+    "soundfile": "0.14.0",
+    "soxr": "1.1.0",
+    "nagisa": "0.2.11",
+    "DyNet38": "2.2",
+    "gradio": "6.17.3"
+  },
+  "python_version": "3.13.5",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "device": "cpu",
+  "dtype": "float32",
+  "attention": "eager",
+  "sdk_import_status": "passed",
+  "model_attempts": 1,
+  "status": "memory_limit",
+  "wall_seconds": 33.057386700005736,
+  "peak_memory_bytes": 2878787584,
+  "memory_metric": "windows-job-private-commit",
+  "budget": {
+    "memory_bytes": 4294967296,
+    "wall_seconds": 300,
+    "threads": 2,
+    "cpu_rate_per_10000": 2500,
+    "max_log_bytes": 4194304
+  },
+  "cleanup_confirmed": true,
+  "exit_code": 3221225786,
+  "usable_alignment_received": false,
+  "raw_backend_response_received": false,
+  "completed_model_forward_confirmed": false,
+  "human_timing_verified": false,
+  "precision_status": "not-measured",
+  "naturalness_status": "not-evaluated",
+  "rk3588_npu_status": "not-tested",
+  "source_sha256_observed_after_attempt": {
+    "video_workbench/alignment_lab.py": "2de4913c75106aa7fd385bee58fb1718f1a1f7547f2c2cd88b36648d72ec6c17",
+    "video_workbench/alignment_runner.py": "f7d725dcfc7fac3fed397947f49fce2c4f87f7fd1c71bb40a1ec4349136df43e",
+    "video_workbench/alignment_assets.py": "a96c7a9a6e30738c41f35e674083511720cfccb4bff90ab48de0c5e251f8427b",
+    "video_workbench/word_alignment.py": "10538e8168f4c37ad874b9631f7d80ae85d650c59fce1ef0061fef62495db63f"
+  },
+  "evidence": {
+    "runner_receipt": "video_workbench/rendered/audio-clock/real-trial/attempt-1/receipt.json",
+    "runner_receipt_sha256": "4df67e05bcec5b6400b094eca552a0da4a4f7ab7c8dd099e4353286ff67cb76a",
+    "sdk_import_receipt": "video_workbench/rendered/audio-clock/real-trial/sdk-import-r2.receipt.json",
+    "sdk_import_receipt_sha256": "39dca51bea8aee7aad3aae99596e0ac3ab13c3940eda1330b7b208604f81307f",
+    "sdk_official_archives": "outer-runtime/alignment-experiment/runtime/sdk-official-verification.json",
+    "sdk_official_archives_sha256": "8193a58828ec1a27676898954eb91a1e8125068df829a4c2e891a7e6a702c27c",
+    "sdk_install_sha256": "3576ddcb5b867788f78c70f7ba974bcd1e7cfdc3d0d327c461bb306399373b5e",
+    "logs": [
+      {
+        "name": "stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stored_bytes": 0
+      },
+      {
+        "name": "stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stored_bytes": 0
+      }
+    ]
+  },
+  "assets": {
+    "model_bytes": 1840073172,
+    "sdk_archive_bytes": 149192007,
+    "sdk_archive_count": 29,
+    "actual_network_transfer_measured": false
+  },
+  "calls": {
+    "tts": 0,
+    "agent": 0,
+    "render": 0,
+    "paid_api": 0
+  },
+  "production_state_modified": false,
+  "notes": [
+    "The runner received a Windows process/job memory-limit notification; refused allocations need not appear in the measured committed-memory peak.",
+    "The 4GiB boundary is private committed memory, not total RSS or mapped-file physical pages.",
+    "A complete alignment result and model-forward completion were not observed; no latency or precision pass is claimed.",
+    "The sandbox-only import probe failed at Windows DLL initialization; a separate bounded elevated import probe passed without loading weights.",
+    "Inference was not retried and the resource budget was not expanded.",
+    "SDK archives were served by a mirror and matched official PyPI SHA256 metadata; installation enforced those hashes.",
+    "These are standalone Windows CPU results, not production ARM/NPU performance.",
+    "File SHA256 values describe the observed Windows working files; plan_content_sha256 uses canonical JSON and remains stable across Git line-ending conversion."
+  ],
+  "plan_content_sha256": "5a596c692802484cd3565eb276b94e27d4b065b34425515cd6cacbd7cef1d9c6"
+}

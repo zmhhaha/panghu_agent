@@ -1,0 +1,46 @@
+{
+  "schema": "video.alignment-real-trial.v1",
+  "date": "2026-11-05",
+  "case_id": "existing-yunjian-session-events-32s",
+  "baseline_sha256": "45d37671fb69438fa475465c675045f4127b0ad481fe4896090165c48891ee9b",
+  "recording": {
+    "sha256": "e67c5a2e871aaf5928dc02e9569f51af31f3ae9aa3dd4bde401354da6bae3855",
+    "bytes": 1536044,
+    "duration_seconds": 32.0,
+    "sample_rate": 24000,
+    "channels": 1,
+    "sample_width": 2
+  },
+  "spoken_text_sha256": "0d37cb4f50accd28e4ceb2dcd600477125e76903120ab154d5b6f6f13c4ffe47",
+  "source_text_sha256": "3d0b495ea3cbcc58a5f64fd9c44d1a32a663f096196839a3f50b25566fd88888",
+  "asset_manifest_sha256": "804a0b043891491014fe2fc410dc58904cea34c479845237e427273d1d710319",
+  "sdk_versions": {
+    "qwen_asr": "0.0.6",
+    "transformers": "4.57.6",
+    "accelerate": "1.12.0"
+  },
+  "inference": {
+    "device": "cpu",
+    "dtype": "float32",
+    "attention": "eager"
+  },
+  "budget": {
+    "attempts": 1,
+    "wall_seconds": 300,
+    "cpu_threads": 2,
+    "windows_job_private_commit_bytes": 4294967296,
+    "total_rss_hard_limit_enforced": false,
+    "maximum_audio_seconds": 60,
+    "model_asset_download_bytes": 1840073172,
+    "paid_api_requests": 0,
+    "tts_requests": 0,
+    "render_requests": 0
+  },
+  "notes": [
+    "Standalone Windows experiment; not evidence of RK3588 or NPU performance.",
+    "The 4GiB Windows Job limit applies to private committed memory, not total resident or mapped-file memory.",
+    "No automatic inference retry or resource expansion.",
+    "Independent human reference times remain pending; automatic output cannot grant human timing approval.",
+    "Baseline v1 remains immutable; this plan adds the now-authorized model download and states the enforced memory metric."
+  ]
+}

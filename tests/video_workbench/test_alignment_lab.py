@@ -28,6 +28,13 @@ def rows():
             dict(text='返回', start_time=1.1, end_time=1.8)]
 
 
+def mock_assets(monkeypatch):
+    from video_workbench import alignment_assets
+    assets = dict(manifest_sha256='b' * 64, file_count=11, total_bytes=123)
+    monkeypatch.setattr(alignment_assets, 'verify_assets', lambda _directory: dict(assets))
+    return assets
+
+
 def test_import_binds_actual_wav_and_preserves_backend_time(tmp_path):
     path = recording(tmp_path)
     report = lab.align_recording(path, '请求。返回。', backend_items=rows(), source=SOURCE)
@@ -72,6 +79,19 @@ def test_import_rejects_missing_text_or_invalid_time(tmp_path, items):
         lab.align_recording(recording(tmp_path), '请求。返回。', backend_items=items, source=SOURCE)
 
 
+def test_raw_response_is_preserved_without_claiming_structural_success(tmp_path):
+    raw = []
+    missing = [dict(text='请求', start_time=.2, end_time=.7)]
+    with pytest.raises(ServiceError, match='text_mismatch'):
+        lab.align_recording(recording(tmp_path), '请求。返回。', backend_items=missing,
+                            source=SOURCE, backend_observer=raw.append)
+    assert len(raw) == 1
+    assert raw[0]['backend_items'] == missing
+    assert raw[0]['structural_validation'] == 'not-yet-run'
+    assert raw[0]['human_timing_verified'] is False
+    assert raw[0]['execution']['inference_executed'] is False
+
+
 @pytest.mark.parametrize('seconds,width,channels', [(61, 2, 1), (.05, 2, 1), (2, 1, 1), (2, 2, 3)])
 def test_unsupported_or_unbounded_wav_is_rejected(tmp_path, seconds, width, channels):
     with pytest.raises(ServiceError):
@@ -99,11 +119,12 @@ def test_requires_explicit_local_model_before_importing_runtime(tmp_path, monkey
         lab.align_recording(recording(tmp_path), '请求。返回。')
     with pytest.raises(FileNotFoundError):
         lab.align_recording(tmp_path / 'speech.wav', '请求。返回。',
-                            model_path='Qwen/Qwen3-ForcedAligner-0.6B', model_revision='a' * 40)
+                            model_path='Qwen/Qwen3-ForcedAligner-0.6B', asset_manifest_sha256='a' * 64)
     assert imported == []
 
 
-def test_injected_runner_is_never_evidence_of_real_inference(tmp_path):
+def test_injected_runner_is_never_evidence_of_real_inference(tmp_path, monkeypatch):
+    assets = mock_assets(monkeypatch)
     directory = tmp_path / 'model'
     directory.mkdir()
     (directory / 'config.json').write_text('{}')
@@ -112,22 +133,24 @@ def test_injected_runner_is_never_evidence_of_real_inference(tmp_path):
         calls.append((audio, text, model, threads))
         return rows()
     report = lab.align_recording(recording(tmp_path), '请求。返回。',
-        model_path=directory, model_revision='b' * 40, qwen_runner=runner)
+        model_path=directory, asset_manifest_sha256='b' * 64, qwen_runner=runner)
     assert calls[0][1:] == ('请求。返回。', directory, 2)
     assert report['execution']['runner_injected'] is True
     assert report['execution']['inference_executed'] is False
     assert report['execution']['sdk_runtime_verified'] is False
-    assert report['execution']['adapter_status'] == 'source-reviewed-runtime-unverified'
+    assert report['execution']['adapter_status'] == 'injected-adapter-test'
     assert report['execution']['sdk_source_package_version'] == '0.0.6'
     assert report['execution']['sdk_source_reference_mutable'] is True
     assert report['execution']['model_timestamp_postprocessing'] == 'qwen-fix_timestamp-model-derived'
     assert report['human_timing_verified'] is False
     assert report['alignment']['review_status'] == 'pending'
     assert report['alignment']['source']['kind'] == 'forced_alignment'
-    assert report['execution']['model_revision_claim'] == 'b' * 40
+    assert report['execution']['model_assets'] == assets
+    assert report['alignment']['source']['version'].endswith(';assets-sha256:' + 'b' * 64)
 
 
-def test_recording_replacement_during_runner_is_detected(tmp_path):
+def test_recording_replacement_during_runner_is_detected(tmp_path, monkeypatch):
+    mock_assets(monkeypatch)
     path = recording(tmp_path)
     directory = tmp_path / 'model'
     directory.mkdir()
@@ -139,7 +162,31 @@ def test_recording_replacement_during_runner_is_detected(tmp_path):
         return rows()
     with pytest.raises(ServiceError, match='audio_changed'):
         lab.align_recording(path, '请求。返回。', model_path=directory,
-                            model_revision='b' * 40, qwen_runner=runner)
+                            asset_manifest_sha256='b' * 64, qwen_runner=runner)
+
+
+def test_model_identity_mismatch_is_rejected_before_inference(tmp_path, monkeypatch):
+    mock_assets(monkeypatch)
+    directory = tmp_path / 'model'
+    directory.mkdir()
+    (directory / 'config.json').write_text('{}')
+    with pytest.raises(ServiceError, match='model_identity_mismatch'):
+        lab.align_recording(recording(tmp_path), '请求。返回。', model_path=directory,
+                            asset_manifest_sha256='a' * 64,
+                            qwen_runner=lambda *_a, **_k: pytest.fail('must not run'))
+
+
+def test_model_replacement_during_runner_is_detected(tmp_path, monkeypatch):
+    from video_workbench import alignment_assets
+    assets = mock_assets(monkeypatch)
+    sequence = iter([assets, dict(assets, manifest_sha256='c' * 64)])
+    monkeypatch.setattr(alignment_assets, 'verify_assets', lambda _p: next(sequence))
+    directory = tmp_path / 'model'
+    directory.mkdir()
+    (directory / 'config.json').write_text('{}')
+    with pytest.raises(ServiceError, match='model_changed'):
+        lab.align_recording(recording(tmp_path), '请求。返回。', model_path=directory,
+                            asset_manifest_sha256='b' * 64, qwen_runner=lambda *_a, **_k: rows())
 
 
 @pytest.mark.parametrize('threads', [0, 5, True, 1.5])
@@ -150,7 +197,7 @@ def test_qwen_thread_budget_is_checked_before_running_model(tmp_path, threads):
     calls = []
     with pytest.raises(ServiceError, match='threads'):
         lab.align_recording(recording(tmp_path), '请求。返回。', model_path=directory,
-                            model_revision='b' * 40, threads=threads,
+                            asset_manifest_sha256='b' * 64, threads=threads,
                             qwen_runner=lambda *_a, **_k: calls.append(True))
     assert calls == []
 
@@ -253,7 +300,7 @@ def test_cli_checks_output_parent_before_model_or_input_loading(tmp_path, monkey
     monkeypatch.setattr(lab, 'read_bounded', lambda *_a, **_k: calls.append('read'))
     with pytest.raises(SystemExit) as failure:
         lab.main(['--audio', str(tmp_path / 'audio.wav'), '--spoken-text', str(tmp_path / 'spoken.txt'),
-                  '--model-path', str(tmp_path / 'model'), '--model-revision', 'a' * 40,
+                  '--model-path', str(tmp_path / 'model'), '--asset-manifest-sha256', 'a' * 64,
                   '--output', str(parent / 'receipt.json')])
     assert failure.value.code == 2
     assert calls == []
@@ -270,7 +317,7 @@ def test_cli_rejects_dangling_output_before_inference(tmp_path, monkeypatch):
     monkeypatch.setattr(lab, 'align_recording', lambda *_a, **_k: calls.append('model'))
     with pytest.raises(SystemExit) as failure:
         lab.main(['--audio', str(tmp_path / 'audio.wav'), '--spoken-text', str(tmp_path / 'spoken.txt'),
-                  '--model-path', str(tmp_path / 'model'), '--model-revision', 'a' * 40,
+                  '--model-path', str(tmp_path / 'model'), '--asset-manifest-sha256', 'a' * 64,
                   '--output', str(output)])
     assert failure.value.code == 2
     assert calls == [] and not missing.exists()
@@ -318,3 +365,27 @@ def test_cli_invalid_backend_never_publishes_report(tmp_path):
                   '--version', 'test-only', '--output', str(output)])
     assert failure.value.code == 2
     assert not output.exists()
+
+
+@pytest.mark.parametrize('invalid_time', [float('nan'), float('inf'), float('-inf')])
+def test_cli_preserves_nonfinite_backend_diagnostics_but_refuses_alignment(tmp_path, invalid_time):
+    path = recording(tmp_path)
+    text = tmp_path / 'spoken.txt'
+    text.write_text('请求。返回。', encoding='utf-8')
+    backend = tmp_path / 'backend.json'
+    items = rows()
+    items[0]['end_time'] = invalid_time
+    backend.write_text(json.dumps(items), encoding='utf-8')
+    raw, output = tmp_path / 'raw.json', tmp_path / 'result.json'
+    with pytest.raises(SystemExit) as failure:
+        lab.main(['--audio', str(path), '--spoken-text', str(text), '--backend-json', str(backend),
+                  '--source-kind', 'forced_alignment', '--provider', 'example', '--model', 'test',
+                  '--version', 'test-only', '--output', str(output), '--raw-output', str(raw)])
+    assert failure.value.code == 2 and not output.exists()
+    diagnostic = json.loads(raw.read_text(encoding='utf-8'),
+                            parse_constant=lambda _v: pytest.fail('nonstandard JSON'))
+    assert diagnostic['backend_items'][0]['end_time'] == {
+        'diagnostic_nonfinite_float': str(invalid_time)}
+    assert diagnostic['structural_validation'] == 'not-yet-run'
+    assert diagnostic['number_encoding'] == 'strict-json-with-tagged-nonfinite-floats'
+    assert diagnostic['human_timing_verified'] is False
