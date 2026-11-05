@@ -136,3 +136,14 @@ workflow is now demonstrated. All application checks/builds/rendering ran on
 the server; the browser was used for the actual UI, downloads and visual spot checks.
 Owner visual approval, actual native-chart editing in PowerPoint, and publication
 authorization have not been recorded for this chart draft.
+
+## Later public-trial closeout and acceptance correction
+
+The later signed-in acceptance view exposed 18 source-structure warnings on
+the six-page chart draft. The readback receipts above verify artifact content;
+they do not assert completion of all seven strict acceptance gates. Actual
+PowerPoint native-chart editing, source-range refresh, save and reopen have
+since passed on an independent copy. The original download is unchanged.
+The source-warning repair, public-trial site release and platform responsibility
+transfer are recorded in [the current closeout](public-trial-closeout-20261105.md).
+Owner visual approval and publication remain version-specific.
