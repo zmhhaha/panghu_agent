@@ -87,6 +87,76 @@ def generate(client, p, key='generate-1', **fields):
                        headers={'Idempotency-Key': key}, json=dict(expected_revision=p['revision'], **fields))
 
 
+def test_scene_edit_survives_other_scene_completion_without_overwriting_it(env):
+    client, store, workflow, gateway = env
+    p = project(client)
+    p = client.post(f'/api/projects/{p["id"]}/scenes', json=dict(SCENE, title='另一个镜头')).json()
+    first, second = p['scenes']
+    base = {key: second[key] for key in SCENE}
+    old_revision = p['revision']
+    assert generate(client, p).status_code == 202
+    gateway.ready = True
+    workflow.tick()
+    latest = client.get('/api/projects/' + p['id']).json()
+    assert latest['revision'] > old_revision
+    generated_ids = [v['id'] for v in latest['scenes'][0]['versions']]
+    assert generated_ids
+    response = client.patch('/api/scenes/' + second['id'], json=dict(
+        base, narration='这段旁白仍在编辑。', expected_revision=old_revision, base_fields=base))
+    assert response.status_code == 200, response.text
+    saved = response.json()
+    assert saved['scenes'][1]['narration'] == '这段旁白仍在编辑。'
+    assert [v['id'] for v in saved['scenes'][0]['versions']] == generated_ids
+    assert saved['scenes'][0]['head_version_id'] is None
+    # A late request from the same original editor must not overwrite this edit.
+    late = client.patch('/api/scenes/' + second['id'], json=dict(
+        base, title='迟到的标题', expected_revision=old_revision, base_fields=base))
+    assert late.status_code == 409 and late.json()['detail']['code'] == 'scene_edit_conflict'
+    assert client.get('/api/projects/' + p['id']).json() == saved
+
+
+def test_scene_edit_base_does_not_relax_legacy_future_or_owner_checks(env):
+    client, store, workflow, gateway = env
+    p = project(client)
+    scene = p['scenes'][0]
+    base = {key: scene[key] for key in SCENE}
+    assert generate(client, p).status_code == 202
+    gateway.ready = True
+    workflow.tick()
+    latest = client.get('/api/projects/' + p['id']).json()
+    path = '/api/scenes/' + scene['id']
+    legacy = client.patch(path, json=dict(base, expected_revision=p['revision']))
+    assert legacy.status_code == 409 and legacy.json()['detail']['code'] == 'revision_conflict'
+    future = client.patch(path, json=dict(base, expected_revision=latest['revision'] + 1, base_fields=base))
+    assert future.status_code == 409
+    malformed = client.patch(path, json=dict(base, expected_revision=p['revision'], base_fields={'title': base['title']}))
+    assert malformed.status_code == 422
+    client.headers['X-Forwarded-User'] = 'bob'
+    denied = client.patch(path, json=dict(base, expected_revision=p['revision'], base_fields=base))
+    assert denied.status_code in {401, 403, 404}
+    client.headers['X-Forwarded-User'] = 'alice'
+    assert client.get('/api/projects/' + p['id']).json() == latest
+
+
+def test_scene_edit_compares_generated_base_whitespace_exactly(env):
+    client, store, workflow, gateway = env
+    p = project(client)
+    sid = p['scenes'][0]['id']
+    with store.transaction() as db:
+        raw = store._project(db, 'alice', p['id'])
+        raw['scenes'][0].update(title=' 原标题 ', narration='原始旁白。\n', visual_description=' 原始画面 ')
+        store._save(db, raw)
+    p = client.get('/api/projects/' + p['id']).json()
+    base = {key: p['scenes'][0][key] for key in SCENE}
+    assert generate(client, p).status_code == 202
+    gateway.ready = True
+    workflow.tick()
+    response = client.patch('/api/scenes/' + sid, json=dict(base, narration='修改后的旁白。',
+        expected_revision=p['revision'], base_fields=base))
+    assert response.status_code == 200, response.text
+    assert response.json()['scenes'][0]['narration'] == '修改后的旁白。'
+
+
 def test_generate_review_revise_adopt_and_export(env):
     client, store, workflow, gateway = env
     p = project(client)

@@ -154,6 +154,51 @@ def test_video_scenario_refuses_rebound_or_malformed_input(image_packages, tmp_p
         scenario.load_scenario(path, sources, None, host_policy(config('video.storyboard.v1')))
 
 
+def test_motion_scenario_freezes_canonical_data_with_no_checkpoint_or_script(image_packages, tmp_path):
+    from test_video_motion_profile import document
+    raw = canonical_bytes(document())
+    profile = 'video.motion-plan.v1'
+    path, sources, _ = write_scenario(tmp_path / 'motion-candidate', profile,
+        {'input_sha256': hashlib.sha256(raw).hexdigest()}, {'motion-input.json': raw}, export=True)
+    host = config(profile)
+    loaded = scenario.load_scenario(path, sources, None, host_policy(host))
+    assert loaded.files == {'motion-input.json': raw}
+    assert not loaded.checkpoint_files and loaded.checkpoint_ref is None
+    assert loaded.metadata['production_acceptance_created'] is False
+    rendered = probe.render_probe(host, name='motion-offline-candidate',
+        worker_image='registry.invalid/pi:latest@' + host.profile.image_digest,
+        node='offline-node', uid_start=2100000000, bootstrap_secret='offline-bootstrap',
+        upstream_secret='offline-upstream', scenario=path, source_dir=sources)
+    network = next(item for item in rendered['items'] if item['kind'] == 'NetworkPolicy')
+    assert not any('ipBlock' in destination for rule in network['spec']['egress']
+                   for destination in rule['to'])
+
+
+def test_explanation_scenario_keeps_immutable_project_input_and_no_approval(image_packages, tmp_path):
+    from test_video_explanation_profile import document
+    raw = canonical_bytes(document())
+    profile = 'video.explanation-plan.v1'
+    path, sources, _ = write_scenario(tmp_path / 'explanation-candidate', profile,
+        {'input_sha256': hashlib.sha256(raw).hexdigest()}, {'explanation-input.json': raw}, export=True)
+    host = config(profile)
+    loaded = scenario.load_scenario(path, sources, None, host_policy(host))
+    assert loaded.files == {'explanation-input.json': raw}
+    assert not loaded.checkpoint_files and loaded.checkpoint_ref is None
+    assert loaded.metadata['production_acceptance_created'] is False
+
+
+@pytest.mark.parametrize('change', ['noncanonical', 'hash', 'filename'])
+def test_explanation_scenario_refuses_changed_project_material(image_packages, tmp_path, change):
+    from test_video_explanation_profile import document
+    raw = canonical_bytes(document()) + (b'\n' if change == 'noncanonical' else b'')
+    task = {'input_sha256': '0' * 64 if change == 'hash' else hashlib.sha256(raw).hexdigest()}
+    name = 'video-input.json' if change == 'filename' else 'explanation-input.json'
+    path, sources, _ = write_scenario(tmp_path / 'explanation-invalid', 'video.explanation-plan.v1',
+                                     task, {name: raw}, export=True)
+    with pytest.raises(ServiceError):
+        scenario.load_scenario(path, sources, None, host_policy(config('video.explanation-plan.v1')))
+
+
 def record_stopped_parent(run, artifacts):
     """Synthetic signed result/Pod evidence; never real execution or publication."""
     pod_uid = str(uuid4())

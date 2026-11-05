@@ -471,7 +471,7 @@ def test_modified_video_resource_fails_before_docker(service, changed):
     assert not receipt.exists() and not runner.calls
 
 
-@pytest.mark.parametrize('changed', ['manifest.json', 'PLAN.schema.json', 'motion-procedure/SKILL.md'])
+@pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'PLAN.schema.json', 'motion-procedure/SKILL.md'])
 def test_modified_motion_resource_fails_before_docker(service, changed):
     path = service / 'resources/video-motion-v1' / changed
     path.write_bytes(path.read_bytes() + b' ')
@@ -481,7 +481,8 @@ def test_modified_motion_resource_fails_before_docker(service, changed):
     assert not receipt.exists() and not runner.calls
 
 
-@pytest.mark.parametrize('changed', ['manifest.json', 'RESULT.schema.json', 'explanation-procedure/SKILL.md'])
+@pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'RESULT.schema.json',
+                                   'explanation-procedure/SKILL.md'])
 def test_modified_explanation_resource_fails_before_docker(service, changed):
     path = service / 'resources/video-explanation-v1' / changed
     path.write_bytes(path.read_bytes() + b' ')

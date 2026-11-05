@@ -10,20 +10,59 @@ const STATUS_LABELS = {
   publishing: '保存结果', cancelling: '正在取消', cancel_requested: '已申请取消',
   completed: '已完成', succeeded: '已完成', failed: '制作失败', cancelled: '已取消',
   timed_out: '执行超时', rejected: '未能提交', needs_input: '需要补充内容',
-  quarantined: '等待服务处理', stopped: '已停止',
+  quarantined: '等待服务处理', stopped: '已停止', uncertain: '提交结果待确认',
 };
 
 export function statusLabel(status) {
   return STATUS_LABELS[status] ?? '状态待确认';
 }
 
+export function renderSourceLabel(item) {
+  const scenes = item?.scenes;
+  if (!Array.isArray(scenes) || !scenes.length) return '制作范围未记录';
+  if (scenes.length > 1) return `整片 · ${scenes.length} 镜头`;
+  const scene = scenes[0];
+  return [scene.title || '单镜头',
+    scene.visual_version_number ? `图解 ${scene.visual_version_number}` : null,
+    scene.audio_version_number ? `配音 A${scene.audio_version_number}` : null].filter(Boolean).join(' · ');
+}
+
+const RENDER_STAGES = {
+  preparing_scene: '准备镜头', waiting_scene: '等待镜头开始', rendering_scene: '渲染动态画面',
+  observing_scene: '检查动画关键帧', validating_scene: '校验镜头产物', normalizing_scene: '整理镜头视频',
+  preparing_audio: '准备原始配音', compositing: '合成整片', validating_video: '检查完整视频',
+  completed: '视频制作完成', cleanup: '清理制作资源',
+};
+
+export function renderProgressLabel(item, now = Date.now() / 1000) {
+  const progress = item?.progress, diagnostic = item?.diagnostic;
+  const parts = [];
+  if (progress && RENDER_STAGES[progress.stage]) {
+    parts.push(RENDER_STAGES[progress.stage]);
+    if (Number.isInteger(progress.scene_index)) parts.push(`第 ${progress.scene_index + 1}/${progress.total_scenes} 镜`);
+    parts.push(`已完成 ${progress.completed_scenes}/${progress.total_scenes} 镜`);
+  }
+  if (isActiveOperation(item) && Number.isFinite(item.created_at)) {
+    const seconds = Math.max(0, Math.floor(now - item.created_at));
+    parts.push(`已等待 ${Math.floor(seconds / 60)}分${seconds % 60}秒`);
+  }
+  if (/^MR-[0-9a-f]{16}$/.test(diagnostic?.diagnostic_id ?? '')) parts.push(`问题编号 ${diagnostic.diagnostic_id}`);
+  return parts.join(' · ');
+}
+
 export function isActiveOperation(operation) {
   return Boolean(operation?.id && ACTIVE_STATUSES.has(operation.status));
 }
 
+// Production-mode conversion waits for a confirmed terminal result, including
+// when submission is uncertain. This does not change polling or cancellation.
+export function isUnresolvedProductionOperation(operation) {
+  return Boolean(operation?.id && !['completed', 'failed', 'cancelled', 'timed_out', 'needs_input'].includes(operation.status));
+}
+
 export function activeOperations(project) {
   const candidates = [project?.storyboard_operation,
-    ...(project?.scenes ?? []).map(scene => scene.operation)];
+    ...(project?.scenes ?? []).flatMap(scene => [scene.operation, scene.audio_operation])];
   const seen = new Set();
   return candidates.filter(operation => {
     if (!isActiveOperation(operation) || seen.has(operation.id)) return false;
@@ -35,7 +74,7 @@ export function activeOperations(project) {
 export function createWorkspaceState() {
   return {
     projectId: null, epoch: 0, requestSequence: 0, appliedRequest: 0,
-    project: null, sceneId: null, selectedVersions: new Map(),
+    project: null, sceneId: null, selectedVersions: new Map(), selectedAudioVersions: new Map(),
   };
 }
 
@@ -46,6 +85,7 @@ export function selectProject(state, projectId) {
   state.project = null;
   state.sceneId = null;
   state.selectedVersions.clear();
+  state.selectedAudioVersions.clear();
 }
 
 /** Project detail reads also refresh the matching sidebar summary. */
@@ -89,6 +129,11 @@ export function acceptProjectRead(state, ticket, project) {
       const head = versions.find(version => version.id === scene.head_version_id);
       state.selectedVersions.set(scene.id, head?.id ?? versions.at(-1)?.id ?? null);
     }
+    const audio = orderedAudioVersions(scene);
+    if (!audio.some(version => version.id === state.selectedAudioVersions.get(scene.id))) {
+      state.selectedAudioVersions.set(scene.id,
+        audio.find(version => version.id === scene.head_audio_version_id)?.id ?? audio.at(-1)?.id ?? null);
+    }
   }
   return true;
 }
@@ -115,12 +160,13 @@ export function chooseVersion(state, sceneId, versionId) {
 }
 
 export function createSceneDraft(scene = {}, revision = 0) {
-  return {
+  const fields = {
     title: scene.title ?? '', narration: scene.narration ?? '',
     visual_description: scene.visual_description ?? '',
     duration_seconds: scene.duration_seconds ?? 8,
-    format: scene.format ?? 'svg', expected_revision: revision, dirty: false,
+    format: scene.format ?? 'svg',
   };
+  return { ...fields, expected_revision: revision, base_fields: { ...fields }, dirty: false };
 }
 
 export function syncSceneDraft(draft, scene, revision) {
@@ -178,4 +224,170 @@ export function createIntentKeys(makeKey = randomIntentKey) {
 export function versionPath(versionId, action = 'preview') {
   if (!['preview', 'source'].includes(action)) throw new Error('Unsupported version action');
   return `/api/versions/${encodeURIComponent(versionId)}/${action}`;
+}
+
+export function orderedAudioVersions(scene) {
+  return [...(scene?.audio_versions ?? [])].sort((a, b) => (a.number ?? 0) - (b.number ?? 0));
+}
+
+export function selectedAudioVersion(state, scene = selectedScene(state)) {
+  return scene?.audio_versions?.find(version => version.id === state.selectedAudioVersions.get(scene.id)) ?? null;
+}
+
+/** Resolve this scene's completed operation, never the newest history entry. */
+export function audioOperationCandidate(scene) {
+  const operation = scene?.audio_operation;
+  if (operation?.status !== 'completed' || !['speech', 'audio_upload'].includes(operation.kind)
+      || !operation.id || !operation.candidate_id) return null;
+  return scene.audio_versions?.find(version => version.id === operation.candidate_id
+    && version.operation_id === operation.id) ?? null;
+}
+
+export function chooseAudioVersion(state, sceneId, versionId) {
+  const scene = state.project?.scenes?.find(candidate => candidate.id === sceneId);
+  if (!scene?.audio_versions?.some(version => version.id === versionId)) return false;
+  state.selectedAudioVersions.set(sceneId, versionId);
+  return true;
+}
+
+export function audioPath(versionId) {
+  return `/api/audio-versions/${encodeURIComponent(versionId)}/audio`;
+}
+
+/** The operator's verified catalog is the only source of selectable voices. */
+export function speechVoices(session = {}) {
+  const seen = new Set();
+  return (Array.isArray(session.speech_voices) ? session.speech_voices : []).filter(voice => {
+    if (typeof voice?.id !== 'string' || !voice.id.trim() || seen.has(voice.id)) return false;
+    seen.add(voice.id);
+    return true;
+  }).map(voice => ({ ...voice, name: typeof voice.name === 'string' && voice.name.trim() ? voice.name : voice.id }));
+}
+
+export function speechVoiceName(voiceId, session = {}) {
+  return speechVoices(session).find(voice => voice.id === voiceId)?.name
+    ?? (typeof voiceId === 'string' && voiceId ? voiceId : '未记录音色');
+}
+
+export function projectSpeechVoice(project, session = {}) {
+  return project?.speech_settings?.voice ?? session.speech_voice ?? '';
+}
+
+export function syncProjectSpeechDraft(draft, project, session = {}) {
+  if (draft?.dirty && draft.project_id === project.id) return draft;
+  return { project_id: project.id, voice: projectSpeechVoice(project, session),
+    expected_revision: project.revision, dirty: false };
+}
+
+export function projectVoiceOptions(voiceId, session = {}) {
+  const options = speechVoices(session).map(voice => ({ value: voice.id,
+    label: `${voice.name}${voice.default ? ' · 默认' : ''}`, disabled: false }));
+  if (!options.some(option => option.value === voiceId)) {
+    options.unshift({ value: voiceId, label: voiceId ? `${speechVoiceName(voiceId, session)} · 当前不可用`
+      : options.length ? '请选择项目音色' : '暂无可用音色', disabled: true });
+  }
+  return options;
+}
+
+export function projectSpeechCanGenerate(project, session = {}, draft = null) {
+  return Boolean(session.speech_configured && !draft?.dirty
+    && speechVoices(session).some(voice => voice.id === projectSpeechVoice(project, session)));
+}
+
+/** Historical audio describes its own voice; uploads have no inferred voice. */
+export function audioVoiceLabel(version, session = {}) {
+  return version?.source === 'upload' || version?.origin === 'upload' ? '上传录音'
+    : speechVoiceName(version?.voice, session);
+}
+
+/** Name the scenes that still need resources for the selected delivery mode. */
+export function deliveryIssues(project, { silent = false, subtitles = true } = {}) {
+  return (project?.scenes ?? []).flatMap((scene, index) => {
+    const reasons = [];
+    if ((scene.motion?.mode ?? scene.production_mode) === 'motion') {
+      if (!scene.motion?.head_version_id) reasons.push('missing_motion_plan');
+      else if (scene.motion.head_stale) reasons.push('stale_motion');
+    } else if (!scene.head_version_id) reasons.push('missing_visual');
+    if (!silent) {
+      if (!scene.head_audio_version_id) reasons.push('missing_audio');
+      else if (scene.audio_stale) reasons.push('stale_audio');
+      if (subtitles) {
+        const captions = scene.captions;
+        if (!captions?.cues?.length) reasons.push('missing_captions');
+        else if (captions.stale || captions.timing_stale || scene.audio_stale
+            || (captions.audio_version_id && captions.audio_version_id !== scene.head_audio_version_id)) {
+          reasons.push('stale_captions');
+        }
+      }
+    }
+    return reasons.length ? [{ sceneId: scene.id, number: index + 1, title: scene.title ?? '', reasons }] : [];
+  });
+}
+
+/** One pronunciation override per line; duplicates are refused instead of lost. */
+export function parsePronunciation(value) {
+  const pairs = [];
+  const seen = new Set();
+  for (const line of String(value).split('\n')) {
+    if (!line.trim()) continue;
+    const position = line.indexOf('=');
+    const word = line.slice(0, position).trim();
+    const replacement = line.slice(position + 1).trim();
+    if (position < 1 || !word || !replacement || seen.has(word)
+        || pairs.length >= 32 || word.length > 80 || replacement.length > 200) {
+      throw new Error('每行填写「原词=读法」，原词不能重复；原词最多80字、读法最多200字，最多32条。');
+    }
+    seen.add(word);
+    pairs.push([word, replacement]);
+  }
+  return Object.fromEntries(pairs);
+}
+
+export function pronunciationText(value = {}) {
+  return Object.entries(value).map(([word, replacement]) => `${word}=${replacement}`).join('\n');
+}
+
+/** Caption edits stay bound to the exact adopted audio and concurrency revision. */
+export function createCaptionDraft(scene, revision) {
+  return { expected_revision: revision, audio_version_id: scene.head_audio_version_id,
+    leading_seconds: Number(scene.leading_seconds ?? 0), trailing_seconds: Number(scene.trailing_seconds ?? 0),
+    cues: (scene.captions?.cues ?? []).map(cue => ({ start: cue.start, end: cue.end, text: cue.text })),
+    dirty: false };
+}
+
+export function validateCaptionCues(cues, duration, { leadingSeconds = 0, audioSeconds = null } = {}) {
+  if (!Array.isArray(cues) || cues.length < 1 || cues.length > 200 || !Number.isFinite(duration) || duration <= 0) return false;
+  const endLimit = audioSeconds === null ? duration : Math.min(duration, leadingSeconds + audioSeconds);
+  let previous = leadingSeconds;
+  let characters = 0;
+  return cues.every(cue => {
+    characters += typeof cue.text === 'string' ? cue.text.length : 0;
+    const valid = Number.isFinite(cue.start) && Number.isFinite(cue.end)
+      && cue.start >= previous && cue.start >= leadingSeconds && cue.end > cue.start
+      && Math.round(cue.end * 1000) > Math.round(cue.start * 1000)
+      && cue.end <= endLimit && typeof cue.text === 'string'
+      && cue.text.trim().length > 0 && cue.text.length <= 500 && characters <= 10000
+      && !cue.text.replace(/\r\n?/g, '\n').includes('\n\n');
+    previous = cue.end;
+    return valid;
+  });
+}
+
+/** Playback follows the server's measured timeline; audio is never cut to a shorter scene. */
+export function timelinePosition(timeline, seconds) {
+  if (!Array.isArray(timeline?.scenes) || !Number.isFinite(seconds) || seconds < 0) return null;
+  for (const scene of timeline.scenes) {
+    const start = Number(scene.start_seconds);
+    const duration = Number(scene.duration_seconds);
+    if (Number.isFinite(start) && Number.isFinite(duration) && duration > 0
+        && seconds >= start && seconds < start + duration) {
+      const sceneTime = seconds - start;
+      const audioTime = sceneTime - Number(scene.leading_seconds ?? 0);
+      const audioDuration = Number(scene.audio_duration_seconds ?? 0);
+      return { scene, sceneTime, audioTime,
+        speaking: Boolean(scene.audio_version_id && !scene.audio_stale && audioTime >= 0 && audioTime < audioDuration),
+        caption: (scene.cues ?? []).find(cue => sceneTime >= cue.start && sceneTime < cue.end)?.text ?? '' };
+    }
+  }
+  return null;
 }

@@ -13,6 +13,8 @@ from uuid import uuid4
 
 from agent_service.contracts import ServiceError, digest
 from agent_service.profiles.video import validate_video_input
+from .audio_store import AudioStoreMixin
+from .explanation_store import visual_generation_description
 
 ACTIVE = {'queued', 'submitting', 'running', 'cancelling'}
 
@@ -21,7 +23,7 @@ def uid():
     return str(uuid4())
 
 
-class Store:
+class Store(AudioStoreMixin):
     def __init__(self, path):
         self.path = str(Path(path).resolve())
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
@@ -39,6 +41,7 @@ class Store:
                     UNIQUE(owner, idem));
                 CREATE TABLE IF NOT EXISTS metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             ''')
+            self._init_audio_schema(db)
             db.execute('INSERT OR IGNORE INTO metadata VALUES (?, ?)', ('csrf_secret', secrets.token_hex(32)))
             self.csrf_secret = db.execute('SELECT value FROM metadata WHERE key=?', ('csrf_secret',)).fetchone()[0]
 
@@ -97,7 +100,10 @@ class Store:
                 raise ServiceError('operation_in_progress', 409)
 
     def create_project(self, owner, fields):
-        project = dict(fields, id=uid(), revision=1, updated_at=time.time(), scenes=[])
+        mode = fields.get('production_mode', 'static')
+        if type(mode) is not str or mode not in {'static', 'motion'}:
+            raise ServiceError('invalid_production_mode', 422)
+        project = dict(fields, production_mode=mode, id=uid(), revision=1, updated_at=time.time(), scenes=[])
         with self.transaction() as db:
             db.execute('INSERT INTO projects VALUES (?, ?, ?)', (project['id'], owner, json.dumps(project)))
         return project
@@ -105,12 +111,15 @@ class Store:
     def list_projects(self, owner):
         with self.transaction() as db:
             projects = [json.loads(r[0]) for r in db.execute('SELECT document FROM projects WHERE owner=?', (owner,))]
-        return [dict(id=p['id'], title=p['title'], updated_at=p['updated_at'], scene_count=len(p['scenes']))
+        return [dict(id=p['id'], title=p['title'], updated_at=p['updated_at'], scene_count=len(p['scenes']),
+                     production_mode=p.get('production_mode', 'static'))
                 for p in sorted(projects, key=lambda p: p['updated_at'], reverse=True)]
 
     def project(self, owner, project_id):
         with self.transaction() as db:
             project = self._project(db, owner, project_id)
+            # This is a read projection, never a migration of old JSON rows.
+            project.setdefault('production_mode', 'static')
             project['storyboard_operation'] = None
             for scene in project['scenes']:
                 scene['operation'] = None
@@ -119,7 +128,7 @@ class Store:
                     project['storyboard_operation'] = self._op_public(op)
                 else:
                     self._scene(project, op['scene_id'])['operation'] = self._op_public(op)
-            return project
+            return self._attach_audio(db, project)
 
     def scene_project(self, owner, scene_id):
         with self.transaction() as db:
@@ -129,17 +138,31 @@ class Store:
                     return p['id']
         raise ServiceError('not_found', 404)
 
-    def save_scene(self, owner, project_id, fields, scene_id=None, expected_revision=None):
+    def save_scene(self, owner, project_id, fields, scene_id=None, expected_revision=None, *, base_fields=None):
         with self.transaction() as db:
             project = self._project(db, owner, project_id)
             self._busy(db, project_id, scene_id)
             if scene_id:
-                self._revision(project, expected_revision)
-                self._scene(project, scene_id).update(fields)
+                scene = self._scene(project, scene_id)
+                if project['revision'] != expected_revision:
+                    # A background result on another scene changes the project
+                    # revision, but must not invalidate an unchanged editor base.
+                    # Old clients retain strict revision checks. Compare the
+                    # entire editable base inside this write transaction; never
+                    # overwrite a concurrent edit or accept a future revision.
+                    keys = {'title', 'narration', 'visual_description', 'duration_seconds', 'format'}
+                    if (type(expected_revision) is not int or not 1 <= expected_revision < project['revision']
+                            or type(base_fields) is not dict or set(base_fields) != keys):
+                        raise ServiceError('revision_conflict', 409)
+                    if any(scene.get(key, 'svg' if key == 'format' else None) != value
+                           for key, value in base_fields.items()):
+                        raise ServiceError('scene_edit_conflict', 409)
+                scene.update(fields)
             else:
                 if len(project['scenes']) >= 24:
                     raise ServiceError('scene_limit', 422)
-                project['scenes'].append(dict(fields, id=uid(), head_version_id=None, versions=[]))
+                project['scenes'].append(dict(fields, production_mode=project.get('production_mode', 'static'),
+                                              id=uid(), head_version_id=None, versions=[]))
             self._save(db, project)
         return self.project(owner, project_id)
 
@@ -166,6 +189,10 @@ class Store:
                     raise ServiceError('storyboard_requires_empty_project', 409)
                 document = dict(schema_version='1', kind=kind, title=project['title'], script=project['script'],
                                 style=project['style'], max_scenes=request.get('max_scenes', 12))
+                if project.get('production_mode') == 'motion':
+                    document['style'] = ('当前制作模式：随旁白逐步展开的动态图解，1280×720、24fps；关键点融入画面，'
+                        '不附加字幕。分镜画面说明应描述对象、关系和展开顺序，不要求静态SVG、1080p或底部字幕区域。\n'
+                        + project['style'])[:4000]
             else:
                 scene = self._scene(project, scene_id)
                 base_id = request.get('base_version_id')
@@ -179,7 +206,7 @@ class Store:
                     if base['format'] != scene['format']:
                         raise ServiceError('base_format_conflict', 409)
                 document = dict(schema_version='1', kind='scene', title=scene['title'], narration=scene['narration'],
-                                visual_description=scene['visual_description'], style=project['style'], format=scene['format'],
+                                visual_description=visual_generation_description(scene), style=project['style'], format=scene['format'],
                                 width=1280, height=720, duration_seconds=scene['duration_seconds'],
                                 base_source=base['source'] if base else None, instruction=request.get('instruction', ''))
             validate_video_input(document, 'storyboard' if kind == 'storyboard' else 'scene')
@@ -252,7 +279,8 @@ class Store:
             elif op['kind'] == 'storyboard':
                 if project['scenes']:
                     raise ServiceError('storyboard_requires_empty_project', 409)
-                project['scenes'] = [dict(s, id=uid(), head_version_id=None, versions=[]) for s in output['scenes']]
+                project['scenes'] = [dict(s, production_mode=project.get('production_mode', 'static'),
+                    id=uid(), head_version_id=None, versions=[]) for s in output['scenes']]
                 op.update(status='completed', error=None)
             else:
                 scene = self._scene(project, op['scene_id'])
