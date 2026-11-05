@@ -171,6 +171,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--controller-image', required=True)
     parser.add_argument('--worker-image', required=True, help='Digest of the independent PPT validator image')
+    parser.add_argument('--worker-hostname', help='Exact kubernetes.io/hostname for PPT parser and validator Pods')
     parser.add_argument('--kube-api-cidr', action='append', required=True)
     parser.add_argument('--kube-api-port', action='append', type=int)
     parser.add_argument('--kube-api-server', default='https://192.168.137.101:6443')

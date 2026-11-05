@@ -127,10 +127,19 @@ renderer 只生成配置，加入 `--apply` 才会写入集群，`--enable-execu
 bash ppt_service/deploy/agent/deploy.sh \
   --controller-image '<controller-registry-image@sha256:digest>' \
   --worker-image '<validator-registry-image@sha256:digest>' \
+  --worker-hostname arm-cluster-master \
   --profile-revision v2 \
   --kube-api-cidr 192.168.137.101/32 \
   --kube-api-port 6443
 ```
+
+`--worker-hostname` 写入控制器的 `PPT_WORKER_HOSTNAME`，使 PPT 资料解析、独立校验和
+验收沙箱同时选择 `kubernetes.io/arch=arm64` 与指定的 `kubernetes.io/hostname`。
+当前使用已缓存完整工具镜像的 `arm-cluster-master`，避免调度到磁盘不足的小节点。
+该设置只作用于 PPT 自有沙箱，不调整通用 Agent Service 的 Pi 执行池或控制器本身的位置。
+节点值必须与实际 hostname 标签完全一致，采用小写 DNS 主机名且不超过 63 个字符；
+显式空值和不合法值会在渲染或控制器启动时被拒绝。未指定时仅选择 ARM64。
+目标节点不可用时任务会等待或超时，不会自动转移到其他节点；修改配置后须重新发布控制器。
 
 确认下节的服务端合同、凭据与网络检查，并排空旧执行链后，再显式添加
 `--enable-execution --apply --enable-site`。

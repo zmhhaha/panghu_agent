@@ -37,6 +37,7 @@ INTENT = METADATA_PREFIX + 'intent'
 RESOURCES = {'pods': '/api/v1', 'secrets': '/api/v1',
              'networkpolicies': '/apis/networking.k8s.io/v1'}
 NAME = re.compile(r'[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?\Z')
+HOSTNAME = re.compile(r'[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*\Z')
 IMAGE = re.compile(r'[^\s@]+@sha256:[0-9a-f]{64}\Z')
 MAX_API_BYTES = 8 * 1024**2
 
@@ -66,6 +67,7 @@ class KubeSettings:
     startup_timeout: float = 120
     stop_timeout: float = 45
     poll_seconds: float = 0.5
+    worker_hostname: str | None = None
 
     def __post_init__(self):
         require(isinstance(self.worker_image, str) and IMAGE.fullmatch(self.worker_image))
@@ -73,6 +75,9 @@ class KubeSettings:
             require(isinstance(value, str) and NAME.fullmatch(value) and len(value) <= 63)
         require(isinstance(self.provider_secret_key, str) and re.fullmatch(r'[-._a-zA-Z0-9]{1,253}', self.provider_secret_key))
         relative(self.pvc_data_prefix)
+        if self.worker_hostname is not None:
+            require(isinstance(self.worker_hostname, str) and len(self.worker_hostname) <= 63
+                    and HOSTNAME.fullmatch(self.worker_hostname))
         require(0 < self.startup_timeout <= 300 and 0 < self.stop_timeout <= 120
                 and 0 < self.poll_seconds <= 5)
 
@@ -84,7 +89,8 @@ class KubeSettings:
                    provider_secret=os.getenv('PPT_PROVIDER_SECRET', 'ppt-model-upstream'),
                    provider_secret_key=os.getenv('PPT_PROVIDER_SECRET_KEY', 'PPT_UPSTREAM_API_KEY'),
                    worker_service_account=os.getenv('PPT_WORKER_SERVICE_ACCOUNT', 'ppt-worker'),
-                   pvc_data_prefix=os.getenv('PPT_PVC_DATA_PREFIX', 'state'))
+                   pvc_data_prefix=os.getenv('PPT_PVC_DATA_PREFIX', 'state'),
+                   worker_hostname=os.getenv('PPT_WORKER_HOSTNAME'))
 
 
 class KubeError(ControlError):
@@ -384,11 +390,14 @@ class KubernetesBackend:
                                               'memory': '4Gi' if role == 'worker' else '1Gi',
                                               'ephemeral-storage': '512Mi'}},
                      'env': list(env), 'volumeMounts': volume_mounts}
+        node_selector = {'kubernetes.io/arch': 'arm64'}
+        if self.settings.worker_hostname is not None:
+            node_selector['kubernetes.io/hostname'] = self.settings.worker_hostname
         return {'apiVersion': 'v1', 'kind': 'Pod', 'metadata': metadata,
                 'spec': {'serviceAccountName': self.settings.worker_service_account,
                          'automountServiceAccountToken': False, 'enableServiceLinks': False,
                          'restartPolicy': 'Never', 'terminationGracePeriodSeconds': 30,
-                         'activeDeadlineSeconds': deadline, 'nodeSelector': {'kubernetes.io/arch': 'arm64'},
+                         'activeDeadlineSeconds': deadline, 'nodeSelector': node_selector,
                          'hostNetwork': False, 'hostPID': False, 'hostIPC': False,
                          'securityContext': {'runAsNonRoot': True, 'runAsUser': 10000, 'runAsGroup': 10000,
                                              'seccompProfile': {'type': 'RuntimeDefault'}},

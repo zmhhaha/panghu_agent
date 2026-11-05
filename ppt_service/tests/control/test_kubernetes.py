@@ -338,6 +338,29 @@ def test_settings_reject_local_image_id_and_unsafe_mount(runtime):
         backend.subpath(config.data_root.parent)
 
 
+@pytest.mark.parametrize('hostname', ['', '-node', 'node-', 'node..cluster', 'node_bad',
+                                     'Master', 'node/other', 'a' * 64, True])
+def test_worker_hostname_rejects_invalid_selector_values(runtime, hostname):
+    _, settings, _, _, _ = runtime
+    with pytest.raises(ControlError, match='invalid_kubernetes_configuration'):
+        replace(settings, worker_hostname=hostname)
+
+
+def test_worker_hostname_env_pins_parser_and_validator_pods(runtime, monkeypatch):
+    config, settings, api, _, _ = runtime
+    monkeypatch.setenv('PPT_WORKER_IMAGE', settings.worker_image)
+    monkeypatch.setenv('PPT_WORKER_HOSTNAME', 'arm-cluster-master')
+    selected = KubeSettings.env()
+    assert selected.worker_hostname == 'arm-cluster-master'
+    backend = KubernetesBackend(config, selected, api)
+    handle = backend.register_sandbox_scope(str(uuid.uuid4()))
+    for module in ('parsing', 'agent_validation', 'acceptance_validation'):
+        body = backend.pod(handle, 'hostname-probe', 'sandbox', 'ppt_service.control.' + module, [])
+        assert body['spec']['nodeSelector'] == {
+            'kubernetes.io/arch': 'arm64', 'kubernetes.io/hostname': 'arm-cluster-master'}
+    assert not any(call[0] == 'POST' for call in api.calls)
+
+
 def test_disabled_config_never_submits_paid_work(runtime):
     config, settings, api, backend, attempt = runtime
     disabled = KubernetesBackend(RuntimeConfig(config.data_root), settings, api)

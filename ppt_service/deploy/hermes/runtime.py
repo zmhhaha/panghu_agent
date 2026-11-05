@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 HERE = Path(__file__).resolve().parent
 NAME = re.compile(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\Z')
+HOSTNAME = re.compile(r'[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)*\Z')
 IMAGE = re.compile(r'[^\s@]+@sha256:[0-9a-f]{64}\Z')
 ENV_KEY = re.compile(r'[A-Za-z_][A-Za-z0-9_]*\Z')
 CONTROLLER = 'ppt-hermes-controller'
@@ -37,13 +38,16 @@ def render(*, controller_image, worker_image, kube_api_cidr, kube_api_port=(6443
            kube_api_server='https://192.168.137.101:6443', chart_oracle_configmap=None,
            namespace='ppt-service', pvc='ppt-data', provider_secret='ppt-model-upstream',
            provider_secret_key='PPT_UPSTREAM_API_KEY', worker_service_account='ppt-worker',
-           pvc_data_prefix='state', enabled=False):
+           pvc_data_prefix='state', worker_hostname=None, enabled=False):
     """Configuration is public. The provider key only reaches each proxy Pod."""
     for value in (namespace, pvc, provider_secret, worker_service_account):
         if not isinstance(value, str) or not NAME.fullmatch(value):
             raise ValueError('invalid_kubernetes_resource_name')
     if worker_service_account == CONTROLLER:
         raise ValueError('worker_service_account_must_be_unprivileged')
+    if worker_hostname is not None and (not isinstance(worker_hostname, str)
+            or len(worker_hostname) > 63 or not HOSTNAME.fullmatch(worker_hostname)):
+        raise ValueError('invalid_worker_hostname')
     if not ENV_KEY.fullmatch(provider_secret_key):
         raise ValueError('invalid_provider_secret_key')
     if (not isinstance(pvc_data_prefix, str) or not pvc_data_prefix
@@ -106,6 +110,8 @@ def render(*, controller_image, worker_image, kube_api_cidr, kube_api_port=(6443
         'PPT_WORKER_SERVICE_ACCOUNT': worker_service_account,
         'PYTHONDONTWRITEBYTECODE': '1', 'PYTHONUNBUFFERED': '1', 'HOME': '/tmp',
     }
+    if worker_hostname is not None:
+        environment['PPT_WORKER_HOSTNAME'] = worker_hostname
     if chart_oracle_configmap:
         environment['PPT_CHART_ORACLE_FILE'] = '/etc/ppt-oracle/oracles.json'
     labels = {'app': CONTROLLER, 'app.kubernetes.io/name': CONTROLLER,
@@ -226,6 +232,7 @@ def main():
     parser.add_argument('--provider-secret', default='ppt-model-upstream')
     parser.add_argument('--provider-secret-key', default='PPT_UPSTREAM_API_KEY')
     parser.add_argument('--worker-service-account', default='ppt-worker')
+    parser.add_argument('--worker-hostname', help='Exact kubernetes.io/hostname for PPT task and sandbox Pods')
     parser.add_argument('--pvc-data-prefix', default='state')
     parser.add_argument('--enable-execution', action='store_true', dest='enabled',
                         help='Allow paid queue execution after actual CNI isolation checks')

@@ -13,6 +13,18 @@ def manifest(enabled=True):
         kube_api_cidr=['192.168.137.101/32'], enabled=enabled)
 
 
+def test_worker_hostname_cli_reaches_sandbox_environment(tmp_path):
+    output = tmp_path / 'runtime.json'
+    runtime.main(['--controller-image', 'registry.invalid/ppt-controller@sha256:' + 'a' * 64,
+        '--worker-image', 'registry.invalid/ppt-validator@sha256:' + 'b' * 64,
+        '--kube-api-cidr', '192.168.137.101/32', '--worker-hostname', 'arm-cluster-master',
+        '--output', str(output)])
+    deployment = next(row for row in json.loads(output.read_text())['items'] if row['kind'] == 'Deployment')
+    environment = {row['name']: row.get('value')
+        for row in deployment['spec']['template']['spec']['containers'][0]['env']}
+    assert environment['PPT_WORKER_HOSTNAME'] == 'arm-cluster-master'
+
+
 class Scenario:
     def __init__(self):
         self.calls = []

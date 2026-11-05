@@ -169,6 +169,12 @@ def test_unsafe_inputs_fail_before_rendering(changes):
         runtime.render(**arguments)
 
 
+@pytest.mark.parametrize('hostname', ['', 'node..cluster', 'a' * 64])
+def test_worker_hostname_rejects_invalid_rendered_selector(hostname):
+    with pytest.raises(ValueError, match='invalid_worker_hostname'):
+        manifest(worker_hostname=hostname)
+
+
 def test_source_context_excludes_private_data_and_pins_reviewed_current_sources():
     context, digest = build.source_context(DIRECTORY / 'Dockerfile.worker')
     with tarfile.open(fileobj=io.BytesIO(context), mode='r:') as archive:
