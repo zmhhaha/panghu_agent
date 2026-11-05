@@ -65,14 +65,31 @@ file content, `snapshot.expected_charts` or Actor output to reinterpret dispatch
 expectations. Native chart roster, page/type, cache and embedded workbook checks
 continue to use the existing independent verifier.
 
-Historical Agent tasks with no binding and no chart declaration remain
-chart-free. Declared but unbound chart plans require replanning and the normal
-direction confirmation. Nonempty historical deployment mappings are not
-automatically migrated. The explicit legacy `ChartOracle` and dependency-injected
-providers remain for the old Dispatcher and deliberate integrations; deployment
-must check for affected historical Agent tasks before switching this resolver.
+Chart-free plans use an empty chart expectation list. Declared but unbound chart
+plans require replanning and the normal direction confirmation.
+
+The owner confirmed on 2026-11-05 that the service has not formally launched and
+old tasks/configuration do not require compatibility. Replace the PPT runtime
+configuration directly: do not add parallel legacy routes/pools, migrate old
+tasks, or maintain per-project chart approval maps for this rollout. This does
+not require deleting historical business records or changing other services'
+Agent configuration.
 
 The optional catalog is a coordinated profile/API/control/Pi wire extension.
-Deploy compatible profile readers before the control process sends it. All
+Update the participating profile readers together before enabling production. All
 execution checks, tests and rendering are run on the server from committed Git;
 the implementation does not require production database edits or new user tasks.
+
+## Verification recorded on 2026-11-05
+
+Server Git source `fefd714c7a9face373d08e592f6ceb37a845f1f8` passed 165 focused
+checks covering source-table parsing, connector/frozen task construction, the
+planning catalog, PPT output contracts and the latest-tag build entry. Failures,
+errors and skips were all zero; the container stopped and was removed, and source
+hashes remained unchanged. Receipt:
+`/root/ppt-source-chart-regressions-fefd714c-d6836b9e/receipt.json`.
+
+The source-chart UI previously passed 73 focused tests on unchanged frontend
+source, and its full source build subsequently passed. These checks do not claim
+a successful production chart draft, an edited PowerPoint chart, owner visual
+approval or publication; those require evidence from the resulting version.
