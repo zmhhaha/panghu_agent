@@ -1,5 +1,7 @@
 # 执行器公开资料验收
 
+2026-11-05 当前复杂图表稿、实际 Office 操作及待完成质量门见 [公开试用收尾](../docs/public-trial-closeout-20261105.md) 和 [源绑定图表交付](../docs/source-chart-release-20261105.md)。下文为早期样稿的带日期历史记录，不代表当前网站仍未接通生成或正式登录。
+
 最新状态（2026-10-22）：用户已通过真实 `website_development_before_manual_gate` 选择“先开发并测试网站（推荐）”，允许 PowerPoint 验收前开发测试，正式发布/邀请前的实际 PowerPoint 门禁仍保留。本机 SSH 开发站 `http://127.0.0.1:18505` 的 FastAPI/PostgreSQL CRUD、上传与受控材料解析已真实联通，网页提供解析状态和受限摘要；使用固定 local test identity，非正式 Casdoor。生成仍为 `POST /plans` 503 `execution_not_connected`，不能称 PPT 闭环可用。R8/V2 原 actor NEEDS_INPUT、独立 review 与非 accepted base 状态不变，人工 PowerPoint 验收仍待完成。下文旧实现状态、顺序决定与样稿镜像证据为历史记录，最新开发事实见末尾。
 
 此前本地镜像：`ppt-service-worker:arm64-c350bc31-preview4`，image ID `sha256:aadf6d7a9d162969e188030c7e1c2d9ee95f7554363d8ae1f1702692d3eed8fc`；官方前台预览生命周期已无模型实测，142 项受限 ARM64 测试通过（9.503 秒、无 skip）。attempt 6 仍为 needs_input，无 PNG/PPTX、发布或 PowerPoint 人工验收；后续模型 retry 未启动。新控制器私有 working continuation 已通过 166 项受限测试（9.121 秒、无 skip）及免费 preflight，preview4 Worker 镜像未变；下一次收费授权尚未取得，详情见末尾补记。
