@@ -1,6 +1,6 @@
 # PPT Service Web
 
-React / TypeScript / Vite 中文私有项目工作台。仅使用同源 `/api/v1` 与 `/oauth2/start`、`/oauth2/sign_out`，没有演示数据、模型直连或部署脚本。页面明确显示开发测试状态，PowerPoint 人工验收仍待完成，正式发布与邀请仍未开放。
+React / TypeScript / Vite 中文私有项目工作台。仅使用同源 `/api/v1` 与 `/oauth2/start`、`/oauth2/sign_out`，没有演示数据、模型直连或部署脚本。当前供用户公开试用，正式 SSO、资料解析、方案确认、PPTX 生成下载与反馈修改已联通；页面保留试用反馈提示，仅开发身份显示环境说明。具体版本的人工视觉检查、实际 PowerPoint 操作与发布仍分别记录，试用状态不代表所有规格或样稿均已验收。最新复杂图表生成与修改记录见 `../docs/source-chart-release-20261105.md`；下文日期章节保留历史接口与验证范围。
 
 ## 服务器安装、验证、构建
 

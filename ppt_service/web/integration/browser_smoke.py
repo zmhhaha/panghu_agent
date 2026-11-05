@@ -34,7 +34,7 @@ def main():
         page.route(PUBLIC + '/**', forward)
         page.goto(PUBLIC, wait_until='networkidle')
         expect(page.get_by_role('heading', name='我的项目')).to_be_visible()
-        expect(page.get_by_text('开发测试中', exact=True)).to_be_visible()
+        expect(page.get_by_text('开发测试中', exact=True)).to_have_count(0)
         expect(page.get_by_text('本地开发测试账户 · 正式 SSO 未接通；执行器尚未接通，不会调用模型')).to_be_visible()
         expect(page.get_by_text('当前为试用版本，欢迎反馈使用问题与改进建议。')).to_be_visible()
         check('hydration_and_explicit_development_release_gate')
