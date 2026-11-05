@@ -28,8 +28,9 @@ agent-service，不再使用旧 Gradio 或科研专用常驻 Pi Worker 接收新
 
 共享 Agent 当前版本的完整真实故障/排空/回滚演练，仍属于
 `add-pi-first-agent-execution-service` 的 `5.5R`，不随旧服务删除而自动完成。
-最新版本正式网页新建项目完整五阶段和桌面 Word/LibreOffice 排版，仍按反馈交付记录
-独立验收。本次不发起模型调用、不修改用户方案、正文、引用映射或采用记录。
+最新版本正式网页新建项目完整五阶段仍需独立验收。原生 Word/PDF 表格及实际
+LibreOffice 排版于 2026-11-05 后续完成，见 [REPORT_EXPORTS.md](REPORT_EXPORTS.md)，
+不计作旧服务移除时的验收。本次不发起模型调用、不修改用户方案、正文、引用映射或采用记录。
 
 ## 删除不再使用的旧任务数据
 

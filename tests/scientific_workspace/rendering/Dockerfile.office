@@ -1,0 +1,7 @@
+ARG OFFICE_BASE=ppt-validator-office-dependency:latest
+FROM ${OFFICE_BASE}
+USER root
+RUN sed -i 's|http://deb.debian.org/debian-security|https://mirrors.ustc.edu.cn/debian-security|g; s|http://deb.debian.org/debian|https://mirrors.ustc.edu.cn/debian|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get -o Acquire::Retries=1 -o Acquire::https::Timeout=30 update \
+    && apt-get -o Acquire::Retries=1 -o Acquire::https::Timeout=30 install -y --no-install-recommends libreoffice-writer \
+    && apt-get clean
