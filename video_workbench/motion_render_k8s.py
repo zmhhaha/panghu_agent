@@ -365,7 +365,15 @@ def validate_artifacts(entries, files, runtime, quality):
             reviewer = verify_process_observations
         else:
             reviewer = verify_observations
-        review = reviewer(plan, timeline, observations)
+        if timeline.get('compiler') == 'motion-process-continuity-compiler-1':
+            # Each declared frame was bound to its real artifact bytes above.
+            # Keep that provenance when checking a repeated pose; a JPEG hash
+            # is an integrity key, not a claim of identical browser rastering.
+            frames = {sha(raw): raw for name, raw in entries.items()
+                      if name.startswith('observations/') and name.endswith('.jpg')}
+            review = reviewer(plan, timeline, observations, frame_bytes=frames)
+        else:
+            review = reviewer(plan, timeline, observations)
         return {'technical_review': review, 'media_sha256': sha(entries['output.mp4']),
                 'manifest_sha256': manifest_sha, 'runtime_fingerprint': runtime, 'quality': quality}
     except (KeyError, ValueError, TypeError, UnicodeError, RecursionError, OverflowError):

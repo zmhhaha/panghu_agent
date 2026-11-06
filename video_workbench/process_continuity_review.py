@@ -7,6 +7,8 @@ The event evaluator here deliberately does not call the compiler's evaluator.
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
+import io
 import math
 
 from agent_service.contracts import ServiceError
@@ -321,7 +323,125 @@ def _checkpoint(sample, checkpoint):
                   code='process_continuity_checkpoint_mismatch')
 
 
-def _verify(wrapper, timeline, observations):
+def _repeat_frame_equivalence(sample_a, sample_b, frames):
+    """Allow only bounded token-corner raster noise between identical DOM states.
+
+    Every JPEG retains its independent SHA binding. A changed JPEG must match
+    exactly outside compiler-owned rounded-corner JPEG neighborhoods, including
+    every measured text region plus a two-pixel margin. This is not a general
+    perceptual similarity test or a claim about Chromium's underlying cause.
+    """
+    error = 'process_continuity_seek_sequence_mismatch'
+    _require(type(sample_a) is dict and type(sample_b) is dict, error)
+    for sample in (sample_a, sample_b):
+        _finite_tree(sample)
+        _digest(sample.get('frame_sha256'))
+    fields = ('elements', 'relations', 'layout', 'continuity')
+    _require(all(type(sample_a.get(key)) is dict and sample_a[key] == sample_b.get(key)
+                 for key in fields)
+             and sample_a.get('time') == sample_b.get('time')
+             and sample_a.get('actual_time') == sample_b.get('actual_time'), error)
+    identities = (sample_a['frame_sha256'], sample_b['frame_sha256'])
+    if identities[0] == identities[1]:
+        return dict(mode='exact', frame_sha256=list(identities), changed_pixels=0,
+                    max_channel_error=0, global_mae=0.0)
+    _require(type(frames) is dict, error)
+
+    # Pillow is already installed by the workbench's WeasyPrint dependency.
+    from PIL import Image, ImageChops, ImageDraw, ImageStat
+
+    def decode(identity):
+        raw = frames.get(identity)
+        _require(type(raw) is bytes and 0 < len(raw) <= 2 * 1024 * 1024
+                 and hashlib.sha256(raw).hexdigest() == identity, error)
+        try:
+            with Image.open(io.BytesIO(raw)) as source:
+                _require(source.format == 'JPEG' and source.mode == 'RGB'
+                         and source.size == (WIDTH, HEIGHT)
+                         and getattr(source, 'n_frames', 1) == 1, error)
+                source.load()
+                return source.copy()
+        except (OSError, ValueError, SyntaxError, Image.DecompressionBombError):
+            raise ServiceError(error, 422) from None
+
+    first, second = (decode(identity) for identity in identities)
+    mask = Image.new('L', (WIDTH, HEIGHT), 0)
+    draw = ImageDraw.Draw(mask)
+    text_regions, token_regions = [], []
+
+    def protect(rectangle, *, positive=True):
+        x, y, width, height = _bounds(rectangle, positive=positive)
+        if width and height:
+            text_regions.append((max(0, math.floor(x) - 2), max(0, math.floor(y) - 2),
+                min(WIDTH, math.ceil(x + width) + 2), min(HEIGHT, math.ceil(y + height) + 2)))
+
+    _require(bool(sample_a['elements']), error)
+    for identity, state in sample_a['elements'].items():
+        x, y, width, height = _bounds(state)
+        _require(type(state.get('text_boxes')) is dict
+                 and 'element-label' in state['text_boxes'], error)
+        for rectangle in state['text_boxes'].values():
+            protect(rectangle)
+        opacity = _number(state.get('opacity'))
+        _require(0 <= opacity <= 1, error)
+        if state.get('state') is not None or opacity <= .99:
+            continue
+        # The controlled compiler owns these 136x44, radius-22 token pills.
+        _require(width == 136 and height == 44 and state.get('stateOpacities') == {}
+                 and state.get('docking_bay') is None
+                 and type(state.get('label')) is str and state['label'].strip(), error)
+        radius = 22
+        for left, right in ((x, x + radius), (x + width - radius, x + width)):
+            for top, bottom in ((y, y + radius), (y + height - radius, y + height)):
+                # 16px JPEG 4:2:0 MCU neighborhoods plus 2px chroma reconstruction.
+                # The mask is derived from fixed geometry, never from differences.
+                box = (max(0, math.floor(left / 16) * 16 - 2),
+                       max(0, math.floor(top / 16) * 16 - 2),
+                       min(WIDTH, math.ceil(right / 16) * 16 + 2),
+                       min(HEIGHT, math.ceil(bottom / 16) * 16 + 2))
+                draw.rectangle((box[0], box[1], box[2] - 1, box[3] - 1), fill=255)
+                token_regions.append(dict(element_id=identity, box=list(box)))
+        rectangle = state['text_boxes']['element-label']
+        lx, ly, lw, lh = _bounds(rectangle)
+        _require(x <= lx < lx + lw <= x + width and y <= ly < ly + lh <= y + height, error)
+        label = first.crop((math.floor(lx), math.floor(ly), math.ceil(lx + lw), math.ceil(ly + lh)))
+        rgb = label.tobytes()
+        _require(sum(min(rgb[index:index + 3]) > 100 for index in range(0, len(rgb), 3)) >= 2, error)
+    _require(bool(token_regions), error)
+    layout = sample_a['layout']
+    _require(layout.get('fontReady') is True and type(layout.get('headers')) is dict
+             and set(layout['headers']) == {'previous', 'current'}
+             and type(layout.get('relations')) is list, error)
+    for key in ('title', 'takeaway'):
+        protect(layout.get(key))
+    for header in layout['headers'].values():
+        _require(type(header) is dict, error)
+        for key in ('title', 'takeaway'):
+            protect(header.get(key))
+    for relation in layout['relations']:
+        _require(type(relation) is dict, error)
+        protect(relation.get('ink'), positive=False)
+    for left, top, right, bottom in text_regions:
+        _require(first.crop((left, top, right, bottom)).tobytes()
+                 == second.crop((left, top, right, bottom)).tobytes(), error)
+        draw.rectangle((left, top, right - 1, bottom - 1), fill=0)
+    difference = ImageChops.difference(first, second)
+    outside = ImageChops.multiply(difference, ImageChops.invert(mask).convert('RGB'))
+    _require(outside.getbbox() is None, error)
+    red, green, blue = difference.split()
+    maximum = ImageChops.lighter(ImageChops.lighter(red, green), blue)
+    changed = WIDTH * HEIGHT - maximum.histogram()[0]
+    largest = maximum.getextrema()[1]
+    global_mae = sum(ImageStat.Stat(difference).mean) / 3
+    _require(global_mae <= .01 and largest <= 48 and changed <= 2048, error)
+    return dict(mode='bounded_corner_raster', frame_sha256=list(identities),
+                changed_pixels=changed, max_channel_error=largest, global_mae=global_mae,
+                protected_text_regions=len(text_regions), token_corner_regions=token_regions,
+                limits=dict(max_global_mae=.01, max_channel_error=48, max_changed_pixels=2048),
+                other_pixels_exact=True, protected_text_exact=True)
+
+
+def _verify(wrapper, timeline, observations, *, frame_bytes=None):
     for value in (wrapper, timeline, observations):
         _finite_tree(value)
     segment = _contract(wrapper, timeline)
@@ -379,12 +499,17 @@ def _verify(wrapper, timeline, observations):
              and type(sequence.get('samples')) is list and len(sequence['samples']) == len(times),
              'process_continuity_seek_sequence_missing')
     repeated = {}
+    repeated_frame_checks = []
     for sample, time in zip(sequence['samples'], times):
         _sample(sample, time, segment)
-        state = {key: sample[key] for key in ('elements', 'relations', 'layout', 'continuity', 'frame_sha256')}
         if time in repeated:
-            _require(state == repeated[time], 'process_continuity_seek_sequence_mismatch')
-        repeated[time] = state
+            previous = repeated[time]
+            _require(all(sample[key] == previous[key]
+                         for key in ('elements', 'relations', 'layout', 'continuity')),
+                     'process_continuity_seek_sequence_mismatch')
+            comparison = _repeat_frame_equivalence(previous, sample, frame_bytes)
+            repeated_frame_checks.append(dict(time=time, **comparison))
+        repeated[time] = sample
     _require(repeated[0]['frame_sha256'] == boundary['initial']['frame_sha256']
              and repeated[timeline['duration_seconds'] - 1 / FPS]['frame_sha256'] == boundary['final']['frame_sha256'],
              'process_continuity_seek_sequence_mismatch')
@@ -396,12 +521,12 @@ def _verify(wrapper, timeline, observations):
                         final_checkpoint_sha256=sha256(segment['final_checkpoint']),
                         initial_frame_sha256=boundary['initial']['frame_sha256'], final_frame_sha256=boundary['final']['frame_sha256'],
                         boundary_status='passed', copy_lineage=deepcopy(segment['copy_lineage']),
-                        seek_sequence_samples=len(times)))
+                        seek_sequence_samples=len(times), repeated_frame_checks=repeated_frame_checks))
 
 
-def verify_process_continuity_observations(wrapper, timeline, observations):
+def verify_process_continuity_observations(wrapper, timeline, observations, *, frame_bytes=None):
     """Validate measured browser evidence without granting human acceptance."""
     try:
-        return _verify(wrapper, timeline, observations)
+        return _verify(wrapper, timeline, observations, frame_bytes=frame_bytes)
     except (KeyError, TypeError, ValueError, AttributeError, RecursionError, ZeroDivisionError):
         raise ServiceError('process_continuity_observation_invalid', 422) from None

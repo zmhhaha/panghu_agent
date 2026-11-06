@@ -246,7 +246,7 @@ def _relation_plate(item, elements, labels):
         _require(item.get('ink') is None, 'motion_relation_bounds_missing')
 
 
-def verify_observations(plan, timeline, observations):
+def verify_observations(plan, timeline, observations, *, frame_bytes=None):
     """Reject missing/bogus seeks, overflow, no-op moves and frozen timelines.
 
     This checks declared action windows; it deliberately makes no global
@@ -255,7 +255,7 @@ def verify_observations(plan, timeline, observations):
     """
     if timeline.get('compiler') == 'motion-process-continuity-compiler-1':
         from .process_continuity_review import verify_process_continuity_observations
-        return verify_process_continuity_observations(plan, timeline, observations)
+        return verify_process_continuity_observations(plan, timeline, observations, frame_bytes=frame_bytes)
     if timeline.get('compiler') in {'motion-continuity-compiler-1', 'motion-continuity-compiler-2'}:
         from .continuity_review import verify_continuity_observations
         return verify_continuity_observations(plan, timeline, observations)
