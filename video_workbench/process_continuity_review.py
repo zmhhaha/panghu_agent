@@ -75,7 +75,10 @@ def expected_states(segment, time):
         for key, end in event['after'].items():
             start = event['before'][key]
             if key == 'slot':
-                if fraction >= 1:
+                # Compare timestamps directly: (.6-.15)/.45 is just below 1
+                # even though .15+.45 == .6. A ratio is valid for interpolation
+                # but cannot decide whether a discrete endpoint has arrived.
+                if time >= event['start'] + event['duration']:
                     target[key] = end
             elif type(start) in (int, float):
                 target[key] = start + (end - start) * eased

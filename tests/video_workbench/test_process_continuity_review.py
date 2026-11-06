@@ -18,7 +18,7 @@ from video_workbench.process_continuity import (
     compile_process_continuity_project, expected_process_continuity_states,
 )
 from video_workbench.process_continuity_review import (
-    verify_process_continuity_observations, seek_sequence_times, _segment_hits_box,
+    verify_process_continuity_observations, seek_sequence_times, _segment_hits_box, expected_states,
 )
 from video_workbench.process_review import _path_position
 
@@ -28,6 +28,20 @@ from video_workbench.process_review import _path_position
     ((5, 15), (15, 5), False), ((0, 30), (30, 0), True), ((20, 20), (30, 30), False)])
 def test_swept_archive_clearance_checks_diagonals_and_permits_exact_touch(start, end, hit):
     assert _segment_hits_box(start, end, (10, 10, 10, 10)) is hit
+
+
+@pytest.mark.parametrize('time,slot', [(math.nextafter(.6, -math.inf), 'token_queue'),
+    (.6, 'token_source'), (math.nextafter(.6, math.inf), 'token_source')])
+def test_discrete_transfer_slot_completes_at_exact_timestamp_without_boundary_tolerance(time, slot):
+    # Real copy-boundary evidence exposed this cancellation error: the quotient
+    # is below one at exactly .6, while its endpoint timestamp is exactly .6.
+    assert (.6 - .15) / .45 < 1 and .15 + .45 == .6
+    segment = dict(index=1, relations={}, initial_states=dict(request=dict(slot='token_queue',
+        x=572, y=470, width=136, height=44)), timeline=dict(actions=[dict(
+            scope='element', target='request', kind='tween', process_kind='transfer', start=.15, duration=.45,
+            before=dict(x=572, y=470, slot='token_queue'), after=dict(x=136, y=470, slot='token_source'),
+            points=[[640, 492], [204, 492]])]))
+    assert expected_states(segment, time)['elements']['request']['slot'] == slot
 
 
 def inputs():

@@ -1,6 +1,7 @@
 """Pure compiler checks; synthetic timing does not prove real video quality."""
 from copy import deepcopy
 import json
+import math
 
 import pytest
 
@@ -80,6 +81,27 @@ def test_copy_is_explicit_has_new_identity_and_originals_remain_across_three_sce
     assert third['initial_checkpoint'] == second['final_checkpoint']
     for scene, segment in zip(scenes, result['segments']):
         assert compile_process_continuity_project(scene, segment)
+
+
+@pytest.mark.parametrize('time,complete', [
+    (math.nextafter(.6, -math.inf), False),
+    (.6, True),
+    (math.nextafter(.6, math.inf), True),
+])
+def test_copy_boundary_slot_changes_at_exact_endpoint_without_early_tolerance(time, complete):
+    scenes = process_scenes(count=2, repeat=True)
+    segment = resolve_process_continuity(scenes, build_process_continuity_plan(scenes))['segments'][1]
+    transfers = [row for row in segment['timeline']['actions']
+                 if row['reason'] in {'copy', 'archive_copy_source'}]
+    assert len(transfers) == 2
+    assert all(row['start'] == .15 and row['duration'] == .45 for row in transfers)
+    # The sum is exactly .6, while (.6-.15)/.45 rounds below one. Use the
+    # timeline endpoint to match GSAP; the preceding float must remain old.
+    assert .15 + .45 == .6 and (.6-.15)/.45 < 1
+    actual = expected_process_continuity_states(segment, time)['elements']
+    for event in transfers:
+        expected = event['after' if complete else 'before']['slot']
+        assert actual[event['target']]['slot'] == expected
 
 
 def test_archive_capacity_fails_before_silently_discarding_an_original():

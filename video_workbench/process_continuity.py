@@ -457,7 +457,7 @@ def expected_process_continuity_states(segment, time):
         if event['process_kind'] == 'transfer' and event['kind'] != 'hold':
             cx, cy = _position(event['points'], eased)
             target.update(x=cx-target['width']/2, y=cy-target['height']/2)
-            if fraction >= 1:
+            if time >= event['start'] + event['duration']:
                 target['slot'] = event['after']['slot']
             continue
         for key, end in event['after'].items():
