@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-首批实现与本地验证完成；晚间HTTPS旧线上版本评价新增问题正在核查、补齐，生产发布和新增付费候选暂缓，不自动合主线。OpenSpec沿用 `fix-video-user-feedback-reliability`，原完成记录保留；最新新增第13至16项跟踪写失败、后台恢复、图元/尾帧与采用前估时差值。临时操作器与证据集中在既有 ignored `video_workbench/rendered/feedback-20261106/`；服务器视频证据使用 `/root/video-process-20261105/feedback-20261106/`，共享Agent证据使用 `/root/video-feedback-20261106/`，保留失败记录供后续整体清理。
+工作台修复源码 `650f8c40d209fea4bc4ca2ac635eeaf035fa9db6` 已于11月7日上线，服务就绪、原数据/媒体核对与线上浏览器读取通过，已通知用户可在原项目重新制作对比。按用户授权先上线后验收，六例实际渲染与四份历史回放已通过；初次汇总的空日志错误已通过独立汇总恢复，原失败收据保留。共享Agent新组合的隔离候选因上游SSE错误停止，生产路由保持，不能将工作台发布描述成共享Agent升级完成。不自动合主线。OpenSpec沿用 `fix-video-user-feedback-reliability`，第15项技术验证完成，第12项仍跟踪共享Agent新组合的验收和发布。临时操作器与证据集中在既有 ignored `video_workbench/rendered/feedback-20261106/`；服务器视频证据使用 `/root/video-process-20261105/feedback-20261106/`，共享Agent证据使用 `/root/video-feedback-20261106/`，保留失败记录供后续整体清理。
 
 ## 修复
 
@@ -27,13 +27,39 @@
 
 ## 发布身份与范围
 
-业务实现和共享Agent固定源码为 `c683232c1a72eec1aba5da56c9b8dc13a9186db3`；工作台含来源行距后续补丁，固定源码为 `613ecf6428701571a90fd288677c2c8cc82bfddb`。所有镜像使用latest并固定digest，不能因为部分组件源码未变而声称全部来自同一提交。
+当前已发布的工作台固定源码为 `650f8c40d209fea4bc4ca2ac635eeaf035fa9db6`，共享Agent候选与renderer的固定源码仍为 `c683232c1a72eec1aba5da56c9b8dc13a9186db3`。以下 `613ecf6428701571a90fd288677c2c8cc82bfddb` 工作台及其镜像是包含来源行距补丁的上一轮构建证据，不代替本轮最终镜像。所有镜像使用latest并固定digest，不能声称全部来自同一提交。
 
 已经构建并逐文件核对的工作台镜像为 `arm-cluster-master:5000/video-workbench:latest@sha256:bce6b2facc7ede3b37c9c7325ad0d47778a3b937e865955c06bd070a357f4eff`；本轮新renderer为 `arm-cluster-master:5000/video-motion-renderer:latest@sha256:a437f7cb8c3f50bfd0cf08441bd341ec153568e418246c484b9dd64d22f33800`。构建成功不等于生产已切换；实际发布、数据库逐行/BLOB比较、线上浏览器分别留存收据。
 
 共享Agent基于实际线上control、motion/explanation Worker、较旧storyboard Worker分别做窄范围源码更新。保留旧motion-v1字节和旧binding/pool/host/acceptance，不覆盖科研/PPT/process profile。新增生成组合先保持disabled，通过三类独立候选及motion业务预检后，再增量切换三条现有视频路由。先发布兼容新旧模板的工作台，再切共享Agent路由。
 
 共享Agent需要基于实际线上源码做窄范围镜像及独立新组合发布；仅更新本仓库或视频工作台镜像不能让既有Worker获得新模板/提示。发布、真实浏览器、人工准确时序、自然度和最终讲解效果各自记录，不自动互相代替。
+
+## 11月7日工作台与执行器发布
+
+已将两个部署切换为 `arm-cluster-master:5000/video-workbench:latest@sha256:6e868b5e0b1cac14ae0a6c7fd00487296f0215da7c172482d783ac3e0b424348`，renderer使用上述 `a437f7cb…33800`。发布ID为 `video-feedback-20261106-https-r1`；最终构建使用 `https-r1/package-r3.json` 与 `build-r3/`，包SHA256为 `a706b21bb3db345a23f4b34d7f7a419ba52b0f80ac99161784000bb7c09c3c94`。实际72个工作台文件、5个renderer文件逐字节核对通过。两次早期构建在旧镜像引用检查处停止，未发生Docker构建或推送；分别一次拉取原精确digest恢复引用后构建成功，未替换基础版本，原失败目录保持。
+
+准备和执行阶段分别完成SQLite一致备份、空队列检查、旧writer停稳及UID/resourceVersion/完整spec核对，executor先恢复。部署后17个工作台表与2个executor表的旧行/BLOB/媒体一致、无新增业务行、无schema变更；health/ready均200，8个项目统一音色配置与执行器能力通过。未提交模型、TTS或生产渲染。完整回执 `video-release-https-r1-postcheck.json` SHA256为 `3b924c1d41fd8e6e7f436910e4116f9484b89c87e6da6a7a4d682940a47e2679`。
+
+线上浏览器已刷新新版，原HTTPS项目与11个可见项目正常读取，顶部区分238秒文本估时、4/5镜175秒有效录音，方案审阅显示逐镜与总体估时对比，生成/修改批注说明可见，完成的拆镜任务不显示取消。只读回执 `browser-https-production-r1.json` SHA256为 `70c22d1ff82688ebcd411e2e40d176789eea8e01993ebe256cbeb9bb060e21a4`。这是线上读取检查；409冲突恢复由前述本地真实API夹具验证，未在生产人为制造冲突。
+
+已通知用户可在原项目复测，无需新建。保留文稿、音色和有效录音，用现有图解制作新的单镜或整片草稿，更利于比较布局和尾帧。新普通motion渲染快照使用当前compiler6，批次复用草稿还需compiler、runtime及完整输入匹配，因此旧版MP4不会冒充新版渲染结果；旧冻结快照及媒体保持原样。原HTTPS第3镜当前文稿已有改动，其旧图解/配音显示过期，需先更新这一镜。批次可复用其他有效图解和配音，不必全片重新付费生成。
+
+上线后的六例encode/observe/严格审阅及四份历史精确回放均已通过：共20个阶段exit0且清理确认。包含原镜1、完整双来源嵌套结构、HTTPS原镜2/4/5，以及独立修正第3镜certificate移动时机的夹具。第3镜原错误方案先被明确拒绝，仅夹具把第9个动作从本段开始改到中间；原项目未改，不能宣称旧错误方案会被自动修好。所有原时序段、估算/待核对状态与留白保持，音轨仅替换为同长度静音。
+
+HTTPS第5镜保留原53秒录音时长与4秒尾停，56.9583秒→0秒→56.9583秒→0秒的状态恢复通过：末帧旧关系线、箭头、标签可见度均为0，`chain_recap`结论保留，字体已加载。历史四份process连续输入逐字节重编译与旧产物严格审阅通过，不冒充新增历史视频编码。
+
+初次汇总在20阶段全部结束后拒绝了正常的19个空日志，原`overall-outcome.json`因此保持`stopped`，SHA256为 `bab51ab69167228a0fa4bfad4be0521b97e85192006ef1e21f9173d33e487e9f`；这不是渲染失败。独立finalizer重新核对20阶段及清理、完整文件哈希、媒体/时间轴/截图绑定、原历史库存与旧失败证据，仅允许实测的14个非encode阶段stderr与5个普通observe stdout为空，不放宽媒体/JSON校验。汇总恢复回执 `bound-preflight-https-r1-aggregation-recovery.json` 状态为 `existing_stage_evidence_verified`，SHA256为 `ca61cf4a934c83fa34bd6696d6a41c6ef10aaa5d9dcd94ed54309c03a2e6c79b`。恢复新增编码、观察、浏览器、模型、TTS与生产写入均0；原operator与失败收据未覆写，不将原汇总标为成功。共享Agent新模板组合仍未切换，人工旁白时序与声音/美学核准继续独立。
+
+已取回并由助手检查末帧、0秒及27.624077秒中间帧三张截图，确认这些样本没有残留孤立线，末尾结论保留；有限截图检查不代替真人整片观感。OpenSpec实际回读revision `f1ead2a0c5dc046c6a0664f6ec55cc95f5ef621e`，第15项完成，16项中完成15项；第12项剩余工作明确为共享Agent新组合/路由的独立验收及发布。规格验证valid=true，未apply/archive。
+
+## 共享Agent单次隔离候选结果
+
+`motion-r2`准备后，按原预算执行一次`candidate-video-fb-mot`隔离候选，共发生3次模型HTTP请求：1次连通性probe、2次Worker请求，均返回HTTP 200。probe正常完成，第一次Worker SSE正常结束并包含function_call；第二次Worker SSE在流内以`{type: error, code: upstream_error, message: "", param: null}`终止。该错误事件SHA256为`dc3cb06fdd43d8ce387f3feaa5e13ba0b709c413df524b2c41534fe980115461`。
+
+脱敏执行链为`pi_model_failure`（`native_unknown`、`execute_native`、`stop_reason=error`）→`pi_runtime.model_error`→`pi_driver.model_error`，最终`state=failed`、`artifacts=[]`，未进入collector的交付产物校验。HTTP成功并不代表SSE流内成功；上游没有提供错误消息，当前只能确认流中途报错，不能将本次结果描述为模型内容、布局或生成质量不合格，也没有证据归因为管理员profile或collector协议失败。
+
+原once标记与`agent-campaign-STOPPED.json`保留，禁止自动重试、另建目录绕过或继续storyboard/explanation候选。Worker与Proxy均已终止、零重启，实际镜像身份吻合，租约失效请求返回401；`cleanup-summary.json`确认`exact_candidate_resources_deleted=true`，结果保存了带签名的stop receipt。本次失败未标记accepted，未绕过STOP执行成功验收。完整失败证据位于既有共享Agent证据目录的`evidence/candidate-video-fb-mot/`；生产control与路由未切换。
 
 ## HTTPS旧线上评价与根因核对
 
