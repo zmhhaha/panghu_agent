@@ -155,6 +155,26 @@ def test_focus_preserves_original_note_caption_two_urls_and_separate_tokens():
     assert plan == before and json.loads(files['plan.json']) == before
 
 
+@pytest.mark.parametrize('template', ['flow', 'focus', 'sequence', 'nested'])
+def test_two_short_sources_preserve_distinct_labels_in_the_footer(template):
+    plan, beats = fixture(template)
+    plan['takeaway'] = '模型读取文件后继续处理。'
+    plan['sources'] = [
+        dict(label='官方仓库', url='https://github.com/deepseek-ai/deepseek-harness'),
+        dict(label='架构文档', url='https://github.com/deepseek-ai/deepseek-harness/blob/8bd0733/docs/architecture.md'),
+    ]
+    original = deepcopy(plan)
+    preflight_plan(plan, beats)
+    files = compile_project(plan, beats, estimated_alignment(beats, 'a' * 64, 20))
+    page = files['index.html'].decode()
+    assert page.split('<script>')[0].count('<div class="source-label">') == 2
+    for source in plan['sources']:
+        assert '<div class="source-label">' + source['label'] + '</div>' in page
+        assert '<div class="source-url">' + source['url'] + '</div>' in page
+    assert '.source-row:last-child{margin-bottom:0}' in page
+    assert plan == original and json.loads(files['plan.json']) == original
+
+
 @pytest.mark.parametrize('compiler', [f'motion-compiler-{i}' for i in range(1, 6)])
 @pytest.mark.parametrize('feature', ['sources', 'nested', 'sequence'])
 def test_old_compilers_reject_new_semantics_instead_of_dropping_them(compiler, feature):

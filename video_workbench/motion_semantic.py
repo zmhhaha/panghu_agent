@@ -57,11 +57,12 @@ def source_layout(plan):
     shared_label = (plan['sources'][0]['label'] if len({s['label'] for s in plan['sources']}) == 1
                     else None)
     source_height = (text_lines(shared_label, 1100, 18) * 25 +
-                     sum(text_lines(s['url'], 1100, 18) * 25 for s in plan['sources']) + 8
+                     sum(text_lines(s['url'], 1100, 18) * 25 for s in plan['sources'])
                      if shared_label is not None else
                      sum((text_lines(s['label'], 1100, 18) +
-                          text_lines(s['url'], 1100, 18)) * 25 + 8 for s in plan['sources']))
-    if takeaway_height + source_height + 8 > 140:
+                          text_lines(s['url'], 1100, 18)) * 25 for s in plan['sources'])
+                     + 4 * (len(plan['sources']) - 1))
+    if takeaway_height + source_height + 4 > 140:
         raise ServiceError('motion_text_overflow', 422)
     return dict(top=568, height=140, takeaway_height=takeaway_height,
                 source_top=568 + takeaway_height + 4, shared_label=shared_label)

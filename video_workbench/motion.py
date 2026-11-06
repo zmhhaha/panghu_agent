@@ -671,7 +671,7 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
 .container .element-detail{font-size:18px;line-height:27px;margin-top:4px}
 .card,.token,.label{z-index:2}#connections{z-index:1}.takeaway{z-index:3}
 #source-panel{position:absolute;left:72px;top:604px;width:1136px;max-height:104px;padding:0 18px;color:#d4e5f1;font-size:18px;line-height:25px;overflow:hidden;overflow-wrap:anywhere;z-index:3}
-.source-row{margin-bottom:8px}.source-label{color:#8ba2b9}.source-url{color:#e6f5ff}
+.source-row{margin-bottom:4px}.source-row:last-child{margin-bottom:0}.source-label{color:#8ba2b9}.source-url{color:#e6f5ff}
 </style>''')
         if panel:
             if panel['shared_label'] is not None:
