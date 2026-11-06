@@ -99,6 +99,20 @@ def test_process_copy_only_for_token_and_new_candidate_preserves_original(state)
     assert continuity.project_projection(OWNER, project_id)['head_version_id'] is None
 
 
+def test_explicit_empty_process_links_remain_empty_and_restore_standalone_initial_state(state):
+    _, _, continuity, project_id = state
+    original = propose(state)
+    candidate = propose(state, [])
+    assert original['plan']['links'] and candidate['plan']['links'] == []
+    assert candidate['compiler'] == PROCESS_COMPILER
+    for summary in candidate['scene_summaries']:
+        worker = next(row for row in summary['elements'] if row['id'] == 'worker')
+        assert worker['initial_state'] == worker['standalone_initial_state'] == 'idle'
+    continuity.adopt(OWNER, project_id, candidate['id'], revision(state), None)
+    assert continuity.render_selection(OWNER, project_id)['plan']['links'] == []
+    assert continuity.get(OWNER, original['id'])['plan'] == original['plan']
+
+
 def test_process_adoption_keeps_owner_revision_and_head_cas(state):
     _, _, continuity, project_id = state
     first, second = propose(state), propose(state)

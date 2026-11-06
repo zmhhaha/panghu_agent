@@ -116,6 +116,36 @@ def test_each_segment_rebuilds_exactly_and_keeps_old_process2_bytes():
     assert compile_process_project(source['plan'], source['beats'], source['alignment']) == old
 
 
+def test_transfer_runtime_uses_transform_offsets_from_each_frozen_initial_pose():
+    scenes = process_scenes(repeat=True)
+    resolution = resolve_process_continuity(scenes, build_process_continuity_plan(scenes))
+    for scene, segment in zip(scenes, resolution['segments']):
+        page = compile_process_continuity_project(scene, segment)['index.html'].decode()
+        script = page.rsplit('<script>', 1)[1].split('tl.set({}, {},data.timeline.duration_seconds)', 1)[0]
+        # Strict HyperFrames permits transform motion. Static CSS positioning
+        # is not an animation, and must remain the per-object base for seeking.
+        assert '{left:' not in script and '{top:' not in script
+        assert "key==='x'?'left'" not in script and "key==='y'?'top'" not in script
+        assert 'x:points[i-1][0]-base.width/2-base.x' in script
+        assert 'y:points[i-1][1]-base.height/2-base.y' in script
+        for event in segment['timeline']['actions']:
+            if event['process_kind'] != 'transfer':
+                continue
+            base = segment['initial_states'][event['target']]
+            for endpoint, position in zip((event['points'][0], event['points'][-1]),
+                                          (event['before'], event['after'])):
+                dx, dy = endpoint[0]-base['width']/2-base['x'], endpoint[1]-base['height']/2-base['y']
+                assert (base['x']+dx, base['y']+dy) == (position['x'], position['y'])
+        # Last->zero->middle->zero uses the frozen base rather than accumulating
+        # offsets from the previous seek or a copy's later archive location.
+        last = segment['timeline']['duration_seconds']-1/24
+        initial = expected_process_continuity_states(segment, 0)
+        for time in (last, 0, .375, 0):
+            sample = expected_process_continuity_states(segment, time)
+            if time == 0:
+                assert sample == initial
+
+
 def test_unsafe_links_and_inherited_state_conflicts_are_rejected_before_audio():
     scenes = process_scenes()
     plan = build_process_continuity_plan(scenes)

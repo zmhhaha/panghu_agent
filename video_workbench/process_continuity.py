@@ -693,7 +693,7 @@ _SCRIPT = r'''(()=>{'use strict';
 const data=__PAYLOAD__,s=data.segment,tl=gsap.timeline({paused:true,defaults:{ease:'power2.inOut',autoRound:false}});
 const node=id=>document.getElementById('el-'+id),rel=id=>document.getElementById('rel-'+id);
 const cubic=t=>t<.5?4*t*t*t:1-4*Math.pow(1-t,3),inverse=t=>t<.5?Math.cbrt(t/4):1-Math.cbrt((1-t)/4);
-const vars=value=>Object.fromEntries(Object.entries(value).filter(([key])=>key!=='slot').map(([key,value])=>[key==='x'?'left':key==='y'?'top':key,value]));
+const vars=(value,id)=>Object.fromEntries(Object.entries(value).filter(([key])=>key!=='slot').map(([key,value])=>[key,(key==='x'||key==='y')?value-s.initial_states[id][key]:value]));
 for(const a of data.timeline.actions){
  if(a.kind==='hold')continue;
  const when=a.start,duration=a.duration;
@@ -708,15 +708,15 @@ for(const a of data.timeline.actions){
   if(total>0)for(let i=1;i<points.length;i++){
    const length=lengths[i-1];if(!length)continue;
    const a0=distance/total,a1=(distance+length)/total,lo=inverse(a0),hi=inverse(a1);
-   tl.fromTo(el,{left:points[i-1][0]-base.width/2,top:points[i-1][1]-base.height/2},
-    {left:points[i][0]-base.width/2,top:points[i][1]-base.height/2,duration:duration*(hi-lo),
+   tl.fromTo(el,{x:points[i-1][0]-base.width/2-base.x,y:points[i-1][1]-base.height/2-base.y},
+    {x:points[i][0]-base.width/2-base.x,y:points[i][1]-base.height/2-base.y,duration:duration*(hi-lo),
      ease:u=>(cubic(lo+u*(hi-lo))-a0)/(a1-a0),immediateRender:false},when+duration*lo);
    distance+=length;
   }
   tl.fromTo(el,{attr:{'data-slot':a.before.slot}},{attr:{'data-slot':a.after.slot},duration:0,immediateRender:false},when+duration);
  }else{
   const el=a.scope==='element'?node(a.target):a.scope==='relation'?rel(a.target):a.scope==='plate'?document.getElementById('label-'+a.target):a.scope==='marker'?document.getElementById('tip-'+a.target):document.getElementById('head-'+a.target);
-  tl.fromTo(el,vars(a.before),{...vars(a.after),duration,immediateRender:false},when);
+  tl.fromTo(el,vars(a.before,a.target),{...vars(a.after,a.target),duration,immediateRender:false},when);
  }
 }
 tl.set({}, {},data.timeline.duration_seconds);window.__timelines=window.__timelines||{};window.__timelines['video-motion']=tl;
