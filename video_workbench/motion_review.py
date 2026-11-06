@@ -58,6 +58,12 @@ def _connector_states(plan, timeline, time):
         tip_start = start + .85 * duration
         if time >= tip_start:
             state['markerOpacity'] = progress(tip_start, .15 * duration)
+    if timeline.get('compiler') == 'motion-compiler-6':
+        for relation in plan['relations']:
+            factor = (_element_opacity(timeline, relation['source'], time) *
+                      _element_opacity(timeline, relation['target'], time))
+            for key in ('opacity', 'labelOpacity', 'markerOpacity'):
+                states[relation['id']][key] *= factor
     return states
 
 
@@ -95,6 +101,9 @@ def _highlight_widths(plan, timeline, time):
 
 
 def _element_opacity(timeline, identity, time):
+    if timeline.get('compiler') == 'motion-compiler-6':
+        from .motion_semantic import element_opacity
+        return element_opacity(timeline, identity, time)
     actions = [row for row in timeline['actions'] if row['target'] == identity and row['kind'] in {'reveal', 'hide'}]
     initial = 0.0 if actions and actions[0]['kind'] == 'reveal' else 1.0
     opacity = initial
@@ -388,6 +397,9 @@ def verify_observations(plan, timeline, observations, *, frame_bytes=None):
                     _require(values[0] >= .98 and values[2] <= .02
                              and values[2] < values[1] < values[0], 'motion_expected_hide_missing')
             elif kind == 'move':
+                if not all(_visible(state) for state in (a, b, c)):
+                    from .motion_semantic import invisible_move
+                    invisible_move(action, action['ordinal'])
                 _require(_visible(a) and _visible(b) and _visible(c), 'motion_invisible_move')
                 x, y = layout[action['to_slot']][:2]
                 if demonstration:

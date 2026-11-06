@@ -115,6 +115,20 @@ def test_scene_edit_survives_other_scene_completion_without_overwriting_it(env):
     assert client.get('/api/projects/' + p['id']).json() == saved
 
 
+def test_storyboard_public_clock_is_persisted_without_exposing_frozen_input(env):
+    client, store, workflow, gateway = env
+    p = project(client, with_scene=False)
+    accepted = client.post(f'/api/projects/{p["id"]}/storyboard',
+        headers={'Idempotency-Key': 'clock-storyboard'}, json=dict(expected_revision=p['revision']))
+    assert accepted.status_code == 202, accepted.text
+    public = accepted.json()
+    assert set(public) == {'id', 'kind', 'status', 'error', 'job_id', 'created_at'}
+    assert public['created_at'] > 0
+    observed = client.get('/api/projects/' + p['id']).json()['storyboard_operation']
+    assert observed['created_at'] == public['created_at']
+    assert Store(store.path).project('alice', p['id'])['storyboard_operation']['created_at'] == public['created_at']
+
+
 def test_scene_edit_base_does_not_relax_legacy_future_or_owner_checks(env):
     client, store, workflow, gateway = env
     p = project(client)

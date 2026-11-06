@@ -12,6 +12,54 @@ from .motion_geometry import (connection_geometry, inflate, overlaps, path_text,
                               route, wrap_label)
 
 
+def element_opacity(timeline, identity, time):
+    """Evaluate explicit GSAP opacity endpoints with its cubic power2 ease."""
+    actions = [row for row in timeline['actions'] if row['target'] == identity
+               and row['kind'] in {'reveal', 'hide'}]
+    opacity = 0.0 if actions and actions[0]['kind'] == 'reveal' else 1.0
+    for action in actions:
+        if time < action['start']:
+            continue
+        progress = min(1.0, max(0.0, (time - action['start']) / action['duration']))
+        eased = 4 * progress ** 3 if progress < .5 else 1 - (-2 * progress + 2) ** 3 / 2
+        opacity += ((1.0 if action['kind'] == 'reveal' else 0.0) - opacity) * eased
+    return opacity
+
+
+def invisible_move(action, ordinal):
+    error = ServiceError('motion_invisible_move', 422)
+    error.motion_context = dict(target=action['target'], kind='move', ordinal=ordinal,
+                                beat_id=action['beat_id'])
+    raise error
+
+
+def check_action_visibility(plan, beats):
+    """Reject provably invisible moves before recording-dependent timing exists.
+
+    A later beat or placement may provide enough time for a reveal; the exact
+    frame samples are checked again once a particular recording is available.
+    A reveal on a hidden object or a hide simultaneous with its move cannot
+    meet that contract. Re-revealing an already visible object is harmless;
+    its exact fade state remains subject to the recording-dependent check.
+    """
+    beat_order = {row['id']: index for index, row in enumerate(beats['segments'])}
+    placement_order = {'start': 0, 'middle': 1, 'end': 2}
+    anchor = lambda action: (beat_order[action['beat_id']], placement_order[action['placement']])
+    for ordinal, action in enumerate(plan['actions']):
+        if action['kind'] != 'move':
+            continue
+        visibility = sorted((row for row in plan['actions']
+                             if row['target'] == action['target'] and row['kind'] in {'reveal', 'hide'}),
+                            key=anchor)
+        visible = not visibility or visibility[0]['kind'] != 'reveal'
+        for row in visibility:
+            if anchor(row) < anchor(action):
+                visible = row['kind'] == 'reveal'
+        if not visible or any(row['kind'] == 'hide' and anchor(row) == anchor(action)
+                              for row in visibility):
+            invisible_move(action, ordinal)
+
+
 LAYOUTS = {
     'sequence': {
         'step_1': (72, 332, 240, 148), 'step_2': (370, 332, 240, 148),

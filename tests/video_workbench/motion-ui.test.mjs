@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import {
   createMotionPanel, createMotionRequest, createMotionAdoption, createMotionRenderRequest, createProjectMotionDraftRequest,
   currentMotionAudio, hasMotionScenes, usesDynamicVideo, createDynamicProjectRequest, motionMetadata, motionDiagramKind, motionErrorLabel, motionRenderErrorLabel, motionSelection, validateMotionSegments,
+  safeMotionContext, motionFailureSource, motionFailureDetails,
 } from '../../video_workbench/web/motion.mjs';
 import { deliveryIssues, isActiveOperation, isUnresolvedProductionOperation } from '../../video_workbench/web/model.mjs';
 
@@ -13,6 +14,8 @@ class Element {
     this.tagName = tag; this.children = []; this.listeners = new Map(); this.dataset = {};
     this.value = ''; this.checked = false; this.disabled = false; this.hidden = false;
     this.content = ''; this.paused = true; this.currentTime = 0;
+    const classes = new Set();
+    this.classList = { toggle(name, enabled) { enabled ? classes.add(name) : classes.delete(name); }, contains: name => classes.has(name) };
   }
   set textContent(value) { this.content = String(value); this.children = []; }
   get textContent() { return [this.content, ...this.children.map(row => row.textContent)].join('\n'); }
@@ -308,6 +311,104 @@ test('one generation submits once; uncertain result refreshes existing work with
   assert.ok(!h.state.calls.some(row => /audio\/generate|\/adopt|motion-renders/.test(row.path)));
 });
 
+test('actual input and button events preserve revision notes across refresh and bind revision to the selected candidate', async () => {
+  for (const revise of [false, true]) {
+    const h = harness(); await h.load();
+    h.$('motion-instruction').value = '减少节点和关系，保留请求到达服务器的主线。';
+    await h.$('motion-instruction').emit('input');
+    h.state.context.project.revision = 2; h.state.data.revision = 2;
+    await h.load();
+    assert.equal(h.$('motion-instruction').value, '减少节点和关系，保留请求到达服务器的主线。');
+    assert.match(h.$('motion-form-note').textContent, /重新生成会创建新候选.*所选图解 1.*提交上方批注/);
+    h.state.transport = async (path, options, fallback) => options.method === 'POST'
+      ? { id: 'submitted', status: 'queued' } : fallback(path);
+    await h.$(revise ? 'revise-motion' : 'generate-motion').emit('click');
+    assert.equal(posts(h).length, 1);
+    assert.equal(posts(h)[0].options.body.instruction, '减少节点和关系，保留请求到达服务器的主线。');
+    assert.equal(posts(h)[0].options.body.expected_revision, 2);
+    assert.equal(posts(h)[0].options.body.base_version_id, revise ? 'v1' : undefined);
+    assert.equal(h.$('motion-instruction').value, '减少节点和关系，保留请求到达服务器的主线。');
+  }
+});
+
+test('protocol and quarantine failures remain visible in task status and refresh elapsed time without another request', async () => {
+  const originalNow = Date.now; let now = originalNow(); Date.now = () => now;
+  try {
+    for (const [status, error] of [['submitting', 'service_protocol_invalid'], ['quarantined', 'agent_quarantined']]) {
+      const h = harness();
+      h.state.data.scenes[0].motion.operation = { id: 'blocked', status, error, created_at: now / 1000 - 60 };
+      await h.load();
+      assert.equal(h.$('motion-status').hidden, false);
+      assert.match(h.$('motion-status-text').textContent, new RegExp(error));
+      assert.match(h.$('motion-status-text').textContent, /维护者|不要重复生成/);
+      assert.equal(h.$('motion-status').classList.contains('failed'), true);
+      assert.equal(h.panel.hasRefreshableOperation(), true);
+      const reads = h.state.calls.length; now += 65000; h.panel.refreshElapsed();
+      assert.match(h.$('motion-status-text').textContent, /已等待 2分5秒/);
+      assert.equal(h.state.calls.length, reads);
+      assert.equal(posts(h).length, 0);
+    }
+  } finally { Date.now = originalNow; }
+});
+
+test('motion write errors remain visible locally across successful reads and do not clear the instruction', async () => {
+  const h = harness(); await h.load();
+  h.$('motion-instruction').value = '明确展示失败与重试。'; await h.$('motion-instruction').emit('input');
+  h.state.transport = async (path, options, fallback) => {
+    if (options.method === 'POST') throw Object.assign(new Error('revision_conflict'), { status: 409 });
+    return fallback(path);
+  };
+  h.state.refreshAction = h.load;
+  await h.$('revise-motion').emit('click');
+  assert.equal(posts(h).length, 1);
+  assert.equal(h.$('motion-read-error').hidden, false);
+  assert.match(h.$('motion-read-error').textContent, /已有更新/);
+  await h.load();
+  assert.equal(h.$('motion-read-error').hidden, false);
+  assert.equal(h.$('motion-instruction').value, '明确展示失败与重试。');
+  assert.match(motionErrorLabel('motion_revision_unchanged'), /完全相同.*未保存重复候选.*配音保留/);
+  h.state.data.scenes[0].motion.operation = { id: 'needs-review', status: 'needs_input', error: 'motion_revision_unchanged',
+    motion_context: { target: 'queue', kind: 'reveal', ordinal: 0, beat_id: 'b1' } };
+  await h.load();
+  assert.equal(h.$('motion-status').classList.contains('failed'), true);
+  assert.match(h.$('motion-status-text').textContent, /完全相同.*问题图元：queue/);
+});
+
+test('render diagnostics resolve labels only against the frozen version, scene and exact original action', () => {
+  const context = { target: 'queue', kind: 'reveal', ordinal: 0, beat_id: 'b1' };
+  const item = { diagnostic: { scene_index: 0, motion_context: context },
+    scenes: [{ scene_id: 'scene-1', visual_mode: 'motion', visual_version_id: 'v1' }] };
+  const correct = { ...version(), project_id: 'p1', scene_id: 'scene-1' };
+  assert.equal(motionFailureSource(item).visual_version_id, 'v1');
+  assert.equal(motionFailureDetails(item, correct, 'p1').bound, true);
+  assert.match(motionFailureDetails(item, correct, 'p1').text, /<img onerror=alert\(1\)>队列（queue）.*出现.*第 1 个动作/);
+  for (const changed of [undefined, { ...correct, id: 'v2' }, { ...correct, project_id: 'other' },
+    { ...correct, scene_id: 'other' }, { ...correct, plan: { ...correct.plan, actions: [{ ...correct.plan.actions[0], beat_id: 'other' }] } }]) {
+    const result = motionFailureDetails(item, changed, 'p1');
+    assert.equal(result.bound, false);
+    assert.match(result.text, /queue.*尚未取得该任务的确切方案/);
+    assert.doesNotMatch(result.text, /onerror|队列/);
+  }
+  for (const changed of [{ ...context, target: '/private/file' }, { ...context, ordinal: -1 },
+    { ...context, kind: 'constructor' }, { ...context, beat_id: '<img>' }, { ...context, ordinal: 48 },
+    { ...context, target: ['queue'] }, { ...context, beat_id: ['b1'] },
+    { ...context, kind: ['reveal'] }, { ...context, target: 'Queue' }, { ...context, target: 'q'.repeat(33) }]) {
+    assert.equal(safeMotionContext(changed), null);
+  }
+});
+
+test('explicit diagnostic navigation highlights only the matching historical version without submitting work', async () => {
+  const h = harness(); await h.load();
+  const walk = row => [row, ...row.children.flatMap(walk)];
+  h.panel.focusDiagnostic('v1', { target: 'queue', kind: 'reveal', ordinal: 0, beat_id: 'b1' });
+  h.panel.render();
+  assert.equal(walk(h.$('motion-review')).filter(row => row.className === 'motion-diagnostic-target').length, 2);
+  h.state.data.scenes[0].motion.versions.push({ id: 'v2', stale: false, plan_sha256: 'v2' });
+  h.panel.select('p1', 'scene-1', 'v2'); await h.load();
+  assert.equal(walk(h.$('motion-review')).filter(row => row.className === 'motion-diagnostic-target').length, 0);
+  assert.equal(posts(h).length, 0);
+});
+
 test('gate off preserves history, audio and cancellation and permits withdrawing to static only', async () => {
   const h = harness(); h.state.context.enabled = false; h.state.context.configured = false; h.state.context.renderConfigured = false;
   const motion = h.state.data.scenes[0].motion;
@@ -511,7 +612,7 @@ test('all controls exist once; app wires motion reads, MP4 playback, polling and
   for (const [, id] of source.matchAll(/\$\('([^']+)'\)/g)) assert.ok(ids.includes(id), id);
   assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML|eval\(/);
   assert.match(app, /motionPanel\.load\(ticket.projectId, ticket.epoch\)/);
-  assert.match(app, /!motionPanel\.hasActiveOperation\(state.projectId, state.project\?\.scenes\)/); assert.match(app, /motionPanel\.hasDrafts\(\)/);
+  assert.match(app, /motionPanel\.hasRefreshableOperation\(state.projectId, state.project\?\.scenes\)/); assert.match(app, /motionPanel\.hasDrafts\(\)/);
   assert.match(app, /createMotionRenderRequest\(state.project, \{ purpose: 'delivery',/);
   assert.match(app, /function openMotionRender\(item\)/);
   assert.match(app, /!\$\('motion-panel'\)\.contains\(event.target\) && !\$\('motion-timing-section'\)\.contains\(event.target\)/);

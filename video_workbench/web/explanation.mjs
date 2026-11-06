@@ -1,5 +1,6 @@
 /** Optional project explanation planning; generation never starts media work. */
-import { isActiveOperation, isUnresolvedProductionOperation, statusLabel } from './model.mjs';
+import { isActiveOperation, isUnresolvedProductionOperation, operationNeedsRefresh,
+  operationElapsedLabel, mutationErrorLabel, operationServiceErrorLabel, statusLabel } from './model.mjs';
 
 export const EXPLANATION_TONES = new Set(['conversational', 'precise', 'storytelling']);
 const STRATEGIES = { flow: '流程与路由', compare: '前后对照', focus: '结构聚焦' };
@@ -32,8 +33,8 @@ const EXPLANATION_ERRORS = {
 };
 
 export function explanationErrorLabel(code) {
-  return typeof code === 'string' && Object.hasOwn(EXPLANATION_ERRORS, code) ? EXPLANATION_ERRORS[code]
-    : '讲解任务暂未完成，可重新读取状态；现有镜头内容会保留。';
+  return operationServiceErrorLabel(code) ?? (typeof code === 'string' && Object.hasOwn(EXPLANATION_ERRORS, code) ? EXPLANATION_ERRORS[code]
+    : '讲解任务暂未完成，可重新读取状态；现有镜头内容会保留。');
 }
 
 export function explanationDraft() {
@@ -92,11 +93,46 @@ export function explanationSceneReviews(project, version) {
   }));
 }
 
+const estimate = value => typeof value === 'number' && Number.isFinite(value) && value > 0;
+const rounded = value => Math.round(value * 1000) / 1000;
+const seconds = value => rounded(value).toLocaleString('zh-CN', { maximumFractionDigits: 3 });
+const signedSeconds = value => `${value > 0 ? '+' : ''}${seconds(value)}`;
+
+/** Compare saved and proposed script estimates for the same complete set of scenes. */
+export function explanationDurationComparison(project, version) {
+  const current = project?.scenes ?? [], proposed = version?.result?.scenes ?? [];
+  const currentIds = new Set(current.map(scene => scene.id));
+  const proposedIds = new Set(proposed.map(scene => scene.scene_id));
+  const complete = current.length > 0 && current.length === proposed.length
+    && currentIds.size === current.length && proposedIds.size === proposed.length
+    && current.every(scene => proposedIds.has(scene.id) && estimate(scene.duration_seconds))
+    && proposed.every(scene => estimate(scene.duration_seconds));
+  if (!complete) return null;
+  const previousSeconds = rounded(current.reduce((sum, scene) => sum + scene.duration_seconds, 0));
+  const proposedSeconds = rounded(proposed.reduce((sum, scene) => sum + scene.duration_seconds, 0));
+  const deltaSeconds = rounded(proposedSeconds - previousSeconds);
+  return { previousSeconds, proposedSeconds, deltaSeconds,
+    deltaPercent: Math.round(deltaSeconds / previousSeconds * 1000) / 10 };
+}
+
+function durationComparisonLabel(comparison) {
+  if (!comparison) return '镜头对应或预计时长不完整，暂不能比较整份方案。以下时长均为文本估时，实际以配音录音为准。';
+  const { previousSeconds, proposedSeconds, deltaSeconds, deltaPercent } = comparison;
+  const change = deltaSeconds === 0 ? '时长不变' : `${deltaSeconds > 0 ? '增加' : '减少'} ${seconds(Math.abs(deltaSeconds))} 秒（${seconds(Math.abs(deltaPercent))}%）`;
+  return `当前方案预计 ${seconds(previousSeconds)} 秒 → 候选方案预计 ${seconds(proposedSeconds)} 秒，${change}。均为文本估时，实际以配音录音为准。`;
+}
+
+function sceneDurationLabel(previous, proposed) {
+  if (!estimate(proposed.duration_seconds)) return '候选估时未记录';
+  if (!estimate(previous?.duration_seconds)) return `候选预计 ${seconds(proposed.duration_seconds)} 秒（原镜头估时未记录）`;
+  return `原 ${seconds(previous.duration_seconds)} 秒 → 候选 ${seconds(proposed.duration_seconds)} 秒（${signedSeconds(rounded(proposed.duration_seconds - previous.duration_seconds))} 秒）`;
+}
+
 /** DOM and transport are injected so selection, recovery and review are testable. */
 export function createExplanationPanel({ document, getContext, request, refresh, onError, onSuccess }) {
   const $ = id => document.getElementById(id);
   const cache = new Map(), drafts = new Map(), selections = new Map(), busy = new Set();
-  const revisions = new Map(), readErrors = new Map();
+  const revisions = new Map(), readErrors = new Map(), writeErrors = new Map();
   const restoredDefaults = new Set();
   let sequence = 0, reviewKey = null, confirmationKey = null;
   const readSequences = new Map();
@@ -131,13 +167,14 @@ export function createExplanationPanel({ document, getContext, request, refresh,
     target.replaceChildren();
     if (!version) return;
     target.append(text('h3', '方案概览'), text('p', version.result?.summary ?? '', 'preserve-whitespace'));
+    target.append(text('p', durationComparisonLabel(explanationDurationComparison(project, version)), 'field-note'));
     const warnings = text('div', undefined, 'explanation-warnings');
     addList(warnings, '需要人工核对', version.result?.warnings ?? [], false, '请核对事实、数字和术语。');
     warnings.append(text('p', '来源摘录用于追溯原稿，仍需核对改写后的事实、条件、数字与术语。', 'field-note'));
     target.append(warnings);
     explanationSceneReviews(project, version).forEach(({ previous, proposed, strategy }, index) => {
       const details = text('details', undefined, 'explanation-scene');
-      const summary = text('summary', `镜头 ${index + 1} · ${proposed.title} · 预计 ${proposed.duration_seconds} 秒`);
+      const summary = text('summary', `镜头 ${index + 1} · ${proposed.title} · ${sceneDurationLabel(previous, proposed)}`);
       details.append(summary);
       const columns = text('div', undefined, 'explanation-comparison');
       const before = text('section'), after = text('section');
@@ -184,8 +221,9 @@ export function createExplanationPanel({ document, getContext, request, refresh,
     $('generate-explanation').disabled = !context.configured || !fresh || !project.scenes?.length || active || submitting || blocked;
     $('generate-explanation').textContent = active || submitting ? '方案处理中…' : '生成一份讲解方案';
     $('reload-explanation').disabled = submitting;
-    $('explanation-read-error').hidden = !readErrors.has(project.id);
-    $('explanation-read-error').textContent = readErrors.get(project.id) ?? '';
+    const errorMessage = writeErrors.get(project.id) ?? readErrors.get(project.id);
+    $('explanation-read-error').hidden = !errorMessage;
+    $('explanation-read-error').textContent = errorMessage ?? '';
     $('explanation-form-note').textContent = !context.configured
       ? '暂未开放新方案。历史方案仍可审阅，进行中的任务可继续查询或申请取消。'
       : context.unsaved ? '有未保存的项目修改。草稿会保留，请先保存或重新载入，再生成或采用方案。'
@@ -197,8 +235,9 @@ export function createExplanationPanel({ document, getContext, request, refresh,
     banner.hidden = !operation;
     banner.classList.toggle('active', active);
     banner.classList.toggle('failed', ['failed', 'rejected', 'timed_out', 'needs_input'].includes(operation?.status));
+    const elapsed = operationElapsedLabel(operation);
     $('explanation-status-text').textContent = operation
-      ? `讲解方案 · ${statusLabel(operation.status)}${operation.error ? ` · ${explanationErrorLabel(operation.error)}` : ''}` : '';
+      ? `讲解方案 · ${statusLabel(operation.status)}${elapsed ? ` · ${elapsed}` : ''}${operation.error ? ` · ${explanationErrorLabel(operation.error)}` : ''}` : '';
     $('cancel-explanation').hidden = !active;
     $('cancel-explanation').disabled = submitting || ['cancelling', 'cancel_requested'].includes(operation?.status);
     $('cancel-explanation').textContent = ['cancelling', 'cancel_requested'].includes(operation?.status) ? '已申请取消' : '申请取消';
@@ -232,6 +271,7 @@ export function createExplanationPanel({ document, getContext, request, refresh,
         : selected?.stale ? '项目内容已变化，这份历史方案只供审阅。请重新生成匹配当前内容的方案。'
           : !eligible ? '这份方案当前不能采用，可以重新读取状态或生成新方案。'
             : '采用会更新全部镜头的讲解内容。变更镜头的画面需重做，配音可能失效；原始总文稿和项目音色保留。';
+    if (eligible) $('explanation-adoption-note').textContent += ` ${durationComparisonLabel(explanationDurationComparison(project, selected))}`;
     $('confirm-explanation-adoption').disabled = !eligible || blocked || active || submitting;
     $('adopt-explanation').disabled = !eligible || blocked || active || submitting || !$('confirm-explanation-adoption').checked;
     $('explanation-new-candidate').hidden = !selected || versions.at(-1)?.id === selected.id;
@@ -276,9 +316,16 @@ export function createExplanationPanel({ document, getContext, request, refresh,
     busy.add(id); render();
     try {
       const result = await action();
-      if (same(context)) accepted?.(result);
+      if (same(context)) {
+        writeErrors.delete(id);
+        accepted?.(result);
+      }
     } catch (error) {
-      if (same(context)) onError(error);
+      if (same(context)) {
+        const message = mutationErrorLabel(error);
+        writeErrors.set(id, message);
+        onError(error instanceof Error && Number.isInteger(error.status) ? error : new Error(message));
+      }
     } finally {
       busy.delete(id);
       if (same(context)) {
@@ -354,9 +401,10 @@ export function createExplanationPanel({ document, getContext, request, refresh,
   $('reload-explanation').addEventListener('click', async () => {
     try { await refresh(); } catch (error) { onError(error); }
   });
-  return { render, load, generate, adopt, cancel,
+  return { render, load, generate, adopt, cancel, refreshElapsed: () => render(),
     hasDrafts: () => [...drafts.values()].some(draft => draft.dirty),
     hasActiveOperation: (projectId = current().project?.id) => isActiveOperation(dataFor(projectId)?.operation),
+    hasRefreshableOperation: (projectId = current().project?.id) => operationNeedsRefresh(dataFor(projectId)?.operation),
     hasUnresolvedOperation: (projectId = current().project?.id) => isUnresolvedProductionOperation(dataFor(projectId)?.operation),
   };
 }

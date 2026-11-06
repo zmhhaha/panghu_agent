@@ -145,6 +145,25 @@ def add_initial_evidence(observations):
     observations['repeated_initial'] = deepcopy(initial)
 
 
+def test_legacy_v5_invisible_certificate_keeps_error_code_with_actual_action_context():
+    plan, timeline, observations = v2_text_fixture('motion-compiler-5')
+    next(row for row in plan['elements'] if row['id'] == 'request')['id'] = 'certificate'
+    plan['actions'][0]['target'] = timeline['actions'][0]['target'] = 'certificate'
+    timeline['plan_sha256'] = sha256(plan)
+    observations['timeline_sha256'] = sha256(timeline)
+    for sample in [observations['initial'], observations['repeated_initial'],
+                   *(observations['windows'][0][key] for key in ('before', 'middle', 'after'))]:
+        sample['elements']['certificate'] = sample['elements'].pop('request')
+    assert verify_observations(plan, timeline, observations)['technical_status'] == 'passed'
+    observations['windows'][0]['before']['elements']['certificate']['opacity'] = 0
+    before = deepcopy((plan, timeline, observations))
+    with pytest.raises(ServiceError, match='motion_invisible_move') as raised:
+        verify_observations(plan, timeline, observations)
+    assert raised.value.motion_context == dict(target='certificate', kind='move', ordinal=0,
+                                               beat_id=plan['actions'][0]['beat_id'])
+    assert (plan, timeline, observations) == before
+
+
 @pytest.mark.parametrize('compiler', ['motion-compiler-2', 'motion-compiler-3', 'motion-compiler-4', 'motion-compiler-5'])
 def test_versioned_text_checks_require_all_text_boxes_without_changing_v1_observations(compiler):
     assert verify_observations(*fixture())['technical_status'] == 'passed'

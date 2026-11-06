@@ -88,7 +88,7 @@ class Store(AudioStoreMixin):
 
     @staticmethod
     def _op_public(op):
-        return {key: op.get(key) for key in ('id', 'kind', 'status', 'error', 'job_id')}
+        return {key: op.get(key) for key in ('id', 'kind', 'status', 'error', 'job_id', 'created_at')}
 
     @staticmethod
     def _ops(db, project_id):

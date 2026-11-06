@@ -33,7 +33,7 @@ from .motion_review import verify_observations
 from .motion_dispatch import PROCESS_SCHEMA, PRODUCTION_PROCESS_COMPILER, scene_compiler
 from .process_review import verify_process_observations
 from .motion_renderer.job import FILES, INIT, freeze_input
-from .motion_render_adapter import UNAVAILABLE
+from .motion_render_adapter import UNAVAILABLE, safe_motion_context
 
 CHUNK_BYTES = 512 * 1024
 BUNDLE_BYTES = 16 * 1024 * 1024
@@ -559,8 +559,14 @@ class KubeSceneRenderer:
             require(not path.is_symlink(), 'motion_scratch_invalid')
             path.unlink(missing_ok=True)
 
-    def _pending(self, scene_key, state, *, error=None, status=502, result=None):
+    def _pending(self, scene_key, state, *, error=None, status=502, result=None, motion_context=None):
         record = self.journal.scene(scene_key)
+        if state != 'completed':
+            result = dict(result) if result is not None else None
+            previous_context = result.pop('motion_context', None) if result is not None else None
+            context = safe_motion_context(motion_context if motion_context is not None else previous_context)
+            if context:
+                result = {**(result or {}), 'motion_context': context}
         pending = dict(state=state, error=error, status=status, result=result,
                        fence_missing=record['state'] == 'submitting')
         self.journal.scene_update(scene_key, 'cleanup_pending', result={'cleanup_pending': pending}, error=error)
@@ -577,6 +583,11 @@ class KubeSceneRenderer:
             # permission to delete a foreign object or abandon live resources.
             raise ServiceError(UNAVAILABLE, 503) from None
         result = pending['result']
+        context = safe_motion_context(result.get('motion_context')) if isinstance(result, dict) else None
+        if isinstance(result, dict) and 'motion_context' in result:
+            result.pop('motion_context')
+            if context:
+                result['motion_context'] = context
         if fenced and result is None:
             result = {'submission_fenced': True}
         output = directory / 'output.mp4'
@@ -585,7 +596,10 @@ class KubeSceneRenderer:
                     and sha(output.read_bytes()) == result['media_sha256'], 'motion_cached_media_corrupt')
         self.journal.scene_update(scene_key, pending['state'], result=result or {}, error=pending['error'])
         if pending['state'] != 'completed':
-            raise ServiceError(pending['error'] or 'motion_execution_failed', pending['status'])
+            error = ServiceError(pending['error'] or 'motion_execution_failed', pending['status'])
+            if context:
+                error.motion_context = context
+            raise error
         return {**result, 'path': str(output)}
 
     def render(self, scene, *, key, scene_index, quality, cancel_event=None):
@@ -606,7 +620,8 @@ class KubeSceneRenderer:
             if current['state'] in {'failed', 'cancelled', 'timed_out'} and current['error'] == error.code:
                 raise error from None
             state = 'cancelled' if error.code == 'media_render_cancelled' else ('timed_out' if error.status == 504 else 'failed')
-            self._pending(scene_key, state, error=error.code, status=error.status)
+            self._pending(scene_key, state, error=error.code, status=error.status,
+                          motion_context=getattr(error, 'motion_context', None))
             return self._finish_cleanup(scene_key, directory, configs, expected, binding)
 
     def _execute(self, files, scene_key, directory, configs, expected, binding, record, *, quality, cancel_event):
@@ -629,7 +644,8 @@ class KubeSceneRenderer:
             return {**result, 'path': str(output)}
         if record['state'] in {'failed', 'cancelled', 'timed_out'}:
             self._pending(scene_key, record['state'], error=record['error'],
-                          status=504 if record['state'] == 'timed_out' else (409 if record['state'] == 'cancelled' else 502))
+                          status=504 if record['state'] == 'timed_out' else (409 if record['state'] == 'cancelled' else 502),
+                          result=json.loads(record['result']) if record['result'] else None)
             return self._finish_cleanup(scene_key, directory, configs, expected, binding)
         self.check_policy()
         progress('waiting_scene')

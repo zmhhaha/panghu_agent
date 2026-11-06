@@ -104,7 +104,11 @@ class MotionStore:
 
     @staticmethod
     def _public(op):
-        return {k: op.get(k) for k in ('id', 'kind', 'status', 'error', 'job_id', 'version_id')}
+        from .motion_render_adapter import safe_motion_context
+        result = {k: op.get(k) for k in ('id', 'kind', 'status', 'error', 'job_id', 'version_id', 'created_at')}
+        if context := safe_motion_context(op.get('motion_context')):
+            result['motion_context'] = context
+        return result
 
     @staticmethod
     def _op(db, operation_id, owner=None):
@@ -292,7 +296,10 @@ class MotionStore:
                     if (op := json.loads(r['document']))['status'] in ACTIVE]
 
     def update_operation(self, operation_id, **fields):
-        _require(set(fields) <= {'status', 'error', 'job_id', 'input_ref', 'cancel_attempted'})
+        _require(set(fields) <= {'status', 'error', 'job_id', 'input_ref', 'cancel_attempted', 'motion_context'})
+        if 'motion_context' in fields:
+            from .motion_render_adapter import safe_motion_context
+            fields['motion_context'] = safe_motion_context(fields['motion_context'])
         if 'status' in fields:
             _require(type(fields['status']) is str and fields['status'] in ACTIVE | TERMINAL)
         with self.store.transaction() as db:
@@ -376,6 +383,16 @@ class MotionStore:
                     from agent_service.profiles.video_references import preserve_plan_references
                     from .motion import preflight_plan
                     plan = preserve_plan_references(plan, op['document'])
+                    if (op['parent_version_id'] is not None
+                            and op['document']['instruction'].strip()
+                            and plan == op['document']['base_plan']):
+                        # A new ID alone is not evidence that a requested edit
+                        # happened. Keep the original adoption/media and avoid
+                        # saving or automatically retrying an unchanged result.
+                        op.update(status='needs_input', error='motion_revision_unchanged')
+                        self._write_op(db, op)
+                        self.store._save(db, project)
+                        return self._public(op)
                     preflight_plan(plan, op['document']['beats'])
                 version = dict(id=str(uuid4()), project_id=op['project_id'], scene_id=op['scene_id'],
                     operation_id=op['id'], created_at=time.time(), parent_version_id=op['parent_version_id'],

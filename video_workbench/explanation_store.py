@@ -119,7 +119,7 @@ class ExplanationStore:
 
     @staticmethod
     def _public(op):
-        return {key: op.get(key) for key in ('id', 'kind', 'status', 'error', 'job_id', 'version_id')}
+        return {key: op.get(key) for key in ('id', 'kind', 'status', 'error', 'job_id', 'version_id', 'created_at')}
 
     @staticmethod
     def _op(db, operation_id, owner=None):

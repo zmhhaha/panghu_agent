@@ -10,7 +10,7 @@ const STATUS_LABELS = {
   publishing: '保存结果', cancelling: '正在取消', cancel_requested: '已申请取消',
   completed: '已完成', succeeded: '已完成', failed: '制作失败', cancelled: '已取消',
   timed_out: '执行超时', rejected: '未能提交', needs_input: '需要补充内容',
-  quarantined: '等待服务处理', stopped: '已停止', uncertain: '提交结果待确认',
+  quarantined: '服务已隔离，等待处理', stopped: '已停止', uncertain: '提交结果待确认',
 };
 
 export function statusLabel(status) {
@@ -42,16 +42,39 @@ export function renderProgressLabel(item, now = Date.now() / 1000) {
     if (Number.isInteger(progress.scene_index)) parts.push(`第 ${progress.scene_index + 1}/${progress.total_scenes} 镜`);
     parts.push(`已完成 ${progress.completed_scenes}/${progress.total_scenes} 镜`);
   }
-  if (isActiveOperation(item) && Number.isFinite(item.created_at)) {
-    const seconds = Math.max(0, Math.floor(now - item.created_at));
-    parts.push(`已等待 ${Math.floor(seconds / 60)}分${seconds % 60}秒`);
-  }
+  const elapsed = operationElapsedLabel(item, now);
+  if (elapsed) parts.push(elapsed);
   if (/^MR-[0-9a-f]{16}$/.test(diagnostic?.diagnostic_id ?? '')) parts.push(`问题编号 ${diagnostic.diagnostic_id}`);
   return parts.join(' · ');
 }
 
 export function isActiveOperation(operation) {
   return Boolean(operation?.id && ACTIVE_STATUSES.has(operation.status));
+}
+
+// Uncertain/isolated submissions still need GET reconciliation, but must not
+// become active/cancellable work or cause another POST.
+export function operationNeedsRefresh(operation) {
+  return isActiveOperation(operation) || Boolean(operation?.id
+    && ['uncertain', 'quarantined'].includes(operation.status));
+}
+
+export function operationElapsedLabel(operation, now = Date.now() / 1000) {
+  if (!operationNeedsRefresh(operation) || !Number.isFinite(operation.created_at)) return '';
+  const seconds = Math.max(0, Math.floor(now - operation.created_at));
+  return `已等待 ${Math.floor(seconds / 60)}分${seconds % 60}秒`;
+}
+
+export function mutationErrorLabel(error) {
+  if (error?.status === 409) return '项目或任务已有更新。请核对重新读取后的最新状态；草稿和所选范围会保留，确认当前采用结果后再操作。';
+  if (error?.status && typeof error.message === 'string') return error.message;
+  return '操作结果尚未确认，正在重新读取状态。不会自动重复提交；请核对结果后重试同一个操作。';
+}
+
+export function operationServiceErrorLabel(code) {
+  if (code === 'service_protocol_invalid') return '服务返回的数据不符合约定（service_protocol_invalid），当前任务尚未确认。系统会继续读取原任务，请联系维护者检查服务；不要重复生成。';
+  if (code === 'agent_quarantined') return '生成服务已被隔离（agent_quarantined），需维护者检查并恢复服务。已有画面、配音和草稿保留；请重新读取原任务状态。';
+  return undefined;
 }
 
 // Production-mode conversion waits for a confirmed terminal result, including

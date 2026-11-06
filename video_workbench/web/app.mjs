@@ -6,10 +6,11 @@ import {
   audioPath, chooseAudioVersion, createCaptionDraft, orderedAudioVersions, parsePronunciation,
   pronunciationText, selectedAudioVersion, timelinePosition, validateCaptionCues, deliveryIssues,
   speechVoices, speechVoiceName, projectSpeechVoice, syncProjectSpeechDraft, projectVoiceOptions,
-  projectSpeechCanGenerate, audioVoiceLabel, audioOperationCandidate,
+  projectSpeechCanGenerate, audioVoiceLabel, audioOperationCandidate, mutationErrorLabel,
+  operationElapsedLabel, operationNeedsRefresh, operationServiceErrorLabel,
 } from './model.mjs';
 import { createExplanationPanel, explanationErrorLabel } from './explanation.mjs';
-import { createMotionPanel, createMotionRenderRequest, createProjectMotionDraftRequest, createDynamicProjectRequest, hasMotionScenes, usesDynamicVideo, motionMetadata, motionErrorLabel } from './motion.mjs';
+import { createMotionPanel, createMotionRenderRequest, createProjectMotionDraftRequest, createDynamicProjectRequest, hasMotionScenes, usesDynamicVideo, motionMetadata, motionErrorLabel, motionFailureSource, motionFailureDetails } from './motion.mjs';
 import { createBatchPanel, batchErrorLabel } from './batch.mjs';
 import { createContinuityPanel, createContinuityDraftRequest, continuityErrorLabel } from './continuity.mjs';
 import { projectDurationSummary, durationSummaryLines, plannedSceneSeconds } from './duration.mjs';
@@ -28,6 +29,9 @@ const projectSpeechDrafts = new Map();
 const timingDrafts = new Map();
 const captionDrafts = new Map();
 const renderHistories = new Map();
+const deliveryWriteErrors = new Map();
+const storyboardWriteErrors = new Map();
+const renderFailureVersions = new Map();
 let motionRenderSequence = 0;
 let sessionSettings = {};
 let displayedAudioVersion = null;
@@ -42,6 +46,10 @@ let listSequence = 0;
 let readController = null;
 let sourceController = null;
 let pollTimer = null;
+let statusClockTimer = null;
+let recoveryPromise = null;
+let renderReadSequence = 0;
+let renderElapsedDisplays = [];
 let successTimer = null;
 let editor = null;
 let previewMode = 'preview';
@@ -228,7 +236,7 @@ class ApiError extends Error {
     const detail = body?.detail;
     const code = typeof detail === 'object' && !Array.isArray(detail) ? detail?.code : null;
     const message = typeof detail?.message === 'string' ? detail.message : null;
-    super(ERROR_LABELS[code] ?? (code?.startsWith('explanation_') ? explanationErrorLabel(code) : null)
+    super(ERROR_LABELS[code] ?? operationServiceErrorLabel(code) ?? (code?.startsWith('explanation_') ? explanationErrorLabel(code) : null)
       ?? (code?.startsWith('batch_') ? batchErrorLabel(code) : null)
       ?? (code?.startsWith('continuity_') || code === 'invalid_continuity_plan' ? continuityErrorLabel(code) : null)
       ?? (code?.startsWith('motion_') || code?.startsWith('process_') ? motionErrorLabel(code) : null) ?? message ?? (status === 401 ? '请先登录工作台。'
@@ -264,8 +272,10 @@ async function request(path, { method = 'GET', body, signal, output = 'json', ra
 
 function showError(error) {
   if (error?.name === 'AbortError') return;
-  $('error-text').textContent = error instanceof ApiError ? error.message
-    : '连接中断，尚未确认操作结果。可重新读取状态，或重试同一个操作。';
+  clearTimeout(successTimer);
+  $('success-message').hidden = true;
+  $('error-text').textContent = error?.status === 409 ? mutationErrorLabel(error) : error instanceof ApiError ? error.message
+    : mutationErrorLabel(error);
   $('global-error').hidden = false;
   $('login-link').hidden = error?.status !== 401;
   if ($('create-project-dialog').open) {
@@ -357,12 +367,19 @@ function renderOperation(operation, prefix) {
   const text = $(prefix === 'storyboard' ? 'storyboard-status-text' : 'scene-status-text');
   const cancel = $(prefix === 'storyboard' ? 'cancel-storyboard' : 'cancel-operation');
   const active = isActiveOperation(operation);
-  banner.hidden = !operation;
+  const writeError = prefix === 'storyboard' ? storyboardWriteErrors.get(state.projectId) : null;
+  if (prefix === 'storyboard') $('reload-storyboard').hidden = !writeError;
+  banner.hidden = !operation && !writeError;
+  if (!operation && writeError) {
+    banner.classList.toggle('active', false); banner.classList.toggle('failed', true);
+    text.textContent = writeError; cancel.hidden = true; return;
+  }
   if (!operation) return;
   banner.classList.toggle('active', active);
   banner.classList.toggle('failed', ['failed', 'timed_out', 'rejected', 'needs_input'].includes(operation.status));
   const label = prefix === 'storyboard' ? '拆分镜头' : '制作画面';
-  text.textContent = `${label} · ${statusLabel(operation.status)}${operation.error ? ` · ${ERROR_LABELS[operation.error] ?? operation.error}` : ''}`;
+  text.textContent = [label, statusLabel(operation.status), operationElapsedLabel(operation),
+    operation.error ? ERROR_LABELS[operation.error] ?? operationServiceErrorLabel(operation.error) ?? '任务未完成，请重新读取并联系维护者。' : null, writeError].filter(Boolean).join(' · ');
   cancel.hidden = !active;
   cancel.disabled = pending.has(`cancel:${operation.id}`) || cancelRequests.has(operation.id)
     || ['cancelling', 'cancel_requested'].includes(operation.status);
@@ -720,6 +737,9 @@ function renderProjectDuration(project) {
 }
 
 function renderDelivery(project) {
+  renderElapsedDisplays = [];
+  $('delivery-error').hidden = !deliveryWriteErrors.has(project.id);
+  $('delivery-error-text').textContent = deliveryWriteErrors.get(project.id) ?? '';
   renderProjectDuration(project);
   const scenes = project.scenes ?? [];
   const dynamic = usesDynamicVideo(project);
@@ -781,7 +801,27 @@ function renderDelivery(project) {
     label.append(node('strong', `${kind} · ${renderSourceLabel(item)} · ${subtitleLabel} · ${statusLabel(item.status)}`),
       node('small', `文稿版本 ${item.project_revision ?? '未记录'}${item.content_state === 'changed' ? ' · 此产物对应的内容或采用版本已有变化' : item.content_state === 'current' ? ' · 对应内容仍有效' : ''}${item.width && item.height ? ` · ${item.width}×${item.height} · ${item.fps} fps` : ''}${Number.isFinite(item.actual_duration_seconds) && item.actual_duration_seconds > 0 ? ` · 实际 ${seconds(item.actual_duration_seconds)} 秒` : ''}${item.created_at ? ` · ${new Date(item.created_at * 1000).toLocaleString('zh-CN')}` : ''}${item.error ? ` · ${ERROR_LABELS[item.error] ?? (item.error.startsWith('motion_') ? motionErrorLabel(item.error) : '导出未完成，请检查资源后重试。')}` : ''}`));
     const progress = renderProgressLabel(item);
-    if (progress) label.append(node('small', progress));
+    if (progress) {
+      const display = node('small', progress); label.append(display);
+      renderElapsedDisplays.push({ display, item });
+    }
+    const source = motionFailureSource(item);
+    const failure = motionFailureDetails(item, renderFailureVersions.get(`${project.id}:${source?.visual_version_id}`), project.id);
+    if (failure) {
+      label.append(node('p', failure.text, 'batch-item-error'));
+      if (failure.bound && project.scenes.some(scene => scene.id === source.scene_id)) {
+        const locate = node('button', '查看问题图元与动作', 'text-button'); locate.type = 'button';
+        locate.addEventListener('click', async () => {
+          motionPanel.pause(); batchPanel.pause(); $('audio-preview').pause();
+          selectScene(state, source.scene_id); editor = null;
+          motionPanel.select(project.id, source.scene_id, source.visual_version_id);
+          motionPanel.focusDiagnostic(source.visual_version_id, failure.context);
+          render(); await motionPanel.load(project.id, state.epoch);
+          $('motion-panel').open = true; $('motion-panel').scrollIntoView({ block: 'start' });
+        });
+        label.append(locate);
+      }
+    }
     row.append(label);
     if (['completed', 'succeeded'].includes(item.status)) {
       const play = node('button', '播放 MP4', 'button secondary'); play.type = 'button';
@@ -861,13 +901,50 @@ function render() {
   renderAudio(scene, project);
 }
 
-function stopPolling() { clearTimeout(pollTimer); pollTimer = null; }
+function stopPolling() {
+  clearTimeout(pollTimer); pollTimer = null;
+  clearTimeout(statusClockTimer); statusClockTimer = null;
+}
+
+function projectOperations() {
+  return [state.project?.storyboard_operation,
+    ...(state.project?.scenes ?? []).flatMap(scene => [scene.operation, scene.audio_operation])];
+}
+
+function needsStatusRefresh() {
+  return projectOperations().some(operationNeedsRefresh)
+    || (renderHistories.get(state.projectId) ?? []).some(operationNeedsRefresh)
+    || explanationPanel.hasRefreshableOperation?.(state.projectId)
+    || motionPanel.hasRefreshableOperation(state.projectId, state.project?.scenes)
+    || batchPanel.hasActiveOperation(state.projectId)
+    || continuityPanel.hasUnresolvedOperation(state.projectId);
+}
+
+function refreshStatusClocks() {
+  if (!state.project || document.hidden) return;
+  renderOperation(state.project.storyboard_operation, 'storyboard');
+  const scene = selectedScene(state);
+  if (scene) renderOperation(scene.operation, 'scene');
+  for (const { display, item } of renderElapsedDisplays) display.textContent = renderProgressLabel(item);
+  explanationPanel.refreshElapsed?.(); motionPanel.refreshElapsed(); batchPanel.refreshElapsed();
+}
+
+function scheduleStatusClock() {
+  clearTimeout(statusClockTimer); statusClockTimer = null;
+  if (document.hidden || !state.projectId || !needsStatusRefresh()) return;
+  statusClockTimer = setTimeout(() => { refreshStatusClocks(); scheduleStatusClock(); }, 1000);
+}
+
 function schedulePolling() {
   stopPolling();
-  if (document.hidden || !state.projectId || (!activeOperations(state.project).length
-      && !(renderHistories.get(state.projectId) ?? []).some(isActiveOperation)
-      && !explanationPanel.hasActiveOperation(state.projectId) && !motionPanel.hasActiveOperation(state.projectId, state.project?.scenes) && !batchPanel.hasActiveOperation(state.projectId))) return;
-  pollTimer = setTimeout(() => loadProject().catch(showError), 3500);
+  if (document.hidden || !state.projectId || !needsStatusRefresh()) return;
+  const active = activeOperations(state.project).length
+    || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation)
+    || explanationPanel.hasActiveOperation(state.projectId)
+    || motionPanel.hasActiveOperation(state.projectId, state.project?.scenes)
+    || batchPanel.hasActiveOperation(state.projectId) || continuityPanel.hasUnresolvedOperation(state.projectId);
+  pollTimer = setTimeout(() => loadProject().catch(showError), active ? 3500 : 15000);
+  scheduleStatusClock();
 }
 
 async function loadProjects() {
@@ -879,10 +956,17 @@ async function loadProjects() {
 }
 
 async function loadRenders(projectId, epoch) {
+  const sequence = ++renderReadSequence;
   const result = await request(`/api/projects/${encodeURIComponent(projectId)}/renders`);
-  if (state.projectId !== projectId || state.epoch !== epoch) return;
+  if (state.projectId !== projectId || state.epoch !== epoch || sequence !== renderReadSequence) return;
   renderHistories.set(projectId, result.renders ?? []);
   renderDelivery(state.project);
+  const ids = [...new Set((result.renders ?? []).map(motionFailureSource).filter(Boolean).map(source => source.visual_version_id))];
+  await Promise.allSettled(ids.filter(id => !renderFailureVersions.has(`${projectId}:${id}`)).map(async id => {
+    const version = await request(`/api/motion-versions/${encodeURIComponent(id)}`);
+    if (state.projectId === projectId && state.epoch === epoch && sequence === renderReadSequence) renderFailureVersions.set(`${projectId}:${id}`, version);
+  }));
+  if (state.projectId === projectId && state.epoch === epoch && sequence === renderReadSequence) renderDelivery(state.project);
 }
 
 async function loadProject() {
@@ -905,13 +989,13 @@ async function loadProject() {
       if (state.projectId === ticket.projectId && state.epoch === ticket.epoch) render();
     }
   } catch (error) {
-    if (ticket.epoch === state.epoch && error.name !== 'AbortError') {
+    if (ticket.epoch === state.epoch && ticket.sequence === state.requestSequence && error.name !== 'AbortError') {
       loading = false;
       render();
       throw error;
     }
   } finally {
-    if (ticket.epoch === state.epoch) schedulePolling();
+    if (ticket.epoch === state.epoch && ticket.sequence === state.requestSequence) schedulePolling();
   }
 }
 
@@ -960,12 +1044,24 @@ async function perform(key, action, after) {
   render();
   try {
     const result = await action();
+    if (key === `render:${projectId}`) deliveryWriteErrors.delete(projectId);
+    if (key === `storyboard:${projectId}`) storyboardWriteErrors.delete(projectId);
     if (state.epoch === epoch && state.projectId === projectId) await after?.(result);
     await loadProjects();
     if (state.epoch === epoch && state.projectId === projectId) await loadProject();
     return result;
   } catch (error) {
-    showError(error);
+    // A failed POST response does not prove the write failed. Reconcile only
+    // with GETs; retain the exact intent/idempotency key for an explicit retry.
+    if (state.epoch === epoch && state.projectId === projectId) {
+      if (key === `render:${projectId}`) {
+        deliveryWriteErrors.set(projectId, mutationErrorLabel(error));
+        $('delivery-panel').open = true;
+      }
+      if (key === `storyboard:${projectId}`) storyboardWriteErrors.set(projectId, mutationErrorLabel(error));
+      try { await loadProject(); } catch { /* Keep the original write error visible. */ }
+      showError(error);
+    }
   } finally {
     pending.delete(key);
     render();
@@ -1538,12 +1634,27 @@ async function refresh() {
   } catch (error) { $('session-label').textContent = '连接未完成'; showError(error); }
 }
 $('retry-read').addEventListener('click', refresh);
+$('reload-delivery').addEventListener('click', () => loadProject().catch(showError));
+$('reload-storyboard').addEventListener('click', () => loadProject().catch(showError));
 $('refresh-all').addEventListener('click', refresh);
+function resumeProject() {
+  if (document.hidden || !state.projectId) return;
+  refreshStatusClocks();
+  // Browsers may emit visibility, focus and pageshow together. Coalesce them
+  // into one complete GET refresh, including every panel and render history.
+  if (!recoveryPromise) {
+    const recovery = loadProject().catch(showError).finally(() => { if (recoveryPromise === recovery) recoveryPromise = null; });
+    recoveryPromise = recovery;
+  }
+  return recoveryPromise;
+}
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { stopPolling(); readController?.abort(); motionPanel.pause(); batchPanel.pause(); $('motion-render-video').pause(); }
-  else if (state.projectId) loadProject().catch(showError);
+  if (document.hidden) { stopPolling(); recoveryPromise = null; readController?.abort(); motionPanel.pause(); batchPanel.pause(); $('motion-render-video').pause(); }
+  else return resumeProject();
 });
-window.addEventListener('pagehide', () => { stopPolling(); readController?.abort(); sourceController?.abort(); $('audio-preview').pause(); pauseProjectPlayer(); motionPanel.pause(); batchPanel.pause(); $('motion-render-video').pause(); });
+window.addEventListener('focus', resumeProject);
+window.addEventListener('pageshow', resumeProject);
+window.addEventListener('pagehide', () => { stopPolling(); recoveryPromise = null; readController?.abort(); sourceController?.abort(); $('audio-preview').pause(); pauseProjectPlayer(); motionPanel.pause(); batchPanel.pause(); $('motion-render-video').pause(); });
 window.addEventListener('beforeunload', event => {
   if (explanationPanel.hasDrafts() || motionPanel.hasDrafts() || batchPanel.hasDrafts() || continuityPanel.hasDrafts() || [...drafts.values(), ...projectSpeechDrafts.values(), ...speechDrafts.values(), ...timingDrafts.values(), ...captionDrafts.values()].some(draft => draft.dirty)) {
     event.preventDefault(); event.returnValue = '';

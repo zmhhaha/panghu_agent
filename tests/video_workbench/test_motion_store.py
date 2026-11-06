@@ -48,6 +48,10 @@ def complete(motion, op):
 def test_additive_candidate_never_changes_static_head_or_auto_adopts(state):
     base, motion, project_id, scene_id = state
     op = start(state)
+    public = motion.public_operation(OWNER, op['id'])
+    assert public['created_at'] == op['created_at']
+    assert set(public) == {'id', 'kind', 'status', 'error', 'job_id', 'version_id', 'created_at'}
+    assert MotionStore(Store(base.path)).public_operation(OWNER, op['id'])['created_at'] == op['created_at']
     assert 'voice' not in json.dumps(op['document']) and 'audio_sha256' not in json.dumps(op['document'])
     version_id, result = complete(motion, op)
     project = motion.project(OWNER, project_id)
@@ -267,9 +271,48 @@ def test_revision_material_is_immutable_and_bound_to_the_same_scene(state):
         base_version_id=version_id, instruction='突出工作节点'))
     assert op['document']['base_plan'] == motion.version(OWNER, version_id)['plan']
     assert op['parent_version_id'] == version_id
-    new_id, _ = complete(motion, op)
+    plan = example_plan(op['document']['beats'])
+    plan['takeaway'] = '工作节点只处理已排队的请求。'
+    revised = motion.complete(op['id'], dict(schema='video.motion-result.v1',
+        input_sha256=op['input_sha256'], plan=plan))
+    new_id = revised['version_id']
     assert motion.version(OWNER, new_id)['parent_version_id'] == version_id
     assert motion.project(OWNER, project_id)['scenes'][0]['motion']['head_version_id'] is None
+
+
+def test_unchanged_explicit_revision_is_visible_without_duplicate_or_media_change(state):
+    base, motion, project_id, scene_id = state
+    version_id, _ = complete(motion, start(state))
+    project = motion.project(OWNER, project_id)
+    motion.adopt(OWNER, scene_id, version_id, None, project['revision'])
+    before = motion.project(OWNER, project_id)['scenes'][0]
+    op = start(state, key='unchanged-revision', request=dict(
+        expected_revision=base.project(OWNER, project_id)['revision'],
+        base_version_id=version_id, instruction='减少关系，只保留接收、排队、执行。'))
+    result = dict(schema='video.motion-result.v1', input_sha256=op['input_sha256'],
+                  plan=deepcopy(op['document']['base_plan']))
+    rejected = motion.complete(op['id'], result)
+    assert rejected['status'] == 'needs_input'
+    assert rejected['error'] == 'motion_revision_unchanged'
+    assert rejected['version_id'] is None
+    assert not motion.active_operations()
+    # Restart/late collection cannot manufacture a duplicate candidate.
+    assert MotionStore(Store(base.path)).complete(op['id'], result) == rejected
+    after = motion.project(OWNER, project_id)['scenes'][0]
+    assert after['motion']['versions'] == before['motion']['versions']
+    assert after['motion']['head_version_id'] == version_id
+    assert after['head_version_id'] == before['head_version_id']
+    assert after.get('audio') == before.get('audio')
+
+
+def test_new_generation_with_an_instruction_can_match_a_previous_candidate(state):
+    base, motion, project_id, scene_id = state
+    original, _ = complete(motion, start(state))
+    op = start(state, key='fresh-generation', request=dict(
+        expected_revision=base.project(OWNER, project_id)['revision'],
+        instruction='重新生成流程。'))
+    new_id, _ = complete(motion, op)
+    assert new_id and new_id != original
 
 
 class FakeGateway:
@@ -614,3 +657,44 @@ def test_completion_releases_reserved_capacity_and_never_deletes_history(state):
     with base.transaction() as db:
         completed = motion._usage(db, project_id)
     assert completed < reserved and motion.version(OWNER, version_id)['plan']
+
+
+def test_candidate_preflight_failure_context_is_persisted_safe_and_public_after_reload(state, monkeypatch):
+    base, motion, project_id, scene_id = state
+    op = start(state)
+    captured = []
+
+    def fail_preflight(plan, beats):
+        ordinal, action = next((index, action) for index, action in enumerate(plan['actions'])
+                               if action['kind'] == 'move')
+        context = {key: action[key] for key in ('target', 'kind', 'beat_id')}
+        context['ordinal'] = ordinal
+        captured.append(context)
+        error = ServiceError('motion_invisible_move', 422)
+        error.motion_context = dict(context, path='/private/path', stderr='private stderr', owner=OWNER)
+        raise error
+
+    monkeypatch.setattr('video_workbench.motion.preflight_plan', fail_preflight)
+    gateway = FakeGateway()
+    gateway.state = 'completed'
+    MotionWorkflow(motion, gateway, enabled=True).tick()
+    restored = MotionStore(Store(base.path))
+    public = restored.public_operation(OWNER, op['id'])
+    assert public['status'] == 'failed' and public['error'] == 'motion_invisible_move'
+    assert public['motion_context'] == captured[0]
+    assert restored.operation(op['id'])['motion_context'] == captured[0]
+    assert restored.project(OWNER, project_id)['scenes'][0]['motion']['versions'] == []
+    MotionWorkflow(restored, gateway, enabled=True).tick()
+    assert gateway.posts == gateway.uploads == len(captured) == 1
+    assert 'private' not in json.dumps(public)
+
+
+def test_candidate_public_context_drops_corrupt_or_unknown_fields(state):
+    base, motion, project_id, scene_id = state
+    op = start(state)
+    clean = dict(target='request', kind='move', ordinal=0, beat_id=op['document']['beats']['segments'][0]['id'])
+    saved = motion.update_operation(op['id'], motion_context=dict(clean, stderr='private', path='/private'))
+    assert saved['motion_context'] == clean
+    assert motion.public_operation(OWNER, op['id'])['motion_context'] == clean
+    motion.update_operation(op['id'], motion_context=dict(clean, ordinal=True))
+    assert 'motion_context' not in MotionStore(Store(base.path)).public_operation(OWNER, op['id'])

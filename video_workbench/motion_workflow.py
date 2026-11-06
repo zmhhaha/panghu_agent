@@ -76,7 +76,8 @@ class MotionWorkflow:
                     if exc.status >= 500 and exc.code.startswith('service_'):
                         self.store.update_operation(op['id'], error=exc.code)
                     else:
-                        self.store.update_operation(op['id'], status='failed', error=exc.code)
+                        self.store.update_operation(op['id'], status='failed', error=exc.code,
+                            motion_context=getattr(exc, 'motion_context', None))
                 except Exception:
                     LOG.exception('Motion reconciliation failed: %s', op['id'])
                     self.store.update_operation(op['id'], error='reconciliation_failed')

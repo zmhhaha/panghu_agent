@@ -1,5 +1,5 @@
 /** Semantic motion proposals and recording-bound timing; no executable model HTML. */
-import { isActiveOperation, isUnresolvedProductionOperation, statusLabel } from './model.mjs';
+import { isActiveOperation, isUnresolvedProductionOperation, mutationErrorLabel, operationElapsedLabel, operationNeedsRefresh, operationServiceErrorLabel, statusLabel } from './model.mjs';
 import { continuityErrorLabel } from './continuity.mjs';
 
 const STRATEGIES = { flow: '流程推演', compare: '前后对比', focus: '结构聚焦',
@@ -14,6 +14,7 @@ const RENDER_ERRORS = {
   motion_text_overflow: '图解文字超出可读区域。请缩短节点说明或把内容拆到更多镜头，再制作该镜头草稿；已有配音保留。',
   motion_expected_highlight_missing: '图解的强调动画未通过检查。请调整该镜头的强调动作后制作草稿；已有配音保留。',
   motion_invisible_highlight: '强调动作发生时，对象还不可见。请先显现对象再强调，或调整动作时间后制作草稿；已有配音保留。',
+  motion_invisible_move: '移动动作开始时，对象还不可见。请先让该对象出现，再移动，或推迟移动动作后仅补做这份草稿；已有配音保留。',
   motion_execution_failed: '镜头渲染未完成，原因尚未确认。请重新读取任务状态并检查这份图解；只补做失败镜头的草稿，已有图解和配音会保留。',
   motion_execution_timed_out: '镜头渲染超过时间上限。可简化这份图解的节点或动作后，仅补做该镜头草稿；已有配音可继续使用。',
   motion_execution_oom: '镜头渲染时内存不足。可简化这份图解后仅补做草稿；已有图解和配音会保留。',
@@ -62,6 +63,7 @@ const ERRORS = {
   motion_plan_stale: '旁白或画面说明已经变化，请生成匹配当前内容的动态图解。',
   motion_semantics_stale: '旁白分段或读音已经变化，请生成匹配当前内容的动态图解。',
   motion_base_stale: '这个修改基础已经过期，请选择匹配当前内容的方案。',
+  motion_revision_unchanged: '这次修改返回了与原方案完全相同的图解，未保存重复候选。原方案、已采用画面和配音保留，请核对修改要求后再提交。',
   motion_head_conflict: '采用的动态图解已经变化，请重新读取后审阅。',
   motion_timing_needs_review: '动态时序仍待人工试听核对，完成后才能正式导出。',
   motion_alignment_conflict: '时序已经更新，请重新读取后再校正。',
@@ -86,11 +88,44 @@ export function motionRenderErrorLabel(code) {
 }
 
 export function motionErrorLabel(code) {
+  const serviceError = operationServiceErrorLabel(code);
+  if (serviceError) return serviceError;
   if (typeof code === 'string' && (code.startsWith('process_continuity_') || code === 'invalid_process_continuity_plan')) {
     return continuityErrorLabel(code);
   }
   return typeof code === 'string' && Object.hasOwn(ERRORS, code) ? ERRORS[code]
     : '动态图解处理未完成，请重新读取状态并检查当前内容、配音和时序。';
+}
+
+export function safeMotionContext(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || typeof value.target !== 'string' || !/^[a-z][a-z0-9_-]{0,31}$/.test(value.target)
+      || typeof value.kind !== 'string' || !Object.hasOwn(ACTIONS, value.kind) || !Number.isInteger(value.ordinal)
+      || value.ordinal < 0 || value.ordinal > 47
+      || typeof value.beat_id !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(value.beat_id)) return null;
+  return { target: value.target, kind: value.kind, ordinal: value.ordinal, beat_id: value.beat_id };
+}
+
+export function motionFailureSource(item) {
+  const index = item?.diagnostic?.scene_index;
+  if (!safeMotionContext(item?.diagnostic?.motion_context) || !Number.isInteger(index) || index < 0) return null;
+  const scene = item.scenes?.[index];
+  return scene?.visual_mode === 'motion' && typeof scene.visual_version_id === 'string'
+    && scene.visual_version_id.length > 0 && scene.visual_version_id.length <= 100 ? scene : null;
+}
+
+export function motionFailureDetails(item, version, projectId) {
+  const context = safeMotionContext(item?.diagnostic?.motion_context);
+  if (!context) return null;
+  const source = motionFailureSource(item), action = version?.plan?.actions?.[context.ordinal];
+  const bound = Boolean(source && version?.id === source.visual_version_id && version.scene_id === source.scene_id
+    && version.project_id === projectId && action?.target === context.target
+    && action.kind === context.kind && action.beat_id === context.beat_id);
+  const target = bound ? version.plan.elements?.find(row => row.id === context.target)
+    ?? version.plan.relations?.find(row => row.id === context.target) : null;
+  const label = typeof target?.label === 'string' && target.label ? `${target.label}（${context.target}）` : context.target;
+  return { context, source, bound: bound && Boolean(target),
+    text: `问题图元：${label} · ${ACTIONS[context.kind]} · 第 ${context.ordinal + 1} 个动作${bound && target ? '' : '。尚未取得该任务的确切方案，仅显示图元编号。'}` };
 }
 
 export const hasMotionScenes = project => Boolean(project?.scenes?.some(scene => motionMetadata(scene).mode === 'motion'));
@@ -190,7 +225,7 @@ export function createProjectMotionDraftRequest(project, { endHoldSeconds = 0 } 
 export function createMotionPanel({ document, getContext, request, refresh, onError, onSuccess, onPreviewStateChange = () => {} }) {
   const $ = id => document.getElementById(id);
   const metadata = new Map(), versions = new Map(), timings = new Map(), drafts = new Map();
-  const selections = new Map(), instructions = new Map(), diagramKinds = new Map(), busy = new Set(), readErrors = new Map();
+  const selections = new Map(), instructions = new Map(), diagramKinds = new Map(), busy = new Set(), readErrors = new Map(), writeErrors = new Map(), diagnostics = new Map();
   let sequence = 0, latestRead = 0, renderedTiming = null, renderedReview = null, confirmation = null;
   let draftSequence = 0, auditionEnd = null;
   const draftIdentities = new WeakMap();
@@ -226,7 +261,8 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
   };
 
   function review(value) {
-    const signature = JSON.stringify([value.key, value.selected?.id, value.version?.plan_sha256]);
+    const diagnostic = diagnostics.get(value.version?.id);
+    const signature = JSON.stringify([value.key, value.selected?.id, value.version?.plan_sha256, diagnostic]);
     if (renderedReview === signature) return;
     renderedReview = signature;
     const target = $('motion-review'); target.replaceChildren();
@@ -238,11 +274,12 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
       `${elements.get(row.source)} → ${elements.get(row.target)}${row.label ? `：${row.label}` : ''}`]));
     const names = new Map(beats.segments.map((row, index) => [row.id, `第 ${index + 1} 段` ]));
     const list = text('ol');
-    for (const item of plan.elements) list.append(text('li', `${item.label}${item.detail ? `：${item.detail}` : ''}`));
+    for (const item of plan.elements) list.append(text('li', `${item.label}${item.detail ? `：${item.detail}` : ''}`,
+      diagnostic?.target === item.id ? 'motion-diagnostic-target' : undefined));
     target.append(text('h5', `画面结构 · ${motionDiagramKind(value.version) === 'process' ? '过程演示' : STRATEGIES[plan.template] ?? '图解'}`), list);
     if (relations.size) {
       const connections = text('ul');
-      for (const label of relations.values()) connections.append(text('li', label));
+      for (const [id, label] of relations) connections.append(text('li', label, diagnostic?.target === id ? 'motion-diagnostic-target' : undefined));
       target.append(text('h5', '关系'), connections);
     }
     if (plan.sources?.length) {
@@ -251,7 +288,8 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
       target.append(text('h5', '画面参考来源（输入提供，未自动核验）'), references);
     }
     const actions = text('ol');
-    for (const action of plan.actions) actions.append(text('li', `${names.get(action.beat_id) ?? '语音分段'} · ${elements.get(action.target) ?? relations.get(action.target) ?? '图形关系'} · ${ACTIONS[action.kind] ?? '变化'}${action.kind === 'transfer' ? `：${relations.get(action.relation_id) ?? '关系待核对'}` : action.kind === 'set_state' ? `：${STATES[action.state] ?? '状态待核对'}` : ''} · ${PLACEMENTS[action.placement] ?? ''} · ${PACES[action.pace] ?? ''}`));
+    plan.actions.forEach((action, index) => actions.append(text('li', `${names.get(action.beat_id) ?? '语音分段'} · ${elements.get(action.target) ?? relations.get(action.target) ?? '图形关系'} · ${ACTIONS[action.kind] ?? '变化'}${action.kind === 'transfer' ? `：${relations.get(action.relation_id) ?? '关系待核对'}` : action.kind === 'set_state' ? `：${STATES[action.state] ?? '状态待核对'}` : ''} · ${PLACEMENTS[action.placement] ?? ''} · ${PACES[action.pace] ?? ''}`,
+      diagnostic?.ordinal === index && diagnostic.target === action.target && diagnostic.kind === action.kind && diagnostic.beat_id === action.beat_id ? 'motion-diagnostic-target' : undefined)));
     target.append(text('h5', '随旁白展开的变化'), actions);
   }
 
@@ -320,15 +358,19 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
       : '适合一般流程、有序步骤、嵌套层级、前后对比和结构聚焦。选择方式仅影响新候选，修改沿用所选候选的方式。';
     $('motion-instruction').disabled = !generationConfigured && !revisionConfigured;
     $('generate-motion').disabled = !value.enabled || !generationConfigured || blocked || active;
+    $('generate-motion').textContent = selected ? '重新生成新候选' : '生成动态图解方案';
     $('revise-motion').disabled = !value.enabled || !revisionConfigured || blocked || active || !selected || selected.stale || !$('motion-instruction').value.trim();
     $('motion-form-note').textContent = !value.enabled ? '动态图解生成与修改暂未启用；可以查看历史、试听和取消在途任务。'
       : !generationConfigured ? '所选方式的生成服务暂未连接；已有候选仍可审阅、采用与校正。'
       : value.unsaved ? '先保存或重新载入未保存的镜头、配音和时序修改，再继续；草稿会保留。'
-        : '生成只增加候选。审阅图形变化后明确采用，再结合实际配音核对时序。';
-    $('motion-read-error').hidden = !readErrors.has(value.key);
-    $('motion-read-error').textContent = readErrors.get(value.key) ?? '';
+        : selected ? `重新生成会创建新候选；「按要求修改所选方案」沿用当前所选图解 ${(data.versions ?? []).findIndex(row => row.id === selected.id) + 1}，并提交上方批注。两种操作都只增加候选，需审阅后明确采用。`
+          : '生成只增加候选。审阅图形变化后明确采用，再结合实际配音核对时序。';
+    $('motion-read-error').hidden = !readErrors.has(value.key) && !writeErrors.has(value.key);
+    $('motion-read-error').textContent = [writeErrors.get(value.key), readErrors.get(value.key)].filter(Boolean).join(' ');
     $('motion-status').hidden = !data.operation;
-    $('motion-status-text').textContent = data.operation ? `${statusLabel(data.operation.status)}${data.operation.error ? ` · ${motionErrorLabel(data.operation.error)}` : ''}` : '';
+    $('motion-status').classList.toggle('failed', ['failed', 'timed_out', 'needs_input', 'quarantined', 'uncertain'].includes(data.operation?.status)
+      || Boolean(operationServiceErrorLabel(data.operation?.error)));
+    refreshElapsed();
     $('cancel-motion').hidden = !active;
     $('cancel-motion').disabled = inFlight || data.operation?.status === 'cancelling';
     const options = (data.versions ?? []).map((item, index) => {
@@ -425,8 +467,8 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
   async function mutate(value, action, accepted) {
     if (busy.has(value.key)) return;
     busy.add(value.key); render();
-    try { const result = await action(); if (same(value)) accepted?.(result); }
-    catch (error) { if (same(value)) onError(error); }
+    try { const result = await action(); if (same(value)) { writeErrors.delete(value.key); accepted?.(result); } }
+    catch (error) { if (same(value)) { writeErrors.set(value.key, mutationErrorLabel(error)); onError(error); } }
     finally {
       busy.delete(value.key);
       if (same(value)) { try { await refresh(); } catch (error) { onError(error); } render(); }
@@ -539,11 +581,20 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     const audio = $('motion-timing-audio');
     if (Number.isFinite(auditionEnd) && audio.currentTime >= auditionEnd) { audio.pause(); auditionEnd = null; }
   });
-  return { render, load, generate, adopt, mode, cancel, saveTiming, preview,
+  function refreshElapsed() {
+    const operation = motionMetadata(current().scene).operation;
+    const error = operation?.error ?? (operation?.status === 'quarantined' ? 'agent_quarantined' : null);
+    const context = safeMotionContext(operation?.motion_context);
+    $('motion-status-text').textContent = operation ? [statusLabel(operation.status), operationElapsedLabel(operation), error ? motionErrorLabel(error) : null,
+      context ? `问题图元：${context.target} · ${ACTIONS[context.kind]} · 第 ${context.ordinal + 1} 个动作` : null].filter(Boolean).join(' · ') : '';
+  }
+  return { render, load, generate, adopt, mode, cancel, saveTiming, preview, refreshElapsed,
     select: (projectId, sceneId, versionId) => {
       if (projectId && sceneId && versionId) selections.set(`${projectId}:${sceneId}`, versionId);
     },
+    focusDiagnostic: (versionId, context) => { const safe = safeMotionContext(context); if (versionId && safe) diagnostics.set(versionId, safe); },
     hasActiveOperation: (projectId, fallbackScenes) => operationScenes(projectId, fallbackScenes).some(scene => isActiveOperation(scene.motion?.operation)),
+    hasRefreshableOperation: (projectId, fallbackScenes) => operationScenes(projectId, fallbackScenes).some(scene => operationNeedsRefresh(scene.motion?.operation)),
     hasUnresolvedOperation: (projectId, fallbackScenes) => operationScenes(projectId, fallbackScenes).some(scene => isUnresolvedProductionOperation(scene.motion?.operation)),
     hasDrafts: () => [...drafts.values()].some(row => row.dirty),
     hasProjectDrafts: projectId => [...drafts.values()].some(row => row.dirty && row.project_id === projectId),

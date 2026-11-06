@@ -68,6 +68,10 @@ def test_candidate_is_explicit_and_adoption_is_project_wide_without_media_calls(
     base, explanation, project_id = state
     original = base.project(OWNER, project_id)
     op = begin(state)
+    public = explanation.public_operation(OWNER, op['id'])
+    assert public['created_at'] == op['created_at']
+    assert set(public) == {'id', 'kind', 'status', 'error', 'job_id', 'version_id', 'created_at'}
+    assert ExplanationStore(Store(base.path)).public_operation(OWNER, op['id'])['created_at'] == op['created_at']
     assert op['document']['project']['voice'] == 'zm_yunjian'
     version_id = complete(state, op)
     pending = explanation.project(OWNER, project_id)

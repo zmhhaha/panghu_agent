@@ -245,10 +245,12 @@ def test_remote_progress_and_safe_diagnostics_survive_business_reload(env):
         json=draft_request(project, sid, vid, aid), headers={'Idempotency-Key': 'progress-provenance'})
     assert response.status_code == 202, response.text
     progress = dict(stage='observing_scene', scene_index=0, completed_scenes=0, total_scenes=1, updated_at=100)
+    context = dict(target='certificate', kind='move', ordinal=7, beat_id='beat_' + '1' * 16)
     diagnostic = dict(code='motion_observation_stage_failed', category='observation', stage='observing_scene',
-                      scene_index=0, diagnostic_id='MR-' + 'a' * 16)
+                      scene_index=0, diagnostic_id='MR-' + 'a' * 16, motion_context=context)
     def failing(snapshot, directory, *, progress_callback, **kwargs):
-        progress_callback(dict(progress=dict(progress, private_path='/secret'), diagnostic=dict(diagnostic, stderr='secret')))
+        progress_callback(dict(progress=dict(progress, private_path='/secret'), diagnostic=dict(diagnostic,
+            motion_context=dict(context, stderr='private', path='/secret', owner='alice'), stderr='secret')))
         raise ServiceError('motion_observation_stage_failed', 502)
     renderer.supports_progress = True
     renderer.render = failing

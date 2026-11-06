@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from agent_service.contracts import ServiceError
+from agent_service.profiles.video_motion_contract import BEAT_IDENTIFIER, IDENTIFIER
 from . import media
 from .continuity_snapshot import verify_motion_snapshot
 
@@ -43,6 +44,21 @@ def safe_progress(value):
                 total_scenes=total, updated_at=updated)
 
 
+def safe_motion_context(value):
+    """Only a complete, bounded action identity may describe a motion failure."""
+    if not isinstance(value, dict):
+        return None
+    target, kind, ordinal, beat = (value.get(key) for key in ('target', 'kind', 'ordinal', 'beat_id'))
+    # video_motion_contract caps plans at 48 actions and validates these IDs.
+    # Require the whole identity so a malformed hint cannot point at an action.
+    if (not isinstance(target, str) or not IDENTIFIER.fullmatch(target)
+            or not isinstance(kind, str) or kind not in {'reveal', 'hide', 'highlight', 'move', 'draw'}
+            or type(ordinal) is not int or not 0 <= ordinal < 48
+            or not isinstance(beat, str) or not BEAT_IDENTIFIER.fullmatch(beat)):
+        return None
+    return dict(target=target, kind=kind, ordinal=ordinal, beat_id=beat)
+
+
 def safe_diagnostic(value):
     if not isinstance(value, dict):
         return None
@@ -56,7 +72,10 @@ def safe_diagnostic(value):
             or stage is not None and (not isinstance(stage, str) or stage not in PROGRESS_STAGES)
             or index is not None and (type(index) is not int or not 0 <= index < 24)):
         return None
-    return dict(code=code, category=category, stage=stage, scene_index=index, diagnostic_id=identity)
+    result = dict(code=code, category=category, stage=stage, scene_index=index, diagnostic_id=identity)
+    if context := safe_motion_context(value.get('motion_context')):
+        result['motion_context'] = context
+    return result
 
 
 def read_secret(path):
@@ -152,7 +171,11 @@ class RemoteMotionRenderer:
                     code = result.get('error', 'motion_execution_failed')
                     if not re.fullmatch(r'[a-z0-9_]{1,100}', str(code)):
                         code = 'motion_execution_failed'
-                    raise ServiceError(code, 504 if state == 'timed_out' else 502)
+                    error = ServiceError(code, 504 if state == 'timed_out' else 502)
+                    diagnostic = status.get('diagnostic') or {}
+                    if diagnostic.get('code') == code and (context := diagnostic.get('motion_context')):
+                        error.motion_context = context
+                    raise error
                 break
             if time.monotonic() - started >= self.wait_seconds:
                 # Remote remains journalled, same ID resumes next tick.

@@ -311,7 +311,7 @@ def resolve_timeline(plan, beats, alignment, *, leading_seconds=0, trailing_seco
         key = row['target'], prop
         _require(row['start'] >= ends.get(key, -1), 'conflicting_motion_actions')
         ends[key] = row['start'] + row['duration']
-    return dict(schema='video.motion-timeline.v1', compiler=compiler_version,
+    timeline = dict(schema='video.motion-timeline.v1', compiler=compiler_version,
                 plan_sha256=sha256(plan), semantic_sha256=semantic_digest(beats),
                 alignment_sha256=sha256(alignment), audio_sha256=alignment['audio_sha256'],
                 spoken_sha256=alignment['spoken_sha256'], audio_seconds=alignment['audio_seconds'],
@@ -320,6 +320,14 @@ def resolve_timeline(plan, beats, alignment, *, leading_seconds=0, trailing_seco
                 alignment_method=alignment['method'], review_status=alignment['review_status'],
                 beats=[dict(row, start=leading + row['start'], end=leading + row['end'])
                        for row in alignment['segments']], actions=actions)
+    if compiler_version == 'motion-compiler-6':
+        from .motion_semantic import element_opacity, invisible_move
+        for action, samples in zip(actions, action_windows(timeline)):
+            if action['kind'] == 'move' and any(
+                    element_opacity(timeline, action['target'], samples[label]) < .98
+                    for label in ('before', 'middle', 'after')):
+                invisible_move(action, action['ordinal'])
+    return timeline
 
 
 def _safe_script_json(value):
@@ -370,7 +378,8 @@ def preflight_plan(plan, beats, *, compiler_version=COMPILER_VERSION):
     """
     plan = validate_motion_plan(plan, beats)
     _require(compiler_version == 'motion-compiler-6', 'motion_compiler_version_unsupported')
-    from .motion_semantic import check_text, geometry, obstacle_boxes
+    from .motion_semantic import check_action_visibility, check_text, geometry, obstacle_boxes
+    check_action_visibility(plan, beats)
     layout = compiler_layout(plan, compiler_version)
     boxes = {row['id']: layout[row['slot']] for row in plan['elements']}
     check_text(plan, boxes)
@@ -450,14 +459,19 @@ def compile_project(plan, beats, alignment, *, animated=True, runtime_fingerprin
         if geometry is None:
             markup.append(stroke + f'<text id="label-{row["id"]}" data-motion-relation="{row["id"]}" class="relation-label" x="{lx}" y="{ly}" text-anchor="middle">{html.escape(row["label"])}</text>')
         else:
-            markup.append(stroke)
+            def endpoints(content):
+                if compiler_version != 'motion-compiler-6':
+                    return content
+                return (f'<g class="relation-endpoint relation-endpoint-{row["source"]}">'
+                        f'<g class="relation-endpoint relation-endpoint-{row["target"]}">{content}</g></g>')
+            markup.append(endpoints(stroke))
             x, y, width, height = geometry[row['id']]['box']
             cx = x + width / 2
             rows = ''.join(f'<tspan x="{cx:g}" y="{y + 24 + index * 26:g}">{html.escape(line)}</tspan>'
                            for index, line in enumerate(geometry[row['id']]['lines']))
-            relation_labels.append(f'<g id="label-{row["id"]}" data-motion-relation="{row["id"]}" class="relation-label">'
+            relation_labels.append(endpoints(f'<g id="label-{row["id"]}" data-motion-relation="{row["id"]}" class="relation-label">'
                 f'<rect class="relation-plate" x="{x:g}" y="{y:g}" width="{width:g}" height="{height:g}" rx="7"/>'
-                f'<text text-anchor="middle">{rows}</text></g>')
+                f'<text text-anchor="middle">{rows}</text></g>'))
     connections = ''.join(markup + relation_labels)
     markup = []
     drawing_order = (sorted(plan['elements'], key=lambda row: row['kind'] != 'container')
@@ -663,6 +677,29 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
     if compiler_version == 'motion-compiler-6':
         from .motion_semantic import source_layout
         panel = source_layout(plan)
+        # Separate opacity owners multiply source, target and draw visibility.
+        # Explicit fromTo endpoints retain exact forward/reverse renderSeek
+        # behavior without callbacks or mutating the authored action sequence.
+        page = page.replace('const actions = data.timeline.actions;', '''const actions = data.timeline.actions;
+  const endpointNodes=id=>document.querySelectorAll('.relation-endpoint-'+id);
+  const endpointFactor=el=>{
+    let factor=1;
+    for(let parent=el.parentElement;parent&&parent.id!=='connections';parent=parent.parentElement)
+      if(parent.classList.contains('relation-endpoint'))factor*=Number(getComputedStyle(parent).opacity);
+    return factor;
+  };''')
+        page = page.replace('for (const id of revealTargets) gsap.set(node(id),{opacity:0});',
+            'for (const id of revealTargets) {gsap.set(node(id),{opacity:0});for(const endpoint of endpointNodes(id))gsap.set(endpoint,{opacity:0});}')
+        page = page.replace('opacity[a.target]=next;',
+            'for(const endpoint of endpointNodes(a.target))tl.fromTo(endpoint,{opacity:opacity[a.target]},{opacity:next,duration,immediateRender:false},when);\n      opacity[a.target]=next;')
+        page = page.replace('opacity:Number(style.opacity),\n        markerOpacity:',
+            'opacity:Number(style.opacity)*endpointFactor(el),\n        markerOpacity:')
+        page = page.replace("markerOpacity:Number(getComputedStyle(document.getElementById('tip-'+r.id)).opacity)",
+            "markerOpacity:Number(getComputedStyle(document.getElementById('tip-'+r.id)).opacity)*endpointFactor(el)")
+        page = page.replace("labelOpacity:Number(getComputedStyle(document.getElementById('label-'+r.id)).opacity)",
+            "labelOpacity:Number(getComputedStyle(document.getElementById('label-'+r.id)).opacity)*endpointFactor(document.getElementById('label-'+r.id))")
+        page = page.replace('...metrics(el),...relationLayout(el),',
+            '...metrics(el),...relationLayout(el),opacity:Number(getComputedStyle(el).opacity)*endpointFactor(el),')
         page = page.replace("version:'motion-compiler-5'", "version:'motion-compiler-6'")
         page = page.replace('</style>', '''
 .container{z-index:0;align-items:flex-start;padding:10px 14px;border-style:dashed;background:#19344722;box-shadow:none}

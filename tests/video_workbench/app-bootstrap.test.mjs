@@ -64,14 +64,15 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
   const idle = project('idle'), motionBusy = project('motion-busy'), explanationBusy = project('explanation-busy');
   const batchBusy = project('batch-busy'), historical = project('historical', 'static');
   const audition = project('audition');
+  const unmade = project('unmade'); unmade.scenes = [];
   const auditionScene = audition.scenes[0];
   const auditionAudio = { id: 'audition-audio', number: 1, sha256: 'a'.repeat(64), duration_seconds: 4,
     voice: 'test-voice', source: 'tts', operation_id: 'original-audio-op', stale: false };
   auditionScene.audio_versions = [auditionAudio]; auditionScene.head_audio_version_id = auditionAudio.id;
   auditionScene.motion.versions = [{ id: 'audition-motion', number: 1, plan_sha256: 'b'.repeat(64) }];
-  const auditionVersion = { id: 'audition-motion', plan: { template: 'flow', title: '逐段试听',
+  const auditionVersion = { id: 'audition-motion', project_id: audition.id, scene_id: auditionScene.id, plan: { template: 'flow', title: '逐段试听',
     takeaway: '每段单独核对', elements: [{ id: 'one', label: '第一步', detail: '先说明问题' }],
-    relations: [], actions: [] }, beats: { segments: [
+    relations: [], actions: [{ target: 'one', kind: 'move', beat_id: 'first', placement: 'start', pace: 'normal' }] }, beats: { segments: [
       { id: 'first', source_text: '先说明问题。', spoken_text: '先说明问题。' },
       { id: 'second', source_text: '再解释原因。', spoken_text: '再解释原因。' },
     ] } };
@@ -84,7 +85,7 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
   secondDraftScene.motion.head_version_id = 'audition-second-motion';
   audition.scenes.push(secondDraftScene);
   motionBusy.scenes[0].motion.operation = { id: 'motion-op', status: 'running' };
-  const all = [idle, motionBusy, explanationBusy, batchBusy, historical, audition];
+  const all = [idle, motionBusy, explanationBusy, batchBusy, historical, audition, unmade];
   let listedProjects = [];
   const batch = { id: 'batch-op', project_id: batchBusy.id, status: 'running', items: [] };
   const settings = { user_id: 'offline-bootstrap-test', csrf_token: 'offline-only',
@@ -93,10 +94,16 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
     speech_voice: 'test-voice', speech_voices: [{ id: 'test-voice', name: '测试音色', default: true },
       { id: 'other-voice', name: '另一音色' }] };
   const writes = [], voiceWrites = [], sceneWrites = [];
-  let allowProjectDraft = false, allowVoiceSave = false, allowSceneSave = false;
+  const storyboardWrites = [];
+  const renderRows = new Map();
+  let allowProjectDraft = false, allowVoiceSave = false, allowSceneSave = false, draftFailure = null;
   const fetchFixture = async (path, options) => {
     calls.push(path);
     if (options.method !== 'GET') {
+      if (path === '/api/projects/unmade/storyboard') {
+        storyboardWrites.push(JSON.parse(options.body)); unmade.revision++;
+        return { ok: false, status: 409, json: async () => ({ detail: { code: 'revision_conflict' } }) };
+      }
       if (allowSceneSave && path === '/api/scenes/audition-scene' && options.method === 'PATCH') {
         const body = JSON.parse(options.body);
         sceneWrites.push(body);
@@ -119,6 +126,14 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
       assert.equal(options.method, 'POST');
       assert.equal(path, '/api/projects/audition/motion-renders');
       writes.push({ path, body: JSON.parse(options.body) });
+      if (draftFailure === '409') {
+        audition.revision++;
+        return { ok: false, status: 409, json: async () => ({ detail: { code: 'revision_conflict' } }) };
+      }
+      if (draftFailure === 'network') {
+        renderRows.set(audition.id, [{ id: 'accepted-before-disconnect', status: 'running', purpose: 'draft', created_at: Date.now() / 1000 }]);
+        throw new TypeError('fetch failed after admission');
+      }
       return { ok: true, status: 202, json: async () => ({ id: 'whole-project-draft', purpose: 'draft', status: 'queued' }) };
     }
     let result;
@@ -138,7 +153,7 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
       const p = all.find(row => row.id === id);
       assert.ok(p, `Unexpected application request ${path}`);
       if (!suffix) result = p;
-      else if (suffix === 'renders') result = { renders: [] };
+      else if (suffix === 'renders') result = { renders: renderRows.get(id) ?? [] };
       else if (suffix.startsWith('timeline?')) result = { duration_seconds: 5, scenes: [
         { id: p.scenes[0].id, title: p.scenes[0].title, start_seconds: 0, duration_seconds: 5,
           leading_seconds: 0.5, audio_duration_seconds: 4, audio_version_id: 'historical-audio',
@@ -172,7 +187,7 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
       document: { hidden: false, getElementById: $, createElement: tag => new Element(tag),
         createDocumentFragment: () => new Element('#fragment'),
         addEventListener: (...args) => pageEvents.addEventListener(...args) },
-      window: { addEventListener: (...args) => windowEvents.addEventListener(...args) },
+      window: { addEventListener: (...args) => windowEvents.addEventListener(...args), confirm: () => true },
       fetch: fetchFixture,
       setTimeout: (callback, duration) => { const id = ++timerSequence; timers.set(id, { callback, duration }); return id; },
       clearTimeout: id => timers.delete(id),
@@ -241,7 +256,8 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
     healthy(motionBusy.id);
     assert.equal($('convert-project-motion').disabled, true, 'An uncertain operation remains unresolved');
     assert.equal($('preview-batch').disabled, true);
-    assert.equal(timers.size, 0, 'Uncertain work does not become a running-operation polling loop');
+    assert.ok([...timers.values()].some(timer => timer.duration === 15000), 'Uncertain work keeps a slow read-only reconciliation loop');
+    assert.ok(![...timers.values()].some(timer => timer.duration === 3500), 'Uncertain work is not treated as a running operation');
     await clickProject(idle.id);
     healthy(idle.id);
     assert.equal($('generate-motion').disabled, false);
@@ -466,6 +482,115 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
       assert.equal(sceneWrites[0].narration, '这段旁白正在编辑。');
       assert.equal(sceneWrites[0].dirty, undefined);
       assert.equal($('global-error').hidden, true);
+    });
+    await t.test('whole-project 409 and lost admission responses reconcile with GETs and never automatically repeat POST', async () => {
+      await clickProject(audition.id); await $('reset-project-speech').emit('click');
+      for (const scene of audition.scenes) {
+        scene.audio_stale = false; scene.audio_versions.forEach(audio => { audio.stale = false; });
+      }
+      await $('refresh-all').emit('click');
+      assert.equal($('preview-batch-project').disabled, false);
+      const before = writes.length, previousRevision = audition.revision, beforeReads = calls.length;
+      allowProjectDraft = true; draftFailure = '409';
+      await $('preview-batch-project').emit('click'); await nextTurn();
+      assert.equal(writes.length, before + 1);
+      assert.equal(writes.at(-1).body.expected_revision, previousRevision);
+      assert.ok(calls.slice(beforeReads).includes('/api/projects/audition'));
+      assert.ok(calls.slice(beforeReads).includes('/api/projects/audition/renders'));
+      assert.equal($('global-error').hidden, false);
+      assert.match($('error-text').textContent, /已有更新.*所选范围会保留/);
+      assert.equal($('delivery-panel').open, true);
+      assert.equal($('delivery-error').hidden, false);
+      assert.match($('delivery-error-text').textContent, /已有更新/);
+      await $('reload-delivery').emit('click');
+      assert.equal(writes.length, before + 1, 'The local output recovery button only reads');
+      assert.equal($('delivery-error').hidden, false, 'A GET does not silently dismiss the write failure');
+      assert.equal($('preview-batch-project').disabled, false, 'Failed submit releases its pending lock after reading the latest revision');
+      draftFailure = 'network';
+      await $('preview-batch-project').emit('click'); await nextTurn();
+      assert.equal(writes.length, before + 2);
+      assert.equal($('global-error').hidden, false);
+      assert.match($('error-text').textContent, /结果尚未确认.*不会自动重复提交/);
+      assert.match($('render-history').textContent, /制作中/);
+      assert.equal($('preview-batch-project').disabled, true, 'A recovered in-flight render blocks a duplicate submission');
+      allowProjectDraft = false; draftFailure = null; renderRows.delete(audition.id);
+      await $('refresh-all').emit('click');
+    });
+    await t.test('a failed storyboard start has a persistent local error and a read-only recovery button', async () => {
+      await clickProject(unmade.id);
+      $('storyboard-max-scenes').valueAsNumber = 6;
+      await $('create-storyboard').emit('click'); await nextTurn();
+      assert.equal(storyboardWrites.length, 1);
+      assert.equal(storyboardWrites[0].max_scenes, 6);
+      assert.equal($('storyboard-status').hidden, false);
+      assert.match($('storyboard-status-text').textContent, /已有更新/);
+      assert.equal($('reload-storyboard').hidden, false);
+      assert.equal($('cancel-storyboard').hidden, true);
+      await $('reload-storyboard').emit('click');
+      assert.equal(storyboardWrites.length, 1);
+      assert.equal($('storyboard-status').hidden, false);
+      assert.equal($('storyboard-max-scenes').valueAsNumber, 6);
+    });
+    await t.test('render failures retrieve and highlight the exact frozen candidate instead of the current adopted version', async () => {
+      const beforeWrites = writes.length;
+      renderRows.set(audition.id, [{ id: 'failed-old-render', status: 'failed', purpose: 'draft', error: 'motion_invisible_move',
+        scenes: [{ scene_id: auditionScene.id, visual_mode: 'motion', visual_version_id: auditionVersion.id }],
+        diagnostic: { scene_index: 0, motion_context: { target: 'one', kind: 'move', ordinal: 0, beat_id: 'first' } } }]);
+      const before = calls.length;
+      await clickProject(audition.id);
+      assert.ok(calls.slice(before).includes('/api/motion-versions/audition-motion'));
+      assert.match($('render-history').textContent, /第一步（one）.*移动/);
+      const walk = row => [row, ...row.children.flatMap(walk)];
+      const locate = walk($('render-history')).find(row => row.tagName === 'button' && row.textContent === '查看问题图元与动作');
+      assert.ok(locate); await locate.emit('click');
+      assert.equal($('motion-version').value, auditionVersion.id);
+      assert.ok(walk($('motion-review')).some(row => row.className === 'motion-diagnostic-target'));
+      assert.equal(writes.length, beforeWrites);
+      renderRows.delete(audition.id);
+    });
+    await t.test('wall-clock progress advances without network and visibility, focus and pageshow reconcile every panel once', async () => {
+      const originalNow = Date.now; let now = originalNow(); Date.now = () => now;
+      const beforeWrites = writes.length;
+      try {
+        batch.status = 'running';
+        batch.created_at = now / 1000 - 60;
+        const render = { id: 'background-render', status: 'running', created_at: now / 1000 - 60,
+          progress: { stage: 'rendering_scene', scene_index: 0, completed_scenes: 0, total_scenes: 1 } };
+        renderRows.set(batchBusy.id, [render]);
+        await clickProject(batchBusy.id);
+        assert.match($('render-history').textContent, /已等待 1分0秒/);
+        assert.match($('batch-status').textContent, /已等待 1分0秒/);
+        const beforeTick = calls.length;
+        now += 125000;
+        const clock = [...timers.entries()].find(([, timer]) => timer.duration === 1000);
+        assert.ok(clock); timers.delete(clock[0]); clock[1].callback();
+        assert.match($('render-history').textContent, /已等待 3分5秒/);
+        assert.match($('batch-status').textContent, /已等待 3分5秒/);
+        assert.equal(calls.length, beforeTick, 'Clock tick redraws time without polling the server');
+        document.hidden = true; await pageEvents.emit('visibilitychange');
+        assert.ok(![...timers.values()].some(timer => [1000, 3500, 15000].includes(timer.duration)));
+        batch.status = 'completed'; render.status = 'completed'; now += 40000;
+        document.hidden = false;
+        const beforeResume = calls.length;
+        await Promise.all([pageEvents.emit('visibilitychange'), windowEvents.emit('focus'), windowEvents.emit('pageshow')]);
+        const resumed = calls.slice(beforeResume);
+        for (const suffix of ['', '/renders', '/motion', '/explanation', '/batches', '/continuity']) {
+          // Continuity is feature-gated in this fixture; the enabled panels must all catch up.
+          if (suffix === '/continuity') continue;
+          assert.equal(resumed.filter(path => path === `/api/projects/batch-busy${suffix}`).length, 1, suffix);
+        }
+        assert.match($('batch-status').textContent, /已完成/);
+        assert.match($('render-history').textContent, /已完成/);
+        assert.doesNotMatch($('render-history').textContent, /申请取消|已等待/);
+        assert.equal($('cancel-batch').hidden, true);
+        batch.status = 'running';
+        const beforeFocus = calls.length; await windowEvents.emit('focus');
+        assert.ok(calls.length > beforeFocus, 'Focus alone also catches up when visibility did not fire');
+        assert.match($('batch-status').textContent, /制作中/);
+        batch.status = 'completed'; await windowEvents.emit('pageshow');
+        assert.equal($('cancel-batch').hidden, true);
+        assert.equal(writes.length, beforeWrites, 'All recovery events remain read-only');
+      } finally { Date.now = originalNow; renderRows.delete(batchBusy.id); }
     });
     for (const [id, timer] of timers) if (timer.duration === 5000) {
       timers.delete(id); timer.callback();

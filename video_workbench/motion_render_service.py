@@ -25,7 +25,7 @@ from agent_service.contracts import ServiceError, canonical_bytes
 from . import media
 from .motion_snapshot import _runtime
 from .continuity_snapshot import verify_motion_snapshot
-from .motion_render_adapter import read_secret, safe_progress, safe_diagnostic, UNAVAILABLE
+from .motion_render_adapter import read_secret, safe_progress, safe_diagnostic, safe_motion_context, UNAVAILABLE
 from .motion_render_k8s import ExecutionJournal, KubeHTTP, KubeSceneRenderer, operation_key, require
 
 MAX_REQUEST_BYTES = 192 * 1024 * 1024
@@ -264,7 +264,8 @@ class MotionExecutionService:
                     self.journal.update(key, state='queued', error=None)
                 else:
                     state = 'cancelled' if error.code in {'media_render_cancelled', 'media_cancelled'} else ('timed_out' if error.status == 504 else 'failed')
-                    self._begin_failure(row, state, error.code, error.status)
+                    self._begin_failure(row, state, error.code, error.status,
+                                        motion_context=getattr(error, 'motion_context', None))
             except Exception as error:
                 # Do not expose filesystem, credentials or exception text.
                 self.last_error = 'motion_execution_storage_error' if isinstance(error, OSError) else 'motion_execution_internal_error'
@@ -273,14 +274,14 @@ class MotionExecutionService:
         finally:
             self.worker_lock.release()
 
-    def _begin_failure(self, row, state, error, status):
+    def _begin_failure(self, row, state, error, status, *, motion_context=None):
         pending = dict(state=state, error=error, status=status)
         # Persist cleanup intent before touching resources. A process restart
         # takes this path directly, never renders/submits another scene Job.
         latest = self.journal.operation(row['owner'], row['operation_id'])
         result = json.loads(latest['result']) if latest['result'] else {}
         progress = safe_progress(result.get('progress'))
-        diagnostic = failure_diagnostic(row['key'], error, progress)
+        diagnostic = failure_diagnostic(row['key'], error, progress, motion_context=motion_context)
         self.journal.update(row['key'], result=json.dumps({**result,
             'cleanup_pending': pending, 'diagnostic': diagnostic}), error=None)
         self._finish_failure(row, pending)
@@ -333,7 +334,7 @@ class MotionExecutionService:
             uncertain_submission='same_name_suspended_fence_no_pods_no_audio_configmaps')
 
 
-def failure_diagnostic(key, code, progress=None):
+def failure_diagnostic(key, code, progress=None, *, motion_context=None):
     category = ('resource' if code == 'motion_execution_oom' else
         'timeout' if code in {'motion_execution_timed_out', 'media_render_timed_out'} else
         'artifact_budget' if code == 'motion_artifact_budget_exceeded' else
@@ -348,9 +349,12 @@ def failure_diagnostic(key, code, progress=None):
             'motion_expected_draw_missing', 'motion_expected_reveal_missing', 'motion_expected_hide_missing',
             'motion_invisible_move', 'motion_expected_move_missing', 'motion_frozen_frames',
             'motion_seek_time_mismatch', 'motion_reverse_seek_failed'} else 'execution')
-    return dict(code=code, category=category, stage=progress['stage'] if progress else None,
+    result = dict(code=code, category=category, stage=progress['stage'] if progress else None,
         scene_index=progress['scene_index'] if progress else None,
         diagnostic_id='MR-' + hashlib.sha256((key + ':' + code).encode()).hexdigest()[:16])
+    if context := safe_motion_context(motion_context):
+        result['motion_context'] = context
+    return result
 
 
 def public_operation(row):
