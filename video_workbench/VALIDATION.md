@@ -1,5 +1,63 @@
 # 分支验证记录
 
+## 2026-11-06 校验补丁预检、发布与真实浏览器技术闭环通过
+
+源码仍为 `139295401b24dd1440c6df227d79776eeaa7036b`。下方保留此前尚未发布、浏览器待验和原失败记录，当前结果以本节为准；独立分支未合主线，3.2b技术完成，OpenSpec已实际同步并回读验证通过。
+
+| 检查 | 实际结果与边界 |
+| --- | --- |
+| 完整固定输入预检 | `preflight-r5` 返回 `exact_process_continuity_preflight_passed`；四段编码及四段观察沿用既有执行身份，编译／复核／组合／媒体检查新执行。retain与copy两片仍各19.625秒／471帧，MP4 SHA与r4完全相同，不宣称新执行了复用阶段。 |
+| 发布操作器历史 | wrapper首试在导入摘要校验阶段停止，未造成线上变更。服务器现存较早base与本地增强版有差异，分别保存为 `release_continuity_patch_base_r1.py` 和 `release_continuity_patch_remote_r2.py`，服务器原件保持；现存base不被当成已证明的release-r1历史执行身份。新版发布工具101项通过，只说明工具范围。 |
+| 实际发布与独立核验 | `release-r2` prepare／apply／postcheck通过；工作台及执行器实际imageID与 `ba9a9ba2b67fa79fca7715de80f9fb3e90afc9d9465fc59f902445004b8ea5a6` 匹配，Ready、0重启。渲染器和 `video-motion-runtime-6e2ad4a143eff46537e2` 保持；旧14项目、17＋2表及媒体保持，发布核验当时额外行0、active0。该零新增结论不包括随后真实草稿。 |
+| 新真实生产草稿 | `20951f68-5849-4610-b823-64f4ab4fbe5c` 已完成；候选3 token copy、原录音、默认 `end_hold=4`。成片23.625秒、1280×720／24fps、567实读帧，MP4 SHA `7c364330b99f3d80e0124f0fae4778574beb88e2a38a16a4ab8f48b5c7e298bc`。 |
+| 媒体与原声 | 新草稿完整解码、十个AAC解码原声窗口相关性通过，最低 `0.9999441150885439`。这次草稿未测组合主PCM逐样本一致，不复用预检主PCM证据冒充；声音自然度与准确人工时序仍未核准。 |
+| 草稿后只读audit | `process_continuity_browser_read_only_audit_passed`：全部原typed行和BLOB保持，仅新增工作台video_renders1条、执行器operation1条及scene2条。原失败及采用记录保持；audit工具35项通过。只读audit本身不证明浏览器播放或下载。 |
+| 浏览器完整播放与跳转 | 实际使用原生控件从0播放到23.625秒，ended=true、未静音、error=null；正反跨镜跳转 `12.617066` 秒与 `11.922213` 秒成功。3.2b的浏览器技术闭环通过，不代替效果人工认可。 |
+| 下载入口与响应边界 | 点击下载按钮后，对应媒体GET200已由工作台访问日志确认，播放器媒体请求206。服务端导出MP4另取回并核验SHA／完整解码；浏览器操作系统最终文件落盘未观察，不声明已保存成功。 |
+| 刷新恢复与正式导出门禁 | 刷新后完成历史、候选3采用及旧失败保留；同一render ID重新打开仍为23.625秒、无媒体错误。再次正式导出仍被pending时序门禁拒绝，未勾选人工旁白核对。 |
+| 独立待办 | 3.3、准确人工旁白时序、声音自然度与整片讲解效果保持待办；服务器媒体技术结果与有限UI检查不替代用户效果认可。 |
+
+本地 `continuity-media/preflight-r5/summary.json` SHA256为 `e2efcf43f6cdc0a08904711df374e87376fbfbca0e4d3b43af2366400a37588e`；`release-r2/summary.json` 为 `443fae0a8b0bbe2a186aa806064b202b3e28976e786b6bd619b1d1fdf2f21032`，独立 `release-r2/postcheck.json` 为 `0bf6cf5598de1eb85f8bfd1b142025f31759db391f787f250922b278b1879ac8`。summary的 `postcheck_pending` 为apply刚结束的历史状态，以独立postcheck通过回执为准。草稿后audit回执为 `continuity-media/browser-acceptance/final-audit-20261106T092601Z-160afb38a26b/summary.json`，SHA256 `1d41e59b3ba0f0ee8e42b039c4cc4d8f46bc5bbd9ca2a354ae15cc2ecd2d5c0c`。所有路径仍在原有ignored证据根下。
+
+最终浏览器[实际回执](rendered/audio-clock/process/pc-browser-passed-r2.json) SHA256为 `76d7a12e115efec8e8bc5d52a702d88798041b0b088a80dc3a4d0a931361a153`，状态passed；[23.625秒连续草稿本地媒体](rendered/audio-clock/process/continuity-media/browser-acceptance/final-audit-20261106T092601Z-160afb38a26b/draft.mp4) SHA与上述新草稿一致。3.3、声音自然度、准确人工时序和讲解效果仍保持待办，浏览器技术通过不自动核准这些项目。
+
+[技术收尾总回执](rendered/audio-clock/process/process-continuity-closeout.json)状态passed，SHA256为 `a8c6bc4ecb36c0aeed7c56438f469aef2d7be09e0fa33f9c50c3882db18076ce`。OpenSpec项目 `ec663f5a-53d3-4a0e-9037-933eb788d183` 的 `improve-video-audio-clock-and-expression` 已同步至 revision `f67f5a1019a1eda4e1d8777bfeade3e7f0cfdb0a`，回读匹配、`valid=true`、issues为空；仅3.2b从unchecked改为checked，其余checkbox不变，33项从完成9项变为10项、剩余23项。[同步摘要](rendered/audio-clock/process/process-continuity-closeout-openspec/summary.json)、[回读](rendered/audio-clock/process/process-continuity-closeout-openspec/readback.json)和[验证](rendered/audio-clock/process/process-continuity-closeout-openspec/validate.json)保留实际结果。
+
+## 2026-11-06 重复跳转截图校验补丁：诊断证据复核通过，待完整预检及发布
+
+源码 `139295401b24dd1440c6df227d79776eeaa7036b`，独立分支 `codex/video-audio-clock` 未合主线。以下为原浏览器失败之后追加的诊断与补丁阶段，保留下节失败历史；补丁尚未部署，浏览器尚未重做，3.2b 不因此完成。细节见 [诊断补丁阶段记录](docs/process-continuity.md#重复跳转截图诊断与有界校验补丁)。
+
+| 检查 | 实际结果与边界 |
+| --- | --- |
+| 原失败诊断 | `MR-8dbdfdececeee794` 对应 `process_continuity_seek_sequence_mismatch`。真实同 `.375` 秒样本的 DOM、状态、几何、transform 与文字精确一致；RGB 差异局限 token 圆角附近，1600像素、全图平均通道差 `0.0052126736111111115`、最大通道差44。文字外扩2px完全相同；底层原因仍未确定。 |
+| 已检验假设 | 提前注入 runtime bootstrap、关闭 partial raster 均未改变差异；每种跳转历史后连续三次截图各自稳定，历史间差异仍在。实验证据不支持对应的初始化、partial raster 或等待截图稳定猜测，不能据此断言特定 Chromium 机制或普通编码噪声。 |
+| 补丁门禁 | 同SHA保留精确路径；SHA不同必须绑定真实JPEG、保持所有测量元数据完全一致。只允许编译器固定token圆角的有界mask内差异；文字外扩2px及mask外逐像素精确一致，且平均差≤0.01、最大差≤48、差异像素≤2048。缺证据、坏SHA、格式／尺寸异常及超预算均拒绝，没有引入通用感知相似度通过条件。 |
+| 新增定向测试 | `repeat-frame-tests-r2.xml`：32 passed。含真实JPEG双向对照，以及微小文字笔画、换字、细线、移位、背景、文字保护边缘、证据异常和三项预算各自独立超限负例。 |
+| 既有定向回归 | `patch-review-regression-r1.xml`：444 passed／0 skipped。仅声明此集合范围，不累计历轮测试或视为最新完整Python集合。 |
+| 新镜像 | `build-r6` 工作台 `latest@sha256:ba9a9ba2b67fa79fca7715de80f9fb3e90afc9d9465fc59f902445004b8ea5a6` 已构建；渲染器 `aaa8f1c05e141ac83c182df1a66826f9931d2d0a38278aaecf68d9f12b0ba486` 与runtime ConfigMap保持，尚未部署。 |
+| 原失败证据的真实复核 | 新工作台镜像在隔离环境重用 `diagnostic-r2` 原输入、观察与真实JPEG，实际生产复核入口返回 `exact_failed_scene_review_passed`。原观察前后SHA保持，observe／Agent／TTS均0；不是新渲染或新浏览器闭环通过。 |
+| 尚未完成 | 新四段输入 `preflight-r5` 执行中，未写为通过；尚未发布补丁或重做浏览器草稿／播放／刷新／下载。原browser失败保留，3.2b、3.3及人工旁白时序、声音自然度与讲解效果仍未核准。 |
+
+本地证据根仍为 `video_workbench/rendered/audio-clock/process/`。`continuity-media/build-r6/images.json` SHA256为 `57b420b4a169d9354c7a511cbdf96204e177ae45793f49784acd23e7e3aff0ec`；`continuity-media/patch-preflight-r1/summary.json` SHA256为 `44ff1cb21dc4f43a4bcc769ed72faa8aafac4e9c58df3d85d6d63f164683ce87`。以下保留原发布与真实失败的阶段记录。
+
+## 2026-11-06 过程动画跨镜：技术预检与发布完成，浏览器草稿失败
+
+本轮源码 `eab5a7e7d4d43bb66a866785038b0e55f756e5d1`，独立分支 `codex/video-audio-clock` 未合主线。采用 `motion-process-continuity-compiler-1`／`continuous-process-1`，保留旧版本快照含义；完整身份、失败修复和证据见 [过程动画跨镜衔接](docs/process-continuity.md)。以下仅记录已完成范围，不把夹具或工具测试视为真实浏览器通过。
+
+| 检查 | 实际结果与边界 |
+| --- | --- |
+| 回归范围 | 完整 Python 集合 1903 passed／5 skipped，运行于位移与终点判定修复前；最新终点修复后定向 166 项通过。JS 153 项、兼容集合 125 项等范围有重叠，不累计为最新提交的完整集合。 |
+| 原输入与复用身份 | retain／copy 四段的 24 个编译文件在终点判定修复前后原字节及 manifest 摘要保持；r4 四段共 28 个渲染输入精确匹配。八个旧编码／观察阶段复用，四个工作台阶段重新执行，不伪造新渲染执行。 |
+| 组合与原声 | retain／copy 两片均 19.625 秒、1280×720／24 fps、471 实读帧，完整解码、真实主 PCM 逐样本核对通过；AAC 解码每片十窗口相关性最低 0.9999441150885439，不写成有损音频逐样本一致。 |
+| 预览／编码帧 | 四段 draft 与两段 final 共 80／80 条对照通过，相邻 floor／ceil 时差≤1／24 秒。初始文字仍有栅格边缘差异，来源未查明；通过的是局部结构／字形和背景门槛，不是逐像素相同。原 74／80 失败、权限停止及工具修复回执保留。 |
+| 生产发布 | `release-r1` prepare／apply／postcheck 通过，工作台和执行器 Ready、实际 imageID 与 digest 匹配、重启 0；八音色、health／ready 200、匿名 401、runtime 与执行器鉴权通过。发布阶段 Agent／TTS／渲染提交均为 0。 |
+| 数据保持 | postcheck 比较工作台 17 表和执行器 2 表，旧 schema、原行值及已有连续候选记录保持，核验时额外行 0、active 0；两份新鲜数据库备份仅留服务器。随后新增专用浏览器夹具项目不包括在该时点额外行 0 的结论中。 |
+| 浏览器已通过步骤 | 两镜图解／原录音采用；候选 1 retain 自动规划；token 不关联的未保存保护及另存候选 2；返回候选 1 改为 token copy 后另存／明确采用候选 3。正式导出被 pending 时序门禁拒绝，未自动确认人工时序。 |
+| 浏览器真实失败 | 唯一一次生产连续 draft 使用候选 3 token copy、默认 `end_hold=4`，在第二镜 `validating_scene` 产物校验失败，界面问题 `MR-8dbdfdececeee794`。原失败保留，原因尚未确认，不据此推断根因。 |
+| 仍待验收 | 完整浏览器闭环 failed／未完成，相关成片播放和下载尚未通过，3.2b 未勾选；3.3、准确人工旁白时序、声音自然度和整片讲解效果未核准。助手对有限 preview／decoded／diff 样本的检查不替代真人认可。 |
+
+工作台 `latest` digest 为 `sha256:167060a2c4e923c16605b865cf47c88a98d3c5d9aef0db977cfb31a1b2df8d60`，渲染器／执行器绑定 `sha256:aaa8f1c05e141ac83c182df1a66826f9931d2d0a38278aaecf68d9f12b0ba486`。未修改共享 Agent 或新增模型；Canvas／Three.js 公共服务与 panghu-tool 迁移暂缓，可信费用与生产存储回收仍由框架统一解决。以下保留历轮原始记录，不用于扩大本轮完成范围。
+
 ## 2026-11-01 无字幕图解改进
 
 用户认为原成片机械感明显、字幕遮挡，已选择无字幕图解。前端源码 `31cb29d514e74a81bac87f6a32aef31a5cf081ec` 已部署，最新镜像 digest `sha256:0ab44a7e62464e000247f138462bb663ff6047f42519fa2f3d2b27e9534bded3`，Pod `video-workbench-6cb86d7ccf-jxblm` Ready、0 重启。Node 25 项、语法及 diff 检查通过；真实浏览器确认字幕默认关闭、旁白保留、可编辑指引、无字幕预览和旧有字幕成片标识；未修改既有项目。
