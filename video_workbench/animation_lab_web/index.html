@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>动画实验与标注 · Video Service</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.mjs"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">◈</span><div><span class="eyebrow">VIDEO SERVICE / DEVELOPER LAB</span><h1>动画实验与标注</h1></div><span class="private-badge">开发者专用</span></div>
+    <div class="header-actions"><button id="reload" class="button secondary" type="button">刷新样例</button><a id="export" class="button primary" href="/api/export?format=jsonl" download="animation-lab-annotations.jsonl">导出标注 JSONL <span aria-hidden="true">↗</span></a></div>
+  </header>
+  <div id="global-message" class="global-message" role="status" hidden></div>
+  <div class="layout">
+    <aside class="sidebar" aria-label="动画样例">
+      <div class="sidebar-heading"><h2>效果样例库</h2><span id="case-count" class="count">—</span></div>
+      <p class="muted small">固定输入，独立对比。标注会绑定当前样例和版本。</p>
+      <label class="field-label" for="module-filter">能力模块</label><select id="module-filter"><option value="all">全部模块</option></select>
+      <label class="field-label" for="case-search">查找样例</label><input id="case-search" type="search" placeholder="名称或效果说明" autocomplete="off">
+      <label class="field-label" for="review-filter">评价状态</label><select id="review-filter"><option value="all">全部评价状态</option><option value="unreviewed">待评价</option><option value="reviewed">已评价</option></select>
+      <div id="module-note" class="module-note" hidden></div>
+      <nav id="case-list" class="case-list" aria-label="选择样例"><p class="muted">正在读取样例…</p></nav>
+      <div class="sidebar-footer"><span class="status-dot" aria-hidden="true"></span><p>积累效果评测与开发偏好。<br>标注不自动修改生产效果。</p></div>
+    </aside>
+    <main>
+      <div id="empty-state" class="empty-state"><span aria-hidden="true">◈</span><h2>选择一个效果样例</h2><p>从框图、过程动画和镜头衔接开始，逐项改善表现力。</p></div>
+      <div id="case-workspace" hidden>
+        <section class="case-heading" aria-labelledby="case-title"><div><div class="title-row"><span id="module-badge" class="module-badge"></span><span id="review-badge" class="review-badge">待标注</span></div><h2 id="case-title"></h2><p id="case-description" class="muted"></p></div><div class="review-actions" aria-label="人工效果评价"><button id="review-acceptable" class="button secondary" type="button" data-verdict="acceptable">效果可接受</button><button id="review-needs-work" class="button secondary" type="button" data-verdict="needs_work">还需改进</button></div></section>
+        <div class="fixture-note"><span aria-hidden="true">◷</span><p><strong>无旁白技术样例</strong> · 用于评价画面和动作。静音计时及估算时间不代表真实配音同步。</p></div>
+        <section class="comparison-grid" aria-label="动画版本对比">
+          <article class="player-card" id="baseline-card"><header><div><span class="version-letter">A</span><strong id="baseline-title">基线版本</strong></div><span id="baseline-duration" class="muted small"></span></header><div class="player-stage" id="baseline-stage"><iframe id="baseline-frame" title="基线动画预览" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe><div id="baseline-loading" class="player-status">正在准备预览…</div><div id="baseline-overlay" class="annotation-overlay"><div class="region-box" hidden></div></div></div><footer><span id="baseline-state" class="player-state">等待预览</span><code id="baseline-identity"></code></footer></article>
+          <article class="player-card" id="candidate-card"><header><div><span class="version-letter candidate">B</span><strong id="candidate-title">候选版本</strong></div><span id="candidate-duration" class="muted small"></span></header><div class="player-stage" id="candidate-stage"><iframe id="candidate-frame" title="候选动画预览" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe><div id="candidate-loading" class="player-status">正在准备预览…</div><div id="candidate-overlay" class="annotation-overlay"><div class="region-box" hidden></div></div></div><footer><span id="candidate-state" class="player-state">等待预览</span><code id="candidate-identity"></code></footer></article>
+        </section>
+        <section class="transport" aria-label="同步播放控制"><div class="transport-row"><button id="play" class="button primary" type="button" disabled>播放</button><button id="reset" class="button icon-button secondary" type="button" aria-label="回到首帧" disabled>↶</button><button id="previous-frame" class="button icon-button secondary" type="button" aria-label="上一帧" disabled>Ⅰ‹</button><button id="next-frame" class="button icon-button secondary" type="button" aria-label="下一帧" disabled>›Ⅰ</button><output id="timecode" for="seek">00:00.000 / 00:00.000</output><label class="speed-label" for="speed">速度<select id="speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option></select></label></div><input id="seek" type="range" min="0" max="0" step="0.001" value="0" aria-label="同步预览时间" disabled><p id="timing-note" class="muted small"></p><div id="checkpoints" class="checkpoints" aria-label="效果检查位置"></div></section>
+        <section class="preference-panel" aria-labelledby="preference-title"><div><h3 id="preference-title">这个样例，你更喜欢哪个版本？</h3><p class="muted small">偏好与下面的具体问题分别记录，便于后续比较改进。</p></div><div class="preference-actions"><button class="button secondary" type="button" data-preference="baseline">A 更好</button><button class="button secondary" type="button" data-preference="candidate">B 更好</button><button class="button secondary" type="button" data-preference="tie">差不多</button><button class="button secondary" type="button" data-preference="neither">都需改进</button></div><p id="preference-note" class="muted small" role="status"></p></section>
+        <div class="review-grid">
+          <section class="panel annotation-panel" aria-labelledby="annotation-title"><div class="panel-heading"><h3 id="annotation-title">记录具体问题</h3><span id="draft-status" class="muted small">可标注时间区间与画面区域</span></div><form id="annotation-form"><div class="form-row"><label>标注版本<select id="annotation-variant"></select></label><label>影响程度<select id="annotation-severity"><option value="minor">轻微 · 可优化</option><option value="major">明显 · 影响观看</option><option value="blocker">严重 · 无法理解</option><option value="note">建议 · 值得尝试</option></select></label></div><div class="form-row time-fields"><label>开始（秒）<input id="annotation-start" type="number" min="0" step="0.001" value="0" required></label><label>结束（秒）<input id="annotation-end" type="number" min="0" step="0.001" value="0" required></label><button id="capture-time" type="button" class="button secondary">取当前帧</button></div><div class="region-controls"><button id="draw-region" class="button secondary" type="button" aria-pressed="false">框选画面区域</button><button id="clear-region" class="text-button" type="button" disabled>清除框选</button><span id="region-note" class="muted small">可选；不框选则评价整个画面</span></div><fieldset class="tags"><legend>问题类型</legend><label><input type="checkbox" name="tag" value="layout">布局</label><label><input type="checkbox" name="tag" value="typography">文字</label><label><input type="checkbox" name="tag" value="connector">连线</label><label><input type="checkbox" name="tag" value="motion">动作</label><label><input type="checkbox" name="tag" value="pacing">节奏</label><label><input type="checkbox" name="tag" value="continuity">衔接</label><label><input type="checkbox" name="tag" value="clarity">表达</label><label><input type="checkbox" name="tag" value="other">其他</label></fieldset><label class="comment-label" for="annotation-comment">哪里不好，或希望变成什么效果？</label><textarea id="annotation-comment" maxlength="4000" rows="4" placeholder="例如：右边的文字太密；请求移动到一半时，返回箭头和正向箭头重叠。" required></textarea><div id="annotation-message" class="inline-message" role="status" hidden></div><div class="form-footer"><span class="muted small">保存后保留原始意见，可导出复用。</span><button id="save-annotation" class="button primary" type="submit">保存标注</button></div></form></section>
+          <section class="panel history-panel" aria-labelledby="history-title"><div class="panel-heading"><h3 id="history-title">本样例标注</h3><span id="annotation-count" class="count">0</span></div><div id="annotation-history" class="annotation-history" aria-live="polite"><p class="muted small">尚无标注。</p></div></section>
+        </div>
+        <details class="identity-details"><summary>效果检查与版本信息</summary><div id="case-checks"></div><div id="variant-summaries"></div><p class="muted small">冻结样例标识</p><code id="case-identity"></code></details>
+      </div>
+    </main>
+  </div>
+</body>
+</html>
