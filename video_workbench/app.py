@@ -243,6 +243,7 @@ class Generation(Revision):
 
 class MotionGeneration(Generation):
     diagram_kind: Literal['diagram', 'process'] = 'diagram'
+    expected_semantic_binding_sha256: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
 
 
 class Adoption(Fields):
@@ -703,6 +704,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                         idempotency_key: str | None = Header(default=None)):
         motion_workflow.require_gateway(body.diagram_kind)
         document = body.model_dump()
+        if document['expected_semantic_binding_sha256'] is None:
+            document.pop('expected_semantic_binding_sha256')
         if document['diagram_kind'] == 'diagram':
             # Preserve exact old generation request identities across upgrades.
             document.pop('diagram_kind')

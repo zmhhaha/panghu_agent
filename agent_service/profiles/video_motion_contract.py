@@ -7,13 +7,14 @@ from __future__ import annotations
 
 from copy import deepcopy
 import re
+from urllib.parse import urlsplit
 
 from ..contracts import ServiceError, canonical_bytes
 
 
-# The published Agent contract retains its original template vocabulary. Local
-# experiments must opt in explicitly; registering slots cannot expand defaults.
-DEFAULT_TEMPLATES = frozenset({'flow', 'compare', 'focus'})
+# Public templates remain a bounded vocabulary. Local demonstration experiments
+# must opt in explicitly; registering slots alone cannot expand defaults.
+DEFAULT_TEMPLATES = frozenset({'flow', 'compare', 'focus', 'sequence', 'nested'})
 DEMONSTRATION_TEMPLATES = frozenset({'demonstration'})
 TEMPLATE_SLOTS = {
     'flow': {'card': frozenset({'source', 'queue', 'worker', 'note'}),
@@ -25,6 +26,14 @@ TEMPLATE_SLOTS = {
     'focus': {'card': frozenset({'top', 'left', 'center', 'right', 'note'}),
               'token': frozenset({'token_top', 'token_left', 'token_center', 'token_right'}),
               'label': frozenset({'caption'})},
+    'sequence': {'card': frozenset({'step_1', 'step_2', 'step_3', 'step_4', 'note'}),
+                 'token': frozenset({'token_1', 'token_2', 'token_3', 'token_4'}),
+                 'label': frozenset({'caption'})},
+    # Containment is compiler-owned and represented by slots, never a vague
+    # "contains" arrow or model-provided coordinates.
+    'nested': {'container': frozenset({'outer', 'inner'}),
+               'card': frozenset({'request', 'tool', 'result', 'decision'}),
+               'label': frozenset({'caption'})},
     'demonstration': {
         'document': frozenset({'log_center', 'log_left'}),
         'record': frozenset({'answer_center', 'answer_left', 'answer_right'}),
@@ -105,10 +114,27 @@ def validate_motion_plan(plan, beats, *, allowed_templates=None):
     _require(len(beat_ids) == len(rows)
              and all(type(item) is str and BEAT_IDENTIFIER.fullmatch(item) for item in beat_ids)
              and len(set(beat_ids)) == len(beat_ids))
-    _fields(plan, {'schema', 'template', 'title', 'takeaway', 'elements', 'relations', 'actions'})
+    keys = {'schema', 'template', 'title', 'takeaway', 'elements', 'relations', 'actions'}
+    _require(type(plan) is dict and set(plan) in (keys, keys | {'sources'}))
     _require(plan['schema'] == 'video.motion-plan.v1'
              and type(plan['template']) is str and plan['template'] in allowed_templates)
     demonstration = plan['template'] == 'demonstration'
+    if 'sources' in plan:
+        _require(not demonstration and type(plan['sources']) is list and len(plan['sources']) <= 2)
+        seen_urls = set()
+        for source in plan['sources']:
+            _fields(source, {'url', 'label'})
+            _text(source['url'], 512)
+            _text(source['label'], 100)
+            try:
+                parsed = urlsplit(source['url'])
+                _require(parsed.scheme in {'http', 'https'} and bool(parsed.hostname)
+                         and parsed.username is None and parsed.password is None
+                         and not any(c.isspace() for c in source['url'])
+                         and source['url'] not in seen_urls)
+            except ValueError:
+                _require(False)
+            seen_urls.add(source['url'])
     for key, maximum in (('title', 50), ('takeaway', 90)):
         _text(plan[key], maximum)
     slots = TEMPLATE_SLOTS[plan['template']]
@@ -128,6 +154,10 @@ def validate_motion_plan(plan, beats, *, allowed_templates=None):
         _text(item['detail'], 64, empty=True)
         by_id[identity] = item
         occupied.add(slot)
+    if plan['template'] == 'nested':
+        # The visible parent frames are mandatory. Hiding or moving a frame
+        # would make independently animated descendants misleading.
+        _require({'outer', 'inner'} <= occupied)
     relation_ids = set()
     for item in relations:
         _fields(item, {'id', 'source', 'target', 'label'})
@@ -136,6 +166,7 @@ def validate_motion_plan(plan, beats, *, allowed_templates=None):
                  and identity not in by_id and identity not in relation_ids
                  and type(source) is str and source in by_id
                  and type(target) is str and target in by_id and source != target)
+        _require(by_id[source]['kind'] != 'container' and by_id[target]['kind'] != 'container')
         _text(item['label'], 18, empty=True)
         relation_ids.add(identity)
     conflicts = set()
@@ -154,6 +185,8 @@ def validate_motion_plan(plan, beats, *, allowed_templates=None):
             _require(target in relation_ids)
         else:
             _require(target in by_id)
+            if by_id[target]['kind'] == 'container':
+                _require(kind == 'highlight')
         if kind == 'move':
             target_kind = by_id[target]['kind']
             movable_kinds = {'document', 'record', 'attempt'} if demonstration else {'token'}

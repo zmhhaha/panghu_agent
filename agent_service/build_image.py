@@ -33,9 +33,11 @@ PROFILE_RESOURCE = "resources/workspace-text-v1/"
 VIDEO_RESOURCE = "resources/video-workbench-v1/"
 VIDEO_MANIFEST_SHA256 = "d5a5fcb5081d65acce5783f72effe3fafe1954613e62d6dc5471cbfe2cd8a681"
 VIDEO_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'video-procedure/SKILL.md'})
-MOTION_RESOURCE = "resources/video-motion-v1/"
-MOTION_MANIFEST_SHA256 = "4eba854c6f858a6ec18eb01687a87865dca53efc1346eb4456e6a47bd9dac104"
+MOTION_RESOURCE = "resources/video-motion-v2/"
+MOTION_MANIFEST_SHA256 = "b64687707555b3f52c66d801ef57890d40efe6113fa7753b5d86da9ca0e25653"
 MOTION_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'PLAN.schema.json', 'motion-procedure/SKILL.md'})
+LEGACY_MOTION_RESOURCE = "resources/video-motion-v1/"
+LEGACY_MOTION_MANIFEST_SHA256 = "4eba854c6f858a6ec18eb01687a87865dca53efc1346eb4456e6a47bd9dac104"
 EXPLANATION_RESOURCE = "resources/video-explanation-v1/"
 EXPLANATION_MANIFEST_SHA256 = 'bb1da41c91bc3393b7cafea3ab165ec9f92e658a8efc256378cebe8294f660c0'
 EXPLANATION_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'RESULT.schema.json', 'explanation-procedure/SKILL.md'})
@@ -197,28 +199,33 @@ def context_archive(service, target, destination):
         except (ValueError, TypeError, KeyError, AttributeError):
             raise BuildError('invalid_video_resource_manifest') from None
         files['agent_service/' + VIDEO_RESOURCE + 'manifest.json'] = manifest
-        manifest = read_regular(service / (MOTION_RESOURCE + 'manifest.json'), 65536)
-        try:
-            resource = json.loads(manifest, object_pairs_hook=unique_pairs)
-            if (hashlib.sha256(manifest).hexdigest() != MOTION_MANIFEST_SHA256
-                    or resource.get('bundle_revision') != 'video-motion-v1'
-                    or resource.get('automatic_updates') is not False
-                    or resource.get('upstream_content_vendored') is not False
-                    or resource.get('license') != 'MIT'):
-                raise ValueError()
-            rows = resource['local_files']
-            if (type(rows) is not list or len(rows) != len(MOTION_FILES)
-                    or any(type(row) is not dict or set(row) != {'path', 'sha256'} for row in rows)
-                    or {row['path'] for row in rows} != MOTION_FILES):
-                raise ValueError()
-            for row in rows:
-                raw = read_regular(service / (MOTION_RESOURCE + row['path']), 128 * 1024)
-                if hashlib.sha256(raw).hexdigest() != row['sha256']:
+        # Old accepted bindings still measure v1. Keep its exact reviewed
+        # bytes in clean images while admitting v2 independently.
+        for motion_root, motion_revision, manifest_sha in (
+                (LEGACY_MOTION_RESOURCE, 'video-motion-v1', LEGACY_MOTION_MANIFEST_SHA256),
+                (MOTION_RESOURCE, 'video-motion-v2', MOTION_MANIFEST_SHA256)):
+            manifest = read_regular(service / (motion_root + 'manifest.json'), 65536)
+            try:
+                resource = json.loads(manifest, object_pairs_hook=unique_pairs)
+                if (hashlib.sha256(manifest).hexdigest() != manifest_sha
+                        or resource.get('bundle_revision') != motion_revision
+                        or resource.get('automatic_updates') is not False
+                        or resource.get('upstream_content_vendored') is not False
+                        or resource.get('license') != 'MIT'):
                     raise ValueError()
-                files['agent_service/' + MOTION_RESOURCE + row['path']] = raw
-        except (ValueError, TypeError, KeyError, AttributeError):
-            raise BuildError('invalid_motion_resource_manifest') from None
-        files['agent_service/' + MOTION_RESOURCE + 'manifest.json'] = manifest
+                rows = resource['local_files']
+                if (type(rows) is not list or len(rows) != len(MOTION_FILES)
+                        or any(type(row) is not dict or set(row) != {'path', 'sha256'} for row in rows)
+                        or {row['path'] for row in rows} != MOTION_FILES):
+                    raise ValueError()
+                for row in rows:
+                    raw = read_regular(service / (motion_root + row['path']), 128 * 1024)
+                    if hashlib.sha256(raw).hexdigest() != row['sha256']:
+                        raise ValueError()
+                    files['agent_service/' + motion_root + row['path']] = raw
+            except (ValueError, TypeError, KeyError, AttributeError):
+                raise BuildError('invalid_motion_resource_manifest') from None
+            files['agent_service/' + motion_root + 'manifest.json'] = manifest
         manifest = read_regular(service / (PROCESS_RESOURCE + 'manifest.json'), 65536)
         try:
             resource = json.loads(manifest, object_pairs_hook=unique_pairs)

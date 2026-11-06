@@ -63,6 +63,13 @@ def test_process_candidate_is_pinned_never_auto_adopted_and_coexists_with_old_di
     old = motion.operation(motion.start(OWNER, sid, dict(expected_revision=2), 'old-diagram')['id'])
     old_id = motion.complete(old['id'], dict(schema='video.motion-result.v1', input_sha256=old['input_sha256'],
         plan=example_plan(old['document']['beats'])))['version_id']
+    # Recreate the pre-compiler6 stored shape rather than treating a newly
+    # generated candidate as a historical record.
+    with base.transaction() as db:
+        legacy = json.loads(db.execute('SELECT document FROM motion_versions WHERE id=?', (old_id,)).fetchone()[0])
+        for field in ('compiler_version', 'agent_plan_sha256', 'preparation'):
+            legacy.pop(field, None)
+        db.execute('UPDATE motion_versions SET document=? WHERE id=?', (json.dumps(legacy), old_id))
     historical = motion.version(OWNER, old_id)
     assert 'compiler_version' not in historical and 'diagram_kind' not in historical
     op = start_process(state)

@@ -77,11 +77,14 @@ def service(tmp_path):
         target = root / 'resources/video-workbench-v1' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((BUNDLE_ROOT / name).read_bytes())
-    from agent_service.profiles.video_motion import BUNDLE_ROOT as MOTION_ROOT, BUNDLE_FILES as MOTION_FILES
-    for name in ('manifest.json', *MOTION_FILES):
-        target = root / 'resources/video-motion-v1' / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes((MOTION_ROOT / name).read_bytes())
+    from agent_service.profiles.video_motion import (BUNDLE_ROOT as MOTION_ROOT, BUNDLE_FILES as MOTION_FILES,
+        BUNDLE_REVISION as MOTION_REVISION)
+    for revision in ('video-motion-v1', MOTION_REVISION):
+        source = MOTION_ROOT.parent / revision
+        for name in ('manifest.json', *MOTION_FILES):
+            target = root / 'resources' / revision / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((source / name).read_bytes())
     from agent_service.profiles.video_process import BUNDLE_ROOT as PROCESS_ROOT, BUNDLE_FILES as PROCESS_FILES
     for name in ('manifest.json', *PROCESS_FILES):
         target = root / 'resources/video-process-v1' / name
@@ -393,6 +396,7 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
     assert "PPT_DONOR_IMAGE=" + ppt_donor in runner.calls[0]
     assert "agent_service/Dockerfile.agent-pi" in runner.names
     assert "agent_service/Dockerfile.control" not in runner.names
+    from agent_service.profiles.video_motion import BUNDLE_REVISION as MOTION_REVISION
     assert set(name for name in runner.names if "/resources/" in name) == {
         "agent_service/resources/workspace-text-v1/CONTRACT.md",
         "agent_service/resources/workspace-text-v1/manifest.json",
@@ -400,6 +404,11 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
         "agent_service/resources/video-workbench-v1/CONTRACT.md",
         "agent_service/resources/video-workbench-v1/LICENSE",
         "agent_service/resources/video-workbench-v1/video-procedure/SKILL.md",
+        f"agent_service/resources/{MOTION_REVISION}/manifest.json",
+        f"agent_service/resources/{MOTION_REVISION}/CONTRACT.md",
+        f"agent_service/resources/{MOTION_REVISION}/LICENSE",
+        f"agent_service/resources/{MOTION_REVISION}/PLAN.schema.json",
+        f"agent_service/resources/{MOTION_REVISION}/motion-procedure/SKILL.md",
         "agent_service/resources/video-motion-v1/manifest.json",
         "agent_service/resources/video-motion-v1/CONTRACT.md",
         "agent_service/resources/video-motion-v1/LICENSE",
@@ -481,9 +490,24 @@ def test_modified_video_resource_fails_before_docker(service, changed):
     assert not receipt.exists() and not runner.calls
 
 
-@pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'PLAN.schema.json', 'motion-procedure/SKILL.md'])
-def test_modified_motion_resource_fails_before_docker(service, changed):
-    path = service / 'resources/video-motion-v1' / changed
+@pytest.mark.parametrize('target', ['control', 'pi', 'hermes'])
+def test_clean_context_preserves_exact_legacy_and_current_motion_bundles(service, tmp_path, target):
+    from agent_service.build_image import context_archive, MOTION_FILES
+    destination = tmp_path / 'motion-context.tar'
+    context_archive(service, target, destination)
+    with tarfile.open(destination) as archive:
+        for revision in ('video-motion-v1', 'video-motion-v2'):
+            root = 'agent_service/resources/' + revision + '/'
+            assert {name.removeprefix(root) for name in archive.getnames() if name.startswith(root)} == {
+                'manifest.json', *MOTION_FILES}
+            for name in ('manifest.json', *MOTION_FILES):
+                assert archive.extractfile(root + name).read() == (service / 'resources' / revision / name).read_bytes()
+
+
+@pytest.mark.parametrize('revision', ['video-motion-v1', 'video-motion-v2'])
+@pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'LICENSE', 'PLAN.schema.json', 'motion-procedure/SKILL.md'])
+def test_modified_motion_resource_fails_before_docker(service, changed, revision):
+    path = service / 'resources' / revision / changed
     path.write_bytes(path.read_bytes() + b' ')
     receipt, runner = old_receipt(service), DockerFixture()
     with pytest.raises(BuildError, match='invalid_motion_resource_manifest'):

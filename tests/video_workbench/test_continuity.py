@@ -48,6 +48,18 @@ def test_candidates_use_only_exact_unique_adjacent_appearances_and_support_spars
     assert not any(link['to_element_id'] == 'node0' for link in build_continuity_plan(inputs)['links'])
 
 
+@pytest.mark.parametrize('feature', ['sequence', 'nested', 'sources'])
+def test_continuity_does_not_silently_recompile_new_semantics_as_compiler5(feature):
+    inputs = scenes(template=feature if feature != 'sources' else 'flow')
+    if feature == 'sources':
+        for row in inputs:
+            row['motion']['plan']['sources'] = [dict(url='https://example.org/full-source', label='官方资料')]
+    with pytest.raises(ServiceError, match='continuity_semantic_layout_not_supported'):
+        build_continuity_plan(inputs)
+    with pytest.raises(ServiceError, match='continuity_semantic_layout_not_supported'):
+        resolve_continuity(inputs, dict(schema='video.continuity-plan.v1', links=[]))
+
+
 @pytest.mark.parametrize('field,value',[('mode','guess'),('to_scene_id','unrelated'),('from_element_id','absent')])
 def test_invalid_or_ambiguous_links_fail_closed(field,value):
     inputs = scenes(single=True)

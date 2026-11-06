@@ -2,13 +2,15 @@
 import { isActiveOperation, isUnresolvedProductionOperation, statusLabel } from './model.mjs';
 import { continuityErrorLabel } from './continuity.mjs';
 
-const STRATEGIES = { flow: '流程推演', compare: '前后对比', focus: '结构聚焦' };
+const STRATEGIES = { flow: '流程推演', compare: '前后对比', focus: '结构聚焦',
+  sequence: '有序流程', nested: '嵌套层级' };
 const ACTIONS = { reveal: '出现', hide: '隐藏', highlight: '强调', move: '移动', draw: '连线展开',
   transfer: '沿关系传递', set_state: '状态变化' };
 const STATES = { idle: '待命', waiting: '等待', running: '处理中', completed: '完成', failed: '失败' };
 const PLACEMENTS = { start: '本段开始', middle: '本段中间', end: '本段末尾' };
 const PACES = { quick: '较快', normal: '正常', slow: '较慢' };
 const RENDER_ERRORS = {
+  motion_source_reading_time_too_short: '完整来源至少需要 5 秒可读时间，请增加该镜头的停留时间后再制作；已有配音保留。',
   motion_text_overflow: '图解文字超出可读区域。请缩短节点说明或把内容拆到更多镜头，再制作该镜头草稿；已有配音保留。',
   motion_expected_highlight_missing: '图解的强调动画未通过检查。请调整该镜头的强调动作后制作草稿；已有配音保留。',
   motion_invisible_highlight: '强调动作发生时，对象还不可见。请先显现对象再强调，或调整动作时间后制作草稿；已有配音保留。',
@@ -34,10 +36,19 @@ const RENDER_ERRORS = {
 };
 const ERRORS = {
   ...RENDER_ERRORS,
+  video_references_require_split: '参考链接超过单镜可读容量，请把来源分配到更多镜头后再生成；已有配音保留。',
+  video_reference_sensitive_url: '参考链接包含登录或访问凭据，请改用不含凭据的公开来源链接后再生成。',
+  video_reference_too_long: '参考链接过长，无法完整清楚展示，请整理来源后再生成。',
+  video_reference_invalid: '参考链接格式无效，请检查完整公开链接后再生成。',
+  video_reference_not_in_input: '生成结果包含输入未提供的参考链接，未保存该候选，请核对来源后重新生成。',
+  explanation_visual_requires_split: '当前画面要求过长，无法完整保留讲解步骤和来源，请拆分镜头后再生成；已有配音保留。',
+  motion_reference_not_in_input: '返回图解使用了输入未提供的来源链接，未保存该候选；请核对来源要求后重新生成。',
+  motion_generation_conflict: '当前镜头的文稿、画面要求或项目风格已变化，本次生成未启动。草稿已保留，请重新读取并核对后再提交。',
   motion_disabled: '动态图解暂未启用，历史仍可查看，正在执行的任务仍可取消。',
   process_disabled: '过程演示暂未启用，已有候选和录音仍保留。',
   process_profile_unavailable: '过程演示生成服务尚未就绪，请稍后重新读取；已有内容保留。',
   process_continuity_not_supported: '过程演示暂不支持跨镜连续衔接。可分别制作镜头或普通整片草稿，已有画面和录音保留。',
+  continuity_semantic_layout_not_supported: '新流程、层级图解或完整来源面板暂不支持对象跨镜继承。请先制作单镜或普通整片草稿；已有画面和录音保留。',
   process_base_kind_mismatch: '修改需要沿用所选方案的图解方式；切换方式时请生成新候选。',
   motion_diagram_kind_mismatch: '修改需要沿用所选方案的图解方式；切换方式时请生成新候选。',
   motion_base_kind_mismatch: '修改需要沿用所选方案的图解方式；切换方式时请生成新候选。',
@@ -119,6 +130,8 @@ export function createMotionRequest(project, scene, instruction = '', base = nul
   }
   return { path: `/api/scenes/${encodeURIComponent(scene.id)}/motion`, body: {
     expected_revision: project.revision, instruction: instruction.trim(), ...(base ? { base_version_id: base.id } : {}),
+    ...(/^[0-9a-f]{64}$/.test(scene.motion?.semantic_binding_sha256 ?? '')
+      ? { expected_semantic_binding_sha256: scene.motion.semantic_binding_sha256 } : {}),
     ...(diagramKind === 'process' ? { diagram_kind: 'process' } : {}),
   } };
 }
@@ -232,6 +245,11 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
       for (const label of relations.values()) connections.append(text('li', label));
       target.append(text('h5', '关系'), connections);
     }
+    if (plan.sources?.length) {
+      const references = text('ul', undefined, 'preserve-whitespace');
+      for (const source of plan.sources) references.append(text('li', `${source.label}\n${source.url}`));
+      target.append(text('h5', '画面参考来源（输入提供，未自动核验）'), references);
+    }
     const actions = text('ol');
     for (const action of plan.actions) actions.append(text('li', `${names.get(action.beat_id) ?? '语音分段'} · ${elements.get(action.target) ?? relations.get(action.target) ?? '图形关系'} · ${ACTIONS[action.kind] ?? '变化'}${action.kind === 'transfer' ? `：${relations.get(action.relation_id) ?? '关系待核对'}` : action.kind === 'set_state' ? `：${STATES[action.state] ?? '状态待核对'}` : ''} · ${PLACEMENTS[action.placement] ?? ''} · ${PACES[action.pace] ?? ''}`));
     target.append(text('h5', '随旁白展开的变化'), actions);
@@ -299,7 +317,7 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     $('motion-diagram-kind').disabled = !value.enabled || blocked || active;
     $('motion-process-note').textContent = value.diagramKind === 'process'
       ? `${value.processConfigured ? '' : '过程演示生成尚未启用。'}适合三个环节之间的单个请求流转、失败返回和状态变化。修改沿用所选候选的方式；全部镜头采用有效过程演示后，可审阅对象的跨镜延续或请求复制。`
-      : '适合一般流程、前后对比和结构聚焦。选择方式仅影响新候选，修改沿用所选候选的方式。';
+      : '适合一般流程、有序步骤、嵌套层级、前后对比和结构聚焦。选择方式仅影响新候选，修改沿用所选候选的方式。';
     $('motion-instruction').disabled = !generationConfigured && !revisionConfigured;
     $('generate-motion').disabled = !value.enabled || !generationConfigured || blocked || active;
     $('revise-motion').disabled = !value.enabled || !revisionConfigured || blocked || active || !selected || selected.stale || !$('motion-instruction').value.trim();

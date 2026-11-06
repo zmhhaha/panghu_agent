@@ -88,6 +88,10 @@ def validate_explanation_input(document):
         _fields(scene['speech'], {'speed', 'pronunciation'})
         _number(scene['speech']['speed'], 0.5, 2)
         _pronunciation(scene['speech']['pronunciation'])
+    from .video_references import reference_urls
+    references = reference_urls(document['project']['script'], document['instruction'],
+        *(row['visual_description'] for row in scenes))
+    _require(len(references) <= 2 * len(scenes), 'video_references_require_split')
     _require(len(canonical_bytes(document)) <= INPUT_MAX_BYTES, 'explanation_input_too_large')
     return deepcopy(document)
 

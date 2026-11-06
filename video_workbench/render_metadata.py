@@ -51,4 +51,6 @@ def render_metadata(snapshot, project, alignments=None, *, end_hold_seconds=0):
         changed = changed or project.get('continuity_head_version_id') != continuity['version_id']
     return dict(scenes=sources, width=snapshot.get('width'), height=snapshot.get('height'),
                 fps=snapshot.get('fps'), duration_seconds=snapshot.get('duration_seconds'),
-                content_state='changed' if changed else 'current')
+                content_state='changed' if changed else 'current', **(
+                    {'continuity_current': project.get('continuity_head_version_id') == continuity['version_id']}
+                    if continuity else {}))

@@ -186,6 +186,19 @@ test('whole-project drafts explicitly use adopted versions and leave timing conf
   }
 });
 
+test('generation submits the server-issued scene binding without deriving it from editable content', () => {
+  const p = project(), scene = p.scenes[0];
+  scene.motion.semantic_binding_sha256 = 'a'.repeat(64);
+  const request = createMotionRequest(p, scene, '突出请求与返回');
+  assert.equal(request.body.expected_semantic_binding_sha256, 'a'.repeat(64));
+  assert.equal(request.body.expected_revision, p.revision);
+  assert.equal(createMotionRequest(p, scene, '', null, 'process').body.expected_semantic_binding_sha256,
+    'a'.repeat(64));
+  scene.motion.semantic_binding_sha256 = 'not-a-valid-binding';
+  assert.equal(createMotionRequest(p, scene).body.expected_semantic_binding_sha256, undefined);
+  assert.match(motionErrorLabel('motion_generation_conflict'), /未启动.*草稿已保留/);
+});
+
 test('timing validation rejects nonfinite, overlap, reordered, too short and out of recording segments', () => {
   const t = timing(), original = t.alignment.segments;
   assert.equal(validateMotionSegments(original, t), true);
@@ -208,6 +221,21 @@ test('review is inert text, first read only estimates and never generates, adopt
   assert.equal(h.$('motion-timing-audio').src, '/api/audio-versions/a1/audio');
   assert.equal(h.$('adopt-motion').disabled, true); assert.equal(h.$('preview-motion').disabled, false);
   assert.deepEqual(h.state.context.project.speech_settings, { voice: 'one-project-voice' });
+});
+
+test('source review preserves a complete literal URL without activating it or changing adoption', async () => {
+  const h = harness();
+  const url = 'https://github.com/deepseek-ai/deepseek-harness/blob/8bd073392eef6f54e921a093b95076248eb08cbb/docs/architecture.md';
+  h.state.transport = async (path, options, fallback) => {
+    const row = await fallback(path);
+    if (path.endsWith('/motion-versions/v1')) row.plan.sources = [{ url, label: '固定版本8bd0733；核对2026-11-04' }];
+    return row;
+  };
+  await h.load();
+  assert.ok(h.$('motion-review').textContent.includes(url));
+  assert.match(h.$('motion-review').textContent, /输入提供，未自动核验/);
+  assert.equal(posts(h).length, 0);
+  assert.equal(h.state.context.scene.motion.head_version_id, null);
 });
 
 test('native candidate selection survives input then change and new candidates do not switch the review', async () => {

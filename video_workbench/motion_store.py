@@ -208,8 +208,12 @@ class MotionStore:
 
     def start(self, owner, scene_id, request, idem, *, timeout=600):
         _require(type(request) is dict and {'expected_revision'} <= set(request)
-                 and set(request) <= {'expected_revision', 'instruction', 'base_version_id', 'diagram_kind'}
+                 and set(request) <= {'expected_revision', 'instruction', 'base_version_id', 'diagram_kind',
+                                      'expected_semantic_binding_sha256'}
                  and type(request['expected_revision']) is int and request['expected_revision'] >= 1)
+        expected_binding = request.get('expected_semantic_binding_sha256')
+        _require(expected_binding is None or type(expected_binding) is str and len(expected_binding) == 64
+                 and all(char in '0123456789abcdef' for char in expected_binding))
         diagram_kind = request.get('diagram_kind', 'diagram')
         _require(type(diagram_kind) is str and diagram_kind in {'diagram', 'process'})
         if diagram_kind == 'diagram' and 'diagram_kind' in request:
@@ -228,8 +232,16 @@ class MotionStore:
                 _require(existing['request_hash'] == fingerprint, 'idempotency_conflict', 409)
                 return self._public(json.loads(existing['document']))
             project = self.store._project(db, owner, project_id)
-            self.store._revision(project, request['expected_revision'])
             scene = self.store._scene(project, scene_id)
+            binding = semantic_binding(project, scene)
+            # A result on another scene changes the project revision without
+            # changing this generation's input. Compare the server-issued scene
+            # binding inside the same transaction; legacy requests stay strict.
+            if project['revision'] != request['expected_revision']:
+                _require(request['expected_revision'] < project['revision'] and expected_binding is not None,
+                         'revision_conflict', 409)
+            if expected_binding is not None:
+                _require(expected_binding == binding, 'motion_generation_conflict', 409)
             active = [o for r in db.execute('SELECT document FROM motion_operations WHERE owner=?', (owner,))
                       if (o := json.loads(r['document']))['status'] in ACTIVE]
             _require(not any(o['scene_id'] == scene_id for o in active), 'motion_operation_in_progress', 409)
@@ -240,7 +252,6 @@ class MotionStore:
             _require(db.execute('SELECT COUNT(*) FROM motion_versions WHERE project_id=? AND scene_id=?',
                                 (project_id, scene_id)).fetchone()[0] < MAX_CANDIDATES_PER_SCENE,
                      'motion_candidate_limit', 409)
-            binding = semantic_binding(project, scene)
             base_id = request.get('base_version_id')
             base = None
             if base_id is not None:
@@ -251,7 +262,7 @@ class MotionStore:
                 _require(plan_diagram_kind(base['plan']) == diagram_kind, 'motion_base_kind_mismatch', 409)
             document = dict(schema='video.process-input.v1' if diagram_kind == 'process' else 'video.motion-input.v1',
                 title=scene['title'], style=project.get('style', ''),
-                visual_description=visual_generation_description(scene), beats=make_beats(scene['narration']),
+                visual_description=visual_generation_description(scene, enforce_limit=True), beats=make_beats(scene['narration']),
                 instruction=request.get('instruction', ''), base_plan=base['plan'] if base else None)
             (validate_process_input if diagram_kind == 'process' else validate_motion_input)(document)
             now = time.time()
@@ -359,12 +370,24 @@ class MotionStore:
                 process = operation_diagram_kind(op) == 'process'
                 (validate_process_result if process else validate_motion_result)(
                     result, op['input_sha256'], op['document']['beats'])
+                plan = result['plan']
+                agent_plan_sha256 = digest(plan)
+                if not process:
+                    from agent_service.profiles.video_references import preserve_plan_references
+                    from .motion import preflight_plan
+                    plan = preserve_plan_references(plan, op['document'])
+                    preflight_plan(plan, op['document']['beats'])
                 version = dict(id=str(uuid4()), project_id=op['project_id'], scene_id=op['scene_id'],
                     operation_id=op['id'], created_at=time.time(), parent_version_id=op['parent_version_id'],
                     input_sha256=op['input_sha256'], semantic_binding_sha256=op['semantic_binding_sha256'],
-                    beats=op['document']['beats'], plan=result['plan'], plan_sha256=digest(result['plan']))
+                    beats=op['document']['beats'], plan=plan, plan_sha256=digest(plan))
                 if process:
                     version.update(diagram_kind='process', compiler_version=PROCESS_CANDIDATE_COMPILER)
+                else:
+                    from .motion import COMPILER_VERSION
+                    version.update(compiler_version=COMPILER_VERSION,
+                        agent_plan_sha256=agent_plan_sha256,
+                        preparation='reference-preservation-and-layout-preflight-v1')
                 _require(_size(version) <= OUTPUT_RESERVE_BYTES - 8192, 'motion_candidate_too_large', 413)
                 op.update(status='completed', error=None, version_id=version['id'])
                 self._capacity(db, op['project_id'],

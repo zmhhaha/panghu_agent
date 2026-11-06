@@ -13,6 +13,7 @@ const linksSignature = links => JSON.stringify(copyLinks(links).sort((a, b) => k
 export function continuityErrorLabel(code) {
   const labels = {
     process_continuity_not_supported: '过程演示暂不支持跨镜连续衔接，请使用单镜或普通整片草稿。',
+    continuity_semantic_layout_not_supported: '新流程、层级图解或完整来源面板暂不支持对象跨镜继承。请先制作单镜或普通整片草稿；已有画面和录音保留。',
     process_continuity_mixed_not_supported: '当前连续方案需要全部使用过程演示，或全部使用通用图解；两种方式混合时可制作普通整片草稿。',
     process_continuity_source_unsupported: '这份过程演示使用的版本尚不支持连续衔接，请生成并采用新的过程候选；原画面和录音仍保留。',
     process_continuity_source_invalid: '过程演示的状态或请求流转尚不能连续衔接，请检查该镜头后修改方案。',

@@ -58,7 +58,8 @@ def _validated(plan, scenes, compiler=LEGACY_COMPILER):
 
 
 def _require_supported(current):
-    for reason in ('process_continuity_mixed_not_supported', 'process_continuity_source_unsupported'):
+    for reason in ('process_continuity_mixed_not_supported', 'process_continuity_source_unsupported',
+                   'continuity_semantic_layout_not_supported'):
         _require(not any(issue['reason'] == reason for issue in current['issues']), reason, 409)
 
 
@@ -126,6 +127,9 @@ class ContinuityStore:
                     elif (version['plan'].get('schema') == PROCESS_SCHEMA
                           and version.get('compiler_version') != PROCESS_SOURCE_COMPILER):
                         reason = 'process_continuity_source_unsupported'
+                    elif (version['plan'].get('template') in {'sequence', 'nested'}
+                          or 'sources' in version['plan']):
+                        reason = 'continuity_semantic_layout_not_supported'
             if reason:
                 issues.append(dict(scene_id=scene_id, scene_title=scene['title'], kind='motion', reason=reason))
             elements = deepcopy(version['plan']['elements']) if version is not None else []

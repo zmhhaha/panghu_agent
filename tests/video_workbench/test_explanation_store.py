@@ -144,7 +144,7 @@ def test_adopted_composition_reaches_existing_visual_generation_schema_and_stops
     assert explanation.project(OWNER, project_id)['head_stale']
 
 
-def test_composition_size_is_bounded_without_dropping_visual_steps(state):
+def test_oversize_composition_is_readable_but_cannot_generate_by_truncating_requirements(state):
     base, explanation, project_id = state
     op = begin(state)
     result = result_for(op)
@@ -153,8 +153,13 @@ def test_composition_size_is_bounded_without_dropping_visual_steps(state):
     version_id = explanation.complete(op['id'], result)['version_id']
     project = adopt(state, version_id)
     description = visual_generation_description(project['scenes'][0])
-    assert len(description) == 10000
+    assert len(description) > 10000
+    assert '图' * 8000 in description
     assert description.count('变化' * 120) == 6
+    with pytest.raises(ServiceError, match='explanation_visual_requires_split'):
+        base.start(OWNER, project_id, 'generate', dict(expected_revision=project['revision']),
+                   'oversize-visual', scene_id=project['scenes'][0]['id'])
+    assert base.project(OWNER, project_id)['scenes'][0]['explanation']['version_id'] == version_id
 
 
 @pytest.mark.parametrize('changed', ['title', 'script', 'style', 'voice', 'scene_title', 'narration',

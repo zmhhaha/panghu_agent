@@ -17,6 +17,7 @@ const projectPair=(compiler,template)=>(compiler==='motion-compiler-1'&&template
  ||(compiler==='motion-compiler-3'&&template==='technical-diagrams-3')
  ||(compiler==='motion-compiler-4'&&template==='technical-diagrams-4')
  ||(compiler==='motion-compiler-5'&&template==='technical-diagrams-5')
+ ||(compiler==='motion-compiler-6'&&template==='technical-diagrams-6')
  ||(compiler==='motion-process-compiler-2'&&template==='controlled-process-2')
  ||(compiler==='motion-process-continuity-compiler-1'&&template==='continuous-process-1')
  ||(compiler==='motion-continuity-compiler-1'&&template==='continuous-diagrams-1')

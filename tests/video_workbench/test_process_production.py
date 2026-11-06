@@ -313,6 +313,6 @@ def test_real_ffmpeg_independent_process_and_legacy_concat_preserves_original_pc
         with wave.open(io.BytesIO(source['audio']['data']), 'rb') as wav:
             expected += wav.readframes(wav.getnframes())
     assert masters == [expected]
-    assert compilers == ['motion-process-compiler-2', 'motion-compiler-5']
+    assert compilers == ['motion-process-compiler-2', 'motion-compiler-6']
     assert Path(result['path']).is_file() and result['expected_duration_seconds'] == 3
     assert result['audio_codec'] == 'aac' and result['snapshot_sha256'] == snapshot['sha256']

@@ -155,6 +155,68 @@ def test_revision_and_head_conflicts_are_checked_transactionally(state):
     assert motion.project(OWNER, project_id)['revision'] == project['revision']
 
 
+@pytest.mark.parametrize('kind', ['diagram', 'process'])
+def test_generation_binding_allows_other_scene_background_updates_and_replay(state, kind):
+    base, motion, project_id, scene_id = state
+    project = base.save_scene(OWNER, project_id, fields('另一个镜头'))
+    second = project['scenes'][1]['id']
+    request = dict(expected_revision=project['revision'], diagram_kind=kind,
+                   expected_semantic_binding_sha256=semantic_binding(project, project['scenes'][1]))
+    first = motion.operation(motion.start(OWNER, scene_id,
+        dict(expected_revision=project['revision']), 'other-scene-background')['id'])
+    # Starting and completing another scene both update the shared revision.
+    complete(motion, first)
+    started = motion.start(OWNER, second, request, 'bound-second-scene')
+    operation = motion.operation(started['id'])
+    assert operation['semantic_binding_sha256'] == request['expected_semantic_binding_sha256']
+    assert operation['document']['title'] == '另一个镜头'
+    assert motion.start(OWNER, second, request, 'bound-second-scene') == started
+    with pytest.raises(ServiceError, match='motion_operation_in_progress'):
+        motion.start(OWNER, second, request, 'bound-second-scene-duplicate')
+    with pytest.raises(ServiceError, match='idempotency_conflict'):
+        motion.start(OWNER, second, dict(request, instruction='不同要求'), 'bound-second-scene')
+    # The new optional binding must not turn an old stale request into acceptance.
+    with pytest.raises(ServiceError, match='revision_conflict'):
+        motion.start(OWNER, second, dict(expected_revision=request['expected_revision']), 'legacy-stale')
+
+
+@pytest.mark.parametrize('field', ['title', 'narration', 'visual_description', 'style'])
+def test_bound_generation_rejects_changed_target_and_future_revision(state, field):
+    base, motion, project_id, scene_id = state
+    project = base.project(OWNER, project_id)
+    binding = semantic_binding(project, project['scenes'][0])
+    request = dict(expected_revision=project['revision'], expected_semantic_binding_sha256=binding)
+    with pytest.raises(ServiceError, match='revision_conflict'):
+        motion.start(OWNER, scene_id, dict(request, expected_revision=project['revision'] + 1), 'future')
+    with pytest.raises(ServiceError, match='not_found'):
+        motion.start('bob', scene_id, request, 'wrong-owner')
+    if field == 'style':
+        with base.transaction() as db:
+            latest = base._project(db, OWNER, project_id)
+            latest['style'] = '新的风格'
+            base._save(db, latest)
+    else:
+        changed = fields()
+        changed[field] += '已更改'
+        base.save_scene(OWNER, project_id, changed, scene_id, project['revision'])
+    with pytest.raises(ServiceError, match='motion_generation_conflict'):
+        motion.start(OWNER, scene_id, request, 'stale-scene')
+    # A matching shared revision cannot override a stale explicit binding either.
+    request['expected_revision'] = base.project(OWNER, project_id)['revision']
+    with pytest.raises(ServiceError, match='motion_generation_conflict'):
+        motion.start(OWNER, scene_id, request, 'stale-scene-current-revision')
+    assert not motion.active_operations()
+
+
+@pytest.mark.parametrize('binding', ['', 'wrong', 'A' * 64, True, {}, 'a' * 63])
+def test_invalid_generation_binding_never_starts_work(state, binding):
+    base, motion, project_id, scene_id = state
+    with pytest.raises(ServiceError, match='invalid_motion_request'):
+        motion.start(OWNER, scene_id, dict(expected_revision=2,
+            expected_semantic_binding_sha256=binding), 'malformed-binding')
+    assert not motion.active_operations()
+
+
 def test_owners_cannot_read_cancel_or_adopt_each_others_candidates(state):
     base, motion, project_id, scene_id = state
     op = start(state)

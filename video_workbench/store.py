@@ -206,7 +206,7 @@ class Store(AudioStoreMixin):
                     if base['format'] != scene['format']:
                         raise ServiceError('base_format_conflict', 409)
                 document = dict(schema_version='1', kind='scene', title=scene['title'], narration=scene['narration'],
-                                visual_description=visual_generation_description(scene), style=project['style'], format=scene['format'],
+                                visual_description=visual_generation_description(scene, enforce_limit=True), style=project['style'], format=scene['format'],
                                 width=1280, height=720, duration_seconds=scene['duration_seconds'],
                                 base_source=base['source'] if base else None, instruction=request.get('instruction', ''))
             validate_video_input(document, 'storyboard' if kind == 'storyboard' else 'scene')

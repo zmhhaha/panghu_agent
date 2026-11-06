@@ -125,6 +125,46 @@ def setup(env):
     return project, sid, version_id, audio_id
 
 
+def test_bound_generation_accepts_other_scene_updates_but_rejects_stale_target_and_legacy_request(env):
+    client, app, gateway, _ = env
+    project = client.post('/api/projects', json=dict(title='跨镜生成', script=FIELDS['narration'],
+                                                   style='清晰图解')).json()
+    for title in ('后台生成的第一镜', '继续处理的第二镜'):
+        project = app.state.store.save_scene('alice', project['id'], dict(FIELDS, title=title))
+    view = client.get(f'/api/projects/{project["id"]}/motion').json()
+    first, second = view['scenes']
+    body = dict(expected_revision=view['revision'],
+                expected_semantic_binding_sha256=second['motion']['semantic_binding_sha256'])
+    response = client.post(f'/api/scenes/{first["id"]}/motion',
+        json=dict(expected_revision=view['revision']), headers={'Idempotency-Key': 'cross-scene-first'})
+    assert response.status_code == 202, response.text
+    legacy_replay = client.post(f'/api/scenes/{first["id"]}/motion',
+        json=dict(expected_revision=view['revision'], expected_semantic_binding_sha256=None),
+        headers={'Idempotency-Key': 'cross-scene-first'})
+    assert legacy_replay.json() == response.json(), 'An absent or null new field preserves the old request identity'
+    app.state.motion_workflow.tick()
+    assert gateway.posts == 1
+    path = f'/api/scenes/{second["id"]}/motion'
+    stale_legacy = client.post(path, json=dict(expected_revision=view['revision']),
+                              headers={'Idempotency-Key': 'cross-scene-legacy'})
+    assert stale_legacy.status_code == 409
+    assert stale_legacy.json()['detail']['code'] == 'revision_conflict'
+    malformed = client.post(path, json=dict(body, expected_semantic_binding_sha256='bad'),
+                            headers={'Idempotency-Key': 'cross-scene-malformed'})
+    assert malformed.status_code == 422
+    response = client.post(path, json=body, headers={'Idempotency-Key': 'cross-scene-second'})
+    assert response.status_code == 202, response.text
+    replay = client.post(path, json=body, headers={'Idempotency-Key': 'cross-scene-second'})
+    assert replay.json() == response.json()
+    latest = app.state.store.project('alice', project['id'])
+    app.state.store.save_scene('alice', project['id'], dict(FIELDS, title='第二镜已被别人修改'),
+                              second['id'], latest['revision'])
+    conflict = client.post(path, json=body, headers={'Idempotency-Key': 'cross-scene-changed'})
+    assert conflict.status_code == 409
+    assert conflict.json()['detail']['code'] == 'motion_generation_conflict'
+    assert gateway.posts == 1, 'Rejected or queued requests must never submit extra model work'
+
+
 def timing(env, version_id, audio_id):
     response = env[0].get(f'/api/motion-versions/{version_id}/timing', params=dict(audio_version_id=audio_id))
     assert response.status_code == 200, response.text

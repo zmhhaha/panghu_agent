@@ -58,6 +58,9 @@ def _scene_rows(scenes):
                  and not (type(scene['motion'].get('timeline')) is dict
                           and str(scene['motion']['timeline'].get('compiler', '')).startswith('motion-process-compiler-')),
                  'process_continuity_not_supported')
+        _require(not (type(plan) is dict and
+                      (plan.get('template') in {'sequence', 'nested'} or 'sources' in plan)),
+                 'continuity_semantic_layout_not_supported')
         _require(type(plan) is dict and plan.get('template') in {'flow', 'compare', 'focus'}
                  and type(plan.get('elements')) is list and 1 <= len(plan['elements']) <= 9)
         elements = {row['id']: row for row in plan['elements']}

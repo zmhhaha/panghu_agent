@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import stat
@@ -16,6 +17,28 @@ VIDEO_ROOT = Path(__file__).resolve().parent / 'resources' / 'video-workbench-v1
 MOTION_ROOT = Path(__file__).resolve().parent / 'resources' / 'video-motion-v1'
 EXPLANATION_ROOT = Path(__file__).resolve().parent / 'resources' / 'video-explanation-v1'
 PROCESS_ROOT = Path(__file__).resolve().parent / 'resources' / 'video-process-v1'
+LEGACY_MOTION_MANIFEST_SHA256 = '4eba854c6f858a6ec18eb01687a87865dca53efc1346eb4456e6a47bd9dac104'
+
+
+def motion_package_root(revision):
+    """Resolve only reviewed bundle identities; old pools retain their v1 bytes."""
+    from .profiles.video import _read
+    from .profiles.video_motion import BUNDLE_REVISION, BUNDLE_ROOT, verified_bundle
+    if revision == BUNDLE_REVISION:
+        verified_bundle()
+        return BUNDLE_ROOT
+    if revision != 'video-motion-v1':
+        raise ServiceError('package_bundle_revision_unsupported', 503)
+    raw = _read(MOTION_ROOT, 'manifest.json', 65536)
+    if hashlib.sha256(raw).hexdigest() != LEGACY_MOTION_MANIFEST_SHA256:
+        raise ServiceError('motion_bundle_integrity', 422)
+    # The fixed manifest supplies a bounded, exact four-file inventory. Never
+    # interpret a caller-controlled revision as a filesystem path.
+    for row in json.loads(raw)['local_files']:
+        content = _read(MOTION_ROOT, row['path'], 128 * 1024)
+        if hashlib.sha256(content).hexdigest() != row['sha256']:
+            raise ServiceError('motion_bundle_integrity', 422)
+    return MOTION_ROOT
 
 
 def measured_package(config, policy, control_root):
@@ -47,10 +70,8 @@ def measured_package(config, policy, control_root):
         from .profiles.video_process import verified_bundle
         verified_bundle()
     elif policy.name == 'video.motion-plan.v1':
-        root = MOTION_ROOT
-        mandatory = {'motion-procedure/SKILL.md', 'CONTRACT.md', 'PLAN.schema.json', 'LICENSE'}
-        from .profiles.video_motion import verified_bundle
-        verified_bundle()
+        root = motion_package_root(pins.bundle_revision)
+        mandatory = {'manifest.json', 'motion-procedure/SKILL.md', 'CONTRACT.md', 'PLAN.schema.json', 'LICENSE'}
     elif policy.name in {'video.storyboard.v1', 'video.scene.v1'}:
         root = VIDEO_ROOT
         mandatory = {'video-procedure/SKILL.md', 'CONTRACT.md', 'LICENSE'}

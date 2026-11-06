@@ -348,7 +348,11 @@ class Production:
                 for row in db.execute('SELECT document,snapshot FROM video_renders '
                         'WHERE owner=? AND project_id=? ORDER BY rowid DESC', (owner, project_id)):
                     job = self._public(json.loads(row['document']))
-                    result.append(dict(job, **render_metadata(json.loads(row['snapshot']), project,
+                    measured = job.get('duration_seconds')
+                    actual = (measured if job.get('status') == 'completed'
+                        and type(measured) in (int, float) and math.isfinite(measured) and measured > 0 else None)
+                    result.append(dict(job, actual_duration_seconds=actual,
+                        **render_metadata(json.loads(row['snapshot']), project,
                         alignments, end_hold_seconds=job.get('end_hold_seconds', 0))))
                 return result
 

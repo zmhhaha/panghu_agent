@@ -117,7 +117,7 @@ export async function observeProject(chromium,{root='/work',dist='/opt/renderer/
     timeline_sha256:sha(readRegular(root+'/timeline.json')),windows,
     ...(continuityBoundary?{continuity_boundary:continuityBoundary}:{}),
     ...(seekSequence?{seek_sequence:seekSequence}:{}),
-    ...(['motion-compiler-4','motion-compiler-5','motion-process-compiler-2'].includes(timeline.compiler)?{initial:first,repeated_initial:repeat}:{}),
+    ...(['motion-compiler-4','motion-compiler-5','motion-compiler-6','motion-process-compiler-2'].includes(timeline.compiler)?{initial:first,repeated_initial:repeat}:{}),
     reverse_seek:{first_sha256:first.frame_sha256,last_sha256:last.frame_sha256,repeated_first_sha256:repeat.frame_sha256,repeat_state_equal:state(first)===state(repeat)}},null,2));
   });
  }finally{await new Promise(done=>server.close(done));}

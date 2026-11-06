@@ -11,11 +11,14 @@ from video_workbench.continuity_snapshot import (freeze_continuity_snapshot,
 from tests.video_workbench.test_motion_snapshot import freeze, motion_scene
 
 
-def source_snapshot():
+def source_snapshot(*, compiler_version=None):
     first, second = motion_scene(), motion_scene()
     second['id'] = 'scene-second'
     second['motion']['id'] = 'motion-second'
     second['audio']['id'] = 'audio-second'
+    if compiler_version is not None:
+        for scene in (first, second):
+            scene['motion']['compiler_version'] = compiler_version
     return freeze([first, second])
 
 
@@ -28,7 +31,8 @@ def continuous(source=None, *, compiler_version=CONTINUITY_COMPILER_VERSION):
 def test_historical_compiler1_snapshot_rebuild_keeps_its_pre_fix_identity():
     # Frozen before compiler2 was introduced. The original failed CLI attempt
     # remains inspectable; changing publication order must not rewrite it.
-    frozen = continuous(compiler_version='motion-continuity-compiler-1')
+    frozen = continuous(source_snapshot(compiler_version='motion-compiler-5'),
+                        compiler_version='motion-continuity-compiler-1')
     assert frozen['sha256'] == 'ca594d9ade70731e47e495106308f7f7287893933145e394ae926e8797cc61b6'
     assert digest(frozen['continuity']['resolution']) == 'fb4f863720941699f7421f918980e53f3fdbc09e797e2504ca3f48f68725f0e2'
     assert [s['continuity_project_files_sha256']['index.html'] for s in frozen['scenes']] == [

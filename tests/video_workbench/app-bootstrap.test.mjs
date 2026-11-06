@@ -209,6 +209,23 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
     healthy(batchBusy.id);
     await $('toggle-scene-editor').emit('click');
     assert.equal($('save-scene').disabled, true);
+    assert.match($('scene-edit-note').textContent, /批量制作.*暂时不能保存.*批次结束或取消完成/);
+    $('scene-visual').value = '批次运行期间先整理的画面草稿';
+    await $('scene-form').emit('input');
+    assert.match($('draft-status').textContent, /草稿未保存.*等待批次结束/);
+    await $('cancel-scene-edit').emit('click');
+    assert.match($('success-message').textContent, /未保存的草稿已保留/);
+    for (const [id, timer] of timers) if (timer.duration === 5000) {
+      timers.delete(id); timer.callback();
+    }
+    await $('toggle-scene-editor').emit('click');
+    assert.equal($('scene-visual').value, '批次运行期间先整理的画面草稿');
+    batch.status = 'completed';
+    await $('refresh-all').emit('click');
+    assert.equal($('save-scene').disabled, false);
+    assert.match($('scene-edit-note').textContent, /收起编辑会保留.*重新载入会放弃/);
+    batch.status = 'running';
+    await $('refresh-all').emit('click');
     assert.equal($('generate-audio').disabled, true);
     assert.equal($('generate-explanation').disabled, true);
     assert.equal($('generate-motion').disabled, true);

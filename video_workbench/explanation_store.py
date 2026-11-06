@@ -45,7 +45,7 @@ def scene_visual_binding(scene):
                    ('title', 'narration', 'visual_description', 'duration_seconds', 'format')})
 
 
-def visual_generation_description(scene):
+def visual_generation_description(scene, *, enforce_limit=False):
     """Consume adopted visual direction without changing the legacy Agent schema.
 
     A subsequent manual scene edit stops using that direction. The short key
@@ -61,7 +61,12 @@ def visual_generation_description(scene):
              + '\n画面关键点：\n' + '\n'.join('- ' + item for item in explanation['key_points'])
              + '\n画面展开顺序：\n' + '\n'.join(f'{i}. {step}' for i, step in enumerate(explanation['visual_steps'], 1))
              + '\n以少量关键词和图形关系解释内容，避免把完整旁白铺满画面。')
-    return description[:max(0, 10000 - len(extra))] + extra
+    # Truncating the tail can silently discard a required URL, version/date or
+    # a containment requirement. Resolve excess input before admitting a task.
+    if enforce_limit:
+        _require(len(description) + len(extra) <= 10000,
+                 'explanation_visual_requires_split')
+    return description + extra
 
 
 class ExplanationStore:

@@ -12,6 +12,7 @@ import { createExplanationPanel, explanationErrorLabel } from './explanation.mjs
 import { createMotionPanel, createMotionRenderRequest, createProjectMotionDraftRequest, createDynamicProjectRequest, hasMotionScenes, usesDynamicVideo, motionMetadata, motionErrorLabel } from './motion.mjs';
 import { createBatchPanel, batchErrorLabel } from './batch.mjs';
 import { createContinuityPanel, createContinuityDraftRequest, continuityErrorLabel } from './continuity.mjs';
+import { projectDurationSummary, durationSummaryLines, plannedSceneSeconds } from './duration.mjs';
 
 const $ = id => document.getElementById(id);
 const nativeMediaIds = ['audio-preview', 'motion-timing-audio', 'batch-audio-preview',
@@ -168,6 +169,13 @@ function renderProductionTransition(project) {
 }
 
 const ERROR_LABELS = {
+  video_references_require_split: '参考链接超过可读容量，请将来源分配到更多镜头后再生成。',
+  video_reference_sensitive_url: '参考链接包含访问凭据，请使用不含凭据的公开来源链接。',
+  video_reference_too_long: '参考链接过长，无法完整清楚展示，请整理来源后再生成。',
+  video_reference_invalid: '参考链接格式无效，请检查完整链接。',
+  video_reference_not_in_input: '生成结果包含输入未提供的参考链接，未保存该候选，请核对来源后重新生成。',
+  explanation_visual_requires_split: '当前镜头的画面要求过长，无法完整保留讲解步骤和来源，请拆分镜头后再生成。',
+  motion_source_reading_time_too_short: '完整来源至少需要 5 秒可读时间，请增加该镜头的停留时间后再制作。',
   unauthorized: '登录已失效，请重新登录。', authentication_required: '请先登录工作台。',
   csrf_invalid: '登录状态已更新，请刷新后重试。', invalid_csrf: '登录状态已更新，请刷新后重试。',
   csrf_rejected: '登录状态已更新，请刷新后重试。',
@@ -385,11 +393,20 @@ function renderEditor(scene, project) {
   const dynamic = editor === 'new' ? project.production_mode === 'motion' : motionMetadata(scene).mode === 'motion';
   $('scene-duration').max = dynamic ? String(Math.max(60, Number(scene?.duration_seconds ?? 0))) : '120';
   $('scene-static-settings').hidden = dynamic && editor === 'new';
-  $('draft-status').textContent = draft.dirty ? '有未保存的修改'
-    : dynamic ? '保存后制作动态图解；动态片段最多 60 秒，长旁白建议拆镜。'
-      : editor === 'new' ? '保存后即可制作镜头' : '已载入当前镜头';
+  renderSceneEditStatus(draft, project, dynamic);
   $('save-scene').disabled = pending.has(`save:${project.id}`) || batchPanel.hasUnresolvedOperation(state.projectId);
   $('save-scene').textContent = pending.has(`save:${project.id}`) ? '正在保存…' : '保存镜头';
+}
+
+function renderSceneEditStatus(draft, project, dynamic = false) {
+  const locked = batchPanel.hasUnresolvedOperation(project.id);
+  $('scene-edit-note').textContent = locked
+    ? '批量制作正在使用已保存的镜头，暂时不能保存修改。可以先整理草稿；批次结束或取消完成后可保存。收起编辑会保留草稿。'
+    : '收起编辑会保留未保存的草稿；重新载入会放弃本镜头的草稿并读取最新内容。';
+  $('draft-status').textContent = locked ? draft.dirty ? '草稿未保存，等待批次结束后可保存' : '批量制作期间暂不能保存'
+    : draft.dirty ? '有未保存的修改'
+    : dynamic ? '保存后制作动态图解；动态片段最多 60 秒，长旁白建议拆镜。'
+      : editor === 'new' ? '保存后即可制作镜头' : '已载入当前镜头';
 }
 
 function clearPreview() {
@@ -676,8 +693,7 @@ function renderAudio(scene, project) {
   $('save-timing').disabled = batchBusy || !timing.dirty || pending.has(`timing:${scene.id}`);
   $('timing-draft-note').textContent = batchBusy ? '批量制作期间保持当前镜头留白。' : timing.dirty ? '留白尚未保存' : '';
   const head = adoptedAudio(scene);
-  const duration = head && !scene.audio_stale ? Math.max(Number(scene.duration_seconds), Number(head.duration_seconds)
-    + Number(scene.leading_seconds ?? 0) + Number(scene.trailing_seconds ?? 0)) : Number(scene.duration_seconds);
+  const duration = plannedSceneSeconds(scene) ?? Number(scene.duration_seconds);
   $('timing-summary').textContent = head && !scene.audio_stale
     ? `配音 ${seconds(head.duration_seconds)} 秒 · 原设定 ${seconds(scene.duration_seconds)} 秒 · 含留白后镜头 ${seconds(duration)} 秒。完整保留旁白。`
     : scene.audio_stale ? '采用配音已过期，更新后重新安排时长与字幕。' : '采用配音后按实际音频时长安排，不截断旁白。';
@@ -697,7 +713,14 @@ function renderAudio(scene, project) {
   updateCaptionButtons();
 }
 
+function renderProjectDuration(project) {
+  const summary = projectDurationSummary(project, renderHistories.get(project.id) ?? [],
+    { endHoldSeconds: usesDynamicVideo(project) && $('render-end-hold').checked ? 4 : 0 });
+  $('project-duration-summary').replaceChildren(...durationSummaryLines(summary).map(line => node('p', line)));
+}
+
 function renderDelivery(project) {
+  renderProjectDuration(project);
   const scenes = project.scenes ?? [];
   const dynamic = usesDynamicVideo(project);
   const visualCount = scenes.filter(scene => motionMetadata(scene).mode === 'motion'
@@ -756,7 +779,7 @@ function renderDelivery(project) {
     const kind = item.continuity_version_id ? (item.purpose === 'draft' ? '连续 MP4 草稿' : '连续动态成片')
       : item.purpose === 'draft' ? 'MP4 草稿' : item.visual_mode === 'mixed' ? '动态成片' : item.silent ? '静音视频' : '有声视频';
     label.append(node('strong', `${kind} · ${renderSourceLabel(item)} · ${subtitleLabel} · ${statusLabel(item.status)}`),
-      node('small', `文稿版本 ${item.project_revision ?? '未记录'}${item.content_state === 'changed' ? ' · 此产物对应的内容或采用版本已有变化' : item.content_state === 'current' ? ' · 对应内容仍有效' : ''}${item.width && item.height ? ` · ${item.width}×${item.height} · ${item.fps} fps` : ''}${item.created_at ? ` · ${new Date(item.created_at * 1000).toLocaleString('zh-CN')}` : ''}${item.error ? ` · ${ERROR_LABELS[item.error] ?? (item.error.startsWith('motion_') ? motionErrorLabel(item.error) : '导出未完成，请检查资源后重试。')}` : ''}`));
+      node('small', `文稿版本 ${item.project_revision ?? '未记录'}${item.content_state === 'changed' ? ' · 此产物对应的内容或采用版本已有变化' : item.content_state === 'current' ? ' · 对应内容仍有效' : ''}${item.width && item.height ? ` · ${item.width}×${item.height} · ${item.fps} fps` : ''}${Number.isFinite(item.actual_duration_seconds) && item.actual_duration_seconds > 0 ? ` · 实际 ${seconds(item.actual_duration_seconds)} 秒` : ''}${item.created_at ? ` · ${new Date(item.created_at * 1000).toLocaleString('zh-CN')}` : ''}${item.error ? ` · ${ERROR_LABELS[item.error] ?? (item.error.startsWith('motion_') ? motionErrorLabel(item.error) : '导出未完成，请检查资源后重试。')}` : ''}`));
     const progress = renderProgressLabel(item);
     if (progress) label.append(node('small', progress));
     row.append(label);
@@ -791,7 +814,7 @@ function render() {
   project.scenes ??= [];
   $('project-title').textContent = project.title;
   const duration = project.scenes.reduce((sum, scene) => sum + Number(scene.duration_seconds || 0), 0);
-  $('project-meta').textContent = `${project.scenes.length} 个镜头 · 预计 ${duration} 秒 · 文稿版本 ${project.revision}`;
+  $('project-meta').textContent = `${project.scenes.length} 个镜头 · 方案预计 ${seconds(duration)} 秒 · 文稿版本 ${project.revision}`;
   $('project-script').textContent = project.script;
   $('project-style').textContent = project.style || '还没有指定视觉方向。';
   const dynamicIntent = project.production_mode === 'motion';
@@ -1232,14 +1255,18 @@ $('scene-form').addEventListener('input', () => {
     visual_description: $('scene-visual').value, duration_seconds: Number($('scene-duration').value),
     format: $('scene-format').value, dirty: true,
   });
-  $('draft-status').textContent = '有未保存的修改';
+  renderSceneEditStatus(draft, state.project);
   updateGenerationButtons();
   $('generate-audio').disabled = true;
   $('upload-audio').disabled = true;
   $('audio-generation-hint').textContent = '请先保存镜头中的修改。';
 });
 $('toggle-scene-editor').addEventListener('click', () => { editor = editor ? null : 'existing'; render(); });
-$('cancel-scene-edit').addEventListener('click', () => { editor = null; render(); });
+$('cancel-scene-edit').addEventListener('click', () => {
+  const dirty = currentDraft()?.dirty;
+  editor = null; render();
+  if (dirty) success('已收起编辑，未保存的草稿已保留。再次编辑可继续；重新载入可放弃草稿。');
+});
 $('reset-scene-draft').addEventListener('click', () => {
   const key = draftKey(editor === 'new' ? null : state.sceneId);
   if (drafts.get(key)?.dirty && !window.confirm('重新载入会清除这个镜头尚未保存的修改，继续吗？')) return;
@@ -1466,7 +1493,7 @@ $('preview-project').addEventListener('click', () => {
     if (!$('preview-project').disabled) motionPanel.preview();
   } else openProjectPlayer();
 });
-for (const id of ['render-silent', 'render-subtitles']) $(id).addEventListener('change', () => {
+for (const id of ['render-silent', 'render-subtitles', 'render-end-hold']) $(id).addEventListener('change', () => {
   if (state.project) renderDelivery(state.project);
 });
 $('close-project-player').addEventListener('click', closeProjectPlayer);
