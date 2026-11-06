@@ -11,6 +11,17 @@ export async function screenshotObservation(page,path){
  return await page.screenshot({path,type:'jpeg',quality:75});
 }
 
+// An additional bounded, non-monotonic pass is required only by the new
+// process-continuity compiler. Old observation contracts and sampling stay
+// byte-for-byte structurally compatible with their existing consumers.
+export function processContinuitySeekTimes(timeline){
+ const last=timeline.duration_seconds-1/24;
+ const middles=timeline.actions.map(row=>row.start+row.duration/2);
+ const count=Math.min(24,middles.length),selected=[];
+ for(let i=0;i<count;i++)selected.push(middles[Math.floor(i*middles.length/count)]);
+ return [last,0,...selected.reverse(),Math.min(.375,last),Math.min(.6,last),last,0];
+}
+
 export async function seekPageExact(page,time){
  return await page.evaluate(async value=>{
   const player=window.__player;
@@ -74,7 +85,8 @@ export async function observeProject(chromium,{root='/work',dist='/opt/renderer/
    mkdirSync(root+'/observations',{recursive:true});
    const capture=async(time,label)=>{
     const actual_time=await seekPageExact(page,time);
-    const state=await page.evaluate(()=>({elements:window.__videoMotion.inspect(),relations:window.__videoMotion.inspectRelations(),layout:window.__videoMotion.inspectLayout()}));
+    const state=await page.evaluate(processContinuity=>({elements:window.__videoMotion.inspect(),relations:window.__videoMotion.inspectRelations(),layout:window.__videoMotion.inspectLayout(),
+     ...(processContinuity?{continuity:window.__videoMotion.inspectContinuity()}:{} )}),timeline.compiler==='motion-process-continuity-compiler-1');
     // Screenshot waits for browser capture; no custom rAF-based wait can hang
     // this observer when the paused runtime owns the page's animation clock.
     const raw=await screenshotObservation(page,root+'/observations/'+label+'.jpg');
@@ -87,17 +99,24 @@ export async function observeProject(chromium,{root='/work',dist='/opt/renderer/
    }
    const first=await capture(0,'seek-first'),last=await capture(timeline.duration_seconds-1/24,'seek-last'),repeat=await capture(0,'seek-repeat');
    let continuityBoundary;
-   if(['motion-continuity-compiler-1','motion-continuity-compiler-2'].includes(timeline.compiler)){
+   if(['motion-continuity-compiler-1','motion-continuity-compiler-2','motion-process-continuity-compiler-1'].includes(timeline.compiler)){
     const plan=JSON.parse(readRegular(join(root,'plan.json')));
     continuityBoundary={initial:first,final:last,repeated_initial:repeat,
      ...(plan.segment.index?{transition_middle:await capture(.375,'continuity-transition-middle'),
        transition_end:await capture(.6,'continuity-transition-end')}:{})};
+   }
+   let seekSequence;
+   if(timeline.compiler==='motion-process-continuity-compiler-1'){
+    const samples=[];
+    for(const [index,time] of processContinuitySeekTimes(timeline).entries())samples.push(await capture(time,`continuity-sequence-${index}`));
+    seekSequence={schema:'video.process-continuity-seek-sequence.v1',samples};
    }
    const state=x=>JSON.stringify([x.elements,x.relations,x.layout]);
    writeFileSync(root+'/observations.json',JSON.stringify({schema:'video.motion-observations.v1',
     seek_protocol:'hyperframes-core-renderSeek-exact',render_fps:24,
     timeline_sha256:sha(readRegular(root+'/timeline.json')),windows,
     ...(continuityBoundary?{continuity_boundary:continuityBoundary}:{}),
+    ...(seekSequence?{seek_sequence:seekSequence}:{}),
     ...(['motion-compiler-4','motion-compiler-5','motion-process-compiler-2'].includes(timeline.compiler)?{initial:first,repeated_initial:repeat}:{}),
     reverse_seek:{first_sha256:first.frame_sha256,last_sha256:last.frame_sha256,repeated_first_sha256:repeat.frame_sha256,repeat_state_equal:state(first)===state(repeat)}},null,2));
   });

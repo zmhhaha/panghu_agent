@@ -31,14 +31,15 @@ function project(id = 'p1', revision = 1) {
   })) };
 }
 
-test('process candidates visibly block continuity planning while preserving ordinary drafts', async () => {
+test('mixed process and diagram candidates block continuity while preserving ordinary drafts', async () => {
   const h = harness();
   h.state.context.project.scenes[0].motion.versions[0].diagram_kind = 'process';
+  h.state.context.project.scenes[0].motion.versions[0].compiler_version = 'motion-process-compiler-2';
   await h.load();
-  assert.match(continuityIssues(h.state.context.project)[0], /过程演示.*普通整片草稿/);
+  assert.match(continuityIssues(h.state.context.project)[0], /混合.*普通整片草稿/);
   assert.equal(h.$('propose-continuity').disabled, true);
   assert.equal(h.$('preview-continuity').disabled, true);
-  assert.match(h.$('continuity-issues').textContent, /过程演示.*普通整片草稿/);
+  assert.match(h.$('continuity-issues').textContent, /混合.*普通整片草稿/);
   await h.panel.propose();
   assert.equal(h.state.calls.filter(row => row.options.method === 'POST').length, 0);
   assert.match(continuityErrorLabel('process_continuity_not_supported'), /普通整片草稿/);
@@ -91,6 +92,88 @@ function harness() {
 const descendants = node => [node, ...node.children.flatMap(descendants)];
 const linkSelects = h => descendants(h.$('continuity-review')).filter(row => row.tagName === 'select');
 const writes = h => h.state.calls.filter(row => row.options.method === 'POST');
+
+function asProcess(h) {
+  for (const scene of h.state.context.project.scenes) {
+    Object.assign(scene.motion.versions[0], { diagram_kind: 'process', compiler_version: 'motion-process-compiler-2' });
+  }
+  Object.assign(h.state.data.versions[0], { compiler: 'motion-process-continuity-compiler-1' });
+  return h;
+}
+
+test('all supported process candidates can plan and preview without changing adopted media', async () => {
+  const h = asProcess(harness()), before = structuredClone(h.state.context.project);
+  await h.load();
+  assert.deepEqual(continuityIssues(h.state.context.project, { audio: true }), []);
+  assert.equal(h.$('propose-continuity').disabled, false);
+  assert.equal(h.$('preview-continuity').disabled, false);
+  assert.equal(writes(h).length, 0);
+  await h.$('preview-continuity').emit('click');
+  assert.deepEqual(h.state.previews, ['v1']);
+  assert.equal(createContinuityDraftRequest(h.state.context.project, h.state.data.versions[0]).body.continuity_version_id, 'v1');
+  assert.equal(writes(h).length, 0);
+  assert.deepEqual(h.state.context.project, before);
+});
+
+test('old or unspecified process source compiler remains visibly blocked', async () => {
+  for (const compiler of [undefined, 'motion-process-compiler-1', 'unknown']) {
+    const h = asProcess(harness());
+    h.state.context.project.scenes[1].motion.versions[0].compiler_version = compiler;
+    await h.load();
+    assert.match(h.$('continuity-issues').textContent, /第2段.*版本尚不支持/);
+    assert.equal(h.$('propose-continuity').disabled, true);
+    await h.panel.propose(); assert.equal(writes(h).length, 0);
+  }
+});
+
+test('process cards expose state changes and cannot be copied as request objects', async () => {
+  const h = asProcess(harness());
+  Object.assign(h.state.data.versions[0].scene_summaries[0].elements[0],
+    { initial_state: 'idle', final_state: 'running', initial_visible: true, final_visible: true });
+  Object.assign(h.state.data.versions[0].scene_summaries[1].elements[0],
+    { initial_state: 'running', standalone_initial_state: 'idle', final_state: 'completed', initial_visible: true, final_visible: true });
+  await h.load();
+  assert.match(h.$('continuity-review').textContent, /前镜终态：处理中.*下一镜独立起态：待命.*衔接起态：处理中.*衔接终态：完成/);
+  assert.match(h.$('continuity-review').textContent, /处理节点可以延续/);
+  const select = linkSelects(h)[0];
+  assert.equal(select.children.find(row => row.value === 'copy').disabled, true);
+  select.value = 'copy'; await select.emit('change');
+  assert.equal(h.panel.hasDrafts(), false);
+  select.value = 'none'; await select.emit('change');
+  assert.equal(h.panel.hasDrafts(), true);
+  assert.match(h.$('continuity-review').textContent, /摘要来自已保存候选.*保存为新候选后/);
+  assert.equal(h.$('preview-continuity').disabled, true);
+});
+
+test('process token copy shows real docking labels and keeps the original despite a different destination', async () => {
+  const h = asProcess(harness()), row = h.state.data.versions[0];
+  row.plan.links = [{ from_scene_id: 's1', from_element_id: 'token1', to_scene_id: 's2', to_element_id: 'token2', mode: 'copy' }];
+  row.scene_summaries[0].elements = [
+    { id: 'queue', kind: 'card', slot: 'queue', label: '队列', detail: '' },
+    { id: 'token1', kind: 'token', label: '<svg>请求', detail: '', initial_slot: 'token_source', final_slot: 'token_queue', final_visible: true },
+  ];
+  row.scene_summaries[1].elements = [
+    { id: 'source', kind: 'card', slot: 'source', label: '入口', detail: '' },
+    { id: 'worker', kind: 'card', slot: 'worker', label: '执行节点', detail: '' },
+    { id: 'token2', kind: 'token', label: '<svg>请求', detail: '', initial_slot: 'token_source', final_slot: 'token_worker', final_visible: true },
+  ];
+  await h.load();
+  assert.match(h.$('continuity-review').textContent, /前镜结束位置：队列，请求可见.*下一镜起点：入口.*结束位置：执行节点/);
+  assert.match(h.$('continuity-review').textContent, /复制将保留上一镜原件/);
+  assert.match(h.$('continuity-review').textContent, /<svg>请求/);
+  assert.equal(linkSelects(h)[0].value, 'copy');
+  assert.equal(linkSelects(h)[0].children.find(row => row.value === 'copy').disabled, false);
+  assert.equal(linkSelects(h)[0].children.find(row => row.value === 'retain').disabled, true);
+  assert.match(h.$('continuity-review').textContent, /延续不可用.*结束位置与下一镜起点不同/);
+  linkSelects(h)[0].value = 'retain'; await linkSelects(h)[0].emit('change');
+  assert.equal(h.panel.hasDrafts(), false);
+  assert.equal(writes(h).length, 0);
+  row.scene_summaries[0].elements[1].final_visible = false;
+  h.state.context.project.revision += 1; h.state.data.project_revision += 1;
+  await h.load();
+  assert.equal(linkSelects(h)[0].children.find(row => row.value === 'copy').disabled, true);
+  assert.match(h.$('continuity-review').textContent, /上一镜结束时请求不可见/);
+});
 
 test('detail updates are shown for review and cannot be presented as unchanged copies', async () => {
   const h = harness();

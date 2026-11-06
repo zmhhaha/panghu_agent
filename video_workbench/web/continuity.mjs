@@ -1,5 +1,8 @@
 /** Project continuity is reviewed data; it never generates speech or approves timing. */
 const MODES = new Set(['retain', 'copy']);
+const PROCESS_COMPILER = 'motion-process-continuity-compiler-1';
+const PROCESS_SOURCE_COMPILER = 'motion-process-compiler-2';
+const STATES = { idle: '待命', waiting: '等待', running: '处理中', completed: '完成', failed: '失败' };
 const projectPath = id => `/api/projects/${encodeURIComponent(id)}/continuity`;
 const keyOf = link => JSON.stringify([link.from_scene_id, link.from_element_id, link.to_scene_id, link.to_element_id]);
 const copyLinks = links => links.map(link => ({ from_scene_id: link.from_scene_id,
@@ -10,6 +13,23 @@ const linksSignature = links => JSON.stringify(copyLinks(links).sort((a, b) => k
 export function continuityErrorLabel(code) {
   const labels = {
     process_continuity_not_supported: '过程演示暂不支持跨镜连续衔接，请使用单镜或普通整片草稿。',
+    process_continuity_mixed_not_supported: '当前连续方案需要全部使用过程演示，或全部使用通用图解；两种方式混合时可制作普通整片草稿。',
+    process_continuity_source_unsupported: '这份过程演示使用的版本尚不支持连续衔接，请生成并采用新的过程候选；原画面和录音仍保留。',
+    process_continuity_source_invalid: '过程演示的状态或请求流转尚不能连续衔接，请检查该镜头后修改方案。',
+    invalid_process_continuity_plan: '过程对象的连续关系不符合要求，请核对相邻镜头后重新保存候选。',
+    process_continuity_requires_process: '这份连续方案需要全部镜头采用有效过程演示。',
+    process_continuity_compiler_unsupported: '这份过程演示的制作版本暂不支持连续衔接，请生成并采用新的候选。',
+    process_continuity_source_not_visible: '上一镜结束时关联对象不可见，请修改过程方案或取消关联。',
+    process_continuity_slot_conflict: '延续对象的位置与下一镜起点不同，请修改过程方案或取消关联。',
+    process_continuity_state_conflict: '延续后的节点状态无法接上下一镜动作，请修改过程方案或取消关联。',
+    process_continuity_card_copy_not_supported: '过程演示目前只支持复制请求对象，处理节点请使用延续或取消关联。',
+    process_continuity_copy_content_changed: '请求内容不同，不能作为保持原内容的复制。',
+    process_continuity_copy_archive_unavailable: '没有可供保留原请求的安全位置，请改为延续或取消这处关联。',
+    process_continuity_unsafe_transition: '过程衔接存在位置冲突，请修改方案或取消该处关联。',
+    continuity_compiler_version_unsupported: '这份连续方案的制作版本暂不支持，请重新规划；历史记录仍保留。',
+    continuity_compiler_schema_mismatch: '连续方案的制作方式与图解不匹配，请重新规划；历史记录仍保留。',
+    continuity_source_stale: '连续制作对应的图解、录音或时序已变化，请重新读取并制作新的草稿。',
+    continuity_segment_budget_exceeded: '加入跨镜衔接后的镜头超过当前制作限制，请缩短旁白或拆分镜头。',
     continuity_plan_stale: '镜头内容或已采用图解已变化，请重新规划连续方案。',
     continuity_head_conflict: '已采用的连续方案已变化，请重新读取并核对。',
     continuity_requires_scenes: '连续图解至少需要两个镜头。',
@@ -39,7 +59,7 @@ export function continuityErrorLabel(code) {
 }
 
 export function continuityIssues(project, { audio = false } = {}) {
-  const issues = [];
+  const issues = [], kinds = new Set();
   if ((project?.scenes?.length ?? 0) < 2) issues.push('连续图解至少需要两个镜头。');
   for (const [index, scene] of (project?.scenes ?? []).entries()) {
     const title = `镜头 ${index + 1} · ${scene.title || '未命名镜头'}`;
@@ -48,8 +68,12 @@ export function continuityIssues(project, { audio = false } = {}) {
     if (motion?.mode !== 'motion' || !motion.head_version_id || motion.head_stale || !head || head.stale) {
       issues.push(`${title}：请先采用有效动态图解。`);
     }
-    if (head?.diagram_kind === 'process') {
-      issues.push(`${title}：过程演示暂不支持跨镜连续衔接，可制作普通整片草稿。`);
+    if (head) {
+      const process = head.diagram_kind === 'process' || head.plan?.schema === 'video.process-plan.v1';
+      kinds.add(process ? 'process' : 'diagram');
+      if (process && head.compiler_version !== PROCESS_SOURCE_COMPILER) {
+        issues.push(`${title}：${continuityErrorLabel('process_continuity_source_unsupported')}`);
+      }
     }
     if (audio) {
       const recording = scene.audio_versions?.find(row => row.id === scene.head_audio_version_id);
@@ -57,6 +81,9 @@ export function continuityIssues(project, { audio = false } = {}) {
         issues.push(`${title}：请先试听并采用匹配当前旁白和项目音色的配音。`);
       }
     }
+  }
+  if (kinds.size > 1 && kinds.has('process')) {
+    issues.push(continuityErrorLabel('process_continuity_mixed_not_supported'));
   }
   return issues;
 }
@@ -142,6 +169,27 @@ export function createContinuityPanel({ document, getContext, request, refresh, 
     const element = scene?.elements?.find(row => row.id === elementId);
     return element ?? { label: elementId, detail: '' };
   }
+  function processSummary(value, sceneId) {
+    return sceneSummaries(value).find(row => (row.scene_id ?? row.id) === sceneId);
+  }
+  function slotLabel(value, sceneId, slot) {
+    const cardSlot = slot?.replace(/^token_/, '');
+    return processSummary(value, sceneId)?.elements?.find(row => row.kind === 'card' && row.slot === cardSlot)?.label
+      ?? ({ source: '起始节点', queue: '中间节点', worker: '处理节点' }[cardSlot] ?? '未知位置');
+  }
+  function processLink(value, source, destination) {
+    return value.version?.compiler === PROCESS_COMPILER || source.initial_state !== undefined
+      || source.initial_slot !== undefined || destination.initial_state !== undefined || destination.initial_slot !== undefined;
+  }
+  function copyIssue(value, source, destination) {
+    if (source.detail !== destination.detail) return '说明内容不同，不能作为保持原内容的复制。';
+    if (!processLink(value, source, destination)) return '';
+    if (source.kind !== 'token' || destination.kind !== 'token') return '过程演示只支持复制请求对象，处理节点可以延续。';
+    if (source.label !== destination.label) return '请求名称不同，不能直接复制为同一内容。';
+    if (source.final_visible !== true) return '上一镜结束时请求不可见，不能据此复制。';
+    if (!source.final_slot || !destination.initial_slot) return '请求的停靠位置尚未核对，请重新读取方案。';
+    return '';
+  }
   function renderReview(value) {
     const { project, version, draft } = value;
     const signature = JSON.stringify([project.id, project.revision, version?.id, version?.stale,
@@ -151,6 +199,9 @@ export function createContinuityPanel({ document, getContext, request, refresh, 
     const target = $('continuity-review'); target.replaceChildren();
     if (!version) return;
     if (typeof version.summary === 'string') target.append(node('p', version.summary, 'field-note'));
+    if (version.compiler === PROCESS_COMPILER && draft?.dirty) {
+      target.append(node('p', '衔接方式有未保存修改。下面的状态和停靠摘要来自已保存候选；保存为新候选后会重新核对，当前不能制作草稿。', 'field-note'));
+    }
     const summaries = sceneSummaries(value);
     const scenes = (summaries.length ? summaries : project.scenes ?? [])
       .map(row => ({ id: row.scene_id ?? row.id, title: row.title }));
@@ -165,19 +216,36 @@ export function createContinuityPanel({ document, getContext, request, refresh, 
         const source = elementFor(value, previous.id, original.from_element_id);
         const destination = elementFor(value, next.id, original.to_element_id);
         const detailChanged = source.detail !== destination.detail;
+        const isProcess = processLink(value, source, destination);
+        const copyBlocked = copyIssue(value, source, destination);
+        const retainBlocked = isProcess && source.kind === 'token' && source.final_slot && destination.initial_slot
+          && source.final_slot !== destination.initial_slot;
         const label = node('label', `「${source.label}」 → 「${destination.label}」`);
         if (detailChanged) label.append(node('span', `说明更新：「${source.detail || '无'}」 → 「${destination.detail || '无'}」。延续外框，说明渐变更新；内容不同不能作为复制。`, 'field-note'));
+        if (isProcess) {
+          if (source.kind === 'card') {
+            const before = STATES[source.final_state] ?? '待核对';
+            const initial = STATES[destination.standalone_initial_state ?? destination.initial_state] ?? '待核对';
+            const inherited = STATES[destination.initial_state] ?? '待核对';
+            const final = STATES[destination.final_state] ?? '待核对';
+            label.append(node('span', `前镜终态：${before}；下一镜独立起态：${initial}，衔接起态：${inherited}，衔接终态：${final}。延续将继承前镜状态，按下一镜动作继续变化。`, 'field-note'));
+          } else if (source.kind === 'token') {
+            label.append(node('span', `前镜结束位置：${slotLabel(value, previous.id, source.final_slot)}${source.final_visible ? '，请求可见' : '，请求已隐藏'}；下一镜起点：${slotLabel(value, next.id, destination.initial_slot)}，结束位置：${slotLabel(value, next.id, destination.final_slot)}。复制将保留上一镜原件；实际停靠和留存空间在制作时核验。`, 'field-note'));
+            if (retainBlocked) label.append(node('span', '延续不可用：请求结束位置与下一镜起点不同，可以复制并保留原件，或取消关联。', 'field-note'));
+          }
+          if (copyBlocked) label.append(node('span', `复制不可用：${copyBlocked}`, 'field-note'));
+        }
         const select = node('select');
         select.setAttribute('aria-label', `${previous.title || '上一镜头'}与${next.title || '下一镜头'}中对象的衔接方式`);
         for (const [mode, title] of [['retain', '延续同一对象'], ['copy', '复制并保留原件'], ['none', '不关联']]) {
           const option = node('option', title); option.value = mode;
-          option.disabled = mode === 'copy' && detailChanged; select.append(option);
+          option.disabled = mode === 'copy' && Boolean(copyBlocked) || mode === 'retain' && Boolean(retainBlocked); select.append(option);
         }
         select.value = link?.mode ?? 'none';
         select.disabled = value.blocked || !value.fresh || version.stale || value.enabled === false;
         select.addEventListener('change', () => {
           if (!['retain', 'copy', 'none'].includes(select.value) || select.disabled
-              || (select.value === 'copy' && detailChanged)) return;
+              || (select.value === 'copy' && copyBlocked) || (select.value === 'retain' && retainBlocked)) return;
           draft.links = draft.links.filter(row => keyOf(row) !== keyOf(original));
           if (select.value !== 'none') draft.links.push({ ...original, mode: select.value });
           draft.dirty = linksSignature(draft.links) !== linksSignature(version.plan?.links ?? []);

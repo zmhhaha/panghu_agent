@@ -23,6 +23,13 @@ CONTINUITY_COMPILER_TEMPLATES = {
     'motion-continuity-compiler-1': 'continuous-diagrams-1',
     CONTINUITY_COMPILER_VERSION: CONTINUITY_TEMPLATE_VERSION,
 }
+# Keep the historical diagram registry unchanged. New production snapshots
+# explicitly select this separate process contract; old snapshots never do.
+PROCESS_CONTINUITY_COMPILER_VERSION = 'motion-process-continuity-compiler-1'
+ALL_CONTINUITY_COMPILER_TEMPLATES = {
+    **CONTINUITY_COMPILER_TEMPLATES,
+    PROCESS_CONTINUITY_COMPILER_VERSION: 'continuous-process-1',
+}
 TRANSITION_SECONDS = .6
 TEXT_COORDINATE_EPSILON = .001
 SCHEMA = 'video.continuity-plan.v1'
@@ -64,8 +71,19 @@ def _appearance(row):
     return row['kind'], row['label']
 
 
+def _has_process(scenes):
+    return type(scenes) is list and any(
+        type(scene) is dict and type(scene.get('motion')) is dict
+        and type(scene['motion'].get('plan')) is dict
+        and scene['motion']['plan'].get('schema') == 'video.process-plan.v1'
+        for scene in scenes)
+
+
 def build_continuity_plan(scenes):
     """Suggest exact kind/label matches; changed details still need user review."""
+    if _has_process(scenes):
+        from .process_continuity import build_process_continuity_plan
+        return build_process_continuity_plan(scenes)
     rows, links = _scene_rows(scenes), []
     for (before, old), (after, new) in zip(rows, rows[1:]):
         for target in new.values():
@@ -78,6 +96,9 @@ def build_continuity_plan(scenes):
 
 
 def validate_continuity_plan(plan, scenes):
+    if _has_process(scenes):
+        from .process_continuity import validate_process_continuity_plan
+        return validate_process_continuity_plan(plan, scenes)
     rows = _scene_rows(scenes)
     _require(type(plan) is dict and set(plan) == {'schema', 'links'} and plan['schema'] == SCHEMA
              and type(plan['links']) is list and len(plan['links']) <= 23 * 9)
@@ -205,9 +226,18 @@ def _event(events, scope, target, start, duration, before, after, *, reason='sce
                        after=deepcopy(after), reason=reason))
 
 
-def resolve_continuity(scenes, plan, *, compiler_version=CONTINUITY_COMPILER_VERSION):
+def resolve_continuity(scenes, plan, *, compiler_version=None):
+    if compiler_version == PROCESS_CONTINUITY_COMPILER_VERSION or (
+            compiler_version is None and _has_process(scenes)):
+        from .process_continuity import resolve_process_continuity
+        return resolve_process_continuity(scenes, plan,
+            compiler_version=PROCESS_CONTINUITY_COMPILER_VERSION)
+    compiler_version = CONTINUITY_COMPILER_VERSION if compiler_version is None else compiler_version
     _require(type(compiler_version) is str and compiler_version in CONTINUITY_COMPILER_TEMPLATES,
              'continuity_compiler_version_unsupported')
+    # An explicitly frozen ordinary compiler must retain its original schema
+    # boundary even after the public planner gains process support.
+    _scene_rows(scenes)
     plan = validate_continuity_plan(plan, scenes)
     segments, previous, previous_map, frame = [], None, {}, 0
     for index, scene in enumerate(scenes):
@@ -447,6 +477,11 @@ def _validate_segment(scene, segment):
 
 
 def compile_continuity_project(scene, continuity_segment, *, animated=True, runtime_fingerprint=None):
+    if (type(continuity_segment) is dict
+            and continuity_segment.get('compiler') == PROCESS_CONTINUITY_COMPILER_VERSION):
+        from .process_continuity import compile_process_continuity_project
+        return compile_process_continuity_project(scene, continuity_segment,
+            animated=animated, runtime_fingerprint=runtime_fingerprint)
     _scene_rows([scene])
     segment = deepcopy(continuity_segment)
     _validate_segment(scene, segment)
@@ -458,6 +493,10 @@ def compile_continuity_project(scene, continuity_segment, *, animated=True, runt
 
 
 def recompile_continuity_project(plan_document, beats, alignment, *, animated=True, runtime_fingerprint=None):
+    if type(plan_document) is dict and plan_document.get('schema') == 'video.process-continuity-scene.v1':
+        from .process_continuity import recompile_process_continuity_project
+        return recompile_process_continuity_project(plan_document, beats, alignment,
+            animated=animated, runtime_fingerprint=runtime_fingerprint)
     _require(type(plan_document) is dict and set(plan_document) == {'schema','scene_id','scene_title','motion_id',
         'audio_id','audio_sha256','base_timing','base_plan','segment'}
         and plan_document['schema'] == 'video.continuity-scene.v1', 'continuity_scene_invalid')

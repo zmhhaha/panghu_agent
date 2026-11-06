@@ -241,12 +241,14 @@ def test_process_artifact_reviewer_checks_state_ports_docking_and_frame_bindings
         validate_artifacts(entries, files, RUNTIME, 'draft')
 
 
-def test_process_continuity_plan_and_snapshot_boundaries_explicitly_reject():
+def test_mixed_process_continuity_and_legacy_compiler_boundaries_explicitly_reject():
     scenes = freeze([process_scene(), motion_scene()])['scenes']
     plan = dict(schema='video.continuity-plan.v1', links=[])
     for action in [lambda: build_continuity_plan(scenes), lambda: validate_continuity_plan(plan, scenes),
-                   lambda: resolve_continuity(scenes, plan),
-                   lambda: compile_continuity_project(scenes[0], {}),
+                   lambda: resolve_continuity(scenes, plan)]:
+        with pytest.raises(ServiceError, match='process_continuity_mixed_not_supported'):
+            action()
+    for action in [lambda: compile_continuity_project(scenes[0], {}),
                    lambda: freeze_continuity_snapshot(freeze([process_scene(), motion_scene()]), dict(id='candidate', plan=plan))]:
         with pytest.raises(ServiceError, match='process_continuity_not_supported'):
             action()
@@ -263,17 +265,18 @@ def test_process_continuity_store_reports_issue_and_blocks_suggestion_adoption_r
         version_id = motion._head(db, owner, project_id, scene_id)['version_id']
         version = motion._version(db, owner, version_id)
         version['plan'] = process_scene()['motion']['plan']
+        version['compiler_version'] = 'motion-process-compiler-2'
         version['plan_sha256'] = digest(version['plan'])
         db.execute('UPDATE motion_versions SET document=? WHERE id=?', (canonical_bytes(version).decode(), version_id))
     projection = continuity.project_projection(owner, project_id)
-    assert projection['issues'][0]['reason'] == 'process_continuity_not_supported'
+    assert any(issue['reason'] == 'process_continuity_mixed_not_supported' for issue in projection['issues'])
     assert projection['head_stale'] and not projection['versions'][0]['adoptable']
     for action in [lambda: continuity.propose(owner, project_id, revision()),
                    lambda: continuity.propose(owner, project_id, revision(), []),
                    lambda: continuity.adopt(owner, project_id, candidate['id'], revision(), candidate['id']),
                    lambda: continuity.render_selection(owner, project_id),
                    lambda: continuity.render_selection(owner, project_id, candidate['id'])]:
-        with pytest.raises(ServiceError, match='process_continuity_not_supported'):
+        with pytest.raises(ServiceError, match='process_continuity_mixed_not_supported'):
             action()
     with base.transaction() as db:
         db.execute('DELETE FROM continuity_heads WHERE owner=? AND project_id=?', (owner, project_id))

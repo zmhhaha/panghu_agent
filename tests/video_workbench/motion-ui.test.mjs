@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
   createMotionPanel, createMotionRequest, createMotionAdoption, createMotionRenderRequest, createProjectMotionDraftRequest,
-  currentMotionAudio, hasMotionScenes, usesDynamicVideo, createDynamicProjectRequest, motionMetadata, motionDiagramKind, motionErrorLabel, motionSelection, validateMotionSegments,
+  currentMotionAudio, hasMotionScenes, usesDynamicVideo, createDynamicProjectRequest, motionMetadata, motionDiagramKind, motionErrorLabel, motionRenderErrorLabel, motionSelection, validateMotionSegments,
 } from '../../video_workbench/web/motion.mjs';
 import { deliveryIssues, isActiveOperation, isUnresolvedProductionOperation } from '../../video_workbench/web/model.mjs';
 
@@ -108,6 +108,7 @@ test('process choice is per scene, opt-in and read-only until an explicit genera
   await h.panel.generate(); assert.equal(posts(h).length, 0);
   h.state.context.processConfigured = true; h.panel.render();
   assert.equal(h.$('generate-motion').disabled, false);
+  assert.match(h.$('motion-process-note').textContent, /全部镜头.*跨镜延续或请求复制/);
   h.setProject(project('p2'), 2); await h.load();
   assert.equal(h.$('motion-diagram-kind').value, 'diagram');
   h.setProject(project(), 3); await h.load();
@@ -464,6 +465,14 @@ test('known rendering failures distinguish resource, duration and uncertain stat
     'motion_relation_layout_unavailable']) {
     assert.doesNotMatch(motionErrorLabel(code), /Traceback|\/data\/|https?:|motion_/);
   }
+});
+
+test('process continuity errors retain actionable explanations through general motion and batch render paths', () => {
+  assert.match(motionErrorLabel('process_continuity_card_copy_not_supported'), /只支持复制请求对象.*处理节点/);
+  assert.match(motionErrorLabel('process_continuity_slot_conflict'), /位置.*起点不同/);
+  assert.match(motionRenderErrorLabel('process_continuity_copy_archive_unavailable'), /安全位置.*延续/);
+  assert.match(motionErrorLabel('invalid_process_continuity_plan'), /核对相邻镜头/);
+  assert.ok(!motionRenderErrorLabel('process_continuity_pose_mismatch').includes('process_'));
 });
 
 test('all controls exist once; app wires motion reads, MP4 playback, polling and unload drafts', async () => {

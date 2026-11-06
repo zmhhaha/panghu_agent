@@ -27,7 +27,7 @@ import httpx
 
 from agent_service.contracts import ServiceError, canonical_bytes
 from .motion import COMPILER_TEMPLATES, compile_project
-from .continuity import (CONTINUITY_COMPILER_TEMPLATES,
+from .continuity import (ALL_CONTINUITY_COMPILER_TEMPLATES,
                          compile_continuity_project)
 from .motion_review import verify_observations
 from .motion_dispatch import PROCESS_SCHEMA, PRODUCTION_PROCESS_COMPILER, scene_compiler
@@ -193,7 +193,7 @@ def production_resources(directory, *, image, release_id, namespace, name, bindi
     frozen = freeze_input(directory, image_digest=image.rsplit('@', 1)[1], max_payload_bytes=BUNDLE_BYTES)
     manifest = json.loads((Path(directory) / 'manifest.json').read_bytes())
     require(COMPILER_TEMPLATES.get(manifest['compiler']) == manifest['template'] or
-            CONTINUITY_COMPILER_TEMPLATES.get(manifest['compiler']) == manifest['template'] or
+            ALL_CONTINUITY_COMPILER_TEMPLATES.get(manifest['compiler']) == manifest['template'] or
             (manifest['compiler'], manifest['template']) == (PRODUCTION_PROCESS_COMPILER, 'controlled-process-2'),
             'motion_production_template_not_supported', 422)
     labels = {'app': 'video-motion-renderer', LABEL + 'execution': binding[:32]}
@@ -350,6 +350,15 @@ def validate_artifacts(entries, files, runtime, quality):
                     filename = 'observations/continuity-' + key.replace('_', '-') + '.jpg'
                     require(sha(entries[filename]) == boundary[key]['frame_sha256'],
                             'motion_observation_frame_mismatch')
+        if json.loads(files['timeline.json']).get('compiler') == 'motion-process-continuity-compiler-1':
+            sequence = observations.get('seek_sequence')
+            require(type(sequence) is dict and sequence.get('schema') == 'video.process-continuity-seek-sequence.v1'
+                    and type(sequence.get('samples')) is list and 1 <= len(sequence['samples']) <= 32,
+                    'motion_observation_sequence_invalid')
+            for index, sample in enumerate(sequence['samples']):
+                filename = f'observations/continuity-sequence-{index}.jpg'
+                require(sha(entries[filename]) == sample['frame_sha256'],
+                        'motion_observation_frame_mismatch')
         plan, timeline = json.loads(files['plan.json']), json.loads(files['timeline.json'])
         if plan.get('schema') == PROCESS_SCHEMA or timeline.get('compiler') == PRODUCTION_PROCESS_COMPILER:
             scene_compiler(plan, compiler_version=timeline.get('compiler'))

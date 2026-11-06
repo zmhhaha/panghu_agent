@@ -1,5 +1,6 @@
 /** Semantic motion proposals and recording-bound timing; no executable model HTML. */
 import { isActiveOperation, isUnresolvedProductionOperation, statusLabel } from './model.mjs';
+import { continuityErrorLabel } from './continuity.mjs';
 
 const STRATEGIES = { flow: '流程推演', compare: '前后对比', focus: '结构聚焦' };
 const ACTIONS = { reveal: '出现', hide: '隐藏', highlight: '强调', move: '移动', draw: '连线展开',
@@ -67,10 +68,16 @@ const ERRORS = {
 };
 
 export function motionRenderErrorLabel(code) {
+  if (typeof code === 'string' && (code.startsWith('process_continuity_') || code === 'invalid_process_continuity_plan')) {
+    return continuityErrorLabel(code);
+  }
   return typeof code === 'string' && Object.hasOwn(RENDER_ERRORS, code) ? RENDER_ERRORS[code] : undefined;
 }
 
 export function motionErrorLabel(code) {
+  if (typeof code === 'string' && (code.startsWith('process_continuity_') || code === 'invalid_process_continuity_plan')) {
+    return continuityErrorLabel(code);
+  }
   return typeof code === 'string' && Object.hasOwn(ERRORS, code) ? ERRORS[code]
     : '动态图解处理未完成，请重新读取状态并检查当前内容、配音和时序。';
 }
@@ -291,7 +298,7 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     $('motion-diagram-kind').value = value.diagramKind;
     $('motion-diagram-kind').disabled = !value.enabled || blocked || active;
     $('motion-process-note').textContent = value.diagramKind === 'process'
-      ? `${value.processConfigured ? '' : '过程演示生成尚未启用。'}适合三个环节之间的单个请求流转、失败返回和状态变化。修改沿用所选候选的方式；跨镜连续衔接暂不支持。`
+      ? `${value.processConfigured ? '' : '过程演示生成尚未启用。'}适合三个环节之间的单个请求流转、失败返回和状态变化。修改沿用所选候选的方式；全部镜头采用有效过程演示后，可审阅对象的跨镜延续或请求复制。`
       : '适合一般流程、前后对比和结构聚焦。选择方式仅影响新候选，修改沿用所选候选的方式。';
     $('motion-instruction').disabled = !generationConfigured && !revisionConfigured;
     $('generate-motion').disabled = !value.enabled || !generationConfigured || blocked || active;

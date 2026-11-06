@@ -8,7 +8,7 @@ import json
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from . import media
 from .motion_snapshot import SCHEMA as SOURCE_SCHEMA, verify_snapshot_v2
-from .continuity import (CONTINUITY_COMPILER_TEMPLATES, CONTINUITY_COMPILER_VERSION,
+from .continuity import (ALL_CONTINUITY_COMPILER_TEMPLATES, CONTINUITY_COMPILER_VERSION,
                          resolve_continuity, compile_continuity_project)
 
 SCHEMA = 'video.render-snapshot.v3'
@@ -20,7 +20,7 @@ def _require(value, code='invalid_continuity_snapshot', status=422):
         raise ServiceError(code, status)
 
 
-def freeze_continuity_snapshot(source, version, *, compiler_version=CONTINUITY_COMPILER_VERSION):
+def freeze_continuity_snapshot(source, version, *, compiler_version=None):
     """Freeze a reviewed visual candidate without changing its source media."""
     verify_snapshot_v2(source)
     _require(not source['subtitles'], 'continuity_subtitles_not_supported')
@@ -28,7 +28,10 @@ def freeze_continuity_snapshot(source, version, *, compiler_version=CONTINUITY_C
              'continuity_requires_motion', 409)
     _require(type(version) is dict and type(version.get('id')) is str
              and type(version.get('plan')) is dict)
-    _require(type(compiler_version) is str and compiler_version in CONTINUITY_COMPILER_TEMPLATES)
+    compiler_version = version.get('compiler', CONTINUITY_COMPILER_VERSION) if compiler_version is None else compiler_version
+    _require(type(compiler_version) is str and compiler_version in ALL_CONTINUITY_COMPILER_TEMPLATES
+             and version.get('compiler', compiler_version) == compiler_version,
+             'continuity_compiler_version_unsupported')
     resolution = json.loads(canonical_bytes(resolve_continuity(source['scenes'], version['plan'],
                                                               compiler_version=compiler_version)))
     _require(len(resolution['segments']) == len(source['scenes']))
@@ -67,7 +70,7 @@ def verify_continuity_snapshot(snapshot):
         source = deepcopy(snapshot)
         continuity = source.pop('continuity')
         compiler_version = continuity['resolution']['compiler']
-        _require(type(compiler_version) is str and compiler_version in CONTINUITY_COMPILER_TEMPLATES,
+        _require(type(compiler_version) is str and compiler_version in ALL_CONTINUITY_COMPILER_TEMPLATES,
                  'continuity_snapshot_corrupt', 409)
         source_sha = source.pop('source_snapshot_sha256')
         source.update(schema=SOURCE_SCHEMA, visual_mode='mixed')

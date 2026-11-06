@@ -47,6 +47,7 @@ SOURCE_FILES = frozenset({
     'video_workbench/motion.py', 'video_workbench/motion_snapshot.py',
     'video_workbench/motion_dispatch.py', 'video_workbench/motion_process.py',
     'video_workbench/process_review.py',
+    'video_workbench/process_continuity.py', 'video_workbench/process_continuity_review.py',
     'video_workbench/continuity.py', 'video_workbench/continuity_store.py',
     'video_workbench/continuity_snapshot.py', 'video_workbench/continuity_review.py',
     'video_workbench/motion_geometry.py',
