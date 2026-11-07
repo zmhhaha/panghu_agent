@@ -48,15 +48,31 @@ export async function captureLab({root='/work',requestSha256,chromium,
   if(hash(readRegular(join(root,'plan.json')))!==timeline.plan_sha256
     || hash(readRegular(join(root,'audio.wav'),8*1024*1024))!==timeline.audio_sha256)
     throw Error('capture_plan_audio_binding_mismatch');
+  const engine=['canvas','three'].includes(timeline.engine);
+  const manifest=JSON.parse(readRegular(join(root,'manifest.json')));
+  if(engine) {
+    if(hash(readFileSync(join(here,'engine_observe.mjs')))!==request.engine_observer_sha256)
+      throw Error('capture_engine_observer_mismatch');
+    if(canonical(request.engine_assets)!==canonical(manifest.engine_assets||{}))
+      throw Error('capture_engine_asset_binding_mismatch');
+  }
   mkdirSync(join(root,'assets'));
   for(const [name,key] of [['gsap.min.js','gsap_sha256'],['NotoSansCJK-Regular.ttc','font_sha256']]) {
     const source=join(assetRoot,name);
     if(hash(readRegular(source,32*1024*1024))!==actual[key]) throw Error('capture_asset_mismatch');
     copyFileSync(source,join(root,'assets',name));
   }
+  if(engine)for(const [name,digest] of Object.entries(request.engine_assets)) {
+    if(!/^three\.(module|core)\.min\.js$/.test(name)
+      ||hash(readRegular(join(here,name),8*1024*1024))!==digest)throw Error('capture_engine_asset_mismatch');
+    copyFileSync(join(here,name),join(root,'assets',name));
+  }
   // This separate observer does not grant historical local compiler1 production
   // admission. The coordinator verifies trusted compiler bytes before packaging.
-  await observeProject(chromium,{root,dist});
+  if(engine) {
+    const {observeEngineProject}=await import('./engine_observe.mjs');
+    await observeEngineProject(chromium,{root,dist});
+  } else await observeProject(chromium,{root,dist});
   const frames=[];
   let total=0;
   for(const name of readdirSync(join(root,'observations')).sort()) {
@@ -74,6 +90,7 @@ export async function captureLab({root='/work',requestSha256,chromium,
     runtime_collector_sha256:request.runtime_collector_sha256,
     observations_sha256:hash(observed),frame_count:frames.length,frames,
     agent_calls:0,tts_calls:0,production_writes:0,output:'sampled_browser_observations_not_mp4'};
+  if(engine)receipt.engine_assets=request.engine_assets;
   writeFileSync(join(root,'capture-receipt.json'),JSON.stringify(receipt,null,2));
   return receipt;
 }

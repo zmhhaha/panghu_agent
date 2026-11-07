@@ -93,6 +93,8 @@ class Docker:
             observations_sha256=sha256(observed), frame_count=1,
             frames=[dict(name='seek-first.jpg', sha256=sha256(raw), bytes=len(raw))],
             agent_calls=0, tts_calls=0, production_writes=0, output='sampled_browser_observations_not_mp4')
+        if 'engine_assets' in request:
+            receipt['engine_assets'] = request['engine_assets']
         if self.failure == 'receipt':
             receipt['request_sha256'] = '0' * 64
         if self.failure == 'work_input':
@@ -168,6 +170,40 @@ def test_one_bounded_capture_uses_real_image_id_and_owned_cleanup(tmp_path, monk
     with pytest.raises(ValueError, match='no_overwrite'):
         executor.capture_directory(root, RUNTIME, IMAGE, OVERLAY)
     assert len(transport.calls) == count
+
+
+@pytest.mark.parametrize('case', ['canvas-queue', 'three-layers'])
+def test_engine_capture_mounts_every_bound_observer_and_dependency(tmp_path, monkeypatch, case):
+    # This checks the container boundary with synthetic transport/resources;
+    # actual Canvas/WebGL execution is verified by separate native captures.
+    from video_workbench import animation_lab_samples as samples
+    from video_workbench import animation_lab_three as three
+    assets = {name: ('// synthetic dependency '+name).encode() for name in three.THREE_ASSET_SHA256}
+    monkeypatch.setattr(three, 'THREE_ASSET_SHA256', {name: sha256(raw) for name, raw in assets.items()})
+    samples._compiled_case.cache_clear()
+    try:
+        bundle = compile_sample(case, 'candidate')
+        root = Path(write_capture_inputs(bundle, tmp_path / 'prepared', RUNTIME)[0]['directory'])
+    finally:
+        samples._compiled_case.cache_clear()
+    overlay = tmp_path / 'overlay'
+    overlay.mkdir()
+    for name in [*executor._ADAPTERS, 'engine_observe.mjs']:
+        (overlay / name).write_bytes((OVERLAY / name).read_bytes())
+    for name, raw in assets.items():
+        (overlay / name).write_bytes(raw)
+    transport = install(monkeypatch, root)
+    outcome = executor.capture_directory(root, RUNTIME, IMAGE, overlay)
+    assert outcome['status'] == 'captured'
+    create = next(args for args in transport.calls if args[:2] == ['container', 'create'])
+    mounts = [create[index+1] for index, value in enumerate(create) if value == '--mount']
+    required = {*executor._ADAPTERS, 'engine_observe.mjs'}
+    if case == 'three-layers':
+        required.update(assets)
+    assert len(mounts) == len(required)+1
+    for name in required:
+        assert any(row.endswith(',target=/opt/renderer/'+name+',readonly') for row in mounts)
+    assert outcome['cleanup']['status'] == 'removed_and_confirmed_absent'
 
 
 @pytest.mark.parametrize('failure,error', [

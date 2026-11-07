@@ -65,6 +65,14 @@ def load_assets(directory):
     _require(('GSAP ' + GSAP_VERSION).encode('ascii') in result['gsap.min.js'][:1024],
              'animation_lab_gsap_version_mismatch')
     _require(result['NotoSansCJK-Regular.ttc'][:4] == b'ttcf', 'animation_lab_font_invalid')
+    # Optional WebGL resources affect only cases that declare their exact bytes.
+    from .animation_lab_three import THREE_ASSET_SHA256
+    for name, digest in THREE_ASSET_SHA256.items():
+        path = root / name
+        if path.is_file() and not path.is_symlink() and path.stat().st_size <= 8 * 1024 * 1024:
+            raw = path.read_bytes()
+            if sha256(raw) == digest:
+                result[name] = raw
     return result
 
 
@@ -74,7 +82,7 @@ class AnimationLab:
         self.evaluations_dir = Path(evaluations_dir).resolve(strict=True) if evaluations_dir else None
         self.player_script = Path(__file__).with_name('animation_lab_player.mjs').read_bytes()
         self.runtime = dict(schema='video.animation-lab-preview-runtime.v1',
-            gsap=GSAP_VERSION, assets={name: sha256(raw) for name, raw in sorted(assets.items())},
+            gsap=GSAP_VERSION, assets={name: sha256(assets[name]) for name in sorted(ASSET_NAMES)},
             preview_adapter_sha256=sha256(self.player_script), width=1280, height=720, fps=FPS,
             output='browser_preview', production_export_verified=False)
         self.store = AnnotationStore(Path(data_dir) / 'animation-lab.db')
@@ -89,12 +97,15 @@ class AnimationLab:
             frozen = []
             for variant, bundle in zip(case['variants'], bundles):
                 self.bundles[case['id'], variant['id']] = bundle
+                available = self._assets_match(bundle)
                 points, offset = [], 0
                 for clip in bundle['clips']:
                     points.extend(dict(label=clip['id'] + ' · ' + point['label'],
                                        time=offset + point['time']) for point in clip['checkpoints'])
                     offset += clip['duration_seconds']
-                variant.update(available=True, preview_url=f"/preview/{case['id']}/{variant['id']}/",
+                variant.update(available=available,
+                    reason='' if available else 'Three.js 本地资源缺失或摘要不匹配，请安装固定版本资源后重启工作台。',
+                    preview_url=f"/preview/{case['id']}/{variant['id']}/" if available else None,
                     identity=bundle['artifact_sha256'], observation_times=points,
                     summary=f"{len(bundle['clips'])} 段 · {bundle['duration_seconds']:.3f} 秒")
                 document = {key: deepcopy(value) for key, value in bundle.items() if key != 'clips'}
@@ -104,7 +115,7 @@ class AnimationLab:
                         for name, raw in sorted(clip['files'].items())}) for clip in bundle['clips']]
                 frozen.append(document)
             snapshot = dict(schema='video.animation-lab-case.v1',
-                case_id=case['id'], module=case['module'], title=case['title'], runtime=self.runtime,
+                case_id=case['id'], module=case['module'], title=case['title'], runtime=self._case_runtime(bundles),
                 comparison=dict(baseline=case['variants'][0]['id'], candidate=case['variants'][-1]['id']),
                 review_scope='developer_visual_only', variants=frozen)
             # Hash every persisted field: editing a case title must create a new
@@ -113,6 +124,21 @@ class AnimationLab:
             case.update(identity=identity, case_identity=identity)
             self.cases[case['id']] = case
             self.store.register_snapshot(dict(snapshot, identity=identity))
+
+    @staticmethod
+    def _engine_requirements(bundle):
+        result = {}
+        for clip in bundle['clips']:
+            result.update(json.loads(clip['files']['manifest.json']).get('engine_assets', {}))
+        return result
+
+    def _assets_match(self, bundle):
+        return all(name in self.assets and sha256(self.assets[name]) == digest
+                   for name, digest in self._engine_requirements(bundle).items())
+
+    def _case_runtime(self, bundles):
+        required = {name: digest for bundle in bundles for name, digest in self._engine_requirements(bundle).items()}
+        return dict(self.runtime, engine_assets=required) if required else self.runtime
 
     def get_catalog(self):
         with self.evaluation_lock:
@@ -191,15 +217,16 @@ class AnimationLab:
         variants, documents = [], []
         for source in snapshot['variants']:
             bundle = by_id[source['id']]
+            variant_assets_match = assets_match and self._assets_match(bundle)
             variants.append(dict(id=source['id'], label=source['label'], compiler=bundle['compiler'],
                 duration_seconds=source['duration_seconds'], identity=bundle['artifact_sha256'],
-                available=assets_match,
-                reason='' if assets_match else '当前预览资源与冻结评测不匹配；可查看原始证据帧。',
-                preview_url=f"/preview/{identity}/{source['id']}/" if assets_match else None,
+                available=variant_assets_match,
+                reason='' if variant_assets_match else '当前预览资源与冻结评测不匹配；可查看原始证据帧。',
+                preview_url=f"/preview/{identity}/{source['id']}/" if variant_assets_match else None,
                 observation_times=[dict(label='证据 '+frame['id'], time=frame['time_seconds'])
                                    for frame in snapshot['frame_catalog'] if frame['variant_id'] == source['id']],
                 summary=f"{len(bundle['clips'])} 段 · {bundle['duration_seconds']:.3f} 秒 · 冻结评测版本"))
-            if assets_match:
+            if variant_assets_match:
                 self.bundles[identity, source['id']] = bundle
             document = deepcopy(frozen[source['id']])
             for clip_document, clip in zip(document['clips'], bundle['clips']):
@@ -207,7 +234,7 @@ class AnimationLab:
                     data=clip_document['files'][name]) for name, raw in clip['files'].items()}
             documents.append(document)
         document = dict(schema='video.animation-lab-case.v1', case_id=identity, module=run['module'],
-            title='自动评测 · '+run['title'], runtime=self.runtime,
+            title='自动评测 · '+run['title'], runtime=self._case_runtime(loaded['bundles']),
             comparison=dict(baseline=variants[0]['id'], candidate=variants[1]['id']),
             evaluation=dict(run_identity=run['identity'], report_identity=snapshot['identity']),
             review_scope='developer_evaluation_visual_only', variants=documents)
@@ -424,8 +451,10 @@ class LabHandler(BaseHTTPRequestHandler):
                 clip = next((row for row in bundle['clips'] if row['id'] == clip_id), None)
                 _require(clip is not None, 'animation_lab_unknown_clip', 404)
                 name = '/'.join(tail)
-                if name in {'assets/' + value for value in ASSET_NAMES}:
+                required_assets = {**{value: None for value in ASSET_NAMES}, **lab._engine_requirements(bundle)}
+                if name in {'assets/' + value for value in required_assets}:
                     asset = name.split('/')[1]
+                    _require(asset in lab.assets and lab._assets_match(bundle), 'animation_lab_asset_missing', 404)
                     mime = 'text/javascript' if asset.endswith('.js') else 'font/collection'
                     return self._send(lab.assets[asset], mime)
                 _require(name in clip['files'], 'animation_lab_unknown_file', 404)

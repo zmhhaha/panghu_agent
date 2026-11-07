@@ -64,7 +64,7 @@ def _thaw(value):
     return value
 
 
-def prepare(destination, runtime, *, case_id='diagram-connections', template=None, feedback_store=None):
+def prepare(destination, runtime, *, case_id='diagram-connections', template=None, feedback_store=None, engine_assets_dir=None):
     root = Path(destination).absolute()
     _require(not root.exists() and not root.is_symlink(), 'animation_evaluation_run_exists')
     reference = compile_sample(case_id, 'candidate')
@@ -81,6 +81,16 @@ def prepare(destination, runtime, *, case_id='diagram-connections', template=Non
     frozen = [_freeze(bundle) for bundle in bundles]
     semantic = semantic_identity(reference)
     _require(all(semantic_identity(bundle) == semantic for bundle in bundles), 'animation_evaluation_semantics_changed')
+    engine_assets = {name: digest for bundle in bundles for clip in bundle['clips']
+        for name, digest in json.loads(clip['files']['manifest.json']).get('engine_assets', {}).items()}
+    asset_bytes = {}
+    for name, digest in engine_assets.items():
+        _require(engine_assets_dir is not None, 'animation_evaluation_engine_assets_required')
+        path = Path(engine_assets_dir) / name
+        _require(path.is_file() and not path.is_symlink() and path.stat().st_size <= 8*1024*1024,
+                 'animation_evaluation_engine_assets_invalid')
+        asset_bytes[name] = path.read_bytes()
+        _require(sha256(asset_bytes[name]) == digest, 'animation_evaluation_engine_assets_mismatch')
     root.mkdir(parents=True)
     captures = []
     for bundle in bundles:
@@ -94,6 +104,10 @@ def prepare(destination, runtime, *, case_id='diagram-connections', template=Non
         path = root / 'overlay' / name
         path.parent.mkdir(exist_ok=True)
         path.write_bytes((overlay / name).read_bytes())
+    if any(clip['timeline'].get('engine') in {'canvas', 'three'} for bundle in bundles for clip in bundle['clips']):
+        (root / 'overlay' / 'engine_observe.mjs').write_bytes((overlay / 'engine_observe.mjs').read_bytes())
+    for name, raw in asset_bytes.items():
+        (root / 'overlay' / name).write_bytes(raw)
     feedback = effective_feedback(feedback_store, bundles) if feedback_store else []
     if feedback_store:
         from .animation_lab_triage_store import TriageStore
@@ -286,13 +300,14 @@ def main():
     prep.add_argument('--case', default='diagram-connections', choices=[row['id'] for row in catalog()])
     prep.add_argument('--template', choices=['flow', 'focus'], help='diagram only; defaults to focus')
     prep.add_argument('--feedback-db', type=Path)
+    prep.add_argument('--engine-assets-dir', type=Path, help='pinned local Three.js assets for the three-layers sample')
     for name in ('collect', 'model'):
         sub.add_parser(name).add_argument('--run', type=Path, required=True)
     args = parser.parse_args()
     if args.command == 'prepare':
         store = AnnotationStore(args.feedback_db) if args.feedback_db else None
         run = prepare(args.output, json.loads(args.runtime.read_bytes()), case_id=args.case,
-                      template=args.template, feedback_store=store)
+                      template=args.template, feedback_store=store, engine_assets_dir=args.engine_assets_dir)
         result = dict(status='prepared', identity=run['identity'], captures=run['limits']['captures'])
     elif args.command == 'collect':
         report, request = collect(args.run)

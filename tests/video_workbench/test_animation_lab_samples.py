@@ -54,10 +54,10 @@ def test_cross_shot_cases_keep_boundary_state_and_distinguish_identity(mode):
         assert before['files']['alignment.json'] == after['files']['alignment.json']
 
 
-def test_catalog_is_replayable_and_future_engines_are_not_claimed_as_available():
+def test_catalog_contains_genuine_engines_and_replayable_variants():
     cases = catalog()
-    assert {row['module'] for row in cases} == {'diagram', 'process', 'continuity'}
-    assert {row['id'] for row in MODULES if row['status'] == 'planned'} == {'canvas', 'three'}
+    assert {row['module'] for row in cases} == {'diagram', 'process', 'continuity', 'canvas', 'three'}
+    assert all(row['status'] == 'available' for row in MODULES)
     json.dumps(cases)
     for case in cases:
         assert len(case['identity']) == len(case['input_sha256']) == 64

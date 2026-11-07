@@ -1,6 +1,7 @@
 """Fixed developer evaluation cases compiled by the real animation compilers.
 
-This module has no filesystem, network, Agent or TTS operations. Historical
+Compilation reads only its bundled engine source and performs no filesystem
+writes, network, Agent or TTS operations. Historical
 variants are comparison baselines, not a change to production admission. Audio
 is explicitly synthetic silence and cannot establish narration quality/timing.
 """
@@ -15,6 +16,8 @@ import wave
 from .examples.build_process_sample import SAMPLE_TEXT, process_plan
 from .motion import FPS, compile_project, estimated_alignment, example_plan, make_beats, sha256
 from .motion_process import compile_process_project
+from .animation_lab_canvas import compile_canvas_project, example_canvas_plan
+from .animation_lab_three import compile_three_project, example_three_plan
 from .process_continuity import (build_process_continuity_plan,
                                  compile_process_continuity_project, resolve_process_continuity)
 
@@ -24,15 +27,29 @@ MODULES = (
     dict(id='diagram', title='框图与信息图', status='available'),
     dict(id='process', title='二维过程动画', status='available'),
     dict(id='continuity', title='跨镜衔接', status='available'),
-    dict(id='canvas', title='Canvas 2D', status='planned',
-         note='尚未实现；后续由具体题材建立样例，不以 SVG 冒充 Canvas 能力。'),
-    dict(id='three', title='Three.js 三维动画', status='planned',
-         note='尚未实现；后续在明确三维需求后建立样例。'),
+    dict(id='canvas', title='Canvas 2D', status='available',
+         note='真实 Canvas 2D 绘制，使用共享时间轴和固定种子。'),
+    dict(id='three', title='Three.js 三维动画', status='available',
+         note='真实 Three.js / WebGL；需要本地固定版本资源和可用的 WebGL 2。'),
 )
 
 
 def _variant(identity, label, compiler, *, role='candidate', status='available'):
     return dict(id=identity, label=label, compiler=compiler, role=role, status=status)
+
+
+_ENGINE_CASES = (
+    dict(id='canvas-queue', module='canvas', title='Canvas：请求积压与队列消退',
+         description='相同请求与吞吐变化，对比均匀呈现和分阶段聚焦。',
+         checks=['积压和消退是否清楚', '请求是否连续且可区分', '倒放定位能否恢复相同画面'],
+         variants=[_variant('baseline', 'Canvas · 均匀呈现', 'animation-lab-canvas-compiler-1', role='baseline'),
+                   _variant('candidate', 'Canvas · 分阶段聚焦', 'animation-lab-canvas-compiler-1')]),
+    dict(id='three-layers', module='three', title='Three.js：分层系统展开与聚焦',
+         description='相同三维层级，对比固定视角和随讲解展开、聚焦、复原。',
+         checks=['空间层级是否清楚', '镜头移动是否帮助理解', '标签是否易读', '倒放后几何和镜头是否一致'],
+         variants=[_variant('baseline', 'Three.js · 固定视角', 'animation-lab-three-compiler-1', role='baseline'),
+                   _variant('candidate', 'Three.js · 镜头聚焦', 'animation-lab-three-compiler-1')]),
+)
 
 
 _CASES = (
@@ -62,7 +79,7 @@ _CASES = (
          checks=['原件是否仍可辨认', '复制关系是否清楚', '衔接速度是否合适'],
          variants=[_variant('baseline', '两镜独立播放', 'motion-process-compiler-2', role='baseline'),
                    _variant('candidate', '复制并保留 copy', 'motion-process-continuity-compiler-1')]),
-)
+) + _ENGINE_CASES
 
 
 def _case(case_id):
@@ -133,6 +150,13 @@ def _continuity_inputs(copy):
 
 
 def _inputs(case_id):
+    if case_id in {'canvas-queue', 'three-layers'}:
+        text = ('请求持续进入队列。处理速度不足，等待逐渐增加。增加处理能力，积压逐步消退。' if case_id == 'canvas-queue' else
+                '先看系统的整体层级。把各层展开，观察它们的职责。聚焦关键一层，再回到整体结构。')
+        beats = make_beats(text)
+        audio = _silence(18)
+        plan = example_canvas_plan() if case_id == 'canvas-queue' else example_three_plan()
+        return dict(plan=plan, beats=beats, alignment=estimated_alignment(beats, sha256(audio), 18)), [audio]
     if case_id.startswith('diagram-'):
         return _diagram_inputs(case_id == 'diagram-long-label')
     if case_id == 'process-retry':
@@ -170,7 +194,10 @@ def _clip(identity, files, audio):
 
 def _compile_variant(case_id, variant, inputs, audio):
     compiler = variant['compiler']
-    if case_id.startswith('diagram-'):
+    if case_id in {'canvas-queue', 'three-layers'}:
+        compile_engine = compile_canvas_project if case_id == 'canvas-queue' else compile_three_project
+        clips = [_clip('scene-1', compile_engine(**inputs, variant=variant['id']), audio[0])]
+    elif case_id.startswith('diagram-'):
         clips = [_clip('scene-1', compile_project(**inputs, compiler_version=compiler), audio[0])]
     elif case_id == 'process-retry':
         clips = [_clip('scene-1', compile_process_project(**inputs, compiler_version=compiler), audio[0])]

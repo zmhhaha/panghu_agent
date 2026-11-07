@@ -134,10 +134,19 @@ def capture_plan(directory, runtime, image, overlay_dir, timeout=MAX_TIMEOUT):
         _require(_sha(_read(directory / name, 8 * 1024 * 1024)) == digest,
                  'animation_lab_executor_input_mismatch')
     adapters = {}
-    for name, binding in _ADAPTERS.items():
+    bindings = dict(_ADAPTERS)
+    if request.get('engine_observer_sha256'):
+        bindings['engine_observe.mjs'] = 'engine_observer_sha256'
+    for name, binding in bindings.items():
         adapters[name] = _sha(_read(overlay_dir / name, 1024 * 1024))
         _require(binding is None or adapters[name] == request.get(binding),
                  'animation_lab_executor_adapter_mismatch')
+    for name, digest in request.get('engine_assets', {}).items():
+        _require(re.fullmatch(r'three\.(?:module|core)\.min\.js', name)
+                 and _SHA.fullmatch(digest)
+                 and _sha(_read(overlay_dir / name, 8 * 1024 * 1024)) == digest,
+                 'animation_lab_executor_engine_asset_mismatch')
+        adapters[name] = digest
     timeline = json.loads(_read(directory / 'timeline.json', 8 * 1024 * 1024))
     _require(type(timeline) is dict and type(timeline.get('actions')) is list
              and len(timeline['actions']) <= 64
@@ -177,7 +186,7 @@ def _prepare(plan, request):
         _ownership(work / name)
     _ownership(work, directory=True)
     for name, digest in plan['adapters'].items():
-        raw = _read(Path(plan['overlay_dir']) / name, 1024 * 1024)
+        raw = _read(Path(plan['overlay_dir']) / name, 8 * 1024 * 1024)
         _require(_sha(raw) == digest, 'animation_lab_executor_adapter_changed')
         _exclusive(adapters / name, raw)
         os.chmod(adapters / name, 0o444)
@@ -353,7 +362,7 @@ def capture_directory(directory, runtime, image, overlay_dir, timeout=MAX_TIMEOU
             '--restart=no', '--log-driver=none', '--stop-timeout=3', '--init', '--workdir=/work',
             '--env', 'ANIMATION_LAB_IMAGE_DIGEST=' + plan['image_digest'],
             '--mount', 'type=bind,source=' + str(work) + ',target=/work']
-        for adapter in _ADAPTERS:
+        for adapter in plan['adapters']:
             arguments += ['--mount', 'type=bind,source=' + str(adapters / adapter)
                           + ',target=/opt/renderer/' + adapter + ',readonly']
         arguments += ['--entrypoint=node', image_id, '/opt/renderer/lab_observe.mjs',
@@ -425,7 +434,7 @@ def main(argv=None):
     parser.add_argument('--directory', required=True)
     parser.add_argument('--runtime', required=True, help='local JSON with the frozen measured runtime')
     parser.add_argument('--image', required=True, help='an already-local repository:latest@sha256:...')
-    parser.add_argument('--overlay-dir', required=True, help='directory containing the four capture adapters')
+    parser.add_argument('--overlay-dir', required=True, help='directory containing the bound capture adapters and engine assets')
     parser.add_argument('--timeout', type=float, default=MAX_TIMEOUT)
     args = parser.parse_args(argv)
     runtime = json.loads(_read(args.runtime, 64 * 1024))

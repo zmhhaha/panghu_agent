@@ -86,6 +86,9 @@ def capture_request(bundle, clip_id, runtime):
         historical_local_experiment=clip['timeline']['compiler'] == 'motion-process-compiler-1',
         agent_calls=0, tts_calls=0, production_writes=0,
         output='sampled_browser_observations_not_mp4')
+    if clip['timeline'].get('engine') in {'canvas', 'three'}:
+        value.update(engine_observer_sha256=sha256((_HERE / 'engine_observe.mjs').read_bytes()),
+                     engine_assets=json.loads(clip['files']['manifest.json']).get('engine_assets', {}))
     return dict(value, capture_identity=sha256(value))
 
 
@@ -243,7 +246,13 @@ def review_capture(bundle, clip_id, capture_directory, expected_runtime):
     timeline = clip['timeline']
     technical, error = None, None
     try:
-        technical = (verify_process_observations(plan, timeline, observations)
+        if timeline.get('engine') in {'canvas', 'three'}:
+            from .animation_lab_engine_review import verify_engine_observations
+            _require(receipt.get('engine_assets') == request.get('engine_assets'),
+                     'animation_lab_capture_engine_assets_mismatch')
+            technical = verify_engine_observations(plan, timeline, observations)
+        else:
+            technical = (verify_process_observations(plan, timeline, observations)
                      if timeline['compiler'] in {'motion-process-compiler-1', 'motion-process-compiler-2'}
                      else verify_observations(plan, timeline, observations, frame_bytes=frames))
     except ServiceError as exc:
