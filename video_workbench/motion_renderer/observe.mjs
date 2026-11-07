@@ -65,8 +65,15 @@ export async function withObservationPage(chromium,{url,executablePath,runtimePa
  }finally{if(browser)await browser.close();}
 }
 
-export async function observeProject(chromium,{root='/work',dist='/opt/renderer/node_modules/hyperframes/dist'}={}){
+export async function observeProject(chromium,{root='/work',dist='/opt/renderer/node_modules/hyperframes/dist',
+ historicalProcessEvidence=false}={}){
  const timeline=JSON.parse(readRegular(join(root,'timeline.json')));
+ // Compiler1 remains outside production admission. Only the isolated Lab
+ // explicitly requests its complete initial/repeated DOM evidence; do not
+ // reconstruct those samples later from a screenshot or a reverse-seek hash.
+ if(historicalProcessEvidence!==false
+  && !(historicalProcessEvidence===true&&timeline.compiler==='motion-process-compiler-1'))
+  throw Error('historical_process_evidence_scope_mismatch');
  // This is the same IIFE published by build-runtime.ts for real rendering;
  // resolve its manifest filename and verify its checksum before any execution.
  const runtimePath=runtimeArtifact(dist);
@@ -117,7 +124,8 @@ export async function observeProject(chromium,{root='/work',dist='/opt/renderer/
     timeline_sha256:sha(readRegular(root+'/timeline.json')),windows,
     ...(continuityBoundary?{continuity_boundary:continuityBoundary}:{}),
     ...(seekSequence?{seek_sequence:seekSequence}:{}),
-    ...(['motion-compiler-4','motion-compiler-5','motion-compiler-6','motion-process-compiler-2'].includes(timeline.compiler)?{initial:first,repeated_initial:repeat}:{}),
+    ...(['motion-compiler-4','motion-compiler-5','motion-compiler-6','motion-process-compiler-2'].includes(timeline.compiler)
+      ||historicalProcessEvidence?{initial:first,repeated_initial:repeat}:{}),
     reverse_seek:{first_sha256:first.frame_sha256,last_sha256:last.frame_sha256,repeated_first_sha256:repeat.frame_sha256,repeat_state_equal:state(first)===state(repeat)}},null,2));
   });
  }finally{await new Promise(done=>server.close(done));}

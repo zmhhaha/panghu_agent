@@ -19,14 +19,25 @@
       <div class="sidebar-heading"><h2>效果样例库</h2><span id="case-count" class="count">—</span></div>
       <p class="muted small">固定输入，独立对比。标注会绑定当前样例和版本。</p>
       <label class="field-label" for="module-filter">能力模块</label><select id="module-filter"><option value="all">全部模块</option></select>
+      <label class="field-label" for="domain-filter">领域</label><select id="domain-filter"><option value="all">全部领域</option></select>
+      <label class="field-label" for="engine-filter">渲染引擎</label><select id="engine-filter"><option value="all">全部引擎</option></select>
       <label class="field-label" for="case-search">查找样例</label><input id="case-search" type="search" placeholder="名称或效果说明" autocomplete="off">
       <label class="field-label" for="review-filter">评价状态</label><select id="review-filter"><option value="all">全部评价状态</option><option value="unreviewed">待评价</option><option value="reviewed">已评价</option></select>
       <div id="module-note" class="module-note" hidden></div>
+      <p id="filter-summary" class="muted small" role="status"></p>
       <nav id="case-list" class="case-list" aria-label="选择样例"><p class="muted">正在读取样例…</p></nav>
       <section id="evaluations-panel" hidden aria-label="自动评测报告"><h3>自动评测报告</h3><p class="muted small">技术检查与模型意见分开记录，报告不自动采用。</p><div id="evaluations-list"></div></section>
       <div class="sidebar-footer"><span class="status-dot" aria-hidden="true"></span><p>积累效果评测与开发偏好。<br>标注不自动修改生产效果。</p></div>
     </aside>
     <main>
+      <details id="requirements-panel" class="panel requirements-panel">
+        <summary><strong>跨领域需求矩阵</strong><span id="requirements-count" class="count">正在读取</span></summary>
+        <p class="muted small">样例库按跨领域需求重新构建。用不同数据结构、布局和难度检查同一项能力；每份需求有明确的目标与预期结果，固定种子便于重复比较。</p>
+        <div id="requirements-summary" class="requirements-summary"></div>
+        <div id="requirements-coverage" class="requirements-coverage"></div>
+        <div class="requirements-actions"><a id="requirements-export" class="button secondary" download="animation-requirements.json">下载当前筛选的需求集</a><span id="requirements-export-note" class="muted small"></span></div>
+        <p class="muted small">需求覆盖、技术采样和人工认可分别记录；样例数量不代表已经通过视觉评价或正式视频制作准入。</p>
+      </details>
       <details id="iteration-panel" class="panel iteration-panel">
         <summary><span><strong>反馈迭代</strong><span class="muted small">按模块整理意见，追踪开发任务与候选验收</span></span><span id="iteration-refresh-note" class="count">展开读取</span></summary>
         <div class="iteration-controls"><label>迭代模块<select id="iteration-module"><option value="">正在读取模块…</option></select></label><button id="iteration-refresh" class="button secondary" type="button">刷新反馈</button><button id="iteration-prepare" class="button primary" type="button" disabled>生成增量任务包</button></div>
@@ -44,6 +55,7 @@
       <div id="case-workspace" hidden>
         <section class="case-heading" aria-labelledby="case-title"><div><div class="title-row"><span id="module-badge" class="module-badge"></span><span id="review-badge" class="review-badge">待标注</span></div><h2 id="case-title"></h2><p id="case-description" class="muted"></p></div><div class="review-actions" aria-label="人工效果评价"><button id="review-acceptable" class="button secondary" type="button" data-verdict="acceptable">效果可接受</button><button id="review-needs-work" class="button secondary" type="button" data-verdict="needs_work">还需改进</button></div></section>
         <div class="fixture-note"><span aria-hidden="true">◷</span><p><strong>无旁白技术样例</strong> · 用于评价画面和动作。静音计时及估算时间不代表真实配音同步。</p></div>
+        <details id="case-requirement" class="panel case-requirement" hidden><summary><strong>本样例的需求与预期结果</strong><span id="case-requirement-meta" class="muted small"></span></summary><div id="case-requirement-body"></div></details>
         <section class="comparison-grid" aria-label="动画版本对比">
           <article class="player-card" id="baseline-card"><header><div><span class="version-letter">A</span><strong id="baseline-title">基线版本</strong></div><span id="baseline-duration" class="muted small"></span></header><div class="player-stage" id="baseline-stage"><iframe id="baseline-frame" title="基线动画预览" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe><div id="baseline-loading" class="player-status">正在准备预览…</div><div id="baseline-overlay" class="annotation-overlay"><div class="region-box" hidden></div></div></div><footer><span id="baseline-state" class="player-state">等待预览</span><code id="baseline-identity"></code></footer></article>
           <article class="player-card" id="candidate-card"><header><div><span class="version-letter candidate">B</span><strong id="candidate-title">候选版本</strong></div><span id="candidate-duration" class="muted small"></span></header><div class="player-stage" id="candidate-stage"><iframe id="candidate-frame" title="候选动画预览" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe><div id="candidate-loading" class="player-status">正在准备预览…</div><div id="candidate-overlay" class="annotation-overlay"><div class="region-box" hidden></div></div></div><footer><span id="candidate-state" class="player-state">等待预览</span><code id="candidate-identity"></code></footer></article>

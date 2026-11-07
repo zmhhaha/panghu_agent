@@ -169,8 +169,12 @@ def _text_and_state(state, wanted):
     _require(state.get('label') == wanted['label'] and state.get('detail') == wanted['detail']
              and state.get('copied_from') == wanted['copied_from']
              and state.get('slot') == wanted['slot'], 'process_continuity_identity_mismatch')
-    text = {'element-label'} | ({'element-detail'} if wanted['detail'] else set())
+    text = {'element-label'}
     if wanted['kind'] == 'card':
+        # Continuity cards retain this DOM region even when it is empty so a
+        # later scene can update its text without rebuilding the object. Its
+        # measured bounds still reserve clearance and must never be omitted.
+        text.add('element-detail')
         visual = STATE_PRESENTATIONS[wanted['state']]
         _require(state.get('state') == wanted['state'] and state.get('stateLabel') == visual['label']
                  and state.get('stateSymbol') == visual['symbol'] and state.get('statePath') == visual['path'],

@@ -54,6 +54,8 @@ def setup(tmp_path):
     (test_dir / 'test_animation_lab_canvas.py').write_text(
         'from video_workbench.animation_lab_canvas import value\ndef test_value():\n    assert value() == 2\n', encoding='utf-8')
     (test_dir / 'test_animation_lab_engine_integration.py').write_text('def test_contract():\n    assert True\n', encoding='utf-8')
+    (test_dir / 'test_animation_lab_domain_cases.py').write_text('def test_domain_contract():\n    assert True\n', encoding='utf-8')
+    (test_dir / 'test_animation_lab_matrix_v2.py').write_text('def test_matrix_identity_contract():\n    assert True\n', encoding='utf-8')
     git(source, 'add', '.')
     git(source, 'commit', '-q', '-m', 'Synthetic fixture')
     package = runner._signed(dict(schema=runner.TASK_SCHEMA, module='canvas',
@@ -241,7 +243,7 @@ def test_real_local_module_checks_are_bound_to_exact_candidate_diff(setup):
     runner.apply_proposal(workspace, request, proposal)
     receipt = fixture_checks(workspace, request)
     assert receipt['passed'] is True
-    assert '2 passed' in receipt['output_tail']
+    assert '4 passed' in receipt['output_tail']
     assert receipt['diff_sha256'] == runner._sha(runner._git(workspace, 'diff', '--binary', raw=True))
     assert receipt['scope'] == 'module_technical_tests_only'
 
@@ -443,6 +445,47 @@ def test_shared_source_changes_expand_only_related_module_checks():
     assert runner.affected_modules(['video_workbench/motion_process.py']) == ['continuity', 'process']
     assert runner.affected_modules(['video_workbench/animation_lab_effects_visual.py']) == ['diagram', 'process']
     assert runner.affected_modules(['video_workbench/motion.py']) == sorted(runner.MODULE_TESTS)
+    assert runner.affected_modules(['video_workbench/animation_lab_scenarios.py']) == ['algorithms', 'charts', 'interface']
+    assert runner.affected_modules(['video_workbench/animation_lab_domain_cases.py']) == ['canvas', 'continuity', 'diagram', 'process', 'three']
+
+
+@pytest.mark.parametrize('module,family', [('charts', 'charts'), ('algorithms', 'algorithms'), ('interface', 'interfaces')])
+def test_new_family_modules_are_explicitly_scoped_and_share_common_regression(module, family):
+    own = 'video_workbench/animation_lab_scenarios_'+family+'.py'
+    assert runner.MODULE_FILES[module] == {own, 'video_workbench/animation_lab_scenarios.py'}
+    assert runner.affected_modules([own]) == [module]
+    assert 'test_animation_lab_scenarios_'+family+'.py' in runner.MODULE_TESTS[module]
+    assert {'test_animation_lab_scenarios.py', 'test_animation_lab_scenarios_review.py', 'test_animation_lab_domain_cases.py',
+            'test_animation_lab_matrix_v2.py',
+            'test_animation_lab_review.py'} <= set(runner.MODULE_TESTS[module])
+    assert all(not path.startswith(('tests/', '.github/', 'agent_service/'))
+               and path not in {'video_workbench/animation_lab_iteration_runner.py',
+                                'video_workbench/animation_lab_model.py'}
+               for path in runner.MODULE_FILES[module])
+
+
+@pytest.mark.parametrize('module,family', [('charts', 'charts'), ('algorithms', 'algorithms'), ('interface', 'interfaces')])
+def test_real_git_new_family_source_windows_cannot_edit_other_modules_or_controls(setup, module, family):
+    source, package, _, _, _, temp = setup
+    own = 'video_workbench/animation_lab_scenarios_'+family+'.py'
+    shared = 'video_workbench/animation_lab_scenarios.py'
+    for name in (own, shared):
+        (source / name).write_bytes(b'# Synthetic new-family scope fixture\ndef value():\n    return 1\n')
+    git(source, 'add', '--', own, shared)
+    git(source, 'commit', '-q', '-m', 'Synthetic explicit family sources')
+    package = runner._signed({**{k: v for k, v in package.items() if k != 'identity'},
+        'module': module, 'source_revision': git(source, 'rev-parse', 'HEAD')})
+    request = runner.prepare_request(source, package, [own+':3:3', shared+':3:3'], base_branch='master')
+    assert request['module'] == module and request['branch'].startswith('codex/animation-'+module+'-')
+    workspace = runner.create_workspace(source, temp / ('scope-'+module), request)
+    proposal = dict(schema=runner.PROPOSAL_SCHEMA, request_identity=request['identity'],
+        task_identity=package['identity'], edits=[dict(source_id=request['sources'][0]['source_id'], replacement='    return 2\n')])
+    assert runner.apply_proposal(workspace, request, proposal)['changed_files'] == [own]
+    for forbidden in ['video_workbench/animation_lab_canvas.py', '../secrets',
+                      'video_workbench/animation_lab_model.py', 'video_workbench/animation_lab_iteration_runner.py',
+                      'tests/video_workbench/test_animation_lab_scenarios.py', '.github/workflows/deploy.yml']:
+        with pytest.raises(ValueError, match='out_of_scope'):
+            runner.prepare_request(source, package, [forbidden], base_branch='master')
 
 
 def test_runner_events_roundtrip_real_iteration_store_and_new_retry_attempt(setup):

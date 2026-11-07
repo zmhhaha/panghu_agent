@@ -5,7 +5,8 @@ import json
 import pytest
 
 from video_workbench.animation_lab_canvas import (
-    COMPILER_VERSION, compile_canvas_project, example_canvas_plan, validate_canvas_plan,
+    COMPILER_VERSION, CONTEXT_COMPILER_VERSION, CONTEXT_PLAN_SCHEMA,
+    compile_canvas_project, example_canvas_plan, validate_canvas_plan,
 )
 from video_workbench.motion import estimated_alignment, make_beats, sha256
 
@@ -122,3 +123,67 @@ def test_plan_validation_returns_an_isolated_value():
     checked = validate_canvas_plan(original)
     original['labels']['source'] = 'changed'
     assert checked['labels']['source'] != original['labels']['source']
+
+
+def contextual_inputs():
+    plan = example_canvas_plan()
+    plan.update(schema=CONTEXT_PLAN_SCHEMA, title='门诊登记单依次完成',
+                labels=dict(source='登记区', queue='待诊区', worker='诊室'),
+                context=dict(noun='登记单', source_detail='登记单依次到达', queue_detail='等待空闲诊室',
+                    worker_detail='逐张领取并完成', phase_intro='登记单先进入待诊区',
+                    phase_queue='待诊区暂存登记单', phase_work='诊室逐张领取登记单', phase_done='所有登记单已处理完成'))
+    beats = make_beats('登记单先进入待诊区。诊室逐张领取。最后所有登记单完成。')
+    return plan, beats, estimated_alignment(beats, 'c'*64, 18)
+
+
+def test_context_v2_binds_domain_language_and_actual_drawn_text_without_changing_geometry():
+    args = contextual_inputs()
+    files = compile_canvas_project(*args)
+    page = files['index.html'].decode()
+    timeline, manifest = (json.loads(files[key]) for key in ('timeline.json', 'manifest.json'))
+    assert timeline['compiler'] == manifest['compiler'] == CONTEXT_COMPILER_VERSION
+    assert json.loads(files['plan.json'])['schema'] == CONTEXT_PLAN_SCHEMA
+    assert "plan.context[id+'_detail']" in page
+    assert 'plan.context.phase_intro' in page and 'plan.context.phase_done' in page
+    assert "ctx.measureText(String(label))" in page and 'text_boxes:drawnText' in page
+    assert '.eyebrow{font-size:14px}' in page
+    assert '请求全部完成' not in page and '请求到达速度超过处理速度' not in page
+    assert '同时到来的请求' not in page and '执行节点持续领取' not in page
+    assert all('请求' not in row['label'] and '执行节点' not in row['label'] for row in timeline['actions'])
+    assert '登记单出现' in {row['label'] for row in timeline['actions']}
+    old_plan = deepcopy(args[0]); old_plan.pop('context'); old_plan['schema'] = 'video.canvas-plan.v1'
+    old = json.loads(compile_canvas_project(old_plan, args[1], args[2])['timeline.json'])
+    geometry = lambda rows: [{key: value for key, value in row.items() if key != 'label'} for row in rows]
+    assert geometry(old['actions']) == geometry(timeline['actions'])
+
+
+@pytest.mark.parametrize('mutation', [
+    lambda p: p.update(schema='video.canvas-plan.v1'),
+    lambda p: p.pop('context'),
+    lambda p: p['context'].update(extra='unexpected program'),
+    lambda p: p['context'].update(noun='too long an object noun'),
+    lambda p: p['context'].update(source_detail='说明'*8),
+    lambda p: p['context'].update(phase_work='bad\0text'),
+    lambda p: p['context'].pop('phase_done'),
+])
+def test_context_v2_rejects_schema_smuggling_unknown_and_unbounded_language(mutation):
+    plan, beats, alignment = contextual_inputs()
+    mutation(plan)
+    with pytest.raises(ValueError, match='canvas_plan_invalid'):
+        compile_canvas_project(plan, beats, alignment)
+
+
+def test_context_language_remains_data_in_the_script_context():
+    plan, beats, alignment = contextual_inputs()
+    plan['context']['phase_done'] = '</script><script>x</script>'
+    page = compile_canvas_project(plan, beats, alignment)['index.html'].decode()
+    assert plan['context']['phase_done'] not in page
+    assert '\\u003c/script\\u003e\\u003cscript\\u003ex\\u003c/script\\u003e' in page
+
+
+def test_v1_still_uses_original_source_and_compiler_identity(canvas_inputs):
+    files = compile_canvas_project(*canvas_inputs)
+    page = files['index.html'].decode()
+    assert json.loads(files['timeline.json'])['compiler'] == COMPILER_VERSION
+    assert 'text_boxes:drawnText' not in page and 'let drawnText=[]' not in page
+    assert '请求全部完成' in page

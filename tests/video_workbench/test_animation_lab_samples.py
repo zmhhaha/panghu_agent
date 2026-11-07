@@ -56,7 +56,9 @@ def test_cross_shot_cases_keep_boundary_state_and_distinguish_identity(mode):
 
 def test_catalog_contains_genuine_engines_and_replayable_variants():
     cases = catalog()
-    assert {row['module'] for row in cases} == {'diagram', 'process', 'continuity', 'canvas', 'three'}
+    assert len(cases) == 27
+    assert {row['module'] for row in cases} == {'diagram', 'process', 'continuity', 'canvas', 'three',
+                                               'charts', 'algorithms', 'interface'}
     assert all(row['status'] == 'available' for row in MODULES)
     json.dumps(cases)
     for case in cases:

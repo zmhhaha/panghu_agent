@@ -60,7 +60,8 @@ def _model_review(fixture, *, issues=True):
             description='Synthetic fixture issue for '+variant['id'], confidence=.7))
     suggestions = [dict(issue_id=row['id'], kind='improve_layout',
         parameters=dict(layout_template='flow'), reason='Synthetic bounded layout suggestion')
-        for row in findings] if fixture['run']['module'] == 'diagram' else []
+        for row in findings] if (fixture['run']['module'] == 'diagram'
+            and all('requirement' not in bundle['inputs'] for bundle in fixture['bundles'])) else []
     if not suggestions:
         suggestions = [dict(issue_id=None, kind='no_change', parameters={},
                             reason='Synthetic fixture; no executable change')]
@@ -76,7 +77,7 @@ def _model_review(fixture, *, issues=True):
 
 @pytest.fixture
 def evaluation_factory(tmp_path):
-    def create(*, case_id='diagram-connections', name='run-one', technical_issue=True,
+    def create(*, case_id='domain-diagram-water', name='run-one', technical_issue=True,
                model='reviewed', model_issues=True):
         root = tmp_path/'evaluations'/name
         run = prepare(root, deepcopy(RUNTIME), case_id=case_id)
@@ -189,13 +190,14 @@ def _decision(report, finding, decision, comment='Synthetic developer decision')
                 decision=decision, comment=comment)
 
 
-def test_frozen_comparison_uses_candidate_and_layout_focus_not_normal_catalog(evaluation_factory, client_factory):
+def test_frozen_requirement_comparison_preserves_actual_baseline_and_candidate(evaluation_factory, client_factory):
     fixture = evaluation_factory()
     client = client_factory(fixture)
     frozen = _case(client)
-    normal = next(row for row in client.catalog['cases'] if row['id'] == 'diagram-connections')
+    normal = next(row for row in client.catalog['cases'] if row['id'] == 'domain-diagram-water')
     assert {row['id'] for row in normal['variants']} == {'baseline', 'candidate'}
-    assert {row['id'] for row in frozen['variants']} == {'candidate', 'layout-focus'}
+    assert {row['id'] for row in frozen['variants']} == {'baseline', 'candidate'}
+    assert fixture['run']['limits']['local_candidates'] == 0
     assert frozen['id'] != normal['id']
     expected_order = [row['id'] for _, row in sorted(fixture['request']['private']['variants'].items())]
     assert [row['id'] for row in frozen['variants']] == expected_order
@@ -223,7 +225,7 @@ def test_runtime_asset_mismatch_blocks_preview_but_keeps_verified_evidence(evalu
 
 
 def test_model_findings_map_exact_original_side_global_clock_hash_and_region(evaluation_factory, client_factory):
-    fixture = evaluation_factory(case_id='continuity-retain')
+    fixture = evaluation_factory(case_id='domain-continuity-delivery')
     client = client_factory(fixture)
     report = client.request('GET', '/api/evaluations/run-one')[1]
     for finding in report['findings']:
@@ -277,7 +279,7 @@ def test_only_latest_needs_fix_decision_enters_task_without_changing_case_identi
 
 
 @pytest.mark.parametrize('case_id,scope', [
-    ('diagram-connections', 'bounded_diagram_layout'), ('process-retry', 'developer_design_required'),
+    ('domain-diagram-water', 'developer_design_required'), ('domain-process-parcel', 'developer_design_required'),
 ])
 def test_revision_task_preserves_original_runtime_inputs_audio_and_requires_explicit_execution(
         evaluation_factory, client_factory, case_id, scope):

@@ -48,7 +48,7 @@ export async function captureLab({root='/work',requestSha256,chromium,
   if(hash(readRegular(join(root,'plan.json')))!==timeline.plan_sha256
     || hash(readRegular(join(root,'audio.wav'),8*1024*1024))!==timeline.audio_sha256)
     throw Error('capture_plan_audio_binding_mismatch');
-  const engine=['canvas','three','svg-effects'].includes(timeline.engine);
+  const engine=['canvas','three','svg-effects','scenario-effects'].includes(timeline.engine);
   const manifest=JSON.parse(readRegular(join(root,'manifest.json')));
   if(engine) {
     if(hash(readFileSync(join(here,'engine_observe.mjs')))!==request.engine_observer_sha256)
@@ -72,7 +72,8 @@ export async function captureLab({root='/work',requestSha256,chromium,
   if(engine) {
     const {observeEngineProject}=await import('./engine_observe.mjs');
     await observeEngineProject(chromium,{root,dist});
-  } else await observeProject(chromium,{root,dist});
+  } else await observeProject(chromium,{root,dist,
+    historicalProcessEvidence:request.historical_local_experiment});
   const frames=[];
   let total=0;
   for(const name of readdirSync(join(root,'observations')).sort()) {

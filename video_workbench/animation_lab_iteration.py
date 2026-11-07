@@ -22,7 +22,7 @@ from .motion import canonical, sha256
 
 
 SCHEMA = 'video.animation-lab-feedback-task.v1'
-MODULES = ('diagram', 'process', 'continuity', 'canvas', 'three')
+MODULES = ('diagram', 'process', 'continuity', 'canvas', 'three', 'charts', 'algorithms', 'interface')
 STATES = frozenset({'prepared', 'synced', 'running', 'pr_open', 'candidate_ready',
                     'accepted', 'rejected', 'failed', 'canceled'})
 TRANSITIONS = {
@@ -40,6 +40,7 @@ _SHA = re.compile(r'[0-9a-f]{64}\Z')
 _REVISION = re.compile(r'[0-9a-f]{40}(?:[0-9a-f]{24})?\Z')
 _KEY = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}\Z')
 MAX_PACKAGE_BYTES = 2 * 1024 * 1024
+MAX_REQUIREMENT_CHARS = 8000
 _RECEIPT_FIELDS = {'task_identity', 'module', 'source_revision', 'run_id', 'branch',
                    'commit', 'pr_url', 'candidate_url', 'checks', 'comment',
                    'run_slug', 'report_identity'}
@@ -105,9 +106,71 @@ def _source_snapshot(db, identity):
         SELECT coalesce(json_extract(v.value,'$.variant_id'),json_extract(v.value,'$.id')), json_extract(v.value,'$.compiler'),
             json_extract(v.value,'$.artifact_sha256'), json_extract(v.value,'$.input_sha256')
         FROM lab_snapshots s, json_each(s.document,'$.variants') v WHERE s.identity=?''', (identity,))]
-    return dict(case_id=row[0], module=row[1], title=row[2],
+    result = dict(case_id=row[0], module=row[1], title=row[2],
                 runtime=json.loads(row[3]) if row[3] else {},
                 comparison=json.loads(row[4]) if row[4] else {}, variants=variants)
+    requirement = _source_requirement(db, identity)
+    if requirement is not None:
+        result['requirement'] = requirement
+    return result
+
+
+def _source_requirement(db, identity):
+    """Project only a bounded frozen brief; never materialize binary artifacts.
+
+    Matrix inputs carry a brief wrapper; registered scenario plans can supply
+    the same fields directly. Inputs without a brief add no fabricated data.
+    """
+    row = db.execute('''WITH selected AS (
+        SELECT
+            CASE WHEN json_type(document,'$.variants[0].inputs.requirement') IS NOT NULL
+                THEN json_type(document,'$.variants[0].inputs.requirement')
+                WHEN json_type(document,'$.variants[0].inputs.inputs.plan.requirement') IS NOT NULL
+                THEN json_type(document,'$.variants[0].inputs.inputs.plan') END AS kind,
+            CASE WHEN json_type(document,'$.variants[0].inputs.requirement') IS NOT NULL
+                THEN json_extract(document,'$.variants[0].inputs.requirement')
+                WHEN json_type(document,'$.variants[0].inputs.inputs.plan.requirement') IS NOT NULL
+                THEN json_extract(document,'$.variants[0].inputs.inputs.plan') END AS raw
+        FROM lab_snapshots WHERE identity=?
+    ), projected AS (
+        SELECT kind, CASE WHEN kind='object' THEN json_object(
+            'domain',json_extract(raw,'$.domain'),
+            'domain_label',json_extract(raw,'$.domain_label'),
+            'engine',json_extract(raw,'$.engine'),
+            'expression',json_extract(raw,'$.expression'),
+            'narrative',json_extract(raw,'$.narrative'),
+            'difficulty',json_extract(raw,'$.difficulty'),
+            'requirement',json_extract(raw,'$.requirement')) END AS brief
+        FROM selected
+    ) SELECT kind,length(brief),CASE WHEN length(brief)<=? THEN brief END FROM projected''',
+        (identity, MAX_REQUIREMENT_CHARS)).fetchone()
+    if row is None or row[0] is None:
+        return None
+    _require(row[0] == 'object', 'animation_iteration_requirement_invalid')
+    _require(row[1] is not None and row[1] <= MAX_REQUIREMENT_CHARS,
+             'animation_iteration_requirement_too_large')
+    value = json.loads(row[2])
+    # All fields remain untrusted quoted data. Extra plan fields, including
+    # scripts, credentials, and large frozen files, never enter this projection.
+    for name, maximum in (('domain', 64), ('engine', 32), ('expression', 64), ('narrative', 5000)):
+        _require(_text(value.get(name), maximum) and bool(value[name].strip()),
+                 'animation_iteration_requirement_invalid')
+    for name, maximum in (('domain_label', 100), ('difficulty', 32)):
+        if value.get(name) is None:
+            value.pop(name, None)
+        else:
+            _require(_text(value[name], maximum), 'animation_iteration_requirement_invalid')
+    brief = value.get('requirement')
+    _require(type(brief) is dict and set(brief) == {'audience', 'goal', 'questions',
+             'required_entities', 'expected_outcome', 'boundaries'}, 'animation_iteration_requirement_invalid')
+    for name in ('audience', 'goal', 'expected_outcome'):
+        _require(_text(brief[name], 1500) and bool(brief[name].strip()),
+                 'animation_iteration_requirement_invalid')
+    for name in ('questions', 'required_entities', 'boundaries'):
+        _require(type(brief[name]) is list and 1 <= len(brief[name]) <= 32
+                 and all(_text(item, 1000) and bool(item.strip()) for item in brief[name]),
+                 'animation_iteration_requirement_invalid')
+    return value
 
 
 def _runtime_projection(runtime):
@@ -195,6 +258,9 @@ class IterationStore:
                 binding=dict(case_identity=identity, variants=snapshot['variants'], comparison=snapshot['comparison'],
                              runtime=_runtime_projection(snapshot['runtime'])),
                 links=dict(annotations_url=self.base_path + '/api/annotations?case_id=' + quote(row['case_id'], safe='')))
+            if 'requirement' in snapshot:
+                item['source'] = dict(requirement=snapshot['requirement'])
+                item['links']['case_url'] = self.base_path + '/#' + quote(row['case_id'], safe='')
             records[key] = item
         raw_decisions = [json.loads(row[0]) for row in db.execute(
             'SELECT document FROM lab_evaluation_decisions ORDER BY rowid')]

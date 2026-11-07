@@ -1,3 +1,83 @@
+const textField = value => typeof value === 'string' ? value : '';
+const ENGINE_LABELS = {svg: 'SVG', 'html-svg': 'HTML / SVG', html: 'HTML 界面', canvas: 'Canvas 2D', three: 'Three.js / WebGL'};
+
+export function animationEngineLabel(engine) {
+  return (typeof engine === 'string' && Object.hasOwn(ENGINE_LABELS, engine) ? ENGINE_LABELS[engine] : textField(engine)) || '未分类';
+}
+
+// Every filter is an intersection; an empty match must never select an unrelated
+// fixture. Evaluation deep links are handled separately as explicit selections.
+export function filterAnimationCases(cases, filters = {}, reviewed = new Set()) {
+  if (!Array.isArray(cases)) return [];
+  if (filters.review && !['all', 'unreviewed', 'reviewed'].includes(filters.review)) return [];
+  const query = textField(filters.query).trim().toLocaleLowerCase();
+  const hasReview = row => reviewed instanceof Set && reviewed.has(`${row.id}:${row.case_identity ?? row.identity ?? ''}`);
+  return cases.filter(row => row && typeof row === 'object' && !row.evaluation
+    && ['module', 'domain', 'engine'].every(key => !filters[key] || filters[key] === 'all' || row[key] === filters[key])
+    && [row.title, row.description, row.domain_label, row.narrative, ...(Array.isArray(row.tags) ? row.tags : [])]
+      .map(textField).join(' ').toLocaleLowerCase().includes(query)
+    && (!filters.review || filters.review === 'all' || hasReview(row) === (filters.review === 'reviewed')));
+}
+
+export function animationFacetOptions(cases, key) {
+  if (!['domain', 'engine'].includes(key) || !Array.isArray(cases)) return [];
+  const groups = new Map();
+  for (const row of cases) {
+    if (!row || row.evaluation || typeof row[key] !== 'string' || !row[key]) continue;
+    const label = key === 'domain' ? textField(row.domain_label) || row.domain : animationEngineLabel(row.engine);
+    const previous = groups.get(row[key]);
+    groups.set(row[key], {id: row[key], label: previous?.label ?? label, count: (previous?.count ?? 0) + 1});
+  }
+  return [...groups.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export function animationCoverage(cases, modules = []) {
+  const fixtures = filterAnimationCases(cases);
+  const moduleRows = Array.isArray(modules) ? modules : [];
+  const ids = [...new Set(fixtures.map(row => row.module).filter(value => typeof value === 'string' && value))];
+  return {
+    total: fixtures.length,
+    matrixCases: fixtures.filter(row => row.is_matrix_case === true).length,
+    domains: animationFacetOptions(fixtures, 'domain'),
+    engines: animationFacetOptions(fixtures, 'engine'),
+    modules: ids.map(id => {
+      const selected = fixtures.filter(row => row.module === id);
+      return {id, label: moduleRows.find(row => row.id === id)?.label ?? id, cases: selected.length,
+        domains: animationFacetOptions(selected, 'domain'), engines: animationFacetOptions(selected, 'engine')};
+    }),
+  };
+}
+
+export function animationRequirementRows(row) {
+  const requirement = row?.requirement;
+  if (!requirement || typeof requirement !== 'object' || Array.isArray(requirement)) return [];
+  const specs = [['audience', '面向谁'], ['goal', '表达目标'], ['questions', '需要讲清楚'],
+    ['required_entities', '必须展示'], ['expected_outcome', '预期结果'], ['boundaries', '范围说明']];
+  const result = [];
+  for (const [key, label] of specs) {
+    const values = Array.isArray(requirement[key]) ? requirement[key].filter(value => typeof value === 'string')
+      : typeof requirement[key] === 'string' && requirement[key] ? [requirement[key]] : [];
+    if (values.length) result.push({label, values});
+  }
+  if (typeof row.narrative === 'string' && row.narrative) result.push({label: '示例文稿', values: [row.narrative]});
+  return result;
+}
+
+export function animationRequirementsUrl(applicationRoot, filters = {}, seed = 20261107) {
+  try {
+    const base = new URL(applicationRoot);
+    if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password
+        || !Number.isSafeInteger(seed) || seed < 0 || seed > 2**32-1) return null;
+    const url = new URL('./api/requirements', base);
+    url.searchParams.set('seed', String(seed));
+    for (const key of ['module', 'domain', 'engine']) {
+      const value = textField(filters[key]) || 'all';
+      url.searchParams.set(key, value);
+    }
+    return url.origin === base.origin ? url.href : null;
+  } catch { return null; }
+}
+
 // An annotation belongs to one exact frozen visual experiment. Missing or old
 // identities remain useful history, but cannot approve or locate current frames.
 export function isCurrentAnnotation(annotation, currentIdentity) {
@@ -140,7 +220,7 @@ export function verifiedIterationCandidate(task) {
     && JSON.stringify([...actual].sort()) === JSON.stringify(expected);
   const valid = Boolean(typeof task?.task_id === 'string' && digest(task.task_id)
     && task.package?.identity === task.task_id
-    && ['diagram', 'process', 'continuity', 'canvas', 'three'].includes(task.package.module)
+    && ['diagram', 'process', 'continuity', 'canvas', 'three', 'charts', 'algorithms', 'interface'].includes(task.package.module)
     && source(task.package.source_revision)
     && task.acceptance_scope === 'developer_sample_only' && task.production_adopted === false
     && proof?.task_identity === task.task_id && proof.module === task.package.module

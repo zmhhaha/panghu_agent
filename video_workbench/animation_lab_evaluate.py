@@ -64,13 +64,15 @@ def _thaw(value):
     return value
 
 
-def prepare(destination, runtime, *, case_id='diagram-connections', template=None, feedback_store=None, engine_assets_dir=None):
+def prepare(destination, runtime, *, case_id='domain-diagram-water', template=None, feedback_store=None, engine_assets_dir=None):
     root = Path(destination).absolute()
     _require(not root.exists() and not root.is_symlink(), 'animation_evaluation_run_exists')
     reference = compile_sample(case_id, 'candidate')
     case = next(row for row in catalog() if row['id'] == case_id)
-    if reference['inputs']['inputs'].get('plan', {}).get('schema') == 'video.motion-plan.v1':
-        alternative = layout_candidate(reference, template or 'focus')
+    current_plan=reference['inputs']['inputs'].get('plan', {})
+    if ('requirement' not in reference['inputs'] and current_plan.get('schema') == 'video.motion-plan.v1'
+            and current_plan.get('template') in {'flow','focus'}):
+        alternative = layout_candidate(reference, template or ('flow' if current_plan['template']=='focus' else 'focus'))
         local_candidates = 1
     else:
         _require(template is None, 'animation_evaluation_layout_not_supported')
@@ -104,7 +106,7 @@ def prepare(destination, runtime, *, case_id='diagram-connections', template=Non
         path = root / 'overlay' / name
         path.parent.mkdir(exist_ok=True)
         path.write_bytes((overlay / name).read_bytes())
-    if any(clip['timeline'].get('engine') in {'canvas', 'three', 'svg-effects'} for bundle in bundles for clip in bundle['clips']):
+    if any(clip['timeline'].get('engine') in {'canvas', 'three', 'svg-effects','scenario-effects'} for bundle in bundles for clip in bundle['clips']):
         (root / 'overlay' / 'engine_observe.mjs').write_bytes((overlay / 'engine_observe.mjs').read_bytes())
     for name, raw in asset_bytes.items():
         (root / 'overlay' / name).write_bytes(raw)
@@ -297,10 +299,10 @@ def main():
     prep = sub.add_parser('prepare')
     prep.add_argument('--output', type=Path, required=True)
     prep.add_argument('--runtime', type=Path, required=True)
-    prep.add_argument('--case', default='diagram-connections', choices=[row['id'] for row in catalog()])
+    prep.add_argument('--case', default='domain-diagram-water', choices=[row['id'] for row in catalog()])
     prep.add_argument('--template', choices=['flow', 'focus'], help='diagram only; defaults to focus')
     prep.add_argument('--feedback-db', type=Path)
-    prep.add_argument('--engine-assets-dir', type=Path, help='pinned local Three.js assets for the three-layers sample')
+    prep.add_argument('--engine-assets-dir', type=Path, help='pinned local Three.js resources for WebGL samples')
     for name in ('collect', 'model'):
         sub.add_parser(name).add_argument('--run', type=Path, required=True)
     args = parser.parse_args()

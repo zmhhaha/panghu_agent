@@ -52,7 +52,7 @@ def iteration_http(tmp_path_factory):
 
 def test_prepare_download_preserves_package_hash_frozen_case_and_sync_cursor(iteration_http):
     lab, request = iteration_http
-    case = lab.cases['canvas-queue']
+    case = lab.cases['domain-canvas-clinic']
     before_identity = case['identity']
     status, saved, _ = request('POST', PREFIX+'/api/annotations', dict(case_id=case['id'],
         case_identity=case['identity'], variant_id='candidate', kind='issue', start_seconds=2,
@@ -77,7 +77,9 @@ def test_prepare_download_preserves_package_hash_frozen_case_and_sync_cursor(ite
     assert feedback['links']['annotations_url'].startswith(PREFIX+'/api/annotations?')
     assert all(v['id'] in {'baseline','candidate'} for v in feedback['binding']['variants'])
     assert 'base64' not in json.dumps(package) and 'forwarded_user' not in json.dumps(package)
-    assert lab.cases['canvas-queue']['identity'] == before_identity
+    assert feedback['source']['requirement']['domain'] == 'healthcare'
+    assert feedback['source']['requirement']['requirement']['goal'] == case['requirement']['goal']
+    assert lab.cases['domain-canvas-clinic']['identity'] == before_identity
     assert request('GET', PREFIX+'/api/iterations?module=canvas')[1]['module_cursor'] is None
     # The same preparation must not duplicate a task, and download is only a read.
     assert request('POST', PREFIX+'/api/iterations', dict(module='canvas'))[1]['task_id'] == task_id

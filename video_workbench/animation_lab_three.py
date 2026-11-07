@@ -18,10 +18,12 @@ from .motion import (FPS, GSAP_VERSION, HYPERFRAMES_VERSION, canonical,
 THREE_VERSION = '0.170.0'
 THREE_REVISION = '170'
 COMPILER_VERSION = 'animation-lab-three-compiler-1'
+CONTEXT_COMPILER_VERSION = 'animation-lab-three-compiler-2'
 # Measured from the integrity-verified official three@0.170.0 package.
 THREE_ASSET_SHA256 = {'three.module.min.js': '08fd7545d13d2c7fb65ab691530a802dafefd638596501854f267d0fb13c39e7'}
 ENGINE_ASSETS = THREE_ASSET_SHA256
 SCHEMA = 'video.animation-lab-three-plan.v1'
+CONTEXT_SCHEMA = 'video.animation-lab-three-plan.v2'
 _ID = re.compile(r'[a-z][a-z0-9-]{0,39}\Z')
 _COLOR = re.compile(r'#[0-9a-fA-F]{6}\Z')
 
@@ -38,8 +40,11 @@ def _text(value, maximum):
 
 
 def validate_three_plan(plan):
-    _require(type(plan) is dict and set(plan) == {'schema', 'title', 'takeaway', 'layers'}
-             and plan['schema'] == SCHEMA)
+    _require(type(plan) is dict)
+    contextual = plan.get('schema') == CONTEXT_SCHEMA
+    keys = {'schema', 'title', 'takeaway', 'layers'}
+    _require(set(plan) == (keys | {'context'} if contextual else keys)
+             and plan['schema'] in {SCHEMA, CONTEXT_SCHEMA})
     _text(plan['title'], 50)
     _text(plan['takeaway'], 100)
     layers = plan['layers']
@@ -53,6 +58,10 @@ def validate_three_plan(plan):
         _text(row['label'], 18)
         _text(row['detail'], 48)
         ids.add(row['id'])
+    if contextual:
+        _require(type(plan['context']) is dict and set(plan['context']) == {'phase_whole', 'phase_expand'})
+        for value in plan['context'].values():
+            _text(value, 48)
     return deepcopy(plan)
 
 
@@ -66,6 +75,8 @@ def example_three_plan():
 
 def compile_three_project(plan, beats, alignment, *, variant='candidate'):
     plan = validate_three_plan(plan)
+    contextual = plan['schema'] == CONTEXT_SCHEMA
+    compiler = CONTEXT_COMPILER_VERSION if contextual else COMPILER_VERSION
     beats = validate_beats(beats)
     alignment = validate_alignment(alignment, beats)
     _require(type(variant) is str and variant in {'baseline', 'candidate'}, 'animation_lab_three_variant_invalid')
@@ -79,7 +90,7 @@ def compile_three_project(plan, beats, alignment, *, variant='candidate'):
     actions.append(dict(kind='move', target='layers', start=duration*.8, duration=duration*.16))
     for ordinal, action in enumerate(actions):
         action['ordinal'] = ordinal
-    timeline = dict(schema='video.motion-timeline.v1', compiler=COMPILER_VERSION,
+    timeline = dict(schema='video.motion-timeline.v1', compiler=compiler,
         engine='three', template='layered-system', variant=variant, width=1280, height=720, fps=FPS,
         duration_seconds=duration, audio_seconds=alignment['audio_seconds'],
         plan_sha256=sha256(plan), audio_sha256=alignment['audio_sha256'],
@@ -89,6 +100,8 @@ def compile_three_project(plan, beats, alignment, *, variant='candidate'):
     payload = payload.replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e')
     payload = payload.replace('\u2028', '\\u2028').replace('\u2029', '\\u2029')
     source = Path(__file__).with_name('animation_lab_engines').joinpath('three.mjs').read_text(encoding='utf-8')
+    if contextual:
+        source = _context_engine(source)
     source = source.replace('__PAYLOAD__', payload)
     cards = ''.join('<article class="layer-key" data-layer="'+html.escape(row['id'], quote=True)+'">'
         '<span class="swatch" style="background:'+row['color']+'"></span><div><strong>'
@@ -97,10 +110,20 @@ def compile_three_project(plan, beats, alignment, *, variant='candidate'):
     replacements = dict(__TITLE__=html.escape(plan['title']), __TAKEAWAY__=html.escape(plan['takeaway']),
                         __DURATION__=str(duration), __CARDS__=cards, __ENGINE__=source)
     page = re.sub('|'.join(map(re.escape, replacements)), lambda match: replacements[match.group()], _PAGE)
+    if len(plan['layers']) > 3:
+        # The original three-layer fixture retains exact historical bytes.
+        # Four/five-layer requirements need their own bounded label layout.
+        page = page.replace('</style>', '#keys{top:168px}.layer-key{padding:9px 12px;margin:7px 0}.layer-key strong{font-size:18px}.layer-key p{font-size:14px;line-height:1.35;margin-top:4px}</style>')
+    if contextual:
+        page = page.replace('</style>', '.eyebrow{font-size:14px}.layer-key p{font-size:14px}</style>')
+        page = page.replace('<p id="phase">完整服务：各层共同工作</p>',
+            '<p id="phase">'+html.escape(plan['context']['phase_whole'])+'</p>')
+        page = page.replace('aria-label="服务分层的真实三维拆解动画"',
+            'aria-label="'+html.escape(plan['title'], quote=True)+'"')
     files = {'index.html': page.encode('utf-8'), 'plan.json': canonical(plan), 'beats.json': canonical(beats),
              'alignment.json': canonical(alignment), 'timeline.json': canonical(timeline)}
     assets = dict(THREE_ASSET_SHA256)
-    manifest = dict(schema='video.motion-project.v1', compiler=COMPILER_VERSION, engine='three',
+    manifest = dict(schema='video.motion-project.v1', compiler=compiler, engine='three',
         template='layered-system', hyperframes=HYPERFRAMES_VERSION, gsap=GSAP_VERSION,
         width=1280, height=720, fps=FPS, animated=True, plan_sha256=sha256(plan),
         semantic_sha256=semantic_digest(beats), timeline_sha256=sha256(timeline),
@@ -110,6 +133,19 @@ def compile_three_project(plan, beats, alignment, *, variant='candidate'):
         scope='developer_sample_not_production_admitted')
     files['manifest.json'] = canonical(manifest)
     return files
+
+
+def _context_engine(source):
+    replacements = {
+        "'完整服务：各层共同工作'": 'data.plan.context.phase_whole',
+        "'拆开来看：每层负责一件事'": 'data.plan.context.phase_expand',
+        "state.snapshot=()=>({engine:'three',time:current,three_revision:THREE.REVISION,":
+            "state.snapshot=()=>({engine:'three',time:current,three_revision:THREE.REVISION,phase_text:document.getElementById('phase').textContent,layer_texts:layers.map(({row,key})=>({id:row.id,label:key.querySelector('strong').textContent,detail:key.querySelector('p').textContent})),text_boxes:Array.from(document.querySelectorAll('header .eyebrow,header h1,.layer-key strong,.layer-key p,#phase,.takeaway')).map(n=>{const b=n.getBoundingClientRect(),s=getComputedStyle(n);return{text:n.textContent.trim(),opacity:Number(s.opacity),font_size:parseFloat(s.fontSize),bounds:{x:b.x,y:b.y,width:b.width,height:b.height}};}),",
+    }
+    for before, after in replacements.items():
+        _require(source.count(before) == 1, 'animation_lab_three_context_source_mismatch')
+        source = source.replace(before, after, 1)
+    return source
 
 
 _PAGE = '''<!doctype html>

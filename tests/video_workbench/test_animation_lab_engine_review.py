@@ -233,3 +233,91 @@ def test_declared_camera_move_accepts_actual_camera_change_with_fixed_mesh_world
         for first, row in zip(window['before']['engine_state']['objects'], state['objects']):
             row['matrix_world'] = deepcopy(first['matrix_world'])
     assert verify_engine_observations(plan, timeline, observed)['technical_status'] == 'passed'
+
+
+def _context_fixture(engine):
+    """Add synthetic text observations; never represented as browser evidence."""
+    import math
+    plan, timeline, observed = _fixture(engine)
+    if engine == 'canvas':
+        plan.update(schema='video.canvas-plan.v2', labels=dict(source='登记区', queue='待诊区', worker='诊室'),
+            context=dict(noun='登记单', source_detail='登记单依次到达', queue_detail='等待空闲诊室',
+                worker_detail='逐张领取并完成', phase_intro='登记单先进入待诊区', phase_queue='待诊区暂存登记单',
+                phase_work='诊室逐张领取登记单', phase_done='所有登记单已处理完成'))
+    else:
+        from video_workbench.animation_lab_three import example_three_plan
+        plan = example_three_plan()
+        for index, layer in enumerate(plan['layers']):
+            layer['id'] = 'packet-'+str(index+1)
+        plan.update(schema='video.animation-lab-three-plan.v2',
+                    context=dict(phase_whole='完整平台：各层共同协作', phase_expand='展开层级：观察职责'))
+    timeline.update(compiler=f'animation-lab-{engine}-compiler-2', variant='candidate', plan_sha256=sha256(plan))
+    observed['timeline_sha256'] = sha256(timeline)
+    samples = [observed[key] for key in ('initial', 'last', 'repeated_initial')]
+    samples += [window[key] for window in observed['windows'] for key in ('before', 'middle', 'after')]
+    for sample in samples:
+        state = sample['engine_state']
+        time = state['time']; normalized = time/timeline['duration_seconds']
+        if engine == 'canvas':
+            stage = ('arrival' if normalized < 4.8/18 else 'buffer' if normalized < 6.4/18
+                     else 'complete' if state['completed_count'] == plan['packet_count'] else 'dispatch')
+            phase_key = {'arrival': 'phase_intro', 'buffer': 'phase_queue',
+                         'dispatch': 'phase_work', 'complete': 'phase_done'}[stage]
+            state.update(stage=stage, phase_text=plan['context'][phase_key])
+            texts = list(plan['labels'].values())+[plan['context'][key+'_detail'] for key in ('source', 'queue', 'worker')]
+        else:
+            smooth = lambda v: (lambda p: p*p*(3-2*p))(max(0, min(1, v)))
+            explode = smooth((normalized-.12)/.18)*(1-smooth((normalized-.8)/.16))
+            focus = smooth((normalized-.32)/.4)
+            strength = math.sin(math.pi*focus)
+            index = min(len(plan['layers'])-1, math.floor(focus*len(plan['layers'])))
+            state['phase_text'] = (plan['context']['phase_whole'] if explode < .03 else
+                plan['layers'][index]['label']+'：'+plan['layers'][index]['detail'] if strength > .1
+                else plan['context']['phase_expand'])
+            state['layer_texts'] = [dict(id=row['id'], label=row['label'], detail=row['detail']) for row in plan['layers']]
+            texts = [row[key] for row in plan['layers'] for key in ('label', 'detail')]
+        texts.append(state['phase_text'])
+        state['text_boxes'] = [dict(text=text, opacity=1, font_size=14, bounds=dict(x=64, y=100+index*30, width=240, height=22))
+                               for index, text in enumerate(texts)]
+    return plan, timeline, observed
+
+
+@pytest.mark.parametrize('engine', ['canvas', 'three'])
+def test_v2_domain_text_observation_contract_is_checked_without_changing_v1(engine):
+    plan, timeline, observed = _context_fixture(engine)
+    assert verify_engine_observations(plan, timeline, observed)['technical_status'] == 'passed'
+    assert verify_engine_observations(*_fixture(engine))['technical_status'] == 'passed'
+
+
+@pytest.mark.parametrize('engine', ['canvas', 'three'])
+@pytest.mark.parametrize('failure', ['missing_text', 'wrong_phase', 'wrong_label', 'small_font', 'offscreen', 'compiler', 'context_plan'])
+def test_v2_rejects_domain_language_font_geometry_and_schema_binding_failures(engine, failure):
+    plan, timeline, observed = _context_fixture(engine)
+    state = observed['windows'][0]['middle']['engine_state']
+    if failure == 'missing_text':
+        state.pop('text_boxes')
+    elif failure == 'wrong_phase':
+        state['phase_text'] = '请求全部完成'
+    elif failure == 'wrong_label':
+        state['text_boxes'][0]['text'] = 'unrelated label'
+    elif failure == 'small_font':
+        state['text_boxes'][0]['font_size'] = 13
+    elif failure == 'offscreen':
+        state['text_boxes'][0]['bounds']['x'] = 1270
+    elif failure == 'compiler':
+        timeline['compiler'] = f'animation-lab-{engine}-compiler-1'
+        observed['timeline_sha256'] = sha256(timeline)
+    else:
+        plan['context']['script'] = 'unbounded program'
+        timeline['plan_sha256'] = sha256(plan)
+        observed['timeline_sha256'] = sha256(timeline)
+    with pytest.raises(ServiceError):
+        verify_engine_observations(plan, timeline, observed)
+
+
+def test_three_v2_labels_cannot_be_swapped_while_keeping_all_words_visible():
+    plan, timeline, observed = _context_fixture('three')
+    state = observed['windows'][0]['middle']['engine_state']
+    state['layer_texts'][0]['label'], state['layer_texts'][1]['label'] = state['layer_texts'][1]['label'], state['layer_texts'][0]['label']
+    with pytest.raises(ServiceError, match='context_text_mismatch'):
+        verify_engine_observations(plan, timeline, observed)

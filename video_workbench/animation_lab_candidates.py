@@ -46,9 +46,9 @@ def _semantic_plan(plan):
 
 def semantic_identity(bundle):
     inputs = bundle['inputs']['inputs']
-    if ('scenes' in inputs or inputs.get('plan', {}).get('schema') in {
-            'video.process-plan.v1', 'video.canvas-plan.v1', 'video.animation-lab-three-plan.v1',
-            'video.animation-lab-effect-plan.v1'}):
+    if ('requirement' in bundle['inputs'] or 'scenes' in inputs or inputs.get('plan', {}).get('schema') in {
+            'video.process-plan.v1', 'video.canvas-plan.v1', 'video.canvas-plan.v2', 'video.animation-lab-three-plan.v1','video.animation-lab-three-plan.v2',
+            'video.animation-lab-effect-plan.v1', 'video.animation-lab-scenario-plan.v1'}):
         return sha256(dict(inputs=inputs,
                            audio=[sha256(clip['files']['audio.wav']) for clip in bundle['clips']]))
     if 'plan' not in inputs or inputs['plan']['schema'] != 'video.motion-plan.v1':

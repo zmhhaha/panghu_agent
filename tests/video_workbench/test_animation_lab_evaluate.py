@@ -13,6 +13,7 @@ from video_workbench import animation_lab_evaluate as evaluation
 from video_workbench.animation_lab import AnimationLab, LabError
 from video_workbench.animation_lab_model import ModelError
 from video_workbench.animation_lab_review import REVIEW_SCHEMA
+from video_workbench.animation_lab_triage_store import TriageStore
 from video_workbench.motion import sha256
 
 
@@ -32,19 +33,22 @@ def png():
 @pytest.fixture
 def ready(tmp_path, monkeypatch):
     root = tmp_path / 'run'
-    run = evaluation.prepare(root, RUNTIME)
+    run = evaluation.prepare(root, RUNTIME, case_id='domain-diagram-water')
     raw = png()
 
     def capture(bundle, clip_id, directory, runtime):
         target = directory / 'observations' / 'seek-first.png'
         target.parent.mkdir(exist_ok=True)
         target.write_bytes(raw)
-        status = 'failed' if bundle['variant_id'] == 'layout-focus' else 'passed'
-        return dict(variant_id=bundle['variant_id'], technical_status=status,
+        status = 'failed' if bundle['variant_id'] == 'baseline' else 'passed'
+        value = dict(variant_id=bundle['variant_id'], clip_id=clip_id,
+            sample_identity=bundle['identity'], artifact_sha256=bundle['artifact_sha256'],
+            input_sha256=bundle['input_sha256'], runtime=deepcopy(runtime), technical_status=status,
             issues=[] if status == 'passed' else [dict(code='synthetic_objective_failure')], frame_count=1,
             visual_frames=[dict(frame_id='scene-1:seek-first', clip_id=clip_id,
                 path='observations/seek-first.png', global_time_seconds=0, time_seconds=0,
                 sha256=sha256(raw), mime_type='image/png')])
+        return dict(value, evidence_identity=sha256(value))
 
     monkeypatch.setattr(evaluation, 'review_capture', capture)
     technical, request = evaluation.collect(root)
@@ -80,26 +84,26 @@ class Model:
 
 def test_preparation_preserves_inputs_and_owns_distinct_frozen_outputs(tmp_path):
     root = tmp_path / 'run'
-    run = evaluation.prepare(root, RUNTIME)
+    run = evaluation.prepare(root, RUNTIME, case_id='domain-diagram-water')
     reloaded, bundles = evaluation.load_run(root)
     assert reloaded == run
     assert len({bundle['artifact_sha256'] for bundle in bundles}) == 2
     assert bundles[0]['clips'][0]['files']['audio.wav'] == bundles[1]['clips'][0]['files']['audio.wav']
     assert all(row['directory'].startswith('inputs/') for row in run['captures'])
     with pytest.raises(ValueError, match='run_exists'):
-        evaluation.prepare(root, RUNTIME)
+        evaluation.prepare(root, RUNTIME, case_id='domain-diagram-water')
     assert json.loads((root/'run.json').read_bytes()) == run
 
 
 @pytest.mark.parametrize('case_id,module,captures', [
-    ('diagram-long-label','diagram',2), ('process-retry','process',2),
-    ('continuity-retain','continuity',4), ('continuity-copy','continuity',4)])
+    ('domain-diagram-learning','diagram',2), ('domain-process-parcel','process',2),
+    ('domain-continuity-delivery','continuity',4), ('domain-continuity-invoice','continuity',4)])
 def test_all_fixed_modules_have_real_compiled_frozen_preparation(tmp_path, case_id, module, captures):
     root = tmp_path / case_id
     run = evaluation.prepare(root, RUNTIME, case_id=case_id)
     _, bundles = evaluation.load_run(root)
     assert run['module'] == module and len(run['captures']) == captures
-    assert run['limits']['local_candidates'] == (1 if module == 'diagram' else 0)
+    assert run['limits']['local_candidates'] == 0
     assert len(bundles) == 2 and len({b['artifact_sha256'] for b in bundles}) == 2
     assert all('window.__videoMotion' in clip['files']['index.html'].decode('utf-8')
                for bundle in bundles for clip in bundle['clips'])
@@ -107,7 +111,7 @@ def test_all_fixed_modules_have_real_compiled_frozen_preparation(tmp_path, case_
 
 def test_frozen_content_tamper_rejected_before_dispatch(tmp_path):
     root = tmp_path / 'run'
-    run = evaluation.prepare(root, RUNTIME)
+    run = evaluation.prepare(root, RUNTIME, case_id='domain-diagram-water')
     run['bundles'][0]['inputs']['inputs']['plan']['title'] = 'changed'
     (root / 'run.json').write_text(json.dumps(run))
     with pytest.raises(ValueError, match='run_mismatch'):
@@ -127,7 +131,7 @@ def test_collect_binds_real_bytes_and_never_overwrites_evidence(ready):
     assert (root / 'technical.json').read_bytes() == old
 
 
-@pytest.mark.parametrize('selected,eligible', [('candidate', True), ('layout-focus', False)])
+@pytest.mark.parametrize('selected,eligible', [('candidate', True), ('baseline', False)])
 def test_model_preference_cannot_override_objective_failure_or_adopt(ready, selected, eligible):
     root, run, technical, request = ready
     model = Model(root, request, variant_id=selected)
@@ -193,6 +197,7 @@ def test_saved_report_endpoint_reads_derived_report_without_starting_jobs(ready)
     root, run, technical, request = ready
     lab = AnimationLab.__new__(AnimationLab)
     lab.evaluations_dir = root.parent
+    lab.triage_store = TriageStore(root / 'lab-triage.db')
     body, mime = lab.evaluation_file(root.name, 'report.html')
     assert mime.startswith('text/html') and '没有自动采用'.encode() in body
     assert not (root / 'model-attempt.json').exists()
@@ -203,5 +208,6 @@ def test_report_endpoint_has_no_arbitrary_file_access(ready, relative):
     root, *_ = ready
     lab = AnimationLab.__new__(AnimationLab)
     lab.evaluations_dir = root.parent
+    lab.triage_store = TriageStore(root / 'lab-triage.db')
     with pytest.raises(LabError, match='report_not_found'):
         lab.evaluation_file(root.name, relative)

@@ -119,6 +119,8 @@ class AnimationLab:
         # and source assets remain the exact original measured bytes.
         self.gzip_assets = {name: gzip.compress(self.assets[name], compresslevel=6, mtime=0)
                             for name in self.shared_assets}
+        from .animation_lab_baseline import initialize_baseline
+        self.corpus_baseline=initialize_baseline(Path(data_dir)/'animation-lab.db')
         self.store = AnnotationStore(Path(data_dir) / 'animation-lab.db')
         self.triage_store = TriageStore(self.store.path)
         self.iteration_store = IterationStore(self.store.path,
@@ -157,7 +159,7 @@ class AnimationLab:
             # Hash every persisted field: editing a case title must create a new
             # experiment, not prevent reopening an existing annotation database.
             identity = sha256(snapshot)
-            case.update(identity=identity, case_identity=identity)
+            case.update(identity=identity, case_identity=identity,lab_snapshot_identity=identity)
             self.cases[case['id']] = case
             self.store.register_snapshot(dict(snapshot, identity=identity))
 
@@ -191,11 +193,26 @@ class AnimationLab:
             case['annotation_count'] = len(active)
             if reviews:
                 case.update(review_verdict=reviews[-1]['verdict'], reviewed_identity=case['identity'])
+        from .animation_lab_matrix import coverage
         return dict(schema='video.animation-lab-catalog.v1',
             modules=[dict(row, label=row['title']) for row in deepcopy(MODULES)],
             cases=cases, runtime=deepcopy(self.runtime),
+            corpus=coverage(cases),
+            corpus_baseline=deepcopy(self.corpus_baseline),
             evaluations=evaluations,
             csrf_token=self.csrf_token)
+
+    def requirement_suite(self, parameters):
+        from .animation_lab_matrix import requirement_suite, DEFAULT_SEED
+        _require(set(parameters) <= {'seed','module','domain','engine'}
+                 and all(len(value)==1 for value in parameters.values()), 'animation_matrix_query_invalid')
+        seed=parameters.get('seed',[str(DEFAULT_SEED)])[0]
+        _require(bool(re.fullmatch(r'[0-9]{1,10}',seed)), 'animation_matrix_seed_invalid')
+        try:
+            return requirement_suite(list(self.cases.values()),seed=int(seed),runtime=self.runtime,
+                **{key:parameters[key][0] for key in ('module','domain','engine') if key in parameters})
+        except ValueError as error:
+            raise LabError(str(error)) from None
 
     def shared_asset_url(self, name):
         _require(name in self.shared_assets, 'animation_lab_asset_missing', 404)
@@ -228,6 +245,7 @@ class AnimationLab:
                  'animation_iteration_candidate_run_invalid')
         root = self.evaluations_dir / slug
         loaded = load_evaluation(root)
+        self._require_current_corpus(loaded)
         snapshot, run = loaded['snapshot'], loaded['run']
         try:
             def unique(rows):
@@ -316,8 +334,21 @@ class AnimationLab:
         _require(self.evaluations_dir is not None and re.fullmatch(r'[a-z0-9][a-z0-9-]{0,63}', run_id),
                  'animation_lab_report_not_found', 404)
         loaded = load_evaluation(self.evaluations_dir / run_id)
+        self._require_current_corpus(loaded)
         self.triage_store.register_report(loaded['snapshot'])
         return loaded
+
+    @staticmethod
+    def _require_current_corpus(loaded):
+        from .animation_lab_baseline import CORPUS_VERSION
+        # A read-only mounted report directory may still contain the retired
+        # corpus. Reject it before registering either findings or snapshots.
+        run = loaded['run']
+        active = {row['id'] for row in catalog()}
+        _require(run.get('case_id') in active and bool(run.get('bundles'))
+                 and all(bundle.get('inputs', {}).get('corpus_version') == CORPUS_VERSION
+                         for bundle in run['bundles']),
+                 'animation_lab_report_not_found', 404)
 
     def evaluation_detail(self, run_id):
         from .animation_lab_evaluation_view import detail
@@ -384,6 +415,7 @@ class AnimationLab:
         return revision_task(loaded, self.triage_store.list(report_identity))
 
     def evaluation_file(self, run_id, relative):
+        self._evaluation(run_id)
         _require(self.evaluations_dir is not None and re.fullmatch(r'[a-z0-9-]{1,64}', run_id),
                  'animation_lab_report_not_found', 404)
         root = self.evaluations_dir / run_id
@@ -609,6 +641,10 @@ class LabHandler(BaseHTTPRequestHandler):
                 return self._json(dict(status='ok'))
             if path == '/api/catalog':
                 return self._json(lab.get_catalog())
+            if path == '/api/requirements':
+                suite=lab.requirement_suite(parse_qs(parsed.query,keep_blank_values=True))
+                return self._send(canonical(suite),'application/json; charset=utf-8',download=True,
+                    download_name='animation-requirements-'+suite['identity'][:12]+'.json')
             if path == '/api/annotations':
                 case_id = parse_qs(parsed.query).get('case_id', [None])[0]
                 _require(case_id is None or case_id in lab.cases, 'animation_lab_unknown_case', 404)

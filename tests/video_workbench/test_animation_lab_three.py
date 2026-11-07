@@ -134,3 +134,58 @@ def test_export_refuses_to_overwrite_a_different_existing_asset(tmp_path, monkey
         exporter.export_assets(destination, installation=package)
     assert (destination/'three.module.min.js').read_bytes() == b'user existing bytes'
     assert not (destination/'three-assets.json').exists()
+
+
+def contextual_inputs(count=3):
+    plan, beats, alignment = inputs()
+    plan.update(schema=three.CONTEXT_SCHEMA, context=dict(
+        phase_whole='完整平台：各层共同协作', phase_expand='展开层级：观察职责'))
+    for index in range(3, count):
+        plan['layers'].append(dict(id='layer-'+str(index), label='辅助层'+str(index),
+                                   detail='保持职责与对应', color='#aabbcc'))
+    return plan, beats, alignment
+
+
+@pytest.mark.parametrize('count', [3, 4, 5])
+def test_context_v2_measures_actual_domain_labels_and_all_layer_counts_have_readable_text(count):
+    files = three.compile_three_project(*contextual_inputs(count))
+    timeline, manifest = (json.loads(files[key]) for key in ('timeline.json', 'manifest.json'))
+    assert timeline['compiler'] == manifest['compiler'] == three.CONTEXT_COMPILER_VERSION
+    page = files['index.html'].decode()
+    assert '.eyebrow{font-size:14px}.layer-key p{font-size:14px}' in page
+    assert "phase_text:document.getElementById('phase').textContent" in page
+    assert 'layer_texts:layers.map' in page and 'font_size:parseFloat(s.fontSize)' in page
+    assert 'data.plan.context.phase_whole' in page and 'data.plan.context.phase_expand' in page
+    assert "'完整服务：各层共同工作'" not in page
+    assert '<p id="phase">完整平台：各层共同协作</p>' in page
+    assert json.loads(files['plan.json'])['schema'] == three.CONTEXT_SCHEMA
+
+
+def test_context_v2_preserves_layer_and_camera_timing():
+    old = json.loads(three.compile_three_project(*inputs())['timeline.json'])
+    new = json.loads(three.compile_three_project(*contextual_inputs())['timeline.json'])
+    assert old['actions'] == new['actions']
+    assert old['duration_seconds'] == new['duration_seconds']
+    assert old['compiler'] != new['compiler']
+
+
+@pytest.mark.parametrize('mutation', [
+    lambda p: p.update(schema=three.SCHEMA),
+    lambda p: p.pop('context'),
+    lambda p: p['context'].update(extra='arbitrary script'),
+    lambda p: p['context'].update(phase_whole='x'*49),
+    lambda p: p['context'].pop('phase_expand'),
+])
+def test_context_v2_does_not_allow_unknown_or_unbounded_text(mutation):
+    plan, beats, alignment = contextual_inputs()
+    mutation(plan)
+    with pytest.raises(ValueError, match='three_plan_invalid'):
+        three.compile_three_project(plan, beats, alignment)
+
+
+def test_v1_keeps_original_three_source_and_label_css():
+    files = three.compile_three_project(*inputs())
+    page = files['index.html'].decode()
+    assert json.loads(files['timeline.json'])['compiler'] == three.COMPILER_VERSION
+    assert 'layer_texts:layers.map' not in page
+    assert '.eyebrow{font-size:14px}.layer-key p{font-size:14px}' not in page

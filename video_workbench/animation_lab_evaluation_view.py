@@ -190,7 +190,7 @@ def revision_task(loaded, decisions):
             audio=[dict(clip_id=clip['id'], sha256=sha256(clip['files']['audio.wav'])) for clip in bundle['clips']])
             for bundle in loaded['bundles']],
         editable_scope=(dict(kind='bounded_diagram_layout', fields=['template', 'mapped_slots'], templates=['flow', 'focus'])
-                        if snapshot['module'] == 'diagram' and all(bundle['inputs']['inputs'].get('plan', {}).get('schema') == 'video.motion-plan.v1' for bundle in loaded['bundles'])
+                        if snapshot['module'] == 'diagram' and all('requirement' not in bundle['inputs'] and bundle['inputs']['inputs'].get('plan', {}).get('schema') == 'video.motion-plan.v1' for bundle in loaded['bundles'])
                         else dict(kind='developer_design_required', fields=[])),
         design_rules=list(DESIGN_RULES), required_checks=['recompile', 'same_content_and_audio', 'native_observations', 'same_input_comparison'],
         status='prepared_not_executed', agent_calls=0, model_calls=0, production_adopted=False)

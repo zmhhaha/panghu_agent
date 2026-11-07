@@ -33,25 +33,48 @@ COMMIT = re.compile(r'[0-9a-f]{40}(?:[0-9a-f]{24})?')
 MODULE_FILES = {
     'diagram': frozenset({'video_workbench/motion.py', 'video_workbench/motion_geometry.py',
         'video_workbench/animation_lab_candidates.py', 'video_workbench/animation_lab_effects.py',
-        'video_workbench/animation_lab_effects_logic.py', 'video_workbench/animation_lab_effects_visual.py'}),
+        'video_workbench/animation_lab_effects_logic.py', 'video_workbench/animation_lab_effects_visual.py',
+        'video_workbench/animation_lab_domain_cases.py'}),
     'process': frozenset({'video_workbench/motion_process.py', 'video_workbench/animation_lab_samples.py',
         'video_workbench/animation_lab_effects.py', 'video_workbench/animation_lab_effects_logic.py',
-        'video_workbench/animation_lab_effects_visual.py'}),
+        'video_workbench/animation_lab_effects_visual.py', 'video_workbench/animation_lab_domain_cases.py'}),
     'continuity': frozenset({'video_workbench/process_continuity.py', 'video_workbench/motion_process.py',
-        'video_workbench/animation_lab_samples.py'}),
-    'canvas': frozenset({'video_workbench/animation_lab_canvas.py'}),
-    'three': frozenset({'video_workbench/animation_lab_three.py', 'video_workbench/animation_lab_engines/three.mjs'}),
+        'video_workbench/animation_lab_samples.py', 'video_workbench/animation_lab_domain_cases.py'}),
+    'canvas': frozenset({'video_workbench/animation_lab_canvas.py', 'video_workbench/animation_lab_domain_cases.py'}),
+    'three': frozenset({'video_workbench/animation_lab_three.py', 'video_workbench/animation_lab_engines/three.mjs',
+        'video_workbench/animation_lab_domain_cases.py'}),
+    'charts': frozenset({'video_workbench/animation_lab_scenarios.py',
+        'video_workbench/animation_lab_scenarios_charts.py'}),
+    'algorithms': frozenset({'video_workbench/animation_lab_scenarios.py',
+        'video_workbench/animation_lab_scenarios_algorithms.py'}),
+    'interface': frozenset({'video_workbench/animation_lab_scenarios.py',
+        'video_workbench/animation_lab_scenarios_interfaces.py'}),
 }
 # These commands are code-owned. Feedback and model output cannot choose a command
 # or edit the tests, the runner, dependency files, workflows or credentials.
 MODULE_TESTS = {
     'diagram': ('test_motion.py', 'test_motion_visibility.py', 'test_animation_lab_candidates.py',
-                'test_animation_lab_effects.py', 'test_animation_lab_effects_logic.py', 'test_animation_lab_effects_visual.py'),
-    'process': ('test_motion_process.py', 'test_process_review.py', 'test_animation_lab_effects_logic.py'),
-    'continuity': ('test_process_continuity_core.py', 'test_process_continuity_review.py', 'test_continuity.py'),
-    'canvas': ('test_animation_lab_canvas.py', 'test_animation_lab_engine_integration.py'),
-    'three': ('test_animation_lab_three.py', 'test_animation_lab_engine_integration.py'),
+                'test_animation_lab_effects.py', 'test_animation_lab_effects_logic.py', 'test_animation_lab_effects_visual.py',
+                'test_animation_lab_domain_cases.py'),
+    'process': ('test_motion_process.py', 'test_process_review.py', 'test_animation_lab_effects_logic.py',
+                'test_animation_lab_domain_cases.py'),
+    'continuity': ('test_process_continuity_core.py', 'test_process_continuity_review.py', 'test_continuity.py',
+                   'test_animation_lab_domain_cases.py'),
+    'canvas': ('test_animation_lab_canvas.py', 'test_animation_lab_engine_integration.py',
+               'test_animation_lab_domain_cases.py'),
+    'three': ('test_animation_lab_three.py', 'test_animation_lab_engine_integration.py',
+              'test_animation_lab_domain_cases.py'),
+    'charts': ('test_animation_lab_scenarios_charts.py', 'test_animation_lab_scenarios.py',
+               'test_animation_lab_scenarios_review.py', 'test_animation_lab_domain_cases.py', 'test_animation_lab_review.py'),
+    'algorithms': ('test_animation_lab_scenarios_algorithms.py', 'test_animation_lab_scenarios.py',
+                   'test_animation_lab_scenarios_review.py', 'test_animation_lab_domain_cases.py', 'test_animation_lab_review.py'),
+    'interface': ('test_animation_lab_scenarios_interfaces.py', 'test_animation_lab_scenarios.py',
+                  'test_animation_lab_scenarios_review.py', 'test_animation_lab_domain_cases.py', 'test_animation_lab_review.py'),
 }
+# Every family contributes compiled artifacts to the same portable requirement
+# suite. Identity projection must remain consistent between HTTP and CLI.
+MODULE_TESTS = {module: (*tests, 'test_animation_lab_matrix_v2.py')
+                for module, tests in MODULE_TESTS.items()}
 
 
 def _require(value, code):

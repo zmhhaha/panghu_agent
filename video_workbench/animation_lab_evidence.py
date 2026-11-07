@@ -86,7 +86,7 @@ def _capture_request(bundle, clip_id, runtime, adapter_root):
         historical_local_experiment=clip['timeline']['compiler'] == 'motion-process-compiler-1',
         agent_calls=0, tts_calls=0, production_writes=0,
         output='sampled_browser_observations_not_mp4')
-    if clip['timeline'].get('engine') in {'canvas', 'three', 'svg-effects'}:
+    if clip['timeline'].get('engine') in {'canvas', 'three', 'svg-effects','scenario-effects'}:
         value.update(engine_observer_sha256=sha256(_read(adapter_root / 'engine_observe.mjs', 1024 * 1024)),
                      engine_assets=json.loads(clip['files']['manifest.json']).get('engine_assets', {}))
     return dict(value, capture_identity=sha256(value))
@@ -317,7 +317,12 @@ def review_capture(bundle, clip_id, capture_directory, expected_runtime):
     timeline = clip['timeline']
     technical, error = None, None
     try:
-        if timeline.get('engine') == 'svg-effects':
+        if timeline.get('engine') == 'scenario-effects':
+            from .animation_lab_scenarios_review import verify_scenario_observations
+            _require(receipt.get('engine_assets') == request.get('engine_assets'),
+                     'animation_lab_capture_engine_assets_mismatch')
+            technical = verify_scenario_observations(plan,timeline,observations)
+        elif timeline.get('engine') == 'svg-effects':
             from .animation_lab_effects_review import verify_effect_observations
             _require(receipt.get('engine_assets') == request.get('engine_assets'),
                      'animation_lab_capture_engine_assets_mismatch')

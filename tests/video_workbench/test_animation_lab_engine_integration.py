@@ -16,6 +16,8 @@ from video_workbench.animation_lab_evaluate import load_run, prepare
 from video_workbench.animation_lab_capture import capture_plan
 from video_workbench.animation_lab_review import build_review_request
 import video_workbench.animation_lab_samples as samples
+from video_workbench.animation_lab_domain_cases import DOMAIN_CASES
+from video_workbench.animation_lab_scenarios import SCENARIOS
 import video_workbench.animation_lab_three as three
 from video_workbench.motion import sha256
 
@@ -24,11 +26,7 @@ BASE_ASSETS = {
     'gsap.min.js': b'/*! GSAP 3.14.2 synthetic integration resource, not executable */',
     'NotoSansCJK-Regular.ttc': b'ttcf-synthetic-integration-font',
 }
-OLD_CASES = {'diagram-connections', 'diagram-long-label', 'process-retry',
-             'continuity-retain', 'continuity-copy'}
-ENGINE_CASES = {'canvas-queue': 'canvas', 'three-layers': 'three'}
-EFFECT_CASES = {'condition-branch', 'parallel-wait', 'architecture-expand', 'focus-shift',
-                'data-compare', 'code-execution', 'local-replace', 'svg-morph'}
+ENGINE_CASES = {'domain-canvas-clinic': 'canvas', 'domain-three-retail': 'three'}
 RUNTIME = dict(schema='video.motion-runtime.v1', hyperframes='0.8.149',
     hyperframes_source='synthetic_contract_fixture', node='synthetic', browser='synthetic',
     ffmpeg='synthetic', gsap='3.14.2', gsap_sha256=sha256(BASE_ASSETS['gsap.min.js']),
@@ -101,8 +99,10 @@ def _issue(case, *, comment='Synthetic integration annotation, not aesthetic app
 
 def test_catalog_adds_two_genuine_engine_pairs_with_same_semantics_and_clock():
     catalog = samples.catalog()
-    assert {row['id'] for row in catalog} == OLD_CASES | set(ENGINE_CASES) | EFFECT_CASES
-    assert {row['module'] for row in catalog} == {'diagram', 'process', 'continuity', 'canvas', 'three'}
+    assert {row['id'] for row in catalog} == set(DOMAIN_CASES) | set(SCENARIOS)
+    assert len(catalog) == 27
+    assert {row['module'] for row in catalog} == {'diagram', 'process', 'continuity', 'canvas', 'three',
+                                                 'charts', 'algorithms', 'interface'}
     assert all(row['status'] == 'available' for row in samples.MODULES)
     for case_id, engine in ENGINE_CASES.items():
         baseline, candidate = [samples.compile_sample(case_id, variant) for variant in ('baseline', 'candidate')]
@@ -125,7 +125,7 @@ def test_missing_optional_three_resources_only_disables_three_preview(tmp_path):
     lab = AnimationLab(tmp_path/'missing', BASE_ASSETS)
     catalog = lab.get_catalog()
     for case in catalog['cases']:
-        if case['id'] == 'three-layers':
+        if case['module'] == 'three':
             assert all(row['available'] is False and row['preview_url'] is None
                        and row['reason'] for row in case['variants'])
         else:
@@ -133,26 +133,26 @@ def test_missing_optional_three_resources_only_disables_three_preview(tmp_path):
     assert set(lab.runtime['assets']) == set(BASE_ASSETS)
 
 
-def test_optional_resource_installation_preserves_old_identities_and_opinions(clients, engine_assets):
+def test_optional_resource_installation_keeps_current_requirement_annotations(clients, engine_assets):
     original = clients(BASE_ASSETS)
     before = original.request('GET', '/api/catalog')[1]
     old = {row['id']: row for row in before['cases']}
-    issue = _issue(old['diagram-connections'])
+    issue = _issue(old['domain-diagram-water'])
     assert original.request('POST', '/api/annotations', issue)[0] == 201
 
     installed = clients(engine_assets)
     after = installed.request('GET', '/api/catalog')[1]
     current = {row['id']: row for row in after['cases']}
-    for case_id in OLD_CASES | set(ENGINE_CASES) | EFFECT_CASES:
+    for case_id in set(DOMAIN_CASES) | set(SCENARIOS):
         assert old[case_id]['identity'] == current[case_id]['identity']
-    assert current['diagram-connections']['annotation_count'] == 1
-    assert installed.request('GET', '/api/annotations?case_id=diagram-connections')[1]['annotations'][0]['case_identity'] == issue['case_identity']
-    assert all(row['available'] for row in current['three-layers']['variants'])
+    assert current['domain-diagram-water']['annotation_count'] == 1
+    assert installed.request('GET', '/api/annotations?case_id=domain-diagram-water')[1]['annotations'][0]['case_identity'] == issue['case_identity']
+    assert all(row['available'] for row in current['domain-three-retail']['variants'])
     assert after['runtime'] == before['runtime']
     records = [json.loads(line) for line in installed.request('GET', '/api/export')[1].decode().splitlines()]
     snapshots = {row['snapshot']['case_id']: row['snapshot'] for row in records if row['record_type'] == 'case_snapshot'}
-    assert 'engine_assets' not in snapshots['diagram-connections']['runtime']
-    assert snapshots['three-layers']['runtime']['engine_assets'] == three.THREE_ASSET_SHA256
+    assert 'engine_assets' not in snapshots['domain-diagram-water']['runtime']
+    assert snapshots['domain-three-retail']['runtime']['engine_assets'] == three.THREE_ASSET_SHA256
 
 
 def test_corrupt_or_missing_optional_resource_cannot_claim_three_ready(tmp_path, engine_assets):
@@ -166,15 +166,15 @@ def test_corrupt_or_missing_optional_resource_cannot_claim_three_ready(tmp_path,
     loaded = load_assets(root)
     assert victim not in loaded
     lab = AnimationLab(tmp_path/'corrupt-data', loaded)
-    assert all(not row['available'] for row in lab.cases['three-layers']['variants'])
-    assert all(row['available'] for row in lab.cases['canvas-queue']['variants'])
+    assert all(not row['available'] for row in lab.cases['domain-three-retail']['variants'])
+    assert all(row['available'] for row in lab.cases['domain-canvas-clinic']['variants'])
     (root/victim).unlink()
     assert victim not in load_assets(root)
 
 
 def test_three_module_routes_use_local_verified_bytes_and_javascript_mime(clients, engine_assets):
     client = clients(engine_assets)
-    case = next(row for row in client.request('GET', '/api/catalog')[1]['cases'] if row['id'] == 'three-layers')
+    case = next(row for row in client.request('GET', '/api/catalog')[1]['cases'] if row['id'] == 'domain-three-retail')
     for variant in case['variants']:
         assert {row['name'] for row in variant['preload_assets']} == set(engine_assets)
         for asset in variant['preload_assets']:
@@ -182,15 +182,15 @@ def test_three_module_routes_use_local_verified_bytes_and_javascript_mime(client
             assert status == 200 and raw == engine_assets[asset['name']]
             assert asset['sha256'] == sha256(raw) and asset['bytes'] == len(raw)
             assert headers['Cache-Control'] == 'private, max-age=31536000, immutable'
-        status, page, metadata = client.request('GET', f"/composition/three-layers/{variant['id']}/scene-1/index.html")
+        status, page, metadata = client.request('GET', f"/composition/domain-three-retail/{variant['id']}/scene-1/index.html")
         assert status == 200 and metadata['Content-Type'].startswith('text/html')
         assert b'https://' not in page and b'http://' not in page
         for name in three.THREE_ASSET_SHA256:
-            path = f"/composition/three-layers/{variant['id']}/scene-1/assets/{name}"
+            path = f"/composition/domain-three-retail/{variant['id']}/scene-1/assets/{name}"
             status, raw, headers = client.request('GET', path)
             assert status == 200 and raw == engine_assets[name]
             assert headers['Content-Type'].startswith('text/javascript')
-    assert client.request('GET', '/composition/three-layers/candidate/scene-1/assets/unregistered.mjs')[0] == 404
+    assert client.request('GET', '/composition/domain-three-retail/candidate/scene-1/assets/unregistered.mjs')[0] == 404
 
 
 @pytest.mark.parametrize('case_id', sorted(ENGINE_CASES))
@@ -235,7 +235,7 @@ def test_engine_run_preparation_freezes_actual_compiler_bytes_without_dispatch(t
             assert request['compiler'] == bundle['compiler']
             assert request['engine_observer_sha256'] == sha256((root/'overlay'/'engine_observe.mjs').read_bytes())
             assert all(sha256((directory/name).read_bytes()) == digest for name, digest in request['files'].items())
-    if case_id == 'three-layers':
+    if case_id == 'domain-three-retail':
         assert all((root/'overlay'/name).read_bytes() == engine_assets[name] for name in three.THREE_ASSET_SHA256)
 
 
@@ -251,7 +251,7 @@ def test_three_prepare_rejects_missing_or_corrupt_engine_assets_before_creating_
     elif state == 'corrupt':
         (assets_dir/victim).write_bytes(b'wrong bytes')
     with pytest.raises(ValueError, match='animation_evaluation_engine_assets_'):
-        prepare(root, deepcopy(RUNTIME), case_id='three-layers',
+        prepare(root, deepcopy(RUNTIME), case_id='domain-three-retail',
                 engine_assets_dir=None if state == 'unspecified' else assets_dir)
     assert not root.exists()
 
@@ -262,7 +262,7 @@ def test_changed_three_asset_is_rejected_during_capture_plan_without_docker(tmp_
     for name, raw in engine_assets.items():
         (assets_dir/name).write_bytes(raw)
     root = tmp_path/'frozen-run'
-    prepare(root, deepcopy(RUNTIME), case_id='three-layers', engine_assets_dir=assets_dir)
+    prepare(root, deepcopy(RUNTIME), case_id='domain-three-retail', engine_assets_dir=assets_dir)
     directory = root/'inputs'/'candidate'/'scene-1'
     image = 'test.invalid/animation:latest@'+RUNTIME['image_digest']
     plan = capture_plan(directory, RUNTIME, image, root/'overlay')

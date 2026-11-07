@@ -18,6 +18,9 @@ from .motion import FPS, compile_project, estimated_alignment, example_plan, mak
 from .motion_process import compile_process_project
 from .animation_lab_canvas import compile_canvas_project, example_canvas_plan
 from .animation_lab_three import compile_three_project, example_three_plan
+from .animation_lab_scenarios import (COMPILER_VERSION as SCENARIO_COMPILER, SCENARIOS,
+    compile_scenario_project, example_scenario_plan)
+from .animation_lab_domain_cases import DOMAIN_CASES, inputs_for as domain_inputs
 from .animation_lab_effects import (COMPILER_VERSION as EFFECTS_COMPILER, EFFECT_IDS,
     RECIPES as EFFECT_RECIPES, compile_effect_project, example_effect_plan)
 from .process_continuity import (build_process_continuity_plan,
@@ -33,6 +36,9 @@ MODULES = (
          note='真实 Canvas 2D 绘制，使用共享时间轴和固定种子。'),
     dict(id='three', title='Three.js 三维动画', status='available',
          note='真实 Three.js / WebGL；需要本地固定版本资源和可用的 WebGL 2。'),
+    dict(id='charts', title='动态图表联动', status='available'),
+    dict(id='algorithms', title='算法与数据结构', status='available'),
+    dict(id='interface', title='软件界面操作', status='available'),
 )
 
 
@@ -90,10 +96,41 @@ _CASES = (
 ) + _ENGINE_CASES + _EFFECT_CASES
 
 
+def _matrix_cases():
+    rows=[]
+    for identity,definition in DOMAIN_CASES.items():
+        module=definition['module']
+        compilers={'diagram':('motion-compiler-5','motion-compiler-6'),
+            'process':('motion-process-compiler-1','motion-process-compiler-2'),
+            'continuity':('motion-process-compiler-2','motion-process-continuity-compiler-1'),
+            'canvas':('animation-lab-canvas-compiler-2',)*2,
+            'three':('animation-lab-three-compiler-2',)*2}[module]
+        row=deepcopy(definition)
+        row.update(is_matrix_case=True,variants=[
+            _variant('baseline','基础呈现',compilers[0],role='baseline',
+                     status='historical_local_experiment' if module=='process' else 'available'),
+            _variant('candidate','重点引导',compilers[1])])
+        rows.append(row)
+    for identity,definition in SCENARIOS.items():
+        row=deepcopy(definition)
+        row.update(id=identity,is_matrix_case=True,
+            checks=row.get('checks',['数值与状态是否一致','动作是否帮助理解','任意定位能否恢复']),
+            variants=[_variant('baseline','基础呈现',SCENARIO_COMPILER,role='baseline'),
+                      _variant('candidate','重点引导',SCENARIO_COMPILER)])
+        rows.append(row)
+    return tuple(rows)
+
+
+_COMPONENT_FIXTURES = _CASES
+_CASES = _matrix_cases()
+
+
 def _case(case_id):
     if type(case_id) is not str:
         raise ValueError('unknown_animation_lab_case')
-    value = next((row for row in _CASES if row['id'] == case_id), None)
+    # Old compiler fixtures can still exercise low-level components. They are
+    # deliberately absent from the public requirement catalog and lab routes.
+    value = next((row for row in (*_CASES,*_COMPONENT_FIXTURES) if row['id'] == case_id), None)
     if value is None:
         raise ValueError('unknown_animation_lab_case')
     return value
@@ -158,6 +195,13 @@ def _continuity_inputs(copy):
 
 
 def _inputs(case_id):
+    if case_id in DOMAIN_CASES:
+        return domain_inputs(case_id)
+    if case_id in SCENARIOS:
+        plan=example_scenario_plan(case_id)
+        audio=_silence(plan['duration_seconds'])
+        beats=make_beats(plan['narrative'])
+        return dict(plan=plan,beats=beats,alignment=estimated_alignment(beats,sha256(audio),plan['duration_seconds'])),[audio]
     if case_id in EFFECT_RECIPES:
         plan = example_effect_plan(case_id)
         beats = make_beats(plan['title']+'。'+plan['takeaway'])
@@ -186,7 +230,7 @@ def _checkpoints(timeline):
     if timeline.get('compiler') == 'motion-process-continuity-compiler-1':
         points.append(dict(label='跨镜承接完成', time=min(.6, duration-1/FPS)))
     for index, row in enumerate(timeline['actions']):
-        if timeline.get('engine') != 'svg-effects' and row.get('kind') not in {'move', 'hide', 'transfer', 'set_state'}:
+        if timeline.get('engine') not in {'svg-effects','scenario-effects'} and row.get('kind') not in {'move', 'hide', 'transfer', 'set_state'}:
             continue
         title = f'{index+1} · {row.get("target", "")} · {row["kind"]}'
         for label, time in [('动作前', row['start']-1/FPS),
@@ -207,14 +251,17 @@ def _clip(identity, files, audio):
 
 def _compile_variant(case_id, variant, inputs, audio):
     compiler = variant['compiler']
-    if case_id in EFFECT_RECIPES:
+    module=DOMAIN_CASES.get(case_id,{}).get('module')
+    if case_id in SCENARIOS:
+        clips=[_clip('scene-1',compile_scenario_project(**inputs,variant=variant['id']),audio[0])]
+    elif case_id in EFFECT_RECIPES:
         clips = [_clip('scene-1', compile_effect_project(**inputs, variant=variant['id']), audio[0])]
-    elif case_id in {'canvas-queue', 'three-layers'}:
-        compile_engine = compile_canvas_project if case_id == 'canvas-queue' else compile_three_project
+    elif case_id in {'canvas-queue', 'three-layers'} or module in {'canvas','three'}:
+        compile_engine = compile_canvas_project if case_id == 'canvas-queue' or module=='canvas' else compile_three_project
         clips = [_clip('scene-1', compile_engine(**inputs, variant=variant['id']), audio[0])]
-    elif case_id.startswith('diagram-'):
+    elif case_id.startswith('diagram-') or module=='diagram':
         clips = [_clip('scene-1', compile_project(**inputs, compiler_version=compiler), audio[0])]
-    elif case_id == 'process-retry':
+    elif case_id == 'process-retry' or module=='process':
         clips = [_clip('scene-1', compile_process_project(**inputs, compiler_version=compiler), audio[0])]
     else:
         scenes = inputs['scenes']
@@ -232,12 +279,17 @@ def _compile_variant(case_id, variant, inputs, audio):
                 artifact_sha256=sha256(hashes), duration_seconds=sum(c['duration_seconds'] for c in clips))
 
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=96)
 def _compiled_case(case_id):
     case = _case(case_id)
     inputs, audio = _inputs(case_id)
     source = dict(fixture_version=FIXTURE_VERSION, case_id=case_id, inputs=inputs,
                   audio_kind='synthetic_silence_not_narration')
+    if case.get('is_matrix_case'):
+        from .animation_lab_baseline import CORPUS_VERSION
+        source['corpus_version']=CORPUS_VERSION
+        source['requirement']={key:deepcopy(case[key]) for key in (
+            'domain','domain_label','engine','expression','narrative','requirement','difficulty')}
     input_sha = sha256(source)
     variants = [_compile_variant(case_id, row, inputs, audio) for row in case['variants']]
     identity = sha256(dict(input_sha256=input_sha,
@@ -256,8 +308,14 @@ def catalog():
     result = []
     for definition in _CASES:
         row = deepcopy(definition)
+        if not row.get('is_matrix_case'):
+            row.update(domain='computing',domain_label='计算机与系统',
+                engine='canvas' if row['module']=='canvas' else 'three' if row['module']=='three'
+                    else 'svg' if row['id'] in EFFECT_RECIPES else 'html-svg',
+                expression=row['module'],difficulty='basic',is_matrix_case=False,tags=[])
         variants = _compiled_case(row['id'])
         row.update(identity=variants[0]['identity'], input_sha256=variants[0]['input_sha256'],
+                   sample_identity=variants[0]['identity'],
                    fixture_version=FIXTURE_VERSION, status='available',
                    audio_kind='synthetic_silence_not_narration', agent_calls=0, tts_calls=0)
         for spec, compiled in zip(row['variants'], variants):

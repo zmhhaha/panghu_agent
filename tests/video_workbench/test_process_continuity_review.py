@@ -98,7 +98,7 @@ def sample(segment, time):
                          docking_bay=dict(x=x + 14, y=y + 204, width=252, height=56, owner=identity, opacity=row['opacity']),
                          text_area=dict(left=x + 22, top=y + 22, right=x + 258, bottom=y + 188),
                          text_boxes={'element-label': box(x + 22, y + 22, 236, 64),
-                                     **({'element-detail': box(x + 22, y + 92, 236, 48)} if row['detail'] else {}),
+                                     'element-detail': box(x + 22, y + 92, 236, 48),
                                      'state-label': box(x + 56, y + 158, 54, 28),
                                      'state-symbol': box(x + 22, y + 160, 24, 24)})
         else:
@@ -161,6 +161,51 @@ def test_process_continuity_review_accepts_complete_synthetic_evidence_without_q
     assert report['technical_status'] == report['continuity']['boundary_status'] == 'passed'
     assert report['timing_review_status'] == 'pending'
     assert report['visual_comprehension_status'] == report['voice_review_status'] == 'pending'
+
+
+def empty_detail_fixture(index=1):
+    scenes = inputs()
+    for scene in scenes:
+        for element in scene['motion']['plan']['elements']:
+            element['detail'] = ''
+        scene['motion']['timeline'] = resolve_process_timeline(
+            scene['motion']['plan'], scene['motion']['beats'], scene['motion']['alignment'],
+            compiler_version='motion-process-compiler-2')
+    return fixture(scene_inputs=scenes, index=index)
+
+
+@pytest.mark.parametrize('index', [0, 1])
+def test_empty_card_detail_retains_measured_region_across_continuity_scenes(index):
+    # The actual card DOM retains .element-detail for later in-place updates,
+    # even when these scenes have no detail text. Empty text is not a reason to
+    # discard its measured region or its clearance/overflow checks.
+    report = verify_process_continuity_observations(*empty_detail_fixture(index))
+    assert report['technical_status'] == 'passed'
+
+
+@pytest.mark.parametrize('failure,code', [
+    ('missing', 'process_text_bounds_missing'),
+    ('extra', 'process_text_bounds_missing'),
+    ('outside', 'process_text_overflow'),
+    ('overflow', 'process_text_overflow'),
+])
+def test_empty_card_detail_still_requires_exact_observed_bounds_and_clearance(failure, code):
+    wrapper, timeline, observations = empty_detail_fixture()
+    card_id = next(identity for identity, row in wrapper['segment']['initial_states'].items()
+                   if row['kind'] == 'card')
+    state = observations['continuity_boundary']['initial']['elements'][card_id]
+    assert state['detail'] == ''
+    boxes = state['text_boxes']
+    if failure == 'missing':
+        boxes.pop('element-detail')
+    elif failure == 'extra':
+        boxes['unexpected-detail'] = deepcopy(boxes['element-detail'])
+    elif failure == 'outside':
+        boxes['element-detail']['y'] = state['text_area']['bottom']
+    else:
+        boxes['element-detail']['scrollHeight'] += 1
+    with pytest.raises(ServiceError, match=code):
+        verify_process_continuity_observations(wrapper, timeline, observations)
 
 
 @pytest.mark.parametrize('repeat', [False, True])

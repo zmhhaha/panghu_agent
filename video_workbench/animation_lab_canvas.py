@@ -17,7 +17,11 @@ from .motion import (FPS, GSAP_VERSION, HYPERFRAMES_VERSION, canonical, semantic
 
 COMPILER_VERSION = 'animation-lab-canvas-compiler-1'
 PLAN_SCHEMA = 'video.canvas-plan.v1'
+CONTEXT_COMPILER_VERSION = 'animation-lab-canvas-compiler-2'
+CONTEXT_PLAN_SCHEMA = 'video.canvas-plan.v2'
 _PLAN_KEYS = {'schema', 'template', 'title', 'takeaway', 'seed', 'packet_count', 'labels'}
+_CONTEXT_KEYS = {'noun', 'source_detail', 'queue_detail', 'worker_detail',
+                 'phase_intro', 'phase_queue', 'phase_work', 'phase_done'}
 
 
 def _require(value, code='animation_lab_canvas_plan_invalid'):
@@ -31,8 +35,10 @@ def _text(value, limit):
 
 
 def validate_canvas_plan(plan):
-    _require(type(plan) is dict and set(plan) == _PLAN_KEYS)
-    _require(plan['schema'] == PLAN_SCHEMA and plan['template'] == 'queue-backpressure')
+    _require(type(plan) is dict)
+    contextual = plan.get('schema') == CONTEXT_PLAN_SCHEMA
+    _require(set(plan) == (_PLAN_KEYS | {'context'} if contextual else _PLAN_KEYS))
+    _require(plan['schema'] in {PLAN_SCHEMA, CONTEXT_PLAN_SCHEMA} and plan['template'] == 'queue-backpressure')
     _text(plan['title'], 32)
     _text(plan['takeaway'], 68)
     _require(type(plan['seed']) is int and 0 <= plan['seed'] <= 65535)
@@ -40,6 +46,10 @@ def validate_canvas_plan(plan):
     _require(type(plan['labels']) is dict and set(plan['labels']) == {'source', 'queue', 'worker'})
     for value in plan['labels'].values():
         _text(value, 8)
+    if contextual:
+        _require(type(plan['context']) is dict and set(plan['context']) == _CONTEXT_KEYS)
+        for key, value in plan['context'].items():
+            _text(value, 8 if key == 'noun' else 14 if key.endswith('_detail') else 28)
     return json.loads(canonical(plan))
 
 
@@ -57,6 +67,8 @@ def _script_json(value):
 def compile_canvas_project(plan, beats, alignment, *, variant='candidate'):
     """Compile a real canvas scene with a bounded, exact input/output contract."""
     plan = validate_canvas_plan(plan)
+    contextual = plan['schema'] == CONTEXT_PLAN_SCHEMA
+    compiler = CONTEXT_COMPILER_VERSION if contextual else COMPILER_VERSION
     _require(type(variant) is str and variant in {'baseline', 'candidate'},
              'animation_lab_canvas_variant_invalid')
     try:
@@ -75,12 +87,15 @@ def compile_canvas_project(plan, beats, alignment, *, variant='candidate'):
             ('move', 1.5 + index * .2, 1.25, '进入队列'),
             ('move', 6.4 + index * .75, 1.0, '交给执行节点'),
         ):
+            if contextual:
+                label = (plan['context']['noun']+'出现' if kind == 'reveal' else
+                         '进入'+plan['labels']['queue'] if start < 6 else '交给'+plan['labels']['worker'])
             actions.append(dict(kind=kind, target=target, start=round(start * scale, 6),
                                 duration=round(duration * scale, 6), label=label))
     actions.sort(key=lambda row: (row['start'], row['target']))
     for ordinal, action in enumerate(actions):
         action['ordinal'] = ordinal
-    timeline = dict(schema='video.motion-timeline.v1', compiler=COMPILER_VERSION,
+    timeline = dict(schema='video.motion-timeline.v1', compiler=compiler,
         engine='canvas', template='canvas-queue', variant=variant, fps=FPS,
         width=1280, height=720, duration_seconds=seconds, plan_sha256=sha256(plan),
         audio_sha256=alignment['audio_sha256'], semantic_sha256=semantic_digest(beats),
@@ -88,13 +103,20 @@ def compile_canvas_project(plan, beats, alignment, *, variant='candidate'):
     payload = dict(plan=plan, timeline=timeline)
     substitutions = dict(__TITLE__=html.escape(plan['title']),
         __TAKEAWAY__=html.escape(plan['takeaway']), __DURATION__=str(seconds),
-        __PAYLOAD__=_script_json(payload), __ENGINE_SCRIPT__=_ENGINE)
+        __PAYLOAD__=_script_json(payload), __ENGINE_SCRIPT__=_context_engine() if contextual else _ENGINE)
     page = re.sub('|'.join(map(re.escape, substitutions)),
                   lambda match: substitutions[match.group()], _PAGE)
+    if contextual:
+        page = page.replace('<title>Canvas 流量与队列演示</title>', '<title>'+html.escape(plan['title'])+'</title>')
+        page = page.replace('aria-label="请求进入队列，再交给执行节点的二维过程动画"',
+            'aria-label="'+html.escape(plan['context']['noun']+'进入'+plan['labels']['queue']+'，再交给'+plan['labels']['worker'], quote=True)+'"')
+        page = page.replace('<p class="eyebrow">流量与处理能力</p>',
+            '<p class="eyebrow">'+html.escape(plan['context']['noun']+'与处理能力')+'</p>')
+        page = page.replace('</style>', '.eyebrow{font-size:14px}</style>')
     files = {'index.html': page.encode('utf-8'), 'plan.json': canonical(plan),
              'beats.json': canonical(beats), 'alignment.json': canonical(alignment),
              'timeline.json': canonical(timeline)}
-    manifest = dict(schema='video.motion-project.v1', compiler=COMPILER_VERSION,
+    manifest = dict(schema='video.motion-project.v1', compiler=compiler,
         template='canvas-queue', engine='canvas', developer_only=True,
         hyperframes=HYPERFRAMES_VERSION, gsap=GSAP_VERSION, width=1280, height=720, fps=FPS,
         animated=True, plan_sha256=sha256(plan), semantic_sha256=semantic_digest(beats),
@@ -103,6 +125,31 @@ def compile_canvas_project(plan, beats, alignment, *, variant='candidate'):
         required_assets=['assets/gsap.min.js', 'assets/NotoSansCJK-Regular.ttc'])
     files['manifest.json'] = canonical(manifest)
     return files
+
+
+def _context_engine():
+    """Upgrade only v2 source; keep the original v1 JavaScript byte-for-byte."""
+    source = _ENGINE
+    replacements = {
+        "const enhanced=data.timeline.variant==='candidate',plan=data.plan;":
+            "const enhanced=data.timeline.variant==='candidate',plan=data.plan;let drawnText=[];",
+        "ctx.fillText(label,x,y);}":
+            "ctx.fillText(label,x,y);const m=ctx.measureText(String(label));drawnText.push({text:String(label),opacity:ctx.globalAlpha,font_size:size,bounds:{x:x-m.actualBoundingBoxLeft,y:y-m.actualBoundingBoxAscent,width:m.actualBoundingBoxLeft+m.actualBoundingBoxRight,height:m.actualBoundingBoxAscent+m.actualBoundingBoxDescent}});}",
+        "ctx.globalAlpha=1;ctx.fillStyle='#0b1422';":
+            "drawnText=[];ctx.globalAlpha=1;ctx.fillStyle='#0b1422';",
+        "const stages=[['arrival','突增流量'],['buffer','队列缓冲'],['dispatch','按能力处理'],['complete','请求全部完成']];":
+            "const stages=[['arrival',plan.context.noun+'进入'],['buffer',plan.labels.queue],['dispatch',plan.labels.worker],['complete',plan.context.noun+'完成']];",
+        "const subtitle=id==='source'?'同时到来的请求':id==='queue'?'等待资源，不丢请求':'逐个领取并完成';":
+            "const subtitle=plan.context[id+'_detail'];",
+        "const info=stage==='arrival'?'请求到达速度超过处理速度':stage==='buffer'?'队列暂存请求，等待可用资源':stage==='complete'?'流量恢复平稳，队列已被消化':'执行节点持续领取，排队请求逐渐减少';":
+            "const info=stage==='arrival'?plan.context.phase_intro:stage==='buffer'?plan.context.phase_queue:stage==='complete'?plan.context.phase_done:plan.context.phase_work;",
+        "width:canvas.width,height:canvas.height,context:'2d',seed:plan.seed,stage,queue_count:queued,completed_count:done,":
+            "width:canvas.width,height:canvas.height,context:'2d',seed:plan.seed,stage,queue_count:queued,completed_count:done,text_boxes:drawnText,phase_text:info,",
+    }
+    for before, after in replacements.items():
+        _require(source.count(before) == 1, 'animation_lab_canvas_context_source_mismatch')
+        source = source.replace(before, after, 1)
+    return source
 
 
 _PAGE = '''<!doctype html>

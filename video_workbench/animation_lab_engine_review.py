@@ -16,6 +16,8 @@ from .motion import FPS, sha256
 
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
 _COMPILERS = {'canvas': 'animation-lab-canvas-compiler-1', 'three': 'animation-lab-three-compiler-1'}
+_CONTEXT_COMPILERS = {'canvas': ('video.canvas-plan.v2', 'animation-lab-canvas-compiler-2'),
+                      'three': ('video.animation-lab-three-plan.v2', 'animation-lab-three-compiler-2')}
 _EPS = 1 / FPS + 1e-6
 
 
@@ -156,7 +158,61 @@ def _sample(plan, timeline, sample, expected):
         _canvas_state(plan, state)
     else:
         _three_state(plan, state)
+    if plan.get('schema') == _CONTEXT_COMPILERS[timeline['engine']][0]:
+        _context_state(plan, timeline, state)
     return state
+
+
+def _context_state(plan, timeline, state):
+    """Only v2 records bind actual domain text and readable label geometry."""
+    texts = state.get('text_boxes')
+    _require(type(texts) is list and 3 <= len(texts) <= 128, 'animation_lab_engine_text_missing')
+    for row in texts:
+        _require(type(row) is dict and type(row.get('text')) is str and 0 < len(row['text']) <= 1000,
+                 'animation_lab_engine_text_invalid')
+        opacity = _number(row.get('opacity'), 0, 1)
+        _number(row.get('font_size'), 14, 64)
+        bounds = row.get('bounds')
+        _require(type(bounds) is dict and set(bounds) == {'x', 'y', 'width', 'height'},
+                 'animation_lab_engine_bounds_invalid')
+        for number in bounds.values():
+            _number(number)
+        _number(bounds['width'], 0); _number(bounds['height'], 0)
+        if opacity > .01:
+            _bounds(row.get('bounds'))
+    visible = {row['text'] for row in texts if row['opacity'] > .01}
+    if timeline['engine'] == 'canvas':
+        scale = timeline['duration_seconds']/18
+        time = state['time']
+        stage = ('arrival' if time < 4.8*scale else 'buffer' if time < 6.4*scale
+                 else 'complete' if state['completed_count'] == plan['packet_count'] else 'dispatch')
+        phase_key = {'arrival': 'phase_intro', 'buffer': 'phase_queue',
+                     'dispatch': 'phase_work', 'complete': 'phase_done'}[stage]
+        expected = {plan['context'][phase_key], *plan['labels'].values(),
+                    *(plan['context'][key+'_detail'] for key in ('source', 'queue', 'worker'))}
+        _require(state.get('stage') == stage and state.get('phase_text') == plan['context'][phase_key]
+                 and expected <= visible, 'animation_lab_engine_context_text_mismatch')
+        return
+    layers = state.get('layer_texts')
+    _require(layers == [dict(id=row['id'], label=row['label'], detail=row['detail']) for row in plan['layers']],
+             'animation_lab_engine_context_text_mismatch')
+    smooth = lambda value: (lambda p: p*p*(3-2*p))(max(0., min(1., value)))
+    normalized = state['time']/timeline['duration_seconds']
+    explode = smooth((normalized-.12)/.18)*(1-smooth((normalized-.80)/.16))
+    focus = smooth((normalized-.32)/.40)
+    candidate = timeline.get('variant') == 'candidate'
+    strength = math.sin(math.pi*focus) if candidate else 0
+    focus_index = min(len(plan['layers'])-1, math.floor(focus*len(plan['layers'])))
+    if explode < .03:
+        phase = plan['context']['phase_whole']
+    elif candidate and strength > .1:
+        row = plan['layers'][focus_index]
+        phase = row['label']+'：'+row['detail']
+    else:
+        phase = plan['context']['phase_expand']
+    required = {phase, *(row['label'] for row in plan['layers']), *(row['detail'] for row in plan['layers'])}
+    _require(state.get('phase_text') == phase and required <= visible,
+             'animation_lab_engine_context_text_mismatch')
 
 
 def _scene_change(before, after):
@@ -184,7 +240,20 @@ def verify_engine_observations(plan, timeline, observations):
         _finite_tree(value)
     _require(type(plan) is dict and type(timeline) is dict and type(observations) is dict)
     engine = timeline.get('engine')
-    _require(engine in _COMPILERS and timeline.get('compiler') == _COMPILERS[engine]
+    _require(engine in _COMPILERS, 'animation_lab_engine_timeline_invalid')
+    contextual = plan.get('schema') == _CONTEXT_COMPILERS[engine][0]
+    compiler = _CONTEXT_COMPILERS[engine][1] if contextual else _COMPILERS[engine]
+    if contextual:
+        try:
+            if engine == 'canvas':
+                from .animation_lab_canvas import validate_canvas_plan
+                validate_canvas_plan(plan)
+            else:
+                from .animation_lab_three import validate_three_plan
+                validate_three_plan(plan)
+        except (ValueError, TypeError, KeyError):
+            raise ServiceError('animation_lab_engine_context_plan_invalid', 422) from None
+    _require(timeline.get('compiler') == compiler
              and timeline.get('schema') == 'video.motion-timeline.v1'
              and timeline.get('fps') == FPS and timeline.get('width') == 1280 and timeline.get('height') == 720,
              'animation_lab_engine_timeline_invalid')

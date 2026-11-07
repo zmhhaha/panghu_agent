@@ -63,10 +63,41 @@ def test_missing_publication_and_failed_technical_report_cannot_be_ready(evaluat
 
 def test_case_coverage_and_semantic_binding_are_explicit(evaluation_factory):
     lab, package, receipt, _, _ = candidate(evaluation_factory)
-    other = dict(key='annotation:other', case_id='diagram-long-label', binding={})
+    other = dict(key='annotation:other', case_id='domain-diagram-learning', binding={})
     package['feedback'].append(other)
     proof = lab.verify_iteration_candidate(package, receipt)
     assert proof['uncovered_feedback_keys'] == ['annotation:other']
     package['feedback'][0]['binding'] = dict(semantic_input_sha256='f'*64)
     with pytest.raises(LabError, match='candidate_semantics_changed'):
+        lab.verify_iteration_candidate(package, receipt)
+
+
+@pytest.mark.parametrize('legacy_kind', ['missing', 'previous', 'mixed'])
+def test_valid_frozen_report_from_retired_corpus_cannot_publish_a_ready_candidate(
+        evaluation_factory, monkeypatch, legacy_kind):
+    # Compile real current artifacts, then freeze an otherwise valid legacy
+    # input envelope. The real run/report reader still verifies all hashes;
+    # this reaches the separate corpus-admission boundary, not corruption.
+    from video_workbench import animation_lab_evaluate as evaluation
+    compile_current = evaluation.compile_sample
+
+    def compile_legacy(case_id, variant_id):
+        bundle = compile_current(case_id, variant_id)
+        if legacy_kind == 'mixed' and variant_id != 'baseline':
+            return bundle
+        bundle['inputs'].pop('corpus_version')
+        if legacy_kind == 'previous':
+            bundle['inputs']['corpus_version'] = 'retired-cross-domain-corpus'
+        bundle['input_sha256'] = sha256(bundle['inputs'])
+        bundle['identity'] = sha256(dict(input_sha256=bundle['input_sha256'],
+            variants=[dict(id=key, artifact_sha256=compile_current(case_id, key)['artifact_sha256'])
+                      for key in ('baseline', 'candidate')]))
+        return bundle
+
+    monkeypatch.setattr(evaluation, 'compile_sample', compile_legacy)
+    lab, package, receipt, _, fixture = candidate(evaluation_factory)
+    # It is a self-consistent frozen report; obsolete corpus admission is the
+    # sole reason it cannot become candidate_ready or accepted.
+    assert load_evaluation(fixture['root'])['snapshot']['technical']['status'] == 'passed'
+    with pytest.raises(LabError, match='animation_lab_report_not_found'):
         lab.verify_iteration_candidate(package, receipt)

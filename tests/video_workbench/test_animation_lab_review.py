@@ -251,3 +251,20 @@ def test_json_duplicate_keys_and_nonfinite_values_do_not_override_validated_deci
         validate_review_output(duplicate, request)
     with pytest.raises(ReviewContractError, match='invalid_json'):
         validate_review_output(output.replace('0.6', 'NaN'), request)
+
+
+@pytest.mark.parametrize('module', ['charts', 'algorithms', 'interface'])
+def test_new_capability_visual_review_preserves_blind_evidence_and_suggestion_only_scope(module):
+    request, images = request_fixture(module=module, sequence=True)
+    assert request['public']['module'] == module
+    messages = build_review_messages(request, images)
+    assert len(messages) == 2
+    output = review_fixture(request)
+    output['suggestions'] = [dict(issue_id=None, kind='no_change', parameters={}, reason='需要开发者进一步标注具体表达问题。')]
+    result = validate_review_output(json.dumps(output), request)
+    assert result['status'] == 'suggestion_only'
+    assert result['auto_adopt'] is result['human_approved'] is result['technical_pass'] is False
+    assert result['selected_variant_id'] == request['private']['variants']['B']['id']
+    # New families do not gain the old diagram flow/focus layout editor.
+    with pytest.raises(ReviewContractError, match='suggestion'):
+        validate_review_output(json.dumps(review_fixture(request)), request)

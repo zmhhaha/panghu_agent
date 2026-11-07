@@ -1,7 +1,9 @@
 import {isCurrentAnnotation, issueLocation, isCurrentEvaluation, evaluationFindingLocation,
   currentEvaluationDecisions, localResourceUrl, warmPreviewAssets, iterationPullRequestUrl,
   iterationResourceUrl, isIterationOverview, iterationStateLabel, canReviewIteration,
-  iterationAttemptReceipt, canImportIterationReceipt, verifiedIterationCandidate, canAcceptIteration} from './model.mjs';
+  iterationAttemptReceipt, canImportIterationReceipt, verifiedIterationCandidate, canAcceptIteration,
+  filterAnimationCases, animationFacetOptions, animationCoverage, animationEngineLabel,
+  animationRequirementRows, animationRequirementsUrl} from './model.mjs';
 
 const $ = id => document.getElementById(id);
 const applicationRoot = new URL('./', import.meta.url);
@@ -400,14 +402,64 @@ function restoreDraft() {
   formMessage('');
 }
 
+function caseFilters() {
+  return {module: $('module-filter').value, domain: $('domain-filter').value,
+    engine: $('engine-filter').value, query: $('case-search').value, review: $('review-filter').value};
+}
+
+function filteredCases() { return filterAnimationCases(catalog.cases, caseFilters(), knownReviews); }
+
+function renderRequirementsMatrix() {
+  const coverage = animationCoverage(catalog.cases, catalog.modules);
+  $('requirements-count').textContent = `${coverage.total} 个跨领域需求样例`;
+  $('requirements-summary').replaceChildren(...[
+    ['能力模块', coverage.modules.length], ['领域', coverage.domains.length],
+    ['渲染引擎', coverage.engines.length], ['需求样例', coverage.total],
+  ].map(([label, count]) => { const card = node('article'); card.append(node('span', label), node('strong', count)); return card; }));
+  const table = node('table'), head = node('thead'), header = node('tr');
+  for (const label of ['能力模块', '样例数', '覆盖领域', '渲染引擎']) header.append(node('th', label));
+  head.append(header); table.append(head);
+  const body = node('tbody');
+  for (const module of coverage.modules) {
+    const row = node('tr');
+    for (const value of [module.label, module.cases, module.domains.map(item => item.label).join('、') || '待分类',
+      module.engines.map(item => item.label).join('、') || '待分类']) row.append(node('td', value));
+    body.append(row);
+  }
+  table.append(body); $('requirements-coverage').replaceChildren(table);
+  updateRequirementsDownload();
+}
+
+function updateRequirementsDownload() {
+  const filters = caseFilters();
+  const url = animationRequirementsUrl(applicationRoot, filters);
+  const count = filterAnimationCases(catalog.cases, {module: filters.module, domain: filters.domain, engine: filters.engine})
+    .filter(row => row.is_matrix_case === true).length;
+  const link = $('requirements-export');
+  if (url && count) { link.href = url; link.removeAttribute('aria-disabled'); }
+  else { link.removeAttribute('href'); link.setAttribute('aria-disabled', 'true'); }
+  link.textContent = `下载模块／领域／引擎需求集（${count}）`;
+  $('requirements-export-note').textContent = '检索词和评价状态只影响左侧列表。';
+}
+
+function renderCaseRequirement(row) {
+  const rows = animationRequirementRows(row);
+  $('case-requirement').hidden = !rows.length;
+  $('case-requirement-meta').textContent = [row.domain_label, animationEngineLabel(row.engine),
+    {basic: '基础', intermediate: '进阶', boundary: '边界'}[row.difficulty]].filter(Boolean).join(' · ');
+  $('case-requirement-body').replaceChildren(...rows.map(item => {
+    const section = node('section'); section.append(node('h4', item.label));
+    if (item.values.length === 1) section.append(node('p', item.values[0]));
+    else { const list = node('ul'); for (const value of item.values) list.append(node('li', value)); section.append(list); }
+    return section;
+  }));
+}
+
 function renderCaseList() {
   const selectedModule = $('module-filter').value;
-  const query = $('case-search').value.trim().toLocaleLowerCase();
-  const reviewFilter = $('review-filter').value;
-  const matches = catalog.cases.filter(row => !row.evaluation && (selectedModule === 'all' || row.module === selectedModule)
-    && `${row.title} ${row.description ?? ''}`.toLocaleLowerCase().includes(query)
-    && (reviewFilter === 'all' || knownReviews.has(`${row.id}:${caseIdentity(row)}`) === (reviewFilter === 'reviewed')));
+  const matches = filteredCases();
   $('case-count').textContent = String(matches.length);
+  $('filter-summary').textContent = `当前组合：${matches.length} 个样例，${animationFacetOptions(matches, 'domain').length} 个领域。`;
   const list = $('case-list');
   list.replaceChildren();
   for (const row of matches) {
@@ -415,16 +467,17 @@ function renderCaseList() {
     button.type = 'button';
     button.setAttribute('aria-current', String(currentCase?.id === row.id));
     const category = moduleFor(row.module)?.label ?? row.module;
-    button.append(node('span', `${category}${knownReviews.has(`${row.id}:${caseIdentity(row)}`) ? ' · 已核看' : ''}`, 'case-category'), node('strong', row.title), node('span', row.description ?? '', 'case-description'));
+    button.append(node('span', `${category}${row.domain_label ? ' · '+row.domain_label : ''}${knownReviews.has(`${row.id}:${caseIdentity(row)}`) ? ' · 已核看' : ''}`, 'case-category'), node('strong', row.title), node('span', row.description ?? '', 'case-description'));
     button.addEventListener('click', () => selectCase(row));
     list.append(button);
   }
-  if (!matches.length) list.append(node('p', '当前模块暂无可用样例。', 'muted small'));
+  if (!matches.length) list.append(node('p', '当前筛选组合没有样例，请调整模块、领域、引擎、检索词或评价状态。', 'muted small'));
   const selected = moduleFor(selectedModule);
   const available = !selected || ['ready', 'available', 'implemented', 'active'].includes(selected.status ?? 'ready');
   $('module-note').hidden = available;
   $('module-note').textContent = available ? '' : selected.reason ?? selected.description ?? '这项能力尚未接入，本页不提供模拟效果。';
   for (const button of document.querySelectorAll('[data-evaluation-case]')) button.setAttribute('aria-current', String(button.dataset.evaluationCase === currentCase?.id));
+  updateRequirementsDownload();
 }
 
 function evaluationMessage(text, error = false) {
@@ -713,6 +766,7 @@ async function selectCase(row) {
   $('case-title').textContent = row.title;
   $('case-description').textContent = row.description ?? '';
   $('module-badge').textContent = moduleFor(row.module)?.label ?? row.module;
+  renderCaseRequirement(row);
   $('candidate-card').hidden = row.variants.length < 2;
   document.querySelector('.comparison-grid').classList.toggle('single', row.variants.length < 2);
   players = [];
@@ -1022,22 +1076,25 @@ $('annotation-variant').addEventListener('change', () => {
   $('annotation-start').max = String(maximum); $('annotation-end').max = String(maximum);
 });
 $('annotation-form').addEventListener('input', () => setDirty());
-$('module-filter').addEventListener('change', () => {
+function applyCaseFilters() {
   captureDraft(); pause(); renderCaseList();
-  const selected = $('module-filter').value;
-  const matches = catalog.cases.filter(row => selected === 'all' || row.module === selected);
+  const matches = filteredCases();
   if (!matches.length) {
+    // Hiding a still-selected case must preserve its in-flight resource warmup.
+    // Selecting this same frozen case again reuses its players and controller.
     $('case-workspace').hidden = true; $('empty-state').hidden = false;
-    $('empty-state').querySelector('h2').textContent = `${moduleFor(selected)?.label ?? '这个模块'}尚未接入`;
-    $('empty-state').querySelector('p').textContent = moduleFor(selected)?.reason ?? '这里将展示独立效果样例；当前没有可评价的实现。';
+    $('empty-state').querySelector('h2').textContent = '当前筛选组合没有样例';
+    $('empty-state').querySelector('p').textContent = '请调整模块、领域、引擎、检索词或评价状态。';
   } else {
     $('empty-state').querySelector('h2').textContent = '选择一个效果样例';
-    $('empty-state').querySelector('p').textContent = '从框图、过程动画和镜头衔接开始，逐项改善表现力。';
-    selectCase(matches.find(row => row.id === currentCase?.id) ?? matches[0]);
+    $('empty-state').querySelector('p').textContent = '比较不同领域的需求样例，逐项改善表现力。';
+    const retained = matches.find(row => row.id === currentCase?.id);
+    if (retained && !$('case-workspace').hidden) return;
+    void selectCase(retained ?? matches[0]);
   }
-});
-$('case-search').addEventListener('input', renderCaseList);
-$('review-filter').addEventListener('change', renderCaseList);
+}
+for (const id of ['module-filter', 'domain-filter', 'engine-filter', 'review-filter']) $(id).addEventListener('change', applyCaseFilters);
+$('case-search').addEventListener('input', applyCaseFilters);
 document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
 window.addEventListener('pagehide', () => { pause(); captureDraft(); clearLoadTimers(); });
 
@@ -1063,6 +1120,8 @@ async function loadCatalog() {
         select.dataset.evaluationCase = evaluatedCase.id;
         select.addEventListener('click', () => {
           if (!['all', evaluatedCase.module].includes($('module-filter').value)) $('module-filter').value = evaluatedCase.module;
+          for (const key of ['domain', 'engine']) if (!['all', evaluatedCase[key]].includes($(`${key}-filter`).value)) $(`${key}-filter`).value = 'all';
+          $('case-search').value = ''; $('review-filter').value = 'all';
           selectCase(evaluatedCase);
         });
         row.append(select);
@@ -1087,13 +1146,25 @@ async function loadCatalog() {
       $('module-filter').append(option);
     }
     $('module-filter').value = catalog.modules.some(row => row.id === selectedModule) ? selectedModule : 'all';
+    for (const key of ['domain', 'engine']) {
+      const selector = $(`${key}-filter`), previous = selector.value;
+      const rows = animationFacetOptions(catalog.cases, key);
+      const all = node('option', key === 'domain' ? '全部领域' : '全部引擎'); all.value = 'all';
+      selector.replaceChildren(all, ...rows.map(row => { const option = node('option', `${row.label}（${row.count}）`); option.value = row.id; return option; }));
+      selector.value = rows.some(row => row.id === previous) ? previous : 'all';
+    }
     syncIterationModules();
     let hashId = ''; try { hashId = decodeURIComponent(location.hash.slice(1)); } catch { /* An invalid hash is not a case selection. */ }
-    const selected = catalog.cases.find(row => row.id === oldId) ?? catalog.cases.find(row => row.id === hashId) ?? catalog.cases[0];
+    const matches = filteredCases();
+    const explicitHash = !oldId ? catalog.cases.find(row => row.id === hashId) : null;
+    const currentEvaluation = catalog.cases.find(row => row.id === oldId && row.evaluation);
+    const selected = explicitHash ?? currentEvaluation ?? matches.find(row => row.id === oldId) ?? matches[0];
     currentCase = null;
-    renderCaseList(); globalMessage('');
+    renderRequirementsMatrix(); renderCaseList(); globalMessage('');
     if (selected) await selectCase(selected);
-    else { $('case-workspace').hidden = true; $('empty-state').hidden = false; }
+    else { $('case-workspace').hidden = true; $('empty-state').hidden = false;
+      $('empty-state').querySelector('h2').textContent = '当前筛选组合没有样例';
+      $('empty-state').querySelector('p').textContent = '请调整筛选条件后查看。'; }
   } catch (error) { if (serial === loadSerial) globalMessage(`无法读取动画实验样例：${error.message}。请检查开发者服务后刷新。`, true); }
   finally { if (serial === loadSerial) $('reload').disabled = false; }
 }

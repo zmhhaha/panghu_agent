@@ -1,8 +1,8 @@
-"""Fixed-effect integration contracts; no browser, render, model or TTS dispatch.
+"""Requirement-library integration and isolated SVG component contracts.
 
-The resource bytes and revision findings here are explicit unit fixtures. Old
-hashes were measured before extending the library, at e4366c39fceefbf053c715606af49891465a148f;
-they guard the promised existing-source and history preservation boundary.
+The public developer library contains only the rebuilt cross-domain demands.
+Legacy compiler recipes remain internal component fixtures; no old artifact
+identity or historical annotation is a public-library compatibility contract.
 """
 from copy import deepcopy
 import http.client
@@ -20,6 +20,8 @@ from video_workbench.animation_lab_effects_review import verify_effect_observati
 from video_workbench.animation_lab_evaluate import load_run, prepare, revision_decision
 from video_workbench.animation_lab_evaluation_view import revision_task
 from video_workbench.animation_lab_samples import catalog, compile_sample
+from video_workbench.animation_lab_domain_cases import DOMAIN_CASES
+from video_workbench.animation_lab_scenarios import SCENARIOS
 from video_workbench.motion import sha256
 
 
@@ -35,43 +37,7 @@ EFFECTS = {
     'architecture-expand': 'diagram', 'focus-shift': 'diagram', 'data-compare': 'diagram',
     'local-replace': 'diagram', 'svg-morph': 'diagram',
 }
-OLD = {
-    'diagram-connections': (
-        '5e36eb6e782cb05c8d8ce4d745bb69aab427c4f7a5f6926405ddb9cddd682c81',
-        '412ebb0fb87b76b8c5b457e786b3a33d33e69e3379f29760e9aa9d52fd6b5bb1',
-        'ff116ac659a92c06fdcbb056dd76af075aea7ee40a747e207f31ab1eb04d14ce',
-        'a984526f3033f8aada54cca0725399cbe7afff31e4eaa9f0b57cc0f04d6ac814'),
-    'diagram-long-label': (
-        'd8eb53eefb8640c9a56d08fecbccc3573c3301d5e53c62b5b5853720eb35cdfd',
-        'fa3ab1499a1abd2afa5a520df8b615b670ffdafe5cd02b12613d0139c5977cd7',
-        'a041b15be33ed27be01249fba7678059ca042e22e169beff446917fa0568238d',
-        '8f7b9593316d6d608ed65df88d1fcf5ae8b1a4d74ec0081aa61a8dce2d11d337'),
-    'process-retry': (
-        'a05bc300c9ad7f802e15206b008a30995a0ff7095a82635e07c394ac69f4b1f2',
-        '40faaeee2ff88eaea19cbe673fad92e53e5414d86b3f381baeb863a704388155',
-        'ec2718d0170572265656fcad0c2033f15f8f2b87da157a059186fa7da90fe3a5',
-        'd0eed145290b78b75f61e0a157418abc3157de83320831562f131f4f614f42ea'),
-    'continuity-retain': (
-        'c7bb66343a5182cafb10d62da00608b32ad294b6119431f8db7c238ac5c43a5f',
-        '8445b4ef625553854e2b63b9995cdd26e168d98382411761b80b6343850ea7f5',
-        '9963386a07a7195126866b9a14126142ac81159a224343798c235baf92b54d15',
-        '23cc9f4ac69250edd9ddb4e628a4cb746d3be90effa54e9f8a68fd7b407604a5'),
-    'continuity-copy': (
-        'f7bef26af4db69ed8926ac5f8ef7c1a23728f39521b8573841dba64e3350eea0',
-        '37cbb973689a80425167d44930ce28f4fa68e1eee553c69ba19c252347f28395',
-        'bfc099415eabacf1f43ac1d3a54163bd3c1f64102f8390d414160b226e4595b9',
-        '76fcd3989fe2c60a9c6f9484df34f93d5b9025f218cb81feb544264ec2fda346'),
-    'canvas-queue': (
-        '1382f77746cba24203cc592c5ca9e95a2ecfc70128d2a4e766b88fcc883baa44',
-        '2069f37827425ac5d1bfd04780aa53792a58c788a17451dd5fcea98dbecce05d',
-        'f20a79467960e57597797b0f094858fd068216c4caee44156f555b7d5e4a0ea8',
-        '3aedc8718470f0a4650de07fcf724238e6ae8ec5dbbcac7cbe8897314c9e27cc'),
-    'three-layers': (
-        'ef3c7e8c818b07fdd5ae09cc7b16edb15384273fb9282fe8efe323e000a3c8cb',
-        '58cf267ba42a6b5c928e24a4f220cd0621bd1bcca67a366125f8810f01396a84',
-        'eccd436a1f34d85773b1847c3f0c47821f63b9443a85a2db640b75447637dcfd',
-        '24a17929182e9bb6b91873c533dd6d5444f70ea75d6c69e93dc3219d6517bf7e'),
-}
+
 
 
 class Client:
@@ -120,7 +86,7 @@ def clients(tmp_path):
 def runs(tmp_path_factory):
     base = tmp_path_factory.mktemp('effect-frozen-contracts')
     result = {}
-    for case_id in EFFECTS:
+    for case_id in SCENARIOS:
         root = base/case_id
         run = prepare(root, deepcopy(RUNTIME), case_id=case_id)
         loaded, bundles = load_run(root)
@@ -135,18 +101,13 @@ def checkpoint_catalog(tmp_path_factory):
     return {row['id']: row for row in lab.get_catalog()['cases']}
 
 
-def test_fifteen_case_catalog_preserves_all_seven_original_artifact_and_runtime_identities(tmp_path):
+def test_public_catalog_contains_only_rebuilt_cross_domain_requirements():
     rows = {row['id']: row for row in catalog()}
-    assert set(rows) == set(OLD) | set(EFFECTS)
-    lab = AnimationLab(tmp_path/'original-identities', ASSETS)
-    for case_id, (source, baseline, candidate, identity) in OLD.items():
-        assert rows[case_id]['input_sha256'] == source
-        assert compile_sample(case_id, 'baseline')['artifact_sha256'] == baseline
-        assert compile_sample(case_id, 'candidate')['artifact_sha256'] == candidate
-        assert lab.cases[case_id]['identity'] == identity
-    new_bundles = [compile_sample(case_id, variant) for case_id in EFFECTS for variant in ('baseline', 'candidate')]
-    assert len({row['artifact_sha256'] for row in new_bundles}) == 16
-    assert len({row['input_sha256'] for row in new_bundles}) == 8
+    assert set(rows) == set(DOMAIN_CASES) | set(SCENARIOS)
+    assert len(rows) == 27
+    assert not set(EFFECTS) & set(rows)
+    assert all(row['is_matrix_case'] and row['requirement']['goal'] and row['narrative'] for row in rows.values())
+    assert len({row['input_sha256'] for row in rows.values()}) == 27
 
 
 @pytest.mark.parametrize('case_id', sorted(EFFECTS))
@@ -174,21 +135,22 @@ def test_effect_pair_has_same_semantic_inputs_and_clock_but_distinct_actual_proj
         assert b'http://' not in page and b'https://' not in page
 
 
-@pytest.mark.parametrize('case_id', sorted(EFFECTS))
+@pytest.mark.parametrize('case_id', sorted(SCENARIOS))
 def test_preview_checkpoints_cover_every_declared_effect_action_and_actual_boundary_times(checkpoint_catalog, case_id):
     case = checkpoint_catalog[case_id]
     for variant in case['variants']:
         bundle = compile_sample(case_id, variant['id'])
         clip = bundle['clips'][0]
         points = variant['observation_times']
-        assert all(0 <= row['time'] <= 18-1/24 for row in points)
+        duration = variant['duration_seconds']
+        assert all(0 <= row['time'] <= duration-1/24 for row in points)
         for action in clip['timeline']['actions']:
             prefix = f"{clip['id']} · {action['ordinal']+1} · {action['target']} · {action['kind']} · "
             actual = {row['label'][len(prefix):]: row['time'] for row in points if row['label'].startswith(prefix)}
             assert actual == pytest.approx({
                 '动作前': max(0, action['start']-1/24),
-                '途中': min(18-1/24, action['start']+action['duration']/2),
-                '完成': min(18-1/24, action['start']+action['duration']+1/24),
+                '途中': min(duration-1/24, action['start']+action['duration']/2),
+                '完成': min(duration-1/24, action['start']+action['duration']+1/24),
             }, abs=1e-9)
 
 
@@ -198,17 +160,18 @@ def test_all_new_cases_are_available_without_unrelated_three_resources(tmp_path)
     for name, raw in ASSETS.items():
         (assets/name).write_bytes(raw)
     lab = AnimationLab(tmp_path/'no-webgl', load_assets(assets))
-    for case_id in EFFECTS:
+    for case_id in SCENARIOS:
         assert all(row['available'] for row in lab.cases[case_id]['variants'])
-    assert all(not row['available'] for row in lab.cases['three-layers']['variants'])
+    assert all(not row['available'] for case in lab.cases.values() if case['module'] == 'three' for row in case['variants'])
 
 
-def test_new_histories_are_isolated_and_original_opinions_survive_restart_and_full_export(clients):
+def test_new_requirement_feedback_is_isolated_and_persists_after_restart(clients):
     original = clients()
     cases = {row['id']: row for row in original.request('GET', '/api/catalog')[1]['cases']}
-    assert len({cases[key]['identity'] for key in EFFECTS}) == 8
+    representatives = ['domain-diagram-water', *[next(key for key, row in SCENARIOS.items() if row['module'] == module) for module in ('charts', 'algorithms', 'interface')]]
+    assert len({cases[key]['identity'] for key in representatives}) == 4
     saved = {}
-    for case_id in ['diagram-connections', *EFFECTS]:
+    for case_id in representatives:
         case = cases[case_id]
         body = dict(case_id=case_id, case_identity=case['identity'], variant_id='candidate',
             kind='issue', start_seconds=6, end_seconds=7, region=dict(x=.2,y=.3,width=.25,height=.2),
@@ -229,16 +192,16 @@ def test_new_histories_are_isolated_and_original_opinions_survive_restart_and_fu
     assert {key: value['id'] for key,value in annotations.items()} == saved
     snapshots = {row['snapshot']['case_id']: row['snapshot'] for row in records if row['record_type'] == 'case_snapshot'}
     assert all(snapshots[key]['identity'] == cases[key]['identity'] for key in saved)
-    stale = dict(body, case_id='condition-branch', case_identity=cases['parallel-wait']['identity'])
+    stale = dict(body, case_id=representatives[0], case_identity=cases[representatives[1]]['identity'])
     assert restarted.request('POST', '/api/annotations', stale)[0] == 409
-    assert len(restarted.request('GET', '/api/annotations?case_id=condition-branch')[1]['annotations']) == 1
+    assert len(restarted.request('GET', '/api/annotations?case_id='+representatives[0])[1]['annotations']) == 1
 
 
-@pytest.mark.parametrize('case_id', sorted(EFFECTS))
+@pytest.mark.parametrize('case_id', sorted(SCENARIOS))
 def test_frozen_effect_run_uses_original_fixed_pair_and_binds_actual_capture_dependencies(runs, case_id):
     fixture = runs[case_id]
     root, run, bundles = fixture['root'], fixture['run'], fixture['bundles']
-    assert run['module'] == EFFECTS[case_id]
+    assert run['module'] == SCENARIOS[case_id]['module']
     assert run['limits']['local_candidates'] == 0 and run['limits']['captures'] == 2
     assert run['production_adopted'] is False and run['agent_calls'] == run['tts_calls'] == 0
     assert {bundle['variant_id'] for bundle in bundles} == {'baseline', 'candidate'}
@@ -258,8 +221,8 @@ def test_frozen_effect_run_uses_original_fixed_pair_and_binds_actual_capture_dep
         assert plan['automatic_retry'] is False
 
 
-@pytest.mark.parametrize('case_id', sorted(key for key,module in EFFECTS.items() if module == 'diagram'))
-def test_new_diagram_classification_does_not_admit_old_flow_or_focus_layouts(tmp_path, case_id):
+@pytest.mark.parametrize('case_id', sorted(SCENARIOS))
+def test_structured_requirement_families_do_not_admit_unrelated_old_layouts(tmp_path, case_id):
     for template in ('flow', 'focus'):
         target = tmp_path/template
         with pytest.raises(ValueError, match='animation_evaluation_layout_not_supported'):
@@ -267,14 +230,14 @@ def test_new_diagram_classification_does_not_admit_old_flow_or_focus_layouts(tmp
         assert not target.exists()
 
 
-@pytest.mark.parametrize('case_id', sorted(EFFECTS))
+@pytest.mark.parametrize('case_id', sorted(SCENARIOS))
 def test_effect_revision_task_requires_developer_design_and_exposes_no_old_layout_editor(runs, case_id):
     fixture = runs[case_id]
     # Minimal explicit synthetic triage finding, never a claimed model output.
     finding = dict(id='synthetic-finding', source='synthetic_contract_fixture',
                    description='Synthetic source-binding test, not a real quality finding')
     snapshot = dict(identity='d'*64, run_identity=fixture['run']['identity'], evidence_identity='e'*64,
-        module=EFFECTS[case_id], case_id=case_id, semantic_input_sha256=fixture['run']['semantic_input_sha256'],
+        module=SCENARIOS[case_id]['module'], case_id=case_id, semantic_input_sha256=fixture['run']['semantic_input_sha256'],
         findings=[finding])
     decision = dict(finding_id=finding['id'], report_identity=snapshot['identity'],
                     decision='needs_fix', effective=True)
@@ -291,7 +254,7 @@ def test_effect_revision_task_requires_developer_design_and_exposes_no_old_layou
 @pytest.mark.parametrize('target', ['page', 'engine-observer'])
 def test_capture_rejects_changed_effect_source_or_observer_without_dispatch(runs, tmp_path, target):
     root = tmp_path/'frozen-copy'
-    shutil.copytree(runs['svg-morph']['root'], root)
+    shutil.copytree(runs[next(iter(SCENARIOS))]['root'], root)
     directory = root/'inputs'/'candidate'/'scene-1'
     if target == 'page':
         (directory/'index.html').write_bytes(b'changed after freezing')

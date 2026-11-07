@@ -50,7 +50,7 @@ class Client:
         return status, data, response_headers
 
     def issue(self):
-        case = next(row for row in self.catalog['cases'] if row['id'] == 'diagram-connections')
+        case = next(row for row in self.catalog['cases'] if row['id'] == 'domain-diagram-water')
         return dict(case_id=case['id'], case_identity=case['identity'], variant_id='candidate',
             kind='issue', start_seconds=5.25, end_seconds=6, region=dict(x=.1, y=.2, width=.3, height=.4),
             tags=['connector'], severity='major', comment='这条线遮挡了说明文字')
@@ -99,7 +99,7 @@ def test_case_title_edit_opens_same_database_as_new_experiment(lab_factory, monk
 
     def revised_catalog():
         cases = original_catalog()
-        cases[0]['title'] += '（更清楚的样例名称）'
+        next(row for row in cases if row['id'] == 'domain-diagram-water')['title'] += '（更清楚的样例名称）'
         return cases
 
     monkeypatch.setattr(animation_lab_module, 'catalog', revised_catalog)
@@ -151,7 +151,7 @@ def test_issue_preference_review_retraction_and_frozen_export_survive_restart(la
     assert client.request('POST', route, {'reason': 'second reason'})[1]['annotation']['retraction'] == withdrawn['retraction']
     client.close()
     restarted = lab_factory()
-    rows = restarted.request('GET', '/api/annotations?case_id=diagram-connections')[1]['annotations']
+    rows = restarted.request('GET', '/api/annotations?case_id=domain-diagram-water')[1]['annotations']
     assert [row['id'] for row in rows] == [row['id'] for row in results]
     assert rows[0]['retracted'] and rows[0]['comment'] == issue['comment']
     assert rows[0]['retraction'] == withdrawn['retraction']
@@ -194,7 +194,7 @@ def test_http_write_protection_rejects_untrusted_requests(lab_factory, headers, 
 
 
 @pytest.mark.parametrize('path', ['/animation-lab.db', '/data/animation-lab.db', '/../animation-lab.db',
-                                  '/%2e%2e/animation-lab.db', '/composition/diagram-connections/candidate/scene-1/../animation-lab.db'])
+                                  '/%2e%2e/animation-lab.db', '/composition/domain-diagram-water/candidate/scene-1/../animation-lab.db'])
 def test_fixed_get_routes_never_serve_the_annotation_database(lab_factory, path):
     client = lab_factory()
     status, value, _ = client.request('GET', path)

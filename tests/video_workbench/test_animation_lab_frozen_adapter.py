@@ -14,6 +14,7 @@ from video_workbench import animation_lab_evidence as evidence
 from video_workbench.animation_lab_evaluate import collect, load_run, model_review, prepare
 from video_workbench.animation_lab_review import REVIEW_SCHEMA
 from video_workbench.motion import canonical, sha256
+from test_animation_lab_scenarios_review import fixture as synthetic_scenario_observations
 
 
 RUNTIME = dict(schema='video.motion-runtime.v1', hyperframes='0.8.149',
@@ -40,35 +41,28 @@ def write_synthetic_capture(root, bundle, *, coordinator_outcome):
     (directory/'observations').mkdir()
     timeline = clip['timeline']
 
-    def sample(time, name):
-        raw = synthetic_jpeg(time)
-        (directory/'observations'/f'{name}.jpg').write_bytes(raw)
-        return dict(time=time, actual_time=time, frame_sha256=sha256(raw),
-            engine_state=dict(engine='svg-effects', context='svg', deterministic=True,
-                effect=bundle['case_id'], time=time, width=1280, height=720,
-                objects=[dict(id=identity, tag='g', opacity=1, text='',
-                    bounds=dict(x=100+time, y=200, width=80, height=50),
-                    attributes=dict(transform=f'translate({time} 0)', d=f'M0 0L{time+1} 20',
-                                    **{'stroke-dashoffset': str(time)}))
-                    for identity in timeline['object_ids']],
-                text_boxes=[dict(text=text, opacity=1, font_size=20,
-                    bounds=dict(x=64,y=position,width=300,height=24))
-                    for text,position in [('Synthetic title',40),('Synthetic takeaway',650)]],
-                semantic=dict(scope='synthetic_adapter_contract')))
+    # Reuse the explicitly synthetic cross-domain DOM contract fixture. These
+    # observations are independent of installed capture adapters and are never
+    # described as rendered evidence. The frozen bundle supplies the timeline.
+    _, _, observations = synthetic_scenario_observations(bundle['case_id'], bundle['variant_id'])
+    observations['timeline_sha256'] = sha256(timeline)
 
-    windows = []
-    for action in timeline['actions']:
-        ordinal = action['ordinal']
-        windows.append(dict(ordinal=ordinal,
-            before=sample(max(0, action['start']-1/24), f'a{ordinal}-before'),
-            middle=sample(action['start']+action['duration']/2, f'a{ordinal}-middle'),
-            after=sample(min(18-1/24, action['start']+action['duration']+1/24), f'a{ordinal}-after')))
-    first, last, repeated = sample(0, 'seek-first'), sample(18-1/24, 'seek-last'), sample(0, 'seek-repeat')
-    observations = dict(schema='video.animation-lab-engine-observations.v1', engine='svg-effects',
-        timeline_sha256=sha256(timeline), seek_protocol='hyperframes-core-renderSeek-exact', render_fps=24,
-        rendering='svg_dom', page_errors=[], windows=windows, initial=first, last=last, repeated_initial=repeated,
-        reverse_seek=dict(first_sha256=first['frame_sha256'], last_sha256=last['frame_sha256'],
-            repeated_first_sha256=repeated['frame_sha256'], repeat_state_equal=True))
+    def bind_sample(sample, name):
+        raw = synthetic_jpeg(sample['time'])
+        (directory/'observations'/f'{name}.jpg').write_bytes(raw)
+        sample['frame_sha256'] = sha256(raw)
+
+    for window in observations['windows']:
+        for name in ('before', 'middle', 'after'):
+            bind_sample(window[name], f"a{window['ordinal']}-{name}")
+    for key, name in [('initial', 'seek-first'), ('last', 'seek-last'),
+                      ('repeated_initial', 'seek-repeat')]:
+        bind_sample(observations[key], name)
+    observations['reverse_seek'] = dict(
+        first_sha256=observations['initial']['frame_sha256'],
+        last_sha256=observations['last']['frame_sha256'],
+        repeated_first_sha256=observations['repeated_initial']['frame_sha256'],
+        repeat_state_equal=True)
     (directory/'observations.json').write_bytes(canonical(observations))
     frames = [dict(name=path.name, sha256=sha256(path.read_bytes()), bytes=path.stat().st_size)
               for path in sorted((directory/'observations').iterdir())]
@@ -90,7 +84,7 @@ def write_synthetic_capture(root, bundle, *, coordinator_outcome):
 
 def frozen_run(tmp_path, *, coordinator_outcome=False):
     root = tmp_path/'frozen-run'
-    prepare(root, deepcopy(RUNTIME), case_id='svg-morph')
+    prepare(root, deepcopy(RUNTIME), case_id='chart-compute-backlog')
     _, bundles = load_run(root)
     directories = [write_synthetic_capture(root, bundle, coordinator_outcome=coordinator_outcome)
                    for bundle in bundles]

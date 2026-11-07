@@ -193,7 +193,7 @@ def test_exact_context_contains_all_runtime_imports_without_business_application
             'video_workbench.animation_lab_engine_review, video_workbench.animation_lab_effects_review, '
             'video_workbench.process_continuity_review; '
             'from video_workbench.animation_lab_samples import catalog; '
-            'assert len(catalog())==15; '
+            'assert len(catalog())==27; '
             "assert 'video_workbench.app' not in sys.modules")
     result = subprocess.run([sys.executable, '-I', '-c', code, str(extracted)],
                             capture_output=True, check=False, timeout=30)

@@ -51,7 +51,7 @@ class ProxyClient:
             connection.close()
 
     def issue(self):
-        case = self.lab.cases['svg-morph']
+        case = self.lab.cases['interface-library-search']
         return dict(case_id=case['id'], case_identity=case['identity'], variant_id='candidate',
             kind='issue', start_seconds=11.5, end_seconds=11.5, tags=['motion'],
             severity='note', comment='Synthetic proxy API acceptance, not an aesthetic preference.')
@@ -64,7 +64,7 @@ class ProxyClient:
 
 @pytest.fixture(scope='module')
 def proxy(tmp_path_factory):
-    # One server preserves the real snapshot store without duplicating all 15
+    # One server preserves the real snapshot store without duplicating all 27
     # frozen media bundles for every read/header rejection parameter.
     client = ProxyClient(AnimationLab(tmp_path_factory.mktemp('proxy')/'data', ASSETS))
     yield client
@@ -74,7 +74,7 @@ def proxy(tmp_path_factory):
 def test_prefix_catalog_preview_assets_and_export_preserve_frozen_identity_and_bytes(proxy):
     before = deepcopy(proxy.lab.cases)
     status, catalog, _ = proxy.request('GET', PREFIX+'/api/catalog')
-    assert status == 200 and len(catalog['cases']) == 15
+    assert status == 200 and len(catalog['cases']) == 27
     for case in catalog['cases']:
         assert case['identity'] == before[case['id']]['identity']
         for variant in case['variants']:
@@ -91,10 +91,10 @@ def test_prefix_catalog_preview_assets_and_export_preserve_frozen_identity_and_b
     assert b'href="./api/export?format=jsonl"' in index
     for path in ('/app.mjs', '/model.mjs', '/style.css', '/lab-player.mjs'):
         assert proxy.request('GET', PREFIX+path)[0] == 200
-    status, wrapper, _ = proxy.request('GET', PREFIX+'/preview/svg-morph/candidate/')
-    assert status == 200 and (PREFIX+'/composition/svg-morph/candidate/scene-1/index.html').encode() in wrapper
+    status, wrapper, _ = proxy.request('GET', PREFIX+'/preview/interface-library-search/candidate/')
+    assert status == 200 and (PREFIX+'/composition/interface-library-search/candidate/scene-1/index.html').encode() in wrapper
     assert ('src="'+PREFIX+'/lab-player.mjs"').encode() in wrapper
-    for case_id in ('diagram-connections', 'svg-morph', 'canvas-queue'):
+    for case_id in ('domain-diagram-water', 'interface-library-search', 'domain-canvas-clinic'):
         clip = proxy.lab.bundles[case_id, 'candidate']['clips'][0]
         base = PREFIX+f'/composition/{case_id}/candidate/{clip["id"]}/'
         for name, expected in clip['files'].items():
@@ -129,8 +129,22 @@ def test_shared_asset_routes_require_exact_current_hash_name_and_authenticated_d
         assert status == 403 and values['Cache-Control'] == 'no-store'
     # Shared cached responses are opt-in only; scripts, evidence, catalog, and
     # composition bytes continue to have their original no-store policy.
-    for path in ('/app.mjs', '/api/catalog', '/composition/svg-morph/candidate/scene-1/index.html'):
+    for path in ('/app.mjs', '/api/catalog', '/composition/interface-library-search/candidate/scene-1/index.html'):
         assert proxy.request('GET', PREFIX+path)[2]['Cache-Control'] == 'no-store'
+
+
+@pytest.mark.parametrize('retired', ['diagram-connections', 'diagram-long-label', 'process-retry',
+    'continuity-retain', 'continuity-copy', 'canvas-queue', 'three-layers',
+    'condition-branch', 'parallel-wait', 'architecture-expand', 'focus-shift',
+    'data-compare', 'code-execution', 'local-replace', 'svg-morph'])
+def test_retired_examples_have_no_public_preview_composition_or_annotation_route(proxy, retired):
+    assert retired not in proxy.lab.cases
+    assert (retired, 'candidate') not in proxy.lab.bundles
+    assert proxy.request('GET', PREFIX+f'/preview/{retired}/candidate/')[0] == 404
+    assert proxy.request('GET', PREFIX+f'/composition/{retired}/candidate/scene-1/index.html')[0] == 404
+    assert proxy.request('GET', PREFIX+'/api/annotations?case_id='+retired)[0] == 404
+    status, result, _ = proxy.request('POST', PREFIX+'/api/annotations', dict(proxy.issue(), case_id=retired))
+    assert status == 422 and result['error'] == 'animation_lab_unknown_case'
 
 
 @pytest.mark.parametrize('accept_encoding,compressed', [
@@ -164,8 +178,8 @@ def test_shared_asset_transport_negotiation_preserves_raw_hashes_and_case_identi
     # gzip is restricted to shared immutable resources: no changes to player,
     # generated HTML, API JSON or redirect responses even when accepted.
     for path in ('/lab-player.mjs', '/api/catalog',
-                 '/composition/svg-morph/candidate/scene-1/index.html',
-                 '/composition/svg-morph/candidate/scene-1/assets/gsap.min.js'):
+                 '/composition/interface-library-search/candidate/scene-1/index.html',
+                 '/composition/interface-library-search/candidate/scene-1/assets/gsap.min.js'):
         _, _, headers = proxy.request('GET', PREFIX+path, headers=header)
         assert 'Content-Encoding' not in headers and 'Vary' not in headers
         assert headers['Cache-Control'] == 'no-store'
@@ -183,11 +197,11 @@ def test_prefixed_annotation_persists_trusted_principal_without_accepting_client
     status, result, _ = proxy.request('POST', PREFIX+'/api/annotations', proxy.issue())
     assert status == 201 and result['annotation']['client']['forwarded_user'] == DEVELOPER
     assert result['annotation']['reviewer'] == 'local-developer'  # Existing store contract stays unchanged.
-    status, records, _ = proxy.request('GET', PREFIX+'/api/annotations?case_id=svg-morph')
+    status, records, _ = proxy.request('GET', PREFIX+'/api/annotations?case_id=interface-library-search')
     assert status == 200 and records['annotations'][0]['client']['forwarded_user'] == DEVELOPER
     annotation_id = result['annotation']['id']
     assert proxy.request('POST', PREFIX+'/api/annotations/'+annotation_id+'/retract', {'reason':'technical test'})[0] == 200
-    assert proxy.request('GET', PREFIX+'/api/annotations?case_id=svg-morph')[1]['annotations'][0]['retracted']
+    assert proxy.request('GET', PREFIX+'/api/annotations?case_id=interface-library-search')[1]['annotations'][0]['retracted']
     for key in ('client', 'forwarded_user', 'reviewer'):
         assert proxy.request('POST', PREFIX+'/api/annotations', dict(proxy.issue(), **{key:'forged'}))[0] == 422
 
@@ -204,7 +218,7 @@ def test_prefixed_annotation_persists_trusted_principal_without_accepting_client
     ((), (('Origin', ORIGIN),('Origin', ORIGIN)), 'animation_lab_origin_rejected'),
 ])
 def test_auth_and_fixed_origin_reject_ambiguous_or_spoofed_headers_on_reads(proxy, omit, headers, error):
-    for path in ('/', '/api/catalog', '/api/export?format=jsonl', '/app.mjs', '/preview/svg-morph/candidate/'):
+    for path in ('/', '/api/catalog', '/api/export?format=jsonl', '/app.mjs', '/preview/interface-library-search/candidate/'):
         status, result, _ = proxy.request('GET', PREFIX+path, omit=omit, headers=headers)
         assert (status,result['error']) == (403,error)
 

@@ -388,3 +388,111 @@ def test_no_cross_module_cursor_or_state_skip_and_backup_keeps_task_event_histor
     with sqlite3.connect(store.path) as db:
         assert db.execute('SELECT count(*) FROM lab_annotations').fetchone()[0] == 1
         assert db.execute('SELECT count(*) FROM lab_snapshots').fetchone()[0] == 1
+
+
+@pytest.mark.parametrize('module', ['charts', 'algorithms', 'interface'])
+def test_new_capability_feedback_projection_export_and_sync_remain_explicit(tmp_path, module):
+    database = tmp_path / 'new-capability.db'
+    manual, _ = AnnotationStore(database), TriageStore(database)
+    store = IterationStore(database, REVISION, '/dev/animations')
+    case_id = module+'-cross-domain-fixture'
+    snapshot = dict(schema='video.animation-lab-case.v1', case_id=case_id, module=module,
+        title='跨领域需求的合成接口夹具', runtime={}, comparison=dict(baseline='baseline', candidate='candidate'),
+        variants=[dict(variant_id='candidate', compiler='scenario-contract-fixture',
+            input_sha256='1'*64, artifact_sha256='2'*64)])
+    snapshot['identity'] = sha256(snapshot)
+    manual.register_snapshot(snapshot)
+    annotation = manual.append(dict(case_id=case_id, case_identity=snapshot['identity'], module=module,
+        variant_id='candidate', kind='issue', start_seconds=2, end_seconds=3,
+        region=None, tags=['clarity'], severity='major', comment='本领域的对象关系需要解释清楚',
+        preference=None, verdict=None))
+    summary = store.summary(module, current_cases={case_id: snapshot['identity']})
+    assert summary['module'] == module and len(summary['current_effective_feedback']) == 1
+    assert summary['current_effective_feedback'][0]['record_id'] == annotation['id']
+    task = store.prepare(module, expected_cursor=summary['current_cursor'])
+    package = task['package']
+    assert package['identity'] == sha256({k: v for k, v in package.items() if k != 'identity'})
+    assert package['module'] == module and package['feedback'][0]['case_identity'] == snapshot['identity']
+    assert package['feedback'][0]['binding']['variants'][0]['artifact_sha256'] == '2'*64
+    assert task['state'] == 'prepared' and task['events'] == [] and task['production_adopted'] is False
+    records = [json.loads(line) for line in store.export_jsonl().splitlines()]
+    assert records[0]['task'] == package
+    assert store.summary(module)['module_cursor'] is None
+    body = dict(state='synced', expected_state='prepared', idempotency_key='new-module-synced',
+        receipt=dict(task_identity=task['task_id'], module=module, source_revision=REVISION, run_id='external-fixture'))
+    synced_task = store.transition(task['task_id'], body)
+    assert synced_task['state'] == 'synced' and synced_task['production_adopted'] is False
+    restored = IterationStore(database, REVISION, '/dev/animations')
+    assert restored.summary(module)['module_cursor'] == package['next_cursor']
+    assert restored.summary(module)['preview_delta'] == []
+    assert restored.summary('canvas')['current_effective_feedback'] == []
+
+
+def test_module_summary_exposes_the_eight_explicit_capability_families(stores):
+    _, _, store, _ = stores
+    assert [r['module'] for r in store.summary()['modules']] == [
+        'diagram', 'process', 'continuity', 'canvas', 'three', 'charts', 'algorithms', 'interface']
+    with pytest.raises(IterationError, match='module_invalid'):
+        store.summary('arbitrary-engine')
+
+
+def _registered_algorithm_snapshot(database, *, plan_fallback=False, change=None):
+    """Use genuine compiled requirements/artifacts; no browser or model dispatch."""
+    from video_workbench.animation_lab_samples import compile_sample
+    from video_workbench.animation_lab_evaluate import _freeze
+    manual, _ = AnnotationStore(database), TriageStore(database)
+    bundle = _freeze(compile_sample('algorithm-shop-selection', 'candidate'))
+    expected = deepcopy(bundle['inputs']['requirement'])
+    if plan_fallback:
+        bundle['inputs'].pop('requirement')
+        target = bundle['inputs']['inputs']['plan']
+    else:
+        target = bundle['inputs']['requirement']
+    if change:
+        change(target)
+    snapshot = dict(schema='video.animation-lab-case.v1', case_id='algorithm-shop-selection',
+        module='algorithms', title='商品排序的真实编译样例', runtime={},
+        comparison=dict(baseline='baseline', candidate='candidate'), variants=[bundle])
+    snapshot['identity'] = sha256(snapshot)
+    manual.register_snapshot(snapshot)
+    annotation = manual.append(dict(case_id=snapshot['case_id'], case_identity=snapshot['identity'],
+        module='algorithms', variant_id='candidate', kind='issue', start_seconds=5, end_seconds=7,
+        region=None, tags=['clarity'], severity='minor', comment='交换时需要更清楚地区分商品身份',
+        preference=None, verdict=None))
+    return IterationStore(database, REVISION, '/dev/animations'), snapshot, annotation, expected
+
+
+@pytest.mark.parametrize('fallback', [False, True])
+def test_cross_domain_real_compiled_annotation_exports_bounded_brief_without_artifacts(tmp_path, fallback):
+    store, snapshot, annotation, expected = _registered_algorithm_snapshot(
+        tmp_path / 'brief.db', plan_fallback=fallback)
+    task = store.prepare('algorithms', current_cases={snapshot['case_id']: snapshot['identity']})
+    feedback = task['package']['feedback'][0]
+    assert feedback['record_id'] == annotation['id']
+    assert feedback['case_identity'] == snapshot['identity']
+    assert feedback['source']['requirement'] == expected
+    assert {'domain', 'expression', 'engine', 'requirement', 'narrative'} <= set(feedback['source']['requirement'])
+    assert feedback['links']['case_url'] == '/dev/animations/#algorithm-shop-selection'
+    raw = canonical(task['package']).decode()
+    assert len(raw) < 20000
+    assert all(text not in raw for text in ('base64', 'audio.wav', 'index.html', 'effectRender', 'script'))
+    assert task['state'] == 'prepared' and task['production_adopted'] is False
+
+
+@pytest.mark.parametrize('fallback', [False, True])
+def test_requirement_overflow_is_rejected_without_truncation_or_task_creation(tmp_path, fallback):
+    from video_workbench.animation_lab_iteration import MAX_REQUIREMENT_CHARS
+    store, _, _, _ = _registered_algorithm_snapshot(tmp_path / 'large-brief.db',
+        plan_fallback=fallback, change=lambda brief: brief.update(narrative='文'*(MAX_REQUIREMENT_CHARS+1)))
+    with pytest.raises(IterationError, match='requirement_too_large'):
+        store.prepare('algorithms')
+    with sqlite3.connect(store.path) as db:
+        assert db.execute('SELECT count(*) FROM lab_iteration_tasks').fetchone()[0] == 0
+
+
+def test_requirement_projection_does_not_load_or_export_unrelated_payload(tmp_path):
+    store, _, _, expected = _registered_algorithm_snapshot(tmp_path / 'whitelist-brief.db',
+        change=lambda brief: brief.update(unrelated_payload='DO_NOT_EXPORT_SCRIPT_OR_TOKEN'*40000))
+    task = store.prepare('algorithms')
+    assert task['package']['feedback'][0]['source']['requirement'] == expected
+    assert 'DO_NOT_EXPORT' not in canonical(task['package']).decode()
