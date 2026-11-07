@@ -27,6 +27,8 @@ BASE_ASSETS = {
 OLD_CASES = {'diagram-connections', 'diagram-long-label', 'process-retry',
              'continuity-retain', 'continuity-copy'}
 ENGINE_CASES = {'canvas-queue': 'canvas', 'three-layers': 'three'}
+EFFECT_CASES = {'condition-branch', 'parallel-wait', 'architecture-expand', 'focus-shift',
+                'data-compare', 'code-execution', 'local-replace', 'svg-morph'}
 RUNTIME = dict(schema='video.motion-runtime.v1', hyperframes='0.8.149',
     hyperframes_source='synthetic_contract_fixture', node='synthetic', browser='synthetic',
     ffmpeg='synthetic', gsap='3.14.2', gsap_sha256=sha256(BASE_ASSETS['gsap.min.js']),
@@ -99,7 +101,7 @@ def _issue(case, *, comment='Synthetic integration annotation, not aesthetic app
 
 def test_catalog_adds_two_genuine_engine_pairs_with_same_semantics_and_clock():
     catalog = samples.catalog()
-    assert {row['id'] for row in catalog} == OLD_CASES | set(ENGINE_CASES)
+    assert {row['id'] for row in catalog} == OLD_CASES | set(ENGINE_CASES) | EFFECT_CASES
     assert {row['module'] for row in catalog} == {'diagram', 'process', 'continuity', 'canvas', 'three'}
     assert all(row['status'] == 'available' for row in samples.MODULES)
     for case_id, engine in ENGINE_CASES.items():
@@ -141,7 +143,7 @@ def test_optional_resource_installation_preserves_old_identities_and_opinions(cl
     installed = clients(engine_assets)
     after = installed.request('GET', '/api/catalog')[1]
     current = {row['id']: row for row in after['cases']}
-    for case_id in OLD_CASES | {'canvas-queue'}:
+    for case_id in OLD_CASES | set(ENGINE_CASES) | EFFECT_CASES:
         assert old[case_id]['identity'] == current[case_id]['identity']
     assert current['diagram-connections']['annotation_count'] == 1
     assert installed.request('GET', '/api/annotations?case_id=diagram-connections')[1]['annotations'][0]['case_identity'] == issue['case_identity']

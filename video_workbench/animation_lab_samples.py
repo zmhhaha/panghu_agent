@@ -18,6 +18,8 @@ from .motion import FPS, compile_project, estimated_alignment, example_plan, mak
 from .motion_process import compile_process_project
 from .animation_lab_canvas import compile_canvas_project, example_canvas_plan
 from .animation_lab_three import compile_three_project, example_three_plan
+from .animation_lab_effects import (COMPILER_VERSION as EFFECTS_COMPILER, EFFECT_IDS,
+    RECIPES as EFFECT_RECIPES, compile_effect_project, example_effect_plan)
 from .process_continuity import (build_process_continuity_plan,
                                  compile_process_continuity_project, resolve_process_continuity)
 
@@ -51,6 +53,12 @@ _ENGINE_CASES = (
                    _variant('candidate', 'Three.js · 镜头聚焦', 'animation-lab-three-compiler-1')]),
 )
 
+_EFFECT_CASES = tuple(dict(id=effect, module=EFFECT_RECIPES[effect]['module'],
+    title=EFFECT_RECIPES[effect]['title'], description=EFFECT_RECIPES[effect]['description'],
+    checks=deepcopy(EFFECT_RECIPES[effect]['checks']),
+    variants=[_variant('baseline', '基础呈现', EFFECTS_COMPILER, role='baseline'),
+              _variant('candidate', '重点引导', EFFECTS_COMPILER)]) for effect in EFFECT_IDS)
+
 
 _CASES = (
     dict(id='diagram-connections', module='diagram', title='框图：节点退出后的连线与结论',
@@ -79,7 +87,7 @@ _CASES = (
          checks=['原件是否仍可辨认', '复制关系是否清楚', '衔接速度是否合适'],
          variants=[_variant('baseline', '两镜独立播放', 'motion-process-compiler-2', role='baseline'),
                    _variant('candidate', '复制并保留 copy', 'motion-process-continuity-compiler-1')]),
-) + _ENGINE_CASES
+) + _ENGINE_CASES + _EFFECT_CASES
 
 
 def _case(case_id):
@@ -150,6 +158,11 @@ def _continuity_inputs(copy):
 
 
 def _inputs(case_id):
+    if case_id in EFFECT_RECIPES:
+        plan = example_effect_plan(case_id)
+        beats = make_beats(plan['title']+'。'+plan['takeaway'])
+        audio = _silence(18)
+        return dict(plan=plan, beats=beats, alignment=estimated_alignment(beats, sha256(audio), 18)), [audio]
     if case_id in {'canvas-queue', 'three-layers'}:
         text = ('请求持续进入队列。处理速度不足，等待逐渐增加。增加处理能力，积压逐步消退。' if case_id == 'canvas-queue' else
                 '先看系统的整体层级。把各层展开，观察它们的职责。聚焦关键一层，再回到整体结构。')
@@ -173,7 +186,7 @@ def _checkpoints(timeline):
     if timeline.get('compiler') == 'motion-process-continuity-compiler-1':
         points.append(dict(label='跨镜承接完成', time=min(.6, duration-1/FPS)))
     for index, row in enumerate(timeline['actions']):
-        if row.get('kind') not in {'move', 'hide', 'transfer', 'set_state'}:
+        if timeline.get('engine') != 'svg-effects' and row.get('kind') not in {'move', 'hide', 'transfer', 'set_state'}:
             continue
         title = f'{index+1} · {row.get("target", "")} · {row["kind"]}'
         for label, time in [('动作前', row['start']-1/FPS),
@@ -194,7 +207,9 @@ def _clip(identity, files, audio):
 
 def _compile_variant(case_id, variant, inputs, audio):
     compiler = variant['compiler']
-    if case_id in {'canvas-queue', 'three-layers'}:
+    if case_id in EFFECT_RECIPES:
+        clips = [_clip('scene-1', compile_effect_project(**inputs, variant=variant['id']), audio[0])]
+    elif case_id in {'canvas-queue', 'three-layers'}:
         compile_engine = compile_canvas_project if case_id == 'canvas-queue' else compile_three_project
         clips = [_clip('scene-1', compile_engine(**inputs, variant=variant['id']), audio[0])]
     elif case_id.startswith('diagram-'):
@@ -217,7 +232,7 @@ def _compile_variant(case_id, variant, inputs, audio):
                 artifact_sha256=sha256(hashes), duration_seconds=sum(c['duration_seconds'] for c in clips))
 
 
-@lru_cache(maxsize=8)
+@lru_cache(maxsize=32)
 def _compiled_case(case_id):
     case = _case(case_id)
     inputs, audio = _inputs(case_id)

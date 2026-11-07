@@ -48,7 +48,7 @@ export async function captureLab({root='/work',requestSha256,chromium,
   if(hash(readRegular(join(root,'plan.json')))!==timeline.plan_sha256
     || hash(readRegular(join(root,'audio.wav'),8*1024*1024))!==timeline.audio_sha256)
     throw Error('capture_plan_audio_binding_mismatch');
-  const engine=['canvas','three'].includes(timeline.engine);
+  const engine=['canvas','three','svg-effects'].includes(timeline.engine);
   const manifest=JSON.parse(readRegular(join(root,'manifest.json')));
   if(engine) {
     if(hash(readFileSync(join(here,'engine_observe.mjs')))!==request.engine_observer_sha256)

@@ -26,8 +26,11 @@ python -m video_workbench.animation_lab \
 | 跨镜衔接 | 固定两镜的独立播放与连续承接 | 对象身份、状态延续、位置衔接及转场边界 |
 | Canvas 2D | 真实 Canvas 请求积压与队列消退 | 请求数量、排队与分发、阶段聚焦、反向状态恢复 |
 | Three.js | 真实 WebGL 分层系统展开与聚焦 | 空间层级、相机变化、对象保留和重组 |
+| 讲解效果（框图/过程分类） | 条件分支、并行等待、结构展开、重点迁移、数据比较、代码执行、局部替换和SVG形变 | 对象、条件、数据和动作是否对应，绝对时间恢复是否完整 |
 
 两类新引擎各提供一个18秒静音案例和两个比较版本。本地 Three.js 的安装、资源身份、失败诊断及真实采样结果见 [Canvas 2D 与 Three.js 开发者小样](animation-canvas-three-lab.md)。
+
+随后新增八类各18秒的固定讲解效果，当前共十五例；每类两个同语义、同音频时钟的版本。它们复用原分类与标注，不改变旧七例身份和历史；同属框图分类也不会获得旧配方的 `flow`/`focus` 编辑能力。用途、编译合同和实际验证进度见 [八类讲解动画效果](animation-explanatory-effects.md)。
 
 历史版本仅用于开发对比，不能因此扩展生产准入。两个版本的时长可能不同，尤其连续转场会增加时长；对比页保留各自时长，较短侧到达末帧后停留。首批是无旁白技术样例，静音输入只用作固定时间夹具，不支持评价语音自然度或真实字词同步。
 
@@ -71,7 +74,7 @@ python -m video_workbench.animation_lab \
 
 ## 状态与关联记录
 
-OpenSpec 初始变更：`add-video-animation-developer-lab`。当前提供框图2例、过程1例、跨镜2例、Canvas 1例和 Three.js 1例，共7个固定案例。新增引擎由 `add-video-canvas-three-developer-capabilities` 记录，实际验收见其独立说明；本说明的存在不代表这些效果已经由用户认可。现有 `improve-video-audio-clock-and-expression` 与用户反馈修复任务继续保持各自状态。下面的阶段记录保留当时的范围和结果。
+OpenSpec 初始变更：`add-video-animation-developer-lab`。原五例加Canvas/Three.js各一例，再加八个讲解效果，当前共15个固定案例。新增引擎由 `add-video-canvas-three-developer-capabilities` 记录，八类讲解效果由 `add-video-explanatory-animation-sample-library` 记录；实际验收见各自说明。本说明的存在不代表这些效果已经由用户认可。现有 `improve-video-audio-clock-and-expression` 与用户反馈修复任务继续保持各自状态。下面的阶段记录保留当时的五例范围和结果。
 
 实验资源、标注库及非敏感验证材料统一放在既有忽略目录 `video_workbench/rendered/feedback-20261106/animation-lab/`。本工具不处理框架费用计量、生产存储回收或公共渲染服务重构。
 

@@ -60,8 +60,8 @@ def _runtime(value):
     return deepcopy(value)
 
 
-def capture_request(bundle, clip_id, runtime):
-    """Bind one real compiled clip, the measured runtime and capture adapters."""
+def _capture_request(bundle, clip_id, runtime, adapter_root):
+    """Derive bindings from measured adapter bytes, never request assertions."""
     _require(type(bundle) is dict and type(clip_id) is str and _IDENTIFIER.fullmatch(clip_id))
     clips = bundle.get('clips')
     _require(type(clips) is list and 1 <= len(clips) <= 4)
@@ -79,17 +79,88 @@ def capture_request(bundle, clip_id, runtime):
         compiler=clip['timeline']['compiler'], duration_seconds=clip['duration_seconds'],
         files={name: sha256(raw) for name, raw in sorted(clip['files'].items())},
         runtime=_runtime(runtime),
-        capture_adapter_sha256=sha256((_HERE / 'lab_observe.mjs').read_bytes()),
-        observer_sha256=sha256((_HERE / 'observe.mjs').read_bytes()),
-        runtime_collector_sha256=sha256((_HERE / 'runtime.mjs').read_bytes()),
+        capture_adapter_sha256=sha256(_read(adapter_root / 'lab_observe.mjs', 1024 * 1024)),
+        observer_sha256=sha256(_read(adapter_root / 'observe.mjs', 1024 * 1024)),
+        runtime_collector_sha256=sha256(_read(adapter_root / 'runtime.mjs', 1024 * 1024)),
         max_frames=MAX_FRAMES, max_evidence_bytes=MAX_EVIDENCE_BYTES,
         historical_local_experiment=clip['timeline']['compiler'] == 'motion-process-compiler-1',
         agent_calls=0, tts_calls=0, production_writes=0,
         output='sampled_browser_observations_not_mp4')
-    if clip['timeline'].get('engine') in {'canvas', 'three'}:
-        value.update(engine_observer_sha256=sha256((_HERE / 'engine_observe.mjs').read_bytes()),
+    if clip['timeline'].get('engine') in {'canvas', 'three', 'svg-effects'}:
+        value.update(engine_observer_sha256=sha256(_read(adapter_root / 'engine_observe.mjs', 1024 * 1024)),
                      engine_assets=json.loads(clip['files']['manifest.json']).get('engine_assets', {}))
     return dict(value, capture_identity=sha256(value))
+
+
+def capture_request(bundle, clip_id, runtime):
+    """Bind a new capture to the current measured runtime and adapter sources."""
+    return _capture_request(bundle, clip_id, runtime, _HERE)
+
+
+def _review_request(bundle, clip_id, root, runtime):
+    """Use the owning frozen run when reviewing an existing capture.
+
+    Reconstructing an old request from today's adapter sources would strand a
+    run after an adapter upgrade. The frozen run must instead bind the exact
+    bundle, runtime, capture directory, request digest and actual overlay bytes.
+    Standalone captures retain their existing current-source trust boundary.
+    """
+    root = root.absolute()
+    if len(root.parents) < 3 or root.parent.parent.name != 'inputs':
+        return capture_request(bundle, clip_id, runtime)
+    owner = root.parents[2]
+    if not (owner / 'run.json').exists():
+        return capture_request(bundle, clip_id, runtime)
+    _require(not any(path.is_symlink() for path in (root, root.parent, root.parent.parent, owner)),
+             'animation_lab_capture_frozen_directory_invalid')
+    # Deferred to avoid the coordinator/evidence module import cycle.
+    from .animation_lab_evaluate import load_run
+    run, frozen = load_run(owner)
+    _require(run['runtime'] == runtime and any(value == bundle for value in frozen),
+             'animation_lab_capture_frozen_bundle_mismatch')
+    relative = f"inputs/{bundle['variant_id']}/{clip_id}"
+    _require(root == owner / relative, 'animation_lab_capture_frozen_directory_invalid')
+    matches = [row for row in run['captures'] if row.get('directory') == relative]
+    _require(len(matches) == 1 and matches[0].get('clip_id') == clip_id
+             and matches[0].get('variant_id') == bundle['variant_id'],
+             'animation_lab_capture_frozen_entry_mismatch')
+    overlay = owner / 'overlay'
+    _require(overlay.is_dir() and not overlay.is_symlink(),
+             'animation_lab_capture_frozen_overlay_invalid')
+    request = _capture_request(bundle, clip_id, runtime, overlay)
+    request_digest = sha256(canonical(request))
+    _require(matches[0].get('request_sha256') == request_digest
+             and matches[0].get('capture_identity') == request['capture_identity'],
+             'animation_lab_capture_frozen_adapter_mismatch')
+    bindings = {'lab_observe.mjs': 'capture_adapter_sha256', 'observe.mjs': 'observer_sha256',
+                'runtime.mjs': 'runtime_collector_sha256'}
+    if 'engine_observer_sha256' in request:
+        bindings['engine_observe.mjs'] = 'engine_observer_sha256'
+    adapters = {name: request[key] for name, key in bindings.items()}
+    adapters['contract.mjs'] = sha256(_read(overlay / 'contract.mjs', 1024 * 1024))
+    for name, digest in request.get('engine_assets', {}).items():
+        _require(type(name) is str and re.fullmatch(r'three\.(?:module|core)\.min\.js', name)
+                 and sha256(_read(overlay / name, 8 * 1024 * 1024)) == digest,
+                 'animation_lab_capture_frozen_engine_asset_mismatch')
+        adapters[name] = digest
+    outcome_path = root / 'capture-outcome.json'
+    if outcome_path.exists():
+        # The coordinator also measured imported contract.mjs, which legacy
+        # capture-request/receipt schemas do not record as a separate field.
+        outcome = json.loads(_read(outcome_path, 128 * 1024))
+        _require(type(outcome) is dict
+                 and outcome.get('schema') == 'video.animation-lab-execution-outcome.v1'
+                 and outcome.get('status') == 'captured'
+                 and outcome.get('capture_identity') == request['capture_identity']
+                 and outcome.get('request_sha256') == request_digest
+                 and outcome.get('adapters') == adapters,
+                 'animation_lab_capture_frozen_outcome_mismatch')
+    else:
+        # Legacy hand-imported captures lack coordinator provenance for this
+        # dependency. Fail closed unless its bytes still match trusted code.
+        _require(adapters['contract.mjs'] == sha256(_read(_HERE / 'contract.mjs', 1024 * 1024)),
+                 'animation_lab_capture_frozen_contract_mismatch')
+    return request
 
 
 def write_capture_inputs(bundle, destination, runtime):
@@ -191,7 +262,7 @@ def review_capture(bundle, clip_id, capture_directory, expected_runtime):
     a later revision can be compared without erasing the original failure.
     """
     root = Path(capture_directory)
-    request = capture_request(bundle, clip_id, expected_runtime)
+    request = _review_request(bundle, clip_id, root, expected_runtime)
     request_raw = _read(root / 'capture-request.json', 64 * 1024)
     _require(request_raw == canonical(request), 'animation_lab_capture_request_mismatch')
     for name, digest in request['files'].items():
@@ -246,7 +317,12 @@ def review_capture(bundle, clip_id, capture_directory, expected_runtime):
     timeline = clip['timeline']
     technical, error = None, None
     try:
-        if timeline.get('engine') in {'canvas', 'three'}:
+        if timeline.get('engine') == 'svg-effects':
+            from .animation_lab_effects_review import verify_effect_observations
+            _require(receipt.get('engine_assets') == request.get('engine_assets'),
+                     'animation_lab_capture_engine_assets_mismatch')
+            technical = verify_effect_observations(plan, timeline, observations)
+        elif timeline.get('engine') in {'canvas', 'three'}:
             from .animation_lab_engine_review import verify_engine_observations
             _require(receipt.get('engine_assets') == request.get('engine_assets'),
                      'animation_lab_capture_engine_assets_mismatch')

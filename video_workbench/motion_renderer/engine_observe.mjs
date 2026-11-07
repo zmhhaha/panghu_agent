@@ -11,7 +11,7 @@ export async function observeEngineProject(chromium,{root,dist}) {
   root=resolve(root);
   const timeline=JSON.parse(readRegular(join(root,'timeline.json')));
   const manifest=JSON.parse(readRegular(join(root,'manifest.json')));
-  if(!['canvas','three'].includes(timeline.engine))throw Error('engine_not_supported');
+  if(!['canvas','three','svg-effects'].includes(timeline.engine))throw Error('engine_not_supported');
   const assets=Object.keys(manifest.engine_assets||{});
   const allowed=new Set(['index.html','assets/gsap.min.js','assets/NotoSansCJK-Regular.ttc',...assets.map(name=>'assets/'+name)]);
   const server=createServer((req,res)=>{try{
@@ -60,7 +60,7 @@ export async function observeEngineProject(chromium,{root,dist}) {
       reverse_seek:{first_sha256:initial.frame_sha256,last_sha256:last.frame_sha256,
         repeated_first_sha256:repeated.frame_sha256,
         repeat_state_equal:JSON.stringify(initial.engine_state)===JSON.stringify(repeated.engine_state)},
-      rendering:timeline.engine==='three'?'webgl_software_requested':'canvas_2d',page_errors:errors},null,2));
+      rendering:timeline.engine==='three'?'webgl_software_requested':timeline.engine==='canvas'?'canvas_2d':'svg_dom',page_errors:errors},null,2));
   } finally {
     if(browser)await browser.close();
     await new Promise(done=>server.close(done));

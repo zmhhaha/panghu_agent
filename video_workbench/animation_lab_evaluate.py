@@ -69,7 +69,7 @@ def prepare(destination, runtime, *, case_id='diagram-connections', template=Non
     _require(not root.exists() and not root.is_symlink(), 'animation_evaluation_run_exists')
     reference = compile_sample(case_id, 'candidate')
     case = next(row for row in catalog() if row['id'] == case_id)
-    if case['module'] == 'diagram':
+    if reference['inputs']['inputs'].get('plan', {}).get('schema') == 'video.motion-plan.v1':
         alternative = layout_candidate(reference, template or 'focus')
         local_candidates = 1
     else:
@@ -104,7 +104,7 @@ def prepare(destination, runtime, *, case_id='diagram-connections', template=Non
         path = root / 'overlay' / name
         path.parent.mkdir(exist_ok=True)
         path.write_bytes((overlay / name).read_bytes())
-    if any(clip['timeline'].get('engine') in {'canvas', 'three'} for bundle in bundles for clip in bundle['clips']):
+    if any(clip['timeline'].get('engine') in {'canvas', 'three', 'svg-effects'} for bundle in bundles for clip in bundle['clips']):
         (root / 'overlay' / 'engine_observe.mjs').write_bytes((overlay / 'engine_observe.mjs').read_bytes())
     for name, raw in asset_bytes.items():
         (root / 'overlay' / name).write_bytes(raw)
@@ -253,7 +253,7 @@ def model_review(root, *, model=None):
 
 def revision_decision(run, review):
     measured = ({row['inputs']['inputs']['plan']['template']: row['artifact_sha256'] for row in run['bundles']}
-                if run['module'] == 'diagram' else {})
+                if run['module'] == 'diagram' and all(row['inputs']['inputs'].get('plan', {}).get('schema') == 'video.motion-plan.v1' for row in run['bundles']) else {})
     suggestions = []
     for item in review['opinion']['suggestions']:
         if item['kind'] == 'no_change':
