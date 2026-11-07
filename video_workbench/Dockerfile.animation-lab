@@ -1,0 +1,30 @@
+ARG PYTHON_BASE_IMAGE=python@sha256:cf50a4f6ac4f026458b08d5222023d700ac806410dff5e9ca8728fa44f2b850f
+FROM ${PYTHON_BASE_IMAGE}
+
+LABEL org.opencontainers.image.title="Video animation developer lab" \
+      org.opencontainers.image.source="https://github.com/zmhhaha/panghu_agent"
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+WORKDIR /app
+COPY video_workbench/requirements-animation-lab.txt /app/requirements-animation-lab.txt
+ARG PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+RUN pip install --no-cache-dir --index-url "${PYPI_INDEX_URL}" -r /app/requirements-animation-lab.txt \
+    && python -m pip check \
+    && groupadd --gid 10001 animation-lab \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin animation-lab \
+    && mkdir /data /evaluations \
+    && chown 10001:10001 /data /evaluations
+
+# The offline context builder admits exact source files and measured assets only.
+# Rendering happens in the visiting browser; no Agent or browser runtime starts.
+COPY agent_service /app/agent_service
+COPY video_workbench /app/video_workbench
+COPY build-assets /opt/animation-lab-assets
+ARG SOURCE_REVISION
+RUN test -n "${SOURCE_REVISION}"
+LABEL org.opencontainers.image.revision="${SOURCE_REVISION}"
+USER 10001:10001
+VOLUME ["/data", "/evaluations"]
+EXPOSE 8766
+CMD ["python", "-m", "video_workbench.animation_lab", "--data-dir", "/data", "--assets-dir", "/opt/animation-lab-assets", "--evaluations-dir", "/evaluations", "--port", "8766"]

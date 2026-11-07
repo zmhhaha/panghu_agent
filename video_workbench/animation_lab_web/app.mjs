@@ -2,6 +2,7 @@ import {isCurrentAnnotation, issueLocation, isCurrentEvaluation, evaluationFindi
   currentEvaluationDecisions, localResourceUrl} from './model.mjs';
 
 const $ = id => document.getElementById(id);
+const applicationRoot = new URL('./', import.meta.url);
 const TAGS = {layout: '布局', typography: '文字', connector: '连线', motion: '动作', pacing: '节奏', continuity: '衔接', clarity: '表达', other: '其他'};
 const SEVERITIES = {note: '建议', minor: '轻微', major: '明显', blocker: '严重'};
 const PREFERENCES = {baseline: 'A 更好', candidate: 'B 更好', tie: '差不多', neither: '都需改进'};
@@ -75,7 +76,8 @@ async function request(path, options = {}) {
     headers['X-Animation-Lab'] = '1';
     if (catalog.csrf_token) headers['X-Animation-Lab-Token'] = catalog.csrf_token;
   }
-  const response = await fetch(path, {...options, headers, credentials: 'same-origin', cache: 'no-store'});
+  const response = await fetch(new URL(path.replace(/^\//, ''), applicationRoot),
+    {...options, headers, credentials: 'same-origin', cache: 'no-store'});
   let value;
   try { value = await response.json(); } catch { throw new Error(`服务返回了无法读取的内容（HTTP ${response.status}）。`); }
   if (!response.ok) {

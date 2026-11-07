@@ -3,8 +3,10 @@
 Run with explicit, separate data and existing renderer asset directories:
   python -m video_workbench.animation_lab --data-dir DIR --assets-dir DIR
 
-The server only binds loopback. It neither imports the production application
-nor calls Agent/TTS, changes project ownership, or publishes animation versions.
+The default server only binds loopback. Explicit proxy mode requires a fixed
+HTTPS origin and a developer allowlist behind an authenticated, header-scrubbing
+proxy. It neither imports the production application nor calls Agent/TTS,
+changes project ownership, or publishes animation versions.
 """
 from __future__ import annotations
 
@@ -34,6 +36,7 @@ MAX_BODY = 32 * 1024
 WEB = Path(__file__).with_name('animation_lab_web')
 _FIELDS = {'case_id', 'case_identity', 'variant_id', 'kind', 'start_seconds',
            'end_seconds', 'region', 'tags', 'severity', 'comment', 'preference', 'verdict'}
+_PUBLIC_URL_FIELDS = frozenset({'preview_url', 'report_url', 'task_url', 'image_url'})
 
 
 class LabError(ValueError):
@@ -283,7 +286,7 @@ class AnimationLab:
                  'animation_lab_report_not_found', 404)
         return path.read_bytes(), allowed[relative]
 
-    def annotate(self, body, user_agent=''):
+    def annotate(self, body, user_agent='', *, forwarded_user=None):
         _require(type(body) is dict and not (set(body) - _FIELDS), 'animation_lab_invalid_fields')
         case_id = body.get('case_id')
         _require(type(case_id) is str and case_id in self.cases, 'animation_lab_unknown_case')
@@ -332,16 +335,18 @@ class AnimationLab:
             fps=FPS, region=deepcopy(region), tags=list(tags), severity=severity, comment=comment.strip(),
             preference=preference, verdict=verdict, client=dict(user_agent=user_agent[:512]),
             review_scope='developer_visual_only')
+        if forwarded_user is not None:
+            row['client']['forwarded_user'] = forwarded_user
         return self.store.append(row)
 
-    def preview(self, case_id, variant_id):
+    def preview(self, case_id, variant_id, *, base_path=''):
         bundle = self.bundles.get((case_id, variant_id))
         _require(bundle is not None, 'animation_lab_unknown_variant', 404)
         clips, offset = [], 0
         for clip in bundle['clips']:
             clips.append(dict(id=clip['id'], label=clip['id'], offset=offset,
                 duration=clip['duration_seconds'],
-                url=f"/composition/{case_id}/{variant_id}/{clip['id']}/index.html"))
+                url=f"{base_path}/composition/{case_id}/{variant_id}/{clip['id']}/index.html"))
             offset += clip['duration_seconds']
         payload = html.escape(json.dumps(dict(clips=clips, duration=offset), allow_nan=False), quote=True)
         return ('''<!doctype html><html lang="zh-CN"><meta charset="utf-8">
@@ -350,16 +355,62 @@ class AnimationLab:
 iframe{position:absolute;inset:0;width:1280px;height:720px;border:0;transform-origin:top left}
 iframe[hidden]{display:none}#error{position:absolute;inset:0;padding:24px;color:#fff;background:#301b25;font:18px sans-serif}
 </style><main id="player" data-config="''' + payload + '''"></main><p id="error" hidden></p>
-<script type="module" src="/lab-player.mjs"></script></html>''').encode('utf-8')
+<script type="module" src="''' + base_path + '''/lab-player.mjs"></script></html>''').encode('utf-8')
 
 
 class LabHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, lab, port=8766):
+    def __init__(self, lab, port=8766, *, proxy_mode=False, listen='127.0.0.1',
+                 public_origin=None, base_path='', developer_users=()):
         self.lab = lab
-        super().__init__(('127.0.0.1', port), LabHandler)
-        self.allowed_hosts = {f'127.0.0.1:{self.server_port}', f'localhost:{self.server_port}'}
+        _require(type(proxy_mode) is bool, 'animation_lab_proxy_config_invalid')
+        _require(type(base_path) is str and (not base_path or
+                 re.fullmatch(r'(?:/[a-z0-9][a-z0-9_-]*)+/?', base_path)),
+                 'animation_lab_base_path_invalid')
+        self.base_path = base_path.rstrip('/')
+        self.proxy_mode = proxy_mode
+        self.public_origin = public_origin
+        _require(type(developer_users) in (list, tuple, set, frozenset),
+                 'animation_lab_developer_config_invalid')
+        self.developer_users = frozenset(developer_users)
+        _require(all(type(user) is str and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._@:/+-]{0,199}', user)
+                     for user in self.developer_users), 'animation_lab_developer_config_invalid')
+        if proxy_mode:
+            _require(listen in {'0.0.0.0', '127.0.0.1'}, 'animation_lab_proxy_config_invalid')
+            _require(type(public_origin) is str and re.fullmatch(
+                r'https://[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?', public_origin),
+                'animation_lab_public_origin_invalid')
+            parsed = urlsplit(public_origin)
+            _require(len(parsed.hostname) <= 253 and all(re.fullmatch(
+                r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?', part) for part in parsed.hostname.split('.')),
+                'animation_lab_public_origin_invalid')
+            try:
+                valid_port = parsed.port is None or 1 <= parsed.port <= 65535
+            except ValueError:
+                valid_port = False
+            _require(valid_port,
+                     'animation_lab_public_origin_invalid')
+            _require(bool(self.developer_users), 'animation_lab_developer_config_required')
+            self.allowed_hosts = {parsed.netloc}
+        else:
+            _require(listen == '127.0.0.1' and public_origin is None and not self.developer_users
+                     and not self.base_path, 'animation_lab_proxy_mode_required')
+        super().__init__((listen, port), LabHandler)
+        if not proxy_mode:
+            self.allowed_hosts = {f'127.0.0.1:{self.server_port}', f'localhost:{self.server_port}'}
+
+    def public_urls(self, value):
+        """Transport-only prefixes; saved plans, artifacts and identities stay raw."""
+        if not self.base_path:
+            return value
+        if type(value) is list:
+            return [self.public_urls(row) for row in value]
+        if type(value) is dict:
+            return {key: self.base_path + row if key in _PUBLIC_URL_FIELDS
+                    and type(row) is str and row.startswith('/') and not row.startswith('//')
+                    else self.public_urls(row) for key, row in value.items()}
+        return value
 
 
 class LabHandler(BaseHTTPRequestHandler):
@@ -368,19 +419,40 @@ class LabHandler(BaseHTTPRequestHandler):
         pass
 
     def _context(self, write=False):
-        host = self.headers.get('Host', '')
+        hosts = self.headers.get_all('Host', [])
+        _require(len(hosts) == 1, 'animation_lab_host_rejected', 403)
+        host = hosts[0]
         _require(host in self.server.allowed_hosts, 'animation_lab_host_rejected', 403)
-        origin = self.headers.get('Origin')
-        _require(origin is None or origin == 'http://' + host, 'animation_lab_origin_rejected', 403)
+        origins = self.headers.get_all('Origin', [])
+        _require(len(origins) <= 1, 'animation_lab_origin_rejected', 403)
+        origin = origins[0] if origins else None
+        expected_origin = self.server.public_origin if self.server.proxy_mode else 'http://' + host
+        _require(origin is None or origin == expected_origin, 'animation_lab_origin_rejected', 403)
+        self.forwarded_user = None
+        if self.server.proxy_mode:
+            users = self.headers.get_all('X-Forwarded-User', [])
+            _require(len(users) == 1 and users[0] in self.server.developer_users,
+                     'animation_lab_developer_required', 403)
+            self.forwarded_user = users[0]
         if write:
-            _require(origin == 'http://' + host, 'animation_lab_origin_required', 403)
-            token = self.headers.get('X-Animation-Lab-Token', '')
-            _require(token.isascii() and secrets.compare_digest(token, self.server.lab.csrf_token),
+            _require(origin == expected_origin, 'animation_lab_origin_required', 403)
+            tokens = self.headers.get_all('X-Animation-Lab-Token', [])
+            _require(len(tokens) == 1 and tokens[0].isascii()
+                     and secrets.compare_digest(tokens[0], self.server.lab.csrf_token),
                      'animation_lab_token_required', 403)
-            _require(self.headers.get_content_type() == 'application/json',
+            _require(len(self.headers.get_all('Content-Type', [])) == 1
+                     and self.headers.get_content_type() == 'application/json',
                      'animation_lab_json_required', 415)
 
-    def _send(self, raw, content_type, status=200, *, download=False, download_name='animation-lab-evaluation.jsonl'):
+    def _path(self, parsed):
+        path = parsed.path
+        if self.server.base_path:
+            _require(path.startswith(self.server.base_path + '/'), 'animation_lab_not_found', 404)
+            path = path[len(self.server.base_path):]
+        return unquote(path)
+
+    def _send(self, raw, content_type, status=200, *, download=False,
+              download_name='animation-lab-evaluation.jsonl', location=None):
         self.send_response(status)
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(raw)))
@@ -392,18 +464,27 @@ class LabHandler(BaseHTTPRequestHandler):
             "connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'self'")
         if download:
             self.send_header('Content-Disposition', 'attachment; filename="'+download_name+'"')
+        if location is not None:
+            self.send_header('Location', location)
         self.end_headers()
         self.wfile.write(raw)
 
     def _json(self, value, status=200):
-        self._send(canonical(value), 'application/json; charset=utf-8', status)
+        self._send(canonical(self.server.public_urls(value)), 'application/json; charset=utf-8', status)
 
     def do_GET(self):
         try:
-            self._context()
             parsed = urlsplit(self.path)
-            path = unquote(parsed.path)
+            if parsed.path == '/healthz' and not parsed.query:
+                return self._json(dict(status='ok'))
+            self._context()
+            if self.server.base_path and parsed.path == self.server.base_path:
+                return self._send(b'', 'text/plain; charset=utf-8', 308,
+                                  location=self.server.base_path + '/')
+            path = self._path(parsed)
             lab = self.server.lab
+            if path == '/healthz':
+                return self._json(dict(status='ok'))
             if path == '/api/catalog':
                 return self._json(lab.get_catalog())
             if path == '/api/annotations':
@@ -443,7 +524,8 @@ class LabHandler(BaseHTTPRequestHandler):
                 raw, mime = lab.evaluation_file(pieces[1], '/'.join(pieces[2:]))
                 return self._send(raw, mime)
             if len(pieces) == 3 and pieces[0] == 'preview':
-                return self._send(lab.preview(pieces[1], pieces[2]), 'text/html; charset=utf-8')
+                return self._send(lab.preview(pieces[1], pieces[2], base_path=self.server.base_path),
+                                  'text/html; charset=utf-8')
             if len(pieces) in (5, 6) and pieces[0] == 'composition':
                 _, case_id, variant_id, clip_id, *tail = pieces
                 bundle = lab.bundles.get((case_id, variant_id))
@@ -472,17 +554,20 @@ class LabHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             self._context(write=True)
-            length = self.headers.get('Content-Length', '')
-            _require(length.isdigit() and 0 < int(length) <= MAX_BODY, 'animation_lab_body_size', 413)
-            _require(not self.headers.get('Transfer-Encoding'), 'animation_lab_body_size', 413)
+            lengths = self.headers.get_all('Content-Length', [])
+            _require(len(lengths) == 1 and lengths[0].isdigit()
+                     and 0 < int(lengths[0]) <= MAX_BODY, 'animation_lab_body_size', 413)
+            length = lengths[0]
+            _require(not self.headers.get_all('Transfer-Encoding', []), 'animation_lab_body_size', 413)
             try:
                 body = json.loads(self.rfile.read(int(length)))
             except (ValueError, UnicodeError):
                 raise LabError('animation_lab_invalid_json', 400) from None
-            path = urlsplit(self.path).path
+            path = self._path(urlsplit(self.path))
             lab = self.server.lab
             if path == '/api/annotations':
-                return self._json(dict(annotation=lab.annotate(body, self.headers.get('User-Agent', ''))), 201)
+                return self._json(dict(annotation=lab.annotate(body, self.headers.get('User-Agent', ''),
+                                                              forwarded_user=self.forwarded_user)), 201)
             pieces = path.strip('/').split('/')
             if len(pieces) == 4 and pieces[:2] == ['api', 'evaluations'] and pieces[3] == 'decisions':
                 return self._json(dict(decision=lab.decide(pieces[2], body)), 201)
@@ -507,10 +592,19 @@ def main():
     parser.add_argument('--assets-dir', required=True, type=Path)
     parser.add_argument('--port', type=int, default=8766)
     parser.add_argument('--evaluations-dir', type=Path, help='optional read-only saved automatic evaluation runs')
+    parser.add_argument('--proxy-mode', action='store_true', help='explicit authenticated reverse-proxy deployment')
+    parser.add_argument('--listen', default='127.0.0.1')
+    parser.add_argument('--public-origin', help='fixed external HTTPS origin; never inferred from forwarded headers')
+    parser.add_argument('--base-path', default='')
+    parser.add_argument('--developer-user', action='append', default=[], help='exact trusted proxy principal; repeatable')
     args = parser.parse_args()
     lab = AnimationLab(args.data_dir, load_assets(args.assets_dir), args.evaluations_dir)
-    with LabHTTPServer(lab, args.port) as server:
-        print(f'Animation developer lab: http://127.0.0.1:{server.server_port}/', flush=True)
+    with LabHTTPServer(lab, args.port, proxy_mode=args.proxy_mode, listen=args.listen,
+                       public_origin=args.public_origin, base_path=args.base_path,
+                       developer_users=args.developer_user) as server:
+        address = (args.public_origin + server.base_path + '/' if args.proxy_mode
+                   else f'http://127.0.0.1:{server.server_port}/')
+        print(f'Animation developer lab: {address}', flush=True)
         print('Developer visual review only; Agent/TTS/production writes: 0.', flush=True)
         try:
             server.serve_forever(poll_interval=.25)
