@@ -16,6 +16,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
 from pathlib import Path
+import re
 import secrets
 from urllib.parse import parse_qs, unquote, urlsplit
 
@@ -66,8 +67,9 @@ def load_assets(directory):
 
 
 class AnimationLab:
-    def __init__(self, data_dir, assets):
+    def __init__(self, data_dir, assets, evaluations_dir=None):
         self.assets = dict(assets)
+        self.evaluations_dir = Path(evaluations_dir).resolve(strict=True) if evaluations_dir else None
         self.player_script = Path(__file__).with_name('animation_lab_player.mjs').read_bytes()
         self.runtime = dict(schema='video.animation-lab-preview-runtime.v1',
             gsap=GSAP_VERSION, assets={name: sha256(raw) for name, raw in sorted(assets.items())},
@@ -121,7 +123,52 @@ class AnimationLab:
         return dict(schema='video.animation-lab-catalog.v1',
             modules=[dict(row, label=row['title']) for row in deepcopy(MODULES)],
             cases=cases, runtime=deepcopy(self.runtime),
+            evaluations=self.evaluations(),
             csrf_token=self.csrf_token)
+
+    def evaluations(self):
+        """Read saved reports only. Page reads never start model/render jobs."""
+        if self.evaluations_dir is None:
+            return []
+        from .animation_lab_evaluate import load_run
+        result = []
+        for root in sorted(self.evaluations_dir.iterdir()):
+            if root.is_symlink() or not root.is_dir() or not re.fullmatch(r'[a-z0-9-]{1,64}', root.name):
+                continue
+            if not (root / 'report.html').is_file():
+                continue
+            try:
+                run, _ = load_run(root)
+                technical = json.loads((root / 'technical.json').read_bytes())
+                _require(technical['run_identity'] == run['identity'], 'animation_lab_report_mismatch')
+                result.append(dict(id=root.name, title=run['title'], identity=run['identity'],
+                    technical_status=technical['status'],
+                    model_status='已评审' if (root / 'model-review.json').is_file() else (
+                        '失败已停止' if (root / 'model-failure.json').is_file() else (
+                            '未配置或凭据不可用' if (root / 'model-unavailable.json').is_file() else '尚未调用')),
+                    report_url=f'/evaluations/{root.name}/report.html'))
+            except (ValueError, OSError, KeyError):
+                continue
+        return result
+
+    def evaluation_file(self, run_id, relative):
+        _require(self.evaluations_dir is not None and re.fullmatch(r'[a-z0-9-]{1,64}', run_id),
+                 'animation_lab_report_not_found', 404)
+        root = self.evaluations_dir / run_id
+        _require(not root.is_symlink() and root.is_dir(), 'animation_lab_report_not_found', 404)
+        allowed = {'report.html': 'text/html; charset=utf-8',
+                   'technical.json': 'application/json; charset=utf-8',
+                   'review-request.json': 'application/json; charset=utf-8'}
+        request = json.loads((root / 'review-request.json').read_bytes())
+        for frame in request['private']['frames'].values():
+            name = frame['source_id'].split(':')[-1] + '.jpg'
+            allowed[f"inputs/{frame['variant_id']}/{frame['clip_id']}/observations/{name}"] = 'image/jpeg'
+        _require(relative in allowed, 'animation_lab_report_not_found', 404)
+        path = root / relative
+        _require(not path.is_symlink() and path.resolve().is_relative_to(root.resolve())
+                 and path.is_file() and path.stat().st_size <= 8 * 1024 * 1024,
+                 'animation_lab_report_not_found', 404)
+        return path.read_bytes(), allowed[relative]
 
     def annotate(self, body, user_agent=''):
         _require(type(body) is dict and not (set(body) - _FIELDS), 'animation_lab_invalid_fields')
@@ -262,6 +309,9 @@ class LabHandler(BaseHTTPRequestHandler):
                 mime = {'html': 'text/html', 'mjs': 'text/javascript', 'css': 'text/css'}[name.rsplit('.', 1)[-1]]
                 return self._send(source.read_bytes(), mime + '; charset=utf-8')
             pieces = path.strip('/').split('/')
+            if len(pieces) >= 3 and pieces[0] == 'evaluations':
+                raw, mime = lab.evaluation_file(pieces[1], '/'.join(pieces[2:]))
+                return self._send(raw, mime)
             if len(pieces) == 3 and pieces[0] == 'preview':
                 return self._send(lab.preview(pieces[1], pieces[2]), 'text/html; charset=utf-8')
             if len(pieces) in (5, 6) and pieces[0] == 'composition':
@@ -318,8 +368,9 @@ def main():
     parser.add_argument('--data-dir', required=True, type=Path)
     parser.add_argument('--assets-dir', required=True, type=Path)
     parser.add_argument('--port', type=int, default=8766)
+    parser.add_argument('--evaluations-dir', type=Path, help='optional read-only saved automatic evaluation runs')
     args = parser.parse_args()
-    lab = AnimationLab(args.data_dir, load_assets(args.assets_dir))
+    lab = AnimationLab(args.data_dir, load_assets(args.assets_dir), args.evaluations_dir)
     with LabHTTPServer(lab, args.port) as server:
         print(f'Animation developer lab: http://127.0.0.1:{server.server_port}/', flush=True)
         print('Developer visual review only; Agent/TTS/production writes: 0.', flush=True)

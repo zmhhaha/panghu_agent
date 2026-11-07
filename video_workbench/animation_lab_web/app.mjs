@@ -572,6 +572,14 @@ async function loadCatalog() {
     if (!Array.isArray(result.modules) || !Array.isArray(result.cases)) throw new Error('样例目录格式不完整。');
     const oldId = currentCase?.id;
     catalog = result;
+    const evaluations = Array.isArray(catalog.evaluations) ? catalog.evaluations : [];
+    $('evaluations-panel').hidden = !evaluations.length;
+    $('evaluations-list').replaceChildren();
+    for (const item of evaluations) {
+      const link = node('a', `${item.title} · 检查 ${item.technical_status} · 模型 ${item.model_status}`, 'small');
+      link.href = item.report_url; link.target = '_blank'; link.rel = 'noopener';
+      const row = node('p'); row.append(link); $('evaluations-list').append(row);
+    }
     for (const row of catalog.cases) {
       const key = `${row.id}:${caseIdentity(row)}`;
       if (row.reviewed_identity && row.reviewed_identity === caseIdentity(row)) knownReviews.add(key);
