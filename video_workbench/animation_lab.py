@@ -18,6 +18,7 @@ import html
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
+import os
 from pathlib import Path
 import re
 import secrets
@@ -27,6 +28,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 from .animation_lab_samples import MODULES, catalog, compile_sample
 from .animation_lab_store import AnnotationStore
 from .animation_lab_triage_store import TriageStore
+from .animation_lab_iteration import IterationError, IterationStore
 from .motion import FPS, GSAP_VERSION, canonical, sha256
 
 
@@ -97,7 +99,7 @@ def load_assets(directory):
 
 
 class AnimationLab:
-    def __init__(self, data_dir, assets, evaluations_dir=None):
+    def __init__(self, data_dir, assets, evaluations_dir=None, *, source_revision=None):
         self.assets = dict(assets)
         self.evaluations_dir = Path(evaluations_dir).resolve(strict=True) if evaluations_dir else None
         self.player_script = Path(__file__).with_name('animation_lab_player.mjs').read_bytes()
@@ -119,6 +121,8 @@ class AnimationLab:
                             for name in self.shared_assets}
         self.store = AnnotationStore(Path(data_dir) / 'animation-lab.db')
         self.triage_store = TriageStore(self.store.path)
+        self.iteration_store = IterationStore(self.store.path,
+            source_revision=source_revision or os.environ.get('ANIMATION_LAB_SOURCE_REVISION', 'unknown'))
         self.evaluation_lock = threading.RLock()
         self.csrf_token = secrets.token_urlsafe(32)
         self.cases, self.bundles = {}, {}
@@ -196,6 +200,77 @@ class AnimationLab:
     def shared_asset_url(self, name):
         _require(name in self.shared_assets, 'animation_lab_asset_missing', 404)
         return f"/assets/{self.shared_assets[name]['sha256']}/{name}"
+
+    def iteration_context(self):
+        with self.evaluation_lock:
+            runs = self.evaluations()
+            return dict(current_cases={key: row['identity'] for key, row in self.cases.items()},
+                        evaluation_runs={row['report_identity']: row['id'] for row in runs})
+
+    def iteration_summary(self, module=None):
+        return self.iteration_store.summary(module, **self.iteration_context())
+
+    def prepare_iteration(self, body):
+        _require(type(body) is dict and set(body) <= {'module', 'base_cursor', 'expected_cursor'}
+                 and 'module' in body, 'animation_lab_iteration_fields_invalid')
+        return self.iteration_store.prepare(**body, **self.iteration_context())
+
+    def verify_iteration_candidate(self, package, receipt):
+        """Read a published frozen comparison without writing inside its event transaction.
+
+        This verifies frozen evidence and a developer's publication binding. It
+        cannot attest which source checkout originally compiled an old report.
+        """
+        from .animation_lab_evaluation_view import load_evaluation, read_file
+        _require(self.evaluations_dir is not None, 'animation_iteration_candidate_unavailable', 409)
+        slug = receipt.get('run_slug')
+        _require(type(slug) is str and re.fullmatch(r'[a-z0-9][a-z0-9-]{0,63}', slug),
+                 'animation_iteration_candidate_run_invalid')
+        root = self.evaluations_dir / slug
+        loaded = load_evaluation(root)
+        snapshot, run = loaded['snapshot'], loaded['run']
+        try:
+            def unique(rows):
+                value = {}
+                for key, item in rows:
+                    if key in value:
+                        raise ValueError('duplicate publication field')
+                    value[key] = item
+                return value
+            publication = json.loads(read_file(root, 'iteration-candidate.json', 32*1024),
+                                     object_pairs_hook=unique)
+        except (ValueError, OSError):
+            raise LabError('animation_iteration_candidate_publication_invalid', 409) from None
+        _require(type(publication) is dict and publication.get('schema') == 'video.animation-lab-candidate-publication.v1'
+                 and publication.get('identity') == sha256({key:value for key,value in publication.items() if key != 'identity'})
+                 and publication.get('provenance') == 'developer_bound_frozen_evaluation_not_independent_build_attestation',
+                 'animation_iteration_candidate_publication_invalid', 409)
+        expected = dict(task_identity=package['identity'], module=package['module'],
+            source_revision=package['source_revision'], commit=receipt['commit'], run_slug=slug,
+            run_identity=run['identity'], report_identity=snapshot['identity'],
+            artifact_sha256s=[bundle['artifact_sha256'] for bundle in loaded['bundles']],
+            runtime_identity=run['runtime_identity'], semantic_input_sha256=run['semantic_input_sha256'])
+        _require(all(publication.get(key) == value for key,value in expected.items())
+                 and receipt.get('report_identity') == snapshot['identity']
+                 and snapshot['module'] == package['module'] and snapshot['technical']['status'] == 'passed',
+                 'animation_iteration_candidate_binding_mismatch', 409)
+        cases = {row.get('case_id') for row in package['feedback']}
+        _require(run['case_id'] in cases, 'animation_iteration_candidate_case_mismatch', 409)
+        semantics = {row.get('binding', {}).get('semantic_input_sha256') for row in package['feedback']
+                     if row.get('case_id') == run['case_id']}
+        semantics.discard(None)
+        _require(not semantics or semantics == {run['semantic_input_sha256']},
+                 'animation_iteration_candidate_semantics_changed', 409)
+        return dict(task_identity=expected['task_identity'], module=expected['module'],
+            source_revision=expected['source_revision'], commit=expected['commit'], run_slug=slug,
+            report_identity=expected['report_identity'], run_identity=expected['run_identity'],
+            artifact_sha256s=expected['artifact_sha256s'], semantic_input_sha256=expected['semantic_input_sha256'],
+            publication_identity=publication['identity'],
+            case_id=run['case_id'],
+            covered_feedback_keys=sorted(row['key'] for row in package['feedback'] if row.get('case_id') == run['case_id']),
+            uncovered_feedback_keys=sorted(row['key'] for row in package['feedback'] if row.get('case_id') != run['case_id']),
+            candidate_url=self.iteration_store.base_path+'/#evaluation-'+slug+'-'+run['identity'][:16],
+            verification_scope='frozen_report_and_developer_publication_binding')
 
     def preload_assets(self, bundle):
         names = sorted(set(ASSET_NAMES) | set(self._engine_requirements(bundle)))
@@ -437,6 +512,7 @@ class LabHTTPServer(ThreadingHTTPServer):
         else:
             _require(listen == '127.0.0.1' and public_origin is None and not self.developer_users
                      and not self.base_path, 'animation_lab_proxy_mode_required')
+        self.lab.iteration_store.base_path = self.base_path
         super().__init__((listen, port), LabHandler)
         if not proxy_mode:
             self.allowed_hosts = {f'127.0.0.1:{self.server_port}', f'localhost:{self.server_port}'}
@@ -537,10 +613,30 @@ class LabHandler(BaseHTTPRequestHandler):
                 case_id = parse_qs(parsed.query).get('case_id', [None])[0]
                 _require(case_id is None or case_id in lab.cases, 'animation_lab_unknown_case', 404)
                 return self._json(dict(annotations=lab.store.list(case_id)))
+            if path == '/api/iterations':
+                query = parse_qs(parsed.query, keep_blank_values=True)
+                _require(set(query) <= {'module'} and all(len(rows) == 1 for rows in query.values()),
+                         'animation_lab_iteration_query_invalid')
+                module = query['module'][0] if 'module' in query else None
+                return self._send(canonical(lab.iteration_summary(module)), 'application/json; charset=utf-8')
+            pieces = path.strip('/').split('/')
+            if len(pieces) in (3, 4) and pieces[:2] == ['api', 'iterations']:
+                _require(not parsed.query and re.fullmatch(r'[0-9a-f]{64}', pieces[2]) is not None,
+                         'animation_lab_iteration_task_invalid')
+                task = lab.iteration_store.get_task(pieces[2], **lab.iteration_context())
+                if len(pieces) == 3:
+                    return self._send(canonical(task), 'application/json; charset=utf-8')
+                if pieces[3] == 'export':
+                    # Package bytes are already identity-bound. Never rewrite
+                    # URL fields recursively after computing their identity.
+                    return self._send(canonical(task['package']), 'application/json; charset=utf-8',
+                        download=True, download_name='animation-feedback-'+pieces[2][:12]+'.json')
+                raise LabError('animation_lab_not_found', 404)
             if path == '/api/export':
                 _require(parse_qs(parsed.query).get('format', ['jsonl']) == ['jsonl'],
                          'animation_lab_unknown_export')
-                return self._send(lab.store.export_jsonl() + lab.triage_store.export_jsonl(), 'application/x-ndjson; charset=utf-8', download=True)
+                return self._send(lab.store.export_jsonl() + lab.triage_store.export_jsonl()
+                                  + lab.iteration_store.export_jsonl(), 'application/x-ndjson; charset=utf-8', download=True)
             if path in {'/', '/index.html', '/app.mjs', '/model.mjs', '/style.css', '/lab-player.mjs'}:
                 name = 'index.html' if path == '/' else path[1:]
                 if name == 'lab-player.mjs':
@@ -602,7 +698,7 @@ class LabHandler(BaseHTTPRequestHandler):
                     'audio/wav' if name.endswith('.wav') else 'application/json; charset=utf-8')
                 return self._send(clip['files'][name], mime)
             raise LabError('animation_lab_not_found', 404)
-        except LabError as error:
+        except (LabError, IterationError) as error:
             self._json(dict(error=error.code), error.status)
         except (FileNotFoundError, KeyError):
             self._json(dict(error='animation_lab_not_found'), 404)
@@ -618,15 +714,32 @@ class LabHandler(BaseHTTPRequestHandler):
             length = lengths[0]
             _require(not self.headers.get_all('Transfer-Encoding', []), 'animation_lab_body_size', 413)
             try:
-                body = json.loads(self.rfile.read(int(length)))
+                def pairs(rows):
+                    result = {}
+                    for key, value in rows:
+                        if key in result:
+                            raise ValueError('duplicate JSON key')
+                        result[key] = value
+                    return result
+                body = json.loads(self.rfile.read(int(length)), object_pairs_hook=pairs)
             except (ValueError, UnicodeError):
                 raise LabError('animation_lab_invalid_json', 400) from None
             path = self._path(urlsplit(self.path))
             lab = self.server.lab
+            if path == '/api/iterations':
+                _require(not urlsplit(self.path).query, 'animation_lab_iteration_query_invalid')
+                return self._send(canonical(lab.prepare_iteration(body)), 'application/json; charset=utf-8', 201)
             if path == '/api/annotations':
                 return self._json(dict(annotation=lab.annotate(body, self.headers.get('User-Agent', ''),
                                                               forwarded_user=self.forwarded_user)), 201)
             pieces = path.strip('/').split('/')
+            if len(pieces) == 4 and pieces[:2] == ['api', 'iterations'] and pieces[3] == 'events':
+                _require(not urlsplit(self.path).query and re.fullmatch(r'[0-9a-f]{64}', pieces[2]) is not None,
+                         'animation_lab_iteration_task_invalid')
+                task = lab.iteration_store.transition(pieces[2], body,
+                    actor=self.forwarded_user or 'local-developer',
+                    candidate_verifier=lab.verify_iteration_candidate, **lab.iteration_context())
+                return self._send(canonical(task), 'application/json; charset=utf-8')
             if len(pieces) == 4 and pieces[:2] == ['api', 'evaluations'] and pieces[3] == 'decisions':
                 return self._json(dict(decision=lab.decide(pieces[2], body)), 201)
             if len(pieces) == 4 and pieces[:2] == ['api', 'annotations'] and pieces[3] == 'retract':
@@ -638,7 +751,7 @@ class LabHandler(BaseHTTPRequestHandler):
                     raise LabError('animation_lab_annotation_not_found', 404) from None
                 return self._json(dict(annotation=row))
             raise LabError('animation_lab_not_found', 404)
-        except LabError as error:
+        except (LabError, IterationError) as error:
             self._json(dict(error=error.code), error.status)
         except (ValueError, OSError):
             self._json(dict(error='animation_lab_evaluation_invalid'), 422)
@@ -655,8 +768,10 @@ def main():
     parser.add_argument('--public-origin', help='fixed external HTTPS origin; never inferred from forwarded headers')
     parser.add_argument('--base-path', default='')
     parser.add_argument('--developer-user', action='append', default=[], help='exact trusted proxy principal; repeatable')
+    parser.add_argument('--source-revision', help='explicit Git source identity for feedback tasks; image default is baked at build time')
     args = parser.parse_args()
-    lab = AnimationLab(args.data_dir, load_assets(args.assets_dir), args.evaluations_dir)
+    lab = AnimationLab(args.data_dir, load_assets(args.assets_dir), args.evaluations_dir,
+                       source_revision=args.source_revision)
     with LabHTTPServer(lab, args.port, proxy_mode=args.proxy_mode, listen=args.listen,
                        public_origin=args.public_origin, base_path=args.base_path,
                        developer_users=args.developer_user) as server:

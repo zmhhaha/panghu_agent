@@ -27,6 +27,19 @@
       <div class="sidebar-footer"><span class="status-dot" aria-hidden="true"></span><p>积累效果评测与开发偏好。<br>标注不自动修改生产效果。</p></div>
     </aside>
     <main>
+      <details id="iteration-panel" class="panel iteration-panel">
+        <summary><span><strong>反馈迭代</strong><span class="muted small">按模块整理意见，追踪开发任务与候选验收</span></span><span id="iteration-refresh-note" class="count">展开读取</span></summary>
+        <div class="iteration-controls"><label>迭代模块<select id="iteration-module"><option value="">正在读取模块…</option></select></label><button id="iteration-refresh" class="button secondary" type="button">刷新反馈</button><button id="iteration-prepare" class="button primary" type="button" disabled>生成增量任务包</button></div>
+        <p class="muted small iteration-explanation">生成任务包会保存本轮意见和版本依据。开发执行、PR 和样例验收分别记录；这里的验收通过仅表示开发样例可接受。</p>
+        <div id="iteration-message" class="inline-message" role="status" hidden></div>
+        <div id="iteration-summary" class="iteration-summary" aria-label="本模块反馈概况"></div>
+        <p id="iteration-source" class="muted small iteration-source"></p>
+        <div class="iteration-feedback-grid">
+          <details class="iteration-feedback-section"><summary>当前有效意见 <span id="iteration-feedback-count" class="count">—</span></summary><div id="iteration-feedback" class="iteration-feedback-list"></div></details>
+          <details class="iteration-feedback-section"><summary>与已同步意见的变化 <span id="iteration-change-count" class="count">—</span></summary><p class="muted small">撤回和改判也会进入下一轮任务；生成或下载任务包不会推进已同步游标。</p><div id="iteration-changes" class="iteration-feedback-list"></div></details>
+        </div>
+        <section class="iteration-tasks-section" aria-labelledby="iteration-tasks-title"><div class="panel-heading"><h3 id="iteration-tasks-title">开发任务与验收记录</h3><span id="iteration-task-count" class="count">—</span></div><div id="iteration-tasks" class="iteration-task-list" aria-live="polite"><p class="muted small">展开面板后读取任务。</p></div></section>
+      </details>
       <div id="empty-state" class="empty-state"><span aria-hidden="true">◈</span><h2>选择一个效果样例</h2><p>从框图、过程动画和镜头衔接开始，逐项改善表现力。</p></div>
       <div id="case-workspace" hidden>
         <section class="case-heading" aria-labelledby="case-title"><div><div class="title-row"><span id="module-badge" class="module-badge"></span><span id="review-badge" class="review-badge">待标注</span></div><h2 id="case-title"></h2><p id="case-description" class="muted"></p></div><div class="review-actions" aria-label="人工效果评价"><button id="review-acceptable" class="button secondary" type="button" data-verdict="acceptable">效果可接受</button><button id="review-needs-work" class="button secondary" type="button" data-verdict="needs_work">还需改进</button></div></section>

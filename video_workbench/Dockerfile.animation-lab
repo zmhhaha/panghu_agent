@@ -24,6 +24,7 @@ COPY build-assets /opt/animation-lab-assets
 ARG SOURCE_REVISION
 RUN test -n "${SOURCE_REVISION}"
 LABEL org.opencontainers.image.revision="${SOURCE_REVISION}"
+ENV ANIMATION_LAB_SOURCE_REVISION=${SOURCE_REVISION}
 USER 10001:10001
 VOLUME ["/data", "/evaluations"]
 EXPOSE 8766

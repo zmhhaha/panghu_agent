@@ -74,6 +74,104 @@ export function localResourceUrl(value, origin) {
   } catch { return null; }
 }
 
+// A task can display only the repository's real PR URL. A user comment or an
+// imported receipt must never turn an arbitrary link into a trusted action.
+export function iterationPullRequestUrl(value) {
+  return typeof value === 'string'
+    && value === value.trim()
+    && /^https:\/\/github\.com\/zmhhaha\/panghu_agent\/pull\/[1-9][0-9]{0,9}$/.test(value)
+    ? value : null;
+}
+
+export function iterationResourceUrl(value, origin, applicationPath) {
+  const target = localResourceUrl(value, origin);
+  if (!target || typeof applicationPath !== 'string' || !applicationPath.startsWith('/')
+      || applicationPath.startsWith('//') || applicationPath.includes('\\')
+      || !applicationPath.endsWith('/')) return null;
+  const path = new URL(target).pathname;
+  return path.startsWith(applicationPath) && !/%(?:2f|5c|2e|00)/i.test(path) ? target : null;
+}
+
+export function isIterationOverview(value, module) {
+  const digest = input => typeof input === 'string' && /^[0-9a-f]{64}$/.test(input);
+  return Boolean(value && typeof module === 'string' && module.length && value.module === module
+    && digest(value.current_cursor) && (value.module_cursor === null || digest(value.module_cursor))
+    && Array.isArray(value.current_effective_feedback) && Array.isArray(value.preview_delta)
+    && Array.isArray(value.tasks));
+}
+
+export function iterationStateLabel(state) {
+  return ({prepared: '已生成 · 待同步', synced: '已同步 · 待执行', running: '开发执行中',
+    pr_open: 'PR 待核看', candidate_ready: '候选待验收', accepted: '开发样例验收通过',
+    rejected: '开发样例需改进', failed: '执行失败', canceled: '已取消'})[state] ?? '状态未知 · 请刷新核对';
+}
+
+export function currentIterationAttemptEvents(task) {
+  const events = Array.isArray(task?.events) ? task.events : [];
+  let start = 0;
+  for (let index = 0; index < events.length; index++) if (events[index]?.new_attempt === true) start = index;
+  return events.slice(start);
+}
+
+export function iterationAttemptReceipt(task) {
+  const result = {};
+  for (const event of currentIterationAttemptEvents(task)) {
+    for (const key of ['pr_url', 'candidate_url', 'run_id', 'branch', 'commit'])
+      if (typeof event?.receipt?.[key] === 'string') result[key] = event.receipt[key];
+  }
+  return result;
+}
+
+export function canImportIterationReceipt(task) {
+  return ['prepared', 'synced', 'running', 'pr_open', 'candidate_ready', 'rejected', 'failed', 'canceled'].includes(task?.state);
+}
+
+export function verifiedIterationCandidate(task) {
+  const candidate = currentIterationAttemptEvents(task).findLast(event => event?.state === 'candidate_ready');
+  const proof = candidate?.verified_candidate;
+  const digest = value => typeof value === 'string' && value.length === 64 && /^[0-9a-f]+$/.test(value);
+  const source = value => typeof value === 'string' && [40, 64].includes(value.length) && /^[0-9a-f]+$/.test(value);
+  const feedback = Array.isArray(task?.package?.feedback) ? task.package.feedback : null;
+  const covered = feedback?.filter(row => row.case_id === proof?.case_id).map(row => row.key).sort();
+  const uncovered = feedback?.filter(row => row.case_id !== proof?.case_id).map(row => row.key).sort();
+  const sameKeys = (actual, expected) => Array.isArray(actual) && Array.isArray(expected)
+    && actual.every(key => typeof key === 'string' && key.length > 0)
+    && new Set(actual).size === actual.length
+    && JSON.stringify([...actual].sort()) === JSON.stringify(expected);
+  const valid = Boolean(typeof task?.task_id === 'string' && digest(task.task_id)
+    && task.package?.identity === task.task_id
+    && ['diagram', 'process', 'continuity', 'canvas', 'three'].includes(task.package.module)
+    && source(task.package.source_revision)
+    && task.acceptance_scope === 'developer_sample_only' && task.production_adopted === false
+    && proof?.task_identity === task.task_id && proof.module === task.package.module
+    && proof.source_revision === task.package.source_revision && source(proof.commit)
+    && proof.verification_scope === 'frozen_report_and_developer_publication_binding'
+    && typeof proof.case_id === 'string' && proof.case_id.length > 0
+    && sameKeys(proof.covered_feedback_keys, covered) && sameKeys(proof.uncovered_feedback_keys, uncovered)
+    && candidate.receipt?.commit === proof.commit
+    && typeof proof.run_slug === 'string' && /^[a-z0-9][a-z0-9-]{0,63}$/.test(proof.run_slug)
+    && candidate.receipt?.run_slug === proof.run_slug
+    && digest(proof.report_identity) && candidate.receipt?.report_identity === proof.report_identity
+    && digest(proof.run_identity) && digest(proof.semantic_input_sha256) && digest(proof.publication_identity)
+    && Array.isArray(proof.artifact_sha256s) && proof.artifact_sha256s.length > 0
+    && proof.artifact_sha256s.every(digest)
+    && typeof proof.candidate_url === 'string'
+    && proof.candidate_url.startsWith('/') && !proof.candidate_url.startsWith('//')
+    && !proof.candidate_url.includes('\\') && !proof.candidate_url.includes('?')
+    && proof.candidate_url === candidate.receipt?.candidate_url
+    && proof.candidate_url.endsWith(`/#evaluation-${proof.run_slug}-${proof.run_identity.slice(0, 16)}`));
+  return valid ? proof : null;
+}
+
+export function canReviewIteration(task) {
+  return Boolean(task?.state === 'candidate_ready' && task.current_feedback_matches === true
+    && verifiedIterationCandidate(task));
+}
+
+export function canAcceptIteration(task) {
+  return Boolean(canReviewIteration(task) && verifiedIterationCandidate(task).uncovered_feedback_keys.length === 0);
+}
+
 // Finish the first download before navigating the immutable preview player,
 // whose short initialization deadline should measure animation startup only.
 export async function warmPreviewAssets(variants, {origin, signal, timeoutMs = 600000,

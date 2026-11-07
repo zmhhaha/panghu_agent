@@ -1,5 +1,7 @@
 import {isCurrentAnnotation, issueLocation, isCurrentEvaluation, evaluationFindingLocation,
-  currentEvaluationDecisions, localResourceUrl, warmPreviewAssets} from './model.mjs';
+  currentEvaluationDecisions, localResourceUrl, warmPreviewAssets, iterationPullRequestUrl,
+  iterationResourceUrl, isIterationOverview, iterationStateLabel, canReviewIteration,
+  iterationAttemptReceipt, canImportIterationReceipt, verifiedIterationCandidate, canAcceptIteration} from './model.mjs';
 
 const $ = id => document.getElementById(id);
 const applicationRoot = new URL('./', import.meta.url);
@@ -40,6 +42,12 @@ const drafts = new Map();
 const decisionDrafts = new Map();
 const knownReviews = new Set();
 const loadTimers = new Set();
+let iterationState = null;
+let iterationLoadSerial = 0;
+let iterationLoading = false;
+let iterationBusy = false;
+const iterationReceiptDrafts = new Map();
+const iterationReviewDrafts = new Map();
 
 function node(tag, text, className) {
   const value = document.createElement(tag);
@@ -93,6 +101,265 @@ function caseIdentity(row = currentCase) { return row?.case_identity ?? row?.ide
 function playablePlayers() { return players.filter(row => row.variant.available !== false && !row.error); }
 function allReady() { return players.length > 0 && players.every(row => row.ready && !row.error && row.variant.available !== false); }
 function isRetracted(row) { return Boolean(row.retracted_at || row.retracted || row.status === 'retracted'); }
+
+function iterationMessage(text, error = false) {
+  $('iteration-message').textContent = text;
+  $('iteration-message').classList.toggle('error', error);
+  $('iteration-message').hidden = !text;
+}
+
+function syncIterationModules() {
+  const previous = $('iteration-module').value;
+  $('iteration-module').replaceChildren(...catalog.modules.map(module => {
+    const option = node('option', module.label ?? module.id); option.value = module.id; return option;
+  }));
+  $('iteration-module').value = catalog.modules.some(module => module.id === previous)
+    ? previous : catalog.modules.find(module => module.id === currentCase?.module)?.id ?? catalog.modules[0]?.id ?? '';
+  invalidateIterations();
+}
+
+function invalidateIterations() {
+  ++iterationLoadSerial;
+  iterationState = null;
+  iterationLoading = false;
+  $('iteration-refresh-note').textContent = '待刷新';
+  renderIterations();
+  if ($('iteration-panel').open) void loadIterations();
+}
+
+function iterationFeedbackCard(feedback, change) {
+  const article = node('article', undefined, 'iteration-feedback-item');
+  const heading = node('header');
+  const kind = {issue: '问题标注', preference: '版本偏好', review: '人工评价', needs_fix: '已确认评测问题'}[feedback?.kind]
+    ?? (feedback?.source_type === 'evaluation_finding' ? '已确认评测问题' : '反馈记录');
+  heading.append(node('strong', kind));
+  if (change) heading.append(node('span', change.op === 'inactivate' ? '停止作为指导' : '新增或更新',
+    `iteration-change-label ${change.op === 'inactivate' ? 'inactive' : ''}`));
+  if (feedback?.severity && SEVERITIES[feedback.severity]) heading.append(node('span', SEVERITIES[feedback.severity], `severity-label ${feedback.severity}`));
+  article.append(heading);
+  const label = feedback?.title ?? catalog.cases.find(row => row.id === feedback?.case_id)?.title ?? feedback?.case_id ?? '冻结样例';
+  const times = Number.isFinite(feedback?.start_seconds)
+    ? ` · ${formatTime(feedback.start_seconds)}${Number.isFinite(feedback.end_seconds) && feedback.end_seconds > feedback.start_seconds ? `—${formatTime(feedback.end_seconds)}` : ''}` : '';
+  article.append(node('p', `${label}${feedback?.variant_id ? ` · ${feedback.variant_id}` : ''}${times}`, 'muted small'));
+  const text = feedback?.comment || feedback?.description
+    || (feedback?.kind === 'preference' ? PREFERENCES[feedback.preference]
+      : feedback?.kind === 'review' ? ({acceptable: '效果可接受', needs_work: '还需改进'})[feedback.verdict] : '')
+    || '保留原始反馈及其版本依据。';
+  article.append(node('p', text, 'iteration-feedback-comment'));
+  if (feedback?.description && feedback.description !== text) article.append(node('p', feedback.description, 'iteration-feedback-comment'));
+  if (change?.reason) article.append(node('p', ({new: '新记录', updated: '意见已更新', retracted: '原意见已撤回',
+    superseded: '已被新的偏好或评价替代', decision_dismiss: '已改判为此项不成立',
+    decision_defer: '已改为暂缓判断', no_longer_effective: '原意见不再有效'})[change.reason] ?? change.reason, 'muted small'));
+  if (feedback?.historical_source === true) article.append(node('p', '来自历史样例版本；保留原版本依据，不代表当前画面仍存在此问题。', 'iteration-stale'));
+  const metadata = [feedback?.region ? '含画面区域' : '', ...(feedback?.tags ?? []).map(tag => TAGS[tag] ?? tag)].filter(Boolean);
+  if (metadata.length) article.append(node('p', metadata.join(' · '), 'muted small'));
+  const report = iterationResourceUrl(feedback?.links?.report_url, location.origin, applicationRoot.pathname);
+  if (report) { const link = node('a', '查看冻结评测报告 ↗', 'small'); link.href = report; link.target = '_blank'; link.rel = 'noopener noreferrer'; article.append(link); }
+  if (feedback?.record_id) article.append(node('code', feedback.record_id, 'iteration-record-id'));
+  return article;
+}
+
+function iterationTaskCard(task) {
+  const article = node('article', undefined, 'iteration-task');
+  const validId = typeof task?.task_id === 'string' && /^[0-9a-f]{64}$/.test(task.task_id);
+  const heading = node('header');
+  heading.append(node('strong', validId ? shortIdentity(task.task_id) : '任务记录待核对'),
+    node('span', iterationStateLabel(task?.state), 'iteration-state'));
+  article.append(heading);
+  if (!validId) { article.append(node('p', '任务身份不完整，请刷新后核对。', 'muted small')); return article; }
+  const source = task.package?.source_revision ?? '';
+  const metadata = [task.created_at ? new Date(task.created_at).toLocaleString('zh-CN') : '',
+    /^[0-9a-f]{40}$/.test(source) ? `源码 ${shortIdentity(source)}` : '源码版本未配置'].filter(Boolean);
+  if (metadata.length) article.append(node('p', metadata.join(' · '), 'muted small'));
+  if (task.current_feedback_matches === false) article.append(node('p', '当前意见已变化；本任务保留原依据，不能用来确认新一轮反馈已经解决。', 'iteration-stale'));
+  const actions = node('div', undefined, 'iteration-task-actions');
+  const download = node('a', '下载轻量任务包', 'button secondary');
+  download.href = new URL(`api/iterations/${task.task_id}/export`, applicationRoot).href;
+  download.download = `animation-iteration-${task.task_id.slice(0, 12)}.json`; actions.append(download);
+  const receipt = iterationAttemptReceipt(task);
+  const prUrl = iterationPullRequestUrl(receipt.pr_url);
+  if (prUrl) { const link = node('a', '查看 GitHub PR ↗', 'button secondary'); link.href = prUrl; link.target = '_blank'; link.rel = 'noopener noreferrer'; actions.append(link); }
+  const candidateUrl = iterationResourceUrl(receipt.candidate_url, location.origin, applicationRoot.pathname);
+  if (candidateUrl) { const link = node('a', '查看候选样例 ↗', 'button secondary'); link.href = candidateUrl; link.target = '_blank'; link.rel = 'noopener noreferrer'; actions.append(link); }
+  article.append(actions);
+  const execution = [receipt.run_id ? `执行 ${receipt.run_id}` : '', receipt.branch ? `分支 ${receipt.branch}` : '', receipt.commit ? `提交 ${shortIdentity(receipt.commit)}` : ''].filter(Boolean);
+  if (execution.length) article.append(node('p', execution.join(' · '), 'iteration-execution muted small'));
+  if (task.events?.length) article.append(node('p', '执行与候选状态来自已登记回执；外部结果未在此独立核验，可打开 PR 和证据核对。', 'muted small'));
+  const verified = verifiedIterationCandidate(task);
+  if (verified) {
+    article.append(node('p', '冻结候选资料已核对；与提交的关联由开发者登记，尚无独立构建证明。', 'muted small'));
+    article.append(node('p', `候选样例 ${verified.case_id} · 覆盖 ${verified.covered_feedback_keys.length} 条意见 · 未覆盖 ${verified.uncovered_feedback_keys.length} 条意见`, 'muted small'));
+    if (verified.uncovered_feedback_keys.length) article.append(node('p', '这份候选只覆盖部分意见，其余样例仍需处理，当前不能将本任务判为通过。', 'iteration-stale'));
+  }
+  if (task.state === 'rejected') article.append(node('p', '验收说明保留在任务历史；如需下一轮采用，请在对应候选样例添加问题标注，再生成新任务。原任务重试不会自动吸收这段新评价。', 'iteration-stale'));
+  if (task.state === 'candidate_ready') {
+    const review = node('div', undefined, 'iteration-review');
+    const label = node('label', '候选样例验收意见');
+    const comment = node('textarea'); comment.rows = 2; comment.maxLength = 2000;
+    comment.placeholder = '说明哪些效果已改善，或还有哪些问题；此处仅验收开发样例。';
+    comment.value = iterationReviewDrafts.get(task.task_id) ?? '';
+    comment.addEventListener('input', () => iterationReviewDrafts.set(task.task_id, comment.value));
+    label.append(comment); review.append(label);
+    const controls = node('div', undefined, 'iteration-task-actions');
+    for (const [state, title] of [['accepted', '开发样例通过'], ['rejected', '仍需改进']]) {
+      const button = node('button', title, 'button secondary'); button.type = 'button';
+      button.disabled = iterationBusy || (state === 'accepted' ? !canAcceptIteration(task) : !canReviewIteration(task));
+      button.addEventListener('click', () => reviewIteration(task, state, comment.value)); controls.append(button);
+    }
+    if (!canReviewIteration(task)) review.append(node('p', '候选尚未取得匹配的发布核验，或反馈已变化；当前记录不能提交样例验收。', 'muted small'));
+    review.append(controls, node('p', '通过仅记录这份开发样例的判断，合入和业务采用另行决定。', 'muted small'));
+    article.append(review);
+  }
+  const history = node('details', undefined, 'iteration-event-history');
+  history.append(node('summary', `处理历史（${task.events?.length ?? 0}）`));
+  for (const event of task.events ?? []) {
+    const row = node('div', undefined, 'iteration-event');
+    row.append(node('p', `${iterationStateLabel(event.state)}${event.created_at ? ` · ${new Date(event.created_at).toLocaleString('zh-CN')}` : ''}`, 'small'));
+    if (event.receipt?.comment) row.append(node('p', event.receipt.comment, 'muted small'));
+    const links = node('div', undefined, 'iteration-task-actions');
+    const pr = iterationPullRequestUrl(event.receipt?.pr_url);
+    if (pr) { const link = node('a', '本条回执的 PR ↗', 'small'); link.href = pr; link.target = '_blank'; link.rel = 'noopener noreferrer'; links.append(link); }
+    const candidate = iterationResourceUrl(event.receipt?.candidate_url, location.origin, applicationRoot.pathname);
+    if (candidate) { const link = node('a', '本条回执的候选 ↗', 'small'); link.href = candidate; link.target = '_blank'; link.rel = 'noopener noreferrer'; links.append(link); }
+    if (links.children.length) row.append(links);
+    history.append(row);
+  }
+  article.append(history);
+  if (canImportIterationReceipt(task)) {
+    const imported = node('details', undefined, 'iteration-receipt-import');
+    imported.append(node('summary', '导入外部执行回执'), node('p', '粘贴独立开发执行器返回的完整事件 JSON。外部回执未在这里独立核验；登记不会启动 Agent，也不需要填写凭据。', 'muted small'));
+    if (['rejected', 'failed', 'canceled'].includes(task.state)) imported.append(node('p', '本任务已停止；这里只接受显式新执行尝试的回执，并保留先前历史。登记不会自动重试。', 'muted small'));
+    const textarea = node('textarea'); textarea.rows = 4; textarea.maxLength = 32768;
+    textarea.setAttribute('aria-label', '外部执行回执 JSON'); textarea.spellcheck = false;
+    textarea.value = iterationReceiptDrafts.get(task.task_id) ?? '';
+    textarea.addEventListener('input', () => iterationReceiptDrafts.set(task.task_id, textarea.value));
+    const button = node('button', '核对并登记回执', 'button secondary'); button.type = 'button'; button.disabled = iterationBusy;
+    button.addEventListener('click', () => importIterationReceipt(task, textarea.value));
+    imported.append(textarea, button); article.append(imported);
+  }
+  return article;
+}
+
+function renderIterations() {
+  const module = $('iteration-module').value;
+  const current = isIterationOverview(iterationState, module);
+  $('iteration-refresh').disabled = iterationBusy || iterationLoading || !module;
+  $('iteration-prepare').disabled = iterationBusy || iterationLoading || !current || !iterationState.preview_delta.length;
+  $('iteration-prepare').textContent = iterationBusy ? '正在保存…' : '生成增量任务包';
+  $('iteration-summary').replaceChildren();
+  $('iteration-feedback').replaceChildren(); $('iteration-changes').replaceChildren(); $('iteration-tasks').replaceChildren();
+  for (const id of ['iteration-feedback-count', 'iteration-change-count', 'iteration-task-count']) $(id).textContent = current ? '0' : '—';
+  if (!current) {
+    $('iteration-source').textContent = '';
+    $('iteration-tasks').append(node('p', iterationLoading ? '正在读取本模块的反馈和任务…' : '展开面板或刷新后，查看本模块的有效反馈与开发记录。', 'muted small'));
+    return;
+  }
+  const value = iterationState;
+  const active = value.current_effective_feedback;
+  const changes = value.preview_delta;
+  const inactivated = changes.filter(change => change.op === 'inactivate').length;
+  for (const [label, count] of [['有效意见', active.length], ['增量变化', changes.length], ['撤回或改判', inactivated], ['开发任务', value.tasks.length]]) {
+    const card = node('article'); card.append(node('span', label), node('strong', count)); $('iteration-summary').append(card);
+  }
+  const source = /^[0-9a-f]{40}$/.test(value.source_revision ?? '') ? value.source_revision : '未配置，不能作为已绑定源码的开发任务';
+  $('iteration-source').textContent = `模块：${moduleFor(module)?.label ?? module} · 源码：${source} · 当前意见 ${shortIdentity(value.current_cursor)} · 已同步 ${value.module_cursor ? shortIdentity(value.module_cursor) : '尚无'}`;
+  $('iteration-feedback-count').textContent = String(active.length);
+  $('iteration-change-count').textContent = String(changes.length);
+  $('iteration-task-count').textContent = String(value.tasks.length);
+  for (const feedback of active) $('iteration-feedback').append(iterationFeedbackCard(feedback));
+  for (const change of changes) $('iteration-changes').append(iterationFeedbackCard(change.feedback, change));
+  for (const task of value.tasks) $('iteration-tasks').append(iterationTaskCard(task));
+  if (!active.length) $('iteration-feedback').append(node('p', '本模块当前没有有效意见。技术验收的已撤回记录仍保留在完整历史中。', 'muted small'));
+  if (!changes.length) $('iteration-changes').append(node('p', '相对已同步意见没有新增变化。任务执行状态仍需单独核对。', 'muted small'));
+  if (!value.tasks.length) $('iteration-tasks').append(node('p', '尚未生成开发任务。可以先标注问题，再为本模块生成增量任务包。', 'muted small'));
+}
+
+async function loadIterations() {
+  const module = $('iteration-module').value;
+  if (!module) return;
+  const serial = ++iterationLoadSerial;
+  iterationLoading = true; iterationState = null; renderIterations();
+  $('iteration-refresh-note').textContent = '正在读取';
+  try {
+    const result = await request(`/api/iterations?module=${encodeURIComponent(module)}`);
+    if (serial !== iterationLoadSerial || module !== $('iteration-module').value) return;
+    const summary = result.summary ?? result;
+    if (!isIterationOverview(summary, module)) throw new Error('反馈汇总与当前模块或版本不匹配，请刷新核对。');
+    iterationState = summary;
+    $('iteration-refresh-note').textContent = summary.preview_delta.length ? `${summary.preview_delta.length} 项变化` : '已更新';
+  } catch (error) {
+    if (serial === iterationLoadSerial && module === $('iteration-module').value) {
+      $('iteration-refresh-note').textContent = '读取失败';
+      iterationMessage(`读取反馈迭代失败：${error.message}`, true);
+    }
+  } finally {
+    if (serial === iterationLoadSerial && module === $('iteration-module').value) { iterationLoading = false; renderIterations(); }
+  }
+}
+
+async function prepareIteration() {
+  const module = $('iteration-module').value;
+  if (iterationBusy || !isIterationOverview(iterationState, module) || !iterationState.preview_delta.length) return;
+  const summary = iterationState;
+  iterationBusy = true; renderIterations(); iterationMessage('正在保存本轮反馈依据和增量任务…');
+  try {
+    const result = await request('/api/iterations', {method: 'POST', body: JSON.stringify({module,
+      base_cursor: summary.module_cursor, expected_cursor: summary.current_cursor})});
+    const task = result.task ?? result;
+    if (!task || !/^[0-9a-f]{64}$/.test(task.task_id ?? '') || task.package?.module !== module)
+      throw new Error('任务回执与本轮模块不匹配，请刷新后核对。');
+    if (module === $('iteration-module').value) iterationMessage('增量任务已保存，可从任务记录下载。生成和下载不会标记为已执行或已修复。');
+    await loadIterations();
+  } catch (error) {
+    if (module === $('iteration-module').value) iterationMessage(`任务生成未完成：${error.message}。未自动重试，请刷新任务记录核对。`, true);
+  } finally { iterationBusy = false; renderIterations(); }
+}
+
+async function recordIterationEvent(task, event) {
+  if (iterationBusy) return;
+  const module = $('iteration-module').value;
+  iterationBusy = true; renderIterations(); iterationMessage('正在核对并保存任务事件…');
+  try {
+    const result = await request(`/api/iterations/${encodeURIComponent(task.task_id)}/events`, {method: 'POST', body: JSON.stringify(event)});
+    const updated = result.task ?? result;
+    if (updated?.task_id !== task.task_id || updated.state !== event.state) throw new Error('事件回执与本次任务不匹配，请刷新核对。');
+    iterationReceiptDrafts.delete(task.task_id); iterationReviewDrafts.delete(task.task_id);
+    if (module === $('iteration-module').value) iterationMessage(`已保存：${iterationStateLabel(updated.state)}。`);
+    await loadIterations();
+  } catch (error) {
+    if (module === $('iteration-module').value) iterationMessage(`事件未确认保存：${error.message}。原输入保留，未自动重试；请刷新后核对。`, true);
+  } finally { iterationBusy = false; renderIterations(); }
+}
+
+function importIterationReceipt(task, text) {
+  if (iterationBusy) return;
+  try {
+    if (!text.trim() || text.length > 32768) throw new Error('请粘贴不超过 32KB 的完整事件 JSON。');
+    const event = JSON.parse(text);
+    if (!event || typeof event !== 'object' || Array.isArray(event) || event.expected_state !== task.state
+        || typeof event.state !== 'string' || typeof event.idempotency_key !== 'string'
+        || !event.idempotency_key || !event.receipt || event.receipt.task_identity !== task.task_id)
+      throw new Error('请使用与当前任务及状态匹配的完整执行事件；不要省略身份和幂等键。');
+    void recordIterationEvent(task, event);
+  } catch (error) { iterationMessage(`回执尚未提交：${error.message}`, true); }
+}
+
+function reviewIteration(task, state, text) {
+  if (iterationBusy || !canReviewIteration(task) || (state === 'accepted' && !canAcceptIteration(task))) return;
+  const comment = text.trim();
+  if (!comment) { iterationMessage('请填写候选样例的验收意见，再选择通过或继续改进。', true); return; }
+  const receipt = {task_identity: task.task_id, module: task.package.module,
+    source_revision: task.package.source_revision, comment};
+  void recordIterationEvent(task, {state, expected_state: task.state,
+    idempotency_key: crypto.randomUUID(), receipt});
+}
+
+$('iteration-panel').addEventListener('toggle', () => {
+  if ($('iteration-panel').open && !iterationState && !iterationLoading) { iterationMessage(''); void loadIterations(); }
+});
+$('iteration-module').addEventListener('change', () => { iterationMessage(''); invalidateIterations(); });
+$('iteration-refresh').addEventListener('click', () => { iterationMessage(''); void loadIterations(); });
+$('iteration-prepare').addEventListener('click', prepareIteration);
 
 function setDirty(value = true) {
   dirty = value;
@@ -306,6 +573,7 @@ async function saveFindingDecision(findingId, decision, comment) {
     const result = await request(`/api/evaluations/${encodeURIComponent(evaluation.id)}/decisions`, {
       method: 'POST', body: JSON.stringify({report_identity: reportIdentity, finding_id: findingId, decision, comment: comment.trim()}),
     });
+    invalidateIterations();
     if (epoch !== caseEpoch || operation !== evaluationOperation) return;
     const saved = result.decision;
     if (!saved || saved.finding_id !== findingId || saved.decision !== decision || typeof saved.id !== 'string'
@@ -671,6 +939,7 @@ async function saveAnnotation(payload) {
   setSaving(true);
   try {
     const result = await request('/api/annotations', {method: 'POST', body: JSON.stringify({case_id: row.id, case_identity: caseIdentity(row), ...payload})});
+    invalidateIterations();
     if (epoch !== caseEpoch) return false;
     if (!result.annotation || result.annotation.case_id !== row.id) throw new Error('保存结果缺少本样例的标注回执，请刷新后核对。');
     mutationSerial++;
@@ -689,6 +958,7 @@ async function retractAnnotation(row) {
   setSaving(true);
   try {
     const result = await request(`/api/annotations/${encodeURIComponent(row.id)}/retract`, {method: 'POST', body: JSON.stringify({reason: '开发者撤回'})});
+    invalidateIterations();
     if (epoch !== caseEpoch) return;
     if (!result.annotation || result.annotation.id !== row.id) throw new Error('撤回回执不完整，请刷新后核对。');
     mutationSerial++;
@@ -817,6 +1087,7 @@ async function loadCatalog() {
       $('module-filter').append(option);
     }
     $('module-filter').value = catalog.modules.some(row => row.id === selectedModule) ? selectedModule : 'all';
+    syncIterationModules();
     let hashId = ''; try { hashId = decodeURIComponent(location.hash.slice(1)); } catch { /* An invalid hash is not a case selection. */ }
     const selected = catalog.cases.find(row => row.id === oldId) ?? catalog.cases.find(row => row.id === hashId) ?? catalog.cases[0];
     currentCase = null;
