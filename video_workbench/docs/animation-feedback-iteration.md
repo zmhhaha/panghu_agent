@@ -47,3 +47,17 @@ GitHub 保存代码、测试、小型任务摘要和对比结论。SQLite、完�
 镜像在构建时保存实际 Git 源码身份。源码身份未知的本地实验可查看反馈，但不能宣称已经具备可执行的代码基准；本地启动可通过 `--source-revision` 显式提供已核对的提交。
 
 OpenSpec 变更为 `add-animation-feedback-github-iteration`；实际源码检查、部署和浏览器验收分别记录，真实模型调用与真实 PR 发布不以模拟测试代替。
+
+## 2026-11-07 发布与实际验证
+
+服务器已部署本轮工作台升级。构建源码为 `205b1ea4011d6c4b9a47417e57b666de6ac7b632`，开发分支为 `codex/video-feedback-iteration`；镜像为 `arm-cluster-master:5000/video-animation-lab:latest@sha256:36538111fac4003594b6c2313d8cf65fad6b05aeebc53cf8764b6d8317dbc2a5`，ARM64、177,000,360 字节，构建上下文摘要为 `00920c9777e9f81bd4b38ceedd93949f33c1500813426c4139d064bb981da836`。后续验收文档提交不改变该镜像源码身份。
+
+升级前使用 SQLite backup API 保存 `/data/before-feedback-205b1ea4011d6c4b9a47417e57b666de6ac7b632.db`，120,418,304 字节，SHA-256 为 `2f4cedac2b6b3b6065ebeff3b374c6be398afa4a3f8dc5bb89712b085d817527`。服务器私有发布目录同时保留部署原配置。原镜像为 `latest@sha256:9719df446c4eb0223a22f5fd4fda0c905873078ee3e483bd526f094eab4fb176`，需要回退时只恢复独立 Lab 的镜像与发布注解，保留 PVC 和备份；不要覆盖其他服务配置或删除新历史表。升级核对原 49 条样例快照、20 条评测快照、10 条标注、8 条撤回和 3 条分诊全部保留，普通业务 Deployment spec 不变。
+
+源码集成检查首轮为 217 通过、1 项 Windows 本地连接中断；对应请求体边界组 9 项复跑全部通过，首轮失败和复跑 XML 均保留。独立 runner 完整 43 项通过，最后文档基准兼容调整的 5 项针对性真实 Git 检查通过；前端 22 项 Node 检查通过。不同运行版本和重叠分组不相加。Git 检查使用真实临时仓库，Agent、Docker、GitHub 使用明确模拟传输，不作为真实模型、真实测试容器或真实 PR 的凭证。
+
+真实已登录浏览器检查了模块汇总、明确标注用途的临时记录、生成任务、正确同源前缀的下载链接、外部取消回执及整页刷新。技术任务 `6eeef6045b06c1646520eb9512b405709615546e3057038af4f613cbc7fb4ee3` 保留为 `canceled`；临时标注 `0bfbd74e-dda6-4f5e-b7d2-5c84ea731b24` 已撤回，原用户的两条有效框图意见保留。受信后端通过实际 HTTP 读取 4,769 字节任务包并核对内容身份及无大产物，浏览器只核对下载入口，二者分别记录。生成和下载后已同步游标仍未推进。
+
+服务器新路由的身份缺失/错误、错误 Origin、缺少 CSRF、重复模块参数和不存在任务均按预期拒绝。新历史总计多一条已撤回技术标注及其取消任务，不包含虚构的运行、PR 或审美批准。本轮没有真实模型、Agent、TTS 调用或 GitHub PR 创建；独立调用方凭据、真实测试镜像和 GitHub 环境仍由执行器显式配置，工作台不会自行开始开发。
+
+证据统一位于既有 `video_workbench/rendered/feedback-20261106/animation-lab/server-deploy/` 的 `iteration-*` 文件。OpenSpec 本轮有界任务 9/9 完成，revision `cc8d19458bff58f8f56e44de7c41830b05f2587d`，validate 通过；没有合入主线、apply 或 archive。

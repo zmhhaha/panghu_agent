@@ -2,6 +2,8 @@
 
 2026-11-07，分支 `codex/video-animation-lab`。独立实例、数据迁移和已有登录入口下的路径转发已部署完成。最终gzip版通过真实登录下的SVG、Canvas、Three.js、跨镜播放、报告读取、技术标注保存/刷新/撤回，以及同digest Pod重启后的持久化核对；真实集群安全边界和受信后端完整HTTP导出也通过。
 
+随后已发布反馈迭代升级，当前运行源码为 `205b1ea4011d6c4b9a47417e57b666de6ac7b632`、镜像digest为 `sha256:36538111fac4003594b6c2313d8cf65fad6b05aeebc53cf8764b6d8317dbc2a5`。本说明以下保留首次服务器部署的原验收记录；后续版本、数据备份和实际交接验收见 [动画反馈到 GitHub 的开发迭代](animation-feedback-iteration.md)。
+
 ## 访问和用途
 
 入口为 `https://video-service.panghuer.top/dev/animations/`，沿用已有Casdoor登录。只允许明确配置的开发者身份进入，普通视频制作界面不增加实验入口。十五个固定样例、A/B同步播放、动作检查点、标注、JSONL导出和已保存评测继续使用原工作台能力。
@@ -34,7 +36,7 @@ VPS仅为`/dev/animations/assets/<64位小写SHA-256>/`下的GSAP、CJK字体、
 
 镜像以`latest`发布，部署同时固定实际digest，并在labels/annotations保存源码和发布身份。采用单副本、`Recreate`更新、非root、只读根文件系统、drop ALL、禁止提权和禁用ServiceAccount令牌；设置资源限额及不调用模型的健康检查。
 
-最终ARM64工作台镜像已构建、推送并滚动就绪，两个PVC及已发布路径保持。当前实际运行版本为：
+首次部署的最终ARM64工作台镜像已构建、推送并滚动就绪，两个PVC及已发布路径保持。当时实际验收版本为：
 
 | 项目 | 实际记录 |
 | --- | --- |
