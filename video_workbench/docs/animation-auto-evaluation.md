@@ -83,3 +83,5 @@ python -m video_workbench.animation_lab_evaluate model --run /evaluations/new-di
 未配置模型时可以完成技术阶段并查看报告；视觉阶段记录 unavailable，不发 POST，不消耗调用预留，可在之后提供有效配置时继续。已经真正开始的调用则受一次预留限制。不能把报告中的“尚未调用”当成模型验收。失败保留冻结请求、已经取得的回执和停止原因。报告 `report.html` 可经开发者实验服务的 `--evaluations-dir` 只读入口查看；该页面没有模型调用或采用按钮，不在普通视频工作台增加步骤。
 
 原始输入、帧、执行日志、模型请求/响应的脱敏记录和非敏感回执统一进入既有忽略目录 `video_workbench/rendered/feedback-20261106/animation-lab/auto-evaluation/`。长期标注库及冻结资料应与可重建的临时文件分别保留。
+
+已保存评测的交互核看、问题分诊和精确源任务导出，见 [自动评测问题定位与开发者处理](animation-evaluation-triage.md)。后续 `prepare --feedback-db` 可读取当前有效且产物匹配的开发者 `needs_fix/dismiss` 决定作为参考数据；暂缓决定和历史被替代决定不作为当前指导。

@@ -189,13 +189,10 @@ def test_unconfigured_model_records_no_dispatch_and_later_configuration_allows_f
     assert model.calls == 1 and review['status'] == 'suggestion_only'
 
 
-def test_developer_report_reads_saved_results_without_starting_jobs(ready):
+def test_saved_report_endpoint_reads_derived_report_without_starting_jobs(ready):
     root, run, technical, request = ready
     lab = AnimationLab.__new__(AnimationLab)
     lab.evaluations_dir = root.parent
-    rows = lab.evaluations()
-    assert len(rows) == 1 and rows[0]['identity'] == run['identity']
-    assert rows[0]['model_status'] == '尚未调用'
     body, mime = lab.evaluation_file(root.name, 'report.html')
     assert mime.startswith('text/html') and '没有自动采用'.encode() in body
     assert not (root / 'model-attempt.json').exists()

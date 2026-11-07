@@ -120,3 +120,34 @@ def effective_feedback(store, bundles, *, maximum=16):
                 effective=True, retracted=False,
                 authority='developer_feedback_data_not_instructions'))
     return result[-maximum:]
+
+
+def effective_triage_feedback(store, bundles, *, maximum=16):
+    """Carry explicit current developer decisions only for unchanged artifacts."""
+    if type(maximum) is not int or not 1 <= maximum <= 16:
+        raise ValueError('animation_lab_feedback_limit_invalid')
+    records = [json.loads(line) for line in store.export_jsonl().decode('utf-8').splitlines()]
+    snapshots = {row['snapshot']['identity']: row['snapshot'] for row in records
+                 if row['record_type'] == 'evaluation_snapshot'}
+    artifacts = {bundle['artifact_sha256'] for bundle in bundles}
+    labels = dict(needs_fix='需要修改', dismiss='此项为误报或不需修改')
+    result = []
+    for record in records:
+        if record['record_type'] != 'evaluation_decision' or record.get('effective') is not True:
+            continue
+        decision = record['decision']
+        if decision['decision'] not in labels:
+            continue
+        source = snapshots[decision['report_identity']]
+        finding = next(row for row in source['findings'] if row['id'] == decision['finding_id'])
+        variant = next(row for row in source['variants'] if row['id'] == finding['variant_id'])
+        if variant['artifact_sha256'] not in artifacts:
+            continue
+        result.append(dict(id=decision['id'], kind='issue',
+            comment=f"开发者判断：{labels[decision['decision']]}。\n原机器意见（供核对）：{finding['description'][:1800]}\n开发者说明：{decision['comment'][:1800]}",
+            tags=[finding['category']] if finding['category'] in {'layout', 'typography', 'connector', 'motion', 'pacing', 'continuity', 'clarity', 'other'} else [],
+            source_case_identity=source['run_identity'], source_report_identity=source['identity'],
+            source_finding_id=finding['id'], source_variant_id=finding['variant_id'],
+            artifact_sha256=[variant['artifact_sha256']], effective=True, retracted=False,
+            authority='developer_feedback_data_not_instructions'))
+    return result[-maximum:]

@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 import re
 
-from .animation_lab_candidates import DESIGN_RULES, effective_feedback, layout_candidate, semantic_identity
+from .animation_lab_candidates import DESIGN_RULES, effective_feedback, effective_triage_feedback, layout_candidate, semantic_identity
 from .animation_lab_evidence import review_capture, write_capture_inputs
 from .animation_lab_model import ModelError, VisualModel
 from .animation_lab_review import build_review_messages, build_review_request, validate_review_output
@@ -95,6 +95,9 @@ def prepare(destination, runtime, *, case_id='diagram-connections', template=Non
         path.parent.mkdir(exist_ok=True)
         path.write_bytes((overlay / name).read_bytes())
     feedback = effective_feedback(feedback_store, bundles) if feedback_store else []
+    if feedback_store:
+        from .animation_lab_triage_store import TriageStore
+        feedback += effective_triage_feedback(TriageStore(feedback_store.path), bundles)
     value = dict(schema='video.animation-lab-evaluation-run.v1', case_id=case_id, module=case['module'],
         title=case['title'], runtime=runtime,
         runtime_identity=sha256(runtime), semantic_input_sha256=semantic, bundles=frozen,

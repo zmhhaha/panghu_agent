@@ -234,11 +234,15 @@ def build_review_request(*, case_identity, module, variants, frames,
             preference_orientation=orientation,
             verdict=row.get('verdict') if row.get('verdict') in ('acceptable', 'needs_work') else None,
             tags=[tag for tag in tags if type(tag) is str and tag in CATEGORIES]))
-        feedback_sources.append(dict(id=identity, binding='artifact_provenance',
+        provenance = dict(id=identity, binding='artifact_provenance',
             source_case_identity=row['source_case_identity'], source_annotation_id=row['id'],
             source_variant_id=source_variant, artifact_sha256=list(needed),
             source_preference=row.get('preference'),
-            preferred_artifact_sha256=row.get('preferred_artifact_sha256')))
+            preferred_artifact_sha256=row.get('preferred_artifact_sha256'))
+        if _digest(row.get('source_report_identity')) and _identity(row.get('source_finding_id')):
+            provenance.update(source_report_identity=row['source_report_identity'],
+                              source_finding_id=row['source_finding_id'])
+        feedback_sources.append(provenance)
     payload = dict(schema=REQUEST_SCHEMA,
         public=dict(case_identity=case_identity, module=module, runtime_identity=runtime_identity,
             evidence_identity=evidence_identity,

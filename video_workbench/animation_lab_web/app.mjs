@@ -1,9 +1,13 @@
-import {isCurrentAnnotation, issueLocation} from './model.mjs';
+import {isCurrentAnnotation, issueLocation, isCurrentEvaluation, evaluationFindingLocation,
+  currentEvaluationDecisions, localResourceUrl} from './model.mjs';
 
 const $ = id => document.getElementById(id);
 const TAGS = {layout: '布局', typography: '文字', connector: '连线', motion: '动作', pacing: '节奏', continuity: '衔接', clarity: '表达', other: '其他'};
 const SEVERITIES = {note: '建议', minor: '轻微', major: '明显', blocker: '严重'};
 const PREFERENCES = {baseline: 'A 更好', candidate: 'B 更好', tie: '差不多', neither: '都需改进'};
+const MODEL_STATES = {not_run: '尚未调用', unavailable: '模型暂不可用', failed: '调用失败，已停止', invalid: '评审证据无效'};
+const MODEL_PREFERENCES = {A: '倾向 A', B: '倾向 B', tie: '两版相当', inconclusive: '证据不足，暂无法判断'};
+const DECISIONS = {needs_fix: '确认需修改', dismiss: '此项不成立', defer: '暂缓判断'};
 let catalog = {modules: [], cases: []};
 let currentCase = null;
 let players = [];
@@ -26,7 +30,12 @@ let pointerOrigin = null;
 let saving = false;
 let dirty = false;
 let mutationSerial = 0;
+let evaluationState = null;
+let evaluationBusy = false;
+let evaluationOperation = 0;
+let evaluationLoadSerial = 0;
 const drafts = new Map();
+const decisionDrafts = new Map();
 const knownReviews = new Set();
 const loadTimers = new Set();
 
@@ -125,7 +134,7 @@ function renderCaseList() {
   const selectedModule = $('module-filter').value;
   const query = $('case-search').value.trim().toLocaleLowerCase();
   const reviewFilter = $('review-filter').value;
-  const matches = catalog.cases.filter(row => (selectedModule === 'all' || row.module === selectedModule)
+  const matches = catalog.cases.filter(row => !row.evaluation && (selectedModule === 'all' || row.module === selectedModule)
     && `${row.title} ${row.description ?? ''}`.toLocaleLowerCase().includes(query)
     && (reviewFilter === 'all' || knownReviews.has(`${row.id}:${caseIdentity(row)}`) === (reviewFilter === 'reviewed')));
   $('case-count').textContent = String(matches.length);
@@ -145,12 +154,174 @@ function renderCaseList() {
   const available = !selected || ['ready', 'available', 'implemented', 'active'].includes(selected.status ?? 'ready');
   $('module-note').hidden = available;
   $('module-note').textContent = available ? '' : selected.reason ?? selected.description ?? '这项能力尚未接入，本页不提供模拟效果。';
+  for (const button of document.querySelectorAll('[data-evaluation-case]')) button.setAttribute('aria-current', String(button.dataset.evaluationCase === currentCase?.id));
+}
+
+function evaluationMessage(text, error = false) {
+  $('evaluation-message').textContent = text;
+  $('evaluation-message').classList.toggle('error', error);
+  $('evaluation-message').hidden = !text;
+}
+
+function renderEvaluation() {
+  const expected = currentCase?.evaluation;
+  $('automatic-review').hidden = !expected;
+  $('evaluation-findings').replaceChildren();
+  $('revision-task').hidden = true;
+  $('evaluation-empty').hidden = true;
+  $('evaluation-context').hidden = true;
+  if (!expected) return;
+  if (!isCurrentEvaluation(evaluationState, currentCase)) {
+    $('evaluation-technical').textContent = '正在读取';
+    $('evaluation-model').textContent = '正在读取';
+    $('evaluation-developer').textContent = '尚未确认';
+    return;
+  }
+  const evaluation = evaluationState;
+  const findings = [...(evaluation.findings ?? [])].sort((a, b) =>
+    ({blocker: 0, major: 1, minor: 2, note: 3}[a.severity] ?? 4) - ({blocker: 0, major: 1, minor: 2, note: 3}[b.severity] ?? 4));
+  const decisions = currentEvaluationDecisions(evaluation, currentCase);
+  const counts = {needs_fix: 0, dismiss: 0, defer: 0};
+  for (const decision of decisions) counts[decision.decision]++;
+  $('evaluation-technical').textContent = {passed: '采样检查通过', failed: '采样检查未通过', not_run: '尚未检查'}[evaluation.technical?.status] ?? '检查状态未知';
+  $('evaluation-model').textContent = evaluation.model?.status === 'reviewed'
+    ? MODEL_PREFERENCES[evaluation.model.preference] ?? '已返回意见'
+    : MODEL_STATES[evaluation.model?.status] ?? '状态未知';
+  $('evaluation-developer').textContent = decisions.length
+    ? `${counts.needs_fix} 项待修改 · ${counts.dismiss} 项不成立 · ${counts.defer} 项暂缓`
+    : findings.length ? `${findings.length} 项待核看` : '暂无问题需处理';
+  const task = localResourceUrl(evaluation.task_url, location.origin);
+  if (counts.needs_fix > 0 && task) { $('revision-task').href = task; $('revision-task').hidden = false; }
+  if (!findings.length) {
+    $('evaluation-empty').hidden = false;
+    $('evaluation-empty').textContent = evaluation.technical?.status === 'failed'
+      ? '采样检查未通过，当前没有可定位的问题记录，请结合原始报告核对。'
+      : evaluation.model?.status === 'reviewed'
+        ? '采样画面中未发现有证据支持的问题。可以结合原始意见与播放画面，继续判断效果差异。'
+        : '当前没有可定位的问题记录。视觉模型尚未完成有效审阅，不能据此判断整体效果。';
+  }
+  $('evaluation-reason').textContent = evaluation.model?.comparison_reason ?? '';
+  $('evaluation-limitations').replaceChildren(...(evaluation.model?.limitations ?? []).map(value => node('li', value)));
+  $('evaluation-context').hidden = false;
+  for (const finding of findings) {
+    const article = node('article', undefined, 'evaluation-finding');
+    const header = node('header');
+    header.append(node('span', finding.source === 'technical' ? '技术检查' : '视觉模型', `finding-source ${finding.source}`),
+      node('strong', TAGS[finding.category] ?? '效果问题'),
+      node('span', SEVERITIES[finding.severity] ?? finding.severity ?? '待判断', `severity-label ${finding.severity}`));
+    if (finding.claim === 'sampled_motion') header.append(node('span', '采样动作窗', 'muted small'));
+    article.append(header, node('p', finding.description ?? '', 'finding-description'));
+    const evidence = node('div', undefined, 'finding-evidence');
+    for (const frame of finding.frames ?? []) {
+      const target = evaluationFindingLocation(evaluation, currentCase, finding.id, frame.id);
+      const player = players.find(value => value.variant.id === frame.variant_id);
+      const letter = player?.key === 'baseline' ? 'A' : player?.key === 'candidate' ? 'B' : '未知版本';
+      const label = `${letter} · ${formatTime(frame.time_seconds)}`;
+      const jump = node('button', undefined, 'finding-jump');
+      jump.type = 'button'; jump.title = frame.id;
+      jump.setAttribute('aria-label', `定位 ${label} · ${frame.id}`);
+      jump.dataset.locationValid = String(Boolean(target));
+      jump.disabled = !target || !allReady();
+      const image = localResourceUrl(frame.image_url, location.origin);
+      if (image) { const thumbnail = node('img'); thumbnail.src = image; thumbnail.alt = frame.id; thumbnail.loading = 'lazy'; jump.append(thumbnail); }
+      jump.append(node('span', label));
+      if (!target) jump.title = '证据的运行身份、版本或时间不匹配，不能定位当前画面。';
+      jump.addEventListener('click', () => {
+        const exact = evaluationFindingLocation(evaluationState, currentCase, finding.id, frame.id);
+        if (!exact || !allReady()) return;
+        pause(); setDrawing(false); seek(exact.time);
+        viewedRegion = {variant: exact.variant_id, region: exact.region, source: 'automatic'};
+        renderRegion();
+        if (player) $(`${player.key}-stage`).scrollIntoView({behavior: 'smooth', block: 'center'});
+      });
+      evidence.append(jump);
+    }
+    if (evidence.children.length) article.append(evidence);
+    else article.append(node('p', '此项没有可定位的截图，保留检查说明供核对。', 'muted small'));
+    if (finding.suggestions?.length) {
+      const suggestions = node('div', undefined, 'finding-suggestions');
+      suggestions.append(node('p', '修改建议（待核看）', 'muted small'));
+      const list = node('ul');
+      for (const suggestion of finding.suggestions) {
+        const layout = {flow: '流程布局', focus: '关系强调布局'}[suggestion.parameters?.layout_template];
+        list.append(node('li', `${layout ? `尝试${layout}：` : ''}${suggestion.reason ?? '结合证据核对候选修改。'}`));
+      }
+      suggestions.append(list); article.append(suggestions);
+    }
+    const previous = decisions.find(row => row.finding_id === finding.id);
+    const state = node('p', previous ? `开发者处理：${DECISIONS[previous.decision]}` : '开发者尚未处理', 'finding-decision-state');
+    article.append(state);
+    if (previous?.comment) article.append(node('p', previous.comment, 'finding-decision-comment'));
+    const commentLabel = node('label', '处理备注（可选）', 'finding-comment-label');
+    const comment = node('textarea'); comment.rows = 2; comment.maxLength = 1000; comment.disabled = evaluationBusy;
+    const key = `${evaluation.report_identity}:${finding.id}`;
+    comment.value = decisionDrafts.get(key) ?? '';
+    comment.addEventListener('input', () => decisionDrafts.set(key, comment.value));
+    commentLabel.append(comment); article.append(commentLabel);
+    const actions = node('div', undefined, 'finding-actions');
+    for (const [decision, title] of Object.entries(DECISIONS)) {
+      const button = node('button', title, 'button secondary'); button.type = 'button';
+      button.disabled = evaluationBusy;
+      button.classList.toggle('selected', previous?.decision === decision);
+      button.setAttribute('aria-pressed', String(previous?.decision === decision));
+      button.addEventListener('click', () => saveFindingDecision(finding.id, decision, comment.value));
+      actions.append(button);
+    }
+    article.append(actions); $('evaluation-findings').append(article);
+  }
+}
+
+async function loadEvaluation(row, epoch) {
+  if (!row.evaluation) return;
+  const serial = ++evaluationLoadSerial, operation = evaluationOperation;
+  const isLatest = () => epoch === caseEpoch && serial === evaluationLoadSerial && operation === evaluationOperation;
+  evaluationMessage('');
+  try {
+    const result = await request(`/api/evaluations/${encodeURIComponent(row.evaluation.id)}`);
+    if (!isLatest()) return;
+    const evaluation = result.evaluation ?? result;
+    if (!isCurrentEvaluation(evaluation, currentCase)) throw new Error('评测报告已变化，请刷新样例后再核看。');
+    evaluationState = evaluation; renderEvaluation();
+  } catch (error) {
+    if (isLatest()) {
+      evaluationState = null; renderEvaluation();
+      $('evaluation-technical').textContent = '记录未能载入';
+      $('evaluation-model').textContent = '记录未能载入';
+      evaluationMessage(`读取自动评测失败：${error.message}`, true);
+    }
+  }
+}
+
+async function saveFindingDecision(findingId, decision, comment) {
+  if (evaluationBusy || !isCurrentEvaluation(evaluationState, currentCase)) return;
+  const evaluation = evaluationState, epoch = caseEpoch, operation = ++evaluationOperation;
+  const reportIdentity = evaluation.report_identity;
+  const key = `${reportIdentity}:${findingId}`;
+  decisionDrafts.set(key, comment);
+  evaluationBusy = true; renderEvaluation(); evaluationMessage('正在保存处理意见…');
+  try {
+    const result = await request(`/api/evaluations/${encodeURIComponent(evaluation.id)}/decisions`, {
+      method: 'POST', body: JSON.stringify({report_identity: reportIdentity, finding_id: findingId, decision, comment: comment.trim()}),
+    });
+    if (epoch !== caseEpoch || operation !== evaluationOperation) return;
+    const saved = result.decision;
+    if (!saved || saved.finding_id !== findingId || saved.decision !== decision || typeof saved.id !== 'string'
+        || (saved.report_identity !== undefined && saved.report_identity !== reportIdentity)) throw new Error('保存回执与本次评测不匹配，请刷新核对。');
+    evaluationState = {...evaluationState, decisions: [...(evaluationState.decisions ?? []).filter(row => row.finding_id !== findingId), saved]};
+    decisionDrafts.delete(key);
+    evaluationMessage('处理意见已保存。已确认需修改的问题可以导出为独立任务。');
+  } catch (error) {
+    if (epoch === caseEpoch && operation === evaluationOperation) evaluationMessage(`处理意见保存未完成：${error.message}。未自动重试，请刷新核对。`, true);
+  } finally {
+    if (epoch === caseEpoch && operation === evaluationOperation) { evaluationBusy = false; renderEvaluation(); }
+  }
 }
 
 function clearLoadTimers() { for (const timer of loadTimers) clearTimeout(timer); loadTimers.clear(); }
 
 function configurePlayer(key, variant, epoch) {
   const player = {key, variant, ready: false, error: null, frame: $(`${key}-frame`)};
+  player.frame.title = `${key === 'baseline' ? 'A' : 'B'} · ${variant.label ?? variant.id} 动画预览`;
   $(`${key}-title`).textContent = variant.label ?? variant.id;
   $(`${key}-duration`).textContent = `${Number(variant.duration_seconds).toFixed(3)} 秒`;
   $(`${key}-identity`).textContent = shortIdentity(variant.identity);
@@ -229,10 +400,11 @@ function renderCheckpoints() {
 }
 
 async function selectCase(row) {
-  if (currentCase?.id === row.id && caseIdentity(currentCase) === caseIdentity(row)) { $('empty-state').hidden = true; $('case-workspace').hidden = false; return; }
+  if (currentCase?.id === row.id && caseIdentity(currentCase) === caseIdentity(row)) { $('empty-state').hidden = true; $('case-workspace').hidden = false; if (row.evaluation && !evaluationBusy) await loadEvaluation(row, caseEpoch); return; }
   captureDraft(); pause(); clearLoadTimers();
   currentCase = row;
   const epoch = ++caseEpoch;
+  evaluationState = null; evaluationBusy = false; evaluationOperation++;
   setDrawing(false);
   annotations = []; region = null; regionVariant = null; viewedRegion = null; mutationSerial = 0;
   $('empty-state').hidden = true;
@@ -259,7 +431,8 @@ async function selectCase(row) {
   $('preference-note').textContent = players.length < 2 ? '当前样例只有一个版本，可记录问题与核看结果。' : '';
   const different = players.length === 2 && Math.abs(players[0].variant.duration_seconds - players[1].variant.duration_seconds) > .001;
   $('timing-note').textContent = different ? '两版包含不同的转场时长；公共时间轴按较长版本显示，较短版本到末尾后保持末帧。' : '两侧使用同一个预览时钟。可逐帧定位，再记录具体问题。';
-  restoreDraft(); renderCaseList(); renderChecks(); renderCheckpoints(); renderHistory(); updateTransport();
+  restoreDraft(); renderCaseList(); renderChecks(); renderCheckpoints(); renderHistory(); updateTransport(); renderEvaluation();
+  void loadEvaluation(row, epoch);
   const url = new URL(location.href); url.hash = encodeURIComponent(row.id); history.replaceState(null, '', url);
   try {
     const serial = mutationSerial;
@@ -279,6 +452,7 @@ function updateTransport() {
   $('timecode').textContent = `${formatTime(time)} / ${formatTime(duration)}`;
   $('draw-region').disabled = !ready;
   $('capture-time').disabled = !ready;
+  for (const button of document.querySelectorAll('.finding-jump')) button.disabled = !ready || button.dataset.locationValid !== 'true';
 }
 
 function seek(value) {
@@ -337,13 +511,15 @@ window.addEventListener('message', event => {
 function renderRegion() {
   for (const player of players) {
     const box = $(`${player.key}-overlay`).querySelector('.region-box');
-    const displayed = viewedRegion?.variant === player.variant.id ? viewedRegion.region : regionVariant === player.variant.id ? region : null;
+    const displayed = viewedRegion?.source === 'automatic'
+      ? viewedRegion.variant === player.variant.id ? viewedRegion.region : null
+      : viewedRegion?.variant === player.variant.id ? viewedRegion.region : regionVariant === player.variant.id ? region : null;
     const show = Boolean(displayed);
     box.hidden = !show;
     if (show) { box.style.left = `${displayed.x * 100}%`; box.style.top = `${displayed.y * 100}%`; box.style.width = `${displayed.width * 100}%`; box.style.height = `${displayed.height * 100}%`; }
   }
   $('clear-region').disabled = !region && !viewedRegion;
-  $('region-note').textContent = viewedRegion ? '正在查看历史标注框选；不会写入当前草稿' : region ? `已框选 ${Math.round(region.width * 1280)} × ${Math.round(region.height * 720)}（1280 × 720 基准）` : '可选；不框选则评价整个画面';
+  $('region-note').textContent = viewedRegion?.source === 'automatic' ? '正在查看自动评测证据；不会写入人工标注草稿' : viewedRegion ? '正在查看历史标注框选；不会写入当前草稿' : region ? `已框选 ${Math.round(region.width * 1280)} × ${Math.round(region.height * 720)}（1280 × 720 基准）` : '可选；不框选则评价整个画面';
 }
 
 function setDrawing(value) {
@@ -576,9 +752,22 @@ async function loadCatalog() {
     $('evaluations-panel').hidden = !evaluations.length;
     $('evaluations-list').replaceChildren();
     for (const item of evaluations) {
-      const link = node('a', `${item.title} · 检查 ${item.technical_status} · 模型 ${item.model_status}`, 'small');
-      link.href = item.report_url; link.target = '_blank'; link.rel = 'noopener';
-      const row = node('p'); row.append(link); $('evaluations-list').append(row);
+      const row = node('div', undefined, 'evaluation-list-item');
+      const evaluatedCase = catalog.cases.find(value => value.id === item.case_id);
+      if (evaluatedCase) {
+        const select = node('button', item.title, 'case-button'); select.type = 'button';
+        select.dataset.evaluationCase = evaluatedCase.id;
+        select.addEventListener('click', () => {
+          if (!['all', evaluatedCase.module].includes($('module-filter').value)) $('module-filter').value = evaluatedCase.module;
+          selectCase(evaluatedCase);
+        });
+        row.append(select);
+      } else row.append(node('p', item.title, 'small'));
+      const technical = {passed: '技术采样通过', failed: '技术采样未通过'}[item.technical_status] ?? '技术检查待核对';
+      row.append(node('p', `${technical} · 模型 ${item.model_status}`, 'muted small'));
+      const report = localResourceUrl(item.report_url, location.origin);
+      if (report) { const link = node('a', '查看原始报告', 'small'); link.href = report; link.target = '_blank'; link.rel = 'noopener'; row.append(link); }
+      $('evaluations-list').append(row);
     }
     for (const row of catalog.cases) {
       const key = `${row.id}:${caseIdentity(row)}`;
