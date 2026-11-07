@@ -128,3 +128,17 @@ python -m video_workbench.animation_lab_matrix prepare \
 登录浏览器验收包括目录/覆盖、需求说明、筛选空态及恢复、真实HTML商品筛选排序、双侧定位/归零，以及明确标记为技术用途的标注保存。相同镜像重启后，新Pod核对该标注原始文档SHA完全一致、快照仍27条，旧历史未复活；随后撤回技术记录，避免将其当作用户效果意见。本地浏览器另核对五层真实WebGL展开及领域职责。需求下载由实际服务器HTTP核对内容与身份，浏览器核对同源前缀链接，不把链接检查记为浏览器全量下载。
 
 证据统一位于既有忽略目录 `video_workbench/rendered/feedback-20261106/animation-lab/`：`auto-evaluation/scenarios-final-native.json`、原始及修复后技术报告、`server-deploy/matrix-*` 发布/后端/持久化回执。Windows短路径采样工作目录位于既有 `.research-temp` 范围，仍归后续统一临时文件清理任务。技术采样通过不等于人工审美批准或真实旁白同步，也没有启用真实Agent到GitHub PR的自动执行环境。
+
+## 2026-11-08 三类新能力的发布与验证
+
+本轮新增12条需求，目录扩为11模块、39条需求、13领域，已部署到同一开发者入口。源码为 `944b6acd0ce2d52f1ff39fec3e46aa43d793402a`，分支 `codex/video-math-spatial-field-capabilities` 已推送，未合主线。ARM64镜像为 `arm-cluster-master:5000/video-animation-lab:latest@sha256:a72f1303f7f5456f4e6b055689568d2b9e09ee148333e3083cc987eb88a52b8f`，177,295,611字节；构建上下文SHA-256为 `6014631c68a32a677ba5fe8d88e7104846d672e94cdbb8afcea8dd4b2d07d77d`。实际Pod imageID、revision注解和label、60个运行源文件及4份固定资产均与构建内容一致。
+
+新增12例最终全部通过真实ARM Chromium采样与独立数据/几何/像素检查，最终绑定24个A/B片段、360张JPEG。实际共执行26次采集，所有容器均确认清理。初轮4例技术失败的记录保留：3个fields例的请求分数帧时间与GSAP实际六位小数绘制时钟存在不足一微秒差异；现在先严格绑定实际时钟，再计算预期几何，原120条Canvas原生样本复核通过，像素与几何门禁未放宽。螺栓剖切后模型确实过小，改为随装配平滑拉近镜头（zoom从1到2.2），仅为该例另采两侧，末帧实测91/1100个前景样点、42种颜色且无GL错误。24次初轮及2次复测的原始回执、图像与检查分别保留，不覆盖失败报告。最早的冻结输入在发起采样前因标记遮挡修正而替换；调度时超过210秒上限的参数也在创建容器前被拒绝，未产生额外采集。
+
+最终针对性Python组293项通过；公共资源/HTTP/反馈等8文件组247项、runner组59项、矩阵扩展组8项及目录编译组34项通过，分组有交集，不相加为独立总数。工作台Node28项通过。原生检查包含实际SVG公式/单位/图形，真实Canvas绘制与像素，以及Three.js网格、部件矩阵、剖切平面、相机投影、GPU读回和反向归零。样例采集没有调用Agent、模型或TTS，也没有编码MP4。
+
+发布前对专用SQLite做在线备份，服务器私有release目录保留完整备份，SHA-256为 `58a9785868f807ef014cff67276d72faa3c4825170b18a8d058c173924437f70`。继续使用同一corpus版本，原27个快照、1条已撤回的技术标注及其撤回事件逐列摘要均保留，新样例只追加记录。后端核对39条当前需求、78个可用预览、未登录或非开发者身份403、20份挂载旧报告仍排除。需求集 `semantic_identity=8a04225520cdcfe980dd5774f52994f92e71dee1550712521f01189f79402822`；业务视频Deployment spec保持原值。
+
+登录浏览器已检查三个新模块的代表画面、双侧就绪、动作检查点和归零：几何面积推导得到48cm²，声波相位推进到180°，螺栓模型随装配放大并显示真实剖面。新增fields技术标注保存后真实刷新仍可读取，随后撤回；服务器回读核对39个快照、全部原有行保留，技术记录不计入有效效果意见。技术通过仍不表示用户已认可审美效果或真实旁白时序；这些能力当前供独立开发者工作台分别改进，普通用户视频生成不自动采用。
+
+本轮汇总为既有忽略目录中的 `auto-evaluation/extended-final-native.json`，原失败/复核/螺栓复测记录为 `extended-native-r2-review.json`、`extended-fields-recheck.json`、`extended-native-r3-review.json`，发布回执为 `server-deploy/extended-*`。短路径冻结证据位于既有 `.research-temp/ext-native-*`，服务器备份位于 `/root/video-process-20261105/feedback-20261106/animation-extended-release/944b6acd0ce2d52f1ff39fec3e46aa43d793402a/`；仍纳入此前约定的整体清理计划。
