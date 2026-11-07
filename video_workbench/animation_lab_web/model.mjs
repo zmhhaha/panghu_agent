@@ -76,7 +76,7 @@ export function localResourceUrl(value, origin) {
 
 // Finish the first download before navigating the immutable preview player,
 // whose short initialization deadline should measure animation startup only.
-export async function warmPreviewAssets(variants, {origin, signal, timeoutMs = 120000,
+export async function warmPreviewAssets(variants, {origin, signal, timeoutMs = 600000,
   fetcher = globalThis.fetch, onProgress = () => {}} = {}) {
   const allowed = new Set(['gsap.min.js', 'NotoSansCJK-Regular.ttc', 'three.module.min.js']);
   const assets = new Map();

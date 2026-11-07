@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import base64
 from copy import deepcopy
+import gzip
 import html
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -52,6 +53,22 @@ def _require(value, code, status=422):
 
 def _number(value):
     return type(value) in (int, float) and math.isfinite(value)
+
+
+def _accepts_gzip(values):
+    """An explicit gzip refusal takes priority over a wildcard allowance."""
+    qualities = {}
+    for value in values:
+        for entry in value.split(','):
+            coding, *parameters = [part.strip().lower() for part in entry.split(';')]
+            if coding not in {'gzip', '*'}:
+                continue
+            quality = 1.0
+            if parameters:
+                match = re.fullmatch(r'q\s*=\s*(0(?:\.[0-9]{0,3})?|1(?:\.0{0,3})?)', parameters[0])
+                quality = float(match[1]) if len(parameters) == 1 and match else 0.0
+            qualities[coding] = min(qualities.get(coding, 1.0), quality)
+    return qualities.get('gzip', qualities.get('*', 0.0)) > 0
 
 
 def load_assets(directory):
@@ -96,6 +113,10 @@ class AnimationLab:
         self.shared_assets.update({name: dict(sha256=digest, bytes=len(self.assets[name]))
             for name, digest in THREE_ASSET_SHA256.items()
             if name in self.assets and sha256(self.assets[name]) == digest})
+        # Precompute wire encodings once; decompressed hashes, persisted cases
+        # and source assets remain the exact original measured bytes.
+        self.gzip_assets = {name: gzip.compress(self.assets[name], compresslevel=6, mtime=0)
+                            for name in self.shared_assets}
         self.store = AnnotationStore(Path(data_dir) / 'animation-lab.db')
         self.triage_store = TriageStore(self.store.path)
         self.evaluation_lock = threading.RLock()
@@ -472,11 +493,16 @@ class LabHandler(BaseHTTPRequestHandler):
         return unquote(path)
 
     def _send(self, raw, content_type, status=200, *, download=False,
-              download_name='animation-lab-evaluation.jsonl', location=None, cache_control='no-store'):
+              download_name='animation-lab-evaluation.jsonl', location=None, cache_control='no-store',
+              content_encoding=None, vary=None):
         self.send_response(status)
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(raw)))
         self.send_header('Cache-Control', cache_control)
+        if content_encoding:
+            self.send_header('Content-Encoding', content_encoding)
+        if vary:
+            self.send_header('Vary', vary)
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
         self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; "
@@ -528,8 +554,10 @@ class LabHandler(BaseHTTPRequestHandler):
                 _require(name in lab.shared_assets and digest == lab.shared_assets[name]['sha256'],
                          'animation_lab_asset_missing', 404)
                 mime = 'text/javascript' if name.endswith('.js') else 'font/collection'
-                return self._send(lab.assets[name], mime,
-                                  cache_control='private, max-age=31536000, immutable')
+                compressed = _accepts_gzip(self.headers.get_all('Accept-Encoding', []))
+                return self._send(lab.gzip_assets[name] if compressed else lab.assets[name], mime,
+                    cache_control='private, max-age=31536000, immutable',
+                    content_encoding='gzip' if compressed else None, vary='Accept-Encoding')
             if len(pieces) >= 3 and pieces[:2] == ['api', 'evaluations']:
                 run_id = pieces[2]
                 if len(pieces) == 3:

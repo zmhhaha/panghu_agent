@@ -88,3 +88,20 @@ test('cold resources have a separate bounded deadline and a fresh explicit attem
   await assert.rejects(warmPreviewAssets([variant(asset)], {origin, signal: controller.signal,
     fetcher: () => assert.fail('An already cancelled case must not dispatch.')}), error => error.name === 'AbortError');
 });
+
+test('the fixed-resource cold download deadline is ten minutes and always cleared', async () => {
+  const originalSetTimeout = globalThis.setTimeout, originalClearTimeout = globalThis.clearTimeout;
+  let timeout, cleared;
+  globalThis.setTimeout = (callback, milliseconds) => {
+    timeout = milliseconds;
+    return originalSetTimeout(callback, milliseconds);
+  };
+  globalThis.clearTimeout = timer => { cleared = true; return originalClearTimeout(timer); };
+  try {
+    await warmPreviewAssets([variant(asset)], {origin, fetcher: async () => response()});
+    assert.equal(timeout, 600000);
+    assert.equal(cleared, true);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout; globalThis.clearTimeout = originalClearTimeout;
+  }
+});

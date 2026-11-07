@@ -1,5 +1,6 @@
 """Real HTTP prefix/identity boundaries; synthetic assets do not execute a browser."""
 from copy import deepcopy
+import gzip
 import http.client
 import json
 import threading
@@ -130,6 +131,52 @@ def test_shared_asset_routes_require_exact_current_hash_name_and_authenticated_d
     # composition bytes continue to have their original no-store policy.
     for path in ('/app.mjs', '/api/catalog', '/composition/svg-morph/candidate/scene-1/index.html'):
         assert proxy.request('GET', PREFIX+path)[2]['Cache-Control'] == 'no-store'
+
+
+@pytest.mark.parametrize('accept_encoding,compressed', [
+    (None, False), ('', False), ('identity', False), ('br, deflate', False),
+    ('gzip', True), ('br, gzip, deflate', True), ('GZip ; q=0.500', True),
+    ('gzip;q=0.001', True), ('*;q=0.7', True), ('gzip;q=1, *;q=0', True),
+    ('gzip;q=0', False), ('gzip;q=0.000', False), ('gzip;q=0, *;q=1', False),
+    ('gzip;q=0.5, gzip;q=0', False), ('gzip;q=1.01', False), ('gzip;q=invalid', False),
+    ('gzip;q=.5', False), ('gzip;q=0.5;other=1', False), ('*;q=0', False),
+])
+def test_shared_asset_transport_negotiation_preserves_raw_hashes_and_case_identities(proxy, accept_encoding, compressed):
+    identities = {key: row['identity'] for key, row in proxy.lab.cases.items()}
+    player = proxy.lab.player_script
+    header = () if accept_encoding is None else (('Accept-Encoding', accept_encoding),)
+    for name, expected in ASSETS.items():
+        path = PREFIX+f'/assets/{sha256(expected)}/{name}'
+        status, raw, headers = proxy.request('GET', path, headers=header)
+        assert status == 200 and headers['Vary'] == 'Accept-Encoding'
+        assert int(headers['Content-Length']) == len(raw)
+        assert headers['Cache-Control'] == 'private, max-age=31536000, immutable'
+        if compressed:
+            assert headers['Content-Encoding'] == 'gzip'
+            assert raw == proxy.lab.gzip_assets[name]
+            decoded = gzip.decompress(raw)
+        else:
+            assert 'Content-Encoding' not in headers
+            decoded = raw
+        assert decoded == expected and sha256(decoded) == sha256(expected)
+    assert {key: row['identity'] for key, row in proxy.lab.cases.items()} == identities
+    assert proxy.lab.player_script == player
+    # gzip is restricted to shared immutable resources: no changes to player,
+    # generated HTML, API JSON or redirect responses even when accepted.
+    for path in ('/lab-player.mjs', '/api/catalog',
+                 '/composition/svg-morph/candidate/scene-1/index.html',
+                 '/composition/svg-morph/candidate/scene-1/assets/gsap.min.js'):
+        _, _, headers = proxy.request('GET', PREFIX+path, headers=header)
+        assert 'Content-Encoding' not in headers and 'Vary' not in headers
+        assert headers['Cache-Control'] == 'no-store'
+
+
+def test_repeated_accept_encoding_cannot_override_an_explicit_gzip_refusal(proxy):
+    name, expected = next(iter(ASSETS.items()))
+    path = PREFIX+f'/assets/{sha256(expected)}/{name}'
+    _, raw, headers = proxy.request('GET', path, headers=(
+        ('Accept-Encoding', 'gzip;q=1'), ('Accept-Encoding', 'gzip;q=0, *;q=1')))
+    assert raw == expected and 'Content-Encoding' not in headers
 
 
 def test_prefixed_annotation_persists_trusted_principal_without_accepting_client_identity(proxy):
