@@ -176,6 +176,12 @@ def test_three_module_routes_use_local_verified_bytes_and_javascript_mime(client
     client = clients(engine_assets)
     case = next(row for row in client.request('GET', '/api/catalog')[1]['cases'] if row['id'] == 'three-layers')
     for variant in case['variants']:
+        assert {row['name'] for row in variant['preload_assets']} == set(engine_assets)
+        for asset in variant['preload_assets']:
+            status, raw, headers = client.request('GET', asset['asset_url'])
+            assert status == 200 and raw == engine_assets[asset['name']]
+            assert asset['sha256'] == sha256(raw) and asset['bytes'] == len(raw)
+            assert headers['Cache-Control'] == 'private, max-age=31536000, immutable'
         status, page, metadata = client.request('GET', f"/composition/three-layers/{variant['id']}/scene-1/index.html")
         assert status == 200 and metadata['Content-Type'].startswith('text/html')
         assert b'https://' not in page and b'http://' not in page

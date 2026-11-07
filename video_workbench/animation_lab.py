@@ -36,7 +36,7 @@ MAX_BODY = 32 * 1024
 WEB = Path(__file__).with_name('animation_lab_web')
 _FIELDS = {'case_id', 'case_identity', 'variant_id', 'kind', 'start_seconds',
            'end_seconds', 'region', 'tags', 'severity', 'comment', 'preference', 'verdict'}
-_PUBLIC_URL_FIELDS = frozenset({'preview_url', 'report_url', 'task_url', 'image_url'})
+_PUBLIC_URL_FIELDS = frozenset({'preview_url', 'report_url', 'task_url', 'image_url', 'asset_url'})
 
 
 class LabError(ValueError):
@@ -88,6 +88,14 @@ class AnimationLab:
             gsap=GSAP_VERSION, assets={name: sha256(assets[name]) for name in sorted(ASSET_NAMES)},
             preview_adapter_sha256=sha256(self.player_script), width=1280, height=720, fps=FPS,
             output='browser_preview', production_export_verified=False)
+        from .animation_lab_three import THREE_ASSET_SHA256
+        # Transport metadata only: the player, compiled compositions and frozen
+        # identities keep their original bytes and relative resource names.
+        self.shared_assets = {name: dict(sha256=sha256(self.assets[name]), bytes=len(self.assets[name]))
+            for name in ASSET_NAMES}
+        self.shared_assets.update({name: dict(sha256=digest, bytes=len(self.assets[name]))
+            for name, digest in THREE_ASSET_SHA256.items()
+            if name in self.assets and sha256(self.assets[name]) == digest})
         self.store = AnnotationStore(Path(data_dir) / 'animation-lab.db')
         self.triage_store = TriageStore(self.store.path)
         self.evaluation_lock = threading.RLock()
@@ -149,6 +157,9 @@ class AnimationLab:
             cases = deepcopy(list(self.cases.values()))
         history = self.store.list()
         for case in cases:
+            for variant in case['variants']:
+                bundle = self.bundles.get((case['id'], variant['id']))
+                variant['preload_assets'] = self.preload_assets(bundle) if variant['available'] and bundle else []
             active = [row for row in history if row['case_identity'] == case['identity']
                       and not row['retracted']]
             reviews = [row for row in active if row['kind'] == 'review']
@@ -160,6 +171,15 @@ class AnimationLab:
             cases=cases, runtime=deepcopy(self.runtime),
             evaluations=evaluations,
             csrf_token=self.csrf_token)
+
+    def shared_asset_url(self, name):
+        _require(name in self.shared_assets, 'animation_lab_asset_missing', 404)
+        return f"/assets/{self.shared_assets[name]['sha256']}/{name}"
+
+    def preload_assets(self, bundle):
+        names = sorted(set(ASSET_NAMES) | set(self._engine_requirements(bundle)))
+        return [dict(name=name, **self.shared_assets[name], asset_url=self.shared_asset_url(name))
+                for name in names]
 
     def evaluations(self):
         """Import frozen comparison pairs; page reads never start model jobs."""
@@ -452,11 +472,11 @@ class LabHandler(BaseHTTPRequestHandler):
         return unquote(path)
 
     def _send(self, raw, content_type, status=200, *, download=False,
-              download_name='animation-lab-evaluation.jsonl', location=None):
+              download_name='animation-lab-evaluation.jsonl', location=None, cache_control='no-store'):
         self.send_response(status)
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(raw)))
-        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Cache-Control', cache_control)
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
         self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; "
@@ -503,6 +523,13 @@ class LabHandler(BaseHTTPRequestHandler):
                 mime = {'html': 'text/html', 'mjs': 'text/javascript', 'css': 'text/css'}[name.rsplit('.', 1)[-1]]
                 return self._send(source.read_bytes(), mime + '; charset=utf-8')
             pieces = path.strip('/').split('/')
+            if len(pieces) == 3 and pieces[0] == 'assets':
+                _, digest, name = pieces
+                _require(name in lab.shared_assets and digest == lab.shared_assets[name]['sha256'],
+                         'animation_lab_asset_missing', 404)
+                mime = 'text/javascript' if name.endswith('.js') else 'font/collection'
+                return self._send(lab.assets[name], mime,
+                                  cache_control='private, max-age=31536000, immutable')
             if len(pieces) >= 3 and pieces[:2] == ['api', 'evaluations']:
                 run_id = pieces[2]
                 if len(pieces) == 3:
@@ -537,6 +564,9 @@ class LabHandler(BaseHTTPRequestHandler):
                 if name in {'assets/' + value for value in required_assets}:
                     asset = name.split('/')[1]
                     _require(asset in lab.assets and lab._assets_match(bundle), 'animation_lab_asset_missing', 404)
+                    if self.server.proxy_mode:
+                        return self._send(b'', 'text/plain; charset=utf-8', 307,
+                            location=self.server.base_path + lab.shared_asset_url(asset))
                     mime = 'text/javascript' if asset.endswith('.js') else 'font/collection'
                     return self._send(lab.assets[asset], mime)
                 _require(name in clip['files'], 'animation_lab_unknown_file', 404)

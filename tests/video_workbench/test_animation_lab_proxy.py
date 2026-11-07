@@ -79,6 +79,11 @@ def test_prefix_catalog_preview_assets_and_export_preserve_frozen_identity_and_b
         for variant in case['variants']:
             if variant['available']:
                 assert variant['preview_url'] == PREFIX+before[case['id']]['variants'][0 if variant['id']=='baseline' else 1]['preview_url']
+                assert {row['name'] for row in variant['preload_assets']} == set(ASSETS)
+                for asset in variant['preload_assets']:
+                    assert asset == dict(name=asset['name'], sha256=sha256(ASSETS[asset['name']]),
+                        bytes=len(ASSETS[asset['name']]),
+                        asset_url=PREFIX+f"/assets/{sha256(ASSETS[asset['name']])}/{asset['name']}")
     assert proxy.lab.cases == before
     status, index, _ = proxy.request('GET', PREFIX+'/')
     assert status == 200 and b'href="./style.css"' in index and b'src="./app.mjs"' in index
@@ -95,14 +100,36 @@ def test_prefix_catalog_preview_assets_and_export_preserve_frozen_identity_and_b
             status, raw, _ = proxy.request('GET', base+name, decode_json=False)
             assert status == 200
             assert raw == expected and sha256(raw) == sha256(expected)
-        assert proxy.request('GET', base+'assets/gsap.min.js')[1] == ASSETS['gsap.min.js']
-        assert proxy.request('GET', base+'assets/NotoSansCJK-Regular.ttc')[1] == ASSETS['NotoSansCJK-Regular.ttc']
+        for name, expected in ASSETS.items():
+            status, raw, headers = proxy.request('GET', base+'assets/'+name)
+            assert status == 307 and raw == b'' and headers['Cache-Control'] == 'no-store'
+            assert headers['Location'] == PREFIX+f'/assets/{sha256(expected)}/{name}'
+            status, raw, headers = proxy.request('GET', headers['Location'])
+            assert status == 200 and raw == expected
+            assert headers['Cache-Control'] == 'private, max-age=31536000, immutable'
     status, exported, headers = proxy.request('GET', PREFIX+'/api/export?format=jsonl')
     assert status == 200 and 'attachment;' in headers['Content-Disposition']
     snapshots = [row['snapshot'] for row in map(json.loads,exported.splitlines()) if row['record_type']=='case_snapshot']
     assert {row['identity'] for row in snapshots} == {row['identity'] for row in before.values()}
     for snapshot in snapshots:
         assert PREFIX not in json.dumps(snapshot)
+        assert 'preload_assets' not in json.dumps(snapshot)
+
+
+def test_shared_asset_routes_require_exact_current_hash_name_and_authenticated_developer(proxy):
+    name = 'NotoSansCJK-Regular.ttc'
+    path = PREFIX+f'/assets/{sha256(ASSETS[name])}/{name}'
+    for suffix in (f"/assets/{'0'*64}/{name}", f'/assets/{sha256(ASSETS[name])}/gsap.min.js',
+                   f'/assets/{sha256(ASSETS[name])}/animation-lab.db', '/assets/../animation-lab.db'):
+        status, _, headers = proxy.request('GET', PREFIX+suffix)
+        assert status == 404 and headers['Cache-Control'] == 'no-store'
+    for headers in [(), (('X-Forwarded-User', 'another-user'),)]:
+        status, _, values = proxy.request('GET', path, omit=('X-Forwarded-User',), headers=headers)
+        assert status == 403 and values['Cache-Control'] == 'no-store'
+    # Shared cached responses are opt-in only; scripts, evidence, catalog, and
+    # composition bytes continue to have their original no-store policy.
+    for path in ('/app.mjs', '/api/catalog', '/composition/svg-morph/candidate/scene-1/index.html'):
+        assert proxy.request('GET', PREFIX+path)[2]['Cache-Control'] == 'no-store'
 
 
 def test_prefixed_annotation_persists_trusted_principal_without_accepting_client_identity(proxy):

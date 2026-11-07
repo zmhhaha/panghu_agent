@@ -73,3 +73,65 @@ export function localResourceUrl(value, origin) {
     return url.origin === origin && ['http:', 'https:'].includes(url.protocol) ? url.href : null;
   } catch { return null; }
 }
+
+// Finish the first download before navigating the immutable preview player,
+// whose short initialization deadline should measure animation startup only.
+export async function warmPreviewAssets(variants, {origin, signal, timeoutMs = 120000,
+  fetcher = globalThis.fetch, onProgress = () => {}} = {}) {
+  const allowed = new Set(['gsap.min.js', 'NotoSansCJK-Regular.ttc', 'three.module.min.js']);
+  const assets = new Map();
+  for (const variant of variants) {
+    if (variant.available === false) continue;
+    if (!Array.isArray(variant.preload_assets) || variant.preload_assets.length > allowed.size)
+      throw new Error('预览资源清单无效，请刷新工作台。');
+    for (const asset of variant.preload_assets) {
+      const url = localResourceUrl(asset?.asset_url, origin);
+      if (!allowed.has(asset?.name) || !/^[0-9a-f]{64}$/.test(asset?.sha256 ?? '')
+          || !Number.isSafeInteger(asset?.bytes) || asset.bytes <= 0 || asset.bytes > 32 * 1024 * 1024
+          || !url || !new URL(url).pathname.endsWith(`/assets/${asset.sha256}/${asset.name}`)
+          || new URL(url).search || new URL(url).hash)
+        throw new Error('预览资源清单无效，请刷新工作台。');
+      const previous = assets.get(url);
+      if (previous && (previous.sha256 !== asset.sha256 || previous.bytes !== asset.bytes))
+        throw new Error('预览资源清单冲突，请刷新工作台。');
+      assets.set(url, asset);
+    }
+  }
+  const controller = new AbortController();
+  let timer, rejectStopped;
+  const stopped = new Promise((_, reject) => { rejectStopped = reject; });
+  const abort = () => {
+    controller.abort();
+    rejectStopped(new DOMException('已切换样例，停止加载。', 'AbortError'));
+  };
+  const work = async () => {
+    if (signal?.aborted) { abort(); return stopped; }
+    signal?.addEventListener('abort', abort, {once: true});
+    timer = setTimeout(() => {
+      controller.abort();
+      rejectStopped(new Error('动画资源加载超时，请检查网络后重新打开样例。'));
+    }, timeoutMs);
+    let completed = 0;
+    onProgress({completed, total: assets.size});
+    await Promise.all([...assets].map(async ([url, asset]) => {
+      const response = await fetcher(url, {credentials: 'same-origin', signal: controller.signal});
+      if (!response.ok || response.redirected) throw new Error('动画资源加载失败，请确认登录状态后刷新。');
+      // Reading the full body is essential: fetch resolves before a large font
+      // finishes downloading, and the original player still has a 20s limit.
+      const bytes = await response.arrayBuffer();
+      if (controller.signal.aborted) throw new DOMException('已停止加载。', 'AbortError');
+      if (bytes.byteLength !== asset.bytes) throw new Error('动画资源不完整，请刷新后重试。');
+      const hash = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+      const digest = [...new Uint8Array(hash)].map(value => value.toString(16).padStart(2, '0')).join('');
+      if (digest !== asset.sha256) throw new Error('动画资源校验失败，请刷新后重试。');
+      if (!controller.signal.aborted) onProgress({completed: ++completed, total: assets.size});
+    }));
+  };
+  try {
+    await Promise.race([work(), stopped]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
+    controller.abort();
+  }
+}

@@ -1,5 +1,5 @@
 import {isCurrentAnnotation, issueLocation, isCurrentEvaluation, evaluationFindingLocation,
-  currentEvaluationDecisions, localResourceUrl} from './model.mjs';
+  currentEvaluationDecisions, localResourceUrl, warmPreviewAssets} from './model.mjs';
 
 const $ = id => document.getElementById(id);
 const applicationRoot = new URL('./', import.meta.url);
@@ -22,6 +22,7 @@ let playTime = 0;
 let lastDispatch = 0;
 let requestSerial = 0;
 let caseEpoch = 0;
+let previewWarmController = null;
 let loadSerial = 0;
 let drawing = false;
 let region = null;
@@ -321,8 +322,12 @@ async function saveFindingDecision(findingId, decision, comment) {
 
 function clearLoadTimers() { for (const timer of loadTimers) clearTimeout(timer); loadTimers.clear(); }
 
-function configurePlayer(key, variant, epoch) {
-  const player = {key, variant, ready: false, error: null, frame: $(`${key}-frame`)};
+function configurePlayer(key, variant) {
+  // A new browsing context prevents delayed messages from the previous case
+  // being accepted for the current one while its resources are warming.
+  const oldFrame = $(`${key}-frame`), frame = oldFrame.cloneNode(false);
+  frame.removeAttribute('src'); oldFrame.replaceWith(frame);
+  const player = {key, variant, ready: false, error: null, previewStarted: false, frame};
   player.frame.title = `${key === 'baseline' ? 'A' : 'B'} · ${variant.label ?? variant.id} 动画预览`;
   $(`${key}-title`).textContent = variant.label ?? variant.id;
   $(`${key}-duration`).textContent = `${Number(variant.duration_seconds).toFixed(3)} 秒`;
@@ -330,7 +335,7 @@ function configurePlayer(key, variant, epoch) {
   $(`${key}-identity`).title = typeof variant.identity === 'string' ? variant.identity : JSON.stringify(variant.identity ?? '');
   $(`${key}-loading`).hidden = false;
   $(`${key}-loading`).classList.remove('failed');
-  $(`${key}-loading`).textContent = '正在准备预览…';
+  $(`${key}-loading`).textContent = '正在加载动画资源，首次打开可能需要一些时间…';
   $(`${key}-state`).textContent = '等待预览';
   $(`${key}-state`).classList.remove('ready');
   const url = new URL(variant.preview_url ?? '', location.origin);
@@ -339,13 +344,37 @@ function configurePlayer(key, variant, epoch) {
     player.frame.removeAttribute('src');
     return player;
   }
-  player.frame.src = url.href;
-  const timer = setTimeout(() => {
-    loadTimers.delete(timer);
-    if (caseEpoch === epoch && !player.ready && !player.error) failPlayer(player, '预览尚未就绪。请检查本地动画资源，或刷新样例重试。');
-  }, 20000);
-  loadTimers.add(timer);
+  player.previewUrl = url.href;
   return player;
+}
+
+async function preparePlayers(selected, epoch, controller) {
+  const available = selected.filter(player => !player.error);
+  try {
+    await warmPreviewAssets(available.map(player => player.variant), {
+      origin: location.origin, signal: controller.signal,
+      onProgress: ({completed, total}) => {
+        if (caseEpoch !== epoch || controller.signal.aborted) return;
+        for (const player of available) $(`${player.key}-loading`).textContent =
+          `正在加载动画资源（${completed}/${total}），首次打开可能需要一些时间…`;
+      }
+    });
+    if (caseEpoch !== epoch || controller.signal.aborted) return;
+    for (const player of available) {
+      player.previewStarted = true;
+      $(`${player.key}-loading`).textContent = '正在准备预览…';
+      player.frame.src = player.previewUrl;
+      const timer = setTimeout(() => {
+        loadTimers.delete(timer);
+        if (caseEpoch === epoch && !player.ready && !player.error)
+          failPlayer(player, '预览尚未就绪。请刷新样例重试。');
+      }, 20000);
+      loadTimers.add(timer);
+    }
+  } catch (error) {
+    if (caseEpoch !== epoch || controller.signal.aborted) return;
+    for (const player of available) failPlayer(player, error.message ?? '动画资源加载失败。');
+  }
 }
 
 function failPlayer(player, message) {
@@ -404,6 +433,8 @@ function renderCheckpoints() {
 async function selectCase(row) {
   if (currentCase?.id === row.id && caseIdentity(currentCase) === caseIdentity(row)) { $('empty-state').hidden = true; $('case-workspace').hidden = false; if (row.evaluation && !evaluationBusy) await loadEvaluation(row, caseEpoch); return; }
   captureDraft(); pause(); clearLoadTimers();
+  previewWarmController?.abort();
+  previewWarmController = new AbortController();
   currentCase = row;
   const epoch = ++caseEpoch;
   evaluationState = null; evaluationBusy = false; evaluationOperation++;
@@ -417,8 +448,8 @@ async function selectCase(row) {
   $('candidate-card').hidden = row.variants.length < 2;
   document.querySelector('.comparison-grid').classList.toggle('single', row.variants.length < 2);
   players = [];
-  if (row.variants[0]) players.push(configurePlayer('baseline', row.variants[0], epoch));
-  if (row.variants.length > 1) players.push(configurePlayer('candidate', row.variants.at(-1), epoch));
+  if (row.variants[0]) players.push(configurePlayer('baseline', row.variants[0]));
+  if (row.variants.length > 1) players.push(configurePlayer('candidate', row.variants.at(-1)));
   else $('candidate-frame').removeAttribute('src');
   duration = Math.max(0, ...players.map(player => Number(player.variant.duration_seconds) || 0));
   time = 0;
@@ -434,6 +465,7 @@ async function selectCase(row) {
   const different = players.length === 2 && Math.abs(players[0].variant.duration_seconds - players[1].variant.duration_seconds) > .001;
   $('timing-note').textContent = different ? '两版包含不同的转场时长；公共时间轴按较长版本显示，较短版本到末尾后保持末帧。' : '两侧使用同一个预览时钟。可逐帧定位，再记录具体问题。';
   restoreDraft(); renderCaseList(); renderChecks(); renderCheckpoints(); renderHistory(); updateTransport(); renderEvaluation();
+  void preparePlayers(players, epoch, previewWarmController);
   void loadEvaluation(row, epoch);
   const url = new URL(location.href); url.hash = encodeURIComponent(row.id); history.replaceState(null, '', url);
   try {
@@ -496,7 +528,7 @@ function play() {
 window.addEventListener('message', event => {
   if (event.origin !== location.origin || !event.data || typeof event.data !== 'object') return;
   const player = players.find(row => row.frame.contentWindow === event.source);
-  if (!player) return;
+  if (!player || !player.previewStarted) return;
   const data = event.data;
   if (data.type === 'animation-lab:ready') {
     if (player.error || player.variant.available === false) return;
