@@ -18,7 +18,7 @@ from .animation_lab_candidates import DESIGN_RULES
 
 REQUEST_SCHEMA = 'video.animation-lab-visual-request.v1'
 REVIEW_SCHEMA = 'video.animation-lab-visual-review.v1'
-MODULES = frozenset({'diagram', 'process', 'continuity', 'canvas', 'three', 'charts', 'algorithms', 'interface'})
+MODULES = frozenset({'diagram', 'process', 'continuity', 'canvas', 'three', 'charts', 'algorithms', 'interface', 'math', 'spatial', 'fields'})
 CATEGORIES = frozenset({'layout', 'typography', 'connector', 'motion', 'pacing',
                         'continuity', 'clarity', 'other'})
 SEVERITIES = frozenset({'note', 'minor', 'major', 'blocker'})

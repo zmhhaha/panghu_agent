@@ -49,6 +49,12 @@ MODULE_FILES = {
         'video_workbench/animation_lab_scenarios_algorithms.py'}),
     'interface': frozenset({'video_workbench/animation_lab_scenarios.py',
         'video_workbench/animation_lab_scenarios_interfaces.py'}),
+    'math': frozenset({'video_workbench/animation_lab_scenarios.py',
+        'video_workbench/animation_lab_scenarios_math.py'}),
+    'spatial': frozenset({'video_workbench/animation_lab_scenarios.py',
+        'video_workbench/animation_lab_scenarios_spatial.py'}),
+    'fields': frozenset({'video_workbench/animation_lab_scenarios.py',
+        'video_workbench/animation_lab_scenarios_fields.py'}),
 }
 # These commands are code-owned. Feedback and model output cannot choose a command
 # or edit the tests, the runner, dependency files, workflows or credentials.
@@ -70,6 +76,12 @@ MODULE_TESTS = {
                    'test_animation_lab_scenarios_review.py', 'test_animation_lab_domain_cases.py', 'test_animation_lab_review.py'),
     'interface': ('test_animation_lab_scenarios_interfaces.py', 'test_animation_lab_scenarios.py',
                   'test_animation_lab_scenarios_review.py', 'test_animation_lab_domain_cases.py', 'test_animation_lab_review.py'),
+    'math': ('test_animation_lab_scenarios_math.py', 'test_animation_lab_scenarios.py',
+             'test_animation_lab_scenarios_review.py', 'test_animation_lab_review.py'),
+    'spatial': ('test_animation_lab_scenarios_spatial.py', 'test_animation_lab_scenarios.py',
+                'test_animation_lab_scenarios_review.py', 'test_animation_lab_review.py'),
+    'fields': ('test_animation_lab_scenarios_fields.py', 'test_animation_lab_scenarios.py',
+               'test_animation_lab_scenarios_review.py', 'test_animation_lab_review.py'),
 }
 # Every family contributes compiled artifacts to the same portable requirement
 # suite. Identity projection must remain consistent between HTTP and CLI.

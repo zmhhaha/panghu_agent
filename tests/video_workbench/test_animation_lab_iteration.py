@@ -390,7 +390,7 @@ def test_no_cross_module_cursor_or_state_skip_and_backup_keeps_task_event_histor
         assert db.execute('SELECT count(*) FROM lab_snapshots').fetchone()[0] == 1
 
 
-@pytest.mark.parametrize('module', ['charts', 'algorithms', 'interface'])
+@pytest.mark.parametrize('module', ['charts', 'algorithms', 'interface', 'math', 'spatial', 'fields'])
 def test_new_capability_feedback_projection_export_and_sync_remain_explicit(tmp_path, module):
     database = tmp_path / 'new-capability.db'
     manual, _ = AnnotationStore(database), TriageStore(database)
@@ -428,10 +428,11 @@ def test_new_capability_feedback_projection_export_and_sync_remain_explicit(tmp_
     assert restored.summary('canvas')['current_effective_feedback'] == []
 
 
-def test_module_summary_exposes_the_eight_explicit_capability_families(stores):
+def test_module_summary_exposes_the_eleven_explicit_capability_families(stores):
     _, _, store, _ = stores
     assert [r['module'] for r in store.summary()['modules']] == [
-        'diagram', 'process', 'continuity', 'canvas', 'three', 'charts', 'algorithms', 'interface']
+        'diagram', 'process', 'continuity', 'canvas', 'three', 'charts', 'algorithms', 'interface',
+        'math', 'spatial', 'fields']
     with pytest.raises(IterationError, match='module_invalid'):
         store.summary('arbitrary-engine')
 

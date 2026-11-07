@@ -220,7 +220,7 @@ export function verifiedIterationCandidate(task) {
     && JSON.stringify([...actual].sort()) === JSON.stringify(expected);
   const valid = Boolean(typeof task?.task_id === 'string' && digest(task.task_id)
     && task.package?.identity === task.task_id
-    && ['diagram', 'process', 'continuity', 'canvas', 'three', 'charts', 'algorithms', 'interface'].includes(task.package.module)
+    && ['diagram', 'process', 'continuity', 'canvas', 'three', 'charts', 'algorithms', 'interface', 'math', 'spatial', 'fields'].includes(task.package.module)
     && source(task.package.source_revision)
     && task.acceptance_scope === 'developer_sample_only' && task.production_adopted === false
     && proof?.task_identity === task.task_id && proof.module === task.package.module

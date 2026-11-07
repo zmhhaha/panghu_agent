@@ -64,7 +64,7 @@ class ProxyClient:
 
 @pytest.fixture(scope='module')
 def proxy(tmp_path_factory):
-    # One server preserves the real snapshot store without duplicating all 27
+    # One server preserves the real snapshot store without duplicating all 39
     # frozen media bundles for every read/header rejection parameter.
     client = ProxyClient(AnimationLab(tmp_path_factory.mktemp('proxy')/'data', ASSETS))
     yield client
@@ -74,7 +74,7 @@ def proxy(tmp_path_factory):
 def test_prefix_catalog_preview_assets_and_export_preserve_frozen_identity_and_bytes(proxy):
     before = deepcopy(proxy.lab.cases)
     status, catalog, _ = proxy.request('GET', PREFIX+'/api/catalog')
-    assert status == 200 and len(catalog['cases']) == 27
+    assert status == 200 and len(catalog['cases']) == 39
     for case in catalog['cases']:
         assert case['identity'] == before[case['id']]['identity']
         for variant in case['variants']:

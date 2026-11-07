@@ -253,7 +253,7 @@ def test_json_duplicate_keys_and_nonfinite_values_do_not_override_validated_deci
         validate_review_output(output.replace('0.6', 'NaN'), request)
 
 
-@pytest.mark.parametrize('module', ['charts', 'algorithms', 'interface'])
+@pytest.mark.parametrize('module', ['charts', 'algorithms', 'interface', 'math', 'spatial', 'fields'])
 def test_new_capability_visual_review_preserves_blind_evidence_and_suggestion_only_scope(module):
     request, images = request_fixture(module=module, sequence=True)
     assert request['public']['module'] == module

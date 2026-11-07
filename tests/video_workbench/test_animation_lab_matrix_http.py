@@ -67,9 +67,9 @@ def test_prefixed_requirement_download_is_lightweight_self_identified_and_read_o
     assert status == 200
     assert suite['schema'] == 'video.animation-lab-requirement-suite.v2'
     assert suite['identity'] == sha256({key: value for key, value in suite.items() if key != 'identity'})
-    assert suite['case_count'] == len(suite['cases']) == 27
-    assert suite['coverage']['requirements'] == 27
-    assert len(suite['coverage']['modules']) == 8
+    assert suite['case_count'] == len(suite['cases']) == 39
+    assert suite['coverage']['requirements'] == 39
+    assert len(suite['coverage']['modules']) == 11
     assert suite['execution_status'] == 'prepared_not_executed'
     assert suite['agent_calls'] == suite['tts_calls'] == suite['production_writes'] == 0
     assert suite['production_adopted'] is False

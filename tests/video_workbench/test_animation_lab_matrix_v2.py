@@ -46,10 +46,11 @@ def matrix_http(tmp_path_factory):
     thread.join(5)
 
 
-def test_http_cli_sample_bindings_and_semantic_identity_match(matrix_http):
+@pytest.mark.parametrize('module', ['algorithms', 'math', 'spatial', 'fields'])
+def test_http_cli_sample_bindings_and_semantic_identity_match(matrix_http, module):
     lab, get = matrix_http
-    web, headers = get('/api/requirements?module=algorithms')
-    cli = requirement_suite(catalog(), module='algorithms', runtime=lab.runtime)
+    web, headers = get('/api/requirements?module='+module)
+    cli = requirement_suite(catalog(), module=module, runtime=lab.runtime)
     assert web['schema'] == cli['schema'] == SCHEMA == 'video.animation-lab-requirement-suite.v2'
     assert web['semantic_identity'] == cli['semantic_identity']
     assert web['identity'] != cli['identity']
@@ -72,13 +73,13 @@ def test_http_cli_sample_bindings_and_semantic_identity_match(matrix_http):
         assert 'case_identity' not in row and 'case_identity' not in source
 
 
-def test_http_matrix_exposes_only_the_27_current_requirement_samples(matrix_http):
+def test_http_matrix_exposes_only_the_39_current_requirement_samples(matrix_http):
     _, get = matrix_http
     doc, _ = get('/api/catalog')
     rows = [r for r in doc['cases'] if not r.get('evaluation')]
-    assert len(rows) == 27
+    assert len(rows) == 39
     assert all(row['is_matrix_case'] for row in rows)
-    assert len({r['module'] for r in rows}) == 8
+    assert len({r['module'] for r in rows}) == 11
     assert all(r['sample_identity'] and r['lab_snapshot_identity'] for r in rows)
 
 

@@ -23,7 +23,9 @@ export async function observeEngineProject(chromium,{root,dist}) {
   let browser;
   await new Promise((done,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',done);});
   try {
-    const gpu=timeline.engine==='three'?['--use-angle=swiftshader','--enable-unsafe-swiftshader']:['--disable-gpu'];
+    const webgl=timeline.engine==='three'||(timeline.engine==='scenario-effects'&&timeline.rendering==='three');
+    const canvas=timeline.engine==='canvas'||(timeline.engine==='scenario-effects'&&timeline.rendering==='canvas');
+    const gpu=webgl?['--use-angle=swiftshader','--enable-unsafe-swiftshader']:['--disable-gpu'];
     browser=await chromium.launch({headless:true,executablePath:process.env.HYPERFRAMES_BROWSER_PATH,
       args:['--no-sandbox','--disable-setuid-sandbox','--disable-dev-shm-usage',...gpu]});
     const context=await browser.newContext({viewport:{width:1280,height:720},deviceScaleFactor:1});
@@ -60,7 +62,7 @@ export async function observeEngineProject(chromium,{root,dist}) {
       reverse_seek:{first_sha256:initial.frame_sha256,last_sha256:last.frame_sha256,
         repeated_first_sha256:repeated.frame_sha256,
         repeat_state_equal:JSON.stringify(initial.engine_state)===JSON.stringify(repeated.engine_state)},
-      rendering:timeline.engine==='three'?'webgl_software_requested':timeline.engine==='canvas'?'canvas_2d':timeline.rendering==='html'?'html_dom':'svg_dom',page_errors:errors},null,2));
+      rendering:webgl?'webgl_software_requested':canvas?'canvas_2d':timeline.rendering==='html'?'html_dom':'svg_dom',page_errors:errors},null,2));
   } finally {
     if(browser)await browser.close();
     await new Promise(done=>server.close(done));

@@ -100,9 +100,9 @@ def _issue(case, *, comment='Synthetic integration annotation, not aesthetic app
 def test_catalog_adds_two_genuine_engine_pairs_with_same_semantics_and_clock():
     catalog = samples.catalog()
     assert {row['id'] for row in catalog} == set(DOMAIN_CASES) | set(SCENARIOS)
-    assert len(catalog) == 27
+    assert len(catalog) == 39
     assert {row['module'] for row in catalog} == {'diagram', 'process', 'continuity', 'canvas', 'three',
-                                                 'charts', 'algorithms', 'interface'}
+                                                 'charts', 'algorithms', 'interface', 'math', 'spatial', 'fields'}
     assert all(row['status'] == 'available' for row in samples.MODULES)
     for case_id, engine in ENGINE_CASES.items():
         baseline, candidate = [samples.compile_sample(case_id, variant) for variant in ('baseline', 'candidate')]
@@ -125,7 +125,7 @@ def test_missing_optional_three_resources_only_disables_three_preview(tmp_path):
     lab = AnimationLab(tmp_path/'missing', BASE_ASSETS)
     catalog = lab.get_catalog()
     for case in catalog['cases']:
-        if case['module'] == 'three':
+        if case['engine'] == 'three':
             assert all(row['available'] is False and row['preview_url'] is None
                        and row['reason'] for row in case['variants'])
         else:

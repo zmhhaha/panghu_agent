@@ -17,7 +17,8 @@ ENGINE_LABELS = {'svg':'SVG', 'html':'HTML 界面', 'html-svg':'HTML / SVG',
                  'canvas':'Canvas 2D', 'three':'Three.js / WebGL'}
 MODULE_LABELS = {'diagram':'框图与信息图','process':'二维过程动画','continuity':'跨镜衔接',
                  'canvas':'Canvas 2D','three':'Three.js 三维动画','charts':'动态图表联动',
-                 'algorithms':'算法与数据结构','interface':'软件界面操作'}
+                 'algorithms':'算法与数据结构','interface':'软件界面操作',
+                 'math':'数学公式与符号推导','spatial':'三维剖切与装配','fields':'波形、粒子与场'}
 
 
 def coverage(cases):

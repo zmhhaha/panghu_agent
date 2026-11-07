@@ -39,6 +39,9 @@ MODULES = (
     dict(id='charts', title='动态图表联动', status='available'),
     dict(id='algorithms', title='算法与数据结构', status='available'),
     dict(id='interface', title='软件界面操作', status='available'),
+    dict(id='math', title='数学公式与符号推导', status='available'),
+    dict(id='spatial', title='三维剖切与装配', status='available', note='真实本地 Three.js / WebGL 剖切与部件装配。'),
+    dict(id='fields', title='波形、粒子与场', status='available', note='真实 Canvas 2D，固定种子和绝对时间重建。'),
 )
 
 

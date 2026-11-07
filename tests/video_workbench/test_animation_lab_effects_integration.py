@@ -22,6 +22,8 @@ from video_workbench.animation_lab_evaluation_view import revision_task
 from video_workbench.animation_lab_samples import catalog, compile_sample
 from video_workbench.animation_lab_domain_cases import DOMAIN_CASES
 from video_workbench.animation_lab_scenarios import SCENARIOS
+import video_workbench.animation_lab_samples as sample_module
+import video_workbench.animation_lab_three as three
 from video_workbench.motion import sha256
 
 
@@ -85,14 +87,26 @@ def clients(tmp_path):
 @pytest.fixture(scope='module')
 def runs(tmp_path_factory):
     base = tmp_path_factory.mktemp('effect-frozen-contracts')
+    assets_dir = base/'synthetic-engine-assets'
+    assets_dir.mkdir()
+    # Dependency binding only: these deliberately non-executable resources do
+    # not claim a browser/WebGL success. Native execution is accepted separately.
+    assets = {name: ('// synthetic freezing dependency '+name).encode()
+              for name in three.THREE_ASSET_SHA256}
+    for name, raw in assets.items():
+        (assets_dir/name).write_bytes(raw)
     result = {}
-    for case_id in SCENARIOS:
-        root = base/case_id
-        run = prepare(root, deepcopy(RUNTIME), case_id=case_id)
-        loaded, bundles = load_run(root)
-        assert loaded == run
-        result[case_id] = dict(root=root, run=run, bundles=bundles)
-    return result
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(three, 'THREE_ASSET_SHA256', {name: sha256(raw) for name, raw in assets.items()})
+        sample_module._compiled_case.cache_clear()
+        for case_id in SCENARIOS:
+            root = base/case_id
+            run = prepare(root, deepcopy(RUNTIME), case_id=case_id, engine_assets_dir=assets_dir)
+            loaded, bundles = load_run(root)
+            assert loaded == run
+            result[case_id] = dict(root=root, run=run, bundles=bundles)
+        yield result
+    sample_module._compiled_case.cache_clear()
 
 
 @pytest.fixture(scope='module')
@@ -104,10 +118,10 @@ def checkpoint_catalog(tmp_path_factory):
 def test_public_catalog_contains_only_rebuilt_cross_domain_requirements():
     rows = {row['id']: row for row in catalog()}
     assert set(rows) == set(DOMAIN_CASES) | set(SCENARIOS)
-    assert len(rows) == 27
+    assert len(rows) == 39
     assert not set(EFFECTS) & set(rows)
     assert all(row['is_matrix_case'] and row['requirement']['goal'] and row['narrative'] for row in rows.values())
-    assert len({row['input_sha256'] for row in rows.values()}) == 27
+    assert len({row['input_sha256'] for row in rows.values()}) == 39
 
 
 @pytest.mark.parametrize('case_id', sorted(EFFECTS))
@@ -154,22 +168,23 @@ def test_preview_checkpoints_cover_every_declared_effect_action_and_actual_bound
             }, abs=1e-9)
 
 
-def test_all_new_cases_are_available_without_unrelated_three_resources(tmp_path):
+def test_only_three_cases_require_the_pinned_three_resources(tmp_path):
     assets = tmp_path/'assets'
     assets.mkdir()
     for name, raw in ASSETS.items():
         (assets/name).write_bytes(raw)
     lab = AnimationLab(tmp_path/'no-webgl', load_assets(assets))
     for case_id in SCENARIOS:
-        assert all(row['available'] for row in lab.cases[case_id]['variants'])
-    assert all(not row['available'] for case in lab.cases.values() if case['module'] == 'three' for row in case['variants'])
+        assert all(row['available'] is (SCENARIOS[case_id]['engine'] != 'three')
+                   for row in lab.cases[case_id]['variants'])
+    assert all(not row['available'] for case in lab.cases.values() if case['engine'] == 'three' for row in case['variants'])
 
 
 def test_new_requirement_feedback_is_isolated_and_persists_after_restart(clients):
     original = clients()
     cases = {row['id']: row for row in original.request('GET', '/api/catalog')[1]['cases']}
-    representatives = ['domain-diagram-water', *[next(key for key, row in SCENARIOS.items() if row['module'] == module) for module in ('charts', 'algorithms', 'interface')]]
-    assert len({cases[key]['identity'] for key in representatives}) == 4
+    representatives = ['domain-diagram-water', *[next(key for key, row in SCENARIOS.items() if row['module'] == module) for module in ('charts', 'algorithms', 'interface', 'math', 'spatial', 'fields')]]
+    assert len({cases[key]['identity'] for key in representatives}) == 7
     saved = {}
     for case_id in representatives:
         case = cases[case_id]
@@ -213,7 +228,8 @@ def test_frozen_effect_run_uses_original_fixed_pair_and_binds_actual_capture_dep
         directory = root/'inputs'/bundle['variant_id']/'scene-1'
         request = json.loads((directory/'capture-request.json').read_bytes())
         assert request['engine_observer_sha256'] == sha256((root/'overlay'/'engine_observe.mjs').read_bytes())
-        assert request['engine_assets'] == {}
+        manifest = json.loads(bundle['clips'][0]['files']['manifest.json'])
+        assert request['engine_assets'] == manifest.get('engine_assets', {})
         assert all(sha256((directory/name).read_bytes()) == digest for name,digest in request['files'].items())
         image = 'synthetic.invalid/renderer:latest@'+RUNTIME['image_digest']
         plan = capture_plan(directory, RUNTIME, image, root/'overlay')

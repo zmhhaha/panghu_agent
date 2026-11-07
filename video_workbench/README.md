@@ -10,6 +10,8 @@
 
 可选的[项目级讲解方案](EXPLANATION.md)统一整理旁白、读音、画面重点和展开步骤，生成候选后审阅采用；生产接线与有界真实验收已完成。新环境仍需显式配置并开启功能，不强制改成旁白优先流程。动态制作实验和实际发布记录见 [HYPERFRAMES.md](HYPERFRAMES.md) 与 [CURRENT_STATUS.md](CURRENT_STATUS.md)。
 
+独立的[开发者动画 Lab](docs/animation-requirement-suite.md)当前代码目录包含11个能力模块、39条需求、13个领域，支持分别比较框图、过程、跨镜、Canvas、Three.js、图表、算法、界面操作、数学推导、三维剖切装配与波形粒子场。每条需求附完整文稿、数据与前提，A/B保持相同语义和时长。本轮扩展沿用 `cross-domain-requirements-v2` 并保留已有v2标注；实际采样及发布状态按对应回执记录，普通用户流程未接入这些实验能力。
+
 ## 本地启动
 
 在仓库根目录使用 Python 3.12 或更新版本：

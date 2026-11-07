@@ -445,26 +445,31 @@ def test_shared_source_changes_expand_only_related_module_checks():
     assert runner.affected_modules(['video_workbench/motion_process.py']) == ['continuity', 'process']
     assert runner.affected_modules(['video_workbench/animation_lab_effects_visual.py']) == ['diagram', 'process']
     assert runner.affected_modules(['video_workbench/motion.py']) == sorted(runner.MODULE_TESTS)
-    assert runner.affected_modules(['video_workbench/animation_lab_scenarios.py']) == ['algorithms', 'charts', 'interface']
+    assert runner.affected_modules(['video_workbench/animation_lab_scenarios.py']) == ['algorithms', 'charts', 'fields', 'interface', 'math', 'spatial']
     assert runner.affected_modules(['video_workbench/animation_lab_domain_cases.py']) == ['canvas', 'continuity', 'diagram', 'process', 'three']
 
 
-@pytest.mark.parametrize('module,family', [('charts', 'charts'), ('algorithms', 'algorithms'), ('interface', 'interfaces')])
+@pytest.mark.parametrize('module,family', [('charts', 'charts'), ('algorithms', 'algorithms'), ('interface', 'interfaces'),
+                                        ('math', 'math'), ('spatial', 'spatial'), ('fields', 'fields')])
 def test_new_family_modules_are_explicitly_scoped_and_share_common_regression(module, family):
     own = 'video_workbench/animation_lab_scenarios_'+family+'.py'
     assert runner.MODULE_FILES[module] == {own, 'video_workbench/animation_lab_scenarios.py'}
     assert runner.affected_modules([own]) == [module]
     assert 'test_animation_lab_scenarios_'+family+'.py' in runner.MODULE_TESTS[module]
-    assert {'test_animation_lab_scenarios.py', 'test_animation_lab_scenarios_review.py', 'test_animation_lab_domain_cases.py',
-            'test_animation_lab_matrix_v2.py',
-            'test_animation_lab_review.py'} <= set(runner.MODULE_TESTS[module])
+    required = {'test_animation_lab_scenarios_'+family+'.py', 'test_animation_lab_scenarios.py',
+                'test_animation_lab_scenarios_review.py', 'test_animation_lab_matrix_v2.py',
+                'test_animation_lab_review.py'}
+    if module in {'charts', 'algorithms', 'interface'}:
+        required.add('test_animation_lab_domain_cases.py')
+    assert set(runner.MODULE_TESTS[module]) == required
     assert all(not path.startswith(('tests/', '.github/', 'agent_service/'))
                and path not in {'video_workbench/animation_lab_iteration_runner.py',
                                 'video_workbench/animation_lab_model.py'}
                for path in runner.MODULE_FILES[module])
 
 
-@pytest.mark.parametrize('module,family', [('charts', 'charts'), ('algorithms', 'algorithms'), ('interface', 'interfaces')])
+@pytest.mark.parametrize('module,family', [('charts', 'charts'), ('algorithms', 'algorithms'), ('interface', 'interfaces'),
+                                        ('math', 'math'), ('spatial', 'spatial'), ('fields', 'fields')])
 def test_real_git_new_family_source_windows_cannot_edit_other_modules_or_controls(setup, module, family):
     source, package, _, _, _, temp = setup
     own = 'video_workbench/animation_lab_scenarios_'+family+'.py'

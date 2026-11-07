@@ -12,6 +12,10 @@ from video_workbench.animation_lab_scenarios_review import verify_scenario_obser
 from video_workbench.motion import FPS, estimated_alignment, make_beats, sha256
 
 
+DOM_SCENARIOS = [key for key, row in SCENARIOS.items() if row['engine'] in {'svg', 'html'}]
+NATIVE_SCENARIOS = [key for key, row in SCENARIOS.items() if row['engine'] in {'canvas', 'three'}]
+
+
 def fixture(identity='chart-compute-backlog', variant='candidate'):
     """Illustrative observation-shaped data, explicitly not native evidence."""
     plan = example_scenario_plan(identity)
@@ -32,6 +36,8 @@ def fixture(identity='chart-compute-backlog', variant='candidate'):
                     node['attributes'].update(value)
                 else:
                     node[name] = value
+            if 'opacity' in node['attributes']:
+                node['opacity'] = float(node['attributes']['opacity'])
             if 'value' in node:
                 node['tag'] = 'input'
             objects.append(node)
@@ -62,7 +68,8 @@ def fixture(identity='chart-compute-backlog', variant='candidate'):
 
     initial, last = sample(0), sample(plan['duration_seconds']-1/FPS)
     observations = dict(schema='video.animation-lab-engine-observations.v1', engine='scenario-effects',
-        rendering='svg_dom' if plan['engine'] == 'svg' else 'html_dom',
+        rendering={'svg': 'svg_dom', 'html': 'html_dom', 'canvas': 'canvas_2d',
+                   'three': 'webgl_software_requested'}[plan['engine']],
         seek_protocol='hyperframes-core-renderSeek-exact', render_fps=FPS, page_errors=[],
         timeline_sha256=sha256(timeline), initial=initial, repeated_initial=deepcopy(initial), last=last,
         reverse_seek=dict(first_sha256=initial['frame_sha256'], last_sha256=last['frame_sha256'],
@@ -74,7 +81,7 @@ def fixture(identity='chart-compute-backlog', variant='candidate'):
     return plan, timeline, observations
 
 
-@pytest.mark.parametrize('identity', SCENARIOS)
+@pytest.mark.parametrize('identity', DOM_SCENARIOS)
 @pytest.mark.parametrize('variant', ['baseline', 'candidate'])
 def test_contract_fixtures_cover_all_domain_oracles_without_approving_aesthetics(identity, variant):
     result = verify_scenario_observations(*fixture(identity, variant))
@@ -86,7 +93,7 @@ def test_contract_fixtures_cover_all_domain_oracles_without_approving_aesthetics
     assert 'independent_data_oracle' in result['checks']
 
 
-@pytest.mark.parametrize('identity', SCENARIOS)
+@pytest.mark.parametrize('identity', DOM_SCENARIOS)
 def test_false_actual_dom_cannot_pass_by_claiming_correct_semantics(identity):
     plan, timeline, observed = fixture(identity)
     sample = observed['windows'][0]['middle']
@@ -105,6 +112,18 @@ def test_false_actual_dom_cannot_pass_by_claiming_correct_semantics(identity):
         target['disabled'] = not condition['disabled']
     state['semantic'] = dict(everything_correct=True, expected=oracle)
     with pytest.raises(ServiceError, match='semantic_mismatch'):
+        verify_scenario_observations(plan, timeline, observed)
+
+
+@pytest.mark.parametrize('identity', NATIVE_SCENARIOS)
+@pytest.mark.parametrize('native', [None, {}, {'everything_correct': True}])
+def test_native_families_reject_missing_or_self_reported_engine_evidence(identity, native):
+    plan, timeline, observed = fixture(identity)
+    if native is not None:
+        for sample in [observed['initial'], observed['last'], observed['repeated_initial'],
+                       *[window[name] for window in observed['windows'] for name in ('before', 'middle', 'after')]]:
+            sample['engine_state']['native_state'] = deepcopy(native)
+    with pytest.raises(ServiceError, match='scenario_native_(missing|mismatch)'):
         verify_scenario_observations(plan, timeline, observed)
 
 

@@ -22,7 +22,7 @@ from .motion import canonical, sha256
 
 
 SCHEMA = 'video.animation-lab-feedback-task.v1'
-MODULES = ('diagram', 'process', 'continuity', 'canvas', 'three', 'charts', 'algorithms', 'interface')
+MODULES = ('diagram', 'process', 'continuity', 'canvas', 'three', 'charts', 'algorithms', 'interface', 'math', 'spatial', 'fields')
 STATES = frozenset({'prepared', 'synced', 'running', 'pr_open', 'candidate_ready',
                     'accepted', 'rejected', 'failed', 'canceled'})
 TRANSITIONS = {

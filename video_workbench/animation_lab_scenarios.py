@@ -13,12 +13,15 @@ import re
 from . import animation_lab_scenarios_charts as charts
 from . import animation_lab_scenarios_algorithms as algorithms
 from . import animation_lab_scenarios_interfaces as interfaces
+from . import animation_lab_scenarios_math as mathematics
+from . import animation_lab_scenarios_spatial as spatial
+from . import animation_lab_scenarios_fields as fields
 from .motion import (FPS, GSAP_VERSION, HYPERFRAMES_VERSION, canonical, semantic_digest,
                      sha256, validate_alignment, validate_beats)
 
 PLAN_SCHEMA = 'video.animation-lab-scenario-plan.v1'
 COMPILER_VERSION = 'animation-lab-scenario-compiler-1'
-FAMILIES = (charts, algorithms, interfaces)
+FAMILIES = (charts, algorithms, interfaces, mathematics, spatial, fields)
 SCENARIOS = {key: row for family in FAMILIES for key, row in family.SCENARIOS.items()}
 _ID = re.compile(r'[a-z][a-z0-9-]{0,79}\Z')
 
@@ -83,9 +86,14 @@ def compile_scenario_project(plan, beats, alignment, *, variant='candidate'):
              + html.escape(plan['title'], quote=True) + '">' + recipe['markup'] + '</svg>'
              if plan['engine'] == 'svg' else '<section id="scenario-stage" aria-label="界面操作演示">'
              + recipe['markup'] + '</section>')
+    if plan['engine'] == 'three':
+        stage = stage.replace('<section id="scenario-stage" aria-label="界面操作演示">',
+            '<section id="scenario-stage" style="top:100px;height:520px" aria-label="'
+            + html.escape(plan['title'], quote=True) + '">')
     substitutions = {'__TITLE__': html.escape(plan['title']), '__TAKEAWAY__': html.escape(plan['takeaway']),
         '__ENGINE__': plan['engine'], '__DURATION__': str(plan['duration_seconds']), '__STAGE__': stage,
-        '__SCRIPT__': recipe['script'], '__HOST__': _HOST,
+        '__SCRIPT__': recipe['script'],
+        '__HOST__': _native_host() if plan['engine'] in {'canvas', 'three'} else _HOST,
         '__DATA__': canonical(dict(plan=plan, timeline=timeline)).decode('utf8').replace('<', '\\u003c').replace('&', '\\u0026')}
     page = re.sub('|'.join(map(re.escape, substitutions)), lambda match: substitutions[match.group()], _PAGE)
     files = {'index.html': page.encode('utf8'), 'plan.json': canonical(plan), 'beats.json': canonical(beats),
@@ -97,6 +105,10 @@ def compile_scenario_project(plan, beats, alignment, *, variant='candidate'):
         audio_sha256=alignment['audio_sha256'], runtime_fingerprint=None,
         files={name: sha256(raw) for name, raw in sorted(files.items())},
         required_assets=['assets/gsap.min.js', 'assets/NotoSansCJK-Regular.ttc'])
+    if plan['engine'] == 'three':
+        from .animation_lab_three import THREE_ASSET_SHA256, THREE_VERSION
+        manifest.update(engine_assets=dict(THREE_ASSET_SHA256), engine_version=THREE_VERSION)
+        manifest['required_assets'] += ['assets/'+name for name in THREE_ASSET_SHA256]
     files['manifest.json'] = canonical(manifest)
     return files
 
@@ -154,3 +166,18 @@ window.__videoMotion={engine:'scenario-effects',compiler:data.timeline.compiler,
   text_boxes:measuredText(),
   semantic:effectState()};}};
 '''
+
+
+def _native_host():
+    """Native families wait for initialization and expose measured engine state.
+
+    The ordinary SVG/HTML host remains independent of GPU/context initialization.
+    """
+    return _HOST.replace(
+        'for(const id of data.timeline.object_ids)$(id);initialized=true;paint(clock.time);',
+        "if(typeof effectNativeState!=='function')throw Error('scenario_native_observer_missing');"
+        "if(plan.engine==='three'&&typeof effectReady!=='function')throw Error('scenario_native_initializer_missing');"
+        "if(typeof effectReady==='function')await effectReady();"
+        'for(const id of data.timeline.object_ids)$(id);initialized=true;paint(clock.time);').replace(
+        'semantic:effectState()};}};',
+        'semantic:effectState(),native_state:effectNativeState()};}};')

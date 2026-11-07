@@ -11,7 +11,7 @@ import re
 
 from agent_service.contracts import ServiceError
 from .animation_lab_scenarios import (
-    COMPILER_VERSION, expected_observations, recipe_for, validate_scenario_plan,
+    COMPILER_VERSION, expected_observations, family_for, recipe_for, validate_scenario_plan,
 )
 from .motion import FPS, sha256
 
@@ -23,7 +23,7 @@ _HTML_TAGS = {'div', 'span', 'p', 'h1', 'h2', 'h3', 'h4', 'label', 'input',
               'button', 'ul', 'ol', 'li', 'section', 'article', 'aside', 'header',
               'footer', 'select', 'option', 'strong', 'small', 'table', 'thead',
               'tbody', 'tr', 'th', 'td', 'form', 'output', 'meter', 'progress',
-              'a', 'b', 'em', 'i', 'fieldset', 'legend', 'main', 'nav'}
+              'a', 'b', 'em', 'i', 'fieldset', 'legend', 'main', 'nav', 'canvas'}
 
 
 def _require(value, code='animation_lab_scenario_observations_invalid'):
@@ -178,7 +178,17 @@ def _sample(plan, timeline, sample, time):
         _bounds(row.get('bounds'), opacity if row['text'] else 0)
     _require(type(state.get('semantic')) is dict, 'animation_lab_scenario_semantic_missing')
     objects = {row['id']: row for row in rows}
-    return objects, _oracle(plan, time, objects)+_spatial_relationships(plan, time, objects)
+    native_facts = 0
+    if plan['engine'] in {'canvas', 'three'}:
+        _require(type(state.get('native_state')) is dict, 'animation_lab_scenario_native_missing')
+        try:
+            native_facts = family_for(plan).verify_native_observation(
+                plan, time, timeline['variant'], state['native_state'])
+        except (ServiceError, ValueError, TypeError, KeyError, IndexError, OverflowError, AttributeError):
+            raise ServiceError('animation_lab_scenario_native_mismatch', 422) from None
+        _require(type(native_facts) is int and native_facts > 0,
+                 'animation_lab_scenario_native_oracle_invalid')
+    return objects, native_facts+_oracle(plan, time, objects)+_spatial_relationships(plan, time, objects)
 
 
 def verify_scenario_observations(plan, timeline, observations):
@@ -204,7 +214,8 @@ def verify_scenario_observations(plan, timeline, observations):
              and observations.get('engine') == 'scenario-effects'
              and observations.get('seek_protocol') == 'hyperframes-core-renderSeek-exact'
              and observations.get('render_fps') == FPS
-             and observations.get('rendering') == ('svg_dom' if plan['engine'] == 'svg' else 'html_dom')
+             and observations.get('rendering') == {'svg':'svg_dom', 'html':'html_dom',
+                 'canvas':'canvas_2d', 'three':'webgl_software_requested'}[plan['engine']]
              and observations.get('page_errors') == [], 'animation_lab_scenario_observations_binding_mismatch')
     windows = observations.get('windows')
     _require(type(windows) is list and len(windows) == len(actions)
@@ -246,7 +257,8 @@ def verify_scenario_observations(plan, timeline, observations):
         scenario_id=plan['scenario_id'], domain=plan['domain'], checked_action_windows=len(actions),
         checked_data_facts=facts, plan_sha256=sha256(plan), timeline_sha256=sha256(timeline),
         observation_sha256=sha256(observations),
-        checks=['bound_cross_domain_requirement', 'native_exact_seek', 'actual_'+plan['engine']+'_dom',
+        checks=['bound_cross_domain_requirement', 'native_exact_seek',
+                'actual_'+{'canvas':'canvas_2d','three':'webgl'}.get(plan['engine'],plan['engine']+'_dom'),
                 'bounded_visible_geometry_and_text', 'independent_data_oracle',
                 'actual_target_and_frame_changes', 'strict_reverse_seek'],
         visual_comprehension='pending_developer_review', narration_timing='not_evaluated',

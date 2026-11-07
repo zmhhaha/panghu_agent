@@ -11,14 +11,14 @@ from video_workbench.animation_lab_candidates import semantic_identity
 from video_workbench.motion import sha256
 
 
-def test_active_cross_domain_corpus_covers_eight_modules_and_27_requirements():
+def test_active_cross_domain_corpus_covers_eleven_modules_and_39_requirements():
     rows=catalog(); corpus=coverage(rows)
-    assert len(rows)==27 and corpus['requirements']==27
+    assert len(rows)==39 and corpus['requirements']==39
     assert all(row['is_matrix_case'] for row in rows)
-    assert len(corpus['modules'])==8
+    assert len(corpus['modules'])==11
     assert all(row['requirements']>=3 and row['domains']>=3 for row in corpus['modules'])
     assert len(corpus['domains'])>=8
-    for module in ('charts','algorithms','interface'):
+    for module in ('charts','algorithms','interface','math','spatial','fields'):
         selected=[row for row in rows if row['module']==module]
         assert len(selected)==4 and len({row['domain'] for row in selected})==4
         assert len({sha256(row['data']) for row in selected})==4
@@ -43,7 +43,7 @@ def test_new_families_freeze_real_briefs_and_identical_semantics(identity):
 def test_suite_seed_binding_selection_and_lightweight_export_are_reproducible():
     rows=catalog()
     a=requirement_suite(rows,seed=29);b=requirement_suite(rows,seed=29)
-    assert a==b and len(a['cases'])==27
+    assert a==b and len(a['cases'])==39
     assert a['schema']=='video.animation-lab-requirement-suite.v2'
     assert all(row['sample_identity'] for row in a['cases'])
     assert a['identity']==sha256({k:v for k,v in a.items() if k!='identity'})
