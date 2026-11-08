@@ -1,4 +1,4 @@
-import {experimentIdentity, experimentLocalUrl, experimentVersions, experimentPlayable,
+import {experimentIdentity, experimentLocalUrl, experimentVersions, experimentPlayable, experimentInitialSelection,
   experimentComparison, experimentFrameTime, experimentIssuePayload,
   experimentSourceLabel, experimentStatusLabel, experimentTextDifference, experimentTechnicalLabel} from './experiment-model.mjs';
 
@@ -20,6 +20,7 @@ let startClock = 0;
 let saving = false;
 let playbackEpoch = 0;
 const drafts = new Map();
+const versionSelections = new Map();
 const CAPABILITIES = {'identity-tracking': '移动中的身份追踪', identity_tracking: '移动中的身份追踪',
   motion: '运动与节奏', layout: '布局与避让', continuity: '跨镜承接', morph: '连续形变'};
 
@@ -185,6 +186,9 @@ function renderVersion(version, index) {
   if (Array.isArray(version.technical?.issues) && version.technical.issues.length) {
     article.append(node('p', `技术问题：${version.technical.issues.join('、')}`, 'experiment-technical failed'));
   }
+  if (typeof version.error === 'string' && version.error) {
+    article.append(node('p', `执行错误：${version.error}`, 'experiment-technical failed'));
+  }
   if (experimentPlayable(version, root)) {
     const video = node('video'); video.preload = 'auto'; video.muted = true; video.playsInline = true;
     video.setAttribute('aria-label', `${version.label ?? version.id} 实际渲染视频`);
@@ -258,16 +262,21 @@ function renderResults() {
   for (const option of roleSelect.options) option.disabled = !availableRoles.has(option.value);
   if (!availableRoles.has(roleSelect.value)) roleSelect.value = availableRoles.has('development') ? 'development' : 'held_out';
   const versions = experimentVersions(current, roleSelect.value);
+  const selectionKey = `${current.id}:${roleSelect.value}`;
+  const initial = experimentInitialSelection(versions, root, versionSelections.get(selectionKey));
   const selectors = $('experiment-version-selectors'); selectors.replaceChildren();
   for (let index = 0; index < Math.min(versions.length, 2); index++) {
     const label = node('label', index === 0 ? '左侧作品' : '右侧作品'); const select = node('select');
     if (index === 1) { const single = node('option', '不比较 · 单作品探索'); single.value = ''; select.append(single); }
     for (const version of versions) {
-      const option = node('option', `${version.label ?? version.id}${version.prompt_revision ? ` · ${version.prompt_revision}` : ''}`);
+      const option = node('option', `${version.label ?? version.id} · ${experimentStatusLabel(version.status)}`);
       option.value = version.id; select.append(option);
     }
-    select.value = versions[index].id;
-    select.addEventListener('change', () => { captureDraft(); renderMedia(versions); renderFeedback(); }); label.append(select); selectors.append(label);
+    select.value = initial[index] ?? '';
+    select.addEventListener('change', () => {
+      versionSelections.set(selectionKey, [...selectors.querySelectorAll('select')].map(element => element.value));
+      captureDraft(); renderMedia(versions); renderFeedback();
+    }); label.append(select); selectors.append(label);
   }
   renderMedia(versions);
 }

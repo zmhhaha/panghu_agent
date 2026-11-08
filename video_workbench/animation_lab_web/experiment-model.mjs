@@ -27,6 +27,47 @@ export function experimentPlayable(version, root) {
   return Boolean(experimentLocalUrl(version.media_url, root));
 }
 
+export function experimentInitialSelection(versions, root, preferred = null) {
+  const available = Array.isArray(versions) ? versions.filter(row => row && typeof row.id === 'string' && row.id) : [];
+  // Explicit choices may include failed execution records or a single work.
+  // Refreshing the catalogue must not replace a developer's investigation.
+  if (Array.isArray(preferred) && available.some(row => row.id === preferred[0])) {
+    const chosen = [preferred[0]];
+    if (preferred[1] && preferred[1] !== preferred[0] && available.some(row => row.id === preferred[1])) chosen.push(preferred[1]);
+    return chosen;
+  }
+  const playable = available.map((row, index) => ({row, index,
+    created: Number.isFinite(row.provenance?.created_at) ? row.provenance.created_at : 0}))
+    .filter(item => experimentPlayable(item.row, root));
+  const order = (a, b) => a.created - b.created || a.index - b.index;
+  const groups = new Map();
+  for (const item of playable) {
+    const row = item.row;
+    const input = row.comparison_input_identity ?? row.input_identity;
+    const recovery = row.provenance?.recovery;
+    // A missing input or incomplete recovery identity cannot establish a pair.
+    const lineage = recovery ? recovery.identity ?? row.id : 'original';
+    const key = JSON.stringify([lineage, row.input_role ?? 'development', row.source,
+      typeof input === 'string' && input ? input : row.id]);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  }
+  const pairs = [];
+  for (const group of groups.values()) {
+    group.sort(order);
+    if (group.length < 2) continue;
+    const newest = group[group.length - 1];
+    const earlier = [...group.slice(0, -1)].reverse();
+    const previous = earlier.find(item => item.row.prompt_revision !== newest.row.prompt_revision) ?? earlier[0];
+    pairs.push({rows: [previous.row.id, newest.row.id], newest});
+  }
+  pairs.sort((a, b) => order(a.newest, b.newest));
+  if (pairs.length) return pairs[pairs.length - 1].rows;
+  playable.sort(order);
+  if (playable.length) return [playable[playable.length - 1].row.id];
+  return available.length ? [available[0].id] : [];
+}
+
 export function experimentComparison(left, right) {
   if (!left || !right || left.id === right.id) return {allowed: false, reason: '选择两个不同的真实作品后才能比较。'};
   if ((left.input_role ?? 'development') !== (right.input_role ?? 'development')) {

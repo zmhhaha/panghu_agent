@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
-import {experimentIdentity, experimentLocalUrl, experimentVersions, experimentPlayable,
+import {experimentIdentity, experimentLocalUrl, experimentVersions, experimentPlayable, experimentInitialSelection,
   experimentComparison, experimentFrameTime, experimentIssuePayload,
   experimentSourceLabel, experimentStatusLabel, experimentTextDifference, experimentTechnicalLabel} from '../../video_workbench/animation_lab_web/experiment-model.mjs';
 
@@ -13,6 +13,39 @@ const left = {id: 'dev-v1', label: 'v1', source: 'agent', prompt_revision: 'v1',
   media_url: '/dev/animations/api/experiments/identity-tracking/media/dev-v1.mp4'};
 const right = {...left, id: 'dev-v2', identity: 'frozen-v2', label: 'v2', prompt_revision: 'v2'};
 const experiment = {id: 'identity-tracking', identity: 'frozen-definition', versions: [left, right]};
+
+test('initial comparison selects actual playable works while preserving failed records for inspection', () => {
+  const failed = {...left, id: 'original-failed', status: 'failed', media_url: null};
+  assert.deepEqual(experimentInitialSelection([failed, left, right], root), ['dev-v1', 'dev-v2']);
+  assert.deepEqual(experimentInitialSelection([failed, left], root), ['dev-v1']);
+  assert.deepEqual(experimentInitialSelection([failed], root), ['original-failed']);
+  assert.deepEqual(experimentInitialSelection([], root), []);
+  assert.deepEqual(experimentInitialSelection(null, root), []);
+  assert.deepEqual(experimentInitialSelection([failed, left, right], root, ['original-failed', 'dev-v1']), ['original-failed', 'dev-v1']);
+  assert.deepEqual(experimentInitialSelection([failed, left, right], root, ['dev-v1', '']), ['dev-v1']);
+  assert.deepEqual(experimentInitialSelection([failed, left], root, ['dev-v1', 'removed-version']), ['dev-v1']);
+});
+
+test('default comparison uses timestamps and a common recovery identity rather than directory order', () => {
+  const make = (base, id, recovery, created_at) => ({...base, id,
+    comparison_input_identity: 'same-controlled-input', provenance: {created_at, recovery: {identity: recovery}}});
+  const oldV1 = make(left, 'z-old-v1', 'old-recovery', 10);
+  const oldV2 = make(right, 'z-old-v2', 'old-recovery', 20);
+  const newV1 = make(left, 'a-new-v1', 'new-recovery', 30);
+  const newV2 = make(right, 'a-new-v2', 'new-recovery', 40);
+  const versions = [newV2, oldV1, oldV2, newV1];
+  assert.deepEqual(experimentInitialSelection(versions, root), ['a-new-v1', 'a-new-v2']);
+  assert.deepEqual(versions.map(row => row.id), ['a-new-v2', 'z-old-v1', 'z-old-v2', 'a-new-v1']);
+  // Neither another round nor another input may fill the missing half of a pair.
+  assert.deepEqual(experimentInitialSelection([oldV1, newV2], root), ['a-new-v2']);
+  assert.deepEqual(experimentInitialSelection([newV1, {...newV2, comparison_input_identity: 'different-input'}], root), ['a-new-v2']);
+  assert.deepEqual(experimentInitialSelection([newV1, {...newV2, input_role: 'held_out'}], root), ['a-new-v2']);
+  assert.deepEqual(experimentInitialSelection([newV1, {...newV2, media_url: 'https://other.example/video.mp4'}], root), ['a-new-v1']);
+});
+
+test('technical failures remain eligible for visual comparison instead of selecting only passed works', () => {
+  assert.deepEqual(experimentInitialSelection([left, {...right, technical: {status: 'failed'}}], root), ['dev-v1', 'dev-v2']);
+});
 
 test('unrun definitions do not manufacture playable variants or model provenance', () => {
   assert.deepEqual(experimentVersions({versions: []}), []);

@@ -4,6 +4,7 @@ This does not execute a model or browser. The tests verify stopped artifact
 custody, bounded task admission, concurrency and durable failure publication.
 """
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -560,4 +561,239 @@ def test_changed_expected_build_source_is_refused_before_candidate_reservation(t
     with pytest.raises(lab.ExperimentError, match='candidate_build_mismatch'):
         runner.reserve_candidate(root, expected_binding_file=binding, build_receipt=receipt)
     assert runner._load(root)[1]['slots']['development-v1']['state'] == 'unstarted'
+    assert peer.calls == [] and rendered == []
+
+
+def synthetic_failure(directory, document):
+    """Root-capture shapes for an offline precreative failure, never real proof."""
+    docs = synthetic_candidate(directory, document)
+    for name in ('candidate-result.json', 'candidate-evidence.json'):
+        (directory / name).unlink()
+    request = docs['candidate-request.json']
+    envelope = ExecutionEnvelope.model_validate(request['envelope'])
+    worker = deepcopy(docs['worker-pod.json'])
+    worker['metadata'] = dict(name='candidate-animation-exp-v1-worker', namespace='agent-workers', uid=str(UUID(int=4)))
+    worker['status']['phase'] = 'Failed'
+    worker['status']['containerStatuses'][0]['state']['terminated']['exitCode'] = 1
+    proxy = deepcopy(worker)
+    proxy['metadata'] = dict(name='candidate-animation-exp-v1-proxy', namespace='agent-service', uid=str(UUID(int=5)))
+    proxy['status']['containerStatuses'][0]['state']['terminated']['exitCode'] = 143
+    name = 'candidate-animation-exp-v1'
+    resources = [('ConfigMap', 'agent-service', name), ('ConfigMap', 'agent-workers', name),
+        ('Service', 'agent-service', name), ('NetworkPolicy', 'agent-service', name),
+        ('Pod', 'agent-service', name + '-proxy'), ('Pod', 'agent-workers', name + '-worker'),
+        ('Secret', 'agent-service', name + '-bootstrap'), ('Secret', 'agent-workers', name + '-bootstrap'),
+        ('Secret', 'agent-service', name + '-upstream')]
+    diagnosis = dict(status='failed_before_agent_start', code='package_resources_incomplete',
+        worker_pod_uid=worker['metadata']['uid'], proxy_pod_uid=proxy['metadata']['uid'],
+        request_sha256=envelope.request_sha256, attempt_id=envelope.attempt_id,
+        worker_stopped=True, worker_restarts=0, agent_generation_started=False,
+        only_expected_connectivity_request=True, model_request_count=1,
+        model_calls=[dict(attempt_id=envelope.attempt_id, body_sha256='f' * 64, state='complete', status=200,
+                         response_sha256='d' * 64, response_bytes=100)],
+        retry_performed=False, pilot_slot_consumed=True, animation_result_created=False)
+    cleanup = dict(status='failed_candidate_closed', worker_stopped=True, proxy_stopped=True,
+        model_request_count=1, creative_agent_started=False, animation_result_created=False,
+        retry_performed=False, slot_still_consumed=True, uid_reservation_retained=True,
+        exact_resources_absent=[dict(kind=k, namespace=ns, name=n) for k, ns, n in resources],
+        production_routes_changed=False)
+    failure = dict(zip(runner.FAILURE_FILES, (request, diagnosis, cleanup, worker, proxy)))
+    for filename, value in failure.items():
+        (directory / filename).write_bytes(lab.canonical(value))
+    return failure
+
+
+def closed_failure(tmp_path):
+    root = init(tmp_path)
+    reserve(root)
+    evidence = tmp_path / 'synthetic-failure-evidence'
+    synthetic_failure(evidence, lab.pilot_input())
+    row = runner.close_failed_candidate(root, evidence)
+    return root, evidence, row
+
+
+def test_explicit_failed_candidate_close_preserves_consumed_original_without_fake_result(tmp_path, wire):
+    gateway, peer, rendered = wire
+    root = init(tmp_path)
+    reserve(root)
+    reserved = (root / 'identity-development-v1' / runner.RESERVATION_NAME).read_bytes()
+    evidence = tmp_path / 'synthetic-failure-evidence'
+    documents = synthetic_failure(evidence, lab.pilot_input())
+    row = runner.close_failed_candidate(root, evidence)
+    run_dir = root / row['id']
+    assert lab.read_run(run_dir) == row and row['status'] == 'failed'
+    assert row['error'] == 'package_resources_incomplete'
+    assert row['code_files'] == row['strategy'] == {} and set(row['artifacts']) == {'report.json'}
+    assert row['provenance']['creative_agent_starts'] == 0
+    assert row['provenance']['connectivity_model_requests'] == 1
+    assert row['provenance']['stop_proven'] is False and row['provenance']['returned_model'] is None
+    assert row['provenance']['worker_and_proxy_observed_stopped'] is True
+    assert (run_dir / runner.RESERVATION_NAME).read_bytes() == reserved
+    for filename, value in documents.items():
+        assert (run_dir / 'failure-evidence' / filename).read_bytes() == lab.canonical(value)
+    report = json.loads((run_dir / 'report.json').read_bytes())
+    assert report['generation_attempts'] == 0 and report['candidate_launch_attempts'] == 1
+    assert report['renderer'] == {'status': 'not_started'}
+    assert runner._load(root)[1]['slots']['development-v1']['state'] == 'failed'
+    assert peer.calls == [] and rendered == []
+    with pytest.raises(lab.ExperimentError, match='failure_close_not_ready'):
+        runner.close_failed_candidate(root, evidence)
+    with pytest.raises(lab.ExperimentError, match='already_reserved'):
+        run(root, 'development-v1', gateway)
+    with pytest.raises(lab.ExperimentError, match='candidate_not_reserved'):
+        runner.complete_candidate(root, evidence, renderer_image=IMAGE)
+    with pytest.raises(lab.ExperimentError, match='revision_not_ready'):
+        runner.revise(root, 'A new direction', 'No successful baseline exists.')
+
+
+@pytest.mark.parametrize('change', ['request', 'uncertain_model', 'cleanup_count', 'resource_missing',
+    'worker_running', 'worker_image', 'worker_restart', 'proxy_running', 'output_present'])
+def test_failed_candidate_closure_rejects_unbound_or_incomplete_proof_without_releasing_slot(tmp_path, wire, change):
+    gateway, peer, rendered = wire
+    root = init(tmp_path)
+    reserve(root)
+    evidence = tmp_path / 'synthetic-failure-evidence'
+    docs = synthetic_failure(evidence, lab.pilot_input())
+    if change == 'request':
+        docs['failure-diagnosis.json']['request_sha256'] = '0' * 64
+    elif change == 'uncertain_model':
+        docs['failure-diagnosis.json']['model_calls'][0]['state'] = 'admitted'
+    elif change == 'cleanup_count':
+        docs['failure-cleanup-summary.json']['model_request_count'] = 0
+    elif change == 'resource_missing':
+        docs['failure-cleanup-summary.json']['exact_resources_absent'].pop()
+    elif change == 'worker_running':
+        docs['failure-worker-pod.json']['status']['containerStatuses'][0]['state'] = {'running': {}}
+    elif change == 'worker_image':
+        docs['failure-worker-pod.json']['spec']['containers'][0]['image'] = 'different:latest@sha256:' + '1' * 64
+    elif change == 'worker_restart':
+        docs['failure-worker-pod.json']['status']['containerStatuses'][0]['restartCount'] = 1
+    elif change == 'proxy_running':
+        docs['failure-proxy-stopped.json']['status']['containerStatuses'][0]['state'] = {'running': {}}
+    else:
+        (evidence / 'candidate-result.json').write_text('{}')
+    for filename, value in docs.items():
+        (evidence / filename).write_bytes(lab.canonical(value))
+    with pytest.raises((lab.ExperimentError, ServiceError)):
+        runner.close_failed_candidate(root, evidence)
+    assert runner._load(root)[1]['slots']['development-v1']['state'] == 'candidate_reserved'
+    assert not (root / 'identity-development-v1' / 'experiment-run.json').exists()
+    with pytest.raises(lab.ExperimentError, match='already_reserved'):
+        run(root, 'development-v1', gateway)
+    with pytest.raises(lab.ExperimentError, match='recovery_not_ready'):
+        runner.create_recovery(root, tmp_path / 'recovered', authorization_note='Explicit new four-task budget')
+    assert peer.calls == [] and rendered == []
+
+
+def test_interrupted_failure_close_resumes_same_immutable_evidence_without_model_retry(tmp_path, wire, monkeypatch):
+    _, peer, rendered = wire
+    root = init(tmp_path)
+    reserve(root)
+    evidence = tmp_path / 'synthetic-failure-evidence'
+    synthetic_failure(evidence, lab.pilot_input())
+    original = runner._immutable_bytes
+    interrupted = False
+    def one_interruption(path, raw):
+        nonlocal interrupted
+        if path.name == 'failure-diagnosis.json' and not interrupted:
+            interrupted = True
+            raise OSError('Synthetic interrupted evidence copy')
+        return original(path, raw)
+    monkeypatch.setattr(runner, '_immutable_bytes', one_interruption)
+    with pytest.raises(OSError):
+        runner.close_failed_candidate(root, evidence)
+    intent = deepcopy(runner._load(root)[1]['slots']['development-v1']['failure_close_intent'])
+    assert runner._load(root)[1]['slots']['development-v1']['state'] == 'candidate_closing'
+    row = runner.close_failed_candidate(root, evidence)
+    closure = json.loads((root / row['id'] / runner.FAILURE_CLOSURE_NAME).read_bytes())
+    assert closure['closure_id'] == intent['closure_id'] and closure['created_at'] == intent['created_at']
+    assert row['status'] == 'failed' and peer.calls == [] and rendered == []
+
+
+def test_explicit_recovery_declares_four_new_slots_retains_parent_and_uses_unique_ids(tmp_path, wire):
+    gateway, peer, rendered = wire
+    root, _, failed = closed_failure(tmp_path)
+    original = (root / failed['id'] / 'experiment-run.json').read_bytes()
+    target = tmp_path / 'recovered'
+    plan = runner.create_recovery(root, target, authorization_note='User explicitly continued; four new bounded tasks.')
+    origin = plan['recovery']
+    assert origin['parent_run_identity'] == failed['identity']
+    assert origin['parent_attempt_id'] == failed['provenance']['attempt']['attempt_id']
+    assert origin['cumulative_candidate_budget'] == 5 and origin['original_unstarted_slots_abandoned'] == 3
+    assert origin['new_budget']['max_tasks'] == 4 and origin['new_budget']['max_attempts_per_task'] == 1
+    assert origin['new_budget']['automatic_retry'] is False
+    assert (root / failed['id'] / 'experiment-run.json').read_bytes() == original
+    assert all(row['state'] == 'unstarted' for row in plan['slots'].values())
+    assert set(row['run_id'] for row in plan['slots'].values()).isdisjoint(
+        row['run_id'] for row in runner._load(root)[1]['slots'].values())
+    assert runner._load(target)[1] == plan and peer.calls == [] and rendered == []
+    for name, expected in origin['parent_snapshots_sha256'].items():
+        assert lab.digest((target / name).read_bytes()) == expected
+    first = run(target, 'development-v1', gateway)
+    runner.revise(target, 'Distinct motion lanes.', 'Synthetic operator direction, not aesthetic approval.')
+    for name in runner.SLOTS[1:]:
+        row = run(target, name, gateway)
+        assert row['provenance']['recovery']['identity'] == origin['identity']
+        assert type(row['provenance']['created_at']) is float
+        assert row['input_role'] == ('held_out' if name.startswith('held-out') else 'development')
+    assert first['provenance']['recovery'] == origin and peer.count('POST', '/v1/jobs') == 4
+    with pytest.raises(lab.ExperimentError, match='already_reserved'):
+        run(target, 'development-v1', gateway)
+    with pytest.raises(lab.ExperimentError, match='pilot_superseded'):
+        run(root, 'development-v2', gateway)
+    # Re-reading the explicit recovery cannot create another budget or reset any task.
+    repeated = runner.create_recovery(root, target, authorization_note=origin['authorization_note'])
+    assert all(row['state'] == 'finished' for row in repeated['slots'].values())
+    with pytest.raises(lab.ExperimentError, match='recovery_already_reserved'):
+        runner.create_recovery(root, tmp_path / 'another', authorization_note=origin['authorization_note'])
+    assert peer.count('POST', '/v1/jobs') == 4
+
+
+@pytest.mark.parametrize('bad', ['budget', 'empty_note', 'unclosed', 'nested_directory'])
+def test_recovery_requires_closed_parent_explicit_note_and_exact_new_budget(tmp_path, wire, bad):
+    _, peer, rendered = wire
+    if bad == 'unclosed':
+        root = init(tmp_path)
+        reserve(root)
+    else:
+        root, _, _ = closed_failure(tmp_path)
+    target = root / 'nested' if bad == 'nested_directory' else tmp_path / 'recovered'
+    with pytest.raises(lab.ExperimentError):
+        runner.create_recovery(root, target, authorization_note='' if bad == 'empty_note' else 'Explicit continuation',
+                               max_tasks=5 if bad == 'budget' else 4)
+    assert not target.exists() and 'recovery_child' not in runner._load(root)[1]
+    assert peer.calls == [] and rendered == []
+
+
+@pytest.mark.parametrize('filename', [runner.RECOVERY_ORIGIN_NAME, 'recovery-parent-report.json'])
+def test_recovery_origin_or_parent_snapshot_tamper_blocks_generation_before_admission(tmp_path, wire, filename):
+    gateway, peer, rendered = wire
+    root, _, _ = closed_failure(tmp_path)
+    target = tmp_path / 'recovered'
+    runner.create_recovery(root, target, authorization_note='Explicit four-task continuation')
+    path = target / filename
+    path.write_bytes(path.read_bytes() + b'\n')
+    with pytest.raises(lab.ExperimentError, match='recovery_changed'):
+        run(target, 'development-v1', gateway)
+    assert peer.calls == [] and rendered == []
+
+
+def test_recovery_initialization_resumes_reserved_same_successor_without_new_budget(tmp_path, wire, monkeypatch):
+    _, peer, rendered = wire
+    root, _, _ = closed_failure(tmp_path)
+    target = tmp_path / 'recovered'
+    original = runner._write
+    def interrupted(path, document, **kwargs):
+        if path == target / 'pilot.json':
+            raise OSError('Synthetic initialization interruption')
+        return original(path, document, **kwargs)
+    monkeypatch.setattr(runner, '_write', interrupted)
+    with pytest.raises(OSError):
+        runner.create_recovery(root, target, authorization_note='Explicit continuation')
+    marker = runner._load(root)[1]['recovery_child']
+    assert marker['state'] == 'reserved' and not (target / 'pilot.json').exists()
+    monkeypatch.setattr(runner, '_write', original)
+    recovered = runner.create_recovery(root, target, authorization_note='Explicit continuation')
+    assert recovered['recovery']['identity'] == marker['origin']['identity']
+    assert runner._load(root)[1]['recovery_child']['state'] == 'initialized'
     assert peer.calls == [] and rendered == []
