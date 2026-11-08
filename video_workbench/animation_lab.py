@@ -605,7 +605,7 @@ class LabHandler(BaseHTTPRequestHandler):
 
     def _send(self, raw, content_type, status=200, *, download=False,
               download_name='animation-lab-evaluation.jsonl', location=None, cache_control='no-store',
-              content_encoding=None, vary=None):
+              content_encoding=None, vary=None, extra_headers=()):
         self.send_response(status)
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(raw)))
@@ -623,11 +623,53 @@ class LabHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Disposition', 'attachment; filename="'+download_name+'"')
         if location is not None:
             self.send_header('Location', location)
+        for name, value in extra_headers:
+            self.send_header(name, value)
         self.end_headers()
-        self.wfile.write(raw)
+        if self.command != 'HEAD':
+            self.wfile.write(raw)
+
+    def _send_artifact(self, raw, content_type):
+        if not content_type.startswith(('video/', 'audio/')):
+            return self._send(raw, content_type)
+        # Browser media seeking requires byte ranges even when the whole short
+        # video has already buffered. Slice only after the artifact store has
+        # verified the complete frozen file; never serve an unchecked file path.
+        length = len(raw)
+        etag = '"' + sha256(raw) + '"'
+        headers = [('Accept-Ranges', 'bytes'), ('ETag', etag)]
+        ranges = self.headers.get_all('Range', [])
+        validators = self.headers.get_all('If-Range', [])
+        match = (re.fullmatch(r'bytes=([0-9]*)-([0-9]*)', ranges[0].strip(), re.IGNORECASE)
+                 if len(ranges) == 1 else None)
+        # Range applies only to GET. Unsupported/malformed or multipart ranges
+        # are ignored; a stale/weak If-Range validator gets the full response.
+        if self.command == 'GET' and match and any(match.groups()) and (
+                not validators or validators == [etag]):
+            def bounded_integer(value):
+                value = value.lstrip('0') or '0'
+                return int(value) if len(value) <= len(str(length)) else length + 1
+
+            first, last = match.groups()
+            start = bounded_integer(first) if first else max(0, length - bounded_integer(last))
+            end = bounded_integer(last) if first and last else length - 1
+            # A backwards interval is invalid, rather than a satisfiable range.
+            if not first or not last or end >= start:
+                if not length or start >= length or (not first and bounded_integer(last) == 0):
+                    return self._send(b'', content_type, 416,
+                        extra_headers=[*headers, ('Content-Range', f'bytes */{length}')])
+                end = min(end, length - 1)
+                return self._send(raw[start:end + 1], content_type, 206,
+                    extra_headers=[*headers, ('Content-Range', f'bytes {start}-{end}/{length}')])
+        return self._send(raw, content_type, extra_headers=headers)
 
     def _json(self, value, status=200):
         self._send(canonical(self.server.public_urls(value)), 'application/json; charset=utf-8', status)
+
+    def do_HEAD(self):
+        # Reuse the same authentication, allowlist and immutable artifact checks
+        # as GET; _send emits matching metadata without a response body.
+        self.do_GET()
 
     def do_GET(self):
         try:
@@ -656,7 +698,7 @@ class LabHandler(BaseHTTPRequestHandler):
                 if len(experiment_pieces) >= 6 and experiment_pieces[3] == 'runs':
                     raw, mime = lab.experiments.artifact(experiment_id, experiment_pieces[4],
                         '/'.join(experiment_pieces[5:]))
-                    return self._send(raw, mime)
+                    return self._send_artifact(raw, mime)
                 raise LabError('animation_experiment_not_found', 404)
             if path == '/api/requirements':
                 suite=lab.requirement_suite(parse_qs(parsed.query,keep_blank_values=True))
@@ -734,7 +776,7 @@ class LabHandler(BaseHTTPRequestHandler):
                 raise LabError('animation_lab_report_not_found', 404)
             if len(pieces) >= 3 and pieces[0] == 'evaluations':
                 raw, mime = lab.evaluation_file(pieces[1], '/'.join(pieces[2:]))
-                return self._send(raw, mime)
+                return self._send_artifact(raw, mime)
             if len(pieces) == 3 and pieces[0] == 'preview':
                 return self._send(lab.preview(pieces[1], pieces[2], base_path=self.server.base_path),
                                   'text/html; charset=utf-8')
@@ -757,7 +799,7 @@ class LabHandler(BaseHTTPRequestHandler):
                 _require(name in clip['files'], 'animation_lab_unknown_file', 404)
                 mime = 'text/html; charset=utf-8' if name == 'index.html' else (
                     'audio/wav' if name.endswith('.wav') else 'application/json; charset=utf-8')
-                return self._send(clip['files'][name], mime)
+                return self._send_artifact(clip['files'][name], mime)
             raise LabError('animation_lab_not_found', 404)
         except (LabError, IterationError, ExperimentError) as error:
             self._json(dict(error=error.code), error.status)
