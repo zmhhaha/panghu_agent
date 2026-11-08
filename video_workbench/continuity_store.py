@@ -59,7 +59,7 @@ def _validated(plan, scenes, compiler=LEGACY_COMPILER):
 
 def _require_supported(current):
     for reason in ('process_continuity_mixed_not_supported', 'process_continuity_source_unsupported',
-                   'continuity_semantic_layout_not_supported'):
+                   'continuity_semantic_layout_not_supported', 'creative_continuity_not_supported'):
         _require(not any(issue['reason'] == reason for issue in current['issues']), reason, 409)
 
 
@@ -124,6 +124,8 @@ class ContinuityStore:
                     elif (version['semantic_binding_sha256'] != binding
                           or digest(version['plan']) != version['plan_sha256']):
                         reason = 'continuity_motion_stale'
+                    elif version['plan'].get('schema') == 'video.creative-scene.v1':
+                        reason = 'creative_continuity_not_supported'
                     elif (version['plan'].get('schema') == PROCESS_SCHEMA
                           and version.get('compiler_version') != PROCESS_SOURCE_COMPILER):
                         reason = 'process_continuity_source_unsupported'
@@ -132,7 +134,8 @@ class ContinuityStore:
                         reason = 'continuity_semantic_layout_not_supported'
             if reason:
                 issues.append(dict(scene_id=scene_id, scene_title=scene['title'], kind='motion', reason=reason))
-            elements = deepcopy(version['plan']['elements']) if version is not None else []
+            creative = version is not None and version['plan'].get('schema') == 'video.creative-scene.v1'
+            elements = deepcopy(version['plan']['elements']) if version is not None and not creative else []
             summary = dict(scene_id=scene_id, title=scene['title'], elements=elements)
             source = dict(scene_id=scene_id, semantic_binding_sha256=binding,
                           motion_version_id=head['version_id'],

@@ -151,6 +151,50 @@ def test_new_preview_reuses_exact_candidates_and_completed_drafts(env):
     assert count(env, 'motion_operations') == count(env, 'audio_operations') == count(env, 'video_renders') == 2
 
 
+def test_review_only_keeps_completed_draft_reusable(env):
+    p = project(env, 1)
+    first = finish(env, start(env, p)['id'])
+    motion_id, audio_id = first['items'][0]['version_id'], first['items'][1]['version_id']
+    current = env.motion.project(OWNER, p['id'])
+    timing = env.timing.get(OWNER, motion_id, audio_id)
+    env.timing.save(OWNER, motion_id, dict(expected_revision=current['revision'], audio_version_id=audio_id,
+        expected_alignment_sha256=timing['alignment_sha256']), verify=True)
+    updated = env.motion.project(OWNER, p['id'])
+    preview = plan(env, updated)[1]
+    assert preview['estimated_tasks'] == dict(motion=0, audio=0, draft=0)
+    assert preview['items'][-1]['render_id'] == first['items'][-1]['render_id']
+
+
+@pytest.mark.parametrize('review', [False, True])
+def test_creative_draft_reuse_binds_candidate_audio_clock_and_runtime(env, review):
+    from test_creative_production import result
+    p = project(env, 1)
+    first = finish(env, start(env, p)['id'])
+    scene_id, audio_id = p['scenes'][0]['id'], first['items'][1]['version_id']
+    env.store.adopt_audio(OWNER, scene_id, audio_id, None)
+    current = env.motion.project(OWNER, p['id'])
+    started = env.motion.start(OWNER, scene_id,
+        dict(expected_revision=current['revision'], diagram_kind='creative'), 'creative-batch-candidate')
+    operation = env.motion.operation(started['id'])
+    version_id = env.motion.complete(started['id'], result(operation['document']))['version_id']
+    current = env.motion.project(OWNER, p['id'])
+    draft = env.production.start_motion_render(OWNER, p['id'], dict(expected_revision=current['revision'],
+        purpose='draft', scene_id=scene_id, motion_version_id=version_id, audio_version_id=audio_id),
+        'creative-batch-draft')
+    env.production.tick()
+    if review:
+        timing = env.timing.get(OWNER, version_id, audio_id)
+        env.timing.save(OWNER, version_id, dict(expected_revision=current['revision'], audio_version_id=audio_id,
+            expected_alignment_sha256=timing['alignment_sha256']), verify=True)
+        current = env.motion.project(OWNER, p['id'])
+    preview = plan(env, current)[1]
+    assert preview['estimated_tasks'] == dict(motion=0, audio=0, draft=0)
+    assert preview['items'][-1]['render_id'] == draft['id']
+    assert count(env, 'video_renders') == 2
+    env.production.runtime_fingerprint = dict(RUNTIME, image_digest='sha256:' + '2' * 64)
+    assert plan(env, current)[1]['estimated_tasks'] == dict(motion=0, audio=0, draft=1)
+
+
 def test_create_is_idempotent_before_stale_revision_and_start_is_local_only(env):
     p = project(env, 1)
     request, preview = plan(env, p)

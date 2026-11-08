@@ -15,7 +15,7 @@ from uuid import uuid4
 from agent_service.contracts import ServiceError, digest
 from .audio_store import narration_binding, narration_document
 from .motion import COMPILER_VERSION
-from .motion_store import semantic_binding
+from .motion_store import plan_diagram_kind, semantic_binding
 
 
 STEPS = ('motion', 'audio', 'draft')
@@ -39,6 +39,16 @@ def _require(value, code='invalid_batch_request', status=422):
 
 def _json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False)
+
+
+def _render_clock(value):
+    """Compare authored timing without making a review create new pixels."""
+    alignment = value.get('alignment') or {}
+    timeline = value.get('timeline') or {}
+    return (dict((key, item) for key, item in alignment.items()
+                 if key not in {'review_status', 'reviewed_by', 'reviewed_at'}),
+            dict((key, item) for key, item in timeline.items()
+                 if key not in {'review_status', 'alignment_sha256'}))
 
 
 def _idempotency(value):
@@ -135,15 +145,16 @@ class BatchStore:
                 continue
             frozen = scenes[0]
             timing = frozen.get('timing', {})
-            if (frozen.get('id') == scene['id'] and frozen.get('motion', {}).get('id') == motion_id
+            dynamic = frozen.get('creative' if frozen.get('visual_mode') == 'creative' else 'motion', {})
+            if (frozen.get('id') == scene['id'] and dynamic.get('id') == motion_id
                     and frozen.get('audio', {}).get('id') == audio_id
                     and frozen.get('narration') == scene['narration']
                     and frozen.get('title') == scene['title']
                     and timing.get('leading_seconds', 0) == scene.get('leading_seconds', 0)
                     and timing.get('trailing_seconds', 0) == scene.get('trailing_seconds', 0)
-                    and frozen.get('motion', {}).get('alignment') == current_timing['alignment']
-                    and frozen.get('motion', {}).get('timeline') == current_timing['timeline']
-                    and frozen.get('motion', {}).get('timeline', {}).get('compiler') == COMPILER_VERSION
+                    and _render_clock(dynamic) == _render_clock(current_timing)
+                    and (dynamic.get('plan', {}).get('schema') != 'video.motion-plan.v1'
+                         or dynamic.get('timeline', {}).get('compiler') == COMPILER_VERSION)
                     and snapshot.get('runtime_fingerprint') == self.production.runtime_fingerprint):
                 return row['id']
         return None
@@ -335,6 +346,7 @@ class BatchStore:
                 seen.add(selection['scene_id'])
                 scene = self.store._scene(project, selection['scene_id'])
                 motion_id, audio_id = selection.get('motion_version_id'), selection.get('audio_version_id')
+                motion_version = None
                 _require(motion_id is not None or audio_id is not None)
                 if motion_id is not None:
                     _require('expected_motion_head_version_id' in selection)
@@ -343,6 +355,7 @@ class BatchStore:
                     version = self.motion._version(db, owner, motion_id)
                     _require(version['project_id'] == project_id and version['scene_id'] == scene['id'], 'not_found', 404)
                     _require(version['semantic_binding_sha256'] == semantic_binding(project, scene), 'motion_plan_stale', 409)
+                    motion_version = version
                 if audio_id is not None:
                     _require(type(audio_id) is str and 1 <= len(audio_id) <= 100 and 'expected_audio_head_version_id' in selection)
                     _require(scene.get('head_audio_version_id') == selection['expected_audio_head_version_id'], 'audio_head_conflict', 409)
@@ -352,6 +365,11 @@ class BatchStore:
                     version = json.loads(row[0])
                     binding = narration_binding(narration_document(scene, self.store._project_speech_provider(project)))
                     _require(version['input_sha256'] == binding, 'audio_stale', 409)
+                if motion_version is not None and plan_diagram_kind(motion_version['plan']) == 'creative':
+                    selected_scene = dict(scene, head_audio_version_id=audio_id or scene.get('head_audio_version_id'))
+                    _, _, recording = self.motion._creative_audio(db, project, selected_scene)
+                    _require(recording['sha256'] == motion_version['audio_sha256'],
+                             'creative_audio_binding_mismatch', 409)
                 checked.append((scene, motion_id, audio_id))
             for scene, motion_id, audio_id in checked:
                 if motion_id is not None:

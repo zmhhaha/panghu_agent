@@ -12,6 +12,8 @@ from agent_service.contracts import ServiceError, digest
 from agent_service.profiles.video_animation_experiment import validate_experiment_result
 from video_workbench.creative_contract import build_scene_input, collect_scene_result, base_scene_result
 from video_workbench.creative_snapshot import freeze_snapshot_v4, verify_snapshot_v4
+from video_workbench.batch_store import BatchStore
+from video_workbench.continuity_store import ContinuityStore
 from video_workbench.motion import estimated_alignment, make_beats
 from video_workbench.motion_store import MotionStore, operation_diagram_kind, semantic_binding
 from video_workbench.motion_timing import MotionTiming
@@ -233,6 +235,44 @@ def test_production_preview_review_adoption_and_delivery_follow_same_candidate(s
     assert delivery['scenes'][0]['creative']['alignment']['review_status'] == 'verified'
     assert delivery['scenes'][0]['creative']['package'] == draft['scenes'][0]['creative']['package']
     assert verify_snapshot_v4(delivery) == delivery
+
+
+def test_creative_adoption_keeps_continuity_projection_and_render_history_readable(state):
+    adopted_audio(state)
+    store, motion, _, project_id, scene_id = state
+    _, completed = generated(state)
+    current = motion.project(OWNER, project_id)
+    motion.adopt(OWNER, scene_id, completed['version_id'], None, current['revision'])
+    continuity = ContinuityStore(store, motion)
+    projection = continuity.project_projection(OWNER, project_id)
+    assert any(issue['reason'] == 'creative_continuity_not_supported' for issue in projection['issues'])
+    with pytest.raises(ServiceError, match='creative_continuity_not_supported'):
+        continuity.propose(OWNER, project_id, motion.project(OWNER, project_id)['revision'])
+    service = production(state)
+    service.continuity_store = continuity
+    assert service.renders(OWNER, project_id) == []
+
+
+def test_atomic_batch_adoption_rejects_mismatched_creative_recording_before_writes(state):
+    audio_id = adopted_audio(state)
+    store, motion, _, project_id, scene_id = state
+    _, completed = generated(state)
+    current = motion.project(OWNER, project_id)
+    uploaded = store.upload_audio(OWNER, scene_id, dict(expected_revision=current['revision']),
+                                 'unadopted-replacement', audio(2)['data'], source_name='replacement.wav')
+    replacement = uploaded['scenes'][0]['audio_versions'][-1]['id']
+    batches = BatchStore(store, motion, production(state))
+    selection = dict(scene_id=scene_id, motion_version_id=completed['version_id'], audio_version_id=replacement,
+                     expected_motion_head_version_id=None, expected_audio_head_version_id=audio_id)
+    with pytest.raises(ServiceError, match='creative_audio_binding_mismatch'):
+        batches.adopt(OWNER, project_id, uploaded['revision'], [selection])
+    unchanged = motion.project(OWNER, project_id)
+    assert unchanged['revision'] == uploaded['revision']
+    assert unchanged['scenes'][0]['motion']['head_version_id'] is None
+    assert unchanged['scenes'][0]['head_audio_version_id'] == audio_id
+    adopted = batches.adopt(OWNER, project_id, unchanged['revision'],
+                            [dict(selection, audio_version_id=audio_id)])
+    assert adopted['scenes'][0]['motion']['head_version_id'] == completed['version_id']
 
 
 def test_workflow_routes_creative_to_shared_profile_gateway_with_exact_input(state):
