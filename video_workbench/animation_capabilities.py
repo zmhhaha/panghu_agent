@@ -51,8 +51,8 @@ def _release(document):
 # paths. The four Lab works did not establish an aesthetic winner; neither their
 # v2 text nor a copied scene is silently promoted as a universally better model.
 _RELEASES = {
-    DEFAULT_RELEASE_ID: _release(dict(
-        schema=SCHEMA, id=DEFAULT_RELEASE_ID, revision=1, engines=['html-svg'],
+    'explanatory-motion-v1': _release(dict(
+        schema=SCHEMA, id='explanatory-motion-v1', revision=1, engines=['html-svg'],
         targets=['explanatory-motion', 'identity-tracking', 'process-explanation',
                  'spatial-relationship', 'comparison'],
         rules=[

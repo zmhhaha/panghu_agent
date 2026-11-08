@@ -1,6 +1,9 @@
 """Shared strategy custody; no model, browser or rendering calls occur here."""
 from copy import deepcopy
 import json
+from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -56,6 +59,59 @@ def test_lab_and_production_freeze_exact_same_strategy_not_scene_code():
     assert experiment['guidance'] == production['guidance'] == policies.release_guidance(release)
     assert 'scene.html' not in release and production['constraints']['production']['base_result'] is None
     assert production['constraints']['production']['alignment']['review_status'] == 'pending'
+
+
+def test_next_process_default_release_preserves_v1_and_binds_new_lab_and_production():
+    # Change only the future deployment's default assignment before import.
+    # Patching a live module's default would miss import-time registry renaming.
+    probe = r'''
+import ast,json,pathlib,sys,types
+import video_workbench
+source = pathlib.Path(sys.argv[1])
+tree = ast.parse(source.read_text(encoding='utf-8'), filename=str(source))
+assignments = [node for node in tree.body if isinstance(node, ast.Assign)
+               and any(isinstance(name, ast.Name) and name.id == 'DEFAULT_RELEASE_ID'
+                       for name in node.targets)]
+assert len(assignments) == 1
+assignments[0].value = ast.Constant(value='explanatory-motion-v2')
+tree = ast.fix_missing_locations(tree)
+name = 'video_workbench.animation_capabilities'
+policies = types.ModuleType(name)
+policies.__file__, policies.__package__ = str(source), 'video_workbench'
+sys.modules[name] = policies
+video_workbench.animation_capabilities = policies
+exec(compile(tree, str(source), 'exec'), policies.__dict__)
+v1 = policies.capability_release('explanatory-motion-v1')
+assert v1['sha256'] == sys.argv[2]
+v2 = {key: value for key, value in v1.items() if key != 'sha256'}
+v2.update(id='explanatory-motion-v2', revision=2, rules=[*v1['rules'], 'Test-only next-release rule.'])
+policies._RELEASES[v2['id']] = policies._release(v2)
+from video_workbench.creative_contract import build_scene_input,validate_scene_input
+from video_workbench.animation_experiments import pilot_input
+from video_workbench.motion import estimated_alignment,make_beats
+narration = 'Keep the object visible. Then move it.'
+beats = make_beats(narration)
+arguments = dict(scene_id='future-default-check', title='Tracking',
+    visual_description='Move one labelled object continuously.', narration=narration,
+    beats=beats, alignment=estimated_alignment(beats, 'a' * 64, 8),
+    audio_sha256='a' * 64, duration_seconds=8)
+old = build_scene_input(**arguments, capability_release_id=v1['id'])
+new = build_scene_input(**arguments)
+experiment = pilot_input(capability_release_id=v2['id'])
+assert new['constraints']['capability_release'] == experiment['constraints']['capability_release']
+assert new['guidance'] == experiment['guidance']
+assert new['constraints']['capability_release']['id'] == 'explanatory-motion-v2'
+assert policies.capability_release(v1['id']) == v1
+assert validate_scene_input(old) == old
+assert old['constraints']['capability_release'] == v1
+print(json.dumps(dict(status='future_default_preserves_v1', model_calls=0)))
+'''
+    process = subprocess.run(
+        [sys.executable, '-B', '-c', probe, str(Path(policies.__file__).resolve()),
+         policies.capability_release('explanatory-motion-v1')['sha256']],
+        cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True, timeout=30)
+    assert process.returncode == 0, process.stderr
+    assert json.loads(process.stdout) == {'status': 'future_default_preserves_v1', 'model_calls': 0}
 
 
 def test_old_pilot_documents_remain_identical_and_new_plan_freezes_release(tmp_path):

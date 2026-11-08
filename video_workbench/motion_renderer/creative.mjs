@@ -66,6 +66,20 @@ export async function captureCreative({root='/work',mode='render',quality='draft
     await window.__animationExperiment.seek(t);
     if(document.querySelector('canvas,iframe,object,embed,video,audio'))throw Error('creative_engine_not_admitted');
    },local);
+   // Rebuild layout objects before painting to avoid observed SVG rounded-edge
+   // raster drift between otherwise identical forward/reverse states.
+   // This preserves source nodes/attributes and the strict frame-hash checks.
+   await page.evaluate(()=>{
+    if(document.getAnimations().some(animation=>animation.playState==='running'))
+     throw Error('creative_autonomous_animation');
+    const root=document.documentElement;
+    const prior=root.style.getPropertyValue('display');
+    const priority=root.style.getPropertyPriority('display');
+    root.style.setProperty('display','none','important');
+    root.getBoundingClientRect();
+    if(prior)root.style.setProperty('display',prior,priority);else root.style.removeProperty('display');
+    root.getBoundingClientRect();
+   });
    const bytes=await page.screenshot({type:'jpeg',quality:quality==='final'?90:75,
     animations:'allow',timeout:15000});
    if(bytes.length>2*1024*1024)throw Error('creative_frame_too_large');
