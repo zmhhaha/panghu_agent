@@ -330,6 +330,13 @@ def load_scenario(path, source_dir, parent_dir, policy):
         document = validate_process_input(decode_video_json(raw))
         require(canonical_bytes(document) == raw and hashlib.sha256(raw).hexdigest() == task['input_sha256'],
             'candidate_process_input_mismatch')
+    elif policy.name == 'video.animation-experiment.v1':
+        from agent_service.profiles.video_animation_experiment import INPUT_NAME, validate_experiment_input
+        require(set(files) == {INPUT_NAME}, 'candidate_animation_experiment_input_required')
+        raw = files[INPUT_NAME]
+        document = validate_experiment_input(_json(raw))
+        require(canonical_bytes(document) == raw and hashlib.sha256(raw).hexdigest() == task['input_sha256'],
+            'candidate_animation_experiment_input_mismatch')
     elif policy.name == 'video.motion-plan.v1':
         require(set(files) == {'motion-input.json'}, 'candidate_motion_input_required')
         from agent_service.profiles.video import decode_video_json

@@ -1,11 +1,14 @@
 """Additive disabled deployment preparation; all authority below is synthetic test data."""
 from copy import deepcopy
 import json
+import hashlib
+from uuid import uuid4
 
 import pytest
 
 from registry_fixtures import make_catalog
 from agent_service.catalog import CATALOG_KEYS
+from agent_service.contracts import canonical_bytes, ServiceError
 from agent_service.deploy.animation_experiment_catalog import prepare_animation_catalog
 from agent_service.deploy.video_catalog import VideoCatalogError, registry
 from agent_service.profiles.video_animation_experiment import BUNDLE_ROOT, PROFILE
@@ -103,3 +106,46 @@ def test_candidate_cannot_be_silently_enabled_without_own_acceptance():
     merged['routes'][-1]['enabled'] = True
     with pytest.raises(VideoCatalogError, match='invalid_public_catalog'):
         registry(merged)
+
+
+def test_lab_probe_cannot_run_an_implicit_fixture():
+    from agent_service.deploy.acceptance_probe import candidate_config, fixture, render_probe
+    _, host, _ = prepare()
+    config, _, _ = candidate_config(host)
+    with pytest.raises(ServiceError, match='candidate_scenario_required'):
+        fixture(PROFILE)
+    with pytest.raises(ServiceError, match='candidate_scenario_required'):
+        render_probe(config, name='lab-needs-input',
+            worker_image='registry.internal/animation-pi:latest@sha256:' + 'c' * 64,
+            node='offline-node', uid_start=2100000000, bootstrap_secret='offline-bootstrap',
+            upstream_secret='offline-upstream')
+
+
+def test_real_probe_scenario_binds_exact_animation_input_before_model_submission(tmp_path):
+    from agent_service.deploy.acceptance_probe import candidate_config
+    from agent_service.deploy.candidate_scenario import load_scenario
+    from agent_service.profiles.video_animation_experiment import INPUT_NAME, INPUT_SCHEMA
+    _, host, _ = prepare()
+    _, policy, _ = candidate_config(host)
+    document = dict(schema=INPUT_SCHEMA, experiment_id='trace-a', capability='identity',
+        goal='Track A while the squares move.', constraints=dict(width=1280, height=720,
+            fps=24, duration_seconds=8, allowed_engines=['html-svg']),
+        assets={}, prompt_revision='v1', guidance='')
+    raw = canonical_bytes(document)
+    source_dir = tmp_path / 'sources'
+    source_dir.mkdir()
+    (source_dir / INPUT_NAME).write_bytes(raw)
+    scenario = dict(schema_version='agent-candidate-scenario.v1', candidate_scope_only=True,
+        scenario_id=str(uuid4()), profile=PROFILE, timeout_seconds=600,
+        task=dict(input_sha256=hashlib.sha256(raw).hexdigest()),
+        inputs=[dict(name=INPUT_NAME, sha256=hashlib.sha256(raw).hexdigest(), bytes=len(raw))],
+        business_export=None, parent=None)
+    path = tmp_path / 'scenario.json'
+    path.write_bytes(canonical_bytes(scenario))
+    result = load_scenario(path, source_dir, None, policy)
+    assert result.files == {INPUT_NAME: raw}
+    assert result.metadata['production_acceptance_created'] is False
+    scenario['task']['input_sha256'] = 'f' * 64
+    path.write_bytes(canonical_bytes(scenario))
+    with pytest.raises(ServiceError, match='candidate_animation_experiment_input_mismatch'):
+        load_scenario(path, source_dir, None, policy)
