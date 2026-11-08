@@ -200,6 +200,31 @@ def test_exact_context_contains_all_runtime_imports_without_business_application
     assert result.returncode == 0, result.stderr.decode('utf8', 'replace')
 
 
+def test_exact_context_can_rebuild_shared_strategy_input_and_verify_frozen_profile_bundle(source_and_assets, tmp_path):
+    source, assets = source_and_assets
+    archive = tmp_path/'shared-strategy.tar'
+    build.context_archive(source, assets, archive)
+    extracted = tmp_path/'s'
+    with tarfile.open(archive) as stream:
+        stream.extractall(extracted, filter='data')
+    # Lab imports the profile lazily when rebinding new strategy inputs. An
+    # ordinary module import misses this production failure; use only files
+    # actually admitted to the build and read the complete frozen bundle.
+    code = ('import sys; sys.path.insert(0,sys.argv[1]); '
+            'from video_workbench.animation_experiments import pilot_input,_record_input; '
+            'from video_workbench.animation_capabilities import capability_release; '
+            'from agent_service.profiles.video_animation_experiment import verified_bundle,validate_experiment_input; '
+            'legacy=pilot_input(); assert _record_input(legacy,"development")==legacy; '
+            'bound=pilot_input(capability_release_id=capability_release()["id"]); '
+            'assert _record_input(bound,"development")==bound; '
+            'assert validate_experiment_input(bound)==bound; '
+            'assert set(verified_bundle())=={"CONTRACT.md","LICENSE","animation-procedure/SKILL.md"}; '
+            'assert "video_workbench.animation_experiment_runner" not in sys.modules')
+    result = subprocess.run([sys.executable, '-I', '-c', code, str(extracted)],
+                            capture_output=True, check=False, timeout=30)
+    assert result.returncode == 0, result.stderr.decode('utf8', 'replace')
+
+
 def test_docker_context_ignore_admits_exact_files_and_no_rendered_tree():
     raw = (build.ROOT/(build.DOCKERFILE+'.dockerignore')).read_text('utf8').splitlines()
     assert '**' in raw
