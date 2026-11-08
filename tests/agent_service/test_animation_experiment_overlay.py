@@ -1,7 +1,9 @@
 """Donor branch ordering and fail-closed pre-model image checks, without Docker."""
 import ast
+import io
 import json
 from pathlib import Path
+import tarfile
 from types import SimpleNamespace
 
 import pytest
@@ -35,27 +37,34 @@ RESOURCES = '''def measured_package(config, policy, control_root):
 '''
 
 
-def donor(newline='\n'):
+def donor(newline='\n', kind='synthetic'):
+    resources = RESOURCES if kind == 'synthetic' else (Path(__file__).with_name(
+        'animation_overlay_' + kind + '_resources.txt')).read_text(encoding='utf-8')
     return {name: value.replace('\n', newline) for name, value in {
         'profiles/__init__.py': "def implementation(name):\n    raise ValueError('No reviewed profile implementation')\n",
         'registry.py': "OutputSchema = Literal['text-output.v1']\n",
-        'resources.py': RESOURCES,
+        'resources.py': resources,
         'deploy/acceptance_probe.py': "PROFILES = {'video.storyboard.v1'}\n"}.items()}
 
 
 def branch(source, name):
-    node = ast.parse(source).body[0].body[0]
+    function = next(row for row in ast.parse(source).body
+                    if isinstance(row, ast.FunctionDef) and row.name == 'measured_package')
+    node = next(row for row in function.body if isinstance(row, ast.If)
+                and overlay.resource_condition(row.test) == ('prefix', 'ppt.'))
     while True:
         if eval(compile(ast.Expression(node.test), '<reviewed-test-branch>', 'eval'),
                 {'policy': SimpleNamespace(name=name)}):
             return ast.unparse(node.test), node.body
-        assert len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If)
+        if not (len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If)):
+            return 'else', node.orelse
         node = node.orelse[0]
 
 
 @pytest.mark.parametrize('newline', ['\n', '\r\n'])
-def test_specific_animation_package_precedes_generic_video_and_preserves_old_routes(newline):
-    original = donor(newline)
+@pytest.mark.parametrize('kind', ['synthetic', 'control', 'pi'])
+def test_specific_animation_package_precedes_either_reviewed_video_terminal_and_preserves_old_routes(newline, kind):
+    original = donor(newline, kind)
     patched = overlay.patched_sources(original)
     code = patched['resources.py'].decode()
     selected, body = branch(code, overlay.PROFILE)
@@ -92,14 +101,59 @@ def test_the_failed_late_branch_insertion_is_detected_by_the_regression():
 def test_unrecognized_donor_cannot_silently_fall_back_to_another_patch_anchor():
     original = donor()
     original['resources.py'] = original['resources.py'].replace("policy.name.startswith('video.')", "policy.name == 'video.scene.v1'")
-    with pytest.raises(RuntimeError, match='donor_patch_anchor_changed'):
+    with pytest.raises(RuntimeError, match='donor_resources_shape_not_reviewed'):
         overlay.patched_sources(original)
+
+
+@pytest.mark.parametrize('kind,expected', [
+    ('control', '1048d328dde1656a214c24198b4a9779dcdc73caabc720f1aa478640a801529a'),
+    ('pi', 'f311327da42bf55acb099bd82d9b40cf7e00c7236e87da00012b243c40da6a23')])
+def test_resource_regressions_use_both_exact_inspected_donors(kind, expected):
+    # Text normalization only tolerates Git's Windows checkout conversion.
+    source = Path(__file__).with_name('animation_overlay_' + kind + '_resources.txt').read_text(encoding='utf-8')
+    assert overlay.sha(source.encode()) == expected
+
+
+def test_unknown_earlier_profile_predicate_is_rejected_instead_of_shadowing_new_profile():
+    source = RESOURCES.replace("policy.name == 'video.motion-plan.v1'", "policy.name.startswith('video')")
+    with pytest.raises(RuntimeError, match='donor_resources_shape_not_reviewed'):
+        overlay.patched_resources(source)
 
 
 def test_already_patched_donor_is_refused():
     once = {name: raw.decode() for name, raw in overlay.patched_sources(donor()).items()}
     with pytest.raises(RuntimeError, match='donor_already_has_profile'):
         overlay.patched_sources(once)
+
+
+def test_core_and_builder_revisions_are_recorded_separately_without_changing_profile_bytes(tmp_path, monkeypatch):
+    source = Path(overlay.__file__).resolve().parents[2]
+    core, builder = '7' * 40, 'f' * 40
+    image = 'registry.internal/animation:latest'
+    digest = 'sha256:' + 'a' * 64
+    captured = {}
+    def run(arguments, **settings):
+        if arguments[:3] == ['git', '-C', str(source)]:
+            return (core + '\n').encode() if 'rev-parse' in arguments else b''
+        if arguments[:2] == ['docker', 'build']:
+            with tarfile.open(fileobj=io.BytesIO(settings['input'])) as archive:
+                captured['dockerfile'] = archive.extractfile('Dockerfile').read().decode()
+                captured['profile'] = archive.extractfile('overlay/profiles/video_animation_experiment.py').read()
+            return b''
+        assert arguments == ['docker', 'push', image]
+        return b''
+    monkeypatch.setattr(overlay, 'run', run)
+    monkeypatch.setattr(overlay, 'inspect', lambda *a: dict(Config={}, Id='sha256:' + 'b' * 64,
+        RepoDigests=[image.removesuffix(':latest') + '@' + digest]))
+    monkeypatch.setattr(overlay, 'donor_sources', lambda *a: donor(kind='control'))
+    receipt = overlay.build(SimpleNamespace(repository=source, revision=core, builder_revision=builder,
+        base_image='registry.internal/control@' + digest, target_image=image, output=tmp_path / 'receipt.json',
+        source_archive=None, archive_sha256=None))
+    assert receipt['revision'] == core and receipt['builder_revision'] == builder
+    assert receipt['builder_source_sha256'] == overlay.sha(Path(overlay.__file__).read_bytes())
+    assert 'org.opencontainers.image.revision="' + core + '"' in captured['dockerfile']
+    assert 'builder-revision="' + builder + '"' in captured['dockerfile']
+    assert captured['profile'] == (source / 'agent_service/profiles/video_animation_experiment.py').read_bytes()
 
 
 def preflight_fixture(tmp_path, monkeypatch, *, failure=None, network='none'):

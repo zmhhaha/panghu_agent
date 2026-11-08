@@ -67,6 +67,68 @@ def once(source, before, after):
     return source.replace(before, after, 1)
 
 
+def resource_condition(test):
+    """Recognize only the reviewed package profile tests, without executing one."""
+    name = ast.dump(ast.parse('policy.name', mode='eval').body)
+    if (isinstance(test, ast.Call) and isinstance(test.func, ast.Attribute)
+        and ast.dump(test.func.value) == name and test.func.attr == 'startswith'
+        and len(test.args) == 1 and not test.keywords and isinstance(test.args[0], ast.Constant)
+        and test.args[0].value in {'ppt.', 'research.', 'video.'}):
+        return ('prefix', test.args[0].value)
+    if (isinstance(test, ast.Compare) and ast.dump(test.left) == name
+        and len(test.ops) == len(test.comparators) == 1):
+        value = test.comparators[0]
+        if (isinstance(test.ops[0], ast.Eq) and isinstance(value, ast.Constant)
+            and value.value in {'video.motion-plan.v1', 'video.explanation-plan.v1', 'video.process-plan.v1'}):
+            return ('profile', value.value)
+        if isinstance(test.ops[0], ast.In) and isinstance(value, ast.Set):
+            if all(isinstance(item, ast.Constant) and type(item.value) is str for item in value.elts):
+                if {item.value for item in value.elts} == {'video.storyboard.v1', 'video.scene.v1'}:
+                    return ('legacy-video',)
+    return None
+
+
+def patched_resources(source):
+    """Insert before either inspected terminal video branch; preserve other bytes.
+
+    The real control donor has an explicit legacy-profile set, while the Pi
+    donor has a generic video prefix. Both known chains are reviewed here;
+    unfamiliar conditions or terminal branches fail closed.
+    """
+    functions = [row for row in ast.parse(source).body
+                 if isinstance(row, ast.FunctionDef) and row.name == 'measured_package']
+    require(len(functions) == 1 and PROFILE not in source, 'donor_resources_shape_not_reviewed')
+    roots = [row for row in functions[0].body if isinstance(row, ast.If)
+             and resource_condition(row.test) == ('prefix', 'ppt.')]
+    require(len(roots) == 1, 'donor_resources_shape_not_reviewed')
+    branches, node = [], roots[0]
+    while True:
+        branches.append(node)
+        if len(node.orelse) == 1 and isinstance(node.orelse[0], ast.If):
+            node = node.orelse[0]
+        else:
+            break
+    keys = [resource_condition(row.test) for row in branches]
+    require(None not in keys and len(keys) == len(set(keys))
+        and keys[:2] == [('prefix', 'ppt.'), ('prefix', 'research.')]
+        and keys[-1] in {('prefix', 'video.'), ('legacy-video',)}
+        and not any(key in {('prefix', 'video.'), ('legacy-video',)} for key in keys[:-1])
+        and len(node.orelse) == 1 and isinstance(node.orelse[0], ast.Raise),
+        'donor_resources_shape_not_reviewed')
+    lines = source.splitlines(keepends=True)
+    require(node.col_offset == 4 and lines[node.lineno - 1].startswith('    elif '),
+            'donor_resources_shape_not_reviewed')
+    newline = '\r\n' if '\r\n' in source else '\n'
+    insertion = (
+        "    elif policy.name == 'video.animation-experiment.v1':\n"
+        "        from .profiles.video_animation_experiment import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle\n"
+        "        root = BUNDLE_ROOT\n"
+        "        mandatory = {'manifest.json', *BUNDLE_FILES}\n"
+        "        verified_bundle()\n").replace('\n', newline)
+    offset = sum(map(len, lines[:node.lineno - 1]))
+    return source[:offset] + insertion + source[offset:]
+
+
 def patched_sources(sources):
     require(PROFILE not in sources['profiles/__init__.py'], 'donor_already_has_profile')
     init = once(sources['profiles/__init__.py'],
@@ -80,14 +142,7 @@ def patched_sources(sources):
     value = registry[start:end]
     require(value.endswith(']') and OUTPUT_SCHEMA not in value, 'donor_schema_already_registered')
     registry = registry[:start] + value[:-1] + ", '" + OUTPUT_SCHEMA + "']" + registry[end:]
-    resources = once(sources['resources.py'],
-        "    elif policy.name.startswith('video.'):\n",
-        "    elif policy.name == 'video.animation-experiment.v1':\n"
-        "        from .profiles.video_animation_experiment import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle\n"
-        "        root = BUNDLE_ROOT\n"
-        "        mandatory = {'manifest.json', *BUNDLE_FILES}\n"
-        "        verified_bundle()\n"
-        "    elif policy.name.startswith('video.'):\n")
+    resources = patched_resources(sources['resources.py'])
     probe = sources['deploy/acceptance_probe.py']
     start, end = assignment(probe, 'PROFILES')
     value = probe[start:end]
@@ -169,6 +224,9 @@ def build(args):
     """Build a minimal independent overlay; never alter a running service."""
     require(IMAGE.fullmatch(args.base_image) and TARGET.fullmatch(args.target_image)
         and re.fullmatch(r'[0-9a-f]{40}', args.revision), 'immutable_donor_latest_target_and_revision_required')
+    builder_revision = getattr(args, 'builder_revision', None) or args.revision
+    require(re.fullmatch(r'[0-9a-f]{40}', builder_revision), 'builder_revision_required')
+    builder_source_sha256 = sha(Path(__file__).read_bytes())
     require(not args.output.exists() and not args.output.is_symlink(), 'output_exists')
     repository = args.repository.resolve()
     if args.source_archive:
@@ -196,6 +254,8 @@ def build(args):
     dockerfile = (f'FROM {args.base_image}\nCOPY overlay/ {PACKAGE}\n'
         f'LABEL org.opencontainers.image.revision="{args.revision}" '
         f'io.panghu.animation-experiment.profile="{PROFILE}" '
+        f'io.panghu.animation-experiment.builder-revision="{builder_revision}" '
+        f'io.panghu.animation-experiment.builder-source-sha256="{builder_source_sha256}" '
         f'io.panghu.animation-experiment.donor="{args.base_image}"\n').encode()
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode='w') as archive:
@@ -215,6 +275,7 @@ def build(args):
     matches = [value for value in pushed.get('RepoDigests', []) if value.startswith(repository_name + '@sha256:')]
     require(len(matches) == 1, 'pushed_digest_unavailable')
     receipt = dict(schema='animation-agent-overlay-build.v1', revision=args.revision,
+        builder_revision=builder_revision, builder_source_sha256=builder_source_sha256,
         donor=args.base_image, image=args.target_image + '@' + matches[0].split('@')[1],
         donor_image_id=before['Id'], built_image_id=after['Id'],
         context_sha256=sha(context), runtime_configuration_preserved=True,
@@ -343,6 +404,7 @@ def main():
     build_parser.add_argument('--base-image', required=True)
     build_parser.add_argument('--target-image', required=True)
     build_parser.add_argument('--revision', required=True)
+    build_parser.add_argument('--builder-revision', help='Separate builder source revision; defaults to core revision')
     build_parser.add_argument('--output', required=True, type=Path)
     build_parser.add_argument('--source-archive', type=Path)
     build_parser.add_argument('--archive-sha256')
