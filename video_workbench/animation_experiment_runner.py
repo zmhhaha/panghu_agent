@@ -226,13 +226,13 @@ def _attach_recovery(record, plan):
         record['provenance']['recovery'] = deepcopy(plan['recovery'])
 
 
-def _reserved_candidate(root, slot, record):
+def _reserved_candidate(root, slot, record, *, slot_name='development-v1'):
     run_dir, document = root / slot['run_id'], record['input_document']
     raw = _ordinary_file(run_dir, RESERVATION_NAME, INPUT_MAX_BYTES)
     reservation = decode(raw)
     require(digest(raw) == slot['candidate_reservation_sha256']
             and reservation.get('schema') == RESERVATION_SCHEMA
-            and reservation.get('slot') == 'development-v1' and reservation.get('run_id') == slot['run_id']
+            and reservation.get('slot') == slot_name and reservation.get('run_id') == slot['run_id']
             and reservation.get('profile') == PROFILE and reservation.get('profile_revision') == '1'
             and reservation.get('max_generation_attempts') == 1 and reservation.get('automatic_retries') is False
             and reservation.get('input_sha256') == slot['input_sha256'] == digest(document)
@@ -251,6 +251,57 @@ def _reserved_candidate(root, slot, record):
             and binding.sha256 == reservation['execution_binding_sha256'],
             'animation_experiment_candidate_reservation_changed')
     return reservation, binding, receipt, source_sha
+
+
+def _slot_document(root, plan, slot_name, *, importing=False):
+    """Share admission order and frozen-input checks across both transports."""
+    require('recovery_child' not in plan, 'animation_experiment_pilot_superseded', 409)
+    require(slot_name in SLOTS, 'animation_experiment_slot_invalid')
+    slot = plan['slots'][slot_name]
+    require(slot['state'] == ('candidate_reserved' if importing else 'unstarted'),
+            'animation_experiment_candidate_not_reserved' if importing
+            else 'animation_experiment_attempt_already_reserved', 409)
+    revision = 'v2' if slot_name.endswith('v2') else 'v1'
+    role = 'held_out' if slot_name.startswith('held-out') else 'development'
+    require(plan['guidance']['v1'] == '' and (revision != 'v2' or plan['guidance']['v2'] is not None),
+            'animation_experiment_revision_not_ready', 409)
+    if role == 'held_out':
+        require(plan['slots']['development-v2']['state'] == 'finished',
+                'animation_experiment_holdout_not_released', 409)
+        developed = read_run(root / plan['slots']['development-v2']['run_id'])
+        require(developed['input_document'] == pilot_input('development', 'v2', plan['guidance']['v2']),
+                'animation_experiment_frozen_guidance_changed', 409)
+    document = pilot_input(role, revision, plan['guidance'][revision])
+    validate_experiment_input(document)
+    return slot, document, role
+
+
+def _candidate_comparison_baseline(root, plan):
+    """Bind subsequent isolated executions to the already reviewed first run.
+
+    This does not enable a shared route or authorize any new Agent launch. A
+    different worker, source package, policy, asset set or renderer is a new
+    experiment, not an interchangeable prompt comparison.
+    """
+    first = plan['slots']['development-v1']
+    require(first['state'] == 'finished', 'animation_experiment_baseline_not_ready', 409)
+    row = read_run(root / first['run_id'])
+    require(row['status'] == 'rendered' and row['input_document'] == pilot_input(),
+            'animation_experiment_baseline_changed', 409)
+    reservation, _, _, _ = _reserved_candidate(root, first, row)
+    report = decode(_ordinary_file(root / first['run_id'], 'report.json', 3 * 1024 * 1024))
+    renderer = report.get('renderer', {})
+    host_sha = renderer.get('receipt', {}).get('host_sha256')
+    require(type(renderer.get('image')) is str
+            and re.fullmatch(r'[a-z0-9][a-z0-9._:/-]*:latest@sha256:[0-9a-f]{64}', renderer['image'])
+            and type(host_sha) is str and re.fullmatch(r'[0-9a-f]{64}', host_sha),
+            'animation_experiment_baseline_renderer_missing', 409)
+    return dict(run_id=row['id'], run_identity=row['identity'],
+        expected_binding_sha256=reservation['expected_binding_sha256'],
+        build_receipt_sha256=reservation['build_receipt_sha256'],
+        declared_model_policy=reservation.get('declared_model_policy'),
+        renderer_image=renderer['image'], renderer_host_sha256=host_sha,
+        assets=deepcopy(row['input_document']['assets']))
 
 
 def _candidate_input_bound(envelope, binding, document):
@@ -329,19 +380,20 @@ def _fail(root, plan, slot, record, error):
 
 
 @_pilot_lock
-def reserve_candidate(directory, *, expected_binding_file, build_receipt, model_policy_file=None):
-    """Reserve the first pilot attempt before an external candidate is run.
+def reserve_candidate(directory, *, expected_binding_file, build_receipt, model_policy_file=None,
+                      slot_name='development-v1'):
+    """Reserve one named pilot slot before an explicit isolated execution.
 
     No Agent upload, admission or rendering occurs. A crash or later failed
-    import leaves this slot consumed, so candidate acceptance is not a fifth task.
+    import leaves this slot consumed. The initial acceptance and later isolated
+    executions share the same four-slot budget; no task is added or retried.
     """
     root, plan = _load(directory)
-    require(all(plan['slots'][name]['state'] == 'unstarted' for name in SLOTS)
-            and plan['guidance'] == {'v1': '', 'v2': None},
-            'animation_experiment_attempt_already_reserved', 409)
-    slot = plan['slots']['development-v1']
-    document = pilot_input('development', 'v1', '')
-    validate_experiment_input(document)
+    slot, document, _ = _slot_document(root, plan, slot_name)
+    if slot_name == 'development-v1':
+        require(all(plan['slots'][name]['state'] == 'unstarted' for name in SLOTS)
+                and plan['guidance'] == {'v1': '', 'v2': None},
+                'animation_experiment_attempt_already_reserved', 409)
     from agent_service.deploy.candidate_scenario import _read
     expected_binding_file, build_receipt = Path(expected_binding_file), Path(build_receipt)
     binding_raw = _read(expected_binding_file.parent, expected_binding_file.name)
@@ -349,20 +401,28 @@ def reserve_candidate(directory, *, expected_binding_file, build_receipt, model_
     binding, receipt, source_sha = _candidate_build(binding_raw, receipt_raw)
     policy = _read_model_policy(model_policy_file)
     _bind_model_policy({'provenance': {}}, policy, binding.model_dump(mode='json'))
+    baseline = None if slot_name == 'development-v1' else _candidate_comparison_baseline(root, plan)
+    if baseline is not None:
+        require(digest(binding_raw) == baseline['expected_binding_sha256']
+                and digest(receipt_raw) == baseline['build_receipt_sha256']
+                and policy == baseline['declared_model_policy'] and document['assets'] == baseline['assets'],
+                'animation_experiment_comparison_environment_changed', 409)
     prompt = VideoAnimationExperimentProfile().build_prompt({'input_sha256': digest(document)})
     reservation = dict(schema=RESERVATION_SCHEMA, reservation_id=str(uuid4()),
-        slot='development-v1', run_id=slot['run_id'], profile=PROFILE, profile_revision='1',
+        slot=slot_name, run_id=slot['run_id'], profile=PROFILE, profile_revision='1',
         input_sha256=digest(document), prompt_text=prompt, prompt_sha256=digest(prompt.encode('utf-8')),
         expected_binding_sha256=digest(binding_raw), build_receipt_sha256=digest(receipt_raw),
         profile_source_sha256=source_sha, worker_image=receipt['image'],
         execution_binding_sha256=binding.sha256, declared_model_policy=policy,
         created_at=time.time(), max_generation_attempts=1, automatic_retries=False)
+    if baseline is not None:
+        reservation['comparison_baseline'] = baseline
     run_dir = root / slot['run_id']
     run_dir.mkdir()
     slot.update(state='candidate_reserved', input_sha256=digest(document),
         candidate_reservation_sha256=digest(reservation), created_at=reservation['created_at'])
     # Persist before writing sources. An incomplete reservation can only fail;
-    # it cannot reauthorize the first slot or trigger another candidate job.
+    # it cannot reauthorize this slot or trigger another candidate job.
     _write(root / 'pilot.json', plan)
     _write(run_dir / INPUT_NAME, document, exclusive=True)
     _write(run_dir / RESERVATION_NAME, reservation, exclusive=True)
@@ -587,7 +647,8 @@ def create_recovery(directory, new_directory, *, authorization_note, max_tasks=4
 
 
 @_pilot_lock
-def complete_candidate(directory, candidate_dir, *, renderer_image, assets_dir=None):
+def complete_candidate(directory, candidate_dir, *, renderer_image, assets_dir=None,
+                       slot_name='development-v1'):
     """Import one stopped, operator-captured candidate into its reserved slot.
 
     This path never constructs an AgentClient or submits/retries a task. Root-
@@ -597,17 +658,26 @@ def complete_candidate(directory, candidate_dir, *, renderer_image, assets_dir=N
     from agent_service.deploy.candidate_scenario import PARENT_FILES, _read, _json, verify_parent
 
     root, plan = _load(directory)
-    slot = plan['slots']['development-v1']
-    require(slot['state'] == 'candidate_reserved', 'animation_experiment_candidate_not_reserved', 409)
+    slot, document, role = _slot_document(root, plan, slot_name, importing=True)
     slot['state'] = 'candidate_importing'
     _write(root / 'pilot.json', plan)
-    document = pilot_input('development', 'v1', '')
-    record = _record(slot, document, 'development')
+    record = _record(slot, document, role)
     _attach_recovery(record, plan)
-    record['provenance']['admission'] = 'external_acceptance_candidate_reused_in_reserved_pilot_slot'
+    record['provenance']['admission'] = (
+        'external_acceptance_candidate_reused_in_reserved_pilot_slot' if slot_name == 'development-v1'
+        else 'explicit_isolated_pilot_execution_not_shared_route_admission')
     run_dir = root / slot['run_id']
     try:
-        reservation, binding, receipt, source_sha = _reserved_candidate(root, slot, record)
+        reservation, binding, receipt, source_sha = _reserved_candidate(root, slot, record, slot_name=slot_name)
+        if slot_name != 'development-v1':
+            from .animation_experiment_render import HOST
+            baseline = _candidate_comparison_baseline(root, plan)
+            require(reservation.get('comparison_baseline') == baseline
+                    and renderer_image == baseline['renderer_image']
+                    and digest(HOST.read_bytes()) == baseline['renderer_host_sha256']
+                    and document['assets'] == baseline['assets'],
+                    'animation_experiment_comparison_environment_changed', 409)
+            record['provenance']['comparison_baseline'] = baseline
         captured = run_dir / 'candidate-evidence'
         captured.mkdir()
         documents, hashes = {}, {}
@@ -622,6 +692,15 @@ def complete_candidate(directory, candidate_dir, *, renderer_image, assets_dir=N
             documents[name] = _json(evidence_raw)
         record['provenance']['candidate_files_sha256'] = hashes
         envelope, result = verify_parent(documents)
+        for other_name, other_slot in plan['slots'].items():
+            if other_name == slot_name:
+                continue
+            other_dir = root / other_slot['run_id']
+            if (other_dir / 'experiment-run.json').exists():
+                other = read_run(other_dir)['provenance']
+                require(other.get('job_id') != envelope.job_id
+                        and other.get('attempt', {}).get('attempt_id') != envelope.attempt_id,
+                        'animation_experiment_candidate_execution_reused', 409)
         _bind_model_policy(record, reservation.get('declared_model_policy'),
                            envelope.execution_binding.model_dump(mode='json'))
         _candidate_input_bound(envelope, binding, document)
@@ -654,18 +733,7 @@ def complete_candidate(directory, candidate_dir, *, renderer_image, assets_dir=N
 def run(directory, slot_name, gateway, *, renderer_image, assets_dir=None, timeout=600, poll_seconds=3,
         model_policy_file=None):
     root, plan = _load(directory)
-    require('recovery_child' not in plan, 'animation_experiment_pilot_superseded', 409)
-    require(slot_name in SLOTS, 'animation_experiment_slot_invalid')
-    slot = plan['slots'][slot_name]
-    require(slot['state'] == 'unstarted', 'animation_experiment_attempt_already_reserved', 409)
-    revision = 'v2' if slot_name.endswith('v2') else 'v1'
-    role = 'held_out' if slot_name.startswith('held-out') else 'development'
-    require(revision != 'v2' or plan['guidance']['v2'] is not None, 'animation_experiment_revision_not_ready', 409)
-    if role == 'held_out':
-        require(plan['slots']['development-v2']['state'] == 'finished',
-                'animation_experiment_holdout_not_released', 409)
-    document = pilot_input(role, revision, plan['guidance'][revision])
-    validate_experiment_input(document)
+    slot, document, role = _slot_document(root, plan, slot_name)
     policy = _read_model_policy(model_policy_file)
     run_dir = root / slot['run_id']
     run_dir.mkdir()
@@ -731,6 +799,8 @@ def main(argv=None):
     change.add_argument('--feedback-file', required=True, type=Path)
     reserve = commands.add_parser('reserve-candidate')
     reserve.add_argument('--directory', required=True, type=Path)
+    reserve.add_argument('--slot', choices=SLOTS, default='development-v1',
+                         help='one explicit existing pilot slot; does not launch an Agent')
     reserve.add_argument('--expected-binding-file', required=True, type=Path,
                          help='root-owned exact host_policy(host).execution_binding JSON')
     reserve.add_argument('--build-receipt', required=True, type=Path,
@@ -738,6 +808,7 @@ def main(argv=None):
     reserve.add_argument('--model-policy-file', type=Path, help='public operator ModelPolicy JSON; never actual-model evidence')
     complete = commands.add_parser('complete-candidate')
     complete.add_argument('--directory', required=True, type=Path)
+    complete.add_argument('--slot', choices=SLOTS, default='development-v1')
     complete.add_argument('--candidate-dir', required=True, type=Path,
                           help='root-owned captured request, evidence, result and stopped worker Pod')
     complete.add_argument('--renderer-image', required=True)
@@ -768,10 +839,12 @@ def main(argv=None):
     elif args.command == 'reserve-candidate':
         print(json.dumps(reserve_candidate(args.directory, expected_binding_file=args.expected_binding_file,
                                            build_receipt=args.build_receipt,
-                                           model_policy_file=args.model_policy_file), ensure_ascii=True))
+                                           model_policy_file=args.model_policy_file,
+                                           slot_name=args.slot), ensure_ascii=True))
     elif args.command == 'complete-candidate':
         result = complete_candidate(args.directory, args.candidate_dir,
-                                    renderer_image=args.renderer_image, assets_dir=args.assets_dir)
+                                    renderer_image=args.renderer_image, assets_dir=args.assets_dir,
+                                    slot_name=args.slot)
         print(json.dumps({k: result[k] for k in ('id', 'identity', 'status')}, ensure_ascii=True))
     elif args.command == 'close-failed-candidate':
         result = close_failed_candidate(args.directory, args.evidence_dir)

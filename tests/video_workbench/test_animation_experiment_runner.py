@@ -135,6 +135,7 @@ def wire(monkeypatch):
         for index in (0, 24, 72, 120, 156, 191):
             (destination / 'work' / 'frames' / ('frame-%06d.jpg' % index)).write_bytes(b'SYNTHETIC-JPEG-' + str(index).encode())
         return dict(schema='video.animation-experiment-render-outcome.v1', status='rendered',
+            image=kwargs['image'], receipt=dict(host_sha256=lab.digest(media.HOST.read_bytes())),
             technical=dict(status='passed', scope='synthetic unit transport only'),
             cleanup=dict(status='removed_and_confirmed_absent'), visual_quality='not_evaluated')
 
@@ -319,7 +320,7 @@ def synthetic_binding(profile_name=PROFILE):
         acceptance_sha256='0' * 64)
 
 
-def reserve(root):
+def reserve(root, slot_name='development-v1'):
     # Explicitly synthetic build-source descriptors for offline unit custody.
     binding = root / '.synthetic-expected-binding.json'
     receipt = root / '.synthetic-build-receipt.json'
@@ -329,7 +330,8 @@ def reserve(root):
         new_files={'profiles/video_animation_experiment.py':
             lab.digest(runner.Path(runner.experiment_profile.__file__).read_bytes()),
             'resources/animation-experiment-v1/manifest.json': runner.experiment_profile.BUNDLE_MANIFEST_SHA256})))
-    return runner.reserve_candidate(root, expected_binding_file=binding, build_receipt=receipt)
+    return runner.reserve_candidate(root, expected_binding_file=binding, build_receipt=receipt,
+                                    slot_name=slot_name)
 
 
 def synthetic_candidate(directory, document, change=None):
@@ -342,7 +344,9 @@ def synthetic_candidate(directory, document, change=None):
     binding = synthetic_binding(profile_name)
     limits = {name: getattr(profile.limits, name) for name in ('max_input_bytes', 'max_input_total_bytes',
         'max_input_files', 'max_artifact_bytes', 'max_artifact_file_bytes', 'max_artifact_files')}
-    envelope = ExecutionEnvelope(job_id=str(UUID(int=2)), attempt_id=str(UUID(int=3)), fence=1,
+    # Distinct input executions have distinct synthetic authority identities.
+    identity = 2 if document == lab.pilot_input() else int(input_hash[:30], 16) + 10
+    envelope = ExecutionEnvelope(job_id=str(UUID(int=identity)), attempt_id=str(UUID(int=identity + 1)), fence=1,
         engine=binding.engine, profile=profile_name, profile_revision='1', runtime_revision=binding.runtime_revision,
         image_digest=binding.image_digest, deadline_at=2000., lease_expires_at=1500.,
         task={'input_sha256': input_hash}, inputs=[InlineFile.from_bytes(INPUT_NAME, raw_input)],
@@ -797,3 +801,145 @@ def test_recovery_initialization_resumes_reserved_same_successor_without_new_bud
     assert recovered['recovery']['identity'] == marker['origin']['identity']
     assert runner._load(root)[1]['recovery_child']['state'] == 'initialized'
     assert peer.calls == [] and rendered == []
+
+
+def isolated_slot(root, temporary, slot_name):
+    reservation = reserve(root, slot_name)
+    document = json.loads(Path(reservation['input_path']).read_bytes())
+    evidence = temporary / ('isolated-' + slot_name)
+    synthetic_candidate(evidence, document)
+    return runner.complete_candidate(root, evidence, slot_name=slot_name, renderer_image=IMAGE)
+
+
+def test_four_explicit_isolated_slots_share_budget_frozen_environment_and_no_gateway_launch(tmp_path, wire):
+    _, peer, rendered = wire
+    root = init(tmp_path)
+    first = isolated_slot(root, tmp_path, 'development-v1')
+    guidance = 'Preserve distinct identities through continuous curved movement.'
+    runner.revise(root, guidance, 'Synthetic engineering observation only; no aesthetic approval.')
+    rows = [first]
+    for slot_name in runner.SLOTS[1:]:
+        row = isolated_slot(root, tmp_path, slot_name)
+        rows.append(row)
+        assert row['input_document']['guidance'] == (guidance if slot_name.endswith('v2') else '')
+        assert row['input_document']['constraints'] == lab.constraints(row['input_role'])
+        assert row['provenance']['admission'] == 'explicit_isolated_pilot_execution_not_shared_route_admission'
+        reference = row['provenance']['comparison_baseline']
+        assert reference['run_identity'] == first['identity']
+        assert reference['renderer_image'] == IMAGE
+        assert reference['assets'] == {} and reference['declared_model_policy'] is None
+        assert reference['renderer_host_sha256'] == lab.digest(media.HOST.read_bytes())
+        assert row['provenance']['returned_model'] is None
+    assert len({row['provenance']['attempt']['attempt_id'] for row in rows}) == 4
+    assert len(rendered) == 4 and peer.calls == []
+    assert all(slot['state'] == 'finished' for slot in runner._load(root)[1]['slots'].values())
+    for slot_name in runner.SLOTS:
+        with pytest.raises(lab.ExperimentError, match='already_reserved'):
+            reserve(root, slot_name)
+        with pytest.raises(lab.ExperimentError, match='candidate_not_reserved'):
+            runner.complete_candidate(root, tmp_path / 'unused', slot_name=slot_name, renderer_image=IMAGE)
+    with pytest.raises(lab.ExperimentError, match='slot_invalid'):
+        reserve(root, 'fifth-task')
+    assert len(rendered) == 4 and peer.calls == []
+
+
+@pytest.mark.parametrize('slot_name,code', [
+    ('development-v2', 'revision_not_ready'), ('held-out-v1', 'holdout_not_released'),
+    ('held-out-v2', 'revision_not_ready'), ('extra', 'slot_invalid')])
+def test_isolated_candidate_order_rejected_before_any_slot_or_input_write(tmp_path, wire, slot_name, code):
+    _, peer, rendered = wire
+    root = init(tmp_path)
+    before = (root / 'pilot.json').read_bytes()
+    with pytest.raises(lab.ExperimentError, match=code):
+        reserve(root, slot_name)
+    assert (root / 'pilot.json').read_bytes() == before
+    assert all(not (root / row['run_id']).exists() for row in runner._load(root)[1]['slots'].values())
+    assert peer.calls == [] and rendered == []
+
+
+def test_isolated_heldout_waits_for_completed_development_v2_and_frozen_guidance(tmp_path, wire):
+    _, peer, rendered = wire
+    root = init(tmp_path)
+    isolated_slot(root, tmp_path, 'development-v1')
+    runner.revise(root, 'Continuous curved choreography.', 'Synthetic direction only.')
+    with pytest.raises(lab.ExperimentError, match='holdout_not_released'):
+        reserve(root, 'held-out-v1')
+    isolated_slot(root, tmp_path, 'development-v2')
+    plan = runner._load(root)[1]
+    plan['guidance']['v2'] = 'A new direction informed by heldout would contaminate the comparison.'
+    (root / 'pilot.json').write_bytes(lab.canonical(plan))
+    with pytest.raises(lab.ExperimentError, match='frozen_guidance_changed'):
+        reserve(root, 'held-out-v1')
+    with pytest.raises(lab.ExperimentError, match='frozen_guidance_changed'):
+        reserve(root, 'held-out-v2')
+    assert len(rendered) == 2 and peer.calls == []
+    assert runner._load(root)[1]['slots']['held-out-v1']['state'] == 'unstarted'
+
+
+@pytest.mark.parametrize('change', ['receipt', 'binding'])
+def test_subsequent_isolated_candidate_cannot_change_reviewed_build_environment(tmp_path, wire, change):
+    _, peer, rendered = wire
+    root = init(tmp_path)
+    isolated_slot(root, tmp_path, 'development-v1')
+    runner.revise(root, 'Continuous motion.', 'Synthetic engineering observation.')
+    binding = root / '.synthetic-expected-binding.json'
+    receipt = root / '.synthetic-build-receipt.json'
+    changed = binding if change == 'binding' else receipt
+    # JSON whitespace does not change decoded policy, but this path requires the
+    # exact reviewed receipt/binding bytes, not an equivalent unreviewed copy.
+    changed.write_bytes(changed.read_bytes() + b'\n')
+    before = (root / 'pilot.json').read_bytes()
+    with pytest.raises(lab.ExperimentError, match='comparison_environment_changed'):
+        runner.reserve_candidate(root, slot_name='development-v2', expected_binding_file=binding,
+                                 build_receipt=receipt)
+    assert (root / 'pilot.json').read_bytes() == before
+    assert len(rendered) == 1 and peer.calls == []
+
+
+@pytest.mark.parametrize('change', ['renderer', 'host', 'input', 'guidance', 'envelope'])
+def test_isolated_import_rejects_drift_and_preserves_consumed_slot(tmp_path, wire, monkeypatch, change):
+    _, peer, rendered = wire
+    root = init(tmp_path)
+    isolated_slot(root, tmp_path, 'development-v1')
+    runner.revise(root, 'Continuous motion.', 'Synthetic engineering observation.')
+    reservation = reserve(root, 'development-v2')
+    document = json.loads(Path(reservation['input_path']).read_bytes())
+    candidate = tmp_path / 'changed-candidate'
+    synthetic_candidate(candidate, lab.pilot_input() if change == 'envelope' else document)
+    renderer_image = IMAGE
+    if change == 'renderer':
+        renderer_image = IMAGE[:-1] + 'b'
+    elif change == 'host':
+        host = tmp_path / 'different-host.mjs'
+        host.write_bytes(media.HOST.read_bytes() + b'\n// synthetic changed host\n')
+        monkeypatch.setattr(media, 'HOST', host)
+    elif change == 'input':
+        Path(reservation['input_path']).write_bytes(lab.canonical(document) + b'\n')
+    elif change == 'guidance':
+        plan = runner._load(root)[1]
+        plan['guidance']['v2'] += ' Changed after reservation.'
+        (root / 'pilot.json').write_bytes(lab.canonical(plan))
+    with pytest.raises(lab.ExperimentError):
+        runner.complete_candidate(root, candidate, slot_name='development-v2', renderer_image=renderer_image)
+    row = lab.read_run(root / 'identity-development-v2')
+    assert row['status'] == 'failed' and 'output.mp4' not in row['artifacts']
+    assert runner._load(root)[1]['slots']['development-v2']['state'] == 'failed'
+    assert len(rendered) == 1 and peer.calls == []
+    with pytest.raises(lab.ExperimentError, match='already_reserved'):
+        reserve(root, 'development-v2')
+
+
+def test_named_isolated_reservations_cannot_extend_superseded_original_pilot(tmp_path, wire):
+    _, peer, rendered = wire
+    root, _, failed = closed_failure(tmp_path)
+    before = (root / failed['id'] / 'experiment-run.json').read_bytes()
+    recovered = tmp_path / 'recovered'
+    plan = runner.create_recovery(root, recovered, authorization_note='Explicit bounded continuation.')
+    for slot_name in runner.SLOTS:
+        with pytest.raises(lab.ExperimentError, match='pilot_superseded'):
+            reserve(root, slot_name)
+    assert (root / failed['id'] / 'experiment-run.json').read_bytes() == before
+    first = isolated_slot(recovered, tmp_path, 'development-v1')
+    assert first['provenance']['recovery']['identity'] == plan['recovery']['identity']
+    assert first['id'] != failed['id'] and first['provenance']['recovery']['cumulative_candidate_budget'] == 5
+    assert peer.calls == [] and len(rendered) == 1
