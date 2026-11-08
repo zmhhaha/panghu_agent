@@ -1169,4 +1169,5 @@ async function loadCatalog() {
   finally { if (serial === loadSerial) $('reload').disabled = false; }
 }
 $('reload').addEventListener('click', loadCatalog);
+document.addEventListener('animation-lab-regression-pause', () => { pause(); captureDraft(); });
 loadCatalog();

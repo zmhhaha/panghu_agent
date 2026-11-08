@@ -44,6 +44,9 @@ EXPLANATION_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'RESULT.schema.json', '
 PROCESS_RESOURCE = 'resources/video-process-v1/'
 PROCESS_MANIFEST_SHA256 = '3f70951641a0ebd8a3b08771734f0ece568a8fa392caf296181ecf303ea1f409'
 PROCESS_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'PLAN.schema.json', 'process-procedure/SKILL.md'})
+ANIMATION_RESOURCE = 'resources/animation-experiment-v1/'
+ANIMATION_MANIFEST_SHA256 = '2c090966b7df774b399b5c8d48acc002a35fd4b0a5612c21936780f109202b86'
+ANIMATION_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'animation-procedure/SKILL.md'})
 
 
 class BuildError(RuntimeError):
@@ -270,6 +273,28 @@ def context_archive(service, target, destination):
         except (ValueError, TypeError, KeyError, AttributeError):
             raise BuildError('invalid_explanation_resource_manifest') from None
         files['agent_service/' + EXPLANATION_RESOURCE + 'manifest.json'] = manifest
+        manifest = read_regular(service / (ANIMATION_RESOURCE + 'manifest.json'), 65536)
+        try:
+            resource = json.loads(manifest, object_pairs_hook=unique_pairs)
+            if (hashlib.sha256(manifest).hexdigest() != ANIMATION_MANIFEST_SHA256
+                    or resource.get('bundle_revision') != 'animation-experiment-v1'
+                    or resource.get('automatic_updates') is not False
+                    or resource.get('upstream_content_vendored') is not False
+                    or resource.get('license') != 'MIT'):
+                raise ValueError()
+            rows = resource['local_files']
+            if (type(rows) is not list or len(rows) != len(ANIMATION_FILES)
+                    or any(type(row) is not dict or set(row) != {'path', 'sha256'} for row in rows)
+                    or {row['path'] for row in rows} != ANIMATION_FILES):
+                raise ValueError()
+            for row in rows:
+                raw = read_regular(service / (ANIMATION_RESOURCE + row['path']), 128 * 1024)
+                if hashlib.sha256(raw).hexdigest() != row['sha256']:
+                    raise ValueError()
+                files['agent_service/' + ANIMATION_RESOURCE + row['path']] = raw
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise BuildError('invalid_animation_resource_manifest') from None
+        files['agent_service/' + ANIMATION_RESOURCE + 'manifest.json'] = manifest
     root = service.parent
     # Explicit framework-neutral dependencies of the reviewed collectors. No
     # business API/database/publisher, sessions or private Agent HOME is copied.

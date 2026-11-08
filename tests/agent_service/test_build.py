@@ -95,6 +95,11 @@ def service(tmp_path):
         target = root / 'resources/video-explanation-v1' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((EXPLANATION_ROOT / name).read_bytes())
+    from agent_service.profiles.video_animation_experiment import BUNDLE_ROOT as ANIMATION_ROOT, BUNDLE_FILES as ANIMATION_FILES
+    for name in ('manifest.json', *ANIMATION_FILES):
+        target = root / 'resources/animation-experiment-v1' / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((ANIMATION_ROOT / name).read_bytes())
     # Only reviewed framework-neutral helpers may cross the package allowlist;
     # business API/database/runtime files must still remain outside it.
     names = ['pi_worker/__init__.py', 'pi_worker/research_tools/__init__.py',
@@ -423,7 +428,11 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
         "agent_service/resources/video-explanation-v1/CONTRACT.md",
         "agent_service/resources/video-explanation-v1/LICENSE",
         "agent_service/resources/video-explanation-v1/RESULT.schema.json",
-        "agent_service/resources/video-explanation-v1/explanation-procedure/SKILL.md"}
+        "agent_service/resources/video-explanation-v1/explanation-procedure/SKILL.md",
+        "agent_service/resources/animation-experiment-v1/manifest.json",
+        "agent_service/resources/animation-experiment-v1/CONTRACT.md",
+        "agent_service/resources/animation-experiment-v1/LICENSE",
+        "agent_service/resources/animation-experiment-v1/animation-procedure/SKILL.md"}
     assert not any(name.endswith(("credentials.json", "NOT_ALLOWED.md", "private.py")) for name in runner.names)
 
 

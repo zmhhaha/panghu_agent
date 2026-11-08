@@ -29,6 +29,7 @@ from .animation_lab_samples import MODULES, catalog, compile_sample
 from .animation_lab_store import AnnotationStore
 from .animation_lab_triage_store import TriageStore
 from .animation_lab_iteration import IterationError, IterationStore
+from .animation_experiments import ExperimentError, ExperimentStore
 from .motion import FPS, GSAP_VERSION, canonical, sha256
 
 
@@ -39,7 +40,7 @@ MAX_BODY = 32 * 1024
 WEB = Path(__file__).with_name('animation_lab_web')
 _FIELDS = {'case_id', 'case_identity', 'variant_id', 'kind', 'start_seconds',
            'end_seconds', 'region', 'tags', 'severity', 'comment', 'preference', 'verdict'}
-_PUBLIC_URL_FIELDS = frozenset({'preview_url', 'report_url', 'task_url', 'image_url', 'asset_url'})
+_PUBLIC_URL_FIELDS = frozenset({'preview_url', 'report_url', 'task_url', 'image_url', 'asset_url', 'media_url'})
 
 
 class LabError(ValueError):
@@ -125,6 +126,8 @@ class AnimationLab:
         self.triage_store = TriageStore(self.store.path)
         self.iteration_store = IterationStore(self.store.path,
             source_revision=source_revision or os.environ.get('ANIMATION_LAB_SOURCE_REVISION', 'unknown'))
+        self.experiments = ExperimentStore(Path(data_dir) / 'animation-experiments.db',
+            self.evaluations_dir / 'capability-experiments' if self.evaluations_dir else None)
         self.evaluation_lock = threading.RLock()
         self.csrf_token = secrets.token_urlsafe(32)
         self.cases, self.bundles = {}, {}
@@ -641,6 +644,20 @@ class LabHandler(BaseHTTPRequestHandler):
                 return self._json(dict(status='ok'))
             if path == '/api/catalog':
                 return self._json(lab.get_catalog())
+            if path == '/api/experiments':
+                _require(not parsed.query, 'animation_experiment_query_invalid')
+                return self._json(dict(lab.experiments.catalogue(), csrf_token=lab.csrf_token))
+            experiment_pieces = path.strip('/').split('/')
+            if len(experiment_pieces) >= 3 and experiment_pieces[:2] == ['api', 'experiments']:
+                _require(not parsed.query, 'animation_experiment_query_invalid')
+                experiment_id = experiment_pieces[2]
+                if len(experiment_pieces) == 3:
+                    return self._json(dict(lab.experiments.detail(experiment_id), csrf_token=lab.csrf_token))
+                if len(experiment_pieces) >= 6 and experiment_pieces[3] == 'runs':
+                    raw, mime = lab.experiments.artifact(experiment_id, experiment_pieces[4],
+                        '/'.join(experiment_pieces[5:]))
+                    return self._send(raw, mime)
+                raise LabError('animation_experiment_not_found', 404)
             if path == '/api/requirements':
                 suite=lab.requirement_suite(parse_qs(parsed.query,keep_blank_values=True))
                 return self._send(canonical(suite),'application/json; charset=utf-8',download=True,
@@ -672,8 +689,10 @@ class LabHandler(BaseHTTPRequestHandler):
                 _require(parse_qs(parsed.query).get('format', ['jsonl']) == ['jsonl'],
                          'animation_lab_unknown_export')
                 return self._send(lab.store.export_jsonl() + lab.triage_store.export_jsonl()
-                                  + lab.iteration_store.export_jsonl(), 'application/x-ndjson; charset=utf-8', download=True)
-            if path in {'/', '/index.html', '/app.mjs', '/model.mjs', '/style.css', '/lab-player.mjs'}:
+                                  + lab.iteration_store.export_jsonl() + lab.experiments.export_jsonl(),
+                                  'application/x-ndjson; charset=utf-8', download=True)
+            if path in {'/', '/index.html', '/app.mjs', '/model.mjs', '/style.css', '/lab-player.mjs',
+                        '/experiments.mjs', '/experiment-model.mjs'}:
                 name = 'index.html' if path == '/' else path[1:]
                 if name == 'lab-player.mjs':
                     return self._send(lab.player_script, 'text/javascript; charset=utf-8')
@@ -734,7 +753,7 @@ class LabHandler(BaseHTTPRequestHandler):
                     'audio/wav' if name.endswith('.wav') else 'application/json; charset=utf-8')
                 return self._send(clip['files'][name], mime)
             raise LabError('animation_lab_not_found', 404)
-        except (LabError, IterationError) as error:
+        except (LabError, IterationError, ExperimentError) as error:
             self._json(dict(error=error.code), error.status)
         except (FileNotFoundError, KeyError):
             self._json(dict(error='animation_lab_not_found'), 404)
@@ -769,6 +788,10 @@ class LabHandler(BaseHTTPRequestHandler):
                 return self._json(dict(annotation=lab.annotate(body, self.headers.get('User-Agent', ''),
                                                               forwarded_user=self.forwarded_user)), 201)
             pieces = path.strip('/').split('/')
+            if len(pieces) == 4 and pieces[:2] == ['api', 'experiments'] and pieces[3] == 'feedback':
+                _require(not urlsplit(self.path).query, 'animation_experiment_query_invalid')
+                row = lab.experiments.annotate(pieces[2], body, actor=self.forwarded_user or 'local-developer')
+                return self._json(dict(feedback=row), 201)
             if len(pieces) == 4 and pieces[:2] == ['api', 'iterations'] and pieces[3] == 'events':
                 _require(not urlsplit(self.path).query and re.fullmatch(r'[0-9a-f]{64}', pieces[2]) is not None,
                          'animation_lab_iteration_task_invalid')
@@ -787,7 +810,7 @@ class LabHandler(BaseHTTPRequestHandler):
                     raise LabError('animation_lab_annotation_not_found', 404) from None
                 return self._json(dict(annotation=row))
             raise LabError('animation_lab_not_found', 404)
-        except (LabError, IterationError) as error:
+        except (LabError, IterationError, ExperimentError) as error:
             self._json(dict(error=error.code), error.status)
         except (ValueError, OSError):
             self._json(dict(error='animation_lab_evaluation_invalid'), 422)

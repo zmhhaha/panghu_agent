@@ -71,6 +71,26 @@ def proxy(tmp_path_factory):
     client.close()
 
 
+def test_capability_definition_and_feedback_keep_proxy_authentication_and_prefix(proxy):
+    status, catalogue, _ = proxy.request('GET', PREFIX+'/api/experiments')
+    assert status == 200 and len(catalogue['experiments']) == 1
+    experiment = catalogue['experiments'][0]
+    assert experiment['id'] == 'identity-tracking' and experiment['versions'] == []
+    assert experiment['status'] == 'unexecuted'
+    assert proxy.request('GET', PREFIX+'/api/experiments/identity-tracking')[1]['identity'] == experiment['identity']
+    for path in ('/api/experiments', '/api/experiments/identity-tracking',
+                 '/api/experiments/identity-tracking/runs/identity-development-v1/output.mp4'):
+        assert proxy.request('GET', PREFIX+path, omit=['X-Forwarded-User'])[0] == 403
+    body = dict(experiment_identity=experiment['identity'], kind='issue', version_ids=['missing'],
+                version_identities={'missing': '0'*64}, comment='No actual media to annotate',
+                start_seconds=0, end_seconds=1, preference=None)
+    target = PREFIX+'/api/experiments/identity-tracking/feedback'
+    assert proxy.request('POST', target, body, omit=['X-Animation-Lab-Token'])[0] == 403
+    assert proxy.request('POST', target, body)[0] == 422
+    assert proxy.request('GET', PREFIX+'/api/experiments/identity-tracking')[1]['feedback'] == []
+    assert proxy.request('GET', PREFIX+'/api/experiments/unknown')[0] == 404
+
+
 def test_prefix_catalog_preview_assets_and_export_preserve_frozen_identity_and_bytes(proxy):
     before = deepcopy(proxy.lab.cases)
     status, catalog, _ = proxy.request('GET', PREFIX+'/api/catalog')
@@ -87,9 +107,9 @@ def test_prefix_catalog_preview_assets_and_export_preserve_frozen_identity_and_b
                         asset_url=PREFIX+f"/assets/{sha256(ASSETS[asset['name']])}/{asset['name']}")
     assert proxy.lab.cases == before
     status, index, _ = proxy.request('GET', PREFIX+'/')
-    assert status == 200 and b'href="./style.css"' in index and b'src="./app.mjs"' in index
+    assert status == 200 and b'href="./style.css"' in index and b'src="./experiments.mjs"' in index
     assert b'href="./api/export?format=jsonl"' in index
-    for path in ('/app.mjs', '/model.mjs', '/style.css', '/lab-player.mjs'):
+    for path in ('/app.mjs', '/model.mjs', '/style.css', '/lab-player.mjs', '/experiments.mjs', '/experiment-model.mjs'):
         assert proxy.request('GET', PREFIX+path)[0] == 200
     status, wrapper, _ = proxy.request('GET', PREFIX+'/preview/interface-library-search/candidate/')
     assert status == 200 and (PREFIX+'/composition/interface-library-search/candidate/scene-1/index.html').encode() in wrapper

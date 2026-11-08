@@ -6,18 +6,53 @@
   <meta name="color-scheme" content="dark">
   <title>动画实验与标注 · Video Service</title>
   <link rel="stylesheet" href="./style.css">
-  <script type="module" src="./app.mjs"></script>
+  <script type="module" src="./experiments.mjs"></script>
 </head>
 <body>
   <header class="topbar">
     <div class="brand"><span class="brand-mark" aria-hidden="true">◈</span><div><span class="eyebrow">VIDEO SERVICE / DEVELOPER LAB</span><h1>动画实验与标注</h1></div><span class="private-badge">开发者专用</span></div>
-    <div class="header-actions"><button id="reload" class="button secondary" type="button">刷新样例</button><a id="export" class="button primary" href="./api/export?format=jsonl" download="animation-lab-annotations.jsonl">导出标注 JSONL <span aria-hidden="true">↗</span></a></div>
+    <nav class="lab-navigation" aria-label="实验类型"><button id="show-experiments" class="button secondary" type="button" aria-pressed="true">能力实验</button><button id="show-regressions" class="button secondary" type="button" aria-pressed="false">组件与参数回归</button></nav>
+    <div id="regression-actions" class="header-actions" hidden><button id="reload" class="button secondary" type="button">刷新回归样例</button><a id="export" class="button primary" href="./api/export?format=jsonl" download="animation-lab-annotations.jsonl">导出回归标注 <span aria-hidden="true">↗</span></a></div>
   </header>
   <div id="global-message" class="global-message" role="status" hidden></div>
-  <div class="layout">
+  <section id="experiment-lab" class="experiment-layout" aria-label="动画能力实验">
+    <aside class="experiment-sidebar">
+      <div class="sidebar-heading"><h2>能力问题</h2><span id="experiment-count" class="count">—</span></div>
+      <p class="muted small">从一个表达问题出发，用最小输入比较真实作品。</p>
+      <button id="experiment-reload" type="button" class="button secondary">刷新实验</button>
+      <nav id="experiment-list" class="case-list" aria-label="选择能力实验"><p class="muted small">正在读取实验定义…</p></nav>
+      <p class="muted small experiment-sidebar-note">同一机制换内容只作为参数回归；这里不按领域或样例数量衡量能力。</p>
+    </aside>
+    <div id="experiment-content" class="experiment-content">
+      <div id="experiment-message" class="inline-message" role="status" hidden></div>
+      <div id="experiment-empty" class="experiment-empty"><h2>正在读取能力实验</h2><p class="muted">未运行的定义不会显示为生成作品。</p></div>
+      <div id="experiment-workspace" hidden>
+        <header class="experiment-heading"><div><span id="experiment-capability" class="eyebrow"></span><h2 id="experiment-title"></h2></div><span id="experiment-status" class="experiment-badge"></span></header>
+        <p id="experiment-goal" class="experiment-goal"></p>
+        <div class="experiment-facts"><article><span>实验方式</span><strong id="experiment-mode"></strong></article><article><span>作品来源</span><strong id="experiment-source"></strong></article><article><span>本轮改动</span><strong id="experiment-change"></strong></article></div>
+        <details class="panel experiment-constraints"><summary>最小输入与固定约束</summary><pre id="experiment-constraints"></pre></details>
+        <div id="experiment-rejected-runs" class="inline-message error" role="status" hidden></div>
+        <div id="experiment-definition-only" class="experiment-empty"><h3>实验定义 · 尚无真实作品</h3><p class="muted">等待实际生成与隔离渲染。打开此页不会调用模型，也不会用手写样例冒充生成结果。</p></div>
+        <section id="experiment-results" hidden aria-label="实际作品">
+          <div class="experiment-result-heading"><h3>实际作品</h3><label>输入组<select id="experiment-input-role"><option value="development">调优输入</option><option value="held_out">未参与调优的复测输入</option></select></label></div>
+          <p class="muted small">只展示隔离渲染后的媒体；技术检查与画面偏好分别记录。</p>
+          <div id="experiment-version-selectors" class="experiment-version-selectors"></div>
+          <div id="experiment-media" class="experiment-media-grid"></div>
+          <div id="experiment-transport" class="transport" hidden><button id="experiment-play" type="button" class="button secondary">播放</button><button id="experiment-reset" type="button" class="button secondary">归零</button><button id="experiment-previous" type="button" class="button secondary" aria-label="前一帧">−1帧</button><button id="experiment-next" type="button" class="button secondary" aria-label="后一帧">+1帧</button><input id="experiment-seek" type="range" min="0" max="8" step="0.0416666667" value="0" aria-label="作品公共时间"><output id="experiment-time">0.000 / 8.000 秒</output></div>
+          <p id="experiment-playback-note" class="muted small"></p>
+          <div id="experiment-comparison-note" class="experiment-comparison-note"></div>
+          <details id="experiment-diff" class="panel experiment-version-details" hidden><summary>两侧提示词与代码差异（文本）</summary><pre id="experiment-diff-text"></pre></details>
+          <div id="experiment-preferences" class="experiment-preferences" hidden><span>同输入比较：</span><button type="button" class="button secondary" data-experiment-preference="left">左侧更好</button><button type="button" class="button secondary" data-experiment-preference="right">右侧更好</button><button type="button" class="button secondary" data-experiment-preference="equal">差异不明显</button><button type="button" class="button secondary" data-experiment-preference="neither">都不理想</button></div>
+          <section class="panel experiment-feedback-panel"><h3>记录具体问题</h3><p class="muted small">指出哪里难以跟随、哪里不自然，或希望尝试什么机制。意见绑定实际作品。</p><form id="experiment-feedback-form"><div class="form-row"><label>作品<select id="experiment-feedback-version"></select></label><label>开始（秒）<input id="experiment-feedback-start" type="number" min="0" step="0.001" value="0" required></label><label>结束（秒）<input id="experiment-feedback-end" type="number" min="0" step="0.001" value="0" required></label><button id="experiment-capture-time" type="button" class="button secondary">取当前时间</button></div><label for="experiment-feedback-comment" class="field-label">观察与下一步建议</label><textarea id="experiment-feedback-comment" rows="3" maxlength="4000" required placeholder="例如：交叉时分不清 A，可尝试分层路径或错峰；不要只换颜色。"></textarea><div id="experiment-feedback-message" class="inline-message" role="status" hidden></div><div class="form-footer"><span class="muted small">保存意见不会自动修改提示词或采用到生产。</span><button id="experiment-feedback-save" class="button primary" type="submit">保存问题</button></div></form></section>
+        </section>
+        <section class="panel experiment-history"><div class="panel-heading"><h3>观察与反馈</h3><span id="experiment-feedback-count" class="count">0</span></div><div id="experiment-feedback-history"></div></section>
+      </div>
+    </div>
+  </section>
+  <div id="regression-lab" class="layout" hidden>
     <aside class="sidebar" aria-label="动画样例">
-      <div class="sidebar-heading"><h2>效果样例库</h2><span id="case-count" class="count">—</span></div>
-      <p class="muted small">固定输入，独立对比。标注会绑定当前样例和版本。</p>
+      <div class="sidebar-heading"><h2>组件与参数回归</h2><span id="case-count" class="count">—</span></div>
+      <p class="muted small">固定代码配方用于正确性和边界回归，不代表模型创作能力。</p>
       <label class="field-label" for="module-filter">能力模块</label><select id="module-filter"><option value="all">全部模块</option></select>
       <label class="field-label" for="domain-filter">领域</label><select id="domain-filter"><option value="all">全部领域</option></select>
       <label class="field-label" for="engine-filter">渲染引擎</label><select id="engine-filter"><option value="all">全部引擎</option></select>

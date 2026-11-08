@@ -69,6 +69,11 @@ def measured_package(config, policy, control_root):
         mandatory = {'process-procedure/SKILL.md', 'CONTRACT.md', 'PLAN.schema.json', 'LICENSE'}
         from .profiles.video_process import verified_bundle
         verified_bundle()
+    elif policy.name == 'video.animation-experiment.v1':
+        from .profiles.video_animation_experiment import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
     elif policy.name == 'video.motion-plan.v1':
         root = motion_package_root(pins.bundle_revision)
         mandatory = {'manifest.json', 'motion-procedure/SKILL.md', 'CONTRACT.md', 'PLAN.schema.json', 'LICENSE'}
