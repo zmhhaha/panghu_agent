@@ -196,7 +196,8 @@ test('a late play completion or rejection from the previous media cannot pause t
     return source.slice(start, end < 0 ? undefined : end);
   };
   for (const staleOutcome of ['resolve', 'reject']) {
-    let finishOld, failOld, finishNew, oldPauses = 0, newPauses = 0;
+    let finishOld, failOld, finishNew, oldPauses = 0, newPauses = 0, clears = 0;
+    let notice = 'Current selection warning';
     const oldPending = new Promise((resolve, reject) => { finishOld = resolve; failOld = reject; });
     const newPending = new Promise(resolve => { finishNew = resolve; });
     const makeRow = (id, pending, pause) => ({version: {...left, id}, error: false,
@@ -206,7 +207,11 @@ test('a late play completion or rejection from the previous media cannot pause t
     const element = {textContent: ''};
     const context = vm.createContext({oldRows, newRows, $: () => element, experimentFrameTime,
       cancelAnimationFrame() {}, requestAnimationFrame: () => 1, performance: {now: () => 100},
-      message() { throw Error('Stale player must not emit a new-selection error'); },
+      message(id, text = '') {
+        assert.equal(id, 'experiment-feedback-message');
+        assert.equal(text, '', 'Stale player must not emit a new-selection error');
+        notice = text; clears++;
+      },
       totalDuration: () => 8, fps: () => 24, seek() {}, updateTime() {}});
     vm.runInContext(`let media = oldRows, clock = 0, playing = false, playbackFrame = null, playbackEpoch = 0,
       activeView = 'experiments', startClock = 0, startWall = 0;\n${getFunction('pause')}\n${getFunction('play', true)}`, context);
@@ -217,12 +222,59 @@ test('a late play completion or rejection from the previous media cannot pause t
     if (staleOutcome === 'resolve') finishOld(); else failOld(Error('old media replaced'));
     await oldPlay;
     assert.equal(newPauses, 0, `stale ${staleOutcome} must not pause the replacement`);
+    assert.equal(clears, 0, `stale ${staleOutcome} must not clear the replacement warning`);
+    assert.equal(notice, 'Current selection warning');
     assert.equal(vm.runInContext('playing', context), true);
     finishNew(); await newPlay;
+    assert.equal(clears, 1);
+    assert.equal(notice, '');
     assert.equal(vm.runInContext('playing', context), true);
     vm.runInContext('pause()', context);
     assert.equal(newPauses, 1);
     assert.ok(oldPauses >= 1);
+  }
+});
+
+test('successful current playback retry clears an earlier loading or browser rejection warning', async () => {
+  const source = readFileSync(new URL('../../video_workbench/animation_lab_web/experiments.mjs', import.meta.url), 'utf8');
+  const getFunction = (name, isAsync = false) => {
+    const marker = `${isAsync ? 'async ' : ''}function ${name}(`;
+    const start = source.indexOf(marker);
+    const end = source.indexOf('\nfunction ', start + marker.length);
+    assert.ok(start >= 0);
+    return source.slice(start, end < 0 ? undefined : end);
+  };
+  for (const initialFailure of ['not-ready', 'browser-rejected']) {
+    let notice = '', errors = 0, clears = 0, starts = 0, finishRetry;
+    const retry = new Promise(resolve => { finishRetry = resolve; });
+    const row = {version: {...left}, error: false, element: {
+      readyState: initialFailure === 'not-ready' ? 1 : 2, currentTime: 0, pause() {},
+      play() { starts++; return Promise.reject(Error('Synthetic browser rejection')); }}};
+    const button = {textContent: ''};
+    const context = vm.createContext({rows: [row], $: () => button, experimentFrameTime,
+      cancelAnimationFrame() {}, requestAnimationFrame: () => 1, performance: {now: () => 100},
+      message(id, text = '', error = false) {
+        assert.equal(id, 'experiment-feedback-message');
+        notice = text;
+        if (error) errors++; else if (!text) clears++;
+      }, totalDuration: () => 8, fps: () => 24, seek() {}, updateTime() {}});
+    vm.runInContext(`let media = rows, clock = 0, playing = false, playbackFrame = null, playbackEpoch = 0,
+      activeView = 'experiments', startClock = 0, startWall = 0;\n${getFunction('pause')}\n${getFunction('play', true)}`, context);
+    await vm.runInContext('play()', context);
+    assert.equal(errors, 1);
+    assert.equal(starts, initialFailure === 'not-ready' ? 0 : 1);
+    assert.match(notice, initialFailure === 'not-ready' ? /尚未加载完成/ : /浏览器未能开始播放/);
+    const warning = notice;
+    row.element.readyState = 2;
+    row.element.play = () => { starts++; return retry; };
+    const pending = vm.runInContext('play()', context);
+    assert.equal(notice, warning, 'The warning is cleared only after playback actually succeeds');
+    finishRetry(); await pending;
+    assert.equal(notice, '');
+    assert.equal(clears, 1);
+    assert.equal(errors, 1);
+    assert.equal(vm.runInContext('playing', context), true);
+    assert.equal(button.textContent, '暂停');
   }
 });
 

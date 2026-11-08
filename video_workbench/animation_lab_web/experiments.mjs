@@ -112,6 +112,7 @@ async function play() {
     for (const row of requestedMedia) if (!media.includes(row)) row.element.pause();
     return;
   }
+  message('experiment-feedback-message');
   playing = true; startClock = clock; startWall = performance.now();
   $('experiment-play').textContent = '暂停';
   const tick = now => {
