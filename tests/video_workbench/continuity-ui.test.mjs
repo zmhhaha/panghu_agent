@@ -45,6 +45,17 @@ test('mixed process and diagram candidates block continuity while preserving ord
   assert.match(continuityErrorLabel('process_continuity_not_supported'), /普通整片草稿/);
   assert.equal(h.state.context.project.scenes[0].motion.head_version_id, 'm1');
 });
+
+test('creative candidates keep ordinary video available but cannot enter fixed-object continuity', async () => {
+  const h = harness();
+  h.state.context.project.scenes[0].motion.versions[0].diagram_kind = 'creative';
+  await h.load();
+  assert.match(continuityIssues(h.state.context.project)[0], /创意动画.*普通整片草稿或导出/);
+  assert.equal(h.$('propose-continuity').disabled, true);
+  await h.panel.propose();
+  assert.equal(h.state.calls.filter(row => row.options.method === 'POST').length, 0);
+  assert.equal(h.state.context.project.scenes[0].motion.head_version_id, 'm1');
+});
 function version(id = 'v1', links = [link()]) {
   return { id, stale: false, adoptable: true, plan: { schema: 'video.continuity-plan.v1', links },
     scene_summaries: [

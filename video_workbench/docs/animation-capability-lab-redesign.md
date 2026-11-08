@@ -217,6 +217,38 @@
 
 ## 核对依据
 
+### 共享能力策略与正式创作候选（2026-11-08 源码接入）
+
+`animation_capabilities.py` 是实验室与正式创作共用的策略注册表。首个发布包
+`explanatory-motion-v1` 冻结适用目标、准入引擎、完整规则、证据与限制，并计算
+整个包的 SHA-256。规则吸收上轮工程观察：保持对象与标签身份、转向尽量连续、
+为全部对象分配合理运动时间、避免片尾赶路，并留出稳定可读的结束状态。
+发布包引用原冻结指导摘要，不将 v2 记为用户选择的审美赢家，也不直接复用某个实验源码。
+
+新实验使用 `python -m video_workbench.animation_experiment_runner init --directory <新目录>`
+时默认选择这个包；可用 `--capability-release <发布ID>` 明确指定。完整发布包进入冻结输入，
+实验局部的 v1/v2 指导单独保留，不会改变发布规则。正式创作输入构建器读取同一个注册表，
+因此两边消耗的是同一份规则及摘要。旧 pilot、四份原作品及补充复核继续按原输入读取，
+不补写策略字段，也不重算原身份。代码级 `initialize()` 的无参数调用保留旧协议，
+需要共用策略的新调用显式提供 `capability_release_id`。
+
+发布新策略通过代码审查新增唯一发布 ID，保留原 ID 和内容；不能直接覆盖原包。
+生产校验要求完整包与注册表精确相同，客户端自行改写规则再计算摘要不能获得准入。
+实验反馈本身仍只代表一次评价；推广时应说明来源、适用目标、复测结果与未验证限制。
+首包仅准入 HTML/SVG。Canvas 与 Three.js 的固定回归样例及创作协议名称不构成生产放行。
+
+`creative_contract.py` 将正式场景适配到原有 `video.animation-experiment.v1`，不修改该冻结
+profile、指令或工具资源。它将真实旁白、beats、alignment、录音摘要与实际时长一起传入
+`constraints.production`；时长不一致、旁白变更或录音摘要不一致会明确拒绝。
+已有候选改稿通过 `base_result` 传入原完整源码，不能放得下时直接失败，不静默丢弃。
+首版保持 1280×720、24fps、录音最长60秒及原 profile 的128KiB输入限制。
+
+返回的 `video.creative-scene.v1` 候选保存完整输入、能力包摘要、结果及源码摘要，
+并绑定 profile、指令修订、工具包 manifest 和实际提示词摘要。它仍是不可信代码包，
+不能在登录工作台同源执行；必须经过独立的正式隔离渲染与候选采用链路。
+估算 alignment 的 pending 状态原样保留，生成源码不会自动核准旁白时序或审美。
+本小节说明代码协议和共享来源，真实发布、生成及成片验收由本轮独立记录确认。
+
 - `animation_lab_samples.py` 的 `_matrix_cases()`、`_compiled_case()` 与 `catalog()`：固定样例、静音时钟、`agent_calls=0`。
 - `animation_lab_scenarios.py` 的 `validate_scenario_plan()`：计划必须等于注册配方。
 - `agent_service/profiles/video_motion.py` 的 `build_prompt()`、`video_motion_contract.py` 与 `motion.py`：JSON计划、受限模板/动作、编译器布局。

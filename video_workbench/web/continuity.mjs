@@ -17,6 +17,7 @@ export function continuityErrorLabel(code) {
     process_continuity_mixed_not_supported: '当前连续方案需要全部使用过程演示，或全部使用通用图解；两种方式混合时可制作普通整片草稿。',
     process_continuity_source_unsupported: '这份过程演示使用的版本尚不支持连续衔接，请生成并采用新的过程候选；原画面和录音仍保留。',
     process_continuity_source_invalid: '过程演示的状态或请求流转尚不能连续衔接，请检查该镜头后修改方案。',
+    creative_continuity_not_supported: '创意动画暂不支持在镜头之间继承图形对象，请使用普通整片草稿或导出；已有动画和配音保留。',
     invalid_process_continuity_plan: '过程对象的连续关系不符合要求，请核对相邻镜头后重新保存候选。',
     process_continuity_requires_process: '这份连续方案需要全部镜头采用有效过程演示。',
     process_continuity_compiler_unsupported: '这份过程演示的制作版本暂不支持连续衔接，请生成并采用新的候选。',
@@ -70,10 +71,15 @@ export function continuityIssues(project, { audio = false } = {}) {
       issues.push(`${title}：请先采用有效动态图解。`);
     }
     if (head) {
-      const process = head.diagram_kind === 'process' || head.plan?.schema === 'video.process-plan.v1';
-      kinds.add(process ? 'process' : 'diagram');
-      if (process && head.compiler_version !== PROCESS_SOURCE_COMPILER) {
-        issues.push(`${title}：${continuityErrorLabel('process_continuity_source_unsupported')}`);
+      if (head.diagram_kind === 'creative' || head.plan?.schema === 'video.creative-scene.v1') {
+        kinds.add('creative');
+        issues.push(`${title}：${continuityErrorLabel('creative_continuity_not_supported')}`);
+      } else {
+        const process = head.diagram_kind === 'process' || head.plan?.schema === 'video.process-plan.v1';
+        kinds.add(process ? 'process' : 'diagram');
+        if (process && head.compiler_version !== PROCESS_SOURCE_COMPILER) {
+          issues.push(`${title}：${continuityErrorLabel('process_continuity_source_unsupported')}`);
+        }
       }
     }
     if (audio) {

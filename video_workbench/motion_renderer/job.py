@@ -20,6 +20,8 @@ from video_workbench.motion_dispatch import PRODUCTION_PROCESS_COMPILER, scene_c
 from video_workbench.continuity import (ALL_CONTINUITY_COMPILER_TEMPLATES,
                                        recompile_continuity_project)
 from video_workbench.motion_snapshot import _runtime as validate_runtime_fingerprint
+from video_workbench.creative_renderer import (COMPILER as CREATIVE_COMPILER,
+    TEMPLATE as CREATIVE_TEMPLATE, compile_creative_project)
 
 NAMESPACE = 'video-motion-experiment'
 FILES = ('index.html', 'plan.json', 'beats.json', 'alignment.json', 'timeline.json', 'manifest.json', 'audio.wav')
@@ -60,6 +62,9 @@ def freeze_input(directory, *, allow_unbound_experiment=False, image_digest=None
     elif pair == (PRODUCTION_PROCESS_COMPILER, 'controlled-process-2'):
         _, compiler, version = scene_compiler(json.loads(files['plan.json']), compiler_version=pair[0])
         options['compiler_version'] = version
+    elif pair == (CREATIVE_COMPILER, CREATIVE_TEMPLATE):
+        compiler = compile_creative_project
+        options['compiler_version'] = CREATIVE_COMPILER
     elif type(pair[0]) is str and ALL_CONTINUITY_COMPILER_TEMPLATES.get(pair[0]) == pair[1]:
         compiler = recompile_continuity_project
     else:

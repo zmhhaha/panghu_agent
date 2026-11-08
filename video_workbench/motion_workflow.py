@@ -16,28 +16,37 @@ CANCEL_RETRY_DELAYS = (2.0, 5.0, 15.0, 30.0)
 
 
 class MotionWorkflow:
-    def __init__(self, store, gateway=None, *, enabled=False, process_gateway=None, process_enabled=False):
-        if type(enabled) is not bool or type(process_enabled) is not bool:
+    def __init__(self, store, gateway=None, *, enabled=False, process_gateway=None, process_enabled=False,
+                 creative_gateway=None, creative_enabled=False):
+        if any(type(gate) is not bool for gate in (enabled, process_enabled, creative_enabled)):
             raise ValueError('An explicit boolean motion feature gate is required')
         self.store, self.gateway, self.enabled = store, gateway, enabled
         self.process_gateway, self.process_enabled = process_gateway, process_enabled
+        self.creative_gateway, self.creative_enabled = creative_gateway, creative_enabled
         self.lock = threading.Lock()
         self.stopping = threading.Event()
         self.thread = None
 
     def _enabled(self, diagram_kind):
-        return self.enabled and (diagram_kind == 'diagram' or self.process_enabled)
+        return self.enabled and {'diagram': True, 'process': self.process_enabled,
+                                 'creative': self.creative_enabled}.get(diagram_kind, False)
 
     def _gateway(self, diagram_kind):
-        return self.process_gateway if diagram_kind == 'process' else self.gateway
+        return {'diagram': self.gateway, 'process': self.process_gateway,
+                'creative': self.creative_gateway}.get(diagram_kind)
+
+    def _disabled_error(self, kind):
+        return 'motion_disabled' if not self.enabled else kind + '_disabled'
 
     def require_gateway(self, diagram_kind='diagram'):
-        if type(diagram_kind) is not str or diagram_kind not in {'diagram', 'process'}:
+        if type(diagram_kind) is not str or diagram_kind not in {'diagram', 'process', 'creative'}:
             raise ServiceError('invalid_motion_request', 422)
         if not self.enabled:
             raise ServiceError('motion_disabled', 503)
         if diagram_kind == 'process' and not self.process_enabled:
             raise ServiceError('process_disabled', 503)
+        if diagram_kind == 'creative' and not self.creative_enabled:
+            raise ServiceError('creative_disabled', 503)
         gateway = self._gateway(diagram_kind)
         if gateway is None:
             raise ServiceError('agent_not_configured', 503)
@@ -49,9 +58,9 @@ class MotionWorkflow:
             kind = operation_diagram_kind(op)
             if not self._enabled(kind) and not op['submit_attempted'] and not op['job_id']:
                 self.store.update_operation(op['id'], status='cancelled',
-                    error='motion_disabled' if not self.enabled else 'process_disabled')
+                    error=self._disabled_error(kind))
         admitted = any(op['submit_attempted'] or op['job_id'] for op in active)
-        if (self.gateway is not None or self.process_gateway is not None) and self.thread is None and (self.enabled or admitted):
+        if any(gateway is not None for gateway in (self.gateway, self.process_gateway, self.creative_gateway)) and self.thread is None and (self.enabled or admitted):
             self.thread = threading.Thread(target=self._run, name='video-motion-reconcile', daemon=True)
             self.thread.start()
 
@@ -66,7 +75,7 @@ class MotionWorkflow:
             self.stopping.wait(2)
 
     def tick(self):
-        if (self.gateway is None and self.process_gateway is None) or not self.lock.acquire(blocking=False):
+        if all(gateway is None for gateway in (self.gateway, self.process_gateway, self.creative_gateway)) or not self.lock.acquire(blocking=False):
             return
         try:
             for op in self.store.active_operations():
@@ -91,7 +100,7 @@ class MotionWorkflow:
         kind = operation_diagram_kind(op)
         if not self._enabled(kind) and not op['submit_attempted'] and not op['job_id']:
             self.store.update_operation(op['id'], status='cancelled',
-                error='motion_disabled' if not self.enabled else 'process_disabled')
+                error=self._disabled_error(kind))
             return
         gateway = self._gateway(kind)
         if gateway is None:
@@ -134,7 +143,7 @@ class MotionWorkflow:
         state = job['state']
         if state == 'completed':
             result = None if op['cancel_requested'] or time.time() >= op['deadline_at'] else gateway.collect(
-                op['job_id'], op['input_sha256'], op['document']['beats'])
+                op['job_id'], op['input_sha256'], op['document'] if kind == 'creative' else op['document']['beats'])
             self.store.complete(op['id'], result)
         elif state in {'failed', 'needs_input', 'cancelled', 'timed_out', 'quarantined'}:
             self.store.update_operation(op['id'], status='failed' if state == 'quarantined' else state,

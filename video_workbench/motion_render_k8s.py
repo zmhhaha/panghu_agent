@@ -34,6 +34,8 @@ from .motion_dispatch import PROCESS_SCHEMA, PRODUCTION_PROCESS_COMPILER, scene_
 from .process_review import verify_process_observations
 from .motion_renderer.job import FILES, INIT, freeze_input
 from .motion_render_adapter import UNAVAILABLE, safe_motion_context
+from .creative_renderer import (COMPILER as CREATIVE_COMPILER,
+    TEMPLATE as CREATIVE_TEMPLATE, compile_creative_project)
 
 CHUNK_BYTES = 512 * 1024
 BUNDLE_BYTES = 16 * 1024 * 1024
@@ -194,7 +196,9 @@ def production_resources(directory, *, image, release_id, namespace, name, bindi
     manifest = json.loads((Path(directory) / 'manifest.json').read_bytes())
     require(COMPILER_TEMPLATES.get(manifest['compiler']) == manifest['template'] or
             ALL_CONTINUITY_COMPILER_TEMPLATES.get(manifest['compiler']) == manifest['template'] or
-            (manifest['compiler'], manifest['template']) == (PRODUCTION_PROCESS_COMPILER, 'controlled-process-2'),
+            (manifest['compiler'], manifest['template']) in {
+                (PRODUCTION_PROCESS_COMPILER, 'controlled-process-2'),
+                (CREATIVE_COMPILER, CREATIVE_TEMPLATE)},
             'motion_production_template_not_supported', 422)
     labels = {'app': 'video-motion-renderer', LABEL + 'execution': binding[:32]}
     annotations = {ANNOTATION: binding, LABEL + 'bundle-sha256': frozen['bundle_sha256'],
@@ -310,6 +314,44 @@ def unpack_artifacts(logs):
         raise ServiceError('motion_artifacts_invalid', 502) from None
 
 
+def validate_creative_artifacts(entries, files, observations, runtime, quality):
+    """Independent custody/clock checks; no generic aesthetic approval claim."""
+    timeline, package = (json.loads(files[name]) for name in ('timeline.json', 'plan.json'))
+    count = round(timeline['duration_seconds'] * 24)
+    require(type(observations) is dict and observations.get('schema') == 'video.creative-observations.v1'
+            and observations.get('input_sha256') == package['input_sha256']
+            and observations.get('source_sha256') == package['result_sha256']
+            and observations.get('renderer') == 'isolated-chromium-absolute-seek-ffmpeg-1'
+            and observations.get('frame_count') == count
+            and observations.get('blocked_requests') == [] and observations.get('page_errors') == [],
+            'creative_observation_binding_mismatch')
+    samples = observations.get('samples')
+    require(type(samples) is list and len(samples) == 20, 'creative_observation_samples_invalid')
+    expected_times = [0, *[(count - 1) / 24 * (i + 1) / 18 for i in range(17)], (count - 1) / 24, 0]
+    for index, (row, expected_time) in enumerate(zip(samples, expected_times)):
+        filename = f'observations/creative-{index}.jpg'
+        local = max(0, min(timeline['audio_seconds'], expected_time - timeline['leading_seconds']))
+        require(type(row) is dict and row.get('path') == filename and row.get('time') == expected_time
+                and row.get('local_seconds') == local and row.get('bytes') == len(entries[filename])
+                and row.get('frame_sha256') == sha(entries[filename]), 'creative_observation_frame_mismatch')
+    require(samples[0]['frame_sha256'] == samples[-1]['frame_sha256'], 'creative_reverse_seek_mismatch')
+    capture = json.loads(entries['render-receipt.json']).get('creative_capture')
+    require(type(capture) is dict and capture.get('schema') == 'video.creative-capture.v1'
+            and capture.get('renderer') == observations['renderer'] and capture.get('frame_count') == count
+            and capture.get('first_sha256') == samples[0]['frame_sha256']
+            and capture.get('last_sha256') == samples[-2]['frame_sha256']
+            and capture.get('reverse_initial_sha256') == samples[-1]['frame_sha256']
+            and capture.get('probe_sha256') == [row['frame_sha256'] for row in samples]
+            and capture.get('blocked_requests') == [] and capture.get('page_errors') == [],
+            'creative_render_observation_mismatch')
+    return dict(technical_review=dict(status='passed', renderer=observations['renderer'],
+        reverse_seek_verified=True, source_sha256=package['result_sha256'],
+        capability_release_sha256=package['capability_release_sha256'],
+        visual_quality='not_evaluated', aesthetic_approval=False),
+        media_sha256=sha(entries['output.mp4']), manifest_sha256=sha(files['manifest.json']),
+        runtime_fingerprint=runtime, quality=quality)
+
+
 def validate_artifacts(entries, files, runtime, quality):
     try:
         summary = json.loads(entries['experiment.json'])
@@ -336,6 +378,8 @@ def validate_artifacts(entries, files, runtime, quality):
                 require(receipt.get('decode_verified') is True
                         and receipt.get('output_sha256') == sha(entries['output.mp4']), 'motion_media_receipt_invalid')
         observations = json.loads(entries['observations.json'])
+        if json.loads(files['manifest.json']).get('compiler') == CREATIVE_COMPILER:
+            return validate_creative_artifacts(entries, files, observations, runtime, quality)
         for row in observations['windows']:
             for label in ('before', 'middle', 'after'):
                 filename = f"observations/a{row['ordinal']}-{label}.jpg"
@@ -517,8 +561,15 @@ class KubeSceneRenderer:
         return None
 
     def _context(self, scene, key, scene_index, quality):
-        motion = scene['motion']
-        if 'continuity' in scene:
+        motion = scene.get('motion')
+        if scene['visual_mode'] == 'creative':
+            creative = scene['creative']
+            files = compile_creative_project(creative['package'], creative['beats'], creative['alignment'],
+                runtime_fingerprint=self.runtime, leading_seconds=scene['timing']['leading_seconds'],
+                trailing_seconds=scene['timing']['trailing_seconds'],
+                compiler_version=creative['timeline']['compiler'])
+            expected_files = creative['project_files_sha256']
+        elif 'continuity' in scene:
             files = compile_continuity_project(scene, scene['continuity'], runtime_fingerprint=self.runtime)
             expected_files = scene['continuity_project_files_sha256']
         else:
@@ -751,7 +802,7 @@ class KubeSceneRenderer:
         """Recover only recorded identities, without invoking the render path."""
         for index, scene in enumerate(snapshot['scenes']):
             record = self.journal.scene(f'{key}:{index}')
-            if scene['visual_mode'] != 'motion' or record is None:
+            if scene['visual_mode'] not in {'motion', 'creative'} or record is None:
                 continue
             _, scene_key, binding, name, directory, configs, expected = self._context(scene, key, index, snapshot['quality'])
             require(record['binding'] == binding and record['name'] == name, UNAVAILABLE, 503)

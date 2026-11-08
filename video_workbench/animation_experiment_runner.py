@@ -26,6 +26,7 @@ from agent_service.profiles.video_animation_experiment import (
 from .motion_gateway import MotionAgentGateway
 from .animation_experiments import (RUN_SCHEMA, canonical, constraints, decode, definition,
     digest, pilot_input, require, signed, read_run, _ordinary_file)
+from .animation_capabilities import capability_release, validate_release, DEFAULT_RELEASE_ID
 
 
 SLOTS = ('development-v1', 'development-v2', 'held-out-v1', 'held-out-v2')
@@ -133,7 +134,7 @@ def _bind_model_policy(record, policy, pins):
         requested_model_note='Operator-declared request policy; not a returned or observed model identity.')
 
 
-def _new_plan(run_prefix='identity', recovery=None):
+def _new_plan(run_prefix='identity', recovery=None, *, capability_release_id=None):
     plan = dict(schema='video.animation-experiment-pilot.v1', experiment=definition(),
         constraints={role: constraints(role) for role in ('development', 'held_out')},
         constraint_identities={role: digest(constraints(role)) for role in ('development', 'held_out')},
@@ -142,13 +143,15 @@ def _new_plan(run_prefix='identity', recovery=None):
         slots={slot: dict(state='unstarted', run_id=run_prefix + '-' + slot) for slot in SLOTS})
     if recovery is not None:
         plan['recovery'] = deepcopy(recovery)
+    if capability_release_id is not None:
+        plan['capability_release'] = capability_release(capability_release_id)
     return plan
 
 
-def initialize(directory):
+def initialize(directory, *, capability_release_id=None):
     root = Path(directory).absolute()
     root.mkdir(parents=True, exist_ok=False)
-    plan = _new_plan()
+    plan = _new_plan(capability_release_id=capability_release_id)
     _write(root / 'pilot.json', plan, exclusive=True)
     return plan
 
@@ -168,6 +171,8 @@ def _load(root):
         require(plan['constraints'][role] == constraints(role)
                 and plan['constraint_identities'][role] == digest(constraints(role)),
                 'animation_experiment_plan_changed')
+    if 'capability_release' in plan:
+        validate_release(plan['capability_release'])
     if 'recovery' in plan:
         recovery = plan['recovery']
         require(type(recovery) is dict and recovery.get('schema') == 'video.animation-experiment-recovery.v1'
@@ -185,6 +190,12 @@ def _load(root):
                 and all(plan['slots'][name]['run_id'] == recovery['run_prefix'] + '-' + name for name in SLOTS),
                 'animation_experiment_recovery_changed')
     return root, plan
+
+
+def _plan_input(plan, role='development', revision='v1', guidance=''):
+    release = plan.get('capability_release')
+    return pilot_input(role, revision, guidance,
+        capability_release_id=None if release is None else validate_release(release)['id'])
 
 
 @_pilot_lock
@@ -209,7 +220,7 @@ def _publish_record(root, slot, document):
 
 def _record(slot, document, role):
     revision = document['prompt_revision']
-    return dict(schema=RUN_SCHEMA, id=slot['run_id'], experiment_id=definition()['id'],
+    record = dict(schema=RUN_SCHEMA, id=slot['run_id'], experiment_id=definition()['id'],
         experiment_identity=definition()['identity'], source='agent', input_role=role,
         input_document=document, input_sha256=digest(document),
         label=('开发输入' if role == 'development' else '未参与调优输入') + ' · ' + revision,
@@ -219,6 +230,10 @@ def _record(slot, document, role):
             requested_model=None, returned_model=None, returned_model_note='服务未返回实际模型名称时保持未知。',
             generation_context='profile_prompt_plus_exact_input_document',
             automatic_retries=False), artifacts={}, code_files={}, strategy={})
+    if release := document['constraints'].get('capability_release'):
+        record['provenance']['capability_release_id'] = release['id']
+        record['provenance']['capability_release_sha256'] = release['sha256']
+    return record
 
 
 def _attach_recovery(record, plan):
@@ -269,9 +284,9 @@ def _slot_document(root, plan, slot_name, *, importing=False):
         require(plan['slots']['development-v2']['state'] == 'finished',
                 'animation_experiment_holdout_not_released', 409)
         developed = read_run(root / plan['slots']['development-v2']['run_id'])
-        require(developed['input_document'] == pilot_input('development', 'v2', plan['guidance']['v2']),
+        require(developed['input_document'] == _plan_input(plan, 'development', 'v2', plan['guidance']['v2']),
                 'animation_experiment_frozen_guidance_changed', 409)
-    document = pilot_input(role, revision, plan['guidance'][revision])
+    document = _plan_input(plan, role, revision, plan['guidance'][revision])
     validate_experiment_input(document)
     return slot, document, role
 
@@ -286,7 +301,7 @@ def _candidate_comparison_baseline(root, plan):
     first = plan['slots']['development-v1']
     require(first['state'] == 'finished', 'animation_experiment_baseline_not_ready', 409)
     row = read_run(root / first['run_id'])
-    require(row['status'] == 'rendered' and row['input_document'] == pilot_input(),
+    require(row['status'] == 'rendered' and row['input_document'] == _plan_input(plan),
             'animation_experiment_baseline_changed', 409)
     reservation, _, _, _ = _reserved_candidate(root, first, row)
     report = decode(_ordinary_file(root / first['run_id'], 'report.json', 3 * 1024 * 1024))
@@ -475,7 +490,7 @@ def close_failed_candidate(directory, evidence_dir):
     require(slot['state'] in {'candidate_reserved', 'candidate_closing'}
             and all(plan['slots'][name]['state'] == 'unstarted' for name in SLOTS[1:]),
             'animation_experiment_failure_close_not_ready', 409)
-    document = pilot_input('development', 'v1', '')
+    document = _plan_input(plan)
     record = _record(slot, document, 'development')
     _attach_recovery(record, plan)
     reservation, binding, _, source_sha = _reserved_candidate(root, slot, record)
@@ -638,7 +653,9 @@ def create_recovery(directory, new_directory, *, authorization_note, max_tasks=4
         _immutable_bytes(target / name, value)
     _immutable_bytes(target / RECOVERY_ORIGIN_NAME, canonical(recovery))
     if not (target / 'pilot.json').exists():
-        _write(target / 'pilot.json', _new_plan(recovery['run_prefix'], recovery), exclusive=True)
+        release = plan.get('capability_release')
+        _write(target / 'pilot.json', _new_plan(recovery['run_prefix'], recovery,
+            capability_release_id=None if release is None else validate_release(release)['id']), exclusive=True)
     _, recovered = _load(target)
     require(recovered.get('recovery') == recovery, 'animation_experiment_recovery_changed')
     plan['recovery_child']['state'] = 'initialized'
@@ -793,6 +810,8 @@ def main(argv=None):
     commands = parser.add_subparsers(dest='command', required=True)
     init = commands.add_parser('init')
     init.add_argument('--directory', required=True, type=Path)
+    init.add_argument('--capability-release', default=DEFAULT_RELEASE_ID,
+                      help='freeze a repository-reviewed strategy also used by production')
     change = commands.add_parser('revise')
     change.add_argument('--directory', required=True, type=Path)
     change.add_argument('--guidance-file', required=True, type=Path)
@@ -831,7 +850,7 @@ def main(argv=None):
     execute.add_argument('--model-policy-file', type=Path, help='public operator ModelPolicy JSON, checked against actual pins')
     args = parser.parse_args(argv)
     if args.command == 'init':
-        result = initialize(args.directory)
+        result = initialize(args.directory, capability_release_id=args.capability_release)
         print(json.dumps(dict(status='prepared', max_tasks=result['max_tasks'])))
     elif args.command == 'revise':
         revise(args.directory, args.guidance_file.read_text(encoding='utf-8'), args.feedback_file.read_text(encoding='utf-8'))

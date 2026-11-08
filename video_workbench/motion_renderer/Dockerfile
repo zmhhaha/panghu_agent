@@ -33,7 +33,7 @@ ENV HYPERFRAMES_BROWSER_PATH=/opt/browser/headless_shell \
     PRODUCER_HEADLESS_SHELL_PATH=/opt/browser/headless_shell \
     PUPPETEER_EXECUTABLE_PATH=/opt/browser/headless_shell \
     XDG_CACHE_HOME=/tmp/cache XDG_CONFIG_HOME=/tmp/config TMPDIR=/tmp
-COPY runtime.mjs run.mjs observe.mjs contract.mjs experiment.py ./
+COPY runtime.mjs run.mjs observe.mjs creative.mjs contract.mjs experiment.py ./
 RUN node runtime.mjs > /opt/renderer/runtime.json
 USER 10001:10001
 WORKDIR /work

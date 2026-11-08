@@ -28,6 +28,7 @@ SOURCE_FILES = frozenset({
     'video_workbench/__init__.py',
     'video_workbench/animation_lab.py', 'video_workbench/animation_lab_samples.py',
     'video_workbench/animation_experiments.py',
+    'video_workbench/animation_capabilities.py',
     'video_workbench/animation_lab_store.py', 'video_workbench/animation_lab_triage_store.py',
     'video_workbench/animation_lab_iteration.py',
     'video_workbench/animation_lab_baseline.py','video_workbench/animation_lab_matrix.py','video_workbench/animation_lab_domain_cases.py',

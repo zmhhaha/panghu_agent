@@ -14,6 +14,8 @@ from uuid import uuid4
 from agent_service.contracts import ServiceError, digest
 from . import media
 from .motion_snapshot import SCHEMA as MOTION_SCHEMA, freeze_snapshot_v2
+from .creative_snapshot import freeze_snapshot_v4
+from .motion_store import plan_diagram_kind
 from .continuity_snapshot import (MOTION_SCHEMAS,
                                   freeze_continuity_snapshot, verify_motion_snapshot)
 from .render_metadata import render_metadata
@@ -258,8 +260,14 @@ class Production:
                     timing = self.motion_timing.get(owner, version_id, audio_id)
                     if timing['timeline']['duration_seconds'] > MAX_MOTION_SCENE_SECONDS:
                         raise ServiceError('motion_scene_duration_exceeded', 422)
-                    item['motion'] = dict(id=version_id, plan=version['plan'], beats=timing['beats'],
-                                          alignment=timing['alignment'], stale=version['stale'])
+                    if plan_diagram_kind(version['plan']) == 'creative':
+                        mode = item['visual_mode'] = 'creative'
+                        item['creative'] = dict(id=version_id, package=version['plan'], beats=timing['beats'],
+                                                alignment=timing['alignment'], stale=version['stale'],
+                                                compiler_version=version['compiler_version'])
+                    else:
+                        item['motion'] = dict(id=version_id, plan=version['plan'], beats=timing['beats'],
+                                              alignment=timing['alignment'], stale=version['stale'])
                     if version['plan'].get('schema') == 'video.process-plan.v1':
                         item['motion']['compiler_version'] = version.get('compiler_version')
                 else:
@@ -271,10 +279,11 @@ class Production:
                                             audio_version_id=scene.get('head_audio_version_id'))
                 if scene is scenes[-1] and not all(selection) and request.get('end_hold_seconds', 0):
                     item['trailing_seconds'] = max(item['trailing_seconds'], request['end_hold_seconds'])
-                    if mode == 'motion' and audio['duration_seconds'] + item['leading_seconds'] + item['trailing_seconds'] > MAX_MOTION_SCENE_SECONDS:
+                    if mode in {'motion', 'creative'} and audio['duration_seconds'] + item['leading_seconds'] + item['trailing_seconds'] > MAX_MOTION_SCENE_SECONDS:
                         raise ServiceError('motion_tail_hold_exceeds_limit', 422)
                 resolved.append(item)
-            snapshot = freeze_snapshot_v2(project_id, project['revision'], project['title'], resolved,
+            freeze = freeze_snapshot_v4 if any(s['visual_mode'] == 'creative' for s in resolved) else freeze_snapshot_v2
+            snapshot = freeze(project_id, project['revision'], project['title'], resolved,
                 runtime_fingerprint=self.runtime_fingerprint, purpose=purpose,
                 quality='final' if purpose == 'delivery' else 'draft', subtitles=request.get('subtitles', False),
                 current_adoptions=adopted if purpose == 'delivery' else None)

@@ -86,6 +86,23 @@ const descendants = element => [element, ...element.children.flatMap(descendants
 const inputIn = element => descendants(element).find(element => element.tagName === 'input');
 const reviewCheck = h => descendants(h.$('batch-review')).find(element => element.tagName === 'input');
 
+test('reused creative candidates display their frozen strategy without executing code or changing batch generation', async () => {
+  const h = harness(); h.state.context.creativeConfigured = true;
+  const row = version('m1'); row.diagram_kind = 'creative';
+  row.plan = { schema: 'video.creative-scene.v1',
+    input_document: { constraints: { capability_release: { id: 'continuous-motion', revision: 'v1' } } },
+    result: { strategy: { description: '<script>对象沿轨迹移动</script>' }, files: { 'scene.html': '<script>MUST_NOT_EXECUTE</script>' } } };
+  h.state.versions.set('m1', row);
+  await h.load();
+  assert.equal(h.$('batch-creative-note').hidden, false);
+  const review = h.$('batch-review').textContent;
+  assert.match(review, /创意动画候选/);
+  assert.match(review, /<script>对象沿轨迹移动<\/script>/);
+  assert.match(review, /continuous-motion.*v1/);
+  assert.doesNotMatch(review, /MUST_NOT_EXECUTE/);
+  assert.equal(writes(h).length, 0);
+});
+
 test('batch intent validates the selected project scenes, bounded steps and clean revision', () => {
   const p = project('../p?');
   const intent = createBatchRequest(p, { sceneIds: ['s1'], steps: ['draft', 'motion'] });

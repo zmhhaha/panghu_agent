@@ -12,7 +12,7 @@ from .continuity import (ALL_CONTINUITY_COMPILER_TEMPLATES, CONTINUITY_COMPILER_
                          resolve_continuity, compile_continuity_project)
 
 SCHEMA = 'video.render-snapshot.v3'
-MOTION_SCHEMAS = frozenset({SOURCE_SCHEMA, SCHEMA})
+MOTION_SCHEMAS = frozenset({SOURCE_SCHEMA, SCHEMA, 'video.render-snapshot.v4'})
 
 
 def _require(value, code='invalid_continuity_snapshot', status=422):
@@ -92,6 +92,9 @@ def verify_continuity_snapshot(snapshot):
 
 
 def verify_motion_snapshot(snapshot):
+    if type(snapshot) is dict and snapshot.get('schema') == 'video.render-snapshot.v4':
+        from .creative_snapshot import verify_snapshot_v4
+        return verify_snapshot_v4(snapshot)
     if type(snapshot) is dict and snapshot.get('schema') == SCHEMA:
         return verify_continuity_snapshot(snapshot)
     return verify_snapshot_v2(snapshot)

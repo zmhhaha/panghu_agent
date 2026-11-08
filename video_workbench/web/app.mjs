@@ -81,6 +81,7 @@ const motionPanel = createMotionPanel({
     enabled: sessionSettings.motion_enabled === true,
     configured: sessionSettings.motion_configured === true,
     processConfigured: sessionSettings.process_configured === true,
+    creativeConfigured: sessionSettings.creative_configured === true,
     renderConfigured: sessionSettings.motion_render_configured === true,
     unsaved: projectHasUnsavedEdits(state.projectId, false),
     projectBusy: activeOperations(state.project).length > 0 || pending.size > 0 || explanationPanel.hasActiveOperation(state.projectId)
@@ -95,6 +96,7 @@ const batchPanel = createBatchPanel({
   getContext: () => ({ project: state.project, epoch: state.epoch,
     enabled: sessionSettings.batch_enabled === true && sessionSettings.motion_enabled === true,
     motionConfigured: sessionSettings.motion_configured === true,
+    creativeConfigured: sessionSettings.creative_configured === true,
     audioConfigured: sessionSettings.speech_configured === true,
     renderConfigured: sessionSettings.motion_render_configured === true,
     unsaved: projectHasUnsavedEdits(state.projectId),

@@ -45,6 +45,8 @@ SOURCE_FILES = frozenset({
     'video_workbench/explanation_store.py', 'video_workbench/explanation_workflow.py',
     'video_workbench/explanation_gateway.py',
     'video_workbench/motion.py', 'video_workbench/motion_snapshot.py',
+    'video_workbench/animation_capabilities.py', 'video_workbench/creative_contract.py',
+    'video_workbench/creative_renderer.py', 'video_workbench/creative_snapshot.py',
     'video_workbench/motion_dispatch.py', 'video_workbench/motion_process.py',
     'video_workbench/process_review.py',
     'video_workbench/process_continuity.py', 'video_workbench/process_continuity_review.py',
@@ -75,6 +77,11 @@ SOURCE_FILES = frozenset({
     'agent_service/profiles/video_explanation_contract.py',
     'agent_service/profiles/video_motion.py', 'agent_service/profiles/video_motion_contract.py',
     'agent_service/profiles/video_process.py', 'agent_service/profiles/video_process_contract.py',
+    'agent_service/profiles/video_animation_experiment.py',
+    'agent_service/resources/animation-experiment-v1/manifest.json',
+    'agent_service/resources/animation-experiment-v1/CONTRACT.md',
+    'agent_service/resources/animation-experiment-v1/LICENSE',
+    'agent_service/resources/animation-experiment-v1/animation-procedure/SKILL.md',
     *(RESOURCE + name for name in VIDEO_FILES),
 })
 MAX_CONTEXT_BYTES = 8 * 1024 * 1024

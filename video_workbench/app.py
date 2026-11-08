@@ -36,7 +36,7 @@ from .explanation_workflow import ExplanationWorkflow
 from .motion_store import MotionStore
 from .motion_timing import MotionTiming
 from .motion_workflow import MotionWorkflow
-from .motion_gateway import MotionAgentGateway, ProcessAgentGateway
+from .motion_gateway import MotionAgentGateway, ProcessAgentGateway, CreativeAgentGateway
 from .continuity_store import ContinuityStore
 from .batch_store import BatchStore
 from .batch_workflow import BatchWorkflow
@@ -80,6 +80,13 @@ MESSAGES = {
     'explanation_head_conflict': '已采用的讲解方案发生变化，请重新读取后核对。',
     'explanation_storage_limit': '讲解方案记录已达到当前存储限制。',
     'motion_disabled': '动态图解尚未启用，仍可查看历史和取消在途任务。',
+    'creative_disabled': '创意动画尚未启用，原动画和录音仍可查看。',
+    'creative_profile_unavailable': '创意动画的通用 Agent 服务尚未就绪，请稍后重试。',
+    'creative_audio_binding_mismatch': '这份动画对应的旁白录音已变化，请为当前录音重新生成。',
+    'creative_timing_requires_regeneration': '这份动画按固定录音时间制作，调整节拍后需要重新生成。',
+    'creative_scene_engine_not_admitted': '当前创意动画支持 HTML/SVG，这种渲染方式尚未启用。',
+    'creative_render_observation_mismatch': '动画的播放与复验画面不一致，请重新制作候选。',
+    'creative_reverse_seek_mismatch': '动画反向定位不一致，请重新制作候选。',
     'process_disabled': '过程演示尚未启用，已有候选和录音仍可查看。',
     'process_profile_unavailable': '过程演示生成服务尚未就绪，请稍后重新读取。',
     'process_continuity_not_supported': '过程演示暂不支持跨镜连续衔接，可制作单镜或普通整片草稿。',
@@ -242,8 +249,9 @@ class Generation(Revision):
 
 
 class MotionGeneration(Generation):
-    diagram_kind: Literal['diagram', 'process'] = 'diagram'
+    diagram_kind: Literal['diagram', 'process', 'creative'] = 'diagram'
     expected_semantic_binding_sha256: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
+    expected_audio_version_id: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class Adoption(Fields):
@@ -424,7 +432,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                speech_client=None, renderer=None, render_enabled=None,
                explanation_gateway=None, explanation_enabled=None, motion_gateway=None,
                motion_enabled=None, motion_renderer=None, motion_runtime=None,
-               process_gateway=None, process_enabled=None):
+               process_gateway=None, process_enabled=None, creative_gateway=None, creative_enabled=None):
     explanation_settings = ExplanationSettings.from_env()
     enabled = explanation_settings.enabled if explanation_enabled is None else explanation_enabled
     if type(enabled) is not bool:
@@ -437,6 +445,10 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     if type(process_gate) is not bool:
         raise ValueError('An explicit boolean process feature gate is required')
     process_gate = process_gate and motion_gate
+    creative_gate = motion_settings.creative_enabled if creative_enabled is None else creative_enabled
+    if type(creative_gate) is not bool:
+        raise ValueError('An explicit boolean creative feature gate is required')
+    creative_gate = creative_gate and motion_gate
     owned_client = None
     owned_speech_client = None
     if gateway is None:
@@ -468,8 +480,11 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         motion_gateway = MotionAgentGateway(gateway.client, motion_settings.revision)
     if process_gateway is None and isinstance(gateway, VideoAgentGateway):
         process_gateway = ProcessAgentGateway(gateway.client, motion_settings.process_revision)
+    if creative_gateway is None and isinstance(gateway, VideoAgentGateway):
+        creative_gateway = CreativeAgentGateway(gateway.client, motion_settings.creative_revision)
     motion_workflow = MotionWorkflow(motion_store, motion_gateway, enabled=motion_gate,
-                                    process_gateway=process_gateway, process_enabled=process_gate)
+                                    process_gateway=process_gateway, process_enabled=process_gate,
+                                    creative_gateway=creative_gateway, creative_enabled=creative_gate)
     owned_motion_renderer = None
     if motion_renderer is None and os.environ.get('VIDEO_MOTION_RENDER_URL'):
         from .motion_render_adapter import configured_motion_renderer
@@ -603,6 +618,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     explanation_configured=enabled and explanation_gateway is not None,
                     motion_enabled=motion_gate, motion_configured=motion_gate and motion_gateway is not None,
                     process_enabled=process_gate, process_configured=process_gate and process_gateway is not None,
+                    creative_enabled=creative_gate, creative_configured=creative_gate and creative_gateway is not None,
                     batch_enabled=motion_gate, continuity_enabled=motion_gate,
                     default_production_mode='motion' if motion_gate else 'static',
                     motion_render_configured=motion_gate and motion_renderer is not None and runtime is not None)
@@ -706,6 +722,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         document = body.model_dump()
         if document['expected_semantic_binding_sha256'] is None:
             document.pop('expected_semantic_binding_sha256')
+        if document['expected_audio_version_id'] is None:
+            document.pop('expected_audio_version_id')
         if document['diagram_kind'] == 'diagram':
             # Preserve exact old generation request identities across upgrades.
             document.pop('diagram_kind')

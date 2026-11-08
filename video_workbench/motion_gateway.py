@@ -181,3 +181,21 @@ class ProcessAgentGateway(MotionAgentGateway):
     business_prefix, idempotency_prefix = 'video-process:', 'process-'
     validate_input = staticmethod(validate_process_input)
     validate_result = staticmethod(validate_process_result)
+
+
+class CreativeAgentGateway(MotionAgentGateway):
+    """Reuse the Lab's frozen creative profile through the common Agent service.
+
+    The separate business/idempotency namespaces preserve recovery identity;
+    collect receives the complete immutable input rather than a beat-only plan.
+    """
+    from agent_service.profiles.video_animation_experiment import (
+        PROFILE as profile, INPUT_NAME as input_name, RESULT_NAME as result_name,
+        INPUT_MAX_BYTES as input_limit, OUTPUT_MAX_BYTES as output_limit,
+        validate_experiment_result,
+    )
+    from .creative_contract import validate_scene_input
+    input_role = 'animation_experiment_input'
+    business_prefix, idempotency_prefix = 'video-creative:', 'creative-'
+    validate_input = staticmethod(validate_scene_input)
+    validate_result = staticmethod(validate_experiment_result)

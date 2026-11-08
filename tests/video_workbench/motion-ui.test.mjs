@@ -90,6 +90,87 @@ function harness() {
 const posts = h => h.state.calls.filter(row => ['POST', 'PATCH'].includes(row.options.method));
 const timingInput = (h, index, field = 0) => h.$('motion-timing-rows').children[index].children[field + 1].children[0];
 
+function creativeVersion() {
+  return { id: 'v1', diagram_kind: 'creative', audio_version_id: 'a1', audio_sha256: '1'.repeat(64),
+    plan_sha256: 'creative-source', beats: version().beats, plan: { schema: 'video.creative-scene.v1',
+      capability_release_sha256: 'c'.repeat(64), engine: 'html-svg',
+      input_document: { constraints: { duration_seconds: 4,
+        production: { title: '队列动态演示' }, capability_release: { id: 'continuous-explanation', revision: 'v1' } } },
+      result: { strategy: { description: '<script>用对象流转解释队列</script>', tradeoffs: '减少次要装饰' },
+        files: { 'scene.html': '<script>throw new Error("MUST NOT EXECUTE")</script>' } } } };
+}
+
+test('creative generation uses the explicit kind and requires an adopted current recording', () => {
+  const p = project(), scene = p.scenes[0], base = creativeVersion();
+  assert.equal(motionDiagramKind(base), 'creative');
+  assert.equal(motionDiagramKind({ plan: base.plan }), 'creative');
+  assert.deepEqual(createMotionRequest(p, scene, '连续移动', null, 'creative').body,
+    { expected_revision: 1, instruction: '连续移动', expected_audio_version_id: 'a1', diagram_kind: 'creative' });
+  assert.deepEqual(createMotionRequest(p, scene, '更清楚', base, 'creative').body,
+    { expected_revision: 1, instruction: '更清楚', base_version_id: 'v1', expected_audio_version_id: 'a1', diagram_kind: 'creative' });
+  assert.throws(() => createMotionRequest(p, scene, '', base, 'diagram'));
+  scene.audio_stale = true;
+  assert.throws(() => createMotionRequest(p, scene, '', null, 'creative'), /试听并采用/);
+});
+
+test('an available creative release is the default for new generation, with an audio-first hint', async () => {
+  const h = harness(); h.state.context.creativeConfigured = true;
+  await h.load();
+  assert.equal(h.$('motion-diagram-kind').value, 'creative');
+  assert.equal(h.$('generate-motion').disabled, false);
+  assert.match(h.$('motion-process-note').textContent, /已发布.*先试听并采用配音/);
+  h.state.context.scene.audio_stale = true; h.panel.render();
+  assert.equal(h.$('generate-motion').disabled, true);
+  assert.match(h.$('motion-form-note').textContent, /先生成或上传配音/);
+  await h.panel.generate(); assert.equal(posts(h).length, 0);
+  h.state.context.scene.audio_stale = false;
+  h.state.transport = async () => ({ id: 'creative-op', status: 'queued' });
+  await h.panel.generate();
+  assert.equal(posts(h).length, 1);
+  assert.equal(posts(h)[0].options.body.diagram_kind, 'creative');
+  assert.equal(posts(h)[0].options.body.expected_audio_version_id, 'a1');
+  assert.equal(h.state.context.scene.motion.head_version_id, null);
+});
+
+test('creative candidate review is inert, exposes release and recording identity and preserves explicit adoption', async () => {
+  const h = harness(); h.state.context.creativeConfigured = true;
+  h.state.data.scenes[0].motion.versions[0].diagram_kind = 'creative';
+  h.state.transport = async (path, options, fallback) => path.endsWith('/motion-versions/v1')
+    ? creativeVersion() : fallback(path);
+  await h.load();
+  const review = h.$('motion-review').textContent;
+  assert.match(review, /<script>用对象流转解释队列<\/script>/);
+  assert.match(review, /continuous-explanation.*v1/);
+  assert.match(review, /cccccccccccc/);
+  assert.match(review, /动作已绑定.*当前配音匹配/);
+  assert.doesNotMatch(review, /MUST NOT EXECUTE/);
+  assert.equal(h.$('motion-version').children[0].textContent.includes('创意动画'), true);
+  assert.equal(h.$('confirm-motion-adoption').checked, false);
+  assert.equal(h.$('adopt-motion').disabled, true);
+  assert.equal(posts(h).length, 0);
+  assert.equal(h.$('preview-motion').disabled, false);
+  assert.equal(timingInput(h, 0).disabled, true);
+  assert.equal(h.$('save-motion-timing').hidden, true);
+  assert.equal(h.$('motion-correction-label').hidden, true);
+  assert.match(h.$('motion-timing-note').textContent, /生成这份动画时.*生成新候选/);
+  await h.panel.saveTiming(false); assert.equal(posts(h).length, 0);
+});
+
+test('creative revisions keep their reviewed kind while a different new-generation choice remains explicit', async () => {
+  const h = harness(); h.state.context.creativeConfigured = true;
+  h.state.data.scenes[0].motion.versions[0].diagram_kind = 'creative';
+  h.state.transport = async (path, options, fallback) => options.method === 'POST'
+    ? { id: 'revision', status: 'queued' } : path.endsWith('/motion-versions/v1') ? creativeVersion() : fallback(path);
+  await h.load();
+  h.$('motion-diagram-kind').value = 'diagram'; await h.$('motion-diagram-kind').emit('change');
+  h.$('motion-instruction').value = '加长关键对象停留'; await h.$('motion-instruction').emit('input');
+  await h.panel.generate(true);
+  assert.equal(posts(h).length, 1);
+  assert.equal(posts(h)[0].options.body.diagram_kind, 'creative');
+  assert.equal(posts(h)[0].options.body.base_version_id, 'v1');
+  assert.equal(h.$('motion-diagram-kind').value, 'diagram');
+});
+
 test('process requests are explicit, legacy requests stay identical and revisions cannot change kind', () => {
   const p = project(), scene = p.scenes[0], base = { id: 'process-1', diagram_kind: 'process' };
   assert.equal(motionDiagramKind(base), 'process');

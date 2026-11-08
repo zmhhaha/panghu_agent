@@ -171,6 +171,20 @@ def test_successful_real_client_protocol_publishes_bound_media_without_aesthetic
     assert row['artifacts']['frames/000191.jpg']['sha256'] == lab.digest(b'SYNTHETIC-JPEG-191')
 
 
+def test_new_pilot_executes_shared_production_capability_release_over_existing_profile(tmp_path, wire):
+    from video_workbench.animation_capabilities import DEFAULT_RELEASE_ID, capability_release
+    gateway, peer, rendered = wire
+    root = tmp_path / 'shared-pilot'
+    runner.initialize(root, capability_release_id=DEFAULT_RELEASE_ID)
+    row = run(root, 'development-v1', gateway)
+    release = capability_release()
+    assert row['input_document']['constraints']['capability_release'] == release
+    assert row['provenance']['capability_release_sha256'] == release['sha256']
+    assert rendered[0]['input_document'] == row['input_document']
+    assert lab.read_run(root / row['id']) == row
+    assert peer.count('POST', '/v1/jobs') == 1
+
+
 def test_lost_submission_response_performs_one_readonly_lookup_without_second_post(tmp_path, wire):
     gateway, peer, rendered = wire
     peer.lose_submission = True
@@ -394,6 +408,110 @@ def synthetic_candidate(directory, document, change=None):
     for name, value in documents.items():
         (directory / name).write_bytes(lab.canonical(value))
     return documents
+
+
+def creative_validation_request(tmp_path, *, scene_id='creative-validation-scene'):
+    """Synthetic PCM and source document; not a voice or visual sample."""
+    import io
+    import wave
+    from video_workbench.creative_contract import build_scene_input
+    from video_workbench.motion import make_beats, estimated_alignment
+    stream = io.BytesIO()
+    with wave.open(stream, 'wb') as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(8000)
+        audio.writeframes(b'\0\0' * 64000)
+    audio_raw = stream.getvalue()
+    beats = make_beats('观察对象身份。再解释运动的关系。')
+    document = build_scene_input(scene_id=scene_id, title='正式创作验证',
+        visual_description='通过连续运动解释关系。', narration=beats['source_text'], beats=beats,
+        alignment=estimated_alignment(beats, lab.digest(audio_raw), 8), audio_sha256=lab.digest(audio_raw),
+        duration_seconds=8)
+    request_root = tmp_path / scene_id
+    request_root.mkdir()
+    input_file, audio_file = request_root / 'input.json', request_root / 'source.wav'
+    input_file.write_bytes(lab.canonical(document))
+    audio_file.write_bytes(audio_raw)
+    binding_file, receipt_file = request_root / 'binding.json', request_root / 'build.json'
+    binding_file.write_bytes(lab.canonical(synthetic_binding().model_dump(mode='json')))
+    receipt_file.write_bytes(lab.canonical(dict(schema='animation-agent-overlay-build.v1',
+        image='registry.invalid/agent-pi:latest@' + synthetic_binding().image_digest,
+        new_files={'profiles/video_animation_experiment.py':
+            lab.digest(runner.Path(runner.experiment_profile.__file__).read_bytes()),
+            'resources/animation-experiment-v1/manifest.json': runner.experiment_profile.BUNDLE_MANIFEST_SHA256})))
+    return document, dict(input_file=input_file, audio_file=audio_file,
+                         expected_binding_file=binding_file, build_receipt_file=receipt_file)
+
+
+def test_creative_validation_has_two_separate_consumed_slots_and_preserves_old_pilot(tmp_path):
+    from video_workbench import creative_validation as validation
+    old = init(tmp_path)
+    old_bytes = (old / 'pilot.json').read_bytes()
+    root = tmp_path / 'production-validation'
+    validation.initialize(root, 'Synthetic offline test authorization; no real execution.')
+    _, files = creative_validation_request(tmp_path)
+    first = validation.prepare(root, 'first', **files, candidate_name='creative-unit-first', uid_start=50100000)
+    second = validation.prepare(root, 'second', **files, candidate_name='creative-unit-second', uid_start=50100010)
+    assert first['max_generation_attempts'] == second['max_generation_attempts'] == 1
+    assert first['automatic_retries'] is second['automatic_retries'] is False
+    assert first['scope_id'] == second['scope_id']
+    assert first['reservation_id'] != second['reservation_id']
+    assert (old / 'pilot.json').read_bytes() == old_bytes
+    with pytest.raises(ServiceError, match='attempt_consumed'):
+        validation.prepare(root, 'first', **files, candidate_name='another-unit-first', uid_start=50100020)
+    with pytest.raises(ServiceError):
+        validation.prepare(root, 'third', **files, candidate_name='creative-unit-third', uid_start=50100020)
+    assert list((root / 'first' / 'candidate-sources').iterdir()) == [root / 'first' / 'candidate-sources' / INPUT_NAME]
+    assert not (root / 'first' / 'candidate-manifest.json').exists()
+    assert not (root / 'first' / 'creative-scene.json').exists()
+
+
+def test_creative_validation_rejects_wrong_or_truncated_wav_before_reserving_slot(tmp_path):
+    from video_workbench import creative_validation as validation
+    root = tmp_path / 'production-validation'
+    validation.initialize(root, 'Offline test only.')
+    _, files = creative_validation_request(tmp_path)
+    raw = files['audio_file'].read_bytes()
+    with pytest.raises(ServiceError, match='audio_truncated'):
+        validation.wav_clock(raw[:-10])
+    # A complete different recording has the same duration but a different SHA.
+    files['audio_file'].write_bytes(raw[:-2] + b'\1\1')
+    with pytest.raises(ServiceError, match='audio_binding_mismatch'):
+        validation.prepare(root, 'first', **files, candidate_name='creative-unit-first', uid_start=50100000)
+    assert validation._load(root)[1]['slots']['first']['state'] == 'unstarted'
+
+
+@pytest.mark.parametrize('change', [None, 'running', 'source_digest', 'evidence_digest'])
+def test_creative_validation_import_requires_real_custody_shape_and_independent_stop(tmp_path, change):
+    from video_workbench import creative_validation as validation
+    root = tmp_path / 'production-validation'
+    validation.initialize(root, 'Offline synthetic custody fixture; no real execution.')
+    document, files = creative_validation_request(tmp_path)
+    reservation = validation.prepare(root, 'first', **files, candidate_name='creative-unit-first', uid_start=50100000)
+    captured = tmp_path / 'captured'
+    docs = synthetic_candidate(captured, document, change)
+    docs['worker-pod.json']['metadata'].update(name='creative-unit-first-worker', namespace='agent-workers')
+    docs['candidate-result.json']['observations']['isolation'] = {'uid': [reservation['uid_range'][2]] * 3}
+    for name, value in docs.items():
+        (captured / name).write_bytes(lab.canonical(value))
+    if change is not None:
+        with pytest.raises(ServiceError):
+            validation.collect(root, 'first', captured)
+        plan = validation._load(root)[1]
+        assert plan['slots']['first']['state'] == 'collection_failed'
+        assert not (root / 'first' / 'creative-scene.json').exists()
+        with pytest.raises(ServiceError, match='attempt_consumed'):
+            validation.prepare(root, 'first', **files, candidate_name='retry-unit-first', uid_start=50100020)
+    else:
+        package = validation.collect(root, 'first', captured)
+        assert package['input_document'] == document
+        assert validation.collect(root, 'first', captured) == package
+        provenance = json.loads((root / 'first' / 'provenance.json').read_bytes())
+        assert provenance['admission'] == 'explicit_isolated_creative_validation_not_shared_route'
+        assert provenance['production_acceptance_created'] is provenance['rendered'] is False
+        assert provenance['actual_model'] is None
+        assert provenance['stop_proof']['attempt_id'] == docs['candidate-evidence.json']['attempt_id']
 
 
 def test_candidate_reservation_survives_commands_without_model_or_published_result(tmp_path, wire):

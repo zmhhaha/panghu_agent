@@ -12,7 +12,8 @@ from uuid import uuid4
 from agent_service.contracts import ServiceError, digest
 from agent_service.profiles.video_motion import validate_motion_input, validate_motion_result
 from agent_service.profiles.video_process import validate_process_input, validate_process_result
-from .motion import make_beats
+from .motion import make_beats, estimated_alignment
+from .audio_store import narration_document, narration_binding
 from .explanation_store import visual_generation_description
 
 
@@ -25,6 +26,7 @@ MAX_TOTAL_JSON_BYTES = 128 * 1024 * 1024
 # Input beats (256KiB), plan (128KiB), and bounded coordinator metadata fit in
 # this reservation. JSON budgets do not claim to measure SQLite/WAL disk bytes.
 OUTPUT_RESERVE_BYTES = 512 * 1024
+CREATIVE_OUTPUT_RESERVE_BYTES = 2 * 1024 * 1024
 PROCESS_CANDIDATE_COMPILER = 'motion-process-compiler-2'
 
 
@@ -42,15 +44,19 @@ def semantic_binding(project, scene):
 
 def plan_diagram_kind(plan):
     _require(type(plan) is dict and type(plan.get('schema')) is str
-             and plan['schema'] in {'video.motion-plan.v1', 'video.process-plan.v1'},
+             and plan['schema'] in {'video.motion-plan.v1', 'video.process-plan.v1', 'video.creative-scene.v1'},
              'motion_candidate_schema_invalid')
+    if plan['schema'] == 'video.creative-scene.v1':
+        return 'creative'
     return 'process' if plan['schema'] == 'video.process-plan.v1' else 'diagram'
 
 
 def operation_diagram_kind(operation):
     document = operation.get('document')
     _require(type(document) is dict and type(document.get('schema')) is str and document['schema'] in {
-        'video.motion-input.v1', 'video.process-input.v1'}, 'motion_operation_schema_invalid')
+        'video.motion-input.v1', 'video.process-input.v1', 'video.animation-experiment-input.v1'}, 'motion_operation_schema_invalid')
+    if document['schema'] == 'video.animation-experiment-input.v1':
+        return 'creative'
     return 'process' if document['schema'] == 'video.process-input.v1' else 'diagram'
 
 
@@ -87,7 +93,8 @@ class MotionStore:
         clause, args = (' WHERE project_id=?', (project_id,)) if project_id is not None else ('', ())
         operations = db.execute('SELECT COALESCE(SUM(length(CAST(document AS BLOB))),0), '
             "COALESCE(SUM(CASE WHEN json_extract(document,'$.status') IN "
-            "('queued','submitting','running','cancelling') THEN 1 ELSE 0 END),0) "
+            "('queued','submitting','running','cancelling') THEN "
+            "COALESCE(json_extract(document,'$.output_reserve_bytes'),512*1024) ELSE 0 END),0) "
             'FROM motion_operations' + clause, args).fetchone()
         versions = db.execute('SELECT COALESCE(SUM(length(CAST(document AS BLOB))),0) '
                               'FROM motion_versions' + clause, args).fetchone()[0]
@@ -95,10 +102,10 @@ class MotionStore:
         if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='motion_alignments'").fetchone():
             alignments = db.execute('SELECT COALESCE(SUM(length(CAST(document AS BLOB))),0) '
                                     'FROM motion_alignments' + clause, args).fetchone()[0]
-        return operations[0] + versions + alignments + operations[1] * OUTPUT_RESERVE_BYTES
+        return operations[0] + versions + alignments + operations[1]
 
-    def _capacity(self, db, project_id, *, extra_bytes=0, active_delta=0):
-        extra = extra_bytes + active_delta * OUTPUT_RESERVE_BYTES
+    def _capacity(self, db, project_id, *, extra_bytes=0, active_delta=0, reserve_bytes=OUTPUT_RESERVE_BYTES):
+        extra = extra_bytes + active_delta * reserve_bytes
         _require(self._usage(db, project_id) + extra <= MAX_PROJECT_JSON_BYTES
                  and self._usage(db) + extra <= MAX_TOTAL_JSON_BYTES, 'motion_storage_limit', 413)
 
@@ -138,12 +145,39 @@ class MotionStore:
 
     @staticmethod
     def _metadata(version, binding):
+        creative = plan_diagram_kind(version['plan']) == 'creative'
+        production = version['plan']['input_document']['constraints']['production'] if creative else None
         return {k: version[k] for k in ('id', 'created_at', 'parent_version_id', 'input_sha256',
                                        'plan_sha256', 'semantic_binding_sha256')} | {
-            'title': version['plan']['title'], 'template': version['plan']['template'],
+            'title': production['title'] if creative else version['plan']['title'],
+            'template': 'creative' if creative else version['plan']['template'],
             'stale': version['semantic_binding_sha256'] != binding,
             'diagram_kind': plan_diagram_kind(version['plan'])} | (
                 {'compiler_version': version['compiler_version']} if 'compiler_version' in version else {})
+
+    def _creative_audio(self, db, project, scene):
+        """Resolve the exact current owner-scoped recording inside the transaction."""
+        identity = scene.get('head_audio_version_id')
+        _require(bool(identity), 'missing_current_audio', 409)
+        row = db.execute('SELECT document,data FROM audio_versions WHERE id=? AND project_id=? AND scene_id=?',
+                         (identity, project['id'], scene['id'])).fetchone()
+        _require(row is not None, 'missing_current_audio', 409)
+        audio = dict(json.loads(row['document']), data=bytes(row['data']))
+        document = narration_document(scene, self.store._project_speech_provider(project))
+        _require(audio['input_sha256'] == narration_binding(document), 'audio_stale', 409)
+        from .motion_snapshot import _audio
+        checked = _audio(audio)
+        _require(checked['duration_seconds'] <= 60, 'motion_scene_duration_exceeded', 422)
+        return audio, document, checked
+
+    @staticmethod
+    def _audio_stale(version, scene):
+        if plan_diagram_kind(version['plan']) != 'creative':
+            return False
+        selected = next((a for a in scene.get('audio_versions', [])
+                         if a['id'] == scene.get('head_audio_version_id')), None)
+        return (selected is None or selected.get('stale', False)
+                or selected.get('sha256') != version['audio_sha256'])
 
     def project(self, owner, project_id):
         # The existing lock keeps the static and additive views on one revision,
@@ -161,7 +195,9 @@ class MotionStore:
                     ops = [json.loads(r['document']) for r in db.execute(
                         'SELECT document FROM motion_operations WHERE owner=? AND project_id=? AND scene_id=? ORDER BY rowid',
                         (owner, project_id, scene['id']))]
-                    metadata = [self._metadata(v, binding) for v in versions]
+                    metadata = [dict(self._metadata(v, binding),
+                                     stale=v['semantic_binding_sha256'] != binding or self._audio_stale(v, scene))
+                                for v in versions]
                     adopted = next((v for v in metadata if v['id'] == head['version_id']), None)
                     scene['motion'] = dict(mode=head['mode'], head_version_id=head['version_id'],
                         head_stale=bool(head['version_id'] and (adopted is None or adopted['stale'])),
@@ -207,19 +243,24 @@ class MotionStore:
             version = self._version(db, owner, version_id)
             project = self.store._project(db, owner, version['project_id'])
             scene = self.store._scene(project, version['scene_id'])
-            version['stale'] = version['semantic_binding_sha256'] != semantic_binding(project, scene)
+            self.store._attach_audio(db, project)
+            version['stale'] = (version['semantic_binding_sha256'] != semantic_binding(project, scene)
+                                or self._audio_stale(version, scene))
             return version
 
     def start(self, owner, scene_id, request, idem, *, timeout=600):
         _require(type(request) is dict and {'expected_revision'} <= set(request)
                  and set(request) <= {'expected_revision', 'instruction', 'base_version_id', 'diagram_kind',
-                                      'expected_semantic_binding_sha256'}
+                                      'expected_semantic_binding_sha256', 'expected_audio_version_id'}
                  and type(request['expected_revision']) is int and request['expected_revision'] >= 1)
         expected_binding = request.get('expected_semantic_binding_sha256')
         _require(expected_binding is None or type(expected_binding) is str and len(expected_binding) == 64
                  and all(char in '0123456789abcdef' for char in expected_binding))
         diagram_kind = request.get('diagram_kind', 'diagram')
-        _require(type(diagram_kind) is str and diagram_kind in {'diagram', 'process'})
+        _require(type(diagram_kind) is str and diagram_kind in {'diagram', 'process', 'creative'})
+        expected_audio = request.get('expected_audio_version_id')
+        _require('expected_audio_version_id' not in request or diagram_kind == 'creative'
+                 and type(expected_audio) is str and 1 <= len(expected_audio) <= 100)
         if diagram_kind == 'diagram' and 'diagram_kind' in request:
             # Only normalize this newly introduced default. Preserve the old
             # instruction/base defaults and every historical request hash.
@@ -244,8 +285,12 @@ class MotionStore:
             if project['revision'] != request['expected_revision']:
                 _require(request['expected_revision'] < project['revision'] and expected_binding is not None,
                          'revision_conflict', 409)
+                if diagram_kind == 'creative':
+                    _require(expected_audio is not None, 'revision_conflict', 409)
             if expected_binding is not None:
                 _require(expected_binding == binding, 'motion_generation_conflict', 409)
+            if expected_audio is not None:
+                _require(scene.get('head_audio_version_id') == expected_audio, 'creative_audio_binding_mismatch', 409)
             active = [o for r in db.execute('SELECT document FROM motion_operations WHERE owner=?', (owner,))
                       if (o := json.loads(r['document']))['status'] in ACTIVE]
             _require(not any(o['scene_id'] == scene_id for o in active), 'motion_operation_in_progress', 409)
@@ -264,20 +309,37 @@ class MotionStore:
                 _require(base['scene_id'] == scene_id and base['project_id'] == project_id, 'not_found', 404)
                 _require(base['semantic_binding_sha256'] == binding, 'motion_base_stale', 409)
                 _require(plan_diagram_kind(base['plan']) == diagram_kind, 'motion_base_kind_mismatch', 409)
-            document = dict(schema='video.process-input.v1' if diagram_kind == 'process' else 'video.motion-input.v1',
-                title=scene['title'], style=project.get('style', ''),
-                visual_description=visual_generation_description(scene, enforce_limit=True), beats=make_beats(scene['narration']),
-                instruction=request.get('instruction', ''), base_plan=base['plan'] if base else None)
-            (validate_process_input if diagram_kind == 'process' else validate_motion_input)(document)
+            audio_binding = {}
+            if diagram_kind == 'creative':
+                from .creative_contract import build_scene_input
+                audio, narration, checked = self._creative_audio(db, project, scene)
+                beats = make_beats(scene['narration'], checked['spoken_text'])
+                alignment = estimated_alignment(beats, checked['sha256'], checked['duration_seconds'])
+                document = build_scene_input(scene_id=scene_id, title=scene['title'],
+                    visual_description=visual_generation_description(scene, enforce_limit=True),
+                    narration=scene['narration'], beats=beats, alignment=alignment,
+                    audio_sha256=checked['sha256'], duration_seconds=checked['duration_seconds'],
+                    style=project.get('style', ''),
+                    instruction=request.get('instruction', ''),
+                    base_result=base['plan']['result'] if base else None)
+                audio_binding = dict(audio_version_id=audio['id'], audio_sha256=checked['sha256'],
+                                     output_reserve_bytes=CREATIVE_OUTPUT_RESERVE_BYTES)
+            else:
+                document = dict(schema='video.process-input.v1' if diagram_kind == 'process' else 'video.motion-input.v1',
+                    title=scene['title'], style=project.get('style', ''),
+                    visual_description=visual_generation_description(scene, enforce_limit=True), beats=make_beats(scene['narration']),
+                    instruction=request.get('instruction', ''), base_plan=base['plan'] if base else None)
+                (validate_process_input if diagram_kind == 'process' else validate_motion_input)(document)
             now = time.time()
             op = dict(id=str(uuid4()), owner=owner, project_id=project_id, scene_id=scene_id,
-                kind='process-plan' if diagram_kind == 'process' else 'motion-plan',
+                kind={'process': 'process-plan', 'creative': 'creative-scene', 'diagram': 'motion-plan'}[diagram_kind],
                 document=document, input_sha256=digest(document),
                 semantic_binding_sha256=binding, parent_version_id=base_id, status='queued', error=None,
                 job_id=None, input_ref=None, submit_attempted=False, cancel_requested=False,
                 cancel_attempted=False, cancel_attempts=0, next_cancel_at=0.0,
-                deadline_at=now + timeout, created_at=now, version_id=None)
-            self._capacity(db, project_id, extra_bytes=_size(op), active_delta=1)
+                deadline_at=now + timeout, created_at=now, version_id=None, **audio_binding)
+            self._capacity(db, project_id, extra_bytes=_size(op), active_delta=1,
+                           reserve_bytes=op.get('output_reserve_bytes', OUTPUT_RESERVE_BYTES))
             db.execute('INSERT INTO motion_operations VALUES (?, ?, ?, ?, ?, ?, ?)',
                 (op['id'], owner, project_id, scene_id, idem, fingerprint, _json(op)))
             self.store._save(db, project)
@@ -374,12 +436,25 @@ class MotionStore:
             elif time.time() >= op['deadline_at']:
                 op.update(status='timed_out', error='motion_result_after_deadline')
             else:
-                process = operation_diagram_kind(op) == 'process'
-                (validate_process_result if process else validate_motion_result)(
-                    result, op['input_sha256'], op['document']['beats'])
-                plan = result['plan']
+                kind = operation_diagram_kind(op)
+                process, creative = kind == 'process', kind == 'creative'
+                if creative:
+                    from .creative_contract import collect_scene_result
+                    plan = collect_scene_result(op['document'], result)
+                    beats = op['document']['constraints']['production']['beats']
+                    if op['parent_version_id'] is not None:
+                        parent = self._version(db, op['owner'], op['parent_version_id'])
+                        if plan['result']['files_sha256'] == parent['plan']['result']['files_sha256']:
+                            op.update(status='needs_input', error='motion_revision_unchanged')
+                            self._write_op(db, op)
+                            self.store._save(db, project)
+                            return self._public(op)
+                else:
+                    (validate_process_result if process else validate_motion_result)(
+                        result, op['input_sha256'], op['document']['beats'])
+                    plan, beats = result['plan'], op['document']['beats']
                 agent_plan_sha256 = digest(plan)
-                if not process:
+                if not process and not creative:
                     from agent_service.profiles.video_references import preserve_plan_references
                     from .motion import preflight_plan
                     plan = preserve_plan_references(plan, op['document'])
@@ -397,18 +472,24 @@ class MotionStore:
                 version = dict(id=str(uuid4()), project_id=op['project_id'], scene_id=op['scene_id'],
                     operation_id=op['id'], created_at=time.time(), parent_version_id=op['parent_version_id'],
                     input_sha256=op['input_sha256'], semantic_binding_sha256=op['semantic_binding_sha256'],
-                    beats=op['document']['beats'], plan=plan, plan_sha256=digest(plan))
-                if process:
+                    beats=beats, plan=plan, plan_sha256=digest(plan))
+                if creative:
+                    from .creative_renderer import COMPILER
+                    version.update(diagram_kind='creative', compiler_version=COMPILER,
+                        audio_version_id=op['audio_version_id'], audio_sha256=op['audio_sha256'])
+                elif process:
                     version.update(diagram_kind='process', compiler_version=PROCESS_CANDIDATE_COMPILER)
                 else:
                     from .motion import COMPILER_VERSION
                     version.update(compiler_version=COMPILER_VERSION,
                         agent_plan_sha256=agent_plan_sha256,
                         preparation='reference-preservation-and-layout-preflight-v1')
-                _require(_size(version) <= OUTPUT_RESERVE_BYTES - 8192, 'motion_candidate_too_large', 413)
+                reserve = op.get('output_reserve_bytes', OUTPUT_RESERVE_BYTES)
+                _require(_size(version) <= reserve - 8192, 'motion_candidate_too_large', 413)
                 op.update(status='completed', error=None, version_id=version['id'])
                 self._capacity(db, op['project_id'],
-                    extra_bytes=_size(version) + _size(op) - old_op_size, active_delta=-1)
+                    extra_bytes=_size(version) + _size(op) - old_op_size, active_delta=-1,
+                    reserve_bytes=reserve)
                 db.execute('INSERT INTO motion_versions VALUES (?, ?, ?, ?, ?, ?)',
                     (version['id'], op['owner'], op['project_id'], op['scene_id'], op['id'], _json(version)))
             self._write_op(db, op)
@@ -438,6 +519,9 @@ class MotionStore:
                 head = self._head(db, owner, project_id, scene_id)
                 _require(head['version_id'] == selection['expected_head_version_id'], 'motion_head_conflict', 409)
                 _require(version['semantic_binding_sha256'] == semantic_binding(project, scene), 'motion_plan_stale', 409)
+                if plan_diagram_kind(version['plan']) == 'creative':
+                    _, _, audio = self._creative_audio(db, project, scene)
+                    _require(audio['sha256'] == version['audio_sha256'], 'creative_audio_binding_mismatch', 409)
                 checked.append((scene_id, version['id']))
             for scene_id, version_id in checked:
                 db.execute('INSERT INTO motion_heads VALUES (?, ?, ?, ?, ?) ON CONFLICT(owner,project_id,scene_id) '
@@ -464,6 +548,9 @@ class MotionStore:
                 _require(head['version_id'] is not None, 'missing_motion_plan', 409)
                 version = self._version(db, owner, head['version_id'])
                 _require(version['semantic_binding_sha256'] == semantic_binding(project, scene), 'motion_plan_stale', 409)
+                if plan_diagram_kind(version['plan']) == 'creative':
+                    _, _, audio = self._creative_audio(db, project, scene)
+                    _require(audio['sha256'] == version['audio_sha256'], 'creative_audio_binding_mismatch', 409)
             db.execute('INSERT INTO motion_heads VALUES (?, ?, ?, ?, ?) ON CONFLICT(owner,project_id,scene_id) '
                        'DO UPDATE SET mode=excluded.mode', (owner, project_id, scene_id, head['version_id'], mode))
             self.store._save(db, project)

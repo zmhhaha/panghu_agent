@@ -91,11 +91,32 @@ def definition():
         note='中性能力目标，无业务故事、旁白或语音；尚无作品时只显示定义。'))
 
 
-def pilot_input(role='development', prompt_revision='v1', guidance=''):
+def pilot_input(role='development', prompt_revision='v1', guidance='', *, capability_release_id=None):
     goal = definition()
-    return dict(schema='video.animation-experiment-input.v1', experiment_id=goal['id'],
+    value = dict(schema='video.animation-experiment-input.v1', experiment_id=goal['id'],
         capability='identity-tracking', goal=goal['goal'] + '\n' + goal['exploration'],
         constraints=constraints(role), assets={}, prompt_revision=prompt_revision, guidance=guidance)
+    if capability_release_id is not None:
+        from .animation_capabilities import bind_experiment_release
+        return bind_experiment_release(value, capability_release_id)
+    return value
+
+
+def _record_input(document, role):
+    """Rebuild old inputs byte-for-byte and explicitly bound new strategy inputs."""
+    require(type(document) is dict, 'animation_experiment_input_mismatch')
+    require(type(document.get('constraints')) is dict, 'animation_experiment_input_mismatch')
+    release = document['constraints'].get('capability_release')
+    if release is None:
+        return pilot_input(role, document.get('prompt_revision'), document.get('guidance'))
+    from .animation_capabilities import validate_release
+    from agent_service.contracts import ServiceError
+    try:
+        release = validate_release(release)
+        return pilot_input(role, document.get('prompt_revision'),
+            document['constraints'].get('capability_local_guidance'), capability_release_id=release['id'])
+    except ServiceError:
+        raise ExperimentError('animation_experiment_capability_binding_mismatch') from None
 
 
 def _ordinary_file(root, name, limit):
@@ -128,11 +149,15 @@ def read_run(directory):
     require(row.get('identity') == digest({k: v for k, v in row.items() if k != 'identity'}),
             'animation_experiment_run_changed', 409)
     doc = row.get('input_document')
-    require(type(doc) is dict and doc == pilot_input(row['input_role'], doc.get('prompt_revision'), doc.get('guidance'))
+    require(type(doc) is dict and doc == _record_input(doc, row['input_role'])
             and row.get('input_sha256') == digest(doc), 'animation_experiment_input_mismatch')
     require(type(row.get('prompt_text')) is str and len(row['prompt_text']) <= 128 * 1024
             and type(row.get('provenance')) is dict and type(row.get('artifacts')) is dict,
             'animation_experiment_run_invalid')
+    if release := doc['constraints'].get('capability_release'):
+        require(row['provenance'].get('capability_release_id') == release['id']
+                and row['provenance'].get('capability_release_sha256') == release['sha256'],
+                'animation_experiment_capability_binding_mismatch')
     require(len(row['artifacts']) <= 250, 'animation_experiment_artifacts_invalid')
     for name, item in row['artifacts'].items():
         require(type(item) is dict and set(item) == {'sha256', 'size', 'mime'}

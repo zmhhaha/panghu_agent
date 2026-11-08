@@ -48,13 +48,29 @@ class MotionTiming:
                 row = db.execute('SELECT document FROM motion_alignments WHERE owner=? '
                                  'AND motion_version_id=? AND audio_version_id=?',
                                  (owner, version_id, audio_version_id)).fetchone()
-            alignment = (validate_alignment(json.loads(row[0]), beats) if row else
-                         estimated_alignment(beats, audio['sha256'], audio['duration_seconds']))
+            creative = plan_diagram_kind(version['plan']) == 'creative'
+            if creative:
+                from .creative_contract import scene_context
+                context = scene_context(version['plan'])
+                _require(context['audio_sha256'] == audio['sha256'], 'creative_audio_binding_mismatch', 409)
+                _require(context['beats'] == beats, 'motion_semantics_stale', 409)
+                alignment = validate_alignment(json.loads(row[0]) if row else context['alignment'], beats)
+                review_fields = {'review_status', 'reviewed_by', 'reviewed_at'}
+                _require({k: v for k, v in alignment.items() if k not in review_fields}
+                         == {k: v for k, v in context['alignment'].items() if k not in review_fields},
+                         'creative_timing_requires_regeneration', 409)
+            else:
+                alignment = (validate_alignment(json.loads(row[0]), beats) if row else
+                             estimated_alignment(beats, audio['sha256'], audio['duration_seconds']))
             _require(alignment['audio_sha256'] == audio['sha256'] and
                      alignment['audio_seconds'] == audio['duration_seconds'], 'motion_audio_binding_mismatch', 409)
             options = dict(leading_seconds=scene.get('leading_seconds', 0),
                            trailing_seconds=scene.get('trailing_seconds', 0))
-            if plan_diagram_kind(version['plan']) == 'process':
+            if creative:
+                from .creative_renderer import resolve_creative_timeline
+                timeline = resolve_creative_timeline(version['plan'], beats, alignment,
+                    compiler_version=version['compiler_version'], **options)
+            elif plan_diagram_kind(version['plan']) == 'process':
                 _require(version.get('compiler_version') == PROCESS_CANDIDATE_COMPILER,
                          'process_candidate_compiler_invalid', 409)
                 timeline = resolve_process_timeline(version['plan'], beats, alignment,
@@ -75,6 +91,10 @@ class MotionTiming:
                  and type(request['expected_revision']) is int and request['expected_revision'] >= 1)
         with self.store.lock:
             current = self.get(owner, version_id, request['audio_version_id'])
+            if not verify:
+                version = self.motion.version(owner, version_id)
+                _require(plan_diagram_kind(version['plan']) != 'creative',
+                         'creative_timing_requires_regeneration', 409)
             _require(current['alignment_sha256'] == request['expected_alignment_sha256'], 'motion_alignment_conflict', 409)
             actor = owner if len(owner) <= 120 else 'owner-sha256:' + digest(owner)
             if verify:

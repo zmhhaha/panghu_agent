@@ -34,6 +34,7 @@ try{
  Object.assign(receipt,renderQuality(process.env.MOTION_QUALITY||'draft'));
  if(!['render','observe'].includes(mode))throw Error('mode_not_allowed');
  const {manifest,timeline}=verifyInput(source,process.env.MOTION_MANIFEST_SHA256);
+ const creative=manifest.compiler==='creative-scene-adapter-1';
  receipt.timeline_sha256=manifest.timeline_sha256;receipt.input_manifest_sha256=process.env.MOTION_MANIFEST_SHA256;
  // Probe the files and binaries that will actually run rather than trusting
  // the build-time runtime.json as an assertion about a later image layer.
@@ -46,13 +47,21 @@ try{
  cpSync('/opt/assets/NotoSansCJK-Regular.ttc',root+'/assets/NotoSansCJK-Regular.ttc');
  if(mode==='observe'){
   receipt.stage='observing_scene';persist();
-  await execute(process.execPath,['/opt/renderer/observe.mjs']);
+  await execute(process.execPath,creative?['/opt/renderer/creative.mjs','observe']:['/opt/renderer/observe.mjs']);
   receipt.status='observed_pending_validation';
  }else{
   const cli='/opt/renderer/node_modules/hyperframes/bin/hyperframes.mjs';
   receipt.status='rendering';receipt.stage='rendering_scene';persist();
-  await execute(process.execPath,[cli,'render',root,'--output',root+'/silent.mp4','--fps','24',
-   '--workers','1','--quality',receipt.cli_quality,'--no-browser-gpu','--low-memory-mode','--strict','--no-best-effort']);
+  if(creative){
+   await execute(process.execPath,['/opt/renderer/creative.mjs','render']);
+   receipt.creative_capture=JSON.parse(readRegular(root+'/creative-render.json'));
+   await execute('ffmpeg',['-v','error','-nostdin','-y','-framerate','24','-i',root+'/creative-frames/frame-%06d.jpg',
+    '-frames:v',String(receipt.creative_capture.frame_count),'-c:v','libx264','-preset','veryfast',
+    '-crf',receipt.quality==='final'?'18':'25','-pix_fmt','yuv420p','-movflags','+faststart',root+'/silent.mp4']);
+  }else{
+   await execute(process.execPath,[cli,'render',root,'--output',root+'/silent.mp4','--fps','24',
+    '--workers','1','--quality',receipt.cli_quality,'--no-browser-gpu','--low-memory-mode','--strict','--no-best-effort']);
+  }
   receipt.status='muxing';receipt.stage='preparing_audio';persist();
   await execute('ffmpeg',['-v','error','-nostdin','-y','-i',root+'/silent.mp4','-i',root+'/audio.wav',
    '-filter_complex',muxAudioFilter(timeline),

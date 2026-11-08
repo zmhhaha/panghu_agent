@@ -103,7 +103,7 @@ class MixedMotionRenderer:
                 media._cancel(cancel_event)
                 progress('preparing_scene', index, index)
                 seconds, name = scene['timing']['duration_seconds'], f'scene-{index:03d}'
-                if scene['visual_mode'] == 'motion':
+                if scene['visual_mode'] in {'motion', 'creative'}:
                     result = self.scene_renderer.render(scene, key=key, scene_index=index,
                         quality=snapshot['quality'], cancel_event=cancel_event)
                     source = Path(result['path']).resolve()
@@ -220,9 +220,9 @@ class MotionExecutionService:
         require(len(raw) <= self.max_request_bytes, 'motion_render_input_too_large', 413)
         verify_motion_snapshot(snapshot)
         require(snapshot['runtime_fingerprint'] == self.runtime, 'motion_render_runtime_conflict', 409)
-        require(all(s['visual_mode'] != 'motion' or s['timing']['duration_seconds'] <= 60 for s in snapshot['scenes']),
+        require(all(s['visual_mode'] not in {'motion', 'creative'} or s['timing']['duration_seconds'] <= 60 for s in snapshot['scenes']),
                 'motion_scene_duration_exceeded', 422)
-        require(all(s['visual_mode'] != 'motion' or len(base64.b64decode(s['audio']['data_base64'], validate=True))
+        require(all(s['visual_mode'] not in {'motion', 'creative'} or len(base64.b64decode(s['audio']['data_base64'], validate=True))
                     <= 8 * 1024 * 1024 for s in snapshot['scenes']), 'motion_audio_size_exceeded', 413)
         reserve = len(raw) * 2 + 512 * 1024 * 1024
         require(self.usage() + reserve <= self.max_storage_bytes

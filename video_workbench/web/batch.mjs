@@ -1,6 +1,6 @@
 /** Project batches submit bounded work and keep review separate from adoption. */
 import { mutationErrorLabel, operationElapsedLabel, operationServiceErrorLabel, statusLabel } from './model.mjs';
-import { motionMetadata, motionRenderErrorLabel, usesDynamicVideo } from './motion.mjs';
+import { motionDiagramKind, motionMetadata, motionRenderErrorLabel, usesDynamicVideo } from './motion.mjs';
 
 const STEPS = ['motion', 'audio', 'draft'];
 const STEP_LABELS = { motion: '动态图解', audio: '配音', draft: '镜头草稿' };
@@ -222,9 +222,14 @@ export function createBatchPanel({ document, getContext, request, refresh, onErr
       const body = text('div', undefined, 'batch-review-body');
       body.append(text('p', info.scene?.narration ?? '', 'preserve-whitespace'));
       if (row.motion_version_id) {
-        body.append(text('h4', info.version?.plan?.title ?? '正在读取这份图解候选'));
+        const creative = motionDiagramKind(info.version) === 'creative';
+        body.append(text('h4', creative ? '创意动画候选' : info.version?.plan?.title ?? '正在读取这份图解候选'));
         if (info.version) {
-          body.append(text('p', info.version.plan.takeaway ?? ''));
+          if (creative) {
+            const plan = info.version.plan, release = plan.input_document?.constraints?.capability_release ?? {};
+            body.append(text('p', plan.result?.strategy?.description ?? '', 'preserve-whitespace'),
+              text('p', `能力策略：${release.id ?? '已发布策略'}${release.revision ? ` · ${release.revision}` : ''}。请播放对应草稿检查实际动画。`, 'field-note'));
+          } else body.append(text('p', info.version.plan.takeaway ?? ''));
           const elements = text('ul');
           for (const element of info.version.plan.elements ?? []) elements.append(text('li', `${element.label}${element.detail ? `：${element.detail}` : ''}`));
           body.append(elements);
@@ -274,6 +279,7 @@ export function createBatchPanel({ document, getContext, request, refresh, onErr
     const selectedSceneIds = [...form.sceneIds].filter(id => project.scenes.some(scene => scene.id === id));
     const selectionIssue = !selectedSceneIds.length ? '请至少选择一个镜头。'
       : !form.steps.size ? '请至少选择一个制作步骤。' : '';
+    $('batch-creative-note').hidden = !value.creativeConfigured;
     $('batch-form-note').textContent = inputErrors.get(project.id) || (value.unsaved ? '请先保存或重新载入未保存的镜头、音色和时序修改。'
       : inFlight ? '当前批次尚未结束，可以审阅进度、试听和申请取消。'
         : selectionIssue || '每批最多 12 个镜头。复用当前可用版本；核对范围只计算任务上限，不提交生成。');

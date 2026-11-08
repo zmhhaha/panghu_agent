@@ -16,6 +16,8 @@ class MotionSettings:
     runtime_fingerprint: dict | None = None
     process_enabled: bool = False
     process_revision: str = '1'
+    creative_enabled: bool = False
+    creative_revision: str = '1'
 
     @classmethod
     def from_env(cls, env=None):
@@ -24,8 +26,12 @@ class MotionSettings:
         revision = env.get('VIDEO_MOTION_PROFILE_REVISION', '1')
         process_enabled = env.get('VIDEO_PROCESS_ENABLED', '0')
         process_revision = env.get('VIDEO_PROCESS_PROFILE_REVISION', '1')
+        creative_enabled = env.get('VIDEO_CREATIVE_ENABLED', '0')
+        creative_revision = env.get('VIDEO_CREATIVE_PROFILE_REVISION', '1')
         if (enabled not in {'0', '1'} or process_enabled not in {'0', '1'}
                 or not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', revision)
+                or creative_enabled not in {'0', '1'}
+                or not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', creative_revision)
                 or not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', process_revision)):
             raise ValueError('Invalid motion feature settings')
         runtime = None
@@ -42,7 +48,8 @@ class MotionSettings:
                 runtime = _runtime(json.loads(raw))
             except Exception:
                 raise ValueError('Motion runtime fingerprint is unavailable or invalid') from None
-        return cls(enabled == '1', revision, runtime, process_enabled == '1', process_revision)
+        return cls(enabled == '1', revision, runtime, process_enabled == '1', process_revision,
+                   creative_enabled == '1', creative_revision)
 
 
 @dataclass(frozen=True)
