@@ -686,10 +686,16 @@ class LabHandler(BaseHTTPRequestHandler):
                         download=True, download_name='animation-feedback-'+pieces[2][:12]+'.json')
                 raise LabError('animation_lab_not_found', 404)
             if path == '/api/export':
-                _require(parse_qs(parsed.query).get('format', ['jsonl']) == ['jsonl'],
+                query = parse_qs(parsed.query, keep_blank_values=True)
+                _require(set(query) <= {'format', 'scope'}
+                         and query.get('format', ['jsonl']) == ['jsonl']
+                         and query.get('scope', ['all']) in (['all'], ['regressions']),
                          'animation_lab_unknown_export')
-                return self._send(lab.store.export_jsonl() + lab.triage_store.export_jsonl()
-                                  + lab.iteration_store.export_jsonl() + lab.experiments.export_jsonl(),
+                raw = (lab.store.export_jsonl() + lab.triage_store.export_jsonl()
+                       + lab.iteration_store.export_jsonl())
+                if query.get('scope', ['all']) == ['all']:
+                    raw += lab.experiments.export_jsonl()
+                return self._send(raw,
                                   'application/x-ndjson; charset=utf-8', download=True)
             if path in {'/', '/index.html', '/app.mjs', '/model.mjs', '/style.css', '/lab-player.mjs',
                         '/experiments.mjs', '/experiment-model.mjs'}:

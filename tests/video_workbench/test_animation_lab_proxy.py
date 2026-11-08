@@ -108,7 +108,7 @@ def test_prefix_catalog_preview_assets_and_export_preserve_frozen_identity_and_b
     assert proxy.lab.cases == before
     status, index, _ = proxy.request('GET', PREFIX+'/')
     assert status == 200 and b'href="./style.css"' in index and b'src="./experiments.mjs"' in index
-    assert b'href="./api/export?format=jsonl"' in index
+    assert b'href="./api/export?format=jsonl&amp;scope=regressions"' in index
     for path in ('/app.mjs', '/model.mjs', '/style.css', '/lab-player.mjs', '/experiments.mjs', '/experiment-model.mjs'):
         assert proxy.request('GET', PREFIX+path)[0] == 200
     status, wrapper, _ = proxy.request('GET', PREFIX+'/preview/interface-library-search/candidate/')
@@ -135,6 +135,20 @@ def test_prefix_catalog_preview_assets_and_export_preserve_frozen_identity_and_b
     for snapshot in snapshots:
         assert PREFIX not in json.dumps(snapshot)
         assert 'preload_assets' not in json.dumps(snapshot)
+
+
+def test_regression_export_excludes_capability_experiment_feedback(proxy, monkeypatch):
+    for store, marker in ((proxy.lab.store, 'regression'), (proxy.lab.triage_store, 'triage'),
+                          (proxy.lab.iteration_store, 'iteration'), (proxy.lab.experiments, 'experiment')):
+        monkeypatch.setattr(store, 'export_jsonl', lambda marker=marker: (json.dumps({'type': marker})+'\n').encode())
+    status, raw, _ = proxy.request('GET', PREFIX+'/api/export?format=jsonl&scope=regressions')
+    assert status == 200
+    assert [json.loads(line)['type'] for line in raw.splitlines()] == ['regression', 'triage', 'iteration']
+    status, raw, _ = proxy.request('GET', PREFIX+'/api/export?format=jsonl')
+    assert status == 200
+    assert [json.loads(line)['type'] for line in raw.splitlines()] == ['regression', 'triage', 'iteration', 'experiment']
+    for query in ('scope=unknown', 'scope=', 'scope=all&scope=regressions', 'scope=regressions&extra=1'):
+        assert proxy.request('GET', PREFIX+'/api/export?'+query)[0] == 422
 
 
 def test_shared_asset_routes_require_exact_current_hash_name_and_authenticated_developer(proxy):

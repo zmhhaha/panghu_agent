@@ -12,7 +12,6 @@
   <header class="topbar">
     <div class="brand"><span class="brand-mark" aria-hidden="true">◈</span><div><span class="eyebrow">VIDEO SERVICE / DEVELOPER LAB</span><h1>动画实验与标注</h1></div><span class="private-badge">开发者专用</span></div>
     <nav class="lab-navigation" aria-label="实验类型"><button id="show-experiments" class="button secondary" type="button" aria-pressed="true">能力实验</button><button id="show-regressions" class="button secondary" type="button" aria-pressed="false">组件与参数回归</button></nav>
-    <div id="regression-actions" class="header-actions" hidden><button id="reload" class="button secondary" type="button">刷新回归样例</button><a id="export" class="button primary" href="./api/export?format=jsonl" download="animation-lab-annotations.jsonl">导出回归标注 <span aria-hidden="true">↗</span></a></div>
   </header>
   <div id="global-message" class="global-message" role="status" hidden></div>
   <section id="experiment-lab" class="experiment-layout" aria-label="动画能力实验">
@@ -53,6 +52,11 @@
     <aside class="sidebar" aria-label="动画样例">
       <div class="sidebar-heading"><h2>组件与参数回归</h2><span id="case-count" class="count">—</span></div>
       <p class="muted small">固定代码配方用于正确性和边界回归，不代表模型创作能力。</p>
+      <section id="regression-actions" class="regression-toolbar" aria-labelledby="regression-tools-title" hidden>
+        <h3 id="regression-tools-title">回归工具</h3>
+        <p class="muted small">刷新固定样例，或导出回归标注与迭代记录；不包含能力实验记录。</p>
+        <div class="regression-toolbar-buttons"><button id="reload" class="button secondary" type="button">刷新回归样例</button><a id="export" class="button primary" href="./api/export?format=jsonl&amp;scope=regressions" download="animation-regression-annotations.jsonl">导出回归标注 <span aria-hidden="true">↗</span></a></div>
+      </section>
       <label class="field-label" for="module-filter">能力模块</label><select id="module-filter"><option value="all">全部模块</option></select>
       <label class="field-label" for="domain-filter">领域</label><select id="domain-filter"><option value="all">全部领域</option></select>
       <label class="field-label" for="engine-filter">渲染引擎</label><select id="engine-filter"><option value="all">全部引擎</option></select>
