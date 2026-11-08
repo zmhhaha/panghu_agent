@@ -66,6 +66,8 @@ export function operationElapsedLabel(operation, now = Date.now() / 1000) {
 }
 
 export function mutationErrorLabel(error) {
+  if (error?.status === 409 && error.code === 'motion_timing_needs_review'
+      && typeof error.message === 'string') return error.message;
   if (error?.status === 409) return '项目或任务已有更新。请核对重新读取后的最新状态；草稿和所选范围会保留，确认当前采用结果后再操作。';
   if (error?.status && typeof error.message === 'string') return error.message;
   return '操作结果尚未确认，正在重新读取状态。不会自动重复提交；请核对结果后重试同一个操作。';

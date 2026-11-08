@@ -93,13 +93,14 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
     batch_enabled: true, explanation_configured: true, speech_configured: true,
     speech_voice: 'test-voice', speech_voices: [{ id: 'test-voice', name: '测试音色', default: true },
       { id: 'other-voice', name: '另一音色' }] };
-  const writes = [], voiceWrites = [], sceneWrites = [];
+  const writes = [], voiceWrites = [], sceneWrites = [], mutationCalls = [];
   const storyboardWrites = [];
   const renderRows = new Map();
   let allowProjectDraft = false, allowVoiceSave = false, allowSceneSave = false, draftFailure = null;
   const fetchFixture = async (path, options) => {
     calls.push(path);
     if (options.method !== 'GET') {
+      mutationCalls.push({ path, method: options.method });
       if (path === '/api/projects/unmade/storyboard') {
         storyboardWrites.push(JSON.parse(options.body)); unmade.revision++;
         return { ok: false, status: 409, json: async () => ({ detail: { code: 'revision_conflict' } }) };
@@ -126,6 +127,10 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
       assert.equal(options.method, 'POST');
       assert.equal(path, '/api/projects/audition/motion-renders');
       writes.push({ path, body: JSON.parse(options.body) });
+      if (draftFailure === 'timing-review') {
+        assert.equal(writes.at(-1).body.purpose, 'delivery');
+        return { ok: false, status: 409, json: async () => ({ detail: { code: 'motion_timing_needs_review' } }) };
+      }
       if (draftFailure === '409') {
         audition.revision++;
         return { ok: false, status: 409, json: async () => ({ detail: { code: 'revision_conflict' } }) };
@@ -515,6 +520,31 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
       assert.equal($('preview-batch-project').disabled, true, 'A recovered in-flight render blocks a duplicate submission');
       allowProjectDraft = false; draftFailure = null; renderRows.delete(audition.id);
       await $('refresh-all').emit('click');
+    });
+    await t.test('delivery timing review rejection explains the manual gate without verifying or retrying the export', async () => {
+      await clickProject(audition.id);
+      assert.equal($('render-motion-project').disabled, false);
+      assert.equal($('confirm-motion-timing').checked, false);
+      const beforeWrites = writes.length, beforeMutations = mutationCalls.length, previousRevision = audition.revision;
+      allowProjectDraft = true; draftFailure = 'timing-review';
+      await $('render-motion-project').emit('click'); await nextTurn();
+      allowProjectDraft = false; draftFailure = null;
+      assert.equal(writes.length, beforeWrites + 1);
+      assert.equal(writes.at(-1).body.purpose, 'delivery');
+      assert.equal(writes.at(-1).body.expected_revision, previousRevision);
+      const message = '动态时序仍待人工试听核对，完成后才能正式导出。';
+      assert.equal($('global-error').hidden, false);
+      assert.equal($('error-text').textContent, message);
+      assert.equal($('delivery-error').hidden, false);
+      assert.equal($('delivery-error-text').textContent, message);
+      await $('reload-delivery').emit('click'); await $('refresh-all').emit('click'); await nextTurn();
+      assert.equal($('delivery-error-text').textContent, message, 'Read-only reconciliation keeps the actionable review message');
+      assert.deepEqual(mutationCalls.slice(beforeMutations), [
+        { path: '/api/projects/audition/motion-renders', method: 'POST' },
+      ], 'A rejected delivery neither retries the export nor submits timing verification');
+      assert.equal($('confirm-motion-timing').checked, false);
+      assert.match($('motion-timing-status').textContent, /尚未人工核对/);
+      assert.equal(audition.revision, previousRevision);
     });
     await t.test('a failed storyboard start has a persistent local error and a read-only recovery button', async () => {
       await clickProject(unmade.id);
