@@ -22,6 +22,11 @@ ID = re.compile(r'[a-z][a-z0-9-]{0,63}')
 SHA = re.compile(r'[0-9a-f]{64}')
 MAX_RECORD = 3 * 1024 * 1024
 MAX_MEDIA = 32 * 1024 * 1024
+REASSESSMENT_SCHEMA = 'video.animation-experiment-reassessment.v1'
+REASSESSMENT_FIELDS = frozenset({'schema', 'run_id', 'run_identity', 'original_report_sha256',
+    'media_sha256', 'verifier_revision', 'source_code_sha256', 'renderer_image',
+    'observer_host_sha256', 'observations_sha256', 'frame_hashes_match', 'media_hash_matches',
+    'technical', 'evaluated_at', 'identity'})
 
 
 class ExperimentError(ValueError):
@@ -189,6 +194,55 @@ class ExperimentStore:
         with self._connection() as db:
             return [json.loads(row[0]) for row in db.execute('SELECT document FROM experiment_feedback ORDER BY rowid')]
 
+    def _reassessment(self, row, report):
+        """Read a supplemental verdict without changing the original work.
+
+        This directory is published by the trusted offline audit operator. A
+        content digest binds the audit, not a model's claim or browser input.
+        Missing/invalid supplements never replace the original technical result.
+        """
+        directory = self.runs_dir.parent / 'capability-assessments'
+        path = directory / (row['id'] + '.json')
+        try:
+            if not path.exists() and not path.is_symlink():
+                return None, None
+            value = decode(_ordinary_file(directory, path.name, MAX_RECORD))
+            require(type(value) is dict and set(value) == REASSESSMENT_FIELDS
+                    and value['schema'] == REASSESSMENT_SCHEMA
+                    and value['identity'] == digest({k: v for k, v in value.items() if k != 'identity'}),
+                    'animation_experiment_assessment_invalid')
+            source = row.get('code_files')
+            require(row['status'] == 'rendered' and type(source) is dict and source
+                    and all(type(k) is str and type(v) is str for k, v in source.items())
+                    and value['run_id'] == row['id'] and value['run_identity'] == row['identity']
+                    and value['original_report_sha256'] == row['artifacts']['report.json']['sha256']
+                    and value['media_sha256'] == row['artifacts']['output.mp4']['sha256']
+                    and value['source_code_sha256'] == {k: digest(v.encode('utf-8')) for k, v in source.items()}
+                    and value['renderer_image'] == report.get('renderer', {}).get('image')
+                    and type(value['renderer_image']) is str
+                    and re.fullmatch(r'[a-z0-9][a-z0-9._:/-]*:latest@sha256:[0-9a-f]{64}', value['renderer_image'])
+                    and value['verifier_revision'] == 'svg-label-geometry-v2'
+                    and all(type(value[k]) is str and SHA.fullmatch(value[k])
+                            for k in ('observer_host_sha256', 'observations_sha256'))
+                    and value['frame_hashes_match'] is True and value['media_hash_matches'] is True
+                    and type(value['evaluated_at']) in (int, float)
+                    and math.isfinite(value['evaluated_at']) and value['evaluated_at'] > 0,
+                    'animation_experiment_assessment_invalid')
+            technical = value['technical']
+            require(type(technical) is dict
+                    and set(technical) == {'status', 'issues', 'metrics', 'scope', 'aesthetic_approval'}
+                    and technical['status'] in {'passed', 'failed'}
+                    and type(technical['issues']) is list and len(technical['issues']) <= 128
+                    and all(type(issue) is str and 0 < len(issue) <= 256 for issue in technical['issues'])
+                    and (technical['status'] != 'passed' or not technical['issues'])
+                    and type(technical['metrics']) is dict
+                    and technical['scope'] == 'pilot_dom_geometry_and_rendered_frames'
+                    and technical['aesthetic_approval'] is False,
+                    'animation_experiment_assessment_invalid')
+            return value, None
+        except (ExperimentError, ValueError, OSError, TypeError, KeyError, RecursionError, OverflowError):
+            return None, 'animation_experiment_assessment_invalid'
+
     def detail(self, experiment_id):
         item = definition()
         require(experiment_id == item['id'], 'animation_experiment_not_found', 404)
@@ -197,6 +251,8 @@ class ExperimentStore:
         for row in runs:
             report = (decode(_ordinary_file(self.runs_dir / row['id'], 'report.json', MAX_RECORD))
                       if 'report.json' in row['artifacts'] else {})
+            original_technical = report.get('renderer', {}).get('technical')
+            assessment, assessment_error = self._reassessment(row, report)
             version = dict(id=row['id'], identity=row['identity'], label=row['label'], source=row['source'],
                 prompt_revision=row['input_document']['prompt_revision'], input_role=row['input_role'],
                 duration_seconds=row['input_document']['constraints']['duration_seconds'], status=row['status'],
@@ -206,7 +262,10 @@ class ExperimentStore:
                 input_document=deepcopy(row['input_document']),
                 code_files=deepcopy(row.get('code_files', {})), strategy=deepcopy(row.get('strategy', {})),
                 input_identity=row['input_sha256'], error=row.get('error'),
-                technical=deepcopy(report.get('renderer', {}).get('technical')),
+                original_technical=deepcopy(original_technical),
+                technical=deepcopy(assessment['technical'] if assessment else original_technical),
+                technical_reassessment=deepcopy(assessment), assessment_error=assessment_error,
+                assessment_url=f"/api/experiments/{experiment_id}/runs/{row['id']}/assessment.json" if assessment else None,
                 aesthetic_status='unreviewed',
                 comparison_input_identity=digest({k: v for k, v in row['input_document'].items()
                                                   if k not in {'prompt_revision', 'guidance'}}),
@@ -265,6 +324,13 @@ class ExperimentStore:
         require(self.runs_dir is not None, 'animation_experiment_not_found', 404)
         directory = self.runs_dir / run_id
         row = read_run(directory)
+        if name == 'assessment.json':
+            require(row['id'] == run_id, 'animation_experiment_artifact_not_found', 404)
+            report = decode(_ordinary_file(directory, 'report.json', MAX_RECORD))
+            assessment, error = self._reassessment(row, report)
+            require(not error, 'animation_experiment_assessment_invalid', 409)
+            require(assessment is not None, 'animation_experiment_artifact_not_found', 404)
+            return canonical(assessment), 'application/json'
         require(row['id'] == run_id and name in row['artifacts'], 'animation_experiment_artifact_not_found', 404)
         item = row['artifacts'][name]
         raw = _ordinary_file(directory, name, MAX_MEDIA)

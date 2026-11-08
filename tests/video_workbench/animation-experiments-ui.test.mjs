@@ -139,6 +139,53 @@ test('rendering and technical outcomes stay independent from effect approval', (
   assert.equal(experimentTechnicalLabel({...left, technical: null}), '技术检查待核验 · 效果待评价');
 });
 
+test('supplemental technical audit keeps the original failure and both reports visible without approving effects', () => {
+  const source = readFileSync(new URL('../../video_workbench/animation_lab_web/experiments.mjs', import.meta.url), 'utf8');
+  const functionSource = name => {
+    const marker = `function ${name}(`;
+    const start = source.indexOf(marker);
+    const end = source.indexOf('\nfunction ', start + marker.length);
+    assert.ok(start >= 0);
+    return source.slice(start, end < 0 ? undefined : end);
+  };
+  class Element {
+    constructor(tag) { this.tag = tag; this.children = []; this.value = ''; }
+    set textContent(value) { this.value = String(value); this.children = []; }
+    get textContent() { return this.value + this.children.map(child => child.textContent).join(''); }
+    set innerHTML(_) { throw Error('Audit/source metadata must stay inert'); }
+    append(...children) { this.children.push(...children); }
+    setAttribute() {}
+    addEventListener() {}
+  }
+  const original = {status: 'failed', issues: ['object_identity_not_visible']};
+  const version = {...left, original_technical: original,
+    technical: {status: 'passed', issues: [], aesthetic_approval: false},
+    technical_reassessment: {verifier_revision: 'svg-label-geometry-v2', identity: 'audit-identity'},
+    report_url: '/dev/animations/api/experiments/identity-tracking/runs/dev-v1/report.json',
+    assessment_url: '/dev/animations/api/experiments/identity-tracking/runs/dev-v1/assessment.json',
+    aesthetic_status: 'unreviewed'};
+  assert.equal(experimentTechnicalLabel(version), '技术复核通过（原检查失败） · 效果待评价');
+  const frozen = JSON.stringify(version);
+  const context = vm.createContext({document: {createElement: tag => new Element(tag)}, version, root,
+    experimentSourceLabel, experimentStatusLabel, experimentTechnicalLabel, experimentPlayable,
+    experimentLocalUrl, fps: () => 24, media: [], clock: 0});
+  const rendered = vm.runInContext(`${['node', 'jsonText', 'metadataDetails', 'renderVersion'].map(functionSource).join('\n')}\nrenderVersion(version, 0)`, context);
+  const descendants = element => [element, ...element.children.flatMap(descendants)];
+  const all = descendants(rendered);
+  assert.ok(rendered.textContent.includes('技术复核通过（原检查失败） · 效果待评价'));
+  const links = all.filter(element => element.tag === 'a');
+  assert.equal(links.find(link => link.textContent.includes('查看原始检查报告')).href,
+    experimentLocalUrl(version.report_url, root));
+  assert.equal(links.find(link => link.textContent.includes('查看技术复核报告')).href,
+    experimentLocalUrl(version.assessment_url, root));
+  const facts = JSON.parse(all.find(element => element.tag === 'pre').textContent);
+  assert.equal(facts.original_technical.status, 'failed');
+  assert.equal(facts.current_technical.status, 'passed');
+  assert.equal(facts.current_technical.aesthetic_approval, false);
+  assert.equal(facts.technical_reassessment.verifier_revision, 'svg-label-geometry-v2');
+  assert.equal(JSON.stringify(version), frozen, 'Displaying a correction cannot rewrite frozen version data');
+});
+
 test('a late play completion or rejection from the previous media cannot pause the new selection', async () => {
   const source = readFileSync(new URL('../../video_workbench/animation_lab_web/experiments.mjs', import.meta.url), 'utf8');
   const getFunction = (name, isAsync = false) => {

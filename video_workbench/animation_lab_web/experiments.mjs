@@ -156,7 +156,11 @@ function metadataDetails(version) {
   const text = node('div');
   const provenance = version.provenance ?? {};
   const facts = {source: version.source, prompt_revision: version.prompt_revision,
-    input_role: version.input_role, version_id: version.id, ...provenance};
+    input_role: version.input_role, version_id: version.id, ...provenance,
+    original_technical: version.original_technical ?? version.technical ?? null,
+    current_technical: version.technical ?? null,
+    technical_reassessment: version.technical_reassessment ?? null,
+    assessment_error: version.assessment_error ?? null};
   text.append(node('h4', '执行来源'), node('pre', jsonText(facts)));
   if (typeof version.prompt_text === 'string') text.append(node('h4', '实际提示词'), node('pre', version.prompt_text));
   else text.append(node('p', version.source === 'agent' ? '未提供实际提示词文本，请核对原始执行记录。' : '该作品没有模型提示词。', 'muted small'));
@@ -186,6 +190,9 @@ function renderVersion(version, index) {
   if (Array.isArray(version.technical?.issues) && version.technical.issues.length) {
     article.append(node('p', `技术问题：${version.technical.issues.join('、')}`, 'experiment-technical failed'));
   }
+  if (version.assessment_error) {
+    article.append(node('p', '技术复核报告未通过绑定校验，保留原检查结果。', 'experiment-technical failed'));
+  }
   if (typeof version.error === 'string' && version.error) {
     article.append(node('p', `执行错误：${version.error}`, 'experiment-technical failed'));
   }
@@ -212,6 +219,11 @@ function renderVersion(version, index) {
   if (report) {
     const link = node('a', '查看原始检查报告 ↗', 'text-button');
     link.href = report; link.target = '_blank'; link.rel = 'noopener noreferrer'; article.append(link);
+  }
+  const assessment = experimentLocalUrl(version.assessment_url, root);
+  if (assessment && version.technical_reassessment) {
+    const link = node('a', '查看技术复核报告 ↗', 'text-button');
+    link.href = assessment; link.target = '_blank'; link.rel = 'noopener noreferrer'; article.append(link);
   }
   article.append(metadataDetails(version));
   return article;

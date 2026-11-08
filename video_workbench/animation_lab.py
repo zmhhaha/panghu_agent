@@ -40,7 +40,7 @@ MAX_BODY = 32 * 1024
 WEB = Path(__file__).with_name('animation_lab_web')
 _FIELDS = {'case_id', 'case_identity', 'variant_id', 'kind', 'start_seconds',
            'end_seconds', 'region', 'tags', 'severity', 'comment', 'preference', 'verdict'}
-_PUBLIC_URL_FIELDS = frozenset({'preview_url', 'report_url', 'task_url', 'image_url', 'asset_url', 'media_url'})
+_PUBLIC_URL_FIELDS = frozenset({'preview_url', 'report_url', 'task_url', 'image_url', 'asset_url', 'media_url', 'assessment_url'})
 
 
 class LabError(ValueError):

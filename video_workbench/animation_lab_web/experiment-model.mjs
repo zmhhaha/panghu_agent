@@ -115,6 +115,10 @@ export function experimentStatusLabel(status) {
 }
 
 export function experimentTechnicalLabel(version) {
+  if (version?.technical_reassessment && version?.technical?.status === 'passed') {
+    return version?.original_technical?.status === 'failed'
+      ? '技术复核通过（原检查失败） · 效果待评价' : '技术复核通过 · 效果待评价';
+  }
   if (version?.technical?.status === 'passed') return '技术检查通过 · 效果待评价';
   if (version?.technical?.status === 'failed') return '技术检查失败 · 保留视频供观察，效果待评价';
   if (!version?.technical && ['failed', 'generated', 'not_run', 'unexecuted', 'pending', 'running'].includes(version?.status)) {

@@ -10,6 +10,88 @@ import {spawnSync} from 'node:child_process';
 import {collectRuntime} from './runtime.mjs';
 
 const hash=raw=>createHash('sha256').update(raw).digest('hex');
+// BEGIN TRUSTED LABEL OBSERVER
+function observeAnimationObjects(expectedLabels){
+ const revision='svg-label-geometry-v2',svg='http://www.w3.org/2000/svg';
+ const labels=new Map(expectedLabels.map(row=>[row.id,row.label]));
+ const boundsOf=rect=>({x:rect.x,y:rect.y,width:rect.width,height:rect.height});
+ const positive=rect=>[rect.x,rect.y,rect.width,rect.height].every(Number.isFinite)&&rect.width>0&&rect.height>0;
+ const inside=(small,large)=>small.x>=large.x-.5&&small.y>=large.y-.5
+  &&small.x+small.width<=large.x+large.width+.5&&small.y+small.height<=large.y+large.height+.5;
+ const shown=node=>{
+  for(let p=node;p;p=p.parentElement){
+   const s=getComputedStyle(p);
+   if(s.display==='none'||['hidden','collapse'].includes(s.visibility)||Number(s.opacity)<=0
+    ||s.contentVisibility==='hidden')return false;
+  }
+  return true;
+ };
+ const paint=value=>{
+  value=String(value).trim().toLowerCase();
+  if(!value||['none','transparent'].includes(value)||value.includes('url('))return false;
+  const alpha=value.match(/(?:rgba|hsla)\([^)]*,\s*([\d.]+)\s*\)$/)
+   ||value.match(/\/\s*([\d.]+)(%)?\s*\)$/);
+  return !alpha||Number(alpha[1])>0;
+ };
+ const paintedText=node=>{
+  if(!shown(node))return false;
+  for(let p=node;p;p=p.parentElement){
+   const s=getComputedStyle(p);
+   // Bounded pilot labels use plain paint. Complex clipping, masks or filters
+   // require a different verifier instead of claiming visible glyphs from a bbox.
+   if((s.clipPath&&s.clipPath!=='none')||(s.maskImage&&s.maskImage!=='none')
+    ||(s.filter&&s.filter!=='none'))return false;
+  }
+  const s=getComputedStyle(node);
+  if(!(Number.parseFloat(s.fontSize)>0))return false;
+  if(node.namespaceURI===svg)return (paint(s.fill)&&Number(s.fillOpacity)>0)
+    ||(paint(s.stroke)&&Number(s.strokeOpacity)>0&&Number.parseFloat(s.strokeWidth)>0);
+  return paint(s.color);
+ };
+ const renderedLabels=scope=>{
+  const groups=new Map(),walker=document.createTreeWalker(scope,NodeFilter.SHOW_TEXT);
+  for(let text=walker.nextNode();text;text=walker.nextNode()){
+   const p=text.parentElement,raw=text.nodeValue||'',trimmed=raw.trim();
+   if(!p||!trimmed||p.closest('script,style,title,desc,metadata,defs,symbol,clipPath,mask,marker,noscript,template'))continue;
+   const owner=p.namespaceURI===svg?p.closest('text'):p;
+   if(!owner||!scope.contains(owner)||!paintedText(p))continue;
+   const start=raw.indexOf(trimmed),range=document.createRange();
+   range.setStart(text,start);range.setEnd(text,start+trimmed.length);
+   const rect=range.getBoundingClientRect();
+   if(!positive(rect))continue;
+   let clipped=false;
+   for(let a=p;a;a=a.parentElement){
+    const s=getComputedStyle(a);
+    if((['hidden','clip','scroll','auto'].includes(s.overflowX)
+       ||['hidden','clip','scroll','auto'].includes(s.overflowY))&&!inside(rect,a.getBoundingClientRect()))clipped=true;
+   }
+   if(clipped)continue;
+   const row=groups.get(owner)||{text:'',rects:[]};row.text+=raw;row.rects.push(rect);groups.set(owner,row);
+  }
+  return [...groups.values()].map(row=>{
+   const left=Math.min(...row.rects.map(r=>r.x)),top=Math.min(...row.rects.map(r=>r.y));
+   return {text:row.text.trim(),bounds:{x:left,y:top,
+    width:Math.max(...row.rects.map(r=>r.right))-left,height:Math.max(...row.rects.map(r=>r.bottom))-top}};
+  });
+ };
+ return [...document.querySelectorAll('[data-object-id]')].map(node=>{
+  const id=node.getAttribute('data-object-id'),rect=node.getBoundingClientRect(),bounds=boundsOf(rect);
+  let scope=node,attachment='marked_object_descendants';
+  if(node.namespaceURI===svg&&node.localName!=='g'){
+   scope=node.parentElement?.closest('g')||node;attachment='nearest_svg_group';
+  }
+  const markers=[...(scope.matches('[data-object-id]')?[scope]:[]),...scope.querySelectorAll('[data-object-id]')];
+  const candidates=renderedLabels(scope).map(label=>({...label,within_object:inside(label.bounds,bounds)}));
+  const attached=markers.length===1&&markers[0]===node;
+  const label=candidates.length===1?candidates[0]:null,expected=labels.get(id);
+  const status=!attached?'attachment_ambiguous':candidates.length===0?'missing':candidates.length!==1?'ambiguous'
+   :label.text!==expected?'wrong_text':!label.within_object?'outside_object':'measured';
+  return {id,text:status==='measured'?label.text:'',visible:positive(rect)&&shown(node),bounds,
+   label_observation:{verifier_revision:revision,status,expected_text:expected??null,attachment,
+    object_marker_count:markers.length,candidates}};
+ }).sort((a,b)=>a.id.localeCompare(b.id));
+}
+// END TRUSTED LABEL OBSERVER
 const read=(path,limit)=>{const info=lstatSync(path);if(!info.isFile()||info.isSymbolicLink()||info.size>limit)throw Error('host_file_invalid');return readFileSync(path);};
 const require=createRequire('/opt/renderer/package.json');
 const {chromium}=require('playwright-core');
@@ -74,12 +156,7 @@ try{
  const isolated=await cdp.send('Page.createIsolatedWorld',{frameId:tree.frameTree.frame.id,worldName:'trusted-animation-observer'});
  const observe=async()=>{
   const {result,exceptionDetails}=await cdp.send('Runtime.evaluate',{contextId:isolated.executionContextId,
-   returnByValue:true,expression:`(()=>Array.from(document.querySelectorAll('[data-object-id]')).map(node=>{
-    const rect=node.getBoundingClientRect();let visible=rect.width>0&&rect.height>0;
-    for(let p=node;p;p=p.parentElement){const s=getComputedStyle(p);if(s.display==='none'||s.visibility==='hidden'||Number(s.opacity)===0)visible=false;}
-    return {id:node.getAttribute('data-object-id'),text:(node.textContent||'').trim(),visible,
-     bounds:{x:rect.x,y:rect.y,width:rect.width,height:rect.height}};
-   }).sort((a,b)=>a.id.localeCompare(b.id)))()`});
+   returnByValue:true,expression:`(${observeAnimationObjects.toString()})(${JSON.stringify((c.objects||[]).map(({id,label})=>({id,label})))})`});
   if(exceptionDetails||!Array.isArray(result.value))throw Error('host_observation_failed');
   return result.value;
  };
