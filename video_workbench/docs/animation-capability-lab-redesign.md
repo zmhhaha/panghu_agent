@@ -1,6 +1,6 @@
 # 动画能力实验重新设计
 
-2026-11-08。状态：首轮四个真实作品、独立技术复核、媒体比较与反馈验收已完成并发布；共享服务登记仍受框架恢复依赖阻塞。开发分支为 `codex/video-capability-experiment-redesign`，OpenSpec 变更为 `redesign-video-animation-capability-experiments`。代码测试通过与真实实验完成分别记录，不能互相替代。
+2026-11-08 至 2026-11-09。状态：首轮四个真实作品、独立技术复核、媒体比较与反馈验收已完成并发布；共享创作 profile 随后已通过增量准入，实验室和正式调用方均验证可用。开发分支为 `codex/video-capability-experiment-redesign`，OpenSpec 变更为 `redesign-video-animation-capability-experiments`。代码测试通过与真实实验完成分别记录，不能互相替代。本文保留首轮执行与发布的历史事实；后续正式接入和实际发布身份见[动画实验成果进入正式制作](animation-capability-production.md)。
 
 ## 要解决的问题
 
@@ -8,7 +8,7 @@
 
 本轮核对发现，当前39个公开样例由固定 Python/JavaScript 配方生成，打开或切换样例不会调用 LLM。多数 A/B 只改描边、透明度或高亮；场景数据不同不能据此认定表达策略不同。保存标注不会自动改提示词或训练模型。已有技术检查证明了有限输入下能正确渲染，没有证明模型创作能力得到提升。
 
-生产链路也有边界：通用 Agent 输出受限的 motion/process JSON 计划，确定性编译器负责布局和动作，再交 Hyperframes 渲染。当前计划无法表达任意路径形变、Canvas 粒子、Three.js 相机和材质。优化提示词能改善已有表达空间内的选择；增加表达空间还需要修改契约与实现。
+重新设计开始时，生产链路只接收通用 Agent 输出的受限 motion/process JSON 计划，由确定性编译器负责布局和动作，再交 Hyperframes 渲染。这些计划无法表达任意路径形变、Canvas 粒子、Three.js 相机和材质。后续已增加 HTML/SVG 源码候选的独立准入与隔离渲染路径，旧计划路径继续保留；Canvas/Three 自由生成仍未进入正式准入。优化提示词能改善已有表达空间内的选择；增加表达空间仍需要相应契约、实现与验证。
 
 ## 新的实验方式
 
@@ -93,7 +93,7 @@
 
 现工作台的可信 iframe 同时允许脚本和同源，用来播放固定编译器产物；不能直接用来运行模型代码。新 profile 首版在隔离环境渲染，只向工作台交付视频、逐帧图片和验证报告。确需交互代码预览时再设计无凭据隔离 origin 或 opaque-origin 沙箱及消息协议；不能将未审脚本送入当前已登录的同源页面。
 
-生产接入是后续独立步骤：把有证据的策略沉淀到生产组件、提示词和可表达的契约；无法由现生产契约表达的能力，先设计编译或代码准入。实验画面更好不自动证明生产已经会生成，更不直接把实验代码送入生产 `scene_compiler`。
+生产接入作为独立变更 `connect-animation-capabilities-to-video-production` 实施：把有证据的策略发布为不可变规则包，实验与正式新候选冻结同一包；HTML/SVG 源码在隔离渲染器执行，经预览和明确采用后进入普通整片制作。它不把任意实验源码直接送入旧 `scene_compiler`，也不因一条作品更好就自动更新生产默认规则。Canvas/Three 的正式生成与编码仍需分别完成引擎准入。
 
 ## 第一轮完整实验
 
@@ -213,7 +213,11 @@
 
 ### 共享框架依赖
 
-共享profile注册（任务3.1）仍未完成。通用Agent中两条11月6日起隔离的过期任务，其Pod从未调度到节点，没有容器终止状态，仍保留停止证明finalizer；现有恢复协议不能据此形成受信停止回执，因此共享启用的空闲门禁拒绝继续。这属于 `harden-shared-platform-production-readiness` 的P3框架恢复依赖，视频变更仅引用，不另列业务修复任务。共享槽位、finalizer、永久UID及旧任务证据保持原状；完成本轮隔离创作比较也不会自动完成共享注册或生产采用。
+共享 profile 注册（任务 3.1）已于后续增量准入中完成。`video.animation-experiment.v1` 复用通用 Agent / Pi，实验室与正式工作台两个调用方均通过 configured/ready 检查；正式任务 `3b65a776-9d70-4c4c-a06d-c92e331f35e9` 实际完成，attempt `07e200fc-8cb7-4a17-9862-8654fb5ea83c` 取得停止证明并回收已停止产物。原四次隔离实验仍保留其当时未经过共享路由的事实，未重置实验次数、重跑模型或改写旧报告。
+
+旧 drain 发布方法曾因历史隔离任务没有停止证明而被全局空槽门禁阻塞；它不再是新能力登记的唯一方法。增量准入保留旧配置、槽位、隔离任务、finalizer 和永久 UID，单独验证新增 profile 与两个调用方，不制造旧任务的停止回执。框架恢复缺陷仍属于 `harden-shared-platform-production-readiness` 的 P3；本次业务准入完成不代表该问题已修复，也不将其重新列为视频业务待办。
+
+准入和真实任务证据保存在既有 `production-bridge-20261108/` 目录的 `shared-agent-completed.json`、`shared-agent-final-readback.json` 及 `real-production-acceptance-r1/shared-agent-custody.json` 中。技术验收、用户审美、正式采用及人工时序核对仍分别记录。2026-11-09 用户实际试听后明确确认时序合适，才提交人工核对并完成 17 秒正式导出；生成时原包的待审来源不改写。最终播放、下载和原声验证见 `animation-capability-production.md`。
 
 ## 核对依据
 
