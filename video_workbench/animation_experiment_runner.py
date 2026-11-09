@@ -239,17 +239,41 @@ def _plan_input(plan, role='development', revision='v1', guidance=''):
         experiment_id=plan['experiment']['id'], definition_identity=plan['experiment']['identity'])
 
 
+def _completed_run(root, plan, slot_name, code):
+    """Resolve success without rewriting a failed task after read-only recovery."""
+    slot = plan['slots'][slot_name]
+    if slot['state'] == 'finished':
+        row = read_run(root / slot['run_id'])
+    else:
+        link = slot.get('result_reconciliation')
+        require(slot['state'] == 'failed' and type(link) is dict and link.get('state') == 'finished', code, 409)
+        original = read_run(root / slot['run_id'])
+        row = read_run(root / link['run_id'])
+        binding = row['provenance'].get('result_reconciliation', {})
+        require(original['status'] == 'failed' and row['identity'] == link.get('run_identity')
+                and row['input_document'] == original['input_document']
+                and binding.get('original_run_id') == original['id']
+                and binding.get('original_run_identity') == original['identity']
+                and binding.get('original_record_sha256') == digest(
+                    _ordinary_file(root / slot['run_id'], 'experiment-run.json', 3 * 1024 * 1024))
+                and binding.get('original_input_sha256') == original['input_sha256']
+                and binding.get('original_slot') == slot_name
+                and row['provenance'].get('job_id') == link.get('job_id') == binding.get('original_job_id'), code, 409)
+    require(row['status'] == 'rendered', code, 409)
+    return row
+
+
 @_pilot_lock
 def revise(directory, guidance, feedback):
     root, plan = _load(directory)
-    require(plan['slots']['development-v1']['state'] == 'finished'
-            and plan['guidance']['v2'] is None and all(plan['slots'][s]['state'] == 'unstarted' for s in SLOTS[1:]),
+    require(plan['guidance']['v2'] is None and all(plan['slots'][s]['state'] == 'unstarted' for s in SLOTS[1:]),
             'animation_experiment_revision_not_ready', 409)
+    baseline = _completed_run(root, plan, 'development-v1', 'animation_experiment_revision_not_ready')
     require(type(guidance) is str and 0 < len(guidance.strip()) <= 16000
             and type(feedback) is str and 0 < len(feedback.strip()) <= 16000,
             'animation_experiment_feedback_invalid')
     plan['guidance']['v2'] = guidance
-    plan['feedback'] = dict(comment=feedback, basis_run_id=plan['slots']['development-v1']['run_id'],
+    plan['feedback'] = dict(comment=feedback, basis_run_id=baseline['id'],
         scope='developer_technical_direction_not_user_aesthetic_approval', created_at=time.time())
     _write(root / 'pilot.json', plan)
     return plan
@@ -324,9 +348,7 @@ def _slot_document(root, plan, slot_name, *, importing=False):
     require(plan['guidance']['v1'] == '' and (revision != 'v2' or plan['guidance']['v2'] is not None),
             'animation_experiment_revision_not_ready', 409)
     if role == 'held_out':
-        require(plan['slots']['development-v2']['state'] == 'finished',
-                'animation_experiment_holdout_not_released', 409)
-        developed = read_run(root / plan['slots']['development-v2']['run_id'])
+        developed = _completed_run(root, plan, 'development-v2', 'animation_experiment_holdout_not_released')
         require(developed['input_document'] == _plan_input(plan, 'development', 'v2', plan['guidance']['v2']),
                 'animation_experiment_frozen_guidance_changed', 409)
     document = _plan_input(plan, role, revision, plan['guidance'][revision])
@@ -407,7 +429,7 @@ def _render_record(root, plan, slot, record, result, *, renderer_image, assets_d
         published_frames=published_frames,
         feedback_basis=deepcopy(plan['feedback']) if document['prompt_revision'] == 'v2' else None,
         technical_scope='independent_geometry_and_runtime_not_aesthetic_approval',
-        aesthetic_status='unreviewed', generation_attempts=1)
+        aesthetic_status='unreviewed', generation_attempts=(0 if record['provenance'].get('result_reconciliation') else 1))
     _write(run_dir / 'report.json', report, exclusive=True)
     media = run_dir / 'render' / 'work' / 'output.mp4'
     require(media.is_file(), 'animation_experiment_media_missing')
@@ -422,7 +444,11 @@ def _render_record(root, plan, slot, record, result, *, renderer_image, assets_d
 def _fail(root, plan, slot, record, error):
     # Fixed diagnostics keep arbitrary provider text and secrets unpublished.
     code = getattr(error, 'code', 'animation_experiment_execution_failed')
-    job_id = record['provenance'].get('job_id')
+    job_id = record['provenance'].get('job_id') or slot.get('job_id')
+    if job_id is not None:
+        record['provenance']['job_id'] = job_id
+    record['provenance']['remote_stop_status'] = (
+        'proven' if record['provenance'].get('stop_proven') is True else 'unverified')
     record.update(status='failed', error=code)
     report_path = root / slot['run_id'] / 'report.json'
     if not report_path.exists():
@@ -432,9 +458,25 @@ def _fail(root, plan, slot, record, error):
             technical_scope='execution_failure_not_aesthetic_approval', aesthetic_status='unreviewed'), exclusive=True)
     raw = report_path.read_bytes()
     record['artifacts']['report.json'] = dict(size=len(raw), sha256=digest(raw), mime='application/json')
-    slot.update(state='failed', error=code, job_id=job_id)
+    slot.update(state='failed', error=code)
+    if job_id is not None:
+        slot['job_id'] = job_id
     _publish_record(root, slot, record)
     _write(root / 'pilot.json', plan)
+
+
+def _observe_job(root, slot, record, job):
+    """Retain the last valid remote receipt; observation failure proves no stop."""
+    job_id = job['job_id']
+    require(slot.get('job_id') in (None, job_id)
+            and record['provenance'].get('job_id') in (None, job_id),
+            'animation_experiment_job_tracking_changed')
+    slot['job_id'] = job_id
+    record['provenance'].update(job_id=job_id, state=job['state'], attempt=job.get('attempt'),
+        pins=job.get('pins'), stop_proven=job.get('stop_proven'), stop_proof=job.get('stop_proof'),
+        artifact_manifest_sha256=job.get('artifact_manifest_sha256'),
+        last_observed_job_sha256=digest(job), last_observed_at=time.time())
+    _write(root / slot['run_id'] / 'agent-job-last-observed.json', job)
 
 
 @_pilot_lock
@@ -823,14 +865,20 @@ def run(directory, slot_name, gateway, *, renderer_image, assets_dir=None, timeo
             else:
                 raise
         job_id = job['job_id']
+        # The task has been admitted even when a later GET is malformed. Keep
+        # its identity before any poll so failure cannot erase the original key.
+        record['provenance']['job_id'] = job_id
         slot.update(state='running', job_id=job_id)
         _write(root / 'pilot.json', plan)
-        while job['state'] in {'queued', 'running', 'cancelling'}:
+        _write(run_dir / 'agent-job-submitted.json', job, exclusive=True)
+        _observe_job(root, slot, record, job)
+        while job['state'] in {'queued', 'starting', 'running', 'cancelling'}:
             if time.time() >= deadline:
                 gateway.cancel(job_id)
                 raise ServiceError('animation_experiment_deadline_elapsed', 409)
             time.sleep(min(poll_seconds, max(0, deadline - time.time())))
             job = gateway.poll(job_id)
+            _observe_job(root, slot, record, job)
         _write(run_dir / 'agent-job.json', job, exclusive=True)
         record['provenance'].update(job_id=job_id, state=job['state'], attempt=job.get('attempt'),
             pins=job.get('pins'), stop_proven=job.get('stop_proven'), stop_proof=job.get('stop_proof'),
@@ -846,6 +894,93 @@ def run(directory, slot_name, gateway, *, renderer_image, assets_dir=None, timeo
         _fail(root, plan, slot, record, error)
         raise
     _publish_record(root, slot, record)
+    _write(root / 'pilot.json', plan)
+    return signed(record)
+
+
+@_pilot_lock
+def reconcile(directory, slot_name, gateway, *, renderer_image, assets_dir=None, model_policy_file=None):
+    """Read the original key once; render a completed result in one new record.
+
+    This never uploads, submits, cancels, retries generation or resets a slot.
+    The original failure is immutable. Once supplementary rendering is reserved,
+    it is not automatically retried even when collection/rendering later fails.
+    """
+    root, plan = _load(directory)
+    require(slot_name in SLOTS, 'animation_experiment_slot_invalid')
+    slot = plan['slots'][slot_name]
+    require('recovery_child' not in plan and slot['state'] == 'failed',
+            'animation_experiment_reconciliation_not_ready', 409)
+    original_dir = root / slot['run_id']
+    original_raw = _ordinary_file(original_dir, 'experiment-run.json', 3 * 1024 * 1024)
+    original = read_run(original_dir)
+    require(original['status'] == 'failed' and original['id'] == slot['run_id'],
+            'animation_experiment_reconciliation_origin_changed', 409)
+    if 'result_reconciliation' in slot:
+        return _completed_run(root, plan, slot_name, 'animation_experiment_reconciliation_already_reserved')
+    document, role = original['input_document'], original['input_role']
+    revision = document['prompt_revision']
+    require(document == _plan_input(plan, role, revision, plan['guidance'][revision])
+            and original['input_sha256'] == slot.get('input_sha256'),
+            'animation_experiment_reconciliation_input_changed', 409)
+    job = gateway.lookup(slot['run_id'])
+    known = {value for value in (slot.get('job_id'), original['provenance'].get('job_id')) if value is not None}
+    require(len(known) <= 1 and (not known or job['job_id'] in known),
+            'animation_experiment_reconciliation_job_changed', 409)
+    observation = dict(schema='video.animation-experiment-reconciliation-observation.v1',
+        original_run_id=original['id'], original_run_identity=original['identity'],
+        idempotency_key=gateway._operation_key(original['id']), job_id=job['job_id'],
+        state=job['state'], stop_proven=job.get('stop_proven') is True,
+        observed_at=time.time(), receipt=job, new_generation_attempts=0)
+    _write(root / ('reconciliation-observation-' + uuid4().hex + '.json'), signed(observation), exclusive=True)
+    if job['state'] != 'completed':
+        return dict(schema=observation['schema'], status='pending_original_task' if job['state'] in
+            {'queued', 'starting', 'running', 'cancelling'} else 'original_task_has_no_completed_result',
+            original_run_id=original['id'], job_id=job['job_id'], state=job['state'], new_generation_attempts=0)
+    require(job.get('stop_proven') is True, 'animation_experiment_reconciliation_stop_unverified', 409)
+    # The gateway independently checks the input digest, immutable artifact
+    # manifest and stopped writer evidence. Read failures consume no render.
+    result = gateway.collect(job['job_id'], digest(document), document)
+    manifest = gateway.client.artifact_manifest(job['job_id'])
+    policy = (_read_model_policy(model_policy_file) if model_policy_file is not None
+              else original['provenance'].get('declared_model_policy'))
+    supplementary = dict(run_id='reconciled-' + uuid4().hex[:16] + '-' + slot_name,
+                         state='reserved', job_id=job['job_id'], created_at=time.time())
+    record = _record(supplementary, document, role, experiment=plan['experiment'])
+    _attach_recovery(record, plan)
+    binding = dict(schema='video.animation-experiment-result-reconciliation.v1',
+        original_run_id=original['id'], original_run_identity=original['identity'],
+        original_record_sha256=digest(original_raw), original_error=original.get('error'),
+        original_slot=slot_name, original_job_id=job['job_id'],
+        idempotency_key=gateway._operation_key(original['id']),
+        original_input_sha256=digest(document), new_generation_attempts=0)
+    record['label'] += ' · 原任务结果补充渲染'
+    record['provenance'].update(result_reconciliation=binding,
+        admission='read_only_original_key_lookup_no_new_submission', new_generation_attempts=0)
+    _bind_model_policy(record, policy, job.get('pins'))
+    run_dir = root / supplementary['run_id']
+    run_dir.mkdir()
+    slot['result_reconciliation'] = dict(schema=binding['schema'], state='reserved',
+        run_id=supplementary['run_id'], original_run_identity=original['identity'],
+        job_id=job['job_id'], created_at=supplementary['created_at'])
+    _write(root / 'pilot.json', plan)
+    try:
+        _write(run_dir / INPUT_NAME, document, exclusive=True)
+        _write(run_dir / 'agent-job-reconciled.json', job, exclusive=True)
+        _write(run_dir / 'agent-job.json', job, exclusive=True)
+        _observe_job(root, supplementary, record, job)
+        _write(run_dir / RESULT_NAME, result, exclusive=True)
+        _write(run_dir / 'agent-artifact-manifest.json', manifest, exclusive=True)
+        _render_record(root, plan, supplementary, record, result,
+                       renderer_image=renderer_image, assets_dir=assets_dir)
+    except Exception as error:
+        slot['result_reconciliation']['state'] = 'failed'
+        _fail(root, plan, supplementary, record, error)
+        raise
+    require(_ordinary_file(original_dir, 'experiment-run.json', 3 * 1024 * 1024) == original_raw
+            and slot['state'] == 'failed', 'animation_experiment_reconciliation_origin_changed', 409)
+    _publish_record(root, supplementary, record)
+    slot['result_reconciliation'].update(state='finished', run_identity=signed(record)['identity'])
     _write(root / 'pilot.json', plan)
     return signed(record)
 
@@ -896,6 +1031,13 @@ def main(argv=None):
     execute.add_argument('--renderer-image', required=True, help='latest@sha256 immutable renderer reference')
     execute.add_argument('--assets-dir', type=Path)
     execute.add_argument('--model-policy-file', type=Path, help='public operator ModelPolicy JSON, checked against actual pins')
+    reconciler = commands.add_parser('reconcile')
+    reconciler.add_argument('--directory', required=True, type=Path)
+    reconciler.add_argument('--slot', choices=SLOTS, required=True)
+    reconciler.add_argument('--agent-config', required=True, type=Path)
+    reconciler.add_argument('--renderer-image', required=True)
+    reconciler.add_argument('--assets-dir', type=Path)
+    reconciler.add_argument('--model-policy-file', type=Path)
     args = parser.parse_args(argv)
     if args.command == 'init':
         release_id = args.capability_release
@@ -930,9 +1072,11 @@ def main(argv=None):
         config = decode(args.agent_config.read_bytes())
         require(set(config) == {'base_url', 'token'}, 'animation_experiment_private_config_invalid')
         with AgentClient(config['base_url'], config['token']) as client:
-            result = run(args.directory, args.slot, ExperimentGateway(client), renderer_image=args.renderer_image,
-                         assets_dir=args.assets_dir, model_policy_file=args.model_policy_file)
-        print(json.dumps({k: result[k] for k in ('id', 'identity', 'status')}, ensure_ascii=True))
+            operation = reconcile if args.command == 'reconcile' else run
+            result = operation(args.directory, args.slot, ExperimentGateway(client), renderer_image=args.renderer_image,
+                               assets_dir=args.assets_dir, model_policy_file=args.model_policy_file)
+        print(json.dumps({k: result[k] for k in ('id', 'identity', 'status', 'job_id', 'state', 'original_run_id')
+                          if k in result}, ensure_ascii=True))
 
 
 if __name__ == '__main__':

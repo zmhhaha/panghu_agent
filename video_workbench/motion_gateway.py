@@ -40,7 +40,7 @@ def _document_bytes(document):
 def _job(document, *, job_id=None, operation_id=None, business_prefix='video-motion:'):
     _require(type(document) is dict and _uuid(document.get('job_id'))
              and type(document.get('state')) is str and document['state'] in {
-                 'queued', 'running', 'cancelling', 'completed', 'failed', 'needs_input',
+                 'queued', 'starting', 'running', 'cancelling', 'completed', 'failed', 'needs_input',
                  'cancelled', 'timed_out', 'quarantined'}
              and (job_id is None or document['job_id'] == job_id)
              and (operation_id is None or document.get('business_ref') == business_prefix + operation_id)

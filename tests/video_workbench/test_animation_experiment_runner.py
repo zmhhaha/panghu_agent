@@ -59,6 +59,7 @@ class Peer:
         self.lookup_missing = False
         self.failure = None
         self.model_policy = None
+        self.admission_state, self.poll_states = 'completed', []
 
     def __call__(self, request):
         self.calls.append(request)
@@ -103,7 +104,11 @@ class Peer:
             self.key_jobs[request.headers['idempotency-key']] = job_id
             if self.lose_submission:
                 raise httpx.ReadTimeout('Lost response after synthetic admission', request=request)
-            return httpx.Response(202, json=job)
+            response = deepcopy(job)
+            response['state'] = self.admission_state
+            if response['state'] != 'completed':
+                response.update(stop_proven=False, stop_proof=None)
+            return httpx.Response(202, json=response)
         if path.startswith('/v1/jobs/by-idempotency/'):
             key = path.rsplit('/', 1)[-1]
             if self.lookup_missing or key not in self.key_jobs:
@@ -114,7 +119,12 @@ class Peer:
         if path.startswith('/v1/artifacts/'):
             return httpx.Response(200, content=self.contents[path.split('/')[-2]])
         if path.startswith('/v1/jobs/'):
-            return httpx.Response(200, json=self.jobs[path.rsplit('/', 1)[-1]])
+            response = deepcopy(self.jobs[path.rsplit('/', 1)[-1]])
+            if self.poll_states:
+                response['state'] = self.poll_states.pop(0)
+                if response['state'] != 'completed':
+                    response.update(stop_proven=False, stop_proof=None)
+            return httpx.Response(200, json=response)
         raise AssertionError((method, path))
 
     def count(self, method, prefix):
@@ -1262,3 +1272,181 @@ def test_pilot_keeps_old_definition_and_input_when_current_registry_advances(tmp
     assert current['experiment']['version'] == '2'
     assert runner._plan_input(current) != old_input
     assert peer.count('POST', '/v1/jobs') == 1
+
+
+def test_native_starting_running_completed_lifecycle_keeps_original_job_and_one_admission(tmp_path, wire):
+    gateway, peer, rendered = wire
+    peer.admission_state, peer.poll_states = 'starting', ['running', 'completed']
+    root = init(tmp_path)
+    row = run(root, 'development-v1', gateway)
+    job_id = next(iter(peer.jobs))
+    assert row['status'] == 'rendered' and row['provenance']['job_id'] == job_id
+    assert runner._load(root)[1]['slots']['development-v1']['job_id'] == job_id
+    submitted = json.loads((root / row['id'] / 'agent-job-submitted.json').read_bytes())
+    last = json.loads((root / row['id'] / 'agent-job-last-observed.json').read_bytes())
+    assert submitted['state'] == 'starting' and submitted['stop_proven'] is False
+    assert last['state'] == 'completed' and last['stop_proven'] is True
+    assert row['provenance']['last_observed_job_sha256'] == lab.digest(last)
+    assert peer.count('POST', '/v1/jobs') == 1 and len(rendered) == 1
+
+
+def test_poll_protocol_error_preserves_admitted_job_and_last_valid_receipt_without_stop_claim(tmp_path, wire):
+    gateway, peer, rendered = wire
+    peer.admission_state, peer.poll_states = 'starting', ['not-a-native-state']
+    root = init(tmp_path)
+    with pytest.raises(ServiceError, match='service_protocol_invalid'):
+        run(root, 'development-v1', gateway)
+    job_id = next(iter(peer.jobs))
+    slot = runner._load(root)[1]['slots']['development-v1']
+    row = lab.read_run(root / slot['run_id'])
+    assert slot['state'] == row['status'] == 'failed'
+    assert slot['job_id'] == row['provenance']['job_id'] == job_id
+    assert row['provenance']['stop_proven'] is False
+    assert row['provenance']['remote_stop_status'] == 'unverified'
+    last = json.loads((root / row['id'] / 'agent-job-last-observed.json').read_bytes())
+    assert last['job_id'] == job_id and last['state'] == 'starting'
+    assert row['provenance']['last_observed_job_sha256'] == lab.digest(last)
+    report = json.loads((root / row['id'] / 'report.json').read_bytes())
+    assert report['agent_job_id'] == job_id
+    assert not (root / row['id'] / 'agent-job.json').exists()
+    with pytest.raises(lab.ExperimentError, match='already_reserved'):
+        run(root, 'development-v1', gateway)
+    assert peer.count('POST', '/v1/jobs') == 1 and rendered == []
+
+
+def test_failure_handler_keeps_slot_identity_when_provenance_has_not_yet_received_it(tmp_path):
+    root = init(tmp_path)
+    plan = runner._load(root)[1]
+    slot = plan['slots']['development-v1']
+    (root / slot['run_id']).mkdir()
+    slot['job_id'] = str(UUID(int=9876))
+    row = runner._record(slot, runner._plan_input(plan), 'development', experiment=plan['experiment'])
+    runner._fail(root, plan, slot, row, ServiceError('service_protocol_invalid', 502))
+    failed = lab.read_run(root / slot['run_id'])
+    assert runner._load(root)[1]['slots']['development-v1']['job_id'] == str(UUID(int=9876))
+    assert failed['provenance']['job_id'] == str(UUID(int=9876))
+    assert failed['provenance']['remote_stop_status'] == 'unverified'
+
+
+def failed_poll_fixture(tmp_path, wire):
+    gateway, peer, rendered = wire
+    peer.admission_state, peer.poll_states = 'starting', ['not-a-native-state']
+    root = init(tmp_path)
+    with pytest.raises(ServiceError, match='service_protocol_invalid'):
+        run(root, 'development-v1', gateway)
+    slot = runner._load(root)[1]['slots']['development-v1']
+    return root, slot, lab.read_run(root / slot['run_id'])
+
+
+def test_readonly_reconciliation_renders_original_job_in_new_record_preserving_failure_and_budget(tmp_path, wire):
+    gateway, peer, rendered = wire
+    root, slot, failed = failed_poll_fixture(tmp_path, wire)
+    original_files = {path.name: path.read_bytes() for path in (root / failed['id']).iterdir() if path.is_file()}
+    row = runner.reconcile(root, 'development-v1', gateway, renderer_image=IMAGE)
+    assert row['status'] == 'rendered' and row['id'] != failed['id']
+    assert row['input_document'] == failed['input_document']
+    assert row['provenance']['job_id'] == failed['provenance']['job_id']
+    binding = row['provenance']['result_reconciliation']
+    assert binding['original_run_id'] == failed['id'] and binding['original_run_identity'] == failed['identity']
+    assert binding['original_record_sha256'] == lab.digest(original_files['experiment-run.json'])
+    assert row['provenance']['new_generation_attempts'] == 0
+    assert row['provenance']['stop_proven'] is True
+    assert lab.read_run(root / row['id']) == row
+    report = json.loads((root / row['id'] / 'report.json').read_bytes())
+    assert report['generation_attempts'] == 0 and report['agent_job_id'] == failed['provenance']['job_id']
+    plan = runner._load(root)[1]
+    assert plan['max_tasks'] == 4 and plan['slots']['development-v1']['state'] == 'failed'
+    assert plan['slots']['development-v1']['result_reconciliation']['run_identity'] == row['identity']
+    assert {path.name: path.read_bytes() for path in (root / failed['id']).iterdir() if path.is_file()} == original_files
+    calls, captures = len(peer.calls), len(rendered)
+    assert runner.reconcile(root, 'development-v1', gateway, renderer_image=IMAGE) == row
+    assert len(peer.calls) == calls and len(rendered) == captures == 1
+    assert peer.count('POST', '/v1/jobs') == peer.count('POST', '/v1/inputs') == 1
+    runner.revise(root, 'Show the relationship with a continuous path.', 'Feedback is based on the recovered work.')
+    assert runner._load(root)[1]['feedback']['basis_run_id'] == row['id']
+    with pytest.raises(lab.ExperimentError, match='holdout_not_released'):
+        run(root, 'held-out-v1', gateway)
+    second = run(root, 'development-v2', gateway)
+    assert second['status'] == 'rendered' and peer.count('POST', '/v1/jobs') == 2
+
+
+def test_readonly_reconciliation_recovers_historic_missing_job_id_from_original_key(tmp_path, wire):
+    gateway, peer, rendered = wire
+    root, slot, failed = failed_poll_fixture(tmp_path, wire)
+    plan = runner._load(root)[1]
+    plan['slots']['development-v1']['job_id'] = None
+    failed['provenance'].pop('job_id')
+    failed.pop('identity')
+    report_path = root / failed['id'] / 'report.json'
+    report = json.loads(report_path.read_bytes())
+    report['agent_job_id'] = None
+    report_path.write_bytes(lab.canonical(report))
+    failed['artifacts']['report.json'].update(size=report_path.stat().st_size, sha256=lab.digest(report_path.read_bytes()))
+    original_path = root / failed['id'] / 'experiment-run.json'
+    original_path.write_bytes(lab.canonical(lab.signed(failed)))
+    (root / 'pilot.json').write_bytes(lab.canonical(plan))
+    original_raw = original_path.read_bytes()
+    row = runner.reconcile(root, 'development-v1', gateway, renderer_image=IMAGE)
+    assert row['provenance']['job_id'] == next(iter(peer.jobs))
+    assert row['provenance']['result_reconciliation']['original_record_sha256'] == lab.digest(original_raw)
+    assert original_path.read_bytes() == original_raw
+    assert runner._load(root)[1]['slots']['development-v1']['job_id'] is None
+    assert peer.count('POST', '/v1/jobs') == 1 and len(rendered) == 1
+
+
+def test_reconciliation_of_still_starting_job_only_observes_without_reserving_or_rendering(tmp_path, wire):
+    gateway, peer, rendered = wire
+    root, _, failed = failed_poll_fixture(tmp_path, wire)
+    job_id = next(iter(peer.jobs))
+    peer.jobs[job_id].update(state='starting', stop_proven=False, stop_proof=None)
+    before = (root / failed['id'] / 'experiment-run.json').read_bytes()
+    result = runner.reconcile(root, 'development-v1', gateway, renderer_image=IMAGE)
+    assert result['status'] == 'pending_original_task' and result['state'] == 'starting'
+    assert result['job_id'] == job_id and result['new_generation_attempts'] == 0
+    assert 'result_reconciliation' not in runner._load(root)[1]['slots']['development-v1']
+    assert (root / failed['id'] / 'experiment-run.json').read_bytes() == before
+    assert peer.count('POST', '/v1/jobs') == 1 and rendered == []
+
+
+@pytest.mark.parametrize('change', ['different_job', 'stop_unproven', 'proof_mismatch'])
+def test_reconciliation_rejects_unbound_job_or_stop_proof_before_render_reservation(tmp_path, wire, change):
+    gateway, peer, rendered = wire
+    root, _, failed = failed_poll_fixture(tmp_path, wire)
+    job_id = next(iter(peer.jobs))
+    if change == 'different_job':
+        other = str(UUID(int=2345))
+        peer.jobs[other] = dict(deepcopy(peer.jobs[job_id]), job_id=other)
+        peer.key_jobs[gateway._operation_key(failed['id'])] = other
+    elif change == 'stop_unproven':
+        peer.jobs[job_id]['stop_proven'] = False
+    else:
+        peer.jobs[job_id]['stop_proof']['fence'] += 1
+    before = (root / failed['id'] / 'experiment-run.json').read_bytes()
+    with pytest.raises((lab.ExperimentError, ServiceError)):
+        runner.reconcile(root, 'development-v1', gateway, renderer_image=IMAGE)
+    assert 'result_reconciliation' not in runner._load(root)[1]['slots']['development-v1']
+    assert (root / failed['id'] / 'experiment-run.json').read_bytes() == before
+    assert peer.count('POST', '/v1/jobs') == 1 and rendered == []
+
+
+def test_reconciliation_render_failure_keeps_original_and_consumes_only_one_supplementary_render(tmp_path, wire, monkeypatch):
+    gateway, peer, _ = wire
+    root, _, failed = failed_poll_fixture(tmp_path, wire)
+    original = (root / failed['id'] / 'experiment-run.json').read_bytes()
+    renders = []
+    def failed_render(*args, **kwargs):
+        renders.append(kwargs)
+        raise media.RenderExecutionError(dict(status='failed', error='animation_experiment_render_container_failed',
+            cleanup=dict(status='removed_and_confirmed_absent'), technical=None))
+    monkeypatch.setattr(media, 'render_scene', failed_render)
+    with pytest.raises(media.RenderExecutionError):
+        runner.reconcile(root, 'development-v1', gateway, renderer_image=IMAGE)
+    slot = runner._load(root)[1]['slots']['development-v1']
+    assert slot['state'] == slot['result_reconciliation']['state'] == 'failed'
+    supplementary = lab.read_run(root / slot['result_reconciliation']['run_id'])
+    assert supplementary['status'] == 'failed'
+    assert supplementary['provenance']['result_reconciliation']['original_run_identity'] == failed['identity']
+    assert (root / failed['id'] / 'experiment-run.json').read_bytes() == original
+    with pytest.raises(lab.ExperimentError, match='reconciliation_already_reserved'):
+        runner.reconcile(root, 'development-v1', gateway, renderer_image=IMAGE)
+    assert peer.count('POST', '/v1/jobs') == 1 and len(renders) == 1
