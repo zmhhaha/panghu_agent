@@ -110,12 +110,183 @@ def _text(raw):
     return raw.decode('utf-8') if isinstance(raw, bytes) else raw
 
 
-def _patch_text(name, donor, baseline, candidate):
-    newline = '\r\n' if '\r\n' in donor else '\n'
-    require(newline == '\n' or '\n' not in donor.replace('\r\n', ''), 'overlay_mixed_donor_newlines:' + name)
-    baseline = baseline.replace('\r\n', '\n')
-    candidate = candidate.replace('\r\n', '\n')
-    scopes = _allowed_changes(name, baseline, candidate)
+def _one(rows, code):
+    rows = list(rows)
+    require(len(rows) == 1, code)
+    return rows[0]
+
+
+def _assignment(source, name):
+    return _one((node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Assign)
+        and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == name), 'overlay_ast_assignment_not_unique:' + name)
+
+
+def _offset(source, line, column=0):
+    # AST columns count UTF-8 bytes, whereas splice offsets index Unicode text.
+    lines = source.splitlines(keepends=True)
+    prefix = lines[line - 1].encode('utf-8')[:column].decode('utf-8')
+    return sum(map(len, lines[:line - 1])) + len(prefix)
+
+
+def _splice(source, start, end, replacement, edits, target):
+    original = source[start:end]
+    edits.append(dict(offset=start, before=original, after=replacement, target=target))
+    return source[:start] + replacement + source[end:]
+
+
+def _replace_node(source, node, replacement, edits, target):
+    return _splice(source, _offset(source, node.lineno, node.col_offset),
+        _offset(source, node.end_lineno, node.end_col_offset), replacement, edits, target)
+
+
+def _segment(source, node):
+    return ast.get_source_segment(source, node)
+
+
+def _literal_strings(node):
+    require(isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
+            and node.value.id == 'Literal', 'overlay_ast_literal_shape_changed')
+    items = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+    require(all(isinstance(item, ast.Constant) and type(item.value) is str for item in items),
+            'overlay_ast_literal_shape_changed')
+    values = [item.value for item in items]
+    require(len(values) == len(set(values)), 'overlay_ast_literal_shape_changed')
+    return set(values)
+
+
+def _set_members(node):
+    """Inspect a literal union; an existing comprehension is an opaque identity."""
+    if isinstance(node, ast.Set):
+        require(all(isinstance(item, ast.Constant) and type(item.value) is str for item in node.elts),
+                'overlay_ast_profile_set_shape_changed')
+        return {item.value for item in node.elts}
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _set_members(node.left) | _set_members(node.right)
+    if isinstance(node, ast.SetComp):
+        return {'comprehension:' + ast.dump(node)}
+    raise RuntimeError('overlay_ast_profile_set_shape_changed')
+
+
+def _condition(test):
+    name = ast.dump(ast.parse('policy.name', mode='eval').body)
+    if (isinstance(test, ast.Compare) and ast.dump(test.left) == name
+            and len(test.ops) == len(test.comparators) == 1):
+        value = test.comparators[0]
+        if isinstance(test.ops[0], ast.Eq) and isinstance(value, ast.Constant) and type(value.value) is str:
+            return ('names', frozenset({value.value}))
+        if isinstance(test.ops[0], ast.In) and isinstance(value, ast.Set) and all(
+                isinstance(item, ast.Constant) and type(item.value) is str for item in value.elts):
+            return ('names', frozenset(item.value for item in value.elts))
+    if (isinstance(test, ast.Call) and isinstance(test.func, ast.Attribute)
+            and ast.dump(test.func.value) == name and test.func.attr == 'startswith'
+            and len(test.args) == 1 and not test.keywords and isinstance(test.args[0], ast.Constant)
+            and test.args[0].value in {'ppt.', 'research.', 'video.'}):
+        return ('prefix', test.args[0].value)
+    return None
+
+
+def _chain(source, function):
+    scope = _one((node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
+                  and node.name == function), 'overlay_ast_function_not_unique:' + function)
+    node = _one((node for node in scope.body if isinstance(node, ast.If)
+                 and _condition(node.test) == ('prefix', 'ppt.')),
+                'overlay_ast_profile_chain_not_unique:' + function)
+    result = []
+    while True:
+        result.append(node)
+        if len(node.orelse) != 1 or not isinstance(node.orelse[0], ast.If):
+            return result
+        node = node.orelse[0]
+
+
+def _branch_text(source, node):
+    lines = source.splitlines(keepends=True)
+    require(node.col_offset == 4 and lines[node.lineno - 1].startswith('    elif '),
+            'overlay_ast_branch_shape_changed')
+    start = _offset(source, node.lineno)
+    end = sum(map(len, lines[:node.body[-1].end_lineno]))
+    return start, end, source[start:end]
+
+
+def _insert_role_branches(donor, candidate, function, groups, anchor_names, newline, edits):
+    """Add only exact new-role predicates before a verified non-shadowed branch."""
+    inserted = []
+    for names in groups:
+        node = _one((node for node in _chain(candidate, function)
+            if _condition(node.test) == ('names', frozenset(names))), 'overlay_ast_new_role_branch_required')
+        start, end, raw = _branch_text(candidate, node)
+        inserted.append(raw.replace('\n', newline))
+        candidate = candidate[:start] + candidate[end:]
+    branches = _chain(donor, function)
+    anchor = _one((node for node in branches if _condition(node.test) == ('names', frozenset(anchor_names))),
+                  'overlay_ast_donor_branch_required')
+    for node in branches[:branches.index(anchor) + 1]:
+        predicate = _condition(node.test)
+        require(predicate is not None, 'overlay_ast_prior_predicate_not_reviewed')
+        require(not any(profile in predicate[1] if predicate[0] == 'names' else profile.startswith(predicate[1])
+                        for profile in PROFILES), 'overlay_ast_prior_predicate_shadows_role')
+    start, _, _ = _branch_text(donor, anchor)
+    donor = _splice(donor, start, start, ''.join(inserted), edits, function + ':new-role-branches')
+    return donor, candidate
+
+
+def _ast_rebase(name, donor, baseline, candidate, newline):
+    """Explicit node edits for the inspected Pi donor's older shared structure.
+
+    This is not fuzzy matching. Existing Literal/set members, quotas, resource
+    roots and unrelated statements stay exactly as found. Only declared role
+    additions and a structurally identical old suite expression may change.
+    All remaining source deltas still require their original exact contexts.
+    """
+    edits = []
+    if name == 'registry.py':
+        old = _assignment(baseline, 'OutputSchema').value
+        new = _assignment(candidate, 'OutputSchema').value
+        required = {'video-animation-observe-output.v1', 'video-animation-review-output.v1',
+                    'video-animation-create-output.v2'}
+        require(_literal_strings(new) - _literal_strings(old) == required
+                and _literal_strings(old) <= _literal_strings(new), 'overlay_ast_schema_delta_not_reviewed')
+        actual = _assignment(donor, 'OutputSchema').value
+        values = _literal_strings(actual)
+        require('video-animation-experiment-output.v1' in values and not values & required,
+                'overlay_ast_donor_schema_not_reviewed')
+        last = actual.slice.elts[-1] if isinstance(actual.slice, ast.Tuple) else actual.slice
+        position = _offset(donor, last.end_lineno, last.end_col_offset)
+        donor = _splice(donor, position, position, ', ' + ', '.join(map(repr, sorted(required))),
+                        edits, 'OutputSchema:append-new-roles')
+        candidate = _replace_node(candidate, new, _segment(baseline, old), [], 'OutputSchema:restore-baseline')
+        old = _assignment(baseline, 'suite').value
+        new = _assignment(candidate, 'suite').value
+        actual = _assignment(donor, 'suite').value
+        require(ast.dump(actual) == ast.dump(old), 'overlay_ast_donor_suite_changed')
+        donor = _replace_node(donor, actual, _segment(candidate, new).replace('\n', newline), edits,
+                              'suite:versioned-contract-expression')
+        candidate = _replace_node(candidate, new, _segment(baseline, old), [], 'suite:restore-baseline')
+    elif name == 'deploy/acceptance_probe.py':
+        old = _assignment(baseline, 'PROFILES').value
+        new = _assignment(candidate, 'PROFILES').value
+        require(_set_members(new) - _set_members(old) == set(PROFILES)
+                and _set_members(old) <= _set_members(new), 'overlay_ast_profile_delta_not_reviewed')
+        actual = _assignment(donor, 'PROFILES').value
+        members = _set_members(actual)
+        require('video.animation-experiment.v1' in members and not members & set(PROFILES),
+                'overlay_ast_donor_profiles_not_reviewed')
+        donor = _replace_node(donor, actual, _segment(donor, actual) + ' | {' + ', '.join(map(repr, PROFILES)) + '}',
+                              edits, 'PROFILES:append-new-roles')
+        candidate = _replace_node(candidate, new, _segment(baseline, old), [], 'PROFILES:restore-baseline')
+    elif name == 'resources.py':
+        donor, candidate = _insert_role_branches(donor, candidate, 'measured_package',
+            [PROFILES[:2], (PROFILES[2],)], {'video.animation-experiment.v1'}, newline, edits)
+    elif name == 'deploy/candidate_scenario.py':
+        donor, candidate = _insert_role_branches(donor, candidate, 'load_scenario',
+            [PROFILES], {'video.storyboard.v1', 'video.scene.v1'}, newline, edits)
+    else:
+        raise RuntimeError('overlay_donor_patch_context_changed:' + name)
+    return donor, candidate, edits
+
+
+def _exact_edits(name, donor, baseline, candidate, newline):
     left, right = baseline.splitlines(keepends=True), candidate.splitlines(keepends=True)
     matcher = difflib.SequenceMatcher(a=left, b=right, autojunk=False)
     result, edits = donor, []
@@ -125,8 +296,25 @@ def _patch_text(name, donor, baseline, candidate):
         after = ''.join(right[first[3]:last[4]]).replace('\n', newline)
         require(before and result.count(before) == 1, 'overlay_donor_patch_context_changed:' + name)
         offset = result.index(before)
-        result = result[:offset] + after + result[offset + len(before):]
-        edits.append(dict(offset=offset, before=before, after=after))
+        result = _splice(result, offset, offset + len(before), after, edits, 'exact-source-context')
+    return result, edits
+
+
+def _patch_text(name, donor, baseline, candidate):
+    newline = '\r\n' if '\r\n' in donor else '\n'
+    require(newline == '\n' or '\n' not in donor.replace('\r\n', ''), 'overlay_mixed_donor_newlines:' + name)
+    baseline = baseline.replace('\r\n', '\n')
+    candidate = candidate.replace('\r\n', '\n')
+    scopes = _allowed_changes(name, baseline, candidate)
+    ast_edits = []
+    try:
+        result, edits = _exact_edits(name, donor, baseline, candidate, newline)
+    except RuntimeError as error:
+        if str(error) != 'overlay_donor_patch_context_changed:' + name:
+            raise
+        rebased, reduced, ast_edits = _ast_rebase(name, donor, baseline, candidate, newline)
+        result, exact = _exact_edits(name, rebased, baseline, reduced, newline)
+        edits = ast_edits + exact
     restored = result
     for edit in reversed(edits):
         offset, after = edit['offset'], edit['after']
@@ -136,7 +324,9 @@ def _patch_text(name, donor, baseline, candidate):
     ast.parse(result)
     return result, dict(name=name, donor_sha256=sha(donor.encode()), patched_sha256=sha(result.encode()),
         modified_scopes=scopes, patch_count=len(edits), untouched_bytes_preserved=True,
-        reversible_to_exact_donor=True)
+        reversible_to_exact_donor=True, ast_rebase=[dict(target=edit['target'],
+            before_sha256=sha(edit['before'].encode()), after_sha256=sha(edit['after'].encode()))
+            for edit in ast_edits])
 
 
 def patched_sources(donors, baseline_sources, candidate_sources, *, role='control'):
