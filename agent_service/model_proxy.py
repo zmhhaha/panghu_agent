@@ -41,6 +41,74 @@ observations = Table('agent_tool_observations', metadata,
     Column('created_at', Float, nullable=False), Column('state', String(16), nullable=False),
     Column('request', LargeBinary, nullable=False), Column('response', LargeBinary))
 
+# Transport evidence only: retain hashes and positions, never image bytes, tool
+# arguments or prompt text. Completion comes from the actual request row, not
+# an Agent-provided claim. A separate table requires no rewrite of old rows.
+image_inputs = Table('agent_model_image_inputs', metadata,
+    Column('attempt_id', String(36), ForeignKey('agent_attempts.id'), primary_key=True),
+    Column('body_sha256', String(64), primary_key=True),
+    Column('input_item_index', Integer, primary_key=True),
+    Column('part_index', Integer, primary_key=True),
+    Column('sha256', String(64), nullable=False),
+    Column('media_type', String(32), nullable=False),
+    Column('byte_length', Integer, nullable=False))
+
+
+def _image_inputs(value):
+    """Hash the self-contained image bytes in an already validated request."""
+    if not isinstance(value, list):
+        return []
+    images = []
+    for index, item in enumerate(value):
+        parts = item.get('output') if item.get('type') == 'function_call_output' else item.get('content')
+        if not isinstance(parts, list):
+            continue
+        for part_index, part in enumerate(parts):
+            if part.get('type') != 'input_image':
+                continue
+            header, encoded = part['image_url'].split(',', 1)
+            try:
+                raw = base64.b64decode(encoded, validate=True)
+            except ValueError:
+                raise ServiceError('model_input_reference_not_authorized', 422) from None
+            if not raw:
+                raise ServiceError('model_input_reference_not_authorized', 422)
+            images.append(dict(input_item_index=index, part_index=part_index,
+                sha256=hashlib.sha256(raw).hexdigest(), byte_length=len(raw),
+                media_type=header[5:].split(';', 1)[0]))
+    return images
+
+
+def image_evidence_for_job(store, job):
+    """Control-only evidence for this job's current attempt, also after stop.
+
+    This proves that exact image bytes were included in a completed upstream
+    transport. It cannot prove model understanding or observation of unsupplied
+    frames. Old requests without recorded image hashes provide no evidence.
+    The caller must authorize ownership/profile before calling this function.
+    """
+    job_id = job.get('job_id', job.get('id'))
+    attempt_id = job.get('attempt_id')
+    with store.engine.connect() as db:
+        envelope_sha256 = db.execute(select(worker_allocations.c.request_sha256).where(
+            worker_allocations.c.job_id == job_id, worker_allocations.c.attempt_id == attempt_id,
+            worker_allocations.c.fence == job.get('fence'))).scalar_one_or_none() if attempt_id else None
+        rows = db.execute(select(image_inputs, requests.c.state, requests.c.status).join(
+            requests, (image_inputs.c.attempt_id == requests.c.attempt_id)
+            & (image_inputs.c.body_sha256 == requests.c.body_sha256)).join(
+            attempts, image_inputs.c.attempt_id == attempts.c.id).where(
+                attempts.c.job_id == job_id, attempts.c.id == attempt_id,
+                attempts.c.fence == job.get('fence'), requests.c.state == 'complete',
+                requests.c.status == 200).order_by(requests.c.created_at,
+                image_inputs.c.body_sha256, image_inputs.c.input_item_index,
+                image_inputs.c.part_index)).mappings().all() if attempt_id else []
+    return dict(schema='agent-model-image-evidence.v1', job_id=job_id,
+        attempt_id=attempt_id, request_sha256=envelope_sha256,
+        evidence_scope='completed_upstream_transport', images=[dict(
+            sha256=row['sha256'], media_type=row['media_type'], byte_length=row['byte_length'],
+            input_item_index=row['input_item_index'], part_index=row['part_index'],
+            model_request_sha256=row['body_sha256'], model_request_completed=True) for row in rows])
+
 
 def _b64(value):
     return base64.urlsafe_b64encode(value).decode('ascii').rstrip('=')
@@ -347,8 +415,11 @@ class ModelProxy:
     def respond(self, token, value):
         grant = self.authorize(token)
         body = self._body(value, grant)
+        images = _image_inputs(body['input'])
         try:
             identity = digest(body)
+            if len(canonical_bytes(body)) > self.settings.max_request_bytes:
+                raise ServiceError('request_too_large', 413)
         except (ValueError, TypeError, UnicodeError, RecursionError):
             raise ServiceError('model_request_scope_invalid', 422) from None
         key = (requests.c.attempt_id == grant['attempt']) & (requests.c.body_sha256 == identity)
@@ -366,6 +437,9 @@ class ModelProxy:
                 raise ServiceError('model_budget_exhausted', 429)
             db.execute(insert(requests).values(attempt_id=grant['attempt'], body_sha256=identity,
                 state='admitted', created_at=time.time()))
+            if images:
+                db.execute(insert(image_inputs), [dict(attempt_id=grant['attempt'],
+                    body_sha256=identity, **image) for image in images])
         diagnostic_stage = 'authorize_upstream'
         upstream_status = upstream_media = None
         try:

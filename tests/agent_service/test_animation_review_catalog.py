@@ -1,0 +1,215 @@
+"""Offline additive deployment preparation; synthetic pins grant no readiness."""
+from copy import deepcopy
+import hashlib
+
+import pytest
+
+from registry_fixtures import make_catalog
+from agent_service.catalog import CATALOG_KEYS
+from agent_service.contracts import canonical_bytes
+from agent_service.deploy.animation_review_catalog import (
+    PROFILES, measure_animation_review_bundles, prepare_animation_review_catalog)
+from agent_service.deploy.video_catalog import VideoCatalogError, registry
+from agent_service.profiles import video_animation_create as creation
+from agent_service.profiles import video_animation_review as review
+from agent_service.registry import binding_fingerprint
+
+
+IMAGE = 'registry.internal/animation-pi:latest@sha256:' + 'c' * 64
+
+
+def model(*, vision=True, model_name='candidate-vision'):
+    return dict(revision='model-candidate-v1', api_mode='openai-responses',
+                provider='task-proxy', model=model_name,
+                capabilities=['text', 'tool_calls'] + (['vision'] if vision else []))
+
+
+def public_config(*, vision=False):
+    catalog = make_catalog('pi', True)
+    if vision:
+        binding = catalog['execution_bindings'][0]
+        binding['model_policy'] = model()
+        binding['acceptance']['combination_sha256'] = binding_fingerprint(
+            catalog['task_contracts'][0], catalog['capability_bundles'][0],
+            catalog['tool_environments'][0], binding)
+    catalog.pop('schema_version')
+    binding = catalog['execution_bindings'][0]
+    return dict(schema_version=2, **catalog, callers=[dict(tenant='internal', caller='existing-service',
+        profiles=['workspace-task.v1'], token_ref='existing-service')], workers=[],
+        kubernetes_workers=[dict(pool_id='existing-pool', engine='pi',
+            binding_id=binding['id'], binding_revision=binding['revision'],
+            namespace='agent-workers', image='registry.internal/agent-pi:latest@sha256:' + 'a' * 64,
+            host_config_map='existing-host', pod_cidrs=['10.244.0.0/16'], enabled=True,
+            port=8090, uid_start=10000000, uid_count=65536, read_only_mounts=True,
+            mount_apparmor_profile='agent-capsule-inputs',
+            node_selector={'kubernetes.io/hostname': 'operator-node'},
+            token_ref='pi-worker-pool', receipt_key_ref='pi-worker-pool')])
+
+
+def prepare(current=None, **changes):
+    manifests, _ = measure_animation_review_bundles()
+    settings = dict(worker_image=IMAGE, resource_manifests=manifests,
+                    source_pool_id='existing-pool', vision_model_policy=model())
+    settings.update(changes)
+    return prepare_animation_review_catalog(public_config() if current is None else current, **settings)
+
+
+def test_local_measurement_verifies_exact_resources_without_claiming_image_or_model_readiness():
+    manifests, measured = measure_animation_review_bundles()
+    assert set(manifests) == {review.BUNDLE_REVISION, creation.BUNDLE_REVISION}
+    assert measured['local_files_verified'] is True
+    assert measured['container_measured'] is measured['vision_delivery_verified'] is False
+    assert measured['model_requests'] == measured['agent_tasks'] == 0
+    for module, bundle in zip((review, creation), measured['bundles'], strict=True):
+        manifest = manifests[module.BUNDLE_REVISION]
+        assert bundle['manifest_sha256'] in {
+            hashlib.sha256(canonical_bytes(manifest) + suffix).hexdigest() for suffix in (b'', b'\n')}
+        for row in bundle['local_files']:
+            raw = (module.BUNDLE_ROOT / row['path']).read_bytes()
+            assert row['sha256'] == hashlib.sha256(raw).hexdigest()
+            assert row['bytes'] == len(raw)
+
+
+def test_preparation_is_pure_additive_and_all_three_roles_are_disabled_candidates():
+    current = public_config()
+    before = deepcopy(current)
+    merged, hosts, summary = prepare(current)
+    assert current == before
+    for key, value in before.items():
+        assert merged[key][:len(value)] == value if key in {*CATALOG_KEYS, 'callers', 'kubernetes_workers'} else merged[key] == value
+    assert set(hosts) == set(PROFILES)
+    assert len(summary['combinations']) == 3
+    assert len(merged['capability_bundles']) == len(before['capability_bundles']) + 2
+    assert len(merged['callers']) == len(before['callers']) + 1
+    assert merged['callers'][-1]['profiles'] == list(PROFILES)
+    assert summary['required_caller_token_ref'] == 'video-animation-creation'
+    assert summary['vision_delivery_verified'] is summary['acceptance_created'] is False
+    assert summary['secrets_created'] is False and summary['model_requests'] == 0
+    for pool in merged['kubernetes_workers'][-3:]:
+        assert pool['enabled'] is False and pool['uid_start'] is None
+        assert pool['node_selector'] == before['kubernetes_workers'][0]['node_selector']
+        assert pool['pod_cidrs'] == before['kubernetes_workers'][0]['pod_cidrs']
+    for binding in merged['execution_bindings'][-3:]:
+        assert 'acceptance' not in binding
+    assert registry(merged).profiles().policy('workspace-task.v1', 'v1').enabled is True
+
+
+def test_each_host_resolves_independently_for_a_later_real_candidate():
+    from agent_service.deploy.acceptance_probe import candidate_config
+    merged, hosts, summary = prepare()
+    resolved = registry(merged)
+    for item in summary['combinations']:
+        profile = item['profile']
+        host = hosts[profile]
+        _, policy, binding = candidate_config(host)
+        assert policy.name == profile and policy.enabled is False
+        assert binding.acceptance is None
+        assert len(host['execution_catalog']['routes']) == 1
+        assert policy.execution_binding.combination_sha256 == item['combination_sha256']
+        contract = resolved.contract(profile, '1')
+        required = {'text', 'tool_calls'} | ({'vision'} if profile != creation.PROFILE else set())
+        assert set(contract.required_model_capabilities) == required
+        assert set(contract.required_tools) == {'read', 'write'}
+        assert set(item['required_model_capabilities']) == required
+        assert item['route_enabled'] is item['pool_enabled'] is item['uid_reserved'] is False
+
+
+def test_replay_is_idempotent_and_new_image_cannot_replace_existing_routes():
+    merged, hosts, _ = prepare()
+    again, same_hosts, _ = prepare(merged)
+    assert again == merged and same_hosts == hosts
+    changed = 'registry.internal/animation-pi:latest@sha256:' + 'd' * 64
+    other, _, second = prepare(worker_image=changed)
+    assert other['routes'][-1] != merged['routes'][-1]
+    with pytest.raises(VideoCatalogError, match='existing_catalog_identity_conflict'):
+        prepare(merged, worker_image=changed)
+    assert len(second['combinations']) == 3
+
+
+def test_text_only_default_policy_cannot_be_used_for_visual_roles():
+    with pytest.raises(VideoCatalogError, match='animation_review_vision_model_policy_required'):
+        prepare(vision_model_policy=None)
+    merged, _, summary = prepare(public_config(vision=True), vision_model_policy=None)
+    assert summary['vision_policy_source']['binding_id'] == 'workspace-pi'
+    assert merged['execution_bindings'][-3]['model_policy']['model'] == 'candidate-vision'
+
+
+def test_explicit_new_model_policies_are_disabled_candidates_and_create_may_use_vision_model():
+    explicit = model(model_name='never-accepted-before')
+    merged, _, summary = prepare(vision_model_policy=explicit, creator_model_policy=explicit)
+    assert summary['vision_policy_source'] == 'explicit'
+    for binding in merged['execution_bindings'][-3:]:
+        assert binding['model_policy']['model'] == 'never-accepted-before'
+        assert 'acceptance' not in binding
+    assert all(not row['enabled'] for row in merged['routes'][-3:])
+
+
+def test_vision_pool_or_binding_selects_model_but_never_expands_inherited_operator_settings():
+    current = public_config()
+    binding = deepcopy(current['execution_bindings'][0])
+    binding['id'] = 'vision-source'
+    binding['model_policy'] = model(model_name='inspected-vision')
+    binding.pop('acceptance')
+    current['execution_bindings'].append(binding)
+    pool = deepcopy(current['kubernetes_workers'][0])
+    pool.update(pool_id='vision-source-pool', binding_id=binding['id'],
+                enabled=False, uid_start=None, node_selector={'kubernetes.io/hostname': 'other-node'},
+                pod_cidrs=['10.99.0.0/16'])
+    current['kubernetes_workers'].append(pool)
+    merged, hosts, _ = prepare(current, vision_model_policy=None, vision_source_pool_id='vision-source-pool')
+    assert hosts[review.REVIEW_PROFILE]['model']['model'] == 'inspected-vision'
+    assert all(row['node_selector']['kubernetes.io/hostname'] == 'operator-node'
+               and row['pod_cidrs'] == ['10.244.0.0/16'] for row in merged['kubernetes_workers'][-3:])
+    _, from_binding, _ = prepare(current, vision_model_policy=None,
+        vision_source_binding=dict(id=binding['id'], revision=binding['revision']))
+    assert from_binding == hosts
+    with pytest.raises(VideoCatalogError, match='animation_review_vision_source_ambiguous'):
+        prepare(current, vision_source_pool_id='vision-source-pool',
+                vision_source_binding=dict(id=binding['id'], revision=binding['revision']))
+
+
+@pytest.mark.parametrize('changes,code', [
+    ({'source_pool_id': None}, 'animation_review_source_pool_required'),
+    ({'source_pool_id': 'missing'}, 'animation_review_source_pi_pool_required'),
+    ({'vision_source_pool_id': 'missing'}, 'animation_review_source_pi_pool_required'),
+    ({'vision_source_binding': {'id': 'missing', 'revision': 'v1'}}, 'animation_review_vision_binding_required'),
+    ({'vision_model_policy': model(vision=False)}, 'animation_review_vision_model_policy_required'),
+    ({'creator_model_policy': dict(model(), capabilities=['vision'])}, 'animation_review_creator_model_policy_required'),
+])
+def test_invalid_explicit_sources_and_policies_are_rejected(changes, code):
+    with pytest.raises(VideoCatalogError, match=code):
+        prepare(**changes)
+
+
+def test_bundle_pins_and_latest_image_digest_are_required():
+    manifests, _ = measure_animation_review_bundles()
+    manifests[review.BUNDLE_REVISION]['local_files'][0]['sha256'] = 'e' * 64
+    with pytest.raises(VideoCatalogError, match='animation_review_bundle_manifest_mismatch'):
+        prepare(resource_manifests=manifests)
+    with pytest.raises(VideoCatalogError, match='animation_review_bundle_manifests_required'):
+        prepare(resource_manifests={})
+    for image in ('registry/animation:latest', 'registry/animation:v2@sha256:' + 'a' * 64):
+        with pytest.raises(VideoCatalogError, match='animation_review_worker_latest_digest_required'):
+            prepare(worker_image=image)
+
+
+def test_new_caller_cannot_broaden_an_existing_caller_or_reuse_its_token_reference():
+    with pytest.raises(VideoCatalogError, match='dedicated_animation_review_caller_required'):
+        prepare(caller=dict(tenant='internal', caller='video-workbench',
+                            profiles=list(PROFILES), token_ref='new-token'))
+    with pytest.raises(VideoCatalogError, match='dedicated_animation_review_caller_required'):
+        prepare(caller=dict(tenant='internal', caller='new-caller',
+                            profiles=list(PROFILES) + ['workspace-task.v1'], token_ref='new-token'))
+    with pytest.raises(VideoCatalogError, match='existing_catalog_identity_conflict'):
+        prepare(caller=dict(tenant='internal', caller='existing-service',
+                            profiles=list(PROFILES), token_ref='existing-service'))
+    with pytest.raises(VideoCatalogError, match='invalid_public_catalog'):
+        prepare(caller=dict(tenant='internal', caller='new-caller',
+                            profiles=list(PROFILES), token_ref='existing-service'))
+
+
+def test_new_combination_cannot_be_silently_enabled_using_source_acceptance():
+    merged, _, _ = prepare()
+    merged['routes'][-1]['enabled'] = True
+    with pytest.raises(VideoCatalogError, match='invalid_public_catalog'):
+        registry(merged)

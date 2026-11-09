@@ -29,7 +29,8 @@ from .profiles.video_explanation import (BUNDLE_ROOT as EXPLANATION_ROOT, BUNDLE
     BUNDLE_MANIFEST_SHA256 as EXPLANATION_MANIFEST_SHA256, BUNDLE_FILES as EXPLANATION_FILES)
 from .pi_cage import PI_CAGE_REPOSITORY, PI_CAGE_REVISION, PI_PACKAGE, PI_VERSION
 from .registry import (CapabilityBundle, DeploymentRegistry, ExecutionBinding,
-                       ModelPolicy, TaskContract, ToolEnvironment, binding_fingerprint)
+                       ModelPolicy, TaskContract, ToolEnvironment, binding_fingerprint,
+                       required_model_capabilities)
 
 
 PPT_COMMIT = 'c350bc31e6d43b7bcf5234183d650ba8f9f4c9d7'
@@ -280,7 +281,7 @@ def _image(value):
 
 def _contract(name):
     handler = implementation(name)
-    capabilities = ['text', 'tool_calls'] + (['vision'] if 'image' in handler.required_tools else [])
+    capabilities = list(required_model_capabilities(handler))
     return TaskContract.model_validate(dict(name=name, revision='1' if name in (*VIDEO_PROFILES, *MOTION_PROFILES, *EXPLANATION_PROFILES, *PROCESS_PROFILES) else 'v1', task_schema=handler.task_schema,
         output_schema=handler.output_schema, required_tools=list(handler.required_tools),
         required_model_capabilities=capabilities, max_timeout_seconds=3600,

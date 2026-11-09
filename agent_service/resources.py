@@ -74,6 +74,16 @@ def measured_package(config, policy, control_root):
         root = BUNDLE_ROOT
         mandatory = {'manifest.json', *BUNDLE_FILES}
         verified_bundle()
+    elif policy.name in {'video.animation-observe.v1', 'video.animation-review.v1'}:
+        from .profiles.video_animation_review import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
+    elif policy.name == 'video.animation-create.v2':
+        from .profiles.video_animation_create import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
     elif policy.name == 'video.motion-plan.v1':
         root = motion_package_root(pins.bundle_revision)
         mandatory = {'manifest.json', 'motion-procedure/SKILL.md', 'CONTRACT.md', 'PLAN.schema.json', 'LICENSE'}

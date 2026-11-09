@@ -37,7 +37,8 @@ PROFILES = {'ppt.' + stage + '.v1' for stage in (
     'research.generate.v1', 'research.revise.v1', 'research.plan.v1',
     'research.retrieve.v1', 'research.outline.v1', 'research.draft.v1',
     'video.storyboard.v1', 'video.scene.v1', 'video.motion-plan.v1', 'video.explanation-plan.v1',
-    'video.process-plan.v1', 'video.animation-experiment.v1'}
+    'video.process-plan.v1', 'video.animation-experiment.v1',
+    'video.animation-observe.v1', 'video.animation-review.v1', 'video.animation-create.v2'}
 FIXTURE_PROFILES = {'ppt.plan_initial.v1', 'research.revise.v1'}
 CONTROL = Path('/run/agent-control')
 WORK = Path('/work')
@@ -279,6 +280,9 @@ class ProbeAuthority:
                 writer_resources=list(result.stop_receipt.resource_ids),
                 writers_observed_stopped_at=result.stop_receipt.observed_at,
                 observations=document['observations'], model_calls=before, lease_expiry_rejected=True,
+                model_image_evidence=__import__('agent_service.model_proxy',
+                    fromlist=['image_evidence_for_job']).image_evidence_for_job(self.store,
+                        self.store.get_job('candidate-probe', 'administrator', self.envelope.job_id)),
                 pod_termination='external_operator_observation_required',
                 unverified=['external_actual_pod_image_and_security_context', 'external_pod_termination',
                     'other_profiles_and_engines', 'full_production_acceptance_suite'])

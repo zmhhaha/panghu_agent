@@ -5,6 +5,8 @@ or upstream readiness. No model/provider or academic network calls are made.
 """
 from copy import deepcopy
 from dataclasses import replace
+import base64
+import hashlib
 import json
 import logging
 import time
@@ -18,7 +20,7 @@ from sqlalchemy import select, update
 from agent_service.contracts import ExecutionBindingPins, ServiceError, canonical_bytes, digest
 from agent_service.model_proxy import (
     ModelGrantIssuer, ModelProxy, ModelProxySettings, create_model_proxy_app,
-    observations, requests,
+    image_evidence_for_job, image_inputs, observations, requests,
 )
 from agent_service.registry import DeploymentRegistry
 from agent_service.store import Store, attempts, jobs, worker_allocations
@@ -366,6 +368,111 @@ def test_pi_image_tool_result_preserves_content_role_call_identity_and_durable_r
     assert len(run.calls) == 1
     with run.store.engine.connect() as db:
         assert db.execute(select(requests.c.state)).scalar_one() == 'complete'
+
+
+def _image_history(raw):
+    return [
+        {'role': 'user', 'content': 'Inspect the supplied frame.'},
+        {'type': 'function_call', 'call_id': 'read_frame', 'name': 'read',
+         'arguments': '{"path":"inputs/frame.png"}'},
+        {'type': 'function_call_output', 'call_id': 'read_frame', 'output': [
+            {'type': 'input_text', 'text': 'Read image file [image/png]'},
+            {'type': 'input_image', 'image_url': 'data:image/png;base64,'
+             + base64.b64encode(raw).decode('ascii')}]},
+    ]
+
+
+def test_image_evidence_is_measured_from_completed_upstream_bytes_and_bound_to_envelope(execution):
+    run = execution()
+    raw = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9YLXnG0AAAAASUVORK5CYII=')
+    body = dict(run.body, input=_image_history(raw))
+    run.proxy.respond(run.token, body)
+    job = run.store.get_job('tenant', 'business', run.envelope.job_id)
+    proof = image_evidence_for_job(run.store, job)
+    assert proof['schema'] == 'agent-model-image-evidence.v1'
+    assert proof['evidence_scope'] == 'completed_upstream_transport'
+    assert proof['job_id'] == run.envelope.job_id
+    assert proof['attempt_id'] == run.envelope.attempt_id
+    assert proof['request_sha256'] == run.envelope.request_sha256
+    assert proof['images'] == [dict(sha256=hashlib.sha256(raw).hexdigest(),
+        media_type='image/png', byte_length=len(raw), input_item_index=2, part_index=1,
+        model_request_sha256=digest(run.proxy._body(body, run.proxy.issuer.decode(run.token))),
+        model_request_completed=True)]
+    forwarded = json.loads(run.calls[0].content)
+    assert base64.b64decode(forwarded['input'][2]['output'][1]['image_url'].split(',')[1]) == raw
+    # The independent metadata carries no prompt, filename, inline bytes or key.
+    serialized = json.dumps(proof)
+    assert all(value not in serialized for value in ('inputs/frame.png', 'Read image',
+        base64.b64encode(raw).decode('ascii'), 'offline-provider-token', run.token))
+    run.proxy.respond(run.token, body)
+    assert len(run.calls) == 1
+    assert image_evidence_for_job(run.store, job) == proof
+    # Evidence remains available after grant revocation and writer shutdown.
+    run.store.cancel('tenant', 'business', run.envelope.job_id)
+    assert image_evidence_for_job(run.store, run.store.get_job('tenant', 'business',
+        run.envelope.job_id)) == proof
+
+
+def test_uncertain_model_transport_cannot_prove_frame_delivery(execution):
+    run = execution()
+    run.proxy.client.close()
+    run.proxy.client = httpx.Client(transport=httpx.MockTransport(
+        lambda _: httpx.Response(503, content=b'upstream unavailable')))
+    body = dict(run.body, input=_image_history(b'frame bytes'))
+    error('model_admission_uncertain', lambda: run.proxy.respond(run.token, body), 502)
+    job = run.store.get_job('tenant', 'business', run.envelope.job_id)
+    assert image_evidence_for_job(run.store, job)['images'] == []
+    with run.store.engine.connect() as db:
+        assert db.execute(select(image_inputs.c.sha256)).scalar_one() == hashlib.sha256(b'frame bytes').hexdigest()
+    assert image_evidence_for_job(run.store, dict(job, attempt_id='unrelated-attempt'))['images'] == []
+    assert image_evidence_for_job(run.store, dict(job, fence=job['fence'] + 1))['images'] == []
+
+
+def test_text_only_requests_and_legacy_records_have_no_image_evidence(execution):
+    run = execution()
+    run.proxy.respond(run.token, run.body)
+    job = run.store.get_job('tenant', 'business', run.envelope.job_id)
+    assert image_evidence_for_job(run.store, job)['images'] == []
+
+
+def test_image_evidence_control_api_and_client_enforce_tenant_caller_and_profile(execution):
+    from agent_service.api import ApiSettings, create_app
+    from agent_service.client import AgentClient
+    from agent_service.contracts import Principal
+    run = execution()
+    run.proxy.respond(run.token, dict(run.body, input=_image_history(b'actual frame')))
+    registry = DeploymentRegistry.from_config(**{key: value for key, value in
+        make_catalog('pi', True).items() if key != 'schema_version'}).profiles()
+    configured = ApiSettings({'a' * 40: Principal('tenant', 'business', frozenset({'workspace-task.v1'})),
+        'b' * 40: Principal('other', 'business', frozenset({'workspace-task.v1'})),
+        'c' * 40: Principal('tenant', 'other', frozenset({'workspace-task.v1'})),
+        'd' * 40: Principal('tenant', 'business', frozenset())})
+    with TestClient(create_app(configured, run.store, registry)) as control:
+        path = '/v1/jobs/' + run.envelope.job_id + '/model-image-evidence'
+        assert control.get(path).status_code == 401
+        for token in ('b' * 40, 'c' * 40, 'd' * 40):
+            assert control.get(path, headers={'Authorization': 'Bearer ' + token}).status_code == 404
+        def forward(request):
+            result = control.request(request.method, request.url.path, headers=request.headers)
+            return httpx.Response(result.status_code, json=result.json())
+        with AgentClient('http://control.invalid', 'a' * 40,
+                transport=httpx.MockTransport(forward)) as client:
+            proof = client.model_image_evidence(run.envelope.job_id)
+            assert proof['images'][0]['sha256'] == hashlib.sha256(b'actual frame').hexdigest()
+            assert proof['request_sha256'] == run.envelope.request_sha256
+            with pytest.raises(ValueError):
+                client.model_image_evidence('../foreign-job')
+
+
+def test_malformed_base64_is_rejected_before_admission_or_evidence(execution):
+    run = execution()
+    body = dict(run.body, input=_image_history(b'valid'))
+    body['input'][-1]['output'][-1]['image_url'] = 'data:image/png;base64,Y==='
+    error('model_input_reference_not_authorized', lambda: run.proxy.respond(run.token, body), 422)
+    assert run.calls == []
+    with run.store.engine.connect() as db:
+        assert db.execute(select(requests)).first() is None
+        assert db.execute(select(image_inputs)).first() is None
 
 
 def test_changed_tool_image_bytes_create_distinct_request_identity(execution):

@@ -7,6 +7,7 @@ an explicit reviewed implementation, not a new name for the text collector.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from types import MappingProxyType
 from typing import Literal, Mapping
 
@@ -25,7 +26,8 @@ OutputSchema = Literal['text-output.v1', 'ppt-plan_initial-output.v1', 'ppt-plan
     'research-retrieve-output.v1', 'research-outline-output.v1', 'research-draft-output.v1',
     'video-storyboard-output.v1', 'video-scene-output.v1', 'video-motion-plan-output.v1',
     'video-explanation-plan-output.v1', 'video-process-plan-output.v1',
-    'video-animation-experiment-output.v1']
+    'video-animation-experiment-output.v1', 'video-animation-observe-output.v1',
+    'video-animation-review-output.v1', 'video-animation-create-output.v2']
 
 NAME = r'^[a-z][a-z0-9_.-]{0,79}$'
 REVISION = r'^[A-Za-z0-9_.-]{1,100}$'
@@ -49,6 +51,21 @@ def _unique(values):
     if len(set(values)) != len(values):
         raise ValueError('Duplicate capability')
     return tuple(sorted(values))
+
+
+def required_model_capabilities(handler):
+    """Model input requirements are independent of the native tool names.
+
+    Pi's read tool produces images without a tool named ``image``. Existing
+    contracts keep their original requirements; new reviewed handlers can
+    require vision explicitly without widening their read/write tool scope.
+    """
+    required = set(getattr(handler, 'required_model_capabilities', ('text', 'tool_calls')))
+    if 'image' in handler.required_tools:
+        required.add('vision')
+    if not {'text', 'tool_calls'} <= required <= {'text', 'tool_calls', 'vision'}:
+        raise ValueError('Invalid reviewed model capability requirements')
+    return tuple(sorted(required))
 
 
 class TaskContract(_Record):
@@ -78,8 +95,8 @@ class TaskContract(_Record):
                 or set(self.required_tools) != set(handler.required_tools)
                 or not {'text', 'tool_calls'} <= set(self.required_model_capabilities)):
             raise ValueError('Task contract has no reviewed implementation')
-        if 'image' in handler.required_tools and 'vision' not in self.required_model_capabilities:
-            raise ValueError('The image tool requires a vision-capable model policy')
+        if not set(required_model_capabilities(handler)) <= set(self.required_model_capabilities):
+            raise ValueError('The reviewed handler requires a vision-capable model policy')
         for key, maximum in handler.limits.as_dict().items():
             value = getattr(self, key)
             if value is not None and value > maximum:
@@ -276,7 +293,7 @@ class DeploymentRegistry:
                     and binding.acceptance.combination_sha256 != fingerprints[key]):
                 raise ValueError('Stale combination acceptance record')
             suite = ('workspace-contract.v1' if c.name == 'workspace-task.v1'
-                     else c.name.replace('.v1', '-contract.v1'))
+                     else re.sub(r'\.v([0-9]+)$', r'-contract.v\1', c.name))
             if binding.acceptance is not None and binding.acceptance.suite != suite:
                 raise ValueError('Acceptance suite does not cover the actual domain contract')
         if type(routes) not in (list, tuple) or len(routes) > CONTRACT_RECORD_LIMIT:

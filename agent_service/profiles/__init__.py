@@ -30,4 +30,13 @@ def implementation(name):
     if name == 'video.animation-experiment.v1':
         from .video_animation_experiment import VideoAnimationExperimentProfile
         return VideoAnimationExperimentProfile()
+    if name == 'video.animation-observe.v1':
+        from .video_animation_review import VideoAnimationObserveProfile
+        return VideoAnimationObserveProfile()
+    if name == 'video.animation-review.v1':
+        from .video_animation_review import VideoAnimationReviewProfile
+        return VideoAnimationReviewProfile()
+    if name == 'video.animation-create.v2':
+        from .video_animation_create import VideoAnimationCreateProfile
+        return VideoAnimationCreateProfile()
     raise ValueError('No reviewed profile implementation')

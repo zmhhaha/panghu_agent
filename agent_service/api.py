@@ -28,6 +28,7 @@ from .contracts import (MAX_INPUT_BYTES, ExecutionBindingPins, JobRequest, Princ
                         ServiceError)
 from .artifacts import relative_path
 from .storage import execution_fields
+from .model_proxy import image_evidence_for_job
 
 
 @dataclass(frozen=True)
@@ -284,6 +285,9 @@ def create_app(settings: ApiSettings, store, registry: ProfileRegistry,
         for item in values:
             engine = item['engine']
             policy = registry.policy(item['profile'], item['profile_revision'])
+            from .profiles import implementation
+            from .registry import required_model_capabilities
+            item['required_model_capabilities'] = list(required_model_capabilities(implementation(item['profile'])))
             item['ready'] = item['configured'] and await run_in_threadpool(_ready, adapters.get(engine), policy)
             if getattr(adapters.get(engine), 'provisioning', None) == 'kubernetes_per_attempt':
                 item['provisioning'] = 'kubernetes_per_attempt'
@@ -395,6 +399,11 @@ def create_app(settings: ApiSettings, store, registry: ProfileRegistry,
         principal = request.state.principal
         await authorized_job(principal, job_id)
         return await run_in_threadpool(store.get_artifact_manifest, principal.tenant, principal.caller, _id(job_id))
+
+    @app.get('/v1/jobs/{job_id}/model-image-evidence')
+    async def model_image_evidence(request: Request, job_id: str):
+        job = await authorized_job(request.state.principal, job_id)
+        return await run_in_threadpool(image_evidence_for_job, store, job)
 
     @app.delete('/v1/artifacts/{artifact_id}')
     async def delete_artifact(request: Request, artifact_id: str):
