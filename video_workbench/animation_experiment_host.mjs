@@ -92,6 +92,66 @@ function observeAnimationObjects(expectedLabels){
  }).sort((a,b)=>a.id.localeCompare(b.id));
 }
 // END TRUSTED LABEL OBSERVER
+// BEGIN TRUSTED SEMANTIC OBSERVER
+function observeAnimationSemantics(){
+ const svg='http://www.w3.org/2000/svg';
+ const boundsOf=r=>({x:r.x,y:r.y,width:r.width,height:r.height});
+ const positive=r=>[r.x,r.y,r.width,r.height].every(Number.isFinite)&&r.width>0&&r.height>0;
+ const inside=(a,b)=>a.x>=b.x-.5&&a.y>=b.y-.5&&a.x+a.width<=b.x+b.width+.5&&a.y+a.height<=b.y+b.height+.5;
+ const shown=node=>{
+  for(let p=node;p;p=p.parentElement){const s=getComputedStyle(p);
+   if(s.display==='none'||['hidden','collapse'].includes(s.visibility)||Number(s.opacity)<=0
+    ||s.contentVisibility==='hidden'||(s.clipPath&&s.clipPath!=='none')
+    ||(s.maskImage&&s.maskImage!=='none')||(s.filter&&s.filter!=='none'))return false;
+  }return true;
+ };
+ const paint=value=>{
+  value=String(value||'').trim().toLowerCase();
+  if(!value||['none','transparent'].includes(value)||value.includes('url('))return false;
+  const alpha=value.match(/(?:rgba|hsla)\([^)]*,\s*([\d.]+)\s*\)$/)||value.match(/\/\s*([\d.]+)(%)?\s*\)$/);
+  return !alpha||Number(alpha[1])>0;
+ };
+ const painted=node=>{const s=getComputedStyle(node);
+  const stroke=paint(s.stroke)&&Number(s.strokeOpacity)>0&&Number.parseFloat(s.strokeWidth)>0;
+  return node.namespaceURI===svg?((node.localName!=='line'&&paint(s.fill)&&Number(s.fillOpacity)>0)
+   ||stroke):paint(s.color);
+ };
+ const textOf=node=>{
+  const parts=[],walker=document.createTreeWalker(node,NodeFilter.SHOW_TEXT);
+  for(let text=walker.nextNode();text;text=walker.nextNode()){
+   const p=text.parentElement,raw=text.nodeValue||'',trimmed=raw.trim();
+   if(!p||!trimmed||p.closest('script,style,title,desc,metadata,defs,symbol,clipPath,mask,marker,noscript,template')
+    ||!shown(p)||!painted(p)||!(Number.parseFloat(getComputedStyle(p).fontSize)>0))continue;
+   const start=raw.indexOf(trimmed),range=document.createRange();range.setStart(text,start);range.setEnd(text,start+trimmed.length);
+   const r=range.getBoundingClientRect();if(!positive(r))continue;
+   let clipped=false;
+   for(let a=p;a;a=a.parentElement){const s=getComputedStyle(a);
+    if((['hidden','clip','scroll','auto'].includes(s.overflowX)||['hidden','clip','scroll','auto'].includes(s.overflowY))
+     &&!inside(r,a.getBoundingClientRect()))clipped=true;
+   }
+   if(!clipped)parts.push(trimmed);
+  }return parts.join(' ').trim();
+ };
+ const geometryOf=node=>{
+  if(node.namespaceURI!==svg)return null;
+  const matrix=node.getScreenCTM();if(!matrix)return null;
+  const point=(x,y)=>{const p=new DOMPoint(x,y).matrixTransform(matrix);return [p.x,p.y];};
+  if(['circle','ellipse'].includes(node.localName))return {kind:'point',point:point(node.cx.baseVal.value,node.cy.baseVal.value)};
+  if(node.localName==='line')return {kind:'line',points:[point(node.x1.baseVal.value,node.y1.baseVal.value),point(node.x2.baseVal.value,node.y2.baseVal.value)]};
+  if(node.localName==='polygon')return {kind:'polygon',points:[...node.points].map(p=>point(p.x,p.y))};
+  return null;
+ };
+ return [...document.querySelectorAll('[data-semantic-id]')].slice(0,129).map(node=>{
+  const rect=node.getBoundingClientRect(),text=textOf(node),geometry=geometryOf(node),displayed=shown(node);
+  let entity=node;
+  while(entity&&!String(entity.getAttribute('data-semantic-id')||'').startsWith('entity-'))entity=entity.parentElement;
+  const rendered=displayed&&(!geometry||painted(node));
+  return {id:node.getAttribute('data-semantic-id'),tag:node.localName,bounds:boundsOf(rect),
+   rendered,visible:rendered&&positive(rect),text,text_status:text?'measured':'missing',
+   entity_attachment:entity?.getAttribute('data-semantic-id')||null,geometry};
+ }).sort((a,b)=>a.id.localeCompare(b.id));
+}
+// END TRUSTED SEMANTIC OBSERVER
 const read=(path,limit)=>{const info=lstatSync(path);if(!info.isFile()||info.isSymbolicLink()||info.size>limit)throw Error('host_file_invalid');return readFileSync(path);};
 const require=createRequire('/opt/renderer/package.json');
 const {chromium}=require('playwright-core');
@@ -160,15 +220,21 @@ try{
   if(exceptionDetails||!Array.isArray(result.value))throw Error('host_observation_failed');
   return result.value;
  };
+ const observeSemantics=async()=>{
+  const {result,exceptionDetails}=await cdp.send('Runtime.evaluate',{contextId:isolated.executionContextId,
+   returnByValue:true,expression:`(${observeAnimationSemantics.toString()})()`});
+  if(exceptionDetails||!Array.isArray(result.value))throw Error('host_semantic_observation_failed');
+  return result.value;
+ };
  mkdirSync(join(root,'frames'));
  const frames=[],samples=[];let total=0;
  const capture=async(time,name)=>{
   await page.evaluate(async t=>{await window.__animationExperiment.seek(t);},time);
-  const objects=await observe();
+  const objects=await observe(),semantics=c.semantic?await observeSemantics():undefined;
   const bytes=await page.screenshot({type:'jpeg',quality:80,timeout:10000});
   total+=bytes.length;if(total>request.max_evidence_bytes||bytes.length>4*1024*1024)throw Error('host_evidence_budget');
   writeFileSync(join(root,'frames',name),bytes);frames.push({name,sha256:hash(bytes),bytes:bytes.length});
-  return {time,objects,frame_sha256:hash(bytes)};
+  return {time,objects,...(c.semantic?{semantics}:{}),frame_sha256:hash(bytes)};
  };
  for(let index=0;index<count;index++)samples.push({frame_index:index,...await capture(index/24,'frame-'+String(index).padStart(6,'0')+'.jpg')});
  // The page was at its final frame. Revisiting the first frame validates a
@@ -178,6 +244,7 @@ try{
   observer:'isolated_world_dom_and_browser_screenshots',request_identity:request.identity,
   input_sha256:request.input_sha256,samples,reverse_initial_sha256:reverse.frame_sha256,
   reverse_initial_objects:reverse.objects,blocked_requests:blocked,page_errors:errors};
+ if(c.semantic)Object.assign(observations,{semantic_observer_revision:'visible-semantic-geometry-v1',reverse_initial_semantics:reverse.semantics});
  const observed=Buffer.from(JSON.stringify(observations,null,2));
  writeFileSync(join(root,'observations.json'),observed);
  await browser.close();browser=null;

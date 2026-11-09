@@ -24,8 +24,8 @@ from agent_service.profiles.video_animation_experiment import (
     PROFILE, INPUT_NAME, RESULT_NAME, INPUT_MAX_BYTES, OUTPUT_MAX_BYTES,
     VideoAnimationExperimentProfile, validate_experiment_input, validate_experiment_result, scene_files)
 from .motion_gateway import MotionAgentGateway
-from .animation_experiments import (RUN_SCHEMA, canonical, constraints, decode, definition,
-    digest, pilot_input, require, signed, read_run, _ordinary_file)
+from .animation_experiments import (RUN_SCHEMA, ExperimentError, canonical, constraints, decode, definition,
+    definitions, digest, pilot_input, require, signed, read_run, _ordinary_file)
 from .animation_capabilities import capability_release, validate_release, DEFAULT_RELEASE_ID
 
 
@@ -134,26 +134,57 @@ def _bind_model_policy(record, policy, pins):
         requested_model_note='Operator-declared request policy; not a returned or observed model identity.')
 
 
-def _new_plan(run_prefix='identity', recovery=None, *, capability_release_id=None):
-    plan = dict(schema='video.animation-experiment-pilot.v1', experiment=definition(),
-        constraints={role: constraints(role) for role in ('development', 'held_out')},
-        constraint_identities={role: digest(constraints(role)) for role in ('development', 'held_out')},
+def _new_plan(run_prefix=None, recovery=None, *, capability_release_id=None,
+              experiment_id='identity-tracking', definition_identity=None):
+    goal = definition(experiment_id, definition_identity)
+    frozen = {role: constraints(role, goal['id'], goal['identity'])
+              for role in ('development', 'held_out')}
+    # Preserve all legacy IDs and bytes. New ability pilots receive independent
+    # namespaces so publishing one cannot replace a different pilot's works.
+    if run_prefix is None:
+        run_prefix = ('identity' if goal['id'] == 'identity-tracking'
+                      else goal['id'] + '-' + uuid4().hex[:12])
+    plan = dict(schema='video.animation-experiment-pilot.v1', experiment=goal,
+        constraints=frozen,
+        constraint_identities={role: digest(value) for role, value in frozen.items()},
         max_tasks=4, max_attempts_per_task=1,
         guidance={'v1': '', 'v2': None}, feedback=None,
         slots={slot: dict(state='unstarted', run_id=run_prefix + '-' + slot) for slot in SLOTS})
+    if goal['id'] != 'identity-tracking':
+        plan['run_prefix'] = run_prefix
     if recovery is not None:
         plan['recovery'] = deepcopy(recovery)
     if capability_release_id is not None:
+        # A registered release can still be inapplicable to this goal. Reject
+        # that combination at preparation, before a task directory is created.
+        pilot_input(experiment_id=goal['id'], definition_identity=goal['identity'],
+                    capability_release_id=capability_release_id)
         plan['capability_release'] = capability_release(capability_release_id)
     return plan
 
 
-def initialize(directory, *, capability_release_id=None):
+def initialize(directory, *, capability_release_id=None, experiment_id='identity-tracking',
+               definition_identity=None):
     root = Path(directory).absolute()
+    # Validate the selected frozen definition before creating any directory.
+    plan = _new_plan(capability_release_id=capability_release_id,
+                     experiment_id=experiment_id, definition_identity=definition_identity)
     root.mkdir(parents=True, exist_ok=False)
-    plan = _new_plan(capability_release_id=capability_release_id)
     _write(root / 'pilot.json', plan, exclusive=True)
     return plan
+
+
+def _plan_definition(plan):
+    """Resolve the exact recorded snapshot, never reinterpret it as latest."""
+    goal = plan.get('experiment') if type(plan) is dict else None
+    require(type(goal) is dict and type(goal.get('id')) is str
+            and type(goal.get('identity')) is str, 'animation_experiment_plan_changed')
+    try:
+        expected = definition(goal['id'], goal['identity'])
+    except ExperimentError:
+        raise ExperimentError('animation_experiment_plan_changed') from None
+    require(goal == expected, 'animation_experiment_plan_changed')
+    return expected
 
 
 def _load(root):
@@ -161,15 +192,24 @@ def _load(root):
     require(root.is_dir() and not any(p.is_symlink() for p in (root, *root.parents)),
             'animation_experiment_directory_invalid')
     plan = decode((root / 'pilot.json').read_bytes())
+    goal = _plan_definition(plan)
     require(plan.get('schema') == 'video.animation-experiment-pilot.v1'
-            and plan.get('experiment') == definition() and set(plan['slots']) == set(SLOTS)
+            and type(plan.get('slots')) is dict and set(plan['slots']) == set(SLOTS)
             and plan['max_tasks'] == 4 and plan['max_attempts_per_task'] == 1
             and all(type(row) is dict and type(row.get('run_id')) is str
                     and re.fullmatch('[a-z][a-z0-9-]{0,63}', row['run_id']) for row in plan['slots'].values()),
             'animation_experiment_plan_changed')
     for role in ('development', 'held_out'):
-        require(plan['constraints'][role] == constraints(role)
-                and plan['constraint_identities'][role] == digest(constraints(role)),
+        expected = constraints(role, goal['id'], goal['identity'])
+        require(plan['constraints'][role] == expected
+                and plan['constraint_identities'][role] == digest(expected),
+                'animation_experiment_plan_changed')
+    if goal['id'] != 'identity-tracking':
+        prefix = plan.get('run_prefix')
+        require(type(prefix) is str
+                and (re.fullmatch(re.escape(goal['id']) + '-[0-9a-f]{12}', prefix)
+                     or ('recovery' in plan and prefix == plan['recovery'].get('run_prefix')))
+                and all(row['run_id'] == prefix + '-' + name for name, row in plan['slots'].items()),
                 'animation_experiment_plan_changed')
     if 'capability_release' in plan:
         validate_release(plan['capability_release'])
@@ -195,7 +235,8 @@ def _load(root):
 def _plan_input(plan, role='development', revision='v1', guidance=''):
     release = plan.get('capability_release')
     return pilot_input(role, revision, guidance,
-        capability_release_id=None if release is None else validate_release(release)['id'])
+        capability_release_id=None if release is None else validate_release(release)['id'],
+        experiment_id=plan['experiment']['id'], definition_identity=plan['experiment']['identity'])
 
 
 @_pilot_lock
@@ -218,10 +259,12 @@ def _publish_record(root, slot, document):
     _write(root / slot['run_id'] / 'experiment-run.json', signed(document))
 
 
-def _record(slot, document, role):
+def _record(slot, document, role, *, experiment=None):
     revision = document['prompt_revision']
-    record = dict(schema=RUN_SCHEMA, id=slot['run_id'], experiment_id=definition()['id'],
-        experiment_identity=definition()['identity'], source='agent', input_role=role,
+    goal = definition(document['experiment_id']) if experiment is None else _plan_definition({'experiment': experiment})
+    require(document['experiment_id'] == goal['id'], 'animation_experiment_input_mismatch')
+    record = dict(schema=RUN_SCHEMA, id=slot['run_id'], experiment_id=goal['id'],
+        experiment_identity=goal['identity'], source='agent', input_role=role,
         input_document=document, input_sha256=digest(document),
         label=('开发输入' if role == 'development' else '未参与调优输入') + ' · ' + revision,
         prompt_text=VideoAnimationExperimentProfile().build_prompt({'input_sha256': digest(document)}),
@@ -491,7 +534,7 @@ def close_failed_candidate(directory, evidence_dir):
             and all(plan['slots'][name]['state'] == 'unstarted' for name in SLOTS[1:]),
             'animation_experiment_failure_close_not_ready', 409)
     document = _plan_input(plan)
-    record = _record(slot, document, 'development')
+    record = _record(slot, document, 'development', experiment=plan['experiment'])
     _attach_recovery(record, plan)
     reservation, binding, _, source_sha = _reserved_candidate(root, slot, record)
     require(not any((Path(evidence_dir) / name).exists() or (Path(evidence_dir) / name).is_symlink()
@@ -655,7 +698,9 @@ def create_recovery(directory, new_directory, *, authorization_note, max_tasks=4
     if not (target / 'pilot.json').exists():
         release = plan.get('capability_release')
         _write(target / 'pilot.json', _new_plan(recovery['run_prefix'], recovery,
-            capability_release_id=None if release is None else validate_release(release)['id']), exclusive=True)
+            capability_release_id=None if release is None else validate_release(release)['id'],
+            experiment_id=plan['experiment']['id'],
+            definition_identity=plan['experiment']['identity']), exclusive=True)
     _, recovered = _load(target)
     require(recovered.get('recovery') == recovery, 'animation_experiment_recovery_changed')
     plan['recovery_child']['state'] = 'initialized'
@@ -678,7 +723,7 @@ def complete_candidate(directory, candidate_dir, *, renderer_image, assets_dir=N
     slot, document, role = _slot_document(root, plan, slot_name, importing=True)
     slot['state'] = 'candidate_importing'
     _write(root / 'pilot.json', plan)
-    record = _record(slot, document, role)
+    record = _record(slot, document, role, experiment=plan['experiment'])
     _attach_recovery(record, plan)
     record['provenance']['admission'] = (
         'external_acceptance_candidate_reused_in_reserved_pilot_slot' if slot_name == 'development-v1'
@@ -758,7 +803,7 @@ def run(directory, slot_name, gateway, *, renderer_image, assets_dir=None, timeo
     # authorize another task; recover only the original idempotency key.
     slot.update(state='reserved', input_sha256=digest(document), created_at=time.time())
     _write(root / 'pilot.json', plan)
-    record = _record(slot, document, role)
+    record = _record(slot, document, role, experiment=plan['experiment'])
     _attach_recovery(record, plan)
     _write(run_dir / INPUT_NAME, document, exclusive=True)
     deadline = time.time() + timeout
@@ -810,8 +855,11 @@ def main(argv=None):
     commands = parser.add_subparsers(dest='command', required=True)
     init = commands.add_parser('init')
     init.add_argument('--directory', required=True, type=Path)
-    init.add_argument('--capability-release', default=DEFAULT_RELEASE_ID,
-                      help='freeze a repository-reviewed strategy also used by production')
+    init.add_argument('--experiment', choices=[item['id'] for item in definitions()],
+                      default='identity-tracking', help='one independently frozen capability goal')
+    init.add_argument('--capability-release',
+                      help='freeze a reviewed strategy; identity-tracking defaults to its existing release, '
+                           'new capabilities start with unbound exploration')
     change = commands.add_parser('revise')
     change.add_argument('--directory', required=True, type=Path)
     change.add_argument('--guidance-file', required=True, type=Path)
@@ -850,8 +898,13 @@ def main(argv=None):
     execute.add_argument('--model-policy-file', type=Path, help='public operator ModelPolicy JSON, checked against actual pins')
     args = parser.parse_args(argv)
     if args.command == 'init':
-        result = initialize(args.directory, capability_release_id=args.capability_release)
-        print(json.dumps(dict(status='prepared', max_tasks=result['max_tasks'])))
+        release_id = args.capability_release
+        if release_id is None and args.experiment == 'identity-tracking':
+            release_id = DEFAULT_RELEASE_ID
+        result = initialize(args.directory, capability_release_id=release_id,
+                            experiment_id=args.experiment)
+        print(json.dumps(dict(status='prepared', experiment_id=result['experiment']['id'],
+                              experiment_identity=result['experiment']['identity'], max_tasks=result['max_tasks'])))
     elif args.command == 'revise':
         revise(args.directory, args.guidance_file.read_text(encoding='utf-8'), args.feedback_file.read_text(encoding='utf-8'))
         print(json.dumps(dict(status='revision_frozen')))

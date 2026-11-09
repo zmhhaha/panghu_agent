@@ -27,6 +27,7 @@ from video_workbench import animation_experiments as lab
 
 IMAGE = 'registry.example/renderer:latest@sha256:' + 'a' * 64
 TOKEN = 'offline-animation-experiment-test-' + 'x' * 32
+NEW_EXPERIMENTS = ('cohort-statistics', 'parameter-geometry', 'event-delay')
 
 
 @pytest.fixture(autouse=True)
@@ -1061,3 +1062,203 @@ def test_named_isolated_reservations_cannot_extend_superseded_original_pilot(tmp
     assert first['provenance']['recovery']['identity'] == plan['recovery']['identity']
     assert first['id'] != failed['id'] and first['provenance']['recovery']['cumulative_candidate_budget'] == 5
     assert peer.calls == [] and len(rendered) == 1
+
+
+@pytest.mark.parametrize('experiment_id', NEW_EXPERIMENTS)
+def test_new_capability_initialization_freezes_definition_and_both_roles_without_execution(tmp_path, wire, experiment_id):
+    _, peer, rendered = wire
+    root = tmp_path / experiment_id
+    plan = runner.initialize(root, experiment_id=experiment_id)
+    goal = lab.definition(experiment_id)
+    assert plan['experiment'] == goal
+    assert plan['max_tasks'] == 4 and plan['max_attempts_per_task'] == 1
+    assert plan['guidance'] == {'v1': '', 'v2': None}
+    assert plan['constraints']['development'] != plan['constraints']['held_out']
+    for role in ('development', 'held_out'):
+        expected = lab.constraints(role, experiment_id, goal['identity'])
+        assert plan['constraints'][role] == expected
+        assert plan['constraint_identities'][role] == lab.digest(expected)
+        document = runner._plan_input(plan, role)
+        assert document['experiment_id'] == experiment_id
+        assert document['constraints'] == expected
+        assert document == lab.pilot_input(role, experiment_id=experiment_id,
+                                           definition_identity=goal['identity'])
+    assert runner._load(root)[1] == plan
+    assert peer.calls == [] and rendered == []
+
+
+@pytest.mark.parametrize('experiment_id', NEW_EXPERIMENTS)
+def test_new_capability_protocol_keeps_real_goal_binding_and_one_task_limit(tmp_path, wire, experiment_id):
+    gateway, peer, rendered = wire
+    root = tmp_path / experiment_id
+    plan = runner.initialize(root, experiment_id=experiment_id)
+    row = run(root, 'development-v1', gateway)
+    assert row['experiment_id'] == experiment_id
+    assert row['experiment_identity'] == plan['experiment']['identity']
+    assert row['input_document']['experiment_id'] == experiment_id
+    assert row['input_document']['constraints'] == plan['constraints']['development']
+    assert rendered[0]['input_document'] == row['input_document']
+    assert lab.read_run(root / row['id']) == row
+    with pytest.raises(lab.ExperimentError, match='already_reserved'):
+        run(root, 'development-v1', gateway)
+    assert peer.count('POST', '/v1/jobs') == 1 and len(rendered) == 1
+
+
+def test_distinct_new_pilots_and_capabilities_cannot_publish_the_same_run_ids(tmp_path):
+    ids = []
+    for index, experiment_id in enumerate((*NEW_EXPERIMENTS, 'cohort-statistics')):
+        plan = runner.initialize(tmp_path / str(index), experiment_id=experiment_id)
+        ids.extend(row['run_id'] for row in plan['slots'].values())
+        assert all(row['run_id'].startswith(experiment_id + '-') for row in plan['slots'].values())
+        assert all(lab.ID.fullmatch(row['run_id']) for row in plan['slots'].values())
+    assert len(ids) == len(set(ids)) == 16
+
+
+def test_legacy_plan_structure_and_input_identity_remain_unchanged(tmp_path):
+    expected = dict(schema='video.animation-experiment-pilot.v1', experiment=lab.definition(),
+        constraints={role: lab.constraints(role) for role in ('development', 'held_out')},
+        constraint_identities={role: lab.digest(lab.constraints(role)) for role in ('development', 'held_out')},
+        max_tasks=4, max_attempts_per_task=1, guidance={'v1': '', 'v2': None}, feedback=None,
+        slots={slot: dict(state='unstarted', run_id='identity-' + slot) for slot in runner.SLOTS})
+    plan = runner.initialize(tmp_path / 'legacy')
+    assert lab.canonical(plan) == lab.canonical(expected)
+    assert runner._plan_input(plan) == lab.pilot_input()
+
+
+@pytest.mark.parametrize('experiment_id,identity', [('unknown-capability', None), ('cohort-statistics', '0' * 64)])
+def test_unknown_definition_or_identity_does_not_create_a_pilot_directory(tmp_path, experiment_id, identity):
+    root = tmp_path / 'must-not-exist'
+    with pytest.raises(lab.ExperimentError):
+        runner.initialize(root, experiment_id=experiment_id, definition_identity=identity)
+    assert not root.exists()
+
+
+@pytest.mark.parametrize('change', ['definition', 'identity', 'role_constraints', 'run_namespace'])
+def test_new_pilot_rejects_cross_capability_and_frozen_input_tampering_before_calls(tmp_path, wire, change):
+    gateway, peer, rendered = wire
+    root = tmp_path / 'pilot'
+    plan = runner.initialize(root, experiment_id='cohort-statistics')
+    if change == 'definition':
+        plan['experiment'] = lab.definition('parameter-geometry')
+    elif change == 'identity':
+        plan['experiment']['identity'] = '0' * 64
+    elif change == 'role_constraints':
+        plan['constraints']['held_out'] = deepcopy(plan['constraints']['development'])
+        plan['constraint_identities']['held_out'] = lab.digest(plan['constraints']['held_out'])
+    else:
+        plan['slots']['development-v1']['run_id'] = 'identity-development-v1'
+    (root / 'pilot.json').write_bytes(lab.canonical(plan))
+    with pytest.raises(lab.ExperimentError, match='plan_changed'):
+        run(root, 'development-v1', gateway)
+    assert peer.calls == [] and rendered == []
+
+
+def test_new_pilot_preserves_feedback_and_heldout_release_gates(tmp_path, wire):
+    gateway, peer, _ = wire
+    root = tmp_path / 'pilot'
+    runner.initialize(root, experiment_id='event-delay')
+    with pytest.raises(lab.ExperimentError, match='revision_not_ready'):
+        run(root, 'development-v2', gateway)
+    with pytest.raises(lab.ExperimentError, match='holdout_not_released'):
+        run(root, 'held-out-v1', gateway)
+    first = run(root, 'development-v1', gateway)
+    runner.revise(root, 'Show material arrivals before inventory changes.', 'Synthetic review: explain the delay.')
+    with pytest.raises(lab.ExperimentError, match='holdout_not_released'):
+        run(root, 'held-out-v1', gateway)
+    second = run(root, 'development-v2', gateway)
+    heldout = run(root, 'held-out-v1', gateway)
+    assert second['input_document']['guidance'] == 'Show material arrivals before inventory changes.'
+    assert first['input_document']['constraints'] == second['input_document']['constraints']
+    assert heldout['input_document']['constraints'] != first['input_document']['constraints']
+    assert {row['experiment_id'] for row in (first, second, heldout)} == {'event-delay'}
+    assert peer.count('POST', '/v1/jobs') == 3
+
+
+def test_cli_initializes_selected_capability_without_starting_work(tmp_path, wire, capsys):
+    _, peer, rendered = wire
+    root = tmp_path / 'cli-pilot'
+    runner.main(['init', '--directory', str(root), '--experiment', 'parameter-geometry'])
+    response = json.loads(capsys.readouterr().out)
+    plan = runner._load(root)[1]
+    assert response['experiment_id'] == plan['experiment']['id'] == 'parameter-geometry'
+    assert response['experiment_identity'] == plan['experiment']['identity']
+    assert response['status'] == 'prepared' and response['max_tasks'] == 4
+    assert 'capability_release' not in plan
+    assert peer.calls == [] and rendered == []
+
+
+def test_new_capability_recovery_keeps_exact_definition_input_and_parent_failure(tmp_path, wire):
+    gateway, peer, rendered = wire
+    root = tmp_path / 'new-capability'
+    original = runner.initialize(root, experiment_id='parameter-geometry')
+    reserve(root)
+    evidence = tmp_path / 'synthetic-failure-evidence'
+    synthetic_failure(evidence, runner._plan_input(original))
+    failed = runner.close_failed_candidate(root, evidence)
+    failure_bytes = (root / failed['id'] / 'experiment-run.json').read_bytes()
+    recovered_root = tmp_path / 'recovered-new-capability'
+    recovered = runner.create_recovery(root, recovered_root,
+        authorization_note='Synthetic explicit recovery; no real Agent or model request.')
+    assert recovered['experiment'] == original['experiment']
+    assert recovered['constraints'] == original['constraints']
+    assert 'capability_release' not in recovered
+    assert recovered['run_prefix'].startswith('recovery-')
+    assert runner._plan_input(recovered) == runner._plan_input(original)
+    assert runner._load(recovered_root)[1] == recovered
+    assert (root / failed['id'] / 'experiment-run.json').read_bytes() == failure_bytes
+    assert peer.calls == [] and rendered == []
+    row = run(recovered_root, 'development-v1', gateway)
+    assert row['experiment_id'] == 'parameter-geometry'
+    assert row['experiment_identity'] == original['experiment']['identity']
+    assert row['provenance']['recovery'] == recovered['recovery']
+    assert 'capability_release_id' not in row['provenance']
+    assert lab.read_run(recovered_root / row['id']) == row
+    assert peer.count('POST', '/v1/jobs') == 1 and len(rendered) == 1
+
+
+@pytest.mark.parametrize('experiment_id', NEW_EXPERIMENTS)
+def test_unsupported_release_is_rejected_at_initialization_without_creating_directory(tmp_path, wire, experiment_id):
+    from video_workbench.animation_capabilities import DEFAULT_RELEASE_ID
+    _, peer, rendered = wire
+    root = tmp_path / 'must-not-exist'
+    with pytest.raises(ServiceError, match='target_not_supported'):
+        runner.initialize(root, experiment_id=experiment_id, capability_release_id=DEFAULT_RELEASE_ID)
+    assert not root.exists() and peer.calls == [] and rendered == []
+
+
+def test_cli_legacy_default_still_binds_its_existing_shared_release(tmp_path, capsys):
+    from video_workbench.animation_capabilities import DEFAULT_RELEASE_ID
+    root = tmp_path / 'legacy-cli'
+    runner.main(['init', '--directory', str(root)])
+    response = json.loads(capsys.readouterr().out)
+    plan = runner._load(root)[1]
+    assert response['experiment_id'] == 'identity-tracking'
+    assert plan['capability_release']['id'] == DEFAULT_RELEASE_ID
+    assert runner._plan_input(plan)['constraints']['capability_release'] == plan['capability_release']
+
+
+def test_pilot_keeps_old_definition_and_input_when_current_registry_advances(tmp_path, wire, monkeypatch):
+    from video_workbench import animation_experiment_definitions as registry
+    gateway, peer, _ = wire
+    root = tmp_path / 'frozen-v1'
+    original = runner.initialize(root, experiment_id='cohort-statistics')
+    old_input = runner._plan_input(original)
+    second = deepcopy(registry._REGISTRY['cohort-statistics']['1'])
+    second['definition'].update(version='2', goal='Synthetic future goal, not the frozen v1 problem.')
+    for value in second['constraints'].values():
+        value['definition_version'] = '2'
+        value['semantic']['data']['threshold'] += 1
+    second['definition']['constraints'] = deepcopy(second['constraints']['development'])
+    monkeypatch.setitem(registry._REGISTRY['cohort-statistics'], '2', second)
+    monkeypatch.setitem(registry.CURRENT_VERSIONS, 'cohort-statistics', '2')
+    assert lab.definition('cohort-statistics')['version'] == '2'
+    assert runner._load(root)[1] == original
+    assert runner._plan_input(runner._load(root)[1]) == old_input
+    row = run(root, 'development-v1', gateway)
+    assert row['experiment_identity'] == original['experiment']['identity']
+    assert row['input_document'] == old_input
+    assert lab.read_run(root / row['id']) == row
+    current = runner.initialize(tmp_path / 'new-v2', experiment_id='cohort-statistics')
+    assert current['experiment']['version'] == '2'
+    assert runner._plan_input(current) != old_input
+    assert peer.count('POST', '/v1/jobs') == 1

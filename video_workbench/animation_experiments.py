@@ -64,7 +64,7 @@ def decode(raw):
     return json.loads(raw, object_pairs_hook=pairs, parse_constant=constant)
 
 
-def constraints(role='development'):
+def _legacy_constraints(role='development'):
     require(role in {'development', 'held_out'})
     xs, size = ([320, 640, 960], 112) if role == 'development' else ([400, 640, 880], 88)
     return dict(width=1280, height=720, fps=24, duration_seconds=8,
@@ -78,12 +78,12 @@ def constraints(role='development'):
         validation=dict(position_tolerance_px=2, max_step_px=112))
 
 
-def definition():
+def _legacy_definition():
     return signed(dict(schema='video.animation-experiment-definition.v1',
         id='identity-tracking', title='换位时，怎样让人始终跟得住 A？',
         capability='移动中的身份追踪',
         goal='三个相同的方块从左到右 A/B/C 换位为 C/A/B；保留每个对象身份，让观看者能够跟随 A 的全过程。',
-        constraints=constraints(),
+        constraints=_legacy_constraints(),
         exploration='自行选择运动路径、先后、停顿和空间组织，不指定固定配方。对象必须实际连续移动；不要只更换文字、淡入淡出或切屏。',
         source='definition', status='unexecuted',
         evaluation=dict(technical=['对象身份及初末位置', '起止停留与逐帧连续性', '实际可见几何与反向归零'],
@@ -91,32 +91,91 @@ def definition():
         note='中性能力目标，无业务故事、旁白或语音；尚无作品时只显示定义。'))
 
 
-def pilot_input(role='development', prompt_revision='v1', guidance='', *, capability_release_id=None):
-    goal = definition()
+def definition(experiment_id='identity-tracking', definition_identity=None):
+    """Resolve an immutable definition; historic default bytes stay unchanged.
+
+    A future version must be appended to the version registry rather than
+    rewriting a published definition. Runs resolve their exact stored identity.
+    """
+    require(type(experiment_id) is str, 'animation_experiment_not_found', 404)
+    if experiment_id == 'identity-tracking':
+        candidates = [_legacy_definition()]
+    else:
+        from .animation_experiment_definitions import CURRENT_VERSIONS, definition_document, versions
+        candidates = [signed(definition_document(experiment_id, version))
+                      for version in versions(experiment_id)]
+    require(bool(candidates), 'animation_experiment_not_found', 404)
+    if definition_identity is None:
+        current = (candidates[0] if experiment_id == 'identity-tracking' else
+                   next(item for item in candidates if item['version'] == CURRENT_VERSIONS[experiment_id]))
+        return deepcopy(current)
+    require(type(definition_identity) is str and SHA.fullmatch(definition_identity),
+            'animation_experiment_definition_changed', 409)
+    selected = next((item for item in candidates if item['identity'] == definition_identity), None)
+    require(selected is not None, 'animation_experiment_definition_changed', 409)
+    return deepcopy(selected)
+
+
+def definitions():
+    from .animation_experiment_definitions import NEW_EXPERIMENT_IDS
+    return [definition(name) for name in ('identity-tracking', *NEW_EXPERIMENT_IDS)]
+
+
+def constraints(role='development', experiment_id='identity-tracking', definition_identity=None):
+    require(role in {'development', 'held_out'})
+    goal = definition(experiment_id, definition_identity)
+    if experiment_id == 'identity-tracking':
+        return _legacy_constraints(role)
+    from .animation_experiment_definitions import versioned_constraints
+    return versioned_constraints(experiment_id, role, goal['version'])
+
+
+def pilot_input(role='development', prompt_revision='v1', guidance='', *, capability_release_id=None,
+                experiment_id='identity-tracking', definition_identity=None):
+    goal = definition(experiment_id, definition_identity)
     value = dict(schema='video.animation-experiment-input.v1', experiment_id=goal['id'],
-        capability='identity-tracking', goal=goal['goal'] + '\n' + goal['exploration'],
-        constraints=constraints(role), assets={}, prompt_revision=prompt_revision, guidance=guidance)
+        capability=goal['id'], goal=goal['goal'] + '\n' + goal['exploration'],
+        constraints=constraints(role, goal['id'], goal['identity']), assets={},
+        prompt_revision=prompt_revision, guidance=guidance)
     if capability_release_id is not None:
         from .animation_capabilities import bind_experiment_release
         return bind_experiment_release(value, capability_release_id)
     return value
 
 
-def _record_input(document, role):
+def _record_input(document, role, definition_identity=None):
     """Rebuild old inputs byte-for-byte and explicitly bound new strategy inputs."""
     require(type(document) is dict, 'animation_experiment_input_mismatch')
     require(type(document.get('constraints')) is dict, 'animation_experiment_input_mismatch')
+    goal = definition(document.get('experiment_id'), definition_identity)
     release = document['constraints'].get('capability_release')
     if release is None:
-        return pilot_input(role, document.get('prompt_revision'), document.get('guidance'))
+        return pilot_input(role, document.get('prompt_revision'), document.get('guidance'),
+                           experiment_id=goal['id'], definition_identity=goal['identity'])
     from .animation_capabilities import validate_release
     from agent_service.contracts import ServiceError
     try:
         release = validate_release(release)
         return pilot_input(role, document.get('prompt_revision'),
-            document['constraints'].get('capability_local_guidance'), capability_release_id=release['id'])
+            document['constraints'].get('capability_local_guidance'), capability_release_id=release['id'],
+            experiment_id=goal['id'], definition_identity=goal['identity'])
     except ServiceError:
         raise ExperimentError('animation_experiment_capability_binding_mismatch') from None
+
+
+def _comparison_input_identity(document):
+    """Freeze the target and strategy package, excluding local prompt changes.
+
+    Release binding retains the local direction inside constraints as well as
+    in the expanded guidance text. Neither copy changes the controlled target.
+    The complete strategy release and all other constraints remain included.
+    This derived view never rewrites the original input or run identity.
+    """
+    controlled = deepcopy(document)
+    controlled.pop('prompt_revision', None)
+    controlled.pop('guidance', None)
+    controlled['constraints'].pop('capability_local_guidance', None)
+    return digest(controlled)
 
 
 def _ordinary_file(root, name, limit):
@@ -142,14 +201,21 @@ def read_run(directory):
     raw = _ordinary_file(directory, 'experiment-run.json', MAX_RECORD)
     row = decode(raw)
     require(type(row) is dict and row.get('schema') == RUN_SCHEMA
-            and ID.fullmatch(row.get('id', '')) and row.get('experiment_id') == definition()['id']
-            and row.get('experiment_identity') == definition()['identity']
+            and type(row.get('id')) is str and ID.fullmatch(row['id'])
             and row.get('source') == 'agent' and row.get('input_role') in {'development', 'held_out'}
             and row.get('status') in {'rendered', 'failed', 'generated'}, 'animation_experiment_run_invalid')
     require(row.get('identity') == digest({k: v for k, v in row.items() if k != 'identity'}),
             'animation_experiment_run_changed', 409)
+    try:
+        goal = definition(row.get('experiment_id'), row.get('experiment_identity'))
+    except ExperimentError:
+        # Invalid stored bindings keep the historic public run error; direct
+        # definition lookups still distinguish missing and changed definitions.
+        raise ExperimentError('animation_experiment_run_invalid') from None
+    require(row.get('experiment_identity') == goal['identity'], 'animation_experiment_run_invalid')
     doc = row.get('input_document')
-    require(type(doc) is dict and doc == _record_input(doc, row['input_role'])
+    require(type(doc) is dict and doc.get('experiment_id') == goal['id']
+            and doc == _record_input(doc, row['input_role'], goal['identity'])
             and row.get('input_sha256') == digest(doc), 'animation_experiment_input_mismatch')
     require(type(row.get('prompt_text')) is str and len(row['prompt_text']) <= 128 * 1024
             and type(row.get('provenance')) is dict and type(row.get('artifacts')) is dict,
@@ -269,16 +335,18 @@ class ExperimentStore:
             return None, 'animation_experiment_assessment_invalid'
 
     def detail(self, experiment_id):
-        item = definition()
-        require(experiment_id == item['id'], 'animation_experiment_not_found', 404)
+        item = definition(experiment_id)
         runs, invalid = self.runs()
         versions = []
         for row in runs:
+            if row['experiment_id'] != experiment_id:
+                continue
             report = (decode(_ordinary_file(self.runs_dir / row['id'], 'report.json', MAX_RECORD))
                       if 'report.json' in row['artifacts'] else {})
             original_technical = report.get('renderer', {}).get('technical')
             assessment, assessment_error = self._reassessment(row, report)
             version = dict(id=row['id'], identity=row['identity'], label=row['label'], source=row['source'],
+                experiment_identity=row['experiment_identity'],
                 prompt_revision=row['input_document']['prompt_revision'], input_role=row['input_role'],
                 duration_seconds=row['input_document']['constraints']['duration_seconds'], status=row['status'],
                 provenance=deepcopy(row['provenance']),
@@ -292,12 +360,12 @@ class ExperimentStore:
                 technical_reassessment=deepcopy(assessment), assessment_error=assessment_error,
                 assessment_url=f"/api/experiments/{experiment_id}/runs/{row['id']}/assessment.json" if assessment else None,
                 aesthetic_status='unreviewed',
-                comparison_input_identity=digest({k: v for k, v in row['input_document'].items()
-                                                  if k not in {'prompt_revision', 'guidance'}}),
+                comparison_input_identity=_comparison_input_identity(row['input_document']),
                 media_url=f"/api/experiments/{experiment_id}/runs/{row['id']}/output.mp4" if 'output.mp4' in row['artifacts'] else None,
                 report_url=f"/api/experiments/{experiment_id}/runs/{row['id']}/report.json" if 'report.json' in row['artifacts'] else None)
             versions.append(version)
-        return dict(item, experiment_identity=item['identity'], versions=versions, feedback=self.feedback(),
+        return dict(item, experiment_identity=item['identity'], versions=versions,
+            feedback=[row for row in self.feedback() if row.get('experiment_id') == experiment_id],
             status='has_results' if versions else 'unexecuted', rejected_runs=invalid,
             comparisons=[dict(id=role, label='开发输入' if role == 'development' else '未参与调优的输入',
                 version_ids=[row['id'] for row in versions if row['input_role'] == role])
@@ -305,7 +373,7 @@ class ExperimentStore:
                 if any(row['input_role'] == role for row in versions)])
 
     def catalogue(self):
-        return dict(schema=SCHEMA, experiments=[self.detail(definition()['id'])],
+        return dict(schema=SCHEMA, experiments=[self.detail(item['id']) for item in definitions()],
                     note='来源和执行结果分别记录；标注不会自动训练模型或修改生产。')
 
     def annotate(self, experiment_id, body, actor='local-developer'):
@@ -326,7 +394,8 @@ class ExperimentStore:
         if body['kind'] == 'preference':
             require(len(ids) == 2 and preference in {'left', 'right', 'equal', 'neither'}
                 and versions[ids[0]]['input_identity'] != ''
-                and versions[ids[0]]['input_role'] == versions[ids[1]]['input_role'],
+                and versions[ids[0]]['input_role'] == versions[ids[1]]['input_role']
+                and versions[ids[0]]['experiment_identity'] == versions[ids[1]]['experiment_identity'],
                 'animation_experiment_comparison_invalid')
             # Changes in guidance/revision are expected; neutral target and all
             # other controlled inputs are held by the independently fixed probe.
@@ -344,11 +413,13 @@ class ExperimentStore:
         return row
 
     def artifact(self, experiment_id, run_id, name):
-        require(experiment_id == definition()['id'] and ID.fullmatch(run_id),
+        definition(experiment_id)
+        require(type(run_id) is str and ID.fullmatch(run_id),
                 'animation_experiment_not_found', 404)
         require(self.runs_dir is not None, 'animation_experiment_not_found', 404)
         directory = self.runs_dir / run_id
         row = read_run(directory)
+        require(row['experiment_id'] == experiment_id, 'animation_experiment_artifact_not_found', 404)
         if name == 'assessment.json':
             require(row['id'] == run_id, 'animation_experiment_artifact_not_found', 404)
             report = decode(_ordinary_file(directory, 'report.json', MAX_RECORD))

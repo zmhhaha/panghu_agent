@@ -79,6 +79,9 @@ def _constraints(value):
              and 180 <= height <= 720 and fps == 24 and type(fps) is int
              and _number(duration) and 1 <= duration <= 10
              and duration * fps == int(duration * fps), 'render_budget_invalid')
+    if 'semantic' in value:
+        from .animation_experiment_semantics import validate_spec
+        validate_spec(value['semantic'], duration)
     return value
 
 
@@ -182,6 +185,9 @@ def validate_observations(observations, constraints):
         issues.append('reverse_seek_pixels_differ')
     if observations.get('reverse_initial_objects') != samples[0]['objects']:
         issues.append('reverse_seek_geometry_differs')
+    if 'semantic' in constraints:
+        from .animation_experiment_semantics import validate_observations as validate_semantics
+        return validate_semantics(observations, constraints, issues)
     objects = constraints.get('objects')
     if type(objects) is not list or not objects:
         return dict(status='pending_goal_review', issues=issues,

@@ -22,6 +22,8 @@ let playbackEpoch = 0;
 const drafts = new Map();
 const versionSelections = new Map();
 const CAPABILITIES = {'identity-tracking': '移动中的身份追踪', identity_tracking: '移动中的身份追踪',
+  'cohort-statistics': '群体筛选与统计', 'parameter-geometry': '参数、几何与公式联动',
+  'event-delay': '多轨事件与延迟',
   motion: '运动与节奏', layout: '布局与避让', continuity: '跨镜承接', morph: '连续形变'};
 
 function node(tag, text, className) {
@@ -323,6 +325,15 @@ function renderExperiment() {
   $('experiment-title').textContent = current.title ?? current.id;
   $('experiment-capability').textContent = CAPABILITIES[current.capability] ?? current.capability ?? '能力问题';
   $('experiment-goal').textContent = current.goal ?? '';
+  const evaluation = $('experiment-evaluation'); evaluation.replaceChildren();
+  for (const [key, title] of [['technical', '独立检查'], ['human', '观看与标注重点']]) {
+    const items = current.evaluation?.[key];
+    if (!Array.isArray(items) || !items.length) continue;
+    const section = node('div'); section.append(node('strong', title));
+    const list = node('ul');
+    for (const text of items) list.append(node('li', text));
+    section.append(list); evaluation.append(section);
+  }
   $('experiment-status').textContent = experimentStatusLabel(current.status);
   $('experiment-mode').textContent = ({exploration: '开放探索', explore: '开放探索', comparison: '受控比较', compare: '受控比较'})[current.mode] ?? '探索与版本比较';
   const sources = [...new Set((current.versions ?? []).map(row => row.source))];
