@@ -1,5 +1,7 @@
 # 动画实验成果进入正式制作
 
+> 2026-11-09 后续方向见[Agent 主导创作与参考效果库方案](agent-creation-effect-library-plan.md)，OpenSpec：`evolve-video-agent-creation-and-effect-library`。本文记录已完成的文字规则包、单镜源码创作与交付；效果源码检索改编、整片 Agent 策划和独立审阅仍待实施，不把现有规则包视为完整效果库。本轮只更新规划。
+
 2026-11-08 至 2026-11-09；开发分支 `codex/video-capability-experiment-redesign`。
 
 ## 要解决的问题

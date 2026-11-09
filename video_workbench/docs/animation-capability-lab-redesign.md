@@ -1,5 +1,7 @@
 # 动画能力实验重新设计
 
+> 2026-11-09 后续方向已整理为[Agent 主导创作与参考效果库方案](agent-creation-effect-library-plan.md)，OpenSpec：`evolve-video-agent-creation-and-effect-library`。下一阶段以完整表达片段、原参考实现认可和异结构改编验收为主；本文保留旧四题及技术检查的真实历史，本次只更新规划，未实施新流程。
+
 2026-11-08 至 2026-11-09。状态：首轮四个真实作品、独立技术复核、媒体比较与反馈验收已完成并发布；共享创作 profile 随后已通过增量准入，实验室和正式调用方均验证可用。新增三项语义能力的首作、技术检查、Lab发布和浏览器验收亦已完成，效果保持待评价，详见“当前扩展”。开发分支为 `codex/video-capability-experiment-redesign`，首轮 OpenSpec 变更为 `redesign-video-animation-capability-experiments`，本轮为 `add-semantic-animation-capability-experiments`。代码测试通过与真实实验完成分别记录，不能互相替代。本文保留首轮执行与发布的历史事实；后续正式接入和实际发布身份见[动画实验成果进入正式制作](animation-capability-production.md)。
 
 ## 要解决的问题
