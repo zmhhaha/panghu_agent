@@ -2,6 +2,7 @@
 from copy import deepcopy
 import hashlib
 import json
+import shutil
 import time
 from uuid import UUID
 
@@ -60,8 +61,8 @@ def artifact(role, document):
         **judgment, **({'source_sha256':document['source_sha256']} if review else {}))
 
 
-def candidate(root, role, document, files, host_value, *, failed=False):
-    directory = root / ('candidate-animation-' + role + '-p1')
+def candidate(root, role, document, files, host_value, *, failed=False, directory_name=None):
+    directory = root / (directory_name or ('candidate-animation-' + role + '-p1'))
     output = directory / 'candidate-output'
     output.mkdir(parents=True)
     host, policy, _ = candidate_config(host_value)
@@ -133,7 +134,8 @@ def candidate(root, role, document, files, host_value, *, failed=False):
     return directory, value
 
 
-def make_pilot(tmp_path, *, review_profile=visual.REVIEW_PROFILE, with_observer=True):
+def make_pilot(tmp_path, *, review_profile=visual.REVIEW_PROFILE, with_observer=True, candidate_names=None):
+    candidate_names = {} if candidate_names is None else candidate_names
     _, hosts, _ = prepare(include_sequence_review=review_profile == visual.REVIEW_SEQUENCE_PROFILE)
     context = creation_document()
     base = dict(source_revision='original-r1',engine=source_output()['engine'],files=source_output()['files'])
@@ -147,10 +149,13 @@ def make_pilot(tmp_path, *, review_profile=visual.REVIEW_PROFILE, with_observer=
     if with_observer:
         observation = input_document(False)
         observe_files = bundle(tmp_path,'observation-reference',observation,visual.OBSERVE_INPUT_NAME,visual.OBSERVE_PROFILE)
-        candidate(tmp_path,'observe',observation,observe_files,hosts[visual.OBSERVE_PROFILE])
-    _, review = candidate(tmp_path,'review',review_doc,review_files,hosts[review_profile])
+        candidate(tmp_path,'observe',observation,observe_files,hosts[visual.OBSERVE_PROFILE],
+                  directory_name=candidate_names.get('observe'))
+    _, review = candidate(tmp_path,'review',review_doc,review_files,hosts[review_profile],
+                          directory_name=candidate_names.get('review'))
     revised = dict(context,base_source=base,review=review)
-    candidate(tmp_path,'create',revised,{creation.INPUT_NAME:canonical_bytes(revised)},hosts[creation.PROFILE])
+    candidate(tmp_path,'create',revised,{creation.INPUT_NAME:canonical_bytes(revised)},hosts[creation.PROFILE],
+              directory_name=candidate_names.get('create'))
     return dict(root=tmp_path,context=context,base=base,review_doc=review_doc,hosts=hosts)
 
 
@@ -164,9 +169,9 @@ def sequence_pilot(tmp_path):
     return make_pilot(tmp_path, review_profile=visual.REVIEW_SEQUENCE_PROFILE, with_observer=False)
 
 
-def run(pilot,stage='all'):
+def run(pilot,stage='all',**kwargs):
     return import_phase_one(pilot['root'],owner='offline-operator',project_id='offline-project',
-        expected_image_digest=IMAGE_DIGEST,stage=stage)
+        expected_image_digest=IMAGE_DIGEST,stage=stage,**kwargs)
 
 
 def mutate(pilot,file_name,change):
@@ -458,3 +463,83 @@ def test_all_still_requires_observation_even_for_explicit_sequence_review(sequen
     with pytest.raises(ServiceError):
         run(sequence_pilot, 'all')
     assert not (sequence_pilot['root'] / 'revision-ledger.sqlite3').exists()
+
+
+def test_explicit_unique_run_directories_bind_p2_pods_and_replay_without_new_allowance(tmp_path):
+    names = dict(review='candidate-animation-review-p2', create='candidate-animation-create-p2')
+    pilot = make_pilot(tmp_path, review_profile=visual.REVIEW_SEQUENCE_PROFILE,
+                       with_observer=False, candidate_names=names)
+    assert not (tmp_path / 'candidate-animation-review-p1').exists()
+    review = run(pilot, 'review', candidate_directories=names)
+    assert review['review_status'] == 'completed' and review['revision_operation_id'] is None
+    assert review['candidate_directories'] == dict(names, observe='candidate-animation-observe-p1')
+    assert review['live_http_verified'] is False
+    for role in ('review', 'create'):
+        exported = json.loads((tmp_path / names[role] / 'candidate-output' / 'worker-pod.json').read_bytes())
+        assert exported['metadata']['name'] == names[role] + '-worker'
+    revision = run(pilot, 'revision', candidate_directories=names)
+    assert revision['lineage_id'] == review['lineage_id'] and revision['revision_status'] == 'completed'
+    store = AnimationRevisionStore(tmp_path / 'revision-ledger.sqlite3')
+    frozen = store.operations(review['lineage_id']), store.events(review['lineage_id'])
+    assert len(frozen[0]) == 2
+    assert run(pilot, 'revision', candidate_directories=names) == revision
+    assert (store.operations(review['lineage_id']), store.events(review['lineage_id'])) == frozen
+    assert revision['candidate_directories'] == review['candidate_directories']
+
+
+def test_omitted_candidate_mapping_retains_original_paths_and_receipt_shape(pilot):
+    receipt = run(pilot, 'review')
+    assert receipt['review_status'] == 'completed'
+    assert 'candidate_directories' not in receipt
+    assert run(pilot, 'review') == receipt
+
+
+def test_copying_old_exports_to_a_new_run_name_does_not_relabel_pod_evidence(pilot):
+    root = pilot['root']
+    original = root / 'candidate-animation-review-p1'
+    copied = root / 'candidate-animation-review-p2'
+    original_manifest = (original / 'candidate-output' / 'manifest.json').read_bytes()
+    # Synthetic fixtures only: copied bytes still name the original p1 Pods.
+    shutil.copytree(original, copied)
+    with pytest.raises(ServiceError, match='animation_candidate_pod_identity_mismatch'):
+        run(pilot, 'review', candidate_directories={'review': copied.name})
+    assert (original / 'candidate-output' / 'manifest.json').read_bytes() == original_manifest
+    assert not (root / 'revision-ledger.sqlite3').exists()
+
+
+@pytest.mark.parametrize('mapping', [
+    {'unknown': 'candidate-animation-review-p2'},
+    {'review': '../candidate-animation-review-p2'},
+    {'review': '/candidate-animation-review-p2'},
+    {'review': 'C:\\candidate-animation-review-p2'},
+    {'review': 'nested/candidate-animation-review-p2'},
+    {'review': 'nested\\candidate-animation-review-p2'},
+    {'review': 'candidate-animation-create-p2'},
+    {'review': 'candidate-animation-review-p2', 'create': 'candidate-animation-review-p2'},
+    {'review': 'candidate-animation-review-p2.'},
+    {'review': 'candidate-animation-review-p2 '},
+    {'review': 'candidate-animation-review-P2'},
+    {'review': ''},
+    {'review': None},
+    {'review': 2},
+    [],
+])
+def test_candidate_directory_mapping_rejects_escape_unknown_roles_and_aliases_before_writes(tmp_path, mapping):
+    with pytest.raises(ServiceError, match='animation_candidate_directory_'):
+        import_phase_one(tmp_path, owner='operator', project_id='project',
+            expected_image_digest=IMAGE_DIGEST, candidate_directories=mapping)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_candidate_directory_symlink_cannot_alias_another_run(tmp_path):
+    actual = tmp_path / 'actual'
+    actual.mkdir()
+    alias = tmp_path / 'candidate-animation-review-p2'
+    try:
+        alias.symlink_to(actual, target_is_directory=True)
+    except OSError:
+        pytest.skip('Host does not permit creating directory symlinks')
+    with pytest.raises(ServiceError, match='animation_candidate_directory_alias'):
+        import_phase_one(tmp_path, owner='operator', project_id='project',
+            expected_image_digest=IMAGE_DIGEST, candidate_directories={'review': alias.name})
+    assert not (tmp_path / 'revision-ledger.sqlite3').exists()

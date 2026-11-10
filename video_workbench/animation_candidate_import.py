@@ -365,15 +365,42 @@ def _immutable(path, value):
         os.fsync(stream.fileno())
 
 
-def import_phase_one(root, *, owner, project_id, expected_image_digest, stage='review', review_directory=None):
+def _candidate_paths(root, directories):
+    """Resolve explicit unique run names inside this trusted operator root.
+
+    Mapping values are direct role-scoped child names, never paths. Defaults
+    retain the original layout; no prior directory is moved or relabelled.
+    """
+    require(directories is None or type(directories) is dict,
+            'animation_candidate_directory_invalid')
+    supplied = {} if directories is None else directories
+    require(set(supplied) <= set(ROLE_PROFILES), 'animation_candidate_directory_invalid')
+    names = {role: 'candidate-animation-' + role + '-p1' for role in ROLE_PROFILES}
+    names.update(supplied)
+    require(all(type(name) is str and re.fullmatch(
+        r'candidate-animation-' + role + r'-[a-z0-9](?:[a-z0-9_.-]{0,62}[a-z0-9])?', name)
+        is not None for role, name in names.items()), 'animation_candidate_directory_invalid')
+    require(len(set(names.values())) == len(names), 'animation_candidate_directory_alias')
+    require(root.is_dir() and not any(path.is_symlink() for path in (root, *root.parents))
+            and root.resolve() == root, 'animation_candidate_directory_invalid')
+    paths = {role: root / name for role, name in names.items()}
+    require(all(not path.is_symlink() and path.resolve() == path for path in paths.values()),
+            'animation_candidate_directory_alias')
+    return paths
+
+
+def import_phase_one(root, *, owner, project_id, expected_image_digest, stage='review', review_directory=None,
+                     candidate_directories=None):
     """Import review before preparing create, then import it with --stage revision.
 
     Only the separate SQLite ledger and importer audit receipts are written.
     The candidate directories, contexts and all source/media remain read-only.
     --stage all additionally requires the separately observed reference export.
+    Explicit role directories select a unique run without renaming old exports.
     """
     require(stage in ('review', 'revision', 'all'))
     root = Path(root).absolute()
+    candidate_paths = _candidate_paths(root, candidate_directories)
     if review_directory is None:
         selected = (_json(root / 'review-selection.json').get('directory')
                     if (root / 'review-selection.json').exists() else 'review-original')
@@ -394,19 +421,19 @@ def import_phase_one(root, *, owner, project_id, expected_image_digest, stage='r
     require(review_profile in (visual.REVIEW_PROFILE, visual.REVIEW_SEQUENCE_PROFILE)
             and review_doc['source_sha256'] == base['source_sha256'])
     observer = None
-    observe_directory = root / 'candidate-animation-observe-p1' / 'candidate-output'
+    observe_directory = candidate_paths['observe'] / 'candidate-output'
     if stage == 'all' or observe_directory.exists():
         profile, doc, files = load_bundle(root / 'observation-reference')
         require(profile == visual.OBSERVE_PROFILE)
         observer = validate_candidate(observe_directory.parent, role='observe', document=doc,
             files=files, expected_image_digest=expected_image_digest)
-    reviewer = validate_candidate(root / 'candidate-animation-review-p1', role='review',
+    reviewer = validate_candidate(candidate_paths['review'], role='review',
         document=review_doc, files=review_files, expected_image_digest=expected_image_digest,
         expected_profile=review_profile)
     creator, revised_input = None, None
     if stage in ('revision', 'all') and reviewer.state == 'completed' and reviewer.artifact['issues']:
         revised_input = creation.validate_creation_input(dict(context, base_source=base, review=reviewer.artifact))
-        creator = validate_candidate(root / 'candidate-animation-create-p1', role='create',
+        creator = validate_candidate(candidate_paths['create'], role='create',
             document=revised_input, files={creation.INPUT_NAME:canonical_bytes(revised_input)},
             expected_image_digest=expected_image_digest)
     # Validate every requested export before allocating any new ledger slot.
@@ -450,6 +477,8 @@ def import_phase_one(root, *, owner, project_id, expected_image_digest, stage='r
         observation_status=observer.state if observer else 'not_imported',
         new_model_submissions=0, live_http_verified=False, verification_started_by_importer=False,
         production_routes_changed=False, production_acceptance_created=False, aesthetic_status='unreviewed')
+    if candidate_directories is not None:
+        receipt['candidate_directories'] = {role: path.name for role, path in candidate_paths.items()}
     _immutable(audit / ('receipt-' + digest(receipt) + '.json'), receipt)
     target = root / 'import-receipt.json'
     temporary = root / ('.import-receipt-' + digest(receipt) + '.json')
@@ -473,11 +502,16 @@ def main(argv=None):
     parser.add_argument('--expected-image-digest', required=True)
     parser.add_argument('--stage', choices=['review', 'revision', 'all'], default='review')
     parser.add_argument('--review-directory', type=Path)
+    for role in ROLE_PROFILES:
+        parser.add_argument('--' + role + '-candidate-directory',
+            help='Direct role-scoped candidate directory name inside --root')
     args = parser.parse_args(argv)
     try:
         receipt = import_phase_one(args.root, owner=args.owner, project_id=args.project_id,
             expected_image_digest=args.expected_image_digest, stage=args.stage,
-            review_directory=args.review_directory)
+            review_directory=args.review_directory, candidate_directories={
+                role: getattr(args, role + '_candidate_directory') for role in ROLE_PROFILES
+                if getattr(args, role + '_candidate_directory') is not None} or None)
     except (ServiceError, OSError, ValueError, KeyError, TypeError) as error:
         code = error.code if isinstance(error, ServiceError) else 'animation_candidate_import_invalid'
         print(json.dumps(dict(status='rejected', code=code, new_model_submissions=0)))
