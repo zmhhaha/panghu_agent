@@ -5,8 +5,9 @@ Run with explicit, separate data and existing renderer asset directories:
 
 The default server only binds loopback. Explicit proxy mode requires a fixed
 HTTPS origin and a developer allowlist behind an authenticated, header-scrubbing
-proxy. It neither imports the production application nor calls Agent/TTS,
-changes project ownership, or publishes animation versions.
+proxy. Optional creation requests go through a separately configured private
+executor; the lab never receives Agent credentials or executes scene code.
+Opening a page does not generate work or publish animation versions.
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ from pathlib import Path
 import re
 import secrets
 import threading
+import time
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from .animation_lab_samples import MODULES, catalog, compile_sample
@@ -30,6 +32,7 @@ from .animation_lab_store import AnnotationStore
 from .animation_lab_triage_store import TriageStore
 from .animation_lab_iteration import IterationError, IterationStore
 from .animation_experiments import ExperimentError, ExperimentStore
+from .animation_creation_http import CreationAPIClient, CreationTransportError, LIMITS as CREATION_LIMITS
 from .motion import FPS, GSAP_VERSION, canonical, sha256
 
 
@@ -40,7 +43,7 @@ MAX_BODY = 32 * 1024
 WEB = Path(__file__).with_name('animation_lab_web')
 _FIELDS = {'case_id', 'case_identity', 'variant_id', 'kind', 'start_seconds',
            'end_seconds', 'region', 'tags', 'severity', 'comment', 'preference', 'verdict'}
-_PUBLIC_URL_FIELDS = frozenset({'preview_url', 'report_url', 'task_url', 'image_url', 'asset_url', 'media_url', 'assessment_url'})
+_PUBLIC_URL_FIELDS = frozenset({'preview_url', 'report_url', 'task_url', 'image_url', 'asset_url', 'media_url', 'assessment_url', 'source_url'})
 
 
 class LabError(ValueError):
@@ -100,7 +103,8 @@ def load_assets(directory):
 
 
 class AnimationLab:
-    def __init__(self, data_dir, assets, evaluations_dir=None, *, source_revision=None):
+    def __init__(self, data_dir, assets, evaluations_dir=None, *, source_revision=None, creation_client=None):
+        self.creation_client = creation_client
         self.assets = dict(assets)
         self.evaluations_dir = Path(evaluations_dir).resolve(strict=True) if evaluations_dir else None
         self.player_script = Path(__file__).with_name('animation_lab_player.mjs').read_bytes()
@@ -570,6 +574,59 @@ class LabHandler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass
 
+    def _read_post_body(self, length, *, deadline=None):
+        """Count consumed bytes even if a later chunk fails or JSON is rejected."""
+        chunks = bytearray()
+        while len(chunks) < length:
+            if deadline is not None:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise TimeoutError('rejected_body_drain_timeout')
+                self.connection.settimeout(left)
+            chunk = self.rfile.read1(min(8192, length - len(chunks)))
+            if not chunk:
+                break
+            self._post_body_consumed += len(chunk)
+            chunks.extend(chunk)
+        return bytes(chunks)
+
+    def _drain_rejected_post_body(self):
+        """Avoid a TCP reset on early rejection without trusting ambiguous framing.
+
+        Windows can discard the rejection response if the socket closes with
+        an unread request body. Drain only the remaining bytes of one bounded
+        Content-Length, with a single short wall-clock budget. This never
+        authenticates or parses the rejected content, nor waits for a body
+        already consumed by the normal JSON parser.
+        """
+        self.close_connection = True
+        lengths = self.headers.get_all('Content-Length', [])
+        if len(lengths) != 1 or self.headers.get_all('Transfer-Encoding', []):
+            return
+        value = lengths[0]
+        if re.fullmatch(r'[0-9]+', value) is None:
+            return
+        significant = value.lstrip('0') or '0'
+        if len(significant) > len(str(MAX_BODY)):
+            return
+        length = int(significant)
+        if length > MAX_BODY:
+            return
+        remaining = length - self._post_body_consumed
+        if remaining <= 0:
+            return
+        previous = self.connection.gettimeout()
+        deadline = time.monotonic() + .25
+        try:
+            self._read_post_body(remaining, deadline=deadline)
+        except (OSError, ValueError):
+            pass
+        finally:
+            try:
+                self.connection.settimeout(previous)
+            except OSError:
+                pass
+
     def _context(self, write=False):
         hosts = self.headers.get_all('Host', [])
         _require(len(hosts) == 1, 'animation_lab_host_rejected', 403)
@@ -689,6 +746,30 @@ class LabHandler(BaseHTTPRequestHandler):
             if path == '/api/experiments':
                 _require(not parsed.query, 'animation_experiment_query_invalid')
                 return self._json(dict(lab.experiments.catalogue(), csrf_token=lab.csrf_token))
+            creation_pieces = path.strip('/').split('/')
+            if creation_pieces[:2] == ['api', 'creation-runs']:
+                client = getattr(lab, 'creation_client', None)
+                owner = self.forwarded_user or 'local-developer'
+                if len(creation_pieces) == 2:
+                    query = parse_qs(parsed.query, keep_blank_values=True)
+                    _require(set(query) <= {'experiment_id'} and all(len(v) == 1 for v in query.values()),
+                             'animation_creation_query_invalid')
+                    experiment_id = query.get('experiment_id', [None])[0]
+                    if client is None:
+                        return self._json(dict(schema='video.animation-creation-runs.v1', enabled=False,
+                            disabled_reason='尚未配置制作执行器', limits=CREATION_LIMITS, runs=[]))
+                    return self._json(client.list(owner, experiment_id))
+                _require(not parsed.query, 'animation_creation_query_invalid')
+                _require(client is not None, 'animation_creation_executor_unavailable', 503)
+                if len(creation_pieces) == 3:
+                    return self._json(client.get(owner, creation_pieces[2]))
+                if len(creation_pieces) == 6 and creation_pieces[3] == 'versions':
+                    raw, mime = client.artifact(owner, creation_pieces[2], creation_pieces[4], creation_pieces[5])
+                    if creation_pieces[5] == 'source':
+                        return self._send(raw, 'application/json; charset=utf-8', download=True,
+                            download_name='animation-source.json')
+                    return self._send_artifact(raw, mime)
+                raise LabError('animation_creation_not_found', 404)
             experiment_pieces = path.strip('/').split('/')
             if len(experiment_pieces) >= 3 and experiment_pieces[:2] == ['api', 'experiments']:
                 _require(not parsed.query, 'animation_experiment_query_invalid')
@@ -740,7 +821,7 @@ class LabHandler(BaseHTTPRequestHandler):
                 return self._send(raw,
                                   'application/x-ndjson; charset=utf-8', download=True)
             if path in {'/', '/index.html', '/app.mjs', '/model.mjs', '/style.css', '/lab-player.mjs',
-                        '/experiments.mjs', '/experiment-model.mjs'}:
+                        '/experiments.mjs', '/experiment-model.mjs', '/creation-runs.mjs'}:
                 name = 'index.html' if path == '/' else path[1:]
                 if name == 'lab-player.mjs':
                     return self._send(lab.player_script, 'text/javascript; charset=utf-8')
@@ -801,7 +882,7 @@ class LabHandler(BaseHTTPRequestHandler):
                     'audio/wav' if name.endswith('.wav') else 'application/json; charset=utf-8')
                 return self._send_artifact(clip['files'][name], mime)
             raise LabError('animation_lab_not_found', 404)
-        except (LabError, IterationError, ExperimentError) as error:
+        except (LabError, IterationError, ExperimentError, CreationTransportError) as error:
             self._json(dict(error=error.code), error.status)
         except (FileNotFoundError, KeyError):
             self._json(dict(error='animation_lab_not_found'), 404)
@@ -809,6 +890,7 @@ class LabHandler(BaseHTTPRequestHandler):
             self._json(dict(error='animation_lab_evaluation_invalid'), 422)
 
     def do_POST(self):
+        self._post_body_consumed = 0
         try:
             self._context(write=True)
             lengths = self.headers.get_all('Content-Length', [])
@@ -824,11 +906,23 @@ class LabHandler(BaseHTTPRequestHandler):
                             raise ValueError('duplicate JSON key')
                         result[key] = value
                     return result
-                body = json.loads(self.rfile.read(int(length)), object_pairs_hook=pairs)
+                body = json.loads(self._read_post_body(int(length)), object_pairs_hook=pairs)
             except (ValueError, UnicodeError):
                 raise LabError('animation_lab_invalid_json', 400) from None
             path = self._path(urlsplit(self.path))
             lab = self.server.lab
+            creation_pieces = path.strip('/').split('/')
+            if creation_pieces[:2] == ['api', 'creation-runs']:
+                _require(not urlsplit(self.path).query, 'animation_creation_query_invalid')
+                client = getattr(lab, 'creation_client', None)
+                _require(client is not None, 'animation_creation_executor_unavailable', 503)
+                owner = self.forwarded_user or 'local-developer'
+                if len(creation_pieces) == 2:
+                    return self._json(client.start(owner, body), 202)
+                if len(creation_pieces) == 4 and creation_pieces[3] == 'cancel':
+                    _require(body == {}, 'animation_creation_cancel_invalid')
+                    return self._json(client.cancel(owner, creation_pieces[2]))
+                raise LabError('animation_creation_not_found', 404)
             if path == '/api/iterations':
                 _require(not urlsplit(self.path).query, 'animation_lab_iteration_query_invalid')
                 return self._send(canonical(lab.prepare_iteration(body)), 'application/json; charset=utf-8', 201)
@@ -858,9 +952,11 @@ class LabHandler(BaseHTTPRequestHandler):
                     raise LabError('animation_lab_annotation_not_found', 404) from None
                 return self._json(dict(annotation=row))
             raise LabError('animation_lab_not_found', 404)
-        except (LabError, IterationError, ExperimentError) as error:
+        except (LabError, IterationError, ExperimentError, CreationTransportError) as error:
+            self._drain_rejected_post_body()
             self._json(dict(error=error.code), error.status)
         except (ValueError, OSError):
+            self._drain_rejected_post_body()
             self._json(dict(error='animation_lab_evaluation_invalid'), 422)
 
 
@@ -876,16 +972,24 @@ def main():
     parser.add_argument('--base-path', default='')
     parser.add_argument('--developer-user', action='append', default=[], help='exact trusted proxy principal; repeatable')
     parser.add_argument('--source-revision', help='explicit Git source identity for feedback tasks; image default is baked at build time')
+    parser.add_argument('--creation-url', help='fixed internal creation executor origin; default disabled')
+    parser.add_argument('--creation-token-file', type=Path, help='private executor credential file; never an Agent credential')
     args = parser.parse_args()
+    _require(bool(args.creation_url) == bool(args.creation_token_file), 'animation_creation_configuration_incomplete')
+    creation_client = None
+    if args.creation_url:
+        with args.creation_token_file.open('r', encoding='ascii') as stream:
+            executor_token = stream.read(514).strip()
+        creation_client = CreationAPIClient(args.creation_url, executor_token)
     lab = AnimationLab(args.data_dir, load_assets(args.assets_dir), args.evaluations_dir,
-                       source_revision=args.source_revision)
+                       source_revision=args.source_revision, creation_client=creation_client)
     with LabHTTPServer(lab, args.port, proxy_mode=args.proxy_mode, listen=args.listen,
                        public_origin=args.public_origin, base_path=args.base_path,
                        developer_users=args.developer_user) as server:
         address = (args.public_origin + server.base_path + '/' if args.proxy_mode
                    else f'http://127.0.0.1:{server.server_port}/')
         print(f'Animation developer lab: {address}', flush=True)
-        print('Developer visual review only; Agent/TTS/production writes: 0.', flush=True)
+        print('Creation executor configured.' if creation_client else 'Developer visual review only; Agent/TTS/production writes: 0.', flush=True)
         try:
             server.serve_forever(poll_interval=.25)
         except KeyboardInterrupt:

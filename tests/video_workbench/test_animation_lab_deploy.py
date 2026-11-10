@@ -11,7 +11,7 @@ import tarfile
 import pytest
 
 from video_workbench.deploy import build_animation_lab as build
-from video_workbench.deploy.animation_lab import Settings, main, render
+from video_workbench.deploy.animation_lab import CREATION_TOKEN_PATH, Settings, main, render
 
 
 @pytest.fixture
@@ -23,6 +23,131 @@ def settings():
 
 def by_kind(document, kind):
     return next(item for item in document['items'] if item['kind'] == kind)
+
+
+@pytest.fixture
+def creation_settings(settings):
+    return replace(settings, creation_namespace='animation-creation', creation_name='animation-creation-api',
+                   creation_port=8770, creation_labels={'app': 'animation-creation', 'component': 'api'},
+                   creation_token_secret='lab-creation-caller')
+
+
+def test_default_resource_bytes_preserve_the_pre_creation_deployment(settings):
+    # Captured before optional executor configuration was added. Default
+    # resources must remain byte-for-byte unchanged, including deny-all egress.
+    raw = (json.dumps(render(settings), ensure_ascii=False, indent=2) + '\n').encode()
+    assert hashlib.sha256(raw).hexdigest() == '585f6cbb6b83a2cce78e247139242c51412a6687dc6415b3c5692479562ba584'
+
+
+def test_optional_executor_has_only_a_dedicated_single_key_read_only_token(creation_settings, settings):
+    document = render(creation_settings)
+    assert len(document['items']) == 5
+    assert {item['kind'] for item in document['items']} == {
+        'Deployment', 'Service', 'PersistentVolumeClaim', 'NetworkPolicy'}
+    deployment = by_kind(document, 'Deployment')
+    pod = deployment['spec']['template']['spec']
+    container, = pod['containers']
+    assert not pod['automountServiceAccountToken']
+    assert not pod.get('serviceAccountName') and not pod.get('hostNetwork')
+    assert not pod.get('initContainers') and not container.get('env') and not container.get('envFrom')
+    args = container['args']
+    assert args[args.index('--creation-url') + 1] == 'http://animation-creation-api.animation-creation.svc.cluster.local:8770'
+    assert args[args.index('--creation-token-file') + 1] == CREATION_TOKEN_PATH
+    assert not any('agent' in arg.lower() or 'docker' in arg.lower() for arg in args)
+    volume = next(row for row in pod['volumes'] if row['name'] == 'creation-caller-token')
+    assert volume == {'name': 'creation-caller-token', 'secret': {
+        'secretName': 'lab-creation-caller', 'optional': False, 'defaultMode': 0o440,
+        'items': [{'key': 'token', 'path': 'token'}]}}
+    assert next(row for row in container['volumeMounts'] if row['name'] == 'creation-caller-token') == {
+        'name': 'creation-caller-token', 'mountPath': '/run/secrets/animation-creation', 'readOnly': True}
+    assert not any('hostPath' in row or 'projected' in row for row in pod['volumes'])
+    assert container['securityContext']['readOnlyRootFilesystem']
+    assert container['securityContext']['capabilities'] == {'drop': ['ALL']}
+    custom = render(replace(creation_settings, creation_token_key='executor-caller.token'))
+    secret = next(row['secret'] for row in by_kind(custom, 'Deployment')['spec']['template']['spec']['volumes'] if 'secret' in row)
+    assert secret['items'] == [{'key': 'executor-caller.token', 'path': 'token'}]
+    # The lab's ingress, claims, service, and execution isolation do not change.
+    original = render(settings)
+    assert by_kind(document, 'Service') == by_kind(original, 'Service')
+    assert [row for row in document['items'] if row['kind'] == 'PersistentVolumeClaim'] == [
+        row for row in original['items'] if row['kind'] == 'PersistentVolumeClaim']
+    assert by_kind(document, 'NetworkPolicy')['spec']['ingress'] == by_kind(original, 'NetworkPolicy')['spec']['ingress']
+
+
+def test_optional_executor_egress_is_exact_namespace_and_pods_plus_cluster_dns(creation_settings):
+    policy = by_kind(render(creation_settings), 'NetworkPolicy')['spec']
+    assert policy['egress'] == [
+        {'to': [{'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'kube-system'}},
+                 'podSelector': {'matchLabels': {'k8s-app': 'kube-dns'}}}],
+         'ports': [{'protocol': 'UDP', 'port': 53}, {'protocol': 'TCP', 'port': 53}]},
+        {'to': [{'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'animation-creation'}},
+                 'podSelector': {'matchLabels': {'app': 'animation-creation', 'component': 'api'}}}],
+         'ports': [{'protocol': 'TCP', 'port': 8770}]},
+    ]
+    assert not any('ipBlock' in peer for rule in policy['egress'] for peer in rule['to'])
+    assert all(peer['namespaceSelector']['matchLabels'] and peer['podSelector']['matchLabels']
+               for rule in policy['egress'] for peer in rule['to'])
+
+
+@pytest.mark.parametrize('missing', ['creation_namespace', 'creation_name', 'creation_port',
+                                     'creation_labels', 'creation_token_secret'])
+def test_creation_executor_destination_and_dedicated_token_must_be_configured_together(creation_settings, missing):
+    with pytest.raises(ValueError, match='supplied together'):
+        render(replace(creation_settings, **{missing: None}))
+
+
+@pytest.mark.parametrize('changes', [
+    dict(creation_namespace='https://public.example'), dict(creation_namespace='namespace.svc'),
+    dict(creation_namespace='user@internal'), dict(creation_namespace='../other'),
+    dict(creation_name='public.example'), dict(creation_name='http://internal'),
+    dict(creation_name='user:password@host'), dict(creation_name='api/path'),
+    dict(creation_name='api?host=public'), dict(creation_name='api#fragment'),
+    dict(creation_name='Api'), dict(creation_name=' api'), dict(creation_name='api\n'),
+    dict(creation_name='1invalid-service'), dict(creation_name='a' * 64),
+    dict(creation_port=0), dict(creation_port=65536), dict(creation_port=True), dict(creation_port='8770'),
+    dict(creation_labels={}), dict(creation_labels=[]), dict(creation_labels={'*': '*'}),
+    dict(creation_labels={'app': 'x\ny'}), dict(creation_token_secret='../caller'),
+    dict(creation_token_secret='https://secret.example'), dict(creation_token_key=''),
+    dict(creation_token_key='../../agent'), dict(creation_token_key='token\n'), dict(creation_token_key='a' * 254),
+])
+def test_creation_destination_never_accepts_arbitrary_urls_or_broad_network_selectors(creation_settings, changes):
+    with pytest.raises(ValueError):
+        render(replace(creation_settings, **changes))
+
+
+def test_an_orphan_creation_token_key_does_not_enable_network_or_credentials(settings):
+    with pytest.raises(ValueError, match='complete executor configuration'):
+        render(replace(settings, creation_token_key='executor-token'))
+
+
+def test_cli_generates_fixed_internal_origin_and_requires_all_optional_settings(tmp_path, settings):
+    arguments = ['--image', settings.image, '--image-digest', settings.image_digest,
+                 '--release-id', settings.release_id, '--storage-class', settings.storage_class,
+                 '--developer-user', 'developer-subject']
+    output = tmp_path / 'optional-resources.json'
+    optional = ['--creation-namespace', 'animation-creation', '--creation-name', 'creation-api',
+                '--creation-port', '8770', '--creation-label', 'app=creation',
+                '--creation-label', 'component=api', '--creation-token-secret', 'lab-executor-caller',
+                '--creation-token-key', 'caller-token']
+    main([*arguments, *optional, '--output', str(output)])
+    pod = by_kind(json.loads(output.read_text('utf8')), 'Deployment')['spec']['template']['spec']
+    args = pod['containers'][0]['args']
+    assert args[args.index('--creation-url') + 1] == 'http://creation-api.animation-creation.svc.cluster.local:8770'
+    assert next(row['secret']['items'] for row in pod['volumes'] if 'secret' in row) == [
+        {'key': 'caller-token', 'path': 'token'}]
+    old = output.read_bytes()
+    with pytest.raises(FileExistsError):
+        main([*arguments, *optional, '--output', str(output)])
+    assert output.read_bytes() == old
+    rejected = tmp_path / 'incomplete.json'
+    with pytest.raises(ValueError, match='supplied together'):
+        main([*arguments, '--creation-name', 'api', '--output', str(rejected)])
+    assert not rejected.exists()
+    for invalid in [['--creation-url', 'https://public.example'],
+                    [*optional, '--creation-label', 'app=duplicate'],
+                    [*optional, '--creation-label', 'not-a-pair']]:
+        with pytest.raises(SystemExit):
+            main([*arguments, *invalid])
 
 
 def test_lab_is_an_independent_single_writer_without_business_credentials(settings):

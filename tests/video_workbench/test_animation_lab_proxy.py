@@ -1,13 +1,18 @@
 """Real HTTP prefix/identity boundaries; synthetic assets do not execute a browser."""
 from copy import deepcopy
+from email.message import Message
 import gzip
 import http.client
 import json
+import socket
 import threading
+from types import SimpleNamespace
 
 import pytest
 
-from video_workbench.animation_lab import AnimationLab, LabHTTPServer
+from video_workbench.animation_lab import AnimationLab, LabHTTPServer, LabHandler, MAX_BODY
+from video_workbench import animation_lab as lab_module
+from video_workbench.animation_experiments import SCHEMA, definitions
 from video_workbench.motion import sha256
 
 
@@ -73,21 +78,35 @@ def proxy(tmp_path_factory):
 
 def test_capability_definition_and_feedback_keep_proxy_authentication_and_prefix(proxy):
     status, catalogue, _ = proxy.request('GET', PREFIX+'/api/experiments')
-    assert status == 200 and len(catalogue['experiments']) == 1
-    experiment = catalogue['experiments'][0]
-    assert experiment['id'] == 'identity-tracking' and experiment['versions'] == []
-    assert experiment['status'] == 'unexecuted'
-    assert proxy.request('GET', PREFIX+'/api/experiments/identity-tracking')[1]['identity'] == experiment['identity']
-    for path in ('/api/experiments', '/api/experiments/identity-tracking',
-                 '/api/experiments/identity-tracking/runs/identity-development-v1/output.mp4'):
-        assert proxy.request('GET', PREFIX+path, omit=['X-Forwarded-User'])[0] == 403
-    body = dict(experiment_identity=experiment['identity'], kind='issue', version_ids=['missing'],
-                version_identities={'missing': '0'*64}, comment='No actual media to annotate',
-                start_seconds=0, end_seconds=1, preference=None)
-    target = PREFIX+'/api/experiments/identity-tracking/feedback'
-    assert proxy.request('POST', target, body, omit=['X-Animation-Lab-Token'])[0] == 403
-    assert proxy.request('POST', target, body)[0] == 422
-    assert proxy.request('GET', PREFIX+'/api/experiments/identity-tracking')[1]['feedback'] == []
+    expected = {item['id']: item for item in definitions()}
+    assert status == 200 and catalogue['schema'] == SCHEMA
+    assert catalogue['csrf_token'] == proxy.lab.csrf_token
+    assert {item['id'] for item in catalogue['experiments']} == set(expected)
+    assert len(catalogue['experiments']) == len(expected)  # Reject duplicate catalogue rows.
+    assert proxy.request('GET', PREFIX+'/api/experiments', omit=['X-Forwarded-User'])[0] == 403
+    assert proxy.request('GET', '/api/experiments')[0] == 404
+    for experiment in catalogue['experiments']:
+        definition = expected[experiment['id']]
+        # The HTTP prefix must not change the frozen goal, role constraints or
+        # definition identity as the registry gains additional capabilities.
+        assert {key: experiment[key] for key in definition} == definition
+        assert experiment['experiment_identity'] == definition['identity']
+        assert experiment['versions'] == experiment['feedback'] == experiment['comparisons'] == []
+        assert experiment['status'] == 'unexecuted'
+        path = '/api/experiments/' + experiment['id']
+        status, detail, _ = proxy.request('GET', PREFIX+path)
+        assert status == 200 and detail['csrf_token'] == proxy.lab.csrf_token
+        assert {key: value for key, value in detail.items() if key != 'csrf_token'} == experiment
+        for protected in (path, path+'/runs/missing-development-v1/output.mp4'):
+            assert proxy.request('GET', PREFIX+protected, omit=['X-Forwarded-User'])[0] == 403
+        body = dict(experiment_identity=experiment['identity'], kind='issue', version_ids=['missing'],
+                    version_identities={'missing': '0'*64}, comment='No actual media to annotate',
+                    start_seconds=0, end_seconds=1, preference=None)
+        target = PREFIX+path+'/feedback'
+        assert proxy.request('POST', target, body, omit=['X-Animation-Lab-Token'])[0] == 403
+        assert proxy.request('POST', target, dict(body, experiment_identity='0'*64))[0] == 409
+        assert proxy.request('POST', target, body)[0] == 422
+        assert proxy.request('GET', PREFIX+path)[1]['feedback'] == []
     assert proxy.request('GET', PREFIX+'/api/experiments/unknown')[0] == 404
 
 
@@ -285,6 +304,103 @@ def test_missing_or_ambiguous_json_content_type_is_rejected(proxy, omit, headers
     status, result, _ = proxy.request('POST', PREFIX+'/api/annotations', proxy.issue(), omit=omit, headers=headers)
     assert (status, result['error']) == (415, 'animation_lab_json_required')
     assert proxy.lab.store.list() == before
+
+
+@pytest.mark.parametrize('missing_csrf,expected_status,expected_error', [
+    (False, 415, 'animation_lab_json_required'),
+    (True, 403, 'animation_lab_token_required'),
+])
+def test_early_rejection_drains_delayed_raw_body_before_sending_response(
+        proxy, monkeypatch, missing_csrf, expected_status, expected_error):
+    before = proxy.lab.store.list()
+    payload = json.dumps(proxy.issue()).encode()
+    rejection_entered, body_sent = threading.Event(), threading.Event()
+    consumed = []
+    drain = LabHandler._drain_rejected_post_body
+
+    def observed_drain(handler):
+        # Synchronize after the rejection decision and before draining. The
+        # client sends its body later, without relying on scheduler sleeps.
+        rejection_entered.set()
+        assert body_sent.wait(3)
+        drain(handler)
+        consumed.append(handler._post_body_consumed)
+
+    monkeypatch.setattr(LabHandler, '_drain_rejected_post_body', observed_drain)
+    headers = [('Host', HOST), ('X-Forwarded-User', DEVELOPER), ('Origin', ORIGIN),
+               ('Content-Type', 'application/json'), ('Content-Length', str(len(payload)))]
+    if not missing_csrf:
+        headers.extend([('X-Animation-Lab-Token', proxy.lab.csrf_token),
+                        ('Content-Type', 'application/json')])
+    head = ('POST '+PREFIX+'/api/annotations HTTP/1.0\r\n'
+            + ''.join(name+': '+value+'\r\n' for name, value in headers) + '\r\n').encode()
+    with socket.create_connection(('127.0.0.1', proxy.server.server_port), timeout=5) as stream:
+        try:
+            stream.sendall(head)
+            assert rejection_entered.wait(3)
+            stream.sendall(payload)
+            body_sent.set()
+            response = http.client.HTTPResponse(stream)
+            response.begin()
+            assert response.status == expected_status
+            assert json.loads(response.read()) == {'error': expected_error}
+            assert consumed == [len(payload)]
+        finally:
+            body_sent.set()
+    assert proxy.lab.store.list() == before
+
+
+def test_error_after_json_parsing_does_not_consume_the_body_twice(proxy, monkeypatch):
+    before = proxy.lab.store.list()
+    reads = []
+    read = LabHandler._read_post_body
+
+    def counted(handler, length, **kwargs):
+        reads.append((length, handler._post_body_consumed, kwargs.get('deadline')))
+        return read(handler, length, **kwargs)
+
+    monkeypatch.setattr(LabHandler, '_read_post_body', counted)
+    status, result, _ = proxy.request('POST', PREFIX+'/api/not-a-route', {})
+    assert status == 404 and result == {'error': 'animation_lab_not_found'}
+    assert reads == [(len(json.dumps({}).encode()), 0, None)]
+    assert proxy.lab.store.list() == before
+
+
+@pytest.mark.parametrize('headers', [
+    [], [('Content-Length', '2'), ('Content-Length', '2')],
+    [('Content-Length', '-1')], [('Content-Length', '2, 2')],
+    [('Content-Length', str(MAX_BODY + 1))],
+    [('Content-Length', '2'), ('Transfer-Encoding', 'chunked')],
+    [('Content-Length', '2'), ('Transfer-Encoding', '')],
+])
+def test_rejection_does_not_read_missing_ambiguous_or_unbounded_framing(headers):
+    handler = object.__new__(LabHandler)
+    handler.headers = Message()
+    for key, value in headers:
+        handler.headers[key] = value
+    handler._post_body_consumed = 0
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError('Ambiguous or unbounded framing must not trigger body reads')
+
+    handler._read_post_body = forbidden
+    handler._drain_rejected_post_body()
+    assert handler.close_connection is True
+
+
+def test_rejection_drain_uses_one_wall_clock_budget_instead_of_resetting_for_each_chunk(monkeypatch):
+    handler = object.__new__(LabHandler)
+    handler.headers = Message()
+    handler.headers['Content-Length'] = '3'
+    handler._post_body_consumed = 0
+    timeouts, reads = [], []
+    handler.connection = SimpleNamespace(gettimeout=lambda: 7, settimeout=timeouts.append)
+    handler.rfile = SimpleNamespace(read1=lambda size: reads.append(size) or b'x')
+    clock = iter([0, .1, .2, .3])
+    monkeypatch.setattr(lab_module, 'time', SimpleNamespace(monotonic=lambda: next(clock)))
+    handler._drain_rejected_post_body()
+    assert handler._post_body_consumed == 2 and reads == [3, 2]
+    assert timeouts[:2] == pytest.approx([.15, .05]) and timeouts[-1] == 7
 
 
 def test_unprefixed_and_traversal_routes_cannot_escape_to_another_service_or_data(proxy):

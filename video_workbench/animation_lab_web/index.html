@@ -31,10 +31,18 @@
         <section id="experiment-evaluation" class="panel" aria-label="本项实验如何评价"></section>
         <div class="experiment-facts"><article><span>实验方式</span><strong id="experiment-mode"></strong></article><article><span>作品来源</span><strong id="experiment-source"></strong></article><article><span>本轮改动</span><strong id="experiment-change"></strong></article></div>
         <details class="panel experiment-constraints"><summary>最小输入与固定约束</summary><pre id="experiment-constraints"></pre></details>
+        <section id="creation-runs-panel" class="panel creation-runs-panel" aria-labelledby="creation-runs-title">
+          <div class="panel-heading"><div><h3 id="creation-runs-title">Agent制作与一轮打磨</h3><p class="muted small">按当前实验定义生成初作，再由独立Agent审阅；有具体问题时最多修改一次。前后作品和意见分别保留。</p></div></div>
+          <div class="creation-runs-actions"><label>本次输入组<select id="creation-runs-role"><option value="development">调优输入</option><option value="held_out">未参与调优的复测输入</option></select></label><button id="creation-runs-start" class="button primary" type="button" disabled>制作并打磨一轮</button><button id="creation-runs-refresh" class="button secondary" type="button" disabled>刷新制作进度</button></div>
+          <p id="creation-runs-availability" class="muted small" role="status">请先选择能力实验。</p>
+          <div id="creation-runs-message" class="inline-message" role="status" hidden></div>
+          <p class="creation-runs-note muted small">取消不退回已用额度。技术通过和模型意见不代表效果认可；本页不会自动追加打磨或采用到正式视频。</p>
+          <div id="creation-runs-list" class="creation-runs-list" aria-label="当前定义与输入组的制作记录"></div>
+        </section>
         <div id="experiment-rejected-runs" class="inline-message error" role="status" hidden></div>
-        <div id="experiment-definition-only" class="experiment-empty"><h3>实验定义 · 尚无真实作品</h3><p class="muted">等待实际生成与隔离渲染。打开此页不会调用模型，也不会用手写样例冒充生成结果。</p></div>
+        <div id="experiment-definition-only" class="experiment-empty"><h3>既有作品 · 尚无归档记录</h3><p class="muted">本区展示此前归档的实验作品；本轮制作的初作、修订版与审阅意见在上方展示。打开此页不会调用模型。</p></div>
         <section id="experiment-results" hidden aria-label="实际作品">
-          <div class="experiment-result-heading"><h3>实际作品</h3><label>输入组<select id="experiment-input-role"><option value="development">调优输入</option><option value="held_out">未参与调优的复测输入</option></select></label></div>
+          <div class="experiment-result-heading"><h3>既有作品与标注</h3><label>输入组<select id="experiment-input-role"><option value="development">调优输入</option><option value="held_out">未参与调优的复测输入</option></select></label></div>
           <p class="muted small">只展示隔离渲染后的媒体；技术检查与画面偏好分别记录。</p>
           <div id="experiment-version-selectors" class="experiment-version-selectors"></div>
           <div id="experiment-media" class="experiment-media-grid"></div>

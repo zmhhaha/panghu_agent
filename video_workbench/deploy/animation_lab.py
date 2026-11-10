@@ -21,6 +21,7 @@ PORT = 8766
 DATA_CLAIM = NAME + '-data'
 EVALUATIONS_CLAIM = NAME + '-evaluations'
 SELECTOR = {'app.kubernetes.io/name': NAME}
+CREATION_TOKEN_PATH = '/run/secrets/animation-creation/token'
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,12 @@ class Settings:
     proxy_labels: Mapping[str, str] = field(default_factory=lambda: {'app': 'oauth2-proxy-video-workbench'})
     data_size: str = '2Gi'
     evaluations_size: str = '2Gi'
+    creation_namespace: str | None = None
+    creation_name: str | None = None
+    creation_port: int | None = None
+    creation_labels: Mapping[str, str] | None = None
+    creation_token_secret: str | None = None
+    creation_token_key: str = 'token'
 
 
 def render(settings: Settings):
@@ -69,6 +76,27 @@ def render(settings: Settings):
     for size in (settings.data_size, settings.evaluations_size):
         if type(size) is not str or not re.fullmatch(r'[1-9][0-9]*(?:Mi|Gi|Ti)', size):
             raise ValueError('Lab storage size must be positive Mi/Gi/Ti')
+    creation_fields = (settings.creation_namespace, settings.creation_name, settings.creation_port,
+                       settings.creation_labels, settings.creation_token_secret)
+    creation_enabled = any(value is not None for value in creation_fields)
+    creation = None
+    if creation_enabled:
+        if any(value is None for value in creation_fields):
+            raise ValueError('Creation executor namespace, name, port, labels and dedicated token Secret must be supplied together')
+        creation_namespace = _dns_name(settings.creation_namespace, 'creation namespace', namespace=True)
+        creation_name = _dns_name(settings.creation_name, 'creation Service name', namespace=True)
+        if not re.fullmatch(r'[a-z](?:[-a-z0-9]{0,61}[a-z0-9])?', creation_name):
+            raise ValueError('Invalid creation Service name')
+        if type(settings.creation_port) is not int or not 1 <= settings.creation_port <= 65535:
+            raise ValueError('Invalid creation HTTP port')
+        creation_labels = _labels(settings.creation_labels, 'creation Pod labels')
+        creation_secret = _dns_name(settings.creation_token_secret, 'creation caller Secret')
+        if type(settings.creation_token_key) is not str or not re.fullmatch(r'[A-Za-z0-9_.-]{1,253}', settings.creation_token_key):
+            raise ValueError('Invalid creation caller Secret key')
+        creation = dict(namespace=creation_namespace, labels=creation_labels, secret=creation_secret,
+                        origin=f'http://{creation_name}.{creation_namespace}.svc.cluster.local:{settings.creation_port}')
+    elif settings.creation_token_key != 'token':
+        raise ValueError('Creation token key requires the complete executor configuration')
 
     labels = {**SELECTOR, 'app.kubernetes.io/component': 'developer-lab',
               'app.kubernetes.io/version': settings.release_id}
@@ -87,6 +115,8 @@ def render(settings: Settings):
             '--base-path', settings.base_path]
     for user in settings.developer_users:
         args.extend(['--developer-user', user])
+    if creation:
+        args.extend(['--creation-url', creation['origin'], '--creation-token-file', CREATION_TOKEN_PATH])
     probe = {'httpGet': {'path': '/healthz', 'port': 'http',
                         'httpHeaders': [{'name': 'Host', 'value': origin.netloc}]},
              'periodSeconds': 10, 'timeoutSeconds': 3, 'failureThreshold': 3}
@@ -118,6 +148,17 @@ def render(settings: Settings):
                         {'name': 'temporary', 'emptyDir': {'sizeLimit': '32Mi'}}],
         }},
     })
+    if creation:
+        pod = deployment['spec']['template']['spec']
+        pod['containers'][0]['volumeMounts'].append({
+            'name': 'creation-caller-token', 'mountPath': CREATION_TOKEN_PATH.rsplit('/', 1)[0], 'readOnly': True,
+        })
+        # This is only the lab-to-executor credential. Agent credentials stay
+        # with the separately deployed executor, never in the lab container.
+        pod['volumes'].append({'name': 'creation-caller-token', 'secret': {
+            'secretName': creation['secret'], 'optional': False, 'defaultMode': 0o440,
+            'items': [{'key': settings.creation_token_key, 'path': 'token'}],
+        }})
     claims = [obj('v1', 'PersistentVolumeClaim', name, {
         'accessModes': ['ReadWriteOnce'], 'volumeMode': 'Filesystem',
         'storageClassName': storage_class, 'resources': {'requests': {'storage': size}},
@@ -134,6 +175,15 @@ def render(settings: Settings):
         }], 'ports': [{'protocol': 'TCP', 'port': PORT}]}],
         'egress': [],
     })
+    if creation:
+        policy['spec']['egress'] = [
+            {'to': [{'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'kube-system'}},
+                     'podSelector': {'matchLabels': {'k8s-app': 'kube-dns'}}}],
+             'ports': [{'protocol': 'UDP', 'port': 53}, {'protocol': 'TCP', 'port': 53}]},
+            {'to': [{'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': creation['namespace']}},
+                     'podSelector': {'matchLabels': dict(creation['labels'])}}],
+             'ports': [{'protocol': 'TCP', 'port': settings.creation_port}]},
+        ]
     return dict(apiVersion='v1', kind='List', items=[*claims, deployment, service, policy])
 
 
@@ -151,6 +201,12 @@ def main(argv=None):
     parser.add_argument('--proxy-label', action='append', default=[])
     parser.add_argument('--data-size', default='2Gi')
     parser.add_argument('--evaluations-size', default='2Gi')
+    parser.add_argument('--creation-namespace', help='optional private creation executor namespace; requires all creation settings')
+    parser.add_argument('--creation-name', help='creation executor Service DNS label; no URL or external hostname')
+    parser.add_argument('--creation-port', type=int, help='creation HTTP Service and selected Pod port')
+    parser.add_argument('--creation-label', action='append', default=[], help='exact executor Pod selector KEY=VALUE; repeat as needed')
+    parser.add_argument('--creation-token-secret', help='existing dedicated lab-to-executor token Secret in the lab namespace; never an Agent credential')
+    parser.add_argument('--creation-token-key', default='token', help='single caller token key from the dedicated Secret (default: token)')
     parser.add_argument('--output', type=Path)
     args = parser.parse_args(argv)
     labels = None
@@ -161,12 +217,23 @@ def main(argv=None):
             if not separator or key in labels:
                 parser.error('--proxy-label requires distinct KEY=VALUE entries')
             labels[key] = item
+    creation_labels = None
+    if args.creation_label:
+        creation_labels = {}
+        for value in args.creation_label:
+            key, separator, item = value.partition('=')
+            if not separator or key in creation_labels:
+                parser.error('--creation-label requires distinct KEY=VALUE entries')
+            creation_labels[key] = item
     settings = Settings(image=args.image, image_digest=args.image_digest,
         release_id=args.release_id, developer_users=args.developer_user,
         storage_class=args.storage_class, namespace=args.namespace,
         public_origin=args.public_origin, base_path=args.base_path,
         proxy_namespace=args.proxy_namespace, data_size=args.data_size,
         evaluations_size=args.evaluations_size,
+        creation_namespace=args.creation_namespace, creation_name=args.creation_name,
+        creation_port=args.creation_port, creation_labels=creation_labels,
+        creation_token_secret=args.creation_token_secret, creation_token_key=args.creation_token_key,
         **({'proxy_labels': labels} if labels is not None else {}))
     raw = json.dumps(render(settings), ensure_ascii=False, indent=2) + '\n'
     if args.output:

@@ -1,6 +1,7 @@
 import {experimentIdentity, experimentLocalUrl, experimentVersions, experimentPlayable, experimentInitialSelection,
   experimentComparison, experimentFrameTime, experimentIssuePayload,
   experimentSourceLabel, experimentStatusLabel, experimentTextDifference, experimentTechnicalLabel} from './experiment-model.mjs';
+import {createCreationRunsPanel} from './creation-runs.mjs';
 
 const $ = id => document.getElementById(id);
 const root = new URL('./', import.meta.url);
@@ -19,6 +20,7 @@ let startWall = 0;
 let startClock = 0;
 let saving = false;
 let playbackEpoch = 0;
+let creationPanel = null;
 const drafts = new Map();
 const versionSelections = new Map();
 const CAPABILITIES = {'identity-tracking': '移动中的身份追踪', identity_tracking: '移动中的身份追踪',
@@ -48,8 +50,12 @@ async function request(path, options = {}) {
     {...options, headers, credentials: 'same-origin', cache: 'no-store'});
   let value;
   try { value = await response.json(); } catch { throw Error(`服务响应无法读取（HTTP ${response.status}）`); }
-  if (!response.ok) throw Error(typeof value.message === 'string' ? value.message
-    : typeof value.error === 'string' ? value.error : `HTTP ${response.status}`);
+  if (!response.ok) {
+    const error = Error(typeof value.message === 'string' ? value.message
+      : typeof value.error?.message === 'string' ? value.error.message
+      : typeof value.error === 'string' ? value.error : value.error?.code ?? `HTTP ${response.status}`);
+    error.status = response.status; error.code = value.error?.code ?? value.error; throw error;
+  }
   return value;
 }
 
@@ -321,6 +327,7 @@ function renderFeedback() {
 function renderExperiment() {
   pause();
   $('experiment-empty').hidden = Boolean(current); $('experiment-workspace').hidden = !current;
+  void creationPanel?.select(current);
   if (!current) return;
   $('experiment-title').textContent = current.title ?? current.id;
   $('experiment-capability').textContent = CAPABILITIES[current.capability] ?? current.capability ?? '能力问题';
@@ -350,6 +357,7 @@ function renderExperiment() {
 
 async function selectExperiment(id) {
   captureDraft(); pause(); const operation = ++serial;
+  void creationPanel?.select(null);
   try {
     const result = await request(`api/experiments/${encodeURIComponent(id)}`);
     if (operation !== serial) return;
@@ -417,16 +425,21 @@ async function showView(view, updateHash = true) {
   $('show-experiments').setAttribute('aria-pressed', String(!regression));
   $('show-regressions').setAttribute('aria-pressed', String(regression));
   if (regression) {
+    creationPanel?.pause();
     if (updateHash && (!location.hash || location.hash.startsWith('#experiment-'))) history.replaceState(null, '', '#regressions');
     if (!regressionLoading) regressionLoading = import('./app.mjs').then(value => { regressionModule = value; });
     try { await regressionLoading; } catch (error) { message('global-message', `回归工具加载失败：${error.message}`, true); }
   } else {
     if (updateHash) history.replaceState(null, '', current ? `#experiment-${encodeURIComponent(current.id)}` : '#experiments');
     if (!listing.experiments.length || !current) await loadExperiments();
+    else void creationPanel?.resume();
   }
 }
 
 function boot() {
+  let storage;
+  try { storage = window.sessionStorage; } catch { storage = null; }
+  creationPanel = createCreationRunsPanel({document, request, root, storage});
   $('show-experiments').addEventListener('click', () => showView('experiments'));
   $('show-regressions').addEventListener('click', () => showView('regressions'));
   $('experiment-reload').addEventListener('click', loadExperiments);
@@ -459,8 +472,11 @@ function boot() {
         end_seconds: totalDuration(), preference: button.dataset.experimentPreference});
     });
   }
-  document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
-  window.addEventListener('pagehide', () => { pause(); captureDraft(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { pause(); creationPanel?.pause(); }
+    else if (activeView === 'experiments') void creationPanel?.resume();
+  });
+  window.addEventListener('pagehide', () => { pause(); captureDraft(); creationPanel?.pause(); });
   window.addEventListener('hashchange', () => {
     if (location.hash === '#regressions') void showView('regressions', false);
     else if (location.hash.startsWith('#experiment-')) {
