@@ -19,12 +19,14 @@ RUN python -c "import os,re; assert re.fullmatch(r'[a-z0-9][a-z0-9._:/-]*:latest
 # pinned donor. No broad repository copy, runtime databases or credential files.
 COPY agent_service/client.py agent_service/contracts.py agent_service/artifacts.py agent_service/diagnostics.py agent_service/engines.py /app/agent_service/
 COPY agent_service/profiles/__init__.py agent_service/profiles/base.py agent_service/profiles/video.py agent_service/profiles/video_animation_experiment.py agent_service/profiles/video_animation_create.py agent_service/profiles/video_animation_review.py /app/agent_service/profiles/
+COPY agent_service/profiles/video_motion.py agent_service/profiles/video_motion_contract.py agent_service/profiles/video_process_contract.py /app/agent_service/profiles/
 COPY agent_service/resources/animation-experiment-v1 /app/agent_service/resources/animation-experiment-v1
 COPY agent_service/resources/animation-create-v2 /app/agent_service/resources/animation-create-v2
 COPY agent_service/resources/animation-review-v1 /app/agent_service/resources/animation-review-v1
 COPY agent_service/resources/animation-review-v2 /app/agent_service/resources/animation-review-v2
 COPY video_workbench/animation_creation_executor.py video_workbench/animation_creation_service.py video_workbench/animation_creation_http.py video_workbench/animation_creation_renderer.py /app/video_workbench/
 COPY video_workbench/animation_review_gateway.py video_workbench/animation_revision_store.py video_workbench/animation_polish.py video_workbench/animation_observation.py /app/video_workbench/
+COPY video_workbench/agent.py video_workbench/motion_gateway.py /app/video_workbench/
 COPY video_workbench/animation_experiment_render.py video_workbench/animation_experiment_host.mjs video_workbench/animation_lab_capture.py video_workbench/animation_experiment_semantics.py /app/video_workbench/
 COPY video_workbench/animation_experiments.py video_workbench/animation_experiment_definitions.py video_workbench/animation_capabilities.py /app/video_workbench/
 RUN python -c "from video_workbench.animation_creation_executor import create_server; from agent_service.profiles.video_animation_create import verified_bundle; from agent_service.profiles.video_animation_review import verified_bundle as old_bundle,verified_sequence_bundle; verified_bundle(); old_bundle(); verified_sequence_bundle()" \
