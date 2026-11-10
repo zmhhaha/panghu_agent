@@ -18,6 +18,33 @@ from agent_service.registry import binding_fingerprint
 IMAGE = 'registry.internal/animation-pi:latest@sha256:' + 'c' * 64
 
 
+def test_complete_input_review_selects_only_v4_and_pins_the_fixed_tool_environment():
+    from agent_service.input_tools import READ_INPUTS_ENVIRONMENT_NAME, read_inputs_environment_revision
+    current, _, _ = prepare(include_batched_review=True)
+    before = deepcopy(current)
+    caller = dict(tenant='internal', caller='existing-creation-caller',
+        profiles=[creation.PROFILE, review.REVIEW_PACKED_PROFILE], token_ref='same-caller')
+    merged, hosts, summary = prepare(current, include_input_review=True, review_only=True,
+        register_caller=False, caller=caller)
+    assert current == before and set(hosts) == {review.REVIEW_PACKED_PROFILE}
+    assert summary['combinations'][0]['acceptance_suite'] == 'video.animation-review-contract.v4'
+    assert summary['existing_creator_reused'] is True and merged['callers'] == before['callers']
+    for section in CATALOG_KEYS:
+        assert merged[section][:len(before[section])] == before[section]
+    resolved = registry(merged)
+    contract = resolved.contract(review.REVIEW_PACKED_PROFILE, '1')
+    assert set(contract.required_tools) == {'read_inputs', 'write'}
+    binding = resolved.binding(hosts[review.REVIEW_PACKED_PROFILE]['binding_id'],
+        hosts[review.REVIEW_PACKED_PROFILE]['binding_revision'])
+    environment = resolved.environment(binding.tool_environment.name, binding.tool_environment.revision)
+    assert environment.name == READ_INPUTS_ENVIRONMENT_NAME
+    assert environment.revision == read_inputs_environment_revision(environment.model_dump(mode='json'))
+    assert set(environment.tools) == {'read_inputs', 'write'}
+    assert binding.acceptance is None and not hosts[review.REVIEW_PACKED_PROFILE]['profile']['enabled']
+    with pytest.raises(VideoCatalogError, match='animation_review_selection_ambiguous'):
+        measure_animation_review_bundles(include_input_review=True, include_batched_review=True)
+
+
 def model(*, vision=True, model_name='candidate-vision'):
     return dict(revision='model-candidate-v1', api_mode='openai-responses',
                 provider='task-proxy', model=model_name,
@@ -49,7 +76,8 @@ def public_config(*, vision=False):
 def prepare(current=None, **changes):
     manifests, _ = measure_animation_review_bundles(
         include_sequence_review=changes.get('include_sequence_review', False),
-        include_batched_review=changes.get('include_batched_review', False))
+        include_batched_review=changes.get('include_batched_review', False),
+        include_input_review=changes.get('include_input_review', False))
     settings = dict(worker_image=IMAGE, resource_manifests=manifests,
                     source_pool_id='existing-pool', vision_model_policy=model())
     settings.update(changes)

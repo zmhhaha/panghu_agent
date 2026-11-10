@@ -432,6 +432,13 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
         bundle_revision = policy.execution_binding.bundle_revision
         extensions = ((Path(ACADEMIC_EXTENSION),)
                       if policy.name in {'research.generate.v1', 'research.retrieve.v1'} else ())
+        environment = registry.environment(binding.tool_environment.name, binding.tool_environment.revision)
+        if 'read_inputs' in environment.tools:
+            from .input_tools import verified_read_inputs_extension
+            try:
+                extensions += (verified_read_inputs_extension(),)
+            except (OSError, ValueError):
+                raise WorkerConfigError() from None
         profile = DomainExecutionProfile(policy, bundle_revision, extensions=extensions)
         profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL_ROOT
     settings = build_pi_runtime_settings(policy, command=(NODE, PI_CLI), node_command=(NODE,),

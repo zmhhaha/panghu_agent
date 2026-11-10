@@ -42,6 +42,9 @@ def implementation(name):
     if name == 'video.animation-review.v3':
         from .video_animation_review import VideoAnimationReviewBatchProfile
         return VideoAnimationReviewBatchProfile()
+    if name == 'video.animation-review.v4':
+        from .video_animation_review import VideoAnimationReviewInputProfile
+        return VideoAnimationReviewInputProfile()
     if name == 'video.animation-create.v2':
         from .video_animation_create import VideoAnimationCreateProfile
         return VideoAnimationCreateProfile()

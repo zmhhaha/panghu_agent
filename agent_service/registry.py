@@ -19,7 +19,7 @@ from .profiles import implementation
 from .catalog_limits import (CATALOG_READER_MAX_BYTES, CONTRACT_RECORD_LIMIT, HISTORY_RECORD_LIMIT,
                              validate_catalog_budget)
 
-Tool = Literal['read', 'write', 'bash', 'image', 'academic_search', 'academic_verify']
+Tool = Literal['read', 'write', 'bash', 'image', 'academic_search', 'academic_verify', 'read_inputs']
 OutputSchema = Literal['text-output.v1', 'ppt-plan_initial-output.v1', 'ppt-plan_options-output.v1',
     'ppt-generate-output.v1', 'ppt-revise-output.v1', 'ppt-prepare-output.v1',
     'research-output.v1', 'research-revision-output.v1', 'research-plan-output.v1',
@@ -28,7 +28,7 @@ OutputSchema = Literal['text-output.v1', 'ppt-plan_initial-output.v1', 'ppt-plan
     'video-explanation-plan-output.v1', 'video-process-plan-output.v1',
     'video-animation-experiment-output.v1', 'video-animation-observe-output.v1',
     'video-animation-review-output.v1', 'video-animation-create-output.v2',
-    'video-animation-review-output.v2', 'video-animation-review-output.v3']
+    'video-animation-review-output.v2', 'video-animation-review-output.v3', 'video-animation-review-output.v4']
 
 NAME = r'^[a-z][a-z0-9_.-]{0,79}$'
 REVISION = r'^[A-Za-z0-9_.-]{1,100}$'
@@ -163,6 +163,16 @@ class ToolEnvironment(_Record):
     @classmethod
     def unique_capabilities(cls, values):
         return _unique(values)
+
+    @model_validator(mode='after')
+    def fixed_input_reader(self):
+        if 'read_inputs' in self.tools:
+            from .input_tools import READ_INPUTS_ENVIRONMENT_NAME, read_inputs_environment_revision
+            if (self.name != READ_INPUTS_ENVIRONMENT_NAME
+                    or self.revision != read_inputs_environment_revision(self.model_dump(mode='json'))
+                    or set(self.tools) != {'read_inputs', 'write'}):
+                raise ValueError('Input reader requires its fixed extension identity and tool scope')
+        return self
 
 
 class ResourceRef(_Record):

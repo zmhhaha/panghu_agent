@@ -19,6 +19,19 @@ PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4
 ATTEMPT = 'visual-agent-attempt'
 
 
+def test_complete_input_review_has_its_own_pinned_bundle_and_no_individual_read_tool(tmp_path):
+    profile, envelope = prepare(tmp_path, profile_name=visual.REVIEW_PACKED_PROFILE)
+    assert profile.required_tools == ('read_inputs', 'write')
+    assert profile.task_schema == 'video-animation-review.v4'
+    assert profile.output_schema == 'video-animation-review-output.v4'
+    assert set(visual.verified_packed_bundle()) == visual.PACKED_BUNDLE_FILES
+    prompt = profile.build_prompt(envelope.task)
+    assert 'read_inputs' in prompt and 'no arguments' in prompt
+    assert 'Use read on every' not in prompt and 'Read inputs/' not in prompt
+    artifact = collect(profile, tmp_path, envelope)
+    assert artifact and implementation(visual.REVIEW_BATCH_PROFILE).required_tools == ('read', 'write')
+
+
 def input_document(review=True):
     document = dict(schema=visual.REVIEW_INPUT_SCHEMA if review else visual.OBSERVE_INPUT_SCHEMA,
         clip_id='arbitrary-expression-fragment', goal='Keep the moving object traceable through a crossing.',

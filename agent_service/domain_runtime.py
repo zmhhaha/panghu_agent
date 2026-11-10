@@ -26,7 +26,7 @@ class DomainExecutionProfile(ExecutionProfile):
         # builtins. Select precisely the domain contract's supported tools;
         # merely loading the academic extension does not activate its tools.
         self.allowed_tools = tuple(t for t in self.impl.required_tools
-            if t in {'read', 'write', 'bash', 'academic_search', 'academic_verify'})
+            if t in {'read', 'write', 'bash', 'academic_search', 'academic_verify', 'read_inputs'})
         # Pi's read tool natively accepts images; no invented `image` tool.
         # Research and video embed their checksum-verified procedures in the
         # prompt. Only PPT uses Pi's separate skill loading; other domains must

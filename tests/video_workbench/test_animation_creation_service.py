@@ -139,7 +139,7 @@ class Renderer:
 def fake_prepare(media, directory, *, clip_id, goal, source_sha256, sampling_layers, frame_limit, review_profile):
     """A fake decoder for orchestration tests, explicitly not real media evidence."""
     assert media.read_bytes().startswith(b'fake-media-for-business-unit-test:')
-    assert review_profile == visual.REVIEW_BATCH_PROFILE and frame_limit == 24
+    assert review_profile in {visual.REVIEW_BATCH_PROFILE, visual.REVIEW_PACKED_PROFILE} and frame_limit == 24
     inputs = directory / 'inputs'
     inputs.mkdir(parents=True)
     document = dict(schema=visual.REVIEW_INPUT_SCHEMA, clip_id=clip_id, goal=goal,
@@ -209,6 +209,7 @@ def test_full_chain_is_one_initial_one_review_one_revision_and_two_renders(work)
     initial, revised = [job['document'] for job in work['creator'].jobs.values()]
     assert initial['base_source'] is None and revised['base_source']['source_revision'] == 'original'
     assert revised['review']['issues'] == run['review']['issues']
+
     assert initial['goal'] == revised['goal'] and initial['guidance'] == revised['guidance']
     assert 'fixed explanations' in initial['guidance']
     assert run['request_id'] == work['body']['request_id'] and run['input_role'] == 'development'
@@ -221,6 +222,25 @@ def test_full_chain_is_one_initial_one_review_one_revision_and_two_renders(work)
         work['svc'].list('alice')
         advance(work)
     assert calls == (len(work['creator'].calls), len(work['reviewer'].calls), len(work['renderer'].calls))
+
+
+def test_new_v4_runs_and_existing_v3_runs_keep_their_frozen_reviewers(work):
+    # Existing test fixture represents an already queued v3 run.
+    original = work['svc']._read('alice', work['run']['id'])
+    newer = Gateway(visual.REVIEW_PACKED_PROFILE)
+    work['svc'] = AnimationCreationService(work['root'], creation_gateway=work['creator'],
+        review_gateway=newer, renderer=work['renderer'],
+        historical_review_gateways={visual.REVIEW_BATCH_PROFILE: work['reviewer']})
+    assert work['svc']._read('alice', original['id'])['frozen'] == original['frozen']
+    completed = complete(work)
+    assert work['svc']._read('alice', completed['id'])['frozen']['review_profile'] == visual.REVIEW_BATCH_PROFILE
+    assert work['reviewer'].count('submit') == 1 and newer.count('submit') == 0
+    next_run = work['svc'].start('alice', dict(work['body'], request_id=str(uuid4())))
+    assert work['svc']._read('alice', next_run['id'])['frozen']['review_profile'] == visual.REVIEW_PACKED_PROFILE
+    work.update(run=next_run, reviewer=newer)
+    completed = complete(work)
+    assert work['svc']._read('alice', completed['id'])['frozen']['review_profile'] == visual.REVIEW_PACKED_PROFILE
+    assert newer.count('submit') == 1
 
 
 def test_issue_free_review_does_not_allocate_revision(work):

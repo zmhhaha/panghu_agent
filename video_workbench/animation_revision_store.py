@@ -242,7 +242,7 @@ class AnimationRevisionStore:
         _text(review_operation_id)
         operation_id = review_operation_id if operation_id is None else _text(operation_id)
         _require(type(profile) is str and profile in {
-            'video.animation-review.v1', 'video.animation-review.v2', 'video.animation-review.v3'}
+            'video.animation-review.v1', 'video.animation-review.v2', 'video.animation-review.v3', 'video.animation-review.v4'}
             and type(revision) is str and revision == '1',
             'animation_revision_review_profile_invalid')
         versions = _media(media_versions)

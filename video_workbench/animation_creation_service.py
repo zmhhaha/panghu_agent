@@ -125,7 +125,7 @@ class _CancellationRenderer:
 
 
 class AnimationCreationService:
-    def __init__(self, root, *, creation_gateway, review_gateway, renderer):
+    def __init__(self, root, *, creation_gateway, review_gateway, renderer, historical_review_gateways=None):
         self.root = Path(root).absolute()
         _require(not any(p.is_symlink() for p in (self.root, *self.root.parents)),
                  'animation_creation_root_invalid')
@@ -137,8 +137,13 @@ class AnimationCreationService:
                  'animation_creation_root_invalid')
         self.creation_gateway, self.review_gateway, self.renderer = creation_gateway, review_gateway, renderer
         _require(getattr(creation_gateway, 'profile', None) == creation.PROFILE
-                 and getattr(review_gateway, 'profile', None) == visual.REVIEW_BATCH_PROFILE,
+                 and getattr(review_gateway, 'profile', None) in {visual.REVIEW_BATCH_PROFILE, visual.REVIEW_PACKED_PROFILE},
                  'animation_creation_profile_mismatch', 409)
+        self.review_gateways = dict(historical_review_gateways or {})
+        _require(all(profile in {visual.REVIEW_BATCH_PROFILE, visual.REVIEW_PACKED_PROFILE}
+            and getattr(gateway, 'profile', None) == profile for profile, gateway in self.review_gateways.items()),
+            'animation_creation_profile_mismatch', 409)
+        self.review_gateways[review_gateway.profile] = review_gateway
         self.revisions = AnimationRevisionStore(self.root / 'creation-polish.sqlite3')
         with self._db() as db:
             tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -237,7 +242,7 @@ class AnimationCreationService:
             constraints=bounds, assets={}, prompt_revision='lab-create-v2-r1', guidance=_FIXED_GUIDANCE,
             base_source=None, review=None))
         frozen = dict(definition=target, creation_input=document, input_role=body['input_role'],
-                      review_profile=visual.REVIEW_BATCH_PROFILE)
+                      review_profile=self.review_gateway.profile)
         now = time.time()
         run = dict(schema=SCHEMA, id=run_id, owner=owner, request_id=body['request_id'],
             input_role=body['input_role'], experiment=dict(id=target['id'], identity=target['identity'],
@@ -445,11 +450,16 @@ class AnimationCreationService:
         staging.rename(directory)
         return self._review_directory(run)
 
+    def _reviewer(self, run):
+        gateway = self.review_gateways.get(run['frozen']['review_profile'])
+        _require(gateway is not None, 'animation_creation_frozen_reviewer_unavailable', 409)
+        return gateway
+
     def _polish(self, run):
         directory = self._review_directory(run)
         source = run['operations']['initial_creation']['result']
         checked_creator = _CancellationGateway(self.creation_gateway, lambda: self._cancelled(run))
-        checked_reviewer = _CancellationGateway(self.review_gateway, lambda: self._cancelled(run))
+        checked_reviewer = _CancellationGateway(self._reviewer(run), lambda: self._cancelled(run))
         checked_renderer = _CancellationRenderer(self.renderer, lambda: self._cancelled(run))
         coordinator = AnimationPolishCoordinator(self.revisions, checked_reviewer, checked_creator, checked_renderer)
         outcome = coordinator.step(run['lineage_id'], review_directory=directory,
@@ -545,7 +555,7 @@ class AnimationCreationService:
                             self.revisions.mark_submitted(active['id'], active['id'])
                         self.revisions.finish(active['id'], 'cancelled', result=dict(render_finished_after_cancel=True))
             elif active:
-                gateway = self.review_gateway if active['stage'] == 'review' else self.creation_gateway
+                gateway = self._reviewer(run) if active['stage'] == 'review' else self.creation_gateway
                 done = self._cancel_remote(run, active, gateway, ledger=True)
         elif run['stage'] == 'initial_render':
             op = run['operations'].get('initial_render')

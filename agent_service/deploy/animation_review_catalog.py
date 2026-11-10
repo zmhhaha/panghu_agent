@@ -29,11 +29,19 @@ _MODULES = (review, creation)
 _VISION = frozenset({'text', 'tool_calls', 'vision'})
 
 
-def _modules(include_sequence_review, include_batched_review=False):
+def _modules(include_sequence_review, include_batched_review=False, include_input_review=False):
     require(type(include_sequence_review) is bool, 'animation_sequence_review_selection_invalid')
     require(type(include_batched_review) is bool, 'animation_batch_review_selection_invalid')
-    require(not (include_sequence_review and include_batched_review),
+    require(type(include_input_review) is bool, 'animation_input_review_selection_invalid')
+    require(sum((include_sequence_review, include_batched_review, include_input_review)) <= 1,
             'animation_review_selection_ambiguous')
+    if include_input_review:
+        return (creation, SimpleNamespace(
+            BUNDLE_ROOT=review.PACKED_BUNDLE_ROOT,
+            BUNDLE_REVISION=review.PACKED_BUNDLE_REVISION,
+            BUNDLE_MANIFEST_SHA256=review.PACKED_BUNDLE_MANIFEST_SHA256,
+            BUNDLE_FILES=review.PACKED_BUNDLE_FILES,
+            verified_bundle=review.verified_packed_bundle))
     if include_batched_review:
         return (creation, SimpleNamespace(
             BUNDLE_ROOT=review.BATCH_BUNDLE_ROOT,
@@ -72,14 +80,15 @@ def _manifest(manifest, module):
     return rows
 
 
-def measure_animation_review_bundles(*, include_sequence_review=False, include_batched_review=False):
+def measure_animation_review_bundles(*, include_sequence_review=False, include_batched_review=False,
+        include_input_review=False):
     """Verify frozen bundles, adding sequence review only when explicitly selected.
 
     This measures local procedure bytes only. Image/container measurement,
     actual frame delivery and model readiness require separate evidence.
     """
     manifests, measured = {}, []
-    for module in _modules(include_sequence_review, include_batched_review):
+    for module in _modules(include_sequence_review, include_batched_review, include_input_review):
         raw = (module.BUNDLE_ROOT / 'manifest.json').read_bytes()
         require(hashlib.sha256(raw).hexdigest() == module.BUNDLE_MANIFEST_SHA256,
                 'animation_review_bundle_manifest_mismatch')
@@ -121,6 +130,7 @@ def prepare_animation_review_catalog(current, *, worker_image, resource_manifest
         source_pool_id, vision_source_pool_id=None, vision_source_binding=None,
         vision_model_policy=None, creator_model_policy=None, caller=None,
         runtime_revision=None, include_sequence_review=False, include_batched_review=False,
+        include_input_review=False,
         creator_worker_image=None, review_only=False, register_caller=True,
         model_proxy_url='http://agent-model-proxy.agent-service.svc.cluster.local:8080/v1'):
     """Return (additive catalog, hosts keyed by profile, preparation receipt).
@@ -131,15 +141,16 @@ def prepare_animation_review_catalog(current, *, worker_image, resource_manifest
     candidate; it is not admitted until that exact combination passes real
     acceptance. Default text-only policies are rejected for visual roles.
     """
-    modules = _modules(include_sequence_review, include_batched_review)
-    profiles = ((creation.PROFILE, review.REVIEW_BATCH_PROFILE) if include_batched_review else
+    modules = _modules(include_sequence_review, include_batched_review, include_input_review)
+    profiles = ((creation.PROFILE, review.REVIEW_PACKED_PROFILE) if include_input_review else
+                (creation.PROFILE, review.REVIEW_BATCH_PROFILE) if include_batched_review else
                 (*PROFILES, review.REVIEW_SEQUENCE_PROFILE) if include_sequence_review else PROFILES)
-    require(type(review_only) is bool and (not review_only or include_batched_review),
+    require(type(review_only) is bool and (not review_only or include_batched_review or include_input_review),
             'animation_review_only_selection_invalid')
     require(type(register_caller) is bool, 'animation_review_caller_registration_invalid')
     caller_profiles = profiles
     if review_only:
-        profiles = (review.REVIEW_BATCH_PROFILE,)
+        profiles = (review.REVIEW_PACKED_PROFILE if include_input_review else review.REVIEW_BATCH_PROFILE,)
     before = deepcopy(current)
     existing = registry(current)
     require(type(worker_image) is str and re.fullmatch(
@@ -185,7 +196,8 @@ def prepare_animation_review_catalog(current, *, worker_image, resource_manifest
                 'animation_review_existing_creator_image_mismatch')
         require(creator_model_policy is None or dict(creator_model) == dict(selected_creator.model_policy),
                 'animation_review_existing_creator_model_mismatch')
-    caller_name = ('video-animation-creation-batch' if include_batched_review else
+    caller_name = ('video-animation-creation-input' if include_input_review else
+                   'video-animation-creation-batch' if include_batched_review else
                    'video-animation-creation-sequence' if include_sequence_review else 'video-animation-creation')
     caller = deepcopy(caller) if caller is not None else dict(tenant='internal',
         caller=caller_name, profiles=list(caller_profiles), token_ref=caller_name)
@@ -196,11 +208,12 @@ def prepare_animation_review_catalog(current, *, worker_image, resource_manifest
 
     merged, hosts, combinations = deepcopy(current), {}, []
     for profile in profiles:
+        packed = include_input_review and profile == review.REVIEW_PACKED_PROFILE
         batched = include_batched_review and profile == review.REVIEW_BATCH_PROFILE
         sequence = include_sequence_review and profile == review.REVIEW_SEQUENCE_PROFILE
-        visual = profile in {review.OBSERVE_PROFILE, review.REVIEW_PROFILE} or sequence or batched
-        module = modules[-1] if sequence or batched else review if visual else creation
-        role = ('review-batch-v3' if batched else 'review-sequence-v2' if sequence else 'observe' if profile == review.OBSERVE_PROFILE
+        visual = profile in {review.OBSERVE_PROFILE, review.REVIEW_PROFILE} or sequence or batched or packed
+        module = modules[-1] if sequence or batched or packed else review if visual else creation
+        role = ('review-input-v4' if packed else 'review-batch-v3' if batched else 'review-sequence-v2' if sequence else 'observe' if profile == review.OBSERVE_PROFILE
                 else 'review' if visual else 'create-v2')
         selected_image = worker_image if visual else creator_worker_image or worker_image
         model = visual_model if visual else creator_model
@@ -221,6 +234,10 @@ def prepare_animation_review_catalog(current, *, worker_image, resource_manifest
             image_digest=selected_image.rsplit('@', 1)[1],
             runtime_revision=runtime_revision or source_environment.runtime_revision)
         environment_data['revision'] = 'env-' + digest(environment_data)[:20]
+        if packed:
+            from agent_service.input_tools import READ_INPUTS_ENVIRONMENT_NAME, read_inputs_environment_revision
+            environment_data['name'] = READ_INPUTS_ENVIRONMENT_NAME
+            environment_data['revision'] = read_inputs_environment_revision(environment_data)
         environment = ToolEnvironment.model_validate(environment_data)
         binding_data = dict(id='video-animation-' + role + '-pi', revision='v1',
             profile=profile, profile_revision='1', engine='pi', adapter_revision=PI_ADAPTER_REVISION,

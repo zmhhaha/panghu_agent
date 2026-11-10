@@ -30,7 +30,7 @@ from video_workbench.animation_candidate_import import EXPORT_NAMES, validate_ca
 
 
 PROFILES = {creation.PROFILE: 'create', visual.REVIEW_SEQUENCE_PROFILE: 'review',
-            visual.REVIEW_BATCH_PROFILE: 'review'}
+            visual.REVIEW_BATCH_PROFILE: 'review', visual.REVIEW_PACKED_PROFILE: 'review'}
 CHECKS = ('capability', 'model_round_trip', 'isolation', 'model_proxy_lease')
 ISOLATION = ('arbitrary_mount_denied', 'caps_empty', 'control_unreadable',
     'detached_writers_stopped', 'input_write_denied', 'no_new_privileges',
@@ -81,14 +81,18 @@ def _bundle(package, registry, binding, policy, profile):
     if profile == creation.PROFILE:
         revision, manifest_sha, members = (
             creation.BUNDLE_REVISION, creation.BUNDLE_MANIFEST_SHA256, creation.BUNDLE_FILES)
+    elif profile == visual.REVIEW_PACKED_PROFILE:
+        revision, manifest_sha, members = (
+            visual.PACKED_BUNDLE_REVISION, visual.PACKED_BUNDLE_MANIFEST_SHA256, visual.PACKED_BUNDLE_FILES)
     elif profile == visual.REVIEW_BATCH_PROFILE:
         revision, manifest_sha, members = (
             visual.BATCH_BUNDLE_REVISION, visual.BATCH_BUNDLE_MANIFEST_SHA256, visual.BATCH_BUNDLE_FILES)
     else:
         revision, manifest_sha, members = (
             visual.SEQUENCE_BUNDLE_REVISION, visual.SEQUENCE_BUNDLE_MANIFEST_SHA256, visual.SEQUENCE_BUNDLE_FILES)
+    tools = {'read_inputs', 'write'} if profile == visual.REVIEW_PACKED_PROFILE else {'read', 'write'}
     require(bundle.revision == revision and set(contract.required_tools) == set(bundle.required_tools)
-            == set(environment.tools) == set(handler.required_tools) == {'read', 'write'},
+            == set(environment.tools) == set(handler.required_tools) == tools,
             'animation_creation_admission_bundle_tools_mismatch')
     require(set(required_model_capabilities(handler)) <= set(binding.model_policy.capabilities),
             'animation_creation_admission_model_policy_mismatch')
@@ -224,8 +228,9 @@ def assess_candidate(candidate_dir, *, source_root=None):
             and decode_video_json(projected.get('scenario.json')) == documents['scenario.json'],
             'animation_creation_admission_harness_mismatch')
     capability = observation.get('capability', {})
+    expected_tools = ['read_inputs', 'write'] if profile == visual.REVIEW_PACKED_PROFILE else ['read', 'write']
     require(capability.get('engine') == 'pi' and capability.get('package_measured') is True
-            and capability.get('allowed_tools') == ['read', 'write']
+            and capability.get('allowed_tools') == expected_tools
             and capability.get('pi_cage_repository') == PI_CAGE_REPOSITORY
             and capability.get('pi_cage_revision') == PI_CAGE_REVISION
             and capability.get('pi_version') == PI_VERSION

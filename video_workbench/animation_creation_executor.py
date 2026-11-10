@@ -16,7 +16,7 @@ from agent_service.client import AgentClient
 from .animation_creation_http import CreationHTTPServer, _token
 from .animation_creation_renderer import DurableAnimationRenderer
 from .animation_creation_service import AnimationCreationService
-from .animation_review_gateway import AnimationCreateGateway, AnimationBatchReviewGateway
+from .animation_review_gateway import AnimationCreateGateway, AnimationBatchReviewGateway, AnimationInputReviewGateway
 
 
 def read_token(path):
@@ -40,7 +40,8 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
     client = AgentClient(agent_url, agent_token, timeout=30)
     try:
         service = AnimationCreationService(root, creation_gateway=AnimationCreateGateway(client),
-            review_gateway=AnimationBatchReviewGateway(client), renderer=renderer)
+            review_gateway=AnimationInputReviewGateway(client), renderer=renderer,
+            historical_review_gateways={'video.animation-review.v3': AnimationBatchReviewGateway(client)})
         server = CreationHTTPServer(service, executor_token, host=listen, port=port)
     except BaseException:
         client.close()

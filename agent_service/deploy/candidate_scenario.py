@@ -339,7 +339,7 @@ def load_scenario(path, source_dir, parent_dir, policy):
             'candidate_animation_experiment_input_mismatch')
     elif policy.name in {'video.animation-observe.v1', 'video.animation-review.v1',
                          'video.animation-create.v2', 'video.animation-review.v2',
-                         'video.animation-review.v3'}:
+                         'video.animation-review.v3', 'video.animation-review.v4'}:
         # Validate the exact root-owned, explicitly projected JSON/frame files.
         # No temporary workspace, renamed inputs, or implicit source is created.
         require(export is None, 'candidate_animation_role_business_export_not_supported')

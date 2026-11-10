@@ -34,7 +34,7 @@ COPY agent_service/ /app/agent_service/
 COPY video_workbench/ /app/video_workbench/
 ARG SOURCE_REVISION
 RUN python -c "import os,re; assert re.fullmatch(r'[0-9a-f]{40}',os.environ['SOURCE_REVISION'])" \
-    && python -c "from video_workbench.animation_creation_executor import create_server; from agent_service.profiles.video_animation_create import verified_bundle; from agent_service.profiles.video_animation_review import verified_bundle as old_bundle,verified_sequence_bundle,verified_batch_bundle; verified_bundle(); old_bundle(); verified_sequence_bundle(); verified_batch_bundle()" \
+    && python -c "from video_workbench.animation_creation_executor import create_server; from agent_service.profiles.video_animation_create import verified_bundle; from agent_service.profiles.video_animation_review import verified_bundle as old_bundle,verified_sequence_bundle,verified_batch_bundle,verified_packed_bundle; from agent_service.input_tools import verified_read_inputs_extension; verified_bundle(); old_bundle(); verified_sequence_bundle(); verified_batch_bundle(); verified_packed_bundle(); verified_read_inputs_extension()" \
     && mkdir -p /var/lib/video-animation-creation
 LABEL org.opencontainers.image.source="https://github.com/zmhhaha/panghu_agent" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \

@@ -82,7 +82,7 @@ def test_video_probe_requires_explicit_reviewed_scenario(image_packages, profile
 # New visual roles require actual frame evidence and an explicit reviewed scenario.
 @pytest.mark.parametrize('profile', sorted(probe.PROFILES - {'video.animation-experiment.v1',
     'video.animation-observe.v1', 'video.animation-review.v1', 'video.animation-create.v2',
-    'video.animation-review.v2', 'video.animation-review.v3'}))
+    'video.animation-review.v2', 'video.animation-review.v3', 'video.animation-review.v4'}))
 @pytest.mark.parametrize('engine', ['pi', 'hermes'])
 def test_candidate_is_exact_disabled_binding_without_production_approval(image_packages, profile, engine):
     original = config(profile, engine).model_dump(mode='json')

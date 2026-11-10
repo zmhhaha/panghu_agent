@@ -39,7 +39,7 @@ PROFILES = {'ppt.' + stage + '.v1' for stage in (
     'video.storyboard.v1', 'video.scene.v1', 'video.motion-plan.v1', 'video.explanation-plan.v1',
     'video.process-plan.v1', 'video.animation-experiment.v1',
     'video.animation-observe.v1', 'video.animation-review.v1', 'video.animation-create.v2',
-    'video.animation-review.v2', 'video.animation-review.v3'}
+    'video.animation-review.v2', 'video.animation-review.v3', 'video.animation-review.v4'}
 FIXTURE_PROFILES = {'ppt.plan_initial.v1', 'research.revise.v1'}
 CONTROL = Path('/run/agent-control')
 WORK = Path('/work')
@@ -471,6 +471,15 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
     from agent_service.engines import PiDriver
     extensions = ((Path(ACADEMIC_EXTENSION),)
                   if policy.name in {'research.generate.v1', 'research.retrieve.v1'} else ())
+    from agent_service.worker_entry import _host_registry
+    environment = _host_registry(config).environment(binding.tool_environment.name,
+                                                    binding.tool_environment.revision)
+    if 'read_inputs' in environment.tools:
+        from agent_service.input_tools import verified_read_inputs_extension
+        try:
+            extensions += (verified_read_inputs_extension(),)
+        except (OSError, ValueError):
+            raise ServiceError('candidate_input_reader_integrity_invalid', 422) from None
     profile = DomainExecutionProfile(policy, policy.execution_binding.bundle_revision, extensions=extensions)
     profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL
     settings = build_pi_runtime_settings(policy, command=(NODE, PI_CLI), node_command=(NODE,), provider=config.model.provider,

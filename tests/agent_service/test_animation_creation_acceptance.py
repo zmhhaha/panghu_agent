@@ -52,7 +52,8 @@ def capture(tmp_path, role='review', *, review_profile=visual.REVIEW_SEQUENCE_PR
     uid = 219100000
     observation = dict(harness_sha256=harness_sha256(),
         scenario=dict(scenario_harness_sha256=module_sha256()),
-        capability=dict(engine='pi', package_measured=True, allowed_tools=['read', 'write'],
+        capability=dict(engine='pi', package_measured=True,
+            allowed_tools=['read_inputs', 'write'] if envelope.profile == visual.REVIEW_PACKED_PROFILE else ['read', 'write'],
             pi_cage_repository=admission.PI_CAGE_REPOSITORY, pi_cage_revision=admission.PI_CAGE_REVISION,
             pi_version=admission.PI_VERSION, node_version='24.22.1'),
         isolation={**{key: True for key in admission.ISOLATION}, 'groups': [], 'uid': [uid + 2] * 3,
@@ -166,6 +167,35 @@ def test_batch_bundle_cannot_be_admitted_with_old_review_manifest(tmp_path):
         (PACKAGE / 'resources' / visual.SEQUENCE_BUNDLE_REVISION / 'manifest.json').read_bytes())
     with pytest.raises(ServiceError, match='animation_creation_admission_resource_mismatch'):
         admission.assess_candidate(directory, source_root=copied)
+
+
+def test_input_review_acceptance_uses_bound_reader_tools_bundle_and_suite(tmp_path):
+    directory, _ = capture(tmp_path, review_profile=visual.REVIEW_PACKED_PROFILE)
+    output = tmp_path / 'input-review'
+    summary = admission.review_candidate(directory, output)
+    approval = read(output / 'binding-approvals.json')[0]
+    target = output / approval['path']
+    report = read(target / 'acceptance-evidence.json')
+    host = HostConfig.model_validate(read(target / 'config.json'))
+    assert summary['profile'] == visual.REVIEW_PACKED_PROFILE
+    assert approval['acceptance']['suite'] == 'video.animation-review-contract.v4'
+    assert report['checks']['capability']['allowed_tools'] == ['read_inputs', 'write']
+    assert host.execution_catalog['capability_bundles'][0]['revision'] == visual.PACKED_BUNDLE_REVISION
+    assert report['measured_bundle_files_sha256']['manifest.json'] == visual.PACKED_BUNDLE_MANIFEST_SHA256
+    assert accepted_host(host, target / 'acceptance.json')
+    assert summary['enabled'] is False and summary['live_http_verified'] is False
+    assert summary['model_requests'] == summary['uid_allocations'] == 0
+
+
+def test_input_review_cannot_use_legacy_read_capability_evidence(tmp_path):
+    directory, root = capture(tmp_path, review_profile=visual.REVIEW_PACKED_PROFILE)
+    result, evidence = read(root / 'candidate-result.json'), read(root / 'candidate-evidence.json')
+    result['observations']['capability']['allowed_tools'] = ['read', 'write']
+    evidence['observations'] = result['observations']
+    save(root / 'candidate-result.json', result)
+    save(root / 'candidate-evidence.json', evidence)
+    with pytest.raises(ServiceError, match='animation_creation_admission_capability_missing'):
+        admission.review_candidate(directory, tmp_path / 'rejected-input-review')
 
 
 @pytest.mark.parametrize('name,change', [

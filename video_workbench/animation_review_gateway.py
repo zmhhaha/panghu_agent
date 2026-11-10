@@ -196,3 +196,9 @@ class AnimationBatchReviewGateway(AnimationReviewGateway):
     """Production review with a bounded batch of independent frame reads."""
     profile = visual.REVIEW_BATCH_PROFILE
     business_prefix, idempotency_prefix = 'animation-review-batch:', 'animation-review-batch-'
+
+
+class AnimationInputReviewGateway(AnimationReviewGateway):
+    """One bounded tool result supplies manifest and all original frames."""
+    profile = visual.REVIEW_PACKED_PROFILE
+    business_prefix, idempotency_prefix = 'animation-review-input:', 'animation-review-input-'

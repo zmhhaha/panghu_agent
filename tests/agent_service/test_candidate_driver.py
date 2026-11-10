@@ -26,10 +26,13 @@ from test_candidate_scenario import synthetic_source_root_owner, write_scenario
 def config(profile, engine='pi'):
     # New roles are additive preparations, not additions to the frozen original
     # catalog generator. Use their real preparation path with synthetic pins.
-    if profile in {'video.animation-observe.v1', 'video.animation-review.v1', 'video.animation-create.v2'}:
+    if profile in {'video.animation-observe.v1', 'video.animation-review.v1', 'video.animation-create.v2',
+                   'video.animation-review.v2', 'video.animation-review.v3', 'video.animation-review.v4'}:
         from test_animation_review_catalog import prepare
         assert engine == 'pi'
-        _, hosts, _ = prepare()
+        _, hosts, _ = prepare(include_sequence_review=profile == 'video.animation-review.v2',
+            include_batched_review=profile == 'video.animation-review.v3',
+            include_input_review=profile == 'video.animation-review.v4')
         return worker_entry.HostConfig.model_validate(hosts[profile])
     if profile == 'video.animation-experiment.v1':
         from test_animation_experiment_catalog import prepare
@@ -139,18 +142,40 @@ def test_all_candidate_factories_keep_exact_contract_tools_and_capabilities(fact
         driver.runtime.profile.policy.max_timeout_seconds)
     assert driver.runtime.settings.model_env == {'AGENT_MODEL_API_KEY': 'offline-attempt-only-grant'}
     academic = profile in {'research.generate.v1', 'research.retrieve.v1'}
+    input_review = profile == 'video.animation-review.v4'
+    from agent_service.input_tools import READ_INPUTS_EXTENSION
     assert driver.runtime.profile.extension_paths == (
-        (Path(ACADEMIC_EXTENSION),) if academic else ())
+        (Path(ACADEMIC_EXTENSION),) if academic else (READ_INPUTS_EXTENSION,) if input_review else ())
     assert callable(getattr(driver, 'academic_observer', None)) is academic
     assert driver.runtime.profile.load_skills is profile.startswith('ppt.')
     if profile.startswith('video.'):
         assert run.config.profile.revision == '1'
-        assert driver.runtime.profile.allowed_tools == ('read', 'write')
+        assert driver.runtime.profile.allowed_tools == (('read_inputs', 'write') if input_review else ('read', 'write'))
         assert driver.runtime.profile.shared_project is False
     assert driver.runtime.profile.policy.enabled is False
     assert run.config.profile.enabled is False
     assert all(not route['enabled'] for route in run.config.execution_catalog['routes'])
     assert run.observations['capability']['engine'] == 'pi'
+
+
+@pytest.mark.parametrize('production', [False, True], ids=['candidate', 'production'])
+def test_complete_input_review_factory_loads_verified_fixed_extension(factory, production):
+    from agent_service.input_tools import verified_read_inputs_extension
+    run = factory('video.animation-review.v4', production=production)
+    assert run.driver.runtime.profile.extension_paths == (verified_read_inputs_extension(),)
+    assert run.driver.runtime.profile.allowed_tools == ('read_inputs', 'write')
+
+
+@pytest.mark.parametrize('production', [False, True], ids=['candidate', 'production'])
+def test_modified_input_reader_is_rejected_before_any_runtime_is_created(factory, monkeypatch, production):
+    from agent_service import input_tools
+    monkeypatch.setattr(input_tools, '_read', lambda *args: b'changed fixed reader')
+    monkeypatch.setattr(runtime, 'PiRuntime', lambda *args, **kwargs: pytest.fail('Runtime must not be created'))
+    monkeypatch.setattr(worker_entry, 'PiRuntime', lambda *args, **kwargs: pytest.fail('Runtime must not be created'))
+    error = worker_entry.WorkerConfigError if production else ServiceError
+    expected = 'invalid_worker_configuration' if production else 'candidate_input_reader_integrity_invalid'
+    with pytest.raises(error, match=expected):
+        factory('video.animation-review.v4', production=production)
 
 
 @pytest.mark.parametrize('profile', sorted(probe.PROFILES - probe.FIXTURE_PROFILES))

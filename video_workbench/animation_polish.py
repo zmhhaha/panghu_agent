@@ -182,7 +182,7 @@ class AnimationPolishCoordinator:
         """Advance one stage; call again explicitly to poll/reconcile/continue."""
         lineage = self.store.lineage(lineage_id)
         profile, review_document, files = load_bundle(review_directory)
-        _require(profile in {visual.REVIEW_PROFILE, visual.REVIEW_SEQUENCE_PROFILE, visual.REVIEW_BATCH_PROFILE},
+        _require(profile in {visual.REVIEW_PROFILE, visual.REVIEW_SEQUENCE_PROFILE, visual.REVIEW_BATCH_PROFILE, visual.REVIEW_PACKED_PROFILE},
                  'animation_polish_review_bundle_required')
         _require(getattr(self.review_gateway, 'profile', profile) == profile,
                  'animation_polish_review_profile_mismatch', 409)
