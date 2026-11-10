@@ -36,7 +36,7 @@
 
 控制发布、健康检查和 capability GET 不能代表产品真实制作链通过。
 
-## 首次真实制作：失败，正在核查
+## 首次真实制作失败与配置根因
 
 已登录浏览器在群体筛选与统计实验的开发输入中实际点击一次“制作并打磨一轮”，请求编号 `d6bc962b-b1e8-42a7-8cec-5e4c9ccac05a`，产品 run 为 `867bf1be-46f0-431a-ae99-3d6fad4af44e`。实验定义身份为 `67a09e0378cbbb991bae4bfe1456d2bd43ff784dd13cda14823d698e5780c428`。
 
@@ -49,5 +49,31 @@
 该预检只读取 ConfigMap，不加载 Secret，不启动 Worker／Agent 或模型；两个临时 Docker 容器均禁网、只读根文件系统、去掉 capabilities、无宿主机挂载。实际 Worker 以 root 控制进程启动，因此根因使用 root 静态检查的缺失 handler 结果；非 root 辅助检查的额外文件权限错误不作为生产根因。静态配置通过不证明实际 Pod 隔离或后续制作通过。原地证据为 `static-worker-config-check-1794314278555204542.json`。下一步仅修正两个新动画角色的 Host 配置闭包，补永久回归后再实际验收。
 
 浏览器刷新后重新匹配同一请求与 run，显示原失败记录，未再提交制作。刷新恢复和失败展示已实际观察；作品播放、定位、源码下载和成功制作全链仍未完成。该预登记一个 run 的额度已使用，后续先只读诊断，不能自动重开旧预算。OpenSpec 1.4 继续未完成，旧案例 E 漏检的 1.3 也不因本次发布改变。
+
+## 配置修复已发布
+
+纯配置修复 `1073dcb519d01c25b784ccc042788a902dda632b` 已提交并推送原开发分支，31 项定向回归通过。`project_animation_worker_host()` 在解析目录前精确选出目标五项引用闭包；与目标无关的旧合同不会被导入，原模型、权限、配额、准入记录及目标组合摘要保持。发布模块直接从精确 Git 字节导出，SHA256 `f94433add81aff0b80e8c50ee9c4d41dd282050f8732d788dd190630e6410fe9`。
+
+`host_catalog_fix_server_v1.py` 的 prepare、apply 已实际通过。仅新建两个目标 Host ConfigMap 与一个中央 ConfigMap，中央目录仅变更这两个池的 Host 名称；三个控制服务仅切换配置挂载，镜像及其余部署设置保持。新中央配置为 `agent-service-animation-hostfix-597a963876d95387`，配置 SHA256 `597a963876d953873ab1075156224cd5ec53928bfc2c7349c711d80def7765f0`。两个目标均在原固定 Worker 镜像内通过静态准入检查。
+
+应用时暂时关闭 Agent Service 入口，并在共享准入锁内停止 API／dispatcher；无活动任务后切换配置。恢复前已核对全部 Agent 表摘要、原 Host、UID 账本、运行 Secret、槽位与隔离记录保持；三个实际控制 Pod Ready、零重启，实际挂载配置摘要匹配。原 Service selector 及真实 API endpoint 已恢复，create/review v2 的鉴权能力 GET 均 ready。本次修复没有创建任务、调用模型、重复分配 UID 或再次初始化数据库，原失败仍保留。计划及实际回执在 `host-catalog-fix-plan-r1/`。
+
+这项配置发布成功仍不代表真实制作链或浏览器验收通过。后续内部 HTTP 功能验证使用另行冻结的一条新 run 预算，明确区别于已耗尽的原产品预算；浏览器工具因站点安全检查不可用而无法继续，不通过其他方式读取页面或登录会话来替代。
+
+## 新内部 HTTP 验证：原作通过，独立审阅超时
+
+原内部验收工具的准备检查因主机未安装 ffprobe／ffmpeg，在提交任何任务前停止。修正版复用固定摘要 `744b6241…` 的现有渲染镜像；检查工具版本及解码只在禁网、只读、移除 Linux capabilities、无密钥和 Docker socket 的受限临时容器中运行。唯一媒体挂载是操作器新保存的 MP4，只读映射；生成源码只作 JSON 解析及哈希核对，不执行。这些解码操作不是新的场景渲染。
+
+`internal_product_validation_v2.py` 已在 `internal-http-validation-r2/` 登记独立预算：新 run 最多 1、初作 1、独立审阅 1、可选修订 1、场景渲染 2，参考观察和 TTS 为 0，不自动重试。原失败及原预算文件摘要保持。准备检查通过后只调用一次私有执行器 HTTP POST；请求为 `199bea60-51b9-4c33-88fe-c51f448cd695`，新 run 为 `3cfbf00d-a797-4a14-adac-86da222a0d18`。随后只做 GET 跟踪，终态为 `failed / review`，业务错误 `animation_creation_review_failed`。本次预算已结束，不自动续跑或重发原请求。
+
+初作 job `c5497623-dfdb-440a-8e1b-5806263e5b49`、attempt `181aa63e-6c86-4b62-910b-2a736f3f07e9`、fence153 已完成，4 个持久模型请求全部 complete／HTTP200。原作隔离渲染通过：8秒、1280×720，MP4为115561字节，SHA256 `187214efe44d60b98a09f4285c680c02911b3054018fde3e3191826ba1792c42`；源码JSON为10479字节，文件SHA256 `9351e99de01565355bbbbd2cc1a00821ed3bec3e36ebc84fcd663cb4df9cb6e6`。实际产物HTTP MIME、字节哈希、ffprobe和完整ffmpeg解码均通过，未执行下载的生成源码。原地媒体与报告在 `internal-http-validation-r2/artifacts-1794318025634386640/`。
+
+独立审阅 job `7a972378-4d40-440b-8636-b6c00f66469c`、attempt `da8fa921-ee54-4225-9a5a-5f18740b47ce`、fence154 为 `timed_out`。25个持久模型请求中24个complete／HTTP200，最后1个仅admitted、无HTTP终态，不计为成功。上传24帧、22个不同的预期图片哈希；成功模型请求记录了253个图片输入，覆盖20／22个预期哈希，`all_expected_frame_hashes_transported=false`。这不能证明全部帧送达、完整审阅或理解通过。跨回合图片重复传输是后续调查线索，尚不作为超时根因结论。
+
+两次Agent均绑定真实停止证明。审阅未产出结果，修订与技术复验均未执行；不能把未提出修改意见当成“无需修改”。实际消耗为初作1、独立审阅1、场景渲染1、修订0、复验0。原作保留，但完整制作链验收仍未通过，OpenSpec 1.3／1.4继续未完成。
+
+本次只验证私有执行器、真实 Agent 和产物，不能冒充已登录浏览器的新一轮点击、播放器或下载验收。后续核验使用按显式 run UUID 读取的 `inspect_completed_run_server_v3.py`。原只读检查器将停止资源误写为 `pod:UID` 的假设已纠正为真实 `k8s:namespace:UID`；原版和修正版分别保留，该旧 false 不代表服务停止证明失败。
+
+终态已同步OpenSpec，revision `7f928b40fb5c114a5d6675d76c62c33a2ce76655`；CAS更新、精确回读和validate均通过，issues为空。只替换顶部产品进展说明，所有任务复选框保持，仍为5／29完成、24项待办，1.3／1.4均未勾选；本次同步不提交模型或渲染。回执为 `openspec-product-terminal-progress-*.json`。
 
 统一操作与原地回执位于忽略目录 `video_workbench/rendered/feedback-20261106/animation-lab/agent-creation-phase1/creation-product-r1/`；私有数据库、模型日志和凭据留在服务器，不提交 Git。
