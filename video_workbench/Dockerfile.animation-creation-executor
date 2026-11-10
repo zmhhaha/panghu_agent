@@ -8,7 +8,7 @@ USER 0:0
 WORKDIR /app
 RUN python -c "import os,re; assert re.fullmatch(r'[a-z0-9][a-z0-9._:/-]*:latest@sha256:[0-9a-f]{64}',os.environ['VIDEO_WORKBENCH_IMAGE']); assert re.fullmatch(r'[0-9a-f]{40}',os.environ['SOURCE_REVISION'])" \
     && apt-get update \
-    && apt-get install -y --no-install-recommends docker.io \
+    && apt-get install -y --no-install-recommends docker.io docker-cli \
     && rm -rf /var/lib/apt/lists/* \
     && docker --version \
     && ffmpeg -version >/dev/null \
