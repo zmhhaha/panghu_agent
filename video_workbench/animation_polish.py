@@ -56,11 +56,14 @@ class AnimationPolishCoordinator:
             # leaves the local reservation retryable, without a job POST.
             gateway.preflight(deadline_at)
             refs = gateway.upload(document, files)
+            prepare = getattr(gateway, 'prepare_submission', None)
+            admit = (prepare(operation_id, document, deadline_at, refs) if callable(prepare)
+                     else lambda: gateway.submit(operation_id, document, deadline_at, refs))
             claimed = self.store.mark_submitting(operation_id)
             if not claimed['submission_claimed']:
                 return _result(lineage_id, self.store.operation(operation_id), 'reconcile_required')
             try:
-                job = gateway.submit(operation_id, document, deadline_at, refs)
+                job = admit()
             except ServiceError as error:
                 if error.status >= 500:
                     operation = self.store.mark_submission_unknown(operation_id, error.code)
@@ -179,7 +182,10 @@ class AnimationPolishCoordinator:
         """Advance one stage; call again explicitly to poll/reconcile/continue."""
         lineage = self.store.lineage(lineage_id)
         profile, review_document, files = load_bundle(review_directory)
-        _require(profile == visual.REVIEW_PROFILE, 'animation_polish_review_bundle_required')
+        _require(profile in {visual.REVIEW_PROFILE, visual.REVIEW_SEQUENCE_PROFILE},
+                 'animation_polish_review_bundle_required')
+        _require(getattr(self.review_gateway, 'profile', profile) == profile,
+                 'animation_polish_review_profile_mismatch', 409)
         creation_input = creation.validate_creation_input(creation_input)
         _require(creation_input['base_source'] is None and creation_input['review'] is None,
                  'animation_polish_initial_creation_required')
@@ -192,10 +198,12 @@ class AnimationPolishCoordinator:
         # This immutable reservation also freezes the confirmed creation context
         # and original media, preventing a different step caller from swapping
         # narration/constraints or treating revised output as a fresh allowance.
-        versions = [dict(version_id=base_source['source_revision'],
+        media_versions = [dict(version_id=base_source['source_revision'],
             sha256=review_document['media']['sha256'], source_sha256=base_source['source_sha256'],
             creation_input_sha256=digest(creation_input))]
         review_id = lineage_id + ':review'
+        review_revision = getattr(self.review_gateway, 'profile_revision', '1')
+        versions = self.store.review_media_versions(review_id, media_versions, profile, review_revision)
         review = self.store.reserve(lineage_id, 'review', review_id, review_id,
                                     digest(review_document), versions)
         if review['status'] != 'completed':
@@ -212,12 +220,16 @@ class AnimationPolishCoordinator:
             revised_input = dict(creation_input, base_source=deepcopy(base_source), review=review_result)
             revised_input = creation.validate_creation_input(revised_input)
             revision_id = lineage_id + ':revision'
+            versions = self.store.review_media_versions(review_id, media_versions, profile,
+                review_revision, operation_id=revision_id)
             revision = self.store.reserve(lineage_id, 'revision', revision_id, revision_id,
                                           digest(revised_input), versions)
             if revision['status'] != 'completed':
                 return self._remote_step(revision, self.creation_gateway, revised_input, None, deadline_at)
             source = creation.validate_creation_result(revision['result'], digest(revised_input), revised_input)
         verification_id = lineage_id + ':verification'
+        versions = self.store.review_media_versions(review_id, media_versions, profile,
+            review_revision, operation_id=verification_id)
         verification_input = dict(source_sha256=creation.source_sha256(source),
                                   creation_input_sha256=digest(creation_input))
         verification = self.store.reserve(lineage_id, 'verification', verification_id, verification_id,

@@ -47,7 +47,8 @@ def public_config(*, vision=False):
 
 
 def prepare(current=None, **changes):
-    manifests, _ = measure_animation_review_bundles()
+    manifests, _ = measure_animation_review_bundles(
+        include_sequence_review=changes.get('include_sequence_review', False))
     settings = dict(worker_image=IMAGE, resource_manifests=manifests,
                     source_pool_id='existing-pool', vision_model_policy=model())
     settings.update(changes)
@@ -213,3 +214,94 @@ def test_new_combination_cannot_be_silently_enabled_using_source_acceptance():
     merged['routes'][-1]['enabled'] = True
     with pytest.raises(VideoCatalogError, match='invalid_public_catalog'):
         registry(merged)
+
+
+def test_sequence_resources_are_only_measured_when_explicitly_selected():
+    original_manifests, original = measure_animation_review_bundles()
+    manifests, measured = measure_animation_review_bundles(include_sequence_review=True)
+    assert set(manifests) == set(original_manifests) | {review.SEQUENCE_BUNDLE_REVISION}
+    assert all(manifests[name] == value for name, value in original_manifests.items())
+    assert measured['bundles'][:2] == original['bundles']
+    assert measured['local_files_verified'] is True
+    assert measured['container_measured'] is measured['vision_delivery_verified'] is False
+    assert measured['model_requests'] == measured['agent_tasks'] == 0
+    sequence = measured['bundles'][-1]
+    raw = (review.SEQUENCE_BUNDLE_ROOT / 'manifest.json').read_bytes()
+    assert sequence['bundle_revision'] == review.SEQUENCE_BUNDLE_REVISION
+    assert sequence['manifest_sha256'] == review.SEQUENCE_BUNDLE_MANIFEST_SHA256 == hashlib.sha256(raw).hexdigest()
+    assert {row['path'] for row in sequence['local_files']} == review.SEQUENCE_BUNDLE_FILES
+    for row in sequence['local_files']:
+        raw = (review.SEQUENCE_BUNDLE_ROOT / row['path']).read_bytes()
+        assert row['sha256'] == hashlib.sha256(raw).hexdigest()
+        assert row['bytes'] == len(raw)
+
+
+def test_explicit_sequence_review_adds_one_disabled_role_and_preserves_existing_combinations():
+    from agent_service.deploy.acceptance_probe import candidate_config
+    original, original_hosts, original_summary = prepare()
+    before = deepcopy(original)
+    merged, hosts, summary = prepare(original, include_sequence_review=True)
+    assert original == before
+    for section, value in before.items():
+        assert merged[section][:len(value)] == value if section in {*CATALOG_KEYS, 'callers', 'kubernetes_workers'} else merged[section] == value
+    assert set(hosts) == set(original_hosts) | {review.REVIEW_SEQUENCE_PROFILE}
+    assert all(hosts[name] == value for name, value in original_hosts.items())
+    assert summary['combinations'][:3] == original_summary['combinations']
+    assert len(summary['combinations']) == 4
+    assert len(merged['capability_bundles']) == len(before['capability_bundles']) + 1
+    assert len(merged['execution_bindings']) == len(before['execution_bindings']) + 1
+    assert len(merged['routes']) == len(before['routes']) + 1
+    assert len(merged['kubernetes_workers']) == len(before['kubernetes_workers']) + 1
+    assert merged['callers'][-1]['caller'] == 'video-animation-creation-sequence'
+    assert merged['callers'][-1]['profiles'] == [*PROFILES, review.REVIEW_SEQUENCE_PROFILE]
+    assert summary['required_caller_token_ref'] == 'video-animation-creation-sequence'
+    route, pool = merged['routes'][-1], merged['kubernetes_workers'][-1]
+    assert route['enabled'] is pool['enabled'] is False
+    assert pool['uid_start'] is None
+    assert pool['node_selector'] == before['kubernetes_workers'][0]['node_selector']
+    assert pool['pod_cidrs'] == before['kubernetes_workers'][0]['pod_cidrs']
+    binding = merged['execution_bindings'][-1]
+    assert binding['bundle']['revision'] == review.SEQUENCE_BUNDLE_REVISION
+    assert 'acceptance' not in binding
+    _, policy, selected_binding = candidate_config(hosts[review.REVIEW_SEQUENCE_PROFILE])
+    assert policy.name == review.REVIEW_SEQUENCE_PROFILE and policy.enabled is False
+    assert selected_binding.acceptance is None
+    contract = registry(merged).contract(review.REVIEW_SEQUENCE_PROFILE, '1')
+    assert contract.output_schema == 'video-animation-review-output.v2'
+    assert contract.max_input_files == 25
+    assert set(contract.required_model_capabilities) == {'text', 'tool_calls', 'vision'}
+    assert set(contract.required_tools) == {'read', 'write'}
+    assert summary['combinations'][-1]['acceptance_suite'] == 'video.animation-review-contract.v2'
+    again, same_hosts, _ = prepare(merged, include_sequence_review=True)
+    assert again == merged and same_hosts == hosts
+
+
+def test_sequence_selection_does_not_allow_missing_or_unselected_bundle_manifests():
+    manifests, _ = measure_animation_review_bundles()
+    with pytest.raises(VideoCatalogError, match='animation_review_bundle_manifests_required'):
+        prepare(include_sequence_review=True, resource_manifests=manifests)
+    manifests, _ = measure_animation_review_bundles(include_sequence_review=True)
+    with pytest.raises(VideoCatalogError, match='animation_review_bundle_manifests_required'):
+        prepare(resource_manifests=manifests)
+    manifests[review.SEQUENCE_BUNDLE_REVISION]['local_files'][0]['sha256'] = 'e' * 64
+    with pytest.raises(VideoCatalogError, match='animation_review_bundle_manifest_mismatch'):
+        prepare(include_sequence_review=True, resource_manifests=manifests)
+
+
+@pytest.mark.parametrize('selected', [None, 0, 1, 'yes'])
+def test_sequence_role_selection_requires_an_explicit_boolean(selected):
+    with pytest.raises(VideoCatalogError, match='animation_sequence_review_selection_invalid'):
+        measure_animation_review_bundles(include_sequence_review=selected)
+    manifests, _ = measure_animation_review_bundles()
+    with pytest.raises(VideoCatalogError, match='animation_sequence_review_selection_invalid'):
+        prepare_animation_review_catalog(public_config(), worker_image=IMAGE,
+            resource_manifests=manifests, source_pool_id='existing-pool',
+            vision_model_policy=model(), include_sequence_review=selected)
+
+
+def test_sequence_selection_cannot_broaden_frozen_original_caller():
+    current, _, _ = prepare()
+    with pytest.raises(VideoCatalogError, match='existing_catalog_identity_conflict'):
+        prepare(current, include_sequence_review=True, caller=dict(tenant='internal',
+            caller='video-animation-creation', profiles=[*PROFILES, review.REVIEW_SEQUENCE_PROFILE],
+            token_ref='video-animation-creation'))

@@ -78,6 +78,114 @@ def test_reservation_input_identity_and_media_are_frozen(state):
         reserve(store, lineage_id, key='review-again')
 
 
+@pytest.mark.parametrize('profile', ['video.animation-review.v1', 'video.animation-review.v2'])
+def test_review_execution_identity_is_added_before_atomic_reservation(state, profile):
+    store, lineage_id = state
+    original = deepcopy(MEDIA)
+    media = store.review_media_versions('operation-review', original, profile)
+    assert media == [dict(MEDIA[0], review_profile=profile, review_profile_revision='1')]
+    assert original == MEDIA and store.operations(lineage_id) == []
+    operation = store.reserve(lineage_id, 'review', 'operation-review', 'idem-review', INPUT, media)
+    before = store.events(lineage_id)
+    assert store.review_media_versions(operation['id'], original, profile) == media
+    changed = 'video.animation-review.v2' if profile.endswith('v1') else 'video.animation-review.v1'
+    with error('animation_revision_idempotency_conflict'):
+        store.review_media_versions(operation['id'], original, changed)
+    assert store.operation(operation['id']) == operation
+    assert store.events(lineage_id) == before
+
+
+@pytest.mark.parametrize('status', ['reserved', 'submitting', 'submission_unknown', 'submitted',
+                                   'running', 'completed', 'failed', 'cancelled', 'released'])
+def test_legacy_review_identity_only_replays_v1_without_rewriting_metadata(state, status):
+    store, lineage_id = state
+    operation = reserve(store, lineage_id)
+    if status in {'submitting', 'submission_unknown', 'submitted', 'running', 'completed'}:
+        store.mark_submitting(operation['id'])
+    if status == 'submission_unknown':
+        store.mark_submission_unknown(operation['id'], 'synthetic lost response')
+    elif status in {'submitted', 'running', 'completed'}:
+        store.mark_submitted(operation['id'], 'original-job')
+        if status == 'running':
+            store.mark_running(operation['id'])
+        elif status == 'completed':
+            store.finish(operation['id'], issues=[])
+    elif status in {'failed', 'cancelled'}:
+        store.finish(operation['id'], status=status, issues=[])
+    elif status == 'released':
+        store.release_unsubmitted(operation['id'], dict(reason='unsubmitted fixture'))
+    with sqlite3.connect(store.path) as db:
+        original_bytes = db.execute('SELECT document FROM animation_revision_operations WHERE id=?',
+                                    (operation['id'],)).fetchone()[0]
+    before = store.events(lineage_id)
+    assert store.review_media_versions(operation['id'], MEDIA, 'video.animation-review.v1') == MEDIA
+    with error('animation_revision_idempotency_conflict'):
+        store.review_media_versions(operation['id'], MEDIA, 'video.animation-review.v2')
+    with sqlite3.connect(store.path) as db:
+        assert db.execute('SELECT document FROM animation_revision_operations WHERE id=?',
+                           (operation['id'],)).fetchone()[0] == original_bytes
+    assert store.events(lineage_id) == before
+
+
+@pytest.mark.parametrize('change', ['different_media', 'different_role', 'partial_identity', 'mixed_identity'])
+def test_review_identity_helper_rejects_changed_or_partial_frozen_metadata(state, change):
+    store, lineage_id = state
+    media = deepcopy(MEDIA)
+    if change == 'partial_identity':
+        media[0]['review_profile'] = 'video.animation-review.v1'
+    elif change == 'mixed_identity':
+        media.append(dict(media[0], review_profile='video.animation-review.v1', review_profile_revision='1'))
+    operation = store.reserve(lineage_id, 'review', 'operation-review', 'idem-review', INPUT, media)
+    candidate = deepcopy(MEDIA)
+    if change == 'different_media':
+        candidate[0]['sha256'] = 'd' * 64
+    elif change == 'different_role':
+        candidate[0]['role'] = 'different-role'
+    with error('animation_revision_idempotency_conflict'):
+        store.review_media_versions(operation['id'], candidate, 'video.animation-review.v1')
+
+
+@pytest.mark.parametrize('profile,revision', [('unknown', '1'), ('video.animation-review.v1', '2'),
+    ('video.animation-review.v2', 1), ('video.animation-review.v1', None)])
+def test_review_identity_helper_rejects_unsupported_profile_revisions(state, profile, revision):
+    store, _ = state
+    with error('animation_revision_review_profile_invalid'):
+        store.review_media_versions('operation-review', MEDIA, profile, revision)
+
+
+def test_legacy_lineage_labels_new_stages_but_does_not_relabel_existing_stages(state):
+    store, lineage_id = state
+    review = complete(store, reserve(store, lineage_id), issues=ISSUES)
+    tagged = store.review_media_versions(review['id'], MEDIA, 'video.animation-review.v1',
+                                        operation_id='operation-revision')
+    assert tagged == [dict(MEDIA[0], review_profile='video.animation-review.v1', review_profile_revision='1')]
+    assert store.operation(review['id'])['media_versions'] == MEDIA
+    # Reproduce an already existing legacy revision using its historical API.
+    revision = reserve(store, lineage_id, 'revision')
+    assert store.review_media_versions(review['id'], MEDIA, 'video.animation-review.v1',
+                                      operation_id=revision['id']) == MEDIA
+    with error('animation_revision_idempotency_conflict'):
+        store.review_media_versions(review['id'], MEDIA, 'video.animation-review.v2',
+                                    operation_id='operation-verification')
+
+
+def test_reopened_legacy_three_stage_ledger_keeps_every_original_document_byte(state):
+    store, lineage_id = state
+    review = complete(store, reserve(store, lineage_id), issues=ISSUES)
+    revision = complete(store, reserve(store, lineage_id, 'revision'))
+    verification = complete(store, reserve(store, lineage_id, 'verification'))
+    with sqlite3.connect(store.path) as db:
+        frozen = db.execute('SELECT id,document FROM animation_revision_operations ORDER BY rowid').fetchall()
+    events = store.events(lineage_id)
+    store = AnimationRevisionStore(store.path)
+    for operation in (review, revision, verification):
+        assert store.review_media_versions(review['id'], MEDIA, 'video.animation-review.v1',
+            operation_id=operation['id']) == MEDIA
+    with sqlite3.connect(store.path) as db:
+        assert db.execute('SELECT id,document FROM animation_revision_operations ORDER BY rowid').fetchall() == frozen
+    assert store.events(lineage_id) == events
+
+
 def test_concurrent_independent_connections_reserve_only_one_stage_slot(state):
     store, lineage_id = state
     stores = [AnimationRevisionStore(store.path) for _ in range(8)]

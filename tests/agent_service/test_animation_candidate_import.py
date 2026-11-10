@@ -12,7 +12,8 @@ from agent_service.contracts import (ExecutionEnvelope, InlineFile, ServiceError
 from agent_service.deploy.acceptance_probe import candidate_config
 from agent_service.profiles import video_animation_create as creation
 from agent_service.profiles import video_animation_review as visual
-from video_workbench.animation_candidate_import import import_phase_one, ImportedCandidateOnlyGateway
+from video_workbench.animation_candidate_import import import_phase_one, ImportedCandidateOnlyGateway, validate_candidate
+from video_workbench.animation_observation import load_bundle
 from video_workbench.animation_polish import AnimationPolishCoordinator
 from video_workbench.animation_revision_store import AnimationRevisionStore
 from test_animation_review_catalog import prepare, IMAGE
@@ -132,9 +133,8 @@ def candidate(root, role, document, files, host_value, *, failed=False):
     return directory, value
 
 
-@pytest.fixture
-def pilot(tmp_path):
-    _, hosts, _ = prepare()
+def make_pilot(tmp_path, *, review_profile=visual.REVIEW_PROFILE, with_observer=True):
+    _, hosts, _ = prepare(include_sequence_review=review_profile == visual.REVIEW_SEQUENCE_PROFILE)
     context = creation_document()
     base = dict(source_revision='original-r1',engine=source_output()['engine'],files=source_output()['files'])
     base['source_sha256'] = creation.source_sha256(base)
@@ -142,15 +142,26 @@ def pilot(tmp_path):
     save(tmp_path/'creation-context.json',context)
     review_doc = input_document()
     review_doc['source_sha256'] = base['source_sha256']
-    review_files = bundle(tmp_path,'review-original-offset',review_doc,visual.REVIEW_INPUT_NAME,visual.REVIEW_PROFILE)
+    review_files = bundle(tmp_path,'review-original-offset',review_doc,visual.REVIEW_INPUT_NAME,review_profile)
     save(tmp_path/'review-selection.json',{'directory':'review-original-offset'})
-    observation = input_document(False)
-    observe_files = bundle(tmp_path,'observation-reference',observation,visual.OBSERVE_INPUT_NAME,visual.OBSERVE_PROFILE)
-    candidate(tmp_path,'observe',observation,observe_files,hosts[visual.OBSERVE_PROFILE])
-    _, review = candidate(tmp_path,'review',review_doc,review_files,hosts[visual.REVIEW_PROFILE])
+    if with_observer:
+        observation = input_document(False)
+        observe_files = bundle(tmp_path,'observation-reference',observation,visual.OBSERVE_INPUT_NAME,visual.OBSERVE_PROFILE)
+        candidate(tmp_path,'observe',observation,observe_files,hosts[visual.OBSERVE_PROFILE])
+    _, review = candidate(tmp_path,'review',review_doc,review_files,hosts[review_profile])
     revised = dict(context,base_source=base,review=review)
     candidate(tmp_path,'create',revised,{creation.INPUT_NAME:canonical_bytes(revised)},hosts[creation.PROFILE])
     return dict(root=tmp_path,context=context,base=base,review_doc=review_doc,hosts=hosts)
+
+
+@pytest.fixture
+def pilot(tmp_path):
+    return make_pilot(tmp_path)
+
+
+@pytest.fixture
+def sequence_pilot(tmp_path):
+    return make_pilot(tmp_path, review_profile=visual.REVIEW_SEQUENCE_PROFILE, with_observer=False)
 
 
 def run(pilot,stage='all'):
@@ -179,6 +190,8 @@ def test_import_preserves_real_ids_origin_and_emits_no_submission_events(pilot):
     assert operations[0]['result']['observation']['model_understanding_verified'] is False
     assert operations[1]['result']['base_source_sha256']==pilot['base']['source_sha256']
     assert operations[1]['candidate_origin']['stop_signature_verified_locally'] is False
+    assert all(row['media_versions'][0]['review_profile'] == visual.REVIEW_PROFILE
+               and row['media_versions'][0]['review_profile_revision'] == '1' for row in operations)
     before_events=store.events(receipt['lineage_id'])
     assert run(pilot)==receipt
     assert store.events(receipt['lineage_id'])==before_events
@@ -323,3 +336,125 @@ def test_failed_stopped_candidate_consumes_review_allowance_without_becoming_com
     store=AnimationRevisionStore(root/'revision-ledger.sqlite3')
     with pytest.raises(ServiceError,match='animation_revision_allowance_consumed'):
         store.reserve(receipt['lineage_id'],'review','different-operation','different-key',digest(pilot['review_doc']))
+
+
+def test_sequence_review_import_then_revision_without_observe_preserves_bound_identity_and_replay(sequence_pilot):
+    pilot = sequence_pilot
+    review = run(pilot, 'review')
+    assert review['observation_status'] == 'not_imported'
+    assert review['review_status'] == 'completed' and review['revision_operation_id'] is None
+    store = AnimationRevisionStore(pilot['root'] / 'revision-ledger.sqlite3')
+    operation = store.operations(review['lineage_id'])[0]
+    assert operation['candidate_origin']['profile'] == visual.REVIEW_SEQUENCE_PROFILE
+    assert operation['media_versions'][0]['review_profile'] == visual.REVIEW_SEQUENCE_PROFILE
+    assert operation['media_versions'][0]['review_profile_revision'] == '1'
+    assert operation['candidate_origin']['execution_path'] == 'isolated_candidate_import'
+    assert operation['candidate_origin']['live_http_verified'] is False
+    assert operation['result']['review']['schema'] == visual.REVIEW_RESULT_SCHEMA
+    revision = run(pilot, 'revision')
+    assert revision['lineage_id'] == review['lineage_id']
+    assert revision['revision_status'] == 'completed'
+    assert revision['observation_status'] == 'not_imported'
+    operations = store.operations(review['lineage_id'])
+    assert [row['stage'] for row in operations] == ['review', 'revision']
+    assert operations[1]['review_result_sha256'] == operations[0]['result_sha256']
+    assert operations[1]['result']['review_sha256'] == digest(operations[0]['result']['review'])
+    events = store.events(review['lineage_id'])
+    assert not any(event['event'] in {'submission_claimed', 'submitted', 'running'} for event in events)
+    audits = sorted(path.name for path in (pilot['root'] / 'candidate-import-audit').iterdir())
+    assert run(pilot, 'revision') == revision
+    assert store.operations(review['lineage_id']) == operations
+    assert store.events(review['lineage_id']) == events
+    assert sorted(path.name for path in (pilot['root'] / 'candidate-import-audit').iterdir()) == audits
+
+
+def test_sequence_candidate_needs_explicit_profile_and_cannot_silently_use_the_v1_default(sequence_pilot):
+    root = sequence_pilot['root']
+    profile, document, files = load_bundle(root / 'review-original-offset')
+    assert profile == visual.REVIEW_SEQUENCE_PROFILE
+    directory = root / 'candidate-animation-review-p1'
+    verified = validate_candidate(directory, role='review', document=document, files=files,
+        expected_image_digest=IMAGE_DIGEST, expected_profile=profile)
+    assert verified.envelope.profile == verified.provenance['profile'] == profile
+    with pytest.raises(ServiceError, match='animation_candidate_input_binding_mismatch'):
+        validate_candidate(directory, role='review', document=document, files=files,
+                           expected_image_digest=IMAGE_DIGEST)
+    assert not (root / 'revision-ledger.sqlite3').exists()
+
+
+def test_relabelling_a_v1_preparation_as_v2_does_not_relabel_execution_evidence(pilot):
+    path = pilot['root'] / 'review-original-offset' / 'evidence.json'
+    receipt = json.loads(path.read_bytes())
+    receipt['profile'] = visual.REVIEW_SEQUENCE_PROFILE
+    save(path, receipt)
+    with pytest.raises(ServiceError, match='animation_candidate_input_binding_mismatch'):
+        run(pilot, 'review')
+    assert not (pilot['root'] / 'revision-ledger.sqlite3').exists()
+
+
+def reserve_legacy_review(pilot):
+    store = AnimationRevisionStore(pilot['root'] / 'revision-ledger.sqlite3')
+    base, context = pilot['base'], pilot['context']
+    lineage = store.create_lineage('offline-operator', 'offline-project', base['source_revision'],
+        base['source_sha256'], 'candidate-import:' + digest(dict(source=base['source_sha256'], context=context)))
+    versions = [dict(version_id=base['source_revision'], sha256=pilot['review_doc']['media']['sha256'],
+        source_sha256=base['source_sha256'], creation_input_sha256=digest(context))]
+    operation_id = lineage['id'] + ':review'
+    operation = store.reserve(lineage['id'], 'review', operation_id, operation_id,
+                              digest(pilot['review_doc']), versions)
+    return store, lineage, operation
+
+
+def test_import_can_resume_a_legacy_v1_reservation_without_backfilling_historical_identity(pilot):
+    store, lineage, legacy = reserve_legacy_review(pilot)
+    receipt = run(pilot, 'review')
+    assert receipt['lineage_id'] == lineage['id']
+    operation = store.operation(legacy['id'])
+    assert operation['status'] == 'completed'
+    assert operation['media_versions'] == legacy['media_versions']
+    assert 'review_profile' not in operation['media_versions'][0]
+    frozen = store.operations(lineage['id']), store.events(lineage['id'])
+    assert run(pilot, 'review') == receipt
+    assert (store.operations(lineage['id']), store.events(lineage['id'])) == frozen
+    # A new downstream stage carries identity; the old review remains unchanged.
+    run(pilot, 'revision')
+    revision = store.operations(lineage['id'])[-1]
+    assert revision['stage'] == 'revision'
+    assert revision['media_versions'][0]['review_profile'] == visual.REVIEW_PROFILE
+    assert store.operation(legacy['id']) == operation
+
+
+def test_sequence_import_cannot_take_over_a_legacy_unlabelled_review(sequence_pilot):
+    store, lineage, _ = reserve_legacy_review(sequence_pilot)
+    before = store.operations(lineage['id']), store.events(lineage['id'])
+    with pytest.raises(ServiceError, match='animation_revision_idempotency_conflict'):
+        run(sequence_pilot, 'review')
+    assert (store.operations(lineage['id']), store.events(lineage['id'])) == before
+    assert not (sequence_pilot['root'] / 'import-receipt.json').exists()
+
+
+@pytest.mark.parametrize('file_name', ['candidate-evidence.json', 'operator-summary.json', 'scenario.json'])
+def test_sequence_export_cannot_substitute_a_v1_profile_at_any_bound_layer(sequence_pilot, file_name):
+    mutate(sequence_pilot, file_name, lambda document: document.update(profile=visual.REVIEW_PROFILE))
+    with pytest.raises(ServiceError):
+        run(sequence_pilot, 'review')
+    assert not (sequence_pilot['root'] / 'revision-ledger.sqlite3').exists()
+
+
+@pytest.mark.parametrize('role, profile', [
+    ('observe', visual.REVIEW_SEQUENCE_PROFILE),
+    ('create', visual.REVIEW_SEQUENCE_PROFILE),
+    ('review', creation.PROFILE),
+    ('review', 'video.animation-review.v3'),
+    ('review', {}),
+])
+def test_expected_profile_cannot_expand_other_roles_or_admit_unknown_profiles(tmp_path, role, profile):
+    with pytest.raises(ServiceError, match='animation_candidate_profile_not_allowed'):
+        validate_candidate(tmp_path / 'absent', role=role, document={}, files={},
+            expected_image_digest=IMAGE_DIGEST, expected_profile=profile)
+
+
+def test_all_still_requires_observation_even_for_explicit_sequence_review(sequence_pilot):
+    with pytest.raises(ServiceError):
+        run(sequence_pilot, 'all')
+    assert not (sequence_pilot['root'] / 'revision-ledger.sqlite3').exists()

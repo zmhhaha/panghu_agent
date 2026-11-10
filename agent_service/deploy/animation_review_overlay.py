@@ -23,7 +23,8 @@ from agent_service.deploy import animation_experiment_overlay as prior
 
 
 PACKAGE = prior.PACKAGE
-PROFILES = ('video.animation-observe.v1', 'video.animation-review.v1', 'video.animation-create.v2')
+PROFILES = ('video.animation-observe.v1', 'video.animation-review.v1', 'video.animation-create.v2',
+            'video.animation-review.v2')
 SCOPES = {
     'profiles/__init__.py': {'implementation'},
     'registry.py': {'import:re', 'OutputSchema', 'required_model_capabilities',
@@ -44,6 +45,8 @@ NEW_NAMES = ('profiles/video_animation_review.py', 'profiles/video_animation_cre
     'resources/animation-review-v1/LICENSE', 'resources/animation-review-v1/review-procedure/SKILL.md',
     'resources/animation-create-v2/manifest.json', 'resources/animation-create-v2/CONTRACT.md',
     'resources/animation-create-v2/LICENSE', 'resources/animation-create-v2/creation-procedure/SKILL.md')
+NEW_NAMES += ('resources/animation-review-v2/manifest.json', 'resources/animation-review-v2/CONTRACT.md',
+    'resources/animation-review-v2/LICENSE', 'resources/animation-review-v2/review-procedure/SKILL.md')
 REVISION = re.compile(r'[0-9a-f]{40}\Z')
 
 
@@ -244,7 +247,7 @@ def _ast_rebase(name, donor, baseline, candidate, newline):
         old = _assignment(baseline, 'OutputSchema').value
         new = _assignment(candidate, 'OutputSchema').value
         required = {'video-animation-observe-output.v1', 'video-animation-review-output.v1',
-                    'video-animation-create-output.v2'}
+                    'video-animation-create-output.v2', 'video-animation-review-output.v2'}
         require(_literal_strings(new) - _literal_strings(old) == required
                 and _literal_strings(old) <= _literal_strings(new), 'overlay_ast_schema_delta_not_reviewed')
         actual = _assignment(donor, 'OutputSchema').value
@@ -277,7 +280,7 @@ def _ast_rebase(name, donor, baseline, candidate, newline):
         candidate = _replace_node(candidate, new, _segment(baseline, old), [], 'PROFILES:restore-baseline')
     elif name == 'resources.py':
         donor, candidate = _insert_role_branches(donor, candidate, 'measured_package',
-            [PROFILES[:2], (PROFILES[2],)], {'video.animation-experiment.v1'}, newline, edits)
+            [PROFILES[:2], (PROFILES[2],), (PROFILES[3],)], {'video.animation-experiment.v1'}, newline, edits)
     elif name == 'deploy/candidate_scenario.py':
         donor, candidate = _insert_role_branches(donor, candidate, 'load_scenario',
             [PROFILES], {'video.storyboard.v1', 'video.scene.v1'}, newline, edits)
@@ -434,7 +437,7 @@ def _new_files(repository):
         require(path.is_file() and not path.is_symlink() and path.stat().st_size <= 512 * 1024,
                 'overlay_new_source_invalid')
         files[name] = path.read_bytes()
-    for revision in ('animation-review-v1', 'animation-create-v2'):
+    for revision in ('animation-review-v1', 'animation-create-v2', 'animation-review-v2'):
         manifest = json.loads(files['resources/' + revision + '/manifest.json'])
         for row in manifest['local_files']:
             require(sha(files['resources/' + revision + '/' + row['path']]) == row['sha256'],

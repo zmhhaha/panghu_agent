@@ -51,8 +51,8 @@ def opinion(review=True):
     return result
 
 
-def prepare(tmp_path, review=True, document=None):
-    profile = implementation(visual.REVIEW_PROFILE if review else visual.OBSERVE_PROFILE)
+def prepare(tmp_path, review=True, document=None, profile_name=None):
+    profile = implementation(profile_name or (visual.REVIEW_PROFILE if review else visual.OBSERVE_PROFILE))
     document = document or input_document(review)
     raw = canonical_bytes(document)
     root = tmp_path / 'inputs'
@@ -251,3 +251,81 @@ def test_visual_probe_requires_explicit_real_evidence_scenario(profile_name):
     assert profile_name in acceptance_probe.PROFILES
     with pytest.raises(ServiceError, match='candidate_scenario_required'):
         acceptance_probe.fixture(profile_name)
+
+
+@pytest.mark.parametrize('name,checksum', [
+    (visual.OBSERVE_PROFILE, '36439743647eae0f52b93ed868e24bb06038519967edd845a251f2c357cbfe8a'),
+    (visual.REVIEW_PROFILE, '59f0a606528a80cb028b44e4070dd73f94a46c13baadfb05bc09c90a9df62502'),
+])
+def test_opt_in_sequence_procedure_keeps_frozen_v1_prompt_bytes(name, checksum):
+    # Existing combinations retain their actual prompts, not just profile names.
+    prompt = implementation(name).build_prompt({'input_sha256': 'a' * 64})
+    assert hashlib.sha256(prompt.encode()).hexdigest() == checksum
+    assert visual.BUNDLE_MANIFEST_SHA256 == '165e4bc85eeae28a1fd30028f555b5d5a832f4dfdcfed09904bfd49859126f29'
+
+
+def test_sequence_review_is_explicitly_selected_and_retains_evidence_contract(tmp_path):
+    profile, envelope = prepare(tmp_path, profile_name=visual.REVIEW_SEQUENCE_PROFILE)
+    assert profile.name == 'video.animation-review.v2'
+    assert profile.task_schema == 'video-animation-review.v2'
+    assert profile.output_schema == 'video-animation-review-output.v2'
+    assert profile.required_tools == ('read', 'write')
+    assert profile.required_model_capabilities == ('text', 'tool_calls', 'vision')
+    assert profile.limits.max_input_files == 25
+    profile.validate_inputs(tmp_path, envelope.task)
+    result = json.loads(collect(profile, tmp_path, envelope)[0].content())
+    assert visual.validate_review_result(result, envelope.task['input_sha256'], input_document()) == result
+    assert result['schema'] == visual.REVIEW_RESULT_SCHEMA
+    assert result['frame_evidence_status'] == 'supplied_only'
+    assert result['evidence_scope'] == 'visual_only'
+    assert 'approval' not in result and 'passed' not in result
+    prompt = profile.build_prompt(envelope.task)
+    assert visual.verified_sequence_bundle()['review-procedure/SKILL.md'] in prompt
+    assert visual.verified_bundle()['review-procedure/SKILL.md'] not in prompt
+    assert 'do not look for a separate CONTRACT.md file' in prompt
+    # This is a procedure-selection check, not evidence of model understanding.
+    assert 'intermediate states' in prompt and 'stationary' in prompt
+    assert 'Empty issues are valid' in prompt
+
+
+@pytest.mark.parametrize('change', ['old_profile', 'wrong_revision', 'one_motion_frame',
+                                   'invented_coverage', 'unknown_frame', 'audio_claim'])
+def test_sequence_role_does_not_relax_identity_or_visual_scope(tmp_path, change):
+    profile, envelope = prepare(tmp_path, profile_name=visual.REVIEW_SEQUENCE_PROFILE)
+    output = opinion()
+    if change == 'old_profile':
+        envelope.profile = visual.REVIEW_PROFILE
+    elif change == 'wrong_revision':
+        envelope.profile_revision = '2'
+    elif change == 'one_motion_frame':
+        output['issues'][0]['frame_ids'] = ['frame-1']
+    elif change == 'invented_coverage':
+        output['coverage'] = 'whole_video'
+    elif change == 'unknown_frame':
+        output['issues'][0]['frame_ids'][1] = 'unseen-frame'
+    else:
+        output['issues'][0]['kind'] = 'voice-naturalness'
+    (tmp_path / 'output.json').write_bytes(canonical_bytes(output))
+    with pytest.raises(ServiceError):
+        collect(profile, tmp_path, envelope)
+
+
+@pytest.mark.parametrize('path', ['manifest.json', 'CONTRACT.md', 'review-procedure/SKILL.md'])
+def test_sequence_bundle_tampering_is_rejected_without_changing_v1(tmp_path, monkeypatch, path):
+    copied = tmp_path / visual.SEQUENCE_BUNDLE_REVISION
+    shutil.copytree(visual.SEQUENCE_BUNDLE_ROOT, copied)
+    (copied / path).write_bytes(b'changed instructions')
+    monkeypatch.setattr(visual, 'SEQUENCE_BUNDLE_ROOT', copied)
+    with pytest.raises(ServiceError, match='animation_review_bundle_integrity'):
+        implementation(visual.REVIEW_SEQUENCE_PROFILE).build_prompt({'input_sha256': 'a' * 64})
+    assert implementation(visual.REVIEW_PROFILE).build_prompt({'input_sha256': 'a' * 64})
+
+
+def test_sequence_collector_checks_its_own_bundle_after_writer_stop(tmp_path, monkeypatch):
+    profile, envelope = prepare(tmp_path, profile_name=visual.REVIEW_SEQUENCE_PROFILE)
+    copied = tmp_path / visual.SEQUENCE_BUNDLE_REVISION
+    shutil.copytree(visual.SEQUENCE_BUNDLE_ROOT, copied)
+    (copied / 'review-procedure/SKILL.md').write_bytes(b'changed after execution')
+    monkeypatch.setattr(visual, 'SEQUENCE_BUNDLE_ROOT', copied)
+    with pytest.raises(ServiceError, match='animation_review_bundle_integrity'):
+        collect(profile, tmp_path, envelope)

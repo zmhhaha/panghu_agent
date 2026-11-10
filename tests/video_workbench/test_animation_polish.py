@@ -1,6 +1,7 @@
 """Durable bounded orchestration tests; fake executors never make model calls."""
 from copy import deepcopy
 import hashlib
+import json
 from uuid import UUID
 
 import pytest
@@ -10,6 +11,7 @@ from agent_service.profiles import video_animation_create as creation
 from agent_service.profiles import video_animation_review as visual
 from video_workbench.animation_polish import AnimationPolishCoordinator
 from video_workbench.animation_revision_store import AnimationRevisionStore
+from video_workbench.animation_observation import load_bundle
 from test_animation_review_gateway import PNG, visual_document, creation_document, result_document
 
 
@@ -165,6 +167,30 @@ def finish_revision(work):
     assert step(work)['state'] == 'stage_completed'
 
 
+def test_submission_preparation_failure_does_not_consume_admission_claim(work):
+    def unavailable(*args):
+        raise ServiceError('animation_preflight_unavailable', 503)
+    work['reviewer'].prepare_submission = unavailable
+    with pytest.raises(ServiceError, match='animation_preflight_unavailable'):
+        step(work)
+    operation = work['store'].operation(work['lineage']['id'] + ':review')
+    assert operation['status'] == 'reserved'
+    assert work['reviewer'].count('submit') == 0
+
+
+def test_prepared_admission_runs_only_after_the_persisted_claim(work):
+    def prepare(*args):
+        def admit():
+            reopened = AnimationRevisionStore(work['store'].path)
+            operation = reopened.operation(work['lineage']['id'] + ':review')
+            assert operation['status'] == 'submitting'
+            return work['reviewer'].submit(*args)
+        return admit
+    work['reviewer'].prepare_submission = prepare
+    assert step(work)['state'] == 'submitted'
+    assert work['reviewer'].count('submit') == 1
+
+
 def test_one_independent_review_one_creator_revision_one_isolated_verification(work):
     finish_revision(work)
     result = step(work)
@@ -258,6 +284,54 @@ def test_original_source_and_confirmed_context_are_frozen_before_review_submissi
         step(work)
     assert work['reviewer'].count('submit') == 1
     assert work['creator'].calls == []
+
+
+@pytest.mark.parametrize('profile', [visual.REVIEW_PROFILE, visual.REVIEW_SEQUENCE_PROFILE])
+@pytest.mark.parametrize('status', ['reserved', 'submitting', 'submission_unknown', 'submitted'])
+def test_same_review_document_cannot_switch_execution_role_before_any_io(work, profile, status):
+    bundle = work['kwargs']['review_directory']
+    receipt_path = bundle / 'evidence.json'
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt['profile'] = profile
+    receipt_path.write_bytes(canonical_bytes(receipt))
+    work['reviewer'].profile = profile
+    _, document, _ = load_bundle(bundle)
+    base, context = work['kwargs']['base_source'], work['kwargs']['creation_input']
+    versions = [dict(version_id=base['source_revision'], sha256=document['media']['sha256'],
+        source_sha256=base['source_sha256'], creation_input_sha256=digest(context))]
+    operation_id = work['lineage']['id'] + ':review'
+    store = work['store']
+    versions = store.review_media_versions(operation_id, versions, profile)
+    store.reserve(work['lineage']['id'], 'review', operation_id, operation_id, digest(document), versions)
+    if status != 'reserved':
+        store.mark_submitting(operation_id)
+    if status == 'submission_unknown':
+        store.mark_submission_unknown(operation_id, 'fixture lost response')
+    elif status == 'submitted':
+        store.mark_submitted(operation_id, 'original-job')
+    before = store.operations(work['lineage']['id']), store.events(work['lineage']['id'])
+    changed = visual.REVIEW_SEQUENCE_PROFILE if profile == visual.REVIEW_PROFILE else visual.REVIEW_PROFILE
+    receipt['profile'] = changed
+    receipt_path.write_bytes(canonical_bytes(receipt))
+    work['reviewer'].profile = changed
+    assert load_bundle(bundle)[1] == document  # Only execution identity changed.
+    with pytest.raises(ServiceError, match='animation_revision_idempotency_conflict'):
+        step(work)
+    assert work['reviewer'].calls == work['creator'].calls == work['renderer'].calls == []
+    assert (store.operations(work['lineage']['id']), store.events(work['lineage']['id'])) == before
+
+
+def test_legacy_unlabelled_reservation_remains_v1_and_can_continue_without_migration(work):
+    _, document, _ = load_bundle(work['kwargs']['review_directory'])
+    base, context = work['kwargs']['base_source'], work['kwargs']['creation_input']
+    versions = [dict(version_id=base['source_revision'], sha256=document['media']['sha256'],
+        source_sha256=base['source_sha256'], creation_input_sha256=digest(context))]
+    operation_id = work['lineage']['id'] + ':review'
+    store = work['store']
+    store.reserve(work['lineage']['id'], 'review', operation_id, operation_id, digest(document), versions)
+    assert step(work)['state'] == 'submitted'
+    assert store.operation(operation_id)['media_versions'] == versions
+    assert all('review_profile' not in row for row in store.operation(operation_id)['media_versions'])
 
 
 @pytest.mark.parametrize('images', [[], [dict(sha256='0' * 64, model_request_completed=True)],

@@ -180,15 +180,23 @@ class VerifiedCandidate:
     provenance: dict
 
 
-def validate_candidate(directory, *, role, document, files, expected_image_digest):
+def validate_candidate(directory, *, role, document, files, expected_image_digest, expected_profile=None):
     """Verify one immutable operator export against the exact business input.
 
     No artifact, image or exported process is executed. Completed visual roles
     need actual proxy transport evidence. A stopped, controller-recorded failed
     result is importable as failed, consuming its allowance without a retry.
+    Sequence-review v2 requires an explicit expected_profile. It shares the
+    frozen evidence schema, but its execution identity cannot be relabelled.
     """
     require(role in ROLE_PROFILES and type(expected_image_digest) is str
             and re.fullmatch(r'sha256:[0-9a-f]{64}', expected_image_digest) is not None)
+    profile = ROLE_PROFILES[role] if expected_profile is None else expected_profile
+    allowed_profiles = {ROLE_PROFILES[role]}
+    if role == 'review':
+        allowed_profiles.add(visual.REVIEW_SEQUENCE_PROFILE)
+    require(type(profile) is str and profile in allowed_profiles,
+            'animation_candidate_profile_not_allowed')
     root = Path(directory).absolute() / 'candidate-output'
     raw = {name: _read(root, name, MAX_EXPORT_BYTES) for name in EXPORT_NAMES}
     exports = {name: decode_video_json(value) for name, value in raw.items()}
@@ -202,7 +210,6 @@ def validate_candidate(directory, *, role, document, files, expected_image_diges
         result = WorkerResult.model_validate(submitted['result'])
     except (KeyError, ValueError, TypeError):
         raise ServiceError('animation_candidate_wire_invalid', 422) from None
-    profile = ROLE_PROFILES[role]
     input_name = creation.INPUT_NAME if role == 'create' else (
         visual.REVIEW_INPUT_NAME if role == 'review' else visual.OBSERVE_INPUT_NAME)
     result_name = input_name.replace('-input.json', '-result.json')
@@ -359,10 +366,11 @@ def _immutable(path, value):
 
 
 def import_phase_one(root, *, owner, project_id, expected_image_digest, stage='review', review_directory=None):
-    """Import review before preparing create, then import revision with --stage all.
+    """Import review before preparing create, then import it with --stage revision.
 
     Only the separate SQLite ledger and importer audit receipts are written.
     The candidate directories, contexts and all source/media remain read-only.
+    --stage all additionally requires the separately observed reference export.
     """
     require(stage in ('review', 'revision', 'all'))
     root = Path(root).absolute()
@@ -382,8 +390,9 @@ def import_phase_one(root, *, owner, project_id, expected_image_digest, stage='r
             'animation_candidate_original_context_required')
     require(type(base) is dict and set(base) == {'engine', 'files', 'source_revision', 'source_sha256'}
             and creation.source_sha256(base) == base['source_sha256'])
-    profile, review_doc, review_files = load_bundle(review_directory)
-    require(profile == visual.REVIEW_PROFILE and review_doc['source_sha256'] == base['source_sha256'])
+    review_profile, review_doc, review_files = load_bundle(review_directory)
+    require(review_profile in (visual.REVIEW_PROFILE, visual.REVIEW_SEQUENCE_PROFILE)
+            and review_doc['source_sha256'] == base['source_sha256'])
     observer = None
     observe_directory = root / 'candidate-animation-observe-p1' / 'candidate-output'
     if stage == 'all' or observe_directory.exists():
@@ -392,7 +401,8 @@ def import_phase_one(root, *, owner, project_id, expected_image_digest, stage='r
         observer = validate_candidate(observe_directory.parent, role='observe', document=doc,
             files=files, expected_image_digest=expected_image_digest)
     reviewer = validate_candidate(root / 'candidate-animation-review-p1', role='review',
-        document=review_doc, files=review_files, expected_image_digest=expected_image_digest)
+        document=review_doc, files=review_files, expected_image_digest=expected_image_digest,
+        expected_profile=review_profile)
     creator, revised_input = None, None
     if stage in ('revision', 'all') and reviewer.state == 'completed' and reviewer.artifact['issues']:
         revised_input = creation.validate_creation_input(dict(context, base_source=base, review=reviewer.artifact))
@@ -403,9 +413,11 @@ def import_phase_one(root, *, owner, project_id, expected_image_digest, stage='r
     store = AnimationRevisionStore(root / 'revision-ledger.sqlite3')
     lineage = store.create_lineage(owner, project_id, base['source_revision'], base['source_sha256'],
                                    'candidate-import:' + digest(dict(source=base['source_sha256'], context=context)))
-    versions = [dict(version_id=base['source_revision'], sha256=review_doc['media']['sha256'],
+    media_versions = [dict(version_id=base['source_revision'], sha256=review_doc['media']['sha256'],
                      source_sha256=base['source_sha256'], creation_input_sha256=digest(context))]
     review_id = lineage['id'] + ':review'
+    versions = store.review_media_versions(review_id, media_versions, review_profile,
+                                          reviewer.envelope.profile_revision)
     operation = store.reserve(lineage['id'], 'review', review_id, review_id, digest(review_doc), versions)
     result = (dict(review=reviewer.artifact, observation=reviewer.observation,
                    model_frame_receipt=reviewer.frame_receipt) if reviewer.state == 'completed'
@@ -415,6 +427,8 @@ def import_phase_one(root, *, owner, project_id, expected_image_digest, stage='r
     imported_revision = None
     if creator is not None:
         revision_id = lineage['id'] + ':revision'
+        versions = store.review_media_versions(review_id, media_versions, review_profile,
+            reviewer.envelope.profile_revision, operation_id=revision_id)
         operation = store.reserve(lineage['id'], 'revision', revision_id, revision_id, digest(revised_input), versions)
         result = creator.artifact if creator.state == 'completed' else dict(
             candidate_failed=True, candidate_origin_sha256=digest(creator.provenance))

@@ -30,16 +30,24 @@ def sources(newline='\n'):
             f"    if name == '{profile}':\n        return NewProfile()\n" for profile in overlay.PROFILES)
         + "    raise ValueError('unknown')")
     candidate['registry.py'] = candidate['registry.py'].replace(
-        "'video-animation-experiment-output.v1']", "'video-animation-experiment-output.v1', 'video-animation-review-output.v1']")
+        "'video-animation-experiment-output.v1']", "'video-animation-experiment-output.v1', "
+        "'video-animation-observe-output.v1', 'video-animation-review-output.v1', "
+        "'video-animation-create-output.v2', 'video-animation-review-output.v2']")
     candidate['registry.py'] += "\n\ndef required_model_capabilities(handler):\n    return handler.required_model_capabilities\n"
     candidate['resources.py'] = candidate['resources.py'].replace('    return other_resources',
-        "    if policy.name == 'video.animation-review.v1':\n        return new_resources\n    return other_resources")
+        "    if policy.name in {'video.animation-observe.v1', 'video.animation-review.v1'}:\n"
+        "        return review_resources\n"
+        "    if policy.name == 'video.animation-create.v2':\n        return create_resources\n"
+        "    if policy.name == 'video.animation-review.v2':\n        return sequence_resources\n"
+        "    return other_resources")
     candidate['deploy/acceptance_probe.py'] = candidate['deploy/acceptance_probe.py'].replace(
-        "PROFILES = {'video.animation-experiment.v1'}", "PROFILES = {'video.animation-experiment.v1', 'video.animation-review.v1'}")
+        "PROFILES = {'video.animation-experiment.v1'}", "PROFILES = {'video.animation-experiment.v1', "
+        + ', '.join(map(repr, overlay.PROFILES)) + ' }')
     candidate['deploy/acceptance_probe.py'] = candidate['deploy/acceptance_probe.py'].replace(
         "return {'state': 'completed'}", "return {'state': 'completed', 'model_image_evidence': measured_images()}")
     candidate['deploy/candidate_scenario.py'] = candidate['deploy/candidate_scenario.py'].replace(
-        '    return source_dir', "    if policy.name == 'video.animation-review.v1':\n        implementation(policy.name).validate_inputs(None, task, input_root=source_dir)\n    return source_dir")
+        '    return source_dir', "    if policy.name in {" + ', '.join(map(repr, overlay.PROFILES))
+        + "}:\n        implementation(policy.name).validate_inputs(None, task, input_root=source_dir)\n    return source_dir")
     candidate['model_proxy.py'] += "\n\ndef image_evidence_for_job(store, job):\n    return actual_transport_evidence\n"
     candidate['api.py'] = candidate['api.py'].replace('from .storage import execution_fields',
         'from .storage import execution_fields\nfrom .model_proxy import image_evidence_for_job').replace(
@@ -67,10 +75,10 @@ def test_patch_preserves_unknown_donor_changes_outside_exact_edit_contexts(newli
 
 
 def test_unknown_shared_changes_inside_patch_context_are_rejected():
-    baseline, candidate = sources()
-    donors = deepcopy(baseline)
-    donors['registry.py'] = donors['registry.py'].replace('return True', 'return tightened_gate')
-    with pytest.raises(RuntimeError, match='overlay_ast_schema_delta_not_reviewed'):
+    baseline, candidate, donors = older_pi_sources()
+    donors['registry.py'] = donors['registry.py'].replace(
+        'from typing import Literal', 'from typing import Literal, Any')
+    with pytest.raises(RuntimeError, match='overlay_donor_patch_context_changed:registry.py'):
         overlay.patched_sources(donors, baseline, candidate)
 
 
@@ -138,7 +146,8 @@ class DeploymentRegistry:
         '    return handler.required_model_capabilities\n\n\nfrom typing import Literal').replace(
         "'video-animation-experiment-output.v1',",
         "'video-animation-experiment-output.v1', 'video-animation-observe-output.v1', "
-        "'video-animation-review-output.v1', 'video-animation-create-output.v2',").replace(
+        "'video-animation-review-output.v1', 'video-animation-create-output.v2', "
+        "'video-animation-review-output.v2',").replace(
         "c.name.replace('.v1', '-contract.v1')", "re.sub(r'\\.v([0-9]+)$', r'-contract.v\\1', c.name)")
     baseline['resources.py'] = '''def measured_package(config, policy, control_root):
     if policy.name.startswith('ppt.'):
@@ -158,6 +167,8 @@ class DeploymentRegistry:
         return review_resources
     elif policy.name == 'video.animation-create.v2':
         return create_resources
+    elif policy.name == 'video.animation-review.v2':
+        return sequence_resources
 '''
     candidate['resources.py'] = baseline['resources.py'].replace(
         "    elif policy.name == 'video.motion-plan.v1':", new_resource_branches +
@@ -230,7 +241,7 @@ def test_inspected_older_pi_shapes_keep_quotas_members_and_original_video_routin
     exec(patched['registry.py'], registry)
     schema = set(registry['OutputSchema'].__args__)
     expected_schemas = {'video-animation-observe-output.v1', 'video-animation-review-output.v1',
-                        'video-animation-create-output.v2'}
+                        'video-animation-create-output.v2', 'video-animation-review-output.v2'}
     assert schema == {'video-motion-plan-output.v1', 'video-animation-experiment-output.v1'} | expected_schemas
     config = registry['DeploymentRegistry']()
     assert config.from_config(SimpleNamespace(name='video-animation-create.v2'), [None] * 100) == 'video-animation-create-contract.v2'
@@ -238,10 +249,11 @@ def test_inspected_older_pi_shapes_keep_quotas_members_and_original_video_routin
         config.from_config(SimpleNamespace(name='video-animation-create.v2'), [None] * 101)
 
     old_values = ('old_ppt_resources', 'old_research_resources', 'frozen_experiment_resources', 'old_video_resources')
-    resources = {name: name for name in (*old_values, 'review_resources', 'create_resources')}
+    resources = {name: name for name in (*old_values, 'review_resources', 'create_resources', 'sequence_resources')}
     exec(patched['resources.py'], resources)
     for profile, expected in (
             ('video.animation-observe.v1', 'review_resources'), ('video.animation-review.v1', 'review_resources'),
+            ('video.animation-review.v2', 'sequence_resources'),
             ('video.animation-create.v2', 'create_resources'), ('video.animation-experiment.v1', 'frozen_experiment_resources'),
             ('video.motion-plan.v1', 'old_video_resources'), ('video.storyboard.v1', 'old_video_resources')):
         assert resources['measured_package'](None, SimpleNamespace(name=profile), None) == expected
@@ -408,6 +420,44 @@ def test_build_preserves_old_resources_and_runtime_and_never_pushes_implicitly(t
     assert receipt['model_requests'] == receipt['model_tasks'] == 0
     assert receipt['deployment_changed'] is receipt['production_routes_changed'] is False
     assert 'COPY overlay/ ' in captured['dockerfile'] and 'FROM ' + args.base_image in captured['dockerfile']
+    assert receipt['profiles'] == list(overlay.PROFILES)
+    assert receipt['profiles'][-1] == 'video.animation-review.v2'
+    from agent_service.profiles import video_animation_review as review
+    manifest = json.loads(captured['files']['resources/animation-review-v2/manifest.json'])
+    assert overlay.sha(captured['files']['resources/animation-review-v2/manifest.json']) == review.SEQUENCE_BUNDLE_MANIFEST_SHA256
+    assert manifest['bundle_revision'] == review.SEQUENCE_BUNDLE_REVISION
+    for row in manifest['local_files']:
+        name = 'resources/animation-review-v2/' + row['path']
+        assert row['sha256'] == overlay.sha(captured['files'][name]) == receipt['new_files'][name]
+
+
+def test_overlay_inventory_adds_explicit_sequence_resources_without_replacing_old_experiment():
+    root = Path(overlay.__file__).resolve().parents[2]
+    files = overlay._new_files(root)
+    assert set(files) == set(overlay.NEW_NAMES)
+    sequence = {name for name in files if name.startswith('resources/animation-review-v2/')}
+    assert sequence == {'resources/animation-review-v2/' + name for name in
+                        ('manifest.json', 'CONTRACT.md', 'LICENSE', 'review-procedure/SKILL.md')}
+    assert not any(name.startswith('resources/animation-experiment-v1/') for name in files)
+    assert 'profiles/video_animation_experiment.py' not in files
+
+
+@pytest.mark.parametrize('part', ['output_schema', 'resource_branch', 'candidate_branch'])
+def test_old_donor_rebase_cannot_silently_omit_the_sequence_role(part):
+    baseline, candidate, donors = older_pi_sources()
+    if part == 'output_schema':
+        candidate['registry.py'] = candidate['registry.py'].replace("'video-animation-review-output.v2',", '')
+        code = 'overlay_ast_schema_delta_not_reviewed'
+    elif part == 'resource_branch':
+        candidate['resources.py'] = candidate['resources.py'].replace(
+            "    elif policy.name == 'video.animation-review.v2':\n        return sequence_resources\n", '')
+        code = 'overlay_ast_new_role_branch_required'
+    else:
+        candidate['deploy/candidate_scenario.py'] = candidate['deploy/candidate_scenario.py'].replace(
+            ", 'video.animation-review.v2'", '')
+        code = 'overlay_ast_new_role_branch_required'
+    with pytest.raises(RuntimeError, match=code):
+        overlay.patched_sources(donors, baseline, candidate)
 
 
 def test_push_requires_explicit_flag_and_returns_latest_with_immutable_digest(tmp_path, monkeypatch):

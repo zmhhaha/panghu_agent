@@ -84,7 +84,13 @@ class _AnimationGateway(MotionAgentGateway):
                  and expected <= set(required), 'animation_model_capability_unavailable', 503)
         return route
 
-    def submit(self, operation_id, document, deadline_at, input_refs=None):
+    def prepare_submission(self, operation_id, document, deadline_at, input_refs=None):
+        """Validate and read readiness before the durable admission claim.
+
+        The returned callable performs one job POST. A preparation outage has
+        not attempted admission and must not strand a ledger in unknown state.
+        The remote API still checks its authoritative route at that POST.
+        """
         key = self._operation_key(operation_id)
         raw = self._document_bytes(document)
         expected = {self.input_name: hashlib.sha256(raw).hexdigest()}
@@ -110,11 +116,16 @@ class _AnimationGateway(MotionAgentGateway):
             task=dict(input_sha256=hashlib.sha256(raw).hexdigest()), inputs=[dict(ref) for ref in input_refs],
             execution_deadline_at=deadline_at,
             timeout_seconds=min(600, route['max_timeout_seconds'], math.ceil(remaining)))
-        response = self._remote(self.client.submit, request, idempotency_key=key)
-        try:
-            return self._checked_job(response, operation_id=operation_id)
-        except ServiceError:
-            raise ServiceError('service_protocol_invalid', 502) from None
+        def admit():
+            response = self._remote(self.client.submit, request, idempotency_key=key)
+            try:
+                return self._checked_job(response, operation_id=operation_id)
+            except ServiceError:
+                raise ServiceError('service_protocol_invalid', 502) from None
+        return admit
+
+    def submit(self, operation_id, document, deadline_at, input_refs=None):
+        return self.prepare_submission(operation_id, document, deadline_at, input_refs)()
 
     def model_frame_receipt(self, job_id):
         """Read control-plane evidence, bound to the completed stopped attempt.
@@ -173,3 +184,9 @@ class AnimationCreateGateway(_AnimationGateway):
     input_limit, output_limit = creation.INPUT_MAX_BYTES, creation.OUTPUT_MAX_BYTES
     validate_input = staticmethod(creation.validate_creation_input)
     validate_result = staticmethod(creation.validate_creation_result)
+
+
+class AnimationSequenceReviewGateway(AnimationReviewGateway):
+    """Explicit opt-in; original v1 identity and defaults remain frozen."""
+    profile = visual.REVIEW_SEQUENCE_PROFILE
+    business_prefix, idempotency_prefix = 'animation-review-sequence:', 'animation-review-seq-'

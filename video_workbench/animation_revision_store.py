@@ -230,6 +230,59 @@ class AnimationRevisionStore:
                 'SELECT sequence,document FROM animation_revision_events WHERE lineage_id=? ORDER BY sequence',
                 (lineage_id,))]
 
+    def review_media_versions(self, review_operation_id, media_versions, profile, revision='1', *, operation_id=None):
+        """Freeze the review execution identity alongside its immutable input.
+
+        The two roles intentionally share an input schema, so its JSON digest
+        alone cannot distinguish their idempotency namespaces. Old unlabelled
+        reservations predate v2: they may only replay v1/revision 1, with their
+        original metadata untouched. This helper reads but never migrates rows;
+        the subsequent atomic reserve still arbitrates concurrent first calls.
+        """
+        _text(review_operation_id)
+        operation_id = review_operation_id if operation_id is None else _text(operation_id)
+        _require(type(profile) is str and profile in {
+            'video.animation-review.v1', 'video.animation-review.v2'}
+            and type(revision) is str and revision == '1',
+            'animation_revision_review_profile_invalid')
+        versions = _media(media_versions)
+        fields = {'review_profile', 'review_profile_revision'}
+        _require(bool(versions) and all(not fields.intersection(row) for row in versions))
+        labelled = [dict(row, review_profile=profile, review_profile_revision=revision)
+                    for row in versions]
+
+        def retained(operation):
+            previous = _media(operation['media_versions'])
+            legacy = all(not fields.intersection(item) for item in previous)
+            if legacy:
+                _require(profile == 'video.animation-review.v1' and revision == '1'
+                         and previous == versions, 'animation_revision_idempotency_conflict', 409)
+            else:
+                _require(previous == labelled, 'animation_revision_idempotency_conflict', 409)
+            return previous
+
+        with self._transaction() as db:
+            row = db.execute('SELECT document FROM animation_revision_operations WHERE id=?',
+                             (review_operation_id,)).fetchone()
+            original = json.loads(row['document']) if row is not None else None
+            if original is not None:
+                _require(original['stage'] == 'review', 'animation_revision_idempotency_conflict', 409)
+                review_versions = retained(original)
+                if operation_id == review_operation_id:
+                    return review_versions
+            else:
+                _require(operation_id == review_operation_id, 'animation_revision_review_required', 409)
+                return labelled
+            row = db.execute('SELECT document FROM animation_revision_operations WHERE id=?',
+                             (operation_id,)).fetchone()
+            if row is None:
+                return labelled
+            operation = json.loads(row['document'])
+            _require(operation['lineage_id'] == original['lineage_id']
+                     and operation['stage'] in {'revision', 'verification'},
+                     'animation_revision_idempotency_conflict', 409)
+            return retained(operation)
+
     def reserve(self, lineage_id, stage, operation_id, idempotency_key, input_sha256,
                 media_versions=None):
         """Atomically reserve a stage, binding its input and the completed review.

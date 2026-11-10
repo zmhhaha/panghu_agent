@@ -337,7 +337,8 @@ def load_scenario(path, source_dir, parent_dir, policy):
         document = validate_experiment_input(_json(raw))
         require(canonical_bytes(document) == raw and hashlib.sha256(raw).hexdigest() == task['input_sha256'],
             'candidate_animation_experiment_input_mismatch')
-    elif policy.name in {'video.animation-observe.v1', 'video.animation-review.v1', 'video.animation-create.v2'}:
+    elif policy.name in {'video.animation-observe.v1', 'video.animation-review.v1',
+                         'video.animation-create.v2', 'video.animation-review.v2'}:
         # Validate the exact root-owned, explicitly projected JSON/frame files.
         # No temporary workspace, renamed inputs, or implicit source is created.
         require(export is None, 'candidate_animation_role_business_export_not_supported')

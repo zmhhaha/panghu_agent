@@ -20,6 +20,7 @@ from ..engines import StopEvidence
 
 OBSERVE_PROFILE = 'video.animation-observe.v1'
 REVIEW_PROFILE = 'video.animation-review.v1'
+REVIEW_SEQUENCE_PROFILE = 'video.animation-review.v2'
 OBSERVE_INPUT_SCHEMA = 'video.animation-observe-input.v1'
 REVIEW_INPUT_SCHEMA = 'video.animation-review-input.v1'
 OBSERVE_RESULT_SCHEMA = 'video.animation-observe-result.v1'
@@ -37,6 +38,10 @@ BUNDLE_REVISION = 'animation-review-v1'
 BUNDLE_ROOT = Path(__file__).resolve().parent.parent / 'resources' / BUNDLE_REVISION
 BUNDLE_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'review-procedure/SKILL.md'})
 BUNDLE_MANIFEST_SHA256 = '165e4bc85eeae28a1fd30028f555b5d5a832f4dfdcfed09904bfd49859126f29'
+SEQUENCE_BUNDLE_REVISION = 'animation-review-v2'
+SEQUENCE_BUNDLE_ROOT = Path(__file__).resolve().parent.parent / 'resources' / SEQUENCE_BUNDLE_REVISION
+SEQUENCE_BUNDLE_FILES = BUNDLE_FILES
+SEQUENCE_BUNDLE_MANIFEST_SHA256 = 'ce0ea7908798bcca99c7effc5cf6cbc3f3c9166e12cfadf2bae50a5d862fe77c'
 
 
 def _number(value, low, high):
@@ -264,6 +269,29 @@ def verified_bundle():
     return result
 
 
+def verified_sequence_bundle():
+    """Pin the explicitly selected v2 procedure without replacing frozen v1."""
+    raw = _read(SEQUENCE_BUNDLE_ROOT, 'manifest.json', 65536)
+    _require(hashlib.sha256(raw).hexdigest() == SEQUENCE_BUNDLE_MANIFEST_SHA256,
+             'animation_review_bundle_integrity')
+    manifest = decode_video_json(raw)
+    _require(type(manifest) is dict and manifest.get('bundle_revision') == SEQUENCE_BUNDLE_REVISION
+             and manifest.get('automatic_updates') is False
+             and manifest.get('upstream_content_vendored') is False
+             and manifest.get('license') == 'MIT', 'animation_review_bundle_integrity')
+    rows = manifest.get('local_files')
+    _require(type(rows) is list and len(rows) == len(SEQUENCE_BUNDLE_FILES)
+             and all(type(row) is dict and set(row) == {'path', 'sha256'} for row in rows)
+             and {row['path'] for row in rows} == SEQUENCE_BUNDLE_FILES,
+             'animation_review_bundle_integrity')
+    result = {}
+    for row in rows:
+        raw = _read(SEQUENCE_BUNDLE_ROOT, row['path'], 128 * 1024)
+        _require(hashlib.sha256(raw).hexdigest() == row['sha256'], 'animation_review_bundle_integrity')
+        result[row['path']] = raw.decode('utf-8')
+    return result
+
+
 class _VisualProfile:
     required_tools = ('read', 'write')
     required_model_capabilities = ('text', 'tool_calls', 'vision')
@@ -300,9 +328,12 @@ class _VisualProfile:
     def validate_inputs(self, workspace, task, *, input_root=None):
         self._input(workspace, task, input_root=input_root)
 
+    def _bundle(self):
+        return verified_bundle()
+
     def build_prompt(self, task):
         self.validate_task(task)
-        bundle = verified_bundle()
+        bundle = self._bundle()
         operation = ('Observe the supplied reference frames and identify reusable expression fragments.'
                      if not self.review else
                      'Independently review the rendered scene against the goal and identify concrete visual issues.')
@@ -328,7 +359,7 @@ class _VisualProfile:
         _require(envelope.profile == self.name and envelope.profile_revision == '1',
                  'animation_review_profile_binding_mismatch')
         self.validate_task(envelope.task)
-        verified_bundle()
+        self._bundle()
         document = self._input(workspace, envelope.task)
         expected = {self.input_name: envelope.task['input_sha256'],
                     **{row['file_name']: row['sha256'] for row in document['observation']['frames']}}
@@ -365,3 +396,19 @@ class VideoAnimationReviewProfile(_VisualProfile):
     output_schema = 'video-animation-review-output.v1'
     input_name, result_name = REVIEW_INPUT_NAME, REVIEW_RESULT_NAME
     result_schema, review = REVIEW_RESULT_SCHEMA, True
+
+
+class VideoAnimationReviewSequenceProfile(VideoAnimationReviewProfile):
+    """Opt-in sequence review; the v1 evidence/result contract stays unchanged."""
+    name = REVIEW_SEQUENCE_PROFILE
+    task_schema = 'video-animation-review.v2'
+    output_schema = 'video-animation-review-output.v2'
+
+    def _bundle(self):
+        return verified_sequence_bundle()
+
+    def build_prompt(self, task):
+        return super().build_prompt(task).replace(
+            'Use the exact row fields in CONTRACT.md.',
+            'Use the exact row fields in the inline contract above; '
+            'do not look for a separate CONTRACT.md file.')
