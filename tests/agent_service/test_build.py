@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 from types import SimpleNamespace
 
@@ -100,6 +101,16 @@ def service(tmp_path):
         target = root / 'resources/animation-experiment-v1' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((ANIMATION_ROOT / name).read_bytes())
+    from agent_service.profiles import video_animation_review as review, video_animation_create as creation
+    for source, names in (
+            (review.BUNDLE_ROOT, review.BUNDLE_FILES),
+            (review.SEQUENCE_BUNDLE_ROOT, review.SEQUENCE_BUNDLE_FILES),
+            (review.BATCH_BUNDLE_ROOT, review.BATCH_BUNDLE_FILES),
+            (creation.BUNDLE_ROOT, creation.BUNDLE_FILES)):
+        for name in ('manifest.json', *names):
+            target = root / 'resources' / source.name / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((source / name).read_bytes())
     # Only reviewed framework-neutral helpers may cross the package allowlist;
     # business API/database/runtime files must still remain outside it.
     names = ['pi_worker/__init__.py', 'pi_worker/research_tools/__init__.py',
@@ -432,7 +443,12 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
         "agent_service/resources/animation-experiment-v1/manifest.json",
         "agent_service/resources/animation-experiment-v1/CONTRACT.md",
         "agent_service/resources/animation-experiment-v1/LICENSE",
-        "agent_service/resources/animation-experiment-v1/animation-procedure/SKILL.md"}
+        "agent_service/resources/animation-experiment-v1/animation-procedure/SKILL.md"} | {
+            'agent_service/resources/' + revision + '/' + name
+            for revision in ('animation-review-v1', 'animation-review-v2', 'animation-review-v3')
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'review-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-create-v2/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'creation-procedure/SKILL.md')}
     assert not any(name.endswith(("credentials.json", "NOT_ALLOWED.md", "private.py")) for name in runner.names)
 
 
@@ -511,6 +527,123 @@ def test_clean_context_preserves_exact_legacy_and_current_motion_bundles(service
                 'manifest.json', *MOTION_FILES}
             for name in ('manifest.json', *MOTION_FILES):
                 assert archive.extractfile(root + name).read() == (service / 'resources' / revision / name).read_bytes()
+
+
+@pytest.mark.parametrize('target', ['control', 'pi', 'hermes'])
+def test_clean_source_context_carries_all_real_profile_resource_bytes(tmp_path, target):
+    from agent_service.build_image import context_archive
+    service = Path(__file__).parents[2] / 'agent_service'
+    destination = tmp_path / 'complete-source-context.tar'
+    context_archive(service, target, destination)
+    actual = {path.relative_to(service).as_posix(): path.read_bytes()
+        for path in (service / 'resources').rglob('*') if path.is_file()}
+    assert len(actual) == 46
+    with tarfile.open(destination) as archive:
+        captured = {name.removeprefix('agent_service/'): archive.extractfile(name).read()
+            for name in archive.getnames() if name.startswith('agent_service/resources/')}
+        assert captured == actual
+        assert archive.extractfile('scientific_agent/workflow_contracts.py').read() == (
+            service.parent / 'scientific_agent/workflow_contracts.py').read_bytes()
+        assert archive.extractfile('scientific_agent/academic_observations.py').read() == (
+            service.parent / 'scientific_agent/academic_observations.py').read_bytes()
+
+
+def test_clean_builder_animation_pins_match_independently_verified_profile_bundles():
+    from agent_service.build_image import ANIMATION_RUNTIME_BUNDLES
+    from agent_service.profiles import video_animation_review as review, video_animation_create as creation
+    measured = {}
+    for root, files, verify in (
+            (review.BUNDLE_ROOT, review.BUNDLE_FILES, review.verified_bundle),
+            (review.SEQUENCE_BUNDLE_ROOT, review.SEQUENCE_BUNDLE_FILES, review.verified_sequence_bundle),
+            (review.BATCH_BUNDLE_ROOT, review.BATCH_BUNDLE_FILES, review.verified_batch_bundle),
+            (creation.BUNDLE_ROOT, creation.BUNDLE_FILES, creation.verified_bundle)):
+        assert set(verify()) == files
+        measured[root.name] = (hashlib.sha256((root / 'manifest.json').read_bytes()).hexdigest(), files)
+    assert {revision: (pin, files) for revision, pin, files in ANIMATION_RUNTIME_BUNDLES} == measured
+
+
+def test_clean_context_imports_control_roles_and_existing_profile_closures_without_repository_fallback(tmp_path):
+    from agent_service.build_image import context_archive
+    service = Path(__file__).parents[2] / 'agent_service'
+    destination = tmp_path / 'isolated-source-context.tar'
+    extracted = tmp_path / 'isolated-source'
+    extracted.mkdir()
+    context_archive(service, 'pi', destination)
+    with tarfile.open(destination) as archive:
+        for member in archive.getmembers():
+            # Only files emitted by this bounded context builder are measured.
+            assert member.isfile() and not Path(member.name).is_absolute() and '..' not in Path(member.name).parts
+            path = extracted / member.name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(archive.extractfile(member).read())
+    code = r'''import importlib,json,pathlib,sys
+root=pathlib.Path(sys.argv[1]).resolve();sys.path.insert(0,str(root))
+modules=('agent_service.__main__','agent_service.api','agent_service.dispatcher',
+ 'agent_service.model_proxy','agent_service.worker_entry','agent_service.resources',
+ 'scientific_agent.workflow_contracts','scientific_agent.academic_observations',
+ 'scientific_agent.pi_revision_validation','pi_worker.research_tools.bridge')
+for name in modules:
+ module=importlib.import_module(name)
+ assert pathlib.Path(module.__file__).resolve().is_relative_to(root)
+from agent_service.profiles import implementation
+profiles=('workspace-task.v1','ppt.plan_initial.v1','ppt.plan_options.v1','ppt.prepare.v1',
+ 'ppt.generate.v1','ppt.revise.v1','research.generate.v1','research.revise.v1',
+ 'research.plan.v1','research.retrieve.v1','research.outline.v1','research.draft.v1',
+ 'video.storyboard.v1','video.scene.v1','video.motion-plan.v1','video.process-plan.v1',
+ 'video.explanation-plan.v1','video.animation-experiment.v1','video.animation-observe.v1',
+ 'video.animation-review.v1','video.animation-review.v2','video.animation-review.v3','video.animation-create.v2')
+for name in profiles:implementation(name)
+for name in ('video','video_motion','video_process','video_explanation','video_animation_experiment',
+ 'video_animation_create','video_animation_review','research'):
+ importlib.import_module('agent_service.profiles.'+name).verified_bundle()
+from agent_service.profiles.video_animation_review import verified_sequence_bundle,verified_batch_bundle
+verified_sequence_bundle();verified_batch_bundle()
+from agent_service.catalog_limits import HISTORY_RECORD_LIMIT
+from agent_service.model_proxy import image_inputs
+assert HISTORY_RECORD_LIMIT==256 and image_inputs.name=='agent_model_image_inputs'
+print(json.dumps({'control_modules':len(modules),'profile_implementations':len(profiles)}))
+'''
+    result = subprocess.run([sys.executable, '-I', '-B', '-c', code, str(extracted)],
+        cwd=extracted, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=True)
+    assert json.loads(result.stdout) == dict(control_modules=10, profile_implementations=23)
+
+
+@pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
+                                     'animation-create-v2'])
+@pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'LICENSE', 'procedure'])
+def test_changed_animation_runtime_resource_fails_before_docker(service, revision, changed):
+    if changed == 'procedure':
+        changed = ('creation' if revision == 'animation-create-v2' else 'review') + '-procedure/SKILL.md'
+    path = service / 'resources' / revision / changed
+    path.write_bytes(path.read_bytes() + b' ')
+    receipt, runner = old_receipt(service), DockerFixture()
+    with pytest.raises(BuildError, match='invalid_animation_runtime_resource_manifest'):
+        build(service=service, environ={}, runner=runner)
+    assert not receipt.exists() and not runner.calls
+
+
+@pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
+                                     'animation-create-v2'])
+def test_missing_animation_runtime_resource_cannot_produce_deployable_digest(service, revision):
+    (service / 'resources' / revision / 'LICENSE').unlink()
+    receipt, runner = old_receipt(service), DockerFixture()
+    with pytest.raises(BuildError, match='invalid_animation_runtime_resource_manifest'):
+        build(service=service, environ={}, runner=runner)
+    assert not receipt.exists() and not runner.calls
+
+
+def test_unreviewed_animation_resource_files_stay_out_of_clean_image(service, tmp_path):
+    from agent_service.build_image import context_archive
+    private = service / 'resources/animation-review-v3/private.py'
+    private.write_bytes(b'PRIVATE_RESOURCE = True\n')
+    extra = service / 'resources/animation-unreviewed/credentials.json'
+    extra.parent.mkdir()
+    extra.write_bytes(b'{"private":true}')
+    destination = tmp_path / 'bounded-animation-context.tar'
+    context_archive(service, 'control', destination)
+    with tarfile.open(destination) as archive:
+        assert 'agent_service/resources/animation-review-v3/private.py' not in archive.getnames()
+        assert not any('animation-unreviewed' in name for name in archive.getnames())
 
 
 @pytest.mark.parametrize('revision', ['video-motion-v1', 'video-motion-v2'])

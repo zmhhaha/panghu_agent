@@ -233,13 +233,15 @@ def test_cli_is_deterministic_preserves_existing_output_and_has_no_url_node_or_r
             main([*arguments(settings), *invalid])
 
 
-def test_independent_dockerfile_copies_exact_sources_and_no_execution_state_or_credentials():
+def test_independent_dockerfile_builds_complete_git_sources_without_application_donor():
     source = DOCKERFILE.read_text('utf8')
-    assert source.startswith('# Build separately')
-    assert 'ARG VIDEO_WORKBENCH_IMAGE\nFROM ${VIDEO_WORKBENCH_IMAGE}\n' in source
-    assert 'ARG VIDEO_WORKBENCH_IMAGE=' not in source
+    assert source.startswith('# Build the complete executor')
+    assert 'FROM ${PYTHON_BASE_IMAGE}\n' in source
+    assert re.search(r'^ARG PYTHON_BASE_IMAGE=python@sha256:[0-9a-f]{64}$', source, re.MULTILINE)
+    assert 'VIDEO_WORKBENCH_IMAGE' not in source
     assert 'USER 0:0' in source and 'EXPOSE 8767' in source
-    assert 'apt-get install -y --no-install-recommends docker.io' in source
+    packages = re.search(r'apt-get install -y --no-install-recommends ([^\n]+)', source).group(1).split()
+    assert {'docker.io', 'docker-cli', 'ffmpeg', 'fonts-noto-cjk', 'ca-certificates'} <= set(packages)
     assert all(check in source for check in ['docker --version', 'ffmpeg -version', 'ffprobe -version', 'python -m pip check'])
     assert 'root-docker-controller-not-restricted-renderer' in source
     copied = []
@@ -251,33 +253,43 @@ def test_independent_dockerfile_copies_exact_sources_and_no_execution_state_or_c
         for relative in paths[:-1]:
             path = ROOT / relative
             assert path.exists(), relative
-            assert relative not in ('.', 'agent_service', 'video_workbench')
+            assert relative != '.'
             assert '*' not in relative and '..' not in Path(relative).parts
             assert not any(token in relative for token in ('secrets', 'credentials', '.sqlite', '.db', 'renders/', 'evaluations/'))
             copied.append(relative)
-    assert 'video_workbench/animation_creation_executor.py' in copied
-    assert 'video_workbench/animation_creation_renderer.py' in copied
-    assert 'video_workbench/animation_creation_http.py' in copied
-    assert 'video_workbench/animation_creation_service.py' in copied
-    assert 'agent_service/resources/animation-create-v2' in copied
-    assert 'agent_service/resources/animation-review-v2' in copied
+    assert set(copied) == {'video_workbench/requirements.txt', 'agent_service/', 'video_workbench/'}
+    # Source changes reuse dependency layers, not a deployed application image.
+    assert source.index('pip install') < source.index('COPY agent_service/') < source.index('ARG SOURCE_REVISION\n')
     assert 'from video_workbench.animation_creation_executor import create_server' in source
-    assert 'verified_bundle(); old_bundle(); verified_sequence_bundle()' in source
+    assert 'verified_bundle(); old_bundle(); verified_sequence_bundle(); verified_batch_bundle()' in source
+    assert 'io.panghu.animation-creation.build="full-source"' in source
+    assert 'io.panghu.animation-creation.workbench-donor' not in source
     assert 'create_server(' not in source
     assert '--enable-isolated-rendering' not in source
 
 
-@pytest.mark.parametrize('donor,revision,valid', [
-    ('registry.example:5000/workbench:latest@sha256:' + 'a' * 64, 'b' * 40, True),
-    ('registry.example/workbench:latest', 'b' * 40, False),
-    ('registry.example/workbench:v1@sha256:' + 'a' * 64, 'b' * 40, False),
-    ('registry.example/workbench:latest@sha256:' + 'A' * 64, 'b' * 40, False),
-    ('registry.example/workbench:latest@sha256:' + 'a' * 64, 'not-measured', False),
+def test_full_source_context_excludes_runtime_data_and_credentials():
+    rules = (DOCKERFILE.with_name(DOCKERFILE.name + '.dockerignore')).read_text('utf8').splitlines()
+    patterns = [line for line in rules if line and not line.startswith('#')]
+    assert patterns[:5] == ['**', '!agent_service/', '!agent_service/**', '!video_workbench/', '!video_workbench/**']
+    assert not any(line.startswith('!') for line in patterns[5:])
+    assert {'**/.git', '**/.git/**', '**/rendered', '**/renders', '**/evaluations', '**/data',
+            '**/worker-hosts', '**/secrets', '**/credentials', '**/.env', '**/.env.*',
+            '**/*.pem', '**/*.key', '**/*.token', '**/*.db', '**/*.db-*', '**/*.sqlite',
+            '**/*.sqlite-*', '**/*.sqlite3', '**/*.sqlite3-*',
+            'agent_service/config*.json', 'agent_service/worker.config*.json'} <= set(patterns)
+
+
+@pytest.mark.parametrize('revision,valid', [
+    ('b' * 40, True),
+    ('B' * 40, False),
+    ('b' * 39, False),
+    ('', False),
+    ('not-measured', False),
 ])
-def test_dockerfile_build_guard_requires_explicit_latest_digest_and_source_revision(monkeypatch, donor, revision, valid):
+def test_dockerfile_build_guard_requires_complete_source_revision(monkeypatch, revision, valid):
     source = DOCKERFILE.read_text('utf8')
     guard = re.search(r'^RUN python -c "([^"]+)"', source, re.MULTILINE).group(1)
-    monkeypatch.setenv('VIDEO_WORKBENCH_IMAGE', donor)
     monkeypatch.setenv('SOURCE_REVISION', revision)
     if valid:
         exec(compile(guard, str(DOCKERFILE), 'exec'), {})
@@ -289,15 +301,18 @@ def test_dockerfile_build_guard_requires_explicit_latest_digest_and_source_revis
 def test_runtime_imports_and_frozen_resources_validate_without_startup_submission():
     from video_workbench.animation_creation_executor import create_server
     from agent_service.profiles.video_animation_create import verified_bundle
-    from agent_service.profiles.video_animation_review import verified_bundle as review_bundle, verified_sequence_bundle
+    from agent_service.profiles.video_animation_review import (
+        verified_bundle as review_bundle, verified_sequence_bundle, verified_batch_bundle,
+    )
     assert callable(create_server)
     verified_bundle()
     review_bundle()
     verified_sequence_bundle()
+    verified_batch_bundle()
 
 
 def test_child_renderer_does_not_inherit_controller_socket_credentials_or_capabilities():
-    # Packaging overlays the existing renderer unchanged. Verify its launch
+    # Full-source packaging keeps the renderer boundary. Verify its launch
     # boundary remains independently credential-free and networkless.
     source = (ROOT / 'video_workbench' / 'animation_experiment_render.py').read_text('utf8')
     for flag in ['--pull=never', '--network=none', '--read-only', '--user=10001:10001',

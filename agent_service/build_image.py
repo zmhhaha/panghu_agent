@@ -47,6 +47,17 @@ PROCESS_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'PLAN.schema.json', 'proces
 ANIMATION_RESOURCE = 'resources/animation-experiment-v1/'
 ANIMATION_MANIFEST_SHA256 = '2c090966b7df774b399b5c8d48acc002a35fd4b0a5612c21936780f109202b86'
 ANIMATION_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'animation-procedure/SKILL.md'})
+REVIEW_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'review-procedure/SKILL.md'})
+CREATION_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'creation-procedure/SKILL.md'})
+# Clean builds must carry every reviewed execution identity, including the
+# older observe/review resources still referenced by immutable accepted Hosts.
+# These pins deliberately remain independent of importing the service runtime.
+ANIMATION_RUNTIME_BUNDLES = (
+    ('animation-review-v1', '165e4bc85eeae28a1fd30028f555b5d5a832f4dfdcfed09904bfd49859126f29', REVIEW_FILES),
+    ('animation-review-v2', 'ce0ea7908798bcca99c7effc5cf6cbc3f3c9166e12cfadf2bae50a5d862fe77c', REVIEW_FILES),
+    ('animation-review-v3', '841e048b5493d290160e6ab8694460fb0f0b2032dc9f7ed12e2798f2d5f95676', REVIEW_FILES),
+    ('animation-create-v2', '5033ca38c868c54b860caf678bdcb39ae30088a89b659990ac609b45113fc923', CREATION_FILES),
+)
 
 
 class BuildError(RuntimeError):
@@ -132,6 +143,36 @@ def read_regular(path, limit=2 * 1024 * 1024):
     if len(content) != info.st_size or len(content) > limit or after.st_mtime_ns != info.st_mtime_ns:
         raise BuildError("build_source_changed")
     return content
+
+
+def animation_runtime_resources(service):
+    """Measure only the fixed create/observe/review bundle file inventories."""
+    files = {}
+    for revision, expected_sha, expected_files in ANIMATION_RUNTIME_BUNDLES:
+        prefix = 'resources/' + revision + '/'
+        try:
+            manifest = read_regular(service / (prefix + 'manifest.json'), 65536)
+            resource = json.loads(manifest, object_pairs_hook=unique_pairs)
+            if (hashlib.sha256(manifest).hexdigest() != expected_sha
+                    or type(resource) is not dict or resource.get('bundle_revision') != revision
+                    or resource.get('automatic_updates') is not False
+                    or resource.get('upstream_content_vendored') is not False
+                    or resource.get('license') != 'MIT'):
+                raise ValueError()
+            rows = resource['local_files']
+            if (type(rows) is not list or len(rows) != len(expected_files)
+                    or any(type(row) is not dict or set(row) != {'path', 'sha256'} for row in rows)
+                    or {row['path'] for row in rows} != expected_files):
+                raise ValueError()
+            for row in rows:
+                raw = read_regular(service / (prefix + row['path']), 128 * 1024)
+                if hashlib.sha256(raw).hexdigest() != row['sha256']:
+                    raise ValueError()
+                files['agent_service/' + prefix + row['path']] = raw
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            raise BuildError('invalid_animation_runtime_resource_manifest') from None
+        files['agent_service/' + prefix + 'manifest.json'] = manifest
+    return files
 
 
 def reset_receipt(service, target):
@@ -295,6 +336,7 @@ def context_archive(service, target, destination):
         except (ValueError, TypeError, KeyError, AttributeError):
             raise BuildError('invalid_animation_resource_manifest') from None
         files['agent_service/' + ANIMATION_RESOURCE + 'manifest.json'] = manifest
+        files.update(animation_runtime_resources(service))
     root = service.parent
     # Explicit framework-neutral dependencies of the reviewed collectors. No
     # business API/database/publisher, sessions or private Agent HOME is copied.

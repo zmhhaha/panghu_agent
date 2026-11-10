@@ -1,43 +1,44 @@
-# Build separately from the ordinary workbench and the credential-free Lab.
-# Supply an already measured workbench :latest@sha256:... donor explicitly.
-ARG VIDEO_WORKBENCH_IMAGE
-FROM ${VIDEO_WORKBENCH_IMAGE}
-ARG VIDEO_WORKBENCH_IMAGE
-ARG SOURCE_REVISION
+# Build the complete executor from a clean Git checkout at the repository root:
+# docker build -f video_workbench/Dockerfile.animation-creation-executor \
+#   --build-arg SOURCE_REVISION=<full-git-sha> \
+#   -t arm-cluster-master:5000/video-animation-creation:latest .
+# Dependencies use ordinary Docker layer caching; no deployed application donor.
+ARG PYTHON_BASE_IMAGE=python@sha256:cf50a4f6ac4f026458b08d5222023d700ac806410dff5e9ca8728fa44f2b850f
+FROM ${PYTHON_BASE_IMAGE}
+
 USER 0:0
 WORKDIR /app
-RUN python -c "import os,re; assert re.fullmatch(r'[a-z0-9][a-z0-9._:/-]*:latest@sha256:[0-9a-f]{64}',os.environ['VIDEO_WORKBENCH_IMAGE']); assert re.fullmatch(r'[0-9a-f]{40}',os.environ['SOURCE_REVISION'])" \
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    DOCKER_HOST=unix:///var/run/docker.sock \
+    DOCKER_CONFIG=/tmp/docker-config
+
+ARG DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
+RUN sed -i "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
-    && apt-get install -y --no-install-recommends docker.io docker-cli \
+    && apt-get install -y --no-install-recommends ca-certificates docker.io docker-cli ffmpeg poppler-utils libpango-1.0-0 libpangoft2-1.0-0 fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/* \
     && docker --version \
     && ffmpeg -version >/dev/null \
-    && ffprobe -version >/dev/null \
+    && ffprobe -version >/dev/null
+
+COPY video_workbench/requirements.txt /app/requirements.txt
+ARG PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+RUN pip install --no-cache-dir --index-url "${PYPI_INDEX_URL}" -r /app/requirements.txt \
     && python -m pip check
 
-# Exact source overlays; existing ordinary imports/dependencies come from the
-# pinned donor. No broad repository copy, runtime databases or credential files.
-COPY agent_service/client.py agent_service/contracts.py agent_service/artifacts.py agent_service/diagnostics.py agent_service/engines.py /app/agent_service/
-COPY agent_service/profiles/__init__.py agent_service/profiles/base.py agent_service/profiles/video.py agent_service/profiles/video_animation_experiment.py agent_service/profiles/video_animation_create.py agent_service/profiles/video_animation_review.py /app/agent_service/profiles/
-COPY agent_service/profiles/video_motion.py agent_service/profiles/video_motion_contract.py agent_service/profiles/video_process_contract.py /app/agent_service/profiles/
-COPY agent_service/resources/animation-experiment-v1 /app/agent_service/resources/animation-experiment-v1
-COPY agent_service/resources/animation-create-v2 /app/agent_service/resources/animation-create-v2
-COPY agent_service/resources/animation-review-v1 /app/agent_service/resources/animation-review-v1
-COPY agent_service/resources/animation-review-v2 /app/agent_service/resources/animation-review-v2
-COPY agent_service/resources/animation-review-v3 /app/agent_service/resources/animation-review-v3
-COPY video_workbench/animation_creation_executor.py video_workbench/animation_creation_service.py video_workbench/animation_creation_http.py video_workbench/animation_creation_renderer.py /app/video_workbench/
-COPY video_workbench/animation_review_gateway.py video_workbench/animation_revision_store.py video_workbench/animation_polish.py video_workbench/animation_observation.py /app/video_workbench/
-COPY video_workbench/agent.py video_workbench/motion_gateway.py /app/video_workbench/
-COPY video_workbench/animation_experiment_render.py video_workbench/animation_experiment_host.mjs video_workbench/animation_lab_capture.py video_workbench/animation_experiment_semantics.py /app/video_workbench/
-COPY video_workbench/animation_experiments.py video_workbench/animation_experiment_definitions.py video_workbench/animation_capabilities.py /app/video_workbench/
-RUN python -c "from video_workbench.animation_creation_executor import create_server; from agent_service.profiles.video_animation_create import verified_bundle; from agent_service.profiles.video_animation_review import verified_bundle as old_bundle,verified_sequence_bundle,verified_batch_bundle; verified_bundle(); old_bundle(); verified_sequence_bundle(); verified_batch_bundle()" \
+# The Dockerfile-specific ignore rules omit runtime state and credentials.
+# All application modules and their image-owned resource bundles come from Git.
+COPY agent_service/ /app/agent_service/
+COPY video_workbench/ /app/video_workbench/
+ARG SOURCE_REVISION
+RUN python -c "import os,re; assert re.fullmatch(r'[0-9a-f]{40}',os.environ['SOURCE_REVISION'])" \
+    && python -c "from video_workbench.animation_creation_executor import create_server; from agent_service.profiles.video_animation_create import verified_bundle; from agent_service.profiles.video_animation_review import verified_bundle as old_bundle,verified_sequence_bundle,verified_batch_bundle; verified_bundle(); old_bundle(); verified_sequence_bundle(); verified_batch_bundle()" \
     && mkdir -p /var/lib/video-animation-creation
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    DOCKER_HOST=unix:///var/run/docker.sock \
-    DOCKER_CONFIG=/tmp/docker-config
-LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" \
-      io.panghu.animation-creation.workbench-donor="${VIDEO_WORKBENCH_IMAGE}" \
+LABEL org.opencontainers.image.source="https://github.com/zmhhaha/panghu_agent" \
+      org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      io.panghu.animation-creation.build="full-source" \
       io.panghu.animation-creation.trust-boundary="root-docker-controller-not-restricted-renderer"
 EXPOSE 8767
 # The manifest supplies root, fixed Agent origin, distinct token files, pinned
