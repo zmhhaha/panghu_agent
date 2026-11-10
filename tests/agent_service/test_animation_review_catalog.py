@@ -48,7 +48,8 @@ def public_config(*, vision=False):
 
 def prepare(current=None, **changes):
     manifests, _ = measure_animation_review_bundles(
-        include_sequence_review=changes.get('include_sequence_review', False))
+        include_sequence_review=changes.get('include_sequence_review', False),
+        include_batched_review=changes.get('include_batched_review', False))
     settings = dict(worker_image=IMAGE, resource_manifests=manifests,
                     source_pool_id='existing-pool', vision_model_policy=model())
     settings.update(changes)
@@ -305,3 +306,124 @@ def test_sequence_selection_cannot_broaden_frozen_original_caller():
         prepare(current, include_sequence_review=True, caller=dict(tenant='internal',
             caller='video-animation-creation', profiles=[*PROFILES, review.REVIEW_SEQUENCE_PROFILE],
             token_ref='video-animation-creation'))
+
+
+def test_batch_selection_prepares_only_creation_and_new_review_and_is_idempotent():
+    from agent_service.deploy.acceptance_probe import candidate_config
+    original = public_config()
+    before = deepcopy(original)
+    manifests, measured = measure_animation_review_bundles(include_batched_review=True)
+    assert set(manifests) == {creation.BUNDLE_REVISION, review.BATCH_BUNDLE_REVISION}
+    assert measured['vision_delivery_verified'] is False
+    assert measured['model_requests'] == measured['agent_tasks'] == 0
+    merged, hosts, summary = prepare(original, include_batched_review=True)
+    assert original == before
+    assert set(hosts) == {creation.PROFILE, review.REVIEW_BATCH_PROFILE}
+    assert [row['profile'] for row in summary['combinations']] == [creation.PROFILE, review.REVIEW_BATCH_PROFILE]
+    assert len(merged['execution_bindings']) == len(before['execution_bindings']) + 2
+    assert not {review.OBSERVE_PROFILE, review.REVIEW_PROFILE, review.REVIEW_SEQUENCE_PROFILE} & set(hosts)
+    assert merged['callers'][-1]['profiles'] == [creation.PROFILE, review.REVIEW_BATCH_PROFILE]
+    assert summary['required_caller_token_ref'] == 'video-animation-creation-batch'
+    contract = registry(merged).contract(review.REVIEW_BATCH_PROFILE, '1')
+    assert contract.output_schema == 'video-animation-review-output.v3'
+    assert contract.max_input_files == 25 and contract.max_timeout_seconds == 1200
+    _, policy, binding = candidate_config(hosts[review.REVIEW_BATCH_PROFILE])
+    assert policy.name == review.REVIEW_BATCH_PROFILE and policy.enabled is False
+    assert binding.bundle.revision == review.BATCH_BUNDLE_REVISION and binding.acceptance is None
+    assert summary['combinations'][-1]['acceptance_suite'] == 'video.animation-review-contract.v3'
+    again, same_hosts, same_summary = prepare(merged, include_batched_review=True)
+    assert again == merged and same_hosts == hosts
+    assert same_summary['combinations'] == summary['combinations']
+
+
+def test_batch_role_has_a_new_combination_without_changing_existing_sequence_history():
+    existing, old_hosts, _ = prepare(include_sequence_review=True)
+    # The new source/image identity applies to the new candidate creation too;
+    # existing creation cannot be silently replaced by this additive helper.
+    merged, hosts, _ = prepare(existing, include_batched_review=True)
+    assert hosts[creation.PROFILE] == old_hosts[creation.PROFILE]
+    for section, rows in existing.items():
+        assert merged[section][:len(rows)] == rows if section in {*CATALOG_KEYS, 'callers', 'kubernetes_workers'} else merged[section] == rows
+    assert hosts[review.REVIEW_BATCH_PROFILE]['binding_id'] != old_hosts[review.REVIEW_SEQUENCE_PROFILE]['binding_id']
+
+
+def test_batch_new_worker_can_reuse_the_existing_unchanged_creation_image_and_combination():
+    existing, old_hosts, old_summary = prepare(include_sequence_review=True)
+    new_image = 'registry.internal/animation-pi:latest@sha256:' + 'd' * 64
+    merged, hosts, summary = prepare(existing, include_batched_review=True,
+        worker_image=new_image, creator_worker_image=IMAGE)
+    assert hosts[creation.PROFILE] == old_hosts[creation.PROFILE]
+    assert hosts[creation.PROFILE]['profile']['image_digest'] == IMAGE.rsplit('@', 1)[1]
+    assert hosts[review.REVIEW_BATCH_PROFILE]['profile']['image_digest'] == new_image.rsplit('@', 1)[1]
+    assert len(merged['execution_bindings']) == len(existing['execution_bindings']) + 1
+    old_creation = next(row for row in old_summary['combinations'] if row['profile'] == creation.PROFILE)
+    assert summary['combinations'][0] == old_creation
+    with pytest.raises(VideoCatalogError, match='animation_review_creator_worker_latest_digest_required'):
+        prepare(include_batched_review=True, creator_worker_image='registry.internal/pi:latest')
+
+
+def test_review_only_preserves_enabled_accepted_creator_and_leaves_caller_updates_to_operator():
+    from agent_service.registry import binding_fingerprint
+    current, _, _ = prepare(include_sequence_review=True)
+    binding = next(row for row in current['execution_bindings'] if row['profile'] == creation.PROFILE)
+    resolved = registry(current)
+    contract = resolved.contract(creation.PROFILE, '1')
+    bundle = resolved.bundle(binding['bundle']['name'], binding['bundle']['revision'])
+    environment = resolved.environment(binding['tool_environment']['name'], binding['tool_environment']['revision'])
+    binding['acceptance'] = dict(combination_sha256=binding_fingerprint(contract, bundle, environment, binding),
+        suite='video.animation-create-contract.v2', report_sha256='e' * 64)
+    next(row for row in current['routes'] if row['profile'] == creation.PROFILE)['enabled'] = True
+    creator_pool = next(row for row in current['kubernetes_workers'] if row['binding_id'] == binding['id'])
+    creator_pool.update(enabled=True, uid_start=130000000)
+    before = deepcopy(current)
+    caller = dict(tenant='internal', caller='video-animation-creation-sequence',
+        profiles=[creation.PROFILE, review.REVIEW_BATCH_PROFILE], token_ref='video-animation-creation-sequence')
+    new_image = 'registry.internal/animation-pi:latest@sha256:' + 'd' * 64
+    merged, hosts, summary = prepare(current, include_batched_review=True, review_only=True,
+        register_caller=False, worker_image=new_image, creator_worker_image=IMAGE,
+        creator_model_policy=binding['model_policy'], caller=caller)
+    assert current == before
+    assert set(hosts) == {review.REVIEW_BATCH_PROFILE}
+    assert [row['profile'] for row in summary['combinations']] == [review.REVIEW_BATCH_PROFILE]
+    assert summary['existing_creator_reused'] is True and summary['caller_registered'] is False
+    assert summary['required_caller_token_ref'] == caller['token_ref']
+    assert merged['callers'] == before['callers']
+    assert len(merged['execution_bindings']) == len(before['execution_bindings']) + 1
+    for section, rows in before.items():
+        assert merged[section][:len(rows)] == rows if section in {*CATALOG_KEYS, 'callers', 'kubernetes_workers'} else merged[section] == rows
+    with pytest.raises(VideoCatalogError, match='existing_catalog_identity_conflict'):
+        prepare(current, include_batched_review=True, review_only=True, caller=caller)
+    with pytest.raises(VideoCatalogError, match='animation_review_existing_creator_image_mismatch'):
+        prepare(current, include_batched_review=True, review_only=True, creator_worker_image=new_image)
+    with pytest.raises(VideoCatalogError, match='animation_review_existing_creator_model_mismatch'):
+        prepare(current, include_batched_review=True, review_only=True,
+            creator_model_policy=dict(binding['model_policy'], model='changed-creator-model'))
+
+
+@pytest.mark.parametrize('changes,code', [
+    ({'review_only': 'yes'}, 'animation_review_only_selection_invalid'),
+    ({'review_only': True}, 'animation_review_only_selection_invalid'),
+    ({'register_caller': None}, 'animation_review_caller_registration_invalid'),
+    ({'include_batched_review': True, 'review_only': True}, 'animation_review_existing_creator_required'),
+])
+def test_review_only_preparation_rejects_implicit_modes_and_missing_creator(changes, code):
+    with pytest.raises(VideoCatalogError, match=code):
+        prepare(**changes)
+
+
+@pytest.mark.parametrize('selected', [None, 0, 1, 'yes'])
+def test_batch_role_selection_requires_an_explicit_boolean(selected):
+    with pytest.raises(VideoCatalogError, match='animation_batch_review_selection_invalid'):
+        measure_animation_review_bundles(include_batched_review=selected)
+
+
+def test_batch_selection_rejects_mixed_modes_and_wrong_resource_manifests():
+    with pytest.raises(VideoCatalogError, match='animation_review_selection_ambiguous'):
+        measure_animation_review_bundles(include_sequence_review=True, include_batched_review=True)
+    manifests, _ = measure_animation_review_bundles(include_sequence_review=True)
+    with pytest.raises(VideoCatalogError, match='animation_review_bundle_manifests_required'):
+        prepare(include_batched_review=True, resource_manifests=manifests)
+    manifests, _ = measure_animation_review_bundles(include_batched_review=True)
+    manifests[review.BATCH_BUNDLE_REVISION]['local_files'][0]['sha256'] = 'e' * 64
+    with pytest.raises(VideoCatalogError, match='animation_review_bundle_manifest_mismatch'):
+        prepare(include_batched_review=True, resource_manifests=manifests)

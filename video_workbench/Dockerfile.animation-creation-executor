@@ -24,12 +24,13 @@ COPY agent_service/resources/animation-experiment-v1 /app/agent_service/resource
 COPY agent_service/resources/animation-create-v2 /app/agent_service/resources/animation-create-v2
 COPY agent_service/resources/animation-review-v1 /app/agent_service/resources/animation-review-v1
 COPY agent_service/resources/animation-review-v2 /app/agent_service/resources/animation-review-v2
+COPY agent_service/resources/animation-review-v3 /app/agent_service/resources/animation-review-v3
 COPY video_workbench/animation_creation_executor.py video_workbench/animation_creation_service.py video_workbench/animation_creation_http.py video_workbench/animation_creation_renderer.py /app/video_workbench/
 COPY video_workbench/animation_review_gateway.py video_workbench/animation_revision_store.py video_workbench/animation_polish.py video_workbench/animation_observation.py /app/video_workbench/
 COPY video_workbench/agent.py video_workbench/motion_gateway.py /app/video_workbench/
 COPY video_workbench/animation_experiment_render.py video_workbench/animation_experiment_host.mjs video_workbench/animation_lab_capture.py video_workbench/animation_experiment_semantics.py /app/video_workbench/
 COPY video_workbench/animation_experiments.py video_workbench/animation_experiment_definitions.py video_workbench/animation_capabilities.py /app/video_workbench/
-RUN python -c "from video_workbench.animation_creation_executor import create_server; from agent_service.profiles.video_animation_create import verified_bundle; from agent_service.profiles.video_animation_review import verified_bundle as old_bundle,verified_sequence_bundle; verified_bundle(); old_bundle(); verified_sequence_bundle()" \
+RUN python -c "from video_workbench.animation_creation_executor import create_server; from agent_service.profiles.video_animation_create import verified_bundle; from agent_service.profiles.video_animation_review import verified_bundle as old_bundle,verified_sequence_bundle,verified_batch_bundle; verified_bundle(); old_bundle(); verified_sequence_bundle(); verified_batch_bundle()" \
     && mkdir -p /var/lib/video-animation-creation
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

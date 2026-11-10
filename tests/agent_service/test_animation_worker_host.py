@@ -14,7 +14,7 @@ from agent_service.worker_entry import CATALOG_KEYS, HostConfig, host_policy
 
 
 IMAGE = 'registry.internal/animation-pi:latest@sha256:' + 'c' * 64
-PROFILES = ('video.animation-create.v2', 'video.animation-review.v2')
+PROFILES = ('video.animation-create.v2', 'video.animation-review.v2', 'video.animation-review.v3')
 
 
 @pytest.fixture(scope='module')
@@ -37,6 +37,13 @@ def full_hosts():
         include_sequence_review=True, vision_model_policy=dict(revision='vision-v1',
             api_mode='openai-responses', provider='task-proxy', model='vision-model',
             capabilities=['text','tool_calls','vision']))
+    batch_manifests, _ = measure_animation_review_bundles(include_batched_review=True)
+    merged, batch_hosts, _ = prepare_animation_review_catalog(merged,
+        worker_image=IMAGE, resource_manifests=batch_manifests, source_pool_id='source-pool',
+        include_batched_review=True, vision_model_policy=dict(revision='vision-v1',
+            api_mode='openai-responses', provider='task-proxy', model='vision-model',
+            capabilities=['text','tool_calls','vision']))
+    hosts.update(batch_hosts)
     for profile in PROFILES:
         binding = next(row for row in merged['execution_bindings'] if row['profile'] == profile)
         contract = next(row for row in merged['task_contracts'] if row['name'] == profile)

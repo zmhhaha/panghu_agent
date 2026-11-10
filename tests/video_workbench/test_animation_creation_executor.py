@@ -85,7 +85,7 @@ def test_real_executor_wires_separate_credentials_storage_profiles_and_default_p
         assert server.service.creation_gateway.client is client
         assert server.service.review_gateway.client is client
         assert server.service.creation_gateway.profile == 'video.animation-create.v2'
-        assert server.service.review_gateway.profile == 'video.animation-review.v2'
+        assert server.service.review_gateway.profile == 'video.animation-review.v3'
         assert server.service.renderer.enabled is True and server.service.renderer.image == IMAGE
         assert server.service.path == config['root'] / 'creation-service.sqlite3'
         assert server.service.revisions.path == str((config['root'] / 'creation-polish.sqlite3').resolve())

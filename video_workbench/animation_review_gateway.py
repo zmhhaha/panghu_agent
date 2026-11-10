@@ -190,3 +190,9 @@ class AnimationSequenceReviewGateway(AnimationReviewGateway):
     """Explicit opt-in; original v1 identity and defaults remain frozen."""
     profile = visual.REVIEW_SEQUENCE_PROFILE
     business_prefix, idempotency_prefix = 'animation-review-sequence:', 'animation-review-seq-'
+
+
+class AnimationBatchReviewGateway(AnimationReviewGateway):
+    """Production review with a bounded batch of independent frame reads."""
+    profile = visual.REVIEW_BATCH_PROFILE
+    business_prefix, idempotency_prefix = 'animation-review-batch:', 'animation-review-batch-'

@@ -286,7 +286,7 @@ def test_original_source_and_confirmed_context_are_frozen_before_review_submissi
     assert work['creator'].calls == []
 
 
-@pytest.mark.parametrize('profile', [visual.REVIEW_PROFILE, visual.REVIEW_SEQUENCE_PROFILE])
+@pytest.mark.parametrize('profile', [visual.REVIEW_PROFILE, visual.REVIEW_SEQUENCE_PROFILE, visual.REVIEW_BATCH_PROFILE])
 @pytest.mark.parametrize('status', ['reserved', 'submitting', 'submission_unknown', 'submitted'])
 def test_same_review_document_cannot_switch_execution_role_before_any_io(work, profile, status):
     bundle = work['kwargs']['review_directory']

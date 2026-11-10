@@ -78,7 +78,7 @@ def test_reservation_input_identity_and_media_are_frozen(state):
         reserve(store, lineage_id, key='review-again')
 
 
-@pytest.mark.parametrize('profile', ['video.animation-review.v1', 'video.animation-review.v2'])
+@pytest.mark.parametrize('profile', ['video.animation-review.v1', 'video.animation-review.v2', 'video.animation-review.v3'])
 def test_review_execution_identity_is_added_before_atomic_reservation(state, profile):
     store, lineage_id = state
     original = deepcopy(MEDIA)

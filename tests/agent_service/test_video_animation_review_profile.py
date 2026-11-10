@@ -256,6 +256,7 @@ def test_visual_probe_requires_explicit_real_evidence_scenario(profile_name):
 @pytest.mark.parametrize('name,checksum', [
     (visual.OBSERVE_PROFILE, '36439743647eae0f52b93ed868e24bb06038519967edd845a251f2c357cbfe8a'),
     (visual.REVIEW_PROFILE, '59f0a606528a80cb028b44e4070dd73f94a46c13baadfb05bc09c90a9df62502'),
+    (visual.REVIEW_SEQUENCE_PROFILE, '0a9db534980e48136faeee911a754790e919000cacc071fdc7f68963516fb721'),
 ])
 def test_opt_in_sequence_procedure_keeps_frozen_v1_prompt_bytes(name, checksum):
     # Existing combinations retain their actual prompts, not just profile names.
@@ -329,3 +330,80 @@ def test_sequence_collector_checks_its_own_bundle_after_writer_stop(tmp_path, mo
     monkeypatch.setattr(visual, 'SEQUENCE_BUNDLE_ROOT', copied)
     with pytest.raises(ServiceError, match='animation_review_bundle_integrity'):
         collect(profile, tmp_path, envelope)
+
+
+def test_batch_profile_preserves_all_24_frames_and_the_visual_only_contract(tmp_path):
+    document = input_document()
+    document['observation']['windows'] = [dict(start_seconds=0, end_seconds=8)]
+    document['observation']['frames'] = [dict(frame_id=f'frame-{index}',
+        file_name=f'frame-{index}.png', time_seconds=index / 3,
+        sha256=hashlib.sha256(PNG).hexdigest()) for index in range(24)]
+    profile, envelope = prepare(tmp_path, document=document, profile_name=visual.REVIEW_BATCH_PROFILE)
+    assert profile.name == 'video.animation-review.v3'
+    assert profile.task_schema == 'video-animation-review.v3'
+    assert profile.output_schema == 'video-animation-review-output.v3'
+    assert profile.required_tools == ('read', 'write')
+    assert profile.required_model_capabilities == ('text', 'tool_calls', 'vision')
+    assert profile.limits == implementation(visual.REVIEW_SEQUENCE_PROFILE).limits
+    profile.validate_inputs(tmp_path, envelope.task)
+    output = opinion()
+    output['issues'][0].update(start_seconds=1 / 3, end_seconds=2 / 3)
+    (tmp_path / 'output.json').write_bytes(canonical_bytes(output))
+    result = json.loads(collect(profile, tmp_path, envelope)[0].content())
+    assert len(result['observed_frame_ids']) == 24
+    assert visual.validate_review_result(result, envelope.task['input_sha256'], document) == result
+    assert result['frame_evidence_status'] == 'supplied_only'
+    prompt = profile.build_prompt(envelope.task)
+    assert visual.verified_batch_bundle()['review-procedure/SKILL.md'] in prompt
+    assert 'same reply' in prompt and 'up to 24 reads' in prompt
+    assert 'at most two groups of up to 12 reads' in prompt
+    assert 'Do not wait for a new model reply between individual frames' in prompt
+    assert 'every declared original image' in prompt
+    assert 'fixed' in prompt and 'boundaries' in prompt and 'intermediate' in prompt
+    assert 'complete transport' in prompt and 'not a read receipt' in prompt
+    assert 'at most one' in prompt and 'one review' in prompt
+    assert 'do not look for a separate CONTRACT.md file' in prompt
+
+
+@pytest.mark.parametrize('change', ['old_profile', 'wrong_revision', 'one_motion_frame',
+                                   'invented_coverage', 'unknown_frame', 'audio_claim'])
+def test_batch_role_retains_identity_and_evidence_validation(tmp_path, change):
+    profile, envelope = prepare(tmp_path, profile_name=visual.REVIEW_BATCH_PROFILE)
+    output = opinion()
+    if change == 'old_profile':
+        envelope.profile = visual.REVIEW_SEQUENCE_PROFILE
+    elif change == 'wrong_revision':
+        envelope.profile_revision = '2'
+    elif change == 'one_motion_frame':
+        output['issues'][0]['frame_ids'] = ['frame-1']
+    elif change == 'invented_coverage':
+        output['coverage'] = 'whole_video'
+    elif change == 'unknown_frame':
+        output['issues'][0]['frame_ids'][1] = 'unseen-frame'
+    else:
+        output['issues'][0]['kind'] = 'voice-naturalness'
+    (tmp_path / 'output.json').write_bytes(canonical_bytes(output))
+    with pytest.raises(ServiceError):
+        collect(profile, tmp_path, envelope)
+
+
+@pytest.mark.parametrize('path', ['manifest.json', 'CONTRACT.md', 'LICENSE', 'review-procedure/SKILL.md'])
+def test_batch_bundle_tampering_is_rejected_at_prompt_and_collection(tmp_path, monkeypatch, path):
+    profile, envelope = prepare(tmp_path, profile_name=visual.REVIEW_BATCH_PROFILE)
+    copied = tmp_path / visual.BATCH_BUNDLE_REVISION
+    shutil.copytree(visual.BATCH_BUNDLE_ROOT, copied)
+    (copied / path).write_bytes(b'changed instructions')
+    monkeypatch.setattr(visual, 'BATCH_BUNDLE_ROOT', copied)
+    with pytest.raises(ServiceError, match='animation_review_bundle_integrity'):
+        profile.build_prompt(envelope.task)
+    with pytest.raises(ServiceError, match='animation_review_bundle_integrity'):
+        collect(profile, tmp_path, envelope)
+    assert visual.verified_sequence_bundle()
+    assert visual.verified_bundle()
+
+
+def test_batch_visual_probe_requires_an_explicit_real_evidence_scenario():
+    from agent_service.deploy import acceptance_probe
+    assert visual.REVIEW_BATCH_PROFILE in acceptance_probe.PROFILES
+    with pytest.raises(ServiceError, match='candidate_scenario_required'):
+        acceptance_probe.fixture(visual.REVIEW_BATCH_PROFILE)

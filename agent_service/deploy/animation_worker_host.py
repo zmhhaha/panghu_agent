@@ -12,7 +12,8 @@ from copy import deepcopy
 from agent_service.worker_entry import CATALOG_KEYS, HostConfig, WorkerConfigError, host_policy
 
 
-PROFILES = frozenset({'video.animation-create.v2', 'video.animation-review.v2'})
+PROFILES = frozenset({'video.animation-create.v2', 'video.animation-review.v2',
+                      'video.animation-review.v3'})
 
 
 class AnimationWorkerHostError(ValueError):

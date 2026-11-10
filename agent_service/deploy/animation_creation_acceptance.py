@@ -29,7 +29,8 @@ from agent_service.worker_entry import HostConfig, _host_registry, accepted_host
 from video_workbench.animation_candidate_import import EXPORT_NAMES, validate_candidate
 
 
-PROFILES = {creation.PROFILE: 'create', visual.REVIEW_SEQUENCE_PROFILE: 'review'}
+PROFILES = {creation.PROFILE: 'create', visual.REVIEW_SEQUENCE_PROFILE: 'review',
+            visual.REVIEW_BATCH_PROFILE: 'review'}
 CHECKS = ('capability', 'model_round_trip', 'isolation', 'model_proxy_lease')
 ISOLATION = ('arbitrary_mount_denied', 'caps_empty', 'control_unreadable',
     'detached_writers_stopped', 'input_write_denied', 'no_new_privileges',
@@ -77,10 +78,15 @@ def _bundle(package, registry, binding, policy, profile):
     contract = registry.contract(profile, policy.revision)
     bundle = registry.bundle(binding.bundle.name, binding.bundle.revision)
     environment = registry.environment(binding.tool_environment.name, binding.tool_environment.revision)
-    revision = creation.BUNDLE_REVISION if profile == creation.PROFILE else visual.SEQUENCE_BUNDLE_REVISION
-    manifest_sha = (creation.BUNDLE_MANIFEST_SHA256 if profile == creation.PROFILE
-                    else visual.SEQUENCE_BUNDLE_MANIFEST_SHA256)
-    members = creation.BUNDLE_FILES if profile == creation.PROFILE else visual.SEQUENCE_BUNDLE_FILES
+    if profile == creation.PROFILE:
+        revision, manifest_sha, members = (
+            creation.BUNDLE_REVISION, creation.BUNDLE_MANIFEST_SHA256, creation.BUNDLE_FILES)
+    elif profile == visual.REVIEW_BATCH_PROFILE:
+        revision, manifest_sha, members = (
+            visual.BATCH_BUNDLE_REVISION, visual.BATCH_BUNDLE_MANIFEST_SHA256, visual.BATCH_BUNDLE_FILES)
+    else:
+        revision, manifest_sha, members = (
+            visual.SEQUENCE_BUNDLE_REVISION, visual.SEQUENCE_BUNDLE_MANIFEST_SHA256, visual.SEQUENCE_BUNDLE_FILES)
     require(bundle.revision == revision and set(contract.required_tools) == set(bundle.required_tools)
             == set(environment.tools) == set(handler.required_tools) == {'read', 'write'},
             'animation_creation_admission_bundle_tools_mismatch')

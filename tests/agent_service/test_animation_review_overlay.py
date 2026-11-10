@@ -32,13 +32,14 @@ def sources(newline='\n'):
     candidate['registry.py'] = candidate['registry.py'].replace(
         "'video-animation-experiment-output.v1']", "'video-animation-experiment-output.v1', "
         "'video-animation-observe-output.v1', 'video-animation-review-output.v1', "
-        "'video-animation-create-output.v2', 'video-animation-review-output.v2']")
+        "'video-animation-create-output.v2', 'video-animation-review-output.v2', 'video-animation-review-output.v3']")
     candidate['registry.py'] += "\n\ndef required_model_capabilities(handler):\n    return handler.required_model_capabilities\n"
     candidate['resources.py'] = candidate['resources.py'].replace('    return other_resources',
         "    if policy.name in {'video.animation-observe.v1', 'video.animation-review.v1'}:\n"
         "        return review_resources\n"
         "    if policy.name == 'video.animation-create.v2':\n        return create_resources\n"
         "    if policy.name == 'video.animation-review.v2':\n        return sequence_resources\n"
+        "    if policy.name == 'video.animation-review.v3':\n        return batch_resources\n"
         "    return other_resources")
     candidate['deploy/acceptance_probe.py'] = candidate['deploy/acceptance_probe.py'].replace(
         "PROFILES = {'video.animation-experiment.v1'}", "PROFILES = {'video.animation-experiment.v1', "
@@ -147,7 +148,7 @@ class DeploymentRegistry:
         "'video-animation-experiment-output.v1',",
         "'video-animation-experiment-output.v1', 'video-animation-observe-output.v1', "
         "'video-animation-review-output.v1', 'video-animation-create-output.v2', "
-        "'video-animation-review-output.v2',").replace(
+        "'video-animation-review-output.v2', 'video-animation-review-output.v3',").replace(
         "c.name.replace('.v1', '-contract.v1')", "re.sub(r'\\.v([0-9]+)$', r'-contract.v\\1', c.name)")
     baseline['resources.py'] = '''def measured_package(config, policy, control_root):
     if policy.name.startswith('ppt.'):
@@ -169,6 +170,8 @@ class DeploymentRegistry:
         return create_resources
     elif policy.name == 'video.animation-review.v2':
         return sequence_resources
+    elif policy.name == 'video.animation-review.v3':
+        return batch_resources
 '''
     candidate['resources.py'] = baseline['resources.py'].replace(
         "    elif policy.name == 'video.motion-plan.v1':", new_resource_branches +
@@ -241,7 +244,8 @@ def test_inspected_older_pi_shapes_keep_quotas_members_and_original_video_routin
     exec(patched['registry.py'], registry)
     schema = set(registry['OutputSchema'].__args__)
     expected_schemas = {'video-animation-observe-output.v1', 'video-animation-review-output.v1',
-                        'video-animation-create-output.v2', 'video-animation-review-output.v2'}
+                        'video-animation-create-output.v2', 'video-animation-review-output.v2',
+                        'video-animation-review-output.v3'}
     assert schema == {'video-motion-plan-output.v1', 'video-animation-experiment-output.v1'} | expected_schemas
     config = registry['DeploymentRegistry']()
     assert config.from_config(SimpleNamespace(name='video-animation-create.v2'), [None] * 100) == 'video-animation-create-contract.v2'
@@ -249,11 +253,12 @@ def test_inspected_older_pi_shapes_keep_quotas_members_and_original_video_routin
         config.from_config(SimpleNamespace(name='video-animation-create.v2'), [None] * 101)
 
     old_values = ('old_ppt_resources', 'old_research_resources', 'frozen_experiment_resources', 'old_video_resources')
-    resources = {name: name for name in (*old_values, 'review_resources', 'create_resources', 'sequence_resources')}
+    resources = {name: name for name in (*old_values, 'review_resources', 'create_resources', 'sequence_resources', 'batch_resources')}
     exec(patched['resources.py'], resources)
     for profile, expected in (
             ('video.animation-observe.v1', 'review_resources'), ('video.animation-review.v1', 'review_resources'),
             ('video.animation-review.v2', 'sequence_resources'),
+            ('video.animation-review.v3', 'batch_resources'),
             ('video.animation-create.v2', 'create_resources'), ('video.animation-experiment.v1', 'frozen_experiment_resources'),
             ('video.motion-plan.v1', 'old_video_resources'), ('video.storyboard.v1', 'old_video_resources')):
         assert resources['measured_package'](None, SimpleNamespace(name=profile), None) == expected
@@ -421,7 +426,7 @@ def test_build_preserves_old_resources_and_runtime_and_never_pushes_implicitly(t
     assert receipt['deployment_changed'] is receipt['production_routes_changed'] is False
     assert 'COPY overlay/ ' in captured['dockerfile'] and 'FROM ' + args.base_image in captured['dockerfile']
     assert receipt['profiles'] == list(overlay.PROFILES)
-    assert receipt['profiles'][-1] == 'video.animation-review.v2'
+    assert receipt['profiles'][-1] == 'video.animation-review.v3'
     from agent_service.profiles import video_animation_review as review
     manifest = json.loads(captured['files']['resources/animation-review-v2/manifest.json'])
     assert overlay.sha(captured['files']['resources/animation-review-v2/manifest.json']) == review.SEQUENCE_BUNDLE_MANIFEST_SHA256
@@ -438,6 +443,9 @@ def test_overlay_inventory_adds_explicit_sequence_resources_without_replacing_ol
     sequence = {name for name in files if name.startswith('resources/animation-review-v2/')}
     assert sequence == {'resources/animation-review-v2/' + name for name in
                         ('manifest.json', 'CONTRACT.md', 'LICENSE', 'review-procedure/SKILL.md')}
+    batched = {name for name in files if name.startswith('resources/animation-review-v3/')}
+    assert batched == {'resources/animation-review-v3/' + name for name in
+                       ('manifest.json', 'CONTRACT.md', 'LICENSE', 'review-procedure/SKILL.md')}
     assert not any(name.startswith('resources/animation-experiment-v1/') for name in files)
     assert 'profiles/video_animation_experiment.py' not in files
 

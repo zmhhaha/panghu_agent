@@ -28,7 +28,7 @@ OutputSchema = Literal['text-output.v1', 'ppt-plan_initial-output.v1', 'ppt-plan
     'video-explanation-plan-output.v1', 'video-process-plan-output.v1',
     'video-animation-experiment-output.v1', 'video-animation-observe-output.v1',
     'video-animation-review-output.v1', 'video-animation-create-output.v2',
-    'video-animation-review-output.v2']
+    'video-animation-review-output.v2', 'video-animation-review-output.v3']
 
 NAME = r'^[a-z][a-z0-9_.-]{0,79}$'
 REVISION = r'^[A-Za-z0-9_.-]{1,100}$'

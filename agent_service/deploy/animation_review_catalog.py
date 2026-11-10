@@ -29,8 +29,18 @@ _MODULES = (review, creation)
 _VISION = frozenset({'text', 'tool_calls', 'vision'})
 
 
-def _modules(include_sequence_review):
+def _modules(include_sequence_review, include_batched_review=False):
     require(type(include_sequence_review) is bool, 'animation_sequence_review_selection_invalid')
+    require(type(include_batched_review) is bool, 'animation_batch_review_selection_invalid')
+    require(not (include_sequence_review and include_batched_review),
+            'animation_review_selection_ambiguous')
+    if include_batched_review:
+        return (creation, SimpleNamespace(
+            BUNDLE_ROOT=review.BATCH_BUNDLE_ROOT,
+            BUNDLE_REVISION=review.BATCH_BUNDLE_REVISION,
+            BUNDLE_MANIFEST_SHA256=review.BATCH_BUNDLE_MANIFEST_SHA256,
+            BUNDLE_FILES=review.BATCH_BUNDLE_FILES,
+            verified_bundle=review.verified_batch_bundle))
     if not include_sequence_review:
         return _MODULES
     return (*_MODULES, SimpleNamespace(
@@ -62,14 +72,14 @@ def _manifest(manifest, module):
     return rows
 
 
-def measure_animation_review_bundles(*, include_sequence_review=False):
+def measure_animation_review_bundles(*, include_sequence_review=False, include_batched_review=False):
     """Verify frozen bundles, adding sequence review only when explicitly selected.
 
     This measures local procedure bytes only. Image/container measurement,
     actual frame delivery and model readiness require separate evidence.
     """
     manifests, measured = {}, []
-    for module in _modules(include_sequence_review):
+    for module in _modules(include_sequence_review, include_batched_review):
         raw = (module.BUNDLE_ROOT / 'manifest.json').read_bytes()
         require(hashlib.sha256(raw).hexdigest() == module.BUNDLE_MANIFEST_SHA256,
                 'animation_review_bundle_manifest_mismatch')
@@ -110,7 +120,8 @@ def _model(policy, required, code):
 def prepare_animation_review_catalog(current, *, worker_image, resource_manifests,
         source_pool_id, vision_source_pool_id=None, vision_source_binding=None,
         vision_model_policy=None, creator_model_policy=None, caller=None,
-        runtime_revision=None, include_sequence_review=False,
+        runtime_revision=None, include_sequence_review=False, include_batched_review=False,
+        creator_worker_image=None, review_only=False, register_caller=True,
         model_proxy_url='http://agent-model-proxy.agent-service.svc.cluster.local:8080/v1'):
     """Return (additive catalog, hosts keyed by profile, preparation receipt).
 
@@ -120,13 +131,23 @@ def prepare_animation_review_catalog(current, *, worker_image, resource_manifest
     candidate; it is not admitted until that exact combination passes real
     acceptance. Default text-only policies are rejected for visual roles.
     """
-    modules = _modules(include_sequence_review)
-    profiles = (*PROFILES, review.REVIEW_SEQUENCE_PROFILE) if include_sequence_review else PROFILES
+    modules = _modules(include_sequence_review, include_batched_review)
+    profiles = ((creation.PROFILE, review.REVIEW_BATCH_PROFILE) if include_batched_review else
+                (*PROFILES, review.REVIEW_SEQUENCE_PROFILE) if include_sequence_review else PROFILES)
+    require(type(review_only) is bool and (not review_only or include_batched_review),
+            'animation_review_only_selection_invalid')
+    require(type(register_caller) is bool, 'animation_review_caller_registration_invalid')
+    caller_profiles = profiles
+    if review_only:
+        profiles = (review.REVIEW_BATCH_PROFILE,)
     before = deepcopy(current)
     existing = registry(current)
     require(type(worker_image) is str and re.fullmatch(
         r'[a-z0-9][a-z0-9._:/-]*:latest@sha256:[0-9a-f]{64}', worker_image),
         'animation_review_worker_latest_digest_required')
+    require(creator_worker_image is None or type(creator_worker_image) is str and re.fullmatch(
+        r'[a-z0-9][a-z0-9._:/-]*:latest@sha256:[0-9a-f]{64}', creator_worker_image),
+        'animation_review_creator_worker_latest_digest_required')
     require(type(resource_manifests) is dict
             and set(resource_manifests) == {module.BUNDLE_REVISION for module in modules},
             'animation_review_bundle_manifests_required')
@@ -151,21 +172,37 @@ def prepare_animation_review_catalog(current, *, worker_image, resource_manifest
                           _VISION, 'animation_review_vision_model_policy_required')
     creator_model = _model(source_binding.model_policy if creator_model_policy is None else creator_model_policy,
                            {'text', 'tool_calls'}, 'animation_review_creator_model_policy_required')
-    caller_name = 'video-animation-creation-sequence' if include_sequence_review else 'video-animation-creation'
+    if review_only:
+        routes = [row for row in current['routes']
+                  if row['profile'] == creation.PROFILE and row['profile_revision'] == '1']
+        require(len(routes) == 1, 'animation_review_existing_creator_required')
+        selected_creator = existing.binding(routes[0]['binding_id'], routes[0]['binding_revision'])
+        require(selected_creator is not None and selected_creator.profile == creation.PROFILE,
+                'animation_review_existing_creator_required')
+        creator_environment = existing.environment(selected_creator.tool_environment.name,
+                                                   selected_creator.tool_environment.revision)
+        require(creator_worker_image is None or creator_environment.image_digest == creator_worker_image.rsplit('@', 1)[1],
+                'animation_review_existing_creator_image_mismatch')
+        require(creator_model_policy is None or dict(creator_model) == dict(selected_creator.model_policy),
+                'animation_review_existing_creator_model_mismatch')
+    caller_name = ('video-animation-creation-batch' if include_batched_review else
+                   'video-animation-creation-sequence' if include_sequence_review else 'video-animation-creation')
     caller = deepcopy(caller) if caller is not None else dict(tenant='internal',
-        caller=caller_name, profiles=list(profiles), token_ref=caller_name)
+        caller=caller_name, profiles=list(caller_profiles), token_ref=caller_name)
     require(type(caller) is dict and set(caller) == {'tenant', 'caller', 'profiles', 'token_ref'}
-            and caller['profiles'] == list(profiles)
+            and caller['profiles'] == list(caller_profiles)
             and caller['caller'] not in {'video-workbench', 'video-animation-lab'},
             'dedicated_animation_review_caller_required')
 
     merged, hosts, combinations = deepcopy(current), {}, []
     for profile in profiles:
+        batched = include_batched_review and profile == review.REVIEW_BATCH_PROFILE
         sequence = include_sequence_review and profile == review.REVIEW_SEQUENCE_PROFILE
-        visual = profile in {review.OBSERVE_PROFILE, review.REVIEW_PROFILE} or sequence
-        module = modules[-1] if sequence else review if visual else creation
-        role = ('review-sequence-v2' if sequence else 'observe' if profile == review.OBSERVE_PROFILE
+        visual = profile in {review.OBSERVE_PROFILE, review.REVIEW_PROFILE} or sequence or batched
+        module = modules[-1] if sequence or batched else review if visual else creation
+        role = ('review-batch-v3' if batched else 'review-sequence-v2' if sequence else 'observe' if profile == review.OBSERVE_PROFILE
                 else 'review' if visual else 'create-v2')
+        selected_image = worker_image if visual else creator_worker_image or worker_image
         model = visual_model if visual else creator_model
         handler = implementation(profile)
         contract = TaskContract.model_validate(dict(name=profile, revision='1',
@@ -181,7 +218,7 @@ def prepare_animation_review_catalog(current, *, worker_image, resource_manifest
                    for row in resource_manifests[module.BUNDLE_REVISION]['local_files']]))
         environment_data = dict(name='tools-pi-animation-' + role,
             tools=list(handler.required_tools), capabilities=[handler.output_schema],
-            image_digest=worker_image.rsplit('@', 1)[1],
+            image_digest=selected_image.rsplit('@', 1)[1],
             runtime_revision=runtime_revision or source_environment.runtime_revision)
         environment_data['revision'] = 'env-' + digest(environment_data)[:20]
         environment = ToolEnvironment.model_validate(environment_data)
@@ -198,7 +235,7 @@ def prepare_animation_review_catalog(current, *, worker_image, resource_manifest
         host_name = 'animation-' + role + '-pi-' + fingerprint[:20]
         pool = deepcopy(source_pool)
         pool.update(pool_id=host_name, binding_id=binding.id, binding_revision=binding.revision,
-                    host_config_map=host_name, image=worker_image, enabled=False, uid_start=None)
+                    host_config_map=host_name, image=selected_image, enabled=False, uid_start=None)
         for section, value, keys in (
             ('task_contracts', contract, ('name', 'revision')),
             ('capability_bundles', bundle, ('name', 'revision')),
@@ -229,7 +266,8 @@ def prepare_animation_review_catalog(current, *, worker_image, resource_manifest
             required_model_capabilities=sorted(contract.required_model_capabilities),
             model_policy_sha256=digest(model.model_dump(mode='json')),
             route_enabled=False, pool_enabled=False, acceptance_created=False, uid_reserved=False))
-    append_row(merged, 'callers', caller, ('tenant', 'caller'))
+    if register_caller:
+        append_row(merged, 'callers', caller, ('tenant', 'caller'))
     resolved = registry(merged)
     for profile, host in hosts.items():
         require(host_policy(HostConfig.model_validate(host)).execution_binding
@@ -246,6 +284,7 @@ def prepare_animation_review_catalog(current, *, worker_image, resource_manifest
             dict(binding_id=vision_binding.id, binding_revision=vision_binding.revision),
         bundles=[dict(bundle_revision=module.BUNDLE_REVISION, manifest_sha256=module.BUNDLE_MANIFEST_SHA256)
                  for module in modules], existing_routes_preserved=len(before['routes']),
+        existing_creator_reused=review_only, caller_registered=register_caller,
         required_caller_token_ref=caller['token_ref'], route_enabled=False, pool_enabled=False,
         acceptance_created=False, vision_delivery_verified=False, uid_reserved=False,
         model_requests=0, secrets_created=False)

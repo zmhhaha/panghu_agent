@@ -21,6 +21,7 @@ from ..engines import StopEvidence
 OBSERVE_PROFILE = 'video.animation-observe.v1'
 REVIEW_PROFILE = 'video.animation-review.v1'
 REVIEW_SEQUENCE_PROFILE = 'video.animation-review.v2'
+REVIEW_BATCH_PROFILE = 'video.animation-review.v3'
 OBSERVE_INPUT_SCHEMA = 'video.animation-observe-input.v1'
 REVIEW_INPUT_SCHEMA = 'video.animation-review-input.v1'
 OBSERVE_RESULT_SCHEMA = 'video.animation-observe-result.v1'
@@ -42,6 +43,10 @@ SEQUENCE_BUNDLE_REVISION = 'animation-review-v2'
 SEQUENCE_BUNDLE_ROOT = Path(__file__).resolve().parent.parent / 'resources' / SEQUENCE_BUNDLE_REVISION
 SEQUENCE_BUNDLE_FILES = BUNDLE_FILES
 SEQUENCE_BUNDLE_MANIFEST_SHA256 = 'ce0ea7908798bcca99c7effc5cf6cbc3f3c9166e12cfadf2bae50a5d862fe77c'
+BATCH_BUNDLE_REVISION = 'animation-review-v3'
+BATCH_BUNDLE_ROOT = Path(__file__).resolve().parent.parent / 'resources' / BATCH_BUNDLE_REVISION
+BATCH_BUNDLE_FILES = BUNDLE_FILES
+BATCH_BUNDLE_MANIFEST_SHA256 = '841e048b5493d290160e6ab8694460fb0f0b2032dc9f7ed12e2798f2d5f95676'
 
 
 def _number(value, low, high):
@@ -292,6 +297,29 @@ def verified_sequence_bundle():
     return result
 
 
+def verified_batch_bundle():
+    """Measure the new procedure without rewriting historical v1/v2 resources."""
+    raw = _read(BATCH_BUNDLE_ROOT, 'manifest.json', 65536)
+    _require(hashlib.sha256(raw).hexdigest() == BATCH_BUNDLE_MANIFEST_SHA256,
+             'animation_review_bundle_integrity')
+    manifest = decode_video_json(raw)
+    _require(type(manifest) is dict and manifest.get('bundle_revision') == BATCH_BUNDLE_REVISION
+             and manifest.get('automatic_updates') is False
+             and manifest.get('upstream_content_vendored') is False
+             and manifest.get('license') == 'MIT', 'animation_review_bundle_integrity')
+    rows = manifest.get('local_files')
+    _require(type(rows) is list and len(rows) == len(BATCH_BUNDLE_FILES)
+             and all(type(row) is dict and set(row) == {'path', 'sha256'} for row in rows)
+             and {row['path'] for row in rows} == BATCH_BUNDLE_FILES,
+             'animation_review_bundle_integrity')
+    result = {}
+    for row in rows:
+        raw = _read(BATCH_BUNDLE_ROOT, row['path'], 128 * 1024)
+        _require(hashlib.sha256(raw).hexdigest() == row['sha256'], 'animation_review_bundle_integrity')
+        result[row['path']] = raw.decode('utf-8')
+    return result
+
+
 class _VisualProfile:
     required_tools = ('read', 'write')
     required_model_capabilities = ('text', 'tool_calls', 'vision')
@@ -412,3 +440,13 @@ class VideoAnimationReviewSequenceProfile(VideoAnimationReviewProfile):
             'Use the exact row fields in CONTRACT.md.',
             'Use the exact row fields in the inline contract above; '
             'do not look for a separate CONTRACT.md file.')
+
+
+class VideoAnimationReviewBatchProfile(VideoAnimationReviewSequenceProfile):
+    """New execution identity for grouped reads; visual evidence gates are unchanged."""
+    name = REVIEW_BATCH_PROFILE
+    task_schema = 'video-animation-review.v3'
+    output_schema = 'video-animation-review-output.v3'
+
+    def _bundle(self):
+        return verified_batch_bundle()

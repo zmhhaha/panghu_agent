@@ -136,7 +136,8 @@ def candidate(root, role, document, files, host_value, *, failed=False, director
 
 def make_pilot(tmp_path, *, review_profile=visual.REVIEW_PROFILE, with_observer=True, candidate_names=None):
     candidate_names = {} if candidate_names is None else candidate_names
-    _, hosts, _ = prepare(include_sequence_review=review_profile == visual.REVIEW_SEQUENCE_PROFILE)
+    _, hosts, _ = prepare(include_sequence_review=review_profile == visual.REVIEW_SEQUENCE_PROFILE,
+                          include_batched_review=review_profile == visual.REVIEW_BATCH_PROFILE)
     context = creation_document()
     base = dict(source_revision='original-r1',engine=source_output()['engine'],files=source_output()['files'])
     base['source_sha256'] = creation.source_sha256(base)
@@ -450,7 +451,7 @@ def test_sequence_export_cannot_substitute_a_v1_profile_at_any_bound_layer(seque
     ('observe', visual.REVIEW_SEQUENCE_PROFILE),
     ('create', visual.REVIEW_SEQUENCE_PROFILE),
     ('review', creation.PROFILE),
-    ('review', 'video.animation-review.v3'),
+    ('review', 'video.animation-review.v99'),
     ('review', {}),
 ])
 def test_expected_profile_cannot_expand_other_roles_or_admit_unknown_profiles(tmp_path, role, profile):

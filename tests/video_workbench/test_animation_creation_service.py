@@ -35,7 +35,7 @@ class Gateway:
 
     def upload(self, document, files):
         self.calls.append(('upload', digest(document)))
-        if self.profile == visual.REVIEW_SEQUENCE_PROFILE:
+        if self.profile == visual.REVIEW_BATCH_PROFILE:
             assert all(files[frame['file_name']] == PNG for frame in document['observation']['frames'])
         return []
 
@@ -139,7 +139,7 @@ class Renderer:
 def fake_prepare(media, directory, *, clip_id, goal, source_sha256, sampling_layers, frame_limit, review_profile):
     """A fake decoder for orchestration tests, explicitly not real media evidence."""
     assert media.read_bytes().startswith(b'fake-media-for-business-unit-test:')
-    assert review_profile == visual.REVIEW_SEQUENCE_PROFILE and frame_limit == 24
+    assert review_profile == visual.REVIEW_BATCH_PROFILE and frame_limit == 24
     inputs = directory / 'inputs'
     inputs.mkdir(parents=True)
     document = dict(schema=visual.REVIEW_INPUT_SCHEMA, clip_id=clip_id, goal=goal,
@@ -164,7 +164,7 @@ def fake_prepare(media, directory, *, clip_id, goal, source_sha256, sampling_lay
 def work(tmp_path, monkeypatch):
     monkeypatch.setattr(service_module, 'prepare_temporal_media', fake_prepare)
     creator = Gateway(creation.PROFILE)
-    reviewer = Gateway(visual.REVIEW_SEQUENCE_PROFILE)
+    reviewer = Gateway(visual.REVIEW_BATCH_PROFILE)
     renderer = Renderer(tmp_path / 'renderer')
     root = tmp_path / 'new-service'
     svc = AnimationCreationService(root, creation_gateway=creator, review_gateway=reviewer, renderer=renderer)

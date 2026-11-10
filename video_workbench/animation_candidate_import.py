@@ -186,7 +186,7 @@ def validate_candidate(directory, *, role, document, files, expected_image_diges
     No artifact, image or exported process is executed. Completed visual roles
     need actual proxy transport evidence. A stopped, controller-recorded failed
     result is importable as failed, consuming its allowance without a retry.
-    Sequence-review v2 requires an explicit expected_profile. It shares the
+    Versioned sequence/batch reviews require an explicit expected_profile. They share the
     frozen evidence schema, but its execution identity cannot be relabelled.
     """
     require(role in ROLE_PROFILES and type(expected_image_digest) is str
@@ -194,7 +194,7 @@ def validate_candidate(directory, *, role, document, files, expected_image_diges
     profile = ROLE_PROFILES[role] if expected_profile is None else expected_profile
     allowed_profiles = {ROLE_PROFILES[role]}
     if role == 'review':
-        allowed_profiles.add(visual.REVIEW_SEQUENCE_PROFILE)
+        allowed_profiles.update({visual.REVIEW_SEQUENCE_PROFILE, visual.REVIEW_BATCH_PROFILE})
     require(type(profile) is str and profile in allowed_profiles,
             'animation_candidate_profile_not_allowed')
     root = Path(directory).absolute() / 'candidate-output'
@@ -418,7 +418,7 @@ def import_phase_one(root, *, owner, project_id, expected_image_digest, stage='r
     require(type(base) is dict and set(base) == {'engine', 'files', 'source_revision', 'source_sha256'}
             and creation.source_sha256(base) == base['source_sha256'])
     review_profile, review_doc, review_files = load_bundle(review_directory)
-    require(review_profile in (visual.REVIEW_PROFILE, visual.REVIEW_SEQUENCE_PROFILE)
+    require(review_profile in (visual.REVIEW_PROFILE, visual.REVIEW_SEQUENCE_PROFILE, visual.REVIEW_BATCH_PROFILE)
             and review_doc['source_sha256'] == base['source_sha256'])
     observer = None
     observe_directory = candidate_paths['observe'] / 'candidate-output'

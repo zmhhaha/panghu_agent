@@ -137,7 +137,7 @@ class AnimationCreationService:
                  'animation_creation_root_invalid')
         self.creation_gateway, self.review_gateway, self.renderer = creation_gateway, review_gateway, renderer
         _require(getattr(creation_gateway, 'profile', None) == creation.PROFILE
-                 and getattr(review_gateway, 'profile', None) == visual.REVIEW_SEQUENCE_PROFILE,
+                 and getattr(review_gateway, 'profile', None) == visual.REVIEW_BATCH_PROFILE,
                  'animation_creation_profile_mismatch', 409)
         self.revisions = AnimationRevisionStore(self.root / 'creation-polish.sqlite3')
         with self._db() as db:
@@ -236,7 +236,8 @@ class AnimationCreationService:
             creation_id='creation-' + run_id, goal=target['goal'] + '\n' + target['exploration'],
             constraints=bounds, assets={}, prompt_revision='lab-create-v2-r1', guidance=_FIXED_GUIDANCE,
             base_source=None, review=None))
-        frozen = dict(definition=target, creation_input=document, input_role=body['input_role'])
+        frozen = dict(definition=target, creation_input=document, input_role=body['input_role'],
+                      review_profile=visual.REVIEW_BATCH_PROFILE)
         now = time.time()
         run = dict(schema=SCHEMA, id=run_id, owner=owner, request_id=body['request_id'],
             input_role=body['input_role'], experiment=dict(id=target['id'], identity=target['identity'],
@@ -421,7 +422,7 @@ class AnimationCreationService:
         source = run['operations']['initial_creation']['result']
         if directory.exists():
             profile, document, _ = load_bundle(directory)
-            _require(profile == visual.REVIEW_SEQUENCE_PROFILE
+            _require(profile == run['frozen']['review_profile']
                      and document['source_sha256'] == source['source_sha256']
                      and document['media']['sha256'] == run['versions'][0]['sha256'],
                      'animation_creation_review_binding_changed', 409)
@@ -440,7 +441,7 @@ class AnimationCreationService:
         prepare_temporal_media(media, staging, clip_id='fragment-' + run['id'],
             goal=run['frozen']['creation_input']['goal'] + '\n' + _FIXED_GUIDANCE,
             source_sha256=source['source_sha256'], sampling_layers=layers, frame_limit=24,
-            review_profile=visual.REVIEW_SEQUENCE_PROFILE)
+            review_profile=run['frozen']['review_profile'])
         staging.rename(directory)
         return self._review_directory(run)
 

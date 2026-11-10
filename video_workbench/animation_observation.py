@@ -18,7 +18,7 @@ from uuid import UUID
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.profiles import implementation
 from agent_service.profiles.video_animation_review import (
-    OBSERVE_PROFILE, REVIEW_PROFILE, REVIEW_SEQUENCE_PROFILE, OBSERVE_INPUT_NAME, REVIEW_INPUT_NAME,
+    OBSERVE_PROFILE, REVIEW_PROFILE, REVIEW_SEQUENCE_PROFILE, REVIEW_BATCH_PROFILE, OBSERVE_INPUT_NAME, REVIEW_INPUT_NAME,
     OBSERVE_INPUT_SCHEMA, REVIEW_INPUT_SCHEMA, MAX_FRAMES, MAX_IMAGE_BYTES,
     validate_observation_input, validate_review_input)
 
@@ -209,7 +209,7 @@ def _prepare_media(media_path, directory, *, clip_id, goal, source_sha256, windo
             times.extend(round(start + i / sample_fps, 6) for i in range(count))
     # Validate metadata, identifiers and windows before creating files.
     review = source_sha256 is not None
-    require(review_profile in (REVIEW_PROFILE, REVIEW_SEQUENCE_PROFILE)
+    require(review_profile in (REVIEW_PROFILE, REVIEW_SEQUENCE_PROFILE, REVIEW_BATCH_PROFILE)
             and (review or review_profile == REVIEW_PROFILE), 'animation_observation_profile_invalid')
     profile = review_profile if review else OBSERVE_PROFILE
     input_name = REVIEW_INPUT_NAME if review else OBSERVE_INPUT_NAME
@@ -359,8 +359,8 @@ def load_bundle(directory):
     receipt = json.loads(_file(root / 'evidence.json', 16384).read_bytes())
     require(receipt.get('schema') == 'video.animation-observation-preparation.v1')
     profile = receipt.get('profile')
-    require(profile in (OBSERVE_PROFILE, REVIEW_PROFILE, REVIEW_SEQUENCE_PROFILE))
-    name = REVIEW_INPUT_NAME if profile in (REVIEW_PROFILE, REVIEW_SEQUENCE_PROFILE) else OBSERVE_INPUT_NAME
+    require(profile in (OBSERVE_PROFILE, REVIEW_PROFILE, REVIEW_SEQUENCE_PROFILE, REVIEW_BATCH_PROFILE))
+    name = REVIEW_INPUT_NAME if profile in (REVIEW_PROFILE, REVIEW_SEQUENCE_PROFILE, REVIEW_BATCH_PROFILE) else OBSERVE_INPUT_NAME
     raw = _file(root / 'inputs' / name, 128 * 1024).read_bytes()
     require(receipt.get('input_name') == name and hashlib.sha256(raw).hexdigest() ==
             receipt.get('input_sha256'), 'animation_observation_input_changed')

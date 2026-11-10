@@ -196,16 +196,17 @@ def test_temporal_plan_is_immutable_when_reloaded(media, tmp_path):
         observation.load_bundle(root)
 
 
-def test_sequence_review_profile_requires_explicit_opt_in_and_a_source(media, tmp_path):
+@pytest.mark.parametrize('profile', ['video.animation-review.v2', 'video.animation-review.v3'])
+def test_sequence_review_profile_requires_explicit_opt_in_and_a_source(media, tmp_path, profile):
     root = tmp_path / 'sequence'
     result = observation.prepare_temporal_media(media, root, clip_id='technical-fixture', goal='Inspect',
         sampling_layers=[dict(start_seconds=0, end_seconds=2, sample_fps=1)],
-        source_sha256='a' * 64, review_profile='video.animation-review.v2')
-    assert result['receipt']['profile'] == observation.load_bundle(root)[0] == 'video.animation-review.v2'
+        source_sha256='a' * 64, review_profile=profile)
+    assert result['receipt']['profile'] == observation.load_bundle(root)[0] == profile
     with pytest.raises(ServiceError, match='profile_invalid'):
         observation.prepare_temporal_media(media, tmp_path / 'no-source', clip_id='technical-fixture',
             goal='Inspect', sampling_layers=[dict(start_seconds=0, end_seconds=2, sample_fps=1)],
-            review_profile='video.animation-review.v2')
+            review_profile=profile)
     assert not (tmp_path / 'no-source').exists()
 
 

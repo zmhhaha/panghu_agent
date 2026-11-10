@@ -42,8 +42,8 @@ def edit(root, name, change):
     save(root / name, value)
 
 
-def capture(tmp_path, role='review'):
-    pilot = make_pilot(tmp_path, review_profile=visual.REVIEW_SEQUENCE_PROFILE, with_observer=False)
+def capture(tmp_path, role='review', *, review_profile=visual.REVIEW_SEQUENCE_PROFILE):
+    pilot = make_pilot(tmp_path, review_profile=review_profile, with_observer=False)
     directory = tmp_path / ('candidate-animation-' + role + '-p1')
     root = directory / 'candidate-output'
     request, captured, record = (read(root / name) for name in
@@ -136,6 +136,36 @@ def test_four_captured_prerequisites_produce_only_a_disabled_host(tmp_path, role
     assert not list(tmp_path.glob('*.sqlite3'))
     with pytest.raises(ServiceError, match='new_output_required'):
         admission.review_candidate(directory, output)
+
+
+def test_batch_acceptance_uses_new_profile_bundle_and_suite(tmp_path):
+    directory, root = capture(tmp_path, review_profile=visual.REVIEW_BATCH_PROFILE)
+    output = tmp_path / 'batch-review'
+    summary = admission.review_candidate(directory, output)
+    approval = read(output / 'binding-approvals.json')[0]
+    target = output / approval['path']
+    report = read(target / 'acceptance-evidence.json')
+    host = HostConfig.model_validate(read(target / 'config.json'))
+    assert summary['profile'] == visual.REVIEW_BATCH_PROFILE
+    assert approval['acceptance']['suite'] == 'video.animation-review-contract.v3'
+    assert report['profile'] == visual.REVIEW_BATCH_PROFILE
+    host_policy_bundle = host.execution_catalog['capability_bundles'][0]
+    assert host_policy_bundle['revision'] == visual.BATCH_BUNDLE_REVISION
+    assert report['measured_bundle_files_sha256']['manifest.json'] == visual.BATCH_BUNDLE_MANIFEST_SHA256
+    assert accepted_host(host, target / 'acceptance.json')
+    assert summary['enabled'] is False and summary['live_http_verified'] is False
+    assert summary['model_requests'] == summary['uid_allocations'] == 0
+
+
+def test_batch_bundle_cannot_be_admitted_with_old_review_manifest(tmp_path):
+    directory, _ = capture(tmp_path, review_profile=visual.REVIEW_BATCH_PROFILE)
+    copied = tmp_path / 'source'
+    shutil.copytree(PACKAGE / 'resources' / visual.BATCH_BUNDLE_REVISION,
+                    copied / 'resources' / visual.BATCH_BUNDLE_REVISION)
+    (copied / 'resources' / visual.BATCH_BUNDLE_REVISION / 'manifest.json').write_bytes(
+        (PACKAGE / 'resources' / visual.SEQUENCE_BUNDLE_REVISION / 'manifest.json').read_bytes())
+    with pytest.raises(ServiceError, match='animation_creation_admission_resource_mismatch'):
+        admission.assess_candidate(directory, source_root=copied)
 
 
 @pytest.mark.parametrize('name,change', [

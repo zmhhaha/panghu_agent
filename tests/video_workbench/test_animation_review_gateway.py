@@ -15,7 +15,7 @@ from agent_service.profiles import video_animation_create as creation
 from agent_service.profiles import video_animation_review as visual
 from video_workbench.animation_review_gateway import (
     AnimationObserveGateway, AnimationReviewGateway, AnimationCreateGateway,
-    AnimationSequenceReviewGateway)
+    AnimationSequenceReviewGateway, AnimationBatchReviewGateway)
 
 
 PNG = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS1sAAAAASUVORK5CYII=')
@@ -51,7 +51,7 @@ def result_document(profile, document):
             prompt_revision=document['prompt_revision'], **source,
             source_sha256=creation.source_sha256(source), base_source_sha256=None, review_sha256=None,
             files_sha256={key:hashlib.sha256(value.encode()).hexdigest() for key,value in source['files'].items()})
-    review = profile in {visual.REVIEW_PROFILE, visual.REVIEW_SEQUENCE_PROFILE}
+    review = profile in {visual.REVIEW_PROFILE, visual.REVIEW_SEQUENCE_PROFILE, visual.REVIEW_BATCH_PROFILE}
     result = dict(schema=visual.REVIEW_RESULT_SCHEMA if review else visual.OBSERVE_RESULT_SCHEMA,
         input_sha256=digest(document), prompt_revision=document['prompt_revision'],
         media_sha256=document['media']['sha256'], coverage='sampled_frames', evidence_scope='visual_only',
@@ -135,7 +135,7 @@ class Peer:
 
 
 @pytest.fixture(params=[AnimationObserveGateway, AnimationReviewGateway, AnimationCreateGateway,
-                       AnimationSequenceReviewGateway])
+                       AnimationSequenceReviewGateway, AnimationBatchReviewGateway])
 def wire(request, monkeypatch):
     gateway_class = request.param
     monkeypatch.setattr('video_workbench.animation_review_gateway.time.time', lambda: 1000.0)

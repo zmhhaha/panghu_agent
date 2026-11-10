@@ -90,6 +90,12 @@ def measured_package(config, policy, control_root):
         root = SEQUENCE_BUNDLE_ROOT
         mandatory = {'manifest.json', *SEQUENCE_BUNDLE_FILES}
         verified_sequence_bundle()
+    elif policy.name == 'video.animation-review.v3':
+        from .profiles.video_animation_review import (
+            BATCH_BUNDLE_ROOT, BATCH_BUNDLE_FILES, verified_batch_bundle)
+        root = BATCH_BUNDLE_ROOT
+        mandatory = {'manifest.json', *BATCH_BUNDLE_FILES}
+        verified_batch_bundle()
     elif policy.name == 'video.motion-plan.v1':
         root = motion_package_root(pins.bundle_revision)
         mandatory = {'manifest.json', 'motion-procedure/SKILL.md', 'CONTRACT.md', 'PLAN.schema.json', 'LICENSE'}
