@@ -700,7 +700,7 @@ class AnimationMethodService:
                 entries, frame_files = [], {}
                 for target in ([best, candidate] if best else [candidate]):
                     for index, frame in enumerate(self.renderer.frames(target['operation_id'], max_frames=12)):
-                        name = 'frames/' + ('baseline' if target is best else 'candidate') + '-' + str(index) + '.jpg'
+                        name = 'frame-' + ('baseline' if target is best else 'candidate') + '-' + str(index) + '.jpg'
                         raw = frame['raw']
                         entries.append(dict(frame_id=('b' if target is best else 'c') + str(index),
                             file_name=name, sha256=hashlib.sha256(raw).hexdigest(),

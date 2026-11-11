@@ -59,7 +59,7 @@ def document(review=True):
         feedback='',base_source=None,reference=None,comparison=None,assets={},
         observation=dict(frames=[],audio_observed=False,motion_observed=False,limitations=['Still images only']))
     if review:
-        value['observation']['frames']=[dict(frame_id='frame-one',file_name='frames/one.png',
+        value['observation']['frames']=[dict(frame_id='frame-one',file_name='frame-one.png',
             sha256=hashlib.sha256(PNG).hexdigest(),timestamp_seconds=0,candidate_id='candidate-one',media_sha256='d'*64)]
         value['comparison']=dict(candidate_id='candidate-one',baseline_candidate_id=None)
     return value
@@ -88,7 +88,7 @@ def capture(tmp_path,review=True):
     value=document(review)
     files={method.INPUT_NAME:canonical_bytes(value)}
     if review:
-        files['frames/one.png']=PNG
+        files['frame-one.png']=PNG
     scenario_path,sources,scenario=write_scenario(tmp_path/'projected',profile,
         dict(input_sha256=digest(value)),files)
     pins={key:item for key,item in policy.pins().items() if key in ExecutionEnvelope.model_fields}

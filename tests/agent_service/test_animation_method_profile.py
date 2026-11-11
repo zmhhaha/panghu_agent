@@ -32,7 +32,7 @@ def result(context):
 def review_context():
     context = document('review')
     current, baseline = str(uuid4()), str(uuid4())
-    context['observation']['frames'] = [dict(frame_id='frame-' + str(i), file_name='frames/' + str(i) + '.png',
+    context['observation']['frames'] = [dict(frame_id='frame-' + str(i), file_name='frame-' + str(i) + '.png',
         sha256=str(i + 1) * 64, timestamp_seconds=2, candidate_id=candidate, media_sha256='f' * 64)
         for i, candidate in enumerate([baseline, current])]
     context['comparison'] = dict(candidate_id=current, baseline_candidate_id=baseline)
@@ -42,6 +42,33 @@ def review_context():
         criteria_results=[dict(criterion_id='cause', status='passed', evidence='The supplied frames show the change')],
         remaining_issues=[], next_guidance='', limitations=['Only still frames'])
     return context, output
+
+
+@pytest.mark.parametrize('name', ['frame-candidate-0.png', 'frame-baseline-0.jpg', 'Frame_2.jpeg',
+                                 'a' * 120 + '.png'])
+def test_review_frame_names_are_flat_images_accepted_by_input_reader(name):
+    context, _ = review_context()
+    context['observation']['frames'][0]['file_name'] = name
+    assert contract.validate_input(context) == context
+
+
+@pytest.mark.parametrize('name', ['frames/one.png', '../one.png', '/one.png', 'C:/one.png',
+                                 r'frames\one.png', 'one..png', '.hidden.png', 'one.gif',
+                                 contract.INPUT_NAME, 'one.PNG', 'a' * 121 + '.png', 'one\n.png'])
+def test_review_frame_names_reject_paths_and_nonreader_names(name):
+    context, _ = review_context()
+    context['observation']['frames'][0]['file_name'] = name
+    with pytest.raises(ServiceError):
+        contract.validate_input(context)
+
+
+@pytest.mark.parametrize('key', ['file_name', 'frame_id'])
+def test_review_frame_names_and_ids_must_be_unique(key):
+    context, _ = review_context()
+    frames = context['observation']['frames']
+    frames[1][key] = frames[0][key]
+    with pytest.raises(ServiceError):
+        contract.validate_input(context)
 
 
 def test_bundle_and_roles_are_distinct_and_verified():

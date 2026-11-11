@@ -142,6 +142,8 @@ def test_complete_bounded_commission_and_readonly_get(work):
     row = finish(service, row['id'])
     assert row['stop_reason'] == 'goal_met'
     assert len(creator.submissions) == 2 and len(reviewer.submissions) == len(renderer.calls) == 1
+    frames = reviewer.jobs[reviewer.submissions[0]]['document']['observation']['frames']
+    assert [frame['file_name'] for frame in frames] == ['frame-candidate-0.jpg', 'frame-candidate-1.jpg']
     assert row['candidates'][0]['demonstration_id']
     assert row['publication_ready'] is False
     assert '尚未完成异结构迁移验证' in row['publication_blockers']
@@ -215,6 +217,10 @@ def test_continue_preserves_better_baseline(work):
     assert row['baseline_candidate']['id'] == first['best_candidate_id']
     assert len(row['candidates']) == 2
     assert service.artifact('developer', row['id'], row['best_candidate_id'], 'media')
+    frames = reviewer.jobs[reviewer.submissions[-1]]['document']['observation']['frames']
+    assert [frame['file_name'] for frame in frames] == [
+        'frame-baseline-0.jpg', 'frame-baseline-1.jpg', 'frame-candidate-0.jpg', 'frame-candidate-1.jpg']
+    assert len({frame['frame_id'] for frame in frames}) == len(frames)
 
 
 def test_transfer_retained_baseline_uses_exact_method_criteria(work):

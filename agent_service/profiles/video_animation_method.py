@@ -124,8 +124,9 @@ def validate_input(document):
         _identifier(frame['frame_id'])
         _candidate_id(frame['candidate_id'])
         name = frame['file_name']
-        _require(type(name) is str and name.startswith('frames/') and name.endswith(('.png', '.jpg'))
-                 and len(name.split('/')) == 2 and '..' not in name and '\\' not in name
+        # The pinned read_inputs tool reads one flat directory of staged files.
+        _require(type(name) is str and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,119}\.(?:png|jpg|jpeg)', name)
+                 and '..' not in name and name != INPUT_NAME
                  and name not in names and frame['frame_id'] not in frame_ids)
         names.add(name)
         frame_ids.add(frame['frame_id'])
