@@ -48,4 +48,7 @@ def implementation(name):
     if name == 'video.animation-create.v2':
         from .video_animation_create import VideoAnimationCreateProfile
         return VideoAnimationCreateProfile()
+    if name in {'video.animation-method-author.v1', 'video.animation-method-review.v1'}:
+        from .video_animation_method import VideoAnimationMethodProfile
+        return VideoAnimationMethodProfile(review=name == 'video.animation-method-review.v1')
     raise ValueError('No reviewed profile implementation')

@@ -27,7 +27,6 @@ import threading
 import time
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from .animation_lab_samples import MODULES, catalog, compile_sample
 from .animation_lab_store import AnnotationStore
 from .animation_lab_triage_store import TriageStore
 from .animation_lab_iteration import IterationError, IterationStore
@@ -44,6 +43,20 @@ WEB = Path(__file__).with_name('animation_lab_web')
 _FIELDS = {'case_id', 'case_identity', 'variant_id', 'kind', 'start_seconds',
            'end_seconds', 'region', 'tags', 'severity', 'comment', 'preference', 'verdict'}
 _PUBLIC_URL_FIELDS = frozenset({'preview_url', 'report_url', 'task_url', 'image_url', 'asset_url', 'media_url', 'assessment_url', 'source_url'})
+_METHOD_UI_PATHS = frozenset({'/', '/index.html', '/method-gallery.html',
+                              '/method-gallery.mjs', '/method-gallery.css'})
+
+
+def catalog():
+    # Legacy callers retain the same test seam without importing the fixed
+    # corpus at all during methods-only service startup.
+    from .animation_lab_samples import catalog as legacy_catalog
+    return legacy_catalog()
+
+
+def compile_sample(case_id, variant_id):
+    from .animation_lab_samples import compile_sample as legacy_compile
+    return legacy_compile(case_id, variant_id)
 
 
 class LabError(ValueError):
@@ -103,8 +116,20 @@ def load_assets(directory):
 
 
 class AnimationLab:
-    def __init__(self, data_dir, assets, evaluations_dir=None, *, source_revision=None, creation_client=None):
+    def __init__(self, data_dir, assets, evaluations_dir=None, *, source_revision=None, creation_client=None,
+                 method_client=None, methods_only=False):
+        _require(type(methods_only) is bool, 'animation_lab_mode_invalid')
+        _require(not methods_only or method_client is not None, 'animation_method_configuration_required')
+        self.methods_only = methods_only
         self.creation_client = creation_client
+        self.method_client = method_client
+        self.csrf_token = secrets.token_urlsafe(32)
+        self.cases, self.bundles = {}, {}
+        if methods_only:
+            # Methods, media and durable execution records belong to the
+            # private executor. This authenticated UI proxy needs no local
+            # legacy databases, corpus, renderer assets or evaluation mounts.
+            return
         self.assets = dict(assets)
         self.evaluations_dir = Path(evaluations_dir).resolve(strict=True) if evaluations_dir else None
         self.player_script = Path(__file__).with_name('animation_lab_player.mjs').read_bytes()
@@ -133,8 +158,6 @@ class AnimationLab:
         self.experiments = ExperimentStore(Path(data_dir) / 'animation-experiments.db',
             self.evaluations_dir / 'capability-experiments' if self.evaluations_dir else None)
         self.evaluation_lock = threading.RLock()
-        self.csrf_token = secrets.token_urlsafe(32)
-        self.cases, self.bundles = {}, {}
         for case in catalog():
             bundles = [compile_sample(case['id'], row['id']) for row in case['variants']]
             case.update(fps=FPS,
@@ -186,6 +209,7 @@ class AnimationLab:
         return dict(self.runtime, engine_assets=required) if required else self.runtime
 
     def get_catalog(self):
+        from .animation_lab_samples import MODULES
         with self.evaluation_lock:
             evaluations = self.evaluations()
             cases = deepcopy(list(self.cases.values()))
@@ -551,7 +575,8 @@ class LabHTTPServer(ThreadingHTTPServer):
         else:
             _require(listen == '127.0.0.1' and public_origin is None and not self.developer_users
                      and not self.base_path, 'animation_lab_proxy_mode_required')
-        self.lab.iteration_store.base_path = self.base_path
+        if not getattr(self.lab, 'methods_only', False):
+            self.lab.iteration_store.base_path = self.base_path
         super().__init__((listen, port), LabHandler)
         if not proxy_mode:
             self.allowed_hosts = {f'127.0.0.1:{self.server_port}', f'localhost:{self.server_port}'}
@@ -741,8 +766,30 @@ class LabHandler(BaseHTTPRequestHandler):
             lab = self.server.lab
             if path == '/healthz':
                 return self._json(dict(status='ok'))
+            if getattr(lab, 'methods_only', False):
+                _require(path in _METHOD_UI_PATHS or path == '/api/method-lab'
+                         or path.startswith('/api/method-lab/'), 'animation_lab_not_found', 404)
             if path == '/api/catalog':
                 return self._json(lab.get_catalog())
+            method_pieces = path.strip('/').split('/')
+            if method_pieces[:2] == ['api', 'method-lab']:
+                _require(not parsed.query, 'animation_method_query_invalid')
+                client = getattr(lab, 'method_client', None)
+                owner = self.forwarded_user or 'local-developer'
+                if method_pieces == ['api', 'method-lab', 'catalog']:
+                    value = (client.catalogue(owner) if client else dict(effects=[], commissions=[],
+                        availability=dict(enabled=False, reason='制作执行器尚未配置')))
+                    return self._json(dict(value, csrf_token=lab.csrf_token))
+                _require(client is not None, 'animation_method_service_unavailable', 503)
+                if len(method_pieces) == 4 and method_pieces[2] == 'commissions':
+                    return self._json(client.get(owner, method_pieces[3]))
+                if len(method_pieces) == 7 and method_pieces[2] == 'commissions' and method_pieces[4] == 'candidates':
+                    raw, mime = client.artifact(owner, method_pieces[3], method_pieces[5], method_pieces[6])
+                    if method_pieces[6] == 'source':
+                        return self._send(raw, 'application/json; charset=utf-8', download=True,
+                            download_name='animation-source.json')
+                    return self._send_artifact(raw, mime)
+                raise LabError('animation_method_not_found', 404)
             if path == '/api/experiments':
                 _require(not parsed.query, 'animation_experiment_query_invalid')
                 return self._json(dict(lab.experiments.catalogue(), csrf_token=lab.csrf_token))
@@ -821,8 +868,9 @@ class LabHandler(BaseHTTPRequestHandler):
                 return self._send(raw,
                                   'application/x-ndjson; charset=utf-8', download=True)
             if path in {'/', '/index.html', '/app.mjs', '/model.mjs', '/style.css', '/lab-player.mjs',
-                        '/experiments.mjs', '/experiment-model.mjs', '/creation-runs.mjs'}:
-                name = 'index.html' if path == '/' else path[1:]
+                        '/experiments.mjs', '/experiment-model.mjs', '/creation-runs.mjs',
+                        '/method-gallery.html', '/method-gallery.mjs', '/method-gallery.css'}:
+                name = 'method-gallery.html' if path in {'/', '/index.html'} else path[1:]
                 if name == 'lab-player.mjs':
                     return self._send(lab.player_script, 'text/javascript; charset=utf-8')
                 source = WEB / name
@@ -894,8 +942,10 @@ class LabHandler(BaseHTTPRequestHandler):
         try:
             self._context(write=True)
             lengths = self.headers.get_all('Content-Length', [])
+            request_path = self._path(urlsplit(self.path))
+            body_limit = 1024 * 1024 if request_path.startswith('/api/method-lab/') else MAX_BODY
             _require(len(lengths) == 1 and lengths[0].isdigit()
-                     and 0 < int(lengths[0]) <= MAX_BODY, 'animation_lab_body_size', 413)
+                     and 0 < int(lengths[0]) <= body_limit, 'animation_lab_body_size', 413)
             length = lengths[0]
             _require(not self.headers.get_all('Transfer-Encoding', []), 'animation_lab_body_size', 413)
             try:
@@ -911,6 +961,20 @@ class LabHandler(BaseHTTPRequestHandler):
                 raise LabError('animation_lab_invalid_json', 400) from None
             path = self._path(urlsplit(self.path))
             lab = self.server.lab
+            if getattr(lab, 'methods_only', False):
+                _require(path == '/api/method-lab' or path.startswith('/api/method-lab/'),
+                         'animation_lab_not_found', 404)
+            method_pieces = path.strip('/').split('/')
+            if method_pieces[:2] == ['api', 'method-lab']:
+                _require(not urlsplit(self.path).query, 'animation_method_query_invalid')
+                client = getattr(lab, 'method_client', None)
+                _require(client is not None, 'animation_method_service_unavailable', 503)
+                owner = self.forwarded_user or 'local-developer'
+                if method_pieces == ['api', 'method-lab', 'commissions']:
+                    return self._json(client.start(owner, body), 202)
+                if len(method_pieces) == 5 and method_pieces[2] == 'commissions':
+                    return self._json(client.action(owner, method_pieces[3], method_pieces[4], body))
+                raise LabError('animation_method_not_found', 404)
             creation_pieces = path.strip('/').split('/')
             if creation_pieces[:2] == ['api', 'creation-runs']:
                 _require(not urlsplit(self.path).query, 'animation_creation_query_invalid')
@@ -960,10 +1024,12 @@ class LabHandler(BaseHTTPRequestHandler):
             self._json(dict(error='animation_lab_evaluation_invalid'), 422)
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--data-dir', required=True, type=Path)
-    parser.add_argument('--assets-dir', required=True, type=Path)
+    parser.add_argument('--assets-dir', type=Path, help='renderer assets required only for legacy mode')
+    parser.add_argument('--mode', choices=('auto', 'methods', 'legacy'), default='auto',
+        help='auto uses methods-only with a creation executor; legacy explicitly loads fixed local examples')
     parser.add_argument('--port', type=int, default=8766)
     parser.add_argument('--evaluations-dir', type=Path, help='optional read-only saved automatic evaluation runs')
     parser.add_argument('--proxy-mode', action='store_true', help='explicit authenticated reverse-proxy deployment')
@@ -974,22 +1040,31 @@ def main():
     parser.add_argument('--source-revision', help='explicit Git source identity for feedback tasks; image default is baked at build time')
     parser.add_argument('--creation-url', help='fixed internal creation executor origin; default disabled')
     parser.add_argument('--creation-token-file', type=Path, help='private executor credential file; never an Agent credential')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     _require(bool(args.creation_url) == bool(args.creation_token_file), 'animation_creation_configuration_incomplete')
-    creation_client = None
+    methods_only = args.mode == 'methods' or args.mode == 'auto' and bool(args.creation_url)
+    _require(not methods_only or bool(args.creation_url), 'animation_method_configuration_required')
+    _require(methods_only or args.assets_dir is not None, 'animation_lab_assets_required')
+    creation_client = method_client = None
     if args.creation_url:
         with args.creation_token_file.open('r', encoding='ascii') as stream:
             executor_token = stream.read(514).strip()
-        creation_client = CreationAPIClient(args.creation_url, executor_token)
-    lab = AnimationLab(args.data_dir, load_assets(args.assets_dir), args.evaluations_dir,
-                       source_revision=args.source_revision, creation_client=creation_client)
+        if not methods_only:
+            creation_client = CreationAPIClient(args.creation_url, executor_token)
+        from .animation_method_http import MethodLabClient
+        method_client = MethodLabClient(args.creation_url, executor_token)
+    lab = AnimationLab(args.data_dir, {} if methods_only else load_assets(args.assets_dir), args.evaluations_dir,
+                       source_revision=args.source_revision, creation_client=creation_client,
+                       method_client=method_client, methods_only=methods_only)
     with LabHTTPServer(lab, args.port, proxy_mode=args.proxy_mode, listen=args.listen,
                        public_origin=args.public_origin, base_path=args.base_path,
                        developer_users=args.developer_user) as server:
         address = (args.public_origin + server.base_path + '/' if args.proxy_mode
                    else f'http://127.0.0.1:{server.server_port}/')
         print(f'Animation developer lab: {address}', flush=True)
-        print('Creation executor configured.' if creation_client else 'Developer visual review only; Agent/TTS/production writes: 0.', flush=True)
+        print('Methods-only proxy; durable records and rendering stay in the private executor.' if methods_only
+              else 'Creation executor configured.' if creation_client
+              else 'Developer visual review only; Agent/TTS/production writes: 0.', flush=True)
         try:
             server.serve_forever(poll_interval=.25)
         except KeyboardInterrupt:

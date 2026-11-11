@@ -144,6 +144,17 @@ class ModelProxySettings:
             raise ValueError('A dedicated fixed model upstream and signing key are required')
 
 
+def profile_model_call_limit(profile, configured):
+    """Tighten new method roles without changing any existing role's budget.
+
+    The profile comes from the authenticated stored job, never request JSON or
+    grant metadata supplied by a caller. A stricter operator cap still wins.
+    """
+    if profile in {'video.animation-method-author.v1', 'video.animation-method-review.v1'}:
+        return min(configured, 8)
+    return configured
+
+
 class ModelGrantIssuer:
     def __init__(self, signing_key):
         if not isinstance(signing_key, bytes) or len(signing_key) < 32:
@@ -433,7 +444,9 @@ class ModelProxy:
                 return old['status'], old['media_type'], old['response']
             count = db.execute(select(func.count()).select_from(requests).where(
                 requests.c.attempt_id == grant['attempt'])).scalar_one()
-            if count >= self.settings.max_calls_per_attempt:
+            request = db.execute(select(jobs.c.request).where(jobs.c.id == grant['job'])).scalar_one()
+            maximum = profile_model_call_limit(request['profile'], self.settings.max_calls_per_attempt)
+            if count >= maximum:
                 raise ServiceError('model_budget_exhausted', 429)
             db.execute(insert(requests).values(attempt_id=grant['attempt'], body_sha256=identity,
                 state='admitted', created_at=time.time()))

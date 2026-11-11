@@ -622,6 +622,39 @@ def test_completed_replay_does_not_consume_the_distinct_request_budget(execution
     assert len(run.calls) == 1
 
 
+@pytest.mark.parametrize('profile', ['video.animation-method-author.v1', 'video.animation-method-review.v1'])
+def test_method_roles_have_an_eight_request_hard_cap_and_free_completed_replay(execution, profile):
+    run = execution(profile=profile, max_calls_per_attempt=40)
+    for index in range(8):
+        run.proxy.respond(run.token, dict(run.body, input='Request ' + str(index)))
+    run.proxy.respond(run.token, dict(run.body, input='Request 0'))
+    error('model_budget_exhausted', lambda: run.proxy.respond(
+        run.token, dict(run.body, input='Request 8')), 429)
+    assert len(run.calls) == 8
+    with run.store.engine.connect() as db:
+        assert len(db.execute(select(requests)).all()) == 8
+
+
+@pytest.mark.parametrize('profile', ['video.animation-method-author.v1', 'video.animation-method-review.v1'])
+def test_operator_can_tighten_method_limit_further(execution, profile):
+    run = execution(profile=profile, max_calls_per_attempt=1)
+    run.proxy.respond(run.token, run.body)
+    error('model_budget_exhausted', lambda: run.proxy.respond(
+        run.token, dict(run.body, input='Another request')), 429)
+    assert len(run.calls) == 1
+
+
+@pytest.mark.parametrize('profile', ['workspace-task.v1', 'video.animation-create.v2',
+    'video.animation-review.v4', 'video.animation-method-author.v2', 'other.animation-method-author.v1'])
+def test_existing_and_similarly_named_roles_keep_their_configured_limit(execution, profile):
+    run = execution(profile=profile, max_calls_per_attempt=10)
+    for index in range(10):
+        run.proxy.respond(run.token, dict(run.body, input='Request ' + str(index)))
+    error('model_budget_exhausted', lambda: run.proxy.respond(
+        run.token, dict(run.body, input='Request 10')), 429)
+    assert len(run.calls) == 10
+
+
 @pytest.mark.parametrize('status,headers,raw', [
     (302, {'location': 'https://other.invalid', 'content-type': 'application/json'}, b'{}'),
     (429, {'content-type': 'application/json'}, b'{"private":"provider response"}'),

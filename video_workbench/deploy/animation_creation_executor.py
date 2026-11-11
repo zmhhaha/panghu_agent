@@ -29,6 +29,7 @@ DATA_ROOT = '/var/lib/video-animation-creation'
 DOCKER_SOCKET = '/var/run/docker.sock'
 AGENT_TOKEN = '/run/secrets/animation-creation-agent/token'
 LAB_TOKEN = '/run/secrets/animation-creation-lab/token'
+METHOD_TOKEN = '/run/secrets/animation-method-agent/token'
 SELECTOR = {'app.kubernetes.io/name': NAME}
 
 
@@ -51,6 +52,8 @@ class Settings:
         'app.kubernetes.io/name': 'agent-execution-service', 'component': 'api'})
     agent_token_key: str = 'token'
     lab_token_key: str = 'token'
+    method_agent_token_secret: str | None = None
+    method_agent_token_key: str = 'token'
 
 
 def render(settings: Settings):
@@ -73,7 +76,11 @@ def render(settings: Settings):
     lab_secret = _dns_name(settings.lab_token_secret, 'Lab caller Secret')
     if agent_secret == lab_secret:
         raise ValueError('Distinct Agent and Lab caller Secrets required')
-    for key in (settings.agent_token_key, settings.lab_token_key):
+    method_secret = (_dns_name(settings.method_agent_token_secret, 'method Agent caller Secret')
+                     if settings.method_agent_token_secret is not None else None)
+    if method_secret in {agent_secret, lab_secret}:
+        raise ValueError('Distinct method Agent caller Secret required')
+    for key in (settings.agent_token_key, settings.lab_token_key, settings.method_agent_token_key):
         if type(key) is not str or not re.fullmatch(r'[A-Za-z0-9_.-]{1,253}', key):
             raise ValueError('Invalid caller Secret key')
 
@@ -97,6 +104,8 @@ def render(settings: Settings):
             '--agent-token-file', AGENT_TOKEN, '--token-file', LAB_TOKEN,
             '--renderer-image', renderer_image, '--enable-isolated-rendering',
             '--listen', '0.0.0.0', '--port', str(PORT)]
+    if method_secret:
+        args += ['--method-agent-token-file', METHOD_TOKEN]
     health = {'httpGet': {'path': '/healthz', 'port': 'http'}, 'periodSeconds': 10,
               'timeoutSeconds': 3, 'failureThreshold': 3}
     container = {
@@ -135,6 +144,11 @@ def render(settings: Settings):
                               ('lab-caller-token', lab_secret, settings.lab_token_key)):
         volumes.append({'name': name, 'secret': {'secretName': secret, 'optional': False,
             'defaultMode': 0o400, 'items': [{'key': key, 'path': 'token'}]}})
+    if method_secret:
+        volumes.append({'name': 'method-agent-token', 'secret': {'secretName': method_secret, 'optional': False,
+            'defaultMode': 0o400, 'items': [{'key': settings.method_agent_token_key, 'path': 'token'}]}})
+        container['volumeMounts'].append({'name': 'method-agent-token',
+            'mountPath': METHOD_TOKEN.rsplit('/', 1)[0], 'readOnly': True})
     deployment = resource('apps/v1', 'Deployment', {
         'replicas': 1, 'strategy': {'type': 'Recreate'}, 'selector': {'matchLabels': dict(SELECTOR)},
         'template': {'metadata': {'labels': dict(labels), 'annotations': dict(annotations)}, 'spec': {
@@ -189,6 +203,8 @@ def main(argv=None):
     parser.add_argument('--agent-label', action='append', default=[])
     parser.add_argument('--agent-token-key', default='token')
     parser.add_argument('--lab-token-key', default='token')
+    parser.add_argument('--method-agent-token-secret')
+    parser.add_argument('--method-agent-token-key', default='token')
     parser.add_argument('--output', type=Path)
     args = vars(parser.parse_args(argv))
     output = args.pop('output')

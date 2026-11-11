@@ -126,8 +126,8 @@ def test_prefix_catalog_preview_assets_and_export_preserve_frozen_identity_and_b
                         asset_url=PREFIX+f"/assets/{sha256(ASSETS[asset['name']])}/{asset['name']}")
     assert proxy.lab.cases == before
     status, index, _ = proxy.request('GET', PREFIX+'/')
-    assert status == 200 and b'href="./style.css"' in index and b'src="./experiments.mjs"' in index
-    assert b'href="./api/export?format=jsonl&amp;scope=regressions"' in index
+    assert status == 200 and b'href="./method-gallery.css"' in index and b'src="./method-gallery.mjs"' in index
+    assert b'id="method-gallery-app"' in index
     for path in ('/app.mjs', '/model.mjs', '/style.css', '/lab-player.mjs', '/experiments.mjs', '/experiment-model.mjs'):
         assert proxy.request('GET', PREFIX+path)[0] == 200
     status, wrapper, _ = proxy.request('GET', PREFIX+'/preview/interface-library-search/candidate/')

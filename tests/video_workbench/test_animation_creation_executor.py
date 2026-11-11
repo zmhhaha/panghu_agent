@@ -11,10 +11,13 @@ from agent_service.contracts import ServiceError
 from video_workbench import animation_creation_executor as executor
 from video_workbench.animation_creation_renderer import DurableAnimationRenderer
 from video_workbench.animation_creation_service import AnimationCreationService
+from video_workbench.animation_method_service import AnimationMethodService
+from video_workbench.animation_method_renderer import MethodAnimationRenderer
 
 
 AGENT_TOKEN = 'unit-agent-credential-' + 'a' * 40
 CALLER_TOKEN = 'unit-lab-caller-credential-' + 'b' * 40
+METHOD_TOKEN = 'unit-method-agent-credential-' + 'd' * 40
 IMAGE = 'registry.example/renderer:latest@sha256:' + 'c' * 64
 
 
@@ -40,12 +43,13 @@ class NoNetworkAgentClient:
 def config(tmp_path, monkeypatch):
     NoNetworkAgentClient.instances = []
     monkeypatch.setattr(executor, 'AgentClient', NoNetworkAgentClient)
-    agent, caller = tmp_path / 'agent-token', tmp_path / 'caller-token'
+    agent, caller, method = tmp_path / 'agent-token', tmp_path / 'caller-token', tmp_path / 'method-token'
     agent.write_text(AGENT_TOKEN + '\n', encoding='ascii')
     caller.write_text(CALLER_TOKEN + '\n', encoding='ascii')
+    method.write_text(METHOD_TOKEN + '\n', encoding='ascii')
     return dict(root=tmp_path / 'executor', agent_url='http://127.0.0.1:1',
         agent_token_file=agent, token_file=caller, renderer_image=IMAGE,
-        enable_isolated_rendering=True, listen='127.0.0.1', port=0)
+        enable_isolated_rendering=True, listen='127.0.0.1', port=0, method_agent_token_file=method)
 
 
 @contextmanager
@@ -91,13 +95,30 @@ def test_real_executor_wires_separate_credentials_storage_profiles_and_default_p
         assert server.service.revisions.path == str((config['root'] / 'creation-polish.sqlite3').resolve())
         assert server.service.renderer.root == config['root'] / 'renders'
         assert server.pump is not None and server.pump.thread.is_alive()
+        assert isinstance(server.method_service, AnimationMethodService)
+        assert isinstance(server.method_service.renderer, MethodAnimationRenderer)
+        method_client = server.method_service.author.client
+        assert method_client is not client and method_client.token == METHOD_TOKEN
+        assert server.method_service.reviewer.client is method_client
+        assert server.method_service.author.profile == 'video.animation-method-author.v1'
+        assert server.method_service.reviewer.profile == 'video.animation-method-review.v1'
+        assert server.method_service.root == config['root'] / 'method-lab'
+        assert server.method_service.renderer.root == config['root'] / 'method-renders'
+        assert server.method_service.renderer.enabled is True
+        assert server.method_service.renderer.image == IMAGE
+        assert server.method_service.pending() == []
+        assert server.method_service.catalogue('developer-1')['commissions'] == []
+        assert server.method_pump is not None and server.method_pump.thread.is_alive()
         assert server.service.pending() == [] and server.service.list('developer-1') == []
         assert not (config['root'] / 'renders').exists()
+        assert not (config['root'] / 'method-renders').exists()
         assert client.timeout == 30 and client.calls == []
     finally:
         server.server_close()
         client.close()
     assert not server.pump.thread.is_alive() and client.close_count == 1
+    assert method_client.close_count == 1 and method_client.calls == []
+    assert not server.method_pump.thread.is_alive()
 
 
 @pytest.mark.parametrize('enabled', [None, False, 1, 'true'])
@@ -140,9 +161,9 @@ def test_http_bind_failure_after_real_service_initialization_closes_agent_client
         with pytest.raises(OSError):
             executor.create_server(**config)
     assert (config['root'] / 'creation-service.sqlite3').is_file()
-    assert len(NoNetworkAgentClient.instances) == 1
-    assert NoNetworkAgentClient.instances[0].close_count == 1
-    assert NoNetworkAgentClient.instances[0].calls == []
+    assert (config['root'] / 'method-lab/methods.sqlite3').is_file()
+    assert len(NoNetworkAgentClient.instances) == 2
+    assert all(client.close_count == 1 and client.calls == [] for client in NoNetworkAgentClient.instances)
 
 
 def test_renderer_configuration_failure_does_not_construct_an_agent_client(config):
@@ -164,10 +185,18 @@ def test_private_http_accepts_only_caller_credential_and_does_not_expose_tokens_
             assert headers['Cache-Control'] == 'no-store'
             encoded = json.dumps(value)
             assert AGENT_TOKEN not in encoded and CALLER_TOKEN not in encoded
+            method_path = '/api/method-lab/catalog'
+            assert request(server, method_path, token=AGENT_TOKEN, owner='developer-1')[0] == 403
+            status, methods, _ = request(server, method_path, token=CALLER_TOKEN, owner='developer-1')
+            assert status == 200 and methods['effects'] == methods['commissions'] == []
+            assert methods['availability']['enabled'] is True
+            assert AGENT_TOKEN not in json.dumps(methods) and CALLER_TOKEN not in json.dumps(methods)
+            assert server.method_service.pending() == []
             assert client.calls == [] and server.service.pending() == []
     finally:
         client.close()
     assert not server.pump.thread.is_alive()
+    assert not server.method_pump.thread.is_alive()
 
 
 def test_private_health_is_unauthenticated_status_only_and_never_drives_work(config):
@@ -183,3 +212,24 @@ def test_private_health_is_unauthenticated_status_only_and_never_drives_work(con
             assert client.calls == [] and server.service.pending() == []
     finally:
         client.close()
+
+
+def test_unconfigured_methods_are_disabled_without_expanding_legacy_caller(config):
+    config.pop('method_agent_token_file')
+    server, client = executor.create_server(**config)
+    try:
+        with serving(server):
+            status, value, _ = request(server, '/api/method-lab/catalog', token=CALLER_TOKEN, owner='developer-1')
+            assert status == 200 and value['availability']['enabled'] is False
+            assert server.method_service is server.method_pump is None
+            assert len(NoNetworkAgentClient.instances) == 1 and client.calls == []
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize('token', [AGENT_TOKEN, CALLER_TOKEN])
+def test_methods_require_a_distinct_scoped_agent_credential(config, token):
+    config['method_agent_token_file'].write_text(token, encoding='ascii')
+    with pytest.raises(ValueError, match='animation_method_distinct_credentials_required'):
+        executor.create_server(**config)
+    assert all(client.close_count == 1 for client in NoNetworkAgentClient.instances)

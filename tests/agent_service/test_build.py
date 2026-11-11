@@ -101,13 +101,15 @@ def service(tmp_path):
         target = root / 'resources/animation-experiment-v1' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((ANIMATION_ROOT / name).read_bytes())
-    from agent_service.profiles import video_animation_review as review, video_animation_create as creation
+    from agent_service.profiles import (video_animation_review as review, video_animation_create as creation,
+        video_animation_method as method)
     for source, names in (
             (review.BUNDLE_ROOT, review.BUNDLE_FILES),
             (review.SEQUENCE_BUNDLE_ROOT, review.SEQUENCE_BUNDLE_FILES),
             (review.BATCH_BUNDLE_ROOT, review.BATCH_BUNDLE_FILES),
             (review.PACKED_BUNDLE_ROOT, review.PACKED_BUNDLE_FILES),
-            (creation.BUNDLE_ROOT, creation.BUNDLE_FILES)):
+            (creation.BUNDLE_ROOT, creation.BUNDLE_FILES),
+            (method.BUNDLE_ROOT, method.BUNDLE_FILES)):
         for name in ('manifest.json', *names):
             target = root / 'resources' / source.name / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -445,6 +447,8 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
         "agent_service/resources/animation-experiment-v1/CONTRACT.md",
         "agent_service/resources/animation-experiment-v1/LICENSE",
         "agent_service/resources/animation-experiment-v1/animation-procedure/SKILL.md"} | {
+            'agent_service/resources/animation-method-v1/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'method-procedure/SKILL.md')} | {
             'agent_service/resources/' + revision + '/' + name
             for revision in ('animation-review-v1', 'animation-review-v2', 'animation-review-v3', 'animation-review-v4')
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'review-procedure/SKILL.md')} | {
@@ -538,7 +542,7 @@ def test_clean_source_context_carries_all_real_profile_resource_bytes(tmp_path, 
     context_archive(service, target, destination)
     actual = {path.relative_to(service).as_posix(): path.read_bytes()
         for path in (service / 'resources').rglob('*') if path.is_file()}
-    assert len(actual) == 50
+    assert len(actual) == 54
     with tarfile.open(destination) as archive:
         captured = {name.removeprefix('agent_service/'): archive.extractfile(name).read()
             for name in archive.getnames() if name.startswith('agent_service/resources/')}
@@ -555,14 +559,16 @@ def test_clean_source_context_carries_all_real_profile_resource_bytes(tmp_path, 
 
 def test_clean_builder_animation_pins_match_independently_verified_profile_bundles():
     from agent_service.build_image import ANIMATION_RUNTIME_BUNDLES
-    from agent_service.profiles import video_animation_review as review, video_animation_create as creation
+    from agent_service.profiles import (video_animation_review as review, video_animation_create as creation,
+        video_animation_method as method)
     measured = {}
     for root, files, verify in (
             (review.BUNDLE_ROOT, review.BUNDLE_FILES, review.verified_bundle),
             (review.SEQUENCE_BUNDLE_ROOT, review.SEQUENCE_BUNDLE_FILES, review.verified_sequence_bundle),
             (review.BATCH_BUNDLE_ROOT, review.BATCH_BUNDLE_FILES, review.verified_batch_bundle),
             (review.PACKED_BUNDLE_ROOT, review.PACKED_BUNDLE_FILES, review.verified_packed_bundle),
-            (creation.BUNDLE_ROOT, creation.BUNDLE_FILES, creation.verified_bundle)):
+            (creation.BUNDLE_ROOT, creation.BUNDLE_FILES, creation.verified_bundle),
+            (method.BUNDLE_ROOT, method.BUNDLE_FILES, method.verified_bundle)):
         assert set(verify()) == files
         measured[root.name] = (hashlib.sha256((root / 'manifest.json').read_bytes()).hexdigest(), files)
     assert {revision: (pin, files) for revision, pin, files in ANIMATION_RUNTIME_BUNDLES} == measured
@@ -597,10 +603,11 @@ profiles=('workspace-task.v1','ppt.plan_initial.v1','ppt.plan_options.v1','ppt.p
  'research.plan.v1','research.retrieve.v1','research.outline.v1','research.draft.v1',
  'video.storyboard.v1','video.scene.v1','video.motion-plan.v1','video.process-plan.v1',
  'video.explanation-plan.v1','video.animation-experiment.v1','video.animation-observe.v1',
- 'video.animation-review.v1','video.animation-review.v2','video.animation-review.v3','video.animation-review.v4','video.animation-create.v2')
+ 'video.animation-review.v1','video.animation-review.v2','video.animation-review.v3','video.animation-review.v4','video.animation-create.v2',
+ 'video.animation-method-author.v1','video.animation-method-review.v1')
 for name in profiles:implementation(name)
 for name in ('video','video_motion','video_process','video_explanation','video_animation_experiment',
- 'video_animation_create','video_animation_review','research'):
+ 'video_animation_create','video_animation_review','video_animation_method','research'):
  importlib.import_module('agent_service.profiles.'+name).verified_bundle()
 from agent_service.profiles.video_animation_review import verified_sequence_bundle,verified_batch_bundle,verified_packed_bundle
 verified_sequence_bundle();verified_batch_bundle();verified_packed_bundle()
@@ -611,15 +618,16 @@ print(json.dumps({'control_modules':len(modules),'profile_implementations':len(p
 '''
     result = subprocess.run([sys.executable, '-I', '-B', '-c', code, str(extracted)],
         cwd=extracted, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=True)
-    assert json.loads(result.stdout) == dict(control_modules=10, profile_implementations=24)
+    assert json.loads(result.stdout) == dict(control_modules=10, profile_implementations=26)
 
 
 @pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
-                                     'animation-create-v2'])
+                                     'animation-create-v2', 'animation-method-v1'])
 @pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'LICENSE', 'procedure'])
 def test_changed_animation_runtime_resource_fails_before_docker(service, revision, changed):
     if changed == 'procedure':
-        changed = ('creation' if revision == 'animation-create-v2' else 'review') + '-procedure/SKILL.md'
+        changed = ('method' if revision == 'animation-method-v1' else
+                   'creation' if revision == 'animation-create-v2' else 'review') + '-procedure/SKILL.md'
     path = service / 'resources' / revision / changed
     path.write_bytes(path.read_bytes() + b' ')
     receipt, runner = old_receipt(service), DockerFixture()
@@ -629,7 +637,7 @@ def test_changed_animation_runtime_resource_fails_before_docker(service, revisio
 
 
 @pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
-                                     'animation-create-v2'])
+                                     'animation-create-v2', 'animation-method-v1'])
 def test_missing_animation_runtime_resource_cannot_produce_deployable_digest(service, revision):
     (service / 'resources' / revision / 'LICENSE').unlink()
     receipt, runner = old_receipt(service), DockerFixture()

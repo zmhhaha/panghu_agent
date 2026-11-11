@@ -35,6 +35,10 @@
 !video_workbench/animation_lab.py
 !video_workbench/animation_experiments.py
 !video_workbench/animation_creation_http.py
+!video_workbench/animation_method_http.py
+!video_workbench/animation_lab_web/method-gallery.html
+!video_workbench/animation_lab_web/method-gallery.css
+!video_workbench/animation_lab_web/method-gallery.mjs
 !video_workbench/animation_experiment_definitions.py
 !video_workbench/animation_experiment_semantics.py
 !video_workbench/animation_capabilities.py

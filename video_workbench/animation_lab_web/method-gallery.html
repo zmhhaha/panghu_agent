@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>动画效果库 · Video Service</title>
+  <link rel="stylesheet" href="./method-gallery.css">
+  <script type="module" src="./method-gallery.mjs"></script>
+</head>
+<body>
+  <div id="method-gallery-app">
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="动画效果库首页"><span class="brand-icon" aria-hidden="true">◈</span><span><span class="eyebrow">VIDEO SERVICE · 开发者</span><strong>动画效果库</strong></span></a>
+      <div class="toolbar"><button id="gallery-refresh" class="button secondary" type="button">刷新进度</button><button id="gallery-new" class="button primary" type="button">新建实验</button></div>
+    </header>
+    <main class="workspace">
+      <div id="gallery-message" class="message" role="status" hidden></div>
+      <section id="gallery-home" aria-labelledby="gallery-title">
+        <div class="page-heading"><div><p class="eyebrow">从完整效果，打磨创作方法</p><h1 id="gallery-title">让过程更清楚，让表达更生动</h1><p class="muted">提交参考或表达目标，比较完整样片，积累可交付的创作方法。</p></div><span id="gallery-count" class="count"></span></div>
+        <p id="gallery-availability" class="muted" role="status"></p>
+        <div class="gallery-tools"><label class="search-label" for="gallery-search">查找效果<input id="gallery-search" type="search" placeholder="按表达目标或效果名称查找" autocomplete="off"></label><label for="gallery-state">状态<select id="gallery-state"><option value="all">全部</option><option value="active">制作中</option><option value="review">待评价</option><option value="published">已发布</option></select></label></div>
+        <div id="gallery-cards" class="gallery-grid" aria-live="polite"></div>
+        <div id="gallery-empty" class="empty-state" hidden><span aria-hidden="true">◈</span><h2>从一个想学会的效果开始</h2><p>描述希望观众看懂什么，或给出一段参考视频。样片不加讲解旁白，可保留需要的音效。</p><button id="gallery-empty-new" class="button primary" type="button">提交第一个目标</button></div>
+      </section>
+      <section id="gallery-detail" hidden aria-labelledby="detail-title"></section>
+      <section id="gallery-form-panel" class="panel experiment-form" hidden aria-labelledby="experiment-form-title">
+        <div class="panel-heading"><div><p class="eyebrow">一次有边界的探索</p><h2 id="experiment-form-title">新建实验</h2></div><button id="experiment-form-close" class="button secondary" type="button">返回效果库</button></div>
+        <form id="experiment-form">
+          <label for="experiment-title">效果名称<input id="experiment-title" name="title" maxlength="200" required placeholder="例如：让筛选过程与统计变化关联起来"></label>
+          <label for="experiment-goal">希望观众看懂什么<textarea id="experiment-goal" name="goal" rows="4" maxlength="8000" required placeholder="描述表达目标、重要过程，以及希望改善的地方。无需编写动画代码。"></textarea></label>
+          <div id="experiment-base-note" class="message" hidden></div>
+          <section id="experiment-transfer-fields" class="form-details" hidden aria-labelledby="experiment-transfer-title"><h3 id="experiment-transfer-title">这次换一种什么任务？</h3><p class="muted small">改变真正影响编排的条件，检查方法能否迁移。只替换文字或领域名称不足以证明迁移。</p><label for="experiment-transfer-dimension">主要变化<select id="experiment-transfer-dimension" name="transfer_dimension"><option value="relations">关系结构</option><option value="data_structure">数据组织</option><option value="staging">呈现与布局条件</option><option value="explanation_problem">要讲清的问题</option><option value="object_count">对象数量</option><option value="timing">时序条件</option><option value="task">任务类型</option></select></label><div class="form-row"><label for="experiment-transfer-before">原任务条件<input id="experiment-transfer-before" name="transfer_before" maxlength="2000" placeholder="例如：所有请求依次通过同一路径"></label><label for="experiment-transfer-after">新任务条件<input id="experiment-transfer-after" name="transfer_after" maxlength="2000" placeholder="例如：请求分支后汇合，完成顺序不同"></label></div></section>
+          <label for="experiment-feedback">本次修改意见<textarea id="experiment-feedback" name="feedback" rows="3" maxlength="8000" placeholder="继续优化时，说明上一版哪里不清楚，或想尝试哪些表达。"></textarea></label>
+          <details class="form-details"><summary>参考视频与片段（可选）</summary><label for="experiment-reference">参考链接<input id="experiment-reference" name="reference_url" type="url" maxlength="4000" placeholder="https://…"></label><div class="form-row"><label for="experiment-reference-start">片段开始（秒）<input id="experiment-reference-start" name="reference_start" type="number" min="0" step="0.01"></label><label for="experiment-reference-end">片段结束（秒）<input id="experiment-reference-end" name="reference_end" type="number" min="0" step="0.01"></label></div><p class="muted small">只提供链接时，先识别可学习片段。无法访问的内容会明确说明。</p></details>
+          <details class="form-details"><summary>本次预算与验收标准</summary><div class="form-row"><label for="experiment-duration">期望样片时长（秒）<input id="experiment-duration" name="duration_seconds" type="number" min="2" max="60" step="1" value="24" required></label><label for="experiment-rounds">本次最多探索轮数<input id="experiment-rounds" name="max_rounds" type="number" min="1" max="8" step="1" value="3" required></label><label for="experiment-seconds">本次时间上限（分钟）<input id="experiment-seconds" name="max_minutes" type="number" min="1" max="60" step="1" value="15" required></label></div><label for="experiment-criteria">可观察的标准（可选，每行一项）<textarea id="experiment-criteria" name="criteria_text" rows="3" maxlength="8000" placeholder="留空时由 Agent 根据目标提出；之后也可以调整。"></textarea></label><p class="muted small">预算只限定本次实验。结束后可以继续优化；多种尝试仍无进展时，会提前结束并说明原因。</p></details>
+          <div class="form-footer"><p class="muted small">样片默认不加讲解旁白，可包含帮助表达的音效。</p><button id="experiment-submit" class="button primary" type="submit">开始本次实验</button></div>
+        </form>
+      </section>
+    </main>
+    <footer class="page-footer">开发者看效果、提意见，Agent 维护创作方法。认可样片和迁移结果后可发布方法；正式制作接入待完成。</footer>
+  </div>
+</body>
+</html>

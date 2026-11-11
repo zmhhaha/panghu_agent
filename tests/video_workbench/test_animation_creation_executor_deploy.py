@@ -46,6 +46,20 @@ def arguments(settings):
             '--lab-token-secret', settings.lab_token_secret]
 
 
+def test_method_caller_is_a_distinct_optional_readonly_secret(settings):
+    document = render(replace(settings, method_agent_token_secret='methods-agent-caller'))
+    spec = pod(document)
+    container = spec['containers'][0]
+    assert container['args'][-2:] == ['--method-agent-token-file', '/run/secrets/animation-method-agent/token']
+    assert next(row for row in spec['volumes'] if row['name'] == 'method-agent-token')['secret'] == {
+        'secretName': 'methods-agent-caller', 'optional': False, 'defaultMode': 0o400,
+        'items': [{'key': 'token', 'path': 'token'}]}
+    assert next(row for row in container['volumeMounts'] if row['name'] == 'method-agent-token')['readOnly']
+    for secret in (settings.agent_token_secret, settings.lab_token_secret):
+        with pytest.raises(ValueError, match='Distinct method'):
+            render(replace(settings, method_agent_token_secret=secret))
+
+
 def test_only_three_private_resources_without_provisioning_permissions_or_public_routes(settings):
     document = render(settings)
     assert document['kind'] == 'List' and document['apiVersion'] == 'v1'

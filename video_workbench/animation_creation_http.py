@@ -173,16 +173,27 @@ class CreationPump:
 class CreationHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, service, token, *, host='127.0.0.1', port=0, pump=True):
+    def __init__(self, service, token, *, host='127.0.0.1', port=0, pump=True, method_service=None,
+                 close_callbacks=()):
         self.service, self._token = service, _token(token)
         self.pump = CreationPump(service) if pump else None
+        self.method_service = method_service
+        self.method_pump = CreationPump(method_service) if pump and method_service is not None else None
+        self.close_callbacks = tuple(close_callbacks)
         super().__init__((host, port), CreationHandler)
         if self.pump:
             self.pump.start()
+        if self.method_pump:
+            self.method_pump.start()
 
     def server_close(self):
         if self.pump:
             self.pump.close()
+        if self.method_pump:
+            self.method_pump.close()
+        callbacks, self.close_callbacks = self.close_callbacks, ()
+        for callback in callbacks:
+            callback()
         super().server_close()
 
 
@@ -217,6 +228,11 @@ class CreationHandler(BaseHTTPRequestHandler):
         owner = self._auth()
         pieces = parsed.path.strip('/').split('/')
         service = self.server.service
+        if method == 'GET' and parsed.path.startswith('/api/method-lab/'):
+            from .animation_method_http import route_private
+            _require(not parsed.query)
+            if route_private(self, owner, method, parsed.path):
+                return
         if method == 'GET':
             if parsed.path == PREFIX:
                 query = parse_qs(parsed.query, keep_blank_values=True)
@@ -237,10 +253,15 @@ class CreationHandler(BaseHTTPRequestHandler):
         else:
             _require(not parsed.query)
             lengths = self.headers.get_all('Content-Length', [])
-            _require(len(lengths) == 1 and lengths[0].isdigit() and 0 < int(lengths[0]) <= 32768
+            body_limit = 1024 * 1024 if parsed.path.startswith('/api/method-lab/') else 32768
+            _require(len(lengths) == 1 and lengths[0].isdigit() and 0 < int(lengths[0]) <= body_limit
                      and not self.headers.get_all('Transfer-Encoding'), 'animation_creation_body_size', 413)
             _require(self.headers.get_content_type() == 'application/json', 'animation_creation_json_required', 415)
             body = _json(self.rfile.read(int(lengths[0])))
+            if parsed.path.startswith('/api/method-lab/'):
+                from .animation_method_http import route_private
+                if route_private(self, owner, method, parsed.path, body):
+                    return
             if parsed.path == PREFIX:
                 result = service.start(owner, body)
                 if self.server.pump:
