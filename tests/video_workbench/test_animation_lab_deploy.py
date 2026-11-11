@@ -287,6 +287,28 @@ def test_context_is_deterministic_and_exact_even_beside_runtime_secrets(source_a
     assert first['network_calls'] == first['builds'] == first['deployments'] == 0
 
 
+def test_review_comparison_module_is_delivered_as_exact_reviewed_source(source_and_assets, tmp_path):
+    source, assets = source_and_assets
+    name = 'video_workbench/animation_lab_web/method-comparison.mjs'
+    assert name in build.SOURCE_FILES
+    output = tmp_path/'method-review-controls.tar'
+    receipt = build.context_archive(source, assets, output)
+    with tarfile.open(output) as archive:
+        assert archive.extractfile(name).read() == (build.ROOT/name).read_bytes()
+    item = next(row for row in receipt['files'] if row['path'] == name)
+    assert item['sha256'] == hashlib.sha256((build.ROOT/name).read_bytes()).hexdigest()
+    assert receipt['network_calls'] == receipt['builds'] == receipt['deployments'] == 0
+
+
+def test_missing_review_comparison_module_stops_before_writing_a_build_context(source_and_assets, tmp_path):
+    source, assets = source_and_assets
+    (source/'video_workbench/animation_lab_web/method-comparison.mjs').unlink()
+    output = tmp_path/'missing-review-controls.tar'
+    with pytest.raises(ValueError, match='animation_lab_build_file_invalid'):
+        build.context_archive(source, assets, output)
+    assert not output.exists()
+
+
 @pytest.mark.parametrize('name', list(build.ASSET_SHA256))
 def test_tampered_pinned_asset_cannot_enter_context(source_and_assets, tmp_path, name):
     source, assets = source_and_assets

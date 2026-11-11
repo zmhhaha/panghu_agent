@@ -9,6 +9,7 @@ from contextlib import closing
 from copy import deepcopy
 import hashlib
 import json
+import math
 from pathlib import Path
 import sqlite3
 import time
@@ -38,6 +39,11 @@ def _candidates(run):
     return rows
 
 
+def _finite_number(value):
+    # Do not coerce unbounded JSON integers to float before range validation.
+    return type(value) is int or (type(value) is float and math.isfinite(value))
+
+
 class AnimationMethodService:
     def __init__(self, root, *, author_gateway, review_gateway, renderer, clock=time.time):
         self.root = Path(root).absolute()
@@ -52,14 +58,28 @@ class AnimationMethodService:
         with closing(sqlite3.connect(self.metadata_path)) as db:
             db.execute('CREATE TABLE IF NOT EXISTS feedback (owner TEXT, request_id TEXT, '
                        'commission_id TEXT, sha256 TEXT, document TEXT, PRIMARY KEY(owner,request_id))')
+            db.execute('CREATE TABLE IF NOT EXISTS feedback_withdrawals (owner TEXT, '
+                       'commission_id TEXT, feedback_id TEXT, document TEXT, '
+                       'PRIMARY KEY(owner,commission_id,feedback_id))')
+            db.execute('CREATE TABLE IF NOT EXISTS feedback_withdrawal_requests (owner TEXT, '
+                       'request_id TEXT, commission_id TEXT, feedback_id TEXT, sha256 TEXT, '
+                       'PRIMARY KEY(owner,request_id))')
             db.commit()
 
     def pending(self, limit=100):
         return self.commissions.pending(limit)
 
+    @staticmethod
+    def _feedback_view(db, owner, record):
+        withdrawn = db.execute('SELECT document FROM feedback_withdrawals '
+            'WHERE owner=? AND commission_id=? AND feedback_id=?',
+            (owner, record['commission_id'], record['id'])).fetchone()
+        return dict(record, kind=record.get('kind', 'comment'), withdrawn=withdrawn is not None,
+                    withdrawal=json.loads(withdrawn[0]) if withdrawn else None)
+
     def _feedback(self, owner, commission_id):
         with closing(sqlite3.connect(self.metadata_path)) as db:
-            return [json.loads(row[0]) for row in db.execute(
+            return [self._feedback_view(db, owner, json.loads(row[0])) for row in db.execute(
                 'SELECT document FROM feedback WHERE owner=? AND commission_id=? ORDER BY rowid',
                 (owner, commission_id))]
 
@@ -222,31 +242,98 @@ class AnimationMethodService:
         return self.get(owner, commission_id)
 
     def feedback(self, owner, commission_id, body):
-        _require(type(body) is dict and {'request_id', 'candidate_id', 'comment'} <= set(body)
-                 and set(body) <= {'request_id', 'candidate_id', 'comment', 'start_seconds', 'end_seconds'})
+        """Save an opinion; it grants no selection, acceptance or publication.
+
+        Omitted kind preserves the original comment contract. Spatial/time
+        annotations belong to one candidate; comparisons explicitly bind two
+        candidates and cannot borrow an ambiguous region or time range.
+        """
+        _require(type(body) is dict and 'request_id' in body)
+        kind = body.get('kind', 'comment')
+        _require(type(kind) is str and kind in {'comment', 'preference'})
+        common = {'request_id', 'kind', 'comment'}
+        if kind == 'comment':
+            _require({'candidate_id', 'comment'} <= set(body) and set(body) <= common |
+                     {'candidate_id', 'start_seconds', 'end_seconds', 'region'})
+        else:
+            _require({'left_candidate_id', 'right_candidate_id', 'preference'} <= set(body)
+                     and set(body) <= common | {'left_candidate_id', 'right_candidate_id', 'preference'})
+        _require(type(body['request_id']) is str and 1 <= len(body['request_id']) <= 200)
+        comment = body.get('comment', '')
+        _require(type(comment) is str and len(comment.strip()) <= 16000
+                 and (kind == 'preference' or bool(comment.strip())))
         run = self.commissions.get(owner, commission_id)
-        candidate = next((row for row in _candidates(run) if row['id'] == body['candidate_id']), None)
-        _require(candidate is not None, 'animation_method_candidate_not_found', 404)
-        _require(type(body['request_id']) is str and 1 <= len(body['request_id']) <= 200
-                 and type(body['comment']) is str and 0 < len(body['comment'].strip()) <= 16000)
-        for key in ('start_seconds', 'end_seconds'):
-            if key in body:
-                _require(type(body[key]) in (int, float) and 0 <= body[key] <= candidate['media']['duration_seconds'])
-        if 'start_seconds' in body and 'end_seconds' in body:
-            _require(body['start_seconds'] <= body['end_seconds'])
-        with closing(sqlite3.connect(self.metadata_path)) as db:
+        candidates = {row['id']: row for row in _candidates(run)}
+        ids = ('candidate_id',) if kind == 'comment' else ('left_candidate_id', 'right_candidate_id')
+        for key in ids:
+            _require(type(body[key]) is str and 1 <= len(body[key]) <= 200)
+            _require(body[key] in candidates, 'animation_method_candidate_not_found', 404)
+        if kind == 'preference':
+            _require(body['left_candidate_id'] != body['right_candidate_id']
+                     and type(body['preference']) is str
+                     and body['preference'] in {'left', 'right', 'equal', 'neither'})
+        else:
+            _require(('start_seconds' in body) == ('end_seconds' in body),
+                     'animation_method_feedback_range_invalid')
+            if 'start_seconds' in body:
+                duration = candidates[body['candidate_id']]['media']['duration_seconds']
+                _require(_finite_number(body['start_seconds']) and _finite_number(body['end_seconds'])
+                         and 0 <= body['start_seconds'] <= body['end_seconds'] <= duration,
+                         'animation_method_feedback_range_invalid')
+            if 'region' in body:
+                region = body['region']
+                _require(type(region) is dict and set(region) == {'x', 'y', 'width', 'height'}
+                         and all(_finite_number(value) and 0 <= value <= 1 for value in region.values())
+                         and region['x'] + region['width'] <= 1 and region['y'] + region['height'] <= 1,
+                         'animation_method_feedback_region_invalid')
+        try:
+            checksum = digest(dict(commission_id=commission_id, body=body))
+        except (TypeError, ValueError, OverflowError, UnicodeError):
+            raise ServiceError('animation_method_request_invalid', 422) from None
+        with closing(sqlite3.connect(self.metadata_path, timeout=20)) as db:
+            db.execute('BEGIN IMMEDIATE')
             prior = db.execute('SELECT sha256,document FROM feedback WHERE owner=? AND request_id=?',
                                (owner, body['request_id'])).fetchone()
-            checksum = digest(dict(commission_id=commission_id, body=body))
             if prior:
                 _require(prior[0] == checksum, 'animation_method_feedback_conflict', 409)
-                return json.loads(prior[1])
-            record = dict(body, id=str(uuid4()), commission_id=commission_id,
+                return self._feedback_view(db, owner, json.loads(prior[1]))
+            record = dict(body, kind=kind, id=str(uuid4()), commission_id=commission_id,
                           source='explicit_developer_feedback', created_at=self.clock())
             db.execute('INSERT INTO feedback VALUES (?,?,?,?,?)',
                        (owner, body['request_id'], commission_id, checksum, canonical_bytes(record).decode()))
             db.commit()
-        return record
+            return self._feedback_view(db, owner, record)
+
+    def withdraw_feedback(self, owner, commission_id, body):
+        """Append a durable withdrawal without mutating the original opinion."""
+        _require(type(body) is dict and set(body) == {'request_id', 'feedback_id'}
+                 and all(type(value) is str and 1 <= len(value) <= 200 for value in body.values()))
+        self.commissions.get(owner, commission_id)
+        try:
+            checksum = digest(dict(commission_id=commission_id, body=body))
+        except (TypeError, ValueError, OverflowError, UnicodeError):
+            raise ServiceError('animation_method_request_invalid', 422) from None
+        with closing(sqlite3.connect(self.metadata_path, timeout=20)) as db:
+            db.execute('BEGIN IMMEDIATE')
+            prior = db.execute('SELECT sha256 FROM feedback_withdrawal_requests WHERE owner=? AND request_id=?',
+                               (owner, body['request_id'])).fetchone()
+            if prior:
+                _require(prior[0] == checksum, 'animation_method_feedback_conflict', 409)
+            records = (json.loads(row[0]) for row in db.execute(
+                'SELECT document FROM feedback WHERE owner=? AND commission_id=?', (owner, commission_id)))
+            record = next((row for row in records if row['id'] == body['feedback_id']), None)
+            _require(record is not None, 'animation_method_feedback_not_found', 404)
+            view = self._feedback_view(db, owner, record)
+            if not view['withdrawn']:
+                withdrawal = dict(id=str(uuid4()), request_id=body['request_id'], feedback_id=record['id'],
+                    commission_id=commission_id, source='explicit_developer_feedback_withdrawal', created_at=self.clock())
+                db.execute('INSERT INTO feedback_withdrawals VALUES (?,?,?,?)',
+                           (owner, commission_id, record['id'], canonical_bytes(withdrawal).decode()))
+            if not prior:
+                db.execute('INSERT INTO feedback_withdrawal_requests VALUES (?,?,?,?,?)',
+                           (owner, body['request_id'], commission_id, record['id'], checksum))
+            db.commit()
+            return self._feedback_view(db, owner, record)
 
     def _method_criteria(self, owner, version_ids):
         standards = {}

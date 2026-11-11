@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
-  MethodGalleryController, buildCommissionRequest, buildTransferRequest, methodAssetUrl, methodStateLabel, layoutPreviewDetail,
+  MethodGalleryController, buildCommissionRequest, buildTransferRequest, methodAssetUrl, methodStateLabel, layoutPreviewDetail, continuationFeedback,
   publicationSelection, publicationApprovalBinding, methodsPublished, canPublish, renderMethodMedia, renderMethodCard, renderMethodDetail,
 } from '../../video_workbench/animation_lab_web/method-gallery.mjs';
 
@@ -296,13 +296,17 @@ test('saving feedback binds an actual candidate and never starts another commiss
 });
 
 class FakeElement {
-  constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.handlers = {}; this.attributes = {}; this.className = ''; this._text = ''; this.classList = {add: value => { this.className += ' ' + value; }}; }
+  constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.handlers = {}; this.attributes = {}; this.dataset = {}; this.className = ''; this._text = ''; this.readyState = 0; this.duration = NaN; this.currentTime = 0; this.paused = true; this.classList = {add: value => { this.className += ' ' + value; }}; }
   set textContent(value) { this._text = String(value); this.children = []; }
   get textContent() { return this._text + this.children.map(row => row.textContent).join(''); }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this._text = ''; this.children = nodes; }
   setAttribute(name, value) { this.attributes[name] = value; }
   addEventListener(name, fn) { this.handlers[name] = fn; }
+  removeEventListener(name, fn) { if (this.handlers[name] === fn) delete this.handlers[name]; }
+  removeAttribute(name) { delete this.attributes[name]; }
+  pause() { this.paused = true; }
+  load() {}
   descendants(tag) { return this.children.flatMap(row => [row, ...row.descendants(tag)]).filter(row => !tag || row.tagName === tag.toUpperCase()); }
 }
 const doc = {createElement: tag => new FakeElement(tag), createDocumentFragment: () => new FakeElement('fragment')};
@@ -334,7 +338,7 @@ test('an unsaved comment and selected candidate survive detail reconstruction', 
   const detail = renderMethodDetail(doc, run({state: 'completed', candidates: [candidate('first'), candidate('best')],
     best_candidate_id: 'best'}), root, {...callbacks,
     feedbackDraft: {candidate_id: 'first', comment: '希望继续改善原作的对象分组'}});
-  assert.equal(detail.descendants('select')[0].value, 'first');
+  assert.equal(detail.descendants('select').find(row => row.attributes['aria-label'] === '意见对应样片').value, 'first');
   assert.equal(detail.descendants('textarea')[0].value, '希望继续改善原作的对象分组');
 });
 
@@ -343,8 +347,9 @@ test('a regressing attempt remains viewable when the frozen baseline is still be
   const rendered = renderMethodDetail(doc, run({state: 'completed', baseline_candidate: baseline,
     candidates: [baseline, attempt], best_candidate_id: 'baseline'}), root, callbacks);
   assert.equal(rendered.descendants('video').length, 2);
-  assert.match(rendered.textContent, /当前最佳样片 · 本次优化基线/);
-  assert.match(rendered.textContent, /本次候选 · 暂未超过最佳样片/);
+  const comparison = rendered.descendants('select').filter(row => ['左侧样片', '右侧样片'].includes(row.attributes['aria-label']));
+  assert.deepEqual(comparison.map(row => row.value), ['baseline', 'attempt']);
+  assert.match(comparison[0].textContent, /当前最佳.*优化基线/);
 });
 
 test('actual transfer metadata is playable and published methods are labelled without hiding pending motion evidence', () => {
@@ -367,4 +372,79 @@ test('the new entry presents an effect gallery and goals rather than legacy modu
   assert.match(html, /id="method-gallery-app"/); assert.match(html, /希望观众看懂什么/);
   assert.match(html, /本次最多探索轮数/); assert.match(html, /可包含帮助表达的音效/);
   assert.doesNotMatch(html, /组件与参数回归|跨领域需求矩阵|生成增量任务包|held_out|调优输入/);
+});
+
+test('late old detail cannot replace a newly created commission', async () => {
+  const old = deferred();
+  const h = harness((path, options) => options.method ? run({id: 'new'}) : path.endsWith('/old') ? old.promise : catalog());
+  await h.controller.refresh(); const reading = h.controller.select('old');
+  assert.equal(await h.controller.start(fields), true);
+  old.resolve(run({id: 'old'})); await reading;
+  assert.equal(h.controller.snapshot.detail.id, 'new'); h.controller.close();
+});
+
+test('pair preferences and withdrawal only post the explicit scoped action', async () => {
+  const detail = run({state: 'completed', candidates: [candidate('a'), candidate('b')], feedback: [{id: 'f', candidate_id: 'a', comment: '节奏'}]});
+  const h = harness((path, options) => path.endsWith('/catalog') ? catalog() : options.method ? {id: 'receipt'} : detail);
+  await h.controller.refresh(); await h.controller.select(detail.id);
+  assert.equal(await h.controller.savePreference({left_candidate_id: 'a', right_candidate_id: 'a', preference: 'left'}), false);
+  assert.equal(await h.controller.savePreference({left_candidate_id: 'a', right_candidate_id: 'b', preference: 'right'}), true);
+  assert.equal(await h.controller.withdrawFeedback('foreign'), false);
+  assert.equal(await h.controller.withdrawFeedback('f'), true);
+  const posts = h.requests.filter(row => row.options.method);
+  assert.deepEqual(posts.map(row => row.path.split('/').at(-1)), ['feedback', 'withdraw_feedback']);
+  assert.deepEqual(JSON.parse(posts[0].options.body), {request_id: firstId, kind: 'preference', left_candidate_id: 'a', right_candidate_id: 'b', preference: 'right'});
+  assert.deepEqual(JSON.parse(posts[1].options.body), {request_id: firstId, feedback_id: 'f'});
+  h.controller.state.detail = layoutPreviewDetail();
+  assert.equal(await h.controller.savePreference({left_candidate_id: 'layout-original', right_candidate_id: 'layout-best', preference: 'equal'}), false);
+  assert.equal(h.requests.filter(row => row.options.method).length, 2); h.controller.close();
+});
+
+test('continue preloads only active text feedback for the exact selected candidate, preserving ranges', () => {
+  const detail = {feedback: [
+    {candidate_id: 'a', comment: '看不清关联', start_seconds: 2, end_seconds: 4},
+    {candidate_id: 'a', comment: '已不需要', withdrawn: true},
+    {candidate_id: 'b', comment: '别的版本'},
+    {kind: 'preference', left_candidate_id: 'a', right_candidate_id: 'b', comment: '偏好说明'},
+  ]};
+  assert.equal(continuationFeedback(detail, 'a', '下一步优化节奏'), '[2–4 秒] 看不清关联\n\n下一步优化节奏');
+  assert.equal(continuationFeedback(detail, 'a', '看不清关联'), '[2–4 秒] 看不清关联');
+});
+
+test('review controls bind preferences, frame capture, history jump and withdrawal to visible candidate IDs', () => {
+  let player, preference, feedback, withdrawn, continued;
+  const detail = run({state: 'completed', candidates: [candidate('a'), candidate('b')], best_candidate_id: 'b',
+    feedback: [{id: 'f', candidate_id: 'a', comment: '这里需要停顿', start_seconds: 2, end_seconds: 3},
+      {id: 'gone', candidate_id: 'a', comment: '已撤销', withdrawn: true}]});
+  const rendered = renderMethodDetail(doc, detail, root, {...callbacks, comparisonSelection: {left: 'b', right: 'a', time: 1, speed: .5},
+    feedbackDraft: {candidate_id: 'a', comment: '让过程更清楚', start_seconds: '1', end_seconds: '3'},
+    onComparisonReady: value => { player = value; }, onPreference: value => { preference = value; },
+    onFeedback: value => { feedback = value; }, onWithdraw: value => { withdrawn = value; },
+    onContinue: (...args) => { continued = args; }});
+  const byText = label => rendered.descendants('button').find(row => row.textContent === label);
+  byText('右侧更好').handlers.click();
+  assert.deepEqual(preference, {left_candidate_id: 'b', right_candidate_id: 'a', preference: 'right'});
+  rendered.descendants('form')[0].handlers.submit({preventDefault() {}});
+  assert.deepEqual(feedback, {candidate_id: 'a', comment: '让过程更清楚', start_seconds: '1', end_seconds: '3'});
+  byText('撤回意见').handlers.click(); assert.equal(withdrawn, 'f');
+  assert.equal(rendered.descendants('button').filter(row => row.textContent === '撤回意见').length, 1);
+  byText('继续优化这版').handlers.click(); assert.equal(continued[1], 'a'); assert.match(continued[2], /这里需要停顿/); assert.doesNotMatch(continued[2], /已撤销/);
+  for (const video of rendered.descendants('video')) { video.duration = 8; video.readyState = 2; video.handlers.loadedmetadata(); }
+  byText('2–3 秒 · 跳到画面').handlers.click();
+  assert.equal(player.getTime('a'), 2);
+  byText('用当前画面时间').handlers.click();
+  const input = name => rendered.descendants('input').find(row => row.attributes['aria-label'] === name);
+  assert.equal(input('意见开始秒数').value, '2.000'); assert.equal(input('意见结束秒数').value, '2.000');
+  player.destroy();
+});
+
+test('switching the feedback version clears a time range from the previous version', () => {
+  let draft, player;
+  const rendered = renderMethodDetail(doc, run({state: 'completed', candidates: [candidate('a'), candidate('b')], best_candidate_id: 'b'}), root,
+    {...callbacks, feedbackDraft: {candidate_id: 'a', comment: '节奏', start_seconds: 1, end_seconds: 4},
+      onDraftChange: value => { draft = value; }, onComparisonReady: value => { player = value; }});
+  const select = rendered.descendants('select').find(row => row.attributes['aria-label'] === '意见对应样片');
+  select.value = 'b'; select.handlers.change();
+  assert.equal(draft.candidate_id, 'b'); assert.equal(draft.start_seconds, ''); assert.equal(draft.end_seconds, '');
+  player.destroy();
 });

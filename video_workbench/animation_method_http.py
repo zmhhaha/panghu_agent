@@ -23,7 +23,7 @@ class MethodLabClient(CreationAPIClient):
         return self._request(owner, 'POST', PREFIX + '/commissions', body)
 
     def action(self, owner, commission_id, action, body):
-        _require(action in {'cancel', 'feedback', 'publish', 'transfer'})
+        _require(action in {'cancel', 'feedback', 'withdraw_feedback', 'publish', 'transfer'})
         return self._request(owner, 'POST', PREFIX + '/commissions/' +
                              quote(commission_id, safe='') + '/' + action, body)
 
@@ -75,9 +75,11 @@ def route_private(handler, owner, method, path, body=None):
             handler._send(service.read_methods(owner, body))
             return True
         if len(pieces) == 3 and pieces[0] == 'commissions' and pieces[2] in {
-                'cancel', 'feedback', 'publish', 'transfer'}:
+                'cancel', 'feedback', 'withdraw_feedback', 'publish', 'transfer'}:
             handler._send(getattr(service, pieces[2])(owner, pieces[1], body))
-            if handler.server.method_pump:
+            # Developer opinions are metadata, never a reason to schedule Agent
+            # work. Only execution-affecting actions wake the coordinator.
+            if pieces[2] in {'cancel', 'transfer'} and handler.server.method_pump:
                 handler.server.method_pump.notify()
             return True
     raise CreationTransportError('animation_method_not_found', 404)

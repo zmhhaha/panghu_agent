@@ -44,7 +44,7 @@ _FIELDS = {'case_id', 'case_identity', 'variant_id', 'kind', 'start_seconds',
            'end_seconds', 'region', 'tags', 'severity', 'comment', 'preference', 'verdict'}
 _PUBLIC_URL_FIELDS = frozenset({'preview_url', 'report_url', 'task_url', 'image_url', 'asset_url', 'media_url', 'assessment_url', 'source_url'})
 _METHOD_UI_PATHS = frozenset({'/', '/index.html', '/method-gallery.html',
-                              '/method-gallery.mjs', '/method-gallery.css'})
+                              '/method-gallery.mjs', '/method-comparison.mjs', '/method-gallery.css'})
 
 
 def catalog():
@@ -869,7 +869,7 @@ class LabHandler(BaseHTTPRequestHandler):
                                   'application/x-ndjson; charset=utf-8', download=True)
             if path in {'/', '/index.html', '/app.mjs', '/model.mjs', '/style.css', '/lab-player.mjs',
                         '/experiments.mjs', '/experiment-model.mjs', '/creation-runs.mjs',
-                        '/method-gallery.html', '/method-gallery.mjs', '/method-gallery.css'}:
+                        '/method-gallery.html', '/method-gallery.mjs', '/method-comparison.mjs', '/method-gallery.css'}:
                 name = 'method-gallery.html' if path in {'/', '/index.html'} else path[1:]
                 if name == 'lab-player.mjs':
                     return self._send(lab.player_script, 'text/javascript; charset=utf-8')
@@ -972,7 +972,8 @@ class LabHandler(BaseHTTPRequestHandler):
                 owner = self.forwarded_user or 'local-developer'
                 if method_pieces == ['api', 'method-lab', 'commissions']:
                     return self._json(client.start(owner, body), 202)
-                if len(method_pieces) == 5 and method_pieces[2] == 'commissions':
+                if (len(method_pieces) == 5 and method_pieces[2] == 'commissions'
+                        and method_pieces[4] in {'cancel', 'feedback', 'withdraw_feedback', 'publish', 'transfer'}):
                     return self._json(client.action(owner, method_pieces[3], method_pieces[4], body))
                 raise LabError('animation_method_not_found', 404)
             creation_pieces = path.strip('/').split('/')

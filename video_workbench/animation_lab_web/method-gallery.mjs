@@ -1,3 +1,5 @@
+import {createMethodComparison} from './method-comparison.mjs';
+
 const API = 'api/method-lab/';
 const ACTIVE = new Set(['queued', 'running', 'cancelling', 'submission_unknown', 'planning', 'creating', 'reviewing', 'rendering']);
 const STATES = {queued: '等待制作', running: '正在探索', planning: '正在整理目标', creating: '正在创作',
@@ -35,6 +37,14 @@ export function commissionCandidates(detail) {
 export function selectedCandidate(detail) {
   const candidates = commissionCandidates(detail);
   return candidates.find(row => row.id === detail?.best_candidate_id) ?? detail?.best_candidate ?? candidates.at(-1) ?? null;
+}
+export function continuationFeedback(detail, candidateId, draft = '') {
+  const comments = rows(detail?.feedback).filter(row => !row.withdrawn && row.kind !== 'preference'
+    && row.candidate_id === candidateId && text(row.comment).trim());
+  const saved = comments.map(row => (Number.isFinite(row.start_seconds) ? '[' + row.start_seconds + '–' + row.end_seconds + ' 秒] ' : '') + row.comment.trim());
+  const current = text(draft).trim();
+  if (current && !comments.some(row => row.comment.trim() === current)) saved.push(current);
+  return saved.join('\n\n');
 }
 export function publicationSelection(detail) {
   const methodIds = Array.isArray(detail?.publication_method_version_ids) ? detail.publication_method_version_ids
@@ -203,17 +213,19 @@ export class MethodGalleryController {
   }
   deselect() { this.epoch++; this.state.detail = null; this.emit(); }
   async start(fields) {
-    if (this.state.busy || this.state.loading || !this.state.catalog?.availability.enabled) return false;
+    if (this.closed || this.state.busy || this.state.loading || !this.state.catalog?.availability.enabled) return false;
     let body;
     try {
       if (this.readPending()) throw Error('上次提交尚未核对，先刷新查找原任务');
       body = fields.transfer_commission_id ? buildTransferRequest(fields, this.uuid()) : buildCommissionRequest(fields, this.uuid());
       this.savePending(body); this.state.pending = body;
     } catch (error) { this.state.error = error.message; this.emit(); return false; }
+    ++this.epoch;
     this.state.busy = true; this.state.error = ''; this.state.notice = '正在提交本次实验…'; this.emit();
     try {
       const path = fields.transfer_commission_id ? API + 'commissions/' + encodeURIComponent(fields.transfer_commission_id) + '/transfer' : API + 'commissions';
       const detail = await this.request(path, {method: 'POST', body: JSON.stringify(body)});
+      if (this.closed) return false;
       if (!detail?.id || detail.request_id !== body.request_id || !Array.isArray(detail.candidates)) throw Error('提交回执与本次请求不符');
       this.clearPending(); this.state.pending = null; this.state.detail = detail;
       const catalog = this.state.catalog;
@@ -225,7 +237,7 @@ export class MethodGalleryController {
   }
   async mutate(action, body) {
     const detail = this.state.detail;
-    if (!detail || this.state.busy) return false;
+    if (!detail || detail.ui_preview || this.state.busy) return false;
     this.state.busy = true; this.state.error = ''; this.emit();
     try {
       const value = await this.request(API + 'commissions/' + encodeURIComponent(detail.id) + '/' + action,
@@ -233,6 +245,7 @@ export class MethodGalleryController {
       if (this.state.detail?.id === detail.id && value?.id === detail.id && Array.isArray(value.candidates)) this.state.detail = value;
       else if (this.state.detail?.id === detail.id) await this.select(detail.id);
       if (action === 'feedback') this.state.notice = '意见已保存。选择“继续优化这版”时才会开始下一次实验。';
+      else if (action === 'withdraw_feedback') this.state.notice = '意见已撤回，原记录保留供核对。不会开始新的制作。';
       else if (action === 'publish') this.state.notice = '验收与发布请求已提交，状态以服务器结果为准。';
       else this.state.notice = '取消请求已提交，已开始的工作会保留记录。';
       return true;
@@ -254,6 +267,19 @@ export class MethodGalleryController {
       } catch (error) { this.state.error = error.message; this.emit(); return Promise.resolve(false); }
     }
     return this.mutate('feedback', body);
+  }
+  savePreference({left_candidate_id, right_candidate_id, preference}) {
+    const ids = new Set(commissionCandidates(this.state.detail).map(row => row.id));
+    if (!ids.has(left_candidate_id) || !ids.has(right_candidate_id) || left_candidate_id === right_candidate_id
+      || !['left', 'right', 'equal', 'neither'].includes(preference)) {
+      this.state.error = '请选择两个不同版本再记录比较偏好'; this.emit(); return Promise.resolve(false);
+    }
+    return this.mutate('feedback', {request_id: this.uuid(), kind: 'preference', left_candidate_id, right_candidate_id, preference});
+  }
+  withdrawFeedback(feedback_id) {
+    const row = rows(this.state.detail?.feedback).find(value => value.id === feedback_id);
+    if (!row || row.withdrawn) return Promise.resolve(false);
+    return this.mutate('withdraw_feedback', {request_id: this.uuid(), feedback_id});
   }
   publish(acknowledged, expected = null) {
     if (!acknowledged || !canPublish(this.state.detail)) return Promise.resolve(false);
@@ -316,7 +342,9 @@ function details(doc, title, value) {
   return section;
 }
 export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCancel, onFeedback, onPublish,
-  onTransfer = () => {}, feedbackDraft = null, onDraftChange = () => {}}) {
+  onTransfer = () => {}, feedbackDraft = null, onDraftChange = () => {},
+  onPreference = () => {}, onWithdraw = () => {}, comparisonSelection = null,
+  onComparisonReady = () => {}, onComparisonChange = () => {}}) {
   const fragment = doc.createDocumentFragment(), head = element(doc, 'header', 'detail-heading'), heading = element(doc, 'div');
   heading.append(button(doc, '← 返回效果库', onBack), element(doc, 'h1', '', text(detail.title) || '效果实验'),
     element(doc, 'p', 'muted', text(detail.goal)), element(doc, 'span', 'badge', methodStateLabel(displayState(detail))));
@@ -325,23 +353,25 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   const candidates = commissionCandidates(detail), best = selectedCandidate(detail);
   const baseline = detail.baseline_candidate ?? detail.baseline ?? null, original = baseline?.candidate ?? baseline ?? candidates[0];
   const latestAttempt = candidates.findLast(candidate => candidate.id !== best?.id);
-  const chosen = original && best && original.id !== best.id ? [original, best]
-    : best && latestAttempt ? [best, latestAttempt] : best ? [best] : [];
-  const comparison = element(doc, 'div', 'comparison-grid' + (chosen.length < 2 ? ' single' : ''));
-  for (const candidate of chosen) {
-    const card = element(doc, 'article', 'comparison-card'), header = element(doc, 'header');
-    const label = candidate.id === detail.best_candidate_id ? '当前最佳样片' + (baseline && candidate.id === original?.id ? ' · 本次优化基线' : '')
-      : baseline && candidate.id === original?.id ? '本次优化基线'
-        : candidate.id === original?.id ? '初始样片' : '本次候选 · 暂未超过最佳样片';
-    header.append(element(doc, 'strong', '', label));
-    const source = methodAssetUrl(candidate.source_url, root);
-    if (source) { const link = element(doc, 'a', 'source-link', '下载源码'); link.href = source; link.download = ''; header.append(link); }
-    card.append(header, renderMethodMedia(doc, candidate, root),
-      element(doc, 'footer', '', candidate.technical_status === 'passed' ? '技术检查通过 · 表达效果请结合目标评价' : '技术状态：' + (text(candidate.technical_status) || '待核对')));
-    comparison.append(card);
+  const preferences = element(doc, 'div', 'comparison-preferences detail-actions');
+  const updatePreferenceButtons = selection => {
+    for (const child of preferences.children) child.disabled = detail.ui_preview === true || !selection.left || !selection.right;
+    onComparisonChange(selection);
+  };
+  const comparison = createMethodComparison(doc, {candidates, bestId: best?.id, baselineId: original?.id, root,
+    assetUrl: methodAssetUrl,
+    selection: comparisonSelection ?? {left: original?.id ?? best?.id,
+      right: original?.id !== best?.id ? best?.id : latestAttempt?.id ?? ''},
+    onSelectionChange: updatePreferenceButtons, onTimeChange: (_time, selection) => onComparisonChange(selection)});
+  for (const [value, label] of [['left', '左侧更好'], ['right', '右侧更好'], ['equal', '差不多'], ['neither', '都需改进']]) {
+    preferences.append(button(doc, label, () => {
+      const selection = comparison.getSelection();
+      if (!detail.ui_preview) void onPreference({left_candidate_id: selection.left, right_candidate_id: selection.right, preference: value});
+    }));
   }
-  if (!chosen.length) comparison.append(renderMethodMedia(doc, null, root, ACTIVE.has(detail.state) ? '正在准备实际样片，稍后可在这里查看' : '本次尚无可播放结果，请查看执行说明'));
-  fragment.append(comparison);
+  updatePreferenceButtons(comparison.getSelection()); onComparisonReady(comparison);
+  comparison.element.append(preferences, element(doc, 'p', 'small muted', '快捷比较只记录当前两版的偏好，不会自动更换最佳样片或发布方法。'));
+  fragment.append(comparison.element);
   if (detail.stop_reason || rows(detail.remaining_issues).length || detail.error) {
     const result = panel(doc, ACTIVE.has(detail.state) ? '当前进度与问题' : '本次结果');
     const reason = methodStopLabel(detail.stop_reason);
@@ -354,7 +384,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   const criteria = panel(doc, '本次想让观众看懂什么');
   if (rows(detail.criteria).length) criteria.append(list(doc, detail.criteria, 'criteria-list'));
   else criteria.append(element(doc, 'p', 'muted', '验收标准尚在整理。可以通过后续修改意见调整目标。'));
-  const adjust = button(doc, '调整标准并继续', () => onContinue(detail, best?.id, ''));
+  const adjust = button(doc, '调整标准并继续', () => onContinue(detail, best?.id, continuationFeedback(detail, best?.id)));
   adjust.disabled = !best || ACTIVE.has(detail.state); criteria.append(adjust); fragment.append(criteria);
   if (detail.comparison) fragment.append(details(doc, '优化对比与判断依据', detail.comparison));
   const transfers = panel(doc, '换一种任务，方法还能成立吗？');
@@ -375,7 +405,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
         : status === 'failed' ? '尚未通过目标标准' : '迁移结果待核对'));
     transferGrid.append(item);
   }
-  transfers.append(transferGrid); fragment.append(transfers);
+  transfers.append(transferGrid);
   const feedback = panel(doc, '指出问题，继续打磨');
   const form = element(doc, 'form', 'feedback-form'), selectLabel = element(doc, 'label', '', '这条意见针对哪版样片');
   const select = element(doc, 'select'); select.setAttribute('aria-label', '意见对应样片');
@@ -389,16 +419,62 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   const commentLabel = element(doc, 'label', '', '哪里不清楚，或希望怎样改善'), comment = element(doc, 'textarea');
   comment.rows = 3; comment.maxLength = 8000; comment.placeholder = '例如：对象被筛掉之后数字突然变化，没看清两者的关系。';
   comment.value = text(feedbackDraft?.comment); commentLabel.append(comment);
-  const rememberDraft = () => onDraftChange({candidate_id: select.value, comment: comment.value});
-  select.addEventListener('change', rememberDraft); comment.addEventListener('input', rememberDraft);
-  const actions = element(doc, 'div', 'detail-actions'), save = element(doc, 'button', 'button secondary', '保存意见'); save.type = 'submit'; save.disabled = !candidates.length;
-  const continueButton = button(doc, '继续优化这版', () => onContinue(detail, select.value, comment.value), 'button primary');
+  const rangeDetails = details(doc, '定位到具体时间（可选）'), rangeFields = element(doc, 'div', 'form-row');
+  const startLabel = element(doc, 'label', '', '开始（秒）'), endLabel = element(doc, 'label', '', '结束（秒）');
+  const start = element(doc, 'input'), end = element(doc, 'input');
+  for (const input of [start, end]) { input.type = 'number'; input.min = '0'; input.step = '0.001'; }
+  start.setAttribute('aria-label', '意见开始秒数'); end.setAttribute('aria-label', '意见结束秒数');
+  start.value = feedbackDraft?.start_seconds ?? ''; end.value = feedbackDraft?.end_seconds ?? '';
+  rangeDetails.open = start.value !== '' || end.value !== '';
+  startLabel.append(start); endLabel.append(end); rangeFields.append(startLabel, endLabel);
+  const draft = () => ({candidate_id: select.value, comment: comment.value, start_seconds: start.value, end_seconds: end.value});
+  const rememberDraft = () => onDraftChange(draft());
+  const rangeNotice = element(doc, 'p', 'small muted'); rangeNotice.setAttribute('role', 'status');
+  const capture = button(doc, '用当前画面时间', () => {
+    const time = comparison.getTime(select.value);
+    if (time == null) { rangeNotice.textContent = '先在上方选中这版样片，等待媒体加载后再定位。'; return; }
+    start.value = end.value = time.toFixed(3); rememberDraft(); rangeNotice.textContent = '已记录当前画面时间，可调整结束时间标注一段。';
+  });
+  capture.disabled = detail.ui_preview === true || !candidates.length;
+  const clearRange = button(doc, '清除时间', () => { start.value = end.value = ''; rememberDraft(); rangeNotice.textContent = ''; });
+  rangeDetails.append(rangeFields, capture, clearRange, rangeNotice);
+  start.addEventListener('input', rememberDraft); end.addEventListener('input', rememberDraft);
+  select.addEventListener('change', () => {
+    start.value = end.value = ''; rangeNotice.textContent = '已切换样片，请按这版画面重新定位时间。'; rememberDraft();
+  });
+  comment.addEventListener('input', rememberDraft);
+  const actions = element(doc, 'div', 'detail-actions'), save = element(doc, 'button', 'button secondary', '保存意见'); save.type = 'submit'; save.disabled = detail.ui_preview === true || !candidates.length;
+  const continueButton = button(doc, '继续优化这版', () => onContinue(detail, select.value, continuationFeedback(detail, select.value, comment.value)), 'button primary');
   continueButton.disabled = !candidates.length || ACTIVE.has(detail.state);
-  actions.append(save, continueButton); form.append(selectLabel, commentLabel, actions);
-  form.addEventListener('submit', event => { event.preventDefault(); void onFeedback({candidate_id: select.value, comment: comment.value}); });
-  feedback.append(form, element(doc, 'p', 'small muted', '保存意见不会开始制作。继续优化会建立新的有界实验，不限制这个效果的累计打磨次数。'));
-  if (rows(detail.feedback).length) feedback.append(list(doc, detail.feedback.map(row => row.comment ?? row), 'feedback-history'));
+  actions.append(save, continueButton); form.append(selectLabel, commentLabel, rangeDetails, actions);
+  form.addEventListener('submit', event => { event.preventDefault(); if (!detail.ui_preview) void onFeedback(draft()); });
+  feedback.append(form, element(doc, 'p', 'small muted', '保存意见不会开始制作。继续优化时，会把这版尚未撤回的文字意见带入表单供你核对，再按新预算开始实验。累计打磨次数不限。'));
+  if (rows(detail.feedback).length) {
+    const history = details(doc, '已记录意见（' + detail.feedback.filter(row => !row.withdrawn).length + ' 条有效）');
+    const items = element(doc, 'ul', 'feedback-history');
+    const candidateName = id => { const index = candidates.findIndex(row => row.id === id); return index < 0 ? '原样片' : '版本 ' + (index + 1) + ' · ' + (text(candidates[index].title) || '样片'); };
+    for (const row of detail.feedback) {
+      const item = element(doc, 'li', row.withdrawn ? 'withdrawn' : '');
+      if (row.kind === 'preference') {
+        const labels = {left: '左侧更好', right: '右侧更好', equal: '差不多', neither: '都需改进'};
+        item.append(element(doc, 'strong', '', '比较偏好：' + (labels[row.preference] ?? '待核对')),
+          element(doc, 'small', '', '左侧：' + candidateName(row.left_candidate_id) + '；右侧：' + candidateName(row.right_candidate_id)));
+      } else item.append(element(doc, 'small', '', candidateName(row.candidate_id)));
+      if (row.comment) item.append(element(doc, 'p', '', row.comment));
+      const controls = element(doc, 'div', 'detail-actions');
+      if (row.candidate_id && Number.isFinite(row.start_seconds)) {
+        controls.append(button(doc, row.start_seconds + '–' + row.end_seconds + ' 秒 · 跳到画面', () => {
+          comparison.seek(row.candidate_id, row.start_seconds); comparison.element.scrollIntoView?.({behavior: 'smooth', block: 'start'});
+        }));
+      }
+      if (row.withdrawn) controls.append(element(doc, 'span', 'small muted', '已撤回 · 保留原记录'));
+      else if (row.id) { const withdraw = button(doc, '撤回意见', () => { if (!detail.ui_preview) void onWithdraw(row.id); }); withdraw.disabled = detail.ui_preview === true; controls.append(withdraw); }
+      item.append(controls); items.append(item);
+    }
+    history.append(items); feedback.append(history);
+  }
   fragment.append(feedback);
+  fragment.append(transfers);
   const publish = panel(doc, '认可效果，发布创作方法'); publish.classList.add('publication');
   const selection = publicationSelection(detail), ready = canPublish(detail);
   publish.append(element(doc, 'p', 'muted', '发布会保存这些已认可的方法版本，确认范围绑定本次样片与迁移结果。正式制作接入仍待完成。'));
@@ -433,8 +509,16 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
 export function mountMethodGallery({document: doc = document, root = new URL('./', location.href), fetch: fetcher = fetch,
   storage = sessionStorage, uuid, schedule, unschedule} = {}) {
   const $ = id => doc.getElementById(id), home = $('gallery-home'), detailHost = $('gallery-detail'), formPanel = $('gallery-form-panel');
-  let continuation = null, controller, renderedDetailId = null, renderedDetailSnapshot = null;
-  const feedbackDrafts = new Map();
+  let continuation = null, controller, renderedDetailId = null, renderedDetailSnapshot = null, renderedCardsSnapshot = null, comparison = null, replacing = false;
+  const feedbackDrafts = new Map(), comparisonStates = new Map();
+  const releaseComparison = () => {
+    replacing = true;
+    try {
+      if (comparison && renderedDetailId) comparisonStates.set(renderedDetailId, {...comparison.getSelection(), playing: false});
+      comparison?.destroy(); comparison = null;
+      for (const video of detailHost.querySelectorAll('video')) video.pause();
+    } finally { replacing = false; }
+  };
   const request = async (path, options = {}) => {
     const headers = {Accept: 'application/json', ...options.headers};
     if (options.method === 'POST') Object.assign(headers, {'Content-Type': 'application/json', 'X-Animation-Lab': '1',
@@ -447,7 +531,13 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     if (!response.ok) throw Error('请求失败（HTTP ' + response.status + '），请刷新核对');
     return response.json();
   };
-  const show = mode => { home.hidden = mode !== 'home'; detailHost.hidden = mode !== 'detail'; formPanel.hidden = mode !== 'form'; };
+  const show = mode => {
+    if (mode !== 'detail' && comparison) {
+      releaseComparison(); renderedDetailId = renderedDetailSnapshot = null;
+    }
+    if (mode !== 'home') for (const video of home.querySelectorAll('video')) video.pause();
+    home.hidden = mode !== 'home'; detailHost.hidden = mode !== 'detail'; formPanel.hidden = mode !== 'form';
+  };
   const openForm = (detail = null, candidateId = null, feedback = '', mode = 'continue') => {
     const isTransfer = Boolean(detail) && mode === 'transfer';
     continuation = detail ? {commission_id: detail.id, candidate_id: candidateId, mode, criteria: detail.criteria,
@@ -456,6 +546,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     $('experiment-title').value = isTransfer ? (detail.title + ' · 迁移验证') : detail?.title ?? '';
     $('experiment-goal').value = isTransfer ? '' : detail?.goal ?? '';
     $('experiment-feedback').value = feedback; $('experiment-feedback').required = Boolean(detail) && !isTransfer;
+    $('experiment-feedback-label').hidden = !detail || isTransfer;
     $('experiment-criteria').value = rows(detail?.criteria).map(row => typeof row === 'string' ? row : row.description).filter(Boolean).join('\n');
     $('experiment-form-title').textContent = isTransfer ? '验证方法在不同任务中的表现' : detail ? '继续优化这版' : '新建实验';
     $('experiment-base-note').hidden = !detail;
@@ -477,9 +568,14 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     const filtered = all.filter(row => (!query || (text(row.title) + ' ' + text(row.goal)).toLocaleLowerCase().includes(query))
       && (filter === 'all' || filter === 'active' && ACTIVE.has(row.state) || filter === 'published' && displayState(row) === 'published'
         || filter === 'review' && !ACTIVE.has(row.state) && displayState(row) !== 'published'));
-    $('gallery-cards').replaceChildren(...filtered.map(row => renderMethodCard(doc, row, root, id => { show('detail'); void controller.select(id); })));
+    const snapshot = JSON.stringify({filtered, query, filter});
+    if (renderedCardsSnapshot !== snapshot) {
+      for (const video of $('gallery-cards').querySelectorAll('video')) video.pause();
+      $('gallery-cards').replaceChildren(...filtered.map(row => renderMethodCard(doc, row, root, id => { show('detail'); void controller.select(id); })));
+      renderedCardsSnapshot = snapshot;
+      if (all.length && !filtered.length) $('gallery-cards').append(element(doc, 'p', 'muted', '没有匹配的效果，请调整查找条件。'));
+    }
     $('gallery-empty').hidden = all.length > 0; $('gallery-count').textContent = all.length + ' 个效果与实验';
-    if (all.length && !filtered.length) $('gallery-cards').append(element(doc, 'p', 'muted', '没有匹配的效果，请调整查找条件。'));
   };
   controller = new MethodGalleryController({root, request, storage, uuid, schedule, unschedule, onChange: state => {
     const message = $('gallery-message'); message.hidden = !state.error && !state.notice;
@@ -491,27 +587,42 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     $('experiment-unavailable').hidden = enabled && continuation?.ui_preview !== true;
     $('gallery-preview-note').hidden = !state.catalog || enabled;
     $('gallery-refresh').disabled = state.loading || state.busy;
+    $('experiment-form-close').disabled = state.busy;
     $('gallery-availability').textContent = state.catalog ? enabled ? '按目标自主探索，完成后查看最佳样片、改进依据与尚存问题。'
       : state.catalog.availability.reason || '制作服务尚未就绪，可查看已有样片。' : '正在读取效果库…';
     renderCards();
+    if (!formPanel.hidden) return;
     if (state.detail) {
       const isTyping = detailHost.contains(doc.activeElement) && ['TEXTAREA', 'INPUT', 'SELECT'].includes(doc.activeElement?.tagName);
       const isPlaying = [...detailHost.querySelectorAll('video')].some(video => !video.paused && !video.ended);
       const snapshot = JSON.stringify(state.detail), switched = renderedDetailId !== state.detail.id;
       if (!state.busy && (switched || !isTyping && !isPlaying && renderedDetailSnapshot !== snapshot)) {
         const detail = state.detail;
+        releaseComparison();
         detailHost.replaceChildren(renderMethodDetail(doc, detail, root, {
           onBack: () => { controller.deselect(); show('home'); }, onContinue: openForm,
           onTransfer: (current, candidateId) => openForm(current, candidateId, '', 'transfer'),
-          onCancel: () => void controller.cancel(), onFeedback: value => controller.saveFeedback(value),
+          onCancel: () => void controller.cancel(), onFeedback: async value => {
+            const before = JSON.stringify(feedbackDrafts.get(detail.id));
+            const saved = await controller.saveFeedback(value);
+            if (saved && JSON.stringify(feedbackDrafts.get(detail.id)) === before) {
+              feedbackDrafts.delete(detail.id);
+              if (renderedDetailId === detail.id) { renderedDetailSnapshot = null; controller.emit(); }
+            }
+            return saved;
+          },
+          onPreference: value => controller.savePreference(value), onWithdraw: id => controller.withdrawFeedback(id),
           onPublish: (acknowledged, expected) => controller.publish(acknowledged, expected),
           feedbackDraft: feedbackDrafts.get(detail.id),
           onDraftChange: value => feedbackDrafts.set(detail.id, value),
+          comparisonSelection: comparisonStates.get(detail.id), onComparisonReady: value => { comparison = value; },
+          onComparisonChange: value => comparisonStates.set(detail.id, value),
         }));
         renderedDetailId = detail.id; renderedDetailSnapshot = snapshot;
+        const mountedComparison = comparison;
         for (const video of detailHost.querySelectorAll('video')) {
-          video.addEventListener('pause', () => controller.emit());
-          video.addEventListener('ended', () => controller.emit());
+          video.addEventListener('pause', () => { if (!replacing && comparison === mountedComparison) controller.emit(); });
+          video.addEventListener('ended', () => { if (!replacing && comparison === mountedComparison) controller.emit(); });
         }
       }
       if (!formPanel.hidden && !state.busy) return;
@@ -522,19 +633,26 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
   $('gallery-empty-new').addEventListener('click', () => openForm());
   $('gallery-preview-detail').addEventListener('click', () => {
     controller.deselect();
+    releaseComparison();
     const preview = layoutPreviewDetail();
     detailHost.replaceChildren(renderMethodDetail(doc, preview, root, {
       onBack: () => show('home'), onContinue: openForm,
       onTransfer: (current, candidateId) => openForm(current, candidateId, '', 'transfer'),
       onFeedback: () => Promise.resolve(false), onPublish: () => Promise.resolve(false), onCancel: () => {},
+      comparisonSelection: comparisonStates.get(preview.id), onComparisonReady: value => { comparison = value; },
+      onComparisonChange: value => comparisonStates.set(preview.id, value),
     }));
+    renderedDetailId = preview.id; renderedDetailSnapshot = JSON.stringify(preview);
     for (const form of detailHost.querySelectorAll('form')) {
       for (const submit of form.querySelectorAll('[type="submit"]')) submit.disabled = true;
     }
     show('detail');
   });
   $('gallery-refresh').addEventListener('click', () => void controller.refresh());
-  $('experiment-form-close').addEventListener('click', () => show(controller.state.detail ? 'detail' : 'home'));
+  $('experiment-form-close').addEventListener('click', () => {
+    show(controller.state.detail ? 'detail' : 'home');
+    if (controller.state.detail) controller.emit();
+  });
   $('gallery-search').addEventListener('input', renderCards);
   $('gallery-state').addEventListener('change', renderCards);
   detailHost.addEventListener('focusout', () => queueMicrotask(() => controller.emit()));
@@ -544,8 +662,10 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     const fields = Object.fromEntries(new FormData($('experiment-form')));
     if (continuation) Object.assign(fields, {base_candidate_id: continuation.candidate_id, criteria_metadata: continuation.criteria,
       ...(continuation.mode === 'transfer' ? {transfer_commission_id: continuation.commission_id} : {base_commission_id: continuation.commission_id})});
-    if (await controller.start(fields)) show('detail');
+    if (await controller.start(fields)) { show('detail'); controller.emit(); }
   });
+  const closeController = controller.close.bind(controller);
+  controller.close = () => { closeController(); releaseComparison(); };
   void controller.refresh(); return controller;
 }
 

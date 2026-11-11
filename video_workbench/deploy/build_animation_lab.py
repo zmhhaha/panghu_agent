@@ -65,6 +65,7 @@ SOURCE_FILES = frozenset({
     'video_workbench/animation_lab_web/method-gallery.html',
     'video_workbench/animation_lab_web/method-gallery.css',
     'video_workbench/animation_lab_web/method-gallery.mjs',
+    'video_workbench/animation_lab_web/method-comparison.mjs',
     'video_workbench/examples/build_process_sample.py',
     'video_workbench/motion.py', 'video_workbench/motion_demo.py',
     'video_workbench/motion_geometry.py', 'video_workbench/motion_process.py',
