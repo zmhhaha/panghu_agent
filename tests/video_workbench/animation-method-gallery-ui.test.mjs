@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
-  MethodGalleryController, buildCommissionRequest, buildTransferRequest, methodAssetUrl, methodStateLabel, layoutPreviewDetail, continuationFeedback,
+  MethodGalleryController, mountMethodGallery, buildCommissionRequest, buildTransferRequest, methodAssetUrl, methodStateLabel, layoutPreviewDetail, continuationFeedback, continuationDuration,
   publicationSelection, publicationApprovalBinding, methodsPublished, canPublish, renderMethodMedia, renderMethodCard, renderMethodDetail,
 } from '../../video_workbench/animation_lab_web/method-gallery.mjs';
 
@@ -307,10 +307,89 @@ class FakeElement {
   removeAttribute(name) { delete this.attributes[name]; }
   pause() { this.paused = true; }
   load() {}
+  querySelectorAll(tag) { return this.descendants(tag); }
+  contains(node) { return this === node || this.descendants().includes(node); }
+  focus() { if (this.ownerDocument) this.ownerDocument.activeElement = this; }
   descendants(tag) { return this.children.flatMap(row => [row, ...row.descendants(tag)]).filter(row => !tag || row.tagName === tag.toUpperCase()); }
 }
 const doc = {createElement: tag => new FakeElement(tag), createDocumentFragment: () => new FakeElement('fragment')};
 const callbacks = {onBack() {}, onContinue() {}, onCancel() {}, onFeedback() {}, onPublish() {}};
+
+function mountedGallery(initial) {
+  const html = readFileSync(new URL('../../video_workbench/animation_lab_web/method-gallery.html', import.meta.url), 'utf8');
+  const nodes = new Map([...html.matchAll(/<([a-z][a-z0-9]*)\b[^>]*\bid="([^"]+)"/g)]
+    .map(([, tag, id]) => [id, new FakeElement(tag)]));
+  const document = {activeElement: null, getElementById: id => nodes.get(id),
+    createElement(tag) { const element = new FakeElement(tag); element.ownerDocument = this; return element; },
+    createDocumentFragment: () => new FakeElement('fragment')};
+  const get = id => nodes.get(id);
+  get('gallery-search').value = ''; get('gallery-state').value = 'all';
+  get('gallery-form-panel').hidden = get('gallery-detail').hidden = true;
+  get('experiment-form').reset = () => {
+    for (const node of nodes.values()) node.value = '';
+    get('experiment-duration').value = '24'; get('experiment-rounds').value = '3'; get('experiment-seconds').value = '15';
+  };
+  let current = initial;
+  const controller = mountMethodGallery({document, root, storage: storage(), uuid: () => firstId,
+    schedule: () => 1, unschedule() {}, fetch: async url => ({ok: true, status: 200,
+      json: async () => structuredClone(url.pathname.endsWith('/catalog') ? catalog([current]) : current)})});
+  return {controller, document, get, update: value => { current = value; }};
+}
+
+test('polling preserves each commission disclosure state and time drafts without replacing focused input', async () => {
+  let detail = run({state: 'running', candidates: [candidate('a')], best_candidate_id: 'a',
+    feedback: [{id: 'first', candidate_id: 'a', comment: '原意见'}], methods: [{id: 'm1'}]});
+  const h = mountedGallery(detail);
+  await h.controller.refresh(); await h.controller.select(detail.id);
+  const host = h.get('gallery-detail');
+  const section = key => host.descendants('details').find(node => node.dataset.methodDisclosure === key);
+  const input = label => host.descendants('input').find(node => node.attributes['aria-label'] === label);
+  for (const key of ['feedback-range', 'execution', 'feedback-history', 'methods']) section(key).open = true;
+  const start = input('意见开始秒数'); start.value = '2'; start.handlers.input(); start.focus();
+  input('意见结束秒数').value = '3.5'; input('意见结束秒数').handlers.input();
+  const comment = host.descendants('textarea')[0]; comment.value = '继续让变化更清楚'; comment.handlers.input();
+  detail = {...detail, feedback: [...detail.feedback, {id: 'second', candidate_id: 'a', comment: '新增意见'}],
+    methods: [...detail.methods, {id: 'm2'}], execution: [{id: 'operation', status: 'running'}]};
+  h.update(detail); await h.controller.refresh();
+  assert.equal(input('意见开始秒数'), start);
+  h.document.activeElement = null; h.controller.emit();
+  assert.notEqual(input('意见开始秒数'), start);
+  for (const key of ['feedback-range', 'execution', 'feedback-history', 'methods']) assert.equal(section(key).open, true);
+  assert.match(section('feedback-history').textContent, /2 条有效/);
+  assert.match(section('methods').textContent, /关联创作方法（2）/);
+  assert.equal(input('意见开始秒数').value, '2'); assert.equal(input('意见结束秒数').value, '3.5');
+  assert.equal(host.descendants('textarea')[0].value, '继续让变化更清楚');
+  section('feedback-range').open = false;
+  detail = {...detail, execution: [{id: 'operation', status: 'completed'}]};
+  h.update(detail); await h.controller.refresh();
+  assert.equal(section('feedback-range').open, false);
+  const other = run({id: 'commission-2', state: 'running', candidates: [candidate('other')], best_candidate_id: 'other'});
+  h.update(other); await h.controller.select(other.id);
+  assert.notEqual(section('execution').open, true); assert.equal(section('feedback-range').open, false);
+  assert.equal(input('意见开始秒数').value, ''); assert.equal(host.descendants('textarea')[0].value, '');
+  h.update(detail); await h.controller.select(detail.id);
+  assert.equal(section('execution').open, true); assert.equal(section('feedback-range').open, false);
+  assert.equal(input('意见开始秒数').value, '2'); h.controller.close();
+});
+
+test('continue form inherits the selected actual media duration while a fresh experiment keeps defaults', async () => {
+  const detail = run({state: 'completed', candidates: [
+    {...candidate('original'), media: {duration_seconds: 16}}, {...candidate('best'), media: {duration_seconds: 31}}],
+    best_candidate_id: 'best', criteria: [{id: 'clear', description: '能看清变化'}]});
+  const h = mountedGallery(detail);
+  await h.controller.refresh(); await h.controller.select(detail.id);
+  const host = h.get('gallery-detail');
+  const selected = host.descendants('select').find(node => node.attributes['aria-label'] === '意见对应样片');
+  selected.value = 'original'; selected.handlers.change();
+  host.descendants('button').find(node => node.textContent === '继续优化这版').handlers.click();
+  assert.equal(h.get('experiment-duration').value, '16');
+  assert.equal(h.get('experiment-rounds').value, '3'); assert.equal(h.get('experiment-seconds').value, '15');
+  assert.equal(h.get('experiment-criteria').value, '能看清变化');
+  h.get('gallery-new').handlers.click(); assert.equal(h.get('experiment-duration').value, '24');
+  assert.equal(continuationDuration({duration_seconds: 18}, null), 18);
+  assert.equal(continuationDuration({...detail, candidates: [{...candidate('best'), media: {duration_seconds: NaN}}]}, 'best'), 24);
+  h.controller.close();
+});
 
 test('real media exposes controls without forcing autoplay or muting necessary sound', () => {
   const stage = renderMethodMedia(doc, candidate(), root), video = stage.descendants('video')[0];

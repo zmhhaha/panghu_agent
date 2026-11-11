@@ -46,6 +46,12 @@ export function continuationFeedback(detail, candidateId, draft = '') {
   if (current && !comments.some(row => row.comment.trim() === current)) saved.push(current);
   return saved.join('\n\n');
 }
+export function continuationDuration(detail, candidateId) {
+  const candidate = commissionCandidates(detail).find(row => row.id === candidateId) ?? selectedCandidate(detail);
+  return [candidate?.media?.duration_seconds, candidate?.duration_seconds, detail?.duration_seconds,
+    detail?.constraints?.duration_seconds, detail?.frozen?.duration_seconds]
+    .find(value => typeof value === 'number' && Number.isFinite(value) && value >= 2 && value <= 60) ?? 24;
+}
 export function publicationSelection(detail) {
   const methodIds = Array.isArray(detail?.publication_method_version_ids) ? detail.publication_method_version_ids
     : rows(detail?.method_version_ids).length ? detail.method_version_ids
@@ -344,7 +350,12 @@ function details(doc, title, value) {
 export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCancel, onFeedback, onPublish,
   onTransfer = () => {}, feedbackDraft = null, onDraftChange = () => {},
   onPreference = () => {}, onWithdraw = () => {}, comparisonSelection = null,
-  onComparisonReady = () => {}, onComparisonChange = () => {}}) {
+  onComparisonReady = () => {}, onComparisonChange = () => {}, disclosureState = null}) {
+  const disclosure = (key, title, value) => {
+    const section = details(doc, title, value); section.dataset.methodDisclosure = key;
+    if (Object.hasOwn(disclosureState ?? {}, key)) section.open = disclosureState[key] === true;
+    return section;
+  };
   const fragment = doc.createDocumentFragment(), head = element(doc, 'header', 'detail-heading'), heading = element(doc, 'div');
   heading.append(button(doc, '← 返回效果库', onBack), element(doc, 'h1', '', text(detail.title) || '效果实验'),
     element(doc, 'p', 'muted', text(detail.goal)), element(doc, 'span', 'badge', methodStateLabel(displayState(detail))));
@@ -386,7 +397,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   else criteria.append(element(doc, 'p', 'muted', '验收标准尚在整理。可以通过后续修改意见调整目标。'));
   const adjust = button(doc, '调整标准并继续', () => onContinue(detail, best?.id, continuationFeedback(detail, best?.id)));
   adjust.disabled = !best || ACTIVE.has(detail.state); criteria.append(adjust); fragment.append(criteria);
-  if (detail.comparison) fragment.append(details(doc, '优化对比与判断依据', detail.comparison));
+  if (detail.comparison) fragment.append(disclosure('comparison', '优化对比与判断依据', detail.comparison));
   const transfers = panel(doc, '换一种任务，方法还能成立吗？');
   const startTransfer = button(doc, '验证不同结构', () => onTransfer(detail, best?.id), 'button secondary');
   startTransfer.disabled = !best || ACTIVE.has(detail.state); transfers.append(startTransfer);
@@ -419,13 +430,13 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   const commentLabel = element(doc, 'label', '', '哪里不清楚，或希望怎样改善'), comment = element(doc, 'textarea');
   comment.rows = 3; comment.maxLength = 8000; comment.placeholder = '例如：对象被筛掉之后数字突然变化，没看清两者的关系。';
   comment.value = text(feedbackDraft?.comment); commentLabel.append(comment);
-  const rangeDetails = details(doc, '定位到具体时间（可选）'), rangeFields = element(doc, 'div', 'form-row');
+  const rangeDetails = disclosure('feedback-range', '定位到具体时间（可选）'), rangeFields = element(doc, 'div', 'form-row');
   const startLabel = element(doc, 'label', '', '开始（秒）'), endLabel = element(doc, 'label', '', '结束（秒）');
   const start = element(doc, 'input'), end = element(doc, 'input');
   for (const input of [start, end]) { input.type = 'number'; input.min = '0'; input.step = '0.001'; }
   start.setAttribute('aria-label', '意见开始秒数'); end.setAttribute('aria-label', '意见结束秒数');
   start.value = feedbackDraft?.start_seconds ?? ''; end.value = feedbackDraft?.end_seconds ?? '';
-  rangeDetails.open = start.value !== '' || end.value !== '';
+  if (!Object.hasOwn(disclosureState ?? {}, 'feedback-range')) rangeDetails.open = start.value !== '' || end.value !== '';
   startLabel.append(start); endLabel.append(end); rangeFields.append(startLabel, endLabel);
   const draft = () => ({candidate_id: select.value, comment: comment.value, start_seconds: start.value, end_seconds: end.value});
   const rememberDraft = () => onDraftChange(draft());
@@ -450,7 +461,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   form.addEventListener('submit', event => { event.preventDefault(); if (!detail.ui_preview) void onFeedback(draft()); });
   feedback.append(form, element(doc, 'p', 'small muted', '保存意见不会开始制作。继续优化时，会把这版尚未撤回的文字意见带入表单供你核对，再按新预算开始实验。累计打磨次数不限。'));
   if (rows(detail.feedback).length) {
-    const history = details(doc, '已记录意见（' + detail.feedback.filter(row => !row.withdrawn).length + ' 条有效）');
+    const history = disclosure('feedback-history', '已记录意见（' + detail.feedback.filter(row => !row.withdrawn).length + ' 条有效）');
     const items = element(doc, 'ul', 'feedback-history');
     const candidateName = id => { const index = candidates.findIndex(row => row.id === id); return index < 0 ? '原样片' : '版本 ' + (index + 1) + ' · ' + (text(candidates[index].title) || '样片'); };
     for (const row of detail.feedback) {
@@ -490,7 +501,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   const publishButton = button(doc, '认可并发布方法', () => onPublish(checkbox.checked, publicationApprovalBinding(detail)), 'button primary');
   publishButton.disabled = true; checkbox.addEventListener('change', () => { publishButton.disabled = !ready || !checkbox.checked; });
   publish.append(acknowledgment, publishButton); fragment.append(publish);
-  const methods = details(doc, '关联创作方法（' + rows(detail.methods).length + '）');
+  const methods = disclosure('methods', '关联创作方法（' + rows(detail.methods).length + '）');
   for (const method of rows(detail.methods)) {
     const article = element(doc, 'article', 'method-item');
     article.append(element(doc, 'h4', '', text(method.title) || text(method.problem) || '创作方法'),
@@ -500,7 +511,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
     methods.append(article);
   }
   fragment.append(methods);
-  fragment.append(details(doc, '候选、技术检查与执行记录', {candidates, budget: detail.budget, operations: detail.operations ?? detail.execution,
+  fragment.append(disclosure('execution', '候选、技术检查与执行记录', {candidates, budget: detail.budget, operations: detail.operations ?? detail.execution,
     events: detail.events, stop_reason: detail.stop_reason, error: detail.error}));
   if (ACTIVE.has(detail.state)) fragment.append(button(doc, '取消本次实验', onCancel, 'button secondary danger'));
   return fragment;
@@ -510,10 +521,13 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
   storage = sessionStorage, uuid, schedule, unschedule} = {}) {
   const $ = id => doc.getElementById(id), home = $('gallery-home'), detailHost = $('gallery-detail'), formPanel = $('gallery-form-panel');
   let continuation = null, controller, renderedDetailId = null, renderedDetailSnapshot = null, renderedCardsSnapshot = null, comparison = null, replacing = false;
-  const feedbackDrafts = new Map(), comparisonStates = new Map();
+  const feedbackDrafts = new Map(), comparisonStates = new Map(), disclosureStates = new Map();
   const releaseComparison = () => {
     replacing = true;
     try {
+      if (renderedDetailId) disclosureStates.set(renderedDetailId, Object.fromEntries(
+        [...detailHost.querySelectorAll('details')].filter(section => section.dataset.methodDisclosure)
+          .map(section => [section.dataset.methodDisclosure, section.open === true])));
       if (comparison && renderedDetailId) comparisonStates.set(renderedDetailId, {...comparison.getSelection(), playing: false});
       comparison?.destroy(); comparison = null;
       for (const video of detailHost.querySelectorAll('video')) video.pause();
@@ -543,6 +557,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     continuation = detail ? {commission_id: detail.id, candidate_id: candidateId, mode, criteria: detail.criteria,
       ui_preview: detail.ui_preview === true} : null;
     $('experiment-form').reset();
+    if (detail) $('experiment-duration').value = String(continuationDuration(detail, candidateId));
     $('experiment-title').value = isTransfer ? (detail.title + ' · 迁移验证') : detail?.title ?? '';
     $('experiment-goal').value = isTransfer ? '' : detail?.goal ?? '';
     $('experiment-feedback').value = feedback; $('experiment-feedback').required = Boolean(detail) && !isTransfer;
@@ -615,6 +630,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
           onPublish: (acknowledged, expected) => controller.publish(acknowledged, expected),
           feedbackDraft: feedbackDrafts.get(detail.id),
           onDraftChange: value => feedbackDrafts.set(detail.id, value),
+          disclosureState: disclosureStates.get(detail.id),
           comparisonSelection: comparisonStates.get(detail.id), onComparisonReady: value => { comparison = value; },
           onComparisonChange: value => comparisonStates.set(detail.id, value),
         }));
@@ -639,6 +655,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
       onBack: () => show('home'), onContinue: openForm,
       onTransfer: (current, candidateId) => openForm(current, candidateId, '', 'transfer'),
       onFeedback: () => Promise.resolve(false), onPublish: () => Promise.resolve(false), onCancel: () => {},
+      disclosureState: disclosureStates.get(preview.id),
       comparisonSelection: comparisonStates.get(preview.id), onComparisonReady: value => { comparison = value; },
       onComparisonChange: value => comparisonStates.set(preview.id, value),
     }));
