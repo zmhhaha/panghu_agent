@@ -117,3 +117,13 @@ OpenSpec 变更 `evolve-video-agent-creation-and-effect-library` 已同步实际
 多图层表现力仅登记为后续讨论，不新增本期任务或验收门槛。可信费用与用量由 `add-pi-first-agent-execution-service` 承接；生产存储回收及跨服务整体清理由 `harden-shared-platform-production-readiness`、`consolidate-service-workspaces-and-execution-artifacts` 承接，不列为视频业务重复待办；移交不表示框架任务已完成。应用设计文档与本轮主变更设计同步。
 
 26 个变更的远程 CAS 更新已完成，逐项完整工件精确回读一致且校验均通过；最终项目 revision 为 `099cadb61cf3d2e2dc88002f4619f381abfa72a8`，回执保存在既有操作目录 `creation-product-r1/spec-consolidation-r1/remote-apply-receipt.json`。本次仅整理规格和职责边界，没有执行 apply／archive，没有新增完成勾选，主变更保持 10/34。
+
+### 迁移问题回流与评审输出边界（2026-11-12）
+
+原迁移片的任务状态标签残留、分叉／汇合标注进入运动区域两项问题，已作为反馈带入原代表片的新续作。委托 `64979bcb-9931-4746-96af-7ee6306fda7e` 以唯一 request_id `68939870-a4f6-4f0a-962c-c733b3768c7b` 提交，预算固定为 creator2／render1／review1／900秒。规划、创作与原始源码渲染完成，新16秒候选为 `617c1ff3-fa72-4f13-b9d0-bdf753843576`；三个新方法版本准确指向各自原父版本，指导内容增加临时标签结束状态、服务与旅程统一状态，以及完整经过区域留白。方法文本改变不等于效果改善已获验证。
+
+唯一评审 job `9c89b970-7064-4b30-b67d-a3ed4139e3da` 因 `worker_output_invalid` 失败，原交付 artifact 为0、停止已证明。限定该 job／attempt 的只读取证取得三条已保存模型响应；从原 write 参数重建的输出在实际生产校验器上复现 `animation_method_parent_not_supplied`：评审额外输出三个保留 method_id、未提供有效父版本的方法提案。`next_guidance` 实际是字符串，不是本次根因。重建诊断明确不冒充原 artifact，原失败没有被修复产物覆盖；证据保存在服务器既有 `spec-consolidation-r1/method-a-evidence-r1.json`、`method-a-review-readonly-diagnostic-r2.json` 及根因摘要中。
+
+最小修复只在 review 输入的 `constraints.result_requirements` 明确 `methods=[]`、`source=null`、`sound_events=[]`，评审结论写入 review，输入方法为只读上下文。plan／create 继续创作和改进方法，父版本校验器、共享角色合同及运行镜像准入规则均未放宽。reference／transfer 的输入保真、合法空方法评审、历史父版本误用、同 method_id 缺父版本及显式 null 的不同拒绝路径均有定向覆盖。服务、委托账本与共享 profile 联合96项通过；初次测试目录权限导致的52项 setup 错误另行保留，改用短路径可写临时目录后完整通过，不把环境错误当实现失败或省略失败记录。
+
+原委托以 failed 停止并保留 `dda4a0ae-54a9-43c8-825c-acf8fddc724d` 为最佳；没有重开预算、自动重试或启动原20秒迁移回归B。登录浏览器实测原最佳与新候选均播放至16秒末尾，无媒体错误，认可框仍为false。OpenSpec 已记录真实失败，revision `050f301d32eb37356225d9d7feb9aa171c77aaa4`；主清单保持10/34，2.8及发布、正式采用仍待完成。修复的构建、部署和真实输入核对结果另行记录，单元检查不替代新一次真实Agent输出或完整质量认可。

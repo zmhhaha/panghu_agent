@@ -1,6 +1,7 @@
 """Business orchestration tests: fixtures never represent real Agent/media evidence."""
 from copy import deepcopy
 import hashlib
+import json
 from uuid import uuid4
 
 import pytest
@@ -216,6 +217,74 @@ def test_reference_documents_keep_existing_constraints_and_method_records(work):
             duration_seconds=18, allowed_engines=['html-svg'])
         assert document['methods'] == [service.methods.get_method('developer', version_id)
                                        for version_id in base['method_versions']]
+
+
+@pytest.mark.parametrize('role', ['reference', 'transfer'])
+def test_review_requests_assessment_only_and_keeps_historical_methods_readonly(work, role):
+    service, creator, reviewer, _ = work
+    first = finish(service, start(service)['id'])
+    revised = finish(service, start(service, base_commission_id=first['id'])['id'])
+    version_id = revised['publication_method_version_ids'][0]
+    original_method = service.methods.get_method('developer', version_id)
+    assert original_method['parent_version_id'] == first['publication_method_version_ids'][0]
+    if role == 'reference':
+        queued = start(service, base_commission_id=revised['id'])
+    else:
+        queued = service.transfer('developer', revised['id'], dict(request_id=str(uuid4()),
+            goal='Explain a fork and merge using the same method',
+            structural_changes={'relations': {'before': 'chain', 'after': 'fork and merge'}},
+            budget=dict(max_rounds=1, max_seconds=300)))
+    author_offset = len(creator.submissions)
+    completed = finish(service, queued['id'])
+    assert completed['state'] == 'completed'
+    author_inputs = [creator.jobs[operation_id]['document']
+                     for operation_id in creator.submissions[author_offset:]]
+    assert [document['mode'] for document in author_inputs] == ['plan', 'create']
+    assert all('result_requirements' not in document['constraints'] for document in author_inputs)
+
+    job = reviewer.jobs[reviewer.submissions[-1]]
+    document = job['document']
+    requirements = document['constraints']['result_requirements']
+    assert requirements['methods'] == [] and requirements['source'] is None
+    assert requirements['sound_events'] == []
+    assert all(text in requirements['instruction'] for text in (
+        'actual media evidence', 'assessment in review', 'read-only context',
+        'do not copy, rewrite or create methods', 'historical parent_version_id or lineage'))
+    assert json.loads(json.dumps(document)) == document
+    assert protocol.validate_input(document) == document
+    selected = document['methods']
+    assert selected == [service.methods.get_method('developer', row['version_id']) for row in selected]
+    assert selected and selected[0]['parent_version_id'] not in {row['version_id'] for row in selected}
+    original_input = deepcopy(document)
+    original_versions = service.methods.list_methods('developer')
+    output = reviewer.collect(job['job_id'], digest(document), document)
+    assert output['methods'] == [] and output['source'] is None and output['sound_events'] == []
+    assert output['review']['summary'] == 'UNIT TEST sampled-image review'
+    assert protocol.validate_result(output, digest(document), document) == output
+
+    # Clear instructions avoid the failed historical-lineage echo; they do not
+    # make that echo valid or change the stored source method or its ancestry.
+    bad = deepcopy(output)
+    bad['methods'] = [dict(method(document['criteria']), method_id=selected[0]['method_id'],
+                           parent_version_id=selected[0]['parent_version_id'])]
+    with pytest.raises(ServiceError, match='animation_method_parent_not_supplied'):
+        protocol.validate_result(bad, digest(document), document)
+    # The failed review emitted three same-method proposals with no parent,
+    # not a malformed next_guidance. Missing parent and explicit null remain
+    # distinct invalid cases in the existing validator.
+    bad = deepcopy(output)
+    bad['methods'] = [dict(method(document['criteria']), method_id=selected[0]['method_id'])
+                      for _ in range(3)]
+    assert type(bad['review']['next_guidance']) is str
+    with pytest.raises(ServiceError, match='animation_method_parent_not_supplied'):
+        protocol.validate_result(bad, digest(document), document)
+    bad['methods'][0]['parent_version_id'] = None
+    with pytest.raises(ServiceError, match='invalid_animation_experiment_contract'):
+        protocol.validate_result(bad, digest(document), document)
+    assert document == original_input
+    assert service.methods.list_methods('developer') == original_versions
+    assert service.methods.get_method('developer', version_id) == original_method
+
 
 def test_uncertain_submit_reconciles_original_without_resubmission(work):
     service, creator, _, _ = work

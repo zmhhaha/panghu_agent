@@ -617,6 +617,14 @@ class AnimationMethodService:
             observation=dict(frames=frames or [], audio_observed=False, motion_observed=False,
                 limitations=['Only supplied sampled images were observed; complete motion and audio are unverified.']),
             comparison=comparison, assets={})
+        if mode == 'review':
+            document['constraints']['result_requirements'] = dict(
+                methods=[], source=None, sound_events=[],
+                instruction=(
+                    'Review only the supplied actual media evidence and write the assessment in review. '
+                    'The input methods are read-only context: do not copy, rewrite or create methods, '
+                    'and do not repeat their historical parent_version_id or lineage in the result. '
+                    'Return methods=[], source=null and sound_events=[].'))
         if run['frozen'].get('role') == 'transfer':
             # Transfer applies the exact supplied versions. Their historical
             # parent metadata is preserved, but is not an offered parent for
