@@ -121,8 +121,22 @@ export function buildTransferRequest(fields, requestId) {
   const after = dimension === 'object_count' ? number(afterText, 0, 100000, '对象数量需要是有效整数', true) : afterText;
   if (before === after) throw Error('迁移任务需要有实质变化');
   delete body.base_commission_id;
+  delete body.criteria;
   body.structural_changes = {[dimension]: {before, after}};
   return body;
+}
+
+export function layoutPreviewDetail() {
+  return {id: 'layout-preview', ui_preview: true, title: '样片详情 · 界面示意',
+    goal: '此页展示功能布局，不是已生成的动画或已验证的方法。', state: 'review',
+    best_candidate_id: 'layout-best', baseline_candidate: {id: 'layout-original', title: '优化前样片的位置'},
+    candidates: [{id: 'layout-original', title: '优化前样片的位置', technical_status: 'unverified'},
+      {id: 'layout-best', title: '当前最佳样片的位置', technical_status: 'unverified'}],
+    criteria: [{id: 'layout-standard', description: '这里展示每个目标的具体评价标准，由 Agent 提议，也可由你调整。'}],
+    methods: [], transfers: [], feedback: [], reviews: [],
+    remaining_issues: ['这里展示最佳结果仍未解决的问题，以及为何结束本次实验。'],
+    publication_ready: false, publication_blockers: ['界面示意没有真实样片、迁移证据或可发布方法。'],
+    summary: '实际制作完成后，可在这里比较完整样片、保存意见并继续优化。'};
 }
 
 export class MethodGalleryController {
@@ -426,13 +440,18 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     if (options.method === 'POST') Object.assign(headers, {'Content-Type': 'application/json', 'X-Animation-Lab': '1',
       'X-Animation-Lab-Token': controller.state.catalog?.csrf_token ?? '', 'X-CSRF-Token': controller.state.catalog?.csrf_token ?? ''});
     const response = await fetcher(new URL(path, root), {...options, headers, credentials: 'same-origin', redirect: 'error', cache: 'no-store'});
+    if (path === API + 'catalog' && !options.method && [404, 503].includes(response.status)) {
+      return {effects: [], commissions: [], availability: {enabled: false,
+        reason: '前端预览：生成服务尚未接通。可以先检查页面与功能，不会启动实验。'}};
+    }
     if (!response.ok) throw Error('请求失败（HTTP ' + response.status + '），请刷新核对');
     return response.json();
   };
   const show = mode => { home.hidden = mode !== 'home'; detailHost.hidden = mode !== 'detail'; formPanel.hidden = mode !== 'form'; };
   const openForm = (detail = null, candidateId = null, feedback = '', mode = 'continue') => {
     const isTransfer = Boolean(detail) && mode === 'transfer';
-    continuation = detail ? {commission_id: detail.id, candidate_id: candidateId, mode, criteria: detail.criteria} : null;
+    continuation = detail ? {commission_id: detail.id, candidate_id: candidateId, mode, criteria: detail.criteria,
+      ui_preview: detail.ui_preview === true} : null;
     $('experiment-form').reset();
     $('experiment-title').value = isTransfer ? (detail.title + ' · 迁移验证') : detail?.title ?? '';
     $('experiment-goal').value = isTransfer ? '' : detail?.goal ?? '';
@@ -445,6 +464,8 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     $('experiment-transfer-fields').hidden = !isTransfer;
     $('experiment-transfer-before').required = isTransfer; $('experiment-transfer-after').required = isTransfer;
     $('experiment-submit').textContent = isTransfer ? '开始迁移验证' : detail ? '开始本次优化' : '开始本次实验';
+    $('experiment-submit').disabled = detail?.ui_preview === true || controller.state.catalog?.availability.enabled !== true;
+    $('experiment-unavailable').hidden = !($('experiment-submit').disabled);
     show('form'); $('experiment-title').focus();
   };
   const renderCards = () => {
@@ -464,9 +485,11 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     const message = $('gallery-message'); message.hidden = !state.error && !state.notice;
     message.textContent = state.error || state.notice; message.className = 'message' + (state.error ? ' error' : '');
     const enabled = state.catalog?.availability.enabled === true;
-    $('gallery-new').disabled = !enabled || state.busy || Boolean(state.pending);
+    $('gallery-new').disabled = state.busy || Boolean(state.pending);
     $('gallery-empty-new').disabled = $('gallery-new').disabled;
-    $('experiment-submit').disabled = !enabled || state.busy || Boolean(state.pending);
+    $('experiment-submit').disabled = !enabled || continuation?.ui_preview === true || state.busy || Boolean(state.pending);
+    $('experiment-unavailable').hidden = enabled && continuation?.ui_preview !== true;
+    $('gallery-preview-note').hidden = !state.catalog || enabled;
     $('gallery-refresh').disabled = state.loading || state.busy;
     $('gallery-availability').textContent = state.catalog ? enabled ? '按目标自主探索，完成后查看最佳样片、改进依据与尚存问题。'
       : state.catalog.availability.reason || '制作服务尚未就绪，可查看已有样片。' : '正在读取效果库…';
@@ -497,6 +520,19 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
   }});
   $('gallery-new').addEventListener('click', () => openForm());
   $('gallery-empty-new').addEventListener('click', () => openForm());
+  $('gallery-preview-detail').addEventListener('click', () => {
+    controller.deselect();
+    const preview = layoutPreviewDetail();
+    detailHost.replaceChildren(renderMethodDetail(doc, preview, root, {
+      onBack: () => show('home'), onContinue: openForm,
+      onTransfer: (current, candidateId) => openForm(current, candidateId, '', 'transfer'),
+      onFeedback: () => Promise.resolve(false), onPublish: () => Promise.resolve(false), onCancel: () => {},
+    }));
+    for (const form of detailHost.querySelectorAll('form')) {
+      for (const submit of form.querySelectorAll('[type="submit"]')) submit.disabled = true;
+    }
+    show('detail');
+  });
   $('gallery-refresh').addEventListener('click', () => void controller.refresh());
   $('experiment-form-close').addEventListener('click', () => show(controller.state.detail ? 'detail' : 'home'));
   $('gallery-search').addEventListener('input', renderCards);
@@ -504,6 +540,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
   detailHost.addEventListener('focusout', () => queueMicrotask(() => controller.emit()));
   $('experiment-form').addEventListener('submit', async event => {
     event.preventDefault();
+    if (continuation?.ui_preview || controller.state.catalog?.availability.enabled !== true) return;
     const fields = Object.fromEntries(new FormData($('experiment-form')));
     if (continuation) Object.assign(fields, {base_candidate_id: continuation.candidate_id, criteria_metadata: continuation.criteria,
       ...(continuation.mode === 'transfer' ? {transfer_commission_id: continuation.commission_id} : {base_commission_id: continuation.commission_id})});

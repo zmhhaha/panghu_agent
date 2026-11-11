@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {
-  MethodGalleryController, buildCommissionRequest, buildTransferRequest, methodAssetUrl, methodStateLabel,
+  MethodGalleryController, buildCommissionRequest, buildTransferRequest, methodAssetUrl, methodStateLabel, layoutPreviewDetail,
   publicationSelection, publicationApprovalBinding, methodsPublished, canPublish, renderMethodMedia, renderMethodCard, renderMethodDetail,
 } from '../../video_workbench/animation_lab_web/method-gallery.mjs';
 
@@ -38,6 +38,15 @@ test('opening the gallery only reads and a disabled service retains its actual a
   assert.equal(h.controller.snapshot.catalog.availability.reason, '尚未接通制作执行器');
   assert.equal(await h.controller.start(fields), false);
   assert.deepEqual(h.requests.map(row => row.options.method ?? 'GET'), ['GET']);
+});
+
+test('layout preview carries no generated media, accepted evidence or publishable methods', () => {
+  const detail = layoutPreviewDetail();
+  assert.equal(detail.ui_preview, true);
+  assert.equal(canPublish(detail), false);
+  assert.equal(detail.candidates.some(row => row.media_url || row.demonstration_id), false);
+  assert.deepEqual(publicationSelection(detail), {method_version_ids: [], demonstration_ids: []});
+  assert.match(detail.goal, /不是已生成/);
 });
 
 test('commission input preserves reference ranges, independent budget and exact continuation candidate', () => {
@@ -89,6 +98,7 @@ test('a transfer creates a materially different task from the selected sample an
     goal: '对象数量增加后仍能追踪筛选和汇总的关联'};
   const body = buildTransferRequest(input, firstId);
   assert.equal(body.base_candidate_id, 'exact-best'); assert.equal(body.base_commission_id, undefined);
+  assert.equal(buildTransferRequest({...input, criteria_text: '不能用当前委托的新标准替换方法原标准'}, firstId).criteria, undefined);
   assert.deepEqual(body.structural_changes, {object_count: {before: 8, after: 40}});
   assert.throws(() => buildTransferRequest({...input, transfer_after: '8'}, firstId), /变化/);
   assert.throws(() => buildTransferRequest({...input, transfer_before: ''}, firstId), /真正改变/);
