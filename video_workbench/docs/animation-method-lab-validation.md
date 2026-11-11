@@ -109,3 +109,11 @@ OpenSpec 变更 `evolve-video-agent-creation-and-effect-library` 已同步实际
 当前方法创作链仍仅开放 HTML/SVG。旧实验室的 Canvas／Three.js 作品主要由固定编译器与模板绘制，旧自由源码合同枚举不代表新方法创作的运行支持；可信渲染宿主仍拒绝 Canvas 元素。Canvas／Three.js 的 Agent 自由源码接通继续由 OpenSpec 5.1／5.2 验证，未恢复旧数据填充分类。
 
 完整 Git 源码已通过 `grouped-effect-release-r3`／`grouped-effect-deploy-r3` 构建部署，执行器摘要为 `sha256:2af6b2f4399d6e6fa2d50ef0a1cd6d0d2d234d1c2727811227f080c8942d532e`，实验室摘要为 `sha256:1b9384f0245928cf96e9741c6a809ac376f8ab609f3975cffffab509dadf7ed1`。浏览器实测 Canvas、Three.js、待确认各筛得 0/1，HTML/SVG＋待评价＋svg 搜索为 1/1，组合已发布条件为 0/1，清除后恢复一条效果。详情原作／最佳均标 HTML/SVG，四条历史中失败记录保留待确认，迁移标 HTML/SVG；发布认可框仍未勾选。回执为 `engine-filter-live-r1.json`。OpenSpec 的需求、设计和 2.6 说明已同步并校验通过，revision `9c801109b010afbf5cdbd271c4a6e8bdfbe672a0`；任务勾选保持 10/34，不把技术标签上线计为 Canvas／Three.js 接通。
+
+### 需求整理与待办归属（2026-11-11）
+
+本轮需求整理覆盖 26 个相关变更，明确各版本的有效范围、当前主规范与历史完成证据。20 项旧 pending 仅移交到当前主任务并保留来源，不改成已完成，不重复统计；旧完成勾选保持不变。当前主变更仍为 34 项、10 项完成、24 项待办；合并同一实施责任后，活动待办共 42 项：主变更 24 项，加独立待办 18 项（原音频时钟与表现力 13 项、背景音乐 3 项、原图解 Agent 组合／路由反馈 1 项、原生 OOM 归因 1 项）。同一缺口在多份旧记录中引用时只计一次，历史完成不能证明新方法迁移、发布或正式视频采用已经通过。
+
+多图层表现力仅登记为后续讨论，不新增本期任务或验收门槛。可信费用与用量由 `add-pi-first-agent-execution-service` 承接；生产存储回收及跨服务整体清理由 `harden-shared-platform-production-readiness`、`consolidate-service-workspaces-and-execution-artifacts` 承接，不列为视频业务重复待办；移交不表示框架任务已完成。应用设计文档与本轮主变更设计同步。
+
+26 个变更的远程 CAS 更新已完成，逐项完整工件精确回读一致且校验均通过；最终项目 revision 为 `099cadb61cf3d2e2dc88002f4619f381abfa72a8`，回执保存在既有操作目录 `creation-product-r1/spec-consolidation-r1/remote-apply-receipt.json`。本次仅整理规格和职责边界，没有执行 apply／archive，没有新增完成勾选，主变更保持 10/34。
