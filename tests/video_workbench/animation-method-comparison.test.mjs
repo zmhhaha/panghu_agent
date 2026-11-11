@@ -161,6 +161,26 @@ test('a rejected play pauses both versions and does not leave an animation loop'
   assert.match(h.control('status').textContent, /未能开始播放/); h.player.destroy();
 });
 
+test('buffering never disables the pause action and prevents restarting until data returns', async () => {
+  const h = harness(); h.ready(); h.click('play'); await flush();
+  h.videos()[1].readyState = 1; h.videos()[1].emit('durationchange');
+  assert.equal(h.control('play').disabled, false); assert.equal(h.control('play').textContent, '暂停');
+  h.click('play'); assert.equal(h.player.getSelection().playing, false);
+  assert.ok(h.videos().every(row => row.paused)); assert.equal(h.frames.size, 0);
+  assert.equal(h.control('play').disabled, true);
+  h.videos()[1].readyState = 2; h.videos()[1].emit('canplay');
+  assert.equal(h.control('play').disabled, false); h.player.destroy();
+});
+
+test('a pending play request remains cancellable when media starts buffering', async () => {
+  const h = harness(); h.ready(); const pending = deferred(); h.videos()[1].playResult = pending.promise;
+  h.click('play'); h.videos()[1].readyState = 1; h.videos()[1].emit('durationchange');
+  assert.equal(h.control('play').disabled, false); assert.equal(h.control('play').textContent, '取消开始');
+  h.click('play'); assert.equal(h.player.getSelection().playing, false);
+  pending.resolve(); await flush();
+  assert.ok(h.videos().every(row => row.paused)); assert.equal(h.frames.size, 0); h.player.destroy();
+});
+
 test('audio comes from only the selected version and single view cannot keep an absent audio side', () => {
   const h = harness(); h.ready(); assert.deepEqual(h.videos().map(row => row.muted), [false, true]);
   h.change('audio', 'right'); assert.deepEqual(h.videos().map(row => row.muted), [true, false]);

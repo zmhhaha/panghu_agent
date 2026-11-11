@@ -157,6 +157,17 @@ class AnimationMethodService:
                      and op['status'] == 'completed'), None)
         standards = run['frozen'].get('criteria') or (plan['criteria'] if plan else [])
         latest_review = run['reviews'][-1] if run['reviews'] else {}
+        summary, error = run['summary'], None
+        if type(summary) is dict:
+            # The durable ledger keeps structured failure/cancellation detail;
+            # the browser's summary is prose, never an object coerced to text.
+            message = summary.get('message')
+            summary = (message if type(message) is str else
+                       '开发者取消了本次实验' if run['stop_reason'] == 'cancelled' else
+                       '本次实验已结束，请查看执行记录')
+            code = run['summary'].get('code')
+            if type(code) is str:
+                error = code
         return dict(schema='video.animation-method-lab-detail.v1', id=run['id'], request_id=run['request_id'],
             title=run['title'], goal=run['frozen']['goal'], state=run['state'],
             budget=run['budget'], usage=run['usage'], remaining=run['remaining'],
@@ -168,7 +179,7 @@ class AnimationMethodService:
             transfers=transfers,
             validations=validations, feedback=self._feedback(owner, commission_id),
             stop_reason=run['stop_reason'], remaining_issues=latest_review.get('remaining_issues', []),
-            summary=run['summary'], publication_ready=not blockers, publishable=not blockers,
+            summary=summary, error=error, publication_ready=not blockers, publishable=not blockers,
             publication_blockers=sorted(set(blockers)), reviews=run['reviews'],
             execution=[{k: op.get(k) for k in ('id', 'stage', 'status', 'job_id', 'error')}
                        for op in run['operations']])

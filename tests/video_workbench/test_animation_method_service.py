@@ -177,6 +177,34 @@ def test_cancel_active_agent_waits_for_stop_proof(work):
     assert row['state'] == 'cancelled' and len(creator.submissions) == 1
 
 
+def test_cancel_before_work_has_readable_summary_and_reopens_without_work(work):
+    service, creator, reviewer, renderer = work
+    row = start(service)
+    cancelled = service.cancel('developer', row['id'], {})
+    assert cancelled['state'] == 'cancelled'
+    assert cancelled['summary'] == '开发者取消了本次实验' and cancelled['error'] is None
+    original = service.commissions.get('developer', row['id'])
+    assert original['summary'] == {'reason': 'developer_cancelled'}
+    restored = AnimationMethodService(service.root, author_gateway=creator,
+        review_gateway=reviewer, renderer=renderer)
+    restored.advance('developer', row['id'])
+    assert restored.get('developer', row['id']) == cancelled
+    assert restored.commissions.get('developer', row['id']) == original
+    assert creator.submissions == reviewer.submissions == renderer.calls == []
+
+
+def test_failed_admission_summary_remains_prose_with_original_code_preserved(work):
+    service, creator, reviewer, renderer = work
+    row = start(service)
+    summary = dict(message='制作结果未通过入库验证；保留原操作，不自动重跑',
+                   code='animation_method_render_failed')
+    service.commissions.stop('developer', row['id'], 'failed', summary)
+    failed = service.get('developer', row['id'])
+    assert failed['summary'] == summary['message'] and failed['error'] == summary['code']
+    assert service.commissions.get('developer', row['id'])['summary'] == summary
+    assert creator.submissions == reviewer.submissions == renderer.calls == []
+
+
 def test_continue_preserves_better_baseline(work):
     service, _, reviewer, _ = work
     first = finish(service, start(service)['id'])

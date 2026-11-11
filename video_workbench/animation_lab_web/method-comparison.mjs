@@ -113,7 +113,8 @@ export function createMethodComparison(doc, {
   function update() {
     if (destroyed) return;
     const available = ready(), max = total();
-    playButton.disabled = !canPlay(); playButton.textContent = pendingPlay ? '正在开始…' : playing ? '暂停' : '播放';
+    playButton.disabled = !playing && !pendingPlay && !canPlay();
+    playButton.textContent = pendingPlay ? '取消开始' : playing ? '暂停' : '播放';
     for (const control of [resetButton, previousButton, nextButton, seekInput, speedSelect]) control.disabled = !available;
     audioSelect.disabled = !media.length;
     audioSelect.value = audio;
