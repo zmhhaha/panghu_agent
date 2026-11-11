@@ -127,3 +127,7 @@ OpenSpec 变更 `evolve-video-agent-creation-and-effect-library` 已同步实际
 最小修复只在 review 输入的 `constraints.result_requirements` 明确 `methods=[]`、`source=null`、`sound_events=[]`，评审结论写入 review，输入方法为只读上下文。plan／create 继续创作和改进方法，父版本校验器、共享角色合同及运行镜像准入规则均未放宽。reference／transfer 的输入保真、合法空方法评审、历史父版本误用、同 method_id 缺父版本及显式 null 的不同拒绝路径均有定向覆盖。服务、委托账本与共享 profile 联合96项通过；初次测试目录权限导致的52项 setup 错误另行保留，改用短路径可写临时目录后完整通过，不把环境错误当实现失败或省略失败记录。
 
 原委托以 failed 停止并保留 `dda4a0ae-54a9-43c8-825c-acf8fddc724d` 为最佳；没有重开预算、自动重试或启动原20秒迁移回归B。登录浏览器实测原最佳与新候选均播放至16秒末尾，无媒体错误，认可框仍为false。OpenSpec 已记录真实失败，revision `050f301d32eb37356225d9d7feb9aa171c77aaa4`；主清单保持10/34，2.8及发布、正式采用仍待完成。修复的构建、部署和真实输入核对结果另行记录，单元检查不替代新一次真实Agent输出或完整质量认可。
+
+源码 `762e639f0954bd138b7bab562eb30d60d9d45af8` 已从开发分支快进同步至服务器，以普通Dockerfile完整构建并部署。执行器latest摘要为 `sha256:b186d8b743a39e7ae6578c454419db50a5d14f871980ecd5bbd1408145f9efee`，实验室latest摘要为 `sha256:fbf9b0cb884a0d0f609a1644e0a8c79ac2a3e8ebb17f59dbde5f325ab56081d6`；两Pod Ready，实际摘要、部署注解与构建回执一致。构建和部署回执均位于本次集中目录的 `review-output-release-r1`／`review-output-deploy-r1`，没有应用overlay或主线合入。
+
+新执行器Pod用原委托的冻结方法、候选与观察元数据分别重建reference／transfer评审输入，确认只读方法及观察内容保持原值、明确空方法输出要求已生效。回执为 `review-output-live-input-postflight-r1.json`；该检查没有模型请求、新渲染或业务写入。更新后登录工作台仍显示原失败，旧最佳保留、两版媒体可用、发布按钮禁用及认可框false。限定模型响应中的三条方法实际缺少parent_version_id字段，并非显式JSON null，更正摘要为 `method-a-review-root-cause-r2.json`；此前投影摘要保留，不覆盖原证据。OpenSpec已同步此修复与真实验收边界，精确回读和校验通过，最终revision为 `4ee133e2db9896dfeced41bb3304c9fe6a5bb3f5`，主清单仍10/34。新一次Agent实际评审和原结构迁移回归继续保持待办。
