@@ -22,6 +22,7 @@ from agent_service.contracts import ServiceError, canonical_bytes, digest
 SCHEMA = 'video.production-method-delivery.v1'
 DECISION_SCHEMA = 'video.production-method-decision.v1'
 MAX_DELIVERY_BYTES = 256 * 1024
+MAX_TASK_BYTES = 2 * 1024 * 1024
 _CONTENT = frozenset({'title', 'problem', 'guidance', 'applicability', 'limitations',
                       'criteria', 'runtime_requirements'})
 _ENGINES = frozenset({'html-svg', 'canvas', 'three'})
@@ -196,7 +197,7 @@ class MethodProductionAdapter:
         _require(type(consumer_id) is str and 0 < len(consumer_id) <= 400
                  and not any(ord(char) < 32 for char in consumer_id))
         _require(type(task) is dict and bool(task)
-                 and len(canonical_bytes(task)) <= 128 * 1024)
+                 and len(canonical_bytes(task)) <= MAX_TASK_BYTES)
         _require(type(allowed_engines) is list and bool(allowed_engines)
                  and len(set(allowed_engines)) == len(allowed_engines)
                  and set(allowed_engines) <= _ENGINES)
@@ -216,7 +217,13 @@ class MethodProductionAdapter:
         document = self.catalogue(owner)
         records = document.get('methods') if type(document) is dict else document
         _require(type(records) is list, 'production_method_catalog_invalid', 502)
-        query = _tokens(' '.join(value for value in task.values() if type(value) is str))
+        # Production tasks nest their semantic scene context. Source code,
+        # assets and offered methods are never retrieval queries.
+        scene = task.get('scene')
+        query_fields = scene if type(scene) is dict else task
+        query = _tokens(' '.join(query_fields.get(key, '') for key in (
+            'title', 'visual_description', 'narration', 'instruction', 'style')
+            if type(query_fields.get(key)) is str))
         latest, exclusions = {}, []
         for row in records:
             # A malformed published record is an integration failure, not a

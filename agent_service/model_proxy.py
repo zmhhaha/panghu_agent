@@ -145,12 +145,13 @@ class ModelProxySettings:
 
 
 def profile_model_call_limit(profile, configured):
-    """Tighten new method roles without changing any existing role's budget.
+    """Tighten new method/production roles without changing older budgets.
 
     The profile comes from the authenticated stored job, never request JSON or
     grant metadata supplied by a caller. A stricter operator cap still wins.
     """
-    if profile in {'video.animation-method-author.v1', 'video.animation-method-review.v1'}:
+    if profile in {'video.animation-method-author.v1', 'video.animation-method-review.v1',
+                   'video.animation-production.v1'}:
         return min(configured, 8)
     return configured
 

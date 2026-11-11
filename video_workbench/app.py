@@ -24,7 +24,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from agent_service.client import AgentClient
 from agent_service.contracts import ServiceError
 from .agent import VideoAgentGateway
-from .config import AgentSettings, ExplanationSettings, MotionSettings
+from .config import (AgentSettings, ExplanationSettings, MotionSettings,
+                     ProductionMethodSettings, ProductionAgentSettings)
 from .service import Workflow
 from .store import Store
 from .speech import SpeechClient, SpeechSettings, MAX_AUDIO_BYTES
@@ -36,7 +37,7 @@ from .explanation_workflow import ExplanationWorkflow
 from .motion_store import MotionStore
 from .motion_timing import MotionTiming
 from .motion_workflow import MotionWorkflow
-from .motion_gateway import MotionAgentGateway, ProcessAgentGateway, CreativeAgentGateway
+from .motion_gateway import MotionAgentGateway, ProcessAgentGateway, ProductionCreativeAgentGateway
 from .continuity_store import ContinuityStore
 from .batch_store import BatchStore
 from .batch_workflow import BatchWorkflow
@@ -82,6 +83,7 @@ MESSAGES = {
     'motion_disabled': '动态图解尚未启用，仍可查看历史和取消在途任务。',
     'creative_disabled': '创意动画尚未启用，原动画和录音仍可查看。',
     'creative_profile_unavailable': '创意动画的通用 Agent 服务尚未就绪，请稍后重试。',
+    'creative_methods_unavailable': '正式动画的方法服务尚未配置，请联系维护者完成接入。',
     'creative_audio_binding_mismatch': '这份动画对应的旁白录音已变化，请为当前录音重新生成。',
     'creative_timing_requires_regeneration': '这份动画按固定录音时间制作，调整节拍后需要重新生成。',
     'creative_scene_engine_not_admitted': '当前创意动画支持 HTML/SVG，这种渲染方式尚未启用。',
@@ -432,7 +434,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                speech_client=None, renderer=None, render_enabled=None,
                explanation_gateway=None, explanation_enabled=None, motion_gateway=None,
                motion_enabled=None, motion_renderer=None, motion_runtime=None,
-               process_gateway=None, process_enabled=None, creative_gateway=None, creative_enabled=None):
+               process_gateway=None, process_enabled=None, creative_gateway=None, creative_enabled=None,
+               method_adapter=None):
     explanation_settings = ExplanationSettings.from_env()
     enabled = explanation_settings.enabled if explanation_enabled is None else explanation_enabled
     if type(enabled) is not bool:
@@ -450,6 +453,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         raise ValueError('An explicit boolean creative feature gate is required')
     creative_gate = creative_gate and motion_gate
     owned_client = None
+    owned_production_client = None
     owned_speech_client = None
     if gateway is None:
         settings = AgentSettings.from_env()
@@ -480,11 +484,32 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         motion_gateway = MotionAgentGateway(gateway.client, motion_settings.revision)
     if process_gateway is None and isinstance(gateway, VideoAgentGateway):
         process_gateway = ProcessAgentGateway(gateway.client, motion_settings.process_revision)
-    if creative_gateway is None and isinstance(gateway, VideoAgentGateway):
-        creative_gateway = CreativeAgentGateway(gateway.client, motion_settings.creative_revision)
+    if creative_gateway is None:
+        production_settings = ProductionAgentSettings.from_env()
+        if production_settings:
+            owned_production_client = AgentClient(production_settings.base_url, production_settings.token)
+            creative_gateway = ProductionCreativeAgentGateway(owned_production_client, production_settings.revision)
+    if method_adapter is None:
+        method_settings = ProductionMethodSettings.from_env()
+        if method_settings:
+            from .animation_method_http import MethodLabClient, CreationTransportError
+            from .animation_method_production import MethodProductionAdapter
+            method_client = MethodLabClient(method_settings.base_url, method_settings.token)
+
+            def method_request(call, *args):
+                try:
+                    return call(*args)
+                except CreationTransportError as error:
+                    raise ServiceError('creative_methods_unavailable', error.status) from None
+
+            method_adapter = MethodProductionAdapter(
+                lambda owner: method_request(method_client.published_catalog, owner),
+                lambda owner, body: method_request(method_client.published_methods, owner, body),
+                ledger_path=Path(store.path).with_name('production-method-freezes.sqlite3'))
     motion_workflow = MotionWorkflow(motion_store, motion_gateway, enabled=motion_gate,
                                     process_gateway=process_gateway, process_enabled=process_gate,
-                                    creative_gateway=creative_gateway, creative_enabled=creative_gate)
+                                    creative_gateway=creative_gateway, creative_enabled=creative_gate,
+                                    method_adapter=method_adapter)
     owned_motion_renderer = None
     if motion_renderer is None and os.environ.get('VIDEO_MOTION_RENDER_URL'):
         from .motion_render_adapter import configured_motion_renderer
@@ -518,6 +543,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
             owned_motion_renderer.close()
         if owned_client:
             owned_client.close()
+        if owned_production_client:
+            owned_production_client.close()
         if owned_speech_client:
             owned_speech_client.close()
 
@@ -618,7 +645,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     explanation_configured=enabled and explanation_gateway is not None,
                     motion_enabled=motion_gate, motion_configured=motion_gate and motion_gateway is not None,
                     process_enabled=process_gate, process_configured=process_gate and process_gateway is not None,
-                    creative_enabled=creative_gate, creative_configured=creative_gate and creative_gateway is not None,
+                    creative_enabled=creative_gate, creative_configured=creative_gate and creative_gateway is not None
+                        and method_adapter is not None,
                     batch_enabled=motion_gate, continuity_enabled=motion_gate,
                     default_production_mode='motion' if motion_gate else 'static',
                     motion_render_configured=motion_gate and motion_renderer is not None and runtime is not None)

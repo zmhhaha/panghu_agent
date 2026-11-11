@@ -158,6 +158,9 @@ def collect_scene_result(input_document, result):
 
 
 def validate_scene_package(package):
+    if type(package) is dict and package.get('schema') == 'video.creative-scene.v2':
+        from .creative_method_contract import validate_scene_package as validate_method_package
+        return validate_method_package(package)
     _require(type(package) is dict and set(package) == PACKAGE_FIELDS
              and package.get('schema') == CREATIVE_SCHEMA
              and package.get('adapter_revision') == ADAPTER_REVISION)
@@ -168,12 +171,18 @@ def validate_scene_package(package):
 
 def scene_files(package):
     """Verified bytes remain untrusted code; never serve them as workbench HTML."""
+    return {name: content.encode('utf-8') for name, content in scene_source(package)['files'].items()}
+
+
+def scene_source(package):
     value = validate_scene_package(package)
-    return {name: content.encode('utf-8') for name, content in value['result']['files'].items()}
+    return value['result']['source'] if value['schema'] == 'video.creative-scene.v2' else value['result']
 
 
 def scene_context(package):
-    return validate_scene_package(package)['input_document']['constraints']['production']
+    value = validate_scene_package(package)
+    document = value['input_document']
+    return document['scene'] if value['schema'] == 'video.creative-scene.v2' else document['constraints']['production']
 
 
 def base_scene_result(document):

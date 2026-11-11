@@ -117,3 +117,45 @@ class AgentSettings:
         if not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', revision):
             raise ValueError('Invalid video task contract revision')
         return cls(url, token, revision)
+
+
+@dataclass(frozen=True, repr=False)
+class ProductionMethodSettings:
+    """Separate internal executor credential; it grants no Agent admission."""
+    base_url: str
+    token: str
+
+    @classmethod
+    def from_env(cls, env=None):
+        env = os.environ if env is None else env
+        try:
+            settings = AgentSettings.from_env({
+                'VIDEO_AGENT_URL': env.get('VIDEO_METHOD_LAB_URL', ''),
+                'VIDEO_AGENT_TOKEN': env.get('VIDEO_METHOD_LAB_TOKEN', ''),
+                'VIDEO_AGENT_TOKEN_FILE': env.get('VIDEO_METHOD_LAB_TOKEN_FILE', ''),
+            })
+        except ValueError:
+            raise ValueError('Invalid dedicated VIDEO_METHOD_LAB origin or credential configuration') from None
+        return cls(settings.base_url, settings.token) if settings else None
+
+
+@dataclass(frozen=True, repr=False)
+class ProductionAgentSettings:
+    """Dedicated caller identity for methods-aware formal authoring."""
+    base_url: str
+    token: str
+    revision: str = '1'
+
+    @classmethod
+    def from_env(cls, env=None):
+        env = os.environ if env is None else env
+        try:
+            settings = AgentSettings.from_env({
+                'VIDEO_AGENT_URL': env.get('VIDEO_PRODUCTION_AGENT_URL', ''),
+                'VIDEO_AGENT_TOKEN': env.get('VIDEO_PRODUCTION_AGENT_TOKEN', ''),
+                'VIDEO_AGENT_TOKEN_FILE': env.get('VIDEO_PRODUCTION_AGENT_TOKEN_FILE', ''),
+                'VIDEO_AGENT_PROFILE_REVISION': env.get('VIDEO_PRODUCTION_AGENT_PROFILE_REVISION', '1'),
+            })
+        except ValueError:
+            raise ValueError('Invalid dedicated VIDEO_PRODUCTION_AGENT origin, credential or revision configuration') from None
+        return cls(settings.base_url, settings.token, settings.revision) if settings else None

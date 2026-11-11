@@ -24,6 +24,9 @@ RUN pip install --no-cache-dir --index-url "${PYPI_INDEX_URL}" -r /app/requireme
 # Build context is the repository root; no Agent runtime is started here.
 COPY agent_service /app/agent_service
 COPY video_workbench /app/video_workbench
+ARG SOURCE_REVISION
+LABEL org.opencontainers.image.source="https://github.com/zmhhaha/panghu_agent" \
+      org.opencontainers.image.revision="${SOURCE_REVISION}"
 
 USER 10001:10001
 VOLUME ["/data"]

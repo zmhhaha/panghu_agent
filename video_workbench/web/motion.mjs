@@ -158,7 +158,7 @@ export function currentMotionAudio(scene) {
 }
 
 export function motionDiagramKind(candidate) {
-  if (candidate?.diagram_kind === 'creative' || candidate?.plan?.schema === 'video.creative-scene.v1') return 'creative';
+  if (candidate?.diagram_kind === 'creative' || ['video.creative-scene.v1', 'video.creative-scene.v2'].includes(candidate?.plan?.schema)) return 'creative';
   return candidate?.plan?.schema === 'video.process-plan.v1' || candidate?.diagram_kind === 'process'
     ? 'process' : 'diagram';
 }
@@ -285,13 +285,24 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     if (!value.version) return;
     const { plan, beats } = value.version;
     if (motionDiagramKind(value.version) === 'creative') {
-      const input = plan.input_document ?? {}, production = input.constraints?.production ?? {};
+      const input = plan.input_document ?? {}, production = input.scene ?? input.constraints?.production ?? {};
       const release = input.constraints?.capability_release ?? {};
-      const strategy = plan.result?.strategy ?? {};
+      const strategy = plan.result?.source?.strategy ?? plan.result?.strategy ?? {};
       target.append(text('h4', production.title ?? value.scene?.title ?? '创意动画'),
         text('p', strategy.description ?? '按当前旁白生成的动画候选。', 'preserve-whitespace'));
       if (strategy.tradeoffs) target.append(text('p', strategy.tradeoffs, 'field-note preserve-whitespace'));
-      target.append(text('p', `能力策略：${release.id ?? '已发布策略'}${release.revision ? ` · ${release.revision}` : ''}`, 'field-note'));
+      if (plan.schema === 'video.creative-scene.v2') {
+        const offered = input.method_delivery?.methods ?? [];
+        const decisions = plan.method_decision?.decisions ?? [];
+        target.append(text('p', offered.length ? `已参考 ${offered.length} 项创作方法。以下是生成时的采用说明，实际效果请观看草稿。` : '本次未提供适用的已发布方法，按当前内容自主创作。', 'field-note'));
+        for (const row of decisions) {
+          const method = offered.find(item => item.id === row.version_id);
+          const action = { apply: '采用', adapt: '调整后采用', reject: '未采用' }[row.action] ?? row.action;
+          target.append(text('p', `${method?.title ?? '创作方法'} · ${action}：${row.reason}`, 'field-note preserve-whitespace'));
+        }
+      } else {
+        target.append(text('p', `能力策略：${release.id ?? '已发布策略'}${release.revision ? ` · ${release.revision}` : ''}`, 'field-note'));
+      }
       const digest = plan.capability_release_sha256;
       if (typeof digest === 'string') target.append(text('p', `策略摘要：${digest.slice(0, 12)}`, 'field-note'));
       const audioId = value.version.audio_version_id;

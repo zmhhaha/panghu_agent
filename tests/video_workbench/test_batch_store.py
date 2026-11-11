@@ -3,6 +3,7 @@ from copy import deepcopy
 import hashlib
 import io
 import json
+from pathlib import Path
 from types import SimpleNamespace
 import wave
 
@@ -167,7 +168,8 @@ def test_review_only_keeps_completed_draft_reusable(env):
 
 @pytest.mark.parametrize('review', [False, True])
 def test_creative_draft_reuse_binds_candidate_audio_clock_and_runtime(env, review):
-    from test_creative_production import result
+    from test_creative_method_contract import production_result
+    from video_workbench.animation_method_production import MethodProductionAdapter
     p = project(env, 1)
     first = finish(env, start(env, p)['id'])
     scene_id, audio_id = p['scenes'][0]['id'], first['items'][1]['version_id']
@@ -175,8 +177,10 @@ def test_creative_draft_reuse_binds_candidate_audio_clock_and_runtime(env, revie
     current = env.motion.project(OWNER, p['id'])
     started = env.motion.start(OWNER, scene_id,
         dict(expected_revision=current['revision'], diagram_kind='creative'), 'creative-batch-candidate')
-    operation = env.motion.operation(started['id'])
-    version_id = env.motion.complete(started['id'], result(operation['document']))['version_id']
+    adapter = MethodProductionAdapter(lambda owner: [], lambda *args: pytest.fail('No methods to read'),
+        ledger_path=Path(env.store.path).with_name('batch-method-freezes.db'))
+    operation = env.motion.prepare_creative(started['id'], adapter)
+    version_id = env.motion.complete(started['id'], production_result(operation['document']))['version_id']
     current = env.motion.project(OWNER, p['id'])
     draft = env.production.start_motion_render(OWNER, p['id'], dict(expected_revision=current['revision'],
         purpose='draft', scene_id=scene_id, motion_version_id=version_id, audio_version_id=audio_id),

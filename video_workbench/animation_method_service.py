@@ -449,6 +449,27 @@ class AnimationMethodService:
             observation=dict(frames=frames or [], audio_observed=False, motion_observed=False,
                 limitations=['Only supplied sampled images were observed; complete motion and audio are unverified.']),
             comparison=comparison, assets={})
+        if run['frozen'].get('role') == 'transfer':
+            # Transfer applies the exact supplied versions. Their historical
+            # parent metadata is preserved, but is not an offered parent for
+            # this task. The Agent needs that distinction beside the records.
+            document['constraints']['method_application'] = dict(
+                role='transfer',
+                structural_changes=deepcopy(run['frozen']['structural_changes']),
+                frozen_version_to_method={row['version_id']: row['method_id'] for row in selected},
+                purpose='Apply the frozen methods to the changed structure; do not revise or replace them.',
+                lineage_rule=(
+                    'The supplied records retain historical parent_version_id metadata. Do not copy it into '
+                    'a result. If returning lineage, set parent_version_id to a current version_id from '
+                    'frozen_version_to_method and method_id to its mapped value. No other parent is supplied.'),
+                result_requirements=dict(
+                    plan=dict(methods=[], instruction='Keep the frozen criteria and return methods=[].'),
+                    create=dict(instruction=(
+                        'Return nonempty method content explaining the application, as required by the '
+                        'create contract. It does not revise the frozen versions. Optional lineage must '
+                        'use the current supplied version mapping. Create a new composition for the '
+                        'structural changes, without copying a reference source.')),
+                    review=dict(instruction='Assess the transferred application against the frozen criteria.')))
         protocol.validate_input(document)
         return document
 

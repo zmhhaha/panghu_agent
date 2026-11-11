@@ -102,14 +102,15 @@ def service(tmp_path):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((ANIMATION_ROOT / name).read_bytes())
     from agent_service.profiles import (video_animation_review as review, video_animation_create as creation,
-        video_animation_method as method)
+        video_animation_method as method, video_animation_production as production)
     for source, names in (
             (review.BUNDLE_ROOT, review.BUNDLE_FILES),
             (review.SEQUENCE_BUNDLE_ROOT, review.SEQUENCE_BUNDLE_FILES),
             (review.BATCH_BUNDLE_ROOT, review.BATCH_BUNDLE_FILES),
             (review.PACKED_BUNDLE_ROOT, review.PACKED_BUNDLE_FILES),
             (creation.BUNDLE_ROOT, creation.BUNDLE_FILES),
-            (method.BUNDLE_ROOT, method.BUNDLE_FILES)):
+            (method.BUNDLE_ROOT, method.BUNDLE_FILES),
+            (production.BUNDLE_ROOT, production.BUNDLE_FILES)):
         for name in ('manifest.json', *names):
             target = root / 'resources' / source.name / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -453,7 +454,9 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
             for revision in ('animation-review-v1', 'animation-review-v2', 'animation-review-v3', 'animation-review-v4')
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'review-procedure/SKILL.md')} | {
             'agent_service/resources/animation-create-v2/' + name
-            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'creation-procedure/SKILL.md')}
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'creation-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-production-v1/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md')}
     assert not any(name.endswith(("credentials.json", "NOT_ALLOWED.md", "private.py")) for name in runner.names)
 
 
@@ -542,7 +545,7 @@ def test_clean_source_context_carries_all_real_profile_resource_bytes(tmp_path, 
     context_archive(service, target, destination)
     actual = {path.relative_to(service).as_posix(): path.read_bytes()
         for path in (service / 'resources').rglob('*') if path.is_file()}
-    assert len(actual) == 54
+    assert len(actual) == 58
     with tarfile.open(destination) as archive:
         captured = {name.removeprefix('agent_service/'): archive.extractfile(name).read()
             for name in archive.getnames() if name.startswith('agent_service/resources/')}
@@ -560,7 +563,7 @@ def test_clean_source_context_carries_all_real_profile_resource_bytes(tmp_path, 
 def test_clean_builder_animation_pins_match_independently_verified_profile_bundles():
     from agent_service.build_image import ANIMATION_RUNTIME_BUNDLES
     from agent_service.profiles import (video_animation_review as review, video_animation_create as creation,
-        video_animation_method as method)
+        video_animation_method as method, video_animation_production as production)
     measured = {}
     for root, files, verify in (
             (review.BUNDLE_ROOT, review.BUNDLE_FILES, review.verified_bundle),
@@ -568,7 +571,8 @@ def test_clean_builder_animation_pins_match_independently_verified_profile_bundl
             (review.BATCH_BUNDLE_ROOT, review.BATCH_BUNDLE_FILES, review.verified_batch_bundle),
             (review.PACKED_BUNDLE_ROOT, review.PACKED_BUNDLE_FILES, review.verified_packed_bundle),
             (creation.BUNDLE_ROOT, creation.BUNDLE_FILES, creation.verified_bundle),
-            (method.BUNDLE_ROOT, method.BUNDLE_FILES, method.verified_bundle)):
+            (method.BUNDLE_ROOT, method.BUNDLE_FILES, method.verified_bundle),
+            (production.BUNDLE_ROOT, production.BUNDLE_FILES, production.verified_bundle)):
         assert set(verify()) == files
         measured[root.name] = (hashlib.sha256((root / 'manifest.json').read_bytes()).hexdigest(), files)
     assert {revision: (pin, files) for revision, pin, files in ANIMATION_RUNTIME_BUNDLES} == measured

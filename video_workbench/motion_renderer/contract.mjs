@@ -23,7 +23,8 @@ const projectPair=(compiler,template)=>(compiler==='motion-compiler-1'&&template
  ||(compiler==='motion-continuity-compiler-1'&&template==='continuous-diagrams-1')
  ||(compiler==='motion-continuity-compiler-2'&&template==='continuous-diagrams-2')
  ||(compiler==='motion-demo-compiler-1'&&template==='record-demonstration-1')
- ||(compiler==='creative-scene-adapter-1'&&template==='generated-html-svg-1');
+ ||(compiler==='creative-scene-adapter-1'&&template==='generated-html-svg-1')
+ ||(compiler==='creative-method-scene-adapter-1'&&template==='generated-method-html-svg-1');
 function validateRuntimeShape(value,keys){
  if(!exactKeys(value,keys)||Object.values(value).some(v=>typeof v!=='string'||v.length<1||v.length>2000||/[\x00-\x1f\x7f]/.test(v)))
   throw Error('runtime_fingerprint_invalid');
@@ -92,17 +93,23 @@ export function verifyInput(root,expected){
   ||!Number.isFinite(timeline.duration_seconds)||timeline.duration_seconds<=0||timeline.duration_seconds>60)
   throw Error('timeline_contract_mismatch');
  const plan=JSON.parse(readRegular(root+'/plan.json'));
- if(manifest.compiler==='creative-scene-adapter-1'){
-  if(plan?.schema!=='video.creative-scene.v1'||plan.engine!=='html-svg'
-   ||plan.adapter_revision!=='creative-scene-adapter-1'
-   ||plan.input_document?.constraints?.production?.audio_sha256!==manifest.audio_sha256)
+ const methodCreative=manifest.compiler==='creative-method-scene-adapter-1';
+ if(manifest.compiler==='creative-scene-adapter-1'||methodCreative){
+  const schema=methodCreative?'video.creative-scene.v2':'video.creative-scene.v1';
+  const audio=methodCreative?plan.input_document?.scene?.audio_sha256:plan.input_document?.constraints?.production?.audio_sha256;
+  if(plan?.schema!==schema||plan.engine!=='html-svg'
+   ||plan.adapter_revision!==manifest.compiler||audio!==manifest.audio_sha256)
    throw Error('creative_plan_binding_mismatch');
-  const files=plan.result?.files,hashes=plan.result?.files_sha256;
+  const source=methodCreative?plan.result?.source:plan.result;
+  const files=source?.files,hashes=source?.files_sha256;
   if(!object(files)||!object(hashes)||!files['scene.html']||Object.keys(files).length>3
+   ||JSON.stringify(Object.keys(files).sort())!==JSON.stringify(Object.keys(hashes).sort())
    ||Object.keys(files).some(name=>!['scene.html','scene.js','scene.css'].includes(name)
      ||typeof files[name]!=='string'||sha(Buffer.from(files[name]))!==hashes[name])
    ||sha(Buffer.from(files['scene.html']))!==manifest.files['index.html'])throw Error('creative_source_mismatch');
  }
+ if((plan?.schema==='video.creative-scene.v1')!==(manifest.compiler==='creative-scene-adapter-1')
+  ||(plan?.schema==='video.creative-scene.v2')!==methodCreative)throw Error('project_schema_compiler_mismatch');
  if((manifest.compiler==='motion-process-compiler-2')!==(plan?.schema==='video.process-plan.v1')
   ||(manifest.compiler==='motion-process-continuity-compiler-1')!==(plan?.schema==='video.process-continuity-scene.v1'))
   throw Error('project_schema_compiler_mismatch');

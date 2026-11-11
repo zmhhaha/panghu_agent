@@ -35,6 +35,9 @@ ENV HYPERFRAMES_BROWSER_PATH=/opt/browser/headless_shell \
     XDG_CACHE_HOME=/tmp/cache XDG_CONFIG_HOME=/tmp/config TMPDIR=/tmp
 COPY runtime.mjs run.mjs observe.mjs creative.mjs contract.mjs experiment.py ./
 RUN node runtime.mjs > /opt/renderer/runtime.json
+ARG SOURCE_REVISION
+LABEL org.opencontainers.image.source="https://github.com/zmhhaha/panghu_agent" \
+      org.opencontainers.image.revision="${SOURCE_REVISION}"
 USER 10001:10001
 WORKDIR /work
 ENTRYPOINT ["node", "/opt/renderer/run.mjs"]

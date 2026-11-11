@@ -12,7 +12,7 @@ import json
 
 from agent_service.contracts import ServiceError, digest
 from . import media
-from .creative_contract import validate_scene_package
+from .creative_contract import validate_scene_package, scene_context
 from .motion import validate_alignment
 from .motion_snapshot import _audio, _runtime, freeze_snapshot_v2
 
@@ -55,7 +55,7 @@ def freeze_snapshot_v4(project_id, revision, title, scenes, *, runtime_fingerpri
             _require(type(creative) is dict and not creative.get('stale'), 'motion_plan_stale', 409)
             visual_id = media._text(creative.get('id'), 100)
             package = validate_scene_package(creative.get('package'))
-            context = package['input_document']['constraints']['production']
+            context = scene_context(package)
             beats = deepcopy(creative.get('beats'))
             alignment = validate_alignment(creative.get('alignment'), beats)
             _require(context['scene_id'] == identity and context['narration'] == source.get('narration')

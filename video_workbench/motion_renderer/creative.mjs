@@ -9,9 +9,12 @@ import {readRegular,sha,encodedDuration} from './contract.mjs';
 export async function captureCreative({root='/work',mode='render',quality='draft'}={}){
  const plan=JSON.parse(readRegular(root+'/plan.json'));
  const timeline=JSON.parse(readRegular(root+'/timeline.json'));
- if(plan.schema!=='video.creative-scene.v1'||plan.engine!=='html-svg'
-  ||timeline.compiler!=='creative-scene-adapter-1')throw Error('creative_contract_mismatch');
- const files=plan.result?.files||{},allowed=['scene.html','scene.js','scene.css'];
+ const methodCreative=plan.schema==='video.creative-scene.v2';
+ const compiler=methodCreative?'creative-method-scene-adapter-1':'creative-scene-adapter-1';
+ if(!['video.creative-scene.v1','video.creative-scene.v2'].includes(plan.schema)||plan.engine!=='html-svg'
+  ||plan.adapter_revision!==compiler||timeline.compiler!==compiler)throw Error('creative_contract_mismatch');
+ const source=methodCreative?plan.result?.source:plan.result;
+ const files=source?.files||{},allowed=['scene.html','scene.js','scene.css'];
  if(!files['scene.html']||Object.keys(files).some(name=>!allowed.includes(name)))throw Error('creative_files');
  const count=Math.round(encodedDuration(timeline)*24);
  if(count<1||count>1440)throw Error('creative_frame_limit');

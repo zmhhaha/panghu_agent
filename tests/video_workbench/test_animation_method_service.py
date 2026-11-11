@@ -152,6 +152,71 @@ def test_complete_bounded_commission_and_readonly_get(work):
         service.get('another-developer', row['id'])
 
 
+def test_transfer_context_distinguishes_current_versions_from_historical_parents(work):
+    service, creator, _, _ = work
+    first = finish(service, start(service)['id'])
+    revised = finish(service, start(service, base_commission_id=first['id'])['id'])
+    version_id = revised['publication_method_version_ids'][0]
+    version = service.methods.get_method('developer', version_id)
+    historical_parent = first['publication_method_version_ids'][0]
+    assert version['parent_version_id'] == historical_parent != version['version_id']
+    changes = {'relations': dict(before='One direct route', after='A fork and merge')}
+    transfer = service.transfer('developer', revised['id'], dict(request_id=str(uuid4()),
+        goal='Apply the method to a fork and merge', structural_changes=changes,
+        feedback='Keep the two routes easy to distinguish.', budget=dict(max_rounds=1, max_seconds=300)))
+    run = service.commissions.get('developer', transfer['id'])
+    before = service.methods.list_methods('developer')
+    for mode in ('plan', 'create'):
+        document = service._document('developer', run, mode)
+        application = document['constraints']['method_application']
+        assert application['role'] == 'transfer'
+        assert application['structural_changes'] == changes
+        assert application['frozen_version_to_method'] == {version_id: version['method_id']}
+        assert application['result_requirements']['plan']['methods'] == []
+        assert 'nonempty method content' in application['result_requirements']['create']['instruction']
+        assert 'Do not copy it' in application['lineage_rule']
+        assert document['methods'] == [version]
+        assert document['feedback'] == run['frozen']['feedback']
+        assert document['base_source'] is None
+        proposal = dict(method(document['criteria']), method_id=version['method_id'],
+                        parent_version_id=version_id)
+        output = dict(schema=protocol.RESULT_SCHEMA, input_sha256=digest(document), mode=mode,
+            criteria=document['criteria'], methods=[] if mode == 'plan' else [proposal],
+            source=deepcopy(SOURCE) if mode == 'create' else None, sound_events=[], review=None)
+        assert protocol.validate_result(output, digest(document), document) == output
+        # Reproduce the failed model response: copying a record's historical
+        # parent must remain invalid, even though that ID appears in metadata.
+        bad = deepcopy(output)
+        bad['methods'] = [dict(proposal, parent_version_id=historical_parent)]
+        with pytest.raises(ServiceError, match='animation_method_parent_not_supplied'):
+            protocol.validate_result(bad, digest(document), document)
+        wrong_method = deepcopy(output)
+        wrong_method['methods'] = [dict(proposal, method_id=str(uuid4()))]
+        with pytest.raises(ServiceError, match='animation_method_parent_not_supplied'):
+            protocol.validate_result(wrong_method, digest(document), document)
+    completed = finish(service, transfer['id'])
+    assert completed['publication_method_version_ids'] == [version_id]
+    assert service.methods.list_methods('developer') == before
+    offered = [job['document'] for job in creator.jobs.values()
+               if job['document']['goal'] == transfer['goal']]
+    assert offered and all(document['constraints']['method_application']['role'] == 'transfer'
+                           for document in offered)
+    assert service.methods.get_method('developer', version_id) == version
+
+
+def test_reference_documents_keep_existing_constraints_and_method_records(work):
+    service, _, _, _ = work
+    first = finish(service, start(service)['id'])
+    continued = start(service, base_commission_id=first['id'])
+    run = service.commissions.get('developer', continued['id'])
+    base = run['frozen']['base_candidate']
+    for mode in ('plan', 'create'):
+        document = service._document('developer', run, mode, base=base)
+        assert document['constraints'] == dict(width=1280, height=720, fps=24,
+            duration_seconds=18, allowed_engines=['html-svg'])
+        assert document['methods'] == [service.methods.get_method('developer', version_id)
+                                       for version_id in base['method_versions']]
+
 def test_uncertain_submit_reconciles_original_without_resubmission(work):
     service, creator, _, _ = work
     creator.lose_response = True

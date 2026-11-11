@@ -25,7 +25,7 @@ import zlib
 
 import httpx
 
-from agent_service.contracts import ServiceError, canonical_bytes
+from agent_service.contracts import ServiceError, canonical_bytes, digest
 from .motion import COMPILER_TEMPLATES, compile_project
 from .continuity import (ALL_CONTINUITY_COMPILER_TEMPLATES,
                          compile_continuity_project)
@@ -34,8 +34,8 @@ from .motion_dispatch import PROCESS_SCHEMA, PRODUCTION_PROCESS_COMPILER, scene_
 from .process_review import verify_process_observations
 from .motion_renderer.job import FILES, INIT, freeze_input
 from .motion_render_adapter import UNAVAILABLE, safe_motion_context
-from .creative_renderer import (COMPILER as CREATIVE_COMPILER,
-    TEMPLATE as CREATIVE_TEMPLATE, compile_creative_project)
+from .creative_renderer import (COMPILER_TEMPLATES as CREATIVE_COMPILER_TEMPLATES,
+    compile_creative_project)
 
 CHUNK_BYTES = 512 * 1024
 BUNDLE_BYTES = 16 * 1024 * 1024
@@ -196,9 +196,9 @@ def production_resources(directory, *, image, release_id, namespace, name, bindi
     manifest = json.loads((Path(directory) / 'manifest.json').read_bytes())
     require(COMPILER_TEMPLATES.get(manifest['compiler']) == manifest['template'] or
             ALL_CONTINUITY_COMPILER_TEMPLATES.get(manifest['compiler']) == manifest['template'] or
+            CREATIVE_COMPILER_TEMPLATES.get(manifest['compiler']) == manifest['template'] or
             (manifest['compiler'], manifest['template']) in {
-                (PRODUCTION_PROCESS_COMPILER, 'controlled-process-2'),
-                (CREATIVE_COMPILER, CREATIVE_TEMPLATE)},
+                (PRODUCTION_PROCESS_COMPILER, 'controlled-process-2')},
             'motion_production_template_not_supported', 422)
     labels = {'app': 'video-motion-renderer', LABEL + 'execution': binding[:32]}
     annotations = {ANNOTATION: binding, LABEL + 'bundle-sha256': frozen['bundle_sha256'],
@@ -344,10 +344,16 @@ def validate_creative_artifacts(entries, files, observations, runtime, quality):
             and capture.get('probe_sha256') == [row['frame_sha256'] for row in samples]
             and capture.get('blocked_requests') == [] and capture.get('page_errors') == [],
             'creative_render_observation_mismatch')
-    return dict(technical_review=dict(status='passed', renderer=observations['renderer'],
+    technical = dict(status='passed', renderer=observations['renderer'],
         reverse_seek_verified=True, source_sha256=package['result_sha256'],
-        capability_release_sha256=package['capability_release_sha256'],
-        visual_quality='not_evaluated', aesthetic_approval=False),
+        visual_quality='not_evaluated', aesthetic_approval=False)
+    if package['schema'] == 'video.creative-scene.v2':
+        technical.update(method_delivery_sha256=package['method_delivery_sha256'],
+            method_decision_sha256=digest(package['method_decision']),
+            method_evidence_scope=package['evidence_scope'])
+    else:
+        technical['capability_release_sha256'] = package['capability_release_sha256']
+    return dict(technical_review=technical,
         media_sha256=sha(entries['output.mp4']), manifest_sha256=sha(files['manifest.json']),
         runtime_fingerprint=runtime, quality=quality)
 
@@ -378,7 +384,7 @@ def validate_artifacts(entries, files, runtime, quality):
                 require(receipt.get('decode_verified') is True
                         and receipt.get('output_sha256') == sha(entries['output.mp4']), 'motion_media_receipt_invalid')
         observations = json.loads(entries['observations.json'])
-        if json.loads(files['manifest.json']).get('compiler') == CREATIVE_COMPILER:
+        if json.loads(files['manifest.json']).get('compiler') in CREATIVE_COMPILER_TEMPLATES:
             return validate_creative_artifacts(entries, files, observations, runtime, quality)
         for row in observations['windows']:
             for label in ('before', 'middle', 'after'):

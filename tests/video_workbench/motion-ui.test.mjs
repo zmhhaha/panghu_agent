@@ -132,6 +132,29 @@ test('an available creative release is the default for new generation, with an a
   assert.equal(h.state.context.scene.motion.head_version_id, null);
 });
 
+test('method-driven creative review shows decisions without claiming observed application or auto adoption', async () => {
+  const h = harness(); h.state.context.creativeConfigured = true;
+  const candidate = creativeVersion();
+  candidate.plan.schema = 'video.creative-scene.v2';
+  candidate.plan.input_document.scene = { title: '方法用于新内容' };
+  candidate.plan.input_document.method_delivery = { methods: [{ id: 'method-v1', title: '<script>对象身份</script>' }] };
+  candidate.plan.result = { source: candidate.plan.result };
+  candidate.plan.method_decision = { decisions: [{ version_id: 'method-v1', action: 'adapt', reason: '适配两组对象。' }] };
+  assert.equal(motionDiagramKind({ plan: candidate.plan }), 'creative');
+  h.state.data.scenes[0].motion.versions[0].diagram_kind = 'creative';
+  h.state.transport = async (path, options, fallback) => path.endsWith('/motion-versions/v1') ? candidate : fallback(path);
+  await h.load();
+  const review = h.$('motion-review').textContent;
+  assert.match(review, /方法用于新内容/);
+  assert.match(review, /已参考 1 项创作方法/);
+  assert.match(review, /<script>对象身份<\/script> · 调整后采用：适配两组对象。/);
+  assert.match(review, /实际效果请观看草稿/);
+  assert.doesNotMatch(review, /已发布策略/);
+  assert.doesNotMatch(review, /MUST NOT EXECUTE/);
+  assert.equal(h.$('confirm-motion-adoption').checked, false);
+  assert.equal(posts(h).length, 0);
+});
+
 test('creative candidate review is inert, exposes release and recording identity and preserves explicit adoption', async () => {
   const h = harness(); h.state.context.creativeConfigured = true;
   h.state.data.scenes[0].motion.versions[0].diagram_kind = 'creative';

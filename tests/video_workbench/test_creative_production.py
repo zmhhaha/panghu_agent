@@ -20,6 +20,8 @@ from video_workbench.motion_timing import MotionTiming
 from video_workbench.motion_workflow import MotionWorkflow
 from video_workbench.production import Production
 from video_workbench.store import Store
+from video_workbench.animation_method_production import MethodProductionAdapter
+from test_creative_method_contract import production_result
 from test_motion_snapshot import RUNTIME, audio, static_scene, motion_scene
 
 
@@ -31,6 +33,8 @@ window.__animationExperiment.seek(0);</script></body></html>'''
 
 
 def result(document, html=HTML):
+    if document['schema'] == 'video.animation-production-input.v1':
+        return production_result(document, source_html=html)
     files = {'scene.html': html}
     value = dict(schema='video.animation-experiment-result.v1', input_sha256=digest(document),
         prompt_revision=document['prompt_revision'], engine='html-svg',
@@ -79,9 +83,15 @@ def generated(state, *, key='creative', base_id=None, html=HTML):
     if base_id:
         request.update(base_version_id=base_id, instruction='改用另一条运动曲线。')
     started = motion.start(OWNER, scene_id, request, key)
-    operation = motion.operation(started['id'])
+    operation = motion.prepare_creative(started['id'], empty_methods(store))
     completed = motion.complete(operation['id'], result(operation['document'], html))
     return operation, completed
+
+
+def empty_methods(store):
+    from pathlib import Path
+    return MethodProductionAdapter(lambda owner: [], lambda *args: None,
+        ledger_path=Path(store.path).with_name('method-freezes.sqlite3'))
 
 
 def production(state):
@@ -104,12 +114,12 @@ def test_creative_candidate_freezes_audio_policy_and_source_without_auto_adoptio
     operation, completed = generated(state)
     assert operation_diagram_kind(operation) == 'creative'
     assert operation['audio_version_id'] == identity
-    context = operation['document']['constraints']['production']
+    context = operation['document']['scene']
     assert context['audio_sha256'] == audio()['sha256']
     assert operation['document']['constraints']['duration_seconds'] == 1.5
     version = motion.version(OWNER, completed['version_id'])
     assert version['diagram_kind'] == 'creative'
-    assert version['plan']['result']['files']['scene.html'] == HTML
+    assert version['plan']['result']['source']['files']['scene.html'] == HTML
     project = motion.project(OWNER, project_id)
     assert project['scenes'][0]['motion']['head_version_id'] is None
     assert project['scenes'][0]['motion']['versions'][0]['template'] == 'creative'
@@ -180,7 +190,7 @@ def test_revision_receives_original_source_and_unchanged_result_is_not_saved(sta
     _, completed = generated(state)
     original = completed['version_id']
     operation, unchanged = generated(state, key='revise', base_id=original)
-    assert base_scene_result(operation['document'])['files']['scene.html'] == HTML
+    assert operation['document']['base_source']['files']['scene.html'] == HTML
     assert unchanged['status'] == 'needs_input'
     assert unchanged['error'] == 'motion_revision_unchanged'
     assert unchanged['version_id'] is None
@@ -298,7 +308,8 @@ def test_workflow_routes_creative_to_shared_profile_gateway_with_exact_input(sta
             assert digest(input_document) == checksum
             return result(input_document)
 
-    workflow = MotionWorkflow(motion, enabled=True, creative_enabled=True, creative_gateway=Gateway())
+    workflow = MotionWorkflow(motion, enabled=True, creative_enabled=True, creative_gateway=Gateway(),
+                              method_adapter=empty_methods(store))
     assert workflow.require_gateway('creative') is workflow.creative_gateway
     workflow.tick()
     assert motion.public_operation(OWNER, started['id'])['status'] == 'completed'
@@ -337,10 +348,12 @@ def test_creative_ambiguous_submission_recovers_original_job_after_restart(state
             return result(document)
 
     gateway = Gateway()
-    MotionWorkflow(motion, enabled=True, creative_enabled=True, creative_gateway=gateway).tick()
+    MotionWorkflow(motion, enabled=True, creative_enabled=True, creative_gateway=gateway,
+                   method_adapter=empty_methods(store)).tick()
     assert motion.operation(started['id'])['error'] == 'submission_uncertain'
     restarted = MotionStore(Store(store.path))
-    MotionWorkflow(restarted, enabled=True, creative_enabled=True, creative_gateway=gateway).tick()
+    MotionWorkflow(restarted, enabled=True, creative_enabled=True, creative_gateway=gateway,
+                   method_adapter=empty_methods(store)).tick()
     assert restarted.public_operation(OWNER, started['id'])['status'] == 'completed'
     assert gateway.posts == gateway.lookups == 1
 
@@ -372,7 +385,8 @@ def test_creative_cancel_uses_same_gateway_and_never_admits_again(state):
             self.status = 'cancelled'
 
     gateway = Gateway()
-    workflow = MotionWorkflow(motion, enabled=True, creative_enabled=True, creative_gateway=gateway)
+    workflow = MotionWorkflow(motion, enabled=True, creative_enabled=True, creative_gateway=gateway,
+                              method_adapter=empty_methods(store))
     workflow.tick()
     motion.cancel(OWNER, started['id'])
     workflow.tick()

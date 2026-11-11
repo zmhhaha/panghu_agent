@@ -17,12 +17,13 @@ CANCEL_RETRY_DELAYS = (2.0, 5.0, 15.0, 30.0)
 
 class MotionWorkflow:
     def __init__(self, store, gateway=None, *, enabled=False, process_gateway=None, process_enabled=False,
-                 creative_gateway=None, creative_enabled=False):
+                 creative_gateway=None, creative_enabled=False, method_adapter=None):
         if any(type(gate) is not bool for gate in (enabled, process_enabled, creative_enabled)):
             raise ValueError('An explicit boolean motion feature gate is required')
         self.store, self.gateway, self.enabled = store, gateway, enabled
         self.process_gateway, self.process_enabled = process_gateway, process_enabled
         self.creative_gateway, self.creative_enabled = creative_gateway, creative_enabled
+        self.method_adapter = method_adapter
         self.lock = threading.Lock()
         self.stopping = threading.Event()
         self.thread = None
@@ -47,9 +48,12 @@ class MotionWorkflow:
             raise ServiceError('process_disabled', 503)
         if diagram_kind == 'creative' and not self.creative_enabled:
             raise ServiceError('creative_disabled', 503)
+        if diagram_kind == 'creative' and self.method_adapter is None:
+            raise ServiceError('creative_methods_unavailable', 503)
         gateway = self._gateway(diagram_kind)
         if gateway is None:
-            raise ServiceError('agent_not_configured', 503)
+            raise ServiceError('creative_profile_unavailable' if diagram_kind == 'creative'
+                               else 'agent_not_configured', 503)
         return gateway
 
     def start(self):
@@ -108,6 +112,19 @@ class MotionWorkflow:
             # configuration change. Never look it up through another adapter.
             self.store.update_operation(op['id'], error='agent_not_configured')
             return
+        if kind == 'creative':
+            from .motion_store import CREATIVE_PENDING_SCHEMA
+            if op['document']['schema'] == CREATIVE_PENDING_SCHEMA:
+                op = self.store.prepare_creative(op['id'], self.method_adapter)
+                if op['document']['schema'] == CREATIVE_PENDING_SCHEMA:
+                    if op['cancel_requested'] or time.time() >= op['deadline_at']:
+                        self.store.update_operation(op['id'],
+                            status='cancelled' if op['cancel_requested'] else 'timed_out', error=None)
+                    return
+            if op['document']['schema'] != 'video.animation-production-input.v1':
+                # A historical Lab author input is not a production input.
+                # Never relabel or submit it under a new role.
+                raise ServiceError('creative_profile_unavailable', 503)
         if not op['job_id']:
             if not op['submit_attempted']:
                 if op['cancel_requested'] or time.time() >= op['deadline_at']:

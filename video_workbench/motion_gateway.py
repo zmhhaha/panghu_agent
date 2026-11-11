@@ -199,3 +199,16 @@ class CreativeAgentGateway(MotionAgentGateway):
     business_prefix, idempotency_prefix = 'video-creative:', 'creative-'
     validate_input = staticmethod(validate_scene_input)
     validate_result = staticmethod(validate_experiment_result)
+
+
+class ProductionCreativeAgentGateway(MotionAgentGateway):
+    """Only the explicitly admitted methods-aware production author contract."""
+    from agent_service.profiles.video_animation_production import (
+        PROFILE as profile, INPUT_NAME as input_name, INPUT_ROLE as input_role,
+        RESULT_NAME as result_name, INPUT_MAX_BYTES as input_limit, OUTPUT_MAX_BYTES as output_limit,
+    )
+    from .creative_method_contract import validate_scene_input
+    from agent_service.profiles.video_animation_production_contract import validate_result
+    business_prefix, idempotency_prefix = 'video-production:', 'production-'
+    validate_input = staticmethod(validate_scene_input)
+    validate_result = staticmethod(validate_result)

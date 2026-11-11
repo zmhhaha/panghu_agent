@@ -1,0 +1,20 @@
+{
+  "bundle_revision": "animation-production-v1",
+  "automatic_updates": false,
+  "upstream_content_vendored": false,
+  "license": "MIT",
+  "local_files": [
+    {
+      "path": "CONTRACT.md",
+      "sha256": "967488286fec4a583d8e0e8267ea4ebbf764dcd59a7076dcfbd65a2ef0279358"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "3c008d7b96c96dffe712c6c06b5fa410c6e34a705400078730007ceafdab10a5"
+    },
+    {
+      "path": "production-procedure/SKILL.md",
+      "sha256": "c6eb0544474268933e67aee5fac6e73b0b35e470322ebaab8d638d800828223e"
+    }
+  ]
+}

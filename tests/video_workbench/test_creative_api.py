@@ -10,6 +10,8 @@ import pytest
 from agent_service.contracts import digest
 from video_workbench.app import create_app
 from video_workbench.config import MotionSettings
+from video_workbench.animation_method_production import MethodProductionAdapter
+from test_creative_method_contract import production_result
 
 
 FIELDS = dict(title='任务进入队列', narration='先放入队列。再交给工作节点。',
@@ -49,18 +51,20 @@ class CreativeGateway:
                  '<circle cx="100" cy="100" r="24"/></svg><script>'
                  'window.__animationExperiment={seek(t){document.body.dataset.t=String(t)}};'
                  '</script></body></html>'}
-        return dict(schema='video.animation-experiment-result.v1', input_sha256=input_sha256,
-                    prompt_revision=document['prompt_revision'], engine='html-svg',
-                    strategy=dict(description='请求连续移动到处理节点', tradeoffs='省略次要装饰'),
-                    files=files, files_sha256={name: hashlib.sha256(source.encode()).hexdigest()
-                                              for name, source in files.items()})
+        value = production_result(document, source_html=files['scene.html'])
+        value['source']['strategy']['description'] = '请求连续移动到处理节点'
+        return value
 
 
 def app_for(path, gateway=None, **settings):
+    from pathlib import Path
+    method_adapter = settings.pop('method_adapter', MethodProductionAdapter(
+        lambda owner: [], lambda *args: None,
+        ledger_path=Path(path).with_name('method-freezes.sqlite3')))
     return create_app(db_path=path, trusted_hosts={'testserver'}, background=False,
                       motion_enabled=settings.pop('motion_enabled', True),
                       creative_enabled=settings.pop('creative_enabled', True),
-                      creative_gateway=gateway, **settings)
+                      creative_gateway=gateway, method_adapter=method_adapter, **settings)
 
 
 def login(client, owner='alice'):
@@ -144,21 +148,20 @@ def test_api_creative_kind_freezes_the_released_strategy_and_current_recording(t
         assert replay.json() == response.json()
         assert (gateway.uploads, gateway.posts, gateway.collects) == (0, 0, 0)
         operation = app.state.motion_store.operation(response.json()['id'], 'alice')
-        context = operation['document']['constraints']['production']
+        assert operation['document']['schema'] == 'video.animation-production-pending.v1'
+        context = operation['document']['core_task']['scene']
         assert context['narration'] == FIELDS['narration']
         assert context['audio_sha256'] == project['scenes'][0]['audio_versions'][0]['sha256']
-        release = operation['document']['constraints']['capability_release']
-        assert release['id'] == operation['document']['prompt_revision']
-        assert len(release['sha256']) == 64
         app.state.motion_workflow.tick()
         view = client.get(f'/api/projects/{project["id"]}/motion').json()
         candidate = view['scenes'][0]['motion']['versions'][0]
         assert candidate['diagram_kind'] == 'creative'
         assert view['scenes'][0]['motion']['head_version_id'] is None
         result = client.get(f'/api/motion-versions/{candidate["id"]}').json()
-        assert result['plan']['schema'] == 'video.creative-scene.v1'
-        assert result['plan']['input_document']['constraints']['capability_release'] == release
-        assert result['plan']['result']['strategy']['description'] == '请求连续移动到处理节点'
+        assert result['plan']['schema'] == 'video.creative-scene.v2'
+        assert result['plan']['profile']['name'] == 'video.animation-production.v1'
+        assert result['plan']['input_document']['method_delivery']['methods'] == []
+        assert result['plan']['result']['source']['strategy']['description'] == '请求连续移动到处理节点'
         assert result['audio_version_id'] == project['scenes'][0]['head_audio_version_id']
         assert (gateway.uploads, gateway.posts, gateway.collects) == (1, 1, 1)
 

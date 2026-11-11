@@ -45,6 +45,7 @@ from video_workbench import media
 from video_workbench.app import create_app
 from video_workbench.creative_renderer import compile_creative_project
 from video_workbench.creative_snapshot import verify_snapshot_v4
+from video_workbench.animation_method_production import MethodProductionAdapter
 from video_workbench.motion import example_plan
 from video_workbench.motion_dispatch import scene_compiler
 from video_workbench.motion_render_k8s import validate_artifacts
@@ -190,10 +191,16 @@ def fixture_state(directory, runtime):
                         'fixture-authored-' + kind)
                     request = app.state.motion_store.operation(operation['id'])
                     if kind == 'creative':
-                        result = dict(schema='video.animation-experiment-result.v1', input_sha256=digest(request['document']),
-                            prompt_revision=request['document']['prompt_revision'], engine='html-svg',
-                            strategy=dict(description='Hand-authored integration fixture; not Agent generated.', tradeoffs=''),
-                            files={'scene.html': HTML}, files_sha256={'scene.html': sha(HTML.encode())})
+                        def no_methods(*args):
+                            raise AssertionError('Empty fixture catalog cannot read methods')
+                        adapter = MethodProductionAdapter(lambda owner: [], no_methods,
+                            ledger_path=Path(path).with_name('fixture-method-freezes.db'))
+                        request = app.state.motion_store.prepare_creative(operation['id'], adapter)
+                        result = dict(schema='video.animation-production-result.v1', input_sha256=digest(request['document']),
+                            source=dict(engine='html-svg',
+                                strategy=dict(description='Hand-authored integration fixture; not Agent generated.', tradeoffs=''),
+                                files={'scene.html': HTML}, files_sha256={'scene.html': sha(HTML.encode())}),
+                            method_decision=dict(delivery_sha256=request['document']['method_delivery']['sha256'], decisions=[]))
                     else:
                         result = dict(schema='video.motion-result.v1', input_sha256=digest(request['document']),
                                       plan=example_plan(request['document']['beats']))
