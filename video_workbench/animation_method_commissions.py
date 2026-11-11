@@ -315,6 +315,24 @@ class AnimationMethodCommissionStore:
                 "SELECT document FROM animation_method_commissions WHERE owner=? ORDER BY rowid DESC LIMIT ?",
                 (owner, limit))]
 
+    def list_all(self, owner):
+        """Read the complete owner history for explicit relationship resolution.
+
+        The bounded public listing is still available for execution callers.
+        Grouping must not lose an ancestor outside its most recent window;
+        it needs frozen records, not every operation and budget calculation.
+        """
+        _identifier(owner)
+        with self._transaction() as db:
+            result = []
+            for row in db.execute('SELECT document FROM animation_method_commissions '
+                                  'WHERE owner=? ORDER BY rowid DESC', (owner,)):
+                commission = json.loads(row['document'])
+                _require(commission['frozen_sha256'] == digest(commission['frozen']),
+                         'animation_method_commission_frozen_input_changed', 409)
+                result.append(commission)
+            return result
+
     def pending(self, limit=100):
         _require(type(limit) is int and 1 <= limit <= 1000)
         with self._transaction() as db:

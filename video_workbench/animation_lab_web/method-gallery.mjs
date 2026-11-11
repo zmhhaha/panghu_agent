@@ -236,7 +236,18 @@ export class MethodGalleryController {
       this.clearPending(); this.state.pending = null; this.state.detail = detail;
       const catalog = this.state.catalog;
       catalog.commissions = [detail, ...catalog.commissions.filter(row => row.id !== detail.id)];
-      this.state.notice = '实验已提交。可以离开页面，稍后回来查看最佳结果。'; return true;
+      this.state.notice = '实验已提交。可以离开页面，稍后回来查看最佳结果。';
+      // Group membership belongs to the server. A failed read must never turn a
+      // confirmed submission into an uncertain one or cause a second POST.
+      try {
+        const refreshed = await this.request(API + 'catalog');
+        if (!refreshed || !Array.isArray(refreshed.effects) || !Array.isArray(refreshed.commissions)
+          || typeof refreshed.availability?.enabled !== 'boolean') throw Error('效果库状态不完整');
+        if (!this.closed) this.state.catalog = refreshed;
+      } catch {
+        this.state.notice += ' 效果库列表暂未更新，请刷新查看；本次实验已确认提交。';
+      }
+      return true;
     } catch (error) {
       this.state.error = '尚未确认提交结果：' + error.message + '。请刷新核对，不会自动重发。'; return false;
     } finally { this.state.busy = false; this.emit(); this.queueRead(); }
@@ -328,15 +339,18 @@ export function renderMethodMedia(doc, candidate, root, emptyText = '尚未生�
 }
 export function renderMethodCard(doc, effect, root, onOpen) {
   const card = element(doc, 'article', 'effect-card');
+  card.dataset.effectId = text(effect.effect_id) || text(effect.id);
   const candidate = effect.best_candidate ?? {media_url: effect.media_url, title: effect.title};
   card.append(renderMethodMedia(doc, candidate, root, ACTIVE.has(effect.state) ? '正在制作，完成后展示实际样片' : '打开实验，查看样片与尚存问题'));
   const body = element(doc, 'div', 'card-body'), heading = element(doc, 'h3');
-  heading.append(button(doc, text(effect.title) || '未命名效果', () => onOpen(effect.commission_id ?? effect.id), 'effect-title'));
+  heading.append(button(doc, text(effect.title) || '未命名效果', () => onOpen(effect.open_commission_id ?? effect.commission_id ?? effect.id), 'effect-title'));
   body.append(heading, element(doc, 'p', 'card-goal', text(effect.goal)));
   const meta = element(doc, 'div', 'card-meta');
   const state = displayState(effect);
   meta.append(element(doc, 'span', 'badge ' + (Object.hasOwn(STATES, state) ? state : ''), methodStateLabel(state)));
   if (rows(effect.methods).length) meta.append(element(doc, 'span', '', effect.methods.length + ' 项关联方法'));
+  if (rows(effect.commissions).length > 1) meta.append(element(doc, 'span', '', effect.commissions.length + ' 次实验'));
+  if (effect.relationship_status === 'needs_review') meta.append(element(doc, 'span', '', '关系待核对'));
   body.append(meta); card.append(body); return card;
 }
 function panel(doc, title) {
@@ -348,7 +362,7 @@ function details(doc, title, value) {
   return section;
 }
 export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCancel, onFeedback, onPublish,
-  onTransfer = () => {}, feedbackDraft = null, onDraftChange = () => {},
+  onTransfer = () => {}, onSelectCommission = () => {}, feedbackDraft = null, onDraftChange = () => {},
   onPreference = () => {}, onWithdraw = () => {}, comparisonSelection = null,
   onComparisonReady = () => {}, onComparisonChange = () => {}, disclosureState = null}) {
   const disclosure = (key, title, value) => {
@@ -361,6 +375,28 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
     element(doc, 'p', 'muted', text(detail.goal)), element(doc, 'span', 'badge', methodStateLabel(displayState(detail))));
   heading.children[1].id = 'detail-title';
   head.append(heading); fragment.append(head);
+  const history = rows(detail.effect?.commissions);
+  if (history.length) {
+    const section = disclosure('effect-history', '版本与实验记录（' + history.length + '）');
+    section.classList.add('effect-history');
+    if (detail.effect.title && detail.effect.title !== detail.title) section.append(element(doc, 'p', 'small muted', '所属效果：' + detail.effect.title));
+    if (detail.effect.relationship_status === 'needs_review') section.append(element(doc, 'p', 'small muted', '关系待核对'));
+    const items = element(doc, 'ol', 'effect-history-list');
+    const labels = {original: '原作', continuation: '继续优化', transfer: '迁移验证'};
+    for (const run of history) {
+      const item = element(doc, 'li', 'effect-history-item'), label = labels[run.kind] ?? '实验记录';
+      const open = button(doc, text(run.title) || label, () => {
+        if (run.id !== detail.id) onSelectCommission(run.id);
+      }, 'effect-history-title');
+      if (run.id === detail.id) open.setAttribute('aria-current', 'true');
+      const meta = element(doc, 'div', 'effect-history-meta');
+      meta.append(element(doc, 'span', '', label), element(doc, 'span', 'badge', methodStateLabel(run.state)));
+      if (run.id === detail.id) meta.append(element(doc, 'span', '', '正在查看'));
+      if (run.id === detail.effect.open_commission_id) meta.append(element(doc, 'span', '', '代表样片'));
+      item.append(open, meta); items.append(item);
+    }
+    section.append(items); fragment.append(section);
+  }
   const candidates = commissionCandidates(detail), best = selectedCandidate(detail);
   const baseline = detail.baseline_candidate ?? detail.baseline ?? null, original = baseline?.candidate ?? baseline ?? candidates[0];
   const latestAttempt = candidates.findLast(candidate => candidate.id !== best?.id);
@@ -578,8 +614,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     const catalog = controller.state.catalog;
     if (!catalog) return;
     const query = $('gallery-search').value.trim().toLocaleLowerCase(), filter = $('gallery-state').value;
-    const all = [...catalog.effects], seen = new Set(all.map(row => row.commission_id ?? row.id));
-    for (const commission of catalog.commissions) if (!seen.has(commission.id)) { all.push(commission); seen.add(commission.id); }
+    const all = catalog.effects;
     const filtered = all.filter(row => (!query || (text(row.title) + ' ' + text(row.goal)).toLocaleLowerCase().includes(query))
       && (filter === 'all' || filter === 'active' && ACTIVE.has(row.state) || filter === 'published' && displayState(row) === 'published'
         || filter === 'review' && !ACTIVE.has(row.state) && displayState(row) !== 'published'));
@@ -590,7 +625,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
       renderedCardsSnapshot = snapshot;
       if (all.length && !filtered.length) $('gallery-cards').append(element(doc, 'p', 'muted', '没有匹配的效果，请调整查找条件。'));
     }
-    $('gallery-empty').hidden = all.length > 0; $('gallery-count').textContent = all.length + ' 个效果与实验';
+    $('gallery-empty').hidden = all.length > 0; $('gallery-count').textContent = all.length + ' 个效果';
   };
   controller = new MethodGalleryController({root, request, storage, uuid, schedule, unschedule, onChange: state => {
     const message = $('gallery-message'); message.hidden = !state.error && !state.notice;
@@ -616,6 +651,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
         releaseComparison();
         detailHost.replaceChildren(renderMethodDetail(doc, detail, root, {
           onBack: () => { controller.deselect(); show('home'); }, onContinue: openForm,
+          onSelectCommission: id => { show('detail'); void controller.select(id); },
           onTransfer: (current, candidateId) => openForm(current, candidateId, '', 'transfer'),
           onCancel: () => void controller.cancel(), onFeedback: async value => {
             const before = JSON.stringify(feedbackDrafts.get(detail.id));

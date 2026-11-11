@@ -315,7 +315,7 @@ class FakeElement {
 const doc = {createElement: tag => new FakeElement(tag), createDocumentFragment: () => new FakeElement('fragment')};
 const callbacks = {onBack() {}, onContinue() {}, onCancel() {}, onFeedback() {}, onPublish() {}};
 
-function mountedGallery(initial) {
+function mountedGallery(initial, {catalogValue = null, detailRecords = []} = {}) {
   const html = readFileSync(new URL('../../video_workbench/animation_lab_web/method-gallery.html', import.meta.url), 'utf8');
   const nodes = new Map([...html.matchAll(/<([a-z][a-z0-9]*)\b[^>]*\bid="([^"]+)"/g)]
     .map(([, tag, id]) => [id, new FakeElement(tag)]));
@@ -330,11 +330,110 @@ function mountedGallery(initial) {
     get('experiment-duration').value = '24'; get('experiment-rounds').value = '3'; get('experiment-seconds').value = '15';
   };
   let current = initial;
+  const records = new Map(detailRecords.map(row => [row.id, row])), requests = [];
   const controller = mountMethodGallery({document, root, storage: storage(), uuid: () => firstId,
-    schedule: () => 1, unschedule() {}, fetch: async url => ({ok: true, status: 200,
-      json: async () => structuredClone(url.pathname.endsWith('/catalog') ? catalog([current]) : current)})});
-  return {controller, document, get, update: value => { current = value; }};
+    schedule: () => 1, unschedule() {}, fetch: async (url, options = {}) => {
+      requests.push({url, options});
+      return {ok: true, status: 200, json: async () => structuredClone(url.pathname.endsWith('/catalog')
+        ? catalogValue ?? catalog([current]) : records.get(url.pathname.split('/commissions/')[1]?.split('/')[0]) ?? current)};
+    }});
+  return {controller, document, get, requests, ready: () => new Promise(resolve => setImmediate(resolve)),
+    update: value => { current = value; }};
 }
+
+test('the homepage renders only server-grouped effects and opens each representative commission', async () => {
+  const original = run({id: 'root', state: 'completed'}), continuation = run({id: 'continuation', state: 'completed'});
+  const failedTransfer = run({id: 'failed-transfer', state: 'failed'});
+  const effect = {...original, id: 'root', effect_id: 'root', open_commission_id: continuation.id,
+    commissions: [original, continuation, failedTransfer]};
+  const h = mountedGallery(original, {catalogValue: catalog([original, continuation, failedTransfer], {effects: [effect]}),
+    detailRecords: [continuation]});
+  await h.ready();
+  const cards = h.get('gallery-cards').descendants('article');
+  assert.equal(cards.length, 1); assert.equal(cards[0].dataset.effectId, 'root');
+  assert.equal(h.get('gallery-count').textContent, '1 个效果');
+  cards[0].descendants('button')[0].handlers.click();
+  await h.ready();
+  assert.ok(h.requests.some(row => row.url.pathname.endsWith('/commissions/continuation')));
+  assert.equal(h.requests.some(row => row.options.method), false);
+  h.controller.close();
+});
+
+test('commissions never become fallback effect cards and similarly named independent effects stay separate', async () => {
+  const original = run(), h = mountedGallery(original, {catalogValue: catalog([original])});
+  await h.ready();
+  assert.equal(h.get('gallery-cards').descendants('article').length, 0);
+  assert.equal(h.get('gallery-count').textContent, '0 个效果'); h.controller.close();
+  const independent = mountedGallery(original, {catalogValue: catalog([original], {effects: [
+    {...original, id: 'root-one', open_commission_id: 'run-one'},
+    {...original, id: 'root-two', open_commission_id: 'run-two'}]})});
+  await independent.ready();
+  assert.equal(independent.get('gallery-cards').descendants('article').length, 2);
+  independent.controller.close();
+});
+
+test('effect history links exact original, continuation and failed transfer records without relabelling a global best', () => {
+  const selected = [], effect = {id: 'root', title: '筛选效果', open_commission_id: 'continued', commissions: [
+    {id: 'root', title: '最初目标', kind: 'original', state: 'completed'},
+    {id: 'continued', title: '优化节奏', kind: 'continuation', state: 'completed'},
+    {id: 'transfer-failed', title: '不同结构', kind: 'transfer', state: 'failed'}]};
+  const rendered = renderMethodDetail(doc, run({id: 'continued', title: '优化节奏', effect}), root,
+    {...callbacks, onSelectCommission: id => selected.push(id)});
+  const history = rendered.descendants('details').find(node => node.dataset.methodDisclosure === 'effect-history');
+  assert.match(history.textContent, /版本与实验记录（3）/);
+  assert.match(history.textContent, /原作/); assert.match(history.textContent, /继续优化/);
+  assert.match(history.textContent, /迁移验证/); assert.match(history.textContent, /本次执行失败/);
+  assert.doesNotMatch(history.textContent, /全局最佳/);
+  const buttons = history.descendants('button');
+  assert.equal(buttons[1].attributes['aria-current'], 'true');
+  buttons[1].handlers.click(); buttons[0].handlers.click(); buttons[2].handlers.click();
+  assert.deepEqual(selected, ['root', 'transfer-failed']);
+});
+
+test('switching history preserves commission-scoped feedback, continuation and publication', async () => {
+  const original = run({id: 'root', state: 'completed', candidates: [candidate('original')], best_candidate_id: 'original'});
+  const continued = run({id: 'continued', title: '优化版本', state: 'completed', candidates: [candidate('improved')],
+    best_candidate_id: 'improved', publishable: true, methods: [{id: 'method-improved'}], transfers: [{demonstration_id: 'transfer-demo'}]});
+  const effect = {id: 'root', open_commission_id: 'continued', commissions: [
+    {id: 'root', title: '原版', kind: 'original', state: 'completed'},
+    {id: 'continued', title: '优化版本', kind: 'continuation', state: 'completed'}]};
+  original.effect = continued.effect = effect;
+  const h = mountedGallery(original, {detailRecords: [original, continued]});
+  await h.ready(); await h.controller.select('root');
+  h.get('gallery-detail').descendants('button').find(row => row.textContent === '优化版本').handlers.click();
+  await h.ready();
+  assert.equal(h.controller.snapshot.detail.id, 'continued');
+  const host = h.get('gallery-detail');
+  host.descendants('textarea')[0].value = '保留对象轨迹';
+  await host.descendants('form')[0].handlers.submit({preventDefault() {}});
+  await h.ready();
+  assert.ok(h.requests.some(row => row.url.pathname.endsWith('/commissions/continued/feedback')));
+  const approval = host.descendants('input').find(row => row.type === 'checkbox');
+  approval.checked = true; approval.handlers.change();
+  host.descendants('button').find(row => row.textContent === '认可并发布方法').handlers.click();
+  await h.ready();
+  const publication = h.requests.find(row => row.url.pathname.endsWith('/commissions/continued/publish'));
+  assert.ok(publication); assert.deepEqual(JSON.parse(publication.options.body).method_version_ids, ['method-improved']);
+  host.descendants('button').find(row => row.textContent === '继续优化这版').handlers.click();
+  assert.equal(h.get('experiment-title').value, '优化版本');
+  assert.equal(h.requests.filter(row => row.options.method).length, 2);
+  h.controller.close();
+});
+
+test('a catalog read failure after acknowledged creation preserves success without another submission', async () => {
+  let reads = 0;
+  const h = harness((path, options) => {
+    if (options.method) return run();
+    if (++reads > 1) throw Error('catalog unavailable');
+    return catalog();
+  });
+  await h.controller.refresh();
+  assert.equal(await h.controller.start(fields), true);
+  assert.equal(h.controller.snapshot.pending, null); assert.equal(h.store.data.size, 0);
+  assert.equal(h.controller.snapshot.detail.id, 'commission-1');
+  assert.equal(h.controller.snapshot.error, ''); assert.match(h.controller.snapshot.notice, /已确认提交/);
+  assert.equal(h.requests.filter(row => row.options.method).length, 1); h.controller.close();
+});
 
 test('polling preserves each commission disclosure state and time drafts without replacing focused input', async () => {
   let detail = run({state: 'running', candidates: [candidate('a')], best_candidate_id: 'a',

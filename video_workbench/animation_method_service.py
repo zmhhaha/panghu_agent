@@ -44,6 +44,108 @@ def _finite_number(value):
     return type(value) is int or (type(value) is float and math.isfinite(value))
 
 
+def _effect_views(runs, demonstrations):
+    """Group only owner-scoped, explicit frozen lineage; never infer a method.
+
+    A missing/foreign ancestor or a cycle makes every affected run independent.
+    This is a read projection: neither the recorded choices nor history change.
+    """
+    by_id = {run['id']: run for run in runs}
+    demos = {row['id']: row for row in demonstrations}
+    parents, kinds, direct_issues = {}, {}, {}
+    for run in runs:
+        identity, frozen = run['id'], run['frozen']
+        base, baseline = frozen.get('base_commission_id'), frozen.get('baseline_demonstration_id')
+        transfer = frozen.get('role', 'reference') == 'transfer'
+        parent, issue = None, None
+        kinds[identity] = 'continuation' if base else 'transfer' if transfer else 'original'
+        if base and (transfer or baseline):
+            issue = 'conflicting_frozen_relations'
+        elif base:
+            parent = base
+        elif transfer:
+            demonstration = demos.get(baseline) if type(baseline) is str else None
+            if demonstration is None:
+                issue = 'baseline_demonstration_missing_or_not_owned'
+            else:
+                parent = demonstration.get('provenance', {}).get('commission_id')
+                if type(parent) is not str or not parent:
+                    issue = 'baseline_commission_missing_or_not_owned'
+        elif baseline:
+            issue = 'transfer_role_missing'
+        if parent is not None and (type(parent) is not str or parent not in by_id):
+            issue = 'ancestor_missing_or_not_owned'
+        parents[identity], direct_issues[identity] = parent, issue
+
+    roots, relation_issues = {}, {}
+    for run in runs:
+        current, path, visited = run['id'], [], set()
+        while current not in roots:
+            if current in visited:
+                root, issue = None, 'frozen_relation_cycle'
+                break
+            visited.add(current)
+            path.append(current)
+            if direct_issues[current]:
+                root, issue = None, direct_issues[current]
+                break
+            parent = parents[current]
+            if parent is None:
+                root, issue = current, None
+                break
+            current = parent
+        else:
+            root, issue = roots[current], relation_issues[current]
+        for identity in path:
+            roots[identity], relation_issues[identity] = root, issue
+
+    groups = {}
+    for run in runs:
+        groups.setdefault(roots[run['id']] or run['id'], []).append(run)
+    effects, membership = [], {}
+    for effect_id, members in groups.items():
+        original = by_id[effect_id]
+        representative = original
+        children = {}
+        for run in members:
+            if kinds[run['id']] == 'continuation' and not relation_issues[run['id']]:
+                children.setdefault(parents[run['id']], []).append(run)
+        current = original
+        # A linear continuation can carry its recorded best forward, including
+        # a deliberately retained baseline. Transfers are separate validation,
+        # and competing branches supply no global comparison between siblings.
+        while children.get(current['id']):
+            next_runs = children[current['id']]
+            if len(next_runs) != 1:
+                representative = original
+                break
+            current = next_runs[0]
+            if current['state'] == 'completed' and any(
+                    item['id'] == current['best_candidate_id'] for item in _candidates(current)):
+                representative = current
+        candidate = next((item for item in _candidates(representative)
+                          if item['id'] == representative['best_candidate_id']), None)
+        best = (dict(id=candidate['id'], media_url=_public_url(
+            representative['id'], candidate['id'], 'media')) if candidate else None)
+        summaries = [dict(id=run['id'], title=run['title'],
+            role=run['frozen'].get('role', 'reference'), kind=kinds[run['id']], state=run['state'],
+            best_candidate_id=run['best_candidate_id'],
+            base_commission_id=run['frozen'].get('base_commission_id'),
+            stop_reason=run['stop_reason'], created_at=run['created_at']) for run in reversed(members)]
+        issues = sorted({relation_issues[run['id']] for run in members if relation_issues[run['id']]})
+        active = next((run for run in members if run['state'] not in TERMINAL), None)
+        effect = dict(id=effect_id, effect_id=effect_id, title=original['title'],
+            goal=original['frozen']['goal'], state=active['state'] if active else representative['state'],
+            request_id=representative['request_id'], open_commission_id=representative['id'],
+            media_url=best['media_url'] if best else None, best_candidate=best,
+            commissions=summaries, relationship_status='needs_review' if issues else 'verified',
+            relationship_issues=issues)
+        effects.append(effect)
+        for run in members:
+            membership[run['id']] = effect
+    return effects, membership
+
+
 class AnimationMethodService:
     def __init__(self, root, *, author_gateway, review_gateway, renderer, clock=time.time):
         self.root = Path(root).absolute()
@@ -90,8 +192,9 @@ class AnimationMethodService:
 
     def catalogue(self, owner):
         rows = []
-        effects = []
-        for run in self.commissions.list(owner):
+        runs = self.commissions.list_all(owner)
+        effects, _ = _effect_views(runs, self.methods.list_demonstrations(owner))
+        for run in runs:
             candidate = next((item for item in _candidates(run) if item['id'] == run['best_candidate_id']), None)
             best = (dict(id=candidate['id'], media_url=_public_url(run['id'], candidate['id'], 'media'))
                     if candidate else None)
@@ -99,10 +202,6 @@ class AnimationMethodService:
                        request_id=run['request_id'], state=run['state'], best_candidate_id=run['best_candidate_id'],
                        best_candidate=best, stop_reason=run['stop_reason'])
             rows.append(row)
-            effects.append(dict(id=row['id'], title=row['title'], goal=row['goal'],
-                state=row['state'], request_id=row['request_id'],
-                media_url=best.get('media_url') if best else None, best_candidate=best,
-                commissions=[dict(id=row['id'], state=row['state'])]))
         return dict(schema='video.animation-method-lab.v1', effects=effects, commissions=rows,
                     availability=dict(enabled=self.author is not None and self.reviewer is not None
                         and self.renderer is not None, reason=None))
@@ -110,6 +209,8 @@ class AnimationMethodService:
     def get(self, owner, commission_id):
         run = self.commissions.get(owner, commission_id)
         all_demos = self.methods.list_demonstrations(owner)
+        _, membership = _effect_views(self.commissions.list_all(owner), all_demos)
+        effect = membership[commission_id]
         demos = {row['provenance'].get('candidate_id'): row for row in all_demos}
         methods, candidates = {}, []
         for candidate in _candidates(run):
@@ -169,6 +270,8 @@ class AnimationMethodService:
             if type(code) is str:
                 error = code
         return dict(schema='video.animation-method-lab-detail.v1', id=run['id'], request_id=run['request_id'],
+            effect={key: deepcopy(effect[key]) for key in (
+                'id', 'title', 'open_commission_id', 'commissions', 'relationship_status', 'relationship_issues')},
             title=run['title'], goal=run['frozen']['goal'], state=run['state'],
             budget=run['budget'], usage=run['usage'], remaining=run['remaining'],
             criteria=standards, candidates=candidates, best_candidate_id=run['best_candidate_id'],

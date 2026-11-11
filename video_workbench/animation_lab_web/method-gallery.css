@@ -22,3 +22,12 @@ label{display:block;color:#c8d3e4;font-size:13px;font-weight:600}input,textarea,
 .feedback-history p { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0; }
 .feedback-history .detail-actions { margin-top: 8px; }
 @media(max-width:760px) { .comparison-actions { gap: 8px; } .comparison-preferences .button { flex: 1 1 40%; } }
+
+.effect-history-list { margin: 0; padding: 0; list-style: none; }
+.effect-history-item { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 12px 0; }
+.effect-history-item + .effect-history-item { border-top: 1px solid var(--line); }
+.effect-history-title { border: 0; background: transparent; color: var(--text); padding: 3px 0; text-align: left; font: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.effect-history-title:hover { color: var(--accent); }
+.effect-history-title[aria-current=true] { font-weight: 700; color: #c9d6ff; }
+.effect-history-meta { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; flex-shrink: 0; color: var(--muted); font-size: 12px; }
+@media(max-width:760px) { .effect-history-item { align-items: flex-start; flex-direction: column; gap: 8px; } .effect-history-meta { justify-content: flex-start; } }
