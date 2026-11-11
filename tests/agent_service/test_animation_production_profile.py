@@ -69,6 +69,12 @@ def test_registered_profile_has_its_own_bundle_tools_and_provenance():
     prompt = handler.build_prompt({'input_sha256': 'a' * 64})
     assert contract.INPUT_NAME in prompt and 'apply' in prompt and 'reject' in prompt
     assert 'source_anchor' in prompt and 'do not prove' in prompt.lower()
+    assert 'animation-production-instructions-2' in prompt
+    assert 'Strategy has exactly `description` and `tradeoffs`.' in prompt
+    assert 'Both must be non-empty\n  JSON strings, at most 3000 characters each.' in prompt
+    assert 'Do not use arrays, objects, null' in prompt
+    assert '`source`: `engine`, `strategy`, `files` only.' in prompt
+    assert 'The host computes `files_sha256`; do not include\n  hashes' in prompt
     assert 'video_workbench' not in Path(contract.__file__).read_text()
 
 
@@ -82,6 +88,30 @@ def test_collector_requires_stopped_writers_and_computes_source_hash(tmp_path):
     proof = StopEvidence(execution_id=envelope.attempt_id, all_writers_stopped=False, resource_ids=('fixture',))
     with pytest.raises(ServiceError, match='writers_not_stopped'):
         contract.VideoAnimationProductionProfile().collect_output(tmp_path, envelope, proof)
+
+
+@pytest.mark.parametrize('field', ['description', 'tradeoffs'])
+@pytest.mark.parametrize('value', [['One limitation', 'Another limitation'], 'x' * 3001])
+def test_collector_rejects_strategy_arrays_and_oversized_strings(tmp_path, field, value):
+    context, envelope, proof = staged(tmp_path)
+    result = raw_result(context)
+    result['source']['strategy'][field] = value
+    (tmp_path / 'output.json').write_bytes(canonical_bytes(result))
+    with pytest.raises(ServiceError):
+        contract.VideoAnimationProductionProfile().collect_output(tmp_path, envelope, proof)
+
+
+def test_collector_accepts_strategy_string_limits_and_keeps_host_hash_custody(tmp_path):
+    context, envelope, proof = staged(tmp_path)
+    result = raw_result(context)
+    result['source']['strategy'] = dict(description='d' * 3000, tradeoffs='t' * 3000)
+    assert set(result['source']) == {'engine', 'strategy', 'files'}
+    (tmp_path / 'output.json').write_bytes(canonical_bytes(result))
+    collected = contract.VideoAnimationProductionProfile().collect_output(tmp_path, envelope, proof)[0]
+    output = json.loads(collected.content())
+    assert output['source']['strategy'] == result['source']['strategy']
+    assert output['source']['files_sha256'] == {'scene.html': hashlib.sha256(
+        result['source']['files']['scene.html'].encode()).hexdigest()}
 
 
 @pytest.mark.parametrize('change', ['profile', 'reference', 'extra-file', 'hash', 'precomputed-hash', 'checkpoint'])

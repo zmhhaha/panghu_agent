@@ -18,11 +18,11 @@ PROFILE = 'video.animation-production.v1'
 INPUT_NAME = 'animation-production-input.json'
 INPUT_ROLE = 'animation_production_input'
 RESULT_NAME = 'animation-production-result.json'
-INSTRUCTION_REVISION = 'animation-production-instructions-1'
+INSTRUCTION_REVISION = 'animation-production-instructions-2'
 BUNDLE_REVISION = 'animation-production-v1'
 BUNDLE_ROOT = Path(__file__).resolve().parent.parent / 'resources' / BUNDLE_REVISION
 BUNDLE_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md'})
-BUNDLE_MANIFEST_SHA256 = '98d898c3bf3641d264deba2d709691ade5c2097dbcc4767fc4e9753865c8b031'
+BUNDLE_MANIFEST_SHA256 = '275a909d0d8b7e5e406b87f63455fd450c47a40a8234ce57ee4e0e5f6effbb14'
 
 
 def verified_bundle():

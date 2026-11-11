@@ -21,9 +21,12 @@ Write one JSON object to `output.json` with exactly:
 - `schema`: `video.animation-production-result.v1`.
 - `input_sha256`: the supplied immutable input SHA-256.
 - `source`: `engine`, `strategy`, `files` only. Engine is `html-svg`.
-  Strategy has `description` and `tradeoffs`. Files map `scene.html` (required)
-  and optionally `scene.js` and `scene.css` to complete UTF-8 source. The host
-  computes `files_sha256`; do not include hashes or additional source fields.
+  Strategy has exactly `description` and `tradeoffs`. Both must be non-empty
+  JSON strings, at most 3000 characters each. Do not use arrays, objects, null
+  or additional strategy fields; express multiple tradeoffs in one string.
+  Files map `scene.html` (required) and optionally `scene.js` and `scene.css`
+  to complete UTF-8 source. The host computes `files_sha256`; do not include
+  hashes or additional source fields.
 - `method_decision`: exactly `delivery_sha256` and `decisions`. Use the input
   delivery SHA-256. Emit exactly one decision per offered version, or `[]` when
   none is offered. Each decision has `version_id`, `content_sha256`, `action`

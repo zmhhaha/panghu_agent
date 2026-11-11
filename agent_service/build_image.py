@@ -61,7 +61,7 @@ ANIMATION_RUNTIME_BUNDLES = (
     ('animation-review-v4', 'bcef4965e4b8a564ee6905ad598d71fd4510abbf25cdca06d63c6544476db8f8', REVIEW_FILES),
     ('animation-create-v2', '5033ca38c868c54b860caf678bdcb39ae30088a89b659990ac609b45113fc923', CREATION_FILES),
     ('animation-method-v1', '5736a38aa05058011ad9ee7e886360e15b0a0cf28be3211b242241c2299c7b91', METHOD_FILES),
-    ('animation-production-v1', '98d898c3bf3641d264deba2d709691ade5c2097dbcc4767fc4e9753865c8b031', PRODUCTION_FILES),
+    ('animation-production-v1', '275a909d0d8b7e5e406b87f63455fd450c47a40a8234ce57ee4e0e5f6effbb14', PRODUCTION_FILES),
 )
 
 
