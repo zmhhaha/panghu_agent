@@ -1,6 +1,8 @@
 # Agent 创作阶段1：观察、独立审阅与单次修订
 
-2026-11-10；开发分支 `codex/video-capability-experiment-redesign`。状态：首轮（p1）与时序审阅第二轮 `sequence-review-r2` 均已收尾。第二轮23帧实际图片传输、一次Agent修订、8秒渲染技术检查及账本重放通过；新增发现并修正了抽查时刻的C状态遮挡，但仍漏检预先登记的E靠近说明问题，修订片2.5秒的固定说明仍不可见。隔离真实HTTP准入边界已补证，完整付费提交链及阶段1整体尚未完成。现有工作台流程未切换，未合主线；两轮原结果及失败均保留。
+2026-11-11更新；开发分支 `codex/video-capability-experiment-redesign`。当前：r4完整Git源码构建已完成，通用Agent Control、review v4执行环境和动画创作执行器已上线；开发者入口为 `https://video-service.panghuer.top/dev/animations/`。网页只提交一次的 `held_out` 制作 `c91c2150-1ecc-423c-8968-1948a0b7f276` 已完成初作、渲染、一次独立审阅、一次修订及技术复验。两版8秒媒体的摘要、独立完整解码和浏览器播放通过；重新打开页面后原request/run、账本事件、任务、媒体及额度保持，未新增执行。OpenSpec仅新增完成1.4“有界基础”，未执行生产服务重启故障注入。review v4候选的一次 `read_inputs()` 及24帧原始图片传输通过，但预先登记的E问题仍未识别，1.3保持未完成。尚未合主线；本次是开发者动画创作入口上线，不代表普通整片工作台已切换新导演流程或用户审美已认可。
+
+以下首轮（p1）与时序审阅第二轮 `sequence-review-r2` 保留为历史记录。第二轮23帧实际图片传输、一次Agent修订、8秒渲染技术检查及账本重放通过；新增发现并修正了抽查时刻的C状态遮挡，但仍漏检预先登记的E靠近说明问题，修订片2.5秒的固定说明仍不可见。当时只有隔离真实HTTP准入边界补证，完整付费提交链及阶段1整体尚未完成，现有工作台流程未切换；两轮原结果及失败均保留。当前r4发布和网页制作证据见本文末尾。
 
 ## 本阶段实现
 
@@ -123,3 +125,57 @@ Worker复用 `arm-cluster-master:5000/agent-service-animation-review-pi:latest@s
 同一项目和变更已同步本轮真实输入、审阅、修订、渲染、HTTP探针及尚存问题；最终revision为 `ba4b236c1244e65d5016b592b75e17e9cbb7beb2`。设计页与本地方案精确回读一致，任务正文保留旧历史；全部勾选逐项不变，仍为5／29完成、24项待办。校验 `valid=true`、issues为空。1.3的预定问题识别未通过，1.4缺完整正式提交链，均未勾选。
 
 同步回执为 `sequence-review-r2/spec-closeout-r2.json` 和最终措辞同步的 `spec-closeout-r2-final.json`。本轮不改旧音频变更或其他服务状态，不合主线、不切换工作台或生产路由。
+
+## 2026-11-11：完整源码r4、批量输入与开发者入口上线
+
+本轮在Git提交 `7cf5f2a3865f5ef1a0068832f833ee811c5eb9f1` 上构建，不再将旧容器文件叠加为本轮发布源码。服务器同步完整源码后按522项文件清单核对，清单SHA256为 `e1fedf479da40b914726c5add557a410d7c85e95fdd6753b245d9326d58ff055`。三镜像均使用 `latest`，发布身份另以源码、构建回执与digest固定：
+
+| 构建产物 | 镜像与digest |
+| --- | --- |
+| Agent Control | `arm-cluster-master:5000/agent-service-control:latest@sha256:b8e5e536c8ddf1baffe8979d5d78f37245193fad3a27be2d6725e9a62b77b99a` |
+| Pi Worker | `arm-cluster-master:5000/agent-service-pi:latest@sha256:2fef7a2c84432860547a72c588e1b72734873eb29ca7bd40c992d6ed2eb76bfd` |
+| 动画创作执行器 | `arm-cluster-master:5000/video-animation-creation:latest@sha256:8f7730bb5d4bd710ee05599e2d6d0d0a3a916ab96443432f93e531d4370a5640` |
+
+构建回执 `creation-product-r1/full-source-release-r4/build-completed.json` 记录三产物成功，构建阶段模型请求、部署均为0。构建成功与随后准入、上线及真实制作分别取证，不以镜像存在替代服务运行。
+
+### 固定批量输入工具及离线SDK核对
+
+新增无参数的 `read_inputs()`：一次读取固定只读 `inputs` 中的全部JSON、PNG或JPEG，输出文件名、文本及原始图片内容；不接受路径、URL或文件选择。限制为64文件、每文件2MiB、合计32MiB，拒绝链接、未知格式、非法图片头与超限输入，并保留取消路径。review v4仅开放 `read_inputs/write`，不开放通用文件读取；扩展文件按SHA256 `5f2bde15e1f477b2f6c01bca39785aec0d6ebaa2910627ccfc0a4d44e25dd601` 固定，环境revision同时绑定完整扩展摘要及环境规范数据摘要，Worker加载时重新核对文件摘要。
+
+真实Pi/core `0.99.2` 的断网SDK探针通过：一次工具调用、两次stub模型回合，下一回合接收24张逐字节一致的图片；真实模型请求为0。它验证SDK工具返回与多模态消息装配，不证明真实模型理解画面。该工具相关定向检查为75项通过；回执为服务器统一目录 `creation-product-r1/read-inputs-offline-r1/result.stdout`，不与历史重叠测试累加为总数。
+
+### review v4真实候选：批量门槛通过，E问题仍漏检
+
+独立候选 `candidate-anim-review-v4-r2` 使用上述新Pi Worker和 `video.animation-review.v4`，实际完成一次 `read_inputs()`，没有逐帧工具调用、意外原生工具或非法工具参数。24张供给帧包含21种不同图片字节，全部24个图片位置在成功模型请求中逐字节匹配；首次图片传输发生在一个请求中，不能将21种字节误写成只传了21帧。实际付费模型请求共4次，其中一次连接探测、三次任务内部往返，批量行为及预登记请求数门槛通过；这是一次审阅任务，不是四轮审阅。
+
+候选提出D在1.75～2.25秒转移时遮住C状态，以及A的“保留”标签与筛选结果冲突，均带有效时间和帧引用。它仍未提出预先登记的E卡片约2.2～2.8秒靠近固定说明问题；批量输入成功与已有其他意见不能替代该项识别验收，1.3保持未完成。这是复用已知案例的回归，不代表盲测泛化、完整运动理解或完整视频观看；没有音频，不能评价配音及音画同步。独立自动评估保留 `hidden_finding=operator_confirmation_required`，未自动批准隐藏问题。
+
+Worker与代理均正常退出、零重启，候选专属临时资源已清理。准确回执为 `creation-product-r1/read-inputs-assessment-r2/batch-behavior.json`、`independent-assessment.json` 和 `candidate-anim-review-v4-r2/candidate-output/operator-summary.json`、`cleanup-summary.json`。此前review v3逐帧读取未通过批量门槛的失败及其实际图片传输证据均保留，未重标成功。
+
+### Control与执行器的实际发布
+
+技术准入先固定review v4执行组合摘要 `6cd2a6f158c0b6e0c000172f5f338f95642cc0456d01afe6eb661d499832e7e2` 和绑定摘要 `97a6691e457fb2d87036d97173d3f8cad1b563ea802a8e370a5928adfe8c8e1a`；该准入步骤自身不部署、不分配UID、不发模型请求，不冒称完整生产验收。
+
+随后Agent API、dispatcher与model proxy三个现有Control Deployment已更新到上述 `b8e5e536…` digest，review v4已配置并ready。发布前后历史数据库逐行摘要保持，原服务重新开放；保留旧Host与其他角色、原密钥与策略，不初始化或清空数据库。旧review v2停用，新review分配独立永久UID范围。创作者 `video.animation-create.v2` 的既有准入组合保持，仍使用其已固定的 `sha256:38731ff5003aa80d4a98acd9cc77caa1dbe004cac18185509b3d09d51aeabb40` Worker；不能把新review Worker构建误记为所有角色已经换镜像。Control回执为 `creation-product-r1/read-inputs-plan-r2/rollout-complete.json`，当时仅做零模型调用的能力探测，尚未把后来的网页制作归入该回执。
+
+动画创作执行器r4的init与main实际镜像ID均为上述 `8f7730bb…` digest，Pod为 `video-animation-creation-84995bdb8d-fjgz8`，部署generation为2，review配置为v4；Ready、零重启，健康接口HTTP 200。执行器发布保留原两次失败制作和修订账本，历史行摘要核对通过，没有为了取得成功而清库。准确回执为 `creation-product-r1/executor-rollout-r4/verified.json`；部署本身不证明后续制作、审阅或用户认可。
+
+服务器统一证据根目录为 `/root/video-process-20261105/feedback-20261106/animation-capability-redesign/agent-creation-phase1/`，上述 `creation-product-r1/` 均相对此目录；本地临时证据继续留在忽略目录，不将密钥或模型响应数据库提交Git。
+
+### 网页单次真实制作：完整有界链、媒体及页面恢复通过
+
+浏览器在开发者入口以 `held_out` 输入只提交一次，request为 `c85fc3db-74f8-444a-bd68-1f127daea814`，run为 `c91c2150-1ecc-423c-8968-1948a0b7f276`，lineage为 `4c18cb33-c555-4fba-8388-065157b186d3`。该run已返回 `completed`，初作与修订稿均实际渲染且技术检查通过，包含一次独立审阅及一次修订；审阅提出约1.333秒的标题叠字。初作媒体SHA256为 `14dfe785782de7f9b038257a3f94cbd4ab9158c727b37fb57042d47f300b8aec`，修订媒体SHA256为 `08159933791900e019279718273b0771fb068581eac0980dba6ec916ef35fa04`，原稿与修订稿分别保留。
+
+重新打开开发者页面后恢复同一个request/run，原稿与修订稿媒体摘要保持。两版HTMLVideo均为 `readyState=4`、`duration=8`、`error=null`；修订稿从约0.244秒播放到8秒并返回 `ended=true`，初稿也正常播放到8秒，修订源码下载链接已点击。这验证页面重新读取和媒体播放，不能写成Control API重启或故障注入恢复，也不代表实际下载文件已经独立核对。
+
+三个真实Agent任务分别为初作 `47ffee13-85d4-4f02-bdfa-b14b24f0be53`、审阅 `87af4ff9-4053-4a91-a3b6-07ffee165fc3`、修订 `617f2f41-0018-49d7-afd1-9b9a4c86e2ef`，均为 `completed`、错误为空、各唯一attempt，且 `stop_proven=true`。公开usage为空，不能把三个任务写成三个付费模型请求。持久账本记录初作1、独立审阅1、创作者修订1、渲染2，均等于冻结上限；审阅、修订及技术复验分别保留预占和唯一提交claim。刷新前后严格核对request/run、三个job、lineage、15条事件、两媒体路径与摘要、版本及updated_at完全一致，没有增加执行或消耗额度。
+
+只读独立媒体核对确认原稿105957字节、修订稿104538字节，实际SHA均与产品记录一致；两版均为8.000秒、H264、1280×720、24fps，ffprobe实读192帧，全部192帧完整解码exit 0且stderr为空。核验通过执行器已有工具读取既有文件，没有新增Agent、模型或场景渲染。回执 `creation-product-r1/browser-validation-r4/media-check.json` 的SHA256为 `cdefa359f9ae74a4ee9774451ba66fa9038ccb75a18ce7d591ae3b2dd9438e97`。
+
+本次真实网页全链、持久账本／幂等预占、页面只读重放及已有重开恢复测试共同支持1.4的“有界基础”完成，不以旧候选导入或合成ready的HTTP探针拼接替代。没有执行Control API真实重启或故障注入，不宣称完整生产故障恢复已验收。本次没有重开旧失败任务或发第二次独立审阅。服务端回执为 `creation-product-r1/browser-validation-r4/run-after-refresh-summary.json`、`refresh-readback-comparison.json`、`agent-terminal-jobs.json`；本地浏览器记录为 `creation-product-r1/browser-validation-r4-observations.json`。
+
+完整效果库、参考与异结构改编的用户认可、新整片统筹流程、用户额外修订轮次及Canvas／Three.js自由运行准入仍属后续阶段；此次开发者入口发布不自动完成这些任务，也不代表画面审美、旁白自然度或用户采用已获认可。本轮不合主线。
+
+### OpenSpec r4收尾
+
+项目 `ec663f5a-53d3-4a0e-9037-933eb788d183` 的同一变更已通过 `expectedRevision` 更新至 `903c55814b1281bfa78a93419afb3ce8fbeee967`。仅更新 `tasks.md` 当前事实并新增完成1.4，其他artifact逐字未变；1.3和所有后续任务保持原勾选。累计6／29完成、23项待办，精确回读一致，`validate_change valid=true`、issues为空；没有归档整个变更，也没有修改其他服务。唯一同步回执为本地忽略目录 `creation-product-r1/spec-r4-closeout-1794363097332553100.json`。
