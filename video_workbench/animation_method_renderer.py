@@ -182,7 +182,7 @@ class MethodAnimationRenderer:
                  'animation_method_render_operation_invalid', 422)
         return _plain(self.root / 'operations' / hashlib.sha256(operation_id.encode()).hexdigest())
 
-    def _connect(self, create=False):
+    def _connect(self, create=False, *, write=False):
         _plain(self.ledger)
         if not self.ledger.exists():
             _require(create, 'animation_method_render_not_found', 404)
@@ -190,7 +190,8 @@ class MethodAnimationRenderer:
                      or not any((self.root / 'operations').iterdir()),
                      'animation_method_render_ledger_missing')
             self.root.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(self.ledger, timeout=15, isolation_level=None)
+        db = (sqlite3.connect(self.ledger, timeout=15, isolation_level=None) if create or write else
+              sqlite3.connect(self.ledger.as_uri() + '?mode=ro', uri=True, timeout=15, isolation_level=None))
         db.row_factory = sqlite3.Row
         try:
             tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -240,7 +241,7 @@ class MethodAnimationRenderer:
             image_digest=self.image_digest, timeout_seconds=self.timeout,
             configured_timeout_seconds=self.timeout, deadline_at=deadline_at)
 
-    def _row(self, operation_id):
+    def _row(self, operation_id, *, historical=False):
         self._directory(operation_id)
         with closing(self._connect()) as db:
             row = db.execute('SELECT * FROM ' + _TABLE + ' WHERE operation_id=?',
@@ -249,7 +250,15 @@ class MethodAnimationRenderer:
         binding = json.loads(row['binding'])
         _require(bytes(row['binding']) == canonical_bytes(binding)
                  and digest(binding) == row['binding_sha256']
-                 and binding['operation_id'] == operation_id and binding['image'] == self.image,
+                 and binding['operation_id'] == operation_id,
+                 'animation_method_render_binding_changed')
+        image = _IMAGE.fullmatch(binding.get('image', '')) if type(binding.get('image')) is str else None
+        request = binding['request']
+        _require(image is not None and image[1] == self.repository
+                 and image[2] == binding['image_digest'] == request.get('image_digest')
+                 and binding['request_sha256'] == digest(request)
+                 and request.get('identity') == digest({k: v for k, v in request.items() if k != 'identity'})
+                 and (historical or binding['image'] == self.image),
                  'animation_method_render_binding_changed')
         return dict(row), binding
 
@@ -332,7 +341,7 @@ class MethodAnimationRenderer:
                  and receipt.get('request_identity') == request['identity']
                  and receipt.get('request_sha256') == binding['request_sha256']
                  and receipt.get('host_sha256') == request['host_sha256']
-                 and receipt.get('image_digest') == self.image_digest,
+                 and receipt.get('image_digest') == binding['image_digest'],
                  'animation_method_render_receipt_invalid')
         count = int(request['constraints']['duration_seconds'] * 24)
         frames = receipt.get('frames')
@@ -402,7 +411,9 @@ class MethodAnimationRenderer:
         return receipt, receipt_raw, audio_sha256
 
     def lookup(self, operation_id):
-        row, binding = self._row(operation_id)
+        # Reading a stopped historical attempt does not authorize execution
+        # with its old pin. render() keeps _row's strict current-image default.
+        row, binding = self._row(operation_id, historical=True)
         root = self._directory(operation_id)
         try:
             outcome, outcome_raw = _json(root / 'render-outcome.json', 65536)
@@ -411,7 +422,7 @@ class MethodAnimationRenderer:
         _require(outcome.get('schema') == 'video.animation-method-render-outcome.v1'
                  and outcome.get('request_identity') == binding['request']['identity']
                  and outcome.get('request_sha256') == binding['request_sha256']
-                 and outcome.get('image') == self.image and outcome.get('automatic_retry') is False,
+                 and outcome.get('image') == binding['image'] and outcome.get('automatic_retry') is False,
                  'animation_method_render_outcome_changed')
         cleanup = outcome.get('cleanup', {})
         if cleanup.get('status') not in {'not_created', 'confirmed_absent', 'removed_and_confirmed_absent'}:
@@ -453,16 +464,29 @@ class MethodAnimationRenderer:
             evidence_sha256=proof, scope='isolated_media_reverse_seek_and_sound_timing')
         result['runtime'] = dict(engine='html-svg',
             admission=dict(status='admitted' if rendered else 'not_admitted',
-                id='method-html-svg-v1@' + self.image_digest, evidence_sha256=proof),
-            image=self.image, actual_image_id=outcome.get('actual_image_id'),
+                id='method-html-svg-v1@' + binding['image_digest'], evidence_sha256=proof),
+            image=binding['image'], actual_image_id=outcome.get('actual_image_id'),
             observation='rendered_frames_not_agent_motion_or_audio_observation')
-        with closing(self._connect()) as db:
+        if row['proof_sha256'] is not None:
+            _require(row['proof_sha256'] == proof, 'animation_method_render_proof_changed')
+            _require(row['result'] is not None and bytes(row['result']) == canonical_bytes(result),
+                     'animation_method_render_result_changed')
+            return result
+        # A previously unrecorded completion may reconcile its original claim.
+        # Already completed media/frame reads above never rewrite the ledger.
+        with closing(self._connect(write=True)) as db:
             db.execute('BEGIN IMMEDIATE')
-            stored = db.execute('SELECT proof_sha256 FROM ' + _TABLE + ' WHERE operation_id=?',
+            stored = db.execute('SELECT binding_sha256,proof_sha256,result FROM ' + _TABLE + ' WHERE operation_id=?',
                                 (operation_id,)).fetchone()
+            _require(stored is not None and stored['binding_sha256'] == digest(binding),
+                     'animation_method_render_binding_changed')
             _require(stored['proof_sha256'] in (None, proof), 'animation_method_render_proof_changed')
-            db.execute('UPDATE ' + _TABLE + ' SET proof_sha256=?,result=? WHERE operation_id=?',
-                       (proof, canonical_bytes(result), operation_id))
+            if stored['proof_sha256'] is None:
+                db.execute('UPDATE ' + _TABLE + ' SET proof_sha256=?,result=? WHERE operation_id=?',
+                           (proof, canonical_bytes(result), operation_id))
+            else:
+                _require(stored['result'] is not None and bytes(stored['result']) == canonical_bytes(result),
+                         'animation_method_render_result_changed')
             db.commit()
         return result
 

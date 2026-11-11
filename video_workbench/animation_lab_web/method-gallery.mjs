@@ -439,17 +439,34 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   startTransfer.disabled = !best || ACTIVE.has(detail.state); transfers.append(startTransfer);
   if (!rows(detail.transfers).length) transfers.append(element(doc, 'p', 'muted', '尚未形成迁移验证结果。先打磨代表片段，再在里程碑验证不同结构的任务。'));
   const transferGrid = element(doc, 'div', 'transfer-grid');
+  const transferGroups = new Map();
   for (const transfer of rows(detail.transfers)) {
+    const demonstration = text(transfer.demonstration_id), mediaUrl = text(transfer.media_url) || text(transfer.media?.url);
+    const key = demonstration ? 'demonstration:' + demonstration : mediaUrl ? 'media:' + mediaUrl : transfer;
+    if (!transferGroups.has(key)) transferGroups.set(key, []);
+    transferGroups.get(key).push(transfer);
+  }
+  for (const validations of transferGroups.values()) {
+    const transfer = validations[0];
     const item = element(doc, 'article', 'transfer-item');
     item.append(element(doc, 'h4', '', text(transfer.title) || '迁移样片'),
       element(doc, 'p', 'muted', text(transfer.goal) || text(transfer.requirement)),
       renderMethodMedia(doc, transfer, root, '尚无可播放的迁移样片'));
     if (transfer.structural_changes) item.append(element(doc, 'p', 'small muted',
       typeof transfer.structural_changes === 'string' ? transfer.structural_changes : JSON.stringify(transfer.structural_changes)));
-    const status = transfer.status ?? transfer.outcome;
-    item.append(element(doc, 'span', 'badge', transfer.accepted === true || transfer.acceptance ? '开发者已认可'
-      : status === 'passed' ? '检查通过 · 待认可' : status === 'incomplete' ? '部分证据待人工核对'
-        : status === 'failed' ? '尚未通过目标标准' : '迁移结果待核对'));
+    for (const validation of validations) {
+      const status = validation.status ?? validation.outcome, result = element(doc, 'p', 'small');
+      result.dataset.validationId = text(validation.id);
+      result.dataset.methodVersionId = text(validation.method_version_id);
+      if (validation.method_version_id) {
+        const method = rows(detail.methods).find(row => identity(row) === validation.method_version_id);
+        result.append(element(doc, 'span', '', (text(method?.title) || validation.method_version_id) + '：'));
+      }
+      result.append(element(doc, 'span', 'badge', validation.accepted === true || validation.acceptance ? '开发者已认可'
+        : status === 'passed' ? '检查通过 · 待认可' : status === 'incomplete' ? '部分证据待人工核对'
+          : status === 'failed' ? '尚未通过目标标准' : '迁移结果待核对'));
+      item.append(result);
+    }
     transferGrid.append(item);
   }
   transfers.append(transferGrid);
@@ -524,7 +541,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   fragment.append(transfers);
   const publish = panel(doc, '认可效果，发布创作方法'); publish.classList.add('publication');
   const selection = publicationSelection(detail), ready = canPublish(detail);
-  publish.append(element(doc, 'p', 'muted', '发布会保存这些已认可的方法版本，确认范围绑定本次样片与迁移结果。正式制作接入仍待完成。'));
+  publish.append(element(doc, 'p', 'muted', '发布会保存这些已认可的方法版本，确认范围绑定本次样片与迁移结果。发布后，正式制作可读取这些方法；采用情况保存在制作记录中。'));
   if (selection.method_version_ids.length) publish.append(list(doc, rows(detail.methods)
     .filter(row => selection.method_version_ids.includes(identity(row))).map(row => text(row.title) || text(row.problem) || '关联方法')));
   if (rows(detail.publication_blockers).length) publish.append(list(doc, detail.publication_blockers));

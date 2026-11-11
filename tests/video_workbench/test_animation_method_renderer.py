@@ -9,6 +9,7 @@ import io
 import json
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import threading
 import wave
@@ -21,6 +22,7 @@ from video_workbench import animation_method_renderer as renderer
 
 
 IMAGE = 'registry.example/renderer:latest@sha256:' + 'a' * 64
+NEW_IMAGE = 'registry.example/renderer:latest@sha256:' + 'd' * 64
 SOURCE = dict(engine='html-svg', strategy=dict(description='表达群体变化', tradeoffs='保持对象可跟随'),
     files={'scene.html': '<html><body><script>window.__animationExperiment={seek(t){'
            'document.body.dataset.t=String(t);}};</script></body></html>'})
@@ -140,6 +142,89 @@ def test_complete_fragment_can_exceed_old_ten_second_limit(adapter):
     assert restarted.lookup('full-passage') == result
     assert value.render('full-passage', SOURCE, document(14)) == result
     assert execution.calls == 1
+
+
+def test_new_renderer_reads_completed_historical_media_and_frames_without_rewriting_or_executing(adapter):
+    value, execution = adapter
+    result = value.render('historical-complete', SOURCE, document())
+    root = value._directory('historical-complete')
+    original_files = {name: (root / name).read_bytes() for name in (
+        'binding.json', 'input/request.json', 'render-outcome.json', 'work/render-receipt.json')}
+    ledger_bytes = value.ledger.read_bytes()
+    restarted = renderer.MethodAnimationRenderer(value.root, NEW_IMAGE, enabled=True)
+    assert restarted.lookup('historical-complete') == result
+    assert restarted.lookup('historical-complete')['runtime']['image'] == IMAGE
+    assert restarted.lookup('historical-complete')['runtime']['admission']['id'].endswith('@sha256:' + 'a' * 64)
+    assert restarted.media_path('historical-complete').read_bytes() == (root / 'work/output.mp4').read_bytes()
+    assert restarted.frames('historical-complete') == value.frames('historical-complete')
+    with pytest.raises(ServiceError, match='binding_changed'):
+        restarted._row('historical-complete')
+    with pytest.raises(ServiceError, match='binding_changed'):
+        restarted.render('historical-complete', SOURCE, document())
+    assert execution.calls == 1
+    assert value.ledger.read_bytes() == ledger_bytes
+    assert {name: (root / name).read_bytes() for name in original_files} == original_files
+
+
+@pytest.mark.parametrize('change', ['binding-image', 'binding-digest', 'request-digest',
+                                  'outcome-image', 'receipt-digest', 'proof', 'stored-result'])
+def test_historical_pin_and_evidence_tampering_remain_rejected_after_upgrade(adapter, change):
+    value, execution = adapter
+    value.render('historical-tamper', SOURCE, document())
+    root = value._directory('historical-tamper')
+    if change in {'binding-image', 'binding-digest', 'request-digest', 'proof', 'stored-result'}:
+        with sqlite3.connect(value.ledger) as db:
+            binding_raw, result_raw = db.execute('SELECT binding,result FROM '
+                'animation_method_render_operations WHERE operation_id=?', ('historical-tamper',)).fetchone()
+            binding = json.loads(binding_raw)
+            if change == 'binding-image':
+                binding['image'] = NEW_IMAGE
+            elif change == 'binding-digest':
+                binding['image_digest'] = 'sha256:' + 'd' * 64
+            elif change == 'request-digest':
+                binding['request']['image_digest'] = 'sha256:' + 'd' * 64
+                binding['request']['identity'] = digest({k: v for k, v in binding['request'].items() if k != 'identity'})
+                binding['request_sha256'] = digest(binding['request'])
+            elif change == 'proof':
+                db.execute('UPDATE animation_method_render_operations SET proof_sha256=?', ('e' * 64,))
+            else:
+                result = json.loads(result_raw); result['runtime']['image'] = NEW_IMAGE
+                db.execute('UPDATE animation_method_render_operations SET result=?', (canonical_bytes(result),))
+            if change.startswith(('binding-', 'request-')):
+                db.execute('UPDATE animation_method_render_operations SET binding=?,binding_sha256=?',
+                           (canonical_bytes(binding), digest(binding)))
+    else:
+        path = root / ('render-outcome.json' if change == 'outcome-image' else 'work/render-receipt.json')
+        record = json.loads(path.read_bytes())
+        record['image' if change == 'outcome-image' else 'image_digest'] = (
+            NEW_IMAGE if change == 'outcome-image' else 'sha256:' + 'd' * 64)
+        path.write_bytes(canonical_bytes(record))
+    restarted = renderer.MethodAnimationRenderer(value.root, NEW_IMAGE, enabled=True)
+    with pytest.raises(ServiceError):
+        restarted.lookup('historical-tamper')
+    assert execution.calls == 1
+
+
+def test_historical_read_cannot_borrow_another_renderer_repository(adapter):
+    value, execution = adapter
+    value.render('historical-repository', SOURCE, document())
+    foreign = renderer.MethodAnimationRenderer(value.root,
+        'another.example/renderer:latest@sha256:' + 'd' * 64, enabled=True)
+    with pytest.raises(ServiceError, match='binding_changed'):
+        foreign.lookup('historical-repository')
+    assert execution.calls == 1
+
+
+def test_unknown_historical_attempt_stays_unknown_and_cannot_execute_with_new_pin(adapter):
+    value, execution = adapter
+    execution.failure = 'unknown'
+    assert value.render('historical-unknown', SOURCE, document()) is None
+    ledger_bytes = value.ledger.read_bytes()
+    restarted = renderer.MethodAnimationRenderer(value.root, NEW_IMAGE, enabled=True)
+    assert restarted.lookup('historical-unknown') is None
+    with pytest.raises(ServiceError, match='binding_changed'):
+        restarted.render('historical-unknown', SOURCE, document())
+    assert execution.calls == 1 and value.ledger.read_bytes() == ledger_bytes
 
 
 def test_sound_event_binding_is_preserved_and_changed_replay_rejected(adapter):

@@ -545,10 +545,42 @@ test('actual transfer metadata is playable and published methods are labelled wi
   assert.ok(after.descendants('button').find(row => row.textContent === '认可并发布方法').disabled);
 });
 
+test('three method validations of one demonstration share a single preview while retaining each result', () => {
+  const methods = [{id: 'method-a', title: '对象身份'}, {id: 'method-b', title: '因果动作'}, {id: 'method-c', title: '空间编排'}];
+  const outcomes = ['passed', 'incomplete', 'failed'];
+  const transfers = methods.map((method, index) => ({id: 'validation-' + index, method_version_id: method.id,
+    demonstration_id: 'one-demo', title: '同一迁移片段', outcome: outcomes[index],
+    media_url: 'api/method-lab/commissions/transfer/candidates/one/media'}));
+  const rendered = renderMethodDetail(doc, run({state: 'completed', methods, transfers}), root, callbacks);
+  const previews = rendered.descendants('article').filter(row => row.className === 'transfer-item');
+  assert.equal(previews.length, 1); assert.equal(previews[0].descendants('video').length, 1);
+  assert.deepEqual(previews[0].descendants('p').filter(row => row.dataset.validationId)
+    .map(row => [row.dataset.validationId, row.dataset.methodVersionId]),
+  [['validation-0', 'method-a'], ['validation-1', 'method-b'], ['validation-2', 'method-c']]);
+  assert.match(previews[0].textContent, /对象身份：检查通过 · 待认可/);
+  assert.match(previews[0].textContent, /因果动作：部分证据待人工核对/);
+  assert.match(previews[0].textContent, /空间编排：尚未通过目标标准/);
+  assert.match(rendered.textContent, /发布后，正式制作可读取这些方法；采用情况保存在制作记录中/);
+  assert.doesNotMatch(rendered.textContent, /正式制作接入.*待完成/);
+});
+
+test('transfer preview fallback groups exact media URLs without merging different demonstrations or matching titles', () => {
+  const shared = 'api/method-lab/commissions/transfer/candidates/one/media';
+  const rendered = renderMethodDetail(doc, run({state: 'completed', transfers: [
+    {title: '相同名称', media_url: shared, outcome: 'passed'},
+    {title: '相同名称', media_url: shared, outcome: 'incomplete'},
+    {title: '相同名称', media_url: shared, demonstration_id: 'different-demo', outcome: 'passed'},
+    {title: '相同名称', media_url: 'api/method-lab/commissions/transfer/candidates/two/media', outcome: 'failed'},
+  ]}), root, callbacks);
+  assert.equal(rendered.descendants('article').filter(row => row.className === 'transfer-item').length, 3);
+});
+
 test('the new entry presents an effect gallery and goals rather than legacy module/engineering workflows', () => {
   const html = readFileSync(new URL('../../video_workbench/animation_lab_web/method-gallery.html', import.meta.url), 'utf8');
   assert.match(html, /id="method-gallery-app"/); assert.match(html, /希望观众看懂什么/);
   assert.match(html, /本次最多探索轮数/); assert.match(html, /可包含帮助表达的音效/);
+  assert.match(html, /发布后，正式制作可读取这些方法；采用情况保存在制作记录中/);
+  assert.doesNotMatch(html, /正式制作接入.*待完成/);
   assert.doesNotMatch(html, /组件与参数回归|跨领域需求矩阵|生成增量任务包|held_out|调优输入/);
 });
 
