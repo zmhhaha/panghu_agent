@@ -323,7 +323,7 @@ function mountedGallery(initial, {catalogValue = null, detailRecords = []} = {})
     createElement(tag) { const element = new FakeElement(tag); element.ownerDocument = this; return element; },
     createDocumentFragment: () => new FakeElement('fragment')};
   const get = id => nodes.get(id);
-  get('gallery-search').value = ''; get('gallery-state').value = 'all';
+  get('gallery-search').value = ''; get('gallery-state').value = 'all'; get('gallery-engine').value = 'all';
   get('gallery-form-panel').hidden = get('gallery-detail').hidden = true;
   get('experiment-form').reset = () => {
     for (const node of nodes.values()) node.value = '';
@@ -370,6 +370,99 @@ test('commissions never become fallback effect cards and similarly named indepen
   await independent.ready();
   assert.equal(independent.get('gallery-cards').descendants('article').length, 2);
   independent.controller.close();
+});
+
+test('rendering technology, state and alias search combine and can be reset without starting work', async () => {
+  const effects = [
+    {id: 'svg-effect', title: '队列', goal: '追踪请求', state: 'completed', engine: 'html-svg', engine_status: 'rendered'},
+    {id: 'canvas-effect', title: '波动', goal: '理解传播', state: 'creating', engine: 'canvas', engine_status: 'rendered'},
+    {id: 'three-effect', title: '装配', goal: '理解结构', state: 'completed', engine: 'three', engine_status: 'rendered'},
+    {id: 'unknown-effect', title: '探索中', goal: '尚未验证', state: 'failed', engine: null, engine_status: 'unverified'},
+  ];
+  const h = mountedGallery(run(), {catalogValue: catalog([], {effects, availability: {enabled: true, allowed_engines: ['html-svg']}})});
+  await h.ready();
+  const visibleIds = () => h.get('gallery-cards').descendants('article').map(row => row.dataset.effectId);
+  const select = (id, value) => { h.get(id).value = value; h.get(id).handlers.change(); };
+  const search = value => { h.get('gallery-search').value = value; h.get('gallery-search').handlers.input(); };
+  assert.match(h.get('gallery-engine-availability').textContent, /当前可生成：HTML\/SVG；Canvas 2D、Three\.js 暂未开放/);
+  select('gallery-state', 'active'); select('gallery-engine', 'canvas'); search('2d');
+  assert.deepEqual(visibleIds(), ['canvas-effect']); assert.equal(h.get('gallery-count').textContent, '1 / 4 个效果');
+  search('threejs'); assert.deepEqual(visibleIds(), []); assert.equal(h.get('gallery-no-results').hidden, false);
+  h.get('gallery-reset').handlers.click();
+  assert.equal(h.get('gallery-state').value, 'all'); assert.equal(h.get('gallery-engine').value, 'all');
+  assert.equal(h.get('gallery-search').value, ''); assert.equal(h.get('gallery-count').textContent, '4 个效果');
+  assert.equal(h.get('gallery-no-results').hidden, true);
+  search('html/svg'); assert.deepEqual(visibleIds(), ['svg-effect']);
+  search('threejs'); assert.deepEqual(visibleIds(), ['three-effect']);
+  search('待验证'); select('gallery-engine', 'unknown'); assert.deepEqual(visibleIds(), ['unknown-effect']);
+  assert.equal(h.requests.some(row => row.options.method), false); h.controller.close();
+});
+
+test('technology filters use only the displayed sample, ignoring family engines, method requirements and source declarations', async () => {
+  const effects = [
+    {id: 'representative-svg', title: '对象过程', state: 'completed', engine: 'html-svg', engine_status: 'rendered',
+      engines: ['three'], commissions: [{id: 'other', engine: 'three', engine_status: 'rendered'}],
+      methods: [{runtime_requirements: {engine: 'canvas'}}]},
+    {id: 'declaration-only', title: '待验证对象', state: 'failed', engine: 'three', engine_status: 'unverified',
+      best_candidate: {source: {engine: 'three'}}},
+    {id: 'conflict', title: '待核对对象', state: 'completed', engine: 'canvas', engine_status: 'conflict'},
+  ];
+  const h = mountedGallery(run(), {catalogValue: catalog([], {effects, availability: {enabled: true, allowed_engines: ['html-svg']}})});
+  await h.ready();
+  h.get('gallery-engine').value = 'three'; h.get('gallery-engine').handlers.change();
+  assert.equal(h.get('gallery-cards').descendants('article').length, 0);
+  assert.match(h.get('gallery-no-results-message').textContent, /暂无 Three\.js 实际样片/);
+  assert.match(h.get('gallery-no-results-message').textContent, /暂未开放生成/);
+  h.get('gallery-engine').value = 'canvas'; h.get('gallery-engine').handlers.change();
+  assert.equal(h.get('gallery-cards').descendants('article').length, 0);
+  assert.match(h.get('gallery-no-results-message').textContent, /暂无 Canvas 2D 实际样片/);
+  h.get('gallery-reset').handlers.click();
+  h.get('gallery-search').value = 'threejs'; h.get('gallery-search').handlers.input();
+  assert.equal(h.get('gallery-cards').descendants('article').length, 0);
+  h.get('gallery-reset').handlers.click();
+  h.get('gallery-engine').value = 'unknown'; h.get('gallery-engine').handlers.change();
+  assert.deepEqual(h.get('gallery-cards').descendants('article').map(row => row.dataset.effectId), ['declaration-only', 'conflict']);
+  assert.equal(h.requests.some(row => row.options.method), false); h.controller.close();
+});
+
+test('cards distinguish confirmed technology, unverified source and an absent sample', () => {
+  const known = renderMethodCard(doc, {id: 'known', engine: 'html-svg', engine_status: 'rendered'}, root, () => {});
+  assert.match(known.textContent, /渲染技术HTML\/SVG/);
+  const declared = renderMethodCard(doc, {id: 'declared', engine: null, engine_status: 'unverified',
+    methods: [{runtime_requirements: {engine: 'three'}}]}, root, () => {});
+  assert.match(declared.textContent, /渲染技术待验证/); assert.doesNotMatch(declared.textContent, /Three\.js/);
+  const missing = renderMethodCard(doc, {id: 'missing', engine: null, engine_status: 'unknown'}, root, () => {});
+  assert.match(missing.textContent, /渲染技术尚无样片/);
+});
+
+test('candidate, history and transfer badges show each actual sample technology and follow comparison selection', () => {
+  let comparison;
+  const candidates = [
+    {...candidate('svg'), engine: 'html-svg', engine_status: 'rendered'},
+    {...candidate('canvas'), engine: 'canvas', engine_status: 'rendered'},
+    {...candidate('three'), engine: 'three', engine_status: 'rendered'},
+  ];
+  const rendered = renderMethodDetail(doc, run({state: 'completed', candidates, best_candidate_id: 'canvas',
+    effect: {id: 'effect', commissions: [
+      {id: 'original', kind: 'original', state: 'completed', engine: 'three', engine_status: 'rendered'},
+      {id: 'unverified', kind: 'transfer', state: 'failed', engine: null, engine_status: 'unverified'},
+    ]}, transfers: [{id: 'validation', demonstration_id: 'demo', media_url: candidate().media_url,
+      engine: 'html-svg', engine_status: 'rendered'}]}), root, {...callbacks, onComparisonReady: value => { comparison = value; }});
+  const comparisonBadges = () => comparison.element.descendants('span').filter(row => row.dataset.renderEngine !== undefined);
+  assert.deepEqual(comparisonBadges().map(row => row.textContent), ['HTML/SVG', 'Canvas 2D']);
+  const right = comparison.element.descendants('select').find(row => row.attributes['aria-label'] === '右侧样片');
+  right.value = 'three'; right.handlers.change();
+  assert.deepEqual(comparisonBadges().map(row => row.textContent), ['HTML/SVG', 'Three.js']);
+  const left = comparison.element.descendants('select').find(row => row.attributes['aria-label'] === '左侧样片');
+  left.value = 'three'; left.handlers.change();
+  assert.deepEqual(comparisonBadges().map(row => row.textContent), ['Three.js']);
+  left.value = 'canvas'; left.handlers.change(); right.value = 'svg'; right.handlers.change();
+  assert.deepEqual(comparisonBadges().map(row => row.textContent), ['Canvas 2D', 'HTML/SVG']);
+  const history = rendered.descendants('details').find(row => row.dataset.methodDisclosure === 'effect-history');
+  assert.deepEqual(history.descendants('span').filter(row => row.dataset.renderEngine !== undefined).map(row => row.textContent), ['Three.js', '待验证']);
+  const transfer = rendered.descendants('article').find(row => row.className === 'transfer-item');
+  assert.deepEqual(transfer.descendants('span').filter(row => row.dataset.renderEngine !== undefined).map(row => row.textContent), ['HTML/SVG']);
+  comparison.destroy();
 });
 
 test('effect history links exact original, continuation and failed transfer records without relabelling a global best', () => {

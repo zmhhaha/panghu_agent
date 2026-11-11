@@ -13,6 +13,25 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const text = value => typeof value === 'string' ? value : '';
 const rows = value => Array.isArray(value) ? value : [];
 const identity = value => text(value?.version_id) || text(value?.id);
+const ENGINE_LABELS = {'html-svg': 'HTML/SVG', canvas: 'Canvas 2D', three: 'Three.js', unknown: '待确认'};
+const ENGINE_ALIASES = {'html-svg': 'html svg html/svg html-svg 矢量', canvas: 'canvas canvas2d canvas 2d 2d 画布',
+  three: 'three three.js threejs three js webgl 3d 三维', unknown: '待确认 待验证 尚无样片'};
+function actualEngine(value) {
+  return value?.engine_status === 'rendered' && Object.hasOwn(ENGINE_LABELS, value?.engine) && value.engine !== 'unknown'
+    ? value.engine : 'unknown';
+}
+function engineLabel(value, noSample = false) {
+  const engine = actualEngine(value);
+  return engine !== 'unknown' ? ENGINE_LABELS[engine] : value?.engine_status === 'unverified' ? '待验证'
+    : noSample ? '尚无样片' : ENGINE_LABELS.unknown;
+}
+function engineAvailability(value) {
+  if (!Array.isArray(value?.allowed_engines)) return '当前可生成技术待确认。';
+  const allowed = value.allowed_engines.filter(engine => engine !== 'unknown' && Object.hasOwn(ENGINE_LABELS, engine));
+  const closed = ['canvas', 'three'].filter(engine => !allowed.includes(engine)).map(engine => ENGINE_LABELS[engine]);
+  return (allowed.length ? '当前可生成：' + allowed.map(engine => ENGINE_LABELS[engine]).join('、') : '当前暂无可生成的渲染技术')
+    + (closed.length ? '；' + closed.join('、') + ' 暂未开放。' : '。');
+}
 
 export function methodStateLabel(value) { return STATES[value] ?? '状态待核对'; }
 export function methodStopLabel(value) { return STOP_REASONS[typeof value === 'object' ? value?.code : value] ?? ''; }
@@ -318,6 +337,12 @@ function element(doc, tag, className, value) {
 function button(doc, label, handler, className = 'button secondary') {
   const node = element(doc, 'button', className, label); node.type = 'button'; node.addEventListener('click', handler); return node;
 }
+function renderEngineBadge(doc, value, noSample = false) {
+  const badge = element(doc, 'span', 'engine-badge engine-' + actualEngine(value), engineLabel(value, noSample));
+  badge.dataset.renderEngine = actualEngine(value);
+  badge.setAttribute('title', '渲染技术：' + engineLabel(value, noSample));
+  return badge;
+}
 function list(doc, values, className = '') {
   const node = element(doc, 'ul', className);
   for (const row of rows(values)) node.append(element(doc, 'li', '', typeof row === 'string' ? row : text(row.description) || text(row.message) || text(row.issue)));
@@ -344,7 +369,10 @@ export function renderMethodCard(doc, effect, root, onOpen) {
   card.append(renderMethodMedia(doc, candidate, root, ACTIVE.has(effect.state) ? '正在制作，完成后展示实际样片' : '打开实验，查看样片与尚存问题'));
   const body = element(doc, 'div', 'card-body'), heading = element(doc, 'h3');
   heading.append(button(doc, text(effect.title) || '未命名效果', () => onOpen(effect.open_commission_id ?? effect.commission_id ?? effect.id), 'effect-title'));
-  body.append(heading, element(doc, 'p', 'card-goal', text(effect.goal)));
+  const engine = element(doc, 'div', 'card-engine');
+  engine.append(element(doc, 'span', 'small muted', '渲染技术'), renderEngineBadge(doc, effect,
+    !text(candidate?.media_url) && !text(candidate?.media?.url)));
+  body.append(heading, engine, element(doc, 'p', 'card-goal', text(effect.goal)));
   const meta = element(doc, 'div', 'card-meta');
   const state = displayState(effect);
   meta.append(element(doc, 'span', 'badge ' + (Object.hasOwn(STATES, state) ? state : ''), methodStateLabel(state)));
@@ -390,7 +418,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
       }, 'effect-history-title');
       if (run.id === detail.id) open.setAttribute('aria-current', 'true');
       const meta = element(doc, 'div', 'effect-history-meta');
-      meta.append(element(doc, 'span', '', label), element(doc, 'span', 'badge', methodStateLabel(run.state)));
+      meta.append(element(doc, 'span', '', label), renderEngineBadge(doc, run), element(doc, 'span', 'badge', methodStateLabel(run.state)));
       if (run.id === detail.id) meta.append(element(doc, 'span', '', '正在查看'));
       if (run.id === detail.effect.open_commission_id) meta.append(element(doc, 'span', '', '代表样片'));
       item.append(open, meta); items.append(item);
@@ -401,11 +429,25 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   const baseline = detail.baseline_candidate ?? detail.baseline ?? null, original = baseline?.candidate ?? baseline ?? candidates[0];
   const latestAttempt = candidates.findLast(candidate => candidate.id !== best?.id);
   const preferences = element(doc, 'div', 'comparison-preferences detail-actions');
+  let comparison;
   const updatePreferenceButtons = selection => {
     for (const child of preferences.children) child.disabled = detail.ui_preview === true || !selection.left || !selection.right;
+    if (comparison) {
+      const selected = [selection.left, selection.right].filter(Boolean);
+      for (const [index, card] of [...comparison.element.querySelectorAll('article')].entries()) {
+        const header = card.querySelectorAll('header')[0], candidate = candidates.find(row => row.id === selected[index]);
+        if (!header) continue;
+        let badge = [...header.children].find(row => row.dataset.renderEngine !== undefined);
+        if (!badge) { badge = renderEngineBadge(doc, candidate); header.append(badge); }
+        else {
+          badge.textContent = engineLabel(candidate); badge.className = 'engine-badge engine-' + actualEngine(candidate);
+          badge.dataset.renderEngine = actualEngine(candidate); badge.setAttribute('title', '渲染技术：' + engineLabel(candidate));
+        }
+      }
+    }
     onComparisonChange(selection);
   };
-  const comparison = createMethodComparison(doc, {candidates, bestId: best?.id, baselineId: original?.id, root,
+  comparison = createMethodComparison(doc, {candidates, bestId: best?.id, baselineId: original?.id, root,
     assetUrl: methodAssetUrl,
     selection: comparisonSelection ?? {left: original?.id ?? best?.id,
       right: original?.id !== best?.id ? best?.id : latestAttempt?.id ?? ''},
@@ -450,6 +492,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
     const transfer = validations[0];
     const item = element(doc, 'article', 'transfer-item');
     item.append(element(doc, 'h4', '', text(transfer.title) || '迁移样片'),
+      renderEngineBadge(doc, transfer),
       element(doc, 'p', 'muted', text(transfer.goal) || text(transfer.requirement)),
       renderMethodMedia(doc, transfer, root, '尚无可播放的迁移样片'));
     if (transfer.structural_changes) item.append(element(doc, 'p', 'small muted',
@@ -630,19 +673,27 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
   const renderCards = () => {
     const catalog = controller.state.catalog;
     if (!catalog) return;
-    const query = $('gallery-search').value.trim().toLocaleLowerCase(), filter = $('gallery-state').value;
+    const query = $('gallery-search').value.trim().toLocaleLowerCase(), filter = $('gallery-state').value,
+      engine = $('gallery-engine').value;
     const all = catalog.effects;
-    const filtered = all.filter(row => (!query || (text(row.title) + ' ' + text(row.goal)).toLocaleLowerCase().includes(query))
+    const filtered = all.filter(row => (!query || (text(row.title) + ' ' + text(row.goal) + ' ' + ENGINE_ALIASES[actualEngine(row)]).toLocaleLowerCase().includes(query))
+      && (engine === 'all' || actualEngine(row) === engine)
       && (filter === 'all' || filter === 'active' && ACTIVE.has(row.state) || filter === 'published' && displayState(row) === 'published'
         || filter === 'review' && !ACTIVE.has(row.state) && displayState(row) !== 'published'));
-    const snapshot = JSON.stringify({filtered, query, filter});
+    const snapshot = JSON.stringify({filtered, query, filter, engine});
     if (renderedCardsSnapshot !== snapshot) {
       for (const video of $('gallery-cards').querySelectorAll('video')) video.pause();
       $('gallery-cards').replaceChildren(...filtered.map(row => renderMethodCard(doc, row, root, id => { show('detail'); void controller.select(id); })));
       renderedCardsSnapshot = snapshot;
-      if (all.length && !filtered.length) $('gallery-cards').append(element(doc, 'p', 'muted', '没有匹配的效果，请调整查找条件。'));
     }
-    $('gallery-empty').hidden = all.length > 0; $('gallery-count').textContent = all.length + ' 个效果';
+    const constrained = Boolean(query) || filter !== 'all' || engine !== 'all';
+    $('gallery-empty').hidden = all.length > 0 || constrained;
+    $('gallery-no-results').hidden = filtered.length > 0 || !constrained;
+    const unavailableEngine = ['canvas', 'three'].includes(engine) && !all.some(row => actualEngine(row) === engine);
+    $('gallery-no-results-message').textContent = unavailableEngine
+      ? '效果库中暂无 ' + ENGINE_LABELS[engine] + ' 实际样片。' + (!rows(catalog.availability.allowed_engines).includes(engine) ? '该技术暂未开放生成。' : '')
+      : '没有匹配的效果，请调整搜索、状态或渲染技术。';
+    $('gallery-count').textContent = (constrained ? filtered.length + ' / ' : '') + all.length + ' 个效果';
   };
   controller = new MethodGalleryController({root, request, storage, uuid, schedule, unschedule, onChange: state => {
     const message = $('gallery-message'); message.hidden = !state.error && !state.notice;
@@ -657,6 +708,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     $('experiment-form-close').disabled = state.busy;
     $('gallery-availability').textContent = state.catalog ? enabled ? '按目标自主探索，完成后查看最佳样片、改进依据与尚存问题。'
       : state.catalog.availability.reason || '制作服务尚未就绪，可查看已有样片。' : '正在读取效果库…';
+    $('gallery-engine-availability').textContent = state.catalog ? engineAvailability(state.catalog.availability) : '';
     renderCards();
     if (!formPanel.hidden) return;
     if (state.detail) {
@@ -725,6 +777,10 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
   });
   $('gallery-search').addEventListener('input', renderCards);
   $('gallery-state').addEventListener('change', renderCards);
+  $('gallery-engine').addEventListener('change', renderCards);
+  $('gallery-reset').addEventListener('click', () => {
+    $('gallery-search').value = ''; $('gallery-state').value = 'all'; $('gallery-engine').value = 'all'; renderCards();
+  });
   detailHost.addEventListener('focusout', () => queueMicrotask(() => controller.emit()));
   $('experiment-form').addEventListener('submit', async event => {
     event.preventDefault();

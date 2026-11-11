@@ -7,7 +7,7 @@ import pytest
 
 from agent_service.contracts import ServiceError, digest
 from agent_service.profiles import video_animation_method as protocol
-from video_workbench.animation_method_service import AnimationMethodService
+from video_workbench.animation_method_service import AnimationMethodService, _effect_views
 
 
 CRITERIA = [dict(id='causality', description='The cause and the changed result can be identified.')]
@@ -409,3 +409,117 @@ def test_outer_render_claim_recovers_missing_inner_ledger_once(work, monkeypatch
     monkeypatch.setattr(renderer, 'lookup', absent_is_404)
     row = finish(service, row['id'])
     assert row['stop_reason'] == 'goal_met' and len(renderer.calls) == 1
+
+
+def test_engine_metadata_uses_rendered_sample_and_get_never_executes_or_changes_history(work, monkeypatch):
+    service, creator, reviewer, renderer = work
+    queued = start(service, title='Canvas and Three.js are only words in this title')
+    empty = service.catalogue('developer')
+    assert empty['availability']['allowed_engines'] == ['html-svg']
+    assert empty['effects'][0]['engine'] is None and empty['effects'][0]['engines'] == []
+    assert empty['effects'][0]['engine_status'] == 'unknown'
+    assert service.get('developer', queued['id'])['engine'] is None
+    finished = finish(service, queued['id'])
+    paths = [service.root / name for name in ('methods.sqlite3', 'commissions.sqlite3', 'feedback.sqlite3')]
+    before = [path.read_bytes() for path in paths]
+    calls = (len(creator.submissions), len(reviewer.submissions), len(renderer.calls))
+    monkeypatch.setattr(renderer, 'media_path', lambda *_: pytest.fail('metadata must not read rendered files'))
+    monkeypatch.setattr(renderer, 'lookup', lambda *_: pytest.fail('metadata must not reconcile render operations'))
+    catalogue, detail = service.catalogue('developer'), service.get('developer', finished['id'])
+    assert catalogue['effects'][0]['engine'] == detail['effect']['engine'] == 'html-svg'
+    assert catalogue['effects'][0]['engines'] == detail['effect']['engines'] == ['html-svg']
+    for row in (catalogue['effects'][0], catalogue['commissions'][0], detail,
+                detail['candidates'][0], detail['effect']['commissions'][0]):
+        assert row['engine'] == 'html-svg' and row['engine_status'] == 'rendered'
+    assert [path.read_bytes() for path in paths] == before
+    assert calls == (len(creator.submissions), len(reviewer.submissions), len(renderer.calls))
+
+
+def engine_projection_fixture(engine='html-svg', *, identity='original', parent=None):
+    """Inert stored-record fixtures; these never claim an actual Canvas/Three run."""
+    candidate = dict(id=identity + '-candidate', operation_id=identity + '-render',
+        source=dict(engine=engine), media=dict(sha256='a' * 64), technical=dict(status='passed'))
+    run = dict(id=identity, title='Three.js Canvas HTML/SVG', frozen=dict(goal='Compare actual sample evidence'),
+        state='completed', request_id=identity, best_candidate_id=candidate['id'], candidates=[candidate],
+        stop_reason='budget_exhausted', created_at=1)
+    if parent:
+        run['frozen']['base_commission_id'] = parent
+    demonstration = dict(id=identity + '-demo', source=dict(engine=engine), media=dict(sha256='a' * 64),
+        technical=dict(status='passed'), runtime=dict(engine=engine, admission=dict(status='admitted')),
+        provenance=dict(commission_id=identity, candidate_id=candidate['id'],
+                        render_operation_id=candidate['operation_id']))
+    return run, demonstration
+
+
+@pytest.mark.parametrize('engine', ['html-svg', 'canvas', 'three'])
+def test_engine_projection_matches_candidate_and_demonstration_not_method_or_plan(engine):
+    run, demo = engine_projection_fixture(engine)
+    run['frozen']['allowed_engines'] = ['three' if engine != 'three' else 'html-svg']
+    run['frozen']['runtime_requirements'] = {'engine': 'canvas' if engine != 'canvas' else 'html-svg'}
+    before = deepcopy((run, demo))
+    effects, _ = _effect_views([run], [demo])
+    effect = effects[0]
+    assert effect['engine'] == effect['best_candidate']['engine'] == effect['commissions'][0]['engine'] == engine
+    assert effect['engine_status'] == 'rendered' and effect['engines'] == [engine]
+    assert (run, demo) == before
+
+
+@pytest.mark.parametrize('change,status', [
+    ('no-source', 'unknown'), ('no-source-engine', 'unknown'), ('no-demo', 'unverified'),
+    ('wrong-runtime', 'conflict'), ('wrong-demo-source', 'conflict'), ('wrong-media', 'conflict'),
+    ('wrong-render-operation', 'conflict'), ('foreign-candidate-demo', 'unverified'),
+    ('failed-technical', 'unverified'), ('missing-admission', 'unverified'),
+])
+def test_engine_projection_with_missing_or_conflicting_evidence_remains_unconfirmed(change, status):
+    run, demo = engine_projection_fixture()
+    candidate = run['candidates'][0]
+    demonstrations = [demo]
+    if change == 'no-source':
+        candidate.pop('source')
+    elif change == 'no-source-engine':
+        candidate['source'] = {}
+    elif change == 'no-demo':
+        demonstrations = []
+    elif change == 'wrong-runtime':
+        demo['runtime']['engine'] = 'canvas'
+    elif change == 'wrong-demo-source':
+        demo['source']['engine'] = 'three'
+    elif change == 'wrong-media':
+        demo['media']['sha256'] = 'b' * 64
+    elif change == 'wrong-render-operation':
+        demo['provenance']['render_operation_id'] = 'unrelated-render'
+    elif change == 'foreign-candidate-demo':
+        demo['provenance']['candidate_id'] = 'another-candidate'
+    elif change == 'failed-technical':
+        demo['technical']['status'] = 'failed'
+    else:
+        demo['runtime']['admission'] = None
+    effect = _effect_views([run], demonstrations)[0][0]
+    assert effect['engine'] is None and effect['engines'] == []
+    assert effect['engine_status'] == effect['commissions'][0]['engine_status'] == status
+
+
+def test_effect_engine_tracks_only_representative_while_other_versions_keep_their_engine():
+    original, first_demo = engine_projection_fixture('html-svg')
+    continued, next_demo = engine_projection_fixture('canvas', identity='continued', parent='original')
+    transfer, transfer_demo = engine_projection_fixture('three', identity='transfer')
+    transfer['frozen'].update(role='transfer', baseline_demonstration_id=first_demo['id'])
+    effects, _ = _effect_views([transfer, continued, original], [first_demo, next_demo, transfer_demo])
+    effect = effects[0]
+    assert effect['open_commission_id'] == 'continued'
+    assert effect['engine'] == 'canvas' and effect['engines'] == ['canvas']
+    assert {row['id']: row['engine'] for row in effect['commissions']} == {
+        'original': 'html-svg', 'continued': 'canvas', 'transfer': 'three'}
+
+
+def test_transfer_and_history_expose_the_exact_sample_engine(work):
+    service, _, _, _ = work
+    first = finish(service, start(service)['id'])
+    transfer = service.transfer('developer', first['id'], dict(request_id=str(uuid4()),
+        goal='Explain a branching intervention', structural_changes={'relations': {'before': 'chain', 'after': 'branch'}},
+        budget=dict(max_rounds=1, max_seconds=300)))
+    finish(service, transfer['id'])
+    detail = service.get('developer', first['id'])
+    assert detail['transfers'] and detail['effect']['commissions']
+    for row in detail['transfers'] + detail['effect']['commissions']:
+        assert row['engine'] == 'html-svg' and row['engine_status'] == 'rendered'

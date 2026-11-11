@@ -44,6 +44,53 @@ def _finite_number(value):
     return type(value) is int or (type(value) is float and math.isfinite(value))
 
 
+def _sample_index(demonstrations):
+    result = {}
+    for demonstration in demonstrations:
+        candidate_id = demonstration.get('provenance', {}).get('candidate_id')
+        if type(candidate_id) is str:
+            result.setdefault(candidate_id, []).append(demonstration)
+    return result
+
+
+def _sample_engine(candidate, demonstrations):
+    """Describe stored media evidence, never a requested or family-wide engine."""
+    unknown = dict(engine=None, engine_status='unknown')
+    if not candidate or type(candidate.get('source')) is not dict:
+        return unknown
+    engine = candidate['source'].get('engine')
+    if engine not in ('html-svg', 'canvas', 'three'):
+        return unknown
+    unverified = dict(engine=None, engine_status='unverified')
+    linked = demonstrations.get(candidate['id'], [])
+    if not linked:
+        return unverified
+    media_sha = candidate.get('media', {}).get('sha256')
+    operation_id = candidate.get('operation_id')
+    confirmed = False
+    for demonstration in linked:
+        origin = demonstration.get('provenance', {})
+        runtime = demonstration.get('runtime', {})
+        admission = runtime.get('admission')
+        source = demonstration.get('source') or {}
+        sample_sha = demonstration.get('media', {}).get('sha256')
+        recorded = (source.get('engine'), runtime.get('engine'))
+        if (any(value is not None and value != engine for value in recorded)
+                or (media_sha and sample_sha and media_sha != sample_sha)
+                or (operation_id and origin.get('render_operation_id')
+                    and operation_id != origin['render_operation_id'])):
+            return dict(engine=None, engine_status='conflict')
+        confirmed |= (recorded == (engine, engine)
+            and type(media_sha) is str and len(media_sha) == 64
+            and set(media_sha) <= set('0123456789abcdef') and sample_sha == media_sha
+            and type(operation_id) is str and bool(operation_id)
+            and origin.get('render_operation_id') == operation_id
+            and candidate.get('technical', {}).get('status') == 'passed'
+            and demonstration.get('technical', {}).get('status') == 'passed'
+            and type(admission) is dict and admission.get('status') == 'admitted')
+    return dict(engine=engine, engine_status='rendered') if confirmed else unverified
+
+
 def _effect_views(runs, demonstrations):
     """Group only owner-scoped, explicit frozen lineage; never infer a method.
 
@@ -52,6 +99,7 @@ def _effect_views(runs, demonstrations):
     """
     by_id = {run['id']: run for run in runs}
     demos = {row['id']: row for row in demonstrations}
+    samples = _sample_index(demonstrations)
     parents, kinds, direct_issues = {}, {}, {}
     for run in runs:
         identity, frozen = run['id'], run['frozen']
@@ -125,19 +173,23 @@ def _effect_views(runs, demonstrations):
                 representative = current
         candidate = next((item for item in _candidates(representative)
                           if item['id'] == representative['best_candidate_id']), None)
+        engine = _sample_engine(candidate, samples)
         best = (dict(id=candidate['id'], media_url=_public_url(
-            representative['id'], candidate['id'], 'media')) if candidate else None)
+            representative['id'], candidate['id'], 'media'), **engine) if candidate else None)
         summaries = [dict(id=run['id'], title=run['title'],
             role=run['frozen'].get('role', 'reference'), kind=kinds[run['id']], state=run['state'],
             best_candidate_id=run['best_candidate_id'],
             base_commission_id=run['frozen'].get('base_commission_id'),
-            stop_reason=run['stop_reason'], created_at=run['created_at']) for run in reversed(members)]
+            stop_reason=run['stop_reason'], created_at=run['created_at'],
+            **_sample_engine(next((item for item in _candidates(run)
+                if item['id'] == run['best_candidate_id']), None), samples)) for run in reversed(members)]
         issues = sorted({relation_issues[run['id']] for run in members if relation_issues[run['id']]})
         active = next((run for run in members if run['state'] not in TERMINAL), None)
         effect = dict(id=effect_id, effect_id=effect_id, title=original['title'],
             goal=original['frozen']['goal'], state=active['state'] if active else representative['state'],
             request_id=representative['request_id'], open_commission_id=representative['id'],
             media_url=best['media_url'] if best else None, best_candidate=best,
+            **engine, engines=[engine['engine']] if engine['engine'] else [],
             commissions=summaries, relationship_status='needs_review' if issues else 'verified',
             relationship_issues=issues)
         effects.append(effect)
@@ -193,23 +245,28 @@ class AnimationMethodService:
     def catalogue(self, owner):
         rows = []
         runs = self.commissions.list_all(owner)
-        effects, _ = _effect_views(runs, self.methods.list_demonstrations(owner))
+        demonstrations = self.methods.list_demonstrations(owner)
+        samples = _sample_index(demonstrations)
+        effects, _ = _effect_views(runs, demonstrations)
         for run in runs:
             candidate = next((item for item in _candidates(run) if item['id'] == run['best_candidate_id']), None)
-            best = (dict(id=candidate['id'], media_url=_public_url(run['id'], candidate['id'], 'media'))
+            engine = _sample_engine(candidate, samples)
+            best = (dict(id=candidate['id'], media_url=_public_url(run['id'], candidate['id'], 'media'), **engine)
                     if candidate else None)
             row = dict(id=run['id'], title=run['title'], goal=run['frozen']['goal'],
                        request_id=run['request_id'], state=run['state'], best_candidate_id=run['best_candidate_id'],
-                       best_candidate=best, stop_reason=run['stop_reason'])
+                       best_candidate=best, stop_reason=run['stop_reason'], **engine)
             rows.append(row)
         return dict(schema='video.animation-method-lab.v1', effects=effects, commissions=rows,
                     availability=dict(enabled=self.author is not None and self.reviewer is not None
-                        and self.renderer is not None, reason=None))
+                        and self.renderer is not None, reason=None, allowed_engines=['html-svg']))
 
     def get(self, owner, commission_id):
         run = self.commissions.get(owner, commission_id)
         all_demos = self.methods.list_demonstrations(owner)
-        _, membership = _effect_views(self.commissions.list_all(owner), all_demos)
+        all_runs = self.commissions.list_all(owner)
+        _, membership = _effect_views(all_runs, all_demos)
+        samples = _sample_index(all_demos)
         effect = membership[commission_id]
         demos = {row['provenance'].get('candidate_id'): row for row in all_demos}
         methods, candidates = {}, []
@@ -220,7 +277,8 @@ class AnimationMethodService:
                 source_url=_public_url(commission_id, candidate['id'], 'source'),
                 technical_status=candidate.get('technical', {}).get('status', 'unverified'),
                 method_version_ids=candidate.get('method_versions', []),
-                demonstration_id=demos.get(candidate['id'], {}).get('id'))
+                demonstration_id=demos.get(candidate['id'], {}).get('id'),
+                **_sample_engine(candidate, samples))
             candidates.append(row)
             for version_id in candidate.get('method_versions', []):
                 methods[version_id] = self.methods.get_method(owner, version_id)
@@ -247,8 +305,12 @@ class AnimationMethodService:
                 continue
             demo = demo_ids[validation['demonstration_version_id']]
             origin = demo['provenance']
+            origin_run = next((item for item in all_runs if item['id'] == origin['commission_id']), None)
+            origin_candidate = next((item for item in _candidates(origin_run)
+                if item['id'] == origin['candidate_id']), None) if origin_run else None
             transfers.append(dict(validation, title=demo['title'], goal=demo['goal'],
                 demonstration_id=demo['id'],
+                **_sample_engine(origin_candidate, _sample_index([demo])),
                 media_url=_public_url(origin['commission_id'], origin['candidate_id'], 'media'),
                 source_url=_public_url(origin['commission_id'], origin['candidate_id'], 'source')))
         relevant_demos = [demo_ids[row['demonstration_version_id']] for row in validations
@@ -271,8 +333,11 @@ class AnimationMethodService:
                 error = code
         return dict(schema='video.animation-method-lab-detail.v1', id=run['id'], request_id=run['request_id'],
             effect={key: deepcopy(effect[key]) for key in (
-                'id', 'title', 'open_commission_id', 'commissions', 'relationship_status', 'relationship_issues')},
+                'id', 'title', 'open_commission_id', 'commissions', 'relationship_status', 'relationship_issues',
+                'engine', 'engine_status', 'engines')},
             title=run['title'], goal=run['frozen']['goal'], state=run['state'],
+            **({key: best[key] for key in ('engine', 'engine_status')} if best else
+               dict(engine=None, engine_status='unknown')),
             budget=run['budget'], usage=run['usage'], remaining=run['remaining'],
             criteria=standards, candidates=candidates, best_candidate_id=run['best_candidate_id'],
             baseline_candidate=next((row for row in candidates if row['id'] ==

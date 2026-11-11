@@ -19,9 +19,11 @@
       <section id="gallery-home" aria-labelledby="gallery-title">
         <div class="page-heading"><div><p class="eyebrow">从完整效果，打磨创作方法</p><h1 id="gallery-title">让过程更清楚，让表达更生动</h1><p class="muted">每个效果汇集相关版本与实验。提交参考或表达目标，比较完整样片，积累可交付的创作方法。</p></div><span id="gallery-count" class="count"></span></div>
         <p id="gallery-availability" class="muted" role="status"></p>
+        <p id="gallery-engine-availability" class="engine-availability small" role="status"></p>
         <div id="gallery-preview-note" class="panel" hidden><strong>先确认界面与功能</strong><p class="muted">当前先开放前端预览。你可以查看效果库、填写目标，以及浏览样片比较、修改意见、迁移验证和发布的位置；暂不启动生成任务。</p><button id="gallery-preview-detail" class="button secondary" type="button">查看样片详情布局</button></div>
-        <div class="gallery-tools"><label class="search-label" for="gallery-search">查找效果<input id="gallery-search" type="search" placeholder="按表达目标或效果名称查找" autocomplete="off"></label><label for="gallery-state">状态<select id="gallery-state"><option value="all">全部</option><option value="active">制作中</option><option value="review">待评价</option><option value="published">已发布</option></select></label></div>
+        <div class="gallery-tools"><label class="search-label" for="gallery-search">查找效果<input id="gallery-search" type="search" placeholder="名称、表达目标或渲染技术" autocomplete="off"></label><label for="gallery-state">状态<select id="gallery-state"><option value="all">全部</option><option value="active">制作中</option><option value="review">待评价</option><option value="published">已发布</option></select></label><label for="gallery-engine">渲染技术<select id="gallery-engine"><option value="all">全部</option><option value="html-svg">HTML/SVG</option><option value="canvas">Canvas 2D</option><option value="three">Three.js</option><option value="unknown">待确认</option></select></label></div>
         <div id="gallery-cards" class="gallery-grid" aria-live="polite"></div>
+        <div id="gallery-no-results" class="filter-empty" role="status" hidden><p id="gallery-no-results-message" class="muted"></p><button id="gallery-reset" class="button secondary" type="button">清除筛选</button></div>
         <div id="gallery-empty" class="empty-state" hidden><span aria-hidden="true">◈</span><h2>从一个想学会的效果开始</h2><p>描述希望观众看懂什么，或给出一段参考视频。样片不加讲解旁白，可保留需要的音效。</p><button id="gallery-empty-new" class="button primary" type="button">提交第一个目标</button></div>
       </section>
       <section id="gallery-detail" hidden aria-labelledby="detail-title"></section>
