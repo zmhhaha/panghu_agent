@@ -127,7 +127,11 @@ class Store(AudioStoreMixin):
                 if op['kind'] == 'storyboard':
                     project['storyboard_operation'] = self._op_public(op)
                 else:
-                    self._scene(project, op['scene_id'])['operation'] = self._op_public(op)
+                    # Joint planning can replace the scene structure. Historical
+                    # jobs and media remain readable under the owning project.
+                    scene = next((s for s in project['scenes'] if s['id'] == op['scene_id']), None)
+                    if scene is not None:
+                        scene['operation'] = self._op_public(op)
             return self._attach_audio(db, project)
 
     def scene_project(self, owner, scene_id):

@@ -53,6 +53,18 @@ def visual_generation_description(scene, *, enforce_limit=False):
     or a second copy of the narration.
     """
     description = scene['visual_description']
+    joint = scene.get('joint_plan')
+    if isinstance(joint, dict) and joint.get('visual_binding_sha256') == scene_visual_binding(scene):
+        extra = ('\n\n已采用的整片联合方案：\n表达构思：' + joint['expression']
+                 + '\n统一视觉风格：' + joint['visual_style']
+                 + '\n跨段衔接意图：' + joint['continuity']
+                 + '\n画面关键点：\n' + '\n'.join('- ' + point for point in joint['key_points'])
+                 + '\n画面展开顺序：\n' + '\n'.join(f'{i}. {step}' for i, step in enumerate(joint['visual_steps'], 1))
+                 + '\n旁白表达提示：' + joint['delivery_note']
+                 + '\n让对象和关系随讲解展开，关键词服务于理解，避免铺满旁白字幕。')
+        if enforce_limit:
+            _require(len(description) + len(extra) <= 10000, 'joint_plan_visual_requires_split')
+        return description + extra
     explanation = scene.get('explanation')
     if not isinstance(explanation, dict) or explanation.get('visual_binding_sha256') != scene_visual_binding(scene):
         return description

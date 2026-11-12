@@ -106,7 +106,7 @@ class BatchStore:
     def _busy(self, db, owner, project_id, *, exclude_batch=None):
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         for table in ('operations', 'motion_operations', 'audio_operations',
-                      'explanation_operations', 'video_renders'):
+                      'explanation_operations', 'joint_plan_operations', 'video_renders'):
             if table in tables:
                 for row in db.execute('SELECT document FROM ' + table + ' WHERE project_id=?', (project_id,)):
                     _require(json.loads(row[0]).get('status') in CHILD_TERMINAL, 'batch_project_busy', 409)

@@ -62,7 +62,7 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
   const pageEvents = new Element(), windowEvents = new Element(), calls = [], timers = new Map(), frames = new Map();
   let timerSequence = 0, frameSequence = 0, releaseMotionRead, delayMotionRead = true;
   const idle = project('idle'), motionBusy = project('motion-busy'), explanationBusy = project('explanation-busy');
-  const batchBusy = project('batch-busy'), historical = project('historical', 'static');
+  const batchBusy = project('batch-busy'), jointBusy = project('joint-busy'), historical = project('historical', 'static');
   const audition = project('audition');
   const unmade = project('unmade'); unmade.scenes = [];
   const auditionScene = audition.scenes[0];
@@ -85,12 +85,12 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
   secondDraftScene.motion.head_version_id = 'audition-second-motion';
   audition.scenes.push(secondDraftScene);
   motionBusy.scenes[0].motion.operation = { id: 'motion-op', status: 'running' };
-  const all = [idle, motionBusy, explanationBusy, batchBusy, historical, audition, unmade];
+  const all = [idle, motionBusy, explanationBusy, jointBusy, batchBusy, historical, audition, unmade];
   let listedProjects = [];
   const batch = { id: 'batch-op', project_id: batchBusy.id, status: 'running', items: [] };
   const settings = { user_id: 'offline-bootstrap-test', csrf_token: 'offline-only',
     motion_enabled: true, motion_configured: true, motion_render_configured: true,
-    batch_enabled: true, explanation_configured: true, speech_configured: true,
+    batch_enabled: true, explanation_configured: true, joint_plan_configured: true, speech_configured: true,
     speech_voice: 'test-voice', speech_voices: [{ id: 'test-voice', name: '测试音色', default: true },
       { id: 'other-voice', name: '另一音色' }] };
   const writes = [], voiceWrites = [], sceneWrites = [], mutationCalls = [];
@@ -171,6 +171,8 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
         result = p;
       } else if (suffix === 'explanation') result = { versions: [],
         operation: id === explanationBusy.id ? { id: 'explanation-op', status: 'running' } : null };
+      else if (suffix === 'joint-plan') result = { versions: [],
+        operation: id === jointBusy.id ? { id: 'joint-op', status: 'running' } : null };
       else if (suffix === 'batches') result = { batches: id === batchBusy.id ? [batch] : [] };
       else assert.fail(`Unexpected application request ${path}`);
     }
@@ -208,7 +210,8 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
     healthy(idle.id);
     assert.equal($('session-label').textContent, '已连接工作台');
     assert.equal($('generate-motion').disabled, false);
-    assert.equal($('generate-explanation').disabled, false);
+    assert.equal($('generate-explanation').disabled, true, 'Previous planner remains available for historical review only');
+    assert.equal($('generate-joint-plan').disabled, false);
     assert.equal($('preview-batch').disabled, false);
 
     const selectingMotion = clickProject(motionBusy.id);
@@ -224,6 +227,13 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
     healthy(explanationBusy.id);
     assert.equal($('generate-motion').disabled, true, 'Explanation work still blocks competing motion work');
     assert.equal($('preview-batch').disabled, true);
+
+    await clickProject(jointBusy.id);
+    healthy(jointBusy.id);
+    assert.equal($('generate-joint-plan').disabled, true);
+    assert.equal($('generate-motion').disabled, true, 'Whole-video planning blocks competing scene work');
+    assert.equal($('preview-batch').disabled, true);
+    assert.equal($('convert-project-motion').disabled, true);
 
     await clickProject(batchBusy.id);
     healthy(batchBusy.id);
@@ -248,13 +258,14 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
     await $('refresh-all').emit('click');
     assert.equal($('generate-audio').disabled, true);
     assert.equal($('generate-explanation').disabled, true);
+    assert.equal($('generate-joint-plan').disabled, true);
     assert.equal($('generate-motion').disabled, true);
     assert.equal($('preview-batch').disabled, true);
 
     await clickProject(historical.id);
     healthy(historical.id);
     assert.equal($('batch-panel').hidden, true);
-    assert.equal($('generate-explanation').disabled, false, 'Previous project activity cannot leak into the new project');
+    assert.equal($('generate-joint-plan').disabled, false, 'Previous project activity cannot leak into the new project');
     assert.equal($('convert-project-motion').disabled, false);
     motionBusy.scenes[0].motion.operation.status = 'uncertain';
     await clickProject(motionBusy.id);
@@ -271,6 +282,7 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
     healthy(idle.id);
     assert.ok(calls.includes('/api/projects/batch-busy/batches'));
     assert.ok(calls.includes('/api/projects/explanation-busy/explanation'));
+    assert.ok(calls.includes('/api/projects/joint-busy/joint-plan'));
     const mediaIds = [...html.matchAll(/<(?:audio|video)\b[^>]*\bid="([^"]+)"/g)].map(match => match[1]);
     const pauseAll = () => mediaIds.forEach(id => $(id).pause());
     await t.test('candidate narration and timing audition stop each other when native controls start playback', async () => {
@@ -604,7 +616,7 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
         const beforeResume = calls.length;
         await Promise.all([pageEvents.emit('visibilitychange'), windowEvents.emit('focus'), windowEvents.emit('pageshow')]);
         const resumed = calls.slice(beforeResume);
-        for (const suffix of ['', '/renders', '/motion', '/explanation', '/batches', '/continuity']) {
+        for (const suffix of ['', '/renders', '/motion', '/explanation', '/joint-plan', '/batches', '/continuity']) {
           // Continuity is feature-gated in this fixture; the enabled panels must all catch up.
           if (suffix === '/continuity') continue;
           assert.equal(resumed.filter(path => path === `/api/projects/batch-busy${suffix}`).length, 1, suffix);

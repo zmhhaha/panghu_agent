@@ -38,19 +38,38 @@
         <div class="workspace-heading"><div><div class="eyebrow">制作中的项目</div><h1 id="project-title"></h1><p id="project-meta"></p><div id="project-duration-summary" class="field-note" aria-live="polite"></div></div></div>
         <section class="production-mode-panel" id="production-mode-panel" aria-label="项目制作方式"><div><strong id="production-mode-label">动态视频制作</strong><p id="production-mode-note"></p></div><button class="button secondary" id="convert-project-motion" type="button" hidden>转为动态制作</button></section>
         <details class="brief-panel"><summary><span>文稿与视觉方向</span><small>查看项目原稿</small><span aria-hidden="true">⌄</span></summary><div class="brief-content"><div><h3>原始文稿</h3><p class="preserve-whitespace" id="project-script"></p></div><div><h3>视觉方向</h3><p class="preserve-whitespace" id="project-style"></p></div></div></details>
+        <details class="explanation-panel joint-plan-panel" id="joint-plan-panel" hidden open>
+          <summary><span>整片制作方案</span><small>总文稿 → 旁白、画面与衔接 → 一次整体确认</small><span aria-hidden="true">⌄</span></summary>
+          <div class="explanation-content">
+            <p class="field-note">从总文稿规划完整视频。无需提前拆镜头，由 Agent 安排表达段落、旁白与画面。先看完整方案，再一次确认；方案采用后，可继续制作画面与配音。</p>
+            <form id="joint-plan-form">
+              <div class="explanation-brief-grid"><label>讲给谁听 <span class="optional">选填</span><input id="joint-plan-audience" maxlength="300" placeholder="例如：第一次接触这个概念的观众"></label><label>讲述方式<select id="joint-plan-tone"><option value="conversational">自然口语 · 便于理解</option><option value="precise">严谨说明 · 清楚准确</option><option value="storytelling">循序讲述 · 用过程解释</option></select></label></div>
+              <label>希望观众理解什么 <span class="optional">选填</span><textarea id="joint-plan-goal" rows="3" maxlength="1200" placeholder="例如：理解这个过程为什么有效，以及关键步骤之间的关系。"></textarea></label>
+              <label>制作要求 <span class="optional">选填</span><textarea id="joint-plan-instruction" rows="3" maxlength="2000" placeholder="例如：用一个贯穿的例子，不堆砌术语，让画面跟随讲解逐步展开。"></textarea></label>
+              <label class="checkbox-label joint-plan-preserve"><input id="joint-plan-preserve-script" type="checkbox">保留原稿措辞，只安排段落与画面</label><p class="field-note">未勾选时，可在保留事实和原意的基础上，把原稿整理成更适合讲述的旁白。原始总文稿始终保留。</p>
+              <div class="explanation-actions"><p class="field-note" id="joint-plan-form-note"></p><button class="text-button" id="reload-joint-plan" type="button">重新读取方案</button><button class="button primary" id="generate-joint-plan" type="submit" disabled>生成整片方案</button></div>
+            </form>
+            <p class="explanation-read-error" id="joint-plan-read-error" role="alert" hidden></p>
+            <div class="operation-banner" id="joint-plan-status" role="status" hidden><span class="status-dot"></span><span id="joint-plan-status-text"></span><button class="text-button" id="cancel-joint-plan" type="button" hidden>申请取消</button></div>
+            <div class="explanation-version-row"><label>审阅整片方案<select id="joint-plan-version" disabled><option>尚无整片方案</option></select></label><button class="text-button" id="joint-plan-new-candidate" type="button" hidden>查看最新候选 →</button></div>
+            <p class="field-note" id="joint-plan-empty">方案完成后，可查看整体目标、视觉方向、旁白和各段落的画面展开。全片统一使用项目音色。</p>
+            <div id="joint-plan-review" class="explanation-review" aria-live="polite"></div>
+            <div class="explanation-adoption" id="joint-plan-adoption" hidden><p id="joint-plan-adoption-note" class="field-note"></p><label class="checkbox-label"><input id="confirm-joint-plan-adoption" type="checkbox">我已审阅完整方案，确认采用全部段落</label><button class="button primary" id="adopt-joint-plan" type="button" disabled>采用整份方案</button></div>
+          </div>
+        </details>
         <div class="operation-banner" id="storyboard-status" role="status" hidden><span class="status-dot"></span><span id="storyboard-status-text"></span><button type="button" class="text-button" id="reload-storyboard" hidden>重新读取拆镜状态</button><button class="text-button" id="cancel-storyboard" type="button">申请取消</button></div>
 
-        <details class="explanation-panel" id="explanation-panel" hidden open><summary><span>项目讲解方案</span><small>统筹旁白、画面重点与展开方式</small><span aria-hidden="true">⌄</span></summary><div class="explanation-content">
-          <p class="field-note">把各镜头的旁白、画面重点和展开步骤整理成一致的讲解。先审阅方案，再决定采用；也可以直接编辑镜头。生成方案不会自动启动配音或视频制作。</p>
-          <form id="explanation-form">
+        <details class="explanation-panel" id="explanation-panel" hidden><summary><span>历史讲解方案</span><small>查看之前按镜头整理的方案</small><span aria-hidden="true">⌄</span></summary><div class="explanation-content">
+          <p class="field-note">这里保留历史方案和在途任务。新的制作请使用上方的「整片制作方案」。</p>
+          <form id="explanation-form" hidden>
             <div class="explanation-brief-grid"><label>讲给谁听 <span class="optional">选填</span><input id="explanation-audience" maxlength="300" placeholder="例如：第一次接触这个概念的开发者"></label><label>讲述方式<select id="explanation-tone"><option value="conversational">自然口语 · 便于理解</option><option value="precise">严谨说明 · 清楚准确</option><option value="storytelling">循序讲述 · 用过程解释</option></select></label></div>
             <label>希望观众理解什么 <span class="optional">选填</span><textarea id="explanation-goal" rows="3" maxlength="1200" placeholder="例如：讲清两类记录的区别，以及为什么下一轮要采用不同的处理方式。"></textarea></label>
             <label>这次额外调整 <span class="optional">选填</span><textarea id="explanation-instruction" rows="2" maxlength="2000" placeholder="例如：减少术语堆叠，用一个连贯例子讲完整个过程。"></textarea></label>
-            <div class="explanation-actions"><p class="field-note" id="explanation-form-note"></p><button class="text-button" id="reload-explanation" type="button">重新读取方案</button><button class="button secondary" id="generate-explanation" type="submit" disabled>生成一份讲解方案</button></div>
+            <div class="explanation-actions"><p class="field-note" id="explanation-form-note"></p><button class="button secondary" id="generate-explanation" type="submit" disabled>生成一份讲解方案</button></div>
           </form>
           <p class="explanation-read-error" id="explanation-read-error" role="alert" hidden></p>
           <div class="operation-banner" id="explanation-status" role="status" hidden><span class="status-dot"></span><span id="explanation-status-text"></span><button class="text-button" id="cancel-explanation" type="button" hidden>申请取消</button></div>
-          <div class="explanation-version-row"><label>审阅版本<select id="explanation-version" disabled><option>尚无讲解方案</option></select></label><button class="text-button" id="explanation-new-candidate" type="button" hidden>查看最新候选 →</button></div>
+          <div class="explanation-version-row"><label>审阅版本<select id="explanation-version" disabled><option>尚无讲解方案</option></select></label><button class="text-button" id="reload-explanation" type="button">重新读取历史方案</button><button class="text-button" id="explanation-new-candidate" type="button" hidden>查看最新候选 →</button></div>
           <p class="field-note" id="explanation-empty">方案完成后，可以查看整体建议，并逐镜比较新旧内容。生成完成不会自动采用。</p>
           <div id="explanation-review" class="explanation-review" aria-live="polite"></div>
           <div class="explanation-adoption" id="explanation-adoption" hidden><p id="explanation-adoption-note" class="field-note"></p><label class="checkbox-label"><input id="confirm-explanation-adoption" type="checkbox">我已审阅，确认采用全部镜头的讲解方案</label><button class="button primary" id="adopt-explanation" type="button" disabled>采用整份方案</button></div>
@@ -102,7 +121,7 @@
           <section class="scenes-panel" aria-labelledby="scenes-heading">
             <div class="panel-heading"><div><h2 id="scenes-heading">分镜</h2><span id="scene-count">0 个镜头</span></div><button class="icon-button bordered" id="add-scene" aria-label="新增镜头" title="新增镜头" type="button" data-testid="add-scene">＋</button></div>
             <div id="scene-list" class="scene-list" aria-label="镜头列表" data-testid="scene-list"></div>
-            <div class="scenes-empty" id="scenes-empty" hidden><span class="empty-glyph" aria-hidden="true">▧</span><h3>先给内容安排镜头</h3><p>让 Agent 按文稿拆分镜头，<br>或手动添加第一个镜头。</p><label class="storyboard-limit">最多镜头<input id="storyboard-max-scenes" type="number" min="1" max="12" step="1" required value="12" data-testid="storyboard-max-scenes"></label><button class="button primary" type="button" id="create-storyboard" data-testid="create-storyboard">按文稿拆分镜头</button><button class="text-button" type="button" id="empty-add-scene">手动添加镜头</button></div>
+            <div class="scenes-empty" id="scenes-empty" hidden><span class="empty-glyph" aria-hidden="true">▧</span><h3>从整片方案开始</h3><p>在上方生成并采用「整片制作方案」，<br>即可一次建立全部表达段落。</p><details class="manual-storyboard"><summary>手动安排镜头</summary><label class="storyboard-limit">最多镜头<input id="storyboard-max-scenes" type="number" min="1" max="12" step="1" required value="12" data-testid="storyboard-max-scenes"></label><button class="button secondary" type="button" id="create-storyboard" data-testid="create-storyboard">按文稿拆分镜头</button><button class="text-button" type="button" id="empty-add-scene">手动添加镜头</button></details></div>
           </section>
 
           <section class="scene-workspace" id="scene-workspace" aria-label="镜头制作" hidden>
@@ -162,7 +181,7 @@
             </div>
           </section>
 
-          <div class="select-scene-empty" id="select-scene-empty"><span class="empty-glyph" aria-hidden="true">▧</span><h2>让每段讲解，逐步展开。</h2><p>先安排镜头，再制作动态图解和配音，<br>通过视频草稿比较和修改。</p></div>
+          <div class="select-scene-empty" id="select-scene-empty"><span class="empty-glyph" aria-hidden="true">▧</span><h2>让每段讲解，逐步展开。</h2><p>先确认完整制作方案，再制作画面与配音，<br>通过视频草稿比较和修改。</p></div>
         </div>
       </section>
       <div class="loading-view" id="loading-view" role="status" hidden><span class="loader"></span><p>正在读取项目…</p></div>

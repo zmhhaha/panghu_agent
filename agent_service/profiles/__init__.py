@@ -3,6 +3,9 @@ from .base import ProfileImplementation, ProfileLimits
 
 
 def implementation(name):
+    if name == 'video.joint-plan.v1':
+        from .video_joint_plan import VideoJointPlanProfile
+        return VideoJointPlanProfile()
     if name == 'workspace-task.v1':
         from .text import TextProfile
         return TextProfile()

@@ -191,3 +191,25 @@ class ProductionAgentSettings:
         except ValueError:
             raise ValueError('Invalid dedicated VIDEO_PRODUCTION_AGENT origin, credential or revision configuration') from None
         return cls(settings.base_url, settings.token, settings.revision) if settings else None
+
+
+@dataclass(frozen=True, repr=False)
+class JointPlanAgentSettings:
+    """Dedicated caller identity for joint planning, without authoring scope."""
+    base_url: str
+    token: str
+    revision: str = '1'
+
+    @classmethod
+    def from_env(cls, env=None):
+        env = os.environ if env is None else env
+        try:
+            settings = AgentSettings.from_env({
+                'VIDEO_AGENT_URL': env.get('VIDEO_JOINT_PLAN_AGENT_URL', ''),
+                'VIDEO_AGENT_TOKEN': env.get('VIDEO_JOINT_PLAN_AGENT_TOKEN', ''),
+                'VIDEO_AGENT_TOKEN_FILE': env.get('VIDEO_JOINT_PLAN_AGENT_TOKEN_FILE', ''),
+                'VIDEO_AGENT_PROFILE_REVISION': env.get('VIDEO_JOINT_PLAN_PROFILE_REVISION', '1'),
+            })
+        except ValueError:
+            raise ValueError('Invalid dedicated VIDEO_JOINT_PLAN_AGENT configuration') from None
+        return cls(settings.base_url, settings.token, settings.revision) if settings else None

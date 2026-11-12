@@ -25,7 +25,8 @@ from agent_service.client import AgentClient
 from agent_service.contracts import ServiceError
 from .agent import VideoAgentGateway
 from .config import (AgentSettings, ExplanationSettings, MotionSettings,
-                     ProductionMethodSettings, ProductionAgentSettings, creative_runtime_capabilities)
+                     ProductionMethodSettings, ProductionAgentSettings, JointPlanAgentSettings,
+                     creative_runtime_capabilities)
 from .service import Workflow
 from .store import Store
 from .speech import SpeechClient, SpeechSettings, MAX_AUDIO_BYTES
@@ -34,6 +35,9 @@ from .production import Production
 from .explanation_gateway import ExplanationAgentGateway
 from .explanation_store import ExplanationStore
 from .explanation_workflow import ExplanationWorkflow
+from .joint_plan_gateway import JointPlanAgentGateway
+from .joint_plan_store import JointPlanStore
+from .joint_plan_workflow import JointPlanWorkflow
 from .motion_store import MotionStore
 from .motion_timing import MotionTiming
 from .motion_workflow import MotionWorkflow
@@ -50,6 +54,17 @@ UI_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'sel
           "media-src 'self'; frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 
 MESSAGES = {
+    'joint_plan_disabled': '整片联合方案尚未启用。',
+    'joint_plan_profile_unavailable': '通用 Agent 尚未启用整片联合规划能力。',
+    'joint_plan_preflight_unavailable': '未能确认整片规划能力，尚未提交任务，请稍后再试。',
+    'joint_plan_operation_in_progress': '项目已有规划任务，请等待完成或申请取消。',
+    'joint_plan_stale': '文稿、镜头或配音设置已变化，请基于当前项目重新生成方案。',
+    'joint_plan_head_conflict': '已采用方案发生变化，请重新读取后核对。',
+    'joint_plan_visual_requires_split': '规划的画面说明过长，请缩短说明或拆分为更短的片段。',
+    'joint_plan_storage_limit': '本项目的规划记录已达到当前存储限制。',
+    'joint_plan_candidate_limit': '本项目的规划候选数量已达到限制。',
+    'joint_plan_operation_limit': '本项目的规划任务记录已达到限制。',
+    'joint_plan_queue_limit': '规划任务较多，请等待已有任务完成。',
     'not_found': '项目或资源不存在。', 'revision_conflict': '项目已更新，请核对最新内容后重试。',
     'head_conflict': '采用版本已变化，请核对后重试。', 'idempotency_conflict': '请求标识已用于另一次操作。',
     'operation_in_progress': '这个镜头或项目已有任务，请等待完成。',
@@ -245,6 +260,10 @@ class ExplanationAdoption(Revision):
     expected_head_version_id: str | None = Field(max_length=100)
 
 
+class JointPlanRequest(ExplanationRequest):
+    preserve_script: bool = Field(default=False, strict=True)
+
+
 class Generation(Revision):
     base_version_id: str | None = Field(default=None, max_length=100)
     instruction: str = Field(default='', max_length=8000)
@@ -435,11 +454,18 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                explanation_gateway=None, explanation_enabled=None, motion_gateway=None,
                motion_enabled=None, motion_renderer=None, motion_runtime=None,
                process_gateway=None, process_enabled=None, creative_gateway=None, creative_enabled=None,
-               method_adapter=None, creative_capabilities=None):
+               method_adapter=None, creative_capabilities=None, joint_plan_gateway=None,
+               joint_plan_enabled=None):
     explanation_settings = ExplanationSettings.from_env()
     enabled = explanation_settings.enabled if explanation_enabled is None else explanation_enabled
     if type(enabled) is not bool:
         raise ValueError('An explicit boolean explanation feature gate is required')
+    joint_setting = os.environ.get('VIDEO_JOINT_PLAN_ENABLED', '1' if enabled else '0')
+    if joint_plan_enabled is None and joint_setting not in {'0', '1'}:
+        raise ValueError('Invalid joint plan feature settings')
+    joint_gate = joint_setting == '1' if joint_plan_enabled is None else joint_plan_enabled
+    if type(joint_gate) is not bool:
+        raise ValueError('An explicit boolean joint plan feature gate is required')
     motion_settings = MotionSettings.from_env()
     if creative_capabilities is None:
         creative_capabilities = creative_runtime_capabilities(
@@ -457,6 +483,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     creative_gate = creative_gate and motion_gate
     owned_client = None
     owned_production_client = None
+    owned_joint_plan_client = None
     owned_speech_client = None
     if gateway is None:
         settings = AgentSettings.from_env()
@@ -509,6 +536,18 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                 lambda owner: method_request(method_client.published_catalog, owner),
                 lambda owner, body: method_request(method_client.published_methods, owner, body),
                 ledger_path=Path(store.path).with_name('production-method-freezes.sqlite3'))
+    if joint_plan_gateway is None:
+        joint_settings = JointPlanAgentSettings.from_env()
+        if joint_settings:
+            owned_joint_plan_client = AgentClient(joint_settings.base_url, joint_settings.token)
+        joint_client = owned_joint_plan_client or owned_production_client or (
+            gateway.client if isinstance(gateway, VideoAgentGateway) else None)
+        if joint_client is not None:
+            joint_plan_gateway = JointPlanAgentGateway(joint_client,
+                os.environ.get('VIDEO_JOINT_PLAN_PROFILE_REVISION', '1'))
+    joint_plan_store = JointPlanStore(store, runtime_capabilities=creative_capabilities)
+    joint_plan_workflow = JointPlanWorkflow(joint_plan_store, joint_plan_gateway, enabled=joint_gate,
+                                           method_adapter=method_adapter)
     motion_workflow = MotionWorkflow(motion_store, motion_gateway, enabled=motion_gate,
                                     process_gateway=process_gateway, process_enabled=process_gate,
                                     creative_gateway=creative_gateway, creative_enabled=creative_gate,
@@ -531,6 +570,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         if background:
             workflow.start()
             explanation_workflow.start()
+            joint_plan_workflow.start()
             motion_workflow.start()
             audio_workflow.start()
             production.start()
@@ -541,6 +581,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         audio_workflow.stop()
         workflow.stop()
         explanation_workflow.stop()
+        joint_plan_workflow.stop()
         motion_workflow.stop()
         if owned_motion_renderer is not None and hasattr(owned_motion_renderer, 'close'):
             owned_motion_renderer.close()
@@ -548,6 +589,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
             owned_client.close()
         if owned_production_client:
             owned_production_client.close()
+        if owned_joint_plan_client:
+            owned_joint_plan_client.close()
         if owned_speech_client:
             owned_speech_client.close()
 
@@ -555,6 +598,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     app.state.store, app.state.workflow = store, workflow
     app.state.audio_workflow, app.state.production = audio_workflow, production
     app.state.explanation_store, app.state.explanation_workflow = explanation_store, explanation_workflow
+    app.state.joint_plan_store, app.state.joint_plan_workflow = joint_plan_store, joint_plan_workflow
     app.state.motion_store, app.state.motion_workflow, app.state.motion_timing = motion_store, motion_workflow, motion_timing
     app.state.continuity_store = continuity_store
     app.state.batch_store, app.state.batch_workflow = batch_store, batch_workflow
@@ -646,6 +690,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     speech_voices=speech_client.voice_catalog if speech_client else [],
                     media_configured=production.enabled,
                     explanation_configured=enabled and explanation_gateway is not None,
+                    joint_plan_configured=joint_gate and joint_plan_gateway is not None,
                     motion_enabled=motion_gate, motion_configured=motion_gate and motion_gateway is not None,
                     process_enabled=process_gate, process_configured=process_gate and process_gateway is not None,
                     creative_enabled=creative_gate, creative_configured=creative_gate and creative_gateway is not None
@@ -798,6 +843,24 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     def render_motion(project_id: str, body: MotionRenderRequest, owner=Depends(mutation),
                       idempotency_key: str | None = Header(default=None)):
         return production.start_motion_render(owner, project_id, body.model_dump(), idempotency(idempotency_key))
+
+    @app.get('/api/projects/{project_id}/joint-plan')
+    def joint_plan(project_id: str, owner=Depends(identity)):
+        return joint_plan_store.project(owner, project_id)
+
+    @app.post('/api/projects/{project_id}/joint-plan', status_code=202)
+    def generate_joint_plan(project_id: str, body: JointPlanRequest, owner=Depends(mutation),
+                            idempotency_key: str | None = Header(default=None, alias='Idempotency-Key')):
+        joint_plan_workflow.require_gateway()
+        return joint_plan_store.start(owner, project_id, body.model_dump(), idempotency(idempotency_key))
+
+    @app.post('/api/projects/{project_id}/joint-plan/adopt')
+    def adopt_joint_plan(project_id: str, body: ExplanationAdoption, owner=Depends(mutation)):
+        return joint_plan_store.adopt(owner, project_id, body.model_dump())
+
+    @app.post('/api/joint-plan-operations/{operation_id}/cancel')
+    def cancel_joint_plan(operation_id: str, owner=Depends(mutation)):
+        return joint_plan_store.cancel(owner, operation_id)
 
     @app.get('/api/projects/{project_id}/explanation')
     def explanation(project_id: str, owner=Depends(identity)):

@@ -102,8 +102,9 @@ def service(tmp_path):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((ANIMATION_ROOT / name).read_bytes())
     from agent_service.profiles import (video_animation_review as review, video_animation_create as creation,
-        video_animation_method as method, video_animation_production as production)
+        video_animation_method as method, video_animation_production as production, video_joint_plan as joint)
     for source, names in (
+            (joint.BUNDLE_ROOT, joint.BUNDLE_FILES),
             (review.BUNDLE_ROOT, review.BUNDLE_FILES),
             (review.SEQUENCE_BUNDLE_ROOT, review.SEQUENCE_BUNDLE_FILES),
             (review.BATCH_BUNDLE_ROOT, review.BATCH_BUNDLE_FILES),
@@ -462,7 +463,9 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
             'agent_service/resources/animation-method-v2/' + name
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'method-procedure/SKILL.md')} | {
             'agent_service/resources/animation-production-v2/' + name
-            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md')}
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md')} | {
+            'agent_service/resources/video-joint-plan-v1/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'joint-plan-procedure/SKILL.md')}
     assert not any(name.endswith(("credentials.json", "NOT_ALLOWED.md", "private.py")) for name in runner.names)
 
 
@@ -551,7 +554,7 @@ def test_clean_source_context_carries_all_real_profile_resource_bytes(tmp_path, 
     context_archive(service, target, destination)
     actual = {path.relative_to(service).as_posix(): path.read_bytes()
         for path in (service / 'resources').rglob('*') if path.is_file()}
-    assert len(actual) == 66
+    assert len(actual) == 70
     with tarfile.open(destination) as archive:
         captured = {name.removeprefix('agent_service/'): archive.extractfile(name).read()
             for name in archive.getnames() if name.startswith('agent_service/resources/')}
@@ -569,9 +572,10 @@ def test_clean_source_context_carries_all_real_profile_resource_bytes(tmp_path, 
 def test_clean_builder_animation_pins_match_independently_verified_profile_bundles():
     from agent_service.build_image import ANIMATION_RUNTIME_BUNDLES
     from agent_service.profiles import (video_animation_review as review, video_animation_create as creation,
-        video_animation_method as method, video_animation_production as production)
+        video_animation_method as method, video_animation_production as production, video_joint_plan as joint)
     measured = {}
     for root, files, verify in (
+            (joint.BUNDLE_ROOT, joint.BUNDLE_FILES, joint.verified_bundle),
             (review.BUNDLE_ROOT, review.BUNDLE_FILES, review.verified_bundle),
             (review.SEQUENCE_BUNDLE_ROOT, review.SEQUENCE_BUNDLE_FILES, review.verified_sequence_bundle),
             (review.BATCH_BUNDLE_ROOT, review.BATCH_BUNDLE_FILES, review.verified_batch_bundle),

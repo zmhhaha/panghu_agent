@@ -251,6 +251,10 @@ class MotionStore:
         with self.store.transaction() as db:
             version = self._version(db, owner, version_id)
             project = self.store._project(db, owner, version['project_id'])
+            if not any(s['id'] == version['scene_id'] for s in project['scenes']):
+                # Retired by an adopted joint plan; the immutable media and
+                # source remain owner-readable, but cannot be adopted anew.
+                return dict(version, stale=True, retired=True)
             scene = self.store._scene(project, version['scene_id'])
             self.store._attach_audio(db, project)
             version['stale'] = (version['semantic_binding_sha256'] != semantic_binding(project, scene)
