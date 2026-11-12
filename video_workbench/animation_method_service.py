@@ -94,11 +94,31 @@ def _sample_engine(candidate, demonstrations):
     return dict(engine=engine, engine_status='rendered') if confirmed else unverified
 
 
-def _effect_views(runs, demonstrations):
-    """Group only owner-scoped, explicit frozen lineage; never infer a method.
+def _historical_membership_issue(previous, canonical):
+    if previous['id'] == canonical['id']:
+        return 'historical_effect_membership_self_reference'
+    for run in (previous, canonical):
+        frozen = run['frozen']
+        if (frozen.get('role', 'reference') != 'reference' or any(frozen.get(key) for key in (
+                'base_commission_id', 'base_candidate_id', 'retry_of_commission_id',
+                'baseline_demonstration_id', 'structural_changes'))):
+            return 'historical_effect_membership_frozen_relation_conflict'
+    if previous['state'] not in {'failed', 'cancelled'} or _candidates(previous):
+        return 'historical_effect_membership_previous_ineligible'
+    best = next((row for row in _candidates(canonical)
+                 if row['id'] == canonical['best_candidate_id']), None)
+    if (canonical['state'] not in TERMINAL or best is None
+            or best.get('technical', {}).get('status') != 'passed'):
+        return 'historical_effect_membership_canonical_ineligible'
+    return None
+
+
+def _effect_views(runs, demonstrations, memberships=()):
+    """Group explicit frozen lineage and separately audited historical membership.
 
     A missing/foreign ancestor or a cycle makes every affected run independent.
-    This is a read projection: neither the recorded choices nor history change.
+    Historical membership is presentation identity, never a creation baseline.
+    This read projection never changes recorded inputs, choices or history.
     """
     by_id = {run['id']: run for run in runs}
     demos = {row['id']: row for row in demonstrations}
@@ -138,6 +158,25 @@ def _effect_views(runs, demonstrations):
         if parent is not None and (type(parent) is not str or parent not in by_id):
             issue = 'ancestor_missing_or_not_owned'
         parents[identity], direct_issues[identity] = parent, issue
+
+    for membership in memberships:
+        identity = membership.get('commission_id')
+        if identity not in by_id:
+            continue
+        canonical_id = membership.get('canonical_commission_id')
+        canonical = by_id.get(canonical_id)
+        issue = ('historical_effect_membership_target_missing_or_not_owned' if canonical is None
+                 else _historical_membership_issue(by_id[identity], canonical))
+        if (not issue and any(membership.get(key) != value for key, value in (
+                ('commission_frozen_sha256', by_id[identity]['frozen_sha256']),
+                ('canonical_frozen_sha256', canonical['frozen_sha256'])))):
+            issue = 'historical_effect_membership_snapshot_changed'
+        if parents[identity] is not None or direct_issues[identity]:
+            issue = 'historical_effect_membership_frozen_relation_conflict'
+        if issue:
+            direct_issues[identity] = issue
+            continue
+        parents[identity], kinds[identity] = canonical_id, 'historical_attempt'
 
     roots, relation_issues = {}, {}
     for run in runs:
@@ -258,6 +297,9 @@ class AnimationMethodService:
             db.execute('CREATE TABLE IF NOT EXISTS feedback_withdrawal_requests (owner TEXT, '
                        'request_id TEXT, commission_id TEXT, feedback_id TEXT, sha256 TEXT, '
                        'PRIMARY KEY(owner,request_id))')
+            db.execute('CREATE TABLE IF NOT EXISTS effect_memberships (owner TEXT NOT NULL, '
+                       'commission_id TEXT NOT NULL, canonical_commission_id TEXT NOT NULL, '
+                       'document TEXT NOT NULL, PRIMARY KEY(owner,commission_id))')
             db.commit()
 
     def pending(self, limit=100):
@@ -288,13 +330,62 @@ class AnimationMethodService:
             for row in self.methods.list_demonstrations(owner)
             if row['provenance'].get('commission_id') == commission_id}
 
+    def _effect_memberships(self, owner):
+        with closing(sqlite3.connect(self.metadata_path)) as db:
+            return [json.loads(row[0]) for row in db.execute(
+                'SELECT document FROM effect_memberships WHERE owner=? ORDER BY rowid', (owner,))]
+
+    def record_effect_membership(self, owner, commission_id, canonical_commission_id, *, reason):
+        """Operator-only historical correction; never exposed as an HTTP write route.
+
+        This annotates separately created attempts after explicit owner confirmation.
+        It creates no retry or creator dependency, accepts no new execution budget,
+        and leaves both immutable commission ledgers and all media untouched.
+        """
+        _require(type(reason) is str and bool(reason.strip()) and len(reason) <= 2000)
+        previous = self.commissions.get(owner, commission_id)
+        canonical = self.commissions.get(owner, canonical_commission_id)
+        issue = _historical_membership_issue(previous, canonical)
+        _require(issue is None, issue or 'animation_method_effect_membership_invalid', 409)
+        _require(all(op['status'] in OP_TERMINAL
+                     for run in (previous, canonical) for op in run['operations']),
+                 'animation_method_effect_membership_operation_active', 409)
+        document = dict(schema='video.animation-effect-membership.v1', owner=owner,
+            commission_id=commission_id, canonical_commission_id=canonical_commission_id,
+            commission_frozen_sha256=previous['frozen_sha256'],
+            canonical_frozen_sha256=canonical['frozen_sha256'], reason=reason,
+            source='explicit_owner_historical_grouping')
+        with closing(sqlite3.connect(self.metadata_path, timeout=20)) as db:
+            db.execute('BEGIN IMMEDIATE')
+            prior = db.execute('SELECT document FROM effect_memberships WHERE owner=? AND commission_id=?',
+                               (owner, commission_id)).fetchone()
+            if prior:
+                record = json.loads(prior[0])
+                _require({key: record.get(key) for key in document} == document,
+                         'animation_method_effect_membership_conflict', 409)
+                return record
+            # Targets must remain canonical roots; never turn an existing root
+            # into a member or use another member as the target of a new link.
+            conflict = db.execute('SELECT 1 FROM effect_memberships WHERE owner=? '
+                'AND (commission_id=? OR canonical_commission_id=?) LIMIT 1',
+                (owner, canonical_commission_id, commission_id)).fetchone()
+            _require(conflict is None, 'animation_method_effect_membership_cycle_or_chain', 409)
+            # Verify already stored media only for a new annotation. Replaying
+            # an existing annotation returns its original record unchanged.
+            self.artifact(owner, canonical_commission_id, canonical['best_candidate_id'], 'media')
+            record = dict(document, created_at=self.clock())
+            db.execute('INSERT INTO effect_memberships VALUES (?,?,?,?)',
+                (owner, commission_id, canonical_commission_id, canonical_bytes(record).decode()))
+            db.commit()
+            return record
+
     def catalogue(self, owner):
         capabilities = self._capabilities()
         rows = []
         runs = self.commissions.list_all(owner)
         demonstrations = self.methods.list_demonstrations(owner)
         samples = _sample_index(demonstrations)
-        effects, _ = _effect_views(runs, demonstrations)
+        effects, _ = _effect_views(runs, demonstrations, self._effect_memberships(owner))
         for run in runs:
             candidate = next((item for item in _candidates(run) if item['id'] == run['best_candidate_id']), None)
             engine = _sample_engine(candidate, samples)
@@ -313,7 +404,7 @@ class AnimationMethodService:
         run = self.commissions.get(owner, commission_id)
         all_demos = self.methods.list_demonstrations(owner)
         all_runs = self.commissions.list_all(owner)
-        _, membership = _effect_views(all_runs, all_demos)
+        _, membership = _effect_views(all_runs, all_demos, self._effect_memberships(owner))
         samples = _sample_index(all_demos)
         effect = membership[commission_id]
         demos = {row['provenance'].get('candidate_id'): row for row in all_demos}

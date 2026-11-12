@@ -690,11 +690,15 @@ test('retry defaults clamp unusually long budgets and preview retries cannot exe
   assert.equal(h.requests.some(row => row.options.method), false); h.controller.close();
 });
 
-test('effect history names retries separately from continuation', () => {
+test('effect history distinguishes retry and early execution from continuation', () => {
   const rendered = renderMethodDetail(doc, run({state: 'failed', effect: {commissions: [
+    {id: 'early', title: '初始制作', kind: 'historical_attempt', state: 'failed'},
     {id: 'retry', title: '重试原目标', kind: 'retry', state: 'completed'}]}}), root, callbacks);
   const history = rendered.descendants('details').find(node => node.dataset.methodDisclosure === 'effect-history');
   assert.match(history.textContent, /重新运行/); assert.doesNotMatch(history.textContent, /继续优化/);
+  const items = history.descendants('li');
+  assert.equal(items[0].descendants('span')[0].textContent, '早期执行');
+  assert.equal(items[1].descendants('span')[0].textContent, '重新运行');
 });
 
 test('real media exposes controls without forcing autoplay or muting necessary sound', () => {

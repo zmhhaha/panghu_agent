@@ -417,7 +417,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
     if (detail.effect.title && detail.effect.title !== detail.title) section.append(element(doc, 'p', 'small muted', '所属效果：' + detail.effect.title));
     if (detail.effect.relationship_status === 'needs_review') section.append(element(doc, 'p', 'small muted', '关系待核对'));
     const items = element(doc, 'ol', 'effect-history-list');
-    const labels = {original: '原作', continuation: '继续优化', transfer: '迁移验证', retry: '重新运行'};
+    const labels = {original: '原作', continuation: '继续优化', transfer: '迁移验证', retry: '重新运行', historical_attempt: '早期执行'};
     for (const run of history) {
       const item = element(doc, 'li', 'effect-history-item'), label = labels[run.kind] ?? '实验记录';
       const open = button(doc, text(run.title) || label, () => {
