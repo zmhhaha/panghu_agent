@@ -336,7 +336,7 @@ class FakeElement {
   constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.handlers = {}; this.attributes = {}; this.dataset = {}; this.className = ''; this._text = ''; this.readyState = 0; this.duration = NaN; this.currentTime = 0; this.paused = true; this.classList = {add: value => { this.className += ' ' + value; }}; }
   set textContent(value) { this._text = String(value); this.children = []; }
   get textContent() { return this._text + this.children.map(row => row.textContent).join(''); }
-  append(...nodes) { this.children.push(...nodes); }
+  append(...nodes) { this.children.push(...nodes); for (const node of nodes) node.parentElement = this; }
   replaceChildren(...nodes) { this._text = ''; this.children = nodes; }
   setAttribute(name, value) { this.attributes[name] = value; }
   addEventListener(name, fn) { this.handlers[name] = fn; }
@@ -346,6 +346,7 @@ class FakeElement {
   load() {}
   querySelectorAll(tag) { return this.descendants(tag); }
   contains(node) { return this === node || this.descendants().includes(node); }
+  closest(tag) { return this.tagName === tag.toUpperCase() ? this : this.parentElement?.closest(tag) ?? null; }
   focus() { if (this.ownerDocument) this.ownerDocument.activeElement = this; }
   descendants(tag) { return this.children.flatMap(row => [row, ...row.descendants(tag)]).filter(row => !tag || row.tagName === tag.toUpperCase()); }
 }
@@ -360,6 +361,8 @@ function mountedGallery(initial, {catalogValue = null, detailRecords = []} = {})
     createElement(tag) { const element = new FakeElement(tag); element.ownerDocument = this; return element; },
     createDocumentFragment: () => new FakeElement('fragment')};
   const get = id => nodes.get(id);
+  const budgetDetails = new FakeElement('details'); budgetDetails.open = false;
+  budgetDetails.append(get('experiment-rounds'));
   get('gallery-search').value = ''; get('gallery-state').value = 'all'; get('gallery-engine').value = 'all';
   get('gallery-form-panel').hidden = get('gallery-detail').hidden = true;
   get('experiment-form').reset = () => {
@@ -653,6 +656,7 @@ test('opening retry only prefills the original goal, reference, standards and a 
   assert.equal(h.get('experiment-reference-start').value, 12.5); assert.equal(h.get('experiment-reference-end').value, 38);
   assert.equal(h.get('experiment-criteria').value, criterion.description);
   assert.equal(h.get('experiment-duration').value, '14'); assert.equal(h.get('experiment-rounds').value, '1');
+  assert.equal(h.get('experiment-rounds').closest('details').open, true);
   assert.equal(h.get('experiment-seconds').value, '16'); assert.equal(h.get('experiment-feedback').required, false);
   assert.equal(h.get('experiment-feedback').value, detail.feedback_text);
   assert.match(h.get('experiment-base-note').textContent, /使用新预算，保留已有样片和失败记录/);

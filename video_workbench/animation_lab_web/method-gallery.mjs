@@ -673,6 +673,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
       $('experiment-reference-start').value = detail.reference?.start_seconds ?? '';
       $('experiment-reference-end').value = detail.reference?.end_seconds ?? '';
       $('experiment-rounds').value = '1';
+      $('experiment-rounds').closest('details').open = true;
       const seconds = Number(detail.retry_budget?.max_seconds ?? detail.budget?.seconds);
       $('experiment-seconds').value = String(Number.isFinite(seconds) && seconds > 0 ? Math.min(60, Math.max(1, Math.ceil(seconds / 60))) : 15);
     }
