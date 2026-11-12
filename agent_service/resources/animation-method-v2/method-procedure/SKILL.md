@@ -17,6 +17,11 @@ feedback when revising. Improve the relevant methods as well as this passage;
 explain the new strategy without claiming that a rendered output already exists.
 Use examples as evidence, not as a required source template.
 
+Return source.strategy.description and source.strategy.tradeoffs as JSON strings
+of at most 3000 characters each. description must be non-empty; tradeoffs may be
+"". Do not use arrays, objects or null for either field; combine multiple
+limitations in the single tradeoffs string.
+
 The host owns the timeline. Generated scene.html (and optional scene.js/scene.css)
 must expose window.__animationExperiment.seek(seconds). Reconstruct the full
 state deterministically for forward, backward and zero seeks. Use local declared

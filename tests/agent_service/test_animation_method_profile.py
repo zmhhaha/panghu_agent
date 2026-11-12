@@ -92,6 +92,33 @@ def test_new_engine_bundle_keeps_frozen_v1_resources_and_review_readonly_instruc
     assert 'return methods=[], source=null and sound_events=[] exactly.' in prompt
     assert 'constraints.allowed_engines' in prompt and "canvas.getContext('2d')" in prompt
     assert './assets/three.module.min.js' in prompt and 'ready' in prompt
+    assert 'Strategy has exactly `description` and `tradeoffs`.' in prompt
+    assert 'Both must be JSON strings,\nat most 3000 characters each.' in prompt
+    assert '`description` must be non-empty; `tradeoffs` may\nbe empty ("").' in prompt
+    assert 'Do not use arrays, objects, null, or additional strategy fields' in prompt
+    assert 'combine multiple\nlimitations in the single tradeoffs string.' in prompt
+
+
+@pytest.mark.parametrize('field', ['description', 'tradeoffs'])
+@pytest.mark.parametrize('value', [['One limitation'], {'limitation': 'A tradeoff'}, None, 1, 'x' * 3001])
+def test_source_strategy_rejects_nonstrings_and_oversized_strings(field, value):
+    context = document()
+    output = result(context)
+    output['source']['strategy'][field] = value
+    with pytest.raises(ServiceError):
+        contract.validate_result(output, digest(context), context)
+
+
+def test_source_strategy_accepts_string_limits_and_empty_tradeoffs_but_requires_description():
+    context = document()
+    output = result(context)
+    output['source']['strategy'] = dict(description='d' * 3000, tradeoffs='t' * 3000)
+    assert contract.validate_result(output, digest(context), context) == output
+    output['source']['strategy']['tradeoffs'] = ''
+    assert contract.validate_result(output, digest(context), context) == output
+    output['source']['strategy']['description'] = ''
+    with pytest.raises(ServiceError):
+        contract.validate_result(output, digest(context), context)
 
 
 @pytest.mark.parametrize('engine', ['canvas', 'three'])

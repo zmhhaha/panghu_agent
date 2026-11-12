@@ -24,6 +24,10 @@ a new method omits both lineage identifiers.
 
 In create mode source is {engine,strategy:{description,tradeoffs},
 files:{"scene.html":"...",optional "scene.js":"...",optional "scene.css":"..."}}.
+Strategy has exactly `description` and `tradeoffs`. Both must be JSON strings,
+at most 3000 characters each. `description` must be non-empty; `tradeoffs` may
+be empty (""). Do not use arrays, objects, null, or additional strategy fields;
+express multiple tradeoffs in one string.
 In other modes source is null. Honor allowed_engines and measured duration.
 The allowed list is the trusted runtime capability for this task, not a request
 for every engine. Select the best admitted medium for the expression; HTML/SVG
