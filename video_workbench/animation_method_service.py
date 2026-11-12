@@ -19,7 +19,9 @@ from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.profiles import video_animation_method as protocol
 from .animation_creation_service import _run_lock
 from .animation_method_store import AnimationMethodStore, _structural_changes
-from .animation_method_commissions import AnimationMethodCommissionStore, TERMINAL
+from .animation_method_commissions import (
+    AnimationMethodCommissionStore, OP_TERMINAL, RETRY_RELATION_FIELDS, TERMINAL,
+)
 from .animation_runtime_capabilities import validate_runtime_capabilities
 
 
@@ -105,9 +107,10 @@ def _effect_views(runs, demonstrations):
     for run in runs:
         identity, frozen = run['id'], run['frozen']
         base, baseline = frozen.get('base_commission_id'), frozen.get('baseline_demonstration_id')
+        retry = frozen.get('retry_of_commission_id')
         transfer = frozen.get('role', 'reference') == 'transfer'
         parent, issue = None, None
-        kinds[identity] = 'continuation' if base else 'transfer' if transfer else 'original'
+        kinds[identity] = 'retry' if retry else 'continuation' if base else 'transfer' if transfer else 'original'
         if base and (transfer or baseline):
             issue = 'conflicting_frozen_relations'
         elif base:
@@ -122,6 +125,16 @@ def _effect_views(runs, demonstrations):
                     issue = 'baseline_commission_missing_or_not_owned'
         elif baseline:
             issue = 'transfer_role_missing'
+        if retry is not None:
+            previous = by_id.get(retry) if type(retry) is str else None
+            if previous is None:
+                issue = 'retry_commission_missing_or_not_owned'
+            elif previous['state'] not in {'failed', 'cancelled'} or any(
+                    frozen.get(key) != previous['frozen'].get(key) for key in RETRY_RELATION_FIELDS):
+                issue = 'retry_relationship_invalid'
+            # A retry repeats an execution, not the business baseline. Its
+            # identity edge must not create a second continuation branch.
+            parent = retry
         if parent is not None and (type(parent) is not str or parent not in by_id):
             issue = 'ancestor_missing_or_not_owned'
         parents[identity], direct_issues[identity] = parent, issue
@@ -157,10 +170,30 @@ def _effect_views(runs, demonstrations):
         representative = original
         children = {}
         for run in members:
-            if kinds[run['id']] == 'continuation' and not relation_issues[run['id']]:
+            if (kinds[run['id']] in {'continuation', 'retry'}
+                    and run['frozen'].get('role', 'reference') != 'transfer'
+                    and not relation_issues[run['id']]):
                 children.setdefault(parents[run['id']], []).append(run)
+        # An empty stopped retry offers no competing sample. Keep branches
+        # with an active attempt, a retained sample or any such descendant;
+        # a failed intermediate retry must not hide a later successful child.
+        live_branches = set()
+        for run in members:
+            if run['state'] in TERMINAL and not _candidates(run):
+                continue
+            current = run
+            while current['id'] not in live_branches:
+                live_branches.add(current['id'])
+                if (kinds[current['id']] not in {'continuation', 'retry'}
+                        or current['frozen'].get('role', 'reference') == 'transfer'
+                        or relation_issues[current['id']]):
+                    break
+                current = by_id[parents[current['id']]]
+        children = {parent: [run for run in descendants
+                            if kinds[run['id']] != 'retry' or run['id'] in live_branches]
+                    for parent, descendants in children.items()}
         current = original
-        # A linear continuation can carry its recorded best forward, including
+        # A linear continuation/retry can carry its recorded best forward, including
         # a deliberately retained baseline. Transfers are separate validation,
         # and competing branches supply no global comparison between siblings.
         while children.get(current['id']):
@@ -170,7 +203,9 @@ def _effect_views(runs, demonstrations):
                 break
             current = next_runs[0]
             if current['state'] == 'completed' and any(
-                    item['id'] == current['best_candidate_id'] for item in _candidates(current)):
+                    item['id'] == current['best_candidate_id']
+                    and (kinds[current['id']] != 'retry' or item.get('technical', {}).get('status') == 'passed')
+                    for item in _candidates(current)):
                 representative = current
         candidate = next((item for item in _candidates(representative)
                           if item['id'] == representative['best_candidate_id']), None)
@@ -181,6 +216,7 @@ def _effect_views(runs, demonstrations):
             role=run['frozen'].get('role', 'reference'), kind=kinds[run['id']], state=run['state'],
             best_candidate_id=run['best_candidate_id'],
             base_commission_id=run['frozen'].get('base_commission_id'),
+            retry_of_commission_id=run['frozen'].get('retry_of_commission_id'),
             stop_reason=run['stop_reason'], created_at=run['created_at'],
             **_sample_engine(next((item for item in _candidates(run)
                 if item['id'] == run['best_candidate_id']), None), samples)) for run in reversed(members)]
@@ -348,6 +384,13 @@ class AnimationMethodService:
                 'id', 'title', 'open_commission_id', 'commissions', 'relationship_status', 'relationship_issues',
                 'engine', 'engine_status', 'engines')},
             title=run['title'], goal=run['frozen']['goal'], state=run['state'],
+            reference=deepcopy(run['frozen'].get('reference')),
+            duration_seconds=run['frozen'].get('duration_seconds', 18),
+            feedback_text=run['frozen'].get('feedback', ''),
+            retry_of_commission_id=run['frozen'].get('retry_of_commission_id'),
+            retry_budget=dict(max_rounds=run['budget']['render'], max_seconds=run['budget']['seconds']),
+            can_retry=(run['state'] in {'failed', 'cancelled'} and all(
+                op['status'] in OP_TERMINAL for op in run['operations'])),
             **({key: best[key] for key in ('engine', 'engine_status')} if best else
                dict(engine=None, engine_status='unknown')),
             budget=run['budget'], usage=run['usage'], remaining=run['remaining'],
@@ -367,11 +410,24 @@ class AnimationMethodService:
     def start(self, owner, body):
         fields = {'request_id', 'title', 'goal', 'reference', 'duration_seconds', 'budget',
                   'base_commission_id', 'base_candidate_id', 'feedback', 'criteria', 'method_versions',
-                  'role', 'baseline_demonstration_id', 'structural_changes'}
+                  'role', 'baseline_demonstration_id', 'structural_changes', 'retry_of_commission_id'}
         _require(type(body) is dict and {'request_id', 'goal', 'budget'} <= set(body)
                  and set(body) <= fields)
         request_id = body['request_id']
         data = {key: deepcopy(value) for key, value in body.items() if key != 'request_id' and value is not None}
+        if 'retry_of_commission_id' in data:
+            previous = self.commissions.get(owner, data['retry_of_commission_id'])
+            _require(previous['state'] in {'failed', 'cancelled'} and all(
+                op['status'] in OP_TERMINAL for op in previous['operations']),
+                'animation_method_retry_not_available', 409)
+            for key in RETRY_RELATION_FIELDS:
+                _require(key not in data or data[key] == previous['frozen'].get(key),
+                         'animation_method_retry_relationship_invalid', 409)
+                if key in previous['frozen']:
+                    data[key] = deepcopy(previous['frozen'][key])
+            for key in ('title', 'reference', 'duration_seconds', 'criteria', 'feedback'):
+                if key in previous['frozen']:
+                    data.setdefault(key, deepcopy(previous['frozen'][key]))
         budget = data['budget']
         _require(type(budget) is dict and set(budget) == {'max_rounds', 'max_seconds'})
         rounds, seconds = budget['max_rounds'], budget['max_seconds']
@@ -647,6 +703,17 @@ class AnimationMethodService:
             observation=dict(frames=frames or [], audio_observed=False, motion_observed=False,
                 limitations=['Only supplied sampled images were observed; complete motion and audio are unverified.']),
             comparison=comparison, assets=deepcopy(run['frozen'].get('assets', {})))
+        if mode == 'plan':
+            document['constraints']['result_requirements'] = dict(
+                source=None, review=None, sound_events=[],
+                instruction=(
+                    'Plan criteria and reusable methods only. Return source=null, review=null and sound_events=[]. '
+                    'Every criterion id must match [a-z][a-z0-9_.-]{0,99}: use lowercase ids such as c1, '
+                    'never uppercase C1. If input criteria are supplied, copy them exactly without changes. '
+                    'Each method applicability must be one nonempty string, not a list or object. '
+                    'Each method criteria must be a nonempty exact subset of result.criteria: copy complete '
+                    'criterion objects with identical ids, descriptions and optional fields; do not invent '
+                    'method-only standards or rewrite them. Respect any method_application requirements.'))
         if mode == 'review':
             document['constraints']['result_requirements'] = dict(
                 methods=[], source=None, sound_events=[],

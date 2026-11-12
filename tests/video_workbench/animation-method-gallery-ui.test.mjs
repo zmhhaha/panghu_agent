@@ -64,6 +64,17 @@ test('commission input preserves reference ranges, independent budget and exact 
   assert.throws(() => buildCommissionRequest({...fields, reference_url: 'https://example.com', reference_start: 2}, firstId), /同时/);
 });
 
+test('retry input keeps its origin without requiring feedback or changing it into continuation or transfer', () => {
+  const value = buildCommissionRequest({...fields, retry_of_commission_id: 'failed-run',
+    base_commission_id: 'unrelated-base', base_candidate_id: 'unrelated-clip', feedback: ''}, firstId);
+  assert.equal(value.retry_of_commission_id, 'failed-run');
+  assert.equal(Object.hasOwn(value, 'base_commission_id'), false);
+  assert.equal(Object.hasOwn(value, 'base_candidate_id'), false);
+  assert.equal(Object.hasOwn(value, 'transfer_commission_id'), false);
+  assert.equal(value.feedback, '');
+  assert.throws(() => buildTransferRequest({...fields, retry_of_commission_id: 'failed-run'}, firstId), /不能同时/);
+});
+
 test('only same-origin controlled method-lab media can be embedded', () => {
   assert.equal(methodAssetUrl(candidate().media_url, root), new URL(candidate().media_url, root).href);
   assert.equal(methodAssetUrl('/api/method-lab/commissions/c/candidates/v/media', root),
@@ -141,6 +152,32 @@ test('a lost creation response is recovered by matching the saved request using 
   await reopened.controller.refresh();
   assert.equal(reopened.controller.snapshot.detail.id, 'commission-1');
   assert.equal(reopened.controller.snapshot.pending, null); assert.equal(posts, 1);
+  assert.ok(reopened.requests.every(row => !row.options.method)); reopened.controller.close();
+});
+
+test('retry double submission and a lost response recover the same request without spending a second budget', async () => {
+  const store = storage(), response = deferred(), input = {...fields, retry_of_commission_id: 'failed-run', max_rounds: 1};
+  const retried = run({id: 'retry-run', retry_of_commission_id: 'failed-run'}); let admitted = false;
+  const handler = (path, options) => {
+    if (options.method === 'POST') {
+      admitted = true;
+      assert.equal(path, 'api/method-lab/commissions');
+      assert.equal(JSON.parse(options.body).retry_of_commission_id, 'failed-run');
+      assert.equal(JSON.parse([...store.data.values()][0]).request_id, firstId);
+      return response.promise;
+    }
+    return path.endsWith('/catalog') ? catalog(admitted ? [retried] : []) : retried;
+  };
+  const first = harness(handler, {storage: store}); await first.controller.refresh();
+  const started = first.controller.start(input);
+  assert.equal(await first.controller.start(input), false);
+  response.reject(Error('response lost')); assert.equal(await started, false);
+  assert.equal(first.requests.filter(row => row.options.method === 'POST').length, 1);
+  assert.equal(first.controller.snapshot.pending.request_id, firstId); first.controller.close();
+  const reopened = harness(handler, {storage: store, uuid: () => assert.fail('recovery cannot create another retry')});
+  await reopened.controller.refresh();
+  assert.equal(reopened.controller.snapshot.detail.id, 'retry-run');
+  assert.equal(reopened.controller.snapshot.pending, null);
   assert.ok(reopened.requests.every(row => !row.options.method)); reopened.controller.close();
 });
 
@@ -581,6 +618,79 @@ test('continue form inherits the selected actual media duration while a fresh ex
   assert.equal(continuationDuration({duration_seconds: 18}, null), 18);
   assert.equal(continuationDuration({...detail, candidates: [{...candidate('best'), media: {duration_seconds: NaN}}]}, 'best'), 24);
   h.controller.close();
+});
+
+test('failed and cancelled experiments offer retry with or without usable samples, but running or completed ones do not', () => {
+  for (const state of ['failed', 'cancelled']) {
+    for (const candidates of [[], [candidate()]]) {
+      const detail = run({state, candidates, can_retry: true}); let opened;
+      const rendered = renderMethodDetail(doc, detail, root, {...callbacks, onRetry: value => { opened = value; }});
+      const retry = rendered.descendants('button').find(node => node.textContent === '重新运行');
+      assert.ok(retry); assert.equal(retry.disabled, false); retry.handlers.click(); assert.equal(opened, detail);
+      if (candidates.length) assert.ok(rendered.descendants('button').some(node => node.textContent === '继续优化这版' && !node.disabled));
+    }
+  }
+  for (const detail of [run({state: 'running', can_retry: true}), run({state: 'completed', can_retry: true}),
+    run({state: 'failed', can_retry: false})]) {
+    const rendered = renderMethodDetail(doc, detail, root, callbacks);
+    assert.equal(rendered.descendants('button').some(node => node.textContent === '重新运行'), false);
+  }
+});
+
+test('opening retry only prefills the original goal, reference, standards and a new budget before explicit submission', async t => {
+  const criterion = {id: 'tracking', description: '对象运动过程可追踪', requires_motion: true, observation: '看完整段运动'};
+  const detail = run({state: 'failed', duration_seconds: 14, can_retry: true, base_commission_id: 'original-run',
+    feedback_text: '保留上一版的轨迹，改善交叉时的可辨识度',
+    reference: {url: 'https://www.bilibili.com/video/BVexample/', start_seconds: 12.5, end_seconds: 38},
+    retry_budget: {max_rounds: 4, max_seconds: 901}, budget: {seconds: 88}, criteria: [criterion],
+    candidates: [{...candidate('first'), media: {duration_seconds: 11}}], best_candidate_id: 'first'});
+  const h = mountedGallery(detail); await h.ready(); await h.controller.select(detail.id);
+  h.get('gallery-detail').descendants('button').find(node => node.textContent === '重新运行').handlers.click();
+  assert.equal(h.get('gallery-form-panel').hidden, false);
+  assert.equal(h.get('experiment-form-title').textContent, '重新运行本次实验');
+  assert.equal(h.get('experiment-title').value, fields.title); assert.equal(h.get('experiment-goal').value, fields.goal);
+  assert.equal(h.get('experiment-reference').value, detail.reference.url);
+  assert.equal(h.get('experiment-reference-start').value, 12.5); assert.equal(h.get('experiment-reference-end').value, 38);
+  assert.equal(h.get('experiment-criteria').value, criterion.description);
+  assert.equal(h.get('experiment-duration').value, '14'); assert.equal(h.get('experiment-rounds').value, '1');
+  assert.equal(h.get('experiment-seconds').value, '16'); assert.equal(h.get('experiment-feedback').required, false);
+  assert.equal(h.get('experiment-feedback').value, detail.feedback_text);
+  assert.match(h.get('experiment-base-note').textContent, /使用新预算，保留已有样片和失败记录/);
+  assert.equal(h.requests.some(row => row.options.method), false);
+  const inputIds = {title: 'title', goal: 'goal', feedback: 'feedback', reference_url: 'reference',
+    reference_start: 'reference-start', reference_end: 'reference-end', duration_seconds: 'duration',
+    max_rounds: 'rounds', max_minutes: 'seconds', criteria_text: 'criteria'};
+  t.mock.method(globalThis, 'FormData', function(form) {
+    assert.equal(form, h.get('experiment-form'));
+    return Object.entries(inputIds).map(([name, id]) => [name, h.get('experiment-' + id).value]);
+  });
+  await h.get('experiment-form').handlers.submit({preventDefault() {}});
+  const posts = h.requests.filter(row => row.options.method);
+  assert.equal(posts.length, 1); assert.equal(posts[0].url.pathname, '/dev/animations/api/method-lab/commissions');
+  const body = JSON.parse(posts[0].options.body);
+  assert.equal(body.retry_of_commission_id, detail.id); assert.deepEqual(body.criteria, [criterion]);
+  assert.equal(body.feedback, detail.feedback_text);
+  assert.deepEqual(body.reference, detail.reference); assert.deepEqual(body.budget, {max_rounds: 1, max_seconds: 960});
+  assert.equal(Object.hasOwn(body, 'base_commission_id'), false); assert.equal(Object.hasOwn(body, 'base_candidate_id'), false);
+  h.controller.close();
+});
+
+test('retry defaults clamp unusually long budgets and preview retries cannot execute', async () => {
+  const detail = run({state: 'cancelled', can_retry: true, ui_preview: true, retry_budget: {max_seconds: 8000}});
+  const h = mountedGallery(detail); await h.ready(); await h.controller.select(detail.id);
+  const retry = h.get('gallery-detail').descendants('button').find(node => node.textContent === '重新运行');
+  assert.equal(retry.disabled, true);
+  retry.handlers.click();
+  assert.equal(h.get('experiment-seconds').value, '60'); assert.equal(h.get('experiment-submit').disabled, true);
+  await h.get('experiment-form').handlers.submit({preventDefault() {}});
+  assert.equal(h.requests.some(row => row.options.method), false); h.controller.close();
+});
+
+test('effect history names retries separately from continuation', () => {
+  const rendered = renderMethodDetail(doc, run({state: 'failed', effect: {commissions: [
+    {id: 'retry', title: '重试原目标', kind: 'retry', state: 'completed'}]}}), root, callbacks);
+  const history = rendered.descendants('details').find(node => node.dataset.methodDisclosure === 'effect-history');
+  assert.match(history.textContent, /重新运行/); assert.doesNotMatch(history.textContent, /继续优化/);
 });
 
 test('real media exposes controls without forcing autoplay or muting necessary sound', () => {

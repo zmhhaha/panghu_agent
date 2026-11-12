@@ -135,8 +135,14 @@ export function buildCommissionRequest(fields, requestId) {
     budget: {max_rounds: number(fields.max_rounds ?? 3, 1, 8, '本次探索轮数应为 1 至 8', true),
       max_seconds: number(fields.max_minutes ?? 15, 1, 60, '本次时间上限应为 1 至 60 分钟', true) * 60},
     base_commission_id: text(fields.base_commission_id) || null, feedback};
-  if (body.base_commission_id && !feedback) throw Error('继续优化时，请说明本次修改意见');
-  if (fields.base_candidate_id) body.base_candidate_id = text(fields.base_candidate_id);
+  const retryOf = text(fields.retry_of_commission_id).trim();
+  if (retryOf) {
+    body.retry_of_commission_id = retryOf;
+    delete body.base_commission_id;
+  } else {
+    if (body.base_commission_id && !feedback) throw Error('继续优化时，请说明本次修改意见');
+    if (fields.base_candidate_id) body.base_candidate_id = text(fields.base_candidate_id);
+  }
   const criteria = text(fields.criteria_text).split(/\r?\n/).map(value => value.trim()).filter(Boolean);
   if (criteria.length > 16 || criteria.some(value => value.length > 1200)) throw Error('验收标准最多 16 项，每项不超过 1200 字');
   if (criteria.length) body.criteria = criteria.map((description, index) => {
@@ -146,6 +152,7 @@ export function buildCommissionRequest(fields, requestId) {
   return body;
 }
 export function buildTransferRequest(fields, requestId) {
+  if (fields.retry_of_commission_id) throw Error('重新运行不能同时进行迁移验证');
   const body = buildCommissionRequest({...fields, base_commission_id: null}, requestId);
   const dimension = text(fields.transfer_dimension), beforeText = text(fields.transfer_before).trim(), afterText = text(fields.transfer_after).trim();
   if (!['relations', 'data_structure', 'staging', 'explanation_problem', 'object_count', 'timing', 'task'].includes(dimension)
@@ -390,7 +397,7 @@ function details(doc, title, value) {
   return section;
 }
 export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCancel, onFeedback, onPublish,
-  onTransfer = () => {}, onSelectCommission = () => {}, feedbackDraft = null, onDraftChange = () => {},
+  onTransfer = () => {}, onRetry = () => {}, onSelectCommission = () => {}, feedbackDraft = null, onDraftChange = () => {},
   onPreference = () => {}, onWithdraw = () => {}, comparisonSelection = null,
   onComparisonReady = () => {}, onComparisonChange = () => {}, disclosureState = null}) {
   const disclosure = (key, title, value) => {
@@ -410,7 +417,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
     if (detail.effect.title && detail.effect.title !== detail.title) section.append(element(doc, 'p', 'small muted', '所属效果：' + detail.effect.title));
     if (detail.effect.relationship_status === 'needs_review') section.append(element(doc, 'p', 'small muted', '关系待核对'));
     const items = element(doc, 'ol', 'effect-history-list');
-    const labels = {original: '原作', continuation: '继续优化', transfer: '迁移验证'};
+    const labels = {original: '原作', continuation: '继续优化', transfer: '迁移验证', retry: '重新运行'};
     for (const run of history) {
       const item = element(doc, 'li', 'effect-history-item'), label = labels[run.kind] ?? '实验记录';
       const open = button(doc, text(run.title) || label, () => {
@@ -461,13 +468,19 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   updatePreferenceButtons(comparison.getSelection()); onComparisonReady(comparison);
   comparison.element.append(preferences, element(doc, 'p', 'small muted', '快捷比较只记录当前两版的偏好，不会自动更换最佳样片或发布方法。'));
   fragment.append(comparison.element);
-  if (detail.stop_reason || rows(detail.remaining_issues).length || detail.error) {
+  const retryable = ['failed', 'cancelled'].includes(detail.state) && detail.can_retry !== false;
+  if (detail.stop_reason || rows(detail.remaining_issues).length || detail.error || retryable) {
     const result = panel(doc, ACTIVE.has(detail.state) ? '当前进度与问题' : '本次结果');
     const reason = methodStopLabel(detail.stop_reason);
     if (reason) result.append(element(doc, 'p', '', reason));
     if (detail.stop_explanation || detail.summary) result.append(element(doc, 'p', 'muted', detail.stop_explanation || detail.summary));
     if (detail.error) result.append(element(doc, 'p', 'muted', '本次执行未完成，记录已保留。可在执行详情中核对原因。'));
     if (rows(detail.remaining_issues).length) result.append(list(doc, detail.remaining_issues));
+    if (retryable) {
+      const retry = button(doc, '重新运行', () => onRetry(detail), 'button primary');
+      retry.disabled = detail.ui_preview === true;
+      result.append(retry, element(doc, 'p', 'small muted', '先核对原目标和本次预算，再提交重新运行。已有样片和失败记录会保留。'));
+    }
     fragment.append(result);
   }
   const criteria = panel(doc, '本次想让观众看懂什么');
@@ -649,23 +662,34 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     home.hidden = mode !== 'home'; detailHost.hidden = mode !== 'detail'; formPanel.hidden = mode !== 'form';
   };
   const openForm = (detail = null, candidateId = null, feedback = '', mode = 'continue') => {
-    const isTransfer = Boolean(detail) && mode === 'transfer';
+    const isTransfer = Boolean(detail) && mode === 'transfer', isRetry = Boolean(detail) && mode === 'retry';
     continuation = detail ? {commission_id: detail.id, candidate_id: candidateId, mode, criteria: detail.criteria,
       ui_preview: detail.ui_preview === true} : null;
     $('experiment-form').reset();
-    if (detail) $('experiment-duration').value = String(continuationDuration(detail, candidateId));
+    if (detail) $('experiment-duration').value = String(isRetry && Number.isFinite(detail.duration_seconds)
+      && detail.duration_seconds >= 2 && detail.duration_seconds <= 60 ? detail.duration_seconds : continuationDuration(detail, candidateId));
+    if (isRetry) {
+      $('experiment-reference').value = text(detail.reference?.url);
+      $('experiment-reference-start').value = detail.reference?.start_seconds ?? '';
+      $('experiment-reference-end').value = detail.reference?.end_seconds ?? '';
+      $('experiment-rounds').value = '1';
+      const seconds = Number(detail.retry_budget?.max_seconds ?? detail.budget?.seconds);
+      $('experiment-seconds').value = String(Number.isFinite(seconds) && seconds > 0 ? Math.min(60, Math.max(1, Math.ceil(seconds / 60))) : 15);
+    }
     $('experiment-title').value = isTransfer ? (detail.title + ' · 迁移验证') : detail?.title ?? '';
     $('experiment-goal').value = isTransfer ? '' : detail?.goal ?? '';
-    $('experiment-feedback').value = feedback; $('experiment-feedback').required = Boolean(detail) && !isTransfer;
+    $('experiment-feedback').value = isRetry ? text(detail.feedback_text) : feedback;
+    $('experiment-feedback').required = Boolean(detail) && !isTransfer && !isRetry;
     $('experiment-feedback-label').hidden = !detail || isTransfer;
     $('experiment-criteria').value = rows(detail?.criteria).map(row => typeof row === 'string' ? row : row.description).filter(Boolean).join('\n');
-    $('experiment-form-title').textContent = isTransfer ? '验证方法在不同任务中的表现' : detail ? '继续优化这版' : '新建实验';
+    $('experiment-form-title').textContent = isRetry ? '重新运行本次实验' : isTransfer ? '验证方法在不同任务中的表现' : detail ? '继续优化这版' : '新建实验';
     $('experiment-base-note').hidden = !detail;
-    $('experiment-base-note').textContent = isTransfer ? '将使用选定样片背后的方法，为新目标创作。请观看迁移结果后再决定发布。'
+    $('experiment-base-note').textContent = isRetry ? '按当前表单重新执行，使用新预算，保留已有样片和失败记录。'
+      : isTransfer ? '将使用选定样片背后的方法，为新目标创作。请观看迁移结果后再决定发布。'
       : detail ? '将基于选定样片与本次意见开始新实验，已有结果和发布版本保持。' : '';
     $('experiment-transfer-fields').hidden = !isTransfer;
     $('experiment-transfer-before').required = isTransfer; $('experiment-transfer-after').required = isTransfer;
-    $('experiment-submit').textContent = isTransfer ? '开始迁移验证' : detail ? '开始本次优化' : '开始本次实验';
+    $('experiment-submit').textContent = isRetry ? '确认重新运行' : isTransfer ? '开始迁移验证' : detail ? '开始本次优化' : '开始本次实验';
     $('experiment-submit').disabled = detail?.ui_preview === true || controller.state.catalog?.availability.enabled !== true;
     $('experiment-unavailable').hidden = !($('experiment-submit').disabled);
     show('form'); $('experiment-title').focus();
@@ -720,6 +744,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
         releaseComparison();
         detailHost.replaceChildren(renderMethodDetail(doc, detail, root, {
           onBack: () => { controller.deselect(); show('home'); }, onContinue: openForm,
+          onRetry: current => openForm(current, null, '', 'retry'),
           onSelectCommission: id => { show('detail'); void controller.select(id); },
           onTransfer: (current, candidateId) => openForm(current, candidateId, '', 'transfer'),
           onCancel: () => void controller.cancel(), onFeedback: async value => {
@@ -758,6 +783,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     const preview = layoutPreviewDetail();
     detailHost.replaceChildren(renderMethodDetail(doc, preview, root, {
       onBack: () => show('home'), onContinue: openForm,
+      onRetry: current => openForm(current, null, '', 'retry'),
       onTransfer: (current, candidateId) => openForm(current, candidateId, '', 'transfer'),
       onFeedback: () => Promise.resolve(false), onPublish: () => Promise.resolve(false), onCancel: () => {},
       disclosureState: disclosureStates.get(preview.id),
@@ -786,8 +812,10 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     event.preventDefault();
     if (continuation?.ui_preview || controller.state.catalog?.availability.enabled !== true) return;
     const fields = Object.fromEntries(new FormData($('experiment-form')));
-    if (continuation) Object.assign(fields, {base_candidate_id: continuation.candidate_id, criteria_metadata: continuation.criteria,
-      ...(continuation.mode === 'transfer' ? {transfer_commission_id: continuation.commission_id} : {base_commission_id: continuation.commission_id})});
+    if (continuation) Object.assign(fields, {criteria_metadata: continuation.criteria,
+      ...(continuation.mode === 'retry' ? {retry_of_commission_id: continuation.commission_id}
+        : {base_candidate_id: continuation.candidate_id,
+          ...(continuation.mode === 'transfer' ? {transfer_commission_id: continuation.commission_id} : {base_commission_id: continuation.commission_id})})});
     if (await controller.start(fields)) { show('detail'); controller.emit(); }
   });
   const closeController = controller.close.bind(controller);

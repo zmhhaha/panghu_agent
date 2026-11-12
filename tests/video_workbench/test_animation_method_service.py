@@ -268,8 +268,10 @@ def test_reference_documents_keep_existing_constraints_and_method_records(work):
     base = run['frozen']['base_candidate']
     for mode in ('plan', 'create'):
         document = service._document('developer', run, mode, base=base)
-        assert document['constraints'] == dict(width=1280, height=720, fps=24,
-            duration_seconds=18, allowed_engines=['html-svg'])
+        expected = dict(width=1280, height=720, fps=24, duration_seconds=18, allowed_engines=['html-svg'])
+        assert {key: value for key, value in document['constraints'].items()
+                if key != 'result_requirements'} == expected
+        assert ('result_requirements' in document['constraints']) == (mode == 'plan')
         assert document['methods'] == [service.methods.get_method('developer', version_id)
                                        for version_id in base['method_versions']]
 
@@ -295,7 +297,8 @@ def test_review_requests_assessment_only_and_keeps_historical_methods_readonly(w
     author_inputs = [creator.jobs[operation_id]['document']
                      for operation_id in creator.submissions[author_offset:]]
     assert [document['mode'] for document in author_inputs] == ['plan', 'create']
-    assert all('result_requirements' not in document['constraints'] for document in author_inputs)
+    assert 'result_requirements' in author_inputs[0]['constraints']
+    assert 'result_requirements' not in author_inputs[1]['constraints']
 
     job = reviewer.jobs[reviewer.submissions[-1]]
     document = job['document']

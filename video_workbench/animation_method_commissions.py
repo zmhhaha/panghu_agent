@@ -21,6 +21,10 @@ from agent_service.contracts import ServiceError, digest
 STAGES = frozenset({"creator", "review", "render"})
 TERMINAL = frozenset({"completed", "failed", "cancelled"})
 OP_TERMINAL = TERMINAL | {"released"}
+RETRY_RELATION_FIELDS = (
+    "base_commission_id", "base_candidate_id", "method_versions", "role",
+    "baseline_demonstration_id", "structural_changes",
+)
 STOP_REASONS = frozenset({
     "goal_met", "budget_exhausted", "no_progress", "developer_stopped", "failed", "cancelled",
 })
@@ -245,6 +249,7 @@ class AnimationMethodCommissionStore:
                      "method_versions", "base_commission_id", "base_candidate_id", "feedback",
                      "duration_seconds", "constraints", "assets", "role",
                      "baseline_demonstration_id", "structural_changes",
+                     "retry_of_commission_id",
                  })
         _text(body["goal"], 16000)
         limits = _budget(body["budget"])
@@ -277,6 +282,15 @@ class AnimationMethodCommissionStore:
             replay = self._replay(db, owner, "create", request_id, request)
             if replay is not None:
                 return self._present(db, self._commission(db, owner, replay["id"]))
+            retry_id = body.get("retry_of_commission_id")
+            if retry_id is not None:
+                previous = self._commission(db, owner, retry_id)
+                _require(previous["state"] in {"failed", "cancelled"}
+                         and not self._active(db, retry_id),
+                         "animation_method_retry_not_available", 409)
+                _require(all(body.get(key) == previous["frozen"].get(key)
+                             for key in RETRY_RELATION_FIELDS),
+                         "animation_method_retry_relationship_invalid", 409)
             base_id = body.get("base_commission_id")
             base_candidate = body.get("base_candidate_id")
             _require(base_candidate is None or base_id is not None,
