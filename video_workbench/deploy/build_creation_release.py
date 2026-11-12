@@ -34,8 +34,8 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
 
 
-def command(argv, *, cwd=ROOT, env=None, timeout=1800, output=None, stdin=None):
-    result = subprocess.run(argv, cwd=cwd, env=env, stdin=stdin, stdout=output or subprocess.PIPE,
+def command(argv, *, cwd=ROOT, env=None, timeout=1800, output=None):
+    result = subprocess.run(argv, cwd=cwd, env=env, stdout=output or subprocess.PIPE,
         stderr=output or subprocess.PIPE, timeout=timeout, check=False)
     require(result.returncode == 0, 'release_command_failed:' + argv[0])
     return result.stdout
@@ -102,7 +102,12 @@ def build(args):
     immutable_image(os.environ.get('PI_CAGE_IMAGE'))
     immutable_image(os.environ.get('PPT_DONOR_IMAGE'))
     results = {}
+    roles = getattr(args, 'roles', ('control', 'worker', 'executor'))
+    require(type(roles) is tuple and set(roles) in
+        ({'control', 'worker', 'executor'}, {'worker', 'executor'}), 'release_roles_invalid')
     for role, target in (('control', 'control'), ('worker', 'pi')):
+        if role not in roles:
+            continue
         environ = {**os.environ, 'SOURCE_REVISION': args.revision,
                    'IMAGE_TAG': 'latest', 'IMAGE': args.registry + '/agent-service-' + target + ':latest'}
         with (output / (role + '-build.log')).open('xb') as log:
