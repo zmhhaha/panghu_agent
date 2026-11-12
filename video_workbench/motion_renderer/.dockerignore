@@ -6,5 +6,10 @@
 !run.mjs
 !observe.mjs
 !creative.mjs
+!engine_runtime.mjs
 !contract.mjs
 !experiment.py
+!vendor/
+!vendor/three.module.min.js
+!vendor/three.LICENSE.txt
+!vendor/three-assets.json
