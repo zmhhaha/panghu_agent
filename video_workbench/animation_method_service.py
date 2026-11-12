@@ -113,7 +113,51 @@ def _historical_membership_issue(previous, canonical):
     return None
 
 
-def _effect_views(runs, demonstrations, memberships=()):
+def _deleted_commission_ids(runs, deletions):
+    """Only exact owner-confirmed, unchanged empty failures can be hidden."""
+    by_id = {run['id']: run for run in runs}
+    hidden = set()
+    for record in deletions:
+        if type(record) is not dict or type(record.get('commission_id')) is not str:
+            continue
+        run = by_id.get(record['commission_id'])
+        if (run is not None and record.get('schema') == 'video.animation-commission-deletion.v1'
+                and record.get('owner') == run.get('owner')
+                and record.get('commission_frozen_sha256') == run.get('frozen_sha256')
+                and record.get('source') == 'explicit_owner_failed_attempt_deletion'
+                and type(record.get('reason')) is str and bool(record['reason'].strip())
+                and _finite_number(record.get('created_at')) and record['created_at'] >= 0
+                and run['state'] == 'failed' and not _candidates(run)):
+            hidden.add(run['id'])
+    return hidden
+
+
+def _resolve_effect_roots(runs, parents, direct_issues):
+    roots, issues = {}, {}
+    for run in runs:
+        current, path, visited = run['id'], [], set()
+        while current not in roots:
+            if current in visited:
+                root, issue = None, 'frozen_relation_cycle'
+                break
+            visited.add(current)
+            path.append(current)
+            if direct_issues[current]:
+                root, issue = None, direct_issues[current]
+                break
+            parent = parents[current]
+            if parent is None:
+                root, issue = current, None
+                break
+            current = parent
+        else:
+            root, issue = roots[current], issues[current]
+        for identity in path:
+            roots[identity], issues[identity] = root, issue
+    return roots, issues
+
+
+def _effect_views(runs, demonstrations, memberships=(), deletions=()):
     """Group explicit frozen lineage and separately audited historical membership.
 
     A missing/foreign ancestor or a cycle makes every affected run independent.
@@ -121,6 +165,7 @@ def _effect_views(runs, demonstrations, memberships=()):
     This read projection never changes recorded inputs, choices or history.
     """
     by_id = {run['id']: run for run in runs}
+    hidden = _deleted_commission_ids(runs, deletions)
     demos = {row['id']: row for row in demonstrations}
     samples = _sample_index(demonstrations)
     parents, kinds, direct_issues = {}, {}, {}
@@ -161,7 +206,7 @@ def _effect_views(runs, demonstrations, memberships=()):
 
     for membership in memberships:
         identity = membership.get('commission_id')
-        if identity not in by_id:
+        if identity not in by_id or identity in hidden or membership.get('canonical_commission_id') in hidden:
             continue
         canonical_id = membership.get('canonical_commission_id')
         canonical = by_id.get(canonical_id)
@@ -178,27 +223,21 @@ def _effect_views(runs, demonstrations, memberships=()):
             continue
         parents[identity], kinds[identity] = canonical_id, 'historical_attempt'
 
-    roots, relation_issues = {}, {}
-    for run in runs:
-        current, path, visited = run['id'], [], set()
-        while current not in roots:
-            if current in visited:
-                root, issue = None, 'frozen_relation_cycle'
-                break
-            visited.add(current)
-            path.append(current)
-            if direct_issues[current]:
-                root, issue = None, direct_issues[current]
-                break
-            parent = parents[current]
-            if parent is None:
-                root, issue = current, None
-                break
-            current = parent
-        else:
-            root, issue = roots[current], relation_issues[current]
-        for identity in path:
-            roots[identity], relation_issues[identity] = root, issue
+    roots, relation_issues = _resolve_effect_roots(runs, parents, direct_issues)
+    if hidden:
+        # Keep the real ancestors above for validation. Only presentation skips
+        # deleted empty failures; every surviving run keeps its frozen lineage.
+        runs = [run for run in runs if run['id'] not in hidden]
+        for run in runs:
+            identity = run['id']
+            if relation_issues[identity]:
+                direct_issues[identity] = relation_issues[identity]
+                continue
+            parent = parents[identity]
+            while parent in hidden:
+                parent = parents[parent]
+            parents[identity] = parent
+        roots, relation_issues = _resolve_effect_roots(runs, parents, direct_issues)
 
     groups = {}
     for run in runs:
@@ -225,7 +264,7 @@ def _effect_views(runs, demonstrations, memberships=()):
                 live_branches.add(current['id'])
                 if (kinds[current['id']] not in {'continuation', 'retry'}
                         or current['frozen'].get('role', 'reference') == 'transfer'
-                        or relation_issues[current['id']]):
+                        or relation_issues[current['id']] or parents[current['id']] is None):
                     break
                 current = by_id[parents[current['id']]]
         children = {parent: [run for run in descendants
@@ -300,6 +339,8 @@ class AnimationMethodService:
             db.execute('CREATE TABLE IF NOT EXISTS effect_memberships (owner TEXT NOT NULL, '
                        'commission_id TEXT NOT NULL, canonical_commission_id TEXT NOT NULL, '
                        'document TEXT NOT NULL, PRIMARY KEY(owner,commission_id))')
+            db.execute('CREATE TABLE IF NOT EXISTS commission_deletions (owner TEXT NOT NULL, '
+                       'commission_id TEXT NOT NULL, document TEXT NOT NULL, PRIMARY KEY(owner,commission_id))')
             db.commit()
 
     def pending(self, limit=100):
@@ -335,6 +376,63 @@ class AnimationMethodService:
             return [json.loads(row[0]) for row in db.execute(
                 'SELECT document FROM effect_memberships WHERE owner=? ORDER BY rowid', (owner,))]
 
+    def _commission_deletions(self, owner):
+        records = []
+        with closing(sqlite3.connect(self.metadata_path)) as db:
+            for identity, raw in db.execute('SELECT commission_id,document FROM commission_deletions '
+                                           'WHERE owner=? ORDER BY rowid', (owner,)):
+                try:
+                    record = json.loads(raw)
+                except (ValueError, TypeError):
+                    continue
+                if (type(record) is dict and record.get('owner') == owner
+                        and record.get('commission_id') == identity):
+                    records.append(record)
+        return records
+
+    def _get_visible_commission(self, owner, commission_id):
+        run = self.commissions.get(owner, commission_id)
+        _require(not _deleted_commission_ids([run], self._commission_deletions(owner)),
+                 'animation_method_commission_not_found', 404)
+        return run
+
+    def record_failed_attempt_deletion(self, owner, commission_id, *, reason):
+        """Operator-only removal from business views; preserve internal ancestry.
+
+        Only stopped failures without any retained sample are eligible. No
+        execution, frozen input, budget or media is modified by this operation.
+        """
+        _require(type(reason) is str and bool(reason.strip()) and len(reason) <= 2000)
+        run = self.commissions.get(owner, commission_id)
+        _require(run['state'] == 'failed' and not _candidates(run),
+                 'animation_method_failed_attempt_deletion_ineligible', 409)
+        _require(all(op['status'] in OP_TERMINAL for op in run['operations']),
+                 'animation_method_failed_attempt_deletion_operation_active', 409)
+        document = dict(schema='video.animation-commission-deletion.v1', owner=owner,
+            commission_id=commission_id, commission_frozen_sha256=run['frozen_sha256'],
+            reason=reason, source='explicit_owner_failed_attempt_deletion')
+        with closing(sqlite3.connect(self.metadata_path, timeout=20)) as db:
+            db.execute('BEGIN IMMEDIATE')
+            prior = db.execute('SELECT document FROM commission_deletions WHERE owner=? AND commission_id=?',
+                               (owner, commission_id)).fetchone()
+            if prior:
+                record = json.loads(prior[0])
+                _require({key: record.get(key) for key in document} == document,
+                         'animation_method_failed_attempt_deletion_conflict', 409)
+                return record
+            removed = [json.loads(row[0]) for row in db.execute(
+                'SELECT document FROM effect_memberships WHERE owner=? '
+                'AND (commission_id=? OR canonical_commission_id=?) ORDER BY rowid',
+                (owner, commission_id, commission_id))]
+            record = dict(document, created_at=self.clock(), removed_memberships=removed)
+            db.execute('INSERT INTO commission_deletions VALUES (?,?,?)',
+                       (owner, commission_id, canonical_bytes(record).decode()))
+            db.execute('DELETE FROM effect_memberships WHERE owner=? '
+                       'AND (commission_id=? OR canonical_commission_id=?)',
+                       (owner, commission_id, commission_id))
+            db.commit()
+            return record
+
     def record_effect_membership(self, owner, commission_id, canonical_commission_id, *, reason):
         """Operator-only historical correction; never exposed as an HTTP write route.
 
@@ -343,8 +441,8 @@ class AnimationMethodService:
         and leaves both immutable commission ledgers and all media untouched.
         """
         _require(type(reason) is str and bool(reason.strip()) and len(reason) <= 2000)
-        previous = self.commissions.get(owner, commission_id)
-        canonical = self.commissions.get(owner, canonical_commission_id)
+        previous = self._get_visible_commission(owner, commission_id)
+        canonical = self._get_visible_commission(owner, canonical_commission_id)
         issue = _historical_membership_issue(previous, canonical)
         _require(issue is None, issue or 'animation_method_effect_membership_invalid', 409)
         _require(all(op['status'] in OP_TERMINAL
@@ -383,10 +481,14 @@ class AnimationMethodService:
         capabilities = self._capabilities()
         rows = []
         runs = self.commissions.list_all(owner)
+        deletions = self._commission_deletions(owner)
+        hidden = _deleted_commission_ids(runs, deletions)
         demonstrations = self.methods.list_demonstrations(owner)
         samples = _sample_index(demonstrations)
-        effects, _ = _effect_views(runs, demonstrations, self._effect_memberships(owner))
+        effects, _ = _effect_views(runs, demonstrations, self._effect_memberships(owner), deletions)
         for run in runs:
+            if run['id'] in hidden:
+                continue
             candidate = next((item for item in _candidates(run) if item['id'] == run['best_candidate_id']), None)
             engine = _sample_engine(candidate, samples)
             best = (dict(id=candidate['id'], media_url=_public_url(run['id'], candidate['id'], 'media'), **engine)
@@ -401,10 +503,11 @@ class AnimationMethodService:
                         allowed_engines=capabilities['allowed_engines'] if capabilities else ['html-svg']))
 
     def get(self, owner, commission_id):
-        run = self.commissions.get(owner, commission_id)
+        run = self._get_visible_commission(owner, commission_id)
         all_demos = self.methods.list_demonstrations(owner)
         all_runs = self.commissions.list_all(owner)
-        _, membership = _effect_views(all_runs, all_demos, self._effect_memberships(owner))
+        _, membership = _effect_views(all_runs, all_demos, self._effect_memberships(owner),
+                                     self._commission_deletions(owner))
         samples = _sample_index(all_demos)
         effect = membership[commission_id]
         demos = {row['provenance'].get('candidate_id'): row for row in all_demos}
@@ -506,8 +609,17 @@ class AnimationMethodService:
                  and set(body) <= fields)
         request_id = body['request_id']
         data = {key: deepcopy(value) for key, value in body.items() if key != 'request_id' and value is not None}
+        previous_request = next((row for row in self.commissions.list_all(owner)
+                                 if row['request_id'] == request_id), None)
+        if previous_request is not None:
+            self._get_visible_commission(owner, previous_request['id'])
         if 'retry_of_commission_id' in data:
-            previous = self.commissions.get(owner, data['retry_of_commission_id'])
+            # An existing visible retry still normalizes against its immutable
+            # ancestor on replay. Only a new request needs a visible parent;
+            # the durable request hash below rejects changed replay payloads.
+            previous = (self.commissions.get(owner, data['retry_of_commission_id'])
+                        if previous_request is not None else
+                        self._get_visible_commission(owner, data['retry_of_commission_id']))
             _require(previous['state'] in {'failed', 'cancelled'} and all(
                 op['status'] in OP_TERMINAL for op in previous['operations']),
                 'animation_method_retry_not_available', 409)
@@ -530,8 +642,6 @@ class AnimationMethodService:
         # Runtime admission is trusted server configuration, never a browser
         # field. Replay uses the original server-injected snapshot even if a
         # later deployment admits additional engines or changes image hashes.
-        previous_request = next((row for row in self.commissions.list_all(owner)
-                                 if row['request_id'] == request_id), None)
         if previous_request is not None:
             for key in ('constraints', 'assets'):
                 if key in previous_request['frozen']:
@@ -550,7 +660,7 @@ class AnimationMethodService:
             _require(not data.get('base_commission_id') and not data.get('base_candidate_id'),
                      'animation_method_transfer_identity_invalid', 409)
         if data.get('base_commission_id'):
-            previous = self.commissions.get(owner, data['base_commission_id'])
+            previous = self._get_visible_commission(owner, data['base_commission_id'])
             baseline_id = data.get('base_candidate_id') or previous['best_candidate_id']
             baseline = next((row for row in _candidates(previous) if row['id'] == baseline_id), None)
             _require(baseline is not None, 'animation_method_baseline_missing', 409)
