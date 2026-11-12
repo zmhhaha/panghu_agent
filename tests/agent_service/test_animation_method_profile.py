@@ -79,6 +79,36 @@ def test_bundle_and_roles_are_distinct_and_verified():
     assert reviewer.required_tools == ('read_inputs', 'write')
 
 
+def test_new_engine_bundle_keeps_frozen_v1_resources_and_review_readonly_instructions():
+    import hashlib
+    import json
+    old = contract.BUNDLE_ROOT.parent / contract.LEGACY_BUNDLE_REVISION
+    manifest_raw = (old / 'manifest.json').read_bytes()
+    assert hashlib.sha256(manifest_raw).hexdigest() == contract.LEGACY_BUNDLE_MANIFEST_SHA256
+    for row in json.loads(manifest_raw)['local_files']:
+        assert hashlib.sha256((old / row['path']).read_bytes()).hexdigest() == row['sha256']
+    assert contract.BUNDLE_REVISION == 'animation-method-v2'
+    prompt = contract.VideoAnimationMethodProfile(True).build_prompt({'input_sha256': 'a' * 64})
+    assert 'return methods=[], source=null and sound_events=[] exactly.' in prompt
+    assert 'constraints.allowed_engines' in prompt and "canvas.getContext('2d')" in prompt
+    assert './assets/three.module.min.js' in prompt and 'ready' in prompt
+
+
+@pytest.mark.parametrize('engine', ['canvas', 'three'])
+def test_author_selects_only_admitted_engine_and_all_methods_must_match_source(engine):
+    context = document()
+    context['constraints']['allowed_engines'] = [engine]
+    if engine == 'three':
+        context['assets']['three.module.min.js'] = 'a' * 64
+    output = result(context)
+    output['source']['engine'] = engine
+    output['methods'][0]['runtime_requirements']['engine'] = engine
+    assert contract.validate_result(output, digest(context), context) == output
+    output['methods'][0]['runtime_requirements']['engine'] = 'html-svg'
+    with pytest.raises(ServiceError, match='runtime_not_admitted'):
+        contract.validate_result(output, digest(context), context)
+
+
 def test_result_binds_input_criteria_and_source_engine():
     context = document()
     output = result(context)

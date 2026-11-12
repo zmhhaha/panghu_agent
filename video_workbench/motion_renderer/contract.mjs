@@ -10,6 +10,7 @@ export function renderQuality(value='draft'){
 export const inputFiles=['index.html','plan.json','beats.json','alignment.json','timeline.json'];
 export const runtimeKeys=['schema','hyperframes','hyperframes_source','node','browser','ffmpeg','gsap',
  'gsap_sha256','font_sha256','dpkg_sha256','npm_lock_sha256'];
+export const engineRuntimeKeys=[...runtimeKeys,'three','three_sha256','three_license_sha256','engine_runtime_sha256','creative_host_sha256'];
 const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const exactKeys=(value,keys)=>object(value)&&JSON.stringify(Object.keys(value).sort())===JSON.stringify([...keys].sort());
 const projectPair=(compiler,template)=>(compiler==='motion-compiler-1'&&template==='technical-diagrams-1')
@@ -24,28 +25,36 @@ const projectPair=(compiler,template)=>(compiler==='motion-compiler-1'&&template
  ||(compiler==='motion-continuity-compiler-2'&&template==='continuous-diagrams-2')
  ||(compiler==='motion-demo-compiler-1'&&template==='record-demonstration-1')
  ||(compiler==='creative-scene-adapter-1'&&template==='generated-html-svg-1')
- ||(compiler==='creative-method-scene-adapter-1'&&template==='generated-method-html-svg-1');
+ ||(compiler==='creative-method-scene-adapter-1'&&template==='generated-method-html-svg-1')
+ ||(compiler==='creative-method-engine-scene-adapter-1'&&template==='generated-method-engine-scene-1');
 function validateRuntimeShape(value,keys){
  if(!exactKeys(value,keys)||Object.values(value).some(v=>typeof v!=='string'||v.length<1||v.length>2000||/[\x00-\x1f\x7f]/.test(v)))
   throw Error('runtime_fingerprint_invalid');
- if(value.schema!=='video.motion-runtime.v1'||value.hyperframes!=='0.8.149'
+ if(!['video.motion-runtime.v1','video.motion-runtime.v2'].includes(value.schema)||value.hyperframes!=='0.8.149'
   ||value.hyperframes_source!=='2905162d925fc87fb8242e24ed0bbf025d307ea1'||value.gsap!=='3.14.2')
   throw Error('runtime_version_mismatch');
  for(const key of ['gsap_sha256','font_sha256','dpkg_sha256','npm_lock_sha256'])
   if(!/^[0-9a-f]{64}$/.test(value[key]))throw Error('runtime_fingerprint_invalid');
+ if(value.schema==='video.motion-runtime.v2'&&(value.three!=='0.170.0'
+  ||value.three_sha256!=='08fd7545d13d2c7fb65ab691530a802dafefd638596501854f267d0fb13c39e7'
+  ||value.three_license_sha256!=='4c40a1ef62450b857c3b2aaf294936304cd552d965fbcd9d32d4c5bcf4ba4454'
+  ||!/^[0-9a-f]{64}$/.test(value.engine_runtime_sha256)
+  ||!/^[0-9a-f]{64}$/.test(value.creative_host_sha256)))throw Error('runtime_version_mismatch');
 }
 export function verifyRuntime(frozen,installed,imageDigest,{allowUnboundExperiment=false}={}){
  // The image deliberately cannot supply its own registry identity. The trusted
  // coordinator pins image@digest and passes this same digest separately.
  if(!/^sha256:[0-9a-f]{64}$/.test(imageDigest||''))throw Error('external_image_digest_required');
- validateRuntimeShape(installed,runtimeKeys);
+ const installedKeys=installed?.schema==='video.motion-runtime.v2'?engineRuntimeKeys:runtimeKeys;
+ validateRuntimeShape(installed,installedKeys);
  if(frozen===null){
   if(allowUnboundExperiment!==true)throw Error('runtime_fingerprint_required');
   return {status:'unbound_experiment',image_digest:imageDigest,image_digest_source:'coordinator'};
  }
- validateRuntimeShape(frozen,[...runtimeKeys,'image_digest']);
+ const frozenKeys=frozen?.schema==='video.motion-runtime.v2'?engineRuntimeKeys:runtimeKeys;
+ validateRuntimeShape(frozen,[...frozenKeys,'image_digest']);
  if(frozen.image_digest!==imageDigest)throw Error('runtime_image_digest_mismatch');
- for(const key of runtimeKeys)if(frozen[key]!==installed[key])throw Error('runtime_installed_mismatch:'+key);
+ for(const key of frozenKeys)if(frozen[key]!==installed[key])throw Error('runtime_installed_mismatch:'+key);
  return {status:'matched',image_digest:imageDigest,image_digest_source:'coordinator'};
 }
 export function encodedDuration(timeline){
@@ -93,14 +102,29 @@ export function verifyInput(root,expected){
   ||!Number.isFinite(timeline.duration_seconds)||timeline.duration_seconds<=0||timeline.duration_seconds>60)
   throw Error('timeline_contract_mismatch');
  const plan=JSON.parse(readRegular(root+'/plan.json'));
- const methodCreative=manifest.compiler==='creative-method-scene-adapter-1';
+ const engineCreative=manifest.compiler==='creative-method-engine-scene-adapter-1';
+ const methodCreative=manifest.compiler==='creative-method-scene-adapter-1'||engineCreative;
  if(manifest.compiler==='creative-scene-adapter-1'||methodCreative){
-  const schema=methodCreative?'video.creative-scene.v2':'video.creative-scene.v1';
+  const schema=engineCreative?'video.creative-scene.v3':methodCreative?'video.creative-scene.v2':'video.creative-scene.v1';
   const audio=methodCreative?plan.input_document?.scene?.audio_sha256:plan.input_document?.constraints?.production?.audio_sha256;
-  if(plan?.schema!==schema||plan.engine!=='html-svg'
+  if(plan?.schema!==schema||!(engineCreative?['html-svg','canvas','three']:['html-svg']).includes(plan.engine)
    ||plan.adapter_revision!==manifest.compiler||audio!==manifest.audio_sha256)
    throw Error('creative_plan_binding_mismatch');
   const source=methodCreative?plan.result?.source:plan.result;
+  if(engineCreative&&(source?.engine!==plan.engine||manifest.engine!==plan.engine
+   ||timeline.creative?.engine!==plan.engine||manifest.runtime_fingerprint?.schema!=='video.motion-runtime.v2'
+   ||!plan.input_document?.constraints?.allowed_engines?.includes(plan.engine)))throw Error('creative_plan_binding_mismatch');
+  if(engineCreative){
+   const runtime=manifest.runtime_fingerprint,identity=plan.input_document.constraints.runtime_identity;
+   if((plan.engine!=='html-svg'&&!identity)||(identity&&(identity.image_digest!==runtime.image_digest
+    ||identity.host_sha256!==runtime.creative_host_sha256||identity.engine_runtime_sha256!==runtime.engine_runtime_sha256)))
+    throw Error('creative_plan_binding_mismatch');
+   const assets=plan.engine==='three'?{'three.module.min.js':runtime.three_sha256}:{};
+   if(JSON.stringify(manifest.engine_assets)!==JSON.stringify(assets)
+    ||(plan.engine==='three'&&plan.input_document.assets?.['three.module.min.js']!==runtime.three_sha256)
+    ||JSON.stringify(manifest.required_assets)!==JSON.stringify(['assets/gsap.min.js','assets/NotoSansCJK-Regular.ttc',
+     ...Object.keys(assets).map(name=>'assets/'+name)]))throw Error('creative_asset_binding_mismatch');
+  }
   const files=source?.files,hashes=source?.files_sha256;
   if(!object(files)||!object(hashes)||!files['scene.html']||Object.keys(files).length>3
    ||JSON.stringify(Object.keys(files).sort())!==JSON.stringify(Object.keys(hashes).sort())
@@ -109,7 +133,8 @@ export function verifyInput(root,expected){
    ||sha(Buffer.from(files['scene.html']))!==manifest.files['index.html'])throw Error('creative_source_mismatch');
  }
  if((plan?.schema==='video.creative-scene.v1')!==(manifest.compiler==='creative-scene-adapter-1')
-  ||(plan?.schema==='video.creative-scene.v2')!==methodCreative)throw Error('project_schema_compiler_mismatch');
+  ||(plan?.schema==='video.creative-scene.v2')!==(methodCreative&&!engineCreative)
+  ||(plan?.schema==='video.creative-scene.v3')!==engineCreative)throw Error('project_schema_compiler_mismatch');
  if((manifest.compiler==='motion-process-compiler-2')!==(plan?.schema==='video.process-plan.v1')
   ||(manifest.compiler==='motion-process-continuity-compiler-1')!==(plan?.schema==='video.process-continuity-scene.v1'))
   throw Error('project_schema_compiler_mismatch');

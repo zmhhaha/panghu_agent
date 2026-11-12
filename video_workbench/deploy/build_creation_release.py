@@ -34,8 +34,8 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
 
 
-def command(argv, *, cwd=ROOT, env=None, timeout=1800, output=None):
-    result = subprocess.run(argv, cwd=cwd, env=env, stdout=output or subprocess.PIPE,
+def command(argv, *, cwd=ROOT, env=None, timeout=1800, output=None, stdin=None):
+    result = subprocess.run(argv, cwd=cwd, env=env, stdin=stdin, stdout=output or subprocess.PIPE,
         stderr=output or subprocess.PIPE, timeout=timeout, check=False)
     require(result.returncode == 0, 'release_command_failed:' + argv[0])
     return result.stdout

@@ -63,7 +63,8 @@ def production_result(document, *, source_html=None, action='adapt'):
         scene_targets=[dict(target_id='moving-group', description='Maintains object identity',
             source_file='scene.html', source_anchor='id="moving-group"')] if action != 'reject' else [])
         for row in document['method_delivery']['methods']]
-    return dict(schema=production.RESULT_SCHEMA, input_sha256=digest(document), source=source,
+    schema = production.RESULT_SCHEMA if document['schema'] == production.INPUT_SCHEMA else production.LEGACY_RESULT_SCHEMA
+    return dict(schema=schema, input_sha256=digest(document), source=source,
         method_decision=dict(delivery_sha256=document['method_delivery']['sha256'], decisions=decisions))
 
 

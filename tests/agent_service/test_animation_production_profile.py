@@ -46,6 +46,81 @@ def raw_result(context):
         method_decision=dict(delivery_sha256=context['method_delivery']['sha256'], decisions=[]))
 
 
+def engine_document(engine='canvas'):
+    from agent_service.profiles.video_animation_production_contract import THREE_ASSET_SHA256
+    context = document()
+    context['constraints']['allowed_engines'] = [engine]
+    context['constraints']['runtime_identity'] = dict(image_digest='sha256:' + 'a' * 64,
+        host_sha256='b' * 64, engine_runtime_sha256='c' * 64, admission_id='UNIT-TEST-only')
+    if engine == 'three':
+        context['assets'] = {'three.module.min.js': THREE_ASSET_SHA256,
+                            'three.LICENSE.txt': '4c40a1ef62450b857c3b2aaf294936304cd552d965fbcd9d32d4c5bcf4ba4454'}
+    delivery = context['method_delivery']
+    delivery['allowed_engines'] = [engine]
+    delivery['task_sha256'] = digest({key: context[key] for key in ('scene', 'constraints', 'assets', 'base_source')})
+    delivery['sha256'] = digest({key: value for key, value in delivery.items() if key != 'sha256'})
+    return context
+
+
+@pytest.mark.parametrize('engine', ['canvas', 'three'])
+def test_v2_accepts_exact_runtime_authorized_subset_and_cannot_expand_legacy_v1(engine):
+    from agent_service.profiles.video_animation_production_contract import validate_core_task
+    context = engine_document(engine)
+    assert validate_input(context) == context
+    core = {key: context[key] for key in ('scene', 'constraints', 'assets', 'base_source')}
+    assert validate_core_task(core, engine_aware=True) == core
+    # The frozen v1 path keeps both its input identity and HTML-only admission.
+    legacy = deepcopy(context)
+    legacy['schema'] = contract.LEGACY_INPUT_SCHEMA
+    with pytest.raises(ServiceError):
+        validate_input(legacy)
+    without_identity = deepcopy(core)
+    del without_identity['constraints']['runtime_identity']
+    with pytest.raises(ServiceError, match='runtime_identity_required'):
+        validate_core_task(without_identity, engine_aware=True)
+    bad = deepcopy(core)
+    bad['constraints']['allowed_engines'] = [engine, engine]
+    with pytest.raises(ServiceError, match='engine_not_admitted'):
+        validate_core_task(bad, engine_aware=True)
+    if engine == 'three':
+        bad = deepcopy(core)
+        bad['assets']['three.module.min.js'] = 'd' * 64
+        with pytest.raises(ServiceError, match='three_asset_not_admitted'):
+            validate_core_task(bad, engine_aware=True)
+
+
+def test_result_schema_must_match_input_generation_and_cannot_claim_another_engine():
+    context = engine_document()
+    output = raw_result(context)
+    output['source']['engine'] = 'canvas'
+    output['source']['files_sha256'] = {'scene.html': hashlib.sha256(
+        output['source']['files']['scene.html'].encode()).hexdigest()}
+    assert contract.validate_result(output, digest(context), context) == output
+    output['schema'] = contract.LEGACY_RESULT_SCHEMA
+    with pytest.raises(ServiceError, match='input_binding_mismatch'):
+        contract.validate_result(output, digest(context), context)
+    output['schema'] = contract.RESULT_SCHEMA
+    output['source']['engine'] = 'html-svg'
+    with pytest.raises(ServiceError, match='engine_not_allowed'):
+        contract.validate_result(output, digest(context), context)
+
+
+def test_v2_bundle_is_complete_and_legacy_prompt_resources_remain_verifiable():
+    from agent_service import build_image
+    assert contract.BUNDLE_REVISION == 'animation-production-v2'
+    assert set(contract.verified_bundle()) == contract.BUNDLE_FILES
+    assert set(contract.verified_bundle(legacy=True)) == contract.BUNDLE_FILES
+    profile = contract.VideoAnimationProductionProfile()
+    current = profile.build_prompt({'input_sha256': 'a' * 64})
+    legacy = profile.build_prompt({'input_sha256': 'a' * 64}, legacy=True)
+    assert 'animation-production-result.v2' in current and 'WebGL2' in current
+    assert 'animation-production-instructions-3' in current
+    assert 'Engine is `html-svg`.' in legacy
+    pins = {revision: sha for revision, sha, _ in build_image.ANIMATION_RUNTIME_BUNDLES}
+    assert pins[contract.BUNDLE_REVISION] == contract.BUNDLE_MANIFEST_SHA256
+    assert pins[contract.LEGACY_BUNDLE_REVISION] == contract.LEGACY_BUNDLE_MANIFEST_SHA256
+
+
 def staged(tmp_path):
     context = document()
     raw = canonical_bytes(context)
@@ -69,7 +144,7 @@ def test_registered_profile_has_its_own_bundle_tools_and_provenance():
     prompt = handler.build_prompt({'input_sha256': 'a' * 64})
     assert contract.INPUT_NAME in prompt and 'apply' in prompt and 'reject' in prompt
     assert 'source_anchor' in prompt and 'do not prove' in prompt.lower()
-    assert 'animation-production-instructions-2' in prompt
+    assert 'animation-production-instructions-3' in prompt
     assert 'Strategy has exactly `description` and `tradeoffs`.' in prompt
     assert 'Both must be non-empty\n  JSON strings, at most 3000 characters each.' in prompt
     assert 'Do not use arrays, objects, null' in prompt

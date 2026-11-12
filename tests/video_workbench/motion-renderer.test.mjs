@@ -85,6 +85,21 @@ test('a matching partial fingerprint cannot omit font or lock identity',()=>{
   assert.throws(()=>verifyRuntime(partial,installed,imageDigest),/fingerprint_invalid/);
  }
 });
+test('engine runtime v2 freezes Three, its license and both trusted host modules',()=>{
+ const installed={...installedRuntime(),schema:'video.motion-runtime.v2',three:'0.170.0',
+  three_sha256:'08fd7545d13d2c7fb65ab691530a802dafefd638596501854f267d0fb13c39e7',
+  three_license_sha256:'4c40a1ef62450b857c3b2aaf294936304cd552d965fbcd9d32d4c5bcf4ba4454',
+  engine_runtime_sha256:'1'.repeat(64),creative_host_sha256:'2'.repeat(64)};
+ const frozen={...installed,image_digest:imageDigest};
+ assert.equal(verifyRuntime(frozen,installed,imageDigest).status,'matched');
+ for(const key of ['three','three_sha256','three_license_sha256','engine_runtime_sha256','creative_host_sha256']){
+  const partial={...installed};delete partial[key];
+  assert.throws(()=>verifyRuntime(frozen,partial,imageDigest),/runtime_/);
+  assert.throws(()=>verifyRuntime(frozen,{...installed,[key]:key==='three'?'0.169.0':'f'.repeat(64)},imageDigest),/runtime_/);
+ }
+ assert.throws(()=>verifyRuntime({...installedRuntime(),image_digest:imageDigest},installed,imageDigest),/runtime_installed_mismatch/);
+ assert.throws(()=>verifyRuntime(frozen,installedRuntime(),imageDigest),/runtime_installed_mismatch/);
+});
 test('pads audio to the final complete frame without trimming the recording',()=>{
  const timeline={duration_seconds:1.001,leading_seconds:.0005,audio_seconds:1,trailing_seconds:.0005};
  const end=25/24;

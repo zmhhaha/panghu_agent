@@ -158,7 +158,7 @@ def collect_scene_result(input_document, result):
 
 
 def validate_scene_package(package):
-    if type(package) is dict and package.get('schema') == 'video.creative-scene.v2':
+    if type(package) is dict and package.get('schema') in {'video.creative-scene.v2', 'video.creative-scene.v3'}:
         from .creative_method_contract import validate_scene_package as validate_method_package
         return validate_method_package(package)
     _require(type(package) is dict and set(package) == PACKAGE_FIELDS
@@ -176,13 +176,13 @@ def scene_files(package):
 
 def scene_source(package):
     value = validate_scene_package(package)
-    return value['result']['source'] if value['schema'] == 'video.creative-scene.v2' else value['result']
+    return value['result']['source'] if value['schema'] in {'video.creative-scene.v2', 'video.creative-scene.v3'} else value['result']
 
 
 def scene_context(package):
     value = validate_scene_package(package)
     document = value['input_document']
-    return document['scene'] if value['schema'] == 'video.creative-scene.v2' else document['constraints']['production']
+    return document['scene'] if value['schema'] in {'video.creative-scene.v2', 'video.creative-scene.v3'} else document['constraints']['production']
 
 
 def base_scene_result(document):

@@ -132,10 +132,11 @@ test('an available creative release is the default for new generation, with an a
   assert.equal(h.state.context.scene.motion.head_version_id, null);
 });
 
-test('method-driven creative review shows decisions without claiming observed application or auto adoption', async () => {
+for (const creativeSchema of ['video.creative-scene.v2', 'video.creative-scene.v3'])
+test(`method-driven creative review preserves declarations without adoption: ${creativeSchema}`, async () => {
   const h = harness(); h.state.context.creativeConfigured = true;
   const candidate = creativeVersion();
-  candidate.plan.schema = 'video.creative-scene.v2';
+  candidate.plan.schema = creativeSchema;
   candidate.plan.input_document.scene = { title: '方法用于新内容' };
   candidate.plan.input_document.method_delivery = { methods: [{ id: 'method-v1', title: '<script>对象身份</script>' }] };
   candidate.plan.result = { source: candidate.plan.result };

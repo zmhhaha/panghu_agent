@@ -97,6 +97,25 @@ class SyntheticExecution:
                 audio_sha256=audio_sha, sound_events_sha256=digest(request['sound_events']),
                 probe=dict(streams=streams,
                            format=dict(duration=str(request['constraints']['duration_seconds']))))
+            if request.get('engine'):
+                engine = request['engine']
+                probes = []
+                for ordinal in range(4):
+                    name = f'probe-{ordinal}.jpg'
+                    (work / 'frames' / name).write_bytes(frame)
+                    probes.append(dict(frames[0], name=name, reference_name=frames[0]['name'], kind='synthetic'))
+                observation = dict(kind='2d' if engine == 'canvas' else 'webgl2',
+                                   width=320, height=180, visible=True, connected=True)
+                if engine == 'three':
+                    observation.update(renderer='ANGLE SwiftShader', software=True,
+                                       context_lost=False, gl_error=0)
+                receipt.update(schema='video.animation-method-render-receipt.v2', engine=engine,
+                    engine_runtime_sha256=request['engine_runtime_sha256'],
+                    engine_observation=dict(engine=engine, revision='animation-engine-runtime-1',
+                                            contexts=[] if engine == 'html-svg' else [observation]),
+                    seek_checks=dict(schema='video.animation-engine-seek-checks.v1', absolute_seek=True,
+                        non_monotonic_seek_verified=True, repeated_seek_verified=True,
+                        idle_frame_verified=True, fresh_load_verified=True, probes=probes))
             (work / 'render-receipt.json').write_bytes(canonical_bytes(receipt))
         (root / 'render-outcome.json').write_bytes(canonical_bytes(outcome))
         return outcome
@@ -412,3 +431,87 @@ def test_actual_host_sound_synthesis_is_deterministic_and_keeps_event_offsets():
     assert any(pcm[round(.26 * 48000) * 2:round(.34 * 48000) * 2])
     assert set(pcm[round(.36 * 48000) * 2:round(.59 * 48000) * 2]) == {0}
     assert any(pcm[round(.61 * 48000) * 2:round(.69 * 48000) * 2])
+
+
+def native_document(engine):
+    doc = document()
+    doc['constraints']['allowed_engines'] = [engine]
+    if engine == 'three':
+        doc['assets'] = {name: renderer.ASSET_SHA256[name] for name in ('three.module.min.js', 'three.LICENSE.txt')}
+    return doc
+
+
+def test_html_selected_from_engine_aware_runtime_uses_v2_without_native_contexts(adapter):
+    value, execution = adapter
+    doc = document()
+    doc['constraints']['runtime_identity'] = value.capabilities()['runtime_identity']
+    result = value.render('html-new-runtime', SOURCE, doc)
+    assert result['technical_passed'] is True
+    assert 'method-html-svg-v2@' in result['runtime']['admission']['id']
+    assert result['runtime']['engine'] == 'html-svg' and execution.calls == 1
+
+
+def test_candidate_is_not_advertised_and_proven_exact_renderer_is_required_for_admission(tmp_path, monkeypatch):
+    execution = SyntheticExecution()
+    monkeypatch.setattr(renderer, 'execute_method_render', execution)
+    value = renderer.MethodAnimationRenderer(tmp_path / 'render', IMAGE, enabled=True, candidate_engines=['canvas'])
+    assert value.capabilities()['allowed_engines'] == ['html-svg']
+    result = value.render('canvas-proof', dict(SOURCE, engine='canvas'), native_document('canvas'))
+    assert result['technical_passed'] is True and result['runtime']['engine'] == 'canvas'
+    capabilities = value.capabilities()
+    admission = dict(schema='video.animation-engine-admission.v1', assets=capabilities['assets'],
+        **{key: capabilities['runtime_identity'][key] for key in
+           ('image_digest', 'host_sha256', 'engine_runtime_sha256')},
+        evidence={'canvas': dict(operation_id='canvas-proof', evidence_sha256=result['technical']['evidence_sha256'])})
+    path = tmp_path / 'engine-admission.json'
+    path.write_bytes(canonical_bytes(admission))
+    admitted = renderer.MethodAnimationRenderer(value.root, IMAGE, enabled=True, engine_admission_file=path)
+    assert admitted.capabilities()['allowed_engines'] == ['html-svg', 'canvas']
+    admitted.render('canvas-admitted', dict(SOURCE, engine='canvas'), native_document('canvas'))
+    with pytest.raises(ServiceError, match='admission_changed'):
+        renderer.MethodAnimationRenderer(value.root, NEW_IMAGE, engine_admission_file=path).capabilities()
+    admission['evidence']['canvas']['evidence_sha256'] = 'f' * 64
+    path.write_bytes(canonical_bytes(admission))
+    with pytest.raises(ServiceError, match='admission_unproven'):
+        admitted.capabilities()
+    assert execution.calls == 2
+
+
+@pytest.mark.parametrize('tamper', ['engine', 'runtime', 'context', 'reverse', 'idle', 'reload', 'probe'])
+def test_native_context_and_seek_evidence_cannot_be_relabelled(tmp_path, monkeypatch, tamper):
+    execution = SyntheticExecution()
+    monkeypatch.setattr(renderer, 'execute_method_render', execution)
+    value = renderer.MethodAnimationRenderer(tmp_path / 'render', IMAGE, enabled=True, candidate_engines=['canvas'])
+    value.render('native-evidence', dict(SOURCE, engine='canvas'), native_document('canvas'))
+    root = value._directory('native-evidence')
+    path = root / 'work/render-receipt.json'
+    receipt = json.loads(path.read_bytes())
+    if tamper == 'engine':
+        receipt['engine'] = 'three'
+    elif tamper == 'runtime':
+        receipt['engine_runtime_sha256'] = 'f' * 64
+    elif tamper == 'context':
+        receipt['engine_observation']['contexts'][0]['kind'] = 'webgl2'
+    elif tamper in {'reverse', 'idle', 'reload'}:
+        receipt['seek_checks'][{'reverse': 'non_monotonic_seek_verified', 'idle': 'idle_frame_verified',
+                                'reload': 'fresh_load_verified'}[tamper]] = False
+    else:
+        (root / 'work/frames' / receipt['seek_checks']['probes'][0]['name']).write_bytes(b'changed')
+    path.write_bytes(canonical_bytes(receipt))
+    with pytest.raises(ServiceError):
+        value.lookup('native-evidence')
+    assert execution.calls == 1
+
+
+def test_engine_runtime_staged_bytes_remain_bound_after_restart(tmp_path, monkeypatch):
+    execution = SyntheticExecution()
+    monkeypatch.setattr(renderer, 'execute_method_render', execution)
+    value = renderer.MethodAnimationRenderer(tmp_path / 'render', IMAGE, enabled=True, candidate_engines=['canvas'])
+    result = value.render('native-staged', dict(SOURCE, engine='canvas'), native_document('canvas'))
+    restarted = renderer.MethodAnimationRenderer(value.root, NEW_IMAGE)
+    assert restarted.lookup('native-staged') == result
+    path = value._directory('native-staged') / 'engine_runtime.mjs'
+    path.write_bytes(b'changed trusted runtime')
+    with pytest.raises(ServiceError, match='runtime_changed'):
+        restarted.lookup('native-staged')
+    assert execution.calls == 1

@@ -121,7 +121,8 @@ class MotionWorkflow:
                         self.store.update_operation(op['id'],
                             status='cancelled' if op['cancel_requested'] else 'timed_out', error=None)
                     return
-            if op['document']['schema'] != 'video.animation-production-input.v1':
+            if op['document']['schema'] not in {'video.animation-production-input.v1',
+                                              'video.animation-production-input.v2'}:
                 # A historical Lab author input is not a production input.
                 # Never relabel or submit it under a new role.
                 raise ServiceError('creative_profile_unavailable', 503)

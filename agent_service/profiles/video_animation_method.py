@@ -28,10 +28,12 @@ RESULT_NAME = 'animation-method-result.json'
 INPUT_MAX_BYTES = 2 * 1024 * 1024
 OUTPUT_MAX_BYTES = 2 * 1024 * 1024
 MAX_FRAMES = 24
-BUNDLE_REVISION = 'animation-method-v1'
+LEGACY_BUNDLE_REVISION = 'animation-method-v1'
+LEGACY_BUNDLE_MANIFEST_SHA256 = '5736a38aa05058011ad9ee7e886360e15b0a0cf28be3211b242241c2299c7b91'
+BUNDLE_REVISION = 'animation-method-v2'
 BUNDLE_ROOT = Path(__file__).resolve().parent.parent / 'resources' / BUNDLE_REVISION
 BUNDLE_FILES = frozenset({'CONTRACT.md', 'method-procedure/SKILL.md', 'LICENSE'})
-BUNDLE_MANIFEST_SHA256 = '5736a38aa05058011ad9ee7e886360e15b0a0cf28be3211b242241c2299c7b91'
+BUNDLE_MANIFEST_SHA256 = 'ec1b61b8c95618d016316c9264473ad254ccacd7c7bbac63ff0d27f80d7f3e01'
 
 
 def _candidate_id(value):

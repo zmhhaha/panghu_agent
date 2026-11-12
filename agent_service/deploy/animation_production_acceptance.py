@@ -35,7 +35,7 @@ from agent_service.registry import binding_fingerprint, required_model_capabilit
 from agent_service.worker_entry import HostConfig, _host_registry, accepted_host, host_policy
 from video_workbench.animation_candidate_import import EXPORT_NAMES, _pod
 from video_workbench.creative_method_contract import collect_scene_result, validate_scene_package
-from video_workbench.creative_renderer import METHOD_COMPILER, compile_creative_project
+from video_workbench.creative_renderer import METHOD_COMPILER, ENGINE_METHOD_COMPILER, compile_creative_project
 from video_workbench.motion_render_k8s import _subset, unpack_artifacts, validate_artifacts
 from video_workbench.motion_renderer.job import FILES, NAMESPACE, resources
 from video_workbench.motion_snapshot import _runtime
@@ -158,7 +158,9 @@ def _renderer_stop(pod, job, desired):
 def verify_renderer_capture(directory, package, *, renderer_image):
     """Check original seven-file Job input, raw K8s stop and log export bytes."""
     package = validate_scene_package(package)
-    require(package['schema'] == 'video.creative-scene.v2' and type(renderer_image) is str
+    engine_aware = package['schema'] == 'video.creative-scene.v3'
+    compiler = ENGINE_METHOD_COMPILER if engine_aware else METHOD_COMPILER
+    require(package['schema'] in {'video.creative-scene.v2', 'video.creative-scene.v3'} and type(renderer_image) is str
         and IMAGE.fullmatch(renderer_image), 'animation_production_renderer_v2_required')
     root = _directory(directory)
     names = ('desired-resources.json', 'job-created.json', 'job-final.json', 'pod-final.json',
@@ -176,9 +178,9 @@ def verify_renderer_capture(directory, package, *, renderer_image):
     timeline = decode_video_json(files['timeline.json'])
     expected_files = compile_creative_project(package, scene['beats'], scene['alignment'],
         runtime_fingerprint=runtime, leading_seconds=timeline['leading_seconds'],
-        trailing_seconds=timeline['trailing_seconds'], compiler_version=METHOD_COMPILER)
+        trailing_seconds=timeline['trailing_seconds'], compiler_version=compiler)
     require(all(files[name] == value for name,value in expected_files.items())
-        and timeline['compiler'] == METHOD_COMPILER, 'animation_production_renderer_input_mismatch')
+        and timeline['compiler'] == compiler, 'animation_production_renderer_input_mismatch')
     audio = _audio_clock(files['audio.wav'], package['input_document'])
     desired = docs['desired-resources.json']
     jobs = [row for row in desired.get('items', []) if row.get('kind') == 'Job']
@@ -228,7 +230,8 @@ def verify_renderer_capture(directory, package, *, renderer_image):
         and all(_capture(root / 'input', name, 8 * 1024 * 1024) == value for name,value in files.items())
         and all(_capture(artifact_root, name, 32 * 1024 * 1024) == value for name,value in entries.items()),
         'animation_production_renderer_capture_changed')
-    return dict(schema='video.animation-production-captured-render-proof.v1',
+    return dict(schema='video.animation-production-captured-render-proof.v2' if engine_aware
+        else 'video.animation-production-captured-render-proof.v1',
         package_sha256=digest(package), source_sha256=package['result_sha256'],
         input_sha256=package['input_sha256'], renderer_image=renderer_image, runtime=runtime,
         audio_clock=audio, stopped=stopped, media_sha256=evidence['media_sha256'],
@@ -236,7 +239,8 @@ def verify_renderer_capture(directory, package, *, renderer_image):
         capture_sha256={name:sha(value) for name,value in raw.items()},
         input_files_sha256={name:sha(value) for name,value in files.items()},
         artifact_files_sha256={name:sha(value) for name,value in entries.items()},
-        scope='original_v2_input_isolated_job_media_and_reverse_seek',
+        scope='original_v3_engine_input_isolated_job_media_native_context_and_reverse_seek' if engine_aware
+            else 'original_v2_input_isolated_job_media_and_reverse_seek',
         whole_video_watched=False, audio_observed=False, subjective_quality_approved=False)
 
 
@@ -258,9 +262,11 @@ def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_
     document = production.validate_input(decode_video_json(input_raw))
     require(input_raw == canonical_bytes(document) and envelope.task == {'input_sha256':digest(document)},
             'animation_production_admission_input_mismatch')
+    package_name = ('creative-scene-v3.json' if document['schema'] == production.INPUT_SCHEMA
+                    else 'creative-scene-v2.json')
     for name, maximum in ((production.INPUT_NAME, production.INPUT_MAX_BYTES),
             (production.RESULT_NAME, production.OUTPUT_MAX_BYTES),
-            ('creative-scene-v2.json', production.INPUT_MAX_BYTES + production.OUTPUT_MAX_BYTES + 1024 * 1024)):
+            (package_name, production.INPUT_MAX_BYTES + production.OUTPUT_MAX_BYTES + 1024 * 1024)):
         raw[name] = _capture(root, name, maximum)
     require(raw[production.INPUT_NAME] == input_raw and len(result.artifacts) == 1
         and result.artifacts[0].name == production.RESULT_NAME
@@ -268,7 +274,7 @@ def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_
         'animation_production_admission_artifact_mismatch')
     artifact = production.validate_result(decode_video_json(raw[production.RESULT_NAME]), digest(document), document)
     package = collect_scene_result(document, artifact)
-    require(decode_video_json(raw['creative-scene-v2.json']) == package,
+    require(decode_video_json(raw[package_name]) == package,
             'animation_production_admission_package_mismatch')
     record, observation = docs['candidate-evidence.json'], docs['candidate-result.json']['observations']
     host, policy, binding = candidate_config(docs['host-config.json'])

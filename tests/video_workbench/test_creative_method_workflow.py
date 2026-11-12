@@ -124,6 +124,49 @@ def test_declarations_and_exact_delivery_survive_candidate_and_explicit_adoption
     assert motion.version(OWNER, version['id'])['plan'] == package
 
 
+def test_admitted_engine_snapshot_survives_restart_and_builds_engine_package(state, tmp_path):
+    """Frozen engine admission, not restart configuration, controls the result."""
+    from test_animation_method_service import runtime_capabilities
+    from video_workbench.creative_renderer import ENGINE_METHOD_COMPILER
+
+    store, _, timing, project_id, scene_id = state
+    capabilities = runtime_capabilities(['html-svg', 'canvas'])
+    motion = MotionStore(store, runtime_capabilities=capabilities)
+    configured = (store, motion, timing, project_id, scene_id)
+    started = start(configured)
+    core = motion.operation(started['id'])['document']['core_task']
+    assert core['constraints']['allowed_engines'] == ['html-svg', 'canvas']
+    assert core['constraints']['runtime_identity'] == capabilities['runtime_identity']
+    assert core['assets'] == capabilities['assets']
+
+    # Restart without the new admission. The already frozen request must retain
+    # its exact admitted subset and identity instead of falling back to v1.
+    restarted = MotionStore(Store(store.path))
+    records = AnimationMethodStore(tmp_path / 'methods.sqlite3')
+    frozen = restarted.prepare_creative(started['id'], adapter_for(configured, tmp_path, records, []))
+    assert frozen['document']['schema'] == 'video.animation-production-input.v2'
+    assert frozen['document']['constraints'] == core['constraints']
+    assert frozen['document']['assets'] == core['assets']
+    assert frozen['document']['method_delivery']['allowed_engines'] == ['html-svg', 'canvas']
+    output = production_result(frozen['document'])
+    output['source']['engine'] = 'canvas'
+    output['source']['files']['scene.html'] = (
+        '<!doctype html><canvas id="scene"></canvas><script>'
+        'const ctx=document.querySelector("canvas").getContext("2d");'
+        'window.__animationExperiment={seek(t){ctx.clearRect(0,0,1280,720);'
+        'ctx.fillRect(t*20,100,20,20)}};</script>')
+    output['source']['files_sha256']['scene.html'] = hashlib.sha256(
+        output['source']['files']['scene.html'].encode()).hexdigest()
+    completed = restarted.complete(started['id'], output)
+    version = restarted.version(OWNER, completed['version_id'])
+    assert version['plan']['schema'] == 'video.creative-scene.v3'
+    assert version['compiler_version'] == ENGINE_METHOD_COMPILER
+    assert version['plan']['engine'] == 'canvas'
+    project = restarted.project(OWNER, project_id)
+    adopted = restarted.adopt(OWNER, scene_id, version['id'], None, project['revision'])
+    assert adopted['scenes'][0]['motion']['head_version_id'] == version['id']
+
+
 def test_retrieval_uses_scene_context_and_ignores_old_source_and_assets(state, tmp_path):
     started = start(state)
     _, motion, _, _, _ = state

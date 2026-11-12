@@ -9,6 +9,38 @@ import re
 from urllib.parse import urlsplit
 
 
+def creative_runtime_capabilities(runtime, env=None):
+    """Read an operator-owned, acceptance-generated engine capability snapshot."""
+    env = os.environ if env is None else env
+    name = env.get('VIDEO_CREATIVE_RUNTIME_CAPABILITIES_FILE', '')
+    if not name:
+        return None
+    try:
+        path = Path(name)
+        if not path.is_absolute() or not path.is_file():
+            raise ValueError()
+        with path.open('rb') as stream:
+            raw = stream.read(65537)
+        if len(raw) > 65536:
+            raise ValueError()
+        from .animation_runtime_capabilities import validate_runtime_capabilities
+        value = validate_runtime_capabilities(json.loads(raw))
+        if (type(runtime) is not dict or runtime.get('schema') != 'video.motion-runtime.v2'
+                or value['runtime_identity']['image_digest'] != runtime['image_digest']
+                or value['runtime_identity']['host_sha256'] != runtime['creative_host_sha256']
+                or value['runtime_identity']['engine_runtime_sha256'] != runtime['engine_runtime_sha256']
+                or value['assets'].get('gsap.min.js') != runtime['gsap_sha256']
+                or value['assets'].get('NotoSansCJK-Regular.ttc') != runtime['font_sha256']):
+            raise ValueError()
+        if ('three' in value['allowed_engines'] and
+                (value['assets'].get('three.module.min.js') != runtime['three_sha256']
+                 or value['assets'].get('three.LICENSE.txt') != runtime['three_license_sha256'])):
+            raise ValueError()
+        return value
+    except Exception:
+        raise ValueError('Creative runtime capabilities are unavailable or do not match the renderer') from None
+
+
 @dataclass(frozen=True)
 class MotionSettings:
     enabled: bool = False

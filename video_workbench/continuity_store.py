@@ -124,7 +124,8 @@ class ContinuityStore:
                     elif (version['semantic_binding_sha256'] != binding
                           or digest(version['plan']) != version['plan_sha256']):
                         reason = 'continuity_motion_stale'
-                    elif version['plan'].get('schema') in {'video.creative-scene.v1', 'video.creative-scene.v2'}:
+                    elif version['plan'].get('schema') in {'video.creative-scene.v1', 'video.creative-scene.v2',
+                                                          'video.creative-scene.v3'}:
                         reason = 'creative_continuity_not_supported'
                     elif (version['plan'].get('schema') == PROCESS_SCHEMA
                           and version.get('compiler_version') != PROCESS_SOURCE_COMPILER):
@@ -134,7 +135,8 @@ class ContinuityStore:
                         reason = 'continuity_semantic_layout_not_supported'
             if reason:
                 issues.append(dict(scene_id=scene_id, scene_title=scene['title'], kind='motion', reason=reason))
-            creative = version is not None and version['plan'].get('schema') in {'video.creative-scene.v1', 'video.creative-scene.v2'}
+            creative = version is not None and version['plan'].get('schema') in {
+                'video.creative-scene.v1', 'video.creative-scene.v2', 'video.creative-scene.v3'}
             elements = deepcopy(version['plan']['elements']) if version is not None and not creative else []
             summary = dict(scene_id=scene_id, title=scene['title'], elements=elements)
             source = dict(scene_id=scene_id, semantic_binding_sha256=binding,

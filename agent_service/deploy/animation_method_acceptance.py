@@ -142,7 +142,10 @@ def verify_renderer_capture(directory, document, result, *, renderer_image):
         and 30 <= effective_timeout <= configured_timeout <= 600
         and (deadline_at is not None or effective_timeout == configured_timeout),
         'animation_method_admission_renderer_timeout_invalid')
-    renderer = MethodAnimationRenderer(root, renderer_image, timeout=configured_timeout)
+    engine_aware = binding.get('request', {}).get('schema') == 'video.animation-method-render-request.v2'
+    renderer = MethodAnimationRenderer(root, renderer_image, timeout=configured_timeout,
+        candidate_engines=[result['source']['engine']] if engine_aware and
+            result['source']['engine'] in {'canvas', 'three'} else ())
     expected = renderer._snapshot(binding['operation_id'], result['source'], document,
                                   result['sound_events'], deadline_at=deadline_at)
     # The renderer freezes a smaller first-attempt timeout when a commission
@@ -153,6 +156,10 @@ def verify_renderer_capture(directory, document, result, *, renderer_image):
         and raw['input/request.json'] == canonical_bytes(expected['request'])
         and sha(raw['host.mjs']) == expected['request']['host_sha256'],
         'animation_method_admission_renderer_binding_mismatch')
+    if engine_aware:
+        raw['engine_runtime.mjs'] = _capture(root, 'engine_runtime.mjs', 1024 * 1024)
+        require(sha(raw['engine_runtime.mjs']) == expected['request']['engine_runtime_sha256'],
+                'animation_method_admission_renderer_runtime_changed')
     require(outcome.get('schema') == 'video.animation-method-render-outcome.v1'
         and outcome.get('request_identity') == binding['request']['identity']
         and outcome.get('request_sha256') == binding['request_sha256']

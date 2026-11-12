@@ -314,17 +314,53 @@ def unpack_artifacts(logs):
         raise ServiceError('motion_artifacts_invalid', 502) from None
 
 
+def _creative_engine_observation(value, engine):
+    require(type(value) is dict and set(value) == {'engine', 'revision', 'contexts'}
+        and value['engine'] == engine and value['revision'] == 'animation-engine-runtime-1',
+        'creative_engine_observation_invalid')
+    rows = value['contexts']
+    require(type(rows) is list and len(rows) <= 16, 'creative_engine_observation_invalid')
+    kinds = []
+    for row in rows:
+        require(type(row) is dict and row.get('kind') in ({'2d', 'webgl2'} if engine == 'three'
+            else {'2d'} if engine == 'canvas' else set()), 'creative_engine_observation_invalid')
+        expected = {'kind', 'width', 'height', 'connected', 'visible'}
+        if row['kind'] == 'webgl2':
+            expected |= {'renderer', 'software', 'context_lost', 'gl_error'}
+            require(type(row.get('renderer')) is str and 0 < len(row['renderer']) <= 2000
+                and 'swiftshader' in row['renderer'].lower() and row.get('software') is True
+                and row.get('context_lost') is False and type(row.get('gl_error')) is int
+                and row['gl_error'] == 0, 'creative_engine_observation_invalid')
+        require(set(row) == expected
+            and all(type(row[key]) is int and 0 <= row[key] <= 4096 for key in ('width', 'height'))
+            and all(type(row[key]) is bool for key in ('connected', 'visible')),
+            'creative_engine_observation_invalid')
+        if row['connected'] and row['visible'] and row['width'] > 0 and row['height'] > 0:
+            kinds.append(row['kind'])
+    require(engine == 'html-svg' or ('webgl2' if engine == 'three' else '2d') in kinds,
+            'creative_native_context_missing')
+    return value
+
+
 def validate_creative_artifacts(entries, files, observations, runtime, quality):
     """Independent custody/clock checks; no generic aesthetic approval claim."""
     timeline, package = (json.loads(files[name]) for name in ('timeline.json', 'plan.json'))
     count = round(timeline['duration_seconds'] * 24)
-    require(type(observations) is dict and observations.get('schema') == 'video.creative-observations.v1'
+    engine_aware = package['schema'] == 'video.creative-scene.v3'
+    renderer = 'isolated-chromium-engine-seek-ffmpeg-1' if engine_aware else 'isolated-chromium-absolute-seek-ffmpeg-1'
+    require(type(observations) is dict and observations.get('schema') ==
+            ('video.creative-observations.v2' if engine_aware else 'video.creative-observations.v1')
             and observations.get('input_sha256') == package['input_sha256']
             and observations.get('source_sha256') == package['result_sha256']
-            and observations.get('renderer') == 'isolated-chromium-absolute-seek-ffmpeg-1'
+            and observations.get('renderer') == renderer
             and observations.get('frame_count') == count
             and observations.get('blocked_requests') == [] and observations.get('page_errors') == [],
             'creative_observation_binding_mismatch')
+    if engine_aware:
+        require(observations.get('engine') == package['engine'] and observations.get('idle_clock_verified') is True,
+                'creative_engine_observation_invalid')
+        require(observations.get('loaded_engine_assets') ==
+            (['three.module.min.js'] if package['engine'] == 'three' else []), 'creative_engine_observation_invalid')
     samples = observations.get('samples')
     require(type(samples) is list and len(samples) == 20, 'creative_observation_samples_invalid')
     expected_times = [0, *[(count - 1) / 24 * (i + 1) / 18 for i in range(17)], (count - 1) / 24, 0]
@@ -334,9 +370,12 @@ def validate_creative_artifacts(entries, files, observations, runtime, quality):
         require(type(row) is dict and row.get('path') == filename and row.get('time') == expected_time
                 and row.get('local_seconds') == local and row.get('bytes') == len(entries[filename])
                 and row.get('frame_sha256') == sha(entries[filename]), 'creative_observation_frame_mismatch')
+        if engine_aware:
+            _creative_engine_observation(row.get('engine_observation'), package['engine'])
     require(samples[0]['frame_sha256'] == samples[-1]['frame_sha256'], 'creative_reverse_seek_mismatch')
     capture = json.loads(entries['render-receipt.json']).get('creative_capture')
-    require(type(capture) is dict and capture.get('schema') == 'video.creative-capture.v1'
+    require(type(capture) is dict and capture.get('schema') ==
+            ('video.creative-capture.v2' if engine_aware else 'video.creative-capture.v1')
             and capture.get('renderer') == observations['renderer'] and capture.get('frame_count') == count
             and capture.get('first_sha256') == samples[0]['frame_sha256']
             and capture.get('last_sha256') == samples[-2]['frame_sha256']
@@ -344,15 +383,23 @@ def validate_creative_artifacts(entries, files, observations, runtime, quality):
             and capture.get('probe_sha256') == [row['frame_sha256'] for row in samples]
             and capture.get('blocked_requests') == [] and capture.get('page_errors') == [],
             'creative_render_observation_mismatch')
+    if engine_aware:
+        require(capture.get('engine') == package['engine'] and capture.get('idle_clock_verified') is True
+            and capture.get('loaded_engine_assets') == observations['loaded_engine_assets']
+            and capture.get('probe_engine_observations') == [row['engine_observation'] for row in samples],
+            'creative_render_observation_mismatch')
     technical = dict(status='passed', renderer=observations['renderer'],
         reverse_seek_verified=True, source_sha256=package['result_sha256'],
         visual_quality='not_evaluated', aesthetic_approval=False)
-    if package['schema'] == 'video.creative-scene.v2':
+    if package['schema'] in {'video.creative-scene.v2', 'video.creative-scene.v3'}:
         technical.update(method_delivery_sha256=package['method_delivery_sha256'],
             method_decision_sha256=digest(package['method_decision']),
             method_evidence_scope=package['evidence_scope'])
     else:
         technical['capability_release_sha256'] = package['capability_release_sha256']
+    if engine_aware:
+        technical.update(engine=package['engine'], native_context_verified=True,
+            idle_clock_verified=True, engine_evidence_scope='native_context_measured_not_visual_quality')
     return dict(technical_review=technical,
         media_sha256=sha(entries['output.mp4']), manifest_sha256=sha(files['manifest.json']),
         runtime_fingerprint=runtime, quality=quality)

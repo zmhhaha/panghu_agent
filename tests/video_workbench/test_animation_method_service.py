@@ -125,6 +125,61 @@ def start(service, **options):
     return service.start('developer', body)
 
 
+def runtime_capabilities(engines):
+    """Trusted-runtime shape fixture; this is not a real renderer admission."""
+    from video_workbench.animation_runtime_capabilities import SCHEMA
+    from agent_service.profiles.video_animation_production_contract import THREE_ASSET_SHA256
+    return dict(schema=SCHEMA, allowed_engines=list(engines),
+        assets={'three.module.min.js': THREE_ASSET_SHA256} if 'three' in engines else {},
+        runtime_identity=dict(image_digest='sha256:' + 'a' * 64, host_sha256='b' * 64,
+                              engine_runtime_sha256='c' * 64, admission_id='UNIT-TEST-only'))
+
+
+def test_admitted_engines_and_assets_freeze_before_agent_work_and_replay_keeps_original(work, monkeypatch):
+    service, creator, reviewer, renderer = work
+    admitted = runtime_capabilities(['html-svg', 'canvas'])
+    monkeypatch.setattr(renderer, 'capabilities', lambda: deepcopy(admitted), raising=False)
+    body = dict(request_id=str(uuid4()), goal='Choose the admitted medium freely',
+                budget=dict(max_rounds=1, max_seconds=300), duration_seconds=18, criteria=deepcopy(CRITERIA))
+    queued = service.start('developer', body)
+    frozen = service.commissions.get('developer', queued['id'])
+    for mode in ('plan', 'create'):
+        document = service._document('developer', frozen, mode)
+        assert document['constraints']['allowed_engines'] == ['html-svg', 'canvas']
+        assert document['constraints']['runtime_identity'] == admitted['runtime_identity']
+        assert document['assets'] == admitted['assets']
+    # A configuration expansion must neither reinterpret the frozen task nor
+    # turn an HTTP replay into a fresh commission or an idempotency conflict.
+    admitted.update(runtime_capabilities(['html-svg', 'canvas', 'three']))
+    admitted['runtime_identity']['image_digest'] = 'sha256:' + 'd' * 64
+    assert service.start('developer', body)['id'] == queued['id']
+    assert service.commissions.get('developer', queued['id'])['frozen'] == frozen['frozen']
+    assert service.catalogue('developer')['availability']['allowed_engines'] == ['html-svg', 'canvas', 'three']
+    fresh = service.start('developer', dict(body, request_id=str(uuid4())))
+    document = service._document('developer', service.commissions.get('developer', fresh['id']), 'create')
+    assert document['constraints']['allowed_engines'] == ['html-svg', 'canvas', 'three']
+    assert document['assets'] == admitted['assets']
+    assert creator.submissions == reviewer.submissions == renderer.calls == []
+
+
+def test_new_method_engine_requires_actual_runtime_capability_and_cannot_be_selected_by_browser(work, monkeypatch):
+    service, _, _, renderer = work
+    proposal = method()
+    proposal['runtime_requirements']['engine'] = 'canvas'
+    version = service.methods.create_method('developer', proposal, str(uuid4()))
+    with pytest.raises(ServiceError, match='runtime_not_admitted'):
+        start(service, method_versions=[version['id']])
+    for field, value in [('allowed_engines', ['canvas']), ('constraints', {'allowed_engines': ['canvas']}),
+                         ('assets', {'three.module.min.js': 'a' * 64})]:
+        with pytest.raises(ServiceError):
+            start(service, **{field: value})
+    monkeypatch.setattr(renderer, 'capabilities', lambda: runtime_capabilities(['canvas']), raising=False)
+    queued = start(service, method_versions=[version['id']], criteria=deepcopy(CRITERIA))
+    document = service._document('developer', service.commissions.get('developer', queued['id']), 'create')
+    assert document['constraints']['allowed_engines'] == ['canvas']
+    assert document['methods'] == [version]
+
+
 def finish(service, run_id, steps=50):
     for _ in range(steps):
         row = service.get('developer', run_id)

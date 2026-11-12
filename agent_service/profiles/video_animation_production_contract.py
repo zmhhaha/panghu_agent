@@ -17,8 +17,10 @@ from .video_animation_experiment import ASSET_NAMES, _validate_source_output
 from .video_motion_contract import validate_beats
 
 
-INPUT_SCHEMA = 'video.animation-production-input.v1'
-RESULT_SCHEMA = 'video.animation-production-result.v1'
+LEGACY_INPUT_SCHEMA = 'video.animation-production-input.v1'
+LEGACY_RESULT_SCHEMA = 'video.animation-production-result.v1'
+INPUT_SCHEMA = 'video.animation-production-input.v2'
+RESULT_SCHEMA = 'video.animation-production-result.v2'
 INPUT_MAX_BYTES = 2 * 1024 * 1024
 OUTPUT_MAX_BYTES = 2 * 1024 * 1024
 DELIVERY_SCHEMA = 'video.production-method-delivery.v1'
@@ -38,6 +40,8 @@ _ALIGN = frozenset({'schema', 'method', 'review_status', 'audio_sha256', 'spoken
                     'audio_seconds', 'version', 'segments', 'reviewed_by', 'reviewed_at'})
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
 _TARGET = re.compile(r'[a-z][a-z0-9_.-]{0,99}\Z')
+_ENGINES = frozenset({'html-svg', 'canvas', 'three'})
+THREE_ASSET_SHA256 = '08fd7545d13d2c7fb65ab691530a802dafefd638596501854f267d0fb13c39e7'
 
 
 def require(value, code='animation_production_contract_invalid', status=422):
@@ -112,7 +116,21 @@ def validate_clock(alignment, beats):
     return deepcopy(alignment)
 
 
-def validate_core_task(document):
+def validate_runtime_identity(identity):
+    """Validate a frozen runtime binding, never confer runtime admission."""
+    require(type(identity) is dict and set(identity) == {
+        'image_digest', 'host_sha256', 'engine_runtime_sha256', 'admission_id'},
+        'animation_production_runtime_identity_invalid')
+    require(type(identity['image_digest']) is str and identity['image_digest'].startswith('sha256:'),
+            'animation_production_runtime_identity_invalid')
+    checksum(identity['image_digest'][7:])
+    checksum(identity['host_sha256'])
+    checksum(identity['engine_runtime_sha256'])
+    text(identity['admission_id'], 300)
+    return deepcopy(identity)
+
+
+def validate_core_task(document, *, engine_aware=False):
     require(type(document) is dict and set(document) == {'scene', 'constraints', 'assets', 'base_source'})
     scene, bounds = document['scene'], document['constraints']
     require(type(scene) is dict and set(scene) == _SCENE)
@@ -124,17 +142,33 @@ def validate_core_task(document):
     checksum(scene['audio_sha256'])
     require(beats['source_text'] == scene['narration']
         and alignment['audio_sha256'] == scene['audio_sha256'], 'animation_production_audio_binding_mismatch')
-    require(type(bounds) is dict and set(bounds) == _BOUNDS)
+    require(type(engine_aware) is bool)
+    require(type(bounds) is dict and set(bounds) in
+        ((_BOUNDS, _BOUNDS | {'runtime_identity'}) if engine_aware else (_BOUNDS,)))
     require(all(type(bounds[key]) is int and bounds[key] == value
                 for key, value in (('width', 1280), ('height', 720), ('fps', 24))))
-    require(bounds['allowed_engines'] == ['html-svg'], 'animation_production_engine_not_admitted')
+    if engine_aware:
+        engines = bounds['allowed_engines']
+        require(type(engines) is list and bool(engines)
+            and all(type(engine) is str and engine in _ENGINES for engine in engines)
+            and len(engines) == len(set(engines)), 'animation_production_engine_not_admitted')
+        if 'runtime_identity' in bounds:
+            validate_runtime_identity(bounds['runtime_identity'])
+        require(engines == ['html-svg'] or 'runtime_identity' in bounds,
+                'animation_production_runtime_identity_required')
+    else:
+        require(bounds['allowed_engines'] == ['html-svg'], 'animation_production_engine_not_admitted')
     number(bounds['duration_seconds'], .1, 60)
     require(abs(bounds['duration_seconds'] - alignment['audio_seconds']) <= 1e-9,
             'animation_production_audio_duration_mismatch')
     assets = document['assets']
-    require(type(assets) is dict and set(assets) <= ASSET_NAMES)
+    require(type(assets) is dict and set(assets) <=
+            (ASSET_NAMES | {'three.LICENSE.txt'} if engine_aware else ASSET_NAMES))
     for value in assets.values():
         checksum(value)
+    if engine_aware and 'three' in bounds['allowed_engines']:
+        require(assets.get('three.module.min.js') == THREE_ASSET_SHA256,
+                'animation_production_three_asset_not_admitted')
     if document['base_source'] is not None:
         validate_source(document['base_source'], document)
     require(len(canonical_bytes(document)) <= INPUT_MAX_BYTES, 'animation_production_task_too_large', 413)
@@ -188,8 +222,9 @@ def validate_delivery(snapshot):
 def validate_input(document):
     require(type(document) is dict and set(document) ==
         {'schema', 'scene', 'constraints', 'method_delivery', 'assets', 'base_source'}
-        and document['schema'] == INPUT_SCHEMA)
-    core = validate_core_task({key: document[key] for key in ('scene', 'constraints', 'assets', 'base_source')})
+        and document['schema'] in {INPUT_SCHEMA, LEGACY_INPUT_SCHEMA})
+    core = validate_core_task({key: document[key] for key in ('scene', 'constraints', 'assets', 'base_source')},
+                             engine_aware=document['schema'] == INPUT_SCHEMA)
     delivery = validate_delivery(document['method_delivery'])
     require(delivery['task_sha256'] == digest(core)
         and delivery['allowed_engines'] == core['constraints']['allowed_engines'],
@@ -248,7 +283,8 @@ def validate_result(document, input_sha256, input_document):
     checksum(input_sha256)
     context = validate_input(input_document)
     require(type(document) is dict and set(document) == {'schema', 'input_sha256', 'source', 'method_decision'}
-        and document['schema'] == RESULT_SCHEMA and document['input_sha256'] == input_sha256
+        and document['schema'] == (RESULT_SCHEMA if context['schema'] == INPUT_SCHEMA else LEGACY_RESULT_SCHEMA)
+        and document['input_sha256'] == input_sha256
         and digest(context) == input_sha256, 'animation_production_input_binding_mismatch')
     source = validate_source(document['source'], context)
     validate_method_decision(context['method_delivery'], document['method_decision'], source)

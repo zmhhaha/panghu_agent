@@ -163,8 +163,10 @@ def capture(tmp_path,review=True):
 
 def renderer_capture(root,document,result,*,deadline_at=None,effective_timeout=None):
     """Explicit synthetic files model a complete stopped render capture."""
-    from video_workbench.animation_method_renderer import HOST,MethodAnimationRenderer
-    renderer=MethodAnimationRenderer(root,RENDER_IMAGE)
+    from video_workbench.animation_method_renderer import HOST,ENGINE_RUNTIME,MethodAnimationRenderer
+    engine=result['source']['engine']
+    renderer=MethodAnimationRenderer(root,RENDER_IMAGE,
+        candidate_engines=[engine] if engine in {'canvas','three'} else ())
     binding=renderer._snapshot('synthetic-admission',result['source'],document,result['sound_events'],
         deadline_at=deadline_at)
     if effective_timeout is not None:
@@ -180,6 +182,8 @@ def renderer_capture(root,document,result,*,deadline_at=None,effective_timeout=N
     save(root/'render-start.json',start)
     save(root/'input/request.json',request)
     save(root/'host.mjs',HOST.read_bytes())
+    if request.get('engine_runtime_sha256'):
+        save(root/'engine_runtime.mjs',ENGINE_RUNTIME.read_bytes())
     for name,text in result['source']['files'].items():
         save(root/'input/scene'/name,text.encode())
     frame=b'\xff\xd8synthetic-not-an-actual-jpeg\xff\xd9'
@@ -191,12 +195,27 @@ def renderer_capture(root,document,result,*,deadline_at=None,effective_timeout=N
             bytes=len(frame),sha256=hashlib.sha256(frame).hexdigest()))
     media=b'0000ftypSYNTHETIC-NOT-REAL-MP4'
     save(root/'work/output.mp4',media)
-    save(root/'work/render-receipt.json',dict(schema='video.animation-method-render-receipt.v1',status='rendered',
+    receipt=dict(schema='video.animation-method-render-receipt.v1',status='rendered',
         decode_verified=True,reverse_seek_verified=True,request_identity=request['identity'],
         request_sha256=binding['request_sha256'],host_sha256=request['host_sha256'],image_digest=binding['image_digest'],
         frame_count=24,frames=frames,output_bytes=len(media),output_sha256=hashlib.sha256(media).hexdigest(),
         audio_sha256=None,sound_events_sha256=digest([]),probe=dict(streams=[dict(codec_type='video',codec_name='h264',
-            width=320,height=180,avg_frame_rate='24/1')],format=dict(duration='1'))))
+            width=320,height=180,avg_frame_rate='24/1')],format=dict(duration='1')))
+    if request.get('engine_runtime_sha256'):
+        probes=[]
+        for ordinal in range(4):
+            name=f'probe-{ordinal}.jpg'
+            save(root/'work/frames'/name,frame)
+            probes.append(dict(frames[0],name=name,reference_name=frames[0]['name'],kind='synthetic'))
+        receipt.update(schema='video.animation-method-render-receipt.v2',engine=engine,
+            engine_runtime_sha256=request['engine_runtime_sha256'],
+            engine_observation=dict(engine=engine,revision='animation-engine-runtime-1',
+                contexts=[dict(kind='2d',width=320,height=180,connected=True,visible=True)]
+                    if engine=='canvas' else []),
+            seek_checks=dict(schema='video.animation-engine-seek-checks.v1',absolute_seek=True,
+                non_monotonic_seek_verified=True,repeated_seek_verified=True,
+                idle_frame_verified=True,fresh_load_verified=True,probes=probes))
+    save(root/'work/render-receipt.json',receipt)
     save(root/'render-outcome.json',dict(schema='video.animation-method-render-outcome.v1',
         request_identity=request['identity'],request_sha256=binding['request_sha256'],image=RENDER_IMAGE,
         status='rendered',error=None,automatic_retry=False,actual_image_id='sha256:'+'b'*64,
@@ -248,6 +267,22 @@ def test_admission_preserves_frozen_deadline_timeout_without_recomputing_or_rend
     proof=admission.verify_renderer_capture(root,document_value,result,renderer_image=RENDER_IMAGE)
     assert proof['container_absent_verified'] is True
     assert not (root/'method-render-ledger.sqlite3').exists()
+
+
+def test_native_admission_reconstructs_exact_v2_request_and_keeps_runtime_bytes_bound(tmp_path):
+    value=document(False)
+    value['constraints']['allowed_engines']=['canvas']
+    result=output(value)
+    result['source']=dict(SOURCE,engine='canvas')
+    result['methods'][0]['runtime_requirements']['engine']='canvas'
+    root=renderer_capture(tmp_path/'native-render',value,result)
+    proof=admission.verify_renderer_capture(root,value,result,renderer_image=RENDER_IMAGE)
+    assert proof['container_absent_verified'] is True
+    assert 'engine_runtime.mjs' in proof['source_files_sha256']
+    assert not (root/'method-render-ledger.sqlite3').exists()
+    (root/'engine_runtime.mjs').write_bytes(b'changed')
+    with pytest.raises(ServiceError,match='runtime_changed'):
+        admission.verify_renderer_capture(root,value,result,renderer_image=RENDER_IMAGE)
 
 
 @pytest.mark.parametrize('name,change',[

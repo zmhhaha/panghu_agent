@@ -25,7 +25,7 @@ from agent_service.client import AgentClient
 from agent_service.contracts import ServiceError
 from .agent import VideoAgentGateway
 from .config import (AgentSettings, ExplanationSettings, MotionSettings,
-                     ProductionMethodSettings, ProductionAgentSettings)
+                     ProductionMethodSettings, ProductionAgentSettings, creative_runtime_capabilities)
 from .service import Workflow
 from .store import Store
 from .speech import SpeechClient, SpeechSettings, MAX_AUDIO_BYTES
@@ -435,12 +435,15 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                explanation_gateway=None, explanation_enabled=None, motion_gateway=None,
                motion_enabled=None, motion_renderer=None, motion_runtime=None,
                process_gateway=None, process_enabled=None, creative_gateway=None, creative_enabled=None,
-               method_adapter=None):
+               method_adapter=None, creative_capabilities=None):
     explanation_settings = ExplanationSettings.from_env()
     enabled = explanation_settings.enabled if explanation_enabled is None else explanation_enabled
     if type(enabled) is not bool:
         raise ValueError('An explicit boolean explanation feature gate is required')
     motion_settings = MotionSettings.from_env()
+    if creative_capabilities is None:
+        creative_capabilities = creative_runtime_capabilities(
+            motion_settings.runtime_fingerprint if motion_runtime is None else motion_runtime)
     motion_gate = motion_settings.enabled if motion_enabled is None else motion_enabled
     if type(motion_gate) is not bool:
         raise ValueError('An explicit boolean motion feature gate is required')
@@ -477,7 +480,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         explanation_gateway = ExplanationAgentGateway(gateway.client, explanation_settings.revision)
     explanation_store = ExplanationStore(store)
     explanation_workflow = ExplanationWorkflow(explanation_store, explanation_gateway, enabled=enabled)
-    motion_store = MotionStore(store)
+    motion_store = MotionStore(store, runtime_capabilities=creative_capabilities)
     continuity_store = ContinuityStore(store, motion_store)
     motion_timing = MotionTiming(motion_store)
     if motion_gateway is None and isinstance(gateway, VideoAgentGateway):

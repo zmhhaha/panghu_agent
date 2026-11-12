@@ -20,6 +20,7 @@ from agent_service.profiles import video_animation_method as protocol
 from .animation_creation_service import _run_lock
 from .animation_method_store import AnimationMethodStore, _structural_changes
 from .animation_method_commissions import AnimationMethodCommissionStore, TERMINAL
+from .animation_runtime_capabilities import validate_runtime_capabilities
 
 
 def _require(value, code='animation_method_request_invalid', status=422):
@@ -199,7 +200,8 @@ def _effect_views(runs, demonstrations):
 
 
 class AnimationMethodService:
-    def __init__(self, root, *, author_gateway, review_gateway, renderer, clock=time.time):
+    def __init__(self, root, *, author_gateway, review_gateway, renderer, clock=time.time,
+                 runtime_capabilities=None):
         self.root = Path(root).absolute()
         _require(not any(path.is_symlink() for path in (self.root, *self.root.parents)))
         self.root.mkdir(parents=True, exist_ok=True)
@@ -207,6 +209,8 @@ class AnimationMethodService:
         self.methods = AnimationMethodStore(self.root / 'methods.sqlite3')
         self.commissions = AnimationMethodCommissionStore(self.root / 'commissions.sqlite3', clock=clock)
         self.author, self.reviewer, self.renderer = author_gateway, review_gateway, renderer
+        self._runtime_capabilities = (None if runtime_capabilities is None
+                                      else validate_runtime_capabilities(runtime_capabilities))
         self.clock = clock
         self.metadata_path = self.root / 'feedback.sqlite3'
         with closing(sqlite3.connect(self.metadata_path)) as db:
@@ -222,6 +226,12 @@ class AnimationMethodService:
 
     def pending(self, limit=100):
         return self.commissions.pending(limit)
+
+    def _capabilities(self):
+        if self._runtime_capabilities is not None:
+            return deepcopy(self._runtime_capabilities)
+        provider = getattr(self.renderer, 'capabilities', None)
+        return validate_runtime_capabilities(provider()) if callable(provider) else None
 
     @staticmethod
     def _feedback_view(db, owner, record):
@@ -243,6 +253,7 @@ class AnimationMethodService:
             if row['provenance'].get('commission_id') == commission_id}
 
     def catalogue(self, owner):
+        capabilities = self._capabilities()
         rows = []
         runs = self.commissions.list_all(owner)
         demonstrations = self.methods.list_demonstrations(owner)
@@ -259,7 +270,8 @@ class AnimationMethodService:
             rows.append(row)
         return dict(schema='video.animation-method-lab.v1', effects=effects, commissions=rows,
                     availability=dict(enabled=self.author is not None and self.reviewer is not None
-                        and self.renderer is not None, reason=None, allowed_engines=['html-svg']))
+                        and self.renderer is not None, reason=None,
+                        allowed_engines=capabilities['allowed_engines'] if capabilities else ['html-svg']))
 
     def get(self, owner, commission_id):
         run = self.commissions.get(owner, commission_id)
@@ -368,6 +380,22 @@ class AnimationMethodService:
         duration = data.setdefault('duration_seconds', 18)
         _require(type(duration) in (int, float) and 1 <= duration <= 60
                  and duration * 24 == int(duration * 24))
+        # Runtime admission is trusted server configuration, never a browser
+        # field. Replay uses the original server-injected snapshot even if a
+        # later deployment admits additional engines or changes image hashes.
+        previous_request = next((row for row in self.commissions.list_all(owner)
+                                 if row['request_id'] == request_id), None)
+        if previous_request is not None:
+            for key in ('constraints', 'assets'):
+                if key in previous_request['frozen']:
+                    data[key] = deepcopy(previous_request['frozen'][key])
+        else:
+            capabilities = self._capabilities()
+            if capabilities is not None:
+                data['constraints'] = dict(allowed_engines=capabilities['allowed_engines'],
+                                          runtime_identity=capabilities['runtime_identity'])
+                data['assets'] = capabilities['assets']
+        allowed_engines = data.get('constraints', {}).get('allowed_engines', ['html-svg'])
         if data.get('criteria'):
             protocol.criteria(data['criteria'])
         _require(data.get('role', 'reference') in {'reference', 'transfer'})
@@ -389,7 +417,7 @@ class AnimationMethodService:
                  and len(set(version_ids)) == len(version_ids))
         for version_id in version_ids:
             version = self.methods.get_method(owner, version_id)
-            _require(version['runtime_requirements'].get('engine') == 'html-svg',
+            _require(version['runtime_requirements'].get('engine') in allowed_engines,
                      'animation_method_runtime_not_admitted', 409)
         if data.get('role') == 'transfer':
             _require(bool(version_ids), 'animation_method_transfer_methods_required', 409)
@@ -607,16 +635,18 @@ class AnimationMethodService:
         selected = [self.methods.get_method(owner, version_id) for version_id in versions]
         if not selected and plan:
             selected = deepcopy(plan['methods'])
+        frozen_constraints = deepcopy(run['frozen'].get('constraints', {}))
         document = dict(schema=protocol.INPUT_SCHEMA, mode=mode, goal=run['frozen']['goal'],
             criteria=standards, methods=selected,
             constraints=dict(width=1280, height=720, fps=24,
                              duration_seconds=run['frozen'].get('duration_seconds', 18),
-                             allowed_engines=['html-svg']),
+                             allowed_engines=frozen_constraints.pop('allowed_engines', ['html-svg']),
+                             **frozen_constraints),
             feedback=feedback or run['frozen'].get('feedback', ''),
             base_source=base['source'] if base else None, reference=run['frozen'].get('reference'),
             observation=dict(frames=frames or [], audio_observed=False, motion_observed=False,
                 limitations=['Only supplied sampled images were observed; complete motion and audio are unverified.']),
-            comparison=comparison, assets={})
+            comparison=comparison, assets=deepcopy(run['frozen'].get('assets', {})))
         if mode == 'review':
             document['constraints']['result_requirements'] = dict(
                 methods=[], source=None, sound_events=[],

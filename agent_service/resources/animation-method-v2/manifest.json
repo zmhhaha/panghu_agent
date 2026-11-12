@@ -1,0 +1,20 @@
+{
+  "bundle_revision": "animation-method-v2",
+  "automatic_updates": false,
+  "upstream_content_vendored": false,
+  "license": "MIT",
+  "local_files": [
+    {
+      "path": "CONTRACT.md",
+      "sha256": "03a913e335a1a393ee243efdef2d4a002eda074de4af66f2e1e379d54c777a70"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "3c008d7b96c96dffe712c6c06b5fa410c6e34a705400078730007ceafdab10a5"
+    },
+    {
+      "path": "method-procedure/SKILL.md",
+      "sha256": "39c602f9b63f889fe2bd944088e784f3c843cdbb2fb7fa94e35d89d1f3cb5cfd"
+    }
+  ]
+}

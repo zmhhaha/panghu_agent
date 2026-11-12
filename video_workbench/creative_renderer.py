@@ -17,11 +17,15 @@ COMPILER = 'creative-scene-adapter-1'
 TEMPLATE = 'generated-html-svg-1'
 METHOD_COMPILER = 'creative-method-scene-adapter-1'
 METHOD_TEMPLATE = 'generated-method-html-svg-1'
-COMPILER_TEMPLATES = {COMPILER: TEMPLATE, METHOD_COMPILER: METHOD_TEMPLATE}
+ENGINE_METHOD_COMPILER = 'creative-method-engine-scene-adapter-1'
+ENGINE_METHOD_TEMPLATE = 'generated-method-engine-scene-1'
+COMPILER_TEMPLATES = {COMPILER: TEMPLATE, METHOD_COMPILER: METHOD_TEMPLATE,
+                      ENGINE_METHOD_COMPILER: ENGINE_METHOD_TEMPLATE}
 
 
 def _compiler(package, requested):
-    expected = METHOD_COMPILER if package['schema'] == 'video.creative-scene.v2' else COMPILER
+    expected = {'video.creative-scene.v1': COMPILER, 'video.creative-scene.v2': METHOD_COMPILER,
+                'video.creative-scene.v3': ENGINE_METHOD_COMPILER}[package['schema']]
     _require(requested is None or requested == expected, 'creative_renderer_version_unsupported')
     return expected
 
@@ -50,8 +54,9 @@ def resolve_creative_timeline(package, beats, alignment, *, leading_seconds=0,
     creative = dict(engine=package['engine'], input_sha256=package['input_sha256'],
         result_sha256=package['result_sha256'],
         seek_protocol='window.__animationExperiment.seek(seconds)',
-        renderer='isolated-chromium-absolute-seek-ffmpeg-1')
-    if package['schema'] == 'video.creative-scene.v2':
+        renderer='isolated-chromium-engine-seek-ffmpeg-1' if package['schema'] == 'video.creative-scene.v3'
+            else 'isolated-chromium-absolute-seek-ffmpeg-1')
+    if package['schema'] in {'video.creative-scene.v2', 'video.creative-scene.v3'}:
         creative.update(method_delivery_sha256=package['method_delivery_sha256'],
             method_decision_sha256=digest(package['method_decision']),
             method_evidence_scope=package['evidence_scope'])
@@ -85,6 +90,19 @@ def compile_creative_project(package, beats, alignment, *, runtime_fingerprint,
             for name, key in (('gsap.min.js', 'gsap_sha256'),
                               ('NotoSansCJK-Regular.ttc', 'font_sha256'))),
             'creative_render_asset_mismatch')
+    engine_aware = value['schema'] == 'video.creative-scene.v3'
+    if engine_aware:
+        _require(runtime_fingerprint is not None and runtime_fingerprint['schema'] == 'video.motion-runtime.v2',
+                 'creative_engine_runtime_required')
+        identity = value['input_document']['constraints'].get('runtime_identity')
+        if identity is not None:
+            _require(identity['image_digest'] == runtime_fingerprint['image_digest']
+                and identity['engine_runtime_sha256'] == runtime_fingerprint['engine_runtime_sha256']
+                and identity['host_sha256'] == runtime_fingerprint['creative_host_sha256'],
+                'creative_engine_runtime_identity_mismatch')
+        if value['engine'] == 'three':
+            _require(value['input_document']['assets'].get('three.module.min.js') == runtime_fingerprint['three_sha256'],
+                     'creative_render_asset_mismatch')
     files = {'index.html': scene_source(value)['files']['scene.html'].encode('utf-8'),
         'plan.json': canonical_bytes(value), 'beats.json': canonical_bytes(beats),
         'alignment.json': canonical_bytes(alignment), 'timeline.json': canonical_bytes(timeline)}
@@ -96,5 +114,9 @@ def compile_creative_project(package, beats, alignment, *, runtime_fingerprint,
         runtime_fingerprint=deepcopy(runtime_fingerprint),
         files={name: hashlib.sha256(raw).hexdigest() for name, raw in sorted(files.items())},
         required_assets=['assets/gsap.min.js', 'assets/NotoSansCJK-Regular.ttc'])
+    if engine_aware:
+        manifest.update(engine=value['engine'], engine_assets={
+            'three.module.min.js': runtime_fingerprint['three_sha256']} if value['engine'] == 'three' else {})
+        manifest['required_assets'] += ['assets/' + name for name in manifest['engine_assets']]
     files['manifest.json'] = canonical_bytes(manifest)
     return files

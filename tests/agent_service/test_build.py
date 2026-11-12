@@ -110,7 +110,9 @@ def service(tmp_path):
             (review.PACKED_BUNDLE_ROOT, review.PACKED_BUNDLE_FILES),
             (creation.BUNDLE_ROOT, creation.BUNDLE_FILES),
             (method.BUNDLE_ROOT, method.BUNDLE_FILES),
-            (production.BUNDLE_ROOT, production.BUNDLE_FILES)):
+            (production.BUNDLE_ROOT, production.BUNDLE_FILES),
+            (method.BUNDLE_ROOT.parent / method.LEGACY_BUNDLE_REVISION, method.BUNDLE_FILES),
+            (production.BUNDLE_ROOT.parent / production.LEGACY_BUNDLE_REVISION, production.BUNDLE_FILES)):
         for name in ('manifest.json', *names):
             target = root / 'resources' / source.name / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -456,6 +458,10 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
             'agent_service/resources/animation-create-v2/' + name
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'creation-procedure/SKILL.md')} | {
             'agent_service/resources/animation-production-v1/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-method-v2/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'method-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-production-v2/' + name
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md')}
     assert not any(name.endswith(("credentials.json", "NOT_ALLOWED.md", "private.py")) for name in runner.names)
 
@@ -545,7 +551,7 @@ def test_clean_source_context_carries_all_real_profile_resource_bytes(tmp_path, 
     context_archive(service, target, destination)
     actual = {path.relative_to(service).as_posix(): path.read_bytes()
         for path in (service / 'resources').rglob('*') if path.is_file()}
-    assert len(actual) == 58
+    assert len(actual) == 66
     with tarfile.open(destination) as archive:
         captured = {name.removeprefix('agent_service/'): archive.extractfile(name).read()
             for name in archive.getnames() if name.startswith('agent_service/resources/')}
@@ -575,6 +581,13 @@ def test_clean_builder_animation_pins_match_independently_verified_profile_bundl
             (production.BUNDLE_ROOT, production.BUNDLE_FILES, production.verified_bundle)):
         assert set(verify()) == files
         measured[root.name] = (hashlib.sha256((root / 'manifest.json').read_bytes()).hexdigest(), files)
+    for profile in (method, production):
+        root = profile.BUNDLE_ROOT.parent / profile.LEGACY_BUNDLE_REVISION
+        raw = (root / 'manifest.json').read_bytes()
+        assert hashlib.sha256(raw).hexdigest() == profile.LEGACY_BUNDLE_MANIFEST_SHA256
+        for row in json.loads(raw)['local_files']:
+            assert hashlib.sha256((root / row['path']).read_bytes()).hexdigest() == row['sha256']
+        measured[root.name] = (profile.LEGACY_BUNDLE_MANIFEST_SHA256, profile.BUNDLE_FILES)
     assert {revision: (pin, files) for revision, pin, files in ANIMATION_RUNTIME_BUNDLES} == measured
 
 
@@ -626,11 +639,13 @@ print(json.dumps({'control_modules':len(modules),'profile_implementations':len(p
 
 
 @pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
-                                     'animation-create-v2', 'animation-method-v1'])
+                                     'animation-create-v2', 'animation-method-v1', 'animation-method-v2',
+                                     'animation-production-v1', 'animation-production-v2'])
 @pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'LICENSE', 'procedure'])
 def test_changed_animation_runtime_resource_fails_before_docker(service, revision, changed):
     if changed == 'procedure':
-        changed = ('method' if revision == 'animation-method-v1' else
+        changed = ('method' if revision.startswith('animation-method-') else
+                   'production' if revision.startswith('animation-production-') else
                    'creation' if revision == 'animation-create-v2' else 'review') + '-procedure/SKILL.md'
     path = service / 'resources' / revision / changed
     path.write_bytes(path.read_bytes() + b' ')
@@ -641,7 +656,8 @@ def test_changed_animation_runtime_resource_fails_before_docker(service, revisio
 
 
 @pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
-                                     'animation-create-v2', 'animation-method-v1'])
+                                     'animation-create-v2', 'animation-method-v1', 'animation-method-v2',
+                                     'animation-production-v1', 'animation-production-v2'])
 def test_missing_animation_runtime_resource_cannot_produce_deployable_digest(service, revision):
     (service / 'resources' / revision / 'LICENSE').unlink()
     receipt, runner = old_receipt(service), DockerFixture()

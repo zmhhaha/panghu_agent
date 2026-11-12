@@ -11,10 +11,11 @@ import hashlib
 from agent_service.contracts import digest
 from agent_service.profiles.video_animation_production import (
     PROFILE, INPUT_SCHEMA, INSTRUCTION_REVISION, BUNDLE_REVISION, BUNDLE_MANIFEST_SHA256,
-    VideoAnimationProductionProfile,
+    VideoAnimationProductionProfile, LEGACY_BUNDLE_REVISION, LEGACY_BUNDLE_MANIFEST_SHA256,
+    LEGACY_INSTRUCTION_REVISION,
 )
 from agent_service.profiles.video_animation_production_contract import (
-    DECISION_SCOPE, require, validate_core_task, validate_input, validate_result,
+    DECISION_SCOPE, LEGACY_INPUT_SCHEMA, require, validate_core_task, validate_input, validate_result,
 )
 from .animation_method_production import validate_delivery, collect_method_decision
 from .motion import validate_alignment
@@ -22,13 +23,16 @@ from .motion import validate_alignment
 
 CREATIVE_SCHEMA = 'video.creative-scene.v2'
 ADAPTER_REVISION = 'creative-method-scene-adapter-1'
+ENGINE_CREATIVE_SCHEMA = 'video.creative-scene.v3'
+ENGINE_ADAPTER_REVISION = 'creative-method-engine-scene-adapter-1'
 PACKAGE_FIELDS = frozenset({'schema', 'adapter_revision', 'input_document', 'input_sha256',
     'profile', 'result', 'result_sha256', 'engine', 'method_delivery_sha256', 'method_decision', 'evidence_scope'})
 
 
 def prepare_core_task(*, scene_id, title, visual_description, narration, beats, alignment,
                       audio_sha256, duration_seconds, width=1280, height=720, fps=24,
-                      assets=None, instruction='', base_source=None, style=''):
+                      assets=None, instruction='', base_source=None, style='',
+                      allowed_engines=None, runtime_identity=None, engine_aware=False):
     """The exact dictionary passed to MethodProductionAdapter.freeze as task."""
     base = deepcopy(base_source)
     if type(base) is dict and set(base) == {'engine', 'strategy', 'files'}:
@@ -39,17 +43,20 @@ def prepare_core_task(*, scene_id, title, visual_description, narration, beats, 
         narration=narration, beats=deepcopy(beats), alignment=deepcopy(alignment),
         audio_sha256=audio_sha256, instruction=instruction, style=style),
         constraints=dict(width=width, height=height, fps=fps, duration_seconds=duration_seconds,
-                         allowed_engines=['html-svg']),
+                         allowed_engines=['html-svg'] if allowed_engines is None else deepcopy(allowed_engines)),
         assets={} if assets is None else deepcopy(assets), base_source=base)
-    value = validate_core_task(value)
+    if runtime_identity is not None:
+        value['constraints']['runtime_identity'] = deepcopy(runtime_identity)
+    value = validate_core_task(value, engine_aware=engine_aware)
     validate_alignment(value['scene']['alignment'], value['scene']['beats'])
     return value
 
 
-def build_scene_input(*, core_task, method_delivery):
-    core = validate_core_task(core_task)
+def build_scene_input(*, core_task, method_delivery, engine_aware=False):
+    core = validate_core_task(core_task, engine_aware=engine_aware)
     delivery = validate_delivery(method_delivery)
-    return validate_scene_input(dict(schema=INPUT_SCHEMA, **core, method_delivery=delivery))
+    return validate_scene_input(dict(schema=INPUT_SCHEMA if engine_aware else LEGACY_INPUT_SCHEMA,
+                                    **core, method_delivery=delivery))
 
 
 def validate_scene_input(document):
@@ -69,20 +76,25 @@ def collect_scene_result(input_document, result):
     collect_method_decision(document['method_delivery'], dict(delivery_sha256=decision['delivery_sha256'],
         decisions=[{key: row[key] for key in ('version_id', 'content_sha256', 'action', 'reason')}
                    for row in decision['decisions']]))
-    return dict(schema=CREATIVE_SCHEMA, adapter_revision=ADAPTER_REVISION,
+    legacy = document['schema'] == LEGACY_INPUT_SCHEMA
+    return dict(schema=CREATIVE_SCHEMA if legacy else ENGINE_CREATIVE_SCHEMA,
+        adapter_revision=ADAPTER_REVISION if legacy else ENGINE_ADAPTER_REVISION,
         input_document=document, input_sha256=checksum,
-        profile=dict(name=PROFILE, revision='1', instruction_revision=INSTRUCTION_REVISION,
-            bundle_revision=BUNDLE_REVISION, bundle_manifest_sha256=BUNDLE_MANIFEST_SHA256,
+        profile=dict(name=PROFILE, revision='1', instruction_revision=LEGACY_INSTRUCTION_REVISION if legacy else INSTRUCTION_REVISION,
+            bundle_revision=LEGACY_BUNDLE_REVISION if legacy else BUNDLE_REVISION,
+            bundle_manifest_sha256=LEGACY_BUNDLE_MANIFEST_SHA256 if legacy else BUNDLE_MANIFEST_SHA256,
             prompt_sha256=hashlib.sha256(VideoAnimationProductionProfile().build_prompt(
-                {'input_sha256': checksum}).encode()).hexdigest()),
+                {'input_sha256': checksum}, legacy=legacy).encode()).hexdigest()),
         result=output, result_sha256=digest(output), engine=output['source']['engine'],
         method_delivery_sha256=document['method_delivery']['sha256'], method_decision=deepcopy(decision),
         evidence_scope=DECISION_SCOPE)
 
 
 def validate_scene_package(package):
+    engine_aware = type(package) is dict and package.get('schema') == ENGINE_CREATIVE_SCHEMA
     require(type(package) is dict and set(package) == PACKAGE_FIELDS
-        and package.get('schema') == CREATIVE_SCHEMA and package.get('adapter_revision') == ADAPTER_REVISION)
+        and package.get('schema') == (ENGINE_CREATIVE_SCHEMA if engine_aware else CREATIVE_SCHEMA)
+        and package.get('adapter_revision') == (ENGINE_ADAPTER_REVISION if engine_aware else ADAPTER_REVISION))
     expected = collect_scene_result(package['input_document'], package['result'])
     require(package == expected, 'creative_method_package_changed', 409)
     return expected

@@ -149,6 +149,14 @@ def renderer_capture(root, package, audio_raw, runtime):
         'pod-final.json':pod, 'runtime.json':runtime, 'networkpolicies.json':dict(items=[deepcopy(desired['items'][1])])}.items():
         save(root / name, value)
     timeline = read(root / 'input/timeline.json'); count = round(timeline['duration_seconds'] * 24)
+    engine_aware = package['schema'] == 'video.creative-scene.v3'
+    engine = package['engine']
+    native = dict(kind='webgl2' if engine == 'three' else '2d', width=320, height=180,
+        connected=True, visible=True)
+    if engine == 'three':
+        native.update(renderer='ANGLE (Google, Vulkan SwiftShader)', software=True, context_lost=False, gl_error=0)
+    engine_observation = dict(engine=engine, revision='animation-engine-runtime-1',
+        contexts=[] if engine == 'html-svg' else [native])
     times = [0, *[(count - 1) / 24 * (i + 1) / 18 for i in range(17)], (count - 1) / 24, 0]
     entries = {name:value for name,value in files.items() if name not in {'index.html', 'audio.wav'}}
     samples = []
@@ -156,10 +164,15 @@ def renderer_capture(root, package, audio_raw, runtime):
         frame = b'synthetic-zero' if timestamp == 0 else ('synthetic-' + str(timestamp)).encode()
         name = f'observations/creative-{index}.jpg'; entries[name] = frame
         samples.append(dict(path=name, time=timestamp, local_seconds=timestamp,
-            frame_sha256=hashlib.sha256(frame).hexdigest(), bytes=len(frame)))
-    observations = dict(schema='video.creative-observations.v1', renderer='isolated-chromium-absolute-seek-ffmpeg-1',
+            frame_sha256=hashlib.sha256(frame).hexdigest(), bytes=len(frame),
+            **(dict(engine_observation=deepcopy(engine_observation)) if engine_aware else {})))
+    observations = dict(schema='video.creative-observations.v2' if engine_aware else 'video.creative-observations.v1',
+        renderer='isolated-chromium-engine-seek-ffmpeg-1' if engine_aware else 'isolated-chromium-absolute-seek-ffmpeg-1',
         input_sha256=package['input_sha256'], source_sha256=package['result_sha256'], frame_count=count,
         samples=samples, blocked_requests=[], page_errors=[], visual_quality='not_evaluated')
+    if engine_aware:
+        observations.update(engine=engine, idle_clock_verified=True,
+            loaded_engine_assets=['three.module.min.js'] if engine == 'three' else [])
     entries.update({'observations.json':canonical_bytes(observations), 'output.mp4':b'0000ftypSYNTHETIC-MP4',
         'experiment.json':canonical_bytes(dict(status='pending_validation', stages=dict(render=0, observe=0)))})
     for name, status in [('render-receipt.json', 'encoded_pending_validation'), ('observe-receipt.json', 'observed_pending_validation')]:
@@ -171,11 +184,15 @@ def renderer_capture(root, package, audio_raw, runtime):
         if name == 'render-receipt.json':
             receipt.update(decode_verified=True, output_sha256=hashlib.sha256(entries['output.mp4']).hexdigest(),
                 probe=dict(streams=[dict(codec_type='video', codec_name='h264', width=1280, height=720, avg_frame_rate='24/1'),
-                    dict(codec_type='audio', codec_name='aac')], format=dict(duration='3')),
-                creative_capture=dict(schema='video.creative-capture.v1', renderer=observations['renderer'],
+                    dict(codec_type='audio', codec_name='aac')], format=dict(duration=str(timeline['duration_seconds']))),
+                creative_capture=dict(schema='video.creative-capture.v2' if engine_aware else 'video.creative-capture.v1', renderer=observations['renderer'],
                     frame_count=count, first_sha256=samples[0]['frame_sha256'], last_sha256=samples[-2]['frame_sha256'],
                     reverse_initial_sha256=samples[-1]['frame_sha256'], probe_sha256=[row['frame_sha256'] for row in samples],
                     blocked_requests=[], page_errors=[]))
+            if engine_aware:
+                receipt['creative_capture'].update(engine=engine, idle_clock_verified=True,
+                    loaded_engine_assets=observations['loaded_engine_assets'],
+                    probe_engine_observations=[row['engine_observation'] for row in samples])
         entries[name] = canonical_bytes(receipt)
     archive = io.BytesIO()
     with tarfile.open(fileobj=archive, mode='w:gz') as bundle:

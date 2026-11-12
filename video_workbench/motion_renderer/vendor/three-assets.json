@@ -1,0 +1,20 @@
+{
+  "assets": {
+    "three.LICENSE.txt": {
+      "bytes": 1081,
+      "sha256": "4c40a1ef62450b857c3b2aaf294936304cd552d965fbcd9d32d4c5bcf4ba4454"
+    },
+    "three.module.min.js": {
+      "bytes": 691648,
+      "sha256": "08fd7545d13d2c7fb65ab691530a802dafefd638596501854f267d0fb13c39e7"
+    }
+  },
+  "license": "MIT",
+  "network_calls": 0,
+  "npm_integrity": "sha512-FQK+LEpYc0fBD+J8g6oSEyyNzjp+Q7Ks1C568WWaoMRLW+TkNNWmenWeGgJjV105Gd+p/2ql1ZcjYvNiPZBhuQ==",
+  "package_lock_sha256": "29186633842088350e18de27a4abc23ba119a3cdb440ee1148ec1d3a479a6ea6",
+  "resolved": "https://registry.npmjs.org/three/-/three-0.170.0.tgz",
+  "schema": "video.renderer-three-assets.v1",
+  "source": "integrity_locked_official_npm_package",
+  "version": "0.170.0"
+}

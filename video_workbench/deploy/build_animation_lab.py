@@ -76,6 +76,7 @@ SOURCE_FILES = frozenset({
     'video_workbench/motion_renderer/engine_observe.mjs',
     'video_workbench/motion_renderer/observe.mjs',
     'video_workbench/motion_renderer/runtime.mjs',
+    'video_workbench/motion_renderer/engine_runtime.mjs',
     'video_workbench/motion_renderer/contract.mjs',
 })
 ASSET_SHA256 = {

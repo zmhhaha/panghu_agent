@@ -2,7 +2,7 @@
 
 The existing Docker ownership, bounded CLI, and exact cleanup primitives are
 shared with the old renderer. Its contracts, limits and host stay unchanged.
-This new adapter admits only HTML/SVG; Canvas and Three require separate work.
+New native engines bind their trusted runtime and measured seek evidence.
 """
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ from .animation_experiment_render import _IMAGE
 
 
 HOST = Path(__file__).with_name('animation_method_host.mjs')
+ENGINE_RUNTIME = Path(__file__).with_name('motion_renderer') / 'engine_runtime.mjs'
 MAX_FRAMES = 1440
 MAX_MEDIA_BYTES = 32 * 1024 * 1024
 MAX_EVIDENCE_BYTES = 192 * 1024 * 1024
@@ -38,7 +39,13 @@ MAX_TIMEOUT = 600
 _OP = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}\Z')
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
 _TABLE = 'animation_method_render_operations'
-_ASSETS = frozenset({'gsap.min.js', 'NotoSansCJK-Regular.ttc'})
+ASSET_SHA256 = {
+    'gsap.min.js': 'c174bfce53a729418d57a8ad8625e7247c793a22fef8e2851e3cfa3de9cd8280',
+    'NotoSansCJK-Regular.ttc': 'b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a',
+    'three.module.min.js': '08fd7545d13d2c7fb65ab691530a802dafefd638596501854f267d0fb13c39e7',
+    'three.LICENSE.txt': '4c40a1ef62450b857c3b2aaf294936304cd552d965fbcd9d32d4c5bcf4ba4454',
+}
+_ASSETS = frozenset(ASSET_SHA256)
 
 
 def _require(condition, code='animation_method_render_invalid', status=409):
@@ -104,7 +111,8 @@ def execute_method_render(directory):
         # different UID and needs explicit read access to the frozen inputs;
         # bind mounts remain read-only inside the container.
         input_root = root / 'input'
-        for path in (input_root, *input_root.rglob('*'), root / 'host.mjs'):
+        runtime_files = [root / 'engine_runtime.mjs'] if request.get('engine_runtime_sha256') else []
+        for path in (input_root, *input_root.rglob('*'), root / 'host.mjs', *runtime_files):
             docker._ownership(_plain(path), directory=path.is_dir())
         inspected = json.loads(docker._checked(
             ['image', 'inspect', '--format', docker._IMAGE_FORMAT, plan['image']], run_deadline))
@@ -115,6 +123,8 @@ def execute_method_render(directory):
         work = root / 'work'
         work.mkdir()
         docker._ownership(work, directory=True)
+        runtime_mount = (['--mount', 'type=bind,source=' + str(root / 'engine_runtime.mjs')
+                         + ',target=/opt/renderer/engine_runtime.mjs,readonly'] if runtime_files else [])
         arguments = ['container', 'create', '--name', name,
             '--label', docker._OWNER + '=' + token, '--label', docker._CAPTURE + '=' + request['identity'],
             '--pull=never', '--network=none', '--read-only', '--user=10001:10001',
@@ -127,7 +137,7 @@ def execute_method_render(directory):
             '--mount', 'type=bind,source=' + str(root / 'host.mjs')
                 + ',target=/opt/renderer/animation_method_host.mjs,readonly',
             '--mount', 'type=bind,source=' + str(work) + ',target=/work',
-            '--entrypoint=node', image_id, '/opt/renderer/animation_method_host.mjs']
+            *runtime_mount, '--entrypoint=node', image_id, '/opt/renderer/animation_method_host.mjs']
         created = True
         container_id = docker._checked(arguments, run_deadline)
         _require(_SHA.fullmatch(container_id), 'animation_method_render_container_id_invalid')
@@ -165,7 +175,8 @@ def execute_method_render(directory):
 
 
 class MethodAnimationRenderer:
-    def __init__(self, root, image, assets_dir=None, enabled=False, *, timeout=360):
+    def __init__(self, root, image, assets_dir=None, enabled=False, *, timeout=360,
+                 engine_admission_file=None, candidate_engines=()):
         match = _IMAGE.fullmatch(image) if type(image) is str else None
         _require(match is not None, 'animation_method_render_image_pin_required', 422)
         _require(type(enabled) is bool and type(timeout) in (int, float)
@@ -176,6 +187,57 @@ class MethodAnimationRenderer:
         self.assets_dir = _plain(assets_dir) if assets_dir is not None else None
         self.enabled, self.timeout = enabled, timeout
         self.ledger = self.root / 'method-render-ledger.sqlite3'
+        self.engine_admission_file = (_plain(engine_admission_file)
+                                      if engine_admission_file is not None else None)
+        # Only offline acceptance code can opt into candidates. The HTTP server
+        # never exposes this switch or advertises these unproven engines.
+        _require(type(candidate_engines) in (tuple, list)
+                 and set(candidate_engines) <= {'canvas', 'three'},
+                 'animation_method_render_candidate_invalid', 422)
+        self.candidate_engines = tuple(candidate_engines)
+
+    def capabilities(self):
+        assets = {}
+        if self.assets_dir is not None:
+            for name, expected in ASSET_SHA256.items():
+                path = self.assets_dir / name
+                if path.exists():
+                    actual = hashlib.sha256(_read(path, 32 * 1024 * 1024)).hexdigest()
+                    _require(actual == expected, 'animation_method_render_assets_changed')
+                    assets[name] = actual
+        identity = dict(image_digest=self.image_digest,
+            host_sha256=hashlib.sha256(_read(HOST, 1024 * 1024)).hexdigest(),
+            engine_runtime_sha256=hashlib.sha256(_read(ENGINE_RUNTIME, 1024 * 1024)).hexdigest(),
+            admission_id='method-html-svg-v1@' + self.image_digest)
+        engines = ['html-svg']
+        if self.engine_admission_file is not None:
+            admission, _ = _json(self.engine_admission_file, 65536)
+            _require(admission.get('schema') == 'video.animation-engine-admission.v1'
+                     and admission.get('image_digest') == identity['image_digest']
+                     and admission.get('host_sha256') == identity['host_sha256']
+                     and admission.get('engine_runtime_sha256') == identity['engine_runtime_sha256']
+                     and admission.get('assets') == assets,
+                     'animation_method_engine_admission_changed')
+            evidence = admission.get('evidence')
+            _require(type(evidence) is dict and bool(evidence)
+                     and set(evidence) <= {'canvas', 'three'},
+                     'animation_method_engine_admission_invalid')
+            for engine, record in evidence.items():
+                _require(type(record) is dict and type(record.get('operation_id')) is str,
+                         'animation_method_engine_admission_invalid')
+                actual = self.lookup(record['operation_id'])
+                _require(actual is not None and actual['technical_passed'] is True
+                         and actual['runtime']['engine'] == engine
+                         and actual['runtime']['image'] == self.image
+                         and actual['technical']['evidence_sha256'] == record.get('evidence_sha256'),
+                         'animation_method_engine_admission_unproven')
+            if 'three' in evidence:
+                _require({'three.module.min.js', 'three.LICENSE.txt'} <= assets.keys(),
+                         'animation_method_render_assets_missing')
+            engines += [engine for engine in ('canvas', 'three') if engine in evidence]
+            identity['admission_id'] = 'method-engines-v2@' + digest(admission)
+        return dict(schema='video.animation-runtime-capabilities.v1',
+                    allowed_engines=engines, assets=assets, runtime_identity=identity)
 
     def _directory(self, operation_id):
         _require(type(operation_id) is str and _OP.fullmatch(operation_id),
@@ -218,11 +280,29 @@ class MethodAnimationRenderer:
                  and 180 <= bounds['height'] <= 720 and 1 <= bounds['duration_seconds'] <= 60
                  and bounds['duration_seconds'] * 24 == int(bounds['duration_seconds'] * 24),
                  'animation_method_render_budget_not_admitted', 422)
-        _require(type(source) is dict and source.get('engine') == 'html-svg',
+        capabilities = self.capabilities()
+        _require(type(source) is dict and source.get('engine') in
+                 set(capabilities['allowed_engines']) | set(self.candidate_engines),
                  'animation_method_render_engine_not_admitted', 422)
         payload = _validate_source_output(source, context)
         _require(set(context['assets']) <= _ASSETS,
                  'animation_method_render_asset_not_admitted', 422)
+        engine = payload['engine']
+        engine_aware = (engine != 'html-svg' or bounds.get('runtime_identity') is not None
+                        or 'three.module.min.js' in context['assets'])
+        if engine_aware:
+            _require(all(ASSET_SHA256[name] == checksum
+                         for name, checksum in context['assets'].items()),
+                     'animation_method_render_assets_changed')
+            _require(engine != 'three' or context['assets'].get('three.module.min.js') ==
+                     ASSET_SHA256['three.module.min.js'],
+                     'animation_method_render_assets_missing')
+        frozen_runtime = bounds.get('runtime_identity')
+        if frozen_runtime is not None:
+            _require(type(frozen_runtime) is dict and all(
+                frozen_runtime.get(key) == capabilities['runtime_identity'][key]
+                for key in ('image_digest', 'host_sha256', 'engine_runtime_sha256')),
+                'animation_method_render_runtime_changed')
         events = validate_sound_events(sound_events, bounds['duration_seconds'])
         files = {name: hashlib.sha256(text.encode()).hexdigest()
                  for name, text in payload['files'].items()}
@@ -233,6 +313,9 @@ class MethodAnimationRenderer:
             host_sha256=hashlib.sha256(_read(HOST, 1024 * 1024)).hexdigest(),
             image_digest=self.image_digest, max_frames=MAX_FRAMES,
             max_media_bytes=MAX_MEDIA_BYTES, max_evidence_bytes=MAX_EVIDENCE_BYTES)
+        if engine_aware:
+            request.update(schema='video.animation-method-render-request.v2', engine=engine,
+                           engine_runtime_sha256=capabilities['runtime_identity']['engine_runtime_sha256'])
         request['identity'] = digest(request)
         return dict(schema='video.animation-method-render-binding.v1',
             operation_id=operation_id, source=payload, source_sha256=source_sha256(payload),
@@ -310,6 +393,8 @@ class MethodAnimationRenderer:
                          'animation_method_render_assets_changed')
                 _write(root / 'input/scene/assets' / name, raw)
             _write(root / 'host.mjs', _read(HOST, 1024 * 1024))
+            if binding['request'].get('engine_runtime_sha256'):
+                _write(root / 'engine_runtime.mjs', _read(ENGINE_RUNTIME, 1024 * 1024))
             _write(root / 'input/request.json', canonical_bytes(binding['request']))
             _write(root / 'binding.json', canonical_bytes(binding))
             plan = dict(directory=str(root), image=self.image, repository=self.repository,
@@ -335,7 +420,8 @@ class MethodAnimationRenderer:
         request = binding['request']
         work = root / 'work'
         receipt, receipt_raw = _json(work / 'render-receipt.json')
-        _require(receipt.get('schema') == 'video.animation-method-render-receipt.v1'
+        native = request.get('schema') == 'video.animation-method-render-request.v2'
+        _require(receipt.get('schema') == 'video.animation-method-render-receipt.' + ('v2' if native else 'v1')
                  and receipt.get('status') == 'rendered' and receipt.get('decode_verified') is True
                  and receipt.get('reverse_seek_verified') is True
                  and receipt.get('request_identity') == request['identity']
@@ -360,8 +446,54 @@ class MethodAnimationRenderer:
                      and hashlib.sha256(raw).hexdigest() == frame.get('sha256'),
                      'animation_method_render_frame_changed')
             total += len(raw)
+        names = {frame['name'] for frame in frames}
+        if native:
+            _require(receipt.get('engine') == request['engine']
+                     and receipt.get('engine_runtime_sha256') == request['engine_runtime_sha256'],
+                     'animation_method_render_engine_evidence_invalid')
+            observation = receipt.get('engine_observation', {})
+            contexts = observation.get('contexts')
+            _require(observation.get('engine') == request['engine']
+                     and observation.get('revision') == 'animation-engine-runtime-1'
+                     and type(contexts) is list and len(contexts) <= 16,
+                     'animation_method_render_engine_evidence_invalid')
+            required_kind = '2d' if request['engine'] == 'canvas' else 'webgl2'
+            _require((request['engine'] != 'html-svg' or not contexts)
+                     and all(type(row) is dict and row.get('kind') in
+                         ({'2d'} if request['engine'] == 'canvas' else {'2d', 'webgl2'}) for row in contexts)
+                     and (request['engine'] == 'html-svg' or any(row.get('kind') == required_kind and row.get('connected') is True
+                         and row.get('visible') is True and type(row.get('width')) is int
+                         and type(row.get('height')) is int
+                         and 0 < row['width'] <= 4096 and 0 < row['height'] <= 4096 for row in contexts))
+                     and all(row.get('software') is True and
+                             'swiftshader' in str(row.get('renderer', '')).lower()
+                             and row.get('context_lost') is False and row.get('gl_error') == 0
+                             for row in contexts if row.get('kind') == 'webgl2'),
+                     'animation_method_render_engine_evidence_invalid')
+            checks = receipt.get('seek_checks', {})
+            probes = checks.get('probes')
+            _require(checks.get('schema') == 'video.animation-engine-seek-checks.v1'
+                     and all(checks.get(key) is True for key in ('absolute_seek',
+                         'non_monotonic_seek_verified', 'repeated_seek_verified', 'idle_frame_verified',
+                         'fresh_load_verified'))
+                     and type(probes) is list and 4 <= len(probes) <= 8,
+                     'animation_method_render_seek_evidence_invalid')
+            for probe in probes:
+                name = probe.get('name', '')
+                ref = probe.get('reference_name', '')
+                _require(re.fullmatch(r'[A-Za-z0-9_-]+\.jpg', name)
+                         and name not in names and ref in {frame['name'] for frame in frames[:-1]},
+                         'animation_method_render_seek_evidence_invalid')
+                reference = next(frame for frame in frames if frame['name'] == ref)
+                raw = _read(work / 'frames' / name, 4 * 1024 * 1024)
+                _require(probe.get('timestamp_seconds') == reference['timestamp_seconds']
+                         and probe.get('sha256') == reference['sha256'] == hashlib.sha256(raw).hexdigest()
+                         and probe.get('bytes') == len(raw),
+                         'animation_method_render_seek_evidence_invalid')
+                names.add(name)
+                total += len(raw)
         _require(frames[0]['sha256'] == frames[-1]['sha256']
-                 and {path.name for path in (work / 'frames').iterdir()} == {f['name'] for f in frames},
+                 and {path.name for path in (work / 'frames').iterdir()} == names,
                  'animation_method_render_reverse_or_directory_invalid')
         media = _read(work / 'output.mp4', MAX_MEDIA_BYTES)
         _require(media[4:8] == b'ftyp' and len(media) == receipt.get('output_bytes')
@@ -447,6 +579,10 @@ class MethodAnimationRenderer:
                      'animation_method_render_request_changed')
             _require(hashlib.sha256(_read(root / 'host.mjs', 1024 * 1024)).hexdigest()
                      == binding['request']['host_sha256'], 'animation_method_render_host_changed')
+            if binding['request'].get('engine_runtime_sha256'):
+                _require(hashlib.sha256(_read(root / 'engine_runtime.mjs', 1024 * 1024)).hexdigest()
+                         == binding['request']['engine_runtime_sha256'],
+                         'animation_method_render_runtime_changed')
             for name, checksum in binding['request']['files_sha256'].items():
                 _require(hashlib.sha256(_read(root / 'input/scene' / name, 512 * 1024)).hexdigest()
                          == checksum, 'animation_method_render_source_changed')
@@ -462,9 +598,12 @@ class MethodAnimationRenderer:
                             receipt_sha256=digest(receipt) if receipt else None))
         result['technical'] = dict(status='passed' if rendered else 'failed',
             evidence_sha256=proof, scope='isolated_media_reverse_seek_and_sound_timing')
-        result['runtime'] = dict(engine='html-svg',
+        engine = binding['request'].get('engine', 'html-svg')
+        result['runtime'] = dict(engine=engine,
             admission=dict(status='admitted' if rendered else 'not_admitted',
-                id='method-html-svg-v1@' + binding['image_digest'], evidence_sha256=proof),
+                id=('method-' + engine + '-v2@' if binding['request']['schema'].endswith('.v2')
+                    else 'method-html-svg-v1@')
+                    + binding['image_digest'], evidence_sha256=proof),
             image=binding['image'], actual_image_id=outcome.get('actual_image_id'),
             observation='rendered_frames_not_agent_motion_or_audio_observation')
         if row['proof_sha256'] is not None:
