@@ -42,6 +42,37 @@ def test_v3_admission_requires_exact_skill_bytes_and_stopped_host_evidence(captu
             renderer_dir=capture['renderer'], renderer_image=RENDER_IMAGE, film=True)
 
 
+@pytest.mark.parametrize('tools', [
+    ['read_inputs', 'skill_search', 'skill_read', 'write'],
+    ['read_inputs', 'skill_read', 'skill_search', 'write'],
+    ['write', 'skill_read', 'skill_search', 'read_inputs'],
+])
+def test_exact_required_tool_list_accepts_probe_and_other_orders(capture, tools):
+    for name in ('candidate-result.json', 'candidate-evidence.json'):
+        edit(capture['root'], name,
+            lambda doc: doc['observations']['capability'].update(allowed_tools=tools))
+    _, report = assess(capture)
+    assert report['progressive_skill_tools_exercised'] is True
+
+
+@pytest.mark.parametrize('tools', [
+    ['read_inputs', 'skill_search', 'skill_read', 'write', 'write'],
+    ['read_inputs', 'skill_search', 'write'],
+    ['read_inputs', 'skill_search', 'skill_read', 'write', 'shell'],
+    'read_inputs,skill_search,skill_read,write',
+    dict(read_inputs=True, skill_search=True, skill_read=True, write=True),
+    None,
+    ['read_inputs', 'skill_search', 'skill_read', []],
+    ['read_inputs', 'skill_search', 'skill_read', 1],
+])
+def test_tools_still_require_list_of_unique_exact_required_strings(capture, tools):
+    for name in ('candidate-result.json', 'candidate-evidence.json'):
+        edit(capture['root'], name,
+            lambda doc: doc['observations']['capability'].update(allowed_tools=tools))
+    with pytest.raises(ServiceError, match='animation_production_admission_capability_missing'):
+        assess(capture)
+
+
 def test_old_film_proof_cannot_admit_progressive_skill_role(tmp_path, monkeypatch):
     capture = make_capture(tmp_path, monkeypatch, film=True)
     with pytest.raises(ServiceError, match='profile_not_allowed'):

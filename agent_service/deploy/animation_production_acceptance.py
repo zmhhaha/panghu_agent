@@ -425,7 +425,10 @@ def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_
         'animation_production_admission_harness_mismatch')
     capability = observation.get('capability', {})
     require(capability.get('engine') == 'pi' and capability.get('package_measured') is True
-        and capability.get('allowed_tools') == sorted(handler.required_tools)
+        and type(capability.get('allowed_tools')) is list
+        and all(type(tool) is str for tool in capability['allowed_tools'])
+        and len(capability['allowed_tools']) == len(set(capability['allowed_tools']))
+        and set(capability['allowed_tools']) == set(handler.required_tools)
         and capability.get('pi_cage_repository') == PI_CAGE_REPOSITORY
         and capability.get('pi_cage_revision') == PI_CAGE_REVISION and capability.get('pi_version') == PI_VERSION
         and type(capability.get('node_version')) is str and re.fullmatch(r'24\.\d+\.\d+', capability['node_version']),

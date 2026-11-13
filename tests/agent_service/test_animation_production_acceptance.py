@@ -138,7 +138,7 @@ def make_capture(tmp_path, monkeypatch, *, film=False, skills=False):
         ('pod:' + worker_uid, 'uid:' + str(uid), 'uid:' + str(uid + 1)), time.time() - 2)))
     observation = dict(harness_sha256=harness_sha256(), scenario=dict(scenario_harness_sha256=module_sha256()),
         capability=dict(engine='pi', package_measured=True,
-            allowed_tools=['read_inputs', 'skill_read', 'skill_search', 'write'] if skills else ['read_inputs', 'write'],
+            allowed_tools=['read_inputs', 'skill_search', 'skill_read', 'write'] if skills else ['read_inputs', 'write'],
             pi_cage_repository=admission.PI_CAGE_REPOSITORY, pi_cage_revision=admission.PI_CAGE_REVISION,
             pi_version=admission.PI_VERSION, node_version='24.22.1'),
         isolation={**{key:True for key in admission.ISOLATION}, 'groups':[], 'uid':[uid + 2] * 3,

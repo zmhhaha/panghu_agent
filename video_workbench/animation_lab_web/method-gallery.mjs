@@ -154,7 +154,9 @@ export function buildCommissionRequest(fields, requestId) {
 }
 export function buildTransferRequest(fields, requestId) {
   if (fields.retry_of_commission_id) throw Error('重新运行不能同时进行迁移验证');
-  const body = buildCommissionRequest({...fields, base_commission_id: null}, requestId);
+  const skills = fields.transfer_protocol === 'skills';
+  const body = buildCommissionRequest({...fields, base_commission_id: null,
+    ...(skills ? {reference_url: '', reference_start: '', reference_end: ''} : {})}, requestId);
   const dimension = text(fields.transfer_dimension), beforeText = text(fields.transfer_before).trim(), afterText = text(fields.transfer_after).trim();
   if (!['relations', 'data_structure', 'staging', 'explanation_problem', 'object_count', 'timing', 'task'].includes(dimension)
     || !beforeText || !afterText || beforeText.length > 2000 || afterText.length > 2000 || beforeText === afterText) {
@@ -166,6 +168,16 @@ export function buildTransferRequest(fields, requestId) {
   delete body.base_commission_id;
   delete body.criteria;
   body.structural_changes = {[dimension]: {before, after}};
+  if (skills) {
+    const originalGoal = text(fields.transfer_original_goal);
+    if (!originalGoal.trim()) throw Error('当前样片缺少确切的原始目标，请打开该样片所属的原实验后再迁移');
+    if (originalGoal.trim() === body.goal) throw Error('迁移需要新的表达目标，请同时改变讲解内容与结构');
+    if (!['relations', 'task', 'staging', 'data_structure', 'explanation_problem'].includes(dimension)) {
+      throw Error('只改数量或时长不足以验证迁移，请说明真实的关系结构、任务、布局或讲解问题变化');
+    }
+    body.content_changes = {before: originalGoal, after: body.goal,
+      reason: '开发者指定的结构变化：' + beforeText + ' → ' + afterText};
+  }
   return body;
 }
 
@@ -668,9 +680,20 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
   };
   const openForm = (detail = null, candidateId = null, feedback = '', mode = 'continue') => {
     const isTransfer = Boolean(detail) && mode === 'transfer', isRetry = Boolean(detail) && mode === 'retry';
+    const transferCandidate = commissionCandidates(detail).find(row => row.id === candidateId) ?? selectedCandidate(detail);
+    const transferSkills = isTransfer && rows(transferCandidate?.method_version_ids).some(version =>
+      rows(detail.methods).some(method => identity(method) === version && method.schema === 'video.animation-method.v2'));
     continuation = detail ? {commission_id: detail.id, candidate_id: candidateId, mode, criteria: detail.criteria,
-      ui_preview: detail.ui_preview === true} : null;
+      ui_preview: detail.ui_preview === true,
+      ...(transferSkills ? {transfer_protocol: 'skills',
+        // An inherited baseline belongs to another immutable brief. Its exact
+        // demonstration goal is not exposed by this commission's detail.
+        transfer_original_goal: transferCandidate.id === detail.baseline_candidate?.id ? '' : text(detail.goal)} : {})} : null;
     $('experiment-form').reset();
+    for (const id of ['reference', 'reference-start', 'reference-end']) {
+      $('experiment-' + id).disabled = transferSkills;
+      if (transferSkills) $('experiment-' + id).value = '';
+    }
     if (detail) $('experiment-duration').value = String(isRetry && Number.isFinite(detail.duration_seconds)
       && detail.duration_seconds >= 2 && detail.duration_seconds <= 60 ? detail.duration_seconds : continuationDuration(detail, candidateId));
     if (isRetry) {
@@ -691,6 +714,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     $('experiment-form-title').textContent = isRetry ? '重新运行本次实验' : isTransfer ? '验证方法在不同任务中的表现' : detail ? '继续优化这版' : '新建实验';
     $('experiment-base-note').hidden = !detail;
     $('experiment-base-note').textContent = isRetry ? '按当前表单重新执行，使用新预算，保留已有样片和失败记录。'
+      : transferSkills ? '使用选定方法，为内容与结构均不同的新目标创作；本次不携带参考素材。请观看迁移结果后再决定发布。'
       : isTransfer ? '将使用选定样片背后的方法，为新目标创作。请观看迁移结果后再决定发布。'
       : detail ? '将基于选定样片与本次意见开始新实验，已有结果和发布版本保持。' : '';
     $('experiment-transfer-fields').hidden = !isTransfer;
@@ -827,7 +851,9 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     if (continuation) Object.assign(fields, {criteria_metadata: continuation.criteria,
       ...(continuation.mode === 'retry' ? {retry_of_commission_id: continuation.commission_id}
         : {base_candidate_id: continuation.candidate_id,
-          ...(continuation.mode === 'transfer' ? {transfer_commission_id: continuation.commission_id} : {base_commission_id: continuation.commission_id})})});
+          ...(continuation.mode === 'transfer' ? {transfer_commission_id: continuation.commission_id,
+            transfer_protocol: continuation.transfer_protocol, transfer_original_goal: continuation.transfer_original_goal}
+            : {base_commission_id: continuation.commission_id})})});
     if (await controller.start(fields)) { show('detail'); controller.emit(); }
   });
   const closeController = controller.close.bind(controller);

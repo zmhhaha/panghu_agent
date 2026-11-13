@@ -869,3 +869,102 @@ test('switching the feedback version clears a time range from the previous versi
   assert.equal(draft.candidate_id, 'b'); assert.equal(draft.start_seconds, ''); assert.equal(draft.end_seconds, '');
   player.destroy();
 });
+
+test('Skill transfers bind the exact original and new goals without sending reference material or approvals', () => {
+  const originalGoal = '  说明同一路径的请求如何依次完成  ';
+  const input = {...fields, transfer_protocol: 'skills', transfer_original_goal: originalGoal,
+    goal: '  解释多分支竞争后为何需要汇合  ', base_candidate_id: 'exact-reference',
+    reference_url: 'https://example.com/original-reference', reference_start: 2, reference_end: 6,
+    transfer_dimension: 'relations', transfer_before: '单一路径', transfer_after: '并行分支与汇合'};
+  const body = buildTransferRequest(input, firstId);
+  assert.deepEqual(body.content_changes, {before: originalGoal, after: '解释多分支竞争后为何需要汇合',
+    reason: '开发者指定的结构变化：单一路径 → 并行分支与汇合'});
+  assert.equal(body.content_changes.after, body.goal);
+  assert.deepEqual(body.structural_changes, {relations: {before: '单一路径', after: '并行分支与汇合'}});
+  assert.equal(body.reference, null);
+  assert.equal(body.base_candidate_id, 'exact-reference');
+  for (const field of ['transfer_protocol', 'transfer_original_goal', 'human_verification', 'acceptance']) {
+    assert.equal(Object.hasOwn(body, field), false);
+  }
+  assert.throws(() => buildTransferRequest({...input, transfer_original_goal: ''}, firstId), /原实验/);
+  assert.throws(() => buildTransferRequest({...input, goal: originalGoal}, firstId), /新的表达目标/);
+  for (const dimension of ['object_count', 'timing']) {
+    assert.throws(() => buildTransferRequest({...input, transfer_dimension: dimension,
+      transfer_before: '8', transfer_after: '40'}, firstId), /真实的关系结构/);
+  }
+});
+
+test('invalid Skill transfer content stops before persistence or a paid submission', async () => {
+  const h = harness(() => catalog());
+  await h.controller.refresh();
+  const input = {...fields, transfer_commission_id: 'original', transfer_protocol: 'skills',
+    transfer_dimension: 'relations', transfer_before: '单链', transfer_after: '分支'};
+  assert.equal(await h.controller.start(input), false);
+  assert.match(h.controller.snapshot.error, /确切的原始目标/);
+  assert.equal(h.requests.some(row => row.options.method), false);
+  assert.equal(h.store.data.size, 0);
+  h.controller.close();
+});
+
+test('the actual Skill transfer form sends required v2 content changes tied to its selected baseline', async t => {
+  const detail = run({state: 'completed', goal: '原目标：解释流水线中任务的顺序依赖',
+    candidates: [{...candidate('baseline'), method_version_ids: ['skill-v2']}], best_candidate_id: 'baseline',
+    methods: [{id: 'skill-v2', schema: 'video.animation-method.v2'}],
+    reference: {url: 'https://www.bilibili.com/video/BVexample/', start_seconds: 0, end_seconds: 8}});
+  const h = mountedGallery(detail); await h.ready(); await h.controller.select(detail.id);
+  h.get('gallery-detail').descendants('button').find(node => node.textContent === '验证不同结构').handlers.click();
+  for (const id of ['reference', 'reference-start', 'reference-end']) {
+    assert.equal(h.get('experiment-' + id).value, '');
+    assert.equal(h.get('experiment-' + id).disabled, true);
+  }
+  assert.match(h.get('experiment-base-note').textContent, /不携带参考素材/);
+  assert.equal(h.requests.some(row => row.options.method), false);
+  h.get('experiment-goal').value = '  新目标：解释并行分支完成后如何汇合  ';
+  h.get('experiment-transfer-dimension').value = 'relations';
+  h.get('experiment-transfer-before').value = '串行依赖';
+  h.get('experiment-transfer-after').value = '并行分支与汇合';
+  // A retained or manually changed reference control must still never enter
+  // the v2 request, even when a fake FormData includes disabled inputs.
+  h.get('experiment-reference').value = 'https://example.com/not-for-transfer';
+  const inputIds = {title: 'title', goal: 'goal', reference_url: 'reference', reference_start: 'reference-start',
+    reference_end: 'reference-end', duration_seconds: 'duration', max_rounds: 'rounds', max_minutes: 'seconds',
+    transfer_dimension: 'transfer-dimension', transfer_before: 'transfer-before', transfer_after: 'transfer-after'};
+  t.mock.method(globalThis, 'FormData', function() {
+    return Object.entries(inputIds).map(([name, id]) => [name, h.get('experiment-' + id).value]);
+  });
+  await h.get('experiment-form').handlers.submit({preventDefault() {}});
+  const posts = h.requests.filter(row => row.options.method);
+  assert.equal(posts.length, 1);
+  assert.ok(posts[0].url.pathname.endsWith('/commissions/' + detail.id + '/transfer'));
+  const body = JSON.parse(posts[0].options.body);
+  assert.deepEqual(body.content_changes, {before: detail.goal, after: '新目标：解释并行分支完成后如何汇合',
+    reason: '开发者指定的结构变化：串行依赖 → 并行分支与汇合'});
+  assert.equal(body.goal, body.content_changes.after);
+  assert.equal(body.base_candidate_id, 'baseline');
+  assert.equal(body.reference, null);
+  assert.equal(Object.hasOwn(body, 'human_verification'), false);
+  h.get('gallery-new').handlers.click();
+  for (const id of ['reference', 'reference-start', 'reference-end']) assert.equal(h.get('experiment-' + id).disabled, false);
+  h.controller.close();
+});
+
+test('a Skill transfer from an inherited baseline never guesses its demonstration goal from the newer brief', async t => {
+  const inherited = {...candidate('inherited'), method_version_ids: ['older-skill-v2']};
+  const detail = run({state: 'completed', goal: '当前实验已经改过的目标',
+    candidates: [inherited], best_candidate_id: inherited.id, baseline_candidate: inherited,
+    methods: [{id: 'older-skill-v2', schema: 'video.animation-method.v2'}]});
+  const h = mountedGallery(detail); await h.ready(); await h.controller.select(detail.id);
+  h.get('gallery-detail').descendants('button').find(node => node.textContent === '验证不同结构').handlers.click();
+  h.get('experiment-goal').value = '另一个迁移目标';
+  h.get('experiment-transfer-dimension').value = 'relations';
+  h.get('experiment-transfer-before').value = '单链'; h.get('experiment-transfer-after').value = '分支';
+  const inputIds = {title: 'title', goal: 'goal', duration_seconds: 'duration', max_rounds: 'rounds', max_minutes: 'seconds',
+    transfer_dimension: 'transfer-dimension', transfer_before: 'transfer-before', transfer_after: 'transfer-after'};
+  t.mock.method(globalThis, 'FormData', function() {
+    return Object.entries(inputIds).map(([name, id]) => [name, h.get('experiment-' + id).value]);
+  });
+  await h.get('experiment-form').handlers.submit({preventDefault() {}});
+  assert.equal(h.requests.some(row => row.options.method), false);
+  assert.match(h.controller.snapshot.error, /打开该样片所属的原实验/);
+  h.controller.close();
+});
