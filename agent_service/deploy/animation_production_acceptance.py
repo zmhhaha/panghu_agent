@@ -30,13 +30,15 @@ from agent_service.input_tools import (READ_INPUTS_ENVIRONMENT_NAME,
     READ_INPUTS_EXTENSION_SHA256, read_inputs_environment_revision)
 from agent_service.pi_cage import PI_CAGE_REPOSITORY, PI_CAGE_REVISION, PI_VERSION
 from agent_service.profiles import video_animation_production as production
+from agent_service.profiles import video_animation_skill_production as skill_production
 from agent_service.profiles.video import decode_video_json
 from agent_service.registry import binding_fingerprint, required_model_capabilities
 from agent_service.worker_entry import HostConfig, _host_registry, accepted_host, host_policy
 from video_workbench.animation_candidate_import import EXPORT_NAMES, _pod
-from video_workbench.creative_method_contract import collect_scene_result, validate_scene_package
+from video_workbench.creative_method_contract import collect_scene_result
+from video_workbench.creative_contract import validate_scene_package
 from video_workbench.creative_renderer import (METHOD_COMPILER, ENGINE_METHOD_COMPILER, FILM_COMPILER,
-    compile_creative_project)
+    SKILL_COMPILER, compile_creative_project)
 from video_workbench.motion_render_k8s import _subset, unpack_artifacts, validate_artifacts
 from video_workbench.motion_renderer.job import FILES, NAMESPACE, resources
 from video_workbench.motion_snapshot import _runtime
@@ -44,6 +46,7 @@ from video_workbench.motion_snapshot import _runtime
 
 SUITE = 'video.animation-production-contract.v1'
 FILM_SUITE = 'video.animation-production-contract.v2'
+SKILL_SUITE = 'video.animation-production-contract.v3'
 SHA = re.compile(r'[0-9a-f]{64}\Z')
 IMAGE = re.compile(r'[a-z0-9][a-z0-9._:/-]*:latest@sha256:[0-9a-f]{64}\Z')
 NOT_CLAIMED = ['offline_hmac_reverification', 'current_git_status_reverified',
@@ -61,25 +64,39 @@ def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
-def _generation(film):
-    require(type(film) is bool, 'animation_production_admission_generation_invalid')
+def _generation(film, skills=False):
+    require(type(film) is bool and type(skills) is bool and not (film and skills),
+            'animation_production_admission_generation_invalid')
+    if skills:
+        return (skill_production.PROFILE, SKILL_SUITE, skill_production.BUNDLE_REVISION,
+            skill_production.BUNDLE_MANIFEST_SHA256, skill_production.VideoAnimationSkillProductionProfile())
     return (production.FILM_PROFILE, FILM_SUITE, production.FILM_BUNDLE_REVISION,
         production.FILM_BUNDLE_MANIFEST_SHA256, production.VideoAnimationFilmProductionProfile()) if film else (
         production.PROFILE, SUITE, production.BUNDLE_REVISION, production.BUNDLE_MANIFEST_SHA256,
         production.VideoAnimationProductionProfile())
 
 
-def _bundle(package, registry, binding, policy, *, film=False):
-    profile, _, bundle_revision, manifest_sha, handler = _generation(film)
+def _bundle(package, registry, binding, policy, *, film=False, skills=False):
+    profile, _, bundle_revision, manifest_sha, handler = _generation(film, skills)
     contract = registry.contract(profile, policy.revision)
     bundle = registry.bundle(binding.bundle.name, binding.bundle.revision)
     environment = registry.environment(binding.tool_environment.name, binding.tool_environment.revision)
     require(bundle.name == 'animation-production' and bundle.revision == bundle_revision
         and set(contract.required_tools) == set(bundle.required_tools) == set(environment.tools)
-        == set(handler.required_tools) == {'read_inputs', 'write'}
-        and environment.name == READ_INPUTS_ENVIRONMENT_NAME
-        and environment.revision == read_inputs_environment_revision(environment.model_dump(mode='json')),
+        == set(handler.required_tools),
         'animation_production_admission_tools_mismatch')
+    if skills:
+        from agent_service.skill_tools import (SKILL_TOOLS_ENVIRONMENT_NAME,
+            SKILL_TOOLS_EXTENSION_SHA256, SKILL_TASK_EXTENSION_SHA256, skill_tools_environment_revision)
+        require(environment.name == SKILL_TOOLS_ENVIRONMENT_NAME
+            and environment.revision == skill_tools_environment_revision(environment.model_dump(mode='json'))
+            and sha(_capture(package, 'read_skill_task_extension.mjs', 128 * 1024)) == SKILL_TASK_EXTENSION_SHA256
+            and sha(_capture(package, 'skill_tools_extension.mjs', 128 * 1024)) == SKILL_TOOLS_EXTENSION_SHA256,
+            'animation_production_admission_tools_mismatch')
+    else:
+        require(environment.name == READ_INPUTS_ENVIRONMENT_NAME
+            and environment.revision == read_inputs_environment_revision(environment.model_dump(mode='json')),
+            'animation_production_admission_tools_mismatch')
     require(set(required_model_capabilities(handler)) <= set(binding.model_policy.capabilities),
             'animation_production_admission_model_policy_mismatch')
     root = package / 'resources' / bundle_revision
@@ -90,16 +107,16 @@ def _bundle(package, registry, binding, policy, *, film=False):
     require(manifest.get('bundle_revision') == bundle_revision
         and manifest.get('automatic_updates') is False and manifest.get('upstream_content_vendored') is False
         and manifest.get('license') == 'MIT' and type(rows) is list
-        and len(rows) == len(production.BUNDLE_FILES)
+        and len(rows) == len(skill_production.BUNDLE_FILES if skills else production.BUNDLE_FILES)
         and all(type(row) is dict and set(row) == {'path', 'sha256'} for row in rows)
-        and {row['path'] for row in rows} == production.BUNDLE_FILES,
+        and {row['path'] for row in rows} == (skill_production.BUNDLE_FILES if skills else production.BUNDLE_FILES),
         'animation_production_admission_resource_mismatch')
     measured = {'manifest.json':sha(raw)}
     for row in rows:
         measured[row['path']] = sha(_capture(root, row['path'], 128 * 1024))
         require(measured[row['path']] == row['sha256'], 'animation_production_admission_resource_mismatch')
     require({row.name:row.sha256 for row in bundle.resources} == measured
-        and sha(_capture(package, 'read_inputs_extension.mjs', 128 * 1024)) == READ_INPUTS_EXTENSION_SHA256,
+        and (skills or sha(_capture(package, 'read_inputs_extension.mjs', 128 * 1024)) == READ_INPUTS_EXTENSION_SHA256),
         'animation_production_admission_resource_mismatch')
     return measured
 
@@ -168,10 +185,11 @@ def _renderer_stop(pod, job, desired):
 def verify_renderer_capture(directory, package, *, renderer_image):
     """Check original seven-file Job input, raw K8s stop and log export bytes."""
     package = validate_scene_package(package)
-    film = package['schema'] == 'video.creative-scene.v4'
-    engine_aware = package['schema'] in {'video.creative-scene.v3', 'video.creative-scene.v4'}
-    compiler = FILM_COMPILER if film else ENGINE_METHOD_COMPILER if engine_aware else METHOD_COMPILER
-    require(package['schema'] in {'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'} and type(renderer_image) is str
+    skills = package['schema'] == 'video.creative-scene.v5'
+    film = package['schema'] in {'video.creative-scene.v4', 'video.creative-scene.v5'}
+    engine_aware = package['schema'] in {'video.creative-scene.v3', 'video.creative-scene.v4', 'video.creative-scene.v5'}
+    compiler = SKILL_COMPILER if skills else FILM_COMPILER if film else ENGINE_METHOD_COMPILER if engine_aware else METHOD_COMPILER
+    require(package['schema'] in {'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4', 'video.creative-scene.v5'} and type(renderer_image) is str
         and IMAGE.fullmatch(renderer_image), 'animation_production_renderer_v2_required')
     root = _directory(directory)
     names = ('desired-resources.json', 'job-created.json', 'job-final.json', 'pod-final.json',
@@ -241,7 +259,8 @@ def verify_renderer_capture(directory, package, *, renderer_image):
         and all(_capture(root / 'input', name, 8 * 1024 * 1024) == value for name,value in files.items())
         and all(_capture(artifact_root, name, 32 * 1024 * 1024) == value for name,value in entries.items()),
         'animation_production_renderer_capture_changed')
-    return dict(schema='video.animation-film-production-captured-render-proof.v1' if film else
+    return dict(schema='video.animation-skill-production-captured-render-proof.v1' if skills else
+        'video.animation-film-production-captured-render-proof.v1' if film else
         'video.animation-production-captured-render-proof.v2' if engine_aware
         else 'video.animation-production-captured-render-proof.v1',
         package_sha256=digest(package), source_sha256=package['result_sha256'],
@@ -251,25 +270,14 @@ def verify_renderer_capture(directory, package, *, renderer_image):
         capture_sha256={name:sha(value) for name,value in raw.items()},
         input_files_sha256={name:sha(value) for name,value in files.items()},
         artifact_files_sha256={name:sha(value) for name,value in entries.items()},
-        scope='original_v4_film_input_isolated_job_media_native_context_and_reverse_seek' if film else
+        scope='original_v5_skill_film_input_isolated_job_media_native_context_and_reverse_seek' if skills else
+            'original_v4_film_input_isolated_job_media_native_context_and_reverse_seek' if film else
             'original_v3_engine_input_isolated_job_media_native_context_and_reverse_seek' if engine_aware
             else 'original_v2_input_isolated_job_media_and_reverse_seek',
         whole_video_watched=False, audio_observed=False, subjective_quality_approved=False)
 
 
-def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_image, film=False):
-    """Return (unchanged disabled Host, new-suite report), with no writes."""
-    selected_profile, suite, _, _, _ = _generation(film)
-    directory = _directory(candidate_dir)
-    root = _directory(directory / 'candidate-output')
-    raw = {name:_capture(root, name) for name in (*EXPORT_NAMES, 'uid-reservation.json', 'worker.log')}
-    docs = {name:decode_video_json(value) for name,value in raw.items() if name.endswith('.json')}
-    require(all(type(value) is dict for value in docs.values()))
-    envelope, result = verify_parent({name:docs[name] for name in PARENT_FILES.values()})
-    require(envelope.profile == selected_profile and envelope.profile_revision == '1' and envelope.engine == 'pi'
-        and not envelope.checkpoint_inputs and envelope.checkpoint_ref is None,
-        'animation_production_admission_profile_not_allowed')
-    proof = result.stop_receipt
+def _legacy_capture(root, envelope, result, raw, *, film):
     require(len(envelope.inputs) == 1 and envelope.inputs[0].name == production.INPUT_NAME,
             'animation_production_admission_input_mismatch')
     input_raw = envelope.inputs[0].content()
@@ -292,6 +300,75 @@ def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_
     package = collect_scene_result(document, artifact)
     require(decode_video_json(raw[package_name]) == package,
             'animation_production_admission_package_mismatch')
+    return document, artifact, package, {production.INPUT_NAME:input_raw}
+
+
+def _skill_capture(root, envelope, result, raw):
+    """Bind both stopped artifacts and every protected Skill input to v5."""
+    from agent_service.animation_skills_contract import bundle_files
+    from agent_service.skill_tool_evidence import validate_tool_evidence
+    from video_workbench.animation_skill_production import MAX_DELIVERY_BYTES, validate_delivery
+    from video_workbench.creative_skill_contract import (MAX_PACKAGE_BYTES,
+        collect_scene_result as collect_skill_result)
+
+    for name, maximum in ((skill_production.INPUT_NAME, skill_production.INPUT_MAX_BYTES),
+            (skill_production.RESULT_NAME, skill_production.OUTPUT_MAX_BYTES),
+            (skill_production.EVIDENCE_NAME, skill_production.MAX_TOOL_EVIDENCE_BYTES),
+            ('skill-delivery.json', MAX_DELIVERY_BYTES), ('creative-scene-v5.json', MAX_PACKAGE_BYTES)):
+        raw[name] = _capture(root, name, maximum)
+    document = skill_production.validate_input(decode_video_json(raw[skill_production.INPUT_NAME]))
+    delivery = validate_delivery(decode_video_json(raw['skill-delivery.json']))
+    expected_inputs = {item.name:item.content()
+        for item in bundle_files(document['skill_catalog'], delivery['packages'])}
+    expected_inputs[skill_production.INPUT_NAME] = canonical_bytes(document)
+    require(raw[skill_production.INPUT_NAME] == expected_inputs[skill_production.INPUT_NAME]
+        and delivery['catalog'] == document['skill_catalog']
+        and envelope.task == {'input_sha256':digest(document)}
+        and len(envelope.inputs) == len(expected_inputs)
+        and {item.name:item.content() for item in envelope.inputs} == expected_inputs,
+        'animation_production_admission_input_mismatch')
+    names = {skill_production.RESULT_NAME, skill_production.EVIDENCE_NAME}
+    require(len(result.artifacts) == 2 and {item.name for item in result.artifacts} == names
+        and all(item.content() == raw[item.name] for item in result.artifacts),
+        'animation_production_admission_artifact_mismatch')
+    evidence = validate_tool_evidence(decode_video_json(raw[skill_production.EVIDENCE_NAME]),
+        delivery['catalog'], delivery['packages'], attempt_id=envelope.attempt_id,
+        input_sha256=digest(document))
+    searches = [event for event in evidence['events'] if event['tool_name'] == 'skill_search']
+    reads = [event for event in evidence['events'] if event['tool_name'] == 'skill_read'
+             and event['receipt']['path'] == 'SKILL.md']
+    # Empty-directory creation is valid business behaviour. This dedicated
+    # admission must additionally exercise the actual progressive Skill tools.
+    require(bool(document['skill_catalog']['skills']) and bool(searches) and bool(reads),
+            'animation_skill_production_admission_progressive_read_required')
+    artifact = decode_video_json(raw[skill_production.RESULT_NAME])
+    package = collect_skill_result(document, artifact, evidence, skill_delivery=delivery)
+    require(decode_video_json(raw['creative-scene-v5.json']) == package,
+            'animation_production_admission_package_mismatch')
+    return document, package['result'], package, expected_inputs
+
+
+def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_image, film=False, skills=False):
+    """Return (unchanged disabled Host, new-suite report), with no writes."""
+    selected_profile, suite, _, _, handler = _generation(film, skills)
+    directory = _directory(candidate_dir)
+    root = _directory(directory / 'candidate-output')
+    raw = {name:_capture(root, name) for name in (*EXPORT_NAMES, 'uid-reservation.json', 'worker.log')}
+    docs = {name:decode_video_json(value) for name,value in raw.items() if name.endswith('.json')}
+    require(all(type(value) is dict for value in docs.values()))
+    envelope, result = verify_parent({name:docs[name] for name in PARENT_FILES.values()})
+    require(envelope.profile == selected_profile and envelope.profile_revision == '1' and envelope.engine == 'pi'
+        and not envelope.checkpoint_inputs and envelope.checkpoint_ref is None,
+        'animation_production_admission_profile_not_allowed')
+    proof = result.stop_receipt
+    if skills:
+        document, artifact, package, expected_inputs = _skill_capture(root, envelope, result, raw)
+        input_raw = expected_inputs[production.INPUT_NAME]
+    else:
+        document, artifact, package, expected_inputs = _legacy_capture(root, envelope, result, raw, film=film)
+        input_raw = expected_inputs[production.INPUT_NAME]
+    expected_artifacts = [dict(name=item.name, sha256=sha(raw[item.name]), bytes=len(raw[item.name]))
+                          for item in result.artifacts]
     record, observation = docs['candidate-evidence.json'], docs['candidate-result.json']['observations']
     host, policy, binding = candidate_config(docs['host-config.json'])
     registry = _host_registry(host)
@@ -306,21 +383,25 @@ def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_
         and record.get('binding_revision') == binding.revision and record.get('combination_sha256') == combination
         and record.get('execution_binding_sha256') == envelope.execution_binding.sha256
         and record.get('observations') == observation and type(record.get('artifact_count')) is int
-        and record['artifact_count'] == 1 and record.get('artifacts') == [dict(name=production.RESULT_NAME,
-            sha256=sha(raw[production.RESULT_NAME]), bytes=len(raw[production.RESULT_NAME]))]
+        and record['artifact_count'] == len(expected_artifacts) and record.get('artifacts') == expected_artifacts
         and proof is not None and proof.fence == envelope.fence and proof.engine == envelope.engine
         and 0 < proof.observed_at <= time.time() + 5 and len(set(proof.resource_ids)) == len(proof.resource_ids),
         'animation_production_admission_controller_mismatch')
     scenario = docs['scenario.json']
+    expected_scenario_inputs = {name:(sha(value), len(value)) for name,value in expected_inputs.items()}
+    scenario_inputs = scenario.get('inputs')
+    require(type(scenario_inputs) is list and len(scenario_inputs) == len(expected_scenario_inputs)
+        and all(type(row) is dict and set(row) == {'name', 'sha256', 'bytes'} for row in scenario_inputs)
+        and {row['name']:(row['sha256'], row['bytes']) for row in scenario_inputs} == expected_scenario_inputs,
+        'animation_production_admission_scenario_mismatch')
     require(set(scenario) == {'schema_version', 'candidate_scope_only', 'scenario_id', 'profile',
         'timeout_seconds', 'task', 'inputs', 'business_export', 'parent'}
         and scenario.get('schema_version') == 'agent-candidate-scenario.v1'
         and scenario.get('candidate_scope_only') is True and scenario.get('profile') == selected_profile
         and scenario.get('task') == envelope.task and scenario.get('business_export') is None
-        and scenario.get('parent') is None and scenario.get('inputs') == [dict(name=production.INPUT_NAME,
-            sha256=sha(input_raw), bytes=len(input_raw))], 'animation_production_admission_scenario_mismatch')
+        and scenario.get('parent') is None, 'animation_production_admission_scenario_mismatch')
     source = _source_package(source_root)
-    measured_bundle = _bundle(source, registry, binding, policy, film=film)
+    measured_bundle = _bundle(source, registry, binding, policy, film=film, skills=skills)
     harness = sha(_capture(source, 'deploy/acceptance_probe.py').decode().replace('\r\n', '\n').encode())
     scenario_harness = sha(_capture(source, 'deploy/candidate_scenario.py').decode().replace('\r\n', '\n').encode())
     require(observation.get('harness_sha256') == record.get('harness_sha256') == harness
@@ -344,7 +425,7 @@ def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_
         'animation_production_admission_harness_mismatch')
     capability = observation.get('capability', {})
     require(capability.get('engine') == 'pi' and capability.get('package_measured') is True
-        and capability.get('allowed_tools') == ['read_inputs', 'write']
+        and capability.get('allowed_tools') == sorted(handler.required_tools)
         and capability.get('pi_cage_repository') == PI_CAGE_REPOSITORY
         and capability.get('pi_cage_revision') == PI_CAGE_REVISION and capability.get('pi_version') == PI_VERSION
         and type(capability.get('node_version')) is str and re.fullmatch(r'24\.\d+\.\d+', capability['node_version']),
@@ -406,7 +487,8 @@ def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_
     render_proof = verify_renderer_capture(renderer_dir, package, renderer_image=renderer_image)
     require(all(_capture(root, name) == value for name,value in raw.items()),
             'animation_production_admission_capture_changed')
-    report = dict(schema='video-animation-film-production-independent-review.v1' if film else
+    report = dict(schema='video-animation-skill-production-independent-review.v1' if skills else
+        'video-animation-film-production-independent-review.v1' if film else
         'video-animation-production-independent-review.v1', suite=suite,
         evidence_origin='captured_real_candidate', profile=selected_profile, profile_revision='1', engine='pi',
         candidate_name=directory.name, image_digest=envelope.image_digest, runtime_revision=envelope.runtime_revision,
@@ -419,13 +501,22 @@ def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_
             model_calls_complete=len(calls), model_proxy_lease=dict(worker_log_http_status=401),
             stopped_worker=stopped['worker'], stopped_proxy=stopped['proxy'],
             input_sha256=digest(document), output_sha256=sha(raw[production.RESULT_NAME])),
-        method_delivery_sha256=package['method_delivery_sha256'], method_decision=package['method_decision'],
-        method_evidence_scope=package['evidence_scope'], renderer_proof=render_proof,
+        renderer_proof=render_proof,
         original_candidate_flags_preserved=True, technical_host_prerequisites_passed=True,
         acceptance_created=False, production_routes_enabled=False, deployment_performed=False,
         model_requests=0, uid_allocations=0, source_evidence_modified=False, live_http_verified=False,
-        not_claimed=NOT_CLAIMED + (['whole_film_continuity_observed', 'predecessor_frame_observed'] if film else []))
-    if film:
+        not_claimed=NOT_CLAIMED + (['whole_film_continuity_observed', 'predecessor_frame_observed'] if film or skills else []))
+    if skills:
+        report.update(skill_delivery_sha256=package['skill_delivery_sha256'],
+            skill_catalog_sha256=package['skill_catalog_sha256'],
+            skill_tool_evidence_sha256=package['skill_tool_evidence_sha256'],
+            skill_decisions=package['skill_decisions'], skill_evidence_scope=package['evidence_scope'],
+            skill_catalog_evidence_scope='operator_supplied_resources_not_business_publication_verification',
+            progressive_skill_tools_exercised=True)
+    else:
+        report.update(method_delivery_sha256=package['method_delivery_sha256'],
+            method_decision=package['method_decision'], method_evidence_scope=package['evidence_scope'])
+    if film or skills:
         context = document['film_context']
         report['film_context_binding'] = dict(film_sha256=context['film_sha256'],
             current_scene_index=context['current_scene_index'],
@@ -434,16 +525,16 @@ def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_
     return host.model_dump(mode='json'), report
 
 
-def review_candidate(candidate_dir, output, *, source_root=None, renderer_dir, renderer_image, film=False):
+def review_candidate(candidate_dir, output, *, source_root=None, renderer_dir, renderer_image, film=False, skills=False):
     """Freeze standard admission files in a new directory; never deploy/enable."""
-    selected_profile, suite, _, _, _ = _generation(film)
+    selected_profile, suite, _, _, _ = _generation(film, skills)
     directory, render_root = _directory(candidate_dir), _directory(renderer_dir)
     output = Path(output).absolute()
     require(not output.exists() and not output.is_symlink() and not output.is_relative_to(directory)
         and not output.is_relative_to(render_root), 'animation_production_admission_new_output_required')
     _directory(output.parent)
     host, report = assess_candidate(directory, source_root=source_root,
-        renderer_dir=render_root, renderer_image=renderer_image, film=film)
+        renderer_dir=render_root, renderer_image=renderer_image, film=film, skills=skills)
     combination = report['combination_sha256']
     name = report['binding_id'] + '-' + combination[:20]
     require(len(name) <= 63, 'animation_production_admission_host_name_invalid')
@@ -469,18 +560,19 @@ def review_candidate(candidate_dir, output, *, source_root=None, renderer_dir, r
     _save(output / 'binding-approvals.json', [dict(binding_id=report['binding_id'],
         binding_revision=report['binding_revision'], acceptance=approval, host_config_map=name,
         path='worker-configs/' + name)])
-    summary = dict(schema='animation-film-production-technical-admission.v1' if film else 'animation-production-technical-admission.v1', suite=suite,
+    summary = dict(schema='animation-skill-production-technical-admission.v1' if skills else
+        'animation-film-production-technical-admission.v1' if film else 'animation-production-technical-admission.v1', suite=suite,
         profile=selected_profile, combination_sha256=combination, report_sha256=checksum,
         accepted_execution_binding_sha256=policy.execution_binding.sha256, host_config_map=name,
         accepted_host=True, enabled=False, technical_host_admission_only=True, deployment_performed=False,
         model_requests=0, uid_allocations=0, source_evidence_modified=False,
-        live_http_verified=False, not_claimed=NOT_CLAIMED + (['whole_film_continuity_observed', 'predecessor_frame_observed'] if film else []))
+        live_http_verified=False, not_claimed=NOT_CLAIMED + (['whole_film_continuity_observed', 'predecessor_frame_observed'] if film or skills else []))
     _save(output / 'summary.json', summary)
     return summary
 
 
-def main(argv=None, *, film=False):
-    selected_profile, suite, _, _, _ = _generation(film)
+def main(argv=None, *, film=False, skills=False):
+    selected_profile, suite, _, _, _ = _generation(film, skills)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--candidate-dir', required=True, type=Path)
     parser.add_argument('--source', type=Path)
@@ -490,7 +582,8 @@ def main(argv=None, *, film=False):
     args = parser.parse_args(argv)
     try:
         require(os.name == 'posix' and os.geteuid() == 0, 'animation_production_admission_server_root_required')
-        options = dict(film=film, source_root=args.source, renderer_dir=args.renderer_dir, renderer_image=args.renderer_image)
+        options = dict(film=film, skills=skills, source_root=args.source,
+            renderer_dir=args.renderer_dir, renderer_image=args.renderer_image)
         if args.output is not None:
             report = review_candidate(args.candidate_dir, args.output, **options)
         else:

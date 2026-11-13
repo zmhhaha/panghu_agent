@@ -295,7 +295,11 @@ class MethodAnimationRenderer:
         self._directory(operation_id)
         _require(deadline_at is None or type(deadline_at) in (int, float)
                  and math.isfinite(deadline_at), 'animation_method_render_deadline_invalid', 422)
-        context = contract.validate_input(document)
+        protocol = contract
+        if type(document) is dict and document.get('schema') == 'video.animation-method-input.v2':
+            from agent_service.profiles import video_animation_skill_method
+            protocol = video_animation_skill_method
+        context = protocol.validate_input(document)
         bounds = context['constraints']
         _require(bounds['fps'] == 24 and 320 <= bounds['width'] <= 1280
                  and 180 <= bounds['height'] <= 720 and 1 <= bounds['duration_seconds'] <= 60

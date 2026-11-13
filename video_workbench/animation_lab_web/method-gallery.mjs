@@ -1,4 +1,5 @@
 import {createMethodComparison} from './method-comparison.mjs';
+import {usesExactSkillPublication, renderExactSkillPublication} from './skill-publication.mjs';
 
 const API = 'api/method-lab/';
 const ACTIVE = new Set(['queued', 'running', 'cancelling', 'submission_unknown', 'planning', 'creating', 'reviewing', 'rendering']);
@@ -399,7 +400,7 @@ function details(doc, title, value) {
 export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCancel, onFeedback, onPublish,
   onTransfer = () => {}, onRetry = () => {}, onSelectCommission = () => {}, feedbackDraft = null, onDraftChange = () => {},
   onPreference = () => {}, onWithdraw = () => {}, comparisonSelection = null,
-  onComparisonReady = () => {}, onComparisonChange = () => {}, disclosureState = null}) {
+  onComparisonReady = () => {}, onComparisonChange = () => {}, disclosureState = null, publicationServices = {}}) {
   const disclosure = (key, title, value) => {
     const section = details(doc, title, value); section.dataset.methodDisclosure = key;
     if (Object.hasOwn(disclosureState ?? {}, key)) section.open = disclosureState[key] === true;
@@ -595,6 +596,9 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   }
   fragment.append(feedback);
   fragment.append(transfers);
+  if (usesExactSkillPublication(detail)) {
+    fragment.append(renderExactSkillPublication(doc, detail, root, {assetUrl: methodAssetUrl, ...publicationServices}));
+  } else {
   const publish = panel(doc, '认可效果，发布创作方法'); publish.classList.add('publication');
   const selection = publicationSelection(detail), ready = canPublish(detail);
   publish.append(element(doc, 'p', 'muted', '发布会保存这些已认可的方法版本，确认范围绑定本次样片与迁移结果。发布后，正式制作可读取这些方法；采用情况保存在制作记录中。'));
@@ -610,6 +614,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   const publishButton = button(doc, '认可并发布方法', () => onPublish(checkbox.checked, publicationApprovalBinding(detail)), 'button primary');
   publishButton.disabled = true; checkbox.addEventListener('change', () => { publishButton.disabled = !ready || !checkbox.checked; });
   publish.append(acknowledgment, publishButton); fragment.append(publish);
+  }
   const methods = disclosure('methods', '关联创作方法（' + rows(detail.methods).length + '）');
   for (const method of rows(detail.methods)) {
     const article = element(doc, 'article', 'method-item');
@@ -759,6 +764,12 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
           },
           onPreference: value => controller.savePreference(value), onWithdraw: id => controller.withdrawFeedback(id),
           onPublish: (acknowledged, expected) => controller.publish(acknowledged, expected),
+          publicationServices: {request, currentDetail: () => controller.state.detail,
+            refresh: async id => {
+              await controller.select(id);
+              if (controller.state.error) throw Error(controller.state.error);
+              if (controller.state.detail?.id !== id) throw Error('当前选择已变化，请重新打开这条效果');
+            }, uuid: () => controller.uuid()},
           feedbackDraft: feedbackDrafts.get(detail.id),
           onDraftChange: value => feedbackDrafts.set(detail.id, value),
           disclosureState: disclosureStates.get(detail.id),

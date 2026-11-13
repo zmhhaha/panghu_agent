@@ -50,14 +50,15 @@ def capture(tmp_path, monkeypatch):
     return make_capture(tmp_path, monkeypatch)
 
 
-def make_capture(tmp_path, monkeypatch, *, film=False):
+def make_capture(tmp_path, monkeypatch, *, film=False, skills=False):
     # Test helpers live in the sibling business-test directory, not production.
     monkeypatch.syspath_prepend(str(SOURCE / 'tests/video_workbench'))
     from test_creative_method_contract import core_task, delivery, production_result, published_method
     from test_motion_snapshot import RUNTIME
-    selected_profile = production.FILM_PROFILE if film else production.PROFILE
+    selected_profile = 'video.animation-production.v3' if skills else production.FILM_PROFILE if film else production.PROFILE
+    attempt_id = str(uuid4())
     runtime = RUNTIME
-    if film:
+    if film or skills:
         from test_creative_engine_renderer import RUNTIME_V2
         runtime = RUNTIME_V2
     audio = io.BytesIO()
@@ -68,7 +69,7 @@ def make_capture(tmp_path, monkeypatch, *, film=False):
     core = core_task(seconds=3)
     core['scene']['audio_sha256'] = hashlib.sha256(audio_raw).hexdigest()
     core['scene']['alignment']['audio_sha256'] = core['scene']['audio_sha256']
-    if film:
+    if film or skills:
         from test_animation_film_production_profile import film_document
         film_context = film_document()['film_context']
         first = film_context['film']['scenes'][0]
@@ -79,7 +80,38 @@ def make_capture(tmp_path, monkeypatch, *, film=False):
     document = build_scene_input(core_task=core, method_delivery=delivery(core, methods=[published_method()]))
     artifact = production_result(document)
     package = collect_scene_result(document, artifact)
-    if film:
+    if skills:
+        from agent_service.animation_skills_contract import bundle_files
+        from agent_service.deploy.animation_production_catalog import (
+            measure_animation_production_bundle, prepare_animation_production_catalog)
+        from agent_service.skill_tool_evidence import SkillToolObserver
+        from video_workbench.animation_skill_production import SkillProductionAdapter
+        from video_workbench.creative_skill_contract import build_scene_input as build_skill_input
+        from video_workbench.creative_skill_contract import collect_scene_result as collect_skill_result
+        from test_animation_review_catalog import public_config
+        from test_animation_skill_production import published
+        from test_animation_skill_production_profile import raw_result, decision
+        skill_delivery = SkillProductionAdapter(lambda _: [published()], None,
+            tmp_path / 'skill-freeze.sqlite3').freeze('fixture-owner', 'fixture-operation', core, ['html-svg'])
+        document = build_skill_input(core, skill_delivery)
+        observer = SkillToolObserver(skill_delivery['catalog'], skill_delivery['packages'],
+            input_sha256=digest(document))
+        key = next(iter(skill_delivery['packages']))
+        for index, (tool, args) in enumerate((('skill_search', {'query': ''}),
+                ('skill_read', {'package_sha256': key}))):
+            observer.observe(dict(type='tool_execution_start', toolName=tool, toolCallId=str(index), args=args))
+            observer.observe(dict(type='tool_execution_end', toolName=tool, toolCallId=str(index),
+                isError=False, result=observer.tools.tool_result(tool, args)))
+        skill_evidence = observer.finish(attempt_id)
+        artifact = raw_result(document, [decision(key)])
+        artifact['source']['files_sha256'] = {name:hashlib.sha256(text.encode()).hexdigest()
+            for name,text in artifact['source']['files'].items()}
+        artifact['skill_tool_evidence_sha256'] = skill_evidence['sha256']
+        package = collect_skill_result(document, artifact, skill_evidence, skill_delivery=skill_delivery)
+        manifests, _ = measure_animation_production_bundle(skills=True)
+        _, hosts, _ = prepare_animation_production_catalog(public_config(), worker_image=IMAGE,
+            resource_manifests=manifests, source_pool_id='existing-pool', skills=True)
+    elif film:
         from test_animation_film_catalog import prepare as prepare_film
         _, _, film_host, _, _ = prepare_film()
         hosts = {selected_profile: film_host}
@@ -87,19 +119,26 @@ def make_capture(tmp_path, monkeypatch, *, film=False):
         _, hosts, _ = prepare()
     host, policy, binding = candidate_config(hosts[selected_profile])
     files = {production.INPUT_NAME:canonical_bytes(document)}
+    if skills:
+        files.update({item.name:item.content() for item in bundle_files(
+            document['skill_catalog'], skill_delivery['packages'])})
     scenario_path, sources, scenario = write_scenario(tmp_path / 'projected', selected_profile,
         dict(input_sha256=digest(document)), files)
     pins = {key:value for key,value in policy.pins().items() if key in ExecutionEnvelope.model_fields}
-    envelope = ExecutionEnvelope(**pins, job_id=str(uuid4()), attempt_id=str(uuid4()), fence=1,
+    envelope = ExecutionEnvelope(**pins, job_id=str(uuid4()), attempt_id=attempt_id, fence=1,
         deadline_at=time.time() + 600, lease_expires_at=time.time() + 300,
         task=dict(input_sha256=digest(document)), inputs=[InlineFile.from_bytes(name, raw) for name,raw in files.items()])
     directory = tmp_path / 'production-candidate'; root = directory / 'candidate-output'; root.mkdir(parents=True)
     uid, worker_uid, proxy_uid = 303200080, str(uuid4()), str(uuid4())
-    result = WorkerResult(state='completed', artifacts=[InlineFile.from_bytes(production.RESULT_NAME, canonical_bytes(artifact))])
+    artifacts = [InlineFile.from_bytes(production.RESULT_NAME, canonical_bytes(artifact))]
+    if skills:
+        artifacts.append(InlineFile.from_bytes('animation-skill-tool-evidence.json', canonical_bytes(skill_evidence)))
+    result = WorkerResult(state='completed', artifacts=artifacts)
     result = result.model_copy(update=dict(stop_receipt=sign_receipt(envelope, result, b'synthetic-only-key' * 4,
         ('pod:' + worker_uid, 'uid:' + str(uid), 'uid:' + str(uid + 1)), time.time() - 2)))
     observation = dict(harness_sha256=harness_sha256(), scenario=dict(scenario_harness_sha256=module_sha256()),
-        capability=dict(engine='pi', package_measured=True, allowed_tools=['read_inputs', 'write'],
+        capability=dict(engine='pi', package_measured=True,
+            allowed_tools=['read_inputs', 'skill_read', 'skill_search', 'write'] if skills else ['read_inputs', 'write'],
             pi_cage_repository=admission.PI_CAGE_REPOSITORY, pi_cage_revision=admission.PI_CAGE_REVISION,
             pi_version=admission.PI_VERSION, node_version='24.22.1'),
         isolation={**{key:True for key in admission.ISOLATION}, 'groups':[], 'uid':[uid + 2] * 3,
@@ -117,8 +156,8 @@ def make_capture(tmp_path, monkeypatch, *, film=False):
         observations=observation, harness_sha256=harness_sha256(), scenario=observation['scenario'],
         lease_expiry_rejected=True, writer_resources=result.stop_receipt.resource_ids,
         writers_observed_stopped_at=result.stop_receipt.observed_at, pod_uid=worker_uid,
-        artifacts=[dict(name=production.RESULT_NAME, sha256=result.artifacts[0].sha256,
-            bytes=len(canonical_bytes(artifact)))], artifact_count=1,
+        artifacts=[dict(name=item.name, sha256=item.sha256, bytes=len(item.content()))
+            for item in artifacts], artifact_count=len(artifacts),
         model_calls=[dict(body_sha256='f' * 64, response_sha256='9' * 64, state='complete', status=200)])
     manifest = render_probe(host, name=directory.name, worker_image=IMAGE, node='offline-node', uid_start=uid,
         bootstrap_secret='offline-bootstrap', upstream_secret='offline-upstream', scenario=scenario_path, source_dir=sources)
@@ -141,10 +180,13 @@ def make_capture(tmp_path, monkeypatch, *, film=False):
             image_identity_valid=True, production_acceptance_created=False, production_routes_changed=False,
             result_state='completed', lease_expiry_rejected=True, model_calls=1),
         production.INPUT_NAME:files[production.INPUT_NAME], production.RESULT_NAME:artifact,
-        ('creative-scene-v4.json' if film else 'creative-scene-v2.json'):package,
+        ('creative-scene-v5.json' if skills else 'creative-scene-v4.json' if film else 'creative-scene-v2.json'):package,
         'worker.log':canonical_bytes(dict(status='candidate_probe_finished', engine='pi', profile=selected_profile,
             result_state='completed', lease_expired_http_status=401, production_acceptance_created=False,
             pod_uid=worker_uid)) + b'\n'}.items(): save(root / name, value)
+    if skills:
+        save(root / 'skill-delivery.json', skill_delivery)
+        save(root / 'animation-skill-tool-evidence.json', skill_evidence)
     renderer = renderer_capture(tmp_path / 'renderer', package, audio_raw, runtime)
     return dict(directory=directory, root=root, renderer=renderer, package=package)
 
@@ -171,7 +213,7 @@ def renderer_capture(root, package, audio_raw, runtime):
         'pod-final.json':pod, 'runtime.json':runtime, 'networkpolicies.json':dict(items=[deepcopy(desired['items'][1])])}.items():
         save(root / name, value)
     timeline = read(root / 'input/timeline.json'); count = round(timeline['duration_seconds'] * 24)
-    engine_aware = package['schema'] in {'video.creative-scene.v3', 'video.creative-scene.v4'}
+    engine_aware = package['schema'] in {'video.creative-scene.v3', 'video.creative-scene.v4', 'video.creative-scene.v5'}
     engine = package['engine']
     native = dict(kind='webgl2' if engine == 'three' else '2d', width=320, height=180,
         connected=True, visible=True)

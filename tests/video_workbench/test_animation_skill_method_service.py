@@ -141,6 +141,55 @@ def test_failed_render_and_feedback_are_kept_as_real_experiences_without_new_pai
                for row in service.knowledge.list_experiences('developer'))
 
 
+@pytest.mark.parametrize('audio_criterion', [False, True])
+def test_validation_listening_binds_exact_demo_and_method_not_other_media(work, monkeypatch, audio_criterion):
+    service, _, reviewer, renderer = work
+    # A frame-only reviewer cannot pass an audio criterion.
+    reviewer.incomplete = audio_criterion
+    original_render = renderer.render
+
+    def render(*args, **kwargs):
+        result = original_render(*args, **kwargs)
+        # Synthetic reference has sound; synthetic transfer has no audio track.
+        if len(renderer.calls) == 1:
+            result['media']['audio_sha256'] = 'e' * 64
+            renderer.results[args[0]] = deepcopy(result)
+        return result
+
+    monkeypatch.setattr(renderer, 'render', render)
+    criteria = [dict(id='causality', description='Intervention precedes its consequence.',
+                     requires_audio=audio_criterion)]
+    reference = finish(service, start(service, criteria=criteria)['id'])
+    reference_validation = next(row for row in reference['validations'] if row['role'] == 'reference')
+    service.accept_validation('developer', reference_validation['id'], dict(request_id=str(uuid4()),
+        method_content_sha256=reference_validation['method_content_sha256'],
+        comment='UNIT TEST explicit acceptance of synthetic reference.', human_verification=dict(
+            criteria_ids=['causality'], motion_watched=True, audio_listened=True,
+            validation_target_sha256=reference_validation['acceptance_target_sha256'],
+            media_sha256=reference_validation['media_sha256'])))
+    transfer = finish(service, service.transfer('developer', reference['id'], dict(
+        request_id=str(uuid4()), goal='Explain resource allocation among competing branches',
+        structural_changes={'relations': {'before': 'a causal chain', 'after': 'competing branches'}},
+        content_changes=dict(before=reference['goal'], after='Explain resource allocation among competing branches',
+                             reason='Different entities and explanatory question.'),
+        budget=dict(max_rounds=1, max_seconds=300)))['id'])
+    detail = service.get('developer', reference['id'])
+    reference_validation = next(row for row in detail['validations'] if row['role'] == 'reference')
+    transfer_validation = next(row for row in detail['validations'] if row['role'] == 'transfer')
+    assert reference_validation['audio_sha256'] == 'e' * 64
+    assert reference_validation['requires_audio_verification'] is True
+    assert transfer_validation['audio_sha256'] is None
+    assert transfer_validation['requires_audio_verification'] is audio_criterion
+    assert transfer_validation['media_sha256'] == transfer['candidates'][0]['media']['sha256']
+    assert reference_validation['media_sha256'] != transfer_validation['media_sha256']
+    assert detail['transfers'][0]['audio_sha256'] is None
+    assert detail['transfers'][0]['requires_audio_verification'] is audio_criterion
+    assert 'reference_removal' not in transfer_validation
+    before = len(renderer.calls)
+    service.get('developer', reference['id'])
+    assert len(renderer.calls) == before
+
+
 def test_reader_and_combined_ledger_budget_are_checked_before_paid_reservation(tmp_path):
     store = AnimationMethodCommissionStore(tmp_path / 'commissions.sqlite3')
     run = store.create('fixture-owner', dict(goal='Synthetic budget boundary',

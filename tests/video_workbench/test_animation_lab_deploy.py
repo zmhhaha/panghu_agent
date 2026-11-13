@@ -287,9 +287,10 @@ def test_context_is_deterministic_and_exact_even_beside_runtime_secrets(source_a
     assert first['network_calls'] == first['builds'] == first['deployments'] == 0
 
 
-def test_review_comparison_module_is_delivered_as_exact_reviewed_source(source_and_assets, tmp_path):
+@pytest.mark.parametrize('module', ['method-comparison.mjs', 'skill-publication.mjs'])
+def test_review_comparison_module_is_delivered_as_exact_reviewed_source(source_and_assets, tmp_path, module):
     source, assets = source_and_assets
-    name = 'video_workbench/animation_lab_web/method-comparison.mjs'
+    name = 'video_workbench/animation_lab_web/' + module
     assert name in build.SOURCE_FILES
     output = tmp_path/'method-review-controls.tar'
     receipt = build.context_archive(source, assets, output)

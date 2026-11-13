@@ -40,6 +40,7 @@
 !video_workbench/animation_lab_web/method-gallery.css
 !video_workbench/animation_lab_web/method-gallery.mjs
 !video_workbench/animation_lab_web/method-comparison.mjs
+!video_workbench/animation_lab_web/skill-publication.mjs
 !video_workbench/animation_experiment_definitions.py
 !video_workbench/animation_experiment_semantics.py
 !video_workbench/animation_capabilities.py
@@ -91,6 +92,7 @@
 !video_workbench/motion_renderer/lab_observe.mjs
 !video_workbench/motion_renderer/observe.mjs
 !video_workbench/motion_renderer/runtime.mjs
+!video_workbench/motion_renderer/engine_runtime.mjs
 !video_workbench/motion_review.py
 !video_workbench/motion_semantic.py
 !video_workbench/process_continuity.py

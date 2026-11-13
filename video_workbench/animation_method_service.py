@@ -47,10 +47,18 @@ def _method_view(record):
     return view
 
 
-def _validation_view(record):
+def _validation_view(record, *, demonstration=None, method=None):
     if record['schema'] != 'video.animation-method-validation.v2':
         return deepcopy(record)
     view = {key: deepcopy(value) for key, value in record.items() if key != 'reference_removal'}
+    # Listening is an exact validation/media decision. An audible reference
+    # must not impose listening on a separate silent transfer, while an audio
+    # criterion still requires a real audio track before it can be accepted.
+    if demonstration is not None and method is not None:
+        media = demonstration['media']
+        view.update(media_sha256=media['sha256'], audio_sha256=media.get('audio_sha256'),
+            requires_audio_verification=media.get('audio_sha256') is not None or any(
+                row.get('requires_audio') for row in method['criteria']))
     if record.get('reference_removal'):
         receipt = record['reference_removal']
         view['reference_removal_summary'] = dict(schema=receipt['schema'],
@@ -714,6 +722,9 @@ class AnimationMethodService:
         if not selected_method_ids:
             blockers.append('尚未形成可验收的创作方法')
         demo_ids = {row['id']: row for row in all_demos}
+        validation_views = {row['id']: _validation_view(row,
+            demonstration=demo_ids[row['demonstration_version_id']],
+            method=methods[row['method_version_id']]) for row in validations}
         transfers = []
         for validation in validations:
             if validation['role'] != 'transfer':
@@ -723,7 +734,7 @@ class AnimationMethodService:
             origin_run = next((item for item in all_runs if item['id'] == origin['commission_id']), None)
             origin_candidate = next((item for item in _candidates(origin_run)
                 if item['id'] == origin['candidate_id']), None) if origin_run else None
-            transfers.append(dict(_validation_view(validation), title=demo['title'], goal=demo['goal'],
+            transfers.append(dict(validation_views[validation['id']], title=demo['title'], goal=demo['goal'],
                 demonstration_id=demo['id'],
                 **_sample_engine(origin_candidate, _sample_index([demo])),
                 media_url=_public_url(origin['commission_id'], origin['candidate_id'], 'media'),
@@ -768,7 +779,7 @@ class AnimationMethodService:
             method_publication_readiness=readiness,
             requires_audio_verification=any(row['media'].get('audio_sha256') for row in relevant_demos),
             transfers=transfers,
-            validations=[_validation_view(row) for row in validations], feedback=self._feedback(owner, commission_id),
+            validations=[validation_views[row['id']] for row in validations], feedback=self._feedback(owner, commission_id),
             stop_reason=run['stop_reason'], remaining_issues=latest_review.get('remaining_issues', []),
             summary=summary, error=error, publication_ready=not blockers, publishable=not blockers,
             publication_blockers=sorted(set(blockers)), reviews=run['reviews'],
