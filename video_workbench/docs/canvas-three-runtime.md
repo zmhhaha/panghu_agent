@@ -1,5 +1,7 @@
 # Canvas / Three.js 自由创作接入
 
+> 2026-11-13 范围澄清：本文的 5.1／5.2 已验证自定义 seek、Chromium 捕获与 FFmpeg 的实验／正式两条原生路径；不等于 HyperFrames 核心导出已验收。新统一项目与逐引擎迁移验证见[当前设计](agent-creation-effect-library-plan.md)，保留本文全部原始资源、媒体和任务身份。
+
 本轮对应 OpenSpec `evolve-video-agent-creation-and-effect-library` 的 5.1、5.2。动画仍由通用 Agent / Pi 写完整源码；工程只提供可用资源、隔离渲染、时间接口和验证，不新增固定动画模板。渲染暂留 video-service，不启动公共服务拆分或多图层改造。
 
 ## 两条运行链

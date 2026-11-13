@@ -1,5 +1,7 @@
 # 整片上下文与相邻候选交接
 
+> 2026-11-13 范围澄清：3.4 完成的是原生自定义 seek／Chromium／FFmpeg 路径的全片上下文和前候选交接。下文三引擎短夹具是协议／渲染技术检查，不是 Agent 新作品或 HyperFrames 验收。真实三段边界观察保留原义，统一整片 HyperFrames 项目、5.3 更广连续性及人工视听认可另按[当前设计](agent-creation-effect-library-plan.md)记录。
+
 本轮推进 OpenSpec `evolve-video-agent-creation-and-effect-library` 的 3.4。
 代码完成、真实生成、连续画面观察和用户认可分别记录；本文件不把协议声明当作画面证明。
 

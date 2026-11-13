@@ -1,16 +1,14 @@
 # 动态视频工作台
 
-这是以 HyperFrames 动态图解为默认制作方向的视频工作台。文稿拆镜、讲解方案、图解生成和修订通过已有通用 Agent 服务执行；工作台负责项目、候选审阅、明确采用、配音、时序核对、有限批量制作与导出。音频支持中文配音、录音上传和试听采用，项目统一选择一个音色，详见 [AUDIO_PRODUCTION.md](AUDIO_PRODUCTION.md)。
+本服务通过已有通用 Agent / Pi 创作动画，工作台管理项目、方案、配音、候选、制作历史和交付；项目统一选择音色，默认不叠加字幕。音频接口见 [AUDIO_PRODUCTION.md](AUDIO_PRODUCTION.md)。
 
-动态图解使用受限 HTML／SVG 与确定性 GSAP 时间轴，由独立 HyperFrames 渲染器和 FFmpeg 制作 MP4；配音调用独立内部语音服务。项目支持[跨镜连续图解](docs/cross-scene-continuity-20261104.md)，延续对象、渐变更新说明或复制并保留原件。旧静态素材、静态 MP4、ZIP 导出和历史快照继续兼容；背景音乐与混音仍是后续事项。
+当前自由创作支持 HTML/SVG、Canvas2D、Three.js，实际使用自定义 seek → Playwright Chromium 截帧 → FFmpeg；旧受限计划路径使用 HyperFrames。两者不能因环境装有同一依赖而混称。[现有引擎准入](docs/canvas-three-runtime.md)和[整片上下文验证](docs/film-continuity-validation.md)记录具体完成范围。
 
-2026-11-04按用户授权将已完成的配音、动态制作、讲解统筹、批量工作台、用户反馈修复和跨镜连续图解合入主线。线上已发布版本不因源码合并而重新部署。以下“仓库根目录”指当前代码工作树根目录；合并范围及仍待处理事项见 [主线合并记录](docs/mainline-merge-20261104.md)。
+**当前目标设计**见[效果库、视频工作台与 HyperFrames 统一架构](docs/agent-creation-effect-library-plan.md)：实验室内化和验证版本化 SKILL.md；正式 Agent 主动检索、读取并借鉴已发布能力；两端统一为 HyperFrames 项目、时间轴和渲染，整片可分场景／任务执行。统一底座及 Skill 迁移仍是待办，不把方案当已实现。
 
-后续要做的事情见 [NEXT_STEPS.md](NEXT_STEPS.md)。
+开发者实验室以完整效果库、自然语言意见、预算内持续优化、实质迁移验证和认可发布为主；旧固定能力／领域样例及参数回归文档仅保留相应历史或内部工程检查含义，不再定义当前主界面。普通用户无需操作实验室。
 
-可选的[项目级讲解方案](EXPLANATION.md)统一整理旁白、读音、画面重点和展开步骤，生成候选后审阅采用；生产接线与有界真实验收已完成。新环境仍需显式配置并开启功能，不强制改成旁白优先流程。动态制作实验和实际发布记录见 [HYPERFRAMES.md](HYPERFRAMES.md) 与 [CURRENT_STATUS.md](CURRENT_STATUS.md)。
-
-独立的[开发者动画 Lab](docs/animation-requirement-suite.md)当前代码目录包含11个能力模块、39条需求、13个领域，支持分别比较框图、过程、跨镜、Canvas、Three.js、图表、算法、界面操作、数学推导、三维剖切装配与波形粒子场。每条需求附完整文稿、数据与前提，A/B保持相同语义和时长。本轮扩展沿用 `cross-domain-requirements-v2` 并保留已有v2标注；实际采样及发布状态按对应回执记录，普通用户流程未接入这些实验能力。
+方案一次整体确认后的配音先行编排已交付；整片独立审阅、默认一次修订及用户追加最多两轮等剩余工作以主设计与 OpenSpec 为准。旧 [EXPLANATION.md](EXPLANATION.md)、[HYPERFRAMES.md](HYPERFRAMES.md)、[CURRENT_STATUS.md](CURRENT_STATUS.md)、[NEXT_STEPS.md](NEXT_STEPS.md) 和[主线合并记录](docs/mainline-merge-20261104.md)按各自日期、路径和版本阅读，不覆盖主设计。下面保留已有启动／部署操作参考；旧协议配置不代表新创作路由已获准入。
 
 ## 本地启动
 

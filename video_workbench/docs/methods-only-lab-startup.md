@@ -1,5 +1,7 @@
 # 动画效果库启动模式
 
+> 2026-11-13：本文保留 methods-only 入口和启动边界。正式方法读取接线后续已交付，但开发者认可、真实发布与正式新内容采用闭环仍需证据；Skill 主动发现和统一 HyperFrames 工程是[当前设计](agent-creation-effect-library-plan.md)的待实施目标。
+
 生产使用 `--mode methods`。现有启动命令只要配置了 `--creation-url` 和
 `--creation-token-file`，默认的 `--mode auto` 也会进入此模式。
 
@@ -22,4 +24,4 @@ UI 进程不创建旧的 `animation-lab.db`、`animation-experiments.db`，不�
 直接构造 `AnimationLab(...)` 默认保留旧模式；调用方选择
 `methods_only=True, method_client=...` 才启用新模式。
 
-方法发布目前记录已认可的知识版本；正式视频制作的版本化接入仍是独立后续工作。
+该阶段发布对象是版本化方法知识；后续已有正式读取接线，不能据此推断已完成真实认可／发布／采用闭环。当前进展与新增目标以主设计及服务端任务为准。
