@@ -24,6 +24,19 @@ def docker_entrypoint(text):
     return json.loads(entries[0])
 
 
+def verified_retired_skill_method_v4():
+    """Keep the last current bundle independently pinned after moving to v5."""
+    from agent_service.profiles import video_animation_skill_method as profile
+    root = profile.BUNDLE_ROOT.parent / 'animation-method-v4'
+    raw = (root / 'manifest.json').read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == '24c7c973b8a1d9d63e31047f633da038313cc0b500bbdaa2014fea7cd4b9f02c'
+    files = {row['path']: (root / row['path']).read_bytes() for row in json.loads(raw)['local_files']}
+    assert set(files) == profile.BUNDLE_FILES
+    assert all(hashlib.sha256(files[row['path']]).hexdigest() == row['sha256']
+               for row in json.loads(raw)['local_files'])
+    return files
+
+
 def animation_profile_bundles():
     """Independent Profile inventories, never derived from builder allowlists."""
     from agent_service.profiles import (video_animation_review as review, video_animation_create as creation,
@@ -41,6 +54,8 @@ def animation_profile_bundles():
         (production.FILM_BUNDLE_ROOT, production.BUNDLE_FILES, lambda: production.verified_bundle(film=True)),
         (skill_production.BUNDLE_ROOT, skill_production.BUNDLE_FILES, skill_production.verified_bundle),
         (skill_method.BUNDLE_ROOT, skill_method.BUNDLE_FILES, skill_method.verified_bundle),
+        (skill_method.BUNDLE_ROOT.parent / 'animation-method-v4', skill_method.BUNDLE_FILES,
+         verified_retired_skill_method_v4),
     )
 
 
@@ -479,6 +494,8 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'method-procedure/SKILL.md')} | {
             'agent_service/resources/animation-method-v4/' + name
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'method-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-method-v5/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'method-procedure/SKILL.md')} | {
             'agent_service/resources/animation-production-v2/' + name
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md')} | {
             'agent_service/resources/animation-production-v3/' + name
@@ -681,7 +698,7 @@ print(json.dumps({'control_modules':len(modules),'profile_implementations':len(p
 @pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
                                      'animation-review-v4',
                                      'animation-create-v2', 'animation-method-v1', 'animation-method-v2',
-                                     'animation-method-v3', 'animation-method-v4',
+                                     'animation-method-v3', 'animation-method-v4', 'animation-method-v5',
                                      'animation-production-v1', 'animation-production-v2',
                                      'animation-production-v3', 'animation-production-v4'])
 @pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'LICENSE', 'procedure'])
@@ -701,7 +718,7 @@ def test_changed_animation_runtime_resource_fails_before_docker(service, revisio
 @pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
                                      'animation-review-v4',
                                      'animation-create-v2', 'animation-method-v1', 'animation-method-v2',
-                                     'animation-method-v3', 'animation-method-v4',
+                                     'animation-method-v3', 'animation-method-v4', 'animation-method-v5',
                                      'animation-production-v1', 'animation-production-v2',
                                      'animation-production-v3', 'animation-production-v4'])
 def test_missing_animation_runtime_resource_cannot_produce_deployable_digest(service, revision):

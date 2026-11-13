@@ -26,10 +26,10 @@ INPUT_NAME, RESULT_NAME = legacy.INPUT_NAME, legacy.RESULT_NAME
 INPUT_MAX_BYTES, OUTPUT_MAX_BYTES = 2 * 1024 * 1024 - 65536, 2 * 1024 * 1024
 LEGACY_BUNDLE_REVISION = 'animation-method-v3'
 LEGACY_BUNDLE_MANIFEST_SHA256 = 'e8be4336b8ba12a2e3af1fd8c6c350e349fafc25014e3d4e3cf5311eeb38dcc8'
-BUNDLE_REVISION = 'animation-method-v4'
+BUNDLE_REVISION = 'animation-method-v5'
 BUNDLE_ROOT = Path(__file__).resolve().parent.parent / 'resources' / BUNDLE_REVISION
 BUNDLE_FILES = frozenset({'CONTRACT.md', 'method-procedure/SKILL.md', 'LICENSE'})
-BUNDLE_MANIFEST_SHA256 = '24c7c973b8a1d9d63e31047f633da038313cc0b500bbdaa2014fea7cd4b9f02c'
+BUNDLE_MANIFEST_SHA256 = '3e17c8b9766568021b9fbca2ace6cc31f588c966266e169bf229cdbafb69cce0'
 METHOD_SCHEMA = 'video.animation-method.v2'
 _METHOD_FIELDS = frozenset({'title', 'problem', 'guidance', 'applicability', 'limitations',
     'criteria', 'runtime_requirements'})

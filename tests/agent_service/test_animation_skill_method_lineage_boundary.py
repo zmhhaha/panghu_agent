@@ -76,16 +76,19 @@ def test_actual_agent_prompt_explains_planning_draft_and_persisted_parent(tmp_pa
     assert 'exact input-backed lineage' in prompt
 
 
-def test_published_v3_bytes_remain_frozen_and_new_guidance_has_new_identity():
-    previous = contract.BUNDLE_ROOT.parent / 'animation-method-v3'
+@pytest.mark.parametrize('revision,frozen_sha', [
+    ('animation-method-v3', 'e8be4336b8ba12a2e3af1fd8c6c350e349fafc25014e3d4e3cf5311eeb38dcc8'),
+    ('animation-method-v4', '24c7c973b8a1d9d63e31047f633da038313cc0b500bbdaa2014fea7cd4b9f02c'),
+])
+def test_published_bundles_remain_frozen_and_new_guidance_has_new_identity(revision, frozen_sha):
+    previous = contract.BUNDLE_ROOT.parent / revision
     raw = (previous / 'manifest.json').read_bytes()
-    frozen_sha = 'e8be4336b8ba12a2e3af1fd8c6c350e349fafc25014e3d4e3cf5311eeb38dcc8'
     assert hashlib.sha256(raw).hexdigest() == frozen_sha
     manifest = json.loads(raw)
-    assert manifest['bundle_revision'] == 'animation-method-v3'
+    assert manifest['bundle_revision'] == revision
     for row in manifest['local_files']:
         assert hashlib.sha256((previous / row['path']).read_bytes()).hexdigest() == row['sha256']
-    assert contract.BUNDLE_REVISION == 'animation-method-v4'
+    assert contract.BUNDLE_REVISION == 'animation-method-v5'
     assert contract.BUNDLE_MANIFEST_SHA256 != frozen_sha
     assert json.loads((contract.BUNDLE_ROOT / 'manifest.json').read_bytes())['bundle_revision'] == contract.BUNDLE_REVISION
     assert set(contract.verified_bundle()) == contract.BUNDLE_FILES
