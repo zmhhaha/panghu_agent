@@ -121,10 +121,11 @@ def service(tmp_path):
         target = root / 'resources/animation-experiment-v1' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((ANIMATION_ROOT / name).read_bytes())
-    from agent_service.profiles import video_animation_method as method, video_animation_production as production
+    from agent_service.profiles import (video_animation_method as method, video_animation_production as production,
+        video_animation_skill_method as skill_method)
     bundles = [(source, names) for source, names, _ in animation_profile_bundles()]
     bundles.extend((profile.BUNDLE_ROOT.parent / profile.LEGACY_BUNDLE_REVISION, profile.BUNDLE_FILES)
-                   for profile in (method, production))
+                   for profile in (method, production, skill_method))
     for source, names in bundles:
         for name in ('manifest.json', *names):
             target = root / 'resources' / source.name / name
@@ -476,6 +477,8 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'method-procedure/SKILL.md')} | {
             'agent_service/resources/animation-method-v3/' + name
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'method-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-method-v4/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'method-procedure/SKILL.md')} | {
             'agent_service/resources/animation-production-v2/' + name
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md')} | {
             'agent_service/resources/animation-production-v3/' + name
@@ -569,7 +572,8 @@ def test_clean_context_preserves_exact_legacy_and_current_motion_bundles(service
 def test_clean_source_context_carries_all_real_profile_resource_bytes(tmp_path, target):
     from agent_service.build_image import context_archive
     from agent_service.profiles import (video, video_motion, video_process, video_explanation,
-        video_animation_experiment, video_animation_method, video_animation_production)
+        video_animation_experiment, video_animation_method, video_animation_production,
+        video_animation_skill_method)
     service = Path(__file__).parents[2] / 'agent_service'
     destination = tmp_path / 'complete-source-context.tar'
     context_archive(service, target, destination)
@@ -578,7 +582,7 @@ def test_clean_source_context_carries_all_real_profile_resource_bytes(tmp_path, 
                    (video, video_motion, video_process, video_explanation, video_animation_experiment))
     bundles.append((video_motion.BUNDLE_ROOT.parent / 'video-motion-v1', video_motion.BUNDLE_FILES))
     bundles.extend((profile.BUNDLE_ROOT.parent / profile.LEGACY_BUNDLE_REVISION, profile.BUNDLE_FILES)
-                   for profile in (video_animation_method, video_animation_production))
+                   for profile in (video_animation_method, video_animation_production, video_animation_skill_method))
     expected = {'resources/workspace-text-v1/' + name:
                 (service / 'resources/workspace-text-v1' / name).read_bytes()
                 for name in ('manifest.json', 'CONTRACT.md')}
@@ -606,12 +610,13 @@ def test_clean_source_context_carries_all_real_profile_resource_bytes(tmp_path, 
 
 def test_clean_builder_animation_pins_match_independently_verified_profile_bundles():
     from agent_service.build_image import ANIMATION_RUNTIME_BUNDLES
-    from agent_service.profiles import video_animation_method as method, video_animation_production as production
+    from agent_service.profiles import (video_animation_method as method, video_animation_production as production,
+        video_animation_skill_method as skill_method)
     measured = {}
     for root, files, verify in animation_profile_bundles():
         assert set(verify()) == files
         measured[root.name] = (hashlib.sha256((root / 'manifest.json').read_bytes()).hexdigest(), files)
-    for profile in (method, production):
+    for profile in (method, production, skill_method):
         root = profile.BUNDLE_ROOT.parent / profile.LEGACY_BUNDLE_REVISION
         raw = (root / 'manifest.json').read_bytes()
         assert hashlib.sha256(raw).hexdigest() == profile.LEGACY_BUNDLE_MANIFEST_SHA256
@@ -676,7 +681,7 @@ print(json.dumps({'control_modules':len(modules),'profile_implementations':len(p
 @pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
                                      'animation-review-v4',
                                      'animation-create-v2', 'animation-method-v1', 'animation-method-v2',
-                                     'animation-method-v3',
+                                     'animation-method-v3', 'animation-method-v4',
                                      'animation-production-v1', 'animation-production-v2',
                                      'animation-production-v3', 'animation-production-v4'])
 @pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'LICENSE', 'procedure'])
@@ -696,7 +701,7 @@ def test_changed_animation_runtime_resource_fails_before_docker(service, revisio
 @pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
                                      'animation-review-v4',
                                      'animation-create-v2', 'animation-method-v1', 'animation-method-v2',
-                                     'animation-method-v3',
+                                     'animation-method-v3', 'animation-method-v4',
                                      'animation-production-v1', 'animation-production-v2',
                                      'animation-production-v3', 'animation-production-v4'])
 def test_missing_animation_runtime_resource_cannot_produce_deployable_digest(service, revision):

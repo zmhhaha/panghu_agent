@@ -197,3 +197,73 @@ def prepare_animation_method_catalog(current, *, worker_image, resource_manifest
         required_caller_token_ref=caller['token_ref'], route_enabled=False, pool_enabled=False,
         acceptance_created=False, vision_delivery_verified=False, uid_reserved=False,
         model_requests=0, secrets_created=False)
+
+
+def prepare_animation_method_catalog_upgrade(current, *, worker_image, resource_manifests,
+        source_pool_id, author_model_policy=None, review_model_policy=None,
+        caller=None, runtime_revision=None, register_caller=False,
+        model_proxy_url='http://agent-model-proxy.agent-service.svc.cluster.local:8080/v1',
+        skills=True):
+    """Prepare replacement Skill routes without rewriting historical resources.
+
+    Only the two current v2 routes may be replaced, in their original slots.
+    Their old bindings, acceptances, pools, host references and UID reservations
+    stay exact. New hosts and pools remain disabled and unreserved; admission,
+    permanent fresh UID allocation and publication belong to the operator.
+    """
+    require(skills is True and register_caller is False,
+            'animation_method_upgrade_skills_without_caller_registration_required')
+    before = deepcopy(current)
+    registry(current)
+    selected = [(index, row) for index, row in enumerate(current['routes'])
+                if row['profile'] in SKILL_PROFILES]
+    require(len(selected) == 2
+        and {row['profile'] for _, row in selected} == set(SKILL_PROFILES)
+        and all(row['profile_revision'] == '1' for _, row in selected),
+        'animation_method_upgrade_existing_routes_required')
+    selected_caller = deepcopy(caller) if caller is not None else dict(tenant='internal',
+        caller='video-animation-skill-methods', profiles=list(SKILL_PROFILES),
+        token_ref='video-animation-skill-methods')
+    require(sum(row == selected_caller for row in current['callers']) == 1,
+            'animation_method_upgrade_existing_caller_required')
+
+    # The additive preparer intentionally rejects replacement identities. Use
+    # a private derived input with only these routing pointers removed; never
+    # remove their immutable resources or publish the intermediate catalog.
+    intermediate = deepcopy(current)
+    intermediate['routes'] = [deepcopy(row) for row in current['routes']
+                              if row['profile'] not in SKILL_PROFILES]
+    merged, hosts, preparation = prepare_animation_method_catalog(intermediate,
+        worker_image=worker_image, resource_manifests=resource_manifests,
+        source_pool_id=source_pool_id, author_model_policy=author_model_policy,
+        review_model_policy=review_model_policy, caller=selected_caller,
+        runtime_revision=runtime_revision, register_caller=False,
+        model_proxy_url=model_proxy_url, skills=True)
+    replacements = {row['profile']: deepcopy(row) for row in merged['routes']
+                    if row['profile'] in SKILL_PROFILES}
+    require(set(replacements) == set(SKILL_PROFILES)
+        and all((row['binding_id'], row['binding_revision']) !=
+                (replacements[row['profile']]['binding_id'], replacements[row['profile']]['binding_revision'])
+                for _, row in selected), 'animation_method_upgrade_new_bindings_required')
+    merged['routes'] = [deepcopy(replacements.get(row['profile'], row))
+                        for row in before['routes']]
+    additive = {'task_contracts', 'capability_bundles', 'tool_environments',
+                'execution_bindings', 'kubernetes_workers'}
+    for key, previous in before.items():
+        if key == 'routes':
+            continue
+        require(merged[key][:len(previous)] == previous if key in additive else merged[key] == previous,
+                'animation_method_upgrade_historical_records_changed')
+    require(len(merged['kubernetes_workers']) == len(before['kubernetes_workers']) + 2,
+            'animation_method_upgrade_two_new_pools_required')
+    registry(merged)
+    require(current == before, 'current_catalog_mutated')
+    return merged, hosts, dict(preparation,
+        schema='animation-method-catalog-upgrade-preparation.v1',
+        before_sha256=digest(before), after_sha256=digest(merged),
+        derived_preparation_before_sha256=preparation['before_sha256'],
+        replaced_routes=[dict(index=index, before=deepcopy(row),
+            after=deepcopy(replacements[row['profile']])) for index, row in selected],
+        existing_routes_preserved=len(before['routes']) - 2,
+        historical_resources_preserved=True, old_pools_and_uids_preserved=True,
+        caller_registered=False, existing_callers_unchanged=True)
