@@ -25,6 +25,28 @@ do not fetch a CDN. Preserve deterministic seeking, ready state and requested
 duration. Never run, render or inspect source here; the trusted renderer does
 that later. A successfully authored file is not a successful animation.
 
+The source entry is exactly scene.html; optional source files are scene.js and
+scene.css. Never emit index.html or put SKILL.md in source.files. The reusable
+Skill package and this scene's source are separate objects. Match the input's
+constraints.width, constraints.height, constraints.fps and
+constraints.duration_seconds. Preserve nonempty criteria exactly and keep
+source.strategy.description and source.strategy.tradeoffs as JSON strings.
+
+The host owns playback. Expose window.__animationExperiment.seek(seconds) and,
+when initialization is asynchronous, a ready Promise on that same object.
+Reconstruct the whole frame from absolute seconds, including zero, reverse,
+repeated and fresh-load seeks. Do not leave state from an earlier frame. Clear
+canvas each time; for Three.js set every animated value and render in seek.
+Never use timers, requestAnimationFrame, wall-clock state, autonomous CSS/GSAP
+playback, network access or active audio/video elements. Purposeful sounds
+belong only in sound_events; a request for no sound requires an empty array.
+
+Before calling write, check the result against CONTRACT.md: exact top-level
+fields and types, the scene.html entry, only admitted source filenames/assets,
+the host seek interface, a complete Skill draft, frozen criteria and the
+mode-specific null/empty fields. This is an in-memory contract check, not
+permission to execute the scene or claim that a renderer has accepted it.
+
 Use frozen true experiences to improve Wiki principles, applicability and
 counterexamples through knowledge_proposals. Do not assert that this task's
 new source has been rendered, heard, accepted, transferred or published.

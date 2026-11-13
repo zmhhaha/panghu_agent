@@ -62,6 +62,35 @@ def test_complete_skill_and_real_frozen_knowledge_are_required(tmp_path):
         contract.validate_input(value)
 
 
+def test_create_prompt_discloses_exact_source_boundary_and_host_timeline(tmp_path):
+    from agent_service.profiles.video_animation_experiment import FILE_NAMES
+    value = context(tmp_path)
+    prompt = contract.VideoAnimationSkillMethodProfile().build_prompt({'input_sha256': digest(value)})
+    # The real failed candidate used index.html because the new bundle omitted
+    # the renderer's filenames and interface. Verify what the Agent receives,
+    # including every allowed filename; do not relax the source validator.
+    assert all(name in prompt for name in FILE_NAMES)
+    assert 'The entry file `scene.html` is mandatory.' in prompt
+    assert '`index.html`' in prompt and 'not accepted' in prompt
+    assert 'window.__animationExperiment.seek(seconds)' in prompt
+    assert 'window.__animationExperiment.ready' in prompt
+    assert all(name in prompt for name in ('constraints.width', 'constraints.height',
+                                          'constraints.fps', 'constraints.duration_seconds'))
+    assert 'backward' in prompt and 'same time repeatedly' in prompt and 'fresh page load' in prompt
+    assert 'source.strategy.description' in prompt and 'JSON strings' in prompt
+
+
+@pytest.mark.parametrize('extra_files', [{}, {'scene.html': '<html><body>Fixture</body></html>'}])
+def test_index_entry_regression_remains_rejected_without_renaming_original_output(tmp_path, extra_files):
+    value = context(tmp_path)
+    result = output(value)
+    result['source']['files'] = dict(extra_files, **{'index.html': '<html><body>Fixture</body></html>'})
+    before = canonical_bytes(result)
+    with pytest.raises(ServiceError, match='animation_experiment_files_invalid'):
+        contract.validate_result(result, digest(value), value)
+    assert canonical_bytes(result) == before
+
+
 def test_collector_computes_standard_package_hashes_from_agent_authored_files(tmp_path):
     value = context(tmp_path)
     result = output(value)

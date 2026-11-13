@@ -6,7 +6,7 @@
   "local_files": [
     {
       "path": "CONTRACT.md",
-      "sha256": "0ededb1624d9af07534c6004dd1f6b769f2025ae496aa7bbcfb89a2bed144c59"
+      "sha256": "52dc58d23affffb8b3fd5bb04dfddb950f5df6cb980621fbfaa617ba6090dd20"
     },
     {
       "path": "LICENSE",
@@ -14,7 +14,7 @@
     },
     {
       "path": "method-procedure/SKILL.md",
-      "sha256": "934ca7dd69f31a8814563c0c36c8e37bf6e15101e030f143668a9593f8232f1f"
+      "sha256": "a50f78e20095d6fe4fd2363f5fa813cabce48cc057c229ebf43d87bfdae95d73"
     }
   ]
 }

@@ -27,7 +27,7 @@ INPUT_MAX_BYTES, OUTPUT_MAX_BYTES = 2 * 1024 * 1024 - 65536, 2 * 1024 * 1024
 BUNDLE_REVISION = 'animation-method-v3'
 BUNDLE_ROOT = Path(__file__).resolve().parent.parent / 'resources' / BUNDLE_REVISION
 BUNDLE_FILES = frozenset({'CONTRACT.md', 'method-procedure/SKILL.md', 'LICENSE'})
-BUNDLE_MANIFEST_SHA256 = '9aff3c15cc1376ccd95f8530fa2913e6dd6fc496cee790197986630cf7198bb1'
+BUNDLE_MANIFEST_SHA256 = 'e8be4336b8ba12a2e3af1fd8c6c350e349fafc25014e3d4e3cf5311eeb38dcc8'
 METHOD_SCHEMA = 'video.animation-method.v2'
 _METHOD_FIELDS = frozenset({'title', 'problem', 'guidance', 'applicability', 'limitations',
     'criteria', 'runtime_requirements'})
