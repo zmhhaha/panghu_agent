@@ -515,3 +515,49 @@ def test_engine_runtime_staged_bytes_remain_bound_after_restart(tmp_path, monkey
     with pytest.raises(ServiceError, match='runtime_changed'):
         restarted.lookup('native-staged')
     assert execution.calls == 1
+
+
+def test_hyperframes_new_request_binds_project_source_and_runtime_without_relabelling_native(tmp_path):
+    old = renderer.MethodAnimationRenderer(tmp_path / 'old', IMAGE)
+    new = renderer.MethodAnimationRenderer(tmp_path / 'new', IMAGE, hyperframes=True)
+    legacy = renderer.MethodAnimationRenderer(tmp_path / 'legacy', IMAGE, hyperframes=True, legacy_bridge=True)
+    frozen = new._snapshot('hf-native', SOURCE, document(), [])
+    request = frozen['request']
+    assert request['schema'] == 'video.animation-method-render-request.v3'
+    assert request['legacy_bridge'] is False
+    assert request['project']['entry'] == 'scene.html'
+    assert request['project']['scenes'][0]['source_sha256'] == hashlib.sha256(
+        SOURCE['files']['scene.html'].encode()).hexdigest()
+    assert request['project_sha256'] == digest(request['project'])
+    assert request['project_runtime_sha256'] == hashlib.sha256(renderer.PROJECT_RUNTIME.read_bytes()).hexdigest()
+    assert request['hyperframes_core_sha256'] == renderer.HYPERFRAMES_CORE_SHA256
+    assert old._snapshot('old-native', SOURCE, document(), [])['request']['schema'].endswith('.v1')
+    assert legacy._snapshot('hf-legacy', SOURCE, document(), [])['request']['legacy_bridge'] is True
+    assert 'method-hyperframes-v3@' in new.capabilities()['runtime_identity']['admission_id']
+
+
+def test_hyperframes_cannot_inherit_old_engine_admission_or_unbound_bridge(tmp_path):
+    old = renderer.MethodAnimationRenderer(tmp_path / 'old', IMAGE)
+    capabilities = old.capabilities()
+    admission = dict(schema='video.animation-engine-admission.v1', assets=capabilities['assets'],
+        **{key: capabilities['runtime_identity'][key] for key in
+           ('image_digest', 'host_sha256', 'engine_runtime_sha256')}, evidence={})
+    path = tmp_path / 'old-admission.json'
+    path.write_bytes(canonical_bytes(admission))
+    with pytest.raises(ServiceError, match='admission_changed'):
+        renderer.MethodAnimationRenderer(tmp_path / 'new', IMAGE, hyperframes=True,
+                                        engine_admission_file=path).capabilities()
+    with pytest.raises(ServiceError, match='config_invalid'):
+        renderer.MethodAnimationRenderer(tmp_path / 'invalid', IMAGE, legacy_bridge=True)
+
+
+def test_hyperframes_stages_bound_module_and_rejects_old_renderer_receipt(tmp_path, monkeypatch):
+    execution = SyntheticExecution()
+    monkeypatch.setattr(renderer, 'execute_method_render', execution)
+    value = renderer.MethodAnimationRenderer(tmp_path / 'render', IMAGE, enabled=True, hyperframes=True)
+    with pytest.raises(ServiceError, match='receipt_invalid'):
+        value.render('hf-no-old-proof', SOURCE, document())
+    root = value._directory('hf-no-old-proof')
+    request = json.loads((root / 'input/request.json').read_bytes())
+    assert hashlib.sha256((root / 'hyperframes_project.mjs').read_bytes()).hexdigest() == request['project_runtime_sha256']
+    assert execution.calls == 1

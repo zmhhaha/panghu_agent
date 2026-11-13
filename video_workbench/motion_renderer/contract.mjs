@@ -11,6 +11,9 @@ export const inputFiles=['index.html','plan.json','beats.json','alignment.json',
 export const runtimeKeys=['schema','hyperframes','hyperframes_source','node','browser','ffmpeg','gsap',
  'gsap_sha256','font_sha256','dpkg_sha256','npm_lock_sha256'];
 export const engineRuntimeKeys=[...runtimeKeys,'three','three_sha256','three_license_sha256','engine_runtime_sha256','creative_host_sha256'];
+export const hyperFramesRuntimeKeys=[...engineRuntimeKeys,'hyperframes_core_sha256','hyperframes_project_host_sha256'];
+const keysForRuntime=value=>value?.schema==='video.motion-runtime.v3'?hyperFramesRuntimeKeys:
+ value?.schema==='video.motion-runtime.v2'?engineRuntimeKeys:runtimeKeys;
 const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const exactKeys=(value,keys)=>object(value)&&JSON.stringify(Object.keys(value).sort())===JSON.stringify([...keys].sort());
 const projectPair=(compiler,template)=>(compiler==='motion-compiler-1'&&template==='technical-diagrams-1')
@@ -31,28 +34,30 @@ const projectPair=(compiler,template)=>(compiler==='motion-compiler-1'&&template
 function validateRuntimeShape(value,keys){
  if(!exactKeys(value,keys)||Object.values(value).some(v=>typeof v!=='string'||v.length<1||v.length>2000||/[\x00-\x1f\x7f]/.test(v)))
   throw Error('runtime_fingerprint_invalid');
- if(!['video.motion-runtime.v1','video.motion-runtime.v2'].includes(value.schema)||value.hyperframes!=='0.8.149'
+ if(!['video.motion-runtime.v1','video.motion-runtime.v2','video.motion-runtime.v3'].includes(value.schema)||value.hyperframes!=='0.8.149'
   ||value.hyperframes_source!=='2905162d925fc87fb8242e24ed0bbf025d307ea1'||value.gsap!=='3.14.2')
   throw Error('runtime_version_mismatch');
  for(const key of ['gsap_sha256','font_sha256','dpkg_sha256','npm_lock_sha256'])
   if(!/^[0-9a-f]{64}$/.test(value[key]))throw Error('runtime_fingerprint_invalid');
- if(value.schema==='video.motion-runtime.v2'&&(value.three!=='0.170.0'
+ if(['video.motion-runtime.v2','video.motion-runtime.v3'].includes(value.schema)&&(value.three!=='0.170.0'
   ||value.three_sha256!=='08fd7545d13d2c7fb65ab691530a802dafefd638596501854f267d0fb13c39e7'
   ||value.three_license_sha256!=='4c40a1ef62450b857c3b2aaf294936304cd552d965fbcd9d32d4c5bcf4ba4454'
   ||!/^[0-9a-f]{64}$/.test(value.engine_runtime_sha256)
   ||!/^[0-9a-f]{64}$/.test(value.creative_host_sha256)))throw Error('runtime_version_mismatch');
+ if(value.schema==='video.motion-runtime.v3'&&(value.hyperframes_core_sha256!=='675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc'
+  ||!/^[0-9a-f]{64}$/.test(value.hyperframes_project_host_sha256)))throw Error('runtime_version_mismatch');
 }
 export function verifyRuntime(frozen,installed,imageDigest,{allowUnboundExperiment=false}={}){
  // The image deliberately cannot supply its own registry identity. The trusted
  // coordinator pins image@digest and passes this same digest separately.
  if(!/^sha256:[0-9a-f]{64}$/.test(imageDigest||''))throw Error('external_image_digest_required');
- const installedKeys=installed?.schema==='video.motion-runtime.v2'?engineRuntimeKeys:runtimeKeys;
+ const installedKeys=keysForRuntime(installed);
  validateRuntimeShape(installed,installedKeys);
  if(frozen===null){
   if(allowUnboundExperiment!==true)throw Error('runtime_fingerprint_required');
   return {status:'unbound_experiment',image_digest:imageDigest,image_digest_source:'coordinator'};
  }
- const frozenKeys=frozen?.schema==='video.motion-runtime.v2'?engineRuntimeKeys:runtimeKeys;
+ const frozenKeys=keysForRuntime(frozen);
  validateRuntimeShape(frozen,[...frozenKeys,'image_digest']);
  if(frozen.image_digest!==imageDigest)throw Error('runtime_image_digest_mismatch');
  for(const key of frozenKeys)if(frozen[key]!==installed[key])throw Error('runtime_installed_mismatch:'+key);

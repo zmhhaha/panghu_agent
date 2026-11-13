@@ -41,7 +41,8 @@ PROFILES = {'ppt.' + stage + '.v1' for stage in (
     'video.animation-observe.v1', 'video.animation-review.v1', 'video.animation-create.v2',
     'video.animation-review.v2', 'video.animation-review.v3', 'video.animation-review.v4',
     'video.animation-method-author.v1', 'video.animation-method-review.v1',
-    'video.animation-production.v1', 'video.animation-production.v2', 'video.joint-plan.v1'}
+    'video.animation-production.v1', 'video.animation-production.v2',
+    'video.animation-production.v3', 'video.joint-plan.v1'}
 FIXTURE_PROFILES = {'ppt.plan_initial.v1', 'research.revise.v1'}
 CONTROL = Path('/run/agent-control')
 WORK = Path('/work')
@@ -476,7 +477,13 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
     from agent_service.worker_entry import _host_registry
     environment = _host_registry(config).environment(binding.tool_environment.name,
                                                     binding.tool_environment.revision)
-    if 'read_inputs' in environment.tools:
+    if {'skill_search', 'skill_read'} & set(environment.tools):
+        from agent_service.skill_tools import verified_skill_tools_extensions
+        try:
+            extensions += verified_skill_tools_extensions()
+        except (OSError, ValueError):
+            raise ServiceError('candidate_probe_invalid', 422) from None
+    elif 'read_inputs' in environment.tools:
         from agent_service.input_tools import verified_read_inputs_extension
         try:
             extensions += (verified_read_inputs_extension(),)

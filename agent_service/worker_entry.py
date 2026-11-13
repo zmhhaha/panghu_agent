@@ -433,7 +433,13 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
         extensions = ((Path(ACADEMIC_EXTENSION),)
                       if policy.name in {'research.generate.v1', 'research.retrieve.v1'} else ())
         environment = registry.environment(binding.tool_environment.name, binding.tool_environment.revision)
-        if 'read_inputs' in environment.tools:
+        if {'skill_search', 'skill_read'} & set(environment.tools):
+            from .skill_tools import verified_skill_tools_extensions
+            try:
+                extensions += verified_skill_tools_extensions()
+            except (OSError, ValueError):
+                raise WorkerConfigError() from None
+        elif 'read_inputs' in environment.tools:
             from .input_tools import verified_read_inputs_extension
             try:
                 extensions += (verified_read_inputs_extension(),)

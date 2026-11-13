@@ -21,6 +21,10 @@ import time
 from uuid import uuid4
 
 from agent_service.contracts import ServiceError, digest
+from video_workbench.animation_method_research import (
+    METHOD_SCHEMA, RESEARCH_SCHEMA, RELEASE_SCHEMA,
+    validate_content_changes, validate_reference_removal, validate_research,
+)
 
 
 SCHEMA = 'video.animation-method.v1'
@@ -30,7 +34,7 @@ _TABLES = frozenset({
     'animation_methods', 'animation_demonstrations', 'animation_method_validations',
     'animation_method_acceptances', 'animation_method_publications',
     'animation_method_requests', 'animation_method_deliveries',
-    'animation_method_events', 'sqlite_sequence',
+    'animation_method_events', 'animation_research_records', 'sqlite_sequence',
 })
 _METHOD_FIELDS = frozenset({
     'title', 'problem', 'guidance', 'applicability', 'limitations', 'criteria',
@@ -43,6 +47,10 @@ _CHANGE_FIELDS = frozenset({
     'object_count', 'relations', 'task', 'duration', 'staging', 'data_structure',
     'timing', 'explanation_problem', 'conditions',
 })
+_SUBSTANTIVE_CHANGE_FIELDS = frozenset({
+    'relations', 'task', 'staging', 'data_structure', 'explanation_problem', 'conditions',
+})
+_SKILL_FIELDS = frozenset({'skill_package', 'research_record_ids'})
 
 
 def _require(condition, code='invalid_animation_method', status=422):
@@ -118,8 +126,12 @@ def _criteria(value):
 
 
 def _method(body):
+    current = type(body) is dict and body.get('schema') == METHOD_SCHEMA
     _require(type(body) is dict and _METHOD_FIELDS <= set(body)
-             and set(body) <= _METHOD_FIELDS | {'method_id', 'parent_version_id'})
+             and set(body) <= _METHOD_FIELDS | {'method_id', 'parent_version_id', 'schema'}
+             | (_SKILL_FIELDS if current else frozenset()))
+    _require(type(body.get('schema', SCHEMA)) is str
+             and body.get('schema', SCHEMA) in {SCHEMA, METHOD_SCHEMA})
     for key in ('title', 'problem', 'guidance', 'applicability'):
         _text(body[key], 64000 if key == 'guidance' else 16000)
     _strings(body['limitations'])
@@ -131,6 +143,15 @@ def _method(body):
     for key in ('method_id', 'parent_version_id'):
         if key in body and body[key] is not None:
             _text(body[key])
+    if current:
+        from video_workbench.animation_skills import validate_skill_package
+        _require(_SKILL_FIELDS <= set(body), 'animation_method_skill_package_required')
+        package = validate_skill_package(body['skill_package'])
+        _require(runtime.get('engine') is None
+                 or runtime['engine'] in package['runtime_requirements']['engines'],
+                 'animation_method_runtime_mismatch', 409)
+        research = _strings(body['research_record_ids'])
+        _require(len(research) == len(set(research)), 'animation_method_research_duplicate')
     return _copy(body)
 
 
@@ -202,6 +223,10 @@ class AnimationMethodStore:
                 "SELECT name FROM sqlite_master WHERE type='table'")}
             _require(tables <= _TABLES, 'animation_method_database_not_isolated', 409)
             statements = (
+                '''CREATE TABLE IF NOT EXISTS animation_research_records (
+                    id TEXT PRIMARY KEY, owner TEXT NOT NULL, research_id TEXT NOT NULL,
+                    version INTEGER NOT NULL, document TEXT NOT NULL,
+                    UNIQUE(owner,research_id,version))''',
                 '''CREATE TABLE IF NOT EXISTS animation_methods (
                     id TEXT PRIMARY KEY, owner TEXT NOT NULL, method_id TEXT NOT NULL,
                     version INTEGER NOT NULL, document TEXT NOT NULL,
@@ -307,17 +332,40 @@ class AnimationMethodStore:
         def create(db):
             parent_id = body.get('parent_version_id')
             method_id = body.get('method_id')
+            current = body.get('schema') == METHOD_SCHEMA
             if parent_id:
                 parent = self._load(db, 'animation_methods', owner, parent_id)
+                _require(parent['schema'] != METHOD_SCHEMA or body.get('schema') == METHOD_SCHEMA,
+                         'animation_method_contract_downgrade', 409)
                 _require(method_id is None or method_id == parent['method_id'],
                          'animation_method_parent_mismatch', 409)
                 method_id = parent['method_id']
+            if current:
+                package = body['skill_package']
+                _require(method_id is None or method_id == package['skill_id'],
+                         'animation_method_skill_identity_mismatch', 409)
+                method_id = package['skill_id']
             method_id = method_id or str(uuid4())
             version = self._next_version(db, 'animation_methods', owner,
                                          'method_id', method_id, parent_id)
+            if current:
+                _require(body['skill_package']['version'] == version,
+                         'animation_method_skill_identity_mismatch', 409)
             content = {key: body[key] for key in sorted(_METHOD_FIELDS)}
+            if current:
+                research = [self._load(db, 'animation_research_records', owner, row_id)
+                            for row_id in body['research_record_ids']]
+                content.update(skill_package=body['skill_package'],
+                    research_record_ids=body['research_record_ids'],
+                    research_bindings=[dict(id=row['id'], content_sha256=row['content_sha256'])
+                                       for row in research])
+                # Provenance belongs to research, never a prerequisite embedded
+                # in the operational Skill or substituted for method guidance.
+                operative = _json({key: content[key] for key in _METHOD_FIELDS | {'skill_package'}})
+                _require(not any(row['source']['url'] in operative for row in research),
+                         'animation_method_reference_dependency')
             version_id = str(uuid4())
-            result = dict(schema=SCHEMA, id=version_id, version_id=version_id,
+            result = dict(schema=METHOD_SCHEMA if current else SCHEMA, id=version_id, version_id=version_id,
                 owner=owner, method_id=method_id, version=version,
                 parent_version_id=parent_id, content_sha256=digest(content),
                 criteria_sha256=digest(content['criteria']), status='candidate',
@@ -328,6 +376,44 @@ class AnimationMethodStore:
                         dict(content_sha256=result['content_sha256']))
             return result
         return self._perform(owner, 'create_method', request_id, body, create)
+
+    def create_research(self, owner, body, request_id):
+        """Append raw source observations, independent of reusable Skill text."""
+        body = validate_research(body)
+
+        def create(db):
+            parent_id, group_id = body.get('parent_version_id'), body.get('research_id')
+            if parent_id:
+                parent = self._load(db, 'animation_research_records', owner, parent_id)
+                _require(group_id is None or group_id == parent['research_id'],
+                         'animation_method_parent_mismatch', 409)
+                group_id = parent['research_id']
+            group_id = group_id or str(uuid4())
+            version = self._next_version(db, 'animation_research_records', owner,
+                                         'research_id', group_id, parent_id)
+            content = {key: body[key] for key in (
+                'title', 'source', 'observation', 'raw_observations', 'provenance')}
+            row_id = str(uuid4())
+            result = dict(schema=RESEARCH_SCHEMA, id=row_id, version_id=row_id,
+                owner=owner, research_id=group_id, version=version, parent_version_id=parent_id,
+                created_at=time.time(), content_sha256=digest(content), **content)
+            db.execute('INSERT INTO animation_research_records VALUES (?,?,?,?,?)',
+                       (row_id, owner, group_id, version, _json(result)))
+            self._event(db, owner, row_id, 'research_created',
+                        dict(content_sha256=result['content_sha256']))
+            return result
+        return self._perform(owner, 'create_research', request_id, body, create)
+
+    def get_research(self, owner, version_id):
+        _owner(owner)
+        with closing(self._connect()) as db:
+            return self._load(db, 'animation_research_records', owner, version_id)
+
+    def list_research(self, owner):
+        _owner(owner)
+        with closing(self._connect()) as db:
+            return [json.loads(row['document']) for row in db.execute(
+                'SELECT document FROM animation_research_records WHERE owner=? ORDER BY rowid', (owner,))]
 
     def _get_method(self, db, owner, version_id, *, published_only=False):
         _text(version_id)
@@ -408,7 +494,8 @@ class AnimationMethodStore:
         fields = {'method_version_id', 'demonstration_version_id', 'role',
                   'criteria_sha256', 'outcome', 'evidence'}
         _require(type(body) is dict and fields <= set(body)
-                 and set(body) <= fields | {'structural_changes', 'baseline_demonstration_version_id'})
+                 and set(body) <= fields | {'structural_changes', 'baseline_demonstration_version_id',
+                                           'content_changes', 'reference_removal'})
         _require(type(body['role']) is str and body['role'] in {'reference', 'transfer'}
                  and type(body['outcome']) is str and body['outcome'] in {'passed', 'failed', 'incomplete'})
         _require(type(body['evidence']) is dict and bool(body['evidence']))
@@ -417,6 +504,9 @@ class AnimationMethodStore:
 
         def create(db):
             method = self._load(db, 'animation_methods', owner, body['method_version_id'])
+            current = method['schema'] == METHOD_SCHEMA
+            _require(current or not ({'content_changes', 'reference_removal'} & set(body)),
+                     'animation_method_v2_version_required', 409)
             demonstration = self._load(db, 'animation_demonstrations', owner,
                                        body['demonstration_version_id'])
             _require(method['criteria_sha256'] == body['criteria_sha256'],
@@ -447,18 +537,28 @@ class AnimationMethodStore:
                     _require(duration['before'] == base['media']['duration_seconds']
                              and duration['after'] == demonstration['media']['duration_seconds'],
                              'animation_method_transfer_duration_mismatch', 409)
+                if 'content_changes' in body:
+                    validate_content_changes(body['content_changes'])
+                if 'reference_removal' in body:
+                    research = [self._load(db, 'animation_research_records', owner, row_id)
+                                for row_id in method['research_record_ids']]
+                    validate_reference_removal(body['reference_removal'], method, demonstration, research)
             else:
                 _require(not body.get('structural_changes')
-                         and not body.get('baseline_demonstration_version_id'))
+                         and not body.get('baseline_demonstration_version_id')
+                         and not ({'content_changes', 'reference_removal'} & set(body)))
             prior = db.execute('SELECT document FROM animation_method_validations '
                 'WHERE method_version_id=? AND demonstration_version_id=? AND role=?',
                 (method['id'], demonstration['id'], body['role'])).fetchone()
             _require(prior is None, 'animation_method_validation_exists', 409)
             row_id = str(uuid4())
-            result = dict(schema='video.animation-method-validation.v1', id=row_id,
+            result = dict(schema='video.animation-method-validation.v2' if current
+                          else 'video.animation-method-validation.v1', id=row_id,
                 owner=owner, method_content_sha256=method['content_sha256'],
                 demonstration_content_sha256=demonstration['content_sha256'],
                 evidence_sha256=digest(body['evidence']), created_at=time.time(), **body)
+            if current and 'reference_removal' in body:
+                result['reference_removal_sha256'] = digest(body['reference_removal'])
             result['acceptance_target_sha256'] = digest(result)
             db.execute('INSERT INTO animation_method_validations VALUES (?,?,?,?,?,?)',
                 (row_id, owner, method['id'], demonstration['id'], body['role'], _json(result)))
@@ -499,6 +599,8 @@ class AnimationMethodStore:
 
         def create(db):
             validation = self._load(db, 'animation_method_validations', owner, body['validation_id'])
+            method = self._load(db, 'animation_methods', owner, validation['method_version_id'])
+            current = method['schema'] == METHOD_SCHEMA
             _require(validation['method_content_sha256'] == body['method_content_sha256'],
                      'animation_method_acceptance_target_mismatch', 409)
             _require(validation['outcome'] != 'failed',
@@ -509,10 +611,15 @@ class AnimationMethodStore:
                      and _runtime_admitted(demonstration['runtime']),
                      'animation_method_demonstration_not_admitted', 409)
             human = body.get('human_verification')
+            if current:
+                _require(human is not None, 'animation_method_explicit_viewing_required', 409)
             if human is not None:
+                current_fields = {'validation_target_sha256', 'media_sha256',
+                                  'content_and_structure_changed', 'reference_free_reuse'} if current else set()
                 _require(type(human) is dict
                     and {'criteria_ids', 'motion_watched', 'audio_listened'} <= set(human)
-                    and set(human) <= {'criteria_ids', 'motion_watched', 'audio_listened', 'comment'},
+                    and set(human) <= {'criteria_ids', 'motion_watched', 'audio_listened', 'comment'}
+                    | current_fields,
                     'animation_method_human_verification_invalid')
                 criteria_ids = _strings(human['criteria_ids'], minimum=1)
                 _require(len(criteria_ids) == len(set(criteria_ids))
@@ -521,8 +628,6 @@ class AnimationMethodStore:
                     'animation_method_human_verification_invalid')
                 if 'comment' in human:
                     _text(human['comment'], 16000)
-                method = self._load(db, 'animation_methods', owner,
-                                    validation['method_version_id'])
                 _require(set(criteria_ids) == {row['id'] for row in method['criteria']},
                     'animation_method_human_criteria_incomplete', 409)
                 if any(row.get('requires_motion') for row in method['criteria']):
@@ -534,12 +639,24 @@ class AnimationMethodStore:
                     _require(type(demonstration['media'].get('audio_sha256')) is str
                              and _SHA.fullmatch(demonstration['media']['audio_sha256']),
                              'animation_method_audio_evidence_required', 409)
+                if current:
+                    _require(human.get('validation_target_sha256') == validation['acceptance_target_sha256']
+                             and human.get('media_sha256') == demonstration['media']['sha256'],
+                             'animation_method_acceptance_target_mismatch', 409)
+                    _require(human['motion_watched'], 'animation_method_human_motion_required', 409)
+                    if demonstration['media'].get('audio_sha256') is not None:
+                        _require(human['audio_listened'], 'animation_method_human_audio_required', 409)
+                    if validation['role'] == 'transfer':
+                        _require(all(type(human.get(key)) is bool for key in (
+                            'content_and_structure_changed', 'reference_free_reuse')),
+                            'animation_method_human_transfer_verification_required', 409)
             _require(validation['outcome'] == 'passed' or human is not None,
                      'animation_method_validation_not_passed', 409)
             prior = db.execute('SELECT document FROM animation_method_acceptances '
                                'WHERE validation_id=?', (validation['id'],)).fetchone()
             _require(prior is None, 'animation_method_acceptance_exists', 409)
-            result = dict(schema='video.animation-method-acceptance.v1', owner=owner,
+            result = dict(schema='video.animation-method-acceptance.v2' if current
+                          else 'video.animation-method-acceptance.v1', owner=owner,
                 validation_id=validation['id'], method_version_id=validation['method_version_id'],
                 demonstration_version_id=validation['demonstration_version_id'],
                 acceptance_target_sha256=validation['acceptance_target_sha256'],
@@ -548,6 +665,10 @@ class AnimationMethodStore:
                 acceptance_basis='explicit_human_verification' if human else 'observed_goal_review',
                 review_outcome_at_acceptance=validation['outcome'],
                 human_verification=human, created_at=time.time())
+            if current:
+                result.update(media_sha256=demonstration['media']['sha256'],
+                    demonstration_content_sha256=demonstration['content_sha256'],
+                    skill_package_sha256=method['skill_package']['sha256'])
             db.execute('INSERT INTO animation_method_acceptances VALUES (?,?,?)',
                        (validation['id'], owner, _json(result)))
             self._event(db, owner, validation['method_version_id'], 'validation_accepted',
@@ -555,11 +676,89 @@ class AnimationMethodStore:
             return result
         return self._perform(owner, 'accept', request_id, body, create)
 
+    def _publication_readiness(self, db, owner, method):
+        """Report gates; never infer visual success or manufacture acceptance."""
+        validations = [json.loads(row['document']) for row in db.execute(
+            'SELECT document FROM animation_method_validations WHERE owner=? AND method_version_id=?',
+            (owner, method['id']))]
+        accepted = {}
+        for row in validations:
+            acceptance = db.execute('SELECT document FROM animation_method_acceptances '
+                'WHERE owner=? AND validation_id=?', (owner, row['id'])).fetchone()
+            if acceptance:
+                accepted[row['id']] = json.loads(acceptance['document'])
+        if method['schema'] != METHOD_SCHEMA:
+            references = {row['demonstration_version_id']: row for row in validations
+                          if row['role'] == 'reference' and row['id'] in accepted}
+            transfers = [row for row in validations if row['role'] == 'transfer'
+                         and row['id'] in accepted
+                         and row.get('baseline_demonstration_version_id') in references]
+            return dict(schema='video.animation-method-publication-readiness.v2',
+                method_version_id=method['id'], method_schema=method['schema'], ready=False,
+                release_contract='video.animation-method-publication.v1', historical_contract=True,
+                legacy_publication_eligible=bool(references and transfers),
+                unmet_conditions=['animation_method_v2_version_required'],
+                reference_validation_ids=[row['id'] for row in references.values()],
+                transfer_validation_ids=[row['id'] for row in transfers])
+        references = {row['demonstration_version_id']: row for row in validations
+                      if row['role'] == 'reference' and row['id'] in accepted}
+        transfer_rows = [row for row in validations if row['role'] == 'transfer']
+        eligible, gaps = [], []
+        for row in transfer_rows:
+            missing = []
+            if row.get('baseline_demonstration_version_id') not in references:
+                missing.append('animation_method_representative_acceptance_required')
+            if not row.get('content_changes') or not (
+                    set(row.get('structural_changes', {})) & _SUBSTANTIVE_CHANGE_FIELDS):
+                missing.append('animation_method_content_and_structure_evidence_required')
+            if not row.get('reference_removal'):
+                missing.append('animation_method_reference_free_execution_required')
+            acceptance = accepted.get(row['id'])
+            if acceptance is None:
+                missing.append('animation_method_transfer_acceptance_required')
+            elif not all(acceptance['human_verification'].get(key) is True for key in (
+                    'content_and_structure_changed', 'reference_free_reuse')):
+                missing.append('animation_method_human_transfer_verification_required')
+            if missing:
+                gaps.append(dict(validation_id=row['id'], unmet_conditions=missing))
+            else:
+                # Rebind the exact receipt at publication rather than trusting a
+                # persisted success flag or a model's prose.
+                demo = self._load(db, 'animation_demonstrations', owner, row['demonstration_version_id'])
+                research = [self._load(db, 'animation_research_records', owner, record_id)
+                            for record_id in method['research_record_ids']]
+                validate_reference_removal(row['reference_removal'], method, demo, research)
+                eligible.append(row)
+        unmet = []
+        if not references:
+            unmet.append('animation_method_representative_acceptance_required')
+        if not transfer_rows:
+            unmet.append('animation_method_substantive_transfer_required')
+        if transfer_rows and not eligible:
+            unmet.extend(code for gap in gaps for code in gap['unmet_conditions'])
+        return dict(schema='video.animation-method-publication-readiness.v2',
+            method_version_id=method['id'], method_schema=METHOD_SCHEMA, ready=bool(references and eligible),
+            release_contract=RELEASE_SCHEMA, historical_contract=False,
+            unmet_conditions=list(dict.fromkeys(unmet)), evidence_gaps=gaps,
+            reference_validation_ids=[row['id'] for row in references.values()],
+            transfer_validation_ids=[row['id'] for row in eligible],
+            scope='evidence_and_explicit_developer_decisions_not_inferred_internalization')
+
+    def publication_readiness(self, owner, version_id):
+        _owner(owner)
+        with closing(self._connect()) as db:
+            method = self._load(db, 'animation_methods', owner, version_id)
+            return self._publication_readiness(db, owner, method)
+
     def publish(self, owner, version_id, request_id):
         _text(version_id)
 
         def create(db):
             method = self._load(db, 'animation_methods', owner, version_id)
+            readiness = None
+            if method['schema'] == METHOD_SCHEMA:
+                readiness = self._publication_readiness(db, owner, method)
+                _require(readiness['ready'], 'animation_method_publication_blocked', 409)
             accepted = [json.loads(row['document']) for row in db.execute(
                 'SELECT v.document FROM animation_method_validations v JOIN '
                 'animation_method_acceptances a ON a.validation_id=v.id '
@@ -569,16 +768,29 @@ class AnimationMethodStore:
                           if row['role'] == 'reference'}
             transfers = [row for row in accepted if row['role'] == 'transfer'
                          and row.get('baseline_demonstration_version_id') in references]
+            if readiness:
+                transfer_ids = set(readiness['transfer_validation_ids'])
+                transfers = [row for row in transfers if row['id'] in transfer_ids]
             _require(bool(references) and bool(transfers),
                      'animation_method_publication_blocked', 409)
             prior = db.execute('SELECT document FROM animation_method_publications '
                                'WHERE version_id=?', (version_id,)).fetchone()
             _require(prior is None, 'animation_method_already_published', 409)
-            result = dict(schema='video.animation-method-publication.v1',
+            result = dict(schema=RELEASE_SCHEMA if readiness else 'video.animation-method-publication.v1',
                 method_version_id=version_id, method_content_sha256=method['content_sha256'],
                 owner=owner, reference_validation_ids=[row['id'] for row in references.values()],
                 transfer_validation_ids=[row['id'] for row in transfers],
                 created_at=time.time())
+            if readiness:
+                acceptances = [json.loads(row['document']) for row in db.execute(
+                    'SELECT document FROM animation_method_acceptances WHERE owner=?', (owner,))]
+                validation_ids = set(result['reference_validation_ids'] + result['transfer_validation_ids'])
+                result.update(skill_package_sha256=method['skill_package']['sha256'],
+                    research_bindings=method['research_bindings'],
+                    reference_removal_receipt_sha256s=[row['reference_removal_sha256'] for row in transfers],
+                    developer_acceptance_sha256s={row['validation_id']: digest(row) for row in acceptances
+                                                 if row['validation_id'] in validation_ids},
+                    scope='exact_skill_and_media_evidence_with_explicit_developer_acceptance')
             db.execute('INSERT INTO animation_method_publications VALUES (?,?,?)',
                        (version_id, owner, _json(result)))
             self._event(db, owner, version_id, 'method_published', result)

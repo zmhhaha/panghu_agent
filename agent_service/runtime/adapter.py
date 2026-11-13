@@ -748,6 +748,13 @@ class PiRuntime:
                 except (UnicodeError, ValueError) as exc:
                     raise RuntimeExecutionError("runtime_protocol_error", "Pi emitted malformed JSONL") from exc
                 event_type = event["type"]
+                # A separately admitted profile may capture fixed-tool receipts
+                # in controller memory. Raw tool payloads still never enter the
+                # progress stream, and model-written output is not consulted.
+                if event_type in {'tool_execution_start', 'tool_execution_end'}:
+                    observe = getattr(self.profile, 'observe_native_tool_event', None)
+                    if callable(observe):
+                        observe(event)
                 if event_type == "runtime_output_stats":
                     values = {key: event.get(key) for key in OUTPUT_STAT_KEYS}
                     if (not s.compact_events or any(type(value) is not int or not 0 <= value <= 1024**3

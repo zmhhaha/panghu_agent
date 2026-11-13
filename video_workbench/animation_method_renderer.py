@@ -31,6 +31,8 @@ from .animation_experiment_render import _IMAGE
 
 HOST = Path(__file__).with_name('animation_method_host.mjs')
 ENGINE_RUNTIME = Path(__file__).with_name('motion_renderer') / 'engine_runtime.mjs'
+PROJECT_RUNTIME = Path(__file__).with_name('motion_renderer') / 'hyperframes_project.mjs'
+HYPERFRAMES_CORE_SHA256 = '675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc'
 MAX_FRAMES = 1440
 MAX_MEDIA_BYTES = 32 * 1024 * 1024
 MAX_EVIDENCE_BYTES = 192 * 1024 * 1024
@@ -112,6 +114,8 @@ def execute_method_render(directory):
         # bind mounts remain read-only inside the container.
         input_root = root / 'input'
         runtime_files = [root / 'engine_runtime.mjs'] if request.get('engine_runtime_sha256') else []
+        if request.get('project_runtime_sha256'):
+            runtime_files.append(root / 'hyperframes_project.mjs')
         for path in (input_root, *input_root.rglob('*'), root / 'host.mjs', *runtime_files):
             docker._ownership(_plain(path), directory=path.is_dir())
         inspected = json.loads(docker._checked(
@@ -123,8 +127,9 @@ def execute_method_render(directory):
         work = root / 'work'
         work.mkdir()
         docker._ownership(work, directory=True)
-        runtime_mount = (['--mount', 'type=bind,source=' + str(root / 'engine_runtime.mjs')
-                         + ',target=/opt/renderer/engine_runtime.mjs,readonly'] if runtime_files else [])
+        runtime_mount = [argument for path in runtime_files for argument in
+                         ('--mount', 'type=bind,source=' + str(path)
+                          + ',target=/opt/renderer/' + path.name + ',readonly')]
         arguments = ['container', 'create', '--name', name,
             '--label', docker._OWNER + '=' + token, '--label', docker._CAPTURE + '=' + request['identity'],
             '--pull=never', '--network=none', '--read-only', '--user=10001:10001',
@@ -176,7 +181,8 @@ def execute_method_render(directory):
 
 class MethodAnimationRenderer:
     def __init__(self, root, image, assets_dir=None, enabled=False, *, timeout=360,
-                 engine_admission_file=None, candidate_engines=()):
+                 engine_admission_file=None, candidate_engines=(), hyperframes=False,
+                 legacy_bridge=False):
         match = _IMAGE.fullmatch(image) if type(image) is str else None
         _require(match is not None, 'animation_method_render_image_pin_required', 422)
         _require(type(enabled) is bool and type(timeout) in (int, float)
@@ -186,6 +192,10 @@ class MethodAnimationRenderer:
         self.image, self.image_digest, self.repository = image, match[2], match[1]
         self.assets_dir = _plain(assets_dir) if assets_dir is not None else None
         self.enabled, self.timeout = enabled, timeout
+        _require(type(hyperframes) is bool and type(legacy_bridge) is bool
+                 and (hyperframes or not legacy_bridge),
+                 'animation_method_render_config_invalid', 422)
+        self.hyperframes, self.legacy_bridge = hyperframes, legacy_bridge
         self.ledger = self.root / 'method-render-ledger.sqlite3'
         self.engine_admission_file = (_plain(engine_admission_file)
                                       if engine_admission_file is not None else None)
@@ -210,14 +220,22 @@ class MethodAnimationRenderer:
             engine_runtime_sha256=hashlib.sha256(_read(ENGINE_RUNTIME, 1024 * 1024)).hexdigest(),
             admission_id='method-html-svg-v1@' + self.image_digest)
         engines = ['html-svg']
+        if self.hyperframes:
+            identity['admission_id'] = 'method-hyperframes-v3@' + self.image_digest
         if self.engine_admission_file is not None:
             admission, _ = _json(self.engine_admission_file, 65536)
-            _require(admission.get('schema') == 'video.animation-engine-admission.v1'
+            _require(admission.get('schema') == ('video.animation-engine-admission.v2'
+                                               if self.hyperframes else 'video.animation-engine-admission.v1')
                      and admission.get('image_digest') == identity['image_digest']
                      and admission.get('host_sha256') == identity['host_sha256']
                      and admission.get('engine_runtime_sha256') == identity['engine_runtime_sha256']
                      and admission.get('assets') == assets,
                      'animation_method_engine_admission_changed')
+            if self.hyperframes:
+                _require(admission.get('project_runtime_sha256') ==
+                         hashlib.sha256(_read(PROJECT_RUNTIME, 1024 * 1024)).hexdigest()
+                         and admission.get('hyperframes_core_sha256') == HYPERFRAMES_CORE_SHA256,
+                         'animation_method_hyperframes_admission_changed')
             evidence = admission.get('evidence')
             _require(type(evidence) is dict and bool(evidence)
                      and set(evidence) <= {'canvas', 'three'},
@@ -231,11 +249,14 @@ class MethodAnimationRenderer:
                          and actual['runtime']['image'] == self.image
                          and actual['technical']['evidence_sha256'] == record.get('evidence_sha256'),
                          'animation_method_engine_admission_unproven')
+                if self.hyperframes:
+                    _require(actual['runtime'].get('project_runtime') == 'hyperframes-core-project-1',
+                             'animation_method_hyperframes_admission_unproven')
             if 'three' in evidence:
                 _require({'three.module.min.js', 'three.LICENSE.txt'} <= assets.keys(),
                          'animation_method_render_assets_missing')
             engines += [engine for engine in ('canvas', 'three') if engine in evidence]
-            identity['admission_id'] = 'method-engines-v2@' + digest(admission)
+            identity['admission_id'] = ('method-hyperframes-v3@' if self.hyperframes else 'method-engines-v2@') + digest(admission)
         return dict(schema='video.animation-runtime-capabilities.v1',
                     allowed_engines=engines, assets=assets, runtime_identity=identity)
 
@@ -288,7 +309,7 @@ class MethodAnimationRenderer:
         _require(set(context['assets']) <= _ASSETS,
                  'animation_method_render_asset_not_admitted', 422)
         engine = payload['engine']
-        engine_aware = (engine != 'html-svg' or bounds.get('runtime_identity') is not None
+        engine_aware = (self.hyperframes or engine != 'html-svg' or bounds.get('runtime_identity') is not None
                         or 'three.module.min.js' in context['assets'])
         if engine_aware:
             _require(all(ASSET_SHA256[name] == checksum
@@ -316,6 +337,17 @@ class MethodAnimationRenderer:
         if engine_aware:
             request.update(schema='video.animation-method-render-request.v2', engine=engine,
                            engine_runtime_sha256=capabilities['runtime_identity']['engine_runtime_sha256'])
+        if self.hyperframes:
+            project = dict(schema='video.hyperframes-project.v1',
+                project_id='method-' + digest(dict(operation_id=operation_id, files=files))[:32],
+                width=bounds['width'], height=bounds['height'], fps=24,
+                duration_seconds=bounds['duration_seconds'], entry='scene.html',
+                scenes=[dict(id='scene', start_seconds=0, duration_seconds=bounds['duration_seconds'],
+                    entry='scene.html', source_sha256=files['scene.html'], engine=engine)])
+            request.update(schema='video.animation-method-render-request.v3',
+                project=project, project_sha256=digest(project), legacy_bridge=self.legacy_bridge,
+                project_runtime_sha256=hashlib.sha256(_read(PROJECT_RUNTIME, 1024 * 1024)).hexdigest(),
+                hyperframes_core_sha256=HYPERFRAMES_CORE_SHA256)
         request['identity'] = digest(request)
         return dict(schema='video.animation-method-render-binding.v1',
             operation_id=operation_id, source=payload, source_sha256=source_sha256(payload),
@@ -395,6 +427,8 @@ class MethodAnimationRenderer:
             _write(root / 'host.mjs', _read(HOST, 1024 * 1024))
             if binding['request'].get('engine_runtime_sha256'):
                 _write(root / 'engine_runtime.mjs', _read(ENGINE_RUNTIME, 1024 * 1024))
+            if binding['request'].get('project_runtime_sha256'):
+                _write(root / 'hyperframes_project.mjs', _read(PROJECT_RUNTIME, 1024 * 1024))
             _write(root / 'input/request.json', canonical_bytes(binding['request']))
             _write(root / 'binding.json', canonical_bytes(binding))
             plan = dict(directory=str(root), image=self.image, repository=self.repository,
@@ -420,8 +454,10 @@ class MethodAnimationRenderer:
         request = binding['request']
         work = root / 'work'
         receipt, receipt_raw = _json(work / 'render-receipt.json')
-        native = request.get('schema') == 'video.animation-method-render-request.v2'
-        _require(receipt.get('schema') == 'video.animation-method-render-receipt.' + ('v2' if native else 'v1')
+        project_aware = request.get('schema') == 'video.animation-method-render-request.v3'
+        native = project_aware or request.get('schema') == 'video.animation-method-render-request.v2'
+        _require(receipt.get('schema') == 'video.animation-method-render-receipt.' +
+                 ('v3' if project_aware else 'v2' if native else 'v1')
                  and receipt.get('status') == 'rendered' and receipt.get('decode_verified') is True
                  and receipt.get('reverse_seek_verified') is True
                  and receipt.get('request_identity') == request['identity']
@@ -429,6 +465,20 @@ class MethodAnimationRenderer:
                  and receipt.get('host_sha256') == request['host_sha256']
                  and receipt.get('image_digest') == binding['image_digest'],
                  'animation_method_render_receipt_invalid')
+        if project_aware:
+            proof = receipt.get('project_runtime', {})
+            _require(receipt.get('project_runtime_sha256') == request['project_runtime_sha256']
+                and proof.get('schema') == 'video.hyperframes-project-runtime-proof.v1'
+                and proof.get('project_id') == request['project']['project_id']
+                and proof.get('project_sha256') == request['project_sha256']
+                and proof.get('runtime') == 'hyperframes-core-project-1'
+                and proof.get('version') == '0.8.149'
+                and proof.get('core_sha256') == HYPERFRAMES_CORE_SHA256
+                and proof.get('seek_protocol') == 'hyperframes-core-renderSeek-exact'
+                and proof.get('legacy_bridge') is request['legacy_bridge']
+                and type(proof.get('core_seek_count')) is int and proof['core_seek_count'] >= 2
+                and type(proof.get('dispatch_count')) is int and proof['dispatch_count'] >= 2,
+                'animation_method_hyperframes_evidence_invalid')
         count = int(request['constraints']['duration_seconds'] * 24)
         frames = receipt.get('frames')
         _require(type(frames) is list and len(frames) == count + 1
@@ -583,6 +633,10 @@ class MethodAnimationRenderer:
                 _require(hashlib.sha256(_read(root / 'engine_runtime.mjs', 1024 * 1024)).hexdigest()
                          == binding['request']['engine_runtime_sha256'],
                          'animation_method_render_runtime_changed')
+            if binding['request'].get('project_runtime_sha256'):
+                _require(hashlib.sha256(_read(root / 'hyperframes_project.mjs', 1024 * 1024)).hexdigest()
+                         == binding['request']['project_runtime_sha256'],
+                         'animation_method_render_project_runtime_changed')
             for name, checksum in binding['request']['files_sha256'].items():
                 _require(hashlib.sha256(_read(root / 'input/scene' / name, 512 * 1024)).hexdigest()
                          == checksum, 'animation_method_render_source_changed')
@@ -601,11 +655,16 @@ class MethodAnimationRenderer:
         engine = binding['request'].get('engine', 'html-svg')
         result['runtime'] = dict(engine=engine,
             admission=dict(status='admitted' if rendered else 'not_admitted',
-                id=('method-' + engine + '-v2@' if binding['request']['schema'].endswith('.v2')
+                id=('method-hyperframes-' + engine + '-v3@' if binding['request']['schema'].endswith('.v3')
+                    else 'method-' + engine + '-v2@' if binding['request']['schema'].endswith('.v2')
                     else 'method-html-svg-v1@')
                     + binding['image_digest'], evidence_sha256=proof),
             image=binding['image'], actual_image_id=outcome.get('actual_image_id'),
             observation='rendered_frames_not_agent_motion_or_audio_observation')
+        if binding['request']['schema'].endswith('.v3'):
+            result['runtime'].update(project_runtime='hyperframes-core-project-1',
+                hyperframes_core_sha256=HYPERFRAMES_CORE_SHA256,
+                project_runtime_sha256=binding['request']['project_runtime_sha256'])
         if row['proof_sha256'] is not None:
             _require(row['proof_sha256'] == proof, 'animation_method_render_proof_changed')
             _require(row['result'] is not None and bytes(row['result']) == canonical_bytes(result),

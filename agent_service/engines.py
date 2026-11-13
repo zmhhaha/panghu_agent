@@ -324,6 +324,18 @@ class PiDriver(_BaseDriver):
         if hasattr(profile, '_context'):
             profile._context = None
 
+    def collect_tool_evidence(self, request):
+        # WorkerHost calls only after physical writer-stop confirmation and
+        # before releasing the read-only task context.
+        proof = self.stop_controller.prove_stopped(request.execution_id)
+        if not proof.all_writers_stopped:
+            raise _DriverError('writers_not_stopped')
+        profile = getattr(self.runtime, 'profile', None)
+        collect = getattr(profile, 'collect_tool_evidence', None)
+        if not callable(collect):
+            raise _DriverError('skill_tool_observer_unavailable')
+        return collect(request.execution_id)
+
 
 class HermesDriver(_BaseDriver):
     """Adapts a dedicated loopback Hermes gateway, never a personal dashboard.

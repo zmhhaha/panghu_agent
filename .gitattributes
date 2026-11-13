@@ -7,8 +7,11 @@ Dockerfile.scientific-pi* text eol=lf
 agent_service/resources/** text eol=lf
 agent_service/runtime/*.mjs text eol=lf
 agent_service/*.sh text eol=lf
+agent_service/read_skill_task_extension.mjs text eol=lf
+agent_service/skill_tools_extension.mjs text eol=lf
 agent_service/Dockerfile* text eol=lf
 # Engine/host identities and upstream assets are hashes of exact bytes.
 video_workbench/motion_renderer/engine_runtime.mjs text eol=lf
 video_workbench/motion_renderer/creative.mjs text eol=lf
+video_workbench/motion_renderer/hyperframes_project.mjs text eol=lf
 video_workbench/motion_renderer/vendor/** -text

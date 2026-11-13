@@ -26,7 +26,8 @@ class DomainExecutionProfile(ExecutionProfile):
         # builtins. Select precisely the domain contract's supported tools;
         # merely loading the academic extension does not activate its tools.
         self.allowed_tools = tuple(t for t in self.impl.required_tools
-            if t in {'read', 'write', 'bash', 'academic_search', 'academic_verify', 'read_inputs'})
+            if t in {'read', 'write', 'bash', 'academic_search', 'academic_verify', 'read_inputs',
+                     'skill_search', 'skill_read'})
         # Pi's read tool natively accepts images; no invented `image` tool.
         # Research and video embed their checksum-verified procedures in the
         # prompt. Only PPT uses Pi's separate skill loading; other domains must
@@ -39,6 +40,7 @@ class DomainExecutionProfile(ExecutionProfile):
         self._handoff_inputs = self._handoff_workspace = self._handoff_task_digest = None
         self.shared_project = policy.name.startswith('ppt.')
         self.agent_uid = self.preview_uid = self.control_root = None
+        self._tool_observer = None
 
     @contextmanager
     def execution_context(self, context):
@@ -68,6 +70,7 @@ class DomainExecutionProfile(ExecutionProfile):
             self._handoff_inputs.rmdir()
             self._handoff_inputs = self._handoff_workspace = self._handoff_task_digest = None
         self._context = None
+        self._tool_observer = None
 
     def _export_handoff_task(self, workspace, task):
         """Export the actual task outside the tree later chowned to the Agent.
@@ -136,6 +139,9 @@ class DomainExecutionProfile(ExecutionProfile):
         validate_inputs = getattr(self.impl, 'validate_inputs', None)
         if validate_inputs is not None:
             validate_inputs(workspace, wire['task'])
+        create_observer = getattr(self.impl, 'create_tool_observer', None)
+        if create_observer is not None:
+            self._tool_observer = create_observer(workspace, wire['task'])
         prepare_context_view = getattr(self.impl, 'prepare_context_view', None)
         if prepare_context_view is not None:
             if self.control_root is None:
@@ -197,6 +203,17 @@ class DomainExecutionProfile(ExecutionProfile):
     def after_stopped(self, workspace):
         if self._preview is not None:
             self._preview.cleanup_after_stop()
+
+    def observe_native_tool_event(self, event):
+        # Called directly by the controller, never through public progress or
+        # an Agent-written file. The observer retains only verified receipts.
+        if self._tool_observer is not None:
+            self._tool_observer.observe(event)
+
+    def collect_tool_evidence(self, execution_id):
+        if self._tool_observer is None:
+            raise ServiceError('skill_tool_observer_unavailable', 503)
+        return self._tool_observer.finish(execution_id)
 
     def execution_provenance(self, started, finished):
         return dict(engine=self.policy.engine, profile=self.policy.name,

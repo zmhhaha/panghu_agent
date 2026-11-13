@@ -24,6 +24,25 @@ def docker_entrypoint(text):
     return json.loads(entries[0])
 
 
+def animation_profile_bundles():
+    """Independent Profile inventories, never derived from builder allowlists."""
+    from agent_service.profiles import (video_animation_review as review, video_animation_create as creation,
+        video_animation_method as method, video_animation_production as production, video_joint_plan as joint,
+        video_animation_skill_production as skill_production)
+    return (
+        (joint.BUNDLE_ROOT, joint.BUNDLE_FILES, joint.verified_bundle),
+        (review.BUNDLE_ROOT, review.BUNDLE_FILES, review.verified_bundle),
+        (review.SEQUENCE_BUNDLE_ROOT, review.SEQUENCE_BUNDLE_FILES, review.verified_sequence_bundle),
+        (review.BATCH_BUNDLE_ROOT, review.BATCH_BUNDLE_FILES, review.verified_batch_bundle),
+        (review.PACKED_BUNDLE_ROOT, review.PACKED_BUNDLE_FILES, review.verified_packed_bundle),
+        (creation.BUNDLE_ROOT, creation.BUNDLE_FILES, creation.verified_bundle),
+        (method.BUNDLE_ROOT, method.BUNDLE_FILES, method.verified_bundle),
+        (production.BUNDLE_ROOT, production.BUNDLE_FILES, production.verified_bundle),
+        (production.FILM_BUNDLE_ROOT, production.BUNDLE_FILES, lambda: production.verified_bundle(film=True)),
+        (skill_production.BUNDLE_ROOT, skill_production.BUNDLE_FILES, skill_production.verified_bundle),
+    )
+
+
 @pytest.mark.parametrize('name', ['Dockerfile.agent-pi', 'Dockerfile.agent-hermes'])
 def test_workers_isolate_neutral_controller_dependencies_from_native_hermes_environment(name):
     text = dockerfile_text(name)
@@ -101,19 +120,11 @@ def service(tmp_path):
         target = root / 'resources/animation-experiment-v1' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((ANIMATION_ROOT / name).read_bytes())
-    from agent_service.profiles import (video_animation_review as review, video_animation_create as creation,
-        video_animation_method as method, video_animation_production as production, video_joint_plan as joint)
-    for source, names in (
-            (joint.BUNDLE_ROOT, joint.BUNDLE_FILES),
-            (review.BUNDLE_ROOT, review.BUNDLE_FILES),
-            (review.SEQUENCE_BUNDLE_ROOT, review.SEQUENCE_BUNDLE_FILES),
-            (review.BATCH_BUNDLE_ROOT, review.BATCH_BUNDLE_FILES),
-            (review.PACKED_BUNDLE_ROOT, review.PACKED_BUNDLE_FILES),
-            (creation.BUNDLE_ROOT, creation.BUNDLE_FILES),
-            (method.BUNDLE_ROOT, method.BUNDLE_FILES),
-            (production.BUNDLE_ROOT, production.BUNDLE_FILES),
-            (method.BUNDLE_ROOT.parent / method.LEGACY_BUNDLE_REVISION, method.BUNDLE_FILES),
-            (production.BUNDLE_ROOT.parent / production.LEGACY_BUNDLE_REVISION, production.BUNDLE_FILES)):
+    from agent_service.profiles import video_animation_method as method, video_animation_production as production
+    bundles = [(source, names) for source, names, _ in animation_profile_bundles()]
+    bundles.extend((profile.BUNDLE_ROOT.parent / profile.LEGACY_BUNDLE_REVISION, profile.BUNDLE_FILES)
+                   for profile in (method, production))
+    for source, names in bundles:
         for name in ('manifest.json', *names):
             target = root / 'resources' / source.name / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -464,6 +475,11 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'method-procedure/SKILL.md')} | {
             'agent_service/resources/animation-production-v2/' + name
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-production-v3/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-production-v4/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md',
+                         'foundation/SKILL.md')} | {
             'agent_service/resources/video-joint-plan-v1/' + name
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'joint-plan-procedure/SKILL.md')}
     assert not any(name.endswith(("credentials.json", "NOT_ALLOWED.md", "private.py")) for name in runner.names)
@@ -549,16 +565,32 @@ def test_clean_context_preserves_exact_legacy_and_current_motion_bundles(service
 @pytest.mark.parametrize('target', ['control', 'pi', 'hermes'])
 def test_clean_source_context_carries_all_real_profile_resource_bytes(tmp_path, target):
     from agent_service.build_image import context_archive
+    from agent_service.profiles import (video, video_motion, video_process, video_explanation,
+        video_animation_experiment, video_animation_method, video_animation_production)
     service = Path(__file__).parents[2] / 'agent_service'
     destination = tmp_path / 'complete-source-context.tar'
     context_archive(service, target, destination)
-    actual = {path.relative_to(service).as_posix(): path.read_bytes()
-        for path in (service / 'resources').rglob('*') if path.is_file()}
-    assert len(actual) == 70
+    bundles = [(root, files) for root, files, _ in animation_profile_bundles()]
+    bundles.extend((profile.BUNDLE_ROOT, profile.BUNDLE_FILES) for profile in
+                   (video, video_motion, video_process, video_explanation, video_animation_experiment))
+    bundles.append((video_motion.BUNDLE_ROOT.parent / 'video-motion-v1', video_motion.BUNDLE_FILES))
+    bundles.extend((profile.BUNDLE_ROOT.parent / profile.LEGACY_BUNDLE_REVISION, profile.BUNDLE_FILES)
+                   for profile in (video_animation_method, video_animation_production))
+    expected = {'resources/workspace-text-v1/' + name:
+                (service / 'resources/workspace-text-v1' / name).read_bytes()
+                for name in ('manifest.json', 'CONTRACT.md')}
+    for root, files in bundles:
+        expected.update({'resources/' + root.name + '/' + name: (root / name).read_bytes()
+                         for name in ('manifest.json', *files)})
     with tarfile.open(destination) as archive:
         captured = {name.removeprefix('agent_service/'): archive.extractfile(name).read()
             for name in archive.getnames() if name.startswith('agent_service/resources/')}
-        assert captured == actual
+        assert captured == expected
+        # This standalone Skill is a development source, not an additional
+        # admitted runtime bundle. Its exact reviewed copy travels inside v4.
+        foundation = service / 'resources/animation-hyperframes-foundation-v1/SKILL.md'
+        assert foundation.read_bytes() == captured['resources/animation-production-v4/foundation/SKILL.md']
+        assert foundation.relative_to(service).as_posix() not in captured
         from agent_service.input_tools import READ_INPUTS_EXTENSION_SHA256
         extension = archive.extractfile('agent_service/read_inputs_extension.mjs').read()
         assert extension == (service / 'read_inputs_extension.mjs').read_bytes()
@@ -571,18 +603,9 @@ def test_clean_source_context_carries_all_real_profile_resource_bytes(tmp_path, 
 
 def test_clean_builder_animation_pins_match_independently_verified_profile_bundles():
     from agent_service.build_image import ANIMATION_RUNTIME_BUNDLES
-    from agent_service.profiles import (video_animation_review as review, video_animation_create as creation,
-        video_animation_method as method, video_animation_production as production, video_joint_plan as joint)
+    from agent_service.profiles import video_animation_method as method, video_animation_production as production
     measured = {}
-    for root, files, verify in (
-            (joint.BUNDLE_ROOT, joint.BUNDLE_FILES, joint.verified_bundle),
-            (review.BUNDLE_ROOT, review.BUNDLE_FILES, review.verified_bundle),
-            (review.SEQUENCE_BUNDLE_ROOT, review.SEQUENCE_BUNDLE_FILES, review.verified_sequence_bundle),
-            (review.BATCH_BUNDLE_ROOT, review.BATCH_BUNDLE_FILES, review.verified_batch_bundle),
-            (review.PACKED_BUNDLE_ROOT, review.PACKED_BUNDLE_FILES, review.verified_packed_bundle),
-            (creation.BUNDLE_ROOT, creation.BUNDLE_FILES, creation.verified_bundle),
-            (method.BUNDLE_ROOT, method.BUNDLE_FILES, method.verified_bundle),
-            (production.BUNDLE_ROOT, production.BUNDLE_FILES, production.verified_bundle)):
+    for root, files, verify in animation_profile_bundles():
         assert set(verify()) == files
         measured[root.name] = (hashlib.sha256((root / 'manifest.json').read_bytes()).hexdigest(), files)
     for profile in (method, production):
@@ -625,13 +648,17 @@ profiles=('workspace-task.v1','ppt.plan_initial.v1','ppt.plan_options.v1','ppt.p
  'video.storyboard.v1','video.scene.v1','video.motion-plan.v1','video.process-plan.v1',
  'video.explanation-plan.v1','video.animation-experiment.v1','video.animation-observe.v1',
  'video.animation-review.v1','video.animation-review.v2','video.animation-review.v3','video.animation-review.v4','video.animation-create.v2',
- 'video.animation-method-author.v1','video.animation-method-review.v1')
+ 'video.animation-method-author.v1','video.animation-method-review.v1',
+ 'video.joint-plan.v1','video.animation-production.v1','video.animation-production.v2','video.animation-production.v3')
 for name in profiles:implementation(name)
 for name in ('video','video_motion','video_process','video_explanation','video_animation_experiment',
- 'video_animation_create','video_animation_review','video_animation_method','research'):
+ 'video_animation_create','video_animation_review','video_animation_method',
+ 'video_joint_plan','video_animation_production','video_animation_skill_production','research'):
  importlib.import_module('agent_service.profiles.'+name).verified_bundle()
 from agent_service.profiles.video_animation_review import verified_sequence_bundle,verified_batch_bundle,verified_packed_bundle
 verified_sequence_bundle();verified_batch_bundle();verified_packed_bundle()
+from agent_service.profiles.video_animation_production import verified_bundle as verified_production_bundle
+verified_production_bundle(legacy=True);verified_production_bundle(film=True)
 from agent_service.catalog_limits import HISTORY_RECORD_LIMIT
 from agent_service.model_proxy import image_inputs
 assert HISTORY_RECORD_LIMIT==256 and image_inputs.name=='agent_model_image_inputs'
@@ -639,12 +666,14 @@ print(json.dumps({'control_modules':len(modules),'profile_implementations':len(p
 '''
     result = subprocess.run([sys.executable, '-I', '-B', '-c', code, str(extracted)],
         cwd=extracted, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=True)
-    assert json.loads(result.stdout) == dict(control_modules=10, profile_implementations=26)
+    assert json.loads(result.stdout) == dict(control_modules=10, profile_implementations=30)
 
 
 @pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
+                                     'animation-review-v4',
                                      'animation-create-v2', 'animation-method-v1', 'animation-method-v2',
-                                     'animation-production-v1', 'animation-production-v2'])
+                                     'animation-production-v1', 'animation-production-v2',
+                                     'animation-production-v3', 'animation-production-v4'])
 @pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'LICENSE', 'procedure'])
 def test_changed_animation_runtime_resource_fails_before_docker(service, revision, changed):
     if changed == 'procedure':
@@ -660,10 +689,25 @@ def test_changed_animation_runtime_resource_fails_before_docker(service, revisio
 
 
 @pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
+                                     'animation-review-v4',
                                      'animation-create-v2', 'animation-method-v1', 'animation-method-v2',
-                                     'animation-production-v1', 'animation-production-v2'])
+                                     'animation-production-v1', 'animation-production-v2',
+                                     'animation-production-v3', 'animation-production-v4'])
 def test_missing_animation_runtime_resource_cannot_produce_deployable_digest(service, revision):
     (service / 'resources' / revision / 'LICENSE').unlink()
+    receipt, runner = old_receipt(service), DockerFixture()
+    with pytest.raises(BuildError, match='invalid_animation_runtime_resource_manifest'):
+        build(service=service, environ={}, runner=runner)
+    assert not receipt.exists() and not runner.calls
+
+
+@pytest.mark.parametrize('change', ['modified', 'missing'])
+def test_skill_production_foundation_copy_is_an_integrity_checked_runtime_file(service, change):
+    path = service / 'resources/animation-production-v4/foundation/SKILL.md'
+    if change == 'missing':
+        path.unlink()
+    else:
+        path.write_bytes(path.read_bytes() + b' ')
     receipt, runner = old_receipt(service), DockerFixture()
     with pytest.raises(BuildError, match='invalid_animation_runtime_resource_manifest'):
         build(service=service, environ={}, runner=runner)

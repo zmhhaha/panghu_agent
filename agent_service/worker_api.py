@@ -364,7 +364,15 @@ class WorkerHost:
                     self._validate_text_output(value)
                     artifacts.append(InlineFile.from_bytes('response.json', canonical_bytes(value)))
                 elif state == 'completed' or envelope.output_schema != 'text-output.v1':
-                    artifacts = profile.collect_output(workspace, envelope, proof)
+                    collect_with_evidence = getattr(profile, 'collect_output_with_host_evidence', None)
+                    if callable(collect_with_evidence):
+                        collect_evidence = getattr(self.driver, 'collect_tool_evidence', None)
+                        if not callable(collect_evidence):
+                            raise ServiceError('skill_tool_observer_unavailable', 503)
+                        artifacts = collect_with_evidence(workspace, envelope, proof,
+                                                          collect_evidence(request))
+                    else:
+                        artifacts = profile.collect_output(workspace, envelope, proof)
             try:
                 stage = 'release_context'
                 self._release_context(request, context)

@@ -2,7 +2,7 @@
 import {createHash} from 'node:crypto';
 import {createServer} from 'node:http';
 import {createRequire} from 'node:module';
-import {readFileSync,writeFileSync,mkdirSync,lstatSync,unlinkSync} from 'node:fs';
+import {readFileSync,writeFileSync,mkdirSync,lstatSync,unlinkSync,existsSync} from 'node:fs';
 import {join,extname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
@@ -57,9 +57,22 @@ export function synthesizeSoundEvents(events,duration,sampleRate=48000){
 // Only trusted callers supply the browser and measured engine-runtime module.
 // Scene code receives neither, and never chooses file paths or observations.
 export async function captureMethodFrames({chromium,request,resources,root,engineRuntime=null,
- executablePath='/opt/browser/headless_shell'}){
- const c=request.constraints,count=c.duration_seconds*24,extended=request.schema==='video.animation-method-render-request.v2';
+ executablePath='/opt/browser/headless_shell',hyperFramesDist='/opt/renderer/node_modules/hyperframes/dist'}){
+ const projectAware=request.schema==='video.animation-method-render-request.v3';
+ const c=request.constraints,count=c.duration_seconds*24,extended=projectAware||request.schema==='video.animation-method-render-request.v2';
  const engine=extended?request.engine:'html-svg';
+ let projectRuntime,coreRuntime,project;
+ if(projectAware){
+  const adjacent=new URL('./hyperframes_project.mjs',import.meta.url);
+  projectRuntime=await import(existsSync(fileURLToPath(adjacent))?adjacent:new URL('./motion_renderer/hyperframes_project.mjs',import.meta.url));
+  const sourceFiles=Object.fromEntries([...resources].filter(([name])=>!name.startsWith('/assets/')).map(([name,bytes])=>[name.slice(1),bytes]));
+  const assets=Object.fromEntries([...resources].filter(([name])=>name.startsWith('/assets/')).map(([name,bytes])=>[name.slice(1),bytes]));
+  project=projectRuntime.buildHyperFramesProject(request.project,sourceFiles,assets).project;
+  if(project.duration_seconds!==c.duration_seconds||project.fps!==c.fps||project.width!==c.width||project.height!==c.height
+   ||project.scenes.length!==1||project.scenes[0].engine!==engine||typeof request.legacy_bridge!=='boolean')
+   throw Error('method_hyperframes_project_mismatch');
+  coreRuntime=projectRuntime.hyperFramesRuntimeArtifact(hyperFramesDist);
+ }
  if(!Number.isInteger(count)||count<24||count>1440)throw Error('method_frame_budget_invalid');
  if(extended&&(!['html-svg','canvas','three'].includes(engine)||!engineRuntime))throw Error('method_engine_not_admitted');
  const mime={'.html':'text/html;charset=utf-8','.js':'text/javascript;charset=utf-8',
@@ -105,12 +118,16 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
   page.on('popup',popup=>{if(errors.length<32)errors.push('method_popup_forbidden');popup.close();});
   page.on('dialog',dialog=>dialog.dismiss());
   const ready=async()=>{
+   if(projectAware){
+    await projectRuntime.installHyperFramesProject(page,{project,runtimePath:coreRuntime.runtimePath,
+     legacyBridge:request.legacy_bridge});return;
+   }
    await page.evaluate(async()=>{
     await document.fonts.ready;await window.__animationExperiment?.ready;
     if(typeof window.__animationExperiment?.seek!=='function')throw Error('method_seek_missing');
    });
   };
-  await page.goto(origin+'/scene.html',{waitUntil:'networkidle',timeout:20000});
+  await page.goto(origin+'/'+(projectAware?project.entry:'scene.html'),{waitUntil:'networkidle',timeout:20000});
   await ready();
   if(engine==='three'&&!scripts.has('/assets/three.module.min.js'))throw Error('method_three_module_not_loaded');
   let checkRuntime,engineObservation;
@@ -128,7 +145,10 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
   mkdirSync(join(root,'frames'));
   const frames=[];let evidenceBytes=0;
   const capture=async(time,name,{seek=true}={})=>{
-   if(seek)await page.evaluate(async seconds=>{await window.__animationExperiment.seek(seconds);},time);
+   if(seek){
+    if(projectAware)await projectRuntime.seekHyperFramesProject(page,time);
+    else await page.evaluate(async seconds=>{await window.__animationExperiment.seek(seconds);},time);
+   }
    await checkRuntime();
    const bytes=await page.screenshot({type:'jpeg',quality:80,timeout:10000});
    evidenceBytes+=bytes.length;
@@ -164,7 +184,12 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
     fresh_load_verified:true,probes};
   }
   return {frames,frame_count:count,reverse_seek_verified:true,
-   ...(extended?{engine_observation:engineObservation,seek_checks:seekChecks}:{})};
+   ...(extended?{engine_observation:engineObservation,seek_checks:seekChecks}:{}),
+   ...(projectAware?{project_runtime:{...(await page.evaluate(()=>({...window.__trustedHyperFramesProject.state}))),
+    schema:'video.hyperframes-project-runtime-proof.v1',
+    project_id:project.project_id,project_sha256:request.project_sha256,
+    version:coreRuntime.version,core_sha256:coreRuntime.core_sha256,
+    seek_protocol:'hyperframes-core-renderSeek-exact',legacy_bridge:request.legacy_bridge} }:{} )};
  }finally{
   if(browser)await browser.close().catch(()=>{});
   await new Promise(done=>server.close(done));
@@ -185,7 +210,8 @@ async function main(){
   // The trusted adapter authenticates the exact UTF-8 request bytes through
   // this environment value. Do not reserialize parsed floats here: Python and
   // JavaScript legitimately use different spellings for 1.0 and small values.
-  const extended=request.schema==='video.animation-method-render-request.v2';
+  const projectAware=request.schema==='video.animation-method-render-request.v3';
+  const extended=projectAware||request.schema==='video.animation-method-render-request.v2';
   if((!extended&&request.schema!=='video.animation-method-render-request.v1')
    ||(extended&&!['html-svg','canvas','three'].includes(request.engine))
    ||(!extended&&(request.engine!==undefined||request.engine_runtime_sha256!==undefined))
@@ -210,6 +236,13 @@ async function main(){
     if(request.assets_sha256[name]!==undefined&&request.assets_sha256[name]!==expected)
      throw Error('method_three_asset_not_pinned');
    }
+  }
+  if(projectAware){
+   if(!/^[0-9a-f]{64}$/.test(request.project_runtime_sha256||'')
+    ||hash(read(fileURLToPath(new URL('./hyperframes_project.mjs',import.meta.url)),1024*1024))!==request.project_runtime_sha256)
+    throw Error('method_hyperframes_runtime_changed');
+   Object.assign(receipt,{schema:'video.animation-method-render-receipt.v3',
+    project_runtime_sha256:request.project_runtime_sha256});
   }
   if(c.fps!==24||!Number.isInteger(c.width)||c.width<320||c.width>1280
    ||!Number.isInteger(c.height)||c.height<180||c.height>720
