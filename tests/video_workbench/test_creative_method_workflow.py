@@ -242,7 +242,8 @@ def test_partial_separate_credentials_fail_explicitly_without_echoing_token(pref
 
 
 @pytest.mark.parametrize('old_profile_only', [False, True])
-def test_production_gateway_uses_exact_new_profile_input_namespace_and_stopped_artifact(monkeypatch, old_profile_only):
+@pytest.mark.parametrize('film', [False, True])
+def test_production_gateway_uses_exact_new_profile_input_namespace_and_stopped_artifact(monkeypatch, old_profile_only, film):
     monkeypatch.setattr('video_workbench.motion_gateway.time.time', lambda: 1000.0)
 
     class ProductionPeer(Peer):
@@ -255,10 +256,19 @@ def test_production_gateway_uses_exact_new_profile_input_namespace_and_stopped_a
             return super().__call__(request)
 
     peer = ProductionPeer()
-    peer.profiles[0]['profile'] = 'video.animation-experiment.v1' if old_profile_only else 'video.animation-production.v1'
-    doc = production_input()
+    profile = 'video.animation-production.v2' if film else 'video.animation-production.v1'
+    peer.profiles[0]['profile'] = 'video.animation-experiment.v1' if old_profile_only else profile
+    if film:
+        from test_creative_film_renderer import film_scene
+        package = film_scene('html-svg')['creative']['package']
+        doc, expected = package['input_document'], package['result']
+    else:
+        doc = production_input()
+        expected = production_result(doc)
     with AgentClient('http://production-agent.invalid', TOKEN, transport=httpx.MockTransport(peer)) as client:
-        gateway = ProductionCreativeAgentGateway(client)
+        base = ProductionCreativeAgentGateway(client)
+        gateway = base.for_document(doc)
+        assert base.profile == 'video.animation-production.v1'
         ref = gateway.upload(doc)
         assert ref['role'] == 'animation_production_input'
         if old_profile_only:
@@ -267,17 +277,16 @@ def test_production_gateway_uses_exact_new_profile_input_namespace_and_stopped_a
             assert peer.count('POST', '/v1/jobs') == 0
             return
         gateway.submit('formal-operation', doc, 1200, ref)
-        assert peer.request['profile'] == 'video.animation-production.v1'
+        assert peer.request['profile'] == profile
         assert peer.request['business_ref'] == 'video-production:formal-operation'
         post = next(row for row in peer.calls if row.method == 'POST' and row.url.path == '/v1/jobs')
         assert post.headers['idempotency-key'] == 'production-formal-operation'
         peer.complete('formal-operation')
-        expected = production_result(doc)
         peer.content = canonical_bytes(expected)
         peer.manifest = frozen_manifest(JOB, ATTEMPT, [dict(artifact_id=ARTIFACT,
             name='animation-production-result.json', size=len(peer.content), sha256=digest(expected))])
         peer.job.update(business_ref='video-production:formal-operation',
-                        pins=dict(profile='video.animation-production.v1', profile_revision='1'),
+                        pins=dict(profile=profile, profile_revision='1'),
                         artifact_manifest_sha256=peer.manifest['sha256'])
         assert gateway.collect(JOB, digest(doc), doc) == expected
         assert peer.count('POST', '/v1/jobs') == 1

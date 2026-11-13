@@ -623,7 +623,7 @@ def test_completed_replay_does_not_consume_the_distinct_request_budget(execution
 
 
 @pytest.mark.parametrize('profile', ['video.animation-method-author.v1', 'video.animation-method-review.v1',
-                                   'video.animation-production.v1'])
+                                   'video.animation-production.v1', 'video.animation-production.v2'])
 def test_method_roles_have_an_eight_request_hard_cap_and_free_completed_replay(execution, profile):
     run = execution(profile=profile, max_calls_per_attempt=40)
     for index in range(8):
@@ -637,7 +637,7 @@ def test_method_roles_have_an_eight_request_hard_cap_and_free_completed_replay(e
 
 
 @pytest.mark.parametrize('profile', ['video.animation-method-author.v1', 'video.animation-method-review.v1',
-                                   'video.animation-production.v1'])
+                                   'video.animation-production.v1', 'video.animation-production.v2'])
 def test_operator_can_tighten_method_limit_further(execution, profile):
     run = execution(profile=profile, max_calls_per_attempt=1)
     run.proxy.respond(run.token, run.body)

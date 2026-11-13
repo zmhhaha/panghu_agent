@@ -57,4 +57,7 @@ def implementation(name):
     if name == 'video.animation-production.v1':
         from .video_animation_production import VideoAnimationProductionProfile
         return VideoAnimationProductionProfile()
+    if name == 'video.animation-production.v2':
+        from .video_animation_production import VideoAnimationFilmProductionProfile
+        return VideoAnimationFilmProductionProfile()
     raise ValueError('No reviewed profile implementation')

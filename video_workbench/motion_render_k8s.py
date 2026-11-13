@@ -346,7 +346,7 @@ def validate_creative_artifacts(entries, files, observations, runtime, quality):
     """Independent custody/clock checks; no generic aesthetic approval claim."""
     timeline, package = (json.loads(files[name]) for name in ('timeline.json', 'plan.json'))
     count = round(timeline['duration_seconds'] * 24)
-    engine_aware = package['schema'] == 'video.creative-scene.v3'
+    engine_aware = package['schema'] in {'video.creative-scene.v3', 'video.creative-scene.v4'}
     renderer = 'isolated-chromium-engine-seek-ffmpeg-1' if engine_aware else 'isolated-chromium-absolute-seek-ffmpeg-1'
     require(type(observations) is dict and observations.get('schema') ==
             ('video.creative-observations.v2' if engine_aware else 'video.creative-observations.v1')
@@ -391,12 +391,17 @@ def validate_creative_artifacts(entries, files, observations, runtime, quality):
     technical = dict(status='passed', renderer=observations['renderer'],
         reverse_seek_verified=True, source_sha256=package['result_sha256'],
         visual_quality='not_evaluated', aesthetic_approval=False)
-    if package['schema'] in {'video.creative-scene.v2', 'video.creative-scene.v3'}:
+    if package['schema'] in {'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'}:
         technical.update(method_delivery_sha256=package['method_delivery_sha256'],
             method_decision_sha256=digest(package['method_decision']),
             method_evidence_scope=package['evidence_scope'])
     else:
         technical['capability_release_sha256'] = package['capability_release_sha256']
+    if package['schema'] == 'video.creative-scene.v4':
+        # Source custody is independent of whether adjacent motion looks good.
+        context = package['input_document']['film_context']
+        technical.update(film_context_sha256=digest(context), film_sha256=context['film_sha256'],
+            handoff_sha256=digest(package['result']['handoff']), continuity_quality='not_evaluated')
     if engine_aware:
         technical.update(engine=package['engine'], native_context_verified=True,
             idle_clock_verified=True, engine_evidence_scope='native_context_measured_not_visual_quality')

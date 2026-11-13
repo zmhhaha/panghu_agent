@@ -47,7 +47,7 @@ class CandidateMotion:
         self.store = store
         self.real = MotionStore(store)
 
-    def start_candidate(self, owner, scene_id, request, idem, *, audio_version_id):
+    def start_candidate(self, owner, scene_id, request, idem, *, audio_version_id, film_context=None):
         with self.store.transaction() as db:
             row = db.execute('SELECT document FROM motion_operations WHERE owner=? AND idem=?', (owner, idem)).fetchone()
             if row:
@@ -59,6 +59,8 @@ class CandidateMotion:
             op = dict(id=str(uuid4()), owner=owner, project_id=project_id, scene_id=scene_id,
                 status='queued', version_id=None, audio_version_id=audio_version_id, error=None,
                 cancel_requested=False, request=request)
+            if film_context is not None:
+                op.update(film_context=film_context, film_context_sha256=digest(film_context))
             db.execute('INSERT INTO motion_operations VALUES (?, ?, ?, ?, ?, ?, ?)',
                 (op['id'], owner, project_id, scene_id, idem, digest(request), json.dumps(op)))
             self.store._save(db, project)
@@ -72,6 +74,9 @@ class CandidateMotion:
             assert version['audio_version_id'] == audio_version_id
             return version
 
+    def continuity_predecessor(self, owner, version_id, audio_version_id):
+        return self.candidate_version(owner, version_id, audio_version_id)['predecessor_export']
+
     def cancel(self, owner, op_id):
         with self.store.transaction() as db:
             op = self.real._op(db, op_id, owner)
@@ -83,6 +88,16 @@ class CandidateMotion:
             op = self.real._op(db, op_id)
             version = dict(id=str(uuid4()), project_id=op['project_id'], scene_id=op['scene_id'],
                 audio_version_id=op['audio_version_id'], stale=False)
+            if op.get('film_context'):
+                context = op['film_context']
+                version.update(film_context_sha256=digest(context), predecessor_export=dict(
+                    scene_id=op['scene_id'], motion_version_id=version['id'], input_sha256='a' * 64,
+                    result_sha256='b' * 64, source_sha256='c' * 64,
+                    source_summary=dict(engine='html-svg', strategy=dict(description='Synthetic source', tradeoffs='Fixture only'),
+                                        files_sha256={'scene.html': 'd' * 64}),
+                    handoff=dict(schema='video.scene-handoff.v1', film_sha256=context['film_sha256'],
+                        scene_id=op['scene_id'], objects=[], entry_state='前一状态', exit_state='后一状态',
+                        camera='同一相机', transition_intent='继续运动')))
             op.update(status='completed', error=None, version_id=version['id'])
             db.execute('INSERT INTO motion_versions VALUES (?, ?, ?, ?, ?, ?)',
                 (version['id'], op['owner'], op['project_id'], op['scene_id'], op_id, json.dumps(version)))
@@ -211,13 +226,14 @@ def test_replay_after_lost_local_response_and_restart_creates_one_child(env, mon
     assert error.value.code == 'idempotency_conflict'
 
 
-@pytest.mark.parametrize('change', ['script', 'order', 'voice', 'pronunciation', 'pause', 'head'])
+@pytest.mark.parametrize('change', ['script', 'style', 'order', 'voice', 'pronunciation', 'pause', 'head'])
 def test_changed_inputs_stop_new_admission_without_replanning(env, change):
     run = begin(env)
     env.runs.tick()
     with env.store.transaction() as db:
         p = env.store._project(db, OWNER, env.project['id'])
         if change == 'script': p['script'] += '新材料'
+        elif change == 'style': p['style'] += '改用线描'
         elif change == 'order': p['scenes'].reverse()
         elif change == 'voice': p['speech_settings'] = dict(voice='zm_yunxi')
         elif change == 'pronunciation': p['scenes'][0]['speech_settings'] = dict(pronunciation={'粒子':'例子'})
@@ -339,10 +355,185 @@ def test_disabled_admission_keeps_existing_journal_draining(env):
     assert len(children(env, 'audio_operations')) == 1
 
 
+def test_film_context_is_one_frozen_clock_and_exact_predecessor_survives_restart(env):
+    run = begin(env)
+    complete_audio_phase(env)
+    first = children(env, 'motion_operations')[0]
+    context = first['film_context']
+    assert context['current_scene_index'] == 0 and context['predecessor'] is None
+    film = context['film']
+    assert film['script'] == env.project['script']
+    assert [row['scene_id'] for row in film['scenes']] == [s['id'] for s in env.project['scenes']]
+    assert film['total_seconds'] == 4.5
+    env.motion.finish(first['id'])
+    recovered = ProductionRunStore(env.store, env.joint, env.motion, env.production)
+    recovered.tick()
+    second = children(env, 'motion_operations')[1]
+    next_context = second['film_context']
+    assert next_context['film'] == film and next_context['film_sha256'] == context['film_sha256']
+    assert next_context['current_scene_index'] == 1
+    predecessor = next_context['predecessor']
+    assert predecessor == env.motion.continuity_predecessor(OWNER,
+        recovered.get(OWNER, run['id'])['items'][0]['motion_version_id'], first['audio_version_id'])
+    assert 'files' not in predecessor['source_summary'] and 'plan' not in predecessor
+    recovered.tick()
+    assert len(children(env, 'motion_operations')) == 2
+    with env.store.transaction() as db:
+        journal = recovered._read(db, run['id'])
+    assert 'predecessor' not in journal['intents']['motion:1']
+    assert journal['intents']['motion:1']['film_context_sha256'] == digest(next_context)
+
+
+def test_public_current_status_projects_private_candidates_without_writing_heads(env):
+    run = begin(env)
+    assert run['current'] is True and run['duration_seconds'] is None
+    complete_audio_phase(env)
+    env.motion.finish(children(env, 'motion_operations')[0]['id'])
+    env.runs.tick()
+    state = env.runs.get(OWNER, run['id'])
+    assert state['current'] is True and state['duration_seconds'] == 4.5
+    assert [item['duration_seconds'] for item in state['items']] == [1.75, 2.75]
+    assert [item['candidate_current'] for item in state['items']] == [True, False]
+    with env.store.transaction() as db:
+        project = env.store._project(db, OWNER, env.project['id'])
+        project['style'] += '换风格'
+        env.store._save(db, project)
+        before = env.runs._read(db, run['id'])
+    historical = env.runs.list(OWNER, run['project_id'])[0]
+    assert historical['current'] is False
+    assert all(item['candidate_current'] is False for item in historical['items'])
+    with env.store.transaction() as db:
+        assert env.runs._read(db, run['id']) == before  # a read never mutates journal state.
+        assert db.execute('SELECT count(*) FROM motion_heads').fetchone()[0] == 0
+
+
+def test_public_duration_accounts_for_frame_padding(env):
+    run = begin(env)
+    env.runs.tick()
+    finish_audio(env, children(env, 'audio_operations')[0]['id'], seconds=1.013)
+    env.runs.tick()
+    finish_audio(env, children(env, 'audio_operations')[1]['id'], seconds=2.017)
+    env.runs.tick()
+    first = children(env, 'motion_operations')[0]
+    rows = first['film_context']['film']['scenes']
+    assert rows[0]['end_seconds'] == 1.7916666666666667
+    assert rows[1]['start_seconds'] == rows[0]['end_seconds']
+    assert abs(rows[0]['trailing_silence_seconds'] - (rows[0]['end_seconds'] - .25 - 1.013)) < 1e-9
+    state = env.runs.get(OWNER, run['id'])
+    assert state['duration_seconds'] == first['film_context']['film']['total_seconds']
+
+
+def test_legacy_frozen_journal_continues_its_original_nonfilm_contract(env):
+    run = begin(env)
+    with env.store.transaction() as db:
+        legacy = env.runs._read(db, run['id'])
+        for key in ('continuity_schema', 'film', 'film_sha256'):
+            legacy.pop(key)
+        legacy['frozen'] = env.runs._freeze(env.project)
+        legacy['binding_sha256'] = digest(legacy['frozen'])
+        env.runs._write(db, legacy)
+    complete_audio_phase(env)
+    first = children(env, 'motion_operations')[0]
+    assert 'film_context' not in first
+    env.motion.finish(first['id'])
+    env.runs.tick()
+    assert 'film_context' not in children(env, 'motion_operations')[1]
+    assert env.runs.get(OWNER, run['id'])['current'] is True
+
+
+def test_historical_key_replay_after_trash_cannot_admit_or_project_current_work(env):
+    run = begin(env)
+    env.runs.cancel(OWNER, run['id'])
+    project = env.store.project(OWNER, env.project['id'])
+    env.store.set_project_deleted(OWNER, project['id'], project['revision'], deleted=True)
+    replay = begin(env)
+    assert replay['id'] == run['id'] and replay['current'] is False
+    assert not children(env, 'audio_operations') and not children(env, 'motion_operations')
+
+
+def test_three_real_candidates_bind_one_clock_source_handoffs_and_snapshot_chain(tmp_path):
+    from video_workbench.motion_timing import MotionTiming
+    from video_workbench.creative_snapshot import freeze_snapshot_v4, verify_snapshot_v4
+    from test_creative_production import empty_methods, result
+    from test_creative_engine_renderer import RUNTIME_V2
+    store = Store(tmp_path / 'three-film.db')
+    joint, motion = JointPlanStore(store), MotionStore(store)
+    production = Production(store, motion_store=motion, motion_timing=MotionTiming(motion),
+        motion_enabled=True, motion_renderer=object(), runtime_fingerprint=RUNTIME_V2)
+    runs = ProductionRunStore(store, joint, motion, production)
+    project = seed(store, joint, count=3)
+    local = SimpleNamespace(store=store, joint=joint, motion=motion, production=production, runs=runs, project=project)
+    run = begin(local)
+    complete_audio_phase(local)
+    versions, previous = [], None
+    for index in range(3):
+        op = motion.active_operations()[0]
+        prepared = motion.prepare_creative(op['id'], empty_methods(store))
+        context = prepared['document']['film_context']
+        assert context['current_scene_index'] == index
+        if previous is not None:
+            assert context['predecessor'] == previous
+            tampered = deepcopy(context)
+            tampered['predecessor']['source_sha256'] = 'e' * 64
+            with pytest.raises(ServiceError, match='idempotency_conflict'):
+                motion.start_candidate(OWNER, op['scene_id'],
+                    children(local, 'production_runs')[0]['intents'][f'motion:{index}']['request'],
+                    f'production-run:{run["id"]}:motion:{index}', audio_version_id=op['audio_version_id'],
+                    film_context=tampered)
+            with pytest.raises(ServiceError, match='creative_predecessor_binding_mismatch'):
+                motion.start_candidate(OWNER, op['scene_id'],
+                    children(local, 'production_runs')[0]['intents'][f'motion:{index}']['request'],
+                    f'forged-predecessor-{index}', audio_version_id=op['audio_version_id'], film_context=tampered)
+        output = result(prepared['document'])
+        output['handoff']['objects'] = [dict(object_id='particle', meaning='同一粒子', appearance='蓝色圆点',
+            state=f'第{index}段结束时的位置', source_file='scene.html', source_anchor='id="dot"')]
+        output['handoff']['camera'] = '从整体切到局部视角' if index == 1 else '保持对象身份与相机关系'
+        completed = motion.complete(op['id'], output)
+        version = motion.candidate_version(OWNER, completed['version_id'], op['audio_version_id'])
+        assert version['plan']['schema'] == 'video.creative-scene.v4'
+        assert version['film_context_sha256'] == digest(context)
+        versions.append(version)
+        previous = motion.continuity_predecessor(OWNER, version['id'], op['audio_version_id'])
+        runs = ProductionRunStore(store, joint, motion, production)  # restart before the next boundary.
+        local.runs = runs
+        runs.tick()
+    state = runs.get(OWNER, run['id'])
+    assert state['phase'] == 'draft' and state['duration_seconds'] == 8.25
+    with store.transaction() as db:
+        snapshot = json.loads(db.execute('SELECT snapshot FROM video_renders WHERE id=?',
+                                        (state['draft_render_id'],)).fetchone()[0])
+    # Stored snapshots omit WAV payloads; reconstruct the exact records for
+    # verification and reject a different first candidate before rendering.
+    sources = []
+    for version, item, scene in zip(versions, state['items'], project['scenes']):
+        timing = production.motion_timing.get_candidate(OWNER, version['id'], item['audio_version_id'])
+        sources.append(dict(id=scene['id'], title=scene['title'], narration=scene['narration'],
+            visual_mode='creative', audio=store.audio_version(OWNER, item['audio_version_id']),
+            leading_seconds=.25, trailing_seconds=.5,
+            creative=dict(id=version['id'], package=version['plan'], beats=version['beats'], alignment=timing['alignment'],
+                          compiler_version=version['compiler_version'])))
+    full = freeze_snapshot_v4(project['id'], snapshot['project_revision'], project['title'], sources,
+                              runtime_fingerprint=RUNTIME_V2)
+    assert verify_snapshot_v4(full) == full
+    changed = deepcopy(sources)
+    changed[0]['creative']['id'] = 'unrelated-candidate'
+    with pytest.raises(ServiceError, match='creative_film_predecessor_mismatch'):
+        freeze_snapshot_v4(project['id'], snapshot['project_revision'], project['title'], changed,
+                           runtime_fingerprint=RUNTIME_V2)
+    with store.transaction() as db:
+        current = store._project(db, OWNER, project['id'])
+        current['script'] += '改动总稿'
+        store._save(db, current)
+        assert db.execute('SELECT count(*) FROM motion_heads').fetchone()[0] == 0
+    assert runs.get(OWNER, run['id'])['current'] is False
+    assert all(motion.candidate_version(OWNER, version['id'], item['audio_version_id'])['stale']
+               for version, item in zip(versions, state['items']))
+
+
 def test_real_candidate_motion_and_multi_scene_render_snapshot_without_adoption(tmp_path):
     from video_workbench.motion_timing import MotionTiming
     from test_creative_production import empty_methods, result
-    from test_motion_snapshot import RUNTIME
+    from test_creative_engine_renderer import RUNTIME_V2 as RUNTIME
     store = Store(tmp_path / 'real-candidates.db')
     joint = JointPlanStore(store)
     motion = MotionStore(store)

@@ -8,6 +8,38 @@ const uncertain = error => typeof error === 'string' && /uncertain|unconfirmed/.
 export const productionRunUnresolved = run => Boolean(run?.id && (!TERMINAL.has(run.status)
   || run.blocked_reason || run.draining === true || uncertain(run.error) || run.items?.some(item => uncertain(item.error))));
 const pathFor = id => `/api/projects/${encodeURIComponent(id)}/production-runs`;
+const positive = value => typeof value === 'number' && Number.isFinite(value) && value > 0;
+const seconds = value => Math.round(value * 1000) / 1000;
+
+/** Current-content projection is independent of the history dropdown. */
+export function currentProductionRun(project, runs = []) {
+  if (!project?.id || !project.joint_plan?.version_id || !project.scenes?.length) return null;
+  const matching = runs.filter(run => run.project_id === project.id && run.current === true
+    && run.joint_plan_version_id === project.joint_plan.version_id
+    && Array.isArray(run.items) && run.items.length === project.scenes.length
+    && new Set(run.items.map(item => item.scene_id)).size === project.scenes.length
+    && project.scenes.every((scene, index) => run.items[index].scene_id === scene.id))
+    .sort((a, b) => Number(a.created_at ?? 0) - Number(b.created_at ?? 0));
+  const latest = matching.at(-1);
+  // A newer failed attempt must not borrow older successful candidates.
+  return latest && ['queued', 'running', 'completed'].includes(latest.status)
+    && !latest.error && !latest.blocked_reason && latest.draining !== true ? latest : null;
+}
+
+export function productionRunDraftReady(run) {
+  return Boolean(run?.status === 'completed' && run.current === true && run.draft_render_id
+    && !run.error && !run.blocked_reason && run.draining !== true
+    && run.items?.length && run.items.every(item => item.candidate_current === true
+      && item.audio_version_id && item.motion_version_id && !item.error));
+}
+
+export function productionRunActualSeconds(run, renders = []) {
+  if (!productionRunDraftReady(run)) return null;
+  const render = renders.find(item => item.id === run.draft_render_id && item.status === 'completed'
+    && item.selection === 'draft_only' && item.content_state === 'current'
+    && positive(item.actual_duration_seconds));
+  return render?.actual_duration_seconds ?? null;
+}
 
 export function productionRunErrorLabel(code) {
   const labels = {
@@ -56,13 +88,20 @@ export function createProductionRunsPanel({ document, getContext, request, refre
     return node;
   };
   function pause() { $('production-run-video').pause(); }
+  function clearMedia() {
+    pause(); mediaKey = null;
+    $('production-run-video').removeAttribute('src');
+    $('download-production-run').removeAttribute('href');
+  }
   function notify() { render(); onChange(); }
+  const currentRun = project => project?.id && loaded.get(project.id) === project.revision && !errors.has(project.id)
+    && !unresolvedStarts.has(project?.id) ? currentProductionRun(project, rowsFor(project.id)) : null;
 
   function render() {
     const value = context(), project = value.project, id = project?.id;
     const rows = ordered(rowsFor(id)), run = selectedRun(id), waiting = unresolvedStarts.has(id);
     $('production-runs-panel').hidden = !project || (!value.enabled && !rows.length && !waiting);
-    if (!project) { pause(); return; }
+    if (!project) { clearMedia(); return; }
     const running = rows.some(productionRunUnresolved), adopted = Boolean(project.joint_plan?.version_id && project.scenes?.length);
     $('start-production-run').disabled = !value.enabled || loaded.get(id) !== project.revision || !adopted
       || value.unsaved || value.projectBusy || hasUnresolvedOperation(id);
@@ -78,16 +117,23 @@ export function createProductionRunsPanel({ document, getContext, request, refre
     $('production-run-error').hidden = !errors.get(id);
     $('production-run-error').textContent = errors.get(id) ?? '';
     $('production-run-history').hidden = rows.length < 2;
-    const options = rows.map((item,index) => { const option = text('option', `制作 ${index+1} · ${STATUS[item.status] ?? '状态待确认'}`); option.value = item.id; return option; });
+    const options = rows.map((item,index) => { const option = text('option', `制作 ${index+1} · ${STATUS[item.status] ?? '状态待确认'}${item.current === false ? ' · 历史内容' : ''}`); option.value = item.id; return option; });
     $('production-run-select').replaceChildren(...options);
     if (run) { selected.set(id, run.id); $('production-run-select').value = run.id; }
     $('production-run-result').hidden = !run;
-    if (!run) { pause(); $('production-run-player').hidden = true; return; }
+    if (!run) { clearMedia(); $('production-run-player').hidden = true; return; }
     const total = run.items?.length ?? 0;
+    const contentKnown = loaded.get(id) === project.revision && !errors.has(id);
     const steps = Number.isInteger(run.progress?.total) && run.progress.total > 0;
     const progress = steps ? `${run.progress.done}/${run.progress.total} 步`
       : total ? `${run.items.filter(item => item.motion_version_id).length}/${total} 段动画` : '';
-    $('production-run-status').textContent = `${STATUS[run.status] ?? '状态待确认'} · ${PHASE[run.phase] ?? '正在读取制作阶段'}${progress ? ` · ${progress}` : ''}`;
+    const status = STATUS[run.status] ?? '状态待确认';
+    const labels = [status];
+    if (!TERMINAL.has(run.status) && PHASE[run.phase] && PHASE[run.phase] !== status) labels.push(PHASE[run.phase]);
+    if (progress) labels.push(progress);
+    if (run.current === false) labels.push('历史内容，项目已变化');
+    else if (!contentKnown) labels.push('内容匹配状态待读取');
+    $('production-run-status').textContent = labels.join(' · ');
     $('production-run-voice').textContent = `统一音色：${speechVoiceName(run.voice, value.settings ?? {})}。`;
     $('production-run-problem').hidden = !run.error && !run.blocked_reason;
     $('production-run-problem').textContent = run.blocked_reason
@@ -98,9 +144,11 @@ export function createProductionRunsPanel({ document, getContext, request, refre
     $('cancel-production-run').textContent = cancelPending.has(run.id) ? '已申请取消，正在读取状态' : '申请取消本次制作';
     const items = (run.items ?? []).map((item,index) => {
       const node = text('li', undefined, 'production-run-item');
+      const stopped = TERMINAL.has(run.status) && run.status !== 'completed';
       const seconds = Number.isFinite(item.audio_seconds) && item.audio_seconds > 0 ? `实测录音 ${Math.round(item.audio_seconds * 100) / 100} 秒`
-        : item.audio_operation_id ? '正在制作配音' : '配音待制作';
-      const motion = item.motion_version_id ? '动画已完成' : item.motion_operation_id ? '正在制作动画' : '动画待制作';
+        : stopped ? '配音尚未完成' : item.audio_operation_id ? '正在制作配音' : '配音待制作';
+      const motion = item.motion_version_id ? '动画候选已生成'
+        : stopped ? '动画尚未完成' : item.motion_operation_id ? '正在制作动画' : '动画待制作';
       node.append(text('strong', `段落 ${index+1} · ${item.title ?? ''}`), text('span', `${seconds} · ${motion}`));
       if (item.error) node.append(text('p', productionRunErrorLabel(item.error), 'batch-item-error'));
       return node;
@@ -117,11 +165,14 @@ export function createProductionRunsPanel({ document, getContext, request, refre
         $('download-production-run').href = url;
         $('download-production-run').setAttribute('download', `draft-${run.draft_render_id}.mp4`);
       }
-      $('production-run-review-note').textContent = '草稿待审阅。请完整观看画面与旁白；制作完成、播放或下载都不代表你已试听、采用或核准时序。';
+      const actual = (value.renders ?? []).find(item => item.id === run.draft_render_id
+        && item.status === 'completed' && positive(item.actual_duration_seconds))?.actual_duration_seconds;
+      const duration = positive(actual) ? `视频实际 ${seconds(actual)} 秒。`
+        : positive(run.duration_seconds) ? `按录音与留白排程 ${seconds(run.duration_seconds)} 秒；视频实测时长待读取。` : '';
+      $('production-run-player-heading').textContent = run.current === false ? '历史整片预览' : '整片预览';
+      $('production-run-review-note').textContent = `${run.current === false ? '这份草稿对应的项目内容已变化。' : !contentKnown ? '此草稿的内容匹配状态尚未确认。' : ''}${duration}请完整观看画面与旁白；制作完成、播放或下载都不代表你已试听、采用或核准时序。`;
     } else if (mediaKey) {
-      pause(); mediaKey = null;
-      $('production-run-video').removeAttribute('src');
-      $('download-production-run').removeAttribute('href');
+      clearMedia();
     }
   }
 
@@ -192,9 +243,11 @@ export function createProductionRunsPanel({ document, getContext, request, refre
   $('cancel-production-run').addEventListener('click', cancel);
   $('reload-production-runs').addEventListener('click', async () => { try { await refresh(); } catch (error) { onError(error); } });
   $('production-run-select').addEventListener('change', event => {
-    const id = context().project?.id; if (id) selected.set(id, event.target.value); render();
+    const id = context().project?.id; if (id) selected.set(id, event.target.value); notify();
   });
   $('production-run-video').addEventListener('play', onMediaPlay);
-  return { render, load, start, cancel, pause, hasUnresolvedOperation,
+  return { render, load, start, cancel, pause, hasUnresolvedOperation, currentRun,
+    managedRenderIds: projectId => new Set(rowsFor(projectId).filter(run => run.status === 'completed'
+      && run.draft_render_id).map(run => run.draft_render_id)),
     hasActiveOperation: hasUnresolvedOperation, hasRefreshableOperation: hasUnresolvedOperation };
 }

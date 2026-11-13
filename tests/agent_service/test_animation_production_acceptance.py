@@ -47,10 +47,19 @@ def edit(root, name, change):
 
 @pytest.fixture
 def capture(tmp_path, monkeypatch):
+    return make_capture(tmp_path, monkeypatch)
+
+
+def make_capture(tmp_path, monkeypatch, *, film=False):
     # Test helpers live in the sibling business-test directory, not production.
     monkeypatch.syspath_prepend(str(SOURCE / 'tests/video_workbench'))
     from test_creative_method_contract import core_task, delivery, production_result, published_method
     from test_motion_snapshot import RUNTIME
+    selected_profile = production.FILM_PROFILE if film else production.PROFILE
+    runtime = RUNTIME
+    if film:
+        from test_creative_engine_renderer import RUNTIME_V2
+        runtime = RUNTIME_V2
     audio = io.BytesIO()
     with wave.open(audio, 'wb') as stream:
         stream.setparams((1, 2, 16000, 0, 'NONE', 'not compressed'))
@@ -59,13 +68,26 @@ def capture(tmp_path, monkeypatch):
     core = core_task(seconds=3)
     core['scene']['audio_sha256'] = hashlib.sha256(audio_raw).hexdigest()
     core['scene']['alignment']['audio_sha256'] = core['scene']['audio_sha256']
+    if film:
+        from test_animation_film_production_profile import film_document
+        film_context = film_document()['film_context']
+        first = film_context['film']['scenes'][0]
+        first.update(scene_id=core['scene']['scene_id'], narration=core['scene']['narration'],
+                     audio_sha256=core['scene']['audio_sha256'])
+        film_context['film_sha256'] = digest(film_context['film'])
+        core['film_context'] = film_context
     document = build_scene_input(core_task=core, method_delivery=delivery(core, methods=[published_method()]))
     artifact = production_result(document)
     package = collect_scene_result(document, artifact)
-    _, hosts, _ = prepare()
-    host, policy, binding = candidate_config(hosts[production.PROFILE])
+    if film:
+        from test_animation_film_catalog import prepare as prepare_film
+        _, _, film_host, _, _ = prepare_film()
+        hosts = {selected_profile: film_host}
+    else:
+        _, hosts, _ = prepare()
+    host, policy, binding = candidate_config(hosts[selected_profile])
     files = {production.INPUT_NAME:canonical_bytes(document)}
-    scenario_path, sources, scenario = write_scenario(tmp_path / 'projected', production.PROFILE,
+    scenario_path, sources, scenario = write_scenario(tmp_path / 'projected', selected_profile,
         dict(input_sha256=digest(document)), files)
     pins = {key:value for key,value in policy.pins().items() if key in ExecutionEnvelope.model_fields}
     envelope = ExecutionEnvelope(**pins, job_id=str(uuid4()), attempt_id=str(uuid4()), fence=1,
@@ -86,7 +108,7 @@ def capture(tmp_path, monkeypatch):
         model_round_trip=dict(api_mode='responses', status=200, response_sha256='9' * 64))
     record = dict(schema_version='agent-candidate-probe.v1', candidate_only=True, candidate_scope_only=True,
         production_acceptance_created=False, production_routes_changed=False,
-        engine='pi', profile=production.PROFILE, profile_revision='1', image_digest=envelope.image_digest,
+        engine='pi', profile=selected_profile, profile_revision='1', image_digest=envelope.image_digest,
         binding_id=binding.id, binding_revision=binding.revision,
         combination_sha256=envelope.execution_binding.combination_sha256,
         execution_binding_sha256=envelope.execution_binding.sha256,
@@ -113,17 +135,17 @@ def capture(tmp_path, monkeypatch):
             envelope=envelope.model_dump(mode='json')),
         'candidate-result.json':dict(result=result.model_dump(mode='json'), observations=observation),
         'candidate-evidence.json':record, 'uid-reservation.json':dict(name=directory.name, uid_start=uid,
-            uid_count=3, node='offline-node', reusable=False), 'host-config.json':hosts[production.PROFILE],
+            uid_count=3, node='offline-node', reusable=False), 'host-config.json':hosts[selected_profile],
         'scenario.json':scenario, 'manifest.json':manifest,
-        'operator-summary.json':dict(name=directory.name, status='completed', profile=production.PROFILE, engine='pi',
+        'operator-summary.json':dict(name=directory.name, status='completed', profile=selected_profile, engine='pi',
             image_identity_valid=True, production_acceptance_created=False, production_routes_changed=False,
             result_state='completed', lease_expiry_rejected=True, model_calls=1),
         production.INPUT_NAME:files[production.INPUT_NAME], production.RESULT_NAME:artifact,
-        'creative-scene-v2.json':package,
-        'worker.log':canonical_bytes(dict(status='candidate_probe_finished', engine='pi', profile=production.PROFILE,
+        ('creative-scene-v4.json' if film else 'creative-scene-v2.json'):package,
+        'worker.log':canonical_bytes(dict(status='candidate_probe_finished', engine='pi', profile=selected_profile,
             result_state='completed', lease_expired_http_status=401, production_acceptance_created=False,
             pod_uid=worker_uid)) + b'\n'}.items(): save(root / name, value)
-    renderer = renderer_capture(tmp_path / 'renderer', package, audio_raw, RUNTIME)
+    renderer = renderer_capture(tmp_path / 'renderer', package, audio_raw, runtime)
     return dict(directory=directory, root=root, renderer=renderer, package=package)
 
 
@@ -149,7 +171,7 @@ def renderer_capture(root, package, audio_raw, runtime):
         'pod-final.json':pod, 'runtime.json':runtime, 'networkpolicies.json':dict(items=[deepcopy(desired['items'][1])])}.items():
         save(root / name, value)
     timeline = read(root / 'input/timeline.json'); count = round(timeline['duration_seconds'] * 24)
-    engine_aware = package['schema'] == 'video.creative-scene.v3'
+    engine_aware = package['schema'] in {'video.creative-scene.v3', 'video.creative-scene.v4'}
     engine = package['engine']
     native = dict(kind='webgl2' if engine == 'three' else '2d', width=320, height=180,
         connected=True, visible=True)

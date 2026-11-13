@@ -89,7 +89,9 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
   motionBusy.scenes[0].motion.operation = { id: 'motion-op', status: 'running' };
   const productionBusy = project('production-busy'); productionBusy.joint_plan = {version_id:'adopted-plan'};
   const removable = project('removable');
-  const all = [idle, motionBusy, explanationBusy, jointBusy, batchBusy, productionBusy, historical, audition, unmade, removable];
+  const drafted = project('drafted'); drafted.joint_plan = {version_id:'drafted-plan'};
+  const draftedSecond = structuredClone(drafted.scenes[0]); draftedSecond.id = 'drafted-second'; drafted.scenes.push(draftedSecond);
+  const all = [idle, motionBusy, explanationBusy, jointBusy, batchBusy, productionBusy, historical, audition, unmade, removable, drafted];
   const deletedProjects = new Set(), lifecycleWrites = [];
   let listedProjects = [];
   const batch = { id: 'batch-op', project_id: batchBusy.id, status: 'running', items: [] };
@@ -101,6 +103,7 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
   const writes = [], voiceWrites = [], sceneWrites = [], mutationCalls = [];
   const storyboardWrites = [];
   const renderRows = new Map();
+  const productionRunRows = new Map();
   let allowProjectDraft = false, allowVoiceSave = false, allowSceneSave = false, draftFailure = null;
   let allowProjectCreate = false;
   const fetchFixture = async (path, options) => {
@@ -202,8 +205,8 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
       else if (suffix === 'joint-plan') result = { versions: [],
         operation: id === jointBusy.id ? { id: 'joint-op', status: 'running' } : null };
       else if (suffix === 'batches') result = { batches: id === batchBusy.id ? [batch] : [] };
-      else if (suffix === 'production-runs') result = {runs:id === productionBusy.id ? [{id:'whole-video-run',project_id:id,
-        joint_plan_version_id:'adopted-plan',request_key:'production-run:existing',voice:'test-voice',status:'running',phase:'audio',items:[]}] : []};
+      else if (suffix === 'production-runs') result = {runs:productionRunRows.get(id) ?? (id === productionBusy.id ? [{id:'whole-video-run',project_id:id,
+        joint_plan_version_id:'adopted-plan',request_key:'production-run:existing',voice:'test-voice',status:'running',phase:'audio',items:[]}] : [])};
       else assert.fail(`Unexpected application request ${path}`);
     }
     return { ok: true, status: 200, json: async () => structuredClone(result) };
@@ -675,6 +678,58 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
         assert.equal($('cancel-batch').hidden, true);
         assert.equal(writes.length, beforeWrites, 'All recovery events remain read-only');
       } finally { Date.now = originalNow; renderRows.delete(batchBusy.id); }
+    });
+    await t.test('whole-video candidates are distinct from adoption, show measured duration, and never follow the history selector', async () => {
+      const previousMutations = mutationCalls.length;
+      const current = {id:'drafted-run',project_id:drafted.id,joint_plan_version_id:'drafted-plan',voice:'test-voice',
+        status:'completed',phase:'completed',current:true,created_at:2,draft_render_id:'drafted-render',duration_seconds:24,
+        items:drafted.scenes.map((scene,index)=>({scene_id:scene.id,title:scene.title,audio_seconds:index ? 10 : 13,
+          duration_seconds:index ? 10.5 : 13.5,audio_version_id:`audio-${index}`,motion_version_id:`motion-${index}`,
+          candidate_current:true,status:'completed'}))};
+      const old={...structuredClone(current),id:'older-run',created_at:1,current:false,draft_render_id:'older-render'};
+      productionRunRows.set(drafted.id,[current,old]);
+      renderRows.set(drafted.id,[{id:'drafted-render',status:'completed',selection:'draft_only',purpose:'draft',
+        content_state:'current',actual_duration_seconds:24.5},
+        {id:'older-render',status:'completed',selection:'draft_only',purpose:'draft',content_state:'changed',actual_duration_seconds:20}]);
+      await clickProject(drafted.id);
+      for(const card of $('scene-list').children) {
+        assert.match(card.textContent,/草稿画面就绪.*草稿配音就绪/s);
+        assert.match(card.textContent,/人工采用：画面未采用.*配音未采用/s);
+        assert.doesNotMatch(card.textContent,/动态图解待制作/);
+      }
+      assert.match($('project-meta').textContent,/整片草稿实际 24.5 秒/);
+      assert.match($('project-duration-summary').textContent,/视频实际 24.5 秒.*全片录音 23 秒.*排程 24 秒/s);
+      assert.equal($('production-run-status').textContent.match(/草稿待审阅/g)?.length,1);
+      assert.equal($('render-history').children.length,0,'The same completed run render is not repeated in legacy output history');
+      current.items[1].candidate_current=false;
+      await $('refresh-all').emit('click');
+      assert.match($('scene-list').children[0].textContent,/草稿画面就绪/);
+      assert.match($('scene-list').children[1].textContent,/草稿画面待确认.*草稿配音待确认/s);
+      assert.doesNotMatch($('project-meta').textContent,/整片草稿实际/,'An unverified pair cannot establish current whole-video duration');
+      current.items[1].candidate_current=true;
+      await $('refresh-all').emit('click');
+      $('production-run-select').value=old.id;await $('production-run-select').emit('change');
+      assert.equal($('production-run-video').src,'/api/renders/older-render/video');
+      assert.match($('production-run-review-note').textContent,/项目内容已变化/);
+      assert.match($('project-meta').textContent,/整片草稿实际 24.5 秒/,'Reviewing history does not replace current project duration');
+      assert.ok($('scene-list').children.every(card=>/草稿画面就绪/.test(card.textContent)));
+      current.current=false;
+      await $('refresh-all').emit('click');
+      assert.ok($('scene-list').children.every(card=>!/草稿画面就绪|草稿配音就绪/.test(card.textContent)));
+      assert.doesNotMatch($('project-meta').textContent,/整片草稿实际/);
+      current.current=true;
+      productionRunRows.set(drafted.id,[{...structuredClone(current),id:'failed-latest',created_at:3,status:'failed',error:'child_failed'},current,old]);
+      await $('refresh-all').emit('click');
+      assert.ok($('scene-list').children.every(card=>!/草稿画面就绪/.test(card.textContent)),
+        'A newer failed attempt cannot project older completed candidates as this attempt');
+      await clickProject(idle.id);
+      assert.equal($('production-run-player').hidden,true);
+      assert.equal($('production-run-video').src,undefined);
+      assert.equal(mutationCalls.length,previousMutations);
+      for(const scene of drafted.scenes) {
+        assert.equal(scene.head_audio_version_id,null);assert.equal(scene.motion.head_version_id,null);
+      }
+      productionRunRows.delete(drafted.id); renderRows.delete(drafted.id);
     });
     await t.test('deleting the selected project stops its players and restores the same project without generation', async () => {
       await clickProject(removable.id);

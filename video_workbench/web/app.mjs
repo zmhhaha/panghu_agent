@@ -11,7 +11,7 @@ import {
 } from './model.mjs';
 import { createExplanationPanel, explanationErrorLabel } from './explanation.mjs';
 import { createJointPlanPanel, jointPlanErrorLabel } from './joint-plan.mjs';
-import { createProductionRunsPanel, productionRunErrorLabel } from './production-runs.mjs';
+import { createProductionRunsPanel, productionRunErrorLabel, productionRunDraftReady, productionRunActualSeconds } from './production-runs.mjs';
 import { createMotionPanel, createMotionRenderRequest, createProjectMotionDraftRequest, createDynamicProjectRequest, hasMotionScenes, usesDynamicVideo, motionMetadata, motionErrorLabel, motionFailureSource, motionFailureDetails } from './motion.mjs';
 import { createBatchPanel, batchErrorLabel } from './batch.mjs';
 import { createContinuityPanel, createContinuityDraftRequest, continuityErrorLabel } from './continuity.mjs';
@@ -186,6 +186,7 @@ const productionRunsPanel = createProductionRunsPanel({
   onMediaPlay: () => { motionPanel.pause(); batchPanel.pause(); $('audio-preview').pause(); closeMotionRender(); pauseProjectPlayer(); },
   getContext: () => ({ project: state.project, epoch: state.epoch,
     enabled: sessionSettings.production_runs_enabled === true, settings: sessionSettings,
+    renders: renderHistories.get(state.projectId) ?? [],
     unsaved: projectHasUnsavedEdits(state.projectId),
     projectBusy: activeOperations(state.project).length > 0 || pending.size > 0
       || explanationPanel.hasUnresolvedOperation(state.projectId) || jointPlanPanel.hasUnresolvedOperation(state.projectId)
@@ -420,24 +421,42 @@ function renderProjects() {
 
 function renderScenes(project) {
   const fragment = document.createDocumentFragment();
+  const run = productionRunsPanel.currentRun(project);
   for (const [index, scene] of project.scenes.entries()) {
     const motion = motionMetadata(scene);
+    const item = run?.items?.find(item => item.scene_id === scene.id);
+    const candidateReady = item?.candidate_current === true && item.audio_version_id && item.motion_version_id && !item.error;
     const button = node('button', undefined, `scene-card${scene.id === state.sceneId && editor !== 'new' ? ' selected' : ''}`);
     button.type = 'button';
     button.dataset.sceneId = scene.id;
     button.setAttribute('aria-pressed', String(scene.id === state.sceneId && editor !== 'new'));
     const top = node('div', undefined, 'scene-card-top');
-    top.append(node('span', `镜头 ${String(index + 1).padStart(2, '0')}`), node('span', `${scene.duration_seconds} 秒`));
+    top.append(node('span', `镜头 ${String(index + 1).padStart(2, '0')}`),
+      node('span', candidateReady && Number.isFinite(item.duration_seconds) && item.duration_seconds > 0
+        ? `录音排程 ${seconds(item.duration_seconds)} 秒` : `方案 ${scene.duration_seconds} 秒`));
     const bottom = node('div', undefined, 'scene-card-bottom');
     bottom.append(node('span', motion.mode === 'motion' ? '动态图解' : scene.format === 'html' ? 'HTML' : 'SVG'),
-      node('span', isActiveOperation(motion.operation) ? statusLabel(motion.operation.status)
+      node('span', candidateReady ? '草稿画面就绪'
+        : item?.motion_version_id ? '草稿画面待确认'
+        : item && run.status !== 'completed' ? item.motion_operation_id ? '整片动画制作中' : '整片动画待制作'
+        : isActiveOperation(motion.operation) ? statusLabel(motion.operation.status)
         : isActiveOperation(scene.operation) ? statusLabel(scene.operation.status)
-        : motion.mode === 'motion' ? !motion.head_version_id ? '动态图解待制作'
+        : motion.mode === 'motion' ? !motion.head_version_id ? motion.versions?.length ? '有图解候选' : '动态图解待制作'
           : motion.head_stale ? '图解已过期' : '已采用图解'
           : scene.head_version_id ? '已采用画面' : scene.versions?.length ? '有候选版本' : '待制作'),
-      node('span', scene.audio_stale ? '配音已过期' : scene.head_audio_version_id ? '已采用配音' : '未采用配音',
-        `scene-audio-status${scene.audio_stale ? ' stale' : ''}`));
+      node('span', candidateReady ? '草稿配音就绪' : item && run.status === 'completed' && item.audio_version_id ? '草稿配音待确认' : item && run.status !== 'completed'
+        ? item.audio_version_id ? '草稿配音已生成' : item.audio_operation_id ? '整片配音制作中' : '整片配音待制作'
+        : scene.audio_stale ? '配音已过期' : scene.head_audio_version_id ? '已采用配音'
+        : scene.audio_versions?.some(version => !version.stale) ? '有配音候选' : '未采用配音',
+        `scene-audio-status${!item && scene.audio_stale ? ' stale' : ''}`));
     button.append(top, node('h3', scene.title), node('p', scene.narration || scene.visual_description || '还没有旁白'), bottom);
+    if (item) {
+      const visualAdoption = motion.mode === 'motion' ? motion.head_version_id
+        ? motion.head_stale ? '画面采用已过期' : '画面已采用' : '画面未采用'
+        : scene.head_version_id ? '画面已采用' : '画面未采用';
+      const audioAdoption = scene.head_audio_version_id ? scene.audio_stale ? '配音采用已过期' : '配音已采用' : '配音未采用';
+      button.append(node('small', `人工采用：${visualAdoption} · ${audioAdoption}`, 'scene-adoption-note'));
+    }
     button.addEventListener('click', () => {
       motionPanel.pause();
       selectScene(state, scene.id);
@@ -823,6 +842,17 @@ function renderAudio(scene, project) {
 function renderProjectDuration(project) {
   const summary = projectDurationSummary(project, renderHistories.get(project.id) ?? [],
     { endHoldSeconds: usesDynamicVideo(project) && $('render-end-hold').checked ? 4 : 0 });
+  const run = productionRunsPanel.currentRun(project);
+  if (productionRunDraftReady(run)) {
+    const actual = productionRunActualSeconds(run, renderHistories.get(project.id) ?? []);
+    const audio = run.items.reduce((sum, item) => sum + (Number.isFinite(item.audio_seconds) ? item.audio_seconds : 0), 0);
+    const lines = [actual !== null ? `当前整片草稿：视频实际 ${seconds(actual)} 秒，待审阅。`
+      : `当前整片草稿已生成，视频实测时长待读取。`,
+    `方案预计 ${seconds(summary.estimatedSeconds)} 秒 · 全片录音 ${seconds(audio)} 秒${Number.isFinite(run.duration_seconds) && run.duration_seconds > 0 ? ` · 按录音与留白排程 ${seconds(run.duration_seconds)} 秒` : ''}。`,
+    '整片草稿使用本次制作的画面与配音候选；逐镜人工采用和时序核准状态另行保留。'];
+    $('project-duration-summary').replaceChildren(...lines.map(line => node('p', line)));
+    return;
+  }
   $('project-duration-summary').replaceChildren(...durationSummaryLines(summary).map(line => node('p', line)));
 }
 
@@ -836,7 +866,9 @@ function renderDelivery(project) {
   const visualCount = scenes.filter(scene => motionMetadata(scene).mode === 'motion'
     ? motionMetadata(scene).head_version_id && !motionMetadata(scene).head_stale : scene.head_version_id).length;
   const audioCount = scenes.filter(scene => scene.head_audio_version_id && !scene.audio_stale).length;
-  $('delivery-summary').textContent = `已采用画面 ${visualCount}/${scenes.length} · 可用配音 ${audioCount}/${scenes.length}。预览和成片使用已采用的版本。`;
+  $('delivery-summary').textContent = productionRunDraftReady(productionRunsPanel.currentRun(project))
+    ? '整片有声草稿已在上方生成，可直接播放或下载。此处用于逐镜人工采用版本的预览与正式交付。'
+    : `已采用画面 ${visualCount}/${scenes.length} · 可用配音 ${audioCount}/${scenes.length}。预览和成片使用已采用的版本。`;
   const issues = deliveryIssues(project, { silent: dynamic ? false : $('render-silent').checked,
     subtitles: dynamic ? false : $('render-subtitles').checked });
   const reasons = { missing_visual: '未采用画面', missing_audio: '未采用配音', stale_audio: '配音已过期',
@@ -882,7 +914,9 @@ function renderDelivery(project) {
     : sessionSettings.media_configured ? '导出在后台进行，过程中可以继续编辑；结果保留导出开始时的版本。'
     : '视频导出暂时不可用，仍可预览并导出原项目素材。';
   const fragment = document.createDocumentFragment();
+  const managedRenders = productionRunsPanel.managedRenderIds(project.id);
   for (const item of renderHistories.get(project.id) ?? []) {
+    if (item.status === 'completed' && managedRenders.has(item.id)) continue;
     const row = node('div', undefined, 'render-item');
     const label = node('div');
     const subtitleLabel = item.subtitles === true ? '有字幕' : item.subtitles === false ? '无字幕' : '字幕状态未记录';
@@ -947,7 +981,9 @@ function render() {
   project.scenes ??= [];
   $('project-title').textContent = project.title;
   const duration = project.scenes.reduce((sum, scene) => sum + Number(scene.duration_seconds || 0), 0);
-  $('project-meta').textContent = `${project.scenes.length} 个镜头 · 方案预计 ${seconds(duration)} 秒 · 文稿版本 ${project.revision}`;
+  const run = productionRunsPanel.currentRun(project);
+  const actual = productionRunActualSeconds(run, renderHistories.get(project.id) ?? []);
+  $('project-meta').textContent = `${project.scenes.length} 个镜头 · ${actual !== null ? `整片草稿实际 ${seconds(actual)} 秒` : `方案预计 ${seconds(duration)} 秒`} · 文稿版本 ${project.revision}`;
   $('project-script').textContent = project.script;
   $('project-style').textContent = project.style || '还没有指定视觉方向。';
   const dynamicIntent = project.production_mode === 'motion';

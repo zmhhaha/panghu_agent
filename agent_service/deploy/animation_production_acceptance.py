@@ -35,13 +35,15 @@ from agent_service.registry import binding_fingerprint, required_model_capabilit
 from agent_service.worker_entry import HostConfig, _host_registry, accepted_host, host_policy
 from video_workbench.animation_candidate_import import EXPORT_NAMES, _pod
 from video_workbench.creative_method_contract import collect_scene_result, validate_scene_package
-from video_workbench.creative_renderer import METHOD_COMPILER, ENGINE_METHOD_COMPILER, compile_creative_project
+from video_workbench.creative_renderer import (METHOD_COMPILER, ENGINE_METHOD_COMPILER, FILM_COMPILER,
+    compile_creative_project)
 from video_workbench.motion_render_k8s import _subset, unpack_artifacts, validate_artifacts
 from video_workbench.motion_renderer.job import FILES, NAMESPACE, resources
 from video_workbench.motion_snapshot import _runtime
 
 
 SUITE = 'video.animation-production-contract.v1'
+FILM_SUITE = 'video.animation-production-contract.v2'
 SHA = re.compile(r'[0-9a-f]{64}\Z')
 IMAGE = re.compile(r'[a-z0-9][a-z0-9._:/-]*:latest@sha256:[0-9a-f]{64}\Z')
 NOT_CLAIMED = ['offline_hmac_reverification', 'current_git_status_reverified',
@@ -59,12 +61,20 @@ def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
-def _bundle(package, registry, binding, policy):
-    handler = production.VideoAnimationProductionProfile()
-    contract = registry.contract(production.PROFILE, policy.revision)
+def _generation(film):
+    require(type(film) is bool, 'animation_production_admission_generation_invalid')
+    return (production.FILM_PROFILE, FILM_SUITE, production.FILM_BUNDLE_REVISION,
+        production.FILM_BUNDLE_MANIFEST_SHA256, production.VideoAnimationFilmProductionProfile()) if film else (
+        production.PROFILE, SUITE, production.BUNDLE_REVISION, production.BUNDLE_MANIFEST_SHA256,
+        production.VideoAnimationProductionProfile())
+
+
+def _bundle(package, registry, binding, policy, *, film=False):
+    profile, _, bundle_revision, manifest_sha, handler = _generation(film)
+    contract = registry.contract(profile, policy.revision)
     bundle = registry.bundle(binding.bundle.name, binding.bundle.revision)
     environment = registry.environment(binding.tool_environment.name, binding.tool_environment.revision)
-    require(bundle.name == 'animation-production' and bundle.revision == production.BUNDLE_REVISION
+    require(bundle.name == 'animation-production' and bundle.revision == bundle_revision
         and set(contract.required_tools) == set(bundle.required_tools) == set(environment.tools)
         == set(handler.required_tools) == {'read_inputs', 'write'}
         and environment.name == READ_INPUTS_ENVIRONMENT_NAME
@@ -72,12 +82,12 @@ def _bundle(package, registry, binding, policy):
         'animation_production_admission_tools_mismatch')
     require(set(required_model_capabilities(handler)) <= set(binding.model_policy.capabilities),
             'animation_production_admission_model_policy_mismatch')
-    root = package / 'resources' / production.BUNDLE_REVISION
+    root = package / 'resources' / bundle_revision
     raw = _capture(root, 'manifest.json', 65536)
-    require(sha(raw) == production.BUNDLE_MANIFEST_SHA256, 'animation_production_admission_resource_mismatch')
+    require(sha(raw) == manifest_sha, 'animation_production_admission_resource_mismatch')
     manifest = decode_video_json(raw)
     rows = manifest.get('local_files')
-    require(manifest.get('bundle_revision') == production.BUNDLE_REVISION
+    require(manifest.get('bundle_revision') == bundle_revision
         and manifest.get('automatic_updates') is False and manifest.get('upstream_content_vendored') is False
         and manifest.get('license') == 'MIT' and type(rows) is list
         and len(rows) == len(production.BUNDLE_FILES)
@@ -158,9 +168,10 @@ def _renderer_stop(pod, job, desired):
 def verify_renderer_capture(directory, package, *, renderer_image):
     """Check original seven-file Job input, raw K8s stop and log export bytes."""
     package = validate_scene_package(package)
-    engine_aware = package['schema'] == 'video.creative-scene.v3'
-    compiler = ENGINE_METHOD_COMPILER if engine_aware else METHOD_COMPILER
-    require(package['schema'] in {'video.creative-scene.v2', 'video.creative-scene.v3'} and type(renderer_image) is str
+    film = package['schema'] == 'video.creative-scene.v4'
+    engine_aware = package['schema'] in {'video.creative-scene.v3', 'video.creative-scene.v4'}
+    compiler = FILM_COMPILER if film else ENGINE_METHOD_COMPILER if engine_aware else METHOD_COMPILER
+    require(package['schema'] in {'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'} and type(renderer_image) is str
         and IMAGE.fullmatch(renderer_image), 'animation_production_renderer_v2_required')
     root = _directory(directory)
     names = ('desired-resources.json', 'job-created.json', 'job-final.json', 'pod-final.json',
@@ -230,7 +241,8 @@ def verify_renderer_capture(directory, package, *, renderer_image):
         and all(_capture(root / 'input', name, 8 * 1024 * 1024) == value for name,value in files.items())
         and all(_capture(artifact_root, name, 32 * 1024 * 1024) == value for name,value in entries.items()),
         'animation_production_renderer_capture_changed')
-    return dict(schema='video.animation-production-captured-render-proof.v2' if engine_aware
+    return dict(schema='video.animation-film-production-captured-render-proof.v1' if film else
+        'video.animation-production-captured-render-proof.v2' if engine_aware
         else 'video.animation-production-captured-render-proof.v1',
         package_sha256=digest(package), source_sha256=package['result_sha256'],
         input_sha256=package['input_sha256'], renderer_image=renderer_image, runtime=runtime,
@@ -239,20 +251,22 @@ def verify_renderer_capture(directory, package, *, renderer_image):
         capture_sha256={name:sha(value) for name,value in raw.items()},
         input_files_sha256={name:sha(value) for name,value in files.items()},
         artifact_files_sha256={name:sha(value) for name,value in entries.items()},
-        scope='original_v3_engine_input_isolated_job_media_native_context_and_reverse_seek' if engine_aware
+        scope='original_v4_film_input_isolated_job_media_native_context_and_reverse_seek' if film else
+            'original_v3_engine_input_isolated_job_media_native_context_and_reverse_seek' if engine_aware
             else 'original_v2_input_isolated_job_media_and_reverse_seek',
         whole_video_watched=False, audio_observed=False, subjective_quality_approved=False)
 
 
-def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_image):
+def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_image, film=False):
     """Return (unchanged disabled Host, new-suite report), with no writes."""
+    selected_profile, suite, _, _, _ = _generation(film)
     directory = _directory(candidate_dir)
     root = _directory(directory / 'candidate-output')
     raw = {name:_capture(root, name) for name in (*EXPORT_NAMES, 'uid-reservation.json', 'worker.log')}
     docs = {name:decode_video_json(value) for name,value in raw.items() if name.endswith('.json')}
     require(all(type(value) is dict for value in docs.values()))
     envelope, result = verify_parent({name:docs[name] for name in PARENT_FILES.values()})
-    require(envelope.profile == production.PROFILE and envelope.profile_revision == '1' and envelope.engine == 'pi'
+    require(envelope.profile == selected_profile and envelope.profile_revision == '1' and envelope.engine == 'pi'
         and not envelope.checkpoint_inputs and envelope.checkpoint_ref is None,
         'animation_production_admission_profile_not_allowed')
     proof = result.stop_receipt
@@ -260,9 +274,11 @@ def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_
             'animation_production_admission_input_mismatch')
     input_raw = envelope.inputs[0].content()
     document = production.validate_input(decode_video_json(input_raw))
+    require(document['schema'] in ({production.FILM_INPUT_SCHEMA} if film else
+        {production.INPUT_SCHEMA, production.LEGACY_INPUT_SCHEMA}), 'animation_production_admission_profile_not_allowed')
     require(input_raw == canonical_bytes(document) and envelope.task == {'input_sha256':digest(document)},
             'animation_production_admission_input_mismatch')
-    package_name = ('creative-scene-v3.json' if document['schema'] == production.INPUT_SCHEMA
+    package_name = ('creative-scene-v4.json' if film else 'creative-scene-v3.json' if document['schema'] == production.INPUT_SCHEMA
                     else 'creative-scene-v2.json')
     for name, maximum in ((production.INPUT_NAME, production.INPUT_MAX_BYTES),
             (production.RESULT_NAME, production.OUTPUT_MAX_BYTES),
@@ -279,7 +295,7 @@ def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_
     record, observation = docs['candidate-evidence.json'], docs['candidate-result.json']['observations']
     host, policy, binding = candidate_config(docs['host-config.json'])
     registry = _host_registry(host)
-    combination = binding_fingerprint(registry.contract(production.PROFILE, '1'),
+    combination = binding_fingerprint(registry.contract(selected_profile, '1'),
         registry.bundle(binding.bundle.name, binding.bundle.revision),
         registry.environment(binding.tool_environment.name, binding.tool_environment.revision), binding)
     require(policy.matches(envelope) and policy.execution_binding == envelope.execution_binding
@@ -299,12 +315,12 @@ def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_
     require(set(scenario) == {'schema_version', 'candidate_scope_only', 'scenario_id', 'profile',
         'timeout_seconds', 'task', 'inputs', 'business_export', 'parent'}
         and scenario.get('schema_version') == 'agent-candidate-scenario.v1'
-        and scenario.get('candidate_scope_only') is True and scenario.get('profile') == production.PROFILE
+        and scenario.get('candidate_scope_only') is True and scenario.get('profile') == selected_profile
         and scenario.get('task') == envelope.task and scenario.get('business_export') is None
         and scenario.get('parent') is None and scenario.get('inputs') == [dict(name=production.INPUT_NAME,
             sha256=sha(input_raw), bytes=len(input_raw))], 'animation_production_admission_scenario_mismatch')
     source = _source_package(source_root)
-    measured_bundle = _bundle(source, registry, binding, policy)
+    measured_bundle = _bundle(source, registry, binding, policy, film=film)
     harness = sha(_capture(source, 'deploy/acceptance_probe.py').decode().replace('\r\n', '\n').encode())
     scenario_harness = sha(_capture(source, 'deploy/candidate_scenario.py').decode().replace('\r\n', '\n').encode())
     require(observation.get('harness_sha256') == record.get('harness_sha256') == harness
@@ -375,14 +391,14 @@ def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_
         except ServiceError: continue
         if type(row) is dict and row.get('status') == 'candidate_probe_finished': finished.append(row)
     require(len(finished) == 1 and finished[0].get('engine') == 'pi'
-        and finished[0].get('profile') == production.PROFILE and finished[0].get('result_state') == 'completed'
+        and finished[0].get('profile') == selected_profile and finished[0].get('result_state') == 'completed'
         and type(finished[0].get('lease_expired_http_status')) is int and finished[0]['lease_expired_http_status'] == 401
         and finished[0].get('pod_uid') == stopped['worker']['pod_uid']
         and finished[0].get('production_acceptance_created') is False,
         'animation_production_admission_real_lease_401_missing')
     summary = docs['operator-summary.json']
     require(summary.get('name') == directory.name and summary.get('status') == 'completed'
-        and summary.get('profile') == production.PROFILE and summary.get('engine') == 'pi'
+        and summary.get('profile') == selected_profile and summary.get('engine') == 'pi'
         and summary.get('image_identity_valid') is True and summary.get('production_acceptance_created') is False
         and summary.get('production_routes_changed') is False and type(summary.get('model_calls')) is int
         and summary['model_calls'] == len(calls) and summary.get('result_state') == 'completed'
@@ -390,8 +406,9 @@ def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_
     render_proof = verify_renderer_capture(renderer_dir, package, renderer_image=renderer_image)
     require(all(_capture(root, name) == value for name,value in raw.items()),
             'animation_production_admission_capture_changed')
-    return host.model_dump(mode='json'), dict(schema='video-animation-production-independent-review.v1', suite=SUITE,
-        evidence_origin='captured_real_candidate', profile=production.PROFILE, profile_revision='1', engine='pi',
+    report = dict(schema='video-animation-film-production-independent-review.v1' if film else
+        'video-animation-production-independent-review.v1', suite=suite,
+        evidence_origin='captured_real_candidate', profile=selected_profile, profile_revision='1', engine='pi',
         candidate_name=directory.name, image_digest=envelope.image_digest, runtime_revision=envelope.runtime_revision,
         candidate_job_id=envelope.job_id, candidate_attempt_id=envelope.attempt_id,
         binding_id=binding.id, binding_revision=binding.revision, combination_sha256=combination,
@@ -407,18 +424,26 @@ def assess_candidate(candidate_dir, *, source_root=None, renderer_dir, renderer_
         original_candidate_flags_preserved=True, technical_host_prerequisites_passed=True,
         acceptance_created=False, production_routes_enabled=False, deployment_performed=False,
         model_requests=0, uid_allocations=0, source_evidence_modified=False, live_http_verified=False,
-        not_claimed=NOT_CLAIMED)
+        not_claimed=NOT_CLAIMED + (['whole_film_continuity_observed', 'predecessor_frame_observed'] if film else []))
+    if film:
+        context = document['film_context']
+        report['film_context_binding'] = dict(film_sha256=context['film_sha256'],
+            current_scene_index=context['current_scene_index'],
+            predecessor_sha256=digest(context['predecessor']) if context['predecessor'] is not None else None,
+            handoff_sha256=digest(artifact['handoff']), scope='frozen_context_and_author_declaration_not_observed_continuity')
+    return host.model_dump(mode='json'), report
 
 
-def review_candidate(candidate_dir, output, *, source_root=None, renderer_dir, renderer_image):
+def review_candidate(candidate_dir, output, *, source_root=None, renderer_dir, renderer_image, film=False):
     """Freeze standard admission files in a new directory; never deploy/enable."""
+    selected_profile, suite, _, _, _ = _generation(film)
     directory, render_root = _directory(candidate_dir), _directory(renderer_dir)
     output = Path(output).absolute()
     require(not output.exists() and not output.is_symlink() and not output.is_relative_to(directory)
         and not output.is_relative_to(render_root), 'animation_production_admission_new_output_required')
     _directory(output.parent)
     host, report = assess_candidate(directory, source_root=source_root,
-        renderer_dir=render_root, renderer_image=renderer_image)
+        renderer_dir=render_root, renderer_image=renderer_image, film=film)
     combination = report['combination_sha256']
     name = report['binding_id'] + '-' + combination[:20]
     require(len(name) <= 63, 'animation_production_admission_host_name_invalid')
@@ -426,7 +451,7 @@ def review_candidate(candidate_dir, output, *, source_root=None, renderer_dir, r
     target = output / 'worker-configs' / name
     target.mkdir(mode=0o700, parents=True)
     checksum = _save(target / 'acceptance-evidence.json', report)
-    approval = dict(combination_sha256=combination, suite=SUITE, report_sha256=checksum)
+    approval = dict(combination_sha256=combination, suite=suite, report_sha256=checksum)
     binding = next(row for row in host['execution_catalog']['execution_bindings']
         if (row['id'], row['revision']) == (report['binding_id'], report['binding_revision']))
     require(binding.get('acceptance') is None, 'animation_production_admission_already_accepted')
@@ -436,7 +461,7 @@ def review_candidate(candidate_dir, output, *, source_root=None, renderer_dir, r
     require(not policy.enabled and all(row.get('enabled') is False for row in host['execution_catalog']['routes'])
         and policy.execution_binding.combination_sha256 == combination)
     _save(target / 'config.json', host)
-    _save(target / 'acceptance.json', dict(schema_version=1, engine='pi', profile=production.PROFILE,
+    _save(target / 'acceptance.json', dict(schema_version=1, engine='pi', profile=selected_profile,
         profile_revision='1', runtime_revision=report['runtime_revision'], image_digest=report['image_digest'],
         model_api='openai-responses', checks={key:True for key in CHECKS}, evidence_sha256=checksum,
         execution_binding_sha256=policy.execution_binding.sha256))
@@ -444,17 +469,18 @@ def review_candidate(candidate_dir, output, *, source_root=None, renderer_dir, r
     _save(output / 'binding-approvals.json', [dict(binding_id=report['binding_id'],
         binding_revision=report['binding_revision'], acceptance=approval, host_config_map=name,
         path='worker-configs/' + name)])
-    summary = dict(schema='animation-production-technical-admission.v1', suite=SUITE,
-        profile=production.PROFILE, combination_sha256=combination, report_sha256=checksum,
+    summary = dict(schema='animation-film-production-technical-admission.v1' if film else 'animation-production-technical-admission.v1', suite=suite,
+        profile=selected_profile, combination_sha256=combination, report_sha256=checksum,
         accepted_execution_binding_sha256=policy.execution_binding.sha256, host_config_map=name,
         accepted_host=True, enabled=False, technical_host_admission_only=True, deployment_performed=False,
         model_requests=0, uid_allocations=0, source_evidence_modified=False,
-        live_http_verified=False, not_claimed=NOT_CLAIMED)
+        live_http_verified=False, not_claimed=NOT_CLAIMED + (['whole_film_continuity_observed', 'predecessor_frame_observed'] if film else []))
     _save(output / 'summary.json', summary)
     return summary
 
 
-def main(argv=None):
+def main(argv=None, *, film=False):
+    selected_profile, suite, _, _, _ = _generation(film)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--candidate-dir', required=True, type=Path)
     parser.add_argument('--source', type=Path)
@@ -464,16 +490,16 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         require(os.name == 'posix' and os.geteuid() == 0, 'animation_production_admission_server_root_required')
-        options = dict(source_root=args.source, renderer_dir=args.renderer_dir, renderer_image=args.renderer_image)
+        options = dict(film=film, source_root=args.source, renderer_dir=args.renderer_dir, renderer_image=args.renderer_image)
         if args.output is not None:
             report = review_candidate(args.candidate_dir, args.output, **options)
         else:
             _, detailed = assess_candidate(args.candidate_dir, **options)
-            report = dict(status='technical_prerequisites_passed', suite=SUITE, enabled=False,
-                report_content_sha256=digest(detailed), profile=production.PROFILE,
+            report = dict(status='technical_prerequisites_passed', suite=suite, enabled=False,
+                report_content_sha256=digest(detailed), profile=selected_profile,
                 acceptance_created=False, deployment_performed=False, model_requests=0, uid_allocations=0)
     except (OSError, ValueError, KeyError, TypeError, ServiceError, AttributeError) as error:
-        print(json.dumps(dict(status='technical_review_rejected', suite=SUITE,
+        print(json.dumps(dict(status='technical_review_rejected', suite=suite,
             reason=error.code if isinstance(error, ServiceError) else 'malformed_capture',
             acceptance_created=False, deployment_performed=False, model_requests=0, automatic_retry=False)))
         return 1

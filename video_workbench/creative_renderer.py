@@ -19,13 +19,17 @@ METHOD_COMPILER = 'creative-method-scene-adapter-1'
 METHOD_TEMPLATE = 'generated-method-html-svg-1'
 ENGINE_METHOD_COMPILER = 'creative-method-engine-scene-adapter-1'
 ENGINE_METHOD_TEMPLATE = 'generated-method-engine-scene-1'
+FILM_COMPILER = 'creative-film-scene-adapter-1'
+FILM_TEMPLATE = 'generated-film-engine-scene-1'
 COMPILER_TEMPLATES = {COMPILER: TEMPLATE, METHOD_COMPILER: METHOD_TEMPLATE,
-                      ENGINE_METHOD_COMPILER: ENGINE_METHOD_TEMPLATE}
+                      ENGINE_METHOD_COMPILER: ENGINE_METHOD_TEMPLATE,
+                      FILM_COMPILER: FILM_TEMPLATE}
 
 
 def _compiler(package, requested):
     expected = {'video.creative-scene.v1': COMPILER, 'video.creative-scene.v2': METHOD_COMPILER,
-                'video.creative-scene.v3': ENGINE_METHOD_COMPILER}[package['schema']]
+                'video.creative-scene.v3': ENGINE_METHOD_COMPILER,
+                'video.creative-scene.v4': FILM_COMPILER}[package['schema']]
     _require(requested is None or requested == expected, 'creative_renderer_version_unsupported')
     return expected
 
@@ -54,14 +58,25 @@ def resolve_creative_timeline(package, beats, alignment, *, leading_seconds=0,
     creative = dict(engine=package['engine'], input_sha256=package['input_sha256'],
         result_sha256=package['result_sha256'],
         seek_protocol='window.__animationExperiment.seek(seconds)',
-        renderer='isolated-chromium-engine-seek-ffmpeg-1' if package['schema'] == 'video.creative-scene.v3'
+        renderer='isolated-chromium-engine-seek-ffmpeg-1' if package['schema'] in {'video.creative-scene.v3', 'video.creative-scene.v4'}
             else 'isolated-chromium-absolute-seek-ffmpeg-1')
-    if package['schema'] in {'video.creative-scene.v2', 'video.creative-scene.v3'}:
+    if package['schema'] in {'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'}:
         creative.update(method_delivery_sha256=package['method_delivery_sha256'],
             method_decision_sha256=digest(package['method_decision']),
             method_evidence_scope=package['evidence_scope'])
     else:
         creative['capability_release_sha256'] = package['capability_release_sha256']
+    if package['schema'] == 'video.creative-scene.v4':
+        film = package['input_document']['film_context']
+        row = film['film']['scenes'][film['current_scene_index']]
+        _require(abs(row['end_seconds'] - row['start_seconds'] - seconds) <= 1e-6
+            and abs(row['leading_silence_seconds'] - leading_seconds) <= 1e-9
+            and abs(row['trailing_silence_seconds'] - (seconds - leading_seconds - alignment['audio_seconds'])) <= 1e-6,
+            'creative_film_clock_mismatch')
+        predecessor = film['predecessor']
+        creative.update(film_context_sha256=digest(film), film_sha256=film['film_sha256'],
+            handoff_sha256=digest(package['result']['handoff']),
+            predecessor_motion_version_id=predecessor['motion_version_id'] if predecessor else None)
     return dict(schema='video.motion-timeline.v1', compiler=compiler_version,
         plan_sha256=digest(package), semantic_sha256=semantic_digest(beats),
         alignment_sha256=digest(alignment), audio_sha256=alignment['audio_sha256'],
@@ -90,7 +105,7 @@ def compile_creative_project(package, beats, alignment, *, runtime_fingerprint,
             for name, key in (('gsap.min.js', 'gsap_sha256'),
                               ('NotoSansCJK-Regular.ttc', 'font_sha256'))),
             'creative_render_asset_mismatch')
-    engine_aware = value['schema'] == 'video.creative-scene.v3'
+    engine_aware = value['schema'] in {'video.creative-scene.v3', 'video.creative-scene.v4'}
     if engine_aware:
         _require(runtime_fingerprint is not None and runtime_fingerprint['schema'] == 'video.motion-runtime.v2',
                  'creative_engine_runtime_required')

@@ -33,7 +33,8 @@ window.__animationExperiment.seek(0);</script></body></html>'''
 
 
 def result(document, html=HTML):
-    if document['schema'] == 'video.animation-production-input.v1':
+    if document['schema'] in {'video.animation-production-input.v1', 'video.animation-production-input.v2',
+                              'video.animation-production-input.v3'}:
         return production_result(document, source_html=html)
     files = {'scene.html': html}
     value = dict(schema='video.animation-experiment-result.v1', input_sha256=digest(document),

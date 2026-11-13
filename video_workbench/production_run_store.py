@@ -14,9 +14,9 @@ import time
 from uuid import uuid4
 
 from agent_service.contracts import ServiceError, digest
-from .audio_store import narration_binding, narration_document
+from .audio_store import narration_binding
 from .media import MAX_PROJECT_SECONDS, MAX_SCENES
-from .motion_store import semantic_binding
+from .production_film_context import freeze_production_inputs
 from .speech import inspect_wav
 
 
@@ -48,11 +48,21 @@ class ProductionRunStore:
                 CREATE INDEX IF NOT EXISTS production_runs_project ON production_runs(project_id);''')
 
     @staticmethod
-    def public(run):
+    def public(run, *, current=False):
         result = {key: run.get(key) for key in ('id', 'project_id', 'joint_plan_version_id',
             'request_key', 'status', 'phase', 'voice', 'draft_render_id', 'error', 'blocked_reason', 'draining',
             'created_at', 'finished_at')}
-        result.update(items=[{key: item.get(key) for key in PUBLIC_ITEM} for item in run['items']],
+        items = []
+        for item, frozen in zip(run['items'], run['frozen']['scenes']):
+            seconds = item.get('audio_seconds')
+            duration = (math.ceil((seconds + frozen['leading_seconds'] + frozen['trailing_seconds']) * 24) / 24
+                        if seconds is not None else None)
+            items.append(dict({key: item.get(key) for key in PUBLIC_ITEM}, duration_seconds=duration,
+                              candidate_current=bool(current and item.get('motion_version_id'))))
+        result.update(items=items, current=bool(current),
+            duration_seconds=sum(item['duration_seconds'] for item in items)
+                if all(item['duration_seconds'] is not None for item in items) else None,
+            duration_source='measured_recordings_and_frame_quantized_pauses',
             review_status='not_reviewed', selection='draft_only',
             progress=dict(done=sum(bool(item.get('audio_version_id')) + bool(item.get('motion_version_id'))
                                    for item in run['items']) + int(run['status'] == 'completed'),
@@ -79,32 +89,76 @@ class ProductionRunStore:
     def get(self, owner, run_id):
         with self.store.transaction() as db:
             run = self._read(db, run_id, owner)
-            self.store._project(db, owner, run['project_id'])
-            return self.public(run)
+            project = self.store._project(db, owner, run['project_id'])
+            return self.public(run, current=self._matches(run, project, db))
 
     def list(self, owner, project_id):
         with self.store.transaction() as db:
-            self.store._project(db, owner, project_id)
-            return [self.public(json.loads(row[0])) for row in db.execute(
+            project = self.store._project(db, owner, project_id)
+            runs = [json.loads(row[0]) for row in db.execute(
                 'SELECT document FROM production_runs WHERE owner=? AND project_id=? ORDER BY rowid DESC',
                 (owner, project_id))]
+            return [self.public(run, current=self._matches(run, project, db)) for run in runs]
 
-    def _freeze(self, project):
-        provider = self.store._project_speech_provider(project)
-        return dict(title=project['title'], script=project['script'], style=project.get('style', ''),
-            joint_plan=deepcopy(project.get('joint_plan')), provider=provider,
-            scenes=[dict(id=scene['id'], title=scene['title'],
-                semantic_binding=semantic_binding(project, scene),
-                audio_input=narration_document(scene, provider), joint_plan=deepcopy(scene.get('joint_plan')),
-                duration_seconds=scene['duration_seconds'], format=scene.get('format', 'svg'),
-                leading_seconds=scene.get('leading_seconds', 0), trailing_seconds=scene.get('trailing_seconds', 0))
-                for scene in project['scenes']])
+    def _freeze(self, project, *, film_aware=False):
+        return freeze_production_inputs(self.store, project, film_aware=film_aware)
 
     def _matches(self, run, project, db):
         head = self.joint._head(db, run['owner'], run['project_id'])
-        return (head['version_id'] == run['joint_plan_version_id']
-            and head['applied_binding_sha256'] == self.joint._binding(project)
-            and digest(self._freeze(project)) == run['binding_sha256'])
+        try:
+            return (head['version_id'] == run['joint_plan_version_id']
+                and head['applied_binding_sha256'] == self.joint._binding(project)
+                and digest(self._freeze(project, film_aware=bool(run.get('continuity_schema')))) == run['binding_sha256'])
+        except ServiceError:
+            return False
+
+    @staticmethod
+    def _freeze_film(run):
+        """Freeze a single bounded full-film clock after every WAV is measured.
+
+        Padding includes the renderer's final partial-frame hold, so later
+        authors receive the actual joined-video clock, not estimated speech.
+        Old journals deliberately continue their original per-scene contract.
+        """
+        if not run.get('continuity_schema') or run.get('film') is not None:
+            return
+        frozen, rows, cursor = run['frozen'], [], 0
+        for item, scene in zip(run['items'], frozen['scenes']):
+            seconds = item['audio_seconds']
+            require(seconds is not None and item['audio_version_id'] and item['audio_sha256'],
+                    'production_run_film_requires_recordings', 409)
+            frames = math.ceil((seconds + scene['leading_seconds'] + scene['trailing_seconds']) * 24)
+            end = cursor + frames / 24
+            rows.append(dict(scene_id=item['scene_id'], title=scene['title'],
+                narration=scene['audio_input']['narration'], visual_intent=scene['visual_intent'],
+                audio_version_id=item['audio_version_id'], audio_sha256=item['audio_sha256'],
+                audio_seconds=seconds, start_seconds=cursor, end_seconds=end,
+                leading_silence_seconds=scene['leading_seconds'],
+                trailing_silence_seconds=frames / 24 - seconds - scene['leading_seconds']))
+            cursor = end
+        joint = frozen.get('joint_plan') or {}
+        run['film'] = dict(project_id=run['project_id'], joint_plan_version_id=run['joint_plan_version_id'],
+            content_binding_sha256=run['binding_sha256'], title=frozen['title'], script=frozen['script'],
+            understanding_goal=joint.get('understanding_goal') or joint.get('summary') or frozen['title'],
+            style=joint.get('visual_style') or frozen['style'], scenes=rows, total_seconds=cursor)
+        run['film_sha256'] = digest(run['film'])
+
+    @staticmethod
+    def _film_context(run, index, predecessor):
+        if not run.get('continuity_schema'):
+            return None
+        from agent_service.profiles.video_animation_production_contract import validate_film_context
+        return validate_film_context(dict(schema=run['continuity_schema'], film=run['film'],
+            film_sha256=run['film_sha256'], current_scene_index=index, predecessor=predecessor))
+
+    def _intent_context(self, run, intent):
+        index = intent['index']
+        predecessor = (None if index == 0 else self.motion.continuity_predecessor(
+            run['owner'], intent['predecessor_motion_version_id'], run['items'][index - 1]['audio_version_id']))
+        context = self._film_context(run, index, predecessor)
+        require(digest(context) == intent['film_context_sha256'],
+                'production_run_continuity_binding_mismatch', 409)
+        return context
 
     @staticmethod
     def _unfinished(run):
@@ -121,7 +175,11 @@ class ProductionRunStore:
                              (owner, idem)).fetchone()
             if row:
                 require(row[0] == fingerprint, 'idempotency_conflict', 409)
-                return self.public(json.loads(row[1]))
+                run = json.loads(row[1])
+                project = self.store._project(db, owner, project_id, include_deleted=True)
+                lifecycle = self.store._lifecycle(db, project_id)
+                current = not (lifecycle and lifecycle['deleted_at'] is not None)
+                return self.public(run, current=current and self._matches(run, project, db))
             project = self.store._project(db, owner, project_id)
             self.store._revision(project, request['expected_revision'])
             head = self.joint._head(db, owner, project_id)
@@ -143,7 +201,7 @@ class ProductionRunStore:
             require(db.execute('SELECT count(*) FROM production_runs WHERE project_id=?', (project_id,))
                     .fetchone()[0] < 64 and db.execute('SELECT count(*) FROM production_runs').fetchone()[0] < 1024,
                     'production_run_storage_limit', 409)
-            frozen = self._freeze(project)
+            frozen = self._freeze(project, film_aware=True)
             for scene in frozen['scenes']:
                 require(all(type(scene[key]) in (int, float) and math.isfinite(scene[key])
                     and 0 <= scene[key] <= 60 for key in ('leading_seconds', 'trailing_seconds')),
@@ -153,15 +211,24 @@ class ProductionRunStore:
                 binding_sha256=digest(frozen), frozen=frozen, status='queued', phase='audio',
                 error=None, blocked_reason=None, cancel_requested=False, draining=False,
                 created_at=time.time(), finished_at=None, draft_render_id=None, intents={},
+                continuity_schema='video.film-context.v1', film=None, film_sha256=None,
                 items=[dict(scene_id=scene['id'], title=scene['title'], status='queued', error=None,
                     audio_operation_id=None, audio_version_id=None, audio_sha256=None,
                     audio_seconds=None, motion_operation_id=None, motion_version_id=None)
                     for scene in frozen['scenes']])
             raw = packed(run)
             require(len(raw.encode()) <= 512 * 1024, 'production_run_storage_limit', 413)
+            # Reserve the full-film copy before paying for recordings. Child
+            # intents retain only exact references/hashes, never nested sources.
+            probe = deepcopy(run)
+            for item in probe['items']:
+                item.update(audio_version_id='x' * 100, audio_sha256='a' * 64, audio_seconds=.1)
+            self._freeze_film(probe)
+            self._film_context(probe, 0, None)
+            require(len(packed(probe).encode()) <= 448 * 1024, 'production_run_storage_limit', 413)
             db.execute('INSERT INTO production_runs VALUES (?, ?, ?, ?, ?, ?)',
                 (run['id'], owner, project_id, idem, fingerprint, raw))
-            return self.public(run)
+            return self.public(run, current=True)
 
     def cancel(self, owner, run_id):
         with self.store.lock:
@@ -173,7 +240,7 @@ class ProductionRunStore:
                     run['draining'] = True
                     self._write(db, run)
             self._step(run, admit=False)
-            return self.public(run)
+            return self.get(owner, run_id)
 
     def _lookup(self, run, intent):
         with self.store.transaction() as db:
@@ -185,6 +252,9 @@ class ProductionRunStore:
             require(child.get('project_id') == run['project_id'] and (intent['phase'] == 'draft'
                 or child.get('scene_id') == run['items'][intent['index']]['scene_id']),
                 'production_run_child_identity_mismatch', 409)
+            if intent['phase'] == 'motion' and run.get('continuity_schema'):
+                require(child.get('film_context_sha256') == intent['film_context_sha256'],
+                    'production_run_continuity_binding_mismatch', 409)
             return child
 
     @staticmethod
@@ -260,6 +330,9 @@ class ProductionRunStore:
             version = self.motion.candidate_version(run['owner'], version_id, item['audio_version_id'])
             require(version['project_id'] == run['project_id'] and version['scene_id'] == item['scene_id']
                 and not version.get('stale'), 'production_run_motion_binding_mismatch', 409)
+            if run.get('continuity_schema'):
+                require(version.get('film_context_sha256') == intent['film_context_sha256'],
+                        'production_run_continuity_binding_mismatch', 409)
             item.update(motion_version_id=version_id, status='completed', error=None)
 
     def _stop(self, run):
@@ -310,6 +383,9 @@ class ProductionRunStore:
             total = sum(item['audio_seconds'] + frozen['leading_seconds'] + frozen['trailing_seconds']
                         for item, frozen in zip(run['items'], run['frozen']['scenes']))
             require(total <= MAX_PROJECT_SECONDS, 'media_project_too_long', 422)
+            self._freeze_film(run)
+            if run.get('film'):
+                require(run['film']['total_seconds'] <= MAX_PROJECT_SECONDS, 'media_project_too_long', 422)
             run['phase'] = 'motion'
         if all(item['motion_version_id'] for item in run['items']):
             run['phase'] = 'draft'
@@ -324,6 +400,12 @@ class ProductionRunStore:
         if intent is None:
             intent = dict(phase=phase, index=index, key='production-run:' + run['id'] + ':' + name,
                           request=None, active=False)
+            if phase == 'motion' and run.get('continuity_schema'):
+                predecessor = (None if index == 0 else self.motion.continuity_predecessor(
+                    run['owner'], run['items'][index - 1]['motion_version_id'],
+                    run['items'][index - 1]['audio_version_id']))
+                intent['predecessor_motion_version_id'] = predecessor['motion_version_id'] if predecessor else None
+                intent['film_context_sha256'] = digest(self._film_context(run, index, predecessor))
             run['intents'][name] = intent
         # A previous local start may have committed before its response was lost.
         child = self._lookup(run, intent)
@@ -345,7 +427,9 @@ class ProductionRunStore:
             self.store.start_audio(run['owner'], run['items'][index]['scene_id'], request, intent['key'])
         elif phase == 'motion':
             self.motion.start_candidate(run['owner'], run['items'][index]['scene_id'], request,
-                intent['key'], audio_version_id=run['items'][index]['audio_version_id'])
+                intent['key'], audio_version_id=run['items'][index]['audio_version_id'],
+                **(dict(film_context=self._intent_context(run, intent))
+                   if run.get('continuity_schema') else {}))
         else:
             self.production.start_candidate_render(run['owner'], run['project_id'], request, intent['key'])
         self._sync(run, intent, self._lookup(run, intent))

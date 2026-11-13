@@ -132,7 +132,7 @@ test('an available creative release is the default for new generation, with an a
   assert.equal(h.state.context.scene.motion.head_version_id, null);
 });
 
-for (const creativeSchema of ['video.creative-scene.v2', 'video.creative-scene.v3'])
+for (const creativeSchema of ['video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'])
 test(`method-driven creative review preserves declarations without adoption: ${creativeSchema}`, async () => {
   const h = harness(); h.state.context.creativeConfigured = true;
   const candidate = creativeVersion();

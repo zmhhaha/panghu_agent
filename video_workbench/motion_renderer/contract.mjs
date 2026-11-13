@@ -26,7 +26,8 @@ const projectPair=(compiler,template)=>(compiler==='motion-compiler-1'&&template
  ||(compiler==='motion-demo-compiler-1'&&template==='record-demonstration-1')
  ||(compiler==='creative-scene-adapter-1'&&template==='generated-html-svg-1')
  ||(compiler==='creative-method-scene-adapter-1'&&template==='generated-method-html-svg-1')
- ||(compiler==='creative-method-engine-scene-adapter-1'&&template==='generated-method-engine-scene-1');
+ ||(compiler==='creative-method-engine-scene-adapter-1'&&template==='generated-method-engine-scene-1')
+ ||(compiler==='creative-film-scene-adapter-1'&&template==='generated-film-engine-scene-1');
 function validateRuntimeShape(value,keys){
  if(!exactKeys(value,keys)||Object.values(value).some(v=>typeof v!=='string'||v.length<1||v.length>2000||/[\x00-\x1f\x7f]/.test(v)))
   throw Error('runtime_fingerprint_invalid');
@@ -102,15 +103,32 @@ export function verifyInput(root,expected){
   ||!Number.isFinite(timeline.duration_seconds)||timeline.duration_seconds<=0||timeline.duration_seconds>60)
   throw Error('timeline_contract_mismatch');
  const plan=JSON.parse(readRegular(root+'/plan.json'));
- const engineCreative=manifest.compiler==='creative-method-engine-scene-adapter-1';
+ const filmCreative=manifest.compiler==='creative-film-scene-adapter-1';
+ const engineCreative=manifest.compiler==='creative-method-engine-scene-adapter-1'||filmCreative;
  const methodCreative=manifest.compiler==='creative-method-scene-adapter-1'||engineCreative;
  if(manifest.compiler==='creative-scene-adapter-1'||methodCreative){
-  const schema=engineCreative?'video.creative-scene.v3':methodCreative?'video.creative-scene.v2':'video.creative-scene.v1';
+  const schema=filmCreative?'video.creative-scene.v4':engineCreative?'video.creative-scene.v3':methodCreative?'video.creative-scene.v2':'video.creative-scene.v1';
   const audio=methodCreative?plan.input_document?.scene?.audio_sha256:plan.input_document?.constraints?.production?.audio_sha256;
   if(plan?.schema!==schema||!(engineCreative?['html-svg','canvas','three']:['html-svg']).includes(plan.engine)
    ||plan.adapter_revision!==manifest.compiler||audio!==manifest.audio_sha256)
    throw Error('creative_plan_binding_mismatch');
   const source=methodCreative?plan.result?.source:plan.result;
+  if(filmCreative){
+   const context=plan.input_document?.film_context,film=context?.film;
+   const handoff=plan.result?.handoff,proof=timeline.creative;
+   const index=context?.current_scene_index,row=film?.scenes?.[index];
+   if(!Number.isInteger(index)||!row||context.film_sha256!==proof?.film_sha256
+    ||handoff?.film_sha256!==context.film_sha256||handoff?.scene_id!==row.scene_id
+    ||row.scene_id!==plan.input_document.scene.scene_id||row.audio_sha256!==timeline.audio_sha256
+    ||Math.abs(row.audio_seconds-timeline.audio_seconds)>1e-9
+    ||Math.abs(row.start_seconds+timeline.duration_seconds-row.end_seconds)>1e-6
+    ||Math.abs(row.leading_silence_seconds-timeline.leading_seconds)>1e-9
+    ||Math.abs(row.trailing_silence_seconds-(timeline.duration_seconds-timeline.leading_seconds-timeline.audio_seconds))>1e-6
+    ||proof.predecessor_motion_version_id!==(context.predecessor?.motion_version_id??null)
+    ||(index===0?context.predecessor!==null:context.predecessor?.scene_id!==film.scenes[index-1]?.scene_id)
+    ||!['film_context_sha256','film_sha256','handoff_sha256'].every(key=>/^[0-9a-f]{64}$/.test(proof[key]||'')))
+    throw Error('creative_film_binding_mismatch');
+  }
   if(engineCreative&&(source?.engine!==plan.engine||manifest.engine!==plan.engine
    ||timeline.creative?.engine!==plan.engine||manifest.runtime_fingerprint?.schema!=='video.motion-runtime.v2'
    ||!plan.input_document?.constraints?.allowed_engines?.includes(plan.engine)))throw Error('creative_plan_binding_mismatch');
@@ -134,7 +152,8 @@ export function verifyInput(root,expected){
  }
  if((plan?.schema==='video.creative-scene.v1')!==(manifest.compiler==='creative-scene-adapter-1')
   ||(plan?.schema==='video.creative-scene.v2')!==(methodCreative&&!engineCreative)
-  ||(plan?.schema==='video.creative-scene.v3')!==engineCreative)throw Error('project_schema_compiler_mismatch');
+  ||(plan?.schema==='video.creative-scene.v3')!==(engineCreative&&!filmCreative)
+  ||(plan?.schema==='video.creative-scene.v4')!==filmCreative)throw Error('project_schema_compiler_mismatch');
  if((manifest.compiler==='motion-process-compiler-2')!==(plan?.schema==='video.process-plan.v1')
   ||(manifest.compiler==='motion-process-continuity-compiler-1')!==(plan?.schema==='video.process-continuity-scene.v1'))
   throw Error('project_schema_compiler_mismatch');

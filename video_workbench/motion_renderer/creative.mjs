@@ -11,11 +11,12 @@ export async function captureCreative({root='/work',mode='render',quality='draft
  const chromium=providedChromium||(await import('playwright-core')).chromium;
  const plan=JSON.parse(readRegular(root+'/plan.json'));
  const timeline=JSON.parse(readRegular(root+'/timeline.json'));
- const engineCreative=plan.schema==='video.creative-scene.v3';
+ const filmCreative=plan.schema==='video.creative-scene.v4';
+ const engineCreative=plan.schema==='video.creative-scene.v3'||filmCreative;
  const methodCreative=plan.schema==='video.creative-scene.v2'||engineCreative;
- const compiler=engineCreative?'creative-method-engine-scene-adapter-1':methodCreative?'creative-method-scene-adapter-1':'creative-scene-adapter-1';
+ const compiler=filmCreative?'creative-film-scene-adapter-1':engineCreative?'creative-method-engine-scene-adapter-1':methodCreative?'creative-method-scene-adapter-1':'creative-scene-adapter-1';
  const engine=plan.engine;
- if(!['video.creative-scene.v1','video.creative-scene.v2','video.creative-scene.v3'].includes(plan.schema)
+ if(!['video.creative-scene.v1','video.creative-scene.v2','video.creative-scene.v3','video.creative-scene.v4'].includes(plan.schema)
   ||!(engineCreative?['html-svg','canvas','three']:['html-svg']).includes(engine)
   ||plan.adapter_revision!==compiler||timeline.compiler!==compiler)throw Error('creative_contract_mismatch');
  const specification=engineSpec(engine);

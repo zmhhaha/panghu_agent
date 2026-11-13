@@ -47,9 +47,9 @@ def semantic_binding(project, scene):
 def plan_diagram_kind(plan):
     _require(type(plan) is dict and type(plan.get('schema')) is str
              and plan['schema'] in {'video.motion-plan.v1', 'video.process-plan.v1', 'video.creative-scene.v1',
-                                   'video.creative-scene.v2', 'video.creative-scene.v3'},
+                                   'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'},
              'motion_candidate_schema_invalid')
-    if plan['schema'] in {'video.creative-scene.v1', 'video.creative-scene.v2', 'video.creative-scene.v3'}:
+    if plan['schema'] in {'video.creative-scene.v1', 'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'}:
         return 'creative'
     return 'process' if plan['schema'] == 'video.process-plan.v1' else 'diagram'
 
@@ -58,10 +58,10 @@ def operation_diagram_kind(operation):
     document = operation.get('document')
     _require(type(document) is dict and type(document.get('schema')) is str and document['schema'] in {
         'video.motion-input.v1', 'video.process-input.v1', 'video.animation-experiment-input.v1',
-        'video.animation-production-input.v1', 'video.animation-production-input.v2',
+        'video.animation-production-input.v1', 'video.animation-production-input.v2', 'video.animation-production-input.v3',
         CREATIVE_PENDING_SCHEMA}, 'motion_operation_schema_invalid')
     if document['schema'] in {'video.animation-experiment-input.v1', 'video.animation-production-input.v1',
-                             'video.animation-production-input.v2', CREATIVE_PENDING_SCHEMA}:
+                             'video.animation-production-input.v2', 'video.animation-production-input.v3', CREATIVE_PENDING_SCHEMA}:
         return 'creative'
     return 'process' if document['schema'] == 'video.process-input.v1' else 'diagram'
 
@@ -188,6 +188,17 @@ class MotionStore:
         return (selected is None or selected.get('stale', False)
                 or selected.get('sha256') != version['audio_sha256'])
 
+    def _film_stale(self, version, project):
+        if version['plan'].get('schema') != 'video.creative-scene.v4':
+            return False
+        from .production_film_context import freeze_production_inputs
+        film = version['plan']['input_document']['film_context']['film']
+        try:
+            return (film['project_id'] != project['id'] or film['content_binding_sha256']
+                    != digest(freeze_production_inputs(self.store, project, film_aware=True)))
+        except ServiceError:
+            return True
+
     def project(self, owner, project_id):
         # The existing lock keeps the static and additive views on one revision,
         # without opening nested SQLite transactions.
@@ -205,7 +216,8 @@ class MotionStore:
                         'SELECT document FROM motion_operations WHERE owner=? AND project_id=? AND scene_id=? ORDER BY rowid',
                         (owner, project_id, scene['id']))]
                     metadata = [dict(self._metadata(v, binding),
-                                     stale=v['semantic_binding_sha256'] != binding or self._audio_stale(v, scene))
+                                     stale=v['semantic_binding_sha256'] != binding or self._audio_stale(v, scene)
+                                         or self._film_stale(v, project))
                                 for v in versions]
                     adopted = next((v for v in metadata if v['id'] == head['version_id']), None)
                     scene['motion'] = dict(mode=head['mode'], head_version_id=head['version_id'],
@@ -258,7 +270,7 @@ class MotionStore:
             scene = self.store._scene(project, version['scene_id'])
             self.store._attach_audio(db, project)
             version['stale'] = (version['semantic_binding_sha256'] != semantic_binding(project, scene)
-                                or self._audio_stale(version, scene))
+                                or self._audio_stale(version, scene) or self._film_stale(version, project))
             return version
 
     def candidate_version(self, owner, version_id, audio_version_id):
@@ -277,16 +289,35 @@ class MotionStore:
             _require(version.get('audio_version_id') == audio['id']
                      and version.get('audio_sha256') == checked['sha256'],
                      'creative_audio_binding_mismatch', 409)
-            return dict(version, stale=version['semantic_binding_sha256'] != semantic_binding(project, scene))
+            return dict(version, stale=version['semantic_binding_sha256'] != semantic_binding(project, scene)
+                        or self._film_stale(version, project))
 
-    def start_candidate(self, owner, scene_id, request, idem, *, audio_version_id):
+    @staticmethod
+    def _continuity_predecessor(version):
+        from .creative_method_contract import validate_scene_package, FILM_CREATIVE_SCHEMA
+        from .creative_contract import scene_source
+        package = validate_scene_package(version['plan'])
+        _require(package['schema'] == FILM_CREATIVE_SCHEMA, 'creative_predecessor_contract_mismatch', 409)
+        source = scene_source(package)
+        return dict(scene_id=version['scene_id'], motion_version_id=version['id'],
+            input_sha256=package['input_sha256'], result_sha256=package['result_sha256'],
+            source_sha256=digest(source), source_summary={key: source[key] for key in
+                ('engine', 'strategy', 'files_sha256')}, handoff=package['result']['handoff'])
+
+    def continuity_predecessor(self, owner, version_id, audio_version_id):
+        version = self.candidate_version(owner, version_id, audio_version_id)
+        _require(not version['stale'], 'creative_predecessor_stale', 409)
+        return self._continuity_predecessor(version)
+
+    def start_candidate(self, owner, scene_id, request, idem, *, audio_version_id, film_context=None):
         """Coordinator-only admission; no HTTP request can set this selection."""
         _require(type(audio_version_id) is str and 1 <= len(audio_version_id) <= 100)
         _require(type(request) is dict and request.get('diagram_kind') == 'creative'
                  and 'expected_audio_version_id' not in request)
-        return self.start(owner, scene_id, request, idem, _draft_audio_version_id=audio_version_id)
+        return self.start(owner, scene_id, request, idem, _draft_audio_version_id=audio_version_id,
+                          _film_context=film_context)
 
-    def start(self, owner, scene_id, request, idem, *, timeout=600, _draft_audio_version_id=None):
+    def start(self, owner, scene_id, request, idem, *, timeout=600, _draft_audio_version_id=None, _film_context=None):
         _require(type(request) is dict and {'expected_revision'} <= set(request)
                  and set(request) <= {'expected_revision', 'instruction', 'base_version_id', 'diagram_kind',
                                       'expected_semantic_binding_sha256', 'expected_audio_version_id'}
@@ -312,6 +343,11 @@ class MotionStore:
             _require(diagram_kind == 'creative' and type(_draft_audio_version_id) is str
                      and 1 <= len(_draft_audio_version_id) <= 100)
             identity.update(selection='draft_only', audio_version_id=_draft_audio_version_id)
+        if _film_context is not None:
+            from agent_service.profiles.video_animation_production_contract import validate_film_context
+            _require(_draft_audio_version_id is not None, 'creative_film_requires_draft_candidate', 409)
+            _film_context = validate_film_context(_film_context)
+            identity['film_context_sha256'] = digest(_film_context)
         fingerprint = digest(identity)
         with self.store.transaction() as db:
             existing = db.execute('SELECT request_hash,document FROM motion_operations WHERE owner=? AND idem=?',
@@ -321,6 +357,28 @@ class MotionStore:
                 return self._public(json.loads(existing['document']))
             project = self.store._project(db, owner, project_id)
             scene = self.store._scene(project, scene_id)
+            if _film_context is not None:
+                film, index = _film_context['film'], _film_context['current_scene_index']
+                from .production_film_context import freeze_production_inputs
+                _require(film['project_id'] == project_id
+                    and film['content_binding_sha256'] == digest(freeze_production_inputs(
+                        self.store, project, film_aware=True))
+                    and [row['scene_id'] for row in film['scenes']] == [row['id'] for row in project['scenes']]
+                    and film['scenes'][index]['scene_id'] == scene_id
+                    and film['scenes'][index]['audio_version_id'] == _draft_audio_version_id,
+                    'creative_film_project_binding_mismatch', 409)
+                if index:
+                    previous = _film_context['predecessor']
+                    version = self._version(db, owner, previous['motion_version_id'])
+                    previous_scene = self.store._scene(project, film['scenes'][index - 1]['scene_id'])
+                    _, _, previous_audio = self._creative_audio(db, project, previous_scene,
+                        version_id=film['scenes'][index - 1]['audio_version_id'])
+                    _require(version['project_id'] == project_id and version['scene_id'] == previous_scene['id']
+                        and version['semantic_binding_sha256'] == semantic_binding(project, previous_scene)
+                        and version['audio_sha256'] == previous_audio['sha256']
+                        and version['audio_version_id'] == film['scenes'][index - 1]['audio_version_id']
+                        and self._continuity_predecessor(version) == previous,
+                        'creative_predecessor_binding_mismatch', 409)
             binding = semantic_binding(project, scene)
             # A result on another scene changes the project revision without
             # changing this generation's input. Compare the server-issued scene
@@ -368,7 +426,8 @@ class MotionStore:
                     style=project.get('style', ''),
                     instruction=request.get('instruction', ''),
                     base_source=scene_source(base['plan']) if base else None,
-                    engine_aware=self.runtime_capabilities is not None,
+                    engine_aware=self.runtime_capabilities is not None or _film_context is not None,
+                    film_context=_film_context,
                     **(dict(allowed_engines=self.runtime_capabilities['allowed_engines'],
                             runtime_identity=self.runtime_capabilities['runtime_identity'],
                             assets=self.runtime_capabilities['assets'])
@@ -380,6 +439,9 @@ class MotionStore:
                                      output_reserve_bytes=CREATIVE_OUTPUT_RESERVE_BYTES)
                 if _draft_audio_version_id is not None:
                     audio_binding['selection'] = 'draft_only'
+                if _film_context is not None:
+                    audio_binding.update(film_context_sha256=digest(_film_context),
+                                         film_sha256=_film_context['film_sha256'])
             else:
                 document = dict(schema='video.process-input.v1' if diagram_kind == 'process' else 'video.motion-input.v1',
                     title=scene['title'], style=project.get('style', ''),
@@ -570,10 +632,13 @@ class MotionStore:
                     input_sha256=op['input_sha256'], semantic_binding_sha256=op['semantic_binding_sha256'],
                     beats=beats, plan=plan, plan_sha256=digest(plan))
                 if creative:
-                    from .creative_renderer import METHOD_COMPILER, ENGINE_METHOD_COMPILER
-                    compiler = ENGINE_METHOD_COMPILER if plan['schema'] == 'video.creative-scene.v3' else METHOD_COMPILER
+                    from .creative_renderer import METHOD_COMPILER, ENGINE_METHOD_COMPILER, FILM_COMPILER
+                    compiler = (FILM_COMPILER if plan['schema'] == 'video.creative-scene.v4' else
+                        ENGINE_METHOD_COMPILER if plan['schema'] == 'video.creative-scene.v3' else METHOD_COMPILER)
                     version.update(diagram_kind='creative', compiler_version=compiler,
                         audio_version_id=op['audio_version_id'], audio_sha256=op['audio_sha256'])
+                    if 'film_context_sha256' in op:
+                        version.update(film_context_sha256=op['film_context_sha256'], film_sha256=op['film_sha256'])
                 elif process:
                     version.update(diagram_kind='process', compiler_version=PROCESS_CANDIDATE_COMPILER)
                 else:
@@ -615,7 +680,8 @@ class MotionStore:
                 _require(version['scene_id'] == scene_id and version['project_id'] == project_id, 'not_found', 404)
                 head = self._head(db, owner, project_id, scene_id)
                 _require(head['version_id'] == selection['expected_head_version_id'], 'motion_head_conflict', 409)
-                _require(version['semantic_binding_sha256'] == semantic_binding(project, scene), 'motion_plan_stale', 409)
+                _require(version['semantic_binding_sha256'] == semantic_binding(project, scene)
+                    and not self._film_stale(version, project), 'motion_plan_stale', 409)
                 if plan_diagram_kind(version['plan']) == 'creative':
                     _, _, audio = self._creative_audio(db, project, scene)
                     _require(audio['sha256'] == version['audio_sha256'], 'creative_audio_binding_mismatch', 409)
@@ -644,7 +710,8 @@ class MotionStore:
             if mode == 'motion':
                 _require(head['version_id'] is not None, 'missing_motion_plan', 409)
                 version = self._version(db, owner, head['version_id'])
-                _require(version['semantic_binding_sha256'] == semantic_binding(project, scene), 'motion_plan_stale', 409)
+                _require(version['semantic_binding_sha256'] == semantic_binding(project, scene)
+                    and not self._film_stale(version, project), 'motion_plan_stale', 409)
                 if plan_diagram_kind(version['plan']) == 'creative':
                     _, _, audio = self._creative_audio(db, project, scene)
                     _require(audio['sha256'] == version['audio_sha256'], 'creative_audio_binding_mismatch', 409)

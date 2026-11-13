@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { createProductionRunRequest, createProductionRunsPanel, productionRunUnresolved } from '../../video_workbench/web/production-runs.mjs';
+import { createProductionRunRequest, createProductionRunsPanel, productionRunUnresolved,
+  currentProductionRun, productionRunDraftReady, productionRunActualSeconds } from '../../video_workbench/web/production-runs.mjs';
 
 const html = await readFile(new URL('../../video_workbench/web/index.html', import.meta.url), 'utf8');
 class Element {
@@ -152,4 +153,78 @@ test('step progress uses its own denominator and terminal draining or blocked ru
   assert.equal(productionRunUnresolved(run({status:'cancelled',draining:true})),true);
   h.state.data={runs:[run({status:'cancelled',progress:{done:2,total:7},blocked_reason:null,draining:false})]};await h.load();
   assert.equal(h.panel.hasUnresolvedOperation(),false);assert.equal(h.$('start-production-run').disabled,false);
+});
+
+const readyRun = (fields = {}) => run({status:'completed',phase:'completed',current:true,draft_render_id:'draft-render',duration_seconds:9,
+  items:[{scene_id:'p1-scene',title:'示例段落',audio_seconds:8.25,duration_seconds:9,
+    audio_version_id:'exact-audio',motion_version_id:'exact-motion',candidate_current:true}],...fields});
+
+test('current projection requires server currentness, exact plan and ordered scenes, and never falls back past a failed latest run',()=>{
+  const p=project(), completed=readyRun(), before=structuredClone([p,completed]);
+  assert.equal(currentProductionRun(p,[completed]).id,completed.id);
+  for(const invalid of [readyRun({current:false}),readyRun({current:undefined}),readyRun({project_id:'other'}),
+    readyRun({joint_plan_version_id:'old-plan'}),readyRun({items:[]}),readyRun({items:[{scene_id:'other'}]}),
+    readyRun({draining:true}),readyRun({error:'uncertain'})]) assert.equal(currentProductionRun(p,[invalid]),null);
+  for(const status of ['failed','cancelled','stale']) assert.equal(currentProductionRun(p,[completed,
+    readyRun({id:'newer',created_at:2,status})]),null);
+  const two={...p,scenes:[...p.scenes,{id:'second'}]};
+  assert.equal(currentProductionRun(two,[readyRun({items:[{scene_id:'second'},{scene_id:'p1-scene'}]})]),null);
+  assert.deepEqual([p,completed],before,'Reading presentation state never adopts or rewrites project/run state');
+});
+
+test('draft readiness requires exact candidate validation and encoded actual duration never comes from the audio schedule',()=>{
+  const r=readyRun();
+  assert.equal(productionRunDraftReady(r),true);
+  assert.equal(productionRunActualSeconds(r,[]),null);
+  assert.equal(productionRunActualSeconds(r,[{id:'draft-render',status:'completed',selection:'draft_only',content_state:'current',actual_duration_seconds:9.5}]),9.5);
+  for(const render of [{id:'other',status:'completed',selection:'draft_only',content_state:'current',actual_duration_seconds:9.5},
+    {id:'draft-render',status:'completed',selection:'draft_only',content_state:'changed',actual_duration_seconds:9.5},
+    {id:'draft-render',status:'running',selection:'draft_only',content_state:'current',actual_duration_seconds:9.5}])
+    assert.equal(productionRunActualSeconds(r,[render]),null);
+  assert.equal(productionRunDraftReady(readyRun({items:[{...r.items[0],candidate_current:false}]})),false);
+  assert.equal(productionRunDraftReady(readyRun({current:false})),false);
+});
+
+test('completed status is not duplicated, schedule and encoded duration stay distinct, and history selection does not project old candidates',async()=>{
+  const h=harness();
+  h.state.data={runs:[readyRun({id:'latest',created_at:2}),readyRun({id:'old',current:false,draft_render_id:'old-render',created_at:1})]};
+  await h.load();
+  assert.equal(h.$('production-run-status').textContent.match(/草稿待审阅/g)?.length,1);
+  assert.match(h.$('production-run-review-note').textContent,/按录音与留白排程 9 秒.*视频实测时长待读取/);
+  h.state.context.renders=[{id:'draft-render',status:'completed',actual_duration_seconds:9.5}]; h.panel.render();
+  assert.match(h.$('production-run-review-note').textContent,/视频实际 9.5 秒/);
+  h.$('production-run-select').value='old';await h.$('production-run-select').emit('change');
+  assert.equal(h.panel.currentRun(h.state.context.project).id,'latest');
+  assert.equal(h.$('production-run-video').src,'/api/renders/old-render/video');
+  assert.equal(h.$('production-run-player-heading').textContent,'历史整片预览');
+  assert.match(h.$('production-run-review-note').textContent,/项目内容已变化/);
+  assert.deepEqual([...h.panel.managedRenderIds('p1')].sort(),['draft-render','old-render']);
+  assert.equal(posts(h).length,0);
+});
+
+test('revision changes, failed reads and late project reads cannot keep a current-candidate projection',async()=>{
+  const h=harness();h.state.data={runs:[readyRun()]};await h.load();
+  assert.ok(h.panel.currentRun(h.state.context.project));
+  h.state.context.project.revision++;h.panel.render();
+  assert.equal(h.panel.currentRun(h.state.context.project),null);
+  assert.match(h.$('production-run-status').textContent,/内容匹配状态待读取/);
+  h.state.transport=()=>{throw new TypeError('offline');};await h.load();
+  assert.equal(h.panel.currentRun(h.state.context.project),null);
+  assert.match(h.$('production-run-review-note').textContent,/匹配状态尚未确认/);
+  let resolve;h.state.transport=()=>new Promise(done=>{resolve=done;});const old=h.load();
+  h.state.context={...h.state.context,project:project('p2'),epoch:2};h.panel.render();
+  resolve({runs:[readyRun()]});await old;
+  assert.equal(h.panel.currentRun(h.state.context.project),null);
+  assert.equal(h.$('production-run-player').hidden,true);
+  assert.equal(h.$('production-run-video').src,undefined);
+  assert.equal(h.$('download-production-run').href,undefined);
+  assert.equal(posts(h).length,0);
+});
+
+test('terminal partial runs describe unfinished work without claiming operations are still running',async()=>{
+  const h=harness();h.state.data={runs:[run({status:'failed',phase:'motion',error:'child_failed',items:[{
+    scene_id:'p1-scene',audio_operation_id:'audio-op',motion_operation_id:'motion-op'}]})]};await h.load();
+  assert.match(h.$('production-run-items').textContent,/配音尚未完成.*动画尚未完成/);
+  assert.doesNotMatch(h.$('production-run-items').textContent,/正在制作/);
+  assert.equal(h.panel.currentRun(h.state.context.project),null);
 });

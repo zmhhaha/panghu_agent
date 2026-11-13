@@ -21,6 +21,12 @@ LEGACY_INPUT_SCHEMA = 'video.animation-production-input.v1'
 LEGACY_RESULT_SCHEMA = 'video.animation-production-result.v1'
 INPUT_SCHEMA = 'video.animation-production-input.v2'
 RESULT_SCHEMA = 'video.animation-production-result.v2'
+FILM_INPUT_SCHEMA = 'video.animation-production-input.v3'
+FILM_RESULT_SCHEMA = 'video.animation-production-result.v3'
+FILM_CONTEXT_SCHEMA = 'video.film-context.v1'
+HANDOFF_SCHEMA = 'video.scene-handoff.v1'
+MAX_FILM_CONTEXT_BYTES = 384 * 1024
+MAX_HANDOFF_BYTES = 48 * 1024
 INPUT_MAX_BYTES = 2 * 1024 * 1024
 OUTPUT_MAX_BYTES = 2 * 1024 * 1024
 DELIVERY_SCHEMA = 'video.production-method-delivery.v1'
@@ -130,8 +136,127 @@ def validate_runtime_identity(identity):
     return deepcopy(identity)
 
 
-def validate_core_task(document, *, engine_aware=False):
-    require(type(document) is dict and set(document) == {'scene', 'constraints', 'assets', 'base_source'})
+def validate_handoff(document, *, film_sha256, scene_id, source=None):
+    """Check an author's bounded state declaration, never observed continuity."""
+    require(type(document) is dict and set(document) == {'schema', 'film_sha256', 'scene_id',
+        'objects', 'entry_state', 'exit_state', 'camera', 'transition_intent'}
+        and document['schema'] == HANDOFF_SCHEMA
+        and document['film_sha256'] == film_sha256 and document['scene_id'] == scene_id,
+        'animation_production_handoff_binding_mismatch')
+    checksum(document['film_sha256'])
+    text(document['scene_id'], 100)
+    for key in ('entry_state', 'exit_state', 'camera', 'transition_intent'):
+        text(document[key], 4000)
+    objects = document['objects']
+    require(type(objects) is list and len(objects) <= 32)
+    seen = set()
+    for row in objects:
+        require(type(row) is dict and set(row) == {'object_id', 'meaning', 'appearance', 'state',
+                                                 'source_file', 'source_anchor'})
+        identity = row['object_id']
+        require(type(identity) is str and _TARGET.fullmatch(identity) is not None and identity not in seen)
+        seen.add(identity)
+        for key in ('meaning', 'appearance', 'state'):
+            text(row[key], 2000)
+        text(row['source_anchor'], 1000)
+        require(type(row['source_file']) is str and row['source_file'] in {'scene.html', 'scene.js', 'scene.css'})
+        if source is not None:
+            require(row['source_file'] in source['files']
+                and row['source_anchor'] in source['files'][row['source_file']],
+                'animation_production_handoff_source_anchor_missing')
+    require(len(canonical_bytes(document)) <= MAX_HANDOFF_BYTES,
+            'animation_production_handoff_too_large', 413)
+    return deepcopy(document)
+
+
+def validate_film_context(document, scene=None, constraints=None):
+    """Validate the real full-film clock and exact predecessor declaration.
+
+    The caller must copy the predecessor from its validated immutable candidate.
+    These references bind custody; they do not assert that the author saw a frame.
+    """
+    require(type(document) is dict and set(document) == {'schema', 'film_sha256', 'film',
+        'current_scene_index', 'predecessor'} and document['schema'] == FILM_CONTEXT_SCHEMA)
+    film = document['film']
+    require(type(film) is dict and set(film) == {'project_id', 'joint_plan_version_id',
+        'content_binding_sha256', 'title', 'script', 'understanding_goal', 'style', 'scenes', 'total_seconds'})
+    checksum(document['film_sha256'])
+    checksum(film['content_binding_sha256'])
+    require(document['film_sha256'] == digest(film), 'animation_production_film_integrity')
+    for key, maximum in (('project_id', 100), ('joint_plan_version_id', 100), ('title', 300),
+                         ('script', 100000), ('understanding_goal', 16000), ('style', 10000)):
+        text(film[key], maximum, empty=key == 'style')
+    rows = film['scenes']
+    require(type(rows) is list and 1 <= len(rows) <= 24)
+    previous, seen = 0, set()
+    for row in rows:
+        require(type(row) is dict and set(row) == {'scene_id', 'title', 'narration', 'visual_intent',
+            'audio_version_id', 'audio_sha256', 'audio_seconds', 'start_seconds', 'end_seconds',
+            'leading_silence_seconds', 'trailing_silence_seconds'})
+        for key, maximum in (('scene_id', 100), ('title', 300), ('narration', 10000),
+                             ('visual_intent', 16000), ('audio_version_id', 100)):
+            text(row[key], maximum)
+        require(row['scene_id'] not in seen)
+        seen.add(row['scene_id'])
+        checksum(row['audio_sha256'])
+        seconds = number(row['audio_seconds'], .1, 60)
+        leading = number(row['leading_silence_seconds'], 0, 60)
+        trailing = number(row['trailing_silence_seconds'], 0, 60)
+        start, end = number(row['start_seconds'], 0, 1800), number(row['end_seconds'], 0, 1800)
+        require(abs(start - previous) <= 1e-6 and end > start and end - start <= 60 + 1e-6
+            and abs(end - start - seconds - leading - trailing) <= 1e-6
+            and abs(start * 24 - round(start * 24)) <= 1e-5
+            and abs(end * 24 - round(end * 24)) <= 1e-5,
+            'animation_production_film_clock_invalid')
+        previous = end
+    number(film['total_seconds'], .1, 1800)
+    require(abs(film['total_seconds'] - previous) <= 1e-6,
+            'animation_production_film_clock_invalid')
+    index = document['current_scene_index']
+    require(type(index) is int and 0 <= index < len(rows))
+    current = rows[index]
+    if scene is not None:
+        require(current['scene_id'] == scene['scene_id'] and current['narration'] == scene['narration']
+            and current['audio_sha256'] == scene['audio_sha256']
+            and abs(current['audio_seconds'] - scene['alignment']['audio_seconds']) <= 1e-9,
+            'animation_production_film_scene_mismatch')
+    if constraints is not None:
+        require(abs(current['audio_seconds'] - constraints['duration_seconds']) <= 1e-9,
+                'animation_production_film_scene_mismatch')
+    predecessor = document['predecessor']
+    if index == 0:
+        require(predecessor is None, 'animation_production_predecessor_invalid')
+    else:
+        require(type(predecessor) is dict and set(predecessor) == {'scene_id', 'motion_version_id',
+            'input_sha256', 'result_sha256', 'source_sha256', 'source_summary', 'handoff'}
+            and predecessor['scene_id'] == rows[index - 1]['scene_id'],
+            'animation_production_predecessor_invalid')
+        text(predecessor['motion_version_id'], 100)
+        for key in ('input_sha256', 'result_sha256', 'source_sha256'):
+            checksum(predecessor[key])
+        summary = predecessor['source_summary']
+        require(type(summary) is dict and set(summary) == {'engine', 'strategy', 'files_sha256'}
+            and type(summary['engine']) is str and summary['engine'] in _ENGINES)
+        require(type(summary['strategy']) is dict and set(summary['strategy']) == {'description', 'tradeoffs'})
+        for value in summary['strategy'].values():
+            text(value, 3000, empty=True)
+        require(type(summary['files_sha256']) is dict and 'scene.html' in summary['files_sha256']
+            and set(summary['files_sha256']) <= {'scene.html', 'scene.js', 'scene.css'})
+        for value in summary['files_sha256'].values():
+            checksum(value)
+        validate_handoff(predecessor['handoff'], film_sha256=document['film_sha256'],
+                         scene_id=predecessor['scene_id'])
+        require(all(row['source_file'] in summary['files_sha256'] for row in predecessor['handoff']['objects']),
+                'animation_production_predecessor_invalid')
+    require(len(canonical_bytes(document)) <= MAX_FILM_CONTEXT_BYTES,
+            'animation_production_film_context_too_large', 413)
+    return deepcopy(document)
+
+
+def validate_core_task(document, *, engine_aware=False, film_aware=False):
+    fields = {'scene', 'constraints', 'assets', 'base_source'}
+    require(type(film_aware) is bool and (not film_aware or engine_aware))
+    require(type(document) is dict and set(document) == (fields | {'film_context'} if film_aware else fields))
     scene, bounds = document['scene'], document['constraints']
     require(type(scene) is dict and set(scene) == _SCENE)
     for key, maximum in (('scene_id', 100), ('title', 300), ('visual_description', 16000),
@@ -171,6 +296,8 @@ def validate_core_task(document, *, engine_aware=False):
                 'animation_production_three_asset_not_admitted')
     if document['base_source'] is not None:
         validate_source(document['base_source'], document)
+    if film_aware:
+        validate_film_context(document['film_context'], scene, bounds)
     require(len(canonical_bytes(document)) <= INPUT_MAX_BYTES, 'animation_production_task_too_large', 413)
     return deepcopy(document)
 
@@ -220,11 +347,13 @@ def validate_delivery(snapshot):
 
 
 def validate_input(document):
-    require(type(document) is dict and set(document) ==
-        {'schema', 'scene', 'constraints', 'method_delivery', 'assets', 'base_source'}
-        and document['schema'] in {INPUT_SCHEMA, LEGACY_INPUT_SCHEMA})
-    core = validate_core_task({key: document[key] for key in ('scene', 'constraints', 'assets', 'base_source')},
-                             engine_aware=document['schema'] == INPUT_SCHEMA)
+    require(type(document) is dict and type(document.get('schema')) is str and document['schema'] in
+            {INPUT_SCHEMA, LEGACY_INPUT_SCHEMA, FILM_INPUT_SCHEMA})
+    film_aware = document['schema'] == FILM_INPUT_SCHEMA
+    core_fields = {'scene', 'constraints', 'assets', 'base_source'} | ({'film_context'} if film_aware else set())
+    require(set(document) == core_fields | {'schema', 'method_delivery'})
+    core = validate_core_task({key: document[key] for key in core_fields},
+        engine_aware=document['schema'] != LEGACY_INPUT_SCHEMA, film_aware=film_aware)
     delivery = validate_delivery(document['method_delivery'])
     require(delivery['task_sha256'] == digest(core)
         and delivery['allowed_engines'] == core['constraints']['allowed_engines'],
@@ -282,11 +411,18 @@ def validate_source(source, input_document):
 def validate_result(document, input_sha256, input_document):
     checksum(input_sha256)
     context = validate_input(input_document)
-    require(type(document) is dict and set(document) == {'schema', 'input_sha256', 'source', 'method_decision'}
-        and document['schema'] == (RESULT_SCHEMA if context['schema'] == INPUT_SCHEMA else LEGACY_RESULT_SCHEMA)
+    film_aware = context['schema'] == FILM_INPUT_SCHEMA
+    fields = {'schema', 'input_sha256', 'source', 'method_decision'} | ({'handoff'} if film_aware else set())
+    expected_schema = {LEGACY_INPUT_SCHEMA: LEGACY_RESULT_SCHEMA,
+        INPUT_SCHEMA: RESULT_SCHEMA, FILM_INPUT_SCHEMA: FILM_RESULT_SCHEMA}[context['schema']]
+    require(type(document) is dict and set(document) == fields
+        and document['schema'] == expected_schema
         and document['input_sha256'] == input_sha256
         and digest(context) == input_sha256, 'animation_production_input_binding_mismatch')
     source = validate_source(document['source'], context)
     validate_method_decision(context['method_delivery'], document['method_decision'], source)
+    if film_aware:
+        validate_handoff(document['handoff'], film_sha256=context['film_context']['film_sha256'],
+                         scene_id=context['scene']['scene_id'], source=source)
     require(len(canonical_bytes(document)) <= OUTPUT_MAX_BYTES, 'animation_production_output_too_large', 413)
     return deepcopy(document)

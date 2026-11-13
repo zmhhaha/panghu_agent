@@ -448,6 +448,7 @@ class Production:
                 if candidate['id'] == pair[0]:
                     candidate['stale'] = (version is None
                         or version['semantic_binding_sha256'] != semantic_binding(project, scene)
+                        or self.motion_store._film_stale(version, project)
                         or version.get('audio_version_id') != pair[1]
                         or version.get('audio_sha256') != frozen['audio']['sha256'])
         return result

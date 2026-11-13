@@ -12,7 +12,7 @@ import json
 
 from agent_service.contracts import ServiceError, digest
 from . import media
-from .creative_contract import validate_scene_package, scene_context
+from .creative_contract import validate_scene_package, scene_context, scene_source
 from .motion import validate_alignment
 from .motion_snapshot import _audio, _runtime, freeze_snapshot_v2
 
@@ -25,6 +25,41 @@ def _require(condition, code='invalid_creative_snapshot', status=422):
         raise ServiceError(code, status)
 
 
+def _film_chain(project_id, scenes):
+    """A new full-film contract cannot borrow an adjacent but unrelated cut."""
+    packages = [(source['creative'].get('package') if type(source) is dict
+                 and type(source.get('creative')) is dict else None) for source in scenes]
+    if not any(type(value) is dict and value.get('schema') == 'video.creative-scene.v4' for value in packages):
+        return None
+    checked = []
+    for source, package in zip(scenes, packages):
+        _require(type(source) is dict and source.get('visual_mode') == 'creative' and type(package) is dict
+            and package.get('schema') == 'video.creative-scene.v4', 'creative_film_chain_mismatch', 409)
+        checked.append(validate_scene_package(package))
+    film = checked[0]['input_document']['film_context']['film']
+    checksum = digest(film)
+    _require(film['project_id'] == project_id and [row['scene_id'] for row in film['scenes']]
+        == [source.get('id') for source in scenes], 'creative_film_chain_mismatch', 409)
+    for index, (source, package, row) in enumerate(zip(scenes, checked, film['scenes'])):
+        context = package['input_document']['film_context']
+        _require(context['film'] == film and context['film_sha256'] == checksum
+            and context['current_scene_index'] == index
+            and type(source.get('audio')) is dict
+            and source['audio'].get('id') == row['audio_version_id']
+            and source['audio'].get('sha256') == row['audio_sha256'], 'creative_film_chain_mismatch', 409)
+        if index:
+            previous = checked[index - 1]
+            previous_source = scene_source(previous)
+            expected = dict(scene_id=scenes[index - 1]['id'],
+                motion_version_id=scenes[index - 1]['creative']['id'],
+                input_sha256=previous['input_sha256'], result_sha256=previous['result_sha256'],
+                source_sha256=digest(previous_source),
+                source_summary={key: previous_source[key] for key in ('engine', 'strategy', 'files_sha256')},
+                handoff=previous['result']['handoff'])
+            _require(context['predecessor'] == expected, 'creative_film_predecessor_mismatch', 409)
+    return film
+
+
 def freeze_snapshot_v4(project_id, revision, title, scenes, *, runtime_fingerprint,
                        purpose='draft', quality='draft', subtitles=False, current_adoptions=None):
     media._text(project_id, 100)
@@ -35,6 +70,7 @@ def freeze_snapshot_v4(project_id, revision, title, scenes, *, runtime_fingerpri
     _require(purpose != 'delivery' or type(current_adoptions) is dict,
              'motion_adoption_evidence_missing', 409)
     fingerprint = _runtime(runtime_fingerprint)
+    film = _film_chain(project_id, scenes)
     result, seen, voices, cursor, audio_bytes = [], set(), set(), 0.0, 0
     for source in scenes:
         _require(type(source) is dict and type(source.get('visual_mode')) is str
@@ -112,6 +148,11 @@ def freeze_snapshot_v4(project_id, revision, title, scenes, *, runtime_fingerpri
             _require(current_adoptions.get(identity) == dict(visual_mode=source['visual_mode'],
                 visual_version_id=visual_id, audio_version_id=scene['audio']['id']), 'motion_adoption_conflict', 409)
         duration = scene['timing']['duration_seconds']
+        if film is not None:
+            row = film['scenes'][len(result)]
+            _require(abs(duration - (row['end_seconds'] - row['start_seconds'])) <= 1e-6
+                and abs(cursor - row['start_seconds']) <= 1e-6,
+                'creative_film_clock_mismatch', 409)
         scene.update(start_seconds=cursor, end_seconds=cursor + duration)
         cursor = scene['end_seconds']
         _require(cursor <= media.MAX_PROJECT_SECONDS, 'media_project_too_long')

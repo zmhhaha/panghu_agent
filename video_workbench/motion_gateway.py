@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import math
 import time
+from copy import copy
 
 from agent_service.contracts import ServiceError, canonical_bytes
 from agent_service.profiles.video_motion import (INPUT_MAX_BYTES, OUTPUT_MAX_BYTES,
@@ -212,3 +213,14 @@ class ProductionCreativeAgentGateway(MotionAgentGateway):
     business_prefix, idempotency_prefix = 'video-production:', 'production-'
     validate_input = staticmethod(validate_scene_input)
     validate_result = staticmethod(validate_result)
+
+    def for_document(self, document):
+        """Resolve immutable contract identity without mutating shared routing.
+
+        Historical in-flight operations keep their original profile and keys.
+        A v3 film input is admitted only under its separate production role.
+        """
+        from agent_service.profiles.video_animation_production import FILM_PROFILE, FILM_INPUT_SCHEMA, PROFILE as PRODUCTION_PROFILE
+        gateway = copy(self)
+        gateway.profile = FILM_PROFILE if document.get('schema') == FILM_INPUT_SCHEMA else PRODUCTION_PROFILE
+        return gateway

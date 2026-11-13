@@ -122,10 +122,13 @@ class MotionWorkflow:
                             status='cancelled' if op['cancel_requested'] else 'timed_out', error=None)
                     return
             if op['document']['schema'] not in {'video.animation-production-input.v1',
-                                              'video.animation-production-input.v2'}:
+                                              'video.animation-production-input.v2',
+                                              'video.animation-production-input.v3'}:
                 # A historical Lab author input is not a production input.
                 # Never relabel or submit it under a new role.
                 raise ServiceError('creative_profile_unavailable', 503)
+            if hasattr(gateway, 'for_document'):
+                gateway = gateway.for_document(op['document'])
         if not op['job_id']:
             if not op['submit_attempted']:
                 if op['cancel_requested'] or time.time() >= op['deadline_at']:

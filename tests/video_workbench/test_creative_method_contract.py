@@ -63,9 +63,16 @@ def production_result(document, *, source_html=None, action='adapt'):
         scene_targets=[dict(target_id='moving-group', description='Maintains object identity',
             source_file='scene.html', source_anchor='id="moving-group"')] if action != 'reject' else [])
         for row in document['method_delivery']['methods']]
-    schema = production.RESULT_SCHEMA if document['schema'] == production.INPUT_SCHEMA else production.LEGACY_RESULT_SCHEMA
-    return dict(schema=schema, input_sha256=digest(document), source=source,
+    film = document['schema'] == production.FILM_INPUT_SCHEMA
+    schema = production.FILM_RESULT_SCHEMA if film else production.RESULT_SCHEMA if document['schema'] == production.INPUT_SCHEMA else production.LEGACY_RESULT_SCHEMA
+    result = dict(schema=schema, input_sha256=digest(document), source=source,
         method_decision=dict(delivery_sha256=document['method_delivery']['sha256'], decisions=decisions))
+    if film:
+        result['handoff'] = dict(schema='video.scene-handoff.v1',
+            film_sha256=document['film_context']['film_sha256'], scene_id=document['scene']['scene_id'],
+            objects=[], entry_state='上一段对象保持其身份。', exit_state='对象运动到下一段入口。',
+            camera='保持同一坐标与视角。', transition_intent='连续运动。')
+    return result
 
 
 def production_package(*, methods=None, seconds=3, source_html=None):

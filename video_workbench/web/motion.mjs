@@ -158,7 +158,7 @@ export function currentMotionAudio(scene) {
 }
 
 export function motionDiagramKind(candidate) {
-  if (candidate?.diagram_kind === 'creative' || ['video.creative-scene.v1', 'video.creative-scene.v2', 'video.creative-scene.v3'].includes(candidate?.plan?.schema)) return 'creative';
+  if (candidate?.diagram_kind === 'creative' || ['video.creative-scene.v1', 'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'].includes(candidate?.plan?.schema)) return 'creative';
   return candidate?.plan?.schema === 'video.process-plan.v1' || candidate?.diagram_kind === 'process'
     ? 'process' : 'diagram';
 }
@@ -291,7 +291,7 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
       target.append(text('h4', production.title ?? value.scene?.title ?? '创意动画'),
         text('p', strategy.description ?? '按当前旁白生成的动画候选。', 'preserve-whitespace'));
       if (strategy.tradeoffs) target.append(text('p', strategy.tradeoffs, 'field-note preserve-whitespace'));
-      if (['video.creative-scene.v2', 'video.creative-scene.v3'].includes(plan.schema)) {
+      if (['video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'].includes(plan.schema)) {
         const offered = input.method_delivery?.methods ?? [];
         const decisions = plan.method_decision?.decisions ?? [];
         target.append(text('p', offered.length ? `已参考 ${offered.length} 项创作方法。以下是生成时的采用说明，实际效果请观看草稿。` : '本次未提供适用的已发布方法，按当前内容自主创作。', 'field-note'));
