@@ -1,6 +1,6 @@
 # 动画效果库启动模式
 
-> 2026-11-13：本文保留 methods-only 入口和启动边界。Wiki、实验室标准 Skill 和正式主动读取已接入代码；新角色实际准入／部署、精确发布确认前端与真实发布／采用尚未验收。整片 HyperFrames 工程仍由[当前设计](agent-creation-effect-library-plan.md)承接。
+> 2026-11-14：本文保留 methods-only 入口和启动边界。Wiki、实验室标准 Skill 和正式主动读取已接入代码；首轮三个新角色已独立技术准入，正式 production v3、实验室 v2 与新前端已部署。新宿主的两次原生引擎技术重准入与 CAS 参数切换已通过，真实目录 GET 及浏览器均恢复 `html-svg`、`canvas`、`three` 可用。首个有界真实业务实验因 Skill 版本谱系不匹配失败，没有渲染或样片；`a6098e5…` 已新增 v4 合同并保留 v3 原字节，三个新镜像已构建。author-s3 因启动封装失败在模型前被阻断，调用为零；s4 完成 4 次 HTTP 200 complete 请求，谱系已通过，但新 Wiki 页 `expected_revision=null` 不符合整数 `0` 合同，仍为 `worker_output_invalid`，没有渲染或独立准入。仅内存改单个字段后的完整验证通过属于诊断，原始产物不修补、不代表 CAS 成功。v5 已以 `93e7626…` 的明确 10 文件提交推送，profile／lineage／knowledge／build 为 174 passed、2 skipped，独立目录／升级／准入检查 15 passed，v3／v4／validator 原字节保留。r4 完整源码构建及三个 `latest` 镜像推送已完成，构建回执零模型调用／部署；未运行 v5 新模型候选或部署 v5，本轮实际失败后不追加付费尝试。下一阶段是 v5 新独立技术验证及升级；旧升级脚本和 s4 执行器固定 r3／v4，不能用于新 release，须新脚本、candidate 目录及未保留 UID，失败 s4 不作成功准入。v4 r3 镜像未上线，旧委托未自动重试，后续优化／迁移未执行。W.2 的真实 Wiki CAS 回写／后续消费、样片认可、业务发布和正式采用仍须独立验收。具体阶段见[接通验证记录](wikiskill-rollout-validation.md)，整片 HyperFrames 工程由[当前设计](agent-creation-effect-library-plan.md)承接。
 
 生产使用 `--mode methods`。现有启动命令只要配置了 `--creation-url` 和
 `--creation-token-file`，默认的 `--mode auto` 也会进入此模式。
