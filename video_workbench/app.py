@@ -56,6 +56,7 @@ UI_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'sel
           "media-src 'self'; frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 
 MESSAGES = {
+    'project_delete_busy': '项目仍有制作任务正在运行，或上次提交尚未确认结束。请等待任务完成或确认取消后再移到回收站。',
     'production_runs_disabled': '整片草稿制作尚未启用或制作依赖尚未就绪。',
     'production_run_in_progress': '项目已有整片制作任务，或上次任务尚未确认停止。',
     'production_run_project_busy': '项目仍有其他制作任务，请等待结束后再制作整片草稿。',
@@ -723,8 +724,16 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     motion_render_configured=motion_gate and motion_renderer is not None and runtime is not None)
 
     @app.get('/api/projects')
-    def projects(owner=Depends(identity)):
-        return dict(projects=store.list_projects(owner))
+    def projects(deleted: bool = False, owner=Depends(identity)):
+        return dict(projects=store.list_projects(owner, deleted=deleted))
+
+    @app.post('/api/projects/{project_id}/trash')
+    def trash_project(project_id: str, body: Revision, owner=Depends(mutation)):
+        return dict(project=store.set_project_deleted(owner, project_id, body.expected_revision, deleted=True))
+
+    @app.post('/api/projects/{project_id}/restore')
+    def restore_project(project_id: str, body: Revision, owner=Depends(mutation)):
+        return dict(project=store.set_project_deleted(owner, project_id, body.expected_revision, deleted=False))
 
     @app.post('/api/projects')
     def create_project(body: ProjectFields, owner=Depends(mutation)):

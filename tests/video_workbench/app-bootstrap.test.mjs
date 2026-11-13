@@ -86,7 +86,9 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
   audition.scenes.push(secondDraftScene);
   motionBusy.scenes[0].motion.operation = { id: 'motion-op', status: 'running' };
   const productionBusy = project('production-busy'); productionBusy.joint_plan = {version_id:'adopted-plan'};
-  const all = [idle, motionBusy, explanationBusy, jointBusy, batchBusy, productionBusy, historical, audition, unmade];
+  const removable = project('removable');
+  const all = [idle, motionBusy, explanationBusy, jointBusy, batchBusy, productionBusy, historical, audition, unmade, removable];
+  const deletedProjects = new Set(), lifecycleWrites = [];
   let listedProjects = [];
   const batch = { id: 'batch-op', project_id: batchBusy.id, status: 'running', items: [] };
   const settings = { user_id: 'offline-bootstrap-test', csrf_token: 'offline-only',
@@ -102,6 +104,16 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
     calls.push(path);
     if (options.method !== 'GET') {
       mutationCalls.push({ path, method: options.method });
+      if (path === '/api/projects/removable/trash' || path === '/api/projects/removable/restore') {
+        lifecycleWrites.push({ path, body: JSON.parse(options.body) });
+        assert.equal(JSON.parse(options.body).expected_revision, removable.revision);
+        if (path.endsWith('/trash')) deletedProjects.add(removable.id); else deletedProjects.delete(removable.id);
+        removable.revision++;
+        return { ok: true, status: 200, json: async () => ({ project: {
+          id: removable.id, title: removable.title, revision: removable.revision,
+          deleted_at: deletedProjects.has(removable.id) ? 123 : null,
+        } }) };
+      }
       if (path === '/api/projects/unmade/storyboard') {
         storyboardWrites.push(JSON.parse(options.body)); unmade.revision++;
         return { ok: false, status: 409, json: async () => ({ detail: { code: 'revision_conflict' } }) };
@@ -144,7 +156,10 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
     }
     let result;
     if (path === '/api/session') result = settings;
-    else if (path === '/api/projects') result = { projects: listedProjects.map(p => ({ id: p.id, title: p.title, scene_count: p.scenes.length })) };
+    else if (path === '/api/projects') result = { projects: listedProjects.filter(p => !deletedProjects.has(p.id))
+      .map(p => ({ id: p.id, title: p.title, revision: p.revision, scene_count: p.scenes.length })) };
+    else if (path === '/api/projects?deleted=true') result = { projects: listedProjects.filter(p => deletedProjects.has(p.id))
+      .map(p => ({ id: p.id, title: p.title, revision: p.revision, scene_count: p.scenes.length, deleted_at: 123 })) };
     else if (path === '/api/batches/batch-op') result = batch;
     else if (path === '/api/motion-versions/audition-motion') result = auditionVersion;
     else if (path === '/api/motion-versions/audition-motion/timing?audio_version_id=audition-audio') result = {
@@ -648,6 +663,53 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
         assert.equal($('cancel-batch').hidden, true);
         assert.equal(writes.length, beforeWrites, 'All recovery events remain read-only');
       } finally { Date.now = originalNow; renderRows.delete(batchBusy.id); }
+    });
+    await t.test('deleting the selected project stops its players and restores the same project without generation', async () => {
+      await clickProject(removable.id);
+      for (const id of ['audio-preview', 'motion-timing-audio', 'batch-audio-preview',
+        'project-player-audio', 'motion-render-video', 'production-run-video']) await $(id).play();
+      assert.equal($('delete-project').disabled, false);
+      const previousMutations = mutationCalls.length;
+      await $('delete-project').emit('click');
+      assert.equal($('delete-project-dialog').open, true);
+      assert.equal(mutationCalls.length, previousMutations, 'Opening a confirmation does not delete');
+      await $('confirm-delete-project').emit('click');
+      assert.equal(lifecycleWrites.length, 1);
+      assert.equal($('delete-project-dialog').open, false);
+      assert.equal($('project-title').textContent, idle.title);
+      assert.ok(!$('project-list').children.some(row => row.dataset.projectId === removable.id));
+      for (const id of ['audio-preview', 'motion-timing-audio', 'batch-audio-preview',
+        'project-player-audio', 'motion-render-video', 'production-run-video']) assert.equal($(id).paused, true, id);
+      await $('show-project-trash').emit('click');
+      assert.equal($('project-count').textContent, '1');
+      for (const [prefix, projectId] of [['joint-plan', unmade.id], ['explanation', historical.id]]) {
+        await $('show-active-projects').emit('click'); await clickProject(projectId);
+        for (const field of ['audience', 'goal', 'instruction']) {
+          $(`${prefix}-${field}`).value = `尚未提交的${field}`;
+          await $(`${prefix}-${field}`).emit('input'); await $('workspace').emit('input');
+          assert.equal($('delete-project').disabled, true, `${prefix} ${field} must fence deletion`);
+          await $('delete-project').emit('click');
+          assert.equal(lifecycleWrites.length, 1);
+          assert.match($('error-text').textContent, /保存或撤销/);
+          await $('show-project-trash').emit('click');
+          await $('project-list').children[0].children[1].emit('click');
+          assert.equal(lifecycleWrites.length, 1, 'Restore-and-open must not lose an unsubmitted brief');
+          assert.match($('error-text').textContent, /保存或撤销/);
+          await $('show-active-projects').emit('click');
+        }
+      }
+      await clickProject(idle.id);
+      assert.equal($('delete-project').disabled, false, 'Drafts on other projects do not block this project');
+      await $('show-project-trash').emit('click');
+      const restore = $('project-list').children[0].children[1];
+      await restore.emit('click');
+      assert.equal(lifecycleWrites.length, 2);
+      assert.equal($('project-title').textContent, removable.title);
+      assert.ok($('project-list').children.some(row => row.dataset.projectId === removable.id));
+      assert.deepEqual(mutationCalls.slice(previousMutations), [
+        { path: '/api/projects/removable/trash', method: 'POST' },
+        { path: '/api/projects/removable/restore', method: 'POST' },
+      ], 'Deletion and restore do not generate or adopt media');
     });
     for (const [id, timer] of timers) if (timer.duration === 5000) {
       timers.delete(id); timer.callback();

@@ -507,6 +507,7 @@ class Production:
             if row is None:
                 raise ServiceError('not_found', 404)
             job = json.loads(row[0])
+            self.store._project(db, owner, job['project_id'])
             if job['status'] in ACTIVE:
                 never_admitted = job['status'] == 'queued' and not (job.get('schema') in MOTION_SCHEMAS and job.get('render_attempted'))
                 job.update(cancel_requested=True, status='cancelled' if never_admitted else 'cancelling')
@@ -521,6 +522,7 @@ class Production:
             if row is None:
                 raise ServiceError('not_found', 404)
             job = json.loads(row['document'])
+            self.store._project(db, owner, job['project_id'])
             if job['status'] != 'completed' or not row['data']:
                 raise ServiceError('render_not_ready', 409)
             return row['data']

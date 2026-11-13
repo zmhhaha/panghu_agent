@@ -94,7 +94,9 @@ class BatchStore:
 
     def get(self, owner, batch_id):
         with self.store.transaction() as db:
-            return self._public(self._read(db, batch_id, owner))
+            batch = self._read(db, batch_id, owner)
+            self.store._project(db, owner, batch['project_id'])
+            return self._public(batch)
 
     def list(self, owner, project_id):
         with self.store.transaction() as db:
@@ -234,6 +236,7 @@ class BatchStore:
         return {key: deepcopy(plan[key]) for key in ('plan_sha256', 'items', 'estimated_tasks')}
 
     def _insert(self, db, owner, project_id, idem, fingerprint, plan, *, parent=None):
+        self.store._project(db, owner, project_id)
         _require(db.execute('SELECT count(*) FROM video_batches WHERE project_id=?', (project_id,)).fetchone()[0]
                  < MAX_BATCHES_PER_PROJECT and db.execute('SELECT count(*) FROM video_batches').fetchone()[0]
                  < MAX_TOTAL_BATCHES, 'batch_storage_limit', 409)
@@ -320,6 +323,7 @@ class BatchStore:
         with self.store.lock:
             with self.store.transaction() as db:
                 batch = self._read(db, batch_id, owner)
+                self.store._project(db, owner, batch['project_id'])
                 if batch['status'] in TERMINAL:
                     return self._public(batch)
                 batch['cancel_requested'] = True

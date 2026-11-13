@@ -403,6 +403,7 @@ export function createExplanationPanel({ document, getContext, request, refresh,
   });
   return { render, load, generate, adopt, cancel, refreshElapsed: () => render(),
     hasDrafts: () => [...drafts.values()].some(draft => draft.dirty),
+    hasProjectDrafts: id => Boolean(drafts.get(id)?.dirty),
     hasActiveOperation: (projectId = current().project?.id) => isActiveOperation(dataFor(projectId)?.operation),
     hasRefreshableOperation: (projectId = current().project?.id) => operationNeedsRefresh(dataFor(projectId)?.operation),
     hasUnresolvedOperation: (projectId = current().project?.id) => isUnresolvedProductionOperation(dataFor(projectId)?.operation),

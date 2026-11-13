@@ -240,7 +240,10 @@ class JointPlanStore:
 
     def operation(self, operation_id, owner=None):
         with self.store.transaction() as db:
-            return self._op(db, operation_id, owner)
+            op = self._op(db, operation_id, owner)
+            if owner is not None:
+                self.store._project(db, owner, op['project_id'])
+            return op
 
     def public_operation(self, owner, operation_id):
         return self._public(self.operation(operation_id, owner))
@@ -299,6 +302,7 @@ class JointPlanStore:
     def cancel(self, owner, operation_id):
         with self.store.transaction() as db:
             op = self._op(db, operation_id, owner)
+            self.store._project(db, owner, op['project_id'])
             if op['status'] in ACTIVE:
                 op.update(cancel_requested=True, status='cancelling')
                 self._write_op(db, op)

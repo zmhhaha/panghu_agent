@@ -16,9 +16,12 @@
 
   <div class="application-shell">
     <aside class="project-sidebar">
-      <div class="sidebar-label"><span>项目</span><span class="count" id="project-count">—</span></div>
+      <div class="sidebar-label"><span id="project-list-label">项目</span><span class="count" id="project-count">—</span></div>
       <button class="button new-project-button" id="new-project" type="button" data-testid="new-project"><span aria-hidden="true">＋</span>新建项目</button>
+      <div class="project-list-tabs" role="group" aria-label="项目列表范围"><button type="button" id="show-active-projects" aria-pressed="true">我的项目</button><button type="button" id="show-project-trash" aria-pressed="false">回收站</button></div>
       <nav id="project-list" aria-label="项目列表" data-testid="project-list"><p class="sidebar-empty">正在读取项目…</p></nav>
+      <p id="project-trash-note" class="field-note" hidden>删除的项目可恢复，原有素材与制作记录保留。</p><button id="reload-project-trash" class="text-button" type="button" hidden>刷新回收站</button>
+      <p id="project-delete-status" class="field-note" role="status" hidden></p><button id="reload-project-management" class="text-button" type="button" hidden>重新读取项目状态</button>
       <p class="sidebar-note">从一份文稿开始，<br>让讲解随画面展开。</p>
     </aside>
 
@@ -35,7 +38,7 @@
       </section>
 
       <section class="workspace" id="workspace" hidden data-testid="workspace">
-        <div class="workspace-heading"><div><div class="eyebrow">制作中的项目</div><h1 id="project-title"></h1><p id="project-meta"></p><div id="project-duration-summary" class="field-note" aria-live="polite"></div></div></div>
+        <div class="workspace-heading"><div><div class="eyebrow">制作中的项目</div><h1 id="project-title"></h1><p id="project-meta"></p><div id="project-duration-summary" class="field-note" aria-live="polite"></div></div><div class="project-management-actions"><button class="button secondary" type="button" id="delete-project">删除项目</button><p class="field-note" id="delete-project-note" hidden></p></div></div>
         <section class="production-mode-panel" id="production-mode-panel" aria-label="项目制作方式"><div><strong id="production-mode-label">动态视频制作</strong><p id="production-mode-note"></p></div><button class="button secondary" id="convert-project-motion" type="button" hidden>转为动态制作</button></section>
         <details class="brief-panel"><summary><span>文稿与视觉方向</span><small>查看项目原稿</small><span aria-hidden="true">⌄</span></summary><div class="brief-content"><div><h3>原始文稿</h3><p class="preserve-whitespace" id="project-script"></p></div><div><h3>视觉方向</h3><p class="preserve-whitespace" id="project-style"></p></div></div></details>
         <details class="explanation-panel joint-plan-panel" id="joint-plan-panel" hidden open>
@@ -211,5 +214,6 @@
 每个变化都服务于理解，不堆叠装饰动画，不把整段旁白逐字展示。</textarea></label><p class="message error-message" id="create-error" role="alert" hidden></p><p class="dialog-hint">新项目使用动态视频制作。先保存文稿，再安排镜头、制作图解与配音；不会自动提交生成任务。</p><div class="dialog-actions"><button class="button secondary" id="cancel-create-project" type="button">取消</button><button class="button primary" id="submit-create-project" type="submit" data-testid="submit-create-project">创建项目 <span aria-hidden="true">→</span></button></div></form></dialog>
   <dialog id="project-player-dialog" class="project-player-dialog" aria-labelledby="project-player-heading"><div class="dialog-heading"><div><span class="eyebrow">项目预览</span><h2 id="project-player-heading">音画与字幕</h2></div><button class="icon-button" id="close-project-player" type="button" aria-label="关闭项目预览">×</button></div><div class="project-player-stage"><iframe id="project-player-frame" title="项目画面预览" sandbox="" referrerpolicy="no-referrer"></iframe><p id="project-player-caption" hidden></p></div><audio id="project-player-audio" preload="auto" hidden></audio><p class="field-note" id="project-player-scene"></p><div class="project-player-controls"><button class="button primary" id="project-player-toggle" type="button">播放</button><label class="sr-only" for="project-player-seek">播放进度</label><input id="project-player-seek" type="range" min="0" max="1" step="0.05" value="0"><span id="project-player-clock">0:00 / 0:00</span></div><p class="field-note" id="project-player-note">预览使用打开时的采用版本。调整项目后，重新打开预览查看最新内容。</p></dialog>
 <dialog id="motion-render-dialog" class="motion-render-player" aria-labelledby="motion-render-heading"><div class="dialog-heading"><h2 id="motion-render-heading">视频草稿</h2><button class="icon-button" id="close-motion-render" type="button" aria-label="关闭视频播放">×</button></div><video id="motion-render-video" class="motion-draft-video" controls preload="metadata"></video><p class="field-note" id="motion-render-note"></p></dialog>
+  <dialog id="delete-project-dialog" aria-labelledby="delete-project-heading"><div class="dialog-heading"><h2 id="delete-project-heading">删除这个项目？</h2><button id="close-delete-project" class="icon-button" type="button" aria-label="关闭删除项目">×</button></div><p class="project-delete-name" id="delete-project-name"></p><p>项目将移到回收站，从项目列表隐藏。画面、录音和制作记录会保留，可随时恢复。</p><div class="dialog-actions"><button id="cancel-delete-project" class="button secondary" type="button">取消</button><button id="confirm-delete-project" class="button project-delete-button" type="button">移到回收站</button></div></dialog>
 </body>
 </html>

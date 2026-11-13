@@ -16,6 +16,7 @@ import { createMotionPanel, createMotionRenderRequest, createProjectMotionDraftR
 import { createBatchPanel, batchErrorLabel } from './batch.mjs';
 import { createContinuityPanel, createContinuityDraftRequest, continuityErrorLabel } from './continuity.mjs';
 import { projectDurationSummary, durationSummaryLines, plannedSceneSeconds } from './duration.mjs';
+import { createProjectManagement } from './project-management.mjs';
 
 const $ = id => document.getElementById(id);
 const nativeMediaIds = ['audio-preview', 'motion-timing-audio', 'batch-audio-preview',
@@ -194,6 +195,29 @@ const productionRunsPanel = createProductionRunsPanel({
   }),
 });
 
+const projectManagement = createProjectManagement({
+  document, request,
+  getContext: () => ({ project: state.project, epoch: state.epoch,
+    unsaved: projectHasUnsavedEdits(state.projectId) || jointPlanPanel.hasProjectDrafts(state.projectId)
+      || explanationPanel.hasProjectDrafts(state.projectId), busy: productionTransitionBusy(state.project) }),
+  onChange: () => render(),
+  onPending: (id, busy) => { busy ? pending.add(`project-management:${id}`) : pending.delete(`project-management:${id}`); },
+  onError: error => error?.lifecycleMessage ? showInputError(error.lifecycleMessage) : showError(error),
+  onSuccess: success,
+  onRemoved: async id => {
+    const wasSelected = clearRemovedProject(id);
+    await loadProjects();
+    if (wasSelected && !state.projectId) {
+      projectManagement.showActive();
+      if (projects.length) await openProject(projects[0].id);
+    }
+  },
+  onRestored: async (id, epoch) => {
+    await loadProjects();
+    if (state.epoch === epoch) await openProject(id);
+  },
+});
+
 const productionLockedControls = new Map();
 function productionRunBusy(id = state.projectId) { return productionRunsPanel.hasUnresolvedOperation(id); }
 function unlockProductionControls() {
@@ -256,6 +280,7 @@ const ERROR_LABELS = {
   head_conflict: '采用的版本已发生变化，请刷新项目后重试。',
   operation_in_progress: '这个镜头还有正在执行的任务，请等待任务结束。',
   active_operation: '当前任务尚未结束，请稍后重试。',
+  project_delete_busy: '项目仍有制作任务或待确认的提交，请等待结束后再删除。',
   storyboard_exists: '项目已经有镜头，请逐个编辑或添加镜头。',
   video_scene_limit_exceeded: '返回的镜头超过本次上限，未保存分镜。',
   agent_not_configured: '尚未配置 Agent 服务，仍可手动整理文稿与镜头。',
@@ -374,6 +399,7 @@ function draftKey(sceneId = state.sceneId) { return `${state.projectId}:${sceneI
 function currentDraft() { return drafts.get(draftKey(editor === 'new' ? null : state.sceneId)); }
 
 function renderProjects() {
+  if (projectManagement.render()) return;
   $('project-count').textContent = projects.length;
   const fragment = document.createDocumentFragment();
   for (const project of projects) {
@@ -1093,6 +1119,24 @@ async function openProject(id) {
   await loadProject().catch(showError);
 }
 
+function clearRemovedProject(id) {
+  if (state.projectId !== id) return false;
+  stopPolling(); readController?.abort(); sourceController?.abort();
+  renderReadSequence += 1;
+  selectProject(state, null);
+  editor = null; loading = false; previewMode = 'preview';
+  clearPreview(); motionPanel.pause(); batchPanel.pause(); productionRunsPanel.pause();
+  closeProjectPlayer(); closeMotionRender();
+  for (const mediaId of nativeMediaIds) {
+    const media = $(mediaId); media.pause(); media.removeAttribute('src'); media.load();
+  }
+  for (const map of [drafts, feedbacks, speechDrafts, timingDrafts, captionDrafts]) {
+    for (const key of map.keys()) if (key.startsWith(`${id}:`)) map.delete(key);
+  }
+  for (const map of [projectSpeechDrafts, renderHistories, deliveryWriteErrors, storyboardWriteErrors]) map.delete(id);
+  render(); return true;
+}
+
 async function loadSource(versionId) {
   sourceController?.abort();
   sourceController = new AbortController();
@@ -1399,6 +1443,7 @@ $('create-project-form').addEventListener('submit', async event => {
     $('create-project-dialog').close();
     $('create-project-form').reset();
     await loadProjects();
+    projectManagement.showActive();
     await openProject(project.id);
     success('动态视频项目已创建。可以拆分镜头或手动添加，再制作图解与配音。');
   } catch (error) { showError(error); }
@@ -1704,6 +1749,7 @@ async function refresh() {
     sessionSettings = session;
     $('session-label').textContent = session.user_id ? '已连接工作台' : '已连接';
     await loadProjects();
+    await projectManagement.refresh();
     if (state.projectId) await loadProject();
     else if (projects.length) await openProject(projects[0].id);
     else render();
@@ -1746,6 +1792,7 @@ for (const eventName of ['input', 'change']) {
     if (!$('motion-panel').contains(event.target) && !$('motion-timing-section').contains(event.target)) motionPanel.render();
     if (!$('batch-panel').contains(event.target)) batchPanel.render();
     if (!$('continuity-panel').contains(event.target)) continuityPanel.render();
+    projectManagement.render();
   });
 }
 

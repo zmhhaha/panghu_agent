@@ -78,7 +78,9 @@ class ProductionRunStore:
 
     def get(self, owner, run_id):
         with self.store.transaction() as db:
-            return self.public(self._read(db, run_id, owner))
+            run = self._read(db, run_id, owner)
+            self.store._project(db, owner, run['project_id'])
+            return self.public(run)
 
     def list(self, owner, project_id):
         with self.store.transaction() as db:
@@ -165,6 +167,7 @@ class ProductionRunStore:
         with self.store.lock:
             with self.store.transaction() as db:
                 run = self._read(db, run_id, owner)
+                self.store._project(db, owner, run['project_id'])
                 if run['status'] in ACTIVE:
                     run['cancel_requested'] = True
                     run['draining'] = True

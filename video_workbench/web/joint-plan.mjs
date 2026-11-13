@@ -330,6 +330,7 @@ export function createJointPlanPanel({ document, getContext, request, refresh, o
   $('reload-joint-plan').addEventListener('click', async () => { try { await refresh(); } catch (error) { onError(error); } });
   return { render, load, generate, adopt, cancel, refreshElapsed: render,
     hasDrafts: () => [...drafts.values()].some(draft => draft.dirty),
+    hasProjectDrafts: id => Boolean(drafts.get(id)?.dirty),
     hasActiveOperation: (id = current().project?.id) => isActiveOperation(dataFor(id)?.operation),
     hasRefreshableOperation: (id = current().project?.id) => operationNeedsRefresh(dataFor(id)?.operation),
     hasUnresolvedOperation: (id = current().project?.id) => isUnresolvedProductionOperation(dataFor(id)?.operation),

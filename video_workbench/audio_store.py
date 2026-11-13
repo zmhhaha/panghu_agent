@@ -121,7 +121,8 @@ class AudioStoreMixin:
 
     @staticmethod
     def _audio_scene_project(db, owner, scene_id):
-        for row in db.execute('SELECT document FROM projects WHERE owner=?', (owner,)):
+        for row in db.execute('SELECT p.document FROM projects p LEFT JOIN project_lifecycle l '
+                'ON l.project_id=p.id WHERE p.owner=? AND l.deleted_at IS NULL', (owner,)):
             project = json.loads(row[0])
             if any(scene['id'] == scene_id for scene in project['scenes']):
                 return project['id']
@@ -267,6 +268,7 @@ class AudioStoreMixin:
                              (version_id, owner)).fetchone()
             if row is None:
                 raise ServiceError('not_found', 404)
+            self._project(db, owner, row['project_id'])
             metadata = json.loads(row['document'])
             return dict(metadata, data=bytes(row['data']), project_id=row['project_id'], scene_id=row['scene_id'])
 
@@ -293,7 +295,10 @@ class AudioStoreMixin:
             row = db.execute('SELECT owner,document FROM audio_operations WHERE id=?', (operation_id,)).fetchone()
             if row is None or owner is not None and row['owner'] != owner:
                 raise ServiceError('not_found', 404)
-            return json.loads(row['document'])
+            op = json.loads(row['document'])
+            if owner is not None:
+                self._project(db, owner, op['project_id'])
+            return op
 
     def active_audio_operations(self):
         with self.transaction() as db:
@@ -369,6 +374,7 @@ class AudioStoreMixin:
             if row is None:
                 raise ServiceError('not_found', 404)
             op = json.loads(row[0])
+            self._project(db, owner, op['project_id'])
             if op['status'] in AUDIO_ACTIVE:
                 op.update(cancel_requested=True,
                     status='cancelling' if op['submit_attempted'] else 'cancelled',
