@@ -25,9 +25,14 @@ CONTEXT_ROOTS = {'agent_service', 'video_workbench'}
 
 
 def _workbench_context(output, source):
-    """Copy only measured Git files, never ignored local or runtime material."""
+    """Copy measured Git files with modes readable by the image's non-root user."""
     context = output / 'workbench-source'
-    context.mkdir(mode=0o700)
+    context.mkdir(mode=0o755)
+    # mkdir/open modes are filtered by the release operator's private umask.
+    # Docker COPY retains these permissions, so set the staged source modes
+    # explicitly while leaving the enclosing private release output untouched.
+    context.chmod(0o755)
+    directories = {context}
     rows = [row for row in source['source_files']
             if Path(row['path']).parts[0] in CONTEXT_ROOTS]
     base.require(any(row['path'] == DOCKERFILE for row in rows), 'workbench_dockerfile_required')
@@ -41,9 +46,16 @@ def _workbench_context(output, source):
         base.require(len(raw) == row['bytes'] and base.sha(raw) == row['sha256'],
                      'source_changed_during_build')
         destination = context / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        parent = context
+        for part in relative.parts[:-1]:
+            parent = parent / part
+            if parent not in directories:
+                parent.mkdir(mode=0o755, exist_ok=True)
+                parent.chmod(0o755)
+                directories.add(parent)
         with destination.open('xb') as stream:
             stream.write(raw)
+        destination.chmod(0o644)
     return context, base.sha(base.canonical(rows))
 
 

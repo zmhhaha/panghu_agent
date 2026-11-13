@@ -1,7 +1,9 @@
 """Three-image release admission and receipts, without Docker or network."""
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
+import stat
 from types import SimpleNamespace
 
 import pytest
@@ -89,6 +91,35 @@ def test_builds_only_ordinary_control_worker_and_measured_workbench_latest(build
         assert receipt['deployments'] == receipt['model_requests'] == 0
     assert json.loads((env.args.output / 'build-completed.json').read_bytes()) == result
     assert not any(token in str(env.calls) for token in ('executor', 'renderer', 'animation-lab', 'kubectl'))
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='Unix image access permissions require POSIX chmod and umask')
+def test_staged_git_source_stays_readable_by_non_root_under_private_umask(build_env):
+    env = build_env
+    original_modes = {path:stat.S_IMODE(path.stat().st_mode)
+                      for path in env.root.rglob('*')}
+    previous_umask = os.umask(0o077)
+    try:
+        env.args.output.mkdir(mode=0o700)
+        context, _ = release._workbench_context(env.args.output, env.source)
+    finally:
+        os.umask(previous_umask)
+
+    assert stat.S_IMODE(env.args.output.stat().st_mode) == 0o700
+    for path in (context, *context.rglob('*')):
+        expected = 0o755 if path.is_dir() else 0o644
+        assert stat.S_IMODE(path.stat().st_mode) == expected, str(path)
+        # UID 10001 needs other-read and directory traversal after Docker COPY;
+        # no group/world write or executable source files are introduced.
+        assert path.stat().st_mode & stat.S_IROTH
+        if path.is_dir():
+            assert path.stat().st_mode & stat.S_IXOTH
+        else:
+            assert path.read_bytes() == (env.root / path.relative_to(context)).read_bytes()
+    assert original_modes == {path:stat.S_IMODE(path.stat().st_mode)
+                              for path in env.root.rglob('*')}
+    assert not (context / env.ignored.relative_to(env.root)).exists()
+    assert not env.calls and not env.agents
 
 
 @pytest.mark.parametrize('missing', ['PI_CAGE_IMAGE', 'PPT_DONOR_IMAGE'])
