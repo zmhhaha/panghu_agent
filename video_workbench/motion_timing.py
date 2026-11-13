@@ -33,8 +33,16 @@ class MotionTiming:
 
     def get(self, owner, version_id, audio_version_id):
         """Read-only: a deterministic estimate never persists or grants review."""
+        return self._get(owner, version_id, audio_version_id, candidate=False)
+
+    def get_candidate(self, owner, version_id, audio_version_id):
+        """Read-only timing for the coordinator's exact unadopted draft pair."""
+        return self._get(owner, version_id, audio_version_id, candidate=True)
+
+    def _get(self, owner, version_id, audio_version_id, *, candidate):
         with self.store.lock:
-            version = self.motion.version(owner, version_id)
+            version = (self.motion.candidate_version(owner, version_id, audio_version_id) if candidate
+                       else self.motion.version(owner, version_id))
             _require(not version['stale'], 'motion_plan_stale', 409)
             project = self.store.project(owner, version['project_id'])
             scene = self.store._scene(project, version['scene_id'])

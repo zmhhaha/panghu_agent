@@ -11,6 +11,7 @@ import {
 } from './model.mjs';
 import { createExplanationPanel, explanationErrorLabel } from './explanation.mjs';
 import { createJointPlanPanel, jointPlanErrorLabel } from './joint-plan.mjs';
+import { createProductionRunsPanel, productionRunErrorLabel } from './production-runs.mjs';
 import { createMotionPanel, createMotionRenderRequest, createProjectMotionDraftRequest, createDynamicProjectRequest, hasMotionScenes, usesDynamicVideo, motionMetadata, motionErrorLabel, motionFailureSource, motionFailureDetails } from './motion.mjs';
 import { createBatchPanel, batchErrorLabel } from './batch.mjs';
 import { createContinuityPanel, createContinuityDraftRequest, continuityErrorLabel } from './continuity.mjs';
@@ -18,7 +19,7 @@ import { projectDurationSummary, durationSummaryLines, plannedSceneSeconds } fro
 
 const $ = id => document.getElementById(id);
 const nativeMediaIds = ['audio-preview', 'motion-timing-audio', 'batch-audio-preview',
-  'project-player-audio', 'motion-render-video'];
+  'project-player-audio', 'motion-render-video', 'production-run-video'];
 const state = createWorkspaceState();
 const intentKeys = createIntentKeys();
 const drafts = new Map();
@@ -71,6 +72,7 @@ const jointPlanPanel = createJointPlanPanel({
       || motionPanel.hasUnresolvedOperation(state.projectId, state.project?.scenes)
       || batchPanel.hasUnresolvedOperation(state.projectId)
       || continuityPanel.hasUnresolvedOperation(state.projectId)
+      || productionRunsPanel.hasUnresolvedOperation(state.projectId)
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
   }),
 });
@@ -81,6 +83,7 @@ const explanationPanel = createExplanationPanel({
     unsaved: projectHasUnsavedEdits(state.projectId),
     projectBusy: activeOperations(state.project).length > 0 || pending.size > 0
       || jointPlanPanel.hasUnresolvedOperation(state.projectId)
+      || productionRunsPanel.hasUnresolvedOperation(state.projectId)
       || batchPanel.hasUnresolvedOperation(state.projectId)
       || continuityPanel.hasUnresolvedOperation(state.projectId)
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
@@ -101,6 +104,7 @@ const motionPanel = createMotionPanel({
     unsaved: projectHasUnsavedEdits(state.projectId, false),
     projectBusy: activeOperations(state.project).length > 0 || pending.size > 0 || explanationPanel.hasActiveOperation(state.projectId)
       || jointPlanPanel.hasUnresolvedOperation(state.projectId)
+      || productionRunsPanel.hasUnresolvedOperation(state.projectId)
       || batchPanel.hasUnresolvedOperation(state.projectId)
       || continuityPanel.hasUnresolvedOperation(state.projectId)
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
@@ -118,6 +122,7 @@ const batchPanel = createBatchPanel({
     unsaved: projectHasUnsavedEdits(state.projectId),
     projectBusy: activeOperations(state.project).length > 0 || pending.size > 0
       || explanationPanel.hasUnresolvedOperation(state.projectId) || jointPlanPanel.hasUnresolvedOperation(state.projectId)
+      || productionRunsPanel.hasUnresolvedOperation(state.projectId)
       || motionPanel.hasUnresolvedOperation(state.projectId, state.project?.scenes)
       || continuityPanel.hasUnresolvedOperation(state.projectId)
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
@@ -152,6 +157,7 @@ const continuityPanel = createContinuityPanel({
     projectBusy: activeOperations(state.project).length > 0 || pending.size > 0
       || explanationPanel.hasUnresolvedOperation(state.projectId)
       || jointPlanPanel.hasUnresolvedOperation(state.projectId)
+      || productionRunsPanel.hasUnresolvedOperation(state.projectId)
       || motionPanel.hasUnresolvedOperation(state.projectId, state.project?.scenes)
       || batchPanel.hasUnresolvedOperation(state.projectId)
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
@@ -173,6 +179,40 @@ const continuityPanel = createContinuityPanel({
   },
 });
 
+const productionRunsPanel = createProductionRunsPanel({
+  document, request, refresh: () => loadProject(), onError: showError, onSuccess: success,
+  onChange: () => render(),
+  onMediaPlay: () => { motionPanel.pause(); batchPanel.pause(); $('audio-preview').pause(); closeMotionRender(); pauseProjectPlayer(); },
+  getContext: () => ({ project: state.project, epoch: state.epoch,
+    enabled: sessionSettings.production_runs_enabled === true, settings: sessionSettings,
+    unsaved: projectHasUnsavedEdits(state.projectId),
+    projectBusy: activeOperations(state.project).length > 0 || pending.size > 0
+      || explanationPanel.hasUnresolvedOperation(state.projectId) || jointPlanPanel.hasUnresolvedOperation(state.projectId)
+      || motionPanel.hasUnresolvedOperation(state.projectId, state.project?.scenes)
+      || batchPanel.hasUnresolvedOperation(state.projectId) || continuityPanel.hasUnresolvedOperation(state.projectId)
+      || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
+  }),
+});
+
+const productionLockedControls = new Map();
+function productionRunBusy(id = state.projectId) { return productionRunsPanel.hasUnresolvedOperation(id); }
+function unlockProductionControls() {
+  for (const [id, disabled] of productionLockedControls) $(id).disabled = disabled;
+  productionLockedControls.clear();
+}
+function lockProductionControls() {
+  if (!productionRunBusy()) return;
+  const ids = ['add-scene', 'empty-add-scene', 'toggle-scene-editor', 'save-scene',
+    'scene-title-input', 'scene-narration', 'scene-visual', 'scene-duration', 'scene-format',
+    'project-speech-voice', 'save-project-speech', 'reset-project-speech',
+    'speech-speed', 'speech-pronunciation', 'save-speech-settings', 'generate-audio', 'upload-audio',
+    'leading-seconds', 'trailing-seconds', 'save-timing', 'save-captions', 'add-caption',
+    'feedback', 'generate-scene', 'revise-scene', 'adopt-version', 'adopt-audio',
+    'motion-instruction', 'motion-diagram-kind', 'render-project', 'render-motion-project',
+    'create-storyboard', 'storyboard-max-scenes'];
+  for (const id of ids) { productionLockedControls.set(id, $(id).disabled); $(id).disabled = true; }
+}
+
 function projectHasUnsavedEdits(projectId, includeMotion = true, includeContinuity = true) {
   return Boolean(projectSpeechDrafts.get(projectId)?.dirty)
     || Boolean(includeMotion && motionPanel.hasProjectDrafts(projectId))
@@ -188,6 +228,7 @@ function productionTransitionBusy(project) {
     || motionPanel.hasUnresolvedOperation(project?.id ?? null, project?.scenes)
     || explanationPanel.hasUnresolvedOperation(project?.id ?? null)
     || jointPlanPanel.hasUnresolvedOperation(project?.id ?? null)
+    || productionRunBusy(project?.id ?? null)
     || continuityPanel.hasUnresolvedOperation(project?.id ?? null)
     || batchPanel.hasUnresolvedOperation(project?.id ?? null) || batchPanel.hasProjectDrafts(project?.id);
 }
@@ -259,6 +300,7 @@ class ApiError extends Error {
     const message = typeof detail?.message === 'string' ? detail.message : null;
     super(ERROR_LABELS[code] ?? operationServiceErrorLabel(code) ?? (code?.startsWith('explanation_') ? explanationErrorLabel(code) : null)
       ?? (code?.startsWith('joint_plan_') ? jointPlanErrorLabel(code) : null)
+      ?? (code?.startsWith('production_run') ? productionRunErrorLabel(code) : null)
       ?? (code?.startsWith('batch_') ? batchErrorLabel(code) : null)
       ?? (code?.startsWith('continuity_') || code === 'invalid_continuity_plan' ? continuityErrorLabel(code) : null)
       ?? (code?.startsWith('motion_') || code?.startsWith('process_') ? motionErrorLabel(code) : null) ?? message ?? (status === 401 ? '请先登录工作台。'
@@ -269,13 +311,13 @@ class ApiError extends Error {
   }
 }
 
-async function request(path, { method = 'GET', body, signal, output = 'json', raw = false, intentBody } = {}) {
+async function request(path, { method = 'GET', body, signal, output = 'json', raw = false, intentBody, idempotencyKey } = {}) {
   const headers = { Accept: output === 'json' ? 'application/json' : '*/*' };
   const mutating = !['GET', 'HEAD'].includes(method);
   if (mutating) {
     if (!csrfToken) throw new ApiError(401, {});
     headers['X-CSRF-Token'] = csrfToken;
-    headers['Idempotency-Key'] = intentKeys.get(method, path, intentBody ?? body);
+    headers['Idempotency-Key'] = idempotencyKey ?? intentKeys.get(method, path, intentBody ?? body);
     headers['Content-Type'] = raw ? 'audio/wav' : 'application/json';
   }
   const response = await fetch(path, {
@@ -288,7 +330,7 @@ async function request(path, { method = 'GET', body, signal, output = 'json', ra
   }
   const result = response.status === 204 ? null : output === 'blob' ? await response.blob()
     : output === 'text' ? await response.text() : await response.json();
-  if (mutating) intentKeys.complete(method, path, intentBody ?? body);
+  if (mutating && !idempotencyKey) intentKeys.complete(method, path, intentBody ?? body);
   return result;
 }
 
@@ -863,12 +905,14 @@ function renderDelivery(project) {
 }
 
 function render() {
+  unlockProductionControls();
   const project = state.project;
   $('loading-view').hidden = !loading || Boolean(project);
   $('welcome').hidden = Boolean(state.projectId);
   $('workspace').hidden = !project;
   renderProjects();
   jointPlanPanel.render();
+  productionRunsPanel.render();
   explanationPanel.render();
   motionPanel.render();
   batchPanel.render();
@@ -909,7 +953,7 @@ function render() {
     $('scene-title').textContent = scene?.title ?? '安排一个新镜头';
     renderEditor(scene, project);
   }
-  if (!scene || editor === 'new') return;
+  if (!scene || editor === 'new') { lockProductionControls(); return; }
   const materialsKey = `${project.id}:${scene.id}`;
   if (staticMaterialsScene !== materialsKey) {
     staticMaterialsScene = materialsKey;
@@ -922,6 +966,7 @@ function render() {
   setValue('feedback', feedbacks.get(draftKey()) ?? '');
   updateGenerationButtons();
   renderAudio(scene, project);
+  lockProductionControls();
 }
 
 function stopPolling() {
@@ -939,6 +984,7 @@ function needsStatusRefresh() {
     || (renderHistories.get(state.projectId) ?? []).some(operationNeedsRefresh)
     || explanationPanel.hasRefreshableOperation?.(state.projectId)
     || jointPlanPanel.hasRefreshableOperation(state.projectId)
+    || productionRunsPanel.hasRefreshableOperation(state.projectId)
     || motionPanel.hasRefreshableOperation(state.projectId, state.project?.scenes)
     || batchPanel.hasActiveOperation(state.projectId)
     || continuityPanel.hasUnresolvedOperation(state.projectId);
@@ -950,7 +996,7 @@ function refreshStatusClocks() {
   const scene = selectedScene(state);
   if (scene) renderOperation(scene.operation, 'scene');
   for (const { display, item } of renderElapsedDisplays) display.textContent = renderProgressLabel(item);
-  jointPlanPanel.refreshElapsed(); explanationPanel.refreshElapsed?.(); motionPanel.refreshElapsed(); batchPanel.refreshElapsed();
+  jointPlanPanel.refreshElapsed(); productionRunsPanel.render(); explanationPanel.refreshElapsed?.(); motionPanel.refreshElapsed(); batchPanel.refreshElapsed();
 }
 
 function scheduleStatusClock() {
@@ -966,6 +1012,7 @@ function schedulePolling() {
     || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation)
     || explanationPanel.hasActiveOperation(state.projectId)
     || jointPlanPanel.hasActiveOperation(state.projectId)
+    || productionRunsPanel.hasActiveOperation(state.projectId)
     || motionPanel.hasActiveOperation(state.projectId, state.project?.scenes)
     || batchPanel.hasActiveOperation(state.projectId) || continuityPanel.hasUnresolvedOperation(state.projectId);
   pollTimer = setTimeout(() => loadProject().catch(showError), active ? 3500 : 15000);
@@ -1007,6 +1054,7 @@ async function loadProject() {
       render();
       const related = await Promise.allSettled([
         loadRenders(ticket.projectId, ticket.epoch), jointPlanPanel.load(ticket.projectId, ticket.epoch),
+        productionRunsPanel.load(ticket.projectId, ticket.epoch),
         explanationPanel.load(ticket.projectId, ticket.epoch),
         motionPanel.load(ticket.projectId, ticket.epoch), batchPanel.load(ticket.projectId, ticket.epoch),
         continuityPanel.load(ticket.projectId, ticket.epoch),
@@ -1037,6 +1085,7 @@ async function openProject(id) {
   $('audio-preview').pause();
   motionPanel.pause();
   batchPanel.pause();
+  productionRunsPanel.pause();
   closeProjectPlayer();
   closeMotionRender();
   $('global-error').hidden = true;
@@ -1062,6 +1111,7 @@ async function loadSource(versionId) {
 }
 
 async function perform(key, action, after) {
+  if (productionRunBusy()) { showInputError('整片草稿正在制作或确认状态，请先等待结束或申请取消。'); return; }
   if (pending.has(key)) return;
   const projectId = state.projectId;
   const epoch = state.epoch;
@@ -1095,7 +1145,7 @@ async function perform(key, action, after) {
 }
 
 function startNewScene() {
-  if (!state.project) return;
+  if (!state.project || productionRunBusy()) return;
   motionPanel.pause();
   editor = 'new';
   const key = draftKey(null);

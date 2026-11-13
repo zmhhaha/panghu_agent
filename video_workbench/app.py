@@ -45,6 +45,8 @@ from .motion_gateway import MotionAgentGateway, ProcessAgentGateway, ProductionC
 from .continuity_store import ContinuityStore
 from .batch_store import BatchStore
 from .batch_workflow import BatchWorkflow
+from .production_run_store import ProductionRunStore
+from .production_run_workflow import ProductionRunWorkflow
 
 WEB = Path(__file__).parent / 'web'
 PREVIEW_CSP = ("sandbox; default-src 'none'; script-src 'none'; "
@@ -54,6 +56,11 @@ UI_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'sel
           "media-src 'self'; frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 
 MESSAGES = {
+    'production_runs_disabled': '整片草稿制作尚未启用或制作依赖尚未就绪。',
+    'production_run_in_progress': '项目已有整片制作任务，或上次任务尚未确认停止。',
+    'production_run_project_busy': '项目仍有其他制作任务，请等待结束后再制作整片草稿。',
+    'production_run_inputs_changed': '已确认方案、文稿或配音设置已变化，已停止后续制作。',
+    'production_run_cancellation_pending': '已申请取消，正在等待制作任务确认停止。',
     'joint_plan_disabled': '整片联合方案尚未启用。',
     'joint_plan_profile_unavailable': '通用 Agent 尚未启用整片联合规划能力。',
     'joint_plan_preflight_unavailable': '未能确认整片规划能力，尚未提交任务，请稍后再试。',
@@ -264,6 +271,10 @@ class JointPlanRequest(ExplanationRequest):
     preserve_script: bool = Field(default=False, strict=True)
 
 
+class ProductionRunRequest(Revision):
+    joint_plan_version_id: str = Field(min_length=1, max_length=100)
+
+
 class Generation(Revision):
     base_version_id: str | None = Field(default=None, max_length=100)
     instruction: str = Field(default='', max_length=8000)
@@ -455,7 +466,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                motion_enabled=None, motion_renderer=None, motion_runtime=None,
                process_gateway=None, process_enabled=None, creative_gateway=None, creative_enabled=None,
                method_adapter=None, creative_capabilities=None, joint_plan_gateway=None,
-               joint_plan_enabled=None):
+               joint_plan_enabled=None, production_runs_enabled=None):
     explanation_settings = ExplanationSettings.from_env()
     enabled = explanation_settings.enabled if explanation_enabled is None else explanation_enabled
     if type(enabled) is not bool:
@@ -564,6 +575,14 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         motion_enabled=motion_gate, runtime_fingerprint=runtime, continuity_store=continuity_store)
     batch_store = BatchStore(store, motion_store, production)
     batch_workflow = BatchWorkflow(batch_store, enabled=motion_gate)
+    production_run_store = ProductionRunStore(store, joint_plan_store, motion_store, production)
+    run_dependencies = (joint_gate and motion_gate and speech_client is not None and creative_gate
+        and creative_gateway is not None and method_adapter is not None
+        and motion_renderer is not None and runtime is not None)
+    if production_runs_enabled is not None and type(production_runs_enabled) is not bool:
+        raise ValueError('An explicit boolean production run feature gate is required')
+    production_run_workflow = ProductionRunWorkflow(production_run_store,
+        enabled=bool(run_dependencies) if production_runs_enabled is None else production_runs_enabled)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -575,7 +594,9 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
             audio_workflow.start()
             production.start()
             batch_workflow.start()
+            production_run_workflow.start()
         yield
+        production_run_workflow.stop()
         batch_workflow.stop()
         production.stop()
         audio_workflow.stop()
@@ -602,6 +623,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     app.state.motion_store, app.state.motion_workflow, app.state.motion_timing = motion_store, motion_workflow, motion_timing
     app.state.continuity_store = continuity_store
     app.state.batch_store, app.state.batch_workflow = batch_store, batch_workflow
+    app.state.production_run_store, app.state.production_run_workflow = production_run_store, production_run_workflow
     # Proxy mode must be bound behind an authenticated, header-scrubbing proxy.
     app.state.trusted_hosts = set(trusted_hosts or {'127.0.0.1', 'localhost', '[::1]'})
 
@@ -691,6 +713,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     media_configured=production.enabled,
                     explanation_configured=enabled and explanation_gateway is not None,
                     joint_plan_configured=joint_gate and joint_plan_gateway is not None,
+                    production_runs_enabled=production_run_workflow.enabled,
                     motion_enabled=motion_gate, motion_configured=motion_gate and motion_gateway is not None,
                     process_enabled=process_gate, process_configured=process_gate and process_gateway is not None,
                     creative_enabled=creative_gate, creative_configured=creative_gate and creative_gateway is not None
@@ -847,6 +870,24 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     @app.get('/api/projects/{project_id}/joint-plan')
     def joint_plan(project_id: str, owner=Depends(identity)):
         return joint_plan_store.project(owner, project_id)
+
+    @app.post('/api/projects/{project_id}/production-runs', status_code=202)
+    def start_production_run(project_id: str, body: ProductionRunRequest, owner=Depends(mutation),
+                             idempotency_key: str | None = Header(default=None, alias='Idempotency-Key')):
+        production_run_workflow.require_enabled()
+        return production_run_store.start(owner, project_id, body.model_dump(), idempotency(idempotency_key))
+
+    @app.get('/api/projects/{project_id}/production-runs')
+    def project_production_runs(project_id: str, owner=Depends(identity)):
+        return dict(runs=production_run_store.list(owner, project_id))
+
+    @app.get('/api/production-runs/{run_id}')
+    def read_production_run(run_id: str, owner=Depends(identity)):
+        return production_run_store.get(owner, run_id)
+
+    @app.post('/api/production-runs/{run_id}/cancel')
+    def cancel_production_run(run_id: str, owner=Depends(mutation)):
+        return production_run_store.cancel(owner, run_id)
 
     @app.post('/api/projects/{project_id}/joint-plan', status_code=202)
     def generate_joint_plan(project_id: str, body: JointPlanRequest, owner=Depends(mutation),

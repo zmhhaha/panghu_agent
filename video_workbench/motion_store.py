@@ -164,9 +164,9 @@ class MotionStore:
             'diagram_kind': plan_diagram_kind(version['plan'])} | (
                 {'compiler_version': version['compiler_version']} if 'compiler_version' in version else {})
 
-    def _creative_audio(self, db, project, scene):
+    def _creative_audio(self, db, project, scene, *, version_id=None):
         """Resolve the exact current owner-scoped recording inside the transaction."""
-        identity = scene.get('head_audio_version_id')
+        identity = scene.get('head_audio_version_id') if version_id is None else version_id
         _require(bool(identity), 'missing_current_audio', 409)
         row = db.execute('SELECT document,data FROM audio_versions WHERE id=? AND project_id=? AND scene_id=?',
                          (identity, project['id'], scene['id'])).fetchone()
@@ -261,7 +261,32 @@ class MotionStore:
                                 or self._audio_stale(version, scene))
             return version
 
-    def start(self, owner, scene_id, request, idem, *, timeout=600):
+    def candidate_version(self, owner, version_id, audio_version_id):
+        """Resolve a draft pair without granting or borrowing user adoption.
+
+        Head freshness is meaningful for the manual production path. A run's
+        private candidate instead binds its exact recording, current speech
+        input, semantics and measured WAV bytes in the same transaction.
+        """
+        with self.store.transaction() as db:
+            version = self._version(db, owner, version_id)
+            project = self.store._project(db, owner, version['project_id'])
+            scene = self.store._scene(project, version['scene_id'])
+            _require(plan_diagram_kind(version['plan']) == 'creative', 'motion_base_kind_mismatch', 409)
+            audio, _, checked = self._creative_audio(db, project, scene, version_id=audio_version_id)
+            _require(version.get('audio_version_id') == audio['id']
+                     and version.get('audio_sha256') == checked['sha256'],
+                     'creative_audio_binding_mismatch', 409)
+            return dict(version, stale=version['semantic_binding_sha256'] != semantic_binding(project, scene))
+
+    def start_candidate(self, owner, scene_id, request, idem, *, audio_version_id):
+        """Coordinator-only admission; no HTTP request can set this selection."""
+        _require(type(audio_version_id) is str and 1 <= len(audio_version_id) <= 100)
+        _require(type(request) is dict and request.get('diagram_kind') == 'creative'
+                 and 'expected_audio_version_id' not in request)
+        return self.start(owner, scene_id, request, idem, _draft_audio_version_id=audio_version_id)
+
+    def start(self, owner, scene_id, request, idem, *, timeout=600, _draft_audio_version_id=None):
         _require(type(request) is dict and {'expected_revision'} <= set(request)
                  and set(request) <= {'expected_revision', 'instruction', 'base_version_id', 'diagram_kind',
                                       'expected_semantic_binding_sha256', 'expected_audio_version_id'}
@@ -282,7 +307,12 @@ class MotionStore:
                  and all(33 <= ord(c) <= 126 for c in idem))
         _require(type(timeout) in (int, float) and 1 <= timeout <= 600)
         project_id = self.store.scene_project(owner, scene_id)
-        fingerprint = digest(dict(scene_id=scene_id, request=request, timeout=timeout))
+        identity = dict(scene_id=scene_id, request=request, timeout=timeout)
+        if _draft_audio_version_id is not None:
+            _require(diagram_kind == 'creative' and type(_draft_audio_version_id) is str
+                     and 1 <= len(_draft_audio_version_id) <= 100)
+            identity.update(selection='draft_only', audio_version_id=_draft_audio_version_id)
+        fingerprint = digest(identity)
         with self.store.transaction() as db:
             existing = db.execute('SELECT request_hash,document FROM motion_operations WHERE owner=? AND idem=?',
                                   (owner, idem)).fetchone()
@@ -299,7 +329,8 @@ class MotionStore:
                 _require(request['expected_revision'] < project['revision'] and expected_binding is not None,
                          'revision_conflict', 409)
                 if diagram_kind == 'creative':
-                    _require(expected_audio is not None, 'revision_conflict', 409)
+                    _require(expected_audio is not None or _draft_audio_version_id is not None,
+                             'revision_conflict', 409)
             if expected_binding is not None:
                 _require(expected_binding == binding, 'motion_generation_conflict', 409)
             if expected_audio is not None:
@@ -326,7 +357,8 @@ class MotionStore:
             if diagram_kind == 'creative':
                 from .creative_method_contract import prepare_core_task
                 from .creative_contract import scene_source
-                audio, narration, checked = self._creative_audio(db, project, scene)
+                audio, narration, checked = self._creative_audio(db, project, scene,
+                    version_id=_draft_audio_version_id)
                 beats = make_beats(scene['narration'], checked['spoken_text'])
                 alignment = estimated_alignment(beats, checked['sha256'], checked['duration_seconds'])
                 core = prepare_core_task(scene_id=scene_id, title=scene['title'],
@@ -346,6 +378,8 @@ class MotionStore:
                 document = dict(schema=CREATIVE_PENDING_SCHEMA, core_task=core)
                 audio_binding = dict(audio_version_id=audio['id'], audio_sha256=checked['sha256'],
                                      output_reserve_bytes=CREATIVE_OUTPUT_RESERVE_BYTES)
+                if _draft_audio_version_id is not None:
+                    audio_binding['selection'] = 'draft_only'
             else:
                 document = dict(schema='video.process-input.v1' if diagram_kind == 'process' else 'video.motion-input.v1',
                     title=scene['title'], style=project.get('style', ''),

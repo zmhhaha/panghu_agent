@@ -85,12 +85,13 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
   secondDraftScene.motion.head_version_id = 'audition-second-motion';
   audition.scenes.push(secondDraftScene);
   motionBusy.scenes[0].motion.operation = { id: 'motion-op', status: 'running' };
-  const all = [idle, motionBusy, explanationBusy, jointBusy, batchBusy, historical, audition, unmade];
+  const productionBusy = project('production-busy'); productionBusy.joint_plan = {version_id:'adopted-plan'};
+  const all = [idle, motionBusy, explanationBusy, jointBusy, batchBusy, productionBusy, historical, audition, unmade];
   let listedProjects = [];
   const batch = { id: 'batch-op', project_id: batchBusy.id, status: 'running', items: [] };
   const settings = { user_id: 'offline-bootstrap-test', csrf_token: 'offline-only',
     motion_enabled: true, motion_configured: true, motion_render_configured: true,
-    batch_enabled: true, explanation_configured: true, joint_plan_configured: true, speech_configured: true,
+    batch_enabled: true, explanation_configured: true, joint_plan_configured: true, production_runs_enabled:true, speech_configured: true,
     speech_voice: 'test-voice', speech_voices: [{ id: 'test-voice', name: '测试音色', default: true },
       { id: 'other-voice', name: '另一音色' }] };
   const writes = [], voiceWrites = [], sceneWrites = [], mutationCalls = [];
@@ -174,6 +175,8 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
       else if (suffix === 'joint-plan') result = { versions: [],
         operation: id === jointBusy.id ? { id: 'joint-op', status: 'running' } : null };
       else if (suffix === 'batches') result = { batches: id === batchBusy.id ? [batch] : [] };
+      else if (suffix === 'production-runs') result = {runs:id === productionBusy.id ? [{id:'whole-video-run',project_id:id,
+        joint_plan_version_id:'adopted-plan',request_key:'production-run:existing',voice:'test-voice',status:'running',phase:'audio',items:[]}] : []};
       else assert.fail(`Unexpected application request ${path}`);
     }
     return { ok: true, status: 200, json: async () => structuredClone(result) };
@@ -235,6 +238,18 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
     assert.equal($('preview-batch').disabled, true);
     assert.equal($('convert-project-motion').disabled, true);
 
+    await clickProject(productionBusy.id);
+    healthy(productionBusy.id);
+    for (const id of ['start-production-run','generate-joint-plan','adopt-joint-plan','generate-motion','preview-batch',
+      'project-speech-voice','save-project-speech','add-scene','toggle-scene-editor','scene-narration','generate-audio']) {
+      assert.equal($(id).disabled,true,`Whole-video run must fence ${id}`);
+    }
+    assert.match($('production-run-status').textContent,/制作中/);
+    assert.equal($('cancel-production-run').disabled,false);
+    const beforeBusyWrites=mutationCalls.length;
+    await $('create-storyboard').emit('click'); await $('generate-audio').emit('click');
+    assert.equal(mutationCalls.length,beforeBusyWrites,'Busy protection must also fence programmatic actions');
+
     await clickProject(batchBusy.id);
     healthy(batchBusy.id);
     await $('toggle-scene-editor').emit('click');
@@ -293,7 +308,7 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
       }
     });
     await t.test('all native media controls keep only the latest player active in every ordered pair', async () => {
-      assert.equal(mediaIds.length, 5, 'Cover every native audio and video player in the real page');
+      assert.equal(mediaIds.length, 6, 'Cover every native audio and video player in the real page');
       for (const first of mediaIds) for (const second of mediaIds) {
         if (first === second) continue;
         pauseAll(); await $(first).play(); await $(second).play();

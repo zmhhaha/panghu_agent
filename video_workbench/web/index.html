@@ -57,6 +57,21 @@
             <div class="explanation-adoption" id="joint-plan-adoption" hidden><p id="joint-plan-adoption-note" class="field-note"></p><label class="checkbox-label"><input id="confirm-joint-plan-adoption" type="checkbox">我已审阅完整方案，确认采用全部段落</label><button class="button primary" id="adopt-joint-plan" type="button" disabled>采用整份方案</button></div>
           </div>
         </details>
+        <section class="production-runs-panel" id="production-runs-panel" aria-labelledby="production-runs-heading" hidden>
+          <div class="section-heading"><div><span class="eyebrow">从方案到完整视频</span><h2 id="production-runs-heading">整片有声草稿</h2></div><button class="text-button" id="reload-production-runs" type="button">重新读取制作状态</button></div>
+          <p id="production-run-note" class="field-note"></p>
+          <button class="button primary" id="start-production-run" type="button" disabled>制作整片有声草稿</button>
+          <p id="production-run-error" class="message error-message" role="alert" hidden></p>
+          <label id="production-run-history" hidden>历史制作<select id="production-run-select"></select></label>
+          <div id="production-run-result" hidden>
+            <p id="production-run-status" class="production-run-status" role="status" aria-live="polite"></p>
+            <p id="production-run-voice" class="field-note"></p>
+            <p id="production-run-problem" class="message error-message" role="alert" hidden></p>
+            <details class="production-run-details"><summary>查看逐段制作进度</summary><ol id="production-run-items"></ol></details>
+            <button id="cancel-production-run" class="text-button" type="button" hidden>申请取消本次制作</button>
+            <div id="production-run-player" hidden><h3>草稿待审阅</h3><p id="production-run-review-note" class="field-note"></p><video id="production-run-video" controls preload="none" aria-label="整片有声草稿"></video><a id="download-production-run" class="button secondary">下载整片草稿 MP4 ↓</a></div>
+          </div>
+        </section>
         <div class="operation-banner" id="storyboard-status" role="status" hidden><span class="status-dot"></span><span id="storyboard-status-text"></span><button type="button" class="text-button" id="reload-storyboard" hidden>重新读取拆镜状态</button><button class="text-button" id="cancel-storyboard" type="button">申请取消</button></div>
 
         <details class="explanation-panel" id="explanation-panel" hidden><summary><span>历史讲解方案</span><small>查看之前按镜头整理的方案</small><span aria-hidden="true">⌄</span></summary><div class="explanation-content">
@@ -79,8 +94,8 @@
 
         <section class="project-speech-panel" aria-labelledby="project-speech-heading"><div><h2 id="project-speech-heading">项目配音</h2><p>整个项目统一使用一个音色。换声后请重新生成并采用配音，再检查当前动画是否需要更新、核对画面时序。历史版本仍保留，选择音色不会自动生成或采用。</p></div><div class="project-speech-controls"><label>项目音色<select id="project-speech-voice" required disabled><option value="">正在读取音色…</option></select></label><button class="text-button" id="reset-project-speech" type="button">重新载入</button><button class="button secondary" id="save-project-speech" type="button" disabled>保存音色</button></div><p id="project-speech-status" class="field-note" role="status"></p></section>
 
-        <details class="batch-panel" id="batch-panel" hidden open>
-          <summary><span>整片批量制作</span><small>核对范围 → 制作候选 → 集中审阅</small><span aria-hidden="true">⌄</span></summary>
+        <details class="batch-panel" id="batch-panel" hidden>
+          <summary><span>按镜头批量制作（更多操作）</span><small>手动选择范围与步骤</small><span aria-hidden="true">⌄</span></summary>
           <div class="batch-content">
             <p class="field-note">选择本次处理的镜头与步骤。制作只保存候选；采用和人工时序核对由你分别确认。</p>
             <p class="field-note" id="batch-creative-note" hidden>创意动画需先试听并采用旁白，再逐镜生成。这里继续批量制作通用图解与配音；采用的创意动画可直接用于普通整片草稿和导出。</p>
