@@ -1,10 +1,30 @@
 """Release provenance and immutable identity checks, without Docker or network."""
 from pathlib import Path
+import fnmatch
+import shlex
 import subprocess
 
 import pytest
 
 from video_workbench.deploy import build_creation_release as release
+
+
+def test_renderer_copy_inputs_survive_its_exact_docker_context_allowlist():
+    root = Path(__file__).resolve().parents[2] / 'video_workbench' / 'motion_renderer'
+    rules = (root / '.dockerignore').read_text().splitlines()
+    for line in (root / 'Dockerfile').read_text().splitlines():
+        if not line.startswith('COPY ') or line.startswith('COPY --from='):
+            continue
+        for name in shlex.split(line)[1:-1]:
+            included = True
+            for rule in rules:
+                if not rule or rule.startswith('#'):
+                    continue
+                negated = rule.startswith('!')
+                if fnmatch.fnmatchcase(name, rule[1:] if negated else rule):
+                    included = negated
+            assert (root / name).is_file(), name
+            assert included, f'Docker COPY input excluded by .dockerignore: {name}'
 
 
 def git(root, *arguments):
