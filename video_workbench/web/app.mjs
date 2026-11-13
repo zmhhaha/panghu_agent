@@ -1447,7 +1447,12 @@ $('create-project-form').addEventListener('submit', async event => {
     await openProject(project.id);
     success('动态视频项目已创建。可以拆分镜头或手动添加，再制作图解与配音。');
   } catch (error) { showError(error); }
-  finally { pending.delete('create-project'); $('submit-create-project').disabled = false; }
+  finally {
+    pending.delete('create-project'); $('submit-create-project').disabled = false;
+    // Opening the new project renders while creation is still pending. Release
+    // that busy projection immediately, including project management and plans.
+    render();
+  }
 });
 
 $('add-scene').addEventListener('click', startNewScene);

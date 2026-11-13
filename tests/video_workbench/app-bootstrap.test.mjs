@@ -35,6 +35,8 @@ class Element {
   load() { this.paused = true; }
   showModal() { this.open = true; }
   close() { this.open = false; }
+  focus() {}
+  reset() {}
   contains(target) { return this === target || this.children.some(child => child.contains(target)); }
   scrollIntoView() {}
   reportValidity() { return true; }
@@ -100,18 +102,28 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
   const storyboardWrites = [];
   const renderRows = new Map();
   let allowProjectDraft = false, allowVoiceSave = false, allowSceneSave = false, draftFailure = null;
+  let allowProjectCreate = false;
   const fetchFixture = async (path, options) => {
     calls.push(path);
     if (options.method !== 'GET') {
       mutationCalls.push({ path, method: options.method });
-      if (path === '/api/projects/removable/trash' || path === '/api/projects/removable/restore') {
+      if (path === '/api/projects' && options.method === 'POST') {
+        assert.equal(allowProjectCreate, true);
+        const body = JSON.parse(options.body), created = project('newly-created');
+        Object.assign(created, body, { scenes: [] });
+        all.push(created);
+        if (listedProjects !== all) listedProjects.push(created);
+        return { ok: true, status: 201, json: async () => structuredClone(created) };
+      }
+      const managedProject = all.find(p => path === `/api/projects/${p.id}/trash` || path === `/api/projects/${p.id}/restore`);
+      if (managedProject && ['removable', 'newly-created'].includes(managedProject.id)) {
         lifecycleWrites.push({ path, body: JSON.parse(options.body) });
-        assert.equal(JSON.parse(options.body).expected_revision, removable.revision);
-        if (path.endsWith('/trash')) deletedProjects.add(removable.id); else deletedProjects.delete(removable.id);
-        removable.revision++;
+        assert.equal(JSON.parse(options.body).expected_revision, managedProject.revision);
+        if (path.endsWith('/trash')) deletedProjects.add(managedProject.id); else deletedProjects.delete(managedProject.id);
+        managedProject.revision++;
         return { ok: true, status: 200, json: async () => ({ project: {
-          id: removable.id, title: removable.title, revision: removable.revision,
-          deleted_at: deletedProjects.has(removable.id) ? 123 : null,
+          id: managedProject.id, title: managedProject.title, revision: managedProject.revision,
+          deleted_at: deletedProjects.has(managedProject.id) ? 123 : null,
         } }) };
       }
       if (path === '/api/projects/unmade/storyboard') {
@@ -710,6 +722,27 @@ test('real app bootstrap, project switches and cross-panel busy checks never reb
         { path: '/api/projects/removable/trash', method: 'POST' },
         { path: '/api/projects/removable/restore', method: 'POST' },
       ], 'Deletion and restore do not generate or adopt media');
+    });
+    await t.test('newly created empty projects release the creation lock before the first delete or planning action', async () => {
+      const previousMutations = mutationCalls.length;
+      await $('new-project').emit('click');
+      assert.equal($('create-project-dialog').open, true);
+      $('new-title').value = '新建后立即管理'; $('new-script').value = '一段尚未开始制作的文稿。'; $('new-style').value = '';
+      allowProjectCreate = true;
+      await $('create-project-form').emit('submit');
+      allowProjectCreate = false;
+      assert.equal($('create-project-dialog').open, false);
+      assert.equal($('project-title').textContent, '新建后立即管理');
+      assert.equal($('scene-count').textContent, '0 个镜头');
+      assert.equal($('delete-project').disabled, false, 'The completed create-project intent must not leave deletion locked');
+      assert.equal($('delete-project-note').hidden, true);
+      assert.equal($('generate-joint-plan').disabled, false, 'Planning must also see the released creation lock');
+      await $('delete-project').emit('click'); await $('confirm-delete-project').emit('click');
+      assert.ok(!$('project-list').children.some(row => row.dataset.projectId === 'newly-created'));
+      assert.deepEqual(mutationCalls.slice(previousMutations), [
+        { path: '/api/projects', method: 'POST' },
+        { path: '/api/projects/newly-created/trash', method: 'POST' },
+      ], 'Create and delete must not require a manual refresh or trigger paid production');
     });
     for (const [id, timer] of timers) if (timer.duration === 5000) {
       timers.delete(id); timer.callback();
