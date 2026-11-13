@@ -157,8 +157,8 @@ def test_metadata_retrieval_batches_preserve_every_discovered_version(tmp_path):
     instance = SkillProductionAdapter(lambda _: {'methods': [metadata(row) for row in originals]},
         read, tmp_path / 'batch.sqlite3')
     result = instance.freeze('alice', 'all-versions', TASK, ['html-svg'])
-    assert [len(body['method_version_ids']) for body in calls] == [16, 16, 8]
-    assert len({body['consumer_id'] for body in calls}) == 3
+    assert [len(body['method_version_ids']) for body in calls] == [1] * 40
+    assert len({body['consumer_id'] for body in calls}) == 40
     assert {row['method_version_id'] for row in result['catalog']['skills']} == set(by_id)
     assert len(result['packages']) == 40
     assert instance.get_bundle('alice', 'all-versions', result['catalog']['sha256']) == result

@@ -23,9 +23,19 @@ from agent_service.worker_entry import HostConfig, PI_ADAPTER_REVISION, host_pol
 
 
 PROFILES = (method.AUTHOR_PROFILE, method.REVIEW_PROFILE)
+SKILL_PROFILES = ('video.animation-method-author.v2', 'video.animation-method-review.v2')
 
 
-def _manifest(value):
+def _protocol(skills=False):
+    require(type(skills) is bool, 'animation_method_protocol_invalid')
+    if skills:
+        from agent_service.profiles import video_animation_skill_method
+        return video_animation_skill_method
+    return method
+
+
+def _manifest(value, *, skills=False):
+    method = _protocol(skills)
     raw = (method.BUNDLE_ROOT / 'manifest.json').read_bytes()
     require(type(value) is dict and hashlib.sha256(raw).hexdigest() == method.BUNDLE_MANIFEST_SHA256
         and json.loads(raw) == value,
@@ -41,13 +51,14 @@ def _manifest(value):
     return rows
 
 
-def measure_animation_method_bundle():
+def measure_animation_method_bundle(*, skills=False):
     """Measure exact local files; neither inspect a container nor call a model."""
+    method = _protocol(skills)
     raw = (method.BUNDLE_ROOT / 'manifest.json').read_bytes()
     require(hashlib.sha256(raw).hexdigest() == method.BUNDLE_MANIFEST_SHA256,
             'animation_method_bundle_manifest_mismatch')
     manifest = json.loads(raw)
-    rows = _manifest(manifest)
+    rows = _manifest(manifest, skills=skills)
     content = method.verified_bundle()
     require(set(content) == method.BUNDLE_FILES, 'animation_method_bundle_content_mismatch')
     return {method.BUNDLE_REVISION: manifest}, dict(
@@ -62,13 +73,19 @@ def measure_animation_method_bundle():
 def prepare_animation_method_catalog(current, *, worker_image, resource_manifests,
         source_pool_id, author_model_policy=None, review_model_policy=None,
         caller=None, runtime_revision=None, register_caller=True,
-        model_proxy_url='http://agent-model-proxy.agent-service.svc.cluster.local:8080/v1'):
+        model_proxy_url='http://agent-model-proxy.agent-service.svc.cluster.local:8080/v1',
+        skills=False):
     """Return additive catalog, exact disabled hosts, and preparation receipt.
 
     The source pool supplies confinement only. New models can be explicitly
     proposed; a vision policy declaration is never actual frame-delivery proof.
     A dedicated caller can be registered without reusing another service token.
     """
+    method = _protocol(skills)
+    profiles = (method.AUTHOR_PROFILE, method.REVIEW_PROFILE)
+    role_prefix = 'video-animation-skill-method' if skills else 'video-animation-method'
+    bundle_name = 'animation-skill-method' if skills else 'animation-method'
+    caller_name = 'video-animation-skill-methods' if skills else 'video-animation-methods'
     before = deepcopy(current)
     existing = registry(current)
     require(type(worker_image) is str and re.fullmatch(
@@ -77,7 +94,7 @@ def prepare_animation_method_catalog(current, *, worker_image, resource_manifest
     require(type(register_caller) is bool, 'animation_method_caller_registration_invalid')
     require(type(resource_manifests) is dict and set(resource_manifests) == {method.BUNDLE_REVISION},
             'animation_method_bundle_manifests_required')
-    rows = _manifest(resource_manifests[method.BUNDLE_REVISION])
+    rows = _manifest(resource_manifests[method.BUNDLE_REVISION], skills=skills)
     source_pool, source_binding = _pool(current, existing, source_pool_id)
     source_environment = existing.environment(source_binding.tool_environment.name,
                                                source_binding.tool_environment.revision)
@@ -87,9 +104,9 @@ def prepare_animation_method_catalog(current, *, worker_image, resource_manifest
     review_model = _model(source_binding.model_policy if review_model_policy is None else review_model_policy,
                          {'text', 'tool_calls', 'vision'}, 'animation_method_review_model_policy_required')
     caller = deepcopy(caller) if caller is not None else dict(tenant='internal',
-        caller='video-animation-methods', profiles=list(PROFILES), token_ref='video-animation-methods')
+        caller=caller_name, profiles=list(profiles), token_ref=caller_name)
     require(type(caller) is dict and set(caller) == {'tenant', 'caller', 'profiles', 'token_ref'}
-        and caller['profiles'] == list(PROFILES)
+        and caller['profiles'] == list(profiles)
         and caller['caller'] not in {'video-workbench', 'video-animation-lab'},
         'dedicated_animation_method_caller_required')
     require(not any(row['token_ref'] == caller['token_ref']
@@ -105,7 +122,7 @@ def prepare_animation_method_catalog(current, *, worker_image, resource_manifest
             required_tools=list(handler.required_tools),
             required_model_capabilities=list(required_model_capabilities(handler)),
             max_timeout_seconds=1200, **handler.limits.as_dict()))
-        bundle = CapabilityBundle.model_validate(dict(name='animation-method',
+        bundle = CapabilityBundle.model_validate(dict(name=bundle_name,
             revision=method.BUNDLE_REVISION, source='original-local-' + method.BUNDLE_REVISION,
             license='MIT', required_tools=list(handler.required_tools),
             resources=[dict(name='manifest.json', sha256=method.BUNDLE_MANIFEST_SHA256)]
@@ -116,7 +133,7 @@ def prepare_animation_method_catalog(current, *, worker_image, resource_manifest
             runtime_revision=runtime_revision or source_environment.runtime_revision)
         environment_data['revision'] = read_inputs_environment_revision(environment_data)
         environment = ToolEnvironment.model_validate(environment_data)
-        binding_data = dict(id='video-animation-method-' + role + '-pi', revision='v1',
+        binding_data = dict(id=role_prefix + '-' + role + '-pi', revision='v1',
             profile=profile, profile_revision='1', engine='pi', adapter_revision=PI_ADAPTER_REVISION,
             bundle=dict(name=bundle.name, revision=bundle.revision),
             tool_environment=dict(name=environment.name, revision=environment.revision),
@@ -126,7 +143,7 @@ def prepare_animation_method_catalog(current, *, worker_image, resource_manifest
         binding = ExecutionBinding.model_validate(binding_data)
         route = dict(profile=profile, profile_revision='1', binding_id=binding.id,
                      binding_revision=binding.revision, enabled=False)
-        host_name = 'animation-method-' + role + '-pi-' + fingerprint[:20]
+        host_name = ('animation-skill-method-' if skills else 'animation-method-') + role + '-pi-' + fingerprint[:20]
         pool = deepcopy(source_pool)
         pool.update(pool_id=host_name, binding_id=binding.id, binding_revision=binding.revision,
                     host_config_map=host_name, image=worker_image, enabled=False, uid_start=None)
@@ -154,7 +171,7 @@ def prepare_animation_method_catalog(current, *, worker_image, resource_manifest
         hosts[profile] = host.model_dump(mode='json', exclude_none=True)
         combinations.append(dict(profile=profile, profile_revision='1', binding_id=binding.id,
             binding_revision=binding.revision, combination_sha256=fingerprint,
-            acceptance_suite=profile.rsplit('.v', 1)[0] + '-contract.v1',
+            acceptance_suite=profile.rsplit('.v', 1)[0] + ('-contract.v2' if skills else '-contract.v1'),
             worker_host_config_map=host_name, worker_pool_id=host_name,
             required_model_capabilities=sorted(contract.required_model_capabilities),
             model_policy_sha256=digest(model.model_dump(mode='json')),

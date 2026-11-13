@@ -29,12 +29,13 @@ def _film_chain(project_id, scenes):
     """A new full-film contract cannot borrow an adjacent but unrelated cut."""
     packages = [(source['creative'].get('package') if type(source) is dict
                  and type(source.get('creative')) is dict else None) for source in scenes]
-    if not any(type(value) is dict and value.get('schema') == 'video.creative-scene.v4' for value in packages):
+    film_schemas = {'video.creative-scene.v4', 'video.creative-scene.v5'}
+    if not any(type(value) is dict and value.get('schema') in film_schemas for value in packages):
         return None
     checked = []
     for source, package in zip(scenes, packages):
         _require(type(source) is dict and source.get('visual_mode') == 'creative' and type(package) is dict
-            and package.get('schema') == 'video.creative-scene.v4', 'creative_film_chain_mismatch', 409)
+            and package.get('schema') in film_schemas, 'creative_film_chain_mismatch', 409)
         checked.append(validate_scene_package(package))
     film = checked[0]['input_document']['film_context']['film']
     checksum = digest(film)

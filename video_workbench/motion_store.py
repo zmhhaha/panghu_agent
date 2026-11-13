@@ -29,6 +29,7 @@ MAX_TOTAL_JSON_BYTES = 128 * 1024 * 1024
 OUTPUT_RESERVE_BYTES = 512 * 1024
 CREATIVE_OUTPUT_RESERVE_BYTES = 5 * 1024 * 1024
 CREATIVE_PENDING_SCHEMA = 'video.animation-production-pending.v1'
+SKILL_PENDING_SCHEMA = 'video.animation-production-pending.v2'
 PROCESS_CANDIDATE_COMPILER = 'motion-process-compiler-2'
 
 
@@ -47,9 +48,9 @@ def semantic_binding(project, scene):
 def plan_diagram_kind(plan):
     _require(type(plan) is dict and type(plan.get('schema')) is str
              and plan['schema'] in {'video.motion-plan.v1', 'video.process-plan.v1', 'video.creative-scene.v1',
-                                   'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'},
+                                   'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4', 'video.creative-scene.v5'},
              'motion_candidate_schema_invalid')
-    if plan['schema'] in {'video.creative-scene.v1', 'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'}:
+    if plan['schema'] in {'video.creative-scene.v1', 'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4', 'video.creative-scene.v5'}:
         return 'creative'
     return 'process' if plan['schema'] == 'video.process-plan.v1' else 'diagram'
 
@@ -59,9 +60,10 @@ def operation_diagram_kind(operation):
     _require(type(document) is dict and type(document.get('schema')) is str and document['schema'] in {
         'video.motion-input.v1', 'video.process-input.v1', 'video.animation-experiment-input.v1',
         'video.animation-production-input.v1', 'video.animation-production-input.v2', 'video.animation-production-input.v3',
-        CREATIVE_PENDING_SCHEMA}, 'motion_operation_schema_invalid')
+        'video.animation-production-input.v4', CREATIVE_PENDING_SCHEMA, SKILL_PENDING_SCHEMA}, 'motion_operation_schema_invalid')
     if document['schema'] in {'video.animation-experiment-input.v1', 'video.animation-production-input.v1',
-                             'video.animation-production-input.v2', 'video.animation-production-input.v3', CREATIVE_PENDING_SCHEMA}:
+                             'video.animation-production-input.v2', 'video.animation-production-input.v3',
+                             'video.animation-production-input.v4', CREATIVE_PENDING_SCHEMA, SKILL_PENDING_SCHEMA}:
         return 'creative'
     return 'process' if document['schema'] == 'video.process-input.v1' else 'diagram'
 
@@ -75,8 +77,10 @@ def _size(value):
 
 
 class MotionStore:
-    def __init__(self, store, *, runtime_capabilities=None):
+    def __init__(self, store, *, runtime_capabilities=None, skill_production=False):
         self.store = store
+        _require(type(skill_production) is bool)
+        self.skill_production = skill_production
         self.runtime_capabilities = (None if runtime_capabilities is None
                                      else validate_runtime_capabilities(runtime_capabilities))
         with store.transaction() as db:
@@ -189,7 +193,7 @@ class MotionStore:
                 or selected.get('sha256') != version['audio_sha256'])
 
     def _film_stale(self, version, project):
-        if version['plan'].get('schema') != 'video.creative-scene.v4':
+        if version['plan'].get('schema') not in {'video.creative-scene.v4', 'video.creative-scene.v5'}:
             return False
         from .production_film_context import freeze_production_inputs
         film = version['plan']['input_document']['film_context']['film']
@@ -294,10 +298,10 @@ class MotionStore:
 
     @staticmethod
     def _continuity_predecessor(version):
-        from .creative_method_contract import validate_scene_package, FILM_CREATIVE_SCHEMA
-        from .creative_contract import scene_source
+        from .creative_contract import validate_scene_package, scene_source
         package = validate_scene_package(version['plan'])
-        _require(package['schema'] == FILM_CREATIVE_SCHEMA, 'creative_predecessor_contract_mismatch', 409)
+        _require(package['schema'] in {'video.creative-scene.v4', 'video.creative-scene.v5'},
+                 'creative_predecessor_contract_mismatch', 409)
         source = scene_source(package)
         return dict(scene_id=version['scene_id'], motion_version_id=version['id'],
             input_sha256=package['input_sha256'], result_sha256=package['result_sha256'],
@@ -413,6 +417,8 @@ class MotionStore:
                 _require(plan_diagram_kind(base['plan']) == diagram_kind, 'motion_base_kind_mismatch', 409)
             audio_binding = {}
             if diagram_kind == 'creative':
+                _require(not self.skill_production or _film_context is not None,
+                         'creative_film_context_required', 409)
                 from .creative_method_contract import prepare_core_task
                 from .creative_contract import scene_source
                 audio, narration, checked = self._creative_audio(db, project, scene,
@@ -434,7 +440,8 @@ class MotionStore:
                        if self.runtime_capabilities is not None else {}))
                 # Reserve durable identity before network I/O. The workflow
                 # freezes knowledge outside this business transaction.
-                document = dict(schema=CREATIVE_PENDING_SCHEMA, core_task=core)
+                document = dict(schema=SKILL_PENDING_SCHEMA if self.skill_production else CREATIVE_PENDING_SCHEMA,
+                                core_task=core)
                 audio_binding = dict(audio_version_id=audio['id'], audio_sha256=checked['sha256'],
                                      output_reserve_bytes=CREATIVE_OUTPUT_RESERVE_BYTES)
                 if _draft_audio_version_id is not None:
@@ -477,21 +484,27 @@ class MotionStore:
         under this operation's stable consumer id. No HTTP runs in a Store
         transaction, and no published update can change a completed freeze.
         """
-        from .creative_method_contract import build_scene_input
         op = self.operation(operation_id)
-        if op['document'].get('schema') != CREATIVE_PENDING_SCHEMA:
+        pending_schema = op['document'].get('schema')
+        if pending_schema not in {CREATIVE_PENDING_SCHEMA, SKILL_PENDING_SCHEMA}:
             return op
-        _require(adapter is not None, 'creative_methods_unavailable', 503)
+        skills = pending_schema == SKILL_PENDING_SCHEMA
+        _require(adapter is not None, 'creative_skills_unavailable' if skills else 'creative_methods_unavailable', 503)
         if op['status'] not in ACTIVE or op['cancel_requested'] or time.time() >= op['deadline_at']:
             return op
         core = op['document']['core_task']
-        snapshot = adapter.freeze(op['owner'], 'video-production:' + op['id'], core,
+        snapshot = adapter.freeze(op['owner'], ('video-skill-production:' if skills else 'video-production:') + op['id'], core,
                                   core['constraints']['allowed_engines'])
-        document = build_scene_input(core_task=core, method_delivery=snapshot,
-                                     engine_aware='runtime_identity' in core['constraints'])
+        if skills:
+            from .creative_skill_contract import build_scene_input
+            document = build_scene_input(core, snapshot)
+        else:
+            from .creative_method_contract import build_scene_input
+            document = build_scene_input(core_task=core, method_delivery=snapshot,
+                                         engine_aware='runtime_identity' in core['constraints'])
         with self.store.transaction() as db:
             current = self._op(db, operation_id)
-            if current['document'].get('schema') != CREATIVE_PENDING_SCHEMA:
+            if current['document'].get('schema') != pending_schema:
                 _require(current['document'] == document, 'production_method_frozen_input_changed', 409)
                 return current
             _require(current['document'] == op['document'] and not current['submit_attempted']
@@ -524,7 +537,10 @@ class MotionStore:
             op = self._op(db, operation_id)
             if op['status'] in TERMINAL:
                 return op
+            old_size = _size(op)
             op.update(fields)
+            if 'input_ref' in fields:
+                self._capacity(db, op['project_id'], extra_bytes=_size(op) - old_size)
             self._write_op(db, op)
             return op
 
@@ -596,9 +612,16 @@ class MotionStore:
                 kind = operation_diagram_kind(op)
                 process, creative = kind == 'process', kind == 'creative'
                 if creative:
-                    from .creative_method_contract import collect_scene_result
                     from .creative_contract import scene_source, scene_context
-                    plan = collect_scene_result(op['document'], result)
+                    if op['document']['schema'] == 'video.animation-production-input.v4':
+                        from .creative_skill_contract import collect_scene_result
+                        _require(type(result) is dict and set(result) == {'result', 'evidence', 'skill_delivery'},
+                                 'creative_skill_host_evidence_required', 409)
+                        plan = collect_scene_result(op['document'], result['result'], result['evidence'],
+                                                    skill_delivery=result['skill_delivery'])
+                    else:
+                        from .creative_method_contract import collect_scene_result
+                        plan = collect_scene_result(op['document'], result)
                     beats = scene_context(plan)['beats']
                     if op['parent_version_id'] is not None:
                         parent = self._version(db, op['owner'], op['parent_version_id'])
@@ -632,8 +655,9 @@ class MotionStore:
                     input_sha256=op['input_sha256'], semantic_binding_sha256=op['semantic_binding_sha256'],
                     beats=beats, plan=plan, plan_sha256=digest(plan))
                 if creative:
-                    from .creative_renderer import METHOD_COMPILER, ENGINE_METHOD_COMPILER, FILM_COMPILER
-                    compiler = (FILM_COMPILER if plan['schema'] == 'video.creative-scene.v4' else
+                    from .creative_renderer import METHOD_COMPILER, ENGINE_METHOD_COMPILER, FILM_COMPILER, SKILL_COMPILER
+                    compiler = (SKILL_COMPILER if plan['schema'] == 'video.creative-scene.v5' else
+                        FILM_COMPILER if plan['schema'] == 'video.creative-scene.v4' else
                         ENGINE_METHOD_COMPILER if plan['schema'] == 'video.creative-scene.v3' else METHOD_COMPILER)
                     version.update(diagram_kind='creative', compiler_version=compiler,
                         audio_version_id=op['audio_version_id'], audio_sha256=op['audio_sha256'])

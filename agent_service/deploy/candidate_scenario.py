@@ -341,7 +341,9 @@ def load_scenario(path, source_dir, parent_dir, policy):
                          'video.animation-create.v2', 'video.animation-review.v2',
                          'video.animation-review.v3', 'video.animation-review.v4',
                          'video.animation-method-author.v1', 'video.animation-method-review.v1',
+                         'video.animation-method-author.v2', 'video.animation-method-review.v2',
                          'video.animation-production.v1', 'video.animation-production.v2',
+                         'video.animation-production.v3',
                          'video.joint-plan.v1'}:
         # Validate the exact root-owned, explicitly projected JSON/frame files.
         # No temporary workspace, renamed inputs, or implicit source is created.

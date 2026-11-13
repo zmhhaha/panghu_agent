@@ -17,12 +17,14 @@ from uuid import uuid4
 
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.profiles import video_animation_method as protocol
+from agent_service.profiles import video_animation_skill_method as skill_protocol
 from .animation_creation_service import _run_lock
 from .animation_method_store import AnimationMethodStore, _structural_changes
 from .animation_method_commissions import (
     AnimationMethodCommissionStore, OP_TERMINAL, RETRY_RELATION_FIELDS, TERMINAL,
 )
 from .animation_runtime_capabilities import validate_runtime_capabilities
+from .animation_method_research import METHOD_SCHEMA, REMOVAL_SCHEMA, validate_content_changes
 
 
 def _require(value, code='animation_method_request_invalid', status=422):
@@ -32,6 +34,30 @@ def _require(value, code='animation_method_request_invalid', status=422):
 
 def _public_url(commission_id, candidate_id, kind):
     return '/api/method-lab/commissions/' + commission_id + '/candidates/' + candidate_id + '/' + kind
+
+
+def _method_view(record):
+    if record['schema'] != METHOD_SCHEMA:
+        return deepcopy(record)
+    view = {key: deepcopy(value) for key, value in record.items() if key != 'skill_package'}
+    view['skill_package_sha256'] = record['skill_package']['sha256']
+    view['skill_package_url'] = '/api/method-lab/methods/' + record['id']
+    if record.get('publication') is not None:
+        view['publication_sha256'] = digest(record['publication'])
+    return view
+
+
+def _validation_view(record):
+    if record['schema'] != 'video.animation-method-validation.v2':
+        return deepcopy(record)
+    view = {key: deepcopy(value) for key, value in record.items() if key != 'reference_removal'}
+    if record.get('reference_removal'):
+        receipt = record['reference_removal']
+        view['reference_removal_summary'] = dict(schema=receipt['schema'],
+            input_sha256=receipt['input_receipt']['input_sha256'],
+            resource_manifest_sha256=receipt['input_receipt']['resource_manifest_sha256'],
+            scope='exact_host_records_retained_in_private_validation_store')
+    return view
 
 
 def _candidates(run):
@@ -315,7 +341,7 @@ def _effect_views(runs, demonstrations, memberships=(), deletions=()):
 
 class AnimationMethodService:
     def __init__(self, root, *, author_gateway, review_gateway, renderer, clock=time.time,
-                 runtime_capabilities=None):
+                 runtime_capabilities=None, knowledge_store=None):
         self.root = Path(root).absolute()
         _require(not any(path.is_symlink() for path in (self.root, *self.root.parents)))
         self.root.mkdir(parents=True, exist_ok=True)
@@ -323,6 +349,11 @@ class AnimationMethodService:
         self.methods = AnimationMethodStore(self.root / 'methods.sqlite3')
         self.commissions = AnimationMethodCommissionStore(self.root / 'commissions.sqlite3', clock=clock)
         self.author, self.reviewer, self.renderer = author_gateway, review_gateway, renderer
+        self.author_protocol = getattr(type(author_gateway), 'protocol', protocol)
+        self.knowledge = knowledge_store
+        if self.knowledge is None and self.author_protocol is skill_protocol:
+            from .animation_knowledge import AnimationKnowledgeStore
+            self.knowledge = AnimationKnowledgeStore(self.root / 'knowledge.sqlite3')
         self._runtime_capabilities = (None if runtime_capabilities is None
                                       else validate_runtime_capabilities(runtime_capabilities))
         self.clock = clock
@@ -345,6 +376,142 @@ class AnimationMethodService:
 
     def pending(self, limit=100):
         return self.commissions.pending(limit)
+
+    def knowledge_catalogue(self, owner):
+        _require(self.knowledge is not None, 'animation_method_knowledge_unavailable', 503)
+        withdrawn = self._withdrawn_experience_ids(owner)
+        return dict(pages=[dict(page_id=row['page_id'], revision=row['revision'],
+            title=row['body']['title'], status=row['status'], content_sha256=row['content_sha256'],
+            evidence_status='withdrawn_feedback' if withdrawn & set(row['evidence_ids']) else 'current')
+            for row in self.knowledge.list_pages(owner, limit=64)],
+            experiences=[{key: row[key] for key in ('id', 'kind', 'source_id', 'content_sha256')}
+                for row in self.knowledge.list_experiences(owner, limit=64)])
+
+    def knowledge_page(self, owner, page_id):
+        _require(self.knowledge is not None, 'animation_method_knowledge_unavailable', 503)
+        page = self.knowledge.get_page(owner, page_id)
+        return dict(page=page, evidence_issues=sorted(self._withdrawn_experience_ids(owner) & set(page['evidence_ids'])), history=[
+            {key: row[key] for key in ('revision', 'status', 'change_kind', 'change_note', 'content_sha256')}
+            for row in self.knowledge.page_history(owner, page_id)[-64:]])
+
+    def knowledge_experience(self, owner, experience_id):
+        _require(self.knowledge is not None, 'animation_method_knowledge_unavailable', 503)
+        return self.knowledge.get_experience(owner, experience_id)
+
+    def revise_knowledge_page(self, owner, page_id, body):
+        _require(self.knowledge is not None, 'animation_method_knowledge_unavailable', 503)
+        required = {'request_id', 'expected_revision', 'body', 'evidence_ids', 'change_note'}
+        _require(type(body) is dict and required <= set(body)
+                 and set(body) <= required | {'status', 'change_kind', 'relations'})
+        options = {key: deepcopy(value) for key, value in body.items() if key not in {'request_id', 'body'}}
+        result = self.knowledge.revise_page(owner, page_id, body['body'], operation_id=body['request_id'], **options)
+        self._experience(owner, 'developer_knowledge_revision', body['request_id'], dict(
+            page_id=page_id, revision=result['revision'], content_sha256=result['content_sha256'],
+            change_note=body['change_note'], scope='explicit_developer_knowledge_revision_not_skill_publication'))
+        return result
+
+    def publication_readiness(self, owner, method_version_id):
+        return self.methods.publication_readiness(owner, method_version_id)
+
+    def published_catalogue(self, owner):
+        result = dict(methods=[_method_view(row) for row in self.methods.list_methods(owner, published_only=True)])
+        _require(len(canonical_bytes(result)) <= 2 * 1024 * 1024,
+                 'animation_method_catalogue_too_large', 413)
+        return result
+
+    def get_method_version(self, owner, method_version_id):
+        result = self.methods.get_method(owner, method_version_id)
+        _require(len(canonical_bytes(result)) <= 2 * 1024 * 1024,
+                 'animation_method_response_too_large', 413)
+        return result
+
+    def accept_validation(self, owner, validation_id, body):
+        required = {'request_id', 'method_content_sha256', 'comment', 'human_verification'}
+        _require(type(body) is dict and set(body) == required)
+        return self.methods.accept(owner, dict(validation_id=validation_id,
+            **{key: deepcopy(value) for key, value in body.items() if key != 'request_id'}), body['request_id'])
+
+    @staticmethod
+    def _protocol(run):
+        return skill_protocol if run['frozen'].get('protocol_schema') == skill_protocol.INPUT_SCHEMA else protocol
+
+    def _experience(self, owner, kind, source_id, document):
+        if self.knowledge is not None:
+            return self.knowledge.record_experience(owner, kind, source_id, document)
+
+    def _withdrawn_experience_ids(self, owner):
+        with closing(sqlite3.connect(self.metadata_path, timeout=20)) as db:
+            return {'exp_' + digest(dict(owner=owner, kind='developer_feedback', source_id=row[0]))
+                    for row in db.execute('SELECT feedback_id FROM feedback_withdrawals WHERE owner=?', (owner,))}
+
+    def _sync_feedback_knowledge(self, owner):
+        if self.knowledge is None:
+            return
+        with closing(sqlite3.connect(self.metadata_path, timeout=20)) as db:
+            feedback = [json.loads(row[0]) for row in db.execute('SELECT document FROM feedback WHERE owner=?', (owner,))]
+            withdrawals = [json.loads(row[0]) for row in db.execute(
+                'SELECT document FROM feedback_withdrawals WHERE owner=?', (owner,))]
+        for record in feedback:
+            self._experience(owner, 'developer_feedback', record['id'], record)
+        for record in withdrawals:
+            self._experience(owner, 'feedback_withdrawal', record['id'], record)
+
+    def _knowledge_snapshot(self, owner):
+        _require(self.knowledge is not None, 'animation_method_knowledge_unavailable', 503)
+        self._sync_feedback_knowledge(owner)
+        withdrawn = self._withdrawn_experience_ids(owner)
+        records = [row for row in self.knowledge.list_experiences(owner, limit=128)
+                   if row['id'] not in withdrawn and row['kind'] != 'knowledge_proposal']
+        pages = [row['page_id'] for row in self.knowledge.list_pages(owner, limit=256)
+                 if row['status'] != 'deprecated' and not (withdrawn & set(row['evidence_ids']))]
+        return self.knowledge.snapshot(owner, page_ids=pages, experience_ids=[row['id'] for row in records])
+
+    def _sync_knowledge(self, owner, run):
+        """Recover local knowledge writes without another paid submission."""
+        if self._protocol(run) is not skill_protocol:
+            return
+        for operation in run['operations']:
+            if operation['status'] in {'failed', 'cancelled'}:
+                self._experience(owner, 'execution_failure', operation['id'], dict(
+                    commission_id=run['id'], operation_id=operation['id'], stage=operation['stage'],
+                    input_sha256=operation['input_sha256'], error=operation.get('error'),
+                    status=operation['status'], scope='actual_stopped_operation_record'))
+            if operation['status'] != 'completed':
+                continue
+            result = operation['result']
+            if operation['stage'] == 'render':
+                self._experience(owner, 'render', operation['id'], dict(
+                    commission_id=run['id'], operation_id=operation['id'], goal=run['frozen']['goal'],
+                    author_operation_id=operation['input']['author_operation_id'],
+                    input_sha256=operation['input_sha256'], result_sha256=operation['result_sha256'],
+                    engine=operation['input']['source']['engine'], media=result.get('media'),
+                    technical=result.get('technical'), runtime=result.get('runtime'),
+                    scope='actual_render_record_not_human_or_complete_motion_verification'))
+                continue
+            opinion = result.get('review')
+            self._experience(owner, 'sampled_review' if opinion else 'authored_proposal', operation['id'], dict(
+                commission_id=run['id'], operation_id=operation['id'], goal=run['frozen']['goal'],
+                input_sha256=operation['input_sha256'], result_sha256=operation['result_sha256'],
+                mode=result['mode'], summary=opinion['summary'] if opinion else 'Authored proposal; not rendered or accepted.',
+                outcome=opinion['outcome'] if opinion else None,
+                observation=operation['input']['observation'],
+                scope='sampled_images_only' if opinion else 'authored_not_rendered_or_accepted'))
+            snapshot = operation['input'].get('knowledge_snapshot')
+            if snapshot is None or not result.get('knowledge_proposals'):
+                continue
+            proposal = self.knowledge.record_proposals(owner, operation['id'], result['knowledge_proposals'],
+                snapshot_id=snapshot['id'])
+            try:
+                _require(not any(self._withdrawn_experience_ids(owner) & set(row['evidence_ids'])
+                                 for row in result['knowledge_proposals']),
+                         'animation_method_knowledge_evidence_withdrawn', 409)
+                self.knowledge.apply_proposals(owner, proposal['id'])
+            except ServiceError as error:
+                if error.status != 409:
+                    raise
+                self._experience(owner, 'knowledge_conflict', operation['id'] + ':' + error.code, dict(
+                    commission_id=run['id'], proposal_id=proposal['id'], snapshot_id=snapshot['id'],
+                    error=error.code, scope='candidate_preserved_without_overwriting_newer_knowledge'))
 
     def _capabilities(self):
         if self._runtime_capabilities is not None:
@@ -529,7 +696,13 @@ class AnimationMethodService:
         best = next((row for row in candidates if row['id'] == run['best_candidate_id']), None)
         selected_method_ids = best['method_version_ids'] if best else []
         blockers = []
+        readiness = []
         for version_id in selected_method_ids:
+            if methods[version_id]['schema'] == METHOD_SCHEMA:
+                ready = self.methods.publication_readiness(owner, version_id)
+                readiness.append(ready)
+                blockers.extend(ready['unmet_conditions'])
+                continue
             selected = [row for row in validations if row['method_version_id'] == version_id
                         and row['outcome'] != 'failed']
             references = {row['demonstration_version_id'] for row in selected if row['role'] == 'reference'}
@@ -550,7 +723,7 @@ class AnimationMethodService:
             origin_run = next((item for item in all_runs if item['id'] == origin['commission_id']), None)
             origin_candidate = next((item for item in _candidates(origin_run)
                 if item['id'] == origin['candidate_id']), None) if origin_run else None
-            transfers.append(dict(validation, title=demo['title'], goal=demo['goal'],
+            transfers.append(dict(_validation_view(validation), title=demo['title'], goal=demo['goal'],
                 demonstration_id=demo['id'],
                 **_sample_engine(origin_candidate, _sample_index([demo])),
                 media_url=_public_url(origin['commission_id'], origin['candidate_id'], 'media'),
@@ -573,7 +746,7 @@ class AnimationMethodService:
             code = run['summary'].get('code')
             if type(code) is str:
                 error = code
-        return dict(schema='video.animation-method-lab-detail.v1', id=run['id'], request_id=run['request_id'],
+        detail = dict(schema='video.animation-method-lab-detail.v1', id=run['id'], request_id=run['request_id'],
             effect={key: deepcopy(effect[key]) for key in (
                 'id', 'title', 'open_commission_id', 'commissions', 'relationship_status', 'relationship_issues',
                 'engine', 'engine_status', 'engines')},
@@ -591,26 +764,34 @@ class AnimationMethodService:
             criteria=standards, candidates=candidates, best_candidate_id=run['best_candidate_id'],
             baseline_candidate=next((row for row in candidates if row['id'] ==
                 run['frozen'].get('base_candidate_id')), None),
-            methods=list(methods.values()), publication_method_version_ids=selected_method_ids,
+            methods=[_method_view(row) for row in methods.values()], publication_method_version_ids=selected_method_ids,
+            method_publication_readiness=readiness,
             requires_audio_verification=any(row['media'].get('audio_sha256') for row in relevant_demos),
             transfers=transfers,
-            validations=validations, feedback=self._feedback(owner, commission_id),
+            validations=[_validation_view(row) for row in validations], feedback=self._feedback(owner, commission_id),
             stop_reason=run['stop_reason'], remaining_issues=latest_review.get('remaining_issues', []),
             summary=summary, error=error, publication_ready=not blockers, publishable=not blockers,
             publication_blockers=sorted(set(blockers)), reviews=run['reviews'],
             execution=[{k: op.get(k) for k in ('id', 'stage', 'status', 'job_id', 'error')}
                        for op in run['operations']])
+        if self._protocol(run) is skill_protocol:
+            _require(len(canonical_bytes(detail)) <= 2 * 1024 * 1024,
+                     'animation_method_response_too_large', 413)
+        return detail
 
     def start(self, owner, body):
         fields = {'request_id', 'title', 'goal', 'reference', 'duration_seconds', 'budget',
                   'base_commission_id', 'base_candidate_id', 'feedback', 'criteria', 'method_versions',
-                  'role', 'baseline_demonstration_id', 'structural_changes', 'retry_of_commission_id'}
+                  'role', 'baseline_demonstration_id', 'structural_changes', 'retry_of_commission_id',
+                  'research_record_ids', 'content_changes'}
         _require(type(body) is dict and {'request_id', 'goal', 'budget'} <= set(body)
                  and set(body) <= fields)
         request_id = body['request_id']
         data = {key: deepcopy(value) for key, value in body.items() if key != 'request_id' and value is not None}
         previous_request = next((row for row in self.commissions.list_all(owner)
                                  if row['request_id'] == request_id), None)
+        skill_mode = (previous_request['frozen'].get('protocol_schema') == skill_protocol.INPUT_SCHEMA
+                      if previous_request is not None else self.author_protocol is skill_protocol)
         if previous_request is not None:
             self._get_visible_commission(owner, previous_request['id'])
         if 'retry_of_commission_id' in data:
@@ -676,6 +857,12 @@ class AnimationMethodService:
             version = self.methods.get_method(owner, version_id)
             _require(version['runtime_requirements'].get('engine') in allowed_engines,
                      'animation_method_runtime_not_admitted', 409)
+        research_ids = data.get('research_record_ids', [])
+        _require(type(research_ids) is list and len(research_ids) <= 64
+                 and all(type(item) is str for item in research_ids)
+                 and len(set(research_ids)) == len(research_ids))
+        for record_id in research_ids:
+            self.methods.get_research(owner, record_id)
         if data.get('role') == 'transfer':
             _require(bool(version_ids), 'animation_method_transfer_methods_required', 409)
             standards = self._method_criteria(owner, version_ids)
@@ -684,6 +871,17 @@ class AnimationMethodService:
             data['criteria'] = standards
             _structural_changes(data.get('structural_changes'))
             baseline = self.methods.get_demonstration(owner, data.get('baseline_demonstration_id'))
+            if skill_mode:
+                _require(not data.get('reference') and not research_ids
+                         and all(self.methods.get_method(owner, version_id)['schema'] == METHOD_SCHEMA
+                                 for version_id in version_ids),
+                         'animation_skill_method_transfer_reference_present', 409)
+                changes = validate_content_changes(data.get('content_changes'))
+                _require(changes['before'] == baseline['goal'] and changes['after'] == data['goal'],
+                         'animation_skill_method_transfer_content_mismatch', 409)
+                _require(bool({'relations', 'task', 'staging', 'data_structure', 'explanation_problem'}
+                              & set(data['structural_changes'])),
+                         'animation_method_substantive_transfer_required', 409)
             for version_id in data.get('method_versions', []):
                 _require(any(row['role'] == 'reference' and row['demonstration_version_id'] == baseline['id']
                     and row['outcome'] != 'failed' for row in self.methods.list_validations(
@@ -697,6 +895,19 @@ class AnimationMethodService:
         for gateway in (self.author, self.reviewer):
             if callable(getattr(gateway, 'preflight', None)):
                 gateway.preflight(self.clock() + seconds)
+        if skill_mode:
+            data['protocol_schema'] = skill_protocol.INPUT_SCHEMA
+            if previous_request is not None:
+                data['knowledge_snapshot_id'] = previous_request['frozen']['knowledge_snapshot_id']
+            else:
+                self._experience(owner, 'brief', request_id, dict(
+                    goal=data['goal'], feedback=data.get('feedback', ''),
+                    role=data.get('role', 'reference'), scope='requested_goal_not_rendered_or_accepted'))
+                data['knowledge_snapshot_id'] = (None if data.get('role') == 'transfer'
+                                                 else self._knowledge_snapshot(owner)['id'])
+            # Build the complete first main JSON before reserving any paid
+            # operation; research and Wiki cannot exceed the fixed reader.
+            self._document(owner, dict(frozen=data, operations=[]), 'plan')
         run = self.commissions.create(owner, data, request_id)
         return self.get(owner, run['id'])
 
@@ -760,13 +971,16 @@ class AnimationMethodService:
                                (owner, body['request_id'])).fetchone()
             if prior:
                 _require(prior[0] == checksum, 'animation_method_feedback_conflict', 409)
-                return self._feedback_view(db, owner, json.loads(prior[1]))
-            record = dict(body, kind=kind, id=str(uuid4()), commission_id=commission_id,
-                          source='explicit_developer_feedback', created_at=self.clock())
-            db.execute('INSERT INTO feedback VALUES (?,?,?,?,?)',
-                       (owner, body['request_id'], commission_id, checksum, canonical_bytes(record).decode()))
+                record = json.loads(prior[1])
+            else:
+                record = dict(body, kind=kind, id=str(uuid4()), commission_id=commission_id,
+                              source='explicit_developer_feedback', created_at=self.clock())
+                db.execute('INSERT INTO feedback VALUES (?,?,?,?,?)',
+                           (owner, body['request_id'], commission_id, checksum, canonical_bytes(record).decode()))
             db.commit()
-            return self._feedback_view(db, owner, record)
+            result = self._feedback_view(db, owner, record)
+        self._sync_feedback_knowledge(owner)
+        return result
 
     def withdraw_feedback(self, owner, commission_id, body):
         """Append a durable withdrawal without mutating the original opinion."""
@@ -797,7 +1011,9 @@ class AnimationMethodService:
                 db.execute('INSERT INTO feedback_withdrawal_requests VALUES (?,?,?,?,?)',
                            (owner, body['request_id'], commission_id, record['id'], checksum))
             db.commit()
-            return self._feedback_view(db, owner, record)
+            result = self._feedback_view(db, owner, record)
+        self._sync_feedback_knowledge(owner)
+        return result
 
     def _method_criteria(self, owner, version_ids):
         standards = {}
@@ -811,7 +1027,7 @@ class AnimationMethodService:
 
     def transfer(self, owner, commission_id, body):
         allowed = {'request_id', 'title', 'goal', 'structural_changes', 'budget',
-                   'duration_seconds', 'reference', 'base_candidate_id', 'feedback'}
+                   'duration_seconds', 'reference', 'base_candidate_id', 'feedback', 'content_changes'}
         _require(type(body) is dict and {'request_id', 'goal', 'structural_changes', 'budget'} <= set(body)
                  and set(body) <= allowed)
         run = self.commissions.get(owner, commission_id)
@@ -838,10 +1054,13 @@ class AnimationMethodService:
         allowed = set(current['publication_method_version_ids'])
         _require(set(body['method_version_ids']) <= allowed, 'animation_method_publication_target_invalid', 409)
         human = body.get('human_verification')
-        _require(type(human) is dict and human.get('motion_watched') is True,
-                 'animation_method_human_verification_required', 409)
-        _require(not current['requires_audio_verification'] or human.get('audio_listened') is True,
-                 'animation_method_human_audio_required', 409)
+        legacy_selected = any(self.methods.get_method(owner, version_id)['schema'] != METHOD_SCHEMA
+                              for version_id in body['method_version_ids'])
+        if legacy_selected:
+            _require(type(human) is dict and human.get('motion_watched') is True,
+                     'animation_method_human_verification_required', 409)
+            _require(not current['requires_audio_verification'] or human.get('audio_listened') is True,
+                     'animation_method_human_audio_required', 409)
         results = []
         for version_id in body['method_version_ids']:
             version = self.methods.get_method(owner, version_id)
@@ -851,6 +1070,16 @@ class AnimationMethodService:
             _require(any(row['role'] == 'reference' for row in applicable)
                      and any(row['role'] == 'transfer' for row in applicable),
                      'animation_method_publication_blocked', 409)
+            if version['schema'] == METHOD_SCHEMA:
+                # Exact validation/media-bound developer decisions are a
+                # separate explicit API action. A general publish click or
+                # model verdict cannot manufacture those confirmations.
+                _require(all(row.get('acceptance') is not None for row in applicable)
+                         and self.methods.publication_readiness(owner, version_id)['ready'],
+                         'animation_method_publication_blocked', 409)
+                results.append(version if version['status'] == 'published' else
+                    self.methods.publish(owner, version_id, body['request_id'] + ':publish:' + version_id))
+                continue
             for validation in applicable:
                 decision = dict(validation_id=validation['id'],
                     method_content_sha256=version['content_sha256'],
@@ -863,11 +1092,14 @@ class AnimationMethodService:
                     self.methods.accept(owner, decision, body['request_id'] + ':accept:' + validation['id'])
             results.append(version if version['status'] == 'published' else
                 self.methods.publish(owner, version_id, body['request_id'] + ':publish:' + version_id))
-        return dict(methods=results, publication='published')
+        return dict(methods=[_method_view(row) for row in results], publication='published')
 
     def read_methods(self, owner, body):
         _require(type(body) is dict and set(body) == {'method_version_ids', 'consumer_id'})
-        return self.methods.read_published(owner, body['method_version_ids'], body['consumer_id'])
+        result = self.methods.read_published(owner, body['method_version_ids'], body['consumer_id'])
+        _require(len(canonical_bytes(result)) <= 2 * 1024 * 1024,
+                 'animation_method_response_too_large', 413)
+        return result
 
     def artifact(self, owner, commission_id, candidate_id, kind):
         run = self.commissions.get(owner, commission_id)
@@ -885,6 +1117,7 @@ class AnimationMethodService:
         return raw, 'video/mp4'
 
     def _document(self, owner, run, mode, *, base=None, feedback='', frames=None, comparison=None):
+        active_protocol = self._protocol(run)
         plan = next((op['result'] for op in run['operations'] if op['input'].get('mode') == 'plan'
                      and op['status'] == 'completed'), None)
         standards = run['frozen'].get('criteria') or (plan['criteria'] if plan else [])
@@ -893,7 +1126,7 @@ class AnimationMethodService:
         if not selected and plan:
             selected = deepcopy(plan['methods'])
         frozen_constraints = deepcopy(run['frozen'].get('constraints', {}))
-        document = dict(schema=protocol.INPUT_SCHEMA, mode=mode, goal=run['frozen']['goal'],
+        document = dict(schema=active_protocol.INPUT_SCHEMA, mode=mode, goal=run['frozen']['goal'],
             criteria=standards, methods=selected,
             constraints=dict(width=1280, height=720, fps=24,
                              duration_seconds=run['frozen'].get('duration_seconds', 18),
@@ -944,19 +1177,41 @@ class AnimationMethodService:
                         'use the current supplied version mapping. Create a new composition for the '
                         'structural changes, without copying a reference source.')),
                     review=dict(instruction='Assess the transferred application against the frozen criteria.')))
-        protocol.validate_input(document)
+        if active_protocol is skill_protocol:
+            transfer = run['frozen'].get('role') == 'transfer'
+            snapshot = (self.knowledge.get_snapshot(owner, run['frozen']['knowledge_snapshot_id'])
+                        if mode == 'plan' else self._knowledge_snapshot(owner)) if not transfer else None
+            document.update(knowledge_snapshot=snapshot, research_records=[] if transfer else [
+                self.methods.get_research(owner, record_id)
+                for record_id in run['frozen'].get('research_record_ids', [])])
+            if transfer:
+                document.update(reference=None, base_source=None)
+                document['constraints']['method_application']['result_requirements'] = dict(
+                    instruction='Apply the exact Skill versions; return methods=[] in every mode. '
+                                'Create source for new content and structure without original reference material.')
+            else:
+                document['constraints'].setdefault('result_requirements', {})['skill_contract'] = (
+                    'New methods must use video.animation-method.v2 with a complete standard Skill draft; '
+                    'knowledge_proposals are evidence-bound Wiki updates, never Skill publication.')
+        active_protocol.validate_input(document)
         return document
 
     def _advance_agent(self, owner, run, operation):
+        active_protocol = self._protocol(run)
         gateway = self.reviewer if operation['stage'] == 'review' else self.author
         if operation['status'] == 'reserved':
-            files = {protocol.INPUT_NAME: canonical_bytes(operation['input'])}
+            files = {active_protocol.INPUT_NAME: canonical_bytes(operation['input'])}
             for frame in operation['input']['observation']['frames']:
                 path = self.root / 'frame-inputs' / frame['sha256']
                 raw = path.read_bytes()
                 _require(hashlib.sha256(raw).hexdigest() == frame['sha256'], 'animation_method_frame_changed', 409)
                 files[frame['file_name']] = raw
             refs = gateway.upload(operation['input'], files if gateway.visual_input else None)
+            if active_protocol is skill_protocol:
+                _require(type(refs) is list and all(type(row) is dict and {'path', 'sha256'} <= set(row)
+                                                  for row in refs), 'animation_method_input_manifest_invalid')
+                self.commissions.record_input_manifest(owner, operation['id'], sorted([
+                    dict(path=row['path'], sha256=row['sha256']) for row in refs], key=lambda row: row['path']))
             admit = gateway.prepare_submission(operation['id'], operation['input'], run['deadline_at'], refs)
             claim = self.commissions.claim(owner, operation['id'])
             if claim['submission_claimed']:
@@ -996,7 +1251,7 @@ class AnimationMethodService:
                 observed = {row.get('sha256') for row in receipt.get('images', [])
                             if row.get('model_request_completed') is True}
                 _require(expected <= observed, 'animation_method_frame_transport_incomplete', 409)
-            protocol.validate_result(result, operation['input_sha256'], operation['input'])
+            active_protocol.validate_result(result, operation['input_sha256'], operation['input'])
         except ServiceError as error:
             # Transport outages may be retried as reads of the same stopped
             # job. A definitive invalid artifact ends this operation.
@@ -1015,8 +1270,9 @@ class AnimationMethodService:
             versions = run['frozen'].get('method_versions', [])
         else:
             for index, proposal in enumerate(result['methods']):
-                parent = next((row for row in authored['input']['methods']
+                parent = (next((row for row in authored['input']['methods']
                     if row.get('problem') == proposal['problem'] and row.get('version_id')), None)
+                    if self._protocol(run) is protocol else None)
                 body = deepcopy(proposal)
                 if body.get('parent_version_id'):
                     parent = self.methods.get_method(owner, body['parent_version_id'])
@@ -1043,7 +1299,8 @@ class AnimationMethodService:
         demo = self.methods.add_demonstration(owner, dict(title=run['title'], goal=run['frozen']['goal'],
             media=outcome['media'], source=result['source'], runtime=outcome['runtime'],
             technical=outcome['technical'], provenance=dict(commission_id=run['id'], candidate_id=candidate['id'],
-                creator_operation_id=authored['id'], render_operation_id=render['id'])),
+                creator_operation_id=authored['id'], render_operation_id=render['id'],
+                input_sha256=authored['input_sha256'])),
             render['id'] + ':demonstration')
         return candidate, demo
 
@@ -1078,6 +1335,24 @@ class AnimationMethodService:
             if data['role'] == 'transfer':
                 data.update(baseline_demonstration_version_id=run['frozen']['baseline_demonstration_id'],
                             structural_changes=run['frozen']['structural_changes'])
+                if version['schema'] == METHOD_SCHEMA:
+                    authored = self.commissions.operation(owner, demo['provenance']['creator_operation_id'])
+                    _require(authored['status'] == 'completed' and authored['stage'] == 'creator',
+                             'animation_method_input_manifest_required', 409)
+                    manifest = authored.get('input_resource_manifest')
+                    _require(type(manifest) is list and authored.get('input_resource_manifest_sha256') == digest(manifest),
+                             'animation_method_input_manifest_required', 409)
+                    data.update(content_changes=run['frozen']['content_changes'], reference_removal=dict(
+                        schema=REMOVAL_SCHEMA, input_document=deepcopy(authored['input']),
+                        resource_manifest=manifest,
+                        input_receipt=dict(source='verified_host_frozen_input', operation_id=authored['id'],
+                            input_sha256=authored['input_sha256'], resource_manifest_sha256=digest(manifest),
+                            method_content_sha256=version['content_sha256'],
+                            skill_package_sha256=version['skill_package']['sha256']),
+                        run_result=dict(source='verified_host_render_record', creator_operation_id=authored['id'],
+                            render_operation_id=demo['provenance']['render_operation_id'],
+                            demonstration_version_id=demo['id'], media_sha256=demo['media']['sha256'],
+                            technical_evidence_sha256=demo['technical']['evidence_sha256'])))
             self.methods.link_validation(owner, data, operation['id'] + ':validation:' + version_id)
         return self.commissions.record_review(owner, run['id'], review_body, operation['id'] + ':review')
 
@@ -1088,6 +1363,9 @@ class AnimationMethodService:
             run = self.commissions.get(owner, commission_id)
             if run['state'] in TERMINAL:
                 return
+            _require(self._protocol(run) is self.author_protocol,
+                     'animation_method_historical_gateway_required', 409)
+            self._sync_knowledge(owner, run)
             active = next((op for op in run['operations']
                            if op['status'] not in {'completed', 'failed', 'cancelled', 'released'}), None)
             if active:

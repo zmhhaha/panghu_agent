@@ -46,7 +46,7 @@ test('mixed process and diagram candidates block continuity while preserving ord
   assert.equal(h.state.context.project.scenes[0].motion.head_version_id, 'm1');
 });
 
-for (const creativeSchema of ['video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'])
+for (const creativeSchema of ['video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4', 'video.creative-scene.v5'])
 test(`creative candidates keep ordinary video and refuse fixed-object continuity: ${creativeSchema}`, async () => {
   const h = harness();
   h.state.context.project.scenes[0].motion.versions[0].plan = { schema: creativeSchema };

@@ -25,7 +25,7 @@ from agent_service.client import AgentClient
 from agent_service.contracts import ServiceError
 from .agent import VideoAgentGateway
 from .config import (AgentSettings, ExplanationSettings, MotionSettings,
-                     ProductionMethodSettings, ProductionAgentSettings, JointPlanAgentSettings,
+                     ProductionMethodSettings, ProductionAgentSettings, SkillProductionAgentSettings, JointPlanAgentSettings,
                      creative_runtime_capabilities)
 from .service import Workflow
 from .store import Store
@@ -42,6 +42,7 @@ from .motion_store import MotionStore
 from .motion_timing import MotionTiming
 from .motion_workflow import MotionWorkflow
 from .motion_gateway import MotionAgentGateway, ProcessAgentGateway, ProductionCreativeAgentGateway
+from .skill_production_gateway import SkillProductionAgentGateway
 from .continuity_store import ContinuityStore
 from .batch_store import BatchStore
 from .batch_workflow import BatchWorkflow
@@ -56,6 +57,10 @@ UI_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'sel
           "media-src 'self'; frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 
 MESSAGES = {
+    'creative_skills_unavailable': '暂时无法读取已发布的动画 Skill 目录，尚未提交制作任务。',
+    'creative_film_context_required': '请从整片草稿制作入口生成动画，以绑定完整内容和真实配音时钟。',
+    'skill_production_profile_unavailable': '通用 Agent 的动画 Skill 制作能力尚未完成独立准入或配置，暂不能开始新的制作任务。',
+    'skill_production_preflight_unavailable': '未能确认动画 Skill 制作能力，尚未提交任务，请稍后重试。',
     'project_delete_busy': '项目仍有制作任务正在运行，或上次提交尚未确认结束。请等待任务完成或确认取消后再移到回收站。',
     'production_runs_disabled': '整片草稿制作尚未启用或制作依赖尚未就绪。',
     'production_run_in_progress': '项目已有整片制作任务，或上次任务尚未确认停止。',
@@ -467,7 +472,10 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                motion_enabled=None, motion_renderer=None, motion_runtime=None,
                process_gateway=None, process_enabled=None, creative_gateway=None, creative_enabled=None,
                method_adapter=None, creative_capabilities=None, joint_plan_gateway=None,
-               joint_plan_enabled=None, production_runs_enabled=None):
+               joint_plan_enabled=None, production_runs_enabled=None,
+               skill_gateway=None, skill_adapter=None, skill_production=True):
+    if type(skill_production) is not bool:
+        raise ValueError('An explicit boolean Skill production mode is required')
     explanation_settings = ExplanationSettings.from_env()
     enabled = explanation_settings.enabled if explanation_enabled is None else explanation_enabled
     if type(enabled) is not bool:
@@ -481,7 +489,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     motion_settings = MotionSettings.from_env()
     if creative_capabilities is None:
         creative_capabilities = creative_runtime_capabilities(
-            motion_settings.runtime_fingerprint if motion_runtime is None else motion_runtime)
+            motion_settings.runtime_fingerprint if motion_runtime is None else motion_runtime,
+            skill_production=skill_production)
     motion_gate = motion_settings.enabled if motion_enabled is None else motion_enabled
     if type(motion_gate) is not bool:
         raise ValueError('An explicit boolean motion feature gate is required')
@@ -495,6 +504,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     creative_gate = creative_gate and motion_gate
     owned_client = None
     owned_production_client = None
+    owned_skill_client = None
     owned_joint_plan_client = None
     owned_speech_client = None
     if gateway is None:
@@ -519,7 +529,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         explanation_gateway = ExplanationAgentGateway(gateway.client, explanation_settings.revision)
     explanation_store = ExplanationStore(store)
     explanation_workflow = ExplanationWorkflow(explanation_store, explanation_gateway, enabled=enabled)
-    motion_store = MotionStore(store, runtime_capabilities=creative_capabilities)
+    motion_store = MotionStore(store, runtime_capabilities=creative_capabilities,
+                               skill_production=skill_production)
     continuity_store = ContinuityStore(store, motion_store)
     motion_timing = MotionTiming(motion_store)
     if motion_gateway is None and isinstance(gateway, VideoAgentGateway):
@@ -531,11 +542,12 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         if production_settings:
             owned_production_client = AgentClient(production_settings.base_url, production_settings.token)
             creative_gateway = ProductionCreativeAgentGateway(owned_production_client, production_settings.revision)
-    if method_adapter is None:
+    if method_adapter is None or skill_adapter is None:
         method_settings = ProductionMethodSettings.from_env()
         if method_settings:
             from .animation_method_http import MethodLabClient, CreationTransportError
             from .animation_method_production import MethodProductionAdapter
+            from .animation_skill_production import SkillProductionAdapter
             method_client = MethodLabClient(method_settings.base_url, method_settings.token)
 
             def method_request(call, *args):
@@ -544,10 +556,29 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                 except CreationTransportError as error:
                     raise ServiceError('creative_methods_unavailable', error.status) from None
 
-            method_adapter = MethodProductionAdapter(
-                lambda owner: method_request(method_client.published_catalog, owner),
-                lambda owner, body: method_request(method_client.published_methods, owner, body),
-                ledger_path=Path(store.path).with_name('production-method-freezes.sqlite3'))
+            # Only released packages are read as the configured publisher.
+            # Recipient identity and task freezes remain the real project owner;
+            # no browser input can select another publisher or read their Wiki.
+            def released_catalogue(owner):
+                return method_request(method_client.published_catalog, method_settings.publisher_owner or owner)
+
+            def released_methods(owner, body):
+                return method_request(method_client.published_methods, method_settings.publisher_owner or owner, body)
+
+            if method_adapter is None:
+                method_adapter = MethodProductionAdapter(
+                    lambda owner: method_request(method_client.published_catalog, owner),
+                    lambda owner, body: method_request(method_client.published_methods, owner, body),
+                    ledger_path=Path(store.path).with_name('production-method-freezes.sqlite3'))
+            if skill_adapter is None:
+                skill_adapter = SkillProductionAdapter(
+                    released_catalogue, released_methods,
+                    ledger_path=Path(store.path).with_name('production-skill-freezes.sqlite3'))
+    if skill_gateway is None and skill_adapter is not None:
+        skill_settings = SkillProductionAgentSettings.from_env()
+        if skill_settings:
+            owned_skill_client = AgentClient(skill_settings.base_url, skill_settings.token)
+            skill_gateway = SkillProductionAgentGateway(owned_skill_client, skill_adapter, skill_settings.revision)
     if joint_plan_gateway is None:
         joint_settings = JointPlanAgentSettings.from_env()
         if joint_settings:
@@ -563,7 +594,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     motion_workflow = MotionWorkflow(motion_store, motion_gateway, enabled=motion_gate,
                                     process_gateway=process_gateway, process_enabled=process_gate,
                                     creative_gateway=creative_gateway, creative_enabled=creative_gate,
-                                    method_adapter=method_adapter)
+                                    method_adapter=method_adapter, skill_adapter=skill_adapter,
+                                    skill_gateway=skill_gateway)
     owned_motion_renderer = None
     if motion_renderer is None and os.environ.get('VIDEO_MOTION_RENDER_URL'):
         from .motion_render_adapter import configured_motion_renderer
@@ -577,8 +609,10 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     batch_store = BatchStore(store, motion_store, production)
     batch_workflow = BatchWorkflow(batch_store, enabled=motion_gate)
     production_run_store = ProductionRunStore(store, joint_plan_store, motion_store, production)
+    author_configured = ((skill_gateway is not None and skill_adapter is not None) if skill_production
+                         else (creative_gateway is not None and method_adapter is not None))
     run_dependencies = (joint_gate and motion_gate and speech_client is not None and creative_gate
-        and creative_gateway is not None and method_adapter is not None
+        and author_configured
         and motion_renderer is not None and runtime is not None)
     if production_runs_enabled is not None and type(production_runs_enabled) is not bool:
         raise ValueError('An explicit boolean production run feature gate is required')
@@ -611,6 +645,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
             owned_client.close()
         if owned_production_client:
             owned_production_client.close()
+        if owned_skill_client:
+            owned_skill_client.close()
         if owned_joint_plan_client:
             owned_joint_plan_client.close()
         if owned_speech_client:
@@ -717,8 +753,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     production_runs_enabled=production_run_workflow.enabled,
                     motion_enabled=motion_gate, motion_configured=motion_gate and motion_gateway is not None,
                     process_enabled=process_gate, process_configured=process_gate and process_gateway is not None,
-                    creative_enabled=creative_gate, creative_configured=creative_gate and creative_gateway is not None
-                        and method_adapter is not None,
+                    creative_enabled=creative_gate, creative_configured=creative_gate and author_configured,
                     batch_enabled=motion_gate, continuity_enabled=motion_gate,
                     default_production_mode='motion' if motion_gate else 'static',
                     motion_render_configured=motion_gate and motion_renderer is not None and runtime is not None)

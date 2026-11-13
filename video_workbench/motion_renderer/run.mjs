@@ -34,7 +34,7 @@ try{
  Object.assign(receipt,renderQuality(process.env.MOTION_QUALITY||'draft'));
  if(!['render','observe'].includes(mode))throw Error('mode_not_allowed');
  const {manifest,timeline}=verifyInput(source,process.env.MOTION_MANIFEST_SHA256);
- const creative=['creative-scene-adapter-1','creative-method-scene-adapter-1','creative-method-engine-scene-adapter-1','creative-film-scene-adapter-1'].includes(manifest.compiler);
+ const creative=['creative-scene-adapter-1','creative-method-scene-adapter-1','creative-method-engine-scene-adapter-1','creative-film-scene-adapter-1','creative-skill-film-scene-adapter-1'].includes(manifest.compiler);
  receipt.timeline_sha256=manifest.timeline_sha256;receipt.input_manifest_sha256=process.env.MOTION_MANIFEST_SHA256;
  // Probe the files and binaries that will actually run rather than trusting
  // the build-time runtime.json as an assertion about a later image layer.

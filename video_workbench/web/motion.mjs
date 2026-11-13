@@ -50,6 +50,10 @@ const ERRORS = {
   process_profile_unavailable: '过程演示生成服务尚未就绪，请稍后重新读取；已有内容保留。',
   creative_disabled: '创意动画生成暂未启用，已有候选和配音仍保留。',
   creative_profile_unavailable: '创意动画生成服务尚未就绪，请稍后重新读取；已有内容保留。',
+  creative_film_context_required: '请从整片草稿制作入口重做，以使用已确认的整片内容和真实配音时钟。',
+  creative_skills_unavailable: '暂时无法读取已发布的动画方法，尚未提交制作任务。',
+  skill_production_profile_unavailable: '动画 Skill 制作能力尚未完成准入或配置，暂不能开始新的制作任务。',
+  skill_production_preflight_unavailable: '未能确认动画制作能力，尚未提交任务，请稍后重试。',
   creative_audio_required: '请先生成或上传配音，试听并采用后，再生成随旁白展开的创意动画。',
   creative_audio_binding_mismatch: '采用的配音已经变化，请按当前配音重新生成创意动画；原候选保留。',
   creative_timing_requires_regeneration: '这份动画已按生成时的旁白时间安排动作。请在动画要求中说明节奏调整并生成新候选，再试听核对。',
@@ -158,7 +162,7 @@ export function currentMotionAudio(scene) {
 }
 
 export function motionDiagramKind(candidate) {
-  if (candidate?.diagram_kind === 'creative' || ['video.creative-scene.v1', 'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'].includes(candidate?.plan?.schema)) return 'creative';
+  if (candidate?.diagram_kind === 'creative' || ['video.creative-scene.v1', 'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4', 'video.creative-scene.v5'].includes(candidate?.plan?.schema)) return 'creative';
   return candidate?.plan?.schema === 'video.process-plan.v1' || candidate?.diagram_kind === 'process'
     ? 'process' : 'diagram';
 }
@@ -291,7 +295,16 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
       target.append(text('h4', production.title ?? value.scene?.title ?? '创意动画'),
         text('p', strategy.description ?? '按当前旁白生成的动画候选。', 'preserve-whitespace'));
       if (strategy.tradeoffs) target.append(text('p', strategy.tradeoffs, 'field-note preserve-whitespace'));
-      if (['video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'].includes(plan.schema)) {
+      if (plan.schema === 'video.creative-scene.v5') {
+        const offered = input.skill_catalog?.skills ?? [];
+        const decisions = plan.skill_decisions ?? [];
+        target.append(text('p', offered.length ? `本次提供 ${offered.length} 项已发布动画方法，由 Agent 按需查阅。以下采用说明需结合草稿审阅。` : '本次没有匹配的已发布动画方法，按当前内容自主创作。', 'field-note'));
+        for (const row of decisions) {
+          const method = offered.find(item => item.package_sha256 === row.package_sha256);
+          const action = { apply: '采用', adapt: '调整后采用', reject: '未采用' }[row.action] ?? row.action;
+          target.append(text('p', `${method?.name ?? '动画方法'} · ${action}：${row.reason}`, 'field-note preserve-whitespace'));
+        }
+      } else if (['video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'].includes(plan.schema)) {
         const offered = input.method_delivery?.methods ?? [];
         const decisions = plan.method_decision?.decisions ?? [];
         target.append(text('p', offered.length ? `已参考 ${offered.length} 项创作方法。以下是生成时的采用说明，实际效果请观看草稿。` : '本次未提供适用的已发布方法，按当前内容自主创作。', 'field-note'));

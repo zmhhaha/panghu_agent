@@ -112,6 +112,11 @@ def measured_package(config, policy, control_root):
         root = BUNDLE_ROOT
         mandatory = {'manifest.json', *BUNDLE_FILES}
         verified_bundle()
+    elif policy.name in {'video.animation-method-author.v2', 'video.animation-method-review.v2'}:
+        from .profiles.video_animation_skill_method import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
     elif policy.name == 'video.animation-production.v1':
         from .profiles.video_animation_production import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
         root = BUNDLE_ROOT

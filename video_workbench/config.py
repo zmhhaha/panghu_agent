@@ -9,7 +9,7 @@ import re
 from urllib.parse import urlsplit
 
 
-def creative_runtime_capabilities(runtime, env=None):
+def creative_runtime_capabilities(runtime, env=None, *, skill_production=False):
     """Read an operator-owned, acceptance-generated engine capability snapshot."""
     env = os.environ if env is None else env
     name = env.get('VIDEO_CREATIVE_RUNTIME_CAPABILITIES_FILE', '')
@@ -24,8 +24,12 @@ def creative_runtime_capabilities(runtime, env=None):
         if len(raw) > 65536:
             raise ValueError()
         from .animation_runtime_capabilities import validate_runtime_capabilities
+        from .motion_snapshot import _runtime
+        if skill_production:
+            runtime = _runtime(runtime)
         value = validate_runtime_capabilities(json.loads(raw))
-        if (type(runtime) is not dict or runtime.get('schema') != 'video.motion-runtime.v2'
+        runtime_schemas = {'video.motion-runtime.v2', 'video.motion-runtime.v3'} if skill_production else {'video.motion-runtime.v2'}
+        if (type(runtime) is not dict or runtime.get('schema') not in runtime_schemas
                 or value['runtime_identity']['image_digest'] != runtime['image_digest']
                 or value['runtime_identity']['host_sha256'] != runtime['creative_host_sha256']
                 or value['runtime_identity']['engine_runtime_sha256'] != runtime['engine_runtime_sha256']
@@ -153,13 +157,19 @@ class AgentSettings:
 
 @dataclass(frozen=True, repr=False)
 class ProductionMethodSettings:
-    """Separate internal executor credential; it grants no Agent admission."""
+    """Separate credential and optional trusted publisher for released Skills."""
     base_url: str
     token: str
+    publisher_owner: str | None = None
 
     @classmethod
     def from_env(cls, env=None):
         env = os.environ if env is None else env
+        publisher = env.get('VIDEO_METHOD_LAB_PUBLISHER_OWNER')
+        if publisher is not None and (not isinstance(publisher, str) or not 1 <= len(publisher) <= 200
+                                     or any(ord(c) < 33 or ord(c) == 127 or 0xD800 <= ord(c) <= 0xDFFF
+                                            for c in publisher)):
+            raise ValueError('Invalid trusted VIDEO_METHOD_LAB publisher configuration')
         try:
             settings = AgentSettings.from_env({
                 'VIDEO_AGENT_URL': env.get('VIDEO_METHOD_LAB_URL', ''),
@@ -168,7 +178,9 @@ class ProductionMethodSettings:
             })
         except ValueError:
             raise ValueError('Invalid dedicated VIDEO_METHOD_LAB origin or credential configuration') from None
-        return cls(settings.base_url, settings.token) if settings else None
+        if publisher is not None and settings is None:
+            raise ValueError('A trusted publisher requires VIDEO_METHOD_LAB configuration')
+        return cls(settings.base_url, settings.token, publisher) if settings else None
 
 
 @dataclass(frozen=True, repr=False)
@@ -190,6 +202,25 @@ class ProductionAgentSettings:
             })
         except ValueError:
             raise ValueError('Invalid dedicated VIDEO_PRODUCTION_AGENT origin, credential or revision configuration') from None
+        return cls(settings.base_url, settings.token, settings.revision) if settings else None
+
+
+@dataclass(frozen=True, repr=False)
+class SkillProductionAgentSettings(ProductionAgentSettings):
+    """Separate opt-in caller for the independently admitted v3 Skill role."""
+
+    @classmethod
+    def from_env(cls, env=None):
+        env = os.environ if env is None else env
+        try:
+            settings = AgentSettings.from_env({
+                'VIDEO_AGENT_URL': env.get('VIDEO_SKILL_PRODUCTION_AGENT_URL', ''),
+                'VIDEO_AGENT_TOKEN': env.get('VIDEO_SKILL_PRODUCTION_AGENT_TOKEN', ''),
+                'VIDEO_AGENT_TOKEN_FILE': env.get('VIDEO_SKILL_PRODUCTION_AGENT_TOKEN_FILE', ''),
+                'VIDEO_AGENT_PROFILE_REVISION': env.get('VIDEO_SKILL_PRODUCTION_PROFILE_REVISION', '1'),
+            })
+        except ValueError:
+            raise ValueError('Invalid dedicated VIDEO_SKILL_PRODUCTION_AGENT configuration') from None
         return cls(settings.base_url, settings.token, settings.revision) if settings else None
 
 

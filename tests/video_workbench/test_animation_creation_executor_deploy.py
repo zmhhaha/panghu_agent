@@ -50,7 +50,8 @@ def test_method_caller_is_a_distinct_optional_readonly_secret(settings):
     document = render(replace(settings, method_agent_token_secret='methods-agent-caller'))
     spec = pod(document)
     container = spec['containers'][0]
-    assert container['args'][-2:] == ['--method-agent-token-file', '/run/secrets/animation-method-agent/token']
+    assert container['args'][-4:] == ['--method-agent-token-file', '/run/secrets/animation-method-agent/token',
+                                     '--method-protocol', 'skills']
     assert next(row for row in spec['volumes'] if row['name'] == 'method-agent-token')['secret'] == {
         'secretName': 'methods-agent-caller', 'optional': False, 'defaultMode': 0o400,
         'items': [{'key': 'token', 'path': 'token'}]}
@@ -58,6 +59,15 @@ def test_method_caller_is_a_distinct_optional_readonly_secret(settings):
     for secret in (settings.agent_token_secret, settings.lab_token_secret):
         with pytest.raises(ValueError, match='Distinct method'):
             render(replace(settings, method_agent_token_secret=secret))
+
+
+def test_method_protocol_is_explicit_in_deployment_and_invalid_values_are_rejected(settings):
+    legacy = render(replace(settings, method_agent_token_secret='legacy-methods', method_protocol='legacy'))
+    assert pod(legacy)['containers'][0]['args'][-2:] == ['--method-protocol', 'legacy']
+    assert by_kind(legacy, 'Deployment')['metadata']['annotations'][
+        'video-service.panghuer.top/method-protocol'] == 'legacy'
+    with pytest.raises(ValueError, match='Invalid method protocol'):
+        render(replace(settings, method_protocol='auto-fallback'))
 
 
 def test_only_three_private_resources_without_provisioning_permissions_or_public_routes(settings):

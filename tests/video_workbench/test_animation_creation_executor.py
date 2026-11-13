@@ -100,8 +100,8 @@ def test_real_executor_wires_separate_credentials_storage_profiles_and_default_p
         method_client = server.method_service.author.client
         assert method_client is not client and method_client.token == METHOD_TOKEN
         assert server.method_service.reviewer.client is method_client
-        assert server.method_service.author.profile == 'video.animation-method-author.v1'
-        assert server.method_service.reviewer.profile == 'video.animation-method-review.v1'
+        assert server.method_service.author.profile == 'video.animation-method-author.v2'
+        assert server.method_service.reviewer.profile == 'video.animation-method-review.v2'
         assert server.method_service.root == config['root'] / 'method-lab'
         assert server.method_service.renderer.root == config['root'] / 'method-renders'
         assert server.method_service.renderer.enabled is True
@@ -128,6 +128,20 @@ def test_isolated_execution_requires_explicit_true_before_reading_credentials_or
     with pytest.raises(ValueError, match='animation_creation_isolated_rendering_opt_in_required'):
         executor.create_server(**config)
     assert NoNetworkAgentClient.instances == [] and not config['root'].exists()
+
+
+def test_protocol_is_explicit_and_legacy_is_not_an_automatic_fallback(config):
+    with pytest.raises(ValueError, match='animation_method_protocol_invalid'):
+        executor.create_server(**dict(config, method_protocol='auto'))
+    assert NoNetworkAgentClient.instances == [] and not config['root'].exists()
+    server, client = executor.create_server(**dict(config, method_protocol='legacy'))
+    try:
+        assert server.method_service.author.profile == 'video.animation-method-author.v1'
+        assert server.method_service.reviewer.profile == 'video.animation-method-review.v1'
+        assert client.calls == []
+    finally:
+        server.server_close()
+        client.close()
 
 
 def test_omitting_enable_flag_fails_closed(config):

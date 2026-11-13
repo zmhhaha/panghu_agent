@@ -151,7 +151,9 @@ def profile_model_call_limit(profile, configured):
     grant metadata supplied by a caller. A stricter operator cap still wins.
     """
     if profile in {'video.animation-method-author.v1', 'video.animation-method-review.v1',
-                   'video.animation-production.v1', 'video.animation-production.v2', 'video.joint-plan.v1'}:
+                   'video.animation-method-author.v2', 'video.animation-method-review.v2',
+                   'video.animation-production.v1', 'video.animation-production.v2',
+                   'video.animation-production.v3', 'video.joint-plan.v1'}:
         return min(configured, 8)
     return configured
 

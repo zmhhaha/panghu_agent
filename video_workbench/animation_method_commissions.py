@@ -170,6 +170,13 @@ class AnimationMethodCommissionStore:
         if operation["status"] == "completed":
             _require(operation["result_sha256"] == digest(operation["result"]),
                      "animation_method_operation_result_changed", 409)
+        if 'input_resource_manifest' in operation:
+            expected = [dict(path='animation-method-input.json', sha256=operation['input_sha256'])]
+            expected.extend(dict(path=row['file_name'], sha256=row['sha256'])
+                            for row in operation['input']['observation']['frames'])
+            _require(operation['input_resource_manifest'] == sorted(expected, key=lambda row: row['path'])
+                     and operation.get('input_resource_manifest_sha256') == digest(operation['input_resource_manifest']),
+                     'animation_method_operation_frozen_input_changed', 409)
         return operation
 
     def _event(self, db, commission_id, name, operation_id=None, **detail):
@@ -250,6 +257,7 @@ class AnimationMethodCommissionStore:
                      "duration_seconds", "constraints", "assets", "role",
                      "baseline_demonstration_id", "structural_changes",
                      "retry_of_commission_id",
+                     "protocol_schema", "knowledge_snapshot_id", "research_record_ids", "content_changes",
                  })
         _text(body["goal"], 16000)
         limits = _budget(body["budget"])
@@ -372,6 +380,11 @@ class AnimationMethodCommissionStore:
         _require(type(stage) is str and stage in STAGES,
                  "animation_method_commission_stage_invalid")
         _identifier(idempotency_key)
+        _require(type(input_document) is dict)
+        if input_document.get('schema') == 'video.animation-method-input.v2':
+            from agent_service.profiles.video_animation_skill_method import OUTPUT_MAX_BYTES
+            _require(len(_json(input_document).encode('utf-8')) + OUTPUT_MAX_BYTES + 65536 <= MAX_RECORD_BYTES,
+                     'animation_method_operation_budget_exceeded', 413)
         request = dict(stage=stage, input=_copy(input_document))
         request_sha256 = digest(request)
         with self._transaction() as db:
@@ -419,6 +432,29 @@ class AnimationMethodCommissionStore:
             operation["status"] = "submitting"
             self._save_operation(db, operation, "operation_claimed")
             return dict(operation, submission_claimed=True)
+
+    def record_input_manifest(self, owner, operation_id, manifest):
+        """Freeze the actual validated upload inventory before paid admission."""
+        _require(type(manifest) is list and 1 <= len(manifest) <= 25,
+                 'animation_method_input_manifest_invalid')
+        manifest = _copy(manifest)
+        with self._transaction() as db:
+            operation = self._operation(db, owner, operation_id)
+            document = operation['input']
+            _require(document.get('schema') == 'video.animation-method-input.v2',
+                     'animation_method_input_manifest_invalid')
+            expected = [{'path': 'animation-method-input.json', 'sha256': operation['input_sha256']}]
+            expected.extend(dict(path=row['file_name'], sha256=row['sha256'])
+                            for row in document['observation']['frames'])
+            _require(manifest == sorted(expected, key=lambda row: row['path']),
+                     'animation_method_input_manifest_invalid')
+            if 'input_resource_manifest' in operation:
+                _require(operation['input_resource_manifest'] == manifest,
+                         'animation_method_operation_frozen_input_changed', 409)
+                return operation
+            _require(operation['status'] == 'reserved', 'animation_method_operation_not_reserved', 409)
+            operation.update(input_resource_manifest=manifest, input_resource_manifest_sha256=digest(manifest))
+            return self._save_operation(db, operation, 'input_manifest_frozen', manifest_sha256=digest(manifest))
 
     def mark_submitted(self, owner, operation_id, job_id):
         _identifier(job_id)

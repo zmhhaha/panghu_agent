@@ -54,6 +54,7 @@ class Settings:
     lab_token_key: str = 'token'
     method_agent_token_secret: str | None = None
     method_agent_token_key: str = 'token'
+    method_protocol: str = 'skills'
 
 
 def render(settings: Settings):
@@ -78,6 +79,8 @@ def render(settings: Settings):
         raise ValueError('Distinct Agent and Lab caller Secrets required')
     method_secret = (_dns_name(settings.method_agent_token_secret, 'method Agent caller Secret')
                      if settings.method_agent_token_secret is not None else None)
+    if settings.method_protocol not in {'skills', 'legacy'}:
+        raise ValueError('Invalid method protocol')
     if method_secret in {agent_secret, lab_secret}:
         raise ValueError('Distinct method Agent caller Secret required')
     for key in (settings.agent_token_key, settings.lab_token_key, settings.method_agent_token_key):
@@ -93,6 +96,7 @@ def render(settings: Settings):
         'video-service.panghuer.top/renderer-image': renderer_image,
         'video-service.panghuer.top/trust-boundary': 'root-docker-controller-not-restricted-renderer',
         'video-service.panghuer.top/host-data-root': DATA_ROOT,
+        'video-service.panghuer.top/method-protocol': settings.method_protocol,
     }
 
     def resource(api, kind, spec):
@@ -105,7 +109,7 @@ def render(settings: Settings):
             '--renderer-image', renderer_image, '--enable-isolated-rendering',
             '--listen', '0.0.0.0', '--port', str(PORT)]
     if method_secret:
-        args += ['--method-agent-token-file', METHOD_TOKEN]
+        args += ['--method-agent-token-file', METHOD_TOKEN, '--method-protocol', settings.method_protocol]
     health = {'httpGet': {'path': '/healthz', 'port': 'http'}, 'periodSeconds': 10,
               'timeoutSeconds': 3, 'failureThreshold': 3}
     container = {
@@ -205,6 +209,7 @@ def main(argv=None):
     parser.add_argument('--lab-token-key', default='token')
     parser.add_argument('--method-agent-token-secret')
     parser.add_argument('--method-agent-token-key', default='token')
+    parser.add_argument('--method-protocol', choices=('skills', 'legacy'), default='skills')
     parser.add_argument('--output', type=Path)
     args = vars(parser.parse_args(argv))
     output = args.pop('output')

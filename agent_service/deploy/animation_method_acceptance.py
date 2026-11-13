@@ -25,6 +25,7 @@ from agent_service.input_tools import (READ_INPUTS_ENVIRONMENT_NAME,
     READ_INPUTS_EXTENSION_SHA256, read_inputs_environment_revision)
 from agent_service.pi_cage import PI_CAGE_REPOSITORY, PI_CAGE_REVISION, PI_VERSION
 from agent_service.profiles import video_animation_method as method
+from agent_service.profiles import implementation
 from agent_service.profiles.video import decode_video_json
 from agent_service.profiles.video_animation_create import source_sha256
 from agent_service.profiles.video_animation_review import _image_header
@@ -33,7 +34,8 @@ from agent_service.worker_entry import HostConfig, _host_registry, accepted_host
 from video_workbench.animation_candidate_import import EXPORT_NAMES, _pod
 
 
-PROFILES = frozenset({method.AUTHOR_PROFILE, method.REVIEW_PROFILE})
+PROFILES = frozenset({method.AUTHOR_PROFILE, method.REVIEW_PROFILE,
+                     'video.animation-method-author.v2', 'video.animation-method-review.v2'})
 NOT_CLAIMED = ['offline_hmac_reverification', 'production_api_dispatcher_end_to_end',
     'business_user_approval', 'subjective_animation_quality', 'model_understanding',
     'whole_video_watched', 'audio_quality', 'other_profiles_or_images']
@@ -49,12 +51,25 @@ def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
+def _protocol(profile=None, *, document=None):
+    if profile in {'video.animation-method-author.v2', 'video.animation-method-review.v2'} or (
+            profile is None and type(document) is dict
+            and document.get('schema') == 'video.animation-method-input.v2'):
+        from agent_service.profiles import video_animation_skill_method
+        return video_animation_skill_method
+    require(profile is None or profile in {method.AUTHOR_PROFILE, method.REVIEW_PROFILE},
+            'animation_method_admission_profile_not_allowed')
+    return method
+
+
 def _bundle(package, registry, binding, policy):
-    handler = method.VideoAnimationMethodProfile(binding.profile == method.REVIEW_PROFILE)
+    method = _protocol(binding.profile)
+    handler = implementation(binding.profile)
     contract = registry.contract(binding.profile, policy.revision)
     bundle = registry.bundle(binding.bundle.name, binding.bundle.revision)
     environment = registry.environment(binding.tool_environment.name, binding.tool_environment.revision)
-    require(bundle.name == 'animation-method' and bundle.revision == method.BUNDLE_REVISION
+    name = 'animation-skill-method' if binding.profile.endswith('.v2') else 'animation-method'
+    require(bundle.name == name and bundle.revision == method.BUNDLE_REVISION
         and set(contract.required_tools) == set(bundle.required_tools) == set(environment.tools)
         == {'read_inputs', 'write'} and environment.name == READ_INPUTS_ENVIRONMENT_NAME
         and environment.revision == read_inputs_environment_revision(environment.model_dump(mode='json')),
@@ -125,6 +140,7 @@ def verify_renderer_capture(directory, document, result, *, renderer_image):
     insufficient. This only verifies the renderer's own narrow technical scope.
     """
     from video_workbench.animation_method_renderer import MethodAnimationRenderer
+    method = _protocol(document=document)
     document = method.validate_input(document)
     result = method.validate_result(result, digest(document), document)
     require(document['mode'] == 'create', 'animation_method_admission_actual_render_required')
@@ -218,6 +234,7 @@ def assess_candidate(candidate_dir, *, source_root=None, renderer_dir=None, rend
         and not envelope.checkpoint_inputs and envelope.checkpoint_ref is None,
         'animation_method_admission_profile_not_allowed')
     profile, proof = envelope.profile, result.stop_receipt
+    method = _protocol(profile)
     inputs = {item.name:item.content() for item in envelope.inputs}
     require(len(inputs) == len(envelope.inputs) and method.INPUT_NAME in inputs,
             'animation_method_admission_input_mismatch')
@@ -404,7 +421,8 @@ def review_candidate(candidate_dir, output, *, source_root=None, renderer_dir=No
     target = output/'worker-configs'/name
     target.mkdir(mode=0o700,parents=True)
     checksum = _save(target/'acceptance-evidence.json',report)
-    approval = dict(combination_sha256=combination,suite=profile.rsplit('.v',1)[0]+'-contract.v1',report_sha256=checksum)
+    suite = re.sub(r'\.v([0-9]+)$', r'-contract.v\1', profile)
+    approval = dict(combination_sha256=combination,suite=suite,report_sha256=checksum)
     binding = next(row for row in host['execution_catalog']['execution_bindings']
         if (row['id'],row['revision']) == (report['binding_id'],report['binding_revision']))
     require(binding.get('acceptance') is None,'animation_method_admission_already_accepted')

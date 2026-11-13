@@ -1,6 +1,6 @@
 # 动画效果库启动模式
 
-> 2026-11-13：本文保留 methods-only 入口和启动边界。正式方法读取接线后续已交付，但开发者认可、真实发布与正式新内容采用闭环仍需证据；Skill 主动发现和统一 HyperFrames 工程是[当前设计](agent-creation-effect-library-plan.md)的待实施目标。
+> 2026-11-13：本文保留 methods-only 入口和启动边界。Wiki、实验室标准 Skill 和正式主动读取已接入代码；新角色实际准入／部署、精确发布确认前端与真实发布／采用尚未验收。整片 HyperFrames 工程仍由[当前设计](agent-creation-effect-library-plan.md)承接。
 
 生产使用 `--mode methods`。现有启动命令只要配置了 `--creation-url` 和
 `--creation-token-file`，默认的 `--mode auto` 也会进入此模式。
@@ -25,3 +25,27 @@ UI 进程不创建旧的 `animation-lab.db`、`animation-experiments.db`，不�
 `methods_only=True, method_client=...` 才启用新模式。
 
 该阶段发布对象是版本化方法知识；后续已有正式读取接线，不能据此推断已完成真实认可／发布／采用闭环。当前进展与新增目标以主设计及服务端任务为准。
+
+## 新 Wiki／Skill 协议的配置
+
+私有执行器 `--method-protocol skills` 为新代码默认值，要求独立准入的
+`video.animation-method-author.v2`／`video.animation-method-review.v2` 与它们的专用
+调用凭据。新角色、资源、镜像测量与接受记录须成套验证后再部署；旧角色令牌和准入
+不能借用。仅恢复既有 v1 测试时显式选 `--method-protocol legacy`，不会自动降级。
+启动、GET、知识页修正和精确人工认可接口不提交模型任务。
+
+methods-only 代理在 `/api/method-lab` 下提供知识摘要、单页／单经验、已发布目录、
+精确方法版本、发布就绪检查，以及 `POST /validations/<id>/accept`。这些接口沿用
+开发者身份、Host／Origin 和 CSRF。认可必须绑定确切方法内容、验证目标与媒体摘要；
+代表片与迁移分别认可，有声音效时另需实际试听。不能用旧页面的泛化发布框补签。
+
+正式工作台新增独立配置 `VIDEO_SKILL_PRODUCTION_AGENT_URL`、
+`VIDEO_SKILL_PRODUCTION_AGENT_TOKEN_FILE`（或对应 `..._TOKEN`，仅选一种）与
+`VIDEO_SKILL_PRODUCTION_PROFILE_REVISION`。角色是 `video.animation-production.v3`，
+缺配置／未就绪会明确不可用，不静默回退到旧方法作者。
+
+`VIDEO_METHOD_LAB_URL` 与独立 token 继续连接私有方法 API。
+多用户共用开发者已发布技能时，由服务端设置 `VIDEO_METHOD_LAB_PUBLISHER_OWNER`；
+它只改变新 Skill 路径读取已发布目录／包的来源，终端任务、消费者及冻结归属仍各自
+隔离，不能通过浏览器参数改变发布者。未设置时读取各用户自己的发布库。
+旧方法交付／旧联合策划仍按原 owner 合同恢复，不重解释历史收据。

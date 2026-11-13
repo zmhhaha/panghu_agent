@@ -86,6 +86,10 @@ class NoPaidGateway:
 
 
 class NoRenderer:
+    # Capabilities are a local read, distinct from attempting a paid/render
+    # stage. This fixture advertises no provider and still forbids execution.
+    capabilities = None
+
     def __getattr__(self, name):
         pytest.fail('HTTP reads/start must never call renderer stage: ' + name)
 

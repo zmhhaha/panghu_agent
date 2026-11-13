@@ -41,6 +41,7 @@ PROFILES = {'ppt.' + stage + '.v1' for stage in (
     'video.animation-observe.v1', 'video.animation-review.v1', 'video.animation-create.v2',
     'video.animation-review.v2', 'video.animation-review.v3', 'video.animation-review.v4',
     'video.animation-method-author.v1', 'video.animation-method-review.v1',
+    'video.animation-method-author.v2', 'video.animation-method-review.v2',
     'video.animation-production.v1', 'video.animation-production.v2',
     'video.animation-production.v3', 'video.joint-plan.v1'}
 FIXTURE_PROFILES = {'ppt.plan_initial.v1', 'research.revise.v1'}

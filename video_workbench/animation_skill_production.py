@@ -166,12 +166,15 @@ class SkillProductionAdapter:
         if full:
             receipts.append(dict(source='authenticated_catalogue_full_records',
                 method_version_ids=[row['id'] for row in full], scope='host_retrieval_not_agent_observation'))
-        for offset in range(0, len(missing), 16):
+        # A valid package may approach 1 MiB, while the authenticated HTTP
+        # response is capped at 2 MiB. Read exact versions separately so a
+        # full directory never turns into an oversized sixteen-package reply.
+        for offset in range(len(missing)):
             _require(callable(self.read), 'production_skill_read_required', 503)
-            group = missing[offset:offset + 16]
+            group = missing[offset:offset + 1]
             body = dict(method_version_ids=[row['id'] for row in group],
-                        consumer_id='skill-packages:' + digest({key: binding[key] for key in (
-                            'recipient_owner', 'consumer_id')}) + ':' + str(offset // 16))
+                        consumer_id='skill-packages-single-v1:' + digest({key: binding[key] for key in (
+                            'recipient_owner', 'consumer_id')}) + ':' + str(offset))
             response = self.read(binding['recipient_owner'], body)
             _require(type(response) is dict and type(response.get('methods')) is list
                      and len(response['methods']) == len(group), 'production_skill_read_invalid', 502)

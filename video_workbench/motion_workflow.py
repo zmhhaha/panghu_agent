@@ -6,7 +6,7 @@ import threading
 import time
 
 from agent_service.contracts import ServiceError
-from .motion_store import ACTIVE, operation_diagram_kind
+from .motion_store import ACTIVE, operation_diagram_kind, CREATIVE_PENDING_SCHEMA, SKILL_PENDING_SCHEMA
 
 
 LOG = logging.getLogger(__name__)
@@ -17,13 +17,15 @@ CANCEL_RETRY_DELAYS = (2.0, 5.0, 15.0, 30.0)
 
 class MotionWorkflow:
     def __init__(self, store, gateway=None, *, enabled=False, process_gateway=None, process_enabled=False,
-                 creative_gateway=None, creative_enabled=False, method_adapter=None):
+                 creative_gateway=None, creative_enabled=False, method_adapter=None,
+                 skill_gateway=None, skill_adapter=None):
         if any(type(gate) is not bool for gate in (enabled, process_enabled, creative_enabled)):
             raise ValueError('An explicit boolean motion feature gate is required')
         self.store, self.gateway, self.enabled = store, gateway, enabled
         self.process_gateway, self.process_enabled = process_gateway, process_enabled
         self.creative_gateway, self.creative_enabled = creative_gateway, creative_enabled
         self.method_adapter = method_adapter
+        self.skill_gateway, self.skill_adapter = skill_gateway, skill_adapter
         self.lock = threading.Lock()
         self.stopping = threading.Event()
         self.thread = None
@@ -48,11 +50,12 @@ class MotionWorkflow:
             raise ServiceError('process_disabled', 503)
         if diagram_kind == 'creative' and not self.creative_enabled:
             raise ServiceError('creative_disabled', 503)
-        if diagram_kind == 'creative' and self.method_adapter is None:
-            raise ServiceError('creative_methods_unavailable', 503)
-        gateway = self._gateway(diagram_kind)
+        skills = diagram_kind == 'creative' and self.store.skill_production
+        if diagram_kind == 'creative' and (self.skill_adapter if skills else self.method_adapter) is None:
+            raise ServiceError('creative_skills_unavailable' if skills else 'creative_methods_unavailable', 503)
+        gateway = self.skill_gateway if skills else self._gateway(diagram_kind)
         if gateway is None:
-            raise ServiceError('creative_profile_unavailable' if diagram_kind == 'creative'
+            raise ServiceError('skill_production_profile_unavailable' if skills else 'creative_profile_unavailable' if diagram_kind == 'creative'
                                else 'agent_not_configured', 503)
         return gateway
 
@@ -64,7 +67,7 @@ class MotionWorkflow:
                 self.store.update_operation(op['id'], status='cancelled',
                     error=self._disabled_error(kind))
         admitted = any(op['submit_attempted'] or op['job_id'] for op in active)
-        if any(gateway is not None for gateway in (self.gateway, self.process_gateway, self.creative_gateway)) and self.thread is None and (self.enabled or admitted):
+        if any(gateway is not None for gateway in (self.gateway, self.process_gateway, self.creative_gateway, self.skill_gateway)) and self.thread is None and (self.enabled or admitted):
             self.thread = threading.Thread(target=self._run, name='video-motion-reconcile', daemon=True)
             self.thread.start()
 
@@ -79,7 +82,7 @@ class MotionWorkflow:
             self.stopping.wait(2)
 
     def tick(self):
-        if all(gateway is None for gateway in (self.gateway, self.process_gateway, self.creative_gateway)) or not self.lock.acquire(blocking=False):
+        if all(gateway is None for gateway in (self.gateway, self.process_gateway, self.creative_gateway, self.skill_gateway)) or not self.lock.acquire(blocking=False):
             return
         try:
             for op in self.store.active_operations():
@@ -106,24 +109,26 @@ class MotionWorkflow:
             self.store.update_operation(op['id'], status='cancelled',
                 error=self._disabled_error(kind))
             return
-        gateway = self._gateway(kind)
+        skills = kind == 'creative' and op['document']['schema'] in {
+            SKILL_PENDING_SCHEMA, 'video.animation-production-input.v4'}
+        gateway = self.skill_gateway if skills else self._gateway(kind)
         if gateway is None:
             # An admitted job retains its original profile after a gate or
             # configuration change. Never look it up through another adapter.
-            self.store.update_operation(op['id'], error='agent_not_configured')
+            self.store.update_operation(op['id'], error='skill_production_profile_unavailable' if skills else 'agent_not_configured')
             return
         if kind == 'creative':
-            from .motion_store import CREATIVE_PENDING_SCHEMA
-            if op['document']['schema'] == CREATIVE_PENDING_SCHEMA:
-                op = self.store.prepare_creative(op['id'], self.method_adapter)
-                if op['document']['schema'] == CREATIVE_PENDING_SCHEMA:
+            if op['document']['schema'] in {CREATIVE_PENDING_SCHEMA, SKILL_PENDING_SCHEMA}:
+                op = self.store.prepare_creative(op['id'], self.skill_adapter if skills else self.method_adapter)
+                if op['document']['schema'] in {CREATIVE_PENDING_SCHEMA, SKILL_PENDING_SCHEMA}:
                     if op['cancel_requested'] or time.time() >= op['deadline_at']:
                         self.store.update_operation(op['id'],
                             status='cancelled' if op['cancel_requested'] else 'timed_out', error=None)
                     return
             if op['document']['schema'] not in {'video.animation-production-input.v1',
                                               'video.animation-production-input.v2',
-                                              'video.animation-production-input.v3'}:
+                                              'video.animation-production-input.v3',
+                                              'video.animation-production-input.v4'}:
                 # A historical Lab author input is not a production input.
                 # Never relabel or submit it under a new role.
                 raise ServiceError('creative_profile_unavailable', 503)
@@ -137,11 +142,16 @@ class MotionWorkflow:
                 if op['input_ref'] is None:
                     ref = gateway.upload(op['document'])
                     op = self.store.update_operation(op['id'], input_ref=ref)
+                # Receipt/resource validation and route preflight happen before
+                # claiming admission. Only the returned POST may be uncertain.
+                admit = (gateway.prepare_submission(op['id'], op['document'], op['deadline_at'],
+                         input_ref=op['input_ref']) if skills else None)
                 op = self.store.claim_submission(op['id'])
                 if op is None:
                     return
                 try:
-                    job = gateway.submit(op['id'], op['document'], op['deadline_at'], input_ref=op['input_ref'])
+                    job = admit() if admit is not None else gateway.submit(
+                        op['id'], op['document'], op['deadline_at'], input_ref=op['input_ref'])
                 except ServiceError as exc:
                     if exc.status >= 500 and exc.code.startswith(('service_', 'http_')):
                         self.store.update_operation(op['id'], error='submission_uncertain')

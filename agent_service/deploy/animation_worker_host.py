@@ -15,7 +15,9 @@ from agent_service.worker_entry import CATALOG_KEYS, HostConfig, WorkerConfigErr
 PROFILES = frozenset({'video.animation-create.v2', 'video.animation-review.v2',
                       'video.animation-review.v3', 'video.animation-review.v4',
                       'video.animation-method-author.v1', 'video.animation-method-review.v1',
+                      'video.animation-method-author.v2', 'video.animation-method-review.v2',
                       'video.animation-production.v1', 'video.animation-production.v2',
+                      'video.animation-production.v3',
                       'video.joint-plan.v1'})
 
 

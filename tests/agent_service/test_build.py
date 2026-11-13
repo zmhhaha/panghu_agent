@@ -28,7 +28,7 @@ def animation_profile_bundles():
     """Independent Profile inventories, never derived from builder allowlists."""
     from agent_service.profiles import (video_animation_review as review, video_animation_create as creation,
         video_animation_method as method, video_animation_production as production, video_joint_plan as joint,
-        video_animation_skill_production as skill_production)
+        video_animation_skill_production as skill_production, video_animation_skill_method as skill_method)
     return (
         (joint.BUNDLE_ROOT, joint.BUNDLE_FILES, joint.verified_bundle),
         (review.BUNDLE_ROOT, review.BUNDLE_FILES, review.verified_bundle),
@@ -40,6 +40,7 @@ def animation_profile_bundles():
         (production.BUNDLE_ROOT, production.BUNDLE_FILES, production.verified_bundle),
         (production.FILM_BUNDLE_ROOT, production.BUNDLE_FILES, lambda: production.verified_bundle(film=True)),
         (skill_production.BUNDLE_ROOT, skill_production.BUNDLE_FILES, skill_production.verified_bundle),
+        (skill_method.BUNDLE_ROOT, skill_method.BUNDLE_FILES, skill_method.verified_bundle),
     )
 
 
@@ -473,6 +474,8 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md')} | {
             'agent_service/resources/animation-method-v2/' + name
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'method-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-method-v3/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'method-procedure/SKILL.md')} | {
             'agent_service/resources/animation-production-v2/' + name
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md')} | {
             'agent_service/resources/animation-production-v3/' + name
@@ -649,11 +652,12 @@ profiles=('workspace-task.v1','ppt.plan_initial.v1','ppt.plan_options.v1','ppt.p
  'video.explanation-plan.v1','video.animation-experiment.v1','video.animation-observe.v1',
  'video.animation-review.v1','video.animation-review.v2','video.animation-review.v3','video.animation-review.v4','video.animation-create.v2',
  'video.animation-method-author.v1','video.animation-method-review.v1',
+ 'video.animation-method-author.v2','video.animation-method-review.v2',
  'video.joint-plan.v1','video.animation-production.v1','video.animation-production.v2','video.animation-production.v3')
 for name in profiles:implementation(name)
 for name in ('video','video_motion','video_process','video_explanation','video_animation_experiment',
  'video_animation_create','video_animation_review','video_animation_method',
- 'video_joint_plan','video_animation_production','video_animation_skill_production','research'):
+ 'video_joint_plan','video_animation_production','video_animation_skill_production','video_animation_skill_method','research'):
  importlib.import_module('agent_service.profiles.'+name).verified_bundle()
 from agent_service.profiles.video_animation_review import verified_sequence_bundle,verified_batch_bundle,verified_packed_bundle
 verified_sequence_bundle();verified_batch_bundle();verified_packed_bundle()
@@ -666,12 +670,13 @@ print(json.dumps({'control_modules':len(modules),'profile_implementations':len(p
 '''
     result = subprocess.run([sys.executable, '-I', '-B', '-c', code, str(extracted)],
         cwd=extracted, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=True)
-    assert json.loads(result.stdout) == dict(control_modules=10, profile_implementations=30)
+    assert json.loads(result.stdout) == dict(control_modules=10, profile_implementations=32)
 
 
 @pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
                                      'animation-review-v4',
                                      'animation-create-v2', 'animation-method-v1', 'animation-method-v2',
+                                     'animation-method-v3',
                                      'animation-production-v1', 'animation-production-v2',
                                      'animation-production-v3', 'animation-production-v4'])
 @pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'LICENSE', 'procedure'])
@@ -691,6 +696,7 @@ def test_changed_animation_runtime_resource_fails_before_docker(service, revisio
 @pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
                                      'animation-review-v4',
                                      'animation-create-v2', 'animation-method-v1', 'animation-method-v2',
+                                     'animation-method-v3',
                                      'animation-production-v1', 'animation-production-v2',
                                      'animation-production-v3', 'animation-production-v4'])
 def test_missing_animation_runtime_resource_cannot_produce_deployable_digest(service, revision):

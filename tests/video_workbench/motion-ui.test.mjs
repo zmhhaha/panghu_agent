@@ -156,6 +156,27 @@ test(`method-driven creative review preserves declarations without adoption: ${c
   assert.equal(posts(h).length, 0);
 });
 
+test('Skill-driven creative review exposes offered and read declarations without executing or adopting', async () => {
+  const h = harness(); h.state.context.creativeConfigured = true;
+  const candidate = creativeVersion();
+  candidate.plan.schema = 'video.creative-scene.v5';
+  candidate.plan.input_document.scene = { title: '按需读取动画方法' };
+  candidate.plan.input_document.skill_catalog = { skills: [{ package_sha256: 'a'.repeat(64), name: 'identity-flow' }] };
+  candidate.plan.result = { source: candidate.plan.result };
+  candidate.plan.skill_decisions = [{ package_sha256: 'a'.repeat(64), action: 'adapt', reason: '<script>同一对象保持身份</script>' }];
+  assert.equal(motionDiagramKind({ plan: candidate.plan }), 'creative');
+  h.state.data.scenes[0].motion.versions[0].diagram_kind = 'creative';
+  h.state.transport = async (path, options, fallback) => path.endsWith('/motion-versions/v1') ? candidate : fallback(path);
+  await h.load();
+  const review = h.$('motion-review').textContent;
+  assert.match(review, /本次提供 1 项已发布动画方法.*按需查阅/);
+  assert.match(review, /identity-flow · 调整后采用：<script>同一对象保持身份<\/script>/);
+  assert.doesNotMatch(review, /已参考|已发布策略|MUST NOT EXECUTE/);
+  assert.equal(h.$('confirm-motion-adoption').checked, false);
+  assert.equal(posts(h).length, 0);
+  assert.match(motionErrorLabel('creative_film_context_required'), /整片草稿制作入口重做/);
+});
+
 test('creative candidate review is inert, exposes release and recording identity and preserves explicit adoption', async () => {
   const h = harness(); h.state.context.creativeConfigured = true;
   h.state.data.scenes[0].motion.versions[0].diagram_kind = 'creative';

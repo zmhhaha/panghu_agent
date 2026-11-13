@@ -71,7 +71,7 @@ export function continuityIssues(project, { audio = false } = {}) {
       issues.push(`${title}：请先采用有效动态图解。`);
     }
     if (head) {
-      if (head.diagram_kind === 'creative' || ['video.creative-scene.v1', 'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'].includes(head.plan?.schema)) {
+      if (head.diagram_kind === 'creative' || ['video.creative-scene.v1', 'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4', 'video.creative-scene.v5'].includes(head.plan?.schema)) {
         kinds.add('creative');
         issues.push(`${title}：${continuityErrorLabel('creative_continuity_not_supported')}`);
       } else {

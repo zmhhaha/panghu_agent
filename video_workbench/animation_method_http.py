@@ -2,11 +2,29 @@
 from __future__ import annotations
 
 from pathlib import Path
-from urllib.parse import quote
+import json
+import re
+from urllib.parse import quote, unquote
 
-from .animation_creation_http import CreationAPIClient, CreationTransportError, _require, MAX_ARTIFACT
+from .animation_creation_http import CreationAPIClient, CreationTransportError, _require, MAX_ARTIFACT, MAX_JSON
 
 PREFIX = '/api/method-lab'
+
+
+def _identifier(value, *, encoded=False):
+    _require(type(value) is str, 'animation_method_identifier_invalid')
+    value = unquote(value) if encoded else value
+    _require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}', value) is not None,
+             'animation_method_identifier_invalid')
+    return value
+
+
+def _send_bounded(handler, value):
+    # Keep Wiki bodies out of the catalogue and fail before emitting a partial
+    # response if an adapter unexpectedly exceeds the established transport.
+    _require(len(json.dumps(value, ensure_ascii=True, allow_nan=False).encode()) <= MAX_JSON,
+             'animation_method_response_too_large', 413)
+    handler._send(value)
 
 
 class MethodLabClient(CreationAPIClient):
@@ -36,6 +54,27 @@ class MethodLabClient(CreationAPIClient):
     def published_methods(self, owner, body):
         return self._request(owner, 'POST', PREFIX + '/methods/read', body)
 
+    def knowledge_catalogue(self, owner):
+        return self._request(owner, 'GET', PREFIX + '/knowledge')
+
+    def knowledge_page(self, owner, page_id):
+        return self._request(owner, 'GET', PREFIX + '/knowledge/pages/' + quote(_identifier(page_id), safe=''))
+
+    def knowledge_experience(self, owner, experience_id):
+        return self._request(owner, 'GET', PREFIX + '/knowledge/experiences/' + quote(_identifier(experience_id), safe=''))
+
+    def revise_knowledge_page(self, owner, page_id, body):
+        return self._request(owner, 'POST', PREFIX + '/knowledge/pages/' + quote(_identifier(page_id), safe=''), body)
+
+    def publication_readiness(self, owner, method_version_id):
+        return self._request(owner, 'GET', PREFIX + '/methods/' + quote(_identifier(method_version_id), safe='') + '/readiness')
+
+    def method_version(self, owner, method_version_id):
+        return self._request(owner, 'GET', PREFIX + '/methods/' + quote(_identifier(method_version_id), safe=''))
+
+    def accept_validation(self, owner, validation_id, body):
+        return self._request(owner, 'POST', PREFIX + '/validations/' + quote(_identifier(validation_id), safe='') + '/accept', body)
+
 
 def route_private(handler, owner, method, path, body=None):
     """Return False outside this namespace; otherwise emit one response."""
@@ -49,8 +88,25 @@ def route_private(handler, owner, method, path, body=None):
     _require(service is not None, 'animation_method_service_unavailable', 503)
     pieces = path[len(PREFIX):].strip('/').split('/')
     if method == 'GET':
+        if pieces == ['knowledge']:
+            _send_bounded(handler, service.knowledge_catalogue(owner))
+            return True
+        if len(pieces) == 3 and pieces[:2] == ['knowledge', 'pages']:
+            _send_bounded(handler, service.knowledge_page(owner, _identifier(pieces[2], encoded=True)))
+            return True
+        if len(pieces) == 3 and pieces[:2] == ['knowledge', 'experiences']:
+            _send_bounded(handler, service.knowledge_experience(owner, _identifier(pieces[2], encoded=True)))
+            return True
+        if len(pieces) == 3 and pieces[0] == 'methods' and pieces[2] == 'readiness':
+            _send_bounded(handler, service.publication_readiness(owner, _identifier(pieces[1], encoded=True)))
+            return True
         if pieces == ['methods', 'published']:
-            handler._send(dict(methods=service.methods.list_methods(owner, published_only=True)))
+            catalogue = getattr(service, 'published_catalogue', None)
+            value = catalogue(owner) if callable(catalogue) else dict(methods=service.methods.list_methods(owner, published_only=True))
+            _send_bounded(handler, value)
+            return True
+        if len(pieces) == 2 and pieces[0] == 'methods':
+            _send_bounded(handler, service.get_method_version(owner, _identifier(pieces[1], encoded=True)))
             return True
         if pieces == ['catalog']:
             handler._send(service.catalogue(owner))
@@ -66,6 +122,12 @@ def route_private(handler, owner, method, path, body=None):
             handler._send(raw, raw=True, mime=mime)
             return True
     else:
+        if len(pieces) == 3 and pieces[:2] == ['knowledge', 'pages']:
+            _send_bounded(handler, service.revise_knowledge_page(owner, _identifier(pieces[2], encoded=True), body))
+            return True
+        if len(pieces) == 3 and pieces[0] == 'validations' and pieces[2] == 'accept':
+            _send_bounded(handler, service.accept_validation(owner, _identifier(pieces[1], encoded=True), body))
+            return True
         if pieces == ['commissions']:
             handler._send(service.start(owner, body), 202)
             if handler.server.method_pump:

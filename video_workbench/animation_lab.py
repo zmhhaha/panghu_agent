@@ -781,6 +781,18 @@ class LabHandler(BaseHTTPRequestHandler):
                         availability=dict(enabled=False, reason='制作执行器尚未配置')))
                     return self._json(dict(value, csrf_token=lab.csrf_token))
                 _require(client is not None, 'animation_method_service_unavailable', 503)
+                if method_pieces == ['api', 'method-lab', 'knowledge']:
+                    return self._json(dict(client.knowledge_catalogue(owner), csrf_token=lab.csrf_token))
+                if len(method_pieces) == 5 and method_pieces[2:4] == ['knowledge', 'pages']:
+                    return self._json(client.knowledge_page(owner, method_pieces[4]))
+                if len(method_pieces) == 5 and method_pieces[2:4] == ['knowledge', 'experiences']:
+                    return self._json(client.knowledge_experience(owner, method_pieces[4]))
+                if len(method_pieces) == 5 and method_pieces[2] == 'methods' and method_pieces[4] == 'readiness':
+                    return self._json(client.publication_readiness(owner, method_pieces[3]))
+                if method_pieces == ['api', 'method-lab', 'methods', 'published']:
+                    return self._json(client.published_catalog(owner))
+                if len(method_pieces) == 4 and method_pieces[2] == 'methods':
+                    return self._json(client.method_version(owner, method_pieces[3]))
                 if len(method_pieces) == 4 and method_pieces[2] == 'commissions':
                     return self._json(client.get(owner, method_pieces[3]))
                 if len(method_pieces) == 7 and method_pieces[2] == 'commissions' and method_pieces[4] == 'candidates':
@@ -970,6 +982,10 @@ class LabHandler(BaseHTTPRequestHandler):
                 client = getattr(lab, 'method_client', None)
                 _require(client is not None, 'animation_method_service_unavailable', 503)
                 owner = self.forwarded_user or 'local-developer'
+                if len(method_pieces) == 5 and method_pieces[2:4] == ['knowledge', 'pages']:
+                    return self._json(client.revise_knowledge_page(owner, method_pieces[4], body))
+                if len(method_pieces) == 5 and method_pieces[2] == 'validations' and method_pieces[4] == 'accept':
+                    return self._json(client.accept_validation(owner, method_pieces[3], body))
                 if method_pieces == ['api', 'method-lab', 'commissions']:
                     return self._json(client.start(owner, body), 202)
                 if (len(method_pieces) == 5 and method_pieces[2] == 'commissions'

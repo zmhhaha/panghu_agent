@@ -64,7 +64,7 @@ def app_for(path, gateway=None, **settings):
     return create_app(db_path=path, trusted_hosts={'testserver'}, background=False,
                       motion_enabled=settings.pop('motion_enabled', True),
                       creative_enabled=settings.pop('creative_enabled', True),
-                      creative_gateway=gateway, method_adapter=method_adapter, **settings)
+                      creative_gateway=gateway, method_adapter=method_adapter, skill_production=False, **settings)
 
 
 def login(client, owner='alice'):

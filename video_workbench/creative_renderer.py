@@ -21,15 +21,18 @@ ENGINE_METHOD_COMPILER = 'creative-method-engine-scene-adapter-1'
 ENGINE_METHOD_TEMPLATE = 'generated-method-engine-scene-1'
 FILM_COMPILER = 'creative-film-scene-adapter-1'
 FILM_TEMPLATE = 'generated-film-engine-scene-1'
+SKILL_COMPILER = 'creative-skill-film-scene-adapter-1'
+SKILL_TEMPLATE = 'generated-skill-film-engine-scene-1'
 COMPILER_TEMPLATES = {COMPILER: TEMPLATE, METHOD_COMPILER: METHOD_TEMPLATE,
                       ENGINE_METHOD_COMPILER: ENGINE_METHOD_TEMPLATE,
-                      FILM_COMPILER: FILM_TEMPLATE}
+                      FILM_COMPILER: FILM_TEMPLATE, SKILL_COMPILER: SKILL_TEMPLATE}
 
 
 def _compiler(package, requested):
     expected = {'video.creative-scene.v1': COMPILER, 'video.creative-scene.v2': METHOD_COMPILER,
                 'video.creative-scene.v3': ENGINE_METHOD_COMPILER,
-                'video.creative-scene.v4': FILM_COMPILER}[package['schema']]
+                'video.creative-scene.v4': FILM_COMPILER,
+                'video.creative-scene.v5': SKILL_COMPILER}[package['schema']]
     _require(requested is None or requested == expected, 'creative_renderer_version_unsupported')
     return expected
 
@@ -58,15 +61,21 @@ def resolve_creative_timeline(package, beats, alignment, *, leading_seconds=0,
     creative = dict(engine=package['engine'], input_sha256=package['input_sha256'],
         result_sha256=package['result_sha256'],
         seek_protocol='window.__animationExperiment.seek(seconds)',
-        renderer='isolated-chromium-engine-seek-ffmpeg-1' if package['schema'] in {'video.creative-scene.v3', 'video.creative-scene.v4'}
+        renderer='isolated-chromium-engine-seek-ffmpeg-1' if package['schema'] in {'video.creative-scene.v3', 'video.creative-scene.v4', 'video.creative-scene.v5'}
             else 'isolated-chromium-absolute-seek-ffmpeg-1')
-    if package['schema'] in {'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'}:
+    if package['schema'] == 'video.creative-scene.v5':
+        creative.update(skill_catalog_sha256=package['skill_catalog_sha256'],
+            skill_delivery_sha256=package['skill_delivery_sha256'],
+            skill_decisions_sha256=digest(package['skill_decisions']),
+            skill_tool_evidence_sha256=package['skill_tool_evidence_sha256'],
+            skill_evidence_scope=package['evidence_scope'])
+    elif package['schema'] in {'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'}:
         creative.update(method_delivery_sha256=package['method_delivery_sha256'],
             method_decision_sha256=digest(package['method_decision']),
             method_evidence_scope=package['evidence_scope'])
     else:
         creative['capability_release_sha256'] = package['capability_release_sha256']
-    if package['schema'] == 'video.creative-scene.v4':
+    if package['schema'] in {'video.creative-scene.v4', 'video.creative-scene.v5'}:
         film = package['input_document']['film_context']
         row = film['film']['scenes'][film['current_scene_index']]
         _require(abs(row['end_seconds'] - row['start_seconds'] - seconds) <= 1e-6
@@ -105,9 +114,13 @@ def compile_creative_project(package, beats, alignment, *, runtime_fingerprint,
             for name, key in (('gsap.min.js', 'gsap_sha256'),
                               ('NotoSansCJK-Regular.ttc', 'font_sha256'))),
             'creative_render_asset_mismatch')
-    engine_aware = value['schema'] in {'video.creative-scene.v3', 'video.creative-scene.v4'}
+    engine_aware = value['schema'] in {'video.creative-scene.v3', 'video.creative-scene.v4', 'video.creative-scene.v5'}
     if engine_aware:
-        _require(runtime_fingerprint is not None and runtime_fingerprint['schema'] == 'video.motion-runtime.v2',
+        # v3 identifies the measured image/core/host bytes. This route still
+        # uses native seek; accepting those identities is no HF-use claim.
+        runtime_schemas = ({'video.motion-runtime.v2', 'video.motion-runtime.v3'}
+                           if value['schema'] == 'video.creative-scene.v5' else {'video.motion-runtime.v2'})
+        _require(runtime_fingerprint is not None and runtime_fingerprint['schema'] in runtime_schemas,
                  'creative_engine_runtime_required')
         identity = value['input_document']['constraints'].get('runtime_identity')
         if identity is not None:

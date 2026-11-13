@@ -54,6 +54,9 @@ def implementation(name):
     if name in {'video.animation-method-author.v1', 'video.animation-method-review.v1'}:
         from .video_animation_method import VideoAnimationMethodProfile
         return VideoAnimationMethodProfile(review=name == 'video.animation-method-review.v1')
+    if name in {'video.animation-method-author.v2', 'video.animation-method-review.v2'}:
+        from .video_animation_skill_method import VideoAnimationSkillMethodProfile
+        return VideoAnimationSkillMethodProfile(review=name == 'video.animation-method-review.v2')
     if name == 'video.animation-production.v1':
         from .video_animation_production import VideoAnimationProductionProfile
         return VideoAnimationProductionProfile()
