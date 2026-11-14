@@ -68,7 +68,8 @@ test('v5 only admits exact nested PNG inventory and pinned consumer helpers',()=
 
 const enabled=process.env.PANGHU_ANIME_PLAYWRIGHT&&process.env.PANGHU_ANIME_BROWSER
  &&process.env.PANGHU_ANIME_HYPERFRAMES_DIST&&process.env.PANGHU_TEST_TEMP;
-test('actual v5 predecodes PNGs and preserves absolute, reverse, repeat, idle and reload frames',
+for(const placementStartFrame of [0,12])
+test('actual v5 predecodes PNGs and preserves absolute, reverse, repeat, idle and reload frames at '+placementStartFrame,
  {skip:!enabled},async()=>{
  const {chromium}=await import(pathToFileURL(process.env.PANGHU_ANIME_PLAYWRIGHT).href);
  const root=mkdtempSync(join(process.env.PANGHU_TEST_TEMP,'manim-method-host-'));
@@ -77,7 +78,8 @@ test('actual v5 predecodes PNGs and preserves absolute, reverse, repeat, idle an
  const html=`<!doctype html><style>body{margin:0;background:#101629}#layer{position:absolute;inset:0}</style>
  <div id="layer"></div><script type="module">
  import {prepareManimMethodFrames} from '/assets/manim_method_frames.mjs';
- const layer=prepareManimMethodFrames(document.querySelector('#layer'),${JSON.stringify(descriptor.manifest)});
+ const layer=prepareManimMethodFrames(document.querySelector('#layer'),${JSON.stringify(descriptor.manifest)},
+  {placementStartFrame:${placementStartFrame}});
  window.__animationExperiment={ready:layer.ready,seek(seconds){layer.seekFrame(Math.round(seconds*24));}};
  </script>`;
  const project={schema:'video.hyperframes-project.v1',project_id:'manim-method-technical',width:320,height:180,
@@ -94,7 +96,11 @@ test('actual v5 predecodes PNGs and preserves absolute, reverse, repeat, idle an
   assert.equal(result.seek_checks.idle_frame_verified,true);assert.equal(result.reverse_seek_verified,true);
   assert.deepEqual(result.generated_resource_observation.resources_sha256,[descriptor.sha256]);
   assert.deepEqual(result.generated_resource_observation.loaded_png_paths,descriptor.manifest.frames.map(row=>'/'+row.path));
-  assert.notEqual(result.frames[0].sha256,result.frames[1].sha256);
-  assert.notEqual(result.frames[2].sha256,result.frames[3].sha256); // half-open interval becomes hidden
+  assert.notEqual(result.frames[placementStartFrame].sha256,result.frames[placementStartFrame+1].sha256);
+  assert.notEqual(result.frames[placementStartFrame+2].sha256,result.frames[placementStartFrame+3].sha256);
+  if(placementStartFrame){
+   assert.equal(result.frames[0].sha256,result.frames[placementStartFrame-1].sha256);
+   assert.equal(result.frames[0].sha256,result.frames[placementStartFrame+3].sha256);
+  }
  }finally{rmSync(root,{recursive:true,force:true});rmSync(profile,{recursive:true,force:true});}
 });

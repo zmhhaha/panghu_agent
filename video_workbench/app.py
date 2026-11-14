@@ -26,6 +26,7 @@ from agent_service.contracts import ServiceError
 from .agent import VideoAgentGateway
 from .config import (AgentSettings, ExplanationSettings, MotionSettings,
                      ProductionMethodSettings, ProductionAgentSettings, SkillProductionAgentSettings, JointPlanAgentSettings,
+                     ResourcePlanningAgentSettings,
                      creative_runtime_capabilities)
 from .service import Workflow
 from .store import Store
@@ -38,6 +39,9 @@ from .explanation_workflow import ExplanationWorkflow
 from .joint_plan_gateway import JointPlanAgentGateway
 from .joint_plan_store import JointPlanStore
 from .joint_plan_workflow import JointPlanWorkflow
+from .resource_planning_gateway import ResourcePlanningAgentGateway
+from .resource_planning_coordinator import ResourcePlanningCoordinator
+from .resource_producer_catalog import admitted_resource_producers
 from .motion_store import MotionStore
 from .motion_timing import MotionTiming
 from .motion_workflow import MotionWorkflow
@@ -297,6 +301,7 @@ class ProductionRunRequest(Revision):
     joint_plan_version_id: str = Field(min_length=1, max_length=100)
     reuse_audio_from_run_id: str | None = Field(default=None, min_length=1, max_length=100)
     resource_authoring: dict[str, dict] | None = Field(default=None, min_length=1, max_length=8)
+    resource_plan: dict | None = Field(default=None)
 
 
 class Generation(Revision):
@@ -525,7 +530,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                process_gateway=None, process_enabled=None, creative_gateway=None, creative_enabled=None,
                method_adapter=None, creative_capabilities=None, joint_plan_gateway=None,
                joint_plan_enabled=None, production_runs_enabled=None,
-               skill_gateway=None, skill_adapter=None, skill_production=True, film_creation=None):
+               skill_gateway=None, skill_adapter=None, skill_production=True, film_creation=None,
+               resource_planning_gateway=None, resource_producer_catalog=None):
     if type(skill_production) is not bool:
         raise ValueError('An explicit boolean Skill production mode is required')
     explanation_settings = ExplanationSettings.from_env()
@@ -558,6 +564,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     owned_production_client = None
     owned_skill_client = None
     owned_joint_plan_client = None
+    owned_resource_planning_client = None
     owned_film_client = None
     owned_film_renderer = None
     owned_speech_client = None
@@ -643,8 +650,19 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
             joint_plan_gateway = JointPlanAgentGateway(joint_client,
                 os.environ.get('VIDEO_JOINT_PLAN_PROFILE_REVISION', '1'))
     joint_plan_store = JointPlanStore(store, runtime_capabilities=creative_capabilities)
+    if resource_planning_gateway is None:
+        resource_settings = ResourcePlanningAgentSettings.from_env()
+        if resource_settings is not None:
+            owned_resource_planning_client = AgentClient(resource_settings.base_url, resource_settings.token)
+            resource_planning_gateway = ResourcePlanningAgentGateway(
+                owned_resource_planning_client, resource_settings.revision)
+    resource_planner = None
+    if resource_planning_gateway is not None:
+        resource_planner = ResourcePlanningCoordinator(joint_plan_store, resource_planning_gateway,
+            producer_catalog=resource_producer_catalog or (
+                lambda owner: admitted_resource_producers(film_creation, owner)))
     joint_plan_workflow = JointPlanWorkflow(joint_plan_store, joint_plan_gateway, enabled=joint_gate,
-                                           method_adapter=method_adapter)
+                                           method_adapter=method_adapter, resource_planner=resource_planner)
     motion_workflow = MotionWorkflow(motion_store, motion_gateway, enabled=motion_gate,
                                     process_gateway=process_gateway, process_enabled=process_gate,
                                     creative_gateway=creative_gateway, creative_enabled=creative_gate,
@@ -757,6 +775,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
             owned_skill_client.close()
         if owned_joint_plan_client:
             owned_joint_plan_client.close()
+        if owned_resource_planning_client:
+            owned_resource_planning_client.close()
         if owned_film_client:
             owned_film_client.close()
         if owned_film_renderer is not None:

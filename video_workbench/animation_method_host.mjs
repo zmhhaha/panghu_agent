@@ -27,8 +27,8 @@ export function validateAuthoringLibraries(request,resources){
 }
 
 const MANIM_HELPERS={
- 'manim_frame_layer.mjs':'e6785bc26df55a4b4e88fdca2bc74c629643a6b4296ac9eb5970c3221bde1fd5',
- 'manim_method_frames.mjs':'9f3aa078149af3f9f7c3fb7d590b00f3dc9e05605b0c6fb2982a6e91fa1ba6cc'};
+ 'manim_frame_layer.mjs':'de34dea66d0ce8449080b35668f38b4e1ed6ae55e10690d9a3f1b118bb07fa51',
+ 'manim_method_frames.mjs':'6c1d5cd90cbfbe862a646b014ad988a6637c5b74a9af1cb7bd4d5513a8606bfc'};
 const canonicalResource=value=>JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)
  ?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
 export function validateGeneratedResources(request,resources){

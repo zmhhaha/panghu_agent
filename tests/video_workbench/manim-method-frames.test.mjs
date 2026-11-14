@@ -9,9 +9,9 @@ function manifest(){return {schema:'video.manim-frame-resource.v1',resource_id:'
  runtime:{library:'manim-community',version:'0.22.1',renderer:'cairo'},audio:null,
  frames:[0,1,2].map(index=>({index,global_frame:index,
   path:`assets/manim/geometry/frame_${String(index).padStart(6,'0')}.png`,bytes:512,sha256:'c'.repeat(64)}))};}
-function fixture(decode=async()=>{}){
+function fixture(decode=async()=>{},placementStartFrame){
  const images=[];
- const frames=prepareManimMethodFrames({append(){}},manifest(),{createImage(){
+ const frames=prepareManimMethodFrames({append(){}},manifest(),{placementStartFrame,createImage(){
   const image={style:{},async decode(){await decode();},removeAttribute(){this.src=null;},remove(){this.removed=true;}};
   images.push(image);return image;
  }});
@@ -48,4 +48,17 @@ test('outside or fractional frame does not silently stretch or round the resourc
  f.frames.seekFrame(3);assert.ok(f.images.every(image=>image.style.display==='none'));
  assert.throws(()=>f.frames.seekFrame(.5),/clock_invalid/);
  f.frames.dispose();
+});
+
+test('laboratory synchronous playback can place the same local resource without regenerating it',async()=>{
+ const a=fixture(async()=>{},24),b=fixture(async()=>{},72);
+ await Promise.all([a.frames.ready,b.frames.ready]);
+ for(const offset of [0,2,1,1,3,0]){
+  a.frames.seekFrame(24+offset);b.frames.seekFrame(72+offset);
+  assert.deepEqual(a.images.map(image=>image.style.display),b.images.map(image=>image.style.display));
+  assert.deepEqual(a.images.map(image=>image.src),b.images.map(image=>image.src));
+ }
+ a.frames.seekFrame(23);b.frames.seekFrame(71);
+ assert.ok([...a.images,...b.images].every(image=>image.style.display==='none'));
+ a.frames.dispose();b.frames.dispose();
 });

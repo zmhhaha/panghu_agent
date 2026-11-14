@@ -210,8 +210,8 @@ def test_actual_method_service_waits_for_prelude_then_delivers_resources_to_unch
     assert queued['resource_authoring']['status'] == 'pending'
     for _ in range(15):
         service.advance('developer', queued['id'])
-        if coordinator.view('developer', queued['id'])['status'] == 'completed': break
-    assert coordinator.view('developer', queued['id'])['status'] == 'completed'
+        if service.resource_stage.view('developer', queued['id'])['status'] == 'completed': break
+    assert service.resource_stage.view('developer', queued['id'])['status'] == 'completed'
     assert author.submissions == reviewer.submissions == []
     completed = finish_service(service, queued['id'])
     assert completed['state'] == 'completed'
@@ -224,12 +224,12 @@ def test_actual_method_service_waits_for_prelude_then_delivers_resources_to_unch
         assert set(descriptor['assets_sha256']) <= set(context['assets'])
         assert 'prepareManimMethodFrames' in context['constraints']['generated_resource_usage']
     assert completed['resource_authoring']['status'] == 'completed'
-    first = coordinator.context('developer', queued['id'])
+    first = service.resource_stage.context('developer', queued['id'])
     # Continuing a Manim method repeats the producer for this new content/run;
     # it cannot silently reuse the earlier task's immutable PNG resources.
     continued = start(service, base_commission_id=queued['id'], feedback='Use a different composition')
     again = finish_service(service, continued['id'])
-    second = coordinator.context('developer', continued['id'])
+    second = service.resource_stage.context('developer', continued['id'])
     assert again['state'] == 'completed' and second['scope'] != first['scope']
     assert second['manifest']['resource_id'] != first['manifest']['resource_id']
     assert gateway.submissions == executor.calls == 2

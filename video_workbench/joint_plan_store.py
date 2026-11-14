@@ -146,7 +146,7 @@ class JointPlanStore:
                 (owner, project_id))]
             for version in versions:
                 version['stale'] = self._stale(version, binding, head)
-                version['adoptable'] = not version['stale']
+                version['adoptable'] = not version['stale'] and version.get('resource_planning', {}).get('status', 'completed') == 'completed'
             latest = db.execute('SELECT document FROM joint_plan_operations WHERE owner=? AND project_id=? '
                                 'ORDER BY rowid DESC LIMIT 1', (owner, project_id)).fetchone()
             latest_op = json.loads(latest['document']) if latest else None
@@ -164,7 +164,7 @@ class JointPlanStore:
             project = self.store._project(db, owner, version['project_id'])
             head = self._head(db, owner, project['id'])
             version['stale'] = self._stale(version, self._binding(project), head)
-            version['adoptable'] = not version['stale']
+            version['adoptable'] = not version['stale'] and version.get('resource_planning', {}).get('status', 'completed') == 'completed'
             return version
 
     def start(self, owner, project_id, request, idem, *, timeout=600):
@@ -308,7 +308,7 @@ class JointPlanStore:
                 self._write_op(db, op)
             return self._public(op)
 
-    def complete(self, operation_id, result):
+    def complete(self, operation_id, result, *, resource_planning=False):
         with self.store.transaction() as db:
             op = self._op(db, operation_id)
             if op['status'] not in ACTIVE:
@@ -325,8 +325,16 @@ class JointPlanStore:
                     created_at=time.time(), input_sha256=op['input_sha256'],
                     input_binding_sha256=op['input_binding_sha256'], result=result)
                 _require(_size(version) <= OUTPUT_RESERVE_BYTES - 8192, 'joint_plan_candidate_too_large', 413)
-                op.update(status='completed', error=None, version_id=version['id'])
-                self._capacity(db, project['id'], extra_bytes=_size(version) + _size(op) - old_size, active_delta=-1)
+                op.update(status='running' if resource_planning else 'completed', error=None, version_id=version['id'])
+                if resource_planning:
+                    op['phase'] = 'resource-plan'
+                    op['resource_planning'] = dict(operation_id=str(uuid4()), status='pending', document=None,
+                        input_ref=None, job_id=None, submit_attempted=False, stop_proven=True,
+                        cancel_attempts=0, next_cancel_at=0, error=None)
+                    version['resource_planning'] = dict(status='pending', profile='video.resource-plan.v1',
+                        origin='agent_resource_planner', operation_id=op['resource_planning']['operation_id'])
+                self._capacity(db, project['id'], extra_bytes=_size(version) + _size(op) - old_size,
+                    active_delta=0 if resource_planning else -1)
                 db.execute('INSERT INTO joint_plan_versions VALUES (?, ?, ?, ?, ?)',
                            (version['id'], op['owner'], project['id'], op['id'], _json(version)))
             self._write_op(db, op)
@@ -359,6 +367,8 @@ class JointPlanStore:
             head = self._head(db, owner, project_id)
             _require(head['version_id'] == request['expected_head_version_id'], 'joint_plan_head_conflict', 409)
             _require(not self._stale(version, self._binding(project), head), 'joint_plan_stale', 409)
+            _require(version.get('resource_planning', {}).get('status', 'completed') == 'completed',
+                'joint_plan_resources_not_ready', 409)
             self._require_idle(db, project_id)
             tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             for table in ('joint_plan_operations', 'explanation_operations'):
@@ -394,6 +404,20 @@ class JointPlanStore:
                 project['joint_plan'] = dict(version_id=version['id'],
                     **{key: result[key] for key in ('summary', 'understanding_goal', 'visual_style',
                                                   'continuity', 'method_decision')})
+                if 'resource_plan' in version:
+                    from copy import deepcopy
+                    mapped = deepcopy(version['resource_plan'])
+                    segments = {scene['joint_plan']['segment_id']: scene['id'] for scene in scenes}
+                    for node in mapped['nodes']:
+                        placement = node['placement']
+                        node['placement'] = dict(scene_id=segments[placement['segment_id']],
+                            start_frame=placement['start_frame'])
+                    project['joint_plan'].update(resource_plan=mapped,
+                        resource_plan_source=dict(version_id=version['id'],
+                            candidate_resource_plan_sha256=digest(version['resource_plan']),
+                            requirements_sha256=digest(mapped),
+                            resource_planning_input_sha256=version['resource_planning']['input_sha256'],
+                            resource_planning_result_sha256=version['resource_planning']['result_sha256']))
                 applied_binding = self._binding(project)
                 db.execute('INSERT INTO joint_plan_heads VALUES (?, ?, ?, ?) ON CONFLICT(owner,project_id) '
                            'DO UPDATE SET version_id=excluded.version_id,applied_binding_sha256=excluded.applied_binding_sha256',

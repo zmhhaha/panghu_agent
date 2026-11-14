@@ -7,12 +7,51 @@ from fastapi.testclient import TestClient
 
 from video_workbench.app import create_app
 from video_workbench.config import AgentSettings, ExplanationSettings, creative_runtime_capabilities
+from video_workbench.config import ResourcePlanningAgentSettings
+from video_workbench.resource_producer_catalog import admitted_resource_producers
+from agent_service.contracts import ServiceError
 
 
 def test_explanation_is_opt_in_with_an_independent_contract_revision():
     assert ExplanationSettings.from_env({}) == ExplanationSettings(False, '1')
     assert ExplanationSettings.from_env({'VIDEO_EXPLANATION_ENABLED': '1',
                                         'VIDEO_EXPLANATION_PROFILE_REVISION': 'review-2'}) == ExplanationSettings(True, 'review-2')
+
+
+def test_resource_planner_uses_a_separate_explicit_credential_and_hides_secrets():
+    assert ResourcePlanningAgentSettings.from_env({'VIDEO_JOINT_PLAN_AGENT_URL': 'http://agent',
+        'VIDEO_JOINT_PLAN_AGENT_TOKEN': 's' * 40}) is None
+    configured = ResourcePlanningAgentSettings.from_env({'VIDEO_RESOURCE_PLAN_AGENT_URL': 'http://agent',
+        'VIDEO_RESOURCE_PLAN_AGENT_TOKEN': 'r' * 40})
+    assert configured.token == 'r' * 40 and configured.token not in repr(configured)
+    with pytest.raises(ValueError, match='dedicated VIDEO_RESOURCE_PLAN_AGENT'):
+        ResourcePlanningAgentSettings.from_env({'VIDEO_RESOURCE_PLAN_AGENT_URL': 'http://agent'})
+    with pytest.raises(ValueError, match='Unsupported VIDEO_RESOURCE_PLAN'):
+        ResourcePlanningAgentSettings.from_env({'VIDEO_RESOURCE_PLAN_AGENT_URL': 'http://agent',
+            'VIDEO_RESOURCE_PLAN_AGENT_TOKEN': 'r' * 40, 'VIDEO_RESOURCE_PLAN_PROFILE_REVISION': '2'})
+
+
+def test_planner_catalog_requires_both_whole_film_and_resource_admission():
+    class Film:
+        enabled = True
+        consumer = True
+        producer = True
+        def readiness(self):
+            if not self.consumer:
+                raise ServiceError('hyperframes_film_not_admitted', 503)
+            return True
+        def preflight_resources(self, owner):
+            assert owner == 'owner'
+            if not self.producer:
+                raise ServiceError('film_resource_not_admitted', 503)
+            return True
+    film = Film()
+    assert admitted_resource_producers(None, 'owner') == []
+    assert admitted_resource_producers(film, 'owner')[0]['id'] == 'manim'
+    film.consumer = False
+    assert admitted_resource_producers(film, 'owner') == []
+    film.consumer, film.producer = True, False
+    assert admitted_resource_producers(film, 'owner') == []
 
 
 def test_creative_engine_configuration_binds_formal_host_and_exact_runtime(tmp_path):

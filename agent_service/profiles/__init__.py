@@ -3,6 +3,9 @@ from .base import ProfileImplementation, ProfileLimits
 
 
 def implementation(name):
+    if name == 'video.resource-plan.v1':
+        from .video_resource_plan import VideoResourcePlanProfile
+        return VideoResourcePlanProfile()
     if name == 'video.animation-manim-recipe.v1':
         from .video_animation_manim_recipe import VideoAnimationManimRecipeProfile
         return VideoAnimationManimRecipeProfile()

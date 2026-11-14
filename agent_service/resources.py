@@ -59,6 +59,11 @@ def measured_package(config, policy, control_root):
         mandatory = {'research-procedure/SKILL.md', 'task-template.md', 'LICENSE'}
         from .profiles.research import verified_bundle
         verified_bundle()
+    elif policy.name == 'video.resource-plan.v1':
+        from .profiles.video_resource_plan import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
     elif policy.name == 'video.joint-plan.v1':
         from .profiles.video_joint_plan import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
         root = BUNDLE_ROOT

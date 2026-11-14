@@ -51,6 +51,47 @@ def finish(service, op):
     raise AssertionError('resource did not terminate')
 
 
+def prepared_request(**changes):
+    value = dict(schema='video.prepared-manim-resource-request.v1', operation_id=str(uuid4()),
+        project_id='project', node_id='geometry', goal='Author original local-clock geometry.',
+        guidance='Use the measured recording as a dependency; no word alignment is claimed.',
+        duration_seconds=3 / 24,
+        resource_authoring=dict(kind='manim', width=320, height=180,
+            frame_count=3, global_start_frame=0), deadline_at=time.time() + 300)
+    value.update(changes)
+    return value
+
+
+def test_prepared_resource_keeps_local_clock_without_whole_film_identity(tmp_path):
+    service, gateway, executor = setup(tmp_path)
+    req = prepared_request()
+    queued = service.start(OWNER, req)
+    assert queued['node_id'] == req['node_id'] and 'film_sha256' not in queued and 'scene_id' not in queued
+    assert gateway.submissions == executor.calls == 0
+    result = finish(service, req['operation_id'])
+    assert result['status'] == 'completed' and result['stop_proven']
+    assert result['descriptor']['manifest']['global_start_frame'] == 0
+    assert result['descriptor']['manifest']['frame_count'] == 3
+    envelope = service.envelope(OWNER, req['operation_id'])
+    from video_workbench.resource_placement import freeze_manim_placement
+    first = freeze_manim_placement(result['descriptor'], start_frame=12, project_frame_count=96)
+    second = freeze_manim_placement(result['descriptor'], start_frame=60, project_frame_count=96)
+    assert first['resource_sha256'] == second['resource_sha256']
+    assert first['sha256'] != second['sha256']
+    assert service.envelope(OWNER, req['operation_id']) == envelope
+    assert service.start(OWNER, req) == result
+    assert gateway.submissions == executor.calls == 1
+
+
+def test_prepared_resource_rejects_nonlocal_or_conflicting_clock_before_reservation(tmp_path):
+    service, gateway, executor = setup(tmp_path)
+    for options in (dict(kind='manim', width=320, height=180, frame_count=3, global_start_frame=1),
+                    dict(kind='manim', width=320, height=180, frame_count=4, global_start_frame=0)):
+        with pytest.raises(ServiceError, match='clock'):
+            service.start(OWNER, prepared_request(resource_authoring=options))
+    assert not service.pending() and gateway.submissions == executor.calls == 0
+
+
 def test_formal_resource_is_owner_scoped_and_generated_only_by_advance(tmp_path):
     service, gateway, executor = setup(tmp_path)
     req = request()

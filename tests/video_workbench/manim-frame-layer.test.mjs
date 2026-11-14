@@ -11,12 +11,12 @@ function manifest(){return {schema:'video.manim-frame-resource.v1',resource_id:'
  runtime:{library:'manim-community',version:'0.22.1',renderer:'cairo'},audio:null,
  frames:[0,1,2].map(index=>({index,global_frame:48+index,
   path:`assets/manim/geometry/frame_${String(index).padStart(6,'0')}.png`,bytes:512,sha256:'c'.repeat(64)}))};}
-function fixture({decode=async()=>{}}={}){
+function fixture({decode=async()=>{},placementStartFrame,value=manifest()}={}){
  const events=[];let removed=false;
  const image={style:{},removeAttribute(name){events.push(['removeAttribute',name]);},
   remove(){removed=true;},async decode(){events.push(['decode',this.src]);await decode();}};
  const root={append(child){assert.equal(child,image);events.push(['append']);}};
- const layer=createManimFrameLayer(root,manifest(),{createImage:()=>image});
+ const layer=createManimFrameLayer(root,value,{createImage:()=>image,placementStartFrame});
  return {layer,image,events,removed:()=>removed};
 }
 test('resource frame has exact half-open interval and no implicit end hold',()=>{
@@ -86,4 +86,41 @@ test('compression never grants unlimited decoded image memory',()=>{
   path:`assets/manim/geometry/frame_${String(index).padStart(6,'0')}.png`,bytes:512,sha256:'c'.repeat(64)}));
  assert.ok(value.frames.reduce((sum,row)=>sum+row.bytes,0)<25165824);
  assert.throws(()=>validateManimManifest(value),/invalid/);
+});
+
+test('explicit placement preserves the original manifest and PNG inventory at different film positions',async()=>{
+ const value=manifest(),before=structuredClone(value);
+ const first=fixture({value,placementStartFrame:0}),later=fixture({value,placementStartFrame:144});
+ for(const offset of [0,2,1,1,0,2,3,0]){
+  await first.layer.renderAt({global_frame:offset});
+  await later.layer.renderAt({global_frame:144+offset});
+  assert.equal(first.image.style.display,later.image.style.display);
+  assert.equal(first.image.src,later.image.src);
+ }
+ assert.equal(value.global_start_frame,48);assert.deepEqual(value,before);
+ // Exact source inventory is addressed by its original row index, with no
+ // rewritten global_frame or per-placement URL masquerading as a new asset.
+ assert.deepEqual([143,144,145,146,147].map(frame=>manimFrameIndex(value,frame,144)),[null,0,1,2,null]);
+ for(const f of [first,later])f.layer.dispose();
+});
+
+test('a locally authored zero-based sequence is hidden on both sides of its placement',async()=>{
+ const value=manifest();value.global_start_frame=0;
+ for(const row of value.frames)row.global_frame=row.index;
+ const f=fixture({value,placementStartFrame:72});
+ for(const frame of [0,71,72,74,75,73,73,71,72]){
+  await f.layer.renderAt({global_frame:frame});
+  assert.equal(f.image.style.display,frame>=72&&frame<75?'block':'none');
+  if(frame>=72&&frame<75)assert.ok(f.image.src.endsWith(`frame_${String(frame-72).padStart(6,'0')}.png`));
+ }
+ assert.equal(value.global_start_frame,0);f.layer.dispose();
+});
+
+test('placement validation happens before creating or appending a resource image',()=>{
+ let created=0,appended=0;
+ for(const placementStartFrame of [-1,.5,null,true,NaN,Infinity,Number.MAX_SAFE_INTEGER]){
+  assert.throws(()=>createManimFrameLayer({append(){appended++;}},manifest(),
+   {placementStartFrame,createImage(){created++;return {};}}),/placement_invalid/);
+ }
+ assert.equal(created,0);assert.equal(appended,0);
 });

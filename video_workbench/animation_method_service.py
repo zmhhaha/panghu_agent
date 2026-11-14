@@ -435,6 +435,9 @@ class AnimationMethodService:
         self.commissions = AnimationMethodCommissionStore(self.root / 'commissions.sqlite3', clock=clock)
         self.author, self.reviewer, self.renderer = author_gateway, review_gateway, renderer
         self.manim = manim_coordinator
+        from .lab_resource_stage import LabResourceStage
+        self.resource_stage = LabResourceStage(self.root / 'resource-plans.sqlite3',
+            bindings_path=self.commissions.path, coordinator=lambda: self.manim, clock=clock)
         self.author_protocol = getattr(type(author_gateway), 'protocol', protocol)
         self.knowledge = knowledge_store
         if self.knowledge is None and self.author_protocol is skill_protocol:
@@ -893,7 +896,7 @@ class AnimationMethodService:
             _require(len(canonical_bytes(detail)) <= 2 * 1024 * 1024,
                      'animation_method_response_too_large', 413)
         if run['frozen'].get('resource_authoring'):
-            detail['resource_authoring'] = (self.manim.view(owner, commission_id) if self.manim else
+            detail['resource_authoring'] = (self.resource_stage.view(owner, commission_id) if self.manim else
                 dict(kind='manim', status='unavailable', error='manim_resource_coordinator_required'))
         return detail
 
@@ -1264,7 +1267,8 @@ class AnimationMethodService:
         assets = deepcopy(run['frozen'].get('assets', {}))
         if run['frozen'].get('resource_authoring') and run.get('id'):
             _require(self.manim is not None, 'manim_method_resource_coordinator_required', 503)
-            descriptor = self.manim.context(owner, run['id'])
+            descriptor = self.resource_stage.context(owner, run['id'])
+            placement = self.resource_stage.placement(owner, run)
             _require(not (set(assets) & set(descriptor['assets_sha256'])), 'manim_method_resource_collision', 409)
             assets.update(descriptor['assets_sha256'])
             frozen_constraints['generated_resources'] = [descriptor]
@@ -1274,9 +1278,12 @@ class AnimationMethodService:
                 'rebuilding its frames. Import {prepareManimMethodFrames} from /assets/manim_method_frames.mjs. '
                 'The exact manifest object is constraints.generated_resources[0].manifest: embed that object '
                 'directly in scene.js (connect-src is disabled, so do not fetch JSON). Prepare a positioned '
-                'container, call prepareManimMethodFrames(container, manifest), expose its ready promise '
+                'container, call prepareManimMethodFrames(container, manifest, '
+                '{placementStartFrame: ' + str(placement['global_start_frame']) + '}), expose its ready promise '
                 'through window.__animationExperiment.ready, and call layer.seekFrame(Math.round(seconds*24)) '
-                'from the existing synchronous seek(seconds). Outside its half-open global frame range the '
+                'from the existing synchronous seek(seconds). The manifest retains resource-local timing; '
+                'the supplied placementStartFrame maps it into this project without changing the frames. '
+                'Outside its half-open placed global frame range the '
                 'layer is hidden; create your composition for the remaining project time. The helper '
                 'predecodes at most 60 bounded PNGs. Keep all other scene motion on the same absolute clock. '
                 'Do not use autoplay, timers, per-scene MP4 or autonomous playback.')
@@ -1533,7 +1540,7 @@ class AnimationMethodService:
                      'animation_method_historical_gateway_required', 409)
             if run['frozen'].get('resource_authoring'):
                 _require(self.manim is not None, 'manim_method_resource_coordinator_required', 503)
-                resource_state = self.manim.advance(owner, run,
+                resource_state = self.resource_stage.advance(owner, run,
                     cancelled=run['cancel_requested'] or self.clock() >= run['deadline_at'])
                 if resource_state in {'failed', 'cancelled'}:
                     self.commissions.stop(owner, commission_id, resource_state,

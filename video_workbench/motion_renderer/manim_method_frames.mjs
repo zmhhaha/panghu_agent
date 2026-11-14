@@ -1,8 +1,11 @@
 /* Resource-only compatibility with an admitted synchronous method seek host. */
 import {validateManimManifest,manimFrameIndex} from './manim_frame_layer.mjs';
 function require(value,code){if(!value)throw Error(code);}
-export function prepareManimMethodFrames(root,value,{createImage=()=>new Image()}={}){
+export function prepareManimMethodFrames(root,value,{createImage=()=>new Image(),placementStartFrame}={}){
  const manifest=validateManimManifest(value),images=[];
+ const first=placementStartFrame===undefined?manifest.global_start_frame:placementStartFrame;
+ require(Number.isSafeInteger(first)&&first>=0&&Number.isSafeInteger(first+manifest.frame_count),
+  'manim_frame_placement_invalid');
  require(manifest.frame_count<=60&&root&&typeof root.append==='function','manim_method_resource_invalid');
  let disposed=false,prepared=false,cursor=0,visible=null,rejectDisposed;
  const stopped=new Promise((_,reject)=>{rejectDisposed=reject;});
@@ -35,7 +38,7 @@ export function prepareManimMethodFrames(root,value,{createImage=()=>new Image()
   seekFrame(globalFrame){
    require(!disposed,'manim_method_resource_disposed');
    require(prepared,'manim_method_resource_not_ready');
-   const index=manimFrameIndex(manifest,globalFrame);
+   const index=manimFrameIndex(manifest,globalFrame,first);
    if(visible!==null)images[visible].style.display='none';
    visible=index;
    if(index!==null)images[index].style.display='block';

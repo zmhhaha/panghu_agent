@@ -244,3 +244,27 @@ class JointPlanAgentSettings:
         except ValueError:
             raise ValueError('Invalid dedicated VIDEO_JOINT_PLAN_AGENT configuration') from None
         return cls(settings.base_url, settings.token, settings.revision) if settings else None
+
+
+@dataclass(frozen=True, repr=False)
+class ResourcePlanningAgentSettings:
+    """Independent, source-only resource planner caller and admission."""
+    base_url: str
+    token: str
+    revision: str = '1'
+
+    @classmethod
+    def from_env(cls, env=None):
+        env = os.environ if env is None else env
+        try:
+            settings = AgentSettings.from_env({
+                'VIDEO_AGENT_URL': env.get('VIDEO_RESOURCE_PLAN_AGENT_URL', ''),
+                'VIDEO_AGENT_TOKEN': env.get('VIDEO_RESOURCE_PLAN_AGENT_TOKEN', ''),
+                'VIDEO_AGENT_TOKEN_FILE': env.get('VIDEO_RESOURCE_PLAN_AGENT_TOKEN_FILE', ''),
+                'VIDEO_AGENT_PROFILE_REVISION': env.get('VIDEO_RESOURCE_PLAN_PROFILE_REVISION', '1'),
+            })
+        except ValueError:
+            raise ValueError('Invalid dedicated VIDEO_RESOURCE_PLAN_AGENT configuration') from None
+        if settings is not None and settings.revision != '1':
+            raise ValueError('Unsupported VIDEO_RESOURCE_PLAN profile revision')
+        return cls(settings.base_url, settings.token, settings.revision) if settings else None

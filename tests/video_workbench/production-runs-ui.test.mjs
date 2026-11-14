@@ -51,7 +51,20 @@ test('whole-film modules enable draft review without pretending to be old scene 
   assert.equal(h.$('production-run-video').src,'/api/renders/one-project-render/video');
   assert.equal(posts(h).length,0);
   h.state.data={runs:[{ ...value, status:'running', phase:'module' }]}; await h.load();
-  assert.match(h.$('production-run-status').textContent,/按完整讲解制作连续动画/);
+  assert.match(h.$('production-run-status').textContent,/编排完整视频画面/);
+});
+
+test('resource phase reports stopped ready resources and excludes adopted recordings from animation progress', async () => {
+  const h=harness();
+  h.state.data={runs:[run({status:'running',phase:'resources',resources:{nodes:[
+    {id:'audio',producer:'verified-recording',status:'completed',stop_proven:true},
+    {id:'geometry',producer:'manim',status:'completed',stop_proven:true},
+    {id:'second',producer:'manim',status:'completed',stop_proven:false}
+  ]}})]};
+  await h.load();
+  assert.match(h.$('production-run-status').textContent,/预制资源 1\/2/);
+  assert.equal(posts(h).length,0);
+  assert.equal(h.$('production-run-player').hidden,true);
 });
 
 test('whole-video request requires adopted plan and saved inputs, sends no per-scene approvals',()=>{

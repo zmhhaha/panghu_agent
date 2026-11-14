@@ -1,5 +1,12 @@
-// Drawing engines and observed authoring dependencies are separate filters.
-const LABELS = Object.freeze({animejs:'Anime.js', manim:'Manim'});
+// Creation capabilities can share a browser engine. Motion libraries are a
+// separate layer; a loaded dependency never establishes aesthetic acceptance.
+const LABELS = Object.freeze({animejs:'Anime.js', gsap:'GSAP', manim:'Manim'});
+const CREATION_ENGINES = Object.freeze(['html-svg','canvas','three']);
+const MOTION_TOOLS = Object.freeze(['gsap','animejs']);
+
+export function toolLayer(id) {
+  return id === 'manim' ? 'creation' : MOTION_TOOLS.includes(id) ? 'motion' : null;
+}
 
 export function observedTools(value) {
   if (value?.engine_status !== 'rendered' || !Array.isArray(value.authoring_tools)) return [];
@@ -18,15 +25,24 @@ export function toolSearchText(value) {
 }
 
 export function matchesAuthoringTool(value,selected='all') {
-  return selected === 'all' || observedTools(value).some(row=>row.id===selected);
+  return selected === 'all' || MOTION_TOOLS.includes(selected)
+    && observedTools(value).some(row=>row.id===selected);
 }
 
-export function renderAuthoringBadges(doc,value) {
-  return observedTools(value).map(row=>{
+export function matchesVisualCreation(value,selected='all') {
+  if (selected === 'all') return true;
+  if (selected === 'manim') return observedTools(value).some(row=>row.id==='manim');
+  const engine = value?.engine_status === 'rendered' && CREATION_ENGINES.includes(value.engine)
+    ? value.engine : 'unknown';
+  return selected === engine;
+}
+
+export function renderAuthoringBadges(doc,value,layer='motion') {
+  return observedTools(value).filter(row=>toolLayer(row.id)===layer).map(row=>{
     const badge=doc.createElement('span');
-    badge.className='engine-badge'; badge.dataset.authoringTool=row.id;
+    badge.className='engine-badge'; badge.dataset.authoringTool=row.id; badge.dataset.capabilityLayer=layer;
     badge.textContent=row.label+' '+row.version;
-    badge.title='本样片渲染时已加载的创作工具；加载不代表效果已获认可。';
+    badge.title=(layer==='creation'?'画面创作资源':'动作编排依赖')+'；渲染时已加载，不代表效果已获认可。';
     return badge;
   });
 }
@@ -46,16 +62,16 @@ export function mountAuthoringControls(doc,onFilter) {
   const engine=doc.getElementById('gallery-engine'),form=doc.getElementById('experiment-form');
   let select,checkbox,seconds,note;
   if (engine?.parentNode?.parentNode?.append) {
-    const label=doc.createElement('label'); label.textContent='创作工具';
+    const label=doc.createElement('label'); label.textContent='动作编排';
     label.htmlFor='gallery-authoring-tool'; select=doc.createElement('select'); select.id='gallery-authoring-tool';
-    for (const [value,title] of [['all','全部'],['animejs','Anime.js'],['manim','Manim']]) {
+    for (const [value,title] of [['all','全部'],['gsap','GSAP'],['animejs','Anime.js']]) {
       const option=doc.createElement('option');option.value=value;option.textContent=title;select.append(option);
     }
     select.value='all';select.addEventListener('change',onFilter);label.append(select);engine.parentNode.parentNode.append(label);
   }
   if (form?.append) {
     const section=doc.createElement('details');section.className='form-details';
-    const summary=doc.createElement('summary');summary.textContent='创作工具（可选）';
+    const summary=doc.createElement('summary');summary.textContent='Manim 画面（可选）';
     note=doc.createElement('p');note.className='small muted';
     const label=doc.createElement('label');checkbox=doc.createElement('input');
     checkbox.type='checkbox';checkbox.name='use_manim_resource';checkbox.disabled=true;
@@ -66,7 +82,7 @@ export function mountAuthoringControls(doc,onFilter) {
     seconds.min='.5';seconds.max='2.5';seconds.step='.25';seconds.value='2';seconds.disabled=true;
     length.append(seconds);checkbox.addEventListener('change',()=>{seconds.disabled=checkbox.disabled||!checkbox.checked;});
     const help=doc.createElement('p');help.className='small muted';
-    help.textContent='Manim 片段由 Agent 创作，与其他画面共同组成完整样片。HTML/SVG、Canvas 和 Three.js 仍负责画面绘制。';
+    help.textContent='画面创作可组合 HTML/SVG、Canvas、Three.js 和 Manim；GSAP、Anime.js 属于动作编排。Manim 片段由 Agent 创作后加入完整样片。';
     section.append(summary,note,label,length,help);
     const footer=form.querySelector?.('.form-footer');
     if (footer?.before) footer.before(section);else form.append(section);
@@ -86,8 +102,8 @@ export function mountAuthoringControls(doc,onFilter) {
       checkbox.disabled=!manim||availability?.enabled!==true||busy;
       seconds.disabled=checkbox.disabled||!checkbox.checked;
       const anime=Boolean(availability?.authoring_libraries?.animejs);
-      note.textContent=(anime?'Anime.js 已开放，Agent 可按目标选用。':'Anime.js 暂未开放生成。')
-        +(manim?'Manim 片段已开放。':'Manim 片段暂未开放生成。');
+      note.textContent=(manim?'Manim 画面已开放。':'Manim 画面暂未开放生成。')
+        +(anime?'Anime.js 动作编排已开放，Agent 可按目标选用。':'Anime.js 动作编排暂未开放生成。');
     }
   };
 }

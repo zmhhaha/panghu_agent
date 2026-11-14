@@ -1,5 +1,5 @@
 import {createMethodComparison} from './method-comparison.mjs';
-import {mountAuthoringControls, renderAuthoringBadges, matchesAuthoringTool, toolSearchText, resourceAuthoringRequest} from './authoring-tools.mjs';
+import {mountAuthoringControls, renderAuthoringBadges, matchesAuthoringTool, matchesVisualCreation, toolSearchText, resourceAuthoringRequest} from './authoring-tools.mjs';
 import {usesExactSkillPublication, renderExactSkillPublication} from './skill-publication.mjs';
 
 const API = 'api/method-lab/';
@@ -392,10 +392,10 @@ export function renderMethodCard(doc, effect, root, onOpen) {
   const body = element(doc, 'div', 'card-body'), heading = element(doc, 'h3');
   heading.append(button(doc, text(effect.title) || '未命名效果', () => onOpen(effect.open_commission_id ?? effect.commission_id ?? effect.id), 'effect-title'));
   const engine = element(doc, 'div', 'card-engine');
-  engine.append(element(doc, 'span', 'small muted', '渲染技术'), renderEngineBadge(doc, effect,
-    !text(candidate?.media_url) && !text(candidate?.media?.url)));
+  engine.append(element(doc, 'span', 'small muted', '画面创作'), renderEngineBadge(doc, effect,
+    !text(candidate?.media_url) && !text(candidate?.media?.url)), ...renderAuthoringBadges(doc, effect, 'creation'));
   const tools = renderAuthoringBadges(doc, effect);
-  if (tools.length) engine.append(element(doc, 'span', 'small muted', '创作工具'), ...tools);
+  if (tools.length) engine.append(element(doc, 'span', 'small muted', '动作编排'), ...tools);
   body.append(heading, engine, element(doc, 'p', 'card-goal', text(effect.goal)));
   const meta = element(doc, 'div', 'card-meta');
   const state = displayState(effect);
@@ -737,7 +737,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
       engine = $('gallery-engine').value, authoringTool = authoringControls.selected;
     const all = catalog.effects;
     const filtered = all.filter(row => (!query || (text(row.title) + ' ' + text(row.goal) + ' ' + ENGINE_ALIASES[actualEngine(row)] + ' ' + toolSearchText(row)).toLocaleLowerCase().includes(query))
-      && (engine === 'all' || actualEngine(row) === engine)
+      && matchesVisualCreation(row, engine)
       && matchesAuthoringTool(row, authoringTool)
       && (filter === 'all' || filter === 'active' && ACTIVE.has(row.state) || filter === 'published' && displayState(row) === 'published'
         || filter === 'review' && !ACTIVE.has(row.state) && displayState(row) !== 'published'));
@@ -753,7 +753,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     const unavailableEngine = ['canvas', 'three'].includes(engine) && !all.some(row => actualEngine(row) === engine);
     $('gallery-no-results-message').textContent = unavailableEngine
       ? '效果库中暂无 ' + ENGINE_LABELS[engine] + ' 实际样片。' + (!rows(catalog.availability.allowed_engines).includes(engine) ? '该技术暂未开放生成。' : '')
-      : '没有匹配的效果，请调整搜索、状态、渲染技术或创作工具。';
+      : '没有匹配的效果，请调整搜索、状态、画面创作或动作编排。';
     $('gallery-count').textContent = (constrained ? filtered.length + ' / ' : '') + all.length + ' 个效果';
   };
   controller = new MethodGalleryController({root, request, storage, uuid, schedule, unschedule, onChange: state => {

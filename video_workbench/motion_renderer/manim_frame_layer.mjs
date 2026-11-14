@@ -25,15 +25,23 @@ export function validateManimManifest(value){
  require(total<=25165824);
  return structuredClone(value);
 }
-export function manimFrameIndex(manifest,globalFrame){
- require(Number.isInteger(globalFrame)&&globalFrame>=0,'manim_frame_clock_invalid');
- const index=globalFrame-manifest.global_start_frame;
+export function manimFrameIndex(manifest,globalFrame,placementStartFrame=manifest.global_start_frame){
+ require(Number.isSafeInteger(globalFrame)&&globalFrame>=0,'manim_frame_clock_invalid');
+ require(Number.isSafeInteger(placementStartFrame)&&placementStartFrame>=0
+  &&Number.isSafeInteger(placementStartFrame+manifest.frame_count),'manim_frame_placement_invalid');
+ // The producer's manifest and PNG inventory remain unchanged. An explicit
+ // placement maps the whole-film clock onto this original resource sequence;
+ // moving the same content later does not generate or rewrite any asset.
+ const index=globalFrame-placementStartFrame;
  // Half-open interval: a module decides any final hold explicitly; the adapter
  // never clamps another scene to a stale last frame or invents a timing stretch.
  return index<0||index>=manifest.frame_count?null:index;
 }
-export function createManimFrameLayer(root,value,{assetURL=path=>'/project/'+path,createImage=()=>new Image()}={}){
+export function createManimFrameLayer(root,value,{assetURL=path=>'/project/'+path,createImage=()=>new Image(),placementStartFrame}={}){
  const manifest=validateManimManifest(value);
+ const first=placementStartFrame===undefined?manifest.global_start_frame:placementStartFrame;
+ require(Number.isSafeInteger(first)&&first>=0&&Number.isSafeInteger(first+manifest.frame_count),
+  'manim_frame_placement_invalid');
  require(root&&typeof root.append==='function'&&typeof assetURL==='function');
  const image=createImage();
  // One live image only, decoded on demand. Never preload a full sequence. The
@@ -48,7 +56,7 @@ export function createManimFrameLayer(root,value,{assetURL=path=>'/project/'+pat
    require(!busy,'manim_frame_concurrent_render');
    busy=true;
    try{
-   const requested=manimFrameIndex(manifest,context?.global_frame);
+   const requested=manimFrameIndex(manifest,context?.global_frame,first);
    image.style.display='none';
    if(requested===null){index=null;return;}
    if(index!==requested){

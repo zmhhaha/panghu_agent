@@ -15,8 +15,10 @@ from .film_render_adapter import validate_film_render_result
 from .hyperframes_film_snapshot import decode_film_execution_snapshot
 from .manim_method_resources import helper_assets, method_resource, PRODUCER_REQUIREMENT
 from .manim_resource import require
+from .resource_placement import validate_manim_placement
 
 SCHEMA = 'video.manim-film-admission.v1'
+SHARED_SCHEMA = 'video.manim-film-admission.v2'
 CONTEXT_SCHEMA = 'video.manim-film-consumer-context.v1'
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
 _IMAGE = re.compile(r'[A-Za-z0-9./:_-]+:latest@sha256:[0-9a-f]{64}\Z')
@@ -26,7 +28,61 @@ def helpers():
     return {name: hashlib.sha256(raw).hexdigest() for name, raw in helper_assets().items()}
 
 
-def build_admission(*, resource_service, owner, operation_id, snapshot, result, media, capture):
+def _consumer_binding(binding, package, *, descriptor, view, operation_id, snapshot, files, project):
+    """Cross-check an original author package, not a source-string assertion."""
+    from .creative_film_module_contract import validate_module_package
+    from .hyperframes_film_project import module_identity
+    require(type(binding) is dict and set(binding) == {
+        'project_id', 'resource_operation_id', 'placement', 'resource_version_id'}
+        and binding['project_id'] == view.get('project_id') == snapshot['project_id']
+        and binding['resource_operation_id'] == operation_id
+        and type(binding['resource_version_id']) is str
+        and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}', binding['resource_version_id']),
+        'film_manim_consumer_binding_invalid', 409)
+    placement = validate_manim_placement(binding['placement'], descriptor,
+        project_frame_count=project['clock']['frame_count'])
+    package = validate_module_package(package)
+    document, module = package['input_document'], package['result']['module']
+    require(document['film_context']['film_sha256'] == snapshot['film_sha256']
+        and document['film_context']['film']['project_id'] == snapshot['project_id']
+        and module['film_sha256'] == snapshot['film_sha256'],
+        'film_manim_consumer_package_film_mismatch', 409)
+    identity = module_identity(module)
+    matches = [row for row in project['modules'] if row['module_id'] == module['module_id']
+        and row['module_sha256'] == identity]
+    require(len(matches) == 1 and all(files.get('project/' + name) == source.encode('utf-8')
+        for name, source in module['files'].items()), 'film_manim_consumer_source_changed', 409)
+    require(any(row['module_id'] == module['module_id']
+        and max(row['active_start_frame'], placement['global_start_frame'])
+            < min(row['active_end_frame'], placement['global_start_frame'] + placement['frame_count'])
+        for row in project['scenes']), 'film_manim_consumer_placement_inactive', 409)
+    required = {descriptor['manifest_path'], 'assets/manim_frame_layer.mjs',
+        *(row['path'] for row in descriptor['manifest']['frames'])}
+    require(required <= set(module['assets']), 'film_manim_consumer_declaration_missing', 409)
+    references = []
+    for match in re.finditer(r'APP-FROZEN-MANIM-FILM-RESOURCE\n(.*?)\nEND-APP-FROZEN-MANIM-FILM-RESOURCE',
+            document['scene']['instruction'], re.S):
+        try:
+            value = json.loads(match.group(1))
+        except (ValueError, UnicodeError, RecursionError):
+            require(False, 'film_manim_consumer_reference_invalid', 409)
+        if type(value) is dict:
+            references.append(value)
+    require(any(value.get('schema') == 'video.film-manim-resource-reference.v1'
+        and value.get('descriptor_sha256') == descriptor['sha256']
+        and value.get('envelope_sha256') == descriptor['envelope_sha256']
+        and value.get('scope') == descriptor['scope']
+        and value.get('manifest_path') == descriptor['manifest_path']
+        and value.get('manifest_sha256') == descriptor['manifest_sha256']
+        and value.get('placement') == placement
+        and value.get('resource_version_id') == binding['resource_version_id']
+        for value in references), 'film_manim_consumer_reference_mismatch', 409)
+    return dict(binding=json.loads(canonical_bytes(binding)), package_sha256=digest(package),
+        module_id=module['module_id'], module_sha256=identity)
+
+
+def build_admission(*, resource_service, owner, operation_id, snapshot, result, media, capture,
+        consumer_binding=None, consumer_package=None):
     view = resource_service.get(owner, operation_id)
     require(view['status'] == 'completed' and view['stop_proven'] is True
         and not view['cancel_requested'], 'film_manim_generation_not_proven', 409)
@@ -40,13 +96,20 @@ def build_admission(*, resource_service, owner, operation_id, snapshot, result, 
     checked = validate_film_render_result(result, snapshot, runtime_fingerprint=release['runtime_fingerprint'])
     require(type(media) is bytes and len(media) == checked['bytes']
         and hashlib.sha256(media).hexdigest() == checked['sha256'], 'film_manim_media_changed', 409)
-    require(view['film_sha256'] == snapshot['film_sha256'], 'film_manim_consumer_film_mismatch', 409)
+    require((consumer_binding is None) == (consumer_package is None),
+        'film_manim_consumer_binding_required', 409)
+    shared = consumer_binding is not None
+    if not shared:
+        require(view.get('film_sha256') == snapshot['film_sha256'], 'film_manim_consumer_film_mismatch', 409)
     required = {descriptor['manifest_path'], 'assets/manim_frame_layer.mjs',
         *(row['path'] for row in descriptor['manifest']['frames'])}
     for name in required:
         require(files.get('project/' + name) == assets[name.removeprefix('assets/')],
             'film_manim_consumer_assets_missing', 409)
     manifest = json.loads(files['project/manifest.json'])
+    consumer = (_consumer_binding(consumer_binding, consumer_package, descriptor=descriptor,
+        view=view, operation_id=operation_id, snapshot=snapshot, files=files, project=manifest)
+        if shared else None)
     consumers = [module for module in manifest['modules'] if required <= set(module['assets'])]
     require(consumers, 'film_manim_consumer_declaration_missing', 409)
     require(type(capture) is dict and digest(capture) == result['film_export']['capture_sha256']
@@ -55,12 +118,14 @@ def build_admission(*, resource_service, owner, operation_id, snapshot, result, 
     loaded = capture.get('probe', {}).get('loaded_resources')
     require(type(loaded) is list and all('/project/' + name in loaded for name in required),
         'film_manim_consumer_assets_not_loaded', 409)
-    record = dict(schema=SCHEMA, owner=owner, operation_id=operation_id,
+    record = dict(schema=SHARED_SCHEMA if shared else SCHEMA, owner=owner, operation_id=operation_id,
         producer=PRODUCER_REQUIREMENT, resource_image=image, helpers=helpers(), formal_release=release,
         evidence=dict(resource_request_sha256=view['request_sha256'], envelope_sha256=envelope['sha256'],
             descriptor_sha256=descriptor['sha256'], snapshot_sha256=snapshot['sha256'],
             result_sha256=digest(result), media_sha256=checked['sha256'], capture_sha256=digest(capture)),
         scope='stopped_resource_and_encoded_whole_film_not_visual_acceptance_or_skill_publication')
+    if shared:
+        record['consumer'] = consumer
     record['sha256'] = digest(record)
     return record
 
@@ -81,9 +146,11 @@ def read_admission(path):
         value = json.loads(_read(path, 64 * 1024))
     except (ValueError, UnicodeError, RecursionError):
         require(False, 'film_manim_admission_file_invalid', 503)
-    require(type(value) is dict and set(value) == {'schema', 'owner', 'operation_id', 'producer',
+    fields = {'schema', 'owner', 'operation_id', 'producer',
         'resource_image', 'helpers', 'formal_release', 'evidence', 'scope', 'sha256'}
-        and value['schema'] == SCHEMA and type(value['sha256']) is str and _SHA.fullmatch(value['sha256'])
+    require(type(value) is dict and value.get('schema') in {SCHEMA, SHARED_SCHEMA}
+        and set(value) == fields | ({'consumer'} if value['schema'] == SHARED_SCHEMA else set())
+        and type(value['sha256']) is str and _SHA.fullmatch(value['sha256'])
         and digest({key: item for key, item in value.items() if key != 'sha256'}) == value['sha256'],
         'film_manim_admission_binding_invalid', 503)
     return value
@@ -98,8 +165,17 @@ def validate_admission(path, *, resource_service):
     result = json.loads(_read(root / 'result.json', 512 * 1024))
     media = _read(root / 'video.mp4', 128 * 1024 * 1024)
     capture = json.loads(_read(root / 'capture.json', 32 * 1024 * 1024))
+    consumer = {}
+    if value['schema'] == SHARED_SCHEMA:
+        detail = value.get('consumer')
+        require(type(detail) is dict and set(detail) == {
+            'binding', 'package_sha256', 'module_id', 'module_sha256'},
+            'film_manim_consumer_binding_invalid', 503)
+        package = json.loads(_read(root / 'consumer-package.json', 48 * 1024 * 1024))
+        require(digest(package) == detail['package_sha256'], 'film_manim_consumer_package_changed', 503)
+        consumer = dict(consumer_binding=detail['binding'], consumer_package=package)
     actual = build_admission(resource_service=resource_service, owner=value['owner'],
-        operation_id=value['operation_id'], snapshot=snapshot, result=result, media=media, capture=capture)
+        operation_id=value['operation_id'], snapshot=snapshot, result=result, media=media, capture=capture, **consumer)
     require(actual == value, 'film_manim_admission_evidence_changed', 503)
     return actual
 

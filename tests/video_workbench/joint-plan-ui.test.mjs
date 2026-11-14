@@ -104,6 +104,24 @@ test('review supports autonomous structure, global expression and inert text, wi
   provided.result.scenes[0].duration_seconds = '8'; assert.equal(jointPlanEstimate(provided), null);
 });
 
+test('resource sidecar updates the same candidate before overall confirmation and never starts media from a read', async () => {
+  const h = harness(), candidate = version();
+  candidate.adoptable = false;
+  candidate.resource_planning = {status:'pending'};
+  h.state.data = response([candidate]); await h.load();
+  assert.match(h.$('joint-plan-review').textContent,/正在根据整片方案规划资源/);
+  assert.equal(h.$('confirm-joint-plan-adoption').disabled,true);
+  candidate.adoptable = true;
+  candidate.resource_planning = {status:'completed',result_sha256:'a'.repeat(64),raw_result:{reason:'先用短动画解释轨迹。',warnings:[]}};
+  candidate.resource_plan = {nodes:[{id:'orbit',producer:'manim',objective:'展示轨道逐步展开。',
+    key_effects:['continuous-trace'],placement:{segment_id:'worker-takes',start_frame:0}}],budget:{max_attempts:1}};
+  h.state.data = response([candidate]); await h.load();
+  assert.match(h.$('joint-plan-review').textContent,/Manim 动画 · 段落 2 · 执行器接走/);
+  assert.match(h.$('joint-plan-review').textContent,/展示轨道逐步展开/);
+  assert.equal(h.$('confirm-joint-plan-adoption').disabled,false);
+  assert.equal(posts(h).length,0);
+});
+
 test('whole-plan adoption requires explicit confirmation and exact revision/head; no media production follows', async () => {
   const h = harness(); h.state.data = response([version()], null, 'old-head'); await h.load();
   await h.panel.adopt(); assert.equal(posts(h).length, 0);

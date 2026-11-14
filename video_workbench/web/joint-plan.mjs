@@ -121,6 +121,34 @@ export function createJointPlanPanel({ document, getContext, request, refresh, o
     addText(continuity, '段落之间如何衔接', result.continuity);
     overview.append(style, continuity); target.append(overview);
     target.append(text('p', `${result.scenes?.length ?? 0} 个表达段落${estimate === null ? '' : ` · 预计 ${estimate} 秒`}。时长为文本估算，实际以配音录音为准。全片沿用项目统一音色。`, 'field-note'));
+    if (version.resource_planning) {
+      const section = text('section', undefined, 'joint-plan-resources');
+      section.append(text('h4', '制作前需要准备的资源'));
+      const planning = version.resource_planning;
+      if (planning.status !== 'completed') {
+        section.append(text('p', planning.status === 'pending' || planning.status === 'running'
+          ? '正在根据整片方案规划资源，完成后再一起确认。'
+          : '资源规划尚未完成，暂不能采用这份方案。'));
+      } else {
+        const nodes = version.resource_plan?.nodes ?? [];
+        const segments = new Map((result.scenes ?? []).map((scene, index) => [scene.segment_id, `段落 ${index + 1} · ${scene.title}`]));
+        section.append(text('p', nodes.length
+          ? '采用整份方案后，先按依赖准备这些资源，再编排视频。讲解部分以实际配音时长为准。'
+          : '本方案无需提前制作动画资源，将在视频编排时绘制画面；旁白仍先生成。', 'field-note'));
+        for (const node of nodes) {
+          const row = text('article');
+          row.append(text('h5', `${node.producer === 'manim' ? 'Manim 动画' : node.producer} · ${segments.get(node.placement?.segment_id) ?? '待核对段落'}`));
+          row.append(text('p', node.objective, 'preserve-whitespace'));
+          if (node.key_effects?.length) addList(row, '需要保留的效果', node.key_effects);
+          section.append(row);
+        }
+        if (nodes.length) section.append(text('p', `本次资源最多执行 ${version.resource_plan.budget?.max_attempts ?? nodes.length} 次。`, 'field-note'));
+        const explanation = planning.raw_result;
+        if (explanation?.reason) section.append(text('p', explanation.reason, 'preserve-whitespace'));
+        if (explanation?.warnings?.length) addList(section, '资源说明', explanation.warnings);
+      }
+      target.append(section);
+    }
     // Recommendations appear only when this exact candidate contains a decision.
     if (result.method_decision != null) {
       const decision = text('details', undefined, 'joint-plan-method');
@@ -203,7 +231,8 @@ export function createJointPlanPanel({ document, getContext, request, refresh, o
     $('joint-plan-empty').hidden = Boolean(selected);
     const binding = JSON.stringify([project.id, project.revision, selected?.id, data?.head_version_id, selected?.stale, selected?.adoptable]);
     if (confirmationKey !== binding) { confirmationKey = binding; $('confirm-joint-plan-adoption').checked = false; }
-    review(project, selected, JSON.stringify([project.id, project.revision, selected?.id]));
+    review(project, selected, JSON.stringify([project.id, project.revision, selected?.id,
+      selected?.resource_planning?.status, selected?.resource_planning?.result_sha256]));
     const adopted = selected?.id === data?.head_version_id;
     const eligible = context.configured && fresh && selected?.adoptable === true && !selected.stale && !adopted;
     $('joint-plan-adoption').hidden = !selected;

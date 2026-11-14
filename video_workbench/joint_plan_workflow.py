@@ -14,11 +14,12 @@ CANCEL_RETRY_DELAYS = (2.0, 5.0, 15.0, 30.0)
 
 
 class JointPlanWorkflow:
-    def __init__(self, store, gateway=None, *, enabled=False, method_adapter=None):
+    def __init__(self, store, gateway=None, *, enabled=False, method_adapter=None, resource_planner=None):
         if type(enabled) is not bool:
             raise ValueError('An explicit boolean joint_plan feature gate is required')
         self.store, self.gateway, self.enabled = store, gateway, enabled
         self.method_adapter = method_adapter
+        self.resource_planner = resource_planner
         self.lock = threading.Lock()
         self.stopping = threading.Event()
         self.thread = None
@@ -54,7 +55,13 @@ class JointPlanWorkflow:
                 try:
                     self._step(op)
                 except ServiceError as exc:
-                    if exc.status >= 500 and exc.code.startswith(('service_', 'http_')):
+                    current = self.store.operation(op['id'])
+                    resource = current.get('resource_planning')
+                    if resource and resource.get('submit_attempted') and not resource.get('stop_proven'):
+                        self.store.update_operation(op['id'], error=exc.code)
+                    elif resource and self.resource_planner is not None:
+                        self.resource_planner._update(op['id'], dict(stop_proven=True, error=exc.code), terminal='failed')
+                    elif exc.status >= 500 and exc.code.startswith(('service_', 'http_')):
                         self.store.update_operation(op['id'], error=exc.code)
                     else:
                         self.store.update_operation(op['id'], status='failed', error=exc.code)
@@ -68,6 +75,12 @@ class JointPlanWorkflow:
         gateway = self.gateway
         op = self.store.operation(op['id'])
         if op['status'] not in ACTIVE:
+            return
+        if op.get('resource_planning') is not None:
+            if self.resource_planner is None:
+                self.store.update_operation(op['id'], error='resource_planning_unavailable')
+                return
+            self.resource_planner.advance(op['id'], enabled=self.enabled)
             return
         if not self.enabled and not op['submit_attempted'] and not op['job_id']:
             self.store.update_operation(op['id'], status='cancelled', error='joint_plan_disabled')
@@ -113,7 +126,7 @@ class JointPlanWorkflow:
             # whose local deadline has passed. complete() records the race.
             result = None if op['cancel_requested'] or time.time() >= op['deadline_at'] else gateway.collect(
                 op['job_id'], op['input_sha256'], op['document'])
-            self.store.complete(op['id'], result)
+            self.store.complete(op['id'], result, resource_planning=self.resource_planner is not None)
         elif state in {'failed', 'needs_input', 'cancelled', 'timed_out', 'quarantined'}:
             self.store.update_operation(op['id'], status='failed' if state == 'quarantined' else state,
                 error=None if state == 'cancelled' else 'agent_' + state)

@@ -85,7 +85,7 @@ def verify_film_resource(op, descriptor, envelope, *, image):
     return {'assets/' + name: raw for name, raw in assets.items()}
 
 
-def attach_film_resource(core, descriptor, assets):
+def attach_film_resource(core, descriptor, assets, *, placement=None, resource_version_id=None):
     core = validate_core_task(core)
     hashes = {'assets/' + name: sha for name, sha in descriptor['assets_sha256'].items()}
     require(set(assets) == set(hashes) and all(core['assets'][name] == hashes[name]
@@ -100,13 +100,21 @@ def attach_film_resource(core, descriptor, assets):
         fps=24, frame_count=manifest['frame_count'], global_start_frame=manifest['global_start_frame'],
         source_sha256=manifest['source_sha256'],
         helper='assets/manim_frame_layer.mjs', assets=sorted(hashes))
+    if placement is not None:
+        from .resource_placement import validate_manim_placement
+        placement = validate_manim_placement(placement, descriptor,
+            project_frame_count=round(core['film_context']['film']['total_seconds'] * 24))
+        reference.update(placement=placement, resource_version_id=resource_version_id)
     guidance = (
         'An independently authored and stopped Manim/Cairo resource is frozen below. '
         'Compose it freely with your original native objects, labels and transitions; do not execute Python. '
         'Import createManimFrameLayer from /project/assets/manim_frame_layer.mjs. During async mount, '
         'fetch the exact manifest at /project/ plus manifest_path and parse JSON. The exact signature is '
         'createManimFrameLayer(root, manifest, options={}); call it with your own connected mount-root '
-        'child element as root and that parsed manifest as the second argument. Default options already '
+        'child element as root and that parsed manifest as the second argument. '
+        + ('Pass options={placementStartFrame:' + str(placement['global_start_frame']) + '}. '
+            'This placement maps the local resource clock into the whole film; never rewrite its manifest. '
+            if placement is not None else '') + 'Default options already '
         'resolve every asset under /project/; do not override the clock or URLs. Await '
         'layer.renderAt(context) from every renderAt using the real global_frame. '
         'Dispose the layer from dispose. The helper uses a half-open global frame interval; outside it '
@@ -128,9 +136,13 @@ def attach_film_resource(core, descriptor, assets):
 
 def merge_film_resources(runtime_assets, records):
     """Check total decoded bytes and final film inventory across all resources."""
-    resources, helpers = [], {}
+    resources, helpers, seen = [], {}, set()
     for record in records:
         envelope, image = record['envelope'], record['image']
+        identity = (envelope['sha256'], image)
+        if identity in seen:
+            continue
+        seen.add(identity)
         files = decode_generated_assets(envelope, expected_sha256=envelope['sha256'],
             **envelope['scope'], runtime_image_digest=image.rsplit('@', 1)[1])
         resources.append((files, envelope['request'], envelope['manifest_sha256'], image.rsplit('@', 1)[1]))

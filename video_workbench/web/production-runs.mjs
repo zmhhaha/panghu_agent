@@ -3,7 +3,7 @@ import { mutationErrorLabel, speechVoiceName } from './model.mjs';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'stale']);
 const STATUS = { queued: '等待制作', running: '制作中', completed: '草稿待审阅', failed: '制作未完成', cancelled: '已取消', stale: '项目内容已变化' };
-const PHASE = { audio: '制作全片配音', motion: '按实际录音制作动画', module: '按完整讲解制作连续动画', draft: '渲染整片有声草稿', completed: '草稿待审阅' };
+const PHASE = { audio: '制作全片配音', resources: '按方案准备动画与声音资源', motion: '按实际录音制作动画', module: '编排完整视频画面', draft: '渲染整片草稿', completed: '草稿待审阅' };
 const animationReady = (run, item) => run.renderer_mode === 'hyperframes-film'
   ? Boolean(item.module_version_id) : Boolean(item.motion_version_id);
 const uncertain = error => typeof error === 'string' && /uncertain|unconfirmed/.test(error);
@@ -12,6 +12,14 @@ export const productionRunUnresolved = run => Boolean(run?.id && (!TERMINAL.has(
 const pathFor = id => `/api/projects/${encodeURIComponent(id)}/production-runs`;
 const positive = value => typeof value === 'number' && Number.isFinite(value) && value > 0;
 const seconds = value => Math.round(value * 1000) / 1000;
+
+export function productionResourceProgress(run) {
+  const nodes = Array.isArray(run?.resources?.nodes)
+    ? run.resources.nodes.filter(node => node?.producer !== 'verified-recording') : [];
+  if (!nodes.length) return '';
+  const ready = nodes.filter(node => node.status === 'completed' && node.stop_proven === true).length;
+  return `预制资源 ${ready}/${nodes.length}`;
+}
 
 /** Current-content projection is independent of the history dropdown. */
 export function currentProductionRun(project, runs = []) {
@@ -120,7 +128,7 @@ export function createProductionRunsPanel({ document, getContext, request, refre
       : value.unsaved ? '请先保存或重新载入未保存的项目修改。草稿输入会保留。'
       : running ? '本次制作使用已确认方案和统一音色。可查看进度或申请取消。'
       : value.projectBusy ? '项目中还有其他任务，请等待结束后再制作整片草稿。'
-      : '使用已采用的整片方案：先配音，再按实际录音制作动画，最后合成有声草稿。无需逐镜确认。';
+      : '使用已采用的整片方案：先准备配音及所需资源，再编排画面并渲染整片草稿。无需逐镜确认。';
     if (value.enabled && positive(value.settings?.production_run_max_seconds)) {
       $('production-run-note').textContent += ` 当前单次最多 ${value.settings.production_run_max_seconds} 秒。`;
     }
@@ -141,6 +149,8 @@ export function createProductionRunsPanel({ document, getContext, request, refre
     const labels = [status];
     if (!TERMINAL.has(run.status) && PHASE[run.phase] && PHASE[run.phase] !== status) labels.push(PHASE[run.phase]);
     if (progress) labels.push(progress);
+    const resources = productionResourceProgress(run);
+    if (resources) labels.push(resources);
     if (run.current === false) labels.push('历史内容，项目已变化');
     else if (!contentKnown) labels.push('内容匹配状态待读取');
     $('production-run-status').textContent = labels.join(' · ');

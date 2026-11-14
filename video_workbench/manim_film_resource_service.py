@@ -59,6 +59,26 @@ class _AdmissionBoundary:
 
 
 def validate_request(value):
+    prepared = type(value) is dict and value.get('schema') == 'video.prepared-manim-resource-request.v1'
+    if prepared:
+        require(set(value) == {'schema', 'operation_id', 'project_id', 'node_id', 'goal', 'guidance',
+            'duration_seconds', 'resource_authoring', 'deadline_at'}, 'film_manim_request_invalid')
+        require(_uuid(value['operation_id']) and type(value['project_id']) is str
+            and _IDENTIFIER.fullmatch(value['project_id']) and type(value['node_id']) is str
+            and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}', value['node_id']),
+            'film_manim_scope_invalid')
+        require(type(value['duration_seconds']) in (int, float) and math.isfinite(value['duration_seconds'])
+            and 0 < value['duration_seconds'] <= 60, 'film_manim_clock_invalid')
+        options = authoring_request(value['resource_authoring'], value['duration_seconds'])
+        require(options['global_start_frame'] == 0
+            and options['frame_count'] == round(value['duration_seconds'] * 24),
+            'film_manim_local_clock_invalid')
+        legacy = dict(value)
+        legacy.pop('schema'); legacy.pop('node_id')
+        legacy.update(scene_id='prepared-resource', film_sha256='0' * 64,
+            scene_start_frame=0, scene_end_frame=options['frame_count'])
+        validate_request(legacy)
+        return deepcopy(value)
     require(type(value) is dict and set(value) == REQUEST_FIELDS,
         'film_manim_request_invalid')
     require(_uuid(value['operation_id']) and all(type(value[key]) is str
@@ -163,7 +183,9 @@ class ManimFilmResourceService:
                 db.commit()
                 return self.get(owner, request['operation_id'])
             require(self.enabled or self.candidate, 'film_manim_not_admitted', 503)
-            require(0 < request['deadline_at'] - self.clock() <= 900, 'film_manim_deadline_invalid')
+            require(0 < request['deadline_at'] - self.clock()
+                <= (86400 if request.get('schema') == 'video.prepared-manim-resource-request.v1' else 900),
+                'film_manim_deadline_invalid')
             require(db.execute('SELECT count(*) FROM film_resources').fetchone()[0] < 4096,
                 'film_manim_operation_limit', 413)
             value = dict(schema=SCHEMA, owner=owner, id=request['operation_id'], request=request,
@@ -201,7 +223,7 @@ class ManimFilmResourceService:
         descriptor = (self.coordinator.context(owner, 'film-' + operation_id)
             if status == 'completed' and not value['cancel_requested'] else None)
         return dict(schema=SCHEMA, operation_id=operation_id, project_id=value['request']['project_id'],
-            scene_id=value['request']['scene_id'], film_sha256=value['request']['film_sha256'],
+            **({key: value['request'][key] for key in ('node_id', 'scene_id', 'film_sha256') if key in value['request']}),
             request_sha256=digest(value['request']), status=status,
             error=value['error'] or view.get('error'), cancel_requested=value['cancel_requested'],
             stop_proven=status in TERMINAL, descriptor=descriptor,

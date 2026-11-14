@@ -41,10 +41,15 @@ def packed(value):
 
 
 class ProductionRunStore:
-    def __init__(self, store, joint_plan_store, motion_store, production, *, film_creation=None, sequence_store=None):
+    def __init__(self, store, joint_plan_store, motion_store, production, *, film_creation=None, sequence_store=None,
+            resource_stage=None):
         self.store, self.joint, self.motion, self.production = store, joint_plan_store, motion_store, production
         self.film_creation = film_creation
         self.sequence_store = sequence_store
+        if resource_stage is None and film_creation is not None:
+            from .production_resource_stage import ProductionResourceStage
+            resource_stage = ProductionResourceStage(store, film_creation)
+        self.resource_stage = resource_stage
         with store.transaction() as db:
             db.executescript('''CREATE TABLE IF NOT EXISTS production_runs (
                 id TEXT PRIMARY KEY, owner TEXT NOT NULL, project_id TEXT NOT NULL,
@@ -86,6 +91,9 @@ class ProductionRunStore:
         if 'resource_authoring' in run:
             result.update(resource_authoring=deepcopy(run['resource_authoring']),
                 resource_work_budget=deepcopy(run['resource_work_budget']))
+        if 'resource_plan_registration' in run:
+            result.update(resource_plan_registration=deepcopy(run['resource_plan_registration']),
+                resources=deepcopy(run.get('resource_progress', {})))
         return result
 
     @staticmethod
@@ -378,6 +386,26 @@ class ProductionRunStore:
 
     def _matches(self, run, project, db):
         try:
+            source = run.get('resource_plan_source')
+            if source is not None:
+                row = db.execute('SELECT document FROM joint_plan_versions WHERE id=? AND owner=? AND project_id=?',
+                    (source['version_id'], run['owner'], run['project_id'])).fetchone()
+                actual = project.get('joint_plan', {}).get('resource_plan')
+                version = json.loads(row[0]) if row else {}
+                original = version.get('resource_plan')
+                if (digest(actual) != source['requirements_sha256']
+                        or digest(original) != source['source_sha256']):
+                    return False
+                adoption = source.get('adoption_source')
+                if adoption is not None and (adoption != project.get('joint_plan', {}).get('resource_plan_source')
+                        or adoption.get('version_id') != source['version_id']
+                        or adoption.get('candidate_resource_plan_sha256') != digest(original)
+                        or adoption.get('requirements_sha256') != digest(actual)
+                        or adoption.get('resource_planning_input_sha256')
+                            != version.get('resource_planning', {}).get('input_sha256')
+                        or adoption.get('resource_planning_result_sha256')
+                            != version.get('resource_planning', {}).get('result_sha256')):
+                    return False
             head = self.joint._head(db, run['owner'], run['project_id'])
             return (head['version_id'] == run['joint_plan_version_id']
                 and head['applied_binding_sha256'] == self.joint._binding(project)
@@ -537,7 +565,8 @@ class ProductionRunStore:
 
     def start(self, owner, project_id, request, idem):
         required = {'expected_revision', 'joint_plan_version_id'}
-        require(type(request) is dict and required <= set(request) <= required | {'reuse_audio_from_run_id', 'resource_authoring'}
+        require(type(request) is dict and required <= set(request) <= required | {
+            'reuse_audio_from_run_id', 'resource_authoring', 'resource_plan'}
             and type(request['expected_revision']) is int and request['expected_revision'] >= 1
             and type(request['joint_plan_version_id']) is str and 1 <= len(request['joint_plan_version_id']) <= 100
             and ('reuse_audio_from_run_id' not in request or type(request['reuse_audio_from_run_id']) is str
@@ -558,7 +587,7 @@ class ProductionRunStore:
                 # visual work. Failed registration never falls back to a new
                 # sequence or fresh recordings. No GET performs this mutation.
                 parent_sequence = self._sequence_parent(owner, project_id, request['reuse_audio_from_run_id'])
-        configuration = None
+        configuration = resource_plan = resource_source = None
         if self.film_creation is not None:
             # The facade authorizes through this same SQLite store and may do
             # network preflight. Do not hold BEGIN IMMEDIATE while calling it.
@@ -568,9 +597,37 @@ class ProductionRunStore:
             if replay is None:
                 configuration = self._check_film_configuration(
                     self.film_creation.freeze_configuration(owner, project_id))
-                if resource_authoring is not None:
-                    self.film_creation.preflight_resources(owner)
+                with self.store.transaction() as db:
+                    planning_project = self.store._project(db, owner, project_id)
+                    source_row = db.execute('SELECT document FROM joint_plan_versions WHERE id=? AND owner=? AND project_id=?',
+                        (request['joint_plan_version_id'], owner, project_id)).fetchone()
+                    selected_plan = planning_project.get('joint_plan', {}).get('resource_plan')
+                    original_plan = json.loads(source_row[0]).get('resource_plan') if source_row else None
+                if 'resource_plan' in request:
+                    require(resource_authoring is None, 'production_run_conflicting_resource_plans')
+                    selected_plan = request['resource_plan']
+                elif resource_authoring is not None:
+                    # The former optional map is normalized into the shared
+                    # run-level graph. New module tasks never launch resources.
+                    require(set(resource_authoring) <= {s['id'] for s in planning_project['scenes']},
+                        'production_run_resource_scene_invalid', 409)
+                    selected_plan = dict(nodes=[dict(id='manim_' + scene_id, kind='animation', producer='manim',
+                        inputs=dict(resource_authoring=dict(options, global_start_frame=0)), dependencies=[],
+                        objective=next(s['visual_description'] for s in planning_project['scenes'] if s['id'] == scene_id),
+                        required_capabilities=['manim'], key_effects=[], local_timing={},
+                        placement=dict(scene_id=scene_id, start_frame=options.get('global_start_frame', 0)))
+                        for scene_id, options in resource_authoring.items()])
+                else:
+                    resource_source = dict(version_id=request['joint_plan_version_id'],
+                        requirements_sha256=digest(selected_plan), source_sha256=digest(original_plan),
+                        adoption_source=deepcopy(planning_project.get('joint_plan', {}).get('resource_plan_source')))
+                from .production_resource_stage import production_plan
+                resource_plan = production_plan(selected_plan, self._freeze(planning_project, film_aware=True),
+                    deadline_at=time.time() + 7200)
+                self.resource_stage.preflight(owner, resource_plan)
         require(resource_authoring is None or self.film_creation is not None,
+            'production_run_resources_require_film', 503)
+        require('resource_plan' not in request or self.film_creation is not None,
             'production_run_resources_require_film', 503)
         with self.store.transaction() as db:
             row = db.execute('SELECT request_hash,document FROM production_runs WHERE owner=? AND idem=?',
@@ -645,6 +702,11 @@ class ProductionRunStore:
                 for item in run['items']:
                     item.update(module_operation_id=None, module_version_id=None, module_status='queued',
                         module_sha256=None, module_package_sha256=None, module_engine=None)
+                run.update(resource_plan=resource_plan,
+                    resource_plan_registration=dict(status='pending', operation_id=run['id'],
+                        request_sha256=digest(resource_plan)), resource_progress={})
+                if resource_source is not None:
+                    run['resource_plan_source'] = resource_source
                 if resource_authoring is not None:
                     run.update(resource_authoring=deepcopy(resource_authoring), resource_work_budget=dict(
                         recipe_jobs=len(resource_authoring), resource_executions=len(resource_authoring)))
@@ -867,6 +929,11 @@ class ProductionRunStore:
 
     def _stop(self, run):
         pending = False
+        if 'resource_plan_registration' in run:
+            self._ensure_resource_plan(run)
+            resources = self.resource_stage.cancel(run)
+            self._resource_progress(run, resources)
+            pending = not resources['stop_proven']
         for intent in run['intents'].values():
             child = self._lookup(run, intent)
             if child is None:
@@ -989,9 +1056,9 @@ class ProductionRunStore:
                 predecessor_version_id=None if index == 0 else run['items'][index - 1]['module_version_id'],
                 target=deepcopy(run['module_targets'][index]), instruction='',
                 configuration_sha256=configuration_sha256)
-            options = run.get('resource_authoring', {}).get(run['items'][index]['scene_id'])
-            if options is not None:
-                result['resource_authoring'] = deepcopy(options)
+            references = run.get('prepared_resource_references', {}).get(run['items'][index]['scene_id'], [])
+            if references:
+                result['resource_references'] = deepcopy(references)
             return result
         for module_index in range(len(run['items'])):
             self._frozen_module_package(run, module_index)
@@ -1010,6 +1077,22 @@ class ProductionRunStore:
             self._freeze_film(run)
             require(run['film']['total_seconds'] <= run['film_creation_configuration']['max_seconds'],
                 'production_run_film_too_long', 422)
+            if 'resource_plan_registration' in run:
+                self._ensure_resource_plan(run)
+                self.resource_stage.validate_timing(run)
+                resources = self.resource_stage.advance(run, admit=admit)
+                self._resource_progress(run, resources)
+                if resources['status'] in {'blocked', 'cancelled', 'timed_out'}:
+                    self._finish(run, 'failed', 'production_run_resource_' + resources['status'])
+                    run['draining'] = not resources['stop_proven']
+                    self._save(run)
+                    return
+                if resources['status'] != 'completed':
+                    run['phase'] = 'resources'
+                    self._save(run)
+                    return
+                if 'prepared_resource_references' not in run:
+                    run['prepared_resource_references'] = self.resource_stage.module_references(run, resources)
             run['phase'] = 'module'
             if all(item['module_version_id'] for item in run['items']):
                 run['phase'] = 'draft'
@@ -1052,6 +1135,21 @@ class ProductionRunStore:
         self._sync(run, intent, child)
         self._save(run)
 
+    def _ensure_resource_plan(self, run):
+        self.resource_stage.ensure(run)
+        # Persist successful registration before any producer can claim work.
+        # Missing registered ledgers fail closed, rather than rebuilding tasks.
+        self._save(run)
+
+    @staticmethod
+    def _resource_progress(run, view):
+        run['resource_progress'] = dict(status=view['status'], stop_proven=view['stop_proven'],
+            usage=deepcopy(view['usage']), budget=deepcopy(view['budget']),
+            nodes=[dict(id=node_id, kind=row['definition']['kind'], producer=row['definition']['producer'],
+                status=row['status'], stop_proven=row['stop_proven'], error=row['error'],
+                resource_version_id=(row['output'] or {}).get('resource_version_id'))
+                for node_id, row in view['nodes'].items()])
+
     def tick(self):
         with self.store.lock:
             with self.store.transaction() as db:
@@ -1065,6 +1163,8 @@ class ProductionRunStore:
                 except ServiceError as error:
                     self._finish(run, 'failed', error.code)
                     run['draining'] = True
+                    if error.code == 'production_resource_ledger_missing':
+                        run['blocked_reason'] = error.code
                     self._save(run)
                 except Exception:
                     # The local child may have committed: recover by stable key
