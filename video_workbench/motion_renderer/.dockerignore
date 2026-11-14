@@ -8,6 +8,13 @@
 !creative.mjs
 !engine_runtime.mjs
 !hyperframes_project.mjs
+!hyperframes_film.mjs
+!hyperframes_film_browser.mjs
+!hyperframes_film_capture.mjs
+!hyperframes_film_root.mjs
+!hyperframes_film_realm.mjs
+!hyperframes_film_realm_guard.mjs
+!hyperframes_film_channel.mjs
 !contract.mjs
 !experiment.py
 !vendor/

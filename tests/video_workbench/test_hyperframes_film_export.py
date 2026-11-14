@@ -179,6 +179,28 @@ def test_timeout_terminates_a_real_child_process_tree_before_returning(tmp_path)
     assert not psutil.pid_exists(pid) or psutil.Process(pid).status() in {psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD}
 
 
+def test_encoded_audio_shorter_than_film_preserves_probe_in_failure_and_cleans(tmp_path, monkeypatch):
+    if not all(shutil.which(name) for name in ('node', 'ffmpeg', 'ffprobe')):
+        pytest.skip('Existing runtime tools required.')
+    files, checksum = fixture(24)
+    capture_double(monkeypatch)
+    capture_run = E._run
+    def run(command, *, cwd, deadline):
+        raw = capture_run(command, cwd=cwd, deadline=deadline)
+        if Path(command[0]).name.lower().startswith('ffprobe'):
+            media = json.loads(raw)
+            audio, = [row for row in media['streams'] if row['codec_type'] == 'audio']
+            audio['duration_ts'] -= 1024
+            return canonical_bytes(media)
+        return raw
+    monkeypatch.setattr(E, '_run', run)
+    with pytest.raises(ServiceError, match='hyperframes_film_export_media_timing_mismatch') as caught:
+        E.export_film_browser_bundle(files, expected_bundle_sha256=checksum, scratch_dir=tmp_path)
+    audio, = [row for row in caught.value.media_probe['streams'] if row['codec_type'] == 'audio']
+    assert Fraction(audio['duration_ts']) * Fraction(audio['time_base']) < 1
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_wrong_bundle_digest_stops_before_launching_any_process(tmp_path, monkeypatch):
     files, _ = fixture(24)
     monkeypatch.setattr(E, '_run', lambda *args, **kwargs: pytest.fail('must not launch'))

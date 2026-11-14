@@ -245,7 +245,9 @@ def export_film_browser_bundle(files, *, expected_bundle_sha256, scratch_dir,
         _run([str(binaries['ffmpeg']), '-hide_banner', '-loglevel', 'error', '-nostdin', '-n',
             '-threads', '1', '-filter_threads', '1', '-framerate', '24', '-start_number', '0',
             '-i', 'frames/frame-%06d.png', '-i', 'delivery.wav', '-map', '0:v:0', '-map', '1:a:0',
-            '-frames:v', str(count), '-c:v', 'libx264', '-threads:v', '1', '-crf', '20', '-pix_fmt', 'yuv420p',
+            # The exact finite PNG inventory supplies video EOF. In FFmpeg 5.1
+            # an output -frames:v limit can stop the muxer before audio drains.
+            '-c:v', 'libx264', '-threads:v', '1', '-crf', '20', '-pix_fmt', 'yuv420p',
             '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2', '-map_metadata', '-1',
             '-movie_timescale', '48000', '-movflags', '+faststart', 'film.mp4'], cwd=work, deadline=deadline)
         output = work / 'film.mp4'
@@ -259,14 +261,19 @@ def export_film_browser_bundle(files, *, expected_bundle_sha256, scratch_dir,
             video, sound = [row for row in streams if row['codec_type'] == 'video'], [row for row in streams if row['codec_type'] == 'audio']
             _require(len(streams) == 2 and len(video) == len(sound) == 1)
             v, a = video[0], sound[0]
-            _require(v['codec_name'] == 'h264' and int(v['nb_read_frames']) == count
+            valid = (v['codec_name'] == 'h264' and int(v['nb_read_frames']) == count
                 and (v['width'], v['height']) == (config['width'], config['height'])
                 and Fraction(v['avg_frame_rate']) == 24 and Fraction(v['start_time']) == 0
                 and Fraction(v['duration_ts']) * Fraction(v['time_base']) == Fraction(count, 24)
                 and a['codec_name'] == 'aac' and int(a['sample_rate']) == 48000 and a['channels'] == 2
                 and Fraction(a['start_time']) == 0
-                and Fraction(a['duration_ts']) * Fraction(a['time_base']) == Fraction(count, 24),
-                'hyperframes_film_export_media_timing_mismatch', 502)
+                and Fraction(a['duration_ts']) * Fraction(a['time_base']) == Fraction(count, 24))
+            if not valid:
+                error = ServiceError('hyperframes_film_export_media_timing_mismatch', 502)
+                # Preserve actual bounded probe data for the caller's failure
+                # record before the owned temporary directory is removed.
+                error.media_probe = media
+                raise error
         except (KeyError, ValueError, TypeError, ZeroDivisionError):
             raise ServiceError('hyperframes_film_export_media_metadata_invalid', 502) from None
         _run([str(binaries['ffmpeg']), '-v', 'error', '-xerror', '-nostdin', '-threads', '1',

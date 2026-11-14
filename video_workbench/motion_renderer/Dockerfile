@@ -37,6 +37,9 @@ COPY vendor/three.module.min.js vendor/three.LICENSE.txt vendor/three-assets.jso
 RUN echo "08fd7545d13d2c7fb65ab691530a802dafefd638596501854f267d0fb13c39e7  /opt/assets/three.module.min.js" | sha256sum -c - \
     && echo "4c40a1ef62450b857c3b2aaf294936304cd552d965fbcd9d32d4c5bcf4ba4454  /opt/assets/three.LICENSE.txt" | sha256sum -c -
 COPY runtime.mjs run.mjs observe.mjs creative.mjs contract.mjs engine_runtime.mjs hyperframes_project.mjs experiment.py ./
+COPY hyperframes_film.mjs hyperframes_film_browser.mjs hyperframes_film_capture.mjs \
+    hyperframes_film_root.mjs hyperframes_film_realm.mjs hyperframes_film_realm_guard.mjs \
+    hyperframes_film_channel.mjs ./
 RUN node runtime.mjs > /opt/renderer/runtime.json
 ARG SOURCE_REVISION
 LABEL org.opencontainers.image.source="https://github.com/zmhhaha/panghu_agent" \
