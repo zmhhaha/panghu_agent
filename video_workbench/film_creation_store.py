@@ -16,6 +16,7 @@ from agent_service.profiles.video_animation_film_module import PROFILE, BUNDLE_M
 from agent_service.profiles.video_animation_film_module_contract import CONTEXT_SCHEMA
 from agent_service.profiles.video_animation_production_contract import validate_film_context
 from .animation_runtime_capabilities import validate_runtime_capabilities
+from .animation_skill_production import MAX_TASK_BYTES
 from .audio_store import narration_binding, narration_document
 from .creative_film_module_contract import (prepare_core_task, build_module_input,
     collect_module_result, validate_module_package, predecessor_from_package)
@@ -251,14 +252,43 @@ class FilmCreationStore:
             'film_creation_configuration_changed', 409)
 
     @staticmethod
-    def _validate_request(request, fields):
-        require(type(request) is dict and set(request) == set(fields)
+    def _validate_request(request, fields, optional=()):
+        require(type(request) is dict and set(fields) <= set(request) <= set(fields) | set(optional)
             and type(request['expected_revision']) is int and request['expected_revision'] >= 1)
         require(len(canonical_bytes(request)) <= 4 * 1024 * 1024, 'film_creation_request_budget', 413)
 
+    def _base_module(self, db, owner, project_id, scene_id, request):
+        """Resolve an exact compatible scene, without rewriting its source."""
+        version, package = self._version(db, owner, request['base_module_version_id'])
+        original, caps = package['input_document'], self.runtime_capabilities
+        module = package['result']['module']
+        index = request['current_scene_index']
+        row = request['film']['scenes'][index]
+        require(version['id'] == request['base_module_version_id'] and version['owner'] == owner
+            and version['project_id'] == project_id and version['scene_id'] == scene_id
+            and version['film_sha256'] == request['film_sha256']
+            and original['scene']['scene_id'] == scene_id
+            and original['film_context']['film_sha256'] == request['film_sha256']
+            and original['film_context']['film'] == request['film']
+            and original['film_context']['current_scene_index'] == index
+            and original['target'] == request['target']
+            and original['scene']['audio_sha256'] == row['audio_sha256']
+            and original['constraints']['duration_seconds'] == row['audio_seconds'],
+            'film_creation_base_module_mismatch', 409)
+        require(original['constraints']['runtime_identity'] == caps['runtime_identity']
+            and module['engine'] in caps['allowed_engines'],
+            'film_creation_base_module_runtime_mismatch', 409)
+        require(all(original['assets'].get(name) == caps['assets'].get(name.removeprefix('assets/'))
+            for name in module['assets']), 'film_creation_base_module_assets_changed', 409)
+        reference = dict(version_id=version['id'], package_sha256=version['package_sha256'],
+            input_sha256=package['input_sha256'], result_sha256=package['result_sha256'])
+        return module, reference
+
     def start_module(self, owner, project_id, scene_id, request, idem):
         self._validate_request(request, {'expected_revision', 'film', 'film_sha256', 'current_scene_index',
-            'predecessor_version_id', 'target', 'instruction', 'configuration_sha256'})
+            'predecessor_version_id', 'target', 'instruction', 'configuration_sha256'}, {'base_module_version_id'})
+        if 'base_module_version_id' in request:
+            require(type(request['base_module_version_id']) is str and 1 <= len(request['base_module_version_id']) <= 100)
         fingerprint = digest(dict(project_id=project_id, scene_id=scene_id, request=request))
         with self.store.transaction() as db:
             if replay := self._replay(db, owner, idem, 'module', fingerprint):
@@ -281,6 +311,9 @@ class FilmCreationStore:
             row, recording = film['scenes'][index], recordings[index]
             target = request['target']
             require(type(target) is dict and set(target) == {'module_id', 'namespace', 'transition_target'})
+            base_module = base_reference = None
+            if 'base_module_version_id' in request:
+                base_module, base_reference = self._base_module(db, owner, project_id, scene_id, request)
             caps = self.runtime_capabilities
             beats = make_beats(row['narration'], recording['spoken_text'])
             core = prepare_core_task(scene_id=scene_id, title=row['title'], visual_description=row['visual_intent'],
@@ -292,7 +325,10 @@ class FilmCreationStore:
                 module_id=target['module_id'], namespace=target['namespace'], transition_target=target['transition_target'],
                 runtime_identity=caps['runtime_identity'], allowed_engines=caps['allowed_engines'],
                 assets={'assets/' + name: checksum for name, checksum in caps['assets'].items()}, style=film['style'],
-                predecessor_package=predecessor_package)
+                predecessor_package=predecessor_package, base_module=base_module)
+            if base_reference is not None:
+                require(len(canonical_bytes(core)) <= MAX_TASK_BYTES,
+                    'film_creation_base_module_input_too_large', 413)
             require(db.execute('SELECT count(*) FROM film_module_operations WHERE project_id=?', (project_id,)).fetchone()[0] < 256,
                 'film_creation_operation_limit', 409)
             now = time.time()
@@ -304,6 +340,8 @@ class FilmCreationStore:
                 film_sha256=request['film_sha256'], predecessor_version_id=request['predecessor_version_id'],
                 version_id=None, input_ref=None, job_id=None, submit_attempted=False, cancel_requested=False,
                 cancel_attempts=0, next_cancel_at=0, stop_proven=False)
+            if base_reference is not None:
+                op['base_module_reference'] = base_reference
             db.execute('INSERT INTO film_module_operations VALUES(?,?,?,?,?,?,?)',
                 (op['id'], owner, project_id, scene_id, idem, fingerprint, packed(op)))
             return self.public(op)
