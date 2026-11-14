@@ -52,6 +52,12 @@ H.4 复用已有 Skill 协议，不另建一套包或发布系统。补齐新的
 
 原始模块包文件 SHA 为 `8eab1256674c4f8bb19a8dbb56bc7d3f82c979b950781265df7396f61c066e4b`，结果 SHA 为 `7eb5bb5434698d041402039f7c10e3df6e6b616ba63fe03f793a139f053e27c8`，Canvas 源码 `modules/technical_canvas_flow_r1/flow.mjs` 的 SHA 为 `ae7facda0dd1ab2ab61ab6b14153c003fcff916e22348d15222bab7d52a4baa6`。原始证据在既定运维目录 `candidate-film-module-r1/candidate-output`，包含请求、实际工具事件、响应 ledger、Pod 与清理回执。技术 WAV 复用先前 3 秒录音时钟，operator-only Skill 是原创技术夹具；没有新增 TTS，不声称实际讲解、审美／迁移认可或业务 Skill 已发布。此候选预算没有渲染，后续整片渲染单独记账与核验。
 
+另一个独立预算仅执行一个整片 Job，原始 Agent 源码不改写、不补手工动画，经 `assemble_film_production()` 生成 snapshot `9fdb4873885e61a782de2aabf863dfc514c6df07716ba3f31d61ebe07eaa8bed`。固定镜像 `701fea47…` 完成 1280×720、24fps、3 秒／72 帧导出，Job 约 98 秒；这是技术工程编码耗时，不是制作总时长或性能达标证明。使用禁止再次 export 的恢复检查取回原输出，Job／Pods、helper 与仅本次创建的策略均确认清理，原 Deployment／PVC 未变。
+
+MP4 文件 SHA 为 `b2e182ae05a9991beb53683224c4ec198b5cfa5d315d2bfb664cd9af9521b6e4`。独立 Windows FFmpeg 7.1 完整解码确认 72 个不同视频帧、音画零起点与 3 秒、48kHz 双声道及 AAC 384 样本填充；外部 snapshot／原 JS／原 WAV 身份也已重验。原 WAV `cb285321…` 的 72000 个 24kHz PCM 样本全零，实际解码也全零，明确记为 `technical_silence`；相关系数为空不能当成声音一致性证据，更不能算真实旁白、音效或试听通过。独立回执内容摘要为 `1cddb5d70f400c13455873836dcba156e2056e9ecf48f9e9357fa8b8b9ba4f81`，D 盘既有 scratch 下 `original-canvas-film-evidence-r1/independent-validation.json`；初版非零音轨假设和一次时间参数格式的分析失败均保留，仅重做现成媒体分析，没有重渲染。
+
+源码接线已推送 `983d0da`。本地专项分别通过业务／Remote 50 项、真实线程调度 3 项、整片编排 9 项、工作台 HTTP 8 项和前端状态 19 项；另有旧编排和核心合同回归，存在交叉，不累加为唯一测试总数。以上完成技术原创模块到整片导出的验证，尚未部署启用新正式路径、验证真实讲解音轨及多镜 Agent 连续交接，也未代替完整审阅／修订、开发者认可或 Skill 发布。H.3 继续未勾选。
+
 ## 音频与性能边界
 
 新 mixer 输出 48kHz 双声道；旧 `MixedMotionRenderer` 强制 24kHz 单声道并重新拼接，不能绕回该旧合成器来消费新的交付轨。后续边界应重新校验 mixer 回执摘要、项目身份、WAV SHA／格式／样本数；不使用音频变速、截断旁白或以 `-shortest` 掩盖不匹配。浏览器不提供原 WAV 是职责划分：音轨由同一冻结工程独立消费，而不是浏览器自行播放。

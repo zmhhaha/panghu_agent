@@ -285,7 +285,7 @@ H.3 新模块合同、独立网关、禁用候选目录、整片组装、受限�
 
 H.3 保持待办。正式制作持久编排与应用入口已补齐：先取得全部原 WAV，再按确切前任逐段生成生命周期模块，最后只组装／提交一个整片工程；父任务保存引用和摘要，模块包／快照／媒体由业务 SQLite 子任务表保存。工作台现有播放器、下载、取消和回收站保护已接入新产物。新角色使用独立凭据，宿主身份绑定六文件摘要 map，执行准入绑定确切 image／runtime／宿主与实际 Job／媒体／取消证据；配置失配不回退旧逐镜渲染，重启不伪造用户取消。当前导出上限 60 秒，制作方案先作预算检查，录音完成后再按实测时钟检查。
 
-上述编排、本地已停止 Agent／非媒体夹具以及 HTTP 回归只证明代码与持久边界，尚未替代新角色真实产物、执行 API 发布、完整讲解内容的整片预览／草稿／下载、真实边界及独立整片审阅。新模块角色的独立真实候选按 1 次初作、最多 8 次模型请求、600 秒、0 TTS、0 渲染、0 自动重试分别留证；不得将技术时钟与 operator-only Skill 夹具记作真实方法发布或人工认可。详情见[应用接线](hyperframes-film-production-integration.md)及[持久编排](hyperframes-production-run-orchestration.md)。完整先前构建身份、来源、预算、失败与媒体证据见[整片 Job 验证](hyperframes-film-job-validation-20261114.md)，配置及恢复合同见[Kubernetes 接线](hyperframes-film-kubernetes-dispatch.md)。本轮不发布 Skill、不代签人工认可、不合主线。
+上述编排、本地已停止 Agent／非媒体夹具以及 HTTP 回归只证明代码与持久边界，尚未替代执行 API 发布、完整讲解内容的整片预览／草稿／下载、真实边界及独立整片审阅。新模块角色的独立真实候选已按 1 次初作、最多 8 次模型请求、600 秒、0 TTS、0 渲染、0 自动重试执行：实际 6 次请求成功，真实 Skill 搜读、双产物与原进程停止核验通过，原始 Canvas 源码保留；另一个预算仅用 1 个实际 K8s Job 完成 1280×720、24fps、3 秒／72 帧整片导出，并在禁止再次 export 的恢复检查后清理。Windows FFmpeg 独立完整解码与原始源码／WAV／snapshot 绑定通过，MP4 SHA 为 `b2e182ae05a9991beb53683224c4ec198b5cfa5d315d2bfb664cd9af9521b6e4`。原 WAV 及实际解码均为全零 PCM，明确记为静音技术时钟，不能算真实旁白／音效／时序听审；分析时错误假设非零音轨的失败原件保留，仅重验现成媒体。不得将技术时钟与 operator-only Skill 夹具记作真实方法发布或人工认可。源码接线已推送 `983d0da`，新正式路径尚未部署启用，H.3 仍待真实讲解、多镜 Agent 交接及整片审阅闭环。详情见[应用接线](hyperframes-film-production-integration.md)及[持久编排](hyperframes-production-run-orchestration.md)。完整先前构建身份、来源、预算、失败与媒体证据见[整片 Job 验证](hyperframes-film-job-validation-20261114.md)，配置及恢复合同见[Kubernetes 接线](hyperframes-film-kubernetes-dispatch.md)。本轮不发布 Skill、不代签人工认可、不合主线。
 
 ## 8. 旧规格归属与有效证据
 
