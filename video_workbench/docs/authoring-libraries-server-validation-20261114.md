@@ -1,5 +1,7 @@
 # Manim / Anime.js 服务器接入验证（2026-11-14）
 
+本文保留 11 月 14 日各版本的部署与验证历史；这些段落中的“当前”限于当时检查点。11 月 15 日统一资源层的新构建、独立准入与正式消费候选见文末，不能用历史的模块前置暂停状态判断最新实现，也不能将新候选结果当作业务已上线或正常制作入口已验收。
+
 ## 能力与发布范围
 
 动画效果库已开放 Anime.js 4.5.0 和 Manim Community 0.22.1。两者均由通用 Agent 自主创作，最后进入同一个 HyperFrames 时间线；平台代码提供时钟、隔离、资源和验证合同。
@@ -69,3 +71,52 @@ creation 进一步从完整 Git `aa4de3229cc6abe5f34e27c451c72da9bd156b01` 普�
 服务器发布及只读 HTTP 前后，原九个工作台数据库的结构、全部表行及 BLOB 摘要、外部媒体和十个 creation 账本保持。仅在同一 PVC 的 `/data/production-sequences.sqlite3` 建立空的八表账本，已有 Secret、runtime 和 PVC 身份不变。真实两条旧 run 仍为 completed／draft_only／not_reviewed，没有历史迁移或隐式创建序列；readiness、Pod 实际源码及固定镜像摘要校验通过。实际回执 `production-sequence-rollout-r1/completed.json` 为 deployed_verified。
 
 本次部署为零新增模型、TTS、渲染和轮次预占。新片的真实登记尚未用另一付费制作验证，浏览器验收仍受安全检查服务不可用阻断。此切片不执行整片审阅、自动一轮修订或用户追加；OpenSpec 3.5／4.1 整体继续待办。
+
+## 2026-11-15：统一资源层与正式消费候选
+
+完整 Git `ed678aa` 已普通构建并推送六个 `latest` 镜像，源码、构建上下文、镜像标签与 digest 分别保留在 `shared-resource-release-r1/completed.json` 及各构建回执；没有把历史镜像换摘要当作新构建。六镜像构建完成与业务部署完成分别记录。
+
+| 镜像 | 新 digest 前缀 |
+| --- | --- |
+| agent-service-control | `8ec0291ddfcb` |
+| agent-service-pi | `29b64a218eff` |
+| video-animation-creation | `f18f663010f5` |
+| video-workbench | `5ec54ec7769b` |
+| video-motion-renderer | `31a2516d113c` |
+| video-animation-lab | `32ce5677ffea` |
+
+新 renderer 的 Canvas、Three.js、Anime.js、Manim 四种既有组合已各执行一次技术再准入，共 144 帧、4 次渲染；原 Agent 源码及原 Manim/Cairo 资源字节保持，新增 Agent、Cairo、TTS 和 Skill 发布均为零。检查结果及新 engine／authoring-library／Manim-resource 准入位于 `/var/lib/video-animation-creation/shared-resource-r1/completed.json` 所列文件。这是方法运行时准入，不能替代正式整片执行或正式消费准入。
+
+Manim 局部时钟的浏览器测试另在同一新 renderer `31a2516d…` 内实际启用，结果为 3 pass、0 fail、0 skip。默认未启用浏览器的 1 pass／2 skip 基线分别保留，不能并作实际浏览器通过。两次浏览器捕获使用同一个合成 descriptor，placement 分别为 0 和 12，各 24 帧、合计 48 帧；正向、反向、重复定位、空闲稳定、全新重载复现与窗口外 hidden 均通过。镜像内宿主、引擎、HyperFrames 0.8.149 和两份 Manim helper 的实际字节已核对，仅只读挂载测试源码。此项新增 Agent、TTS、Cairo、整片渲染和 MP4 均为零，证明定位协议而非 Agent 原创效果；完整回执为 `manim-placement-browser-r1/completed.json`，实际 TAP 为 `enabled-browser-stdout.tap`。
+
+独立资源规划角色 `video.resource-plan.v1` 已准入并激活。三个 Agent 控制服务使用新 control 镜像，API health 为 200，新独立 caller 为 ready；旧 routes、callers、worker 配置、凭据与历史表保持。专用 Secret 为 `video-workbench/video-resource-plan-agent`。激活回执 `resource-plan-activation-r1/activation-summary.json` 是四业务部署前的独立检查点，当时工作台环境变量和挂载尚未接入、四业务 Deployment 尚未变化。角色候选使用空 `producer_catalog`，尚未验证含 Manim 的生产者选择、新联合方案 sidecar 到整体确认的完整链路或策划质量。正式 FilmModule 候选继续使用原已准入角色及 worker 路线，没有为统一版本而切换其执行组合。
+
+正式消费候选复用项目 `6f2cbbdc…`、原连续 run `06163975…` 的第一镜原包和两段各 8 秒的完整 WAV。恰好新增一个 recipe Agent、一次 Cairo 资源执行、一个第二镜 FilmModule Agent 和一次整片渲染，TTS、动画源码改写、生成重试和 Skill 发布均为零。recipe `baeea83f…` 与 module `083a6e25…` 均取得原始产物和真实停止证明；Manim manifest 保持局部第 0 帧，48 帧资源通过独立 placement 放到全片 `[204,252)`。新第二镜 Agent 的原始源码实际以 Anime.js 暂停时间线驱动 Canvas 通道与球群运动，并逐帧等待 Manim 透明层；最终包为 `914f0dbc…`。
+
+新 renderer 的唯一成功整片 Job 输出 1280×720、24fps、16 秒、384 帧 H.264/AAC 视频，媒体摘要 `e44d0a9596ce…`、snapshot `4db3d8fe…`。原 WAV 字节与录音时钟保持，完整音视频解码通过。实际编码第 203、204、216、228、240、251、252 帧与原 RGBA 资源及确切布局进行像素对照：窗内资源主体可见，窗前／窗后背景无残留；各检查区域平均 RGB 误差为 2.00–2.47，已加载全部 48 个原 PNG。这一有限检查证明实际资源消费与半开窗口，不能推广为整片审美或任意内容的质量认可。
+
+新正式整片执行准入 `11137e52…` 同时绑定成功 Job、独立完整媒体核验和该镜像唯一一次运行中取消探针。取消探针原操作器在额外宿主观察中失败的记录保留；同一 Job 的实际 foreground 删除、精确 Docker 停止事件及后续 Job／Pod／进程与 cgroup 缺席补证见 `shared-resource-formal-cancel-r1/reconciled-cancellation.json`（文件摘要 `bd7e53d9…`），没有另开取消 Job 或声称原脚本全部通过。
+
+正式 Manim 消费 v2 准入 `8ce09a00…` 已按原 producer envelope、placement、consumer package、snapshot 和实际媒体构建，并重新读盘校验。创建服务将读取的完整文件为 `/var/lib/video-animation-creation/shared-resource-r1/formal-consumer-admission.json`；对应五件原证据已保留。候选汇总、执行准入和像素检查分别见 `formal-shared-consumer-v2-r1/completed.json`、`execution-admission.json`、`encoded-placement-audit.json`。成功 Job 与 helper 已清理，PVC 输入／结果保持。
+
+候选采用纯工程编译接口保留第一镜旧运行身份与原包，没有改写旧包来通过新运行身份检查。因此这些结果属于独立正式消费候选，不能当作正常制作 API 已通过。资源核心的 revise、placement 与历史保留测试不代表正式修订完成：`ProductionResourceStage` 尚无实际 revise／retry 入口，模块产物尚未纳入共享依赖图，跨镜前任变化后的资源／模块重做也未接正式修订协调器。本段不据候选完成自动勾选 H.8／H.9 或 U.2–U.5，也不改变完整视听审阅、一轮修订、开发者认可和人工发布的边界。
+
+### 四业务部署与正常入口检查
+
+四业务新配置随后已部署并验证：creation 为 `f18f6630…`，workbench／motion 为 `5ec54ec7…`，lab 为 `32ce5677…`，正式 renderer 为 `31a2516d…`；当前四个 Pod 均 1/1 Ready、0 次重启。首次 workbench 启动因沿用方法级 host 身份被正确拒绝，原失败保留；仅为正式路径派生 `runtime_identity.host_sha256`／`admission_id` 并建立新不可变 ConfigMap 后恢复。固定资产、authoring libraries、原准入和候选 snapshot 未改写。新镜像内 UID 10001 的 `FilmProductionSettings` 与消费 v2 context 校验通过，creation 实际 UID 0 读到了完整准入及五件原证据，工作台实际资产摘要一致。原账本行及摘要保持，仅新增空的 resource-plan schema；部署新增模型、TTS、渲染和 Skill 发布均为零。回执为 `formal-shared-consumer-v2-r1/deployment-plan/final-r1/completed.json`，状态 `deployed_verified_after_configuration_projection`。
+
+正常 ProductionRun API 的唯一 POST 已完成 run `6cc51e62-25c4-40f9-a38d-784e831b209c`，render 为 `003a4231-bd55-49f2-884a-9640e1ef3081`。实际新增一个 recipe、一次 Cairo、两个 Canvas module 和一次整片渲染；TTS、新联合方案、新资源规划、自动重试及 Skill 发布均为零。它复用旧联合方案与完整原声，显式提供 `resource_plan`，`resource_plan_source=None`；因此只证明正常 run 的共享资源制作／消费，新导演 sidecar→用户整体确认及含 Manim 目录的策划质量仍须独立验收。只读采集器对 BEGIN 标记的子串计数失败保留，补充采集按完整行锚定验证原源码与完整前驱，没有改写作品或重新制作。
+
+本次正常 MP4 为 `73613008a338a0c5382b5b65ceb0fc666fe631b31c7a9fd3582226166126f7e3`，snapshot 为 `c8646b0c…`：16 秒、24fps、384 帧，完整音视频解码通过，374 个不同画面。两原 WAV 字节完全复用，最终双声道与原音频相关度分别为 0.9999868、0.9999858。独立证据位于 `shared-resource-normal-business-r1` 及其 `independent-media-r1/validation.json`；浏览器实际观察资源 0/1→1/1、编排、渲染及草稿待审阅，原生播放器完整播放至 16 秒，1280×720、readyState 4、无媒体错误，下载链接指向该 render。播放与入口可见不代替实际点击下载、旁白时序或审美认可。
+
+正常模块没有 import／call Anime.js，H.8 继续待办，不把候选里的 Anime 使用或统一运行库已加载移记到该 run。第二模块确实通过 Manim helper 消费局部 0 帧起的 48 帧资源，但安排为全局 `[192,240)` 的右上角 240×135 缩略图并淡入淡出，第 192 帧透明；实际查看第 200 帧确认这一点。原目标是让资源参与主通道边界展开，缩略图属于表达偏差，不能将“实际消费”写作目标已经达成。没有为弥补该偏差追加生成、打磨或改写原源码；U.2–U.5／H.9、完整视听和人工认可保持独立待验收。
+
+正常 MP4 的追加像素审计保留为 `pixel_evidence_not_proven`：第 204／216／228／234 帧最近的原 PNG 分别匹配局部 12／24／36／42，198 帧最接近局部 5 而非预期 6，原因未定。五个不透明采样帧强 alpha 区域的平均误差为 7–8.6，支持缩略图进入实际编码；首帧透明及边缘淡入淡出导致其余采样难以分辨，不能据此宣称全窗口逐帧精确证明。原测量、阈值及未达标状态保持，见 `encoded-resource-r1/audit.json`；没有重新编码。
+
+### 现有内容按画面创作与动作编排整理
+
+新效果库浏览器回查曾发现旧 Manim 样片漏标，Manim 筛选显示 0/10。根因为 creation 的历史读投影错误地要求旧 descriptor 的 helper 等于当前 helper。完整 Git `6a02aa008b4a38412b1e2eec375aa745a318c28c` 仅修该读投影，并以正常构建的 `video-animation-creation:latest@sha256:ca5d0dc041bdc8a68f701e8e34fb16dde34002cf76b1cb3ffb799cb580a9b351` 单服务部署。旧样片按自身冻结 helper 库存、descriptor 摘要和真实加载观测分类；新生成仍严格使用当前 helper，producer、consumer 和执行准入未放宽。干净源码定向回归 32 项通过，另用原样片只读复现修复前无标签、修复后 Manim 0.22.1。原参数、挂载、init、凭据和 renderer 保持；Pod Ready、0 重启及真实 gateway／Manim 能力预检通过。
+
+用户随后要求专门子 Agent 整理已有数据。已逐条核对 10 个效果、22 条可见实验与22个唯一已成片候选；4 条无可验证样片实验保留待确认。实际分类为 HTML/SVG 3、Canvas 6、Three.js 1、Manim 1，Manim 样片同时保留 HTML 承载标签；动作编排 Anime.js 1、GSAP 0，没有将 HyperFrames 内部时钟推断为作品使用 GSAP。所有分类来自原冻结样片及实际加载证据，不按标题或请求推测，也未改写原记录或重做媒体。
+
+修复发布后，独立真实 catalog GET 与逐条盘点完全一致；浏览器也逐项选择六种筛选，确认 HTML/SVG 3/10、Canvas 6/10、Three.js 1/10、Manim 1/10、Anime.js 1/10、GSAP 0/10，Manim 卡片显示 HTML/SVG 与 Manim 0.22.1。三库20张表、1105行前后完整指纹一致；没有迁移、数据库写入、新实验或发布。回执为 `historical-manim-projection-{release,activation}-r1/completed.json`；D盘现有任务目录的 `existing-library-capability-classification-20261115.json` 与 `existing-library-live-classification-20261115.json` 保留逐条分类及真实核验。源码、数据核验与浏览器结果分别留证，不改变完整视听和人工发布边界。
