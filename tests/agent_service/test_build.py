@@ -41,8 +41,11 @@ def animation_profile_bundles():
     """Independent Profile inventories, never derived from builder allowlists."""
     from agent_service.profiles import (video_animation_review as review, video_animation_create as creation,
         video_animation_method as method, video_animation_production as production, video_joint_plan as joint,
-        video_animation_skill_production as skill_production, video_animation_skill_method as skill_method)
+        video_animation_skill_production as skill_production, video_animation_skill_method as skill_method,
+        video_animation_film_module as film_module, video_animation_manim_recipe as manim_recipe)
     return (
+        (film_module.BUNDLE_ROOT, film_module.BUNDLE_FILES, film_module.verified_bundle),
+        (manim_recipe.BUNDLE_ROOT, manim_recipe.BUNDLE_FILES, manim_recipe.verified_bundle),
         (joint.BUNDLE_ROOT, joint.BUNDLE_FILES, joint.verified_bundle),
         (review.BUNDLE_ROOT, review.BUNDLE_FILES, review.verified_bundle),
         (review.SEQUENCE_BUNDLE_ROOT, review.SEQUENCE_BUNDLE_FILES, review.verified_sequence_bundle),
@@ -504,7 +507,11 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md',
                          'foundation/SKILL.md')} | {
             'agent_service/resources/video-joint-plan-v1/' + name
-            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'joint-plan-procedure/SKILL.md')}
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'joint-plan-procedure/SKILL.md')} | {
+            'agent_service/resources/' + revision + '/' + name
+            for revision in ('animation-film-module-v1', 'animation-manim-recipe-v1')
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'author-procedure/SKILL.md',
+                         'foundation/SKILL.md')}
     assert not any(name.endswith(("credentials.json", "NOT_ALLOWED.md", "private.py")) for name in runner.names)
 
 
@@ -675,11 +682,13 @@ profiles=('workspace-task.v1','ppt.plan_initial.v1','ppt.plan_options.v1','ppt.p
  'video.animation-review.v1','video.animation-review.v2','video.animation-review.v3','video.animation-review.v4','video.animation-create.v2',
  'video.animation-method-author.v1','video.animation-method-review.v1',
  'video.animation-method-author.v2','video.animation-method-review.v2',
- 'video.joint-plan.v1','video.animation-production.v1','video.animation-production.v2','video.animation-production.v3')
+ 'video.joint-plan.v1','video.animation-production.v1','video.animation-production.v2','video.animation-production.v3',
+ 'video.animation-film-module.v1','video.animation-manim-recipe.v1')
 for name in profiles:implementation(name)
 for name in ('video','video_motion','video_process','video_explanation','video_animation_experiment',
  'video_animation_create','video_animation_review','video_animation_method',
- 'video_joint_plan','video_animation_production','video_animation_skill_production','video_animation_skill_method','research'):
+ 'video_joint_plan','video_animation_production','video_animation_skill_production','video_animation_skill_method',
+ 'video_animation_film_module','video_animation_manim_recipe','research'):
  importlib.import_module('agent_service.profiles.'+name).verified_bundle()
 from agent_service.profiles.video_animation_review import verified_sequence_bundle,verified_batch_bundle,verified_packed_bundle
 verified_sequence_bundle();verified_batch_bundle();verified_packed_bundle()
@@ -692,7 +701,7 @@ print(json.dumps({'control_modules':len(modules),'profile_implementations':len(p
 '''
     result = subprocess.run([sys.executable, '-I', '-B', '-c', code, str(extracted)],
         cwd=extracted, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=True)
-    assert json.loads(result.stdout) == dict(control_modules=10, profile_implementations=32)
+    assert json.loads(result.stdout) == dict(control_modules=10, profile_implementations=34)
 
 
 @pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
@@ -700,13 +709,14 @@ print(json.dumps({'control_modules':len(modules),'profile_implementations':len(p
                                      'animation-create-v2', 'animation-method-v1', 'animation-method-v2',
                                      'animation-method-v3', 'animation-method-v4', 'animation-method-v5',
                                      'animation-production-v1', 'animation-production-v2',
-                                     'animation-production-v3', 'animation-production-v4'])
+                                     'animation-production-v3', 'animation-production-v4', 'animation-manim-recipe-v1'])
 @pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'LICENSE', 'procedure'])
 def test_changed_animation_runtime_resource_fails_before_docker(service, revision, changed):
     if changed == 'procedure':
         changed = ('method' if revision.startswith('animation-method-') else
                    'production' if revision.startswith('animation-production-') else
-                   'creation' if revision == 'animation-create-v2' else 'review') + '-procedure/SKILL.md'
+                   'creation' if revision == 'animation-create-v2' else
+                   'author' if revision == 'animation-manim-recipe-v1' else 'review') + '-procedure/SKILL.md'
     path = service / 'resources' / revision / changed
     path.write_bytes(path.read_bytes() + b' ')
     receipt, runner = old_receipt(service), DockerFixture()
@@ -720,7 +730,7 @@ def test_changed_animation_runtime_resource_fails_before_docker(service, revisio
                                      'animation-create-v2', 'animation-method-v1', 'animation-method-v2',
                                      'animation-method-v3', 'animation-method-v4', 'animation-method-v5',
                                      'animation-production-v1', 'animation-production-v2',
-                                     'animation-production-v3', 'animation-production-v4'])
+                                     'animation-production-v3', 'animation-production-v4', 'animation-manim-recipe-v1'])
 def test_missing_animation_runtime_resource_cannot_produce_deployable_digest(service, revision):
     (service / 'resources' / revision / 'LICENSE').unlink()
     receipt, runner = old_receipt(service), DockerFixture()
