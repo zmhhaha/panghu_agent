@@ -14,6 +14,9 @@ from agent_service.animation_skills_contract import (
     ENGINES, bundle_files, freeze_skill_catalog, validate_skill_catalog,
 )
 from agent_service.contracts import ServiceError, canonical_bytes, digest
+from .animation_skill_compatibility import (
+    freeze_compatibility, validate_compatibility, method_compatible,
+)
 
 
 SCHEMA = 'video.production-skill-delivery.v1'
@@ -193,9 +196,17 @@ class SkillProductionAdapter:
                 full.append(actual)
             receipts.append(dict(source='authenticated_method_read', request=body,
                 receipt=deepcopy(response.get('read_receipt')), scope='host_retrieval_not_agent_observation'))
+        # Validate authenticated publications before filtering. An invalid
+        # published record remains an integration error, not a silent no-match.
         catalog = freeze_skill_catalog(full, recipient_owner=binding['recipient_owner'],
             consumer_id=binding['consumer_id'], task_sha256=binding['task_sha256'],
             allowed_engines=binding['allowed_engines'])
+        if 'compatibility' in intent:
+            compatibility = validate_compatibility(intent['compatibility'], task_sha256=binding['task_sha256'])
+            full = [row for row in full if method_compatible(row, compatibility)]
+            catalog = freeze_skill_catalog(full, recipient_owner=binding['recipient_owner'],
+                consumer_id=binding['consumer_id'], task_sha256=binding['task_sha256'],
+                allowed_engines=binding['allowed_engines'])
         wanted = {row['package_sha256'] for row in catalog['skills']}
         packages = {row['skill_package']['sha256']: row['skill_package'] for row in full
                     if row['skill_package']['sha256'] in wanted}
@@ -239,7 +250,7 @@ class SkillProductionAdapter:
             methods.append(deepcopy(row))
         # A concurrent reservation wins even if its directory was empty. No
         # catalogue refresh or later publication can alter this operation.
-        reserved = self._entry(binding, intent=dict(methods=methods))
+        reserved = self._entry(binding, intent=dict(methods=methods, compatibility=freeze_compatibility(task)))
         return reserved['snapshot'] or self._complete(binding, reserved['intent'])
 
     def get_bundle(self, owner, consumer_id, sha):

@@ -17,6 +17,7 @@ import re
 import sqlite3
 
 from agent_service.contracts import ServiceError, canonical_bytes, digest
+from .animation_skill_compatibility import legacy_method_compatible
 
 
 SCHEMA = 'video.production-method-delivery.v1'
@@ -229,6 +230,9 @@ class MethodProductionAdapter:
             # A malformed published record is an integration failure, not a
             # silent "no match" that would mask an unavailable knowledge path.
             row = _published(row)
+            if not legacy_method_compatible(row):
+                exclusions.append(dict(version_id=row['id'], reason='dependency_not_supported_by_legacy_source'))
+                continue
             if row['runtime_requirements']['engine'] not in allowed_engines:
                 exclusions.append(dict(version_id=row['id'], reason='engine_not_admitted'))
                 continue

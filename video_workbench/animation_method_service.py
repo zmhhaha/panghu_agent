@@ -934,6 +934,9 @@ class AnimationMethodService:
             version = self.methods.get_method(owner, version_id)
             _require(version['runtime_requirements'].get('engine') in allowed_engines,
                      'animation_method_runtime_not_admitted', 409)
+            from .animation_skill_compatibility import require_method_compatible
+            require_method_compatible(version, assets=data.get('assets', {}),
+                authoring_libraries=data.get('constraints', {}).get('authoring_libraries', {}))
         research_ids = data.get('research_record_ids', [])
         _require(type(research_ids) is list and len(research_ids) <= 64
                  and all(type(item) is str for item in research_ids)
