@@ -75,6 +75,9 @@ class ProductionRunStore:
                                    + bool(item.get('motion_version_id') or item.get('module_version_id'))
                                    for item in raw_items) + int(run['status'] == 'completed'),
                           total=2 * len(raw_items) + 1))
+        if 'audio_reuse' in run:
+            result.update(audio_reuse=deepcopy(run['audio_reuse']),
+                audio_reuse_sha256=run['audio_reuse_sha256'], work_budget=deepcopy(run['work_budget']))
         return result
 
     @staticmethod
@@ -213,10 +216,109 @@ class ProductionRunStore:
     def _unfinished(run):
         return run['status'] in ACTIVE or run.get('draining') or run.get('blocked_reason')
 
+    @staticmethod
+    def _reuse_audio(db, run, source_run_id):
+        """Admit original WAVs, without adopting heads or reopening old work.
+
+        Read versions on the caller's transaction: AudioStore.audio_version
+        would open another BEGIN IMMEDIATE connection while this one is held.
+        Visual intent can change, but speech inputs and scene order cannot.
+        """
+        source = ProductionRunStore._read(db, source_run_id, run['owner'])
+        source_project = db.execute('SELECT project_id FROM production_runs WHERE id=?', (source_run_id,)).fetchone()[0]
+        require(source_project == source.get('project_id') == run['project_id'], 'not_found', 404)
+        require(source.get('id') == source_run_id and source.get('owner') == run['owner'],
+            'production_run_audio_reuse_mismatch', 409)
+        require(source.get('status') == 'completed' and not source.get('draining')
+            and not source.get('blocked_reason') and not source.get('cancel_requested'),
+            'production_run_audio_reuse_source_not_completed', 409)
+        frozen, items = source.get('frozen'), source.get('items')
+        scenes = frozen.get('scenes') if type(frozen) is dict else None
+        require(type(scenes) is list and type(items) is list
+            and len(scenes) == len(items) == len(run['items'])
+            and digest(frozen) == source.get('binding_sha256'),
+            'production_run_audio_reuse_mismatch', 409)
+        source_film = source.get('film')
+        if source_film is not None:
+            require(type(source_film) is dict and digest(source_film) == source.get('film_sha256')
+                and source_film.get('content_binding_sha256') == source['binding_sha256']
+                and type(source_film.get('scenes')) is list and len(source_film['scenes']) == len(items),
+                'production_run_audio_reuse_mismatch', 409)
+            for item, recording in zip(items, source_film['scenes']):
+                require(type(item) is dict and type(recording) is dict and all(
+                    item.get(key) == recording.get(key)
+                    for key in ('scene_id', 'audio_version_id', 'audio_sha256', 'audio_seconds')),
+                    'production_run_audio_reuse_mismatch', 409)
+        ProductionRunStore._require_audio_reuse(source)
+        recordings = []
+        for previous, original, current, target in zip(scenes, items, run['frozen']['scenes'], run['items']):
+            require(type(previous) is dict and type(original) is dict
+                and previous.get('id') == original.get('scene_id') == current['id']
+                and previous.get('audio_input') == current['audio_input'],
+                'production_run_audio_reuse_mismatch', 409)
+            version_id = original.get('audio_version_id')
+            require(type(version_id) is str and 1 <= len(version_id) <= 100,
+                'production_run_audio_reuse_unavailable', 409)
+            row = db.execute('SELECT id,project_id,scene_id,document,data FROM audio_versions WHERE id=?',
+                (version_id,)).fetchone()
+            require(row is not None and row['project_id'] == run['project_id']
+                and row['scene_id'] == current['id'], 'production_run_audio_reuse_unavailable', 409)
+            try:
+                audio, data = json.loads(row['document']), bytes(row['data'])
+                info = inspect_wav(data)
+            except (ServiceError, ValueError, TypeError):
+                raise ServiceError('production_run_audio_reuse_unavailable', 409) from None
+            checksum = hashlib.sha256(data).hexdigest()
+            input_sha256 = narration_binding(current['audio_input'])
+            require(type(audio) is dict and audio.get('id') == version_id
+                and audio.get('input_sha256') == input_sha256
+                and audio.get('narration') == current['audio_input']['narration']
+                and audio.get('settings') == current['audio_input']['settings']
+                and audio.get('sha256') == original.get('audio_sha256') == checksum
+                and audio.get('duration_seconds') == original.get('audio_seconds') == info.duration_seconds,
+                'production_run_audio_reuse_mismatch', 409)
+            require(info.duration_seconds + current['leading_seconds'] + current['trailing_seconds'] <= 60,
+                'motion_scene_duration_exceeded', 422)
+            target.update(audio_version_id=version_id, audio_sha256=checksum, audio_seconds=info.duration_seconds)
+            recordings.append(dict(scene_id=current['id'], audio_version_id=version_id,
+                audio_sha256=checksum, audio_seconds=info.duration_seconds, input_sha256=input_sha256))
+        run['audio_reuse'] = dict(schema='video.production-run-audio-reuse.v1', source_run_id=source_run_id,
+            source_frozen_sha256=source['binding_sha256'], recordings=recordings)
+        # These limits belong to this run. No source intent, allowance or
+        # consumption is transferred; the existing single-attempt journal
+        # admits only fresh visual children and one fresh whole-film render.
+        run['work_budget'] = dict(schema='video.production-run-work-budget.v1', audio_operations=0,
+            visual_operations=len(run['items']), draft_renders=1, automatic_retries=0)
+        run['audio_reuse_sha256'] = digest(dict(receipt=run['audio_reuse'], work_budget=run['work_budget']))
+        ProductionRunStore._freeze_film(run)
+        require(run['film']['total_seconds'] <= MAX_PROJECT_SECONDS, 'media_project_too_long', 422)
+        if ProductionRunStore._uses_film(run):
+            require(run['film']['total_seconds'] <= run['film_creation_configuration']['max_seconds'],
+                'production_run_film_too_long', 422)
+
+    @staticmethod
+    def _require_audio_reuse(run):
+        if 'audio_reuse' not in run:
+            return
+        receipt, budget = run['audio_reuse'], run.get('work_budget')
+        require(digest(dict(receipt=receipt, work_budget=budget)) == run.get('audio_reuse_sha256')
+            and type(receipt) is dict and type(receipt.get('recordings')) is list
+            and len(receipt['recordings']) == len(run['items']),
+            'production_run_audio_reuse_mismatch', 409)
+        for recording, item, scene in zip(receipt['recordings'], run['items'], run['frozen']['scenes']):
+            require(all(item.get(key) == recording.get(key)
+                for key in ('scene_id', 'audio_version_id', 'audio_sha256', 'audio_seconds'))
+                and recording['input_sha256'] == narration_binding(scene['audio_input'])
+                and item.get('audio_operation_id') is None,
+                'production_run_audio_reuse_mismatch', 409)
+
     def start(self, owner, project_id, request, idem):
-        require(type(request) is dict and set(request) == {'expected_revision', 'joint_plan_version_id'}
+        required = {'expected_revision', 'joint_plan_version_id'}
+        require(type(request) is dict and required <= set(request) <= required | {'reuse_audio_from_run_id'}
             and type(request['expected_revision']) is int and request['expected_revision'] >= 1
-            and type(request['joint_plan_version_id']) is str and 1 <= len(request['joint_plan_version_id']) <= 100)
+            and type(request['joint_plan_version_id']) is str and 1 <= len(request['joint_plan_version_id']) <= 100
+            and ('reuse_audio_from_run_id' not in request or type(request['reuse_audio_from_run_id']) is str
+                and 1 <= len(request['reuse_audio_from_run_id']) <= 100))
         require(type(idem) is str and re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}', idem), 'idempotency_key_required')
         fingerprint = digest(dict(project_id=project_id, request=request))
         configuration = None
@@ -291,6 +393,8 @@ class ProductionRunStore:
                 for item in run['items']:
                     item.update(module_operation_id=None, module_version_id=None, module_status='queued',
                         module_sha256=None, module_package_sha256=None, module_engine=None)
+            if 'reuse_audio_from_run_id' in request:
+                self._reuse_audio(db, run, request['reuse_audio_from_run_id'])
             raw = packed(run)
             require(len(raw.encode()) <= 512 * 1024, 'production_run_storage_limit', 413)
             # Reserve the full-film copy before paying for recordings. Child
@@ -529,6 +633,7 @@ class ProductionRunStore:
             return
         if run['status'] not in ACTIVE:
             return
+        self._require_audio_reuse(run)
         for intent in run['intents'].values():
             child = self._lookup(run, intent)
             if child:

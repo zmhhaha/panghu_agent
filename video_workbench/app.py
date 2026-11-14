@@ -286,6 +286,7 @@ class JointPlanRequest(ExplanationRequest):
 
 class ProductionRunRequest(Revision):
     joint_plan_version_id: str = Field(min_length=1, max_length=100)
+    reuse_audio_from_run_id: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class Generation(Revision):
@@ -981,7 +982,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     def start_production_run(project_id: str, body: ProductionRunRequest, owner=Depends(mutation),
                              idempotency_key: str | None = Header(default=None, alias='Idempotency-Key')):
         production_run_workflow.require_enabled()
-        return production_run_store.start(owner, project_id, body.model_dump(), idempotency(idempotency_key))
+        return production_run_store.start(owner, project_id, body.model_dump(exclude_none=True),
+                                          idempotency(idempotency_key))
 
     @app.get('/api/projects/{project_id}/production-runs')
     def project_production_runs(project_id: str, owner=Depends(identity)):
