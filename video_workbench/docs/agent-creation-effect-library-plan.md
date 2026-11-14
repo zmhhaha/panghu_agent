@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 自由创作与渲染 | 三引擎原始 Agent 源码、正反／非顺序／重复定位、固定随机状态、实际音效及隔离清理已有专项实测 | 实验室仍为显式源码桥接；统一整片音效混合及完整运动／声音审阅分别待补，不把技术通过写成人工认可 |
 | HyperFrames | 实验室已使用 `hyperframes-core-bridge`；正式新路径已部署，以真实两段旁白和两个原生模块完成一个 16 秒工程；387 次核心定位与编码同源回执已核对；后续原声对照已验证真实边界连续性 | H.3 与本轮 5.3 范围已验；原样片跳变与修复证据分别保留，独立整片审阅仍需完成 |
-| 创作工具 | Anime.js 暂停轨道和 Manim Cairo 透明帧资源均已上线，真实 Agent 样片进入同一 HyperFrames 时钟 | 仍需开发者效果认可及方法迁移／发布；Manim 无 TeX，正式 producer 再生尚未准入 |
+| 创作工具 | Anime.js 暂停轨道和 Manim Cairo 透明帧资源均已上线，真实 Agent 样片进入同一 HyperFrames 时钟 | H.8／H.9 已获准由独立子 Agent 补正式链路：Anime.js 验证正式整片实际采用，Manim 补正式资源再生与消费；当前尚未据此新增完成项。开发者认可及 Skill 发布另计；Manim 无 TeX |
 | 方法消费 | 标准 Skill 包、冻结目录、原生搜索／读取及新正式角色已实现；实际隔离候选已留下工具读取证据 | 开发者认可和真实业务发布、正式新内容采用仍需完成；operator-only fixture 不代表业务已发布 Skill |
 | 整片统筹 | 新模块 Agent、独立 caller、执行运输和正式应用已接统一工程；真实网页双镜完成配音、前任交接、冻结、编码与播放器检查；稳定制作序列及原声复用派生登记已上线 | 整片独立视听审阅、默认一轮修订及用户追加流程仍需完成；技术交付、审美认可和方法发布分别记录 |
 | 质量与发布 | 技术结果、模型发现、人工观看和发布分别留证 | 不替开发者认可代表／迁移结果，不把代码、媒体生成或部署成功记为发布完成 |
@@ -36,7 +36,11 @@ flowchart TB
     Tools <--> Create
     Lab --> HF[HyperFrames：统一项目、时间轴、定位与渲染驱动]
     Create --> HF
-    Engines[HTML/CSS/SVG、Canvas2D、Three.js；GSAP 辅助时间编排] --> HF
+    Engines[画面与动画创作能力：HTML/CSS/SVG、Canvas2D、Three.js] --> HF
+    Motion[动作编排工具：GSAP / Anime.js] --> Engines
+    Lab --> Manim[画面与动画创作能力：Manim；Python 离线生成透明帧]
+    Create --> Manim
+    Manim --> HF
     HF --> Pixels[隔离 Chromium：绘制真实帧]
     Pixels --> Encode[FFmpeg：编码、音轨与混音]
     Encode --> Evidence[完整样片／整片媒体及观察证据]
@@ -54,7 +58,7 @@ flowchart TB
 
 ## 2. HyperFrames 与各项绘制能力
 
-HyperFrames 是两端共同的动画工程、时间轴、预览定位和渲染基础，不只是在末端接收另一套自定义动画格式的转换器。HTML/CSS/SVG、Canvas2D 和 Three.js/WebGL 是可组合的绘制能力；GSAP 是可用的时间轴／补间工具。它们不各自形成公共微服务或互不相干的导出合同。
+HyperFrames 是两端共同的动画工程、时间轴、预览定位和渲染基础，不只是在末端接收另一套自定义动画格式的转换器。面向开发者的“画面与动画创作能力”统一包括 HTML/CSS/SVG、Canvas2D、Three.js 和 Manim；其中前三项在浏览器中绘制，Manim 由 Agent 编写 Python、离线绘制与编排动画，再以透明帧接入 HyperFrames。接入路径不同不将 Manim 降格为另一层创作工具，也不把它改称浏览器绘制引擎。GSAP 与 Anime.js 同属动作编排层，统一展示为“动作编排工具：GSAP / Anime.js”，用于控制浏览器图形、绘制参数或三维对象／镜头的属性变化；Manim 自带动画编排，不要求经过二者。它们是 Agent 可选的库，不各自形成公共微服务或互不相干的导出合同，也不要求同一作品同时使用两种编排库。二者的时间定位及 Manim 帧消费均须服从 HyperFrames 的全局时钟；能力分类不扩大各自实际准入和验收范围，Anime.js 正式整片采用及 Manim 正式资源再生仍待验证。
 
 正式交付由一个整片 HyperFrames 项目描述：全片时钟、场景／子合成、对象关系、转场、资源、旁白和音效排程统一。内部可以拆成多文件、多 Agent 任务、多个场景或渲染分块；不要求一份巨型 HTML、一次巨型模型调用或一次性渲染全部帧。分块必须服从同一项目和全局时间，不能仅拼接独立 MP4 后宣称已实现统一项目。
 
@@ -338,6 +342,25 @@ creation 的失败原因展示已进一步以完整 Git aa4de322 普通构建并
 这是 3.5／4.1 的正式身份及恢复接线，不执行独立审阅、不预占或消费打磨轮次，review_status 仍为 not_reviewed。真正的整片审阅、一轮自动修订、用户追加与明确需求协调器／UI 仍未完成；当前图片 reviewer 的实际观察边界不变。此阶段发布记录和本地故障验证见 authoring-libraries-server-validation-20261114.md，不能据此勾选 3.5／4.1 整体。
 
 完整 Git 0364cdf 已普通构建并仅升级 workbench，固定镜像摘要 6932277d…e727。真实 readiness、Pod 源码与挂载校验通过；原九个工作台数据库的全表／结构、媒体以及十个 creation 账本保持，只新增空的八表序列账本。原两条真实 run 的 HTTP 读取仍是 completed／draft_only／not_reviewed，没有凭空创建序列。68 项制作／接口集成、55 项序列测试通过；另 25 个新业务用例分批覆盖恢复与拒绝边界，最后四项窗口验证含三项重复回归，不累计成唯一用例。该部署没有新模型、TTS、渲染、历史迁移或轮次预占，也未代替真实新片登记链或浏览器验收。
+
+### 7.14 新增工具的正式制作链路（2026-11-14，用户已批准实施）
+
+本轮由一个独立子 Agent 承接 H.8／H.9。H.6／H.7 保留已完成的实验室接入范围，不因正式链路尚待完成而改写其原始证据。
+
+- Anime.js：复用正式 v2 资源封存和绝对时间适配，在实际正式 Agent 原创模块中使用，进入一个 HyperFrames 整片工程。核对真实使用、原声、非顺序定位、完整媒体及停止回收，不以依赖存在或实验室样片代替正式采用证据。
+- Manim：正式任务先通过既有通用 Agent 的 source-only recipe 角色生成 Python，再由独立 Cairo 执行器产生透明帧。生成资源与固定运行库分开冻结，按项目／运行／模块绑定，通过资源准入和预算检查后交给正式 Agent 编写消费模块；同一全片时钟逐帧读取，不拼接独立 MP4。原模块角色不获得 Python 或渲染执行权限。
+- 取消、超时、结果不确定和恢复须沿用原任务身份，阻止重复生成、越界资源、过期结果和跨项目读取；完成的原声、资源与冻结旧版本不被新运行改写。
+- 先完成必要离线验证，再以最少有界真实任务复用既有原声验证；完整 Git 源码构建、latest／digest 部署与独立媒体核验分别留证。技术通过不代替开发者效果认可、方法迁移、Skill 发布或自动一轮修订。
+
+### 7.15 效果库空白页修复（2026-11-14，已部署并浏览器回验）
+
+用户反馈效果库无内容。实际页面 HTML 可读，但入口模块依赖 `authoring-tools.mjs`；methods-only 静态路由遗漏该文件，线上返回 404，整个模块入口未初始化。原目录接口为 200，保留 10 个效果和 22 条委托，不是样片被删除或筛选隐藏。
+
+完整 Git `946ad138e63ef5d6e5f03190829e0ab57ecc4b87` 将该文件加入确切 UI 路由，并让静态分发复用同一 UI 路由集合。新增真实 HTTP 依赖图测试从 HTML 入口逐层读取模块，修复前准确复现该 404；修复后 methods-only、部署及方法 HTTP 共 106 项通过。鉴权、旧接口关闭和正确 JavaScript MIME 保持。
+
+仅 lab 从干净完整源码普通构建、推送并部署到 `video-animation-lab:latest@sha256:46d56998142dcbaafc995b299172dbb0eb087de1c65b9faa9786f5ecc3d8e819`。实际 Pod 源码与构建回执一致；workbench、motion、creation 未部署，0 新模型／TTS／渲染。原受保护源码、挂载和配置保持。
+
+浏览器刷新实际确认 10 个效果、Anime.js／Manim 工具筛选及 HTML/SVG／Canvas／Three.js 标签恢复显示。观察范围限效果库首页与加载链，不扩写成整片制作、完整声音审阅或 H.8／H.9 完成。证据为服务器 `skill-lab-module-route-r1-release/build-completed.json`、`skill-lab-module-route-r1-rollout/rollout-completed.json` 及 D 盘 `animation-gallery-routing-fixed-20261114.png`。
 
 ## 8. 旧规格归属与有效证据
 
