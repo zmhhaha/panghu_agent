@@ -254,9 +254,32 @@ def test_feedback_and_withdrawal_archives_recover_without_reusing_withdrawn_wiki
     assert service.knowledge.get_snapshot('developer', frozen['id']) == frozen
     assert service.knowledge.get_page('developer', derived['page_id']) == derived
     assert service.knowledge_page('developer', derived['page_id'])['evidence_issues'] == [experience['id']]
+    historical = service.knowledge_page_revision('developer', derived['page_id'], 1)
+    assert historical['page'] == derived and historical['current_revision'] == 1
+    assert historical['evidence_issues'] == [experience['id']]
     assert next(page for page in service.knowledge_catalogue('developer')['pages']
                 if page['page_id'] == derived['page_id'])['evidence_status'] == 'withdrawn_feedback'
     assert len(creator.submissions) == 2 and len(reviewer.submissions) == len(renderer.calls) == 1
+
+
+def test_explicit_page_history_preserves_body_and_owner_without_execution_or_mutation(work):
+    service, creator, reviewer, renderer = work
+    evidence = service.knowledge.record_experience('developer', 'failure', 'fixture-history', {'error': 'Observed failure'})
+    first = service.knowledge.revise_page('developer', 'draw:async',
+        dict(title='Original interpretation', content='Original full body'), expected_revision=0,
+        evidence_ids=[evidence['id']], change_note='Initial hypothesis.')
+    second = service.knowledge.revise_page('developer', 'draw:async',
+        dict(title='Corrected interpretation', content='Corrected full body'), expected_revision=1,
+        evidence_ids=[evidence['id']], change_note='Correct after inspecting evidence.', change_kind='correct')
+    for _ in range(2):
+        historical = service.knowledge_page_revision('developer', 'draw:async', 1)
+        assert historical == dict(page=first, current_revision=2, evidence_issues=[])
+    assert service.knowledge_page('developer', 'draw:async')['page'] == second
+    with pytest.raises(ServiceError, match='not_found'):
+        service.knowledge_page_revision('another', 'draw:async', 1)
+    assert len(service.knowledge.page_history('developer', 'draw:async')) == 2
+    assert len(service.knowledge.list_experiences('developer')) == 1
+    assert creator.submissions == reviewer.submissions == renderer.calls == []
 
 
 def test_new_gateway_rejects_historical_unfinished_commission_without_reinterpreting_or_resubmitting(tmp_path):

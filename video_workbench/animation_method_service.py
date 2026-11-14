@@ -406,6 +406,12 @@ class AnimationMethodService:
         _require(self.knowledge is not None, 'animation_method_knowledge_unavailable', 503)
         return self.knowledge.get_experience(owner, experience_id)
 
+    def knowledge_page_revision(self, owner, page_id, revision):
+        _require(self.knowledge is not None, 'animation_method_knowledge_unavailable', 503)
+        page = self.knowledge.get_page(owner, page_id, revision=revision)
+        return dict(page=page, current_revision=self.knowledge.get_page(owner, page_id)['revision'],
+            evidence_issues=sorted(self._withdrawn_experience_ids(owner) & set(page['evidence_ids'])))
+
     def revise_knowledge_page(self, owner, page_id, body):
         _require(self.knowledge is not None, 'animation_method_knowledge_unavailable', 503)
         required = {'request_id', 'expected_revision', 'body', 'evidence_ids', 'change_note'}

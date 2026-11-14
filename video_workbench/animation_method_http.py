@@ -19,6 +19,12 @@ def _identifier(value, *, encoded=False):
     return value
 
 
+def _knowledge_revision(value):
+    _require(type(value) is str and re.fullmatch(r'[1-9][0-9]{0,6}', value) is not None
+             and int(value) <= 1000000, 'animation_knowledge_revision_invalid')
+    return int(value)
+
+
 def _send_bounded(handler, value):
     # Keep Wiki bodies out of the catalogue and fail before emitting a partial
     # response if an adapter unexpectedly exceeds the established transport.
@@ -63,6 +69,12 @@ class MethodLabClient(CreationAPIClient):
     def knowledge_experience(self, owner, experience_id):
         return self._request(owner, 'GET', PREFIX + '/knowledge/experiences/' + quote(_identifier(experience_id), safe=''))
 
+    def knowledge_page_revision(self, owner, page_id, revision):
+        _require(type(revision) is int, 'animation_knowledge_revision_invalid')
+        revision = _knowledge_revision(str(revision))
+        return self._request(owner, 'GET', PREFIX + '/knowledge/pages/' + quote(_identifier(page_id), safe='')
+                             + '/revisions/' + str(revision))
+
     def revise_knowledge_page(self, owner, page_id, body):
         return self._request(owner, 'POST', PREFIX + '/knowledge/pages/' + quote(_identifier(page_id), safe=''), body)
 
@@ -93,6 +105,10 @@ def route_private(handler, owner, method, path, body=None):
             return True
         if len(pieces) == 3 and pieces[:2] == ['knowledge', 'pages']:
             _send_bounded(handler, service.knowledge_page(owner, _identifier(pieces[2], encoded=True)))
+            return True
+        if len(pieces) == 5 and pieces[:2] == ['knowledge', 'pages'] and pieces[3] == 'revisions':
+            _send_bounded(handler, service.knowledge_page_revision(owner,
+                _identifier(pieces[2], encoded=True), _knowledge_revision(pieces[4])))
             return True
         if len(pieces) == 3 and pieces[:2] == ['knowledge', 'experiences']:
             _send_bounded(handler, service.knowledge_experience(owner, _identifier(pieces[2], encoded=True)))

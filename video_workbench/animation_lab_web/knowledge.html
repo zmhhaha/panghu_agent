@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>创作知识 · 动画效果库</title>
+  <link rel="stylesheet" href="./knowledge.css">
+  <script type="module" src="./knowledge.mjs"></script>
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="./">← 动画效果库</a><span>开发者 · 创作知识</span><button id="knowledge-refresh" type="button">刷新目录</button></header>
+  <main id="knowledge-app">
+    <div class="heading"><p class="eyebrow">从真实实验中积累</p><h1>查证经验，修正知识</h1><p>实验记录保留原貌，知识页面可以继续修正。这里的改动供后续实验参考；已发布的 Skill 保持原版本。</p></div>
+    <p id="knowledge-message" class="message" role="status" aria-live="polite">正在读取知识目录…</p>
+    <div class="workspace">
+      <aside class="catalogue panel" aria-label="知识与经验目录">
+        <label for="knowledge-search">筛选本次目录<input id="knowledge-search" type="search" placeholder="名称、页面 ID、经验类型或来源" autocomplete="off"></label>
+        <p class="muted small">本次目录最多显示 64 页知识与 64 条经验。按已知 ID 可读取完整记录。</p>
+        <div class="lookup"><label for="knowledge-lookup-kind">记录类型<select id="knowledge-lookup-kind"><option value="page">知识页面</option><option value="experience">实验经验</option></select></label><label for="knowledge-lookup-id">记录 ID<input id="knowledge-lookup-id" autocomplete="off" spellcheck="false"></label><button id="knowledge-lookup" type="button">按 ID 查看</button></div>
+        <h2>知识页面 <span id="knowledge-page-count" class="count"></span></h2><div id="knowledge-pages" class="record-list"></div>
+        <h2>实验经验 <span id="knowledge-experience-count" class="count"></span></h2><div id="knowledge-experiences" class="record-list"></div>
+      </aside>
+      <section id="knowledge-detail" class="detail panel" aria-live="polite"><div class="empty"><h2>从一页知识或一条经验开始</h2><p>选择左侧记录，核对正文、证据和历史版本。</p></div></section>
+    </div>
+  </main>
+</body>
+</html>

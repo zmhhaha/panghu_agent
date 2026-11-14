@@ -100,8 +100,9 @@ def test_methods_only_routes_preserve_identity_csrf_prefix_download_and_media_ra
         assert request(server, 'GET', '/healthz', omit=['X-Forwarded-User'])[0] == 200
         status, html, _ = request(server, 'GET', PREFIX + '/')
         assert status == 200 and b'id="method-gallery-app"' in html
-        for asset in ('method-gallery.mjs', 'method-gallery.css'):
+        for asset in ('method-gallery.mjs', 'method-gallery.css', 'knowledge.html', 'knowledge.mjs', 'knowledge.css'):
             assert request(server, 'GET', PREFIX + '/' + asset)[0] == 200
+        assert request(server, 'GET', PREFIX + '/knowledge.html', omit=['X-Forwarded-User'])[0] == 403
         path = PREFIX + '/api/method-lab/catalog'
         status, raw, _ = request(server, 'GET', path)
         assert status == 200

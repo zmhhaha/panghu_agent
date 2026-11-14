@@ -80,6 +80,11 @@ class WikiTransportService:
         self.calls.append(('experience', owner, record_id))
         return self.knowledge.get_experience(owner, record_id)
 
+    def knowledge_page_revision(self, owner, page_id, revision):
+        self.calls.append(('page_revision', owner, page_id, revision))
+        return dict(page=self.knowledge.get_page(owner, page_id, revision=revision),
+                    current_revision=self.knowledge.get_page(owner, page_id)['revision'], evidence_issues=[])
+
     def revise_knowledge_page(self, owner, page_id, body):
         self.calls.append(('revise', owner, page_id))
         body = dict(body)
@@ -156,6 +161,46 @@ def test_wiki_explicit_revision_uses_cas_idempotency_and_never_schedules(peers):
     assert request(frontend, 'POST', path, changed)[0] == 409
     assert len(service.knowledge.page_history(USER, 'draw:async')) == 2
     assert backend.method_pump is None
+
+
+def test_historical_reads_return_original_body_through_both_hops_without_writes(peers):
+    service, backend, client, frontend, record = peers
+    initial = service.knowledge.get_page(USER, 'draw:async')
+    body = revision_body(record)
+    assert request(frontend, 'POST', PREFIX + '/knowledge/pages/draw%3Aasync', body)[0] == 200
+    service.calls.clear()
+    path = PREFIX + '/knowledge/pages/draw%3Aasync/revisions/1'
+    status, historical, _ = request(frontend, 'GET', path)
+    assert status == 200 and historical['page'] == initial and historical['current_revision'] == 2
+    assert historical['page']['body']['content'] != body['body']['content']
+    assert client.knowledge_page_revision(USER, 'draw:async', 1) == historical
+    assert service.calls == [('page_revision', USER, 'draw:async', 1)] * 2
+    assert request(frontend, 'GET', path, extra={'X-Forwarded-User': SECOND})[0] == 404
+    assert request(frontend, 'GET', path.removesuffix('/1') + '/3')[0] == 404
+    assert request(frontend, 'POST', path, body)[0] == 404
+    assert len(service.knowledge.page_history(USER, 'draw:async')) == 2
+    assert len(service.knowledge.list_experiences(USER)) == 1
+    assert backend.method_pump is None
+
+
+@pytest.mark.parametrize('revision', ['0', '-1', '01', '1.0', '1000001', '99999999', 'true'])
+def test_historical_revision_rejects_ambiguous_or_out_of_range_numbers_before_service(peers, revision):
+    service, backend, _, frontend, _ = peers
+    path = PREFIX + '/knowledge/pages/draw:async/revisions/' + revision
+    assert request(frontend, 'GET', path)[0] == 422
+    assert request(backend, 'GET', path, private=True)[0] == 422
+    assert service.calls == []
+
+
+def test_historical_client_requires_integer_and_valid_id_before_network(peers):
+    service, _, client, _, _ = peers
+    for revision in (0, -1, True, 1.0, '1', 1000001):
+        with pytest.raises(CreationTransportError, match='revision_invalid'):
+            client.knowledge_page_revision(USER, 'draw:async', revision)
+    for identity in ('../escape', 'with/slash', 'encoded%2Fslash', ''):
+        with pytest.raises(CreationTransportError, match='identifier_invalid'):
+            client.knowledge_page_revision(USER, identity, 1)
+    assert service.calls == []
 
 
 @pytest.mark.parametrize('omitted,extra', [

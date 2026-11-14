@@ -44,7 +44,8 @@ _FIELDS = {'case_id', 'case_identity', 'variant_id', 'kind', 'start_seconds',
            'end_seconds', 'region', 'tags', 'severity', 'comment', 'preference', 'verdict'}
 _PUBLIC_URL_FIELDS = frozenset({'preview_url', 'report_url', 'task_url', 'image_url', 'asset_url', 'media_url', 'assessment_url', 'source_url'})
 _METHOD_UI_PATHS = frozenset({'/', '/index.html', '/method-gallery.html',
-                              '/method-gallery.mjs', '/method-comparison.mjs', '/method-gallery.css', '/skill-publication.mjs'})
+                              '/method-gallery.mjs', '/method-comparison.mjs', '/method-gallery.css', '/skill-publication.mjs',
+                              '/knowledge.html', '/knowledge.mjs', '/knowledge.css'})
 
 
 def catalog():
@@ -785,6 +786,12 @@ class LabHandler(BaseHTTPRequestHandler):
                     return self._json(dict(client.knowledge_catalogue(owner), csrf_token=lab.csrf_token))
                 if len(method_pieces) == 5 and method_pieces[2:4] == ['knowledge', 'pages']:
                     return self._json(client.knowledge_page(owner, method_pieces[4]))
+                if (len(method_pieces) == 7 and method_pieces[2:4] == ['knowledge', 'pages']
+                        and method_pieces[5] == 'revisions'):
+                    revision = method_pieces[6]
+                    _require(re.fullmatch(r'[1-9][0-9]{0,6}', revision) is not None
+                             and int(revision) <= 1000000, 'animation_knowledge_revision_invalid')
+                    return self._json(client.knowledge_page_revision(owner, method_pieces[4], int(revision)))
                 if len(method_pieces) == 5 and method_pieces[2:4] == ['knowledge', 'experiences']:
                     return self._json(client.knowledge_experience(owner, method_pieces[4]))
                 if len(method_pieces) == 5 and method_pieces[2] == 'methods' and method_pieces[4] == 'readiness':
@@ -881,7 +888,8 @@ class LabHandler(BaseHTTPRequestHandler):
                                   'application/x-ndjson; charset=utf-8', download=True)
             if path in {'/', '/index.html', '/app.mjs', '/model.mjs', '/style.css', '/lab-player.mjs',
                         '/experiments.mjs', '/experiment-model.mjs', '/creation-runs.mjs',
-                        '/method-gallery.html', '/method-gallery.mjs', '/method-comparison.mjs', '/method-gallery.css', '/skill-publication.mjs'}:
+                        '/method-gallery.html', '/method-gallery.mjs', '/method-comparison.mjs', '/method-gallery.css', '/skill-publication.mjs',
+                        '/knowledge.html', '/knowledge.mjs', '/knowledge.css'}:
                 name = 'method-gallery.html' if path in {'/', '/index.html'} else path[1:]
                 if name == 'lab-player.mjs':
                     return self._send(lab.player_script, 'text/javascript; charset=utf-8')
