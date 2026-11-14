@@ -1,6 +1,6 @@
 # HyperFrames project runtime：实现及技术验证
 
-这次增加显式的正式创作场景适配器，使用已校验字节的 HyperFrames 0.8.149 core `renderSeek(exact)` 驱动画面。SVG/HTML、Canvas2D、Three.js 继续由 Agent 原始源码绘制；宿主只提供工程、时钟、完成等待、媒体编码及证据。默认线上运行路径没有切换，本记录不代表全片统一工程已完成。
+这次增加显式的正式创作场景适配器，使用已校验字节的 HyperFrames 0.8.149 core `renderSeek(exact)` 驱动画面。SVG/HTML、Canvas2D、Three.js 继续由 Agent 原始源码绘制；宿主只提供工程、时钟、完成等待、媒体编码及证据。下列首轮记录中的默认路径未切换是当时状态；随后实验室已完成核心桥接部署，见文末。正式制作仍未接通统一整片工程。
 
 ## 两条显式入口
 
@@ -36,3 +36,11 @@
 接下来须将整片Agent产物组织为一个共享工程，统一录音主时钟、源文件与资产、场景激活和跨镜状态、全片定位与完成等待，再做完整影片实际捕获、原声及转场验证。正式业务编排、运行快照和部署默认切换也须接上明确的新身份，不能仅因工程模块存在或fixture通过而勾选全片闭环。
 
 普通lab白名单和构建清单已经纳入共享 `hyperframes_project.mjs`，renderer普通Dockerfile原本已包含该文件。UI/知识历史发布可单独提交，避免把新HF宿主摘要带入只需要界面变更的发布。
+
+## 实验室核心桥接部署完成
+
+`hyperframes-h2-plan-0e0eb0e-r2/final-independent-readback.json` 已独立确认完整 Git 源码 `0e0eb0e93614bc152e5c7b1c8c7b55d78f4be37c` 的两个 `latest` 镜像实际启用。executor digest 为 `sha256:47d02339fd9556afb74be21dd9aef8e8ac2a65f03afaae2f3ca93ca6ff6810cf`，renderer digest 为 `sha256:59ee5c356f4c742e515385db4e2b315c9393641bea7d76136f095b27214e79ca`。Pod Ready、原 Service 与端点、实际调用方目录均通过回读；`method_project_runtime=hyperframes-core-bridge`，新准入为 v2。
+
+同一全局预算内实际重渲染三次：旧 Agent SVG 4 秒／96 帧、Canvas 14 秒／336 帧、Three.js 14 秒／336 帧均通过真实核心、严格定位、编码及原 PCM／音效核验，模型调用为零。未改写原作品、原录音和历史记录，首轮资产宿主映射失败及其恢复仍保留，不将其算作已消耗渲染或覆盖。部署回读证据归档为本地既有 D 盘研究目录 `hyperframes-h2-final-live-readback-20261114.json`。
+
+这是实验室的核心桥接运行，仍如实标注 `legacy_bridge=true`；没有把旧 Agent 源码改称原生生命周期模块，也不代表正式整片编排、统一音效或新 realm 宿主生产准入已经完成。正式整片下一步见[接入差距](hyperframes-film-production-integration.md)。

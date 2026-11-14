@@ -161,7 +161,9 @@ C 的只读诊断在本地 `canvas-C-reverse-seek-readonly-20261114/diagnosis.md
 
 评审诊断归档修复 `0e0eb0e` 已有 21 项相关检查通过，尚未部署。它对正常大小评审保留 criteria_results、remaining_issues、next_guidance；超过 256 KiB 经验预算时保存明确的结构化投影、字段计数／摘要及原 operation/result SHA 引用，避免归档阻塞已完成评审。完整结果仍在宿主 operation 存储中，后续 Agent 只能读取投影；按需读取诊断全文尚未实现，不因此回填历史经验或扩大快照。
 
-H.2 的显式核心适配仍未部署为线上默认；H.3 整片合同、可组合场景与生命周期宿主已独立提交为 `887b9a8`，39 项离线检查通过，尚未实际执行整片捕获，不记为全片媒体验收或上线。
+上述记录时 H.2 的显式核心适配仍未部署。随后 `hyperframes-h2-plan-0e0eb0e-r2/final-independent-readback.json` 已独立确认新 executor／renderer、v2 准入及 `hyperframes-core-bridge` 实际启用，原三引擎作品各一次真实核心重渲染通过，零模型调用；Pod、Service、调用方目录及历史保全通过。完整镜像与证据见[HF 运行验证](hyperframes-project-runtime-20261114.md)。正式制作未因此切换为统一整片。
+
+H.3 的可组合资源／opaque realm 宿主已提交为 `86b0cc0`，实际修后十次定位矩阵通过，包括三引擎、转场、重复一致、生命周期错误和污染伪造拒绝。`aa01950` 增加离线整片导出，首次目标环境运行因 FFmpeg 5.1 提前结束音轨而被拒绝，失败保留；`5864ede` 的有限 PNG 自然 EOF 修复经过本地 14 项检查、目标环境三组独立编码诊断和修后完整技术工程导出，72 帧／3 秒／75 次核心定位通过。取回实际 MP4 的另一环境独立时长／全解码及三段纯音／静音窗检查也通过，记录见[离线导出](hyperframes-film-offline-export.md)。累计整片 2/2，零业务模型调用。这仍是技术图形／纯音夹具和只读源码，不是新镜像或真实 Agent 制作准入；正式制作快照、运输、新 Agent 模块合同和业务调度仍未接通，不记为 H.3 整体完成。
 
 ## 仍须独立完成的验收
 
@@ -174,3 +176,5 @@ H.2 的显式核心适配仍未部署为线上默认；H.3 整片合同、可组
 本文件继续随真实回执更新，不以单元测试、夹具或技术准入代替真实发布及主观认可。
 
 上一次 OpenSpec 同步：项目 `ec663f5a-53d3-4a0e-9037-933eb788d183` 的本变更更新至 revision `987a15a80f81a74f6e11bece0751ae36b68f2610`，三份文档精确回读一致，规格校验通过。当时仅替换最新进展、同步主设计并澄清历史阶段边界；43 项任务保持 16 完成、27 待办，没有将 v5 构建或诊断通过勾成真实验收完成。后续 v5 部署、真实业务 A／B／D／C、知识界面部署与 HF 进展须另外同步；本文件更新不改变 OpenSpec 任务计数。凭据和 Guard 配置未变。
+
+最新同步补充：本轮已从服务端 fresh revision `834d146011ca5c80fa84adf9738ce87c960a7c9f` 以 CAS 更新 `tasks.md` 最新进展及与本地一致的 `design.md`，实际回读 revision `698cddcd18a8e6a4a44f284bb50afffcbef36538`，两份内容精确一致，`validate_change` 通过。已记录实验室核心部署、修后 realm 矩阵、整片首轮失败、FFmpeg-only 诊断、修后完整工程及取回实际 MP4 的独立检查。43 项继续 17 完成、26 待办，本轮未新增完成勾选，不将技术底座记为 H.3 正式业务完成；未 apply／archive 或合主线。回读／校验回执为既有 D 盘 scratch 的 `openspec-hyperframes-h3-verified-progress-receipt.json`。
