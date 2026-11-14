@@ -357,6 +357,8 @@ def test_failed_render_stops_instead_of_pump_loop(work):
     renderer.failed = True
     row = finish(service, start(service)['id'])
     assert row['state'] == 'failed' and reviewer.submissions == []
+    assert row['error'] == 'animation_method_render_failed'
+    assert service.commissions.get('developer', row['id'])['summary']['code'] == row['error']
     assert len(renderer.calls) == 1
 
 

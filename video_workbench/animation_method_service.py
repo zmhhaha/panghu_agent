@@ -27,6 +27,30 @@ from .animation_method_commissions import (
 from .animation_runtime_capabilities import validate_runtime_capabilities
 from .animation_authoring_tools import observed_authoring_tools
 from .animation_method_research import METHOD_SCHEMA, REMOVAL_SCHEMA, validate_content_changes
+from .animation_method_renderer import PUBLIC_RENDER_FAILURE_CODES, public_render_failure_code
+
+
+_RENDER_FAILURE_MESSAGE = '画面运行检查未通过；保留失败证据，不自动重试'
+_EXECUTION_FAILURE_MESSAGE = '执行失败；保留已有结果与原任务，不自动重试'
+_PUBLIC_FAILURE_MESSAGES = frozenset({
+    _RENDER_FAILURE_MESSAGE, _EXECUTION_FAILURE_MESSAGE,
+    '制作结果未通过入库验证；保留原操作，不自动重跑',
+    '评审证据未通过关联验证；保留原操作，不自动重跑',
+    'Manim资源创作已停止；保留原操作和证据，不自动重试',
+})
+
+
+def _public_failure(run):
+    """Read old/new summaries without exposing arbitrary stored diagnostics."""
+    for operation in reversed(run['operations']):
+        if (operation['stage'] == 'render' and operation['status'] == 'completed'
+                and (operation.get('result') or {}).get('technical', {}).get('status') != 'passed'):
+            return _RENDER_FAILURE_MESSAGE, public_render_failure_code(operation['result'].get('error'))
+    summary = run['summary']
+    message = summary.get('message') if type(summary) is dict else summary
+    code = summary.get('code') if type(summary) is dict else None
+    return (message if type(message) is str and message in _PUBLIC_FAILURE_MESSAGES else _EXECUTION_FAILURE_MESSAGE,
+            code if type(code) is str and code in PUBLIC_RENDER_FAILURE_CODES else 'animation_method_execution_failed')
 
 
 def _require(value, code='animation_method_request_invalid', status=422):
@@ -835,6 +859,8 @@ class AnimationMethodService:
             code = run['summary'].get('code')
             if type(code) is str:
                 error = code
+        if run['state'] == 'failed':
+            summary, error = _public_failure(run)
         detail = dict(schema='video.animation-method-lab-detail.v1', id=run['id'], request_id=run['request_id'],
             effect={key: deepcopy(effect[key]) for key in (
                 'id', 'title', 'open_commission_id', 'commissions', 'relationship_status', 'relationship_issues',
@@ -1564,7 +1590,8 @@ class AnimationMethodService:
                 return
             for render in [op for op in run['operations'] if op['stage'] == 'render' and op['status'] == 'completed']:
                 if render['result'].get('technical', {}).get('status') != 'passed':
-                    self.commissions.stop(owner, commission_id, 'failed', '画面运行检查未通过；保留失败证据，不自动重试')
+                    self.commissions.stop(owner, commission_id, 'failed', dict(message=_RENDER_FAILURE_MESSAGE,
+                        code=public_render_failure_code(render['result'].get('error'))))
                     return
                 candidate = next((row for row in run['candidates'] if row['operation_id'] == render['id']), None)
                 if candidate is None or candidate['id'] not in self._demonstrations(owner, run['id']):

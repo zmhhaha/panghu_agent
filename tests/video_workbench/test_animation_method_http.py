@@ -17,6 +17,8 @@ from video_workbench.animation_creation_http import CreationHTTPServer, Creation
 from video_workbench.animation_method_http import MethodLabClient
 from video_workbench.animation_method_service import AnimationMethodService
 from video_workbench.animation_lab import LabHTTPServer
+from video_workbench import animation_method_renderer as renderer
+from agent_service.contracts import canonical_bytes
 
 
 TOKEN = 'private-method-lab-test-token-' + 'a' * 32
@@ -142,6 +144,84 @@ def test_real_storage_start_is_idempotent_and_gets_never_submit_paid_work(durabl
         client.get(SECOND, first['id'])
     assert denied.value.status == 404
     assert client.action(USER, first['id'], 'cancel', {})['state'] == 'cancelled'
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+@pytest.mark.parametrize('diagnostic,expected', [
+    ('Error: method_absolute_seek_mismatch', 'method_absolute_seek_mismatch'),
+    ('Error: method_absolute_seek_mismatch SOURCE_SECRET', 'animation_method_render_container_failed'),
+])
+def test_real_failed_renderer_reason_reaches_private_and_public_http_safely(
+        durable, tmp_path, monkeypatch, legacy, diagnostic, expected):
+    service, author, review, _, client = durable
+    row = client.start(USER, dict(start_body(), criteria=[dict(id='causal', description='The cause is visible.')]))
+    image = 'registry.example/renderer:latest@sha256:' + 'a' * 64
+    calls = []
+
+    def failed_execution(directory):
+        calls.append(str(directory))
+        binding = json.loads((directory / 'binding.json').read_bytes())
+        request = binding['request']
+        (directory / 'work').mkdir()
+        receipt = dict(schema=request['schema'].replace('-request.', '-receipt.'), status='failed',
+            request_identity=request['identity'], request_sha256=binding['request_sha256'],
+            image_digest=binding['image_digest'], host_sha256=request['host_sha256'], error=diagnostic)
+        (directory / 'work/render-receipt.json').write_bytes(canonical_bytes(receipt))
+        outcome = dict(schema='video.animation-method-render-outcome.v1',
+            request_identity=request['identity'], request_sha256=binding['request_sha256'], image=image,
+            status='failed', error='animation_method_render_container_failed', automatic_retry=False,
+            cleanup=dict(status='removed_and_confirmed_absent'))
+        (directory / 'render-outcome.json').write_bytes(canonical_bytes(outcome))
+        return outcome
+
+    monkeypatch.setattr(renderer, 'execute_method_render', failed_execution)
+    service.renderer = renderer.MethodAnimationRenderer(tmp_path / 'failed-renders', image, enabled=True)
+    run = service.commissions.get(USER, row['id'])
+    document = service._document(USER, run, 'create')
+    source = dict(engine='html-svg', files={'scene.html': '<html><body>inert failed test</body></html>'},
+                  strategy=dict(description='HTTP failure test', tradeoffs='No actual media'))
+    operation = service.commissions.reserve(USER, row['id'], 'render',
+        dict(source=source, document=document, sound_events=[]), 'failed-render')
+    service.advance(USER, row['id'])
+    assert service.commissions.operation(USER, operation['id'])['result']['error'] == expected
+    if legacy:
+        service.commissions.stop(USER, row['id'], 'failed',
+            '画面运行检查未通过；保留失败证据，不自动重试')
+    else:
+        service.advance(USER, row['id'])
+        assert service.commissions.get(USER, row['id'])['summary']['code'] == expected
+    original = service.commissions.get(USER, row['id'])
+    original_events = service.commissions.events(USER, row['id'])
+    before = (len(author.preflights), len(review.preflights))
+    lab = SimpleNamespace(iteration_store=SimpleNamespace(), csrf_token=CSRF, method_client=client)
+    with serving(LabHTTPServer(lab, 0, proxy_mode=True, public_origin='https://' + HOST,
+                 base_path=BASE, developer_users=[USER])) as frontend:
+        for _ in range(2):
+            private = client.get(USER, row['id'])
+            status, public, headers = public_request(frontend, 'GET', PREFIX + '/commissions/' + row['id'])
+            assert status == 200 and headers['Cache-Control'] == 'no-store'
+            for detail in (private, public):
+                assert detail['state'] == 'failed' and detail['error'] == expected
+                assert detail['candidates'] == [] and detail['can_retry'] is True
+                assert 'SOURCE_SECRET' not in json.dumps(detail)
+    assert len(calls) == 1 and (len(author.preflights), len(review.preflights)) == before
+    assert service.commissions.get(USER, row['id']) == original
+    assert service.commissions.events(USER, row['id']) == original_events
+
+
+@pytest.mark.parametrize('summary', [
+    'Error: SOURCE_SECRET from historical exception',
+    {'message': 'SOURCE_SECRET', 'code': 'unknown_SOURCE_SECRET'},
+])
+def test_old_failed_summary_without_known_code_has_fixed_http_fallback(durable, summary):
+    service, _, _, _, client = durable
+    row = client.start(USER, start_body())
+    service.commissions.stop(USER, row['id'], 'failed', summary)
+    original = service.commissions.get(USER, row['id'])
+    failed = client.get(USER, row['id'])
+    assert failed['error'] == 'animation_method_execution_failed'
+    assert 'SOURCE_SECRET' not in json.dumps(failed)
+    assert service.commissions.get(USER, row['id']) == original
 
 
 def test_method_goals_and_standards_can_cross_the_old_small_annotation_body_limit(durable):

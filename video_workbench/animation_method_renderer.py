@@ -49,6 +49,45 @@ ASSET_SHA256 = {
     'three.LICENSE.txt': '4c40a1ef62450b857c3b2aaf294936304cd552d965fbcd9d32d4c5bcf4ba4454',
 }
 _ASSETS = frozenset(ASSET_SHA256)
+PUBLIC_RENDER_FAILURE_CODES = frozenset({
+    'animation_method_render_failed', 'animation_method_render_container_failed',
+    'animation_method_render_deadline_insufficient', 'animation_method_render_exit_invalid',
+    'animation_method_render_image_changed',
+    'method_absolute_seek_mismatch', 'method_reverse_seek_mismatch',
+})
+
+
+def public_render_failure_code(value):
+    """Project a diagnostic onto fixed codes, never exception/log text."""
+    return value if type(value) is str and value in PUBLIC_RENDER_FAILURE_CODES else 'animation_method_render_failed'
+
+
+def _failed_receipt_code(root, binding, outcome):
+    fallback = public_render_failure_code(outcome.get('error'))
+    if outcome.get('error') != 'animation_method_render_container_failed':
+        return fallback
+    try:
+        receipt, _ = _json(root / 'work/render-receipt.json', 65536)
+        request = binding['request']
+        if (receipt.get('status') != 'failed'
+                or receipt.get('schema') != request['schema'].replace('-request.', '-receipt.')
+                or any(receipt.get(key) != expected for key, expected in {
+                    'request_identity': request['identity'],
+                    'request_sha256': binding['request_sha256'],
+                    'image_digest': binding['image_digest'],
+                    'host_sha256': request['host_sha256'],
+                    **{key: request[key] for key in ('engine', 'engine_runtime_sha256', 'project_runtime_sha256')
+                       if key in request},
+                }.items())):
+            return fallback
+        # Host errors include the literal "Error: " prefix. Do not extract a
+        # matching substring from an authored exception, stack trace or log.
+        return {
+            'Error: method_absolute_seek_mismatch': 'method_absolute_seek_mismatch',
+            'Error: method_reverse_seek_mismatch': 'method_reverse_seek_mismatch',
+        }.get(receipt.get('error'), fallback) if type(receipt.get('error')) is str else fallback
+    except (OSError, ServiceError, KeyError, TypeError, ValueError):
+        return fallback
 
 
 def _require(condition, code='animation_method_render_invalid', status=409):
@@ -785,11 +824,16 @@ class MethodAnimationRenderer:
             result['runtime']['generated_resources'] = deepcopy(binding['request']['generated_resources'])
             result['runtime']['generated_resource_observation'] = (
                 deepcopy(receipt['generated_resource_observation']) if receipt else None)
+        # Preserve the immutable historical result/proof shape in the private
+        # ledger. Failure receipts only improve the returned diagnostic; they
+        # never admit media, alter custody proofs or authorize another attempt.
+        public_result = (dict(result, error=_failed_receipt_code(root, binding, outcome))
+                         if not rendered else result)
         if row['proof_sha256'] is not None:
             _require(row['proof_sha256'] == proof, 'animation_method_render_proof_changed')
             _require(row['result'] is not None and bytes(row['result']) == canonical_bytes(result),
                      'animation_method_render_result_changed')
-            return result
+            return public_result
         # A previously unrecorded completion may reconcile its original claim.
         # Already completed media/frame reads above never rewrite the ledger.
         with closing(self._connect(write=True)) as db:
@@ -806,7 +850,7 @@ class MethodAnimationRenderer:
                 _require(stored['result'] is not None and bytes(stored['result']) == canonical_bytes(result),
                          'animation_method_render_result_changed')
             db.commit()
-        return result
+        return public_result
 
     def media_path(self, operation_id):
         result = self.lookup(operation_id)

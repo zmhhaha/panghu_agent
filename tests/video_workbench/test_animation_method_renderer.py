@@ -377,6 +377,85 @@ def test_unknown_or_failed_runs_never_reexecute_after_restart(adapter, failure, 
     assert execution.calls == 1
 
 
+@pytest.mark.parametrize('diagnostic,expected', [
+    ('Error: method_absolute_seek_mismatch', 'method_absolute_seek_mismatch'),
+    ('Error: method_reverse_seek_mismatch', 'method_reverse_seek_mismatch'),
+    ('Error: unknown_failure SOURCE_SECRET', 'animation_method_render_container_failed'),
+    ('Error: method_absolute_seek_mismatch\nSOURCE_SECRET', 'animation_method_render_container_failed'),
+    ({'code': 'method_absolute_seek_mismatch'}, 'animation_method_render_container_failed'),
+])
+def test_failed_receipt_projects_only_exact_fixed_codes_without_rewriting_historical_ledger(
+        adapter, monkeypatch, diagnostic, expected):
+    value, execution = adapter
+    execution.failure = 'known'
+
+    def failed_render(directory):
+        outcome = execution(directory)
+        root = Path(directory)
+        binding = json.loads((root / 'binding.json').read_bytes())
+        request = binding['request']
+        outcome['error'] = 'animation_method_render_container_failed'
+        (root / 'render-outcome.json').write_bytes(canonical_bytes(outcome))
+        work = root / 'work'
+        work.mkdir()
+        receipt = dict(schema=request['schema'].replace('-request.', '-receipt.'), status='failed',
+            request_identity=request['identity'], request_sha256=binding['request_sha256'],
+            image_digest=binding['image_digest'], host_sha256=request['host_sha256'], error=diagnostic)
+        (work / 'render-receipt.json').write_bytes(canonical_bytes(receipt))
+        return outcome
+
+    monkeypatch.setattr(renderer, 'execute_method_render', failed_render)
+    result = value.render('failed-diagnostic', SOURCE, document())
+    assert result['error'] == expected and result['technical']['status'] == 'failed'
+    assert result['technical_passed'] is False and result['media'] is None
+    assert 'SOURCE_SECRET' not in json.dumps(result)
+    ledger_before = value.ledger.read_bytes()
+    root = value._directory('failed-diagnostic')
+    evidence_before = {name: (root / name).read_bytes() for name in (
+        'render-outcome.json', 'work/render-receipt.json')}
+    with sqlite3.connect(value.ledger) as db:
+        stored = json.loads(db.execute('SELECT result FROM animation_method_render_operations').fetchone()[0])
+    # The existing private custody shape is retained; only the return value is
+    # a diagnostic projection, so reading an old receipt never rewrites proof.
+    assert stored['error'] == 'animation_method_render_container_failed'
+    restarted = renderer.MethodAnimationRenderer(value.root, NEW_IMAGE, enabled=True)
+    assert restarted.lookup('failed-diagnostic') == result
+    assert value.ledger.read_bytes() == ledger_before
+    assert {name: (root / name).read_bytes() for name in evidence_before} == evidence_before
+    assert execution.calls == 1
+
+
+@pytest.mark.parametrize('change', ['request_identity', 'request_sha256', 'image_digest',
+                                  'host_sha256', 'schema', 'status', 'invalid-json', 'oversized'])
+def test_unbound_or_invalid_failed_receipt_cannot_supply_a_public_reason(adapter, monkeypatch, change):
+    value, execution = adapter
+    execution.failure = 'known'
+
+    def failed_render(directory):
+        outcome = execution(directory)
+        root = Path(directory)
+        binding = json.loads((root / 'binding.json').read_bytes())
+        request = binding['request']
+        outcome['error'] = 'animation_method_render_container_failed'
+        (root / 'render-outcome.json').write_bytes(canonical_bytes(outcome))
+        (root / 'work').mkdir()
+        receipt = dict(schema=request['schema'].replace('-request.', '-receipt.'), status='failed',
+            request_identity=request['identity'], request_sha256=binding['request_sha256'],
+            image_digest=binding['image_digest'], host_sha256=request['host_sha256'],
+            error='Error: method_absolute_seek_mismatch')
+        if change in receipt:
+            receipt[change] = 'unbound'
+        raw = b'{' if change == 'invalid-json' else b'x' * 65537 if change == 'oversized' else canonical_bytes(receipt)
+        (root / 'work/render-receipt.json').write_bytes(raw)
+        return outcome
+
+    monkeypatch.setattr(renderer, 'execute_method_render', failed_render)
+    result = value.render('unbound-diagnostic', SOURCE, document())
+    assert result['error'] == 'animation_method_render_container_failed'
+    assert result['technical']['status'] == 'failed' and result['media'] is None
+    assert execution.calls == 1
+
+
 def test_simultaneous_callers_share_a_single_external_claim(adapter):
     value, execution = adapter
     execution.entered, execution.release = threading.Event(), threading.Event()
