@@ -9,7 +9,7 @@
 | 范围 | 已有实现与证据 | 本次确认的目标／剩余差距 |
 | --- | --- | --- |
 | 自由创作与渲染 | HTML/SVG、Canvas、Three.js 已分别在自定义运行链验证；`__animationExperiment.seek(t)` → Playwright Chromium 截帧 → FFmpeg 编码／组合 | 实验室和正式制作统一采用 HyperFrames 项目、时间轴、定位与渲染；旧引擎验证不能替代新链路验收 |
-| HyperFrames | 渲染环境保留 0.8.149；共同宿主已有显式核心桥接，旧固定计划路径使用运行时／CLI | 当前生产自由创作仍走原生定位回调；三引擎核心导出及整片接管尚未验收，安装包或身份字段不等于已使用 |
+| HyperFrames | 0.8.149 core 已在目标依赖环境完成三引擎原始 Agent 源码重编码与严格定位验证；共同宿主提供显式核心路径 | 线上默认仍为 native；新镜像独立准入、实验室默认切换和正式整片接管须分别完成，单场景实测不等于全片工程 |
 | 方法消费 | 标准 Skill 包、冻结目录、原生搜索／读取及新正式角色已实现；实际隔离候选已留下工具读取证据 | 开发者认可和真实业务发布、正式新内容采用仍需完成；operator-only fixture 不代表业务已发布 Skill |
 | 整片统筹 | 一次整体确认、配音先行编排和三段上下文／相邻候选交接已有实际验证 | 统一整片 HyperFrames 项目、实际整片独立审阅及默认一轮修订仍需完成 |
 | 质量与发布 | 技术结果、模型发现、人工观看和发布分别留证 | 不替开发者认可代表／迁移结果，不把代码、媒体生成或部署成功记为发布完成 |
@@ -67,7 +67,7 @@ HyperFrames 是两端共同的动画工程、时间轴、预览定位和渲染�
 
 核对来源：npm `hyperframes@0.8.149` 的 `gitHead` 为 `bf881bf79d68cc78b52624f6431644ac152b2723`，见上游 [Frame adapters](https://github.com/heygen-com/hyperframes/blob/bf881bf79d68cc78b52624f6431644ac152b2723/docs/concepts/frame-adapters.mdx) 和 [Three 适配器](https://github.com/heygen-com/hyperframes/blob/bf881bf79d68cc78b52624f6431644ac152b2723/packages/core/src/runtime/adapters/three.ts)。既有资源身份另记的 `hyperframes_source=2905162d925fc87fb8242e24ed0bbf025d307ea1` 是另一条来源记录，不与 npm gitHead 混称。
 
-上述源码／安装包核查不等于我方服务器真实导出验收。本次未执行新的 HyperFrames Canvas／Three 渲染，也未升级依赖。后续必须对三类自由源码分别完成真实编码、时间定位、音轨、边界、资源和清理检查。编辑器的 “canvas integration”、CSS 类名 `.canvas` 和实验性 DOM 纹理接口均不能冒充普通 Canvas2D 导出证据。
+随后服务器已完成三引擎核心探针、正式单场景捕获，以及 SVG、Canvas、Three.js 的真实 Agent 原源码重编码，检查严格定位、原声音轨、独立捕获和完整解码，未升级依赖。详细来源和失败保留见 [HyperFrames 运行验证](hyperframes-project-runtime-20261114.md)。这些验证使用既有依赖镜像和只读新宿主源码，不能替代新构建镜像准入、线上默认切换或全片共享工程验收。编辑器的 “canvas integration”、CSS 类名 `.canvas` 和实验性 DOM 纹理接口也不能冒充普通 Canvas2D 导出证据。
 
 ## 3. 可复用 Skill、效果样片与研究记录
 
@@ -210,6 +210,8 @@ Agent 可直接修改当前样片源码以探索和比较。有效变化必须�
 
 ### 7.3 新角色实际准入与部署（2026-11-13 至 2026-11-14）
 
+本节保存前轮准入、故障定位与发布状态；后续 v5 升级和真实业务结果以 7.4 为准。
+
 实验 author/review v2 在修复后的独立完整源码和镜像上分别实际运行 4 次模型请求，完成唯一一次 4 秒原始源码渲染和真实帧评审；两个角色均通过独立技术准入。正式 production v3 以 6 次模型请求完成标准 Skill 双产物和原生 search/read 证据，原录音驱动的 13 秒原始源码渲染通过，独立准入通过。所有新 attempt 均有有限预算，失败保留；文件保管修正和工具顺序误判的修复没有重复生成或渲染。
 
 正式角色、workbench 与 motion executor 已完成实际接线及开放前后检查，专用 caller 只允许 production v3；旧调用者、宿主和业务数据保留。实验室 author/review v2 和带迁移修复的新前端也已实际部署，Pod Ready；方法部署后的 production capabilities 回验仍通过。精确发布 UI 和迁移内容／结构绑定已有回归，部署和真人认可仍分别记录。
@@ -225,6 +227,18 @@ s4 修正启动封装后实际完成 4 次模型请求，均 HTTP 200 complete�
 `93e7626a9a27200927210de724f85d1d5c02b78a` 已仅以明确的 10 个文件提交并推送 v5 完整知识字段说明及接线，manifest SHA256 为 `3e17c8b9766568021b9fbca2ace6cc31f588c966266e169bf229cdbafb69cce0`；v3／v4／validator 保持原字节。profile／lineage／knowledge／build 检查为 174 passed、2 skipped，独立 catalog／upgrade／acceptance 检查为 15 passed。服务器 `skill-method-source-r4`／`skill-method-release-r4` 的完整 Git 源码构建已完成，三个 `latest` 镜像已推送；源码清单为 `d513471058edb07edefb9fce0b8287a9c06e7bacafbef25686ad090361579c8e`，构建回执均为零模型调用／部署。未启动 v5 新模型候选、未部署 v5，本轮实际失败后不追加付费尝试。下一阶段是 v5 author／reviewer 新独立技术验证及确切升级，不以代码或构建代替准入；旧 upgrade v1／v2、prepare_upgrade_v2 和 s4 执行器固定 r3／v4 及旧 UID，不能直接复用于 r4／v5，需新 release 固定脚本、新 candidate 目录和未保留 UID，不能把失败 s4 用作成功准入。后续真实业务链继续分别验证，W.2 所需的真实知识 CAS 与跨委托消费尚未完成，详见接通验证记录。
 
 这里的真实候选只证明新协议、工具和媒体技术链；正式候选采用的是 operator-only Skill，不能冒充开发者认可或业务发布。真实委托的 Wiki 回写与后续快照消费、异内容异结构迁移、确切样片认可及发布到正式新内容的采用仍按独立证据验收。HyperFrames 核心三引擎导出及统一整片工程继续待办。本轮不合主线。完整来源、失败和验证收据见[WikiSkill 接通验证记录](wikiskill-rollout-validation.md)。
+
+### 7.4 v5 修复上线、知识维护与 HyperFrames 实测（2026-11-14）
+
+v5 author／reviewer 在独立 s5 候选中各完成 4 次真实模型调用，原始产物、唯一一次 4 秒 Canvas 渲染及六张实际评审图通过严格独立准入。v5 的 control、method worker 和 executor 已实际接线，真实 lab caller 目录回验通过，三引擎可用；保留既有身份、凭据及历史记录。技术 fixture 不替代业务作品，原失败 A 未被改写。
+
+原筛选统计目标在同一效果下显式重跑 A，12 秒 Canvas 原始作品完成完整链路并通过技术检查；评审仍发现归集与统计标签遮挡，1 轮预算到达后停止。A 的三个 Agent 操作未提出知识更新；后续有界优化 B 已由 Agent 提案并 CAS 创建真实 Wiki revision 1，同一委托 create 的冻结输入读取该版本。独立普通委托 D 没有继承 B，其 plan／create 冻结输入仍实际纳入 B 的经验与 revision 1；D create 又通过 CAS 修正为 revision 2，review 冻结输入读取新版本，先前输入保持原样。W.2 已结合真实回写、跨委托输入、知识查询修正入口及 GET 不启动预算的代码与浏览器检查完成验证，不将其表述为模型注意力、效果保证或 Skill 发布。
+
+B／D 均完成 12 秒 Canvas 技术链，按 1 轮预算停止；B 的 improved 仅为所供静态图片比较，D 为 inconclusive，仍需改善遮挡及核对完整运动。去参考迁移 C 已移除原参考、原源码、Wiki 和研究材料，但严格定位报 `reverse_seek_mismatch`，没有可采用候选、reviewer 或补充重试，迁移验收继续未完成。精确委托、冻结输入和 revision 1→2 SHA 链见接通验证记录，不以普通 D 的知识消费替代 C 的去参考迁移。
+
+开发者知识页提供经验／Wiki 正文／历史版本查询及显式 CAS 修正，冲突保留草稿，未知结果冻结原请求；知识维护不会触发 Agent 或发布 Skill。界面已独立提交并从干净源码构建部署 lab/executor；浏览器已只读核对 D 完成状态、revision 1／2 正文及历史条目，修订表单打开后取消。诊断三字段归档修复 `0e0eb0e` 的 21 项检查通过但尚未部署；超限时明确保存摘要和原结果引用，后续 Agent 按需读取完整诊断仍未实现。精确证据见接通验证记录。
+
+HyperFrames 新单场景正式适配、实验室显式核心桥接及严格证据校验已单独提交；真实三引擎探针、原 Agent 三引擎源码和音效重编码通过。H.2 尚未部署为线上默认；H.3 的整片合同、可组合模块、全局时钟与场景生命周期宿主已独立提交为 `887b9a8`、通过 39 项离线检查，尚未实际执行整片捕获或接通业务全片验收，不以逐镜 HF 后拼接替代。现有来源、失败与真实验收边界见 [WikiSkill 接通验证](wikiskill-rollout-validation.md) 及 [HyperFrames 技术记录](hyperframes-project-runtime-20261114.md)。本轮不代替开发者认可／发布，不合主线。
 
 ## 8. 旧规格归属与有效证据
 

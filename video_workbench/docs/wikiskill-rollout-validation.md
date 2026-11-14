@@ -123,14 +123,54 @@ Pod Ready 和角色 capabilities 不代表业务目录可用。新建实验页�
 
 未启动 v5 新模型候选，未部署 v5；本轮实际失败后不追加付费尝试。下一阶段是 v5 author／reviewer 新独立技术验证及保留历史身份和凭据的确切升级，之后才继续真实 Wiki CAS／后续消费与发布采用闭环。已上传的 `skill_method_upgrade_v1.py`／`skill_method_upgrade_v2.py`、`prepare_upgrade_v2` 与 s4 执行器固定 r3／`a6098e5…`／v4 及 UID 21／24，不能直接用于 r4／v5；续作必须制作绑定新 release 的新脚本，使用新 candidate 目录与未保留 UID。失败的 s4 不充当成功准入证据，本次不新增或运行这些续作脚本。
 
+## v5 实际准入与升级（2026-11-14，本轮）
+
+上述“未启动 v5 候选”是上一轮同步时点。随后独立的 `candidate-method-author-s5` 与 `candidate-method-review-s5` 均实际完成 4 次模型请求，使用干净 r4 源码及 v5 bundle，原始产物未手改。author 的独立技术输入是 4 秒 Canvas fixture，保留原失败业务 A 的未持久 Skill 草稿；它不能代替原 12 秒业务实验成功的证明。
+
+`skill-method-render-s5-canvas` 完成唯一一次 96 帧原始源码渲染。最初桥接将生产 admission 注入新账本，在渲染前被拒绝；改用原有 offline candidate-engine 路径后才实际渲染，没有复制或改写生产账本。随后确认容器消失、备份九个输入／源码／资产文件，仅恢复 root 归属，内容、0444 权限与 mtime 不变；从已有渲染只读取得六张真实评审图，没有第二次渲染。准入包装器的后置摘要检查曾遗漏 `_save` 的末尾换行，原准入文件保持不变，修正后的只读验证逐字节确认已有 author 准入，再创建 review 准入。
+
+两个角色均通过原严格 validator 与二次独立检查，报告 SHA 分别为 `eb2ecbf6366203664b1b9e62cd6b2aa44dd53fe6987b5f5b774f6ee7852b0931`、`51e0ea4d23b89815fbf0d6664426c43bc9350fb9d6e523bfce16d0939e8094a4`。记录见 `skill-method-admissions-s5-complete.json`；这些是技术准入，不是开发者审美认可。
+
+`skill-method-upgrade-s5/apply-complete.json` 记录 v5 已实际部署，先 dispatcher、proxy、API，后 creation executor；三个 control Pod 和 executor 的实际 digest、Ready 状态及真实 lab caller 目录均已核对。仅两个 Skill author/review 路由换至新绑定；旧目录记录、宿主、调用者、池与 UID 保留，凭据未变。允许引擎仍为 `html-svg`、`canvas`、`three`。正式 production worker 与渲染器未在这次升级中替换。
+
+重跑原筛选统计目标后，新委托 `64a437cb-3a64-41b5-9354-eea2d9cfd895` 已完整完成 plan/create/render/review，12 秒 Canvas 样片的技术检查通过，媒体 SHA 为 `78613cadc6598393c5bf1b52e0464045b9db1e1f56ae3f1a3ced23c2fa7268ca`。它归属原效果，原失败记录保留。独立抽帧评审仍指出归集时个体遮挡、移动对象与统计标签重叠，按 1 轮预算结束；技术通过不代表质量通过。三个 Agent 操作均返回空知识提案，真实经验已归档，但本次没有 Wiki CAS 成功，不能据此勾选 W.2。
+
+知识维护界面已独立提交为 `1dc05d745a3e42fe46aeb94bca7f4c5733ad3973`，从干净 Git 完整源码构建 lab/executor 两镜像，未混入后续 HF 宿主修改。源码与构建记录在 `skill-knowledge-release-w2-r1`；`skill-knowledge-rollout-w2-r1/apply-complete.json` 已证明两镜像实际部署，Pod 源文件逐一匹配，原参数、挂载与凭据保留。lab digest 为 `sha256:ddfcde6f543a0c7b851f2ed07c2cc251d3b481e24574369d7e75cf9bf5abf2ba`，executor 为 `sha256:601e524121a864e2e13f2a26658f4aae3faa276e3c56a2fc17b37d8b430b43d9`。真实登录浏览器已检查新入口、23 条经验目录、筛选及实际评审经验全文；当时 Wiki 页为零，不制造页面来冒充真实知识回写或历史修订验收。
+
+HyperFrames 显式单场景适配已独立提交为 `d8e4950`。真实 core 技术探针、独立捕获与编码通过；原 Agent SVG 4 秒、Canvas 与 Three.js 各 14 秒的原源码及原音效，经 HF 核心重编码与严格定位检查通过。新代码未部署，不能作为新镜像准入或全片共享工程完成的证明，详见 [HF 运行验证](hyperframes-project-runtime-20261114.md)。
+
+## 真实业务 CAS、跨委托输入与迁移（2026-11-14）
+
+W.2 已实际验证：有界实测补齐真实知识 CAS 与独立普通委托冻结输入证据，查询、修正入口及 GET 不启动预算已有代码检查与登录浏览器核对，Wiki 不自动发布 Skill。只读汇总为本地 `skill-business-bdc-evidence-final-check.json`，SHA256 `a6555088438442f08136aa79a4953ec1e98704557bd26cf7c12c32bad7b4d2a2`；采集使用 SQLite `mode=ro`、`query_only`，不实例化业务服务、不重试、不写知识或认可。
+
+| 实测 | 委托 ID | 结果 |
+| --- | --- | --- |
+| B：继续优化原筛选统计效果 | `810b3c4d-7df5-4939-a8ad-b49200f56da4` | completed／budget_exhausted；12 秒 Canvas 技术通过，媒体 SHA `b16c6d6bcac03011c915dfafb9d146253a0b6d0b2b3e5bbc3336f4aeae122383` |
+| D：独立普通委托，无 base commission | `4e2c3e9a-257b-45a4-baf9-66c9d7aa5a34` | completed／budget_exhausted；12 秒 Canvas 技术通过，媒体 SHA `39e39103a8b8cdd11841899e732136e29458e88656891e68ea78aec680d5b948` |
+| C：去参考迁移 | `c3be070c-3362-4ac7-9f04-8a60f1987456` | failed；严格检查 `reverse_seek_mismatch`，没有可采用候选，没有后续 reviewer 或补充重试 |
+
+B 的 plan 操作 `a042748f-c2e9-4218-a523-9dd43e6152ec` 返回一条有经验依据的知识提案。归档内容与归一化 Agent 原结果匹配，CAS 以 `expected_revision=0` 创建 `filtering-protected-annotation-and-identity-space` revision 1；版本 SHA 为 `2704322b8b4376e2cc824ed3236483d9eaf93d9f5c42ffc897e8ca085b9bda90`。随后同一委托 create 的冻结快照 `snapshot_5f084226993d0b869c3c726d5f7c4608a5b51d4be7ba42c10284fe4c50276bde` 已包含确切 revision 1。其 create／review 返回空提案，合法记作 completed_without_knowledge_changes，不冒充第二次 CAS。
+
+D 不声明继承 B。其 plan／create 的确切输入摘要分别为 `cf0c3a5821d687928f4271a4f7cc35be9f643f93c976d948e1045b1ca19cae99`、`0a446f39b1bba16e8bacf0a5a4be535b7b4d58d5ad32295ab8dd5bace3f5c10a`；冻结快照分别纳入 B 的四条、五条经验及上述 revision 1。这证明跨委托实际提供了既有经验和知识，不推断模型注意力或因此改善了画面。D create 又以 `expected_revision=1` 成功生成 revision 2，SHA `56ad97922c0b54f0fbc2545288f4800171ce502308fca1586056000d6bc85306`，`previous_revision_sha256` 精确指向 revision 1。D review 的新快照已读取 revision 2；早先 plan／create 的冻结输入仍保持 revision 1。
+
+B 抽帧评审为 improved，仅表示所供静态图片的可读性较原样片改善；D 为 inconclusive，仍报告移动编号等遮挡问题。评审未观察完整运动或音频，两条样片均没有因此获得开发者认可或正式发布。C 的 plan／create 不含 Wiki 快照、原参考、原源码或研究材料，不能用它证明 Wiki 消费；其确定性定位失败也没有被改成迁移成功。
+
+C 的只读诊断在本地 `canvas-C-reverse-seek-readonly-20261114/diagnosis.md`：原 Canvas 源码只清像素与变换，未封闭 `lineJoin` 绘制状态；走过分路路径后倒回零秒，两个菱形从初始 miter 变为 round。原图差异与静态源码一致，严格拒绝符合绝对定位合同。诊断未执行场景、修源或重跑；切换 HyperFrames 时钟也不能自动清除这种 Agent 绘制状态泄漏。
+
+登录浏览器已只读核对 D 的完成状态、revision 1／2 知识正文与历史条目；修订表单曾打开后取消，没有提交人工修订、勾选认可或发布。此前“知识页为零”的界面记录仅保留为上线当时的事实。
+
+评审诊断归档修复 `0e0eb0e` 已有 21 项相关检查通过，尚未部署。它对正常大小评审保留 criteria_results、remaining_issues、next_guidance；超过 256 KiB 经验预算时保存明确的结构化投影、字段计数／摘要及原 operation/result SHA 引用，避免归档阻塞已完成评审。完整结果仍在宿主 operation 存储中，后续 Agent 只能读取投影；按需读取诊断全文尚未实现，不因此回填历史经验或扩大快照。
+
+H.2 的显式核心适配仍未部署为线上默认；H.3 整片合同、可组合场景与生命周期宿主已独立提交为 `887b9a8`，39 项离线检查通过，尚未实际执行整片捕获，不记为全片媒体验收或上线。
+
 ## 仍须独立完成的验收
 
-- 修正知识字段合同后 author／reviewer 的原始产物、渲染与独立准入，随后才实施现有 Skill 两角色的确切升级并做真实目录回验；构建或内存诊断不代表准入或上线。
-- 有界真实委托产生经验与有证据的 Wiki CAS 回写，后续普通委托实际消费前序冻结经验／知识；去参考迁移另行验证，不以其证明 Wiki 消费。
+- 继续针对实际遮挡问题优化样片；部署尚未上线的诊断归档修复，完整诊断按需读取另行推进。不重复执行 v5 准入、升级或 W.2 已通过的取证与界面检查。
+- 去参考迁移的严格定位与技术验收仍未通过；保留 C 的失败，不自动追加生成／渲染。
 - 开发者实际认可新代表片段与内容、结构均改变的迁移片段，再发布不可变 Skill。
 - 正式新内容实际读取已发布 Skill，保留原生 search/read 记录，并分别核对可见效果与自报采用。
 - 全片 HyperFrames 工程及实验室统一宿主仍按主设计独立推进；安装 core、运行 native fixture 或角色准入不自动完成这些目标。
 
 本文件继续随真实回执更新，不以单元测试、夹具或技术准入代替真实发布及主观认可。
 
-OpenSpec 同步已完成：项目 `ec663f5a-53d3-4a0e-9037-933eb788d183` 的本变更更新至 revision `987a15a80f81a74f6e11bece0751ae36b68f2610`，三份文档精确回读一致，规格校验通过。仅替换最新进展、同步主设计并澄清历史阶段边界；43 项任务保持 16 完成、27 待办，没有将 v5 构建或诊断通过勾成真实验收完成。凭据和 Guard 配置未变。
+上一次 OpenSpec 同步：项目 `ec663f5a-53d3-4a0e-9037-933eb788d183` 的本变更更新至 revision `987a15a80f81a74f6e11bece0751ae36b68f2610`，三份文档精确回读一致，规格校验通过。当时仅替换最新进展、同步主设计并澄清历史阶段边界；43 项任务保持 16 完成、27 待办，没有将 v5 构建或诊断通过勾成真实验收完成。后续 v5 部署、真实业务 A／B／D／C、知识界面部署与 HF 进展须另外同步；本文件更新不改变 OpenSpec 任务计数。凭据和 Guard 配置未变。
