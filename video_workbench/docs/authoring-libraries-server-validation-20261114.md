@@ -57,3 +57,15 @@ creation 进一步从完整 Git `aa4de3229cc6abe5f34e27c451c72da9bd156b01` 普�
 第二个 Agent 的输入包含第一个 Agent 原样的完整模块文件、文件摘要及退出状态，最终 snapshot 也逐字保留两份原创源码。独立核验者与主 Agent 实际检查切镜前后第 168–215 帧的连续窗口，以及第 191、192、193 帧原尺寸图。12 个圆片的位置、大小、顺序及点／环／加号／斜线纹样连续，细描边、下方柔影、米白背景、通道底色及边线未跳变；随后开口逐渐扩大，圆片逐步松散，没有换物或黑帧。这支持本轮 5.3 的连续编排与真实边界评价完成，不能推广成任意内容都不会出现断裂。
 
 技术证据为 `appearance-continuity-audio-reuse-business-r1/collection.json` 与独立 `validation.json`、`visual-sequence-review.json`，分别保留原记录和实际观察范围。本样片只有简单 2D 表面，未验收 PBR 材质、任意转场、完整声音理解或真人效果认可。整片独立视听审阅／一次修订及用户追加额度闭环仍未完成。
+
+## 正式制作序列登记上线
+
+工作台从完整 Git `0364cdfb9fdbfae616b4796acde22cb771f25670` 普通构建并部署为 `video-workbench:latest@sha256:6932277da28d033a586eec694d0f05a2ba29e2e1ee7cda46ad05800353eee727`。本轮只以一次 Recreate Deployment CAS 升级 workbench；motion、creation、lab 的镜像及配置保持。
+
+正式制作完成后，以实际成片字节 SHA、不可变 render id、已核验 snapshot、模块与运行身份登记稳定序列；显式复用原声的多级派生继承同一身份。登记意图先写业务库再写独立序列账本，回执丢失按精确 run/version/source 恢复。普通新制作即使媒体摘要相同仍保留独立身份。缺失账本或构造漏接依赖会阻止新付费子任务；已经完成的成片保持 completed，登记问题另记 pending／blocked。GET/list 不登记历史，回收站恢复不重建身份。
+
+本地 68 项整片制作／原声复用／HTTP 集成回归通过；55 项序列账本测试通过。新增 25 个业务用例分为 22 项基础测试、2 项构造护栏和最后一次 4 项窗口验证；后者含三项重复回归，不汇总成一次完整 25 项运行。覆盖 create/bind 提交后回执丢失、CAS 重新冻结、并发、多级继承、篡改拒绝、已用额度保留、缺库与取消／删除。测试的合成输出只证明持久身份及恢复机制。
+
+服务器发布及只读 HTTP 前后，原九个工作台数据库的结构、全部表行及 BLOB 摘要、外部媒体和十个 creation 账本保持。仅在同一 PVC 的 `/data/production-sequences.sqlite3` 建立空的八表账本，已有 Secret、runtime 和 PVC 身份不变。真实两条旧 run 仍为 completed／draft_only／not_reviewed，没有历史迁移或隐式创建序列；readiness、Pod 实际源码及固定镜像摘要校验通过。实际回执 `production-sequence-rollout-r1/completed.json` 为 deployed_verified。
+
+本次部署为零新增模型、TTS、渲染和轮次预占。新片的真实登记尚未用另一付费制作验证，浏览器验收仍受安全检查服务不可用阻断。此切片不执行整片审阅、自动一轮修订或用户追加；OpenSpec 3.5／4.1 整体继续待办。
