@@ -83,6 +83,9 @@ class ProductionRunStore:
         if 'sequence_registration' in run:
             result.update(sequence_id=run['sequence_registration']['sequence_id'],
                 sequence_registration=deepcopy(run['sequence_registration']))
+        if 'resource_authoring' in run:
+            result.update(resource_authoring=deepcopy(run['resource_authoring']),
+                resource_work_budget=deepcopy(run['resource_work_budget']))
         return result
 
     @staticmethod
@@ -534,11 +537,16 @@ class ProductionRunStore:
 
     def start(self, owner, project_id, request, idem):
         required = {'expected_revision', 'joint_plan_version_id'}
-        require(type(request) is dict and required <= set(request) <= required | {'reuse_audio_from_run_id'}
+        require(type(request) is dict and required <= set(request) <= required | {'reuse_audio_from_run_id', 'resource_authoring'}
             and type(request['expected_revision']) is int and request['expected_revision'] >= 1
             and type(request['joint_plan_version_id']) is str and 1 <= len(request['joint_plan_version_id']) <= 100
             and ('reuse_audio_from_run_id' not in request or type(request['reuse_audio_from_run_id']) is str
                 and 1 <= len(request['reuse_audio_from_run_id']) <= 100))
+        resource_authoring = request.get('resource_authoring')
+        if resource_authoring is not None:
+            require(type(resource_authoring) is dict and 1 <= len(resource_authoring) <= 8
+                and all(type(key) is str and 1 <= len(key) <= 100 and type(value) is dict
+                    for key, value in resource_authoring.items()), 'production_run_resource_options_invalid')
         require(type(idem) is str and re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}', idem), 'idempotency_key_required')
         fingerprint = digest(dict(project_id=project_id, request=request))
         parent_sequence = None
@@ -560,6 +568,10 @@ class ProductionRunStore:
             if replay is None:
                 configuration = self._check_film_configuration(
                     self.film_creation.freeze_configuration(owner, project_id))
+                if resource_authoring is not None:
+                    self.film_creation.preflight_resources(owner)
+        require(resource_authoring is None or self.film_creation is not None,
+            'production_run_resources_require_film', 503)
         with self.store.transaction() as db:
             row = db.execute('SELECT request_hash,document FROM production_runs WHERE owner=? AND idem=?',
                              (owner, idem)).fetchone()
@@ -578,6 +590,17 @@ class ProductionRunStore:
                 'joint_plan_head_conflict', 409)
             require(head['applied_binding_sha256'] == self.joint._binding(project), 'joint_plan_stale', 409)
             require(1 <= len(project['scenes']) <= MAX_SCENES, 'production_run_requires_scenes', 409)
+            if resource_authoring is not None:
+                require(set(resource_authoring) <= {scene['id'] for scene in project['scenes']},
+                    'production_run_resource_scene_invalid', 409)
+                from .manim_method_coordinator import authoring_request
+                from .manim_resource import MAX_DECODED_BYTES
+                reserved = [authoring_request(value, 60) for value in resource_authoring.values()]
+                caps = self.film_creation.configuration['runtime_capabilities']
+                require(sum(value['width'] * value['height'] * value['frame_count'] * 4 for value in reserved)
+                        <= MAX_DECODED_BYTES
+                    and sum(value['frame_count'] + 1 for value in reserved) + 2 + len(caps['assets']) <= 128,
+                    'production_run_resource_budget_exceeded', 413)
             for row in db.execute('SELECT document FROM production_runs WHERE owner=? AND project_id=?',
                                   (owner, project_id)):
                 require(not self._unfinished(json.loads(row[0])), 'production_run_in_progress', 409)
@@ -622,6 +645,9 @@ class ProductionRunStore:
                 for item in run['items']:
                     item.update(module_operation_id=None, module_version_id=None, module_status='queued',
                         module_sha256=None, module_package_sha256=None, module_engine=None)
+                if resource_authoring is not None:
+                    run.update(resource_authoring=deepcopy(resource_authoring), resource_work_budget=dict(
+                        recipe_jobs=len(resource_authoring), resource_executions=len(resource_authoring)))
             if 'reuse_audio_from_run_id' in request:
                 original = self._read(db, request['reuse_audio_from_run_id'], owner)
                 if 'sequence_registration' in original:
@@ -958,11 +984,15 @@ class ProductionRunStore:
         if phase == 'module':
             if index:
                 self._frozen_module_package(run, index - 1)
-            return dict(expected_revision=revision, film=deepcopy(run['film']), film_sha256=run['film_sha256'],
+            result = dict(expected_revision=revision, film=deepcopy(run['film']), film_sha256=run['film_sha256'],
                 current_scene_index=index,
                 predecessor_version_id=None if index == 0 else run['items'][index - 1]['module_version_id'],
                 target=deepcopy(run['module_targets'][index]), instruction='',
                 configuration_sha256=configuration_sha256)
+            options = run.get('resource_authoring', {}).get(run['items'][index]['scene_id'])
+            if options is not None:
+                result['resource_authoring'] = deepcopy(options)
+            return result
         for module_index in range(len(run['items'])):
             self._frozen_module_package(run, module_index)
         return dict(expected_revision=revision, film=deepcopy(run['film']), film_sha256=run['film_sha256'],

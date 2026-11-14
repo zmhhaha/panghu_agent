@@ -44,7 +44,7 @@ def packed(value):
 
 class FilmCreationStore:
     def __init__(self, store, *, runtime_capabilities=None, runtime_fingerprint=None, host_files=None,
-            trusted_host_sha256=None, image=None, assets=None, enabled=False, _mode='configured'):
+            trusted_host_sha256=None, image=None, assets=None, enabled=False, resource_authoring=None, _mode='configured'):
         require(type(enabled) is bool)
         self.store, self.enabled = store, enabled
         require(_mode in {'configured', 'recovery'}, 'film_creation_configuration_invalid')
@@ -72,6 +72,10 @@ class FilmCreationStore:
             bundle_manifest_sha256=BUNDLE_MANIFEST_SHA256, runtime_capabilities=deepcopy(caps),
             runtime_fingerprint=self.runtime, trusted_host_sha256=self.hosts, image=image,
             renderer_mode='hyperframes-film', max_seconds=60, fps=24)
+        if resource_authoring is not None:
+            from .manim_film_admission import validate_consumer_context
+            self.configuration['resource_authoring'] = validate_consumer_context(resource_authoring,
+                runtime=self.runtime, hosts=self.hosts, image=self.image)
         self.configuration['sha256'] = digest(self.configuration)
         self._init_schema()
 
@@ -99,6 +103,9 @@ class FilmCreationStore:
                     UNIQUE(owner,idem));
                 CREATE INDEX IF NOT EXISTS film_module_project ON film_module_operations(project_id,scene_id);
                 CREATE INDEX IF NOT EXISTS film_render_project ON film_render_operations(project_id);
+                CREATE TABLE IF NOT EXISTS film_module_resources (
+                    operation_id TEXT PRIMARY KEY,owner TEXT NOT NULL,project_id TEXT NOT NULL,
+                    document TEXT NOT NULL,envelope BLOB NOT NULL);
             ''')
 
     @property
@@ -118,7 +125,102 @@ class FilmCreationStore:
                 selection='draft_only', content_state='current' if current else 'stale')
             if op.get('result'):
                 result.update({key: value for key, value in op['result'].items() if key != 'path'})
+        if op.get('resource_authoring'):
+            result['resource_authoring'] = dict(kind='manim', status=op.get('resource_status', 'queued'),
+                stop_proven=op.get('resource_stop_proven', False),
+                envelope_sha256=op.get('generated_resource', {}).get('envelope_sha256'))
         return result
+
+    def _resource_records(self, db, owner, operation_ids, seen=None):
+        """Resolve only this module's authenticated predecessor/base lineage."""
+        seen = set() if seen is None else seen
+        records = []
+        for operation_id in operation_ids:
+            if operation_id in seen:
+                continue
+            seen.add(operation_id)
+            op = self._read(db, 'module', operation_id, owner)
+            records.extend(self._resource_records(db, owner, op.get('resource_dependencies', []), seen))
+            row = db.execute('SELECT owner,project_id,document,envelope FROM film_module_resources WHERE operation_id=?',
+                (operation_id,)).fetchone()
+            if row is None:
+                require('generated_resource' not in op, 'film_resource_record_missing', 409)
+                continue
+            record, envelope = json.loads(row['document']), json.loads(row['envelope'])
+            require(row['owner'] == owner and row['project_id'] == op['project_id']
+                and record['descriptor'] == op.get('generated_resource'), 'film_resource_record_changed', 409)
+            from .film_authoring_resources import verify_film_resource
+            verify_film_resource(op, record['descriptor'], envelope, image=record['image'])
+            records.append(dict(record, envelope=envelope))
+        return records
+
+    def _assets_for_operations(self, db, owner, operation_ids):
+        from .film_authoring_resources import merge_film_resources
+        return merge_film_resources(self.assets, self._resource_records(db, owner, operation_ids))
+
+    def claim_resource(self, operation_id):
+        from .film_authoring_resources import resource_request
+        from .manim_film_resource_service import validate_request as validate_resource_request
+        with self.store.transaction() as db:
+            op = self._read(db, 'module', operation_id)
+            if op['status'] not in ACTIVE or op.get('resource_submit_attempted'):
+                return None
+            require(op.get('resource_authoring') and not op['submit_attempted'], 'film_resource_state_invalid', 409)
+            if op['cancel_requested'] or time.time() >= op['deadline_at']:
+                return None
+            frozen = validate_resource_request(resource_request(op))
+            op.update(resource_submit_attempted=True, resource_status='submitting', resource_stop_proven=False,
+                resource_request=frozen, resource_reservation_confirmed=False)
+            self._write(db, op)
+            return op
+
+    def confirm_resource_reservation(self, operation_id):
+        with self.store.transaction() as db:
+            op = self._read(db, 'module', operation_id)
+            require(op.get('resource_submit_attempted') is True, 'film_resource_state_invalid', 409)
+            op['resource_reservation_confirmed'] = True
+            self._write(db, op)
+            return op
+
+    def record_resource(self, operation_id, *, status, stop_proven, descriptor=None, envelope=None, image=None):
+        require(type(status) is str and type(stop_proven) is bool, 'film_resource_state_invalid')
+        initial = self.operation('module', operation_id)
+        from .film_authoring_resources import attach_film_resource, verify_film_resource
+        new_assets = None
+        if status == 'completed':
+            require(stop_proven and type(descriptor) is dict and type(envelope) is dict,
+                'film_resource_stop_unproven', 409)
+            require(image == initial['configuration']['resource_authoring']['resource_image'],
+                'film_resource_image_changed', 409)
+            new_assets = verify_film_resource(initial, descriptor, envelope, image=image)
+        with self.store.transaction() as db:
+            op = self._read(db, 'module', operation_id)
+            if op['status'] not in ACTIVE:
+                return op
+            require(op.get('resource_submit_attempted') is True
+                and not op['submit_attempted'], 'film_resource_state_invalid', 409)
+            require(not op.get('resource_stop_proven') or stop_proven, 'film_resource_stop_evidence_changed', 409)
+            op.update(resource_status=status, resource_stop_proven=stop_proven)
+            if status == 'completed' and not op['cancel_requested'] and time.time() < op['deadline_at']:
+                if op.get('generated_resource'):
+                    require(op['generated_resource'] == descriptor, 'film_resource_record_changed', 409)
+                    return op
+                require(op['document']['schema'] == PENDING_SCHEMA, 'film_resource_state_invalid', 409)
+                existing = self._assets_for_operations(db, op['owner'], op.get('resource_dependencies', []))
+                # Check aggregate decoded bytes/file slots before accepting the
+                # resource or submitting the module author.
+                from .film_authoring_resources import merge_film_resources
+                prior = self._resource_records(db, op['owner'], op.get('resource_dependencies', []))
+                merge_film_resources(self.assets, [*prior, dict(descriptor=descriptor, envelope=envelope, image=image)])
+                require(not (set(existing) & set(new_assets) - {'assets/manim_frame_layer.mjs', 'assets/manim_method_frames.mjs'}),
+                    'film_resource_asset_collision', 409)
+                core = attach_film_resource(op['document']['core_task'], descriptor, new_assets)
+                op['document'] = dict(schema=PENDING_SCHEMA, core_task=core)
+                op['generated_resource'] = deepcopy(descriptor)
+                db.execute('INSERT INTO film_module_resources VALUES(?,?,?,?,?)',
+                    (op['id'], op['owner'], op['project_id'], packed(dict(descriptor=descriptor, image=image)), packed(envelope)))
+            self._write(db, op)
+            return op
 
     @staticmethod
     def _read(db, kind, operation_id, owner=None):
@@ -278,7 +380,8 @@ class FilmCreationStore:
         require(original['constraints']['runtime_identity'] == caps['runtime_identity']
             and module['engine'] in caps['allowed_engines'],
             'film_creation_base_module_runtime_mismatch', 409)
-        require(all(original['assets'].get(name) == caps['assets'].get(name.removeprefix('assets/'))
+        available = self._assets_for_operations(db, owner, [version['operation_id']])
+        require(all(original['assets'].get(name) == hashlib.sha256(available[name]).hexdigest() if name in available else False
             for name in module['assets']), 'film_creation_base_module_assets_changed', 409)
         reference = dict(version_id=version['id'], package_sha256=version['package_sha256'],
             input_sha256=package['input_sha256'], result_sha256=package['result_sha256'])
@@ -286,7 +389,7 @@ class FilmCreationStore:
 
     def start_module(self, owner, project_id, scene_id, request, idem):
         self._validate_request(request, {'expected_revision', 'film', 'film_sha256', 'current_scene_index',
-            'predecessor_version_id', 'target', 'instruction', 'configuration_sha256'}, {'base_module_version_id'})
+            'predecessor_version_id', 'target', 'instruction', 'configuration_sha256'}, {'base_module_version_id', 'resource_authoring'})
         if 'base_module_version_id' in request:
             require(type(request['base_module_version_id']) is str and 1 <= len(request['base_module_version_id']) <= 100)
         fingerprint = digest(dict(project_id=project_id, scene_id=scene_id, request=request))
@@ -300,12 +403,14 @@ class FilmCreationStore:
             require(type(index) is int and 0 <= index < len(film['scenes'])
                 and film['scenes'][index]['scene_id'] == scene_id)
             predecessor = predecessor_package = None
+            resource_dependencies = []
             if index:
                 previous, package = self._version(db, owner, request['predecessor_version_id'])
                 require(previous['project_id'] == project_id and previous['scene_id'] == film['scenes'][index - 1]['scene_id']
                     and previous['film_sha256'] == request['film_sha256'], 'film_creation_predecessor_mismatch', 409)
                 predecessor = predecessor_from_package(package)
                 predecessor_package = package
+                resource_dependencies.append(previous['operation_id'])
             else:
                 require(request['predecessor_version_id'] is None, 'film_creation_predecessor_mismatch', 409)
             row, recording = film['scenes'][index], recordings[index]
@@ -314,6 +419,7 @@ class FilmCreationStore:
             base_module = base_reference = None
             if 'base_module_version_id' in request:
                 base_module, base_reference = self._base_module(db, owner, project_id, scene_id, request)
+                resource_dependencies.append(self._version(db, owner, request['base_module_version_id'])[0]['operation_id'])
             caps = self.runtime_capabilities
             beats = make_beats(row['narration'], recording['spoken_text'])
             core = prepare_core_task(scene_id=scene_id, title=row['title'], visual_description=row['visual_intent'],
@@ -324,8 +430,11 @@ class FilmCreationStore:
                     current_scene_index=index, predecessor=predecessor), instruction=request['instruction'],
                 module_id=target['module_id'], namespace=target['namespace'], transition_target=target['transition_target'],
                 runtime_identity=caps['runtime_identity'], allowed_engines=caps['allowed_engines'],
-                assets={'assets/' + name: checksum for name, checksum in caps['assets'].items()}, style=film['style'],
+                assets={name: hashlib.sha256(raw).hexdigest() for name, raw in
+                    self._assets_for_operations(db, owner, resource_dependencies).items()}, style=film['style'],
                 predecessor_package=predecessor_package, base_module=base_module)
+            from .film_authoring_resources import attach_authoring_libraries
+            core = attach_authoring_libraries(core, caps)
             if base_reference is not None:
                 require(len(canonical_bytes(core)) <= MAX_TASK_BYTES,
                     'film_creation_base_module_input_too_large', 413)
@@ -340,6 +449,12 @@ class FilmCreationStore:
                 film_sha256=request['film_sha256'], predecessor_version_id=request['predecessor_version_id'],
                 version_id=None, input_ref=None, job_id=None, submit_attempted=False, cancel_requested=False,
                 cancel_attempts=0, next_cancel_at=0, stop_proven=False)
+            op['resource_dependencies'] = resource_dependencies
+            if 'resource_authoring' in request:
+                require(self.configuration.get('resource_authoring'), 'film_resource_not_admitted', 503)
+                from .film_authoring_resources import freeze_resource_options
+                op.update(resource_authoring=freeze_resource_options(request['resource_authoring'], row, film['total_seconds']),
+                    resource_submit_attempted=False, resource_status='queued', resource_stop_proven=False)
             if base_reference is not None:
                 op['base_module_reference'] = base_reference
             db.execute('INSERT INTO film_module_operations VALUES(?,?,?,?,?,?,?)',
@@ -351,7 +466,10 @@ class FilmCreationStore:
         if op['document'].get('schema') != PENDING_SCHEMA or op['cancel_requested']:
             return op
         core = op['document']['core_task']
-        delivery = adapter.freeze(op['owner'], 'video-film-module:' + op['id'], core, core['constraints']['allowed_engines'])
+        require(not op.get('resource_authoring') or op.get('generated_resource'), 'film_resource_not_ready', 409)
+        producer = op['configuration'].get('resource_authoring', {}).get('producer') if op.get('generated_resource') else None
+        delivery = adapter.freeze(op['owner'], 'video-film-module:' + op['id'], core, core['constraints']['allowed_engines'],
+            **({'resource_authoring': producer} if producer else {}))
         document = build_module_input(core, delivery)
         with self.store.transaction() as db:
             current = self._read(db, 'module', operation_id)
@@ -377,14 +495,15 @@ class FilmCreationStore:
             require(type(ids) is list and len(ids) == len(film['scenes'])
                 and all(type(value) is str and 1 <= len(value) <= 100 for value in ids)
                 and len(set(ids)) == len(ids))
-            packages = []
+            packages, source_operations = [], []
             for index, version_id in enumerate(ids):
                 version, package = self._version(db, owner, version_id)
                 require(version['project_id'] == project_id and version['scene_id'] == film['scenes'][index]['scene_id']
                     and version['film_sha256'] == request['film_sha256'], 'film_creation_render_module_mismatch', 409)
                 packages.append(package)
+                source_operations.append(version['operation_id'])
             assembled = assemble_film_production(packages=packages, film=film, film_sha256=request['film_sha256'],
-                recordings=self._recordings(db, project, film), assets=self.assets, runtime_fingerprint=self.runtime,
+                recordings=self._recordings(db, project, film), assets=self._assets_for_operations(db, owner, source_operations), runtime_fingerprint=self.runtime,
                 runtime_identity=self.runtime_capabilities['runtime_identity'], module_targets=request['module_targets'],
                 host_files=self.host_files, trusted_host_sha256=self.hosts, image=self.image,
                 project_revision=request['expected_revision'], production_run_id=request['production_run_id'],
@@ -465,6 +584,12 @@ class FilmCreationStore:
     def complete_module(self, operation_id, delivered):
         op = self.operation('module', operation_id)
         package = collect_module_result(op['document'], **delivered)
+        if op.get('generated_resource'):
+            descriptor = op['generated_resource']
+            required = {descriptor['manifest_path'], 'assets/manim_frame_layer.mjs',
+                *(row['path'] for row in descriptor['manifest']['frames'])}
+            require(required <= set(package['result']['module']['assets']),
+                'film_resource_not_declared_by_module', 409)
         with self.store.transaction() as db:
             op = self._read(db, 'module', operation_id)
             if op['status'] in TERMINAL:

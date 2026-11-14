@@ -65,11 +65,13 @@ class _RenderCancellation:
 
 
 class FilmCreationWorkflow:
-    def __init__(self, creation_store, gateway, skill_adapter, renderer, *, enabled=False, render_readiness=None):
+    def __init__(self, creation_store, gateway, skill_adapter, renderer, *, enabled=False, render_readiness=None,
+            resource_client=None):
         if type(enabled) is not bool:
             raise ValueError('An explicit film creation gate is required')
         self.creation, self.gateway, self.skill_adapter, self.renderer = creation_store, gateway, skill_adapter, renderer
         self.enabled, self.render_readiness = enabled, render_readiness
+        self.resource_client = resource_client
         self.lock, self.render_lock, self.stopping = threading.Lock(), threading.Lock(), threading.Event()
         self.thread, self.render_thread = None, None
 
@@ -96,6 +98,14 @@ class FilmCreationWorkflow:
         self.creation.store.project(owner, project_id)
         return self.readiness()
 
+    def preflight_resources(self, owner):
+        from .manim_film_admission import validate_producer_capabilities
+        configuration = self.creation.configuration or {}
+        context = configuration.get('resource_authoring')
+        if self.resource_client is None or context is None:
+            raise ServiceError('film_resource_not_admitted', 503)
+        return validate_producer_capabilities(self.resource_client.capabilities(owner), context)
+
     def start_module(self, owner, project_id, scene_id, request, idem):
         try:
             self.creation.module_by_request_key(owner, idem)
@@ -103,6 +113,8 @@ class FilmCreationWorkflow:
             if exc.status != 404:
                 raise
             self.readiness()
+            if 'resource_authoring' in request:
+                self.preflight_resources(owner)
         return self.creation.start_module(owner, project_id, scene_id, request, idem)
 
     def start_render(self, owner, project_id, request, idem):
@@ -160,7 +172,8 @@ class FilmCreationWorkflow:
         except ServiceError as exc:
             current = self.creation.operation(op['kind'], op['id'])
             # Admission/read/cleanup uncertainty remains recoverable.
-            if current['submit_attempted'] and not current['stop_proven']:
+            if (current['submit_attempted'] and not current['stop_proven']
+                    or current.get('resource_submit_attempted') and not current.get('resource_stop_proven')):
                 self.creation.update_operation(op['kind'], op['id'], error=exc.code)
             else:
                 self.creation.update_operation(op['kind'], op['id'], status='failed', error=exc.code)
@@ -177,10 +190,15 @@ class FilmCreationWorkflow:
         op = self.creation.operation('module', initial['id'])
         if op['status'] not in ACTIVE:
             return
-        if not op['submit_attempted'] and (op['cancel_requested'] or time.time() >= op['deadline_at']):
+        if (not op['submit_attempted'] and (not op.get('resource_submit_attempted') or op.get('resource_stop_proven'))
+                and (op['cancel_requested'] or time.time() >= op['deadline_at'])):
             self.creation.update_operation('module', op['id'],
                 status='cancelled' if op['cancel_requested'] else 'timed_out', stop_proven=True)
             return
+        if op.get('resource_authoring') and not op.get('generated_resource'):
+            if not self._resource(op):
+                return
+            op = self.creation.operation('module', op['id'])
         if self.gateway is None:
             raise ServiceError('film_module_profile_unavailable', 503)
         if not op['job_id']:
@@ -245,6 +263,70 @@ class FilmCreationWorkflow:
                 self.creation.update_operation('module', op['id'], status='cancelling', error='film_module_cancellation_unconfirmed')
         else:
             self.creation.update_operation('module', op['id'], status='running', error=None)
+
+    def _resource(self, initial):
+        """One frozen producer operation; no recipe permission for the module."""
+        from agent_service.contracts import digest
+        op = self.creation.operation('module', initial['id'])
+        if self.resource_client is None:
+            raise ServiceError('film_resource_client_unavailable', 503)
+        cancelled = op['cancel_requested'] or time.time() >= op['deadline_at']
+        if not op.get('resource_submit_attempted'):
+            if cancelled or self.stopping.is_set():
+                return False
+            self._new_admission(op)
+            self.preflight_resources(op['owner'])
+            op = self.creation.claim_resource(op['id'])
+            if op is None:
+                return False
+            # This POST only reserves an idempotent remote resource intent.
+            # Its producer claims are separate and precede actual paid work.
+            result = self.resource_client.start(op['owner'], op['resource_request'])
+        else:
+            try:
+                result = self.resource_client.get(op['owner'], op['id'])
+            except ServiceError as error:
+                if error.status != 404 or op.get('resource_reservation_confirmed'):
+                    raise
+                # Cover the local-claim -> POST crash window by replaying only
+                # this exact unpaid reservation. Never invent a key, request,
+                # producer attempt or Cairo operation. A previously confirmed
+                # remote record disappearing is not recreated.
+                result = (self.resource_client.cancel_reservation(op['owner'], op['resource_request'])
+                    if cancelled else self.resource_client.start(op['owner'], op['resource_request']))
+        if not (type(result) is dict and result.get('operation_id') == op['id']
+                and result.get('project_id') == op['project_id'] and result.get('scene_id') == op['scene_id']
+                and result.get('film_sha256') == op['film_sha256']
+                and result.get('request_sha256') == digest(op['resource_request'])
+                and type(result.get('stop_proven')) is bool and type(result.get('status')) is str):
+            raise ServiceError('film_resource_response_binding_mismatch', 502)
+        self.creation.confirm_resource_reservation(op['id'])
+        op = self.creation.operation('module', op['id'])
+        cancelled = op['cancel_requested'] or time.time() >= op['deadline_at']
+        status, stopped = result['status'], result['stop_proven']
+        if status in {'completed', 'failed', 'cancelled'}:
+            if not stopped:
+                raise ServiceError('film_resource_stop_unproven', 502)
+            # Persist actual stop evidence before collection/validation so a
+            # rejected envelope does not masquerade as an outstanding process.
+            self.creation.record_resource(op['id'], status='stopped', stop_proven=True)
+            if cancelled or status != 'completed':
+                self.creation.update_operation('module', op['id'], stop_proven=True,
+                    status='cancelled' if op['cancel_requested'] or status == 'cancelled'
+                        else 'timed_out' if cancelled else 'failed',
+                    error=None if op['cancel_requested'] else 'film_resource_' + status)
+                return False
+            envelope = self.resource_client.envelope(op['owner'], op['id'])
+            adopted = self.creation.record_resource(op['id'], status='completed', stop_proven=True,
+                descriptor=result.get('descriptor'), envelope=envelope, image=result.get('resource_image'))
+            return bool(adopted.get('generated_resource'))
+        self.creation.record_resource(op['id'], status=status, stop_proven=False)
+        if cancelled:
+            self.resource_client.cancel(op['owner'], op['id'])
+            self.creation.update_operation('module', op['id'], status='cancelling')
+        else:
+            self.creation.update_operation('module', op['id'], status='running', error=None)
+        return False
 
     def _render(self, initial):
         op = self.creation.operation('render', initial['id'])

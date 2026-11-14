@@ -49,7 +49,7 @@ from .batch_workflow import BatchWorkflow
 from .production_run_store import ProductionRunStore
 from .production_sequence_store import ProductionSequenceStore
 from .production_run_workflow import ProductionRunWorkflow
-from .film_production_config import FilmModuleAgentSettings, FilmProductionSettings, execution_readiness
+from .film_production_config import FilmModuleAgentSettings, FilmProductionSettings, FilmManimSettings, execution_readiness
 
 WEB = Path(__file__).parent / 'web'
 PREVIEW_CSP = ("sandbox; default-src 'none'; script-src 'none'; "
@@ -296,6 +296,7 @@ class JointPlanRequest(ExplanationRequest):
 class ProductionRunRequest(Revision):
     joint_plan_version_id: str = Field(min_length=1, max_length=100)
     reuse_audio_from_run_id: str | None = Field(default=None, min_length=1, max_length=100)
+    resource_authoring: dict[str, dict] | None = Field(default=None, min_length=1, max_length=8)
 
 
 class Generation(Revision):
@@ -677,6 +678,11 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
             from .film_render_adapter import RemoteFilmRenderer
             from .motion_render_adapter import read_secret
             module_settings = FilmModuleAgentSettings.from_env()
+            manim_settings = FilmManimSettings.from_env(film_settings)
+            resource_client = None
+            if manim_settings is not None:
+                from .manim_film_resource_http import ManimFilmResourceClient
+                resource_client = ManimFilmResourceClient(manim_settings.base_url, manim_settings.token)
             module_gateway = None
             if module_settings is not None and skill_adapter is not None:
                 owned_film_client = AgentClient(module_settings.base_url, module_settings.token)
@@ -694,11 +700,12 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     runtime_capabilities=film_settings.runtime_capabilities,
                     runtime_fingerprint=film_settings.runtime_fingerprint,
                     host_files=film_settings.host_files, trusted_host_sha256=film_settings.trusted_host_sha256,
-                    image=film_settings.image, assets=film_settings.assets, enabled=film_settings.enabled)
+                    image=film_settings.image, assets=film_settings.assets, enabled=film_settings.enabled,
+                    resource_authoring=manim_settings.context if manim_settings is not None else None)
             film_creation = FilmCreationWorkflow(creation_store, module_gateway, skill_adapter,
                 owned_film_renderer, enabled=film_settings.enabled if film_settings is not None else False,
                 render_readiness=lambda: execution_readiness(owned_film_renderer, film_settings)
-                    if film_settings is not None else {'available': False})
+                    if film_settings is not None else {'available': False}, resource_client=resource_client)
     production_sequence_store = _production_sequence_ledger(store)
     production_run_store = ProductionRunStore(store, joint_plan_store, motion_store, production,
         film_creation=film_creation, sequence_store=production_sequence_store)

@@ -80,7 +80,10 @@ class CreationAPIClient:
         self.base_url, self._token, self.timeout = base_url.rstrip('/'), _token(token), timeout
         self._opener = build_opener(ProxyHandler({}), _NoRedirect())
 
-    def _request(self, owner, method, path, body=None, *, artifact=False):
+    def _request(self, owner, method, path, body=None, *, artifact=False, response_limit=None):
+        _require(response_limit is None or artifact and type(response_limit) is int
+            and 0 < response_limit <= MAX_ARTIFACT + 2 * 1024 * 1024,
+            'animation_creation_response_limit_invalid')
         headers = {'Authorization': 'Bearer ' + self._token, 'X-Animation-Creation-Owner': _owner(owner),
                    'Accept': 'application/octet-stream' if artifact else 'application/json'}
         data = None
@@ -90,7 +93,7 @@ class CreationAPIClient:
         request = Request(self.base_url + path, data=data, headers=headers, method=method)
         try:
             with self._opener.open(request, timeout=self.timeout) as response:
-                limit = MAX_ARTIFACT if artifact else MAX_JSON
+                limit = response_limit if response_limit is not None else (MAX_ARTIFACT if artifact else MAX_JSON)
                 raw = response.read(limit + 1)
                 _require(len(raw) <= limit, 'animation_creation_response_too_large', 502)
                 if artifact:
@@ -174,23 +177,29 @@ class CreationHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, service, token, *, host='127.0.0.1', port=0, pump=True, method_service=None,
-                 close_callbacks=()):
+                 film_resource_service=None, close_callbacks=()):
         self.service, self._token = service, _token(token)
         self.pump = CreationPump(service) if pump else None
         self.method_service = method_service
         self.method_pump = CreationPump(method_service) if pump and method_service is not None else None
+        self.film_resource_service = film_resource_service
+        self.film_resource_pump = CreationPump(film_resource_service) if pump and film_resource_service is not None else None
         self.close_callbacks = tuple(close_callbacks)
         super().__init__((host, port), CreationHandler)
         if self.pump:
             self.pump.start()
         if self.method_pump:
             self.method_pump.start()
+        if self.film_resource_pump:
+            self.film_resource_pump.start()
 
     def server_close(self):
         if self.pump:
             self.pump.close()
         if self.method_pump:
             self.method_pump.close()
+        if self.film_resource_pump:
+            self.film_resource_pump.close()
         callbacks, self.close_callbacks = self.close_callbacks, ()
         for callback in callbacks:
             callback()
@@ -228,6 +237,11 @@ class CreationHandler(BaseHTTPRequestHandler):
         owner = self._auth()
         pieces = parsed.path.strip('/').split('/')
         service = self.server.service
+        if method == 'GET' and parsed.path.startswith('/api/film-manim/'):
+            from .manim_film_resource_http import route_private
+            _require(not parsed.query)
+            if route_private(self, owner, method, parsed.path):
+                return
         if method == 'GET' and parsed.path.startswith('/api/method-lab/'):
             from .animation_method_http import route_private
             _require(not parsed.query)
@@ -253,11 +267,16 @@ class CreationHandler(BaseHTTPRequestHandler):
         else:
             _require(not parsed.query)
             lengths = self.headers.get_all('Content-Length', [])
-            body_limit = 1024 * 1024 if parsed.path.startswith('/api/method-lab/') else 32768
+            body_limit = (1024 * 1024 if parsed.path.startswith('/api/method-lab/')
+                else 128 * 1024 if parsed.path.startswith('/api/film-manim/') else 32768)
             _require(len(lengths) == 1 and lengths[0].isdigit() and 0 < int(lengths[0]) <= body_limit
                      and not self.headers.get_all('Transfer-Encoding'), 'animation_creation_body_size', 413)
             _require(self.headers.get_content_type() == 'application/json', 'animation_creation_json_required', 415)
             body = _json(self.rfile.read(int(lengths[0])))
+            if parsed.path.startswith('/api/film-manim/'):
+                from .manim_film_resource_http import route_private
+                if route_private(self, owner, method, parsed.path, body):
+                    return
             if parsed.path.startswith('/api/method-lab/'):
                 from .animation_method_http import route_private
                 if route_private(self, owner, method, parsed.path, body):

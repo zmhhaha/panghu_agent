@@ -37,7 +37,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                   method_agent_token_file=None, engine_admission_file=None, method_protocol='skills',
                   method_project_runtime='native-seek', authoring_library_admission_file=None,
                   manim_recipe_agent_token_file=None, manim_resource_image=None,
-                  manim_resource_admission_file=None):
+                  manim_resource_admission_file=None, film_manim_admission_file=None):
     if enable_isolated_rendering is not True:
         raise ValueError('animation_creation_isolated_rendering_opt_in_required')
     if method_protocol not in {'skills', 'legacy'}:
@@ -55,7 +55,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
         service = AnimationCreationService(root, creation_gateway=AnimationCreateGateway(client),
             review_gateway=AnimationInputReviewGateway(client), renderer=renderer,
             historical_review_gateways={'video.animation-review.v3': AnimationBatchReviewGateway(client)})
-        methods = None
+        methods = film_resources = None
         if method_agent_token_file is not None:
             method_token = read_token(method_agent_token_file)
             if method_token in {agent_token, executor_token}:
@@ -98,9 +98,25 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                 validate_admission(manim_resource_admission_file,
                     resource_executor=resource_executor, method_renderer=methods.renderer)
                 coordinator.enabled = True
+            from .manim_film_resource_service import ManimFilmResourceService
+            film_adapter = SkillProductionAdapter(methods.published_catalogue, methods.read_methods,
+                Path(root) / 'manim-film-skill-freezes.sqlite3')
+            film_coordinator = ManimMethodCoordinator(Path(root) / 'manim-film-resource-coordinator',
+                gateway=ManimRecipeAgentGateway(manim_client, film_adapter), executor=resource_executor,
+                skill_adapter=film_adapter, enabled=False)
+            film_resources = ManimFilmResourceService(Path(root) / 'manim-film-resources',
+                coordinator=film_coordinator)
+            if film_manim_admission_file is not None:
+                from .manim_film_admission import validate_admission as validate_film_admission
+                film_resources.admission = validate_film_admission(film_manim_admission_file,
+                    resource_service=film_resources)
+                film_resources.enabled = film_coordinator.enabled = True
         elif manim_resource_admission_file is not None:
             raise ValueError('manim_method_config_incomplete')
-        server = CreationHTTPServer(service, executor_token, host=listen, port=port, method_service=methods)
+        elif film_manim_admission_file is not None:
+            raise ValueError('film_manim_config_incomplete')
+        server = CreationHTTPServer(service, executor_token, host=listen, port=port,
+            method_service=methods, film_resource_service=film_resources)
         server.close_callbacks = tuple(client.close for client in (method_client, manim_client) if client is not None)
     except BaseException:
         if manim_client is not None:
@@ -131,6 +147,8 @@ def main(argv=None):
     parser.add_argument('--manim-resource-image', help='Independent Cairo image, pinned latest@sha256 digest.')
     parser.add_argument('--manim-resource-admission-file', type=Path,
         help='Exact stopped resource plus method-v5 whole-project technical admission.')
+    parser.add_argument('--film-manim-admission-file', type=Path,
+        help='Independent formal-film resource generation and whole-film consumption admission.')
     parser.add_argument('--enable-isolated-rendering', action='store_true')
     parser.add_argument('--listen', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8767)

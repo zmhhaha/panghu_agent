@@ -130,3 +130,34 @@ def execution_readiness(renderer, settings):
         return {'available': bool(available)}
     except (ServiceError, ValueError, KeyError, TypeError, AttributeError):
         return {'available': False}
+
+
+@dataclass(frozen=True, repr=False)
+class FilmManimSettings:
+    base_url: str
+    token: str
+    context: dict
+
+    @classmethod
+    def from_env(cls, film_settings, env=None):
+        env = os.environ if env is None else env
+        path = env.get('VIDEO_FILM_MANIM_ADMISSION_FILE', '')
+        if not path:
+            return None
+        try:
+            from .manim_film_admission import read_admission, consumer_context, validate_consumer_context
+            if film_settings is None:
+                raise ValueError()
+            connection = AgentSettings.from_env({
+                'VIDEO_AGENT_URL': env.get('VIDEO_FILM_MANIM_URL', env.get('VIDEO_METHOD_LAB_URL', '')),
+                'VIDEO_AGENT_TOKEN': env.get('VIDEO_FILM_MANIM_TOKEN', env.get('VIDEO_METHOD_LAB_TOKEN', '')),
+                'VIDEO_AGENT_TOKEN_FILE': env.get('VIDEO_FILM_MANIM_TOKEN_FILE', env.get('VIDEO_METHOD_LAB_TOKEN_FILE', '')),
+            })
+            if connection is None:
+                raise ValueError()
+            context = validate_consumer_context(consumer_context(read_admission(path)),
+                runtime=film_settings.runtime_fingerprint, hosts=film_settings.trusted_host_sha256,
+                image=film_settings.image)
+            return cls(connection.base_url, connection.token, context)
+        except (ValueError, ServiceError, OSError, TypeError, KeyError):
+            raise ValueError('Formal Manim producer and consumer admission configuration is unavailable') from None
