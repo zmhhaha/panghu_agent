@@ -20,13 +20,14 @@ def build(args):
     result = joint.build(args)
     source = base.source_measurement(base.ROOT, args.revision)
     output = Path(args.output)
-    renderer_source = output / 'workbench-source' / 'video_workbench' / 'motion_renderer'
-    rows = [row for row in source['source_files'] if row['path'].startswith('video_workbench/motion_renderer/')]
+    renderer_source = output / 'workbench-source'
+    rows = [row for row in source['source_files']
+            if Path(row['path']).parts[0] in joint.CONTEXT_ROOTS]
     context_sha = base.sha(base.canonical(rows))
-    dockerfile = 'video_workbench/motion_renderer/Dockerfile'
+    dockerfile = 'video_workbench/motion_renderer/Dockerfile.film'
     tag = args.registry + '/video-motion-renderer:latest'
     with (output / 'renderer-build.log').open('xb') as log:
-        base.command(['docker', 'build', '--pull=false', '-f', 'Dockerfile',
+        base.command(['docker', 'build', '--pull=false', '-f', dockerfile,
             '--build-arg', 'SOURCE_REVISION=' + args.revision,
             '--label', 'io.panghu.source.context-sha256=' + context_sha, '-t', tag, '.'],
             cwd=renderer_source, output=log)
