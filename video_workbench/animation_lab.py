@@ -44,7 +44,8 @@ _FIELDS = {'case_id', 'case_identity', 'variant_id', 'kind', 'start_seconds',
            'end_seconds', 'region', 'tags', 'severity', 'comment', 'preference', 'verdict'}
 _PUBLIC_URL_FIELDS = frozenset({'preview_url', 'report_url', 'task_url', 'image_url', 'asset_url', 'media_url', 'assessment_url', 'source_url'})
 _METHOD_UI_PATHS = frozenset({'/', '/index.html', '/method-gallery.html',
-                              '/method-gallery.mjs', '/method-comparison.mjs', '/method-gallery.css', '/skill-publication.mjs',
+                              '/method-gallery.mjs', '/method-comparison.mjs', '/authoring-tools.mjs',
+                              '/method-gallery.css', '/skill-publication.mjs',
                               '/knowledge.html', '/knowledge.mjs', '/knowledge.css'})
 
 
@@ -886,10 +887,8 @@ class LabHandler(BaseHTTPRequestHandler):
                     raw += lab.experiments.export_jsonl()
                 return self._send(raw,
                                   'application/x-ndjson; charset=utf-8', download=True)
-            if path in {'/', '/index.html', '/app.mjs', '/model.mjs', '/style.css', '/lab-player.mjs',
-                        '/experiments.mjs', '/experiment-model.mjs', '/creation-runs.mjs',
-                        '/method-gallery.html', '/method-gallery.mjs', '/method-comparison.mjs', '/method-gallery.css', '/skill-publication.mjs',
-                        '/knowledge.html', '/knowledge.mjs', '/knowledge.css'}:
+            if path in _METHOD_UI_PATHS or path in {'/app.mjs', '/model.mjs', '/style.css', '/lab-player.mjs',
+                        '/experiments.mjs', '/experiment-model.mjs', '/creation-runs.mjs'}:
                 name = 'method-gallery.html' if path in {'/', '/index.html'} else path[1:]
                 if name == 'lab-player.mjs':
                     return self._send(lab.player_script, 'text/javascript; charset=utf-8')

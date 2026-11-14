@@ -2,7 +2,9 @@
 from contextlib import contextmanager
 import http.client
 import json
+import re
 import threading
+from urllib.parse import urljoin
 
 import pytest
 
@@ -147,6 +149,32 @@ def test_methods_only_closes_old_routes_without_initializing_their_stores(tmp_pa
         assert request(server, 'GET', PREFIX + '/api/catalog', omit=['X-Forwarded-User'])[0] == 403
         assert client.calls == []
     assert not (tmp_path / 'unused').exists()
+
+
+@pytest.mark.parametrize('page', ['', 'knowledge.html'])
+def test_methods_only_serves_the_complete_page_module_import_graph(tmp_path, page):
+    client = MethodClient()
+    lab = AnimationLab(tmp_path / 'unused', {}, method_client=client, methods_only=True)
+    with serving(lab) as server:
+        status, html, _ = request(server, 'GET', PREFIX + '/' + page)
+        assert status == 200
+        entrypoints = re.findall(rb'<script\b[^>]*\btype="module"[^>]*\bsrc="([^"]+)"', html)
+        assert entrypoints
+        pending = [urljoin(PREFIX + '/' + page, entry.decode()) for entry in entrypoints]
+        visited = set()
+        while pending:
+            path = pending.pop()
+            if path in visited:
+                continue
+            visited.add(path)
+            assert path.startswith(PREFIX + '/') and path.endswith('.mjs')
+            status, raw, headers = request(server, 'GET', path)
+            assert status == 200, path
+            assert headers['Content-Type'].startswith(('text/javascript', 'application/javascript')), path
+            assert request(server, 'GET', path, omit=['X-Forwarded-User'])[0] == 403
+            imports = re.findall(rb"(?m)^\s*(?:import|export)\b[^;]*?\bfrom\s*['\"](\./[^'\"]+)['\"]", raw)
+            pending.extend(urljoin(path, name.decode()) for name in imports)
+        assert not client.calls  # Loading the UI must not submit work or query another owner.
 
 
 class CLIProbeServer:
