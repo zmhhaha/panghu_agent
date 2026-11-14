@@ -1,0 +1,33 @@
+# Dedicated dependency runtime for an admitted isolated author/render worker.
+# Build from the complete repository with latest only. This file alone does
+# not authorize any production profile, Job, effect, or Skill publication.
+ARG PYTHON_BASE_IMAGE
+FROM ${PYTHON_BASE_IMAGE}
+ARG SOURCE_REVISION
+ARG PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+LABEL org.opencontainers.image.source="https://github.com/zmhhaha/panghu_agent" \
+      org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      io.panghu.animation.capability="manim-community-cairo-resource"
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       build-essential cmake pkg-config libcairo2-dev libpango1.0-dev libffi-dev \
+       libegl-dev libgl1 fonts-noto-core fonts-noto-cjk fontconfig \
+    && python -m pip install --no-cache-dir --retries 0 --timeout 30 \
+       --index-url "${PYPI_INDEX_URL}" manim==0.22.1 pydantic==2.12.5 \
+    && python -m pip check \
+    && apt-get purge -y --auto-remove build-essential cmake pkg-config \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 renderer \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin renderer
+# No TeX Live, model downloads, Chromium, Python/OpenGL renderer, or movie encode.
+WORKDIR /app
+COPY agent_service/__init__.py agent_service/contracts.py /app/agent_service/
+COPY video_workbench/__init__.py video_workbench/manim_resource.py \
+     video_workbench/manim_resource_worker.py /app/video_workbench/
+COPY video_workbench/motion_renderer/vendor/manim-community.LICENSE.txt /opt/licenses/manim-community.txt
+ENV PYTHONPATH=/app PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
+    HOME=/tmp/renderer XDG_CACHE_HOME=/tmp/cache XDG_CONFIG_HOME=/tmp/config
+RUN python -c "import manim; assert manim.__version__ == '0.22.1'; from video_workbench.manim_resource_worker import main"
+USER 10001:10001
+WORKDIR /work
+ENTRYPOINT ["python", "-m", "video_workbench.manim_resource_worker"]

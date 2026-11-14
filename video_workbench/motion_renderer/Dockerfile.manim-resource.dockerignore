@@ -1,0 +1,11 @@
+**
+!agent_service/
+!agent_service/__init__.py
+!agent_service/contracts.py
+!video_workbench/
+!video_workbench/__init__.py
+!video_workbench/manim_resource.py
+!video_workbench/manim_resource_worker.py
+!video_workbench/motion_renderer/
+!video_workbench/motion_renderer/vendor/
+!video_workbench/motion_renderer/vendor/manim-community.LICENSE.txt
