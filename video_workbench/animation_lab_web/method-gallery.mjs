@@ -1,4 +1,5 @@
 import {createMethodComparison} from './method-comparison.mjs';
+import {mountAuthoringControls, renderAuthoringBadges, matchesAuthoringTool, toolSearchText, resourceAuthoringRequest} from './authoring-tools.mjs';
 import {usesExactSkillPublication, renderExactSkillPublication} from './skill-publication.mjs';
 
 const API = 'api/method-lab/';
@@ -144,6 +145,7 @@ export function buildCommissionRequest(fields, requestId) {
     if (body.base_commission_id && !feedback) throw Error('继续优化时，请说明本次修改意见');
     if (fields.base_candidate_id) body.base_candidate_id = text(fields.base_candidate_id);
   }
+  Object.assign(body, resourceAuthoringRequest(fields, body.duration_seconds));
   const criteria = text(fields.criteria_text).split(/\r?\n/).map(value => value.trim()).filter(Boolean);
   if (criteria.length > 16 || criteria.some(value => value.length > 1200)) throw Error('验收标准最多 16 项，每项不超过 1200 字');
   if (criteria.length) body.criteria = criteria.map((description, index) => {
@@ -392,6 +394,8 @@ export function renderMethodCard(doc, effect, root, onOpen) {
   const engine = element(doc, 'div', 'card-engine');
   engine.append(element(doc, 'span', 'small muted', '渲染技术'), renderEngineBadge(doc, effect,
     !text(candidate?.media_url) && !text(candidate?.media?.url)));
+  const tools = renderAuthoringBadges(doc, effect);
+  if (tools.length) engine.append(element(doc, 'span', 'small muted', '创作工具'), ...tools);
   body.append(heading, engine, element(doc, 'p', 'card-goal', text(effect.goal)));
   const meta = element(doc, 'div', 'card-meta');
   const state = displayState(effect);
@@ -646,6 +650,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
 export function mountMethodGallery({document: doc = document, root = new URL('./', location.href), fetch: fetcher = fetch,
   storage = sessionStorage, uuid, schedule, unschedule} = {}) {
   const $ = id => doc.getElementById(id), home = $('gallery-home'), detailHost = $('gallery-detail'), formPanel = $('gallery-form-panel');
+  const authoringControls = mountAuthoringControls(doc, () => renderCards());
   let continuation = null, controller, renderedDetailId = null, renderedDetailSnapshot = null, renderedCardsSnapshot = null, comparison = null, replacing = false;
   const feedbackDrafts = new Map(), comparisonStates = new Map(), disclosureStates = new Map();
   const releaseComparison = () => {
@@ -690,6 +695,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
         // demonstration goal is not exposed by this commission's detail.
         transfer_original_goal: transferCandidate.id === detail.baseline_candidate?.id ? '' : text(detail.goal)} : {})} : null;
     $('experiment-form').reset();
+    authoringControls.resetExperiment(detail?.resource_authoring);
     for (const id of ['reference', 'reference-start', 'reference-end']) {
       $('experiment-' + id).disabled = transferSkills;
       if (transferSkills) $('experiment-' + id).value = '';
@@ -728,25 +734,26 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     const catalog = controller.state.catalog;
     if (!catalog) return;
     const query = $('gallery-search').value.trim().toLocaleLowerCase(), filter = $('gallery-state').value,
-      engine = $('gallery-engine').value;
+      engine = $('gallery-engine').value, authoringTool = authoringControls.selected;
     const all = catalog.effects;
-    const filtered = all.filter(row => (!query || (text(row.title) + ' ' + text(row.goal) + ' ' + ENGINE_ALIASES[actualEngine(row)]).toLocaleLowerCase().includes(query))
+    const filtered = all.filter(row => (!query || (text(row.title) + ' ' + text(row.goal) + ' ' + ENGINE_ALIASES[actualEngine(row)] + ' ' + toolSearchText(row)).toLocaleLowerCase().includes(query))
       && (engine === 'all' || actualEngine(row) === engine)
+      && matchesAuthoringTool(row, authoringTool)
       && (filter === 'all' || filter === 'active' && ACTIVE.has(row.state) || filter === 'published' && displayState(row) === 'published'
         || filter === 'review' && !ACTIVE.has(row.state) && displayState(row) !== 'published'));
-    const snapshot = JSON.stringify({filtered, query, filter, engine});
+    const snapshot = JSON.stringify({filtered, query, filter, engine, authoringTool});
     if (renderedCardsSnapshot !== snapshot) {
       for (const video of $('gallery-cards').querySelectorAll('video')) video.pause();
       $('gallery-cards').replaceChildren(...filtered.map(row => renderMethodCard(doc, row, root, id => { show('detail'); void controller.select(id); })));
       renderedCardsSnapshot = snapshot;
     }
-    const constrained = Boolean(query) || filter !== 'all' || engine !== 'all';
+    const constrained = Boolean(query) || filter !== 'all' || engine !== 'all' || authoringTool !== 'all';
     $('gallery-empty').hidden = all.length > 0 || constrained;
     $('gallery-no-results').hidden = filtered.length > 0 || !constrained;
     const unavailableEngine = ['canvas', 'three'].includes(engine) && !all.some(row => actualEngine(row) === engine);
     $('gallery-no-results-message').textContent = unavailableEngine
       ? '效果库中暂无 ' + ENGINE_LABELS[engine] + ' 实际样片。' + (!rows(catalog.availability.allowed_engines).includes(engine) ? '该技术暂未开放生成。' : '')
-      : '没有匹配的效果，请调整搜索、状态或渲染技术。';
+      : '没有匹配的效果，请调整搜索、状态、渲染技术或创作工具。';
     $('gallery-count').textContent = (constrained ? filtered.length + ' / ' : '') + all.length + ' 个效果';
   };
   controller = new MethodGalleryController({root, request, storage, uuid, schedule, unschedule, onChange: state => {
@@ -763,6 +770,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     $('gallery-availability').textContent = state.catalog ? enabled ? '按目标自主探索，完成后查看最佳样片、改进依据与尚存问题。'
       : state.catalog.availability.reason || '制作服务尚未就绪，可查看已有样片。' : '正在读取效果库…';
     $('gallery-engine-availability').textContent = state.catalog ? engineAvailability(state.catalog.availability) : '';
+    authoringControls.update(state.catalog?.availability, state.busy || Boolean(state.pending));
     renderCards();
     if (!formPanel.hidden) return;
     if (state.detail) {
@@ -841,7 +849,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
   $('gallery-state').addEventListener('change', renderCards);
   $('gallery-engine').addEventListener('change', renderCards);
   $('gallery-reset').addEventListener('click', () => {
-    $('gallery-search').value = ''; $('gallery-state').value = 'all'; $('gallery-engine').value = 'all'; renderCards();
+    $('gallery-search').value = ''; $('gallery-state').value = 'all'; $('gallery-engine').value = 'all'; authoringControls.resetFilter(); renderCards();
   });
   detailHost.addEventListener('focusout', () => queueMicrotask(() => controller.emit()));
   $('experiment-form').addEventListener('submit', async event => {
