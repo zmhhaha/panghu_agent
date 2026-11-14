@@ -36,11 +36,17 @@ Manim r2 暴露上游 Responses 返回的未知 token-details 扩展对象被误
 
 Manim 委托已完成：真实 4 秒／96 帧 MP4 SHA256 为 `2bf7ce3ed024eeda3119c654b0c58275f2fd159b4da6d61e9ad71dbc430c4108`。独立核验原 Agent 源码、60 帧透明资源、v5 清单、HyperFrames 0.8.149 和最终解码全部一致；有限边界帧未发现窗口外残留，原任务均已停止清理。高度尺、细线和 b/h 标记偏暗、偏小，不能将技术出片当作目标效果已经获得认可。
 
-Anime 首次委托被 `method_absolute_seek_mismatch` 正确拒收，没有 MP4 或候选。原源码每次重置 Anime 管理的 tween 对象，再执行 seek，破坏了同帧与历史无关的要求。纯状态诊断能复现，原桥接字节未改变；诊断内存里的修改不冒充 Agent 作品。原失败与原预算保留。另以新有限预算、`retry_of_commission_id` 关联同效果，启动修正委托 `5a5ffbd5-a9ae-47a8-b5c9-c53158c8c64b`；仅提供状态所有权反馈，让 Agent 自主重新创作并内化到 Skill 草稿，没有传入手改动画源码。修正结果以最终采集为准，不循环新增任务。
+Anime 首次委托被 `method_absolute_seek_mismatch` 正确拒收，没有 MP4 或候选。原源码每次重置 Anime 管理的 tween 对象，再执行 seek，破坏了同帧与历史无关的要求。纯状态诊断能复现，原桥接字节未改变；诊断内存里的修改不冒充 Agent 作品。原失败与原预算保留。另以新有限预算、`retry_of_commission_id` 关联同效果，启动修正委托 `5a5ffbd5-a9ae-47a8-b5c9-c53158c8c64b`；仅提供状态所有权反馈，让 Agent 自主重新创作并内化到 Skill 草稿，没有传入手改动画源码。修正稿已完成并独立核验：8 秒／192 帧 MP4 SHA256 为 `5a0bb2a49819f32a8349a7fb363ccca77a0ee4c3a2744780b6fe17d98834ba8f`，原 Agent 源码与实际输入一致，35 条 Anime 轨道承担主体动作；201 个帧／seek 探针与完整 MP4 解码通过。原创方法已写入状态独占规则，没有通过删除验证或手改原动画获得通过。新旧委托在同一个效果下，原失败保留，没有循环新增任务。当前 reviewer 的静帧意见仍不能证明完整节奏、因果动作或审美已经得到用户认可。
 
 原声复用的 workbench／motion 已进一步升级到 `7633be283f3dd8158e1a60479b8fb54646a57f21`、镜像 `video-workbench:latest@sha256:65c3b69d7f1b34c6cc3a6139f94c4d76a12ebb7619d84f03648694eb8663c499`。creation／lab 保持原部署，原整片配置不变；通过真实 HTTP 字段和 readiness 检查。该升级不生成语音或媒体。
 
 浏览器安全检查服务当前不可用，页面验收尚未完成；服务器 API／部署核验不替代页面验收。
+
+## 失败原因展示修复
+
+creation 进一步从完整 Git `aa4de3229cc6abe5f34e27c451c72da9bd156b01` 普通构建并部署为 `video-animation-creation:latest@sha256:70c8903dfb9a90516cd7568bf5135f1ee385e0565fa75af9cec06f8ba6b7e60c`；仅此服务升级，lab／workbench／motion 的 Deployment 不变。相关三套回归共覆盖 115 项，新失败仅从与请求、镜像、宿主和运行库绑定的受限收据精确提取固定诊断码；未知内容返回通用原因，不透出原日志。
+
+真实 HTTP 只读核对原 Anime 失败委托 `6b719f65-6aca-4433-95ae-a350f84aa4d3`，现返回非空 `animation_method_render_container_failed`。原记录没有保存具体 seek 码，因此不回填或声称恢复它。升级及 GET 前后十个 SQLite 账本的原始表结构／内容指纹一致，全部原挂载与凭据元数据保持；没有新增模型、TTS 或渲染。发布证据为 `method-diagnostics-rollout-r1/completed.json`，状态 `deployed_verified`。
 
 ## 原声复用与跨镜连续性
 
