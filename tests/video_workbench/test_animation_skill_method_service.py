@@ -5,10 +5,11 @@ from uuid import uuid4
 import pytest
 
 from agent_service.animation_skills_contract import build_skill_package
+from agent_service.animation_knowledge_contract import MAX_EXPERIENCE_BYTES
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.profiles import video_animation_skill_method as protocol
 from video_workbench.animation_method_commissions import AnimationMethodCommissionStore
-from video_workbench.animation_method_service import AnimationMethodService
+from video_workbench.animation_method_service import AnimationMethodService, _review_experience
 from test_animation_method_service import Gateway, Renderer, finish, start
 
 
@@ -280,6 +281,136 @@ def test_explicit_page_history_preserves_body_and_owner_without_execution_or_mut
     assert len(service.knowledge.page_history('developer', 'draw:async')) == 2
     assert len(service.knowledge.list_experiences('developer')) == 1
     assert creator.submissions == reviewer.submissions == renderer.calls == []
+
+
+def test_new_sampled_review_retains_diagnostics_with_idempotent_immutable_evidence(work, monkeypatch):
+    service, creator, reviewer, renderer = work
+    original_collect = reviewer.collect
+    def detailed_review(*args):
+        result = original_collect(*args)
+        result['review']['remaining_issues'] = ['A label overlaps a moving object in the supplied image.']
+        result['review']['next_guidance'] = 'Reserve protected label space and test the same sampled time.'
+        return result
+    monkeypatch.setattr(reviewer, 'collect', detailed_review)
+    row = finish(service, start(service)['id'])
+    run = service.commissions.get('developer', row['id'])
+    operation = next(op for op in run['operations'] if op['stage'] == 'review')
+    record = next(value for value in service.knowledge.list_experiences('developer')
+                  if value['kind'] == 'sampled_review' and value['source_id'] == operation['id'])
+    for key in ('criteria_results', 'remaining_issues', 'next_guidance'):
+        assert record['document'][key] == operation['result']['review'][key]
+    assert record['document']['remaining_issues'] and record['document']['next_guidance']
+    assert record['document']['scope'] == 'sampled_images_only'
+    assert record['document']['observation']['motion_observed'] is False
+    assert record['document']['observation']['audio_observed'] is False
+    frozen = service.knowledge.snapshot('developer', page_ids=[], experience_ids=[record['id']])
+    unchanged = canonical_bytes(record)
+    before = (len(service.knowledge.list_experiences('developer')), len(creator.submissions),
+              len(reviewer.submissions), len(renderer.calls))
+    for _ in range(2):
+        service._sync_knowledge('developer', run)
+    assert canonical_bytes(service.knowledge.get_experience('developer', record['id'])) == unchanged
+    assert service.knowledge.get_snapshot('developer', frozen['id']) == frozen
+    assert before == (len(service.knowledge.list_experiences('developer')), len(creator.submissions),
+                      len(reviewer.submissions), len(renderer.calls))
+
+
+def test_existing_sampled_review_and_frozen_snapshot_are_not_backfilled(work, monkeypatch):
+    service, creator, reviewer, renderer = work
+    original_archive = service._experience
+    fields = {'criteria_results', 'remaining_issues', 'next_guidance'}
+    def legacy_archive(owner, kind, source_id, document):
+        if kind == 'sampled_review':
+            document = {key: value for key, value in document.items() if key not in fields}
+        return original_archive(owner, kind, source_id, document)
+    monkeypatch.setattr(service, '_experience', legacy_archive)
+    row = finish(service, start(service)['id'])
+    monkeypatch.setattr(service, '_experience', original_archive)
+    record = next(value for value in service.knowledge.list_experiences('developer') if value['kind'] == 'sampled_review')
+    assert not fields & set(record['document'])
+    frozen = service.knowledge.snapshot('developer', page_ids=[], experience_ids=[record['id']])
+    unchanged = canonical_bytes(record)
+    before = (len(service.knowledge.list_experiences('developer')), len(creator.submissions),
+              len(reviewer.submissions), len(renderer.calls))
+    run = service.commissions.get('developer', row['id'])
+    for _ in range(2):
+        service._sync_knowledge('developer', run)
+    assert canonical_bytes(service.knowledge.get_experience('developer', record['id'])) == unchanged
+    assert service.knowledge.get_snapshot('developer', frozen['id']) == frozen
+    assert before == (len(service.knowledge.list_experiences('developer')), len(creator.submissions),
+                      len(reviewer.submissions), len(renderer.calls))
+
+
+@pytest.mark.parametrize('issue, count', [('x' * 8000, 33), ('\U0001f642' * 8000, 9)],
+                         ids=['ascii-over-budget', 'utf8-over-budget'])
+def test_valid_large_sampled_review_finishes_with_explicit_bounded_projection(work, monkeypatch, issue, count):
+    service, creator, reviewer, renderer = work
+    original_collect = reviewer.collect
+    def large_review(job_id, checksum, document):
+        result = original_collect(job_id, checksum, document)
+        result['review']['remaining_issues'] = [issue] * count
+        # The counterexample is admissible model output, including UTF-8 bytes.
+        protocol.validate_result(result, checksum, document)
+        return result
+    monkeypatch.setattr(reviewer, 'collect', large_review)
+    row = finish(service, start(service)['id'])
+    assert row['state'] == 'completed'
+    assert (len(creator.submissions), len(reviewer.submissions), len(renderer.calls)) == (2, 1, 1)
+    run = service.commissions.get('developer', row['id'])
+    operation = next(op for op in run['operations'] if op['stage'] == 'review')
+    assert operation['status'] == 'completed'
+    assert operation['result']['review']['remaining_issues'] == [issue] * count
+    record = next(value for value in service.knowledge.list_experiences('developer')
+                  if value['kind'] == 'sampled_review' and value['source_id'] == operation['id'])
+    document = record['document']
+    assert len(canonical_bytes(document)) <= MAX_EXPERIENCE_BYTES
+    assert not {'criteria_results', 'remaining_issues', 'next_guidance'} & set(document)
+    projection = document['diagnostics_projection']
+    assert projection['completeness'] == 'structured_summary_only_not_full_diagnostics'
+    assert projection['reason'] == 'complete_diagnostics_exceed_experience_byte_budget'
+    assert projection['full_result_reference'] == dict(commission_id=row['id'], operation_id=operation['id'],
+        result_sha256=operation['result_sha256'], json_pointer='/review',
+        availability='operation_store_only_not_in_agent_inputs')
+    for key in ('criteria_results', 'remaining_issues', 'next_guidance'):
+        value = operation['result']['review'][key]
+        expected = dict(sha256=digest(value), json_bytes=len(canonical_bytes(value)),
+            **({'item_count': len(value)} if type(value) is list else {'character_count': len(value)}))
+        assert projection['fields'][key] == expected
+    assert projection['fields_not_inlined'] == ['criteria_results', 'remaining_issues', 'next_guidance']
+    assert projection['experience_fields_not_inlined'] == []
+    assert projection['criteria_results'] == [
+        {key: value[key] for key in ('criterion_id', 'status')}
+        for value in operation['result']['review']['criteria_results']]
+    frozen = service.knowledge.snapshot('developer', page_ids=[], experience_ids=[record['id']])
+    assert frozen['experiences'][0]['document']['diagnostics_projection'] == projection
+    unchanged = canonical_bytes(record)
+    before = (len(service.knowledge.list_experiences('developer')), len(creator.submissions),
+              len(reviewer.submissions), len(renderer.calls))
+    for _ in range(2):
+        service._sync_knowledge('developer', run)
+    assert canonical_bytes(service.knowledge.get_experience('developer', record['id'])) == unchanged
+    assert service.knowledge.get_snapshot('developer', frozen['id']) == frozen
+    assert before == (len(service.knowledge.list_experiences('developer')), len(creator.submissions),
+                      len(reviewer.submissions), len(renderer.calls))
+
+
+def test_review_projection_can_fit_when_original_experience_has_no_spare_metadata_space():
+    document = dict(commission_id='synthetic', operation_id='synthetic-review', result_sha256='a' * 64,
+        goal='A finite goal.', summary='A finite summary.', observation={'limitations': []})
+    padding = MAX_EXPERIENCE_BYTES - len(canonical_bytes(document))
+    document['observation']['limitations'] = ['x' * (padding - 2)]
+    assert len(canonical_bytes(document)) == MAX_EXPERIENCE_BYTES
+    original = deepcopy(document)
+    opinion = dict(criteria_results=[dict(criterion_id='meaning', status='failed', evidence='Not observed.')],
+        remaining_issues=['A label is unclear.'], next_guidance='Preserve label contrast.')
+    projected = _review_experience(document, opinion)
+    assert len(canonical_bytes(projected)) <= MAX_EXPERIENCE_BYTES
+    assert document == original
+    projection = projected['diagnostics_projection']
+    assert projection['experience_fields_not_inlined'] == [dict(field='observation',
+        sha256=digest(original['observation']), json_bytes=len(canonical_bytes(original['observation'])))]
+    assert projected['goal'] == original['goal'] and projected['summary'] == original['summary']
+    assert 'observation' not in projected
 
 
 def test_new_gateway_rejects_historical_unfinished_commission_without_reinterpreting_or_resubmitting(tmp_path):

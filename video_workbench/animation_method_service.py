@@ -15,6 +15,7 @@ import sqlite3
 import time
 from uuid import uuid4
 
+from agent_service.animation_knowledge_contract import MAX_EXPERIENCE_BYTES
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.profiles import video_animation_method as protocol
 from agent_service.profiles import video_animation_skill_method as skill_protocol
@@ -30,6 +31,47 @@ from .animation_method_research import METHOD_SCHEMA, REMOVAL_SCHEMA, validate_c
 def _require(value, code='animation_method_request_invalid', status=422):
     if not value:
         raise ServiceError(code, status)
+
+
+def _review_experience(document, opinion):
+    """Retain short diagnostics, or explicitly project the immutable result.
+
+    Long result text remains in the operation store. A later Agent receives
+    only this projection, not an implied full diagnostic resource or fetch tool.
+    """
+    details = {key: deepcopy(opinion[key]) for key in
+               ('criteria_results', 'remaining_issues', 'next_guidance')}
+    complete = dict(document, **details)
+    if len(canonical_bytes(complete)) <= MAX_EXPERIENCE_BYTES:
+        return complete
+    field_details = {key: dict(sha256=digest(value), json_bytes=len(canonical_bytes(value)),
+        **({'item_count': len(value)} if type(value) is list else {'character_count': len(value)}))
+        for key, value in details.items()}
+    projection = dict(schema='video.animation-review-diagnostics-projection.v1',
+        completeness='structured_summary_only_not_full_diagnostics',
+        reason='complete_diagnostics_exceed_experience_byte_budget',
+        experience_byte_budget=MAX_EXPERIENCE_BYTES,
+        full_result_reference=dict(commission_id=document['commission_id'],
+            operation_id=document['operation_id'], result_sha256=document['result_sha256'],
+            json_pointer='/review', availability='operation_store_only_not_in_agent_inputs'),
+        fields_not_inlined=list(details), fields=field_details,
+        criteria_results=[{key: row[key] for key in ('criterion_id', 'status')}
+                          for row in opinion['criteria_results']],
+        experience_fields_not_inlined=[])
+    projected = dict(document, diagnostics_projection=projection)
+    # Even a previously admissible base document might have no spare bytes for
+    # projection metadata. Omit whole descriptive fields with explicit bindings;
+    # never turn a text prefix into an apparently complete original field.
+    for key in sorted(('goal', 'summary', 'observation'),
+                      key=lambda name: len(canonical_bytes(document[name])), reverse=True):
+        if len(canonical_bytes(projected)) <= MAX_EXPERIENCE_BYTES:
+            return projected
+        value = projected.pop(key)
+        projection['experience_fields_not_inlined'].append(dict(field=key,
+            sha256=digest(value), json_bytes=len(canonical_bytes(value))))
+    _require(len(canonical_bytes(projected)) <= MAX_EXPERIENCE_BYTES,
+             'animation_knowledge_too_large', 413)
+    return projected
 
 
 def _public_url(commission_id, candidate_id, kind):
@@ -503,13 +545,28 @@ class AnimationMethodService:
                     scope='actual_render_record_not_human_or_complete_motion_verification'))
                 continue
             opinion = result.get('review')
-            self._experience(owner, 'sampled_review' if opinion else 'authored_proposal', operation['id'], dict(
+            experience_kind = 'sampled_review' if opinion else 'authored_proposal'
+            experience_document = dict(
                 commission_id=run['id'], operation_id=operation['id'], goal=run['frozen']['goal'],
                 input_sha256=operation['input_sha256'], result_sha256=operation['result_sha256'],
                 mode=result['mode'], summary=opinion['summary'] if opinion else 'Authored proposal; not rendered or accepted.',
                 outcome=opinion['outcome'] if opinion else None,
                 observation=operation['input']['observation'],
-                scope='sampled_images_only' if opinion else 'authored_not_rendered_or_accepted'))
+                scope='sampled_images_only' if opinion else 'authored_not_rendered_or_accepted')
+            if opinion:
+                experience_id = 'exp_' + digest(dict(owner=owner, kind=experience_kind, source_id=operation['id']))
+                try:
+                    previous = self.knowledge.get_experience(owner, experience_id)
+                except ServiceError as error:
+                    if error.status != 404:
+                        raise
+                    previous = None
+                # Existing experiences and snapshots are immutable. Replay the
+                # original shape for older records; only new archives gain details.
+                if previous is None or 'diagnostics_projection' in previous['document'] or {
+                        'criteria_results', 'remaining_issues', 'next_guidance'} <= set(previous['document']):
+                    experience_document = _review_experience(experience_document, opinion)
+            self._experience(owner, experience_kind, operation['id'], experience_document)
             snapshot = operation['input'].get('knowledge_snapshot')
             if snapshot is None or not result.get('knowledge_proposals'):
                 continue
