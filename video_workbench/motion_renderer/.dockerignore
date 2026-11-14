@@ -21,3 +21,6 @@
 !vendor/three.module.min.js
 !vendor/three.LICENSE.txt
 !vendor/three-assets.json
+!vendor/anime.esm.min.js
+!vendor/animejs.LICENSE.txt
+!vendor/anime_timeline.mjs

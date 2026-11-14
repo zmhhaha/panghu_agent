@@ -65,6 +65,7 @@ SOURCE_FILES = frozenset({
     'video_workbench/animation_lab_web/method-gallery.html',
     'video_workbench/animation_lab_web/method-gallery.css',
     'video_workbench/animation_lab_web/method-gallery.mjs',
+    'video_workbench/animation_lab_web/authoring-tools.mjs',
     'video_workbench/animation_lab_web/method-comparison.mjs',
     'video_workbench/animation_lab_web/skill-publication.mjs',
     'video_workbench/animation_lab_web/knowledge.html',

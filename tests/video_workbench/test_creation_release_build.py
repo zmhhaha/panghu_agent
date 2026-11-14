@@ -12,7 +12,8 @@ from video_workbench.deploy import build_creation_release as release
 def test_renderer_copy_inputs_survive_its_exact_docker_context_allowlist():
     root = Path(__file__).resolve().parents[2] / 'video_workbench' / 'motion_renderer'
     rules = (root / '.dockerignore').read_text().splitlines()
-    for line in (root / 'Dockerfile').read_text().splitlines():
+    dockerfile = (root / 'Dockerfile').read_text().replace('\\\n', ' ')
+    for line in dockerfile.splitlines():
         if not line.startswith('COPY ') or line.startswith('COPY --from='):
             continue
         for name in shlex.split(line)[1:-1]:
