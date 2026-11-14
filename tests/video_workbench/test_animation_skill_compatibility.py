@@ -146,3 +146,56 @@ def test_actual_lab_explicit_method_entry_cannot_bypass_package_dependency_check
     service._runtime_capabilities = enable_in_capabilities(runtime_capabilities(['html-svg']))
     result = start(service,criteria=CRITERIA,method_versions=[version['id']])
     assert result['id']
+
+
+def test_only_explicit_server_producer_context_offers_manim_skills(tmp_path):
+    from video_workbench.manim_method_resources import PRODUCER_REQUIREMENT
+    row = dependent(resources=True)
+    adapter = SkillProductionAdapter(lambda _: [row], None, tmp_path/'producer.sqlite3')
+    # Neither task metadata nor old generated assets can create a producer.
+    document = task({'manim/old.png': 'a'*64}, resource_authoring=PRODUCER_REQUIREMENT)
+    ordinary = adapter.freeze('alice', 'formal-consumer', document, ['html-svg'])
+    assert ordinary['packages'] == {}
+    producer = adapter.freeze('alice', 'recipe-consumer', document, ['html-svg'],
+        resource_authoring=PRODUCER_REQUIREMENT)
+    package = row['skill_package']
+    tools = SkillCatalogTools(producer['catalog'], producer['packages'])
+    assert tools.search(package['skill_id'])['skills']
+    assert tools.read(package['sha256'])
+    intent = adapter._entry({key:producer[key] for key in (
+        'recipient_owner', 'consumer_id', 'task_sha256', 'allowed_engines')})['intent']
+    assert intent['compatibility']['schema'] == compatibility.PRODUCER_SCHEMA
+    assert intent['compatibility']['resource_authoring'] == PRODUCER_REQUIREMENT
+    mismatched = deepcopy(PRODUCER_REQUIREMENT)
+    mismatched['manim']['version'] = '0.22.2'
+    assert not compatibility.requirements_compatible({'resource_authoring':mismatched}, intent['compatibility'])
+    for bad in [mismatched, {}, {'manim': {'version': '0.22.1'}}]:
+        with pytest.raises(ServiceError, match='dependency_invalid'):
+            compatibility.freeze_compatibility(document, resource_authoring=bad)
+    with pytest.raises(ServiceError, match='dependency_invalid'):
+        compatibility.freeze_compatibility(task(base_source=None), resource_authoring=PRODUCER_REQUIREMENT)
+    changed_v1 = deepcopy(intent['compatibility'])
+    changed_v1['schema'] = compatibility.SCHEMA
+    with pytest.raises(ServiceError, match='dependency_invalid'):
+        compatibility.validate_compatibility(changed_v1)
+
+
+def test_existing_producer_and_ordinary_freezes_keep_original_context_on_recovery(tmp_path):
+    from video_workbench.manim_method_resources import PRODUCER_REQUIREMENT
+    row = dependent(resources=True)
+    def interrupted(*_): raise OSError('interrupted authenticated read')
+    adapter = SkillProductionAdapter(lambda _: [metadata(row)], interrupted, tmp_path/'recovery.sqlite3')
+    document = task()
+    with pytest.raises(OSError):
+        adapter.freeze('alice', 'producer-pending', document, ['html-svg'], resource_authoring=PRODUCER_REQUIREMENT)
+    with pytest.raises(OSError):
+        adapter.freeze('alice', 'ordinary-pending', document, ['html-svg'])
+    reopened = SkillProductionAdapter(lambda _:pytest.fail('No rediscovery'), lambda *_:dict(methods=[row]), adapter.ledger_path)
+    # Both recover the saved intent, even when this call's optional argument differs.
+    original_producer = reopened.freeze('alice', 'producer-pending', document, ['html-svg'])
+    assert row['skill_package']['sha256'] in original_producer['packages']
+    assert reopened.freeze('alice', 'producer-pending', document, ['html-svg'], existing=original_producer) == original_producer
+    original_ordinary = reopened.freeze('alice', 'ordinary-pending', document, ['html-svg'],
+        resource_authoring=PRODUCER_REQUIREMENT)
+    assert original_ordinary['packages'] == {}
+    assert reopened.freeze('alice', 'ordinary-pending', document, ['html-svg'], existing=original_ordinary) == original_ordinary

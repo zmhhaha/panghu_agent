@@ -12,7 +12,7 @@ import time
 
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.profiles.video_animation_manim_contract import INPUT_SCHEMA, validate_core_task, validate_input
-from .manim_method_resources import method_resource
+from .manim_method_resources import method_resource, PRODUCER_REQUIREMENT
 from .manim_resource import require, MANIM_VERSION
 from .manim_resource_job import freeze_resource_job
 
@@ -122,13 +122,15 @@ class ManimMethodCoordinator:
         if value is None:
             if cancelled:
                 return 'cancelled'
+            require(self.enabled or self.candidate, 'manim_method_resource_not_admitted', 503)
             options = authoring_request(run['frozen']['resource_authoring'], run['frozen']['duration_seconds'])
             operation = 'manim-' + digest(dict(owner=owner, commission=commission))[:40]
             bounds = dict(resource_id='resource_' + digest(operation)[:24], fps=24, transparent=True,
                 manim_version=MANIM_VERSION, **{key: item for key, item in options.items() if key != 'kind'})
             task = validate_core_task(dict(effect_id=commission, goal=run['frozen']['goal'],
                 guidance=run['frozen'].get('feedback', ''), resource_constraints=bounds))
-            delivery = self.skill_adapter.freeze(owner, operation, task, ['html-svg'])
+            delivery = self.skill_adapter.freeze(owner, operation, task, ['html-svg'],
+                resource_authoring=PRODUCER_REQUIREMENT)
             document = validate_input(dict(schema=INPUT_SCHEMA, **task, skill_catalog=delivery['catalog']))
             value = dict(scope=dict(owner=owner, effect_id=commission, experiment_id=commission, operation_id=operation),
                 state='reserved', input=document, image=self.executor.image, job_id=None, error=None)

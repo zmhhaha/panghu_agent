@@ -216,7 +216,7 @@ class SkillProductionAdapter:
         result = validate_delivery(result)
         return self._entry(binding, intent=intent, snapshot=result)['snapshot']
 
-    def freeze(self, owner, consumer_id, task, engines, existing=None):
+    def freeze(self, owner, consumer_id, task, engines, existing=None, *, resource_authoring=None):
         _identity(owner, 200)
         _identity(consumer_id)
         _require(type(task) is dict and len(_canonical(task)) <= MAX_TASK_BYTES)
@@ -250,7 +250,8 @@ class SkillProductionAdapter:
             methods.append(deepcopy(row))
         # A concurrent reservation wins even if its directory was empty. No
         # catalogue refresh or later publication can alter this operation.
-        reserved = self._entry(binding, intent=dict(methods=methods, compatibility=freeze_compatibility(task)))
+        reserved = self._entry(binding, intent=dict(methods=methods,
+            compatibility=freeze_compatibility(task, resource_authoring=resource_authoring)))
         return reserved['snapshot'] or self._complete(binding, reserved['intent'])
 
     def get_bundle(self, owner, consumer_id, sha):

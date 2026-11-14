@@ -147,6 +147,31 @@ def test_default_disabled_has_no_live_admission_or_preflight(tmp_path):
     coordinator, gateway, executor, run = setup(tmp_path, candidate=False)
     assert coordinator.capabilities()['status'] == 'prepared_not_admitted'
     with pytest.raises(ServiceError, match='not_admitted'): coordinator.preflight(run['deadline_at'])
+    with pytest.raises(ServiceError, match='not_admitted'): coordinator.advance(OWNER, run)
+    assert gateway.submissions == executor.calls == 0
+
+
+def test_recipe_directory_can_read_published_producer_skill_without_reusing_old_pngs(tmp_path):
+    from agent_service.animation_skills_contract import SkillCatalogTools
+    from test_animation_skill_compatibility import dependent
+    row = dependent(resources=True)
+    coordinator, gateway, executor, run = setup(tmp_path)
+    coordinator.skill_adapter = SkillProductionAdapter(lambda _: [row], None, tmp_path/'published-skills.sqlite3')
+    assert finish(coordinator, run) == 'completed'
+    first = coordinator._get(OWNER, run['id'])
+    delivery = coordinator.skill_adapter.get_bundle(OWNER, first['scope']['operation_id'],
+        first['input']['skill_catalog']['sha256'])
+    tools = SkillCatalogTools(delivery['catalog'], delivery['packages'])
+    assert tools.search(row['skill_package']['skill_id'])['skills']
+    assert tools.read(row['skill_package']['sha256'])
+    assert first['input']['skill_catalog'] == delivery['catalog']
+    second_run = deepcopy(run)
+    second_run['id'] = 'another-experiment'
+    assert finish(coordinator, second_run) == 'completed'
+    second = coordinator._get(OWNER, second_run['id'])
+    assert first['scope'] != second['scope']
+    assert first['input']['resource_constraints']['resource_id'] != second['input']['resource_constraints']['resource_id']
+    assert gateway.submissions == executor.calls == 2
 
 
 @pytest.mark.parametrize('changes', [dict(frame_count=61), dict(frame_count=240), dict(seed=-1),

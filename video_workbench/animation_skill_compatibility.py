@@ -10,6 +10,7 @@ import re
 from agent_service.contracts import ServiceError, digest, safe_relative_path
 
 SCHEMA = 'video.animation-skill-compatibility.v1'
+PRODUCER_SCHEMA = 'video.animation-skill-compatibility.v2'
 _SHA = re.compile(r'[0-9a-f]{64}\Z')
 
 
@@ -46,24 +47,43 @@ def _admitted(assets, declarations=None):
         and all(assets.get(asset) == sha for asset, sha in spec['assets'].items())}
 
 
-def freeze_compatibility(task):
+def freeze_compatibility(task, *, resource_authoring=None):
     _require(type(task) is dict)
     assets = _assets(task.get('assets', {}))
     # Frozen source-based production roles hard-code their earlier assets.
     # Even a misleading metadata field must not give them a new dependency.
     legacy = 'base_source' in task
-    return dict(schema=SCHEMA, task_sha256=digest(task), assets=assets,
+    producer = {}
+    if resource_authoring is not None:
+        # This is a server-owned capability argument, never task metadata or
+        # evidence inferred from PNGs left over from a previous experiment.
+        from .manim_method_resources import PRODUCER_REQUIREMENT
+        _require(not legacy and resource_authoring == PRODUCER_REQUIREMENT)
+        producer = deepcopy(resource_authoring)
+    return dict(schema=PRODUCER_SCHEMA if producer else SCHEMA, task_sha256=digest(task), assets=assets,
         source_contract='legacy-source' if legacy else 'asset-bound',
-        authoring_libraries={} if legacy else _admitted(assets), resource_authoring={})
+        authoring_libraries={} if legacy else _admitted(assets), resource_authoring=producer)
 
 
 def validate_compatibility(value, *, task_sha256=None):
     _require(type(value) is dict and set(value) == {'schema', 'task_sha256', 'assets',
-        'source_contract', 'authoring_libraries', 'resource_authoring'} and value['schema'] == SCHEMA
+        'source_contract', 'authoring_libraries', 'resource_authoring'} and type(value['schema']) is str
+        and value['schema'] in {SCHEMA, PRODUCER_SCHEMA}
         and type(value['task_sha256']) is str and _SHA.fullmatch(value['task_sha256'])
         and (task_sha256 is None or value['task_sha256'] == task_sha256)
         and type(value['source_contract']) is str and value['source_contract'] in {'legacy-source', 'asset-bound'}
-        and type(value['authoring_libraries']) is dict and value['resource_authoring'] == {})
+        and type(value['authoring_libraries']) is dict and type(value['resource_authoring']) is dict)
+    producer = value['resource_authoring']
+    if value['schema'] == SCHEMA:
+        _require(producer == {})
+    else:
+        # Validate the original frozen pins without comparing them to today's
+        # producer version: an interrupted old operation retains its meaning.
+        _require(value['source_contract'] == 'asset-bound' and set(producer) == {'manim'})
+        manim = producer['manim']
+        _require(type(manim) is dict and set(manim) == {'version', 'renderer', 'latex_available'}
+            and type(manim['version']) is str and re.fullmatch(r'\d+\.\d+\.\d+', manim['version'])
+            and manim['renderer'] == 'cairo' and manim['latex_available'] is False)
     assets = _assets(value['assets'], normalize=False)
     _require(assets == value['assets'])
     for name, spec in value['authoring_libraries'].items():
@@ -85,11 +105,10 @@ def requirements_compatible(requirements, context):
     _require(type(libraries) is dict and type(resources) is dict)
     _require(all(type(name) is str and type(spec) is dict for name, spec in libraries.items())
         and all(type(name) is str and type(spec) is dict for name, spec in resources.items()))
-    # Manim-generated PNGs are immutable outputs for one task, not a library
-    # or evidence that a consumer can run the producer for another explanation.
-    if resources:
-        return False
-    return all(context['authoring_libraries'].get(name) == spec for name, spec in libraries.items())
+    # Only an explicitly frozen producer context can satisfy these methods.
+    # Ordinary consumers keep {}, even if their task contains generated PNGs.
+    return (all(context['resource_authoring'].get(name) == spec for name, spec in resources.items())
+        and all(context['authoring_libraries'].get(name) == spec for name, spec in libraries.items()))
 
 
 def method_compatible(method, context):
