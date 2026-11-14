@@ -172,6 +172,22 @@ def test_job_rejects_paths_and_mutated_snapshot_from_caller():
         E.film_job_resources(modified, **options)
 
 
+def test_rwo_pvc_workload_affinity_is_required_and_bound_when_configured():
+    snapshot, _, release = snapshot_fixture()
+    options = dict(namespace='film-executor', pvc_name='film-data', operation_key='e' * 64,
+        release_id='source-revision-1', **arguments(snapshot, release))
+    selector = {'app': 'film-pvc-helper'}
+    result = E.film_job_resources(snapshot, pvc_workload_selector=selector, **options)
+    affinity = result['job']['spec']['template']['spec']['affinity']['podAffinity']
+    assert affinity['requiredDuringSchedulingIgnoredDuringExecution'] == [dict(
+        labelSelector=dict(matchLabels=selector), namespaces=['film-executor'],
+        topologyKey='kubernetes.io/hostname')]
+    assert result['identity']['pvc_workload_selector'] == selector
+    assert result['binding'] != E.film_job_resources(snapshot, **options)['binding']
+    with pytest.raises(ServiceError, match='pvc_selector_invalid'):
+        E.film_job_resources(snapshot, pvc_workload_selector={}, **options)
+
+
 def test_complete_result_is_recovered_without_rerender_and_original_inputs_stay(tmp_path):
     snapshot, bundle, release = snapshot_fixture()
     inputs, output, scratch = [tmp_path / name for name in ('inputs', 'output', 'scratch')]

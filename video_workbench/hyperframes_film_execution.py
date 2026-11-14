@@ -128,7 +128,8 @@ def stage_film_execution_snapshot(root, snapshot, *, expected_snapshot_sha256, *
 
 
 def film_job_resources(snapshot, *, expected_snapshot_sha256, runtime_fingerprint,
-        trusted_host_sha256, image, namespace, pvc_name, operation_key, release_id):
+        trusted_host_sha256, image, namespace, pvc_name, operation_key, release_id,
+        pvc_workload_selector=None):
     """Use exact PVC subPaths; no ConfigMap, URL, shell or caller command."""
     decode_film_execution_snapshot(snapshot, expected_snapshot_sha256=expected_snapshot_sha256,
         runtime_fingerprint=runtime_fingerprint, trusted_host_sha256=trusted_host_sha256, image=image)
@@ -136,10 +137,17 @@ def film_job_resources(snapshot, *, expected_snapshot_sha256, runtime_fingerprin
         and type(operation_key) is str and _SHA.fullmatch(operation_key)
         and type(release_id) is str and re.fullmatch(r'[A-Za-z0-9._-]{1,80}', release_id),
         'hyperframes_film_job_identity_invalid')
+    if pvc_workload_selector is not None:
+        require(type(pvc_workload_selector) is dict and 0 < len(pvc_workload_selector) <= 8
+            and all(type(key) is str and re.fullmatch(r'[A-Za-z0-9./_-]{1,253}', key)
+                and type(value) is str and re.fullmatch(r'[A-Za-z0-9._-]{1,63}', value)
+                for key, value in pvc_workload_selector.items()),
+            'hyperframes_film_pvc_selector_invalid')
     name = 'hf-film-' + operation_key[:24] + '-' + expected_snapshot_sha256[:12]
     identity = dict(schema='video.hyperframes-film-job-binding.v1', operation_key=operation_key,
         snapshot_sha256=expected_snapshot_sha256, image=image, release_id=release_id,
-        namespace=namespace, pvc_name=pvc_name, name=name)
+        namespace=namespace, pvc_name=pvc_name, name=name,
+        pvc_workload_selector=deepcopy(pvc_workload_selector))
     binding = digest(identity)
     labels = {'app': 'video-hyperframes-film-renderer', LABEL + 'execution': operation_key[:32]}
     annotations = {LABEL + 'binding': binding, LABEL + 'snapshot-sha256': expected_snapshot_sha256,
@@ -167,6 +175,10 @@ def film_job_resources(snapshot, *, expected_snapshot_sha256, runtime_fingerprin
         nodeSelector={'kubernetes.io/arch': 'arm64'}, containers=[renderer],
         volumes=[dict(name='data', persistentVolumeClaim=dict(claimName=pvc_name)),
             dict(name='scratch', emptyDir=dict(sizeLimit='2Gi'))], terminationGracePeriodSeconds=20)
+    if pvc_workload_selector is not None:
+        pod['affinity'] = dict(podAffinity=dict(requiredDuringSchedulingIgnoredDuringExecution=[dict(
+            labelSelector=dict(matchLabels=deepcopy(pvc_workload_selector)), namespaces=[namespace],
+            topologyKey='kubernetes.io/hostname')]))
     job = dict(apiVersion='batch/v1', kind='Job',
         metadata=dict(name=name, namespace=namespace, labels=labels, annotations=annotations),
         spec=dict(backoffLimit=0, activeDeadlineSeconds=snapshot['timeout_seconds'] + 60,
