@@ -17,22 +17,22 @@
 
 ## 正式生产接入状态
 
-已实现显式的新路径：`ProductionRunStore(..., film_creation=...)` → 全部原 WAV → 顺序 `FilmCreationWorkflow.start_module()` → `assemble_film_production()` → 一个整片 `RemoteFilmRenderer`。模块、整片快照及媒体由现有业务 SQLite 的独立子任务表保存；父任务只持有版本引用与摘要。应用已接入同一播放器、下载和取消入口。新配置不可用时不回退旧渲染；原历史任务仍按其冻结合同读取。当前部署仍是旧路径，尚不能记为统一整片工程已向用户交付。
+已实现并部署新路径：`ProductionRunStore(..., film_creation=...)` → 全部原 WAV → 顺序 `FilmCreationWorkflow.start_module()` → `assemble_film_production()` → 一个整片 `RemoteFilmRenderer`。模块、整片快照及媒体由现有业务 SQLite 的独立子任务表保存；父任务只持有版本引用与摘要。应用已接入同一播放器、下载和取消入口。新配置不可用时不回退旧渲染；原历史任务仍按其冻结合同读取。真实网页双镜已完成 16 秒／384 帧整片、原声核验和 387 次同源核心定位，H.3 技术范围已验；存在的纹样／投影边界跳变和未完成的审阅另记，见[真实业务验证](hyperframes-narrated-film-validation-20261114.md)。
 
 | 接入缺口 | 需要落实的最小边界 |
 | --- | --- |
 | 全帧捕获与最终编码 | 离线入口已实现并以目标 ARM 环境同一三引擎工程完成 72 帧／3 秒完整导出，实际 MP4 另行探测及全解码通过；当前是技术夹具与只读源码，不是正式任务或发布准入，详见[导出记录](hyperframes-film-offline-export.md)。 |
-| 整片执行快照与运输 | 新多文件快照、PVC staging、固定 CLI、`KubeFilmRenderer`、现有 journal schema 分流及 `RemoteFilmRenderer` 已实现。固定镜像的真实 Job、结果恢复、原声与取消／清理已单独验证；新执行 API 尚未部署启用，业务仍调用旧 motion snapshot。没有扩大旧七文件／ConfigMap 合同。 |
-| Agent 新产物合同 | 新 `VideoAnimationFilmModuleProfile` 输出真实可组合模块、状态与可选转场，复用宿主 Skill 工具证据；网关、资源及禁用候选目录已实现，尚未完成新角色真实产物准入。旧 creative v5 保持原意。 |
-| 一个工程的应用组装 | `FilmCreationStore` 与 `ProductionRunStore` 已接线；原 WAV、确切模块顺序／前任、宿主目标及 runtime 在一个 snapshot 中验证。真实正式运行仍待新角色和执行 API 发布后补验。 |
+| 整片执行快照与运输 | 新多文件快照、PVC staging、固定 CLI、`KubeFilmRenderer`、现有 journal schema 分流及 `RemoteFilmRenderer` 已实际部署。真实 Job、恢复、原声与取消／清理已验，正式新任务使用整片 snapshot。没有扩大旧七文件／ConfigMap 合同。 |
+| Agent 新产物合同 | 新 `VideoAnimationFilmModuleProfile` 输出真实可组合模块、状态与可选转场；独立角色、caller、凭据及准入已启用，实际双镜 Agent 产物已停止并核验。旧 creative v5 保持原意。 |
+| 一个工程的应用组装 | `FilmCreationStore` 与 `ProductionRunStore` 已接线并完成真实网页运行；原 WAV、确切模块顺序／前任、宿主目标及 runtime 在一个 snapshot 中验证，编码一次且无逐镜视频拼接。 |
 | 业务与审阅 | 持久编排、历史媒体读取、取消、项目删除保护与页面模块状态已实现并由本地组合测试覆盖。真实完整媒体的独立整片审阅、一次修订和交付仍待完成。静帧审阅不代替整片运动或声音观察，内部完成不写成人工认可。 |
 
 ## 推荐次序与最小真实交付闭环
 
 1. 先收敛当前 H.2 上线及 H.3 浏览器宿主／音轨基础的错误回归和确切发布身份。
 2. 离线整片导出入口已按以下闭环完成技术验证：已冻结工程 → 一个 HyperFrames 核心与全局时钟 → 全帧捕获 → 一次编码 → 同包原声混合 → 一个可播放 MP4。覆盖三个场景及其边界，核验完整帧数、48kHz PCM 样本数、音画零起点、完整解码、资源与清理。交付回执绑定项目、bundle、原 WAV、混音回执和最终媒体摘要；AAC 编码填充按实际探测单独记录，不以缩短旁白掩盖差异。技术纯音／图形不替代真实 Agent 与讲解内容。
-3. 新模块合同、业务持久编排、组装、HTTP 客户端与执行 journal 接线已实现，普通镜像及固定 Job 的环境补验已完成。接下来完成新 Agent 模块真实产物准入、新执行 API 配置／发布及实际工作台成片；RWO PVC 明确同节点约束，配置普通文件以只读 subPath 挂载。未准入时不直接替换正式生产。
-4. 用真实新内容跑通策划确认、真实录音、Skill 按需读取、模块创作、统一工程导出、独立整片审阅与一次修订；随后做网页播放、版本恢复和下载检查。技术成功、实际观察、开发者认可、Skill 发布和用户采用分别留证。
+3. 新模块独立真实准入、执行 API 配置／发布及实际工作台成片已完成。RWO PVC 明确同节点约束，配置普通文件以只读 subPath 挂载。后续 Manim／Anime.js 使用独立版本与准入，不改写本次冻结身份。
+4. 继续补完整媒体的独立审阅与一次修订、真实已发布方法的按需消费，以及用户追加优化；改善实际边界出现的外观重新解释。技术成功、实际观察、开发者认可、Skill 发布和用户采用分别留证。
 
 H.4 复用已有 Skill 协议，不另建一套包或发布系统。补齐新的工程／引擎基础 Skill 内容及验证证据即可；2.3 继续负责真实认可发布，2.4 负责主动发现／读取。当前目录主要按引擎兼容性过滤，新创作者仍须收到明确的新生命周期要求，不能把旧 `seek(t)` 用法误认成新模块合同。
 
@@ -48,6 +48,8 @@ H.4 复用已有 Skill 协议，不另建一套包或发布系统。补齐新的
 
 ## 真实新模块候选
 
+以下保存上线前独立候选与静音技术时钟的历史范围；当前上线及真实讲解双镜状态以“正式生产接入状态”和真实业务验证文档为准。
+
 2026-11-14，精确源码 `fe215a5cee719f6d9e0e895a0de5bb6bce3caf82` 普通构建 control／Pi 镜像；候选仅使用 `agent-service-pi:latest@sha256:ed08fd7abbb6f58bcaa2383bce123790794830ba30eec0e5cf2d4414c579eff5`。在独立禁用角色下完成一次原创 Canvas 模块，6 次真实模型请求全部返回 200，真实 `skill_search` 和根 `SKILL.md` 读取、双 artifact、原请求绑定及 worker 停止证据均通过。proxy／worker 均零重启、正常退出，原候选资源和临时凭据已清理，未创建公共路由准入或方法发布。
 
 原始模块包文件 SHA 为 `8eab1256674c4f8bb19a8dbb56bc7d3f82c979b950781265df7396f61c066e4b`，结果 SHA 为 `7eb5bb5434698d041402039f7c10e3df6e6b616ba63fe03f793a139f053e27c8`，Canvas 源码 `modules/technical_canvas_flow_r1/flow.mjs` 的 SHA 为 `ae7facda0dd1ab2ab61ab6b14153c003fcff916e22348d15222bab7d52a4baa6`。原始证据在既定运维目录 `candidate-film-module-r1/candidate-output`，包含请求、实际工具事件、响应 ledger、Pod 与清理回执。技术 WAV 复用先前 3 秒录音时钟，operator-only Skill 是原创技术夹具；没有新增 TTS，不声称实际讲解、审美／迁移认可或业务 Skill 已发布。此候选预算没有渲染，后续整片渲染单独记账与核验。
@@ -56,7 +58,7 @@ H.4 复用已有 Skill 协议，不另建一套包或发布系统。补齐新的
 
 MP4 文件 SHA 为 `b2e182ae05a9991beb53683224c4ec198b5cfa5d315d2bfb664cd9af9521b6e4`。独立 Windows FFmpeg 7.1 完整解码确认 72 个不同视频帧、音画零起点与 3 秒、48kHz 双声道及 AAC 384 样本填充；外部 snapshot／原 JS／原 WAV 身份也已重验。原 WAV `cb285321…` 的 72000 个 24kHz PCM 样本全零，实际解码也全零，明确记为 `technical_silence`；相关系数为空不能当成声音一致性证据，更不能算真实旁白、音效或试听通过。独立回执内容摘要为 `1cddb5d70f400c13455873836dcba156e2056e9ecf48f9e9357fa8b8b9ba4f81`，D 盘既有 scratch 下 `original-canvas-film-evidence-r1/independent-validation.json`；初版非零音轨假设和一次时间参数格式的分析失败均保留，仅重做现成媒体分析，没有重渲染。
 
-源码接线已推送 `983d0da`。本地专项分别通过业务／Remote 50 项、真实线程调度 3 项、整片编排 9 项、工作台 HTTP 8 项和前端状态 19 项；另有旧编排和核心合同回归，存在交叉，不累加为唯一测试总数。以上完成技术原创模块到整片导出的验证，尚未部署启用新正式路径、验证真实讲解音轨及多镜 Agent 连续交接，也未代替完整审阅／修订、开发者认可或 Skill 发布。H.3 继续未勾选。
+源码接线首先推送 `983d0da`。当时本地专项分别通过业务／Remote 50 项、真实线程调度 3 项、整片编排 9 项、工作台 HTTP 8 项和前端状态 19 项；另有旧编排和核心合同回归，存在交叉，不累加为唯一测试总数。当时仅完成技术原创模块到整片导出，未部署、未验证真实讲解与多镜交接。后续完整源码 `0f68475` 已部署并补齐真实双镜及同源定位，H.3 技术范围完成；完整审阅／修订、开发者认可与 Skill 发布仍独立保留。
 
 ## 音频与性能边界
 
