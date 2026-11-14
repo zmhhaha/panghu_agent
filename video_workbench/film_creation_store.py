@@ -269,12 +269,13 @@ class FilmCreationStore:
             index = request['current_scene_index']
             require(type(index) is int and 0 <= index < len(film['scenes'])
                 and film['scenes'][index]['scene_id'] == scene_id)
-            predecessor = None
+            predecessor = predecessor_package = None
             if index:
                 previous, package = self._version(db, owner, request['predecessor_version_id'])
                 require(previous['project_id'] == project_id and previous['scene_id'] == film['scenes'][index - 1]['scene_id']
                     and previous['film_sha256'] == request['film_sha256'], 'film_creation_predecessor_mismatch', 409)
                 predecessor = predecessor_from_package(package)
+                predecessor_package = package
             else:
                 require(request['predecessor_version_id'] is None, 'film_creation_predecessor_mismatch', 409)
             row, recording = film['scenes'][index], recordings[index]
@@ -290,7 +291,8 @@ class FilmCreationStore:
                     current_scene_index=index, predecessor=predecessor), instruction=request['instruction'],
                 module_id=target['module_id'], namespace=target['namespace'], transition_target=target['transition_target'],
                 runtime_identity=caps['runtime_identity'], allowed_engines=caps['allowed_engines'],
-                assets={'assets/' + name: checksum for name, checksum in caps['assets'].items()}, style=film['style'])
+                assets={'assets/' + name: checksum for name, checksum in caps['assets'].items()}, style=film['style'],
+                predecessor_package=predecessor_package)
             require(db.execute('SELECT count(*) FROM film_module_operations WHERE project_id=?', (project_id,)).fetchone()[0] < 256,
                 'film_creation_operation_limit', 409)
             now = time.time()

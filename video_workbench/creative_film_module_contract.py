@@ -32,7 +32,8 @@ PACKAGE_FIELDS = frozenset({'schema', 'adapter_revision', 'input_document', 'inp
 def prepare_core_task(*, scene_id, title, visual_description, narration, beats, alignment,
                       audio_sha256, duration_seconds, film_context, module_id, namespace,
                       runtime_identity, transition_target=None, width=1280, height=720, fps=24,
-                      assets=None, instruction='', base_module=None, style='', allowed_engines=None):
+                      assets=None, instruction='', base_module=None, style='', allowed_engines=None,
+                      predecessor_package=None):
     """Exact task for SkillProductionAdapter.freeze, including the new targets."""
     value = dict(scene=dict(scene_id=scene_id, title=title, visual_description=visual_description,
         narration=narration, beats=deepcopy(beats), alignment=deepcopy(alignment),
@@ -45,6 +46,9 @@ def prepare_core_task(*, scene_id, title, visual_description, narration, beats, 
         assets={} if assets is None else deepcopy(assets), base_module=deepcopy(base_module))
     value = validate_core_task(value)
     validate_alignment(value['scene']['alignment'], value['scene']['beats'])
+    if predecessor_package is not None:
+        from .film_appearance_context import attach_predecessor_appearance
+        value = attach_predecessor_appearance(value, predecessor_package)
     return value
 
 
