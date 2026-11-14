@@ -96,7 +96,7 @@ job plan, not from authored output. A manifest hash must be collected only
 after StopProof. Subsequent reads bind it as an immutable artifact. Frame and
 manifest bytes can then enter an explicitly versioned generated-asset envelope.
 
-## Integration still required before enabling
+## Admission requirements
 
 1. A separate Python recipe author/resource contract and admitted isolated
    runtime; film-module-v1 remains source-only with no bash/render permission.
@@ -112,9 +112,8 @@ manifest bytes can then enter an explicitly versioned generated-asset envelope.
 5. Publish a developer-accepted reusable Skill version and then expose Manim as
    an **authoring capability** in the effect library, not a fourth browser engine.
 
-Local validation covers the Python resource and stop-tree contracts, worker
-file-writer stand-ins and JS image/decode scheduling stand-ins. Those tests do
-not establish actual Cairo rendering, ARM compatibility or browser aesthetics.
+Each requirement is independently evidenced; unit fixtures alone do not grant
+runtime admission, subjective quality approval or publication.
 
 ## Source-only recipe and bounded handoff now implemented
 
@@ -148,6 +147,90 @@ at merge. The broader resource format's 240-frame limit does not imply a
 For the method lab's current synchronous seek contract,
 `manim_method_frames.mjs` provides separate bounded initialization: two parallel
 decodes, at most 60 frames and 128 MiB RGBA, a ready promise, synchronous
-seekFrame after readiness, and explicit disposal even during loading. Generated
-asset custody, method renderer v5, commission persistence/cancellation and actual
-effect-library integration remain required before enabling this capability.
+seekFrame after readiness, and explicit disposal even during loading.
+
+## Effect-library integration
+
+The private method executor now supports an opt-in resource prelude. A
+developer can request `resource_authoring` with `kind: "manim"`, width/height,
+frame_count, global_start_frame and seed. The server fills the fixed library
+version, transparent output and immutable resource ID. A browser never chooses
+an image, Python source, Docker command, envelope or storage path.
+
+`ManimMethodCoordinator` durably freezes one recipe input/Skill catalog, saves
+its complete upload receipt, claims one source-only Agent submission, then
+reconciles uncertain responses through its original operation. After stopped
+artifact collection it freezes one Cairo plan. `ManimResourceExecutor` uses
+the private executor's existing Docker isolation boundary and its own SQLite
+claim; the separate Kubernetes Job generator is available preparation code,
+not the initial production execution route. No public web process gets Docker.
+
+The resource prelude has one recipe job and one resource execution. Their
+claims and status are visible beside the experiment; they do not consume or
+change the main author's existing plan/create/review budget. Main creation
+starts after the resource is completed. Cancellation and timeout prevent a
+new recipe/resource claim, stopped cancelled results are not adopted, and
+recovery never starts another container or author attempt.
+
+The original method-author v2 profile receives the exact manifest, asset
+checksums and self-contained usage instructions. Its own composition remains
+Agent-authored. A separate resource-aware method request/receipt v5 resolves
+immutable owner/effect/experiment/operation references through the trusted
+coordinator. It never extends the ordinary fixed runtime-library allowlist.
+
+The v5 host verifies exact resource inventory, PNG geometry, original SHA and
+pinned helpers; it records actually loaded helper scripts and PNG paths.
+`generated_resource_observation` means loaded resources, not visual acceptance.
+The complete HyperFrames render still verifies absolute/reverse/repeated/idle
+and fresh-load frame equality. PNGs are layers on that clock, not MP4 clips.
+
+Local actual Chromium plus HyperFrames 0.8.149 validation passed with distinct
+RGBA frames, exact half-open disappearance, and all seek/reload comparisons.
+Separately, the ARM Cairo 0.22.1 runtime rendered a 48-frame 640×360 technical
+fixture with Chinese Pango text and an exact 12-frame wait. Neither is an
+Agent-created product sample or a developer aesthetic acceptance.
+
+## Deployment and operator sequence
+
+The independent runtime image is `video-manim-resource:latest@sha256:<digest>`.
+Build normal complete Git sources; do not overwrite the browser renderer image
+with Cairo packages. The recipe worker uses its own profile, caller/token,
+binding, host and non-overlapping UID allocation. Its only tools remain
+`read_inputs`, `skill_search`, `skill_read`, `write`. No TeX installation is
+included. Preserve all existing film-module-v1 pins, caller and privileges.
+
+Configure the private executor with the existing normal options plus:
+
+```sh
+python -m video_workbench.animation_creation_executor \
+  --root /data/animation-executor \
+  --agent-url http://agent-service.agent-service.svc.cluster.local:8080 \
+  --agent-token-file /run/secrets/creation-token \
+  --method-agent-token-file /run/secrets/method-token \
+  --token-file /run/secrets/executor-token \
+  --renderer-image 'registry/video-motion-renderer:latest@sha256:<measured-digest>' \
+  --assets-dir /data/animation-assets \
+  --method-project-runtime hyperframes-core-bridge \
+  --engine-admission-file /data/engine-admission.json \
+  --manim-recipe-agent-token-file /run/secrets/manim-recipe-token \
+  --manim-resource-image 'registry/video-manim-resource:latest@sha256:<measured-digest>' \
+  --manim-resource-admission-file /data/manim-method-admission.json \
+  --enable-isolated-rendering
+```
+
+Without the admission file, the configured coordinator remains
+`prepared_not_admitted` and the public form does not advertise Manim as ready.
+Candidate testing is an explicit private Python harness option
+`coordinator.candidate = True`, never a browser field or automatic startup job.
+First run one separately bounded source-only recipe candidate and verify its
+real stopped two-artifact handoff. Then run the Cairo resource and method-v5
+composition with the exact pinned runtime. Review source strategy and actual
+sample separately from technical proof.
+
+`manim_method_admission.build_admission(...)` binds the exact completed stopped
+resource and successful v5 method operation to current host/engine/project/core
+and helper identities. Save that output as the admission file. Startup
+`validate_admission(...)` recomputes the evidence; a hash-shaped JSON claim,
+same-image old host, missing ledger or unverified render cannot enable it.
+Published reusable Skills and formal-film resource regeneration remain separate
+work. No task-specific PNG bundle is published as a reusable Skill.

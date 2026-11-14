@@ -258,6 +258,7 @@ class AnimationMethodCommissionStore:
                      "baseline_demonstration_id", "structural_changes",
                      "retry_of_commission_id",
                      "protocol_schema", "knowledge_snapshot_id", "research_record_ids", "content_changes",
+                     "resource_authoring",
                  })
         _text(body["goal"], 16000)
         limits = _budget(body["budget"])
@@ -267,6 +268,10 @@ class AnimationMethodCommissionStore:
             _text(body["feedback"], 16000, empty=True)
         if "duration_seconds" in body:
             _require(_number(body["duration_seconds"]) and 0 < body["duration_seconds"] <= 600)
+        if "resource_authoring" in body:
+            from .manim_method_coordinator import authoring_request
+            _require(authoring_request(body['resource_authoring'], body.get('duration_seconds', 18)) == body['resource_authoring'],
+                     'animation_method_resource_authoring_not_normalized')
         if "method_versions" in body:
             _require(type(body["method_versions"]) is list and len(body["method_versions"]) <= 32)
         role = body.get("role", "reference")

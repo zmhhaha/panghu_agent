@@ -25,6 +25,7 @@ from .animation_method_commissions import (
     AnimationMethodCommissionStore, OP_TERMINAL, RETRY_RELATION_FIELDS, TERMINAL,
 )
 from .animation_runtime_capabilities import validate_runtime_capabilities
+from .animation_authoring_tools import observed_authoring_tools
 from .animation_method_research import METHOD_SCHEMA, REMOVAL_SCHEMA, validate_content_changes
 
 
@@ -147,6 +148,7 @@ def _sample_engine(candidate, demonstrations):
     media_sha = candidate.get('media', {}).get('sha256')
     operation_id = candidate.get('operation_id')
     confirmed = False
+    authoring_tools = {}
     for demonstration in linked:
         origin = demonstration.get('provenance', {})
         runtime = demonstration.get('runtime', {})
@@ -159,7 +161,7 @@ def _sample_engine(candidate, demonstrations):
                 or (operation_id and origin.get('render_operation_id')
                     and operation_id != origin['render_operation_id'])):
             return dict(engine=None, engine_status='conflict')
-        confirmed |= (recorded == (engine, engine)
+        exact_sample = (recorded == (engine, engine)
             and type(media_sha) is str and len(media_sha) == 64
             and set(media_sha) <= set('0123456789abcdef') and sample_sha == media_sha
             and type(operation_id) is str and bool(operation_id)
@@ -167,7 +169,16 @@ def _sample_engine(candidate, demonstrations):
             and candidate.get('technical', {}).get('status') == 'passed'
             and demonstration.get('technical', {}).get('status') == 'passed'
             and type(admission) is dict and admission.get('status') == 'admitted')
-    return dict(engine=engine, engine_status='rendered') if confirmed else unverified
+        confirmed |= exact_sample
+        if exact_sample:
+            for tool in observed_authoring_tools(runtime):
+                authoring_tools[tool['id']] = tool
+    if not confirmed:
+        return unverified
+    result = dict(engine=engine, engine_status='rendered')
+    if authoring_tools:
+        result['authoring_tools'] = [authoring_tools[key] for key in sorted(authoring_tools)]
+    return result
 
 
 def _historical_membership_issue(previous, canonical):
@@ -391,7 +402,7 @@ def _effect_views(runs, demonstrations, memberships=(), deletions=()):
 
 class AnimationMethodService:
     def __init__(self, root, *, author_gateway, review_gateway, renderer, clock=time.time,
-                 runtime_capabilities=None, knowledge_store=None):
+                 runtime_capabilities=None, knowledge_store=None, manim_coordinator=None):
         self.root = Path(root).absolute()
         _require(not any(path.is_symlink() for path in (self.root, *self.root.parents)))
         self.root.mkdir(parents=True, exist_ok=True)
@@ -399,6 +410,7 @@ class AnimationMethodService:
         self.methods = AnimationMethodStore(self.root / 'methods.sqlite3')
         self.commissions = AnimationMethodCommissionStore(self.root / 'commissions.sqlite3', clock=clock)
         self.author, self.reviewer, self.renderer = author_gateway, review_gateway, renderer
+        self.manim = manim_coordinator
         self.author_protocol = getattr(type(author_gateway), 'protocol', protocol)
         self.knowledge = knowledge_store
         if self.knowledge is None and self.author_protocol is skill_protocol:
@@ -738,7 +750,10 @@ class AnimationMethodService:
         return dict(schema='video.animation-method-lab.v1', effects=effects, commissions=rows,
                     availability=dict(enabled=self.author is not None and self.reviewer is not None
                         and self.renderer is not None, reason=None,
-                        allowed_engines=capabilities['allowed_engines'] if capabilities else ['html-svg']))
+                        allowed_engines=capabilities['allowed_engines'] if capabilities else ['html-svg'],
+                        authoring_libraries=deepcopy(capabilities.get('authoring_libraries', {})) if capabilities else {},
+                        resource_authoring=dict(manim=self.manim.capabilities() if self.manim else
+                            dict(enabled=False, status='prepared_not_admitted', kind='manim'))))
 
     def get(self, owner, commission_id):
         run = self._get_visible_commission(owner, commission_id)
@@ -851,13 +866,16 @@ class AnimationMethodService:
         if self._protocol(run) is skill_protocol:
             _require(len(canonical_bytes(detail)) <= 2 * 1024 * 1024,
                      'animation_method_response_too_large', 413)
+        if run['frozen'].get('resource_authoring'):
+            detail['resource_authoring'] = (self.manim.view(owner, commission_id) if self.manim else
+                dict(kind='manim', status='unavailable', error='manim_resource_coordinator_required'))
         return detail
 
     def start(self, owner, body):
         fields = {'request_id', 'title', 'goal', 'reference', 'duration_seconds', 'budget',
                   'base_commission_id', 'base_candidate_id', 'feedback', 'criteria', 'method_versions',
                   'role', 'baseline_demonstration_id', 'structural_changes', 'retry_of_commission_id',
-                  'research_record_ids', 'content_changes'}
+                  'research_record_ids', 'content_changes', 'resource_authoring'}
         _require(type(body) is dict and {'request_id', 'goal', 'budget'} <= set(body)
                  and set(body) <= fields)
         request_id = body['request_id']
@@ -894,6 +912,11 @@ class AnimationMethodService:
         duration = data.setdefault('duration_seconds', 18)
         _require(type(duration) in (int, float) and 1 <= duration <= 60
                  and duration * 24 == int(duration * 24))
+        if data.get('resource_authoring') is not None:
+            from .manim_method_coordinator import authoring_request
+            data['resource_authoring'] = authoring_request(data['resource_authoring'], duration)
+            _require(self.manim is not None, 'manim_method_resource_not_admitted', 503)
+            self.manim.preflight(self.clock() + seconds)
         # Runtime admission is trusted server configuration, never a browser
         # field. Replay uses the original server-injected snapshot even if a
         # later deployment admits additional engines or changes image hashes.
@@ -1206,6 +1229,25 @@ class AnimationMethodService:
         if not selected and plan:
             selected = deepcopy(plan['methods'])
         frozen_constraints = deepcopy(run['frozen'].get('constraints', {}))
+        assets = deepcopy(run['frozen'].get('assets', {}))
+        if run['frozen'].get('resource_authoring') and run.get('id'):
+            _require(self.manim is not None, 'manim_method_resource_coordinator_required', 503)
+            descriptor = self.manim.context(owner, run['id'])
+            _require(not (set(assets) & set(descriptor['assets_sha256'])), 'manim_method_resource_collision', 409)
+            assets.update(descriptor['assets_sha256'])
+            frozen_constraints['generated_resources'] = [descriptor]
+            frozen_constraints['generated_resource_usage'] = (
+                'A stopped Manim PNG resource has already been created for this experiment. '
+                'Use it as a visual layer in your original scene composition, without running Python or '
+                'rebuilding its frames. Import {prepareManimMethodFrames} from /assets/manim_method_frames.mjs. '
+                'The exact manifest object is constraints.generated_resources[0].manifest: embed that object '
+                'directly in scene.js (connect-src is disabled, so do not fetch JSON). Prepare a positioned '
+                'container, call prepareManimMethodFrames(container, manifest), expose its ready promise '
+                'through window.__animationExperiment.ready, and call layer.seekFrame(Math.round(seconds*24)) '
+                'from the existing synchronous seek(seconds). Outside its half-open global frame range the '
+                'layer is hidden; create your composition for the remaining project time. The helper '
+                'predecodes at most 60 bounded PNGs. Keep all other scene motion on the same absolute clock. '
+                'Do not use autoplay, timers, per-scene MP4 or autonomous playback.')
         document = dict(schema=active_protocol.INPUT_SCHEMA, mode=mode, goal=run['frozen']['goal'],
             criteria=standards, methods=selected,
             constraints=dict(width=1280, height=720, fps=24,
@@ -1216,7 +1258,7 @@ class AnimationMethodService:
             base_source=base['source'] if base else None, reference=run['frozen'].get('reference'),
             observation=dict(frames=frames or [], audio_observed=False, motion_observed=False,
                 limitations=['Only supplied sampled images were observed; complete motion and audio are unverified.']),
-            comparison=comparison, assets=deepcopy(run['frozen'].get('assets', {})))
+            comparison=comparison, assets=assets)
         if mode == 'plan':
             document['constraints']['result_requirements'] = dict(
                 source=None, review=None, sound_events=[],
@@ -1445,6 +1487,16 @@ class AnimationMethodService:
                 return
             _require(self._protocol(run) is self.author_protocol,
                      'animation_method_historical_gateway_required', 409)
+            if run['frozen'].get('resource_authoring'):
+                _require(self.manim is not None, 'manim_method_resource_coordinator_required', 503)
+                resource_state = self.manim.advance(owner, run,
+                    cancelled=run['cancel_requested'] or self.clock() >= run['deadline_at'])
+                if resource_state in {'failed', 'cancelled'}:
+                    self.commissions.stop(owner, commission_id, resource_state,
+                        'Manim资源创作已停止；保留原操作和证据，不自动重试')
+                    return
+                if resource_state != 'completed':
+                    return
             self._sync_knowledge(owner, run)
             active = next((op for op in run['operations']
                            if op['status'] not in {'completed', 'failed', 'cancelled', 'released'}), None)

@@ -18,12 +18,76 @@ export function validateAuthoringLibraries(request,resources){
  const expected={animejs:{schema:'video.animation-authoring-library.v1',library_id:'animejs',
   version:'4.5.0',license:'MIT',role:'animation-authoring',engines:['html-svg','canvas','three'],
   clock:'hyperframes-absolute-seek',assets:{...ANIME_ASSETS}}};
- if(request.schema!=='video.animation-method-render-request.v4'
+ if(!['video.animation-method-render-request.v4','video.animation-method-render-request.v5'].includes(request.schema)
   ||!isDeepStrictEqual(request.authoring_libraries,expected))throw Error('method_authoring_library_invalid');
  for(const [name,sha] of Object.entries(ANIME_ASSETS))
   if(request.assets_sha256[name]!==sha||!resources.has('/assets/'+name)
    ||hash(resources.get('/assets/'+name))!==sha)throw Error('method_authoring_library_asset_changed');
  return expected;
+}
+
+const MANIM_HELPERS={
+ 'manim_frame_layer.mjs':'e6785bc26df55a4b4e88fdca2bc74c629643a6b4296ac9eb5970c3221bde1fd5',
+ 'manim_method_frames.mjs':'9f3aa078149af3f9f7c3fb7d590b00f3dc9e05605b0c6fb2982a6e91fa1ba6cc'};
+const canonicalResource=value=>JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)
+ ?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
+export function validateGeneratedResources(request,resources){
+ if(request.schema!=='video.animation-method-render-request.v5'||!Array.isArray(request.generated_resources)
+  ||request.generated_resources.length!==1)throw Error('method_generated_resource_invalid');
+ const names=new Set();let decoded=0,total=0;
+ for(const descriptor of request.generated_resources){
+  const scope=descriptor?.scope;
+  const fields='assets_sha256,envelope_sha256,helpers,image_digest,manifest,manifest_path,manifest_sha256,schema,scope,sha256';
+  if(descriptor?.schema!=='video.manim-method-resource.v1'||Object.keys(descriptor).sort().join(',')!==fields
+   ||!/^[0-9a-f]{64}$/.test(descriptor.sha256)||!isDeepStrictEqual(descriptor.helpers,MANIM_HELPERS)
+   ||hash(canonicalResource(Object.fromEntries(Object.entries(descriptor).filter(([key])=>key!=='sha256'))))!==descriptor.sha256
+   ||!scope||Object.keys(scope).sort().join(',')!=='effect_id,experiment_id,operation_id,owner'
+   ||typeof scope.owner!=='string'||scope.owner.length<1||scope.owner.length>200||/[\x00-\x1f\x7f\uD800-\uDFFF]/u.test(scope.owner)
+   ||['effect_id','experiment_id','operation_id'].some(key=>typeof scope[key]!=='string'||!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$/.test(scope[key]))
+   ||!/^sha256:[0-9a-f]{64}$/.test(descriptor.image_digest))
+   throw Error('method_generated_resource_invalid');
+  const m=descriptor.manifest,root='assets/manim/'+m?.resource_id+'/';
+  if(m?.schema!=='video.manim-frame-resource.v1'||!Number.isInteger(m.frame_count)||m.frame_count<1||m.frame_count>60
+   ||!/^[a-z][a-z0-9_-]{0,63}$/.test(m.resource_id)||/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(m.resource_id)
+   ||m.fps!==24||!Number.isInteger(m.global_start_frame)||m.global_start_frame<0
+   ||m.global_start_frame+m.frame_count>request.constraints.duration_seconds*24
+   ||!Number.isInteger(m.width)||m.width<320||m.width>1280||!Number.isInteger(m.height)||m.height<180||m.height>720
+   ||!Array.isArray(m.frames)||m.frames.length!==m.frame_count||descriptor.manifest_path!==root+'manifest.json'
+   ||typeof m.transparent!=='boolean'||m.audio!==null||m.runtime?.library!=='manim-community'
+   ||m.runtime.version!=='0.22.1'||m.runtime.renderer!=='cairo'||m.runtime.latex_available!==false
+   ||!Number.isInteger(m.runtime.seed)||m.runtime.seed<0||m.runtime.seed>=2**32
+   ||!/^([0-9a-f]{64})$/.test(m.source_sha256)||!/^([0-9a-f]{64})$/.test(m.request_sha256)
+   ||m.decoded_bytes!==m.width*m.height*m.frame_count*4
+   ||m.limits?.max_resource_bytes!==25165824||m.limits.max_decoded_bytes!==134217728
+   ||m.runtime?.image_digest!==descriptor.image_digest)throw Error('method_generated_resource_manifest_invalid');
+  decoded+=m.width*m.height*m.frame_count*4;
+  if(decoded>128*1024*1024)throw Error('method_generated_resource_budget_exceeded');
+  const manifest=resources.get('/'+descriptor.manifest_path);
+  if(!manifest||hash(manifest)!==descriptor.manifest_sha256||!isDeepStrictEqual(JSON.parse(manifest),m))
+   throw Error('method_generated_resource_manifest_changed');
+  const expected=new Map(Object.entries(MANIM_HELPERS));
+  expected.set(descriptor.manifest_path.slice(7),descriptor.manifest_sha256);
+  for(let index=0;index<m.frame_count;index++){
+   const row=m.frames[index],path=root+'frame_'+String(index).padStart(6,'0')+'.png';
+   const png=resources.get('/'+path);
+   if(row.index!==index||row.global_frame!==m.global_start_frame+index||row.path!==path
+    ||!png||png.length<33||png.length!==row.bytes||hash(png)!==row.sha256||png.length>4*1024*1024
+    ||png.subarray(0,8).toString('hex')!=='89504e470d0a1a0a'
+    ||png.readUInt32BE(16)!==m.width||png.readUInt32BE(20)!==m.height||png[25]!==6)
+    throw Error('method_generated_resource_frame_changed');
+   expected.set(path.slice(7),row.sha256);
+  }
+  if(!isDeepStrictEqual(Object.fromEntries(expected),descriptor.assets_sha256))
+   throw Error('method_generated_resource_inventory_invalid');
+  for(const [name,checksum] of expected){
+   const raw=resources.get('/assets/'+name);
+   if(names.has(name)||!raw||hash(raw)!==checksum||request.assets_sha256[name]!==checksum)
+    throw Error('method_generated_resource_asset_changed');
+   names.add(name);total+=raw.length;
+  }
+ }
+ if(total>25*1024*1024)throw Error('method_generated_resource_budget_exceeded');
+ return names;
 }
 
 export function validateSoundEvents(events,duration){
@@ -74,9 +138,11 @@ export function synthesizeSoundEvents(events,duration,sampleRate=48000){
 // Scene code receives neither, and never chooses file paths or observations.
 export async function captureMethodFrames({chromium,request,resources,root,engineRuntime=null,
  executablePath='/opt/browser/headless_shell',hyperFramesDist='/opt/renderer/node_modules/hyperframes/dist'}){
- const authoringAware=request.schema==='video.animation-method-render-request.v4';
- const projectAware=authoringAware||request.schema==='video.animation-method-render-request.v3';
+ const resourceAware=request.schema==='video.animation-method-render-request.v5';
+ const authoringAware=request.schema==='video.animation-method-render-request.v4'||(resourceAware&&!!request.authoring_libraries);
+ const projectAware=resourceAware||authoringAware||request.schema==='video.animation-method-render-request.v3';
  const authoringLibraries=authoringAware?validateAuthoringLibraries(request,resources):null;
+ if(resourceAware)validateGeneratedResources(request,resources);
  const c=request.constraints,count=c.duration_seconds*24,extended=projectAware||request.schema==='video.animation-method-render-request.v2';
  const engine=extended?request.engine:'html-svg';
  let projectRuntime,coreRuntime,project;
@@ -94,7 +160,7 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
  if(!Number.isInteger(count)||count<24||count>1440)throw Error('method_frame_budget_invalid');
  if(extended&&(!['html-svg','canvas','three'].includes(engine)||!engineRuntime))throw Error('method_engine_not_admitted');
  const mime={'.html':'text/html;charset=utf-8','.js':'text/javascript;charset=utf-8','.mjs':'text/javascript;charset=utf-8',
-  '.css':'text/css;charset=utf-8','.ttc':'font/collection'};
+  '.css':'text/css;charset=utf-8','.ttc':'font/collection','.png':'image/png','.json':'application/json'};
  const server=createServer((req,res)=>{
   const url=new URL(req.url,'http://localhost'),bytes=resources.get(url.pathname);
   res.setHeader('Content-Security-Policy',"default-src 'none';script-src 'self' 'unsafe-inline';style-src 'self' 'unsafe-inline';img-src 'self' data:;font-src 'self';connect-src 'none';media-src 'none';worker-src 'none';frame-src 'none';object-src 'none';base-uri 'none';form-action 'none'");
@@ -112,11 +178,12 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
   const context=await browser.newContext({viewport:{width:c.width,height:c.height},
    deviceScaleFactor:1,serviceWorkers:'block',acceptDownloads:false});
   if(extended)await engineRuntime.installEngineGuard(context,engine);
-  const blocked=[],errors=[],scripts=new Set();
+  const blocked=[],errors=[],scripts=new Set(),loadedPNG=new Set();
   await context.route('**/*',async route=>{
    const url=new URL(route.request().url());
    if(url.origin===origin&&resources.has(url.pathname)&&!url.search&&route.request().method()==='GET'){
     if(route.request().resourceType()==='script')scripts.add(url.pathname);
+    if(url.pathname.endsWith('.png'))loadedPNG.add(url.pathname);
     await route.continue();
    }
    else{if(blocked.length<32)blocked.push(url.protocol+'//'+url.hostname);await route.abort();}
@@ -147,6 +214,8 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
   };
   await page.goto(origin+'/'+(projectAware?project.entry:'scene.html'),{waitUntil:'networkidle',timeout:20000});
   await ready();
+  if(resourceAware&&Object.keys(MANIM_HELPERS).some(name=>!scripts.has('/assets/'+name)))
+   throw Error('method_generated_resource_helper_not_loaded');
   if(engine==='three'&&!scripts.has('/assets/three.module.min.js'))throw Error('method_three_module_not_loaded');
   if(authoringAware&&scripts.has('/assets/anime.esm.min.js')!==scripts.has('/assets/anime_timeline.mjs'))
    throw Error('method_authoring_library_adapter_not_loaded');
@@ -216,6 +285,9 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
     fresh_load_verified:true,probes};
   }
   return {frames,frame_count:count,reverse_seek_verified:true,
+   ...(resourceAware?{generated_resource_observation:{schema:'video.manim-method-resource-observation.v1',
+    scope:'loaded_resources_not_visual_acceptance',helpers_loaded:true,
+    resources_sha256:request.generated_resources.map(item=>item.sha256),loaded_png_paths:[...loadedPNG].sort()}}:{}),
    ...(authoringAware?{authoring_library_observation:{schema:'video.animation-authoring-library-observation.v1',
     scope:'loaded_scripts_not_api_calls_or_visual_application',
     authoring_libraries:authoringLibraries,loaded_scripts:[...scripts].sort(),
@@ -246,8 +318,9 @@ async function main(){
   // The trusted adapter authenticates the exact UTF-8 request bytes through
   // this environment value. Do not reserialize parsed floats here: Python and
   // JavaScript legitimately use different spellings for 1.0 and small values.
-  const authoringAware=request.schema==='video.animation-method-render-request.v4';
-  const projectAware=authoringAware||request.schema==='video.animation-method-render-request.v3';
+  const resourceAware=request.schema==='video.animation-method-render-request.v5';
+  const authoringAware=request.schema==='video.animation-method-render-request.v4'||(resourceAware&&!!request.authoring_libraries);
+  const projectAware=resourceAware||authoringAware||request.schema==='video.animation-method-render-request.v3';
   const extended=projectAware||request.schema==='video.animation-method-render-request.v2';
   if((!extended&&request.schema!=='video.animation-method-render-request.v1')
    ||(extended&&!['html-svg','canvas','three'].includes(request.engine))
@@ -278,7 +351,7 @@ async function main(){
    if(!/^[0-9a-f]{64}$/.test(request.project_runtime_sha256||'')
     ||hash(read(fileURLToPath(new URL('./hyperframes_project.mjs',import.meta.url)),1024*1024))!==request.project_runtime_sha256)
     throw Error('method_hyperframes_runtime_changed');
-   Object.assign(receipt,{schema:'video.animation-method-render-receipt.'+(authoringAware?'v4':'v3'),
+   Object.assign(receipt,{schema:'video.animation-method-render-receipt.'+(resourceAware?'v5':authoringAware?'v4':'v3'),
     project_runtime_sha256:request.project_runtime_sha256});
   }
   if(c.fps!==24||!Number.isInteger(c.width)||c.width<320||c.width>1280
@@ -298,14 +371,18 @@ async function main(){
    if(hash(bytes)!==expected)throw Error('method_scene_changed');
    allowed.set('/'+name,bytes);
   }
+  const generatedNames=resourceAware?new Set(request.generated_resources.flatMap(item=>Object.keys(item.assets_sha256))):new Set();
   for(const [name,expected] of Object.entries(request.assets_sha256)){
+   if(typeof name!=='string'||!name||name.split('/').some(part=>!part||part==='.'||part==='..')||name.includes('\\'))
+    throw Error('method_asset_path_invalid');
    if(!['gsap.min.js','NotoSansCJK-Regular.ttc',
     ...(extended?['three.module.min.js','three.LICENSE.txt']:[]),
-    ...(authoringAware?Object.keys(ANIME_ASSETS):[])].includes(name))throw Error('method_asset_not_admitted');
+    ...(authoringAware?Object.keys(ANIME_ASSETS):[])].includes(name)&&!generatedNames.has(name))throw Error('method_asset_not_admitted');
    const bytes=read(join(input,'scene/assets',name),32*1024*1024);
    if(hash(bytes)!==expected)throw Error('method_asset_changed');
    allowed.set('/assets/'+name,bytes);
   }
+  if(resourceAware)validateGeneratedResources(request,allowed);
   const {chromium}=createRequire('/opt/renderer/package.json')('playwright-core');
   const captured=await captureMethodFrames({chromium,request,resources:allowed,root,engineRuntime});
   const video=request.sound_events.length?'video.mp4':'output.mp4';

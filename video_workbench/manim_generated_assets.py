@@ -13,9 +13,12 @@ MAX_ENVELOPE_BYTES = 34 * 1024 * 1024
 
 
 def scope(owner, effect_id, experiment_id, operation_id):
+    require(type(owner) is str and 1 <= len(owner) <= 200 and bool(owner.strip())
+        and not any(ord(c) < 32 or ord(c) == 127 or 0xD800 <= ord(c) <= 0xDFFF for c in owner),
+        'manim_resource_scope_invalid')
     require(all(type(value) is str and 1 <= len(value) <= 100
         and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]*', value)
-        for value in (owner, effect_id, experiment_id, operation_id)), 'manim_resource_scope_invalid')
+        for value in (effect_id, experiment_id, operation_id)), 'manim_resource_scope_invalid')
     return dict(owner=owner, effect_id=effect_id, experiment_id=experiment_id, operation_id=operation_id)
 
 

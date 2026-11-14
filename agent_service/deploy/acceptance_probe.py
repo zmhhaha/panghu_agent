@@ -43,7 +43,8 @@ PROFILES = {'ppt.' + stage + '.v1' for stage in (
     'video.animation-method-author.v1', 'video.animation-method-review.v1',
     'video.animation-method-author.v2', 'video.animation-method-review.v2',
     'video.animation-production.v1', 'video.animation-production.v2',
-    'video.animation-production.v3', 'video.animation-film-module.v1', 'video.joint-plan.v1'}
+    'video.animation-production.v3', 'video.animation-film-module.v1', 'video.joint-plan.v1',
+    'video.animation-manim-recipe.v1'}
 FIXTURE_PROFILES = {'ppt.plan_initial.v1', 'research.revise.v1'}
 CONTROL = Path('/run/agent-control')
 WORK = Path('/work')

@@ -35,6 +35,7 @@ OutputSchema = Literal['text-output.v1', 'ppt-plan_initial-output.v1', 'ppt-plan
     'video-animation-production-output.v1', 'video-animation-film-production-output.v1',
     'video-animation-skill-production-output.v1',
     'video-animation-film-module-output.v1',
+    'video-animation-manim-recipe-output.v1',
     'video-joint-plan-output.v1']
 
 NAME = r'^[a-z][a-z0-9_.-]{0,79}$'
