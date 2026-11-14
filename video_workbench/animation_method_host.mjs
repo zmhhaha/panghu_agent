@@ -6,9 +6,25 @@ import {readFileSync,writeFileSync,mkdirSync,lstatSync,unlinkSync,existsSync} fr
 import {join,extname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
+import {isDeepStrictEqual} from 'node:util';
 
 const hash=raw=>createHash('sha256').update(raw).digest('hex');
 const finite=value=>typeof value==='number'&&Number.isFinite(value);
+const ANIME_ASSETS={
+ 'anime.esm.min.js':'a19015a1a92d52025a2fb6703b6d67eadd1cc2aeaf880770e96e04cf6aa07be1',
+ 'animejs.LICENSE.txt':'3f3e835a9952cfc2a6ca836fb95b3257c981f24fa3ef51249055acb09931897b',
+ 'anime_timeline.mjs':'c4c6bf0428909366a7f4fced4fbf61c8f2533c23286cc0f26aef785424208b18'};
+export function validateAuthoringLibraries(request,resources){
+ const expected={animejs:{schema:'video.animation-authoring-library.v1',library_id:'animejs',
+  version:'4.5.0',license:'MIT',role:'animation-authoring',engines:['html-svg','canvas','three'],
+  clock:'hyperframes-absolute-seek',assets:{...ANIME_ASSETS}}};
+ if(request.schema!=='video.animation-method-render-request.v4'
+  ||!isDeepStrictEqual(request.authoring_libraries,expected))throw Error('method_authoring_library_invalid');
+ for(const [name,sha] of Object.entries(ANIME_ASSETS))
+  if(request.assets_sha256[name]!==sha||!resources.has('/assets/'+name)
+   ||hash(resources.get('/assets/'+name))!==sha)throw Error('method_authoring_library_asset_changed');
+ return expected;
+}
 
 export function validateSoundEvents(events,duration){
  if(!finite(duration)||duration<1||duration>60||!Array.isArray(events)||events.length>128)
@@ -58,7 +74,9 @@ export function synthesizeSoundEvents(events,duration,sampleRate=48000){
 // Scene code receives neither, and never chooses file paths or observations.
 export async function captureMethodFrames({chromium,request,resources,root,engineRuntime=null,
  executablePath='/opt/browser/headless_shell',hyperFramesDist='/opt/renderer/node_modules/hyperframes/dist'}){
- const projectAware=request.schema==='video.animation-method-render-request.v3';
+ const authoringAware=request.schema==='video.animation-method-render-request.v4';
+ const projectAware=authoringAware||request.schema==='video.animation-method-render-request.v3';
+ const authoringLibraries=authoringAware?validateAuthoringLibraries(request,resources):null;
  const c=request.constraints,count=c.duration_seconds*24,extended=projectAware||request.schema==='video.animation-method-render-request.v2';
  const engine=extended?request.engine:'html-svg';
  let projectRuntime,coreRuntime,project;
@@ -75,7 +93,7 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
  }
  if(!Number.isInteger(count)||count<24||count>1440)throw Error('method_frame_budget_invalid');
  if(extended&&(!['html-svg','canvas','three'].includes(engine)||!engineRuntime))throw Error('method_engine_not_admitted');
- const mime={'.html':'text/html;charset=utf-8','.js':'text/javascript;charset=utf-8',
+ const mime={'.html':'text/html;charset=utf-8','.js':'text/javascript;charset=utf-8','.mjs':'text/javascript;charset=utf-8',
   '.css':'text/css;charset=utf-8','.ttc':'font/collection'};
  const server=createServer((req,res)=>{
   const url=new URL(req.url,'http://localhost'),bytes=resources.get(url.pathname);
@@ -130,6 +148,8 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
   await page.goto(origin+'/'+(projectAware?project.entry:'scene.html'),{waitUntil:'networkidle',timeout:20000});
   await ready();
   if(engine==='three'&&!scripts.has('/assets/three.module.min.js'))throw Error('method_three_module_not_loaded');
+  if(authoringAware&&scripts.has('/assets/anime.esm.min.js')!==scripts.has('/assets/anime_timeline.mjs'))
+   throw Error('method_authoring_library_adapter_not_loaded');
   let checkRuntime,engineObservation;
   if(extended){
    checkRuntime=async()=>{engineObservation=await engineRuntime.verifyPageEngine(page,engine);};
@@ -196,6 +216,9 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
     fresh_load_verified:true,probes};
   }
   return {frames,frame_count:count,reverse_seek_verified:true,
+   ...(authoringAware?{authoring_library_observation:{schema:'video.animation-authoring-library-observation.v1',
+    authoring_libraries:authoringLibraries,loaded_scripts:[...scripts].sort(),
+    used_libraries:scripts.has('/assets/anime_timeline.mjs')?['animejs']:[]}}:{}),
    ...(extended?{engine_observation:engineObservation,seek_checks:seekChecks}:{}),
    ...(projectAware?{project_runtime:{...(await page.evaluate(()=>({...window.__trustedHyperFramesProject.state}))),
     schema:'video.hyperframes-project-runtime-proof.v1',
@@ -222,7 +245,8 @@ async function main(){
   // The trusted adapter authenticates the exact UTF-8 request bytes through
   // this environment value. Do not reserialize parsed floats here: Python and
   // JavaScript legitimately use different spellings for 1.0 and small values.
-  const projectAware=request.schema==='video.animation-method-render-request.v3';
+  const authoringAware=request.schema==='video.animation-method-render-request.v4';
+  const projectAware=authoringAware||request.schema==='video.animation-method-render-request.v3';
   const extended=projectAware||request.schema==='video.animation-method-render-request.v2';
   if((!extended&&request.schema!=='video.animation-method-render-request.v1')
    ||(extended&&!['html-svg','canvas','three'].includes(request.engine))
@@ -253,7 +277,7 @@ async function main(){
    if(!/^[0-9a-f]{64}$/.test(request.project_runtime_sha256||'')
     ||hash(read(fileURLToPath(new URL('./hyperframes_project.mjs',import.meta.url)),1024*1024))!==request.project_runtime_sha256)
     throw Error('method_hyperframes_runtime_changed');
-   Object.assign(receipt,{schema:'video.animation-method-render-receipt.v3',
+   Object.assign(receipt,{schema:'video.animation-method-render-receipt.'+(authoringAware?'v4':'v3'),
     project_runtime_sha256:request.project_runtime_sha256});
   }
   if(c.fps!==24||!Number.isInteger(c.width)||c.width<320||c.width>1280
@@ -275,7 +299,8 @@ async function main(){
   }
   for(const [name,expected] of Object.entries(request.assets_sha256)){
    if(!['gsap.min.js','NotoSansCJK-Regular.ttc',
-    ...(extended?['three.module.min.js','three.LICENSE.txt']:[])].includes(name))throw Error('method_asset_not_admitted');
+    ...(extended?['three.module.min.js','three.LICENSE.txt']:[]),
+    ...(authoringAware?Object.keys(ANIME_ASSETS):[])].includes(name))throw Error('method_asset_not_admitted');
    const bytes=read(join(input,'scene/assets',name),32*1024*1024);
    if(hash(bytes)!==expected)throw Error('method_asset_changed');
    allowed.set('/assets/'+name,bytes);

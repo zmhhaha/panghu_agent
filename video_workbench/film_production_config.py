@@ -101,6 +101,12 @@ class FilmProductionSettings:
                 'NotoSansCJK-Regular.ttc': runtime['font_sha256'],
                 'three.module.min.js': runtime['three_sha256'],
                 'three.LICENSE.txt': runtime['three_license_sha256']}
+            # Version 2 only admits the complete, pinned optional library.
+            # Image digest and the frozen project asset inventory bind these
+            # bytes without changing the legacy motion-runtime.v3 schema.
+            if capabilities['schema'] == 'video.animation-runtime-capabilities.v2':
+                from .animejs_library import ASSETS as ANIME_ASSETS
+                expected_assets.update(ANIME_ASSETS)
             if any(checksum != expected_assets[key] for key, checksum in capabilities['assets'].items()):
                 raise ValueError()
             return cls(gate == '1', value['image'], runtime, capabilities, hosts, host_files, assets, admission)

@@ -1,0 +1,27 @@
+{
+  "schema": "video.renderer-animejs-assets.v1",
+  "source": "integrity_locked_official_npm_package",
+  "version": "4.5.0",
+  "license": "MIT",
+  "resolved": "https://registry.npmjs.org/animejs/-/animejs-4.5.0.tgz",
+  "npm_integrity": "sha512-NQimYX+lz8WaXonGS9zVVoviCIAjONeJayxacUditaivYLqyXgGjFKjuyl0aUUhFKm5MriX9ty1TGovNzoJQWA==",
+  "tarball_sha256": "f1bf4be22ae739bbfefd3ec3651a37a7d178dfa8ce782b0ebe5e39347fcb1706",
+  "upstream_repository": "https://github.com/juliangarnier/anime",
+  "assets": {
+    "anime.esm.min.js": {
+      "bytes": 118678,
+      "sha256": "a19015a1a92d52025a2fb6703b6d67eadd1cc2aeaf880770e96e04cf6aa07be1",
+      "role": "upstream_unchanged"
+    },
+    "animejs.LICENSE.txt": {
+      "bytes": 1075,
+      "sha256": "3f3e835a9952cfc2a6ca836fb95b3257c981f24fa3ef51249055acb09931897b",
+      "role": "upstream_unchanged"
+    },
+    "anime_timeline.mjs": {
+      "bytes": 3661,
+      "sha256": "c4c6bf0428909366a7f4fced4fbf61c8f2533c23286cc0f26aef785424208b18",
+      "role": "project_clock_adapter"
+    }
+  }
+}

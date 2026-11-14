@@ -35,7 +35,7 @@ def read_token(path):
 def create_server(*, root, agent_url, agent_token_file, token_file, renderer_image,
                   assets_dir=None, enable_isolated_rendering=False, listen='127.0.0.1', port=8767,
                   method_agent_token_file=None, engine_admission_file=None, method_protocol='skills',
-                  method_project_runtime='native-seek'):
+                  method_project_runtime='native-seek', authoring_library_admission_file=None):
     if enable_isolated_rendering is not True:
         raise ValueError('animation_creation_isolated_rendering_opt_in_required')
     if method_protocol not in {'skills', 'legacy'}:
@@ -66,6 +66,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                 review_gateway=reviewer(method_client),
                 renderer=MethodAnimationRenderer(Path(root) / 'method-renders', image=renderer_image,
                     assets_dir=assets_dir, enabled=True, engine_admission_file=engine_admission_file,
+                    authoring_library_admission_file=authoring_library_admission_file,
                     hyperframes=method_project_runtime == 'hyperframes-core-bridge',
                     legacy_bridge=method_project_runtime == 'hyperframes-core-bridge'))
         server = CreationHTTPServer(service, executor_token, host=listen, port=port, method_service=methods)
@@ -91,6 +92,8 @@ def main(argv=None):
     parser.add_argument('--renderer-image', required=True)
     parser.add_argument('--assets-dir', type=Path)
     parser.add_argument('--engine-admission-file', type=Path)
+    parser.add_argument('--authoring-library-admission-file', type=Path,
+        help='Separate measured Anime.js admission for the real HyperFrames method runtime.')
     parser.add_argument('--enable-isolated-rendering', action='store_true')
     parser.add_argument('--listen', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=8767)

@@ -7,6 +7,7 @@ New native engines bind their trusted runtime and measured seek evidence.
 from __future__ import annotations
 
 from contextlib import closing
+from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 import io
@@ -182,7 +183,8 @@ def execute_method_render(directory):
 class MethodAnimationRenderer:
     def __init__(self, root, image, assets_dir=None, enabled=False, *, timeout=360,
                  engine_admission_file=None, candidate_engines=(), hyperframes=False,
-                 legacy_bridge=False):
+                 legacy_bridge=False, authoring_library_admission_file=None,
+                 candidate_authoring_libraries=()):
         match = _IMAGE.fullmatch(image) if type(image) is str else None
         _require(match is not None, 'animation_method_render_image_pin_required', 422)
         _require(type(enabled) is bool and type(timeout) in (int, float)
@@ -205,6 +207,14 @@ class MethodAnimationRenderer:
                  and set(candidate_engines) <= {'canvas', 'three'},
                  'animation_method_render_candidate_invalid', 422)
         self.candidate_engines = tuple(candidate_engines)
+        _require(type(candidate_authoring_libraries) in (tuple, list)
+                 and set(candidate_authoring_libraries) <= {'animejs'}
+                 and (hyperframes or not candidate_authoring_libraries)
+                 and (hyperframes or authoring_library_admission_file is None),
+                 'animation_method_authoring_library_config_invalid', 422)
+        self.candidate_authoring_libraries = tuple(candidate_authoring_libraries)
+        self.authoring_library_admission_file = (_plain(authoring_library_admission_file)
+            if authoring_library_admission_file is not None else None)
 
     def capabilities(self):
         assets = {}
@@ -257,8 +267,30 @@ class MethodAnimationRenderer:
                          'animation_method_render_assets_missing')
             engines += [engine for engine in ('canvas', 'three') if engine in evidence]
             identity['admission_id'] = ('method-hyperframes-v3@' if self.hyperframes else 'method-engines-v2@') + digest(admission)
-        return dict(schema='video.animation-runtime-capabilities.v1',
+        capabilities = dict(schema='video.animation-runtime-capabilities.v1',
                     allowed_engines=engines, assets=assets, runtime_identity=identity)
+        if self.authoring_library_admission_file is not None:
+            from .animejs_library import descriptor, enable_in_capabilities
+            _require(self.assets_dir is not None, 'animation_method_authoring_library_assets_missing')
+            value = enable_in_capabilities(capabilities, directory=self.assets_dir)
+            admission, _ = _json(self.authoring_library_admission_file, 65536)
+            _require(type(admission) is dict and set(admission) == {'schema', 'runtime_identity',
+                'authoring_libraries', 'evidence'}
+                and admission['schema'] == 'video.animation-authoring-library-admission.v1'
+                and admission['runtime_identity'] == identity
+                and admission['authoring_libraries'] == {'animejs': descriptor()},
+                'animation_method_authoring_library_admission_changed')
+            evidence = admission['evidence']
+            _require(type(evidence) is dict and set(evidence) == {'operation_id', 'evidence_sha256'},
+                'animation_method_authoring_library_admission_invalid')
+            actual = self.lookup(evidence['operation_id'])
+            _require(actual is not None and actual['technical_passed'] is True
+                and actual['runtime']['image'] == self.image
+                and actual['runtime'].get('authoring_libraries') == value['authoring_libraries']
+                and actual['technical']['evidence_sha256'] == evidence['evidence_sha256'],
+                'animation_method_authoring_library_admission_unproven')
+            return value
+        return capabilities
 
     def _directory(self, operation_id):
         _require(type(operation_id) is str and _OP.fullmatch(operation_id),
@@ -310,13 +342,24 @@ class MethodAnimationRenderer:
                  set(capabilities['allowed_engines']) | set(self.candidate_engines),
                  'animation_method_render_engine_not_admitted', 422)
         payload = _validate_source_output(source, context)
-        _require(set(context['assets']) <= _ASSETS,
+        asset_checksums = dict(ASSET_SHA256)
+        libraries = bounds.get('authoring_libraries')
+        if libraries is not None:
+            from .animejs_library import ASSETS as ANIME_ASSETS, validate_libraries, read_assets
+            validate_libraries(libraries, context['assets'])
+            _require(self.hyperframes and self.assets_dir is not None
+                and (libraries == capabilities.get('authoring_libraries')
+                    or self.candidate_authoring_libraries == ('animejs',)),
+                'animation_method_authoring_library_not_admitted', 422)
+            read_assets(self.assets_dir)
+            asset_checksums.update(ANIME_ASSETS)
+        _require(set(context['assets']) <= set(asset_checksums),
                  'animation_method_render_asset_not_admitted', 422)
         engine = payload['engine']
         engine_aware = (self.hyperframes or engine != 'html-svg' or bounds.get('runtime_identity') is not None
                         or 'three.module.min.js' in context['assets'])
         if engine_aware:
-            _require(all(ASSET_SHA256[name] == checksum
+            _require(all(asset_checksums[name] == checksum
                          for name, checksum in context['assets'].items()),
                      'animation_method_render_assets_changed')
             _require(engine != 'three' or context['assets'].get('three.module.min.js') ==
@@ -352,6 +395,8 @@ class MethodAnimationRenderer:
                 project=project, project_sha256=digest(project), legacy_bridge=self.legacy_bridge,
                 project_runtime_sha256=hashlib.sha256(_read(PROJECT_RUNTIME, 1024 * 1024)).hexdigest(),
                 hyperframes_core_sha256=HYPERFRAMES_CORE_SHA256)
+        if libraries is not None:
+            request.update(schema='video.animation-method-render-request.v4', authoring_libraries=libraries)
         request['identity'] = digest(request)
         return dict(schema='video.animation-method-render-binding.v1',
             operation_id=operation_id, source=payload, source_sha256=source_sha256(payload),
@@ -458,10 +503,11 @@ class MethodAnimationRenderer:
         request = binding['request']
         work = root / 'work'
         receipt, receipt_raw = _json(work / 'render-receipt.json')
-        project_aware = request.get('schema') == 'video.animation-method-render-request.v3'
+        authoring_aware = request.get('schema') == 'video.animation-method-render-request.v4'
+        project_aware = authoring_aware or request.get('schema') == 'video.animation-method-render-request.v3'
         native = project_aware or request.get('schema') == 'video.animation-method-render-request.v2'
         _require(receipt.get('schema') == 'video.animation-method-render-receipt.' +
-                 ('v3' if project_aware else 'v2' if native else 'v1')
+                 ('v4' if authoring_aware else 'v3' if project_aware else 'v2' if native else 'v1')
                  and receipt.get('status') == 'rendered' and receipt.get('decode_verified') is True
                  and receipt.get('reverse_seek_verified') is True
                  and receipt.get('request_identity') == request['identity']
@@ -469,6 +515,16 @@ class MethodAnimationRenderer:
                  and receipt.get('host_sha256') == request['host_sha256']
                  and receipt.get('image_digest') == binding['image_digest'],
                  'animation_method_render_receipt_invalid')
+        if authoring_aware:
+            observation = receipt.get('authoring_library_observation', {})
+            scripts = observation.get('loaded_scripts')
+            _require(observation.get('schema') == 'video.animation-authoring-library-observation.v1'
+                and observation.get('authoring_libraries') == request['authoring_libraries']
+                and type(scripts) is list and all(type(name) is str for name in scripts)
+                and len(scripts) == len(set(scripts))
+                and (('/assets/anime.esm.min.js' in scripts) == ('/assets/anime_timeline.mjs' in scripts))
+                and observation.get('used_libraries') == (['animejs'] if '/assets/anime_timeline.mjs' in scripts else []),
+                'animation_method_authoring_library_evidence_invalid')
         if project_aware:
             proof = receipt.get('project_runtime', {})
             _require(receipt.get('project_runtime_sha256') == request['project_runtime_sha256']
@@ -659,16 +715,23 @@ class MethodAnimationRenderer:
         engine = binding['request'].get('engine', 'html-svg')
         result['runtime'] = dict(engine=engine,
             admission=dict(status='admitted' if rendered else 'not_admitted',
-                id=('method-hyperframes-' + engine + '-v3@' if binding['request']['schema'].endswith('.v3')
+                id=('method-hyperframes-' + engine + '-v4@' if binding['request']['schema'].endswith('.v4')
+                    else 'method-hyperframes-' + engine + '-v3@' if binding['request']['schema'].endswith('.v3')
                     else 'method-' + engine + '-v2@' if binding['request']['schema'].endswith('.v2')
                     else 'method-html-svg-v1@')
                     + binding['image_digest'], evidence_sha256=proof),
             image=binding['image'], actual_image_id=outcome.get('actual_image_id'),
             observation='rendered_frames_not_agent_motion_or_audio_observation')
-        if binding['request']['schema'].endswith('.v3'):
+        if binding['request']['schema'].endswith(('.v3', '.v4')):
             result['runtime'].update(project_runtime='hyperframes-core-project-1',
                 hyperframes_core_sha256=HYPERFRAMES_CORE_SHA256,
                 project_runtime_sha256=binding['request']['project_runtime_sha256'])
+        if binding['request']['schema'].endswith('.v4'):
+            used = receipt['authoring_library_observation']['used_libraries'] if receipt else []
+            result['runtime']['authoring_libraries'] = {
+                name: deepcopy(binding['request']['authoring_libraries'][name]) for name in used}
+            result['runtime']['authoring_library_observation'] = (
+                deepcopy(receipt['authoring_library_observation']) if receipt else None)
         if row['proof_sha256'] is not None:
             _require(row['proof_sha256'] == proof, 'animation_method_render_proof_changed')
             _require(row['result'] is not None and bytes(row['result']) == canonical_bytes(result),

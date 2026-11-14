@@ -907,6 +907,9 @@ class AnimationMethodService:
                 data['constraints'] = dict(allowed_engines=capabilities['allowed_engines'],
                                           runtime_identity=capabilities['runtime_identity'])
                 data['assets'] = capabilities['assets']
+                if capabilities.get('authoring_libraries'):
+                    from .animejs_library import method_authoring_context
+                    data['constraints'].update(method_authoring_context(capabilities))
         allowed_engines = data.get('constraints', {}).get('allowed_engines', ['html-svg'])
         if data.get('criteria'):
             protocol.criteria(data['criteria'])
