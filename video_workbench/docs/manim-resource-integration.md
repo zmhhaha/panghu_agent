@@ -1,8 +1,9 @@
 # Manim Community resource integration
 
-Status: **prepared, not admitted**. The existing source-only film author v1,
-three browser engine allowlists, released Skills and deployed service are
-unchanged. The capability status is available through
+Status as of 2026-11-14: **ARM Cairo and full HyperFrames resource consumption
+technically admitted; business rollout and Agent sample tracked separately**.
+The existing source-only film author v1 and three browser drawing engines keep
+their original privileges. The capability status is available through
 `manim_resource_admission.capability_status()`; importing these helpers does
 not advertise a new live drawing engine.
 
@@ -62,8 +63,9 @@ Build the complete repository normally with
 `motion_renderer/Dockerfile.manim-resource`, a reviewed Python >=3.11 base
 digest and `SOURCE_REVISION`; publish only the `latest` tag. This candidate
 Dockerfile adds CPU Cairo/Pango/Noto and pinned Manim 0.22.1, not a new public
-service. ARM execution and actual output have not been proved by unit tests.
-The current prepared code has not built or pushed this image.
+service. A normal clean-source ARM64 build and actual 48-frame Cairo execution
+have now passed; unit tests alone did not grant that admission. The initial
+runtime digest is recorded in the authoring-libraries release receipt.
 
 In the existing isolated process/Job tool system, a future admitted resource
 author can call:
@@ -109,8 +111,10 @@ manifest bytes can then enter an explicitly versioned generated-asset envelope.
 4. Actual CPU/ARM Cairo generation and complete HyperFrames capture, including
    repeated, reverse and boundary seeks and awaited decode. A frame resource is
    not a substitute for runtime admission or developer visual acceptance.
-5. Publish a developer-accepted reusable Skill version and then expose Manim as
-   an **authoring capability** in the effect library, not a fourth browser engine.
+5. Enable the independently admitted recipe route and resource consumer before
+   exposing Manim as an **authoring capability** in the effect library, not a
+   fourth browser engine. Developer acceptance and ordinary Skill publication
+   remain separate from enabling experiments; enabling a tool publishes no Skill.
 
 Each requirement is independently evidenced; unit fixtures alone do not grant
 runtime admission, subjective quality approval or publication.
@@ -245,3 +249,17 @@ transfer through the private lab preflights the producer and creates a new
 recipe/resource for that experiment. The ordinary formal-video Skill adapter
 continues to exclude Manim producer dependencies until its separate resource
 regeneration path is admitted.
+
+The admitted laboratory coordinator explicitly freezes the exact producer
+requirement in compatibility context v2, allowing its source-only recipe Agent
+to discover and read compatible published Manim methods. Ordinary consumers
+freeze an empty producer context. Earlier pending or completed v1/v2 deliveries
+retain their original pins and bytes; no old intent is reinterpreted against
+today's capability registry. The initial recipe catalog uses HTML/SVG eligibility;
+Canvas-only or Three-only producer methods are not yet promised by this path.
+
+The ARM server has now deployed the independently admitted recipe role and
+the four business applications. Actual runtime identity, deployment scope and
+the separate initial Agent experiments are recorded in
+`authoring-libraries-server-validation-20261114.md`. This deployment does not
+publish a reusable Skill or admit formal-film resource regeneration.

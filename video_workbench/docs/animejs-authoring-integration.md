@@ -33,6 +33,8 @@ The two quoted object placeholders above must be replaced with the actual object
 
 Admission also reopens the operation's exact frozen request and matches host, engine runtime, HyperFrames project adapter and core identities to the current release. A stopped operation from the same image with older executable host bytes cannot qualify as evidence for a newly installed host.
 
+The first server Agent experiment exposed a useful authoring failure: resetting all timeline-owned state before each seek defeated Anime's cached tween writes, so reverse/middle-frame comparison correctly rejected the render. This is not resolved by disabling the comparison or hand-editing the returned animation. Keep tween ownership separate from drawing projection, give the Agent the concrete failure, and verify its new original output through the same host. The unpublished foundation draft now explains this pitfall; changing that draft does not alter an existing frozen input or publish a Skill. Server results and scope are recorded in `authoring-libraries-server-validation-20261114.md`.
+
 ## Skill and developer release
 
 `skills/animejs-frame-authoring/SKILL.md` contains local, reusable authoring knowledge and the actual host-context protocol, with no reference-video dependency. `animejs_library.foundation_skill_package()` builds an **unpublished foundation draft** for the existing developer review flow. It declares all eligible drawing engines and the exact authoring-library requirements. It is not inserted into the published catalog or assigned fabricated developer approval.

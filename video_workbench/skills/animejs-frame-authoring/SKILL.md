@@ -13,6 +13,8 @@ In `mount(root, context)`, create the scene's objects within `root`, give tweene
 
 In `renderAt(context)`, call the timeline's `renderAt(context)`. It computes local milliseconds from the host's `context.global_frame` and exact rational `context.time`; it never accumulates elapsed time. Then redraw Canvas or render the Three.js scene from the tweened state. For SVG/HTML, direct element-property animation is available; path reveal can use `svg.createDrawable`, and motion-path values can come from `svg.createMotionPath`. Keep stable geometry separate from the changing reveal or transform. Do not depend on previously visited frames.
 
+Keep ownership of animated state clear. Initialize timeline-owned properties once and give their tweens explicit start/end values. Do not reset or overwrite those properties before or after every seek: Anime can skip writing a cached, unchanged or completed tween, leaving your external reset visible and making the same frame depend on its history. Derive properties not owned by the timeline directly from the absolute frame, and project tweened state into the drawing after seeking. Compare a middle frame reached sequentially, directly from zero, backwards from the end and twice in succession; a plausible forward playback alone cannot detect this failure.
+
 For an interpolated state, the lifecycle binding has this shape:
 
 ```js
