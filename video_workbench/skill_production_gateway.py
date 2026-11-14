@@ -45,6 +45,7 @@ class SkillProductionAgentGateway(MotionAgentGateway):
     input_limit, output_limit = INPUT_MAX_BYTES, OUTPUT_MAX_BYTES
     validate_input = staticmethod(validate_scene_input)
     validate_result = staticmethod(validate_result)
+    profile_implementation = VideoAnimationSkillProductionProfile
 
     def __init__(self, client, skill_adapter, profile_revision='1'):
         super().__init__(client, profile_revision=profile_revision)
@@ -67,7 +68,7 @@ class SkillProductionAgentGateway(MotionAgentGateway):
         files = {self.input_name: raw}
         files.update({file.name: file.content()
                       for file in bundle_files(delivery['catalog'], delivery['packages'])})
-        limits = VideoAnimationSkillProductionProfile.limits
+        limits = self.profile_implementation.limits
         _require(len(files) <= limits.max_input_files
                  and sum(map(len, files.values())) <= limits.max_input_total_bytes,
                  'skill_production_inputs_too_large', 413)
@@ -221,6 +222,6 @@ class SkillProductionAgentGateway(MotionAgentGateway):
             attempt_id=attempt['attempt_id'], input_sha256=input_sha256)
         reads = {event['receipt']['package_sha256'] for event in evidence['events']
                  if event['tool_name'] == 'skill_read' and event['receipt']['path'] == 'SKILL.md'}
-        result = validate_result(decoded[self.result_name], input_sha256, document,
+        result = self.validate_result(decoded[self.result_name], input_sha256, document,
             read_package_sha256s=reads, tool_evidence_sha256=evidence['sha256'])
         return dict(result=result, evidence=evidence, skill_delivery=delivery)

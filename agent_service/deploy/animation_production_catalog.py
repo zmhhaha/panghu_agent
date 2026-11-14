@@ -23,10 +23,13 @@ from agent_service.worker_entry import HostConfig, PI_ADAPTER_REVISION, host_pol
 PROFILES = (production.PROFILE,)
 
 
-def measure_animation_production_bundle(*, film=False, skills=False):
-    require(type(film) is bool and type(skills) is bool and not (film and skills),
+def measure_animation_production_bundle(*, film=False, skills=False, modules=False):
+    require(all(type(value) is bool for value in (film, skills, modules))
+            and sum((film, skills, modules)) <= 1,
             'animation_production_generation_invalid')
-    role = skill_production if skills else production
+    if modules:
+        from agent_service.profiles import video_animation_film_module
+    role = video_animation_film_module if modules else skill_production if skills else production
     root = production.FILM_BUNDLE_ROOT if film else role.BUNDLE_ROOT
     revision = production.FILM_BUNDLE_REVISION if film else role.BUNDLE_REVISION
     manifest_sha = production.FILM_BUNDLE_MANIFEST_SHA256 if film else role.BUNDLE_MANIFEST_SHA256
@@ -34,9 +37,10 @@ def measure_animation_production_bundle(*, film=False, skills=False):
     require(hashlib.sha256(raw).hexdigest() == manifest_sha,
             'animation_production_bundle_manifest_mismatch')
     manifest = json.loads(raw)
-    content = skill_production.verified_bundle() if skills else production.verified_bundle(film=film)
+    content = role.verified_bundle() if skills or modules else production.verified_bundle(film=film)
     return {revision: manifest}, dict(
-        schema='animation-skill-production-local-bundle-measurement.v1' if skills else
+        schema='animation-film-module-local-bundle-measurement.v1' if modules else
+               'animation-skill-production-local-bundle-measurement.v1' if skills else
                'animation-film-production-local-bundle-measurement.v1' if film else 'animation-production-local-bundle-measurement.v1',
         bundle_revision=revision, manifest_sha256=manifest_sha,
         local_files=[dict(path=row['path'], sha256=row['sha256'], bytes=len(content[row['path']].encode()))
@@ -47,13 +51,17 @@ def measure_animation_production_bundle(*, film=False, skills=False):
 
 def prepare_animation_production_catalog(current, *, worker_image, resource_manifests,
         source_pool_id, model_policy=None, caller=None, runtime_revision=None,
-        register_caller=True, film=False, skills=False,
+        register_caller=True, film=False, skills=False, modules=False,
         model_proxy_url='http://agent-model-proxy.agent-service.svc.cluster.local:8080/v1'):
-    require(type(film) is bool and type(skills) is bool and not (film and skills),
+    require(all(type(value) is bool for value in (film, skills, modules))
+            and sum((film, skills, modules)) <= 1,
             'animation_production_generation_invalid')
-    role = skill_production if skills else production
-    role_name = 'animation-skill-production' if skills else 'animation-film-production' if film else 'animation-production'
-    profiles = (skill_production.PROFILE,) if skills else (production.FILM_PROFILE,) if film else PROFILES
+    if modules:
+        from agent_service.profiles import video_animation_film_module
+    role = video_animation_film_module if modules else skill_production if skills else production
+    role_name = ('animation-film-module' if modules else 'animation-skill-production' if skills
+                 else 'animation-film-production' if film else 'animation-production')
+    profiles = (role.PROFILE,) if skills or modules else (production.FILM_PROFILE,) if film else PROFILES
     profile = profiles[0]
     bundle_revision = production.FILM_BUNDLE_REVISION if film else role.BUNDLE_REVISION
     bundle_manifest_sha = production.FILM_BUNDLE_MANIFEST_SHA256 if film else role.BUNDLE_MANIFEST_SHA256
@@ -63,7 +71,7 @@ def prepare_animation_production_catalog(current, *, worker_image, resource_mani
         r'[a-z0-9][a-z0-9._:/-]*:latest@sha256:[0-9a-f]{64}', worker_image),
         'animation_production_worker_latest_digest_required')
     require(type(register_caller) is bool, 'animation_production_caller_registration_invalid')
-    manifests, _ = measure_animation_production_bundle(film=film, skills=skills)
+    manifests, _ = measure_animation_production_bundle(film=film, skills=skills, modules=modules)
     require(resource_manifests == manifests, 'animation_production_bundle_manifest_mismatch')
     rows = manifests[bundle_revision]['local_files']
     source_pool, source_binding = _pool(current, existing, source_pool_id)
@@ -88,16 +96,16 @@ def prepare_animation_production_catalog(current, *, worker_image, resource_mani
         required_tools=list(handler.required_tools),
         required_model_capabilities=list(required_model_capabilities(handler)),
         max_timeout_seconds=1200, **handler.limits.as_dict()))
-    bundle = CapabilityBundle.model_validate(dict(name='animation-production',
+    bundle = CapabilityBundle.model_validate(dict(name='animation-film-module' if modules else 'animation-production',
         revision=bundle_revision, source='original-local-' + bundle_revision,
         license='MIT', required_tools=list(handler.required_tools),
         resources=[dict(name='manifest.json', sha256=bundle_manifest_sha)]
             + [dict(name=row['path'], sha256=row['sha256']) for row in rows]))
-    environment_data = dict(name=SKILL_TOOLS_ENVIRONMENT_NAME if skills else READ_INPUTS_ENVIRONMENT_NAME,
+    environment_data = dict(name=SKILL_TOOLS_ENVIRONMENT_NAME if skills or modules else READ_INPUTS_ENVIRONMENT_NAME,
         tools=list(handler.required_tools), capabilities=[handler.output_schema],
         image_digest=worker_image.rsplit('@', 1)[1],
         runtime_revision=runtime_revision or source_environment.runtime_revision)
-    environment_data['revision'] = (skill_tools_environment_revision(environment_data) if skills else
+    environment_data['revision'] = (skill_tools_environment_revision(environment_data) if skills or modules else
                                     read_inputs_environment_revision(environment_data))
     environment = ToolEnvironment.model_validate(environment_data)
     binding_data = dict(id='video-' + role_name + '-pi', revision='v1',
@@ -149,7 +157,8 @@ def prepare_animation_production_catalog(current, *, worker_image, resource_mani
         after_sha256=digest(merged), source_pool_id=source_pool_id,
         combinations=[dict(profile=profile, profile_revision='1', binding_id=binding.id,
             binding_revision=binding.revision, combination_sha256=fingerprint,
-            acceptance_suite='video.animation-production-contract.v3' if skills else
+            acceptance_suite='video.animation-film-module-contract.v1' if modules else
+                'video.animation-production-contract.v3' if skills else
                 'video.animation-production-contract.v2' if film else 'video.animation-production-contract.v1',
             worker_host_config_map=host_name, worker_pool_id=host_name,
             model_policy_sha256=digest(model.model_dump(mode='json')),

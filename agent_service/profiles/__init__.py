@@ -3,6 +3,9 @@ from .base import ProfileImplementation, ProfileLimits
 
 
 def implementation(name):
+    if name == 'video.animation-film-module.v1':
+        from .video_animation_film_module import VideoAnimationFilmModuleProfile
+        return VideoAnimationFilmModuleProfile()
     if name == 'video.joint-plan.v1':
         from .video_joint_plan import VideoJointPlanProfile
         return VideoJointPlanProfile()

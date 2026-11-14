@@ -40,6 +40,22 @@ const three=`<!doctype html><style>body{margin:0;background:#08121e}</style>
  window.__hfSceneReady=Promise.resolve();window.addEventListener('hf-seek',event=>{
  event.detail.waitUntil(Promise.resolve().then(()=>{mesh.rotation.set(event.detail.time*.4,event.detail.time*.6,0);renderer.render(scene,camera);}));});</script>`;
 
+// Synthetic protocol fixtures only. These do not edit an Agent artwork or
+// provide a fixed composition/pattern to the production creator.
+const seededCanvas=`<!doctype html><style>body{margin:0;background:#08121e}</style>
+ <canvas width="320" height="180"></canvas><script>
+ const ctx=document.querySelector('canvas').getContext('2d');
+ window.__hfSceneReady=Promise.resolve();window.addEventListener('hf-seek',event=>{
+ event.detail.waitUntil(Promise.resolve().then(()=>{
+ let seed=0x13579bdf;const random=()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return (seed>>>0)/4294967296;};
+ ctx.fillStyle='#08121e';ctx.fillRect(0,0,320,180);
+ for(let i=0;i<24;i++){const x=random()*300,y=random()*160,color=Math.floor(random()*16777216);
+ ctx.fillStyle='#'+color.toString(16).padStart(6,'0');ctx.fillRect((x+event.detail.time*25)%300,y,10,10);}
+ }));});</script>`;
+const unseededCanvas=seededCanvas.replace(
+ 'let seed=0x13579bdf;const random=()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return (seed>>>0)/4294967296;};',
+ 'const random=()=>Math.random();');
+
 async function capture(engine,html){
  mkdirSync(evidence,{recursive:true});const root=mkdtempSync(join(evidence,'hyperframes-'+engine+'-'));
  const project={schema:'video.hyperframes-project.v1',project_id:'real-core-'+engine,
@@ -48,9 +64,15 @@ async function capture(engine,html){
  const request={schema:'video.animation-method-render-request.v3',engine,project,
   project_sha256:sha(JSON.stringify(project)),legacy_bridge:false,
   constraints:{width:320,height:180,fps:24,duration_seconds:1},max_evidence_bytes:16*1024*1024};
+ writeFileSync(join(root,'frozen-input.json'),JSON.stringify({scope:'technical_protocol_fixture',
+  request,source_sha256:sha(html),core_sha256:HYPERFRAMES_CORE_SHA256},null,2),{flag:'wx'});
+ writeFileSync(join(root,'fixture.html'),html,{flag:'wx'});
  const resources=new Map([['/scene.html',Buffer.from(html)]]);
  if(engine==='three')resources.set('/assets/three.module.min.js',readFileSync(join(assetsRoot,'three.module.min.js')));
- const result=await captureMethodFrames({chromium,request,resources,root,engineRuntime,executablePath,hyperFramesDist});
+ let result;
+ try{result=await captureMethodFrames({chromium,request,resources,root,engineRuntime,executablePath,hyperFramesDist});}
+ catch(error){writeFileSync(join(root,'rejected.json'),JSON.stringify({error:String(error),
+  source_sha256:sha(html)},null,2),{flag:'wx'});throw error;}
  writeFileSync(join(root,'capture.json'),JSON.stringify(result,null,2));return result;
 }
 
@@ -77,4 +99,22 @@ test('real core rejects a native hf-seek asynchronous draw failure',{skip:!avail
  const html=svg.replace("Promise.resolve().then(()=>document.querySelector('circle').setAttribute('cx',30+Math.round(event.detail.time*96)))",
   "Promise.reject(Error('intentional_async_fixture_failure'))");
  await assert.rejects(capture('html-svg',html),/intentional_async_fixture_failure|scene_failed_or_blocked/);
+});
+
+test('real core seeded random state survives forward/reverse/nonmonotonic/repeated/reloaded frames',
+ {skip:!available},async()=>{
+ const result=await capture('canvas',seededCanvas);
+ assert.equal(result.frame_count,24);
+ assert.notEqual(result.frames[0].sha256,result.frames[23].sha256);
+ assert.equal(result.seek_checks.non_monotonic_seek_verified,true);
+ assert.equal(result.seek_checks.repeated_seek_verified,true);
+ assert.equal(result.seek_checks.fresh_load_verified,true);
+ assert.equal(result.seek_checks.idle_frame_verified,true);
+ assert.equal(result.project_runtime.legacy_bridge,false);
+ assert.ok(result.project_runtime.core_seek_count>0);
+});
+
+test('real core rejects unfrozen random state before accepting encoded media',
+ {skip:!available},async()=>{
+ await assert.rejects(capture('canvas',unseededCanvas),/method_(reverse|absolute)_seek_mismatch/);
 });
