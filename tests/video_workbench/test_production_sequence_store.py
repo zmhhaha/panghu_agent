@@ -84,6 +84,92 @@ def test_origin_run_is_stable_identity_while_identical_hashes_are_not_identity(w
         store.create(OWNER, 'different-project', SOURCE, 'moved-origin')
 
 
+def test_source_for_run_reads_origin_and_explicitly_bound_derivative(work):
+    store, sequence_id = work
+    derived = dict(run_id='derived-run', version_id='derived-source', sha256=SOURCE['sha256'])
+    bind(store, sequence_id, derived)
+    sequence = store.get(OWNER, PROJECT, sequence_id)
+    for source in (SOURCE, derived):
+        assert store.source_for_run(OWNER, PROJECT, source['run_id']) == dict(sequence=sequence, source=source)
+        assert store.source_for_run(OWNER, PROJECT, source['run_id'], source['version_id']) == dict(
+            sequence=sequence, source=source)
+    assert store.source_for_run(OWNER, PROJECT, 'unbound-run') is None
+    assert store.source_for_run(OWNER, PROJECT, 'unbound-run', SOURCE['version_id']) is None
+
+
+def test_source_for_run_keeps_same_run_and_version_ids_isolated_by_owner(work):
+    store, sequence_id = work
+    other_sequence = store.create('bob', PROJECT, SOURCE, 'create-1')
+    assert store.source_for_run('bob', PROJECT, SOURCE['run_id']) == dict(
+        sequence=other_sequence, source=SOURCE)
+    assert store.source_for_run(OWNER, PROJECT, SOURCE['run_id'])['sequence']['id'] == sequence_id
+    assert store.source_for_run('carol', PROJECT, SOURCE['run_id']) is None
+    assert store.source_for_run('carol', PROJECT, SOURCE['run_id'], SOURCE['version_id']) is None
+
+
+@pytest.mark.parametrize('version_id', [None, SOURCE['version_id'], 'unbound-version'])
+def test_source_for_run_rejects_owned_run_from_another_project(work, version_id):
+    store, _ = work
+    with error('production_sequence_not_found') as exc:
+        store.source_for_run(OWNER, 'different-project', SOURCE['run_id'], version_id)
+    assert exc.value.status == 404
+
+
+def test_source_for_run_requires_exact_version_when_one_run_has_multiple_sources(work):
+    store, sequence_id = work
+    second = dict(SOURCE, version_id='second-source', sha256='e' * 64)
+    derived = dict(run_id='derived-run', version_id='derived-source', sha256=SOURCE['sha256'])
+    bind(store, sequence_id, second)
+    bind(store, sequence_id, derived, key='bind-derived')
+    with error('production_sequence_source_ambiguous') as exc:
+        store.source_for_run(OWNER, PROJECT, SOURCE['run_id'])
+    assert exc.value.status == 409
+    sequence = store.get(OWNER, PROJECT, sequence_id)
+    for source in (SOURCE, second):
+        assert store.source_for_run(OWNER, PROJECT, SOURCE['run_id'], source['version_id']) == dict(
+            sequence=sequence, source=source)
+    for version_id in ('unbound-version', derived['version_id']):
+        with error('production_sequence_source_not_found') as exc:
+            store.source_for_run(OWNER, PROJECT, SOURCE['run_id'], version_id)
+        assert exc.value.status == 404
+    with error('production_sequence_source_not_found'):
+        store.source_for_run(OWNER, PROJECT, derived['run_id'], SOURCE['version_id'])
+
+
+def test_source_for_run_uses_read_only_select_without_changing_ledger(work, monkeypatch):
+    store, sequence_id = work
+    reserve(store, sequence_id)
+    sequence = store.get(OWNER, PROJECT, sequence_id)
+    operations = store.operations(OWNER, PROJECT, sequence_id)
+    events = store.events(OWNER, PROJECT, sequence_id)
+    connect = sqlite3.connect
+    with connect(store.path) as db:
+        before = list(db.iterdump())
+    calls, statements = [], []
+
+    def read_connection(path, *args, **kwargs):
+        calls.append((path, kwargs))
+        db = connect(path, *args, **kwargs)
+        db.set_trace_callback(statements.append)
+        return db
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sqlite3, 'connect', read_connection)
+        found = store.source_for_run(OWNER, PROJECT, SOURCE['run_id'])
+        assert store.source_for_run(OWNER, PROJECT, 'unbound-run') is None
+    assert found == dict(sequence=sequence, source=SOURCE)
+    assert len(calls) == 2 and all(path.endswith('?mode=ro') and options['uri'] is True
+        for path, options in calls)
+    assert len(statements) == 2 and all(statement.startswith('SELECT ') for statement in statements)
+    found['sequence']['limits']['automatic'] = 100
+    found['source']['sha256'] = 'e' * 64
+    assert store.get(OWNER, PROJECT, sequence_id) == sequence
+    assert store.operations(OWNER, PROJECT, sequence_id) == operations
+    assert store.events(OWNER, PROJECT, sequence_id) == events
+    with connect(store.path) as db:
+        assert list(db.iterdump()) == before
+
+
 def test_mutating_returned_documents_does_not_change_the_ledger(work):
     store, sequence_id = work
     original = store.get(OWNER, PROJECT, sequence_id)

@@ -47,6 +47,7 @@ from .continuity_store import ContinuityStore
 from .batch_store import BatchStore
 from .batch_workflow import BatchWorkflow
 from .production_run_store import ProductionRunStore
+from .production_sequence_store import ProductionSequenceStore
 from .production_run_workflow import ProductionRunWorkflow
 from .film_production_config import FilmModuleAgentSettings, FilmProductionSettings, execution_readiness
 
@@ -74,6 +75,14 @@ MESSAGES = {
     'production_run_project_busy': '项目仍有其他制作任务，请等待结束后再制作整片草稿。',
     'production_run_inputs_changed': '已确认方案、文稿或配音设置已变化，已停止后续制作。',
     'production_run_cancellation_pending': '已申请取消，正在等待制作任务确认停止。',
+    'production_run_sequence_registration_pending': '正在保存成片的制作关联记录，请稍后再继续制作。',
+    'production_run_sequence_source_not_completed': '来源成片尚未完整制作完成，暂不能复用。',
+    'production_run_sequence_binding_missing': '制作关联记录缺失，暂不能开始后续制作，请联系维护者恢复记录。',
+    'production_run_sequence_source_changed': '来源成片的内容校验不一致，请检查所选的制作记录。',
+    'production_run_sequence_media_changed': '来源成片的文件校验未通过，暂不能复用。',
+    'production_run_sequence_unavailable': '制作关联记录暂不可用，尚未开始新的制作任务，请稍后重试。',
+    'production_run_sequence_registration_interrupted': '制作记录保存中断，正在按原记录恢复，请稍后重试。',
+    'production_sequence_not_found': '制作关联记录暂不可用，请联系维护者检查。',
     'joint_plan_disabled': '整片联合方案尚未启用。',
     'joint_plan_profile_unavailable': '通用 Agent 尚未启用整片联合规划能力。',
     'joint_plan_preflight_unavailable': '未能确认整片规划能力，尚未提交任务，请稍后再试。',
@@ -474,6 +483,40 @@ def export_project(store, owner, project):
     return buffer.getvalue()
 
 
+_SEQUENCE_TABLES = frozenset({'production_sequences', 'production_sequence_sources',
+    'production_sequence_runs', 'production_sequence_rounds', 'production_requirement_batches',
+    'production_sequence_requests', 'production_sequence_events'})
+
+
+def _check_sequence_database(path):
+    with closing(sqlite3.connect(Path(path).as_uri() + '?mode=rw', uri=True, timeout=1)) as db:
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if not _SEQUENCE_TABLES <= tables:
+            raise sqlite3.DatabaseError('Production sequence schema is missing')
+
+
+def _production_sequence_ledger(store):
+    path = Path(store.path).with_name('production-sequences.sqlite3')
+    # An outbox with no acknowledged ID may already have committed in the
+    # sidecar. Refuse to replace missing history, including that crash window.
+    with store.transaction() as db:
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        required = False
+        if 'production_runs' in tables:
+            for row in db.execute('SELECT document FROM production_runs'):
+                run = json.loads(row[0])
+                registration = run.get('sequence_registration') or {}
+                if 'sequence_intent' in run or registration.get('sequence_id') is not None:
+                    required = True
+                    break
+    if required:
+        try:
+            _check_sequence_database(path)
+        except sqlite3.Error:
+            raise ValueError('Restore the existing production sequence database before starting the workbench') from None
+    return ProductionSequenceStore(path)
+
+
 def create_app(*, db_path=None, gateway=None, local_mode=False, background=True, trusted_hosts=None,
                speech_client=None, renderer=None, render_enabled=None,
                explanation_gateway=None, explanation_enabled=None, motion_gateway=None,
@@ -656,8 +699,9 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                 owned_film_renderer, enabled=film_settings.enabled if film_settings is not None else False,
                 render_readiness=lambda: execution_readiness(owned_film_renderer, film_settings)
                     if film_settings is not None else {'available': False})
+    production_sequence_store = _production_sequence_ledger(store)
     production_run_store = ProductionRunStore(store, joint_plan_store, motion_store, production,
-                                              film_creation=film_creation)
+        film_creation=film_creation, sequence_store=production_sequence_store)
     author_configured = ((skill_gateway is not None and skill_adapter is not None) if skill_production
                          else (creative_gateway is not None and method_adapter is not None))
     run_dependencies = (joint_gate and motion_gate and speech_client is not None and creative_gate
@@ -722,6 +766,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     app.state.continuity_store = continuity_store
     app.state.batch_store, app.state.batch_workflow = batch_store, batch_workflow
     app.state.production_run_store, app.state.production_run_workflow = production_run_store, production_run_workflow
+    app.state.production_sequence_store = production_sequence_store
     app.state.film_creation = film_creation
     # Proxy mode must be bound behind an authenticated, header-scrubbing proxy.
     app.state.trusted_hosts = set(trusted_hosts or {'127.0.0.1', 'localhost', '[::1]'})
@@ -798,6 +843,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                 row = db.execute('SELECT value FROM metadata WHERE key=?', ('csrf_secret',)).fetchone()
                 if row is None or row[0] != store.csrf_secret:
                     raise sqlite3.DatabaseError()
+            _check_sequence_database(production_sequence_store.path)
         except sqlite3.Error:
             return JSONResponse({'status': 'not_ready'}, status_code=503)
         return {'status': 'ready'}

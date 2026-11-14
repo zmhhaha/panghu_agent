@@ -10,6 +10,7 @@ import hashlib
 import json
 import math
 import re
+import sqlite3
 import time
 from uuid import uuid4
 
@@ -40,9 +41,10 @@ def packed(value):
 
 
 class ProductionRunStore:
-    def __init__(self, store, joint_plan_store, motion_store, production, *, film_creation=None):
+    def __init__(self, store, joint_plan_store, motion_store, production, *, film_creation=None, sequence_store=None):
         self.store, self.joint, self.motion, self.production = store, joint_plan_store, motion_store, production
         self.film_creation = film_creation
+        self.sequence_store = sequence_store
         with store.transaction() as db:
             db.executescript('''CREATE TABLE IF NOT EXISTS production_runs (
                 id TEXT PRIMARY KEY, owner TEXT NOT NULL, project_id TEXT NOT NULL,
@@ -78,7 +80,223 @@ class ProductionRunStore:
         if 'audio_reuse' in run:
             result.update(audio_reuse=deepcopy(run['audio_reuse']),
                 audio_reuse_sha256=run['audio_reuse_sha256'], work_budget=deepcopy(run['work_budget']))
+        if 'sequence_registration' in run:
+            result.update(sequence_id=run['sequence_registration']['sequence_id'],
+                sequence_registration=deepcopy(run['sequence_registration']))
         return result
+
+    @staticmethod
+    def _registration(sequence_id=None, parent_source=None):
+        return dict(schema='video.production-run-sequence-registration.v1', status='awaiting_draft',
+            sequence_id=sequence_id, source=None, parent_source=deepcopy(parent_source), error=None)
+
+    def _verified_sequence_source(self, run):
+        """Resolve actual immutable film bytes and the already admitted snapshot.
+
+        This is a local custody check, not another render or media observation.
+        Call outside a business transaction: creation owns its own connections.
+        """
+        from .film_render_adapter import validate_film_render_result
+        require(self._uses_film(run) and run['status'] == 'completed'
+            and not (run.get('cancel_requested') or run.get('draining') or run.get('blocked_reason')),
+            'production_run_sequence_source_not_completed', 409)
+        require(digest(run['frozen']) == run['binding_sha256']
+            and digest(run['film']) == run['film_sha256']
+            and run['film']['content_binding_sha256'] == run['binding_sha256'],
+            'production_run_sequence_source_changed', 409)
+        intent = run.get('intents', {}).get('draft')
+        require(type(intent) is dict and intent.get('phase') == 'draft',
+            'production_run_sequence_source_invalid', 409)
+        child = self._lookup(run, intent)
+        require(type(child) is dict and child.get('id') == run.get('draft_render_id')
+            and child.get('status') == 'completed' and child.get('stop_proven') is True
+            and not child.get('cancel_requested') and child.get('error') is None,
+            'production_run_sequence_source_invalid', 409)
+        previous_snapshot = run.get('render_snapshot_sha256')
+        self._validate_film_draft(run, child)
+        require(previous_snapshot in (None, run['render_snapshot_sha256']),
+            'production_run_sequence_source_changed', 409)
+        snapshot = self._film_service().render_snapshot(child['id'])
+        require(snapshot['sha256'] == run['render_snapshot_sha256']
+            and snapshot['project_id'] == run['project_id'] and snapshot['production_run_id'] == run['id']
+            and snapshot['film_sha256'] == run['film_sha256']
+            and snapshot['module_sha256'] == {target['module_id']: item['module_sha256']
+                for target, item in zip(run['module_targets'], run['items'])},
+            'production_run_sequence_snapshot_mismatch', 409)
+        checked = validate_film_render_result(child['result'], snapshot,
+            runtime_fingerprint=snapshot['runtime_fingerprint'])
+        raw = self._film_service().video(run['owner'], child['id'])
+        require(type(raw) is bytes and len(raw) == checked['bytes']
+            and hashlib.sha256(raw).hexdigest() == checked['sha256'],
+            'production_run_sequence_media_changed', 409)
+        return dict(source=dict(run_id=run['id'], version_id=child['id'], sha256=checked['sha256']),
+            snapshot_sha256=snapshot['sha256'], film_sha256=run['film_sha256'],
+            request_sha256=child['request_sha256'], configuration_sha256=child['configuration_sha256'])
+
+    def _sequence_parent(self, owner, project_id, source_run_id, seen=None):
+        """A mutation-side preparation; GET/list never register historical work."""
+        with self.store.lock:
+            with self.store.transaction() as db:
+                run = self._read(db, source_run_id, owner)
+                self.store._project(db, owner, project_id)
+                require(run['owner'] == owner and run['project_id'] == project_id, 'not_found', 404)
+            seen = set() if seen is None else set(seen)
+            require(source_run_id not in seen and len(seen) < 64,
+                'production_run_sequence_lineage_invalid', 409)
+            seen.add(source_run_id)
+            try:
+                self._register_sequence(run, seen=seen)
+            except ServiceError as error:
+                self._registration_error(run, error.code, blocked=True)
+                raise
+            except (OSError, sqlite3.Error):
+                self._registration_error(run, 'production_run_sequence_unavailable', blocked=True)
+                raise ServiceError('production_run_sequence_unavailable', 503) from None
+            except Exception:
+                self._registration_error(run, 'production_run_sequence_registration_interrupted', blocked=False)
+                raise ServiceError('production_run_sequence_registration_interrupted', 503) from None
+            registration = run['sequence_registration']
+            require(registration['status'] == 'registered', 'production_run_sequence_registration_pending', 409)
+            return dict(sequence_id=registration['sequence_id'], source=deepcopy(registration['source']),
+                snapshot_sha256=run['sequence_intent']['binding']['snapshot_sha256'])
+
+    def _registration_error(self, run, code, *, blocked):
+        if 'sequence_registration' not in run:
+            run['sequence_registration'] = self._registration()
+        run['sequence_registration'].update(status='blocked' if blocked else 'pending', error=code)
+        self._save(run)
+
+    def _require_sequence_admission(self, run):
+        if 'sequence_registration' not in run:
+            return
+        require(self.sequence_store is not None, 'production_run_sequence_unavailable', 503)
+        try:
+            # Read-only lookup also checks the existing sidecar before any new
+            # paid child. A lost database is never recreated by this path.
+            self.sequence_store.source_for_run(run['owner'], run['project_id'], run['id'])
+            lineage = run['sequence_lineage']
+            require(digest(lineage) == run['sequence_lineage_sha256'],
+                'production_run_sequence_lineage_changed', 409)
+            parent = lineage['parent']
+            if parent is not None:
+                prior = self.sequence_store.source_for_run(run['owner'], run['project_id'],
+                    parent['source']['run_id'], parent['source']['version_id'])
+                require(prior is not None and prior['source'] == parent['source']
+                    and prior['sequence']['id'] == parent['sequence_id'],
+                    'production_run_sequence_parent_missing', 409)
+        except (OSError, sqlite3.Error):
+            raise ServiceError('production_run_sequence_unavailable', 503) from None
+
+    def _freeze_sequence_intent(self, run, binding, *, seen=None):
+        lineage = run.get('sequence_lineage')
+        if lineage is None:
+            parent = None
+            if 'audio_reuse' in run:
+                parent = self._sequence_parent(run['owner'], run['project_id'],
+                    run['audio_reuse']['source_run_id'], seen=seen)
+            lineage = dict(origin_run_id=run['id'] if parent is None else None, parent=parent)
+            run['sequence_lineage'], run['sequence_lineage_sha256'] = lineage, digest(lineage)
+        require(digest(lineage) == run.get('sequence_lineage_sha256'),
+            'production_run_sequence_lineage_changed', 409)
+        parent = lineage['parent']
+        registration = run.get('sequence_registration') or self._registration(
+            parent['sequence_id'] if parent else None, parent['source'] if parent else None)
+        require(registration.get('source') in (None, binding['source']),
+            'production_run_sequence_source_changed', 409)
+        existing = self.sequence_store.source_for_run(run['owner'], run['project_id'],
+            run['id'], binding['source']['version_id'])
+        sequence_id = parent['sequence_id'] if parent else registration['sequence_id']
+        # A known binding may be recovered; a missing known binding must never
+        # become a fresh sequence with replenished allowances.
+        if sequence_id is not None:
+            self.sequence_store.get(run['owner'], run['project_id'], sequence_id)
+        if existing is not None:
+            require(existing['source'] == binding['source']
+                and sequence_id in (None, existing['sequence']['id']),
+                'production_run_sequence_binding_changed', 409)
+        elif registration['status'] == 'registered':
+            raise ServiceError('production_run_sequence_binding_missing', 409)
+        if parent:
+            prior = self.sequence_store.source_for_run(run['owner'], run['project_id'],
+                parent['source']['run_id'], parent['source']['version_id'])
+            require(prior is not None and prior['source'] == parent['source']
+                and prior['sequence']['id'] == parent['sequence_id'],
+                'production_run_sequence_parent_missing', 409)
+        action = 'bind' if parent else 'create'
+        revision = (self.sequence_store.get(run['owner'], run['project_id'], sequence_id)['revision']
+            if parent else None)
+        intent = dict(schema='video.production-run-sequence-intent.v1', action=action,
+            key='production-sequence:' + run['id'] + ':' + action + ':0',
+            binding=deepcopy(binding), sequence_id=sequence_id, expected_revision=revision,
+            parent=deepcopy(parent), attempt=0)
+        registration.update(status='pending', source=deepcopy(binding['source']), error=None)
+        run['sequence_registration'], run['sequence_intent'] = registration, intent
+        run['sequence_intent_sha256'] = digest(intent)
+        self._save(run)  # Durable outbox precedes the independent ledger write.
+
+    def _register_sequence(self, run, *, seen=None):
+        require(self.sequence_store is not None, 'production_run_sequence_unavailable', 503)
+        binding = self._verified_sequence_source(run)
+        if 'sequence_intent' not in run:
+            self._freeze_sequence_intent(run, binding, seen=seen)
+        intent = run['sequence_intent']
+        require(digest(intent) == run.get('sequence_intent_sha256')
+            and intent['binding'] == binding
+            and digest(run['sequence_lineage']) == run['sequence_lineage_sha256']
+            and intent['parent'] == run['sequence_lineage']['parent']
+            and run['sequence_registration']['source'] == binding['source']
+            and run['sequence_registration']['parent_source'] == (intent['parent']['source'] if intent['parent'] else None),
+            'production_run_sequence_intent_changed', 409)
+        owner, project_id, source = run['owner'], run['project_id'], binding['source']
+        existing = self.sequence_store.source_for_run(owner, project_id, run['id'], source['version_id'])
+        recorded_id = run['sequence_registration']['sequence_id']
+        if existing is not None:
+            require(existing['source'] == source and recorded_id in (None, existing['sequence']['id'])
+                and intent['sequence_id'] in (None, existing['sequence']['id']),
+                'production_run_sequence_binding_changed', 409)
+            if intent['action'] == 'create':
+                require(existing['sequence']['origin_run_id'] == run['id']
+                    and existing['sequence']['origin_source'] == source,
+                    'production_run_sequence_lineage_invalid', 409)
+            sequence_id = existing['sequence']['id']
+        elif recorded_id is not None and intent['action'] == 'create':
+            raise ServiceError('production_run_sequence_binding_missing', 409)
+        elif intent['action'] == 'create':
+            require(run['sequence_lineage']['origin_run_id'] == run['id']
+                and 'audio_reuse' not in run and intent['parent'] is None,
+                'production_run_sequence_lineage_invalid', 409)
+            sequence_id = self.sequence_store.create(owner, project_id, source, intent['key'])['id']
+        else:
+            parent = intent['parent']
+            prior = self.sequence_store.source_for_run(owner, project_id,
+                parent['source']['run_id'], parent['source']['version_id'])
+            require(prior is not None and prior['source'] == parent['source']
+                and prior['sequence']['id'] == intent['sequence_id'] == recorded_id,
+                'production_run_sequence_parent_missing', 409)
+            try:
+                self.sequence_store.bind_source(owner, project_id, intent['sequence_id'], source,
+                    intent['key'], expected_revision=intent['expected_revision'])
+            except ServiceError as error:
+                if error.code != 'production_sequence_revision_conflict':
+                    raise
+                # Preserve the rejected CAS intent, then freeze a distinct
+                # metadata-only attempt. No old key ever acquires a new body.
+                current = self.sequence_store.get(owner, project_id, intent['sequence_id'])
+                history = run.setdefault('sequence_intent_history', [])
+                require(len(history) < 64, 'production_run_sequence_registration_conflict', 409)
+                history.append(dict(intent_sha256=digest(intent), key=intent['key'],
+                    expected_revision=intent['expected_revision'], error=error.code))
+                updated = deepcopy(intent)
+                updated.update(attempt=intent['attempt'] + 1, expected_revision=current['revision'],
+                    key='production-sequence:' + run['id'] + ':bind:' + str(intent['attempt'] + 1))
+                run['sequence_intent'], run['sequence_intent_sha256'] = updated, digest(updated)
+                run['sequence_registration'].update(status='pending', error=error.code)
+                self._save(run)
+                return
+            sequence_id = intent['sequence_id']
+        run['sequence_registration'].update(status='registered', sequence_id=sequence_id,
+            source=deepcopy(source), error=None)
+        self._save(run)
 
     @staticmethod
     def _uses_film(run):
@@ -214,7 +432,9 @@ class ProductionRunStore:
 
     @staticmethod
     def _unfinished(run):
-        return run['status'] in ACTIVE or run.get('draining') or run.get('blocked_reason')
+        return (run['status'] in ACTIVE or run.get('draining') or run.get('blocked_reason')
+            or run['status'] == 'completed' and run.get('sequence_registration', {}).get('status')
+                in {'awaiting_draft', 'pending', 'blocked'})
 
     @staticmethod
     def _reuse_audio(db, run, source_run_id):
@@ -284,9 +504,9 @@ class ProductionRunStore:
                 audio_sha256=checksum, audio_seconds=info.duration_seconds, input_sha256=input_sha256))
         run['audio_reuse'] = dict(schema='video.production-run-audio-reuse.v1', source_run_id=source_run_id,
             source_frozen_sha256=source['binding_sha256'], recordings=recordings)
-        # These limits belong to this run. No source intent, allowance or
-        # consumption is transferred; the existing single-attempt journal
-        # admits only fresh visual children and one fresh whole-film render.
+        # These technical work limits belong to this run. Source child intents
+        # are not reopened. Formal refinement allowances, when configured, keep
+        # their independent stable sequence identity in the caller below.
         run['work_budget'] = dict(schema='video.production-run-work-budget.v1', audio_operations=0,
             visual_operations=len(run['items']), draft_renders=1, automatic_retries=0)
         run['audio_reuse_sha256'] = digest(dict(receipt=run['audio_reuse'], work_budget=run['work_budget']))
@@ -321,6 +541,15 @@ class ProductionRunStore:
                 and 1 <= len(request['reuse_audio_from_run_id']) <= 100))
         require(type(idem) is str and re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}', idem), 'idempotency_key_required')
         fingerprint = digest(dict(project_id=project_id, request=request))
+        parent_sequence = None
+        if self.sequence_store is not None and self.film_creation is not None and 'reuse_audio_from_run_id' in request:
+            with self.store.transaction() as db:
+                replay = db.execute('SELECT 1 FROM production_runs WHERE owner=? AND idem=?', (owner, idem)).fetchone()
+            if replay is None:
+                # Resolve the real completed candidate before admitting fresh
+                # visual work. Failed registration never falls back to a new
+                # sequence or fresh recordings. No GET performs this mutation.
+                parent_sequence = self._sequence_parent(owner, project_id, request['reuse_audio_from_run_id'])
         configuration = None
         if self.film_creation is not None:
             # The facade authorizes through this same SQLite store and may do
@@ -394,7 +623,25 @@ class ProductionRunStore:
                     item.update(module_operation_id=None, module_version_id=None, module_status='queued',
                         module_sha256=None, module_package_sha256=None, module_engine=None)
             if 'reuse_audio_from_run_id' in request:
+                original = self._read(db, request['reuse_audio_from_run_id'], owner)
+                if 'sequence_registration' in original:
+                    require(self.sequence_store is not None and configuration is not None,
+                        'production_run_sequence_unavailable', 503)
                 self._reuse_audio(db, run, request['reuse_audio_from_run_id'])
+            if configuration is not None and self.sequence_store is not None:
+                if 'reuse_audio_from_run_id' in request:
+                    original = self._read(db, request['reuse_audio_from_run_id'], owner)
+                    registration = original.get('sequence_registration', {})
+                    require(parent_sequence is not None and registration.get('status') == 'registered'
+                        and registration.get('sequence_id') == parent_sequence['sequence_id']
+                        and registration.get('source') == parent_sequence['source'],
+                        'production_run_sequence_parent_changed', 409)
+                lineage = dict(origin_run_id=run['id'] if parent_sequence is None else None,
+                    parent=deepcopy(parent_sequence))
+                run.update(sequence_lineage=lineage, sequence_lineage_sha256=digest(lineage),
+                    sequence_registration=self._registration(parent_sequence['sequence_id'] if parent_sequence else None,
+                        parent_sequence['source'] if parent_sequence else None))
+                self._require_sequence_admission(run)
             raw = packed(run)
             require(len(raw.encode()) <= 512 * 1024, 'production_run_storage_limit', 413)
             # Reserve the full-film copy before paying for recordings. Child
@@ -641,6 +888,10 @@ class ProductionRunStore:
         if run['status'] not in ACTIVE or any(i.get('active') for i in run['intents'].values()):
             self._save(run)
             return
+        # Reconcile already-paid children before checking admission. Missing
+        # sequence metadata must block fresh work, not erase a finished film.
+        if admit:
+            self._require_sequence_admission(run)
         if self._uses_film(run):
             self._step_film(run, project, admit=admit)
             return
@@ -777,6 +1028,7 @@ class ProductionRunStore:
                 runs = [json.loads(row[0]) for row in db.execute('SELECT document FROM production_runs ORDER BY rowid')]
             for run in runs:
                 if run['status'] not in ACTIVE and not run.get('draining'):
+                    self._recover_sequence_registration(run)
                     continue
                 try:
                     self._step(run)
@@ -789,3 +1041,23 @@ class ProductionRunStore:
                     # on the next tick rather than constructing another intent.
                     run['error'] = 'production_run_reconciliation_interrupted'
                     self._save(run)
+                self._recover_sequence_registration(run)
+
+    def _recover_sequence_registration(self, run):
+        """Recover only explicit pending metadata; never replay creation work."""
+        if (self.sequence_store is None or not self._uses_film(run) or run['status'] != 'completed'
+                or 'sequence_registration' not in run
+                or run['sequence_registration']['status'] == 'registered'):
+            return
+        try:
+            with self.store.transaction() as db:
+                self.store._project(db, run['owner'], run['project_id'])
+            self._register_sequence(run, seen={run['id']})
+        except ServiceError as error:
+            self._registration_error(run, error.code, blocked=True)
+        except (OSError, sqlite3.Error):
+            self._registration_error(run, 'production_run_sequence_unavailable', blocked=True)
+        except Exception:
+            # The ledger may already have committed. Its exact source lookup
+            # precedes any repeat write after restart; never refund or reset.
+            self._registration_error(run, 'production_run_sequence_registration_interrupted', blocked=False)

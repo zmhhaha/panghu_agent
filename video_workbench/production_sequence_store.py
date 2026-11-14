@@ -299,6 +299,48 @@ class ProductionSequenceStore:
         with self._transaction() as db:
             return self._sequence(db, owner, project_id, sequence_id)
 
+    def source_for_run(self, owner, project_id, run_id, version_id=None):
+        """Read explicit run lineage without creating identity or spending work.
+
+        Only a genuinely unbound owner/run returns None. A known run in another
+        project, an unknown version of a known run, or multiple possible source
+        versions must not silently fall back to creating a new sequence.
+        """
+        text(owner)
+        text(project_id)
+        text(run_id)
+        if version_id is not None:
+            text(version_id)
+        db = sqlite3.connect(Path(self.path).as_uri() + '?mode=ro', uri=True,
+            timeout=15, isolation_level=None)
+        db.row_factory = sqlite3.Row
+        try:
+            # One SELECT keeps the sequence revision and registered sources in
+            # the same read snapshot. The outer join retains an owned run from
+            # another project only so it can fail closed, without reading that
+            # project's sequence or source documents.
+            rows = db.execute('SELECT r.project_id AS run_project_id, '
+                'q.document AS sequence_document, s.document AS source_document '
+                'FROM production_sequence_runs r '
+                'LEFT JOIN production_sequences q ON q.id=r.sequence_id AND q.owner=r.owner '
+                'AND q.project_id=r.project_id AND q.project_id=? '
+                'LEFT JOIN production_sequence_sources s ON s.sequence_id=q.id '
+                'AND s.owner=q.owner AND s.project_id=q.project_id '
+                'WHERE r.owner=? AND r.run_id=?', (project_id, owner, run_id)).fetchall()
+            if not rows:
+                return None
+            require(rows[0]['run_project_id'] == project_id
+                and rows[0]['sequence_document'] is not None, 'production_sequence_not_found', 404)
+            sources = [json.loads(row['source_document']) for row in rows
+                if row['source_document'] is not None]
+            sources = [source for source in sources if source['run_id'] == run_id
+                and (version_id is None or source['version_id'] == version_id)]
+            require(bool(sources), 'production_sequence_source_not_found', 404)
+            require(len(sources) == 1, 'production_sequence_source_ambiguous', 409)
+            return dict(sequence=json.loads(rows[0]['sequence_document']), source=sources[0])
+        finally:
+            db.close()
+
     def bind_source(self, owner, project_id, sequence_id, source, idem, *, expected_revision):
         """Explicitly carry the same sequence into a new run/version."""
         source = source_ref(source)
