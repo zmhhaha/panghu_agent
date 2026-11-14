@@ -2,6 +2,7 @@
 !agent_service/
 !agent_service/__init__.py
 !agent_service/contracts.py
+!agent_service/manim_resource_contract.py
 !video_workbench/
 !video_workbench/__init__.py
 !video_workbench/manim_resource.py

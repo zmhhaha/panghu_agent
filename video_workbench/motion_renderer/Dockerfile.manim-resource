@@ -5,10 +5,12 @@ ARG PYTHON_BASE_IMAGE
 FROM ${PYTHON_BASE_IMAGE}
 ARG SOURCE_REVISION
 ARG PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+ARG DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian
 LABEL org.opencontainers.image.source="https://github.com/zmhhaha/panghu_agent" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \
       io.panghu.animation.capability="manim-community-cairo-resource"
-RUN apt-get update \
+RUN sed -i "s|http://deb.debian.org/debian|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
+    && apt-get -o Acquire::Retries=0 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update --error-on=any \
     && apt-get install -y --no-install-recommends \
        build-essential cmake pkg-config libcairo2-dev libpango1.0-dev libffi-dev \
        libegl-dev libgl1 fonts-noto-core fonts-noto-cjk fontconfig \
@@ -21,7 +23,7 @@ RUN apt-get update \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin renderer
 # No TeX Live, model downloads, Chromium, Python/OpenGL renderer, or movie encode.
 WORKDIR /app
-COPY agent_service/__init__.py agent_service/contracts.py /app/agent_service/
+COPY agent_service/__init__.py agent_service/contracts.py agent_service/manim_resource_contract.py /app/agent_service/
 COPY video_workbench/__init__.py video_workbench/manim_resource.py \
      video_workbench/manim_resource_worker.py /app/video_workbench/
 COPY video_workbench/motion_renderer/vendor/manim-community.LICENSE.txt /opt/licenses/manim-community.txt
