@@ -54,5 +54,3 @@ def validate_request(value):
         and type(value['transparent']) is bool and value['manim_version'] == MANIM_VERSION,
         'manim_resource_runtime_invalid')
     return deepcopy(value)
-
-

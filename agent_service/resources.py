@@ -127,6 +127,11 @@ def measured_package(config, policy, control_root):
         root = FILM_BUNDLE_ROOT
         mandatory = {'manifest.json', *BUNDLE_FILES}
         verified_bundle(film=True)
+    elif policy.name == 'video.animation-manim-recipe.v1':
+        from .profiles.video_animation_manim_recipe import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
     elif policy.name == 'video.animation-film-module.v1':
         from .profiles.video_animation_film_module import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
         root = BUNDLE_ROOT

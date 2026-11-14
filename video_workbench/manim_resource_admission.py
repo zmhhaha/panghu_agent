@@ -11,7 +11,7 @@ def capability_status():
         status='prepared_not_admitted', enabled=False,
         output=dict(format='png-rgba-sequence', fps=FPS,
             max_frames=MAX_FRAMES, max_bytes=MAX_RESOURCE_BYTES, max_decoded_bytes=MAX_DECODED_BYTES),
-        requires=['separate_recipe_author_contract', 'isolated_cairo_runtime_identity',
+        requires=['recipe_author_profile_admission', 'isolated_cairo_runtime_identity',
             'stop_proof_before_resource_collection', 'generated_asset_transport',
             'whole_project_seek_and_render_proof', 'developer_skill_publication'],
         latex_available=False, independent_video_concatenation=False)

@@ -1,0 +1,24 @@
+{
+  "bundle_revision": "animation-manim-recipe-v1",
+  "automatic_updates": false,
+  "upstream_content_vendored": false,
+  "license": "MIT",
+  "local_files": [
+    {
+      "path": "CONTRACT.md",
+      "sha256": "1933cd43cd786a47edc7469e168d26923b36f140f5a8dbab5c1bfd2bcca7d8f4"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "3c008d7b96c96dffe712c6c06b5fa410c6e34a705400078730007ceafdab10a5"
+    },
+    {
+      "path": "author-procedure/SKILL.md",
+      "sha256": "ce54e1bc8106900c32f50a63888c5ba750d06a3ed5f5a8ea24d02235bd82c74d"
+    },
+    {
+      "path": "foundation/SKILL.md",
+      "sha256": "f35a422b9a928aebccdeb7dc2317eead047433a09d45f4c44983d064b5f8c93d"
+    }
+  ]
+}

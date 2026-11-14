@@ -115,3 +115,39 @@ manifest bytes can then enter an explicitly versioned generated-asset envelope.
 Local validation covers the Python resource and stop-tree contracts, worker
 file-writer stand-ins and JS image/decode scheduling stand-ins. Those tests do
 not establish actual Cairo rendering, ARM compatibility or browser aesthetics.
+
+## Source-only recipe and bounded handoff now implemented
+
+`video.animation-manim-recipe.v1` is a separately registered implementation
+with its own fixed resource bundle. It preserves the source-only tools
+read_inputs/skill_search/skill_read/write and host-observed Skill receipts.
+`ManimRecipeAgentGateway` reuses the existing authenticated general Agent
+transport, exact input upload, uncertain-admission lookup and stopped artifact
+collection. Registering the implementation does not enable a route or pool.
+
+`manim_resource_job.py` freezes recipe input/result/StopProof digests and
+owner/effect/experiment/operation scope into a fixed no-network Cairo Job plan.
+It uses one precise readonly PVC input subPath and one output subPath, no shell
+or caller command, no automatic retry and the existing isolated process budget.
+The execution controller must still persist intent, reconcile the same named
+Job, observe native image identity and delete Job/Pods before collecting a
+terminal stopped resource; the pure manifest generator performs none of that.
+
+`manim_generated_assets.py` freezes and decodes exact RGBA resources after typed
+StopEvidence. Its transport binds owner, effect, experiment, attempt, original
+recipe, resource manifest and runtime image. This is a separate generated
+resource envelope, not an extension to the fixed runtime-library allowlist.
+The aggregate merge rechecks 128 MiB decoded and 48 MiB film resource limits.
+
+The initial consumer recipe profile limits resources to 60 frames: unchanged
+film-module-v1 permits at most 64 used assets, leaving manifest/adapter/runtime
+slots. Extra fonts/libraries reduce the remaining slots and are checked again
+at merge. The broader resource format's 240-frame limit does not imply a
+240-frame resource fits every consumer contract.
+
+For the method lab's current synchronous seek contract,
+`manim_method_frames.mjs` provides separate bounded initialization: two parallel
+decodes, at most 60 frames and 128 MiB RGBA, a ready promise, synchronous
+seekFrame after readiness, and explicit disposal even during loading. Generated
+asset custody, method renderer v5, commission persistence/cancellation and actual
+effect-library integration remain required before enabling this capability.

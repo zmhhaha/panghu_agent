@@ -92,6 +92,14 @@ objects to another DOM/Canvas/Three.js module; design cross-boundary continuity
 explicitly. It also has resolution and storage costs. Prefer native SVG, Canvas
 or Three.js when browser-editable objects or a long cheap animation are better.
 
+For an independently admitted synchronous method-lab host, use the separate
+prepareManimMethodFrames helper instead of async per-frame loading. It is
+limited to 60 frames and the same 128 MiB total RGBA budget. Await its ready
+promise before exposing the host's seek callback; seekFrame then changes only
+visibility of already decoded images. Decode concurrency is two. Dispose
+releases every image and promptly rejects unfinished preparation. This helper
+does not itself admit generated resources to the method renderer.
+
 ## Evaluate and publish
 
 Compare at least a beginning, motion extremum and final state, then observe the
