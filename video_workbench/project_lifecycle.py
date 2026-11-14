@@ -10,7 +10,7 @@ from agent_service.contracts import ServiceError
 CHILD_TERMINAL = frozenset({'completed', 'failed', 'needs_input', 'cancelled', 'timed_out'})
 JOURNALS = ('operations', 'audio_operations', 'motion_operations',
             'explanation_operations', 'joint_plan_operations', 'video_renders',
-            'video_batches', 'production_runs')
+            'video_batches', 'production_runs', 'film_module_operations', 'film_render_operations')
 
 
 class ProjectLifecycleMixin:

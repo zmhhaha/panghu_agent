@@ -15,26 +15,42 @@
 
 整片工程、browser bundle 与 mixer 的项目摘要、24fps 时钟及有理数音频排程相互一致，本次未发现需要重建这些合同的严重冲突。
 
-## 正式生产尚未接通
+## 正式生产接入状态
 
-当前新制作仍走 `ProductionRunStore._step()` → 逐镜 `motion.start_candidate()` → `Production.start_candidate_render()` → creative snapshot v4 → `MixedMotionRenderer`／`KubeSceneRenderer` 逐镜编码与 MP4 拼接。它接收的是单镜源码及交接上下文，不能记为统一整片工程已交付。
+已实现显式的新路径：`ProductionRunStore(..., film_creation=...)` → 全部原 WAV → 顺序 `FilmCreationWorkflow.start_module()` → `assemble_film_production()` → 一个整片 `RemoteFilmRenderer`。模块、整片快照及媒体由现有业务 SQLite 的独立子任务表保存；父任务只持有版本引用与摘要。应用已接入同一播放器、下载和取消入口。新配置不可用时不回退旧渲染；原历史任务仍按其冻结合同读取。当前部署仍是旧路径，尚不能记为统一整片工程已向用户交付。
 
 | 接入缺口 | 需要落实的最小边界 |
 | --- | --- |
 | 全帧捕获与最终编码 | 离线入口已实现并以目标 ARM 环境同一三引擎工程完成 72 帧／3 秒完整导出，实际 MP4 另行探测及全解码通过；当前是技术夹具与只读源码，不是正式任务或发布准入，详见[导出记录](hyperframes-film-offline-export.md)。 |
 | 整片执行快照与运输 | 新多文件快照、PVC staging、固定 CLI、`KubeFilmRenderer`、现有 journal schema 分流及 `RemoteFilmRenderer` 已实现。固定镜像的真实 Job、结果恢复、原声与取消／清理已单独验证；新执行 API 尚未部署启用，业务仍调用旧 motion snapshot。没有扩大旧七文件／ConfigMap 合同。 |
 | Agent 新产物合同 | 新 `VideoAnimationFilmModuleProfile` 输出真实可组合模块、状态与可选转场，复用宿主 Skill 工具证据；网关、资源及禁用候选目录已实现，尚未完成新角色真实产物准入。旧 creative v5 保持原意。 |
-| 一个工程的应用组装 | `assemble_film_production()` 核对确切模块顺序、前任、宿主目标、录音及 runtime 后产生一个工程／snapshot；这是可调用底座，尚未由 `ProductionRunStore` 调度。 |
-| 业务与审阅 | 新编排组装一个工程并提交整片执行；实际完整媒体进入独立审阅、默认最多一轮修订与交付。静帧审阅不代替整片运动或声音观察，内部完成不写成人工认可。 |
+| 一个工程的应用组装 | `FilmCreationStore` 与 `ProductionRunStore` 已接线；原 WAV、确切模块顺序／前任、宿主目标及 runtime 在一个 snapshot 中验证。真实正式运行仍待新角色和执行 API 发布后补验。 |
+| 业务与审阅 | 持久编排、历史媒体读取、取消、项目删除保护与页面模块状态已实现并由本地组合测试覆盖。真实完整媒体的独立整片审阅、一次修订和交付仍待完成。静帧审阅不代替整片运动或声音观察，内部完成不写成人工认可。 |
 
 ## 推荐次序与最小真实交付闭环
 
 1. 先收敛当前 H.2 上线及 H.3 浏览器宿主／音轨基础的错误回归和确切发布身份。
 2. 离线整片导出入口已按以下闭环完成技术验证：已冻结工程 → 一个 HyperFrames 核心与全局时钟 → 全帧捕获 → 一次编码 → 同包原声混合 → 一个可播放 MP4。覆盖三个场景及其边界，核验完整帧数、48kHz PCM 样本数、音画零起点、完整解码、资源与清理。交付回执绑定项目、bundle、原 WAV、混音回执和最终媒体摘要；AAC 编码填充按实际探测单独记录，不以缩短旁白掩盖差异。技术纯音／图形不替代真实 Agent 与讲解内容。
-3. 新模块合同、组装、HTTP 客户端与执行 journal 接线已实现，普通镜像及固定 Job 的环境补验已完成。接下来完成新 Agent 模块真实产物准入、新执行 API 配置／发布及 `ProductionRunStore` 制作路径；RWO PVC 明确同节点约束，配置普通文件以只读 subPath 挂载。未准入时不直接替换正式生产。
+3. 新模块合同、业务持久编排、组装、HTTP 客户端与执行 journal 接线已实现，普通镜像及固定 Job 的环境补验已完成。接下来完成新 Agent 模块真实产物准入、新执行 API 配置／发布及实际工作台成片；RWO PVC 明确同节点约束，配置普通文件以只读 subPath 挂载。未准入时不直接替换正式生产。
 4. 用真实新内容跑通策划确认、真实录音、Skill 按需读取、模块创作、统一工程导出、独立整片审阅与一次修订；随后做网页播放、版本恢复和下载检查。技术成功、实际观察、开发者认可、Skill 发布和用户采用分别留证。
 
 H.4 复用已有 Skill 协议，不另建一套包或发布系统。补齐新的工程／引擎基础 Skill 内容及验证证据即可；2.3 继续负责真实认可发布，2.4 负责主动发现／读取。当前目录主要按引擎兼容性过滤，新创作者仍须收到明确的新生命周期要求，不能把旧 `seek(t)` 用法误认成新模块合同。
+
+## 工作台配置
+
+新路径使用独立的 `VIDEO_FILM_MODULE_AGENT_URL`、`VIDEO_FILM_MODULE_AGENT_TOKEN_FILE` 和 `VIDEO_FILM_MODULE_PROFILE_REVISION=1`，不借用旧作者凭据或角色准入。`VIDEO_FILM_RENDER_URL` 与 `VIDEO_FILM_RENDER_TOKEN_FILE` 明确指定整片执行 API；业务 Pod 不获得 Kubernetes 凭据。
+
+`VIDEO_FILM_PRODUCTION_RELEASE_FILE` 为普通、只读、绝对路径的 JSON 文件，schema 为 `video.film-production-release.v1`，精确包含 `image`、`runtime_fingerprint`、`runtime_capabilities`、`trusted_host_sha256`、`execution_admission`。最后一项由运维依据真实 Job／媒体／取消证据提供，业务代码不自动授予准入。`runtime_capabilities.runtime_identity.host_sha256` 绑定六个生命周期宿主摘要 map 的 canonical digest；不借用旧单镜宿主身份。工作台镜像自带六个宿主文件须与配置逐一匹配。资源从 `VIDEO_FILM_PRODUCTION_ASSET_DIRECTORY` 的普通文件按固定名称与摘要读取，不接受请求指定的宿主或外部脚本。
+
+`VIDEO_FILM_PRODUCTION_ENABLED=1` 开启新任务；配置存在但关闭时保留历史查询、已提交任务恢复与取消。新准入前同时复核 Agent profile 和执行 API 公布的确切 image／runtime／宿主／技术准入摘要，失败时不开始配音。当前完整导出上限为 60 秒，计划早检与实测录音后检查分别执行；应用重启只中断本地等待，保留原远程任务身份，不伪造用户取消。
+
+即使移除新准入的 release 文件，应用也会检测已有整片子任务或新模式父任务，构造只读／排空模式。历史媒体继续经过原 owner 和回收站校验；已提交任务可用保留的专属连接按自身冻结配置恢复，缺少连接时维持待确认，不冒充停止。没有当前 release 时禁止新子任务，不借用旧角色／渲染器。后台模块轮询和整片渲染分别使用一个有界 worker，整片编码等待不阻塞其他项目动画任务的取消。
+
+## 真实新模块候选
+
+2026-11-14，精确源码 `fe215a5cee719f6d9e0e895a0de5bb6bce3caf82` 普通构建 control／Pi 镜像；候选仅使用 `agent-service-pi:latest@sha256:ed08fd7abbb6f58bcaa2383bce123790794830ba30eec0e5cf2d4414c579eff5`。在独立禁用角色下完成一次原创 Canvas 模块，6 次真实模型请求全部返回 200，真实 `skill_search` 和根 `SKILL.md` 读取、双 artifact、原请求绑定及 worker 停止证据均通过。proxy／worker 均零重启、正常退出，原候选资源和临时凭据已清理，未创建公共路由准入或方法发布。
+
+原始模块包文件 SHA 为 `8eab1256674c4f8bb19a8dbb56bc7d3f82c979b950781265df7396f61c066e4b`，结果 SHA 为 `7eb5bb5434698d041402039f7c10e3df6e6b616ba63fe03f793a139f053e27c8`，Canvas 源码 `modules/technical_canvas_flow_r1/flow.mjs` 的 SHA 为 `ae7facda0dd1ab2ab61ab6b14153c003fcff916e22348d15222bab7d52a4baa6`。原始证据在既定运维目录 `candidate-film-module-r1/candidate-output`，包含请求、实际工具事件、响应 ledger、Pod 与清理回执。技术 WAV 复用先前 3 秒录音时钟，operator-only Skill 是原创技术夹具；没有新增 TTS，不声称实际讲解、审美／迁移认可或业务 Skill 已发布。此候选预算没有渲染，后续整片渲染单独记账与核验。
 
 ## 音频与性能边界
 

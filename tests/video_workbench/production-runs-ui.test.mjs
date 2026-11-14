@@ -36,6 +36,24 @@ function harness() {
 }
 const posts = h => h.state.calls.filter(row=>row.options.method==='POST');
 
+test('whole-film modules enable draft review without pretending to be old scene versions', async () => {
+  const item = { scene_id:'p1-scene', audio_version_id:'recording', module_version_id:'module',
+    module_operation_id:'module-task', candidate_current:true };
+  const value = run({ renderer_mode:'hyperframes-film', current:true, status:'completed',
+    phase:'completed', draft_render_id:'one-project-render', items:[item] });
+  assert.equal(productionRunDraftReady(value), true);
+  assert.equal(productionRunDraftReady({ ...value, renderer_mode:undefined }), false);
+  assert.equal(productionRunDraftReady({ ...value, items:[{ ...item, module_version_id:null, motion_version_id:'old-scene' }] }), false);
+  assert.equal(productionRunActualSeconds(value, [{ id:'one-project-render', status:'completed',
+    selection:'draft_only', content_state:'current', actual_duration_seconds:3.125 }]), 3.125);
+  const h=harness(); h.state.data={runs:[value]}; await h.load();
+  assert.match(h.$('production-run-items').textContent,/动画候选已生成/);
+  assert.equal(h.$('production-run-video').src,'/api/renders/one-project-render/video');
+  assert.equal(posts(h).length,0);
+  h.state.data={runs:[{ ...value, status:'running', phase:'module' }]}; await h.load();
+  assert.match(h.$('production-run-status').textContent,/按完整讲解制作连续动画/);
+});
+
 test('whole-video request requires adopted plan and saved inputs, sends no per-scene approvals',()=>{
   const p=project(), before=structuredClone(p);
   assert.deepEqual(createProductionRunRequest(p),{path:'/api/projects/p1/production-runs',body:{expected_revision:4,joint_plan_version_id:'approved-plan'}});

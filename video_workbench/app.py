@@ -48,6 +48,7 @@ from .batch_store import BatchStore
 from .batch_workflow import BatchWorkflow
 from .production_run_store import ProductionRunStore
 from .production_run_workflow import ProductionRunWorkflow
+from .film_production_config import FilmModuleAgentSettings, FilmProductionSettings, execution_readiness
 
 WEB = Path(__file__).parent / 'web'
 PREVIEW_CSP = ("sandbox; default-src 'none'; script-src 'none'; "
@@ -57,6 +58,12 @@ UI_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'sel
           "media-src 'self'; frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 
 MESSAGES = {
+    'film_creation_unavailable': '整片动画制作暂未就绪，尚未开始新的制作任务。',
+    'hyperframes_film_not_admitted': '整片渲染服务暂未就绪，尚未开始新的制作任务。',
+    'production_run_film_unavailable': '整片制作依赖暂未就绪，尚未开始新的制作任务。',
+    'production_run_film_plan_too_long': '当前整片制作支持最长 60 秒，请先将制作方案控制在一分钟内。尚未开始配音。',
+    'production_run_film_too_long': '实际录音与留白超过当前 60 秒制作上限，请缩短内容后再制作。',
+    'film_creation_duration_budget': '实际录音与留白超过当前 60 秒制作上限，请缩短内容后再制作。',
     'creative_skills_unavailable': '暂时无法读取已发布的动画 Skill 目录，尚未提交制作任务。',
     'creative_film_context_required': '请从整片草稿制作入口生成动画，以绑定完整内容和真实配音时钟。',
     'skill_production_profile_unavailable': '通用 Agent 的动画 Skill 制作能力尚未完成独立准入或配置，暂不能开始新的制作任务。',
@@ -473,7 +480,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                process_gateway=None, process_enabled=None, creative_gateway=None, creative_enabled=None,
                method_adapter=None, creative_capabilities=None, joint_plan_gateway=None,
                joint_plan_enabled=None, production_runs_enabled=None,
-               skill_gateway=None, skill_adapter=None, skill_production=True):
+               skill_gateway=None, skill_adapter=None, skill_production=True, film_creation=None):
     if type(skill_production) is not bool:
         raise ValueError('An explicit boolean Skill production mode is required')
     explanation_settings = ExplanationSettings.from_env()
@@ -506,6 +513,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     owned_production_client = None
     owned_skill_client = None
     owned_joint_plan_client = None
+    owned_film_client = None
+    owned_film_renderer = None
     owned_speech_client = None
     if gateway is None:
         settings = AgentSettings.from_env()
@@ -608,12 +617,55 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         motion_enabled=motion_gate, runtime_fingerprint=runtime, continuity_store=continuity_store)
     batch_store = BatchStore(store, motion_store, production)
     batch_workflow = BatchWorkflow(batch_store, enabled=motion_gate)
-    production_run_store = ProductionRunStore(store, joint_plan_store, motion_store, production)
+    if film_creation is None:
+        film_settings = FilmProductionSettings.from_env()
+        with store.transaction() as db:
+            film_tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            film_history = any(db.execute('SELECT 1 FROM ' + table + ' LIMIT 1').fetchone()
+                for table in ('film_module_operations', 'film_render_operations') if table in film_tables)
+            if not film_history:
+                film_history = any(json.loads(row[0]).get('renderer_mode') == 'hyperframes-film'
+                    for row in db.execute('SELECT document FROM production_runs')) if 'production_runs' in film_tables else False
+        if film_settings is not None or film_history:
+            from .film_creation_store import FilmCreationStore
+            from .film_creation_workflow import FilmCreationWorkflow
+            from .film_module_gateway import FilmModuleAgentGateway
+            from .film_render_adapter import RemoteFilmRenderer
+            from .motion_render_adapter import read_secret
+            module_settings = FilmModuleAgentSettings.from_env()
+            module_gateway = None
+            if module_settings is not None and skill_adapter is not None:
+                owned_film_client = AgentClient(module_settings.base_url, module_settings.token)
+                module_gateway = FilmModuleAgentGateway(owned_film_client, skill_adapter, module_settings.revision)
+            film_url = os.environ.get('VIDEO_FILM_RENDER_URL', '')
+            film_token = os.environ.get('VIDEO_FILM_RENDER_TOKEN_FILE', '')
+            if bool(film_url) != bool(film_token):
+                raise ValueError('Configure the dedicated whole-film renderer origin and credential together')
+            if film_url:
+                owned_film_renderer = RemoteFilmRenderer(film_url, read_secret(film_token))
+            if film_settings is None:
+                creation_store = FilmCreationStore.for_recovery(store)
+            else:
+                creation_store = FilmCreationStore(store,
+                    runtime_capabilities=film_settings.runtime_capabilities,
+                    runtime_fingerprint=film_settings.runtime_fingerprint,
+                    host_files=film_settings.host_files, trusted_host_sha256=film_settings.trusted_host_sha256,
+                    image=film_settings.image, assets=film_settings.assets, enabled=film_settings.enabled)
+            film_creation = FilmCreationWorkflow(creation_store, module_gateway, skill_adapter,
+                owned_film_renderer, enabled=film_settings.enabled if film_settings is not None else False,
+                render_readiness=lambda: execution_readiness(owned_film_renderer, film_settings)
+                    if film_settings is not None else {'available': False})
+    production_run_store = ProductionRunStore(store, joint_plan_store, motion_store, production,
+                                              film_creation=film_creation)
     author_configured = ((skill_gateway is not None and skill_adapter is not None) if skill_production
                          else (creative_gateway is not None and method_adapter is not None))
     run_dependencies = (joint_gate and motion_gate and speech_client is not None and creative_gate
         and author_configured
         and motion_renderer is not None and runtime is not None)
+    if film_creation is not None:
+        # A configured whole-film path never falls back to per-scene rendering.
+        # Fresh exact release/profile preflight belongs to start(), before TTS.
+        run_dependencies = joint_gate and speech_client is not None and film_creation.enabled
     if production_runs_enabled is not None and type(production_runs_enabled) is not bool:
         raise ValueError('An explicit boolean production run feature gate is required')
     production_run_workflow = ProductionRunWorkflow(production_run_store,
@@ -629,9 +681,13 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
             audio_workflow.start()
             production.start()
             batch_workflow.start()
+            if film_creation is not None:
+                film_creation.start()
             production_run_workflow.start()
         yield
         production_run_workflow.stop()
+        if film_creation is not None:
+            film_creation.stop()
         batch_workflow.stop()
         production.stop()
         audio_workflow.stop()
@@ -649,6 +705,10 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
             owned_skill_client.close()
         if owned_joint_plan_client:
             owned_joint_plan_client.close()
+        if owned_film_client:
+            owned_film_client.close()
+        if owned_film_renderer is not None:
+            owned_film_renderer.close()
         if owned_speech_client:
             owned_speech_client.close()
 
@@ -661,6 +721,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     app.state.continuity_store = continuity_store
     app.state.batch_store, app.state.batch_workflow = batch_store, batch_workflow
     app.state.production_run_store, app.state.production_run_workflow = production_run_store, production_run_workflow
+    app.state.film_creation = film_creation
     # Proxy mode must be bound behind an authenticated, header-scrubbing proxy.
     app.state.trusted_hosts = set(trusted_hosts or {'127.0.0.1', 'localhost', '[::1]'})
 
@@ -751,6 +812,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     explanation_configured=enabled and explanation_gateway is not None,
                     joint_plan_configured=joint_gate and joint_plan_gateway is not None,
                     production_runs_enabled=production_run_workflow.enabled,
+                    production_run_max_seconds=60 if film_creation is not None else None,
                     motion_enabled=motion_gate, motion_configured=motion_gate and motion_gateway is not None,
                     process_enabled=process_gate, process_configured=process_gate and process_gateway is not None,
                     creative_enabled=creative_gate, creative_configured=creative_gate and author_configured,
@@ -1075,15 +1137,29 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
 
     @app.get('/api/projects/{project_id}/renders')
     def renders(project_id: str, owner=Depends(identity)):
-        return {'renders': production.renders(owner, project_id)}
+        rows = production.renders(owner, project_id)
+        if film_creation is not None:
+            rows += film_creation.renders(owner, project_id)
+        return {'renders': sorted(rows, key=lambda row: row.get('created_at', 0), reverse=True)}
 
     @app.post('/api/renders/{render_id}/cancel')
     def cancel_render(render_id: str, owner=Depends(mutation)):
-        return production.cancel(owner, render_id)
+        try:
+            return production.cancel(owner, render_id)
+        except ServiceError as error:
+            if error.code != 'not_found' or film_creation is None:
+                raise
+        return film_creation.cancel_render(owner, render_id)
 
     @app.get('/api/renders/{render_id}/video')
     def video(render_id: str, request: Request, owner=Depends(identity)):
-        return media_response(production.video(owner, render_id), request, 'video/mp4', f'video-{render_id}.mp4')
+        try:
+            raw = production.video(owner, render_id)
+        except ServiceError as error:
+            if error.code != 'not_found' or film_creation is None:
+                raise
+            raw = film_creation.video(owner, render_id)
+        return media_response(raw, request, 'video/mp4', f'video-{render_id}.mp4')
 
     @app.get('/api/versions/{version_id}/preview')
     def preview(version_id: str, owner=Depends(identity)):

@@ -25,7 +25,9 @@ CHILD_ACTIVE = frozenset({'queued', 'submitting', 'running', 'cancelling'})
 CHILD_TERMINAL = frozenset({'completed', 'failed', 'needs_input', 'cancelled', 'timed_out'})
 TABLES = {'audio': 'audio_operations', 'motion': 'motion_operations', 'draft': 'video_renders'}
 PUBLIC_ITEM = ('scene_id', 'title', 'audio_operation_id', 'audio_version_id', 'audio_sha256',
-               'audio_seconds', 'motion_operation_id', 'motion_version_id', 'status', 'error')
+               'audio_seconds', 'motion_operation_id', 'motion_version_id', 'status', 'error',
+               'module_operation_id', 'module_version_id', 'module_status', 'module_sha256', 'module_engine')
+FILM_RENDERER = 'hyperframes-film'
 
 
 def require(value, code='invalid_production_run_request', status=422):
@@ -38,8 +40,9 @@ def packed(value):
 
 
 class ProductionRunStore:
-    def __init__(self, store, joint_plan_store, motion_store, production):
+    def __init__(self, store, joint_plan_store, motion_store, production, *, film_creation=None):
         self.store, self.joint, self.motion, self.production = store, joint_plan_store, motion_store, production
+        self.film_creation = film_creation
         with store.transaction() as db:
             db.executescript('''CREATE TABLE IF NOT EXISTS production_runs (
                 id TEXT PRIMARY KEY, owner TEXT NOT NULL, project_id TEXT NOT NULL,
@@ -51,23 +54,69 @@ class ProductionRunStore:
     def public(run, *, current=False):
         result = {key: run.get(key) for key in ('id', 'project_id', 'joint_plan_version_id',
             'request_key', 'status', 'phase', 'voice', 'draft_render_id', 'error', 'blocked_reason', 'draining',
-            'created_at', 'finished_at')}
+            'created_at', 'finished_at', 'renderer_mode', 'draft_render_source')}
+        raw_items = run.get('items') if type(run.get('items')) is list else []
+        frozen = run.get('frozen') if type(run.get('frozen')) is dict else {}
+        frozen_scenes = frozen.get('scenes') if type(frozen.get('scenes')) is list else []
         items = []
-        for item, frozen in zip(run['items'], run['frozen']['scenes']):
+        for item, frozen in zip(raw_items, frozen_scenes):
             seconds = item.get('audio_seconds')
             duration = (math.ceil((seconds + frozen['leading_seconds'] + frozen['trailing_seconds']) * 24) / 24
                         if seconds is not None else None)
             items.append(dict({key: item.get(key) for key in PUBLIC_ITEM}, duration_seconds=duration,
-                              candidate_current=bool(current and item.get('motion_version_id'))))
+                              candidate_current=bool(current and (item.get('motion_version_id')
+                                                     or item.get('module_version_id')))))
         result.update(items=items, current=bool(current),
             duration_seconds=sum(item['duration_seconds'] for item in items)
-                if all(item['duration_seconds'] is not None for item in items) else None,
-            duration_source='measured_recordings_and_frame_quantized_pauses',
+                if items and all(item['duration_seconds'] is not None for item in items) else None,
+            duration_source='measured_recordings_and_frame_quantized_pauses' if items else None,
             review_status='not_reviewed', selection='draft_only',
-            progress=dict(done=sum(bool(item.get('audio_version_id')) + bool(item.get('motion_version_id'))
-                                   for item in run['items']) + int(run['status'] == 'completed'),
-                          total=2 * len(run['items']) + 1))
+            progress=dict(done=sum(bool(item.get('audio_version_id'))
+                                   + bool(item.get('motion_version_id') or item.get('module_version_id'))
+                                   for item in raw_items) + int(run['status'] == 'completed'),
+                          total=2 * len(raw_items) + 1))
         return result
+
+    @staticmethod
+    def _uses_film(run):
+        return run.get('renderer_mode') == FILM_RENDERER
+
+    def _film_service(self):
+        require(self.film_creation is not None, 'production_run_film_unavailable', 503)
+        return self.film_creation
+
+    @staticmethod
+    def _check_film_configuration(value):
+        require(type(value) is dict and value.get('available') is True
+            and value.get('renderer_mode') == FILM_RENDERER
+            and type(value.get('configuration_sha256')) is str
+            and re.fullmatch(r'[0-9a-f]{64}', value['configuration_sha256'])
+            and type(value.get('max_seconds')) in (int, float)
+            and 0 < value['max_seconds'] <= 60 and value.get('fps') == 24,
+            'production_run_film_unavailable', 503)
+        require(len(packed(value).encode()) <= 16384, 'production_run_film_configuration_invalid', 503)
+        return deepcopy(value)
+
+    def _require_film_configuration(self, run):
+        current = self._check_film_configuration(self._film_service().readiness())
+        require(current == run['film_creation_configuration'],
+            'production_run_film_configuration_changed', 409)
+
+    @staticmethod
+    def _module_targets(run_id, count):
+        prefix = run_id.replace('-', '')[:20]
+        return [dict(module_id=f'film-{prefix}-scene-{index:03d}',
+            namespace=f'f{prefix}_scene_{index:03d}', transition_target=None if index == 0 else dict(
+                module_id=f'film-{prefix}-transition-{index:03d}', namespace=f'f{prefix}_transition_{index:03d}'))
+            for index in range(count)]
+
+    def _frozen_module_package(self, run, index):
+        from .creative_film_module_contract import validate_module_package
+        item = run['items'][index]
+        package = validate_module_package(self._film_service().module_package(run['owner'], item['module_version_id']))
+        require(digest(package) == item['module_package_sha256'],
+            'production_run_module_package_changed', 409)
+        return package
 
     @staticmethod
     def _read(db, run_id, owner=None):
@@ -104,12 +153,12 @@ class ProductionRunStore:
         return freeze_production_inputs(self.store, project, film_aware=film_aware)
 
     def _matches(self, run, project, db):
-        head = self.joint._head(db, run['owner'], run['project_id'])
         try:
+            head = self.joint._head(db, run['owner'], run['project_id'])
             return (head['version_id'] == run['joint_plan_version_id']
                 and head['applied_binding_sha256'] == self.joint._binding(project)
                 and digest(self._freeze(project, film_aware=bool(run.get('continuity_schema')))) == run['binding_sha256'])
-        except ServiceError:
+        except (ServiceError, KeyError, TypeError):
             return False
 
     @staticmethod
@@ -170,6 +219,16 @@ class ProductionRunStore:
             and type(request['joint_plan_version_id']) is str and 1 <= len(request['joint_plan_version_id']) <= 100)
         require(type(idem) is str and re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}', idem), 'idempotency_key_required')
         fingerprint = digest(dict(project_id=project_id, request=request))
+        configuration = None
+        if self.film_creation is not None:
+            # The facade authorizes through this same SQLite store and may do
+            # network preflight. Do not hold BEGIN IMMEDIATE while calling it.
+            # Historical idempotent replays do not need fresh admission.
+            with self.store.transaction() as db:
+                replay = db.execute('SELECT 1 FROM production_runs WHERE owner=? AND idem=?', (owner, idem)).fetchone()
+            if replay is None:
+                configuration = self._check_film_configuration(
+                    self.film_creation.freeze_configuration(owner, project_id))
         with self.store.transaction() as db:
             row = db.execute('SELECT request_hash,document FROM production_runs WHERE owner=? AND idem=?',
                              (owner, idem)).fetchone()
@@ -193,7 +252,8 @@ class ProductionRunStore:
                 require(not self._unfinished(json.loads(row[0])), 'production_run_in_progress', 409)
             tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             for table in ('audio_operations', 'motion_operations', 'operations', 'explanation_operations',
-                          'joint_plan_operations', 'video_renders', 'video_batches'):
+                          'joint_plan_operations', 'video_renders', 'video_batches',
+                          'film_module_operations', 'film_render_operations'):
                 if table in tables:
                     for row in db.execute('SELECT document FROM ' + table + ' WHERE project_id=?', (project_id,)):
                         require(json.loads(row[0]).get('status') not in CHILD_ACTIVE | {'blocked'},
@@ -206,6 +266,14 @@ class ProductionRunStore:
                 require(all(type(scene[key]) in (int, float) and math.isfinite(scene[key])
                     and 0 <= scene[key] <= 60 for key in ('leading_seconds', 'trailing_seconds')),
                     'invalid_production_run_timing')
+            if configuration is not None:
+                # This is an explicit plan budget, not a prediction of exact
+                # TTS timing. Recheck the real frame clock after all recordings.
+                planned_seconds = sum(scene['duration_seconds'] for scene in frozen['scenes'])
+                pause_seconds = sum(scene['leading_seconds'] + scene['trailing_seconds']
+                    for scene in frozen['scenes'])
+                require(max(planned_seconds, pause_seconds) <= configuration['max_seconds'],
+                    'production_run_film_plan_too_long', 422)
             run = dict(id=str(uuid4()), owner=owner, project_id=project_id, request_key=idem,
                 joint_plan_version_id=head['version_id'], voice=frozen['provider']['voice'],
                 binding_sha256=digest(frozen), frozen=frozen, status='queued', phase='audio',
@@ -216,6 +284,13 @@ class ProductionRunStore:
                     audio_operation_id=None, audio_version_id=None, audio_sha256=None,
                     audio_seconds=None, motion_operation_id=None, motion_version_id=None)
                     for scene in frozen['scenes']])
+            if configuration is not None:
+                run.update(renderer_mode=FILM_RENDERER, draft_render_source=FILM_RENDERER,
+                    film_creation_configuration=configuration,
+                    module_targets=self._module_targets(run['id'], len(run['items'])))
+                for item in run['items']:
+                    item.update(module_operation_id=None, module_version_id=None, module_status='queued',
+                        module_sha256=None, module_package_sha256=None, module_engine=None)
             raw = packed(run)
             require(len(raw.encode()) <= 512 * 1024, 'production_run_storage_limit', 413)
             # Reserve the full-film copy before paying for recordings. Child
@@ -239,10 +314,31 @@ class ProductionRunStore:
                     run['cancel_requested'] = True
                     run['draining'] = True
                     self._write(db, run)
-            self._step(run, admit=False)
+            if run['status'] in ACTIVE or run.get('draining'):
+                self._step(run, admit=False)
             return self.get(owner, run_id)
 
     def _lookup(self, run, intent):
+        if self._uses_film(run) and intent['phase'] in {'module', 'draft'}:
+            creation = self._film_service()
+            lookup = creation.module_by_request_key if intent['phase'] == 'module' else creation.render_by_request_key
+            try:
+                child = lookup(run['owner'], intent['key'])
+            except ServiceError as error:
+                if error.code == 'not_found' and error.status == 404:
+                    return None
+                raise
+            if child is None:
+                return None
+            require(child.get('project_id') == run['project_id']
+                and child.get('request_key') == intent['key']
+                and child.get('request_sha256') == intent['request_sha256']
+                and child.get('configuration_sha256') == run['film_creation_configuration']['configuration_sha256']
+                and child.get('film_sha256') == run['film_sha256']
+                and (intent['phase'] == 'draft'
+                     or child.get('scene_id') == run['items'][intent['index']]['scene_id']),
+                'production_run_child_identity_mismatch', 409)
+            return child
         with self.store.transaction() as db:
             row = db.execute('SELECT document FROM ' + TABLES[intent['phase']] + ' WHERE owner=? AND idem=?',
                 (run['owner'], intent['key'])).fetchone()
@@ -269,9 +365,15 @@ class ProductionRunStore:
         else:
             item[phase + '_operation_id'] = child['id']
         status, error = child['status'], child.get('error')
+        if phase == 'module':
+            item['module_status'] = status
         uncertain = ('uncertain' in (error or '') or 'unconfirmed' in (error or '')
             or phase == 'audio' and status in CHILD_TERMINAL - {'completed'}
-                and child.get('submit_attempted') and child.get('upstream_stop_confirmed') is not True)
+                and child.get('submit_attempted') and child.get('upstream_stop_confirmed') is not True
+            or self._uses_film(run) and phase in {'module', 'draft'}
+                and status in CHILD_TERMINAL - {'completed'} and child.get('stop_proven') is not True)
+        if self._uses_film(run) and phase in {'module', 'draft'} and child.get('stop_proven') is True:
+            uncertain = False
         intent['active'] = status in CHILD_ACTIVE
         if phase != 'audio' and intent['active']:
             # Agent/render workflows reconcile their original remote identity.
@@ -303,6 +405,8 @@ class ProductionRunStore:
         if run['cancel_requested'] or run['status'] not in ACTIVE:
             return
         if phase == 'draft':
+            if self._uses_film(run):
+                self._validate_film_draft(run, child)
             self._finish(run, 'completed')
             run['phase'] = 'completed'
         elif phase == 'audio':
@@ -322,6 +426,8 @@ class ProductionRunStore:
                     'motion_scene_duration_exceeded', 422)
             item.update(audio_version_id=version_id, audio_sha256=checksum,
                         audio_seconds=info.duration_seconds, status='queued', error=None)
+        elif phase == 'module':
+            self._sync_module(run, intent, child)
         else:
             version_id = child.get('version_id')
             require(version_id, 'production_run_child_no_result', 409)
@@ -335,6 +441,53 @@ class ProductionRunStore:
                         'production_run_continuity_binding_mismatch', 409)
             item.update(motion_version_id=version_id, status='completed', error=None)
 
+    def _sync_module(self, run, intent, child):
+        from .creative_film_module_contract import validate_module_package, predecessor_from_package
+        from .hyperframes_film_project import module_identity
+        index = intent['index']
+        item = run['items'][index]
+        version_id = child.get('version_id')
+        require(version_id, 'production_run_child_no_result', 409)
+        if item.get('module_version_id'):
+            require(item['module_version_id'] == version_id
+                and item['module_input_sha256'] == child.get('input_sha256'),
+                'production_run_module_package_changed', 409)
+            return
+        package = validate_module_package(self._film_service().module_package(run['owner'], version_id))
+        document, module = package['input_document'], package['result']['module']
+        context = document['film_context']
+        predecessor = None if index == 0 else predecessor_from_package(self._frozen_module_package(run, index - 1))
+        require(context['film'] == run['film'] and context['film_sha256'] == run['film_sha256']
+            and context['current_scene_index'] == index and context['predecessor'] == predecessor
+            and document['target'] == run['module_targets'][index]
+            and document['scene']['scene_id'] == item['scene_id']
+            and document['scene']['audio_sha256'] == item['audio_sha256']
+            and child.get('input_sha256') == package['input_sha256'],
+            'production_run_module_binding_mismatch', 409)
+        checksum = digest(package)
+        item.update(module_version_id=version_id, module_sha256=module_identity(module),
+            module_package_sha256=checksum, module_input_sha256=package['input_sha256'],
+            module_engine=module['engine'], module_status='completed',
+            status='completed', error=None)
+
+    @staticmethod
+    def _validate_film_draft(run, child):
+        metadata = child.get('result')
+        require(type(metadata) is dict, 'production_run_film_result_invalid', 409)
+        export = metadata.get('film_export')
+        frames = round(run['film']['total_seconds'] * 24)
+        require(metadata.get('visual_mode') == FILM_RENDERER and metadata.get('quality') == 'draft'
+            and metadata.get('subtitles') is False and metadata.get('fps') == 24
+            and metadata.get('audio_sample_rate') == 48000 and metadata.get('audio_channels') == 2
+            and metadata.get('snapshot_sha256') == child.get('snapshot_sha256')
+            and type(child.get('snapshot_sha256')) is str
+            and re.fullmatch(r'[0-9a-f]{64}', child['snapshot_sha256'])
+            and type(export) is dict and export.get('film_sha256') == run['film_sha256']
+            and export.get('concatenated_scene_videos') is False
+            and export.get('clock') == dict(fps=24, frame_count=frames, sample_rate=48000, sample_count=frames * 2000),
+            'production_run_film_result_invalid', 409)
+        run['render_snapshot_sha256'] = child['snapshot_sha256']
+
     def _stop(self, run):
         pending = False
         for intent in run['intents'].values():
@@ -342,8 +495,12 @@ class ProductionRunStore:
             if child is None:
                 continue
             if child['status'] in CHILD_ACTIVE:
-                cancel = {'audio': self.store.cancel_audio, 'motion': self.motion.cancel,
-                          'draft': self.production.cancel}[intent['phase']]
+                if self._uses_film(run) and intent['phase'] in {'module', 'draft'}:
+                    creation = self._film_service()
+                    cancel = creation.cancel_module if intent['phase'] == 'module' else creation.cancel_render
+                else:
+                    cancel = {'audio': self.store.cancel_audio, 'motion': self.motion.cancel,
+                              'draft': self.production.cancel}[intent['phase']]
                 cancel(run['owner'], child['id'])
                 child = self._lookup(run, intent)
             self._sync(run, intent, child)
@@ -378,6 +535,9 @@ class ProductionRunStore:
                 self._sync(run, intent, child)
         if run['status'] not in ACTIVE or any(i.get('active') for i in run['intents'].values()):
             self._save(run)
+            return
+        if self._uses_film(run):
+            self._step_film(run, project, admit=admit)
             return
         if all(item['audio_version_id'] for item in run['items']):
             total = sum(item['audio_seconds'] + frozen['leading_seconds'] + frozen['trailing_seconds']
@@ -433,6 +593,77 @@ class ProductionRunStore:
         else:
             self.production.start_candidate_render(run['owner'], run['project_id'], request, intent['key'])
         self._sync(run, intent, self._lookup(run, intent))
+        self._save(run)
+
+    def _film_child_request(self, run, phase, index, revision):
+        configuration_sha256 = run['film_creation_configuration']['configuration_sha256']
+        if phase == 'audio':
+            return dict(expected_revision=revision)
+        if phase == 'module':
+            if index:
+                self._frozen_module_package(run, index - 1)
+            return dict(expected_revision=revision, film=deepcopy(run['film']), film_sha256=run['film_sha256'],
+                current_scene_index=index,
+                predecessor_version_id=None if index == 0 else run['items'][index - 1]['module_version_id'],
+                target=deepcopy(run['module_targets'][index]), instruction='',
+                configuration_sha256=configuration_sha256)
+        for module_index in range(len(run['items'])):
+            self._frozen_module_package(run, module_index)
+        return dict(expected_revision=revision, film=deepcopy(run['film']), film_sha256=run['film_sha256'],
+            module_version_ids=[item['module_version_id'] for item in run['items']],
+            module_targets=deepcopy(run['module_targets']), production_run_id=run['id'], timeout_seconds=600,
+            configuration_sha256=configuration_sha256)
+
+    def _step_film(self, run, project, *, admit):
+        """New runs author native modules and submit exactly one full project.
+
+        The journal keeps only stable child references and request hashes; it
+        never duplicates each large film request, package or render snapshot.
+        """
+        if all(item['audio_version_id'] for item in run['items']):
+            self._freeze_film(run)
+            require(run['film']['total_seconds'] <= run['film_creation_configuration']['max_seconds'],
+                'production_run_film_too_long', 422)
+            run['phase'] = 'module'
+            if all(item['module_version_id'] for item in run['items']):
+                run['phase'] = 'draft'
+        else:
+            run['phase'] = 'audio'
+        if not admit:
+            self._save(run)
+            return
+        phase = run['phase']
+        version_field = 'audio_version_id' if phase == 'audio' else 'module_version_id'
+        index = next((i for i, item in enumerate(run['items']) if not item[version_field]), None)
+        if phase == 'draft':
+            index = None
+        name = phase + (':' + str(index) if index is not None else '')
+        intent = run['intents'].get(name)
+        revision = project['revision'] if intent is None else intent['request']['expected_revision']
+        request = self._film_child_request(run, phase, index, revision)
+        if intent is None:
+            intent = dict(phase=phase, index=index, key='production-run:' + run['id'] + ':' + name,
+                request=dict(expected_revision=revision), request_sha256=digest(request), active=False)
+            run['intents'][name] = intent
+        require(intent['request_sha256'] == digest(request), 'production_run_film_request_changed', 409)
+        child = self._lookup(run, intent)
+        if child is not None:
+            self._sync(run, intent, child)
+            self._save(run)
+            return
+        self._require_film_configuration(run)
+        run.update(status='running', error=None)
+        self._save(run)  # Intent is durable before any local child admission.
+        if phase == 'audio':
+            self.store.start_audio(run['owner'], run['items'][index]['scene_id'], request, intent['key'])
+        elif phase == 'module':
+            self._film_service().start_module(run['owner'], run['project_id'], run['items'][index]['scene_id'],
+                request, intent['key'])
+        else:
+            self._film_service().start_render(run['owner'], run['project_id'], request, intent['key'])
+        child = self._lookup(run, intent)
+        require(child is not None, 'production_run_child_not_visible', 503)
+        self._sync(run, intent, child)
         self._save(run)
 
     def tick(self):

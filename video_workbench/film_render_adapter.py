@@ -111,12 +111,16 @@ class RemoteFilmRenderer(RemoteMotionRenderer):
                 continue
             if state in TERMINAL:
                 if wants_cancel or state == 'cancelled':
-                    raise ServiceError('media_render_cancelled', 409)
+                    error = ServiceError('media_render_cancelled', 409)
+                    error.stop_proven, error.remote_state = True, state
+                    raise error
                 if state != 'completed':
                     code = result.get('error', 'film_execution_failed')
                     if not re.fullmatch(r'[a-z0-9_]{1,100}', str(code)):
                         code = 'film_execution_failed'
-                    raise ServiceError(code, 504 if state == 'timed_out' else 502)
+                    error = ServiceError(code, 504 if state == 'timed_out' else 502)
+                    error.stop_proven, error.remote_state = True, state
+                    raise error
                 break
             if time.monotonic() - started >= self.wait_seconds:
                 raise ServiceError(UNAVAILABLE, 503)
@@ -125,8 +129,12 @@ class RemoteFilmRenderer(RemoteMotionRenderer):
             else:
                 cancel_event.wait(self.poll_seconds)
             response = self._request('GET', path, owner_hash)
-        metadata = validate_film_render_result(result.get('result'), snapshot,
-            runtime_fingerprint=runtime_fingerprint)
+        try:
+            metadata = validate_film_render_result(result.get('result'), snapshot,
+                runtime_fingerprint=runtime_fingerprint)
+        except ServiceError as exc:
+            exc.stop_proven, exc.remote_state = True, 'completed'
+            raise
         destination, checksum, size = root / 'video.mp4', hashlib.sha256(), 0
         try:
             with self.client.stream('GET', self.url + path + '/video', headers={
@@ -143,16 +151,20 @@ class RemoteFilmRenderer(RemoteMotionRenderer):
         except (httpx.HTTPError, OSError):
             destination.unlink(missing_ok=True)
             raise ServiceError(UNAVAILABLE, 503) from None
-        except BaseException:
+        except BaseException as exc:
             destination.unlink(missing_ok=True)
+            if isinstance(exc, ServiceError) and exc.code == 'media_render_cancelled':
+                exc.stop_proven, exc.remote_state = True, 'completed'
             raise
         if size != metadata['bytes'] or not hmac.compare_digest(checksum.hexdigest(), metadata['sha256']):
             destination.unlink(missing_ok=True)
             raise ServiceError('film_render_response_invalid', 502)
         try:
             media._cancel(cancel_event)
-        except BaseException:
+        except BaseException as exc:
             destination.unlink(missing_ok=True)
+            if isinstance(exc, ServiceError) and exc.code == 'media_render_cancelled':
+                exc.stop_proven, exc.remote_state = True, 'completed'
             raise
         return {**metadata, 'path': str(destination)}
 

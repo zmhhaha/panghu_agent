@@ -3,7 +3,9 @@ import { mutationErrorLabel, speechVoiceName } from './model.mjs';
 
 const TERMINAL = new Set(['completed', 'failed', 'cancelled', 'stale']);
 const STATUS = { queued: '等待制作', running: '制作中', completed: '草稿待审阅', failed: '制作未完成', cancelled: '已取消', stale: '项目内容已变化' };
-const PHASE = { audio: '制作全片配音', motion: '按实际录音制作动画', draft: '合成整片有声草稿', completed: '草稿待审阅' };
+const PHASE = { audio: '制作全片配音', motion: '按实际录音制作动画', module: '按完整讲解制作连续动画', draft: '渲染整片有声草稿', completed: '草稿待审阅' };
+const animationReady = (run, item) => run.renderer_mode === 'hyperframes-film'
+  ? Boolean(item.module_version_id) : Boolean(item.motion_version_id);
 const uncertain = error => typeof error === 'string' && /uncertain|unconfirmed/.test(error);
 export const productionRunUnresolved = run => Boolean(run?.id && (!TERMINAL.has(run.status)
   || run.blocked_reason || run.draining === true || uncertain(run.error) || run.items?.some(item => uncertain(item.error))));
@@ -30,7 +32,7 @@ export function productionRunDraftReady(run) {
   return Boolean(run?.status === 'completed' && run.current === true && run.draft_render_id
     && !run.error && !run.blocked_reason && run.draining !== true
     && run.items?.length && run.items.every(item => item.candidate_current === true
-      && item.audio_version_id && item.motion_version_id && !item.error));
+      && item.audio_version_id && animationReady(run, item) && !item.error));
 }
 
 export function productionRunActualSeconds(run, renders = []) {
@@ -43,6 +45,11 @@ export function productionRunActualSeconds(run, renders = []) {
 
 export function productionRunErrorLabel(code) {
   const labels = {
+    production_run_film_plan_too_long: '当前整片制作支持最长 60 秒，请先缩短制作方案。尚未开始配音。',
+    production_run_film_too_long: '实际录音与留白超过当前 60 秒制作上限，已保留录音，请缩短内容后再制作。',
+    production_run_film_configuration_changed: '制作服务版本已变化，已暂停后续制作。已有结果保留，请重新核对。',
+    film_creation_configuration_changed: '制作服务版本已变化，已暂停后续制作。已有结果保留，请重新核对。',
+    production_run_film_unavailable: '整片制作依赖暂未就绪，请稍后再试。',
     production_runs_disabled: '整片草稿制作暂未启用，已有草稿仍可查看。',
     production_run_in_progress: '项目已有整片制作任务，请等待完成或申请取消。',
     production_run_project_busy: '项目还有其他制作任务，请等待结束后再制作整片草稿。',
@@ -114,6 +121,9 @@ export function createProductionRunsPanel({ document, getContext, request, refre
       : running ? '本次制作使用已确认方案和统一音色。可查看进度或申请取消。'
       : value.projectBusy ? '项目中还有其他任务，请等待结束后再制作整片草稿。'
       : '使用已采用的整片方案：先配音，再按实际录音制作动画，最后合成有声草稿。无需逐镜确认。';
+    if (value.enabled && positive(value.settings?.production_run_max_seconds)) {
+      $('production-run-note').textContent += ` 当前单次最多 ${value.settings.production_run_max_seconds} 秒。`;
+    }
     $('production-run-error').hidden = !errors.get(id);
     $('production-run-error').textContent = errors.get(id) ?? '';
     $('production-run-history').hidden = rows.length < 2;
@@ -126,7 +136,7 @@ export function createProductionRunsPanel({ document, getContext, request, refre
     const contentKnown = loaded.get(id) === project.revision && !errors.has(id);
     const steps = Number.isInteger(run.progress?.total) && run.progress.total > 0;
     const progress = steps ? `${run.progress.done}/${run.progress.total} 步`
-      : total ? `${run.items.filter(item => item.motion_version_id).length}/${total} 段动画` : '';
+      : total ? `${run.items.filter(item => animationReady(run, item)).length}/${total} 段动画` : '';
     const status = STATUS[run.status] ?? '状态待确认';
     const labels = [status];
     if (!TERMINAL.has(run.status) && PHASE[run.phase] && PHASE[run.phase] !== status) labels.push(PHASE[run.phase]);
@@ -147,8 +157,9 @@ export function createProductionRunsPanel({ document, getContext, request, refre
       const stopped = TERMINAL.has(run.status) && run.status !== 'completed';
       const seconds = Number.isFinite(item.audio_seconds) && item.audio_seconds > 0 ? `实测录音 ${Math.round(item.audio_seconds * 100) / 100} 秒`
         : stopped ? '配音尚未完成' : item.audio_operation_id ? '正在制作配音' : '配音待制作';
-      const motion = item.motion_version_id ? '动画候选已生成'
-        : stopped ? '动画尚未完成' : item.motion_operation_id ? '正在制作动画' : '动画待制作';
+      const operation = run.renderer_mode === 'hyperframes-film' ? item.module_operation_id : item.motion_operation_id;
+      const motion = animationReady(run, item) ? '动画候选已生成'
+        : stopped ? '动画尚未完成' : operation ? '正在制作动画' : '动画待制作';
       node.append(text('strong', `段落 ${index+1} · ${item.title ?? ''}`), text('span', `${seconds} · ${motion}`));
       if (item.error) node.append(text('p', productionRunErrorLabel(item.error), 'batch-item-error'));
       return node;
