@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {observedTools,matchesAuthoringTool,resourceAuthoringRequest,toolSearchText}
+import {observedTools,matchesAuthoringTool,matchesVisualCreation,renderAuthoringBadges,resourceAuthoringRequest,toolSearchText}
   from '../../video_workbench/animation_lab_web/authoring-tools.mjs';
 
 const sample={engine_status:'rendered',authoring_tools:[{id:'animejs',version:'4.5.0',status:'loaded',
@@ -23,6 +23,21 @@ test('tool names and markup from metadata cannot create a badge',()=>{
     {...sample.authoring_tools[0],id:'<script>'},
     {...sample.authoring_tools[0],id:'manim',status:'requested'}]};
   assert.deepEqual(observedTools(value),[{id:'animejs',label:'Anime.js',version:'4.5.0'}]);
+});
+
+test('observed Manim resources appear in creation cards and filters independently of their HTML host',()=>{
+  const value={...sample,engine:'html-svg',authoring_tools:[...sample.authoring_tools,
+    {id:'manim',version:'0.22.1',status:'loaded',
+      evidence_scope:'render_loaded_dependency_not_visual_application_or_acceptance'}]};
+  const doc={createElement(){return {dataset:{}};}};
+  assert.equal(matchesVisualCreation(value,'manim'),true);
+  assert.equal(matchesVisualCreation(value,'html-svg'),true);
+  assert.equal(matchesAuthoringTool(value,'manim'),false);
+  assert.equal(matchesAuthoringTool(value,'animejs'),true);
+  assert.deepEqual(renderAuthoringBadges(doc,value,'creation').map(row=>row.textContent),['Manim 0.22.1']);
+  assert.deepEqual(renderAuthoringBadges(doc,value).map(row=>row.textContent),['Anime.js 4.5.0']);
+  assert.equal(matchesVisualCreation({engine_status:'rendered',engine:'html-svg',
+    resource_authoring:{kind:'manim'}},'manim'),false);
 });
 
 test('Manim resource request is opt-in and bounded independently of total duration',()=>{

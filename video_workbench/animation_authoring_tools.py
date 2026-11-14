@@ -35,8 +35,8 @@ def _observed_animejs(runtime):
 
 def _observed_manim(runtime):
     """Project only the exact stopped resource observed by the admitted host."""
-    from .manim_resource import MANIM_VERSION, sha
-    from .manim_method_resources import helper_assets
+    from .manim_resource import MANIM_VERSION
+    from .manim_method_resources import HELPERS
 
     resources = runtime.get('generated_resources')
     observation = runtime.get('generated_resource_observation')
@@ -51,6 +51,7 @@ def _observed_manim(runtime):
         return None
     manifest = item.get('manifest')
     assets = item.get('assets_sha256')
+    helpers = item.get('helpers')
     if (item.get('sha256') != digest({key: value for key, value in item.items() if key != 'sha256'})
             or observation.get('resources_sha256') != [item['sha256']]
             or type(assets) is not dict or any(type(name) is not str for name in assets)
@@ -58,8 +59,14 @@ def _observed_manim(runtime):
             or type(manifest.get('runtime')) is not dict
             or manifest['runtime'].get('library') != 'manim-community'
             or manifest['runtime'].get('version') != MANIM_VERSION
-            or item.get('helpers') != {name: sha(raw) for name, raw in helper_assets().items()}):
+            or type(helpers) is not dict or set(helpers) != set(HELPERS)
+            or any(type(checksum) is not str or len(checksum) != 64
+                or not set(checksum) <= set('0123456789abcdef')
+                or assets.get(name) != checksum for name, checksum in helpers.items())):
         return None
+    # Read the exact stopped sample's sealed inventory, which can predate the
+    # installed helper revision. New renders still require current helper bytes
+    # in manim_method_resources.validate_descriptor and the browser host.
     expected = sorted('/assets/' + name for name in assets if name.endswith('.png'))
     frames = manifest.get('frames')
     if (not expected or type(frames) is not list

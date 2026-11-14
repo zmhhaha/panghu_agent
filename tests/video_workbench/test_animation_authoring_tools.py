@@ -69,9 +69,10 @@ def test_old_sample_shape_is_preserved_without_library_observation():
 def manim_runtime():
     from video_workbench.manim_resource import MANIM_VERSION, sha
     from video_workbench.manim_method_resources import helper_assets
-    assets = {'manim/example/frame_000000.png': 'a' * 64}
+    helpers = {name: sha(raw) for name, raw in helper_assets().items()}
+    assets = {'manim/example/frame_000000.png': 'a' * 64, **helpers}
     item = dict(schema='video.manim-method-resource.v1', assets_sha256=assets,
-        helpers={name: sha(raw) for name, raw in helper_assets().items()},
+        helpers=helpers,
         manifest=dict(runtime=dict(library='manim-community', version=MANIM_VERSION),
             frame_count=1, frames=[dict(path='assets/manim/example/frame_000000.png')]))
     item['sha256'] = digest(item)
@@ -86,6 +87,80 @@ def test_manim_badge_requires_exact_generated_resource_and_observed_frames():
     assert observed_authoring_tools(manim_runtime()) == [dict(id='manim', label='Manim',
         version=MANIM_VERSION, status='loaded',
         evidence_scope='render_loaded_dependency_not_visual_application_or_acceptance')]
+
+
+def _reseal_resource(value):
+    item = value['generated_resources'][0]
+    item['sha256'] = digest({key: content for key, content in item.items() if key != 'sha256'})
+    value['generated_resource_observation']['resources_sha256'] = [item['sha256']]
+
+
+def test_historical_manim_render_uses_its_own_frozen_helper_inventory():
+    """Upgrading consumer helpers must not erase a proven stored media label."""
+    value = manim_runtime()
+    item = value['generated_resources'][0]
+    historical = {'manim_frame_layer.mjs': 'e6785bc26df55a4b4e88fdca2bc74c629643a6b4296ac9eb5970c3221bde1fd5',
+        'manim_method_frames.mjs': '9f3aa078149af3f9f7c3fb7d590b00f3dc9e05605b0c6fb2982a6e91fa1ba6cc'}
+    item['helpers'] = historical
+    item['assets_sha256'].update(historical)
+    _reseal_resource(value)
+    original = deepcopy(value)
+    assert [tool['id'] for tool in observed_authoring_tools(value)] == ['manim']
+    candidate, demos = fixture()
+    demos['candidate'][0]['runtime'].update(value)
+    view = _sample_engine(candidate, demos)
+    assert view['engine_status'] == 'rendered'
+    assert [tool['id'] for tool in view['authoring_tools']] == ['animejs', 'manim']
+    assert value == original
+
+
+@pytest.mark.parametrize('change', ['missing_helper_inventory', 'changed_helper_inventory',
+    'malformed_helper_digest', 'extra_helper', 'requested_only'])
+def test_historical_manim_without_exact_frozen_consumption_stays_unknown(change):
+    value = manim_runtime()
+    item = value['generated_resources'][0]
+    name = 'manim_frame_layer.mjs'
+    if change == 'missing_helper_inventory':
+        item['assets_sha256'].pop(name)
+    elif change == 'changed_helper_inventory':
+        item['assets_sha256'][name] = 'f' * 64
+    elif change == 'malformed_helper_digest':
+        item['helpers'][name] = item['assets_sha256'][name] = 'not-a-digest'
+    elif change == 'extra_helper':
+        item['helpers']['unobserved.mjs'] = 'f' * 64
+    else:
+        value.pop('generated_resource_observation')
+        value['resource_authoring'] = {'kind': 'manim'}
+    if 'generated_resource_observation' in value:
+        _reseal_resource(value)
+    assert observed_authoring_tools(value) == []
+
+
+def test_historical_display_never_admits_old_helpers_for_new_generation():
+    """Read compatibility does not relax the independent producer boundary."""
+    from agent_service.contracts import ServiceError, canonical_bytes
+    from video_workbench.manim_method_resources import helper_assets, validate_descriptor
+    from video_workbench.manim_resource import sha
+
+    value = manim_runtime()
+    item = value['generated_resources'][0]
+    item['manifest']['global_start_frame'] = 0
+    item.update(scope=dict(owner='fixture', effect_id='fixture', experiment_id='fixture', operation_id='fixture'),
+        envelope_sha256='b' * 64, image_digest='sha256:' + 'c' * 64,
+        manifest_path='assets/manim/example/manifest.json', manifest_sha256=digest(item['manifest']))
+    assets = {**helper_assets(), 'manim/example/frame_000000.png': b'fixture inventory, not a PNG admission',
+        'manim/example/manifest.json': canonical_bytes(item['manifest'])}
+    item['assets_sha256'] = {name: sha(raw) for name, raw in assets.items()}
+    _reseal_resource(value)
+    assert validate_descriptor(item, assets=assets, duration_seconds=1) == item
+
+    for name in item['helpers']:
+        assets[name] = ('previous stopped helper ' + name).encode()
+        item['helpers'][name] = item['assets_sha256'][name] = sha(assets[name])
+    _reseal_resource(value)
+    assert [tool['id'] for tool in observed_authoring_tools(value)] == ['manim']
+    with pytest.raises(ServiceError, match='manim_method_resource_helper_changed'):
+        validate_descriptor(item, assets=assets, duration_seconds=1)
 
 
 @pytest.mark.parametrize('change', ['missing_observation', 'wrong_scope', 'helpers_not_loaded',
