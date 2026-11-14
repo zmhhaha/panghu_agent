@@ -12,6 +12,7 @@ from video_workbench.animation_method_renderer import MethodAnimationRenderer
 from video_workbench.manim_generated_assets import freeze_generated_assets
 from video_workbench.manim_method_coordinator import ManimMethodCoordinator, authoring_request
 from video_workbench.manim_method_resources import method_resource, validate_descriptor
+from video_workbench.manim_method_resources import PRODUCER_REQUIREMENT, require_method_producer
 from video_workbench.manim_resource import compile_resource, frame_path
 from test_manim_resource import png, request, IMAGE
 from test_animation_method_renderer import SOURCE, document, IMAGE as METHOD_IMAGE
@@ -49,7 +50,8 @@ class RecipeGateway:
 class ResourceExecutor:
     image = PINNED
     def __init__(self): self.result = None; self.calls = 0
-    def lookup(self, **scope): return deepcopy(self.result)
+    def lookup(self, **scope):
+        return deepcopy(self.result) if self.result is not None and self.result['scope'] == scope else None
     def execute(self, plan):
         self.calls += 1
         recipe = plan['request']
@@ -170,7 +172,13 @@ def test_actual_method_service_waits_for_prelude_then_delivers_resources_to_unch
     from test_animation_method_service import Gateway, Renderer, start, finish as finish_service
     from video_workbench.animation_method_service import AnimationMethodService
     coordinator, gateway, executor, _ = setup(tmp_path)
-    author, reviewer = Gateway(), Gateway(True)
+    class ProducerGateway(Gateway):
+        def collect(self, *args):
+            result = super().collect(*args)
+            for method in result['methods']:
+                method['runtime_requirements']['resource_authoring'] = deepcopy(PRODUCER_REQUIREMENT)
+            return result
+    author, reviewer = ProducerGateway(), Gateway(True)
     service = AnimationMethodService(tmp_path/'lab', author_gateway=author, review_gateway=reviewer,
         renderer=Renderer(tmp_path/'renders'), manim_coordinator=coordinator)
     queued = start(service, resource_authoring=dict(kind='manim', width=320, height=180, frame_count=3))
@@ -191,6 +199,15 @@ def test_actual_method_service_waits_for_prelude_then_delivers_resources_to_unch
         assert set(descriptor['assets_sha256']) <= set(context['assets'])
         assert 'prepareManimMethodFrames' in context['constraints']['generated_resource_usage']
     assert completed['resource_authoring']['status'] == 'completed'
+    first = coordinator.context('developer', queued['id'])
+    # Continuing a Manim method repeats the producer for this new content/run;
+    # it cannot silently reuse the earlier task's immutable PNG resources.
+    continued = start(service, base_commission_id=queued['id'], feedback='Use a different composition')
+    again = finish_service(service, continued['id'])
+    second = coordinator.context('developer', continued['id'])
+    assert again['state'] == 'completed' and second['scope'] != first['scope']
+    assert second['manifest']['resource_id'] != first['manifest']['resource_id']
+    assert gateway.submissions == executor.calls == 2
 
 
 def test_method_service_resource_prelude_cancel_does_not_schedule_main_author(tmp_path):
@@ -207,3 +224,35 @@ def test_method_service_resource_prelude_cancel_does_not_schedule_main_author(tm
     assert service.get('developer', queued['id'])['state'] == 'cancelled'
     assert gateway.submissions == executor.calls == 0
     assert author.submissions == []
+
+
+def test_original_method_and_skill_must_both_declare_exact_manim_producer():
+    method = dict(schema='video.animation-method.v2', runtime_requirements={'engine':'html-svg'},
+        skill_package={'runtime_requirements': {'engines':['html-svg']}})
+    before = deepcopy(method)
+    with pytest.raises(ServiceError, match='producer_declaration'): require_method_producer([method])
+    assert method == before
+    method['runtime_requirements']['resource_authoring'] = deepcopy(PRODUCER_REQUIREMENT)
+    with pytest.raises(ServiceError, match='skill_producer'): require_method_producer([method])
+    method['skill_package']['runtime_requirements']['resource_authoring'] = deepcopy(PRODUCER_REQUIREMENT)
+    original = deepcopy(method)
+    require_method_producer([method])
+    assert method == original
+    require_method_producer([])  # A technical fixture does not invent/publish methods.
+
+
+def test_lab_may_regenerate_manim_resources_but_formal_skill_freezes_still_reject_producer():
+    from video_workbench.animation_skill_compatibility import (
+        require_method_compatible, method_compatible, freeze_compatibility)
+    method = dict(runtime_requirements={'engine':'html-svg', 'resource_authoring':deepcopy(PRODUCER_REQUIREMENT)},
+        skill_package={'runtime_requirements': {'engines':['html-svg'], 'resource_authoring':deepcopy(PRODUCER_REQUIREMENT)}})
+    original = deepcopy(method)
+    with pytest.raises(ServiceError, match='dependency_not_admitted'):
+        require_method_compatible(method, assets={}, authoring_libraries={})
+    require_method_compatible(method, assets={}, authoring_libraries={}, resource_authoring=PRODUCER_REQUIREMENT)
+    assert method == original
+    assert not method_compatible(method, freeze_compatibility({'assets':{}}))
+    wrong = deepcopy(PRODUCER_REQUIREMENT)
+    wrong['manim']['version'] = '0.1.0'
+    with pytest.raises(ServiceError):
+        require_method_compatible(method, assets={}, authoring_libraries={}, resource_authoring=wrong)

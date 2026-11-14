@@ -10,6 +10,18 @@ from .manim_resource import manifest_path, require, sha
 SCHEMA = 'video.manim-method-resource.v1'
 HELPERS = ('manim_frame_layer.mjs', 'manim_method_frames.mjs')
 RUNTIME = Path(__file__).with_name('motion_renderer')
+PRODUCER_REQUIREMENT = {'manim': {'version': '0.22.1', 'renderer': 'cairo', 'latex_available': False}}
+
+
+def require_method_producer(methods):
+    """Validate original author declarations; never modify a method/package."""
+    require(type(methods) is list, 'manim_method_producer_declaration_required', 409)
+    for method in methods:
+        require(type(method) is dict and method.get('runtime_requirements', {}).get('resource_authoring') == PRODUCER_REQUIREMENT,
+            'manim_method_producer_declaration_required', 409)
+        if method.get('schema') == 'video.animation-method.v2':
+            require(method.get('skill_package', {}).get('runtime_requirements', {}).get('resource_authoring') == PRODUCER_REQUIREMENT,
+                'manim_method_skill_producer_declaration_required', 409)
 
 
 def helper_assets():

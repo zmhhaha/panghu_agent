@@ -901,9 +901,13 @@ class AnimationMethodService:
                          'animation_method_retry_relationship_invalid', 409)
                 if key in previous['frozen']:
                     data[key] = deepcopy(previous['frozen'][key])
-            for key in ('title', 'reference', 'duration_seconds', 'criteria', 'feedback'):
+            for key in ('title', 'reference', 'duration_seconds', 'criteria', 'feedback', 'resource_authoring'):
                 if key in previous['frozen']:
                     data.setdefault(key, deepcopy(previous['frozen'][key]))
+        if data.get('base_commission_id') and 'resource_authoring' not in data:
+            baseline_run = self._get_visible_commission(owner, data['base_commission_id'])
+            if baseline_run['frozen'].get('resource_authoring'):
+                data['resource_authoring'] = deepcopy(baseline_run['frozen']['resource_authoring'])
         budget = data['budget']
         _require(type(budget) is dict and set(budget) == {'max_rounds', 'max_seconds'})
         rounds, seconds = budget['max_rounds'], budget['max_seconds']
@@ -958,8 +962,10 @@ class AnimationMethodService:
             _require(version['runtime_requirements'].get('engine') in allowed_engines,
                      'animation_method_runtime_not_admitted', 409)
             from .animation_skill_compatibility import require_method_compatible
+            from .manim_method_resources import PRODUCER_REQUIREMENT
             require_method_compatible(version, assets=data.get('assets', {}),
-                authoring_libraries=data.get('constraints', {}).get('authoring_libraries', {}))
+                authoring_libraries=data.get('constraints', {}).get('authoring_libraries', {}),
+                resource_authoring=PRODUCER_REQUIREMENT if data.get('resource_authoring') else {})
         research_ids = data.get('research_record_ids', [])
         _require(type(research_ids) is list and len(research_ids) <= 64
                  and all(type(item) is str for item in research_ids)
@@ -1248,6 +1254,15 @@ class AnimationMethodService:
                 'layer is hidden; create your composition for the remaining project time. The helper '
                 'predecodes at most 60 bounded PNGs. Keep all other scene motion on the same absolute clock. '
                 'Do not use autoplay, timers, per-scene MP4 or autonomous playback.')
+            from .manim_method_resources import PRODUCER_REQUIREMENT
+            frozen_constraints['method_resource_producer_requirements'] = deepcopy(PRODUCER_REQUIREMENT)
+            frozen_constraints['generated_resource_usage'] += (
+                ' Every returned method must declare runtime_requirements.resource_authoring equal to '
+                'constraints.method_resource_producer_requirements. In a v2 method its skill_package '
+                'must declare the same dependency in its own runtime_requirements. Write and hash the '
+                'original complete package yourself. A portable Skill teaches how to generate a new '
+                'resource for changed content; never embed this task PNGs or immutable envelope IDs '
+                'as if they were reusable knowledge. The host rejects missing producer declarations.')
         document = dict(schema=active_protocol.INPUT_SCHEMA, mode=mode, goal=run['frozen']['goal'],
             criteria=standards, methods=selected,
             constraints=dict(width=1280, height=720, fps=24,
@@ -1367,6 +1382,9 @@ class AnimationMethodService:
             return
         try:
             result = gateway.collect(job['job_id'], operation['input_sha256'], operation['input'])
+            if run['frozen'].get('resource_authoring'):
+                from .manim_method_resources import require_method_producer
+                require_method_producer(result['methods'])
             if operation['stage'] == 'review':
                 receipt = gateway.model_frame_receipt(job['job_id'])
                 expected = {row['sha256'] for row in operation['input']['observation']['frames']}

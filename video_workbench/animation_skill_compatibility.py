@@ -102,13 +102,32 @@ def method_compatible(method, context):
     return all(requirements_compatible(row, context) for row in requirements)
 
 
-def require_method_compatible(method, *, assets, authoring_libraries):
+def require_method_compatible(method, *, assets, authoring_libraries, resource_authoring=None):
     _require(type(authoring_libraries) is dict)
+    # Only the private lab passes producer capability after its preflight.
+    # Ordinary production freezes keep the empty producer context below.
+    if resource_authoring is not None:
+        from .manim_method_resources import PRODUCER_REQUIREMENT
+        _require(resource_authoring == {} or resource_authoring == PRODUCER_REQUIREMENT)
+    checked = deepcopy(method)
+    _require(type(checked) is dict)
+    requirements = [checked.get('runtime_requirements', {})]
+    if 'skill_package' in checked:
+        _require(type(checked['skill_package']) is dict)
+        requirements.append(checked['skill_package'].get('runtime_requirements', {}))
+    for requirements_item in requirements:
+        _require(type(requirements_item) is dict)
+        producer = requirements_item.get('resource_authoring', {})
+        _require(type(producer) is dict)
+        if producer:
+            if resource_authoring != producer:
+                raise ServiceError('animation_method_dependency_not_admitted', 409)
+            requirements_item.pop('resource_authoring')
     normalized = _assets(assets)
     context = dict(schema=SCHEMA, task_sha256='0' * 64, assets=normalized,
         source_contract='asset-bound', authoring_libraries=_admitted(normalized, authoring_libraries),
         resource_authoring={})
-    if not method_compatible(method, context):
+    if not method_compatible(checked, context):
         raise ServiceError('animation_method_dependency_not_admitted', 409)
 
 

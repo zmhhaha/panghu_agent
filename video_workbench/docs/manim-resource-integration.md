@@ -234,3 +234,14 @@ and helper identities. Save that output as the admission file. Startup
 same-image old host, missing ledger or unverified render cannot enable it.
 Published reusable Skills and formal-film resource regeneration remain separate
 work. No task-specific PNG bundle is published as a reusable Skill.
+
+Every original method/Skill returned for a Manim experiment must declare the
+producer dependency in `runtime_requirements.resource_authoring` as
+`{"manim":{"version":"0.22.1","renderer":"cairo","latex_available":false}}`.
+The host validates both the method and its original hashed Skill package; it
+never fills in missing declarations. Pure technical fixtures without methods
+do not acquire invented methods or publication evidence. A continuation or
+transfer through the private lab preflights the producer and creates a new
+recipe/resource for that experiment. The ordinary formal-video Skill adapter
+continues to exclude Manim producer dependencies until its separate resource
+regeneration path is admitted.
