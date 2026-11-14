@@ -25,7 +25,7 @@
 
 `hyperframes-agent-source-r1` 的首个旧 SVG 作品在严格末帧定位比较中失败，错误为 `method_absolute_seek_mismatch`；停止后容器已经移除，未跑后续两项，失败证据保留。没有编辑 Agent 源码、改变时长或放宽帧哈希检查。
 
-随后仅在实验宿主的新 HF 路径加入与正式宿主一致的布局刷新，稳定 SVG 重新定位后的光栅化；native 路径不变。新独立 `hyperframes-agent-source-r2` 的 `completed.json` 与 `independent-reconciliation.json` 已确认：复用已核验的原 SVG 4秒／96帧、Canvas 14秒／336帧和Three.js 14秒／336帧作品，三项全部通过真实core、非顺序／重复／空闲／重新加载定位、编码、完整解码及独立lookup。三项Agent源码和音效PCM字节均保持，Canvas及Three.js新MP4与原native MP4字节也完全一致；SVG因宿主稳帧，新旧媒体摘要不同，不将其记为媒体字节一致。三个技术容器均已独立确认不存在。
+随后仅在实验宿主的新 HF 路径加入与正式宿主一致的布局刷新，稳定 SVG 重新定位后的光栅化；native 路径不变。新独立 `hyperframes-agent-source-r2` 的 `completed.json` 与 `independent-reconciliation.json` 已确认：复用已核验的原 SVG 4秒／96帧、Canvas 14秒／336帧和Three.js 14秒／336帧作品，三项全部通过真实core、非顺序／重复／空闲／重新加载定位、编码、完整解码及独立lookup。三项 Agent 源码均保持，原／新均无音轨（本次回执审计确认，不构成音效 PCM 验证），Canvas 及 Three.js 新 MP4 与原 native MP4 字节也完全一致；SVG因宿主稳帧，新旧媒体摘要不同，不将其记为媒体字节一致。三个技术容器均已独立确认不存在。
 
 本次使用原样片，不是新模型生成，不代表效果已被开发者认可；仍为显式 `legacy_bridge=true`，没有伪称Agent原始源码直接实现了 `hf-seek`。原有业务数据库、作品和准入文件未修改，新技术记录只写入独立ledger。首轮失败与第二轮成功各自保留，未覆盖旧结果。
 
@@ -41,6 +41,12 @@
 
 `hyperframes-h2-plan-0e0eb0e-r2/final-independent-readback.json` 已独立确认完整 Git 源码 `0e0eb0e93614bc152e5c7b1c8c7b55d78f4be37c` 的两个 `latest` 镜像实际启用。executor digest 为 `sha256:47d02339fd9556afb74be21dd9aef8e8ac2a65f03afaae2f3ca93ca6ff6810cf`，renderer digest 为 `sha256:59ee5c356f4c742e515385db4e2b315c9393641bea7d76136f095b27214e79ca`。Pod Ready、原 Service 与端点、实际调用方目录均通过回读；`method_project_runtime=hyperframes-core-bridge`，新准入为 v2。
 
-同一全局预算内实际重渲染三次：旧 Agent SVG 4 秒／96 帧、Canvas 14 秒／336 帧、Three.js 14 秒／336 帧均通过真实核心、严格定位、编码及原 PCM／音效核验，模型调用为零。未改写原作品、原录音和历史记录，首轮资产宿主映射失败及其恢复仍保留，不将其算作已消耗渲染或覆盖。部署回读证据归档为本地既有 D 盘研究目录 `hyperframes-h2-final-live-readback-20261114.json`。
+同一全局预算内实际重渲染三次：旧 Agent SVG 4 秒／96 帧、Canvas 14 秒／336 帧、Three.js 14 秒／336 帧均通过真实核心、严格定位和编码，模型调用为零。三条样片均无音轨；原 PCM／音效摘要为空的相等检查不能表述为带声核验。未改写原作品、原录音和历史记录，首轮资产宿主映射失败及其恢复仍保留，不将其算作已消耗渲染或覆盖。部署回读证据归档为本地既有 D 盘研究目录 `hyperframes-h2-final-live-readback-20261114.json`。
 
 这是实验室的核心桥接运行，仍如实标注 `legacy_bridge=true`；没有把旧 Agent 源码改称原生生命周期模块，也不代表正式整片编排、统一音效或新 realm 宿主生产准入已经完成。正式整片下一步见[接入差距](hyperframes-film-production-integration.md)。
+
+## 完成条件审计补记（2026-11-14）
+
+只读原／新 operation、request、receipt 及 ffprobe 确认三条样片的 sound_events 均为空、audio_sha256 均为 null、无 sound-effects.wav，MP4 只有 video 流。既有 readmission 的 audio_pcm_unchanged=true 来自 null==null；原回执保留，本说明纠正此前过宽描述。实际耗时约 SVG 9.03 秒、Canvas 45.86 秒、Three.js 280.03 秒，三容器均 removed_and_confirmed_absent。
+
+既有 adapter／formal 实测包含异步成功／失败和不同定位顺序，但未包含实际 random／seed 案例。H.1 的随机状态和实验室带声验证、H.2 的必要音效验证仍待完成；核心已上线是独立的完成事实。H.3 技术 WAV 全片导出的有声检查见离线导出记录，不扩写为实验室音效或正式业务验收。紧凑证据保存在既有 D 盘研究目录 hyperframes-task-completion-audit-20261114.json，完整范围见[统一设计 7.6](agent-creation-effect-library-plan.md)。本次没有启动新测试、模型或渲染。
