@@ -82,6 +82,7 @@ SOURCE_FILES = frozenset({
     'video_workbench/motion_renderer/runtime.mjs',
     'video_workbench/motion_renderer/engine_runtime.mjs',
     'video_workbench/motion_renderer/contract.mjs',
+    'video_workbench/motion_renderer/hyperframes_project.mjs',
 })
 ASSET_SHA256 = {
     'gsap.min.js': 'c174bfce53a729418d57a8ad8625e7247c793a22fef8e2851e3cfa3de9cd8280',

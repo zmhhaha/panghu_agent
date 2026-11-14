@@ -5,9 +5,12 @@ import {mkdirSync,writeFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {readRegular,sha,encodedDuration} from './contract.mjs';
 import {engineSpec,browserLaunchArgs,installEngineGuard,verifyPageEngine} from './engine_runtime.mjs';
+import {buildHyperFramesProject,hyperFramesRuntimeArtifact,installHyperFramesProject,
+ seekHyperFramesProject} from './hyperframes_project.mjs';
 
 export async function captureCreative({root='/work',mode='render',quality='draft',
- assetsRoot='/opt/assets',chromium:providedChromium,executablePath=process.env.HYPERFRAMES_BROWSER_PATH}={}){
+ assetsRoot='/opt/assets',chromium:providedChromium,executablePath=process.env.HYPERFRAMES_BROWSER_PATH,
+ hyperFramesDist='/opt/renderer/node_modules/hyperframes/dist'}={}){
  const chromium=providedChromium||(await import('playwright-core')).chromium;
  const plan=JSON.parse(readRegular(root+'/plan.json'));
  const timeline=JSON.parse(readRegular(root+'/timeline.json'));
@@ -16,12 +19,15 @@ export async function captureCreative({root='/work',mode='render',quality='draft
  const engineCreative=plan.schema==='video.creative-scene.v3'||filmCreative;
  const methodCreative=plan.schema==='video.creative-scene.v2'||engineCreative;
  const compiler=skillCreative?'creative-skill-film-scene-adapter-1':filmCreative?'creative-film-scene-adapter-1':engineCreative?'creative-method-engine-scene-adapter-1':methodCreative?'creative-method-scene-adapter-1':'creative-scene-adapter-1';
+ const hyperframes=timeline.compiler==='creative-skill-hyperframes-scene-adapter-1';
  const engine=plan.engine;
  if(!['video.creative-scene.v1','video.creative-scene.v2','video.creative-scene.v3','video.creative-scene.v4','video.creative-scene.v5'].includes(plan.schema)
   ||!(engineCreative?['html-svg','canvas','three']:['html-svg']).includes(engine)
-  ||plan.adapter_revision!==compiler||timeline.compiler!==compiler)throw Error('creative_contract_mismatch');
+  ||plan.adapter_revision!==compiler||(!hyperframes&&timeline.compiler!==compiler)
+  ||(hyperframes&&(!skillCreative||timeline.creative?.legacy_bridge!==true
+   ||timeline.creative?.source_adapter_revision!==compiler)))throw Error('creative_contract_mismatch');
  const specification=engineSpec(engine);
- const renderer=engineCreative?'isolated-chromium-engine-seek-ffmpeg-1':'isolated-chromium-absolute-seek-ffmpeg-1';
+ const renderer=hyperframes?'isolated-hyperframes-core-project-ffmpeg-1':engineCreative?'isolated-chromium-engine-seek-ffmpeg-1':'isolated-chromium-absolute-seek-ffmpeg-1';
  const source=methodCreative?plan.result?.source:plan.result;
  const files=source?.files||{},allowed=['scene.html','scene.js','scene.css'];
  if(!files['scene.html']||Object.keys(files).some(name=>!allowed.includes(name)))throw Error('creative_files');
@@ -35,6 +41,21 @@ export async function captureCreative({root='/work',mode='render',quality='draft
   if(name==='three.module.min.js'&&(sha(raw)!==specification.three_sha256||expected!==specification.three_sha256))
    throw Error('creative_asset_digest_mismatch');
   resources.set('/assets/'+name,raw);
+ }
+ let project,coreRuntime;
+ if(hyperframes){
+  const proof=timeline.creative;
+  project=buildHyperFramesProject(proof.hyperframes_project,files,
+   Object.fromEntries([...resources].filter(([name])=>name.startsWith('/assets/')).map(([name,raw])=>[name.slice(1),raw]))).project;
+  const scene=project.scenes[0];
+  if(project.scenes.length!==1||project.entry!=='scene.html'||project.width!==1280||project.height!==720
+   ||project.duration_seconds!==encodedDuration(timeline)||scene.engine!==engine
+   ||scene.start_seconds!==0||scene.duration_seconds!==project.duration_seconds
+   ||scene.leading_seconds!==timeline.leading_seconds||scene.audio_seconds!==timeline.audio_seconds
+   ||proof.project_runtime!=='hyperframes-core-project-1'||proof.renderer!==renderer
+   ||proof.seek_protocol!=='hyperframes-core-renderSeek-exact'
+   ||!/^[0-9a-f]{64}$/.test(proof.hyperframes_project_sha256||''))throw Error('creative_hyperframes_project_mismatch');
+  coreRuntime=hyperFramesRuntimeArtifact(hyperFramesDist);
  }
  const mime=path=>path.endsWith('.html')?'text/html; charset=utf-8':path.endsWith('.js')?'text/javascript; charset=utf-8':path.endsWith('.css')?'text/css; charset=utf-8':'font/collection';
  const server=createServer((req,res)=>{
@@ -78,11 +99,13 @@ export async function captureCreative({root='/work',mode='render',quality='draft
     if(typeof window.__animationExperiment?.seek!=='function')throw Error('creative_seek_missing');
    }),new Promise((_,reject)=>{readyTimer=setTimeout(()=>reject(Error('creative_ready_timeout')),20000);})]);
   }finally{clearTimeout(readyTimer);}
+  if(hyperframes)await installHyperFramesProject(page,{project,runtimePath:coreRuntime.runtimePath,legacyBridge:true});
   await verifyPageEngine(page,engine,{requireContext:false});
   if(engine==='three'&&!loadedEngineAssets.has('three.module.min.js'))throw Error('creative_three_module_not_loaded');
   const capture=async(time,path)=>{
    const local=Math.max(0,Math.min(timeline.audio_seconds,time-timeline.leading_seconds));
-   await page.evaluate(async t=>{
+   if(hyperframes)await seekHyperFramesProject(page,time);
+   else await page.evaluate(async t=>{
     await window.__animationExperiment.seek(t);
    },local);
    const engineObservation=await verifyPageEngine(page,engine);
@@ -115,6 +138,11 @@ export async function captureCreative({root='/work',mode='render',quality='draft
     ...(engineCreative?{engine_observation:engineObservation}:{})};
   };
   const samples=[];
+  const projectProof=async()=>hyperframes?{project_runtime:{
+   ...(await page.evaluate(()=>({...window.__trustedHyperFramesProject.state}))),
+   schema:'video.hyperframes-project-runtime-proof.v1',project_sha256:timeline.creative.hyperframes_project_sha256,
+   version:coreRuntime.version,core_sha256:coreRuntime.core_sha256,
+   seek_protocol:'hyperframes-core-renderSeek-exact',evidence_scope:'single_scene_project_not_whole_film'}}:{};
   const times=[0,...Array.from({length:17},(_,i)=>(count-1)/24*(i+1)/18),(count-1)/24,0];
   if(mode==='render'){
    mkdirSync(root+'/creative-frames',{recursive:true});let total=0;
@@ -130,20 +158,20 @@ export async function captureCreative({root='/work',mode='render',quality='draft
     const probe=await capture(times[i],'creative-frames/probe-'+i+'.jpg');probes.push(probe.frame_sha256);
     if(engineCreative)engineProbes.push(probe.engine_observation);
    }
-   return {schema:engineCreative?'video.creative-capture.v2':'video.creative-capture.v1',renderer,
+   return {schema:hyperframes?'video.creative-capture.v3':engineCreative?'video.creative-capture.v2':'video.creative-capture.v1',renderer,
     frame_count:count,first_sha256:samples[0].frame_sha256,
     last_sha256:samples.at(-1).frame_sha256,reverse_initial_sha256:reverse.frame_sha256,
     probe_sha256:probes,blocked_requests:blocked,page_errors:errors,
     ...(engineCreative?{engine,probe_engine_observations:engineProbes,idle_clock_verified:true,
-     loaded_engine_assets:[...loadedEngineAssets]}:{})};
+     loaded_engine_assets:[...loadedEngineAssets]}:{}),...(await projectProof())};
   }
   mkdirSync(root+'/observations',{recursive:true});
   for(let i=0;i<times.length;i++)samples.push(await capture(times[i],'observations/creative-'+i+'.jpg'));
   if(samples[0].frame_sha256!==samples.at(-1).frame_sha256)throw Error('creative_reverse_seek_mismatch');
-  const result={schema:engineCreative?'video.creative-observations.v2':'video.creative-observations.v1',renderer,
+  const result={schema:hyperframes?'video.creative-observations.v3':engineCreative?'video.creative-observations.v2':'video.creative-observations.v1',renderer,
    input_sha256:plan.input_sha256,source_sha256:plan.result_sha256,frame_count:count,
    samples,blocked_requests:blocked,page_errors:errors,visual_quality:'not_evaluated',
-   ...(engineCreative?{engine,idle_clock_verified:true,loaded_engine_assets:[...loadedEngineAssets]}:{})};
+   ...(engineCreative?{engine,idle_clock_verified:true,loaded_engine_assets:[...loadedEngineAssets]}:{}),...(await projectProof())};
   writeFileSync(root+'/observations.json',JSON.stringify(result));return result;
  }finally{
   if(browser)await browser.close();

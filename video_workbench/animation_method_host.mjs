@@ -150,6 +150,18 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
     else await page.evaluate(async seconds=>{await window.__animationExperiment.seek(seconds);},time);
    }
    await checkRuntime();
+   if(projectAware)await page.evaluate(()=>{
+    if(document.getAnimations().some(animation=>animation.playState==='running'))
+     throw Error('method_autonomous_animation');
+    // Rebuild SVG layout before painting just as the formal creative host
+    // does. This changes no Agent nodes/attributes and keeps exact forward,
+    // reverse, repeat and reload frame comparisons mandatory.
+    const root=document.documentElement;
+    const prior=root.style.getPropertyValue('display'),priority=root.style.getPropertyPriority('display');
+    root.style.setProperty('display','none','important');root.getBoundingClientRect();
+    if(prior)root.style.setProperty('display',prior,priority);else root.style.removeProperty('display');
+    root.getBoundingClientRect();
+   });
    const bytes=await page.screenshot({type:'jpeg',quality:80,timeout:10000});
    evidenceBytes+=bytes.length;
    if(evidenceBytes>request.max_evidence_bytes||bytes.length>4*1024*1024)throw Error('method_evidence_budget_exceeded');

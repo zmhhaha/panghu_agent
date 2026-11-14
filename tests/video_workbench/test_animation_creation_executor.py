@@ -106,6 +106,8 @@ def test_real_executor_wires_separate_credentials_storage_profiles_and_default_p
         assert server.method_service.renderer.root == config['root'] / 'method-renders'
         assert server.method_service.renderer.enabled is True
         assert server.method_service.renderer.image == IMAGE
+        assert server.method_service.renderer.hyperframes is False
+        assert server.method_service.renderer.legacy_bridge is False
         assert server.method_service.pending() == []
         assert server.method_service.catalogue('developer-1')['commissions'] == []
         assert server.method_pump is not None and server.method_pump.thread.is_alive()
@@ -139,6 +141,23 @@ def test_protocol_is_explicit_and_legacy_is_not_an_automatic_fallback(config):
         assert server.method_service.author.profile == 'video.animation-method-author.v1'
         assert server.method_service.reviewer.profile == 'video.animation-method-review.v1'
         assert client.calls == []
+    finally:
+        server.server_close()
+        client.close()
+
+
+def test_real_hyperframes_bridge_is_explicit_and_starts_no_agent_or_render_work(config):
+    with pytest.raises(ValueError, match='animation_method_project_runtime_invalid'):
+        executor.create_server(**dict(config, method_project_runtime='auto'))
+    assert NoNetworkAgentClient.instances == [] and not config['root'].exists()
+    server, client = executor.create_server(**dict(config, method_project_runtime='hyperframes-core-bridge'))
+    try:
+        renderer = server.method_service.renderer
+        assert renderer.hyperframes is True and renderer.legacy_bridge is True
+        assert renderer.capabilities()['runtime_identity']['admission_id'].startswith('method-hyperframes-v3@')
+        assert server.method_service.pending() == []
+        assert not (config['root'] / 'method-renders').exists()
+        assert all(item.calls == [] for item in NoNetworkAgentClient.instances)
     finally:
         server.server_close()
         client.close()

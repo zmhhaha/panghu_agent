@@ -34,11 +34,14 @@ def read_token(path):
 
 def create_server(*, root, agent_url, agent_token_file, token_file, renderer_image,
                   assets_dir=None, enable_isolated_rendering=False, listen='127.0.0.1', port=8767,
-                  method_agent_token_file=None, engine_admission_file=None, method_protocol='skills'):
+                  method_agent_token_file=None, engine_admission_file=None, method_protocol='skills',
+                  method_project_runtime='native-seek'):
     if enable_isolated_rendering is not True:
         raise ValueError('animation_creation_isolated_rendering_opt_in_required')
     if method_protocol not in {'skills', 'legacy'}:
         raise ValueError('animation_method_protocol_invalid')
+    if method_project_runtime not in {'native-seek', 'hyperframes-core-bridge'}:
+        raise ValueError('animation_method_project_runtime_invalid')
     agent_token, executor_token = read_token(agent_token_file), read_token(token_file)
     if agent_token == executor_token:
         raise ValueError('animation_creation_distinct_credentials_required')
@@ -62,7 +65,9 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                 author_gateway=author(method_client),
                 review_gateway=reviewer(method_client),
                 renderer=MethodAnimationRenderer(Path(root) / 'method-renders', image=renderer_image,
-                    assets_dir=assets_dir, enabled=True, engine_admission_file=engine_admission_file))
+                    assets_dir=assets_dir, enabled=True, engine_admission_file=engine_admission_file,
+                    hyperframes=method_project_runtime == 'hyperframes-core-bridge',
+                    legacy_bridge=method_project_runtime == 'hyperframes-core-bridge'))
         server = CreationHTTPServer(service, executor_token, host=listen, port=port, method_service=methods)
         server.close_callbacks = (method_client.close,) if method_client else ()
     except BaseException:
@@ -80,6 +85,8 @@ def main(argv=None):
     parser.add_argument('--agent-token-file', type=Path, required=True)
     parser.add_argument('--method-agent-token-file', type=Path)
     parser.add_argument('--method-protocol', choices=('skills', 'legacy'), default='skills')
+    parser.add_argument('--method-project-runtime', choices=('native-seek', 'hyperframes-core-bridge'),
+        default='native-seek', help='Explicit real HyperFrames event bridge; requires separate HyperFrames engine admission.')
     parser.add_argument('--token-file', type=Path, required=True)
     parser.add_argument('--renderer-image', required=True)
     parser.add_argument('--assets-dir', type=Path)

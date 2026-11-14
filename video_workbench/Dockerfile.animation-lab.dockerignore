@@ -91,6 +91,7 @@
 !video_workbench/motion_geometry.py
 !video_workbench/motion_process.py
 !video_workbench/motion_renderer/contract.mjs
+!video_workbench/motion_renderer/hyperframes_project.mjs
 !video_workbench/motion_renderer/engine_observe.mjs
 !video_workbench/motion_renderer/lab_observe.mjs
 !video_workbench/motion_renderer/observe.mjs

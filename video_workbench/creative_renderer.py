@@ -23,12 +23,19 @@ FILM_COMPILER = 'creative-film-scene-adapter-1'
 FILM_TEMPLATE = 'generated-film-engine-scene-1'
 SKILL_COMPILER = 'creative-skill-film-scene-adapter-1'
 SKILL_TEMPLATE = 'generated-skill-film-engine-scene-1'
+HYPERFRAMES_SKILL_COMPILER = 'creative-skill-hyperframes-scene-adapter-1'
+HYPERFRAMES_SKILL_TEMPLATE = 'generated-skill-hyperframes-scene-1'
+HYPERFRAMES_RENDERER = 'isolated-hyperframes-core-project-ffmpeg-1'
 COMPILER_TEMPLATES = {COMPILER: TEMPLATE, METHOD_COMPILER: METHOD_TEMPLATE,
                       ENGINE_METHOD_COMPILER: ENGINE_METHOD_TEMPLATE,
-                      FILM_COMPILER: FILM_TEMPLATE, SKILL_COMPILER: SKILL_TEMPLATE}
+                      FILM_COMPILER: FILM_TEMPLATE, SKILL_COMPILER: SKILL_TEMPLATE,
+                      HYPERFRAMES_SKILL_COMPILER: HYPERFRAMES_SKILL_TEMPLATE}
 
 
 def _compiler(package, requested):
+    if requested == HYPERFRAMES_SKILL_COMPILER:
+        _require(package['schema'] == 'video.creative-scene.v5', 'creative_renderer_version_unsupported')
+        return requested
     expected = {'video.creative-scene.v1': COMPILER, 'video.creative-scene.v2': METHOD_COMPILER,
                 'video.creative-scene.v3': ENGINE_METHOD_COMPILER,
                 'video.creative-scene.v4': FILM_COMPILER,
@@ -86,6 +93,22 @@ def resolve_creative_timeline(package, beats, alignment, *, leading_seconds=0,
         creative.update(film_context_sha256=digest(film), film_sha256=film['film_sha256'],
             handoff_sha256=digest(package['result']['handoff']),
             predecessor_motion_version_id=predecessor['motion_version_id'] if predecessor else None)
+    if compiler_version == HYPERFRAMES_SKILL_COMPILER:
+        # A new adapter identity preserves the original Agent package and its
+        # historical native adapter. The explicit bridge runs only from real
+        # HyperFrames hf-seek/waitUntil events; this remains a scene project,
+        # never evidence that a whole film was captured in one HF project.
+        project = dict(schema='video.hyperframes-project.v1',
+            project_id='creative-' + package['input_sha256'][:32], entry='scene.html',
+            width=1280, height=720, fps=24, duration_seconds=seconds,
+            scenes=[dict(id=context['scene_id'], entry='scene.html', engine=package['engine'],
+                source_sha256=scene_source(package)['files_sha256']['scene.html'],
+                start_seconds=0, duration_seconds=seconds,
+                leading_seconds=leading_seconds, audio_seconds=alignment['audio_seconds'])])
+        creative.update(renderer=HYPERFRAMES_RENDERER, seek_protocol='hyperframes-core-renderSeek-exact',
+            project_runtime='hyperframes-core-project-1', hyperframes_project=project,
+            hyperframes_project_sha256=digest(project), legacy_bridge=True,
+            source_adapter_revision=package['adapter_revision'])
     return dict(schema='video.motion-timeline.v1', compiler=compiler_version,
         plan_sha256=digest(package), semantic_sha256=semantic_digest(beats),
         alignment_sha256=digest(alignment), audio_sha256=alignment['audio_sha256'],
@@ -122,6 +145,9 @@ def compile_creative_project(package, beats, alignment, *, runtime_fingerprint,
                            if value['schema'] == 'video.creative-scene.v5' else {'video.motion-runtime.v2'})
         _require(runtime_fingerprint is not None and runtime_fingerprint['schema'] in runtime_schemas,
                  'creative_engine_runtime_required')
+        if timeline['compiler'] == HYPERFRAMES_SKILL_COMPILER:
+            _require(runtime_fingerprint['schema'] == 'video.motion-runtime.v3',
+                     'creative_hyperframes_runtime_required')
         identity = value['input_document']['constraints'].get('runtime_identity')
         if identity is not None:
             _require(identity['image_digest'] == runtime_fingerprint['image_digest']
@@ -146,5 +172,8 @@ def compile_creative_project(package, beats, alignment, *, runtime_fingerprint,
         manifest.update(engine=value['engine'], engine_assets={
             'three.module.min.js': runtime_fingerprint['three_sha256']} if value['engine'] == 'three' else {})
         manifest['required_assets'] += ['assets/' + name for name in manifest['engine_assets']]
+    if compiler == HYPERFRAMES_SKILL_COMPILER:
+        manifest.update(project_runtime='hyperframes-core-project-1',
+            hyperframes_project_sha256=timeline['creative']['hyperframes_project_sha256'])
     files['manifest.json'] = canonical_bytes(manifest)
     return files

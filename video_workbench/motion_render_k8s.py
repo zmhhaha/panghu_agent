@@ -342,14 +342,40 @@ def _creative_engine_observation(value, engine):
     return value
 
 
+def _hyperframes_project_observation(proof, timeline, runtime, *, minimum_seeks):
+    creative = timeline['creative']
+    project = creative['hyperframes_project']
+    require(runtime.get('schema') == 'video.motion-runtime.v3'
+        and digest(project) == creative['hyperframes_project_sha256']
+        and type(proof) is dict
+        and proof.get('schema') == 'video.hyperframes-project-runtime-proof.v1'
+        and proof.get('runtime') == 'hyperframes-core-project-1'
+        and proof.get('project_id') == project['project_id']
+        and proof.get('project_sha256') == creative['hyperframes_project_sha256']
+        and proof.get('version') == runtime.get('hyperframes')
+        and proof.get('core_sha256') == runtime.get('hyperframes_core_sha256')
+        and proof.get('seek_protocol') == 'hyperframes-core-renderSeek-exact'
+        and proof.get('legacy_bridge') is True
+        and proof.get('evidence_scope') == 'single_scene_project_not_whole_film'
+        and type(proof.get('core_seek_count')) is int and proof['core_seek_count'] >= minimum_seeks
+        and type(proof.get('dispatch_count')) is int and proof['dispatch_count'] >= proof['core_seek_count']
+        and type(proof.get('actual_seconds')) in (int, float) and proof['actual_seconds'] == 0
+        and type(proof.get('last_dispatched_seconds')) in (int, float) and proof['last_dispatched_seconds'] == 0,
+        'creative_hyperframes_observation_invalid')
+    return deepcopy(proof)
+
+
 def validate_creative_artifacts(entries, files, observations, runtime, quality):
     """Independent custody/clock checks; no generic aesthetic approval claim."""
     timeline, package = (json.loads(files[name]) for name in ('timeline.json', 'plan.json'))
     count = round(timeline['duration_seconds'] * 24)
     engine_aware = package['schema'] in {'video.creative-scene.v3', 'video.creative-scene.v4', 'video.creative-scene.v5'}
-    renderer = 'isolated-chromium-engine-seek-ffmpeg-1' if engine_aware else 'isolated-chromium-absolute-seek-ffmpeg-1'
+    hyperframes = timeline['compiler'] == 'creative-skill-hyperframes-scene-adapter-1'
+    renderer = ('isolated-hyperframes-core-project-ffmpeg-1' if hyperframes else
+        'isolated-chromium-engine-seek-ffmpeg-1' if engine_aware else 'isolated-chromium-absolute-seek-ffmpeg-1')
     require(type(observations) is dict and observations.get('schema') ==
-            ('video.creative-observations.v2' if engine_aware else 'video.creative-observations.v1')
+            ('video.creative-observations.v3' if hyperframes else
+             'video.creative-observations.v2' if engine_aware else 'video.creative-observations.v1')
             and observations.get('input_sha256') == package['input_sha256']
             and observations.get('source_sha256') == package['result_sha256']
             and observations.get('renderer') == renderer
@@ -375,7 +401,8 @@ def validate_creative_artifacts(entries, files, observations, runtime, quality):
     require(samples[0]['frame_sha256'] == samples[-1]['frame_sha256'], 'creative_reverse_seek_mismatch')
     capture = json.loads(entries['render-receipt.json']).get('creative_capture')
     require(type(capture) is dict and capture.get('schema') ==
-            ('video.creative-capture.v2' if engine_aware else 'video.creative-capture.v1')
+            ('video.creative-capture.v3' if hyperframes else
+             'video.creative-capture.v2' if engine_aware else 'video.creative-capture.v1')
             and capture.get('renderer') == observations['renderer'] and capture.get('frame_count') == count
             and capture.get('first_sha256') == samples[0]['frame_sha256']
             and capture.get('last_sha256') == samples[-2]['frame_sha256']
@@ -391,6 +418,22 @@ def validate_creative_artifacts(entries, files, observations, runtime, quality):
     technical = dict(status='passed', renderer=observations['renderer'],
         reverse_seek_verified=True, source_sha256=package['result_sha256'],
         visual_quality='not_evaluated', aesthetic_approval=False)
+    if hyperframes:
+        manifest = json.loads(files['manifest.json'])
+        require(package['schema'] == 'video.creative-scene.v5'
+            and manifest.get('project_runtime') == 'hyperframes-core-project-1'
+            and manifest.get('hyperframes_project_sha256') == timeline['creative']['hyperframes_project_sha256'],
+            'creative_hyperframes_observation_invalid')
+        technical.update(project_runtime='hyperframes-core-project-1',
+            hyperframes_project_sha256=timeline['creative']['hyperframes_project_sha256'],
+            project_runtime_observation=_hyperframes_project_observation(observations.get('project_runtime'),
+                timeline, runtime, minimum_seeks=20),
+            project_runtime_capture=_hyperframes_project_observation(capture.get('project_runtime'),
+                timeline, runtime, minimum_seeks=count + 21),
+            project_evidence_scope='single_scene_project_not_whole_film')
+    else:
+        require('project_runtime' not in capture and 'project_runtime' not in observations,
+                'creative_hyperframes_observation_invalid')
     if package['schema'] == 'video.creative-scene.v5':
         technical.update(skill_catalog_sha256=package['skill_catalog_sha256'],
             skill_delivery_sha256=package['skill_delivery_sha256'],

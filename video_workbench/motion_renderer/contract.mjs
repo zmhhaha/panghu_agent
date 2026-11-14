@@ -1,5 +1,6 @@
 import { readFileSync, lstatSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import {validateHyperFramesProject} from './hyperframes_project.mjs';
 export const sha=raw=>createHash('sha256').update(raw).digest('hex');
 // Verified against the pinned v0.8.149 CLI: delivery is its high quality preset.
 export function renderQuality(value='draft'){
@@ -31,7 +32,8 @@ const projectPair=(compiler,template)=>(compiler==='motion-compiler-1'&&template
  ||(compiler==='creative-method-scene-adapter-1'&&template==='generated-method-html-svg-1')
  ||(compiler==='creative-method-engine-scene-adapter-1'&&template==='generated-method-engine-scene-1')
  ||(compiler==='creative-film-scene-adapter-1'&&template==='generated-film-engine-scene-1')
- ||(compiler==='creative-skill-film-scene-adapter-1'&&template==='generated-skill-film-engine-scene-1');
+ ||(compiler==='creative-skill-film-scene-adapter-1'&&template==='generated-skill-film-engine-scene-1')
+ ||(compiler==='creative-skill-hyperframes-scene-adapter-1'&&template==='generated-skill-hyperframes-scene-1');
 function validateRuntimeShape(value,keys){
  if(!exactKeys(value,keys)||Object.values(value).some(v=>typeof v!=='string'||v.length<1||v.length>2000||/[\x00-\x1f\x7f]/.test(v)))
   throw Error('runtime_fingerprint_invalid');
@@ -109,7 +111,8 @@ export function verifyInput(root,expected){
   ||!Number.isFinite(timeline.duration_seconds)||timeline.duration_seconds<=0||timeline.duration_seconds>60)
   throw Error('timeline_contract_mismatch');
  const plan=JSON.parse(readRegular(root+'/plan.json'));
- const skillCreative=manifest.compiler==='creative-skill-film-scene-adapter-1';
+ const hyperframesCreative=manifest.compiler==='creative-skill-hyperframes-scene-adapter-1';
+ const skillCreative=manifest.compiler==='creative-skill-film-scene-adapter-1'||hyperframesCreative;
  const filmCreative=manifest.compiler==='creative-film-scene-adapter-1'||skillCreative;
  const engineCreative=manifest.compiler==='creative-method-engine-scene-adapter-1'||filmCreative;
  const methodCreative=manifest.compiler==='creative-method-scene-adapter-1'||engineCreative;
@@ -117,9 +120,26 @@ export function verifyInput(root,expected){
   const schema=skillCreative?'video.creative-scene.v5':filmCreative?'video.creative-scene.v4':engineCreative?'video.creative-scene.v3':methodCreative?'video.creative-scene.v2':'video.creative-scene.v1';
   const audio=methodCreative?plan.input_document?.scene?.audio_sha256:plan.input_document?.constraints?.production?.audio_sha256;
   if(plan?.schema!==schema||!(engineCreative?['html-svg','canvas','three']:['html-svg']).includes(plan.engine)
-   ||plan.adapter_revision!==manifest.compiler||audio!==manifest.audio_sha256)
+   ||plan.adapter_revision!==(hyperframesCreative?'creative-skill-film-scene-adapter-1':manifest.compiler)||audio!==manifest.audio_sha256)
    throw Error('creative_plan_binding_mismatch');
   const source=methodCreative?plan.result?.source:plan.result;
+  if(hyperframesCreative){
+   const proof=timeline.creative,project=validateHyperFramesProject(proof?.hyperframes_project),scene=project.scenes[0];
+   if(manifest.runtime_fingerprint?.schema!=='video.motion-runtime.v3'
+    ||manifest.project_runtime!=='hyperframes-core-project-1'||proof.project_runtime!==manifest.project_runtime
+    ||proof.renderer!=='isolated-hyperframes-core-project-ffmpeg-1'
+    ||proof.seek_protocol!=='hyperframes-core-renderSeek-exact'||proof.legacy_bridge!==true
+    ||proof.source_adapter_revision!==plan.adapter_revision
+    ||!/^[0-9a-f]{64}$/.test(manifest.hyperframes_project_sha256||'')
+    ||manifest.hyperframes_project_sha256!==proof.hyperframes_project_sha256
+    ||project.scenes.length!==1||project.entry!=='scene.html'||scene.entry!=='scene.html'
+    ||project.width!==1280||project.height!==720||project.duration_seconds!==encodedDuration(timeline)
+    ||scene.start_seconds!==0||scene.duration_seconds!==project.duration_seconds||scene.engine!==plan.engine
+    ||scene.source_sha256!==source?.files_sha256?.['scene.html']
+    ||scene.leading_seconds!==timeline.leading_seconds||scene.audio_seconds!==timeline.audio_seconds)
+    throw Error('creative_hyperframes_binding_mismatch');
+  }else if(manifest.project_runtime!==undefined||manifest.hyperframes_project_sha256!==undefined
+   ||timeline.creative?.project_runtime!==undefined)throw Error('creative_hyperframes_binding_mismatch');
   if(skillCreative){
    const proof=timeline.creative;
    if(plan.input_document?.schema!=='video.animation-production-input.v4'
