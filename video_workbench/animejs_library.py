@@ -13,7 +13,7 @@ VERSION = '4.5.0'
 ASSETS = {
     'anime.esm.min.js': 'a19015a1a92d52025a2fb6703b6d67eadd1cc2aeaf880770e96e04cf6aa07be1',
     'animejs.LICENSE.txt': '3f3e835a9952cfc2a6ca836fb95b3257c981f24fa3ef51249055acb09931897b',
-    'anime_timeline.mjs': 'c4c6bf0428909366a7f4fced4fbf61c8f2533c23286cc0f26aef785424208b18',
+    'anime_timeline.mjs': 'b8d594eca930e0758be51e49724ca6274c1c1d3e95d16f43e78d8196fd89cf67',
 }
 
 

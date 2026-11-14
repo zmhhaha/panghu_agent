@@ -284,8 +284,20 @@ class MethodAnimationRenderer:
             _require(type(evidence) is dict and set(evidence) == {'operation_id', 'evidence_sha256'},
                 'animation_method_authoring_library_admission_invalid')
             actual = self.lookup(evidence['operation_id'])
+            _, measured_binding = self._row(evidence['operation_id'], historical=True)
+            measured = measured_binding['request']
+            current_project_runtime = hashlib.sha256(_read(PROJECT_RUNTIME, 1024 * 1024)).hexdigest()
             _require(actual is not None and actual['technical_passed'] is True
                 and actual['runtime']['image'] == self.image
+                and measured_binding['image'] == self.image
+                and measured.get('schema') == 'video.animation-method-render-request.v4'
+                and measured.get('host_sha256') == identity['host_sha256']
+                and measured.get('engine_runtime_sha256') == identity['engine_runtime_sha256']
+                and measured.get('project_runtime_sha256') == current_project_runtime
+                and measured.get('hyperframes_core_sha256') == HYPERFRAMES_CORE_SHA256
+                and actual['runtime'].get('project_runtime') == 'hyperframes-core-project-1'
+                and actual['runtime'].get('project_runtime_sha256') == current_project_runtime
+                and actual['runtime'].get('hyperframes_core_sha256') == HYPERFRAMES_CORE_SHA256
                 and actual['runtime'].get('authoring_libraries') == value['authoring_libraries']
                 and actual['technical']['evidence_sha256'] == evidence['evidence_sha256'],
                 'animation_method_authoring_library_admission_unproven')
@@ -519,6 +531,7 @@ class MethodAnimationRenderer:
             observation = receipt.get('authoring_library_observation', {})
             scripts = observation.get('loaded_scripts')
             _require(observation.get('schema') == 'video.animation-authoring-library-observation.v1'
+                and observation.get('scope') == 'loaded_scripts_not_api_calls_or_visual_application'
                 and observation.get('authoring_libraries') == request['authoring_libraries']
                 and type(scripts) is list and all(type(name) is str for name in scripts)
                 and len(scripts) == len(set(scripts))

@@ -37,6 +37,8 @@ test('clock mismatch, selectors, callbacks, autoplay and late mutations fail clo
   for(const values of [{onUpdate:()=>{}},{autoplay:false},{loop:true},{x:{to:1,onComplete:()=>{}}}])
     assert.throws(()=>timeline.add({x:0},values),/autonomous/);
   assert.throws(()=>timeline.add('.outside',{x:10}),/scoped_targets/);
+  assert.throws(()=>timeline.add(['.outside'],{x:10}),/scoped_targets/);
+  assert.throws(()=>timeline.add([[{x:0}],['.outside']],{x:10}),/scoped_targets/);
   timeline.add({x:0},{x:[0,10],duration:1000});
   for(const context of [{global_frame:1,time:{numerator:1,denominator:25}},
     {global_frame:0.5,time:{numerator:1,denominator:48}},{}])

@@ -18,6 +18,8 @@ The actual `method-author/review.v2` contract already accepts trusted extra cons
 
 The method renderer has a separately opted-in `video.animation-method-render-request.v4` and receipt v4. It retains the existing complete HyperFrames project/bridge, then binds the exact library descriptor and three resources. Its trusted host serves `.mjs` correctly, checks the full resource set and records actual ESM/adapter script loads. Offering a library does not force its use: loading neither is valid; loading ESM without the paused adapter is rejected. A used-library observation requires both. All existing arbitrary/reverse/repeat/idle/fresh-load frame checks and isolated cleanup still apply.
 
+The observation scope is explicitly `loaded_scripts_not_api_calls_or_visual_application`: its `used_libraries` means that both library and paused adapter were loaded as scripts, not a trace of interpolation API calls or proof of visible application. It must not be presented as an automated aesthetic judgment. Technical probes below do call the actual APIs; arbitrary Agent samples still require complete visual comparison.
+
 For offline technical admission, instantiate `MethodAnimationRenderer(..., hyperframes=True, legacy_bridge=True, candidate_authoring_libraries=('animejs',))` and provide a task containing the pinned assets and `constraints.authoring_libraries`. Candidates remain absent from advertised capabilities. After an actual verified operation that loaded both scripts, write a separate operator record:
 
 ```json
@@ -29,14 +31,20 @@ For offline technical admission, instantiate `MethodAnimationRenderer(..., hyper
 
 The two quoted object placeholders above must be replaced with the actual objects, never strings. Start the private executor with `--authoring-library-admission-file` and its existing `--method-project-runtime hyperframes-core-bridge`; its renderer reopens the stopped operation and verifies actual used-library evidence against the exact current image. Asset presence alone, a copied JSON descriptor, a failed sample or an operation that chose not to use Anime cannot admit the capability. The ordinary renderer image also packages the fixed assets for this explicit path. Legacy production contracts that hard-code earlier resource lists are deliberately not used for Anime; the formal continuation is the complete-film module path.
 
+Admission also reopens the operation's exact frozen request and matches host, engine runtime, HyperFrames project adapter and core identities to the current release. A stopped operation from the same image with older executable host bytes cannot qualify as evidence for a newly installed host.
+
 ## Skill and developer release
 
 `skills/animejs-frame-authoring/SKILL.md` contains local, reusable authoring knowledge and the actual host-context protocol, with no reference-video dependency. `animejs_library.foundation_skill_package()` builds an **unpublished foundation draft** for the existing developer review flow. It declares all eligible drawing engines and the exact authoring-library requirements. It is not inserted into the published catalog or assigned fabricated developer approval.
 
 Create a complete effect segment with the relevant v2 task assets, validate deterministic seeking and native engine usage, then compare the entire sample against its expression goal. Transfer to another context before developer acceptance and ordinary Skill publication. Until that acceptance occurs, available code and a passing technical probe do not mean the effect library has a published, visually approved Anime.js effect.
 
+Before any Anime-dependent Skill is published, extend the application-side compatible-catalog and explicit-method selection checks to match authoring-library requirements against task-admitted assets. The current generic Skill catalog filters drawing engines only; this draft remains unpublished and must not be inserted into an old v1 runtime's discoverable production catalog. Keep this follow-up shared with other optional resource authoring tools rather than changing frozen worker contracts separately for each library.
+
 ## Validation
 
 Node tests execute the real pinned ESM for forward, reverse, repeated and arbitrary seeks, object-state stagger, idle stability, exact host clock, lifecycle cleanup and rejected autonomous options. Python tests verify provenance, Skill packaging, strict v1/v2 separation and release rejection after asset tampering. A real-browser probe additionally exercises scoped SVG/DOM interpolation, path reveal, idle screenshot equality and the actual film realm guard; its result is technical compatibility evidence rather than a visual-quality or production-admission claim.
 
 The browser probe accepts explicit `PANGHU_ANIME_PLAYWRIGHT` (installed `playwright-core/index.mjs`), `PANGHU_ANIME_BROWSER` (browser executable) and `PANGHU_TEST_TEMP` (scratch directory), then runs with `node --test tests/video_workbench/anime-timeline-browser.test.mjs`. It also renders actual Canvas and Three.js/WebGL2 with the corresponding native-context checks; it compares pixel hashes after nonmonotonic seeks, idle intervals and fresh reconstruction. Browser profile files stay in the supplied scratch directory. The test is explicitly skipped when these tools are unavailable.
+
+`anime-method-browser.test.mjs` additionally runs the actual method v4 capture host with the official HyperFrames 0.8.149 core at SHA `675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc`. Set `PANGHU_ANIME_HYPERFRAMES_DIST` to its verified dist directory. This probe executes the paused API from a real authored scene, verifies all 24 frames plus reverse/nonmonotonic/repeated/idle/fresh-load captures and checks the observed official ESM/adapter loads. It verifies the real rendering protocol, without fabricating an isolated image receipt or claiming an encoded production release.

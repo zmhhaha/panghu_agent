@@ -38,7 +38,9 @@ export function createFrameTimeline({fps, startFrame = 0, durationFrames, defaul
       active(); check(!rendered, 'anime_timeline_already_rendered'); parameters(values);
       check(typeof position === 'string' || Number.isFinite(position), 'anime_position_invalid');
       // Never use string selectors: modules must stay within their mount root.
-      check(typeof targets !== 'string' && targets != null, 'anime_scoped_targets_required');
+      const targetItems = Array.isArray(targets) ? targets.flat(Infinity) : [targets];
+      check(targetItems.length > 0 && targetItems.every(item => typeof item !== 'string' && item != null),
+        'anime_scoped_targets_required');
       timeline.add(targets, values, position);
       timeline.pause();
       check(Number.isFinite(timeline.duration) && timeline.duration <= endMilliseconds + 1e-6,

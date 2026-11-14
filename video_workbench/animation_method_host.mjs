@@ -13,7 +13,7 @@ const finite=value=>typeof value==='number'&&Number.isFinite(value);
 const ANIME_ASSETS={
  'anime.esm.min.js':'a19015a1a92d52025a2fb6703b6d67eadd1cc2aeaf880770e96e04cf6aa07be1',
  'animejs.LICENSE.txt':'3f3e835a9952cfc2a6ca836fb95b3257c981f24fa3ef51249055acb09931897b',
- 'anime_timeline.mjs':'c4c6bf0428909366a7f4fced4fbf61c8f2533c23286cc0f26aef785424208b18'};
+ 'anime_timeline.mjs':'b8d594eca930e0758be51e49724ca6274c1c1d3e95d16f43e78d8196fd89cf67'};
 export function validateAuthoringLibraries(request,resources){
  const expected={animejs:{schema:'video.animation-authoring-library.v1',library_id:'animejs',
   version:'4.5.0',license:'MIT',role:'animation-authoring',engines:['html-svg','canvas','three'],
@@ -217,6 +217,7 @@ export async function captureMethodFrames({chromium,request,resources,root,engin
   }
   return {frames,frame_count:count,reverse_seek_verified:true,
    ...(authoringAware?{authoring_library_observation:{schema:'video.animation-authoring-library-observation.v1',
+    scope:'loaded_scripts_not_api_calls_or_visual_application',
     authoring_libraries:authoringLibraries,loaded_scripts:[...scripts].sort(),
     used_libraries:scripts.has('/assets/anime_timeline.mjs')?['animejs']:[]}}:{}),
    ...(extended?{engine_observation:engineObservation,seek_checks:seekChecks}:{}),

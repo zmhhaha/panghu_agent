@@ -39,7 +39,7 @@ RUN echo "08fd7545d13d2c7fb65ab691530a802dafefd638596501854f267d0fb13c39e7  /opt
 COPY vendor/anime.esm.min.js vendor/animejs.LICENSE.txt vendor/anime_timeline.mjs /opt/assets/
 RUN echo "a19015a1a92d52025a2fb6703b6d67eadd1cc2aeaf880770e96e04cf6aa07be1  /opt/assets/anime.esm.min.js" | sha256sum -c - \
     && echo "3f3e835a9952cfc2a6ca836fb95b3257c981f24fa3ef51249055acb09931897b  /opt/assets/animejs.LICENSE.txt" | sha256sum -c - \
-    && echo "c4c6bf0428909366a7f4fced4fbf61c8f2533c23286cc0f26aef785424208b18  /opt/assets/anime_timeline.mjs" | sha256sum -c -
+    && echo "b8d594eca930e0758be51e49724ca6274c1c1d3e95d16f43e78d8196fd89cf67  /opt/assets/anime_timeline.mjs" | sha256sum -c -
 COPY runtime.mjs run.mjs observe.mjs creative.mjs contract.mjs engine_runtime.mjs hyperframes_project.mjs experiment.py ./
 COPY hyperframes_film.mjs hyperframes_film_browser.mjs hyperframes_film_capture.mjs \
     hyperframes_film_root.mjs hyperframes_film_realm.mjs hyperframes_film_realm_guard.mjs \
