@@ -5,6 +5,12 @@ web application. It does not pull images, invoke an Agent, retry a recipe, or
 publish a method. A durable claim authorizes at most one container creation;
 recovery only finds/stops that container. PNGs are collected after its writers
 have demonstrably stopped and its container has been removed.
+
+Storage boundary: only this operation's input/output directories are mounted.
+Execution time, RAM, processes, scratch tmpfs and collected deliverable bytes
+are bounded; the dedicated writable output bind has no filesystem quota.
+Bounding all authored-Python diagnostic writes requires a shared executor
+storage quota, independently of the PNG delivery budget and later reclamation.
 """
 from __future__ import annotations
 
