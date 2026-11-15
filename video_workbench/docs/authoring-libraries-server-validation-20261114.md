@@ -228,3 +228,18 @@ OpenSpec L.5已勾选，design／tasks精确回读与validate通过，revision�
 本轮据此完成OpenSpec N.1／N.2；其它26项有效待办不变，不合主线。文档单独提交，不改变上述已发布代码身份。
 
 OpenSpec已同步并通过validate，design／tasks精确回读及本地设计一致检查通过；revision为 `bffb2c15b31077c5f89282b271b754ce002d6649`，本变更37／63项完成。D盘 `library-reading-openspec-verified-r1.json` 保存文件摘要；浏览器回执SHA256为 `9082bac6ece21c5270e983e1e627ce3895a074a2cdc6675253697261348eada2`。
+
+
+### 知识库公共页壳统一与手动整库发版设计（2026-11-15）
+
+用户纠正知识库目标：Agent自动积累知识，用户决定是否发布整库版本；最近五版指整库已发布版本，知识库负责选版阅读和正文全文搜索，人工调整回到效果库。已同步design 7.21、proposal、规格及O.1–O.6任务，保留原37项完成证据；本轮先完成O.1公共页壳，O.2–O.6仍待实现。没有把原单页修订／任务快照视作整库发布，也未代用户执行发布。
+
+代码5文件为gallery导航名称、knowledge三文件与知识UI测试；完整Git `9dfda714ce935670e5594b178253facb747f90de` 已推送开发分支。原六份脏改动及未接线草案保留。干净索引抽取64份UI／测试源码，Node两套75项通过（包含知识23项），Python知识HTTP／构建／部署116项通过，用时37.27秒；独立只读UX审查及diff检查通过。知识页品牌、右上导航、字体、背景、尺寸、按钮、左侧手动刷新操作区与效果库统一，CAS／未知提交消息和原交互保持。
+
+普通Dockerfile从完整干净Git构建一次并推送latest，仅lab滚动一次，部署固定digest `sha256:7e28fbf4ee4b239b30e0a44c204d53e5324aa13e593e8f40eade92cd65c9d81b`。Pod `video-animation-lab-6dd564c4fc-g52fq`、UID `d271e61e-05eb-4fff-82ca-b3d58bb04470`，Ready且0重启。90个运行源码摘要对齐，manifest SHA为 `055f0b154b04b1f20afb7b69f0537026aa8e9c6cda1b78545cf77a3e5544a3aa`；7个UI及3个API帮助文件HTTP200且摘要吻合，缺失／错误owner的6次帮助读取403。根审查发现初版wrapper docs/未覆盖上轮video_workbench/docs三文件，构建前修为明确三文件白名单；未放入原脏改动。最终operator SHA为 `9a9facc8dba98502791a4c2bb7c6f1e6e1991e98a922f2946121d07bbf323665`。
+
+全量SQLite逻辑指纹、catalog／trash、知识目录、Agent计数／状态和其它服务／OAuth／Casdoor规格及Pod保持：7个效果、16条可见实验、4条旧隐藏、回收站0、2页知识／58条经验、254个Agent任务／1883次模型请求。未提交业务POST，没有新模型、TTS、渲染、知识修订或Skill发布。发布总回执D／OPS的 `shell-unification-r1-final-summary.json` SHA为 `862f350f0f7fc0c379ee51f0e3b007323609d9c3e32ccadaa99dc0a3ce99fd69`；其交接时标注浏览器待根任务完成，随后真实浏览器结果独立落盘。
+
+真实登录浏览器核对两页header文本一致、字体一致、桌面导航边界同为x=1063至1227；390×844两页导航位置一致，均无横向溢出。知识目录刷新、搜索并读取实际第2版正文正常，默认高级维护关闭，按钮使用同一公共样式。临时视口已恢复，日志无警告或错误。四张截图、浏览器及本地检查回执保存于既定D盘研究根 `library-reading-ui-r1/`，分别为 `shell-*-{desktop,narrow}.png`、`shell-unification-r1-browser.json` 和 `shell-unification-r1-local-validation.json`。验收没有创建实验、保存知识、整库发版或发布Skill；本次只勾O.1，不合主线。
+
+OpenSpec validate及四份artifact精确回读、本地design一致核对通过，revision为 `c8993933ded8e75c96d2717ef3acc2cd72fda7d2`，任务38／69项完成。O.2–O.6保持未勾；回执为 `shell-unification-r1-openspec-verified.json`。浏览器回执SHA256为 `cea30a916c33e49892b2f112594e99f06f368ae0b8b40a55d200de2bb566d496`。
