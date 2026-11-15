@@ -211,3 +211,20 @@ OpenSpec L.5已勾选，design／tasks精确回读与validate通过，revision�
 根审阅发现初版SQLite协调main使用内存库无法保证崩溃时跨库原子，执行前改为文件协调库并核对全部DELETE日志／FULL同步；副本和正式执行使用同一路径。最终保留行验证初版将盘点解码后的纯数字owner与原字符串owner混比，事务和文件删除均已完成，随后只修正SQL身份比较的类型投影并重做只读验证，没有重跑删除或放宽原文哈希。Agent blob清理复用既有Store保护；候选结果改为明确的purged摘要，保留原签名／结果摘要，不把删正文后的内容冒充原WorkerResult。
 
 独立最终总回执 trash-four-purge-final-summary-r1.json 的SHA256为 `6aa8b4a8b112f81b907538e6f6d5d6f4cce84fe3b9b2ff6d379041f7a89e5a6f`。本次仅完成L.6，不代勾其它创作、视听、修订或发布待办。
+
+
+### 效果库导航分层与知识默认阅读（2026-11-15）
+
+按用户要求将页面导航、进度读取与创建操作分层：顶栏只在效果库／创作知识库间切换，状态区保留原活动任务轮询与手动刷新，新建实验是独立主操作，详情／表单／回收站均保留该操作区。知识页默认阅读正文、适用范围、局限、反例及可读证据；ID查找、原始记录与人工修订收入默认关闭的高级区域。未确认提交、CAS草稿与原样重送仍可达，经验／历史只读，知识保存与Skill发布边界不变。
+
+代码仅7个前端／UI测试文件，完整Git `0c4823e9d7f109bf4604ce73788ca16ef3050df6` 已推送开发分支。原6份未提交改动和未接线草案保留；暂存源单独抽取验证，避免把旧脏改动混入发布。两套Node检查72项通过（知识页20项包含其中），Python知识HTTP／构建／部署116项通过，diff检查及独立只读UX审查通过。审查发现的历史证据返回丢版本、中文类型搜索和维护焦点问题均在本轮修正。
+
+普通Dockerfile从完整干净Git构建一次、推送latest一次，仅部署lab，固定digest `sha256:aa67ae9ea98870ffdd648177ae9466d263fe7654ea204728f568edf68e1e800e`。新Pod `video-animation-lab-59b645b-tgp7d`，UID `684334c0-0aea-4834-8cde-f7469781e1b6`，Ready、0重启；90个运行源码文件与完整Git一致，manifest SHA256为 `30fa1c54b7edd4644806aa1cf12f377b90c9a1f7facc59887fe4b0fcfcd37212`。7个UI和3个既有接口文档／客户端下载HTTP200且摘要吻合，接口文档缺失／错误owner的6次读取仍403。没有源码overlay或其它服务滚动。
+
+部署前后完整catalog、trash、知识目录、所有SQLite指纹、Agent数据库计数／状态及非lab规格／Pod／OAuth／Casdoor保持：7个效果、16条可见实验、4条旧隐藏、回收站0，知识2页／58条经验，Agent254个任务／1883次模型请求。服务器既定OPS保留 `lab-gallery-reading-r1-completed.json`，D盘同名回执与 `lab-gallery-reading-r1-final-summary.json`（SHA256 `fecc67ddca2868d9610ed7d98ad451d139dcf6d485d94fcceef2afd5fd12f84d`）保存发布核对；该summary在交接时明确标注浏览器验收待根任务完成，其后浏览器结果独立记录。
+
+真实登录浏览器已完成导航当前页、手动刷新保持7效果、新建表单打开返回、空回收站、知识阅读及中文经验类型搜索（抽帧评审匹配5条）、历史第1版只读与证据往返保留版本、高级维护的预填／聚焦／取消。桌面与390×844窄屏均无横向溢出，临时视口已恢复，页面日志无警告／错误。浏览器证据及四张截图位于D盘既定研究根的 `library-reading-ui-r1/`，回执 `browser-acceptance.json`。维护只打开后取消；未提交实验、人工修订或Skill认可／发布，没有模型、TTS或渲染。
+
+本轮据此完成OpenSpec N.1／N.2；其它26项有效待办不变，不合主线。文档单独提交，不改变上述已发布代码身份。
+
+OpenSpec已同步并通过validate，design／tasks精确回读及本地设计一致检查通过；revision为 `bffb2c15b31077c5f89282b271b754ce002d6649`，本变更37／63项完成。D盘 `library-reading-openspec-verified-r1.json` 保存文件摘要；浏览器回执SHA256为 `9082bac6ece21c5270e983e1e627ce3895a074a2cdc6675253697261348eada2`。
