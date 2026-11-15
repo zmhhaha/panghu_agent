@@ -1,5 +1,5 @@
 import {createMethodComparison} from './method-comparison.mjs';
-import {mountAuthoringControls, renderAuthoringBadges, matchesAuthoringTool, matchesVisualCreation, toolSearchText, resourceAuthoringRequest} from './authoring-tools.mjs';
+import {mountAuthoringControls, renderCapabilityLabels, matchesAuthoringTool, matchesVisualCreation, toolSearchText, resourceAuthoringRequest} from './authoring-tools.mjs';
 import {usesExactSkillPublication, renderExactSkillPublication} from './skill-publication.mjs';
 
 const API = 'api/method-lab/';
@@ -391,11 +391,7 @@ export function renderMethodCard(doc, effect, root, onOpen) {
   card.append(renderMethodMedia(doc, candidate, root, ACTIVE.has(effect.state) ? '正在制作，完成后展示实际样片' : '打开实验，查看样片与尚存问题'));
   const body = element(doc, 'div', 'card-body'), heading = element(doc, 'h3');
   heading.append(button(doc, text(effect.title) || '未命名效果', () => onOpen(effect.open_commission_id ?? effect.commission_id ?? effect.id), 'effect-title'));
-  const engine = element(doc, 'div', 'card-engine');
-  engine.append(element(doc, 'span', 'small muted', '画面创作'), renderEngineBadge(doc, effect,
-    !text(candidate?.media_url) && !text(candidate?.media?.url)), ...renderAuthoringBadges(doc, effect, 'creation'));
-  const tools = renderAuthoringBadges(doc, effect);
-  if (tools.length) engine.append(element(doc, 'span', 'small muted', '动作编排'), ...tools);
+  const engine = renderCapabilityLabels(doc, effect, !text(candidate?.media_url) && !text(candidate?.media?.url));
   body.append(heading, engine, element(doc, 'p', 'card-goal', text(effect.goal)));
   const meta = element(doc, 'div', 'card-meta');
   const state = displayState(effect);

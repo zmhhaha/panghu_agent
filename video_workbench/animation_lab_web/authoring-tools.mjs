@@ -2,6 +2,7 @@
 // separate layer; a loaded dependency never establishes aesthetic acceptance.
 const LABELS = Object.freeze({animejs:'Anime.js', gsap:'GSAP', manim:'Manim'});
 const CREATION_ENGINES = Object.freeze(['html-svg','canvas','three']);
+const CREATION_LABELS = Object.freeze({'html-svg':'HTML/SVG',canvas:'Canvas 2D',three:'Three.js'});
 const MOTION_TOOLS = Object.freeze(['gsap','animejs']);
 
 export function toolLayer(id) {
@@ -41,10 +42,46 @@ export function renderAuthoringBadges(doc,value,layer='motion') {
   return observedTools(value).filter(row=>toolLayer(row.id)===layer).map(row=>{
     const badge=doc.createElement('span');
     badge.className='engine-badge'; badge.dataset.authoringTool=row.id; badge.dataset.capabilityLayer=layer;
-    badge.textContent=row.label+' '+row.version;
-    badge.title=(layer==='creation'?'画面创作资源':'动作编排依赖')+'；渲染时已加载，不代表效果已获认可。';
+    badge.textContent=row.label;
+    badge.title=row.label+' '+row.version+'；'+(layer==='creation'?'画面创作资源':'动作编排依赖')
+      +'；渲染时已加载，不代表效果已获认可。';
     return badge;
   });
+}
+
+export function renderCapabilityLabels(doc,value,noSample=false) {
+  const root=doc.createElement('div');root.className='card-engine capability-labels';
+  const confirmed=!noSample&&value?.engine_status==='rendered'&&CREATION_ENGINES.includes(value.engine);
+  const creation=[],motion=confirmed?renderAuthoringBadges(doc,value):[];
+  if(confirmed) {
+    const engine=doc.createElement('span');
+    engine.className='engine-badge engine-'+value.engine;engine.dataset.renderEngine=value.engine;
+    engine.dataset.capabilityLayer='creation';engine.textContent=CREATION_LABELS[value.engine];
+    engine.title='画面创作：'+engine.textContent+'；已核实的样片记录。';
+    creation.push(engine,...renderAuthoringBadges(doc,value,'creation'));
+  }
+  for(const [layer,label,badges]of [['creation','画面创作',creation],['motion','动作编排',motion]]) {
+    const row=doc.createElement('div'),caption=doc.createElement('span'),values=doc.createElement('span');
+    row.className='capability-label-row';row.dataset.capabilityLayer=layer;
+    caption.className='capability-label-title';caption.textContent=label+'：';
+    values.className='capability-label-values';
+    if(badges.length) {
+      for(const [index,badge]of badges.entries()) {
+        if(index) {
+          const separator=doc.createElement('span');separator.className='capability-label-separator';
+          separator.textContent='\u00a0';values.append(separator);
+        }
+        values.append(badge);
+      }
+    }else {
+      const pending=doc.createElement('span');pending.className='capability-label-placeholder';
+      pending.textContent=confirmed?'未记录':'待确认';
+      pending.title=confirmed?'缺少可核对的额外动作编排库记录，不代表样片没有动画。':'尚无已核实样片，该能力待确认。';
+      values.append(pending);
+    }
+    row.append(caption,values);root.append(row);
+  }
+  return root;
 }
 
 export function resourceAuthoringRequest(fields,durationSeconds) {

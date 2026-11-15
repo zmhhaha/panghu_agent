@@ -466,13 +466,15 @@ test('technology filters use only the displayed sample, ignoring family engines,
 });
 
 test('cards distinguish confirmed technology, unverified source and an absent sample', () => {
-  const known = renderMethodCard(doc, {id: 'known', engine: 'html-svg', engine_status: 'rendered'}, root, () => {});
-  assert.match(known.textContent, /画面创作HTML\/SVG/);
+  const known = renderMethodCard(doc, {id: 'known', engine: 'html-svg', engine_status: 'rendered',
+    media_url: candidate().media_url}, root, () => {});
+  assert.match(known.textContent, /画面创作：HTML\/SVG/);
+  assert.match(known.textContent, /动作编排：未记录/);
   const declared = renderMethodCard(doc, {id: 'declared', engine: null, engine_status: 'unverified',
     methods: [{runtime_requirements: {engine: 'three'}}]}, root, () => {});
-  assert.match(declared.textContent, /画面创作待验证/); assert.doesNotMatch(declared.textContent, /Three\.js/);
+  assert.match(declared.textContent, /画面创作：待确认动作编排：待确认/); assert.doesNotMatch(declared.textContent, /Three\.js/);
   const missing = renderMethodCard(doc, {id: 'missing', engine: null, engine_status: 'unknown'}, root, () => {});
-  assert.match(missing.textContent, /画面创作尚无样片/);
+  assert.match(missing.textContent, /画面创作：待确认动作编排：待确认/);
 });
 
 test('candidate, history and transfer badges show each actual sample technology and follow comparison selection', () => {
