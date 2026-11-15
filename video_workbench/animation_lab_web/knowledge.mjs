@@ -195,9 +195,38 @@ export class KnowledgeController {
 }
 
 const statusLabel = value => ({provisional: '待验证', active: '适用中', deprecated: '已停用'}[value] ?? value);
+const experienceLabels = {execution_failure: '执行失败记录', failure: '失败记录', render: '实际渲染记录',
+  sampled_review: '抽帧评审', authored_proposal: '创作提案', developer_feedback: '开发者评价',
+  feedback_withdrawal: '评价撤回记录', knowledge_proposal: '知识更新提案',
+  developer_knowledge_revision: '人工修订记录', knowledge_conflict: '知识版本冲突'};
+export const experienceLabel = kind => experienceLabels[kind] ?? '实验记录';
+
+export function experienceReading(detail) {
+  const record = detail?.document && typeof detail.document === 'object' ? detail.document : {};
+  const sections = [];
+  const add = (title, value) => { if (typeof value === 'string' && value.trim()) sections.push({title, content: value}); };
+  add('本次创作目标', record.goal);
+  add(detail.kind === 'developer_feedback' ? '评价内容' : '记录摘要', record.summary || record.comment || record.change_note);
+  add('记录的错误', typeof record.error === 'string' ? record.error : record.error?.message || record.error?.code);
+  if (typeof record.outcome === 'string') add('记录结论', ({passed: '通过', failed: '未通过', incomplete: '证据不足'}[record.outcome] ?? record.outcome));
+  const stringList = value => Array.isArray(value) ? value.filter(item => typeof item === 'string').join('\n') : '';
+  add('仍需解决的问题', stringList(record.remaining_issues));
+  add('后续建议', typeof record.next_guidance === 'string' ? record.next_guidance : stringList(record.next_guidance));
+  for (const proposal of Array.isArray(record.proposals) ? record.proposals : []) {
+    add(proposal?.body?.title || '知识更新提案', proposal?.body?.content);
+  }
+  const context = ({sampled_review: '这是基于实际传入抽帧的评审，不代表已经完整观看运动或试听声音。',
+    render: '这份记录反映实际渲染结果，不能单独证明画面表现已获认可。',
+    authored_proposal: '这是 Agent 的创作提案，不代表已经渲染、验收或发布。',
+    knowledge_proposal: '这是 Agent 提出的知识更新，实际采用情况以对应知识页的版本为准。',
+    feedback_withdrawal: '这条记录说明原评价已撤回；引用它的知识需要重新核对。'}[detail.kind]
+    ?? '真实实验经验保留原貌。需要纠正理解时，可修订引用它的知识页面。');
+  return {title: experienceLabel(detail.kind), context, sections};
+}
 
 export function mountKnowledgePage(document, controller) {
   const get = id => document.getElementById(id);
+  let sourcePage = null, previousEditor = null;
   function el(tag, text, className) {
     const node = document.createElement(tag);
     if (text !== undefined) node.textContent = String(text);
@@ -213,21 +242,32 @@ export function mountKnowledgePage(document, controller) {
     const details = el('details'); details.append(el('summary', title), el('pre', JSON.stringify(value, null, 2), 'json'));
     target.append(details);
   }
+  function listSection(target, title, items, fallback = '未记录') {
+    target.append(el('h3', title));
+    if (!items?.length) { target.append(el('p', fallback, 'muted')); return; }
+    const list = el('ul', undefined, 'reading-list');
+    for (const item of items) list.append(el('li', item));
+    target.append(list);
+  }
+  function evidenceLabel(state, id, index) {
+    const record = state.catalogue?.experiences.find(row => row.id === id);
+    return record ? experienceLabel(record.kind) + ' · 证据 ' + (index + 1) : '实验证据 ' + (index + 1);
+  }
   function renderLists(state) {
     const search = get('knowledge-search').value.trim().toLowerCase();
     for (const [kind, key, idKey] of [['page', 'pages', 'page_id'], ['experience', 'experiences', 'id']]) {
       const target = get('knowledge-' + key), all = state.catalogue?.[key] ?? [];
-      const rows = all.filter(row => JSON.stringify(row).toLowerCase().includes(search));
+      const rows = all.filter(row => (JSON.stringify(row) + ' ' + (kind === 'experience' ? experienceLabel(row.kind) : '')).toLowerCase().includes(search));
       get('knowledge-' + (kind === 'page' ? 'page' : 'experience') + '-count').textContent = rows.length + ' / ' + all.length;
       target.replaceChildren();
-      for (const row of rows) {
+      for (const [index, row] of rows.entries()) {
         const active = state.selection?.kind === kind && state.selection.id === row[idKey];
-        const item = button('', () => controller.select(kind, row[idKey]), state.busy || !!state.pending || !!state.editor,
+        const item = button('', () => { sourcePage = null; controller.select(kind, row[idKey]); }, state.busy || !!state.pending || !!state.editor,
           'record' + (active ? ' active' : ''));
-        item.append(el('strong', row.title || row.kind || row[idKey]), el('span', row[idKey]));
+        item.append(el('strong', kind === 'page' ? row.title : experienceLabel(row.kind)));
         if (kind === 'page') item.append(el('span', '第 ' + row.revision + ' 版 · ' + statusLabel(row.status)
           + (row.evidence_status === 'withdrawn_feedback' ? ' · 证据已撤回' : '')));
-        else item.append(el('span', row.source_id));
+        else item.append(el('span', '实验记录 ' + (index + 1)));
         target.append(item);
       }
       if (!rows.length) target.append(el('p', search ? '本次目录没有匹配记录。' : '暂无记录。', 'muted'));
@@ -249,13 +289,14 @@ export function mountKnowledgePage(document, controller) {
     form.append(input('title', '标题'), input('content', '知识正文', 10));
     const row = el('div', undefined, 'row');
     row.append(input('applicability', '适用条件，每行一项', 4), input('limitations', '局限与注意事项，每行一项', 4));
-    form.append(row, input('evidence_ids', '实验证据 ID，每行一项', 3));
+    form.append(row);
     const label = el('label', '状态'), select = el('select');
     for (const value of STATUSES) { const option = el('option', statusLabel(value)); option.value = value; select.append(option); }
     select.value = editor.fields.status; select.disabled = state.busy || !!state.pending; fields.status = select;
     select.addEventListener('change', () => controller.update(Object.fromEntries(Object.entries(fields).map(([name, field]) => [name, field.value]))));
     label.append(select); form.append(label);
-    const advanced = el('details'); advanced.append(el('summary', '反例与关联页面（高级）'),
+    const advanced = el('details'); advanced.append(el('summary', '证据、反例与关联页面（高级）'),
+      input('evidence_ids', '实验证据 ID，每行一项', 3),
       input('counterexamples', '反例 JSON 数组', 5), input('relations', '关联页面 JSON 数组', 5));
     form.append(advanced, input('change_note', '修正原因（必填）', 3));
     const actions = el('div', undefined, 'actions');
@@ -263,8 +304,12 @@ export function mountKnowledgePage(document, controller) {
     actions.append(submit, button('取消编辑', () => controller.cancelEdit(), state.busy || !!state.pending));
     form.append(actions);
     form.addEventListener('submit', event => { event.preventDefault(); controller.save(); }); target.append(form);
+    return fields.title;
   }
   function render(state) {
+    const enteringEditor = !!state.editor && state.editor !== previousEditor;
+    const leavingEditor = !!previousEditor && !state.editor;
+    previousEditor = state.editor;
     const message = get('knowledge-message'); message.textContent = state.message; message.classList.toggle('error', state.error);
     get('knowledge-refresh').disabled = state.busy;
     get('knowledge-lookup').disabled = state.busy || !!state.pending || !!state.editor;
@@ -276,48 +321,78 @@ export function mountKnowledgePage(document, controller) {
       actions.append(button('核对当前版本', () => controller.checkPending(), state.busy),
         button('重送原请求', () => controller.submitPending(), state.busy)); target.append(actions);
     }
-    if (state.draft && !state.editor) target.append(el('p', '已保留基于第 ' + state.draft.from_revision
-      + ' 版的修订草稿。先读取最新版本，再点击“修订当前页面”核对。', 'note'));
+    if (state.draft && !state.editor) {
+      target.append(el('p', '已保留基于第 ' + state.draft.from_revision
+        + ' 版的修订草稿。先读取最新版本，再从高级维护中继续修订。', 'note'));
+      target.append(button('读取最新版本并核对草稿', () => controller.select('page', state.draft.page_id), state.busy));
+    }
     const {selection, detail} = state;
-    if (!selection || !detail) { target.append(el('p', '选择目录记录，查看正文、证据和历史版本。', 'muted')); return; }
+    if (!selection || !detail) {
+      target.append(el('h2', '选择一页知识开始阅读'), el('p', '左侧也可以查看形成这些知识的真实实验经验。', 'muted'));
+      return;
+    }
     if (selection.kind === 'experience') {
-      target.append(el('h2', '实验经验 · ' + detail.kind), el('p', detail.id, 'muted'),
-        el('p', '真实经验保留原貌，不在这里改写。需要修正理解时，请修订引用它的知识页面。', 'note'));
-      section(target, '来源', detail.source_id); section(target, '内容摘要指纹', detail.content_sha256);
-      target.append(el('h3', '完整经验正文'), el('pre', JSON.stringify(detail.document, null, 2), 'json'));
-      json(target, '查看完整原始记录', detail); return;
+      const reading = experienceReading(detail);
+      if (sourcePage) target.append(button('← 返回引用它的知识页', () => controller.select('page', sourcePage.id, sourcePage.revision), state.busy));
+      target.append(el('h2', reading.title), el('p', reading.context, 'scope-note'));
+      for (const item of reading.sections) section(target, item.title, item.content);
+      if (!reading.sections.length) target.append(el('p', '这份记录主要包含技术证据，完整原文保存在下方高级信息中。', 'muted'));
+      target.append(el('p', '来源记录可能属于已归档或清除的实验；保留经验不表示原样片仍可访问。', 'muted small'));
+      const advanced = el('details', undefined, 'maintenance');
+      advanced.append(el('summary', '高级信息：来源编号与完整记录'));
+      section(advanced, '经验 ID', detail.id); section(advanced, '来源 ID', detail.source_id);
+      section(advanced, '内容摘要指纹', detail.content_sha256);
+      json(advanced, '完整原始记录', detail); target.append(advanced); return;
     }
     const page = detail.page;
-    target.append(el('h2', page.body.title), el('p', page.page_id, 'muted'));
+    target.append(el('h2', page.body.title));
     const badges = el('div', undefined, 'badges');
     for (const value of ['第 ' + page.revision + ' 版', statusLabel(page.status), selection.revision === null ? '当前页面' : '历史版本 · 只读'])
       badges.append(el('span', value, 'badge'));
     target.append(badges);
-    if (detail.evidence_issues?.length) target.append(el('p', '部分引用经验已被撤回：' + detail.evidence_issues.join('、')
-      + '。请核对适用范围和结论。', 'note'));
+    if (selection.revision !== null) target.append(button('返回最新版本', () => controller.select('page', page.page_id),
+      state.busy || !!state.pending || !!state.editor));
+    if (detail.evidence_issues?.length) target.append(el('p', '有 ' + detail.evidence_issues.length
+      + ' 条引用经验已被撤回，请核对适用范围和结论。', 'note'));
     section(target, '知识正文', page.body.content);
-    section(target, '适用条件', (page.body.applicability ?? []).join('\n') || '未记录');
-    section(target, '局限与注意事项', (page.body.limitations ?? []).join('\n') || '未记录');
-    json(target, '反例', page.body.counterexamples ?? []); json(target, '关联页面', page.relations);
+    listSection(target, '适用条件', page.body.applicability);
+    listSection(target, '局限与注意事项', page.body.limitations);
+    if (page.body.counterexamples?.length) listSection(target, '反例', page.body.counterexamples.map(row => row.description));
     const locked = state.busy || !!state.pending || !!state.editor;
-    const actions = el('div', undefined, 'actions');
-    actions.append(selection.revision === null ? button('修订当前页面', () => controller.edit(), locked || state.reloadRequired === page.page_id, 'primary')
-      : button('返回最新版本', () => controller.select('page', page.page_id), locked));
-    if (state.draft && selection.revision === null) actions.append(button('重新读取最新版本', () => controller.select('page', page.page_id), locked));
-    target.append(actions); renderEditor(target, state);
-    target.append(el('h3', '引用的实验证据'));
+    target.append(el('h3', '来源实验证据'), el('p', '查看支撑这页知识的真实经验。', 'muted small'));
     const evidence = el('div', undefined, 'evidence-list');
-    for (const id of page.evidence_ids) evidence.append(button(id, () => controller.select('experience', id), locked));
+    for (const [index, id] of page.evidence_ids.entries()) evidence.append(button(evidenceLabel(state, id, index), () => {
+      sourcePage = {id: page.page_id, revision: selection.revision}; controller.select('experience', id);
+    }, locked));
     target.append(evidence);
     const history = el('details'); history.open = selection.revision !== null;
-    history.append(el('summary', '历史版本（本次最多 64 条）'));
+    history.append(el('summary', '查看历史版本（本次最多 64 条）'));
     const list = el('ul', undefined, 'history');
     for (const row of detail.history ?? []) {
       const li = el('li'); li.append(button('查看第 ' + row.revision + ' 版', () => controller.select('page', page.page_id, row.revision), locked),
         el('span', statusLabel(row.status)), el('p', row.change_note ?? '')); list.append(li);
     }
     if (selection.revision !== null) list.append(el('li', '这是历史正文；返回最新版本可查看历史目录并修订。', 'readonly'));
-    history.append(list); target.append(history); json(target, '完整页面记录与指纹', page);
+    history.append(list); target.append(history);
+    const maintenance = el('details', undefined, 'maintenance');
+    maintenance.open = !!state.editor || !!state.pending || state.reloadRequired === page.page_id;
+    const maintenanceHeading = el('summary', '高级维护：人工修订与技术记录');
+    maintenanceHeading.tabIndex = 0;
+    maintenance.append(maintenanceHeading,
+      el('p', '日常制作无需填写。仅在知识结论有误时修订；保存会创建新版本，不会启动实验或发布 Skill。', 'form-note'));
+    let editorFocus = null;
+    if (selection.revision === null) {
+      const actions = el('div', undefined, 'actions');
+      actions.append(button('修订当前页面', () => controller.edit(), locked || state.reloadRequired === page.page_id, 'primary'));
+      if (state.draft) actions.append(button('重新读取最新版本', () => controller.select('page', page.page_id), locked));
+      maintenance.append(actions); editorFocus = renderEditor(maintenance, state);
+    }
+    section(maintenance, '知识页 ID', page.page_id);
+    if (detail.evidence_issues?.length) json(maintenance, '已撤回的证据 ID', detail.evidence_issues);
+    json(maintenance, '关联页面与版本绑定', page.relations);
+    json(maintenance, '完整页面记录与指纹', page); target.append(maintenance);
+    if (enteringEditor) editorFocus?.focus?.();
+    if (leavingEditor) maintenanceHeading.focus?.();
   }
   controller.onChange = render;
   get('knowledge-refresh').addEventListener('click', () => controller.refresh());

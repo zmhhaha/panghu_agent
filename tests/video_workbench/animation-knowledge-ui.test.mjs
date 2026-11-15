@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {KnowledgeHTTPError, KnowledgeController, createKnowledgeClient, draftFromPage, buildKnowledgeRevision,
-  mountKnowledgePage} from '../../video_workbench/animation_lab_web/knowledge.mjs';
+  mountKnowledgePage, experienceReading} from '../../video_workbench/animation_lab_web/knowledge.mjs';
 
 const root = new URL('https://video-service.panghuer.top/dev/animations/');
 const clone = value => JSON.parse(JSON.stringify(value));
@@ -151,8 +151,114 @@ class Element {
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; }
   addEventListener(name, action) { this.listeners[name] = action; }
+  focus() { this.focused = true; }
   all() { return [this, ...this.children.flatMap(node => node.all())]; }
+  visibleAll() {
+    const children = this.tagName === 'details' && !this.open ? this.children.filter(node => node.tagName === 'summary') : this.children;
+    return [this, ...children.flatMap(node => node.visibleAll())];
+  }
 }
+
+async function mounted(overrides = {}) {
+  const elements = new Map();
+  const document = {createElement: tag => new Element(tag), getElementById: id => {
+    if (!elements.has(id)) elements.set(id, new Element('div')); return elements.get(id);
+  }};
+  const h = harness(overrides); mountKnowledgePage(document, h.controller);
+  await new Promise(resolve => setImmediate(resolve));
+  return {...h, document, detail: document.getElementById('knowledge-detail')};
+}
+const visibleButton = (target, label) => target.visibleAll().find(node => node.tagName === 'button' && node.textContent === label);
+const maintenance = target => target.all().find(node => node.tagName === 'details' && node.className === 'maintenance');
+
+test('reading a knowledge page hides forms and technical identities until maintenance is explicitly opened', async () => {
+  const h = await mounted(); await h.controller.select('page', 'draw:async');
+  assert.equal(h.detail.visibleAll().some(node => ['form', 'textarea', 'pre', 'input'].includes(node.tagName)), false);
+  assert.equal(h.detail.visibleAll().some(node => ['draw:async', 'exp:failure', 'c'.repeat(64)].includes(node.textContent)), false);
+  assert.ok(h.detail.visibleAll().some(node => node.textContent === '以实测事件确定完成时点。'));
+  assert.equal(maintenance(h.detail).open, false); assert.equal(visibleButton(h.detail, '修订当前页面'), undefined);
+  maintenance(h.detail).open = true;
+  visibleButton(h.detail, '修订当前页面').listeners.click();
+  assert.equal(maintenance(h.detail).open, true);
+  assert.equal(h.detail.visibleAll().some(node => node.tagName === 'form'), true);
+  assert.equal(h.controller.state.editor.fields.content, page().body.content);
+  assert.equal(h.controller.state.editor.fields.change_note, '');
+  assert.equal(h.detail.visibleAll().find(node => node.name === 'title').focused, true);
+  visibleButton(h.detail, '取消编辑').listeners.click();
+  assert.equal(maintenance(h.detail).open, false);
+  assert.equal(maintenance(h.detail).children[0].focused, true);
+  assert.equal(h.calls.some(item => item.name === 'revise'), false);
+});
+
+test('an uncertain save keeps reconciliation controls visible outside collapsed maintenance', async () => {
+  const h = await mounted({revise: async () => { throw new Error('network reset'); }});
+  await h.controller.select('page', 'draw:async'); h.controller.edit();
+  h.controller.update({...h.controller.state.editor.fields, change_note: '有证据的修正'}); await h.controller.save();
+  maintenance(h.detail).open = false;
+  assert.ok(visibleButton(h.detail, '核对当前版本')); assert.ok(visibleButton(h.detail, '重送原请求'));
+  assert.ok(h.detail.visibleAll().some(node => node.textContent?.includes('修订请求已冻结')));
+  assert.ok(h.controller.state.pending); assert.equal(h.calls.filter(item => item.name === 'revise').length, 1);
+});
+
+test('CAS conflicts expose the preserved draft and explicit latest-read action in reading mode', async () => {
+  const h = await mounted({revise: async () => { throw new KnowledgeHTTPError(409, 'conflict'); }});
+  await h.controller.select('page', 'draw:async'); h.controller.edit();
+  h.controller.update({...h.controller.state.editor.fields, content: '保留我的修正', change_note: '实际观察'});
+  await h.controller.save(); maintenance(h.detail).open = false;
+  const reload = visibleButton(h.detail, '读取最新版本并核对草稿'); assert.ok(reload);
+  await reload.listeners.click(); maintenance(h.detail).open = true;
+  visibleButton(h.detail, '修订当前页面').listeners.click();
+  assert.equal(h.controller.state.editor.fields.content, '保留我的修正');
+  assert.equal(h.calls.filter(item => item.name === 'revise').length, 1);
+});
+
+test('source evidence opens readable recorded content and can return without revealing raw JSON or claiming a sample exists', async () => {
+  const h = await mounted({experience: async id => ({id, kind: 'sampled_review', source_id: 'operation:removed',
+    content_sha256: 'd'.repeat(64), document: {commission_id: 'removed-commission', goal: '观察群体筛选',
+      summary: '只观察了这次实际传入的抽帧。', outcome: 'incomplete'}})});
+  await h.controller.select('page', 'draw:async');
+  const evidence = h.detail.visibleAll().find(node => node.tagName === 'button' && node.textContent?.startsWith('失败记录 · 证据'));
+  evidence.listeners.click(); await new Promise(resolve => setImmediate(resolve));
+  assert.ok(h.detail.visibleAll().some(node => node.textContent === '只观察了这次实际传入的抽帧。'));
+  assert.ok(h.detail.visibleAll().some(node => node.textContent?.includes('不代表已经完整观看运动')));
+  assert.equal(h.detail.visibleAll().some(node => node.tagName === 'pre' || node.tagName === 'a'), false);
+  assert.equal(h.detail.visibleAll().some(node => node.textContent === 'operation:removed'), false);
+  assert.equal(h.controller.edit(), false);
+  await visibleButton(h.detail, '← 返回引用它的知识页').listeners.click();
+  assert.equal(h.controller.state.selection.kind, 'page'); assert.equal(h.calls.some(item => item.name === 'revise'), false);
+});
+
+test('experience reading retains evidence limitations and translates only recorded content', () => {
+  const authored = experienceReading({kind: 'authored_proposal', document: {summary: 'Agent 实际写下的提案'}});
+  assert.match(authored.context, /不代表已经渲染/);
+  assert.deepEqual(authored.sections, [{title: '记录摘要', content: 'Agent 实际写下的提案'}]);
+  const proposed = experienceReading({kind: 'knowledge_proposal', document: {proposals: [{body: {title: '留出空间', content: '观察到标签相互遮挡。'}}]}});
+  assert.deepEqual(proposed.sections, [{title: '留出空间', content: '观察到标签相互遮挡。'}]);
+  assert.match(proposed.context, /版本为准/);
+  assert.deepEqual(experienceReading({kind: 'unknown', document: {artifact_sha256: 'e'.repeat(64)}}).sections, []);
+});
+
+test('the directory searches the Chinese experience types shown to the reader without extra requests', async () => {
+  const h = await mounted({catalogue: async () => ({...catalogue(), experiences: [
+    {id: 'exp:review', kind: 'sampled_review', source_id: 'source:review'},
+    {id: 'exp:render', kind: 'render', source_id: 'source:render'}]})});
+  const search = h.document.getElementById('knowledge-search'); search.value = '抽帧评审'; search.listeners.input();
+  const list = h.document.getElementById('knowledge-experiences');
+  assert.equal(list.children.length, 1); assert.equal(list.children[0].children[0].textContent, '抽帧评审');
+  search.value = '实际渲染记录'; search.listeners.input();
+  assert.equal(list.children.length, 1); assert.equal(list.children[0].children[0].textContent, '实际渲染记录');
+  assert.deepEqual(h.calls.map(item => item.name), ['catalogue']);
+});
+
+test('following evidence from historical knowledge returns to the same historical revision', async () => {
+  const h = await mounted(); await h.controller.select('page', 'draw:async', 1);
+  const evidence = h.detail.visibleAll().find(node => node.tagName === 'button' && node.textContent?.startsWith('失败记录 · 证据'));
+  evidence.listeners.click(); await new Promise(resolve => setImmediate(resolve));
+  await visibleButton(h.detail, '← 返回引用它的知识页').listeners.click();
+  assert.equal(h.controller.state.selection.revision, 1); assert.equal(h.controller.edit(), false);
+  assert.equal(h.detail.visibleAll().some(node => node.textContent === '历史版本 · 只读'), true);
+  assert.deepEqual(h.calls.map(item => item.name), ['catalogue', 'revision', 'experience', 'revision']);
+});
 
 test('mounted page renders model content as text and exposes historical reads without write controls', async () => {
   const elements = new Map();

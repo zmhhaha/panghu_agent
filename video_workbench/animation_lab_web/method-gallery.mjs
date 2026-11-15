@@ -777,6 +777,17 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     $('experiment-unavailable').hidden = enabled && continuation?.ui_preview !== true;
     $('gallery-preview-note').hidden = !state.catalog || enabled;
     $('gallery-refresh').disabled = state.loading || state.busy;
+    const syncStatus = $('gallery-sync-status');
+    if (syncStatus) {
+      const activeIds = new Set(rows(state.catalog?.commissions).filter(row => ACTIVE.has(row.state)).map(row => row.id));
+      if (ACTIVE.has(state.detail?.state)) activeIds.add(state.detail.id);
+      const syncLabel = error ? '进度更新未完成，可手动刷新核对。'
+        : state.pending || recycle?.state.pending ? '操作结果待核对，请手动刷新查找原记录。'
+        : !state.catalog ? '正在读取效果库…'
+        : activeIds.size ? activeIds.size + ' 个实验制作中 · 进度自动更新'
+        : '当前没有运行中的实验';
+      if (syncStatus.textContent !== syncLabel) syncStatus.textContent = syncLabel;
+    }
     $('experiment-form-close').disabled = state.busy;
     $('gallery-availability').textContent = state.catalog ? enabled ? '按目标自主探索，完成后查看最佳样片、改进依据与尚存问题。'
       : state.catalog.availability.reason || '制作服务尚未就绪，可查看已有样片。' : '正在读取效果库…';
