@@ -1,8 +1,11 @@
 """Recoverable visibility over real stores; synthetic evidence, no paid work."""
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from copy import deepcopy
 import json
 import sqlite3
 from types import SimpleNamespace
+from threading import Event
 from uuid import uuid4
 
 import pytest
@@ -10,6 +13,7 @@ import pytest
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from video_workbench.animation_method_service import AnimationMethodService
 from video_workbench import animation_method_renderer as render_module
+from video_workbench import animation_method_trash as trash_module
 from test_animation_method_service import work, start, finish
 from test_animation_method_renderer import adapter, SOURCE, document, NEW_IMAGE
 from test_animation_method_effect_groups import alter_frozen_fixture
@@ -146,6 +150,38 @@ def test_hidden_old_urls_cannot_write_feedback_withdraw_cancel_or_transfer(work,
             action()
         assert rejected.value.status == 404
         assert (evidence(service), snapshot_database(service.metadata_path)) == before
+
+
+@pytest.mark.parametrize('action', ['feedback', 'withdraw_feedback'])
+def test_waiting_opinion_rechecks_visibility_after_delete_and_writes_nothing(work, monkeypatch, action):
+    service, _, _, renderer = work
+    stop_reader(renderer, monkeypatch)
+    run = finish(service, start(service)['id'])
+    comment = dict(request_id=str(uuid4()), candidate_id=run['best_candidate_id'], comment='Prior opinion')
+    saved = service.feedback(OWNER, run['id'], comment)
+    body = (dict(comment, request_id=str(uuid4())) if action == 'feedback' else
+            dict(request_id=str(uuid4()), feedback_id=saved['id']))
+    waiting = Event()
+    original_lock = trash_module._run_lock
+
+    @contextmanager
+    def observed_lock(path):
+        with original_lock(path) as acquired:
+            if not acquired:
+                waiting.set()
+            yield acquired
+
+    monkeypatch.setattr(trash_module, '_run_lock', observed_lock)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with service.trash.mutation(OWNER):
+            future = pool.submit(getattr(service, action), OWNER, run['id'], body)
+            assert waiting.wait(2), 'The opinion must actually wait behind the owner lock'
+            delete(service, run['id'])
+            before = (evidence(service), snapshot_database(service.metadata_path))
+        with pytest.raises(ServiceError, match='commission_not_found') as rejected:
+            future.result(timeout=5)
+        assert rejected.value.status == 404
+    assert (evidence(service), snapshot_database(service.metadata_path)) == before
 
 
 @pytest.mark.parametrize('kind', ['active', 'uncertain', 'unknown_stop', 'wrong_job'])

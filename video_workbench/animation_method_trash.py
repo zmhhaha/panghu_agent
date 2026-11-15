@@ -31,7 +31,11 @@ def require(value, code='animation_method_trash_invalid', status=422):
 def serialized_library_mutation(function):
     @wraps(function)
     def wrapped(self, owner, *args, **kwargs):
-        with self.trash.mutation(owner):
+        # Concurrent opinion retries retain their original atomic/idempotent
+        # behavior while sharing the deletion lock. Execution actions fail
+        # immediately when another mutation is already in progress.
+        wait = 5 if function.__name__ in {'feedback', 'withdraw_feedback'} else 0
+        with self.trash.mutation(owner, wait_seconds=wait):
             return function(self, owner, *args, **kwargs)
     return wrapped
 
@@ -51,7 +55,7 @@ class AnimationMethodTrash:
             db.commit()
 
     @contextmanager
-    def mutation(self, owner):
+    def mutation(self, owner, *, wait_seconds=0):
         require(type(owner) is str and 1 <= len(owner) <= 200
                 and not any(ord(c) < 32 for c in owner), 'animation_method_owner_invalid', 401)
         held = getattr(self.local, 'owner', None)
@@ -60,13 +64,19 @@ class AnimationMethodTrash:
             return
         require(held is None, 'animation_method_library_busy', 409)
         path = self.service.root / 'locks' / ('library-' + digest(owner) + '.lock')
-        with _run_lock(path) as acquired:
-            require(acquired, 'animation_method_library_busy', 409)
-            self.local.owner = owner
-            try:
-                yield
-            finally:
-                self.local.owner = None
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            with _run_lock(path) as acquired:
+                if acquired:
+                    self.local.owner = owner
+                    try:
+                        yield
+                    finally:
+                        self.local.owner = None
+                    return
+            remaining = deadline - time.monotonic()
+            require(remaining > 0, 'animation_method_library_busy', 409)
+            time.sleep(min(.025, remaining))
 
     @contextmanager
     def database(self, *, write=False):
