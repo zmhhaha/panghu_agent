@@ -196,3 +196,18 @@ Manim 局部时钟的浏览器测试另在同一新 renderer `31a2516d…` 内�
 D盘既定研究目录保存 `legacy-caller-unification-completed-r1.json`、`legacy-caller-readonly-verification-r1.json`、`legacy-caller-final-fingerprint-r1.json`、`legacy-caller-migration-applied-r1.json`、`legacy-caller-unification-prepared-r1.json`、`creation-caller-unified-build-r2.json`、`creation-caller-unified-deployed-r1.json`、`legacy-caller-admin-cleanup-r1.json`及原备份回执。服务器既定OPS保留 `legacy-caller-unification-r1-change/{completed.json,readonly-verification.json}`、`legacy-caller-unification-r1-admin/cleanup-completed.json`、`legacy-caller-unification-r1-backup/completed.json`；首次137和未部署的首次构建记录另保留。L.5据此完成，L.4仅保留历史修复含义；未合主线、未代填其它创作／认可／发布任务。
 
 OpenSpec L.5已勾选，design／tasks精确回读与validate通过，revision为 `25f86c7d4ab410d39f86d337b220677b87b3d7c3`。当前主设计明确统一身份，L.4临时历史凭据方案标为已被替代的修复记录；其它26项待办没有代勾。
+
+
+### 四项回收站内容永久清理（2026-11-15）
+
+用户明确授权清除当前四项及独占内容：功能验收夹具·无模型/无媒体、Manim：剪切变形中的面积不变、筛选发生时，统计也一起变化、两组都算了，为什么总数却不能相加？四个当前entry含八条实验；两条已恢复旧entry也只覆盖相同夹具成员，因此连带清除而未扩大实验范围。冻结entry集合SHA为8cd942002c1dfe1982968a392718c668dcf19c421a36f5c2293a9c7138a30bdb，原冻结正文SHA为29f6ddc2a745dc9b3334dcbfef03a666c25e772aa3857a2d84cd786acbdc70c9。
+
+实际清理已完成：四个当前条目共八条实验，连带清除两条只覆盖相同验收夹具成员的已恢复历史条目；没有扩大成员范围。删除191条独占业务记录和8条资源记录，28条旧请求结果只保留原ID／摘要／已清除状态，创建请求的8个原键／摘要／结果不变。删除1604个线上独占文件，共195896808字节；17个已停止Agent任务的78份输入、17份产物、17份候选结果正文副本及52份模型响应正文均清除，95份blob读取返回404，任务ID／原请求／用量／停止证明及幂等账本保留。
+
+回收站为零，现有7个效果／16条可见实验、4条其它旧隐藏及其媒体身份保持；已被现用实验和知识页引用的31条经验、4个知识修订及冻结快照保持。原方法／发布／正式制作、其它保留行及服务配置通过精确核验。隔离副本正常构造服务验证旧键重放、新恢复404与目录保持，再用文件协调库、DELETE日志与FULL同步执行多SQLite事务；Agent使用既有Store释放／删除能力。没有模型、TTS、渲染、运行服务代码修改、重新部署或合入主线。此次只清理在线独占内容，不扩展到历史运维备份；私有目标备份与摘要回执保存于既有操作根。
+
+只读盘点、清理脚本及回执沿用服务器既有creation-product-r1/trash-four-purge-r1-inventory；PG目标原行备份为同操作根trash-four-purge-r1-agent-backup，目录0700、文件0600，42259805字节，SHA256=cb9a6315039de385249db53495cbcfca67655b829714d56dc7aa9e1900ff3345。盘点私有正文和数据库恢复副本仅作操作证据，不属于在线作品，也未扩展擦除历史备份。物理文件数／字节为移除的在线文件，不等同于包含备份及数据库页后计算的净磁盘空闲增量。
+
+根审阅发现初版SQLite协调main使用内存库无法保证崩溃时跨库原子，执行前改为文件协调库并核对全部DELETE日志／FULL同步；副本和正式执行使用同一路径。最终保留行验证初版将盘点解码后的纯数字owner与原字符串owner混比，事务和文件删除均已完成，随后只修正SQL身份比较的类型投影并重做只读验证，没有重跑删除或放宽原文哈希。Agent blob清理复用既有Store保护；候选结果改为明确的purged摘要，保留原签名／结果摘要，不把删正文后的内容冒充原WorkerResult。
+
+独立最终总回执 trash-four-purge-final-summary-r1.json 的SHA256为 `6aa8b4a8b112f81b907538e6f6d5d6f4cce84fe3b9b2ff6d379041f7a89e5a6f`。本次仅完成L.6，不代勾其它创作、视听、修订或发布待办。
