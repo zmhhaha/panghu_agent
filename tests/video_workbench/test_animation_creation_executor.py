@@ -18,6 +18,7 @@ from video_workbench.animation_method_renderer import MethodAnimationRenderer
 AGENT_TOKEN = 'unit-agent-credential-' + 'a' * 40
 CALLER_TOKEN = 'unit-lab-caller-credential-' + 'b' * 40
 METHOD_TOKEN = 'unit-method-agent-credential-' + 'd' * 40
+HISTORICAL_METHOD_TOKEN = 'unit-history-agent-credential-' + 'e' * 40
 IMAGE = 'registry.example/renderer:latest@sha256:' + 'c' * 64
 
 
@@ -266,3 +267,72 @@ def test_methods_require_a_distinct_scoped_agent_credential(config, token):
     with pytest.raises(ValueError, match='animation_method_distinct_credentials_required'):
         executor.create_server(**config)
     assert all(client.close_count == 1 for client in NoNetworkAgentClient.instances)
+
+
+def history_config(config, token=HISTORICAL_METHOD_TOKEN):
+    path = config['method_agent_token_file'].with_name('history-token')
+    path.write_text(token, encoding='ascii')
+    return dict(config, historical_method_agent_token_file=path)
+
+
+def test_historical_method_caller_only_wires_legacy_stop_lookup_and_closes(config):
+    server, client = executor.create_server(**history_config(config))
+    try:
+        methods = server.method_service
+        schema = executor.AnimationMethodAuthorGateway.protocol.INPUT_SCHEMA
+        history_author = methods.historical_method_gateways[(schema, 'creator')]
+        history_review = methods.historical_method_gateways[(schema, 'review')]
+        history_client = history_author.client
+        assert history_client is history_review.client
+        assert history_client.token == HISTORICAL_METHOD_TOKEN
+        assert history_client is not methods.author.client and history_client is not client
+        assert history_author.idempotency_prefix == 'method-author-'
+        assert history_review.idempotency_prefix == 'method-review-'
+        assert methods.author.profile == 'video.animation-method-author.v2'
+        assert methods.author.client.token == METHOD_TOKEN
+        assert methods.reviewer.client is methods.author.client
+        assert len(NoNetworkAgentClient.instances) == 3
+        assert methods.pending() == []
+        assert all(item.calls == [] for item in NoNetworkAgentClient.instances)
+    finally:
+        server.server_close()
+        client.close()
+    assert all(item.close_count == 1 for item in NoNetworkAgentClient.instances)
+
+
+@pytest.mark.parametrize('token', [AGENT_TOKEN, CALLER_TOKEN, METHOD_TOKEN])
+def test_historical_caller_rejects_reused_credential_and_closes_clients(config, token):
+    with pytest.raises(ValueError, match='animation_method_history_distinct_credentials_required'):
+        executor.create_server(**history_config(config, token))
+    assert all(item.close_count == 1 and item.calls == [] for item in NoNetworkAgentClient.instances)
+
+
+@pytest.mark.parametrize('changes', [dict(method_agent_token_file=None), dict(method_protocol='legacy')])
+def test_historical_caller_requires_current_skills_config_before_clients_start(config, changes):
+    value = history_config(config)
+    value.update(changes)
+    with pytest.raises(ValueError, match='animation_method_history_config_incomplete'):
+        executor.create_server(**value)
+    assert NoNetworkAgentClient.instances == [] and not config['root'].exists()
+
+
+def test_historical_caller_is_closed_if_http_bind_fails(config):
+    value = history_config(config)
+    with socket.socket() as occupied:
+        occupied.bind(('127.0.0.1', 0))
+        occupied.listen(1)
+        value['port'] = occupied.getsockname()[1]
+        with pytest.raises(OSError):
+            executor.create_server(**value)
+    assert len(NoNetworkAgentClient.instances) == 3
+    assert all(item.close_count == 1 and item.calls == [] for item in NoNetworkAgentClient.instances)
+
+
+def test_manim_caller_cannot_reuse_historical_method_credential(config):
+    value = history_config(config)
+    value.update(manim_recipe_agent_token_file=value['historical_method_agent_token_file'],
+                 manim_resource_image=IMAGE, method_project_runtime='hyperframes-core-bridge')
+    with pytest.raises(ValueError, match='manim_method_distinct_credentials_required'):
+        executor.create_server(**value)
+    assert len(NoNetworkAgentClient.instances) == 3
+    assert all(item.close_count == 1 and item.calls == [] for item in NoNetworkAgentClient.instances)

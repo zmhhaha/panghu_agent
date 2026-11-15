@@ -5,7 +5,7 @@ and production inputs remain intact. Unknown execution is never stopped here.
 """
 from contextlib import closing, contextmanager
 from concurrent.futures import ThreadPoolExecutor
-from copy import deepcopy
+from copy import copy, deepcopy
 from functools import wraps
 import json
 from pathlib import Path
@@ -18,9 +18,18 @@ from uuid import uuid4
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from .animation_creation_service import _run_lock
 from .animation_method_commissions import OP_TERMINAL, TERMINAL
+from .animation_method_gateway import (AnimationMethodAuthorGateway, AnimationMethodReviewGateway,
+    AnimationSkillMethodAuthorGateway, AnimationSkillMethodReviewGateway)
 
 _PROBES = ThreadPoolExecutor(max_workers=4, thread_name_prefix='library-stop-read')
 _PROBE_SLOTS = threading.BoundedSemaphore(4)
+_AGENT_STOPPED = frozenset({'completed', 'failed', 'cancelled', 'needs_input', 'timed_out'})
+_METHOD_STOP_GATEWAYS = {
+    AnimationMethodAuthorGateway.protocol.INPUT_SCHEMA: {
+        'creator': AnimationMethodAuthorGateway, 'review': AnimationMethodReviewGateway},
+    AnimationSkillMethodAuthorGateway.protocol.INPUT_SCHEMA: {
+        'creator': AnimationSkillMethodAuthorGateway, 'review': AnimationSkillMethodReviewGateway},
+}
 
 
 def require(value, code='animation_method_trash_invalid', status=422):
@@ -258,6 +267,19 @@ class AnimationMethodTrash:
         except Exception:
             raise ServiceError('animation_method_trash_stop_unproven', 409) from None
 
+    def _stop_gateway(self, operation):
+        schema, stage = operation['input'].get('schema'), operation['stage']
+        current = self.service.reviewer if stage == 'review' else self.service.author
+        gateway = getattr(self.service, 'historical_method_gateways', {}).get((schema, stage), current)
+        expected = _METHOD_STOP_GATEWAYS.get(schema, {}).get(stage)
+        require(gateway is not None and expected is not None, 'animation_method_trash_stop_unproven', 409)
+        # Lookup uses frozen business/idempotency namespaces. Keep the same
+        # selected caller's transport without changing the admission gateway.
+        historical = copy(gateway)
+        for name in ('protocol', 'profile', 'business_prefix', 'idempotency_prefix'):
+            setattr(historical, name, getattr(expected, name))
+        return historical
+
     def stopped(self, owner, members):
         deadline = time.monotonic() + 20
         for run in members:
@@ -273,11 +295,10 @@ class AnimationMethodTrash:
                     require(type(proof) is dict and proof.get('operation_id') == op['id']
                             and proof.get('stop_proven') is True, 'animation_method_trash_stop_unproven', 409)
                 else:
-                    gateway = self.service.reviewer if op['stage'] == 'review' else self.service.author
-                    require(gateway is not None, 'animation_method_trash_stop_unproven', 409)
+                    gateway = self._stop_gateway(op)
                     job = self._read_stop(lambda: gateway.lookup(op['id']), deadline)
                     require(type(job) is dict and job.get('stop_proven') is True
-                        and job.get('state') in TERMINAL
+                        and job.get('state') in _AGENT_STOPPED
                         and (op.get('job_id') is None or job.get('job_id') == op['job_id']),
                         'animation_method_trash_stop_unproven', 409)
             if run['frozen'].get('resource_authoring'):
@@ -343,7 +364,7 @@ class AnimationMethodTrash:
         if old.get('recipe_claimed'):
             job = self._read_stop(lambda: coordinator.gateway.lookup(old['scope']['operation_id']), deadline)
             require(type(job) is dict and job.get('stop_proven') is True
-                and job.get('state') in TERMINAL and job.get('job_id') == old.get('job_id'),
+                and job.get('state') in _AGENT_STOPPED and job.get('job_id') == old.get('job_id'),
                 'animation_method_trash_stop_unproven', 409)
         if 'plan' in old:
             result = self._read_stop(lambda: coordinator.executor.lookup(**old['scope']), deadline)

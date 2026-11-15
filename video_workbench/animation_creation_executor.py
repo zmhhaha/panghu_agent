@@ -37,20 +37,25 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                   method_agent_token_file=None, engine_admission_file=None, method_protocol='skills',
                   method_project_runtime='native-seek', authoring_library_admission_file=None,
                   manim_recipe_agent_token_file=None, manim_resource_image=None,
-                  manim_resource_admission_file=None, film_manim_admission_file=None):
+                  manim_resource_admission_file=None, film_manim_admission_file=None,
+                  historical_method_agent_token_file=None):
     if enable_isolated_rendering is not True:
         raise ValueError('animation_creation_isolated_rendering_opt_in_required')
     if method_protocol not in {'skills', 'legacy'}:
         raise ValueError('animation_method_protocol_invalid')
     if method_project_runtime not in {'native-seek', 'hyperframes-core-bridge'}:
         raise ValueError('animation_method_project_runtime_invalid')
+    if historical_method_agent_token_file is not None and (
+            method_agent_token_file is None or method_protocol != 'skills'):
+        raise ValueError('animation_method_history_config_incomplete')
     agent_token, executor_token = read_token(agent_token_file), read_token(token_file)
     if agent_token == executor_token:
         raise ValueError('animation_creation_distinct_credentials_required')
     renderer = DurableAnimationRenderer(Path(root) / 'renders', image=renderer_image,
         assets_dir=assets_dir, enabled=True)
     client = AgentClient(agent_url, agent_token, timeout=30)
-    method_client = manim_client = None
+    method_client = manim_client = historical_method_client = None
+    historical_method_token = None
     try:
         service = AnimationCreationService(root, creation_gateway=AnimationCreateGateway(client),
             review_gateway=AnimationInputReviewGateway(client), renderer=renderer,
@@ -61,11 +66,25 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
             if method_token in {agent_token, executor_token}:
                 raise ValueError('animation_method_distinct_credentials_required')
             method_client = AgentClient(agent_url, method_token, timeout=30)
+            historical_method_gateways = {}
+            if historical_method_agent_token_file is not None:
+                historical_method_token = read_token(historical_method_agent_token_file)
+                if historical_method_token in {agent_token, executor_token, method_token}:
+                    raise ValueError('animation_method_history_distinct_credentials_required')
+                historical_method_client = AgentClient(agent_url, historical_method_token, timeout=30)
+                # Only deletion stop checks select these gateways. Current
+                # submissions keep the current caller and v2 protocol below.
+                schema = AnimationMethodAuthorGateway.protocol.INPUT_SCHEMA
+                historical_method_gateways = {
+                    (schema, 'creator'): AnimationMethodAuthorGateway(historical_method_client),
+                    (schema, 'review'): AnimationMethodReviewGateway(historical_method_client),
+                }
             author = AnimationSkillMethodAuthorGateway if method_protocol == 'skills' else AnimationMethodAuthorGateway
             reviewer = AnimationSkillMethodReviewGateway if method_protocol == 'skills' else AnimationMethodReviewGateway
             methods = AnimationMethodService(Path(root) / 'method-lab',
                 author_gateway=author(method_client),
                 review_gateway=reviewer(method_client),
+                historical_method_gateways=historical_method_gateways,
                 renderer=MethodAnimationRenderer(Path(root) / 'method-renders', image=renderer_image,
                     assets_dir=assets_dir, enabled=True, engine_admission_file=engine_admission_file,
                     authoring_library_admission_file=authoring_library_admission_file,
@@ -82,7 +101,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
             from .manim_resource_executor import ManimResourceExecutor
             from .manim_method_admission import validate_admission
             manim_token = read_token(manim_recipe_agent_token_file)
-            if manim_token in {agent_token, executor_token, method_token}:
+            if manim_token in {agent_token, executor_token, method_token, historical_method_token}:
                 raise ValueError('manim_method_distinct_credentials_required')
             manim_client = AgentClient(agent_url, manim_token, timeout=30)
             adapter = SkillProductionAdapter(methods.published_catalogue, methods.read_methods,
@@ -117,8 +136,11 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
             raise ValueError('film_manim_config_incomplete')
         server = CreationHTTPServer(service, executor_token, host=listen, port=port,
             method_service=methods, film_resource_service=film_resources)
-        server.close_callbacks = tuple(client.close for client in (method_client, manim_client) if client is not None)
+        server.close_callbacks = tuple(client.close for client in
+            (method_client, manim_client, historical_method_client) if client is not None)
     except BaseException:
+        if historical_method_client is not None:
+            historical_method_client.close()
         if manim_client is not None:
             manim_client.close()
         if method_client is not None:
@@ -134,6 +156,8 @@ def main(argv=None):
     parser.add_argument('--agent-url', required=True)
     parser.add_argument('--agent-token-file', type=Path, required=True)
     parser.add_argument('--method-agent-token-file', type=Path)
+    parser.add_argument('--historical-method-agent-token-file', type=Path,
+        help='Separate legacy caller credential for read-only historical stop verification.')
     parser.add_argument('--method-protocol', choices=('skills', 'legacy'), default='skills')
     parser.add_argument('--method-project-runtime', choices=('native-seek', 'hyperframes-core-bridge'),
         default='native-seek', help='Explicit real HyperFrames event bridge; requires separate HyperFrames engine admission.')
