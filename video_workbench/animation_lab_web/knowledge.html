@@ -4,28 +4,36 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>创作知识库 · 动画效果库</title>
+  <title>知识库 · Video Service</title>
   <link rel="stylesheet" href="./knowledge.css">
   <script type="module" src="./knowledge.mjs"></script>
 </head>
 <body>
-  <header class="topbar"><a class="brand" href="./">动画实验室</a><nav class="page-nav" aria-label="实验室导航"><a href="./">效果库</a><a href="./knowledge.html" aria-current="page">创作知识库</a></nav><span>开发者</span></header>
-  <main id="knowledge-app">
-    <div class="heading"><p class="eyebrow">从真实实验中积累</p><h1>创作知识库</h1><p>阅读实验积累的经验与创作方法。制作动画无需预先填写这里的内容；Agent 可依据实验提炼知识，开发者在需要时修正。</p></div>
+  <div id="knowledge-app">
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="动画实验室首页"><span class="brand-icon" aria-hidden="true">◈</span><span><span class="eyebrow">VIDEO SERVICE · 开发者</span><strong>动画实验室</strong></span></a>
+      <nav class="workspace-nav" aria-label="开发者工作台"><a href="./">效果库</a><a href="./knowledge.html" aria-current="page">知识库</a></nav>
+    </header>
+    <main class="workspace">
+    <div class="workspace-actionbar">
+      <div class="library-sync" aria-label="知识目录"><p class="small muted">知识与经验目录</p><button id="knowledge-refresh" class="button secondary" type="button">手动刷新</button></div>
+    </div>
+    <p id="knowledge-message" class="message" role="status" aria-live="polite">正在读取知识目录…</p>
+    <div class="page-heading"><div><p class="eyebrow">从真实实验中积累</p><h1>知识库</h1><p class="muted">阅读实验积累的经验与创作方法。制作动画无需预先填写这里的内容；Agent 可依据实验提炼知识，开发者在需要时修正。</p></div></div>
     <div class="knowledge-flow" aria-label="知识如何使用"><span>实验留下真实经验</span><span aria-hidden="true">→</span><span>整理为 Wiki 知识</span><span aria-hidden="true">→</span><span>供后续实验参考</span></div>
     <p class="scope-note">正式视频使用经过验收并发布的 Skill。更新这里的工作知识，不会自动替换已发布的 Skill。</p>
-    <div class="catalogue-status"><span>知识与经验目录</span><button id="knowledge-refresh" type="button">刷新目录</button></div>
-    <p id="knowledge-message" class="message" role="status" aria-live="polite">正在读取知识目录…</p>
-    <div class="workspace">
+    <div class="knowledge-layout">
       <aside class="catalogue panel" aria-label="知识与经验目录">
         <label for="knowledge-search">搜索知识与经验目录<input id="knowledge-search" type="search" placeholder="知识名称或经验类型" autocomplete="off"></label>
         <p class="muted small">选择目录即可阅读，本次每类最多显示 64 条。</p>
-        <details class="lookup"><summary>高级查找：按记录 ID 查看</summary><label for="knowledge-lookup-kind">记录类型<select id="knowledge-lookup-kind"><option value="page">知识页面</option><option value="experience">实验经验</option></select></label><label for="knowledge-lookup-id">记录 ID<input id="knowledge-lookup-id" autocomplete="off" spellcheck="false"></label><button id="knowledge-lookup" type="button">按 ID 查看</button></details>
+        <details class="lookup"><summary>高级查找：按记录 ID 查看</summary><label for="knowledge-lookup-kind">记录类型<select id="knowledge-lookup-kind"><option value="page">知识页面</option><option value="experience">实验经验</option></select></label><label for="knowledge-lookup-id">记录 ID<input id="knowledge-lookup-id" autocomplete="off" spellcheck="false"></label><button id="knowledge-lookup" class="button secondary" type="button">按 ID 查看</button></details>
         <h2>知识页面 <span id="knowledge-page-count" class="count"></span></h2><div id="knowledge-pages" class="record-list"></div>
         <h2>实验经验 <span id="knowledge-experience-count" class="count"></span></h2><div id="knowledge-experiences" class="record-list"></div>
       </aside>
       <section id="knowledge-detail" class="detail panel" aria-live="polite"><div class="empty"><h2>选择一页知识开始阅读</h2><p>左侧也可以查看形成这些知识的真实实验经验。</p></div></section>
     </div>
-  </main>
+    </main>
+    <footer class="page-footer">实验经验与工作知识保留来源。正式制作使用经过验收并发布的 Skill。</footer>
+  </div>
 </body>
 </html>

@@ -234,7 +234,8 @@ export function mountKnowledgePage(document, controller) {
     return node;
   }
   function button(text, action, disabled = false, className) {
-    const node = el('button', text, className); node.type = 'button'; node.disabled = disabled;
+    const classes = 'button ' + (className?.split(' ').includes('primary') ? '' : 'secondary ') + (className ?? '');
+    const node = el('button', text, classes.trim()); node.type = 'button'; node.disabled = disabled;
     node.addEventListener('click', action); return node;
   }
   function section(target, title, content) { target.append(el('h3', title), el('div', content, 'prose')); }
@@ -278,7 +279,7 @@ export function mountKnowledgePage(document, controller) {
     if (!editor) return;
     const form = el('form', undefined, 'editor'), fields = {};
     form.append(el('h3', '明确修订 · 基于第 ' + editor.page.revision + ' 版'));
-    form.append(el('p', '保存只修正创作知识，不运行 Agent，也不发布正式 Skill。', 'form-note'));
+    form.append(el('p', '保存只修正知识库内容，不运行 Agent，也不发布正式 Skill。', 'form-note'));
     const input = (key, title, rows) => {
       const label = el('label', title), node = el(rows ? 'textarea' : 'input');
       node.name = key; if (rows) node.rows = rows;

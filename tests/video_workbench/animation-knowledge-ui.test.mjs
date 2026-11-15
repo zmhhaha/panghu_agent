@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {KnowledgeHTTPError, KnowledgeController, createKnowledgeClient, draftFromPage, buildKnowledgeRevision,
   mountKnowledgePage, experienceReading} from '../../video_workbench/animation_lab_web/knowledge.mjs';
 
@@ -30,6 +31,49 @@ async function editing(h) {
   h.controller.update({...h.controller.state.editor.fields, content: '修正后的理解', change_note: '真实失败说明需要改正'});
 }
 const acknowledgment = raw => { const body = JSON.parse(raw); return page(body.expected_revision + 1, body); };
+
+test('knowledge and gallery use the same workspace identity and navigation with their own current page', () => {
+  const read = name => readFileSync(new URL('../../video_workbench/animation_lab_web/' + name, import.meta.url), 'utf8');
+  const knowledge = read('knowledge.html'), gallery = read('method-gallery.html');
+  const header = html => html.match(/<header class="topbar">([\s\S]*?)<\/header>/)?.[1]
+    .replace(/ aria-current="page"/g, '').replace(/\s+/g, ' ').trim();
+  assert.ok(header(knowledge)); assert.equal(header(knowledge), header(gallery));
+  assert.match(knowledge, /<title>知识库 · Video Service<\/title>/);
+  assert.match(knowledge, /<a href="\.\/knowledge\.html" aria-current="page">知识库<\/a>/);
+  assert.match(knowledge, /<main class="workspace">/);
+  const actionbar = knowledge.match(/<div class="workspace-actionbar">([\s\S]*?)<\/div>\s*<\/div>/)?.[1];
+  assert.ok(actionbar);
+  assert.match(actionbar, /class="library-sync"/);
+  assert.match(actionbar, /id="knowledge-refresh" class="button secondary" type="button">手动刷新<\/button>/);
+  assert.equal((actionbar.match(/<button\b/g) ?? []).length, 1);
+  assert.ok(knowledge.indexOf('class="workspace-actionbar"') < knowledge.indexOf('id="knowledge-message"'));
+  assert.ok(knowledge.indexOf('id="knowledge-message"') < knowledge.indexOf('class="page-heading"'));
+  assert.match(knowledge, /id="knowledge-message" class="message" role="status" aria-live="polite"/);
+  assert.match(knowledge, /<div class="knowledge-layout">/);
+  assert.doesNotMatch(knowledge, /创作知识库|class="page-nav"/);
+  assert.equal((knowledge.match(/rel="stylesheet"/g) ?? []).length, 1);
+});
+
+test('knowledge keeps gallery theme, workspace sizing, controls and mobile shell rules aligned', () => {
+  const read = name => readFileSync(new URL('../../video_workbench/animation_lab_web/' + name, import.meta.url), 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const knowledge = read('knowledge.css'), gallery = read('method-gallery.css');
+  const rules = (css, selector) => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return [...css.matchAll(new RegExp('(?:^|(?<=[{}]))\\s*' + escaped + '\\s*\\{([^{}]*)\\}', 'g'))]
+      .map(match => match[1].replace(/\s+/g, ' ').trim());
+  };
+  for (const selector of [':root', 'body', '.topbar', '.brand', '.brand strong', '.brand-icon', '.eyebrow',
+    '.button', '.button.primary', '.button.primary:hover:not(:disabled)', '.button.secondary:hover:not(:disabled)',
+    '.workspace', '.page-heading', '.page-heading .muted', '.panel', '.page-footer', '.workspace-nav',
+    '.workspace-nav a', '.workspace-nav a[aria-current=page]', '.workspace-nav a:hover', '.workspace-actionbar',
+    '.workspace-actionbar>.button', '.library-sync', '.library-sync p', '.library-sync .button']) {
+    assert.ok(rules(gallery, selector).length, 'gallery rule exists: ' + selector);
+    assert.deepEqual(rules(knowledge, selector), rules(gallery, selector), selector);
+  }
+  assert.match(knowledge, /@media\(max-width:760px\)/);
+  assert.match(knowledge, /@media\(max-width:420px\)/);
+});
 
 test('knowledge client scopes all reads and explicit CSRF writes to the prefixed knowledge API', async () => {
   const requests = [];
@@ -187,6 +231,21 @@ test('reading a knowledge page hides forms and technical identities until mainte
   visibleButton(h.detail, '取消编辑').listeners.click();
   assert.equal(maintenance(h.detail).open, false);
   assert.equal(maintenance(h.detail).children[0].focused, true);
+  assert.equal(h.calls.some(item => item.name === 'revise'), false);
+});
+
+test('knowledge reading and explicit maintenance use workspace button styles without changing actions', async () => {
+  const h = await mounted(); await h.controller.select('page', 'draw:async');
+  for (const node of [...h.detail.all(), ...h.document.getElementById('knowledge-pages').all()]) {
+    if (node.tagName !== 'button') continue;
+    assert.ok(node.className.split(' ').includes('button'));
+    assert.ok(node.className.split(' ').some(value => value === 'primary' || value === 'secondary'));
+  }
+  maintenance(h.detail).open = true;
+  const revise = visibleButton(h.detail, '修订当前页面'); assert.equal(revise.className, 'button primary');
+  revise.listeners.click();
+  assert.equal(visibleButton(h.detail, '取消编辑').className, 'button secondary');
+  assert.equal(visibleButton(h.detail, '保存一个新版本').className, 'button primary');
   assert.equal(h.calls.some(item => item.name === 'revise'), false);
 });
 
