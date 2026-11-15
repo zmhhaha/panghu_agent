@@ -19,7 +19,7 @@ INPUT_ROLE = 'animation_wikiskill_input'
 BUNDLE_REVISION = 'animation-wikiskill-v1'
 BUNDLE_ROOT = Path(__file__).resolve().parent.parent / 'resources' / BUNDLE_REVISION
 BUNDLE_FILES = frozenset({'CONTRACT.md', 'compile-procedure/SKILL.md', 'LICENSE'})
-BUNDLE_MANIFEST_SHA256 = 'c10a82f7bf2ab55294e4b829c63b38339dc300581e7513b40ab60cecd372c776'
+BUNDLE_MANIFEST_SHA256 = 'cbc8665c75cfaff22299f8444cd6863fb63c0eb13d2ce2b994cee58825572292'
 
 
 def verified_bundle():

@@ -39,8 +39,23 @@ Write exactly one JSON object to `output.json`:
 }
 ```
 
-The illustration shows the shape, not reusable Skill text or required topics.
-Author all actual prose, organization and technical instructions yourself.
+Schema field names and fixed contract values, including `schema` and
+`evidence_scope`, are mandatory. The sample's topics, Skill text and semantic
+identifiers are illustrative. Author the actual prose, organization and
+technical instructions yourself.
+
+`limitations` MUST include this exact string as a standalone array element:
+
+```
+"No new video, motion or audio validation was performed by this compilation."
+```
+
+Copy it byte for byte, including punctuation, as its own element. Do not
+translate, paraphrase or append another sentence within that element. Put any
+additional explanation in separate array elements. A semantically equivalent
+or longer combined sentence does not satisfy this fixed marker. The host
+rejects invalid output; it never inserts or rewrites this statement for you.
+
 The host computes standard Skill-package frontmatter metadata and byte hashes.
 
 Use at most 256 packages. Each package has at most 32 UTF-8 files, at most

@@ -387,6 +387,34 @@ def test_generic_profile_reads_manifest_and_record_files_and_collects_authored_p
     assert result == result_for(document) and output.name == C.RESULT_NAME
 
 
+def test_scope_literal_must_be_separate_and_host_never_repairs_authored_output(tmp_path):
+    document, envelope, proof = stage_profile(tmp_path)
+    profile = P.VideoAnimationWikiSkillProfile()
+    prompt = profile.build_prompt(envelope.task)
+    assert '`limitations` MUST include this exact string as a standalone array element:' in prompt
+    assert 'translate, paraphrase or append another sentence within that element' in prompt
+    assert 'it never inserts or rewrites this statement for you' in prompt
+
+    path = tmp_path / 'output.json'
+    authored = json.loads(path.read_bytes())
+    additional = 'No source video or sound was supplied for new observation.'
+    # The real r1 candidate merged these two sentences, which is meaningful
+    # prose but does not preserve the required literal as its own member.
+    authored['limitations'] = [C.COMPILATION_LIMITATION + ' ' + additional]
+    original = canonical_bytes(authored)
+    path.write_bytes(original)
+    with pytest.raises(ServiceError, match='animation_wikiskill_observation_scope_required'):
+        profile.collect_output(tmp_path, envelope, proof)
+    assert path.read_bytes() == original
+
+    authored['limitations'] = [C.COMPILATION_LIMITATION, additional]
+    path.write_bytes(canonical_bytes(authored))
+    artifact, = profile.collect_output(tmp_path, envelope, proof)
+    collected = json.loads(artifact.content())
+    assert collected['limitations'] == authored['limitations']
+    assert collected['input_sha256'] == digest(document)
+
+
 @pytest.mark.parametrize('mutation', ['running', 'other_profile', 'changed_record', 'extra_file', 'missing_ref', 'envelope_hash'])
 def test_profile_rejects_unstopped_unbound_or_changed_input(tmp_path, mutation):
     document, envelope, proof = stage_profile(tmp_path)
