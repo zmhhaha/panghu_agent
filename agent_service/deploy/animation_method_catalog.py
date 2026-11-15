@@ -24,6 +24,60 @@ from agent_service.worker_entry import HostConfig, PI_ADAPTER_REVISION, host_pol
 
 PROFILES = (method.AUTHOR_PROFILE, method.REVIEW_PROFILE)
 SKILL_PROFILES = ('video.animation-method-author.v2', 'video.animation-method-review.v2')
+LEGACY_CALLER = 'video-animation-methods'
+SKILL_CALLER = 'video-animation-skill-methods'
+
+
+def unify_animation_method_caller(current):
+    """Retire the legacy credential after a separate verified ownership move.
+
+    This pure configuration transform performs no database or Secret I/O. The
+    current credential gains access to the original v1 records, while disabled
+    v1 routes prevent new v1 admissions. Execution resources remain unchanged.
+    """
+    before = deepcopy(current)
+    registry(current)
+    callers = {}
+    for name, profiles in ((LEGACY_CALLER, PROFILES), (SKILL_CALLER, SKILL_PROFILES)):
+        matches = [row for row in current['callers'] if row['caller'] == name]
+        require(len(matches) <= 1, 'animation_method_cutover_duplicate_caller')
+        if name == SKILL_CALLER:
+            require(len(matches) == 1, 'animation_method_cutover_current_caller_required')
+        if matches:
+            row = matches[0]
+            scopes = set(row['profiles'])
+            allowed = [set(profiles)]
+            if name == SKILL_CALLER:
+                allowed.append(set(SKILL_PROFILES + PROFILES))
+            require(row['tenant'] == 'internal' and row['token_ref'] == name
+                and set(row) == {'tenant', 'caller', 'profiles', 'token_ref'}
+                and scopes in allowed,
+                'animation_method_cutover_caller_scope_mismatch')
+            callers[name] = row
+    routes = [row for row in current['routes'] if row['profile'] in PROFILES + SKILL_PROFILES]
+    require(len(routes) == 4 and {row['profile'] for row in routes} == set(PROFILES + SKILL_PROFILES)
+        and all(row['profile_revision'] == '1' for row in routes),
+        'animation_method_cutover_exact_routes_required')
+    legacy_present = LEGACY_CALLER in callers
+    if not legacy_present:
+        require(set(callers[SKILL_CALLER]['profiles']) == set(SKILL_PROFILES + PROFILES)
+            and all(row['enabled'] is False for row in routes if row['profile'] in PROFILES),
+            'animation_method_cutover_incomplete_identity')
+    merged = deepcopy(current)
+    merged['callers'] = [row for row in merged['callers'] if row['caller'] != LEGACY_CALLER]
+    target = next(row for row in merged['callers'] if row['caller'] == SKILL_CALLER)
+    target['profiles'] += [profile for profile in PROFILES if profile not in target['profiles']]
+    for route in merged['routes']:
+        if route['profile'] in PROFILES:
+            route['enabled'] = False
+    registry(merged)
+    require(current == before, 'current_catalog_mutated')
+    return merged, dict(schema='animation-method-caller-unification.v1',
+        before_sha256=digest(before), after_sha256=digest(merged),
+        tenant='internal', source_caller=LEGACY_CALLER, target_caller=SKILL_CALLER,
+        legacy_caller_removed=legacy_present, historical_read_profiles=list(PROFILES),
+        disabled_execution_profiles=list(PROFILES), current_execution_profiles=list(SKILL_PROFILES),
+        database_migrated=False, secrets_changed=False, model_requests=0)
 
 
 def _protocol(skills=False):
@@ -221,10 +275,18 @@ def prepare_animation_method_catalog_upgrade(current, *, worker_image, resource_
         and {row['profile'] for _, row in selected} == set(SKILL_PROFILES)
         and all(row['profile_revision'] == '1' for _, row in selected),
         'animation_method_upgrade_existing_routes_required')
-    selected_caller = deepcopy(caller) if caller is not None else dict(tenant='internal',
-        caller='video-animation-skill-methods', profiles=list(SKILL_PROFILES),
-        token_ref='video-animation-skill-methods')
-    require(sum(row == selected_caller for row in current['callers']) == 1,
+    matches = [row for row in current['callers']
+               if row['tenant'] == 'internal' and row['caller'] == SKILL_CALLER
+               and row['token_ref'] == SKILL_CALLER]
+    selected_caller = (deepcopy(caller) if caller is not None else
+                       deepcopy(matches[0]) if len(matches) == 1 else None)
+    require(type(selected_caller) is dict
+        and set(selected_caller) == {'tenant', 'caller', 'profiles', 'token_ref'}
+        and type(selected_caller['profiles']) is list
+        and all(type(profile) is str for profile in selected_caller['profiles'])
+        and len(selected_caller['profiles']) == len(set(selected_caller['profiles']))
+        and set(selected_caller['profiles']) in (set(SKILL_PROFILES), set(SKILL_PROFILES + PROFILES))
+        and sum(row == selected_caller for row in current['callers']) == 1,
             'animation_method_upgrade_existing_caller_required')
 
     # The additive preparer intentionally rejects replacement identities. Use
@@ -236,7 +298,8 @@ def prepare_animation_method_catalog_upgrade(current, *, worker_image, resource_
     merged, hosts, preparation = prepare_animation_method_catalog(intermediate,
         worker_image=worker_image, resource_manifests=resource_manifests,
         source_pool_id=source_pool_id, author_model_policy=author_model_policy,
-        review_model_policy=review_model_policy, caller=selected_caller,
+        review_model_policy=review_model_policy,
+        caller=dict(selected_caller, profiles=list(SKILL_PROFILES)),
         runtime_revision=runtime_revision, register_caller=False,
         model_proxy_url=model_proxy_url, skills=True)
     replacements = {row['profile']: deepcopy(row) for row in merged['routes']

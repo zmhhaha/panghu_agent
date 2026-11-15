@@ -8,7 +8,7 @@ import shlex
 import pytest
 
 from video_workbench.deploy.animation_creation_executor import (
-    AGENT_TOKEN, DATA_ROOT, DOCKER_SOCKET, HISTORICAL_METHOD_TOKEN, LAB_TOKEN, NAME, NODE, PORT, SELECTOR,
+    AGENT_TOKEN, DATA_ROOT, DOCKER_SOCKET, LAB_TOKEN, NAME, NODE, PORT, SELECTOR,
     Settings, main, render,
 )
 
@@ -68,49 +68,6 @@ def test_method_protocol_is_explicit_in_deployment_and_invalid_values_are_reject
         'video-service.panghuer.top/method-protocol'] == 'legacy'
     with pytest.raises(ValueError, match='Invalid method protocol'):
         render(replace(settings, method_protocol='auto-fallback'))
-
-
-def test_history_caller_has_separate_optional_readonly_mount_and_leaves_routes_unchanged(settings):
-    current = replace(settings, method_agent_token_secret='current-methods')
-    configured = replace(current, historical_method_agent_token_secret='old-methods',
-                         historical_method_agent_token_key='history.token')
-    document = render(configured)
-    spec = pod(document)
-    container = spec['containers'][0]
-    assert container['args'][-2:] == ['--historical-method-agent-token-file', HISTORICAL_METHOD_TOKEN]
-    assert next(v for v in spec['volumes'] if v['name'] == 'historical-method-agent-token')['secret'] == {
-        'secretName': 'old-methods', 'optional': False, 'defaultMode': 0o400,
-        'items': [{'key': 'history.token', 'path': 'token'}]}
-    assert next(v for v in container['volumeMounts'] if v['name'] == 'historical-method-agent-token') == {
-        'name': 'historical-method-agent-token',
-        'mountPath': '/run/secrets/animation-method-history-agent', 'readOnly': True}
-    assert not any(v['name'] == 'historical-method-agent-token' for v in pod(render(current))['volumes'])
-    assert by_kind(document, 'Service') == by_kind(render(current), 'Service')
-    assert by_kind(document, 'NetworkPolicy') == by_kind(render(current), 'NetworkPolicy')
-
-
-@pytest.mark.parametrize('changes', [
-    dict(method_agent_token_secret=None), dict(method_protocol='legacy'),
-    dict(historical_method_agent_token_secret='creation-agent-caller'),
-    dict(historical_method_agent_token_secret='creation-lab-caller'),
-    dict(historical_method_agent_token_secret='current-methods'),
-    dict(historical_method_agent_token_secret='../../unsafe'),
-    dict(historical_method_agent_token_key='../key'),
-])
-def test_history_caller_rejects_missing_scope_reused_secrets_and_unsafe_keys(settings, changes):
-    configured = replace(settings, method_agent_token_secret='current-methods',
-                         historical_method_agent_token_secret='old-methods')
-    with pytest.raises(ValueError):
-        render(replace(configured, **changes))
-
-
-def test_history_caller_cli_forwards_only_secret_references(settings, capsys):
-    main([*arguments(settings), '--method-agent-token-secret', 'current-methods',
-          '--historical-method-agent-token-secret', 'old-methods',
-          '--historical-method-agent-token-key', 'old.token'])
-    assert json.loads(capsys.readouterr().out) == render(replace(settings,
-        method_agent_token_secret='current-methods', historical_method_agent_token_secret='old-methods',
-        historical_method_agent_token_key='old.token'))
 
 
 def test_only_three_private_resources_without_provisioning_permissions_or_public_routes(settings):

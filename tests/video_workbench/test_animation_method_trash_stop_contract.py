@@ -161,33 +161,3 @@ def test_lost_submission_ack_still_requires_lookup_proof_for_the_frozen_namespac
     service, run_id, _, path = create(GENERATIONS[1], GENERATIONS[0], 'creator', 'needs_input', bound_job=False)
     service.trash.delete(OWNER, 'commission', run_id, delete_body(service, run_id))
     assert peer.calls == [('GET', path)]
-
-
-@pytest.mark.parametrize('stage', ['creator', 'review'])
-@pytest.mark.parametrize('found', [True, False], ids=['original-caller', 'missing-original-job'])
-def test_explicit_historical_caller_is_used_without_falling_back_to_current_identity(setup, stage, found):
-    create, current_peer = setup
-    service, run_id, _, path = create(GENERATIONS[1], GENERATIONS[0], stage, 'completed')
-    historical_peer = ReadOnlyPeer()
-    if found:
-        historical_peer.jobs[path] = deepcopy(current_peer.jobs[path])
-    # The current caller can even expose a different job under the same key;
-    # it must never replace the explicitly configured historical caller.
-    current_peer.jobs[path]['job_id'] = str(uuid4())
-    with AgentClient('http://historical-agent.invalid', 'offline-historical-caller-' + 'y' * 32,
-                     transport=httpx.MockTransport(historical_peer)) as client:
-        old_gateway = GENERATIONS[0][stage == 'review'](client)
-        service.historical_method_gateways = {(GENERATIONS[0][0].protocol.INPUT_SCHEMA, stage): old_gateway}
-        before = original_evidence(service)
-        metadata = Path(service.metadata_path).read_bytes()
-        if found:
-            service.trash.delete(OWNER, 'commission', run_id, delete_body(service, run_id))
-        else:
-            with pytest.raises(ServiceError, match='animation_method_trash_stop_unproven'):
-                service.trash.delete(OWNER, 'commission', run_id, delete_body(service, run_id))
-            assert Path(service.metadata_path).read_bytes() == metadata
-        assert historical_peer.calls == [('GET', path)]
-        assert current_peer.calls == []
-        assert original_evidence(service) == before
-        assert service.author.client is service.reviewer.client
-        assert service.author.client is not client

@@ -427,8 +427,7 @@ def _effect_views(runs, demonstrations, memberships=(), deletions=()):
 
 class AnimationMethodService:
     def __init__(self, root, *, author_gateway, review_gateway, renderer, clock=time.time,
-                 runtime_capabilities=None, knowledge_store=None, manim_coordinator=None,
-                 historical_method_gateways=None):
+                 runtime_capabilities=None, knowledge_store=None, manim_coordinator=None):
         self.root = Path(root).absolute()
         _require(not any(path.is_symlink() for path in (self.root, *self.root.parents)))
         self.root.mkdir(parents=True, exist_ok=True)
@@ -436,9 +435,6 @@ class AnimationMethodService:
         self.methods = AnimationMethodStore(self.root / 'methods.sqlite3')
         self.commissions = AnimationMethodCommissionStore(self.root / 'commissions.sqlite3', clock=clock)
         self.author, self.reviewer, self.renderer = author_gateway, review_gateway, renderer
-        # Historical caller credentials serve stop verification only. New paid
-        # operations continue to use the current author/reviewer exclusively.
-        self.historical_method_gateways = dict(historical_method_gateways or {})
         self.manim = manim_coordinator
         from .lab_resource_stage import LabResourceStage
         self.resource_stage = LabResourceStage(self.root / 'resource-plans.sqlite3',

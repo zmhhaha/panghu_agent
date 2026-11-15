@@ -30,7 +30,6 @@ DOCKER_SOCKET = '/var/run/docker.sock'
 AGENT_TOKEN = '/run/secrets/animation-creation-agent/token'
 LAB_TOKEN = '/run/secrets/animation-creation-lab/token'
 METHOD_TOKEN = '/run/secrets/animation-method-agent/token'
-HISTORICAL_METHOD_TOKEN = '/run/secrets/animation-method-history-agent/token'
 SELECTOR = {'app.kubernetes.io/name': NAME}
 
 
@@ -56,8 +55,6 @@ class Settings:
     method_agent_token_secret: str | None = None
     method_agent_token_key: str = 'token'
     method_protocol: str = 'skills'
-    historical_method_agent_token_secret: str | None = None
-    historical_method_agent_token_key: str = 'token'
 
 
 def render(settings: Settings):
@@ -86,16 +83,7 @@ def render(settings: Settings):
         raise ValueError('Invalid method protocol')
     if method_secret in {agent_secret, lab_secret}:
         raise ValueError('Distinct method Agent caller Secret required')
-    history_secret = (_dns_name(settings.historical_method_agent_token_secret,
-                               'historical method Agent caller Secret')
-                      if settings.historical_method_agent_token_secret is not None else None)
-    if history_secret is not None:
-        if method_secret is None or settings.method_protocol != 'skills':
-            raise ValueError('Historical method caller requires current skills caller')
-        if history_secret in {agent_secret, lab_secret, method_secret}:
-            raise ValueError('Distinct historical method Agent caller Secret required')
-    for key in (settings.agent_token_key, settings.lab_token_key, settings.method_agent_token_key,
-                settings.historical_method_agent_token_key):
+    for key in (settings.agent_token_key, settings.lab_token_key, settings.method_agent_token_key):
         if type(key) is not str or not re.fullmatch(r'[A-Za-z0-9_.-]{1,253}', key):
             raise ValueError('Invalid caller Secret key')
 
@@ -122,8 +110,6 @@ def render(settings: Settings):
             '--listen', '0.0.0.0', '--port', str(PORT)]
     if method_secret:
         args += ['--method-agent-token-file', METHOD_TOKEN, '--method-protocol', settings.method_protocol]
-    if history_secret:
-        args += ['--historical-method-agent-token-file', HISTORICAL_METHOD_TOKEN]
     health = {'httpGet': {'path': '/healthz', 'port': 'http'}, 'periodSeconds': 10,
               'timeoutSeconds': 3, 'failureThreshold': 3}
     container = {
@@ -167,12 +153,6 @@ def render(settings: Settings):
             'defaultMode': 0o400, 'items': [{'key': settings.method_agent_token_key, 'path': 'token'}]}})
         container['volumeMounts'].append({'name': 'method-agent-token',
             'mountPath': METHOD_TOKEN.rsplit('/', 1)[0], 'readOnly': True})
-    if history_secret:
-        volumes.append({'name': 'historical-method-agent-token', 'secret': {
-            'secretName': history_secret, 'optional': False, 'defaultMode': 0o400,
-            'items': [{'key': settings.historical_method_agent_token_key, 'path': 'token'}]}})
-        container['volumeMounts'].append({'name': 'historical-method-agent-token',
-            'mountPath': HISTORICAL_METHOD_TOKEN.rsplit('/', 1)[0], 'readOnly': True})
     deployment = resource('apps/v1', 'Deployment', {
         'replicas': 1, 'strategy': {'type': 'Recreate'}, 'selector': {'matchLabels': dict(SELECTOR)},
         'template': {'metadata': {'labels': dict(labels), 'annotations': dict(annotations)}, 'spec': {
@@ -229,8 +209,6 @@ def main(argv=None):
     parser.add_argument('--lab-token-key', default='token')
     parser.add_argument('--method-agent-token-secret')
     parser.add_argument('--method-agent-token-key', default='token')
-    parser.add_argument('--historical-method-agent-token-secret')
-    parser.add_argument('--historical-method-agent-token-key', default='token')
     parser.add_argument('--method-protocol', choices=('skills', 'legacy'), default='skills')
     parser.add_argument('--output', type=Path)
     args = vars(parser.parse_args(argv))

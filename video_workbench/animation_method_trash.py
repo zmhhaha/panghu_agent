@@ -269,12 +269,11 @@ class AnimationMethodTrash:
 
     def _stop_gateway(self, operation):
         schema, stage = operation['input'].get('schema'), operation['stage']
-        current = self.service.reviewer if stage == 'review' else self.service.author
-        gateway = getattr(self.service, 'historical_method_gateways', {}).get((schema, stage), current)
+        gateway = self.service.reviewer if stage == 'review' else self.service.author
         expected = _METHOD_STOP_GATEWAYS.get(schema, {}).get(stage)
         require(gateway is not None and expected is not None, 'animation_method_trash_stop_unproven', 409)
         # Lookup uses frozen business/idempotency namespaces. Keep the same
-        # selected caller's transport without changing the admission gateway.
+        # current caller's transport without changing the admission gateway.
         historical = copy(gateway)
         for name in ('protocol', 'profile', 'business_prefix', 'idempotency_prefix'):
             setattr(historical, name, getattr(expected, name))
