@@ -120,3 +120,11 @@ Manim 局部时钟的浏览器测试另在同一新 renderer `31a2516d…` 内�
 用户随后要求专门子 Agent 整理已有数据。已逐条核对 10 个效果、22 条可见实验与22个唯一已成片候选；4 条无可验证样片实验保留待确认。实际分类为 HTML/SVG 3、Canvas 6、Three.js 1、Manim 1，Manim 样片同时保留 HTML 承载标签；动作编排 Anime.js 1、GSAP 0，没有将 HyperFrames 内部时钟推断为作品使用 GSAP。所有分类来自原冻结样片及实际加载证据，不按标题或请求推测，也未改写原记录或重做媒体。
 
 修复发布后，独立真实 catalog GET 与逐条盘点完全一致；浏览器也逐项选择六种筛选，确认 HTML/SVG 3/10、Canvas 6/10、Three.js 1/10、Manim 1/10、Anime.js 1/10、GSAP 0/10，Manim 卡片显示 HTML/SVG 与 Manim 0.22.1。三库20张表、1105行前后完整指纹一致；没有迁移、数据库写入、新实验或发布。回执为 `historical-manim-projection-{release,activation}-r1/completed.json`；D盘现有任务目录的 `existing-library-capability-classification-20261115.json` 与 `existing-library-live-classification-20261115.json` 保留逐条分类及真实核验。源码、数据核验与浏览器结果分别留证，不改变完整视听和人工发布边界。
+
+### 卡片能力标签统一
+
+用户指出分类数据虽然正确，卡片仍存在版本混在名称中、HTML/SVG 与 Manim 连写、缺少编排库时整行消失的问题。`4cbdf425e20825343c2fc45e34da267c682b8bb4` 将列表卡片接入同一两行组件：名称徽章、精确版本 title、可复制的多标签分隔、固定类别栏和一致的间距；已验证但缺少额外编排库证据显示“未记录”，无已验证媒体显示两行“待确认”。目标正文、标题、后端分类及媒体不改动。干净 HEAD 加本轮独立补丁的 Node 定向59项全部通过，原有未提交修改另外保留。
+
+完整 Git 普通构建的 lab `latest@sha256:0c53772a62a7d6217621db8c5846c26e055b7d6f546eafa25d54a89c43f93749` 已单独部署，Pod Ready、0 重启；86份运行源码及5个真实 HTTP 静态资源的字节 SHA 匹配该提交。三个 SQLite 全表 schema／行指纹相等，原代理参数、Secret、挂载与 PVC 保留，其他三个业务服务的 spec 和 Pod UID 不变；没有启动模型、TTS 或渲染。回执为 `skill-lab-unified-labels-r1-release/build-completed.json` 与 `skill-lab-unified-labels-r1-guard/completed.json`。
+
+实际浏览器核对10张卡片全部为两行，两行之间没有重叠或横向溢出。Anime.js／Manim／Canvas卡片显示统一，Manim名称之间保留实际空白，库版本确切保留在 title；Manim与Anime筛选均为1/10。实际截图和DOM几何读取分别用于确认外观与布局，未将桌面检查扩大为手机验收；轻量结果保存在既有D盘目录 `label-unification-browser-check-r1.json`。
