@@ -151,15 +151,14 @@ def test_wiki_reads_cross_both_authenticated_hops_without_work_or_writes(peers):
     assert TOKEN not in json.dumps(catalogue)
 
 
-def test_wiki_explicit_revision_uses_cas_idempotency_and_never_schedules(peers):
-    service, backend, _, frontend, record = peers
+def test_wiki_manual_edit_is_retired_and_never_schedules(peers):
+    service, backend, client, frontend, record = peers
     path, body = PREFIX + '/knowledge/pages/draw%3Aasync', revision_body(record)
-    first = request(frontend, 'POST', path, body)
-    assert first[0] == 200 and first[1]['revision'] == 2 and first[1]['change_kind'] == 'correct'
-    assert request(frontend, 'POST', path, body)[1] == first[1]
-    changed = dict(body, request_id='another-request')
-    assert request(frontend, 'POST', path, changed)[0] == 409
-    assert len(service.knowledge.page_history(USER, 'draw:async')) == 2
+    assert request(frontend, 'POST', path, body)[:2] == (410, {'error': 'animation_knowledge_manual_edit_retired'})
+    assert request(backend, 'POST', path, body, private=True)[0] == 410
+    with pytest.raises(CreationTransportError, match='manual_edit_retired'):
+        client.revise_knowledge_page(USER, 'draw:async', body)
+    assert len(service.knowledge.page_history(USER, 'draw:async')) == 1
     assert backend.method_pump is None
 
 
@@ -167,7 +166,7 @@ def test_historical_reads_return_original_body_through_both_hops_without_writes(
     service, backend, client, frontend, record = peers
     initial = service.knowledge.get_page(USER, 'draw:async')
     body = revision_body(record)
-    assert request(frontend, 'POST', PREFIX + '/knowledge/pages/draw%3Aasync', body)[0] == 200
+    service.revise_knowledge_page(USER, 'draw:async', body)  # Existing historical revision fixture.
     service.calls.clear()
     path = PREFIX + '/knowledge/pages/draw%3Aasync/revisions/1'
     status, historical, _ = request(frontend, 'GET', path)
@@ -225,7 +224,7 @@ def test_wiki_owner_isolation_survives_public_proxy_and_private_token(peers):
         assert request(frontend, 'GET', PREFIX + '/knowledge/' + suffix,
                        extra={'X-Forwarded-User': SECOND})[0] == 404
     assert request(frontend, 'POST', PREFIX + '/knowledge/pages/draw:async',
-                   dict(revision_body(record), owner=SECOND))[0] == 422
+                   dict(revision_body(record), owner=SECOND))[0] == 410
     before = len(service.calls)
     assert request(backend, 'GET', PREFIX + '/knowledge', private=True, omit=['Authorization'])[0] == 403
     assert request(backend, 'GET', PREFIX + '/knowledge', private=True,

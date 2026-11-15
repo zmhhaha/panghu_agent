@@ -468,6 +468,79 @@ class AnimationMethodService:
     def pending(self, limit=100):
         return self.commissions.pending(limit)
 
+    def capture_wikiskill_records(self, owner):
+        """Freeze real, currently visible effect evidence without running work.
+
+        The attached read transaction holds source rows steady. Each operation
+        input/result is a separate record, so large histories are neither
+        silently truncated nor expanded into one unbounded model prompt.
+        Working Wiki snapshots embedded in old inputs remain historical input
+        context; they are not an independently published knowledge source.
+        """
+        records = []
+
+        def add(record_id, kind, content):
+            content = deepcopy(content)
+            records.append(dict(record_id=record_id, kind=kind, content=content, sha256=digest(content)))
+
+        with self.trash.mutation(owner, wait_seconds=5):
+            with self.trash.database() as db:
+                # Establish read locks before collecting linked evidence.
+                for table in ('feedback', 'commissions.animation_method_commissions', 'methods.animation_methods'):
+                    db.execute('SELECT count(*) FROM ' + table + ' WHERE owner=?', (owner,)).fetchone()
+                state = self.trash.state(db, owner)
+                hidden = state['hidden'] | state['legacy_hidden']
+                runs = [run for run in state['runs'] if run['id'] not in hidden]
+                visible_ids = {run['id'] for run in runs}
+                _require(bool(runs), 'animation_wikiskill_library_empty', 409)
+                methods, research = set(), set()
+                for run in sorted(runs, key=lambda row: row['id']):
+                    add('commission:' + run['id'], 'commission',
+                        {key: value for key, value in run.items() if key != 'operations'})
+                    for candidate in run.get('candidates', []):
+                        methods.update(candidate.get('method_versions', []))
+                    methods.update(run['frozen'].get('method_versions', []))
+                    for operation in sorted(run['operations'], key=lambda row: row['id']):
+                        identity = 'operation:' + operation['id']
+                        add(identity, 'operation', {key: value for key, value in operation.items()
+                            if key not in {'input', 'result'}})
+                        add(identity + ':input', 'operation_input', operation['input'])
+                        if operation.get('result') is not None:
+                            add(identity + ':result', 'operation_result', operation['result'])
+                for demo in state['demos']:
+                    if demo.get('provenance', {}).get('commission_id') in visible_ids:
+                        add('demonstration:' + demo['id'], 'demonstration', demo)
+                for method in self.trash.documents(db, 'methods.animation_methods', owner):
+                    if method['id'] in methods:
+                        add('method:' + method['id'], 'method', method)
+                        research.update(method.get('research_record_ids', []))
+                for observation in self.trash.documents(db, 'methods.animation_research_records', owner):
+                    if observation['id'] in research:
+                        add('research:' + observation['id'], 'research', observation)
+                for table, kind in (('feedback', 'feedback'), ('feedback_withdrawals', 'feedback_withdrawal')):
+                    for row in self.trash.documents(db, table, owner):
+                        if row['commission_id'] in visible_ids:
+                            add(kind + ':' + row['id'], kind, row)
+                for effect in state['effects']:
+                    members = [row for row in effect['commissions'] if row['id'] in visible_ids]
+                    if members:
+                        view = deepcopy(dict(effect, commissions=members))
+                        if view.get('open_commission_id') not in visible_ids:
+                            usable = [row for row in members if row.get('best_candidate_id') and row['state'] == 'completed']
+                            chosen = max(usable or members, key=lambda row: (row['created_at'], row['id']))
+                            run = state['by_id'][chosen['id']]
+                            candidate = next((row for row in _candidates(run) if row['id'] == run['best_candidate_id']), None)
+                            engine = _sample_engine(candidate, _sample_index(state['demos']))
+                            view.pop('authoring_tools', None)
+                            view.update(engine)
+                            best = (dict(id=candidate['id'], media_url=_public_url(run['id'], candidate['id'], 'media'),
+                                **engine) if candidate else None)
+                            view.update(open_commission_id=run['id'], request_id=run['request_id'], state=run['state'],
+                                best_candidate=best, media_url=best['media_url'] if best else None,
+                                engines=[engine['engine']] if engine['engine'] else [])
+                        add('effect:' + effect['id'], 'effect', view)
+        return sorted(records, key=lambda row: row['record_id'])
+
     def knowledge_catalogue(self, owner):
         _require(self.knowledge is not None, 'animation_method_knowledge_unavailable', 503)
         withdrawn = self._withdrawn_experience_ids(owner)
@@ -496,16 +569,7 @@ class AnimationMethodService:
             evidence_issues=sorted(self._withdrawn_experience_ids(owner) & set(page['evidence_ids'])))
 
     def revise_knowledge_page(self, owner, page_id, body):
-        _require(self.knowledge is not None, 'animation_method_knowledge_unavailable', 503)
-        required = {'request_id', 'expected_revision', 'body', 'evidence_ids', 'change_note'}
-        _require(type(body) is dict and required <= set(body)
-                 and set(body) <= required | {'status', 'change_kind', 'relations'})
-        options = {key: deepcopy(value) for key, value in body.items() if key not in {'request_id', 'body'}}
-        result = self.knowledge.revise_page(owner, page_id, body['body'], operation_id=body['request_id'], **options)
-        self._experience(owner, 'developer_knowledge_revision', body['request_id'], dict(
-            page_id=page_id, revision=result['revision'], content_sha256=result['content_sha256'],
-            change_note=body['change_note'], scope='explicit_developer_knowledge_revision_not_skill_publication'))
-        return result
+        raise ServiceError('animation_knowledge_manual_edit_retired', 410)
 
     def publication_readiness(self, owner, method_version_id):
         return self.methods.publication_readiness(owner, method_version_id)

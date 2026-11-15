@@ -116,93 +116,28 @@ function confirmCard(card) {
   const comment = card.descendants('textarea')[0]; comment.value = 'TEST FIXTURE: 完整动作及因果符合标准。'; comment.handlers.input();
 }
 
-test('the release UI starts with no assumed confirmations, one player per exact validation and lazy Skill reads', async () => {
-  const h = rendered(fixture());
-  assert.equal(h.calls.length, 0);
-  assert.equal(h.result.descendants('video').length, 2);
-  assert.ok(h.result.descendants('video').every(video => video.preload === 'none' && !video.muted));
-  assert.ok(h.result.descendants('input').every(input => !input.checked));
-  assert.ok(h.result.descendants('button').filter(button => button.textContent === '认可这条确切样片').every(button => button.disabled));
-  assert.equal(findButton(h.result, '发布已认可的方法版本').disabled, true);
-  const cards = h.result.descendants('article').filter(card => card.dataset.validationId);
-  assert.equal(cards[0].descendants('input').length, 3);
-  assert.equal(cards[1].descendants('input').length, 6);
-  assert.match(cards[0].textContent, /无需试听/); assert.match(cards[1].textContent, /试听这条样片/);
-  confirmCard(cards[0]); const approve = findButton(cards[0], '认可这条确切样片');
-  assert.equal(approve.disabled, false); approve.handlers.click(); await settle();
-  assert.equal(h.calls.length, 1); assert.equal(h.calls[0].path, 'api/method-lab/validations/reference-validation/accept');
-  assert.equal(JSON.parse(h.calls[0].options.body).human_verification.audio_listened, false);
-  assert.deepEqual(h.refreshed, ['commission']);
-  assert.equal(h.calls.some(call => call.path.endsWith('/publish')), false);
-});
-
-test('a displayed acknowledgement cannot accept a silently changed method, validation or media', async () => {
-  for (const change of [detail => { detail.methods[0].content_sha256 = hash('3'); },
-    detail => { detail.validations[0].acceptance_target_sha256 = hash('4'); },
-    detail => { detail.validations[0].evidence.media_sha256 = hash('5'); }]) {
-    const detail = fixture(), current = structuredClone(detail);
-    const h = rendered(detail, {currentDetail: () => current});
-    const card = h.result.descendants('article').find(row => row.dataset.validationId === 'reference-validation');
-    confirmCard(card); change(current); findButton(card, '认可这条确切样片').handlers.click(); await settle();
-    assert.equal(h.calls.length, 0); assert.match(h.result.textContent, /已经更新|版本发生变化/);
+test('effect detail links to the single whole-library release workflow without writes', () => {
+  for (const detail of [fixture(), fixture({accepted: true, ready: true}), {id:'old', state:'failed'}]) {
+    const h = rendered(detail);
+    assert.equal(h.calls.length, 0);
+    assert.equal(h.result.descendants('button').length, 0);
+    assert.equal(h.result.descendants('input').length, 0);
+    assert.equal(h.result.descendants('video').length, 0);
+    const link = h.result.descendants('a')[0];
+    assert.equal(link.textContent, '打开知识库');
+    assert.equal(link.href, new URL('knowledge.html', root).href);
+    assert.match(h.result.textContent, /整套 WikiSkill/);
+    assert.match(h.result.textContent, /未验证结论/);
   }
 });
 
-test('a lost acceptance response stops mutation until an explicit refresh; it never retries or publishes automatically', async () => {
-  let calls = 0;
-  const h = rendered(fixture(), {request: async () => { calls++; throw Error('Synthetic ack loss'); }});
-  const card = h.result.descendants('article').find(row => row.dataset.validationId === 'reference-validation');
-  confirmCard(card); const accept = findButton(card, '认可这条确切样片'); accept.handlers.click(); await settle();
-  assert.equal(calls, 1); assert.equal(accept.disabled, true); assert.match(h.result.textContent, /没有自动重试/);
-  accept.handlers.click(); await settle(); assert.equal(calls, 1);
-});
-
-test('an explicit successful GET unlocks an unchanged view and retries the original exact request after ack loss', async () => {
-  const posts = [], reads = []; let sequence = 0;
-  const h = rendered(fixture(), {uuid: () => 'request-' + (++sequence), request: async (path, options) => {
-    posts.push({path, body: JSON.parse(options.body)});
-    if (posts.length === 1) throw Error('Synthetic connection loss before admission');
-    return {};
-  }, refresh: async id => reads.push(id)});
-  const card = h.result.descendants('article').find(row => row.dataset.validationId === 'reference-validation');
-  confirmCard(card); const accept = findButton(card, '认可这条确切样片');
-  accept.handlers.click(); await settle(); assert.equal(accept.disabled, true);
-  await findButton(h.result, '刷新发布检查').handlers.click();
-  assert.deepEqual(reads, ['commission']); assert.equal(posts.length, 1); assert.equal(accept.disabled, false);
-  accept.handlers.click(); await settle();
-  assert.equal(posts.length, 2); assert.deepEqual(posts[1], posts[0]);
-  assert.equal(accept.disabled, true);
-});
-
-test('a failed refresh cannot unlock an uncertain confirmation', async () => {
-  let requests = 0;
-  const h = rendered(fixture(), {request: async () => { requests++; throw Error('Synthetic ack loss'); },
-    refresh: async () => { throw Error('Synthetic GET failure'); }});
-  const card = h.result.descendants('article').find(row => row.dataset.validationId === 'reference-validation');
-  confirmCard(card); const accept = findButton(card, '认可这条确切样片');
-  accept.handlers.click(); await settle(); await findButton(h.result, '刷新发布检查').handlers.click();
-  assert.equal(accept.disabled, true); assert.equal(requests, 1); assert.match(h.result.textContent, /GET failure/);
-});
-
-test('Skill contents are requested only on demand and published exact versions require a separate release decision', async () => {
-  const detail = fixture({accepted: true, ready: true}), h = rendered(detail, {request: async (path, options) => {
-    h.calls.push({path, options}); return {...detail.methods[0], skill_package: {sha256: hash('c'), files: {'SKILL.md': 'Synthetic exact Skill.'}}};
-  }});
-  findButton(h.result, '读取这个版本的 Skill').handlers.click(); await settle();
-  assert.deepEqual(h.calls.map(call => call.path), ['api/method-lab/methods/method-v2']);
-  assert.match(h.result.textContent, /Synthetic exact Skill/);
-  const release = h.result.descendants('input').find(input => input.type === 'checkbox');
-  assert.equal(release.checked, false); assert.equal(findButton(h.result, '发布已认可的方法版本').disabled, true);
-  release.checked = true; release.handlers.change(); findButton(h.result, '发布已认可的方法版本').handlers.click(); await settle();
-  const post = h.calls.find(call => call.options?.method === 'POST');
-  assert.equal(post.path, 'api/method-lab/commissions/commission/publish');
-  assert.equal(Object.hasOwn(JSON.parse(post.options.body), 'human_verification'), false);
-});
-
-test('gallery details wire v2 to the exact panel while retaining the effect library and historical details', () => {
-  const detail = fixture();
-  const view = renderMethodDetail(doc, detail, root, {onBack() {}, onContinue() {}, onCancel() {}, onFeedback() {}, onPublish() {}});
-  assert.equal(view.descendants('section').filter(row => row.dataset.exactSkillPublication === 'true').length, 1);
-  assert.equal(findButton(view, '认可并发布方法'), undefined);
-  assert.match(view.textContent, /返回效果库/);
+test('all detail schemas use the same knowledge release entry and preserve the effect workflow', () => {
+  for (const detail of [fixture(), {...fixture(), publication_method_version_ids: [], methods: []}]) {
+    const view = renderMethodDetail(doc, detail, root, {onBack() {}, onContinue() {}, onCancel() {}, onFeedback() {}, onPublish() {}});
+    assert.equal(view.descendants('section').filter(row => row.dataset.exactSkillPublication === 'true').length, 1);
+    assert.equal(findButton(view, '认可并发布方法'), undefined);
+    assert.equal(findButton(view, '发布已认可的方法版本'), undefined);
+    assert.match(view.textContent, /返回效果库/);
+    assert.equal(view.descendants('a').find(row => row.textContent === '打开知识库').href, new URL('knowledge.html', root).href);
+  }
 });

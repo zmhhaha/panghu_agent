@@ -13,6 +13,8 @@ from agent_service.contracts import ServiceError, canonical_bytes
 from agent_service.profiles.video_joint_plan import (INPUT_MAX_BYTES, OUTPUT_MAX_BYTES,
     validate_joint_plan_input, validate_joint_plan_result)
 from .agent import VideoAgentGateway, _decode, _finite_number, _operation, _sha, _uuid
+from .skill_production_gateway import SkillProductionAgentGateway
+from agent_service.profiles.video_joint_plan_skills import VideoJointPlanSkillsProfile
 
 
 PROFILE = 'video.joint-plan.v1'
@@ -40,7 +42,7 @@ def _document_bytes(document):
 def _job(document, *, job_id=None, operation_id=None):
     _require(type(document) is dict and _uuid(document.get('job_id'))
              and type(document.get('state')) is str and document['state'] in {
-                 'queued', 'running', 'cancelling', 'completed', 'failed', 'needs_input',
+                 'queued', 'starting', 'running', 'cancelling', 'completed', 'failed', 'needs_input',
                  'cancelled', 'timed_out', 'quarantined'}
              and (job_id is None or document['job_id'] == job_id)
              and (operation_id is None or document.get('business_ref') == 'video-joint-plan:' + operation_id)
@@ -55,6 +57,13 @@ class JointPlanAgentGateway(VideoAgentGateway):
     business_prefix, key_prefix = 'video-joint-plan:', 'joint_plan-'
     input_validator = staticmethod(validate_joint_plan_input)
     result_validator = staticmethod(validate_joint_plan_result)
+
+    def __init__(self, client, profile_revision='1', *, skill_adapter=None):
+        super().__init__(client, profile_revision=profile_revision)
+        self.skill_adapter = skill_adapter
+
+    def _skills(self):
+        return JointPlanSkillAgentGateway(self.client, self.skill_adapter, self.profile_revision)
 
     def _key(self, operation_id):
         value = _operation(operation_id)
@@ -73,6 +82,8 @@ class JointPlanAgentGateway(VideoAgentGateway):
         return document
 
     def upload(self, document):
+        if document.get('skill_catalog') is not None:
+            return self._skills().upload(document)
         raw = self._document_bytes(document)
         checksum = hashlib.sha256(raw).hexdigest()
         uploaded = self._remote(self.client.upload_input, self.input_name, raw)
@@ -82,6 +93,8 @@ class JointPlanAgentGateway(VideoAgentGateway):
         return dict(input_id=uploaded['input_id'], sha256=checksum, path=self.input_name, role=self.input_role)
 
     def submit(self, operation_id, document, deadline_at, input_ref=None):
+        if document.get('skill_catalog') is not None:
+            return self._skills().submit(operation_id, document, deadline_at, input_ref)
         key = self._key(operation_id)
         checksum = hashlib.sha256(self._document_bytes(document)).hexdigest()
         _require(type(input_ref) is dict and set(input_ref) == {'input_id', 'sha256', 'path', 'role'}
@@ -139,6 +152,8 @@ class JointPlanAgentGateway(VideoAgentGateway):
 
     def collect(self, job_id, input_sha256, input_document):
         """Verify stopped writers and immutable manifest before interpreting the proposal."""
+        if input_document.get('skill_catalog') is not None:
+            return self._skills().collect(job_id, input_sha256, input_document)
         _require(_sha(input_sha256), 'invalid_joint_plan_input_ref', 422)
         job = self.poll(job_id)
         _require(job.get('state') == 'completed', 'joint_plan_result_not_ready', 409)
@@ -178,3 +193,14 @@ class JointPlanAgentGateway(VideoAgentGateway):
         _require(type(raw) is bytes and len(raw) == item['size']
                  and hashlib.sha256(raw).hexdigest() == item['sha256'], 'joint_plan_artifact_digest_mismatch')
         return self.result_validator(_decode(raw), input_sha256, input_document)
+
+
+class JointPlanSkillAgentGateway(SkillProductionAgentGateway):
+    """Same planner identity, with the existing authenticated Skill transport."""
+    profile = 'video.joint-plan.v2'
+    input_name, input_role, result_name = INPUT_NAME, INPUT_ROLE, RESULT_NAME
+    business_prefix, idempotency_prefix = 'video-joint-plan:', 'joint_plan-'
+    input_limit, output_limit = INPUT_MAX_BYTES, OUTPUT_MAX_BYTES
+    validate_input = staticmethod(validate_joint_plan_input)
+    validate_result = staticmethod(validate_joint_plan_result)
+    profile_implementation = VideoJointPlanSkillsProfile

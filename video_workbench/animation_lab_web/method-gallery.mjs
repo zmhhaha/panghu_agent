@@ -1,6 +1,6 @@
 import {createMethodComparison} from './method-comparison.mjs';
 import {mountAuthoringControls, renderCapabilityLabels, matchesAuthoringTool, matchesVisualCreation, toolSearchText, resourceAuthoringRequest} from './authoring-tools.mjs';
-import {usesExactSkillPublication, renderExactSkillPublication} from './skill-publication.mjs';
+import {renderExactSkillPublication} from './skill-publication.mjs';
 import {mountEffectRecycleBin, renderRemovalActions} from './effect-recycle-bin.mjs';
 
 const API = 'api/method-lab/';
@@ -610,25 +610,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   }
   fragment.append(feedback);
   fragment.append(transfers);
-  if (usesExactSkillPublication(detail)) {
-    fragment.append(renderExactSkillPublication(doc, detail, root, {assetUrl: methodAssetUrl, ...publicationServices}));
-  } else {
-  const publish = panel(doc, '认可效果，发布创作方法'); publish.classList.add('publication');
-  const selection = publicationSelection(detail), ready = canPublish(detail);
-  publish.append(element(doc, 'p', 'muted', '发布会保存这些已认可的方法版本，确认范围绑定本次样片与迁移结果。发布后，正式制作可读取这些方法；采用情况保存在制作记录中。'));
-  if (selection.method_version_ids.length) publish.append(list(doc, rows(detail.methods)
-    .filter(row => selection.method_version_ids.includes(identity(row))).map(row => text(row.title) || text(row.problem) || '关联方法')));
-  if (rows(detail.publication_blockers).length) publish.append(list(doc, detail.publication_blockers));
-  else if (!ready) publish.append(element(doc, 'p', 'muted', methodsPublished(detail) ? '本版本的方法已发布。继续优化会产生新的候选版本。' : '尚未具备完整样片、迁移结果和方法版本，暂不能发布。'));
-  const acknowledgment = element(doc, 'label', 'checkbox-label'), checkbox = element(doc, 'input');
-  checkbox.type = 'checkbox'; checkbox.disabled = !ready;
-  acknowledgment.append(checkbox, element(doc, 'span', '', needsAudioVerification(detail)
-    ? '我已完整观看样片及迁移样片，并试听其中音效，确认这些效果符合目标。'
-    : '我已完整观看样片及迁移样片，确认这些效果符合目标。本次样片无音效，无需试听。'));
-  const publishButton = button(doc, '认可并发布方法', () => onPublish(checkbox.checked, publicationApprovalBinding(detail)), 'button primary');
-  publishButton.disabled = true; checkbox.addEventListener('change', () => { publishButton.disabled = !ready || !checkbox.checked; });
-  publish.append(acknowledgment, publishButton); fragment.append(publish);
-  }
+  fragment.append(renderExactSkillPublication(doc, detail, root));
   const methods = disclosure('methods', '关联创作方法（' + rows(detail.methods).length + '）');
   for (const method of rows(detail.methods)) {
     const article = element(doc, 'article', 'method-item');

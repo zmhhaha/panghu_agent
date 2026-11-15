@@ -34,6 +34,7 @@ OutputSchema = Literal['text-output.v1', 'ppt-plan_initial-output.v1', 'ppt-plan
     'video-animation-method-author-output.v2', 'video-animation-method-review-output.v2',
     'video-animation-production-output.v1', 'video-animation-film-production-output.v1',
     'video-animation-skill-production-output.v1',
+    'video-animation-wikiskill-compile-output.v1',
     'video-animation-film-module-output.v1',
     'video-animation-manim-recipe-output.v1',
     'video-joint-plan-output.v1', 'video-resource-plan-output.v1']

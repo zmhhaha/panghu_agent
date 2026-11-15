@@ -65,7 +65,7 @@ def validate_delivery(value):
     _require(type(receipts) is list and len(receipts) <= 256)
     for receipt in receipts:
         _require(type(receipt) is dict and type(receipt.get('source')) is str and receipt.get('source') in {
-            'authenticated_catalogue_full_records', 'authenticated_method_read'}
+            'authenticated_catalogue_full_records', 'authenticated_method_read', 'authenticated_wikiskill_release'}
             and receipt.get('scope') == 'host_retrieval_not_agent_observation')
     _require(value['sha256'] == digest({key: item for key, item in value.items() if key != 'sha256'}),
              'production_skill_delivery_changed', 409)
@@ -93,7 +93,7 @@ class SkillProductionAdapter:
         with closing(self._connect()) as db:
             db.execute('BEGIN IMMEDIATE')
             tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            _require(tables <= {_TABLE}, 'production_skill_ledger_not_isolated', 409)
+            _require(tables <= {_TABLE, 'animation_wikiskill_batch_freezes'}, 'production_skill_ledger_not_isolated', 409)
             db.execute('CREATE TABLE IF NOT EXISTS ' + _TABLE + ' ('
                 'owner TEXT NOT NULL,consumer_id TEXT NOT NULL,binding BLOB NOT NULL,'
                 'binding_sha256 TEXT NOT NULL,intent BLOB NOT NULL,intent_sha256 TEXT NOT NULL,'

@@ -16,7 +16,7 @@ from test_animation_skill_method_service import work, finish, start  # noqa: F40
 OWNER = 'developer'
 
 
-def test_exact_publication_panel_is_served_and_explicit_decisions_cross_both_http_hops(work, tmp_path):
+def test_historical_decisions_remain_readable_but_public_per_method_release_is_retired(work, tmp_path):
     service, creator, reviewer, renderer = work
     first = finish(service, start(service)['id'])
     transfer = service.transfer(OWNER, first['id'], dict(request_id=str(uuid4()),
@@ -51,7 +51,7 @@ def test_exact_publication_panel_is_served_and_explicit_decisions_cross_both_htt
             release = dict(request_id=str(uuid4()), method_version_ids=[method_id],
                            demonstration_ids=[row['demonstration_version_id'] for row in validations])
             # A general publish click cannot also sign per-media viewing decisions.
-            assert send('POST', '/api/method-lab/commissions/' + first['id'] + '/publish', release)[0] == 409
+            assert send('POST', '/api/method-lab/commissions/' + first['id'] + '/publish', release)[0] == 410
             assert all(row['acceptance'] is None for row in service.methods.list_validations(OWNER, method_id))
             for validation in validations:
                 demo = service.methods.get_demonstration(OWNER, validation['demonstration_version_id'])
@@ -71,7 +71,7 @@ def test_exact_publication_panel_is_served_and_explicit_decisions_cross_both_htt
                 assert send('POST', path, body)[1] == accepted[1]
             readiness = send('GET', '/api/method-lab/methods/' + method_id + '/readiness')[1]
             assert readiness['ready'] and not readiness['unmet_conditions']
-            assert send('POST', '/api/method-lab/commissions/' + first['id'] + '/publish', release)[0] == 200
+            assert send('POST', '/api/method-lab/commissions/' + first['id'] + '/publish', release)[0] == 410
             assert 'human_verification' not in release
-            assert send('GET', '/api/method-lab/methods/published')[1]['methods'][0]['id'] == method_id
+            assert send('GET', '/api/method-lab/methods/published')[1]['methods'] == []
     assert before == (len(creator.submissions), len(reviewer.submissions), len(renderer.calls))

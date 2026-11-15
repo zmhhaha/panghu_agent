@@ -1,0 +1,20 @@
+{
+  "bundle_revision": "video-joint-plan-v2",
+  "automatic_updates": false,
+  "upstream_content_vendored": false,
+  "license": "MIT",
+  "local_files": [
+    {
+      "path": "CONTRACT.md",
+      "sha256": "a542a242c5acfdd9f6a3ad25e20561bb7c12189a2856125c314963fe7d993ac4"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "3c008d7b96c96dffe712c6c06b5fa410c6e34a705400078730007ceafdab10a5"
+    },
+    {
+      "path": "joint-plan-procedure/SKILL.md",
+      "sha256": "0c7092202db3624be93fa2a7587266991cb4ab08116009a052dcddac02721a1f"
+    }
+  ]
+}

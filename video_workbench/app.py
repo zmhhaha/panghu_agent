@@ -295,6 +295,7 @@ class ExplanationAdoption(Revision):
 
 class JointPlanRequest(ExplanationRequest):
     preserve_script: bool = Field(default=False, strict=True)
+    library_release_id: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class ProductionRunRequest(Revision):
@@ -608,7 +609,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         if method_settings:
             from .animation_method_http import MethodLabClient, CreationTransportError
             from .animation_method_production import MethodProductionAdapter
-            from .animation_skill_production import SkillProductionAdapter
+            from .animation_wikiskill_production import LibrarySkillProductionAdapter
             method_client = MethodLabClient(method_settings.base_url, method_settings.token)
 
             def method_request(call, *args):
@@ -632,9 +633,13 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     lambda owner, body: method_request(method_client.published_methods, owner, body),
                     ledger_path=Path(store.path).with_name('production-method-freezes.sqlite3'))
             if skill_adapter is None:
-                skill_adapter = SkillProductionAdapter(
-                    released_catalogue, released_methods,
-                    ledger_path=Path(store.path).with_name('production-skill-freezes.sqlite3'))
+                skill_adapter = LibrarySkillProductionAdapter(
+                    lambda owner: method_request(method_client.wikiskill_active, method_settings.publisher_owner or owner),
+                    lambda owner, release_id: method_request(method_client.wikiskill_release,
+                        method_settings.publisher_owner or owner, release_id),
+                    lambda owner: method_request(method_client.wikiskill_catalogue, method_settings.publisher_owner or owner),
+                    ledger_path=Path(store.path).with_name('production-skill-freezes.sqlite3'),
+                    legacy_read=released_methods)
     if skill_gateway is None and skill_adapter is not None:
         skill_settings = SkillProductionAgentSettings.from_env()
         if skill_settings:
@@ -648,8 +653,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
             gateway.client if isinstance(gateway, VideoAgentGateway) else None)
         if joint_client is not None:
             joint_plan_gateway = JointPlanAgentGateway(joint_client,
-                os.environ.get('VIDEO_JOINT_PLAN_PROFILE_REVISION', '1'))
-    joint_plan_store = JointPlanStore(store, runtime_capabilities=creative_capabilities)
+                os.environ.get('VIDEO_JOINT_PLAN_PROFILE_REVISION', '1'), skill_adapter=skill_adapter)
+    joint_plan_store = JointPlanStore(store, runtime_capabilities=creative_capabilities, skill_adapter=skill_adapter)
     if resource_planning_gateway is None:
         resource_settings = ResourcePlanningAgentSettings.from_env()
         if resource_settings is not None:
@@ -662,7 +667,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
             producer_catalog=resource_producer_catalog or (
                 lambda owner: admitted_resource_producers(film_creation, owner)))
     joint_plan_workflow = JointPlanWorkflow(joint_plan_store, joint_plan_gateway, enabled=joint_gate,
-                                           method_adapter=method_adapter, resource_planner=resource_planner)
+        method_adapter=skill_adapter if callable(getattr(skill_adapter, 'pin', None)) else method_adapter,
+        resource_planner=resource_planner)
     motion_workflow = MotionWorkflow(motion_store, motion_gateway, enabled=motion_gate,
                                     process_gateway=process_gateway, process_enabled=process_gate,
                                     creative_gateway=creative_gateway, creative_enabled=creative_gate,
@@ -1051,6 +1057,12 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     def joint_plan(project_id: str, owner=Depends(identity)):
         return joint_plan_store.project(owner, project_id)
 
+    @app.get('/api/wikiskill/releases')
+    def wikiskill_releases(owner=Depends(identity)):
+        if not callable(getattr(skill_adapter, 'list_releases', None)):
+            return dict(active_release_id=None, releases=[])
+        return skill_adapter.list_releases(owner)
+
     @app.post('/api/projects/{project_id}/production-runs', status_code=202)
     def start_production_run(project_id: str, body: ProductionRunRequest, owner=Depends(mutation),
                              idempotency_key: str | None = Header(default=None, alias='Idempotency-Key')):
@@ -1074,7 +1086,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     def generate_joint_plan(project_id: str, body: JointPlanRequest, owner=Depends(mutation),
                             idempotency_key: str | None = Header(default=None, alias='Idempotency-Key')):
         joint_plan_workflow.require_gateway()
-        return joint_plan_store.start(owner, project_id, body.model_dump(), idempotency(idempotency_key))
+        return joint_plan_store.start(owner, project_id, body.model_dump(exclude_none=True), idempotency(idempotency_key))
 
     @app.post('/api/projects/{project_id}/joint-plan/adopt')
     def adopt_joint_plan(project_id: str, body: ExplanationAdoption, owner=Depends(mutation)):

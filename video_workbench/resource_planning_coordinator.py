@@ -10,7 +10,7 @@ import time
 from agent_service.contracts import ServiceError, digest
 from agent_service.profiles.video_resource_plan import PROFILE
 from agent_service.profiles.video_resource_plan_contract import INPUT_SCHEMA, validate_input, validate_result, require
-from .joint_plan_store import ACTIVE, TERMINAL, _json, _size
+from .joint_plan_store import ACTIVE, TERMINAL, OUTPUT_RESERVE_BYTES, _json, _size
 from .agent import _uuid, _sha, _finite_number
 
 
@@ -68,7 +68,8 @@ class ResourcePlanningCoordinator:
                 stage['result_sha256'] = digest(result)
             version['resource_planning'] = annotation
             self.store._capacity(db, op['project_id'], extra_bytes=_size(op) - before_op + _size(version) - before_version,
-                active_delta=-1 if terminal else 0)
+                active_delta=-1 if terminal else 0,
+                reserve_bytes=op.get('output_reserve_bytes', OUTPUT_RESERVE_BYTES))
             self.store._write_op(db, op)
             db.execute('UPDATE joint_plan_versions SET document=? WHERE id=? AND owner=?',
                 (_json(version), version['id'], op['owner']))

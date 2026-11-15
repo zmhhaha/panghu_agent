@@ -132,7 +132,7 @@ class JointPlanWorkflow:
                 error=None if state == 'cancelled' else 'agent_' + state)
         elif state == 'cancelling':
             self.store.update_operation(op['id'], status='cancelling')
-        elif state in {'queued', 'running'} and (op['cancel_requested'] or time.time() >= op['deadline_at']):
+        elif state in {'queued', 'starting', 'running'} and (op['cancel_requested'] or time.time() >= op['deadline_at']):
             claimed = self.store.claim_cancellation(op['id'], now=time.time(), retry_delays=CANCEL_RETRY_DELAYS)
             if claimed is not None:
                 try:

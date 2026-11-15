@@ -29,7 +29,7 @@ def audio_node_id(scene_id):
     return 'audio_' + scene_id
 
 
-def production_plan(value, frozen, *, deadline_at):
+def production_plan(value, frozen, *, deadline_at, library_binding=None):
     """Add real recording dependencies to the confirmed creative requirements."""
     require(value is None or type(value) is dict and set(value) <= {'nodes', 'budget'},
         'production_resource_plan_invalid')
@@ -55,6 +55,10 @@ def production_plan(value, frozen, *, deadline_at):
             options = authoring_request(node['inputs'].get('resource_authoring'), 60)
             require(options['global_start_frame'] == 0, 'production_resource_local_clock_required')
             node['inputs']['resource_authoring'] = options
+            # Owned batch metadata replaces any model/user supplied binding.
+            node['inputs'].pop('library_binding', None)
+            if library_binding is not None:
+                node['inputs']['library_binding'] = deepcopy(library_binding)
             timing = dict(fps=24, frame_count=options['frame_count'])
             require(not node.get('local_timing') or node['local_timing'] == timing,
                 'production_resource_local_clock_required')
@@ -122,10 +126,13 @@ class ManimPlanProducer:
             guidance += '\nCreative requirements to implement; attainment remains subject to expression review:\n'
             guidance += json.dumps(task['key_effects'], ensure_ascii=False)
         require(len(guidance) <= 16000, 'production_resource_guidance_too_large', 413)
-        return dict(schema='video.prepared-manim-resource-request.v1', operation_id=task['task_id'],
+        result = dict(schema='video.prepared-manim-resource-request.v1', operation_id=task['task_id'],
             project_id=task['project_id'], node_id=task['node_id'], goal=task['objective'],
             guidance=guidance, duration_seconds=options['frame_count'] / 24,
             resource_authoring=options, deadline_at=task['deadline_at'])
+        if 'library_binding' in task['inputs']:
+            result['library_binding'] = deepcopy(task['inputs']['library_binding'])
+        return result
 
     def _receipt(self, task, view):
         request = self.request(task)

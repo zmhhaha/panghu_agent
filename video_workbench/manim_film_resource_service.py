@@ -61,7 +61,7 @@ class _AdmissionBoundary:
 def validate_request(value):
     prepared = type(value) is dict and value.get('schema') == 'video.prepared-manim-resource-request.v1'
     if prepared:
-        require(set(value) == {'schema', 'operation_id', 'project_id', 'node_id', 'goal', 'guidance',
+        require(set(value) - {'library_binding'} == {'schema', 'operation_id', 'project_id', 'node_id', 'goal', 'guidance',
             'duration_seconds', 'resource_authoring', 'deadline_at'}, 'film_manim_request_invalid')
         require(_uuid(value['operation_id']) and type(value['project_id']) is str
             and _IDENTIFIER.fullmatch(value['project_id']) and type(value['node_id']) is str
@@ -79,8 +79,24 @@ def validate_request(value):
             scene_start_frame=0, scene_end_frame=options['frame_count'])
         validate_request(legacy)
         return deepcopy(value)
-    require(type(value) is dict and set(value) == REQUEST_FIELDS,
+    require(type(value) is dict and set(value) - {'library_binding'} == REQUEST_FIELDS,
         'film_manim_request_invalid')
+    if 'library_binding' in value:
+        binding = value['library_binding']
+        require(type(binding) is dict and set(binding) == {
+            'batch_id', 'release_id', 'release_sha256', 'publisher_owner', 'release_sequence'}
+            and type(binding['batch_id']) is str and 1 <= len(binding['batch_id']) <= 400,
+            'film_manim_library_binding_invalid')
+        if binding['release_id'] is None:
+            require(binding['release_sha256'] is None and binding['publisher_owner'] is None and binding['release_sequence'] is None,
+                'film_manim_library_binding_invalid')
+        else:
+            require(type(binding['release_id']) is str and 1 <= len(binding['release_id']) <= 200
+                and type(binding['release_sha256']) is str and _SHA.fullmatch(binding['release_sha256'])
+                and type(binding['publisher_owner']) is str and _OWNER.fullmatch(binding['publisher_owner']),
+                'film_manim_library_binding_invalid')
+            require(type(binding['release_sequence']) is int and binding['release_sequence'] > 0,
+                'film_manim_library_binding_invalid')
     require(_uuid(value['operation_id']) and all(type(value[key]) is str
         and _IDENTIFIER.fullmatch(value[key]) for key in ('project_id', 'scene_id'))
         and type(value['film_sha256']) is str and _SHA.fullmatch(value['film_sha256']),
@@ -328,6 +344,9 @@ class ManimFilmResourceService:
             run = dict(id='film-' + operation_id, deadline_at=request['deadline_at'], frozen=dict(
                 duration_seconds=request['duration_seconds'], goal=request['goal'],
                 feedback=request['guidance'], resource_authoring=deepcopy(request['resource_authoring'])))
+            if 'library_binding' in request:
+                self.coordinator.skill_adapter.pin_import(owner, request['library_binding'])
+                run['library_binding'] = deepcopy(request['library_binding'])
             def admission_reason():
                 current = self._read(owner, operation_id)
                 if current['cancel_requested'] or self.clock() >= request['deadline_at']:

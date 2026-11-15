@@ -59,6 +59,7 @@ export function productionRunErrorLabel(code) {
     film_creation_configuration_changed: '制作服务版本已变化，已暂停后续制作。已有结果保留，请重新核对。',
     production_run_film_unavailable: '整片制作依赖暂未就绪，请稍后再试。',
     production_runs_disabled: '整片草稿制作暂未启用，已有草稿仍可查看。',
+    production_skill_new_plan_required: '请先重新统筹并采用整片方案，以固定本次制作的技能版本。已有作品保留。',
     production_run_in_progress: '项目已有整片制作任务，请等待完成或申请取消。',
     production_run_project_busy: '项目还有其他制作任务，请等待结束后再制作整片草稿。',
     production_run_inputs_changed: '已采用方案、文稿或配音设置已变化，已停止后续制作；请核对当前内容。',
@@ -155,6 +156,9 @@ export function createProductionRunsPanel({ document, getContext, request, refre
     else if (!contentKnown) labels.push('内容匹配状态待读取');
     $('production-run-status').textContent = labels.join(' · ');
     $('production-run-voice').textContent = `统一音色：${speechVoiceName(run.voice, value.settings ?? {})}。`;
+    if (run.library_binding) $('production-run-voice').textContent += run.library_binding.release_id
+      ? ` 本批次固定使用技能版本 ${run.library_binding.release_sequence}。`
+      : ' 本批次使用空技能目录，可自由创作。';
     $('production-run-problem').hidden = !run.error && !run.blocked_reason;
     $('production-run-problem').textContent = run.blocked_reason
       ? '本次制作仍在等待上游停止或结果确认，已暂停后续任务；请继续读取状态，不要重复制作。'

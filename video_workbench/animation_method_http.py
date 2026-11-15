@@ -6,9 +6,10 @@ import json
 import re
 from urllib.parse import quote, unquote
 
-from .animation_creation_http import CreationAPIClient, CreationTransportError, _require, MAX_ARTIFACT, MAX_JSON
+from .animation_creation_http import CreationAPIClient, CreationTransportError, _require, _json, MAX_ARTIFACT, MAX_JSON
 
 PREFIX = '/api/method-lab'
+MAX_WIKISKILL_JSON = 18 * 1024 * 1024
 
 
 def _identifier(value, *, encoded=False):
@@ -33,7 +34,50 @@ def _send_bounded(handler, value):
     handler._send(value)
 
 
+def _send_wikiskill(handler, value, status=200):
+    # Whole generated packages have their own finite transport budget. UTF-8
+    # avoids doubling Chinese text or tripling emoji through ASCII escaping.
+    raw = json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode('utf-8')
+    _require(len(raw) <= MAX_WIKISKILL_JSON, 'animation_wikiskill_response_too_large', 413)
+    handler._send(raw, status, raw=True, mime='application/json; charset=utf-8')
+
+
+def _wikiskill(service):
+    coordinator = getattr(service, 'wikiskill', None)
+    _require(coordinator is not None, 'animation_wikiskill_unavailable', 503)
+    return coordinator
+
+
 class MethodLabClient(CreationAPIClient):
+    def _wikiskill_read(self, owner, suffix):
+        raw, mime = self._request(owner, 'GET', PREFIX + '/knowledge/library' + suffix,
+                                  artifact=True, response_limit=MAX_WIKISKILL_JSON)
+        _require(mime == 'application/json', 'animation_wikiskill_response_invalid', 502)
+        return _json(raw)
+
+    def wikiskill_catalogue(self, owner):
+        return self._wikiskill_read(owner, '')
+
+    def wikiskill_active(self, owner):
+        return self._wikiskill_read(owner, '/active')
+
+    def wikiskill_release(self, owner, release_id):
+        return self._wikiskill_read(owner, '/releases/' + quote(_identifier(release_id), safe=''))
+
+    def wikiskill_job(self, owner, job_id):
+        return self._wikiskill_read(owner, '/jobs/' + quote(_identifier(job_id), safe=''))
+
+    def wikiskill_request(self, owner, request_id):
+        return self._wikiskill_read(owner, '/requests/' + quote(_identifier(request_id), safe=''))
+
+    def wikiskill_activation_request(self, owner, request_id):
+        return self._wikiskill_read(owner, '/activation-requests/' + quote(_identifier(request_id), safe=''))
+
+    def wikiskill_publish(self, owner, body):
+        return self._request(owner, 'POST', PREFIX + '/knowledge/library/jobs', body)
+
+    def wikiskill_activate(self, owner, body):
+        return self._request(owner, 'POST', PREFIX + '/knowledge/library/active', body)
     def published_catalog(self, owner):
         return self._request(owner, 'GET', PREFIX + '/methods/published')
 
@@ -88,7 +132,7 @@ class MethodLabClient(CreationAPIClient):
                              + '/revisions/' + str(revision))
 
     def revise_knowledge_page(self, owner, page_id, body):
-        return self._request(owner, 'POST', PREFIX + '/knowledge/pages/' + quote(_identifier(page_id), safe=''), body)
+        raise CreationTransportError('animation_knowledge_manual_edit_retired', 410)
 
     def publication_readiness(self, owner, method_version_id):
         return self._request(owner, 'GET', PREFIX + '/methods/' + quote(_identifier(method_version_id), safe='') + '/readiness')
@@ -112,6 +156,19 @@ def route_private(handler, owner, method, path, body=None):
     _require(service is not None, 'animation_method_service_unavailable', 503)
     pieces = path[len(PREFIX):].strip('/').split('/')
     if method == 'GET':
+        if pieces == ['knowledge', 'library']:
+            _send_wikiskill(handler, _wikiskill(service).catalogue(owner))
+            return True
+        if pieces == ['knowledge', 'library', 'active']:
+            _send_wikiskill(handler, _wikiskill(service).active(owner))
+            return True
+        if len(pieces) == 4 and pieces[:2] == ['knowledge', 'library']:
+            actions = {'jobs': 'get', 'requests': 'recover', 'releases': 'get_release',
+                       'activation-requests': 'recover_activation'}
+            if pieces[2] in actions:
+                value = getattr(_wikiskill(service), actions[pieces[2]])(owner, _identifier(pieces[3], encoded=True))
+                _send_wikiskill(handler, value)
+                return True
         if pieces == ['trash']:
             _send_bounded(handler, service.trash_catalogue(owner))
             return True
@@ -153,6 +210,14 @@ def route_private(handler, owner, method, path, body=None):
             handler._send(raw, raw=True, mime=mime)
             return True
     else:
+        if pieces == ['knowledge', 'library', 'jobs']:
+            _send_wikiskill(handler, _wikiskill(service).start(owner, body), 202)
+            if getattr(handler.server, 'wikiskill_pump', None):
+                handler.server.wikiskill_pump.notify()
+            return True
+        if pieces == ['knowledge', 'library', 'active']:
+            _send_wikiskill(handler, _wikiskill(service).activate(owner, body))
+            return True
         if len(pieces) == 3 and pieces[2] == 'trash' and pieces[0] in {'commissions', 'effects'}:
             action = service.trash_commission if pieces[0] == 'commissions' else service.trash_effect
             _send_bounded(handler, action(owner, _identifier(pieces[1], encoded=True), body))
@@ -161,8 +226,9 @@ def route_private(handler, owner, method, path, body=None):
             _send_bounded(handler, service.restore_trash(owner, _identifier(pieces[1], encoded=True), body))
             return True
         if len(pieces) == 3 and pieces[:2] == ['knowledge', 'pages']:
-            _send_bounded(handler, service.revise_knowledge_page(owner, _identifier(pieces[2], encoded=True), body))
-            return True
+            raise CreationTransportError('animation_knowledge_manual_edit_retired', 410)
+        if len(pieces) == 3 and pieces[0] == 'commissions' and pieces[2] == 'publish':
+            raise CreationTransportError('animation_method_publication_retired', 410)
         if len(pieces) == 3 and pieces[0] == 'validations' and pieces[2] == 'accept':
             _send_bounded(handler, service.accept_validation(owner, _identifier(pieces[1], encoded=True), body))
             return True

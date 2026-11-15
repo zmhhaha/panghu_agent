@@ -28,6 +28,7 @@ MAX_TOTAL_JSON_BYTES = 128 * 1024 * 1024
 # Reserve the complete bounded result and coordinator metadata before admission.
 # These limits measure stored JSON, not SQLite/WAL disk usage.
 OUTPUT_RESERVE_BYTES = 1024 * 1024 + 16384
+SKILL_OUTPUT_RESERVE_BYTES = OUTPUT_RESERVE_BYTES + 2 * 1024 * 1024
 
 
 def _require(value, code='invalid_joint_plan_request', status=422):
@@ -44,8 +45,9 @@ def _size(value):
 
 
 class JointPlanStore:
-    def __init__(self, store, *, runtime_capabilities=None):
+    def __init__(self, store, *, runtime_capabilities=None, skill_adapter=None):
         self.store = store
+        self.skill_adapter = skill_adapter
         self.allowed_engines = (['html-svg'] if runtime_capabilities is None else
                                 validate_runtime_capabilities(runtime_capabilities)['allowed_engines'])
         with store.transaction() as db:
@@ -86,22 +88,23 @@ class JointPlanStore:
         clause, args = (' WHERE project_id=?', (project_id,)) if project_id is not None else ('', ())
         op = db.execute('SELECT COALESCE(SUM(length(CAST(document AS BLOB))),0), '
             "COALESCE(SUM(CASE WHEN json_extract(document,'$.status') IN "
-            "('queued','submitting','running','cancelling') THEN 1 ELSE 0 END),0) "
+            "('queued','submitting','running','cancelling') THEN COALESCE("
+            "json_extract(document,'$.output_reserve_bytes')," + str(OUTPUT_RESERVE_BYTES) + ") ELSE 0 END),0) "
             'FROM joint_plan_operations' + clause, args).fetchone()
         versions = db.execute('SELECT COALESCE(SUM(length(CAST(document AS BLOB))),0) '
                               'FROM joint_plan_versions' + clause, args).fetchone()[0]
         adoptions = db.execute('SELECT COALESCE(SUM(length(CAST(document AS BLOB))),0) '
                               'FROM joint_plan_adoptions' + clause, args).fetchone()[0]
-        return op[0] + versions + adoptions + op[1] * OUTPUT_RESERVE_BYTES
+        return op[0] + versions + adoptions + op[1]
 
-    def _capacity(self, db, project_id, *, extra_bytes=0, active_delta=0):
-        extra = extra_bytes + active_delta * OUTPUT_RESERVE_BYTES
+    def _capacity(self, db, project_id, *, extra_bytes=0, active_delta=0, reserve_bytes=OUTPUT_RESERVE_BYTES):
+        extra = extra_bytes + active_delta * reserve_bytes
         _require(self._usage(db, project_id) + extra <= MAX_PROJECT_JSON_BYTES
                  and self._usage(db) + extra <= MAX_TOTAL_JSON_BYTES, 'joint_plan_storage_limit', 413)
 
     @staticmethod
     def _public(op):
-        return {key: op.get(key) for key in ('id', 'kind', 'status', 'error', 'job_id', 'version_id', 'created_at')}
+        return {key: op.get(key) for key in ('id', 'kind', 'status', 'error', 'job_id', 'version_id', 'created_at', 'library_binding')}
 
     @staticmethod
     def _op(db, operation_id, owner=None):
@@ -169,11 +172,28 @@ class JointPlanStore:
 
     def start(self, owner, project_id, request, idem, *, timeout=600):
         _require(type(request) is dict and {'expected_revision', 'brief'} <= set(request)
-                 and set(request) <= {'expected_revision', 'brief', 'instruction', 'preserve_script'}
+                 and set(request) <= {'expected_revision', 'brief', 'instruction', 'preserve_script', 'library_release_id'}
                  and type(request['expected_revision']) is int and request['expected_revision'] >= 1)
         _require(type(idem) is str and 1 <= len(idem) <= 128 and all(33 <= ord(c) <= 126 for c in idem))
         _require(type(timeout) in (int, float) and 1 <= timeout <= 600)
         fingerprint = digest(dict(project_id=project_id, request=request, timeout=timeout))
+        library_binding = None
+        if callable(getattr(self.skill_adapter, 'pin', None)):
+            # The creative batch starts here. A request replay never refreshes
+            # active; the adapter also survives a crash before this row commits.
+            with self.store.transaction() as db:
+                replay = db.execute('SELECT request_hash,document FROM joint_plan_operations WHERE owner=? AND idem=?',
+                                    (owner, idem)).fetchone()
+                if replay is None:
+                    self.store._revision(self.store._project(db, owner, project_id), request['expected_revision'])
+            if replay:
+                _require(replay['request_hash'] == fingerprint, 'idempotency_conflict', 409)
+                return self._public(json.loads(replay['document']))
+            library_binding = self.skill_adapter.pin(owner,
+                'video-joint-plan-request:' + digest(dict(owner=owner, project_id=project_id, idem=idem)),
+                request.get('library_release_id'))
+        else:
+            _require(request.get('library_release_id') is None, 'production_skill_library_unavailable', 503)
         with self.store.transaction() as db:
             existing = db.execute('SELECT request_hash,document FROM joint_plan_operations WHERE owner=? AND idem=?',
                                   (owner, idem)).fetchone()
@@ -202,7 +222,11 @@ class JointPlanStore:
                 method_prepared=False,
                 cancel_requested=False, cancel_attempts=0, next_cancel_at=0.0,
                 deadline_at=now + timeout, created_at=now, version_id=None)
-            self._capacity(db, project_id, extra_bytes=_size(op), active_delta=1)
+            if library_binding is not None:
+                op['library_binding'] = library_binding
+                op['output_reserve_bytes'] = SKILL_OUTPUT_RESERVE_BYTES
+            self._capacity(db, project_id, extra_bytes=_size(op), active_delta=1,
+                reserve_bytes=op.get('output_reserve_bytes', OUTPUT_RESERVE_BYTES))
             db.execute('INSERT INTO joint_plan_operations VALUES (?, ?, ?, ?, ?, ?)',
                        (op['id'], owner, project_id, idem, fingerprint, _json(op)))
             self.store._save(db, project)
@@ -222,13 +246,16 @@ class JointPlanStore:
         if adapter is not None:
             task = planning_method_task(content)
             snapshot = adapter.freeze(op['owner'], 'video-joint-plan:' + op['id'], task,
-                                      content['allowed_engines'])
+                content['allowed_engines'], **(dict(library_binding=op['library_binding'], discovery_only=True)
+                    if 'library_binding' in op else {}))
         with self.store.transaction() as db:
             current = self._op(db, operation_id)
             if current['status'] not in ACTIVE or current['method_prepared'] or current['cancel_requested']:
                 return current
             old_size = _size(current)
-            current['document'] = validate_joint_plan_input(dict(current['document'], method_delivery=snapshot))
+            updates = (dict(skill_catalog=snapshot['catalog'], method_delivery=None)
+                if snapshot is not None and 'catalog' in snapshot else dict(method_delivery=snapshot))
+            current['document'] = validate_joint_plan_input(dict(current['document'], **updates))
             current.update(method_prepared=True, input_sha256=digest(current['document']))
             self._capacity(db, current['project_id'], extra_bytes=_size(current) - old_size)
             self._write_op(db, current)
@@ -236,7 +263,7 @@ class JointPlanStore:
 
     @staticmethod
     def _content_from_document(document):
-        return {key: value for key, value in document.items() if key != 'method_delivery'}
+        return {key: value for key, value in document.items() if key not in {'method_delivery', 'skill_catalog'}}
 
     def operation(self, operation_id, owner=None):
         with self.store.transaction() as db:
@@ -320,11 +347,32 @@ class JointPlanStore:
             elif time.time() >= op['deadline_at']:
                 op.update(status='timed_out', error='joint_plan_result_after_deadline')
             else:
-                result = validate_joint_plan_result(result, op['input_sha256'], op['document'])
+                delivered = result if type(result) is dict and 'skill_delivery' in result else None
+                evidence_options = {}
+                if op['document'].get('skill_catalog') is not None:
+                    from .animation_skill_production import validate_delivery
+                    from agent_service.skill_tool_evidence import validate_tool_evidence
+                    _require(delivered is not None, 'joint_plan_host_evidence_required', 409)
+                    delivery = validate_delivery(delivered['skill_delivery'])
+                    _require(delivery['catalog'] == op['document']['skill_catalog'],
+                        'joint_plan_skill_catalog_mismatch', 409)
+                    evidence = validate_tool_evidence(delivered['evidence'], delivery['catalog'], delivery['packages'],
+                        attempt_id=delivered['evidence']['attempt_id'], input_sha256=op['input_sha256'])
+                    evidence_options = dict(tool_evidence_sha256=evidence['sha256'], read_package_sha256s={
+                        event['receipt']['package_sha256'] for event in evidence['events']
+                        if event['tool_name'] == 'skill_read' and event['receipt']['path'] == 'SKILL.md'})
+                if delivered is not None:
+                    result = delivered['result']
+                result = validate_joint_plan_result(result, op['input_sha256'], op['document'], **evidence_options)
                 version = dict(id=str(uuid4()), project_id=op['project_id'], operation_id=op['id'],
                     created_at=time.time(), input_sha256=op['input_sha256'],
                     input_binding_sha256=op['input_binding_sha256'], result=result)
-                _require(_size(version) <= OUTPUT_RESERVE_BYTES - 8192, 'joint_plan_candidate_too_large', 413)
+                if 'library_binding' in op:
+                    version['library_binding'] = op['library_binding']
+                if delivered is not None:
+                    version['skill_tool_evidence'] = delivered['evidence']
+                _require(_size(version) <= op.get('output_reserve_bytes', OUTPUT_RESERVE_BYTES) - 8192,
+                    'joint_plan_candidate_too_large', 413)
                 op.update(status='running' if resource_planning else 'completed', error=None, version_id=version['id'])
                 if resource_planning:
                     op['phase'] = 'resource-plan'
@@ -334,7 +382,8 @@ class JointPlanStore:
                     version['resource_planning'] = dict(status='pending', profile='video.resource-plan.v1',
                         origin='agent_resource_planner', operation_id=op['resource_planning']['operation_id'])
                 self._capacity(db, project['id'], extra_bytes=_size(version) + _size(op) - old_size,
-                    active_delta=0 if resource_planning else -1)
+                    active_delta=0 if resource_planning else -1,
+                    reserve_bytes=op.get('output_reserve_bytes', OUTPUT_RESERVE_BYTES))
                 db.execute('INSERT INTO joint_plan_versions VALUES (?, ?, ?, ?, ?)',
                            (version['id'], op['owner'], project['id'], op['id'], _json(version)))
             self._write_op(db, op)
@@ -404,6 +453,8 @@ class JointPlanStore:
                 project['joint_plan'] = dict(version_id=version['id'],
                     **{key: result[key] for key in ('summary', 'understanding_goal', 'visual_style',
                                                   'continuity', 'method_decision')})
+                if 'library_binding' in version:
+                    project['joint_plan']['library_binding'] = version['library_binding']
                 if 'resource_plan' in version:
                     from copy import deepcopy
                     mapped = deepcopy(version['resource_plan'])

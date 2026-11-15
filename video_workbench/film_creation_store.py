@@ -240,7 +240,10 @@ class FilmCreationStore:
             require(op.get('resource_authoring') and not op['submit_attempted'], 'film_resource_state_invalid', 409)
             if op['cancel_requested'] or time.time() >= op['deadline_at']:
                 return None
-            frozen = validate_resource_request(resource_request(op))
+            resource = resource_request(op)
+            if 'library_binding' in op:
+                resource['library_binding'] = deepcopy(op['library_binding'])
+            frozen = validate_resource_request(resource)
             op.update(resource_submit_attempted=True, resource_status='submitting', resource_stop_proven=False,
                 resource_request=frozen, resource_reservation_confirmed=False)
             self._write(db, op)
@@ -462,7 +465,7 @@ class FilmCreationStore:
     def start_module(self, owner, project_id, scene_id, request, idem):
         self._validate_request(request, {'expected_revision', 'film', 'film_sha256', 'current_scene_index',
             'predecessor_version_id', 'target', 'instruction', 'configuration_sha256'},
-            {'base_module_version_id', 'resource_authoring', 'resource_references'})
+            {'base_module_version_id', 'resource_authoring', 'resource_references', 'library_binding'})
         if 'base_module_version_id' in request:
             require(type(request['base_module_version_id']) is str and 1 <= len(request['base_module_version_id']) <= 100)
         fingerprint = digest(dict(project_id=project_id, scene_id=scene_id, request=request))
@@ -471,6 +474,10 @@ class FilmCreationStore:
                 return replay
             self._configured(request)
             project, film = self._film(db, owner, project_id, request)
+            library_binding = deepcopy(request.get('library_binding', project.get('joint_plan', {}).get('library_binding')))
+            if library_binding is not None:
+                require(library_binding == project.get('joint_plan', {}).get('library_binding'),
+                    'film_creation_library_binding_mismatch', 409)
             recordings = self._recordings(db, project, film)
             index = request['current_scene_index']
             require(type(index) is int and 0 <= index < len(film['scenes'])
@@ -492,7 +499,13 @@ class FilmCreationStore:
             base_module = base_reference = None
             if 'base_module_version_id' in request:
                 base_module, base_reference = self._base_module(db, owner, project_id, scene_id, request)
-                resource_dependencies.append(self._version(db, owner, request['base_module_version_id'])[0]['operation_id'])
+                base_version = self._version(db, owner, request['base_module_version_id'])[0]
+                base_op = self._read(db, 'module', base_version['operation_id'], owner)
+                original_binding = base_op.get('library_binding', base_op['request'].get('library_binding'))
+                require(library_binding is None or library_binding == original_binding,
+                    'film_creation_library_binding_mismatch', 409)
+                library_binding = deepcopy(original_binding)
+                resource_dependencies.append(base_version['operation_id'])
             caps = self.runtime_capabilities
             references = request.get('resource_references', [])
             prepared = self._prepared_records(db, owner, project_id, references, round(film['total_seconds'] * 24))
@@ -536,6 +549,8 @@ class FilmCreationStore:
                 version_id=None, input_ref=None, job_id=None, submit_attempted=False, cancel_requested=False,
                 cancel_attempts=0, next_cancel_at=0, stop_proven=False)
             op['resource_dependencies'] = resource_dependencies
+            if library_binding is not None:
+                op['library_binding'] = library_binding
             op['resource_references'] = deepcopy(references)
             if 'resource_authoring' in request:
                 require(self.configuration.get('resource_authoring'), 'film_resource_not_admitted', 503)
@@ -553,11 +568,14 @@ class FilmCreationStore:
         if op['document'].get('schema') != PENDING_SCHEMA or op['cancel_requested']:
             return op
         core = op['document']['core_task']
+        if callable(getattr(adapter, 'pin', None)):
+            require('library_binding' in op, 'production_skill_batch_required', 409)
         require(not op.get('resource_authoring') or op.get('generated_resource'), 'film_resource_not_ready', 409)
         producer = op['configuration'].get('resource_authoring', {}).get('producer') \
             if op.get('generated_resource') or op.get('resource_references') else None
         delivery = adapter.freeze(op['owner'], 'video-film-module:' + op['id'], core, core['constraints']['allowed_engines'],
-            **({'resource_authoring': producer} if producer else {}))
+            **({'resource_authoring': producer} if producer else {}),
+            **({'library_binding': op['library_binding']} if 'library_binding' in op else {}))
         document = build_module_input(core, delivery)
         with self.store.transaction() as db:
             current = self._read(db, 'module', operation_id)

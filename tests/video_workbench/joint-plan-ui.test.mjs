@@ -67,6 +67,31 @@ async function fill(h) {
 }
 const posts = h => h.state.calls.filter(call => call.options.method === 'POST');
 
+test('advanced release selection is made once at planning and never publishes or starts media', async () => {
+  const h = harness();
+  h.state.data.versions[0].library_binding = { release_id: 'release-1', release_sequence: 1 };
+  h.state.transport = (path, options) => path === '/api/wikiskill/releases'
+    ? { active_release_id: 'release-2', releases: [
+      { id: 'release-2', sequence: 2, summary: 'Current knowledge' },
+      { id: 'release-1', sequence: 1, summary: 'Earlier knowledge' }] }
+    : options.method === 'POST' ? { id: 'operation', status: 'queued' } : structuredClone(h.state.data);
+  await h.load();
+  assert.equal(h.state.calls.some(call => call.path === '/api/wikiskill/releases'), false);
+  assert.match(h.$('joint-plan-review').textContent, /固定使用技能版本 1/);
+  h.$('joint-plan-library-options').open = true;
+  await h.$('joint-plan-library-options').emit('toggle');
+  assert.equal(posts(h).length, 0);
+  assert.equal(h.$('joint-plan-library-release').children.length, 3);
+  h.$('joint-plan-library-release').value = 'release-1';
+  await h.$('joint-plan-library-release').emit('change');
+  await h.panel.generate();
+  assert.equal(posts(h).length, 1);
+  assert.equal(posts(h)[0].options.body.library_release_id, 'release-1');
+  assert.match(posts(h)[0].path, /joint-plan$/);
+  const defaultIntent = createJointPlanRequest(project(), jointPlanDraft());
+  assert.equal(Object.hasOwn(defaultIntent.body, 'library_release_id'), false);
+});
+
 test('zero-scene project can plan saved script with immutable bounded inputs and original-script option', () => {
   const draft = { ...jointPlanDraft(), goal: ' 讲清楚 ', preserve_script: true };
   const intent = createJointPlanRequest(project('../p?'), draft);

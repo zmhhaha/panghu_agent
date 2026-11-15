@@ -291,6 +291,41 @@ def validate_skill_catalog(snapshot):
     return deepcopy(snapshot)
 
 
+def freeze_library_skill_catalog(release, *, recipient_owner, consumer_id, task_sha256,
+                                 allowed_engines, packages=None):
+    """Advertise a real WikiSkill release without inventing method approvals.
+
+    The legacy entry field names remain wire compatible. Their identities refer
+    explicitly to the release and its packages, never to a fabricated method.
+    ``packages`` may contain a dependency-compatible subset of this release.
+    """
+    _identity(recipient_owner)
+    _identity(consumer_id)
+    _sha(task_sha256)
+    if release is None:
+        checked = []
+    else:
+        # Import lazily: the release compiler itself uses package validators.
+        from .animation_wikiskill_contract import validate_release
+        release = validate_release(release)
+        checked = [validate_skill_package(row) for row in release['packages']]
+    selected = checked if packages is None else [validate_skill_package(row) for row in packages]
+    require({row['sha256'] for row in selected} <= {row['sha256'] for row in checked},
+            'animation_wikiskill_release_changed', 409)
+    rows = [dict(skill_id=package['skill_id'], version=package['version'], kind=package['kind'],
+        name=package['name'], description=package['description'], package_sha256=package['sha256'],
+        method_version_id='wikiskill:' + release['id'] + ':' + package['skill_id'],
+        method_content_sha256=package['sha256'], publication_sha256=release['sha256'],
+        runtime_requirements=deepcopy(package['runtime_requirements'])) for package in selected
+        if set(package['runtime_requirements']['engines']) & set(allowed_engines)]
+    rows.sort(key=lambda row: (row['skill_id'], row['version'], row['package_sha256']))
+    value = dict(schema=CATALOG_SCHEMA, recipient_owner=recipient_owner, consumer_id=consumer_id,
+        task_sha256=task_sha256, allowed_engines=list(allowed_engines), skills=rows,
+        policy=POLICY, evidence_scope='frozen_published_discovery_not_agent_read_or_application')
+    value['sha256'] = digest(value)
+    return validate_skill_catalog(value)
+
+
 def skill_file_manifest(package):
     package = validate_skill_package(package)
     result = {key: deepcopy(value) for key, value in package.items() if key != 'files'}

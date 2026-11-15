@@ -61,7 +61,7 @@ class ProductionRunStore:
     def public(run, *, current=False):
         result = {key: run.get(key) for key in ('id', 'project_id', 'joint_plan_version_id',
             'request_key', 'status', 'phase', 'voice', 'draft_render_id', 'error', 'blocked_reason', 'draining',
-            'created_at', 'finished_at', 'renderer_mode', 'draft_render_source')}
+            'created_at', 'finished_at', 'renderer_mode', 'draft_render_source', 'library_binding')}
         raw_items = run.get('items') if type(run.get('items')) is list else []
         frozen = run.get('frozen') if type(run.get('frozen')) is dict else {}
         frozen_scenes = frozen.get('scenes') if type(frozen.get('scenes')) is list else []
@@ -599,6 +599,9 @@ class ProductionRunStore:
                     self.film_creation.freeze_configuration(owner, project_id))
                 with self.store.transaction() as db:
                     planning_project = self.store._project(db, owner, project_id)
+                    if callable(getattr(getattr(self.joint, 'skill_adapter', None), 'pin', None)):
+                        require('library_binding' in planning_project.get('joint_plan', {}),
+                            'production_skill_new_plan_required', 409)
                     source_row = db.execute('SELECT document FROM joint_plan_versions WHERE id=? AND owner=? AND project_id=?',
                         (request['joint_plan_version_id'], owner, project_id)).fetchone()
                     selected_plan = planning_project.get('joint_plan', {}).get('resource_plan')
@@ -623,7 +626,8 @@ class ProductionRunStore:
                         adoption_source=deepcopy(planning_project.get('joint_plan', {}).get('resource_plan_source')))
                 from .production_resource_stage import production_plan
                 resource_plan = production_plan(selected_plan, self._freeze(planning_project, film_aware=True),
-                    deadline_at=time.time() + 7200)
+                    deadline_at=time.time() + 7200,
+                    library_binding=planning_project.get('joint_plan', {}).get('library_binding'))
                 self.resource_stage.preflight(owner, resource_plan)
         require(resource_authoring is None or self.film_creation is not None,
             'production_run_resources_require_film', 503)
@@ -695,6 +699,8 @@ class ProductionRunStore:
                     audio_operation_id=None, audio_version_id=None, audio_sha256=None,
                     audio_seconds=None, motion_operation_id=None, motion_version_id=None)
                     for scene in frozen['scenes']])
+            if 'library_binding' in project.get('joint_plan', {}):
+                run['library_binding'] = deepcopy(project['joint_plan']['library_binding'])
             if configuration is not None:
                 run.update(renderer_mode=FILM_RENDERER, draft_render_source=FILM_RENDERER,
                     film_creation_configuration=configuration,
@@ -1056,6 +1062,8 @@ class ProductionRunStore:
                 predecessor_version_id=None if index == 0 else run['items'][index - 1]['module_version_id'],
                 target=deepcopy(run['module_targets'][index]), instruction='',
                 configuration_sha256=configuration_sha256)
+            if 'library_binding' in run:
+                result['library_binding'] = deepcopy(run['library_binding'])
             references = run.get('prepared_resource_references', {}).get(run['items'][index]['scene_id'], [])
             if references:
                 result['resource_references'] = deepcopy(references)

@@ -50,6 +50,7 @@
               <label>希望观众理解什么 <span class="optional">选填</span><textarea id="joint-plan-goal" rows="3" maxlength="1200" placeholder="例如：理解这个过程为什么有效，以及关键步骤之间的关系。"></textarea></label>
               <label>制作要求 <span class="optional">选填</span><textarea id="joint-plan-instruction" rows="3" maxlength="2000" placeholder="例如：用一个贯穿的例子，不堆砌术语，让画面跟随讲解逐步展开。"></textarea></label>
               <label class="checkbox-label joint-plan-preserve"><input id="joint-plan-preserve-script" type="checkbox">保留原稿措辞，只安排段落与画面</label><p class="field-note">未勾选时，可在保留事实和原意的基础上，把原稿整理成更适合讲述的旁白。原始总文稿始终保留。</p>
+              <details id="joint-plan-library-options"><summary>高级：选择技能版本</summary><label>本次统筹使用<select id="joint-plan-library-release"><option value="">当前正式版（默认）</option></select></label><p class="field-note" id="joint-plan-library-note">从统筹到画面制作、打磨始终使用同一版；重试不会更新版本。重新统筹可使用新版。</p></details>
               <div class="explanation-actions"><p class="field-note" id="joint-plan-form-note"></p><button class="text-button" id="reload-joint-plan" type="button">重新读取方案</button><button class="button primary" id="generate-joint-plan" type="submit" disabled>生成整片方案</button></div>
             </form>
             <p class="explanation-read-error" id="joint-plan-read-error" role="alert" hidden></p>

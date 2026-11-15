@@ -42,11 +42,15 @@ def animation_profile_bundles():
     from agent_service.profiles import (video_animation_review as review, video_animation_create as creation,
         video_animation_method as method, video_animation_production as production, video_joint_plan as joint,
         video_animation_skill_production as skill_production, video_animation_skill_method as skill_method,
-        video_animation_film_module as film_module, video_animation_manim_recipe as manim_recipe)
+        video_animation_film_module as film_module, video_animation_manim_recipe as manim_recipe,
+        video_animation_wikiskill as wikiskill, video_joint_plan_skills as joint_skills, video_resource_plan as resource_plan)
     return (
         (film_module.BUNDLE_ROOT, film_module.BUNDLE_FILES, film_module.verified_bundle),
         (manim_recipe.BUNDLE_ROOT, manim_recipe.BUNDLE_FILES, manim_recipe.verified_bundle),
         (joint.BUNDLE_ROOT, joint.BUNDLE_FILES, joint.verified_bundle),
+        (resource_plan.BUNDLE_ROOT, resource_plan.BUNDLE_FILES, resource_plan.verified_bundle),
+        (wikiskill.BUNDLE_ROOT, wikiskill.BUNDLE_FILES, wikiskill.verified_bundle),
+        (joint_skills.BUNDLE_ROOT, joint_skills.BUNDLE_FILES, joint_skills.verified_bundle),
         (review.BUNDLE_ROOT, review.BUNDLE_FILES, review.verified_bundle),
         (review.SEQUENCE_BUNDLE_ROOT, review.SEQUENCE_BUNDLE_FILES, review.verified_sequence_bundle),
         (review.BATCH_BUNDLE_ROOT, review.BATCH_BUNDLE_FILES, review.verified_batch_bundle),
@@ -511,7 +515,13 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
             'agent_service/resources/' + revision + '/' + name
             for revision in ('animation-film-module-v1', 'animation-manim-recipe-v1')
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'author-procedure/SKILL.md',
-                         'foundation/SKILL.md')}
+                         'foundation/SKILL.md')} | {
+            'agent_service/resources/animation-wikiskill-v1/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'compile-procedure/SKILL.md')} | {
+            'agent_service/resources/video-joint-plan-v2/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'joint-plan-procedure/SKILL.md')} | {
+            'agent_service/resources/video-resource-plan-v1/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'resource-plan-procedure/SKILL.md')}
     assert not any(name.endswith(("credentials.json", "NOT_ALLOWED.md", "private.py")) for name in runner.names)
 
 

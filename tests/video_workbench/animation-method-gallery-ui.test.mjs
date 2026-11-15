@@ -525,7 +525,7 @@ test('effect history links exact original, continuation and failed transfer reco
   assert.deepEqual(selected, ['root', 'transfer-failed']);
 });
 
-test('switching history preserves commission-scoped feedback, continuation and publication', async () => {
+test('switching history preserves scoped feedback and continuation, with one library release entry', async () => {
   const original = run({id: 'root', state: 'completed', candidates: [candidate('original')], best_candidate_id: 'original'});
   const continued = run({id: 'continued', title: '优化版本', state: 'completed', candidates: [candidate('improved')],
     best_candidate_id: 'improved', publishable: true, methods: [{id: 'method-improved'}], transfers: [{demonstration_id: 'transfer-demo'}]});
@@ -543,15 +543,12 @@ test('switching history preserves commission-scoped feedback, continuation and p
   await host.descendants('form')[0].handlers.submit({preventDefault() {}});
   await h.ready();
   assert.ok(h.requests.some(row => row.url.pathname.endsWith('/commissions/continued/feedback')));
-  const approval = host.descendants('input').find(row => row.type === 'checkbox');
-  approval.checked = true; approval.handlers.change();
-  host.descendants('button').find(row => row.textContent === '认可并发布方法').handlers.click();
-  await h.ready();
-  const publication = h.requests.find(row => row.url.pathname.endsWith('/commissions/continued/publish'));
-  assert.ok(publication); assert.deepEqual(JSON.parse(publication.options.body).method_version_ids, ['method-improved']);
+  const knowledge = host.descendants('a').find(row => row.textContent === '打开知识库');
+  assert.equal(knowledge.href, new URL('knowledge.html', root).href);
+  assert.equal(h.requests.some(row => row.url.pathname.endsWith('/publish')), false);
   host.descendants('button').find(row => row.textContent === '继续优化这版').handlers.click();
   assert.equal(h.get('experiment-title').value, '优化版本');
-  assert.equal(h.requests.filter(row => row.options.method).length, 2);
+  assert.equal(h.requests.filter(row => row.options.method).length, 1);
   h.controller.close();
 });
 
@@ -722,7 +719,7 @@ test('cards and details keep malicious content as text and media absent when unt
   assert.equal(detail.descendants('img').length, 0);
   assert.ok(detail.descendants('details').some(row => row.textContent.includes('关联创作方法')));
   assert.ok(detail.textContent.includes('尚未形成迁移验证结果'));
-  assert.ok(detail.descendants('button').find(row => row.textContent === '认可并发布方法').disabled);
+  assert.equal(detail.descendants('button').find(row => row.textContent === '认可并发布方法'), undefined);
 });
 
 test('an unsaved comment and selected candidate survive detail reconstruction', () => {
@@ -749,13 +746,13 @@ test('actual transfer metadata is playable and published methods are labelled wi
   assert.equal(rendered.descendants('video').length, 3);
   assert.ok(rendered.descendants('video').some(video => video.src.endsWith('/transfer-commission/candidates/transfer/media')));
   assert.match(rendered.textContent, /部分证据待人工核对/);
-  assert.match(rendered.textContent, /本次样片无音效，无需试听/);
+  assert.match(rendered.textContent, /整套 WikiSkill/);
   const published = {...detail, methods: detail.methods.map(row => row.id === 'best-method-v2' ? {...row, status: 'published'} : row)};
   const card = renderMethodCard(doc, {...published, best_candidate: published.candidates[1]}, root, () => {});
   assert.match(card.textContent, /方法已发布/);
   const after = renderMethodDetail(doc, published, root, callbacks);
-  assert.match(after.textContent, /本版本的方法已发布/);
-  assert.ok(after.descendants('button').find(row => row.textContent === '认可并发布方法').disabled);
+  assert.match(after.textContent, /打开知识库/);
+  assert.equal(after.descendants('button').find(row => row.textContent === '认可并发布方法'), undefined);
 });
 
 test('three method validations of one demonstration share a single preview while retaining each result', () => {
@@ -773,7 +770,7 @@ test('three method validations of one demonstration share a single preview while
   assert.match(previews[0].textContent, /对象身份：检查通过 · 待认可/);
   assert.match(previews[0].textContent, /因果动作：部分证据待人工核对/);
   assert.match(previews[0].textContent, /空间编排：尚未通过目标标准/);
-  assert.match(rendered.textContent, /发布后，正式制作可读取这些方法；采用情况保存在制作记录中/);
+  assert.match(rendered.textContent, /整套 WikiSkill/);
   assert.doesNotMatch(rendered.textContent, /正式制作接入.*待完成/);
 });
 

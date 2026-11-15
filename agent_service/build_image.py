@@ -55,6 +55,10 @@ PRODUCTION_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'production-procedure/SK
 # older observe/review resources still referenced by immutable accepted Hosts.
 # These pins deliberately remain independent of importing the service runtime.
 ANIMATION_RUNTIME_BUNDLES = (
+    ('animation-wikiskill-v1', 'c10a82f7bf2ab55294e4b829c63b38339dc300581e7513b40ab60cecd372c776',
+     frozenset({'CONTRACT.md', 'LICENSE', 'compile-procedure/SKILL.md'})),
+    ('video-joint-plan-v2', '8096dda4dddd5167b724029f96b95acb32064443eaff400cf7cbaba86187b4da',
+     frozenset({'CONTRACT.md', 'LICENSE', 'joint-plan-procedure/SKILL.md'})),
     ('video-resource-plan-v1', '32cb9b6bc30083a784f6b07235dc29fd0dba3647a8ce94fddc3d8f7d936783c9',
      frozenset({'CONTRACT.md', 'LICENSE', 'resource-plan-procedure/SKILL.md'})),
     ('animation-manim-recipe-v1', '051093b78ffa0d338627461094816831ca3075ec23f3b201ebd6f44f4f16ec98',

@@ -109,7 +109,7 @@ class CreationAPIClient:
                     code = value['error']
             except (ValueError, TypeError):
                 pass
-            status = error.code if error.code in (400, 403, 404, 409, 413, 422, 429, 503) else 502
+            status = error.code if error.code in (400, 403, 404, 409, 410, 413, 422, 429, 503) else 502
             raise CreationTransportError(code, status) from None
         except (URLError, TimeoutError, OSError):
             raise CreationTransportError('animation_creation_executor_unavailable', 503) from None
@@ -182,6 +182,8 @@ class CreationHTTPServer(ThreadingHTTPServer):
         self.pump = CreationPump(service) if pump else None
         self.method_service = method_service
         self.method_pump = CreationPump(method_service) if pump and method_service is not None else None
+        wiki = getattr(method_service, 'wikiskill', None)
+        self.wikiskill_pump = CreationPump(wiki) if pump and wiki is not None else None
         self.film_resource_service = film_resource_service
         self.film_resource_pump = CreationPump(film_resource_service) if pump and film_resource_service is not None else None
         self.close_callbacks = tuple(close_callbacks)
@@ -190,6 +192,8 @@ class CreationHTTPServer(ThreadingHTTPServer):
             self.pump.start()
         if self.method_pump:
             self.method_pump.start()
+        if self.wikiskill_pump:
+            self.wikiskill_pump.start()
         if self.film_resource_pump:
             self.film_resource_pump.start()
 
@@ -198,6 +202,8 @@ class CreationHTTPServer(ThreadingHTTPServer):
             self.pump.close()
         if self.method_pump:
             self.method_pump.close()
+        if self.wikiskill_pump:
+            self.wikiskill_pump.close()
         if self.film_resource_pump:
             self.film_resource_pump.close()
         callbacks, self.close_callbacks = self.close_callbacks, ()
@@ -301,7 +307,7 @@ class CreationHandler(BaseHTTPRequestHandler):
             code, status = getattr(error, 'code', None), getattr(error, 'status', 503)
             if not isinstance(code, str) or re.fullmatch(r'[a-z][a-z0-9_]{0,99}', code) is None:
                 code, status = 'animation_creation_executor_error', 503
-            self._send(dict(error=code), status if status in (400, 403, 404, 409, 413, 415, 422, 429, 503) else 502)
+            self._send(dict(error=code), status if status in (400, 403, 404, 409, 410, 413, 415, 422, 429, 503) else 502)
 
     def do_GET(self):
         self._handle('GET')

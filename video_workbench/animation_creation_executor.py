@@ -71,6 +71,12 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                     authoring_library_admission_file=authoring_library_admission_file,
                     hyperframes=method_project_runtime == 'hyperframes-core-bridge',
                     legacy_bridge=method_project_runtime == 'hyperframes-core-bridge'))
+            from .animation_wikiskill_store import AnimationWikiSkillStore
+            from .animation_wikiskill_coordinator import WikiSkillCoordinator
+            from .animation_wikiskill_gateway import AnimationWikiSkillGateway
+            methods.wikiskill = WikiSkillCoordinator(
+                AnimationWikiSkillStore(Path(root) / 'method-lab' / 'wikiskill.sqlite3'),
+                AnimationWikiSkillGateway(method_client), methods.capture_wikiskill_records)
         if manim_recipe_agent_token_file is not None or manim_resource_image is not None:
             if methods is None or manim_recipe_agent_token_file is None or manim_resource_image is None:
                 raise ValueError('manim_method_config_incomplete')
@@ -99,8 +105,17 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                     resource_executor=resource_executor, method_renderer=methods.renderer)
                 coordinator.enabled = True
             from .manim_film_resource_service import ManimFilmResourceService
-            film_adapter = SkillProductionAdapter(methods.published_catalogue, methods.read_methods,
-                Path(root) / 'manim-film-skill-freezes.sqlite3')
+            from .animation_wikiskill_production import LibrarySkillProductionAdapter
+            # Formal resources use their parent creative batch's exact release.
+            # Delayed tasks may resolve archived bytes, never browse/select them.
+            film_adapter = LibrarySkillProductionAdapter(
+                lambda owner: methods.wikiskill.store.active(owner),
+                lambda owner, release_id: methods.wikiskill.store.get_release(owner, release_id),
+                lambda owner: methods.wikiskill.store.list_recent(owner),
+                Path(root) / 'manim-film-skill-freezes.sqlite3',
+                legacy_read=methods.read_methods,
+                import_release=lambda owner, binding: methods.wikiskill.store.get_release(
+                    binding['publisher_owner'], binding['release_id'], include_archived=True))
             film_coordinator = ManimMethodCoordinator(Path(root) / 'manim-film-resource-coordinator',
                 gateway=ManimRecipeAgentGateway(manim_client, film_adapter), executor=resource_executor,
                 skill_adapter=film_adapter, enabled=False)

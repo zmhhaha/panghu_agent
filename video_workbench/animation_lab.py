@@ -751,6 +751,13 @@ class LabHandler(BaseHTTPRequestHandler):
     def _json(self, value, status=200):
         self._send(canonical(self.server.public_urls(value)), 'application/json; charset=utf-8', status)
 
+    def _wikiskill_json(self, value, status=200):
+        # Signed WikiSkill content is the production artifact. Never rewrite
+        # URL-shaped dictionaries or expand non-ASCII source to escaped copies.
+        raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False).encode('utf-8')
+        _require(len(raw) <= 18 * 1024 * 1024, 'animation_wikiskill_response_too_large', 413)
+        return self._send(raw, 'application/json; charset=utf-8', status)
+
     def do_HEAD(self):
         # Reuse the same authentication, allowlist and immutable artifact checks
         # as GET; _send emits matching metadata without a response body.
@@ -784,6 +791,16 @@ class LabHandler(BaseHTTPRequestHandler):
                         availability=dict(enabled=False, reason='制作执行器尚未配置')))
                     return self._json(dict(value, csrf_token=lab.csrf_token))
                 _require(client is not None, 'animation_method_service_unavailable', 503)
+                if method_pieces == ['api', 'method-lab', 'knowledge', 'library']:
+                    return self._wikiskill_json(dict(client.wikiskill_catalogue(owner), csrf_token=lab.csrf_token,
+                        owner_key=sha256(canonical(dict(namespace='wikiskill-library', owner=owner)))))
+                if method_pieces == ['api', 'method-lab', 'knowledge', 'library', 'active']:
+                    return self._wikiskill_json(client.wikiskill_active(owner))
+                if len(method_pieces) == 6 and method_pieces[2:4] == ['knowledge', 'library']:
+                    actions = {'jobs': 'wikiskill_job', 'requests': 'wikiskill_request',
+                        'releases': 'wikiskill_release', 'activation-requests': 'wikiskill_activation_request'}
+                    if method_pieces[4] in actions:
+                        return self._wikiskill_json(getattr(client, actions[method_pieces[4]])(owner, method_pieces[5]))
                 if method_pieces == ['api', 'method-lab', 'trash']:
                     return self._json(dict(client.trash_catalogue(owner), csrf_token=lab.csrf_token))
                 if method_pieces == ['api', 'method-lab', 'knowledge']:
@@ -997,13 +1014,19 @@ class LabHandler(BaseHTTPRequestHandler):
                 client = getattr(lab, 'method_client', None)
                 _require(client is not None, 'animation_method_service_unavailable', 503)
                 owner = self.forwarded_user or 'local-developer'
+                if method_pieces == ['api', 'method-lab', 'knowledge', 'library', 'jobs']:
+                    return self._wikiskill_json(client.wikiskill_publish(owner, body), 202)
+                if method_pieces == ['api', 'method-lab', 'knowledge', 'library', 'active']:
+                    return self._wikiskill_json(client.wikiskill_activate(owner, body))
                 if len(method_pieces) == 5 and method_pieces[4] == 'trash' and method_pieces[2] in {'commissions', 'effects'}:
                     action = client.trash_commission if method_pieces[2] == 'commissions' else client.trash_effect
                     return self._json(action(owner, method_pieces[3], body))
                 if len(method_pieces) == 5 and method_pieces[2] == 'trash' and method_pieces[4] == 'restore':
                     return self._json(client.restore_trash(owner, method_pieces[3], body))
                 if len(method_pieces) == 5 and method_pieces[2:4] == ['knowledge', 'pages']:
-                    return self._json(client.revise_knowledge_page(owner, method_pieces[4], body))
+                    raise LabError('animation_knowledge_manual_edit_retired', 410)
+                if len(method_pieces) == 5 and method_pieces[2] == 'commissions' and method_pieces[4] == 'publish':
+                    raise LabError('animation_method_publication_retired', 410)
                 if len(method_pieces) == 5 and method_pieces[2] == 'validations' and method_pieces[4] == 'accept':
                     return self._json(client.accept_validation(owner, method_pieces[3], body))
                 if method_pieces == ['api', 'method-lab', 'commissions']:

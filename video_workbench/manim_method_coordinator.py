@@ -130,7 +130,8 @@ class ManimMethodCoordinator:
             task = validate_core_task(dict(effect_id=commission, goal=run['frozen']['goal'],
                 guidance=run['frozen'].get('feedback', ''), resource_constraints=bounds))
             delivery = self.skill_adapter.freeze(owner, operation, task, ['html-svg'],
-                resource_authoring=PRODUCER_REQUIREMENT)
+                resource_authoring=PRODUCER_REQUIREMENT,
+                **({'library_binding': run['library_binding']} if 'library_binding' in run else {}))
             document = validate_input(dict(schema=INPUT_SCHEMA, **task, skill_catalog=delivery['catalog']))
             value = dict(scope=dict(owner=owner, effect_id=commission, experiment_id=commission, operation_id=operation),
                 state='reserved', input=document, image=self.executor.image, job_id=None, error=None)

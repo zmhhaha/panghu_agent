@@ -6,6 +6,7 @@ import hashlib
 import re
 
 from ..contracts import canonical_bytes
+from ..animation_skills_contract import validate_skill_catalog
 from .video_explanation_contract import (
     INPUT_MAX_BYTES, OUTPUT_MAX_BYTES, FACT_REVIEW_WARNING,
     _fields, _text, _number, _strings, _pronunciation, _require,
@@ -15,14 +16,15 @@ from .video_references import reference_urls, preserve_project_references
 
 
 def planning_method_task(document):
-    content = {key: value for key, value in document.items() if key != 'method_delivery'}
+    content = {key: value for key, value in document.items() if key not in {'method_delivery', 'skill_catalog'}}
     return dict(title=content['project']['title'], narration=content['project']['script'],
                 style=content['project']['style'], instruction=content['instruction'], planning_input=content)
 
 
 def validate_joint_plan_input(document):
-    _fields(document, {'schema_version', 'project', 'scenes', 'brief', 'instruction',
-                       'preserve_script', 'method_delivery', 'allowed_engines'})
+    fields = {'schema_version', 'project', 'scenes', 'brief', 'instruction',
+              'preserve_script', 'method_delivery', 'allowed_engines'}
+    _require(type(document) is dict and fields <= set(document) <= fields | {'skill_catalog'})
     _require(document['schema_version'] == 'video-joint-plan-input.v1')
     project = document['project']
     _fields(project, {'title', 'script', 'style', 'voice'})
@@ -62,6 +64,12 @@ def validate_joint_plan_input(document):
         _number(scene['speech']['speed'], 0.5, 2)
         _pronunciation(scene['speech']['pronunciation'])
     delivery = document['method_delivery']
+    catalog = document.get('skill_catalog')
+    if catalog is not None:
+        catalog = validate_skill_catalog(catalog)
+        _require(delivery is None and catalog['allowed_engines'] == engines
+            and catalog['task_sha256'] == hashlib.sha256(canonical_bytes(planning_method_task(document))).hexdigest(),
+            'joint_plan_skill_task_mismatch')
     if delivery is not None:
         validate_delivery(delivery)
         _require(delivery['allowed_engines'] == engines, 'joint_plan_method_engines_mismatch')
@@ -98,13 +106,17 @@ def validate_planning_method_decision(delivery, decision, segment_ids):
                  and bool(targets) == (row['action'] != 'reject'), 'joint_plan_method_targets_invalid')
 
 
-def validate_joint_plan_result(result, input_sha256, input_document):
+def validate_joint_plan_result(result, input_sha256, input_document, *, read_package_sha256s=None,
+                               tool_evidence_sha256=None):
     context = validate_joint_plan_input(input_document)
     _require(type(input_sha256) is str and re.fullmatch('[0-9a-f]{64}', input_sha256)
              and hashlib.sha256(canonical_bytes(context)).hexdigest() == input_sha256,
              'joint_plan_input_binding_mismatch')
-    _fields(result, {'schema_version', 'input_sha256', 'summary', 'understanding_goal',
-                     'visual_style', 'continuity', 'scenes', 'method_decision', 'warnings'})
+    fields = {'schema_version', 'input_sha256', 'summary', 'understanding_goal',
+              'visual_style', 'continuity', 'scenes', 'method_decision', 'warnings'}
+    if context.get('skill_catalog') is not None:
+        fields |= {'skill_decisions', 'skill_tool_evidence_sha256'}
+    _fields(result, fields)
     _require(result['schema_version'] == 'video-joint-plan-result.v1'
              and result['input_sha256'] == input_sha256, 'joint_plan_input_binding_mismatch')
     for key in ('summary', 'understanding_goal', 'visual_style', 'continuity'):
@@ -144,6 +156,9 @@ def validate_joint_plan_result(result, input_sha256, input_document):
         _require(''.join(row['narration'] for row in scenes) == context['project']['script'],
                  'joint_plan_script_not_preserved')
     validate_planning_method_decision(context['method_delivery'], result['method_decision'], seen)
+    if context.get('skill_catalog') is not None:
+        validate_planning_skill_decisions(result, context['skill_catalog'], seen,
+            read_package_sha256s=read_package_sha256s, tool_evidence_sha256=tool_evidence_sha256)
     _strings(result['warnings'], 0, 16, 1000, prose=True)
     # Preserve supplied provenance in visuals and reject invented links anywhere.
     inputs = [*source_texts, context['instruction'],
@@ -165,3 +180,28 @@ def validate_joint_plan_result(result, input_sha256, input_document):
         row for row in checked['warnings'] if row != FACT_REVIEW_WARNING][:15]
     _require(len(canonical_bytes(checked)) <= OUTPUT_MAX_BYTES, 'joint_plan_output_too_large')
     return checked
+
+
+def validate_planning_skill_decisions(result, catalog, segment_ids, *, read_package_sha256s=None,
+                                      tool_evidence_sha256=None):
+    """Declarations are planning intentions; only host evidence establishes reads."""
+    sha = result['skill_tool_evidence_sha256']
+    _require(type(sha) is str and re.fullmatch('[0-9a-f]{64}', sha)
+        and (tool_evidence_sha256 is None or sha == tool_evidence_sha256), 'joint_plan_skill_evidence_mismatch')
+    offered = {row['package_sha256'] for row in catalog['skills']}
+    reads = set(read_package_sha256s) if read_package_sha256s is not None else None
+    _require(reads is None or reads <= offered, 'joint_plan_skill_not_offered')
+    decisions, found = result['skill_decisions'], set()
+    _require(type(decisions) is list and len(decisions) <= len(offered))
+    for row in decisions:
+        _fields(row, {'package_sha256', 'action', 'reason', 'segment_ids'})
+        identity = row['package_sha256']
+        _require(identity in offered and identity not in found
+            and row['action'] in {'apply', 'adapt', 'reject'}, 'joint_plan_skill_not_offered')
+        found.add(identity)
+        _text(row['reason'], 4000, prose=True)
+        targets = row['segment_ids']
+        _require(type(targets) is list and all(type(v) is str for v in targets)
+            and len(set(targets)) == len(targets) and set(targets) <= segment_ids
+            and bool(targets) == (row['action'] != 'reject'), 'joint_plan_skill_targets_invalid')
+    _require(reads is None or reads == found, 'joint_plan_skill_decisions_incomplete')
