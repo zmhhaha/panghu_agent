@@ -172,3 +172,27 @@ Manim 局部时钟的浏览器测试另在同一新 renderer `31a2516d…` 内�
 发布后从新镜像、生产参数和原凭据真实调用 `create_server`，使用私有临时root且禁用所有执行泵，仅对原目标成员及原渲染账本执行只读 `stopped()`。十次旧caller Agent GET和四次render停止证明全部通过，耗时0.214秒，当前Skill caller查询为零且仍用于新创作。没有执行删除／恢复／取消／业务POST，没有模型／TTS／渲染或Skill发布；因此结论是已恢复停止核验，用户仍需在网页明确确认删除，不写作已代删作品。17个库、当前完整目录／回收站及其它服务保持；L.4据此完成，未合主线。
 
 最终目录回读确认目标效果仍可见，`deletion.allowed=true`、`member_count=2`、无拒绝原因，下一次删除仍会重新核验停止。既有D盘研究目录保存 `creation-historical-stop-{build,rollout,reader,before,after,patch}-r1.json` 和 `creation-historical-stop-r1-baseline.json`；服务器既定OPS保存 `creation-historical-stop-r1-release/build-completed.json` 与 `creation-historical-stop-r1-verification/completed.json`。operator SHA为 `0bdc2301bad411ef9a90e50a504494d8e1d2ca6fe854160f44fc03dd4b1ca5f3`；首次preflight失败及v1脚本另留原件。OpenSpec L.4已勾选，validate及设计／任务精确回读通过，revision为 `89a91f72168e3d34a7c42feb6cdd8b3b3bc4769d`；其它待办未代勾。
+
+### 旧动画实验任务归属统一迁移（2026-11-15）
+
+用户要求统一全部旧任务身份，移除L.4临时引入的历史身份接线。只读全量库存从全部业务操作关联57个旧Agent任务（含隐藏和回收站）：52 completed、5 failed，40 author.v1、17 review.v1，全部有真实停止证明；旧身份 `internal/video-animation-methods` 另拥有369份输入（57份任务文档、312帧）和0份检查点。全部输入有原请求引用，没有跨caller引用、幂等冲突或活动／quarantined任务；当前身份原有21个任务、93份输入。任务内容及凭据没有输出到回执。
+
+完整 Git `91358423e71339a3075667999eec6425613ee727` 新增一次性管理工具 `agent_service.deploy.migrate_caller_ownership`：只读plan绑定全库逻辑摘要和三类归属行；apply采用与Store相同的PostgreSQL事务锁，重新比对预期plan SHA，再仅更改jobs／inputs／checkpoints的caller列。修改后的全表指纹必须精确等于计划投影，否则整事务回滚；任务ID、请求、原v1 profile、幂等键、pins、产物、停止回执、其它表及预算均保留。它不建库、不分派任务、不授予profile权限。
+
+配置纯函数 `unify_animation_method_caller` 为当前身份追加两个旧profile的历史读取范围，移除旧caller配置，并将旧v1 routes设为disabled。新版本v2的路由和其它目录资源保持；后续Skill升级也保留统一scope。API的profile scope同时用于读取和提交，所以必须关闭旧执行路由，不能只追加范围。工作台删除原历史凭据参数、可选Secret挂载和独立gateway mapping，只以当前凭据按原冻结命名空间读取历史任务。
+
+本地迁移工具最终28项、目录及后续升级44项、执行器／部署／停止核验105项通过，共177项唯一定向检查；测试临时目录在D盘。完整PostgreSQL custom备份175874508字节，SHA `faddb7d70537703ead2b4ac3f2242962db8b4aaba6b74f1538f3d08d8302a785`，`pg_restore --list`核对19类TABLE DATA；原配置、runtime Secret、三个Agent消费者Deployment、creation及其五个Secret亦已备份。服务器备份位于既定OPS的 `legacy-caller-unification-r1-backup`，目录0700、文件0600；D盘只保存不含凭据的 `legacy-caller-backup-receipt-r1.json`。真实PG plan、apply、配置切换、镜像部署和最终回验结果如下。
+
+首次真实PG只读plan在在线model-proxy中的管理子进程退出137，未返回成功plan，也没有执行apply或数据库写入；没有据此认定OOM。`14807c70ffcca8294f5c9640635218a2b1fd8d5a` 将所有扫描改为服务端游标逐行读取，关系和停止检查投影必要字段，源记录测量后不留大正文，并以增量JSON哈希保持原canonical摘要字节。最终28项包含扫描方式、摘要一致与严格JSON布尔检查。原失败留存；后续管理入口改为独立、2Gi、无Service selector、无SA token且只可连接PostgreSQL的短期管理Pod，不启动业务服务或执行泵。
+
+独立管理Pod的真实plan通过，精确范围57 jobs／369 inputs／0 checkpoints，plan SHA为 `0b4e4449aa879ad1d061bbbab7cb20837c201012738f9fe7516d2280614133ca`。迁移前全PG逻辑指纹 `c30a8a4e5c5360cc38ec4a3e8363ba10f37959c54b327c824ed0c6646c01ba44`，预期归属投影 `dcfe86aa8df6281d0a5b18e11b106042d725716d73cc1880581f6fc78d0abb71`；单事务apply及全部最终读取后的指纹均精确等于预期投影，所有非caller字段和其它表保持。旧归属任务／输入／检查点均为零，目标归属为78／462／0。
+
+最终完整Git `14807c70ffcca8294f5c9640635218a2b1fd8d5a` 再以普通Dockerfile构建并推送creation latest，部署固定为 `sha256:996f5afd16eee98ae284abaf57d267e7d218811bf54da5895582e661a2e6a9cd`，source manifest SHA为 `a9581b274ae42bce5a7a38140d9e92e4bd26eb568869711f4518cc549eb5967f`。此前9135842镜像只构建未部署，保留原记录。新ConfigMap和过滤旧token的新runtime Secret仅交给原三个配置消费者（Agent API、dispatcher、model-proxy）重载；原镜像不变，新v2及其它pins／路由保持。creation同时移除历史token参数、旧method-agent-token挂载与volume，保留skills及其它凭据；新Pod为 `video-animation-creation-b9ffbcd4-vppsc`。
+
+新当前凭据真实完成57次job ID读取、57次原幂等键读取、369份输入元数据及原始字节读取，以及52份原manifest和产物字节回验。5项原失败的manifest缺失409合同保持，旧key返回401 `authentication_required`。新配置下57个原v1请求仅用registry预检均为 `profile_not_ready`，没有启动旧版本执行；新v2及其它执行合同保持。真实 `create_server` 构造无历史客户端，执行泵全部关闭；当前Skill client对原目标十项Agent停止证明和四项原渲染证明全部通过。业务模型、TTS、渲染、删除、恢复、Skill发布及真实业务POST均为零，17个业务库、完整catalog／trash和其它业务／lab／OAuth／Casdoor保持。
+
+最终状态为 `animation_method_caller_unified_deployed_readonly_verified`。全量GET耗时15.172秒，16034853字节输入及603364字节产物摘要全部吻合；原目标factory停止核验0.214秒。专用管理Pod及NetworkPolicy已删除并回读不存在，备份与生产使用的新ConfigMap／Secret保留。最终operator SHA为 `3e6ebd3106afe1b6c20103a8b1a033956ab5d95269bb56eb8a0427345f6419d6`，tool SHA为 `9047ce82cf9f094d171e0bac1e287d0a3d57fae6927645df5fea087a9f3dd60a`，GET collector SHA为 `89990197a6a5aefabd2e9526fafeaf818798d4421f03da82116a5f3121994e85`。
+
+D盘既定研究目录保存 `legacy-caller-unification-completed-r1.json`、`legacy-caller-readonly-verification-r1.json`、`legacy-caller-final-fingerprint-r1.json`、`legacy-caller-migration-applied-r1.json`、`legacy-caller-unification-prepared-r1.json`、`creation-caller-unified-build-r2.json`、`creation-caller-unified-deployed-r1.json`、`legacy-caller-admin-cleanup-r1.json`及原备份回执。服务器既定OPS保留 `legacy-caller-unification-r1-change/{completed.json,readonly-verification.json}`、`legacy-caller-unification-r1-admin/cleanup-completed.json`、`legacy-caller-unification-r1-backup/completed.json`；首次137和未部署的首次构建记录另保留。L.5据此完成，L.4仅保留历史修复含义；未合主线、未代填其它创作／认可／发布任务。
+
+OpenSpec L.5已勾选，design／tasks精确回读与validate通过，revision为 `25f86c7d4ab410d39f86d337b220677b87b3d7c3`。当前主设计明确统一身份，L.4临时历史凭据方案标为已被替代的修复记录；其它26项待办没有代勾。
