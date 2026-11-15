@@ -46,7 +46,8 @@ _PUBLIC_URL_FIELDS = frozenset({'preview_url', 'report_url', 'task_url', 'image_
 _METHOD_UI_PATHS = frozenset({'/', '/index.html', '/method-gallery.html',
                               '/method-gallery.mjs', '/method-comparison.mjs', '/authoring-tools.mjs',
                               '/method-gallery.css', '/skill-publication.mjs', '/effect-recycle-bin.mjs',
-                              '/knowledge.html', '/knowledge.mjs', '/knowledge.css'})
+                              '/knowledge.html', '/knowledge.mjs', '/knowledge.css',
+                              '/agent-api.html', '/agent-api.openapi.json', '/agent-api-client.py'})
 
 
 def catalog():
@@ -894,8 +895,13 @@ class LabHandler(BaseHTTPRequestHandler):
                 name = 'method-gallery.html' if path in {'/', '/index.html'} else path[1:]
                 if name == 'lab-player.mjs':
                     return self._send(lab.player_script, 'text/javascript; charset=utf-8')
+                if name == 'agent-api-client.py':
+                    return self._send(Path(__file__).with_name('animation_lab_client.py').read_bytes(),
+                        'text/x-python; charset=utf-8', download=True,
+                        download_name='animation_lab_client.py')
                 source = WEB / name
-                mime = {'html': 'text/html', 'mjs': 'text/javascript', 'css': 'text/css'}[name.rsplit('.', 1)[-1]]
+                mime = {'html': 'text/html', 'mjs': 'text/javascript', 'css': 'text/css',
+                        'json': 'application/json'}[name.rsplit('.', 1)[-1]]
                 return self._send(source.read_bytes(), mime + '; charset=utf-8')
             pieces = path.strip('/').split('/')
             if len(pieces) == 3 and pieces[0] == 'assets':
