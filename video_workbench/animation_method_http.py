@@ -40,6 +40,18 @@ class MethodLabClient(CreationAPIClient):
     def catalogue(self, owner):
         return self._request(owner, 'GET', PREFIX + '/catalog')
 
+    def trash_catalogue(self, owner):
+        return self._request(owner, 'GET', PREFIX + '/trash')
+
+    def trash_commission(self, owner, commission_id, body):
+        return self._request(owner, 'POST', PREFIX + '/commissions/' + quote(_identifier(commission_id), safe='') + '/trash', body)
+
+    def trash_effect(self, owner, effect_id, body):
+        return self._request(owner, 'POST', PREFIX + '/effects/' + quote(_identifier(effect_id), safe='') + '/trash', body)
+
+    def restore_trash(self, owner, entry_id, body):
+        return self._request(owner, 'POST', PREFIX + '/trash/' + quote(_identifier(entry_id), safe='') + '/restore', body)
+
     def get(self, owner, commission_id):
         return self._request(owner, 'GET', PREFIX + '/commissions/' + quote(commission_id, safe=''))
 
@@ -100,6 +112,9 @@ def route_private(handler, owner, method, path, body=None):
     _require(service is not None, 'animation_method_service_unavailable', 503)
     pieces = path[len(PREFIX):].strip('/').split('/')
     if method == 'GET':
+        if pieces == ['trash']:
+            _send_bounded(handler, service.trash_catalogue(owner))
+            return True
         if pieces == ['knowledge']:
             _send_bounded(handler, service.knowledge_catalogue(owner))
             return True
@@ -138,6 +153,13 @@ def route_private(handler, owner, method, path, body=None):
             handler._send(raw, raw=True, mime=mime)
             return True
     else:
+        if len(pieces) == 3 and pieces[2] == 'trash' and pieces[0] in {'commissions', 'effects'}:
+            action = service.trash_commission if pieces[0] == 'commissions' else service.trash_effect
+            _send_bounded(handler, action(owner, _identifier(pieces[1], encoded=True), body))
+            return True
+        if len(pieces) == 3 and pieces[0] == 'trash' and pieces[2] == 'restore':
+            _send_bounded(handler, service.restore_trash(owner, _identifier(pieces[1], encoded=True), body))
+            return True
         if len(pieces) == 3 and pieces[:2] == ['knowledge', 'pages']:
             _send_bounded(handler, service.revise_knowledge_page(owner, _identifier(pieces[2], encoded=True), body))
             return True

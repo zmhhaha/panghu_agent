@@ -51,3 +51,17 @@ label{display:block;color:#c8d3e4;font-size:13px;font-weight:600}input,textarea,
 .capability-label-values .engine-badge { max-width: 100%; margin: 0; line-height: 1.5; white-space: nowrap; }
 .capability-label-separator { white-space: pre; }
 .capability-label-placeholder { color: var(--muted); line-height: 26px; }
+
+/* Recoverable library cleanup is separate from cancelling an execution. */
+.gallery-scope { display: flex; gap: 10px; margin-bottom: 22px; }
+.gallery-scope [aria-pressed=true] { border-color: var(--accent); background: #263d65; color: #e3ecff; }
+.effect-removal { margin-top: 24px; }
+.effect-removal h2 { font-size: 20px; }
+.effect-removal-action { flex: 1 1 230px; }
+.effect-removal-action p { margin: 10px 0 0; max-width: 420px; }
+.trash-entry { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space-between; align-items: center; padding: 18px 0; border-top: 1px solid var(--line); }
+.trash-entry h3 { margin: 0 0 8px; overflow-wrap: anywhere; }
+.trash-entry p { margin: 4px 0; }
+.removal-dialog-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: #060b14c9; }
+.removal-confirmation { width: min(560px,100%); max-height: 90vh; overflow: auto; margin: 0; box-shadow: 0 24px 90px #0009; }
+.removal-confirmation p { overflow-wrap: anywhere; }

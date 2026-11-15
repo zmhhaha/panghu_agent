@@ -174,6 +174,8 @@ def test_methods_only_serves_the_complete_page_module_import_graph(tmp_path, pag
             assert request(server, 'GET', path, omit=['X-Forwarded-User'])[0] == 403
             imports = re.findall(rb"(?m)^\s*(?:import|export)\b[^;]*?\bfrom\s*['\"](\./[^'\"]+)['\"]", raw)
             pending.extend(urljoin(path, name.decode()) for name in imports)
+        if page == '':
+            assert PREFIX + '/effect-recycle-bin.mjs' in visited
         assert not client.calls  # Loading the UI must not submit work or query another owner.
 
 

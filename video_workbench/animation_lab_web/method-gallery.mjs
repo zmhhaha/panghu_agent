@@ -1,6 +1,7 @@
 import {createMethodComparison} from './method-comparison.mjs';
 import {mountAuthoringControls, renderCapabilityLabels, matchesAuthoringTool, matchesVisualCreation, toolSearchText, resourceAuthoringRequest} from './authoring-tools.mjs';
 import {usesExactSkillPublication, renderExactSkillPublication} from './skill-publication.mjs';
+import {mountEffectRecycleBin, renderRemovalActions} from './effect-recycle-bin.mjs';
 
 const API = 'api/method-lab/';
 const ACTIVE = new Set(['queued', 'running', 'cancelling', 'submission_unknown', 'planning', 'creating', 'reviewing', 'rendering']);
@@ -412,7 +413,8 @@ function details(doc, title, value) {
 export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCancel, onFeedback, onPublish,
   onTransfer = () => {}, onRetry = () => {}, onSelectCommission = () => {}, feedbackDraft = null, onDraftChange = () => {},
   onPreference = () => {}, onWithdraw = () => {}, comparisonSelection = null,
-  onComparisonReady = () => {}, onComparisonChange = () => {}, disclosureState = null, publicationServices = {}}) {
+  onComparisonReady = () => {}, onComparisonChange = () => {}, disclosureState = null, publicationServices = {},
+  onRemove = null, removalLocked = false}) {
   const disclosure = (key, title, value) => {
     const section = details(doc, title, value); section.dataset.methodDisclosure = key;
     if (Object.hasOwn(disclosureState ?? {}, key)) section.open = disclosureState[key] === true;
@@ -640,6 +642,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   fragment.append(disclosure('execution', '候选、技术检查与执行记录', {candidates, budget: detail.budget, operations: detail.operations ?? detail.execution,
     events: detail.events, stop_reason: detail.stop_reason, error: detail.error}));
   if (ACTIVE.has(detail.state)) fragment.append(button(doc, '取消本次实验', onCancel, 'button secondary danger'));
+  if (onRemove) fragment.append(renderRemovalActions(doc, detail, onRemove, removalLocked));
   return fragment;
 }
 
@@ -647,7 +650,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
   storage = sessionStorage, uuid, schedule, unschedule} = {}) {
   const $ = id => doc.getElementById(id), home = $('gallery-home'), detailHost = $('gallery-detail'), formPanel = $('gallery-form-panel');
   const authoringControls = mountAuthoringControls(doc, () => renderCards());
-  let continuation = null, controller, renderedDetailId = null, renderedDetailSnapshot = null, renderedCardsSnapshot = null, comparison = null, replacing = false;
+  let continuation = null, controller, recycle, nextEffectAfterRemoval = null, renderedDetailId = null, renderedDetailSnapshot = null, renderedCardsSnapshot = null, comparison = null, replacing = false;
   const feedbackDrafts = new Map(), comparisonStates = new Map(), disclosureStates = new Map();
   const releaseComparison = () => {
     replacing = true;
@@ -661,6 +664,10 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     } finally { replacing = false; }
   };
   const request = async (path, options = {}) => {
+    if (options.method === 'POST' && recycle?.locked
+      && !/^api\/method-lab\/(?:(?:commissions|effects)\/[^/]+\/trash|trash\/[^/]+\/restore)$/.test(path)) {
+      throw Error('请先核对回收站操作结果，再进行其他修改。');
+    }
     const headers = {Accept: 'application/json', ...options.headers};
     if (options.method === 'POST') Object.assign(headers, {'Content-Type': 'application/json', 'X-Animation-Lab': '1',
       'X-Animation-Lab-Token': controller.state.catalog?.csrf_token ?? '', 'X-CSRF-Token': controller.state.catalog?.csrf_token ?? ''});
@@ -669,7 +676,12 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
       return {effects: [], commissions: [], availability: {enabled: false,
         reason: '前端预览：生成服务尚未接通。可以先检查页面与功能，不会启动实验。'}};
     }
-    if (!response.ok) throw Error('请求失败（HTTP ' + response.status + '），请刷新核对');
+    if (!response.ok) {
+      const error = Error('请求失败（HTTP ' + response.status + '），请刷新核对');
+      error.status = response.status;
+      try { const body = await response.json(); error.code = typeof body?.error === 'string' ? body.error : ''; } catch {}
+      throw error;
+    }
     return response.json();
   };
   const show = mode => {
@@ -680,6 +692,8 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     home.hidden = mode !== 'home'; detailHost.hidden = mode !== 'detail'; formPanel.hidden = mode !== 'form';
   };
   const openForm = (detail = null, candidateId = null, feedback = '', mode = 'continue') => {
+    if (recycle?.locked) return;
+    recycle?.setScope('library');
     const isTransfer = Boolean(detail) && mode === 'transfer', isRetry = Boolean(detail) && mode === 'retry';
     const transferCandidate = commissionCandidates(detail).find(row => row.id === candidateId) ?? selectedCandidate(detail);
     const transferSkills = isTransfer && rows(transferCandidate?.method_version_ids).some(version =>
@@ -753,12 +767,13 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     $('gallery-count').textContent = (constrained ? filtered.length + ' / ' : '') + all.length + ' 个效果';
   };
   controller = new MethodGalleryController({root, request, storage, uuid, schedule, unschedule, onChange: state => {
-    const message = $('gallery-message'); message.hidden = !state.error && !state.notice;
-    message.textContent = state.error || state.notice; message.className = 'message' + (state.error ? ' error' : '');
+    const message = $('gallery-message'), error = state.error || recycle?.state.error, notice = recycle?.state.notice || state.notice;
+    message.hidden = !error && !notice;
+    message.textContent = error || notice; message.className = 'message' + (error ? ' error' : '');
     const enabled = state.catalog?.availability.enabled === true;
-    $('gallery-new').disabled = state.busy || Boolean(state.pending);
+    $('gallery-new').disabled = state.busy || Boolean(state.pending) || Boolean(recycle?.locked);
     $('gallery-empty-new').disabled = $('gallery-new').disabled;
-    $('experiment-submit').disabled = !enabled || continuation?.ui_preview === true || state.busy || Boolean(state.pending);
+    $('experiment-submit').disabled = !enabled || continuation?.ui_preview === true || state.busy || Boolean(state.pending) || Boolean(recycle?.locked);
     $('experiment-unavailable').hidden = enabled && continuation?.ui_preview !== true;
     $('gallery-preview-note').hidden = !state.catalog || enabled;
     $('gallery-refresh').disabled = state.loading || state.busy;
@@ -766,19 +781,21 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     $('gallery-availability').textContent = state.catalog ? enabled ? '按目标自主探索，完成后查看最佳样片、改进依据与尚存问题。'
       : state.catalog.availability.reason || '制作服务尚未就绪，可查看已有样片。' : '正在读取效果库…';
     $('gallery-engine-availability').textContent = state.catalog ? engineAvailability(state.catalog.availability) : '';
-    authoringControls.update(state.catalog?.availability, state.busy || Boolean(state.pending));
+    authoringControls.update(state.catalog?.availability, state.busy || Boolean(state.pending) || Boolean(recycle?.locked));
     renderCards();
     if (!formPanel.hidden) return;
     if (state.detail) {
       const isTyping = detailHost.contains(doc.activeElement) && ['TEXTAREA', 'INPUT', 'SELECT'].includes(doc.activeElement?.tagName);
       const isPlaying = [...detailHost.querySelectorAll('video')].some(video => !video.paused && !video.ended);
-      const snapshot = JSON.stringify(state.detail), switched = renderedDetailId !== state.detail.id;
+      const snapshot = JSON.stringify({detail: state.detail, removalLocked: Boolean(recycle?.locked) || state.busy || Boolean(state.pending)}), switched = renderedDetailId !== state.detail.id;
       if (!state.busy && (switched || !isTyping && !isPlaying && renderedDetailSnapshot !== snapshot)) {
         const detail = state.detail;
         releaseComparison();
         detailHost.replaceChildren(renderMethodDetail(doc, detail, root, {
           onBack: () => { controller.deselect(); show('home'); }, onContinue: openForm,
           onRetry: current => openForm(current, null, '', 'retry'),
+          onRemove: (current, scope) => recycle?.prepare(current, scope),
+          removalLocked: Boolean(recycle?.locked) || state.busy || Boolean(state.pending),
           onSelectCommission: id => { show('detail'); void controller.select(id); },
           onTransfer: (current, candidateId) => openForm(current, candidateId, '', 'transfer'),
           onCancel: () => void controller.cancel(), onFeedback: async value => {
@@ -815,6 +832,23 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
       show('detail');
     }
   }});
+  recycle = mountEffectRecycleBin({document: doc, root, request, storage, uuid: () => controller.uuid(),
+    getCatalog: () => controller.state.catalog,
+    externalBusy: () => controller.state.busy || Boolean(controller.state.pending),
+    refreshLibrary: async () => {
+      await controller.refresh(); if (controller.state.error) throw Error(controller.state.error);
+      const effectId = nextEffectAfterRemoval; nextEffectAfterRemoval = null;
+      const next = rows(controller.state.catalog?.effects).find(row => row.id === effectId)?.open_commission_id;
+      if (next) { show('detail'); await controller.select(next); }
+    },
+    afterTrash: entry => {
+      nextEffectAfterRemoval = entry.scope === 'commission' ? controller.state.detail?.effect?.id ?? null : null;
+      controller.deselect(); show('home');
+    }, onChange: state => {
+      if (state.scope === 'trash' && state.pending && !state.busy) { controller.deselect(); show('home'); }
+      controller.emit();
+    }});
+  controller.recycleBin = recycle;
   $('gallery-new').addEventListener('click', () => openForm());
   $('gallery-empty-new').addEventListener('click', () => openForm());
   $('gallery-preview-detail').addEventListener('click', () => {
@@ -836,7 +870,10 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     }
     show('detail');
   });
-  $('gallery-refresh').addEventListener('click', () => void controller.refresh());
+  $('gallery-refresh').addEventListener('click', () => {
+    if (recycle.state.scope === 'trash' || recycle.state.pending) void recycle.refresh();
+    else void controller.refresh();
+  });
   $('experiment-form-close').addEventListener('click', () => {
     show(controller.state.detail ? 'detail' : 'home');
     if (controller.state.detail) controller.emit();
@@ -850,7 +887,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
   detailHost.addEventListener('focusout', () => queueMicrotask(() => controller.emit()));
   $('experiment-form').addEventListener('submit', async event => {
     event.preventDefault();
-    if (continuation?.ui_preview || controller.state.catalog?.availability.enabled !== true) return;
+    if (continuation?.ui_preview || recycle.locked || controller.state.catalog?.availability.enabled !== true) return;
     const fields = Object.fromEntries(new FormData($('experiment-form')));
     if (continuation) Object.assign(fields, {criteria_metadata: continuation.criteria,
       ...(continuation.mode === 'retry' ? {retry_of_commission_id: continuation.commission_id}
@@ -861,7 +898,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     if (await controller.start(fields)) { show('detail'); controller.emit(); }
   });
   const closeController = controller.close.bind(controller);
-  controller.close = () => { closeController(); releaseComparison(); };
+  controller.close = () => { recycle.close(); closeController(); releaseComparison(); };
   void controller.refresh(); return controller;
 }
 

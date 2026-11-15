@@ -28,6 +28,7 @@ from .animation_runtime_capabilities import validate_runtime_capabilities
 from .animation_authoring_tools import observed_authoring_tools
 from .animation_method_research import METHOD_SCHEMA, REMOVAL_SCHEMA, validate_content_changes
 from .animation_method_renderer import PUBLIC_RENDER_FAILURE_CODES, public_render_failure_code
+from .animation_method_trash import AnimationMethodTrash, serialized_library_mutation
 
 
 _RENDER_FAILURE_MESSAGE = '画面运行检查未通过；保留失败证据，不自动重试'
@@ -462,6 +463,7 @@ class AnimationMethodService:
             db.execute('CREATE TABLE IF NOT EXISTS commission_deletions (owner TEXT NOT NULL, '
                        'commission_id TEXT NOT NULL, document TEXT NOT NULL, PRIMARY KEY(owner,commission_id))')
             db.commit()
+        self.trash = AnimationMethodTrash(self)
 
     def pending(self, limit=100):
         return self.commissions.pending(limit)
@@ -520,9 +522,11 @@ class AnimationMethodService:
                  'animation_method_response_too_large', 413)
         return result
 
+    @serialized_library_mutation
     def accept_validation(self, owner, validation_id, body):
         required = {'request_id', 'method_content_sha256', 'comment', 'human_verification'}
         _require(type(body) is dict and set(body) == required)
+        self.trash.require_validation_visible(owner, validation_id)
         return self.methods.accept(owner, dict(validation_id=validation_id,
             **{key: deepcopy(value) for key, value in body.items() if key != 'request_id'}), body['request_id'])
 
@@ -671,8 +675,10 @@ class AnimationMethodService:
         run = self.commissions.get(owner, commission_id)
         _require(not _deleted_commission_ids([run], self._commission_deletions(owner)),
                  'animation_method_commission_not_found', 404)
+        _require(commission_id not in self.trash.hidden(owner), 'animation_method_commission_not_found', 404)
         return run
 
+    @serialized_library_mutation
     def record_failed_attempt_deletion(self, owner, commission_id, *, reason):
         """Operator-only removal from business views; preserve internal ancestry.
 
@@ -710,6 +716,7 @@ class AnimationMethodService:
             db.commit()
             return record
 
+    @serialized_library_mutation
     def record_effect_membership(self, owner, commission_id, canonical_commission_id, *, reason):
         """Operator-only historical correction; never exposed as an HTTP write route.
 
@@ -759,10 +766,11 @@ class AnimationMethodService:
         rows = []
         runs = self.commissions.list_all(owner)
         deletions = self._commission_deletions(owner)
-        hidden = _deleted_commission_ids(runs, deletions)
+        trash_state, effects, _ = self.trash.views(owner)
+        hidden = _deleted_commission_ids(runs, deletions) | trash_state['hidden']
         demonstrations = self.methods.list_demonstrations(owner)
         samples = _sample_index(demonstrations)
-        effects, _ = _effect_views(runs, demonstrations, self._effect_memberships(owner), deletions)
+        deletion = {row['id']: row['deletion'] for effect in effects for row in effect['commissions']}
         for run in runs:
             if run['id'] in hidden:
                 continue
@@ -772,7 +780,7 @@ class AnimationMethodService:
                     if candidate else None)
             row = dict(id=run['id'], title=run['title'], goal=run['frozen']['goal'],
                        request_id=run['request_id'], state=run['state'], best_candidate_id=run['best_candidate_id'],
-                       best_candidate=best, stop_reason=run['stop_reason'], **engine)
+                       best_candidate=best, stop_reason=run['stop_reason'], deletion=deletion[run['id']], **engine)
             rows.append(row)
         return dict(schema='video.animation-method-lab.v1', effects=effects, commissions=rows,
                     availability=dict(enabled=self.author is not None and self.reviewer is not None
@@ -786,8 +794,7 @@ class AnimationMethodService:
         run = self._get_visible_commission(owner, commission_id)
         all_demos = self.methods.list_demonstrations(owner)
         all_runs = self.commissions.list_all(owner)
-        _, membership = _effect_views(all_runs, all_demos, self._effect_memberships(owner),
-                                     self._commission_deletions(owner))
+        _, _, membership = self.trash.views(owner)
         samples = _sample_index(all_demos)
         effect = membership[commission_id]
         demos = {row['provenance'].get('candidate_id'): row for row in all_demos}
@@ -867,7 +874,8 @@ class AnimationMethodService:
         detail = dict(schema='video.animation-method-lab-detail.v1', id=run['id'], request_id=run['request_id'],
             effect={key: deepcopy(effect[key]) for key in (
                 'id', 'title', 'open_commission_id', 'commissions', 'relationship_status', 'relationship_issues',
-                'engine', 'engine_status', 'engines')},
+                'engine', 'engine_status', 'engines', 'deletion')},
+            deletion=next(row['deletion'] for row in effect['commissions'] if row['id'] == commission_id),
             title=run['title'], goal=run['frozen']['goal'], state=run['state'],
             reference=deepcopy(run['frozen'].get('reference')),
             duration_seconds=run['frozen'].get('duration_seconds', 18),
@@ -900,11 +908,14 @@ class AnimationMethodService:
                 dict(kind='manim', status='unavailable', error='manim_resource_coordinator_required'))
         return detail
 
+    @serialized_library_mutation
     def start(self, owner, body):
         fields = {'request_id', 'title', 'goal', 'reference', 'duration_seconds', 'budget',
                   'base_commission_id', 'base_candidate_id', 'feedback', 'criteria', 'method_versions',
                   'role', 'baseline_demonstration_id', 'structural_changes', 'retry_of_commission_id',
                   'research_record_ids', 'content_changes', 'resource_authoring'}
+        if type(body) is dict and body.get('baseline_demonstration_id'):
+            self.trash.require_demonstrations_visible(owner, [body['baseline_demonstration_id']])
         _require(type(body) is dict and {'request_id', 'goal', 'budget'} <= set(body)
                  and set(body) <= fields)
         request_id = body['request_id']
@@ -1049,11 +1060,14 @@ class AnimationMethodService:
         run = self.commissions.create(owner, data, request_id)
         return self.get(owner, run['id'])
 
+    @serialized_library_mutation
     def cancel(self, owner, commission_id, body):
         _require(body == {})
+        self._get_visible_commission(owner, commission_id)
         self.commissions.cancel(owner, commission_id)
         return self.get(owner, commission_id)
 
+    @serialized_library_mutation
     def feedback(self, owner, commission_id, body):
         """Save an opinion; it grants no selection, acceptance or publication.
 
@@ -1075,7 +1089,7 @@ class AnimationMethodService:
         comment = body.get('comment', '')
         _require(type(comment) is str and len(comment.strip()) <= 16000
                  and (kind == 'preference' or bool(comment.strip())))
-        run = self.commissions.get(owner, commission_id)
+        run = self._get_visible_commission(owner, commission_id)
         candidates = {row['id']: row for row in _candidates(run)}
         ids = ('candidate_id',) if kind == 'comment' else ('left_candidate_id', 'right_candidate_id')
         for key in ids:
@@ -1120,11 +1134,12 @@ class AnimationMethodService:
         self._sync_feedback_knowledge(owner)
         return result
 
+    @serialized_library_mutation
     def withdraw_feedback(self, owner, commission_id, body):
         """Append a durable withdrawal without mutating the original opinion."""
         _require(type(body) is dict and set(body) == {'request_id', 'feedback_id'}
                  and all(type(value) is str and 1 <= len(value) <= 200 for value in body.values()))
-        self.commissions.get(owner, commission_id)
+        self._get_visible_commission(owner, commission_id)
         try:
             checksum = digest(dict(commission_id=commission_id, body=body))
         except (TypeError, ValueError, OverflowError, UnicodeError):
@@ -1163,12 +1178,13 @@ class AnimationMethodService:
                 standards[criterion['id']] = deepcopy(criterion)
         return list(standards.values())
 
+    @serialized_library_mutation
     def transfer(self, owner, commission_id, body):
         allowed = {'request_id', 'title', 'goal', 'structural_changes', 'budget',
                    'duration_seconds', 'reference', 'base_candidate_id', 'feedback', 'content_changes'}
         _require(type(body) is dict and {'request_id', 'goal', 'structural_changes', 'budget'} <= set(body)
                  and set(body) <= allowed)
-        run = self.commissions.get(owner, commission_id)
+        run = self._get_visible_commission(owner, commission_id)
         candidate_id = body.get('base_candidate_id') or run['best_candidate_id']
         source = next((row for row in _candidates(run) if row['id'] == candidate_id), None)
         demo = next((row for row in self.methods.list_demonstrations(owner)
@@ -1182,6 +1198,7 @@ class AnimationMethodService:
         # The new goal creates a new composition from the exact method, not a copied source baseline.
         return self.start(owner, request)
 
+    @serialized_library_mutation
     def publish(self, owner, commission_id, body):
         required = {'request_id', 'method_version_ids', 'demonstration_ids'}
         _require(type(body) is dict and required <= set(body)
@@ -1189,6 +1206,7 @@ class AnimationMethodService:
         current = self.get(owner, commission_id)
         _require(type(body['method_version_ids']) is list and bool(body['method_version_ids'])
                  and type(body['demonstration_ids']) is list and bool(body['demonstration_ids']))
+        self.trash.require_demonstrations_visible(owner, body['demonstration_ids'])
         allowed = set(current['publication_method_version_ids'])
         _require(set(body['method_version_ids']) <= allowed, 'animation_method_publication_target_invalid', 409)
         human = body.get('human_verification')
@@ -1215,6 +1233,7 @@ class AnimationMethodService:
                 _require(all(row.get('acceptance') is not None for row in applicable)
                          and self.methods.publication_readiness(owner, version_id)['ready'],
                          'animation_method_publication_blocked', 409)
+                self.trash.require_publication_visible(owner, version_id)
                 results.append(version if version['status'] == 'published' else
                     self.methods.publish(owner, version_id, body['request_id'] + ':publish:' + version_id))
                 continue
@@ -1228,6 +1247,7 @@ class AnimationMethodService:
                     audio_listened=human.get('audio_listened') is True)
                 if validation.get('acceptance') is None:
                     self.methods.accept(owner, decision, body['request_id'] + ':accept:' + validation['id'])
+            self.trash.require_publication_visible(owner, version_id)
             results.append(version if version['status'] == 'published' else
                 self.methods.publish(owner, version_id, body['request_id'] + ':publish:' + version_id))
         return dict(methods=[_method_view(row) for row in results], publication='published')
@@ -1240,7 +1260,7 @@ class AnimationMethodService:
         return result
 
     def artifact(self, owner, commission_id, candidate_id, kind):
-        run = self.commissions.get(owner, commission_id)
+        run = self._get_visible_commission(owner, commission_id)
         candidate = next((row for row in _candidates(run) if row['id'] == candidate_id), None)
         _require(candidate is not None, 'animation_method_candidate_not_found', 404)
         if kind == 'source':
@@ -1253,6 +1273,18 @@ class AnimationMethodService:
         _require(len(raw) <= 32 * 1024 * 1024 and hashlib.sha256(raw).hexdigest() == candidate['media']['sha256'],
                  'animation_method_media_changed', 409)
         return raw, 'video/mp4'
+
+    def trash_catalogue(self, owner):
+        return self.trash.catalogue(owner)
+
+    def trash_commission(self, owner, commission_id, body):
+        return self.trash.delete(owner, 'commission', commission_id, body)
+
+    def trash_effect(self, owner, effect_id, body):
+        return self.trash.delete(owner, 'effect', effect_id, body)
+
+    def restore_trash(self, owner, entry_id, body):
+        return self.trash.restore(owner, entry_id, body)
 
     def _document(self, owner, run, mode, *, base=None, feedback='', frames=None, comparison=None):
         active_protocol = self._protocol(run)

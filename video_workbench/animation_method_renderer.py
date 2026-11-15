@@ -739,6 +739,36 @@ class MethodAnimationRenderer:
         _require(probe_ok, 'animation_method_render_probe_invalid')
         return receipt, receipt_raw, audio_sha256
 
+    def stopping_proof(self, operation_id):
+        """Read only the original cleanup receipt; never reconcile or clean up."""
+        row, binding = self._row(operation_id, historical=True)
+        root = self._directory(operation_id)
+        outcome, outcome_raw = _json(root / 'render-outcome.json', 65536)
+        _require(outcome.get('schema') == 'video.animation-method-render-outcome.v1'
+            and outcome.get('request_identity') == binding['request']['identity']
+            and outcome.get('request_sha256') == binding['request_sha256']
+            and outcome.get('image') == binding['image'] and outcome.get('automatic_retry') is False
+            and outcome.get('status') in {'rendered', 'failed'},
+            'animation_method_render_outcome_changed')
+        receipt = (_json(root / 'work/render-receipt.json', 1024 * 1024)[0]
+                   if outcome['status'] == 'rendered' else None)
+        proof = digest(dict(binding_sha256=digest(binding),
+            outcome_sha256=hashlib.sha256(outcome_raw).hexdigest(),
+            receipt_sha256=digest(receipt) if receipt else None))
+        _require(row['proof_sha256'] is not None and row['proof_sha256'] == proof,
+                 'animation_method_render_proof_changed')
+        cleanup = outcome.get('cleanup', {})
+        container_id = outcome.get('container_id')
+        if container_id is None:
+            proven = (outcome['status'] == 'failed' and cleanup.get('status') == 'not_created'
+                      and cleanup.get('container_id') is None)
+        else:
+            proven = (type(container_id) is str and bool(_SHA.fullmatch(container_id))
+                      and cleanup.get('container_id') == container_id
+                      and cleanup.get('status') in {'confirmed_absent', 'removed_and_confirmed_absent'})
+        return dict(operation_id=operation_id, stop_proven=proven,
+            scope='original_bound_container_cleanup_receipt_not_new_cleanup')
+
     def lookup(self, operation_id):
         # Reading a stopped historical attempt does not authorize execution
         # with its old pin. render() keeps _row's strict current-image default.
