@@ -144,3 +144,15 @@ Manim 局部时钟的浏览器测试另在同一新 renderer `31a2516d…` 内�
 最终只读 guard 核对3 entries／2 restorations／5 requests，全部scope及成员仅限这两个夹具，最终回收站1组2条、正常列表原10效果／22可见实验，其中18条含最佳候选；4条legacy隐藏不变。原26委托／69请求／512事件／106操作逐行SHA保持；新增仅夹具2／2／4／0，当前28／71／516／106。其它17库旧表、其它业务及Agent配置和数据保持，catalog身份、完整URL、技术标签、关联全字段相等。没有新增模型、TTS、渲染、发布、取消或物理媒体回收。已发布／正式引用、未知停止和并发保护由隔离测试验证，没有对用户真实作品做破坏性试验。
 
 服务器既定OPS下保留 `skill-lab-effect-trash-r2-release/{two-build-completed.json,history-check/completed.json}`、`skill-lab-effect-trash-r2-two-rollout/completed.json`、`effect-trash-ui-fixture-r2/{prepared.json,seeded.json,final-verification.json}`。既有D盘研究目录保留 `effect-trash-browser-check-r2.json`、`effect-trash-final-verification-r2.json`、纯UI补丁与独立测试导出。该功能只完成新增L.1–L.3；不代勾U/H资源工作、完整视听、正片修订、开发者认可或Skill发布，未合主线。
+
+### 外部 Agent 结构化 HTTP 接入（2026-11-15）
+
+完整 Git `43912637f31cd8c2a7e2fe0413ccf5e77a14e739` 补充已有公开 JSON API 的中文指南、OpenAPI 3.1 合同和独立 Python 标准库客户端；创建／查询／续作／反馈／取消／媒体与源码继续复用原委托。客户端不依赖浏览器表单，使用调用者安全提供的 Netscape 会话文件并自动取得 CSRF；独立 Bearer／API key、免浏览器机器授权仍未实现。只读帮助与下载均保留原 OAuth 和开发者 allowlist。原有六项未提交改动未纳入本次提交。
+
+客户端最终87项本地 HTTP／边界检查通过，包括原文件／显式UUID、未知提交、无POST自动重试、会话文件错误不泄密、重定向／跨路径拒绝、有界轮询、下载大小／截断及不覆盖竞态；可直接独立执行。父项静态路由和构建82项、既有methods-only及私有HTTP29项通过；OpenAPI 118个引用、所有请求示例与schema、静态页锚点和无脚本依赖检查通过。所有隔离测试目录位于D盘，未读取真实Cookie或调用线上模型。
+
+服务器复用既定完整Git单lab builder，构建推送 `arm-cluster-master:5000/video-animation-lab:latest` 并按 `sha256:75edb7768fda1c356bc9be421d9a646a1be65e21789e0425b06530490dbaeb85` 部署；源码manifest为 `40c6ad81a5831f221f6a613ba6ba6286bc44b4259e760f4978cbc50837de115c`。Pod `video-animation-lab-97cf7c5c4-szvr6` Ready、0重启，90个实际运行源码文件SHA匹配。`agent-api.html`、`agent-api.openapi.json`、`agent-api-client.py` 真实GET均200且字节/MIME匹配；CLI附件名为 `animation_lab_client.py`。缺失／错误开发者身份的6次GET全部403；旧静态依赖及catalog/trash完整投影相等。
+
+原17个执行器数据库、3个lab数据库和其它业务数据库逻辑指纹保持，其他业务／Agent及OAuth／Casdoor的spec和Pod UID保持；lab spec只变镜像与发布注解。模型／TTS／渲染／业务POST／夹具／发布均为0，没有以本轮只读验证宣称已完成新的外部Agent付费生成或独立机器鉴权。三个入口仅补接入与帮助，未创建第二套制作链、未合主线。
+
+服务器既定OPS保留 `skill-lab-agent-api-r1-release/build-completed.json`、`skill-lab-agent-api-r1-release/agent-api-build-guard.json` 及 `skill-lab-agent-api-r1-api-verification/completed.json`；operator SHA为 `d3f51d6ffb9a9665414dde5488639b5eb944246b5552e7520d53be276ecc3485`。D盘既有研究目录保留 `lab-agent-api-build-r1.json`、`lab-agent-api-rollout-r1.json`、`lab-agent-api-local-validation-r1.json`；本轮仅勾M.1–M.3。
