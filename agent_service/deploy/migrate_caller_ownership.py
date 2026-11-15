@@ -14,7 +14,7 @@ from pathlib import Path
 import re
 import sys
 
-from sqlalchemy import inspect, select, text, update
+from sqlalchemy import String, cast, func, inspect, or_, select, text, update
 
 from agent_service.api import _public_stop_proof
 from agent_service.contracts import ServiceError, digest
@@ -90,6 +90,34 @@ def _value(value):
     return value
 
 
+def _rows(conn, statement):
+    # psycopg normally buffers every result row on the client. A migration
+    # scans artifact bytes and staged results, so keep a server-side cursor
+    # with exactly one row per fetch, including in the whole-database audit.
+    with conn.execute(statement.execution_options(stream_results=True, yield_per=1)) as result:
+        for row in result.mappings():
+            yield row
+            del row
+
+
+def _row_digest(row):
+    # Same canonical JSON bytes as contracts.digest(), without materializing
+    # another complete JSON string/byte copy of a large staged result.
+    checksum = hashlib.sha256()
+    encoder = json.JSONEncoder(sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)
+    for chunk in encoder.iterencode(_value(row)):
+        for start in range(0, len(chunk), 65536):
+            checksum.update(chunk[start:start + 65536].encode('utf-8'))
+    return checksum.hexdigest()
+
+
+def _json_true(conn, column, key):
+    # SQLite JSON extraction turns true into integer 1; preserve the exact
+    # JSON boolean test rather than accepting 1 or the string "true" as proof.
+    return (func.json_type(column, '$.' + key) == 'true' if conn.dialect.name == 'sqlite'
+            else cast(column[key], String) == 'true')
+
+
 def _fingerprints(conn, parameters):
     actual = set(inspect(conn).get_table_names())
     _require(actual == set(metadata.tables), 'schema_changed')
@@ -103,14 +131,17 @@ def _fingerprints(conn, parameters):
                        default=c.get('default'), primary_key=bool(c.get('primary_key')))
                   for c in columns]
         rows, moved_rows = [], []
-        for raw in conn.execute(select(table)).mappings():
+        for raw in _rows(conn, select(table)):
             row = dict(raw)
-            rows.append(digest(_value(row)))
+            rows.append(_row_digest(row))
             if (table in _OWNED and row['tenant'] == parameters['tenant']
                     and row['caller'] == parameters['source_caller']):
                 row['caller'] = parameters['target_caller']
-            moved_rows.append(digest(_value(row)))
+                moved_rows.append(_row_digest(row))
+            else:
+                moved_rows.append(rows[-1])
             _require(len(rows) <= 1000000, 'database_limit')
+            del row, raw
         before[name] = dict(rows=len(rows), schema_sha256=digest(schema), rows_sha256=digest(sorted(rows)))
         projected[name] = dict(rows=len(rows), schema_sha256=digest(schema), rows_sha256=digest(sorted(moved_rows)))
     return before, projected
@@ -118,8 +149,9 @@ def _fingerprints(conn, parameters):
 
 def _stopped(conn, row):
     _require(row['state'] in _STOPPED, 'execution_not_stopped')
-    active_attempts = [dict(r) for r in conn.execute(select(attempts).where(
-        attempts.c.job_id == row['id'])).mappings()]
+    active_attempts = [dict(r) for r in _rows(conn, select(attempts.c.id, attempts.c.fence,
+        attempts.c.state, attempts.c.dispatch_intent['provisioning'].label('provisioning')).where(
+        attempts.c.job_id == row['id']))]
     _require(all(r['state'] in _STOPPED for r in active_attempts), 'execution_not_stopped')
     if row['attempt_id'] is None:
         _require(row['fence'] == 0 and not active_attempts and row['state'] in {'cancelled', 'timed_out'}
@@ -132,37 +164,49 @@ def _stopped(conn, row):
     if _public_stop_proof(row, row['outcome'] or {}).get('stop_proven') is True:
         return
     outcome = row['outcome'] or {}
-    allocation = conn.execute(select(worker_allocations).where(
-        worker_allocations.c.attempt_id == row['attempt_id'])).mappings().first()
     _require(outcome.get('_service_not_started') is True
         and row['state'] in {'failed', 'cancelled', 'timed_out'}
-        and matching[0]['dispatch_intent'].get('provisioning') == 'kubernetes_per_attempt'
-        and (allocation is None or (
+        and matching[0]['provisioning'] == 'kubernetes_per_attempt', 'stop_unproven')
+    # JSON null and SQL NULL both deserialize as None. Test that property in
+    # SQL without downloading a potentially huge candidate_result payload.
+    no_candidate = or_(worker_allocations.c.candidate_result.is_(None),
+                      cast(worker_allocations.c.candidate_result, String) == 'null')
+    columns = [worker_allocations.c[key] for key in ('job_id', 'fence', 'retired', 'create_claimed',
+        'worker_start_claimed', 'pod_uid', 'stop_observed_at')]
+    allocation_rows = list(_rows(conn, select(*columns, no_candidate.label('no_candidate')).where(
+        worker_allocations.c.attempt_id == row['attempt_id'])))
+    _require(len(allocation_rows) <= 1, 'attempt_mismatch')
+    allocation = allocation_rows[0] if allocation_rows else None
+    _require(
+        allocation is None or (
             allocation['job_id'] == row['id'] and allocation['fence'] == row['fence']
             and allocation['retired'] and not allocation['create_claimed']
             and not allocation['worker_start_claimed'] and allocation['pod_uid'] is None
-            and allocation['candidate_result'] is None and allocation['stop_observed_at'] is None)),
+            and allocation['no_candidate'] and allocation['stop_observed_at'] is None),
         'stop_unproven')
 
 
 def _closed_graph(conn, parameters, source_jobs, source_inputs, source_checkpoints):
-    all_jobs = {r['id']: dict(r) for r in conn.execute(select(jobs)).mappings()}
-    all_inputs = {r.id: (r.tenant, r.caller, r.sha256) for r in conn.execute(
+    all_jobs = {r['id']: dict(inputs=r['inputs'], checkpoint_ref=r['checkpoint_ref'])
+        for r in _rows(conn, select(jobs.c.id, jobs.c.request['inputs'].label('inputs'),
+                                   jobs.c.request['checkpoint_ref'].label('checkpoint_ref')))}
+    all_inputs = {r['id']: (r['tenant'], r['caller'], r['sha256']) for r in _rows(conn,
         select(inputs.c.id, inputs.c.tenant, inputs.c.caller, inputs.c.sha256))}
     checkpoints = file_tables['checkpoints']
-    all_checkpoints = {r['id']: dict(r) for r in conn.execute(select(checkpoints)).mappings()}
+    all_checkpoints = {r['id']: dict(r) for r in _rows(conn,
+        select(checkpoints.c.id, checkpoints.c.source_job_id, checkpoints.c.manifest))}
     from agent_service.store import artifacts
-    artifact_jobs = {r[0]: r[1] for r in conn.execute(select(artifacts.c.id, artifacts.c.job_id))}
+    artifact_jobs = {r['id']: r['job_id'] for r in _rows(conn, select(artifacts.c.id, artifacts.c.job_id))}
     source_artifacts = {key for key, value in artifact_jobs.items() if value in source_jobs}
     for job_id, row in all_jobs.items():
         owned = job_id in source_jobs
-        for ref in row['request'].get('inputs', []):
+        for ref in row['inputs'] or []:
             identifier = ref['input_id']
             if owned or identifier in source_inputs:
                 _require(owned and identifier in source_inputs and identifier in all_inputs
                     and all_inputs[identifier] == (parameters['tenant'], parameters['source_caller'], ref['sha256']),
                     'reference_not_closed')
-        reference = row['request'].get('checkpoint_ref')
+        reference = row['checkpoint_ref']
         if reference and (owned or reference['checkpoint_id'] in source_checkpoints):
             _require(owned and reference['checkpoint_id'] in source_checkpoints
                 and all_checkpoints[reference['checkpoint_id']]['manifest']['sha256'] == reference['sha256'],
@@ -177,12 +221,14 @@ def _closed_graph(conn, parameters, source_jobs, source_inputs, source_checkpoin
                 'reference_not_closed')
         elif any(f['artifact_id'] in source_artifacts for f in row['manifest']['files']):
             _require(False, 'reference_not_closed')
-    for row in conn.execute(select(file_tables['recoveries'])).mappings():
-        checkpoint_id = row['document'].get('checkpoint_id')
+    recoveries = file_tables['recoveries']
+    for row in _rows(conn, select(recoveries.c.job_id,
+                                  recoveries.c.document['checkpoint_id'].label('checkpoint_id'))):
+        checkpoint_id = row['checkpoint_id']
         if checkpoint_id and (row['job_id'] in source_jobs or checkpoint_id in source_checkpoints):
             _require(row['job_id'] in source_jobs and checkpoint_id in source_checkpoints,
                      'reference_not_closed')
-    for row in conn.execute(select(file_tables['references'])).mappings():
+    for row in _rows(conn, select(file_tables['references'])):
         kind, identifier, owner_kind, owner_id = (row[k] for k in
             ('resource_kind', 'resource_id', 'owner_kind', 'owner_id'))
         affected = ((kind == 'input' and identifier in source_inputs)
@@ -202,27 +248,37 @@ def _plan(conn, parameters):
     for table in _OWNED:
         sources[table.name], records[table.name] = [], []
         statement = select(table).where(table.c.tenant == parameters['tenant'],
-            table.c.caller == parameters['source_caller']).execution_options(stream_results=True)
-        for raw in conn.execute(statement).mappings():
+            table.c.caller == parameters['source_caller'])
+        for raw in _rows(conn, statement):
             row = dict(raw)
-            records[table.name].append(dict(id=row['id'], sha256=digest(_value(row))))
-            if table is inputs:
-                row.pop('content')
-            sources[table.name].append(row)
+            records[table.name].append(dict(id=row['id'], sha256=_row_digest(row)))
+            retained = dict(id=row['id'])
+            if table is not inputs:
+                retained['idempotency_key'] = row['idempotency_key']
+            if table is jobs:
+                retained.update(profile=row['request'].get('profile'), pin_profile=row['pins'].get('profile'))
+            sources[table.name].append(retained)
+            del retained, row, raw
     source_jobs = sources[jobs.name]
     _require(source_jobs, 'source_empty')
-    _require(all(r['request'].get('profile') in parameters['allowed_profiles']
-        and r['pins'].get('profile') == r['request']['profile'] for r in source_jobs), 'profile_outside_scope')
-    affected_jobs = conn.execute(select(jobs).where(jobs.c.tenant == parameters['tenant'],
-        jobs.c.caller.in_([parameters['source_caller'], parameters['target_caller']]))).mappings()
+    _require(all(r['profile'] in parameters['allowed_profiles']
+        and r['pin_profile'] == r['profile'] for r in source_jobs), 'profile_outside_scope')
+    stop_statement = select(jobs.c.id, jobs.c.state, jobs.c.attempt_id, jobs.c.fence,
+        jobs.c.pins['engine'].label('engine'), jobs.c.outcome['stop_receipt'].label('stop_receipt'),
+        _json_true(conn, jobs.c.outcome, '_service_stop_proven').label('service_stop_proven'),
+        _json_true(conn, jobs.c.outcome, '_service_not_started').label('service_not_started')).where(
+            jobs.c.tenant == parameters['tenant'],
+            jobs.c.caller.in_([parameters['source_caller'], parameters['target_caller']]))
     affected_ids = set()
-    for row in affected_jobs:
+    for row in _rows(conn, stop_statement):
         affected_ids.add(row['id'])
-        _stopped(conn, dict(row))
-    _require(not any(r.job_id in affected_ids for r in conn.execute(select(slot.c.job_id))), 'slot_occupied')
+        _stopped(conn, dict(id=row['id'], state=row['state'], attempt_id=row['attempt_id'], fence=row['fence'],
+            pins=dict(engine=row['engine']), outcome=dict(stop_receipt=row['stop_receipt'],
+            _service_stop_proven=row['service_stop_proven'], _service_not_started=row['service_not_started'])))
+    _require(not any(r['job_id'] in affected_ids for r in _rows(conn, select(slot.c.job_id))), 'slot_occupied')
     for table in (jobs, file_tables['checkpoints']):
-        target_keys = set(conn.execute(select(table.c.idempotency_key).where(
-            table.c.tenant == parameters['tenant'], table.c.caller == parameters['target_caller'])).scalars())
+        target_keys = {r['idempotency_key'] for r in _rows(conn, select(table.c.idempotency_key).where(
+            table.c.tenant == parameters['tenant'], table.c.caller == parameters['target_caller']))}
         _require(not target_keys.intersection(r['idempotency_key'] for r in sources[table.name]),
                  'idempotency_conflict')
     identifiers = {name: {r['id'] for r in rows} for name, rows in sources.items()}

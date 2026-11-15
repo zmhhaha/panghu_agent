@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine, event, insert, select, text, update
+from sqlalchemy.sql import Select
 
 from agent_service.contracts import InlineFile, ServiceError, WorkerResult, digest, sign_receipt, verify_receipt
 from agent_service.deploy import migrate_caller_ownership as migration
@@ -264,3 +265,41 @@ def test_cli_sanitizes_driver_or_configuration_failures(monkeypatch, capsys):
     assert output.out == ''
     assert json.loads(output.err) == dict(status='rejected', code='caller_migration_unavailable')
     assert 'private-password' not in output.err
+
+
+def test_every_migration_table_scan_uses_one_row_server_side_batches(store):
+    complete(store, 'source')
+    scans = []
+    def observed(conn, clause, multiparams, params, options):
+        if isinstance(clause, Select):
+            assert options.get('stream_results') is True
+            assert options.get('yield_per') == 1
+            scans.append(tuple(clause.selected_columns.keys()))
+    event.listen(store.engine, 'before_execute', observed)
+    try:
+        planned = migration.plan(store.engine, **OPTIONS)
+        migration.apply(store.engine, expected_plan_sha256=planned['sha256'], **OPTIONS)
+    finally:
+        event.remove(store.engine, 'before_execute', observed)
+    assert len(scans) > 30
+    # Whole-row scans remain required for source hashes and complete database
+    # fingerprints, while relation/stop reads do not fetch arbitrary outcomes.
+    assert any('stop_receipt' in columns and 'outcome' not in columns for columns in scans)
+    assert any('provisioning' in columns and 'outcome' not in columns for columns in scans)
+
+
+def test_incremental_row_hash_matches_original_canonical_digest_with_large_fields():
+    row = dict(id='offline', content=b'\x00\xff' * 524288,
+        payload={'unicode': '中文😀\n"\\' * 40000, 'items': [True, None, 1, 1.25, False]})
+    assert migration._row_digest(row) == digest(migration._value(row))
+
+
+@pytest.mark.parametrize('marker', [1, 'true'])
+def test_minimal_stop_projection_preserves_exact_json_boolean_requirement(store, marker):
+    one = complete(store, 'source')
+    with store._tx() as conn:
+        row = store._find(conn, one['job_id'])
+        outcome = deepcopy(row['outcome'])
+        outcome['_service_stop_proven'] = marker
+        conn.execute(update(jobs).where(jobs.c.id == row['id']).values(outcome=outcome))
+    check_rejected(store, 'stop_unproven', lambda: migration.plan(store.engine, **OPTIONS))
