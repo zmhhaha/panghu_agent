@@ -128,3 +128,19 @@ Manim 局部时钟的浏览器测试另在同一新 renderer `31a2516d…` 内�
 完整 Git 普通构建的 lab `latest@sha256:0c53772a62a7d6217621db8c5846c26e055b7d6f546eafa25d54a89c43f93749` 已单独部署，Pod Ready、0 重启；86份运行源码及5个真实 HTTP 静态资源的字节 SHA 匹配该提交。三个 SQLite 全表 schema／行指纹相等，原代理参数、Secret、挂载与 PVC 保留，其他三个业务服务的 spec 和 Pod UID 不变；没有启动模型、TTS 或渲染。回执为 `skill-lab-unified-labels-r1-release/build-completed.json` 与 `skill-lab-unified-labels-r1-guard/completed.json`。
 
 实际浏览器核对10张卡片全部为两行，两行之间没有重叠或横向溢出。Anime.js／Manim／Canvas卡片显示统一，Manim名称之间保留实际空白，库版本确切保留在 title；Manim与Anime筛选均为1/10。实际截图和DOM几何读取分别用于确认外观与布局，未将桌面检查扩大为手机验收；轻量结果保存在既有D盘目录 `label-unification-browser-check-r1.json`。
+
+### 效果与实验回收站（2026-11-15）
+
+完整 Git `c6f7a1b` 新增单实验／整效果软删除、精确快照确认、独立恢复及稳定效果身份；`95d070c1fc3a867e8902c6acba85dbd7df99f998` 修复并发意见保存／撤回的锁等待。仅更新 creation 和 lab，普通完整 Git 构建推送 latest，部署分别固定为 `sha256:08abd4894934c385723f9fdd07de0afdca78acd2999218eca24bdbc377214d25`、`sha256:9fbb2bff143fb4272dd078b6c8f419e2d6bcf67e07eccc7b3ac6e0933a35d957`。renderer、workbench、motion、Agent 及现有发布配置保持。
+
+前端从干净 HEAD 加本轮纯补丁验证 74 项 Node、85 个唯一 Python 路由／构建用例通过；一例首次因 Windows 路径过长失败，短临时目录重测通过。独立真实两跳 HTTP 35 项通过。后端原大回归 171 通过／8 失败：4 个资源 fixture 与 4 个同源历史倒序问题分别修复、定向回验；新增原35项与两条历史收尾37项通过，资源8项通过，正式 Skill 冻结22项另通过。各组有重叠，不累加为唯一总数。
+
+父项另从 `c6f7a1b` canonical Git 导出测试 trash／HTTP／feedback／retry／commissions，结果155通过、唯一并发意见用例失败；根因为新增非阻塞 owner 锁打断原幂等并发保存。`95d070c` 只让意见保存／撤回最多等待5秒，获锁后重新检查可见性，其它写动作继续立即报告忙。新 commit 的独立完整 Git 导出定向5项通过，包含原并发保存与撤回、等待删除后两种写入均404／不改记录、跨实例锁与旧URL拒绝；不重新跑无变化的全部测试来累计通过数。所有临时导出和最终测试放D盘；附带清理早期C盘 `.test-trash-backend-20261115` 被自动审批返回 `blocked by policy`，未重试或绕过，该目录暂留。
+
+首次 r1 严格历史检查没有通过：它把公开 Lab HTTP 的 `/dev/animations/api/...` 地址与直接 Service 的 `/api/...` 地址比较。独立定位全部38处差异仅为这一传输投影；新 operator v2 调用相同 `LabHTTPServer.public_urls` 后，继续逐字段精确比较，没有删除URL字段或放宽旧身份／标签。r1失败回执原样保留，未部署。r2从新完整源码重新构建，固定 operator `a9832bfce5c85eb111ef50a975334a8490e7b54d1c6c63dc2268fbd7458f91cd`；先在无网络／无凭据的新镜像中 sqlitebackup 到副本，正常构造服务并读取原26委托／106操作，再通过严格历史检查才部署。原17数据库旧表保持，仅新增3张空回收站元数据表；87份lab源码、3份creation源码及7项实际HTTP静态依赖的SHA／MIME通过，防止遗漏入口模块。
+
+浏览器沿用当前登录账号，实际点击详情底部“整理效果与实验”及首页“回收站”。专用“功能验收夹具·无模型/无媒体”由正常 store 在隔离环境创建并终止，备份后单事务导入，线上未见queued窗口。两条实验为 `a897a820-6cef-4b91-bac7-9d3444c0e5aa`、`fc42c57b-0859-48dc-8115-1c7e1921d65f`，无operation／candidate／生成媒体。单删第一条后自动显示关联实验，效果身份保持、历史2→1；恢复后为2。整效果确认显示2条／确切编号，移入后列表11→10，恢复后回11；最终仅将这组夹具重新移回收站。原10张可见卡片、两行标签和媒体保留，无横向溢出。DOM与实际截图用于页面观察，不扩大为手机或动画质量验收。
+
+最终只读 guard 核对3 entries／2 restorations／5 requests，全部scope及成员仅限这两个夹具，最终回收站1组2条、正常列表原10效果／22可见实验，其中18条含最佳候选；4条legacy隐藏不变。原26委托／69请求／512事件／106操作逐行SHA保持；新增仅夹具2／2／4／0，当前28／71／516／106。其它17库旧表、其它业务及Agent配置和数据保持，catalog身份、完整URL、技术标签、关联全字段相等。没有新增模型、TTS、渲染、发布、取消或物理媒体回收。已发布／正式引用、未知停止和并发保护由隔离测试验证，没有对用户真实作品做破坏性试验。
+
+服务器既定OPS下保留 `skill-lab-effect-trash-r2-release/{two-build-completed.json,history-check/completed.json}`、`skill-lab-effect-trash-r2-two-rollout/completed.json`、`effect-trash-ui-fixture-r2/{prepared.json,seeded.json,final-verification.json}`。既有D盘研究目录保留 `effect-trash-browser-check-r2.json`、`effect-trash-final-verification-r2.json`、纯UI补丁与独立测试导出。该功能只完成新增L.1–L.3；不代勾U/H资源工作、完整视听、正片修订、开发者认可或Skill发布，未合主线。
