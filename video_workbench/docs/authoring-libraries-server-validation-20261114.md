@@ -156,3 +156,19 @@ Manim 局部时钟的浏览器测试另在同一新 renderer `31a2516d…` 内�
 原17个执行器数据库、3个lab数据库和其它业务数据库逻辑指纹保持，其他业务／Agent及OAuth／Casdoor的spec和Pod UID保持；lab spec只变镜像与发布注解。模型／TTS／渲染／业务POST／夹具／发布均为0，没有以本轮只读验证宣称已完成新的外部Agent付费生成或独立机器鉴权。三个入口仅补接入与帮助，未创建第二套制作链、未合主线。
 
 服务器既定OPS保留 `skill-lab-agent-api-r1-release/build-completed.json`、`skill-lab-agent-api-r1-release/agent-api-build-guard.json` 及 `skill-lab-agent-api-r1-api-verification/completed.json`；operator SHA为 `d3f51d6ffb9a9665414dde5488639b5eb944246b5552e7520d53be276ecc3485`。D盘既有研究目录保留 `lab-agent-api-build-r1.json`、`lab-agent-api-rollout-r1.json`、`lab-agent-api-local-validation-r1.json`；本轮仅勾M.1–M.3。
+
+### 历史实验删除停止核验补修（2026-11-15）
+
+用户删除“波的叠加与局部抵消”时被 `animation_method_trash_stop_unproven` 拒绝。只读诊断定位其两条实验共十项作者／评审任务均在 `internal/video-animation-methods` 旧 caller 下真实完成，按 Agent 当前公开停止证明合同全部通过；四项历史渲染也已有停止证明。现行 Skill v2 caller 查询这些任务返回404，即使只改幂等前缀或直接按 job ID 查询也仍不可见；不是资源层、20秒总预算或这些任务实际仍在运行。用原挂载旧身份及原生 `stopped()` 核验整组通过，耗时0.228秒，17个数据库和部署规格保持。
+
+完整 Git `7bfd67896f3e1202c97301400a1854e2aefaf8c5` 按冻结 schema／stage 选择原协议，并接受显式历史 caller 网关。executor 可配置独立历史凭据，只供删除停止核验，当前创作仍使用 Skill v2；历史404不回退当前caller，也不当作已停止。另修正业务委托终态与Agent终态混用：`needs_input`／`timed_out` 仍须真实停止证明和原任务绑定。原幂等、快照、发布引用、活动／未知拒绝和软删除合同保持。
+
+删除／HTTP／停止合同组合105项通过；追加独立历史身份后最终合同37项通过，两组去重为109项。executor／部署生成器89项通过，合计198项唯一的定向回归。用例覆盖真实公开停止证明结构、v1／v2命名空间、不同client隔离、历史404不回退、活动／缺失／错配／无证明拒绝、原账本只读和客户端关闭。所有测试临时目录位于D盘。代码已推送开发分支，发布和线上只读验收如下。
+
+正常完整 Git 构建一次并推送 latest 一次，creation 部署固定为 `sha256:89f7fa170716e1a4b321fd0ea1e1006618418fcba3e351a3c54833d3669f0604`，源码manifest SHA为 `1a040c0594fde728523199836995e7e06b6366b489f25282f3e46a7eb3728ad6`。复用既有 `/run/secrets/animation-method-agent/token`，只追加 `--historical-method-agent-token-file` 参数及该路径，不新增Secret或挂载。单creation变更镜像、发布注解和这两个参数；其它业务、Agent、lab、OAuth及Casdoor规格和Pod保持。新Pod `video-animation-creation-ffdcf9b7c-dxk8c` Ready、0重启。
+
+首轮operator复用了旧验收的10／22／4固定数量断言，在preflight即停止，没有Docker构建或部署。当前真实基线为7个效果、16条可见实验、14条有样片实验、4条legacy隐藏及4项回收站；持久委托28／操作106／render账本50，creation数据库仍17个。后续operator保留原失败，改以本次完整catalog／trash投影、旧隐藏身份、逐表schema和行指纹作精确前后比较，不再把旧样片数量当永久规格；无活动／未知状态要求保持。基线SHA为 `c7ff570353bbc7d4b8e76360071e97b6b438c0a748ae4138c0c86fed6d30d709`，17库指纹SHA为 `2433a81c0ce3a824d94a3ab87fb5d6544e9a8a773e12b558be3bf28b2f640dd7`，构建和发布前后均保持。
+
+发布后从新镜像、生产参数和原凭据真实调用 `create_server`，使用私有临时root且禁用所有执行泵，仅对原目标成员及原渲染账本执行只读 `stopped()`。十次旧caller Agent GET和四次render停止证明全部通过，耗时0.214秒，当前Skill caller查询为零且仍用于新创作。没有执行删除／恢复／取消／业务POST，没有模型／TTS／渲染或Skill发布；因此结论是已恢复停止核验，用户仍需在网页明确确认删除，不写作已代删作品。17个库、当前完整目录／回收站及其它服务保持；L.4据此完成，未合主线。
+
+最终目录回读确认目标效果仍可见，`deletion.allowed=true`、`member_count=2`、无拒绝原因，下一次删除仍会重新核验停止。既有D盘研究目录保存 `creation-historical-stop-{build,rollout,reader,before,after,patch}-r1.json` 和 `creation-historical-stop-r1-baseline.json`；服务器既定OPS保存 `creation-historical-stop-r1-release/build-completed.json` 与 `creation-historical-stop-r1-verification/completed.json`。operator SHA为 `0bdc2301bad411ef9a90e50a504494d8e1d2ca6fe854160f44fc03dd4b1ca5f3`；首次preflight失败及v1脚本另留原件。OpenSpec L.4已勾选，validate及设计／任务精确回读通过，revision为 `89a91f72168e3d34a7c42feb6cdd8b3b3bc4769d`；其它待办未代勾。
