@@ -98,10 +98,11 @@ test('observed Manim resources appear in creation cards and filters independentl
 
 function labelDocument() {
   class Element {
-    constructor(tag){this.tagName=tag;this.dataset={};this.children=[];this.ownText='';}
+    constructor(tag){this.tagName=tag;this.dataset={};this.children=[];this.ownText='';this.handlers={};this.checked=false;this.disabled=false;this.hidden=false;}
     set textContent(value){this.ownText=String(value);this.children=[];}
     get textContent(){return this.ownText+this.children.map(row=>row.textContent).join('');}
     append(...nodes){this.children.push(...nodes);}
+    addEventListener(event,handler){this.handlers[event]=handler;}
   }
   return {createElement:tag=>new Element(tag)};
 }
@@ -174,4 +175,146 @@ test('Manim resource request is opt-in and bounded independently of total durati
     assert.throws(()=>resourceAuthoringRequest({use_manim_resource:'on',manim_resource_seconds:duration},24));
   }
   assert.throws(()=>resourceAuthoringRequest({use_manim_resource:'on',manim_resource_seconds:'2.5'},2));
+});
+
+function authoringForm() {
+  const doc=labelDocument(),form=doc.createElement('form');
+  doc.getElementById=id=>id==='experiment-form'?form:null;
+  const controls=mountAuthoringControls(doc,()=>{});
+  const all=()=>{
+    const entries=[];
+    const walk=node=>{entries.push(node);for(const child of node.children)walk(child);};
+    walk(form);return entries;
+  };
+  return {doc,form,controls,all,input:name=>all().find(row=>row.tagName==='input'&&row.name===name),
+    fields:()=>Object.fromEntries(all().filter(row=>row.tagName==='input'&&!row.disabled
+      &&(row.type!=='checkbox'||row.checked)).map(row=>[row.name,row.type==='checkbox'?'on':row.value]))};
+}
+const allCapabilities={enabled:true,allowed_engines:['html-svg','canvas','three'],
+  motion_tools:['native-js','gsap','animejs'],resource_authoring:{manim:{enabled:true}},
+  authoring_libraries:{animejs:{version:'4.5.0'}}};
+
+test('new experiments expose two peer capability groups with automatic selection and no Manim parent disclosure',()=>{
+  const view=authoringForm(),groups=view.all().filter(row=>row.tagName==='fieldset');
+  assert.deepEqual(groups.map(row=>row.children[0].textContent),['画面创作','动作编排']);
+  assert.deepEqual(groups.map(row=>row.dataset.capabilityLayer),['creation','motion']);
+  assert.deepEqual(groups.map(row=>row.children.filter(child=>child.tagName==='label')
+    .filter(child=>child.children[0]?.type==='checkbox').map(child=>child.children[1].textContent)),
+  [['HTML/SVG','Canvas 2D','Three.js','Manim'],['原生 JavaScript','GSAP','Anime.js']]);
+  assert.equal(view.all().some(row=>row.tagName==='details'),false);
+  assert.equal(view.all().some(row=>row.name==='use_manim_resource'),false);
+  assert.equal(view.all().filter(row=>row.type==='checkbox').every(row=>!row.checked&&row.disabled),true);
+  assert.match(groups[0].textContent,/自动选择/);assert.match(groups[1].textContent,/自动选择/);
+  view.controls.update(allCapabilities,false);
+  assert.deepEqual(resourceAuthoringRequest(view.fields(),24),{});
+});
+
+test('independent checkbox names preserve multi-axis combinations through Object.fromEntries form collection',()=>{
+  const view=authoringForm();view.controls.update(allCapabilities,false);
+  const names=view.all().filter(row=>row.type==='checkbox').map(row=>row.name);
+  assert.equal(new Set(names).size,7);
+  for(const name of ['creation_html_svg','creation_canvas','creation_three','motion_gsap','motion_animejs']) {
+    view.input(name).checked=true;view.input(name).handlers.change();
+  }
+  assert.deepEqual(resourceAuthoringRequest(view.fields(),12),{
+    capability_selection:{creation:['html-svg','canvas','three'],motion:['gsap','animejs']}});
+  assert.match(view.all().filter(row=>row.tagName==='fieldset')[0].textContent,/从选中能力中选择或组合/);
+  assert.deepEqual(resourceAuthoringRequest({motion_native_js:'on'},12),{
+    capability_selection:{creation:[],motion:['native-js']}});
+  assert.deepEqual(resourceAuthoringRequest({creation_canvas:true,motion_native_js:'off'},12),{
+    capability_selection:{creation:['canvas'],motion:[]}});
+});
+
+test('Manim settings are subordinate to its creation choice and preserve frame and duration boundaries',()=>{
+  const view=authoringForm();view.controls.update(allCapabilities,false);
+  const manim=view.input('creation_manim'),seconds=view.input('manim_resource_seconds');
+  const length=view.all().find(row=>row.tagName==='label'&&row.children.includes(seconds));
+  assert.equal(length.hidden,true);assert.equal(seconds.disabled,true);
+  manim.checked=true;manim.handlers.change();
+  assert.equal(length.hidden,false);assert.equal(seconds.disabled,false);
+  assert.equal(seconds.min,'.5');assert.equal(seconds.max,'2.5');
+  for(const [value,frames]of [['.5',12],['1.25',30],['2.5',60]]) {
+    seconds.value=value;
+    assert.deepEqual(resourceAuthoringRequest(view.fields(),3),{
+      capability_selection:{creation:['manim'],motion:[]},
+      resource_authoring:{kind:'manim',width:640,height:360,frame_count:frames,global_start_frame:0,seed:17}});
+  }
+  for(const value of ['0.49','2.51','1.01','NaN','']) {
+    seconds.value=value;assert.throws(()=>resourceAuthoringRequest(view.fields(),3),/Manim 片段时长/);
+  }
+  seconds.value='2.5';assert.throws(()=>resourceAuthoringRequest(view.fields(),2),/Manim 片段时长/);
+  manim.checked=false;manim.handlers.change();
+  assert.equal(length.hidden,true);assert.equal(seconds.disabled,true);
+  assert.deepEqual(resourceAuthoringRequest(view.fields(),2),{});
+});
+
+test('server admission controls each checkbox and authoritative motion_tools overrides descriptors and defaults',()=>{
+  const view=authoringForm();
+  view.controls.update({...allCapabilities,allowed_engines:['canvas'],motion_tools:['native-js'],
+    resource_authoring:{manim:{enabled:false}}},false);
+  assert.equal(view.input('creation_canvas').disabled,false);
+  assert.equal(view.input('motion_native_js').disabled,false);
+  for(const name of ['creation_html_svg','creation_three','creation_manim','motion_gsap','motion_animejs']) {
+    assert.equal(view.input(name).disabled,true,name);
+  }
+  view.controls.update({...allCapabilities,motion_tools:[]},false);
+  for(const name of ['motion_native_js','motion_gsap','motion_animejs'])assert.equal(view.input(name).disabled,true);
+  view.controls.update({...allCapabilities,enabled:false},false);
+  assert.equal(view.all().filter(row=>row.type==='checkbox').every(row=>row.disabled),true);
+});
+
+test('older catalogs expose fixed HTML GSAP and only a ready declared Anime.js library',()=>{
+  const view=authoringForm(),older={enabled:true,allowed_engines:['html-svg']};
+  view.controls.update(older,false);
+  assert.equal(view.input('motion_native_js').disabled,false);
+  assert.equal(view.input('motion_gsap').disabled,false);
+  assert.equal(view.input('motion_animejs').disabled,true);
+  for(const descriptor of [false,{}, {version:'4.5.0',enabled:false}]) {
+    view.controls.update({...older,authoring_libraries:{animejs:descriptor}},false);
+    assert.equal(view.input('motion_animejs').disabled,true);
+  }
+  view.controls.update({...older,authoring_libraries:{animejs:{version:'4.5.0'}}},false);
+  assert.equal(view.input('motion_animejs').disabled,false);
+  view.controls.update({...older,authoring_libraries:{gsap:{version:'3.14.2',enabled:false}}},false);
+  assert.equal(view.input('motion_gsap').disabled,true);
+});
+
+test('continuations restore both axes and Manim duration while busy state preserves the choices',()=>{
+  const view=authoringForm();view.controls.update(allCapabilities,false);
+  view.controls.resetExperiment({kind:'manim',frame_count:30},{creation:['html-svg','manim'],motion:['animejs']});
+  assert.equal(view.input('creation_html_svg').checked,true);
+  assert.equal(view.input('creation_manim').checked,true);
+  assert.equal(view.input('creation_canvas').checked,false);
+  assert.equal(view.input('motion_animejs').checked,true);
+  assert.equal(view.input('motion_gsap').checked,false);
+  assert.equal(view.input('manim_resource_seconds').value,'1.25');
+  view.controls.update(allCapabilities,true);
+  assert.equal(view.all().filter(row=>row.type==='checkbox').every(row=>row.disabled),true);
+  assert.equal(view.input('creation_manim').checked,true);
+  assert.equal(view.input('manim_resource_seconds').disabled,true);
+  view.controls.update(allCapabilities,false);
+  assert.equal(view.input('manim_resource_seconds').disabled,false);
+  view.controls.resetExperiment(null,null,{collaboration:false});
+  assert.equal(view.all().filter(row=>row.type==='checkbox').every(row=>!row.checked),true);
+  assert.deepEqual(resourceAuthoringRequest(view.fields(),24),{});
+});
+
+test('collaboration keeps all admitted browser choices and motion tools while excluding only Manim resources',()=>{
+  const view=authoringForm();view.controls.update(allCapabilities,false);
+  view.controls.resetExperiment({kind:'manim',frame_count:48},{creation:['canvas','three','manim'],motion:['animejs']});
+  view.controls.update(allCapabilities,false,{collaboration:true});
+  assert.equal(view.input('creation_manim').disabled,true);
+  assert.equal(view.input('creation_manim').checked,false);
+  assert.equal(view.input('manim_resource_seconds').disabled,true);
+  for(const name of ['creation_html_svg','creation_canvas','creation_three','motion_native_js','motion_gsap','motion_animejs']) {
+    assert.equal(view.input(name).disabled,false,name);
+  }
+  assert.deepEqual(resourceAuthoringRequest(view.fields(),12),{
+    capability_selection:{creation:['canvas','three'],motion:['animejs']}});
+  assert.match(view.form.textContent,/协作创作可使用已开放的 HTML\/SVG、Canvas 2D 和 Three\.js/);
+  assert.match(view.form.textContent,/Manim 预制资源暂未接入协作/);
+  view.controls.resetExperiment(null,{creation:['html-svg'],motion:['gsap']},{collaboration:false});
+  assert.equal(view.input('creation_manim').disabled,false);
+  assert.deepEqual(resourceAuthoringRequest(view.fields(),12),{
+    capability_selection:{creation:['html-svg'],motion:['gsap']}});
 });

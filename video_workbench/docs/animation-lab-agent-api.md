@@ -31,7 +31,7 @@ curl --fail-with-body --cookie cookies.txt \
   --output catalog.json
 ```
 
-从返回 JSON 读取 `availability.enabled`、已有 `commissions` 及 `csrf_token`。`enabled: false` 表示当前执行器不可用；目录仍可读取。若返回登录重定向或 HTML，请先重新授权，不要把登录页当作成功的目录。
+从返回 JSON 读取 `availability.enabled`、已有 `commissions` 及 `csrf_token`。`enabled: false` 表示当前执行器不可用；目录仍可读取。`availability.allowed_engines`、`availability.motion_tools` 和 `availability.resource_authoring.manim.enabled` 分别声明浏览器画面能力、动作工具及 Manim 资源的实际准入。若返回登录重定向或 HTML，请先重新授权，不要把登录页当作成功的目录。
 
 创建 `request.json`：
 
@@ -62,7 +62,7 @@ curl --fail-with-body --cookie cookies.txt \
 }
 ```
 
-上面是需要合入完整请求的字段片段。`max_components` 为 2–4 的整数；新建时显式开启，继续优化或重新运行可继承原协作配置。首版仅支持 Canvas 2D，不能与 Manim 预制资源或迁移任务合用。统筹先规划、部件分别创作、再整合为一条完整样片，调用方无需管理图层或单独发布部件。初版只制作一版，因此新建、继续优化或重新运行的 `budget.max_rounds` 均必须为 1；全部工作共用本次总时限，建议 1800 秒。预算最多包含 `max_components+2` 个创作任务（统筹、最多指定数量的部件、整合），另有 1 次样片渲染和 1 次评审。实际规划可少于上限；不要把上限当作实际消耗。`availability.collaboration` 为 `false` 或未返回时，不得提交此字段。
+上面是需要合入完整请求的字段片段。`max_components` 为 2–4 的整数；新建时显式开启，继续优化或重新运行可继承原协作配置。协作支持已准入的 HTML/SVG、Canvas 2D 和 Three.js，以 `availability.allowed_engines` 为准；动作编排仍单独检查 `availability.motion_tools`，不能与 Manim 预制资源或迁移任务合用。统筹先规划、部件分别创作、再整合为一条完整样片，调用方无需管理图层或单独发布部件。当前协作一次只制作一版，因此新建、继续优化或重新运行的 `budget.max_rounds` 均必须为 1；全部工作共用本次总时限，建议 1800 秒。预算最多包含 `max_components+2` 个创作任务（统筹、最多指定数量的部件、整合），另有 1 次样片渲染和 1 次评审。实际规划可少于上限；不要把上限当作实际消耗。`availability.collaboration` 为 `false` 或未返回时，不得提交此字段。
 
 ```sh
 curl --fail-with-body --cookie cookies.txt \
@@ -82,6 +82,34 @@ curl --fail-with-body --cookie cookies.txt \
 
 GET 只读，不会启动制作、执行模型、续跑任务或增加轮次。轮询应设定间隔和总等待上限。`202` 只代表提交被接受，不能当作完成或质量认可。
 
+## 两轴创作能力选择
+
+新建实验可省略 `capability_selection`，让 Agent 按目标选择已准入能力。需要约束实验能力时，将以下字段片段加入请求；不需要操作网页表单：
+
+```json
+{
+  "capability_selection": {
+    "creation": ["canvas", "three"],
+    "motion": ["gsap", "animejs"]
+  }
+}
+```
+
+| 维度 | 允许值 | 实际可用性 |
+| --- | --- | --- |
+| `creation` 画面创作 | `html-svg`、`canvas`、`three`、`manim` | 浏览器能力读取 `availability.allowed_engines`，Manim 检查 `availability.resource_authoring.manim.enabled=true` |
+| `motion` 动作编排 | `native-js`、`gsap`、`animejs` | 读取 `availability.motion_tools`；历史标签不能代替当前准入 |
+
+两组并列且可搭配；每组省略或空数组均表示自动，整个字段也可省略。数组不接受重复项或未知名称。非空组单选约束使用该能力，多选允许从所选集合中选择或组合，不要求每项都使用。浏览器画面引擎必须属于所选集合；动作组非空时，承载层必须实质使用至少一种所选工具，不能加载或使用未选的动作库，仅加载依赖也不足以满足要求。违反约束会明确失败。动作都跟随同一 HyperFrames 绝对时钟。
+
+Manim 与 SVG、Canvas、Three.js 同属画面创作，区别是先生成真实资源，再加入样片。选中 Manim 会预制资源并占用相应预算；与其他画面能力混选时，Agent 最终可以不采用已经生成的资源。仅选 `manim` 时，主几何及其变化必须来自真实 Manim 资源，HTML/SVG 只负责辅助标记和构图。Manim 内部使用自己的动画 API；如果同时显式选择浏览器动作工具，承载层仍须满足所选工具的实质使用要求。
+
+当前混选实验生成的方法仍保留 Manim producer 依赖，即使样片最终没有消费该资源；迁移这些方法时仍需相应资源能力可用。实际样片标签独立核对真实消费，不能根据该方法依赖推断样片用了 Manim。
+
+选中 Manim 可省略 `resource_authoring`，服务自动生成默认资源请求：640×360、24 fps、起始帧 0，默认 48 帧或不足 48 帧的视频总帧数。也可以指定 `resource_authoring: {"kind":"manim","frame_count":48,"global_start_frame":0}`。API 允许 1–60 帧，且资源必须处于视频时间线内；网页表单限定片段为 0.5–2.5 秒。非空 `creation` 不含 Manim 时，不能另带 Manim 资源；协作暂不能选择 Manim。
+
+这是实验室及外部 API 的约束，正式视频制作不增加能力选项，由 Agent 根据表达目标与已发布的 WikiSkill 选择。`capability_selection` 是请求意图，不是实际使用证据，更不是视觉质量认可。
+
 ## 状态、结果与下载
 
 | 字段或状态 | 含义 |
@@ -93,6 +121,7 @@ GET 只读，不会启动制作、执行模型、续跑任务或增加轮次。�
 | `summary` / `error` | 结果说明 / 失败代码；可能为空 |
 | `best_candidate_id` | 当前选中的候选，可能为空 |
 | `candidates` | 候选列表，包括 `id`、`media_url`、`source_url`、`technical_status` |
+| `capability_selection` | 本次冻结的公开能力选择；旧自动任务可省略，不代表样片实际使用情况 |
 | `collaboration` | 可选，只读协作进度：`enabled`、`stage`、`components` 的 `id`/`title`/`status`、`completed`/`total`、`author_calls_used`/`author_calls_max` |
 
 `completed` 也可能是预算用完或停止进展；请结合 `stop_reason`、`summary`、`remaining_issues` 和候选结果判断。响应中的 `budget`、`usage`、`remaining` 使用服务内部的 `creator`、`review`、`render`、`seconds` 计数，形状与提交时的预算不同。
@@ -130,6 +159,8 @@ curl --fail-with-body --cookie cookies.txt \
 ```
 
 省略 `base_candidate_id` 时服务选择基线委托的 `best_candidate_id`；基线必须存在且当前用户可访问。省略 `criteria` 时继承基线标准。此请求创建新委托，原委托保留。
+
+继续优化和重新运行省略 `capability_selection` 时，继承原能力选择；显式提交时采用本次选择，提交 `{"creation":[],"motion":[]}` 可恢复自动选择。重新运行失败或取消委托使用新 `request_id` 和 `retry_of_commission_id`，且原执行必须已经确认停止；原关联关系保持继承。相同 `request_id` 重放却改变选择会产生幂等冲突。详情中 `resource_authoring` 是只读资源进度，不是提交参数，不能原样复制到下一次请求。
 
 `reference` 可附 `{ "url": "https://example.com/reference.mp4", "start_seconds": 0, "end_seconds": 8 }`。参考 URL 和片段时间只是需求资料，提交链接不会自动读取或观看原片；需要将关键视觉特征、节奏和希望达到的效果写入 `goal` 或 `feedback`。
 

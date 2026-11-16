@@ -1,4 +1,4 @@
-"""One source-only recipe and one isolated resource operation per experiment.
+"""One source-only recipe and one isolated resource operation per resource task.
 
 The method author keeps its existing role. This durable prelude prepares exact
 assets before its normal plan/create/review loop. Reads never execute work.
@@ -115,6 +115,82 @@ class ManimMethodCoordinator:
         require(value is not None and value['state'] == 'completed', 'manim_method_resource_not_ready', 409)
         return deepcopy(value['descriptor'])
 
+    def source_context(self, owner, descriptor):
+        """Read the exact stopped recipe behind an owned resource, not its PNGs.
+
+        A new experiment may learn from this input, but must still author and
+        execute its own recipe. Reading it never starts or reopens a task.
+        """
+        require(type(descriptor) is dict and type(descriptor.get('scope')) is dict
+            and descriptor['scope'].get('owner') == owner,
+            'manim_method_iteration_not_owned', 409)
+        value = self._get(owner, descriptor['scope'].get('experiment_id'))
+        require(value is not None and value['state'] == 'completed'
+            and value['scope'] == descriptor['scope'] and value['descriptor'] == descriptor,
+            'manim_method_iteration_not_owned', 409)
+        recipe = value['recipe']['result']
+        plan = value['plan']
+        require(recipe['request'] == plan['request'] == value['envelope']['request']
+            and digest(recipe) == plan['recipe_result_sha256']
+            and digest(value['input']) == plan['recipe_input_sha256'],
+            'manim_method_iteration_recipe_changed', 409)
+        return dict(schema='video.manim-method-source-context.v1',
+            scope=deepcopy(value['scope']), descriptor_sha256=descriptor['sha256'],
+            recipe_input_sha256=plan['recipe_input_sha256'],
+            recipe_result_sha256=plan['recipe_result_sha256'],
+            request=deepcopy(recipe['request']),
+            strategy=deepcopy(recipe.get('strategy')),
+            skill_decisions=deepcopy(recipe.get('skill_decisions', [])))
+
+    def recipe_guidance(self, owner, frozen):
+        """Carry authored code and exact feedback through the frozen v1 field.
+
+        Preserve old task inputs when no iteration context was frozen. Refuse
+        oversized context instead of silently dropping code or user feedback.
+        """
+        feedback = frozen.get('feedback', '')
+        iteration = frozen.get('manim_iteration')
+        selection = frozen.get('capability_selection')
+        if iteration is None and selection is None:
+            return feedback
+        iteration = {} if iteration is None else iteration
+        fields = {'baseline_descriptor', 'criteria', 'methods', 'review', 'developer_feedback'}
+        require(type(iteration) is dict and set(iteration) <= fields,
+            'manim_method_iteration_invalid')
+        for name in ('criteria', 'methods', 'developer_feedback'):
+            require(name not in iteration or type(iteration[name]) is list,
+                'manim_method_iteration_invalid')
+        require('review' not in iteration or iteration['review'] is None
+            or type(iteration['review']) is dict, 'manim_method_iteration_invalid')
+        context = {key: deepcopy(item) for key, item in iteration.items() if key != 'baseline_descriptor'}
+        if 'baseline_descriptor' in iteration:
+            context['baseline'] = self.source_context(owner, iteration['baseline_descriptor'])
+        if selection is not None:
+            from .animation_creation_selection import normalize_selection
+            context['capability_selection'] = normalize_selection(selection)
+        context.update(schema='video.manim-method-iteration.v1', feedback=feedback)
+        instruction = (
+            'Author the Manim Python scene for this experiment, using the exact previous recipe, '
+            'criteria, feedback and review below where supplied. Improve the Manim expression '
+            'itself rather than only changing its HTML wrapper. Write a complete new recipe under '
+            'the current resource_constraints; previous resource IDs and PNGs are not reusable '
+            'knowledge. Prior methods and Skills here are candidate learning context, not new '
+            'publication or evidence of quality. Keep observed findings distinct from intentions '
+            'and unverified motion/audio. The host will separately render the newly authored scene.\n')
+        if selection is not None:
+            instruction = instruction.removesuffix('\n') + (
+                ' The capability_selection groups describe drawing and browser motion separately; '
+                'empty groups let the Agent choose and multiple values allow composition. Manim '
+                'creates the geometric objects and their internal animation with native Manim APIs. '
+                'If Manim is the only drawing choice, its scene must supply the primary geometry '
+                'and transformation; HTML/SVG is only a carrier for composition or supporting labels. '
+                'The motion selections native-js, GSAP and Anime.js apply to the browser carrier, '
+                'not to Python. Do not import JavaScript libraries or fake browser timelines inside '
+                'the Manim recipe. Respect the current local frame constraints.\n')
+        guidance = instruction + canonical_bytes(context).decode('utf-8')
+        require(len(guidance) <= 16000, 'manim_method_iteration_context_too_large', 413)
+        return guidance
+
     def advance(self, owner, run, *, cancelled=False):
         """One transition; caller holds the existing cross-process run lock."""
         commission = run['id']
@@ -128,7 +204,7 @@ class ManimMethodCoordinator:
             bounds = dict(resource_id='resource_' + digest(operation)[:24], fps=24, transparent=True,
                 manim_version=MANIM_VERSION, **{key: item for key, item in options.items() if key != 'kind'})
             task = validate_core_task(dict(effect_id=commission, goal=run['frozen']['goal'],
-                guidance=run['frozen'].get('feedback', ''), resource_constraints=bounds))
+                guidance=self.recipe_guidance(owner, run['frozen']), resource_constraints=bounds))
             delivery = self.skill_adapter.freeze(owner, operation, task, ['html-svg'],
                 resource_authoring=PRODUCER_REQUIREMENT,
                 **({'library_binding': run['library_binding']} if 'library_binding' in run else {}))

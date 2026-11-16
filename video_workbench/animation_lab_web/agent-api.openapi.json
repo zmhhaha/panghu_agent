@@ -3,7 +3,7 @@
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "info": {
     "title": "动画效果库外部 Agent API",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "description": "现有 REST JSON API 的外部 Agent 支持子集：目录、异步制作、状态、反馈、取消、视频及源码下载。沿用 OAuth 登录 Cookie 和开发者权限；不支持 Bearer，独立长期机器凭据尚未实现。Cookie 文件由用户安全提供，调用方不读取或导出浏览器凭据。POST 还必须提供公网同源 Origin、catalog.csrf_token 和 application/json。GET 只读，不启动或推进执行。未列出的响应字段属于服务扩展，调用方应忽略。发布与人类验收不属于本合同。",
     "x-guide-url": "https://video-service.panghuer.top/dev/animations/agent-api.html",
     "x-client-url": "https://video-service.panghuer.top/dev/animations/agent-api-client.py"
@@ -66,6 +66,22 @@
                 "duration_seconds": 18,
                 "budget": {"max_rounds": 1, "max_seconds": 1800},
                 "collaboration": {"max_components": 3}
+              }},
+              "selectedCapabilities": {"summary": "两轴显式约束；先核对 catalog 准入，多选允许选择或组合", "value": {
+                "request_id": "dbdc386e-254d-427a-b331-96a2865fac3e",
+                "title": "群体响应的节奏",
+                "goal": "从可辨认个体到协同群体，建立清楚的触发、依次响应和稳定收束。",
+                "duration_seconds": 12,
+                "budget": {"max_rounds": 2, "max_seconds": 1200},
+                "capability_selection": {"creation": ["html-svg", "canvas"], "motion": ["animejs"]}
+              }},
+              "manimCreation": {"summary": "选 Manim 时可省略资源参数，由服务生成默认真实资源请求", "value": {
+                "request_id": "a6422951-e3f9-4726-ae03-e146bba9ad7a",
+                "title": "剪切前后面积不变",
+                "goal": "以真实 Manim 几何变形表现底和高保持不变；HTML/SVG 仅辅助标注和整体构图。",
+                "duration_seconds": 4,
+                "budget": {"max_rounds": 2, "max_seconds": 1800},
+                "capability_selection": {"creation": ["manim"], "motion": []}
               }},
               "continueCandidate": {"summary": "候选和委托 ID 应替换为实际返回值", "value": {
                 "request_id": "bb8c0924-41c1-4da1-b2b5-c0e038ca7741",
@@ -268,7 +284,7 @@
       },
       "CollaborationRequest": {
         "type": "object", "required": ["max_components"], "additionalProperties": false,
-        "description": "新建实验仅显式提供时启用；继续优化或重新运行可继承原协作配置。先检查 availability.collaboration=true；budget.max_rounds 必须为 1。初版仅支持 Canvas，不与 Manim 预制资源或迁移任务合用。统筹、最多 max_components 个部件与整合共最多 max_components+2 个创作任务，另有 1 次样片渲染和 1 次评审，均计入本次总时限；建议 max_seconds=1800。不为部件创建独立效果。",
+        "description": "新建实验仅显式提供时启用；继续优化或重新运行可继承原协作配置。先检查 availability.collaboration=true；budget.max_rounds 必须为 1。当前支持 HTML/SVG（html-svg）、Canvas 2D（canvas）和 Three.js（three），具体以 availability.allowed_engines 和本次任务冻结的准入能力为准。画面创作与动作编排是两个维度；GSAP/Anime.js 等编排库仍需分别准入，并遵循绝对时钟规范。协作暂不与 Manim 预制资源或迁移任务合用。统筹、最多 max_components 个部件与整合共最多 max_components+2 个创作任务，另有 1 次样片渲染和 1 次评审，均计入本次总时限；建议 max_seconds=1800。不为部件创建独立效果。",
         "properties": {"max_components": {"type": "integer", "minimum": 2, "maximum": 4}}
       },
       "CollaborationProgress": {
@@ -287,6 +303,31 @@
           }}}
         }
       },
+      "CapabilitySelection": {
+        "type": "object", "additionalProperties": false,
+        "description": "实验室的创作约束，不是已使用能力或效果认可证据。整字段省略为自动；某组省略或空数组时由 Agent 在已准入能力中自选。非空组单选必须实质使用该项；多选允许从所选集合选择或组合，不要求每项装饰性使用。画面 browser engine 必须属于选择集合；仅选 Manim 时允许 HTML/SVG 辅助承载，主几何及其变换来自真实预制资源。动作必须实质使用至少一种所选工具，不得加载或使用未选的动作库；依赖加载不等于实质使用。正式视频制作不增加此选项，由 Agent 按发布的 WikiSkill 选择。",
+        "properties": {
+          "creation": {"type": "array", "maxItems": 4, "uniqueItems": true,
+            "items": {"type": "string", "enum": ["html-svg", "canvas", "three", "manim"]},
+            "description": "画面创作：HTML/SVG、Canvas 2D、Three.js、Manim；前三项以 availability.allowed_engines 为准，Manim 以 availability.resource_authoring.manim.enabled 为准。选中 Manim 会预先制作真实资源并占用资源预算；与其他画面能力混选时，Agent 最终可以不采用已预制的资源。仅选 Manim 时必须真实使用资源表达主几何。"},
+          "motion": {"type": "array", "maxItems": 3, "uniqueItems": true,
+            "items": {"type": "string", "enum": ["native-js", "gsap", "animejs"]},
+            "description": "动作编排：原生 JavaScript、GSAP、Anime.js；以 availability.motion_tools 为准，遵循同一 HyperFrames 绝对时钟。Manim 自身运动不要求额外指定浏览器编排库。"}
+        },
+        "examples": [{"creation": ["canvas"], "motion": ["animejs"]}, {"creation": ["html-svg", "three"], "motion": []}, {}]
+      },
+      "ManimResourceAuthoring": {
+        "type": "object", "required": ["kind"], "additionalProperties": false,
+        "description": "可选的真实 Manim 预制资源参数。选中 Manim 未提供此对象时，服务默认 640×360、从第 0 帧开始，片段为 min(48, 视频总帧数) 帧。所有资源按 24 fps，起始帧加片段帧数不能超过视频总帧数，且受服务解码内存上限约束。API 允许 1–60 帧，网页表单进一步限定 0.5–2.5 秒。非空 creation 不含 Manim 时不能同时提供此对象。",
+        "properties": {
+          "kind": {"type": "string", "const": "manim"},
+          "width": {"type": "integer", "minimum": 320, "maximum": 1280, "default": 640},
+          "height": {"type": "integer", "minimum": 180, "maximum": 720, "default": 360},
+          "frame_count": {"type": "integer", "minimum": 1, "maximum": 60, "default": 48},
+          "global_start_frame": {"type": "integer", "minimum": 0, "maximum": 14400, "default": 0},
+          "seed": {"type": "integer", "minimum": 0, "maximum": 4294967295, "default": 17}
+        }
+      },
       "CommissionRequest": {
         "type": "object", "required": ["request_id", "goal", "budget"], "additionalProperties": false,
         "description": "对外支持的提交子集，禁止提交身份、运行环境或发布验收字段。可选字段请省略而非传 null。",
@@ -297,16 +338,30 @@
           "duration_seconds": {"type": "number", "minimum": 1, "maximum": 60, "default": 18, "description": "24 fps 整帧边界，即 duration_seconds * 24 必须为整数。"},
           "budget": {"$ref": "#/components/schemas/BudgetRequest"},
           "collaboration": {"$ref": "#/components/schemas/CollaborationRequest"},
+          "capability_selection": {"$ref": "#/components/schemas/CapabilitySelection"},
+          "resource_authoring": {"$ref": "#/components/schemas/ManimResourceAuthoring"},
           "criteria": {"$ref": "#/components/schemas/Criteria"},
           "reference": {"$ref": "#/components/schemas/Reference"},
           "base_commission_id": {"$ref": "#/components/schemas/Identifier"},
           "base_candidate_id": {"$ref": "#/components/schemas/Identifier", "description": "须属于 base_commission_id；省略则采用基线 best_candidate_id。"},
+          "retry_of_commission_id": {"$ref": "#/components/schemas/Identifier", "description": "新 request_id 重新运行已失败或取消、且原执行已确认停止的委托。关联关系继承原委托；capability_selection 省略时继承，显式提交时采用本次选择，提交两个空数组可恢复自动选择。同一 request_id 重放时不得改变请求内容。"},
           "feedback": {"type": "string", "maxLength": 16000, "description": "继续优化的改进目标，不等同于单独保存 feedback 意见。"}
         },
         "dependentRequired": {"base_candidate_id": ["base_commission_id"]},
-        "allOf": [{"if": {"required": ["collaboration"]}, "then": {
-          "properties": {"budget": {"properties": {"max_rounds": {"const": 1}}}}
-        }}]
+        "allOf": [
+          {"if": {"required": ["collaboration"]}, "then": {
+            "properties": {
+              "budget": {"properties": {"max_rounds": {"const": 1}}},
+              "capability_selection": {"properties": {"creation": {"not": {"contains": {"const": "manim"}}}}}
+            },
+            "not": {"required": ["resource_authoring"]}
+          }},
+          {"if": {"required": ["capability_selection"], "properties": {
+            "capability_selection": {"required": ["creation"], "properties": {
+              "creation": {"minItems": 1, "not": {"contains": {"const": "manim"}}}
+            }}
+          }}, "then": {"not": {"required": ["resource_authoring"]}}}
+        ]
       },
       "BudgetCounters": {
         "type": "object", "additionalProperties": true,
@@ -345,6 +400,8 @@
               "schema": {"type": "string", "const": "video.animation-method-lab-detail.v1"},
               "duration_seconds": {"type": "number"},
               "collaboration": {"anyOf": [{"$ref": "#/components/schemas/CollaborationProgress"}, {"type": "null"}]},
+              "capability_selection": {"$ref": "#/components/schemas/CapabilitySelection", "description": "公开的本次冻结选择。旧的自动任务可能省略；这是请求约束，不是样片实际使用能力或质量判断。继续优化及重新运行时可按原选择继承。"},
+              "resource_authoring": {"type": "object", "additionalProperties": true, "description": "只读资源进度，形状不同于提交的 ManimResourceAuthoring；不要把此对象直接当成下一次请求参数。", "properties": {"kind": {"type": "string", "const": "manim"}, "status": {"type": "string"}, "error": {"type": ["string", "null"]}}},
               "criteria": {"type": "array", "items": {"$ref": "#/components/schemas/Criterion"}, "description": "规划完成前可能为空。"},
               "candidates": {"type": "array", "items": {"$ref": "#/components/schemas/Candidate"}},
               "budget": {"$ref": "#/components/schemas/BudgetCounters"},
@@ -361,7 +418,15 @@
         "type": "object", "required": ["effects", "commissions", "availability", "csrf_token"], "additionalProperties": true,
         "properties": {
           "csrf_token": {"type": "string", "minLength": 1, "description": "敏感防伪 token，只用于 POST 头，不记录日志；Python 客户端的 catalog 输出隐藏它。"},
-          "availability": {"type": "object", "required": ["enabled"], "additionalProperties": true, "properties": {"enabled": {"type": "boolean"}, "collaboration": {"type": "boolean", "description": "仅 true 表示协作创作已准入；false 或未返回时不得提交 collaboration。"}, "reason": {"type": ["string", "null"]}, "allowed_engines": {"type": "array", "items": {"type": "string"}}}},
+          "availability": {"type": "object", "required": ["enabled"], "additionalProperties": true, "properties": {
+            "enabled": {"type": "boolean"},
+            "collaboration": {"type": "boolean", "description": "仅 true 表示协作创作已准入；false 或未返回时不得提交 collaboration。"},
+            "reason": {"type": ["string", "null"]},
+            "allowed_engines": {"type": "array", "uniqueItems": true, "items": {"type": "string", "enum": ["html-svg", "canvas", "three"]}},
+            "motion_tools": {"type": "array", "uniqueItems": true, "items": {"type": "string", "enum": ["native-js", "gsap", "animejs"]}, "description": "由当前可信固定资产和运行时准入计算的真实可用动作编排工具。GSAP/Anime.js 不能从历史样片标签推断。未返回时调用方不要推断额外库已经准入。"},
+            "resource_authoring": {"type": "object", "additionalProperties": true, "properties": {"manim": {"type": "object", "additionalProperties": true, "properties": {"enabled": {"type": "boolean"}, "status": {"type": "string"}, "max_frames": {"type": "integer", "maximum": 60}}}}},
+            "authoring_libraries": {"type": "object", "additionalProperties": true, "description": "已准入库的固定版本描述；可用动作列表仍以 motion_tools 为准。"}
+          }},
           "effects": {"type": "array", "items": {"type": "object", "additionalProperties": true, "properties": {"id": {"type": "string"}, "title": {"type": "string"}, "open_commission_id": {"type": ["string", "null"]}}}},
           "commissions": {"type": "array", "items": {"$ref": "#/components/schemas/CommissionSummary"}}
         }

@@ -197,6 +197,26 @@ def _has_native_motion(code):
     return False
 
 
+def _has_manim_clock_motion(code, references):
+    """Recognize a local Manim layer whose frame is driven from the seek clock.
+
+    This is source evidence only. Its caller must also bind an observed real
+    Manim resource to the rendered source before reporting an accepted tool.
+    """
+    if '/assets/manim_method_frames.mjs' not in references:
+        return False
+    layers = re.findall(r'\b(?:const|let)\s+(' + _NAME
+        + r')\s*=\s*prepareManimMethodFrames\s*\(', code)
+    for layer in layers:
+        # Reuse the existing clock taint traversal; only this exact local
+        # factory result gains the visual frame-update operation.
+        adapted = re.sub(r'\b' + re.escape(layer) + r'\s*\.\s*seekFrame\s*\(',
+                         layer + '.drawImage(', code)
+        if adapted != code and _has_native_motion(adapted):
+            return True
+    return False
+
+
 def motion_orchestration(candidate, demonstration):
     """Inspect source only after exact media/render admission has been bound."""
     source = candidate.get('source')
@@ -234,7 +254,8 @@ def motion_orchestration(candidate, demonstration):
     # Unverified library use and autonomous CSS/WAAPI are not native evidence.
     if uses_gsap or re.search(r'\bcreateFrameTimeline\s*\(|\.\s*(?:renderAt|animate)\s*\(', code):
         return []
-    if _has_native_motion(code):
+    if (_has_native_motion(code)
+            or (any(row['id'] == 'manim' for row in tools) and _has_manim_clock_motion(code, references))):
         return [dict(id='native-js', label='原生 JavaScript', status='source_verified',
             evidence_scope='source_inspection_not_visual_acceptance', **common)]
     return []

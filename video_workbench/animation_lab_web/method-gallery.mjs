@@ -147,6 +147,9 @@ export function buildCommissionRequest(fields, requestId) {
     if (fields.base_candidate_id) body.base_candidate_id = text(fields.base_candidate_id);
   }
   Object.assign(body, resourceAuthoringRequest(fields, body.duration_seconds));
+  // An edited continuation must distinguish clearing the choices from asking
+  // the API to inherit omitted fields from its baseline.
+  if (body.base_commission_id || retryOf) body.capability_selection ??= {creation: [], motion: []};
   const explicitCollaboration = fields.collaboration_enabled === true || fields.collaboration_enabled === 'on';
   if (explicitCollaboration || fields.collaboration_inherited === true) {
     if (fields.transfer_commission_id) throw Error('按职责分工创作目前不支持迁移验证');
@@ -478,6 +481,21 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   head.append(heading); fragment.append(head);
   const collaboration = renderCollaborationProgress(doc, detail);
   if (collaboration) fragment.append(collaboration);
+  const referenceUrl = text(detail.reference?.url).trim();
+  if (referenceUrl) {
+    const section = panel(doc, '参考视频与片段'), source = element(doc, 'p', 'method-reference-link');
+    let url; try { url = new URL(referenceUrl); } catch {}
+    if (url && ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password) {
+      const link = element(doc, 'a', '', referenceUrl);
+      link.href = url.href; link.target = '_blank'; link.rel = 'noopener noreferrer'; source.append(link);
+    } else source.textContent = referenceUrl;
+    section.append(source);
+    const start = detail.reference.start_seconds, end = detail.reference.end_seconds;
+    if (Number.isFinite(start) && start >= 0 && Number.isFinite(end) && end > start) {
+      section.append(element(doc, 'p', 'small muted', '参考片段：' + start + '–' + end + ' 秒'));
+    }
+    fragment.append(section);
+  }
   const history = rows(detail.effect?.commissions);
   if (history.length) {
     const section = disclosure('effect-history', '版本与实验记录（' + history.length + '）');
@@ -720,6 +738,9 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     checkbox.disabled = Boolean(continuation) || !available || controller.state.busy || Boolean(controller.state.pending) || Boolean(recycle?.locked);
     unavailable.hidden = available;
     if ((!available || continuation) && checkbox.checked) { checkbox.checked = false; applyCollaborationBudget(); }
+    authoringControls.update(controller.state.catalog?.availability,
+      controller.state.busy || Boolean(controller.state.pending) || Boolean(recycle?.locked),
+      {collaboration: continuation?.collaboration_inherited === true || checkbox.checked});
   };
   const feedbackDrafts = new Map(), comparisonStates = new Map(), disclosureStates = new Map();
   const releaseComparison = () => {
@@ -778,17 +799,20 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     $('experiment-form').reset();
     if ($('experiment-collaboration')) $('experiment-collaboration').checked = false;
     collaborationBudget = null; $('experiment-rounds').readOnly = false;
-    authoringControls.resetExperiment(detail?.resource_authoring);
+    authoringControls.resetExperiment(detail?.resource_authoring, detail?.capability_selection,
+      {collaboration: continuation?.collaboration_inherited === true});
+    if (detail) {
+      $('experiment-duration').value = String(isRetry && Number.isFinite(detail.duration_seconds)
+        && detail.duration_seconds >= 2 && detail.duration_seconds <= 60 ? detail.duration_seconds : continuationDuration(detail, candidateId));
+      $('experiment-reference').value = text(detail.reference?.url);
+      $('experiment-reference-start').value = detail.reference?.start_seconds ?? '';
+      $('experiment-reference-end').value = detail.reference?.end_seconds ?? '';
+    }
     for (const id of ['reference', 'reference-start', 'reference-end']) {
       $('experiment-' + id).disabled = transferSkills;
       if (transferSkills) $('experiment-' + id).value = '';
     }
-    if (detail) $('experiment-duration').value = String(isRetry && Number.isFinite(detail.duration_seconds)
-      && detail.duration_seconds >= 2 && detail.duration_seconds <= 60 ? detail.duration_seconds : continuationDuration(detail, candidateId));
     if (isRetry) {
-      $('experiment-reference').value = text(detail.reference?.url);
-      $('experiment-reference-start').value = detail.reference?.start_seconds ?? '';
-      $('experiment-reference-end').value = detail.reference?.end_seconds ?? '';
       $('experiment-rounds').value = '1';
       $('experiment-rounds').closest('details').open = true;
       const seconds = Number(detail.retry_budget?.max_seconds ?? detail.budget?.seconds);
@@ -872,7 +896,6 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     $('gallery-availability').textContent = state.catalog ? enabled ? '按目标自主探索，完成后查看最佳样片、改进依据与尚存问题。'
       : state.catalog.availability.reason || '制作服务尚未就绪，可查看已有样片。' : '正在读取效果库…';
     $('gallery-engine-availability').textContent = state.catalog ? engineAvailability(state.catalog.availability) : '';
-    authoringControls.update(state.catalog?.availability, state.busy || Boolean(state.pending) || Boolean(recycle?.locked));
     updateCollaborationControl();
     renderCards();
     if (!formPanel.hidden) return;
@@ -971,7 +994,6 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     if (controller.state.detail) controller.emit();
   });
   $('experiment-collaboration')?.addEventListener('change', () => {
-    if ($('experiment-collaboration').checked) authoringControls.resetExperiment(null);
     updateCollaborationControl(); applyCollaborationBudget();
   });
   $('gallery-search').addEventListener('input', renderCards);
@@ -985,6 +1007,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     event.preventDefault();
     if (continuation?.ui_preview || recycle.locked || controller.state.catalog?.availability.enabled !== true) return;
     const fields = Object.fromEntries(new FormData($('experiment-form')));
+    Object.assign(fields, authoringControls.requestFields);
     if (continuation) Object.assign(fields, {criteria_metadata: continuation.criteria,
       collaboration_inherited: continuation.collaboration_inherited,
       ...(continuation.mode === 'retry' ? {retry_of_commission_id: continuation.commission_id}

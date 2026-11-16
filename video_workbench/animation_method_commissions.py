@@ -34,7 +34,9 @@ _SHA = re.compile(r"^[0-9a-f]{64}$")
 _TABLES = frozenset({
     "animation_method_commissions", "animation_method_commission_requests",
     "animation_method_commission_operations", "animation_method_commission_events",
-    "sqlite_sequence",
+    # The shared lab resource adapter binds paid child identities here so a
+    # restart cannot regenerate them after losing its separate resource DB.
+    "lab_resource_bindings", "sqlite_sequence",
 })
 
 
@@ -260,8 +262,12 @@ class AnimationMethodCommissionStore:
                      "baseline_demonstration_id", "structural_changes",
                      "retry_of_commission_id",
                      "protocol_schema", "knowledge_snapshot_id", "research_record_ids", "content_changes",
-                     "resource_authoring", "collaboration",
+                      "resource_authoring", "collaboration", "capability_selection", "manim_iteration",
                  })
+        if 'capability_selection' in body:
+            from .animation_creation_selection import normalize_selection
+            _require(normalize_selection(body['capability_selection']) == body['capability_selection'],
+                     'animation_creation_selection_not_normalized')
         _text(body["goal"], 16000)
         limits = _budget(body["budget"])
         if 'collaboration' in body:
@@ -682,7 +688,10 @@ class AnimationMethodCommissionStore:
             if commission["state"] in TERMINAL or commission["cancel_requested"]:
                 return self._present(db, commission)
             commission["cancel_requested"] = True
-            if self._active(db, commission_id):
+            # Manim is a durable paid child in the resource ledger, not one of
+            # the three outer operation stages. Let the service prove that
+            # child stopped before marking this commission terminal.
+            if self._active(db, commission_id) or commission['frozen'].get('resource_authoring'):
                 commission["state"] = "cancelling"
             else:
                 commission.update(state="cancelled", stop_reason="cancelled",
