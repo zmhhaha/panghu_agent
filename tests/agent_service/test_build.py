@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 from types import SimpleNamespace
 
@@ -21,6 +22,52 @@ def docker_entrypoint(text):
                for line in text.splitlines() if line.startswith('ENTRYPOINT ')]
     assert len(entries) == 1
     return json.loads(entries[0])
+
+
+def verified_retired_skill_method_v4():
+    """Keep the last current bundle independently pinned after moving to v5."""
+    from agent_service.profiles import video_animation_skill_method as profile
+    root = profile.BUNDLE_ROOT.parent / 'animation-method-v4'
+    raw = (root / 'manifest.json').read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == '24c7c973b8a1d9d63e31047f633da038313cc0b500bbdaa2014fea7cd4b9f02c'
+    files = {row['path']: (root / row['path']).read_bytes() for row in json.loads(raw)['local_files']}
+    assert set(files) == profile.BUNDLE_FILES
+    assert all(hashlib.sha256(files[row['path']]).hexdigest() == row['sha256']
+               for row in json.loads(raw)['local_files'])
+    return files
+
+
+def animation_profile_bundles():
+    """Independent Profile inventories, never derived from builder allowlists."""
+    from agent_service.profiles import (video_animation_review as review, video_animation_create as creation,
+        video_animation_method as method, video_animation_production as production, video_joint_plan as joint,
+        video_animation_skill_production as skill_production, video_animation_skill_method as skill_method,
+        video_animation_film_module as film_module, video_animation_manim_recipe as manim_recipe,
+        video_animation_wikiskill as wikiskill, video_animation_wikiskill_v2 as wikiskill_v2,
+        video_animation_collaboration as collaboration,
+        video_joint_plan_skills as joint_skills, video_resource_plan as resource_plan)
+    return (
+        (collaboration.BUNDLE_ROOT, collaboration.BUNDLE_FILES, collaboration.verified_bundle),
+        (wikiskill_v2.BUNDLE_ROOT, wikiskill_v2.BUNDLE_FILES, wikiskill_v2.verified_bundle),
+        (film_module.BUNDLE_ROOT, film_module.BUNDLE_FILES, film_module.verified_bundle),
+        (manim_recipe.BUNDLE_ROOT, manim_recipe.BUNDLE_FILES, manim_recipe.verified_bundle),
+        (joint.BUNDLE_ROOT, joint.BUNDLE_FILES, joint.verified_bundle),
+        (resource_plan.BUNDLE_ROOT, resource_plan.BUNDLE_FILES, resource_plan.verified_bundle),
+        (wikiskill.BUNDLE_ROOT, wikiskill.BUNDLE_FILES, wikiskill.verified_bundle),
+        (joint_skills.BUNDLE_ROOT, joint_skills.BUNDLE_FILES, joint_skills.verified_bundle),
+        (review.BUNDLE_ROOT, review.BUNDLE_FILES, review.verified_bundle),
+        (review.SEQUENCE_BUNDLE_ROOT, review.SEQUENCE_BUNDLE_FILES, review.verified_sequence_bundle),
+        (review.BATCH_BUNDLE_ROOT, review.BATCH_BUNDLE_FILES, review.verified_batch_bundle),
+        (review.PACKED_BUNDLE_ROOT, review.PACKED_BUNDLE_FILES, review.verified_packed_bundle),
+        (creation.BUNDLE_ROOT, creation.BUNDLE_FILES, creation.verified_bundle),
+        (method.BUNDLE_ROOT, method.BUNDLE_FILES, method.verified_bundle),
+        (production.BUNDLE_ROOT, production.BUNDLE_FILES, production.verified_bundle),
+        (production.FILM_BUNDLE_ROOT, production.BUNDLE_FILES, lambda: production.verified_bundle(film=True)),
+        (skill_production.BUNDLE_ROOT, skill_production.BUNDLE_FILES, skill_production.verified_bundle),
+        (skill_method.BUNDLE_ROOT, skill_method.BUNDLE_FILES, skill_method.verified_bundle),
+        (skill_method.BUNDLE_ROOT.parent / 'animation-method-v4', skill_method.BUNDLE_FILES,
+         verified_retired_skill_method_v4),
+    )
 
 
 @pytest.mark.parametrize('name', ['Dockerfile.agent-pi', 'Dockerfile.agent-hermes'])
@@ -77,16 +124,39 @@ def service(tmp_path):
         target = root / 'resources/video-workbench-v1' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((BUNDLE_ROOT / name).read_bytes())
-    from agent_service.profiles.video_motion import BUNDLE_ROOT as MOTION_ROOT, BUNDLE_FILES as MOTION_FILES
-    for name in ('manifest.json', *MOTION_FILES):
-        target = root / 'resources/video-motion-v1' / name
+    from agent_service.profiles.video_motion import (BUNDLE_ROOT as MOTION_ROOT, BUNDLE_FILES as MOTION_FILES,
+        BUNDLE_REVISION as MOTION_REVISION)
+    for revision in ('video-motion-v1', MOTION_REVISION):
+        source = MOTION_ROOT.parent / revision
+        for name in ('manifest.json', *MOTION_FILES):
+            target = root / 'resources' / revision / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((source / name).read_bytes())
+    from agent_service.profiles.video_process import BUNDLE_ROOT as PROCESS_ROOT, BUNDLE_FILES as PROCESS_FILES
+    for name in ('manifest.json', *PROCESS_FILES):
+        target = root / 'resources/video-process-v1' / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes((MOTION_ROOT / name).read_bytes())
+        target.write_bytes((PROCESS_ROOT / name).read_bytes())
     from agent_service.profiles.video_explanation import BUNDLE_ROOT as EXPLANATION_ROOT, BUNDLE_FILES as EXPLANATION_FILES
     for name in ('manifest.json', *EXPLANATION_FILES):
         target = root / 'resources/video-explanation-v1' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((EXPLANATION_ROOT / name).read_bytes())
+    from agent_service.profiles.video_animation_experiment import BUNDLE_ROOT as ANIMATION_ROOT, BUNDLE_FILES as ANIMATION_FILES
+    for name in ('manifest.json', *ANIMATION_FILES):
+        target = root / 'resources/animation-experiment-v1' / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((ANIMATION_ROOT / name).read_bytes())
+    from agent_service.profiles import (video_animation_method as method, video_animation_production as production,
+        video_animation_skill_method as skill_method)
+    bundles = [(source, names) for source, names, _ in animation_profile_bundles()]
+    bundles.extend((profile.BUNDLE_ROOT.parent / profile.LEGACY_BUNDLE_REVISION, profile.BUNDLE_FILES)
+                   for profile in (method, production, skill_method))
+    for source, names in bundles:
+        for name in ('manifest.json', *names):
+            target = root / 'resources' / source.name / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((source / name).read_bytes())
     # Only reviewed framework-neutral helpers may cross the package allowlist;
     # business API/database/runtime files must still remain outside it.
     names = ['pi_worker/__init__.py', 'pi_worker/research_tools/__init__.py',
@@ -388,6 +458,7 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
     assert "PPT_DONOR_IMAGE=" + ppt_donor in runner.calls[0]
     assert "agent_service/Dockerfile.agent-pi" in runner.names
     assert "agent_service/Dockerfile.control" not in runner.names
+    from agent_service.profiles.video_motion import BUNDLE_REVISION as MOTION_REVISION
     assert set(name for name in runner.names if "/resources/" in name) == {
         "agent_service/resources/workspace-text-v1/CONTRACT.md",
         "agent_service/resources/workspace-text-v1/manifest.json",
@@ -395,16 +466,70 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
         "agent_service/resources/video-workbench-v1/CONTRACT.md",
         "agent_service/resources/video-workbench-v1/LICENSE",
         "agent_service/resources/video-workbench-v1/video-procedure/SKILL.md",
+        f"agent_service/resources/{MOTION_REVISION}/manifest.json",
+        f"agent_service/resources/{MOTION_REVISION}/CONTRACT.md",
+        f"agent_service/resources/{MOTION_REVISION}/LICENSE",
+        f"agent_service/resources/{MOTION_REVISION}/PLAN.schema.json",
+        f"agent_service/resources/{MOTION_REVISION}/motion-procedure/SKILL.md",
         "agent_service/resources/video-motion-v1/manifest.json",
         "agent_service/resources/video-motion-v1/CONTRACT.md",
         "agent_service/resources/video-motion-v1/LICENSE",
         "agent_service/resources/video-motion-v1/PLAN.schema.json",
         "agent_service/resources/video-motion-v1/motion-procedure/SKILL.md",
+        "agent_service/resources/video-process-v1/manifest.json",
+        "agent_service/resources/video-process-v1/CONTRACT.md",
+        "agent_service/resources/video-process-v1/LICENSE",
+        "agent_service/resources/video-process-v1/PLAN.schema.json",
+        "agent_service/resources/video-process-v1/process-procedure/SKILL.md",
         "agent_service/resources/video-explanation-v1/manifest.json",
         "agent_service/resources/video-explanation-v1/CONTRACT.md",
         "agent_service/resources/video-explanation-v1/LICENSE",
         "agent_service/resources/video-explanation-v1/RESULT.schema.json",
-        "agent_service/resources/video-explanation-v1/explanation-procedure/SKILL.md"}
+        "agent_service/resources/video-explanation-v1/explanation-procedure/SKILL.md",
+        "agent_service/resources/animation-experiment-v1/manifest.json",
+        "agent_service/resources/animation-experiment-v1/CONTRACT.md",
+        "agent_service/resources/animation-experiment-v1/LICENSE",
+        "agent_service/resources/animation-experiment-v1/animation-procedure/SKILL.md"} | {
+            'agent_service/resources/animation-method-v1/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'method-procedure/SKILL.md')} | {
+            'agent_service/resources/' + revision + '/' + name
+            for revision in ('animation-review-v1', 'animation-review-v2', 'animation-review-v3', 'animation-review-v4')
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'review-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-create-v2/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'creation-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-production-v1/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-method-v2/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'method-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-method-v3/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'method-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-method-v4/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'method-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-method-v5/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'method-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-production-v2/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-production-v3/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-production-v4/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md',
+                         'foundation/SKILL.md')} | {
+            'agent_service/resources/video-joint-plan-v1/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'joint-plan-procedure/SKILL.md')} | {
+            'agent_service/resources/' + revision + '/' + name
+            for revision in ('animation-film-module-v1', 'animation-manim-recipe-v1')
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'author-procedure/SKILL.md',
+                         'foundation/SKILL.md')} | {
+            'agent_service/resources/animation-wikiskill-v1/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'compile-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-wikiskill-v2/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'compile-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-collaboration-v1/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'collaboration-procedure/SKILL.md')} | {
+            'agent_service/resources/video-joint-plan-v2/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'joint-plan-procedure/SKILL.md')} | {
+            'agent_service/resources/video-resource-plan-v1/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'resource-plan-procedure/SKILL.md')}
     assert not any(name.endswith(("credentials.json", "NOT_ALLOWED.md", "private.py")) for name in runner.names)
 
 
@@ -471,12 +596,217 @@ def test_modified_video_resource_fails_before_docker(service, changed):
     assert not receipt.exists() and not runner.calls
 
 
-@pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'PLAN.schema.json', 'motion-procedure/SKILL.md'])
-def test_modified_motion_resource_fails_before_docker(service, changed):
-    path = service / 'resources/video-motion-v1' / changed
+@pytest.mark.parametrize('target', ['control', 'pi', 'hermes'])
+def test_clean_context_preserves_exact_legacy_and_current_motion_bundles(service, tmp_path, target):
+    from agent_service.build_image import context_archive, MOTION_FILES
+    destination = tmp_path / 'motion-context.tar'
+    context_archive(service, target, destination)
+    with tarfile.open(destination) as archive:
+        for revision in ('video-motion-v1', 'video-motion-v2'):
+            root = 'agent_service/resources/' + revision + '/'
+            assert {name.removeprefix(root) for name in archive.getnames() if name.startswith(root)} == {
+                'manifest.json', *MOTION_FILES}
+            for name in ('manifest.json', *MOTION_FILES):
+                assert archive.extractfile(root + name).read() == (service / 'resources' / revision / name).read_bytes()
+
+
+@pytest.mark.parametrize('target', ['control', 'pi', 'hermes'])
+def test_clean_source_context_carries_all_real_profile_resource_bytes(tmp_path, target):
+    from agent_service.build_image import context_archive
+    from agent_service.profiles import (video, video_motion, video_process, video_explanation,
+        video_animation_experiment, video_animation_method, video_animation_production,
+        video_animation_skill_method)
+    service = Path(__file__).parents[2] / 'agent_service'
+    destination = tmp_path / 'complete-source-context.tar'
+    context_archive(service, target, destination)
+    bundles = [(root, files) for root, files, _ in animation_profile_bundles()]
+    bundles.extend((profile.BUNDLE_ROOT, profile.BUNDLE_FILES) for profile in
+                   (video, video_motion, video_process, video_explanation, video_animation_experiment))
+    bundles.append((video_motion.BUNDLE_ROOT.parent / 'video-motion-v1', video_motion.BUNDLE_FILES))
+    bundles.extend((profile.BUNDLE_ROOT.parent / profile.LEGACY_BUNDLE_REVISION, profile.BUNDLE_FILES)
+                   for profile in (video_animation_method, video_animation_production, video_animation_skill_method))
+    expected = {'resources/workspace-text-v1/' + name:
+                (service / 'resources/workspace-text-v1' / name).read_bytes()
+                for name in ('manifest.json', 'CONTRACT.md')}
+    for root, files in bundles:
+        expected.update({'resources/' + root.name + '/' + name: (root / name).read_bytes()
+                         for name in ('manifest.json', *files)})
+    with tarfile.open(destination) as archive:
+        captured = {name.removeprefix('agent_service/'): archive.extractfile(name).read()
+            for name in archive.getnames() if name.startswith('agent_service/resources/')}
+        assert captured == expected
+        # This standalone Skill is a development source, not an additional
+        # admitted runtime bundle. Its exact reviewed copy travels inside v4.
+        foundation = service / 'resources/animation-hyperframes-foundation-v1/SKILL.md'
+        assert foundation.read_bytes() == captured['resources/animation-production-v4/foundation/SKILL.md']
+        assert foundation.relative_to(service).as_posix() not in captured
+        from agent_service.input_tools import READ_INPUTS_EXTENSION_SHA256
+        extension = archive.extractfile('agent_service/read_inputs_extension.mjs').read()
+        assert extension == (service / 'read_inputs_extension.mjs').read_bytes()
+        assert hashlib.sha256(extension).hexdigest() == READ_INPUTS_EXTENSION_SHA256
+        assert archive.extractfile('scientific_agent/workflow_contracts.py').read() == (
+            service.parent / 'scientific_agent/workflow_contracts.py').read_bytes()
+        assert archive.extractfile('scientific_agent/academic_observations.py').read() == (
+            service.parent / 'scientific_agent/academic_observations.py').read_bytes()
+
+
+def test_clean_builder_animation_pins_match_independently_verified_profile_bundles():
+    from agent_service.build_image import ANIMATION_RUNTIME_BUNDLES
+    from agent_service.profiles import (video_animation_method as method, video_animation_production as production,
+        video_animation_skill_method as skill_method)
+    measured = {}
+    for root, files, verify in animation_profile_bundles():
+        assert set(verify()) == files
+        measured[root.name] = (hashlib.sha256((root / 'manifest.json').read_bytes()).hexdigest(), files)
+    for profile in (method, production, skill_method):
+        root = profile.BUNDLE_ROOT.parent / profile.LEGACY_BUNDLE_REVISION
+        raw = (root / 'manifest.json').read_bytes()
+        assert hashlib.sha256(raw).hexdigest() == profile.LEGACY_BUNDLE_MANIFEST_SHA256
+        for row in json.loads(raw)['local_files']:
+            assert hashlib.sha256((root / row['path']).read_bytes()).hexdigest() == row['sha256']
+        measured[root.name] = (profile.LEGACY_BUNDLE_MANIFEST_SHA256, profile.BUNDLE_FILES)
+    assert {revision: (pin, files) for revision, pin, files in ANIMATION_RUNTIME_BUNDLES} == measured
+
+
+def test_clean_context_imports_control_roles_and_existing_profile_closures_without_repository_fallback(tmp_path):
+    from agent_service.build_image import context_archive
+    service = Path(__file__).parents[2] / 'agent_service'
+    destination = tmp_path / 'isolated-source-context.tar'
+    extracted = tmp_path / 'isolated-source'
+    extracted.mkdir()
+    context_archive(service, 'pi', destination)
+    with tarfile.open(destination) as archive:
+        for member in archive.getmembers():
+            # Only files emitted by this bounded context builder are measured.
+            assert member.isfile() and not Path(member.name).is_absolute() and '..' not in Path(member.name).parts
+            path = extracted / member.name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(archive.extractfile(member).read())
+    code = r'''import importlib,json,pathlib,sys
+root=pathlib.Path(sys.argv[1]).resolve();sys.path.insert(0,str(root))
+modules=('agent_service.__main__','agent_service.api','agent_service.dispatcher',
+ 'agent_service.model_proxy','agent_service.worker_entry','agent_service.resources',
+ 'scientific_agent.workflow_contracts','scientific_agent.academic_observations',
+ 'scientific_agent.pi_revision_validation','pi_worker.research_tools.bridge')
+for name in modules:
+ module=importlib.import_module(name)
+ assert pathlib.Path(module.__file__).resolve().is_relative_to(root)
+from agent_service.profiles import implementation
+profiles=('workspace-task.v1','ppt.plan_initial.v1','ppt.plan_options.v1','ppt.prepare.v1',
+ 'ppt.generate.v1','ppt.revise.v1','research.generate.v1','research.revise.v1',
+ 'research.plan.v1','research.retrieve.v1','research.outline.v1','research.draft.v1',
+ 'video.storyboard.v1','video.scene.v1','video.motion-plan.v1','video.process-plan.v1',
+ 'video.explanation-plan.v1','video.animation-experiment.v1','video.animation-observe.v1',
+ 'video.animation-review.v1','video.animation-review.v2','video.animation-review.v3','video.animation-review.v4','video.animation-create.v2',
+ 'video.animation-method-author.v1','video.animation-method-review.v1',
+ 'video.animation-method-author.v2','video.animation-method-review.v2',
+ 'video.joint-plan.v1','video.animation-production.v1','video.animation-production.v2','video.animation-production.v3',
+ 'video.animation-film-module.v1','video.animation-manim-recipe.v1',
+ 'video.animation-collaboration.v1','video.animation-wikiskill-compile.v2')
+for name in profiles:implementation(name)
+for name in ('video','video_motion','video_process','video_explanation','video_animation_experiment',
+ 'video_animation_create','video_animation_review','video_animation_method',
+ 'video_joint_plan','video_animation_production','video_animation_skill_production','video_animation_skill_method',
+ 'video_animation_film_module','video_animation_manim_recipe',
+ 'video_animation_collaboration','video_animation_wikiskill_v2','research'):
+ importlib.import_module('agent_service.profiles.'+name).verified_bundle()
+from agent_service.profiles.video_animation_review import verified_sequence_bundle,verified_batch_bundle,verified_packed_bundle
+verified_sequence_bundle();verified_batch_bundle();verified_packed_bundle()
+from agent_service.profiles.video_animation_production import verified_bundle as verified_production_bundle
+verified_production_bundle(legacy=True);verified_production_bundle(film=True)
+from agent_service.catalog_limits import HISTORY_RECORD_LIMIT
+from agent_service.model_proxy import image_inputs
+assert HISTORY_RECORD_LIMIT==256 and image_inputs.name=='agent_model_image_inputs'
+print(json.dumps({'control_modules':len(modules),'profile_implementations':len(profiles)}))
+'''
+    result = subprocess.run([sys.executable, '-I', '-B', '-c', code, str(extracted)],
+        cwd=extracted, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=True)
+    assert json.loads(result.stdout) == dict(control_modules=10, profile_implementations=36)
+
+
+@pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
+                                     'animation-review-v4',
+                                     'animation-collaboration-v1', 'animation-wikiskill-v2',
+                                     'animation-create-v2', 'animation-method-v1', 'animation-method-v2',
+                                     'animation-method-v3', 'animation-method-v4', 'animation-method-v5',
+                                     'animation-production-v1', 'animation-production-v2',
+                                     'animation-production-v3', 'animation-production-v4', 'animation-manim-recipe-v1'])
+@pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'LICENSE', 'procedure'])
+def test_changed_animation_runtime_resource_fails_before_docker(service, revision, changed):
+    if changed == 'procedure':
+        changed = ('method' if revision.startswith('animation-method-') else
+                   'production' if revision.startswith('animation-production-') else
+                   'creation' if revision == 'animation-create-v2' else
+                   'collaboration' if revision == 'animation-collaboration-v1' else
+                   'compile' if revision == 'animation-wikiskill-v2' else
+                   'author' if revision == 'animation-manim-recipe-v1' else 'review') + '-procedure/SKILL.md'
+    path = service / 'resources' / revision / changed
+    path.write_bytes(path.read_bytes() + b' ')
+    receipt, runner = old_receipt(service), DockerFixture()
+    with pytest.raises(BuildError, match='invalid_animation_runtime_resource_manifest'):
+        build(service=service, environ={}, runner=runner)
+    assert not receipt.exists() and not runner.calls
+
+
+@pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
+                                     'animation-review-v4',
+                                     'animation-collaboration-v1', 'animation-wikiskill-v2',
+                                     'animation-create-v2', 'animation-method-v1', 'animation-method-v2',
+                                     'animation-method-v3', 'animation-method-v4', 'animation-method-v5',
+                                     'animation-production-v1', 'animation-production-v2',
+                                     'animation-production-v3', 'animation-production-v4', 'animation-manim-recipe-v1'])
+def test_missing_animation_runtime_resource_cannot_produce_deployable_digest(service, revision):
+    (service / 'resources' / revision / 'LICENSE').unlink()
+    receipt, runner = old_receipt(service), DockerFixture()
+    with pytest.raises(BuildError, match='invalid_animation_runtime_resource_manifest'):
+        build(service=service, environ={}, runner=runner)
+    assert not receipt.exists() and not runner.calls
+
+
+@pytest.mark.parametrize('change', ['modified', 'missing'])
+def test_skill_production_foundation_copy_is_an_integrity_checked_runtime_file(service, change):
+    path = service / 'resources/animation-production-v4/foundation/SKILL.md'
+    if change == 'missing':
+        path.unlink()
+    else:
+        path.write_bytes(path.read_bytes() + b' ')
+    receipt, runner = old_receipt(service), DockerFixture()
+    with pytest.raises(BuildError, match='invalid_animation_runtime_resource_manifest'):
+        build(service=service, environ={}, runner=runner)
+    assert not receipt.exists() and not runner.calls
+
+
+def test_unreviewed_animation_resource_files_stay_out_of_clean_image(service, tmp_path):
+    from agent_service.build_image import context_archive
+    private = service / 'resources/animation-review-v3/private.py'
+    private.write_bytes(b'PRIVATE_RESOURCE = True\n')
+    extra = service / 'resources/animation-unreviewed/credentials.json'
+    extra.parent.mkdir()
+    extra.write_bytes(b'{"private":true}')
+    destination = tmp_path / 'bounded-animation-context.tar'
+    context_archive(service, 'control', destination)
+    with tarfile.open(destination) as archive:
+        assert 'agent_service/resources/animation-review-v3/private.py' not in archive.getnames()
+        assert not any('animation-unreviewed' in name for name in archive.getnames())
+
+
+@pytest.mark.parametrize('revision', ['video-motion-v1', 'video-motion-v2'])
+@pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'LICENSE', 'PLAN.schema.json', 'motion-procedure/SKILL.md'])
+def test_modified_motion_resource_fails_before_docker(service, changed, revision):
+    path = service / 'resources' / revision / changed
     path.write_bytes(path.read_bytes() + b' ')
     receipt, runner = old_receipt(service), DockerFixture()
     with pytest.raises(BuildError, match='invalid_motion_resource_manifest'):
+        build(service=service, environ={}, runner=runner)
+    assert not receipt.exists() and not runner.calls
+
+
+@pytest.mark.parametrize('changed', ['manifest.json', 'CONTRACT.md', 'PLAN.schema.json', 'process-procedure/SKILL.md'])
+def test_modified_process_resource_fails_before_docker(service, changed):
+    path = service / 'resources/video-process-v1' / changed
+    path.write_bytes(path.read_bytes() + b' ')
+    receipt, runner = old_receipt(service), DockerFixture()
+    with pytest.raises(BuildError, match='invalid_process_resource_manifest'):
         build(service=service, environ={}, runner=runner)
     assert not receipt.exists() and not runner.calls
 

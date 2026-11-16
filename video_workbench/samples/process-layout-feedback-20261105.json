@@ -1,0 +1,240 @@
+{
+  "schema": "video.process-layout-feedback.v1",
+  "date": "2026-11-05",
+  "branch": "codex/video-audio-clock",
+  "compiler": "motion-process-compiler-2",
+  "feedback": {
+    "motion_demonstration": "positive",
+    "original_layout": "position_issue_reported",
+    "revised_layout": "pending_user_review"
+  },
+  "change": "Move requests into dedicated node bays and connect relations to real card boundary ports.",
+  "evidence_directory": "video_workbench/rendered/audio-clock/process/evidence-6",
+  "production_integrated": false,
+  "deployed": false,
+  "merged": false,
+  "audio_kind": "synthetic_silence_not_narration",
+  "output_audio_streams": 0,
+  "timing_review": "pending",
+  "voice_naturalness": "not_evaluated",
+  "agent_calls": 0,
+  "tts_calls": 0,
+  "business_writes": 0,
+  "experiment": {
+    "image": "arm-cluster-master:5000/video-motion-renderer:latest@sha256:a39f5e41fd2fba6aeaba28a1e04eea0e057d6a98fcd087b9cb626e6ef7a3814a",
+    "local_image_id": "sha256:bcb2fa4518c3f3e0d36433fb00846b07e543b5791cf4369fc56d0c85966877bb",
+    "seconds": 49.814876057906076,
+    "container_cleanup_confirmed": true,
+    "limits": {
+      "cpus": 2,
+      "memory_bytes": 4294967296,
+      "timeout_seconds": 300,
+      "network": "none"
+    },
+    "resources": {
+      "memory.peak": "446717952",
+      "cpu.stat": "usage_usec 78649995\nuser_usec 67935699\nsystem_usec 10714295\nnr_periods 490\nnr_throttled 245\nthrottled_usec 44123154\nnr_bursts 0\nburst_usec 0"
+    },
+    "stages": [
+      {
+        "stage": "observe",
+        "status": "passed",
+        "exit_code": 0,
+        "seconds": 6.748988147126511
+      },
+      {
+        "stage": "encode",
+        "status": "passed",
+        "exit_code": 0,
+        "seconds": 39.06788862682879
+      },
+      {
+        "stage": "probe",
+        "status": "passed",
+        "exit_code": 0,
+        "seconds": 0.7201291490346193
+      },
+      {
+        "stage": "decode",
+        "status": "passed",
+        "exit_code": 0,
+        "seconds": 0.9738774949219078
+      },
+      {
+        "stage": "frames",
+        "status": "passed",
+        "exit_code": 0,
+        "seconds": 1.1488852850161493
+      }
+    ]
+  },
+  "runtime": {
+    "schema": "video.motion-runtime.v1",
+    "hyperframes": "0.8.149",
+    "hyperframes_source": "2905162d925fc87fb8242e24ed0bbf025d307ea1",
+    "node": "22.20.0",
+    "browser": "Chromium 149.0.7827.0",
+    "ffmpeg": "ffmpeg version 5.1.9-0+deb12u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "gsap": "3.14.2",
+    "gsap_sha256": "c174bfce53a729418d57a8ad8625e7247c793a22fef8e2851e3cfa3de9cd8280",
+    "font_sha256": "b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a",
+    "npm_lock_sha256": "2af25291939e9a22d9ac8627e4e6b34486cd4adb67fe87b5e5c3bd949a143ec5",
+    "dpkg_sha256": "53cd24a529bd41f3d2aee4c75066659ac6af36ae351749f774675d42ba0378c6"
+  },
+  "review": {
+    "schema": "video.process-review.v1",
+    "technical_status": "passed",
+    "plan_sha256": "d42d645da3677f44a6dc58c63eb87af3ef45b2dc27d05690515cd6be0b0fe9b2",
+    "timeline_sha256": "6ada97aff1c78af4f67f7f42b2d88c5c061d5681cbc85dd529cbdee26873575c",
+    "observation_sha256": "8a51f462005cf00507fdeab02edfa2c6eab231b156272bc9d024a38de9325d4e",
+    "checked_action_windows": 16,
+    "timing_review_status": "pending",
+    "visual_comprehension": "pending_user_review",
+    "voice_naturalness": "pending_user_review",
+    "checks": [
+      "native_exact_seek",
+      "complete_token_bounds",
+      "path_arc_length_progress",
+      "state_text_and_symbol",
+      "no_early_connections",
+      "font_and_text_bounds",
+      "reverse_seek",
+      "bound_plan_and_timeline",
+      "actual_svg_node_border_ports",
+      "distinct_relation_and_transfer_paths",
+      "docking_bay_ownership",
+      "swept_text_clearance_8px"
+    ]
+  },
+  "independent_validation": {
+    "schema": "video.process-independent-validation.v1",
+    "status": "passed",
+    "compiler": "motion-process-compiler-2",
+    "experiment_sha256": "f3bb4aeeb1aaa1bfec41c4445ef26e56cc28790962313158fbbdf8121be88d18",
+    "experiment_inputs_verified": 10,
+    "experiment_files_verified": 87,
+    "official_review_file": "process-review.json",
+    "official_review_sha256": "1b458febaefd9773b8c5ab0b29d09b261b99c0996c1f340934f753bbffd9935c",
+    "reviewer_code_sha256": "fc321376cc361fff2d428feb6eb0387fefca4272137cade5aeb9d2e02aa49e1a",
+    "observations_raw_sha256": "035eb34c5efd5452865e148b25ddc6ab6d21fbb83e667588f04d79d4761d5b25",
+    "observations_canonical_sha256": "8a51f462005cf00507fdeab02edfa2c6eab231b156272bc9d024a38de9325d4e",
+    "screenshot_bindings_verified": 51,
+    "dom_samples_verified": 50,
+    "action_windows_verified": 16,
+    "compiler_rebuild_exact_files": 6,
+    "sample_layout_v2_equal_inputs": [
+      "plan.json",
+      "timeline.json",
+      "beats.json",
+      "alignment.json",
+      "index.html",
+      "manifest.json",
+      "audio.wav",
+      "sample.json",
+      "preview.html"
+    ],
+    "v1_evidence5_review": "passed",
+    "v1_evidence5_exact_rebuild_files": 6,
+    "output_mp4_sha256": "b438a328b55073b148ab37ad09b43694da02a0fd4b4f6dfc1bd7068e9f1c8477",
+    "encoded_frames_verified": [
+      {
+        "file": "encoded-frames/01.jpg",
+        "frame": 0,
+        "time": 0.0
+      },
+      {
+        "file": "encoded-frames/02.jpg",
+        "frame": 54,
+        "time": 2.25
+      },
+      {
+        "file": "encoded-frames/03.jpg",
+        "frame": 103,
+        "time": 4.291666666666667
+      },
+      {
+        "file": "encoded-frames/04.jpg",
+        "frame": 187,
+        "time": 7.791666666666667
+      },
+      {
+        "file": "encoded-frames/05.jpg",
+        "frame": 250,
+        "time": 10.416666666666666
+      },
+      {
+        "file": "encoded-frames/06.jpg",
+        "frame": 575,
+        "time": 23.958333333333332
+      }
+    ],
+    "actual_decoded_frame_count": 576,
+    "video_geometry": {
+      "width": 1280,
+      "height": 720,
+      "fps": 24,
+      "seconds": 24
+    },
+    "full_decode_stderr_empty": true,
+    "regression_report_file": "../tests-layout-release.xml",
+    "regression_report_sha256": "20f95c45192a7aeed9dbdd8c8d381059dafc3c0b81e92b406ed65001d1baa99e",
+    "environment_runtime_sha256": "8e9f9935fba760090de7845398a9924abec7b690e76c987c81e99cfcb091c9f0",
+    "audio_kind": "synthetic_silence_not_narration",
+    "timing_review": "pending",
+    "visual_comprehension": "pending_user_review",
+    "voice_naturalness": "not_evaluated_synthetic_silence",
+    "production_admission": false,
+    "business_writes": 0,
+    "agent_calls": 0,
+    "tts_calls": 0,
+    "visual_findings": [
+      "All six encoded MP4 frame extracts inspected independently.",
+      "Initial frame has no links, arrows or request token.",
+      "Forward links terminate on card side borders; retry link terminates on bottom borders.",
+      "The single request occupies the destination docking bay and avoids title, detail, state and labels.",
+      "Retry arrows use a separate bottom port and no longer overlap forward arrowheads.",
+      "Arrows and text remain readable in sampled encoded frames."
+    ],
+    "limitations": [
+      "Only the local controlled three-card/one-token experiment is verified; no production integration.",
+      "actual_svg_node_border_ports verifies native path coordinates against actual DOM card rectangles. Visible borders are confirmed by fixed CSS and the six encoded frames, not by automated verification of border width, style, alpha or arbitrary CSS occlusion.",
+      "Exact seek tests cover recorded action windows and reverse seek, not every possible seek order.",
+      "Layout remains pending user review; positive user feedback concerned motion only.",
+      "Marker refX8 allows its tip to extend two pixels into the overlaid card border; no blocking direction loss observed. Pixel-level arrow tip clearance is not claimed.",
+      "The recording is synthetic silence; narration timing and voice quality have not been evaluated."
+    ]
+  },
+  "tests": {
+    "tests": 330,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "file": "rendered/audio-clock/process/tests-layout-release.xml",
+    "sha256": "20f95c45192a7aeed9dbdd8c8d381059dafc3c0b81e92b406ed65001d1baa99e"
+  },
+  "evidence_sha256": {
+    "experiment.json": "f3bb4aeeb1aaa1bfec41c4445ef26e56cc28790962313158fbbdf8121be88d18",
+    "plan.json": "d42d645da3677f44a6dc58c63eb87af3ef45b2dc27d05690515cd6be0b0fe9b2",
+    "timeline.json": "6ada97aff1c78af4f67f7f42b2d88c5c061d5681cbc85dd529cbdee26873575c",
+    "index.html": "f4c115dd229acf839726d2578a4d4b5d990b73635fb8f912822c6a8cc51438db",
+    "manifest.json": "0d50c987c3226a7dc7acb4199c08ae6ac86bb6b84c51cc07316a2b13899531a1",
+    "observations.json": "035eb34c5efd5452865e148b25ddc6ab6d21fbb83e667588f04d79d4761d5b25",
+    "process-review.json": "1b458febaefd9773b8c5ab0b29d09b261b99c0996c1f340934f753bbffd9935c",
+    "independent-validation.json": "c7fe22c62ca5000e50987bf7f62d02c08a8d0db89afbec8a1891fc6bd3d85566",
+    "output.mp4": "b438a328b55073b148ab37ad09b43694da02a0fd4b4f6dfc1bd7068e9f1c8477",
+    "probe.stdout": "c0a62827e06d4edc293952970d911c7f0091e93d970a227ee4b1b009f21c70f2",
+    "encoded-frames.json": "8cb7895d9defe6593deb261107ec99b58f61dc8789f8b6df801856b4a5363d05",
+    "observe-process.mjs": "95d9e4197b8194f5955f71210f89c449f9766d612653be0c240932526f6cbb59"
+  },
+  "source_sha256_working_bytes": {
+    "video_workbench/motion_process.py": "3191a7fd6fe8e3fbf509e340698795b45b7abd2d802bd0bf3479de1e83fae99a",
+    "video_workbench/process_review.py": "fc321376cc361fff2d428feb6eb0387fefca4272137cade5aeb9d2e02aa49e1a",
+    "video_workbench/examples/build_process_sample.py": "3c31a8d8edd595284f5279c9412ad13fff354ed88050adab25a87abc4cb36a25"
+  },
+  "source_digest_note": "Working-file bytes before Git newline conversion; not a Git blob digest.",
+  "history": {
+    "v1_evidence5_exact_rebuild_files": 6,
+    "v1_old_review": "passed",
+    "previous_evidence_and_results_preserved": true
+  }
+}

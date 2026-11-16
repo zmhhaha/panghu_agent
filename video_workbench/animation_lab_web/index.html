@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>动画实验与标注 · Video Service</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./experiments.mjs"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">◈</span><div><span class="eyebrow">VIDEO SERVICE / DEVELOPER LAB</span><h1>动画实验与标注</h1></div><span class="private-badge">开发者专用</span></div>
+    <nav class="lab-navigation" aria-label="实验类型"><button id="show-experiments" class="button secondary" type="button" aria-pressed="true">能力实验</button><button id="show-regressions" class="button secondary" type="button" aria-pressed="false">组件与参数回归</button></nav>
+  </header>
+  <div id="global-message" class="global-message" role="status" hidden></div>
+  <section id="experiment-lab" class="experiment-layout" aria-label="动画能力实验">
+    <aside class="experiment-sidebar">
+      <div class="sidebar-heading"><h2>能力问题</h2><span id="experiment-count" class="count">—</span></div>
+      <p class="muted small">从一个表达问题出发，用最小输入比较真实作品。</p>
+      <button id="experiment-reload" type="button" class="button secondary">刷新实验</button>
+      <nav id="experiment-list" class="case-list" aria-label="选择能力实验"><p class="muted small">正在读取实验定义…</p></nav>
+      <p class="muted small experiment-sidebar-note">同一机制换内容只作为参数回归；这里不按领域或样例数量衡量能力。</p>
+    </aside>
+    <div id="experiment-content" class="experiment-content">
+      <div id="experiment-message" class="inline-message" role="status" hidden></div>
+      <div id="experiment-empty" class="experiment-empty"><h2>正在读取能力实验</h2><p class="muted">未运行的定义不会显示为生成作品。</p></div>
+      <div id="experiment-workspace" hidden>
+        <header class="experiment-heading"><div><span id="experiment-capability" class="eyebrow"></span><h2 id="experiment-title"></h2></div><span id="experiment-status" class="experiment-badge"></span></header>
+        <p id="experiment-goal" class="experiment-goal"></p>
+        <section id="experiment-evaluation" class="panel" aria-label="本项实验如何评价"></section>
+        <div class="experiment-facts"><article><span>实验方式</span><strong id="experiment-mode"></strong></article><article><span>作品来源</span><strong id="experiment-source"></strong></article><article><span>本轮改动</span><strong id="experiment-change"></strong></article></div>
+        <details class="panel experiment-constraints"><summary>最小输入与固定约束</summary><pre id="experiment-constraints"></pre></details>
+        <section id="creation-runs-panel" class="panel creation-runs-panel" aria-labelledby="creation-runs-title">
+          <div class="panel-heading"><div><h3 id="creation-runs-title">Agent制作与一轮打磨</h3><p class="muted small">按当前实验定义生成初作，再由独立Agent审阅；有具体问题时最多修改一次。前后作品和意见分别保留。</p></div></div>
+          <div class="creation-runs-actions"><label>本次输入组<select id="creation-runs-role"><option value="development">调优输入</option><option value="held_out">未参与调优的复测输入</option></select></label><button id="creation-runs-start" class="button primary" type="button" disabled>制作并打磨一轮</button><button id="creation-runs-refresh" class="button secondary" type="button" disabled>刷新制作进度</button></div>
+          <p id="creation-runs-availability" class="muted small" role="status">请先选择能力实验。</p>
+          <div id="creation-runs-message" class="inline-message" role="status" hidden></div>
+          <p class="creation-runs-note muted small">取消不退回已用额度。技术通过和模型意见不代表效果认可；本页不会自动追加打磨或采用到正式视频。</p>
+          <div id="creation-runs-list" class="creation-runs-list" aria-label="当前定义与输入组的制作记录"></div>
+        </section>
+        <div id="experiment-rejected-runs" class="inline-message error" role="status" hidden></div>
+        <div id="experiment-definition-only" class="experiment-empty"><h3>既有作品 · 尚无归档记录</h3><p class="muted">本区展示此前归档的实验作品；本轮制作的初作、修订版与审阅意见在上方展示。打开此页不会调用模型。</p></div>
+        <section id="experiment-results" hidden aria-label="实际作品">
+          <div class="experiment-result-heading"><h3>既有作品与标注</h3><label>输入组<select id="experiment-input-role"><option value="development">调优输入</option><option value="held_out">未参与调优的复测输入</option></select></label></div>
+          <p class="muted small">只展示隔离渲染后的媒体；技术检查与画面偏好分别记录。</p>
+          <div id="experiment-version-selectors" class="experiment-version-selectors"></div>
+          <div id="experiment-media" class="experiment-media-grid"></div>
+          <div id="experiment-transport" class="transport" hidden><button id="experiment-play" type="button" class="button secondary">播放</button><button id="experiment-reset" type="button" class="button secondary">归零</button><button id="experiment-previous" type="button" class="button secondary" aria-label="前一帧">−1帧</button><button id="experiment-next" type="button" class="button secondary" aria-label="后一帧">+1帧</button><input id="experiment-seek" type="range" min="0" max="8" step="0.0416666667" value="0" aria-label="作品公共时间"><output id="experiment-time">0.000 / 8.000 秒</output></div>
+          <p id="experiment-playback-note" class="muted small"></p>
+          <div id="experiment-comparison-note" class="experiment-comparison-note"></div>
+          <details id="experiment-diff" class="panel experiment-version-details" hidden><summary>两侧提示词与代码差异（文本）</summary><pre id="experiment-diff-text"></pre></details>
+          <div id="experiment-preferences" class="experiment-preferences" hidden><span>同输入比较：</span><button type="button" class="button secondary" data-experiment-preference="left">左侧更好</button><button type="button" class="button secondary" data-experiment-preference="right">右侧更好</button><button type="button" class="button secondary" data-experiment-preference="equal">差异不明显</button><button type="button" class="button secondary" data-experiment-preference="neither">都不理想</button></div>
+          <section class="panel experiment-feedback-panel"><h3>记录具体问题</h3><p class="muted small">指出哪里难以跟随、哪里不自然，或希望尝试什么机制。意见绑定实际作品。</p><form id="experiment-feedback-form"><div class="form-row"><label>作品<select id="experiment-feedback-version"></select></label><label>开始（秒）<input id="experiment-feedback-start" type="number" min="0" step="0.001" value="0" required></label><label>结束（秒）<input id="experiment-feedback-end" type="number" min="0" step="0.001" value="0" required></label><button id="experiment-capture-time" type="button" class="button secondary">取当前时间</button></div><label for="experiment-feedback-comment" class="field-label">观察与下一步建议</label><textarea id="experiment-feedback-comment" rows="3" maxlength="4000" required placeholder="例如：交叉时分不清 A，可尝试分层路径或错峰；不要只换颜色。"></textarea><div id="experiment-feedback-message" class="inline-message" role="status" hidden></div><div class="form-footer"><span class="muted small">保存意见不会自动修改提示词或采用到生产。</span><button id="experiment-feedback-save" class="button primary" type="submit">保存问题</button></div></form></section>
+        </section>
+        <section class="panel experiment-history"><div class="panel-heading"><h3>观察与反馈</h3><span id="experiment-feedback-count" class="count">0</span></div><div id="experiment-feedback-history"></div></section>
+      </div>
+    </div>
+  </section>
+  <div id="regression-lab" class="layout" hidden>
+    <aside class="sidebar" aria-label="动画样例">
+      <div class="sidebar-heading"><h2>组件与参数回归</h2><span id="case-count" class="count">—</span></div>
+      <p class="muted small">固定代码配方用于正确性和边界回归，不代表模型创作能力。</p>
+      <section id="regression-actions" class="regression-toolbar" aria-labelledby="regression-tools-title" hidden>
+        <h3 id="regression-tools-title">回归工具</h3>
+        <p class="muted small">刷新固定样例，或导出回归标注与迭代记录；不包含能力实验记录。</p>
+        <div class="regression-toolbar-buttons"><button id="reload" class="button secondary" type="button">刷新回归样例</button><a id="export" class="button primary" href="./api/export?format=jsonl&amp;scope=regressions" download="animation-regression-annotations.jsonl">导出回归标注 <span aria-hidden="true">↗</span></a></div>
+      </section>
+      <label class="field-label" for="module-filter">能力模块</label><select id="module-filter"><option value="all">全部模块</option></select>
+      <label class="field-label" for="domain-filter">领域</label><select id="domain-filter"><option value="all">全部领域</option></select>
+      <label class="field-label" for="engine-filter">渲染引擎</label><select id="engine-filter"><option value="all">全部引擎</option></select>
+      <label class="field-label" for="case-search">查找样例</label><input id="case-search" type="search" placeholder="名称或效果说明" autocomplete="off">
+      <label class="field-label" for="review-filter">评价状态</label><select id="review-filter"><option value="all">全部评价状态</option><option value="unreviewed">待评价</option><option value="reviewed">已评价</option></select>
+      <div id="module-note" class="module-note" hidden></div>
+      <p id="filter-summary" class="muted small" role="status"></p>
+      <nav id="case-list" class="case-list" aria-label="选择样例"><p class="muted">正在读取样例…</p></nav>
+      <section id="evaluations-panel" hidden aria-label="自动评测报告"><h3>自动评测报告</h3><p class="muted small">技术检查与模型意见分开记录，报告不自动采用。</p><div id="evaluations-list"></div></section>
+      <div class="sidebar-footer"><span class="status-dot" aria-hidden="true"></span><p>积累效果评测与开发偏好。<br>标注不自动修改生产效果。</p></div>
+    </aside>
+    <main>
+      <details id="requirements-panel" class="panel requirements-panel">
+        <summary><strong>跨领域需求矩阵</strong><span id="requirements-count" class="count">正在读取</span></summary>
+        <p class="muted small">样例库按跨领域需求重新构建。用不同数据结构、布局和难度检查同一项能力；每份需求有明确的目标与预期结果，固定种子便于重复比较。</p>
+        <div id="requirements-summary" class="requirements-summary"></div>
+        <div id="requirements-coverage" class="requirements-coverage"></div>
+        <div class="requirements-actions"><a id="requirements-export" class="button secondary" download="animation-requirements.json">下载当前筛选的需求集</a><span id="requirements-export-note" class="muted small"></span></div>
+        <p class="muted small">需求覆盖、技术采样和人工认可分别记录；样例数量不代表已经通过视觉评价或正式视频制作准入。</p>
+      </details>
+      <details id="iteration-panel" class="panel iteration-panel">
+        <summary><span><strong>反馈迭代</strong><span class="muted small">按模块整理意见，追踪开发任务与候选验收</span></span><span id="iteration-refresh-note" class="count">展开读取</span></summary>
+        <div class="iteration-controls"><label>迭代模块<select id="iteration-module"><option value="">正在读取模块…</option></select></label><button id="iteration-refresh" class="button secondary" type="button">刷新反馈</button><button id="iteration-prepare" class="button primary" type="button" disabled>生成增量任务包</button></div>
+        <p class="muted small iteration-explanation">生成任务包会保存本轮意见和版本依据。开发执行、PR 和样例验收分别记录；这里的验收通过仅表示开发样例可接受。</p>
+        <div id="iteration-message" class="inline-message" role="status" hidden></div>
+        <div id="iteration-summary" class="iteration-summary" aria-label="本模块反馈概况"></div>
+        <p id="iteration-source" class="muted small iteration-source"></p>
+        <div class="iteration-feedback-grid">
+          <details class="iteration-feedback-section"><summary>当前有效意见 <span id="iteration-feedback-count" class="count">—</span></summary><div id="iteration-feedback" class="iteration-feedback-list"></div></details>
+          <details class="iteration-feedback-section"><summary>与已同步意见的变化 <span id="iteration-change-count" class="count">—</span></summary><p class="muted small">撤回和改判也会进入下一轮任务；生成或下载任务包不会推进已同步游标。</p><div id="iteration-changes" class="iteration-feedback-list"></div></details>
+        </div>
+        <section class="iteration-tasks-section" aria-labelledby="iteration-tasks-title"><div class="panel-heading"><h3 id="iteration-tasks-title">开发任务与验收记录</h3><span id="iteration-task-count" class="count">—</span></div><div id="iteration-tasks" class="iteration-task-list" aria-live="polite"><p class="muted small">展开面板后读取任务。</p></div></section>
+      </details>
+      <div id="empty-state" class="empty-state"><span aria-hidden="true">◈</span><h2>选择一个效果样例</h2><p>从框图、过程动画和镜头衔接开始，逐项改善表现力。</p></div>
+      <div id="case-workspace" hidden>
+        <section class="case-heading" aria-labelledby="case-title"><div><div class="title-row"><span id="module-badge" class="module-badge"></span><span id="review-badge" class="review-badge">待标注</span></div><h2 id="case-title"></h2><p id="case-description" class="muted"></p></div><div class="review-actions" aria-label="人工效果评价"><button id="review-acceptable" class="button secondary" type="button" data-verdict="acceptable">效果可接受</button><button id="review-needs-work" class="button secondary" type="button" data-verdict="needs_work">还需改进</button></div></section>
+        <div class="fixture-note"><span aria-hidden="true">◷</span><p><strong>无旁白技术样例</strong> · 用于评价画面和动作。静音计时及估算时间不代表真实配音同步。</p></div>
+        <details id="case-requirement" class="panel case-requirement" hidden><summary><strong>本样例的需求与预期结果</strong><span id="case-requirement-meta" class="muted small"></span></summary><div id="case-requirement-body"></div></details>
+        <section class="comparison-grid" aria-label="动画版本对比">
+          <article class="player-card" id="baseline-card"><header><div><span class="version-letter">A</span><strong id="baseline-title">基线版本</strong></div><span id="baseline-duration" class="muted small"></span></header><div class="player-stage" id="baseline-stage"><iframe id="baseline-frame" title="基线动画预览" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe><div id="baseline-loading" class="player-status">正在准备预览…</div><div id="baseline-overlay" class="annotation-overlay"><div class="region-box" hidden></div></div></div><footer><span id="baseline-state" class="player-state">等待预览</span><code id="baseline-identity"></code></footer></article>
+          <article class="player-card" id="candidate-card"><header><div><span class="version-letter candidate">B</span><strong id="candidate-title">候选版本</strong></div><span id="candidate-duration" class="muted small"></span></header><div class="player-stage" id="candidate-stage"><iframe id="candidate-frame" title="候选动画预览" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe><div id="candidate-loading" class="player-status">正在准备预览…</div><div id="candidate-overlay" class="annotation-overlay"><div class="region-box" hidden></div></div></div><footer><span id="candidate-state" class="player-state">等待预览</span><code id="candidate-identity"></code></footer></article>
+        </section>
+        <section class="transport" aria-label="同步播放控制"><div class="transport-row"><button id="play" class="button primary" type="button" disabled>播放</button><button id="reset" class="button icon-button secondary" type="button" aria-label="回到首帧" disabled>↶</button><button id="previous-frame" class="button icon-button secondary" type="button" aria-label="上一帧" disabled>Ⅰ‹</button><button id="next-frame" class="button icon-button secondary" type="button" aria-label="下一帧" disabled>›Ⅰ</button><output id="timecode" for="seek">00:00.000 / 00:00.000</output><label class="speed-label" for="speed">速度<select id="speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option></select></label></div><input id="seek" type="range" min="0" max="0" step="0.001" value="0" aria-label="同步预览时间" disabled><p id="timing-note" class="muted small"></p><div id="checkpoints" class="checkpoints" aria-label="效果检查位置"></div></section>
+        <section id="automatic-review" class="automatic-review panel" aria-labelledby="automatic-review-title" hidden>
+          <div class="panel-heading"><div><h3 id="automatic-review-title">自动评测与问题处理</h3><p class="muted small">对照本次冻结的两个版本，先定位证据，再决定哪些问题值得修改。</p></div><a id="revision-task" class="button secondary" hidden download="animation-revision-task.json">导出已确认的修改任务</a></div>
+          <div id="evaluation-message" class="inline-message" role="status" hidden></div>
+          <div class="evaluation-summary" aria-label="独立评测结论">
+            <article><span>技术检查</span><strong id="evaluation-technical">正在读取</strong><p>只覆盖实际记录的采样范围。</p></article>
+            <article><span>视觉模型意见</span><strong id="evaluation-model">正在读取</strong><p>模型判断不代表人工认可。</p></article>
+            <article><span>开发者处理</span><strong id="evaluation-developer">尚未确认</strong><p>处理意见独立保存，不自动修改动画。</p></article>
+          </div>
+          <p id="evaluation-empty" class="evaluation-empty" hidden></p>
+          <div id="evaluation-findings" class="evaluation-findings" aria-live="polite"></div>
+          <details id="evaluation-context" class="evaluation-context" hidden><summary>证据范围与原始意见</summary><p id="evaluation-reason"></p><ul id="evaluation-limitations"></ul><p class="muted small">画面是静音技术样例；有序采样不能证明整段流畅、旁白自然度或真实字词同步。</p></details>
+        </section>
+        <section class="preference-panel" aria-labelledby="preference-title"><div><h3 id="preference-title">这个样例，你更喜欢哪个版本？</h3><p class="muted small">偏好与下面的具体问题分别记录，便于后续比较改进。</p></div><div class="preference-actions"><button class="button secondary" type="button" data-preference="baseline">A 更好</button><button class="button secondary" type="button" data-preference="candidate">B 更好</button><button class="button secondary" type="button" data-preference="tie">差不多</button><button class="button secondary" type="button" data-preference="neither">都需改进</button></div><p id="preference-note" class="muted small" role="status"></p></section>
+        <div class="review-grid">
+          <section class="panel annotation-panel" aria-labelledby="annotation-title"><div class="panel-heading"><h3 id="annotation-title">记录具体问题</h3><span id="draft-status" class="muted small">可标注时间区间与画面区域</span></div><form id="annotation-form"><div class="form-row"><label>标注版本<select id="annotation-variant"></select></label><label>影响程度<select id="annotation-severity"><option value="minor">轻微 · 可优化</option><option value="major">明显 · 影响观看</option><option value="blocker">严重 · 无法理解</option><option value="note">建议 · 值得尝试</option></select></label></div><div class="form-row time-fields"><label>开始（秒）<input id="annotation-start" type="number" min="0" step="0.001" value="0" required></label><label>结束（秒）<input id="annotation-end" type="number" min="0" step="0.001" value="0" required></label><button id="capture-time" type="button" class="button secondary">取当前帧</button></div><div class="region-controls"><button id="draw-region" class="button secondary" type="button" aria-pressed="false">框选画面区域</button><button id="clear-region" class="text-button" type="button" disabled>清除框选</button><span id="region-note" class="muted small">可选；不框选则评价整个画面</span></div><fieldset class="tags"><legend>问题类型</legend><label><input type="checkbox" name="tag" value="layout">布局</label><label><input type="checkbox" name="tag" value="typography">文字</label><label><input type="checkbox" name="tag" value="connector">连线</label><label><input type="checkbox" name="tag" value="motion">动作</label><label><input type="checkbox" name="tag" value="pacing">节奏</label><label><input type="checkbox" name="tag" value="continuity">衔接</label><label><input type="checkbox" name="tag" value="clarity">表达</label><label><input type="checkbox" name="tag" value="other">其他</label></fieldset><label class="comment-label" for="annotation-comment">哪里不好，或希望变成什么效果？</label><textarea id="annotation-comment" maxlength="4000" rows="4" placeholder="例如：右边的文字太密；请求移动到一半时，返回箭头和正向箭头重叠。" required></textarea><div id="annotation-message" class="inline-message" role="status" hidden></div><div class="form-footer"><span class="muted small">保存后保留原始意见，可导出复用。</span><button id="save-annotation" class="button primary" type="submit">保存标注</button></div></form></section>
+          <section class="panel history-panel" aria-labelledby="history-title"><div class="panel-heading"><h3 id="history-title">本样例标注</h3><span id="annotation-count" class="count">0</span></div><div id="annotation-history" class="annotation-history" aria-live="polite"><p class="muted small">尚无标注。</p></div></section>
+        </div>
+        <details class="identity-details"><summary>效果检查与版本信息</summary><div id="case-checks"></div><div id="variant-summaries"></div><p class="muted small">冻结样例标识</p><code id="case-identity"></code></details>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

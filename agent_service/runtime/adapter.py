@@ -171,8 +171,8 @@ class PiRuntime:
                 raise RuntimeExecutionError("configuration_missing", "Unsupported model compatibility option or value")
         if s.model_compat and s.model_api != "openai-completions":
             raise RuntimeExecutionError("configuration_missing", "Completions compatibility requires openai-completions")
-        if s.model_max_tokens is not None and (type(s.model_max_tokens) is not int or not 1 <= s.model_max_tokens <= 8192):
-            raise RuntimeExecutionError("configuration_missing", "Model token limit must be an integer from 1 to 8192")
+        if s.model_max_tokens is not None and (type(s.model_max_tokens) is not int or not 1 <= s.model_max_tokens <= 32768):
+            raise RuntimeExecutionError("configuration_missing", "Model token limit must be an integer from 1 to 32768")
         if s.model_input is not None and (type(s.model_input) is not tuple
                 or any(type(item) is not str for item in s.model_input)
                 or s.model_input not in (("text",), ("text", "image"))):
@@ -605,7 +605,14 @@ class PiRuntime:
         # provider SDK retry in this fresh task-only settings file. Otherwise a
         # single scheduler attempt can silently make several HTTP requests.
         self._diagnostic_stage = 'write_agent_config'
-        self._atomic(agent / "settings.json", json.dumps({"retry": {
+        remaining_ms = int((end_time - time.monotonic()) * 1000)
+        if remaining_ms <= 0:
+            raise RuntimeExecutionError("timed_out", "Execution deadline elapsed during setup")
+        # Pi uses this setting for both its HTTP dispatcher and the explicit
+        # provider SDK timeout. Its 300s default must not cut a longer bounded
+        # task short; the independent absolute deadline and cancel checks below
+        # still fence the complete process tree, including later model turns.
+        self._atomic(agent / "settings.json", json.dumps({"httpIdleTimeoutMs": remaining_ms, "retry": {
             "enabled": False, "provider": {"maxRetries": 0}}}))
         if s.model_base_url:
             self._atomic(agent / "models.json", json.dumps({"providers": {s.provider: {
@@ -748,6 +755,13 @@ class PiRuntime:
                 except (UnicodeError, ValueError) as exc:
                     raise RuntimeExecutionError("runtime_protocol_error", "Pi emitted malformed JSONL") from exc
                 event_type = event["type"]
+                # A separately admitted profile may capture fixed-tool receipts
+                # in controller memory. Raw tool payloads still never enter the
+                # progress stream, and model-written output is not consulted.
+                if event_type in {'tool_execution_start', 'tool_execution_end'}:
+                    observe = getattr(self.profile, 'observe_native_tool_event', None)
+                    if callable(observe):
+                        observe(event)
                 if event_type == "runtime_output_stats":
                     values = {key: event.get(key) for key in OUTPUT_STAT_KEYS}
                     if (not s.compact_events or any(type(value) is not int or not 0 <= value <= 1024**3

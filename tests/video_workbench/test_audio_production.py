@@ -205,6 +205,29 @@ def test_missing_audio_requires_explicit_silent_export(env):
     assert snapshots[0]['silent'] and snapshots[0]['scenes'][0]['audio'] is None
 
 
+def test_render_history_preserves_measured_duration_separately_from_snapshot(env):
+    client, app, _, _ = env
+    project, _, _ = uploaded(env)
+    original_renderer = app.state.production.renderer
+
+    def measured_renderer(snapshot, directory, *, cancel_event):
+        return dict(original_renderer(snapshot, directory, cancel_event=cancel_event),
+                    duration_seconds=snapshot['duration_seconds'] + .02)
+
+    app.state.production.renderer = measured_renderer
+    endpoint = f'/api/projects/{project["id"]}/renders'
+    response = client.post(endpoint, json=dict(expected_revision=project['revision'], subtitles=False),
+                           headers={'Idempotency-Key': 'measured-duration'})
+    assert response.status_code == 202, response.text
+    queued = client.get(endpoint).json()['renders'][0]
+    assert queued['actual_duration_seconds'] is None
+    app.state.production.tick()
+    completed = client.get(endpoint).json()['renders'][0]
+    assert completed['status'] == 'completed'
+    assert completed['duration_seconds'] == 1.5
+    assert completed['actual_duration_seconds'] == 1.52
+
+
 def test_cancelled_queued_render_never_starts_renderer(env):
     client, app, _, snapshots = env
     p, sid = scene(env)

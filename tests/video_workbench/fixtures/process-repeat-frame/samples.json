@@ -1,0 +1,1212 @@
+[
+  {
+    "time": 0.375,
+    "actual_time": 0.375,
+    "elements": {
+      "ce_309972d015765b2467e685eb": {
+        "x": 354,
+        "y": 316.9998779296875,
+        "width": 136,
+        "height": 44,
+        "opacity": 1,
+        "label": "完整回答",
+        "detail": "",
+        "slot": "token_queue",
+        "copied_from": null,
+        "text_boxes": {
+          "element-label": {
+            "x": 386,
+            "y": 325.9998779296875,
+            "width": 72,
+            "height": 26,
+            "scrollWidth": 72,
+            "clientWidth": 72,
+            "scrollHeight": 26,
+            "clientHeight": 26,
+            "overflow": false
+          }
+        },
+        "text_area": {
+          "left": 354,
+          "top": 316.9998779296875,
+          "right": 490,
+          "bottom": 360.9998779296875
+        },
+        "scrollWidth": 132,
+        "clientWidth": 132,
+        "scrollHeight": 40,
+        "clientHeight": 40,
+        "overflow": false,
+        "stateOpacities": {},
+        "state": null,
+        "stateLabel": null,
+        "stateSymbol": null,
+        "statePath": null,
+        "docking_bay": null
+      },
+      "ce_414113a02d61256a13f0a4d0": {
+        "x": 572,
+        "y": 470,
+        "width": 136,
+        "height": 44,
+        "opacity": 1,
+        "label": "完整回答",
+        "detail": "",
+        "slot": "token_queue",
+        "copied_from": "ce_309972d015765b2467e685eb",
+        "text_boxes": {
+          "element-label": {
+            "x": 604,
+            "y": 479,
+            "width": 72,
+            "height": 26,
+            "scrollWidth": 72,
+            "clientWidth": 72,
+            "scrollHeight": 26,
+            "clientHeight": 26,
+            "overflow": false
+          }
+        },
+        "text_area": {
+          "left": 572,
+          "top": 470,
+          "right": 708,
+          "bottom": 514
+        },
+        "scrollWidth": 132,
+        "clientWidth": 132,
+        "scrollHeight": 40,
+        "clientHeight": 40,
+        "overflow": false,
+        "stateOpacities": {},
+        "state": null,
+        "stateLabel": null,
+        "stateSymbol": null,
+        "statePath": null,
+        "docking_bay": null
+      },
+      "ce_6a475e9680bf7af508ea25c1": {
+        "x": 936,
+        "y": 260,
+        "width": 280,
+        "height": 268,
+        "opacity": 1,
+        "label": "模型历史",
+        "detail": "下一轮使用；不加入尝试记录",
+        "slot": "worker",
+        "copied_from": null,
+        "text_boxes": {
+          "element-label": {
+            "x": 958,
+            "y": 282,
+            "width": 236,
+            "height": 64,
+            "scrollWidth": 236,
+            "clientWidth": 236,
+            "scrollHeight": 64,
+            "clientHeight": 64,
+            "overflow": false
+          },
+          "element-detail": {
+            "x": 958,
+            "y": 352,
+            "width": 236,
+            "height": 48,
+            "scrollWidth": 236,
+            "clientWidth": 236,
+            "scrollHeight": 48,
+            "clientHeight": 48,
+            "overflow": false
+          },
+          "state-label": {
+            "x": 992,
+            "y": 418,
+            "width": 36,
+            "height": 28,
+            "scrollWidth": 36,
+            "clientWidth": 36,
+            "scrollHeight": 28,
+            "clientHeight": 28,
+            "overflow": false
+          },
+          "state-symbol": {
+            "x": 958,
+            "y": 420,
+            "width": 24,
+            "height": 24,
+            "scrollWidth": 24,
+            "clientWidth": 24,
+            "scrollHeight": 24,
+            "clientHeight": 24,
+            "overflow": false
+          }
+        },
+        "text_area": {
+          "left": 958,
+          "top": 282,
+          "right": 1194,
+          "bottom": 448
+        },
+        "scrollWidth": 276,
+        "clientWidth": 276,
+        "scrollHeight": 264,
+        "clientHeight": 264,
+        "overflow": false,
+        "stateOpacities": {
+          "idle": 1,
+          "waiting": 0,
+          "running": 0,
+          "completed": 0,
+          "failed": 0
+        },
+        "state": "idle",
+        "stateLabel": "待命",
+        "stateSymbol": "circle",
+        "statePath": "M12 3 A9 9 0 1 1 11.99 3 Z",
+        "docking_bay": {
+          "x": 950,
+          "y": 464,
+          "width": 252,
+          "height": 56,
+          "owner": "ce_6a475e9680bf7af508ea25c1",
+          "opacity": 1
+        }
+      },
+      "ce_76795ff978dcb20671c0dd90": {
+        "x": 500,
+        "y": 260,
+        "width": 280,
+        "height": 268,
+        "opacity": 1,
+        "label": "完整回答",
+        "detail": "整理完整回答；原日志不变",
+        "slot": "queue",
+        "copied_from": null,
+        "text_boxes": {
+          "element-label": {
+            "x": 522,
+            "y": 282,
+            "width": 236,
+            "height": 64,
+            "scrollWidth": 236,
+            "clientWidth": 236,
+            "scrollHeight": 64,
+            "clientHeight": 64,
+            "overflow": false
+          },
+          "element-detail": {
+            "x": 522,
+            "y": 352,
+            "width": 236,
+            "height": 48,
+            "scrollWidth": 236,
+            "clientWidth": 236,
+            "scrollHeight": 48,
+            "clientHeight": 48,
+            "overflow": false
+          },
+          "state-label": {
+            "x": 556,
+            "y": 418,
+            "width": 36,
+            "height": 28,
+            "scrollWidth": 36,
+            "clientWidth": 36,
+            "scrollHeight": 28,
+            "clientHeight": 28,
+            "overflow": false
+          },
+          "state-symbol": {
+            "x": 522,
+            "y": 420,
+            "width": 24,
+            "height": 24,
+            "scrollWidth": 24,
+            "clientWidth": 24,
+            "scrollHeight": 24,
+            "clientHeight": 24,
+            "overflow": false
+          }
+        },
+        "text_area": {
+          "left": 522,
+          "top": 282,
+          "right": 758,
+          "bottom": 448
+        },
+        "scrollWidth": 276,
+        "clientWidth": 276,
+        "scrollHeight": 264,
+        "clientHeight": 264,
+        "overflow": false,
+        "stateOpacities": {
+          "idle": 0,
+          "waiting": 1,
+          "running": 0,
+          "completed": 0,
+          "failed": 0
+        },
+        "state": "waiting",
+        "stateLabel": "等待",
+        "stateSymbol": "queue",
+        "statePath": "M4 6 H20 M4 12 H20 M4 18 H20",
+        "docking_bay": {
+          "x": 514,
+          "y": 464,
+          "width": 252,
+          "height": 56,
+          "owner": "ce_76795ff978dcb20671c0dd90",
+          "opacity": 1
+        }
+      },
+      "ce_8a62bae92c8a3a8771a2bec0": {
+        "x": 64,
+        "y": 260,
+        "width": 280,
+        "height": 268,
+        "opacity": 1,
+        "label": "会话日志（保留）",
+        "detail": "完整回答和所有尝试记录都保留",
+        "slot": "source",
+        "copied_from": null,
+        "text_boxes": {
+          "element-label": {
+            "x": 86,
+            "y": 282,
+            "width": 236,
+            "height": 64,
+            "scrollWidth": 236,
+            "clientWidth": 236,
+            "scrollHeight": 64,
+            "clientHeight": 64,
+            "overflow": false
+          },
+          "element-detail": {
+            "x": 86,
+            "y": 352,
+            "width": 236,
+            "height": 48,
+            "scrollWidth": 236,
+            "clientWidth": 236,
+            "scrollHeight": 48,
+            "clientHeight": 48,
+            "overflow": false
+          },
+          "state-label": {
+            "x": 120,
+            "y": 418,
+            "width": 54,
+            "height": 28,
+            "scrollWidth": 54,
+            "clientWidth": 54,
+            "scrollHeight": 28,
+            "clientHeight": 28,
+            "overflow": false
+          },
+          "state-symbol": {
+            "x": 86,
+            "y": 420,
+            "width": 24,
+            "height": 24,
+            "scrollWidth": 24,
+            "clientWidth": 24,
+            "scrollHeight": 24,
+            "clientHeight": 24,
+            "overflow": false
+          }
+        },
+        "text_area": {
+          "left": 86,
+          "top": 282,
+          "right": 322,
+          "bottom": 448
+        },
+        "scrollWidth": 276,
+        "clientWidth": 276,
+        "scrollHeight": 264,
+        "clientHeight": 264,
+        "overflow": false,
+        "stateOpacities": {
+          "idle": 0,
+          "waiting": 0,
+          "running": 1,
+          "completed": 0,
+          "failed": 0
+        },
+        "state": "running",
+        "stateLabel": "处理中",
+        "stateSymbol": "triangle",
+        "statePath": "M7 3 L20 12 L7 21 Z",
+        "docking_bay": {
+          "x": 78,
+          "y": 464,
+          "width": 252,
+          "height": 56,
+          "owner": "ce_8a62bae92c8a3a8771a2bec0",
+          "opacity": 1
+        }
+      }
+    },
+    "relations": {
+      "cr_15a0a346311810ca603b7cb9": {
+        "opacity": 0,
+        "strokeDashoffset": 0,
+        "length": 156,
+        "pathD": "M 344 492 L 500 492",
+        "sourcePort": {
+          "x": 344,
+          "y": 492
+        },
+        "targetPort": {
+          "x": 500,
+          "y": 492
+        },
+        "middlePoint": {
+          "x": 422,
+          "y": 492
+        },
+        "markerOpacity": 0,
+        "labelOpacity": 0,
+        "baseCount": 0
+      },
+      "cr_d253769f6357f5e4469c1714": {
+        "opacity": 0,
+        "strokeDashoffset": 1,
+        "length": 156,
+        "pathD": "M 780 492 L 936 492",
+        "sourcePort": {
+          "x": 780,
+          "y": 492
+        },
+        "targetPort": {
+          "x": 936,
+          "y": 492
+        },
+        "middlePoint": {
+          "x": 858,
+          "y": 492
+        },
+        "markerOpacity": 0,
+        "labelOpacity": 0,
+        "baseCount": 0
+      }
+    },
+    "layout": {
+      "fontReady": true,
+      "title": {
+        "x": 64,
+        "y": 44,
+        "width": 1152,
+        "height": 46.390625,
+        "scrollWidth": 1152,
+        "clientWidth": 1152,
+        "scrollHeight": 46,
+        "clientHeight": 46,
+        "overflow": false
+      },
+      "takeaway": {
+        "x": 64,
+        "y": 664,
+        "width": 1152,
+        "height": 24,
+        "scrollWidth": 1152,
+        "clientWidth": 1152,
+        "scrollHeight": 24,
+        "clientHeight": 24,
+        "overflow": false
+      },
+      "headers": {
+        "previous": {
+          "opacity": 0,
+          "title": {
+            "x": 64,
+            "y": 44,
+            "width": 1152,
+            "height": 46.390625,
+            "scrollWidth": 1152,
+            "clientWidth": 1152,
+            "scrollHeight": 46,
+            "clientHeight": 46,
+            "overflow": false,
+            "text": "日志保留回答，也保留尝试"
+          },
+          "takeaway": {
+            "x": 64,
+            "y": 664,
+            "width": 1152,
+            "height": 24,
+            "scrollWidth": 1152,
+            "clientWidth": 1152,
+            "scrollHeight": 24,
+            "clientHeight": 24,
+            "overflow": false,
+            "text": "完整回答与尝试记录都在日志里，下一镜继续看回答的用途。"
+          }
+        },
+        "current": {
+          "opacity": 0.5,
+          "title": {
+            "x": 64,
+            "y": 44,
+            "width": 1152,
+            "height": 46.390625,
+            "scrollWidth": 1152,
+            "clientWidth": 1152,
+            "scrollHeight": 46,
+            "clientHeight": 46,
+            "overflow": false,
+            "text": "完整回答进入下一轮历史"
+          },
+          "takeaway": {
+            "x": 64,
+            "y": 664,
+            "width": 1152,
+            "height": 24,
+            "scrollWidth": 1152,
+            "clientWidth": 1152,
+            "scrollHeight": 24,
+            "clientHeight": 24,
+            "overflow": false,
+            "text": "完整回答整理进模型历史；失败、重试和取消记录继续留在日志。"
+          }
+        }
+      },
+      "relations": [
+        {
+          "id": "cr_15a0a346311810ca603b7cb9",
+          "text": "整理回答",
+          "x": 352,
+          "y": 410,
+          "width": 140,
+          "height": 44,
+          "plate": {
+            "x": 352,
+            "y": 410,
+            "width": 140,
+            "height": 44
+          },
+          "ink": {
+            "x": 394,
+            "y": 421,
+            "width": 56,
+            "height": 20
+          },
+          "opacity": 0,
+          "overflow": false
+        },
+        {
+          "id": "cr_d253769f6357f5e4469c1714",
+          "text": "加入历史",
+          "x": 788,
+          "y": 410,
+          "width": 140,
+          "height": 44,
+          "plate": {
+            "x": 788,
+            "y": 410,
+            "width": 140,
+            "height": 44
+          },
+          "ink": {
+            "x": 830,
+            "y": 421,
+            "width": 56,
+            "height": 20
+          },
+          "opacity": 0,
+          "overflow": false
+        }
+      ]
+    },
+    "continuity": {
+      "scene_id": "06505194-364e-41f5-af17-4c257e18e00a",
+      "index": 1,
+      "entity_map": {
+        "answer": "ce_76795ff978dcb20671c0dd90",
+        "history": "ce_6a475e9680bf7af508ea25c1",
+        "log": "ce_8a62bae92c8a3a8771a2bec0",
+        "record": "ce_414113a02d61256a13f0a4d0"
+      },
+      "copy_lineage": [
+        {
+          "source": "ce_309972d015765b2467e685eb",
+          "target": "ce_414113a02d61256a13f0a4d0"
+        }
+      ]
+    },
+    "compositor_debug": {
+      "el-ce_309972d015765b2467e685eb": {
+        "transform": "matrix(1, 0, 0, 1, -218, -153)",
+        "inlineTransform": "translate(-218px, -153px)",
+        "transformOrigin": "68px 22px",
+        "willChange": "auto",
+        "filter": "none",
+        "boxShadow": "none",
+        "borderRadius": "22px",
+        "cache": {
+          "force3D": false,
+          "x": "-218px",
+          "y": "-153.0001px",
+          "z": "0px",
+          "scaleX": 1,
+          "scaleY": 1,
+          "rotation": "0deg"
+        }
+      },
+      "el-ce_414113a02d61256a13f0a4d0": {
+        "transform": "matrix(1, 0, 0, 1, 0, 0)",
+        "inlineTransform": "translate(0px, 0px)",
+        "transformOrigin": "68px 22px",
+        "willChange": "auto",
+        "filter": "none",
+        "boxShadow": "none",
+        "borderRadius": "22px",
+        "cache": {
+          "force3D": false,
+          "x": "0px",
+          "y": "0px",
+          "z": "0px",
+          "scaleX": 1,
+          "scaleY": 1,
+          "rotation": "0deg"
+        }
+      },
+      "el-ce_6a475e9680bf7af508ea25c1": {
+        "transform": "none",
+        "inlineTransform": "",
+        "transformOrigin": "140px 134px",
+        "willChange": "auto",
+        "filter": "none",
+        "boxShadow": "none",
+        "borderRadius": "16px",
+        "cache": null
+      },
+      "el-ce_76795ff978dcb20671c0dd90": {
+        "transform": "none",
+        "inlineTransform": "",
+        "transformOrigin": "140px 134px",
+        "willChange": "auto",
+        "filter": "none",
+        "boxShadow": "none",
+        "borderRadius": "16px",
+        "cache": null
+      },
+      "el-ce_8a62bae92c8a3a8771a2bec0": {
+        "transform": "none",
+        "inlineTransform": "",
+        "transformOrigin": "140px 134px",
+        "willChange": "auto",
+        "filter": "none",
+        "boxShadow": "none",
+        "borderRadius": "16px",
+        "cache": null
+      }
+    },
+    "frame_sha256": "0ced8ba07dc78fef7a2967fa777d22bc3781bd3e2beb308c878dcdadbaa92439"
+  },
+  {
+    "time": 0.375,
+    "actual_time": 0.375,
+    "elements": {
+      "ce_309972d015765b2467e685eb": {
+        "x": 354,
+        "y": 316.9998779296875,
+        "width": 136,
+        "height": 44,
+        "opacity": 1,
+        "label": "完整回答",
+        "detail": "",
+        "slot": "token_queue",
+        "copied_from": null,
+        "text_boxes": {
+          "element-label": {
+            "x": 386,
+            "y": 325.9998779296875,
+            "width": 72,
+            "height": 26,
+            "scrollWidth": 72,
+            "clientWidth": 72,
+            "scrollHeight": 26,
+            "clientHeight": 26,
+            "overflow": false
+          }
+        },
+        "text_area": {
+          "left": 354,
+          "top": 316.9998779296875,
+          "right": 490,
+          "bottom": 360.9998779296875
+        },
+        "scrollWidth": 132,
+        "clientWidth": 132,
+        "scrollHeight": 40,
+        "clientHeight": 40,
+        "overflow": false,
+        "stateOpacities": {},
+        "state": null,
+        "stateLabel": null,
+        "stateSymbol": null,
+        "statePath": null,
+        "docking_bay": null
+      },
+      "ce_414113a02d61256a13f0a4d0": {
+        "x": 572,
+        "y": 470,
+        "width": 136,
+        "height": 44,
+        "opacity": 1,
+        "label": "完整回答",
+        "detail": "",
+        "slot": "token_queue",
+        "copied_from": "ce_309972d015765b2467e685eb",
+        "text_boxes": {
+          "element-label": {
+            "x": 604,
+            "y": 479,
+            "width": 72,
+            "height": 26,
+            "scrollWidth": 72,
+            "clientWidth": 72,
+            "scrollHeight": 26,
+            "clientHeight": 26,
+            "overflow": false
+          }
+        },
+        "text_area": {
+          "left": 572,
+          "top": 470,
+          "right": 708,
+          "bottom": 514
+        },
+        "scrollWidth": 132,
+        "clientWidth": 132,
+        "scrollHeight": 40,
+        "clientHeight": 40,
+        "overflow": false,
+        "stateOpacities": {},
+        "state": null,
+        "stateLabel": null,
+        "stateSymbol": null,
+        "statePath": null,
+        "docking_bay": null
+      },
+      "ce_6a475e9680bf7af508ea25c1": {
+        "x": 936,
+        "y": 260,
+        "width": 280,
+        "height": 268,
+        "opacity": 1,
+        "label": "模型历史",
+        "detail": "下一轮使用；不加入尝试记录",
+        "slot": "worker",
+        "copied_from": null,
+        "text_boxes": {
+          "element-label": {
+            "x": 958,
+            "y": 282,
+            "width": 236,
+            "height": 64,
+            "scrollWidth": 236,
+            "clientWidth": 236,
+            "scrollHeight": 64,
+            "clientHeight": 64,
+            "overflow": false
+          },
+          "element-detail": {
+            "x": 958,
+            "y": 352,
+            "width": 236,
+            "height": 48,
+            "scrollWidth": 236,
+            "clientWidth": 236,
+            "scrollHeight": 48,
+            "clientHeight": 48,
+            "overflow": false
+          },
+          "state-label": {
+            "x": 992,
+            "y": 418,
+            "width": 36,
+            "height": 28,
+            "scrollWidth": 36,
+            "clientWidth": 36,
+            "scrollHeight": 28,
+            "clientHeight": 28,
+            "overflow": false
+          },
+          "state-symbol": {
+            "x": 958,
+            "y": 420,
+            "width": 24,
+            "height": 24,
+            "scrollWidth": 24,
+            "clientWidth": 24,
+            "scrollHeight": 24,
+            "clientHeight": 24,
+            "overflow": false
+          }
+        },
+        "text_area": {
+          "left": 958,
+          "top": 282,
+          "right": 1194,
+          "bottom": 448
+        },
+        "scrollWidth": 276,
+        "clientWidth": 276,
+        "scrollHeight": 264,
+        "clientHeight": 264,
+        "overflow": false,
+        "stateOpacities": {
+          "idle": 1,
+          "waiting": 0,
+          "running": 0,
+          "completed": 0,
+          "failed": 0
+        },
+        "state": "idle",
+        "stateLabel": "待命",
+        "stateSymbol": "circle",
+        "statePath": "M12 3 A9 9 0 1 1 11.99 3 Z",
+        "docking_bay": {
+          "x": 950,
+          "y": 464,
+          "width": 252,
+          "height": 56,
+          "owner": "ce_6a475e9680bf7af508ea25c1",
+          "opacity": 1
+        }
+      },
+      "ce_76795ff978dcb20671c0dd90": {
+        "x": 500,
+        "y": 260,
+        "width": 280,
+        "height": 268,
+        "opacity": 1,
+        "label": "完整回答",
+        "detail": "整理完整回答；原日志不变",
+        "slot": "queue",
+        "copied_from": null,
+        "text_boxes": {
+          "element-label": {
+            "x": 522,
+            "y": 282,
+            "width": 236,
+            "height": 64,
+            "scrollWidth": 236,
+            "clientWidth": 236,
+            "scrollHeight": 64,
+            "clientHeight": 64,
+            "overflow": false
+          },
+          "element-detail": {
+            "x": 522,
+            "y": 352,
+            "width": 236,
+            "height": 48,
+            "scrollWidth": 236,
+            "clientWidth": 236,
+            "scrollHeight": 48,
+            "clientHeight": 48,
+            "overflow": false
+          },
+          "state-label": {
+            "x": 556,
+            "y": 418,
+            "width": 36,
+            "height": 28,
+            "scrollWidth": 36,
+            "clientWidth": 36,
+            "scrollHeight": 28,
+            "clientHeight": 28,
+            "overflow": false
+          },
+          "state-symbol": {
+            "x": 522,
+            "y": 420,
+            "width": 24,
+            "height": 24,
+            "scrollWidth": 24,
+            "clientWidth": 24,
+            "scrollHeight": 24,
+            "clientHeight": 24,
+            "overflow": false
+          }
+        },
+        "text_area": {
+          "left": 522,
+          "top": 282,
+          "right": 758,
+          "bottom": 448
+        },
+        "scrollWidth": 276,
+        "clientWidth": 276,
+        "scrollHeight": 264,
+        "clientHeight": 264,
+        "overflow": false,
+        "stateOpacities": {
+          "idle": 0,
+          "waiting": 1,
+          "running": 0,
+          "completed": 0,
+          "failed": 0
+        },
+        "state": "waiting",
+        "stateLabel": "等待",
+        "stateSymbol": "queue",
+        "statePath": "M4 6 H20 M4 12 H20 M4 18 H20",
+        "docking_bay": {
+          "x": 514,
+          "y": 464,
+          "width": 252,
+          "height": 56,
+          "owner": "ce_76795ff978dcb20671c0dd90",
+          "opacity": 1
+        }
+      },
+      "ce_8a62bae92c8a3a8771a2bec0": {
+        "x": 64,
+        "y": 260,
+        "width": 280,
+        "height": 268,
+        "opacity": 1,
+        "label": "会话日志（保留）",
+        "detail": "完整回答和所有尝试记录都保留",
+        "slot": "source",
+        "copied_from": null,
+        "text_boxes": {
+          "element-label": {
+            "x": 86,
+            "y": 282,
+            "width": 236,
+            "height": 64,
+            "scrollWidth": 236,
+            "clientWidth": 236,
+            "scrollHeight": 64,
+            "clientHeight": 64,
+            "overflow": false
+          },
+          "element-detail": {
+            "x": 86,
+            "y": 352,
+            "width": 236,
+            "height": 48,
+            "scrollWidth": 236,
+            "clientWidth": 236,
+            "scrollHeight": 48,
+            "clientHeight": 48,
+            "overflow": false
+          },
+          "state-label": {
+            "x": 120,
+            "y": 418,
+            "width": 54,
+            "height": 28,
+            "scrollWidth": 54,
+            "clientWidth": 54,
+            "scrollHeight": 28,
+            "clientHeight": 28,
+            "overflow": false
+          },
+          "state-symbol": {
+            "x": 86,
+            "y": 420,
+            "width": 24,
+            "height": 24,
+            "scrollWidth": 24,
+            "clientWidth": 24,
+            "scrollHeight": 24,
+            "clientHeight": 24,
+            "overflow": false
+          }
+        },
+        "text_area": {
+          "left": 86,
+          "top": 282,
+          "right": 322,
+          "bottom": 448
+        },
+        "scrollWidth": 276,
+        "clientWidth": 276,
+        "scrollHeight": 264,
+        "clientHeight": 264,
+        "overflow": false,
+        "stateOpacities": {
+          "idle": 0,
+          "waiting": 0,
+          "running": 1,
+          "completed": 0,
+          "failed": 0
+        },
+        "state": "running",
+        "stateLabel": "处理中",
+        "stateSymbol": "triangle",
+        "statePath": "M7 3 L20 12 L7 21 Z",
+        "docking_bay": {
+          "x": 78,
+          "y": 464,
+          "width": 252,
+          "height": 56,
+          "owner": "ce_8a62bae92c8a3a8771a2bec0",
+          "opacity": 1
+        }
+      }
+    },
+    "relations": {
+      "cr_15a0a346311810ca603b7cb9": {
+        "opacity": 0,
+        "strokeDashoffset": 0,
+        "length": 156,
+        "pathD": "M 344 492 L 500 492",
+        "sourcePort": {
+          "x": 344,
+          "y": 492
+        },
+        "targetPort": {
+          "x": 500,
+          "y": 492
+        },
+        "middlePoint": {
+          "x": 422,
+          "y": 492
+        },
+        "markerOpacity": 0,
+        "labelOpacity": 0,
+        "baseCount": 0
+      },
+      "cr_d253769f6357f5e4469c1714": {
+        "opacity": 0,
+        "strokeDashoffset": 1,
+        "length": 156,
+        "pathD": "M 780 492 L 936 492",
+        "sourcePort": {
+          "x": 780,
+          "y": 492
+        },
+        "targetPort": {
+          "x": 936,
+          "y": 492
+        },
+        "middlePoint": {
+          "x": 858,
+          "y": 492
+        },
+        "markerOpacity": 0,
+        "labelOpacity": 0,
+        "baseCount": 0
+      }
+    },
+    "layout": {
+      "fontReady": true,
+      "title": {
+        "x": 64,
+        "y": 44,
+        "width": 1152,
+        "height": 46.390625,
+        "scrollWidth": 1152,
+        "clientWidth": 1152,
+        "scrollHeight": 46,
+        "clientHeight": 46,
+        "overflow": false
+      },
+      "takeaway": {
+        "x": 64,
+        "y": 664,
+        "width": 1152,
+        "height": 24,
+        "scrollWidth": 1152,
+        "clientWidth": 1152,
+        "scrollHeight": 24,
+        "clientHeight": 24,
+        "overflow": false
+      },
+      "headers": {
+        "previous": {
+          "opacity": 0,
+          "title": {
+            "x": 64,
+            "y": 44,
+            "width": 1152,
+            "height": 46.390625,
+            "scrollWidth": 1152,
+            "clientWidth": 1152,
+            "scrollHeight": 46,
+            "clientHeight": 46,
+            "overflow": false,
+            "text": "日志保留回答，也保留尝试"
+          },
+          "takeaway": {
+            "x": 64,
+            "y": 664,
+            "width": 1152,
+            "height": 24,
+            "scrollWidth": 1152,
+            "clientWidth": 1152,
+            "scrollHeight": 24,
+            "clientHeight": 24,
+            "overflow": false,
+            "text": "完整回答与尝试记录都在日志里，下一镜继续看回答的用途。"
+          }
+        },
+        "current": {
+          "opacity": 0.5,
+          "title": {
+            "x": 64,
+            "y": 44,
+            "width": 1152,
+            "height": 46.390625,
+            "scrollWidth": 1152,
+            "clientWidth": 1152,
+            "scrollHeight": 46,
+            "clientHeight": 46,
+            "overflow": false,
+            "text": "完整回答进入下一轮历史"
+          },
+          "takeaway": {
+            "x": 64,
+            "y": 664,
+            "width": 1152,
+            "height": 24,
+            "scrollWidth": 1152,
+            "clientWidth": 1152,
+            "scrollHeight": 24,
+            "clientHeight": 24,
+            "overflow": false,
+            "text": "完整回答整理进模型历史；失败、重试和取消记录继续留在日志。"
+          }
+        }
+      },
+      "relations": [
+        {
+          "id": "cr_15a0a346311810ca603b7cb9",
+          "text": "整理回答",
+          "x": 352,
+          "y": 410,
+          "width": 140,
+          "height": 44,
+          "plate": {
+            "x": 352,
+            "y": 410,
+            "width": 140,
+            "height": 44
+          },
+          "ink": {
+            "x": 394,
+            "y": 421,
+            "width": 56,
+            "height": 20
+          },
+          "opacity": 0,
+          "overflow": false
+        },
+        {
+          "id": "cr_d253769f6357f5e4469c1714",
+          "text": "加入历史",
+          "x": 788,
+          "y": 410,
+          "width": 140,
+          "height": 44,
+          "plate": {
+            "x": 788,
+            "y": 410,
+            "width": 140,
+            "height": 44
+          },
+          "ink": {
+            "x": 830,
+            "y": 421,
+            "width": 56,
+            "height": 20
+          },
+          "opacity": 0,
+          "overflow": false
+        }
+      ]
+    },
+    "continuity": {
+      "scene_id": "06505194-364e-41f5-af17-4c257e18e00a",
+      "index": 1,
+      "entity_map": {
+        "answer": "ce_76795ff978dcb20671c0dd90",
+        "history": "ce_6a475e9680bf7af508ea25c1",
+        "log": "ce_8a62bae92c8a3a8771a2bec0",
+        "record": "ce_414113a02d61256a13f0a4d0"
+      },
+      "copy_lineage": [
+        {
+          "source": "ce_309972d015765b2467e685eb",
+          "target": "ce_414113a02d61256a13f0a4d0"
+        }
+      ]
+    },
+    "compositor_debug": {
+      "el-ce_309972d015765b2467e685eb": {
+        "transform": "matrix(1, 0, 0, 1, -218, -153)",
+        "inlineTransform": "translate(-218px, -153px)",
+        "transformOrigin": "68px 22px",
+        "willChange": "auto",
+        "filter": "none",
+        "boxShadow": "none",
+        "borderRadius": "22px",
+        "cache": {
+          "force3D": false,
+          "x": "-218px",
+          "y": "-153.0001px",
+          "z": "0px",
+          "scaleX": 1,
+          "scaleY": 1,
+          "rotation": "0deg"
+        }
+      },
+      "el-ce_414113a02d61256a13f0a4d0": {
+        "transform": "matrix(1, 0, 0, 1, 0, 0)",
+        "inlineTransform": "translate(0px, 0px)",
+        "transformOrigin": "68px 22px",
+        "willChange": "auto",
+        "filter": "none",
+        "boxShadow": "none",
+        "borderRadius": "22px",
+        "cache": {
+          "force3D": false,
+          "x": "0px",
+          "y": "0px",
+          "z": "0px",
+          "scaleX": 1,
+          "scaleY": 1,
+          "rotation": "0deg"
+        }
+      },
+      "el-ce_6a475e9680bf7af508ea25c1": {
+        "transform": "none",
+        "inlineTransform": "",
+        "transformOrigin": "140px 134px",
+        "willChange": "auto",
+        "filter": "none",
+        "boxShadow": "none",
+        "borderRadius": "16px",
+        "cache": null
+      },
+      "el-ce_76795ff978dcb20671c0dd90": {
+        "transform": "none",
+        "inlineTransform": "",
+        "transformOrigin": "140px 134px",
+        "willChange": "auto",
+        "filter": "none",
+        "boxShadow": "none",
+        "borderRadius": "16px",
+        "cache": null
+      },
+      "el-ce_8a62bae92c8a3a8771a2bec0": {
+        "transform": "none",
+        "inlineTransform": "",
+        "transformOrigin": "140px 134px",
+        "willChange": "auto",
+        "filter": "none",
+        "boxShadow": "none",
+        "borderRadius": "16px",
+        "cache": null
+      }
+    },
+    "frame_sha256": "9f347ad5e1e895e03bc2ef358577716ebe3c0eb2e624b1b5d8a268f1dfd7a90c"
+  }
+]

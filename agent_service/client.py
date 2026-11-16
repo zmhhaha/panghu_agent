@@ -105,6 +105,11 @@ class AgentClient:
     def get_job(self, job_id: str):
         return self._request('GET', '/v1/jobs/' + self._id(job_id))
 
+    def model_image_evidence(self, job_id: str):
+        """Fetch control-measured image transport hashes, never Agent claims."""
+        return self._request('GET', '/v1/jobs/' + self._id(job_id) + '/model-image-evidence',
+                             limit=16 * 1024 * 1024)
+
     def lookup_job(self, idempotency_key: str):
         """Recover a lost submission response without repeating a POST."""
         if (type(idempotency_key) is not str or not 1 <= len(idempotency_key) <= 128

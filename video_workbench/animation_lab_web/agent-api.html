@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>外部 Agent API · 动画效果库</title>
+  <style>
+    :root { color-scheme: light; --page: #f7f8fc; --card: #fff; --ink: #19243a; --muted: #536079; --line: #dce2ed; --accent: #315aca; --code: #eff3fa; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--page); color: var(--ink); font: 16px/1.75 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+    a { color: var(--accent); text-underline-offset: .2em; }
+    a:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
+    .wrap { width: min(1080px, calc(100% - 48px)); margin: auto; }
+    header { padding: 52px 0 30px; border-bottom: 1px solid var(--line); }
+    .eyebrow { color: var(--accent); font-size: 13px; font-weight: 700; letter-spacing: .12em; margin: 0 0 10px; }
+    h1 { font-size: clamp(30px, 5vw, 44px); line-height: 1.25; letter-spacing: -.03em; margin: 0 0 16px; }
+    header p { max-width: 820px; color: var(--muted); margin: 12px 0; }
+    .links { display: flex; flex-wrap: wrap; gap: 10px 24px; margin-top: 22px; }
+    .links a { font-size: 14px; font-weight: 650; }
+    .layout { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 36px; padding: 32px 0 64px; }
+    nav { position: sticky; top: 24px; align-self: start; display: grid; gap: 10px; font-size: 14px; }
+    nav a { text-decoration: none; color: var(--muted); }
+    nav a:hover { color: var(--accent); text-decoration: underline; }
+    main { min-width: 0; }
+    section { scroll-margin-top: 20px; margin-bottom: 36px; }
+    h2 { font-size: 24px; line-height: 1.4; margin: 0 0 16px; }
+    h3 { font-size: 17px; margin: 24px 0 10px; }
+    p { margin: 12px 0; }
+    code { padding: .15em .35em; border-radius: 4px; background: var(--code); font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: .88em; overflow-wrap: anywhere; }
+    pre { margin: 16px 0; padding: 18px 20px; background: var(--code); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; line-height: 1.6; tab-size: 2; }
+    pre code { padding: 0; background: none; font-size: 13px; overflow-wrap: normal; }
+    .note { padding: 14px 18px; background: var(--card); border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; }
+    .table { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 16px 0; }
+    th { color: var(--muted); text-align: left; font-weight: 650; }
+    th, td { border-bottom: 1px solid var(--line); padding: 11px 12px; vertical-align: top; }
+    th:first-child, td:first-child { padding-left: 0; }
+    ol, ul { padding-left: 24px; }
+    li { margin: 6px 0; }
+    footer { color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); padding-top: 20px; }
+    @media (max-width: 760px) { .wrap { width: calc(100% - 32px); } header { padding-top: 32px; } .layout { grid-template-columns: 1fr; gap: 24px; } nav { position: static; display: flex; flex-wrap: wrap; gap: 10px 18px; } pre { padding: 14px; } }
+    @media (prefers-color-scheme: dark) { :root { color-scheme: dark; --page: #111722; --card: #192231; --ink: #e5ebf8; --muted: #a7b4cb; --line: #303c50; --accent: #9cb6ff; --code: #1b2536; } }
+    @media print { :root { --page: #fff; --ink: #000; --muted: #333; --line: #ccc; --code: #f5f5f5; } .layout { display: block; } nav { display: none; } pre { white-space: pre-wrap; overflow-wrap: anywhere; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <p class="eyebrow">ANIMATION LAB · REST / JSON</p>
+      <h1>外部 Agent API</h1>
+      <p>直接提交动画需求，查询进度，下载候选视频和源码，再根据结果继续优化。此页和 API 沿用动画效果库现有的 OAuth 登录与开发者权限。</p>
+      <p><code>https://video-service.panghuer.top/dev/animations/api/method-lab</code></p>
+      <div class="links">
+        <a href="agent-api.openapi.json">OpenAPI 3.1 合同</a>
+        <a href="agent-api-client.py" download="animation_lab_client.py">下载 Python 客户端</a>
+        <a href="./">返回动画效果库</a>
+      </div>
+    </div>
+  </header>
+  <div class="wrap layout">
+    <nav aria-label="文档目录">
+      <a href="#auth">授权方式</a>
+      <a href="#start">提交与查询</a>
+      <a href="#results">状态与下载</a>
+      <a href="#iterate">继续优化</a>
+      <a href="#feedback">反馈与取消</a>
+      <a href="#client">Python 客户端</a>
+      <a href="#errors">错误与幂等</a>
+    </nav>
+    <main>
+      <section id="auth">
+        <h2>授权方式</h2>
+        <p>凭据为用户安全提供的 OAuth 会话 Cookie 文件。部署 Cookie 名为 <code>__Host-video_workbench</code>；客户端使用 Netscape 格式的 <code>cookies.txt</code>，保留原域、路径、Secure 和过期信息。接入程序不读取或导出浏览器凭据。会话过期后由用户重新授权。</p>
+        <p>当前尚未实现独立的长期机器凭据，API 不支持 Bearer。每个 POST 必须同时包含：</p>
+        <ol>
+          <li>有效的登录 Cookie，且会话用户具有现有开发者权限。</li>
+          <li><code>Origin: https://video-service.panghuer.top</code></li>
+          <li><code>X-Animation-Lab-Token: &lt;catalog.csrf_token&gt;</code> 和 <code>Content-Type: application/json</code></li>
+        </ol>
+        <p>先 GET <code>/catalog</code> 取得当前 <code>csrf_token</code>。它是写请求防伪 token，不能替代登录 Cookie；服务重启后应重新读取。身份由 OAuth 入口确定。</p>
+      </section>
+
+      <section id="start">
+        <h2>提交与查询</h2>
+        <p>以下为 POSIX shell 示例；Windows 可用 <code>curl.exe</code> 并使用本机 shell 换行语法。示例仅使用凭据文件名和 token 占位符。</p>
+        <pre><code>curl --fail-with-body --cookie cookies.txt \
+  https://video-service.panghuer.top/dev/animations/api/method-lab/catalog \
+  --output catalog.json</code></pre>
+        <p>检查返回的 <code>availability.enabled</code>；为 <code>false</code> 时当前制作执行器不可用，目录仍可读取。从 JSON 取得当前 <code>csrf_token</code>。登录重定向或 HTML 表示需要检查授权。</p>
+        <h3>1. 保存 request.json</h3>
+        <pre><code>{
+  "request_id": "17c8a3ea-52b4-42d0-b875-f55ab241e2db",
+  "title": "聚焦异常数据点",
+  "goal": "制作一段数据点从整体分布中被选出并放大解释的动画。保留总体与局部的对应关系，文字清楚且不遮挡数据。",
+  "duration_seconds": 18,
+  "budget": {"max_rounds": 2, "max_seconds": 600},
+  "criteria": [
+    {"id": "focus", "description": "选中的数据点与总体分布之间的对应关系清楚。"},
+    {"id": "labels", "description": "关键标签完整可读，且不遮挡主要图形。"}
+  ]
+}</code></pre>
+        <p><code>request_id</code> 是调用方提供的幂等键。固定 UUID 仅供示例，每个新任务都应生成新 UUID；超时人工重放保留原 ID。</p>
+        <div class="table">
+          <table>
+            <thead><tr><th>字段</th><th>约束</th></tr></thead>
+            <tbody>
+              <tr><td><code>goal</code></td><td>必填，非空文本，最长 16000 字符；<code>title</code> 可选，最长 500 字符。</td></tr>
+              <tr><td><code>duration_seconds</code></td><td>默认 18，范围 1–60 秒，必须落在 24 fps 的整帧边界。</td></tr>
+              <tr><td><code>budget</code></td><td><code>max_rounds</code> 整数 1–8；<code>max_seconds</code> 整数 60–3600。</td></tr>
+              <tr><td><code>collaboration</code></td><td>可选，新建实验显式开启，继续优化或重新运行可继承原协作配置。先确认 <code>availability.collaboration=true</code>；对象中 <code>max_components</code> 为整数 2–4，同时要求 <code>budget.max_rounds=1</code>。普通制作省略此字段。</td></tr>
+              <tr><td><code>criteria</code></td><td>可省略。提供时为 1–16 项，唯一的 <code>id</code> 与非空 <code>description</code>；可选 <code>requires_motion</code>、<code>requires_audio</code> 布尔值和 <code>observation</code> 文本。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>标准的描述及 observation 最长 4000 字符。运动与音频标准需要对应的实际观察证据，静帧评审不能推断已经满足。</p>
+        <details><summary>复杂效果：按职责分工创作（可选）</summary><p>统筹先规划，部件分别创作，再整合为一条完整样片；无需调用方管理图层。首版支持 Canvas 2D，不与 Manim 预制资源或迁移任务合用。新建实验加入以下字段，并把本次探索轮数设为 1；继续优化或重新运行继承原配置，仍需设置本次预算为 1 轮：</p><pre><code>"budget": {"max_rounds": 1, "max_seconds": 1800},
+"collaboration": {"max_components": 3}</code></pre><p>最多 <code>max_components+2</code> 个创作任务（统筹、部件与整合），另有 1 次完整样片渲染、1 次评审。实际规划可少于指定部件数；全部工作共用这次总时限，建议预留 30 分钟。未启用时请省略该字段，不能仅凭执行器可用就推断协作已开放。详情中的创作任务额度包含已预留任务，不代表模型请求数。</p></details>
+        <h3>2. 提交制作</h3>
+        <pre><code>curl --fail-with-body --cookie cookies.txt \
+  -H 'Origin: https://video-service.panghuer.top' \
+  -H 'X-Animation-Lab-Token: &lt;catalog.csrf_token&gt;' \
+  -H 'Content-Type: application/json' \
+  --data-binary @request.json \
+  https://video-service.panghuer.top/dev/animations/api/method-lab/commissions</code></pre>
+        <p>成功返回 <code>202</code> 和当前委托详情。保存返回的 <code>id</code>；以下固定委托 ID 应替换为实际值。</p>
+        <h3>3. 查询状态</h3>
+        <pre><code>curl --fail-with-body --cookie cookies.txt \
+  https://video-service.panghuer.top/dev/animations/api/method-lab/commissions/11111111-1111-4111-8111-111111111111</code></pre>
+        <p class="note">GET 只读，不启动制作、执行模型、续跑或增加轮次。轮询应设置间隔和总等待上限。<code>202</code> 代表请求已接受，完成情况需查询。</p>
+      </section>
+
+      <section id="results">
+        <h2>状态与下载</h2>
+        <div class="table">
+          <table>
+            <thead><tr><th>状态 / 字段</th><th>含义</th></tr></thead>
+            <tbody>
+              <tr><td><code>queued</code> / <code>running</code></td><td>已入队 / 执行中。</td></tr>
+              <tr><td><code>cancelling</code></td><td>已请求取消，等待在途操作停止。</td></tr>
+              <tr><td><code>completed</code> / <code>failed</code> / <code>cancelled</code></td><td>三种委托终态。完成也可能因为预算用完或停止进展。</td></tr>
+              <tr><td><code>stop_reason</code></td><td><code>goal_met</code>、<code>budget_exhausted</code>、<code>no_progress</code>、<code>developer_stopped</code>、<code>failed</code> 或 <code>cancelled</code>。</td></tr>
+              <tr><td><code>summary</code> / <code>error</code></td><td>结果说明 / 失败代码，可能为空。</td></tr>
+              <tr><td><code>best_candidate_id</code></td><td>当前选中候选，可能为空。</td></tr>
+              <tr><td><code>candidates</code></td><td>候选的 <code>id</code>、<code>media_url</code>、<code>source_url</code>、<code>technical_status</code> 等。</td></tr>
+              <tr><td><code>collaboration</code></td><td>可选的只读协作进度：<code>stage</code>、<code>components</code> 的标题与状态、<code>completed</code>/<code>total</code> 和 <code>author_calls_used</code>/<code>author_calls_max</code>。创作计数含已预留任务，不代表模型请求数。缺少计数不等于零，不把部件完成当作样片认可。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>结合 <code>stop_reason</code>、<code>remaining_issues</code> 和候选结果判断完成质量。响应预算采用 <code>creator</code>、<code>review</code>、<code>render</code>、<code>seconds</code> 计数；与提交时的预算形状不同。</p>
+        <p>下载同样需要 Cookie。使用返回的候选 ID 或 URL；根相对 URL 应相对于同一公网 origin 解析。下例 <code>candidate-1</code> 是占位符。</p>
+        <pre><code>curl --fail-with-body --cookie cookies.txt \
+  https://video-service.panghuer.top/dev/animations/api/method-lab/commissions/11111111-1111-4111-8111-111111111111/candidates/candidate-1/media \
+  --output candidate.mp4
+
+curl --fail-with-body --cookie cookies.txt \
+  https://video-service.panghuer.top/dev/animations/api/method-lab/commissions/11111111-1111-4111-8111-111111111111/candidates/candidate-1/source \
+  --output animation-source.json</code></pre>
+        <p>媒体为 <code>video/mp4</code>，支持单段字节 Range；源码为 <code>application/json</code> 文件。</p>
+      </section>
+
+      <section id="iterate">
+        <h2>继续优化</h2>
+        <p>仍用 <strong>POST /commissions</strong>，新建 <code>request_id</code>，传入基线和改进目标。保存为新的 JSON 文件，再使用前述提交命令。</p>
+        <pre><code>{
+  "request_id": "bb8c0924-41c1-4da1-b2b5-c0e038ca7741",
+  "title": "改善聚焦后的标签间距",
+  "goal": "延续总体到局部的聚焦结构，改善标签间距与画面留白。",
+  "duration_seconds": 18,
+  "budget": {"max_rounds": 1, "max_seconds": 300},
+  "base_commission_id": "11111111-1111-4111-8111-111111111111",
+  "base_candidate_id": "candidate-1",
+  "feedback": "保留总体与选中点的对应关系，增大右侧标签间距，避免遮挡。"
+}</code></pre>
+        <p>基线必须存在且当前用户可访问。省略 <code>base_candidate_id</code> 时使用基线的 <code>best_candidate_id</code>；省略 <code>criteria</code> 时继承基线标准。新请求创建新委托，原委托保留。</p>
+        <p>可附 <code>reference: {"url":"https://example.com/reference.mp4","start_seconds":0,"end_seconds":8}</code>。参考 URL 与片段时间只作为需求资料，链接不会自动读取或观看原片。请将关键视觉、节奏及目标效果写入 <code>goal</code> 或 <code>feedback</code>。</p>
+      </section>
+
+      <section id="feedback">
+        <h2>反馈与取消</h2>
+        <p><strong>POST /commissions/{id}/feedback</strong> 仅保存已授权的意见，不自动制作、选择候选或发布。以下 JSON 可存为 <code>feedback.json</code>：</p>
+        <pre><code>{
+  "request_id": "11b15293-1973-46a0-bd82-fba87e2d8c34",
+  "kind": "comment",
+  "candidate_id": "candidate-1",
+  "comment": "右侧标签仍遮挡数据，请增加间距。",
+  "start_seconds": 6,
+  "end_seconds": 9,
+  "region": {"x": 0.6, "y": 0.1, "width": 0.3, "height": 0.4}
+}</code></pre>
+        <pre><code>curl --fail-with-body --cookie cookies.txt \
+  -H 'Origin: https://video-service.panghuer.top' \
+  -H 'X-Animation-Lab-Token: &lt;catalog.csrf_token&gt;' \
+  -H 'Content-Type: application/json' \
+  --data-binary @feedback.json \
+  https://video-service.panghuer.top/dev/animations/api/method-lab/commissions/11111111-1111-4111-8111-111111111111/feedback</code></pre>
+        <p>时间范围可省略；提供时必须成对，满足 <code>0 ≤ start_seconds ≤ end_seconds ≤ 候选时长</code>。区域可省略；四个值为 0–1 的归一化坐标，矩形必须位于画面内。</p>
+        <p>比较偏好使用 <code>kind: "preference"</code>、同委托内两个不同的 <code>left_candidate_id</code> / <code>right_candidate_id</code> 和 <code>preference: "left" | "right" | "equal" | "neither"</code>；<code>comment</code> 可选，不接受时间或区域。</p>
+        <p><strong>POST /commissions/{id}/cancel</strong> 发送空 JSON <code>{}</code>，使用相同的写请求头。响应为 <code>200</code>，可能先进入 <code>cancelling</code>；继续查询直到终态。重复取消不会启动新任务。</p>
+        <p>发布和人类验收不属于本合同。Agent 只能按用户实际授权记录意见，不能代替用户声明认可。</p>
+      </section>
+
+      <section id="client">
+        <h2>Python 客户端</h2>
+        <p><a href="agent-api-client.py" download="animation_lab_client.py">下载独立客户端</a>，只需 Python 标准库。仓库环境可将 <code>python animation_lab_client.py</code> 换为 <code>python -m video_workbench.animation_lab_client</code>。</p>
+        <p>下载入口 URL 为 <code>agent-api-client.py</code>，响应文件名为 <code>animation_lab_client.py</code>；以下使用下载后的文件名。</p>
+        <pre><code>python animation_lab_client.py --base-url https://video-service.panghuer.top/dev/animations/api/method-lab --cookie-file cookies.txt catalog
+python animation_lab_client.py --base-url https://video-service.panghuer.top/dev/animations/api/method-lab --cookie-file cookies.txt submit request.json
+python animation_lab_client.py --base-url https://video-service.panghuer.top/dev/animations/api/method-lab --cookie-file cookies.txt status 11111111-1111-4111-8111-111111111111
+python animation_lab_client.py --base-url https://video-service.panghuer.top/dev/animations/api/method-lab --cookie-file cookies.txt wait 11111111-1111-4111-8111-111111111111 --timeout 600 --interval 2
+python animation_lab_client.py --base-url https://video-service.panghuer.top/dev/animations/api/method-lab --cookie-file cookies.txt feedback 11111111-1111-4111-8111-111111111111 feedback.json
+python animation_lab_client.py --base-url https://video-service.panghuer.top/dev/animations/api/method-lab --cookie-file cookies.txt cancel 11111111-1111-4111-8111-111111111111
+python animation_lab_client.py --base-url https://video-service.panghuer.top/dev/animations/api/method-lab --cookie-file cookies.txt download 11111111-1111-4111-8111-111111111111 --candidate-id candidate-1 --kind media --output candidate.mp4</code></pre>
+        <p>客户端读取用户提供的 Netscape Cookie 文件，POST 前读取目录并设置 Origin / CSRF 头。<code>catalog</code> 输出隐藏 CSRF token；<code>submit</code> / <code>feedback</code> 文件必须显式包含 UUID <code>request_id</code>。</p>
+        <p><code>wait</code> 的总超时与轮询间隔必须显式设置，超时只结束本地等待。客户端不自动重试写请求、不自动发布。成功 JSON 输出到 stdout，安全错误 JSON 输出到 stderr 并退出 1；命令成功后仍需检查业务 <code>state</code>。</p>
+        <p><code>download</code> 可用 <code>--kind source</code> 下载源码；省略 <code>--candidate-id</code> 时使用当前最佳候选。输出文件必须尚不存在，完成后输出字节数与 SHA-256。</p>
+      </section>
+
+      <section id="errors">
+        <h2>错误与幂等</h2>
+        <p>API 错误通常为 <code>{"error":"错误代码"}</code>。OAuth 入口也可能先返回登录重定向或 HTML，应由用户重新授权。</p>
+        <div class="table">
+          <table>
+            <thead><tr><th>HTTP</th><th>处理</th></tr></thead>
+            <tbody>
+              <tr><td><code>200</code> / <code>202</code></td><td>读取、反馈、取消成功 / 制作请求已接受，随后检查状态。</td></tr>
+              <tr><td><code>400</code> / <code>422</code></td><td>JSON 或参数无效，检查请求字段。</td></tr>
+              <tr><td><code>401</code> / <code>403</code> / 重定向</td><td>检查会话、开发者权限、Origin 和 CSRF；不要循环重试。</td></tr>
+              <tr><td><code>404</code></td><td>委托或候选不存在、不可见或已移入回收站。</td></tr>
+              <tr><td><code>409</code></td><td>幂等键内容冲突、基线不可用或媒体校验冲突，读取当前状态后处理。</td></tr>
+              <tr><td><code>413</code> / <code>415</code></td><td>请求过大（POST 上限 1 MiB）/ Content-Type 不是 application/json。</td></tr>
+              <tr><td><code>502</code> / <code>503</code> / <code>504</code></td><td>服务不可用或网关失败，提交结果可能不明确。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>同一用户以相同 <code>request_id</code> 和相同制作请求重放，返回已有委托；内容改变会得到 <code>409 animation_method_commission_idempotency_conflict</code>。反馈的幂等键也不能跨内容或委托复用，冲突代码为 <code>animation_method_feedback_conflict</code>。</p>
+        <p class="note">POST 超时或连接断开后，先在 <code>/catalog</code> 中按原 <code>request_id</code> 查找，再 GET 详情；反馈可在详情列表中核对。结果仍不明确且人工决定重放时，使用原文件和原 ID。不要自动生成新 ID、自动重试写请求或追加轮次。</p>
+      </section>
+      <footer>此页为无需 JavaScript 和 CDN 的静态指南。机器合同只定义外部接入支持子集；调用方应忽略未知响应字段。<a href="agent-api.openapi.json">查看 OpenAPI 3.1</a></footer>
+    </main>
+  </div>
+</body>
+</html>

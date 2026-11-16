@@ -20,12 +20,13 @@ from agent_service.profiles.video_motion_contract import validate_beats, validat
 from .motion_geometry import connection_geometry
 
 
-COMPILER_VERSION = 'motion-compiler-5'
-TEMPLATE_VERSION = 'technical-diagrams-5'
+COMPILER_VERSION = 'motion-compiler-6'
+TEMPLATE_VERSION = 'technical-diagrams-6'
 COMPILER_TEMPLATES = {'motion-compiler-1': 'technical-diagrams-1',
                       'motion-compiler-2': 'technical-diagrams-2',
                       'motion-compiler-3': 'technical-diagrams-3',
                       'motion-compiler-4': 'technical-diagrams-4',
+                      'motion-compiler-5': 'technical-diagrams-5',
                       COMPILER_VERSION: TEMPLATE_VERSION}
 HYPERFRAMES_VERSION = '0.8.149'
 GSAP_VERSION = '3.14.2'
@@ -58,6 +59,8 @@ LAYOUTS = {
         'token_right': (998, 302, 120, 44), 'caption': (72, 636, 1136, 42),
     },
 }
+from .motion_semantic import LAYOUTS as SEMANTIC_LAYOUTS
+LAYOUTS.update(SEMANTIC_LAYOUTS)
 
 
 def compiler_layout(plan, compiler_version):
@@ -68,7 +71,10 @@ def compiler_layout(plan, compiler_version):
     actual font and overflow validation still runs in the isolated browser.
     """
     layout = LAYOUTS[plan['template']]
-    if compiler_version != 'motion-compiler-5':
+    if compiler_version == 'motion-compiler-6':
+        from .motion_semantic import adapt_layout
+        layout = adapt_layout(plan, layout)
+    if compiler_version not in {'motion-compiler-5', 'motion-compiler-6'}:
         return layout
     width = min(300, max([120, *(18 * len(row['label']) + 28 for row in plan['elements']
                                 if row['kind'] == 'token')]))
@@ -277,9 +283,15 @@ def resolve_timeline(plan, beats, alignment, *, leading_seconds=0, trailing_seco
              'motion_compiler_version_unsupported')
     beats = validate_beats(beats)
     plan = validate_motion_plan(plan, beats)
+    _require(compiler_version == 'motion-compiler-6' or
+             (plan['template'] not in SEMANTIC_LAYOUTS and 'sources' not in plan),
+             'motion_compiler_version_unsupported')
     alignment = validate_alignment(alignment, beats)
     leading = _number(leading_seconds, 0, 10)
     trailing = _number(trailing_seconds, 0, 10)
+    if compiler_version == 'motion-compiler-6' and plan.get('sources'):
+        _require(leading + alignment['audio_seconds'] + trailing >= 5,
+                 'motion_source_reading_time_too_short')
     anchors = {row['beat_id']: row for row in alignment['segments']}
     actions = []
     for ordinal, action in enumerate(plan['actions']):
@@ -299,7 +311,7 @@ def resolve_timeline(plan, beats, alignment, *, leading_seconds=0, trailing_seco
         key = row['target'], prop
         _require(row['start'] >= ends.get(key, -1), 'conflicting_motion_actions')
         ends[key] = row['start'] + row['duration']
-    return dict(schema='video.motion-timeline.v1', compiler=compiler_version,
+    timeline = dict(schema='video.motion-timeline.v1', compiler=compiler_version,
                 plan_sha256=sha256(plan), semantic_sha256=semantic_digest(beats),
                 alignment_sha256=sha256(alignment), audio_sha256=alignment['audio_sha256'],
                 spoken_sha256=alignment['spoken_sha256'], audio_seconds=alignment['audio_seconds'],
@@ -308,6 +320,14 @@ def resolve_timeline(plan, beats, alignment, *, leading_seconds=0, trailing_seco
                 alignment_method=alignment['method'], review_status=alignment['review_status'],
                 beats=[dict(row, start=leading + row['start'], end=leading + row['end'])
                        for row in alignment['segments']], actions=actions)
+    if compiler_version == 'motion-compiler-6':
+        from .motion_semantic import element_opacity, invisible_move
+        for action, samples in zip(actions, action_windows(timeline)):
+            if action['kind'] == 'move' and any(
+                    element_opacity(timeline, action['target'], samples[label]) < .98
+                    for label in ('before', 'middle', 'after')):
+                invisible_move(action, action['ordinal'])
+    return timeline
 
 
 def _safe_script_json(value):
@@ -350,6 +370,41 @@ def _relation_label(source, target, path):
     return (x1 + w1 / 2 + x2 + w2 / 2) / 2, (sy + ey) / 2 + 6
 
 
+def preflight_plan(plan, beats, *, compiler_version=COMPILER_VERSION):
+    """Check text budgets and final wire geometry without making any audio.
+
+    This is a deterministic early rejection, not a visual approval. The actual
+    pinned-font Chromium overflow/geometry checks still run for every render.
+    """
+    plan = validate_motion_plan(plan, beats)
+    _require(compiler_version == 'motion-compiler-6', 'motion_compiler_version_unsupported')
+    from .motion_semantic import check_action_visibility, check_text, geometry, obstacle_boxes
+    check_action_visibility(plan, beats)
+    layout = compiler_layout(plan, compiler_version)
+    boxes = {row['id']: layout[row['slot']] for row in plan['elements']}
+    check_text(plan, boxes)
+    reserved = [(72, 74, 1136, 112)]
+    if plan.get('sources'):
+        reserved.append((72, 568, 1136, 140))
+    elif not any(row['slot'] == 'caption' for row in plan['elements']):
+        reserved.append((72, 636, 1136, 72))
+    moving, positions = [], dict(boxes)
+    for action in plan['actions']:
+        if action['kind'] != 'move':
+            continue
+        origin, destination = positions[action['target']], layout[action['to_slot']]
+        left, top = min(origin[0], destination[0]), min(origin[1], destination[1])
+        right = max(origin[0] + origin[2], destination[0] + destination[2])
+        bottom = max(origin[1] + origin[3], destination[1] + destination[3])
+        moving.append((left, top, right - left, bottom - top))
+        positions[action['target']] = destination
+    try:
+        connections = geometry(plan, boxes, reserved, moving)
+    except ValueError as error:
+        raise ServiceError('motion_relation_layout_unavailable', 422) from error
+    return dict(boxes=boxes, geometry=connections, obstacles=obstacle_boxes(plan, boxes))
+
+
 def compile_project(plan, beats, alignment, *, animated=True, runtime_fingerprint=None,
                     leading_seconds=0, trailing_seconds=0, compiler_version=COMPILER_VERSION):
     """Return deterministic project files as bytes; assets are supplied by renderer.
@@ -368,6 +423,8 @@ def compile_project(plan, beats, alignment, *, animated=True, runtime_fingerprin
     elements = {row['id']: row for row in plan['elements']}
     boxes = {row['id']: layout[row['slot']] for row in plan['elements']}
     geometry = None
+    if compiler_version == 'motion-compiler-6':
+        geometry = preflight_plan(plan, beats, compiler_version=compiler_version)['geometry']
     if compiler_version == 'motion-compiler-5':
         try:
             reserved = [(72, 74, 1136, 112)]
@@ -397,22 +454,30 @@ def compile_project(plan, beats, alignment, *, animated=True, runtime_fingerprin
         arrows.append(f'<marker id="arrow-{row["id"]}" viewBox="0 0 10 10" refX="9" refY="5" '
                       f'markerWidth="5" markerHeight="5" orient="auto-start-reverse">'
                       f'<path id="tip-{row["id"]}" class="arrow-tip" d="M 0 0 L 10 5 L 0 10 z" fill="#67ded0"/></marker>')
-        base = '' if compiler_version in {'motion-compiler-4', 'motion-compiler-5'} else f'<path class="relation-base" d="{path}"/>'
+        base = '' if compiler_version in {'motion-compiler-4', 'motion-compiler-5', 'motion-compiler-6'} else f'<path class="relation-base" d="{path}"/>'
         stroke = base + f'<path id="rel-{row["id"]}" class="relation-active" d="{path}" pathLength="1" marker-end="url(#arrow-{row["id"]})"/>'
         if geometry is None:
             markup.append(stroke + f'<text id="label-{row["id"]}" data-motion-relation="{row["id"]}" class="relation-label" x="{lx}" y="{ly}" text-anchor="middle">{html.escape(row["label"])}</text>')
         else:
-            markup.append(stroke)
+            def endpoints(content):
+                if compiler_version != 'motion-compiler-6':
+                    return content
+                return (f'<g class="relation-endpoint relation-endpoint-{row["source"]}">'
+                        f'<g class="relation-endpoint relation-endpoint-{row["target"]}">{content}</g></g>')
+            markup.append(endpoints(stroke))
             x, y, width, height = geometry[row['id']]['box']
             cx = x + width / 2
             rows = ''.join(f'<tspan x="{cx:g}" y="{y + 24 + index * 26:g}">{html.escape(line)}</tspan>'
                            for index, line in enumerate(geometry[row['id']]['lines']))
-            relation_labels.append(f'<g id="label-{row["id"]}" data-motion-relation="{row["id"]}" class="relation-label">'
+            relation_labels.append(endpoints(f'<g id="label-{row["id"]}" data-motion-relation="{row["id"]}" class="relation-label">'
                 f'<rect class="relation-plate" x="{x:g}" y="{y:g}" width="{width:g}" height="{height:g}" rx="7"/>'
-                f'<text text-anchor="middle">{rows}</text></g>')
+                f'<text text-anchor="middle">{rows}</text></g>'))
     connections = ''.join(markup + relation_labels)
     markup = []
-    for index, row in enumerate(plan['elements']):
+    drawing_order = (sorted(plan['elements'], key=lambda row: row['kind'] != 'container')
+                     if compiler_version == 'motion-compiler-6' else plan['elements'])
+    for row in drawing_order:
+        index = plan['elements'].index(row)
         x, y, w, h = boxes[row['id']]
         kind = row['kind']
         badge = f'<span class="card-index">{index + 1:02d}</span>' if kind == 'card' and row['slot'] != 'note' else ''
@@ -509,7 +574,7 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
   tl.seek(0,false);
 })();
 </script></body></html>'''
-    if compiler_version in {'motion-compiler-2', 'motion-compiler-3', 'motion-compiler-4', 'motion-compiler-5'}:
+    if compiler_version in {'motion-compiler-2', 'motion-compiler-3', 'motion-compiler-4', 'motion-compiler-5', 'motion-compiler-6'}:
         # Keep the v1 page byte-for-byte reproducible. This bounded v2 layout
         # changes only compiler-owned typography, never candidate text, geometry,
         # actions or audio. Text that still does not fit remains a hard failure.
@@ -549,7 +614,7 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
       overflow:el.scrollWidth>el.clientWidth||el.scrollHeight>el.clientHeight||
         Object.values(textBoxes).some(box=>box.overflow)};''')
         page = page.replace("version:'motion-compiler-1'", "version:'motion-compiler-2'")
-        if compiler_version in {'motion-compiler-3', 'motion-compiler-4', 'motion-compiler-5'}:
+        if compiler_version in {'motion-compiler-3', 'motion-compiler-4', 'motion-compiler-5', 'motion-compiler-6'}:
             # Integral line boxes leave room for the pinned CJK font's glyphs;
             # fractional v2 line heights can report a one-pixel scroll overflow
             # even when the outer card fits. Preserve both prior versions and
@@ -561,7 +626,7 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
 .label .element-label{line-height:31px}
 </style>''')
             page = page.replace("version:'motion-compiler-2'", "version:'motion-compiler-3'")
-    if compiler_version in {'motion-compiler-4', 'motion-compiler-5'}:
+    if compiler_version in {'motion-compiler-4', 'motion-compiler-5', 'motion-compiler-6'}:
         # Undrawn relations have no visible guide underneath. Hide the actual
         # stroke before JS/bootstrap too, and animate opacity with the draw so
         # exact forward and reverse seeks restore the same blank initial state.
@@ -575,7 +640,7 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
             'labelOpacity:Number(getComputedStyle(document.getElementById(\'label-\'+r.id)).opacity),'
             'baseCount:document.querySelectorAll(\'.relation-base\').length')
         page = page.replace("version:'motion-compiler-3'", "version:'motion-compiler-4'")
-    if compiler_version == 'motion-compiler-5':
+    if compiler_version in {'motion-compiler-5', 'motion-compiler-6'}:
         # Label plates are above *all* strokes, so the ink is never crossed by
         # an earlier relation. Later relations also route around reserved plates.
         page = page.replace('</style>', '''
@@ -609,9 +674,71 @@ __ELEMENTS__<div class="takeaway">__TAKEAWAY__</div><div id="progress"></div>
             const ink=text.getBBox(),plate=el.querySelector('rect').getBBox();
             return ink.x<plate.x||ink.y<plate.y||ink.x+ink.width>plate.x+plate.width||ink.y+ink.height>plate.y+plate.height;
           })''')
+    if compiler_version == 'motion-compiler-6':
+        from .motion_semantic import source_layout
+        panel = source_layout(plan)
+        # Separate opacity owners multiply source, target and draw visibility.
+        # Explicit fromTo endpoints retain exact forward/reverse renderSeek
+        # behavior without callbacks or mutating the authored action sequence.
+        page = page.replace('const actions = data.timeline.actions;', '''const actions = data.timeline.actions;
+  const endpointNodes=id=>document.querySelectorAll('.relation-endpoint-'+id);
+  const endpointFactor=el=>{
+    let factor=1;
+    for(let parent=el.parentElement;parent&&parent.id!=='connections';parent=parent.parentElement)
+      if(parent.classList.contains('relation-endpoint'))factor*=Number(getComputedStyle(parent).opacity);
+    return factor;
+  };''')
+        page = page.replace('for (const id of revealTargets) gsap.set(node(id),{opacity:0});',
+            'for (const id of revealTargets) {gsap.set(node(id),{opacity:0});for(const endpoint of endpointNodes(id))gsap.set(endpoint,{opacity:0});}')
+        page = page.replace('opacity[a.target]=next;',
+            'for(const endpoint of endpointNodes(a.target))tl.fromTo(endpoint,{opacity:opacity[a.target]},{opacity:next,duration,immediateRender:false},when);\n      opacity[a.target]=next;')
+        page = page.replace('opacity:Number(style.opacity),\n        markerOpacity:',
+            'opacity:Number(style.opacity)*endpointFactor(el),\n        markerOpacity:')
+        page = page.replace("markerOpacity:Number(getComputedStyle(document.getElementById('tip-'+r.id)).opacity)",
+            "markerOpacity:Number(getComputedStyle(document.getElementById('tip-'+r.id)).opacity)*endpointFactor(el)")
+        page = page.replace("labelOpacity:Number(getComputedStyle(document.getElementById('label-'+r.id)).opacity)",
+            "labelOpacity:Number(getComputedStyle(document.getElementById('label-'+r.id)).opacity)*endpointFactor(document.getElementById('label-'+r.id))")
+        page = page.replace('...metrics(el),...relationLayout(el),',
+            '...metrics(el),...relationLayout(el),opacity:Number(getComputedStyle(el).opacity)*endpointFactor(el),')
+        page = page.replace("version:'motion-compiler-5'", "version:'motion-compiler-6'")
+        page = page.replace('</style>', '''
+.container{z-index:0;align-items:flex-start;padding:10px 14px;border-style:dashed;background:#19344722;box-shadow:none}
+.container .element-copy{max-height:72px;overflow:hidden}
+.container .element-label{font-size:24px;line-height:36px}
+.container .element-detail{font-size:18px;line-height:27px;margin-top:4px}
+.card,.token,.label{z-index:2}#connections{z-index:1}.takeaway{z-index:3}
+#source-panel{position:absolute;left:72px;top:604px;width:1136px;max-height:104px;padding:0 18px;color:#d4e5f1;font-size:18px;line-height:25px;overflow:hidden;overflow-wrap:anywhere;z-index:3}
+.source-row{margin-bottom:4px}.source-row:last-child{margin-bottom:0}.source-label{color:#8ba2b9}.source-url{color:#e6f5ff}
+</style>''')
+        if panel:
+            if panel['shared_label'] is not None:
+                sources = ('<div class="source-row"><div class="source-label">' +
+                    html.escape(panel['shared_label']) + '</div>' + ''.join(
+                        '<div class="source-url">' + html.escape(source['url']) + '</div>'
+                        for source in plan['sources']) + '</div>')
+            else:
+                sources = ''.join('<div class="source-row"><div class="source-label">' +
+                    html.escape(source['label']) + '</div><div class="source-url">' +
+                    html.escape(source['url']) + '</div></div>' for source in plan['sources'])
+            page = page.replace('<div id="progress"></div>',
+                f'<div id="source-panel" style="top:{panel["source_top"]}px;max-height:{708 - panel["source_top"]}px">{sources}</div><div id="progress"></div>')
+            page = page.replace('</style>', f'.takeaway{{top:568px;max-height:{panel["takeaway_height"]}px}}\n</style>')
+            page = page.replace('</style>', '''
+.card.slot-note .element-copy{display:flex;align-items:center;gap:16px}
+.card.slot-note .element-label{width:40%;flex-shrink:0}
+.card.slot-note .element-detail{margin-top:0;flex:1;min-width:0}
+</style>''')
+        # Container interiors intentionally contain descendants and their wires;
+        # only the solid header is an obstacle. The review reconstructs exactly
+        # the same named header boxes rather than trusting this observation.
+        page = page.replace('Object.keys(data.boxes).filter(id=>intersects(node(id).getBoundingClientRect()))',
+            "Object.keys(data.boxes).filter(id=>{const r=node(id).getBoundingClientRect();return intersects({...r.toJSON(),height:node(id).classList.contains('container')?96:r.height});})")
+        page = page.replace('fontReady:document.fonts.status',
+            "sources:document.getElementById('source-panel')?{...metrics(document.getElementById('source-panel')),urls:Array.from(document.querySelectorAll('.source-url')).map(el=>el.textContent)}:null,fontReady:document.fonts.status")
     replacements = {
         '__DURATION__': str(timeline['duration_seconds']),
-        '__EYEBROW__': {'flow': '流程与路由', 'compare': '前后对照', 'focus': '结构聚焦'}[plan['template']],
+        '__EYEBROW__': {'flow': '流程与路由', 'compare': '前后对照', 'focus': '结构聚焦',
+                        'sequence': '依次发生什么', 'nested': '范围与层级'}[plan['template']],
         '__TITLE__': html.escape(plan['title']),
         '__TAKEAWAY__': '' if any(e['slot'] == 'caption' for e in plan['elements']) else html.escape(plan['takeaway']),
         '__ARROWS__': ''.join(arrows), '__CONNECTIONS__': connections, '__ELEMENTS__': ''.join(markup),
@@ -661,6 +788,23 @@ def example_plan(beats, *, template='flow'):
         slots, labels = ['before', 'after'], ['每次从头开始', '保留历史，接着完成']
         token_slot, token_destinations = 'token_before', ['token_after']
         title, takeaway = '同一个任务，两种处理方式', '保留上下文，把时间用在新的工作上。'
+    elif template == 'sequence':
+        slots, labels = ['step_1', 'step_2', 'step_3', 'step_4'], ['问题', '模型', '工具', '回答']
+        token_slot, token_destinations = 'token_1', ['token_2', 'token_3']
+        title, takeaway = '沿着请求看清每一步', '请求和返回使用独立通路。'
+    elif template == 'nested':
+        elements = [dict(id=slot, kind=kind, label=label, detail='', slot=slot)
+                    for slot, kind, label in [('outer', 'container', 'turn：一轮'),
+                        ('inner', 'container', 'step：一步'), ('request', 'card', '模型请求'),
+                        ('tool', 'card', '调用工具'), ('result', 'card', '工具结果'),
+                        ('decision', 'card', '还有待处理工作？')]]
+        relations = [dict(id='invoke', source='request', target='tool', label='调用'),
+                     dict(id='return', source='tool', target='result', label='返回')]
+        actions = [dict(beat_id=ids[i], target=row['id'], kind='draw', placement='start',
+                        pace='normal', to_slot=None) for i, row in enumerate(relations)]
+        return validate_motion_plan(dict(schema='video.motion-plan.v1', template=template,
+            title='用范围表达层级', takeaway='一轮可以包含零个或多个步骤。',
+            elements=elements, relations=relations, actions=actions), beats)
     else:
         slots, labels = ['top', 'left', 'center', 'right'], ['总任务', '规划', '执行', '结果']
         token_slot, token_destinations = 'token_top', ['token_center', 'token_right']

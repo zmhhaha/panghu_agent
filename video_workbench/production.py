@@ -9,11 +9,14 @@ from pathlib import Path
 import threading
 import time
 import tempfile
+from copy import deepcopy
 from uuid import uuid4
 
 from agent_service.contracts import ServiceError, digest
 from . import media
 from .motion_snapshot import SCHEMA as MOTION_SCHEMA, freeze_snapshot_v2
+from .creative_snapshot import freeze_snapshot_v4
+from .motion_store import plan_diagram_kind
 from .continuity_snapshot import (MOTION_SCHEMAS,
                                   freeze_continuity_snapshot, verify_motion_snapshot)
 from .render_metadata import render_metadata
@@ -258,8 +261,16 @@ class Production:
                     timing = self.motion_timing.get(owner, version_id, audio_id)
                     if timing['timeline']['duration_seconds'] > MAX_MOTION_SCENE_SECONDS:
                         raise ServiceError('motion_scene_duration_exceeded', 422)
-                    item['motion'] = dict(id=version_id, plan=version['plan'], beats=timing['beats'],
-                                          alignment=timing['alignment'], stale=version['stale'])
+                    if plan_diagram_kind(version['plan']) == 'creative':
+                        mode = item['visual_mode'] = 'creative'
+                        item['creative'] = dict(id=version_id, package=version['plan'], beats=timing['beats'],
+                                                alignment=timing['alignment'], stale=version['stale'],
+                                                compiler_version=version['compiler_version'])
+                    else:
+                        item['motion'] = dict(id=version_id, plan=version['plan'], beats=timing['beats'],
+                                              alignment=timing['alignment'], stale=version['stale'])
+                    if version['plan'].get('schema') == 'video.process-plan.v1':
+                        item['motion']['compiler_version'] = version.get('compiler_version')
                 else:
                     version_id = scene.get('head_version_id')
                     if not version_id:
@@ -269,10 +280,11 @@ class Production:
                                             audio_version_id=scene.get('head_audio_version_id'))
                 if scene is scenes[-1] and not all(selection) and request.get('end_hold_seconds', 0):
                     item['trailing_seconds'] = max(item['trailing_seconds'], request['end_hold_seconds'])
-                    if mode == 'motion' and audio['duration_seconds'] + item['leading_seconds'] + item['trailing_seconds'] > MAX_MOTION_SCENE_SECONDS:
+                    if mode in {'motion', 'creative'} and audio['duration_seconds'] + item['leading_seconds'] + item['trailing_seconds'] > MAX_MOTION_SCENE_SECONDS:
                         raise ServiceError('motion_tail_hold_exceeds_limit', 422)
                 resolved.append(item)
-            snapshot = freeze_snapshot_v2(project_id, project['revision'], project['title'], resolved,
+            freeze = freeze_snapshot_v4 if any(s['visual_mode'] == 'creative' for s in resolved) else freeze_snapshot_v2
+            snapshot = freeze(project_id, project['revision'], project['title'], resolved,
                 runtime_fingerprint=self.runtime_fingerprint, purpose=purpose,
                 quality='final' if purpose == 'delivery' else 'draft', subtitles=request.get('subtitles', False),
                 current_adoptions=adopted if purpose == 'delivery' else None)
@@ -330,6 +342,117 @@ class Production:
                 (job['id'], owner, project_id, idem, fingerprint, json.dumps(job), json.dumps(packed)))
         return self._public(job)
 
+    def start_candidate_render(self, owner, project_id, request, idem):
+        """Freeze the whole run's exact draft pairs, without adopting any media.
+
+        This is a coordinator method, not a delivery or arbitrary-selection
+        HTTP endpoint. Existing manual render requests retain their contracts.
+        """
+        if not self.motion_enabled:
+            raise ServiceError('motion_disabled', 503)
+        if self.motion_renderer is None:
+            raise ServiceError('motion_render_not_configured', 503)
+        if (type(request) is not dict or set(request) != {'expected_revision', 'selections'}
+                or type(request['expected_revision']) is not int or request['expected_revision'] < 1
+                or type(request['selections']) is not list
+                or not 1 <= len(request['selections']) <= media.MAX_SCENES
+                or type(idem) is not str or not 8 <= len(idem) <= 128
+                or any(ord(c) < 33 or ord(c) > 126 for c in idem)):
+            raise ServiceError('invalid_candidate_render_request', 422)
+        for selection in request['selections']:
+            if (type(selection) is not dict or set(selection) !=
+                    {'scene_id', 'motion_version_id', 'audio_version_id'}
+                    or any(type(v) is not str or not 1 <= len(v) <= 100 for v in selection.values())):
+                raise ServiceError('invalid_candidate_render_request', 422)
+        fingerprint = digest(dict(schema='video.production-run-render.v1',
+                                  project_id=project_id, request=request))
+
+        def replay(db):
+            row = db.execute('SELECT document,request_hash FROM video_renders WHERE owner=? AND idem=?',
+                             (owner, idem)).fetchone()
+            if row:
+                if row['request_hash'] != fingerprint:
+                    raise ServiceError('idempotency_conflict', 409)
+                return self._public(json.loads(row['document']))
+            return None
+
+        with self.store.lock:
+            with self.store.transaction() as db:
+                previous = replay(db)
+                if previous:
+                    return previous
+            if self.motion_store is None or self.motion_timing is None or self.runtime_fingerprint is None:
+                raise ServiceError('motion_runtime_not_configured', 503)
+            project = self.store.project(owner, project_id)
+            self.store._revision(project, request['expected_revision'])
+            if [s['scene_id'] for s in request['selections']] != [s['id'] for s in project['scenes']]:
+                raise ServiceError('candidate_render_scene_mismatch', 409)
+            resolved, total = [], 0
+            for scene, pair in zip(project['scenes'], request['selections']):
+                version = self.motion_store.candidate_version(owner, pair['motion_version_id'], pair['audio_version_id'])
+                if version['project_id'] != project_id or version['scene_id'] != scene['id']:
+                    raise ServiceError('not_found', 404)
+                audio = self.store.audio_version(owner, pair['audio_version_id'])
+                if audio['project_id'] != project_id or audio['scene_id'] != scene['id']:
+                    raise ServiceError('not_found', 404)
+                if audio['input_sha256'] != scene['audio_input_sha256']:
+                    raise ServiceError('audio_stale', 409)
+                total += len(audio['data'])
+                if total > MAX_PROJECT_AUDIO_BYTES or len(audio['data']) > MAX_MOTION_AUDIO_BYTES:
+                    raise ServiceError('project_audio_limit', 413)
+                timing = self.motion_timing.get_candidate(owner, pair['motion_version_id'], pair['audio_version_id'])
+                if timing['timeline']['duration_seconds'] > MAX_MOTION_SCENE_SECONDS:
+                    raise ServiceError('motion_scene_duration_exceeded', 422)
+                resolved.append(dict(id=scene['id'], title=scene['title'], narration=scene['narration'],
+                    visual_mode='creative', audio=audio,
+                    leading_seconds=scene.get('leading_seconds', 0), trailing_seconds=scene.get('trailing_seconds', 0),
+                    creative=dict(id=pair['motion_version_id'], package=version['plan'], beats=timing['beats'],
+                        alignment=timing['alignment'], stale=version['stale'],
+                        compiler_version=version['compiler_version'])))
+            snapshot = freeze_snapshot_v4(project_id, project['revision'], project['title'], resolved,
+                runtime_fingerprint=self.runtime_fingerprint, purpose='draft', quality='draft', subtitles=False)
+            with self.store.transaction() as db:
+                current = self.store._project(db, owner, project_id)
+                self.store._revision(current, snapshot['project_revision'])
+                previous = replay(db)
+                if previous:
+                    return previous
+                for row in db.execute('SELECT document FROM video_renders WHERE owner=?', (owner,)):
+                    if json.loads(row[0])['status'] in ACTIVE:
+                        raise ServiceError('render_in_progress', 409)
+                job = dict(id=str(uuid4()), owner=owner, project_id=project_id, project_revision=project['revision'],
+                    status='queued', error=None, silent=False, subtitles=False, schema=snapshot['schema'],
+                    purpose='draft', quality='draft', visual_mode=snapshot['visual_mode'], selection='draft_only',
+                    review_status='not_reviewed', created_at=time.time(), snapshot_sha256=snapshot['sha256'],
+                    cancel_requested=False, render_attempted=False)
+                packed = dict(snapshot, scenes=[dict(s, audio={key: value for key, value in s['audio'].items()
+                    if key != 'data_base64'}) for s in snapshot['scenes']])
+                db.execute('INSERT INTO video_renders VALUES (?, ?, ?, ?, ?, ?, ?, NULL)',
+                    (job['id'], owner, project_id, idem, fingerprint, json.dumps(job), json.dumps(packed)))
+                return self._public(job)
+
+    def _candidate_metadata_project(self, db, owner, project, snapshot):
+        """A draft's freshness follows its pair, independently of manual heads."""
+        from .motion_store import semantic_binding
+        result = deepcopy(project)
+        scenes = {s['id']: s for s in result['scenes']}
+        for frozen in snapshot['scenes']:
+            scene = scenes.get(frozen['id'])
+            if scene is None or frozen.get('visual_mode') != 'creative':
+                continue
+            pair = frozen['creative']['id'], frozen['audio']['id']
+            row = db.execute('SELECT document FROM motion_versions WHERE owner=? AND project_id=? AND scene_id=? AND id=?',
+                (owner, project['id'], scene['id'], pair[0])).fetchone()
+            version = json.loads(row[0]) if row else None
+            for candidate in scene.get('motion', {}).get('versions', []):
+                if candidate['id'] == pair[0]:
+                    candidate['stale'] = (version is None
+                        or version['semantic_binding_sha256'] != semantic_binding(project, scene)
+                        or self.motion_store._film_stale(version, project)
+                        or version.get('audio_version_id') != pair[1]
+                        or version.get('audio_sha256') != frozen['audio']['sha256'])
+        return result
+
     def renders(self, owner, project_id):
         with self.store.lock:
             project = (self.motion_store or self.store).project(owner, project_id)
@@ -346,8 +469,18 @@ class Production:
                 for row in db.execute('SELECT document,snapshot FROM video_renders '
                         'WHERE owner=? AND project_id=? ORDER BY rowid DESC', (owner, project_id)):
                     job = self._public(json.loads(row['document']))
-                    result.append(dict(job, **render_metadata(json.loads(row['snapshot']), project,
-                        alignments, end_hold_seconds=job.get('end_hold_seconds', 0))))
+                    measured = job.get('duration_seconds')
+                    actual = (measured if job.get('status') == 'completed'
+                        and type(measured) in (int, float) and math.isfinite(measured) and measured > 0 else None)
+                    snapshot = json.loads(row['snapshot'])
+                    metadata_project = (self._candidate_metadata_project(db, owner, project, snapshot)
+                        if job.get('selection') == 'draft_only' and job.get('purpose') == 'draft' else project)
+                    metadata = render_metadata(snapshot, metadata_project,
+                        alignments, end_hold_seconds=job.get('end_hold_seconds', 0))
+                    if (job.get('selection') == 'draft_only'
+                            and [s['id'] for s in snapshot['scenes']] != [s['id'] for s in project['scenes']]):
+                        metadata['content_state'] = 'changed'
+                    result.append(dict(job, actual_duration_seconds=actual, **metadata))
                 return result
 
     def _render_progress(self, job_id, snapshot_sha256, payload):
@@ -375,6 +508,7 @@ class Production:
             if row is None:
                 raise ServiceError('not_found', 404)
             job = json.loads(row[0])
+            self.store._project(db, owner, job['project_id'])
             if job['status'] in ACTIVE:
                 never_admitted = job['status'] == 'queued' and not (job.get('schema') in MOTION_SCHEMAS and job.get('render_attempted'))
                 job.update(cancel_requested=True, status='cancelled' if never_admitted else 'cancelling')
@@ -389,6 +523,7 @@ class Production:
             if row is None:
                 raise ServiceError('not_found', 404)
             job = json.loads(row['document'])
+            self.store._project(db, owner, job['project_id'])
             if job['status'] != 'completed' or not row['data']:
                 raise ServiceError('render_not_ready', 409)
             return row['data']

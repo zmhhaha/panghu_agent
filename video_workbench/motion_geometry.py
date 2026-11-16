@@ -162,7 +162,8 @@ def wrap_label(text, maximum):
     return lines
 
 
-def place_label(text, points, boxes, previous_labels=(), previous_paths=(), *, accept=None):
+def place_label(text, points, boxes, previous_labels=(), previous_paths=(), *, accept=None,
+                maximum_widths=(180, 138, 96, 66)):
     """Keep label ink and its plate clear of cards, tokens and other labels.
 
     The plate is painted after every connector; the underlying own line is
@@ -189,7 +190,7 @@ def place_label(text, points, boxes, previous_labels=(), previous_paths=(), *, a
     for start, end, length in zip(points, points[1:], lengths):
         for ratio in (.5, .25, .75):
             cx, cy = start[0] + (end[0] - start[0]) * ratio, start[1] + (end[1] - start[1]) * ratio
-            for maximum in (180, 138, 96, 66):
+            for maximum in maximum_widths:
                 lines = wrap_label(text, maximum)
                 width = max(sum(_glyph_width(c) for c in line) for line in lines) + 18
                 height = len(lines) * LINE_HEIGHT + 8
@@ -221,7 +222,7 @@ def place_label(text, points, boxes, previous_labels=(), previous_paths=(), *, a
                       for value in (y, y + height) if BOUNDS[1] <= value <= BOUNDS[3])})
         centers = [((left + right) / 2, (top + bottom) / 2)
                    for left, right in zip(xs, xs[1:]) for top, bottom in zip(ys, ys[1:])]
-        for maximum in (180, 138, 96, 66):
+        for maximum in maximum_widths:
             lines = wrap_label(text, maximum)
             width = max(sum(_glyph_width(c) for c in line) for line in lines) + 18
             height = len(lines) * LINE_HEIGHT + 8
@@ -244,7 +245,8 @@ def place_label(text, points, boxes, previous_labels=(), previous_paths=(), *, a
     return selected
 
 
-def connection_geometry(relations, boxes, reserved_boxes=(), label_obstacles=()):
+def connection_geometry(relations, boxes, reserved_boxes=(), label_obstacles=(), *,
+                        maximum_widths=(180, 138, 96, 66)):
     labels, result = [], {}
     obstacles = [*boxes.values(), *reserved_boxes]
     for relation in relations:
@@ -272,7 +274,7 @@ def connection_geometry(relations, boxes, reserved_boxes=(), label_obstacles=())
             return True
 
         label = place_label(relation['label'], points, [*obstacles, *label_obstacles], labels,
-                            accept=preserves_connections)
+                            accept=preserves_connections, maximum_widths=maximum_widths)
         result[relation['id']] = dict(points=points, path=path_text(points), **label)
         if label['lines']:
             labels.append(label['box'])

@@ -164,7 +164,7 @@ def test_demonstration_requires_explicit_experimental_template_selection():
     assert result == value and result is not value and result['elements'] is not value['elements']
     result['elements'][0]['label'] = 'changed'
     assert value['elements'][0]['label'] == '执行日志'
-    assert DEFAULT_TEMPLATES == frozenset({'flow', 'compare', 'focus'})
+    assert DEFAULT_TEMPLATES == frozenset({'flow', 'compare', 'focus', 'sequence', 'nested'})
     assert set(TEMPLATE_SLOTS) == DEFAULT_TEMPLATES | DEMONSTRATION_TEMPLATES
 
 
@@ -243,7 +243,9 @@ def test_published_motion_profile_never_accepts_demonstration_input_or_output(tm
     changed_input['base_plan'] = value
     with pytest.raises(ServiceError, match='invalid_motion_plan'):
         motion.validate_motion_input(changed_input)
-    assert hashlib.sha256((motion.BUNDLE_ROOT / 'manifest.json').read_bytes()).hexdigest() == (
+    assert hashlib.sha256((motion.BUNDLE_ROOT / 'manifest.json').read_bytes()).hexdigest() == motion.BUNDLE_MANIFEST_SHA256
+    # Frozen v1 contracts remain available and unchanged beside the new bundle.
+    assert hashlib.sha256((motion.BUNDLE_ROOT.parent / 'video-motion-v1/manifest.json').read_bytes()).hexdigest() == (
         '4eba854c6f858a6ec18eb01687a87865dca53efc1346eb4456e6a47bd9dac104')
 
 
@@ -344,7 +346,7 @@ def test_catalog_motion_is_explicit_disabled_and_uses_separate_resource(image_pa
     contract = next(c for c in new['task_contracts'] if c['name'] == 'video.motion-plan.v1')
     assert contract['revision'] == '1'
     binding = next(c for c in new['execution_bindings'] if c['profile'] == contract['name'])
-    assert binding['bundle'] == dict(name='video-motion', revision='video-motion-v1')
+    assert binding['bundle'] == dict(name='video-motion', revision=motion.BUNDLE_REVISION)
     assert 'acceptance' not in binding
     route = next(c for c in new['routes'] if c['profile'] == contract['name'])
     assert route['enabled'] is False

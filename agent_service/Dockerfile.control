@@ -5,7 +5,8 @@ FROM ${PYTHON_BASE_IMAGE}
 USER 0:0
 WORKDIR /opt/agent-service
 COPY agent_service/requirements.txt /opt/agent-service/agent_service/requirements.txt
-RUN python -m pip install --no-cache-dir -r /opt/agent-service/agent_service/requirements.txt \
+ARG PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
+RUN python -m pip install --no-cache-dir -r /opt/agent-service/agent_service/requirements.txt --index-url "${PYPI_INDEX_URL}" \
     && python -m pip check
 COPY agent_service/ /opt/agent-service/agent_service/
 COPY scientific_agent/ /opt/agent-service/scientific_agent/

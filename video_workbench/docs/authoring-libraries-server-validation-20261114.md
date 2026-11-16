@@ -1,0 +1,245 @@
+# Manim / Anime.js 服务器接入验证（2026-11-14）
+
+本文保留 11 月 14 日各版本的部署与验证历史；这些段落中的“当前”限于当时检查点。11 月 15 日统一资源层的新构建、独立准入与正式消费候选见文末，不能用历史的模块前置暂停状态判断最新实现，也不能将新候选结果当作业务已上线或正常制作入口已验收。
+
+## 能力与发布范围
+
+动画效果库已开放 Anime.js 4.5.0 和 Manim Community 0.22.1。两者均由通用 Agent 自主创作，最后进入同一个 HyperFrames 时间线；平台代码提供时钟、隔离、资源和验证合同。
+
+| 能力 | 作用 | 当前边界 |
+| --- | --- | --- |
+| Anime.js | 辅助 HTML/SVG、Canvas、Three.js 的运动编排 | 固定本地 ESM 和暂停适配器，HyperFrames 绝对定位；不新增绘制引擎或第二时钟 |
+| Manim | Agent 原创 Python 经 Cairo 产生透明 PNG 帧，再由工程消费 | 独立 recipe 角色及离线资源执行；最多 60 帧、640×360 示例；无 TeX/MathTex |
+
+效果库可用、技术通过、实际样片、开发者效果／迁移认可、Skill 发布和正式视频采用分别记录。此次接入不会发布候选 Skill。普通正式视频消费者仍排除需要 Manim producer 的方法，直到其资源再生链单独准入；不能将本次任务的 PNG 包作为通用方法发布。
+
+## 实际部署
+
+- 普通干净 Git 构建；镜像仅使用 `latest`，实际 Deployment 固定 digest，并以标签和注解记录源码。没有运行中覆盖源码。
+- 基础镜像与 renderer 来自 `0b6913b53f8af155d4336ed64a5fdca1427bfb8a`；creation、workbench、motion 的兼容性接线来自 `9fab624b8a8029da722198736b727573566c6f37`。
+- 四业务部署验证回执为 `authoring-apps-rollout-manim-r1/completed.json`，状态 `deployed_verified`。原项目、冻结记录、媒体、旧凭据与整片配置保持；新增独立 Manim 凭据挂载。
+- Manim 角色使用 `36872c3ef70782546d043059e2f405a0ce861ffe` 的完整源码镜像；真实 source-only r3 取得双产物并完成停止与清理后激活，旧角色和数据库记录保留。
+- 宿主机访问 Agent Service 受到原网络策略限制。部署预检和原任务查询改为从现有 creation Pod 内走实际业务路径，没有放开网络策略。
+
+## LLM 协议阻断与修复
+
+Manim r2 暴露上游 Responses 返回的未知 token-details 扩展对象被误拒。原失败请求保留为 uncertain，不声称免费或成功。修复继续严格校验主计数和已知数值明细，保留未知 JSON 扩展且不计入主汇总；没有修改模型路由或放宽主计数校验。
+
+隔离分支完整源码 `152cdded8dd5ce2382976b6900f9adad844cf186` 的 155 项回归通过，正常构建并部署 `llm-service:latest@sha256:5ccd604ef305a0d040d6be8f8127b232ad5b6bf734ea98da0d1f1e5ef72f1f5d`。Manim r3 后续六次实际模型请求成功，证明原阻断已解除；不据此改变视频业务任务的费用统计归属。
+
+## 技术与实际样片证据
+
+基础技术准入已分别验证 Anime、HTML/SVG、Canvas、Three/WebGL2 的 96 帧探针，以及 Cairo 48 帧资源和 72 帧 HyperFrames 资源工程。检查包括正／反／乱序／重复定位、空闲稳定、重新加载、半开资源窗口和隔离资源清理。这些探针不冒充 Agent 原创作品或审美认可。
+
+实际业务通过正常效果库 API 分别提交一次初始委托，保留唯一请求、原 Agent 源码、资源、原始 MP4、时钟和停止证据；不手改生成动画。
+
+- Anime 委托：`6b719f65-6aca-4433-95ae-a350f84aa4d3`，目标为“冲击波与群体节奏”。
+- Manim 委托：`a66253f0-2e2c-4da8-a367-e5c17166b67b`，目标为“剪切变形中的面积不变”。
+
+Manim 委托已完成：真实 4 秒／96 帧 MP4 SHA256 为 `2bf7ce3ed024eeda3119c654b0c58275f2fd159b4da6d61e9ad71dbc430c4108`。独立核验原 Agent 源码、60 帧透明资源、v5 清单、HyperFrames 0.8.149 和最终解码全部一致；有限边界帧未发现窗口外残留，原任务均已停止清理。高度尺、细线和 b/h 标记偏暗、偏小，不能将技术出片当作目标效果已经获得认可。
+
+Anime 首次委托被 `method_absolute_seek_mismatch` 正确拒收，没有 MP4 或候选。原源码每次重置 Anime 管理的 tween 对象，再执行 seek，破坏了同帧与历史无关的要求。纯状态诊断能复现，原桥接字节未改变；诊断内存里的修改不冒充 Agent 作品。原失败与原预算保留。另以新有限预算、`retry_of_commission_id` 关联同效果，启动修正委托 `5a5ffbd5-a9ae-47a8-b5c9-c53158c8c64b`；仅提供状态所有权反馈，让 Agent 自主重新创作并内化到 Skill 草稿，没有传入手改动画源码。修正稿已完成并独立核验：8 秒／192 帧 MP4 SHA256 为 `5a0bb2a49819f32a8349a7fb363ccca77a0ee4c3a2744780b6fe17d98834ba8f`，原 Agent 源码与实际输入一致，35 条 Anime 轨道承担主体动作；201 个帧／seek 探针与完整 MP4 解码通过。原创方法已写入状态独占规则，没有通过删除验证或手改原动画获得通过。新旧委托在同一个效果下，原失败保留，没有循环新增任务。当前 reviewer 的静帧意见仍不能证明完整节奏、因果动作或审美已经得到用户认可。
+
+原声复用的 workbench／motion 已进一步升级到 `7633be283f3dd8158e1a60479b8fb54646a57f21`、镜像 `video-workbench:latest@sha256:65c3b69d7f1b34c6cc3a6139f94c4d76a12ebb7619d84f03648694eb8663c499`。creation／lab 保持原部署，原整片配置不变；通过真实 HTTP 字段和 readiness 检查。该升级不生成语音或媒体。
+
+浏览器安全检查服务当前不可用，页面验收尚未完成；服务器 API／部署核验不替代页面验收。
+
+## 失败原因展示修复
+
+creation 进一步从完整 Git `aa4de3229cc6abe5f34e27c451c72da9bd156b01` 普通构建并部署为 `video-animation-creation:latest@sha256:70c8903dfb9a90516cd7568bf5135f1ee385e0565fa75af9cec06f8ba6b7e60c`；仅此服务升级，lab／workbench／motion 的 Deployment 不变。相关三套回归共覆盖 115 项，新失败仅从与请求、镜像、宿主和运行库绑定的受限收据精确提取固定诊断码；未知内容返回通用原因，不透出原日志。
+
+真实 HTTP 只读核对原 Anime 失败委托 `6b719f65-6aca-4433-95ae-a350f84aa4d3`，现返回非空 `animation_method_render_container_failed`。原记录没有保存具体 seek 码，因此不回填或声称恢复它。升级及 GET 前后十个 SQLite 账本的原始表结构／内容指纹一致，全部原挂载与凭据元数据保持；没有新增模型、TTS 或渲染。发布证据为 `method-diagnostics-rollout-r1/completed.json`，状态 `deployed_verified`。
+
+## 原声复用与跨镜连续性
+
+原项目 `6f2cbbdc-754a-4069-8c0f-5447cea35973` 的新对照 run 为 `06163975-8b2a-4122-b8ff-ed584c137e9f`，复用原 run `663b838d-091d-4378-8813-586d301f72c2` 的两段 WAV。新增恰好两个模块任务、两个模块版本和一个整片渲染；没有新增方案、TTS、录音版本或独立镜头 MP4 拼接，原项目和旧记录逐项保持。
+
+新 MP4 SHA256 为 `0303bc49c6ebdce34d695316f763358c3b4e3870559d05cab76a0f38eb36de43`，单个 HyperFrames 工程输出 1280×720、24fps、16 秒、384 帧。独立完整视频／音频解码通过，原录音字节与 snapshot 一致；最终 AAC 的两段双声道相关度分别为 0.9999868、0.9999858，RMS 比为 0.99910、0.99916，共 768000 个样点。
+
+第二个 Agent 的输入包含第一个 Agent 原样的完整模块文件、文件摘要及退出状态，最终 snapshot 也逐字保留两份原创源码。独立核验者与主 Agent 实际检查切镜前后第 168–215 帧的连续窗口，以及第 191、192、193 帧原尺寸图。12 个圆片的位置、大小、顺序及点／环／加号／斜线纹样连续，细描边、下方柔影、米白背景、通道底色及边线未跳变；随后开口逐渐扩大，圆片逐步松散，没有换物或黑帧。这支持本轮 5.3 的连续编排与真实边界评价完成，不能推广成任意内容都不会出现断裂。
+
+技术证据为 `appearance-continuity-audio-reuse-business-r1/collection.json` 与独立 `validation.json`、`visual-sequence-review.json`，分别保留原记录和实际观察范围。本样片只有简单 2D 表面，未验收 PBR 材质、任意转场、完整声音理解或真人效果认可。整片独立视听审阅／一次修订及用户追加额度闭环仍未完成。
+
+## 正式制作序列登记上线
+
+工作台从完整 Git `0364cdfb9fdbfae616b4796acde22cb771f25670` 普通构建并部署为 `video-workbench:latest@sha256:6932277da28d033a586eec694d0f05a2ba29e2e1ee7cda46ad05800353eee727`。本轮只以一次 Recreate Deployment CAS 升级 workbench；motion、creation、lab 的镜像及配置保持。
+
+正式制作完成后，以实际成片字节 SHA、不可变 render id、已核验 snapshot、模块与运行身份登记稳定序列；显式复用原声的多级派生继承同一身份。登记意图先写业务库再写独立序列账本，回执丢失按精确 run/version/source 恢复。普通新制作即使媒体摘要相同仍保留独立身份。缺失账本或构造漏接依赖会阻止新付费子任务；已经完成的成片保持 completed，登记问题另记 pending／blocked。GET/list 不登记历史，回收站恢复不重建身份。
+
+本地 68 项整片制作／原声复用／HTTP 集成回归通过；55 项序列账本测试通过。新增 25 个业务用例分为 22 项基础测试、2 项构造护栏和最后一次 4 项窗口验证；后者含三项重复回归，不汇总成一次完整 25 项运行。覆盖 create/bind 提交后回执丢失、CAS 重新冻结、并发、多级继承、篡改拒绝、已用额度保留、缺库与取消／删除。测试的合成输出只证明持久身份及恢复机制。
+
+服务器发布及只读 HTTP 前后，原九个工作台数据库的结构、全部表行及 BLOB 摘要、外部媒体和十个 creation 账本保持。仅在同一 PVC 的 `/data/production-sequences.sqlite3` 建立空的八表账本，已有 Secret、runtime 和 PVC 身份不变。真实两条旧 run 仍为 completed／draft_only／not_reviewed，没有历史迁移或隐式创建序列；readiness、Pod 实际源码及固定镜像摘要校验通过。实际回执 `production-sequence-rollout-r1/completed.json` 为 deployed_verified。
+
+本次部署为零新增模型、TTS、渲染和轮次预占。新片的真实登记尚未用另一付费制作验证，浏览器验收仍受安全检查服务不可用阻断。此切片不执行整片审阅、自动一轮修订或用户追加；OpenSpec 3.5／4.1 整体继续待办。
+
+## 2026-11-15：统一资源层与正式消费候选
+
+完整 Git `ed678aa` 已普通构建并推送六个 `latest` 镜像，源码、构建上下文、镜像标签与 digest 分别保留在 `shared-resource-release-r1/completed.json` 及各构建回执；没有把历史镜像换摘要当作新构建。六镜像构建完成与业务部署完成分别记录。
+
+| 镜像 | 新 digest 前缀 |
+| --- | --- |
+| agent-service-control | `8ec0291ddfcb` |
+| agent-service-pi | `29b64a218eff` |
+| video-animation-creation | `f18f663010f5` |
+| video-workbench | `5ec54ec7769b` |
+| video-motion-renderer | `31a2516d113c` |
+| video-animation-lab | `32ce5677ffea` |
+
+新 renderer 的 Canvas、Three.js、Anime.js、Manim 四种既有组合已各执行一次技术再准入，共 144 帧、4 次渲染；原 Agent 源码及原 Manim/Cairo 资源字节保持，新增 Agent、Cairo、TTS 和 Skill 发布均为零。检查结果及新 engine／authoring-library／Manim-resource 准入位于 `/var/lib/video-animation-creation/shared-resource-r1/completed.json` 所列文件。这是方法运行时准入，不能替代正式整片执行或正式消费准入。
+
+Manim 局部时钟的浏览器测试另在同一新 renderer `31a2516d…` 内实际启用，结果为 3 pass、0 fail、0 skip。默认未启用浏览器的 1 pass／2 skip 基线分别保留，不能并作实际浏览器通过。两次浏览器捕获使用同一个合成 descriptor，placement 分别为 0 和 12，各 24 帧、合计 48 帧；正向、反向、重复定位、空闲稳定、全新重载复现与窗口外 hidden 均通过。镜像内宿主、引擎、HyperFrames 0.8.149 和两份 Manim helper 的实际字节已核对，仅只读挂载测试源码。此项新增 Agent、TTS、Cairo、整片渲染和 MP4 均为零，证明定位协议而非 Agent 原创效果；完整回执为 `manim-placement-browser-r1/completed.json`，实际 TAP 为 `enabled-browser-stdout.tap`。
+
+独立资源规划角色 `video.resource-plan.v1` 已准入并激活。三个 Agent 控制服务使用新 control 镜像，API health 为 200，新独立 caller 为 ready；旧 routes、callers、worker 配置、凭据与历史表保持。专用 Secret 为 `video-workbench/video-resource-plan-agent`。激活回执 `resource-plan-activation-r1/activation-summary.json` 是四业务部署前的独立检查点，当时工作台环境变量和挂载尚未接入、四业务 Deployment 尚未变化。角色候选使用空 `producer_catalog`，尚未验证含 Manim 的生产者选择、新联合方案 sidecar 到整体确认的完整链路或策划质量。正式 FilmModule 候选继续使用原已准入角色及 worker 路线，没有为统一版本而切换其执行组合。
+
+正式消费候选复用项目 `6f2cbbdc…`、原连续 run `06163975…` 的第一镜原包和两段各 8 秒的完整 WAV。恰好新增一个 recipe Agent、一次 Cairo 资源执行、一个第二镜 FilmModule Agent 和一次整片渲染，TTS、动画源码改写、生成重试和 Skill 发布均为零。recipe `baeea83f…` 与 module `083a6e25…` 均取得原始产物和真实停止证明；Manim manifest 保持局部第 0 帧，48 帧资源通过独立 placement 放到全片 `[204,252)`。新第二镜 Agent 的原始源码实际以 Anime.js 暂停时间线驱动 Canvas 通道与球群运动，并逐帧等待 Manim 透明层；最终包为 `914f0dbc…`。
+
+新 renderer 的唯一成功整片 Job 输出 1280×720、24fps、16 秒、384 帧 H.264/AAC 视频，媒体摘要 `e44d0a9596ce…`、snapshot `4db3d8fe…`。原 WAV 字节与录音时钟保持，完整音视频解码通过。实际编码第 203、204、216、228、240、251、252 帧与原 RGBA 资源及确切布局进行像素对照：窗内资源主体可见，窗前／窗后背景无残留；各检查区域平均 RGB 误差为 2.00–2.47，已加载全部 48 个原 PNG。这一有限检查证明实际资源消费与半开窗口，不能推广为整片审美或任意内容的质量认可。
+
+新正式整片执行准入 `11137e52…` 同时绑定成功 Job、独立完整媒体核验和该镜像唯一一次运行中取消探针。取消探针原操作器在额外宿主观察中失败的记录保留；同一 Job 的实际 foreground 删除、精确 Docker 停止事件及后续 Job／Pod／进程与 cgroup 缺席补证见 `shared-resource-formal-cancel-r1/reconciled-cancellation.json`（文件摘要 `bd7e53d9…`），没有另开取消 Job 或声称原脚本全部通过。
+
+正式 Manim 消费 v2 准入 `8ce09a00…` 已按原 producer envelope、placement、consumer package、snapshot 和实际媒体构建，并重新读盘校验。创建服务将读取的完整文件为 `/var/lib/video-animation-creation/shared-resource-r1/formal-consumer-admission.json`；对应五件原证据已保留。候选汇总、执行准入和像素检查分别见 `formal-shared-consumer-v2-r1/completed.json`、`execution-admission.json`、`encoded-placement-audit.json`。成功 Job 与 helper 已清理，PVC 输入／结果保持。
+
+候选采用纯工程编译接口保留第一镜旧运行身份与原包，没有改写旧包来通过新运行身份检查。因此这些结果属于独立正式消费候选，不能当作正常制作 API 已通过。资源核心的 revise、placement 与历史保留测试不代表正式修订完成：`ProductionResourceStage` 尚无实际 revise／retry 入口，模块产物尚未纳入共享依赖图，跨镜前任变化后的资源／模块重做也未接正式修订协调器。本段不据候选完成自动勾选 H.8／H.9 或 U.2–U.5，也不改变完整视听审阅、一轮修订、开发者认可和人工发布的边界。
+
+### 四业务部署与正常入口检查
+
+四业务新配置随后已部署并验证：creation 为 `f18f6630…`，workbench／motion 为 `5ec54ec7…`，lab 为 `32ce5677…`，正式 renderer 为 `31a2516d…`；当前四个 Pod 均 1/1 Ready、0 次重启。首次 workbench 启动因沿用方法级 host 身份被正确拒绝，原失败保留；仅为正式路径派生 `runtime_identity.host_sha256`／`admission_id` 并建立新不可变 ConfigMap 后恢复。固定资产、authoring libraries、原准入和候选 snapshot 未改写。新镜像内 UID 10001 的 `FilmProductionSettings` 与消费 v2 context 校验通过，creation 实际 UID 0 读到了完整准入及五件原证据，工作台实际资产摘要一致。原账本行及摘要保持，仅新增空的 resource-plan schema；部署新增模型、TTS、渲染和 Skill 发布均为零。回执为 `formal-shared-consumer-v2-r1/deployment-plan/final-r1/completed.json`，状态 `deployed_verified_after_configuration_projection`。
+
+正常 ProductionRun API 的唯一 POST 已完成 run `6cc51e62-25c4-40f9-a38d-784e831b209c`，render 为 `003a4231-bd55-49f2-884a-9640e1ef3081`。实际新增一个 recipe、一次 Cairo、两个 Canvas module 和一次整片渲染；TTS、新联合方案、新资源规划、自动重试及 Skill 发布均为零。它复用旧联合方案与完整原声，显式提供 `resource_plan`，`resource_plan_source=None`；因此只证明正常 run 的共享资源制作／消费，新导演 sidecar→用户整体确认及含 Manim 目录的策划质量仍须独立验收。只读采集器对 BEGIN 标记的子串计数失败保留，补充采集按完整行锚定验证原源码与完整前驱，没有改写作品或重新制作。
+
+本次正常 MP4 为 `73613008a338a0c5382b5b65ceb0fc666fe631b31c7a9fd3582226166126f7e3`，snapshot 为 `c8646b0c…`：16 秒、24fps、384 帧，完整音视频解码通过，374 个不同画面。两原 WAV 字节完全复用，最终双声道与原音频相关度分别为 0.9999868、0.9999858。独立证据位于 `shared-resource-normal-business-r1` 及其 `independent-media-r1/validation.json`；浏览器实际观察资源 0/1→1/1、编排、渲染及草稿待审阅，原生播放器完整播放至 16 秒，1280×720、readyState 4、无媒体错误，下载链接指向该 render。播放与入口可见不代替实际点击下载、旁白时序或审美认可。
+
+正常模块没有 import／call Anime.js，H.8 继续待办，不把候选里的 Anime 使用或统一运行库已加载移记到该 run。第二模块确实通过 Manim helper 消费局部 0 帧起的 48 帧资源，但安排为全局 `[192,240)` 的右上角 240×135 缩略图并淡入淡出，第 192 帧透明；实际查看第 200 帧确认这一点。原目标是让资源参与主通道边界展开，缩略图属于表达偏差，不能将“实际消费”写作目标已经达成。没有为弥补该偏差追加生成、打磨或改写原源码；U.2–U.5／H.9、完整视听和人工认可保持独立待验收。
+
+正常 MP4 的追加像素审计保留为 `pixel_evidence_not_proven`：第 204／216／228／234 帧最近的原 PNG 分别匹配局部 12／24／36／42，198 帧最接近局部 5 而非预期 6，原因未定。五个不透明采样帧强 alpha 区域的平均误差为 7–8.6，支持缩略图进入实际编码；首帧透明及边缘淡入淡出导致其余采样难以分辨，不能据此宣称全窗口逐帧精确证明。原测量、阈值及未达标状态保持，见 `encoded-resource-r1/audit.json`；没有重新编码。
+
+### 现有内容按画面创作与动作编排整理
+
+新效果库浏览器回查曾发现旧 Manim 样片漏标，Manim 筛选显示 0/10。根因为 creation 的历史读投影错误地要求旧 descriptor 的 helper 等于当前 helper。完整 Git `6a02aa008b4a38412b1e2eec375aa745a318c28c` 仅修该读投影，并以正常构建的 `video-animation-creation:latest@sha256:ca5d0dc041bdc8a68f701e8e34fb16dde34002cf76b1cb3ffb799cb580a9b351` 单服务部署。旧样片按自身冻结 helper 库存、descriptor 摘要和真实加载观测分类；新生成仍严格使用当前 helper，producer、consumer 和执行准入未放宽。干净源码定向回归 32 项通过，另用原样片只读复现修复前无标签、修复后 Manim 0.22.1。原参数、挂载、init、凭据和 renderer 保持；Pod Ready、0 重启及真实 gateway／Manim 能力预检通过。
+
+用户随后要求专门子 Agent 整理已有数据。已逐条核对 10 个效果、22 条可见实验与22个唯一已成片候选；4 条无可验证样片实验保留待确认。实际分类为 HTML/SVG 3、Canvas 6、Three.js 1、Manim 1，Manim 样片同时保留 HTML 承载标签；动作编排 Anime.js 1、GSAP 0，没有将 HyperFrames 内部时钟推断为作品使用 GSAP。所有分类来自原冻结样片及实际加载证据，不按标题或请求推测，也未改写原记录或重做媒体。
+
+修复发布后，独立真实 catalog GET 与逐条盘点完全一致；浏览器也逐项选择六种筛选，确认 HTML/SVG 3/10、Canvas 6/10、Three.js 1/10、Manim 1/10、Anime.js 1/10、GSAP 0/10，Manim 卡片显示 HTML/SVG 与 Manim 0.22.1。三库20张表、1105行前后完整指纹一致；没有迁移、数据库写入、新实验或发布。回执为 `historical-manim-projection-{release,activation}-r1/completed.json`；D盘现有任务目录的 `existing-library-capability-classification-20261115.json` 与 `existing-library-live-classification-20261115.json` 保留逐条分类及真实核验。源码、数据核验与浏览器结果分别留证，不改变完整视听和人工发布边界。
+
+### 卡片能力标签统一
+
+用户指出分类数据虽然正确，卡片仍存在版本混在名称中、HTML/SVG 与 Manim 连写、缺少编排库时整行消失的问题。`4cbdf425e20825343c2fc45e34da267c682b8bb4` 将列表卡片接入同一两行组件：名称徽章、精确版本 title、可复制的多标签分隔、固定类别栏和一致的间距；已验证但缺少额外编排库证据显示“未记录”，无已验证媒体显示两行“待确认”。目标正文、标题、后端分类及媒体不改动。干净 HEAD 加本轮独立补丁的 Node 定向59项全部通过，原有未提交修改另外保留。
+
+完整 Git 普通构建的 lab `latest@sha256:0c53772a62a7d6217621db8c5846c26e055b7d6f546eafa25d54a89c43f93749` 已单独部署，Pod Ready、0 重启；86份运行源码及5个真实 HTTP 静态资源的字节 SHA 匹配该提交。三个 SQLite 全表 schema／行指纹相等，原代理参数、Secret、挂载与 PVC 保留，其他三个业务服务的 spec 和 Pod UID 不变；没有启动模型、TTS 或渲染。回执为 `skill-lab-unified-labels-r1-release/build-completed.json` 与 `skill-lab-unified-labels-r1-guard/completed.json`。
+
+实际浏览器核对10张卡片全部为两行，两行之间没有重叠或横向溢出。Anime.js／Manim／Canvas卡片显示统一，Manim名称之间保留实际空白，库版本确切保留在 title；Manim与Anime筛选均为1/10。实际截图和DOM几何读取分别用于确认外观与布局，未将桌面检查扩大为手机验收；轻量结果保存在既有D盘目录 `label-unification-browser-check-r1.json`。
+
+### 效果与实验回收站（2026-11-15）
+
+完整 Git `c6f7a1b` 新增单实验／整效果软删除、精确快照确认、独立恢复及稳定效果身份；`95d070c1fc3a867e8902c6acba85dbd7df99f998` 修复并发意见保存／撤回的锁等待。仅更新 creation 和 lab，普通完整 Git 构建推送 latest，部署分别固定为 `sha256:08abd4894934c385723f9fdd07de0afdca78acd2999218eca24bdbc377214d25`、`sha256:9fbb2bff143fb4272dd078b6c8f419e2d6bcf67e07eccc7b3ac6e0933a35d957`。renderer、workbench、motion、Agent 及现有发布配置保持。
+
+前端从干净 HEAD 加本轮纯补丁验证 74 项 Node、85 个唯一 Python 路由／构建用例通过；一例首次因 Windows 路径过长失败，短临时目录重测通过。独立真实两跳 HTTP 35 项通过。后端原大回归 171 通过／8 失败：4 个资源 fixture 与 4 个同源历史倒序问题分别修复、定向回验；新增原35项与两条历史收尾37项通过，资源8项通过，正式 Skill 冻结22项另通过。各组有重叠，不累加为唯一总数。
+
+父项另从 `c6f7a1b` canonical Git 导出测试 trash／HTTP／feedback／retry／commissions，结果155通过、唯一并发意见用例失败；根因为新增非阻塞 owner 锁打断原幂等并发保存。`95d070c` 只让意见保存／撤回最多等待5秒，获锁后重新检查可见性，其它写动作继续立即报告忙。新 commit 的独立完整 Git 导出定向5项通过，包含原并发保存与撤回、等待删除后两种写入均404／不改记录、跨实例锁与旧URL拒绝；不重新跑无变化的全部测试来累计通过数。所有临时导出和最终测试放D盘；附带清理早期C盘 `.test-trash-backend-20261115` 被自动审批返回 `blocked by policy`，未重试或绕过，该目录暂留。
+
+首次 r1 严格历史检查没有通过：它把公开 Lab HTTP 的 `/dev/animations/api/...` 地址与直接 Service 的 `/api/...` 地址比较。独立定位全部38处差异仅为这一传输投影；新 operator v2 调用相同 `LabHTTPServer.public_urls` 后，继续逐字段精确比较，没有删除URL字段或放宽旧身份／标签。r1失败回执原样保留，未部署。r2从新完整源码重新构建，固定 operator `a9832bfce5c85eb111ef50a975334a8490e7b54d1c6c63dc2268fbd7458f91cd`；先在无网络／无凭据的新镜像中 sqlitebackup 到副本，正常构造服务并读取原26委托／106操作，再通过严格历史检查才部署。原17数据库旧表保持，仅新增3张空回收站元数据表；87份lab源码、3份creation源码及7项实际HTTP静态依赖的SHA／MIME通过，防止遗漏入口模块。
+
+浏览器沿用当前登录账号，实际点击详情底部“整理效果与实验”及首页“回收站”。专用“功能验收夹具·无模型/无媒体”由正常 store 在隔离环境创建并终止，备份后单事务导入，线上未见queued窗口。两条实验为 `a897a820-6cef-4b91-bac7-9d3444c0e5aa`、`fc42c57b-0859-48dc-8115-1c7e1921d65f`，无operation／candidate／生成媒体。单删第一条后自动显示关联实验，效果身份保持、历史2→1；恢复后为2。整效果确认显示2条／确切编号，移入后列表11→10，恢复后回11；最终仅将这组夹具重新移回收站。原10张可见卡片、两行标签和媒体保留，无横向溢出。DOM与实际截图用于页面观察，不扩大为手机或动画质量验收。
+
+最终只读 guard 核对3 entries／2 restorations／5 requests，全部scope及成员仅限这两个夹具，最终回收站1组2条、正常列表原10效果／22可见实验，其中18条含最佳候选；4条legacy隐藏不变。原26委托／69请求／512事件／106操作逐行SHA保持；新增仅夹具2／2／4／0，当前28／71／516／106。其它17库旧表、其它业务及Agent配置和数据保持，catalog身份、完整URL、技术标签、关联全字段相等。没有新增模型、TTS、渲染、发布、取消或物理媒体回收。已发布／正式引用、未知停止和并发保护由隔离测试验证，没有对用户真实作品做破坏性试验。
+
+服务器既定OPS下保留 `skill-lab-effect-trash-r2-release/{two-build-completed.json,history-check/completed.json}`、`skill-lab-effect-trash-r2-two-rollout/completed.json`、`effect-trash-ui-fixture-r2/{prepared.json,seeded.json,final-verification.json}`。既有D盘研究目录保留 `effect-trash-browser-check-r2.json`、`effect-trash-final-verification-r2.json`、纯UI补丁与独立测试导出。该功能只完成新增L.1–L.3；不代勾U/H资源工作、完整视听、正片修订、开发者认可或Skill发布，未合主线。
+
+### 外部 Agent 结构化 HTTP 接入（2026-11-15）
+
+完整 Git `43912637f31cd8c2a7e2fe0413ccf5e77a14e739` 补充已有公开 JSON API 的中文指南、OpenAPI 3.1 合同和独立 Python 标准库客户端；创建／查询／续作／反馈／取消／媒体与源码继续复用原委托。客户端不依赖浏览器表单，使用调用者安全提供的 Netscape 会话文件并自动取得 CSRF；独立 Bearer／API key、免浏览器机器授权仍未实现。只读帮助与下载均保留原 OAuth 和开发者 allowlist。原有六项未提交改动未纳入本次提交。
+
+客户端最终87项本地 HTTP／边界检查通过，包括原文件／显式UUID、未知提交、无POST自动重试、会话文件错误不泄密、重定向／跨路径拒绝、有界轮询、下载大小／截断及不覆盖竞态；可直接独立执行。父项静态路由和构建82项、既有methods-only及私有HTTP29项通过；OpenAPI 118个引用、所有请求示例与schema、静态页锚点和无脚本依赖检查通过。所有隔离测试目录位于D盘，未读取真实Cookie或调用线上模型。
+
+服务器复用既定完整Git单lab builder，构建推送 `arm-cluster-master:5000/video-animation-lab:latest` 并按 `sha256:75edb7768fda1c356bc9be421d9a646a1be65e21789e0425b06530490dbaeb85` 部署；源码manifest为 `40c6ad81a5831f221f6a613ba6ba6286bc44b4259e760f4978cbc50837de115c`。Pod `video-animation-lab-97cf7c5c4-szvr6` Ready、0重启，90个实际运行源码文件SHA匹配。`agent-api.html`、`agent-api.openapi.json`、`agent-api-client.py` 真实GET均200且字节/MIME匹配；CLI附件名为 `animation_lab_client.py`。缺失／错误开发者身份的6次GET全部403；旧静态依赖及catalog/trash完整投影相等。
+
+原17个执行器数据库、3个lab数据库和其它业务数据库逻辑指纹保持，其他业务／Agent及OAuth／Casdoor的spec和Pod UID保持；lab spec只变镜像与发布注解。模型／TTS／渲染／业务POST／夹具／发布均为0，没有以本轮只读验证宣称已完成新的外部Agent付费生成或独立机器鉴权。三个入口仅补接入与帮助，未创建第二套制作链、未合主线。
+
+服务器既定OPS保留 `skill-lab-agent-api-r1-release/build-completed.json`、`skill-lab-agent-api-r1-release/agent-api-build-guard.json` 及 `skill-lab-agent-api-r1-api-verification/completed.json`；operator SHA为 `d3f51d6ffb9a9665414dde5488639b5eb944246b5552e7520d53be276ecc3485`。D盘既有研究目录保留 `lab-agent-api-build-r1.json`、`lab-agent-api-rollout-r1.json`、`lab-agent-api-local-validation-r1.json`；本轮仅勾M.1–M.3。
+
+### 历史实验删除停止核验补修（2026-11-15）
+
+用户删除“波的叠加与局部抵消”时被 `animation_method_trash_stop_unproven` 拒绝。只读诊断定位其两条实验共十项作者／评审任务均在 `internal/video-animation-methods` 旧 caller 下真实完成，按 Agent 当前公开停止证明合同全部通过；四项历史渲染也已有停止证明。现行 Skill v2 caller 查询这些任务返回404，即使只改幂等前缀或直接按 job ID 查询也仍不可见；不是资源层、20秒总预算或这些任务实际仍在运行。用原挂载旧身份及原生 `stopped()` 核验整组通过，耗时0.228秒，17个数据库和部署规格保持。
+
+完整 Git `7bfd67896f3e1202c97301400a1854e2aefaf8c5` 按冻结 schema／stage 选择原协议，并接受显式历史 caller 网关。executor 可配置独立历史凭据，只供删除停止核验，当前创作仍使用 Skill v2；历史404不回退当前caller，也不当作已停止。另修正业务委托终态与Agent终态混用：`needs_input`／`timed_out` 仍须真实停止证明和原任务绑定。原幂等、快照、发布引用、活动／未知拒绝和软删除合同保持。
+
+删除／HTTP／停止合同组合105项通过；追加独立历史身份后最终合同37项通过，两组去重为109项。executor／部署生成器89项通过，合计198项唯一的定向回归。用例覆盖真实公开停止证明结构、v1／v2命名空间、不同client隔离、历史404不回退、活动／缺失／错配／无证明拒绝、原账本只读和客户端关闭。所有测试临时目录位于D盘。代码已推送开发分支，发布和线上只读验收如下。
+
+正常完整 Git 构建一次并推送 latest 一次，creation 部署固定为 `sha256:89f7fa170716e1a4b321fd0ea1e1006618418fcba3e351a3c54833d3669f0604`，源码manifest SHA为 `1a040c0594fde728523199836995e7e06b6366b489f25282f3e46a7eb3728ad6`。复用既有 `/run/secrets/animation-method-agent/token`，只追加 `--historical-method-agent-token-file` 参数及该路径，不新增Secret或挂载。单creation变更镜像、发布注解和这两个参数；其它业务、Agent、lab、OAuth及Casdoor规格和Pod保持。新Pod `video-animation-creation-ffdcf9b7c-dxk8c` Ready、0重启。
+
+首轮operator复用了旧验收的10／22／4固定数量断言，在preflight即停止，没有Docker构建或部署。当前真实基线为7个效果、16条可见实验、14条有样片实验、4条legacy隐藏及4项回收站；持久委托28／操作106／render账本50，creation数据库仍17个。后续operator保留原失败，改以本次完整catalog／trash投影、旧隐藏身份、逐表schema和行指纹作精确前后比较，不再把旧样片数量当永久规格；无活动／未知状态要求保持。基线SHA为 `c7ff570353bbc7d4b8e76360071e97b6b438c0a748ae4138c0c86fed6d30d709`，17库指纹SHA为 `2433a81c0ce3a824d94a3ab87fb5d6544e9a8a773e12b558be3bf28b2f640dd7`，构建和发布前后均保持。
+
+发布后从新镜像、生产参数和原凭据真实调用 `create_server`，使用私有临时root且禁用所有执行泵，仅对原目标成员及原渲染账本执行只读 `stopped()`。十次旧caller Agent GET和四次render停止证明全部通过，耗时0.214秒，当前Skill caller查询为零且仍用于新创作。没有执行删除／恢复／取消／业务POST，没有模型／TTS／渲染或Skill发布；因此结论是已恢复停止核验，用户仍需在网页明确确认删除，不写作已代删作品。17个库、当前完整目录／回收站及其它服务保持；L.4据此完成，未合主线。
+
+最终目录回读确认目标效果仍可见，`deletion.allowed=true`、`member_count=2`、无拒绝原因，下一次删除仍会重新核验停止。既有D盘研究目录保存 `creation-historical-stop-{build,rollout,reader,before,after,patch}-r1.json` 和 `creation-historical-stop-r1-baseline.json`；服务器既定OPS保存 `creation-historical-stop-r1-release/build-completed.json` 与 `creation-historical-stop-r1-verification/completed.json`。operator SHA为 `0bdc2301bad411ef9a90e50a504494d8e1d2ca6fe854160f44fc03dd4b1ca5f3`；首次preflight失败及v1脚本另留原件。OpenSpec L.4已勾选，validate及设计／任务精确回读通过，revision为 `89a91f72168e3d34a7c42feb6cdd8b3b3bc4769d`；其它待办未代勾。
+
+### 旧动画实验任务归属统一迁移（2026-11-15）
+
+用户要求统一全部旧任务身份，移除L.4临时引入的历史身份接线。只读全量库存从全部业务操作关联57个旧Agent任务（含隐藏和回收站）：52 completed、5 failed，40 author.v1、17 review.v1，全部有真实停止证明；旧身份 `internal/video-animation-methods` 另拥有369份输入（57份任务文档、312帧）和0份检查点。全部输入有原请求引用，没有跨caller引用、幂等冲突或活动／quarantined任务；当前身份原有21个任务、93份输入。任务内容及凭据没有输出到回执。
+
+完整 Git `91358423e71339a3075667999eec6425613ee727` 新增一次性管理工具 `agent_service.deploy.migrate_caller_ownership`：只读plan绑定全库逻辑摘要和三类归属行；apply采用与Store相同的PostgreSQL事务锁，重新比对预期plan SHA，再仅更改jobs／inputs／checkpoints的caller列。修改后的全表指纹必须精确等于计划投影，否则整事务回滚；任务ID、请求、原v1 profile、幂等键、pins、产物、停止回执、其它表及预算均保留。它不建库、不分派任务、不授予profile权限。
+
+配置纯函数 `unify_animation_method_caller` 为当前身份追加两个旧profile的历史读取范围，移除旧caller配置，并将旧v1 routes设为disabled。新版本v2的路由和其它目录资源保持；后续Skill升级也保留统一scope。API的profile scope同时用于读取和提交，所以必须关闭旧执行路由，不能只追加范围。工作台删除原历史凭据参数、可选Secret挂载和独立gateway mapping，只以当前凭据按原冻结命名空间读取历史任务。
+
+本地迁移工具最终28项、目录及后续升级44项、执行器／部署／停止核验105项通过，共177项唯一定向检查；测试临时目录在D盘。完整PostgreSQL custom备份175874508字节，SHA `faddb7d70537703ead2b4ac3f2242962db8b4aaba6b74f1538f3d08d8302a785`，`pg_restore --list`核对19类TABLE DATA；原配置、runtime Secret、三个Agent消费者Deployment、creation及其五个Secret亦已备份。服务器备份位于既定OPS的 `legacy-caller-unification-r1-backup`，目录0700、文件0600；D盘只保存不含凭据的 `legacy-caller-backup-receipt-r1.json`。真实PG plan、apply、配置切换、镜像部署和最终回验结果如下。
+
+首次真实PG只读plan在在线model-proxy中的管理子进程退出137，未返回成功plan，也没有执行apply或数据库写入；没有据此认定OOM。`14807c70ffcca8294f5c9640635218a2b1fd8d5a` 将所有扫描改为服务端游标逐行读取，关系和停止检查投影必要字段，源记录测量后不留大正文，并以增量JSON哈希保持原canonical摘要字节。最终28项包含扫描方式、摘要一致与严格JSON布尔检查。原失败留存；后续管理入口改为独立、2Gi、无Service selector、无SA token且只可连接PostgreSQL的短期管理Pod，不启动业务服务或执行泵。
+
+独立管理Pod的真实plan通过，精确范围57 jobs／369 inputs／0 checkpoints，plan SHA为 `0b4e4449aa879ad1d061bbbab7cb20837c201012738f9fe7516d2280614133ca`。迁移前全PG逻辑指纹 `c30a8a4e5c5360cc38ec4a3e8363ba10f37959c54b327c824ed0c6646c01ba44`，预期归属投影 `dcfe86aa8df6281d0a5b18e11b106042d725716d73cc1880581f6fc78d0abb71`；单事务apply及全部最终读取后的指纹均精确等于预期投影，所有非caller字段和其它表保持。旧归属任务／输入／检查点均为零，目标归属为78／462／0。
+
+最终完整Git `14807c70ffcca8294f5c9640635218a2b1fd8d5a` 再以普通Dockerfile构建并推送creation latest，部署固定为 `sha256:996f5afd16eee98ae284abaf57d267e7d218811bf54da5895582e661a2e6a9cd`，source manifest SHA为 `a9581b274ae42bce5a7a38140d9e92e4bd26eb568869711f4518cc549eb5967f`。此前9135842镜像只构建未部署，保留原记录。新ConfigMap和过滤旧token的新runtime Secret仅交给原三个配置消费者（Agent API、dispatcher、model-proxy）重载；原镜像不变，新v2及其它pins／路由保持。creation同时移除历史token参数、旧method-agent-token挂载与volume，保留skills及其它凭据；新Pod为 `video-animation-creation-b9ffbcd4-vppsc`。
+
+新当前凭据真实完成57次job ID读取、57次原幂等键读取、369份输入元数据及原始字节读取，以及52份原manifest和产物字节回验。5项原失败的manifest缺失409合同保持，旧key返回401 `authentication_required`。新配置下57个原v1请求仅用registry预检均为 `profile_not_ready`，没有启动旧版本执行；新v2及其它执行合同保持。真实 `create_server` 构造无历史客户端，执行泵全部关闭；当前Skill client对原目标十项Agent停止证明和四项原渲染证明全部通过。业务模型、TTS、渲染、删除、恢复、Skill发布及真实业务POST均为零，17个业务库、完整catalog／trash和其它业务／lab／OAuth／Casdoor保持。
+
+最终状态为 `animation_method_caller_unified_deployed_readonly_verified`。全量GET耗时15.172秒，16034853字节输入及603364字节产物摘要全部吻合；原目标factory停止核验0.214秒。专用管理Pod及NetworkPolicy已删除并回读不存在，备份与生产使用的新ConfigMap／Secret保留。最终operator SHA为 `3e6ebd3106afe1b6c20103a8b1a033956ab5d95269bb56eb8a0427345f6419d6`，tool SHA为 `9047ce82cf9f094d171e0bac1e287d0a3d57fae6927645df5fea087a9f3dd60a`，GET collector SHA为 `89990197a6a5aefabd2e9526fafeaf818798d4421f03da82116a5f3121994e85`。
+
+D盘既定研究目录保存 `legacy-caller-unification-completed-r1.json`、`legacy-caller-readonly-verification-r1.json`、`legacy-caller-final-fingerprint-r1.json`、`legacy-caller-migration-applied-r1.json`、`legacy-caller-unification-prepared-r1.json`、`creation-caller-unified-build-r2.json`、`creation-caller-unified-deployed-r1.json`、`legacy-caller-admin-cleanup-r1.json`及原备份回执。服务器既定OPS保留 `legacy-caller-unification-r1-change/{completed.json,readonly-verification.json}`、`legacy-caller-unification-r1-admin/cleanup-completed.json`、`legacy-caller-unification-r1-backup/completed.json`；首次137和未部署的首次构建记录另保留。L.5据此完成，L.4仅保留历史修复含义；未合主线、未代填其它创作／认可／发布任务。
+
+OpenSpec L.5已勾选，design／tasks精确回读与validate通过，revision为 `25f86c7d4ab410d39f86d337b220677b87b3d7c3`。当前主设计明确统一身份，L.4临时历史凭据方案标为已被替代的修复记录；其它26项待办没有代勾。
+
+
+### 四项回收站内容永久清理（2026-11-15）
+
+用户明确授权清除当前四项及独占内容：功能验收夹具·无模型/无媒体、Manim：剪切变形中的面积不变、筛选发生时，统计也一起变化、两组都算了，为什么总数却不能相加？四个当前entry含八条实验；两条已恢复旧entry也只覆盖相同夹具成员，因此连带清除而未扩大实验范围。冻结entry集合SHA为8cd942002c1dfe1982968a392718c668dcf19c421a36f5c2293a9c7138a30bdb，原冻结正文SHA为29f6ddc2a745dc9b3334dcbfef03a666c25e772aa3857a2d84cd786acbdc70c9。
+
+实际清理已完成：四个当前条目共八条实验，连带清除两条只覆盖相同验收夹具成员的已恢复历史条目；没有扩大成员范围。删除191条独占业务记录和8条资源记录，28条旧请求结果只保留原ID／摘要／已清除状态，创建请求的8个原键／摘要／结果不变。删除1604个线上独占文件，共195896808字节；17个已停止Agent任务的78份输入、17份产物、17份候选结果正文副本及52份模型响应正文均清除，95份blob读取返回404，任务ID／原请求／用量／停止证明及幂等账本保留。
+
+回收站为零，现有7个效果／16条可见实验、4条其它旧隐藏及其媒体身份保持；已被现用实验和知识页引用的31条经验、4个知识修订及冻结快照保持。原方法／发布／正式制作、其它保留行及服务配置通过精确核验。隔离副本正常构造服务验证旧键重放、新恢复404与目录保持，再用文件协调库、DELETE日志与FULL同步执行多SQLite事务；Agent使用既有Store释放／删除能力。没有模型、TTS、渲染、运行服务代码修改、重新部署或合入主线。此次只清理在线独占内容，不扩展到历史运维备份；私有目标备份与摘要回执保存于既有操作根。
+
+只读盘点、清理脚本及回执沿用服务器既有creation-product-r1/trash-four-purge-r1-inventory；PG目标原行备份为同操作根trash-four-purge-r1-agent-backup，目录0700、文件0600，42259805字节，SHA256=cb9a6315039de385249db53495cbcfca67655b829714d56dc7aa9e1900ff3345。盘点私有正文和数据库恢复副本仅作操作证据，不属于在线作品，也未扩展擦除历史备份。物理文件数／字节为移除的在线文件，不等同于包含备份及数据库页后计算的净磁盘空闲增量。
+
+根审阅发现初版SQLite协调main使用内存库无法保证崩溃时跨库原子，执行前改为文件协调库并核对全部DELETE日志／FULL同步；副本和正式执行使用同一路径。最终保留行验证初版将盘点解码后的纯数字owner与原字符串owner混比，事务和文件删除均已完成，随后只修正SQL身份比较的类型投影并重做只读验证，没有重跑删除或放宽原文哈希。Agent blob清理复用既有Store保护；候选结果改为明确的purged摘要，保留原签名／结果摘要，不把删正文后的内容冒充原WorkerResult。
+
+独立最终总回执 trash-four-purge-final-summary-r1.json 的SHA256为 `6aa8b4a8b112f81b907538e6f6d5d6f4cce84fe3b9b2ff6d379041f7a89e5a6f`。本次仅完成L.6，不代勾其它创作、视听、修订或发布待办。
+
+
+### 效果库导航分层与知识默认阅读（2026-11-15）
+
+按用户要求将页面导航、进度读取与创建操作分层：顶栏只在效果库／创作知识库间切换，状态区保留原活动任务轮询与手动刷新，新建实验是独立主操作，详情／表单／回收站均保留该操作区。知识页默认阅读正文、适用范围、局限、反例及可读证据；ID查找、原始记录与人工修订收入默认关闭的高级区域。未确认提交、CAS草稿与原样重送仍可达，经验／历史只读，知识保存与Skill发布边界不变。
+
+代码仅7个前端／UI测试文件，完整Git `0c4823e9d7f109bf4604ce73788ca16ef3050df6` 已推送开发分支。原6份未提交改动和未接线草案保留；暂存源单独抽取验证，避免把旧脏改动混入发布。两套Node检查72项通过（知识页20项包含其中），Python知识HTTP／构建／部署116项通过，diff检查及独立只读UX审查通过。审查发现的历史证据返回丢版本、中文类型搜索和维护焦点问题均在本轮修正。
+
+普通Dockerfile从完整干净Git构建一次、推送latest一次，仅部署lab，固定digest `sha256:aa67ae9ea98870ffdd648177ae9466d263fe7654ea204728f568edf68e1e800e`。新Pod `video-animation-lab-59b645b-tgp7d`，UID `684334c0-0aea-4834-8cde-f7469781e1b6`，Ready、0重启；90个运行源码文件与完整Git一致，manifest SHA256为 `30fa1c54b7edd4644806aa1cf12f377b90c9a1f7facc59887fe4b0fcfcd37212`。7个UI和3个既有接口文档／客户端下载HTTP200且摘要吻合，接口文档缺失／错误owner的6次读取仍403。没有源码overlay或其它服务滚动。
+
+部署前后完整catalog、trash、知识目录、所有SQLite指纹、Agent数据库计数／状态及非lab规格／Pod／OAuth／Casdoor保持：7个效果、16条可见实验、4条旧隐藏、回收站0，知识2页／58条经验，Agent254个任务／1883次模型请求。服务器既定OPS保留 `lab-gallery-reading-r1-completed.json`，D盘同名回执与 `lab-gallery-reading-r1-final-summary.json`（SHA256 `fecc67ddca2868d9610ed7d98ad451d139dcf6d485d94fcceef2afd5fd12f84d`）保存发布核对；该summary在交接时明确标注浏览器验收待根任务完成，其后浏览器结果独立记录。
+
+真实登录浏览器已完成导航当前页、手动刷新保持7效果、新建表单打开返回、空回收站、知识阅读及中文经验类型搜索（抽帧评审匹配5条）、历史第1版只读与证据往返保留版本、高级维护的预填／聚焦／取消。桌面与390×844窄屏均无横向溢出，临时视口已恢复，页面日志无警告／错误。浏览器证据及四张截图位于D盘既定研究根的 `library-reading-ui-r1/`，回执 `browser-acceptance.json`。维护只打开后取消；未提交实验、人工修订或Skill认可／发布，没有模型、TTS或渲染。
+
+本轮据此完成OpenSpec N.1／N.2；其它26项有效待办不变，不合主线。文档单独提交，不改变上述已发布代码身份。
+
+OpenSpec已同步并通过validate，design／tasks精确回读及本地设计一致检查通过；revision为 `bffb2c15b31077c5f89282b271b754ce002d6649`，本变更37／63项完成。D盘 `library-reading-openspec-verified-r1.json` 保存文件摘要；浏览器回执SHA256为 `9082bac6ece21c5270e983e1e627ce3895a074a2cdc6675253697261348eada2`。
+
+
+### 知识库公共页壳统一与手动整库发版设计（2026-11-15）
+
+用户纠正知识库目标：Agent自动积累知识，用户决定是否发布整库版本；最近五版指整库已发布版本，知识库负责选版阅读和正文全文搜索，人工调整回到效果库。已同步design 7.21、proposal、规格及O.1–O.6任务，保留原37项完成证据；本轮先完成O.1公共页壳，O.2–O.6仍待实现。没有把原单页修订／任务快照视作整库发布，也未代用户执行发布。
+
+代码5文件为gallery导航名称、knowledge三文件与知识UI测试；完整Git `9dfda714ce935670e5594b178253facb747f90de` 已推送开发分支。原六份脏改动及未接线草案保留。干净索引抽取64份UI／测试源码，Node两套75项通过（包含知识23项），Python知识HTTP／构建／部署116项通过，用时37.27秒；独立只读UX审查及diff检查通过。知识页品牌、右上导航、字体、背景、尺寸、按钮、左侧手动刷新操作区与效果库统一，CAS／未知提交消息和原交互保持。
+
+普通Dockerfile从完整干净Git构建一次并推送latest，仅lab滚动一次，部署固定digest `sha256:7e28fbf4ee4b239b30e0a44c204d53e5324aa13e593e8f40eade92cd65c9d81b`。Pod `video-animation-lab-6dd564c4fc-g52fq`、UID `d271e61e-05eb-4fff-82ca-b3d58bb04470`，Ready且0重启。90个运行源码摘要对齐，manifest SHA为 `055f0b154b04b1f20afb7b69f0537026aa8e9c6cda1b78545cf77a3e5544a3aa`；7个UI及3个API帮助文件HTTP200且摘要吻合，缺失／错误owner的6次帮助读取403。根审查发现初版wrapper docs/未覆盖上轮video_workbench/docs三文件，构建前修为明确三文件白名单；未放入原脏改动。最终operator SHA为 `9a9facc8dba98502791a4c2bb7c6f1e6e1991e98a922f2946121d07bbf323665`。
+
+全量SQLite逻辑指纹、catalog／trash、知识目录、Agent计数／状态和其它服务／OAuth／Casdoor规格及Pod保持：7个效果、16条可见实验、4条旧隐藏、回收站0、2页知识／58条经验、254个Agent任务／1883次模型请求。未提交业务POST，没有新模型、TTS、渲染、知识修订或Skill发布。发布总回执D／OPS的 `shell-unification-r1-final-summary.json` SHA为 `862f350f0f7fc0c379ee51f0e3b007323609d9c3e32ccadaa99dc0a3ce99fd69`；其交接时标注浏览器待根任务完成，随后真实浏览器结果独立落盘。
+
+真实登录浏览器核对两页header文本一致、字体一致、桌面导航边界同为x=1063至1227；390×844两页导航位置一致，均无横向溢出。知识目录刷新、搜索并读取实际第2版正文正常，默认高级维护关闭，按钮使用同一公共样式。临时视口已恢复，日志无警告或错误。四张截图、浏览器及本地检查回执保存于既定D盘研究根 `library-reading-ui-r1/`，分别为 `shell-*-{desktop,narrow}.png`、`shell-unification-r1-browser.json` 和 `shell-unification-r1-local-validation.json`。验收没有创建实验、保存知识、整库发版或发布Skill；本次只勾O.1，不合主线。
+
+OpenSpec validate及四份artifact精确回读、本地design一致核对通过，revision为 `c8993933ded8e75c96d2717ef3acc2cd72fda7d2`，任务38／69项完成。O.2–O.6保持未勾；回执为 `shell-unification-r1-openspec-verified.json`。浏览器回执SHA256为 `cea30a916c33e49892b2f112594e99f06f368ae0b8b40a55d200de2bb566d496`。

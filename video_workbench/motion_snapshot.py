@@ -16,14 +16,18 @@ import re
 
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from . import media
-from .motion import (COMPILER_VERSION, compile_project, resolve_timeline, validate_alignment,
-                     semantic_digest)
+from .motion import validate_alignment, semantic_digest
+from .motion_dispatch import scene_compiler
 from .speech import inspect_wav
 from .audio_store import narration_document, narration_binding
 
 SCHEMA = 'video.render-snapshot.v2'
 RUNTIME_KEYS = {'schema', 'hyperframes', 'hyperframes_source', 'node', 'browser', 'ffmpeg',
                 'gsap', 'gsap_sha256', 'font_sha256', 'dpkg_sha256', 'npm_lock_sha256', 'image_digest'}
+ENGINE_RUNTIME_KEYS = RUNTIME_KEYS | {'three', 'three_sha256', 'three_license_sha256',
+                                    'engine_runtime_sha256', 'creative_host_sha256'}
+HYPERFRAMES_RUNTIME_KEYS = ENGINE_RUNTIME_KEYS | {
+    'hyperframes_core_sha256', 'hyperframes_project_host_sha256'}
 
 
 def _require(value, code='invalid_motion_snapshot', status=422):
@@ -32,7 +36,10 @@ def _require(value, code='invalid_motion_snapshot', status=422):
 
 
 def _runtime(value):
-    _require(type(value) is dict and set(value) == RUNTIME_KEYS, 'motion_runtime_fingerprint_missing')
+    _require(type(value) is dict and set(value) ==
+        (HYPERFRAMES_RUNTIME_KEYS if value.get('schema') == 'video.motion-runtime.v3' else
+         ENGINE_RUNTIME_KEYS if value.get('schema') == 'video.motion-runtime.v2' else RUNTIME_KEYS),
+        'motion_runtime_fingerprint_missing')
     try:
         raw = canonical_bytes(value)
     except (ValueError, TypeError, UnicodeError, RecursionError):
@@ -41,13 +48,25 @@ def _runtime(value):
     _require(all(type(v) is str and 0 < len(v) <= 2000
                  and not any(ord(c) < 32 or ord(c) == 127 for c in v) for v in value.values()),
              'motion_runtime_fingerprint_invalid')
-    _require(value['schema'] == 'video.motion-runtime.v1' and value['hyperframes'] == '0.8.149'
+    _require(value['schema'] in {'video.motion-runtime.v1', 'video.motion-runtime.v2', 'video.motion-runtime.v3'} and value['hyperframes'] == '0.8.149'
              and value['hyperframes_source'] == '2905162d925fc87fb8242e24ed0bbf025d307ea1'
              and value['gsap'] == '3.14.2', 'motion_runtime_version_mismatch')
     _require(re.fullmatch(r'sha256:[0-9a-f]{64}', value['image_digest'])
              and all(re.fullmatch(r'[0-9a-f]{64}', value[key])
                      for key in ('gsap_sha256', 'font_sha256', 'dpkg_sha256', 'npm_lock_sha256')),
              'motion_runtime_fingerprint_invalid')
+    if value['schema'] in {'video.motion-runtime.v2', 'video.motion-runtime.v3'}:
+        _require(value['three'] == '0.170.0'
+            and value['three_sha256'] == '08fd7545d13d2c7fb65ab691530a802dafefd638596501854f267d0fb13c39e7'
+            and value['three_license_sha256'] == '4c40a1ef62450b857c3b2aaf294936304cd552d965fbcd9d32d4c5bcf4ba4454'
+            and re.fullmatch(r'[0-9a-f]{64}', value['engine_runtime_sha256']),
+            'motion_runtime_version_mismatch')
+        _require(re.fullmatch(r'[0-9a-f]{64}', value['creative_host_sha256']), 'motion_runtime_fingerprint_invalid')
+    if value['schema'] == 'video.motion-runtime.v3':
+        _require(value['hyperframes_core_sha256'] ==
+            '675e02ee21f31540e3a6abaec061f86cea92a0178ae67a390700acb4f801dbbc'
+            and re.fullmatch(r'[0-9a-f]{64}', value['hyperframes_project_host_sha256']),
+            'motion_runtime_version_mismatch')
     # The renderer independently checks installed binaries against this complete
     # manifest; matching field names alone is not proof of the running image.
     return json.loads(raw)
@@ -142,11 +161,16 @@ def freeze_snapshot_v2(project_id, revision, title, scenes, *, runtime_fingerpri
             # replacing it with the new default would silently alter old bytes.
             if 'timeline' in motion:
                 _require(type(motion['timeline']) is dict, 'motion_snapshot_corrupt', 409)
-                options['compiler_version'] = motion['timeline'].get('compiler')
+                resolver, compiler, version = scene_compiler(plan,
+                    compiler_version=motion['timeline'].get('compiler'))
+            elif 'compiler_version' in motion:
+                resolver, compiler, version = scene_compiler(plan,
+                    compiler_version=motion['compiler_version'])
             else:
-                options['compiler_version'] = COMPILER_VERSION
-            timeline = resolve_timeline(plan, beats, alignment, **options)
-            project = compile_project(plan, beats, alignment, runtime_fingerprint=fingerprint, **options)
+                resolver, compiler, version = scene_compiler(plan)
+            options['compiler_version'] = version
+            timeline = resolver(plan, beats, alignment, **options)
+            project = compiler(plan, beats, alignment, runtime_fingerprint=fingerprint, **options)
             duration = timeline['duration_seconds']
             captions = dict(audio_sha256=audio['sha256'], alignment='none', requires_review=False, cues=[])
             if subtitles:

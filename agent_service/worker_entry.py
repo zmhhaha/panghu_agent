@@ -432,12 +432,31 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
         bundle_revision = policy.execution_binding.bundle_revision
         extensions = ((Path(ACADEMIC_EXTENSION),)
                       if policy.name in {'research.generate.v1', 'research.retrieve.v1'} else ())
+        environment = registry.environment(binding.tool_environment.name, binding.tool_environment.revision)
+        if {'skill_search', 'skill_read'} & set(environment.tools):
+            from .skill_tools import verified_skill_tools_extensions
+            try:
+                extensions += verified_skill_tools_extensions()
+            except (OSError, ValueError):
+                raise WorkerConfigError() from None
+        elif 'read_compilation_input' in environment.tools:
+            from .compilation_input_tools import verified_compilation_input_extension
+            try:
+                extensions += (verified_compilation_input_extension(),)
+            except (OSError, ValueError):
+                raise WorkerConfigError() from None
+        elif 'read_inputs' in environment.tools:
+            from .input_tools import verified_read_inputs_extension
+            try:
+                extensions += (verified_read_inputs_extension(),)
+            except (OSError, ValueError):
+                raise WorkerConfigError() from None
         profile = DomainExecutionProfile(policy, bundle_revision, extensions=extensions)
         profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL_ROOT
     settings = build_pi_runtime_settings(policy, command=(NODE, PI_CLI), node_command=(NODE,),
         provider=config.model.provider, model=config.model.model,
         model_base_url=config.model.proxy_base_url, model_api=config.model.api,
-        model_max_tokens=8192,
+        model_max_tokens=32768 if policy.name == 'video.animation-wikiskill-compile.v2' else 8192,
         model_env={'AGENT_MODEL_API_KEY': secrets.model_proxy_token.get_secret_value()},
         tool_proxy_base_url=config.model.proxy_base_url,
         model_input=('text', 'image') if 'vision' in (

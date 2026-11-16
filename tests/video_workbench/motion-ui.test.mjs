@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
   createMotionPanel, createMotionRequest, createMotionAdoption, createMotionRenderRequest, createProjectMotionDraftRequest,
-  currentMotionAudio, hasMotionScenes, usesDynamicVideo, createDynamicProjectRequest, motionMetadata, motionErrorLabel, motionSelection, validateMotionSegments,
+  currentMotionAudio, hasMotionScenes, usesDynamicVideo, createDynamicProjectRequest, motionMetadata, motionDiagramKind, motionErrorLabel, motionRenderErrorLabel, motionSelection, validateMotionSegments,
+  safeMotionContext, motionFailureSource, motionFailureDetails,
 } from '../../video_workbench/web/motion.mjs';
 import { deliveryIssues, isActiveOperation, isUnresolvedProductionOperation } from '../../video_workbench/web/model.mjs';
 
@@ -13,6 +14,8 @@ class Element {
     this.tagName = tag; this.children = []; this.listeners = new Map(); this.dataset = {};
     this.value = ''; this.checked = false; this.disabled = false; this.hidden = false;
     this.content = ''; this.paused = true; this.currentTime = 0;
+    const classes = new Set();
+    this.classList = { toggle(name, enabled) { enabled ? classes.add(name) : classes.delete(name); }, contains: name => classes.has(name) };
   }
   set textContent(value) { this.content = String(value); this.children = []; }
   get textContent() { return [this.content, ...this.children.map(row => row.textContent)].join('\n'); }
@@ -87,6 +90,201 @@ function harness() {
 const posts = h => h.state.calls.filter(row => ['POST', 'PATCH'].includes(row.options.method));
 const timingInput = (h, index, field = 0) => h.$('motion-timing-rows').children[index].children[field + 1].children[0];
 
+function creativeVersion() {
+  return { id: 'v1', diagram_kind: 'creative', audio_version_id: 'a1', audio_sha256: '1'.repeat(64),
+    plan_sha256: 'creative-source', beats: version().beats, plan: { schema: 'video.creative-scene.v1',
+      capability_release_sha256: 'c'.repeat(64), engine: 'html-svg',
+      input_document: { constraints: { duration_seconds: 4,
+        production: { title: '队列动态演示' }, capability_release: { id: 'continuous-explanation', revision: 'v1' } } },
+      result: { strategy: { description: '<script>用对象流转解释队列</script>', tradeoffs: '减少次要装饰' },
+        files: { 'scene.html': '<script>throw new Error("MUST NOT EXECUTE")</script>' } } } };
+}
+
+test('creative generation uses the explicit kind and requires an adopted current recording', () => {
+  const p = project(), scene = p.scenes[0], base = creativeVersion();
+  assert.equal(motionDiagramKind(base), 'creative');
+  assert.equal(motionDiagramKind({ plan: base.plan }), 'creative');
+  assert.deepEqual(createMotionRequest(p, scene, '连续移动', null, 'creative').body,
+    { expected_revision: 1, instruction: '连续移动', expected_audio_version_id: 'a1', diagram_kind: 'creative' });
+  assert.deepEqual(createMotionRequest(p, scene, '更清楚', base, 'creative').body,
+    { expected_revision: 1, instruction: '更清楚', base_version_id: 'v1', expected_audio_version_id: 'a1', diagram_kind: 'creative' });
+  assert.throws(() => createMotionRequest(p, scene, '', base, 'diagram'));
+  scene.audio_stale = true;
+  assert.throws(() => createMotionRequest(p, scene, '', null, 'creative'), /试听并采用/);
+});
+
+test('an available creative release is the default for new generation, with an audio-first hint', async () => {
+  const h = harness(); h.state.context.creativeConfigured = true;
+  await h.load();
+  assert.equal(h.$('motion-diagram-kind').value, 'creative');
+  assert.equal(h.$('generate-motion').disabled, false);
+  assert.match(h.$('motion-process-note').textContent, /已发布.*先试听并采用配音/);
+  h.state.context.scene.audio_stale = true; h.panel.render();
+  assert.equal(h.$('generate-motion').disabled, true);
+  assert.match(h.$('motion-form-note').textContent, /先生成或上传配音/);
+  await h.panel.generate(); assert.equal(posts(h).length, 0);
+  h.state.context.scene.audio_stale = false;
+  h.state.transport = async () => ({ id: 'creative-op', status: 'queued' });
+  await h.panel.generate();
+  assert.equal(posts(h).length, 1);
+  assert.equal(posts(h)[0].options.body.diagram_kind, 'creative');
+  assert.equal(posts(h)[0].options.body.expected_audio_version_id, 'a1');
+  assert.equal(h.state.context.scene.motion.head_version_id, null);
+});
+
+for (const creativeSchema of ['video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'])
+test(`method-driven creative review preserves declarations without adoption: ${creativeSchema}`, async () => {
+  const h = harness(); h.state.context.creativeConfigured = true;
+  const candidate = creativeVersion();
+  candidate.plan.schema = creativeSchema;
+  candidate.plan.input_document.scene = { title: '方法用于新内容' };
+  candidate.plan.input_document.method_delivery = { methods: [{ id: 'method-v1', title: '<script>对象身份</script>' }] };
+  candidate.plan.result = { source: candidate.plan.result };
+  candidate.plan.method_decision = { decisions: [{ version_id: 'method-v1', action: 'adapt', reason: '适配两组对象。' }] };
+  assert.equal(motionDiagramKind({ plan: candidate.plan }), 'creative');
+  h.state.data.scenes[0].motion.versions[0].diagram_kind = 'creative';
+  h.state.transport = async (path, options, fallback) => path.endsWith('/motion-versions/v1') ? candidate : fallback(path);
+  await h.load();
+  const review = h.$('motion-review').textContent;
+  assert.match(review, /方法用于新内容/);
+  assert.match(review, /已参考 1 项创作方法/);
+  assert.match(review, /<script>对象身份<\/script> · 调整后采用：适配两组对象。/);
+  assert.match(review, /实际效果请观看草稿/);
+  assert.doesNotMatch(review, /已发布策略/);
+  assert.doesNotMatch(review, /MUST NOT EXECUTE/);
+  assert.equal(h.$('confirm-motion-adoption').checked, false);
+  assert.equal(posts(h).length, 0);
+});
+
+test('Skill-driven creative review exposes offered and read declarations without executing or adopting', async () => {
+  const h = harness(); h.state.context.creativeConfigured = true;
+  const candidate = creativeVersion();
+  candidate.plan.schema = 'video.creative-scene.v5';
+  candidate.plan.input_document.scene = { title: '按需读取动画方法' };
+  candidate.plan.input_document.skill_catalog = { skills: [{ package_sha256: 'a'.repeat(64), name: 'identity-flow' }] };
+  candidate.plan.result = { source: candidate.plan.result };
+  candidate.plan.skill_decisions = [{ package_sha256: 'a'.repeat(64), action: 'adapt', reason: '<script>同一对象保持身份</script>' }];
+  assert.equal(motionDiagramKind({ plan: candidate.plan }), 'creative');
+  h.state.data.scenes[0].motion.versions[0].diagram_kind = 'creative';
+  h.state.transport = async (path, options, fallback) => path.endsWith('/motion-versions/v1') ? candidate : fallback(path);
+  await h.load();
+  const review = h.$('motion-review').textContent;
+  assert.match(review, /本次提供 1 项已发布动画方法.*按需查阅/);
+  assert.match(review, /identity-flow · 调整后采用：<script>同一对象保持身份<\/script>/);
+  assert.doesNotMatch(review, /已参考|已发布策略|MUST NOT EXECUTE/);
+  assert.equal(h.$('confirm-motion-adoption').checked, false);
+  assert.equal(posts(h).length, 0);
+  assert.match(motionErrorLabel('creative_film_context_required'), /整片草稿制作入口重做/);
+});
+
+test('creative candidate review is inert, exposes release and recording identity and preserves explicit adoption', async () => {
+  const h = harness(); h.state.context.creativeConfigured = true;
+  h.state.data.scenes[0].motion.versions[0].diagram_kind = 'creative';
+  h.state.transport = async (path, options, fallback) => path.endsWith('/motion-versions/v1')
+    ? creativeVersion() : fallback(path);
+  await h.load();
+  const review = h.$('motion-review').textContent;
+  assert.match(review, /<script>用对象流转解释队列<\/script>/);
+  assert.match(review, /continuous-explanation.*v1/);
+  assert.match(review, /cccccccccccc/);
+  assert.match(review, /动作已绑定.*当前配音匹配/);
+  assert.doesNotMatch(review, /MUST NOT EXECUTE/);
+  assert.equal(h.$('motion-version').children[0].textContent.includes('创意动画'), true);
+  assert.equal(h.$('confirm-motion-adoption').checked, false);
+  assert.equal(h.$('adopt-motion').disabled, true);
+  assert.equal(posts(h).length, 0);
+  assert.equal(h.$('preview-motion').disabled, false);
+  assert.equal(timingInput(h, 0).disabled, true);
+  assert.equal(h.$('save-motion-timing').hidden, true);
+  assert.equal(h.$('motion-correction-label').hidden, true);
+  assert.match(h.$('motion-timing-note').textContent, /生成这份动画时.*生成新候选/);
+  await h.panel.saveTiming(false); assert.equal(posts(h).length, 0);
+});
+
+test('creative revisions keep their reviewed kind while a different new-generation choice remains explicit', async () => {
+  const h = harness(); h.state.context.creativeConfigured = true;
+  h.state.data.scenes[0].motion.versions[0].diagram_kind = 'creative';
+  h.state.transport = async (path, options, fallback) => options.method === 'POST'
+    ? { id: 'revision', status: 'queued' } : path.endsWith('/motion-versions/v1') ? creativeVersion() : fallback(path);
+  await h.load();
+  h.$('motion-diagram-kind').value = 'diagram'; await h.$('motion-diagram-kind').emit('change');
+  h.$('motion-instruction').value = '加长关键对象停留'; await h.$('motion-instruction').emit('input');
+  await h.panel.generate(true);
+  assert.equal(posts(h).length, 1);
+  assert.equal(posts(h)[0].options.body.diagram_kind, 'creative');
+  assert.equal(posts(h)[0].options.body.base_version_id, 'v1');
+  assert.equal(h.$('motion-diagram-kind').value, 'diagram');
+});
+
+test('process requests are explicit, legacy requests stay identical and revisions cannot change kind', () => {
+  const p = project(), scene = p.scenes[0], base = { id: 'process-1', diagram_kind: 'process' };
+  assert.equal(motionDiagramKind(base), 'process');
+  assert.equal(motionDiagramKind({ plan: { schema: 'video.process-plan.v1' } }), 'process');
+  assert.deepEqual(createMotionRequest(p, scene, ' 失败返回 ', null, 'process').body,
+    { expected_revision: 1, instruction: '失败返回', diagram_kind: 'process' });
+  assert.deepEqual(createMotionRequest(p, scene, '再演示', base, 'process').body,
+    { expected_revision: 1, instruction: '再演示', base_version_id: base.id, diagram_kind: 'process' });
+  assert.throws(() => createMotionRequest(p, scene, '', base));
+  assert.throws(() => createMotionRequest(p, scene, '', scene.motion.versions[0], 'process'));
+  assert.throws(() => createMotionRequest(p, scene, '', null, 'arbitrary'));
+});
+
+test('process choice is per scene, opt-in and read-only until an explicit generation', async () => {
+  const h = harness(); await h.load();
+  h.$('motion-diagram-kind').value = 'process'; await h.$('motion-diagram-kind').emit('change');
+  assert.equal(h.$('generate-motion').disabled, true);
+  assert.match(h.$('motion-process-note').textContent, /尚未启用/);
+  await h.panel.generate(); assert.equal(posts(h).length, 0);
+  h.state.context.processConfigured = true; h.panel.render();
+  assert.equal(h.$('generate-motion').disabled, false);
+  assert.match(h.$('motion-process-note').textContent, /全部镜头.*跨镜延续或请求复制/);
+  h.setProject(project('p2'), 2); await h.load();
+  assert.equal(h.$('motion-diagram-kind').value, 'diagram');
+  h.setProject(project(), 3); await h.load();
+  assert.equal(h.$('motion-diagram-kind').value, 'process');
+  assert.equal(posts(h).length, 0);
+  h.state.transport = async () => ({ id: 'op-process', status: 'running' });
+  await h.panel.generate();
+  assert.equal(posts(h).length, 1);
+  assert.equal(posts(h)[0].options.body.diagram_kind, 'process');
+  assert.equal(h.state.context.scene.motion.head_version_id, null);
+});
+
+test('revision follows reviewed process candidate despite a different new-generation choice', async () => {
+  const h = harness(); h.state.context.processConfigured = true;
+  h.state.data.scenes[0].motion.versions[0].diagram_kind = 'process';
+  h.state.transport = async (path, options, fallback) => {
+    if (options.method === 'POST') return { id: 'revised', status: 'running' };
+    const row = await fallback(path);
+    if (path.endsWith('/motion-versions/v1')) {
+      row.plan.schema = 'video.process-plan.v1';
+      row.plan.relations = [{ id: 'return', source: 'queue', target: 'queue', label: '<svg>返回' }];
+      row.plan.actions = [
+        { beat_id: 'b1', target: 'queue', kind: 'transfer', relation_id: 'return', placement: 'middle', pace: 'normal' },
+        { beat_id: 'b2', target: 'queue', kind: 'set_state', state: 'failed', placement: 'start', pace: 'normal' }];
+    }
+    return row;
+  };
+  await h.load();
+  assert.match(h.$('motion-review').textContent, /过程演示/);
+  assert.match(h.$('motion-review').textContent, /沿关系传递.*<svg>返回/);
+  assert.match(h.$('motion-review').textContent, /状态变化：失败/);
+  h.$('motion-diagram-kind').value = 'diagram'; await h.$('motion-diagram-kind').emit('change');
+  h.$('motion-instruction').value = '重试后完成'; await h.$('motion-instruction').emit('input');
+  assert.equal(posts(h).length, 0);
+  await h.panel.generate(true);
+  assert.deepEqual(posts(h)[0].options.body, { expected_revision: 1, instruction: '重试后完成',
+    base_version_id: 'v1', diagram_kind: 'process' });
+});
+
+test('global motion gate still blocks process even with a stale configured capability', async () => {
+  const h = harness(); h.state.context.processConfigured = true;
+  await h.load(); h.$('motion-diagram-kind').value = 'process'; await h.$('motion-diagram-kind').emit('change');
+  h.state.context.enabled = false; h.panel.render();
+  assert.equal(h.$('generate-motion').disabled, true);
+  await h.panel.generate(); assert.equal(posts(h).length, 0);
+});
+
 test('generation, adoption and draft requests bind exact reviewed candidate, revision and adopted recording', () => {
   const p = project('../p?'), scene = p.scenes[0], candidate = scene.motion.versions[0];
   assert.deepEqual(createMotionRequest(p, scene, ' 连线 ', candidate), {
@@ -117,6 +315,19 @@ test('whole-project drafts explicitly use adopted versions and leave timing conf
   }
 });
 
+test('generation submits the server-issued scene binding without deriving it from editable content', () => {
+  const p = project(), scene = p.scenes[0];
+  scene.motion.semantic_binding_sha256 = 'a'.repeat(64);
+  const request = createMotionRequest(p, scene, '突出请求与返回');
+  assert.equal(request.body.expected_semantic_binding_sha256, 'a'.repeat(64));
+  assert.equal(request.body.expected_revision, p.revision);
+  assert.equal(createMotionRequest(p, scene, '', null, 'process').body.expected_semantic_binding_sha256,
+    'a'.repeat(64));
+  scene.motion.semantic_binding_sha256 = 'not-a-valid-binding';
+  assert.equal(createMotionRequest(p, scene).body.expected_semantic_binding_sha256, undefined);
+  assert.match(motionErrorLabel('motion_generation_conflict'), /未启动.*草稿已保留/);
+});
+
 test('timing validation rejects nonfinite, overlap, reordered, too short and out of recording segments', () => {
   const t = timing(), original = t.alignment.segments;
   assert.equal(validateMotionSegments(original, t), true);
@@ -139,6 +350,21 @@ test('review is inert text, first read only estimates and never generates, adopt
   assert.equal(h.$('motion-timing-audio').src, '/api/audio-versions/a1/audio');
   assert.equal(h.$('adopt-motion').disabled, true); assert.equal(h.$('preview-motion').disabled, false);
   assert.deepEqual(h.state.context.project.speech_settings, { voice: 'one-project-voice' });
+});
+
+test('source review preserves a complete literal URL without activating it or changing adoption', async () => {
+  const h = harness();
+  const url = 'https://github.com/deepseek-ai/deepseek-harness/blob/8bd073392eef6f54e921a093b95076248eb08cbb/docs/architecture.md';
+  h.state.transport = async (path, options, fallback) => {
+    const row = await fallback(path);
+    if (path.endsWith('/motion-versions/v1')) row.plan.sources = [{ url, label: '固定版本8bd0733；核对2026-11-04' }];
+    return row;
+  };
+  await h.load();
+  assert.ok(h.$('motion-review').textContent.includes(url));
+  assert.match(h.$('motion-review').textContent, /输入提供，未自动核验/);
+  assert.equal(posts(h).length, 0);
+  assert.equal(h.state.context.scene.motion.head_version_id, null);
 });
 
 test('native candidate selection survives input then change and new candidates do not switch the review', async () => {
@@ -209,6 +435,104 @@ test('one generation submits once; uncertain result refreshes existing work with
   assert.equal(h.$('generate-motion').disabled, true); assert.equal(h.state.errors.length, 1);
   assert.equal(h.$('motion-instruction').value, '先队列再节点');
   assert.ok(!h.state.calls.some(row => /audio\/generate|\/adopt|motion-renders/.test(row.path)));
+});
+
+test('actual input and button events preserve revision notes across refresh and bind revision to the selected candidate', async () => {
+  for (const revise of [false, true]) {
+    const h = harness(); await h.load();
+    h.$('motion-instruction').value = '减少节点和关系，保留请求到达服务器的主线。';
+    await h.$('motion-instruction').emit('input');
+    h.state.context.project.revision = 2; h.state.data.revision = 2;
+    await h.load();
+    assert.equal(h.$('motion-instruction').value, '减少节点和关系，保留请求到达服务器的主线。');
+    assert.match(h.$('motion-form-note').textContent, /重新生成会创建新候选.*所选图解 1.*提交上方批注/);
+    h.state.transport = async (path, options, fallback) => options.method === 'POST'
+      ? { id: 'submitted', status: 'queued' } : fallback(path);
+    await h.$(revise ? 'revise-motion' : 'generate-motion').emit('click');
+    assert.equal(posts(h).length, 1);
+    assert.equal(posts(h)[0].options.body.instruction, '减少节点和关系，保留请求到达服务器的主线。');
+    assert.equal(posts(h)[0].options.body.expected_revision, 2);
+    assert.equal(posts(h)[0].options.body.base_version_id, revise ? 'v1' : undefined);
+    assert.equal(h.$('motion-instruction').value, '减少节点和关系，保留请求到达服务器的主线。');
+  }
+});
+
+test('protocol and quarantine failures remain visible in task status and refresh elapsed time without another request', async () => {
+  const originalNow = Date.now; let now = originalNow(); Date.now = () => now;
+  try {
+    for (const [status, error] of [['submitting', 'service_protocol_invalid'], ['quarantined', 'agent_quarantined']]) {
+      const h = harness();
+      h.state.data.scenes[0].motion.operation = { id: 'blocked', status, error, created_at: now / 1000 - 60 };
+      await h.load();
+      assert.equal(h.$('motion-status').hidden, false);
+      assert.match(h.$('motion-status-text').textContent, new RegExp(error));
+      assert.match(h.$('motion-status-text').textContent, /维护者|不要重复生成/);
+      assert.equal(h.$('motion-status').classList.contains('failed'), true);
+      assert.equal(h.panel.hasRefreshableOperation(), true);
+      const reads = h.state.calls.length; now += 65000; h.panel.refreshElapsed();
+      assert.match(h.$('motion-status-text').textContent, /已等待 2分5秒/);
+      assert.equal(h.state.calls.length, reads);
+      assert.equal(posts(h).length, 0);
+    }
+  } finally { Date.now = originalNow; }
+});
+
+test('motion write errors remain visible locally across successful reads and do not clear the instruction', async () => {
+  const h = harness(); await h.load();
+  h.$('motion-instruction').value = '明确展示失败与重试。'; await h.$('motion-instruction').emit('input');
+  h.state.transport = async (path, options, fallback) => {
+    if (options.method === 'POST') throw Object.assign(new Error('revision_conflict'), { status: 409 });
+    return fallback(path);
+  };
+  h.state.refreshAction = h.load;
+  await h.$('revise-motion').emit('click');
+  assert.equal(posts(h).length, 1);
+  assert.equal(h.$('motion-read-error').hidden, false);
+  assert.match(h.$('motion-read-error').textContent, /已有更新/);
+  await h.load();
+  assert.equal(h.$('motion-read-error').hidden, false);
+  assert.equal(h.$('motion-instruction').value, '明确展示失败与重试。');
+  assert.match(motionErrorLabel('motion_revision_unchanged'), /完全相同.*未保存重复候选.*配音保留/);
+  h.state.data.scenes[0].motion.operation = { id: 'needs-review', status: 'needs_input', error: 'motion_revision_unchanged',
+    motion_context: { target: 'queue', kind: 'reveal', ordinal: 0, beat_id: 'b1' } };
+  await h.load();
+  assert.equal(h.$('motion-status').classList.contains('failed'), true);
+  assert.match(h.$('motion-status-text').textContent, /完全相同.*问题图元：queue/);
+});
+
+test('render diagnostics resolve labels only against the frozen version, scene and exact original action', () => {
+  const context = { target: 'queue', kind: 'reveal', ordinal: 0, beat_id: 'b1' };
+  const item = { diagnostic: { scene_index: 0, motion_context: context },
+    scenes: [{ scene_id: 'scene-1', visual_mode: 'motion', visual_version_id: 'v1' }] };
+  const correct = { ...version(), project_id: 'p1', scene_id: 'scene-1' };
+  assert.equal(motionFailureSource(item).visual_version_id, 'v1');
+  assert.equal(motionFailureDetails(item, correct, 'p1').bound, true);
+  assert.match(motionFailureDetails(item, correct, 'p1').text, /<img onerror=alert\(1\)>队列（queue）.*出现.*第 1 个动作/);
+  for (const changed of [undefined, { ...correct, id: 'v2' }, { ...correct, project_id: 'other' },
+    { ...correct, scene_id: 'other' }, { ...correct, plan: { ...correct.plan, actions: [{ ...correct.plan.actions[0], beat_id: 'other' }] } }]) {
+    const result = motionFailureDetails(item, changed, 'p1');
+    assert.equal(result.bound, false);
+    assert.match(result.text, /queue.*尚未取得该任务的确切方案/);
+    assert.doesNotMatch(result.text, /onerror|队列/);
+  }
+  for (const changed of [{ ...context, target: '/private/file' }, { ...context, ordinal: -1 },
+    { ...context, kind: 'constructor' }, { ...context, beat_id: '<img>' }, { ...context, ordinal: 48 },
+    { ...context, target: ['queue'] }, { ...context, beat_id: ['b1'] },
+    { ...context, kind: ['reveal'] }, { ...context, target: 'Queue' }, { ...context, target: 'q'.repeat(33) }]) {
+    assert.equal(safeMotionContext(changed), null);
+  }
+});
+
+test('explicit diagnostic navigation highlights only the matching historical version without submitting work', async () => {
+  const h = harness(); await h.load();
+  const walk = row => [row, ...row.children.flatMap(walk)];
+  h.panel.focusDiagnostic('v1', { target: 'queue', kind: 'reveal', ordinal: 0, beat_id: 'b1' });
+  h.panel.render();
+  assert.equal(walk(h.$('motion-review')).filter(row => row.className === 'motion-diagnostic-target').length, 2);
+  h.state.data.scenes[0].motion.versions.push({ id: 'v2', stale: false, plan_sha256: 'v2' });
+  h.panel.select('p1', 'scene-1', 'v2'); await h.load();
+  assert.equal(walk(h.$('motion-review')).filter(row => row.className === 'motion-diagnostic-target').length, 0);
+  assert.equal(posts(h).length, 0);
 });
 
 test('gate off preserves history, audio and cancellation and permits withdrawing to static only', async () => {
@@ -398,6 +722,14 @@ test('known rendering failures distinguish resource, duration and uncertain stat
   }
 });
 
+test('process continuity errors retain actionable explanations through general motion and batch render paths', () => {
+  assert.match(motionErrorLabel('process_continuity_card_copy_not_supported'), /只支持复制请求对象.*处理节点/);
+  assert.match(motionErrorLabel('process_continuity_slot_conflict'), /位置.*起点不同/);
+  assert.match(motionRenderErrorLabel('process_continuity_copy_archive_unavailable'), /安全位置.*延续/);
+  assert.match(motionErrorLabel('invalid_process_continuity_plan'), /核对相邻镜头/);
+  assert.ok(!motionRenderErrorLabel('process_continuity_pose_mismatch').includes('process_'));
+});
+
 test('all controls exist once; app wires motion reads, MP4 playback, polling and unload drafts', async () => {
   const source = await readFile(new URL('../../video_workbench/web/motion.mjs', import.meta.url), 'utf8');
   const app = await readFile(new URL('../../video_workbench/web/app.mjs', import.meta.url), 'utf8');
@@ -406,7 +738,7 @@ test('all controls exist once; app wires motion reads, MP4 playback, polling and
   for (const [, id] of source.matchAll(/\$\('([^']+)'\)/g)) assert.ok(ids.includes(id), id);
   assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML|eval\(/);
   assert.match(app, /motionPanel\.load\(ticket.projectId, ticket.epoch\)/);
-  assert.match(app, /!motionPanel\.hasActiveOperation\(state.projectId, state.project\?\.scenes\)/); assert.match(app, /motionPanel\.hasDrafts\(\)/);
+  assert.match(app, /motionPanel\.hasRefreshableOperation\(state.projectId, state.project\?\.scenes\)/); assert.match(app, /motionPanel\.hasDrafts\(\)/);
   assert.match(app, /createMotionRenderRequest\(state.project, \{ purpose: 'delivery',/);
   assert.match(app, /function openMotionRender\(item\)/);
   assert.match(app, /!\$\('motion-panel'\)\.contains\(event.target\) && !\$\('motion-timing-section'\)\.contains\(event.target\)/);

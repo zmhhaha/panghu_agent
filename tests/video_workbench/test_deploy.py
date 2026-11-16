@@ -83,6 +83,28 @@ def test_invalid_motion_deployment_is_rejected(settings, changes):
         render(replace(settings, **changes))
 
 
+def test_process_is_opt_in_with_existing_agent_and_renderer_boundaries(settings):
+    base = replace(settings, motion_enabled=True, render_enabled=True)
+    before = render(base)
+    after = render(replace(base, process_enabled=True, process_profile_revision='reviewed-1'))
+    old = resource(before, 'Deployment')['spec']['template']['spec']
+    new = resource(after, 'Deployment')['spec']['template']['spec']
+    assert old['volumes'] == new['volumes']
+    assert old['containers'][0]['volumeMounts'] == new['containers'][0]['volumeMounts']
+    assert not any(e['name'].startswith('VIDEO_PROCESS_') for e in old['containers'][0]['env'])
+    env = {e['name']: e.get('value') for e in new['containers'][0]['env']}
+    assert env['VIDEO_PROCESS_ENABLED'] == '1'
+    assert env['VIDEO_PROCESS_PROFILE_REVISION'] == 'reviewed-1'
+    assert resource(before, 'NetworkPolicy') == resource(after, 'NetworkPolicy')
+
+
+@pytest.mark.parametrize('changes', [dict(process_enabled='1'), dict(process_enabled=True),
+    dict(process_profile_revision=''), dict(process_profile_revision='bad/name')])
+def test_process_invalid_deployment_is_rejected(settings, changes):
+    with pytest.raises(ValueError):
+        render(replace(settings, **changes))
+
+
 def test_sqlite_is_single_coordinator_with_durable_writable_data(settings):
     document = render(settings)
     deployment = resource(document, 'Deployment')['spec']

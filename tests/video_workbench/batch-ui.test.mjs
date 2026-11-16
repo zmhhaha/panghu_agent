@@ -86,6 +86,23 @@ const descendants = element => [element, ...element.children.flatMap(descendants
 const inputIn = element => descendants(element).find(element => element.tagName === 'input');
 const reviewCheck = h => descendants(h.$('batch-review')).find(element => element.tagName === 'input');
 
+test('reused creative candidates display their frozen strategy without executing code or changing batch generation', async () => {
+  const h = harness(); h.state.context.creativeConfigured = true;
+  const row = version('m1'); row.diagram_kind = 'creative';
+  row.plan = { schema: 'video.creative-scene.v1',
+    input_document: { constraints: { capability_release: { id: 'continuous-motion', revision: 'v1' } } },
+    result: { strategy: { description: '<script>对象沿轨迹移动</script>' }, files: { 'scene.html': '<script>MUST_NOT_EXECUTE</script>' } } };
+  h.state.versions.set('m1', row);
+  await h.load();
+  assert.equal(h.$('batch-creative-note').hidden, false);
+  const review = h.$('batch-review').textContent;
+  assert.match(review, /创意动画候选/);
+  assert.match(review, /<script>对象沿轨迹移动<\/script>/);
+  assert.match(review, /continuous-motion.*v1/);
+  assert.doesNotMatch(review, /MUST_NOT_EXECUTE/);
+  assert.equal(writes(h).length, 0);
+});
+
 test('batch intent validates the selected project scenes, bounded steps and clean revision', () => {
   const p = project('../p?');
   const intent = createBatchRequest(p, { sceneIds: ['s1'], steps: ['draft', 'motion'] });
@@ -250,7 +267,47 @@ test('batch adoption binds reviewed exact IDs and both current heads with an ind
     expected_revision: 1, selections: [{ scene_id: 's1', motion_version_id: 'm1', audio_version_id: 'a1',
       expected_motion_head_version_id: null, expected_audio_head_version_id: null }] } } });
   assert.equal(h.panel.hasDrafts(), false);
+  assert.equal(reviewCheck(h).checked, true, 'Accepted adoption retains the reviewed range on screen');
   assert.ok(!writes(h).some(row => /timing\/verify|motion-renders|audio\/generate/.test(row.path)));
+});
+
+test('409 adoption refreshes status, retains the reviewed range and displays a local error without replaying POST', async () => {
+  const h = harness(); await h.load();
+  const check = reviewCheck(h); check.checked = true; await check.emit('change');
+  h.$('confirm-batch-adoption').checked = true;
+  h.state.transport = async (path, options, fallback) => {
+    if (path.endsWith('/batch-adopt')) {
+      h.state.context.project.revision = 2;
+      throw Object.assign(new Error('revision_conflict'), { status: 409, code: 'revision_conflict' });
+    }
+    return fallback(path, options);
+  };
+  await h.panel.adopt();
+  assert.equal(writes(h).filter(row => row.path.endsWith('/batch-adopt')).length, 1);
+  assert.equal(h.state.refreshes, 1);
+  assert.equal(reviewCheck(h).checked, true);
+  assert.equal(h.$('confirm-batch-adoption').checked, false, 'The changed revision requires a fresh confirmation');
+  assert.equal(h.$('batch-read-error').hidden, false);
+  assert.match(h.$('batch-read-error').textContent, /已有更新.*草稿和所选范围会保留/);
+  await h.load();
+  assert.equal(h.$('batch-read-error').hidden, false, 'A successful GET must not erase the failed-write notice');
+  assert.equal(reviewCheck(h).checked, true);
+});
+
+test('uncertain adoption only reads status and preserves the exact selected candidates', async () => {
+  const h = harness(); await h.load();
+  const check = reviewCheck(h); check.checked = true; await check.emit('change');
+  h.$('confirm-batch-adoption').checked = true;
+  h.state.transport = async (path, options, fallback) => {
+    if (path.endsWith('/batch-adopt')) throw new TypeError('fetch failed');
+    return fallback(path, options);
+  };
+  await h.panel.adopt();
+  assert.equal(writes(h).length, 1);
+  assert.equal(h.state.refreshes, 1);
+  assert.equal(reviewCheck(h).checked, true);
+  assert.match(h.$('batch-read-error').textContent, /尚未确认.*不会自动重复提交/);
+  assert.equal(h.state.context.project.scenes[0].motion.head_version_id, null);
 });
 
 test('stale plans and changed adoption heads block the saved review rather than choosing latest', async () => {
@@ -343,7 +400,7 @@ test('all controls are unique and the app integrates reads, polling, exact navig
   assert.doesNotMatch(source, /innerHTML|insertAdjacentHTML|eval\(/);
   const app = await readFile(new URL('../../video_workbench/web/app.mjs', import.meta.url), 'utf8');
   assert.match(app, /batchPanel\.load\(ticket.projectId, ticket.epoch\)/);
-  assert.match(app, /!batchPanel\.hasActiveOperation\(state.projectId\)/);
+  assert.match(app, /batchPanel\.hasActiveOperation\(state.projectId\)/);
   assert.match(app, /batchPanel\.hasUnresolvedOperation\(state.projectId\)/);
   assert.match(app, /motionPanel\.select\(state.projectId, sceneId, motionVersionId\)/);
   assert.match(app, /createProjectMotionDraftRequest\(state.project,/);

@@ -964,3 +964,116 @@ def test_real_feedback_validation_codes_remain_specific_and_classified(code):
         dict(stage='validating_scene', scene_index=0))
     assert result['code'] == code and result['category'] == 'validation'
     assert result['stage'] == 'validating_scene' and result['scene_index'] == 0
+
+
+def test_motion_context_survives_scene_and_service_cleanup_restarts_to_remote_callback(tmp_path, monkeypatch):
+    """One synthetic Job, two independent outages, no new render/model/TTS attempt."""
+    import video_workbench.motion_render_k8s as module
+    context = dict(target='certificate', kind='move', ordinal=7, beat_id='beat_' + '1' * 16)
+    private = dict(path='/private/path', stderr='private stderr', owner=OWNER, token=TOKEN)
+    kube = successful_kube(monkeypatch)
+    original_request = kube.request
+    scene_blocked = service_blocked = True
+    calls = []
+
+    def invalid_artifacts(*args):
+        calls.append('verify')
+        error = ServiceError('motion_invisible_move', 422)
+        error.motion_context = dict(context, **private)
+        raise error
+
+    def request(method, resource, *args, **kwargs):
+        if scene_blocked and method == 'DELETE':
+            raise ServiceError(UNAVAILABLE, 503)
+        return original_request(method, resource, *args, **kwargs)
+
+    def render(snapshot, root, *, key, cancel_event):
+        calls.append('render')
+        return scene_renderer(tmp_path, kube).render(snapshot['scenes'][0], key=key,
+            scene_index=0, quality=snapshot['quality'], cancel_event=cancel_event)
+
+    def cleanup(snapshot, *, key, **pending):
+        calls.append('cleanup')
+        assert pending == dict(state='failed', error='motion_invisible_move', status=422)
+        if service_blocked:
+            raise ServiceError(UNAVAILABLE, 503)
+        scene_renderer(tmp_path, kube).cleanup_operation(snapshot, key, **pending)
+
+    monkeypatch.setattr(module, 'validate_artifacts', invalid_artifacts)
+    kube.request = request
+    renderer = SimpleNamespace(render=render, cleanup=cleanup)
+    service = make_service(tmp_path, renderer)
+    row = service.submit(OWNER, 'context-operation', freeze())
+    assert service.tick()
+    pending = json.loads(service.journal.scene(row['key'] + ':0')['result'])['cleanup_pending']
+    assert pending['result'] == {'motion_context': context}
+    assert service.journal.operation(OWNER, 'context-operation')['state'] == 'queued'
+
+    scene_blocked = False
+    restarted = make_service(tmp_path, renderer)
+    assert restarted.tick()
+    row = restarted.journal.operation(OWNER, 'context-operation')
+    assert row['state'] == 'queued'
+    assert json.loads(row['result'])['diagnostic']['motion_context'] == context
+    assert 'diagnostic' not in public_operation(row)
+
+    service_blocked = False
+    resumed = make_service(tmp_path, renderer)
+    assert resumed.tick()
+    row = resumed.journal.operation(OWNER, 'context-operation')
+    response = public_operation(row)
+    assert response['state'] == 'failed' and response['error'] == 'motion_invisible_move'
+    assert response['diagnostic']['motion_context'] == context
+    assert response['diagnostic']['scene_index'] == 0
+    assert json.loads(resumed.journal.scene(row['key'] + ':0')['result']) == {'motion_context': context}
+    assert calls == ['render', 'verify', 'render', 'cleanup', 'cleanup']
+    assert sum(m == 'POST' and r == 'jobs' for m, r, _ in kube.calls) == 1
+    assert not kube.resources
+    for secret in private.values():
+        assert secret not in json.dumps(response)
+
+    seen = []
+    remote = RemoteMotionRenderer('http://internal', TOKEN,
+        client=httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=response))))
+    with pytest.raises(ServiceError, match='motion_invisible_move') as failure:
+        remote.render(freeze(), tmp_path / 'remote', operation_id='context-operation', owner='owner-one',
+                      progress_callback=seen.append)
+    assert failure.value.motion_context == context
+    assert seen[0]['diagnostic']['motion_context'] == context
+
+
+@pytest.mark.parametrize('field,value', [
+    ('target', '/private/path'), ('target', []), ('kind', ['move']), ('kind', 'exec'),
+    ('ordinal', True), ('ordinal', -1), ('ordinal', 48), ('beat_id', 'private-beat'),
+])
+def test_invalid_optional_motion_context_is_dropped_without_hiding_valid_diagnostic(field, value):
+    from video_workbench.motion_render_adapter import safe_diagnostic, safe_motion_context
+    context = dict(target='certificate', kind='move', ordinal=47, beat_id='beat_' + '1' * 16)
+    clean = dict(context)
+    assert safe_motion_context(dict(context, stderr='private', path='/private')) == clean
+    context[field] = value
+    assert safe_motion_context(context) is None
+    diagnostic = dict(code='motion_invisible_move', category='validation', stage='validating_scene',
+                      scene_index=0, diagnostic_id='MR-' + 'a' * 16)
+    assert safe_diagnostic(dict(diagnostic, motion_context=context)) == diagnostic
+
+
+def test_invalid_base_diagnostic_cannot_publish_a_valid_motion_context():
+    from video_workbench.motion_render_adapter import safe_diagnostic, safe_motion_context
+    context = dict(target='certificate', kind='move', ordinal=0, beat_id='beat_' + '1' * 16)
+    assert safe_motion_context({key: value for key, value in context.items() if key != 'beat_id'}) is None
+    assert safe_diagnostic(dict(code='motion_invisible_move', category='validation', stage='private',
+        scene_index=0, diagnostic_id='MR-' + 'a' * 16, motion_context=context)) is None
+
+
+@pytest.mark.parametrize('diagnostic', [None, {}, {'stderr': 'private'}])
+def test_legacy_terminal_failure_without_diagnostic_context_keeps_original_error(tmp_path, diagnostic):
+    snapshot, seen = freeze(), []
+    response = dict(operation_id='legacy-operation', snapshot_sha256=snapshot['sha256'], state='failed',
+                    error='motion_invisible_move', diagnostic=diagnostic)
+    renderer = RemoteMotionRenderer('http://internal', TOKEN,
+        client=httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=response))))
+    with pytest.raises(ServiceError, match='motion_invisible_move') as failure:
+        renderer.render(snapshot, tmp_path / 'legacy', operation_id='legacy-operation', owner='owner-one',
+                        progress_callback=seen.append)
+    assert not hasattr(failure.value, 'motion_context') and seen == []

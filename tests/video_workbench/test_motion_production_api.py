@@ -125,6 +125,46 @@ def setup(env):
     return project, sid, version_id, audio_id
 
 
+def test_bound_generation_accepts_other_scene_updates_but_rejects_stale_target_and_legacy_request(env):
+    client, app, gateway, _ = env
+    project = client.post('/api/projects', json=dict(title='跨镜生成', script=FIELDS['narration'],
+                                                   style='清晰图解')).json()
+    for title in ('后台生成的第一镜', '继续处理的第二镜'):
+        project = app.state.store.save_scene('alice', project['id'], dict(FIELDS, title=title))
+    view = client.get(f'/api/projects/{project["id"]}/motion').json()
+    first, second = view['scenes']
+    body = dict(expected_revision=view['revision'],
+                expected_semantic_binding_sha256=second['motion']['semantic_binding_sha256'])
+    response = client.post(f'/api/scenes/{first["id"]}/motion',
+        json=dict(expected_revision=view['revision']), headers={'Idempotency-Key': 'cross-scene-first'})
+    assert response.status_code == 202, response.text
+    legacy_replay = client.post(f'/api/scenes/{first["id"]}/motion',
+        json=dict(expected_revision=view['revision'], expected_semantic_binding_sha256=None),
+        headers={'Idempotency-Key': 'cross-scene-first'})
+    assert legacy_replay.json() == response.json(), 'An absent or null new field preserves the old request identity'
+    app.state.motion_workflow.tick()
+    assert gateway.posts == 1
+    path = f'/api/scenes/{second["id"]}/motion'
+    stale_legacy = client.post(path, json=dict(expected_revision=view['revision']),
+                              headers={'Idempotency-Key': 'cross-scene-legacy'})
+    assert stale_legacy.status_code == 409
+    assert stale_legacy.json()['detail']['code'] == 'revision_conflict'
+    malformed = client.post(path, json=dict(body, expected_semantic_binding_sha256='bad'),
+                            headers={'Idempotency-Key': 'cross-scene-malformed'})
+    assert malformed.status_code == 422
+    response = client.post(path, json=body, headers={'Idempotency-Key': 'cross-scene-second'})
+    assert response.status_code == 202, response.text
+    replay = client.post(path, json=body, headers={'Idempotency-Key': 'cross-scene-second'})
+    assert replay.json() == response.json()
+    latest = app.state.store.project('alice', project['id'])
+    app.state.store.save_scene('alice', project['id'], dict(FIELDS, title='第二镜已被别人修改'),
+                              second['id'], latest['revision'])
+    conflict = client.post(path, json=body, headers={'Idempotency-Key': 'cross-scene-changed'})
+    assert conflict.status_code == 409
+    assert conflict.json()['detail']['code'] == 'motion_generation_conflict'
+    assert gateway.posts == 1, 'Rejected or queued requests must never submit extra model work'
+
+
 def timing(env, version_id, audio_id):
     response = env[0].get(f'/api/motion-versions/{version_id}/timing', params=dict(audio_version_id=audio_id))
     assert response.status_code == 200, response.text
@@ -205,10 +245,12 @@ def test_remote_progress_and_safe_diagnostics_survive_business_reload(env):
         json=draft_request(project, sid, vid, aid), headers={'Idempotency-Key': 'progress-provenance'})
     assert response.status_code == 202, response.text
     progress = dict(stage='observing_scene', scene_index=0, completed_scenes=0, total_scenes=1, updated_at=100)
+    context = dict(target='certificate', kind='move', ordinal=7, beat_id='beat_' + '1' * 16)
     diagnostic = dict(code='motion_observation_stage_failed', category='observation', stage='observing_scene',
-                      scene_index=0, diagnostic_id='MR-' + 'a' * 16)
+                      scene_index=0, diagnostic_id='MR-' + 'a' * 16, motion_context=context)
     def failing(snapshot, directory, *, progress_callback, **kwargs):
-        progress_callback(dict(progress=dict(progress, private_path='/secret'), diagnostic=dict(diagnostic, stderr='secret')))
+        progress_callback(dict(progress=dict(progress, private_path='/secret'), diagnostic=dict(diagnostic,
+            motion_context=dict(context, stderr='private', path='/secret', owner='alice'), stderr='secret')))
         raise ServiceError('motion_observation_stage_failed', 502)
     renderer.supports_progress = True
     renderer.render = failing
@@ -426,6 +468,98 @@ def test_motion_configuration_is_opt_in_and_reads_bounded_operator_runtime(tmp_p
         MotionSettings.from_env(dict(VIDEO_MOTION_RUNTIME_FILE=str(runtime)))
     with pytest.raises(ValueError):
         MotionSettings.from_env(dict(VIDEO_MOTION_ENABLED='yes'))
+
+
+def test_process_settings_are_separate_and_invalid_values_fail_closed():
+    settings = MotionSettings.from_env(dict(VIDEO_MOTION_ENABLED='1', VIDEO_PROCESS_ENABLED='1',
+                                           VIDEO_PROCESS_PROFILE_REVISION='reviewed-1'))
+    assert settings.process_enabled is True and settings.process_revision == 'reviewed-1'
+    assert settings.revision == '1'
+    for env in [dict(VIDEO_PROCESS_ENABLED='yes'), dict(VIDEO_PROCESS_PROFILE_REVISION=''),
+                dict(VIDEO_PROCESS_PROFILE_REVISION='bad/name')]:
+        with pytest.raises(ValueError):
+            MotionSettings.from_env(env)
+
+
+@pytest.mark.parametrize('motion_on,process_on,connected,code', [
+    (True, False, True, 'process_disabled'),
+    (False, True, True, 'motion_disabled'),
+    (True, True, False, 'agent_not_configured'),
+])
+def test_process_api_admission_has_no_business_write_when_gate_or_adapter_missing(
+        tmp_path, motion_on, process_on, connected, code):
+    gateway = Gateway()
+    app = create_app(db_path=tmp_path / 'process-gates.db', trusted_hosts={'testserver'}, background=False,
+                     motion_enabled=motion_on, process_enabled=process_on, motion_gateway=gateway,
+                     process_gateway=gateway if connected else None)
+    with TestClient(app) as client:
+        client.headers['X-Forwarded-User'] = 'alice'
+        session = client.get('/api/session').json()
+        client.headers['X-CSRF-Token'] = session['csrf_token']
+        assert session['process_enabled'] is (motion_on and process_on)
+        assert session['process_configured'] is (motion_on and process_on and connected)
+        project = client.post('/api/projects', json=dict(title='门禁测试', script='请求进入队列。', style='图解')).json()
+        project = app.state.store.save_scene('alice', project['id'], FIELDS)
+        sid = project['scenes'][0]['id']
+        response = client.post(f'/api/scenes/{sid}/motion', headers={'Idempotency-Key': 'blocked-process'},
+                               json=dict(expected_revision=project['revision'], diagram_kind='process'))
+        assert response.status_code == 503, response.text
+        assert response.json()['detail']['code'] == code
+        assert not app.state.motion_store.active_operations()
+        assert gateway.uploads == gateway.posts == gateway.lookups == 0
+
+
+def test_process_api_candidate_adoption_timing_and_frozen_draft(tmp_path):
+    from video_workbench.examples.build_process_sample import SAMPLE_TEXT, process_plan
+    class ProcessGateway(Gateway):
+        def collect(self, job_id, input_sha256, beats):
+            return dict(schema='video.process-result.v1', input_sha256=input_sha256, plan=process_plan(beats))
+    diagram, process, renderer = Gateway(), ProcessGateway(), Renderer()
+    app = create_app(db_path=tmp_path / 'process.db', trusted_hosts={'testserver'}, background=False,
+                     motion_enabled=True, process_enabled=True, motion_gateway=diagram,
+                     process_gateway=process, motion_renderer=renderer, motion_runtime=RUNTIME, render_enabled=True)
+    with TestClient(app) as client:
+        client.headers['X-Forwarded-User'] = 'alice'
+        client.headers['X-CSRF-Token'] = client.get('/api/session').json()['csrf_token']
+        project = client.post('/api/projects', json=dict(title='请求重试', script=SAMPLE_TEXT, style='清晰图解')).json()
+        project = app.state.store.save_scene('alice', project['id'], dict(FIELDS, narration=SAMPLE_TEXT))
+        sid = project['scenes'][0]['id']
+        request = dict(expected_revision=project['revision'], diagram_kind='process')
+        response = client.post(f'/api/scenes/{sid}/motion', json=request, headers={'Idempotency-Key': 'process-api'})
+        assert response.status_code == 202, response.text
+        app.state.motion_workflow.tick()
+        project = client.get(f'/api/projects/{project["id"]}').json()
+        assert process.posts == process.uploads == 1 and diagram.posts == diagram.uploads == 0
+        assert process.document['schema'] == 'video.process-input.v1'
+        scene = project['scenes'][0]
+        candidate = scene['motion']['versions'][0]
+        assert candidate['diagram_kind'] == 'process'
+        assert scene['motion']['head_version_id'] is None
+        vid = candidate['id']
+        assert client.get(f'/api/motion-versions/{vid}').json()['compiler_version'] == 'motion-process-compiler-2'
+        adopted = client.post(f'/api/scenes/{sid}/motion/adopt', json=dict(expected_revision=project['revision'],
+            version_id=vid, expected_head_version_id=None))
+        assert adopted.status_code == 200, adopted.text
+        project = adopted.json()
+        project = app.state.store.upload_audio('alice', sid, dict(expected_revision=project['revision']),
+                                              'process-pcm-fixture', pcm(seconds=24))
+        aid = project['scenes'][0]['audio_versions'][0]['id']
+        project = app.state.store.adopt_audio('alice', sid, aid, None)
+        aligned = client.get(f'/api/motion-versions/{vid}/timing', params=dict(audio_version_id=aid))
+        assert aligned.status_code == 200, aligned.text
+        assert aligned.json()['alignment']['review_status'] == 'pending'
+        response = client.post(f'/api/projects/{project["id"]}/motion-renders',
+            json=draft_request(project, sid, vid, aid), headers={'Idempotency-Key': 'process-draft'})
+        assert response.status_code == 202, response.text
+        app.state.production.tick()
+        assert renderer.calls[0]['snapshot']['scenes'][0]['motion']['timeline']['compiler'] == 'motion-process-compiler-2'
+        assert client.get(f'/api/projects/{project["id"]}/renders').json()['renders'][0]['status'] == 'completed'
+        denied = client.post(f'/api/projects/{project["id"]}/motion-renders',
+            json=dict(expected_revision=project['revision'], purpose='delivery', subtitles=False),
+            headers={'Idempotency-Key': 'unreviewed-process-delivery'})
+        assert denied.status_code == 409 and denied.json()['detail']['code'] == 'motion_timing_needs_review'
+        client.headers['X-Forwarded-User'] = 'bob'
+        assert client.get(f'/api/motion-versions/{vid}').status_code == 404
 
 
 def test_restart_restores_same_inflight_motion_identity_even_after_gate_is_closed(env):

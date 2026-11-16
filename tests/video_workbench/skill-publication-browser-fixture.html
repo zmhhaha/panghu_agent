@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>精确发布界面 · 本地合成 fixture</title>
+  <link rel="stylesheet" href="../../video_workbench/animation_lab_web/method-gallery.css">
+</head>
+<body>
+  <main class="workspace">
+    <h1>精确发布界面</h1>
+    <p class="message">仅用于本地界面核对。这些是合成版本与媒体占位，不代表真实动画、观看或开发者认可；本页不连接服务，所有提交均已禁用。</p>
+    <div id="fixture"></div>
+  </main>
+  <script type="module">
+    import {renderExactSkillPublication} from '../../video_workbench/animation_lab_web/skill-publication.mjs';
+    const hash = value => value.repeat(64);
+    const method = {schema: 'video.animation-method.v2', id: 'fixture-method-v2', version: 2,
+      title: '群体变化与因果追踪', content_sha256: hash('a'), criteria_sha256: hash('b'),
+      skill_package_sha256: hash('c'), status: 'candidate', criteria: [
+        {id: 'identity', description: '变化前后仍能追踪同一个对象', requires_motion: true},
+        {id: 'cause', description: '先看清动作，再看到动作造成的结果', requires_motion: true}]};
+    const validation = (role, audio) => ({schema: 'video.animation-method-validation.v2', id: role + '-validation',
+      method_version_id: method.id, method_content_sha256: method.content_sha256, criteria_sha256: method.criteria_sha256,
+      demonstration_version_id: role + '-demo', acceptance_target_sha256: hash(role === 'reference' ? 'd' : 'e'),
+      media_sha256: hash('f'), evidence: {media_sha256: hash('f')}, role, outcome: 'incomplete',
+      audio_sha256: audio ? hash('1') : null, requires_audio_verification: audio,
+      ...(role === 'transfer' ? {content_changes: {before: '群体筛选', after: '请求竞争资源', reason: '不同解释问题'},
+        structural_changes: {relations: {before: '单向筛选', after: '多个分支竞争'}},
+        reference_removal_summary: {scope: 'exact_host_records_retained_in_private_validation_store'}} : {})});
+    const detail = {id: 'fixture-commission', state: 'completed', methods: [method],
+      publication_method_version_ids: [method.id], validations: [validation('reference', false), validation('transfer', true)],
+      candidates: [{id: 'reference', title: '代表片段 · 群体筛选', demonstration_id: 'reference-demo'}],
+      transfers: [{id: 'transfer-validation', title: '迁移片段 · 资源分配', goal: '理解分支如何竞争并分配资源',
+        demonstration_id: 'transfer-demo'}], method_publication_readiness: [{method_version_id: method.id, ready: false,
+        unmet_conditions: ['animation_method_representative_acceptance_required', 'animation_method_transfer_acceptance_required']}]};
+    document.getElementById('fixture').append(renderExactSkillPublication(document, detail, location.href, {assetUrl: () => null}));
+  </script>
+</body>
+</html>

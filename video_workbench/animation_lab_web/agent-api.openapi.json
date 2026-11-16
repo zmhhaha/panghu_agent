@@ -1,0 +1,428 @@
+{
+  "openapi": "3.1.0",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "info": {
+    "title": "动画效果库外部 Agent API",
+    "version": "1.1.0",
+    "description": "现有 REST JSON API 的外部 Agent 支持子集：目录、异步制作、状态、反馈、取消、视频及源码下载。沿用 OAuth 登录 Cookie 和开发者权限；不支持 Bearer，独立长期机器凭据尚未实现。Cookie 文件由用户安全提供，调用方不读取或导出浏览器凭据。POST 还必须提供公网同源 Origin、catalog.csrf_token 和 application/json。GET 只读，不启动或推进执行。未列出的响应字段属于服务扩展，调用方应忽略。发布与人类验收不属于本合同。",
+    "x-guide-url": "https://video-service.panghuer.top/dev/animations/agent-api.html",
+    "x-client-url": "https://video-service.panghuer.top/dev/animations/agent-api-client.py"
+  },
+  "servers": [
+    {"url": "https://video-service.panghuer.top/dev/animations/api/method-lab", "description": "沿用 OAuth 登录及开发者权限的公网入口"}
+  ],
+  "security": [{"OAuthSessionCookie": []}],
+  "tags": [
+    {"name": "catalog", "description": "只读目录及当前 CSRF token"},
+    {"name": "commissions", "description": "异步制作及状态"},
+    {"name": "feedback", "description": "仅保存已授权意见，不触发制作或授予人类认可"},
+    {"name": "artifacts", "description": "已生成候选的媒体与 JSON 源码"}
+  ],
+  "paths": {
+    "/catalog": {
+      "get": {
+        "operationId": "getAnimationLabCatalog",
+        "tags": ["catalog"],
+        "summary": "列出效果、委托和执行可用性，取得 CSRF token",
+        "description": "只读。POST 前从 csrf_token 取得当前防伪 token；token 不能替代登录 Cookie。目录中的 request_id 可用于核对超时提交是否已落库。即使 availability.enabled=false，目录也可能正常返回。",
+        "responses": {
+          "200": {"description": "当前用户可见目录", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Catalog"}}}},
+          "302": {"$ref": "#/components/responses/LoginRedirect"},
+          "401": {"$ref": "#/components/responses/AuthenticationRequired"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "default": {"$ref": "#/components/responses/ApiError"}
+        }
+      }
+    },
+    "/commissions": {
+      "post": {
+        "operationId": "submitAnimationLabCommission",
+        "tags": ["commissions"],
+        "summary": "提交新制作或基于候选继续优化",
+        "description": "异步接受后返回 202 和当前详情。继续优化仍调用此路径，新建 request_id，提供 base_commission_id、base_candidate_id 和 feedback。相同用户以原 request_id 和相同请求重放会返回已有委托；内容改变返回 409。POST 超时不等于提交失败：先按目录 request_id 核对，不自动重试或生成新 ID。参考 URL 不会自动读取或观看原片。请求 JSON 最大 1 MiB，不支持查询参数。",
+        "security": [{"OAuthSessionCookie": [], "AnimationLabCsrf": []}],
+        "parameters": [{"$ref": "#/components/parameters/WriteOrigin"}],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {
+            "schema": {"$ref": "#/components/schemas/CommissionRequest"},
+            "examples": {
+              "newAnimation": {"summary": "固定 UUID 仅供示例，新任务必须使用新 ID", "value": {
+                "request_id": "17c8a3ea-52b4-42d0-b875-f55ab241e2db",
+                "title": "聚焦异常数据点",
+                "goal": "制作一段数据点从整体分布中被选出并放大解释的动画，保持总体与局部对应关系，标签清楚。",
+                "duration_seconds": 18,
+                "budget": {"max_rounds": 2, "max_seconds": 600},
+                "criteria": [
+                  {"id": "focus", "description": "选中数据点与总体分布的对应关系清楚。"},
+                  {"id": "labels", "description": "关键标签完整可读且不遮挡主要图形。"}
+                ]
+              }},
+              "collaborativeAnimation": {"summary": "显式开启协作；仅在 availability.collaboration=true 时提交", "value": {
+                "request_id": "56a61685-1b73-473c-8f45-a1c537d9909e",
+                "title": "多种运动共同解释一次触发",
+                "goal": "创作完整动态图解，让主对象、周围群体与场景响应按同一因果节奏协同，保持统一构图。由统筹划分职责，最终只交付一条完整样片。",
+                "duration_seconds": 18,
+                "budget": {"max_rounds": 1, "max_seconds": 1800},
+                "collaboration": {"max_components": 3}
+              }},
+              "continueCandidate": {"summary": "候选和委托 ID 应替换为实际返回值", "value": {
+                "request_id": "bb8c0924-41c1-4da1-b2b5-c0e038ca7741",
+                "title": "改善标签间距",
+                "goal": "延续总体到局部的聚焦结构，改善标签间距与留白。",
+                "duration_seconds": 18,
+                "budget": {"max_rounds": 1, "max_seconds": 300},
+                "base_commission_id": "11111111-1111-4111-8111-111111111111",
+                "base_candidate_id": "candidate-1",
+                "feedback": "保留总体与选中点的对应关系，增大右侧标签间距。"
+              }}
+            }
+          }}
+        },
+        "responses": {
+          "202": {"description": "已接受；可能是原请求的幂等重放。仍需查询 state。", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommissionDetail"}}}},
+          "302": {"$ref": "#/components/responses/LoginRedirect"},
+          "400": {"$ref": "#/components/responses/InvalidJson"},
+          "401": {"$ref": "#/components/responses/AuthenticationRequired"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "413": {"$ref": "#/components/responses/TooLarge"},
+          "415": {"$ref": "#/components/responses/JsonRequired"},
+          "422": {"$ref": "#/components/responses/InvalidRequest"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "default": {"$ref": "#/components/responses/ApiError"}
+        }
+      }
+    },
+    "/commissions/{commission_id}": {
+      "parameters": [{"$ref": "#/components/parameters/CommissionId"}],
+      "get": {
+        "operationId": "getAnimationLabCommission",
+        "tags": ["commissions"],
+        "summary": "查询委托状态、候选和结果",
+        "description": "只读，不执行模型、不推进制作或增加预算。终态为 completed、failed、cancelled；completed 也可能因预算用尽或无进展而停止，应检查 stop_reason 和 remaining_issues。轮询应设置间隔和总等待上限，停止本地等待不会取消任务。",
+        "responses": {
+          "200": {"description": "当前详情；仅约定对外读取子集", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommissionDetail"}}}},
+          "302": {"$ref": "#/components/responses/LoginRedirect"},
+          "401": {"$ref": "#/components/responses/AuthenticationRequired"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "default": {"$ref": "#/components/responses/ApiError"}
+        }
+      }
+    },
+    "/commissions/{commission_id}/feedback": {
+      "parameters": [{"$ref": "#/components/parameters/CommissionId"}],
+      "post": {
+        "operationId": "saveAnimationLabFeedback",
+        "tags": ["feedback"],
+        "summary": "保存候选评论或两候选比较偏好",
+        "description": "只保存已获用户授权的意见，不启动制作、不自动选择候选、不授予人类认可或发布权限。comment 的时间范围必须成对提供且位于候选时长内；区域为画面内归一化矩形。preference 必须绑定同一委托中的两个不同候选。相同 request_id 和相同关联委托、内容返回已有记录；改变内容或委托返回 409。",
+        "security": [{"OAuthSessionCookie": [], "AnimationLabCsrf": []}],
+        "parameters": [{"$ref": "#/components/parameters/WriteOrigin"}],
+        "requestBody": {"required": true, "content": {"application/json": {
+          "schema": {"oneOf": [{"$ref": "#/components/schemas/CommentRequest"}, {"$ref": "#/components/schemas/PreferenceRequest"}]},
+          "examples": {
+            "comment": {"value": {"request_id": "11b15293-1973-46a0-bd82-fba87e2d8c34", "kind": "comment", "candidate_id": "candidate-1", "comment": "右侧标签遮挡数据，请增加间距。", "start_seconds": 6, "end_seconds": 9, "region": {"x": 0.6, "y": 0.1, "width": 0.3, "height": 0.4}}},
+            "preference": {"value": {"request_id": "223886ef-d4c4-40e0-bbd1-f3d578b28583", "kind": "preference", "left_candidate_id": "candidate-1", "right_candidate_id": "candidate-2", "preference": "right", "comment": "右侧标签更清楚。"}}
+          }
+        }}},
+        "responses": {
+          "200": {"description": "已保存的意见", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/FeedbackRecord"}}}},
+          "302": {"$ref": "#/components/responses/LoginRedirect"},
+          "400": {"$ref": "#/components/responses/InvalidJson"},
+          "401": {"$ref": "#/components/responses/AuthenticationRequired"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "413": {"$ref": "#/components/responses/TooLarge"},
+          "415": {"$ref": "#/components/responses/JsonRequired"},
+          "422": {"$ref": "#/components/responses/InvalidRequest"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "default": {"$ref": "#/components/responses/ApiError"}
+        }
+      }
+    },
+    "/commissions/{commission_id}/cancel": {
+      "parameters": [{"$ref": "#/components/parameters/CommissionId"}],
+      "post": {
+        "operationId": "cancelAnimationLabCommission",
+        "tags": ["commissions"],
+        "summary": "请求停止委托",
+        "description": "请求体必须是空对象 {}。重复取消不会创建新任务。返回可能仍为 cancelling，需继续查询到终态；终态委托保持其当前结果。",
+        "security": [{"OAuthSessionCookie": [], "AnimationLabCsrf": []}],
+        "parameters": [{"$ref": "#/components/parameters/WriteOrigin"}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": false, "maxProperties": 0}, "example": {}}}},
+        "responses": {
+          "200": {"description": "取消请求后的当前详情", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommissionDetail"}}}},
+          "302": {"$ref": "#/components/responses/LoginRedirect"},
+          "400": {"$ref": "#/components/responses/InvalidJson"},
+          "401": {"$ref": "#/components/responses/AuthenticationRequired"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "413": {"$ref": "#/components/responses/TooLarge"},
+          "415": {"$ref": "#/components/responses/JsonRequired"},
+          "422": {"$ref": "#/components/responses/InvalidRequest"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "default": {"$ref": "#/components/responses/ApiError"}
+        }
+      }
+    },
+    "/commissions/{commission_id}/candidates/{candidate_id}/media": {
+      "parameters": [{"$ref": "#/components/parameters/CommissionId"}, {"$ref": "#/components/parameters/CandidateId"}],
+      "get": {
+        "operationId": "downloadAnimationLabMedia",
+        "tags": ["artifacts"],
+        "summary": "下载候选 MP4",
+        "description": "只读，仍需登录 Cookie；使用详情中实际候选 ID 或 media_url。同一候选媒体最大 32 MiB，下载前校验冻结摘要。支持单段字节 Range。",
+        "parameters": [
+          {"name": "Range", "in": "header", "required": false, "schema": {"type": "string"}, "example": "bytes=0-1023"},
+          {"name": "If-Range", "in": "header", "required": false, "schema": {"type": "string"}, "description": "可使用前次响应 ETag"}
+        ],
+        "responses": {
+          "200": {"description": "完整候选视频", "headers": {"ETag": {"schema": {"type": "string"}}, "Accept-Ranges": {"schema": {"type": "string", "const": "bytes"}}}, "content": {"video/mp4": {"schema": {"type": "string", "format": "binary"}}}},
+          "206": {"description": "已校验视频的单段字节范围", "headers": {"Content-Range": {"schema": {"type": "string"}}, "ETag": {"schema": {"type": "string"}}}, "content": {"video/mp4": {"schema": {"type": "string", "format": "binary"}}}},
+          "302": {"$ref": "#/components/responses/LoginRedirect"},
+          "401": {"$ref": "#/components/responses/AuthenticationRequired"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "409": {"$ref": "#/components/responses/Conflict"},
+          "413": {"$ref": "#/components/responses/TooLarge"},
+          "416": {"description": "字节范围不可满足", "headers": {"Content-Range": {"schema": {"type": "string"}, "example": "bytes */2048"}}},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "default": {"$ref": "#/components/responses/ApiError"}
+        }
+      }
+    },
+    "/commissions/{commission_id}/candidates/{candidate_id}/source": {
+      "parameters": [{"$ref": "#/components/parameters/CommissionId"}, {"$ref": "#/components/parameters/CandidateId"}],
+      "get": {
+        "operationId": "downloadAnimationLabSource",
+        "tags": ["artifacts"],
+        "summary": "下载候选 JSON 源码包",
+        "description": "只读，仍需登录 Cookie；使用详情返回的 source_url 或实际候选 ID。返回 JSON 文件，不会自动执行其中源码。",
+        "responses": {
+          "200": {"description": "JSON 源码包下载", "headers": {"Content-Disposition": {"schema": {"type": "string"}, "example": "attachment; filename=\"animation-source.json\""}}, "content": {"application/json": {"schema": {"type": "object", "additionalProperties": true, "description": "由候选引擎决定的源码包；作为文件保存，合同不约定引擎内部文件结构。"}}}},
+          "302": {"$ref": "#/components/responses/LoginRedirect"},
+          "401": {"$ref": "#/components/responses/AuthenticationRequired"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "413": {"$ref": "#/components/responses/TooLarge"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "default": {"$ref": "#/components/responses/ApiError"}
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "OAuthSessionCookie": {
+        "type": "apiKey", "in": "cookie", "name": "__Host-video_workbench",
+        "description": "原 OAuth 登录会话 Cookie。由用户安全提供 Cookie 文件，保留域、路径、Secure 和过期信息；会话用户还需有开发者权限。会话过期需要重新授权。此处不是新 API key，也不支持 Bearer。"
+      },
+      "AnimationLabCsrf": {
+        "type": "apiKey", "in": "header", "name": "X-Animation-Lab-Token",
+        "description": "GET /catalog 返回的 csrf_token。每次 POST 必须与 Cookie 和同源 Origin 一起提供；不是独立登录凭据。"
+      }
+    },
+    "parameters": {
+      "WriteOrigin": {"name": "Origin", "in": "header", "required": true, "description": "公网入口所有 POST 必须提供此同源值；不包含 /dev/animations 路径。", "schema": {"type": "string", "const": "https://video-service.panghuer.top"}},
+      "CommissionId": {"name": "commission_id", "in": "path", "required": true, "description": "服务返回的委托 ID", "schema": {"$ref": "#/components/schemas/Identifier"}, "example": "11111111-1111-4111-8111-111111111111"},
+      "CandidateId": {"name": "candidate_id", "in": "path", "required": true, "description": "使用 candidates 中实际返回的 ID", "schema": {"$ref": "#/components/schemas/Identifier"}, "example": "candidate-1"}
+    },
+    "schemas": {
+      "Identifier": {"type": "string", "minLength": 1, "maxLength": 200, "description": "非空标识符，禁止控制字符；使用服务原样返回的 ID。"},
+      "RequestId": {"type": "string", "minLength": 1, "maxLength": 200, "description": "调用方提供的幂等键，建议 UUID，Python 客户端要求 UUID。新意图使用新 ID；超时人工重放保留原 ID 和原 JSON。", "example": "17c8a3ea-52b4-42d0-b875-f55ab241e2db"},
+      "CommissionState": {"type": "string", "enum": ["queued", "running", "cancelling", "completed", "failed", "cancelled"]},
+      "StopReason": {"type": ["string", "null"], "enum": [null, "goal_met", "budget_exhausted", "no_progress", "developer_stopped", "failed", "cancelled"]},
+      "BudgetRequest": {
+        "type": "object", "required": ["max_rounds", "max_seconds"], "additionalProperties": false,
+        "properties": {
+          "max_rounds": {"type": "integer", "minimum": 1, "maximum": 8},
+          "max_seconds": {"type": "integer", "minimum": 60, "maximum": 3600}
+        }
+      },
+      "Criterion": {
+        "type": "object", "required": ["id", "description"], "additionalProperties": false,
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,99}$", "description": "同一 criteria 数组中必须唯一。"},
+          "description": {"type": "string", "minLength": 1, "maxLength": 4000, "pattern": "\\S"},
+          "requires_motion": {"type": "boolean", "description": "需要实际运动证据，不能由静帧评审宣称满足。"},
+          "requires_audio": {"type": "boolean", "description": "需要实际音频证据，不能由静帧评审宣称满足。"},
+          "observation": {"type": "string", "minLength": 1, "maxLength": 4000, "pattern": "\\S"}
+        }
+      },
+      "Criteria": {"type": "array", "minItems": 1, "maxItems": 16, "items": {"$ref": "#/components/schemas/Criterion"}, "description": "id 必须唯一；省略则由服务规划，继续优化时省略则继承基线标准。"},
+      "Reference": {
+        "type": "object", "required": ["url"], "additionalProperties": false,
+        "description": "支持子集。URL 和片段仅为需求资料，不触发下载或观看原片。关键视觉要求应写入 goal / feedback。",
+        "properties": {
+          "url": {"type": "string", "format": "uri", "pattern": "^https?://"},
+          "start_seconds": {"type": ["number", "null"], "minimum": 0, "maximum": 86400},
+          "end_seconds": {"type": ["number", "null"], "minimum": 0, "maximum": 86400}
+        },
+        "dependentRequired": {"start_seconds": ["end_seconds"], "end_seconds": ["start_seconds"]}
+      },
+      "CollaborationRequest": {
+        "type": "object", "required": ["max_components"], "additionalProperties": false,
+        "description": "新建实验仅显式提供时启用；继续优化或重新运行可继承原协作配置。先检查 availability.collaboration=true；budget.max_rounds 必须为 1。初版仅支持 Canvas，不与 Manim 预制资源或迁移任务合用。统筹、最多 max_components 个部件与整合共最多 max_components+2 个创作任务，另有 1 次样片渲染和 1 次评审，均计入本次总时限；建议 max_seconds=1800。不为部件创建独立效果。",
+        "properties": {"max_components": {"type": "integer", "minimum": 2, "maximum": 4}}
+      },
+      "CollaborationProgress": {
+        "type": "object", "additionalProperties": true,
+        "description": "只读的真实协作进度。未返回的计数表示尚未提供，不能推断为零；阶段或部件完成不等于完整样片质量认可。",
+        "properties": {
+          "enabled": {"type": "boolean"},
+          "stage": {"type": "string", "description": "常见阶段 plan、component、integrate、render、review、completed；失败或取消以实际状态为准。调用方应容忍新增阶段。"},
+          "completed": {"type": "integer", "minimum": 0},
+          "total": {"type": "integer", "minimum": 0},
+          "author_calls_used": {"type": "integer", "minimum": 0},
+          "author_calls_max": {"type": "integer", "minimum": 0},
+          "author_calls_scope": {"type": "string", "description": "reserved_creator_operations_not_provider_model_requests 表示已占用的创作任务额度，包含已预留任务，不等于实际模型请求数。"},
+          "components": {"type": "array", "items": {"type": "object", "additionalProperties": true, "properties": {
+            "id": {"type": "string"}, "title": {"type": "string"}, "status": {"type": "string"}
+          }}}
+        }
+      },
+      "CommissionRequest": {
+        "type": "object", "required": ["request_id", "goal", "budget"], "additionalProperties": false,
+        "description": "对外支持的提交子集，禁止提交身份、运行环境或发布验收字段。可选字段请省略而非传 null。",
+        "properties": {
+          "request_id": {"$ref": "#/components/schemas/RequestId"},
+          "title": {"type": "string", "minLength": 1, "maxLength": 500, "pattern": "\\S"},
+          "goal": {"type": "string", "minLength": 1, "maxLength": 16000, "pattern": "\\S"},
+          "duration_seconds": {"type": "number", "minimum": 1, "maximum": 60, "default": 18, "description": "24 fps 整帧边界，即 duration_seconds * 24 必须为整数。"},
+          "budget": {"$ref": "#/components/schemas/BudgetRequest"},
+          "collaboration": {"$ref": "#/components/schemas/CollaborationRequest"},
+          "criteria": {"$ref": "#/components/schemas/Criteria"},
+          "reference": {"$ref": "#/components/schemas/Reference"},
+          "base_commission_id": {"$ref": "#/components/schemas/Identifier"},
+          "base_candidate_id": {"$ref": "#/components/schemas/Identifier", "description": "须属于 base_commission_id；省略则采用基线 best_candidate_id。"},
+          "feedback": {"type": "string", "maxLength": 16000, "description": "继续优化的改进目标，不等同于单独保存 feedback 意见。"}
+        },
+        "dependentRequired": {"base_candidate_id": ["base_commission_id"]},
+        "allOf": [{"if": {"required": ["collaboration"]}, "then": {
+          "properties": {"budget": {"properties": {"max_rounds": {"const": 1}}}}
+        }}]
+      },
+      "BudgetCounters": {
+        "type": "object", "additionalProperties": true,
+        "description": "响应计数，与请求的 max_rounds/max_seconds 形状不同。",
+        "properties": {
+          "creator": {"type": "integer"}, "review": {"type": "integer"}, "render": {"type": "integer"}, "seconds": {"type": "number"}
+        }
+      },
+      "Candidate": {
+        "type": "object", "required": ["id", "media_url", "source_url"], "additionalProperties": true,
+        "properties": {
+          "id": {"$ref": "#/components/schemas/Identifier"},
+          "title": {"type": "string"},
+          "media_url": {"type": "string", "format": "uri-reference", "description": "可能为站点根相对 URL；相对于相同公网 origin 解析。"},
+          "source_url": {"type": "string", "format": "uri-reference"},
+          "technical_status": {"type": "string", "description": "技术检查状态，不代表用户认可。"},
+          "media": {"type": "object", "additionalProperties": true, "properties": {"sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "duration_seconds": {"type": "number"}}}
+        }
+      },
+      "CommissionSummary": {
+        "type": "object", "required": ["id", "request_id", "title", "goal", "state", "best_candidate_id", "stop_reason"], "additionalProperties": true,
+        "properties": {
+          "id": {"$ref": "#/components/schemas/Identifier"},
+          "request_id": {"$ref": "#/components/schemas/RequestId"},
+          "title": {"type": "string"}, "goal": {"type": "string"},
+          "state": {"$ref": "#/components/schemas/CommissionState"},
+          "best_candidate_id": {"type": ["string", "null"]},
+          "stop_reason": {"$ref": "#/components/schemas/StopReason"}
+        }
+      },
+      "CommissionDetail": {
+        "allOf": [
+          {"$ref": "#/components/schemas/CommissionSummary"},
+          {"type": "object", "required": ["candidates", "summary", "error"], "additionalProperties": true,
+            "properties": {
+              "schema": {"type": "string", "const": "video.animation-method-lab-detail.v1"},
+              "duration_seconds": {"type": "number"},
+              "collaboration": {"anyOf": [{"$ref": "#/components/schemas/CollaborationProgress"}, {"type": "null"}]},
+              "criteria": {"type": "array", "items": {"$ref": "#/components/schemas/Criterion"}, "description": "规划完成前可能为空。"},
+              "candidates": {"type": "array", "items": {"$ref": "#/components/schemas/Candidate"}},
+              "budget": {"$ref": "#/components/schemas/BudgetCounters"},
+              "usage": {"$ref": "#/components/schemas/BudgetCounters"},
+              "remaining": {"$ref": "#/components/schemas/BudgetCounters"},
+              "remaining_issues": {"type": "array", "items": {"type": "string"}},
+              "summary": {"type": ["string", "null"]}, "error": {"type": ["string", "null"]},
+              "feedback": {"type": "array", "items": {"$ref": "#/components/schemas/FeedbackRecord"}}
+            }
+          }
+        ]
+      },
+      "Catalog": {
+        "type": "object", "required": ["effects", "commissions", "availability", "csrf_token"], "additionalProperties": true,
+        "properties": {
+          "csrf_token": {"type": "string", "minLength": 1, "description": "敏感防伪 token，只用于 POST 头，不记录日志；Python 客户端的 catalog 输出隐藏它。"},
+          "availability": {"type": "object", "required": ["enabled"], "additionalProperties": true, "properties": {"enabled": {"type": "boolean"}, "collaboration": {"type": "boolean", "description": "仅 true 表示协作创作已准入；false 或未返回时不得提交 collaboration。"}, "reason": {"type": ["string", "null"]}, "allowed_engines": {"type": "array", "items": {"type": "string"}}}},
+          "effects": {"type": "array", "items": {"type": "object", "additionalProperties": true, "properties": {"id": {"type": "string"}, "title": {"type": "string"}, "open_commission_id": {"type": ["string", "null"]}}}},
+          "commissions": {"type": "array", "items": {"$ref": "#/components/schemas/CommissionSummary"}}
+        }
+      },
+      "Region": {
+        "type": "object", "required": ["x", "y", "width", "height"], "additionalProperties": false,
+        "description": "画面内归一化矩形；x+width<=1，y+height<=1。",
+        "properties": {
+          "x": {"type": "number", "minimum": 0, "maximum": 1}, "y": {"type": "number", "minimum": 0, "maximum": 1},
+          "width": {"type": "number", "minimum": 0, "maximum": 1}, "height": {"type": "number", "minimum": 0, "maximum": 1}
+        }
+      },
+      "CommentRequest": {
+        "type": "object", "required": ["request_id", "candidate_id", "comment"], "additionalProperties": false,
+        "properties": {
+          "request_id": {"$ref": "#/components/schemas/RequestId"},
+          "kind": {"type": "string", "const": "comment", "default": "comment"},
+          "candidate_id": {"$ref": "#/components/schemas/Identifier"},
+          "comment": {"type": "string", "minLength": 1, "maxLength": 16000, "pattern": "\\S"},
+          "start_seconds": {"type": "number", "minimum": 0}, "end_seconds": {"type": "number", "minimum": 0},
+          "region": {"$ref": "#/components/schemas/Region"}
+        },
+        "dependentRequired": {"start_seconds": ["end_seconds"], "end_seconds": ["start_seconds"]},
+        "description": "0<=start_seconds<=end_seconds<=候选时长；kind 省略时默认为 comment。"
+      },
+      "PreferenceRequest": {
+        "type": "object", "required": ["request_id", "kind", "left_candidate_id", "right_candidate_id", "preference"], "additionalProperties": false,
+        "properties": {
+          "request_id": {"$ref": "#/components/schemas/RequestId"}, "kind": {"type": "string", "const": "preference"},
+          "left_candidate_id": {"$ref": "#/components/schemas/Identifier"}, "right_candidate_id": {"$ref": "#/components/schemas/Identifier"},
+          "preference": {"type": "string", "enum": ["left", "right", "equal", "neither"]},
+          "comment": {"type": "string", "maxLength": 16000}
+        },
+        "description": "两个候选必须属于本委托且不同；不接受时间范围或 region。"
+      },
+      "FeedbackRecord": {
+        "type": "object", "required": ["id", "request_id", "commission_id", "kind", "created_at", "withdrawn"], "additionalProperties": true,
+        "properties": {
+          "id": {"$ref": "#/components/schemas/Identifier"}, "request_id": {"$ref": "#/components/schemas/RequestId"},
+          "commission_id": {"$ref": "#/components/schemas/Identifier"}, "kind": {"type": "string", "enum": ["comment", "preference"]},
+          "comment": {"type": "string"}, "candidate_id": {"type": "string"},
+          "left_candidate_id": {"type": "string"}, "right_candidate_id": {"type": "string"},
+          "preference": {"type": "string", "enum": ["left", "right", "equal", "neither"]},
+          "start_seconds": {"type": "number"}, "end_seconds": {"type": "number"}, "region": {"$ref": "#/components/schemas/Region"},
+          "created_at": {"type": "number", "description": "Unix 秒时间戳"}, "withdrawn": {"type": "boolean"}
+        }
+      },
+      "Error": {"type": "object", "required": ["error"], "additionalProperties": true, "properties": {"error": {"type": "string"}}}
+    },
+    "responses": {
+      "LoginRedirect": {"description": "OAuth 会话缺失或过期时入口可能重定向登录。需要用户重新授权，不自动跟随到登录页并当作 API 成功。", "headers": {"Location": {"schema": {"type": "string"}}}},
+      "AuthenticationRequired": {"description": "OAuth 会话无效或过期；重新授权。入口也可能返回登录 HTML。", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}, "text/html": {"schema": {"type": "string"}}}},
+      "Forbidden": {"description": "开发者权限、会话、Origin 或 CSRF 校验未通过；不循环重试。", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}, "example": {"error": "animation_lab_token_required"}}, "text/html": {"schema": {"type": "string"}}}},
+      "NotFound": {"description": "委托或候选不存在、不可见或已移入回收站。", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+      "Conflict": {"description": "幂等键内容冲突、基线不可用或媒体摘要变化。不要自动换 request_id 重试；先读取当前状态。", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}, "examples": {"requestConflict": {"value": {"error": "animation_method_commission_idempotency_conflict"}}, "feedbackConflict": {"value": {"error": "animation_method_feedback_conflict"}}, "baselineMissing": {"value": {"error": "animation_method_baseline_missing"}}, "mediaChanged": {"value": {"error": "animation_method_media_changed"}}}}}},
+      "InvalidJson": {"description": "JSON 格式无效，包括重复键。", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}, "example": {"error": "animation_lab_invalid_json"}}}},
+      "InvalidRequest": {"description": "字段、预算、时长、标准或反馈参数无效。", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+      "TooLarge": {"description": "请求或响应超过大小限制；此入口 POST JSON 上限 1 MiB。", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+      "JsonRequired": {"description": "POST 需要且只能提供一个 application/json Content-Type。", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}, "example": {"error": "animation_lab_json_required"}}}},
+      "Unavailable": {"description": "制作执行服务未配置或暂时不可用；不自动创建替代任务。", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}},
+      "ApiError": {"description": "其他服务或网关错误，例如 502/504。提交结果可能不明确：按原 request_id 核对目录及详情；仅在人工决定重放时使用原请求文件和原 ID。", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+    }
+  }
+}

@@ -17,6 +17,10 @@
 /.venv-agent-deploy/
 /.venv-video/
 /.pytest-*/
+/.pytest_cache/
+# Test scratch is reproducible; release/validation evidence belongs elsewhere.
+/.test-*/
+/.tmp-*/
 
 # 数据库文件
 *.db

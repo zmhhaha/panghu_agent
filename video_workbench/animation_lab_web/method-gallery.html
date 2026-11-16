@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>动画效果库 · Video Service</title>
+  <link rel="stylesheet" href="./method-gallery.css">
+  <script type="module" src="./method-gallery.mjs"></script>
+</head>
+<body>
+  <div id="method-gallery-app">
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="动画实验室首页"><span class="brand-icon" aria-hidden="true">◈</span><span><span class="eyebrow">VIDEO SERVICE · 开发者</span><strong>动画实验室</strong></span></a>
+      <nav class="workspace-nav" aria-label="开发者工作台"><a href="./" aria-current="page">效果库</a><a href="./knowledge.html">知识库</a></nav>
+    </header>
+    <main class="workspace">
+      <div class="workspace-actionbar">
+        <div class="library-sync" aria-label="实验进度"><p id="gallery-sync-status" class="small muted" role="status">正在读取效果库…</p><button id="gallery-refresh" class="button secondary" type="button">手动刷新</button></div>
+        <button id="gallery-new" class="button primary" type="button">新建实验</button>
+      </div>
+      <div id="gallery-message" class="message" role="status" hidden></div>
+      <section id="gallery-home" aria-labelledby="gallery-title">
+        <div class="page-heading"><div><p class="eyebrow">从完整效果，打磨创作方法</p><h1 id="gallery-title">让过程更清楚，让表达更生动</h1><p class="muted">每个效果汇集相关版本与实验。提交参考或表达目标，比较完整样片，积累可交付的创作方法。</p></div><span id="gallery-count" class="count"></span></div>
+        <p id="gallery-availability" class="muted" role="status"></p>
+        <p id="gallery-engine-availability" class="engine-availability small" role="status"></p>
+        <div id="gallery-preview-note" class="panel" hidden><strong>先确认界面与功能</strong><p class="muted">当前先开放前端预览。你可以查看效果库、填写目标，以及浏览样片比较、修改意见、迁移验证和发布的位置；暂不启动生成任务。</p><button id="gallery-preview-detail" class="button secondary" type="button">查看样片详情布局</button></div>
+        <nav class="gallery-scope" aria-label="效果库范围"><button id="gallery-scope-library" class="button secondary" type="button" aria-pressed="true">效果库</button><button id="gallery-scope-trash" class="button secondary" type="button" aria-pressed="false">回收站</button></nav>
+        <div id="gallery-library">
+        <div class="gallery-tools"><label class="search-label" for="gallery-search">查找效果<input id="gallery-search" type="search" placeholder="名称、表达目标或创作能力" autocomplete="off"></label><label for="gallery-state">状态<select id="gallery-state"><option value="all">全部</option><option value="active">制作中</option><option value="review">待评价</option><option value="published">已发布</option></select></label><label for="gallery-engine">画面创作<select id="gallery-engine"><option value="all">全部</option><option value="html-svg">HTML/SVG</option><option value="canvas">Canvas 2D</option><option value="three">Three.js</option><option value="manim">Manim</option><option value="unknown">待确认</option></select></label></div>
+        <div id="gallery-cards" class="gallery-grid" aria-live="polite"></div>
+        <div id="gallery-no-results" class="filter-empty" role="status" hidden><p id="gallery-no-results-message" class="muted"></p><button id="gallery-reset" class="button secondary" type="button">清除筛选</button></div>
+        <div id="gallery-empty" class="empty-state" hidden><span aria-hidden="true">◈</span><h2>从一个想学会的效果开始</h2><p>描述希望观众看懂什么，或给出一段参考视频。样片不加讲解旁白，可保留需要的音效。</p><button id="gallery-empty-new" class="button primary" type="button">提交第一个目标</button></div>
+        </div>
+        <section id="gallery-trash" class="panel" aria-label="回收站" hidden></section>
+      </section>
+      <div id="gallery-removal-dialog" class="removal-dialog-backdrop" hidden></div>
+      <section id="gallery-detail" hidden aria-labelledby="detail-title"></section>
+      <section id="gallery-form-panel" class="panel experiment-form" hidden aria-labelledby="experiment-form-title">
+        <div class="panel-heading"><div><p class="eyebrow">一次有边界的探索</p><h2 id="experiment-form-title">新建实验</h2></div><button id="experiment-form-close" class="button secondary" type="button">返回效果库</button></div>
+        <form id="experiment-form">
+          <label for="experiment-title">效果名称<input id="experiment-title" name="title" maxlength="200" required placeholder="例如：让筛选过程与统计变化关联起来"></label>
+          <label for="experiment-goal">希望观众看懂什么<textarea id="experiment-goal" name="goal" rows="4" maxlength="8000" required placeholder="描述表达目标、重要过程，以及希望改善的地方。无需编写动画代码。"></textarea></label>
+          <div id="experiment-base-note" class="message" hidden></div>
+          <section id="experiment-transfer-fields" class="form-details" hidden aria-labelledby="experiment-transfer-title"><h3 id="experiment-transfer-title">这次换一种什么任务？</h3><p class="muted small">改变真正影响编排的条件，检查方法能否迁移。只替换文字或领域名称不足以证明迁移。</p><label for="experiment-transfer-dimension">主要变化<select id="experiment-transfer-dimension" name="transfer_dimension"><option value="relations">关系结构</option><option value="data_structure">数据组织</option><option value="staging">呈现与布局条件</option><option value="explanation_problem">要讲清的问题</option><option value="object_count">对象数量</option><option value="timing">时序条件</option><option value="task">任务类型</option></select></label><div class="form-row"><label for="experiment-transfer-before">原任务条件<input id="experiment-transfer-before" name="transfer_before" maxlength="2000" placeholder="例如：所有请求依次通过同一路径"></label><label for="experiment-transfer-after">新任务条件<input id="experiment-transfer-after" name="transfer_after" maxlength="2000" placeholder="例如：请求分支后汇合，完成顺序不同"></label></div></section>
+          <label id="experiment-feedback-label" for="experiment-feedback" hidden>本次修改意见<textarea id="experiment-feedback" name="feedback" rows="3" maxlength="8000" placeholder="继续优化时，说明上一版哪里不清楚，或想尝试哪些表达。"></textarea></label>
+          <details class="form-details"><summary>参考视频与片段（可选）</summary><label for="experiment-reference">参考链接<input id="experiment-reference" name="reference_url" type="url" maxlength="4000" placeholder="https://…"></label><div class="form-row"><label for="experiment-reference-start">片段开始（秒）<input id="experiment-reference-start" name="reference_start" type="number" min="0" step="0.01"></label><label for="experiment-reference-end">片段结束（秒）<input id="experiment-reference-end" name="reference_end" type="number" min="0" step="0.01"></label></div><p class="muted small">填写想学的片段与表达目标；仅填写链接不代表已读取视频。</p></details>
+          <details id="experiment-collaboration-options" class="form-details"><summary>高级创作方式（可选）</summary><label class="checkbox-label" for="experiment-collaboration"><input id="experiment-collaboration" name="collaboration_enabled" type="checkbox" aria-describedby="experiment-collaboration-help experiment-collaboration-unavailable" disabled><span>按职责分工创作复杂效果</span></label><p id="experiment-collaboration-help" class="muted small">后台先由统筹规划，最多 3 项职责分工创作，再整合成一条完整样片。支持已准入的 HTML/SVG、Canvas 2D 和 Three.js，由统筹按目标选择；无需管理图层。Manim 预制资源暂未接入协作。最多 5 个创作任务、1 次样片渲染和 1 次评审；本次只制作一版，建议预留 30 分钟。</p><p id="experiment-collaboration-unavailable" class="small muted">协作创作尚未启用，等待执行能力启用后可选。普通创作可继续使用。</p></details>
+          <details class="form-details"><summary>本次预算与验收标准</summary><div class="form-row"><label for="experiment-duration">期望样片时长（秒）<input id="experiment-duration" name="duration_seconds" type="number" min="2" max="60" step="1" value="24" required></label><label for="experiment-rounds">本次最多探索轮数<input id="experiment-rounds" name="max_rounds" type="number" min="1" max="8" step="1" value="3" required></label><label for="experiment-seconds">本次时间上限（分钟）<input id="experiment-seconds" name="max_minutes" type="number" min="1" max="60" step="1" value="15" required></label></div><label for="experiment-criteria">可观察的标准（可选，每行一项）<textarea id="experiment-criteria" name="criteria_text" rows="3" maxlength="8000" placeholder="留空时由 Agent 根据目标提出；之后也可以调整。"></textarea></label><p class="muted small">预算只限定本次实验。结束后可以继续优化；多种尝试仍无进展时，会提前结束并说明原因。</p></details>
+          <p id="experiment-unavailable" class="message" hidden>当前可以检查表单设计，生成能力尚未接通，填写内容不会提交。</p><div class="form-footer"><p class="muted small">样片默认不加讲解旁白，可包含帮助表达的音效。</p><button id="experiment-submit" class="button primary" type="submit">开始本次实验</button></div>
+        </form>
+      </section>
+    </main>
+    <footer class="page-footer">开发者看效果、提意见，Agent 维护创作方法。发布后，正式制作可读取这些方法；采用情况保存在制作记录中。</footer>
+  </div>
+</body>
+</html>

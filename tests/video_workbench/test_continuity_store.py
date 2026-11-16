@@ -95,6 +95,39 @@ def test_proposal_is_reviewable_without_head_media_or_project_mutation(state):
     assert continuity.project_projection(OWNER, project_id)['head_version_id'] is None
 
 
+@pytest.mark.parametrize('feature', ['sequence', 'nested', 'sources'])
+def test_new_semantic_layout_explains_continuity_limit_before_starting(tmp_path, feature):
+    base = Store(tmp_path / 'semantic-continuity.sqlite')
+    project = base.create_project(OWNER, dict(title='新图解', script='解释请求、执行与结果。',
+                                             style='清晰', production_mode='motion'))
+    url = 'https://example.org/fixed-version/architecture'
+    for index in range(2):
+        fields = scene_fields(f'第{index + 1}镜')
+        if feature == 'sources':
+            fields['visual_description'] += '完整来源：' + url
+        project = base.save_scene(OWNER, project['id'], fields)
+    motion = MotionStore(base)
+    for index, scene in enumerate(project['scenes']):
+        current = base.project(OWNER, project['id'])
+        operation = motion.start(OWNER, scene['id'], dict(expected_revision=current['revision']), f'semantic-{index}')
+        operation = motion.operation(operation['id'], OWNER)
+        document = operation['document']
+        plan = example_plan(document['beats'], template=feature if feature != 'sources' else 'flow')
+        if feature == 'sources':
+            plan['sources'] = [dict(url=url, label='固定版本来源')]
+        version_id = motion.complete(operation['id'], dict(schema='video.motion-result.v1',
+            input_sha256=operation['input_sha256'], plan=plan))['version_id']
+        current = motion.project(OWNER, project['id'])
+        head = next(s for s in current['scenes'] if s['id'] == scene['id'])['motion']['head_version_id']
+        motion.adopt(OWNER, scene['id'], version_id, head, current['revision'])
+    continuity = ContinuityStore(base, motion)
+    projection = continuity.project_projection(OWNER, project['id'])
+    assert any(issue['reason'] == 'continuity_semantic_layout_not_supported' for issue in projection['issues'])
+    with pytest.raises(ServiceError, match='continuity_semantic_layout_not_supported'):
+        continuity.propose(OWNER, project['id'], base.project(OWNER, project['id'])['revision'])
+    assert projection['versions'] == []
+
+
 def test_explicit_adoption_only_changes_continuity_head_and_project_metadata(state):
     base, motion, continuity, project_id = state
     candidate = propose(state)

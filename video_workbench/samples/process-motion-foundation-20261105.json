@@ -1,0 +1,231 @@
+{
+  "schema": "video.process-foundation-result.v1",
+  "date": "2026-11-05",
+  "branch": "codex/video-audio-clock",
+  "scope": "local_three_cards_one_token_path_transfer_and_finite_state_changes",
+  "compiler": "motion-process-compiler-1",
+  "plan_schema": "video.process-plan.v1",
+  "openspec_change": "improve-video-audio-clock-and-expression",
+  "completed_tasks": [
+    "3.1a",
+    "3.2a"
+  ],
+  "production_integrated": false,
+  "deployed": false,
+  "merged": false,
+  "audio_kind": "synthetic_silence_not_narration",
+  "output_audio_streams": 0,
+  "alignment_method": "estimated",
+  "timing_review": "pending",
+  "voice_naturalness": "not_evaluated",
+  "visual_comprehension": "pending_user_review",
+  "agent_calls": 0,
+  "tts_calls": 0,
+  "business_writes": 0,
+  "experiment": {
+    "image": "arm-cluster-master:5000/video-motion-renderer:latest@sha256:a39f5e41fd2fba6aeaba28a1e04eea0e057d6a98fcd087b9cb626e6ef7a3814a",
+    "local_image_id": "sha256:bcb2fa4518c3f3e0d36433fb00846b07e543b5791cf4369fc56d0c85966877bb",
+    "limits": {
+      "cpus": 2,
+      "memory_bytes": 4294967296,
+      "timeout_seconds": 300,
+      "network": "none"
+    },
+    "seconds": 49.21032136888243,
+    "container_cleanup_confirmed": true,
+    "stages": [
+      {
+        "stage": "observe",
+        "status": "passed",
+        "exit_code": 0,
+        "seconds": 6.294226341880858
+      },
+      {
+        "stage": "encode",
+        "status": "passed",
+        "exit_code": 0,
+        "seconds": 40.588665132876486
+      },
+      {
+        "stage": "probe",
+        "status": "passed",
+        "exit_code": 0,
+        "seconds": 0.1674741068854928
+      },
+      {
+        "stage": "decode",
+        "status": "passed",
+        "exit_code": 0,
+        "seconds": 1.127076396951452
+      }
+    ],
+    "memory_peak_bytes": 450756608
+  },
+  "runtime": {
+    "schema": "video.motion-runtime.v1",
+    "hyperframes": "0.8.149",
+    "hyperframes_source": "2905162d925fc87fb8242e24ed0bbf025d307ea1",
+    "node": "22.20.0",
+    "browser": "Chromium 149.0.7827.0",
+    "ffmpeg": "ffmpeg version 5.1.9-0+deb12u1 Copyright (c) 2000-2026 the FFmpeg developers",
+    "gsap": "3.14.2",
+    "gsap_sha256": "c174bfce53a729418d57a8ad8625e7247c793a22fef8e2851e3cfa3de9cd8280",
+    "font_sha256": "b76b0433203017ca80401b2ee0dd69350349871c4b19d504c34dbdd80541690a",
+    "npm_lock_sha256": "2af25291939e9a22d9ac8627e4e6b34486cd4adb67fe87b5e5c3bd949a143ec5",
+    "dpkg_sha256": "53cd24a529bd41f3d2aee4c75066659ac6af36ae351749f774675d42ba0378c6"
+  },
+  "media": {
+    "width": 1280,
+    "height": 720,
+    "fps": 24,
+    "seconds": 24,
+    "frames": 576,
+    "output_sha256": "54f492b374a1f39d6698d578f06d94289181402973d26b5883b75648d14b9e6f"
+  },
+  "review": {
+    "schema": "video.process-review.v1",
+    "technical_status": "passed",
+    "plan_sha256": "d42d645da3677f44a6dc58c63eb87af3ef45b2dc27d05690515cd6be0b0fe9b2",
+    "timeline_sha256": "be7c9dfe5ff35a68dbc456e8e66ebde0d16a5147a88051252b99ac07ff31ffe9",
+    "observation_sha256": "64c1b9f5cd1f46073bab02b8154c65fcbff0ab6b2e070cd37b6187af600c204c",
+    "checked_action_windows": 16,
+    "timing_review_status": "pending",
+    "visual_comprehension": "pending_user_review",
+    "voice_naturalness": "pending_user_review",
+    "checks": [
+      "native_exact_seek",
+      "complete_token_bounds",
+      "path_arc_length_progress",
+      "state_text_and_symbol",
+      "no_early_connections",
+      "font_and_text_bounds",
+      "reverse_seek",
+      "bound_plan_and_timeline"
+    ]
+  },
+  "independent_validation": {
+    "schema": "video.process-independent-validation.v1",
+    "status": "passed",
+    "experiment_sha256": "1507c3e7a985815744907a2f73fa02c3ace15b54574739799b26fc5ab78962e7",
+    "experiment_inputs_verified": 10,
+    "experiment_files_verified": 78,
+    "official_review_file": "process-review-final-r2.json",
+    "official_review_sha256": "6bc9c1ca569026eaeecf487afa7c0c537793cfae9795ca5ba79594a51885b03e",
+    "reviewer_code_sha256": "9858ff847ba8eeb526d8fa5bbfb131471ff1c6a1bc3fba7735b834a2c598c89a",
+    "observations_raw_sha256": "9ea1ac34769107abcc01db45201e63acf6006b257d71c02b052d525be0ebf049",
+    "observations_canonical_sha256": "64c1b9f5cd1f46073bab02b8154c65fcbff0ab6b2e070cd37b6187af600c204c",
+    "screenshot_bindings_verified": 51,
+    "dom_samples_verified": 50,
+    "action_windows_verified": 16,
+    "compiler_rebuild_exact_files": 6,
+    "sample_r2_equal_inputs": [
+      "plan.json",
+      "timeline.json",
+      "beats.json",
+      "alignment.json",
+      "index.html",
+      "manifest.json",
+      "audio.wav",
+      "sample.json",
+      "preview.html"
+    ],
+    "evidence4_output_mp4_equal": true,
+    "evidence4_all_51_screenshots_equal": true,
+    "output_mp4_sha256": "54f492b374a1f39d6698d578f06d94289181402973d26b5883b75648d14b9e6f",
+    "label_measured_height_scrollHeight_clientHeight": [
+      [
+        32,
+        32,
+        32
+      ]
+    ],
+    "draw_autoRound_false_present": true,
+    "environment_runtime_sha256": "8e9f9935fba760090de7845398a9924abec7b690e76c987c81e99cfcb091c9f0",
+    "audio_kind": "synthetic_silence_not_narration",
+    "timing_review": "pending",
+    "visual_comprehension": "pending_user_review",
+    "voice_naturalness": "not_evaluated_synthetic_silence",
+    "production_admission": false,
+    "business_writes": 0,
+    "agent_calls": 0,
+    "tts_calls": 0,
+    "limitations": [
+      "Local controlled three-card/one-token process experiment only; not production integration.",
+      "Exact seek checks cover recorded action windows and reverse seek; not exhaustive over every possible seek order.",
+      "Visual keyframe inspection confirmed half-drawn paths, hidden initial links/token, and readable state text; artistic approval remains pending.",
+      "Opposite arrow tips meet at the queue anchor in the final frame; minor visual design limitation retained."
+    ],
+    "final_review": true,
+    "previous_receipt_sha256": "73fe7481ec9bad7dbb3d9641cab05db8edc273689e1f4ca5972638f21c7d14a8",
+    "repeated_checks": [
+      "all_10_inputs",
+      "all_78_files",
+      "all_51_screenshot_bindings",
+      "all_50_dom_samples",
+      "all_16_action_windows",
+      "six_file_exact_recompile",
+      "sample_r2_input_bytes",
+      "evidence4_mp4_and_51_frame_bytes"
+    ],
+    "regression_report_file": "../tests-release-r2.xml",
+    "regression_report_sha256": "673b415d9275a043f66e5b36f9ca3628c3e981dabcdca76614c7e5ac18b7475f",
+    "final_revision": "r2"
+  },
+  "tests": {
+    "tests": 284,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "receipt": "rendered/audio-clock/process/tests-release-r2.xml",
+    "sha256": "673b415d9275a043f66e5b36f9ca3628c3e981dabcdca76614c7e5ac18b7475f"
+  },
+  "evidence_directory": "video_workbench/rendered/audio-clock/process/evidence-5",
+  "evidence_sha256": {
+    "experiment.json": "1507c3e7a985815744907a2f73fa02c3ace15b54574739799b26fc5ab78962e7",
+    "observations.json": "9ea1ac34769107abcc01db45201e63acf6006b257d71c02b052d525be0ebf049",
+    "process-review-final-r2.json": "6bc9c1ca569026eaeecf487afa7c0c537793cfae9795ca5ba79594a51885b03e",
+    "independent-validation-final-r2.json": "21fae038c4a686921b263871cd290edd13a23fd65ef1e451496529a363720613",
+    "plan.json": "d42d645da3677f44a6dc58c63eb87af3ef45b2dc27d05690515cd6be0b0fe9b2",
+    "timeline.json": "be7c9dfe5ff35a68dbc456e8e66ebde0d16a5147a88051252b99ac07ff31ffe9",
+    "index.html": "eefdb34d3df35a6c210bee4c4ea3686ff5795986587a4fb8fa4d50ef2a3d597a",
+    "manifest.json": "39699914870a5d5b45c9c4836d0bad35e3f79cd5c65370057c525e271273866d",
+    "observe-process.mjs": "49edc059de2f6fc1e9e046dc3e8456cd48d2f632dc3a8fd5308878f1665bb336",
+    "sample.json": "8806583210be56e2319af5a755833db3c212b88f11574c9e0576f67ebd2d2c55"
+  },
+  "source_sha256_working_bytes": {
+    "agent_service/profiles/video_process_contract.py": "ecb9f9bac7a3d478f46cf14ccaa098c3f830c228ed8c42188abab73053ba2665",
+    "video_workbench/motion_process.py": "49de63fe2f3775a0ba64eb72b26ceffc8790fa37ab85e8fad4eefa3485dd0b4e",
+    "video_workbench/process_review.py": "9858ff847ba8eeb526d8fa5bbfb131471ff1c6a1bc3fba7735b834a2c598c89a",
+    "video_workbench/examples/build_process_sample.py": "1463feaadee59bbcb0310c2f37dcbb8523831f18dd616d99d7fd6baf770a5f4e"
+  },
+  "source_digest_note": "Working-file bytes before Git newline conversion; not a Git blob digest.",
+  "retained_attempts": [
+    {
+      "directory": "evidence",
+      "result": "observer_dependency_resolution_failed"
+    },
+    {
+      "directory": "evidence-2",
+      "result": "strict_encoder_free_disk_preflight_failed"
+    },
+    {
+      "directory": "evidence-3",
+      "result": "encoded_but_title_crop_and_dash_rounding_found"
+    },
+    {
+      "directory": "evidence-4",
+      "result": "encoded_but_dom_json_missing_from_download_allowlist"
+    },
+    {
+      "directory": "evidence-5",
+      "result": "strict_render_and_independent_review_passed"
+    }
+  ],
+  "limitations": [
+    "Only fixed three-card and one-token geometry; not arbitrary process layout.",
+    "Opposite arrows share a queue anchor; queue waiting label remains after dispatch.",
+    "Recorded action windows and reverse seek are checked, not every possible seek permutation.",
+    "New Agent profile, persistence/adoption, snapshots, renderer admission, UI and cross-scene integration remain pending.",
+    "No real narration, word alignment, preview/export one-frame comparison, mobile readability or human quality approval."
+  ]
+}

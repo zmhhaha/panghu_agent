@@ -1,0 +1,443 @@
+{
+  "schema": "video.audio-clock-baseline-set.v1",
+  "date": "2026-11-05",
+  "cases": [
+    {
+      "schema": "video.audio-clock-baseline.v1",
+      "date": "2026-11-05",
+      "case_id": "existing-yunjian-session-history-18s",
+      "recording": {
+        "sha256": "3fa64b4a6800984b4b87719adca38a2eee533d19a5616d7a79305c08b566bce8",
+        "bytes": 864044,
+        "duration_seconds": 18.0,
+        "sample_rate": 24000,
+        "channels": 1,
+        "sample_width": 2
+      },
+      "speech_identity": {
+        "model": "kokoro-rk3588",
+        "voice": "zm_yunjian",
+        "speed": 1.0
+      },
+      "source_receipt_sha256": "b2b738b866e853a04b3a9c4ada31cd6f1d7d91dc3fcf1414fb2480c90a12fff8",
+      "original_source": "2026-10-31 presentation-redesign/narration-sample-receipt.json",
+      "benchmark": {
+        "schema": "video.alignment-benchmark.v1",
+        "beats": {
+          "schema": "video.beats.v1",
+          "source_text": "你可以把会话日志想成一本工作记录。完整回答会留下来，失败、重试或取消的尝试也会留下来，方便查问题。下一轮交给模型时，会把完整回答整理进历史；这些尝试记录则不会加入。",
+          "spoken_text": "你可以把会话日志想成一本工作记录。完整回答会留下来，失败、重试或取消的尝试也会留下来，方便查问题。下一轮交给模型时，会把完整回答整理进历史；这些尝试记录则不会加入。",
+          "segments": [
+            {
+              "id": "beat_58268e0eb9091e6c",
+              "source_start": 0,
+              "source_end": 17,
+              "spoken_start": 0,
+              "spoken_end": 17,
+              "source_text": "你可以把会话日志想成一本工作记录。",
+              "spoken_text": "你可以把会话日志想成一本工作记录。"
+            },
+            {
+              "id": "beat_0a9f8a0e167bb879",
+              "source_start": 17,
+              "source_end": 49,
+              "spoken_start": 17,
+              "spoken_end": 49,
+              "source_text": "完整回答会留下来，失败、重试或取消的尝试也会留下来，方便查问题。",
+              "spoken_text": "完整回答会留下来，失败、重试或取消的尝试也会留下来，方便查问题。"
+            },
+            {
+              "id": "beat_5a47efe79b2652b0",
+              "source_start": 49,
+              "source_end": 70,
+              "spoken_start": 49,
+              "spoken_end": 70,
+              "source_text": "下一轮交给模型时，会把完整回答整理进历史；",
+              "spoken_text": "下一轮交给模型时，会把完整回答整理进历史；"
+            },
+            {
+              "id": "beat_0206fe31d7b3f71d",
+              "source_start": 70,
+              "source_end": 82,
+              "spoken_start": 70,
+              "spoken_end": 82,
+              "source_text": "这些尝试记录则不会加入。",
+              "spoken_text": "这些尝试记录则不会加入。"
+            }
+          ]
+        },
+        "audio_sha256": "3fa64b4a6800984b4b87719adca38a2eee533d19a5616d7a79305c08b566bce8",
+        "audio_seconds": 18.0,
+        "gates": {
+          "minimum_references": 10,
+          "median_error_seconds": 0.15,
+          "maximum_error_seconds": 0.3,
+          "maximum_uncertainty_seconds": 0.05
+        },
+        "references": [
+          {
+            "spoken_start": 4,
+            "spoken_end": 8,
+            "text": "会话日志",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 12,
+            "spoken_end": 16,
+            "text": "工作记录",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 17,
+            "spoken_end": 21,
+            "text": "完整回答",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 26,
+            "spoken_end": 28,
+            "text": "失败",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 29,
+            "spoken_end": 31,
+            "text": "重试",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 32,
+            "spoken_end": 34,
+            "text": "取消",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 45,
+            "spoken_end": 48,
+            "text": "查问题",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 49,
+            "spoken_end": 52,
+            "text": "下一轮",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 52,
+            "spoken_end": 56,
+            "text": "交给模型",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 67,
+            "spoken_end": 69,
+            "text": "历史",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 72,
+            "spoken_end": 76,
+            "text": "尝试记录",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 77,
+            "spoken_end": 81,
+            "text": "不会加入",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          }
+        ]
+      },
+      "execution_budget": {
+        "cpu_threads": 2,
+        "memory_limit_mib": 4096,
+        "wall_seconds": 300,
+        "maximum_audio_seconds": 60,
+        "model_attempts_per_case": 1,
+        "paid_api_requests": 0,
+        "tts_requests": 0,
+        "render_requests": 0,
+        "download_weight_bytes": 0
+      },
+      "human_references_complete": false,
+      "actual_alignment_executed": false,
+      "limitations": [
+        "This existing recording is 18 seconds, not the full approximately 30-second technical acceptance case.",
+        "Digits, abbreviations, polyphones and pronunciation-replacement coverage require an additional frozen case.",
+        "All twelve reference times are deliberately empty pending independent listening annotations.",
+        "CPU/memory/wall budgets are predeclared; memory and wall limits require an external isolated runner before inference."
+      ]
+    },
+    {
+      "schema": "video.audio-clock-baseline.v1",
+      "date": "2026-11-05",
+      "case_id": "existing-yunjian-session-events-32s",
+      "recording": {
+        "sha256": "e67c5a2e871aaf5928dc02e9569f51af31f3ae9aa3dd4bde401354da6bae3855",
+        "bytes": 1536044,
+        "duration_seconds": 32.0,
+        "sample_rate": 24000,
+        "channels": 1,
+        "sample_width": 2
+      },
+      "speech_identity": {
+        "model": "kokoro-rk3588",
+        "voice": "zm_yunjian",
+        "speed": 1.0
+      },
+      "original_source": {
+        "kind": "existing-immutable-audio-operation-input",
+        "project_id": "1e2a822d-c4c1-45de-a8b9-b72a82f714bc",
+        "scene_id": "e4a0c297-1eb8-4554-881d-670890bb683c",
+        "audio_version_id": "6e1d3101-e817-445b-a38d-2e646aec338f",
+        "operation_id": "5d1c2bf2-5112-4e05-be4e-4020dc7de674",
+        "lookup": "read-only exact project and candidate identity; no project mutation"
+      },
+      "pronunciation": {
+        "assistant/message": "assistant 斜杠 message",
+        "assistant/attempt": "assistant 斜杠 attempt",
+        "agent/assistant-stream": "agent 斜杠 assistant stream"
+      },
+      "benchmark": {
+        "schema": "video.alignment-benchmark.v1",
+        "beats": {
+          "schema": "video.beats.v1",
+          "source_text": "持久化 Session 事件记录已提交的事实；agent 事件描述实时过程；文件系统、工具和遥测等能力事件提供策略接缝。会话日志是模型上下文的来源，deriveMessages 从中投影历史。assistant/message 保留完整的紧凑流；assistant/attempt 保留失败、重试或取消的尝试，不加入模型历史。界面的瞬时输出块则来自 agent/assistant-stream。",
+          "spoken_text": "持久化 Session 事件记录已提交的事实；agent 事件描述实时过程；文件系统、工具和遥测等能力事件提供策略接缝。会话日志是模型上下文的来源，deriveMessages 从中投影历史。assistant 斜杠 message 保留完整的紧凑流；assistant 斜杠 attempt 保留失败、重试或取消的尝试，不加入模型历史。界面的瞬时输出块则来自 agent 斜杠 assistant stream。",
+          "segments": [
+            {
+              "id": "beat_070223e16f5af4c0",
+              "source_start": 0,
+              "source_end": 23,
+              "spoken_start": 0,
+              "spoken_end": 23,
+              "source_text": "持久化 Session 事件记录已提交的事实；",
+              "spoken_text": "持久化 Session 事件记录已提交的事实；"
+            },
+            {
+              "id": "beat_4971d820749c5960",
+              "source_start": 23,
+              "source_end": 38,
+              "spoken_start": 23,
+              "spoken_end": 38,
+              "source_text": "agent 事件描述实时过程；",
+              "spoken_text": "agent 事件描述实时过程；"
+            },
+            {
+              "id": "beat_bfa41691b8c38c6e",
+              "source_start": 38,
+              "source_end": 60,
+              "spoken_start": 38,
+              "spoken_end": 60,
+              "source_text": "文件系统、工具和遥测等能力事件提供策略接缝。",
+              "spoken_text": "文件系统、工具和遥测等能力事件提供策略接缝。"
+            },
+            {
+              "id": "beat_a6dcd9a55db98ba6",
+              "source_start": 60,
+              "source_end": 96,
+              "spoken_start": 60,
+              "spoken_end": 96,
+              "source_text": "会话日志是模型上下文的来源，deriveMessages 从中投影历史。",
+              "spoken_text": "会话日志是模型上下文的来源，deriveMessages 从中投影历史。"
+            },
+            {
+              "id": "beat_baf1c915abe2b8f1",
+              "source_start": 96,
+              "source_end": 123,
+              "spoken_start": 96,
+              "spoken_end": 126,
+              "source_text": "assistant/message 保留完整的紧凑流；",
+              "spoken_text": "assistant 斜杠 message 保留完整的紧凑流；"
+            },
+            {
+              "id": "beat_a11f5986ba48bd2d",
+              "source_start": 123,
+              "source_end": 163,
+              "spoken_start": 126,
+              "spoken_end": 169,
+              "source_text": "assistant/attempt 保留失败、重试或取消的尝试，不加入模型历史。",
+              "spoken_text": "assistant 斜杠 attempt 保留失败、重试或取消的尝试，不加入模型历史。"
+            },
+            {
+              "id": "beat_ad4d1a75d2a85cbf",
+              "source_start": 163,
+              "source_end": 198,
+              "spoken_start": 169,
+              "spoken_end": 207,
+              "source_text": "界面的瞬时输出块则来自 agent/assistant-stream。",
+              "spoken_text": "界面的瞬时输出块则来自 agent 斜杠 assistant stream。"
+            }
+          ]
+        },
+        "audio_sha256": "e67c5a2e871aaf5928dc02e9569f51af31f3ae9aa3dd4bde401354da6bae3855",
+        "audio_seconds": 32.0,
+        "gates": {
+          "minimum_references": 10,
+          "median_error_seconds": 0.15,
+          "maximum_error_seconds": 0.3,
+          "maximum_uncertainty_seconds": 0.05
+        },
+        "references": [
+          {
+            "spoken_start": 0,
+            "spoken_end": 3,
+            "text": "持久化",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 4,
+            "spoken_end": 11,
+            "text": "Session",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 16,
+            "spoken_end": 19,
+            "text": "已提交",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 33,
+            "spoken_end": 37,
+            "text": "实时过程",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 55,
+            "spoken_end": 59,
+            "text": "策略接缝",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 60,
+            "spoken_end": 64,
+            "text": "会话日志",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 65,
+            "spoken_end": 70,
+            "text": "模型上下文",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 74,
+            "spoken_end": 88,
+            "text": "deriveMessages",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 119,
+            "spoken_end": 121,
+            "text": "完整",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 149,
+            "spoken_end": 151,
+            "text": "失败",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 152,
+            "spoken_end": 154,
+            "text": "重试",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 155,
+            "spoken_end": 157,
+            "text": "取消",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 161,
+            "spoken_end": 164,
+            "text": "不加入",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          },
+          {
+            "spoken_start": 172,
+            "spoken_end": 177,
+            "text": "瞬时输出块",
+            "reference_start": null,
+            "uncertainty_seconds": null,
+            "reviewed_by": null
+          }
+        ]
+      },
+      "execution_budget": {
+        "cpu_threads": 2,
+        "memory_limit_mib": 4096,
+        "wall_seconds": 300,
+        "maximum_audio_seconds": 60,
+        "model_attempts_per_case": 1,
+        "paid_api_requests": 0,
+        "tts_requests": 0,
+        "render_requests": 0,
+        "download_weight_bytes": 0
+      },
+      "human_references_complete": false,
+      "actual_alignment_executed": false,
+      "limitations": [
+        "Independent human reference timestamps are pending.",
+        "Digits and explicit letter-by-letter acronym coverage require an additional case.",
+        "Actual alignment model execution and precision have not been tested."
+      ]
+    }
+  ],
+  "human_references_complete": false,
+  "actual_alignment_executed": false
+}

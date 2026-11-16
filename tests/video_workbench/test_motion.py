@@ -416,7 +416,7 @@ def test_v5_label_plates_are_above_all_strokes_and_follow_draw_visibility():
     beats = make_beats(SPOKEN_TEXT)
     plan = history_plan(beats)
     page = compile_project(plan, beats, estimated_alignment(beats, 'a' * 64, 18))['index.html'].decode()
-    assert "version:'motion-compiler-5'" in page
+    assert "version:'motion-compiler-6'" in page
     assert 'class="relation-base"' not in page
     assert page.rfind('class="relation-active"') < page.index('class="relation-label"')
     assert 'class="relation-plate"' in page

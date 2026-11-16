@@ -1,0 +1,20 @@
+{
+  "bundle_revision": "video-resource-plan-v1",
+  "automatic_updates": false,
+  "upstream_content_vendored": false,
+  "license": "MIT",
+  "local_files": [
+    {
+      "path": "CONTRACT.md",
+      "sha256": "5b6a9aaffa7d6a189ef3b2c20d74b9c6e15ee32dbfd711acac2a164d57924b67"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "7b6b7b92d1b6756c36abbc6fab2b37dd51a8979c15808da9957079213aebffbf"
+    },
+    {
+      "path": "resource-plan-procedure/SKILL.md",
+      "sha256": "acdb59aa7dc84dcdc7068f724c0eee96df68a284b3a08d7347f5fddba4796608"
+    }
+  ]
+}

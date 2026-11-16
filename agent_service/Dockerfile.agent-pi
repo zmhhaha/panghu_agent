@@ -9,8 +9,9 @@ USER 0:0
 # Keep the reviewed donor fixed. This dependency stage is identical in both
 # Worker Dockerfiles and remains cached when only application sources change.
 COPY agent_service/requirements.txt /tmp/agent-service-requirements.txt
+ARG PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 RUN /opt/hermes/.venv/bin/python -m venv /opt/agent-service/.venv \
-    && /opt/agent-service/.venv/bin/python -m pip install --no-cache-dir -r /tmp/agent-service-requirements.txt \
+    && /opt/agent-service/.venv/bin/python -m pip install --no-cache-dir -r /tmp/agent-service-requirements.txt --index-url "${PYPI_INDEX_URL}" \
     && /opt/agent-service/.venv/bin/python -m pip check \
     && rm /tmp/agent-service-requirements.txt \
     && chown -R 0:0 /opt/ppt-master \

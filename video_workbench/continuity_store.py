@@ -21,6 +21,10 @@ MAX_PROJECT_CANDIDATES = 64
 MAX_VERSION_BYTES = 512 * 1024
 MAX_PROJECT_JSON_BYTES = 32 * 1024 * 1024
 MAX_TOTAL_JSON_BYTES = 128 * 1024 * 1024
+LEGACY_COMPILER = 'motion-continuity-compiler-2'
+PROCESS_COMPILER = 'motion-process-continuity-compiler-1'
+PROCESS_SOURCE_COMPILER = 'motion-process-compiler-2'
+PROCESS_SCHEMA = 'video.process-plan.v1'
 
 
 def _require(value, code='invalid_continuity_request', status=422):
@@ -37,12 +41,26 @@ def _revision(value):
     _require(type(value) is int and value >= 1)
 
 
-def _validated(plan, scenes):
+def _validated(plan, scenes, compiler=LEGACY_COMPILER):
     # Import the video-owned pure contract here; no shared Agent profile is
     # widened by registering or reading a continuity candidate.
-    from .continuity import validate_continuity_plan
-    result = validate_continuity_plan(plan, scenes)
+    if compiler == PROCESS_COMPILER:
+        from .process_continuity import validate_process_continuity_plan
+        result = validate_process_continuity_plan(plan, scenes)
+    else:
+        _require(type(compiler) is str and compiler in {'motion-continuity-compiler-1', LEGACY_COMPILER},
+                 'continuity_compiler_version_unsupported', 409)
+        _require(not any(scene['motion']['plan'].get('schema') == PROCESS_SCHEMA for scene in scenes),
+                 'continuity_compiler_schema_mismatch', 409)
+        from .continuity import validate_continuity_plan
+        result = validate_continuity_plan(plan, scenes)
     return deepcopy(plan if result is None else result)
+
+
+def _require_supported(current):
+    for reason in ('process_continuity_mixed_not_supported', 'process_continuity_source_unsupported',
+                   'continuity_semantic_layout_not_supported', 'creative_continuity_not_supported'):
+        _require(not any(issue['reason'] == reason for issue in current['issues']), reason, 409)
 
 
 class ContinuityStore:
@@ -79,7 +97,7 @@ class ContinuityStore:
 
     def _current(self, db, owner, project_id, project=None):
         project = project if project is not None else self.store._project(db, owner, project_id)
-        scenes, summaries, inputs, issues = [], [], [], []
+        scenes, summaries, inputs, issues, kinds = [], [], [], [], []
         if len(project['scenes']) < 2:
             issues.append(dict(scene_id=None, scene_title=None, kind='project', reason='continuity_requires_scenes'))
         for scene in project['scenes']:
@@ -106,24 +124,62 @@ class ContinuityStore:
                     elif (version['semantic_binding_sha256'] != binding
                           or digest(version['plan']) != version['plan_sha256']):
                         reason = 'continuity_motion_stale'
+                    elif version['plan'].get('schema') in {'video.creative-scene.v1', 'video.creative-scene.v2',
+                                                          'video.creative-scene.v3', 'video.creative-scene.v4', 'video.creative-scene.v5'}:
+                        reason = 'creative_continuity_not_supported'
+                    elif (version['plan'].get('schema') == PROCESS_SCHEMA
+                          and version.get('compiler_version') != PROCESS_SOURCE_COMPILER):
+                        reason = 'process_continuity_source_unsupported'
+                    elif (version['plan'].get('template') in {'sequence', 'nested'}
+                          or 'sources' in version['plan']):
+                        reason = 'continuity_semantic_layout_not_supported'
             if reason:
                 issues.append(dict(scene_id=scene_id, scene_title=scene['title'], kind='motion', reason=reason))
-            elements = deepcopy(version['plan']['elements']) if version is not None else []
-            summaries.append(dict(scene_id=scene_id, title=scene['title'], elements=elements))
-            inputs.append(dict(scene_id=scene_id, semantic_binding_sha256=binding,
-                               motion_version_id=head['version_id'],
-                               motion_plan_sha256=version['plan_sha256'] if version is not None else None))
+            creative = version is not None and version['plan'].get('schema') in {
+                'video.creative-scene.v1', 'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4', 'video.creative-scene.v5'}
+            elements = deepcopy(version['plan']['elements']) if version is not None and not creative else []
+            summary = dict(scene_id=scene_id, title=scene['title'], elements=elements)
+            source = dict(scene_id=scene_id, semantic_binding_sha256=binding,
+                          motion_version_id=head['version_id'],
+                          motion_plan_sha256=version['plan_sha256'] if version is not None else None)
+            process = version is not None and version['plan'].get('schema') == PROCESS_SCHEMA
+            kinds.append('process' if process else 'diagram')
+            if process:
+                summary['diagram_kind'] = 'process'
+                # This is a new input binding only for process candidates. Old
+                # diagram bindings keep their original bytes and freshness.
+                source['motion_compiler_version'] = version.get('compiler_version')
+                if reason is None:
+                    from .process_continuity import process_scene_summary
+                    try:
+                        summary = process_scene_summary(dict(id=scene_id, title=scene['title'],
+                                                             motion=deepcopy(version)))
+                    except ServiceError:
+                        issues.append(dict(scene_id=scene_id, scene_title=scene['title'], kind='motion',
+                                           reason='process_continuity_source_invalid'))
+            summaries.append(summary)
+            inputs.append(source)
             if version is not None:
                 scenes.append(dict(id=scene_id, title=scene['title'], narration=scene['narration'],
                                    motion=deepcopy(version)))
+        if 'process' in kinds and 'diagram' in kinds:
+            issues.append(dict(scene_id=None, scene_title=None, kind='project',
+                               reason='process_continuity_mixed_not_supported'))
         input_binding = dict(schema=INPUT_SCHEMA, scenes=inputs)
         return dict(project=project, scenes=scenes, scene_summaries=summaries, issues=issues,
-                    input_binding=input_binding, input_binding_sha256=digest(input_binding))
+                    input_binding=input_binding, input_binding_sha256=digest(input_binding),
+                    compiler=PROCESS_COMPILER if kinds and set(kinds) == {'process'} else LEGACY_COMPILER)
 
     @staticmethod
     def _public(version, current, head_id):
         result = deepcopy(version)
-        result['stale'] = bool(current['issues'] or version['input_binding_sha256'] != current['input_binding_sha256'])
+        # Candidates predating compiler freezing are diagram compiler 2. In
+        # particular, a new process default must never reinterpret old rows.
+        result['compiler'] = version.get('compiler', LEGACY_COMPILER)
+        compilers = ((PROCESS_COMPILER,) if current['compiler'] == PROCESS_COMPILER
+                     else ('motion-continuity-compiler-1', LEGACY_COMPILER))
+        result['stale'] = bool(current['issues'] or result['compiler'] not in compilers
+                               or version['input_binding_sha256'] != current['input_binding_sha256'])
         result['adoptable'] = not result['stale']
         result['adopted'] = version['id'] == head_id
         return result
@@ -146,19 +202,29 @@ class ContinuityStore:
             project = self.store._project(db, owner, project_id)
             self.store._revision(project, expected_revision)
             current = self._current(db, owner, project_id, project)
+            _require_supported(current)
             _require(not current['issues'], 'continuity_inputs_unavailable', 409)
             if links is None:
-                from .continuity import build_continuity_plan
-                plan = build_continuity_plan(current['scenes'])
+                if current['compiler'] == PROCESS_COMPILER:
+                    from .process_continuity import build_process_continuity_plan
+                    plan = build_process_continuity_plan(current['scenes'])
+                else:
+                    from .continuity import build_continuity_plan
+                    plan = build_continuity_plan(current['scenes'])
             else:
                 plan = dict(schema=PLAN_SCHEMA, links=deepcopy(links))
-            plan = _validated(plan, current['scenes'])
+            plan = _validated(plan, current['scenes'], current['compiler'])
+            summaries = current['scene_summaries']
+            if current['compiler'] == PROCESS_COMPILER:
+                from .process_continuity import process_continuity_summaries
+                summaries = process_continuity_summaries(current['scenes'], plan)
             count = db.execute('SELECT COUNT(*) FROM continuity_versions WHERE owner=? AND project_id=?',
                                (owner, project_id)).fetchone()[0]
             _require(count < MAX_PROJECT_CANDIDATES, 'continuity_candidate_limit', 409)
             version = dict(id=str(uuid4()), project_id=project_id, number=count + 1, created_at=time.time(),
                            input_binding=current['input_binding'], input_binding_sha256=current['input_binding_sha256'],
-                           plan=plan, plan_sha256=digest(plan), scene_summaries=current['scene_summaries'])
+                           plan=plan, plan_sha256=digest(plan), compiler=current['compiler'],
+                           scene_summaries=summaries)
             raw = canonical_bytes(version)
             self._capacity(db, project_id, len(raw))
             db.execute('INSERT INTO continuity_versions VALUES (?, ?, ?, ?)',
@@ -203,10 +269,11 @@ class ContinuityStore:
             head_id = self._head(db, owner, project_id)
             _require(head_id == expected_head_id, 'continuity_head_conflict', 409)
             current = self._current(db, owner, project_id, project)
+            _require_supported(current)
             _require(not current['issues'] and version['input_binding_sha256'] == current['input_binding_sha256'],
                      'continuity_plan_stale', 409)
             _require(digest(version['plan']) == version['plan_sha256'], 'continuity_plan_invalid', 409)
-            _validated(version['plan'], current['scenes'])
+            _validated(version['plan'], current['scenes'], version.get('compiler', LEGACY_COMPILER))
             if head_id != version_id:
                 db.execute('INSERT INTO continuity_heads VALUES (?, ?, ?) '
                            'ON CONFLICT(owner,project_id) DO UPDATE SET version_id=excluded.version_id',
@@ -227,9 +294,12 @@ class ContinuityStore:
             version = self._version(db, owner, selected_id)
             _require(version['project_id'] == project_id, 'not_found', 404)
             current = self._current(db, owner, project_id, project)
+            _require_supported(current)
             _require(not current['issues'] and version['input_binding_sha256'] == current['input_binding_sha256'],
                      'continuity_plan_stale', 409)
             _require(digest(version['plan']) == version['plan_sha256'], 'continuity_plan_invalid', 409)
-            plan = _validated(version['plan'], current['scenes'])
+            compiler = version.get('compiler', LEGACY_COMPILER)
+            plan = _validated(version['plan'], current['scenes'], compiler)
             return dict(id=version['id'], version_id=version['id'], plan=plan,
-                        input_binding_sha256=version['input_binding_sha256'], plan_sha256=version['plan_sha256'])
+                        input_binding_sha256=version['input_binding_sha256'], plan_sha256=version['plan_sha256'],
+                        compiler=compiler)

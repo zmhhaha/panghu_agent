@@ -25,13 +25,17 @@ import zlib
 
 import httpx
 
-from agent_service.contracts import ServiceError, canonical_bytes
+from agent_service.contracts import ServiceError, canonical_bytes, digest
 from .motion import COMPILER_TEMPLATES, compile_project
-from .continuity import (CONTINUITY_COMPILER_TEMPLATES,
+from .continuity import (ALL_CONTINUITY_COMPILER_TEMPLATES,
                          compile_continuity_project)
 from .motion_review import verify_observations
+from .motion_dispatch import PROCESS_SCHEMA, PRODUCTION_PROCESS_COMPILER, scene_compiler
+from .process_review import verify_process_observations
 from .motion_renderer.job import FILES, INIT, freeze_input
-from .motion_render_adapter import UNAVAILABLE
+from .motion_render_adapter import UNAVAILABLE, safe_motion_context
+from .creative_renderer import (COMPILER_TEMPLATES as CREATIVE_COMPILER_TEMPLATES,
+    compile_creative_project)
 
 CHUNK_BYTES = 512 * 1024
 BUNDLE_BYTES = 16 * 1024 * 1024
@@ -191,7 +195,10 @@ def production_resources(directory, *, image, release_id, namespace, name, bindi
     frozen = freeze_input(directory, image_digest=image.rsplit('@', 1)[1], max_payload_bytes=BUNDLE_BYTES)
     manifest = json.loads((Path(directory) / 'manifest.json').read_bytes())
     require(COMPILER_TEMPLATES.get(manifest['compiler']) == manifest['template'] or
-            CONTINUITY_COMPILER_TEMPLATES.get(manifest['compiler']) == manifest['template'],
+            ALL_CONTINUITY_COMPILER_TEMPLATES.get(manifest['compiler']) == manifest['template'] or
+            CREATIVE_COMPILER_TEMPLATES.get(manifest['compiler']) == manifest['template'] or
+            (manifest['compiler'], manifest['template']) in {
+                (PRODUCTION_PROCESS_COMPILER, 'controlled-process-2')},
             'motion_production_template_not_supported', 422)
     labels = {'app': 'video-motion-renderer', LABEL + 'execution': binding[:32]}
     annotations = {ANNOTATION: binding, LABEL + 'bundle-sha256': frozen['bundle_sha256'],
@@ -307,6 +314,151 @@ def unpack_artifacts(logs):
         raise ServiceError('motion_artifacts_invalid', 502) from None
 
 
+def _creative_engine_observation(value, engine):
+    require(type(value) is dict and set(value) == {'engine', 'revision', 'contexts'}
+        and value['engine'] == engine and value['revision'] == 'animation-engine-runtime-1',
+        'creative_engine_observation_invalid')
+    rows = value['contexts']
+    require(type(rows) is list and len(rows) <= 16, 'creative_engine_observation_invalid')
+    kinds = []
+    for row in rows:
+        require(type(row) is dict and row.get('kind') in ({'2d', 'webgl2'} if engine == 'three'
+            else {'2d'} if engine == 'canvas' else set()), 'creative_engine_observation_invalid')
+        expected = {'kind', 'width', 'height', 'connected', 'visible'}
+        if row['kind'] == 'webgl2':
+            expected |= {'renderer', 'software', 'context_lost', 'gl_error'}
+            require(type(row.get('renderer')) is str and 0 < len(row['renderer']) <= 2000
+                and 'swiftshader' in row['renderer'].lower() and row.get('software') is True
+                and row.get('context_lost') is False and type(row.get('gl_error')) is int
+                and row['gl_error'] == 0, 'creative_engine_observation_invalid')
+        require(set(row) == expected
+            and all(type(row[key]) is int and 0 <= row[key] <= 4096 for key in ('width', 'height'))
+            and all(type(row[key]) is bool for key in ('connected', 'visible')),
+            'creative_engine_observation_invalid')
+        if row['connected'] and row['visible'] and row['width'] > 0 and row['height'] > 0:
+            kinds.append(row['kind'])
+    require(engine == 'html-svg' or ('webgl2' if engine == 'three' else '2d') in kinds,
+            'creative_native_context_missing')
+    return value
+
+
+def _hyperframes_project_observation(proof, timeline, runtime, *, minimum_seeks):
+    creative = timeline['creative']
+    project = creative['hyperframes_project']
+    require(runtime.get('schema') == 'video.motion-runtime.v3'
+        and digest(project) == creative['hyperframes_project_sha256']
+        and type(proof) is dict
+        and proof.get('schema') == 'video.hyperframes-project-runtime-proof.v1'
+        and proof.get('runtime') == 'hyperframes-core-project-1'
+        and proof.get('project_id') == project['project_id']
+        and proof.get('project_sha256') == creative['hyperframes_project_sha256']
+        and proof.get('version') == runtime.get('hyperframes')
+        and proof.get('core_sha256') == runtime.get('hyperframes_core_sha256')
+        and proof.get('seek_protocol') == 'hyperframes-core-renderSeek-exact'
+        and proof.get('legacy_bridge') is True
+        and proof.get('evidence_scope') == 'single_scene_project_not_whole_film'
+        and type(proof.get('core_seek_count')) is int and proof['core_seek_count'] >= minimum_seeks
+        and type(proof.get('dispatch_count')) is int and proof['dispatch_count'] >= proof['core_seek_count']
+        and type(proof.get('actual_seconds')) in (int, float) and proof['actual_seconds'] == 0
+        and type(proof.get('last_dispatched_seconds')) in (int, float) and proof['last_dispatched_seconds'] == 0,
+        'creative_hyperframes_observation_invalid')
+    return deepcopy(proof)
+
+
+def validate_creative_artifacts(entries, files, observations, runtime, quality):
+    """Independent custody/clock checks; no generic aesthetic approval claim."""
+    timeline, package = (json.loads(files[name]) for name in ('timeline.json', 'plan.json'))
+    count = round(timeline['duration_seconds'] * 24)
+    engine_aware = package['schema'] in {'video.creative-scene.v3', 'video.creative-scene.v4', 'video.creative-scene.v5'}
+    hyperframes = timeline['compiler'] == 'creative-skill-hyperframes-scene-adapter-1'
+    renderer = ('isolated-hyperframes-core-project-ffmpeg-1' if hyperframes else
+        'isolated-chromium-engine-seek-ffmpeg-1' if engine_aware else 'isolated-chromium-absolute-seek-ffmpeg-1')
+    require(type(observations) is dict and observations.get('schema') ==
+            ('video.creative-observations.v3' if hyperframes else
+             'video.creative-observations.v2' if engine_aware else 'video.creative-observations.v1')
+            and observations.get('input_sha256') == package['input_sha256']
+            and observations.get('source_sha256') == package['result_sha256']
+            and observations.get('renderer') == renderer
+            and observations.get('frame_count') == count
+            and observations.get('blocked_requests') == [] and observations.get('page_errors') == [],
+            'creative_observation_binding_mismatch')
+    if engine_aware:
+        require(observations.get('engine') == package['engine'] and observations.get('idle_clock_verified') is True,
+                'creative_engine_observation_invalid')
+        require(observations.get('loaded_engine_assets') ==
+            (['three.module.min.js'] if package['engine'] == 'three' else []), 'creative_engine_observation_invalid')
+    samples = observations.get('samples')
+    require(type(samples) is list and len(samples) == 20, 'creative_observation_samples_invalid')
+    expected_times = [0, *[(count - 1) / 24 * (i + 1) / 18 for i in range(17)], (count - 1) / 24, 0]
+    for index, (row, expected_time) in enumerate(zip(samples, expected_times)):
+        filename = f'observations/creative-{index}.jpg'
+        local = max(0, min(timeline['audio_seconds'], expected_time - timeline['leading_seconds']))
+        require(type(row) is dict and row.get('path') == filename and row.get('time') == expected_time
+                and row.get('local_seconds') == local and row.get('bytes') == len(entries[filename])
+                and row.get('frame_sha256') == sha(entries[filename]), 'creative_observation_frame_mismatch')
+        if engine_aware:
+            _creative_engine_observation(row.get('engine_observation'), package['engine'])
+    require(samples[0]['frame_sha256'] == samples[-1]['frame_sha256'], 'creative_reverse_seek_mismatch')
+    capture = json.loads(entries['render-receipt.json']).get('creative_capture')
+    require(type(capture) is dict and capture.get('schema') ==
+            ('video.creative-capture.v3' if hyperframes else
+             'video.creative-capture.v2' if engine_aware else 'video.creative-capture.v1')
+            and capture.get('renderer') == observations['renderer'] and capture.get('frame_count') == count
+            and capture.get('first_sha256') == samples[0]['frame_sha256']
+            and capture.get('last_sha256') == samples[-2]['frame_sha256']
+            and capture.get('reverse_initial_sha256') == samples[-1]['frame_sha256']
+            and capture.get('probe_sha256') == [row['frame_sha256'] for row in samples]
+            and capture.get('blocked_requests') == [] and capture.get('page_errors') == [],
+            'creative_render_observation_mismatch')
+    if engine_aware:
+        require(capture.get('engine') == package['engine'] and capture.get('idle_clock_verified') is True
+            and capture.get('loaded_engine_assets') == observations['loaded_engine_assets']
+            and capture.get('probe_engine_observations') == [row['engine_observation'] for row in samples],
+            'creative_render_observation_mismatch')
+    technical = dict(status='passed', renderer=observations['renderer'],
+        reverse_seek_verified=True, source_sha256=package['result_sha256'],
+        visual_quality='not_evaluated', aesthetic_approval=False)
+    if hyperframes:
+        manifest = json.loads(files['manifest.json'])
+        require(package['schema'] == 'video.creative-scene.v5'
+            and manifest.get('project_runtime') == 'hyperframes-core-project-1'
+            and manifest.get('hyperframes_project_sha256') == timeline['creative']['hyperframes_project_sha256'],
+            'creative_hyperframes_observation_invalid')
+        technical.update(project_runtime='hyperframes-core-project-1',
+            hyperframes_project_sha256=timeline['creative']['hyperframes_project_sha256'],
+            project_runtime_observation=_hyperframes_project_observation(observations.get('project_runtime'),
+                timeline, runtime, minimum_seeks=20),
+            project_runtime_capture=_hyperframes_project_observation(capture.get('project_runtime'),
+                timeline, runtime, minimum_seeks=count + 21),
+            project_evidence_scope='single_scene_project_not_whole_film')
+    else:
+        require('project_runtime' not in capture and 'project_runtime' not in observations,
+                'creative_hyperframes_observation_invalid')
+    if package['schema'] == 'video.creative-scene.v5':
+        technical.update(skill_catalog_sha256=package['skill_catalog_sha256'],
+            skill_delivery_sha256=package['skill_delivery_sha256'],
+            skill_decisions_sha256=digest(package['skill_decisions']),
+            skill_tool_evidence_sha256=package['skill_tool_evidence_sha256'],
+            skill_evidence_scope=package['evidence_scope'])
+    elif package['schema'] in {'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'}:
+        technical.update(method_delivery_sha256=package['method_delivery_sha256'],
+            method_decision_sha256=digest(package['method_decision']),
+            method_evidence_scope=package['evidence_scope'])
+    else:
+        technical['capability_release_sha256'] = package['capability_release_sha256']
+    if package['schema'] in {'video.creative-scene.v4', 'video.creative-scene.v5'}:
+        # Source custody is independent of whether adjacent motion looks good.
+        context = package['input_document']['film_context']
+        technical.update(film_context_sha256=digest(context), film_sha256=context['film_sha256'],
+            handoff_sha256=digest(package['result']['handoff']), continuity_quality='not_evaluated')
+    if engine_aware:
+        technical.update(engine=package['engine'], native_context_verified=True,
+            idle_clock_verified=True, engine_evidence_scope='native_context_measured_not_visual_quality')
+    return dict(technical_review=technical,
+        media_sha256=sha(entries['output.mp4']), manifest_sha256=sha(files['manifest.json']),
+        runtime_fingerprint=runtime, quality=quality)
+
+
 def validate_artifacts(entries, files, runtime, quality):
     try:
         summary = json.loads(entries['experiment.json'])
@@ -333,6 +485,8 @@ def validate_artifacts(entries, files, runtime, quality):
                 require(receipt.get('decode_verified') is True
                         and receipt.get('output_sha256') == sha(entries['output.mp4']), 'motion_media_receipt_invalid')
         observations = json.loads(entries['observations.json'])
+        if json.loads(files['manifest.json']).get('compiler') in CREATIVE_COMPILER_TEMPLATES:
+            return validate_creative_artifacts(entries, files, observations, runtime, quality)
         for row in observations['windows']:
             for label in ('before', 'middle', 'after'):
                 filename = f"observations/a{row['ordinal']}-{label}.jpg"
@@ -347,7 +501,30 @@ def validate_artifacts(entries, files, runtime, quality):
                     filename = 'observations/continuity-' + key.replace('_', '-') + '.jpg'
                     require(sha(entries[filename]) == boundary[key]['frame_sha256'],
                             'motion_observation_frame_mismatch')
-        review = verify_observations(json.loads(files['plan.json']), json.loads(files['timeline.json']), observations)
+        if json.loads(files['timeline.json']).get('compiler') == 'motion-process-continuity-compiler-1':
+            sequence = observations.get('seek_sequence')
+            require(type(sequence) is dict and sequence.get('schema') == 'video.process-continuity-seek-sequence.v1'
+                    and type(sequence.get('samples')) is list and 1 <= len(sequence['samples']) <= 32,
+                    'motion_observation_sequence_invalid')
+            for index, sample in enumerate(sequence['samples']):
+                filename = f'observations/continuity-sequence-{index}.jpg'
+                require(sha(entries[filename]) == sample['frame_sha256'],
+                        'motion_observation_frame_mismatch')
+        plan, timeline = json.loads(files['plan.json']), json.loads(files['timeline.json'])
+        if plan.get('schema') == PROCESS_SCHEMA or timeline.get('compiler') == PRODUCTION_PROCESS_COMPILER:
+            scene_compiler(plan, compiler_version=timeline.get('compiler'))
+            reviewer = verify_process_observations
+        else:
+            reviewer = verify_observations
+        if timeline.get('compiler') == 'motion-process-continuity-compiler-1':
+            # Each declared frame was bound to its real artifact bytes above.
+            # Keep that provenance when checking a repeated pose; a JPEG hash
+            # is an integrity key, not a claim of identical browser rastering.
+            frames = {sha(raw): raw for name, raw in entries.items()
+                      if name.startswith('observations/') and name.endswith('.jpg')}
+            review = reviewer(plan, timeline, observations, frame_bytes=frames)
+        else:
+            review = reviewer(plan, timeline, observations)
         return {'technical_review': review, 'media_sha256': sha(entries['output.mp4']),
                 'manifest_sha256': manifest_sha, 'runtime_fingerprint': runtime, 'quality': quality}
     except (KeyError, ValueError, TypeError, UnicodeError, RecursionError, OverflowError):
@@ -491,14 +668,22 @@ class KubeSceneRenderer:
         return None
 
     def _context(self, scene, key, scene_index, quality):
-        motion = scene['motion']
-        if 'continuity' in scene:
+        motion = scene.get('motion')
+        if scene['visual_mode'] == 'creative':
+            creative = scene['creative']
+            files = compile_creative_project(creative['package'], creative['beats'], creative['alignment'],
+                runtime_fingerprint=self.runtime, leading_seconds=scene['timing']['leading_seconds'],
+                trailing_seconds=scene['timing']['trailing_seconds'],
+                compiler_version=creative['timeline']['compiler'])
+            expected_files = creative['project_files_sha256']
+        elif 'continuity' in scene:
             files = compile_continuity_project(scene, scene['continuity'], runtime_fingerprint=self.runtime)
             expected_files = scene['continuity_project_files_sha256']
         else:
-            files = compile_project(motion['plan'], motion['beats'], motion['alignment'],
+            _, compiler, version = scene_compiler(motion['plan'], compiler_version=motion['timeline']['compiler'])
+            files = compiler(motion['plan'], motion['beats'], motion['alignment'],
                 runtime_fingerprint=self.runtime, leading_seconds=scene['timing']['leading_seconds'],
-                trailing_seconds=scene['timing']['trailing_seconds'], compiler_version=motion['timeline']['compiler'])
+                trailing_seconds=scene['timing']['trailing_seconds'], compiler_version=version)
             expected_files = motion['project_files_sha256']
         require({name: sha(raw) for name, raw in files.items()} == expected_files,
                 'motion_frozen_project_mismatch', 409)
@@ -532,8 +717,14 @@ class KubeSceneRenderer:
             require(not path.is_symlink(), 'motion_scratch_invalid')
             path.unlink(missing_ok=True)
 
-    def _pending(self, scene_key, state, *, error=None, status=502, result=None):
+    def _pending(self, scene_key, state, *, error=None, status=502, result=None, motion_context=None):
         record = self.journal.scene(scene_key)
+        if state != 'completed':
+            result = dict(result) if result is not None else None
+            previous_context = result.pop('motion_context', None) if result is not None else None
+            context = safe_motion_context(motion_context if motion_context is not None else previous_context)
+            if context:
+                result = {**(result or {}), 'motion_context': context}
         pending = dict(state=state, error=error, status=status, result=result,
                        fence_missing=record['state'] == 'submitting')
         self.journal.scene_update(scene_key, 'cleanup_pending', result={'cleanup_pending': pending}, error=error)
@@ -550,6 +741,11 @@ class KubeSceneRenderer:
             # permission to delete a foreign object or abandon live resources.
             raise ServiceError(UNAVAILABLE, 503) from None
         result = pending['result']
+        context = safe_motion_context(result.get('motion_context')) if isinstance(result, dict) else None
+        if isinstance(result, dict) and 'motion_context' in result:
+            result.pop('motion_context')
+            if context:
+                result['motion_context'] = context
         if fenced and result is None:
             result = {'submission_fenced': True}
         output = directory / 'output.mp4'
@@ -558,7 +754,10 @@ class KubeSceneRenderer:
                     and sha(output.read_bytes()) == result['media_sha256'], 'motion_cached_media_corrupt')
         self.journal.scene_update(scene_key, pending['state'], result=result or {}, error=pending['error'])
         if pending['state'] != 'completed':
-            raise ServiceError(pending['error'] or 'motion_execution_failed', pending['status'])
+            error = ServiceError(pending['error'] or 'motion_execution_failed', pending['status'])
+            if context:
+                error.motion_context = context
+            raise error
         return {**result, 'path': str(output)}
 
     def render(self, scene, *, key, scene_index, quality, cancel_event=None):
@@ -579,7 +778,8 @@ class KubeSceneRenderer:
             if current['state'] in {'failed', 'cancelled', 'timed_out'} and current['error'] == error.code:
                 raise error from None
             state = 'cancelled' if error.code == 'media_render_cancelled' else ('timed_out' if error.status == 504 else 'failed')
-            self._pending(scene_key, state, error=error.code, status=error.status)
+            self._pending(scene_key, state, error=error.code, status=error.status,
+                          motion_context=getattr(error, 'motion_context', None))
             return self._finish_cleanup(scene_key, directory, configs, expected, binding)
 
     def _execute(self, files, scene_key, directory, configs, expected, binding, record, *, quality, cancel_event):
@@ -602,7 +802,8 @@ class KubeSceneRenderer:
             return {**result, 'path': str(output)}
         if record['state'] in {'failed', 'cancelled', 'timed_out'}:
             self._pending(scene_key, record['state'], error=record['error'],
-                          status=504 if record['state'] == 'timed_out' else (409 if record['state'] == 'cancelled' else 502))
+                          status=504 if record['state'] == 'timed_out' else (409 if record['state'] == 'cancelled' else 502),
+                          result=json.loads(record['result']) if record['result'] else None)
             return self._finish_cleanup(scene_key, directory, configs, expected, binding)
         self.check_policy()
         progress('waiting_scene')
@@ -708,7 +909,7 @@ class KubeSceneRenderer:
         """Recover only recorded identities, without invoking the render path."""
         for index, scene in enumerate(snapshot['scenes']):
             record = self.journal.scene(f'{key}:{index}')
-            if scene['visual_mode'] != 'motion' or record is None:
+            if scene['visual_mode'] not in {'motion', 'creative'} or record is None:
                 continue
             _, scene_key, binding, name, directory, configs, expected = self._context(scene, key, index, snapshot['quality'])
             require(record['binding'] == binding and record['name'] == name, UNAVAILABLE, 503)

@@ -322,6 +322,35 @@ def load_scenario(path, source_dir, parent_dir, policy):
         document = validate_explanation_input(decode_video_json(raw))
         require(canonical_bytes(document) == raw and hashlib.sha256(raw).hexdigest() == task['input_sha256'],
             'candidate_explanation_input_mismatch')
+    elif policy.name == 'video.process-plan.v1':
+        require(set(files) == {'process-input.json'}, 'candidate_process_input_required')
+        from agent_service.profiles.video import decode_video_json
+        from agent_service.profiles.video_process import validate_process_input
+        raw = files['process-input.json']
+        document = validate_process_input(decode_video_json(raw))
+        require(canonical_bytes(document) == raw and hashlib.sha256(raw).hexdigest() == task['input_sha256'],
+            'candidate_process_input_mismatch')
+    elif policy.name == 'video.animation-experiment.v1':
+        from agent_service.profiles.video_animation_experiment import INPUT_NAME, validate_experiment_input
+        require(set(files) == {INPUT_NAME}, 'candidate_animation_experiment_input_required')
+        raw = files[INPUT_NAME]
+        document = validate_experiment_input(_json(raw))
+        require(canonical_bytes(document) == raw and hashlib.sha256(raw).hexdigest() == task['input_sha256'],
+            'candidate_animation_experiment_input_mismatch')
+    elif policy.name in {'video.animation-observe.v1', 'video.animation-review.v1',
+                         'video.animation-create.v2', 'video.animation-review.v2',
+                         'video.animation-review.v3', 'video.animation-review.v4',
+                         'video.animation-method-author.v1', 'video.animation-method-review.v1',
+                         'video.animation-method-author.v2', 'video.animation-method-review.v2',
+                         'video.animation-production.v1', 'video.animation-production.v2',
+                         'video.animation-production.v3', 'video.animation-film-module.v1',
+                         'video.animation-manim-recipe.v1',
+                         'video.joint-plan.v1', 'video.resource-plan.v1', 'video.animation-collaboration.v1',
+                         'video.animation-wikiskill-compile.v1', 'video.animation-wikiskill-compile.v2', 'video.joint-plan.v2'}:
+        # Validate the exact root-owned, explicitly projected JSON/frame files.
+        # No temporary workspace, renamed inputs, or implicit source is created.
+        require(export is None, 'candidate_animation_role_business_export_not_supported')
+        implementation(policy.name).validate_inputs(None, task, input_root=source_dir)
     elif policy.name == 'video.motion-plan.v1':
         require(set(files) == {'motion-input.json'}, 'candidate_motion_input_required')
         from agent_service.profiles.video import decode_video_json

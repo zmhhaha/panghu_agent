@@ -174,6 +174,41 @@ def test_motion_scenario_freezes_canonical_data_with_no_checkpoint_or_script(ima
                    for destination in rule['to'])
 
 
+def test_process_scenario_uses_separate_canonical_input_and_disabled_candidate(image_packages, tmp_path):
+    from test_video_process_profile import document
+    raw = canonical_bytes(document())
+    profile = 'video.process-plan.v1'
+    path, sources, _ = write_scenario(tmp_path / 'process-candidate', profile,
+        {'input_sha256': hashlib.sha256(raw).hexdigest()}, {'process-input.json': raw}, export=True)
+    host = config(profile)
+    loaded = scenario.load_scenario(path, sources, None, host_policy(host))
+    assert loaded.files == {'process-input.json': raw}
+    assert not loaded.checkpoint_files and loaded.checkpoint_ref is None
+    assert loaded.metadata['production_acceptance_created'] is False
+    assert probe.candidate_config(host.model_dump(mode='json'))[2].acceptance is None
+    rendered = probe.render_probe(host, name='process-offline-candidate',
+        worker_image='registry.invalid/pi:latest@' + host.profile.image_digest,
+        node='offline-node', uid_start=2100000000, bootstrap_secret='offline-bootstrap',
+        upstream_secret='offline-upstream', scenario=path, source_dir=sources)
+    network = next(item for item in rendered['items'] if item['kind'] == 'NetworkPolicy')
+    assert not any('ipBlock' in destination for rule in network['spec']['egress'] for destination in rule['to'])
+
+
+@pytest.mark.parametrize('change', ['noncanonical', 'hash', 'filename', 'schema'])
+def test_process_scenario_refuses_changed_or_cross_profile_source(image_packages, tmp_path, change):
+    from test_video_process_profile import document
+    value = document()
+    if change == 'schema':
+        value['schema'] = 'video.motion-input.v1'
+    raw = canonical_bytes(value) + (b'\n' if change == 'noncanonical' else b'')
+    task = {'input_sha256': '0' * 64 if change == 'hash' else hashlib.sha256(raw).hexdigest()}
+    name = 'motion-input.json' if change == 'filename' else 'process-input.json'
+    path, sources, _ = write_scenario(tmp_path / 'process-invalid', 'video.process-plan.v1',
+                                     task, {name: raw}, export=True)
+    with pytest.raises(ServiceError):
+        scenario.load_scenario(path, sources, None, host_policy(config('video.process-plan.v1')))
+
+
 def test_explanation_scenario_keeps_immutable_project_input_and_no_approval(image_packages, tmp_path):
     from test_video_explanation_profile import document
     raw = canonical_bytes(document())

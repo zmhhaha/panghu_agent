@@ -6,8 +6,7 @@ import threading
 import time
 
 from agent_service.contracts import ServiceError
-from agent_service.profiles.video_motion import validate_motion_result
-from .motion_store import ACTIVE
+from .motion_store import ACTIVE, operation_diagram_kind, CREATIVE_PENDING_SCHEMA, SKILL_PENDING_SCHEMA
 
 
 LOG = logging.getLogger(__name__)
@@ -17,29 +16,58 @@ CANCEL_RETRY_DELAYS = (2.0, 5.0, 15.0, 30.0)
 
 
 class MotionWorkflow:
-    def __init__(self, store, gateway=None, *, enabled=False):
-        if type(enabled) is not bool:
+    def __init__(self, store, gateway=None, *, enabled=False, process_gateway=None, process_enabled=False,
+                 creative_gateway=None, creative_enabled=False, method_adapter=None,
+                 skill_gateway=None, skill_adapter=None):
+        if any(type(gate) is not bool for gate in (enabled, process_enabled, creative_enabled)):
             raise ValueError('An explicit boolean motion feature gate is required')
         self.store, self.gateway, self.enabled = store, gateway, enabled
+        self.process_gateway, self.process_enabled = process_gateway, process_enabled
+        self.creative_gateway, self.creative_enabled = creative_gateway, creative_enabled
+        self.method_adapter = method_adapter
+        self.skill_gateway, self.skill_adapter = skill_gateway, skill_adapter
         self.lock = threading.Lock()
         self.stopping = threading.Event()
         self.thread = None
 
-    def require_gateway(self):
+    def _enabled(self, diagram_kind):
+        return self.enabled and {'diagram': True, 'process': self.process_enabled,
+                                 'creative': self.creative_enabled}.get(diagram_kind, False)
+
+    def _gateway(self, diagram_kind):
+        return {'diagram': self.gateway, 'process': self.process_gateway,
+                'creative': self.creative_gateway}.get(diagram_kind)
+
+    def _disabled_error(self, kind):
+        return 'motion_disabled' if not self.enabled else kind + '_disabled'
+
+    def require_gateway(self, diagram_kind='diagram'):
+        if type(diagram_kind) is not str or diagram_kind not in {'diagram', 'process', 'creative'}:
+            raise ServiceError('invalid_motion_request', 422)
         if not self.enabled:
             raise ServiceError('motion_disabled', 503)
-        if self.gateway is None:
-            raise ServiceError('agent_not_configured', 503)
-        return self.gateway
+        if diagram_kind == 'process' and not self.process_enabled:
+            raise ServiceError('process_disabled', 503)
+        if diagram_kind == 'creative' and not self.creative_enabled:
+            raise ServiceError('creative_disabled', 503)
+        skills = diagram_kind == 'creative' and self.store.skill_production
+        if diagram_kind == 'creative' and (self.skill_adapter if skills else self.method_adapter) is None:
+            raise ServiceError('creative_skills_unavailable' if skills else 'creative_methods_unavailable', 503)
+        gateway = self.skill_gateway if skills else self._gateway(diagram_kind)
+        if gateway is None:
+            raise ServiceError('skill_production_profile_unavailable' if skills else 'creative_profile_unavailable' if diagram_kind == 'creative'
+                               else 'agent_not_configured', 503)
+        return gateway
 
     def start(self):
         active = self.store.active_operations()
-        if not self.enabled:
-            for op in active:
-                if not op['submit_attempted'] and not op['job_id']:
-                    self.store.update_operation(op['id'], status='cancelled', error='motion_disabled')
+        for op in active:
+            kind = operation_diagram_kind(op)
+            if not self._enabled(kind) and not op['submit_attempted'] and not op['job_id']:
+                self.store.update_operation(op['id'], status='cancelled',
+                    error=self._disabled_error(kind))
         admitted = any(op['submit_attempted'] or op['job_id'] for op in active)
-        if self.gateway is not None and self.thread is None and (self.enabled or admitted):
+        if any(gateway is not None for gateway in (self.gateway, self.process_gateway, self.creative_gateway, self.skill_gateway)) and self.thread is None and (self.enabled or admitted):
             self.thread = threading.Thread(target=self._run, name='video-motion-reconcile', daemon=True)
             self.thread.start()
 
@@ -54,7 +82,7 @@ class MotionWorkflow:
             self.stopping.wait(2)
 
     def tick(self):
-        if self.gateway is None or not self.lock.acquire(blocking=False):
+        if all(gateway is None for gateway in (self.gateway, self.process_gateway, self.creative_gateway, self.skill_gateway)) or not self.lock.acquire(blocking=False):
             return
         try:
             for op in self.store.active_operations():
@@ -64,7 +92,8 @@ class MotionWorkflow:
                     if exc.status >= 500 and exc.code.startswith('service_'):
                         self.store.update_operation(op['id'], error=exc.code)
                     else:
-                        self.store.update_operation(op['id'], status='failed', error=exc.code)
+                        self.store.update_operation(op['id'], status='failed', error=exc.code,
+                            motion_context=getattr(exc, 'motion_context', None))
                 except Exception:
                     LOG.exception('Motion reconciliation failed: %s', op['id'])
                     self.store.update_operation(op['id'], error='reconciliation_failed')
@@ -72,13 +101,39 @@ class MotionWorkflow:
             self.lock.release()
 
     def _step(self, op):
-        gateway = self.gateway
         op = self.store.operation(op['id'])
         if op['status'] not in ACTIVE:
             return
-        if not self.enabled and not op['submit_attempted'] and not op['job_id']:
-            self.store.update_operation(op['id'], status='cancelled', error='motion_disabled')
+        kind = operation_diagram_kind(op)
+        if not self._enabled(kind) and not op['submit_attempted'] and not op['job_id']:
+            self.store.update_operation(op['id'], status='cancelled',
+                error=self._disabled_error(kind))
             return
+        skills = kind == 'creative' and op['document']['schema'] in {
+            SKILL_PENDING_SCHEMA, 'video.animation-production-input.v4'}
+        gateway = self.skill_gateway if skills else self._gateway(kind)
+        if gateway is None:
+            # An admitted job retains its original profile after a gate or
+            # configuration change. Never look it up through another adapter.
+            self.store.update_operation(op['id'], error='skill_production_profile_unavailable' if skills else 'agent_not_configured')
+            return
+        if kind == 'creative':
+            if op['document']['schema'] in {CREATIVE_PENDING_SCHEMA, SKILL_PENDING_SCHEMA}:
+                op = self.store.prepare_creative(op['id'], self.skill_adapter if skills else self.method_adapter)
+                if op['document']['schema'] in {CREATIVE_PENDING_SCHEMA, SKILL_PENDING_SCHEMA}:
+                    if op['cancel_requested'] or time.time() >= op['deadline_at']:
+                        self.store.update_operation(op['id'],
+                            status='cancelled' if op['cancel_requested'] else 'timed_out', error=None)
+                    return
+            if op['document']['schema'] not in {'video.animation-production-input.v1',
+                                              'video.animation-production-input.v2',
+                                              'video.animation-production-input.v3',
+                                              'video.animation-production-input.v4'}:
+                # A historical Lab author input is not a production input.
+                # Never relabel or submit it under a new role.
+                raise ServiceError('creative_profile_unavailable', 503)
+            if hasattr(gateway, 'for_document'):
+                gateway = gateway.for_document(op['document'])
         if not op['job_id']:
             if not op['submit_attempted']:
                 if op['cancel_requested'] or time.time() >= op['deadline_at']:
@@ -87,11 +142,16 @@ class MotionWorkflow:
                 if op['input_ref'] is None:
                     ref = gateway.upload(op['document'])
                     op = self.store.update_operation(op['id'], input_ref=ref)
+                # Receipt/resource validation and route preflight happen before
+                # claiming admission. Only the returned POST may be uncertain.
+                admit = (gateway.prepare_submission(op['id'], op['document'], op['deadline_at'],
+                         input_ref=op['input_ref']) if skills else None)
                 op = self.store.claim_submission(op['id'])
                 if op is None:
                     return
                 try:
-                    job = gateway.submit(op['id'], op['document'], op['deadline_at'], input_ref=op['input_ref'])
+                    job = admit() if admit is not None else gateway.submit(
+                        op['id'], op['document'], op['deadline_at'], input_ref=op['input_ref'])
                 except ServiceError as exc:
                     if exc.status >= 500 and exc.code.startswith(('service_', 'http_')):
                         self.store.update_operation(op['id'], error='submission_uncertain')
@@ -114,7 +174,7 @@ class MotionWorkflow:
         state = job['state']
         if state == 'completed':
             result = None if op['cancel_requested'] or time.time() >= op['deadline_at'] else gateway.collect(
-                op['job_id'], op['input_sha256'], op['document']['beats'])
+                op['job_id'], op['input_sha256'], op['document'] if kind == 'creative' else op['document']['beats'])
             self.store.complete(op['id'], result)
         elif state in {'failed', 'needs_input', 'cancelled', 'timed_out', 'quarantined'}:
             self.store.update_operation(op['id'], status='failed' if state == 'quarantined' else state,

@@ -1,14 +1,20 @@
-/** Semantic motion proposals and recording-bound timing; no executable model HTML. */
-import { isActiveOperation, isUnresolvedProductionOperation, statusLabel } from './model.mjs';
+/** Animation candidates and recording-bound timing; generated code is never executed by this UI. */
+import { isActiveOperation, isUnresolvedProductionOperation, mutationErrorLabel, operationElapsedLabel, operationNeedsRefresh, operationServiceErrorLabel, statusLabel } from './model.mjs';
+import { continuityErrorLabel } from './continuity.mjs';
 
-const STRATEGIES = { flow: '流程推演', compare: '前后对比', focus: '结构聚焦' };
-const ACTIONS = { reveal: '出现', hide: '隐藏', highlight: '强调', move: '移动', draw: '连线展开' };
+const STRATEGIES = { flow: '流程推演', compare: '前后对比', focus: '结构聚焦',
+  sequence: '有序流程', nested: '嵌套层级' };
+const ACTIONS = { reveal: '出现', hide: '隐藏', highlight: '强调', move: '移动', draw: '连线展开',
+  transfer: '沿关系传递', set_state: '状态变化' };
+const STATES = { idle: '待命', waiting: '等待', running: '处理中', completed: '完成', failed: '失败' };
 const PLACEMENTS = { start: '本段开始', middle: '本段中间', end: '本段末尾' };
 const PACES = { quick: '较快', normal: '正常', slow: '较慢' };
 const RENDER_ERRORS = {
+  motion_source_reading_time_too_short: '完整来源至少需要 5 秒可读时间，请增加该镜头的停留时间后再制作；已有配音保留。',
   motion_text_overflow: '图解文字超出可读区域。请缩短节点说明或把内容拆到更多镜头，再制作该镜头草稿；已有配音保留。',
   motion_expected_highlight_missing: '图解的强调动画未通过检查。请调整该镜头的强调动作后制作草稿；已有配音保留。',
   motion_invisible_highlight: '强调动作发生时，对象还不可见。请先显现对象再强调，或调整动作时间后制作草稿；已有配音保留。',
+  motion_invisible_move: '移动动作开始时，对象还不可见。请先让该对象出现，再移动，或推迟移动动作后仅补做这份草稿；已有配音保留。',
   motion_execution_failed: '镜头渲染未完成，原因尚未确认。请重新读取任务状态并检查这份图解；只补做失败镜头的草稿，已有图解和配音会保留。',
   motion_execution_timed_out: '镜头渲染超过时间上限。可简化这份图解的节点或动作后，仅补做该镜头草稿；已有配音可继续使用。',
   motion_execution_oom: '镜头渲染时内存不足。可简化这份图解后仅补做草稿；已有图解和配音会保留。',
@@ -31,7 +37,35 @@ const RENDER_ERRORS = {
 };
 const ERRORS = {
   ...RENDER_ERRORS,
+  video_references_require_split: '参考链接超过单镜可读容量，请把来源分配到更多镜头后再生成；已有配音保留。',
+  video_reference_sensitive_url: '参考链接包含登录或访问凭据，请改用不含凭据的公开来源链接后再生成。',
+  video_reference_too_long: '参考链接过长，无法完整清楚展示，请整理来源后再生成。',
+  video_reference_invalid: '参考链接格式无效，请检查完整公开链接后再生成。',
+  video_reference_not_in_input: '生成结果包含输入未提供的参考链接，未保存该候选，请核对来源后重新生成。',
+  explanation_visual_requires_split: '当前画面要求过长，无法完整保留讲解步骤和来源，请拆分镜头后再生成；已有配音保留。',
+  motion_reference_not_in_input: '返回图解使用了输入未提供的来源链接，未保存该候选；请核对来源要求后重新生成。',
+  motion_generation_conflict: '当前镜头的文稿、画面要求或项目风格已变化，本次生成未启动。草稿已保留，请重新读取并核对后再提交。',
   motion_disabled: '动态图解暂未启用，历史仍可查看，正在执行的任务仍可取消。',
+  process_disabled: '过程演示暂未启用，已有候选和录音仍保留。',
+  process_profile_unavailable: '过程演示生成服务尚未就绪，请稍后重新读取；已有内容保留。',
+  creative_disabled: '创意动画生成暂未启用，已有候选和配音仍保留。',
+  creative_profile_unavailable: '创意动画生成服务尚未就绪，请稍后重新读取；已有内容保留。',
+  creative_film_context_required: '请从整片草稿制作入口重做，以使用已确认的整片内容和真实配音时钟。',
+  creative_skills_unavailable: '暂时无法读取已发布的动画方法，尚未提交制作任务。',
+  skill_production_profile_unavailable: '动画 Skill 制作能力尚未完成准入或配置，暂不能开始新的制作任务。',
+  skill_production_preflight_unavailable: '未能确认动画制作能力，尚未提交任务，请稍后重试。',
+  creative_audio_required: '请先生成或上传配音，试听并采用后，再生成随旁白展开的创意动画。',
+  creative_audio_binding_mismatch: '采用的配音已经变化，请按当前配音重新生成创意动画；原候选保留。',
+  creative_timing_requires_regeneration: '这份动画已按生成时的旁白时间安排动作。请在动画要求中说明节奏调整并生成新候选，再试听核对。',
+  creative_engine_not_allowed: '这类画面尚未开放正式制作，请重新生成可用的创意动画候选。',
+  process_continuity_not_supported: '过程演示暂不支持跨镜连续衔接。可分别制作镜头或普通整片草稿，已有画面和录音保留。',
+  continuity_semantic_layout_not_supported: '新流程、层级图解或完整来源面板暂不支持对象跨镜继承。请先制作单镜或普通整片草稿；已有画面和录音保留。',
+  process_base_kind_mismatch: '修改需要沿用所选方案的图解方式；切换方式时请生成新候选。',
+  motion_diagram_kind_mismatch: '修改需要沿用所选方案的图解方式；切换方式时请生成新候选。',
+  motion_base_kind_mismatch: '修改需要沿用所选方案的图解方式；切换方式时请生成新候选。',
+  process_path_obstructed: '请求的移动路径挡住了内容，请调整过程说明后生成新的候选，已有配音可继续使用。',
+  process_element_not_visible: '过程变化发生时对象还不可见，请先显现相关节点和请求，再进行传递或状态变化。',
+  process_state_transition_invalid: '过程中的状态衔接不成立，请明确等待、处理、失败重试及完成的先后关系后修改方案。',
   motion_profile_unavailable: '动态图解生成服务尚未准备就绪，当前镜头会保留。',
   motion_render_not_configured: '动态图解渲染服务尚未连接，候选与时序仍会保留。',
   motion_render_service_unavailable: '动态图解渲染服务暂时无法连接，请重新读取任务状态。',
@@ -39,6 +73,7 @@ const ERRORS = {
   motion_plan_stale: '旁白或画面说明已经变化，请生成匹配当前内容的动态图解。',
   motion_semantics_stale: '旁白分段或读音已经变化，请生成匹配当前内容的动态图解。',
   motion_base_stale: '这个修改基础已经过期，请选择匹配当前内容的方案。',
+  motion_revision_unchanged: '这次修改返回了与原方案完全相同的图解，未保存重复候选。原方案、已采用画面和配音保留，请核对修改要求后再提交。',
   motion_head_conflict: '采用的动态图解已经变化，请重新读取后审阅。',
   motion_timing_needs_review: '动态时序仍待人工试听核对，完成后才能正式导出。',
   motion_alignment_conflict: '时序已经更新，请重新读取后再校正。',
@@ -56,12 +91,51 @@ const ERRORS = {
 };
 
 export function motionRenderErrorLabel(code) {
+  if (typeof code === 'string' && (code.startsWith('process_continuity_') || code === 'invalid_process_continuity_plan')) {
+    return continuityErrorLabel(code);
+  }
   return typeof code === 'string' && Object.hasOwn(RENDER_ERRORS, code) ? RENDER_ERRORS[code] : undefined;
 }
 
 export function motionErrorLabel(code) {
+  const serviceError = operationServiceErrorLabel(code);
+  if (serviceError) return serviceError;
+  if (typeof code === 'string' && (code.startsWith('process_continuity_') || code === 'invalid_process_continuity_plan')) {
+    return continuityErrorLabel(code);
+  }
   return typeof code === 'string' && Object.hasOwn(ERRORS, code) ? ERRORS[code]
     : '动态图解处理未完成，请重新读取状态并检查当前内容、配音和时序。';
+}
+
+export function safeMotionContext(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || typeof value.target !== 'string' || !/^[a-z][a-z0-9_-]{0,31}$/.test(value.target)
+      || typeof value.kind !== 'string' || !Object.hasOwn(ACTIONS, value.kind) || !Number.isInteger(value.ordinal)
+      || value.ordinal < 0 || value.ordinal > 47
+      || typeof value.beat_id !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(value.beat_id)) return null;
+  return { target: value.target, kind: value.kind, ordinal: value.ordinal, beat_id: value.beat_id };
+}
+
+export function motionFailureSource(item) {
+  const index = item?.diagnostic?.scene_index;
+  if (!safeMotionContext(item?.diagnostic?.motion_context) || !Number.isInteger(index) || index < 0) return null;
+  const scene = item.scenes?.[index];
+  return scene?.visual_mode === 'motion' && typeof scene.visual_version_id === 'string'
+    && scene.visual_version_id.length > 0 && scene.visual_version_id.length <= 100 ? scene : null;
+}
+
+export function motionFailureDetails(item, version, projectId) {
+  const context = safeMotionContext(item?.diagnostic?.motion_context);
+  if (!context) return null;
+  const source = motionFailureSource(item), action = version?.plan?.actions?.[context.ordinal];
+  const bound = Boolean(source && version?.id === source.visual_version_id && version.scene_id === source.scene_id
+    && version.project_id === projectId && action?.target === context.target
+    && action.kind === context.kind && action.beat_id === context.beat_id);
+  const target = bound ? version.plan.elements?.find(row => row.id === context.target)
+    ?? version.plan.relations?.find(row => row.id === context.target) : null;
+  const label = typeof target?.label === 'string' && target.label ? `${target.label}（${context.target}）` : context.target;
+  return { context, source, bound: bound && Boolean(target),
+    text: `问题图元：${label} · ${ACTIONS[context.kind]} · 第 ${context.ordinal + 1} 个动作${bound && target ? '' : '。尚未取得该任务的确切方案，仅显示图元编号。'}` };
 }
 
 export const hasMotionScenes = project => Boolean(project?.scenes?.some(scene => motionMetadata(scene).mode === 'motion'));
@@ -87,13 +161,32 @@ export function currentMotionAudio(scene) {
   return scene?.audio_versions?.find(row => row.id === scene.head_audio_version_id && !row.stale) ?? null;
 }
 
-export function createMotionRequest(project, scene, instruction = '', base = null) {
+export function motionDiagramKind(candidate) {
+  if (candidate?.diagram_kind === 'creative' || ['video.creative-scene.v1', 'video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4', 'video.creative-scene.v5'].includes(candidate?.plan?.schema)) return 'creative';
+  return candidate?.plan?.schema === 'video.process-plan.v1' || candidate?.diagram_kind === 'process'
+    ? 'process' : 'diagram';
+}
+
+const kindLabel = kind => kind === 'creative' ? '创意动画' : kind === 'process' ? '过程演示' : '通用图解';
+const generationConfigured = (value, kind) => kind === 'creative' ? value.creativeConfigured
+  : kind === 'process' ? value.processConfigured : value.configured;
+
+export function createMotionRequest(project, scene, instruction = '', base = null, diagramKind = 'diagram') {
   if (!project?.id || !scene?.id || !Number.isInteger(project.revision)
-      || typeof instruction !== 'string' || instruction.length > 8000 || base?.stale) {
+      || typeof instruction !== 'string' || instruction.length > 8000 || base?.stale
+      || !['diagram', 'process', 'creative'].includes(diagramKind)
+      || (base && motionDiagramKind(base) !== diagramKind)) {
     throw new Error('请先保存镜头，并检查动态图解要求。');
+  }
+  if (diagramKind === 'creative' && !currentMotionAudio(scene)) {
+    throw new Error(ERRORS.creative_audio_required);
   }
   return { path: `/api/scenes/${encodeURIComponent(scene.id)}/motion`, body: {
     expected_revision: project.revision, instruction: instruction.trim(), ...(base ? { base_version_id: base.id } : {}),
+    ...(/^[0-9a-f]{64}$/.test(scene.motion?.semantic_binding_sha256 ?? '')
+      ? { expected_semantic_binding_sha256: scene.motion.semantic_binding_sha256 } : {}),
+    ...(diagramKind === 'creative' ? { expected_audio_version_id: scene.head_audio_version_id } : {}),
+    ...(diagramKind !== 'diagram' ? { diagram_kind: diagramKind } : {}),
   } };
 }
 
@@ -151,7 +244,7 @@ export function createProjectMotionDraftRequest(project, { endHoldSeconds = 0 } 
 export function createMotionPanel({ document, getContext, request, refresh, onError, onSuccess, onPreviewStateChange = () => {} }) {
   const $ = id => document.getElementById(id);
   const metadata = new Map(), versions = new Map(), timings = new Map(), drafts = new Map();
-  const selections = new Map(), instructions = new Map(), busy = new Set(), readErrors = new Map();
+  const selections = new Map(), instructions = new Map(), diagramKinds = new Map(), busy = new Set(), readErrors = new Map(), writeErrors = new Map(), diagnostics = new Map();
   let sequence = 0, latestRead = 0, renderedTiming = null, renderedReview = null, confirmation = null;
   let draftSequence = 0, auditionEnd = null;
   const draftIdentities = new WeakMap();
@@ -174,6 +267,8 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     const audio = currentMotionAudio(value.scene);
     const id = selected && !selected.stale && audio ? timingKey(selected.id, audio.id) : null;
     return { ...value, scene, selected, audio, key: keyFor(value), timingId: id,
+      diagramKind: diagramKinds.get(keyFor(value)) ?? (value.creativeConfigured ? 'creative'
+        : motionDiagramKind(versions.get(selected?.id) ?? selected)),
       version: versions.get(selected?.id), timing: timings.get(id), draft: drafts.get(id),
       fresh: Boolean(stored && stored.revision === value.project?.revision),
     };
@@ -186,34 +281,79 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
   };
 
   function review(value) {
-    const signature = JSON.stringify([value.key, value.selected?.id, value.version?.plan_sha256]);
+    const diagnostic = diagnostics.get(value.version?.id);
+    const signature = JSON.stringify([value.key, value.selected?.id, value.version?.plan_sha256, diagnostic]);
     if (renderedReview === signature) return;
     renderedReview = signature;
     const target = $('motion-review'); target.replaceChildren();
     if (!value.version) return;
     const { plan, beats } = value.version;
+    if (motionDiagramKind(value.version) === 'creative') {
+      const input = plan.input_document ?? {}, production = input.scene ?? input.constraints?.production ?? {};
+      const release = input.constraints?.capability_release ?? {};
+      const strategy = plan.result?.source?.strategy ?? plan.result?.strategy ?? {};
+      target.append(text('h4', production.title ?? value.scene?.title ?? '创意动画'),
+        text('p', strategy.description ?? '按当前旁白生成的动画候选。', 'preserve-whitespace'));
+      if (strategy.tradeoffs) target.append(text('p', strategy.tradeoffs, 'field-note preserve-whitespace'));
+      if (plan.schema === 'video.creative-scene.v5') {
+        const offered = input.skill_catalog?.skills ?? [];
+        const decisions = plan.skill_decisions ?? [];
+        target.append(text('p', offered.length ? `本次提供 ${offered.length} 项已发布动画方法，由 Agent 按需查阅。以下采用说明需结合草稿审阅。` : '本次没有匹配的已发布动画方法，按当前内容自主创作。', 'field-note'));
+        for (const row of decisions) {
+          const method = offered.find(item => item.package_sha256 === row.package_sha256);
+          const action = { apply: '采用', adapt: '调整后采用', reject: '未采用' }[row.action] ?? row.action;
+          target.append(text('p', `${method?.name ?? '动画方法'} · ${action}：${row.reason}`, 'field-note preserve-whitespace'));
+        }
+      } else if (['video.creative-scene.v2', 'video.creative-scene.v3', 'video.creative-scene.v4'].includes(plan.schema)) {
+        const offered = input.method_delivery?.methods ?? [];
+        const decisions = plan.method_decision?.decisions ?? [];
+        target.append(text('p', offered.length ? `已参考 ${offered.length} 项创作方法。以下是生成时的采用说明，实际效果请观看草稿。` : '本次未提供适用的已发布方法，按当前内容自主创作。', 'field-note'));
+        for (const row of decisions) {
+          const method = offered.find(item => item.id === row.version_id);
+          const action = { apply: '采用', adapt: '调整后采用', reject: '未采用' }[row.action] ?? row.action;
+          target.append(text('p', `${method?.title ?? '创作方法'} · ${action}：${row.reason}`, 'field-note preserve-whitespace'));
+        }
+      } else {
+        target.append(text('p', `能力策略：${release.id ?? '已发布策略'}${release.revision ? ` · ${release.revision}` : ''}`, 'field-note'));
+      }
+      const digest = plan.capability_release_sha256;
+      if (typeof digest === 'string') target.append(text('p', `策略摘要：${digest.slice(0, 12)}`, 'field-note'));
+      const audioId = value.version.audio_version_id;
+      const duration = input.constraints?.duration_seconds;
+      target.append(text('p', `${value.selected?.stale ? '内容或配音已变化，请重新生成。' : '动作已绑定生成时采用的配音。'}${Number.isFinite(duration) ? ` 动画 ${duration.toFixed(2)} 秒。` : ''}${audioId && audioId === value.audio?.id ? ' 当前配音匹配。' : ''}`, 'field-note'));
+      target.append(text('p', '点击「制作本镜头 MP4 草稿」查看实际画面，审阅后再采用；采用后会用于整片制作。', 'field-note'));
+      return;
+    }
     target.append(text('h4', plan.title), text('p', plan.takeaway, 'preserve-whitespace'));
     const elements = new Map(plan.elements.map(row => [row.id, row.label]));
     const relations = new Map(plan.relations.map(row => [row.id,
       `${elements.get(row.source)} → ${elements.get(row.target)}${row.label ? `：${row.label}` : ''}`]));
     const names = new Map(beats.segments.map((row, index) => [row.id, `第 ${index + 1} 段` ]));
     const list = text('ol');
-    for (const item of plan.elements) list.append(text('li', `${item.label}${item.detail ? `：${item.detail}` : ''}`));
-    target.append(text('h5', `画面结构 · ${STRATEGIES[plan.template] ?? '图解'}`), list);
+    for (const item of plan.elements) list.append(text('li', `${item.label}${item.detail ? `：${item.detail}` : ''}`,
+      diagnostic?.target === item.id ? 'motion-diagnostic-target' : undefined));
+    target.append(text('h5', `画面结构 · ${motionDiagramKind(value.version) === 'process' ? '过程演示' : STRATEGIES[plan.template] ?? '图解'}`), list);
     if (relations.size) {
       const connections = text('ul');
-      for (const label of relations.values()) connections.append(text('li', label));
+      for (const [id, label] of relations) connections.append(text('li', label, diagnostic?.target === id ? 'motion-diagnostic-target' : undefined));
       target.append(text('h5', '关系'), connections);
     }
+    if (plan.sources?.length) {
+      const references = text('ul', undefined, 'preserve-whitespace');
+      for (const source of plan.sources) references.append(text('li', `${source.label}\n${source.url}`));
+      target.append(text('h5', '画面参考来源（输入提供，未自动核验）'), references);
+    }
     const actions = text('ol');
-    for (const action of plan.actions) actions.append(text('li', `${names.get(action.beat_id) ?? '语音分段'} · ${elements.get(action.target) ?? relations.get(action.target) ?? '图形关系'} · ${ACTIONS[action.kind] ?? '变化'} · ${PLACEMENTS[action.placement] ?? ''} · ${PACES[action.pace] ?? ''}`));
+    plan.actions.forEach((action, index) => actions.append(text('li', `${names.get(action.beat_id) ?? '语音分段'} · ${elements.get(action.target) ?? relations.get(action.target) ?? '图形关系'} · ${ACTIONS[action.kind] ?? '变化'}${action.kind === 'transfer' ? `：${relations.get(action.relation_id) ?? '关系待核对'}` : action.kind === 'set_state' ? `：${STATES[action.state] ?? '状态待核对'}` : ''} · ${PLACEMENTS[action.placement] ?? ''} · ${PACES[action.pace] ?? ''}`,
+      diagnostic?.ordinal === index && diagnostic.target === action.target && diagnostic.kind === action.kind && diagnostic.beat_id === action.beat_id ? 'motion-diagnostic-target' : undefined)));
     target.append(text('h5', '随旁白展开的变化'), actions);
   }
 
   function renderTiming(value) {
     const { timing, draft } = value;
     if (draft && !draftIdentities.has(draft)) draftIdentities.set(draft, ++draftSequence);
-    const signature = JSON.stringify([value.timingId, draft && draftIdentities.get(draft), value.enabled, busy.has(value.key)]);
+    const creative = motionDiagramKind(value.version ?? value.selected) === 'creative';
+    const signature = JSON.stringify([value.timingId, draft && draftIdentities.get(draft), value.enabled, busy.has(value.key), creative]);
     if (renderedTiming === signature) return;
     renderedTiming = signature;
     const target = $('motion-timing-rows'); target.replaceChildren();
@@ -227,9 +367,9 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
         const label = text('label', field === 'start' ? '开始 / 秒' : '结束 / 秒');
         const input = text('input'); input.type = 'number'; input.min = '0'; input.max = String(timing.audio.duration_seconds);
         input.step = '0.01'; input.required = true; input.value = String(draft.segments[index][field]);
-        input.disabled = !value.enabled || busy.has(value.key);
+        input.disabled = !value.enabled || busy.has(value.key) || creative;
         input.addEventListener('input', () => {
-          if (!current().enabled || busy.has(value.key)) return;
+          if (!current().enabled || busy.has(value.key) || creative) return;
           draft.segments[index][field] = input.value === '' ? NaN : Number(input.value);
           draft.dirty = true; $('confirm-motion-timing').checked = false; render();
         });
@@ -266,25 +406,41 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     $('motion-use-static').disabled = blocked || data.mode !== 'motion';
     $('motion-use-motion').disabled = blocked || !value.enabled || !data.head_version_id || data.head_stale || data.mode === 'motion';
     $('motion-instruction').value = instructions.get(value.key) ?? '';
-    $('motion-instruction').disabled = !value.configured;
-    $('generate-motion').disabled = !value.configured || blocked || active;
-    $('revise-motion').disabled = !value.configured || blocked || active || !selected || selected.stale || !$('motion-instruction').value.trim();
+    const creative = motionDiagramKind(value.version ?? selected) === 'creative';
+    const configured = generationConfigured(value, value.diagramKind);
+    const revisionConfigured = generationConfigured(value, motionDiagramKind(value.version ?? selected));
+    const needsRecording = value.diagramKind === 'creative' && !audio;
+    $('motion-diagram-kind').value = value.diagramKind;
+    $('motion-diagram-kind').disabled = !value.enabled || blocked || active;
+    $('motion-process-note').textContent = value.diagramKind === 'creative'
+      ? `${value.creativeConfigured ? '' : '创意动画生成尚未启用。'}根据内容安排画面和动作，使用已发布的动画能力。先试听并采用配音，动画会按这条旁白的节奏制作。`
+      : value.diagramKind === 'process'
+      ? `${value.processConfigured ? '' : '过程演示生成尚未启用。'}适合三个环节之间的单个请求流转、失败返回和状态变化。修改沿用所选候选的方式；全部镜头采用有效过程演示后，可审阅对象的跨镜延续或请求复制。`
+      : '适合一般流程、有序步骤、嵌套层级、前后对比和结构聚焦。选择方式仅影响新候选，修改沿用所选候选的方式。';
+    $('motion-instruction').disabled = !configured && !revisionConfigured;
+    $('generate-motion').disabled = !value.enabled || !configured || blocked || active || needsRecording;
+    $('generate-motion').textContent = selected ? '重新生成新候选' : value.diagramKind === 'creative' ? '生成创意动画' : '生成动态图解方案';
+    $('revise-motion').disabled = !value.enabled || !revisionConfigured || blocked || active || !selected || selected.stale || (creative && !audio) || !$('motion-instruction').value.trim();
     $('motion-form-note').textContent = !value.enabled ? '动态图解生成与修改暂未启用；可以查看历史、试听和取消在途任务。'
-      : !value.configured ? '生成服务暂未连接；已有候选仍可审阅、采用与校正。'
+      : !configured ? '所选方式的生成服务暂未连接；已有候选仍可审阅、采用与校正。'
       : value.unsaved ? '先保存或重新载入未保存的镜头、配音和时序修改，再继续；草稿会保留。'
-        : '生成只增加候选。审阅图形变化后明确采用，再结合实际配音核对时序。';
-    $('motion-read-error').hidden = !readErrors.has(value.key);
-    $('motion-read-error').textContent = readErrors.get(value.key) ?? '';
+        : needsRecording ? ERRORS.creative_audio_required
+        : selected ? `重新生成会创建新候选；「按要求修改所选方案」沿用当前所选图解 ${(data.versions ?? []).findIndex(row => row.id === selected.id) + 1}，并提交上方批注。两种操作都只增加候选，需审阅后明确采用。`
+          : '生成只增加候选。审阅图形变化后明确采用，再结合实际配音核对时序。';
+    $('motion-read-error').hidden = !readErrors.has(value.key) && !writeErrors.has(value.key);
+    $('motion-read-error').textContent = [writeErrors.get(value.key), readErrors.get(value.key)].filter(Boolean).join(' ');
     $('motion-status').hidden = !data.operation;
-    $('motion-status-text').textContent = data.operation ? `${statusLabel(data.operation.status)}${data.operation.error ? ` · ${motionErrorLabel(data.operation.error)}` : ''}` : '';
+    $('motion-status').classList.toggle('failed', ['failed', 'timed_out', 'needs_input', 'quarantined', 'uncertain'].includes(data.operation?.status)
+      || Boolean(operationServiceErrorLabel(data.operation?.error)));
+    refreshElapsed();
     $('cancel-motion').hidden = !active;
     $('cancel-motion').disabled = inFlight || data.operation?.status === 'cancelling';
     const options = (data.versions ?? []).map((item, index) => {
-      const option = text('option', `图解 ${index + 1}${item.id === data.head_version_id ? ' · 已采用' : ' · 候选'}${item.stale ? ' · 已过期' : ''}`);
+      const option = text('option', `图解 ${index + 1}${motionDiagramKind(item) === 'diagram' ? '' : ` · ${kindLabel(motionDiagramKind(item))}`}${item.id === data.head_version_id ? ' · 已采用' : ' · 候选'}${item.stale ? ' · 已过期' : ''}`);
       option.value = item.id; return option;
     });
     if (!options.length) options.push(text('option', '尚无动态图解'));
-    const optionKey = JSON.stringify([value.key, data.versions?.map(row => [row.id, row.stale]), data.head_version_id]);
+    const optionKey = JSON.stringify([value.key, data.versions?.map(row => [row.id, row.stale, row.diagram_kind]), data.head_version_id]);
     if ($('motion-version').dataset?.optionsKey !== optionKey) {
       $('motion-version').replaceChildren(...options);
       if ($('motion-version').dataset) $('motion-version').dataset.optionsKey = optionKey;
@@ -293,7 +449,7 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     if (selected) $('motion-version').value = selected.id;
     review(value);
     const adopted = selected?.id === data.head_version_id;
-    $('motion-adoption-note').textContent = selected?.stale ? '内容已变化，这份历史图解仅供审阅。'
+    $('motion-adoption-note').textContent = selected?.stale ? creative ? '内容或采用配音已变化，这份历史动画仅供审阅。' : '内容已变化，这份历史图解仅供审阅。'
       : adopted ? '已采用此动态图解。正式导出还需要可用配音与已核对时序。'
         : '采用只切换本镜头的画面模式，不会生成配音或自动导出。';
     const canAdopt = value.enabled && !blocked && !active && selected && !selected.stale && !adopted && value.version;
@@ -309,16 +465,20 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     const valid = timing && draft && validateMotionSegments(draft.segments, timing);
     const timingFresh = timing?.project_revision === project.revision && draft?.expected_revision === project.revision
       && timing?.alignment_sha256 === draft?.expected_alignment_sha256;
-    $('motion-timing-note').textContent = timing && !timingFresh ? '项目或保存时序已变化，本地校正仍保留；请检查并重新载入时序后再保存或核对。'
+    $('motion-timing-note').textContent = creative ? '以下为生成这份动画时使用的旁白分段。请制作 MP4 草稿并试听核对；需要改变动作时间时，在上方要求中说明并生成新候选。'
+      : timing && !timingFresh ? '项目或保存时序已变化，本地校正仍保留；请检查并重新载入时序后再保存或核对。'
       : draft?.dirty ? '时序尚未保存；刷新和切换镜头会保留校正。'
         : sceneHasDrafts(value) ? '本镜头其他配音或候选仍有未保存校正。切回原录音继续编辑，或重新载入并放弃本镜头校正。'
         : '时间从这条配音的开头计起，不包含镜头留白。估算与人工核对分别记录。';
-    $('save-motion-timing').disabled = !value.enabled || blocked || !draft?.dirty || !valid || !timingFresh;
+    $('save-motion-timing').hidden = creative;
+    $('reset-motion-timing').hidden = creative;
+    $('motion-correction-label').hidden = creative;
+    $('save-motion-timing').disabled = creative || !value.enabled || blocked || !draft?.dirty || !valid || !timingFresh;
     $('reset-motion-timing').disabled = inFlight || ((!audio || !selected) && !sceneHasDrafts(value));
     $('confirm-motion-timing').disabled = !value.enabled || blocked || !valid || draft?.dirty || !timingFresh || timing?.alignment.review_status === 'verified';
     $('verify-motion-timing').disabled = $('confirm-motion-timing').disabled || !$('confirm-motion-timing').checked;
     $('motion-correction-reason').value = draft?.correction_reason ?? '';
-    $('motion-correction-reason').disabled = !draft || !value.enabled || inFlight;
+    $('motion-correction-reason').disabled = creative || !draft || !value.enabled || inFlight;
     $('preview-motion').disabled = !value.renderConfigured || blocked || !selected || selected.stale || !audio || !timing || draft?.dirty;
     onPreviewStateChange(!$('preview-motion').disabled);
     const player = $('motion-timing-audio');
@@ -373,8 +533,8 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
   async function mutate(value, action, accepted) {
     if (busy.has(value.key)) return;
     busy.add(value.key); render();
-    try { const result = await action(); if (same(value)) accepted?.(result); }
-    catch (error) { if (same(value)) onError(error); }
+    try { const result = await action(); if (same(value)) { writeErrors.delete(value.key); accepted?.(result); } }
+    catch (error) { if (same(value)) { writeErrors.set(value.key, mutationErrorLabel(error)); onError(error); } }
     finally {
       busy.delete(value.key);
       if (same(value)) { try { await refresh(); } catch (error) { onError(error); } render(); }
@@ -382,11 +542,13 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
   }
   async function generate(revise = false) {
     const value = current();
-    if (!value.scene || !value.configured || !value.fresh || value.unsaved || value.projectBusy
+    const kind = revise ? motionDiagramKind(value.version ?? value.selected) : value.diagramKind;
+    const configured = generationConfigured(value, kind);
+    if (!value.scene || !value.enabled || !configured || !value.fresh || value.unsaved || value.projectBusy || (kind === 'creative' && !value.audio)
         || (revise && (!value.selected || value.selected.stale || !(instructions.get(value.key) ?? '').trim()))
         || isActiveOperation(motionMetadata(value.scene).operation)) return;
     let intent;
-    try { intent = createMotionRequest(value.project, value.scene, instructions.get(value.key) ?? '', revise ? value.selected : null); }
+    try { intent = createMotionRequest(value.project, value.scene, instructions.get(value.key) ?? '', revise ? value.selected : null, kind); }
     catch (error) { onError(error); return; }
     await mutate(value, () => request(intent.path, { method: 'POST', body: intent.body }), operation => {
       const scene = metadata.get(value.project.id)?.scenes.find(row => row.id === value.scene.id);
@@ -425,7 +587,8 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
   }
   async function saveTiming(verify = false) {
     const value = current(), { timing, draft, project } = value;
-    if (!value.enabled || !timing || !draft || value.unsaved || value.projectBusy || !value.fresh
+    if ((!verify && motionDiagramKind(value.version ?? value.selected) === 'creative')
+        || !value.enabled || !timing || !draft || value.unsaved || value.projectBusy || !value.fresh
         || timing.project_revision !== project.revision || draft.expected_revision !== project.revision
         || timing.alignment_sha256 !== draft.expected_alignment_sha256 || !validateMotionSegments(draft.segments, timing)) return;
     if (verify ? draft.dirty || !$('confirm-motion-timing').checked || timing.alignment.review_status === 'verified' : !draft.dirty) return;
@@ -447,6 +610,12 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     await mutate(value, () => request(intent.path, { method: 'POST', body: intent.body }), () => onSuccess('已开始制作本镜头 MP4 草稿。在「项目预览与成片」中播放；这不会采用候选或确认时序。'));
   }
   $('motion-instruction').addEventListener('input', event => { instructions.set(current().key, event.target.value); render(); });
+  $('motion-diagram-kind').addEventListener('change', event => {
+    const value = current();
+    if (!['diagram', 'process', 'creative'].includes(event.target.value) || !value.enabled || busy.has(value.key)
+        || value.unsaved || value.projectBusy || isActiveOperation(motionMetadata(value.scene).operation)) return;
+    diagramKinds.set(value.key, event.target.value); render();
+  });
   $('motion-version').addEventListener('change', async event => {
     const value = current(); selections.set(value.key, event.target.value); $('motion-timing-audio').pause();
     render(); await load(value.project.id, value.epoch);
@@ -479,11 +648,20 @@ export function createMotionPanel({ document, getContext, request, refresh, onEr
     const audio = $('motion-timing-audio');
     if (Number.isFinite(auditionEnd) && audio.currentTime >= auditionEnd) { audio.pause(); auditionEnd = null; }
   });
-  return { render, load, generate, adopt, mode, cancel, saveTiming, preview,
+  function refreshElapsed() {
+    const operation = motionMetadata(current().scene).operation;
+    const error = operation?.error ?? (operation?.status === 'quarantined' ? 'agent_quarantined' : null);
+    const context = safeMotionContext(operation?.motion_context);
+    $('motion-status-text').textContent = operation ? [statusLabel(operation.status), operationElapsedLabel(operation), error ? motionErrorLabel(error) : null,
+      context ? `问题图元：${context.target} · ${ACTIONS[context.kind]} · 第 ${context.ordinal + 1} 个动作` : null].filter(Boolean).join(' · ') : '';
+  }
+  return { render, load, generate, adopt, mode, cancel, saveTiming, preview, refreshElapsed,
     select: (projectId, sceneId, versionId) => {
       if (projectId && sceneId && versionId) selections.set(`${projectId}:${sceneId}`, versionId);
     },
+    focusDiagnostic: (versionId, context) => { const safe = safeMotionContext(context); if (versionId && safe) diagnostics.set(versionId, safe); },
     hasActiveOperation: (projectId, fallbackScenes) => operationScenes(projectId, fallbackScenes).some(scene => isActiveOperation(scene.motion?.operation)),
+    hasRefreshableOperation: (projectId, fallbackScenes) => operationScenes(projectId, fallbackScenes).some(scene => operationNeedsRefresh(scene.motion?.operation)),
     hasUnresolvedOperation: (projectId, fallbackScenes) => operationScenes(projectId, fallbackScenes).some(scene => isUnresolvedProductionOperation(scene.motion?.operation)),
     hasDrafts: () => [...drafts.values()].some(row => row.dirty),
     hasProjectDrafts: projectId => [...drafts.values()].some(row => row.dirty && row.project_id === projectId),

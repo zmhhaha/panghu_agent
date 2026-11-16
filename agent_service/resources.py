@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import stat
@@ -15,6 +16,29 @@ RESEARCH_ROOT = Path(__file__).resolve().parent.parent / 'scientific_skills'
 VIDEO_ROOT = Path(__file__).resolve().parent / 'resources' / 'video-workbench-v1'
 MOTION_ROOT = Path(__file__).resolve().parent / 'resources' / 'video-motion-v1'
 EXPLANATION_ROOT = Path(__file__).resolve().parent / 'resources' / 'video-explanation-v1'
+PROCESS_ROOT = Path(__file__).resolve().parent / 'resources' / 'video-process-v1'
+LEGACY_MOTION_MANIFEST_SHA256 = '4eba854c6f858a6ec18eb01687a87865dca53efc1346eb4456e6a47bd9dac104'
+
+
+def motion_package_root(revision):
+    """Resolve only reviewed bundle identities; old pools retain their v1 bytes."""
+    from .profiles.video import _read
+    from .profiles.video_motion import BUNDLE_REVISION, BUNDLE_ROOT, verified_bundle
+    if revision == BUNDLE_REVISION:
+        verified_bundle()
+        return BUNDLE_ROOT
+    if revision != 'video-motion-v1':
+        raise ServiceError('package_bundle_revision_unsupported', 503)
+    raw = _read(MOTION_ROOT, 'manifest.json', 65536)
+    if hashlib.sha256(raw).hexdigest() != LEGACY_MOTION_MANIFEST_SHA256:
+        raise ServiceError('motion_bundle_integrity', 422)
+    # The fixed manifest supplies a bounded, exact four-file inventory. Never
+    # interpret a caller-controlled revision as a filesystem path.
+    for row in json.loads(raw)['local_files']:
+        content = _read(MOTION_ROOT, row['path'], 128 * 1024)
+        if hashlib.sha256(content).hexdigest() != row['sha256']:
+            raise ServiceError('motion_bundle_integrity', 422)
+    return MOTION_ROOT
 
 
 def measured_package(config, policy, control_root):
@@ -35,16 +59,117 @@ def measured_package(config, policy, control_root):
         mandatory = {'research-procedure/SKILL.md', 'task-template.md', 'LICENSE'}
         from .profiles.research import verified_bundle
         verified_bundle()
+    elif policy.name == 'video.resource-plan.v1':
+        from .profiles.video_resource_plan import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
+    elif policy.name == 'video.joint-plan.v1':
+        from .profiles.video_joint_plan import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
     elif policy.name == 'video.explanation-plan.v1':
         root = EXPLANATION_ROOT
         mandatory = {'explanation-procedure/SKILL.md', 'CONTRACT.md', 'RESULT.schema.json', 'LICENSE'}
         from .profiles.video_explanation import verified_bundle
         verified_bundle()
-    elif policy.name == 'video.motion-plan.v1':
-        root = MOTION_ROOT
-        mandatory = {'motion-procedure/SKILL.md', 'CONTRACT.md', 'PLAN.schema.json', 'LICENSE'}
-        from .profiles.video_motion import verified_bundle
+    elif policy.name == 'video.process-plan.v1':
+        root = PROCESS_ROOT
+        mandatory = {'process-procedure/SKILL.md', 'CONTRACT.md', 'PLAN.schema.json', 'LICENSE'}
+        from .profiles.video_process import verified_bundle
         verified_bundle()
+    elif policy.name == 'video.animation-experiment.v1':
+        from .profiles.video_animation_experiment import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
+    elif policy.name in {'video.animation-observe.v1', 'video.animation-review.v1'}:
+        from .profiles.video_animation_review import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
+    elif policy.name == 'video.animation-create.v2':
+        from .profiles.video_animation_create import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
+    elif policy.name == 'video.animation-review.v2':
+        from .profiles.video_animation_review import (
+            SEQUENCE_BUNDLE_ROOT, SEQUENCE_BUNDLE_FILES, verified_sequence_bundle)
+        root = SEQUENCE_BUNDLE_ROOT
+        mandatory = {'manifest.json', *SEQUENCE_BUNDLE_FILES}
+        verified_sequence_bundle()
+    elif policy.name == 'video.animation-review.v3':
+        from .profiles.video_animation_review import (
+            BATCH_BUNDLE_ROOT, BATCH_BUNDLE_FILES, verified_batch_bundle)
+        root = BATCH_BUNDLE_ROOT
+        mandatory = {'manifest.json', *BATCH_BUNDLE_FILES}
+        verified_batch_bundle()
+    elif policy.name == 'video.animation-review.v4':
+        from .profiles.video_animation_review import (
+            PACKED_BUNDLE_ROOT, PACKED_BUNDLE_FILES, verified_packed_bundle)
+        root = PACKED_BUNDLE_ROOT
+        mandatory = {'manifest.json', *PACKED_BUNDLE_FILES}
+        verified_packed_bundle()
+    elif policy.name == 'video.animation-collaboration.v1':
+        from .profiles.video_animation_collaboration import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
+    elif policy.name == 'video.animation-wikiskill-compile.v2':
+        from .profiles.video_animation_wikiskill_v2 import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
+    elif policy.name == 'video.animation-wikiskill-compile.v1':
+        from .profiles.video_animation_wikiskill import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
+    elif policy.name == 'video.joint-plan.v2':
+        from .profiles.video_joint_plan_skills import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
+    elif policy.name in {'video.animation-method-author.v1', 'video.animation-method-review.v1'}:
+        from .profiles.video_animation_method import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
+    elif policy.name in {'video.animation-method-author.v2', 'video.animation-method-review.v2'}:
+        from .profiles.video_animation_skill_method import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
+    elif policy.name == 'video.animation-production.v1':
+        from .profiles.video_animation_production import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
+    elif policy.name == 'video.animation-production.v2':
+        from .profiles.video_animation_production import FILM_BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = FILM_BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle(film=True)
+    elif policy.name == 'video.animation-manim-recipe.v1':
+        from .profiles.video_animation_manim_recipe import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
+    elif policy.name == 'video.animation-film-module.v1':
+        from .profiles.video_animation_film_module import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
+    elif policy.name == 'video.animation-production.v3':
+        from .profiles.video_animation_skill_production import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
+    elif policy.name == 'video.motion-plan.v1':
+        root = motion_package_root(pins.bundle_revision)
+        mandatory = {'manifest.json', 'motion-procedure/SKILL.md', 'CONTRACT.md', 'PLAN.schema.json', 'LICENSE'}
     elif policy.name in {'video.storyboard.v1', 'video.scene.v1'}:
         root = VIDEO_ROOT
         mandatory = {'video-procedure/SKILL.md', 'CONTRACT.md', 'LICENSE'}

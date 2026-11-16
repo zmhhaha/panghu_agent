@@ -30,6 +30,7 @@ def config(profile='ppt.plan_initial.v1', engine='pi'):
     _, hosts, _ = catalog.generate(pi_image=IMAGE,
         hermes_image='registry.invalid/agent-hermes@sha256:' + 'b' * 64,
         engine='pi', runtime_revision='runtime-v1', include_motion=(profile == 'video.motion-plan.v1'),
+        include_process=(profile == 'video.process-plan.v1'),
         include_explanation=(profile == 'video.explanation-plan.v1'))
     return HostConfig.model_validate(next(value for value in hosts.values()
         if value['profile']['name'] == profile and value['engine'] == engine))
@@ -67,7 +68,7 @@ def test_fixture_matches_actual_profile_contract(profile):
 
 
 @pytest.mark.parametrize('profile', ['video.storyboard.v1', 'video.scene.v1', 'video.motion-plan.v1',
-                                   'video.explanation-plan.v1'])
+                                   'video.explanation-plan.v1', 'video.process-plan.v1'])
 def test_video_probe_requires_explicit_reviewed_scenario(image_packages, profile):
     with pytest.raises(ServiceError, match='candidate_scenario_required'):
         probe.fixture(profile)
@@ -77,7 +78,11 @@ def test_video_probe_requires_explicit_reviewed_scenario(image_packages, profile
             upstream_secret='offline-upstream')
 
 
-@pytest.mark.parametrize('profile', sorted(probe.PROFILES))
+# Independent lab combinations are prepared outside the business catalog fixture.
+# New visual roles require actual frame evidence and an explicit reviewed scenario.
+@pytest.mark.parametrize('profile', sorted(probe.PROFILES.intersection(
+    (*catalog.PPT_PROFILES, *catalog.RESEARCH_PROFILES, *catalog.VIDEO_PROFILES,
+     *catalog.MOTION_PROFILES, *catalog.PROCESS_PROFILES, *catalog.EXPLANATION_PROFILES))))
 @pytest.mark.parametrize('engine', ['pi', 'hermes'])
 def test_candidate_is_exact_disabled_binding_without_production_approval(image_packages, profile, engine):
     original = config(profile, engine).model_dump(mode='json')
@@ -157,12 +162,40 @@ def test_signed_result_is_only_candidate_and_actual_lease_expiry_revokes_grant(a
     assert evidence['candidate_only'] is True
     assert evidence['production_acceptance_created'] is evidence['production_routes_changed'] is False
     assert evidence['result_state'] == 'failed' and evidence['model_calls'] == []
+    image_evidence = evidence['model_image_evidence']
+    assert image_evidence['job_id'] == value.envelope.job_id
+    assert image_evidence['attempt_id'] == value.envelope.attempt_id
+    assert image_evidence['request_sha256'] == value.envelope.request_sha256
+    assert image_evidence['images'] == []
     assert evidence['pod_termination'] == 'external_operator_observation_required'
     assert evidence['harness_sha256'] == probe.harness_sha256()
     assert value.config.model_dump(mode='json') == before
     assert value.store.get_job('candidate-probe', 'administrator', value.envelope.job_id)['state'] == 'running'
     assert value.store.get_worker_allocation(value.envelope.attempt_id)['stop_observed_at'] is None
     assert not list(value.directory.glob('acceptance.json'))
+
+
+def test_candidate_records_proxy_measured_images_independently_of_worker_claims(authority):
+    value = authority()
+    value.register(str(uuid4()))
+    value.proxy.client.close()
+    value.proxy.client = httpx.Client(transport=httpx.MockTransport(
+        lambda _: httpx.Response(200, json={'output': []})))
+    raw = b'offline image transport fixture'
+    value.proxy.respond(value.grant, dict(model=value.config.model.model, input=[
+        {'role': 'user', 'content': [{'type': 'input_image',
+            'image_url': 'data:image/png;base64,' + base64.b64encode(raw).decode()}]}]))
+    result = WorkerResult(state='failed', error_code='offline_synthetic_result')
+    result = result.model_copy(update={'stop_receipt': sign_receipt(value.envelope, result,
+        value.receipt_key, ('offline-synthetic-writer-proof',), time.time())})
+    value.result(dict(result=result.model_dump(mode='json'), observations={
+        'harness_sha256': probe.harness_sha256(), 'claimed_frame_sha256': 'f' * 64}))
+    evidence = json.loads((value.directory / 'candidate-evidence.json').read_bytes())
+    assert evidence['model_image_evidence']['images'][0]['sha256'] == hashlib.sha256(raw).hexdigest()
+    assert evidence['model_image_evidence']['images'][0]['model_request_completed'] is True
+    assert evidence['model_image_evidence']['request_sha256'] == value.envelope.request_sha256
+    assert evidence['observations']['claimed_frame_sha256'] == 'f' * 64
+    assert value.store.get_job('candidate-probe', 'administrator', value.envelope.job_id)['state'] == 'running'
 
 
 def test_admin_endpoints_authenticate_and_bound_input_without_leaking_tokens(authority, monkeypatch):

@@ -36,7 +36,17 @@ PROFILES = {'ppt.' + stage + '.v1' for stage in (
     'plan_initial', 'plan_options', 'prepare', 'generate', 'revise')} | {
     'research.generate.v1', 'research.revise.v1', 'research.plan.v1',
     'research.retrieve.v1', 'research.outline.v1', 'research.draft.v1',
-    'video.storyboard.v1', 'video.scene.v1', 'video.motion-plan.v1', 'video.explanation-plan.v1'}
+    'video.storyboard.v1', 'video.scene.v1', 'video.motion-plan.v1', 'video.explanation-plan.v1',
+    'video.process-plan.v1', 'video.animation-experiment.v1',
+    'video.animation-observe.v1', 'video.animation-review.v1', 'video.animation-create.v2',
+    'video.animation-review.v2', 'video.animation-review.v3', 'video.animation-review.v4',
+    'video.animation-method-author.v1', 'video.animation-method-review.v1',
+    'video.animation-method-author.v2', 'video.animation-method-review.v2',
+    'video.animation-production.v1', 'video.animation-production.v2',
+    'video.animation-production.v3', 'video.animation-film-module.v1', 'video.joint-plan.v1',
+    'video.resource-plan.v1', 'video.animation-wikiskill-compile.v1', 'video.joint-plan.v2',
+    'video.animation-wikiskill-compile.v2', 'video.animation-collaboration.v1',
+    'video.animation-manim-recipe.v1'}
 FIXTURE_PROFILES = {'ppt.plan_initial.v1', 'research.revise.v1'}
 CONTROL = Path('/run/agent-control')
 WORK = Path('/work')
@@ -278,6 +288,9 @@ class ProbeAuthority:
                 writer_resources=list(result.stop_receipt.resource_ids),
                 writers_observed_stopped_at=result.stop_receipt.observed_at,
                 observations=document['observations'], model_calls=before, lease_expiry_rejected=True,
+                model_image_evidence=__import__('agent_service.model_proxy',
+                    fromlist=['image_evidence_for_job']).image_evidence_for_job(self.store,
+                        self.store.get_job('candidate-probe', 'administrator', self.envelope.job_id)),
                 pod_termination='external_operator_observation_required',
                 unverified=['external_actual_pod_image_and_security_context', 'external_pod_termination',
                     'other_profiles_and_engines', 'full_production_acceptance_suite'])
@@ -465,11 +478,32 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
     from agent_service.engines import PiDriver
     extensions = ((Path(ACADEMIC_EXTENSION),)
                   if policy.name in {'research.generate.v1', 'research.retrieve.v1'} else ())
+    from agent_service.worker_entry import _host_registry
+    environment = _host_registry(config).environment(binding.tool_environment.name,
+                                                    binding.tool_environment.revision)
+    if {'skill_search', 'skill_read'} & set(environment.tools):
+        from agent_service.skill_tools import verified_skill_tools_extensions
+        try:
+            extensions += verified_skill_tools_extensions()
+        except (OSError, ValueError):
+            raise ServiceError('candidate_probe_invalid', 422) from None
+    elif 'read_compilation_input' in environment.tools:
+        from agent_service.compilation_input_tools import verified_compilation_input_extension
+        try:
+            extensions += (verified_compilation_input_extension(),)
+        except (OSError, ValueError):
+            raise ServiceError('candidate_compilation_input_reader_integrity_invalid', 422) from None
+    elif 'read_inputs' in environment.tools:
+        from agent_service.input_tools import verified_read_inputs_extension
+        try:
+            extensions += (verified_read_inputs_extension(),)
+        except (OSError, ValueError):
+            raise ServiceError('candidate_input_reader_integrity_invalid', 422) from None
     profile = DomainExecutionProfile(policy, policy.execution_binding.bundle_revision, extensions=extensions)
     profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL
     settings = build_pi_runtime_settings(policy, command=(NODE, PI_CLI), node_command=(NODE,), provider=config.model.provider,
         model=config.model.model, model_base_url=config.model.proxy_base_url, model_api=config.model.api,
-        model_max_tokens=8192,
+        model_max_tokens=32768 if policy.name == 'video.animation-wikiskill-compile.v2' else 8192,
         model_input=('text', 'image') if 'vision' in binding.model_policy.capabilities else ('text',),
         model_env={'AGENT_MODEL_API_KEY': credentials.model_proxy_token.get_secret_value()},
         tool_proxy_base_url=config.model.proxy_base_url, runtime_revision=policy.runtime_revision,

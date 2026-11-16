@@ -1,17 +1,82 @@
 """Deployment configuration and local probes, without contacting an Agent."""
 import sqlite3
+import json
 
 import pytest
 from fastapi.testclient import TestClient
 
 from video_workbench.app import create_app
-from video_workbench.config import AgentSettings, ExplanationSettings
+from video_workbench.config import AgentSettings, ExplanationSettings, creative_runtime_capabilities
+from video_workbench.config import ResourcePlanningAgentSettings
+from video_workbench.resource_producer_catalog import admitted_resource_producers
+from agent_service.contracts import ServiceError
 
 
 def test_explanation_is_opt_in_with_an_independent_contract_revision():
     assert ExplanationSettings.from_env({}) == ExplanationSettings(False, '1')
     assert ExplanationSettings.from_env({'VIDEO_EXPLANATION_ENABLED': '1',
                                         'VIDEO_EXPLANATION_PROFILE_REVISION': 'review-2'}) == ExplanationSettings(True, 'review-2')
+
+
+def test_resource_planner_uses_a_separate_explicit_credential_and_hides_secrets():
+    assert ResourcePlanningAgentSettings.from_env({'VIDEO_JOINT_PLAN_AGENT_URL': 'http://agent',
+        'VIDEO_JOINT_PLAN_AGENT_TOKEN': 's' * 40}) is None
+    configured = ResourcePlanningAgentSettings.from_env({'VIDEO_RESOURCE_PLAN_AGENT_URL': 'http://agent',
+        'VIDEO_RESOURCE_PLAN_AGENT_TOKEN': 'r' * 40})
+    assert configured.token == 'r' * 40 and configured.token not in repr(configured)
+    with pytest.raises(ValueError, match='dedicated VIDEO_RESOURCE_PLAN_AGENT'):
+        ResourcePlanningAgentSettings.from_env({'VIDEO_RESOURCE_PLAN_AGENT_URL': 'http://agent'})
+    with pytest.raises(ValueError, match='Unsupported VIDEO_RESOURCE_PLAN'):
+        ResourcePlanningAgentSettings.from_env({'VIDEO_RESOURCE_PLAN_AGENT_URL': 'http://agent',
+            'VIDEO_RESOURCE_PLAN_AGENT_TOKEN': 'r' * 40, 'VIDEO_RESOURCE_PLAN_PROFILE_REVISION': '2'})
+
+
+def test_planner_catalog_requires_both_whole_film_and_resource_admission():
+    class Film:
+        enabled = True
+        consumer = True
+        producer = True
+        def readiness(self):
+            if not self.consumer:
+                raise ServiceError('hyperframes_film_not_admitted', 503)
+            return True
+        def preflight_resources(self, owner):
+            assert owner == 'owner'
+            if not self.producer:
+                raise ServiceError('film_resource_not_admitted', 503)
+            return True
+    film = Film()
+    assert admitted_resource_producers(None, 'owner') == []
+    assert admitted_resource_producers(film, 'owner')[0]['id'] == 'manim'
+    film.consumer = False
+    assert admitted_resource_producers(film, 'owner') == []
+    film.consumer, film.producer = True, False
+    assert admitted_resource_producers(film, 'owner') == []
+
+
+def test_creative_engine_configuration_binds_formal_host_and_exact_runtime(tmp_path):
+    runtime = dict(schema='video.motion-runtime.v2', image_digest='sha256:' + 'a' * 64,
+        creative_host_sha256='b' * 64, engine_runtime_sha256='c' * 64,
+        gsap_sha256='d' * 64, font_sha256='e' * 64)
+    capabilities = dict(schema='video.animation-runtime-capabilities.v1',
+        allowed_engines=['html-svg', 'canvas'], assets={'gsap.min.js': 'd' * 64,
+        'NotoSansCJK-Regular.ttc': 'e' * 64}, runtime_identity=dict(image_digest=runtime['image_digest'],
+            host_sha256=runtime['creative_host_sha256'], engine_runtime_sha256=runtime['engine_runtime_sha256'],
+            admission_id='formal-native-acceptance'))
+    path = tmp_path / 'capabilities.json'
+    path.write_text(json.dumps(capabilities), encoding='utf-8')
+    env = {'VIDEO_CREATIVE_RUNTIME_CAPABILITIES_FILE': str(path)}
+    assert creative_runtime_capabilities(runtime, {}) is None
+    assert creative_runtime_capabilities(runtime, env) == capabilities
+    for key in ('image_digest', 'creative_host_sha256', 'engine_runtime_sha256', 'gsap_sha256', 'font_sha256'):
+        changed = dict(runtime, **{key: 'f' * 64})
+        with pytest.raises(ValueError, match='do not match'):
+            creative_runtime_capabilities(changed, env)
+    # A v1 runtime or a missing manifest cannot silently broaden production.
+    with pytest.raises(ValueError):
+        creative_runtime_capabilities(dict(runtime, schema='video.motion-runtime.v1'), env)
+    with pytest.raises(ValueError):
+        creative_runtime_capabilities(runtime, {'VIDEO_CREATIVE_RUNTIME_CAPABILITIES_FILE': str(tmp_path / 'missing')})
 
 
 @pytest.mark.parametrize('env', [

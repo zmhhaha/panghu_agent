@@ -33,12 +33,60 @@ PROFILE_RESOURCE = "resources/workspace-text-v1/"
 VIDEO_RESOURCE = "resources/video-workbench-v1/"
 VIDEO_MANIFEST_SHA256 = "d5a5fcb5081d65acce5783f72effe3fafe1954613e62d6dc5471cbfe2cd8a681"
 VIDEO_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'video-procedure/SKILL.md'})
-MOTION_RESOURCE = "resources/video-motion-v1/"
-MOTION_MANIFEST_SHA256 = "4eba854c6f858a6ec18eb01687a87865dca53efc1346eb4456e6a47bd9dac104"
+MOTION_RESOURCE = "resources/video-motion-v2/"
+MOTION_MANIFEST_SHA256 = "b64687707555b3f52c66d801ef57890d40efe6113fa7753b5d86da9ca0e25653"
 MOTION_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'PLAN.schema.json', 'motion-procedure/SKILL.md'})
+LEGACY_MOTION_RESOURCE = "resources/video-motion-v1/"
+LEGACY_MOTION_MANIFEST_SHA256 = "4eba854c6f858a6ec18eb01687a87865dca53efc1346eb4456e6a47bd9dac104"
 EXPLANATION_RESOURCE = "resources/video-explanation-v1/"
 EXPLANATION_MANIFEST_SHA256 = 'bb1da41c91bc3393b7cafea3ab165ec9f92e658a8efc256378cebe8294f660c0'
 EXPLANATION_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'RESULT.schema.json', 'explanation-procedure/SKILL.md'})
+PROCESS_RESOURCE = 'resources/video-process-v1/'
+PROCESS_MANIFEST_SHA256 = '3f70951641a0ebd8a3b08771734f0ece568a8fa392caf296181ecf303ea1f409'
+PROCESS_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'PLAN.schema.json', 'process-procedure/SKILL.md'})
+ANIMATION_RESOURCE = 'resources/animation-experiment-v1/'
+ANIMATION_MANIFEST_SHA256 = '2c090966b7df774b399b5c8d48acc002a35fd4b0a5612c21936780f109202b86'
+ANIMATION_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'animation-procedure/SKILL.md'})
+REVIEW_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'review-procedure/SKILL.md'})
+CREATION_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'creation-procedure/SKILL.md'})
+METHOD_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'method-procedure/SKILL.md'})
+PRODUCTION_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'production-procedure/SKILL.md'})
+# Clean builds must carry every reviewed execution identity, including the
+# older observe/review resources still referenced by immutable accepted Hosts.
+# These pins deliberately remain independent of importing the service runtime.
+ANIMATION_RUNTIME_BUNDLES = (
+    ('animation-collaboration-v1', 'd8c3070184a0d18e0d2224c6245879cf6c934512d341a9423712617af0af42a5',
+     frozenset({'CONTRACT.md', 'LICENSE', 'collaboration-procedure/SKILL.md'})),
+    ('animation-wikiskill-v2', '8c9d0891c0d7dceb965ea63fc8b5c95dc82353bda7eee93b977473161d6eaa78',
+     frozenset({'CONTRACT.md', 'LICENSE', 'compile-procedure/SKILL.md'})),
+    ('animation-wikiskill-v1', 'cbc8665c75cfaff22299f8444cd6863fb63c0eb13d2ce2b994cee58825572292',
+     frozenset({'CONTRACT.md', 'LICENSE', 'compile-procedure/SKILL.md'})),
+    ('video-joint-plan-v2', '8096dda4dddd5167b724029f96b95acb32064443eaff400cf7cbaba86187b4da',
+     frozenset({'CONTRACT.md', 'LICENSE', 'joint-plan-procedure/SKILL.md'})),
+    ('video-resource-plan-v1', '32cb9b6bc30083a784f6b07235dc29fd0dba3647a8ce94fddc3d8f7d936783c9',
+     frozenset({'CONTRACT.md', 'LICENSE', 'resource-plan-procedure/SKILL.md'})),
+    ('animation-manim-recipe-v1', '051093b78ffa0d338627461094816831ca3075ec23f3b201ebd6f44f4f16ec98',
+     frozenset({'CONTRACT.md', 'LICENSE', 'author-procedure/SKILL.md', 'foundation/SKILL.md'})),
+    ('animation-film-module-v1', 'fc40e7b8cab8bbbefc5ede30f9001aa64f197f296e84e9113fb45880106a628f',
+     frozenset({'CONTRACT.md', 'LICENSE', 'author-procedure/SKILL.md', 'foundation/SKILL.md'})),
+    ('video-joint-plan-v1', 'bc38815a2f394181383fa4cea3811380dc899f0cf3ad1e61a7e15f84552cc9ca',
+     frozenset({'CONTRACT.md', 'LICENSE', 'joint-plan-procedure/SKILL.md'})),
+    ('animation-review-v1', '165e4bc85eeae28a1fd30028f555b5d5a832f4dfdcfed09904bfd49859126f29', REVIEW_FILES),
+    ('animation-review-v2', 'ce0ea7908798bcca99c7effc5cf6cbc3f3c9166e12cfadf2bae50a5d862fe77c', REVIEW_FILES),
+    ('animation-review-v3', '841e048b5493d290160e6ab8694460fb0f0b2032dc9f7ed12e2798f2d5f95676', REVIEW_FILES),
+    ('animation-review-v4', 'bcef4965e4b8a564ee6905ad598d71fd4510abbf25cdca06d63c6544476db8f8', REVIEW_FILES),
+    ('animation-create-v2', '5033ca38c868c54b860caf678bdcb39ae30088a89b659990ac609b45113fc923', CREATION_FILES),
+    ('animation-method-v1', '5736a38aa05058011ad9ee7e886360e15b0a0cf28be3211b242241c2299c7b91', METHOD_FILES),
+    ('animation-production-v1', '275a909d0d8b7e5e406b87f63455fd450c47a40a8234ce57ee4e0e5f6effbb14', PRODUCTION_FILES),
+    ('animation-method-v2', '0f99e0b20a647726270889a16c15eca5631837c09fc999ef3e0741e736376fea', METHOD_FILES),
+    ('animation-method-v3', 'e8be4336b8ba12a2e3af1fd8c6c350e349fafc25014e3d4e3cf5311eeb38dcc8', METHOD_FILES),
+    ('animation-method-v4', '24c7c973b8a1d9d63e31047f633da038313cc0b500bbdaa2014fea7cd4b9f02c', METHOD_FILES),
+    ('animation-method-v5', '3e17c8b9766568021b9fbca2ace6cc31f588c966266e169bf229cdbafb69cce0', METHOD_FILES),
+    ('animation-production-v2', '46074b77f1a5aed5ca798652c987ad9e583b383a0a15ff841b5a8c94268931c3', PRODUCTION_FILES),
+    ('animation-production-v3', 'f309927ae86038d40956101174dd52af8912633cb2a5aa4f66083d4d55af9276', PRODUCTION_FILES),
+    ('animation-production-v4', '79d2a35d95452b68329c823373b8d6eea1880582d1dda2aca71d6e116013ed8d',
+     PRODUCTION_FILES | {'foundation/SKILL.md'}),
+)
 
 
 class BuildError(RuntimeError):
@@ -126,6 +174,36 @@ def read_regular(path, limit=2 * 1024 * 1024):
     return content
 
 
+def animation_runtime_resources(service):
+    """Measure only the fixed animation role bundle file inventories."""
+    files = {}
+    for revision, expected_sha, expected_files in ANIMATION_RUNTIME_BUNDLES:
+        prefix = 'resources/' + revision + '/'
+        try:
+            manifest = read_regular(service / (prefix + 'manifest.json'), 65536)
+            resource = json.loads(manifest, object_pairs_hook=unique_pairs)
+            if (hashlib.sha256(manifest).hexdigest() != expected_sha
+                    or type(resource) is not dict or resource.get('bundle_revision') != revision
+                    or resource.get('automatic_updates') is not False
+                    or resource.get('upstream_content_vendored') is not False
+                    or resource.get('license') != 'MIT'):
+                raise ValueError()
+            rows = resource['local_files']
+            if (type(rows) is not list or len(rows) != len(expected_files)
+                    or any(type(row) is not dict or set(row) != {'path', 'sha256'} for row in rows)
+                    or {row['path'] for row in rows} != expected_files):
+                raise ValueError()
+            for row in rows:
+                raw = read_regular(service / (prefix + row['path']), 128 * 1024)
+                if hashlib.sha256(raw).hexdigest() != row['sha256']:
+                    raise ValueError()
+                files['agent_service/' + prefix + row['path']] = raw
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            raise BuildError('invalid_animation_runtime_resource_manifest') from None
+        files['agent_service/' + prefix + 'manifest.json'] = manifest
+    return files
+
+
 def reset_receipt(service, target):
     service = checked_directory(service)
     rendered = service / "rendered"
@@ -194,28 +272,55 @@ def context_archive(service, target, destination):
         except (ValueError, TypeError, KeyError, AttributeError):
             raise BuildError('invalid_video_resource_manifest') from None
         files['agent_service/' + VIDEO_RESOURCE + 'manifest.json'] = manifest
-        manifest = read_regular(service / (MOTION_RESOURCE + 'manifest.json'), 65536)
+        # Old accepted bindings still measure v1. Keep its exact reviewed
+        # bytes in clean images while admitting v2 independently.
+        for motion_root, motion_revision, manifest_sha in (
+                (LEGACY_MOTION_RESOURCE, 'video-motion-v1', LEGACY_MOTION_MANIFEST_SHA256),
+                (MOTION_RESOURCE, 'video-motion-v2', MOTION_MANIFEST_SHA256)):
+            manifest = read_regular(service / (motion_root + 'manifest.json'), 65536)
+            try:
+                resource = json.loads(manifest, object_pairs_hook=unique_pairs)
+                if (hashlib.sha256(manifest).hexdigest() != manifest_sha
+                        or resource.get('bundle_revision') != motion_revision
+                        or resource.get('automatic_updates') is not False
+                        or resource.get('upstream_content_vendored') is not False
+                        or resource.get('license') != 'MIT'):
+                    raise ValueError()
+                rows = resource['local_files']
+                if (type(rows) is not list or len(rows) != len(MOTION_FILES)
+                        or any(type(row) is not dict or set(row) != {'path', 'sha256'} for row in rows)
+                        or {row['path'] for row in rows} != MOTION_FILES):
+                    raise ValueError()
+                for row in rows:
+                    raw = read_regular(service / (motion_root + row['path']), 128 * 1024)
+                    if hashlib.sha256(raw).hexdigest() != row['sha256']:
+                        raise ValueError()
+                    files['agent_service/' + motion_root + row['path']] = raw
+            except (ValueError, TypeError, KeyError, AttributeError):
+                raise BuildError('invalid_motion_resource_manifest') from None
+            files['agent_service/' + motion_root + 'manifest.json'] = manifest
+        manifest = read_regular(service / (PROCESS_RESOURCE + 'manifest.json'), 65536)
         try:
             resource = json.loads(manifest, object_pairs_hook=unique_pairs)
-            if (hashlib.sha256(manifest).hexdigest() != MOTION_MANIFEST_SHA256
-                    or resource.get('bundle_revision') != 'video-motion-v1'
+            if (hashlib.sha256(manifest).hexdigest() != PROCESS_MANIFEST_SHA256
+                    or resource.get('bundle_revision') != 'video-process-v1'
                     or resource.get('automatic_updates') is not False
                     or resource.get('upstream_content_vendored') is not False
                     or resource.get('license') != 'MIT'):
                 raise ValueError()
             rows = resource['local_files']
-            if (type(rows) is not list or len(rows) != len(MOTION_FILES)
+            if (type(rows) is not list or len(rows) != len(PROCESS_FILES)
                     or any(type(row) is not dict or set(row) != {'path', 'sha256'} for row in rows)
-                    or {row['path'] for row in rows} != MOTION_FILES):
+                    or {row['path'] for row in rows} != PROCESS_FILES):
                 raise ValueError()
             for row in rows:
-                raw = read_regular(service / (MOTION_RESOURCE + row['path']), 128 * 1024)
+                raw = read_regular(service / (PROCESS_RESOURCE + row['path']), 128 * 1024)
                 if hashlib.sha256(raw).hexdigest() != row['sha256']:
                     raise ValueError()
-                files['agent_service/' + MOTION_RESOURCE + row['path']] = raw
+                files['agent_service/' + PROCESS_RESOURCE + row['path']] = raw
         except (ValueError, TypeError, KeyError, AttributeError):
-            raise BuildError('invalid_motion_resource_manifest') from None
-        files['agent_service/' + MOTION_RESOURCE + 'manifest.json'] = manifest
+            raise BuildError('invalid_process_resource_manifest') from None
+        files['agent_service/' + PROCESS_RESOURCE + 'manifest.json'] = manifest
         manifest = read_regular(service / (EXPLANATION_RESOURCE + 'manifest.json'), 65536)
         try:
             resource = json.loads(manifest, object_pairs_hook=unique_pairs)
@@ -238,6 +343,29 @@ def context_archive(service, target, destination):
         except (ValueError, TypeError, KeyError, AttributeError):
             raise BuildError('invalid_explanation_resource_manifest') from None
         files['agent_service/' + EXPLANATION_RESOURCE + 'manifest.json'] = manifest
+        manifest = read_regular(service / (ANIMATION_RESOURCE + 'manifest.json'), 65536)
+        try:
+            resource = json.loads(manifest, object_pairs_hook=unique_pairs)
+            if (hashlib.sha256(manifest).hexdigest() != ANIMATION_MANIFEST_SHA256
+                    or resource.get('bundle_revision') != 'animation-experiment-v1'
+                    or resource.get('automatic_updates') is not False
+                    or resource.get('upstream_content_vendored') is not False
+                    or resource.get('license') != 'MIT'):
+                raise ValueError()
+            rows = resource['local_files']
+            if (type(rows) is not list or len(rows) != len(ANIMATION_FILES)
+                    or any(type(row) is not dict or set(row) != {'path', 'sha256'} for row in rows)
+                    or {row['path'] for row in rows} != ANIMATION_FILES):
+                raise ValueError()
+            for row in rows:
+                raw = read_regular(service / (ANIMATION_RESOURCE + row['path']), 128 * 1024)
+                if hashlib.sha256(raw).hexdigest() != row['sha256']:
+                    raise ValueError()
+                files['agent_service/' + ANIMATION_RESOURCE + row['path']] = raw
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise BuildError('invalid_animation_resource_manifest') from None
+        files['agent_service/' + ANIMATION_RESOURCE + 'manifest.json'] = manifest
+        files.update(animation_runtime_resources(service))
     root = service.parent
     # Explicit framework-neutral dependencies of the reviewed collectors. No
     # business API/database/publisher, sessions or private Agent HOME is copied.

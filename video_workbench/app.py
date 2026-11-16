@@ -24,7 +24,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from agent_service.client import AgentClient
 from agent_service.contracts import ServiceError
 from .agent import VideoAgentGateway
-from .config import AgentSettings, ExplanationSettings, MotionSettings
+from .config import (AgentSettings, ExplanationSettings, MotionSettings,
+                     ProductionMethodSettings, ProductionAgentSettings, SkillProductionAgentSettings, JointPlanAgentSettings,
+                     ResourcePlanningAgentSettings,
+                     creative_runtime_capabilities)
 from .service import Workflow
 from .store import Store
 from .speech import SpeechClient, SpeechSettings, MAX_AUDIO_BYTES
@@ -33,13 +36,24 @@ from .production import Production
 from .explanation_gateway import ExplanationAgentGateway
 from .explanation_store import ExplanationStore
 from .explanation_workflow import ExplanationWorkflow
+from .joint_plan_gateway import JointPlanAgentGateway
+from .joint_plan_store import JointPlanStore
+from .joint_plan_workflow import JointPlanWorkflow
+from .resource_planning_gateway import ResourcePlanningAgentGateway
+from .resource_planning_coordinator import ResourcePlanningCoordinator
+from .resource_producer_catalog import admitted_resource_producers
 from .motion_store import MotionStore
 from .motion_timing import MotionTiming
 from .motion_workflow import MotionWorkflow
-from .motion_gateway import MotionAgentGateway
+from .motion_gateway import MotionAgentGateway, ProcessAgentGateway, ProductionCreativeAgentGateway
+from .skill_production_gateway import SkillProductionAgentGateway
 from .continuity_store import ContinuityStore
 from .batch_store import BatchStore
 from .batch_workflow import BatchWorkflow
+from .production_run_store import ProductionRunStore
+from .production_sequence_store import ProductionSequenceStore
+from .production_run_workflow import ProductionRunWorkflow
+from .film_production_config import FilmModuleAgentSettings, FilmProductionSettings, FilmManimSettings, execution_readiness
 
 WEB = Path(__file__).parent / 'web'
 PREVIEW_CSP = ("sandbox; default-src 'none'; script-src 'none'; "
@@ -49,6 +63,41 @@ UI_CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'sel
           "media-src 'self'; frame-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 
 MESSAGES = {
+    'film_creation_unavailable': '整片动画制作暂未就绪，尚未开始新的制作任务。',
+    'hyperframes_film_not_admitted': '整片渲染服务暂未就绪，尚未开始新的制作任务。',
+    'production_run_film_unavailable': '整片制作依赖暂未就绪，尚未开始新的制作任务。',
+    'production_run_film_plan_too_long': '当前整片制作支持最长 60 秒，请先将制作方案控制在一分钟内。尚未开始配音。',
+    'production_run_film_too_long': '实际录音与留白超过当前 60 秒制作上限，请缩短内容后再制作。',
+    'film_creation_duration_budget': '实际录音与留白超过当前 60 秒制作上限，请缩短内容后再制作。',
+    'creative_skills_unavailable': '暂时无法读取已发布的动画 Skill 目录，尚未提交制作任务。',
+    'creative_film_context_required': '请从整片草稿制作入口生成动画，以绑定完整内容和真实配音时钟。',
+    'skill_production_profile_unavailable': '通用 Agent 的动画 Skill 制作能力尚未完成独立准入或配置，暂不能开始新的制作任务。',
+    'skill_production_preflight_unavailable': '未能确认动画 Skill 制作能力，尚未提交任务，请稍后重试。',
+    'project_delete_busy': '项目仍有制作任务正在运行，或上次提交尚未确认结束。请等待任务完成或确认取消后再移到回收站。',
+    'production_runs_disabled': '整片草稿制作尚未启用或制作依赖尚未就绪。',
+    'production_run_in_progress': '项目已有整片制作任务，或上次任务尚未确认停止。',
+    'production_run_project_busy': '项目仍有其他制作任务，请等待结束后再制作整片草稿。',
+    'production_run_inputs_changed': '已确认方案、文稿或配音设置已变化，已停止后续制作。',
+    'production_run_cancellation_pending': '已申请取消，正在等待制作任务确认停止。',
+    'production_run_sequence_registration_pending': '正在保存成片的制作关联记录，请稍后再继续制作。',
+    'production_run_sequence_source_not_completed': '来源成片尚未完整制作完成，暂不能复用。',
+    'production_run_sequence_binding_missing': '制作关联记录缺失，暂不能开始后续制作，请联系维护者恢复记录。',
+    'production_run_sequence_source_changed': '来源成片的内容校验不一致，请检查所选的制作记录。',
+    'production_run_sequence_media_changed': '来源成片的文件校验未通过，暂不能复用。',
+    'production_run_sequence_unavailable': '制作关联记录暂不可用，尚未开始新的制作任务，请稍后重试。',
+    'production_run_sequence_registration_interrupted': '制作记录保存中断，正在按原记录恢复，请稍后重试。',
+    'production_sequence_not_found': '制作关联记录暂不可用，请联系维护者检查。',
+    'joint_plan_disabled': '整片联合方案尚未启用。',
+    'joint_plan_profile_unavailable': '通用 Agent 尚未启用整片联合规划能力。',
+    'joint_plan_preflight_unavailable': '未能确认整片规划能力，尚未提交任务，请稍后再试。',
+    'joint_plan_operation_in_progress': '项目已有规划任务，请等待完成或申请取消。',
+    'joint_plan_stale': '文稿、镜头或配音设置已变化，请基于当前项目重新生成方案。',
+    'joint_plan_head_conflict': '已采用方案发生变化，请重新读取后核对。',
+    'joint_plan_visual_requires_split': '规划的画面说明过长，请缩短说明或拆分为更短的片段。',
+    'joint_plan_storage_limit': '本项目的规划记录已达到当前存储限制。',
+    'joint_plan_candidate_limit': '本项目的规划候选数量已达到限制。',
+    'joint_plan_operation_limit': '本项目的规划任务记录已达到限制。',
+    'joint_plan_queue_limit': '规划任务较多，请等待已有任务完成。',
     'not_found': '项目或资源不存在。', 'revision_conflict': '项目已更新，请核对最新内容后重试。',
     'head_conflict': '采用版本已变化，请核对后重试。', 'idempotency_conflict': '请求标识已用于另一次操作。',
     'operation_in_progress': '这个镜头或项目已有任务，请等待完成。',
@@ -80,6 +129,32 @@ MESSAGES = {
     'explanation_head_conflict': '已采用的讲解方案发生变化，请重新读取后核对。',
     'explanation_storage_limit': '讲解方案记录已达到当前存储限制。',
     'motion_disabled': '动态图解尚未启用，仍可查看历史和取消在途任务。',
+    'creative_disabled': '创意动画尚未启用，原动画和录音仍可查看。',
+    'creative_profile_unavailable': '创意动画的通用 Agent 服务尚未就绪，请稍后重试。',
+    'creative_methods_unavailable': '正式动画的方法服务尚未配置，请联系维护者完成接入。',
+    'creative_audio_binding_mismatch': '这份动画对应的旁白录音已变化，请为当前录音重新生成。',
+    'creative_timing_requires_regeneration': '这份动画按固定录音时间制作，调整节拍后需要重新生成。',
+    'creative_scene_engine_not_admitted': '当前创意动画支持 HTML/SVG，这种渲染方式尚未启用。',
+    'creative_render_observation_mismatch': '动画的播放与复验画面不一致，请重新制作候选。',
+    'creative_reverse_seek_mismatch': '动画反向定位不一致，请重新制作候选。',
+    'process_disabled': '过程演示尚未启用，已有候选和录音仍可查看。',
+    'process_profile_unavailable': '过程演示生成服务尚未就绪，请稍后重新读取。',
+    'process_continuity_not_supported': '过程演示暂不支持跨镜连续衔接，可制作单镜或普通整片草稿。',
+    'invalid_process_continuity_plan': '过程对象的连续关系不符合要求，请核对相邻镜头后重新保存候选。',
+    'process_continuity_requires_process': '这份连续方案需要全部镜头采用有效过程演示。',
+    'process_continuity_mixed_not_supported': '过程演示与通用图解混合时，请制作普通整片草稿；连续方案需要全部镜头使用同一种图解方式。',
+    'process_continuity_source_unsupported': '这份过程演示的版本尚不支持连续衔接，请生成并采用新的过程候选；原画面和录音保留。',
+    'process_continuity_compiler_unsupported': '这份过程演示的版本尚不支持连续衔接，请生成并采用新的过程候选；原画面和录音保留。',
+    'process_continuity_source_invalid': '过程演示的状态或请求流转尚不能连续衔接，请检查该镜头后修改方案。',
+    'process_continuity_source_not_visible': '上一镜结束时关联对象不可见，请修改过程方案或取消关联。',
+    'process_continuity_slot_conflict': '延续对象的位置与下一镜起点不同，请修改过程方案或取消关联。',
+    'process_continuity_state_conflict': '延续后的节点状态无法接上下一镜动作，请修改过程方案或取消关联。',
+    'process_continuity_card_copy_not_supported': '过程演示目前只支持复制请求对象，处理节点请使用延续或取消关联。',
+    'process_continuity_copy_content_changed': '请求内容不同，不能作为保持原内容的复制。',
+    'process_continuity_copy_archive_unavailable': '没有可供保留原请求的安全位置，请改为延续或取消这处关联。',
+    'process_continuity_unsafe_transition': '过程衔接存在位置冲突，请修改方案或取消该处关联。',
+    'motion_diagram_kind_mismatch': '修改应沿用所选方案的图解方式，切换方式请生成新候选。',
+    'motion_base_kind_mismatch': '修改应沿用所选方案的图解方式，切换方式请生成新候选。',
     'project_production_mode_busy': '项目有制作任务正在执行，请等待完成或取消后再转为动态制作。',
     'dynamic_workflow_required': '请使用动态视频的预览与导出入口，先完成动态图解并核对配音时序。',
     'motion_plan_stale': '这份动态图解对应旧内容，请重新生成。',
@@ -113,6 +188,10 @@ MESSAGES = {
     'continuity_candidate_limit': '本项目的连续方案候选已达到数量限制。',
     'continuity_storage_limit': '连续方案记录已达到当前存储限制。',
     'continuity_inputs_unavailable': '请先为至少两个镜头采用有效动态图解，再规划连续关系。',
+    'continuity_compiler_version_unsupported': '这份连续方案的制作版本暂不支持，请重新规划；历史记录保留。',
+    'continuity_compiler_schema_mismatch': '连续方案的制作方式与图解不匹配，请重新规划；历史记录保留。',
+    'continuity_source_stale': '连续制作对应的图解、录音或时序已变化，请重新读取并制作新的草稿。',
+    'continuity_segment_budget_exceeded': '加入跨镜衔接后的镜头超过当前制作限制，请缩短旁白或拆分镜头。',
     'continuity_missing_motion': '请先为全部镜头采用有效动态图解。',
     'continuity_motion_stale': '已采用的动态图解对应旧内容，请先更新图解。',
     'continuity_ambiguous_link': '对象关联不明确，请检查是否重复选择了同一来源或目标。',
@@ -214,9 +293,27 @@ class ExplanationAdoption(Revision):
     expected_head_version_id: str | None = Field(max_length=100)
 
 
+class JointPlanRequest(ExplanationRequest):
+    preserve_script: bool = Field(default=False, strict=True)
+    library_release_id: str | None = Field(default=None, min_length=1, max_length=200)
+
+
+class ProductionRunRequest(Revision):
+    joint_plan_version_id: str = Field(min_length=1, max_length=100)
+    reuse_audio_from_run_id: str | None = Field(default=None, min_length=1, max_length=100)
+    resource_authoring: dict[str, dict] | None = Field(default=None, min_length=1, max_length=8)
+    resource_plan: dict | None = Field(default=None)
+
+
 class Generation(Revision):
     base_version_id: str | None = Field(default=None, max_length=100)
     instruction: str = Field(default='', max_length=8000)
+
+
+class MotionGeneration(Generation):
+    diagram_kind: Literal['diagram', 'process', 'creative'] = 'diagram'
+    expected_semantic_binding_sha256: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
+    expected_audio_version_id: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class Adoption(Fields):
@@ -393,19 +490,85 @@ def export_project(store, owner, project):
     return buffer.getvalue()
 
 
+_SEQUENCE_TABLES = frozenset({'production_sequences', 'production_sequence_sources',
+    'production_sequence_runs', 'production_sequence_rounds', 'production_requirement_batches',
+    'production_sequence_requests', 'production_sequence_events'})
+
+
+def _check_sequence_database(path):
+    with closing(sqlite3.connect(Path(path).as_uri() + '?mode=rw', uri=True, timeout=1)) as db:
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if not _SEQUENCE_TABLES <= tables:
+            raise sqlite3.DatabaseError('Production sequence schema is missing')
+
+
+def _production_sequence_ledger(store):
+    path = Path(store.path).with_name('production-sequences.sqlite3')
+    # An outbox with no acknowledged ID may already have committed in the
+    # sidecar. Refuse to replace missing history, including that crash window.
+    with store.transaction() as db:
+        tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        required = False
+        if 'production_runs' in tables:
+            for row in db.execute('SELECT document FROM production_runs'):
+                run = json.loads(row[0])
+                registration = run.get('sequence_registration') or {}
+                if 'sequence_intent' in run or registration.get('sequence_id') is not None:
+                    required = True
+                    break
+    if required:
+        try:
+            _check_sequence_database(path)
+        except sqlite3.Error:
+            raise ValueError('Restore the existing production sequence database before starting the workbench') from None
+    return ProductionSequenceStore(path)
+
+
 def create_app(*, db_path=None, gateway=None, local_mode=False, background=True, trusted_hosts=None,
                speech_client=None, renderer=None, render_enabled=None,
                explanation_gateway=None, explanation_enabled=None, motion_gateway=None,
-               motion_enabled=None, motion_renderer=None, motion_runtime=None):
+               motion_enabled=None, motion_renderer=None, motion_runtime=None,
+               process_gateway=None, process_enabled=None, creative_gateway=None, creative_enabled=None,
+               method_adapter=None, creative_capabilities=None, joint_plan_gateway=None,
+               joint_plan_enabled=None, production_runs_enabled=None,
+               skill_gateway=None, skill_adapter=None, skill_production=True, film_creation=None,
+               resource_planning_gateway=None, resource_producer_catalog=None,
+               refinement_service=None, refinement_enabled=None):
+    if type(skill_production) is not bool:
+        raise ValueError('An explicit boolean Skill production mode is required')
     explanation_settings = ExplanationSettings.from_env()
     enabled = explanation_settings.enabled if explanation_enabled is None else explanation_enabled
     if type(enabled) is not bool:
         raise ValueError('An explicit boolean explanation feature gate is required')
+    joint_setting = os.environ.get('VIDEO_JOINT_PLAN_ENABLED', '1' if enabled else '0')
+    if joint_plan_enabled is None and joint_setting not in {'0', '1'}:
+        raise ValueError('Invalid joint plan feature settings')
+    joint_gate = joint_setting == '1' if joint_plan_enabled is None else joint_plan_enabled
+    if type(joint_gate) is not bool:
+        raise ValueError('An explicit boolean joint plan feature gate is required')
     motion_settings = MotionSettings.from_env()
+    if creative_capabilities is None:
+        creative_capabilities = creative_runtime_capabilities(
+            motion_settings.runtime_fingerprint if motion_runtime is None else motion_runtime,
+            skill_production=skill_production)
     motion_gate = motion_settings.enabled if motion_enabled is None else motion_enabled
     if type(motion_gate) is not bool:
         raise ValueError('An explicit boolean motion feature gate is required')
+    process_gate = motion_settings.process_enabled if process_enabled is None else process_enabled
+    if type(process_gate) is not bool:
+        raise ValueError('An explicit boolean process feature gate is required')
+    process_gate = process_gate and motion_gate
+    creative_gate = motion_settings.creative_enabled if creative_enabled is None else creative_enabled
+    if type(creative_gate) is not bool:
+        raise ValueError('An explicit boolean creative feature gate is required')
+    creative_gate = creative_gate and motion_gate
     owned_client = None
+    owned_production_client = None
+    owned_skill_client = None
+    owned_joint_plan_client = None
+    owned_resource_planning_client = None
+    owned_film_client = None
+    owned_film_renderer = None
     owned_speech_client = None
     if gateway is None:
         settings = AgentSettings.from_env()
@@ -429,12 +592,90 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         explanation_gateway = ExplanationAgentGateway(gateway.client, explanation_settings.revision)
     explanation_store = ExplanationStore(store)
     explanation_workflow = ExplanationWorkflow(explanation_store, explanation_gateway, enabled=enabled)
-    motion_store = MotionStore(store)
+    motion_store = MotionStore(store, runtime_capabilities=creative_capabilities,
+                               skill_production=skill_production)
     continuity_store = ContinuityStore(store, motion_store)
     motion_timing = MotionTiming(motion_store)
     if motion_gateway is None and isinstance(gateway, VideoAgentGateway):
         motion_gateway = MotionAgentGateway(gateway.client, motion_settings.revision)
-    motion_workflow = MotionWorkflow(motion_store, motion_gateway, enabled=motion_gate)
+    if process_gateway is None and isinstance(gateway, VideoAgentGateway):
+        process_gateway = ProcessAgentGateway(gateway.client, motion_settings.process_revision)
+    if creative_gateway is None:
+        production_settings = ProductionAgentSettings.from_env()
+        if production_settings:
+            owned_production_client = AgentClient(production_settings.base_url, production_settings.token)
+            creative_gateway = ProductionCreativeAgentGateway(owned_production_client, production_settings.revision)
+    method_client = None
+    if method_adapter is None or skill_adapter is None:
+        method_settings = ProductionMethodSettings.from_env()
+        if method_settings:
+            from .animation_method_http import MethodLabClient, CreationTransportError
+            from .animation_method_production import MethodProductionAdapter
+            from .animation_wikiskill_production import LibrarySkillProductionAdapter
+            method_client = MethodLabClient(method_settings.base_url, method_settings.token)
+
+            def method_request(call, *args):
+                try:
+                    return call(*args)
+                except CreationTransportError as error:
+                    raise ServiceError('creative_methods_unavailable', error.status) from None
+
+            # Only released packages are read as the configured publisher.
+            # Recipient identity and task freezes remain the real project owner;
+            # no browser input can select another publisher or read their Wiki.
+            def released_catalogue(owner):
+                return method_request(method_client.published_catalog, method_settings.publisher_owner or owner)
+
+            def released_methods(owner, body):
+                return method_request(method_client.published_methods, method_settings.publisher_owner or owner, body)
+
+            if method_adapter is None:
+                method_adapter = MethodProductionAdapter(
+                    lambda owner: method_request(method_client.published_catalog, owner),
+                    lambda owner, body: method_request(method_client.published_methods, owner, body),
+                    ledger_path=Path(store.path).with_name('production-method-freezes.sqlite3'))
+            if skill_adapter is None:
+                skill_adapter = LibrarySkillProductionAdapter(
+                    lambda owner: method_request(method_client.wikiskill_active, method_settings.publisher_owner or owner),
+                    lambda owner, release_id: method_request(method_client.wikiskill_release,
+                        method_settings.publisher_owner or owner, release_id),
+                    lambda owner: method_request(method_client.wikiskill_catalogue, method_settings.publisher_owner or owner),
+                    ledger_path=Path(store.path).with_name('production-skill-freezes.sqlite3'),
+                    legacy_read=released_methods)
+    if skill_gateway is None and skill_adapter is not None:
+        skill_settings = SkillProductionAgentSettings.from_env()
+        if skill_settings:
+            owned_skill_client = AgentClient(skill_settings.base_url, skill_settings.token)
+            skill_gateway = SkillProductionAgentGateway(owned_skill_client, skill_adapter, skill_settings.revision)
+    if joint_plan_gateway is None:
+        joint_settings = JointPlanAgentSettings.from_env()
+        if joint_settings:
+            owned_joint_plan_client = AgentClient(joint_settings.base_url, joint_settings.token)
+        joint_client = owned_joint_plan_client or owned_production_client or (
+            gateway.client if isinstance(gateway, VideoAgentGateway) else None)
+        if joint_client is not None:
+            joint_plan_gateway = JointPlanAgentGateway(joint_client,
+                os.environ.get('VIDEO_JOINT_PLAN_PROFILE_REVISION', '1'), skill_adapter=skill_adapter)
+    joint_plan_store = JointPlanStore(store, runtime_capabilities=creative_capabilities, skill_adapter=skill_adapter)
+    if resource_planning_gateway is None:
+        resource_settings = ResourcePlanningAgentSettings.from_env()
+        if resource_settings is not None:
+            owned_resource_planning_client = AgentClient(resource_settings.base_url, resource_settings.token)
+            resource_planning_gateway = ResourcePlanningAgentGateway(
+                owned_resource_planning_client, resource_settings.revision)
+    resource_planner = None
+    if resource_planning_gateway is not None:
+        resource_planner = ResourcePlanningCoordinator(joint_plan_store, resource_planning_gateway,
+            producer_catalog=resource_producer_catalog or (
+                lambda owner: admitted_resource_producers(film_creation, owner)))
+    joint_plan_workflow = JointPlanWorkflow(joint_plan_store, joint_plan_gateway, enabled=joint_gate,
+        method_adapter=skill_adapter if callable(getattr(skill_adapter, 'pin', None)) else method_adapter,
+        resource_planner=resource_planner)
+    motion_workflow = MotionWorkflow(motion_store, motion_gateway, enabled=motion_gate,
+                                    process_gateway=process_gateway, process_enabled=process_gate,
+                                    creative_gateway=creative_gateway, creative_enabled=creative_gate,
+                                    method_adapter=method_adapter, skill_adapter=skill_adapter,
+                                    skill_gateway=skill_gateway)
     owned_motion_renderer = None
     if motion_renderer is None and os.environ.get('VIDEO_MOTION_RENDER_URL'):
         from .motion_render_adapter import configured_motion_renderer
@@ -447,27 +688,134 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         motion_enabled=motion_gate, runtime_fingerprint=runtime, continuity_store=continuity_store)
     batch_store = BatchStore(store, motion_store, production)
     batch_workflow = BatchWorkflow(batch_store, enabled=motion_gate)
+    if film_creation is None:
+        film_settings = FilmProductionSettings.from_env()
+        with store.transaction() as db:
+            film_tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            film_history = any(db.execute('SELECT 1 FROM ' + table + ' LIMIT 1').fetchone()
+                for table in ('film_module_operations', 'film_render_operations') if table in film_tables)
+            if not film_history:
+                film_history = any(json.loads(row[0]).get('renderer_mode') == 'hyperframes-film'
+                    for row in db.execute('SELECT document FROM production_runs')) if 'production_runs' in film_tables else False
+        if film_settings is not None or film_history:
+            from .film_creation_store import FilmCreationStore
+            from .film_creation_workflow import FilmCreationWorkflow
+            from .film_module_gateway import FilmModuleAgentGateway
+            from .film_render_adapter import RemoteFilmRenderer
+            from .motion_render_adapter import read_secret
+            module_settings = FilmModuleAgentSettings.from_env()
+            manim_settings = FilmManimSettings.from_env(film_settings)
+            resource_client = None
+            if manim_settings is not None:
+                from .manim_film_resource_http import ManimFilmResourceClient
+                resource_client = ManimFilmResourceClient(manim_settings.base_url, manim_settings.token)
+            module_gateway = None
+            if module_settings is not None and skill_adapter is not None:
+                owned_film_client = AgentClient(module_settings.base_url, module_settings.token)
+                module_gateway = FilmModuleAgentGateway(owned_film_client, skill_adapter, module_settings.revision)
+            film_url = os.environ.get('VIDEO_FILM_RENDER_URL', '')
+            film_token = os.environ.get('VIDEO_FILM_RENDER_TOKEN_FILE', '')
+            if bool(film_url) != bool(film_token):
+                raise ValueError('Configure the dedicated whole-film renderer origin and credential together')
+            if film_url:
+                owned_film_renderer = RemoteFilmRenderer(film_url, read_secret(film_token))
+            if film_settings is None:
+                creation_store = FilmCreationStore.for_recovery(store)
+            else:
+                creation_store = FilmCreationStore(store,
+                    runtime_capabilities=film_settings.runtime_capabilities,
+                    runtime_fingerprint=film_settings.runtime_fingerprint,
+                    host_files=film_settings.host_files, trusted_host_sha256=film_settings.trusted_host_sha256,
+                    image=film_settings.image, assets=film_settings.assets, enabled=film_settings.enabled,
+                    resource_authoring=manim_settings.context if manim_settings is not None else None)
+            film_creation = FilmCreationWorkflow(creation_store, module_gateway, skill_adapter,
+                owned_film_renderer, enabled=film_settings.enabled if film_settings is not None else False,
+                render_readiness=lambda: execution_readiness(owned_film_renderer, film_settings)
+                    if film_settings is not None else {'available': False}, resource_client=resource_client)
+    production_sequence_store = _production_sequence_ledger(store)
+    production_run_store = ProductionRunStore(store, joint_plan_store, motion_store, production,
+        film_creation=film_creation, sequence_store=production_sequence_store)
+    author_configured = ((skill_gateway is not None and skill_adapter is not None) if skill_production
+                         else (creative_gateway is not None and method_adapter is not None))
+    run_dependencies = (joint_gate and motion_gate and speech_client is not None and creative_gate
+        and author_configured
+        and motion_renderer is not None and runtime is not None)
+    if film_creation is not None:
+        # A configured whole-film path never falls back to per-scene rendering.
+        # Fresh exact release/profile preflight belongs to start(), before TTS.
+        run_dependencies = joint_gate and speech_client is not None and film_creation.enabled
+    if production_runs_enabled is not None and type(production_runs_enabled) is not bool:
+        raise ValueError('An explicit boolean production run feature gate is required')
+    production_run_workflow = ProductionRunWorkflow(production_run_store,
+        enabled=bool(run_dependencies) if production_runs_enabled is None else production_runs_enabled)
+    from .production_refinement_workflow import ProductionRefinementWorkflow
+    refinement_setting = os.environ.get('VIDEO_PRODUCTION_REFINEMENT_ENABLED', '0')
+    if refinement_enabled is None:
+        if refinement_setting not in {'0', '1'}:
+            raise ValueError('Invalid VIDEO_PRODUCTION_REFINEMENT_ENABLED')
+        refinement_enabled = refinement_service is not None or refinement_setting == '1'
+    if type(refinement_enabled) is not bool:
+        raise ValueError('An explicit boolean formal refinement feature gate is required')
+    if refinement_service is None and refinement_enabled and film_creation is not None:
+        if method_client is None:
+            refinement_methods = ProductionMethodSettings.from_env()
+            if refinement_methods is not None:
+                from .animation_method_http import MethodLabClient
+                method_client = MethodLabClient(refinement_methods.base_url, refinement_methods.token)
+        if method_client is not None:
+            from .film_review_client import FilmReviewGateway
+            from .production_refinement_driver import ProductionRefinementDriver
+            from .production_refinement_service import ProductionRefinementService
+            refinement_root = Path(store.path).with_name('formal-refinement')
+            refinement_service = ProductionRefinementService(
+                Path(store.path).with_name('production-refinements.sqlite3'), production_sequence_store,
+                ProductionRefinementDriver(store, film_creation, FilmReviewGateway(method_client), refinement_root))
+    refinement_workflow = ProductionRefinementWorkflow(store, production_sequence_store, refinement_service,
+        enabled=bool(refinement_enabled and refinement_service is not None),
+        activation_path=Path(store.path).with_name('production-refinement-activation.json'))
 
     @asynccontextmanager
     async def lifespan(app):
         if background:
             workflow.start()
             explanation_workflow.start()
+            joint_plan_workflow.start()
             motion_workflow.start()
             audio_workflow.start()
             production.start()
             batch_workflow.start()
+            if film_creation is not None:
+                film_creation.start()
+            production_run_workflow.start()
+            refinement_workflow.start()
         yield
+        refinement_workflow.stop()
+        production_run_workflow.stop()
+        if film_creation is not None:
+            film_creation.stop()
         batch_workflow.stop()
         production.stop()
         audio_workflow.stop()
         workflow.stop()
         explanation_workflow.stop()
+        joint_plan_workflow.stop()
         motion_workflow.stop()
         if owned_motion_renderer is not None and hasattr(owned_motion_renderer, 'close'):
             owned_motion_renderer.close()
         if owned_client:
             owned_client.close()
+        if owned_production_client:
+            owned_production_client.close()
+        if owned_skill_client:
+            owned_skill_client.close()
+        if owned_joint_plan_client:
+            owned_joint_plan_client.close()
+        if owned_resource_planning_client:
+            owned_resource_planning_client.close()
+        if owned_film_client:
+            owned_film_client.close()
+        if owned_film_renderer is not None:
+            owned_film_renderer.close()
         if owned_speech_client:
             owned_speech_client.close()
 
@@ -475,9 +823,14 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     app.state.store, app.state.workflow = store, workflow
     app.state.audio_workflow, app.state.production = audio_workflow, production
     app.state.explanation_store, app.state.explanation_workflow = explanation_store, explanation_workflow
+    app.state.joint_plan_store, app.state.joint_plan_workflow = joint_plan_store, joint_plan_workflow
     app.state.motion_store, app.state.motion_workflow, app.state.motion_timing = motion_store, motion_workflow, motion_timing
     app.state.continuity_store = continuity_store
     app.state.batch_store, app.state.batch_workflow = batch_store, batch_workflow
+    app.state.production_run_store, app.state.production_run_workflow = production_run_store, production_run_workflow
+    app.state.production_sequence_store = production_sequence_store
+    app.state.refinement_service, app.state.refinement_workflow = refinement_service, refinement_workflow
+    app.state.film_creation = film_creation
     # Proxy mode must be bound behind an authenticated, header-scrubbing proxy.
     app.state.trusted_hosts = set(trusted_hosts or {'127.0.0.1', 'localhost', '[::1]'})
 
@@ -513,6 +866,11 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         if value is None or not re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}', value):
             raise ServiceError('idempotency_key_required', 422)
         return value
+
+    from .production_refinement_http import register_refinement_routes
+    register_refinement_routes(app, store=store, sequences=production_sequence_store,
+        runs=production_run_store, service=refinement_service, workflow=refinement_workflow,
+        identity=identity, mutation=mutation)
 
     @app.middleware('http')
     async def headers(request, call_next):
@@ -553,6 +911,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                 row = db.execute('SELECT value FROM metadata WHERE key=?', ('csrf_secret',)).fetchone()
                 if row is None or row[0] != store.csrf_secret:
                     raise sqlite3.DatabaseError()
+            _check_sequence_database(production_sequence_store.path)
         except sqlite3.Error:
             return JSONResponse({'status': 'not_ready'}, status_code=503)
         return {'status': 'ready'}
@@ -566,14 +925,31 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     speech_voices=speech_client.voice_catalog if speech_client else [],
                     media_configured=production.enabled,
                     explanation_configured=enabled and explanation_gateway is not None,
+                    joint_plan_configured=joint_gate and joint_plan_gateway is not None,
+                    production_runs_enabled=production_run_workflow.enabled,
+                    production_refinement_enabled=refinement_workflow.enabled,
+                    production_run_max_seconds=60 if film_creation is not None else None,
                     motion_enabled=motion_gate, motion_configured=motion_gate and motion_gateway is not None,
+                    process_enabled=process_gate, process_configured=process_gate and process_gateway is not None,
+                    creative_enabled=creative_gate, creative_configured=creative_gate and author_configured,
                     batch_enabled=motion_gate, continuity_enabled=motion_gate,
                     default_production_mode='motion' if motion_gate else 'static',
                     motion_render_configured=motion_gate and motion_renderer is not None and runtime is not None)
 
     @app.get('/api/projects')
-    def projects(owner=Depends(identity)):
-        return dict(projects=store.list_projects(owner))
+    def projects(deleted: bool = False, owner=Depends(identity)):
+        return dict(projects=store.list_projects(owner, deleted=deleted))
+
+    @app.post('/api/projects/{project_id}/trash')
+    def trash_project(project_id: str, body: Revision, owner=Depends(mutation)):
+        if refinement_service is not None and any(row['status'] not in {'completed', 'failed', 'cancelled'}
+                for row in refinement_service.list(owner, project_id)):
+            raise ServiceError('project_delete_busy', 409)
+        return dict(project=store.set_project_deleted(owner, project_id, body.expected_revision, deleted=True))
+
+    @app.post('/api/projects/{project_id}/restore')
+    def restore_project(project_id: str, body: Revision, owner=Depends(mutation)):
+        return dict(project=store.set_project_deleted(owner, project_id, body.expected_revision, deleted=False))
 
     @app.post('/api/projects')
     def create_project(body: ProjectFields, owner=Depends(mutation)):
@@ -664,10 +1040,18 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         return motion_store.project(owner, project_id)
 
     @app.post('/api/scenes/{scene_id}/motion', status_code=202)
-    def generate_motion(scene_id: str, body: Generation, owner=Depends(mutation),
+    def generate_motion(scene_id: str, body: MotionGeneration, owner=Depends(mutation),
                         idempotency_key: str | None = Header(default=None)):
-        motion_workflow.require_gateway()
-        return motion_store.start(owner, scene_id, body.model_dump(), idempotency(idempotency_key))
+        motion_workflow.require_gateway(body.diagram_kind)
+        document = body.model_dump()
+        if document['expected_semantic_binding_sha256'] is None:
+            document.pop('expected_semantic_binding_sha256')
+        if document['expected_audio_version_id'] is None:
+            document.pop('expected_audio_version_id')
+        if document['diagram_kind'] == 'diagram':
+            # Preserve exact old generation request identities across upgrades.
+            document.pop('diagram_kind')
+        return motion_store.start(owner, scene_id, document, idempotency(idempotency_key))
 
     @app.get('/api/motion-versions/{version_id}')
     def motion_version(version_id: str, owner=Depends(identity)):
@@ -707,6 +1091,49 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     def render_motion(project_id: str, body: MotionRenderRequest, owner=Depends(mutation),
                       idempotency_key: str | None = Header(default=None)):
         return production.start_motion_render(owner, project_id, body.model_dump(), idempotency(idempotency_key))
+
+    @app.get('/api/projects/{project_id}/joint-plan')
+    def joint_plan(project_id: str, owner=Depends(identity)):
+        return joint_plan_store.project(owner, project_id)
+
+    @app.get('/api/wikiskill/releases')
+    def wikiskill_releases(owner=Depends(identity)):
+        if not callable(getattr(skill_adapter, 'list_releases', None)):
+            return dict(active_release_id=None, releases=[])
+        return skill_adapter.list_releases(owner)
+
+    @app.post('/api/projects/{project_id}/production-runs', status_code=202)
+    def start_production_run(project_id: str, body: ProductionRunRequest, owner=Depends(mutation),
+                             idempotency_key: str | None = Header(default=None, alias='Idempotency-Key')):
+        production_run_workflow.require_enabled()
+        return production_run_store.start(owner, project_id, body.model_dump(exclude_none=True),
+                                          idempotency(idempotency_key))
+
+    @app.get('/api/projects/{project_id}/production-runs')
+    def project_production_runs(project_id: str, owner=Depends(identity)):
+        return dict(runs=production_run_store.list(owner, project_id))
+
+    @app.get('/api/production-runs/{run_id}')
+    def read_production_run(run_id: str, owner=Depends(identity)):
+        return production_run_store.get(owner, run_id)
+
+    @app.post('/api/production-runs/{run_id}/cancel')
+    def cancel_production_run(run_id: str, owner=Depends(mutation)):
+        return production_run_store.cancel(owner, run_id)
+
+    @app.post('/api/projects/{project_id}/joint-plan', status_code=202)
+    def generate_joint_plan(project_id: str, body: JointPlanRequest, owner=Depends(mutation),
+                            idempotency_key: str | None = Header(default=None, alias='Idempotency-Key')):
+        joint_plan_workflow.require_gateway()
+        return joint_plan_store.start(owner, project_id, body.model_dump(exclude_none=True), idempotency(idempotency_key))
+
+    @app.post('/api/projects/{project_id}/joint-plan/adopt')
+    def adopt_joint_plan(project_id: str, body: ExplanationAdoption, owner=Depends(mutation)):
+        return joint_plan_store.adopt(owner, project_id, body.model_dump())
+
+    @app.post('/api/joint-plan-operations/{operation_id}/cancel')
+    def cancel_joint_plan(operation_id: str, owner=Depends(mutation)):
+        return joint_plan_store.cancel(owner, operation_id)
 
     @app.get('/api/projects/{project_id}/explanation')
     def explanation(project_id: str, owner=Depends(identity)):
@@ -836,15 +1263,29 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
 
     @app.get('/api/projects/{project_id}/renders')
     def renders(project_id: str, owner=Depends(identity)):
-        return {'renders': production.renders(owner, project_id)}
+        rows = production.renders(owner, project_id)
+        if film_creation is not None:
+            rows += film_creation.renders(owner, project_id)
+        return {'renders': sorted(rows, key=lambda row: row.get('created_at', 0), reverse=True)}
 
     @app.post('/api/renders/{render_id}/cancel')
     def cancel_render(render_id: str, owner=Depends(mutation)):
-        return production.cancel(owner, render_id)
+        try:
+            return production.cancel(owner, render_id)
+        except ServiceError as error:
+            if error.code != 'not_found' or film_creation is None:
+                raise
+        return film_creation.cancel_render(owner, render_id)
 
     @app.get('/api/renders/{render_id}/video')
     def video(render_id: str, request: Request, owner=Depends(identity)):
-        return media_response(production.video(owner, render_id), request, 'video/mp4', f'video-{render_id}.mp4')
+        try:
+            raw = production.video(owner, render_id)
+        except ServiceError as error:
+            if error.code != 'not_found' or film_creation is None:
+                raise
+            raw = film_creation.video(owner, render_id)
+        return media_response(raw, request, 'video/mp4', f'video-{render_id}.mp4')
 
     @app.get('/api/versions/{version_id}/preview')
     def preview(version_id: str, owner=Depends(identity)):

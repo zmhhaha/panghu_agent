@@ -7,6 +7,7 @@ an explicit reviewed implementation, not a new name for the text collector.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from types import MappingProxyType
 from typing import Literal, Mapping
 
@@ -18,13 +19,26 @@ from .profiles import implementation
 from .catalog_limits import (CATALOG_READER_MAX_BYTES, CONTRACT_RECORD_LIMIT, HISTORY_RECORD_LIMIT,
                              validate_catalog_budget)
 
-Tool = Literal['read', 'write', 'bash', 'image', 'academic_search', 'academic_verify']
+Tool = Literal['read', 'write', 'bash', 'image', 'academic_search', 'academic_verify', 'read_inputs',
+               'skill_search', 'skill_read', 'read_compilation_input']
 OutputSchema = Literal['text-output.v1', 'ppt-plan_initial-output.v1', 'ppt-plan_options-output.v1',
     'ppt-generate-output.v1', 'ppt-revise-output.v1', 'ppt-prepare-output.v1',
     'research-output.v1', 'research-revision-output.v1', 'research-plan-output.v1',
     'research-retrieve-output.v1', 'research-outline-output.v1', 'research-draft-output.v1',
     'video-storyboard-output.v1', 'video-scene-output.v1', 'video-motion-plan-output.v1',
-    'video-explanation-plan-output.v1']
+    'video-explanation-plan-output.v1', 'video-process-plan-output.v1',
+    'video-animation-experiment-output.v1', 'video-animation-observe-output.v1',
+    'video-animation-review-output.v1', 'video-animation-create-output.v2',
+    'video-animation-review-output.v2', 'video-animation-review-output.v3', 'video-animation-review-output.v4',
+    'video-animation-method-author-output.v1', 'video-animation-method-review-output.v1',
+    'video-animation-method-author-output.v2', 'video-animation-method-review-output.v2',
+    'video-animation-production-output.v1', 'video-animation-film-production-output.v1',
+    'video-animation-skill-production-output.v1',
+    'video-animation-wikiskill-compile-output.v1',
+    'video-animation-film-module-output.v1',
+    'video-animation-manim-recipe-output.v1',
+    'video-joint-plan-output.v1', 'video-resource-plan-output.v1',
+    'video-animation-collaboration-output.v1']
 
 NAME = r'^[a-z][a-z0-9_.-]{0,79}$'
 REVISION = r'^[A-Za-z0-9_.-]{1,100}$'
@@ -48,6 +62,21 @@ def _unique(values):
     if len(set(values)) != len(values):
         raise ValueError('Duplicate capability')
     return tuple(sorted(values))
+
+
+def required_model_capabilities(handler):
+    """Model input requirements are independent of the native tool names.
+
+    Pi's read tool produces images without a tool named ``image``. Existing
+    contracts keep their original requirements; new reviewed handlers can
+    require vision explicitly without widening their read/write tool scope.
+    """
+    required = set(getattr(handler, 'required_model_capabilities', ('text', 'tool_calls')))
+    if 'image' in handler.required_tools:
+        required.add('vision')
+    if not {'text', 'tool_calls'} <= required <= {'text', 'tool_calls', 'vision'}:
+        raise ValueError('Invalid reviewed model capability requirements')
+    return tuple(sorted(required))
 
 
 class TaskContract(_Record):
@@ -77,8 +106,8 @@ class TaskContract(_Record):
                 or set(self.required_tools) != set(handler.required_tools)
                 or not {'text', 'tool_calls'} <= set(self.required_model_capabilities)):
             raise ValueError('Task contract has no reviewed implementation')
-        if 'image' in handler.required_tools and 'vision' not in self.required_model_capabilities:
-            raise ValueError('The image tool requires a vision-capable model policy')
+        if not set(required_model_capabilities(handler)) <= set(self.required_model_capabilities):
+            raise ValueError('The reviewed handler requires a vision-capable model policy')
         for key, maximum in handler.limits.as_dict().items():
             value = getattr(self, key)
             if value is not None and value > maximum:
@@ -144,6 +173,29 @@ class ToolEnvironment(_Record):
     @classmethod
     def unique_capabilities(cls, values):
         return _unique(values)
+
+    @model_validator(mode='after')
+    def fixed_input_reader(self):
+        if 'read_compilation_input' in self.tools:
+            from .compilation_input_tools import (COMPILATION_INPUT_ENVIRONMENT_NAME,
+                compilation_input_environment_revision)
+            if (self.name != COMPILATION_INPUT_ENVIRONMENT_NAME
+                    or set(self.tools) != {'read_compilation_input', 'write'}
+                    or self.revision != compilation_input_environment_revision(self.model_dump(mode='json'))):
+                raise ValueError('Compilation reader requires its fixed extension identity and tool scope')
+        elif {'skill_search', 'skill_read'} & set(self.tools):
+            from .skill_tools import (SKILL_TOOLS_ENVIRONMENT_NAME, TOOL_SCOPE,
+                                      skill_tools_environment_revision)
+            if (self.name != SKILL_TOOLS_ENVIRONMENT_NAME or set(self.tools) != TOOL_SCOPE
+                    or self.revision != skill_tools_environment_revision(self.model_dump(mode='json'))):
+                raise ValueError('Skill tools require their fixed extensions and exact tool scope')
+        elif 'read_inputs' in self.tools:
+            from .input_tools import READ_INPUTS_ENVIRONMENT_NAME, read_inputs_environment_revision
+            if (self.name != READ_INPUTS_ENVIRONMENT_NAME
+                    or self.revision != read_inputs_environment_revision(self.model_dump(mode='json'))
+                    or set(self.tools) != {'read_inputs', 'write'}):
+                raise ValueError('Input reader requires its fixed extension identity and tool scope')
+        return self
 
 
 class ResourceRef(_Record):
@@ -275,7 +327,7 @@ class DeploymentRegistry:
                     and binding.acceptance.combination_sha256 != fingerprints[key]):
                 raise ValueError('Stale combination acceptance record')
             suite = ('workspace-contract.v1' if c.name == 'workspace-task.v1'
-                     else c.name.replace('.v1', '-contract.v1'))
+                     else re.sub(r'\.v([0-9]+)$', r'-contract.v\1', c.name))
             if binding.acceptance is not None and binding.acceptance.suite != suite:
                 raise ValueError('Acceptance suite does not cover the actual domain contract')
         if type(routes) not in (list, tuple) or len(routes) > CONTRACT_RECORD_LIMIT:

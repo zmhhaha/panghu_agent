@@ -1,0 +1,20 @@
+{
+  "bundle_revision": "animation-wikiskill-v1",
+  "automatic_updates": false,
+  "upstream_content_vendored": false,
+  "license": "MIT",
+  "local_files": [
+    {
+      "path": "compile-procedure/SKILL.md",
+      "sha256": "f0e41a18e2d70b2ebd99472e911c098de0c677eead3912bb846aef2184517d06"
+    },
+    {
+      "path": "CONTRACT.md",
+      "sha256": "1f633a4ac1a9d199a4d67e7970e4486338fca665ef83f561cfa161b98db5ecb4"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "8f3c860eea351cc5880823c9a4ec8248228998fe4ced31480cfa4697b0888c34"
+    }
+  ]
+}

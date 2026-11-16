@@ -30,7 +30,7 @@ def test_configmap_freeze_is_deterministic(project):
 
 @pytest.mark.parametrize('template', ['flow', 'compare', 'focus'])
 @pytest.mark.parametrize('compiler_version', ['motion-compiler-1', 'motion-compiler-2', 'motion-compiler-3',
-                                             'motion-compiler-4', 'motion-compiler-5'])
+                                             'motion-compiler-4', 'motion-compiler-5', 'motion-compiler-6'])
 def test_exact_compiler_versions_keep_all_input_bytes(tmp_path, monkeypatch, template, compiler_version):
     beats = make_beats('首先提交请求。然后进入任务队列。最后执行并返回结果。')
     audio = b'RIFF original template bytes'

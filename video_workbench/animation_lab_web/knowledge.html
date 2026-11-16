@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>知识库 · Video Service</title>
+  <link rel="stylesheet" href="./knowledge.css">
+  <script type="module" src="./knowledge.mjs"></script>
+</head>
+<body>
+  <div id="knowledge-app">
+    <header class="topbar">
+      <a class="brand" href="./" aria-label="动画实验室首页"><span class="brand-icon" aria-hidden="true">◈</span><span><span class="eyebrow">VIDEO SERVICE · 开发者</span><strong>动画实验室</strong></span></a>
+      <nav class="workspace-nav" aria-label="开发者工作台"><a href="./">效果库</a><a href="./knowledge.html" aria-current="page">知识库</a></nav>
+    </header>
+    <main class="workspace">
+      <div class="workspace-actionbar">
+        <div class="library-sync" aria-label="知识库进度"><p id="knowledge-sync-status" class="small muted" role="status">正在读取知识库…</p><button id="knowledge-refresh" class="button secondary" type="button">手动刷新</button></div>
+        <button id="knowledge-publish" class="button primary" type="button" disabled>发布新版本</button>
+      </div>
+      <p id="knowledge-message" class="message" role="status" aria-live="polite"></p>
+      <section id="knowledge-pending" class="panel pending-request" aria-labelledby="knowledge-pending-title" hidden>
+        <h2 id="knowledge-pending-title">原操作结果待核对</h2><p class="muted">原请求已保存在本浏览器。核对不会重新创建任务；明确重送也会使用同一个请求。</p>
+        <div class="actions"><button id="knowledge-pending-check" class="button secondary" type="button">核对原请求</button><button id="knowledge-pending-retry" class="button secondary" type="button">重送原请求</button></div>
+      </section>
+      <section id="knowledge-job" class="panel publication-job" aria-labelledby="knowledge-job-title" hidden></section>
+      <div class="page-heading"><div><p class="eyebrow">效果经验 → WikiSkill → 正式制作</p><h1>知识库</h1><p class="muted">发布新版本会冻结当前效果库快照，由 Agent 提炼为 WikiSkill，校验通过后整体上线。这里展示的就是正式视频制作按需查阅的同一份产物；发布失败时，当前线上版本继续可用。</p></div></div>
+      <div class="knowledge-layout">
+        <aside class="catalogue panel" aria-label="整库版本与创作方法目录">
+          <label for="knowledge-release">整库版本<select id="knowledge-release" disabled><option value="">正在读取…</option></select></label>
+          <p class="muted small">保留最近 5 个成功发布的整库版本。</p>
+          <p id="knowledge-release-meta" class="muted small"></p>
+          <button id="knowledge-activate" class="button secondary" type="button" disabled>设为当前线上版本</button>
+          <label class="knowledge-search" for="knowledge-search">搜索所选版本<input id="knowledge-search" type="search" placeholder="方法正文、适用条件、局限或反例" autocomplete="off" disabled></label>
+          <p id="knowledge-search-status" class="muted small" role="status"></p>
+          <nav id="knowledge-files" class="file-tree" aria-label="所选版本的分层知识文件"></nav>
+        </aside>
+        <section id="knowledge-detail" class="detail panel" aria-live="polite"><h2>正在读取正式知识库…</h2></section>
+      </div>
+    </main>
+    <footer class="page-footer">效果的修改意见仍在效果库提出。知识库不要求填写知识字段，也不会在浏览或刷新时启动生成。</footer>
+  </div>
+</body>
+</html>

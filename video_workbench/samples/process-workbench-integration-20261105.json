@@ -1,0 +1,186 @@
+{
+  "schema": "video.process-workbench-integration-result.v1",
+  "date": "2026-11-05",
+  "branch": "codex/video-audio-clock",
+  "application_revision": "b9a002214b72710ed28a6b162f978af6725fa6b4",
+  "openspec_change": "improve-video-audio-clock-and-expression",
+  "completed_tasks": [
+    "3.1b"
+  ],
+  "openspec_sync": {
+    "project_id": "ec663f5a-53d3-4a0e-9037-933eb788d183",
+    "revision": "12a5fe9041960d2c484fe3614f0699851e9265e5",
+    "readback_matches_submitted_artifacts": true,
+    "valid": true,
+    "completed": 9,
+    "remaining": 24,
+    "total": 33
+  },
+  "production_integrated": true,
+  "deployed": true,
+  "merged": false,
+  "plan_schema": "video.process-plan.v1",
+  "compiler": "motion-process-compiler-2",
+  "template": "controlled-process-2",
+  "images": {
+    "workbench_and_executor": "arm-cluster-master:5000/video-workbench:latest@sha256:d01c05f0e5edb833fe9a014d60a882546c1f30e2eba39d0c022a5d0796759dbc",
+    "renderer": "arm-cluster-master:5000/video-motion-renderer:latest@sha256:1b5f8a2373cb00dd7291d725c1b7fab805b0f71231de949f9307644869a65574",
+    "agent_control": "arm-cluster-master:5000/agent-service-process-control:latest@sha256:09914a4b7267c7f30253cf02b9bf4d37f1e381680739ddaa4a8781e3c1ffd218",
+    "process_worker": "arm-cluster-master:5000/agent-service-process-pi:latest@sha256:8d3d50e3a3be98f69b597d5163da4a8ef7cf689c5c1d3d56c039b57a11ed2df1"
+  },
+  "agent_publication": {
+    "status": "ready_and_idle",
+    "historical_catalog_preserved": true,
+    "independent_process_acceptance": true,
+    "public_sha256": "e48f3dca64f8281164854040cfb3d34ab69838638409ffb4741459f7d06e69de"
+  },
+  "preflight_status": "exact_history_process2_preflight_passed",
+  "release_postcheck_status": "video_process_read_only_postcheck_passed",
+  "business": {
+    "project_id": "ca604138-b269-438f-9adf-c1ebd0377a0c",
+    "scene_id": "5bc389a6-9823-4e38-87d5-092026cb2a73",
+    "motion_version_id": "0992498f-1f52-4b4d-801c-ac9455bea187",
+    "audio_version_id": "2c1dfdb2-e6fa-4ba2-870e-cbb616c68287",
+    "agent_job_id": "c5779f0b-a731-4875-a011-15a912211624",
+    "render_id": "8441ae83-1467-4383-bcbf-1f46a3400c61",
+    "original_audio_origin": "upload",
+    "process_operations": 1,
+    "audio_upload_operations": 1,
+    "render_records": 1,
+    "speech_operations": 0,
+    "upstream_model_HTTP_requests": "not_measured",
+    "global_model_request_count": "not_measured",
+    "historical_project_unchanged": true
+  },
+  "media": {
+    "accurate_word_alignment": false,
+    "audio_sha256": "3fa64b4a6800984b4b87719adca38a2eee533d19a5616d7a79305c08b566bce8",
+    "correlations": [
+      {
+        "samples": 432000,
+        "window": "all",
+        "zero_lag_correlation": 0.9999526875177314
+      },
+      {
+        "samples": 48000,
+        "window": "first-2s",
+        "zero_lag_correlation": 0.9999563012524834
+      },
+      {
+        "samples": 48000,
+        "window": "last-2s",
+        "zero_lag_correlation": 0.9999543931939424
+      },
+      {
+        "samples": 89561,
+        "window": "beat_58268e0eb9091e6c",
+        "zero_lag_correlation": 0.9999557895066736
+      },
+      {
+        "samples": 168585,
+        "window": "beat_0a9f8a0e167bb879",
+        "zero_lag_correlation": 0.9999587647418566
+      },
+      {
+        "samples": 110634,
+        "window": "beat_5a47efe79b2652b0",
+        "zero_lag_correlation": 0.9999449878243672
+      },
+      {
+        "samples": 63220,
+        "window": "beat_0206fe31d7b3f71d",
+        "zero_lag_correlation": 0.9999468225749528
+      }
+    ],
+    "decoded_samples": 432128,
+    "duration_seconds": 18,
+    "fps": 24,
+    "frames": 432,
+    "full_decode": true,
+    "human_timing_review": false,
+    "source_samples": 432000,
+    "temporary_files_cleaned": true,
+    "video_bytes": 277272,
+    "video_sha256": "7763045194b6d99f923bbcf02bb49d3d714b198b050ccc1a5ab4082b5b9780c1",
+    "voice_naturalness": "not_evaluated"
+  },
+  "browser": {
+    "source": "in_app_browser_visible_UI_and_DOM_observations_in_this_session",
+    "project_id": "ca604138-b269-438f-9adf-c1ebd0377a0c",
+    "scene_id": "5bc389a6-9823-4e38-87d5-092026cb2a73",
+    "revision_after_refresh": 7,
+    "candidate_read_and_explicitly_adopted": true,
+    "audio_explicitly_adopted": true,
+    "selected_diagram_kind": "process",
+    "single_business_generation_submitted": true,
+    "single_draft_render_submitted": true,
+    "video_playback_start": {
+      "currentTime": 0.141292,
+      "paused": false,
+      "muted": false,
+      "error": null
+    },
+    "video_playback_end": {
+      "currentTime": 18,
+      "duration": 18,
+      "paused": true,
+      "ended": true,
+      "muted": false,
+      "error": null
+    },
+    "MP4_and_WAV_download_buttons_clicked": true,
+    "browser_download_file_location_verified": false,
+    "downloaded_bytes_verified_by": "independent_account_authenticated_API_GET_and_decode",
+    "refresh_restored_adopted_audio_and_motion_and_same_render": true,
+    "human_timing_checkbox_after_refresh": false,
+    "human_timing_approval_submitted": false,
+    "process_cross_scene_unsupported_notice_visible": true,
+    "process_cross_scene_buttons_disabled": true,
+    "voice_naturalness": "not_evaluated",
+    "overall_user_quality_approval": false
+  },
+  "final_audit": {
+    "status": "process_closeout_read_only_audit_passed",
+    "evidence": "/root/video-process-20261105/browser-acceptance/audit-20261105T135641Z-6a98864aa317",
+    "all_original_schema_typed_rows_and_BLOBs_preserved": true,
+    "added_rows": {
+      "executor": 2,
+      "workbench": 7
+    },
+    "active_tasks": 0,
+    "renderer_jobs": 0,
+    "renderer_pods": 0,
+    "six_dependency_UIDs_and_specs_unchanged": true,
+    "SQLite_clone_header_normalized": true,
+    "original_databases_read_only": true
+  },
+  "alignment_method": "estimated",
+  "timing_review": "pending",
+  "voice_naturalness": "not_evaluated",
+  "accurate_word_alignment": false,
+  "process_cross_scene": false,
+  "new_process_preview_export_one_frame_comparison": false,
+  "evidence_directory": "video_workbench/rendered/audio-clock/process/",
+  "server_evidence_directory": "/root/video-process-20261105/",
+  "evidence_sha256": {
+    "video-release-r2/postcheck.json": "a4a3a5450561466d06b7115ec80eabe36345880f6d31c304454e5fcdd8bee706",
+    "video-release-r2/summary.json": "8b8e5c0554b4f9f1ff44df4265969a20820cec05354c70ca97b0caac0cffff37",
+    "history-process-preflight-r3/summary.json": "d3dadd10b1c8d84ac90b236d20f6a5bc09b3eeea586ab2002639d16c2cad85f1",
+    "production-process/process-agent-postcheck.json": "ce168385fcdc94d33d46a1a438571147e33bbce39fded58e8b43532f7f86df2f",
+    "final-audit.json": "e31277181e48f8ccb34fdd128feb6f0dc1c68ff34cb0803914e4a02c3a3b098d",
+    "browser-acceptance/verify-20261105T134159Z-22f38ff91d2f/summary.json": "b38a70e6ce6f16357375cf128ef94bc5d04461f578979e17ce256a6b5bb8e834",
+    "browser-acceptance/verify-20261105T134159Z-22f38ff91d2f/motion-candidate.json": "b2aac1f10b64e347fcf651bb8955b722b6ce7ba20965b0509ae4e78cacaa2bef",
+    "browser-acceptance/verify-20261105T134159Z-22f38ff91d2f/recording-timing.json": "7a3c25e5ef19c62cf5de13474addc07957448805399c7b5b9c413ced7acbe3a8",
+    "browser-acceptance/verify-20261105T134159Z-22f38ff91d2f/media-verification.json": "e82433a3a8e8815ff61bc00e59b9694d083198fdd0b65477dfbaac149dbc7816",
+    "browser-acceptance/verify-20261105T134159Z-22f38ff91d2f/draft.mp4": "7763045194b6d99f923bbcf02bb49d3d714b198b050ccc1a5ab4082b5b9780c1"
+  },
+  "browser_observations_sha256": "897c2728c699d1e6f986509e5ee9d0e02f267959a78068fae2cd56c9913b316b",
+  "limitations": [
+    "Fixed three-card and one-token scope; not arbitrary process layout.",
+    "Real candidate reveals token before log card; attempts are described rather than independently animated.",
+    "Log/history keep default waiting labels; content pacing and state semantics need director/keyframe review.",
+    "Browser download buttons were clicked; file bytes were separately downloaded and checked through the account API.",
+    "Original WAV is byte-identical; AAC is lossy and verified by full duration and zero-lag correlations.",
+    "Process cross-scene retain/copy, true word timing, naturalness and human overall quality approval remain pending."
+  ]
+}

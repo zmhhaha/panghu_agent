@@ -1,0 +1,10 @@
+{
+  "name": "video-animation-lab-webgl",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pinned local Three.js assets for developer animation samples",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "three": "0.170.0"
+  }
+}

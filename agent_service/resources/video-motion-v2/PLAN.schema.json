@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "video.motion-plan.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "template",
+    "title",
+    "takeaway",
+    "elements",
+    "relations",
+    "actions"
+  ],
+  "properties": {
+    "schema": {
+      "const": "video.motion-plan.v1"
+    },
+    "template": {
+      "enum": [
+        "flow",
+        "compare",
+        "focus",
+        "sequence",
+        "nested"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 50
+    },
+    "takeaway": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 90
+    },
+    "elements": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 9,
+      "items": {
+        "$ref": "#/$defs/element"
+      }
+    },
+    "relations": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "$ref": "#/$defs/relation"
+      }
+    },
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 48,
+      "items": {
+        "$ref": "#/$defs/action"
+      }
+    },
+    "sources": {
+      "type": "array",
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "url",
+          "label"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "maxLength": 512,
+            "pattern": "^https?://"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,31}$"
+    },
+    "element": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "label",
+        "detail",
+        "slot"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "kind": {
+          "enum": [
+            "card",
+            "token",
+            "label",
+            "container"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 28
+        },
+        "detail": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "slot": {
+          "enum": [
+            "source",
+            "queue",
+            "worker",
+            "note",
+            "before",
+            "after",
+            "top",
+            "left",
+            "center",
+            "right",
+            "caption",
+            "token_source",
+            "token_queue",
+            "token_worker",
+            "token_before",
+            "token_after",
+            "token_top",
+            "token_left",
+            "token_center",
+            "token_right",
+            "step_1",
+            "step_2",
+            "step_3",
+            "step_4",
+            "token_1",
+            "token_2",
+            "token_3",
+            "token_4",
+            "outer",
+            "inner",
+            "request",
+            "tool",
+            "result",
+            "decision"
+          ]
+        }
+      }
+    },
+    "relation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "source",
+        "target",
+        "label"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "source": {
+          "$ref": "#/$defs/id"
+        },
+        "target": {
+          "$ref": "#/$defs/id"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 18
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "beat_id",
+        "target",
+        "kind",
+        "placement",
+        "pace",
+        "to_slot"
+      ],
+      "properties": {
+        "beat_id": {
+          "type": "string",
+          "pattern": "^beat_[0-9a-f]{16}$"
+        },
+        "target": {
+          "$ref": "#/$defs/id"
+        },
+        "kind": {
+          "enum": [
+            "reveal",
+            "hide",
+            "highlight",
+            "move",
+            "draw"
+          ]
+        },
+        "placement": {
+          "enum": [
+            "start",
+            "middle",
+            "end"
+          ]
+        },
+        "pace": {
+          "enum": [
+            "quick",
+            "normal",
+            "slow"
+          ]
+        },
+        "to_slot": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            null,
+            "token_source",
+            "token_queue",
+            "token_worker",
+            "token_before",
+            "token_after",
+            "token_top",
+            "token_left",
+            "token_center",
+            "token_right",
+            "token_1",
+            "token_2",
+            "token_3",
+            "token_4"
+          ]
+        }
+      }
+    }
+  }
+}

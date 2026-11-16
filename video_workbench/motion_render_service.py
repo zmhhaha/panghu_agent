@@ -25,11 +25,13 @@ from agent_service.contracts import ServiceError, canonical_bytes
 from . import media
 from .motion_snapshot import _runtime
 from .continuity_snapshot import verify_motion_snapshot
-from .motion_render_adapter import read_secret, safe_progress, safe_diagnostic, UNAVAILABLE
+from .motion_render_adapter import read_secret, safe_progress, safe_diagnostic, safe_motion_context, UNAVAILABLE
 from .motion_render_k8s import ExecutionJournal, KubeHTTP, KubeSceneRenderer, operation_key, require
 
 MAX_REQUEST_BYTES = 192 * 1024 * 1024
 MAX_STORAGE_BYTES = 8 * 1024 * 1024 * 1024
+FILM_SCHEMA = 'video.hyperframes-film-execution-snapshot.v1'
+FILM_RESERVATION_BYTES = 768 * 1024 * 1024
 
 
 def verify_media(path, seconds, *, cwd, cancel_event=None, audio=True):
@@ -103,7 +105,7 @@ class MixedMotionRenderer:
                 media._cancel(cancel_event)
                 progress('preparing_scene', index, index)
                 seconds, name = scene['timing']['duration_seconds'], f'scene-{index:03d}'
-                if scene['visual_mode'] == 'motion':
+                if scene['visual_mode'] in {'motion', 'creative'}:
                     result = self.scene_renderer.render(scene, key=key, scene_index=index,
                         quality=snapshot['quality'], cancel_event=cancel_event)
                     source = Path(result['path']).resolve()
@@ -196,19 +198,32 @@ class JournalCancellation:
 
 class MotionExecutionService:
     def __init__(self, journal, renderer, *, root, token, runtime, image, release_id,
-                 max_request_bytes=MAX_REQUEST_BYTES, max_storage_bytes=MAX_STORAGE_BYTES):
+                 max_request_bytes=MAX_REQUEST_BYTES, max_storage_bytes=MAX_STORAGE_BYTES,
+                 film_renderer=None):
         self.journal, self.renderer, self.root = journal, renderer, Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.token, self.runtime, self.image, self.release_id = token, _runtime(runtime), image, release_id
         require(image.endswith(':latest@' + self.runtime['image_digest']), 'motion_runtime_image_conflict', 422)
         self.max_request_bytes, self.max_storage_bytes = max_request_bytes, max_storage_bytes
+        self.film_renderer = film_renderer
+        self.intake_lock = threading.Lock()
         self.stopping, self.worker_lock = threading.Event(), threading.Lock()
         self.last_error = None
 
     def usage(self):
         paths = list(self.root.rglob('*'))
+        if self.film_renderer is not None:
+            pvc = self.film_renderer.pvc_root
+            if pvc != self.root and self.root not in pvc.parents:
+                paths += list(pvc.rglob('*'))
         paths += [Path(self.journal.path + suffix) for suffix in ('', '-wal', '-shm')]
-        return sum(path.stat().st_size for path in paths if path.is_file() and not path.is_symlink())
+        return sum(path.stat().st_size for path in set(paths) if path.is_file() and not path.is_symlink())
+
+    def _renderer_for(self, snapshot):
+        if snapshot.get('schema') == FILM_SCHEMA:
+            require(self.film_renderer is not None, 'hyperframes_film_execution_disabled', 503)
+            return self.film_renderer
+        return self.renderer
 
     def submit(self, owner, operation_id, snapshot):
         # A re-query/idempotent replay never needs fresh capacity admission.
@@ -218,11 +233,25 @@ class MotionExecutionService:
             return previous
         raw = canonical_bytes(snapshot)
         require(len(raw) <= self.max_request_bytes, 'motion_render_input_too_large', 413)
+        if snapshot.get('schema') == FILM_SCHEMA:
+            renderer = self._renderer_for(snapshot)
+            renderer.verify_snapshot(snapshot)
+            from .hyperframes_film_snapshot import MAX_REQUEST_BYTES as film_request_limit
+            require(len(raw) <= film_request_limit, 'motion_render_input_too_large', 413)
+            # Reserve outstanding deliveries and staging before storing another
+            # large JSON archive. A queue entry is not free storage capacity.
+            with self.journal.lock, self.journal.connect() as db:
+                pending = db.execute("SELECT count(*) FROM motion_operations WHERE state IN ('queued','running')").fetchone()[0]
+            reserve = (pending + 1) * FILM_RESERVATION_BYTES
+            require(self.usage() + reserve <= self.max_storage_bytes
+                and shutil.disk_usage(renderer.pvc_root).free > reserve,
+                'motion_render_storage_exceeded', 507)
+            return self.journal.submit(owner, operation_id, snapshot)
         verify_motion_snapshot(snapshot)
         require(snapshot['runtime_fingerprint'] == self.runtime, 'motion_render_runtime_conflict', 409)
-        require(all(s['visual_mode'] != 'motion' or s['timing']['duration_seconds'] <= 60 for s in snapshot['scenes']),
+        require(all(s['visual_mode'] not in {'motion', 'creative'} or s['timing']['duration_seconds'] <= 60 for s in snapshot['scenes']),
                 'motion_scene_duration_exceeded', 422)
-        require(all(s['visual_mode'] != 'motion' or len(base64.b64decode(s['audio']['data_base64'], validate=True))
+        require(all(s['visual_mode'] not in {'motion', 'creative'} or len(base64.b64decode(s['audio']['data_base64'], validate=True))
                     <= 8 * 1024 * 1024 for s in snapshot['scenes']), 'motion_audio_size_exceeded', 413)
         reserve = len(raw) * 2 + 512 * 1024 * 1024
         require(self.usage() + reserve <= self.max_storage_bytes
@@ -238,13 +267,15 @@ class MotionExecutionService:
                 return False
             key = row['key']
             self.journal.update(key, state='running')
-            event = JournalCancellation(self.journal, key, len(json.loads(row['snapshot'])['scenes']))
+            snapshot = json.loads(row['snapshot'])
+            event = JournalCancellation(self.journal, key, 1 if snapshot.get('schema') == FILM_SCHEMA
+                                        else len(snapshot['scenes']))
             previous_result = json.loads(row['result']) if row['result'] else {}
             if 'cleanup_pending' in previous_result:
                 self._finish_failure(row, previous_result['cleanup_pending'])
                 return True
             try:
-                result = self.renderer.render(json.loads(row['snapshot']), self.root / key / 'result',
+                result = self._renderer_for(snapshot).render(snapshot, self.root / key / 'result',
                                                key=key, cancel_event=event)
                 path = Path(result['path']).resolve()
                 expected = (self.root / key / 'result' / 'video.mp4').resolve()
@@ -264,7 +295,8 @@ class MotionExecutionService:
                     self.journal.update(key, state='queued', error=None)
                 else:
                     state = 'cancelled' if error.code in {'media_render_cancelled', 'media_cancelled'} else ('timed_out' if error.status == 504 else 'failed')
-                    self._begin_failure(row, state, error.code, error.status)
+                    self._begin_failure(row, state, error.code, error.status,
+                                        motion_context=getattr(error, 'motion_context', None))
             except Exception as error:
                 # Do not expose filesystem, credentials or exception text.
                 self.last_error = 'motion_execution_storage_error' if isinstance(error, OSError) else 'motion_execution_internal_error'
@@ -273,14 +305,14 @@ class MotionExecutionService:
         finally:
             self.worker_lock.release()
 
-    def _begin_failure(self, row, state, error, status):
+    def _begin_failure(self, row, state, error, status, *, motion_context=None):
         pending = dict(state=state, error=error, status=status)
         # Persist cleanup intent before touching resources. A process restart
         # takes this path directly, never renders/submits another scene Job.
         latest = self.journal.operation(row['owner'], row['operation_id'])
         result = json.loads(latest['result']) if latest['result'] else {}
         progress = safe_progress(result.get('progress'))
-        diagnostic = failure_diagnostic(row['key'], error, progress)
+        diagnostic = failure_diagnostic(row['key'], error, progress, motion_context=motion_context)
         self.journal.update(row['key'], result=json.dumps({**result,
             'cleanup_pending': pending, 'diagnostic': diagnostic}), error=None)
         self._finish_failure(row, pending)
@@ -288,9 +320,10 @@ class MotionExecutionService:
     def _finish_failure(self, row, pending):
         key = row['key']
         try:
-            cleanup = getattr(self.renderer, 'cleanup', None)
+            snapshot = json.loads(row['snapshot'])
+            cleanup = getattr(self._renderer_for(snapshot), 'cleanup', None)
             if cleanup is not None:
-                cleanup(json.loads(row['snapshot']), key=key, **pending)
+                cleanup(snapshot, key=key, **pending)
             root = self.root / key / 'result'
             require(not root.is_symlink(), 'motion_scratch_invalid')
             work = root / 'assets'
@@ -323,7 +356,7 @@ class MotionExecutionService:
 
     def capabilities(self):
         self.renderer.scene_renderer.check_policy()
-        return dict(schema='video.motion-render-capabilities.v1', configured=True,
+        result = dict(schema='video.motion-render-capabilities.v1', configured=True,
             image=self.image, release_id=self.release_id, runtime_fingerprint=self.runtime,
             runtime_verification='each_job_checks_installed_binaries_and_pod_image_digest',
             quality=['draft', 'final'], quality_presets={'draft': 'draft', 'final': 'delivery'},
@@ -331,9 +364,19 @@ class MotionExecutionService:
             max_artifact_gzip_bytes=6 * 1024 * 1024, worker_concurrency=1,
             original_pcm_master=True, arbitrary_html=False, automatic_fallback=False,
             uncertain_submission='same_name_suspended_fence_no_pods_no_audio_configmaps')
+        if self.film_renderer is not None:
+            self.film_renderer.check_policy()
+            result['hyperframes_film'] = dict(configured=True, schema=FILM_SCHEMA,
+                image=self.film_renderer.image, release_id=self.film_renderer.release_id,
+                runtime_fingerprint=self.film_renderer.runtime,
+                trusted_host_sha256=self.film_renderer.hosts,
+                admission_sha256=self.film_renderer.admission['sha256'],
+                max_seconds=60, fps=24, audio_sample_rate=48000, audio_channels=2,
+                uncertain_submission='same_name_query_only_cleanup_pending_until_resolved')
+        return result
 
 
-def failure_diagnostic(key, code, progress=None):
+def failure_diagnostic(key, code, progress=None, *, motion_context=None):
     category = ('resource' if code == 'motion_execution_oom' else
         'timeout' if code in {'motion_execution_timed_out', 'media_render_timed_out'} else
         'artifact_budget' if code == 'motion_artifact_budget_exceeded' else
@@ -348,9 +391,12 @@ def failure_diagnostic(key, code, progress=None):
             'motion_expected_draw_missing', 'motion_expected_reveal_missing', 'motion_expected_hide_missing',
             'motion_invisible_move', 'motion_expected_move_missing', 'motion_frozen_frames',
             'motion_seek_time_mismatch', 'motion_reverse_seek_failed'} else 'execution')
-    return dict(code=code, category=category, stage=progress['stage'] if progress else None,
+    result = dict(code=code, category=category, stage=progress['stage'] if progress else None,
         scene_index=progress['scene_index'] if progress else None,
         diagnostic_id='MR-' + hashlib.sha256((key + ':' + code).encode()).hexdigest()[:16])
+    if context := safe_motion_context(motion_context):
+        result['motion_context'] = context
+    return result
 
 
 def public_operation(row):
@@ -410,6 +456,8 @@ def create_app(service, *, start_worker=True):
     @app.get('/health/ready')
     def ready():
         service.renderer.scene_renderer.check_policy()
+        if service.film_renderer is not None:
+            service.film_renderer.check_policy()
         require(shutil.disk_usage(service.root).free > 512 * 1024 * 1024, 'motion_render_storage_exceeded', 503)
         return {'status': 'ready'}
 
@@ -422,20 +470,25 @@ def create_app(service, *, start_worker=True):
     async def submit(operation_id: str, request: Request):
         owner = authenticate(request)
         operation_key(owner, operation_id)
-        length = request.headers.get('content-length')
-        require(length is None or length.isdigit() and int(length) <= service.max_request_bytes,
-                'motion_render_input_too_large', 413)
-        raw = bytearray()
-        async for chunk in request.stream():
-            raw.extend(chunk)
-            require(len(raw) <= service.max_request_bytes, 'motion_render_input_too_large', 413)
+        require(service.intake_lock.acquire(blocking=False), 'motion_render_intake_busy', 429)
         try:
-            body = json.loads(raw)
-        except (ValueError, UnicodeError, RecursionError):
-            raise ServiceError('motion_render_input_invalid', 422) from None
-        require(type(body) is dict and set(body) == {'snapshot'} and type(body['snapshot']) is dict,
-                'motion_render_input_invalid', 422)
-        return public_operation(service.submit(owner, operation_id, body['snapshot']))
+            length = request.headers.get('content-length')
+            require(length is None or length.isdigit() and int(length) <= service.max_request_bytes,
+                    'motion_render_input_too_large', 413)
+            raw = bytearray()
+            async for chunk in request.stream():
+                raw.extend(chunk)
+                require(len(raw) <= service.max_request_bytes, 'motion_render_input_too_large', 413)
+            try:
+                body = json.loads(raw)
+            except (ValueError, UnicodeError, RecursionError):
+                raise ServiceError('motion_render_input_invalid', 422) from None
+            del raw
+            require(type(body) is dict and set(body) == {'snapshot'} and type(body['snapshot']) is dict,
+                    'motion_render_input_invalid', 422)
+            return public_operation(service.submit(owner, operation_id, body['snapshot']))
+        finally:
+            service.intake_lock.release()
 
     @app.get('/v1/renders/{operation_id}')
     def query(operation_id: str, request: Request):
@@ -482,9 +535,33 @@ def from_environment(environ=None):
         env.get('VIDEO_MOTION_NAMESPACE', 'video-motion-render'))
     renderer = KubeSceneRenderer(journal, kube, image=needed('VIDEO_MOTION_RENDER_IMAGE'),
         release_id=needed('VIDEO_MOTION_RENDER_RELEASE'), runtime=runtime, root=root)
+    film_renderer = None
+    if env.get('VIDEO_HYPERFRAMES_FILM_ENABLED') == '1':
+        from .hyperframes_film_execution import _ordinary
+        from .hyperframes_film_k8s import KubeFilmRenderer
+        def film_json(name):
+            path = Path(needed(name))
+            require(path.is_absolute(), 'hyperframes_film_configuration_invalid', 503)
+            return json.loads(_ordinary(path, 32768))
+        film_kube = KubeHTTP(needed('VIDEO_MOTION_K8S_API'),
+            env.get('VIDEO_MOTION_K8S_TOKEN_FILE', '/var/run/secrets/kubernetes.io/serviceaccount/token'),
+            env.get('VIDEO_MOTION_K8S_CA_FILE', '/var/run/secrets/kubernetes.io/serviceaccount/ca.crt'),
+            needed('VIDEO_HYPERFRAMES_FILM_NAMESPACE'))
+        film_pvc_selector = json.loads(needed('VIDEO_HYPERFRAMES_FILM_PVC_WORKLOAD_SELECTOR'))
+        require(type(film_pvc_selector) is dict and bool(film_pvc_selector),
+            'hyperframes_film_pvc_selector_invalid', 503)
+        film_renderer = KubeFilmRenderer(journal, film_kube,
+            image=needed('VIDEO_HYPERFRAMES_FILM_IMAGE'),
+            release_id=needed('VIDEO_HYPERFRAMES_FILM_RELEASE'),
+            runtime=film_json('VIDEO_HYPERFRAMES_FILM_RUNTIME_FILE'),
+            trusted_host_sha256=film_json('VIDEO_HYPERFRAMES_FILM_HOSTS_FILE'),
+            admission=film_json('VIDEO_HYPERFRAMES_FILM_ADMISSION_FILE'),
+            pvc_root=Path(needed('VIDEO_HYPERFRAMES_FILM_PVC_ROOT')),
+            pvc_name=needed('VIDEO_HYPERFRAMES_FILM_PVC_NAME'), root=root,
+            pvc_workload_selector=film_pvc_selector)
     return MotionExecutionService(journal, MixedMotionRenderer(renderer), root=root,
         token=read_secret(needed('VIDEO_MOTION_SERVICE_TOKEN_FILE')), runtime=runtime,
-        image=renderer.image, release_id=renderer.release_id)
+        image=renderer.image, release_id=renderer.release_id, film_renderer=film_renderer)
 
 
 def app_factory():
