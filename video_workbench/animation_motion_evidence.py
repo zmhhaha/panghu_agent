@@ -11,6 +11,7 @@ import re
 from agent_service.contracts import ServiceError
 from agent_service.profiles.video_animation_create import source_sha256
 from .animation_authoring_tools import observed_authoring_tools
+from .animation_motion_flow import factory_motion as _factory_motion
 
 
 GSAP_VERSION = '3.14.2'
@@ -154,6 +155,9 @@ def _roots(code, functions):
 
 
 def _has_native_motion(code):
+    factory_result = _factory_motion(code)
+    if factory_result is not None:
+        return factory_result
     functions = _functions(code)
     roots = _roots(code, functions)
     taints = {name: {functions[name][0][0]} for name in roots}

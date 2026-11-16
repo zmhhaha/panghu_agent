@@ -93,6 +93,99 @@ window.__animationExperiment={seek};'''
     assert motion(*fixture(source(js, engine='html-svg')))[0]['id'] == 'native-js'
 
 
+@pytest.mark.parametrize('engine,js', [
+    ('canvas', '''function makePainter(){
+        function paint(context,clock){const phase=Math.sin(clock);context.fillRect(phase,0,8,8);}
+        return {apply:paint};}
+        const work=makePainter();
+        window.__animationExperiment={seek(seconds){work.apply(ctx,seconds);}};'''),
+    ('three', '''function makeAssembly(){
+        function position(clock){const angle=clock*2;hinge.rotation.set(0,angle,0);}
+        return {advance:position};}
+        const work=makeAssembly();
+        window.__animationExperiment={seek(seconds){work.advance(seconds);}};'''),
+    ('html-svg', '''function makeSignal(){
+        const attrs=(el,values)=>{for(const [key,value] of Object.entries(values))el.setAttribute(key,String(value));};
+        function position(clock){const x=clock*20;attrs(circle,{cx:x,cy:5});}
+        return {advance:position};}
+        const work=makeSignal();
+        window.__animationExperiment={seek(seconds){work.advance(seconds);}};'''),
+])
+def test_factory_interfaces_forward_actual_clock_to_visual_writes(engine, js):
+    result = motion(*fixture(source(js, engine=engine)))
+    assert result[0]['id'] == 'native-js'
+    assert result[0]['evidence_scope'] == 'source_inspection_not_visual_acceptance'
+
+
+def test_factory_interfaces_keep_same_named_methods_bound_to_their_lexical_owner():
+    js = '''function makeStatic(){function update(t){ctx.fillRect(0,0,8,8);}return {update};}
+        function makeMotion(){function update(t){ctx.fillRect(t*20,0,8,8);}return {update};}
+        const fixed=makeStatic(),moving=makeMotion();
+        window.__animationExperiment={seek(seconds){fixed.update(seconds);}};'''
+    assert motion(*fixture(source(js))) == []
+    assert motion(*fixture(source(js.replace('fixed.update(seconds)', 'moving.update(seconds)'))))[0]['id'] == 'native-js'
+
+
+def test_factory_same_named_seeks_do_not_promote_an_unregistered_dead_callback():
+    js = '''function makeStatic(){function seek(t){ctx.fillRect(0,0,8,8);}return {seek};}
+        function makeMotion(){function seek(t){ctx.fillRect(t*20,0,8,8);}return {seek};}
+        const fixed=makeStatic(),unused=makeMotion();
+        window.__animationExperiment={seek(seconds){fixed.seek(seconds);}};'''
+    assert motion(*fixture(source(js))) == []
+
+
+def test_unsupported_factory_root_does_not_fall_back_to_global_same_named_seek():
+    js = '''function unusedFactory(){function seek(t){ctx.fillRect(t*20,0,8,8);}return {seek};}
+        const unused=unusedFactory();
+        function fixed(t){ctx.fillRect(0,0,8,8);}
+        const api={seek:fixed};window.__animationExperiment=api;'''
+    assert motion(*fixture(source(js))) == []
+    assert motion(*fixture(source(js.replace('const unused=unusedFactory();', '')))) == []
+
+
+@pytest.mark.parametrize('call', ['mystery.apply(seconds)', 'fixed.apply(0)'])
+def test_unknown_receiver_or_constant_call_never_borrows_a_factory_method(call):
+    js = '''function makePainter(){function paint(clock){ctx.fillRect(clock*20,0,8,8);}return {apply:paint};}
+        const fixed=makePainter();window.__animationExperiment={seek(seconds){CALL;}};'''.replace('CALL', call)
+    assert motion(*fixture(source(js))) == []
+
+
+def test_ambiguous_reassigned_factory_receiver_stays_unknown():
+    js = '''function one(){function tick(t){ctx.fillRect(t*20,0,8,8);}return {tick};}
+        function two(){function tick(t){ctx.fillRect(0,0,8,8);}return {tick};}
+        let work=one();work=two();window.__animationExperiment={seek(seconds){work.tick(seconds);}};'''
+    assert motion(*fixture(source(js))) == []
+
+
+@pytest.mark.parametrize('body', [
+    'work={tick(t){ctx.fillRect(0,0,8,8);}};work.tick(seconds);',
+    'function draw(work,t){work.tick(t);}draw(unknown,seconds);',
+    'function draw(t){const work=unknown;work.tick(t);}draw(seconds);',
+    'function draw(t){let work;work.tick(t);}draw(seconds);',
+])
+def test_nonfactory_assignments_and_local_shadows_never_borrow_outer_factory(body):
+    js = '''function makePainter(){function tick(t){ctx.fillRect(t*20,0,8,8);}return {tick};}
+        let work=makePainter();window.__animationExperiment={seek(seconds){BODY}};'''.replace('BODY', body)
+    assert motion(*fixture(source(js))) == []
+
+
+@pytest.mark.parametrize('registration', [
+    'window.__animationExperiment={seek(seconds){draw(seconds);}};',
+    'function seek(seconds){draw(seconds);}window.__animationExperiment={seek};',
+])
+def test_unrelated_factory_does_not_block_common_direct_motion_paths(registration):
+    js = '''function unusedFactory(){function tick(t){ctx.fillRect(0,0,8,8);}return {tick};}
+        const unused=unusedFactory();function draw(t){ctx.fillRect(t*20,0,8,8);}''' + registration
+    assert motion(*fixture(source(js)))[0]['id'] == 'native-js'
+
+
+def test_unused_nested_function_source_is_not_an_executed_factory_path():
+    js = '''function makePainter(){function apply(clock){function dead(){ctx.fillRect(clock*20,0,8,8);}
+        ctx.fillRect(0,0,8,8);}return {apply};}
+        const work=makePainter();window.__animationExperiment={seek(seconds){work.apply(seconds);}};'''
+    assert motion(*fixture(source(js))) == []
+
+
 @pytest.mark.parametrize('change', ['source', 'media', 'operation', 'technical', 'admission'])
 def test_labels_cannot_cross_changed_source_media_operation_or_admission(change):
     candidate, demos = fixture()
