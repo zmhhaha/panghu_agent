@@ -387,6 +387,24 @@ def test_generic_profile_reads_manifest_and_record_files_and_collects_authored_p
     assert result == result_for(document) and output.name == C.RESULT_NAME
 
 
+def test_v2_reuses_original_byte_and_output_validation_with_bounded_read_prompt(tmp_path):
+    from agent_service.profiles import video_animation_wikiskill_v2 as current
+    document, envelope, proof = stage_profile(tmp_path)
+    envelope.profile = current.PROFILE
+    handler = current.VideoAnimationWikiSkillV2Profile()
+    assert handler.required_tools == ('read_compilation_input', 'write')
+    assert handler.task_schema == P.VideoAnimationWikiSkillProfile.task_schema
+    prompt = handler.build_prompt(envelope.task)
+    assert 'mode=manifest' in prompt and 'mode=batch' in prompt and 'next_offset_bytes' in prompt
+    assert 'No shell' in prompt and digest(document) in prompt
+    artifact, = handler.collect_output(tmp_path, envelope, proof)
+    assert json.loads(artifact.content()) == result_for(document)
+    path = tmp_path / 'inputs' / C.INPUT_NAME
+    path.write_bytes(path.read_bytes() + b' ')
+    with pytest.raises(ServiceError, match='binding_mismatch'):
+        handler.collect_output(tmp_path, envelope, proof)
+
+
 def test_scope_literal_must_be_separate_and_host_never_repairs_authored_output(tmp_path):
     document, envelope, proof = stage_profile(tmp_path)
     profile = P.VideoAnimationWikiSkillProfile()

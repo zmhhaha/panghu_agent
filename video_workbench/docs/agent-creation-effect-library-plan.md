@@ -1,5 +1,15 @@
 # Agent 动画效果库、视频工作台与 HyperFrames：统一设计
 
+## 2026-11-16：动作标签与正片打磨执行上线，知识编译读取修复中
+
+源码 f9ee7ad9cc68213d111a905bfff35a00c948974b 已推送开发分支，服务器从干净 Git 正常构建并部署 executor／lab／workbench 三个 latest@digest 镜像，三个 rollout 均成功；workbench 显式启用默认正片打磨。干净 index 副本 128 项 Python、91 项 Node 检查通过。原声、冻结 WikiSkill 和 HyperFrames 整片工程保持；自动一轮、用户最多追加两轮、后续明确问题列表的协调器、私有 v4 审阅代理和页面已实现。点问题边界和过长意见在占额前拒绝的两个缺陷已修正。v4 只有至多24张有序抽帧及真实模型图片接收证据，没有连续或音频审阅；本轮未用新正片跑过真实自动打磨闭环，不能据此勾选完整3.5、3.6或4.5。
+
+效果库真实网页仍为8条，动作编排为7条源码核实的原生JavaScript和1条实测Anime.js，原生／Anime／GSAP筛选分别7／1／0，恢复全部为8。GSAP识别支持不等于已有GSAP样片。原《雾退见山石》同题Canvas候选efc39c43-5df7-4bb1-8038-192991945727完成24秒渲染，新媒体c675e1fbd68e26fc10b61d15c0075f17f833f7798c1fc46061e134499912d818；《芦塘起翼》保持独立。新山石仍有线束感和远山重复，完整运动与审美未获认可，R2不勾。用户指定BV1BxWu6SESe的21—28秒后，已分段复看并记录山形、皴擦、墨色、分阶段成画与轻微环境运动；现有Canvas＋HyperFrames可承载，不等于同等质量已达成，不新开实验或把外链写作Skill运行依赖。
+
+用户本轮已委托真实整库发布，因此发起首次业务编译ca5cba98-470d-436a-9116-1f5adb252067；它真实失败且停止已证明，没有release、active仍为空。根因是canonical manifest单行147374字节超过Pi builtin read的50KB单行限制；模型两次read失败，没有write，宿主返回worker_output_invalid。没有自动换身份冒充成功。正在以新compiler profile/bundle v2补有界只读输入访问，保留冻结v1合同和原始输入hash。正式验收项目6224e72c-38d3-47fb-a65c-0b14cdea2c66已正常网页创建、0镜头，表单已准备，尚未统筹、采用或制作，2.4／2.5实际采用仍待验证。
+
+细节、镜像摘要、部署CAS／回退收据和证据局限见应用文档production-refinement-validation-20261116.md与reference-BV1BxWu6SESe-study.md。本检查点不把技术通过、静帧比较或工程上线写成人工认可；资源补做U.x、音频及完整视听缺口继续按原归属记录。本轮不合主线。
+
 ## 适用范围与现状（2026-11-16）
 
 本文件是 `evolve-video-agent-creation-and-effect-library` 的当前设计，与该 OpenSpec 变更的 `design.md` 保持一致。它替换旧方案中不符合最新确认的默认流程；历史任务、冻结合同和验证结果保留原来的适用范围。设计同步本身不表示以下目标已经实现；用户随后已批准多 Agent 分工实施，代码、实际验证、部署与发布仍分别记录。

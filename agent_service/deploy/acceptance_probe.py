@@ -45,6 +45,7 @@ PROFILES = {'ppt.' + stage + '.v1' for stage in (
     'video.animation-production.v1', 'video.animation-production.v2',
     'video.animation-production.v3', 'video.animation-film-module.v1', 'video.joint-plan.v1',
     'video.resource-plan.v1', 'video.animation-wikiskill-compile.v1', 'video.joint-plan.v2',
+    'video.animation-wikiskill-compile.v2',
     'video.animation-manim-recipe.v1'}
 FIXTURE_PROFILES = {'ppt.plan_initial.v1', 'research.revise.v1'}
 CONTROL = Path('/run/agent-control')
@@ -486,6 +487,12 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
             extensions += verified_skill_tools_extensions()
         except (OSError, ValueError):
             raise ServiceError('candidate_probe_invalid', 422) from None
+    elif 'read_compilation_input' in environment.tools:
+        from agent_service.compilation_input_tools import verified_compilation_input_extension
+        try:
+            extensions += (verified_compilation_input_extension(),)
+        except (OSError, ValueError):
+            raise ServiceError('candidate_compilation_input_reader_integrity_invalid', 422) from None
     elif 'read_inputs' in environment.tools:
         from agent_service.input_tools import verified_read_inputs_extension
         try:
@@ -496,7 +503,7 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
     profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL
     settings = build_pi_runtime_settings(policy, command=(NODE, PI_CLI), node_command=(NODE,), provider=config.model.provider,
         model=config.model.model, model_base_url=config.model.proxy_base_url, model_api=config.model.api,
-        model_max_tokens=8192,
+        model_max_tokens=32768 if policy.name == 'video.animation-wikiskill-compile.v2' else 8192,
         model_input=('text', 'image') if 'vision' in binding.model_policy.capabilities else ('text',),
         model_env={'AGENT_MODEL_API_KEY': credentials.model_proxy_token.get_secret_value()},
         tool_proxy_base_url=config.model.proxy_base_url, runtime_revision=policy.runtime_revision,

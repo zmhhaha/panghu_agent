@@ -26,6 +26,11 @@ from test_candidate_scenario import synthetic_source_root_owner, write_scenario
 def config(profile, engine='pi'):
     # New roles are additive preparations, not additions to the frozen original
     # catalog generator. Use their real preparation path with synthetic pins.
+    if profile == 'video.animation-wikiskill-compile.v2':
+        from test_wikiskill_catalog import prepare
+        assert engine == 'pi'
+        _, hosts, _ = prepare(profile)
+        return worker_entry.HostConfig.model_validate(hosts[profile])
     if profile in {'video.animation-observe.v1', 'video.animation-review.v1', 'video.animation-create.v2',
                    'video.animation-review.v2', 'video.animation-review.v3', 'video.animation-review.v4'}:
         from test_animation_review_catalog import prepare
@@ -144,13 +149,17 @@ def test_all_candidate_factories_keep_exact_contract_tools_and_capabilities(fact
     academic = profile in {'research.generate.v1', 'research.retrieve.v1'}
     input_review = profile == 'video.animation-review.v4'
     from agent_service.input_tools import READ_INPUTS_EXTENSION
+    from agent_service.compilation_input_tools import COMPILATION_INPUT_EXTENSION
+    compilation = profile == 'video.animation-wikiskill-compile.v2'
     assert driver.runtime.profile.extension_paths == (
-        (Path(ACADEMIC_EXTENSION),) if academic else (READ_INPUTS_EXTENSION,) if input_review else ())
+        (Path(ACADEMIC_EXTENSION),) if academic else (READ_INPUTS_EXTENSION,) if input_review
+        else (COMPILATION_INPUT_EXTENSION,) if compilation else ())
     assert callable(getattr(driver, 'academic_observer', None)) is academic
     assert driver.runtime.profile.load_skills is profile.startswith('ppt.')
     if profile.startswith('video.'):
         assert run.config.profile.revision == '1'
-        assert driver.runtime.profile.allowed_tools == (('read_inputs', 'write') if input_review else ('read', 'write'))
+        assert driver.runtime.profile.allowed_tools == (('read_inputs', 'write') if input_review
+            else ('read_compilation_input', 'write') if compilation else ('read', 'write'))
         assert driver.runtime.profile.shared_project is False
     assert driver.runtime.profile.policy.enabled is False
     assert run.config.profile.enabled is False
@@ -176,6 +185,42 @@ def test_modified_input_reader_is_rejected_before_any_runtime_is_created(factory
     expected = 'invalid_worker_configuration' if production else 'candidate_input_reader_integrity_invalid'
     with pytest.raises(error, match=expected):
         factory('video.animation-review.v4', production=production)
+
+
+@pytest.mark.parametrize('production', [False, True], ids=['candidate', 'production'])
+def test_compilation_factory_loads_only_verified_bounded_input_reader(factory, production):
+    from agent_service.compilation_input_tools import verified_compilation_input_extension
+    run = factory('video.animation-wikiskill-compile.v2', production=production)
+    assert run.driver.runtime.profile.extension_paths == (verified_compilation_input_extension(),)
+    assert run.driver.runtime.profile.allowed_tools == ('read_compilation_input', 'write')
+    assert run.driver.runtime.settings.model_max_tokens == 32768
+
+
+@pytest.mark.parametrize('production', [False, True], ids=['candidate', 'production'])
+def test_modified_compilation_reader_is_rejected_before_runtime_creation(factory, monkeypatch, production):
+    from agent_service import compilation_input_tools
+    prepared = config('video.animation-wikiskill-compile.v2')
+    monkeypatch.setitem(globals(), 'config', lambda *args, **kwargs:prepared)
+    monkeypatch.setattr(compilation_input_tools, '_read', lambda *args:b'changed fixed reader')
+    monkeypatch.setattr(runtime, 'PiRuntime', lambda *args, **kwargs:pytest.fail('Runtime must not be created'))
+    monkeypatch.setattr(worker_entry, 'PiRuntime', lambda *args, **kwargs:pytest.fail('Runtime must not be created'))
+    error = worker_entry.WorkerConfigError if production else ServiceError
+    with pytest.raises(error):
+        factory('video.animation-wikiskill-compile.v2', production=production)
+
+
+def test_compiler_large_output_limit_is_bounded_and_legacy_defaults_are_unchanged(factory):
+    from dataclasses import replace
+    from agent_service.runtime.adapter import PiRuntime, RuntimeExecutionError
+    run = factory('video.animation-wikiskill-compile.v2')
+    settings = replace(run.driver.runtime.settings, fixture_mode=True)
+    runtime = PiRuntime(settings, profile=run.driver.runtime.profile)
+    runtime._check_settings()
+    assert runtime._custom_model_definition()['maxTokens'] == 32768
+    for value in (0, True, 32769, '32768'):
+        with pytest.raises(RuntimeExecutionError):
+            PiRuntime(replace(settings, model_max_tokens=value), profile=runtime.profile)._check_settings()
+    assert factory('video.storyboard.v1').driver.runtime.settings.model_max_tokens == 8192
 
 
 @pytest.mark.parametrize('profile', sorted(probe.PROFILES - probe.FIXTURE_PROFILES))

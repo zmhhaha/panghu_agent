@@ -3,6 +3,9 @@ from .base import ProfileImplementation, ProfileLimits
 
 
 def implementation(name):
+    if name == 'video.animation-wikiskill-compile.v2':
+        from .video_animation_wikiskill_v2 import VideoAnimationWikiSkillV2Profile
+        return VideoAnimationWikiSkillV2Profile()
     if name == 'video.animation-wikiskill-compile.v1':
         from .video_animation_wikiskill import VideoAnimationWikiSkillProfile
         return VideoAnimationWikiSkillProfile()

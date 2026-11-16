@@ -20,7 +20,7 @@ from .catalog_limits import (CATALOG_READER_MAX_BYTES, CONTRACT_RECORD_LIMIT, HI
                              validate_catalog_budget)
 
 Tool = Literal['read', 'write', 'bash', 'image', 'academic_search', 'academic_verify', 'read_inputs',
-               'skill_search', 'skill_read']
+               'skill_search', 'skill_read', 'read_compilation_input']
 OutputSchema = Literal['text-output.v1', 'ppt-plan_initial-output.v1', 'ppt-plan_options-output.v1',
     'ppt-generate-output.v1', 'ppt-revise-output.v1', 'ppt-prepare-output.v1',
     'research-output.v1', 'research-revision-output.v1', 'research-plan-output.v1',
@@ -175,7 +175,14 @@ class ToolEnvironment(_Record):
 
     @model_validator(mode='after')
     def fixed_input_reader(self):
-        if {'skill_search', 'skill_read'} & set(self.tools):
+        if 'read_compilation_input' in self.tools:
+            from .compilation_input_tools import (COMPILATION_INPUT_ENVIRONMENT_NAME,
+                compilation_input_environment_revision)
+            if (self.name != COMPILATION_INPUT_ENVIRONMENT_NAME
+                    or set(self.tools) != {'read_compilation_input', 'write'}
+                    or self.revision != compilation_input_environment_revision(self.model_dump(mode='json'))):
+                raise ValueError('Compilation reader requires its fixed extension identity and tool scope')
+        elif {'skill_search', 'skill_read'} & set(self.tools):
             from .skill_tools import (SKILL_TOOLS_ENVIRONMENT_NAME, TOOL_SCOPE,
                                       skill_tools_environment_revision)
             if (self.name != SKILL_TOOLS_ENVIRONMENT_NAME or set(self.tools) != TOOL_SCOPE

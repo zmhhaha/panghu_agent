@@ -171,8 +171,8 @@ class PiRuntime:
                 raise RuntimeExecutionError("configuration_missing", "Unsupported model compatibility option or value")
         if s.model_compat and s.model_api != "openai-completions":
             raise RuntimeExecutionError("configuration_missing", "Completions compatibility requires openai-completions")
-        if s.model_max_tokens is not None and (type(s.model_max_tokens) is not int or not 1 <= s.model_max_tokens <= 8192):
-            raise RuntimeExecutionError("configuration_missing", "Model token limit must be an integer from 1 to 8192")
+        if s.model_max_tokens is not None and (type(s.model_max_tokens) is not int or not 1 <= s.model_max_tokens <= 32768):
+            raise RuntimeExecutionError("configuration_missing", "Model token limit must be an integer from 1 to 32768")
         if s.model_input is not None and (type(s.model_input) is not tuple
                 or any(type(item) is not str for item in s.model_input)
                 or s.model_input not in (("text",), ("text", "image"))):

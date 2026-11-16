@@ -439,6 +439,12 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
                 extensions += verified_skill_tools_extensions()
             except (OSError, ValueError):
                 raise WorkerConfigError() from None
+        elif 'read_compilation_input' in environment.tools:
+            from .compilation_input_tools import verified_compilation_input_extension
+            try:
+                extensions += (verified_compilation_input_extension(),)
+            except (OSError, ValueError):
+                raise WorkerConfigError() from None
         elif 'read_inputs' in environment.tools:
             from .input_tools import verified_read_inputs_extension
             try:
@@ -450,7 +456,7 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
     settings = build_pi_runtime_settings(policy, command=(NODE, PI_CLI), node_command=(NODE,),
         provider=config.model.provider, model=config.model.model,
         model_base_url=config.model.proxy_base_url, model_api=config.model.api,
-        model_max_tokens=8192,
+        model_max_tokens=32768 if policy.name == 'video.animation-wikiskill-compile.v2' else 8192,
         model_env={'AGENT_MODEL_API_KEY': secrets.model_proxy_token.get_secret_value()},
         tool_proxy_base_url=config.model.proxy_base_url,
         model_input=('text', 'image') if 'vision' in (

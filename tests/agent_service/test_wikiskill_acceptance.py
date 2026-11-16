@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import time
 from uuid import uuid4
 
@@ -15,7 +16,7 @@ from agent_service.contracts import (ExecutionEnvelope, InlineFile, ServiceError
 from agent_service.deploy import wikiskill_acceptance as admission
 from agent_service.deploy.acceptance_probe import candidate_config, harness_sha256, render_probe
 from agent_service.deploy.candidate_scenario import module_sha256
-from agent_service.deploy.wikiskill_catalog import PROFILES, role as profile_module
+from agent_service.deploy.wikiskill_catalog import COMPILER_PROFILES, PROFILES, role as profile_module
 from agent_service.profiles import implementation
 from agent_service import animation_wikiskill_contract as C
 from agent_service.animation_skills_contract import build_skill_package
@@ -65,7 +66,7 @@ def compiler_source():
 
 
 def role_source(tmp_path,profile):
-    if profile==PROFILES[0]:
+    if profile in COMPILER_PROFILES:
         return compiler_source(),None
     from test_joint_plan_skills_profile import stage,observe
     document,packages,output,envelope,proof=stage(tmp_path/'business')
@@ -92,7 +93,7 @@ def capture(tmp_path,profile=PROFILES[0]):
     envelope=ExecutionEnvelope(**pins,job_id=str(uuid4()),attempt_id=observed_attempt or str(uuid4()),fence=1,
         deadline_at=time.time()+600,lease_expires_at=time.time()+300,
         task=dict(input_sha256=digest(value)),inputs=[InlineFile.from_bytes(name,raw) for name,raw in files.items()])
-    directory=tmp_path/('wikiskill-compiler-candidate' if profile==PROFILES[0] else 'wikiskill-planner-candidate')
+    directory=tmp_path/('wikiskill-compiler-candidate' if profile in COMPILER_PROFILES else 'wikiskill-planner-candidate')
     root=directory/'candidate-output'
     root.mkdir(parents=True)
     worker_uid,proxy_uid=str(uuid4()),str(uuid4())
@@ -165,7 +166,7 @@ def test_exact_role_report_and_disabled_admission_preserve_capture(tmp_path,prof
     assert not (tmp_path/'binding-approvals.json').exists()
     assert report['rendering_verified'] is report['subjective_plan_quality_approved'] is False
     assert report['checks']['normalized_output_sha256']==digest(artifact)
-    if profile==PROFILES[0]:
+    if profile in COMPILER_PROFILES:
         assert report['checks']['compiled_package_count']==1
         assert report['checks']['frozen_record_count']==1
         assert report['checks']['new_media_validation_performed'] is False
@@ -237,8 +238,9 @@ def test_output_artifact_changed_after_export_cannot_be_admitted(tmp_path,profil
 
 
 @pytest.mark.parametrize('name', ['records/000000.json', C.INPUT_NAME])
-def test_compiler_changed_record_or_manifest_cannot_be_admitted(tmp_path,name):
-    directory,root,_,_=capture(tmp_path)
+@pytest.mark.parametrize('profile', COMPILER_PROFILES)
+def test_compiler_changed_record_or_manifest_cannot_be_admitted(tmp_path,name,profile):
+    directory,root,_,_=capture(tmp_path,profile)
     save(root/name,b'{}')
     with pytest.raises(ServiceError,match='input_mismatch'):
         admission.review_candidate(directory,tmp_path/'rejected')
@@ -263,14 +265,31 @@ def test_old_planner_capture_cannot_admit_either_new_profile_module(tmp_path):
 
 
 @pytest.mark.parametrize('tools',[['read','write','shell'],['read','write','write'],
-    ['read'], 'read,write', None])
-def test_compiler_requires_exact_read_write_capability(tmp_path,tools):
-    directory,root,_,_=capture(tmp_path)
+    ['read'], 'read,write', None, ['read_compilation_input', 'write', 'write'],
+    ['read_compilation_input']])
+@pytest.mark.parametrize('profile', COMPILER_PROFILES)
+def test_compiler_requires_exact_own_tool_capability(tmp_path,tools,profile):
+    directory,root,_,_=capture(tmp_path,profile)
     for name in ('candidate-evidence.json','candidate-result.json'):
         edit(root,name,lambda row:row['observations']['capability'].update(allowed_tools=tools))
     with pytest.raises(ServiceError,match='capability_missing'):
         admission.review_candidate(directory,tmp_path/'rejected')
     assert not (tmp_path/'rejected').exists()
+
+
+@pytest.mark.parametrize('change', ['changed', 'missing'])
+def test_v2_compiler_rejects_missing_or_changed_source_extension(tmp_path,change):
+    from agent_service.compilation_input_tools import verified_compilation_input_extension
+    _,hosts,_=prepare(PROFILES[2])
+    host,policy,binding=candidate_config(hosts[PROFILES[2]])
+    module=profile_module(PROFILES[2])
+    package=tmp_path/'source'
+    shutil.copytree(module.BUNDLE_ROOT,package/'resources'/module.BUNDLE_REVISION)
+    extension=package/verified_compilation_input_extension().name
+    if change=='changed':
+        extension.write_bytes(b'altered fixed input reader')
+    with pytest.raises(ServiceError,match='tools_mismatch|file'):
+        admission._bundle(package,admission._host_registry(host),binding,policy)
 
 
 def test_planner_business_no_reads_cannot_admit_progressive_tool_profile_module(tmp_path):

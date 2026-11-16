@@ -10,6 +10,8 @@ import tarfile
 import pytest
 
 from agent_service.catalog import CATALOG_KEYS
+from agent_service.compilation_input_tools import (COMPILATION_INPUT_ENVIRONMENT_NAME,
+    COMPILATION_INPUT_EXTENSION_SHA256, compilation_input_environment_revision)
 from agent_service.deploy.acceptance_probe import candidate_config
 from agent_service.deploy.video_catalog import VideoCatalogError, registry
 from agent_service.deploy.wikiskill_catalog import PROFILES, role, measure_wikiskill_bundle, prepare_wikiskill_catalog
@@ -67,6 +69,53 @@ def test_measured_resources_and_host_are_bound_to_exact_current_bytes(profile):
     assert host['model']['api'] == 'openai-responses'
 
 
+def test_v2_appends_new_identity_without_replacing_v1_or_planner():
+    assert PROFILES == ('video.animation-wikiskill-compile.v1', 'video.joint-plan.v2',
+                        'video.animation-wikiskill-compile.v2')
+    first, old_hosts, old_receipt = prepare(PROFILES[0])
+    previous, planner_hosts, _ = prepare(PROFILES[1], first)
+    frozen = deepcopy(previous)
+    merged, hosts, receipt = prepare(PROFILES[2], previous)
+    assert previous == frozen
+    for key in (*CATALOG_KEYS, 'kubernetes_workers', 'callers'):
+        assert merged[key][:len(frozen[key])] == frozen[key]
+    assert role(PROFILES[0]).BUNDLE_REVISION == 'animation-wikiskill-v1'
+    assert role(PROFILES[2]).BUNDLE_REVISION == 'animation-wikiskill-v2'
+    assert old_receipt['binding_id'] == 'wikiskill-compile-pi'
+    assert receipt['binding_id'] == 'wikiskill-compile-v2-pi'
+    assert receipt['acceptance_suite'] == 'video.animation-wikiskill-compile-contract.v2'
+    assert old_hosts[PROFILES[0]]['execution_catalog']['task_contracts'][0]['required_tools'] == ['read', 'write']
+    assert set(planner_hosts[PROFILES[1]]['execution_catalog']['task_contracts'][0]['required_tools']) == {
+        'read_inputs', 'skill_search', 'skill_read', 'write'}
+    assert hosts[PROFILES[2]]['execution_catalog']['task_contracts'][0]['required_tools'] == [
+        'read_compilation_input', 'write']
+
+
+def test_v2_environment_binds_extension_and_full_image_runtime_identity():
+    _, hosts, _ = prepare(PROFILES[2])
+    host = hosts[PROFILES[2]]
+    environment = host['execution_catalog']['tool_environments'][0]
+    assert environment['name'] == COMPILATION_INPUT_ENVIRONMENT_NAME
+    assert environment['revision'] == compilation_input_environment_revision(environment)
+    assert COMPILATION_INPUT_EXTENSION_SHA256 in environment['revision']
+    assert host['execution_catalog']['task_contracts'][0]['max_timeout_seconds'] == 900
+    for changes in ({'runtime_revision': 'changed-runtime'},
+                    {'worker_image': 'registry.internal/worker:latest@sha256:' + 'd' * 64}):
+        _, changed, _ = prepare(PROFILES[2], **changes)
+        observed = changed[PROFILES[2]]['execution_catalog']['tool_environments'][0]
+        assert observed['revision'] != environment['revision']
+        assert COMPILATION_INPUT_EXTENSION_SHA256 in observed['revision']
+
+
+def test_v2_preparation_rejects_changed_fixed_input_reader(tmp_path, monkeypatch):
+    from agent_service import compilation_input_tools
+    changed = tmp_path / 'read_compilation_input_extension.mjs'
+    changed.write_bytes(b'changed reader')
+    monkeypatch.setattr(compilation_input_tools, 'COMPILATION_INPUT_EXTENSION', changed)
+    with pytest.raises(ValueError, match='compilation_input_extension_integrity'):
+        prepare(PROFILES[2])
+
+
 @pytest.mark.parametrize('changes,code', [
     ({'worker_image': 'registry.internal/worker:latest'}, 'latest_digest_required'),
     ({'worker_image': 'registry.internal/worker:v1@sha256:' + 'c' * 64}, 'latest_digest_required'),
@@ -103,6 +152,9 @@ def test_standard_worker_context_includes_exact_bundles_and_needs_no_business_im
         names = set(bundle.getnames())
         assert 'agent_service/animation_wikiskill_contract.py' in names
         assert 'agent_service/profiles/video_animation_wikiskill.py' in names
+        assert 'agent_service/profiles/video_animation_wikiskill_v2.py' in names
+        assert 'agent_service/compilation_input_tools.py' in names
+        assert 'agent_service/read_compilation_input_extension.mjs' in names
         assert 'agent_service/profiles/video_joint_plan_skills.py' in names
         assert not any(name.startswith('video_workbench/') for name in names)
         for profile in PROFILES:
@@ -114,9 +166,12 @@ def test_standard_worker_context_includes_exact_bundles_and_needs_no_business_im
     process = subprocess.run([sys.executable, '-B', '-c',
         'from agent_service.profiles import implementation; '
         'from agent_service.profiles.video_animation_wikiskill import verified_bundle; '
+        'from agent_service.profiles.video_animation_wikiskill_v2 import verified_bundle as compiler_v2_bundle; '
+        'from agent_service.compilation_input_tools import verified_compilation_input_extension; '
         'from agent_service.profiles.video_joint_plan_skills import verified_bundle as planner_bundle; '
         'assert implementation("video.animation-wikiskill-compile.v1").required_tools == ("read","write"); '
+        'assert implementation("video.animation-wikiskill-compile.v2").required_tools == ("read_compilation_input","write"); '
         'assert "skill_read" in implementation("video.joint-plan.v2").required_tools; '
-        'verified_bundle(); planner_bundle()'], cwd=tmp_path / 'isolated',
+        'verified_bundle(); compiler_v2_bundle(); verified_compilation_input_extension(); planner_bundle()'], cwd=tmp_path / 'isolated',
         env={**os.environ, 'PYTHONPATH': str(tmp_path / 'isolated')}, capture_output=True, text=True)
     assert process.returncode == 0, process.stderr

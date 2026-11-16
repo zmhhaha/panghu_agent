@@ -14,13 +14,15 @@ import re
 import time
 
 from agent_service.contracts import ServiceError, canonical_bytes, digest
+from agent_service.compilation_input_tools import (COMPILATION_INPUT_ENVIRONMENT_NAME,
+    COMPILATION_INPUT_EXTENSION_SHA256, compilation_input_environment_revision)
 from agent_service.deploy.acceptance_probe import candidate_config
 from agent_service.deploy.animation_creation_acceptance import (
     CHECKS, ISOLATION, _capture, _directory, _pod_stop, _save, _source_package)
 from agent_service.deploy.candidate_scenario import PARENT_FILES, verify_parent
 from agent_service.pi_cage import PI_CAGE_REPOSITORY, PI_CAGE_REVISION, PI_VERSION
 from agent_service.model_proxy import profile_model_call_limit
-from agent_service.deploy.wikiskill_catalog import PROFILES, role as profile_module
+from agent_service.deploy.wikiskill_catalog import COMPILER_PROFILES, PROFILES, role as profile_module
 from agent_service.profiles import implementation
 from agent_service.animation_skills_contract import bundle_files
 from agent_service.skill_tool_evidence import load_skill_bundle, validate_tool_evidence
@@ -36,6 +38,7 @@ from video_workbench.animation_candidate_import import EXPORT_NAMES, _pod
 SUITES = {
     PROFILES[0]: 'video.animation-wikiskill-compile-contract.v1',
     PROFILES[1]: 'video.joint-plan-contract.v2',
+    PROFILES[2]: 'video.animation-wikiskill-compile-contract.v2',
 }
 EVIDENCE_NAME = 'animation-skill-tool-evidence.json'
 NOT_CLAIMED = ['offline_hmac_reverification', 'production_api_dispatcher_end_to_end',
@@ -71,6 +74,13 @@ def _bundle(package, registry, binding, policy):
             and environment.revision == skill_tools_environment_revision(environment.model_dump(mode='json'))
             and sha(_capture(package, 'read_skill_task_extension.mjs', 128 * 1024)) == SKILL_TASK_EXTENSION_SHA256
             and sha(_capture(package, 'skill_tools_extension.mjs', 128 * 1024)) == SKILL_TOOLS_EXTENSION_SHA256,
+            'wikiskill_admission_tools_mismatch')
+    elif binding.profile == PROFILES[2]:
+        require(environment.name == COMPILATION_INPUT_ENVIRONMENT_NAME
+            and tools == {'read_compilation_input', 'write'}
+            and environment.revision == compilation_input_environment_revision(environment.model_dump(mode='json'))
+            and sha(_capture(package, 'read_compilation_input_extension.mjs', 128 * 1024))
+                == COMPILATION_INPUT_EXTENSION_SHA256,
             'wikiskill_admission_tools_mismatch')
     else:
         identity = environment.model_dump(mode='json')
@@ -114,7 +124,7 @@ def _role_capture(root, envelope, result, raw):
     for name, value in inputs.items():
         raw[name] = _capture(root, name, handler.limits.max_input_bytes)
         require(raw[name] == value, 'wikiskill_admission_input_mismatch')
-    if envelope.profile == PROFILES[0]:
+    if envelope.profile in COMPILER_PROFILES:
         document = module.validate_input(decode_video_json(raw[module.INPUT_NAME]))
         module.validate_input_files(document, inputs)
         artifact_names = {module.RESULT_NAME}
@@ -137,7 +147,7 @@ def _role_capture(root, envelope, result, raw):
         raw[item.name] = _capture(root, item.name, handler.limits.max_artifact_file_bytes)
         require(item.content() == raw[item.name], 'wikiskill_admission_artifact_mismatch')
     value = decode_video_json(raw[module.RESULT_NAME])
-    if envelope.profile == PROFILES[0]:
+    if envelope.profile in COMPILER_PROFILES:
         artifact = module.validate_result(value, digest(document), document)
         facts = dict(compiled_package_count=len(artifact['packages']),
             frozen_record_count=len(document['records']), evidence_scope=artifact['evidence_scope'],
