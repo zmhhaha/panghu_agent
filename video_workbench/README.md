@@ -1,109 +1,63 @@
 # 动态视频工作台
 
-本服务通过已有通用 Agent / Pi 创作动画，工作台管理项目、方案、配音、候选、制作历史和交付；项目统一选择音色，默认不叠加字幕。音频接口见 [AUDIO_PRODUCTION.md](AUDIO_PRODUCTION.md)。
+video-service 管理总文稿、整体方案、项目统一音色、资源、动画工程、候选、采用和交付；创作由通用 Agent / Pi 完成。开发者效果库积累完整表达片段，通过显式发版生成分层 WikiSkill，正式制作按需读取固定版本，为新内容创作。
 
-当前自由创作支持 HTML/SVG、Canvas2D、Three.js，实际使用自定义 seek → Playwright Chromium 截帧 → FFmpeg；旧受限计划路径使用 HyperFrames。两者不能因环境装有同一依赖而混称。[现有引擎准入](docs/canvas-three-runtime.md)和[整片上下文验证](docs/film-continuity-validation.md)记录具体完成范围。
+[当前架构与实施边界](docs/current-architecture.md)是当前实现入口，[文档导航](docs/README.md)区分操作指南、能力合同和历史验收。[统一设计](docs/agent-creation-effect-library-plan.md)记录完整目标；未完成任务以根仓库映射的 OpenSpec 项目为准。旧文档中的静态逐镜工作流、早期分支、任务计数和部署版本不覆盖当前状态。
 
-**当前目标设计**见[效果库、视频工作台与 HyperFrames 统一架构](docs/agent-creation-effect-library-plan.md)：实验室内化和验证版本化 SKILL.md；正式 Agent 主动检索、读取并借鉴已发布能力；两端统一为 HyperFrames 项目、时间轴和渲染，整片可分场景／任务执行。统一底座及 Skill 迁移仍是待办，不把方案当已实现。
+## 工作台入口
 
-开发者实验室以完整效果库、自然语言意见、预算内持续优化、实质迁移验证和认可发布为主；旧固定能力／领域样例及参数回归文档仅保留相应历史或内部工程检查含义，不再定义当前主界面。普通用户无需操作实验室。
+| 使用者 | 入口 | 用途 |
+| --- | --- | --- |
+| 视频用户 | [动态视频工作台](https://video-service.panghuer.top/) | 文稿、整体方案、配音、制作、试听与交付 |
+| 开发者 | [动画效果库](https://video-service.panghuer.top/dev/animations/) | 创作完整效果、比较、反馈和继续实验 |
+| 开发者 | [知识库](https://video-service.panghuer.top/dev/animations/knowledge.html) | 手动发版、已生成 WikiSkill 的版本浏览与搜索 |
+| 外部 Agent | [结构化 JSON API](docs/animation-lab-agent-api.md) | 提交实验、读取状态、反馈、取消及下载，无需模拟网页表单 |
 
-方案一次整体确认后的配音先行编排已交付；整片独立审阅、默认一次修订及用户追加最多两轮等剩余工作以主设计与 OpenSpec 为准。旧 [EXPLANATION.md](EXPLANATION.md)、[HYPERFRAMES.md](HYPERFRAMES.md)、[CURRENT_STATUS.md](CURRENT_STATUS.md)、[NEXT_STEPS.md](NEXT_STEPS.md) 和[主线合并记录](docs/mainline-merge-20261104.md)按各自日期、路径和版本阅读，不覆盖主设计。下面保留已有启动／部署操作参考；旧协议配置不代表新创作路由已获准入。
+知识库浏览与正式制作消费同一份发布产物，保留最近五个成功版本。发布机制已实现；最近一次真实整库业务编译超时，尚不能称为新整库成功发布或新视频已经采用，详见[真实结果](docs/wikiskill-reader-validation-20261116.md)。
 
-## 本地启动
+## 技术关系
 
-在仓库根目录使用 Python 3.12 或更新版本：
+- **画面创作**：HTML/CSS/SVG、Canvas 2D、Three.js；Manim 由 Agent 编写 Python 后预制透明帧。
+- **动作编排**：原生 JavaScript、GSAP、Anime.js，统一服从绝对时间。
+- **渲染底座**：HyperFrames 项目与时钟；Playwright/Chromium 绘制实际帧，FFmpeg 编码与混音。实验室已有源码通过显式桥接消费，正式新流程使用整片共享工程。
+- **公共服务**：agent-service / Pi 和用户 pi-cage、llm-service trusted 路由、独立 speech-service。视频服务组织业务及证据，不自行加载语音模型。
+
+[通用协作](docs/general-creative-collaboration.md)将职责依赖、预算与调度和具体绘制能力分开。代码提供隔离、资源、时钟和检查约定，Agent 决定构图和动作；协作或技术通过不自动证明艺术效果更好。
+
+## 使用流程
+
+1. 创建项目，填写文稿、受众与目标，并选择项目音色。
+2. 审阅并确认整体方案；正式批次固定方案及可用的 WikiSkill 版本。
+3. 制作依赖资源，用真实旁白时长安排讲解段，再由 Agent 创作模块和整片工程。
+4. 查看草稿、问题与制作历史；试听并核对实际时序，采用满意版本后交付。
+5. 正片默认一轮自动打磨，用户最多追加两轮；之后按明确问题和有限预算修改。开发者效果库可持续优化，不受正片轮次限制。
+
+项目默认不叠加逐句字幕，画面承担关键表达。实际开放能力取决于服务端配置与已准入执行组合；未就绪时明确报告，不借用旧角色或模拟结果。
+
+## 本地运行与测试
+
+基础项目页面可以在仓库根目录启动：
 
 ```sh
-python -m venv .venv-video
-# Linux / macOS: source .venv-video/bin/activate
-# PowerShell: .venv-video\Scripts\Activate.ps1
 python -m pip install -r video_workbench/requirements.txt
 python -m video_workbench --local
 ```
 
-打开 http://127.0.0.1:8089 。`--local` 使用固定开发身份，只允许回环地址；默认端口为 8089。未配置 Agent 服务时，可创建项目和编辑镜头，生成操作会提示尚未配置。
+打开 `http://127.0.0.1:8089`。本地模式使用固定开发身份并只绑定回环地址；没有配置相关服务时，不代表可以生成动画或配音。效果库独立进程配置见[启动参考](docs/methods-only-lab-startup.md)，当前外部接口见[Agent API](docs/animation-lab-agent-api.md)。旧启动参考中的逐方法发布及角色版本须按现行整库方案与实际部署核对。
 
-如需演示完整界面流程，可显式启动离线 fixture：
-
-```sh
-python -c "import runpy,uvicorn; uvicorn.run(runpy.run_path('tests/video_workbench/serve_fixture.py')['app'], host='127.0.0.1', port=8089, proxy_headers=False)"
-```
-
-该入口使用 `tests/video_workbench/serve_fixture.py` 的固定示例，画面带有 OFFLINE FIXTURE 标识，不连接模型，也不代表真实 Agent 路由已经可用。不要和正常入口同时占用 8089。示例数据保存在 `.runtime/video-workbench/browser-fixture.db`。
-
-## 连接已有通用 Agent
-
-在启动工作台的进程环境设置：
-
-| 变量 | 含义 |
-| --- | --- |
-| `VIDEO_AGENT_URL` | 通用 Agent 服务的完整 HTTP(S) origin，例如 `https://agent.example.com`；不带路径、查询或账号密码。 |
-| `VIDEO_AGENT_TOKEN` | 专用于该业务调用方的服务凭证，由部署环境注入；与 `VIDEO_AGENT_TOKEN_FILE` 二选一。 |
-| `VIDEO_AGENT_TOKEN_FILE` | 服务凭证文件的绝对路径，支持 Kubernetes 投影 Secret；与 `VIDEO_AGENT_TOKEN` 二选一。 |
-| `VIDEO_AGENT_PROFILE_REVISION` | 视觉任务契约修订，默认 `1`。当前实现使用 `1`。 |
-| `VIDEO_WORKBENCH_DB` | SQLite 数据库路径；默认 `.runtime/video-workbench/workbench.db`；容器默认 `/data/workbench.db`。 |
-| `VIDEO_WORKBENCH_HOSTS` | 允许访问的 Host 名称，逗号分隔，不含协议、路径和端口；默认 `localhost,127.0.0.1,[::1]`。 |
-
-启用连接器需要 `VIDEO_AGENT_URL` 加上一种凭据来源。URL、TOKEN 和 TOKEN_FILE 三项均未配置时，可以启动并手工编辑；只配 URL、只配凭据、同时配置两种凭据来源，或配置内容无效时，程序会在创建数据库前启动失败。连接配置和凭据只在启动时读取，更新环境变量或轮换投影 Secret 后，需要重启工作台。
-
-工作台提交 `video.storyboard.v1` 和 `video.scene.v1`，任务只包含输入摘要，输入以 `video-input.json` / `video_input` 上传。完成结果必须通过真实任务、停止证明、结果 manifest 和文件摘要检查，随后再次验证输入绑定和 SVG / HTML 源码。
-
-本次代码不会自动开启现网视觉路由。现有科研路由已接通，并不代表新增视觉路由已部署。上线还需在通用服务中配置视觉 task contract、`video-workbench-v1` 资源 bundle、工具环境及运行镜像 identity、execution binding、业务 caller scope，并完成对应组合的 acceptance。资源位于 `agent_service/resources/video-workbench-v1/`，校验清单位于其中的 `manifest.json`；工具仅为 read/write。未完成这些配置时，工作台显示视觉任务不可用，不会回退调用科研任务。
-
-本分支在 `agent_service/deploy/platform/vault/agent-service-externalsecret.yaml` 新增了通用服务侧的视觉 caller token 引用。父仓库的规范清单 `vault/inventory/agent-service-externalsecret.yaml` 需要后续合并同步；当前从本分支发布视觉 Agent 时，应向[通用服务部署命令](../agent_service/deploy/README.md)显式传入 `--external-secret-file agent_service/deploy/platform/vault/agent-service-externalsecret.yaml`，避免自动优先选择尚未同步的父仓库清单。本次新增引用不创建工作台自己的业务 Secret；其投影可由下述部署生成器按需生成，从同一 Vault 记录读取 `VIDEO_WORKBENCH_SERVICE_TOKEN`。
-
-## 服务器部署
-
-默认入口采用身份代理模式。服务只读取可信代理提供的 `X-Forwarded-User`，本身不实现登录，也不校验该请求头的签名。身份代理必须完成认证，移除客户端自带的同名请求头，再写入稳定用户标识；工作台端口只能由该代理访问。配置 `VIDEO_WORKBENCH_HOSTS` 为用户实际访问的域名，代理保留该 Host，并使用同一 origin 转发页面和 API。不要把身份代理模式的端口直接开放到公网。
-
-当前使用进程内协调锁和一个后台任务协调器，必须按单进程、单副本运行。同一个数据库不能由多个工作台实例共同调度；请勿增加 Uvicorn workers 或容器副本数。数据包括项目、候选、采用记录和任务提交状态，需持久化数据库及其 WAL 文件。重启后恢复已有任务时，提交状态不明确会按业务标识查询，不会盲目重复提交模型任务。
-
-推荐使用白名单构建入口。可以先生成可审阅的 TAR；`--context` 的目标父目录必须已经存在，下面先创建目录：
+测试按改动范围运行，例如动作标签相关检查：
 
 ```sh
-python -c "from pathlib import Path; Path('.runtime/video-workbench').mkdir(parents=True, exist_ok=True)"
-python -m video_workbench.build_image --context .runtime/video-workbench/context.tar
+python -m pytest tests/video_workbench/test_animation_motion_evidence.py tests/video_workbench/test_animation_authoring_tools.py -q
+node --test tests/video_workbench/animation-authoring-tools-ui.test.mjs
 ```
 
-这一步只打包，不调用 Docker。构建器只读取 26 个明确列出的文件，覆盖工作台、所需的通用服务客户端和校验代码，以及经过摘要验证的视觉资源；不会把同目录下新增的配置、凭据、数据库或运行数据一起发送给 Docker。
+测试临时目录放在预留磁盘，不写入应用发布源码。夹具、单元测试、真实模型执行和人工视听验收分别留证；不要把各批重叠测试数相加成一次完整验收。
 
-准备实际构建和推送时，在 Linux 构建环境设置目标仓库、平台和对应的 Git revision，例如：
+## 构建、部署与数据
 
-```sh
-export IMAGE=registry.example.com/video-workbench:latest
-export PLATFORM=linux/arm64
-export SOURCE_REVISION="$(git rev-parse HEAD)"
-python -m video_workbench.build_image
-```
+服务器从已推送的干净 Git 提交同步完整源码，使用普通 Dockerfile 构建，不拼接已部署应用代码。应用镜像使用 `latest`，发布身份记录在 Git revision、镜像 labels、部署 annotations 与固定 digest 中，详见[源码构建](docs/source-build-and-release.md)。只构建本次实际需要更新的服务，未更改的共享 Worker 或 renderer 不因文档修改重建。
 
-仓库地址是示例，需要替换。默认目标平台为 `linux/arm64`。`--no-push` 仅在本地构建，不保留发布回执；`--native` 跳过 buildx，使用 Docker 主机原生构建，`PLATFORM` 必须与该主机一致。这两个构建选项可以组合使用，但不能与 `--context` 同时使用。完整选项见 `python -m video_workbench.build_image --help`。
+[部署参考](deploy/README.md)保留身份代理、内部网络、持久卷及启动参数说明；实际集群配置和发布收据优先于早期示例。业务数据库、媒体、冻结资源和仍被任务引用的技能版本属于持久数据，不能按临时文件清理。原始构建上下文、重复源码检出和测试缓存经确认不再使用后可回收；清理须记录边界与保留的证据位置。
 
-构建、推送和部署使用 `latest` 标签。只有本次推送成功并校验远端摘要后，构建器才写入 `video_workbench/rendered/workbench-image.txt`，内容为 `仓库:latest@sha256:实际摘要`。镜像 labels 记录源码、构建上下文和发布 revision；发布回执用于后续部署核对镜像内容。本地构建或失败的构建不能作为已经发布的证据。
-
-使用 `python -m video_workbench.deploy.render` 生成内部 Kubernetes 资源，完整命令见[服务器部署说明](deploy/README.md)。将发布回执中 `@` 前的 `仓库:latest` 传给 `--image`，`@` 后的 `sha256:摘要` 传给 `--image-digest`。生成器保存 Deployment 和 Pod 的发布 annotations，默认只生成资源供审阅，不会自动应用到集群。它支持代理与 Agent 的命名空间和 Pod 标签、允许的 Host、存储类，以及可选的业务 `ExternalSecret` 投影；工作台投影对应的 property 为 `VIDEO_WORKBENCH_SERVICE_TOKEN`。
-
-容器以 UID/GID `10001:10001` 运行，数据库及 WAL 文件位于 `/data`；使用已有卷或宿主机目录时，需要确保该 UID 可写。部署生成器配置单副本 `Recreate`、只读根文件系统、持久数据卷和小容量 `/tmp`。容器绑定 `0.0.0.0:8089` 并使用身份代理模式，需要通过受限内部网络交给登录代理访问。
-
-`/healthz` 只表示应用进程能够响应；`/readyz` 检查 Agent 连接器已配置且本地数据库可读，未配置 Agent 或数据库检查失败时返回 503。两个端点均不要求用户身份，仍受允许 Host 校验约束；部署探针显式发送第一个允许的 Host。探针不会连接通用服务或调用模型，就绪状态不代表视觉路由、真实生成质量或耗时已经验证。ARM 服务器上的镜像构建和隔离容器验证已通过；正式部署和真实文稿试做仍待完成。
-
-## 使用流程与边界
-
-1. 创建项目并粘贴文稿，选择画面风格。
-2. 请求自动拆镜，或手工创建和编辑镜头。
-3. 为镜头生成 SVG / HTML 候选，在隔离预览中查看。
-4. 根据说明修订候选；历史版本会保留，修订不会自动替换已采用版本。
-5. 明确采用满意版本；每个镜头都有采用版本后，导出 ZIP 素材包。
-
-每次生成输入上限 1 MiB，结果上限 2 MiB，单镜头源码上限 128 KiB；自动拆镜最多 12 镜，每镜时长 1..120 秒。静态源码通过保守白名单验证：允许本地 SVG 几何图形、文字、渐变，以及 HTML/CSS 布局；禁止 JavaScript、事件处理器、外部资源、远程字体、嵌入网页和 CSS at-rule。预览使用隔离 sandbox 和禁止网络的 CSP。顺序播放器用于审阅素材，不是视频编码器。
-
-## 验证
-
-依赖版本与本地验证环境一致。安装 pytest 后，可运行业务、视觉 profile 和注册回归，以及不需要第三方库的前端状态测试：
-
-```sh
-python -m pytest tests/video_workbench tests/agent_service -q --basetemp=.pytest-video-workbench
-node --test tests/video_workbench/ui.test.mjs
-```
-
-已完成完整 Python 回归与失败修复后的定向复测、10 项前端测试、离线浏览器流程，以及 ARM 镜像构建和禁网容器验证。详细结果和镜像内容身份见 [VALIDATION.md](VALIDATION.md)。测试均未请求真实模型，真实生成质量、耗时与费用仍需联调确认。
+当前已知缺口包括真实整库编译与正式采用、关键画面前置门控、正片打磨真实闭环、完整视听审阅和部分资源补做链路，见[当前架构](docs/current-architecture.md)。可信用量/费用与生产存储生命周期由共享框架统一承接。

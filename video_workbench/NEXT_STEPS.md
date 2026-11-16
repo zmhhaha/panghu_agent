@@ -1,5 +1,7 @@
 # 视频工作台：后续事项
 
+> 历史阶段记录：本文保留原始实现、接口和验收范围，不作为当前流程或未完成任务清单。当前入口见[文档导航](docs/README.md)与[当前架构](docs/current-architecture.md)；有效任务以映射项目的 OpenSpec 为准。
+
 ## 当前总体方案：2026-11-10，阶段1两轮验证已收尾、整体尚未完成
 
 用户已确认下一阶段以 **Agent 统筹整片创作＋参考动画完整表达片段效果库** 为方向。11月9日完成代码核查及OpenSpec方案，随后经用户批准开始阶段1实现。统一入口见[现状与分阶段实施方案](docs/agent-creation-effect-library-plan.md)，OpenSpec 为 `evolve-video-agent-creation-and-effect-library`；实际验收按下节和独立验证记录跟踪。

@@ -1,5 +1,7 @@
 # 动态图解实现与验收
 
+> 历史阶段记录：本文保留原始实现、接口和验收范围，不作为当前流程或未完成任务清单。当前入口见[文档导航](docs/README.md)与[当前架构](docs/current-architecture.md)；有效任务以映射项目的 OpenSpec 为准。
+
 2026-11-02。用户已授权按 HyperFrames 设计实施。代码位于独立分支
 `codex/video-hyperframes-motion`，基于已提交的视频应用 `de705b5`，`5e63150` 为前一 R8 底座检查点。
 本轮演示改动保存在同一独立分支，最终提交号由关闭记录/OpenSpec记录。

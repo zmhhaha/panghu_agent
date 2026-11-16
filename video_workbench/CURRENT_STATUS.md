@@ -1,5 +1,7 @@
 # 视频工作台当前状态
 
+> 历史阶段记录：本文保留原始实现、接口和验收范围，不作为当前流程或未完成任务清单。当前入口见[文档导航](docs/README.md)与[当前架构](docs/current-architecture.md)；有效任务以映射项目的 OpenSpec 为准。
+
 ## 当前职责与状态入口：2026-11-05
 
 过程演示已接入线上工作台，实际发布和18秒真实业务验收见 [过程演示接入记录](docs/process-workbench-integration.md)；业务后续工作以 [NEXT_STEPS](NEXT_STEPS.md) 顶部为准。
