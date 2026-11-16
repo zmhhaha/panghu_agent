@@ -909,6 +909,9 @@ class AnimationMethodService:
         _, _, membership = self.trash.views(owner)
         samples = _sample_index(all_demos)
         effect = membership[commission_id]
+        separated_anchor = effect.get('separation', {}).get('commission_id') == commission_id
+        own_candidate_ids = {row['id'] for row in run['candidates']}
+        creation_reference = None
         demos = {row['provenance'].get('candidate_id'): row for row in all_demos}
         methods, candidates = {}, []
         for candidate in _candidates(run):
@@ -920,6 +923,12 @@ class AnimationMethodService:
                 method_version_ids=candidate.get('method_versions', []),
                 demonstration_id=demos.get(candidate['id'], {}).get('id'),
                 **_sample_engine(candidate, samples))
+            if separated_anchor and candidate['id'] not in own_candidate_ids:
+                # Borrowed creation inputs remain traceable, but are not
+                # versions of the distinct effect shown in the library.
+                creation_reference = dict(commission_id=run['frozen']['base_commission_id'],
+                                          candidate=row)
+                continue
             candidates.append(row)
             for version_id in candidate.get('method_versions', []):
                 methods[version_id] = self.methods.get_method(owner, version_id)
@@ -988,7 +997,8 @@ class AnimationMethodService:
                 'id', 'title', 'open_commission_id', 'commissions', 'relationship_status', 'relationship_issues',
                 'engine', 'engine_status', 'engines', 'deletion')},
             deletion=next(row['deletion'] for row in effect['commissions'] if row['id'] == commission_id),
-            title=run['title'], goal=run['frozen']['goal'], state=run['state'],
+            title=effect['title'] if separated_anchor else run['title'],
+            goal=run['frozen']['goal'], state=run['state'],
             reference=deepcopy(run['frozen'].get('reference')),
             duration_seconds=run['frozen'].get('duration_seconds', 18),
             feedback_text=run['frozen'].get('feedback', ''),
@@ -1012,6 +1022,10 @@ class AnimationMethodService:
             publication_blockers=sorted(set(blockers)), reviews=run['reviews'],
             execution=[{k: op.get(k) for k in ('id', 'stage', 'status', 'job_id', 'error')}
                        for op in run['operations']])
+        if separated_anchor:
+            detail['effect']['separation'] = deepcopy(effect['separation'])
+            detail['execution_title'] = run['title']
+            detail['creation_reference'] = creation_reference
         if self._protocol(run) is skill_protocol:
             _require(len(canonical_bytes(detail)) <= 2 * 1024 * 1024,
                      'animation_method_response_too_large', 413)

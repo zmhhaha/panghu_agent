@@ -47,6 +47,19 @@ def test_separation_is_an_audited_idempotent_identity_record_without_new_work(wo
     assert store.separate('developer', child['id'], deepcopy(body)) == record
     assert store.records('developer') == [record]
     assert store.records('another-owner') == []
+    detail = service.get('developer', child['id'])
+    own = service.commissions.get('developer', child['id'])['candidates']
+    assert detail['title'] == body['title']
+    assert detail['execution_title'] == child['title']
+    assert {row['id'] for row in detail['candidates']} == {row['id'] for row in own}
+    assert detail['baseline_candidate'] is None
+    assert detail['creation_reference']['commission_id'] == original['id']
+    assert detail['creation_reference']['candidate']['id'] == original['best_candidate_id']
+    assert detail['effect']['separation']['commission_id'] == child['id']
+    assert detail['effect']['separation']['source_effect_id'] == original['id']
+    original_detail = service.get('developer', original['id'])
+    assert original_detail['title'] == original['title']
+    assert 'creation_reference' not in original_detail and 'execution_title' not in original_detail
     assert ledger(service) == before
     assert service.artifact('developer', child['id'], child['best_candidate_id'], 'media') == media
     assert calls == (len(creator.submissions), len(reviewer.submissions), len(renderer.calls))
@@ -54,6 +67,32 @@ def test_separation_is_an_audited_idempotent_identity_record_without_new_work(wo
         with pytest.raises(ServiceError, match='animation_effect_separation_conflict'):
             store.separate('developer', child['id'], changed)
     assert store.records('developer') == [record]
+
+
+def test_continuation_inside_separated_effect_keeps_its_same_effect_baseline(work):
+    service, creator, reviewer, renderer = work
+    original = finish(service, start(service)['id'])
+    anchor = finish(service, start(service, base_commission_id=original['id'])['id'])
+    body = request()
+    identity(service).separate('developer', anchor['id'], body)
+    anchor_before = service.commissions.get('developer', anchor['id'])
+    calls = (len(creator.submissions), len(reviewer.submissions), len(renderer.calls))
+
+    continuation = start(service, base_commission_id=anchor['id'], title='Improve this distinct effect')
+    detail = service.get('developer', continuation['id'])
+    assert detail['state'] == 'queued'
+    assert detail['effect']['id'] == anchor['id']
+    assert detail['effect']['title'] == body['title']
+    assert detail['title'] == continuation['title']
+    assert detail['baseline_candidate']['id'] == anchor['best_candidate_id']
+    assert {row['id'] for row in detail['candidates']} == {anchor['best_candidate_id']}
+    assert original['best_candidate_id'] not in {row['id'] for row in detail['candidates']}
+    assert 'creation_reference' not in detail and 'execution_title' not in detail
+    raw = service.commissions.get('developer', continuation['id'])
+    assert raw['frozen']['base_commission_id'] == anchor['id']
+    assert raw['frozen']['base_candidate_id'] == anchor['best_candidate_id']
+    assert service.commissions.get('developer', anchor['id']) == anchor_before
+    assert calls == (len(creator.submissions), len(reviewer.submissions), len(renderer.calls))
 
 
 def test_separation_requires_visible_owned_completed_continuation_and_own_choice(work):
