@@ -1,0 +1,18 @@
+{
+  "local_directories": 213,
+  "local_bytes": 978422995,
+  "local_unreadable_or_uncertain_preserved": 70,
+  "server_archive_files": 67,
+  "server_archive_bytes": 67781487616,
+  "server_worktrees_removed": 25,
+  "server_contexts_removed": 3,
+  "server_source_allocated_bytes": 753836032,
+  "server_total_reclaimed_accounted_bytes": 68535323648,
+  "live_data_removed": false,
+  "model_requests": 0,
+  "receipts_sha256": {
+    "archives-deleted-20261116.jsonl": "0f4f20d00f2265de965851ce1231304ec491a7256414cc1da55db074b72d4bd2",
+    "sources-deleted-20261116-r2.jsonl": "0c5fdf9adceef71cf3229104030b69cae2f9ee8356b33755f1cfa44f7f4d7ea0",
+    "local-cleanup-plan.json": "2dd8a15113c76e74cc3a2e776d66891cc450056aa608b047aacb6bda7f240413"
+  }
+}
