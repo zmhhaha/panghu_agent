@@ -21,8 +21,8 @@ def base_document():
         feedback='', base_source=None)
 
 
-def plan_document():
-    return dict(engine='canvas', composition='One coherent scene with negative space.',
+def plan_document(engine='canvas'):
+    return dict(engine=engine, composition='One coherent scene with negative space.',
         material='Directional marks follow the form.', clock='Absolute seconds, including backward seek.',
         interfaces='Each module exposes draw(ctx, seconds, shared).', keyframe_times=[0, 3, 8],
         components=[
@@ -43,9 +43,9 @@ def run_document():
         operations=[], candidates=[], reviews=[])
 
 
-def append_reservation(run, descriptor):
+def append_reservation(run, descriptor, *, base=None):
     plan = next((op for op in run['operations'] if op['input'].get('phase') == 'plan'), None)
-    context = plan['input'] if plan else base_document()
+    context = plan['input'] if plan else base_document() if base is None else base
     document = operation_input(context, descriptor['phase'], config=run['frozen']['collaboration'],
         brief=descriptor['brief'], component_id=descriptor['component_id'],
         dependencies=descriptor['dependencies'], criteria=descriptor['criteria'])
@@ -66,11 +66,11 @@ def complete(op, *, plan=None):
         result['plan'] = deepcopy(plan or plan_document())
     elif document['phase'] == 'component':
         part = next(row for row in document['brief']['components'] if row['id'] == document['component_id'])
-        result['component'] = dict(component_id=part['id'], engine='canvas', interface=part['interface'],
+        result['component'] = dict(component_id=part['id'], engine=document['brief']['engine'], interface=part['interface'],
             source='export function draw(ctx, seconds, shared) {} // synthetic inert module')
     else:
         # Only a scheduling fixture. No contract acceptance, renderer or media is fabricated.
-        result['source'] = dict(engine='canvas', files={'scene.html': '<canvas></canvas>',
+        result['source'] = dict(engine=document['brief']['engine'], files={'scene.html': '<canvas></canvas>',
             'scene.js': '// synthetic final source'},
             strategy=dict(description='Synthetic composition', tradeoffs='No visual validation.'))
     op.update(status='completed', result=result, result_sha256=digest(result))
@@ -127,7 +127,7 @@ def test_phase_input_keeps_relevant_content_without_wiki_or_history_dump():
     before = deepcopy(context)
     value = operation_input(context, 'plan', config={'max_components': 3})
     assert value['schema'] == INPUT_SCHEMA
-    assert value['constraints']['allowed_engines'] == ['canvas']
+    assert value['constraints']['allowed_engines'] == ['html-svg', 'canvas', 'three']
     assert value['constraints']['collaboration'] == dict(max_components=3, max_parallel=2)
     assert value['methods'] == [{'guidance': 'Preserve negative space.'}]
     assert not {'knowledge_snapshot', 'research_records', 'operations'} & set(value)
@@ -136,15 +136,64 @@ def test_phase_input_keeps_relevant_content_without_wiki_or_history_dump():
     assert context == before
 
 
-def test_phase_input_cannot_admit_canvas_or_truncate_large_request():
+@pytest.mark.parametrize('engines', [[], ['unknown'], ['canvas', 'canvas'], 'canvas'])
+def test_phase_input_rejects_unknown_empty_or_ambiguous_capabilities(engines):
     context = base_document()
-    context['constraints']['allowed_engines'] = ['html-svg']
-    with pytest.raises(ServiceError, match='canvas_not_admitted'):
+    context['constraints']['allowed_engines'] = engines
+    with pytest.raises(ServiceError, match='engine_not_admitted'):
         operation_input(context, 'plan', config={})
+
+
+def test_phase_input_does_not_truncate_large_request():
     context = base_document()
     context['feedback'] = 'x' * 8001
     with pytest.raises(ServiceError):
         operation_input(context, 'plan', config={})
+
+
+@pytest.mark.parametrize('engine', ['html-svg', 'canvas', 'three'])
+def test_each_admitted_capability_uses_the_same_dependency_and_final_delivery_flow(engine):
+    context = base_document()
+    context['constraints']['allowed_engines'] = [engine]
+    run = run_document()
+    descriptor = next_action(run, now=100)['operations'][0]
+    plan = complete(append_reservation(run, descriptor, base=context), plan=plan_document(engine))
+    assert plan['input']['constraints']['allowed_engines'] == [engine]
+    parts = next_action(run, now=100)
+    assert [part['component_id'] for part in parts['operations']] == ['mountains', 'foreground']
+    assert progress_view(run)['stage'] == 'component'
+    integration = finish_parts(run)
+    complete(append_reservation(run, integration['operations'][0]))
+    action = next_action(run, now=100)
+    assert action['kind'] == 'render'
+    assert action['input']['source']['engine'] == engine
+    assert action['input']['document']['constraints']['allowed_engines'] == [engine]
+    assert all(op['input']['constraints']['allowed_engines'] == [engine] for op in run['operations'])
+    assert progress_view(run)['author_calls_used'] == 5
+
+
+def test_plan_cannot_choose_a_capability_outside_the_original_admission():
+    context = base_document()
+    context['constraints']['allowed_engines'] = ['html-svg']
+    run = run_document()
+    descriptor = next_action(run, now=100)['operations'][0]
+    complete(append_reservation(run, descriptor, base=context), plan=plan_document('three'))
+    with pytest.raises(ServiceError, match='engine_not_admitted'):
+        next_action(run, now=100)
+    assert len(run['operations']) == 1
+
+
+@pytest.mark.parametrize('phase', ['component', 'integrate'])
+def test_component_and_final_composition_cannot_change_the_planned_capability(phase):
+    run = planned(plan=plan_document('three'))
+    descriptor = (next_action(run, now=100)['operations'][0] if phase == 'component'
+                  else finish_parts(run)['operations'][0])
+    op = complete(append_reservation(run, descriptor))
+    field = 'component' if phase == 'component' else 'source'
+    op['result'][field]['engine'] = 'html-svg'
+    op['result_sha256'] = digest(op['result'])
+    with pytest.raises(ServiceError, match='component_binding_invalid|final_source_required'):
+        next_action(run, now=100)
 
 
 def test_plan_reservation_is_read_only_and_reuses_original_deadline():

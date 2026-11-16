@@ -98,6 +98,51 @@ def begin(service, **changes):
     return start(service, collaboration={'max_components': 3}, duration_seconds=8, **changes)
 
 
+def test_creative_direction_is_frozen_before_work_and_replay_preserves_it(work):
+    service, _, _, author, _ = work
+    request_id = str(uuid4())
+    queued = begin(service, request_id=request_id, feedback='Preserve material detail, improve the composition.')
+    run = service.commissions.get('developer', queued['id'])
+    direction = deepcopy(run['frozen']['constraints']['creative_direction'])
+    assert direction['schema'] == 'video.creative-direction.v1'
+    assert direction['allowed_engines'] == ['html-svg', 'canvas']
+    assert direction['input_bindings']['feedback_sha256'] == digest(run['frozen']['feedback'])
+    replayed = begin(service, request_id=request_id, feedback=run['frozen']['feedback'])
+    assert replayed['id'] == queued['id'] and author.submissions == []
+    service.advance('developer', queued['id'])
+    run = service.commissions.get('developer', queued['id'])
+    assert run['operations'][0]['input']['constraints']['creative_direction'] == direction
+    assert run['frozen']['constraints']['creative_direction'] == direction
+
+
+def test_guidance_keeps_safe_html_default_when_no_runtime_provider_exists(work):
+    service, _, _, author, renderer = work
+    renderer.capabilities = None
+    queued = begin(service)
+    run = service.commissions.get('developer', queued['id'])
+    assert run['frozen']['constraints']['allowed_engines'] == ['html-svg']
+    assert author.submissions == []
+    service.advance('developer', queued['id'])
+    run = service.commissions.get('developer', queued['id'])
+    assert run['operations'][0]['input']['constraints']['allowed_engines'] == ['html-svg']
+
+
+def test_continuation_preserves_verbatim_developer_opinion_as_scoped_input(work):
+    service, _, _, _, _ = work
+    first = finish(service, begin(service)['id'], steps=80)
+    opinion = 'The material is weaker. Keep the original expressive edges.'
+    record = service.feedback('developer', first['id'], dict(request_id=str(uuid4()),
+        candidate_id=first['best_candidate_id'], comment=opinion))
+    queued = begin(service, base_commission_id=first['id'], feedback='Improve material without losing form.')
+    run = service.commissions.get('developer', queued['id'])
+    direction = run['frozen']['constraints']['creative_direction']
+    assert direction['baseline']['candidate_id'] == first['best_candidate_id']
+    assert direction['developer_feedback']['records'][0]['comment'] == opinion
+    assert direction['developer_feedback']['records'][0]['id'] == record['id']
+    service.withdraw_feedback('developer', first['id'], dict(request_id=str(uuid4()), feedback_id=record['id']))
+    assert service.commissions.get('developer', queued['id'])['frozen']['constraints']['creative_direction'] == direction
+
+
 def until_parts(service, run_id):
     for _ in range(15):
         service.advance('developer', run_id)

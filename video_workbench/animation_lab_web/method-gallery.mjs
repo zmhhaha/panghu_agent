@@ -150,7 +150,7 @@ export function buildCommissionRequest(fields, requestId) {
   const explicitCollaboration = fields.collaboration_enabled === true || fields.collaboration_enabled === 'on';
   if (explicitCollaboration || fields.collaboration_inherited === true) {
     if (fields.transfer_commission_id) throw Error('按职责分工创作目前不支持迁移验证');
-    if (body.resource_authoring) throw Error('协作创作首版只支持 Canvas，不能同时选择 Manim 预制资源');
+    if (body.resource_authoring) throw Error('Manim 预制资源暂未接入协作创作，请先选择一种创作方式');
     if (explicitCollaboration) body.collaboration = {max_components: 3};
     body.budget.max_rounds = 1;
   }
@@ -542,6 +542,18 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
     const reason = methodStopLabel(detail.stop_reason);
     if (reason) result.append(element(doc, 'p', '', reason));
     if (detail.stop_explanation || detail.summary) result.append(element(doc, 'p', 'muted', detail.stop_explanation || detail.summary));
+    const selection = rows(detail.reviews).at(-1)?.evidence?.selection_policy;
+    if (selection?.schema === 'video.animation-quality-selection.v1') {
+      const codes = rows(selection.reason_codes), notices = [];
+      if (codes.includes('frozen_criteria_failed')) notices.push(
+        selection.selected_candidate_id === detail.baseline_candidate?.id
+          ? '新版本有明确未达标项，保留比较基线。' : '当前样片有明确未达标项，尚未证明达到目标。');
+      if (codes.includes('developer_prefers_compared_baseline')) notices.push('依据已记录的比较意见，保留基线。');
+      if (codes.includes('criteria_evidence_incomplete') || codes.includes('required_observation_unavailable')) {
+        notices.push('部分判断证据不足；抽帧无法证明连续动作、节奏或声音效果。');
+      }
+      for (const notice of notices) result.append(element(doc, 'p', 'small muted', notice));
+    }
     if (detail.error) result.append(element(doc, 'p', 'muted', '本次执行未完成，记录已保留。可在执行详情中核对原因。'));
     if (rows(detail.remaining_issues).length) result.append(list(doc, detail.remaining_issues));
     if (retryable) {

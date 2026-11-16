@@ -27,6 +27,7 @@ from .animation_method_commissions import (
 from .animation_runtime_capabilities import validate_runtime_capabilities
 from .animation_authoring_tools import observed_authoring_tools
 from .animation_motion_evidence import motion_orchestration
+from .animation_quality_policy import select_review
 from .animation_method_research import METHOD_SCHEMA, REMOVAL_SCHEMA, validate_content_changes
 from .animation_method_renderer import PUBLIC_RENDER_FAILURE_CODES, public_render_failure_code
 from .animation_method_trash import AnimationMethodTrash, serialized_library_mutation
@@ -1161,6 +1162,16 @@ class AnimationMethodService:
             require_method_compatible(version, assets=data.get('assets', {}),
                 authoring_libraries=data.get('constraints', {}).get('authoring_libraries', {}),
                 resource_authoring=PRODUCER_REQUIREMENT if data.get('resource_authoring') else {})
+        if data.get('collaboration') and previous_request is None:
+            from .creative_direction import build_creative_direction
+            # Freeze the direction with the request. Later feedback must not
+            # change an already reserved operation or its idempotency hash.
+            baseline = baseline if data.get('base_commission_id') else None
+            opinions = self._feedback(owner, data['base_commission_id']) if baseline else []
+            data.setdefault('constraints', {}).setdefault('allowed_engines', allowed_engines)
+            data['constraints']['creative_direction'] = build_creative_direction(
+                goal=data['goal'], criteria=data.get('criteria', []), allowed_engines=allowed_engines,
+                baseline=baseline, feedback=data.get('feedback', ''), developer_feedback=opinions)
         research_ids = data.get('research_record_ids', [])
         _require(type(research_ids) is list and len(research_ids) <= 64
                  and all(type(item) is str for item in research_ids)
@@ -1545,6 +1556,27 @@ class AnimationMethodService:
                     'criterion objects with identical ids, descriptions and optional fields; do not invent '
                     'method-only standards or rewrite them. Respect any method_application requirements.'))
         if mode == 'review':
+            pair = {value for value in (comparison or {}).values() if type(value) is str}
+            preferences = [row for row in self._feedback(owner, run['id'])
+                if row.get('kind') == 'preference' and not row.get('withdrawn')
+                and {row.get('left_candidate_id'), row.get('right_candidate_id')} == pair]
+            document['constraints']['quality_review_policy'] = dict(
+                schema='video.quality-review-direction.v1',
+                developer_preferences=[{key: deepcopy(row[key]) for key in (
+                    'id', 'kind', 'left_candidate_id', 'right_candidate_id', 'preference', 'withdrawn', 'comment')
+                    if key in row} for row in preferences[-1:]],
+                instruction=(
+                    'Assess the actual expression requested in the goal and frozen criteria before general polish. '
+                    'Composition, readability or technical success cannot compensate for a failed essential '
+                    'material, style, visual mechanism or causal expression. Compare baseline and current '
+                    'evidence under the same criteria. Preserve a usable baseline when explicit criteria fail; '
+                    'do not recommend the new candidate merely because it is newer or more complex. '
+                    'Separate visible facts, authored source intentions and untested hypotheses. A source '
+                    'description does not prove its rendered effect. Sampled stills cannot prove continuous '
+                    'motion, transitions, rhythm or audio: use insufficient_evidence where necessary, never '
+                    'mark these passed from stills. Respect supplied explicit developer preferences without '
+                    'inventing their reasons. State both improvements and losses, then give targeted next '
+                    'guidance for the unmet goal rather than replacing successful craft with simple placeholders.'))
             document['constraints']['result_requirements'] = dict(
                 methods=[], source=None, sound_events=[],
                 instruction=(
@@ -1719,16 +1751,24 @@ class AnimationMethodService:
         opinion = result['review']
         current_id = document['comparison']['candidate_id']
         prior_id = document['comparison'].get('baseline_candidate_id')
-        best_id = opinion['preferred_candidate_id'] or run['best_candidate_id'] or current_id
+        policy_input = document.get('constraints', {}).get('quality_review_policy', {})
+        selection = select_review(criteria=document['criteria'], opinion=opinion,
+            comparison=document['comparison'], candidates=_candidates(run),
+            current_best_id=run['best_candidate_id'], observation=document.get('observation'),
+            developer_preferences=policy_input.get('developer_preferences', []))
         review_body = dict(
-            operation_id=operation['id'], candidate_id=current_id, outcome=opinion['outcome'],
-            best_candidate_id=best_id, remaining_issues=opinion['remaining_issues'],
+            operation_id=operation['id'], candidate_id=current_id, outcome=selection['outcome'],
+            best_candidate_id=selection['selected_candidate_id'], remaining_issues=opinion['remaining_issues'],
             compared_candidate_id=prior_id, criteria_version=digest(result['criteria']),
-            criteria_results=opinion['criteria_results'], evidence=dict(input_sha256=operation['input_sha256']),
+            criteria_results=opinion['criteria_results'], evidence=dict(input_sha256=operation['input_sha256'],
+                selection_policy=selection),
             limitations=opinion['limitations'], summary=opinion['summary'])
         demo = self._demonstrations(owner, run['id'])[current_id]
         candidate = next(row for row in run['candidates'] if row['id'] == current_id)
         statuses = {row['criterion_id']: row['status'] for row in opinion['criteria_results']}
+        for criterion_id in selection['unobserved_criterion_ids']:
+            if statuses.get(criterion_id) != 'failed':
+                statuses[criterion_id] = 'insufficient_evidence'
         observed_criteria = {row['id']: row for row in document['criteria']}
         for version_id in candidate['method_versions']:
             version = self.methods.get_method(owner, version_id)
@@ -1741,7 +1781,7 @@ class AnimationMethodService:
                 role=run['frozen'].get('role', 'reference'), criteria_sha256=version['criteria_sha256'],
                 outcome=outcome, evidence=dict(media_sha256=demo['media']['sha256'],
                     review_operation_id=operation['id'], criteria_results=opinion['criteria_results'],
-                    limitations=opinion['limitations']))
+                    limitations=opinion['limitations'], selection_policy=selection))
             if data['role'] == 'transfer':
                 data.update(baseline_demonstration_version_id=run['frozen']['baseline_demonstration_id'],
                             structural_changes=run['frozen']['structural_changes'])

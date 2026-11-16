@@ -967,3 +967,14 @@ test('a Skill transfer from an inherited baseline never guesses its demonstratio
   assert.match(h.controller.snapshot.error, /打开该样片所属的原实验/);
   h.controller.close();
 });
+
+test('host quality selection explains a failed promotion separately from uncertain motion', () => {
+  const rendered = renderMethodDetail(doc, run({state: 'completed', stop_reason: 'budget_exhausted',
+    candidates: [candidate('old'), candidate('new')], baseline_candidate: candidate('old'), best_candidate_id: 'old',
+    reviews: [{evidence: {selection_policy: {schema: 'video.animation-quality-selection.v1',
+      selected_candidate_id: 'old', model_preferred_candidate_id: 'new', model_outcome: 'improved',
+      reason_codes: ['frozen_criteria_failed', 'required_observation_unavailable']}}}]}), root, callbacks);
+  assert.match(rendered.textContent, /新版本有明确未达标项，保留比较基线/);
+  assert.match(rendered.textContent, /抽帧无法证明连续动作、节奏或声音效果/);
+  assert.doesNotMatch(rendered.textContent, /模型已经证明新版本更好/);
+});
