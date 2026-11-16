@@ -1,12 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {observedTools,matchesAuthoringTool,matchesVisualCreation,renderAuthoringBadges,renderCapabilityLabels,resourceAuthoringRequest,toolSearchText}
+import {observedTools,observedMotionOrchestration,matchesAuthoringTool,matchesVisualCreation,renderAuthoringBadges,renderCapabilityLabels,resourceAuthoringRequest,toolSearchText,mountAuthoringControls}
   from '../../video_workbench/animation_lab_web/authoring-tools.mjs';
 
+const motion={id:'animejs',version:'4.5.0',status:'render_observed',
+  evidence_scope:'render_loaded_dependency_not_visual_acceptance',
+  source_sha256:'a'.repeat(64),media_sha256:'b'.repeat(64),render_operation_id:'render-operation'};
+const nativeMotion={...motion,id:'native-js',version:undefined,status:'source_verified',
+  evidence_scope:'source_inspection_not_visual_acceptance'};
 const sample={engine_status:'rendered',authoring_tools:[{id:'animejs',version:'4.5.0',status:'loaded',
-  evidence_scope:'render_loaded_dependency_not_visual_application_or_acceptance'}]};
+  evidence_scope:'render_loaded_dependency_not_visual_application_or_acceptance'}],motion_orchestration:[motion]};
 
-test('tool filters use only actual observed dependencies',()=>{
+test('motion filters require source and exact render evidence independently of loaded dependencies',()=>{
   assert.equal(matchesAuthoringTool(sample,'animejs'),true);
   assert.equal(matchesAuthoringTool(sample,'manim'),false);
   assert.equal(matchesAuthoringTool({},'all'),true);
@@ -16,6 +21,11 @@ test('tool filters use only actual observed dependencies',()=>{
     {engine_status:'rendered',runtime_requirements:{authoring_libraries:{animejs:{}}}}]) {
     assert.deepEqual(observedTools(value),[]);
   }
+  const loadedOnly={engine_status:'rendered',authoring_tools:sample.authoring_tools};
+  assert.equal(observedTools(loadedOnly).length,1);
+  assert.deepEqual(observedMotionOrchestration(loadedOnly),[]);
+  assert.equal(matchesAuthoringTool(loadedOnly,'animejs'),false);
+  assert.doesNotMatch(toolSearchText(loadedOnly),/anime/);
 });
 
 test('tool names and markup from metadata cannot create a badge',()=>{
@@ -23,6 +33,50 @@ test('tool names and markup from metadata cannot create a badge',()=>{
     {...sample.authoring_tools[0],id:'<script>'},
     {...sample.authoring_tools[0],id:'manim',status:'requested'}]};
   assert.deepEqual(observedTools(value),[{id:'animejs',label:'Anime.js',version:'4.5.0'}]);
+});
+
+test('native motion labels and filters need positive inspected source evidence',()=>{
+  const value={engine:'canvas',engine_status:'rendered',motion_orchestration:[nativeMotion]};
+  assert.equal(matchesAuthoringTool(value,'native-js'),true);
+  assert.equal(matchesAuthoringTool(value,'animejs'),false);
+  assert.match(toolSearchText(value),/原生 javascript/);
+  const badge=renderAuthoringBadges(labelDocument(),value)[0];
+  assert.equal(badge.textContent,'原生 JavaScript');
+  assert.equal(badge.dataset.evidenceStatus,'source_verified');
+  assert.match(badge.title,/源码已核验时间驱动的画面更新/);
+  assert.match(badge.title,/不代表连续动作或视觉质量已获认可/);
+  assert.equal(renderCapabilityLabels(labelDocument(),value).children[1].textContent,'动作编排：原生 JavaScript');
+  assert.deepEqual(observedTools({engine_status:'rendered',authoring_tools:[{
+    ...sample.authoring_tools[0],id:'native-js'}]}),[]);
+});
+
+test('GSAP requires the rendered source-backed projection and has its own searchable label',()=>{
+  const gsap={...motion,id:'gsap',version:'3.14.2'};
+  const value={engine:'html-svg',engine_status:'rendered',motion_orchestration:[gsap]};
+  assert.equal(matchesAuthoringTool(value,'gsap'),true);
+  assert.match(toolSearchText(value),/gsap/);
+  const badge=renderAuthoringBadges(labelDocument(),value)[0];
+  assert.equal(badge.textContent,'GSAP');
+  assert.equal(badge.dataset.evidenceStatus,'render_observed');
+  assert.match(badge.title,/源码已核验实质调用，渲染已加载固定版本依赖/);
+  assert.match(badge.title,/GSAP 3\.14\.2/);
+});
+
+test('malformed, requested, unbound or mismatched motion evidence cannot be rendered or filtered',()=>{
+  for(const row of [{...motion,id:'<script>'},{...motion,status:'loaded'},
+    {...motion,evidence_scope:'source_inspection_not_visual_acceptance'},
+    {...motion,source_sha256:''},{...motion,source_sha256:'A'.repeat(64)},
+    {...motion,media_sha256:null},{...motion,media_sha256:['b'.repeat(64)]},
+    {...motion,render_operation_id:' '},{...motion,version:''},
+    {...nativeMotion,status:'render_observed'},
+    {...nativeMotion,evidence_scope:'render_loaded_dependency_not_visual_acceptance'}]) {
+    const value={engine_status:'rendered',motion_orchestration:[row]};
+    assert.deepEqual(observedMotionOrchestration(value),[]);
+    assert.deepEqual(renderAuthoringBadges(labelDocument(),value),[]);
+    assert.equal(matchesAuthoringTool(value,row.id),false);
+  }
+  assert.deepEqual(observedMotionOrchestration({engine_status:'unverified',motion_orchestration:[motion]}),[]);
+  assert.deepEqual(observedMotionOrchestration({motion_orchestration:[motion]}),[]);
 });
 
 test('observed Manim resources appear in creation cards and filters independently of their HTML host',()=>{
@@ -51,6 +105,28 @@ function labelDocument() {
   }
   return {createElement:tag=>new Element(tag)};
 }
+
+test('motion selector offers native JavaScript alongside the two admitted libraries',()=>{
+  const doc=labelDocument(),container=doc.createElement('div');
+  doc.getElementById=id=>id==='gallery-engine'?{parentNode:{parentNode:container}}:null;
+  const create=doc.createElement;
+  doc.createElement=tag=>{
+    const element=create(tag);
+    element.addEventListener=(event,handler)=>{element[event]=handler;};
+    return element;
+  };
+  let changes=0;
+  const controls=mountAuthoringControls(doc,()=>{changes++;});
+  const label=container.children[0],select=label.children[0];
+  assert.equal(label.ownText,'动作编排');
+  assert.deepEqual(select.children.map(row=>[row.value,row.textContent]),[
+    ['all','全部'],['native-js','原生 JavaScript'],['gsap','GSAP'],['animejs','Anime.js']]);
+  select.value='native-js';select.change();
+  assert.equal(controls.selected,'native-js');
+  assert.equal(changes,1);
+  controls.resetFilter();
+  assert.equal(controls.selected,'all');
+});
 
 test('every rendered card keeps both named capability rows and explicit missing motion evidence',()=>{
   for(const [engine,label]of [['html-svg','HTML/SVG'],['canvas','Canvas 2D'],['three','Three.js']]) {

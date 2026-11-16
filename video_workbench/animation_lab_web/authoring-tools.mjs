@@ -1,9 +1,11 @@
 // Creation capabilities can share a browser engine. Motion libraries are a
 // separate layer; a loaded dependency never establishes aesthetic acceptance.
-const LABELS = Object.freeze({animejs:'Anime.js', gsap:'GSAP', manim:'Manim'});
+const LABELS = Object.freeze({animejs:'Anime.js', gsap:'GSAP', manim:'Manim', 'native-js':'原生 JavaScript'});
 const CREATION_ENGINES = Object.freeze(['html-svg','canvas','three']);
 const CREATION_LABELS = Object.freeze({'html-svg':'HTML/SVG',canvas:'Canvas 2D',three:'Three.js'});
-const MOTION_TOOLS = Object.freeze(['gsap','animejs']);
+const MOTION_TOOLS = Object.freeze(['native-js','gsap','animejs']);
+const DEPENDENCY_TOOLS = Object.freeze(['manim','gsap','animejs']);
+const SHA256 = /^[0-9a-f]{64}$/;
 
 export function toolLayer(id) {
   return id === 'manim' ? 'creation' : MOTION_TOOLS.includes(id) ? 'motion' : null;
@@ -13,7 +15,7 @@ export function observedTools(value) {
   if (value?.engine_status !== 'rendered' || !Array.isArray(value.authoring_tools)) return [];
   const found = new Map();
   for (const row of value.authoring_tools) {
-    if (!row || !Object.hasOwn(LABELS,row.id) || row.status !== 'loaded'
+    if (!row || !DEPENDENCY_TOOLS.includes(row.id) || row.status !== 'loaded'
         || typeof row.version !== 'string' || !row.version
         || row.evidence_scope !== 'render_loaded_dependency_not_visual_application_or_acceptance') continue;
     found.set(row.id,{id:row.id,label:LABELS[row.id],version:row.version});
@@ -21,13 +23,33 @@ export function observedTools(value) {
   return [...found.values()].sort((a,b)=>a.id.localeCompare(b.id));
 }
 
+export function observedMotionOrchestration(value) {
+  if (value?.engine_status !== 'rendered' || !Array.isArray(value.motion_orchestration)) return [];
+  const found = new Map();
+  for (const row of value.motion_orchestration) {
+    if (!row || !MOTION_TOOLS.includes(row.id)
+        || typeof row.source_sha256 !== 'string' || !SHA256.test(row.source_sha256)
+        || typeof row.media_sha256 !== 'string' || !SHA256.test(row.media_sha256)
+        || typeof row.render_operation_id !== 'string' || !row.render_operation_id.trim()) continue;
+    const native = row.id === 'native-js';
+    if (native ? row.status !== 'source_verified'
+        || row.evidence_scope !== 'source_inspection_not_visual_acceptance'
+      : row.status !== 'render_observed'
+        || row.evidence_scope !== 'render_loaded_dependency_not_visual_acceptance'
+        || typeof row.version !== 'string' || !row.version.trim()) continue;
+    found.set(row.id,{...row,label:LABELS[row.id]});
+  }
+  return [...found.values()].sort((a,b)=>MOTION_TOOLS.indexOf(a.id)-MOTION_TOOLS.indexOf(b.id));
+}
+
 export function toolSearchText(value) {
-  return observedTools(value).map(row=>row.id+' '+row.label).join(' ').toLowerCase();
+  return [...observedTools(value).filter(row=>toolLayer(row.id)==='creation'),
+    ...observedMotionOrchestration(value)].map(row=>row.id+' '+row.label).join(' ').toLowerCase();
 }
 
 export function matchesAuthoringTool(value,selected='all') {
   return selected === 'all' || MOTION_TOOLS.includes(selected)
-    && observedTools(value).some(row=>row.id===selected);
+    && observedMotionOrchestration(value).some(row=>row.id===selected);
 }
 
 export function matchesVisualCreation(value,selected='all') {
@@ -39,12 +61,20 @@ export function matchesVisualCreation(value,selected='all') {
 }
 
 export function renderAuthoringBadges(doc,value,layer='motion') {
-  return observedTools(value).filter(row=>toolLayer(row.id)===layer).map(row=>{
+  const rows=layer==='motion'?observedMotionOrchestration(value)
+    :observedTools(value).filter(row=>toolLayer(row.id)===layer);
+  return rows.map(row=>{
     const badge=doc.createElement('span');
     badge.className='engine-badge'; badge.dataset.authoringTool=row.id; badge.dataset.capabilityLayer=layer;
     badge.textContent=row.label;
-    badge.title=row.label+' '+row.version+'；'+(layer==='creation'?'画面创作资源':'动作编排依赖')
-      +'；渲染时已加载，不代表效果已获认可。';
+    if(layer==='motion') {
+      badge.dataset.evidenceStatus=row.status;
+      badge.title=row.label+(row.version?' '+row.version:'')+'；'
+        +(row.id==='native-js'?'源码已核验时间驱动的画面更新':'源码已核验实质调用，渲染已加载固定版本依赖')
+        +'；不代表连续动作或视觉质量已获认可。';
+    }else {
+      badge.title=row.label+' '+row.version+'；画面创作资源；渲染时已加载，不代表效果已获认可。';
+    }
     return badge;
   });
 }
@@ -76,7 +106,7 @@ export function renderCapabilityLabels(doc,value,noSample=false) {
     }else {
       const pending=doc.createElement('span');pending.className='capability-label-placeholder';
       pending.textContent=confirmed?'未记录':'待确认';
-      pending.title=confirmed?'缺少可核对的额外动作编排库记录，不代表样片没有动画。':'尚无已核实样片，该能力待确认。';
+      pending.title=confirmed?'缺少可核对的动作编排证据，不代表样片没有动画。':'尚无已核实样片，该能力待确认。';
       values.append(pending);
     }
     row.append(caption,values);root.append(row);
@@ -101,7 +131,7 @@ export function mountAuthoringControls(doc,onFilter) {
   if (engine?.parentNode?.parentNode?.append) {
     const label=doc.createElement('label'); label.textContent='动作编排';
     label.htmlFor='gallery-authoring-tool'; select=doc.createElement('select'); select.id='gallery-authoring-tool';
-    for (const [value,title] of [['all','全部'],['gsap','GSAP'],['animejs','Anime.js']]) {
+    for (const [value,title] of [['all','全部'],...MOTION_TOOLS.map(id=>[id,LABELS[id]])]) {
       const option=doc.createElement('option');option.value=value;option.textContent=title;select.append(option);
     }
     select.value='all';select.addEventListener('change',onFilter);label.append(select);engine.parentNode.parentNode.append(label);

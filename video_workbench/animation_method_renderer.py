@@ -854,6 +854,18 @@ class MethodAnimationRenderer:
             result['runtime']['generated_resources'] = deepcopy(binding['request']['generated_resources'])
             result['runtime']['generated_resource_observation'] = (
                 deepcopy(receipt['generated_resource_observation']) if receipt else None)
+        # New completions retain the host's fixed library measurements. Do not
+        # retroactively alter sealed historical results during media lookup.
+        from .animation_motion_evidence import measured_library_inventory
+        inventory = measured_library_inventory(receipt, binding['request'])
+        previous_runtime = {}
+        if row['proof_sha256'] is not None and row['result'] is not None:
+            try:
+                previous_runtime = json.loads(bytes(row['result'])).get('runtime', {})
+            except (TypeError, ValueError):
+                pass
+        if inventory and (row['proof_sha256'] is None or 'library_inventory' in previous_runtime):
+            result['runtime']['library_inventory'] = inventory
         # Preserve the immutable historical result/proof shape in the private
         # ledger. Failure receipts only improve the returned diagnostic; they
         # never admit media, alter custody proofs or authorize another attempt.

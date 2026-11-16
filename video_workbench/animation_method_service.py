@@ -26,6 +26,7 @@ from .animation_method_commissions import (
 )
 from .animation_runtime_capabilities import validate_runtime_capabilities
 from .animation_authoring_tools import observed_authoring_tools
+from .animation_motion_evidence import motion_orchestration
 from .animation_method_research import METHOD_SCHEMA, REMOVAL_SCHEMA, validate_content_changes
 from .animation_method_renderer import PUBLIC_RENDER_FAILURE_CODES, public_render_failure_code
 from .animation_method_trash import AnimationMethodTrash, serialized_library_mutation
@@ -182,6 +183,7 @@ def _sample_engine(candidate, demonstrations):
     operation_id = candidate.get('operation_id')
     confirmed = False
     authoring_tools = {}
+    motion = {}
     for demonstration in linked:
         origin = demonstration.get('provenance', {})
         runtime = demonstration.get('runtime', {})
@@ -206,11 +208,15 @@ def _sample_engine(candidate, demonstrations):
         if exact_sample:
             for tool in observed_authoring_tools(runtime):
                 authoring_tools[tool['id']] = tool
+            for tool in motion_orchestration(candidate, demonstration):
+                motion[tool['id']] = tool
     if not confirmed:
         return unverified
     result = dict(engine=engine, engine_status='rendered')
     if authoring_tools:
         result['authoring_tools'] = [authoring_tools[key] for key in sorted(authoring_tools)]
+    if motion:
+        result['motion_orchestration'] = [motion[key] for key in sorted(motion)]
     return result
 
 
