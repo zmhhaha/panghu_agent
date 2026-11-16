@@ -389,7 +389,7 @@ class FakeElement {
 const doc = {createElement: tag => new FakeElement(tag), createDocumentFragment: () => new FakeElement('fragment')};
 const callbacks = {onBack() {}, onContinue() {}, onCancel() {}, onFeedback() {}, onPublish() {}};
 
-function mountedGallery(initial, {catalogValue = null, detailRecords = []} = {}) {
+function mountedGallery(initial, {catalogValue = null, detailRecords = [], inspection = null} = {}) {
   const html = readFileSync(new URL('../../video_workbench/animation_lab_web/method-gallery.html', import.meta.url), 'utf8');
   const nodes = new Map([...html.matchAll(/<([a-z][a-z0-9]*)\b[^>]*\bid="([^"]+)"/g)]
     .map(([, tag, id]) => [id, new FakeElement(tag)]));
@@ -410,6 +410,9 @@ function mountedGallery(initial, {catalogValue = null, detailRecords = []} = {})
   const controller = mountMethodGallery({document, root, storage: storage(), uuid: () => firstId,
     schedule: () => 1, unschedule() {}, fetch: async (url, options = {}) => {
       requests.push({url, options});
+      if (inspection && (url.pathname.endsWith('/prompt-inspection') || /\/operations\/[^/]+\/input$/.test(url.pathname))) {
+        return {ok: true, status: 200, json: async () => inspection(url)};
+      }
       return {ok: true, status: 200, json: async () => structuredClone(url.pathname.endsWith('/catalog')
         ? catalogValue ?? catalog([current]) : records.get(url.pathname.split('/commissions/')[1]?.split('/')[0]) ?? current)};
     }});
@@ -637,6 +640,29 @@ test('polling preserves each commission disclosure state and time drafts without
   h.update(detail); await h.controller.select(detail.id);
   assert.equal(section('execution').open, true); assert.equal(section('feedback-range').open, false);
   assert.equal(input('意见开始秒数').value, '2'); h.controller.close();
+});
+
+test('mounted gallery lazily reads saved prompts, preserves them through polling and never reads layout previews', async () => {
+  let detail = run({state: 'running', candidates: [candidate()], best_candidate_id: 'clip-1'});
+  const h = mountedGallery(detail, {inspection: url => url.pathname.endsWith('/prompt-inspection') ? {
+    schema: 'video.animation-prompt-inspection.v1', commission_id: detail.id,
+    submission: {origin: 'captured_request', is_original: true, document: {goal: '可核对的原始需求'}, limitations: []},
+    operations: [], limitations: [],
+  } : assert.fail('no round was opened')});
+  await h.ready(); await h.controller.select(detail.id);
+  const section = key => h.get('gallery-detail').descendants('details').find(node => node.dataset.methodDisclosure === key);
+  const inspectionReads = () => h.requests.filter(row => row.url.pathname.endsWith('/prompt-inspection'));
+  assert.equal(section('prompt-submission').open, false); assert.equal(section('prompt-operations').open, false);
+  assert.equal(inspectionReads().length, 0);
+  section('prompt-submission').open = true; section('prompt-submission').handlers.toggle(); await h.ready();
+  assert.equal(inspectionReads().length, 1); assert.match(section('prompt-submission').textContent, /可核对的原始需求/);
+  detail = {...detail, summary: '进度已更新'}; h.update(detail); await h.controller.refresh();
+  assert.equal(section('prompt-submission').open, true); assert.match(section('prompt-submission').textContent, /可核对的原始需求/);
+  assert.equal(inspectionReads().length, 1);
+  assert.equal(h.requests.some(row => row.options.method), false);
+  h.get('gallery-preview-detail').handlers.click();
+  assert.equal(section('prompt-submission'), undefined); assert.equal(section('prompt-operations'), undefined);
+  assert.equal(inspectionReads().length, 1); h.controller.close();
 });
 
 test('detail shows safe reference links and supplied intervals without inventing URL-only ranges', () => {

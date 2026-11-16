@@ -159,6 +159,9 @@ class AnimationMethodCommissionStore:
         if 'adopted_capabilities' in result:
             _require(result.get('adopted_capabilities_sha256') == digest(result['adopted_capabilities']),
                      'animation_method_capability_decision_changed', 409)
+        if 'submission_snapshot' in result:
+            _require(result.get('submission_snapshot_sha256') == digest(result['submission_snapshot']),
+                     'animation_prompt_inspection_submission_changed', 409)
         return result
 
     @staticmethod
@@ -254,9 +257,12 @@ class AnimationMethodCommissionStore:
             "WHERE commission_id=? ORDER BY rowid", (commission["id"],))]
         return result
 
-    def create(self, owner, body, request_id):
+    def create(self, owner, body, request_id, *, submission_snapshot=None):
         _identifier(owner)
         _identifier(request_id)
+        if submission_snapshot is not None:
+            from .animation_prompt_inspection import validate_submission_snapshot
+            submission_snapshot = validate_submission_snapshot(submission_snapshot, request_id=request_id)
         _require(type(body) is dict and {"goal", "budget"} <= set(body)
                  and set(body) <= {
                      "title", "goal", "budget", "reference", "criteria", "criteria_version",
@@ -346,6 +352,9 @@ class AnimationMethodCommissionStore:
                 state="queued", cancel_requested=False, deadline_at=now + limits["seconds"],
                 created_at=now, updated_at=now, candidates=[], reviews=[],
                 best_candidate_id=frozen.get("base_candidate_id"), stop_reason=None, summary=None)
+            if submission_snapshot is not None:
+                commission['submission_snapshot'] = _copy(submission_snapshot)
+                commission['submission_snapshot_sha256'] = digest(submission_snapshot)
             db.execute("INSERT INTO animation_method_commissions VALUES(?,?,?,?)",
                        (commission["id"], owner, commission["state"], _json(commission)))
             self._record_request(db, owner, "create", request_id, request, {"id": commission["id"]})

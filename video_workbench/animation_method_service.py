@@ -1075,7 +1075,7 @@ class AnimationMethodService:
         return detail
 
     @serialized_library_mutation
-    def start(self, owner, body):
+    def start(self, owner, body, *, _submission_snapshot=None):
         fields = {'request_id', 'title', 'goal', 'reference', 'duration_seconds', 'budget',
                   'base_commission_id', 'base_candidate_id', 'feedback', 'criteria', 'method_versions',
                   'role', 'baseline_demonstration_id', 'structural_changes', 'retry_of_commission_id',
@@ -1085,6 +1085,9 @@ class AnimationMethodService:
         _require(type(body) is dict and {'request_id', 'goal', 'budget'} <= set(body)
                  and set(body) <= fields)
         request_id = body['request_id']
+        from .animation_prompt_inspection import submission_snapshot
+        submitted = (deepcopy(_submission_snapshot) if _submission_snapshot is not None else
+                     submission_snapshot(body))
         data = {key: deepcopy(value) for key, value in body.items() if key != 'request_id' and value is not None}
         explicit_selection = 'capability_selection' in data
         if 'capability_selection' in data:
@@ -1290,8 +1293,18 @@ class AnimationMethodService:
                 self._collaboration_document(owner, dict(frozen=data, operations=[]), 'plan')
             else:
                 self._document(owner, dict(frozen=data, operations=[]), 'plan')
-        run = self.commissions.create(owner, data, request_id)
+        run = self.commissions.create(owner, data, request_id, submission_snapshot=submitted)
         return self.get(owner, run['id'])
+
+    def prompt_inspection(self, owner, commission_id):
+        from .animation_prompt_inspection import inspection_view
+        return inspection_view(self._get_visible_commission(owner, commission_id))
+
+    def operation_input(self, owner, commission_id, operation_id):
+        from .animation_prompt_inspection import operation_input_view
+        run = self._get_visible_commission(owner, commission_id)
+        operation = self.commissions.operation(owner, operation_id)
+        return operation_input_view(run, operation)
 
     @serialized_library_mutation
     def cancel(self, owner, commission_id, body):
@@ -1436,7 +1449,8 @@ class AnimationMethodService:
                 request.setdefault('resource_authoring', deepcopy(run['frozen']['resource_authoring']))
         request.pop('base_candidate_id', None)
         # The new goal creates a new composition from the exact method, not a copied source baseline.
-        return self.start(owner, request)
+        from .animation_prompt_inspection import submission_snapshot
+        return self.start(owner, request, _submission_snapshot=submission_snapshot(body, action='transfer'))
 
     @serialized_library_mutation
     def publish(self, owner, commission_id, body):

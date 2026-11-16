@@ -3,8 +3,8 @@
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "info": {
     "title": "动画效果库外部 Agent API",
-    "version": "1.2.0",
-    "description": "现有 REST JSON API 的外部 Agent 支持子集：目录、异步制作、状态、反馈、取消、视频及源码下载。沿用 OAuth 登录 Cookie 和开发者权限；不支持 Bearer，独立长期机器凭据尚未实现。Cookie 文件由用户安全提供，调用方不读取或导出浏览器凭据。POST 还必须提供公网同源 Origin、catalog.csrf_token 和 application/json。GET 只读，不启动或推进执行。未列出的响应字段属于服务扩展，调用方应忽略。发布与人类验收不属于本合同。",
+    "version": "1.3.0",
+    "description": "现有 REST JSON API 的外部 Agent 支持子集：目录、异步制作、状态、反馈、取消、视频与源码下载，以及提交需求和逐轮冻结输入的只读查看。沿用 OAuth 登录 Cookie 和开发者权限；不支持 Bearer，独立长期机器凭据尚未实现。Cookie 文件由用户安全提供，调用方不读取或导出浏览器凭据。POST 还必须提供公网同源 Origin、catalog.csrf_token 和 application/json。GET 只读，不启动或推进执行。未列出的响应字段属于服务扩展，调用方应忽略。发布与人类验收不属于本合同。",
     "x-guide-url": "https://video-service.panghuer.top/dev/animations/agent-api.html",
     "x-client-url": "https://video-service.panghuer.top/dev/animations/agent-api-client.py"
   },
@@ -15,6 +15,7 @@
   "tags": [
     {"name": "catalog", "description": "只读目录及当前 CSRF token"},
     {"name": "commissions", "description": "异步制作及状态"},
+    {"name": "inspection", "description": "原提交需求、实际冻结需求及主委托各轮 Agent 输入，不等同于完整系统提示词"},
     {"name": "feedback", "description": "仅保存已授权意见，不触发制作或授予人类认可"},
     {"name": "artifacts", "description": "已生成候选的媒体与 JSON 源码"}
   ],
@@ -147,6 +148,46 @@
         }
       }
     },
+    "/commissions/{commission_id}/prompt-inspection": {
+      "parameters": [{"$ref": "#/components/parameters/CommissionId"}],
+      "get": {
+        "operationId": "inspectAnimationLabPrompts",
+        "tags": ["inspection"],
+        "summary": "查看提交需求及各轮 Agent 输入索引",
+        "description": "只读，沿用会话及开发者权限，无需 CSRF，不推进任务或唤醒执行器。不嵌入普通详情轮询。新请求可返回原提交快照；历史请求明确标记为冻结字段还原，不冒充原表单。索引只覆盖主委托 creator/review（包括协作阶段），不含 render 或独立账本中的 Manim recipe。不是完整系统提示词或全部外部调用记录。无查询参数，UTF-8 JSON 响应最多 6 MiB；已删除、其他用户或不可见委托拒绝访问。",
+        "responses": {
+          "200": {"description": "提交快照、有效冻结需求及有限输入索引", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PromptInspection"}}}},
+          "302": {"$ref": "#/components/responses/LoginRedirect"},
+          "401": {"$ref": "#/components/responses/AuthenticationRequired"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "413": {"$ref": "#/components/responses/TooLarge"},
+          "422": {"$ref": "#/components/responses/InvalidRequest"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "default": {"$ref": "#/components/responses/ApiError"}
+        }
+      }
+    },
+    "/commissions/{commission_id}/operations/{operation_id}/input": {
+      "parameters": [{"$ref": "#/components/parameters/CommissionId"}, {"$ref": "#/components/parameters/OperationId"}],
+      "get": {
+        "operationId": "getAnimationLabOperationInput",
+        "tags": ["inspection"],
+        "summary": "按需读取一轮 Agent 的真实冻结输入 JSON",
+        "description": "只读，先验证当前用户可见委托及操作归属，不允许跨委托读取。返回原 op.input 内容与摘要，不递归改写输入中的 URL，不读取模型凭据、不重建没有冻结证据的历史系统提示词。只支持主委托 creator/review（包括协作阶段）。无查询参数，无需 CSRF，不提交、推进或续跑任务；UTF-8 JSON 响应最多 6 MiB。",
+        "responses": {
+          "200": {"description": "该操作的冻结输入和身份摘要", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/OperationInput"}}}},
+          "302": {"$ref": "#/components/responses/LoginRedirect"},
+          "401": {"$ref": "#/components/responses/AuthenticationRequired"},
+          "403": {"$ref": "#/components/responses/Forbidden"},
+          "404": {"$ref": "#/components/responses/NotFound"},
+          "413": {"$ref": "#/components/responses/TooLarge"},
+          "422": {"$ref": "#/components/responses/InvalidRequest"},
+          "503": {"$ref": "#/components/responses/Unavailable"},
+          "default": {"$ref": "#/components/responses/ApiError"}
+        }
+      }
+    },
     "/commissions/{commission_id}/feedback": {
       "parameters": [{"$ref": "#/components/parameters/CommissionId"}],
       "post": {
@@ -264,6 +305,7 @@
     "parameters": {
       "WriteOrigin": {"name": "Origin", "in": "header", "required": true, "description": "公网入口所有 POST 必须提供此同源值；不包含 /dev/animations 路径。", "schema": {"type": "string", "const": "https://video-service.panghuer.top"}},
       "CommissionId": {"name": "commission_id", "in": "path", "required": true, "description": "服务返回的委托 ID", "schema": {"$ref": "#/components/schemas/Identifier"}, "example": "11111111-1111-4111-8111-111111111111"},
+      "OperationId": {"name": "operation_id", "in": "path", "required": true, "description": "同一委托输入索引返回的 operation_id，作为路径段进行 URL 编码", "schema": {"$ref": "#/components/schemas/Identifier"}, "example": "operation-plan-1"},
       "CandidateId": {"name": "candidate_id", "in": "path", "required": true, "description": "使用 candidates 中实际返回的 ID", "schema": {"$ref": "#/components/schemas/Identifier"}, "example": "candidate-1"}
     },
     "schemas": {
@@ -394,6 +436,81 @@
           "uses_manim": {"type": "boolean", "description": "规划是否需要 Manim；false 时不会启动 Manim recipe 或 Cairo 资源制作。"},
           "plan_operation_id": {"type": "string", "minLength": 1},
           "plan_result_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      },
+      "FrozenInputDocument": {
+        "type": "object", "required": ["document", "sha256"], "additionalProperties": true,
+        "properties": {
+          "document": {"type": "object", "additionalProperties": true, "description": "原始或明确标记为还原的结构化需求，查看时不递归改写字段。"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "document 的 canonical JSON SHA-256；不是导出文件排版后的字节摘要。"}
+        }
+      },
+      "SubmissionInspection": {
+        "allOf": [
+          {"$ref": "#/components/schemas/FrozenInputDocument"},
+          {"type": "object", "required": ["origin", "is_original", "action", "limitations"], "properties": {
+            "origin": {"type": "string", "enum": ["captured_request", "reconstructed_frozen_fields"]},
+            "is_original": {"type": "boolean", "description": "false 表示依据历史冻结字段还原，不能当成最初填写的原始表单。"},
+            "action": {"type": "string", "enum": ["create", "transfer", "unknown"]},
+            "limitations": {"type": "array", "items": {"type": "string"}}
+          }},
+          {"if": {"properties": {"origin": {"const": "captured_request"}}},
+           "then": {"properties": {"is_original": {"const": true}}},
+           "else": {"properties": {"is_original": {"const": false}}}}
+        ]
+      },
+      "AgentInputIndexItem": {
+        "type": "object", "additionalProperties": true,
+        "required": ["operation_id", "stage", "mode", "phase", "scope", "round", "round_basis", "component_id", "status", "input_schema", "input_sha256", "input_bytes", "candidate_ids", "author_operation_id", "available", "input_url"],
+        "properties": {
+          "operation_id": {"$ref": "#/components/schemas/Identifier"},
+          "stage": {"type": "string", "enum": ["creator", "review"]},
+          "mode": {"type": ["string", "null"]},
+          "phase": {"type": ["string", "null"]},
+          "scope": {"type": "string", "enum": ["method", "collaboration"]},
+          "round": {"type": ["integer", "null"], "minimum": 0, "description": "plan 为 0，创作按实际顺序；评审按候选创作来源关联。无法核实时为 null。协作是既有单轮合同。"},
+          "round_basis": {"type": "string", "enum": ["plan", "creation_order", "candidate_author", "single_collaboration_round", "unresolved"]},
+          "component_id": {"type": ["string", "null"]},
+          "status": {"type": "string"},
+          "input_schema": {"type": ["string", "null"]},
+          "input_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "input_bytes": {"type": "integer", "minimum": 0},
+          "candidate_ids": {"type": "array", "items": {"type": "string"}},
+          "author_operation_id": {"type": ["string", "null"]},
+          "available": {"type": "boolean"},
+          "input_url": {"type": ["string", "null"], "format": "uri-reference", "description": "仅当前委托下的按需读取链接，公网返回含 /dev/animations 的站点根相对地址；available=false 时为 null。"},
+          "unavailable_reason": {"type": "string", "description": "不可读取时的稳定原因码，不包含私有字段内容；不阻断索引中其他可读操作。"}
+        }
+      },
+      "PromptInspection": {
+        "type": "object", "readOnly": true, "additionalProperties": true,
+        "required": ["schema", "commission_id", "request_id", "submission", "effective_request", "adopted_capabilities", "operations", "scope", "limitations"],
+        "properties": {
+          "schema": {"type": "string", "const": "video.animation-prompt-inspection.v1"},
+          "commission_id": {"$ref": "#/components/schemas/Identifier"},
+          "request_id": {"$ref": "#/components/schemas/RequestId"},
+          "submission": {"$ref": "#/components/schemas/SubmissionInspection"},
+          "effective_request": {"$ref": "#/components/schemas/FrozenInputDocument"},
+          "adopted_capabilities": {"anyOf": [{"$ref": "#/components/schemas/AdoptedCapabilities"}, {"type": "null"}]},
+          "operations": {"type": "array", "items": {"$ref": "#/components/schemas/AgentInputIndexItem"}},
+          "scope": {"type": "string", "const": "method_lab_agent_inputs"},
+          "limitations": {"type": "array", "items": {"type": "string"}, "description": "明确本次可见范围：不包含未冻结历史系统提示词、运行凭据或独立 Manim recipe 账本。"}
+        }
+      },
+      "OperationInput": {
+        "type": "object", "readOnly": true, "additionalProperties": true,
+        "required": ["schema", "commission_id", "operation_id", "stage", "mode", "round", "input_schema", "input_sha256", "input", "limitations"],
+        "properties": {
+          "schema": {"type": "string", "const": "video.animation-operation-input.v1"},
+          "commission_id": {"$ref": "#/components/schemas/Identifier"},
+          "operation_id": {"$ref": "#/components/schemas/Identifier"},
+          "stage": {"type": "string", "enum": ["creator", "review"]},
+          "mode": {"type": ["string", "null"]},
+          "round": {"type": ["integer", "null"], "minimum": 0},
+          "input_schema": {"type": "string"},
+          "input_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "真实冻结 input 的 canonical JSON 摘要，不是完整系统提示词摘要。"},
+          "input": {"type": "object", "additionalProperties": true, "description": "该操作真实冻结 op.input；可能含方法、约束、观察或完整知识快照，按需独立读取。"},
+          "limitations": {"type": "array", "items": {"type": "string"}}
         }
       },
       "BudgetCounters": {

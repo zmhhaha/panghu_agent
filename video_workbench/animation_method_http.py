@@ -10,6 +10,7 @@ from .animation_creation_http import CreationAPIClient, CreationTransportError, 
 
 PREFIX = '/api/method-lab'
 MAX_WIKISKILL_JSON = 18 * 1024 * 1024
+MAX_PROMPT_INSPECTION_JSON = 6 * 1024 * 1024
 
 
 def _identifier(value, *, encoded=False):
@@ -42,6 +43,22 @@ def _send_wikiskill(handler, value, status=200):
     handler._send(raw, status, raw=True, mime='application/json; charset=utf-8')
 
 
+def prompt_inspection_bytes(value):
+    """Keep frozen input content exact and out of ordinary detail polling."""
+    try:
+        raw = json.dumps(value, ensure_ascii=False, sort_keys=True,
+                         allow_nan=False, separators=(',', ':')).encode('utf-8')
+    except (TypeError, ValueError, UnicodeError):
+        raise CreationTransportError('animation_method_prompt_inspection_invalid', 502) from None
+    _require(len(raw) <= MAX_PROMPT_INSPECTION_JSON,
+             'animation_method_prompt_inspection_too_large', 413)
+    return raw
+
+
+def _send_prompt_inspection(handler, value):
+    handler._send(prompt_inspection_bytes(value), raw=True, mime='application/json; charset=utf-8')
+
+
 def _wikiskill(service):
     coordinator = getattr(service, 'wikiskill', None)
     _require(coordinator is not None, 'animation_wikiskill_unavailable', 503)
@@ -49,6 +66,26 @@ def _wikiskill(service):
 
 
 class MethodLabClient(CreationAPIClient):
+    def _prompt_inspection_read(self, owner, path):
+        raw, mime = self._request(owner, 'GET', path, artifact=True,
+                                  response_limit=MAX_PROMPT_INSPECTION_JSON)
+        _require(mime == 'application/json', 'animation_method_prompt_inspection_invalid', 502)
+        try:
+            value = _json(raw)
+        except (ValueError, TypeError, UnicodeError):
+            raise CreationTransportError('animation_method_prompt_inspection_invalid', 502) from None
+        _require(type(value) is dict, 'animation_method_prompt_inspection_invalid', 502)
+        return value
+
+    def prompt_inspection(self, owner, commission_id):
+        return self._prompt_inspection_read(owner, PREFIX + '/commissions/' +
+            quote(_identifier(commission_id), safe='') + '/prompt-inspection')
+
+    def operation_input(self, owner, commission_id, operation_id):
+        return self._prompt_inspection_read(owner, PREFIX + '/commissions/' +
+            quote(_identifier(commission_id), safe='') + '/operations/' +
+            quote(_identifier(operation_id), safe='') + '/input')
+
     def _wikiskill_read(self, owner, suffix):
         raw, mime = self._request(owner, 'GET', PREFIX + '/knowledge/library' + suffix,
                                   artifact=True, response_limit=MAX_WIKISKILL_JSON)
@@ -201,6 +238,15 @@ def route_private(handler, owner, method, path, body=None):
             return True
         if len(pieces) == 2 and pieces[0] == 'commissions':
             handler._send(service.get(owner, pieces[1]))
+            return True
+        if len(pieces) == 3 and pieces[0] == 'commissions' and pieces[2] == 'prompt-inspection':
+            _send_prompt_inspection(handler,
+                service.prompt_inspection(owner, _identifier(pieces[1], encoded=True)))
+            return True
+        if (len(pieces) == 5 and pieces[0] == 'commissions' and pieces[2] == 'operations'
+                and pieces[4] == 'input'):
+            _send_prompt_inspection(handler, service.operation_input(owner,
+                _identifier(pieces[1], encoded=True), _identifier(pieces[3], encoded=True)))
             return True
         if len(pieces) == 5 and pieces[0] == 'commissions' and pieces[2] == 'candidates':
             _require(pieces[4] in {'media', 'source'})

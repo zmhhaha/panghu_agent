@@ -1,6 +1,6 @@
 # 动画效果库：外部 Agent API
 
-外部 Agent 可以直接使用现有 REST JSON API，完成列出效果、提交制作、查询状态、下载候选视频和源码、保存反馈及取消任务。
+外部 Agent 可以直接使用现有 REST JSON API，完成列出效果、提交制作、查询状态、查看提交需求及逐轮冻结输入、下载候选视频和源码、保存反馈及取消任务。
 
 - API 基址：`https://video-service.panghuer.top/dev/animations/api/method-lab`
 - [在线静态指南](https://video-service.panghuer.top/dev/animations/agent-api.html)
@@ -145,6 +145,41 @@ curl --fail-with-body --cookie cookies.txt \
 ```
 
 媒体为 `video/mp4`，支持单段字节 Range；源码是 `application/json` 下载。候选 ID 使用返回值，`candidate-1` 仅是占位示例。
+
+## 查看提交需求与逐轮 Agent 输入
+
+详情页的表达目标不是完整 prompt。用以下两个只读 GET 按需查看；沿用登录会话和开发者权限，无需 CSRF，不启动、续跑任务或唤醒执行器，不放进普通详情的高频轮询。两种响应均为有限 UTF-8 JSON，上限 6 MiB。
+
+```sh
+curl --fail-with-body --cookie cookies.txt \
+  https://video-service.panghuer.top/dev/animations/api/method-lab/commissions/11111111-1111-4111-8111-111111111111/prompt-inspection \
+  --output experiment-requirements.json
+```
+
+索引返回以下内容：
+
+| 字段 | 含义 |
+| --- | --- |
+| `submission` | `origin:captured_request`、`is_original:true` 表示新请求保存的原提交 JSON；历史请求为 `reconstructed_frozen_fields`、`false`，明确是按冻结字段还原。包含 `action`、`document`、`sha256`、`limitations` |
+| `effective_request` | 本次实际冻结的公开需求字段及其 `sha256`，可与原提交比较继承、默认值等处理；预算为执行计数，不能原样作为新的提交 JSON |
+| `operations` | 主委托各次规划、创作和评审的索引，含操作 ID、阶段、状态、轮次及依据、输入摘要和按需读取的 `input_url`；协作还含 `phase`、`component_id` |
+| `scope` / `limitations` | 当前范围为 `method_lab_agent_inputs`，明确未覆盖的内容，不能把索引当成全部外部调用记录 |
+
+主规划的 `round` 为 0；创作轮次按实际预占的创作顺序从 1 开始，评审按对应候选的创作操作关联。无法核实轮次时返回 `null`，不会猜测。协作仍是原有单轮合同，部件不代表多轮打磨。操作即使未执行完成，也可能已有真实预占输入；不把输入存在当成模型已调用或已执行成功。
+
+某次输入不能安全读取时，索引将该项标记为 `available:false`、`input_url:null` 并给出 `unavailable_reason`，其他可读项仍可查看；账本整体完整性异常则可能拒绝整次读取。
+
+从索引取得 `input_url` 后，使用同一会话读取。公网链接为包含 `/dev/animations` 的站点根相对地址，相对于同一站点 origin 解析；不要再次添加该前缀。也可以按以下路径请求，操作 ID 必须使用返回值并作为一个路径段进行 URL 编码：
+
+```sh
+curl --fail-with-body --cookie cookies.txt \
+  https://video-service.panghuer.top/dev/animations/api/method-lab/commissions/11111111-1111-4111-8111-111111111111/operations/operation-plan-1/input \
+  --output agent-operation-input.json
+```
+
+响应的 `input` 是该次操作真实冻结的结构化输入，`input_sha256` 是其 canonical JSON 摘要；不是下载文件排版后的字节摘要。它可能包含需求、选用方法、平台约束、观察和知识快照，服务不递归改写其中的 URL。访问其他用户、已删除委托或其他委托下的操作会被拒绝。
+
+这两个入口不提供运行凭据，也不凭当前代码猜测没有冻结证据的历史系统提示词。Manim recipe 位于独立资源账本，本轮未纳入该索引；渲染操作也不列为 Agent 输入。候选源码下载仍只是动画代码，与逐轮输入分开。网页可复制或导出对应 JSON；本节 curl 亦可直接保存。
 
 ## 继续优化、反馈和取消
 

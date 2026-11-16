@@ -91,3 +91,16 @@ label{display:block;color:#c8d3e4;font-size:13px;font-weight:600}input,textarea,
 .authoring-capability-group .checkbox-label input { width: auto; flex-shrink: 0; }
 .authoring-capability-group .small { min-height: 2.8em; margin-top: 2px; }
 @media(max-width:760px) { .authoring-capability-groups { grid-template-columns: 1fr; } }
+
+/* Prompt inspection reads persisted records and stays outside creation controls. */
+.prompt-inspection { min-width: 0; }
+.prompt-inspection-body { padding-top: 3px; }
+.prompt-origin { color: var(--green); font-size: 13px; }
+.prompt-field { min-width: 0; margin: 16px 0; }
+.prompt-field h4 { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+.prompt-readable { margin: 0; max-height: 280px; font-family: inherit; color: var(--text); user-select: text; }
+.prompt-limitations { padding-left: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.prompt-inspection .detail-actions { margin-bottom: 8px; }
+.prompt-inspection .technical-details { margin-top: 14px; margin-bottom: 10px; }
+.prompt-frozen-input,.prompt-copy-fallback { padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: #0d1420; user-select: text; }
+.prompt-copy-fallback:focus { outline: 2px solid var(--accent); outline-offset: 3px; }

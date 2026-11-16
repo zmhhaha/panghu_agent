@@ -64,6 +64,7 @@
       <a href="#start">提交与查询</a>
       <a href="#capabilities">选择创作能力</a>
       <a href="#results">状态与下载</a>
+      <a href="#inspection">需求与逐轮输入</a>
       <a href="#iterate">继续优化</a>
       <a href="#feedback">反馈与取消</a>
       <a href="#client">Python 客户端</a>
@@ -186,6 +187,22 @@ curl --fail-with-body --cookie cookies.txt \
   https://video-service.panghuer.top/dev/animations/api/method-lab/commissions/11111111-1111-4111-8111-111111111111/candidates/candidate-1/source \
   --output animation-source.json</code></pre>
         <p>媒体为 <code>video/mp4</code>，支持单段字节 Range；源码为 <code>application/json</code> 文件。</p>
+      </section>
+
+      <section id="inspection">
+        <h2>查看需求与逐轮 Agent 输入</h2>
+        <p>表达目标不是完整 prompt。以下两个 GET 沿用现有登录与开发者权限，无需 CSRF，不启动、续跑任务或唤醒执行器。按需读取，避免加入详情的高频轮询；每个 UTF-8 JSON 响应上限 6 MiB。</p>
+        <pre><code>GET /commissions/{commission_id}/prompt-inspection
+GET /commissions/{commission_id}/operations/{operation_id}/input</code></pre>
+        <p>第一个入口返回 <code>submission</code>、<code>effective_request</code> 和 <code>operations</code> 索引。<code>submission.origin=captured_request</code>、<code>is_original=true</code> 是新请求保存的原提交 JSON；历史数据为 <code>reconstructed_frozen_fields</code>、<code>false</code>，明确表示按冻结字段还原。有效需求另列默认值和继承后的实际冻结内容；两份文档都带 <code>sha256</code>。</p>
+        <p>操作索引包含 ID、阶段、状态、轮次及依据、输入摘要和 <code>input_url</code>。主规划轮次为 0，创作按实际顺序从 1 开始，评审关联对应候选；无法核实为 <code>null</code>。协作阶段另含 <code>phase</code>、<code>component_id</code>，仍遵守原有单轮合同。已有预占输入不表示模型已经执行或制作成功。</p>
+        <p>个别输入不能安全读取时，该项返回 <code>available:false</code>、<code>input_url:null</code> 和稳定原因码 <code>unavailable_reason</code>，其余可读项仍可查看；账本整体完整性异常则可能拒绝读取。<code>effective_request</code> 的预算是冻结执行计数，不可原样当成新制作请求。</p>
+        <p>第二个入口按需返回真实冻结的 <code>input</code> 与 <code>input_sha256</code>，可能包含需求、方法、约束、观察与知识快照。摘要针对 canonical JSON，不是下载文件排版后的字节；输入中的 URL 不会被递归重写。使用索引中的站点根相对 <code>input_url</code> 时，不要重复添加 <code>/dev/animations</code>。其他用户、已删除委托或跨委托的操作不可读取。</p>
+        <p class="note">当前范围是主委托的规划、创作、评审及协作 Agent 输入。渲染和独立资源账本中的 Manim recipe 不在索引中。不提供运行凭据，也不猜测没有冻结证据的历史系统提示词；不能把目标文本或候选源码当成完整 prompt。</p>
+        <pre><code>curl --fail-with-body --cookie cookies.txt \
+  https://video-service.panghuer.top/dev/animations/api/method-lab/commissions/11111111-1111-4111-8111-111111111111/prompt-inspection \
+  --output experiment-requirements.json</code></pre>
+        <p>操作输入可按返回的 <code>input_url</code> 使用同样方式保存；操作 ID 应原样使用并进行路径段编码。网页也提供复制与 JSON 导出。</p>
       </section>
 
       <section id="iterate">

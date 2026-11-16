@@ -45,6 +45,7 @@ _FIELDS = {'case_id', 'case_identity', 'variant_id', 'kind', 'start_seconds',
 _PUBLIC_URL_FIELDS = frozenset({'preview_url', 'report_url', 'task_url', 'image_url', 'asset_url', 'media_url', 'assessment_url', 'source_url'})
 _METHOD_UI_PATHS = frozenset({'/', '/index.html', '/method-gallery.html',
                               '/method-gallery.mjs', '/method-comparison.mjs', '/authoring-tools.mjs',
+                              '/prompt-inspection.mjs',
                               '/method-gallery.css', '/skill-publication.mjs', '/effect-recycle-bin.mjs',
                               '/knowledge.html', '/knowledge.mjs', '/knowledge.css',
                               '/agent-api.html', '/agent-api.openapi.json', '/agent-api-client.py'})
@@ -758,6 +759,16 @@ class LabHandler(BaseHTTPRequestHandler):
         _require(len(raw) <= 18 * 1024 * 1024, 'animation_wikiskill_response_too_large', 413)
         return self._send(raw, 'application/json; charset=utf-8', status)
 
+    def _prompt_inspection_json(self, value):
+        # Only transport links belong to the public prefix. Rewriting URL-like
+        # keys inside frozen submissions/inputs would invalidate their hashes.
+        from .animation_method_http import PREFIX, prompt_inspection_bytes
+        if value.get('schema') == 'video.animation-prompt-inspection.v1':
+            value = dict(value, operations=[dict(row, input_url=self.server.base_path + row['input_url'])
+                if type(row.get('input_url')) is str and row['input_url'].startswith(PREFIX + '/')
+                else row for row in value.get('operations', [])])
+        return self._send(prompt_inspection_bytes(value), 'application/json; charset=utf-8')
+
     def do_HEAD(self):
         # Reuse the same authentication, allowlist and immutable artifact checks
         # as GET; _send emits matching metadata without a response body.
@@ -823,6 +834,13 @@ class LabHandler(BaseHTTPRequestHandler):
                     return self._json(client.method_version(owner, method_pieces[3]))
                 if len(method_pieces) == 4 and method_pieces[2] == 'commissions':
                     return self._json(client.get(owner, method_pieces[3]))
+                if (len(method_pieces) == 5 and method_pieces[2] == 'commissions'
+                        and method_pieces[4] == 'prompt-inspection'):
+                    return self._prompt_inspection_json(client.prompt_inspection(owner, method_pieces[3]))
+                if (len(method_pieces) == 7 and method_pieces[2] == 'commissions'
+                        and method_pieces[4] == 'operations' and method_pieces[6] == 'input'):
+                    return self._prompt_inspection_json(client.operation_input(
+                        owner, method_pieces[3], method_pieces[5]))
                 if len(method_pieces) == 7 and method_pieces[2] == 'commissions' and method_pieces[4] == 'candidates':
                     raw, mime = client.artifact(owner, method_pieces[3], method_pieces[5], method_pieces[6])
                     if method_pieces[6] == 'source':

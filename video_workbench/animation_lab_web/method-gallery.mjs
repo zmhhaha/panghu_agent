@@ -1,5 +1,6 @@
 import {createMethodComparison} from './method-comparison.mjs';
 import {mountAuthoringControls, renderCapabilityLabels, matchesAuthoringTool, matchesVisualCreation, toolSearchText, resourceAuthoringRequest} from './authoring-tools.mjs';
+import {createPromptInspection} from './prompt-inspection.mjs';
 import {renderExactSkillPublication} from './skill-publication.mjs';
 import {mountEffectRecycleBin, renderRemovalActions} from './effect-recycle-bin.mjs';
 
@@ -468,7 +469,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   onTransfer = () => {}, onRetry = () => {}, onSelectCommission = () => {}, feedbackDraft = null, onDraftChange = () => {},
   onPreference = () => {}, onWithdraw = () => {}, comparisonSelection = null,
   onComparisonReady = () => {}, onComparisonChange = () => {}, disclosureState = null, publicationServices = {},
-  onRemove = null, removalLocked = false}) {
+  onRemove = null, removalLocked = false, promptInspection = null}) {
   const disclosure = (key, title, value) => {
     const section = details(doc, title, value); section.dataset.methodDisclosure = key;
     if (Object.hasOwn(disclosureState ?? {}, key)) section.open = disclosureState[key] === true;
@@ -725,6 +726,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
     methods.append(article);
   }
   fragment.append(methods);
+  if (promptInspection && !detail.ui_preview) fragment.append(promptInspection.render(doc, detail, disclosureState));
   fragment.append(disclosure('execution', '候选、技术检查与执行记录', {candidates, budget: detail.budget, operations: detail.operations ?? detail.execution,
     events: detail.events, stop_reason: detail.stop_reason, error: detail.error}));
   if (ACTIVE.has(detail.state)) fragment.append(button(doc, '取消本次实验', onCancel, 'button secondary danger'));
@@ -737,7 +739,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
   const $ = id => doc.getElementById(id), home = $('gallery-home'), detailHost = $('gallery-detail'), formPanel = $('gallery-form-panel');
   const authoringControls = mountAuthoringControls(doc, () => renderCards());
   let continuation = null, controller, recycle, nextEffectAfterRemoval = null, renderedDetailId = null, renderedDetailSnapshot = null, renderedCardsSnapshot = null, comparison = null, replacing = false;
-  let collaborationBudget = null;
+  let collaborationBudget = null, promptInspection;
   const applyCollaborationBudget = () => {
     const checkbox = $('experiment-collaboration'), rounds = $('experiment-rounds'), minutes = $('experiment-seconds');
     if (!checkbox) return;
@@ -767,6 +769,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
   const releaseComparison = () => {
     replacing = true;
     try {
+      promptInspection?.releaseView();
       if (renderedDetailId) disclosureStates.set(renderedDetailId, Object.fromEntries(
         [...detailHost.querySelectorAll('details')].filter(section => section.dataset.methodDisclosure)
           .map(section => [section.dataset.methodDisclosure, section.open === true])));
@@ -796,7 +799,9 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     }
     return response.json();
   };
+  promptInspection = createPromptInspection({request, root});
   const show = mode => {
+    if (mode !== 'detail') promptInspection.releaseView();
     if (mode !== 'detail' && comparison) {
       releaseComparison(); renderedDetailId = renderedDetailSnapshot = null;
     }
@@ -954,6 +959,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
           feedbackDraft: feedbackDrafts.get(detail.id),
           onDraftChange: value => feedbackDrafts.set(detail.id, value),
           disclosureState: disclosureStates.get(detail.id),
+          promptInspection,
           comparisonSelection: comparisonStates.get(detail.id), onComparisonReady: value => { comparison = value; },
           onComparisonChange: value => comparisonStates.set(detail.id, value),
         }));
@@ -1039,7 +1045,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     if (await controller.start(fields)) { show('detail'); controller.emit(); }
   });
   const closeController = controller.close.bind(controller);
-  controller.close = () => { recycle.close(); closeController(); releaseComparison(); };
+  controller.close = () => { recycle.close(); closeController(); releaseComparison(); promptInspection.close(); };
   void controller.refresh(); return controller;
 }
 
