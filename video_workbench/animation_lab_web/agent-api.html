@@ -108,11 +108,14 @@
               <tr><td><code>goal</code></td><td>必填，非空文本，最长 16000 字符；<code>title</code> 可选，最长 500 字符。</td></tr>
               <tr><td><code>duration_seconds</code></td><td>默认 18，范围 1–60 秒，必须落在 24 fps 的整帧边界。</td></tr>
               <tr><td><code>budget</code></td><td><code>max_rounds</code> 整数 1–8；<code>max_seconds</code> 整数 60–3600。</td></tr>
+              <tr><td><code>collaboration</code></td><td>可选，新建实验显式开启，继续优化或重新运行可继承原协作配置。先确认 <code>availability.collaboration=true</code>；对象中 <code>max_components</code> 为整数 2–4，同时要求 <code>budget.max_rounds=1</code>。普通制作省略此字段。</td></tr>
               <tr><td><code>criteria</code></td><td>可省略。提供时为 1–16 项，唯一的 <code>id</code> 与非空 <code>description</code>；可选 <code>requires_motion</code>、<code>requires_audio</code> 布尔值和 <code>observation</code> 文本。</td></tr>
             </tbody>
           </table>
         </div>
         <p>标准的描述及 observation 最长 4000 字符。运动与音频标准需要对应的实际观察证据，静帧评审不能推断已经满足。</p>
+        <details><summary>复杂效果：按职责分工创作（可选）</summary><p>统筹先规划，部件分别创作，再整合为一条完整样片；无需调用方管理图层。首版支持 Canvas 2D，不与 Manim 预制资源或迁移任务合用。新建实验加入以下字段，并把本次探索轮数设为 1；继续优化或重新运行继承原配置，仍需设置本次预算为 1 轮：</p><pre><code>"budget": {"max_rounds": 1, "max_seconds": 1800},
+"collaboration": {"max_components": 3}</code></pre><p>最多 <code>max_components+2</code> 个创作任务（统筹、部件与整合），另有 1 次完整样片渲染、1 次评审。实际规划可少于指定部件数；全部工作共用这次总时限，建议预留 30 分钟。未启用时请省略该字段，不能仅凭执行器可用就推断协作已开放。详情中的创作任务额度包含已预留任务，不代表模型请求数。</p></details>
         <h3>2. 提交制作</h3>
         <pre><code>curl --fail-with-body --cookie cookies.txt \
   -H 'Origin: https://video-service.panghuer.top' \
@@ -140,6 +143,7 @@
               <tr><td><code>summary</code> / <code>error</code></td><td>结果说明 / 失败代码，可能为空。</td></tr>
               <tr><td><code>best_candidate_id</code></td><td>当前选中候选，可能为空。</td></tr>
               <tr><td><code>candidates</code></td><td>候选的 <code>id</code>、<code>media_url</code>、<code>source_url</code>、<code>technical_status</code> 等。</td></tr>
+              <tr><td><code>collaboration</code></td><td>可选的只读协作进度：<code>stage</code>、<code>components</code> 的标题与状态、<code>completed</code>/<code>total</code> 和 <code>author_calls_used</code>/<code>author_calls_max</code>。创作计数含已预留任务，不代表模型请求数。缺少计数不等于零，不把部件完成当作样片认可。</td></tr>
             </tbody>
           </table>
         </div>

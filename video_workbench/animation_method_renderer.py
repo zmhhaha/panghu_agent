@@ -382,10 +382,16 @@ class MethodAnimationRenderer:
         _require(deadline_at is None or type(deadline_at) in (int, float)
                  and math.isfinite(deadline_at), 'animation_method_render_deadline_invalid', 422)
         protocol = contract
-        if type(document) is dict and document.get('schema') == 'video.animation-method-input.v2':
+        collaborative = type(document) is dict and document.get('schema') == 'video.animation-collaboration-input.v1'
+        if collaborative:
+            from agent_service.profiles import video_animation_collaboration_contract
+            protocol = video_animation_collaboration_contract
+        elif type(document) is dict and document.get('schema') == 'video.animation-method-input.v2':
             from agent_service.profiles import video_animation_skill_method
             protocol = video_animation_skill_method
         context = protocol.validate_input(document)
+        if collaborative:
+            _require(context['phase'] == 'integrate', 'animation_collaboration_final_phase_required', 422)
         bounds = context['constraints']
         _require(bounds['fps'] == 24 and 320 <= bounds['width'] <= 1280
                  and 180 <= bounds['height'] <= 720 and 1 <= bounds['duration_seconds'] <= 60

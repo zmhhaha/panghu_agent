@@ -3,6 +3,9 @@ from .base import ProfileImplementation, ProfileLimits
 
 
 def implementation(name):
+    if name == 'video.animation-collaboration.v1':
+        from .video_animation_collaboration import VideoAnimationCollaborationProfile
+        return VideoAnimationCollaborationProfile()
     if name == 'video.animation-wikiskill-compile.v2':
         from .video_animation_wikiskill_v2 import VideoAnimationWikiSkillV2Profile
         return VideoAnimationWikiSkillV2Profile()

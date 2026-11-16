@@ -150,6 +150,8 @@ def profile_model_call_limit(profile, configured):
     The profile comes from the authenticated stored job, never request JSON or
     grant metadata supplied by a caller. A stricter operator cap still wins.
     """
+    if profile == 'video.animation-collaboration.v1':
+        return min(configured, 10)
     if profile in {'video.joint-plan.v2',
                    'video.animation-method-author.v1', 'video.animation-method-review.v1',
                    'video.animation-method-author.v2', 'video.animation-method-review.v2',

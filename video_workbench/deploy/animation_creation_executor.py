@@ -30,6 +30,7 @@ DOCKER_SOCKET = '/var/run/docker.sock'
 AGENT_TOKEN = '/run/secrets/animation-creation-agent/token'
 LAB_TOKEN = '/run/secrets/animation-creation-lab/token'
 METHOD_TOKEN = '/run/secrets/animation-method-agent/token'
+COLLABORATION_TOKEN = '/run/secrets/animation-collaboration-agent/token'
 SELECTOR = {'app.kubernetes.io/name': NAME}
 
 
@@ -55,6 +56,9 @@ class Settings:
     method_agent_token_secret: str | None = None
     method_agent_token_key: str = 'token'
     method_protocol: str = 'skills'
+    collaboration_agent_token_secret: str | None = None
+    collaboration_agent_token_key: str = 'token'
+    enable_collaborative_authoring: bool = False
 
 
 def render(settings: Settings):
@@ -83,7 +87,17 @@ def render(settings: Settings):
         raise ValueError('Invalid method protocol')
     if method_secret in {agent_secret, lab_secret}:
         raise ValueError('Distinct method Agent caller Secret required')
-    for key in (settings.agent_token_key, settings.lab_token_key, settings.method_agent_token_key):
+    collaboration_secret = (_dns_name(settings.collaboration_agent_token_secret, 'collaboration Agent caller Secret')
+                            if settings.collaboration_agent_token_secret is not None else None)
+    if type(settings.enable_collaborative_authoring) is not bool:
+        raise ValueError('Invalid collaboration enable flag')
+    if settings.enable_collaborative_authoring and (not method_secret or not collaboration_secret
+                                                   or settings.method_protocol != 'skills'):
+        raise ValueError('Collaboration requires skills and independent caller Secret')
+    if collaboration_secret is not None and collaboration_secret in {agent_secret, lab_secret, method_secret}:
+        raise ValueError('Distinct collaboration Agent caller Secret required')
+    for key in (settings.agent_token_key, settings.lab_token_key, settings.method_agent_token_key,
+                settings.collaboration_agent_token_key):
         if type(key) is not str or not re.fullmatch(r'[A-Za-z0-9_.-]{1,253}', key):
             raise ValueError('Invalid caller Secret key')
 
@@ -110,6 +124,8 @@ def render(settings: Settings):
             '--listen', '0.0.0.0', '--port', str(PORT)]
     if method_secret:
         args += ['--method-agent-token-file', METHOD_TOKEN, '--method-protocol', settings.method_protocol]
+    if settings.enable_collaborative_authoring:
+        args += ['--enable-collaborative-authoring', '--collaboration-agent-token-file', COLLABORATION_TOKEN]
     health = {'httpGet': {'path': '/healthz', 'port': 'http'}, 'periodSeconds': 10,
               'timeoutSeconds': 3, 'failureThreshold': 3}
     container = {
@@ -153,6 +169,12 @@ def render(settings: Settings):
             'defaultMode': 0o400, 'items': [{'key': settings.method_agent_token_key, 'path': 'token'}]}})
         container['volumeMounts'].append({'name': 'method-agent-token',
             'mountPath': METHOD_TOKEN.rsplit('/', 1)[0], 'readOnly': True})
+    if settings.enable_collaborative_authoring:
+        volumes.append({'name': 'collaboration-agent-token', 'secret': {'secretName': collaboration_secret,
+            'optional': False, 'defaultMode': 0o400,
+            'items': [{'key': settings.collaboration_agent_token_key, 'path': 'token'}]}})
+        container['volumeMounts'].append({'name': 'collaboration-agent-token',
+            'mountPath': COLLABORATION_TOKEN.rsplit('/', 1)[0], 'readOnly': True})
     deployment = resource('apps/v1', 'Deployment', {
         'replicas': 1, 'strategy': {'type': 'Recreate'}, 'selector': {'matchLabels': dict(SELECTOR)},
         'template': {'metadata': {'labels': dict(labels), 'annotations': dict(annotations)}, 'spec': {
@@ -210,6 +232,9 @@ def main(argv=None):
     parser.add_argument('--method-agent-token-secret')
     parser.add_argument('--method-agent-token-key', default='token')
     parser.add_argument('--method-protocol', choices=('skills', 'legacy'), default='skills')
+    parser.add_argument('--collaboration-agent-token-secret')
+    parser.add_argument('--collaboration-agent-token-key', default='token')
+    parser.add_argument('--enable-collaborative-authoring', action='store_true')
     parser.add_argument('--output', type=Path)
     args = vars(parser.parse_args(argv))
     output = args.pop('output')

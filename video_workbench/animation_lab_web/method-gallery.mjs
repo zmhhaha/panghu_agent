@@ -147,6 +147,13 @@ export function buildCommissionRequest(fields, requestId) {
     if (fields.base_candidate_id) body.base_candidate_id = text(fields.base_candidate_id);
   }
   Object.assign(body, resourceAuthoringRequest(fields, body.duration_seconds));
+  const explicitCollaboration = fields.collaboration_enabled === true || fields.collaboration_enabled === 'on';
+  if (explicitCollaboration || fields.collaboration_inherited === true) {
+    if (fields.transfer_commission_id) throw Error('按职责分工创作目前不支持迁移验证');
+    if (body.resource_authoring) throw Error('协作创作首版只支持 Canvas，不能同时选择 Manim 预制资源');
+    if (explicitCollaboration) body.collaboration = {max_components: 3};
+    body.budget.max_rounds = 1;
+  }
   const criteria = text(fields.criteria_text).split(/\r?\n/).map(value => value.trim()).filter(Boolean);
   if (criteria.length > 16 || criteria.some(value => value.length > 1200)) throw Error('验收标准最多 16 项，每项不超过 1200 字');
   if (criteria.length) body.criteria = criteria.map((description, index) => {
@@ -266,6 +273,9 @@ export class MethodGalleryController {
     try {
       if (this.readPending()) throw Error('上次提交尚未核对，先刷新查找原任务');
       body = fields.transfer_commission_id ? buildTransferRequest(fields, this.uuid()) : buildCommissionRequest(fields, this.uuid());
+      if ((body.collaboration || fields.collaboration_inherited === true) && this.state.catalog?.availability.collaboration !== true) {
+        throw Error('按职责分工创作尚未启用，请使用普通创作或等待启用');
+      }
       this.savePending(body); this.state.pending = body;
     } catch (error) { this.state.error = error.message; this.emit(); return false; }
     ++this.epoch;
@@ -410,6 +420,47 @@ function details(doc, title, value) {
   if (value) section.append(element(doc, 'pre', '', typeof value === 'string' ? value : JSON.stringify(value, null, 2)));
   return section;
 }
+export function renderCollaborationProgress(doc, detail) {
+  const progress = detail?.collaboration;
+  if (progress?.enabled !== true) return null;
+  const section = panel(doc, '协作创作进度');
+  section.classList.add('collaboration-progress');
+  const stages = {plan: '统筹规划', component: '部件创作', integrate: '整合作品', render: '生成完整样片',
+    review: '检查完整样片', completed: '协作已完成', failed: '协作未完成', cancelled: '协作已取消',
+    cancelling: '正在取消协作', stopping: '正在停止协作'};
+  section.append(element(doc, 'p', '', '当前阶段：' + (stages[progress.stage] ?? '等待核对')));
+  const count = value => Number.isInteger(value) && value >= 0;
+  if (count(progress.completed) && count(progress.total)) {
+    section.append(element(doc, 'p', 'small muted', '已完成部件：' + progress.completed + ' / ' + progress.total));
+  }
+  if (rows(progress.components).length) {
+    const components = element(doc, 'ul', 'collaboration-components');
+    const statuses = {pending: '等待制作', queued: '等待制作', ready: '等待制作', waiting: '等待前置部件',
+      reserved: '已预留任务', submitting: '正在提交', submission_unknown: '提交待核对', submitted: '已提交',
+      running: '制作中', completed: '已完成', failed: '未完成', cancelled: '已取消', released: '额度已释放', skipped: '未执行'};
+    for (const component of progress.components) {
+      const item = element(doc, 'li');
+      item.dataset.componentId = text(component.id);
+      item.append(element(doc, 'span', '', text(component.title) || '部件'),
+        element(doc, 'span', 'small muted', statuses[component.status] ?? '状态待核对'));
+      components.append(item);
+    }
+    section.append(components);
+  }
+  if (count(progress.author_calls_used) && count(progress.author_calls_max)) {
+    section.append(element(doc, 'p', 'small muted', '已占用创作任务额度：' + progress.author_calls_used + ' / ' + progress.author_calls_max));
+    if (progress.author_calls_scope === 'reserved_creator_operations_not_provider_model_requests') {
+      section.append(element(doc, 'p', 'small muted', '包含已预留的创作任务，不代表实际模型请求次数。'));
+    }
+  }
+  const counters = [['render', '样片渲染'], ['review', '完整样片评审']];
+  const actual = counters.filter(([key]) => count(detail.usage?.[key]) && count(detail.budget?.[key]));
+  if (actual.length) section.append(element(doc, 'p', 'small muted', actual.map(([key, label]) =>
+    label + '：' + detail.usage[key] + ' / ' + detail.budget[key]).join('；')));
+  section.append(element(doc, 'p', 'small muted', '部件属于这条完整作品的内部制作过程，不作为独立效果发布。'));
+  return section;
+}
+
 export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCancel, onFeedback, onPublish,
   onTransfer = () => {}, onRetry = () => {}, onSelectCommission = () => {}, feedbackDraft = null, onDraftChange = () => {},
   onPreference = () => {}, onWithdraw = () => {}, comparisonSelection = null,
@@ -425,6 +476,8 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
     element(doc, 'p', 'muted', text(detail.goal)), element(doc, 'span', 'badge', methodStateLabel(displayState(detail))));
   heading.children[1].id = 'detail-title';
   head.append(heading); fragment.append(head);
+  const collaboration = renderCollaborationProgress(doc, detail);
+  if (collaboration) fragment.append(collaboration);
   const history = rows(detail.effect?.commissions);
   if (history.length) {
     const section = disclosure('effect-history', '版本与实验记录（' + history.length + '）');
@@ -633,6 +686,29 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
   const $ = id => doc.getElementById(id), home = $('gallery-home'), detailHost = $('gallery-detail'), formPanel = $('gallery-form-panel');
   const authoringControls = mountAuthoringControls(doc, () => renderCards());
   let continuation = null, controller, recycle, nextEffectAfterRemoval = null, renderedDetailId = null, renderedDetailSnapshot = null, renderedCardsSnapshot = null, comparison = null, replacing = false;
+  let collaborationBudget = null;
+  const applyCollaborationBudget = () => {
+    const checkbox = $('experiment-collaboration'), rounds = $('experiment-rounds'), minutes = $('experiment-seconds');
+    if (!checkbox) return;
+    if (checkbox.checked) {
+      collaborationBudget ??= {rounds: rounds.value, minutes: minutes.value};
+      rounds.value = '1'; rounds.readOnly = true;
+      minutes.value = String(Math.max(30, Number(minutes.value) || 30));
+    } else {
+      rounds.readOnly = false;
+      if (collaborationBudget) { rounds.value = collaborationBudget.rounds; minutes.value = collaborationBudget.minutes; }
+      collaborationBudget = null;
+    }
+  };
+  const updateCollaborationControl = () => {
+    const checkbox = $('experiment-collaboration'), panel = $('experiment-collaboration-options'), unavailable = $('experiment-collaboration-unavailable');
+    if (!checkbox || !panel || !unavailable) return;
+    const available = controller.state.catalog?.availability.collaboration === true;
+    panel.hidden = Boolean(continuation);
+    checkbox.disabled = Boolean(continuation) || !available || controller.state.busy || Boolean(controller.state.pending) || Boolean(recycle?.locked);
+    unavailable.hidden = available;
+    if ((!available || continuation) && checkbox.checked) { checkbox.checked = false; applyCollaborationBudget(); }
+  };
   const feedbackDrafts = new Map(), comparisonStates = new Map(), disclosureStates = new Map();
   const releaseComparison = () => {
     replacing = true;
@@ -681,12 +757,15 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     const transferSkills = isTransfer && rows(transferCandidate?.method_version_ids).some(version =>
       rows(detail.methods).some(method => identity(method) === version && method.schema === 'video.animation-method.v2'));
     continuation = detail ? {commission_id: detail.id, candidate_id: candidateId, mode, criteria: detail.criteria,
+      collaboration_inherited: !isTransfer && detail.collaboration?.enabled === true,
       ui_preview: detail.ui_preview === true,
       ...(transferSkills ? {transfer_protocol: 'skills',
         // An inherited baseline belongs to another immutable brief. Its exact
         // demonstration goal is not exposed by this commission's detail.
         transfer_original_goal: transferCandidate.id === detail.baseline_candidate?.id ? '' : text(detail.goal)} : {})} : null;
     $('experiment-form').reset();
+    if ($('experiment-collaboration')) $('experiment-collaboration').checked = false;
+    collaborationBudget = null; $('experiment-rounds').readOnly = false;
     authoringControls.resetExperiment(detail?.resource_authoring);
     for (const id of ['reference', 'reference-start', 'reference-end']) {
       $('experiment-' + id).disabled = transferSkills;
@@ -703,6 +782,11 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
       const seconds = Number(detail.retry_budget?.max_seconds ?? detail.budget?.seconds);
       $('experiment-seconds').value = String(Number.isFinite(seconds) && seconds > 0 ? Math.min(60, Math.max(1, Math.ceil(seconds / 60))) : 15);
     }
+    if (continuation?.collaboration_inherited) {
+      $('experiment-rounds').value = '1'; $('experiment-rounds').readOnly = true;
+      const seconds = Number(detail.retry_budget?.max_seconds ?? detail.budget?.seconds);
+      $('experiment-seconds').value = String(Number.isFinite(seconds) && seconds > 0 ? Math.min(60, Math.max(1, Math.ceil(seconds / 60))) : 30);
+    }
     $('experiment-title').value = isTransfer ? (detail.title + ' · 迁移验证') : detail?.title ?? '';
     $('experiment-goal').value = isTransfer ? '' : detail?.goal ?? '';
     $('experiment-feedback').value = isRetry ? text(detail.feedback_text) : feedback;
@@ -715,11 +799,13 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
       : transferSkills ? '使用选定方法，为内容与结构均不同的新目标创作；本次不携带参考素材。请观看迁移结果后再决定发布。'
       : isTransfer ? '将使用选定样片背后的方法，为新目标创作。请观看迁移结果后再决定发布。'
       : detail ? '将基于选定样片与本次意见开始新实验，已有结果和发布版本保持。' : '';
+    if (continuation?.collaboration_inherited) $('experiment-base-note').textContent += ' 本次延续原协作分工与部件上限，只制作一版，共用本次总预算。';
     $('experiment-transfer-fields').hidden = !isTransfer;
     $('experiment-transfer-before').required = isTransfer; $('experiment-transfer-after').required = isTransfer;
     $('experiment-submit').textContent = isRetry ? '确认重新运行' : isTransfer ? '开始迁移验证' : detail ? '开始本次优化' : '开始本次实验';
     $('experiment-submit').disabled = detail?.ui_preview === true || controller.state.catalog?.availability.enabled !== true;
     $('experiment-unavailable').hidden = !($('experiment-submit').disabled);
+    updateCollaborationControl();
     show('form'); $('experiment-title').focus();
   };
   const renderCards = () => {
@@ -775,6 +861,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
       : state.catalog.availability.reason || '制作服务尚未就绪，可查看已有样片。' : '正在读取效果库…';
     $('gallery-engine-availability').textContent = state.catalog ? engineAvailability(state.catalog.availability) : '';
     authoringControls.update(state.catalog?.availability, state.busy || Boolean(state.pending) || Boolean(recycle?.locked));
+    updateCollaborationControl();
     renderCards();
     if (!formPanel.hidden) return;
     if (state.detail) {
@@ -871,6 +958,10 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     show(controller.state.detail ? 'detail' : 'home');
     if (controller.state.detail) controller.emit();
   });
+  $('experiment-collaboration')?.addEventListener('change', () => {
+    if ($('experiment-collaboration').checked) authoringControls.resetExperiment(null);
+    updateCollaborationControl(); applyCollaborationBudget();
+  });
   $('gallery-search').addEventListener('input', renderCards);
   $('gallery-state').addEventListener('change', renderCards);
   $('gallery-engine').addEventListener('change', renderCards);
@@ -883,6 +974,7 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     if (continuation?.ui_preview || recycle.locked || controller.state.catalog?.availability.enabled !== true) return;
     const fields = Object.fromEntries(new FormData($('experiment-form')));
     if (continuation) Object.assign(fields, {criteria_metadata: continuation.criteria,
+      collaboration_inherited: continuation.collaboration_inherited,
       ...(continuation.mode === 'retry' ? {retry_of_commission_id: continuation.commission_id}
         : {base_candidate_id: continuation.candidate_id,
           ...(continuation.mode === 'transfer' ? {transfer_commission_id: continuation.commission_id,

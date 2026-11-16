@@ -345,7 +345,7 @@ def load_scenario(path, source_dir, parent_dir, policy):
                          'video.animation-production.v1', 'video.animation-production.v2',
                          'video.animation-production.v3', 'video.animation-film-module.v1',
                          'video.animation-manim-recipe.v1',
-                         'video.joint-plan.v1', 'video.resource-plan.v1',
+                         'video.joint-plan.v1', 'video.resource-plan.v1', 'video.animation-collaboration.v1',
                          'video.animation-wikiskill-compile.v1', 'video.animation-wikiskill-compile.v2', 'video.joint-plan.v2'}:
         # Validate the exact root-owned, explicitly projected JSON/frame files.
         # No temporary workspace, renamed inputs, or implicit source is created.

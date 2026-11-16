@@ -479,7 +479,8 @@ def _effect_views(runs, demonstrations, memberships=(), deletions=(), separation
 
 class AnimationMethodService:
     def __init__(self, root, *, author_gateway, review_gateway, renderer, clock=time.time,
-                 runtime_capabilities=None, knowledge_store=None, manim_coordinator=None):
+                 runtime_capabilities=None, knowledge_store=None, manim_coordinator=None,
+                 collaboration_gateway=None):
         self.root = Path(root).absolute()
         _require(not any(path.is_symlink() for path in (self.root, *self.root.parents)))
         self.root.mkdir(parents=True, exist_ok=True)
@@ -487,6 +488,7 @@ class AnimationMethodService:
         self.methods = AnimationMethodStore(self.root / 'methods.sqlite3')
         self.commissions = AnimationMethodCommissionStore(self.root / 'commissions.sqlite3', clock=clock)
         self.author, self.reviewer, self.renderer = author_gateway, review_gateway, renderer
+        self.collaboration_author = collaboration_gateway
         self.manim = manim_coordinator
         from .lab_resource_stage import LabResourceStage
         self.resource_stage = LabResourceStage(self.root / 'resource-plans.sqlite3',
@@ -696,6 +698,13 @@ class AnimationMethodService:
             if operation['status'] != 'completed':
                 continue
             result = operation['result']
+            if operation['input'].get('schema') == 'video.animation-collaboration-input.v1':
+                self._experience(owner, 'authored_proposal', operation['id'], dict(
+                    commission_id=run['id'], operation_id=operation['id'],
+                    goal=run['frozen']['goal'], phase=operation['input']['phase'],
+                    input_sha256=operation['input_sha256'], result_sha256=operation['result_sha256'],
+                    scope='authored_collaborative_proposal_not_rendered_or_accepted'))
+                continue
             if operation['stage'] == 'render':
                 self._experience(owner, 'render', operation['id'], dict(
                     commission_id=run['id'], operation_id=operation['id'], goal=run['frozen']['goal'],
@@ -903,6 +912,7 @@ class AnimationMethodService:
         return dict(schema='video.animation-method-lab.v1', effects=effects, commissions=rows,
                     availability=dict(enabled=self.author is not None and self.reviewer is not None
                         and self.renderer is not None, reason=None,
+                        collaboration=self.collaboration_author is not None,
                         allowed_engines=capabilities['allowed_engines'] if capabilities else ['html-svg'],
                         authoring_libraries=deepcopy(capabilities.get('authoring_libraries', {})) if capabilities else {},
                         resource_authoring=dict(manim=self.manim.capabilities() if self.manim else
@@ -1038,6 +1048,9 @@ class AnimationMethodService:
         if run['frozen'].get('resource_authoring'):
             detail['resource_authoring'] = (self.resource_stage.view(owner, commission_id) if self.manim else
                 dict(kind='manim', status='unavailable', error='manim_resource_coordinator_required'))
+        if run['frozen'].get('collaboration'):
+            from .animation_collaboration import progress_view
+            detail['collaboration'] = progress_view(run)
         return detail
 
     @serialized_library_mutation
@@ -1045,7 +1058,7 @@ class AnimationMethodService:
         fields = {'request_id', 'title', 'goal', 'reference', 'duration_seconds', 'budget',
                   'base_commission_id', 'base_candidate_id', 'feedback', 'criteria', 'method_versions',
                   'role', 'baseline_demonstration_id', 'structural_changes', 'retry_of_commission_id',
-                  'research_record_ids', 'content_changes', 'resource_authoring'}
+                  'research_record_ids', 'content_changes', 'resource_authoring', 'collaboration'}
         if type(body) is dict and body.get('baseline_demonstration_id'):
             self.trash.require_demonstrations_visible(owner, [body['baseline_demonstration_id']])
         _require(type(body) is dict and {'request_id', 'goal', 'budget'} <= set(body)
@@ -1073,18 +1086,28 @@ class AnimationMethodService:
                          'animation_method_retry_relationship_invalid', 409)
                 if key in previous['frozen']:
                     data[key] = deepcopy(previous['frozen'][key])
-            for key in ('title', 'reference', 'duration_seconds', 'criteria', 'feedback', 'resource_authoring'):
+            for key in ('title', 'reference', 'duration_seconds', 'criteria', 'feedback', 'resource_authoring', 'collaboration'):
                 if key in previous['frozen']:
                     data.setdefault(key, deepcopy(previous['frozen'][key]))
-        if data.get('base_commission_id') and 'resource_authoring' not in data:
+        if data.get('base_commission_id'):
             baseline_run = self._get_visible_commission(owner, data['base_commission_id'])
-            if baseline_run['frozen'].get('resource_authoring'):
-                data['resource_authoring'] = deepcopy(baseline_run['frozen']['resource_authoring'])
+            for key in ('resource_authoring', 'collaboration'):
+                if key not in data and baseline_run['frozen'].get(key):
+                    data[key] = deepcopy(baseline_run['frozen'][key])
         budget = data['budget']
         _require(type(budget) is dict and set(budget) == {'max_rounds', 'max_seconds'})
         rounds, seconds = budget['max_rounds'], budget['max_seconds']
         _require(type(rounds) is int and 1 <= rounds <= 8 and type(seconds) is int and 60 <= seconds <= 3600)
         data['budget'] = dict(creator=rounds + 1, review=rounds, render=rounds, seconds=seconds)
+        if 'collaboration' in data:
+            from .animation_collaboration import validate_request, required_creator_budget
+            _require(type(data['collaboration']) is dict, 'animation_collaboration_request_invalid')
+            data['collaboration'] = validate_request(data['collaboration'], budget=budget)
+            _require(skill_mode and self.collaboration_author is not None,
+                     'animation_collaboration_not_admitted', 503)
+            _require(not data.get('resource_authoring') and data.get('role', 'reference') == 'reference',
+                     'animation_collaboration_scope_invalid')
+            data['budget']['creator'] = required_creator_budget(data['collaboration'])
         duration = data.setdefault('duration_seconds', 18)
         _require(type(duration) in (int, float) and 1 <= duration <= 60
                  and duration * 24 == int(duration * 24))
@@ -1173,7 +1196,8 @@ class AnimationMethodService:
         # Preflight is a read, not a paid task or budget reservation.
         _require(self.author is not None and self.reviewer is not None and self.renderer is not None,
                  'animation_method_service_unavailable', 503)
-        for gateway in (self.author, self.reviewer):
+        for gateway in (self.author, self.reviewer,
+                        *([self.collaboration_author] if data.get('collaboration') else [])):
             if callable(getattr(gateway, 'preflight', None)):
                 gateway.preflight(self.clock() + seconds)
         if skill_mode:
@@ -1184,11 +1208,15 @@ class AnimationMethodService:
                 self._experience(owner, 'brief', request_id, dict(
                     goal=data['goal'], feedback=data.get('feedback', ''),
                     role=data.get('role', 'reference'), scope='requested_goal_not_rendered_or_accepted'))
-                data['knowledge_snapshot_id'] = (None if data.get('role') == 'transfer'
-                                                 else self._knowledge_snapshot(owner)['id'])
+                data['knowledge_snapshot_id'] = (None if data.get('role') == 'transfer' else
+                    self.knowledge.snapshot(owner, page_ids=[], experience_ids=[])['id']
+                    if data.get('collaboration') else self._knowledge_snapshot(owner)['id'])
             # Build the complete first main JSON before reserving any paid
             # operation; research and Wiki cannot exceed the fixed reader.
-            self._document(owner, dict(frozen=data, operations=[]), 'plan')
+            if data.get('collaboration'):
+                self._collaboration_document(owner, dict(frozen=data, operations=[]), 'plan')
+            else:
+                self._document(owner, dict(frozen=data, operations=[]), 'plan')
         run = self.commissions.create(owner, data, request_id)
         return self.get(owner, run['id'])
 
@@ -1418,9 +1446,43 @@ class AnimationMethodService:
     def restore_trash(self, owner, entry_id, body):
         return self.trash.restore(owner, entry_id, body)
 
+    def _collaboration_document(self, owner, run, phase, **task):
+        from .animation_collaboration import operation_input
+        frozen = run['frozen']
+        constraints = dict(width=1280, height=720, fps=24,
+            duration_seconds=frozen.get('duration_seconds', 18),
+            **deepcopy(frozen.get('constraints', {'allowed_engines': ['html-svg']})))
+        plans = [op for op in run['operations'] if op['input'].get('phase') == 'plan'
+                 and op['status'] == 'completed']
+        standards = frozen.get('criteria') or (plans[0]['result']['criteria'] if plans else [])
+        selected = [self.methods.get_method(owner, version_id)
+                    for version_id in frozen.get('method_versions', [])]
+        base = frozen.get('base_candidate')
+        document = dict(goal=frozen['goal'], criteria=deepcopy(standards),
+            constraints=constraints, assets=deepcopy(frozen.get('assets', {})),
+            reference=deepcopy(frozen.get('reference')), feedback=frozen.get('feedback', ''),
+            methods=selected, base_source=deepcopy(base['source']) if base and phase == 'integrate' else None)
+        return operation_input(document, phase, config=frozen['collaboration'], **task)
+
+    def _schedule_collaboration(self, owner, run):
+        from .animation_collaboration import next_action
+        action = next_action(run, now=self.clock())
+        if action['kind'] == 'reserve':
+            for task in action['operations']:
+                document = self._collaboration_document(owner, run, task['phase'],
+                    brief=task.get('brief'), component_id=task.get('component_id'),
+                    dependencies=task.get('dependencies', []))
+                self.commissions.reserve(owner, run['id'], 'creator', document, task['idempotency_key'])
+        elif action['kind'] == 'render':
+            self.commissions.reserve(owner, run['id'], 'render', action['input'], action['idempotency_key'])
+        elif action['kind'] in {'stop', 'complete'}:
+            self.commissions.stop(owner, run['id'], action.get('reason', 'budget_exhausted'),
+                action.get('message', '本次协作初作已结束，可评价完整样片或继续发起优化'))
+
     def _document(self, owner, run, mode, *, base=None, feedback='', frames=None, comparison=None):
         active_protocol = self._protocol(run)
-        plan = next((op['result'] for op in run['operations'] if op['input'].get('mode') == 'plan'
+        plan = next((op['result'] for op in run['operations'] if (op['input'].get('mode') == 'plan'
+                     or op['input'].get('phase') == 'plan')
                      and op['status'] == 'completed'), None)
         standards = run['frozen'].get('criteria') or (plan['criteria'] if plan else [])
         versions = (base.get('method_versions', []) if base else run['frozen'].get('method_versions', []))
@@ -1513,8 +1575,13 @@ class AnimationMethodService:
                     review=dict(instruction='Assess the transferred application against the frozen criteria.')))
         if active_protocol is skill_protocol:
             transfer = run['frozen'].get('role') == 'transfer'
-            snapshot = (self.knowledge.get_snapshot(owner, run['frozen']['knowledge_snapshot_id'])
-                        if mode == 'plan' else self._knowledge_snapshot(owner)) if not transfer else None
+            if run['frozen'].get('collaboration') and mode == 'review':
+                # Review the actual candidate and its criteria. An empty,
+                # honestly captured snapshot avoids unrelated historical Wiki.
+                snapshot = self.knowledge.snapshot(owner, page_ids=[], experience_ids=[])
+            else:
+                snapshot = (self.knowledge.get_snapshot(owner, run['frozen']['knowledge_snapshot_id'])
+                            if mode == 'plan' else self._knowledge_snapshot(owner)) if not transfer else None
             document.update(knowledge_snapshot=snapshot, research_records=[] if transfer else [
                 self.methods.get_research(owner, record_id)
                 for record_id in run['frozen'].get('research_record_ids', [])])
@@ -1531,17 +1598,23 @@ class AnimationMethodService:
         return document
 
     def _advance_agent(self, owner, run, operation):
-        active_protocol = self._protocol(run)
-        gateway = self.reviewer if operation['stage'] == 'review' else self.author
+        collaborative = operation['input'].get('schema') == 'video.animation-collaboration-input.v1'
+        if collaborative:
+            from agent_service.profiles import video_animation_collaboration_contract as active_protocol
+            gateway = self.collaboration_author
+            _require(gateway is not None, 'animation_collaboration_not_admitted', 503)
+        else:
+            active_protocol = self._protocol(run)
+            gateway = self.reviewer if operation['stage'] == 'review' else self.author
         if operation['status'] == 'reserved':
             files = {active_protocol.INPUT_NAME: canonical_bytes(operation['input'])}
-            for frame in operation['input']['observation']['frames']:
+            for frame in operation['input'].get('observation', {}).get('frames', []):
                 path = self.root / 'frame-inputs' / frame['sha256']
                 raw = path.read_bytes()
                 _require(hashlib.sha256(raw).hexdigest() == frame['sha256'], 'animation_method_frame_changed', 409)
                 files[frame['file_name']] = raw
             refs = gateway.upload(operation['input'], files if gateway.visual_input else None)
-            if active_protocol is skill_protocol:
+            if active_protocol is skill_protocol or collaborative:
                 _require(type(refs) is list and all(type(row) is dict and {'path', 'sha256'} <= set(row)
                                                   for row in refs), 'animation_method_input_manifest_invalid')
                 self.commissions.record_input_manifest(owner, operation['id'], sorted([
@@ -1713,10 +1786,42 @@ class AnimationMethodService:
                 if resource_state != 'completed':
                     return
             self._sync_knowledge(owner, run)
-            active = next((op for op in run['operations']
-                           if op['status'] not in {'completed', 'failed', 'cancelled', 'released'}), None)
+            active_operations = [op for op in run['operations']
+                if op['status'] not in {'completed', 'failed', 'cancelled', 'released'}]
+            if (run['frozen'].get('collaboration') and len(active_operations) == 1
+                    and active_operations[0]['input'].get('phase') == 'component'
+                    and not run['cancel_requested'] and self.clock() < run['deadline_at']
+                    and not any(op['status'] in {'failed', 'cancelled'} for op in run['operations'])):
+                from .animation_collaboration import next_action
+                if next_action(run, now=self.clock())['kind'] == 'reserve':
+                    self._schedule_collaboration(owner, run)
+                    run = self.commissions.get(owner, commission_id)
+                    active_operations = [op for op in run['operations'] if op['status'] not in OP_TERMINAL]
+            if run['frozen'].get('collaboration') and len(active_operations) > 1:
+                failed = any(op['status'] in {'failed', 'cancelled'} for op in run['operations'])
+                errors = []
+                for operation in active_operations:
+                    stopping = failed or run['cancel_requested'] or self.clock() >= run['deadline_at']
+                    try:
+                        if operation['status'] == 'reserved' and stopping:
+                            self.commissions.release_unsubmitted(owner, operation['id'], {'reason': 'stopped_before_claim'})
+                        else:
+                            self._advance_agent(owner, dict(run, cancel_requested=stopping), operation)
+                    except (ServiceError, OSError) as error:
+                        # A transport outage on one original job must not
+                        # prevent a sibling from receiving its cancellation.
+                        errors.append(error)
+                    current = self.commissions.get(owner, commission_id)
+                    failed |= any(op['status'] in {'failed', 'cancelled'} for op in current['operations'])
+                if errors:
+                    raise errors[0]
+                return
+            active = active_operations[0] if active_operations else None
             if active:
-                if active['status'] == 'reserved' and (run['cancel_requested'] or self.clock() >= run['deadline_at']):
+                stopping = (run['cancel_requested'] or self.clock() >= run['deadline_at']
+                    or (run['frozen'].get('collaboration') and any(
+                        op['status'] in {'failed', 'cancelled'} for op in run['operations'])))
+                if active['status'] == 'reserved' and stopping:
                     self.commissions.release_unsubmitted(owner, active['id'], {'reason': 'stopped_before_claim'})
                     return
                 if active['stage'] == 'render':
@@ -1751,7 +1856,7 @@ class AnimationMethodService:
                     if result is not None:
                         self.commissions.complete(owner, active['id'], result)
                 else:
-                    self._advance_agent(owner, run, active)
+                    self._advance_agent(owner, dict(run, cancel_requested=bool(stopping)), active)
                 return
             if run['cancel_requested']:
                 self.commissions.stop(owner, commission_id, 'cancelled', '开发者取消了本次实验')
@@ -1794,11 +1899,21 @@ class AnimationMethodService:
                 # A new render needs a minimum launch/cleanup window. Do not
                 # spend another model call when its output cannot be rendered.
                 return
+            if run['frozen'].get('collaboration'):
+                # Final rendering and sampled review below share their existing
+                # artifact/acceptance path. Subtasks themselves never become
+                # library candidates or consume finished-video polish rounds.
+                from .animation_collaboration import next_action
+                action = next_action(run, now=self.clock())
+                if action['kind'] != 'complete':
+                    self._schedule_collaboration(owner, run)
+                    return
             plans = [op for op in run['operations'] if op['input'].get('mode') == 'plan']
-            if not plans:
+            if not plans and not run['frozen'].get('collaboration'):
                 self.commissions.reserve(owner, commission_id, 'creator', self._document(owner, run, 'plan'), 'plan')
                 return
-            creates = [op for op in run['operations'] if op['stage'] == 'creator' and op['input'].get('mode') == 'create']
+            creates = [op for op in run['operations'] if op['stage'] == 'creator'
+                       and (op['input'].get('mode') == 'create' or op['input'].get('phase') == 'integrate')]
             for authored in creates:
                 if not any(op['stage'] == 'render' and op['input'].get('author_operation_id') == authored['id']
                            for op in run['operations']):

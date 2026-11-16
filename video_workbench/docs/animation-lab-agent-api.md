@@ -53,6 +53,17 @@ curl --fail-with-body --cookie cookies.txt \
 
 `criteria` 可省略，由服务规划；显式提供时为 1–16 项，`id` 唯一，每项必须有 `id` 和非空 `description`（最长 4000 字符），可选 `requires_motion`、`requires_audio` 布尔值及 `observation` 文本。运动或音频要求只有实际观察证据才能判定；不能从静帧评审推断已满足。
 
+复杂效果可以显式选择按职责分工创作。先确认目录 `availability.collaboration` 严格为 `true`，然后在新建请求中加入以下字段；普通制作不传 `collaboration`，不改变原流程：
+
+```json
+{
+  "budget": {"max_rounds": 1, "max_seconds": 1800},
+  "collaboration": {"max_components": 3}
+}
+```
+
+上面是需要合入完整请求的字段片段。`max_components` 为 2–4 的整数；新建时显式开启，继续优化或重新运行可继承原协作配置。首版仅支持 Canvas 2D，不能与 Manim 预制资源或迁移任务合用。统筹先规划、部件分别创作、再整合为一条完整样片，调用方无需管理图层或单独发布部件。初版只制作一版，因此新建、继续优化或重新运行的 `budget.max_rounds` 均必须为 1；全部工作共用本次总时限，建议 1800 秒。预算最多包含 `max_components+2` 个创作任务（统筹、最多指定数量的部件、整合），另有 1 次样片渲染和 1 次评审。实际规划可少于上限；不要把上限当作实际消耗。`availability.collaboration` 为 `false` 或未返回时，不得提交此字段。
+
 ```sh
 curl --fail-with-body --cookie cookies.txt \
   -H 'Origin: https://video-service.panghuer.top' \
@@ -82,8 +93,11 @@ GET 只读，不会启动制作、执行模型、续跑任务或增加轮次。�
 | `summary` / `error` | 结果说明 / 失败代码；可能为空 |
 | `best_candidate_id` | 当前选中的候选，可能为空 |
 | `candidates` | 候选列表，包括 `id`、`media_url`、`source_url`、`technical_status` |
+| `collaboration` | 可选，只读协作进度：`enabled`、`stage`、`components` 的 `id`/`title`/`status`、`completed`/`total`、`author_calls_used`/`author_calls_max` |
 
 `completed` 也可能是预算用完或停止进展；请结合 `stop_reason`、`summary`、`remaining_issues` 和候选结果判断。响应中的 `budget`、`usage`、`remaining` 使用服务内部的 `creator`、`review`、`render`、`seconds` 计数，形状与提交时的预算不同。
+
+协作的常见 `stage` 为 `plan`（统筹）、`component`（部件）、`integrate`（整合）、`render`（生成样片）、`review`（完整样片评审）、`stopping`（停止中）、`completed`；调用方应容忍新增阶段。`author_calls_scope=reserved_creator_operations_not_provider_model_requests` 时，创作计数表示已占用任务额度，包含已预留任务，不等于实际模型请求数。仅展示服务实际返回的计数和状态，字段缺失不能推断为零。部件完成不等于完整效果已获认可，最终仍检查委托状态、完整候选及其评审。
 
 从详情取得实际候选 ID 或返回的 URL 后下载。返回 URL 可能是站点根相对地址，应相对于同一公网 origin 解析。下载同样需要登录 Cookie。
 

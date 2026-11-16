@@ -171,9 +171,11 @@ class AnimationMethodCommissionStore:
             _require(operation["result_sha256"] == digest(operation["result"]),
                      "animation_method_operation_result_changed", 409)
         if 'input_resource_manifest' in operation:
-            expected = [dict(path='animation-method-input.json', sha256=operation['input_sha256'])]
+            collaborative = operation['input'].get('schema') == 'video.animation-collaboration-input.v1'
+            expected = [dict(path='collaboration-input.json' if collaborative else 'animation-method-input.json',
+                             sha256=operation['input_sha256'])]
             expected.extend(dict(path=row['file_name'], sha256=row['sha256'])
-                            for row in operation['input']['observation']['frames'])
+                            for row in operation['input'].get('observation', {}).get('frames', []))
             _require(operation['input_resource_manifest'] == sorted(expected, key=lambda row: row['path'])
                      and operation.get('input_resource_manifest_sha256') == digest(operation['input_resource_manifest']),
                      'animation_method_operation_frozen_input_changed', 409)
@@ -258,10 +260,18 @@ class AnimationMethodCommissionStore:
                      "baseline_demonstration_id", "structural_changes",
                      "retry_of_commission_id",
                      "protocol_schema", "knowledge_snapshot_id", "research_record_ids", "content_changes",
-                     "resource_authoring",
+                     "resource_authoring", "collaboration",
                  })
         _text(body["goal"], 16000)
         limits = _budget(body["budget"])
+        if 'collaboration' in body:
+            from .animation_collaboration import validate_request, required_creator_budget
+            config = validate_request(body['collaboration'])
+            _require(config == body['collaboration']
+                     and limits['creator'] == required_creator_budget(config)
+                     and limits['render'] == 1 and limits['review'] == 1
+                     and not body.get('resource_authoring') and body.get('role', 'reference') == 'reference',
+                     'animation_collaboration_budget_invalid')
         if "title" in body:
             _text(body["title"], 500)
         if "feedback" in body:
@@ -404,7 +414,24 @@ class AnimationMethodCommissionStore:
                      "animation_method_commission_stopped", 409)
             _require(self.clock() < commission["deadline_at"],
                      "animation_method_commission_deadline_exceeded", 409)
-            _require(not self._active(db, commission_id), "animation_method_operation_in_progress", 409)
+            active = [json.loads(row['document']) for row in db.execute(
+                "SELECT document FROM animation_method_commission_operations WHERE commission_id=? "
+                "AND status NOT IN('completed','failed','cancelled','released')", (commission_id,))]
+            if active:
+                # Only independent component authors may overlap. The same
+                # transaction enforces the two-slot limit and frozen plan.
+                from agent_service.profiles.video_animation_collaboration_contract import (
+                    INPUT_SCHEMA as collaboration_schema, validate_input as validate_collaboration)
+                _require(commission['frozen'].get('collaboration') is not None
+                         and stage == 'creator' and input_document.get('schema') == collaboration_schema
+                         and input_document.get('phase') == 'component' and len(active) < 2
+                         and all(op['stage'] == 'creator'
+                             and op['input'].get('schema') == collaboration_schema
+                             and op['input'].get('phase') == 'component'
+                             and op['input'].get('brief') == input_document.get('brief')
+                             and op['input'].get('component_id') != input_document.get('component_id')
+                             for op in active), 'animation_method_operation_in_progress', 409)
+                validate_collaboration(input_document)
             usage = self._usage(db, commission_id)
             _require(usage[stage] < commission["budget"][stage],
                      "animation_method_commission_budget_exhausted", 409)
@@ -446,11 +473,13 @@ class AnimationMethodCommissionStore:
         with self._transaction() as db:
             operation = self._operation(db, owner, operation_id)
             document = operation['input']
-            _require(document.get('schema') == 'video.animation-method-input.v2',
+            collaborative = document.get('schema') == 'video.animation-collaboration-input.v1'
+            _require(collaborative or document.get('schema') == 'video.animation-method-input.v2',
                      'animation_method_input_manifest_invalid')
-            expected = [{'path': 'animation-method-input.json', 'sha256': operation['input_sha256']}]
+            expected = [{'path': 'collaboration-input.json' if collaborative else 'animation-method-input.json',
+                         'sha256': operation['input_sha256']}]
             expected.extend(dict(path=row['file_name'], sha256=row['sha256'])
-                            for row in document['observation']['frames'])
+                            for row in document.get('observation', {}).get('frames', []))
             _require(manifest == sorted(expected, key=lambda row: row['path']),
                      'animation_method_input_manifest_invalid')
             if 'input_resource_manifest' in operation:

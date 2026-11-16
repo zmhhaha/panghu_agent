@@ -112,6 +112,11 @@ def measured_package(config, policy, control_root):
         root = PACKED_BUNDLE_ROOT
         mandatory = {'manifest.json', *PACKED_BUNDLE_FILES}
         verified_packed_bundle()
+    elif policy.name == 'video.animation-collaboration.v1':
+        from .profiles.video_animation_collaboration import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
+        root = BUNDLE_ROOT
+        mandatory = {'manifest.json', *BUNDLE_FILES}
+        verified_bundle()
     elif policy.name == 'video.animation-wikiskill-compile.v2':
         from .profiles.video_animation_wikiskill_v2 import BUNDLE_ROOT, BUNDLE_FILES, verified_bundle
         root = BUNDLE_ROOT

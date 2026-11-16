@@ -38,27 +38,39 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                   method_agent_token_file=None, engine_admission_file=None, method_protocol='skills',
                   method_project_runtime='native-seek', authoring_library_admission_file=None,
                   manim_recipe_agent_token_file=None, manim_resource_image=None,
-                  manim_resource_admission_file=None, film_manim_admission_file=None):
+                  manim_resource_admission_file=None, film_manim_admission_file=None,
+                  enable_collaborative_authoring=False, collaboration_agent_token_file=None):
     if enable_isolated_rendering is not True:
         raise ValueError('animation_creation_isolated_rendering_opt_in_required')
     if method_protocol not in {'skills', 'legacy'}:
         raise ValueError('animation_method_protocol_invalid')
     if method_project_runtime not in {'native-seek', 'hyperframes-core-bridge'}:
         raise ValueError('animation_method_project_runtime_invalid')
+    if enable_collaborative_authoring or collaboration_agent_token_file is not None:
+        if enable_collaborative_authoring is not True or collaboration_agent_token_file is None or method_agent_token_file is None:
+            raise ValueError('animation_collaboration_config_incomplete')
+        if method_protocol != 'skills' or method_project_runtime != 'hyperframes-core-bridge':
+            raise ValueError('animation_collaboration_hyperframes_skills_required')
     agent_token, executor_token = read_token(agent_token_file), read_token(token_file)
     if agent_token == executor_token:
         raise ValueError('animation_creation_distinct_credentials_required')
+    method_token = collaboration_token = None
+    if enable_collaborative_authoring:
+        method_token = read_token(method_agent_token_file)
+        collaboration_token = read_token(collaboration_agent_token_file)
+        if collaboration_token in {agent_token, executor_token, method_token}:
+            raise ValueError('animation_collaboration_distinct_credentials_required')
     renderer = DurableAnimationRenderer(Path(root) / 'renders', image=renderer_image,
         assets_dir=assets_dir, enabled=True)
     client = AgentClient(agent_url, agent_token, timeout=30)
-    method_client = manim_client = None
+    method_client = collaboration_client = manim_client = None
     try:
         service = AnimationCreationService(root, creation_gateway=AnimationCreateGateway(client),
             review_gateway=AnimationInputReviewGateway(client), renderer=renderer,
             historical_review_gateways={'video.animation-review.v3': AnimationBatchReviewGateway(client)})
         methods = film_resources = None
         if method_agent_token_file is not None:
-            method_token = read_token(method_agent_token_file)
+            method_token = method_token if method_token is not None else read_token(method_agent_token_file)
             if method_token in {agent_token, executor_token}:
                 raise ValueError('animation_method_distinct_credentials_required')
             method_client = AgentClient(agent_url, method_token, timeout=30)
@@ -72,6 +84,10 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                     authoring_library_admission_file=authoring_library_admission_file,
                     hyperframes=method_project_runtime == 'hyperframes-core-bridge',
                     legacy_bridge=method_project_runtime == 'hyperframes-core-bridge'))
+            if enable_collaborative_authoring:
+                from .animation_collaboration_gateway import AnimationCollaborationGateway
+                collaboration_client = AgentClient(agent_url, collaboration_token, timeout=30)
+                methods.collaboration_author = AnimationCollaborationGateway(collaboration_client)
             from .animation_wikiskill_store import AnimationWikiSkillStore
             from .animation_wikiskill_coordinator import WikiSkillCoordinator
             from .animation_wikiskill_gateway import AnimationWikiSkillGateway
@@ -89,7 +105,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
             from .manim_resource_executor import ManimResourceExecutor
             from .manim_method_admission import validate_admission
             manim_token = read_token(manim_recipe_agent_token_file)
-            if manim_token in {agent_token, executor_token, method_token}:
+            if manim_token in {agent_token, executor_token, method_token, collaboration_token}:
                 raise ValueError('manim_method_distinct_credentials_required')
             manim_client = AgentClient(agent_url, manim_token, timeout=30)
             adapter = SkillProductionAdapter(methods.published_catalogue, methods.read_methods,
@@ -134,10 +150,12 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
         server = CreationHTTPServer(service, executor_token, host=listen, port=port,
             method_service=methods, film_resource_service=film_resources,
             film_review_service=FilmReviewProxy(Path(root) / 'film-reviews', service.review_gateway))
-        server.close_callbacks = tuple(client.close for client in (method_client, manim_client) if client is not None)
+        server.close_callbacks = tuple(client.close for client in (method_client, collaboration_client, manim_client) if client is not None)
     except BaseException:
         if manim_client is not None:
             manim_client.close()
+        if collaboration_client is not None:
+            collaboration_client.close()
         if method_client is not None:
             method_client.close()
         client.close()
@@ -151,6 +169,10 @@ def main(argv=None):
     parser.add_argument('--agent-url', required=True)
     parser.add_argument('--agent-token-file', type=Path, required=True)
     parser.add_argument('--method-agent-token-file', type=Path)
+    parser.add_argument('--enable-collaborative-authoring', action='store_true',
+        help='Explicitly enable the separately admitted collaborative author; no task starts at boot.')
+    parser.add_argument('--collaboration-agent-token-file', type=Path,
+        help='Distinct token for the separately admitted video-animation-collaboration caller; requires explicit enablement.')
     parser.add_argument('--method-protocol', choices=('skills', 'legacy'), default='skills')
     parser.add_argument('--method-project-runtime', choices=('native-seek', 'hyperframes-core-bridge'),
         default='native-seek', help='Explicit real HyperFrames event bridge; requires separate HyperFrames engine admission.')

@@ -20,7 +20,7 @@ PROFILES = frozenset({'video.animation-wikiskill-compile.v1', 'video.animation-w
                       'video.animation-production.v1', 'video.animation-production.v2',
                       'video.animation-production.v3', 'video.animation-film-module.v1',
                       'video.animation-manim-recipe.v1',
-                      'video.joint-plan.v1', 'video.resource-plan.v1'})
+                      'video.joint-plan.v1', 'video.resource-plan.v1', 'video.animation-collaboration.v1'})
 
 
 class AnimationWorkerHostError(ValueError):

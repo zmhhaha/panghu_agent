@@ -3,7 +3,7 @@
   "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
   "info": {
     "title": "动画效果库外部 Agent API",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "现有 REST JSON API 的外部 Agent 支持子集：目录、异步制作、状态、反馈、取消、视频及源码下载。沿用 OAuth 登录 Cookie 和开发者权限；不支持 Bearer，独立长期机器凭据尚未实现。Cookie 文件由用户安全提供，调用方不读取或导出浏览器凭据。POST 还必须提供公网同源 Origin、catalog.csrf_token 和 application/json。GET 只读，不启动或推进执行。未列出的响应字段属于服务扩展，调用方应忽略。发布与人类验收不属于本合同。",
     "x-guide-url": "https://video-service.panghuer.top/dev/animations/agent-api.html",
     "x-client-url": "https://video-service.panghuer.top/dev/animations/agent-api-client.py"
@@ -58,6 +58,14 @@
                   {"id": "focus", "description": "选中数据点与总体分布的对应关系清楚。"},
                   {"id": "labels", "description": "关键标签完整可读且不遮挡主要图形。"}
                 ]
+              }},
+              "collaborativeAnimation": {"summary": "显式开启协作；仅在 availability.collaboration=true 时提交", "value": {
+                "request_id": "56a61685-1b73-473c-8f45-a1c537d9909e",
+                "title": "多种运动共同解释一次触发",
+                "goal": "创作完整动态图解，让主对象、周围群体与场景响应按同一因果节奏协同，保持统一构图。由统筹划分职责，最终只交付一条完整样片。",
+                "duration_seconds": 18,
+                "budget": {"max_rounds": 1, "max_seconds": 1800},
+                "collaboration": {"max_components": 3}
               }},
               "continueCandidate": {"summary": "候选和委托 ID 应替换为实际返回值", "value": {
                 "request_id": "bb8c0924-41c1-4da1-b2b5-c0e038ca7741",
@@ -258,6 +266,27 @@
         },
         "dependentRequired": {"start_seconds": ["end_seconds"], "end_seconds": ["start_seconds"]}
       },
+      "CollaborationRequest": {
+        "type": "object", "required": ["max_components"], "additionalProperties": false,
+        "description": "新建实验仅显式提供时启用；继续优化或重新运行可继承原协作配置。先检查 availability.collaboration=true；budget.max_rounds 必须为 1。初版仅支持 Canvas，不与 Manim 预制资源或迁移任务合用。统筹、最多 max_components 个部件与整合共最多 max_components+2 个创作任务，另有 1 次样片渲染和 1 次评审，均计入本次总时限；建议 max_seconds=1800。不为部件创建独立效果。",
+        "properties": {"max_components": {"type": "integer", "minimum": 2, "maximum": 4}}
+      },
+      "CollaborationProgress": {
+        "type": "object", "additionalProperties": true,
+        "description": "只读的真实协作进度。未返回的计数表示尚未提供，不能推断为零；阶段或部件完成不等于完整样片质量认可。",
+        "properties": {
+          "enabled": {"type": "boolean"},
+          "stage": {"type": "string", "description": "常见阶段 plan、component、integrate、render、review、completed；失败或取消以实际状态为准。调用方应容忍新增阶段。"},
+          "completed": {"type": "integer", "minimum": 0},
+          "total": {"type": "integer", "minimum": 0},
+          "author_calls_used": {"type": "integer", "minimum": 0},
+          "author_calls_max": {"type": "integer", "minimum": 0},
+          "author_calls_scope": {"type": "string", "description": "reserved_creator_operations_not_provider_model_requests 表示已占用的创作任务额度，包含已预留任务，不等于实际模型请求数。"},
+          "components": {"type": "array", "items": {"type": "object", "additionalProperties": true, "properties": {
+            "id": {"type": "string"}, "title": {"type": "string"}, "status": {"type": "string"}
+          }}}
+        }
+      },
       "CommissionRequest": {
         "type": "object", "required": ["request_id", "goal", "budget"], "additionalProperties": false,
         "description": "对外支持的提交子集，禁止提交身份、运行环境或发布验收字段。可选字段请省略而非传 null。",
@@ -267,13 +296,17 @@
           "goal": {"type": "string", "minLength": 1, "maxLength": 16000, "pattern": "\\S"},
           "duration_seconds": {"type": "number", "minimum": 1, "maximum": 60, "default": 18, "description": "24 fps 整帧边界，即 duration_seconds * 24 必须为整数。"},
           "budget": {"$ref": "#/components/schemas/BudgetRequest"},
+          "collaboration": {"$ref": "#/components/schemas/CollaborationRequest"},
           "criteria": {"$ref": "#/components/schemas/Criteria"},
           "reference": {"$ref": "#/components/schemas/Reference"},
           "base_commission_id": {"$ref": "#/components/schemas/Identifier"},
           "base_candidate_id": {"$ref": "#/components/schemas/Identifier", "description": "须属于 base_commission_id；省略则采用基线 best_candidate_id。"},
           "feedback": {"type": "string", "maxLength": 16000, "description": "继续优化的改进目标，不等同于单独保存 feedback 意见。"}
         },
-        "dependentRequired": {"base_candidate_id": ["base_commission_id"]}
+        "dependentRequired": {"base_candidate_id": ["base_commission_id"]},
+        "allOf": [{"if": {"required": ["collaboration"]}, "then": {
+          "properties": {"budget": {"properties": {"max_rounds": {"const": 1}}}}
+        }}]
       },
       "BudgetCounters": {
         "type": "object", "additionalProperties": true,
@@ -311,6 +344,7 @@
             "properties": {
               "schema": {"type": "string", "const": "video.animation-method-lab-detail.v1"},
               "duration_seconds": {"type": "number"},
+              "collaboration": {"anyOf": [{"$ref": "#/components/schemas/CollaborationProgress"}, {"type": "null"}]},
               "criteria": {"type": "array", "items": {"$ref": "#/components/schemas/Criterion"}, "description": "规划完成前可能为空。"},
               "candidates": {"type": "array", "items": {"$ref": "#/components/schemas/Candidate"}},
               "budget": {"$ref": "#/components/schemas/BudgetCounters"},
@@ -327,7 +361,7 @@
         "type": "object", "required": ["effects", "commissions", "availability", "csrf_token"], "additionalProperties": true,
         "properties": {
           "csrf_token": {"type": "string", "minLength": 1, "description": "敏感防伪 token，只用于 POST 头，不记录日志；Python 客户端的 catalog 输出隐藏它。"},
-          "availability": {"type": "object", "required": ["enabled"], "additionalProperties": true, "properties": {"enabled": {"type": "boolean"}, "reason": {"type": ["string", "null"]}, "allowed_engines": {"type": "array", "items": {"type": "string"}}}},
+          "availability": {"type": "object", "required": ["enabled"], "additionalProperties": true, "properties": {"enabled": {"type": "boolean"}, "collaboration": {"type": "boolean", "description": "仅 true 表示协作创作已准入；false 或未返回时不得提交 collaboration。"}, "reason": {"type": ["string", "null"]}, "allowed_engines": {"type": "array", "items": {"type": "string"}}}},
           "effects": {"type": "array", "items": {"type": "object", "additionalProperties": true, "properties": {"id": {"type": "string"}, "title": {"type": "string"}, "open_commission_id": {"type": ["string", "null"]}}}},
           "commissions": {"type": "array", "items": {"$ref": "#/components/schemas/CommissionSummary"}}
         }

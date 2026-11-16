@@ -20,11 +20,13 @@ from .animation_creation_service import _run_lock
 from .animation_method_commissions import OP_TERMINAL, TERMINAL
 from .animation_method_gateway import (AnimationMethodAuthorGateway, AnimationMethodReviewGateway,
     AnimationSkillMethodAuthorGateway, AnimationSkillMethodReviewGateway)
+from .animation_collaboration_gateway import AnimationCollaborationGateway
 
 _PROBES = ThreadPoolExecutor(max_workers=4, thread_name_prefix='library-stop-read')
 _PROBE_SLOTS = threading.BoundedSemaphore(4)
 _AGENT_STOPPED = frozenset({'completed', 'failed', 'cancelled', 'needs_input', 'timed_out'})
 _METHOD_STOP_GATEWAYS = {
+    AnimationCollaborationGateway.protocol.INPUT_SCHEMA: {'creator': AnimationCollaborationGateway},
     AnimationMethodAuthorGateway.protocol.INPUT_SCHEMA: {
         'creator': AnimationMethodAuthorGateway, 'review': AnimationMethodReviewGateway},
     AnimationSkillMethodAuthorGateway.protocol.INPUT_SCHEMA: {
@@ -134,8 +136,11 @@ class AnimationMethodTrash:
                 and (op['status'] != 'completed' or op.get('result_sha256') == digest(op['result'])),
                 'animation_method_trash_record_changed', 409)
             if 'input_resource_manifest' in op:
-                expected = [dict(path='animation-method-input.json', sha256=op['input_sha256'])]
-                expected.extend(dict(path=r['file_name'], sha256=r['sha256']) for r in op['input']['observation']['frames'])
+                collaborative = op['input'].get('schema') == AnimationCollaborationGateway.protocol.INPUT_SCHEMA
+                expected = [dict(path='collaboration-input.json' if collaborative else 'animation-method-input.json',
+                                 sha256=op['input_sha256'])]
+                expected.extend(dict(path=r['file_name'], sha256=r['sha256'])
+                                for r in op['input'].get('observation', {}).get('frames', []))
                 require(op['input_resource_manifest'] == sorted(expected, key=lambda r: r['path'])
                     and op.get('input_resource_manifest_sha256') == digest(op['input_resource_manifest']),
                     'animation_method_trash_record_changed', 409)
@@ -270,7 +275,8 @@ class AnimationMethodTrash:
 
     def _stop_gateway(self, operation):
         schema, stage = operation['input'].get('schema'), operation['stage']
-        gateway = self.service.reviewer if stage == 'review' else self.service.author
+        gateway = (self.service.collaboration_author if schema == AnimationCollaborationGateway.protocol.INPUT_SCHEMA
+                   else self.service.reviewer if stage == 'review' else self.service.author)
         expected = _METHOD_STOP_GATEWAYS.get(schema, {}).get(stage)
         require(gateway is not None and expected is not None, 'animation_method_trash_stop_unproven', 409)
         # Lookup uses frozen business/idempotency namespaces. Keep the same

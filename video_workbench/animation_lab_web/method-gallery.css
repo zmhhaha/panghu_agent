@@ -78,3 +78,7 @@ label{display:block;color:#c8d3e4;font-size:13px;font-weight:600}input,textarea,
 .removal-dialog-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: #060b14c9; }
 .removal-confirmation { width: min(560px,100%); max-height: 90vh; overflow: auto; margin: 0; box-shadow: 0 24px 90px #0009; }
 .removal-confirmation p { overflow-wrap: anywhere; }
+.collaboration-progress p:last-child { margin-bottom: 0; }
+.collaboration-components { list-style: none; margin: 12px 0; padding: 0; }
+.collaboration-components li { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.collaboration-components li > span:first-child { overflow-wrap: anywhere; }
