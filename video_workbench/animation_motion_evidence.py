@@ -119,6 +119,7 @@ def _functions(code):
     result = {}
     patterns = (
         re.compile(r'\bfunction\s+(' + _NAME + r')\s*\(([^()]*)\)\s*\{'),
+        re.compile(r'\b(' + _NAME + r')\s*(?:=|:)\s*(?:async\s*)?function\s*\(([^()]*)\)\s*\{'),
         re.compile(r'\b(seek)\s*\(([^()]*)\)\s*\{'),
         re.compile(r'\b(' + _NAME + r')\s*(?:=|:)\s*(?:async\s*)?(?:\(([^()]*)\)|(' + _NAME + r'))\s*=>\s*'),
     )

@@ -76,6 +76,16 @@ api.seek=draw;'''
     assert motion(*fixture(source(js, engine='three')))[0]['id'] == 'native-js'
 
 
+def test_registered_seek_can_forward_clock_to_assigned_function_expression():
+    js = '''let compose=null;
+window.__animationExperiment={seek(seconds){if(compose)compose(seconds);}};
+compose=function(seconds){const number=Number(seconds),t=Math.max(0,number);
+ctx.globalAlpha=Math.min(1,t/10);ctx.drawImage(painting,0,0);};'''
+    assert motion(*fixture(source(js)))[0]['id'] == 'native-js'
+    unrelated = js.replace('if(compose)compose(seconds);', 'ctx.drawImage(painting,0,0);')
+    assert motion(*fixture(source(unrelated))) == []
+
+
 def test_svg_helper_and_template_motion_are_recognized_without_promoting_unknown_syntax():
     js = '''const set=(id,k,v)=>document.getElementById(id).setAttribute(k,String(v));
 function seek(seconds){const x=seconds*20;set('subject','transform',`translate(${x} 0)`);}
