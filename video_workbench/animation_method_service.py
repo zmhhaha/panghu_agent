@@ -144,6 +144,14 @@ def _candidates(run):
     return rows
 
 
+def _representative_candidate(run):
+    if run['state'] != 'completed':
+        return None
+    return next((item for item in _candidates(run)
+                 if item['id'] == run['best_candidate_id']
+                 and item.get('technical', {}).get('status') == 'passed'), None)
+
+
 def _finite_number(value):
     # Do not coerce unbounded JSON integers to float before range validation.
     return type(value) is int or (type(value) is float and math.isfinite(value))
@@ -364,23 +372,23 @@ def _effect_views(runs, demonstrations, memberships=(), deletions=()):
                     and run['frozen'].get('role', 'reference') != 'transfer'
                     and not relation_issues[run['id']]):
                 children.setdefault(parents[run['id']], []).append(run)
-        # An empty stopped retry offers no competing sample. Keep branches
-        # with an active attempt, a retained sample or any such descendant;
-        # a failed intermediate retry must not hide a later successful child.
-        live_branches = set()
+        # Only completed, technically valid recorded choices compete for the
+        # cover. Failed attempts can inherit a baseline without making a new
+        # choice; keep them as bridges when a descendant did complete.
+        representative_branches = set()
         for run in members:
-            if run['state'] in TERMINAL and not _candidates(run):
+            if _representative_candidate(run) is None:
                 continue
             current = run
-            while current['id'] not in live_branches:
-                live_branches.add(current['id'])
+            while current['id'] not in representative_branches:
+                representative_branches.add(current['id'])
                 if (kinds[current['id']] not in {'continuation', 'retry'}
                         or current['frozen'].get('role', 'reference') == 'transfer'
                         or relation_issues[current['id']] or parents[current['id']] is None):
                     break
                 current = by_id[parents[current['id']]]
         children = {parent: [run for run in descendants
-                            if kinds[run['id']] != 'retry' or run['id'] in live_branches]
+                            if run['id'] in representative_branches]
                     for parent, descendants in children.items()}
         current = original
         # A linear continuation/retry can carry its recorded best forward, including
@@ -389,13 +397,9 @@ def _effect_views(runs, demonstrations, memberships=(), deletions=()):
         while children.get(current['id']):
             next_runs = children[current['id']]
             if len(next_runs) != 1:
-                representative = original
                 break
             current = next_runs[0]
-            if current['state'] == 'completed' and any(
-                    item['id'] == current['best_candidate_id']
-                    and (kinds[current['id']] != 'retry' or item.get('technical', {}).get('status') == 'passed')
-                    for item in _candidates(current)):
+            if _representative_candidate(current) is not None:
                 representative = current
         candidate = next((item for item in _candidates(representative)
                           if item['id'] == representative['best_candidate_id']), None)

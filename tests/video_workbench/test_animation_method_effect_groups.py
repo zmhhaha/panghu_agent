@@ -22,6 +22,22 @@ def effect_for(service, commission_id):
                 if any(run['id'] == commission_id for run in row['commissions']))
 
 
+def advance_to_own_sample(service, commission_id, *, reviewed=False):
+    # Public candidate lists include the inherited baseline. Only the raw
+    # commission's own candidates prove this inert test attempt made a sample.
+    for _ in range(50):
+        run = service.commissions.get('developer', commission_id)
+        if run['candidates'] and (not reviewed or run['reviews']):
+            assert run['state'] not in {'completed', 'cancelled', 'failed'}
+            own = run['candidates'][-1]
+            assert own['commission_id'] == commission_id
+            assert own['id'] != run['frozen']['base_candidate_id']
+            assert own['technical']['status'] == 'passed'
+            return run
+        service.advance('developer', commission_id)
+    pytest.fail('fixture attempt did not retain its own sample')
+
+
 def alter_frozen_fixture(service, commission_id, **changes):
     """Model an imported unresolved relation; production reads must not repair it."""
     with sqlite3.connect(service.commissions.path) as db:
@@ -103,6 +119,138 @@ def test_competing_continuation_branches_keep_original_representative_and_all_ch
     assert effect['best_candidate']['id'] == original['best_candidate_id']
     assert {row['id'] for row in effect['commissions']} == {original['id'], first['id'], second['id']}
     assert service.get('developer', second['id'])['effect']['commissions'] == effect['commissions']
+
+
+def test_failed_side_branches_cannot_hide_rebuild_through_failed_continuation_and_retry(work):
+    service, creator, reviewer, renderer = work
+    original = finish(service, start(service)['id'])
+    empty = start(service, base_commission_id=original['id'])
+    service.commissions.stop('developer', empty['id'], 'failed', 'Fixture empty side branch')
+    sampled = start(service, base_commission_id=original['id'])
+    advance_to_own_sample(service, sampled['id'])
+    service.commissions.stop('developer', sampled['id'], 'failed', 'Fixture sampled side branch')
+    bridge = start(service, base_commission_id=original['id'])
+    service.commissions.stop('developer', bridge['id'], 'failed', 'Fixture failed continuation bridge')
+    retry = start(service, retry_of_commission_id=bridge['id'])
+    retry_sample = advance_to_own_sample(service, retry['id'])['candidates'][-1]
+    service.commissions.stop('developer', retry['id'], 'failed', 'Fixture failed retry bridge')
+    rebuilt = finish(service, start(service, base_commission_id=retry['id'],
+        base_candidate_id=retry_sample['id'])['id'])
+    before = history(service)
+    calls = (len(creator.submissions), len(reviewer.submissions), len(renderer.calls))
+
+    effect = effect_for(service, rebuilt['id'])
+    assert rebuilt['state'] == 'completed'
+    assert rebuilt['best_candidate_id'] not in {original['best_candidate_id'], retry_sample['id']}
+    assert effect['open_commission_id'] == rebuilt['id']
+    assert effect['best_candidate']['id'] == rebuilt['best_candidate_id']
+    assert {row['id'] for row in effect['commissions']} == {
+        row['id'] for row in (original, empty, sampled, bridge, retry, rebuilt)}
+    assert [row['kind'] for row in effect['commissions']] == [
+        'original', 'continuation', 'continuation', 'continuation', 'retry', 'continuation']
+    assert service.artifact('developer', retry['id'], retry_sample['id'], 'media')
+    assert history(service) == before
+    assert calls == (len(creator.submissions), len(reviewer.submissions), len(renderer.calls))
+
+
+@pytest.mark.parametrize('state', ['failed', 'cancelled'])
+@pytest.mark.parametrize('recorded_best', ['baseline', 'own'])
+def test_stopped_branch_with_own_passed_sample_is_not_a_completed_choice(work, state, recorded_best):
+    service, _, _, _ = work
+    original = finish(service, start(service)['id'])
+    completed = finish(service, start(service, base_commission_id=original['id'])['id'])
+    stopped = start(service, base_commission_id=original['id'])
+    run = advance_to_own_sample(service, stopped['id'], reviewed=recorded_best == 'own')
+    expected_best = run['candidates'][-1]['id'] if recorded_best == 'own' else original['best_candidate_id']
+    assert run['best_candidate_id'] == expected_best
+    service.commissions.stop('developer', stopped['id'], state, 'Fixture stopped sampled branch')
+    before = history(service)
+
+    effect = effect_for(service, stopped['id'])
+    assert effect['open_commission_id'] == completed['id']
+    assert effect['best_candidate']['id'] == completed['best_candidate_id']
+    retained = next(row for row in effect['commissions'] if row['id'] == stopped['id'])
+    assert retained['state'] == state and retained['best_candidate_id'] == expected_best
+    assert service.artifact('developer', stopped['id'], run['candidates'][-1]['id'], 'media')
+    assert history(service) == before
+
+
+@pytest.mark.parametrize('with_sample', [False, True])
+def test_active_side_branch_keeps_state_without_hiding_completed_choice(work, with_sample):
+    service, _, _, _ = work
+    original = finish(service, start(service)['id'])
+    completed = finish(service, start(service, base_commission_id=original['id'])['id'])
+    active = start(service, base_commission_id=original['id'])
+    if with_sample:
+        advance_to_own_sample(service, active['id'])
+    run = service.commissions.get('developer', active['id'])
+    before = history(service)
+
+    effect = effect_for(service, active['id'])
+    assert effect['open_commission_id'] == completed['id']
+    assert effect['best_candidate']['id'] == completed['best_candidate_id']
+    assert effect['state'] == run['state']
+    assert next(row for row in effect['commissions'] if row['id'] == active['id'])['state'] == run['state']
+    assert history(service) == before
+
+
+def test_later_competing_choices_keep_last_unambiguous_representative(work):
+    service, _, _, _ = work
+    original = finish(service, start(service)['id'])
+    common = finish(service, start(service, base_commission_id=original['id'])['id'])
+    first = finish(service, start(service, base_commission_id=common['id'])['id'])
+    second = finish(service, start(service, base_commission_id=common['id'])['id'])
+
+    effect = effect_for(service, second['id'])
+    assert common['best_candidate_id'] != original['best_candidate_id']
+    assert effect['open_commission_id'] == common['id']
+    assert effect['best_candidate']['id'] == common['best_candidate_id']
+    assert {row['id'] for row in effect['commissions']} == {
+        row['id'] for row in (original, common, first, second)}
+
+
+def test_completed_choice_can_deliberately_retain_baseline_beside_failed_branch(work):
+    service, _, reviewer, _ = work
+    original = finish(service, start(service)['id'])
+    failed = start(service, base_commission_id=original['id'])
+    service.commissions.stop('developer', failed['id'], 'failed', 'Fixture failed side branch')
+    reviewer.choose_baseline = True
+    retained = finish(service, start(service, base_commission_id=original['id'])['id'])
+    own = service.commissions.get('developer', retained['id'])['candidates'][-1]
+
+    effect = effect_for(service, retained['id'])
+    assert retained['state'] == 'completed'
+    assert retained['reviews'][-1]['outcome'] == 'regressed'
+    assert own['id'] != retained['best_candidate_id'] == original['best_candidate_id']
+    assert effect['open_commission_id'] == retained['id']
+    assert effect['best_candidate']['id'] == original['best_candidate_id']
+    assert '/commissions/' + retained['id'] + '/' in effect['media_url']
+
+
+@pytest.mark.parametrize('invalid_choice', ['absent_best', 'missing_best', 'failed_technical', 'missing_technical'])
+def test_completed_branch_needs_resolvable_recorded_best_with_passed_technical(work, invalid_choice):
+    service, _, _, _ = work
+    original = finish(service, start(service)['id'])
+    completed = finish(service, start(service, base_commission_id=original['id'])['id'])
+    invalid = finish(service, start(service, base_commission_id=original['id'])['id'])
+    rows = service.commissions.list_all('developer')
+    imported = next(row for row in rows if row['id'] == invalid['id'])
+    if invalid_choice in {'absent_best', 'missing_best'}:
+        imported['best_candidate_id'] = None if invalid_choice == 'absent_best' else 'unavailable-candidate'
+    else:
+        selected = next(row for row in imported['candidates'] if row['id'] == imported['best_candidate_id'])
+        if invalid_choice == 'failed_technical':
+            selected['technical']['status'] = 'failed'
+        else:
+            selected.pop('technical')
+    before = deepcopy(rows)
+
+    effects, membership = _effect_views(rows, service.methods.list_demonstrations('developer'))
+    assert len(effects) == 1
+    assert effects[0]['open_commission_id'] == completed['id']
+    assert effects[0]['best_candidate']['id'] == completed['best_candidate_id']
+    assert set(membership) == {original['id'], completed['id'], invalid['id']}
+    assert rows == before
 
 
 def test_same_title_goal_and_shared_method_never_imply_effect_identity(work):
