@@ -21,6 +21,7 @@ from .animation_method_renderer import MethodAnimationRenderer
 from .animation_method_gateway import (AnimationMethodAuthorGateway, AnimationMethodReviewGateway,
     AnimationSkillMethodAuthorGateway, AnimationSkillMethodReviewGateway)
 from .animation_review_gateway import AnimationCreateGateway, AnimationBatchReviewGateway, AnimationInputReviewGateway
+from .film_review_proxy import FilmReviewProxy
 
 
 def read_token(path):
@@ -131,7 +132,8 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
         elif film_manim_admission_file is not None:
             raise ValueError('film_manim_config_incomplete')
         server = CreationHTTPServer(service, executor_token, host=listen, port=port,
-            method_service=methods, film_resource_service=film_resources)
+            method_service=methods, film_resource_service=film_resources,
+            film_review_service=FilmReviewProxy(Path(root) / 'film-reviews', service.review_gateway))
         server.close_callbacks = tuple(client.close for client in (method_client, manim_client) if client is not None)
     except BaseException:
         if manim_client is not None:

@@ -12,6 +12,7 @@ import {
 import { createExplanationPanel, explanationErrorLabel } from './explanation.mjs';
 import { createJointPlanPanel, jointPlanErrorLabel } from './joint-plan.mjs';
 import { createProductionRunsPanel, productionRunErrorLabel, productionRunDraftReady, productionRunActualSeconds } from './production-runs.mjs';
+import { createRefinementsPanel, refinementErrorLabel } from './refinements.mjs';
 import { createMotionPanel, createMotionRenderRequest, createProjectMotionDraftRequest, createDynamicProjectRequest, hasMotionScenes, usesDynamicVideo, motionMetadata, motionErrorLabel, motionFailureSource, motionFailureDetails } from './motion.mjs';
 import { createBatchPanel, batchErrorLabel } from './batch.mjs';
 import { createContinuityPanel, createContinuityDraftRequest, continuityErrorLabel } from './continuity.mjs';
@@ -20,7 +21,7 @@ import { createProjectManagement } from './project-management.mjs';
 
 const $ = id => document.getElementById(id);
 const nativeMediaIds = ['audio-preview', 'motion-timing-audio', 'batch-audio-preview',
-  'project-player-audio', 'motion-render-video', 'production-run-video'];
+  'project-player-audio', 'motion-render-video', 'production-run-video', 'refinement-video'];
 const state = createWorkspaceState();
 const intentKeys = createIntentKeys();
 const drafts = new Map();
@@ -74,6 +75,7 @@ const jointPlanPanel = createJointPlanPanel({
       || batchPanel.hasUnresolvedOperation(state.projectId)
       || continuityPanel.hasUnresolvedOperation(state.projectId)
       || productionRunsPanel.hasUnresolvedOperation(state.projectId)
+      || refinementsPanel.hasUnresolvedOperation(state.projectId)
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
   }),
 });
@@ -85,6 +87,7 @@ const explanationPanel = createExplanationPanel({
     projectBusy: activeOperations(state.project).length > 0 || pending.size > 0
       || jointPlanPanel.hasUnresolvedOperation(state.projectId)
       || productionRunsPanel.hasUnresolvedOperation(state.projectId)
+      || refinementsPanel.hasUnresolvedOperation(state.projectId)
       || batchPanel.hasUnresolvedOperation(state.projectId)
       || continuityPanel.hasUnresolvedOperation(state.projectId)
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
@@ -106,6 +109,7 @@ const motionPanel = createMotionPanel({
     projectBusy: activeOperations(state.project).length > 0 || pending.size > 0 || explanationPanel.hasActiveOperation(state.projectId)
       || jointPlanPanel.hasUnresolvedOperation(state.projectId)
       || productionRunsPanel.hasUnresolvedOperation(state.projectId)
+      || refinementsPanel.hasUnresolvedOperation(state.projectId)
       || batchPanel.hasUnresolvedOperation(state.projectId)
       || continuityPanel.hasUnresolvedOperation(state.projectId)
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
@@ -124,6 +128,7 @@ const batchPanel = createBatchPanel({
     projectBusy: activeOperations(state.project).length > 0 || pending.size > 0
       || explanationPanel.hasUnresolvedOperation(state.projectId) || jointPlanPanel.hasUnresolvedOperation(state.projectId)
       || productionRunsPanel.hasUnresolvedOperation(state.projectId)
+      || refinementsPanel.hasUnresolvedOperation(state.projectId)
       || motionPanel.hasUnresolvedOperation(state.projectId, state.project?.scenes)
       || continuityPanel.hasUnresolvedOperation(state.projectId)
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
@@ -159,6 +164,7 @@ const continuityPanel = createContinuityPanel({
       || explanationPanel.hasUnresolvedOperation(state.projectId)
       || jointPlanPanel.hasUnresolvedOperation(state.projectId)
       || productionRunsPanel.hasUnresolvedOperation(state.projectId)
+      || refinementsPanel.hasUnresolvedOperation(state.projectId)
       || motionPanel.hasUnresolvedOperation(state.projectId, state.project?.scenes)
       || batchPanel.hasUnresolvedOperation(state.projectId)
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
@@ -183,13 +189,30 @@ const continuityPanel = createContinuityPanel({
 const productionRunsPanel = createProductionRunsPanel({
   document, request, refresh: () => loadProject(), onError: showError, onSuccess: success,
   onChange: () => render(),
-  onMediaPlay: () => { motionPanel.pause(); batchPanel.pause(); $('audio-preview').pause(); closeMotionRender(); pauseProjectPlayer(); },
+  onMediaPlay: () => { refinementsPanel.pause(); motionPanel.pause(); batchPanel.pause(); $('audio-preview').pause(); closeMotionRender(); pauseProjectPlayer(); },
   getContext: () => ({ project: state.project, epoch: state.epoch,
     enabled: sessionSettings.production_runs_enabled === true, settings: sessionSettings,
     renders: renderHistories.get(state.projectId) ?? [],
     unsaved: projectHasUnsavedEdits(state.projectId),
     projectBusy: activeOperations(state.project).length > 0 || pending.size > 0
       || explanationPanel.hasUnresolvedOperation(state.projectId) || jointPlanPanel.hasUnresolvedOperation(state.projectId)
+      || motionPanel.hasUnresolvedOperation(state.projectId, state.project?.scenes)
+      || batchPanel.hasUnresolvedOperation(state.projectId) || continuityPanel.hasUnresolvedOperation(state.projectId)
+      || refinementsPanel.hasUnresolvedOperation(state.projectId)
+      || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
+  }),
+});
+
+const refinementsPanel = createRefinementsPanel({
+  document, request, refresh: () => loadProject(), onError: showError, onSuccess: success,
+  onChange: () => render(),
+  onMediaPlay: () => { productionRunsPanel.pause(); motionPanel.pause(); batchPanel.pause(); $('audio-preview').pause(); closeMotionRender(); pauseProjectPlayer(); },
+  getContext: () => ({ project: state.project, epoch: state.epoch, owner: sessionSettings.user_id,
+    run: productionRunsPanel.currentRun(state.project),
+    unsaved: projectHasUnsavedEdits(state.projectId),
+    projectBusy: activeOperations(state.project).length > 0 || pending.size > 0
+      || jointPlanPanel.hasUnresolvedOperation(state.projectId) || explanationPanel.hasUnresolvedOperation(state.projectId)
+      || productionRunsPanel.hasUnresolvedOperation(state.projectId)
       || motionPanel.hasUnresolvedOperation(state.projectId, state.project?.scenes)
       || batchPanel.hasUnresolvedOperation(state.projectId) || continuityPanel.hasUnresolvedOperation(state.projectId)
       || (renderHistories.get(state.projectId) ?? []).some(isActiveOperation),
@@ -220,7 +243,8 @@ const projectManagement = createProjectManagement({
 });
 
 const productionLockedControls = new Map();
-function productionRunBusy(id = state.projectId) { return productionRunsPanel.hasUnresolvedOperation(id); }
+function productionRunBusy(id = state.projectId) { return productionRunsPanel.hasUnresolvedOperation(id)
+  || refinementsPanel.hasUnresolvedOperation(id); }
 function unlockProductionControls() {
   for (const [id, disabled] of productionLockedControls) $(id).disabled = disabled;
   productionLockedControls.clear();
@@ -327,6 +351,7 @@ class ApiError extends Error {
     super(ERROR_LABELS[code] ?? operationServiceErrorLabel(code) ?? (code?.startsWith('explanation_') ? explanationErrorLabel(code) : null)
       ?? (code?.startsWith('joint_plan_') ? jointPlanErrorLabel(code) : null)
       ?? (code?.startsWith('production_run') ? productionRunErrorLabel(code) : null)
+      ?? refinementErrorLabel(code)
       ?? (code?.startsWith('batch_') ? batchErrorLabel(code) : null)
       ?? (code?.startsWith('continuity_') || code === 'invalid_continuity_plan' ? continuityErrorLabel(code) : null)
       ?? (code?.startsWith('motion_') || code?.startsWith('process_') ? motionErrorLabel(code) : null) ?? message ?? (status === 401 ? '请先登录工作台。'
@@ -973,6 +998,7 @@ function render() {
   renderProjects();
   jointPlanPanel.render();
   productionRunsPanel.render();
+  refinementsPanel.render();
   explanationPanel.render();
   motionPanel.render();
   batchPanel.render();
@@ -1047,6 +1073,7 @@ function needsStatusRefresh() {
     || explanationPanel.hasRefreshableOperation?.(state.projectId)
     || jointPlanPanel.hasRefreshableOperation(state.projectId)
     || productionRunsPanel.hasRefreshableOperation(state.projectId)
+    || refinementsPanel.hasRefreshableOperation(state.projectId)
     || motionPanel.hasRefreshableOperation(state.projectId, state.project?.scenes)
     || batchPanel.hasActiveOperation(state.projectId)
     || continuityPanel.hasUnresolvedOperation(state.projectId);
@@ -1075,6 +1102,7 @@ function schedulePolling() {
     || explanationPanel.hasActiveOperation(state.projectId)
     || jointPlanPanel.hasActiveOperation(state.projectId)
     || productionRunsPanel.hasActiveOperation(state.projectId)
+    || refinementsPanel.hasActiveOperation(state.projectId)
     || motionPanel.hasActiveOperation(state.projectId, state.project?.scenes)
     || batchPanel.hasActiveOperation(state.projectId) || continuityPanel.hasUnresolvedOperation(state.projectId);
   pollTimer = setTimeout(() => loadProject().catch(showError), active ? 3500 : 15000);
@@ -1117,6 +1145,7 @@ async function loadProject() {
       const related = await Promise.allSettled([
         loadRenders(ticket.projectId, ticket.epoch), jointPlanPanel.load(ticket.projectId, ticket.epoch),
         productionRunsPanel.load(ticket.projectId, ticket.epoch),
+        refinementsPanel.load(ticket.projectId, ticket.epoch),
         explanationPanel.load(ticket.projectId, ticket.epoch),
         motionPanel.load(ticket.projectId, ticket.epoch), batchPanel.load(ticket.projectId, ticket.epoch),
         continuityPanel.load(ticket.projectId, ticket.epoch),
@@ -1148,6 +1177,7 @@ async function openProject(id) {
   motionPanel.pause();
   batchPanel.pause();
   productionRunsPanel.pause();
+  refinementsPanel.pause();
   closeProjectPlayer();
   closeMotionRender();
   $('global-error').hidden = true;
@@ -1161,7 +1191,7 @@ function clearRemovedProject(id) {
   renderReadSequence += 1;
   selectProject(state, null);
   editor = null; loading = false; previewMode = 'preview';
-  clearPreview(); motionPanel.pause(); batchPanel.pause(); productionRunsPanel.pause();
+  clearPreview(); motionPanel.pause(); batchPanel.pause(); productionRunsPanel.pause(); refinementsPanel.pause();
   closeProjectPlayer(); closeMotionRender();
   for (const mediaId of nativeMediaIds) {
     const media = $(mediaId); media.pause(); media.removeAttribute('src'); media.load();

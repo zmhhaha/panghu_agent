@@ -177,7 +177,7 @@ class CreationHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, service, token, *, host='127.0.0.1', port=0, pump=True, method_service=None,
-                 film_resource_service=None, close_callbacks=()):
+                 film_resource_service=None, film_review_service=None, close_callbacks=()):
         self.service, self._token = service, _token(token)
         self.pump = CreationPump(service) if pump else None
         self.method_service = method_service
@@ -186,6 +186,8 @@ class CreationHTTPServer(ThreadingHTTPServer):
         self.wikiskill_pump = CreationPump(wiki) if pump and wiki is not None else None
         self.film_resource_service = film_resource_service
         self.film_resource_pump = CreationPump(film_resource_service) if pump and film_resource_service is not None else None
+        self.film_review_service = film_review_service
+        self.film_review_pump = CreationPump(film_review_service) if pump and film_review_service is not None else None
         self.close_callbacks = tuple(close_callbacks)
         super().__init__((host, port), CreationHandler)
         if self.pump:
@@ -196,6 +198,8 @@ class CreationHTTPServer(ThreadingHTTPServer):
             self.wikiskill_pump.start()
         if self.film_resource_pump:
             self.film_resource_pump.start()
+        if self.film_review_pump:
+            self.film_review_pump.start()
 
     def server_close(self):
         if self.pump:
@@ -206,6 +210,8 @@ class CreationHTTPServer(ThreadingHTTPServer):
             self.wikiskill_pump.close()
         if self.film_resource_pump:
             self.film_resource_pump.close()
+        if self.film_review_pump:
+            self.film_review_pump.close()
         callbacks, self.close_callbacks = self.close_callbacks, ()
         for callback in callbacks:
             callback()
@@ -243,6 +249,11 @@ class CreationHandler(BaseHTTPRequestHandler):
         owner = self._auth()
         pieces = parsed.path.strip('/').split('/')
         service = self.server.service
+        if method == 'GET' and parsed.path.startswith('/api/film-reviews/'):
+            from .film_review_proxy_http import route_private
+            _require(not parsed.query)
+            if route_private(self, owner, method, parsed.path):
+                return
         if method == 'GET' and parsed.path.startswith('/api/film-manim/'):
             from .manim_film_resource_http import route_private
             _require(not parsed.query)
@@ -273,12 +284,18 @@ class CreationHandler(BaseHTTPRequestHandler):
         else:
             _require(not parsed.query)
             lengths = self.headers.get_all('Content-Length', [])
-            body_limit = (1024 * 1024 if parsed.path.startswith('/api/method-lab/')
+            from .film_review_proxy import MAX_BODY as FILM_REVIEW_MAX_BODY
+            body_limit = (FILM_REVIEW_MAX_BODY if parsed.path.startswith('/api/film-reviews/')
+                else 1024 * 1024 if parsed.path.startswith('/api/method-lab/')
                 else 128 * 1024 if parsed.path.startswith('/api/film-manim/') else 32768)
             _require(len(lengths) == 1 and lengths[0].isdigit() and 0 < int(lengths[0]) <= body_limit
                      and not self.headers.get_all('Transfer-Encoding'), 'animation_creation_body_size', 413)
             _require(self.headers.get_content_type() == 'application/json', 'animation_creation_json_required', 415)
             body = _json(self.rfile.read(int(lengths[0])))
+            if parsed.path.startswith('/api/film-reviews/'):
+                from .film_review_proxy_http import route_private
+                if route_private(self, owner, method, parsed.path, body):
+                    return
             if parsed.path.startswith('/api/film-manim/'):
                 from .manim_film_resource_http import route_private
                 if route_private(self, owner, method, parsed.path, body):

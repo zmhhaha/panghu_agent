@@ -532,7 +532,8 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                method_adapter=None, creative_capabilities=None, joint_plan_gateway=None,
                joint_plan_enabled=None, production_runs_enabled=None,
                skill_gateway=None, skill_adapter=None, skill_production=True, film_creation=None,
-               resource_planning_gateway=None, resource_producer_catalog=None):
+               resource_planning_gateway=None, resource_producer_catalog=None,
+               refinement_service=None, refinement_enabled=None):
     if type(skill_production) is not bool:
         raise ValueError('An explicit boolean Skill production mode is required')
     explanation_settings = ExplanationSettings.from_env()
@@ -604,6 +605,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         if production_settings:
             owned_production_client = AgentClient(production_settings.base_url, production_settings.token)
             creative_gateway = ProductionCreativeAgentGateway(owned_production_client, production_settings.revision)
+    method_client = None
     if method_adapter is None or skill_adapter is None:
         method_settings = ProductionMethodSettings.from_env()
         if method_settings:
@@ -746,6 +748,31 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         raise ValueError('An explicit boolean production run feature gate is required')
     production_run_workflow = ProductionRunWorkflow(production_run_store,
         enabled=bool(run_dependencies) if production_runs_enabled is None else production_runs_enabled)
+    from .production_refinement_workflow import ProductionRefinementWorkflow
+    refinement_setting = os.environ.get('VIDEO_PRODUCTION_REFINEMENT_ENABLED', '0')
+    if refinement_enabled is None:
+        if refinement_setting not in {'0', '1'}:
+            raise ValueError('Invalid VIDEO_PRODUCTION_REFINEMENT_ENABLED')
+        refinement_enabled = refinement_service is not None or refinement_setting == '1'
+    if type(refinement_enabled) is not bool:
+        raise ValueError('An explicit boolean formal refinement feature gate is required')
+    if refinement_service is None and refinement_enabled and film_creation is not None:
+        if method_client is None:
+            refinement_methods = ProductionMethodSettings.from_env()
+            if refinement_methods is not None:
+                from .animation_method_http import MethodLabClient
+                method_client = MethodLabClient(refinement_methods.base_url, refinement_methods.token)
+        if method_client is not None:
+            from .film_review_client import FilmReviewGateway
+            from .production_refinement_driver import ProductionRefinementDriver
+            from .production_refinement_service import ProductionRefinementService
+            refinement_root = Path(store.path).with_name('formal-refinement')
+            refinement_service = ProductionRefinementService(
+                Path(store.path).with_name('production-refinements.sqlite3'), production_sequence_store,
+                ProductionRefinementDriver(store, film_creation, FilmReviewGateway(method_client), refinement_root))
+    refinement_workflow = ProductionRefinementWorkflow(store, production_sequence_store, refinement_service,
+        enabled=bool(refinement_enabled and refinement_service is not None),
+        activation_path=Path(store.path).with_name('production-refinement-activation.json'))
 
     @asynccontextmanager
     async def lifespan(app):
@@ -760,7 +787,9 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
             if film_creation is not None:
                 film_creation.start()
             production_run_workflow.start()
+            refinement_workflow.start()
         yield
+        refinement_workflow.stop()
         production_run_workflow.stop()
         if film_creation is not None:
             film_creation.stop()
@@ -800,6 +829,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
     app.state.batch_store, app.state.batch_workflow = batch_store, batch_workflow
     app.state.production_run_store, app.state.production_run_workflow = production_run_store, production_run_workflow
     app.state.production_sequence_store = production_sequence_store
+    app.state.refinement_service, app.state.refinement_workflow = refinement_service, refinement_workflow
     app.state.film_creation = film_creation
     # Proxy mode must be bound behind an authenticated, header-scrubbing proxy.
     app.state.trusted_hosts = set(trusted_hosts or {'127.0.0.1', 'localhost', '[::1]'})
@@ -836,6 +866,11 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
         if value is None or not re.fullmatch(r'[A-Za-z0-9_.:-]{8,128}', value):
             raise ServiceError('idempotency_key_required', 422)
         return value
+
+    from .production_refinement_http import register_refinement_routes
+    register_refinement_routes(app, store=store, sequences=production_sequence_store,
+        runs=production_run_store, service=refinement_service, workflow=refinement_workflow,
+        identity=identity, mutation=mutation)
 
     @app.middleware('http')
     async def headers(request, call_next):
@@ -892,6 +927,7 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
                     explanation_configured=enabled and explanation_gateway is not None,
                     joint_plan_configured=joint_gate and joint_plan_gateway is not None,
                     production_runs_enabled=production_run_workflow.enabled,
+                    production_refinement_enabled=refinement_workflow.enabled,
                     production_run_max_seconds=60 if film_creation is not None else None,
                     motion_enabled=motion_gate, motion_configured=motion_gate and motion_gateway is not None,
                     process_enabled=process_gate, process_configured=process_gate and process_gateway is not None,
@@ -906,6 +942,9 @@ def create_app(*, db_path=None, gateway=None, local_mode=False, background=True,
 
     @app.post('/api/projects/{project_id}/trash')
     def trash_project(project_id: str, body: Revision, owner=Depends(mutation)):
+        if refinement_service is not None and any(row['status'] not in {'completed', 'failed', 'cancelled'}
+                for row in refinement_service.list(owner, project_id)):
+            raise ServiceError('project_delete_busy', 409)
         return dict(project=store.set_project_deleted(owner, project_id, body.expected_revision, deleted=True))
 
     @app.post('/api/projects/{project_id}/restore')
