@@ -30,7 +30,7 @@ from .animation_motion_evidence import motion_orchestration
 from .animation_quality_policy import select_review
 from .animation_creation_selection import (
     freeze_constraints as freeze_creation_selection, manim_request, motion_tools,
-    normalize_selection, validate_rendered_selection, validate_source_selection,
+    normalize_selection, validate_new_selection, validate_rendered_selection, validate_source_selection,
 )
 from .animation_method_research import METHOD_SCHEMA, REMOVAL_SCHEMA, validate_content_changes
 from .animation_method_renderer import PUBLIC_RENDER_FAILURE_CODES, public_render_failure_code
@@ -1052,12 +1052,21 @@ class AnimationMethodService:
             _require(len(canonical_bytes(detail)) <= 2 * 1024 * 1024,
                      'animation_method_response_too_large', 413)
         if run['frozen'].get('resource_authoring'):
-            options = ({'resource_round': max(self._manim_round(run),
+            decision = run.get('adopted_capabilities')
+            if run['frozen'].get('resource_planning') and not (decision or {}).get('uses_manim'):
+                state = dict(kind='manim', status='not_adopted' if decision else
+                    ('cancelled' if run['cancel_requested'] else
+                     'not_started' if run['state'] in TERMINAL else 'awaiting_plan'),
+                    operation_id=None, usage=dict(attempts=0), error=None,
+                    scope='resource_not_visual_acceptance')
+            else:
+                options = ({'resource_round': max(self._manim_round(run),
                            self.resource_stage.allocated_round(owner, commission_id) or 0)}
                        if 'manim_iteration' in run['frozen'] else {})
-            state = (self.resource_stage.view(owner, commission_id, **options) if self.manim else
-                dict(kind='manim', status='unavailable', error='manim_resource_coordinator_required'))
+                state = (self.resource_stage.view(owner, commission_id, **options) if self.manim else
+                    dict(kind='manim', status='unavailable', error='manim_resource_coordinator_required'))
             detail['resource_authoring'] = dict(deepcopy(run['frozen']['resource_authoring']), **state)
+        detail['adopted_capabilities'] = deepcopy(run.get('adopted_capabilities'))
         if 'capability_selection' in run['frozen']:
             detail['capability_selection'] = deepcopy(run['frozen']['capability_selection'])
         if run['frozen'].get('collaboration'):
@@ -1120,6 +1129,13 @@ class AnimationMethodService:
                     data['resource_authoring'] = deepcopy(baseline_run['frozen']['resource_authoring'])
         if 'capability_selection' in data:
             data['capability_selection'] = normalize_selection(data['capability_selection'])
+            if previous_request is None:
+                validate_new_selection(data['capability_selection'])
+        if previous_request is not None:
+            if previous_request['frozen'].get('resource_planning'):
+                data['resource_planning'] = previous_request['frozen']['resource_planning']
+        elif 'manim' in data.get('capability_selection', {}).get('creation', []):
+            data['resource_planning'] = 'after-plan.v1'
         duration = data.setdefault('duration_seconds', 18)
         _require(type(duration) in (int, float) and 1 <= duration <= 60
                  and duration * 24 == int(duration * 24))
@@ -1145,7 +1161,8 @@ class AnimationMethodService:
             from .manim_method_coordinator import authoring_request
             data['resource_authoring'] = authoring_request(data['resource_authoring'], duration)
             _require(self.manim is not None, 'manim_method_resource_not_admitted', 503)
-            self.manim.preflight(self.clock() + seconds)
+            if not data.get('resource_planning'):
+                self.manim.preflight(self.clock() + seconds)
         # Runtime admission is trusted server configuration, never a browser
         # field. Replay uses the original server-injected snapshot even if a
         # later deployment admits additional engines or changes image hashes.
@@ -1199,10 +1216,11 @@ class AnimationMethodService:
                 if 'manim_iteration' in previous_request['frozen']:
                     data['manim_iteration'] = deepcopy(previous_request['frozen']['manim_iteration'])
             elif 'manim_iteration' not in data:
-                data['manim_iteration'] = (self._manim_iteration_context(owner, previous, baseline)
+                data['manim_iteration'] = (self._manim_iteration_context(owner, previous, baseline,
+                    allow_without_resource=bool(data.get('resource_planning')))
                     if data.get('base_commission_id') else dict(criteria=deepcopy(data.get('criteria', [])),
                         methods=[self.methods.get_method(owner, version_id) for version_id in version_ids]))
-            if callable(getattr(self.manim, 'recipe_guidance', None)):
+            if not data.get('resource_planning') and callable(getattr(self.manim, 'recipe_guidance', None)):
                 self.manim.recipe_guidance(owner, data)
         else:
             data.pop('manim_iteration', None)
@@ -1508,6 +1526,53 @@ class AnimationMethodService:
     def restore_trash(self, owner, entry_id, body):
         return self.trash.restore(owner, entry_id, body)
 
+    @staticmethod
+    def _uses_manim(run):
+        if run['frozen'].get('resource_planning'):
+            return bool(run.get('adopted_capabilities', {}).get('uses_manim'))
+        return bool(run['frozen'].get('resource_authoring'))
+
+    @staticmethod
+    def _effective_selection(run):
+        decision = run.get('adopted_capabilities')
+        if run['frozen'].get('resource_planning') and decision is not None:
+            return {key: deepcopy(decision[key]) for key in ('creation', 'motion')}
+        return deepcopy(run['frozen'].get('capability_selection', {}))
+
+    def _derive_capability_decision(self, run, operation, result=None):
+        """Reuse the existing plan contract; clients cannot supply adoption."""
+        result = operation['result'] if result is None else result
+        methods = (operation['input']['methods'] if run['frozen'].get('role') == 'transfer'
+                   else result['methods'])
+        _require(bool(methods), 'animation_method_capability_plan_missing', 409)
+        engines = {row['runtime_requirements']['engine'] for row in methods}
+        _require(len(engines) == 1, 'animation_method_capability_plan_ambiguous', 409)
+        engine = next(iter(engines))
+        uses_manim = any(row['runtime_requirements'].get('resource_authoring') for row in methods)
+        from .manim_method_resources import PRODUCER_REQUIREMENT, require_method_producer
+        if uses_manim:
+            require_method_producer(methods)
+        else:
+            _require(not any(row.get('skill_package', {}).get('runtime_requirements', {}).get(
+                'resource_authoring') for row in methods), 'animation_method_capability_plan_ambiguous', 409)
+        selection = run['frozen']['capability_selection']
+        candidates = selection.get('creation', [])
+        _require(engine in run['frozen']['constraints']['allowed_engines'],
+                 'animation_method_runtime_not_admitted', 409)
+        _require(engine in candidates or (engine == 'html-svg' and uses_manim),
+                 'animation_method_capability_plan_outside_selection', 409)
+        _require(candidates != ['manim'] or uses_manim,
+                 'animation_method_capability_plan_manim_required', 409)
+        from .animation_skill_compatibility import require_method_compatible
+        for method in methods:
+            require_method_compatible(method, assets=run['frozen'].get('assets', {}),
+                authoring_libraries=run['frozen'].get('constraints', {}).get('authoring_libraries', {}),
+                resource_authoring=PRODUCER_REQUIREMENT if uses_manim else {})
+        creation = ([engine] if engine in candidates else []) + (['manim'] if uses_manim else [])
+        motion = [] if creation == ['manim'] else deepcopy(selection.get('motion', []))
+        return dict(creation=creation, motion=motion, engine=engine, uses_manim=uses_manim,
+                    plan_operation_id=operation['id'], plan_result_sha256=digest(result))
+
     def _manim_round(self, run, *, mode=None, base=None):
         creates = [op for op in run['operations'] if op.get('stage') == 'creator'
                    and op.get('input', {}).get('mode') == 'create']
@@ -1536,7 +1601,8 @@ class AnimationMethodService:
             return current
         return len(creates)
 
-    def _manim_iteration_context(self, owner, run, base, *, review=None, frozen_feedback=None):
+    def _manim_iteration_context(self, owner, run, base, *, review=None, frozen_feedback=None,
+                                 allow_without_resource=False):
         """Bind the actual previous Python resource, not an HTML reconstruction."""
         context = {}
         if base is not None:
@@ -1549,7 +1615,8 @@ class AnimationMethodService:
                 original = run['frozen'].get('manim_iteration', {}).get('baseline_descriptor')
                 if original is not None:
                     context['baseline_descriptor'] = deepcopy(original)
-            _require('baseline_descriptor' in context, 'manim_method_iteration_baseline_missing', 409)
+            _require(allow_without_resource or 'baseline_descriptor' in context,
+                     'manim_method_iteration_baseline_missing', 409)
             context['methods'] = [self.methods.get_method(owner, version_id)
                                   for version_id in base.get('method_versions', [])]
         plan = next((op['result'] for op in run['operations'] if op.get('stage') == 'creator'
@@ -1574,6 +1641,13 @@ class AnimationMethodService:
                 resource_round = max(resource_round, allocated)
         projected = deepcopy(run)
         projected['resource_round'] = resource_round
+        if run['frozen'].get('resource_planning') and not resource_round:
+            plan = next(op for op in run['operations'] if op['input'].get('mode') == 'plan'
+                        and op['status'] == 'completed')
+            context = projected['frozen']['manim_iteration']
+            context['criteria'] = deepcopy(plan['result']['criteria'])
+            context['methods'] = deepcopy(plan['input']['methods'] if run['frozen'].get('role') == 'transfer'
+                                          else plan['result']['methods'])
         if resource_round:
             creates = [op for op in run['operations'] if op.get('stage') == 'creator'
                        and op.get('input', {}).get('mode') == 'create']
@@ -1585,7 +1659,8 @@ class AnimationMethodService:
             review_operation = next(op for op in run['operations'] if op['id'] == evaluation['operation_id'])
             projected['frozen']['manim_iteration'] = self._manim_iteration_context(owner, run, baseline,
                 review=review_operation['result']['review'],
-                frozen_feedback=run['frozen']['manim_iteration'].get('developer_feedback', []))
+                frozen_feedback=run['frozen']['manim_iteration'].get('developer_feedback', []),
+                allow_without_resource=bool(run['frozen'].get('resource_planning')))
             projected['frozen']['feedback'] = review_operation['result']['review']['next_guidance']
         return projected
 
@@ -1634,7 +1709,28 @@ class AnimationMethodService:
             selected = deepcopy(plan['methods'])
         frozen_constraints = deepcopy(run['frozen'].get('constraints', {}))
         assets = deepcopy(run['frozen'].get('assets', {}))
-        if run['frozen'].get('resource_authoring') and run.get('id'):
+        deferred = bool(run['frozen'].get('resource_planning'))
+        decision = run.get('adopted_capabilities')
+        if deferred and mode != 'plan':
+            _require(decision is not None, 'animation_method_capability_decision_missing', 409)
+            frozen_constraints.update(allowed_engines=[decision['engine']],
+                adopted_capabilities=deepcopy(decision), capability_selection=self._effective_selection(run))
+        if deferred and mode == 'plan':
+            from .manim_method_resources import PRODUCER_REQUIREMENT
+            frozen_constraints['resource_authoring_plan'] = dict(
+                candidate=deepcopy(run['frozen']['resource_authoring']),
+                producer_requirements=deepcopy(PRODUCER_REQUIREMENT),
+                instruction=(
+                    'No resource has been made. Choose actual drawing capabilities now, using the existing '
+                    'methods contract: return nonempty methods with one consistent browser engine. Declare '
+                    'runtime_requirements.resource_authoring equal to producer_requirements in every method '
+                    'and its Skill package only when adopting Manim. Otherwise omit that dependency entirely. '
+                    'For transfer, apply the frozen input methods and return methods=[] as required. '
+                    'html-svg outside the requested drawing choices is available solely as a real Manim '
+                    'carrier. A pure Manim decision uses native Manim motion, not browser motion libraries. '
+                    'Never claim resources already exist or wait to read their output in this plan. '
+                    'This choice will be frozen before any producer task and cannot be reversed in create.'))
+        if self._uses_manim(run) and run.get('id') and not (deferred and mode == 'plan'):
             _require(self.manim is not None, 'manim_method_resource_coordinator_required', 503)
             projected = self._manim_projection(owner, run, mode=mode, base=base)
             options = ({'resource_round': projected['resource_round']} if 'resource_round' in projected else {})
@@ -1643,7 +1739,7 @@ class AnimationMethodService:
             _require(not (set(assets) & set(descriptor['assets_sha256'])), 'manim_method_resource_collision', 409)
             assets.update(descriptor['assets_sha256'])
             frozen_constraints['generated_resources'] = [descriptor]
-            optional_resource = ('capability_selection' in run['frozen']
+            optional_resource = (not deferred and 'capability_selection' in run['frozen']
                 and run['frozen']['capability_selection'].get('creation', []) != ['manim'])
             frozen_constraints['generated_resource_usage'] = (
                 'A stopped Manim PNG resource has already been created for this experiment. '
@@ -1822,7 +1918,7 @@ class AnimationMethodService:
             return
         try:
             result = gateway.collect(job['job_id'], operation['input_sha256'], operation['input'])
-            if run['frozen'].get('resource_authoring'):
+            if self._uses_manim(run):
                 from .manim_method_resources import require_method_producer
                 require_method_producer(result['methods'])
             if operation['stage'] == 'review':
@@ -1832,8 +1928,19 @@ class AnimationMethodService:
                             if row.get('model_request_completed') is True}
                 _require(expected <= observed, 'animation_method_frame_transport_incomplete', 409)
             active_protocol.validate_result(result, operation['input_sha256'], operation['input'])
+            if run['frozen'].get('resource_planning'):
+                if operation['input'].get('mode') == 'plan':
+                    self._derive_capability_decision(run, operation, result)
+                elif result.get('source') is not None:
+                    decision = run['adopted_capabilities']
+                    _require(result['source']['engine'] == decision['engine'],
+                             'animation_method_capability_decision_changed', 409)
+                    if not decision['uses_manim']:
+                        _require(not any(row['runtime_requirements'].get('resource_authoring') or
+                            row.get('skill_package', {}).get('runtime_requirements', {}).get('resource_authoring')
+                            for row in result['methods']), 'animation_method_capability_decision_changed', 409)
             if 'capability_selection' in run['frozen'] and result.get('source') is not None:
-                validate_source_selection(run['frozen']['capability_selection'], result['source'])
+                validate_source_selection(self._effective_selection(run), result['source'])
         except ServiceError as error:
             # Transport outages may be retried as reads of the same stopped
             # job. A definitive invalid artifact ends this operation.
@@ -1848,8 +1955,13 @@ class AnimationMethodService:
         authored = next(op for op in run['operations'] if op['id'] == render['input']['author_operation_id'])
         result = authored['result']
         if 'capability_selection' in run['frozen']:
-            validate_rendered_selection(run['frozen']['capability_selection'], result['source'],
+            validate_rendered_selection(self._effective_selection(run), result['source'],
                                         render['result'], render['id'])
+        if run['frozen'].get('resource_planning'):
+            observed_manim = any(row['id'] == 'manim' for row in observed_authoring_tools(
+                render['result'].get('runtime', {})))
+            _require(observed_manim == self._uses_manim(run),
+                     'animation_method_capability_resource_mismatch', 409)
         versions = []
         if run['frozen'].get('role') == 'transfer':
             versions = run['frozen'].get('method_versions', [])
@@ -1958,9 +2070,36 @@ class AnimationMethodService:
                 return
             _require(self._protocol(run) is self.author_protocol,
                      'animation_method_historical_gateway_required', 409)
-            if run['frozen'].get('resource_authoring'):
+            if (run['frozen'].get('resource_planning') and not run.get('adopted_capabilities')
+                    and not run['cancel_requested'] and self.clock() < run['deadline_at']):
+                plan = next((op for op in run['operations'] if op['input'].get('mode') == 'plan'
+                             and op['status'] == 'completed'), None)
+                if plan is not None:
+                    self.commissions.freeze_capability_decision(owner, commission_id,
+                        self._derive_capability_decision(run, plan))
+                    return
+            if self._uses_manim(run):
                 _require(self.manim is not None, 'manim_method_resource_coordinator_required', 503)
-                resource_state = self.resource_stage.advance(owner, self._manim_projection(owner, run),
+                projected = self._manim_projection(owner, run)
+                allocated = (self.resource_stage.allocated_round(owner, commission_id)
+                             if run['frozen'].get('resource_planning') else None)
+                if (run['frozen'].get('resource_planning') and not run['cancel_requested']
+                        and self.clock() < run['deadline_at']
+                        and (allocated is None or allocated < projected.get('resource_round', 0))):
+                    # Admission belongs before a new durable resource intent.
+                    # Once allocated, reconcile its original task and stop
+                    # proof even if later configuration no longer admits it.
+                    try:
+                        self.manim.preflight(run['deadline_at'])
+                        if callable(getattr(self.manim, 'recipe_guidance', None)):
+                            self.manim.recipe_guidance(owner, projected['frozen'])
+                    except ServiceError as error:
+                        if error.status >= 500:
+                            raise
+                        self.commissions.stop(owner, commission_id, 'failed',
+                            dict(message='Manim资源创作已停止；保留原操作和证据，不自动重试', code=error.code))
+                        return
+                resource_state = self.resource_stage.advance(owner, projected,
                     cancelled=run['cancel_requested'] or self.clock() >= run['deadline_at'])
                 if resource_state in {'failed', 'cancelled'}:
                     self.commissions.stop(owner, commission_id, resource_state,

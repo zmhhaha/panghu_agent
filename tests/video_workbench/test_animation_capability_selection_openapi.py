@@ -29,7 +29,9 @@ def request():
     {}, {'creation': []}, {'motion': []}, {'creation': [], 'motion': []},
     {'creation': ['canvas']}, {'motion': ['animejs']},
     {'creation': ['html-svg', 'canvas', 'three'], 'motion': ['native-js', 'gsap', 'animejs']},
+    {'creation': ['manim']},
     {'creation': ['manim'], 'motion': []},
+    {'creation': ['canvas', 'manim'], 'motion': ['gsap']},
 ])
 def test_explicit_automatic_single_and_combined_choices_match_backend_selection_shape(selection):
     from video_workbench.animation_creation_selection import normalize_selection
@@ -79,6 +81,79 @@ def test_detail_exposes_requested_choices_separately_from_resource_progress_and_
     assert list(validator('ManimResourceAuthoring').iter_errors(detail['resource_authoring']))
     detail.pop('capability_selection')
     validator('CommissionDetail').validate(detail)
+
+
+@pytest.mark.parametrize('motion', [['native-js'], ['gsap'], ['animejs'], ['gsap', 'animejs']])
+def test_new_manim_only_request_rejects_browser_motion_but_historical_choices_remain_readable(motion):
+    selection = {'creation': ['manim'], 'motion': motion}
+    body = request()
+    body['capability_selection'] = selection
+    assert list(validator('CommissionRequest').iter_errors(body))
+    # This shape remains legal on old frozen details; only new submissions apply the cross-axis rule.
+    validator('CapabilitySelection').validate(selection)
+    detail = {'id': 'old-commission', 'request_id': body['request_id'],
+              'title': 'old', 'goal': 'old', 'state': 'completed', 'best_candidate_id': None,
+              'stop_reason': 'budget_exhausted', 'candidates': [], 'summary': None, 'error': None,
+              'capability_selection': selection}
+    validator('CommissionDetail').validate(detail)
+
+
+@pytest.mark.parametrize('creation', [['canvas', 'manim'], ['manim', 'three'],
+                                     ['manim', 'html-svg']])
+def test_mixed_manim_candidate_keeps_browser_motion_and_optional_resource_parameters(creation):
+    body = request()
+    body['capability_selection'] = {'creation': creation, 'motion': ['gsap', 'animejs']}
+    body['resource_authoring'] = {'kind': 'manim', 'frame_count': 48}
+    validator('CommissionRequest').validate(body)
+
+
+@pytest.mark.parametrize('adoption', [None, {
+    'creation': ['canvas'], 'motion': ['gsap'], 'engine': 'canvas', 'uses_manim': False,
+    'plan_operation_id': 'plan-1', 'plan_result_sha256': 'a' * 64,
+}, {
+    'creation': ['manim'], 'motion': [], 'engine': 'html-svg', 'uses_manim': True,
+    'plan_operation_id': 'plan-2', 'plan_result_sha256': 'b' * 64,
+}, {
+    'creation': ['html-svg', 'manim'], 'motion': ['gsap'], 'engine': 'html-svg', 'uses_manim': True,
+    'plan_operation_id': 'plan-3', 'plan_result_sha256': 'c' * 64,
+}])
+def test_host_adoption_is_read_only_and_separate_from_requested_pool_and_resource_progress(adoption):
+    body = request()
+    detail = {'id': 'planned-commission', 'request_id': body['request_id'],
+              'title': 'plan', 'goal': 'plan', 'state': 'running', 'best_candidate_id': None,
+              'stop_reason': None, 'candidates': [], 'summary': None, 'error': None,
+              'capability_selection': {'creation': ['canvas', 'manim'], 'motion': ['gsap']},
+              'adopted_capabilities': adoption,
+              'resource_authoring': {'kind': 'manim', 'status': 'awaiting_plan', 'error': None}}
+    if adoption is not None and not adoption['uses_manim']:
+        detail['resource_authoring']['status'] = 'not_adopted'
+        detail['resource_authoring']['usage'] = {'attempts': 0}
+    validator('CommissionDetail').validate(detail)
+    body['adopted_capabilities'] = adoption
+    assert list(validator('CommissionRequest').iter_errors(body))
+
+
+@pytest.mark.parametrize('field,value', [
+    ('resource_planning', 'after-plan.v1'),
+    ('adopted_capabilities_sha256', 'a' * 64),
+    ('runtime_requirements', {'engine': 'canvas'}),
+    ('plan_operation_id', 'caller-plan'),
+])
+def test_request_cannot_inject_host_planning_or_runtime_evidence(field, value):
+    body = request()
+    body[field] = value
+    assert list(validator('CommissionRequest').iter_errors(body))
+
+
+@pytest.mark.parametrize('change', [
+    {'creation': []}, {'motion': ['manim']}, {'engine': 'manim'},
+    {'uses_manim': 'false'}, {'plan_operation_id': ''}, {'plan_result_sha256': 'not-a-digest'},
+])
+def test_adoption_shape_requires_specific_host_decision_and_result_identity(change):
+    adoption = {'creation': ['canvas'], 'motion': ['gsap'], 'engine': 'canvas',
+                'uses_manim': False, 'plan_operation_id': 'plan-1', 'plan_result_sha256': 'a' * 64}
+    adoption.update(change)
+    assert list(validator('AdoptedCapabilities').iter_errors(adoption))
 
 
 def test_manim_can_use_default_resource_request_and_valid_custom_frames_but_not_incompatible_modes():
@@ -131,3 +206,8 @@ def test_new_api_examples_remain_optional_and_manim_example_does_not_require_a_b
     assert examples['selectedCapabilities']['value']['capability_selection']['motion'] == ['animejs']
     assert examples['manimCreation']['value']['capability_selection'] == {'creation': ['manim'], 'motion': []}
     assert 'resource_authoring' not in examples['manimCreation']['value']
+    assert examples['plannedManimCandidate']['value']['capability_selection'] == {
+        'creation': ['canvas', 'manim'], 'motion': ['gsap']}
+    explicit = examples['explicitManimResource']['value']
+    assert 'capability_selection' not in explicit
+    assert explicit['resource_authoring'] == {'kind': 'manim', 'frame_count': 48, 'global_start_frame': 0}

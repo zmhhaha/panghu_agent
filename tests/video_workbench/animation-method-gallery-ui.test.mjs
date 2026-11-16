@@ -755,6 +755,156 @@ test('continued and retried forms preserve both capability axes through actual g
   }
 });
 
+test('new gallery Manim-only selection clears browser motion before the single submitted request', async t => {
+  const h = mountedGallery(run(), {catalogValue: catalog([], {availability: {enabled: true,
+    allowed_engines: ['html-svg', 'canvas', 'three'], motion_tools: ['native-js', 'gsap', 'animejs'],
+    resource_authoring: {manim: {enabled: true}}}})});
+  await h.ready(); h.get('gallery-new').handlers.click();
+  const input = name => h.get('experiment-form').descendants('input').find(node => node.name === name);
+  t.mock.method(globalThis, 'FormData', function(form) {
+    return [...Object.entries(fields), ...form.descendants('input')
+      .filter(node => node.name && !node.disabled && (node.type !== 'checkbox' || node.checked))
+      .map(node => [node.name, node.type === 'checkbox' ? 'on' : node.value])];
+  });
+  for (const name of ['motion_native_js', 'motion_gsap', 'motion_animejs']) {
+    input(name).checked = true; input(name).handlers.change();
+  }
+  input('creation_manim').checked = true; input('creation_manim').handlers.change();
+  for (const name of ['motion_native_js', 'motion_gsap', 'motion_animejs']) {
+    assert.equal(input(name).checked, false, name); assert.equal(input(name).disabled, true, name);
+  }
+  assert.match(h.get('experiment-form').textContent, /由 Manim 自身编排动画/);
+  assert.equal(h.requests.some(row => row.options.method), false);
+  await h.get('experiment-form').handlers.submit({preventDefault() {}});
+  const posts = h.requests.filter(row => row.options.method);
+  assert.equal(posts.length, 1);
+  const body = JSON.parse(posts[0].options.body);
+  assert.deepEqual(body.capability_selection, {creation: ['manim'], motion: []});
+  assert.deepEqual(body.resource_authoring,
+    {kind: 'manim', width: 640, height: 360, frame_count: 48, global_start_frame: 0, seed: 17});
+  h.controller.close();
+});
+
+test('adding browser creation to Manim restores browser motion choices and submits the allowed combination', async t => {
+  const h = mountedGallery(run(), {catalogValue: catalog([], {availability: {enabled: true,
+    allowed_engines: ['html-svg', 'canvas', 'three'], motion_tools: ['native-js', 'gsap', 'animejs'],
+    resource_authoring: {manim: {enabled: true}}}})});
+  await h.ready(); h.get('gallery-new').handlers.click();
+  const input = name => h.get('experiment-form').descendants('input').find(node => node.name === name);
+  t.mock.method(globalThis, 'FormData', function(form) {
+    return [...Object.entries(fields), ...form.descendants('input')
+      .filter(node => node.name && !node.disabled && (node.type !== 'checkbox' || node.checked))
+      .map(node => [node.name, node.type === 'checkbox' ? 'on' : node.value])];
+  });
+  input('motion_gsap').checked = true; input('motion_gsap').handlers.change();
+  input('creation_manim').checked = true; input('creation_manim').handlers.change();
+  assert.equal(input('motion_gsap').checked, false); assert.equal(input('motion_gsap').disabled, true);
+  input('creation_canvas').checked = true; input('creation_canvas').handlers.change();
+  for (const name of ['motion_native_js', 'motion_gsap', 'motion_animejs']) {
+    assert.equal(input(name).disabled, false, name); assert.equal(input(name).checked, false, name);
+  }
+  for (const name of ['motion_gsap', 'motion_animejs']) {
+    input(name).checked = true; input(name).handlers.change();
+  }
+  assert.match(h.get('experiment-form').textContent, /仅在采用 Manim 时制作资源/);
+  assert.equal(h.requests.some(row => row.options.method), false);
+  await h.get('experiment-form').handlers.submit({preventDefault() {}});
+  const posts = h.requests.filter(row => row.options.method);
+  assert.equal(posts.length, 1);
+  const body = JSON.parse(posts[0].options.body);
+  assert.deepEqual(body.capability_selection, {creation: ['canvas', 'manim'], motion: ['gsap', 'animejs']});
+  assert.equal(body.resource_authoring.frame_count, 48);
+  h.controller.close();
+});
+
+test('Manim-only continue and retry forms drop stale browser motion, inherit duration and reset cleanly on new', async t => {
+  t.mock.method(globalThis, 'FormData', function(form) {
+    return [...Object.entries({...fields, feedback: '改善剪切变形的节奏'}), ...form.descendants('input')
+      .filter(node => node.name && !node.disabled && (node.type !== 'checkbox' || node.checked))
+      .map(node => [node.name, node.type === 'checkbox' ? 'on' : node.value])];
+  });
+  for (const retry of [false, true]) {
+    const detail = run({state: retry ? 'failed' : 'completed', candidates: [candidate()], best_candidate_id: 'clip-1',
+      capability_selection: {creation: ['manim'], motion: ['native-js', 'gsap', 'animejs']},
+      resource_authoring: {kind: 'manim', width: 640, height: 360, frame_count: 30, global_start_frame: 0, seed: 17}});
+    const h = mountedGallery(detail, {catalogValue: catalog([detail], {availability: {enabled: true,
+      allowed_engines: ['html-svg', 'canvas', 'three'], motion_tools: ['native-js', 'gsap', 'animejs'],
+      resource_authoring: {manim: {enabled: true}}}})});
+    await h.ready(); await h.controller.select(detail.id);
+    h.get('gallery-detail').descendants('button')
+      .find(node => node.textContent === (retry ? '重新运行' : '继续优化这版')).handlers.click();
+    const input = name => h.get('experiment-form').descendants('input').find(node => node.name === name);
+    assert.equal(input('creation_manim').checked, true); assert.equal(input('creation_manim').disabled, false);
+    assert.equal(input('manim_resource_seconds').value, '1.25');
+    for (const name of ['motion_native_js', 'motion_gsap', 'motion_animejs']) {
+      assert.equal(input(name).checked, false, name); assert.equal(input(name).disabled, true, name);
+    }
+    assert.equal(h.requests.some(row => row.options.method), false);
+    await h.get('experiment-form').handlers.submit({preventDefault() {}});
+    const posts = h.requests.filter(row => row.options.method);
+    assert.equal(posts.length, 1);
+    const body = JSON.parse(posts[0].options.body);
+    assert.deepEqual(body.capability_selection, {creation: ['manim'], motion: []});
+    assert.deepEqual(body.resource_authoring, detail.resource_authoring);
+    assert.equal(body[retry ? 'retry_of_commission_id' : 'base_commission_id'], detail.id);
+    if (!retry) assert.equal(body.base_candidate_id, 'clip-1');
+    h.get('gallery-new').handlers.click();
+    assert.equal(input('creation_manim').checked, false); assert.equal(input('manim_resource_seconds').disabled, true);
+    for (const name of ['motion_native_js', 'motion_gsap', 'motion_animejs']) {
+      assert.equal(input(name).checked, false, name); assert.equal(input(name).disabled, false, name);
+    }
+    h.controller.close();
+  }
+});
+
+test('resource details distinguish awaiting capability planning from not adopting Manim with zero production', () => {
+  const options = {kind: 'manim', width: 640, height: 360, frame_count: 30, global_start_frame: 0, seed: 17};
+  for (const [status, message] of [
+    ['awaiting_plan', /等待规划是否采用 Manim，尚未开始资源制作/],
+    ['not_adopted', /规划未采用 Manim，本次未制作该资源/],
+    ['not_started', /本次实验已结束，未开始资源制作/],
+  ]) {
+    const detail = run({state: status === 'awaiting_plan' ? 'running' : 'completed',
+      resource_authoring: {...options, status, operation_id: null, usage: {attempts: 0}}});
+    const rendered = renderMethodDetail(doc, detail, root, callbacks);
+    const progress = rendered.descendants('section').find(node => node.dataset.resourceAuthoringStatus === status);
+    assert.ok(progress); assert.match(progress.textContent, message);
+    assert.match(progress.textContent, /资源制作次数：0/);
+    assert.doesNotMatch(progress.textContent, /等待资源制作|资源制作中|资源已制作|pending/);
+    assert.equal(progress.descendants('button').length, 0);
+    assert.equal(detail.resource_authoring.frame_count, 30);
+  }
+  const completed = renderMethodDetail(doc, run({resource_authoring: {...options,
+    status: 'completed', usage: {attempts: 1}}}), root, callbacks)
+    .descendants('section').find(node => node.dataset.resourceAuthoringStatus === 'completed');
+  assert.match(completed.textContent, /资源制作次数：1/);
+  assert.match(completed.textContent, /不代表完整样片已完成或效果已获认可/);
+  const unknown = renderMethodDetail(doc, run({resource_authoring: {...options, status: 'unknown'}}), root, callbacks)
+    .descendants('section').find(node => node.dataset.resourceAuthoringStatus === 'unknown');
+  assert.match(unknown.textContent, /资源状态待核对/);
+  assert.doesNotMatch(unknown.textContent, /资源制作次数|等待资源制作|资源已制作/);
+});
+
+test('not-adopted Manim resource keeps candidate parameters for explicit continuation without starting production', async () => {
+  const detail = run({state: 'completed', candidates: [candidate()], best_candidate_id: 'clip-1',
+    capability_selection: {creation: ['canvas', 'manim'], motion: ['gsap']},
+    resource_authoring: {kind: 'manim', width: 640, height: 360, frame_count: 30, global_start_frame: 0, seed: 17,
+      status: 'not_adopted', operation_id: null, usage: {attempts: 0}}});
+  const h = mountedGallery(detail, {catalogValue: catalog([detail], {availability: {enabled: true,
+    allowed_engines: ['html-svg', 'canvas', 'three'], motion_tools: ['native-js', 'gsap', 'animejs'],
+    resource_authoring: {manim: {enabled: true}}}})});
+  await h.ready(); await h.controller.select(detail.id);
+  assert.match(h.get('gallery-detail').textContent, /规划未采用 Manim/);
+  h.get('gallery-detail').descendants('button').find(node => node.textContent === '继续优化这版').handlers.click();
+  const input = name => h.get('experiment-form').descendants('input').find(node => node.name === name);
+  for (const name of ['creation_canvas', 'creation_manim', 'motion_gsap']) {
+    assert.equal(input(name).checked, true, name); assert.equal(input(name).disabled, false, name);
+  }
+  assert.equal(input('manim_resource_seconds').value, '1.25');
+  assert.equal(h.requests.some(row => row.options.method), false);
+  h.controller.close();
+});
+
 test('gallery collaboration switching retains browser and motion choices while excluding only Manim', async () => {
   const detail = run();
   const h = mountedGallery(detail, {catalogValue: catalog([], {availability: {enabled: true,

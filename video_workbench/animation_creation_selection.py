@@ -36,6 +36,17 @@ def normalize_selection(value):
     return result
 
 
+def validate_new_selection(value):
+    """New requests separate Manim's native motion from browser tools.
+
+    Keep normalization permissive for immutable historical request replay.
+    """
+    selection = normalize_selection(value)
+    require(selection.get('creation') != ['manim'] or not selection.get('motion'),
+            'manim_motion_conflict')
+    return selection
+
+
 def motion_tools(capabilities):
     """Expose availability from trusted fixed assets, not prior sample labels."""
     result = ['native-js']
@@ -70,6 +81,10 @@ def freeze_constraints(selection, constraints, assets):
     require(all(value in allowed for value in browsers), 'engine_not_admitted', 409)
     if browsers:
         result['allowed_engines'] = browsers
+        if 'manim' in creation and 'html-svg' in allowed and 'html-svg' not in browsers:
+            # This is only a potential Manim carrier. The host plan decision
+            # must prove Manim was adopted before allowing this engine later.
+            result['allowed_engines'].append('html-svg')
     elif creation == ['manim']:
         require('html-svg' in allowed, 'engine_not_admitted', 409)
         result['allowed_engines'] = ['html-svg']
@@ -85,8 +100,12 @@ def freeze_constraints(selection, constraints, assets):
         'a peer drawing capability consumed as a real preproduced resource. If Manim is the only '
         'drawing choice, the primary geometry and its transformation must come from that resource; '
         'HTML/SVG may carry supporting labels and composition, never fake the Manim geometry. '
-        'Selecting Manim prepares a resource; when combined with other drawing choices, consuming it '
-        'is optional. For nonempty motion, substantively use at least one requested browser carrier '
+        'Selecting Manim offers a candidate capability, not an already prepared resource. Plan first: '
+        'choose the actual browser engine in method.runtime_requirements.engine, and declare the '
+        'offered resource_authoring dependency in both method and Skill only if adopting Manim. '
+        'The host freezes that decision before producing any resource. With Manim as the only drawing '
+        'choice, adopt Manim and use html-svg only as its carrier; browser motion choices do not apply. '
+        'For nonempty motion when a browser drawing capability is adopted, substantively use at least one requested browser carrier '
         'tool and do not import '
         'or use unselected motion libraries. Multiple choices allow selection/combination rather '
         'than requiring decorative use of every tool. native-js means deterministic authored '

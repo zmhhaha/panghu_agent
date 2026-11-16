@@ -119,7 +119,8 @@ export function renderCapabilityLabels(doc,value,noSample=false) {
 export function resourceAuthoringRequest(fields,durationSeconds) {
   const selected=name=>fields[name]==='on'||fields[name]===true;
   const creation=Object.entries(CREATION_FIELDS).filter(([,name])=>selected(name)).map(([id])=>id);
-  const motion=Object.entries(MOTION_FIELDS).filter(([,name])=>selected(name)).map(([id])=>id);
+  const manimOnly=creation.length===1&&creation[0]==='manim';
+  const motion=manimOnly?[]:Object.entries(MOTION_FIELDS).filter(([,name])=>selected(name)).map(([id])=>id);
   // Each checkbox has its own name, so Object.fromEntries(new FormData(form))
   // preserves combinations without relying on repeated-key form fields.
   const request=creation.length||motion.length?{capability_selection:{creation,motion}}:{};
@@ -138,10 +139,20 @@ export function mountAuthoringControls(doc,onFilter) {
   const choices={creation:new Map(),motion:new Map()},selectionNotes={};
   let select,seconds,length,note,availability=null,busy=false,collaboration=false;
   const selectedIds=layer=>[...choices[layer]].filter(([,input])=>input.checked).map(([id])=>id);
+  const isManimOnly=()=>{
+    const creation=selectedIds('creation');
+    return creation.length===1&&creation[0]==='manim';
+  };
   const refreshSelection=()=>{
+    const manimOnly=isManimOnly();
+    if(manimOnly)for(const input of choices.motion.values()) {
+      input.checked=false;input.disabled=true;input.title='由 Manim 自身编排动画，无需浏览器动作编排。';
+    }
     for(const layer of ['creation','motion']) {
-      if(selectionNotes[layer])selectionNotes[layer].textContent=selectedIds(layer).length
-        ?'Agent 从选中能力中选择或组合使用。':'自动选择：由 Agent 根据表达目标决定。';
+      if(selectionNotes[layer])selectionNotes[layer].textContent=layer==='motion'&&manimOnly
+        ?'由 Manim 自身编排动画。'
+        :selectedIds(layer).length?'Agent 从选中能力中选择或组合使用。'
+          :'自动选择：由 Agent 根据表达目标决定。';
     }
     const manim=choices.creation.get('manim');
     if(length)length.hidden=!manim?.checked;
@@ -170,7 +181,7 @@ export function mountAuthoringControls(doc,onFilter) {
     if(collaboration&&manimInput)manimInput.checked=false;
     if(note)note.textContent=collaboration
       ?'协作创作可使用已开放的 HTML/SVG、Canvas 2D 和 Three.js；Manim 预制资源暂未接入协作。'
-      :'勾选 Manim 会先制作动画资源；单选时用它表达主体，混选时可不采用。当前片段为 24 fps、0.5 至 2.5 秒。动作编排选项用于浏览器承载层，Manim 内部仍用自己的动画 API。';
+      :'勾选项限定本次可用能力；Agent 先决定实际采用或组合的能力，仅在采用 Manim 时制作资源。Manim 片段为 24 fps、0.5 至 2.5 秒。动作编排选项仅用于浏览器画面，Manim 使用自身的动画 API。';
     refreshSelection();
   };
   if (engine?.parentNode?.parentNode?.append) {
@@ -198,7 +209,7 @@ export function mountAuthoringControls(doc,onFilter) {
         input.id='experiment-'+name.replaceAll('_','-');input.disabled=true;
         const caption=doc.createElement('span');caption.textContent=layer==='creation'?(CREATION_LABELS[id]??LABELS[id]):LABELS[id];
         label.htmlFor=input.id;label.append(input,caption);group.append(label);
-        choices[layer].set(id,input);input.addEventListener('change',refreshSelection);
+        choices[layer].set(id,input);input.addEventListener('change',applyAvailability);
       }
       if(layer==='creation') {
         length=doc.createElement('label');length.textContent='Manim 片段时长（秒）';length.hidden=true;
@@ -221,6 +232,7 @@ export function mountAuthoringControls(doc,onFilter) {
       // lost admission so the server rejects it rather than silently choosing.
       const fields={};
       for(const [layer,entries]of Object.entries(choices))for(const [id,input]of entries) {
+        if(layer==='motion'&&isManimOnly())continue;
         if(input.checked)fields[(layer==='creation'?CREATION_FIELDS:MOTION_FIELDS)[id]]='on';
       }
       if(choices.creation.get('manim')?.checked)fields.manim_resource_seconds=seconds.value;

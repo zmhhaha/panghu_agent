@@ -75,13 +75,30 @@
                 "budget": {"max_rounds": 2, "max_seconds": 1200},
                 "capability_selection": {"creation": ["html-svg", "canvas"], "motion": ["animejs"]}
               }},
-              "manimCreation": {"summary": "选 Manim 时可省略资源参数，由服务生成默认真实资源请求", "value": {
+              "manimCreation": {"summary": "仅选 Manim，由自身动画 API 编排；可省略资源参数", "value": {
                 "request_id": "a6422951-e3f9-4726-ae03-e146bba9ad7a",
                 "title": "剪切前后面积不变",
                 "goal": "以真实 Manim 几何变形表现底和高保持不变；HTML/SVG 仅辅助标注和整体构图。",
                 "duration_seconds": 4,
                 "budget": {"max_rounds": 2, "max_seconds": 1800},
                 "capability_selection": {"creation": ["manim"], "motion": []}
+              }},
+              "plannedManimCandidate": {"summary": "混选是允许范围；仅规划实际采用 Manim 时制作候选资源", "value": {
+                "request_id": "1199ce44-861a-4734-b03d-ae5b952915ec",
+                "title": "同一变换的几何与轨迹",
+                "goal": "直观展示连续变换前后的对应关系，由规划 Agent 在 Canvas 或 Manim 中选择适合的实现，不要求两者同时出现。",
+                "duration_seconds": 8,
+                "budget": {"max_rounds": 1, "max_seconds": 1800},
+                "capability_selection": {"creation": ["canvas", "manim"], "motion": ["gsap"]},
+                "resource_authoring": {"kind": "manim", "frame_count": 48, "global_start_frame": 0}
+              }},
+              "explicitManimResource": {"summary": "没有能力选择时，显式资源参数仍表示先预制真实 Manim 资源", "value": {
+                "request_id": "c6e56c7e-7efc-4a1b-a8ae-633e243f38e4",
+                "title": "先制作几何资源再编排",
+                "goal": "先预制真实 Manim 几何变形资源，再以 HTML/SVG 完成整体构图和标记。",
+                "duration_seconds": 4,
+                "budget": {"max_rounds": 1, "max_seconds": 1800},
+                "resource_authoring": {"kind": "manim", "frame_count": 48, "global_start_frame": 0}
               }},
               "continueCandidate": {"summary": "候选和委托 ID 应替换为实际返回值", "value": {
                 "request_id": "bb8c0924-41c1-4da1-b2b5-c0e038ca7741",
@@ -305,20 +322,20 @@
       },
       "CapabilitySelection": {
         "type": "object", "additionalProperties": false,
-        "description": "实验室的创作约束，不是已使用能力或效果认可证据。整字段省略为自动；某组省略或空数组时由 Agent 在已准入能力中自选。非空组单选必须实质使用该项；多选允许从所选集合选择或组合，不要求每项装饰性使用。画面 browser engine 必须属于选择集合；仅选 Manim 时允许 HTML/SVG 辅助承载，主几何及其变换来自真实预制资源。动作必须实质使用至少一种所选工具，不得加载或使用未选的动作库；依赖加载不等于实质使用。正式视频制作不增加此选项，由 Agent 按发布的 WikiSkill 选择。",
+        "description": "实验室的创作约束，不是已使用能力或效果认可证据。整字段省略为自动；某组省略或空数组时由 Agent 在已准入能力中自选，唯新请求仅选 Manim 时动作由 Manim 自身编排，motion 必须省略或为空。非空组单选必须实质使用该项；多选允许从所选集合选择或组合，不要求每项装饰性使用。实际采用的浏览器画面引擎必须属于选择集合；纯 Manim 方案允许 HTML/SVG 辅助承载，主几何及其变换来自真实预制资源，此时采用的 motion 为空。实际采用浏览器画面且动作组非空时必须实质使用至少一种所选工具，不得加载或使用未选的动作库；依赖加载不等于实质使用。正式视频制作不增加此选项，由 Agent 按发布的 WikiSkill 选择。历史详情仍可读取旧冻结选择。",
         "properties": {
           "creation": {"type": "array", "maxItems": 4, "uniqueItems": true,
             "items": {"type": "string", "enum": ["html-svg", "canvas", "three", "manim"]},
-            "description": "画面创作：HTML/SVG、Canvas 2D、Three.js、Manim；前三项以 availability.allowed_engines 为准，Manim 以 availability.resource_authoring.manim.enabled 为准。选中 Manim 会预先制作真实资源并占用资源预算；与其他画面能力混选时，Agent 最终可以不采用已预制的资源。仅选 Manim 时必须真实使用资源表达主几何。"},
+            "description": "画面创作：HTML/SVG、Canvas 2D、Three.js、Manim；前三项以 availability.allowed_engines 为准，Manim 以 availability.resource_authoring.manim.enabled 为准。混选先由 Agent 规划实际采用的能力；只有规划采用 Manim 才预占资源制作额度、调用 recipe Agent 并生成资源，未采用时不制作。仅选 Manim 时必须真实使用资源表达主几何。"},
           "motion": {"type": "array", "maxItems": 3, "uniqueItems": true,
             "items": {"type": "string", "enum": ["native-js", "gsap", "animejs"]},
-            "description": "动作编排：原生 JavaScript、GSAP、Anime.js；以 availability.motion_tools 为准，遵循同一 HyperFrames 绝对时钟。Manim 自身运动不要求额外指定浏览器编排库。"}
+            "description": "浏览器动作编排：原生 JavaScript、GSAP、Anime.js；以 availability.motion_tools 为准，遵循同一 HyperFrames 绝对时钟。仅选 creation=[manim] 时必须省略或为空，由 Manim 自身编排；混选浏览器画面能力时仍可选择浏览器动作工具。"}
         },
-        "examples": [{"creation": ["canvas"], "motion": ["animejs"]}, {"creation": ["html-svg", "three"], "motion": []}, {}]
+        "examples": [{"creation": ["canvas"], "motion": ["animejs"]}, {"creation": ["html-svg", "three"], "motion": []}, {"creation": ["manim"], "motion": []}, {}]
       },
       "ManimResourceAuthoring": {
         "type": "object", "required": ["kind"], "additionalProperties": false,
-        "description": "可选的真实 Manim 预制资源参数。选中 Manim 未提供此对象时，服务默认 640×360、从第 0 帧开始，片段为 min(48, 视频总帧数) 帧。所有资源按 24 fps，起始帧加片段帧数不能超过视频总帧数，且受服务解码内存上限约束。API 允许 1–60 帧，网页表单进一步限定 0.5–2.5 秒。非空 creation 不含 Manim 时不能同时提供此对象。",
+        "description": "Manim 资源参数。新请求的 capability_selection.creation 包含 manim 时，此对象仅是按需候选参数，只有 Agent 规划采用 Manim 才制作；没有提供或继承 capability_selection 而显式提供此对象时，仍表示在主动画规划前预制真实资源。含 Manim 候选选择但未提供此对象时，服务默认 640×360、从第 0 帧开始，片段为 min(48, 视频总帧数) 帧。所有资源按 24 fps，起始帧加片段帧数不能超过视频总帧数，且受服务解码内存上限约束。API 允许 1–60 帧，网页表单进一步限定 0.5–2.5 秒。非空 creation 不含 Manim 时不能同时提供此对象。",
         "properties": {
           "kind": {"type": "string", "const": "manim"},
           "width": {"type": "integer", "minimum": 320, "maximum": 1280, "default": 640},
@@ -360,8 +377,24 @@
             "capability_selection": {"required": ["creation"], "properties": {
               "creation": {"minItems": 1, "not": {"contains": {"const": "manim"}}}
             }}
-          }}, "then": {"not": {"required": ["resource_authoring"]}}}
+          }}, "then": {"not": {"required": ["resource_authoring"]}}},
+          {"if": {"required": ["capability_selection"], "properties": {
+            "capability_selection": {"required": ["creation"], "properties": {"creation": {"const": ["manim"]}}}
+          }}, "then": {"properties": {"capability_selection": {"properties": {"motion": {"maxItems": 0}}}}}}
         ]
+      },
+      "AdoptedCapabilities": {
+        "type": "object", "readOnly": true, "additionalProperties": true,
+        "required": ["creation", "motion", "engine", "uses_manim", "plan_operation_id", "plan_result_sha256"],
+        "description": "规划后由宿主冻结的采用决定，只读。creation、engine、uses_manim 描述采用的画面方案；motion 是规划后仍适用的浏览器动作允许范围，不是每项都已实际采用。HTML/SVG 不在原选集且仅为 Manim 辅助承载时，creation 只列 manim、motion 为空；原选集显式含 html-svg 且规划采用 html-svg 和 Manim 时，creation 同时列两项，浏览器动作约束仍适用。此决定来自已完成规划，并不是样片实际渲染或效果认可证据。",
+        "properties": {
+          "creation": {"type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true, "items": {"type": "string", "enum": ["html-svg", "canvas", "three", "manim"]}},
+          "motion": {"type": "array", "maxItems": 3, "uniqueItems": true, "items": {"type": "string", "enum": ["native-js", "gsap", "animejs"]}, "description": "规划后仍适用的浏览器动作允许范围；可能包含多个候选工具，实际使用以源代码和渲染观察为准。仅采用 Manim 时为空。"},
+          "engine": {"type": "string", "enum": ["html-svg", "canvas", "three"], "description": "HyperFrames 浏览器承载引擎；仅当 HTML/SVG 不在原画面选集中且作为 Manim 辅助承载时，不另计为一项创作能力。显式选 html-svg 且采用该引擎时仍计入 creation。"},
+          "uses_manim": {"type": "boolean", "description": "规划是否需要 Manim；false 时不会启动 Manim recipe 或 Cairo 资源制作。"},
+          "plan_operation_id": {"type": "string", "minLength": 1},
+          "plan_result_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
       },
       "BudgetCounters": {
         "type": "object", "additionalProperties": true,
@@ -401,7 +434,8 @@
               "duration_seconds": {"type": "number"},
               "collaboration": {"anyOf": [{"$ref": "#/components/schemas/CollaborationProgress"}, {"type": "null"}]},
               "capability_selection": {"$ref": "#/components/schemas/CapabilitySelection", "description": "公开的本次冻结选择。旧的自动任务可能省略；这是请求约束，不是样片实际使用能力或质量判断。继续优化及重新运行时可按原选择继承。"},
-              "resource_authoring": {"type": "object", "additionalProperties": true, "description": "只读资源进度，形状不同于提交的 ManimResourceAuthoring；不要把此对象直接当成下一次请求参数。", "properties": {"kind": {"type": "string", "const": "manim"}, "status": {"type": "string"}, "error": {"type": ["string", "null"]}}},
+              "adopted_capabilities": {"readOnly": true, "anyOf": [{"$ref": "#/components/schemas/AdoptedCapabilities"}, {"type": "null"}], "description": "规划后宿主冻结的采用决定，规划前为 null；旧任务可省略。不能作为请求字段，也不能代替样片真实消费证据。"},
+              "resource_authoring": {"type": "object", "readOnly": true, "additionalProperties": true, "description": "只读资源进度，形状不同于提交的 ManimResourceAuthoring；不要把此对象直接当成下一次请求参数。新候选任务的 awaiting_plan 表示等待规划，not_adopted 表示规划未采用 Manim、资源制作 attempts=0。", "properties": {"kind": {"type": "string", "const": "manim"}, "status": {"type": "string"}, "error": {"type": ["string", "null"]}}},
               "criteria": {"type": "array", "items": {"$ref": "#/components/schemas/Criterion"}, "description": "规划完成前可能为空。"},
               "candidates": {"type": "array", "items": {"$ref": "#/components/schemas/Candidate"}},
               "budget": {"$ref": "#/components/schemas/BudgetCounters"},

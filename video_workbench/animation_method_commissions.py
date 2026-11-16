@@ -156,6 +156,9 @@ class AnimationMethodCommissionStore:
         result = json.loads(row["document"])
         _require(result["frozen_sha256"] == digest(result["frozen"]),
                  "animation_method_commission_frozen_input_changed", 409)
+        if 'adopted_capabilities' in result:
+            _require(result.get('adopted_capabilities_sha256') == digest(result['adopted_capabilities']),
+                     'animation_method_capability_decision_changed', 409)
         return result
 
     @staticmethod
@@ -263,7 +266,10 @@ class AnimationMethodCommissionStore:
                      "retry_of_commission_id",
                      "protocol_schema", "knowledge_snapshot_id", "research_record_ids", "content_changes",
                       "resource_authoring", "collaboration", "capability_selection", "manim_iteration",
+                      "resource_planning",
                  })
+        _require('resource_planning' not in body or body['resource_planning'] == 'after-plan.v1',
+                 'animation_method_resource_planning_invalid')
         if 'capability_selection' in body:
             from .animation_creation_selection import normalize_selection
             _require(normalize_selection(body['capability_selection']) == body['capability_selection'],
@@ -349,6 +355,28 @@ class AnimationMethodCommissionStore:
     def get(self, owner, commission_id):
         with self._transaction() as db:
             return self._present(db, self._commission(db, owner, commission_id))
+
+    def freeze_capability_decision(self, owner, commission_id, decision):
+        """Host-only immutable adoption, bound to the completed original plan."""
+        with self._transaction() as db:
+            commission = self._commission(db, owner, commission_id)
+            _require(commission['frozen'].get('resource_planning') == 'after-plan.v1',
+                     'animation_method_resource_planning_invalid', 409)
+            plan = self._operation(db, owner, decision['plan_operation_id'])
+            _require(plan['commission_id'] == commission_id and plan['status'] == 'completed'
+                     and plan['input'].get('mode') == 'plan'
+                     and plan['result_sha256'] == decision['plan_result_sha256'],
+                     'animation_method_capability_plan_mismatch', 409)
+            previous = commission.get('adopted_capabilities')
+            _require(previous is None or previous == decision,
+                     'animation_method_capability_decision_changed', 409)
+            if previous is None:
+                commission['adopted_capabilities'] = _copy(decision)
+                commission['adopted_capabilities_sha256'] = digest(decision)
+                self._save(db, commission)
+                self._event(db, commission_id, 'capabilities_adopted',
+                    plan_operation_id=plan['id'], decision_sha256=digest(decision))
+            return self._present(db, commission)
 
     def list(self, owner, limit=100):
         _identifier(owner)

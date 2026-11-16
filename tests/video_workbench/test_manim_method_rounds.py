@@ -215,7 +215,7 @@ def test_actual_service_accepts_a_minimal_manim_native_clock_carrier(tmp_path):
         return outcome
 
     service.renderer.render = observed
-    row = start(service, capability_selection={'creation': ['manim'], 'motion': ['native-js']},
+    row = start(service, capability_selection={'creation': ['manim'], 'motion': []},
         resource_authoring=dict(kind='manim', frame_count=3))
     run = advance_until(service, row['id'], lambda run: run['state'] == 'completed')
     assert run['stop_reason'] == 'goal_met' and len(run['candidates']) == 1

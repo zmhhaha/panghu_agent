@@ -102,13 +102,15 @@ GET 只读，不会启动制作、执行模型、续跑任务或增加轮次。�
 | `creation` 画面创作 | `html-svg`、`canvas`、`three`、`manim` | 浏览器能力读取 `availability.allowed_engines`，Manim 检查 `availability.resource_authoring.manim.enabled=true` |
 | `motion` 动作编排 | `native-js`、`gsap`、`animejs` | 读取 `availability.motion_tools`；历史标签不能代替当前准入 |
 
-两组并列且可搭配；每组省略或空数组均表示自动，整个字段也可省略。数组不接受重复项或未知名称。非空组单选约束使用该能力，多选允许从所选集合中选择或组合，不要求每项都使用。浏览器画面引擎必须属于所选集合；动作组非空时，承载层必须实质使用至少一种所选工具，不能加载或使用未选的动作库，仅加载依赖也不足以满足要求。违反约束会明确失败。动作都跟随同一 HyperFrames 绝对时钟。
+两组并列且可搭配；每组省略或空数组通常表示自动，整个字段也可省略。仅选 `creation:["manim"]` 是例外：动作由 Manim 自身编排，`motion` 必须省略或为空数组，非空值会被 API 拒绝，网页也会禁用浏览器动作选项。数组不接受重复项或未知名称。非空组单选约束使用该能力，多选允许从所选集合中选择或组合，不要求每项都使用。实际采用的浏览器画面引擎必须属于所选集合；实际采用浏览器画面能力且动作组非空时，必须实质使用至少一种所选工具，不能加载或使用未选的动作库，仅加载依赖也不足以满足要求。违反约束会明确失败。动作都跟随同一 HyperFrames 绝对时钟。
 
-Manim 与 SVG、Canvas、Three.js 同属画面创作，区别是先生成真实资源，再加入样片。选中 Manim 会预制资源并占用相应预算；与其他画面能力混选时，Agent 最终可以不采用已经生成的资源。仅选 `manim` 时，主几何及其变化必须来自真实 Manim 资源，HTML/SVG 只负责辅助标记和构图。Manim 内部使用自己的动画 API；如果同时显式选择浏览器动作工具，承载层仍须满足所选工具的实质使用要求。
+Manim 与 SVG、Canvas、Three.js 同属画面创作，区别是先生成真实资源，再加入样片。新请求的 `capability_selection.creation` 包含 `manim` 时，先由现有规划 Agent 决定实际采用的能力，宿主冻结决定后再继续：采用 Manim 才预占资源制作额度、调用 recipe Agent 并生成资源；混选后未采用 Manim 则不启动这些资源任务。仅选 `manim` 时，主几何及其变化必须来自真实 Manim 资源，HTML/SVG 只负责辅助标记和构图。混选 `manim` 与浏览器画面能力时，仍可显式选择浏览器动作工具；若最后只采用 Manim，采用决定的 `motion` 为空，不要求额外制作浏览器装饰动作。
 
-当前混选实验生成的方法仍保留 Manim producer 依赖，即使样片最终没有消费该资源；迁移这些方法时仍需相应资源能力可用。实际样片标签独立核对真实消费，不能根据该方法依赖推断样片用了 Manim。
+`capability_selection` 保留用户允许的范围，`adopted_capabilities` 是规划后宿主冻结的只读决定；`creation`、`engine`、`uses_manim` 说明采用的画面方案，`motion` 是规划后仍适用的浏览器动作允许范围，并非每项都已采用。`plan_operation_id` 和 `plan_result_sha256` 关联规划结果。当 HTML/SVG 不在原画面选集且仅为 Manim 辅助承载时，`creation` 只列 `manim`，`motion` 为空；原选集显式包含 `html-svg` 且规划采用 HTML/SVG 和 Manim 时，`creation` 同时列两项，浏览器动作约束仍适用。规划尚未完成时为 `null`，旧任务可以不返回；请求方不能提交或伪造此字段。规划决定与实际样片标签分开，后者仍核对真实消费。方法只有确实需要 Manim 时才保留 producer 依赖；迁移冻结方法则沿用其确切资源依赖。已冻结的历史实验及原幂等键重放不改写为新流程。
 
-选中 Manim 可省略 `resource_authoring`，服务自动生成默认资源请求：640×360、24 fps、起始帧 0，默认 48 帧或不足 48 帧的视频总帧数。也可以指定 `resource_authoring: {"kind":"manim","frame_count":48,"global_start_frame":0}`。API 允许 1–60 帧，且资源必须处于视频时间线内；网页表单限定片段为 0.5–2.5 秒。非空 `creation` 不含 Manim 时，不能另带 Manim 资源；协作暂不能选择 Manim。
+选中 Manim 可省略 `resource_authoring`；规划采用 Manim 后，服务使用默认资源参数：640×360、24 fps、起始帧 0，默认 48 帧或不足 48 帧的视频总帧数。也可以指定 `resource_authoring: {"kind":"manim","frame_count":48,"global_start_frame":0}`。在新选集包含 Manim 的请求里，它是按需候选参数，本身不触发制作；没有提供或继承 `capability_selection` 而显式提供 `resource_authoring` 时，仍表示在主动画规划前预制真实 Manim 资源。API 允许 1–60 帧，且资源必须处于视频时间线内；网页表单限定片段为 0.5–2.5 秒。非空 `creation` 不含 Manim 时，不能另带 Manim 资源；协作暂不能选择 Manim。
+
+详情中，资源状态 `awaiting_plan` 表示尚在等待规划；`not_adopted` 表示规划未采用 Manim，资源制作次数为零。两者都不能被解读为资源已完成或样片已制作。
 
 这是实验室及外部 API 的约束，正式视频制作不增加能力选项，由 Agent 根据表达目标与已发布的 WikiSkill 选择。`capability_selection` 是请求意图，不是实际使用证据，更不是视觉质量认可。
 
@@ -124,6 +126,7 @@ Manim 与 SVG、Canvas、Three.js 同属画面创作，区别是先生成真实�
 | `best_candidate_id` | 当前选中的候选，可能为空 |
 | `candidates` | 候选列表，包括 `id`、`media_url`、`source_url`、`technical_status` |
 | `capability_selection` | 本次冻结的公开能力选择；旧自动任务可省略，不代表样片实际使用情况 |
+| `adopted_capabilities` | 规划后宿主冻结的只读采用决定，规划前为 `null`；旧任务可省略，不等于渲染或质量证据 |
 | `collaboration` | 可选，只读协作进度：`enabled`、`stage`、`components` 的 `id`/`title`/`status`、`completed`/`total`、`author_calls_used`/`author_calls_max` |
 
 `completed` 也可能是预算用完或停止进展；请结合 `stop_reason`、`summary`、`remaining_issues` 和候选结果判断。响应中的 `budget`、`usage`、`remaining` 使用服务内部的 `creator`、`review`、`render`、`seconds` 计数，形状与提交时的预算不同。

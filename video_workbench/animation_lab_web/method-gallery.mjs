@@ -481,6 +481,27 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   head.append(heading); fragment.append(head);
   const collaboration = renderCollaborationProgress(doc, detail);
   if (collaboration) fragment.append(collaboration);
+  const resource = detail.resource_authoring;
+  if (resource?.kind === 'manim') {
+    const section = panel(doc, 'Manim 资源');
+    section.dataset.resourceAuthoringStatus = text(resource.status);
+    const states = {awaiting_plan: '等待规划是否采用 Manim，尚未开始资源制作。',
+      not_adopted: '规划未采用 Manim，本次未制作该资源。',
+      not_started: '本次实验已结束，未开始资源制作。',
+      pending: '等待资源制作', queued: '等待资源制作', running: '资源制作中',
+      completed: '资源已制作', failed: '资源制作失败', blocked: '资源制作受阻',
+      timed_out: '资源制作已超时', cancelled: '资源制作已取消',
+      cancelling: '正在取消资源制作', unavailable: '资源制作能力暂不可用'};
+    section.append(element(doc, 'p', '', states[resource.status] ?? '资源状态待核对'));
+    const attempts = resource.usage?.attempts;
+    if (Number.isInteger(attempts) && attempts >= 0) {
+      section.append(element(doc, 'p', 'small muted', '资源制作次数：' + attempts));
+    }
+    if (resource.status === 'completed') {
+      section.append(element(doc, 'p', 'small muted', '资源已制作不代表完整样片已完成或效果已获认可。'));
+    }
+    fragment.append(section);
+  }
   const referenceUrl = text(detail.reference?.url).trim();
   if (referenceUrl) {
     const section = panel(doc, '参考视频与片段'), source = element(doc, 'p', 'method-reference-link');

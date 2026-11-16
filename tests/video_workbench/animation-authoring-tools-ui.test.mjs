@@ -248,6 +248,75 @@ test('Manim settings are subordinate to its creation choice and preserve frame a
   assert.deepEqual(resourceAuthoringRequest(view.fields(),2),{});
 });
 
+test('Manim-only clears browser motion and adding browser capabilities restores admitted controls without stale choices',()=>{
+  const view=authoringForm();view.controls.update(allCapabilities,false);
+  for(const name of ['motion_native_js','motion_gsap','motion_animejs']) {
+    view.input(name).checked=true;view.input(name).handlers.change();
+  }
+  const manim=view.input('creation_manim'),canvas=view.input('creation_canvas');
+  manim.checked=true;manim.handlers.change();
+  for(const name of ['motion_native_js','motion_gsap','motion_animejs']) {
+    assert.equal(view.input(name).checked,false,name);
+    assert.equal(view.input(name).disabled,true,name);
+  }
+  assert.match(view.all().filter(row=>row.tagName==='fieldset')[1].textContent,/由 Manim 自身编排动画/);
+  assert.match(view.form.textContent,/Agent 先决定实际采用或组合的能力，仅在采用 Manim 时制作资源/);
+  assert.doesNotMatch(view.form.textContent,/勾选 Manim 会先制作动画资源/);
+  assert.deepEqual(resourceAuthoringRequest(view.controls.requestFields,12).capability_selection,
+    {creation:['manim'],motion:[]});
+  canvas.checked=true;canvas.handlers.change();
+  for(const name of ['motion_native_js','motion_gsap','motion_animejs']) {
+    assert.equal(view.input(name).disabled,false,name);
+    assert.equal(view.input(name).checked,false,name);
+  }
+  view.input('motion_animejs').checked=true;view.input('motion_animejs').handlers.change();
+  assert.deepEqual(resourceAuthoringRequest(view.fields(),12).capability_selection,
+    {creation:['canvas','manim'],motion:['animejs']});
+  canvas.checked=false;canvas.handlers.change();
+  manim.checked=false;manim.handlers.change();
+  for(const name of ['motion_native_js','motion_gsap','motion_animejs']) {
+    assert.equal(view.input(name).disabled,false,name);
+    assert.equal(view.input(name).checked,false,name);
+  }
+  assert.deepEqual(resourceAuthoringRequest(view.fields(),12),{});
+});
+
+test('Manim-only continuations and request projections discard stale browser motion flags',()=>{
+  const view=authoringForm();view.controls.update(allCapabilities,false);
+  view.controls.resetExperiment({kind:'manim',frame_count:30},
+    {creation:['manim'],motion:['native-js','gsap','animejs']});
+  for(const name of ['motion_native_js','motion_gsap','motion_animejs']) {
+    assert.equal(view.input(name).checked,false,name);
+    assert.equal(view.input(name).disabled,true,name);
+    // The request projection also guards against stale programmatic changes.
+    view.input(name).checked=true;
+  }
+  assert.deepEqual(view.controls.requestFields,{creation_manim:'on',manim_resource_seconds:'1.25'});
+  assert.deepEqual(resourceAuthoringRequest({creation_manim:'on',manim_resource_seconds:'1.25',
+    motion_native_js:'on',motion_gsap:true,motion_animejs:'on'},12),{
+    capability_selection:{creation:['manim'],motion:[]},
+    resource_authoring:{kind:'manim',width:640,height:360,frame_count:30,global_start_frame:0,seed:17}});
+});
+
+test('leaving Manim-only respects busy and admission state and preserves other unavailable requests',()=>{
+  const view=authoringForm();
+  const limited={...allCapabilities,motion_tools:['native-js']};
+  view.controls.update(limited,false);
+  view.controls.resetExperiment({kind:'manim',frame_count:48},{creation:['manim'],motion:[]});
+  view.input('creation_canvas').checked=true;view.input('creation_canvas').handlers.change();
+  assert.equal(view.input('motion_native_js').disabled,false);
+  assert.equal(view.input('motion_gsap').disabled,true);
+  assert.equal(view.input('motion_animejs').disabled,true);
+  view.input('motion_native_js').checked=true;view.input('motion_native_js').handlers.change();
+  view.controls.update(limited,true);
+  assert.equal(view.input('motion_native_js').disabled,true);
+  assert.equal(view.input('motion_native_js').checked,true);
+  view.controls.update({...limited,motion_tools:[]},false);
+  assert.equal(view.input('motion_native_js').disabled,true);
+  assert.deepEqual(resourceAuthoringRequest(view.controls.requestFields,12).capability_selection,
+    {creation:['canvas','manim'],motion:['native-js']});
+});
+
 test('server admission controls each checkbox and authoritative motion_tools overrides descriptors and defaults',()=>{
   const view=authoringForm();
   view.controls.update({...allCapabilities,allowed_engines:['canvas'],motion_tools:['native-js'],

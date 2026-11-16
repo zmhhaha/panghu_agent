@@ -148,9 +148,12 @@
             <tr><td><code>motion</code> 动作编排</td><td><code>native-js</code>、<code>gsap</code>、<code>animejs</code></td><td>检查 <code>availability.motion_tools</code>。历史样片标签或库名称不能证明当前准入。</td></tr>
           </tbody>
         </table></div>
-        <p>每组单选约束使用该能力；多选允许 Agent 从所选集合中选择或组合，并非每项都必须使用。数组不能重复或包含未知名称。动作组非空时，承载层须实质使用至少一种所选工具，不能仅加载依赖，也不能使用未选的动作库；否则任务明确失败。原生 JavaScript、GSAP 与 Anime.js 都跟随同一 HyperFrames 绝对时钟。</p>
-        <p>Manim 与 SVG、Canvas、Three.js 同属画面创作，但先预制资源再加入样片。选中 Manim 会先制作真实资源并计入预算；与其他画面能力混选时，最终可以不采用该资源。仅选 <code>manim</code> 时，主几何和其变形必须来自真实 Manim 资源，HTML/SVG 只做辅助标记及构图。Manim 内部使用自己的动画 API；若显式选择浏览器动作工具，承载层仍需满足该工具的实质使用约束。</p>
-        <p>选择 Manim 时，可省略 <code>resource_authoring</code>，服务会生成默认资源请求：640×360、24 fps、从第 0 帧开始，默认 48 帧或不足 48 帧的视频总帧数。需要控制时，可传 <code>{"kind":"manim","frame_count":48,"global_start_frame":0}</code>。API 允许 1–60 帧，且资源不能超出整片时间线；网页表单限定 0.5–2.5 秒。非空画面选择不含 Manim 时不能同时传 Manim 资源。协作暂不支持 Manim。</p>
+        <p>每组单选约束使用该能力；多选允许 Agent 从所选集合中选择或组合，并非每项都必须使用。仅选 <code>creation:["manim"]</code> 时，动作由 Manim 自身编排，<code>motion</code> 必须省略或为空数组，非空值会被 API 拒绝，网页也会禁用浏览器动作选项。数组不能重复或包含未知名称。实际采用浏览器画面能力且动作组非空时，须实质使用至少一种所选工具，不能仅加载依赖，也不能使用未选的动作库；否则任务明确失败。原生 JavaScript、GSAP 与 Anime.js 都跟随同一 HyperFrames 绝对时钟。</p>
+        <p>Manim 与 SVG、Canvas、Three.js 同属画面创作，但先预制资源再加入样片。新请求的 <code>capability_selection.creation</code> 包含 <code>manim</code> 时，先由规划 Agent 决定实际采用的能力，宿主冻结决定后再继续；只有采用 Manim 才预占资源制作额度、调用 recipe Agent 并生成资源，未采用时不制作。仅选 <code>manim</code> 时，主几何和其变形必须来自真实 Manim 资源，HTML/SVG 只做辅助标记及构图。混选浏览器画面能力时，仍可选择浏览器动作工具；最后只采用 Manim 时，采用决定的 <code>motion</code> 为空，不强迫添加浏览器装饰动作。</p>
+        <p><code>capability_selection</code> 是用户允许的范围，<code>adopted_capabilities</code> 是规划后宿主冻结的只读决定，规划前为 <code>null</code>。其中 <code>creation</code>、<code>engine</code>、<code>uses_manim</code> 是采用的画面方案，<code>motion</code> 是规划后仍适用的浏览器动作允许范围，并非每项都已采用；<code>plan_operation_id</code>、<code>plan_result_sha256</code> 关联规划结果。这些字段不能由请求方提交，也不等于实际样片的渲染证据。方法只有确实需要 Manim 才携带 producer 依赖。历史冻结请求及原幂等键重放保持原流程。</p>
+        <p>当 HTML/SVG 不在原画面选集且仅为 Manim 辅助承载时，<code>creation</code> 只列 <code>manim</code>，<code>motion</code> 为空；若原选集显式包含 <code>html-svg</code> 且规划采用 HTML/SVG 和 Manim，则同时列两项，浏览器动作约束仍适用。</p>
+        <p>选择 Manim 时，可省略 <code>resource_authoring</code>；规划采用 Manim 后使用默认资源参数：640×360、24 fps、从第 0 帧开始，默认 48 帧或不足 48 帧的视频总帧数。需要控制时，可传 <code>{"kind":"manim","frame_count":48,"global_start_frame":0}</code>。在新选集包含 Manim 的请求里，这是按需候选参数，本身不触发制作；没有提供或继承 <code>capability_selection</code> 而显式提供 <code>resource_authoring</code> 时，仍表示在主动画规划前预制真实资源。API 允许 1–60 帧，且资源不能超出整片时间线；网页表单限定 0.5–2.5 秒。非空画面选择不含 Manim 时不能同时传 Manim 资源。协作暂不支持 Manim。</p>
+        <p>详情的资源状态 <code>awaiting_plan</code> 表示等待规划，<code>not_adopted</code> 表示规划未采用 Manim、资源制作次数为零。两者均不代表资源或样片已完成。</p>
         <p class="note">这项选择只用于动画实验室及其 API。正式视频制作不增加能力选择表单，由 Agent 根据表达目标和已发布的 WikiSkill 按需选择。请求选择不等于实际使用证据，也不代表视觉质量已经认可。</p>
       </section>
 
@@ -168,6 +171,7 @@
               <tr><td><code>best_candidate_id</code></td><td>当前选中候选，可能为空。</td></tr>
               <tr><td><code>candidates</code></td><td>候选的 <code>id</code>、<code>media_url</code>、<code>source_url</code>、<code>technical_status</code> 等。</td></tr>
               <tr><td><code>capability_selection</code></td><td>本次公开的冻结选择，旧自动任务可能不返回此字段。它是创作约束，不能当成样片实际使用能力的标签。</td></tr>
+              <tr><td><code>adopted_capabilities</code></td><td>规划后宿主冻结的只读采用决定，规划前为 <code>null</code>，旧任务可省略；不能当作渲染或质量证据。</td></tr>
               <tr><td><code>collaboration</code></td><td>可选的只读协作进度：<code>stage</code>、<code>components</code> 的标题与状态、<code>completed</code>/<code>total</code> 和 <code>author_calls_used</code>/<code>author_calls_max</code>。创作计数含已预留任务，不代表模型请求数。缺少计数不等于零，不把部件完成当作样片认可。</td></tr>
             </tbody>
           </table>
