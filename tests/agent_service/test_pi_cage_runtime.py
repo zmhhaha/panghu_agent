@@ -2,6 +2,7 @@
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import sys
@@ -72,6 +73,64 @@ def test_buffered_proxy_idle_does_not_extend_execution_deadline_or_delay_cancel(
     assert failed.value.code == ('timed_out' if stop == 'deadline' else 'cancelled')
     assert time.monotonic() - started < 5
     assert not list((tmp_path / 'attempt' / '.home').glob('runtime-*.json'))
+
+
+@pytest.mark.parametrize('task_seconds,deadline_seconds,lower_ms,upper_ms', [
+    (600, 600, 550_000, 600_000),
+    (60, 60, 50_000, 60_000),
+    (600, 20, 10_000, 20_000),
+])
+def test_native_http_wait_uses_remaining_task_budget_without_enabling_retries(
+        tmp_path, task_seconds, deadline_seconds, lower_ms, upper_ms):
+    """Inspect the settings consumed by a real offline child, without waiting minutes."""
+    fake = Path(__file__).with_name('fixtures') / 'fake_pi.py'
+    skill = tmp_path / 'SKILL.md'
+    skill.write_text('# Offline fixture skill\n', encoding='utf-8')
+    value = runtime(fixture_mode=True, idle_timeout_seconds=buffered_model_idle_timeout(task_seconds),
+                    term_grace_seconds=.1, kill_grace_seconds=1)
+    value.settings = replace(value.settings,
+        command=(sys.executable, str(fake), 'success'), node_command=(sys.executable, str(fake), 'node'),
+        skill_paths=(skill,), skill_hashes=(hashlib.sha256(skill.read_bytes()).hexdigest(),))
+    request = EngineRequest(str(uuid4()), 'workspace-task.v1', {'prompt': 'Offline bounded fixture'},
+        task_seconds, datetime.now(timezone.utc) + timedelta(seconds=deadline_seconds))
+    workspace = tmp_path / 'attempt'
+    value.execute(value.profile.make_wire(request), workspace, lambda _: None, threading.Event())
+    settings = json.loads((workspace / '.home/.pi/agent/settings.json').read_text())
+    assert type(settings['httpIdleTimeoutMs']) is int
+    assert lower_ms <= settings['httpIdleTimeoutMs'] <= upper_ms
+    assert settings['retry'] == {'enabled': False, 'provider': {'maxRetries': 0}}
+    assert (workspace / 'observed.json').is_file()
+
+
+@pytest.mark.parametrize('stop,expected', [('deadline', 'timed_out'), ('cancel', 'cancelled')])
+def test_no_native_launch_when_deadline_expired_or_cancelled_before_setup(tmp_path, monkeypatch, stop, expected):
+    value = runtime(fixture_mode=True)
+    cancel = threading.Event()
+    if stop == 'cancel':
+        cancel.set()
+    request = EngineRequest(str(uuid4()), 'workspace-task.v1', {'prompt': 'Offline bounded fixture'}, 60,
+        datetime.now(timezone.utc) + timedelta(seconds=-1 if stop == 'deadline' else 60))
+    monkeypatch.setattr(value, '_probe', lambda *_: pytest.fail('expired/cancelled task must not launch'))
+    with pytest.raises(RuntimeExecutionError) as failed:
+        value.execute(value.profile.make_wire(request), tmp_path / 'attempt', lambda _: None, cancel)
+    assert failed.value.code == expected
+    assert not (tmp_path / 'attempt').exists()
+
+
+def test_deadline_consumed_during_setup_rejects_before_native_probe(tmp_path, monkeypatch):
+    value = runtime(fixture_mode=True)
+    clock = [100.0]
+    monkeypatch.setattr(adapter.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(value, '_verify_resources', lambda: clock.__setitem__(0, 200.0))
+    monkeypatch.setattr(value, '_probe', lambda *_: pytest.fail('setup exhausted the task deadline'))
+    request = EngineRequest(str(uuid4()), 'workspace-task.v1', {'prompt': 'Offline bounded fixture'}, 60,
+        datetime.now(timezone.utc) + timedelta(seconds=60))
+    workspace = tmp_path / 'attempt'
+    with pytest.raises(RuntimeExecutionError) as failed:
+        value.execute(value.profile.make_wire(request), workspace, lambda _: None, threading.Event())
+    assert failed.value.code == 'timed_out'
+    assert not (workspace / '.home/.pi/agent/settings.json').exists()
+    assert not (workspace / 'observed.json').exists()
 
 
 @pytest.mark.parametrize('command', [
