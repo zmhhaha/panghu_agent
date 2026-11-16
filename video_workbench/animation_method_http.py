@@ -240,6 +240,12 @@ def route_private(handler, owner, method, path, body=None):
         if pieces == ['methods', 'read']:
             handler._send(service.read_methods(owner, body))
             return True
+        if len(pieces) == 3 and pieces[0] == 'commissions' and pieces[2] == 'separate-effect':
+            # Explicit library identity correction; never starts Agent work or
+            # rewrites the creation baseline, selected candidate or media.
+            _send_bounded(handler, service.effect_identity.separate(
+                owner, _identifier(pieces[1], encoded=True), body))
+            return True
         if len(pieces) == 3 and pieces[0] == 'commissions' and pieces[2] in {
                 'cancel', 'feedback', 'withdraw_feedback', 'publish', 'transfer'}:
             handler._send(getattr(service, pieces[2])(owner, pieces[1], body))

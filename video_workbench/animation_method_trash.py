@@ -159,8 +159,9 @@ class AnimationMethodTrash:
         demos = self.documents(db, 'methods.animation_demonstrations', owner)
         memberships = self.documents(db, 'effect_memberships', owner)
         deletions = self.documents(db, 'commission_deletions', owner)
+        separations = self.documents(db, 'effect_separations', owner)
         from .animation_method_service import _effect_views, _deleted_commission_ids
-        effects, _ = _effect_views(runs, demos, memberships, deletions)
+        effects, _ = _effect_views(runs, demos, memberships, deletions, separations)
         return dict(runs=runs, by_id=by_id, demos=demos, effects=effects,
                     hidden=hidden, legacy_hidden=_deleted_commission_ids(runs, deletions),
                     entries=entries, restorations=restorations)

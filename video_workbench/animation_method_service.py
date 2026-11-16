@@ -277,11 +277,12 @@ def _resolve_effect_roots(runs, parents, direct_issues):
     return roots, issues
 
 
-def _effect_views(runs, demonstrations, memberships=(), deletions=()):
+def _effect_views(runs, demonstrations, memberships=(), deletions=(), separations=()):
     """Group explicit frozen lineage and separately audited historical membership.
 
     A missing/foreign ancestor or a cycle makes every affected run independent.
-    Historical membership is presentation identity, never a creation baseline.
+    Membership and explicit separation are presentation identity, never a
+    change to creation baselines or stored provenance.
     This read projection never changes recorded inputs, choices or history.
     """
     by_id = {run['id']: run for run in runs}
@@ -342,6 +343,43 @@ def _effect_views(runs, demonstrations, memberships=(), deletions=()):
             direct_issues[identity] = issue
             continue
         parents[identity], kinds[identity] = canonical_id, 'historical_attempt'
+
+    separation_titles, separation_origins, separation_issues = {}, {}, {}
+    # A new subject or primary drawing technique is a distinct library effect,
+    # even when its creation legitimately borrowed a previous experiment.
+    # Validate the original lineage first; a display annotation cannot repair
+    # or conceal invalid immutable ancestry. Apply annotations in ledger order
+    # so a later separation can start inside an already separated effect.
+    for record in separations:
+        if (type(record) is not dict or type(record.get('commission_id')) is not str
+                or record['commission_id'] not in by_id):
+            continue
+        identity = record['commission_id']
+        run, frozen = by_id[identity], by_id[identity]['frozen']
+        current_roots, current_issues = _resolve_effect_roots(runs, parents, direct_issues)
+        valid = (record.get('schema') == 'video.animation-effect-separation.v1'
+            and record.get('owner') == run.get('owner')
+            and record.get('commission_frozen_sha256') == run.get('frozen_sha256')
+            and identity not in hidden and identity not in separation_titles
+            and not current_issues[identity]
+            and frozen.get('role', 'reference') == 'reference'
+            and bool(frozen.get('base_commission_id')) and not frozen.get('retry_of_commission_id')
+            and record.get('source_parent_id') == parents[identity] == frozen['base_commission_id']
+            and record.get('source_effect_id') == current_roots[identity] != identity
+            and _representative_candidate(run) is not None
+            and any(item['id'] == run['best_candidate_id'] for item in run['candidates'])
+            and all(type(record.get(key)) is str and bool(record[key].strip())
+                    and len(record[key]) <= limit for key, limit in (
+                        ('title', 200), ('reason', 2000), ('request_id', 200)))
+            and _finite_number(record.get('created_at')) and record['created_at'] >= 0)
+        if not valid:
+            separation_issues[identity] = 'effect_separation_record_invalid'
+            continue
+        parents[identity], kinds[identity] = None, 'original'
+        separation_titles[identity] = record['title']
+        separation_origins[identity] = dict(commission_id=identity,
+            source_effect_id=record['source_effect_id'], source_parent_id=record['source_parent_id'],
+            reason=record['reason'])
 
     roots, relation_issues = _resolve_effect_roots(runs, parents, direct_issues)
     if hidden:
@@ -414,15 +452,19 @@ def _effect_views(runs, demonstrations, memberships=(), deletions=()):
             stop_reason=run['stop_reason'], created_at=run['created_at'],
             **_sample_engine(next((item for item in _candidates(run)
                 if item['id'] == run['best_candidate_id']), None), samples)) for run in reversed(members)]
-        issues = sorted({relation_issues[run['id']] for run in members if relation_issues[run['id']]})
+        issues = sorted({issue for run in members for issue in (
+            relation_issues[run['id']], separation_issues.get(run['id'])) if issue})
         active = next((run for run in members if run['state'] not in TERMINAL), None)
-        effect = dict(id=effect_id, effect_id=effect_id, title=original['title'],
+        effect = dict(id=effect_id, effect_id=effect_id,
+            title=separation_titles.get(effect_id, original['title']),
             goal=original['frozen']['goal'], state=active['state'] if active else representative['state'],
             request_id=representative['request_id'], open_commission_id=representative['id'],
             media_url=best['media_url'] if best else None, best_candidate=best,
             **engine, engines=[engine['engine']] if engine['engine'] else [],
             commissions=summaries, relationship_status='needs_review' if issues else 'verified',
             relationship_issues=issues)
+        if effect_id in separation_origins:
+            effect['separation'] = separation_origins[effect_id]
         effects.append(effect)
         for run in members:
             membership[run['id']] = effect
@@ -468,6 +510,8 @@ class AnimationMethodService:
                        'commission_id TEXT NOT NULL, document TEXT NOT NULL, PRIMARY KEY(owner,commission_id))')
             db.commit()
         self.trash = AnimationMethodTrash(self)
+        from .animation_effect_identity import AnimationEffectIdentity
+        self.effect_identity = AnimationEffectIdentity(self)
 
     def pending(self, limit=100):
         return self.commissions.pending(limit)
