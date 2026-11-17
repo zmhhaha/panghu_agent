@@ -158,7 +158,7 @@ test('new-form collaboration stays disabled until explicitly admitted, while ord
 });
 
 test('continuing or retrying a collaborative work keeps one round and the inherited budget without a second opt-in', async () => {
-  for (const [state, action] of [['completed', '继续优化这版'], ['failed', '重新运行']]) {
+  for (const [state, action] of [['completed', '继续优化这版'], ['failed', '技术重试']]) {
     const h = mounted(true); await h.ready();
     h.controller.state.detail = {id: 'original', request_id: requestId, title: fields.title, goal: fields.goal, state,
       candidates: [{id: 'candidate', title: '完整样片'}], feedback: [], methods: [],

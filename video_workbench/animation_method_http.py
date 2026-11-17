@@ -140,7 +140,7 @@ class MethodLabClient(CreationAPIClient):
         return self._request(owner, 'POST', PREFIX + '/commissions', body)
 
     def action(self, owner, commission_id, action, body):
-        _require(action in {'cancel', 'feedback', 'withdraw_feedback', 'publish', 'transfer'})
+        _require(action in {'cancel', 'feedback', 'withdraw_feedback', 'publish', 'transfer', 'adopt'})
         return self._request(owner, 'POST', PREFIX + '/commissions/' +
                              quote(commission_id, safe='') + '/' + action, body)
 
@@ -293,7 +293,7 @@ def route_private(handler, owner, method, path, body=None):
                 owner, _identifier(pieces[1], encoded=True), body))
             return True
         if len(pieces) == 3 and pieces[0] == 'commissions' and pieces[2] in {
-                'cancel', 'feedback', 'withdraw_feedback', 'publish', 'transfer'}:
+                'cancel', 'feedback', 'withdraw_feedback', 'publish', 'transfer', 'adopt'}:
             handler._send(getattr(service, pieces[2])(owner, pieces[1], body))
             # Developer opinions are metadata, never a reason to schedule Agent
             # work. Only execution-affecting actions wake the coordinator.

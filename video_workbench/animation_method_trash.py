@@ -166,7 +166,10 @@ class AnimationMethodTrash:
         deletions = self.documents(db, 'commission_deletions', owner)
         separations = self.documents(db, 'effect_separations', owner)
         from .animation_method_service import _effect_views, _deleted_commission_ids
-        effects, _ = _effect_views(runs, demos, memberships, deletions, separations)
+        adoptions = {row[0]: dict(revision=row[1], commission_id=row[2],
+            candidate_id=row[3]) for row in db.execute(
+                'SELECT effect_id,revision,commission_id,candidate_id FROM animation_effect_adoption_heads WHERE owner=?', (owner,))}
+        effects, _ = _effect_views(runs, demos, memberships, deletions, separations, adoptions=adoptions)
         return dict(runs=runs, by_id=by_id, demos=demos, effects=effects,
                     hidden=hidden, legacy_hidden=_deleted_commission_ids(runs, deletions),
                     entries=entries, restorations=restorations)
@@ -286,6 +289,42 @@ class AnimationMethodTrash:
             setattr(historical, name, getattr(expected, name))
         return historical
 
+    def _stop_origin(self, owner, run, operation):
+        """Resolve a retry checkpoint to the task that actually executed it."""
+        original, current, current_run, seen = operation, operation, run, set()
+        while current.get('reused_from') is not None:
+            origin = current['reused_from']
+            require(type(origin) is dict and set(origin) == {'commission_id', 'operation_id'}
+                and all(type(value) is str and value for value in origin.values())
+                and current['id'] not in seen and current['status'] == 'completed'
+                and current['stage'] in {'creator', 'render'}
+                and current_run['frozen'].get('retry_of_commission_id') == origin['commission_id'],
+                'animation_method_trash_stop_unproven', 409)
+            seen.add(current['id'])
+            previous_run = self.service.commissions.get(owner, origin['commission_id'])
+            previous = self.service.commissions.operation(owner, origin['operation_id'])
+            require(previous_run['owner'] == owner and previous['owner'] == owner
+                and previous['commission_id'] == previous_run['id']
+                and previous_run['state'] in {'failed', 'cancelled'}
+                and all(op['status'] in OP_TERMINAL for op in previous_run['operations'])
+                and previous['stage'] == current['stage'] and previous['status'] == 'completed'
+                and previous.get('job_id') == current.get('job_id')
+                and previous['result_sha256'] == current['result_sha256']
+                and previous['result'] == current['result'],
+                'animation_method_trash_stop_unproven', 409)
+            if current['stage'] == 'creator':
+                require(previous['input_sha256'] == current['input_sha256']
+                    and previous['input'] == current['input'], 'animation_method_trash_stop_unproven', 409)
+            else:
+                require({key: value for key, value in current['input'].items() if key != 'author_operation_id'}
+                    == {key: value for key, value in previous['input'].items() if key != 'author_operation_id'},
+                    'animation_method_trash_stop_unproven', 409)
+            current, current_run = previous, previous_run
+        if original['stage'] == 'render':
+            require(original.get('artifact_operation_id', original['id']) == current['id'],
+                'animation_method_trash_stop_unproven', 409)
+        return current
+
     def stopped(self, owner, members):
         deadline = time.monotonic() + 20
         for run in members:
@@ -294,18 +333,19 @@ class AnimationMethodTrash:
                     require(op.get('job_id') is None and bool(op.get('release_proof')),
                             'animation_method_trash_stop_unproven', 409)
                     continue
+                actual = self._stop_origin(owner, run, op)
                 if op['stage'] == 'render':
                     reader = getattr(self.service.renderer, 'stopping_proof', None)
                     require(callable(reader), 'animation_method_trash_stop_unproven', 409)
-                    proof = self._read_stop(lambda: reader(op['id']), deadline)
-                    require(type(proof) is dict and proof.get('operation_id') == op['id']
+                    proof = self._read_stop(lambda: reader(actual['id']), deadline)
+                    require(type(proof) is dict and proof.get('operation_id') == actual['id']
                             and proof.get('stop_proven') is True, 'animation_method_trash_stop_unproven', 409)
                 else:
-                    gateway = self._stop_gateway(op)
-                    job = self._read_stop(lambda: gateway.lookup(op['id']), deadline)
+                    gateway = self._stop_gateway(actual)
+                    job = self._read_stop(lambda: gateway.lookup(actual['id']), deadline)
                     require(type(job) is dict and job.get('stop_proven') is True
                         and job.get('state') in _AGENT_STOPPED
-                        and (op.get('job_id') is None or job.get('job_id') == op['job_id']),
+                        and (actual.get('job_id') is None or job.get('job_id') == actual['job_id']),
                         'animation_method_trash_stop_unproven', 409)
             if run['frozen'].get('resource_authoring'):
                 self.resources_stopped(owner, run, deadline)

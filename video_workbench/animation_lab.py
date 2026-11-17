@@ -1050,7 +1050,7 @@ class LabHandler(BaseHTTPRequestHandler):
                 if method_pieces == ['api', 'method-lab', 'commissions']:
                     return self._json(client.start(owner, body), 202)
                 if (len(method_pieces) == 5 and method_pieces[2] == 'commissions'
-                        and method_pieces[4] in {'cancel', 'feedback', 'withdraw_feedback', 'publish', 'transfer'}):
+                        and method_pieces[4] in {'cancel', 'feedback', 'withdraw_feedback', 'publish', 'transfer', 'adopt'}):
                     return self._json(client.action(owner, method_pieces[3], method_pieces[4], body))
                 raise LabError('animation_method_not_found', 404)
             creation_pieces = path.strip('/').split('/')

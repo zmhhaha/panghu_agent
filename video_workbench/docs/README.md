@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | 了解整体服务 | [当前架构与实施边界](current-architecture.md) | 效果库、知识库、正式制作、渲染与公共服务关系；已实现和未完成的区别 |
 | 了解目标设计 | [Agent 效果库、视频工作台与 HyperFrames 统一设计](agent-creation-effect-library-plan.md) | 当前设计及历次检查点；不能将设计图中的全部节点当成已验收能力 |
-| 同一效果从零重做、知识加载与技术重试 | [已确认设计与实施拆分](fresh-rebuild-and-skill-loading-design.md) | 效果归属与创作继承分开；默认加载可关闭、候选人工采用，当前仅完成设计 |
+| 同一效果从零重做、知识加载与技术重试 | [设计与实施拆分](fresh-rebuild-and-skill-loading-design.md)、[实现验证](fresh-rebuild-validation-20261117.md) | 效果归属与创作继承分开；知识开关、冻结恢复及候选人工采用 |
 | 外部 Agent 使用效果库 | [结构化 JSON API](animation-lab-agent-api.md) | 请求、凭据边界、幂等、轮询、反馈及下载；无需模拟填写网页 |
 | 理解知识库 | [整库 WikiSkill 发布](animation-knowledge-workbench.md) | 手动快照、自动编译、同产物浏览、最近五版与正式批次冻结 |
 | 理解协作创作 | [通用协作与创作指导](general-creative-collaboration.md)、[视频职责协作](collaborative-effect-authoring.md) | 与绘制技术无关的调度核心，以及视频适配、预算、质量证据 |

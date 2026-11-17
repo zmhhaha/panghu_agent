@@ -20,6 +20,7 @@ from .animation_creation_service import _run_lock, _uuid
 from .manim_method_coordinator import authoring_request
 from .manim_method_resources import PRODUCER_REQUIREMENT, helper_assets
 from .manim_resource import require
+from .animation_wikiskill_production import validate_library_binding
 
 SCHEMA = 'video.manim-film-resource-operation.v1'
 REQUEST_FIELDS = frozenset({'operation_id', 'project_id', 'scene_id', 'film_sha256',
@@ -83,10 +84,10 @@ def validate_request(value):
         'film_manim_request_invalid')
     if 'library_binding' in value:
         binding = value['library_binding']
-        require(type(binding) is dict and set(binding) == {
-            'batch_id', 'release_id', 'release_sha256', 'publisher_owner', 'release_sequence'}
-            and type(binding['batch_id']) is str and 1 <= len(binding['batch_id']) <= 400,
-            'film_manim_library_binding_invalid')
+        try:
+            validate_library_binding(binding)
+        except ServiceError:
+            raise ServiceError('film_manim_library_binding_invalid', 422) from None
         if binding['release_id'] is None:
             require(binding['release_sha256'] is None and binding['publisher_owner'] is None and binding['release_sequence'] is None,
                 'film_manim_library_binding_invalid')

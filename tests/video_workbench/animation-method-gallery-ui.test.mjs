@@ -71,8 +71,54 @@ test('retry input keeps its origin without requiring feedback or changing it int
   assert.equal(Object.hasOwn(value, 'base_commission_id'), false);
   assert.equal(Object.hasOwn(value, 'base_candidate_id'), false);
   assert.equal(Object.hasOwn(value, 'transfer_commission_id'), false);
-  assert.equal(value.feedback, '');
+  assert.deepEqual(Object.keys(value).sort(), ['budget', 'request_id', 'retry_of_commission_id']);
   assert.throws(() => buildTransferRequest({...fields, retry_of_commission_id: 'failed-run'}, firstId), /不能同时/);
+});
+
+test('fresh creation keeps effect ownership and current constraints without inheriting a creative baseline', () => {
+  const value = buildCommissionRequest({...fields, creation_mode: 'fresh', effect_id: 'ink-effect',
+    base_commission_id: 'old-run', base_candidate_id: 'old-clip', feedback: '旧版的全部创作指令',
+    use_wikiskill: false, problem_summary_text: '岩石笔触像线束\n远山重复',
+    criteria_text: '新的笔触需要参与造型', criteria_metadata: [{id: 'old-standard', requires_audio: true}]}, firstId);
+  assert.equal(value.effect_id, 'ink-effect'); assert.equal(value.creation_mode, 'fresh');
+  assert.equal(value.use_wikiskill, false);
+  for (const field of ['base_commission_id', 'base_candidate_id', 'feedback', 'method_versions']) assert.equal(Object.hasOwn(value, field), false, field);
+  assert.deepEqual(value.problem_summary, [{text: '岩石笔触像线束', source: 'developer'}, {text: '远山重复', source: 'developer'}]);
+  assert.deepEqual(value.criteria, [{id: 'criterion-1', description: '新的笔触需要参与造型', requires_motion: true}]);
+  assert.equal(Object.hasOwn(buildCommissionRequest({...fields, creation_mode: 'fresh', effect_id: 'ink-effect'}, firstId), 'criteria'), false);
+  assert.equal(buildCommissionRequest({...fields, creation_mode: 'fresh', effect_id: 'ink-effect'}, firstId).use_wikiskill, true);
+  assert.throws(() => buildCommissionRequest({...fields, creation_mode: 'fresh'}, firstId), /所属效果/);
+  assert.throws(() => buildCommissionRequest({...fields, use_wikiskill: 'false'}, firstId), /明确是否/);
+  const fresh = {...fields, creation_mode: 'fresh', effect_id: 'ink-effect'};
+  assert.equal(buildCommissionRequest({...fresh, problem_summary_text: '山'.repeat(4000)}, firstId).problem_summary[0].text.length, 4000);
+  assert.throws(() => buildCommissionRequest({...fresh, problem_summary_text: '山'.repeat(4001)}, firstId), /4000/);
+  assert.throws(() => buildCommissionRequest({...fresh, problem_summary_text: Array(3).fill('山'.repeat(3000)).join('\n')}, firstId), /整体过长/);
+});
+
+test('technical retry never serializes editable creative fields or a new knowledge selection', () => {
+  const value = buildCommissionRequest({retry_of_commission_id: 'failed-run', max_rounds: 1, max_minutes: 5,
+    goal: '换一种完全不同的创作', creation_mode: 'fresh', effect_id: 'other', use_wikiskill: false,
+    criteria_text: '修改标准', capability_selection: {creation: ['three']}, problem_summary_text: '换方向'}, firstId);
+  assert.deepEqual(value, {request_id: firstId, retry_of_commission_id: 'failed-run', budget: {max_rounds: 1, max_seconds: 300}});
+});
+
+test('adopting a candidate uses the displayed effect revision without generating or publishing work', async () => {
+  const detail = run({state: 'completed', effect_id: 'effect-1', representative_revision: 4,
+    adopted_candidate_id: 'old', candidates: [candidate()], best_candidate_id: 'clip-1'});
+  const h = harness((path, options) => options?.method === 'POST' ? detail : path.endsWith('catalog') ? catalog([detail]) : detail);
+  await h.controller.refresh(); await h.controller.select(detail.id);
+  assert.equal(await h.controller.adoptCandidate('clip-1'), true);
+  const posts = h.requests.filter(row => row.options.method === 'POST');
+  assert.equal(posts.length, 1); assert.equal(posts[0].path, 'api/method-lab/commissions/commission-1/adopt');
+  assert.deepEqual(JSON.parse(posts[0].options.body), {request_id: firstId, effect_id: 'effect-1', candidate_id: 'clip-1', expected_revision: 4});
+  assert.equal(h.requests.some(row => /publish|transfer/.test(row.path)), false);
+  assert.equal(await h.controller.adoptCandidate('foreign-candidate'), false);
+  h.controller.state.detail.baseline_candidate = candidate('inherited-baseline');
+  h.controller.state.detail.candidates.push(candidate('inherited-baseline'));
+  assert.equal(await h.controller.adoptCandidate('inherited-baseline'), false, 'a copied baseline is owned by its original commission');
+  h.controller.state.detail.candidates.push({...candidate('retained-retry-baseline'), commission_id: 'previous-failed-run'});
+  assert.equal(await h.controller.adoptCandidate('retained-retry-baseline'), false);
+  assert.equal(h.requests.filter(row => row.options.method === 'POST').length, 1); h.controller.close();
 });
 
 test('only same-origin controlled method-lab media can be embedded', () => {
@@ -109,6 +155,9 @@ test('a transfer creates a materially different task from the selected sample an
     goal: '对象数量增加后仍能追踪筛选和汇总的关联'};
   const body = buildTransferRequest(input, firstId);
   assert.equal(body.base_candidate_id, 'exact-best'); assert.equal(body.base_commission_id, undefined);
+  assert.equal(Object.hasOwn(body, 'creation_mode'), false);
+  assert.equal(body.use_wikiskill, true);
+  assert.equal(buildTransferRequest({...input, use_wikiskill: false}, firstId).use_wikiskill, false);
   assert.equal(buildTransferRequest({...input, criteria_text: '不能用当前委托的新标准替换方法原标准'}, firstId).criteria, undefined);
   assert.deepEqual(body.structural_changes, {object_count: {before: 8, after: 40}});
   assert.throws(() => buildTransferRequest({...input, transfer_after: '8'}, firstId), /变化/);
@@ -761,11 +810,11 @@ test('continued and retried forms preserve both capability axes through actual g
       allowed_engines: ['html-svg', 'canvas', 'three'], motion_tools: ['native-js', 'gsap', 'animejs']}})});
     await active.ready(); await active.controller.select(detail.id);
     active.get('gallery-detail').descendants('button')
-      .find(node => node.textContent === (retry ? '重新运行' : '继续优化这版')).handlers.click();
+      .find(node => node.textContent === (retry ? '技术重试' : '继续优化这版')).handlers.click();
     const controls = active.get('experiment-form').descendants('input');
     for (const name of ['creation_canvas', 'creation_three', 'motion_gsap', 'motion_animejs']) {
       assert.equal(controls.find(input => input.name === name).checked, true, name);
-      assert.equal(controls.find(input => input.name === name).disabled, false, name);
+      assert.equal(controls.find(input => input.name === name).disabled, retry, name);
     }
     // A capability which loses admission remains a visible requested choice;
     // real FormData omits disabled boxes, but the server must still validate it.
@@ -774,7 +823,7 @@ test('continued and retried forms preserve both capability axes through actual g
     await active.get('experiment-form').handlers.submit({preventDefault() {}});
     const posts = active.requests.filter(row => row.options.method);
     assert.equal(posts.length, 1);
-    assert.deepEqual(JSON.parse(posts[0].options.body).capability_selection, selection);
+    assert.deepEqual(JSON.parse(posts[0].options.body).capability_selection, retry ? undefined : selection);
     active.get('gallery-new').handlers.click();
     assert.ok(controls.filter(input => input.type === 'checkbox').every(input => !input.checked));
     active.controller.close();
@@ -858,9 +907,9 @@ test('Manim-only continue and retry forms drop stale browser motion, inherit dur
       resource_authoring: {manim: {enabled: true}}}})});
     await h.ready(); await h.controller.select(detail.id);
     h.get('gallery-detail').descendants('button')
-      .find(node => node.textContent === (retry ? '重新运行' : '继续优化这版')).handlers.click();
+      .find(node => node.textContent === (retry ? '技术重试' : '继续优化这版')).handlers.click();
     const input = name => h.get('experiment-form').descendants('input').find(node => node.name === name);
-    assert.equal(input('creation_manim').checked, true); assert.equal(input('creation_manim').disabled, false);
+    assert.equal(input('creation_manim').checked, true); assert.equal(input('creation_manim').disabled, retry);
     assert.equal(input('manim_resource_seconds').value, '1.25');
     for (const name of ['motion_native_js', 'motion_gsap', 'motion_animejs']) {
       assert.equal(input(name).checked, false, name); assert.equal(input(name).disabled, true, name);
@@ -870,8 +919,8 @@ test('Manim-only continue and retry forms drop stale browser motion, inherit dur
     const posts = h.requests.filter(row => row.options.method);
     assert.equal(posts.length, 1);
     const body = JSON.parse(posts[0].options.body);
-    assert.deepEqual(body.capability_selection, {creation: ['manim'], motion: []});
-    assert.deepEqual(body.resource_authoring, detail.resource_authoring);
+    assert.deepEqual(body.capability_selection, retry ? undefined : {creation: ['manim'], motion: []});
+    assert.deepEqual(body.resource_authoring, retry ? undefined : detail.resource_authoring);
     assert.equal(body[retry ? 'retry_of_commission_id' : 'base_commission_id'], detail.id);
     if (!retry) assert.equal(body.base_candidate_id, 'clip-1');
     h.get('gallery-new').handlers.click();
@@ -959,7 +1008,7 @@ test('clearing all capability controls explicitly restores automatic choice on c
   for (const relation of [{base_commission_id: 'base', feedback: '重新考虑工具组合'},
     {retry_of_commission_id: 'failed'}]) {
     const body = buildCommissionRequest({...fields, ...relation}, firstId);
-    assert.deepEqual(body.capability_selection, {creation: [], motion: []});
+    assert.deepEqual(body.capability_selection, relation.retry_of_commission_id ? undefined : {creation: [], motion: []});
   }
   assert.equal(Object.hasOwn(buildCommissionRequest(fields, firstId), 'capability_selection'), false);
 });
@@ -1032,7 +1081,7 @@ test('failed and cancelled experiments offer retry with or without usable sample
     for (const candidates of [[], [candidate()]]) {
       const detail = run({state, candidates, can_retry: true}); let opened;
       const rendered = renderMethodDetail(doc, detail, root, {...callbacks, onRetry: value => { opened = value; }});
-      const retry = rendered.descendants('button').find(node => node.textContent === '重新运行');
+      const retry = rendered.descendants('button').find(node => node.textContent === '技术重试');
       assert.ok(retry); assert.equal(retry.disabled, false); retry.handlers.click(); assert.equal(opened, detail);
       if (candidates.length) assert.ok(rendered.descendants('button').some(node => node.textContent === '继续优化这版' && !node.disabled));
     }
@@ -1040,8 +1089,57 @@ test('failed and cancelled experiments offer retry with or without usable sample
   for (const detail of [run({state: 'running', can_retry: true}), run({state: 'completed', can_retry: true}),
     run({state: 'failed', can_retry: false})]) {
     const rendered = renderMethodDetail(doc, detail, root, callbacks);
-    assert.equal(rendered.descendants('button').some(node => node.textContent === '重新运行'), false);
+    assert.equal(rendered.descendants('button').some(node => node.textContent === '技术重试'), false);
   }
+});
+
+test('fresh form does not inherit standards, source-specific tools or collaboration and defaults knowledge on', async t => {
+  const detail = run({state: 'completed', effect_id: 'ink-effect', use_wikiskill: false,
+    candidates: [candidate()], best_candidate_id: 'clip-1', criteria: [{id: 'old', description: '旧标准'}],
+    reference: {url: 'https://old.example/source'}, collaboration: {enabled: true},
+    capability_selection: {creation: ['canvas'], motion: ['native-js']}});
+  const h = mountedGallery(detail, {catalogValue: catalog([detail], {availability: {enabled: true, collaboration: true,
+    allowed_engines: ['html-svg', 'canvas', 'three'], motion_tools: ['native-js', 'gsap', 'animejs']}})});
+  await h.ready(); await h.controller.select(detail.id);
+  h.get('gallery-detail').descendants('button').find(node => node.textContent === '在此效果下从零重做').handlers.click();
+  assert.equal(h.get('experiment-form-title').textContent, '在原效果下从零重做');
+  assert.equal(h.get('experiment-goal').value, detail.goal); assert.equal(h.get('experiment-criteria').value, '');
+  assert.equal(h.get('experiment-reference').value, ''); assert.equal(h.get('experiment-use-wikiskill').checked, true);
+  assert.equal(h.get('experiment-collaboration-options').hidden, false);
+  assert.equal(h.get('experiment-problems-label').hidden, false);
+  assert.equal(h.get('experiment-form').descendants('input').some(input => input.name === 'creation_canvas' && input.checked), false);
+  h.get('experiment-use-wikiskill').checked = false;
+  t.mock.method(globalThis, 'FormData', function() { return Object.entries({...fields, problem_summary_text: '笔触没有参与造型'}); });
+  await h.get('experiment-form').handlers.submit({preventDefault() {}});
+  const posts = h.requests.filter(row => row.options.method === 'POST'); assert.equal(posts.length, 1);
+  const body = JSON.parse(posts[0].options.body);
+  assert.equal(body.creation_mode, 'fresh'); assert.equal(body.effect_id, 'ink-effect'); assert.equal(body.use_wikiskill, false);
+  assert.deepEqual(body.problem_summary, [{text: '笔触没有参与造型', source: 'developer'}]);
+  for (const key of ['base_commission_id', 'base_candidate_id', 'method_versions', 'criteria', 'collaboration', 'reference']) {
+    assert.ok(body[key] === undefined || body[key] === null, key);
+  }
+  h.controller.close();
+});
+
+test('fresh candidates remain explicitly adoptable and default status never follows internal best alone', () => {
+  let adopted;
+  const detail = run({state: 'completed', creation_mode: 'fresh', use_wikiskill: false, effect_id: 'ink-effect',
+    representative_revision: 2, adopted_candidate_id: 'old-clip', candidates: [candidate()], best_candidate_id: 'clip-1'});
+  const rendered = renderMethodDetail(doc, detail, root, {...callbacks, onAdopt: id => { adopted = id; }});
+  assert.match(rendered.textContent, /动效 WikiSkill：关闭/); assert.match(rendered.textContent, /本次作品先作为候选保存/);
+  const button = rendered.descendants('button').find(node => node.textContent === '设为默认展示样片');
+  assert.equal(button.disabled, false); assert.equal(adopted, undefined); button.handlers.click(); assert.equal(adopted, 'clip-1');
+});
+
+test('adoption menus exclude inherited candidates even when retry retains their playable media', () => {
+  const inherited = {...candidate('old-clip'), commission_id: 'old-run'};
+  const own = {...candidate('new-clip'), commission_id: 'commission-1'};
+  const detail = run({state: 'completed', effect_id: 'effect-1', representative_revision: 2,
+    candidates: [inherited, own], baseline_candidate: inherited, best_candidate_id: inherited.id});
+  const rendered = renderMethodDetail(doc, detail, root, callbacks);
+  const select = rendered.descendants('select').find(node => node.attributes['aria-label'] === '要设为默认展示的候选');
+  assert.deepEqual(select.children.map(node => node.value), ['new-clip']);
+  assert.equal(select.value, 'new-clip');
 });
 
 test('opening retry only prefills the original goal, reference, standards and a new budget before explicit submission', async t => {
@@ -1052,9 +1150,9 @@ test('opening retry only prefills the original goal, reference, standards and a 
     retry_budget: {max_rounds: 4, max_seconds: 901}, budget: {seconds: 88}, criteria: [criterion],
     candidates: [{...candidate('first'), media: {duration_seconds: 11}}], best_candidate_id: 'first'});
   const h = mountedGallery(detail); await h.ready(); await h.controller.select(detail.id);
-  h.get('gallery-detail').descendants('button').find(node => node.textContent === '重新运行').handlers.click();
+  h.get('gallery-detail').descendants('button').find(node => node.textContent === '技术重试').handlers.click();
   assert.equal(h.get('gallery-form-panel').hidden, false);
-  assert.equal(h.get('experiment-form-title').textContent, '重新运行本次实验');
+  assert.equal(h.get('experiment-form-title').textContent, '技术重试：恢复本次实验');
   assert.equal(h.get('experiment-title').value, fields.title); assert.equal(h.get('experiment-goal').value, fields.goal);
   assert.equal(h.get('experiment-reference').value, detail.reference.url);
   assert.equal(h.get('experiment-reference-start').value, 12.5); assert.equal(h.get('experiment-reference-end').value, 38);
@@ -1063,7 +1161,7 @@ test('opening retry only prefills the original goal, reference, standards and a 
   assert.equal(h.get('experiment-rounds').closest('details').open, true);
   assert.equal(h.get('experiment-seconds').value, '16'); assert.equal(h.get('experiment-feedback').required, false);
   assert.equal(h.get('experiment-feedback').value, detail.feedback_text);
-  assert.match(h.get('experiment-base-note').textContent, /使用新预算，保留已有样片和失败记录/);
+  assert.match(h.get('experiment-base-note').textContent, /只恢复或修复失败环节/);
   assert.equal(h.requests.some(row => row.options.method), false);
   const inputIds = {title: 'title', goal: 'goal', feedback: 'feedback', reference_url: 'reference',
     reference_start: 'reference-start', reference_end: 'reference-end', duration_seconds: 'duration',
@@ -1076,9 +1174,10 @@ test('opening retry only prefills the original goal, reference, standards and a 
   const posts = h.requests.filter(row => row.options.method);
   assert.equal(posts.length, 1); assert.equal(posts[0].url.pathname, '/dev/animations/api/method-lab/commissions');
   const body = JSON.parse(posts[0].options.body);
-  assert.equal(body.retry_of_commission_id, detail.id); assert.deepEqual(body.criteria, [criterion]);
-  assert.equal(body.feedback, detail.feedback_text);
-  assert.deepEqual(body.reference, detail.reference); assert.deepEqual(body.budget, {max_rounds: 1, max_seconds: 960});
+  assert.deepEqual(Object.keys(body).sort(), ['budget', 'request_id', 'retry_of_commission_id']);
+  assert.equal(body.retry_of_commission_id, detail.id);
+  assert.deepEqual(body.budget, {max_rounds: 1, max_seconds: 960});
+  for (const field of ['goal', 'criteria', 'duration', 'reference', 'use-wikiskill']) assert.equal(h.get('experiment-' + field).disabled, true);
   assert.equal(Object.hasOwn(body, 'base_commission_id'), false); assert.equal(Object.hasOwn(body, 'base_candidate_id'), false);
   h.controller.close();
 });
@@ -1086,7 +1185,7 @@ test('opening retry only prefills the original goal, reference, standards and a 
 test('retry defaults clamp unusually long budgets and preview retries cannot execute', async () => {
   const detail = run({state: 'cancelled', can_retry: true, ui_preview: true, retry_budget: {max_seconds: 8000}});
   const h = mountedGallery(detail); await h.ready(); await h.controller.select(detail.id);
-  const retry = h.get('gallery-detail').descendants('button').find(node => node.textContent === '重新运行');
+  const retry = h.get('gallery-detail').descendants('button').find(node => node.textContent === '技术重试');
   assert.equal(retry.disabled, true);
   retry.handlers.click();
   assert.equal(h.get('experiment-seconds').value, '60'); assert.equal(h.get('experiment-submit').disabled, true);
@@ -1099,10 +1198,10 @@ test('effect history distinguishes retry and early execution from continuation',
     {id: 'early', title: '初始制作', kind: 'historical_attempt', state: 'failed'},
     {id: 'retry', title: '重试原目标', kind: 'retry', state: 'completed'}]}}), root, callbacks);
   const history = rendered.descendants('details').find(node => node.dataset.methodDisclosure === 'effect-history');
-  assert.match(history.textContent, /重新运行/); assert.doesNotMatch(history.textContent, /继续优化/);
+  assert.match(history.textContent, /技术重试/); assert.doesNotMatch(history.textContent, /继续优化/);
   const items = history.descendants('li');
   assert.equal(items[0].descendants('span')[0].textContent, '早期执行');
-  assert.equal(items[1].descendants('span')[0].textContent, '重新运行');
+  assert.equal(items[1].descendants('span')[0].textContent, '技术重试');
 });
 
 test('real media exposes controls without forcing autoplay or muting necessary sound', () => {

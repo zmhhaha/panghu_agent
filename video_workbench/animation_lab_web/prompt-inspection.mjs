@@ -12,7 +12,7 @@ const instructionNames={result_requirements:'本轮结果要求',creative_direct
   capability_selection:'能力选择',allowed_engines:'允许使用的画面能力',method_application:'方法应用要求',
   skill_contract:'技能使用要求',duration_seconds:'时长（秒）',width:'宽度',height:'高度',fps:'帧率',
   max_rounds:'最多探索轮数',max_seconds:'时间上限（秒）',creation:'画面创作',motion:'动作编排',
-  base_commission_id:'基于实验',base_candidate_id:'基于样片',retry_of_commission_id:'重跑原实验',
+  base_commission_id:'基于实验',base_candidate_id:'基于样片',retry_of_commission_id:'技术重试原实验',
   baseline_demonstration_id:'基准样片',role:'任务角色',content_changes:'内容变化',structural_changes:'结构变化'};
 function readable(value,depth=0) {
   if(typeof value==='string')return value;
@@ -53,7 +53,8 @@ function field(doc,host,label,value) {
 function briefText(snapshot) {
   const document=snapshot.submission.document;
   const origin=snapshot.submission.is_original?'原始提交记录':'从冻结字段还原的需求（非原始提交）';
-  const fields=[['表达目标',document.goal],['本次修改意见',document.feedback],['验收标准',document.criteria],
+  const fields=[['创作模式',document.creation_mode],['所属效果',document.effect_id],['加载动效 WikiSkill',document.use_wikiskill],
+    ['表达目标',document.goal],['本次保留的问题',document.problem_summary],['本次修改意见',document.feedback],['验收标准',document.criteria],
     [snapshot.submission.is_original?'提交预算':'执行预算（历史冻结值）',document.budget],
     ['能力选择',document.capability_selection],['参考',document.reference]];
   return [origin,...fields.filter(([,value])=>value!==undefined&&value!==null&&value!=='')
@@ -157,6 +158,8 @@ export function createPromptInspection({request,root,clipboard,download,maxInput
     const submission=snapshot.submission,document=submission.document;
     host.append(node(doc,'p',submission.is_original?'来源：原始提交记录':'来源：从冻结字段还原；不是原始提交记录','prompt-origin'));
     field(doc,host,'效果名称',document.title);field(doc,host,'表达目标',document.goal);
+    field(doc,host,'创作模式',document.creation_mode);field(doc,host,'所属效果',document.effect_id);
+    field(doc,host,'加载动效 WikiSkill',document.use_wikiskill);field(doc,host,'本次保留的问题',document.problem_summary);
     field(doc,host,'本次修改意见',document.feedback);field(doc,host,'验收标准',document.criteria);
     field(doc,host,'期望时长（秒）',document.duration_seconds);
     field(doc,host,submission.is_original?'提交预算':'执行预算（历史冻结值）',document.budget);

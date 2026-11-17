@@ -110,14 +110,14 @@
               <tr><td><code>goal</code></td><td>必填，非空文本，最长 16000 字符；<code>title</code> 可选，最长 500 字符。</td></tr>
               <tr><td><code>duration_seconds</code></td><td>默认 18，范围 1–60 秒，必须落在 24 fps 的整帧边界。</td></tr>
               <tr><td><code>budget</code></td><td><code>max_rounds</code> 整数 1–8；<code>max_seconds</code> 整数 60–3600。</td></tr>
-              <tr><td><code>collaboration</code></td><td>可选，新建实验显式开启，继续优化或重新运行可继承原协作配置。先确认 <code>availability.collaboration=true</code>；对象中 <code>max_components</code> 为整数 2–4，同时要求 <code>budget.max_rounds=1</code>。普通制作省略此字段。</td></tr>
+              <tr><td><code>collaboration</code></td><td>可选，新建实验显式开启，继续优化或技术重试可继承原协作配置。技术重试不重传此字段。先确认 <code>availability.collaboration=true</code>；对象中 <code>max_components</code> 为整数 2–4，同时要求 <code>budget.max_rounds=1</code>。普通制作省略此字段。</td></tr>
               <tr><td><code>criteria</code></td><td>可省略。提供时为 1–16 项，唯一的 <code>id</code> 与非空 <code>description</code>；可选 <code>requires_motion</code>、<code>requires_audio</code> 布尔值和 <code>observation</code> 文本。</td></tr>
               <tr><td><code>capability_selection</code></td><td>可选，分别选择 <code>creation</code> 画面创作与 <code>motion</code> 动作编排。默认省略，让 Agent 自选；组省略或空数组也表示该组自动。见下方能力规则。</td></tr>
             </tbody>
           </table>
         </div>
         <p>标准的描述及 observation 最长 4000 字符。运动与音频标准需要对应的实际观察证据，静帧评审不能推断已经满足。</p>
-        <details><summary>复杂效果：按职责分工创作（可选）</summary><p>统筹先规划，部件分别创作，再整合为一条完整样片；无需调用方管理图层。当前支持 HTML/SVG、Canvas 2D 和 Three.js，具体以目录中的 <code>availability.allowed_engines</code> 和本次任务冻结的准入能力为准。画面创作与动作编排是两个维度；GSAP／Anime.js 等编排库仍需分别准入，并遵循绝对时钟规范。协作暂不与 Manim 预制资源或迁移任务合用。新建实验加入以下字段，并把本次探索轮数设为 1；继续优化或重新运行继承原配置，仍需设置本次预算为 1 轮：</p><pre><code>"budget": {"max_rounds": 1, "max_seconds": 1800},
+        <details><summary>复杂效果：按职责分工创作（可选）</summary><p>统筹先规划，部件分别创作，再整合为一条完整样片；无需调用方管理图层。当前支持 HTML/SVG、Canvas 2D 和 Three.js，具体以目录中的 <code>availability.allowed_engines</code> 和本次任务冻结的准入能力为准。画面创作与动作编排是两个维度；GSAP／Anime.js 等编排库仍需分别准入，并遵循绝对时钟规范。协作暂不与 Manim 预制资源或迁移任务合用。新建实验加入以下字段，并把本次探索轮数设为 1；继续优化或技术重试继承原配置，仍需设置本次预算为 1 轮。技术重试只传原委托、请求编号和预算，不重传协作配置：</p><pre><code>"budget": {"max_rounds": 1, "max_seconds": 1800},
 "collaboration": {"max_components": 3}</code></pre><p>最多 <code>max_components+2</code> 个创作任务（统筹、部件与整合），另有 1 次完整样片渲染、1 次评审。实际规划可少于指定部件数；全部工作共用这次总时限，建议预留 30 分钟。未启用时请省略该字段，不能仅凭执行器可用就推断协作已开放。详情中的创作任务额度包含已预留任务，不代表模型请求数。</p></details>
         <h3>2. 提交制作</h3>
         <pre><code>curl --fail-with-body --cookie cookies.txt \
@@ -219,7 +219,11 @@ GET /commissions/{commission_id}/operations/{operation_id}/input</code></pre>
   "feedback": "保留总体与选中点的对应关系，增大右侧标签间距，避免遮挡。"
 }</code></pre>
         <p>基线必须存在且当前用户可访问。省略 <code>base_candidate_id</code> 时使用基线的 <code>best_candidate_id</code>；省略 <code>criteria</code> 时继承基线标准。新请求创建新委托，原委托保留。</p>
-        <p>继续优化和重新运行省略 <code>capability_selection</code> 时继承原选择；显式提交时采用本次选择，提交 <code>{"creation":[],"motion":[]}</code> 可恢复自动选择。重新运行失败或取消任务时，使用新 <code>request_id</code> 和 <code>retry_of_commission_id</code>，等待原执行确认停止后再提交；原关联关系保持继承。相同 <code>request_id</code> 重放时改变选择会冲突。详情中的 <code>resource_authoring</code> 是只读进度，不能直接作为下一次请求的资源参数。</p>
+        <p>继续优化省略 <code>capability_selection</code> 时继承原选择；显式提交时采用本次选择，提交 <code>{"creation":[],"motion":[]}</code> 可恢复自动选择。详情中的 <code>resource_authoring</code> 是只读进度，不能直接作为下一次请求的资源参数。</p>
+        <h3>在同一效果下从零重做</h3><p>提交 <code>creation_mode:"fresh"</code>、所属 <code>effect_id</code>、本次 <code>goal</code> 和预算；不提交旧的基线或方法。可附 <code>problem_summary:[{"text":"已确认的问题","source":"developer"}]</code>。旧源码、布局与分工不作为创作起点。标准可省略，由 Agent 拟定记录后继续，不等待第二次确认。新作品先作为候选，保留原卡片默认展示，之后由你明确采用。</p>
+        <p>新建、继续优化和从零重做统一默认 <code>use_wikiskill:true</code>；设为 <code>false</code> 可不加载动效知识，平台工具和 HyperFrames 规范仍提供。实际选择与版本固定保留在本次输入中，不会因线上发版在中途改变。</p>
+        <h3>技术重试</h3><p>只有原执行已确认停止才能技术重试。使用新请求编号，仅提交 <code>{"request_id":"新UUID","retry_of_commission_id":"原委托ID","budget":{"max_rounds":1,"max_seconds":600}}</code>。服务保留原需求、标准、知识与已完成方案，只修失败环节。要改方向、技术选择或知识开关，请另开继续优化或从零重做实验；不得把技术重试当重新策划。</p>
+        <h3>采用默认展示作品</h3><p>明确选择后调用 <code>POST /commissions/{id}/adopt</code>，提交 <code>request_id</code>、<code>effect_id</code>、<code>candidate_id</code> 和详情中的 <code>representative_revision</code> 作为 <code>expected_revision</code>。发生冲突须重新读取，不自动覆盖。采用只更新效果卡片，不发布 WikiSkill 或授予审美认可。</p>
         <p>可附 <code>reference: {"url":"https://example.com/reference.mp4","start_seconds":0,"end_seconds":8}</code>。参考 URL 与片段时间只作为需求资料，链接不会自动读取或观看原片。请将关键视觉、节奏及目标效果写入 <code>goal</code> 或 <code>feedback</code>。</p>
       </section>
 

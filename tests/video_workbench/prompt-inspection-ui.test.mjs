@@ -58,6 +58,24 @@ test('default collapsed inspection performs no read until opened and readable su
   assert.ok(h.requests.every(row=>row.requestOptions===undefined));h.inspection.close();
 });
 
+test('fresh mode, explicit knowledge off and problem provenance survive viewing and copying the actual submission',async()=>{
+  const document={...submitted,creation_mode:'fresh',effect_id:'effect-1',use_wikiskill:false,
+    problem_summary:[{text:'雾散后山体要保持空间体积',source:'developer'},
+      {text:'过渡可能缺少层次',source:'hypothesis',observation:'尚未连续播放核对'}]};
+  delete document.base_commission_id;delete document.base_candidate_id;
+  const h=harness(()=>snapshot({submission:{...snapshot().submission,document},effective_request:{document}}));
+  const view=h.render();await open(find(view,'prompt-submission'));
+  for(const label of ['创作模式','所属效果','加载动效 WikiSkill','本次保留的问题'])assert.match(view.textContent,new RegExp(label));
+  assert.match(view.textContent,/fresh/);assert.match(view.textContent,/false/);
+  assert.match(view.textContent,/尚未连续播放核对/);
+  assert.doesNotMatch(view.textContent,/继承与迁移关系/);
+  await button(view,'复制需求文本').handlers.click();
+  assert.match(h.copied[0],/加载动效 WikiSkill\nfalse/);
+  assert.match(h.copied[0],/"source": "hypothesis"/);
+  button(view,'下载 JSON').handlers.click();assert.deepEqual(h.downloads[0].value,document);
+  assert.equal(h.requests.length,1);h.inspection.close();
+});
+
 test('reconstructed requests state their limits and loaded data is text rather than markup',async()=>{
   const hostile='<img src=x onerror=alert(1)>';
   const h=harness(()=>snapshot({submission:{origin:'reconstructed_frozen_fields',is_original:false,

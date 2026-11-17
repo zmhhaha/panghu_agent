@@ -61,6 +61,7 @@ def work(tmp_path, *, author=None):
     renderer.render = render
     service = AnimationMethodService(tmp_path / 'lab', author_gateway=author, review_gateway=reviewer,
         renderer=renderer, manim_coordinator=coordinator)
+    coordinator.skill_adapter = service.library_adapter
     return service, coordinator, recipe, executor, author
 
 

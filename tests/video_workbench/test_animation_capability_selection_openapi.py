@@ -182,6 +182,8 @@ def test_continuation_and_stopped_task_retry_can_omit_choices_for_server_inherit
     validator('CommissionRequest').validate(body)
     body.pop('base_commission_id')
     body.pop('feedback')
+    body.pop('goal')
+    body = {key: value for key, value in body.items() if key in {'request_id', 'budget'}}
     body['retry_of_commission_id'] = 'failed-effect'
     validator('CommissionRequest').validate(body)
     assert 'capability_selection' not in body
@@ -191,11 +193,11 @@ def test_continuation_and_stopped_task_retry_can_omit_choices_for_server_inherit
     {'creation': ['three'], 'motion': ['gsap']},
     {'creation': [], 'motion': []},
 ])
-def test_stopped_task_retry_can_explicitly_choose_different_tools_or_restore_automatic(selection):
+def test_stopped_task_retry_cannot_change_tools_or_restore_automatic(selection):
     body = request()
     body['retry_of_commission_id'] = 'failed-effect'
     body['capability_selection'] = selection
-    validator('CommissionRequest').validate(body)
+    assert list(validator('CommissionRequest').iter_errors(body))
 
 
 def test_new_api_examples_remain_optional_and_manim_example_does_not_require_a_browser_motion_tool():

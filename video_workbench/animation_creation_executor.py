@@ -99,7 +99,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                 raise ValueError('manim_method_config_incomplete')
             if method_project_runtime != 'hyperframes-core-bridge':
                 raise ValueError('manim_method_hyperframes_required')
-            from .animation_skill_production import SkillProductionAdapter
+            from .animation_wikiskill_production import LibrarySkillProductionAdapter
             from .manim_recipe_gateway import ManimRecipeAgentGateway
             from .manim_method_coordinator import ManimMethodCoordinator
             from .manim_resource_executor import ManimResourceExecutor
@@ -108,8 +108,13 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
             if manim_token in {agent_token, executor_token, method_token, collaboration_token}:
                 raise ValueError('manim_method_distinct_credentials_required')
             manim_client = AgentClient(agent_url, manim_token, timeout=30)
-            adapter = SkillProductionAdapter(methods.published_catalogue, methods.read_methods,
-                Path(root) / 'manim-skill-freezes.sqlite3')
+            adapter = LibrarySkillProductionAdapter(
+                lambda owner: methods.wikiskill.store.active(owner),
+                lambda owner, release_id: methods.wikiskill.store.get_release(owner, release_id),
+                lambda owner: methods.wikiskill.store.list_recent(owner),
+                Path(root) / 'manim-skill-freezes.sqlite3', legacy_read=methods.read_methods,
+                import_release=lambda owner, binding: methods.wikiskill.store.get_release(
+                    binding['publisher_owner'], binding['release_id'], include_archived=True))
             resource_executor = ManimResourceExecutor(Path(root) / 'manim-resource-renders',
                 image=manim_resource_image, enabled=True)
             coordinator = ManimMethodCoordinator(Path(root) / 'manim-method-resources',
@@ -122,7 +127,6 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                     resource_executor=resource_executor, method_renderer=methods.renderer)
                 coordinator.enabled = True
             from .manim_film_resource_service import ManimFilmResourceService
-            from .animation_wikiskill_production import LibrarySkillProductionAdapter
             # Formal resources use their parent creative batch's exact release.
             # Delayed tasks may resolve archived bytes, never browse/select them.
             film_adapter = LibrarySkillProductionAdapter(

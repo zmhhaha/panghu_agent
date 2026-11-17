@@ -18,6 +18,28 @@ from .animation_skill_production import (
 
 
 TABLE = 'animation_wikiskill_batch_freezes'
+BINDING_FIELDS = frozenset({'batch_id', 'release_id', 'release_sha256', 'publisher_owner', 'release_sequence'})
+
+
+def validate_library_binding(binding):
+    """Validate current policy bindings without rewriting historical identities."""
+    _require(type(binding) is dict and set(binding) in (BINDING_FIELDS, BINDING_FIELDS | {'use_wikiskill'}),
+             'production_skill_batch_required', 409)
+    _identity(binding['batch_id'])
+    enabled = binding.get('use_wikiskill', True)
+    _require(type(enabled) is bool, 'production_skill_batch_required', 409)
+    if binding['release_id'] is None:
+        _require(all(binding[key] is None for key in ('release_sha256', 'publisher_owner', 'release_sequence')),
+                 'production_skill_frozen_input_changed', 409)
+    else:
+        _require(enabled, 'production_skill_frozen_input_changed', 409)
+        _identity(binding['release_id'], 200)
+        _identity(binding['publisher_owner'], 200)
+        _require(type(binding['release_sha256']) is str and len(binding['release_sha256']) == 64
+            and all(c in '0123456789abcdef' for c in binding['release_sha256'])
+            and type(binding['release_sequence']) is int and binding['release_sequence'] > 0,
+            'production_skill_batch_required', 409)
+    return deepcopy(binding)
 
 
 class LibrarySkillProductionAdapter(SkillProductionAdapter):
@@ -43,23 +65,29 @@ class LibrarySkillProductionAdapter(SkillProductionAdapter):
                  'production_skill_ledger_changed', 409)
         return record
 
-    def pin(self, owner, batch_id, release_id=None):
+    def pin(self, owner, batch_id, release_id=None, *, use_wikiskill=True):
         _identity(owner, 200)
         _identity(batch_id)
+        _require(type(use_wikiskill) is bool, 'production_skill_loading_policy_invalid')
+        _require(use_wikiskill or release_id is None, 'production_skill_loading_policy_conflict')
         if release_id is not None:
             _identity(release_id)
         with closing(self._connect()) as db:
             row = db.execute('SELECT * FROM ' + TABLE + ' WHERE owner=? AND batch_id=?',
                              (owner, batch_id)).fetchone()
             if row is not None:
-                _require(row['requested_release_id'] == release_id,
+                saved = self._record(row)
+                _require(row['requested_release_id'] == release_id
+                    and saved['binding'].get('use_wikiskill', True) is use_wikiskill,
                          'production_skill_frozen_input_changed', 409)
-                return deepcopy(self._record(row)['binding'])
-        release = self.release(owner, release_id) if release_id is not None else self.active(owner)
+                return deepcopy(saved['binding'])
+        release = ((self.release(owner, release_id) if release_id is not None else self.active(owner))
+                   if use_wikiskill else None)
         # Reuse the shared contract to validate package bytes and release hash.
         freeze_library_skill_catalog(release, recipient_owner=owner, consumer_id=batch_id,
             task_sha256='0' * 64, allowed_engines=['html-svg', 'canvas', 'three'])
-        binding = dict(batch_id=batch_id, release_id=release['id'] if release else None,
+        binding = dict(batch_id=batch_id, use_wikiskill=use_wikiskill,
+                       release_id=release['id'] if release else None,
                        release_sha256=release['sha256'] if release else None,
                        publisher_owner=release.get('owner') if release else None,
                        release_sequence=release.get('sequence') if release else None)
@@ -71,14 +99,15 @@ class LibrarySkillProductionAdapter(SkillProductionAdapter):
                 (owner, batch_id, release_id, _canonical(record), digest(record)))
             row = db.execute('SELECT * FROM ' + TABLE + ' WHERE owner=? AND batch_id=?',
                              (owner, batch_id)).fetchone()
-            _require(row['requested_release_id'] == release_id, 'production_skill_frozen_input_changed', 409)
             saved = self._record(row)
+            _require(row['requested_release_id'] == release_id
+                and saved['binding'].get('use_wikiskill', True) is use_wikiskill,
+                'production_skill_frozen_input_changed', 409)
             db.commit()
         return deepcopy(saved['binding'])
 
     def _batch(self, owner, binding):
-        _require(type(binding) is dict and set(binding) == {'batch_id', 'release_id', 'release_sha256', 'publisher_owner', 'release_sequence'},
-                 'production_skill_batch_required', 409)
+        validate_library_binding(binding)
         with closing(self._connect()) as db:
             row = db.execute('SELECT * FROM ' + TABLE + ' WHERE owner=? AND batch_id=?',
                              (owner, binding['batch_id'])).fetchone()
@@ -90,9 +119,7 @@ class LibrarySkillProductionAdapter(SkillProductionAdapter):
     def pin_import(self, owner, binding):
         """Recover an authenticated internal batch by exact release, never active."""
         _identity(owner, 200)
-        _require(type(binding) is dict and set(binding) == {
-            'batch_id', 'release_id', 'release_sha256', 'publisher_owner', 'release_sequence'}, 'production_skill_batch_required', 409)
-        _identity(binding['batch_id'])
+        validate_library_binding(binding)
         with closing(self._connect()) as db:
             row = db.execute('SELECT * FROM ' + TABLE + ' WHERE owner=? AND batch_id=?',
                              (owner, binding['batch_id'])).fetchone()
@@ -164,6 +191,10 @@ class LibrarySkillProductionAdapter(SkillProductionAdapter):
             return prior['snapshot'] or self._complete(binding, prior['intent'])
         if library_binding is None:
             library_binding = self.pin(owner, consumer_id)
+        elif type(library_binding) is dict and library_binding.get('use_wikiskill', True) is False:
+            # Disabled plans made without a publication adapter can be safely
+            # recovered: importing no knowledge never resolves today's active.
+            self.pin_import(owner, library_binding)
         batch = self._batch(owner, library_binding)
         intent = dict(library_binding=deepcopy(library_binding), release=batch['release'],
             compatibility=freeze_compatibility(task, resource_authoring=resource_authoring),

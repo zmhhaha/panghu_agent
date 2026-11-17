@@ -28,7 +28,10 @@ class LabManimProducer:
 
     @staticmethod
     def _run(task):
-        return dict(id=task['task_id'], frozen=deepcopy(task['inputs']), deadline_at=task['deadline_at'])
+        run = dict(id=task['task_id'], frozen=deepcopy(task['inputs']), deadline_at=task['deadline_at'])
+        if 'library_binding' in task['inputs']:
+            run['library_binding'] = deepcopy(task['inputs']['library_binding'])
+        return run
 
     def _advance(self, task, cancelled=False):
         state = self.coordinator.advance(task['owner'], self._run(task), cancelled=cancelled)
@@ -166,6 +169,11 @@ class LabResourceStage:
             inputs['manim_iteration'] = deepcopy(frozen['manim_iteration'])
         if 'capability_selection' in frozen:
             inputs['capability_selection'] = deepcopy(frozen['capability_selection'])
+        for name in ('creation_mode', 'use_wikiskill', 'problem_summary'):
+            if name in frozen:
+                inputs[name] = deepcopy(frozen[name])
+        if 'library_binding' in run:
+            inputs['library_binding'] = deepcopy(run['library_binding'])
         return dict(nodes=[dict(id='manim', kind='animation', producer='manim', inputs=inputs,
             dependencies=[], objective=frozen['goal'], required_capabilities=['manim'], key_effects=[],
             local_timing=dict(fps=24, frame_count=options['frame_count']), placement=placement)],
@@ -204,6 +212,80 @@ class LabResourceStage:
             require(row is not None and row['state'] == 'active', 'lab_resource_stopped', 409)
         return plan
 
+    def restore_retry(self, owner, run, previous_run):
+        """Restore one stopped resource round before ordinary retry execution.
+
+        Completed PNGs are verified and adopted by reference, with no producer
+        task. Failed resources keep their exact recipe checkpoint and only
+        reserve the missing execution. Old attempt outcomes stay unchanged.
+        The caller holds the library/run lock and validates the parent runs.
+        """
+        require(run['id'] != previous_run['id']
+            and run['frozen'].get('retry_of_commission_id') == previous_run['id']
+            and previous_run.get('state') in {'failed', 'cancelled'},
+            'lab_resource_retry_relationship_invalid', 409)
+        request, original = self.request(run), self.request(previous_run)
+        require({key: value for key, value in request.items() if key != 'deadline_at'}
+            == {key: value for key, value in original.items() if key != 'deadline_at'},
+            'lab_resource_retry_input_changed', 409)
+        source_id = self.operation_id(previous_run['id'], previous_run.get('resource_round'))
+        binding = self._binding(owner, source_id)
+        if binding is None or self._stopped_intent(binding) is not None:
+            return None
+        source = self._get(owner, source_id)
+        require(source['stop_proven'] and source['status'] in {'completed', 'blocked', 'cancelled', 'timed_out'},
+            'lab_resource_retry_source_not_stopped', 409)
+        require(source['request_sha256'] == digest(original)
+            and set(source['nodes']) == {'manim'}, 'lab_resource_retry_input_changed', 409)
+        target = self._ensure(owner, run)
+        target = self._store().freeze_retry_source(owner, target['operation_id'], source_id)
+        return self._restore_checkpoint(owner, target)
+
+    def _restore_checkpoint(self, owner, plan):
+        """Resume a durable restore intent after any process interruption."""
+        source_id = plan['retry_source']['operation_id']
+        store = self._store()
+        plan = store.freeze_retry_source(owner, plan['operation_id'], source_id)
+        source = store.get(owner, source_id)
+        node = source['nodes']['manim']
+        require(source['stop_proven'] and node['stop_proven'], 'lab_resource_retry_source_not_stopped', 409)
+        target_node = plan['nodes']['manim']
+        require(target_node['definition'] == node['definition'], 'lab_resource_retry_input_changed', 409)
+        if node['status'] == 'completed':
+            output = node['output']
+            require(type(output) is dict and type(output.get('content')) is dict,
+                'lab_resource_retry_output_missing', 409)
+            descriptor = output['content'].get('descriptor')
+            self.coordinator().resolve(descriptor)
+            return store.adopt(owner, plan['operation_id'], 'manim',
+                {key: deepcopy(output[key]) for key in ('content', 'local_timing', 'capabilities', 'key_effects')},
+                'restore-retry-checkpoint')
+        if node['task'] is None:
+            return plan
+        source_record = self.coordinator()._get(owner, node['task']['task_id'])
+        require(source_record is not None, 'lab_resource_retry_checkpoint_missing', 409)
+        if source_record['state'] == 'completed':
+            # A plan can expire after its producer completed, before adopting
+            # the output. Verify that stopped producer's actual PNGs; the old
+            # cancelled/failed plan itself remains unchanged.
+            descriptor = self.coordinator().context(owner, node['task']['task_id'])
+            self.coordinator().resolve(descriptor)
+            return store.adopt(owner, plan['operation_id'], 'manim',
+                dict(content=dict(descriptor=descriptor), local_timing=deepcopy(node['task']['local_timing']),
+                    capabilities=['manim'], key_effects=[]), 'restore-retry-checkpoint')
+        task = target_node['task']
+        if task is None:
+            task = store.claim(owner, plan['operation_id'], 'manim', LabManimProducer(self.coordinator()).capabilities())
+        if task is None or target_node['status'] in {'completed', 'failed', 'cancelled'}:
+            return store.get(owner, plan['operation_id'])
+        self.coordinator().restore_retry(owner, LabManimProducer._run(task), node['task']['task_id'])
+        # The durable claim has not called submit. Mark it for original-ID
+        # lookup immediately instead of waiting the uncertain-submit grace.
+        current = store.get(owner, plan['operation_id'])['nodes']['manim']
+        if current['status'] == 'submitting':
+            store.unknown(owner, plan['operation_id'], 'manim', task['task_id'], 'lab_resource_retry_checkpoint_ready')
+        return store.get(owner, plan['operation_id'])
+
     def advance(self, owner, run, *, cancelled=False):
         operation_id = self.operation_id(run['id'], run.get('resource_round'))
         binding = self._binding(owner, operation_id)
@@ -218,11 +300,14 @@ class LabResourceStage:
             if ((cancelled or self.clock() >= run['deadline_at']) and binding['state'] == 'intent'
                     and self._stop_unstarted_intent(owner, operation_id, checksum, cancelled=cancelled)):
                 return 'cancelled' if cancelled else 'failed'
-        if binding is None and any(key in run['frozen'] for key in ('manim_iteration', 'capability_selection')):
+        if binding is None and any(key in run['frozen'] for key in (
+                'manim_iteration', 'capability_selection', 'creation_mode')):
             # Check full owned recipe/context bounds before reserving a new
             # resource attempt. Resume always consumes its original task input.
             self.coordinator().recipe_guidance(owner, run['frozen'])
         plan = self._ensure(owner, run)
+        if 'retry_source' in plan and not cancelled:
+            plan = self._restore_checkpoint(owner, plan)
         store = self._store()
         if cancelled:
             store.cancel(owner, operation_id)

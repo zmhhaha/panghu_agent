@@ -228,7 +228,8 @@ class AnimationMethodCommissionStore:
     def _usage(db, commission_id):
         result = dict.fromkeys(sorted(STAGES), 0)
         for row in db.execute("SELECT stage,count(*) AS n FROM animation_method_commission_operations "
-                              "WHERE commission_id=? AND status!='released' GROUP BY stage",
+                              "WHERE commission_id=? AND status!='released' "
+                              "AND json_type(document,'$.reused_from') IS NULL GROUP BY stage",
                               (commission_id,)):
             result[row["stage"]] = row["n"]
         return result
@@ -236,7 +237,7 @@ class AnimationMethodCommissionStore:
     @staticmethod
     def _candidates(commission):
         result = {row["id"]: row for row in commission["candidates"]}
-        baseline = commission["frozen"].get("base_candidate")
+        baseline = commission["frozen"].get("base_candidate") or commission.get('retry_base_candidate')
         if baseline is not None:
             result.setdefault(baseline["id"], baseline)
         return result
@@ -272,7 +273,8 @@ class AnimationMethodCommissionStore:
                      "retry_of_commission_id",
                      "protocol_schema", "knowledge_snapshot_id", "research_record_ids", "content_changes",
                       "resource_authoring", "collaboration", "capability_selection", "manim_iteration",
-                      "resource_planning",
+                      "resource_planning", "creation_mode", "effect_id", "use_wikiskill",
+                      "problem_summary", "library_binding",
                  })
         _require('resource_planning' not in body or body['resource_planning'] == 'after-plan.v1',
                  'animation_method_resource_planning_invalid')
@@ -318,6 +320,10 @@ class AnimationMethodCommissionStore:
                          and value["before"] is not None and value["after"] is not None
                          and _json(value["before"]) != _json(value["after"]),
                          "animation_method_commission_structural_change_required")
+        if body.get('creation_mode') == 'fresh':
+            _require(body.get('effect_id') and not any(body.get(key) for key in (
+                'base_commission_id', 'base_candidate_id', 'base_candidate', 'method_versions')),
+                'animation_creation_fresh_inheritance_forbidden')
         request = _copy(body)
         with self._transaction() as db:
             replay = self._replay(db, owner, "create", request_id, request)
@@ -352,6 +358,11 @@ class AnimationMethodCommissionStore:
                 state="queued", cancel_requested=False, deadline_at=now + limits["seconds"],
                 created_at=now, updated_at=now, candidates=[], reviews=[],
                 best_candidate_id=frozen.get("base_candidate_id"), stop_reason=None, summary=None)
+            if retry_id is not None and previous.get('best_candidate_id') and previous.get('reviews'):
+                retained = self._candidates(previous).get(previous['best_candidate_id'])
+                if retained is not None:
+                    commission['retry_base_candidate'] = _copy(retained)
+                    commission['best_candidate_id'] = retained['id']
             if submission_snapshot is not None:
                 commission['submission_snapshot'] = _copy(submission_snapshot)
                 commission['submission_snapshot_sha256'] = digest(submission_snapshot)
@@ -364,6 +375,153 @@ class AnimationMethodCommissionStore:
     def get(self, owner, commission_id):
         with self._transaction() as db:
             return self._present(db, self._commission(db, owner, commission_id))
+
+    def restore_completed_creators(self, owner, new_commission_id, previous_commission_id):
+        """Carry stopped retry checkpoints forward without submitting new work.
+
+        Only completed creator operations are copied. Original inputs, results,
+        upload manifests and real job identities stay unchanged; the new ledger
+        rows explicitly identify their source and do not spend this retry's
+        operation budget. Render and review outcomes are not copied here.
+        """
+        with self._transaction() as db:
+            previous = self._commission(db, owner, previous_commission_id)
+            commission = self._commission(db, owner, new_commission_id)
+            _require(new_commission_id != previous_commission_id
+                and commission['frozen'].get('retry_of_commission_id') == previous_commission_id,
+                'animation_method_retry_checkpoint_relationship_invalid', 409)
+            _require(previous['state'] in {'failed', 'cancelled'}
+                and not self._active(db, previous_commission_id),
+                'animation_method_retry_not_available', 409)
+            source_rows = list(db.execute('SELECT id FROM animation_method_commission_operations '
+                'WHERE commission_id=? AND stage=? AND status=? ORDER BY rowid',
+                (previous_commission_id, 'creator', 'completed')))
+            sources = [self._operation(db, owner, row['id']) for row in source_rows]
+            _require(all(op['commission_id'] == previous_commission_id
+                and op['owner'] == owner and op['stage'] == 'creator'
+                and op['status'] == 'completed' for op in sources),
+                'animation_method_retry_checkpoint_changed', 409)
+            checkpoint = commission.get('retry_creator_checkpoint')
+            if checkpoint is not None:
+                _require(type(checkpoint) is dict
+                    and checkpoint.get('source_commission_id') == previous_commission_id
+                    and checkpoint.get('source_frozen_sha256') == previous['frozen_sha256']
+                    and type(checkpoint.get('operations')) is list
+                    and all(type(row) is dict and set(row) == {'source_operation_id', 'operation_id'}
+                        and type(row['source_operation_id']) is str and type(row['operation_id']) is str
+                        for row in checkpoint['operations'])
+                    and [row.get('source_operation_id') for row in checkpoint['operations']]
+                        == [op['id'] for op in sources],
+                    'animation_method_retry_checkpoint_changed', 409)
+                for source, identity in zip(sources, checkpoint['operations']):
+                    restored = self._operation(db, owner, identity['operation_id'])
+                    _require(restored['commission_id'] == new_commission_id
+                        and restored.get('reused_from') == dict(
+                            commission_id=previous_commission_id, operation_id=source['id'])
+                        and restored['stage'] == 'creator' and restored['status'] == 'completed'
+                        and restored['idempotency_key'] == source['idempotency_key']
+                        and restored['input_sha256'] == source['input_sha256']
+                        and restored['result_sha256'] == source['result_sha256']
+                        and restored['input'] == source['input'] and restored['result'] == source['result']
+                        and restored['job_id'] == source['job_id'],
+                        'animation_method_retry_checkpoint_changed', 409)
+                return self._present(db, commission)
+            _require(commission['state'] not in TERMINAL and not commission['cancel_requested']
+                and not db.execute('SELECT 1 FROM animation_method_commission_operations '
+                    'WHERE commission_id=? LIMIT 1', (new_commission_id,)).fetchone(),
+                'animation_method_retry_checkpoint_not_pristine', 409)
+            mappings = []
+            now = self.clock()
+            for source in sources:
+                operation = _copy(source)
+                operation.update(id=str(uuid4()), commission_id=new_commission_id,
+                    reused_from=dict(commission_id=previous_commission_id, operation_id=source['id']),
+                    created_at=now, updated_at=now)
+                db.execute('INSERT INTO animation_method_commission_operations VALUES(?,?,?,?,?,?,?,?)',
+                    (operation['id'], new_commission_id, owner, 'creator', operation['idempotency_key'],
+                        operation['request_sha256'], 'completed', _json(operation)))
+                self._event(db, new_commission_id, 'operation_reused', operation['id'],
+                    source_commission_id=previous_commission_id, source_operation_id=source['id'],
+                    input_sha256=source['input_sha256'], result_sha256=source['result_sha256'])
+                mappings.append(dict(source_operation_id=source['id'], operation_id=operation['id']))
+            commission['retry_creator_checkpoint'] = dict(source_commission_id=previous_commission_id,
+                source_frozen_sha256=previous['frozen_sha256'], operations=mappings)
+            self._save(db, commission)
+            self._event(db, new_commission_id, 'creator_checkpoints_restored',
+                source_commission_id=previous_commission_id, count=len(mappings))
+            return self._present(db, commission)
+
+    def reuse_render(self, owner, new_operation_id, previous_render_id):
+        """Complete a reserved retry render from identical, verified old work.
+
+        The service additionally verifies that the original immutable media is
+        still readable with its recorded digest before calling this adapter.
+        New review work observes this exact media; old artistic judgments are
+        never copied. The artifact identity stays that of the original render.
+        """
+        with self._transaction() as db:
+            operation = self._operation(db, owner, new_operation_id)
+            previous = self._operation(db, owner, previous_render_id)
+            commission = self._commission(db, owner, operation['commission_id'])
+            source_commission = self._commission(db, owner, previous['commission_id'])
+            provenance = dict(commission_id=previous['commission_id'], operation_id=previous_render_id)
+            _require(operation['id'] != previous_render_id and operation['stage'] == 'render'
+                and previous['stage'] == 'render' and previous['status'] == 'completed'
+                and source_commission['state'] in {'failed', 'cancelled'}
+                and not self._active(db, source_commission['id'])
+                and commission['frozen'].get('retry_of_commission_id') == source_commission['id'],
+                'animation_method_retry_render_relationship_invalid', 409)
+            _require(type(previous.get('result')) is dict
+                and previous['result'].get('technical', {}).get('status') == 'passed',
+                'animation_method_retry_render_not_usable', 409)
+            _media(previous['result'].get('media'))
+            new_input, old_input = operation['input'], previous['input']
+            _require(type(new_input) is dict and type(old_input) is dict
+                and type(new_input.get('author_operation_id')) is str
+                and type(old_input.get('author_operation_id')) is str
+                and {key: value for key, value in new_input.items() if key != 'author_operation_id'}
+                    == {key: value for key, value in old_input.items() if key != 'author_operation_id'},
+                'animation_method_retry_render_input_changed', 409)
+            author = self._operation(db, owner, new_input['author_operation_id'])
+            old_author = self._operation(db, owner, old_input['author_operation_id'])
+            _require(author['commission_id'] == commission['id']
+                and old_author['commission_id'] == source_commission['id']
+                and author['stage'] == old_author['stage'] == 'creator'
+                and author['status'] == old_author['status'] == 'completed'
+                and author.get('reused_from') == dict(
+                    commission_id=source_commission['id'], operation_id=old_author['id'])
+                and author['input_sha256'] == old_author['input_sha256']
+                and author['result_sha256'] == old_author['result_sha256']
+                and new_input.get('document') == author['input']
+                and type(author.get('result')) is dict
+                and new_input.get('source') == author['result'].get('source')
+                and new_input.get('sound_events') == author['result'].get('sound_events'),
+                'animation_method_retry_render_author_changed', 409)
+            artifact_id = previous.get('artifact_operation_id', previous_render_id)
+            artifact = self._operation(db, owner, artifact_id)
+            artifact_commission = self._commission(db, owner, artifact['commission_id'])
+            _require(artifact['stage'] == 'render' and artifact['status'] == 'completed'
+                and artifact['result_sha256'] == previous['result_sha256']
+                and artifact['result'] == previous['result']
+                and artifact_commission['state'] in TERMINAL
+                and not self._active(db, artifact_commission['id']),
+                'animation_method_retry_render_artifact_changed', 409)
+            if 'reused_from' in operation:
+                _require(operation['reused_from'] == provenance
+                    and operation['status'] == 'completed'
+                    and operation['result_sha256'] == previous['result_sha256']
+                    and operation.get('artifact_operation_id') == artifact_id,
+                    'animation_method_retry_render_conflict', 409)
+                return operation
+            _require(operation['status'] == 'reserved' and operation['job_id'] is None
+                and commission['state'] not in TERMINAL and not commission['cancel_requested'],
+                'animation_method_retry_render_not_reserved', 409)
+            operation.update(status='completed', result=_copy(previous['result']),
+                result_sha256=previous['result_sha256'], error=None,
+                job_id=previous['job_id'], reused_from=provenance, artifact_operation_id=artifact_id)
+            return self._save_operation(db, operation, 'operation_reused',
+                source_commission_id=source_commission['id'], source_operation_id=previous_render_id,
+                artifact_operation_id=artifact_id, result_sha256=previous['result_sha256'])
 
     def freeze_capability_decision(self, owner, commission_id, decision):
         """Host-only immutable adoption, bound to the completed original plan."""

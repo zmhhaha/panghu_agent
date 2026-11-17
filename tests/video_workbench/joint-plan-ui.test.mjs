@@ -92,12 +92,60 @@ test('advanced release selection is made once at planning and never publishes or
   assert.equal(Object.hasOwn(defaultIntent.body, 'library_release_id'), false);
 });
 
+test('WikiSkill is on for each new planning draft and explicit off never carries a release selection', async () => {
+  assert.equal(jointPlanDraft().use_wikiskill, true);
+  const disabled = createJointPlanRequest(project(), { ...jointPlanDraft(), use_wikiskill: false });
+  assert.equal(disabled.body.use_wikiskill, false);
+  assert.equal(Object.hasOwn(disabled.body, 'library_release_id'), false);
+  assert.throws(() => createJointPlanRequest(project(), { ...jointPlanDraft(), use_wikiskill: 'false' }), /WikiSkill/);
+  assert.throws(() => createJointPlanRequest(project(), { ...jointPlanDraft(), use_wikiskill: false, library_release_id: 'release-1' }), /不能同时指定/);
+  const h = harness();
+  h.state.transport = (path, options) => path === '/api/wikiskill/releases'
+    ? { active_release_id: 'release-1', releases: [{ id: 'release-1', sequence: 1 }] }
+    : options.method === 'POST' ? { id: 'operation', status: 'queued' } : structuredClone(h.state.data);
+  await h.load();
+  assert.equal(h.$('joint-plan-use-wikiskill').checked, true);
+  h.$('joint-plan-library-options').open = true; await h.$('joint-plan-library-options').emit('toggle');
+  h.$('joint-plan-library-release').value = 'release-1'; await h.$('joint-plan-library-release').emit('change');
+  h.$('joint-plan-use-wikiskill').checked = false; await h.$('joint-plan-use-wikiskill').emit('change');
+  assert.equal(h.$('joint-plan-library-release').value, '');
+  assert.equal(h.$('joint-plan-library-release').disabled, true);
+  assert.match(h.$('joint-plan-library-note').textContent, /平台工具和 HyperFrames 运行规范仍提供/);
+  await h.load(); assert.equal(h.$('joint-plan-use-wikiskill').checked, false, 'polling preserves the explicit choice');
+  await h.panel.generate();
+  assert.equal(posts(h).length, 1);
+  assert.equal(posts(h)[0].options.body.use_wikiskill, false);
+  assert.equal(Object.hasOwn(posts(h)[0].options.body, 'library_release_id'), false);
+});
+
+test('disabled knowledge can plan despite catalogue failure and adopted versions keep their actual immutable choice', async () => {
+  const h = harness();
+  h.state.data.versions[0].library_binding = { use_wikiskill: false, release_id: null };
+  h.state.transport = (path, options) => {
+    if (path === '/api/wikiskill/releases') throw Error('catalogue unavailable');
+    return options.method === 'POST' ? { id: 'operation', status: 'queued' } : structuredClone(h.state.data);
+  };
+  await h.load();
+  assert.equal(h.$('joint-plan-use-wikiskill').checked, true, 'a new plan does not silently inherit the adopted off choice');
+  assert.match(h.$('joint-plan-review').textContent, /本次统筹及后续制作关闭动效 WikiSkill/);
+  h.$('joint-plan-library-options').open = true; await h.$('joint-plan-library-options').emit('toggle');
+  h.$('joint-plan-use-wikiskill').checked = false; await h.$('joint-plan-use-wikiskill').emit('change');
+  assert.equal(h.$('generate-joint-plan').disabled, false);
+  assert.doesNotMatch(h.$('joint-plan-library-note').textContent, /暂时无法读取/);
+  await h.panel.generate(); assert.equal(posts(h)[0].options.body.use_wikiskill, false);
+  const empty = harness();
+  empty.state.data.versions[0].library_binding = { use_wikiskill: true, release_id: null };
+  await empty.load();
+  assert.match(empty.$('joint-plan-review').textContent, /固定使用空技能目录/);
+  assert.doesNotMatch(empty.$('joint-plan-review').textContent, /关闭动效 WikiSkill/);
+});
+
 test('zero-scene project can plan saved script with immutable bounded inputs and original-script option', () => {
   const draft = { ...jointPlanDraft(), goal: ' 讲清楚 ', preserve_script: true };
   const intent = createJointPlanRequest(project('../p?'), draft);
   assert.equal(intent.path, '/api/projects/..%2Fp%3F/joint-plan');
   assert.deepEqual(intent.body, { expected_revision: 1, brief: { audience: '', goal: '讲清楚', tone: 'conversational' },
-    instruction: '', preserve_script: true });
+    instruction: '', preserve_script: true, use_wikiskill: true });
   draft.goal = '后来改变'; assert.equal(intent.body.brief.goal, '讲清楚');
   assert.throws(() => { intent.body.brief.goal = '改写'; }, TypeError);
   assert.throws(() => createJointPlanRequest({ ...project(), script: ' ' }, draft), /总文稿/);
@@ -211,7 +259,7 @@ test('generation uses zero scenes, keeps in-flight draft changes and never start
   resolve({ id: 'op', kind: 'joint-plan', status: 'queued' }); await generating;
   assert.equal(posts(h).length, 1);
   assert.deepEqual(posts(h)[0].options.body, { expected_revision: 1, brief: { audience: '初学者', goal: '理解任务的全过程', tone: 'conversational' },
-    instruction: '使用贯穿全片的例子', preserve_script: false });
+    instruction: '使用贯穿全片的例子', preserve_script: false, use_wikiskill: true });
   assert.equal(h.panel.hasDrafts(), true); assert.equal(h.$('joint-plan-instruction').value, '新要求');
   assert.equal(h.panel.hasUnresolvedOperation(), true);
   assert.equal(h.panel.hasUnresolvedOperation('other-project'), false);

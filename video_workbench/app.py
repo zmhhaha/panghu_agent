@@ -296,6 +296,7 @@ class ExplanationAdoption(Revision):
 class JointPlanRequest(ExplanationRequest):
     preserve_script: bool = Field(default=False, strict=True)
     library_release_id: str | None = Field(default=None, min_length=1, max_length=200)
+    use_wikiskill: bool = Field(default=True, strict=True)
 
 
 class ProductionRunRequest(Revision):

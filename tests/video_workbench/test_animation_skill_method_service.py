@@ -43,7 +43,8 @@ class SkillGateway(Gateway):
             if parent:
                 result['methods'][0].update(method_id=identity, parent_version_id=parent['version_id'])
         snapshot = document['knowledge_snapshot']
-        if document['mode'] == 'plan' and snapshot is not None and not snapshot['pages']:
+        if (document['mode'] == 'plan' and snapshot is not None and not snapshot['pages']
+                and snapshot['experiences']):
             result['knowledge_proposals'] = [dict(page_id='causal-identity', expected_revision=0,
                 body=dict(title='Provisional causality', content='A requested goal suggests preserving intervention identity; '
                           'this is not evidence that the new source has rendered successfully.'),
@@ -58,7 +59,7 @@ def work(tmp_path):
     return service, creator, reviewer, renderer
 
 
-def test_new_authorship_materializes_standard_skill_and_wiki_without_publishing(work):
+def test_new_authorship_materializes_standard_skill_and_facts_with_empty_published_library(work):
     service, creator, reviewer, renderer = work
     first = start(service)
     initial = deepcopy(service.commissions.get('developer', first['id'])['frozen'])
@@ -69,21 +70,61 @@ def test_new_authorship_materializes_standard_skill_and_wiki_without_publishing(
     assert method['skill_package']['files']['SKILL.md'].startswith('---\n')
     assert 'skill_package' not in row['methods'][0] and row['methods'][0]['skill_package_sha256']
     assert not row['publication_ready'] and not service.published_catalogue('developer')['methods']
-    page = service.knowledge.get_page('developer', 'causal-identity')
-    assert page['status'] == 'provisional'
-    assert service.knowledge.get_snapshot('developer', initial['knowledge_snapshot_id'])['pages'] == []
+    assert initial['library_binding']['use_wikiskill'] is True
+    assert initial['library_binding']['release_id'] is None
+    snapshot = service.library_adapter.laboratory_snapshot('developer', initial['library_binding'])
+    assert snapshot['id'] == initial['knowledge_snapshot_id']
+    assert snapshot['pages'] == snapshot['experiences'] == []
+    assert service.knowledge.list_pages('developer') == []
     run = service.commissions.get('developer', row['id'])
-    create = next(op for op in run['operations'] if op['input'].get('mode') == 'create')
-    assert create['input']['knowledge_snapshot']['pages'][0]['sha256'] == page['sha256']
+    documents = [op['input'] for op in run['operations'] if op['input'].get('schema') == protocol.INPUT_SCHEMA]
+    assert {document['mode'] for document in documents} == {'plan', 'create', 'review'}
+    assert all(document['knowledge_snapshot'] == snapshot for document in documents)
+    assert all(op['result'].get('knowledge_proposals', []) == [] for op in run['operations'])
     experiences = service.knowledge.list_experiences('developer')
-    assert {'brief', 'authored_proposal', 'sampled_review', 'render', 'knowledge_proposal'} <= {
-        record['kind'] for record in experiences}
+    kinds = {record['kind'] for record in experiences}
+    assert {'brief', 'authored_proposal', 'sampled_review', 'render'} <= kinds
+    assert 'knowledge_proposal' not in kinds
     before = len(experiences), len(creator.submissions), len(reviewer.submissions), len(renderer.calls)
     for _ in range(2):
         service.get('developer', row['id'])
         service.knowledge_catalogue('developer')
     assert before == (len(service.knowledge.list_experiences('developer')), len(creator.submissions),
                       len(reviewer.submissions), len(renderer.calls))
+
+
+def test_authorship_retains_exact_published_inline_input_without_working_wiki_refresh(work, monkeypatch):
+    from test_animation_wikiskill_production import release
+    from video_workbench.animation_laboratory_library import LaboratoryLibraryAdapter
+
+    service, creator, reviewer, renderer = work
+    published = release(count=1)
+    state = dict(active=published)
+    service.library_adapter = LaboratoryLibraryAdapter(lambda owner: deepcopy(state['active']),
+        lambda owner, identity: pytest.fail('Frozen release must not be selected again'),
+        lambda owner: [], service.root / 'published-input-ledger.sqlite3')
+    monkeypatch.setattr(service, '_knowledge_snapshot',
+        lambda *_: pytest.fail('New authoring must not read mutable working Wiki'))
+    queued = start(service)
+    frozen = service.commissions.get('developer', queued['id'])['frozen']
+    snapshot = service.library_adapter.laboratory_snapshot('developer', frozen['library_binding'])
+    assert frozen['library_binding']['release_id'] == published['id']
+    receipt = snapshot['experiences'][0]['document']
+    assert receipt['source'] == 'published-release-inline' and receipt['library_binding'] == frozen['library_binding']
+    assert snapshot['pages'][0]['body']['content'].split('\n', 1)[1] == published['packages'][0]['files']['SKILL.md']
+    state['active'] = release(sequence=2, count=1)
+    row = finish(service, queued['id'])
+    assert row['state'] == 'completed'
+    run = service.commissions.get('developer', row['id'])
+    documents = [op['input'] for op in run['operations'] if op['input'].get('schema') == protocol.INPUT_SCHEMA]
+    assert {document['mode'] for document in documents} == {'plan', 'create', 'review'}
+    assert all(document['knowledge_snapshot'] == snapshot for document in documents)
+    assert all(op['result'].get('knowledge_proposals', []) == [] for op in run['operations'])
+    assert run['frozen']['library_binding'] == frozen['library_binding']
+    assert service.knowledge.list_pages('developer') == []
+    assert {'brief', 'authored_proposal', 'sampled_review', 'render'} <= {
+        record['kind'] for record in service.knowledge.list_experiences('developer')}
+    assert (len(creator.submissions), len(reviewer.submissions), len(renderer.calls)) == (2, 1, 1)
 
 
 def test_reference_free_transfer_and_exact_human_acceptances_are_required_for_release(work):
@@ -206,14 +247,23 @@ def test_reader_and_combined_ledger_budget_are_checked_before_paid_reservation(t
     assert store.complete('fixture-owner', operation['id'], result)['result'] == result
 
 
-def test_large_frozen_wiki_is_rejected_before_creating_or_submitting_commission(work):
+def test_large_working_wiki_does_not_enter_or_block_new_published_library_creation(work, monkeypatch):
     service, creator, reviewer, renderer = work
     for index in range(10):
         service.knowledge.record_experience('developer', 'large_fixture', str(index), {'text': 'x' * 230000})
-    with pytest.raises(ServiceError, match='input_too_large'):
-        start(service)
+    monkeypatch.setattr(service, '_knowledge_snapshot',
+        lambda *_: pytest.fail('Working experiences must not become new creation inputs'))
+    queued = start(service)
+    frozen = service.commissions.get('developer', queued['id'])
+    assert frozen['frozen']['library_binding']['use_wikiskill'] is True
+    assert frozen['frozen']['library_binding']['release_id'] is None
+    document = service._document('developer', frozen, 'plan')
+    assert document['knowledge_snapshot']['pages'] == document['knowledge_snapshot']['experiences'] == []
+    assert len(canonical_bytes(document)) < protocol.INPUT_MAX_BYTES
+    assert len(service.commissions.list_all('developer')) == 1
+    assert len([record for record in service.knowledge.list_experiences('developer')
+                if record['kind'] == 'large_fixture']) == 10
     assert creator.submissions == reviewer.submissions == renderer.calls == []
-    assert service.commissions.list_all('developer') == []
 
 
 def test_feedback_and_withdrawal_archives_recover_without_reusing_withdrawn_wiki_evidence(work, monkeypatch):

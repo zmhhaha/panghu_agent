@@ -57,6 +57,11 @@ export function commissionCandidates(detail) {
   const candidates = rows(detail?.candidates);
   return candidates.length ? candidates : detail?.best_candidate ? [detail.best_candidate] : [];
 }
+function adoptableCandidates(detail) {
+  const baseline = detail?.baseline_candidate?.candidate ?? detail?.baseline_candidate;
+  return rows(detail?.candidates).filter(row => row.media_url && (row.commission_id
+    ? row.commission_id === detail?.id : row.id !== baseline?.id));
+}
 export function selectedCandidate(detail) {
   const candidates = commissionCandidates(detail);
   return candidates.find(row => row.id === detail?.best_candidate_id) ?? detail?.best_candidate ?? candidates.at(-1) ?? null;
@@ -117,6 +122,15 @@ function number(value, minimum, maximum, label, integer = false) {
 }
 export function buildCommissionRequest(fields, requestId) {
   if (!UUID.test(requestId ?? '')) throw Error('无法生成有效请求编号');
+  const retryOf = text(fields.retry_of_commission_id).trim();
+  if (retryOf) return {request_id: requestId, retry_of_commission_id: retryOf,
+    budget: {max_rounds: fields.collaboration_inherited === true ? 1
+      : number(fields.max_rounds ?? 1, 1, 8, '本次探索轮数应为 1 至 8', true),
+      max_seconds: number(fields.max_minutes ?? 15, 1, 60, '本次时间上限应为 1 至 60 分钟', true) * 60}};
+  const creationMode = fields.creation_mode ?? (fields.base_commission_id ? 'continue' : 'new');
+  if (!['new', 'continue', 'fresh'].includes(creationMode)) throw Error('请选择有效的创作方式');
+  if (creationMode === 'fresh' && !text(fields.effect_id).trim()) throw Error('从零重做需要明确所属效果');
+  if (fields.use_wikiskill !== undefined && ![true, false, 'on'].includes(fields.use_wikiskill)) throw Error('请明确是否加载动效 WikiSkill');
   const title = text(fields.title).trim(), goal = text(fields.goal).trim(), feedback = text(fields.feedback).trim();
   if (!title || title.length > 200 || !goal || goal.length > 8000 || feedback.length > 8000) throw Error('请填写效果名称和表达目标，并缩短过长的内容');
   let reference = null;
@@ -134,15 +148,22 @@ export function buildCommissionRequest(fields, requestId) {
   } else if ((fields.reference_start !== '' && fields.reference_start != null) || (fields.reference_end !== '' && fields.reference_end != null)) {
     throw Error('填写片段时间前，请先提供参考链接');
   }
-  const body = {request_id: requestId, title, goal, reference,
+  const body = {request_id: requestId, title, goal, reference, creation_mode: creationMode,
+    use_wikiskill: fields.use_wikiskill !== false,
     duration_seconds: number(fields.duration_seconds ?? 24, 2, 60, '样片时长应为 2 至 60 秒'),
     budget: {max_rounds: number(fields.max_rounds ?? 3, 1, 8, '本次探索轮数应为 1 至 8', true),
       max_seconds: number(fields.max_minutes ?? 15, 1, 60, '本次时间上限应为 1 至 60 分钟', true) * 60},
     base_commission_id: text(fields.base_commission_id) || null, feedback};
-  const retryOf = text(fields.retry_of_commission_id).trim();
-  if (retryOf) {
-    body.retry_of_commission_id = retryOf;
+  if (fields.effect_id) body.effect_id = text(fields.effect_id).trim();
+  if (creationMode === 'fresh') {
     delete body.base_commission_id;
+    delete body.feedback;
+    const problems = text(fields.problem_summary_text).split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+    if (problems.length > 16 || problems.some(value => [...value].length > 4000)) throw Error('问题摘要最多 16 项，每项不超过 4000 字');
+    if (problems.length) {
+      body.problem_summary = problems.map(value => ({text: value, source: 'developer'}));
+      if (new TextEncoder().encode(JSON.stringify(body.problem_summary)).length > 24 * 1024) throw Error('问题摘要整体过长，请保留最关键的问题');
+    }
   } else {
     if (body.base_commission_id && !feedback) throw Error('继续优化时，请说明本次修改意见');
     if (fields.base_candidate_id) body.base_candidate_id = text(fields.base_candidate_id);
@@ -150,7 +171,7 @@ export function buildCommissionRequest(fields, requestId) {
   Object.assign(body, resourceAuthoringRequest(fields, body.duration_seconds));
   // An edited continuation must distinguish clearing the choices from asking
   // the API to inherit omitted fields from its baseline.
-  if (body.base_commission_id || retryOf) body.capability_selection ??= {creation: [], motion: []};
+  if (body.base_commission_id) body.capability_selection ??= {creation: [], motion: []};
   const explicitCollaboration = fields.collaboration_enabled === true || fields.collaboration_enabled === 'on';
   if (explicitCollaboration || fields.collaboration_inherited === true) {
     if (fields.transfer_commission_id) throw Error('按职责分工创作目前不支持迁移验证');
@@ -161,13 +182,13 @@ export function buildCommissionRequest(fields, requestId) {
   const criteria = text(fields.criteria_text).split(/\r?\n/).map(value => value.trim()).filter(Boolean);
   if (criteria.length > 16 || criteria.some(value => value.length > 1200)) throw Error('验收标准最多 16 项，每项不超过 1200 字');
   if (criteria.length) body.criteria = criteria.map((description, index) => {
-    const original = rows(fields.criteria_metadata)[index];
+    const original = creationMode === 'fresh' ? null : rows(fields.criteria_metadata)[index];
     return original ? {...original, description} : {id: 'criterion-' + (index + 1), description, requires_motion: true};
   });
   return body;
 }
 export function buildTransferRequest(fields, requestId) {
-  if (fields.retry_of_commission_id) throw Error('重新运行不能同时进行迁移验证');
+  if (fields.retry_of_commission_id) throw Error('技术重试不能同时进行迁移验证');
   const skills = fields.transfer_protocol === 'skills';
   const body = buildCommissionRequest({...fields, base_commission_id: null,
     ...(skills ? {reference_url: '', reference_start: '', reference_end: ''} : {})}, requestId);
@@ -180,6 +201,7 @@ export function buildTransferRequest(fields, requestId) {
   const after = dimension === 'object_count' ? number(afterText, 0, 100000, '对象数量需要是有效整数', true) : afterText;
   if (before === after) throw Error('迁移任务需要有实质变化');
   delete body.base_commission_id;
+  delete body.creation_mode;
   delete body.criteria;
   body.structural_changes = {[dimension]: {before, after}};
   if (skills) {
@@ -320,12 +342,26 @@ export class MethodGalleryController {
       if (action === 'feedback') this.state.notice = '意见已保存。选择“继续优化这版”时才会开始下一次实验。';
       else if (action === 'withdraw_feedback') this.state.notice = '意见已撤回，原记录保留供核对。不会开始新的制作。';
       else if (action === 'publish') this.state.notice = '验收与发布请求已提交，状态以服务器结果为准。';
+      else if (action === 'adopt') {
+        this.state.notice = '默认展示样片已更新。历史和知识库发布版本保持独立。';
+        await this.refresh();
+      }
       else this.state.notice = '取消请求已提交，已开始的工作会保留记录。';
       return true;
     } catch (error) { this.state.error = '请求结果待核对：' + error.message + '。请刷新查看，没有自动重试。'; return false; }
     finally { this.state.busy = false; this.emit(); this.queueRead(); }
   }
   cancel() { return ACTIVE.has(this.state.detail?.state) ? this.mutate('cancel', {}) : Promise.resolve(false); }
+  adoptCandidate(candidateId) {
+    const detail = this.state.detail, effectId = detail?.effect_id ?? detail?.effect?.id;
+    const revision = detail?.representative_revision ?? detail?.effect?.representative_revision;
+    if (!effectId || !Number.isInteger(revision) || ACTIVE.has(detail?.state)
+        || !adoptableCandidates(detail).some(row => row.id === candidateId)) {
+      this.state.error = '请重新读取效果与候选样片，再设置默认展示。'; this.emit(); return Promise.resolve(false);
+    }
+    return this.mutate('adopt', {request_id: this.uuid(), effect_id: effectId,
+      candidate_id: candidateId, expected_revision: revision});
+  }
   saveFeedback({candidate_id, comment, start_seconds, end_seconds}) {
     if (!commissionCandidates(this.state.detail).some(row => row.id === candidate_id) || !text(comment).trim()) {
       this.state.error = '请选择实际样片，并填写修改意见'; this.emit(); return Promise.resolve(false);
@@ -469,7 +505,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   onTransfer = () => {}, onRetry = () => {}, onSelectCommission = () => {}, feedbackDraft = null, onDraftChange = () => {},
   onPreference = () => {}, onWithdraw = () => {}, comparisonSelection = null,
   onComparisonReady = () => {}, onComparisonChange = () => {}, disclosureState = null, publicationServices = {},
-  onRemove = null, removalLocked = false, promptInspection = null}) {
+  onRemove = null, onFresh = () => {}, onAdopt = () => {}, removalLocked = false, promptInspection = null}) {
   const disclosure = (key, title, value) => {
     const section = details(doc, title, value); section.dataset.methodDisclosure = key;
     if (Object.hasOwn(disclosureState ?? {}, key)) section.open = disclosureState[key] === true;
@@ -479,6 +515,15 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   heading.append(button(doc, '← 返回效果库', onBack), element(doc, 'h1', '', text(detail.title) || '效果实验'),
     element(doc, 'p', 'muted', text(detail.goal)), element(doc, 'span', 'badge', methodStateLabel(displayState(detail))));
   heading.children[1].id = 'detail-title';
+  const fresh = button(doc, '在此效果下从零重做', () => onFresh(detail), 'button secondary');
+  fresh.disabled = detail.ui_preview === true || ACTIVE.has(detail.state);
+  heading.append(fresh);
+  const mode = detail.creation_mode ?? detail.frozen?.creation_mode;
+  const modeLabel = {new: '新建实验', continue: '继续优化', fresh: '从零重做'}[mode];
+  if (modeLabel) heading.append(element(doc, 'p', 'small muted', '本次创作：' + modeLabel));
+  const knowledge = detail.use_wikiskill ?? detail.frozen?.use_wikiskill;
+  if (typeof knowledge === 'boolean') heading.append(element(doc, 'p', 'small muted',
+    knowledge ? '动效 WikiSkill：加载（实际版本与读取记录见本次输入）' : '动效 WikiSkill：关闭；保留平台运行规范'));
   head.append(heading); fragment.append(head);
   const collaboration = renderCollaborationProgress(doc, detail);
   if (collaboration) fragment.append(collaboration);
@@ -525,7 +570,7 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
     if (detail.effect.title && detail.effect.title !== detail.title) section.append(element(doc, 'p', 'small muted', '所属效果：' + detail.effect.title));
     if (detail.effect.relationship_status === 'needs_review') section.append(element(doc, 'p', 'small muted', '关系待核对'));
     const items = element(doc, 'ol', 'effect-history-list');
-    const labels = {original: '原作', continuation: '继续优化', transfer: '迁移验证', retry: '重新运行', historical_attempt: '早期执行'};
+    const labels = {original: '原作', continuation: '继续优化', fresh: '从零重做', transfer: '迁移验证', retry: '技术重试', historical_attempt: '早期执行'};
     for (const run of history) {
       const item = element(doc, 'li', 'effect-history-item'), label = labels[run.kind] ?? '实验记录';
       const open = button(doc, text(run.title) || label, () => {
@@ -576,6 +621,25 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
   updatePreferenceButtons(comparison.getSelection()); onComparisonReady(comparison);
   comparison.element.append(preferences, element(doc, 'p', 'small muted', '快捷比较只记录当前两版的偏好，不会自动更换最佳样片或发布方法。'));
   fragment.append(comparison.element);
+  const effectId = detail.effect_id ?? detail.effect?.id;
+  const representativeRevision = detail.representative_revision ?? detail.effect?.representative_revision;
+  if (mode === 'fresh' || Number.isInteger(representativeRevision)) {
+    const adoption = panel(doc, '效果库默认展示');
+    adoption.append(element(doc, 'p', 'small muted', '本次作品先作为候选保存。选择并设置默认后，效果卡片才会展示它；这不会发布 WikiSkill。'));
+    const select = element(doc, 'select'); select.setAttribute('aria-label', '要设为默认展示的候选');
+    const adopted = detail.adopted_candidate_id ?? detail.effect?.adopted_candidate_id;
+    const available = adoptableCandidates(detail);
+    for (const candidate of available) {
+      const option = element(doc, 'option', '', (candidate.title || candidate.id)
+        + (candidate.id === adopted ? ' · 当前默认' : ' · 候选'));
+      option.value = candidate.id; select.append(option);
+    }
+    select.value = available.some(row => row.id === best?.id) ? best.id : available[0]?.id ?? '';
+    const adopt = button(doc, '设为默认展示样片', () => onAdopt(select.value), 'button primary');
+    const syncAdopt = () => { adopt.disabled = detail.ui_preview === true || ACTIVE.has(detail.state)
+      || !effectId || !Number.isInteger(representativeRevision) || !select.value || select.value === adopted; };
+    select.addEventListener('change', syncAdopt); syncAdopt(); adoption.append(select, adopt); fragment.append(adoption);
+  }
   const retryable = ['failed', 'cancelled'].includes(detail.state) && detail.can_retry !== false;
   if (detail.stop_reason || rows(detail.remaining_issues).length || detail.error || retryable) {
     const result = panel(doc, ACTIVE.has(detail.state) ? '当前进度与问题' : '本次结果');
@@ -597,9 +661,9 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
     if (detail.error) result.append(element(doc, 'p', 'muted', '本次执行未完成，记录已保留。可在执行详情中核对原因。'));
     if (rows(detail.remaining_issues).length) result.append(list(doc, detail.remaining_issues));
     if (retryable) {
-      const retry = button(doc, '重新运行', () => onRetry(detail), 'button primary');
+      const retry = button(doc, '技术重试', () => onRetry(detail), 'button primary');
       retry.disabled = detail.ui_preview === true;
-      result.append(retry, element(doc, 'p', 'small muted', '先核对原目标和本次预算，再提交重新运行。已有样片和失败记录会保留。'));
+      result.append(retry, element(doc, 'p', 'small muted', '保留原需求、标准、知识选择和已完成方案，只恢复或修复失败环节。想换创作方向，请继续优化或从零重做。'));
     }
     fragment.append(result);
   }
@@ -757,13 +821,17 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     const checkbox = $('experiment-collaboration'), panel = $('experiment-collaboration-options'), unavailable = $('experiment-collaboration-unavailable');
     if (!checkbox || !panel || !unavailable) return;
     const available = controller.state.catalog?.availability.collaboration === true;
-    panel.hidden = Boolean(continuation);
-    checkbox.disabled = Boolean(continuation) || !available || controller.state.busy || Boolean(controller.state.pending) || Boolean(recycle?.locked);
+    const lockedContinuation = Boolean(continuation) && continuation.mode !== 'fresh';
+    panel.hidden = lockedContinuation;
+    checkbox.disabled = lockedContinuation || !available || controller.state.busy || Boolean(controller.state.pending) || Boolean(recycle?.locked);
     unavailable.hidden = available;
-    if ((!available || continuation) && checkbox.checked) { checkbox.checked = false; applyCollaborationBudget(); }
+    if ((!available || lockedContinuation) && checkbox.checked) { checkbox.checked = false; applyCollaborationBudget(); }
     authoringControls.update(controller.state.catalog?.availability,
-      controller.state.busy || Boolean(controller.state.pending) || Boolean(recycle?.locked),
+      controller.state.busy || Boolean(controller.state.pending) || Boolean(recycle?.locked) || continuation?.mode === 'retry',
       {collaboration: continuation?.collaboration_inherited === true || checkbox.checked});
+    for (const id of ['title', 'goal', 'feedback', 'criteria', 'duration', 'problems', 'use-wikiskill']) {
+      $('experiment-' + id).disabled = continuation?.mode === 'retry';
+    }
   };
   const feedbackDrafts = new Map(), comparisonStates = new Map(), disclosureStates = new Map();
   const releaseComparison = () => {
@@ -811,12 +879,14 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
   const openForm = (detail = null, candidateId = null, feedback = '', mode = 'continue') => {
     if (recycle?.locked) return;
     recycle?.setScope('library');
-    const isTransfer = Boolean(detail) && mode === 'transfer', isRetry = Boolean(detail) && mode === 'retry';
+    const isTransfer = Boolean(detail) && mode === 'transfer', isRetry = Boolean(detail) && mode === 'retry',
+      isFresh = Boolean(detail) && mode === 'fresh';
     const transferCandidate = commissionCandidates(detail).find(row => row.id === candidateId) ?? selectedCandidate(detail);
     const transferSkills = isTransfer && rows(transferCandidate?.method_version_ids).some(version =>
       rows(detail.methods).some(method => identity(method) === version && method.schema === 'video.animation-method.v2'));
-    continuation = detail ? {commission_id: detail.id, candidate_id: candidateId, mode, criteria: detail.criteria,
-      collaboration_inherited: !isTransfer && detail.collaboration?.enabled === true,
+    continuation = detail ? {commission_id: detail.id, effect_id: detail.effect_id ?? detail.effect?.id ?? detail.id,
+      candidate_id: candidateId, mode, criteria: isFresh ? [] : detail.criteria,
+      collaboration_inherited: !isTransfer && !isFresh && detail.collaboration?.enabled === true,
       ui_preview: detail.ui_preview === true,
       ...(transferSkills ? {transfer_protocol: 'skills',
         // An inherited baseline belongs to another immutable brief. Its exact
@@ -825,17 +895,20 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     $('experiment-form').reset();
     if ($('experiment-collaboration')) $('experiment-collaboration').checked = false;
     collaborationBudget = null; $('experiment-rounds').readOnly = false;
-    authoringControls.resetExperiment(detail?.resource_authoring, detail?.capability_selection,
+    $('experiment-use-wikiskill').checked = isRetry ? detail.use_wikiskill !== false : true;
+    $('experiment-problems-label').hidden = !isFresh;
+    $('experiment-problems').value = '';
+    authoringControls.resetExperiment(isFresh ? undefined : detail?.resource_authoring, isFresh ? undefined : detail?.capability_selection,
       {collaboration: continuation?.collaboration_inherited === true});
     if (detail) {
       $('experiment-duration').value = String(isRetry && Number.isFinite(detail.duration_seconds)
         && detail.duration_seconds >= 2 && detail.duration_seconds <= 60 ? detail.duration_seconds : continuationDuration(detail, candidateId));
-      $('experiment-reference').value = text(detail.reference?.url);
-      $('experiment-reference-start').value = detail.reference?.start_seconds ?? '';
-      $('experiment-reference-end').value = detail.reference?.end_seconds ?? '';
+      $('experiment-reference').value = isFresh ? '' : text(detail.reference?.url);
+      $('experiment-reference-start').value = isFresh ? '' : detail.reference?.start_seconds ?? '';
+      $('experiment-reference-end').value = isFresh ? '' : detail.reference?.end_seconds ?? '';
     }
     for (const id of ['reference', 'reference-start', 'reference-end']) {
-      $('experiment-' + id).disabled = transferSkills;
+      $('experiment-' + id).disabled = transferSkills || isRetry;
       if (transferSkills) $('experiment-' + id).value = '';
     }
     if (isRetry) {
@@ -852,19 +925,20 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     $('experiment-title').value = isTransfer ? (detail.title + ' · 迁移验证') : detail?.title ?? '';
     $('experiment-goal').value = isTransfer ? '' : detail?.goal ?? '';
     $('experiment-feedback').value = isRetry ? text(detail.feedback_text) : feedback;
-    $('experiment-feedback').required = Boolean(detail) && !isTransfer && !isRetry;
-    $('experiment-feedback-label').hidden = !detail || isTransfer;
-    $('experiment-criteria').value = rows(detail?.criteria).map(row => typeof row === 'string' ? row : row.description).filter(Boolean).join('\n');
-    $('experiment-form-title').textContent = isRetry ? '重新运行本次实验' : isTransfer ? '验证方法在不同任务中的表现' : detail ? '继续优化这版' : '新建实验';
+    $('experiment-feedback').required = Boolean(detail) && !isTransfer && !isRetry && !isFresh;
+    $('experiment-feedback-label').hidden = !detail || isTransfer || isFresh;
+    $('experiment-criteria').value = isFresh ? '' : rows(detail?.criteria).map(row => typeof row === 'string' ? row : row.description).filter(Boolean).join('\n');
+    $('experiment-form-title').textContent = isRetry ? '技术重试：恢复本次实验' : isFresh ? '在原效果下从零重做' : isTransfer ? '验证方法在不同任务中的表现' : detail ? '继续优化这版' : '新建实验';
     $('experiment-base-note').hidden = !detail;
-    $('experiment-base-note').textContent = isRetry ? '按当前表单重新执行，使用新预算，保留已有样片和失败记录。'
+    $('experiment-base-note').textContent = isRetry ? '需求、标准、技术选择、知识版本和已完成方案保持，只恢复或修复失败环节。这里仅设置新增尝试预算；想换方向请另开实验。'
+      : isFresh ? '保留所属效果与历史，本次不继承旧源码、布局、专用方法或分工。标准可重新填写，留空由 Agent 拟定后继续；新作品先保存为候选，默认展示由你决定。'
       : transferSkills ? '使用选定方法，为内容与结构均不同的新目标创作；本次不携带参考素材。请观看迁移结果后再决定发布。'
       : isTransfer ? '将使用选定样片背后的方法，为新目标创作。请观看迁移结果后再决定发布。'
       : detail ? '将基于选定样片与本次意见开始新实验，已有结果和发布版本保持。' : '';
     if (continuation?.collaboration_inherited) $('experiment-base-note').textContent += ' 本次延续原协作分工与部件上限，只制作一版，共用本次总预算。';
     $('experiment-transfer-fields').hidden = !isTransfer;
     $('experiment-transfer-before').required = isTransfer; $('experiment-transfer-after').required = isTransfer;
-    $('experiment-submit').textContent = isRetry ? '确认重新运行' : isTransfer ? '开始迁移验证' : detail ? '开始本次优化' : '开始本次实验';
+    $('experiment-submit').textContent = isRetry ? '开始技术重试' : isFresh ? '开始从零重做' : isTransfer ? '开始迁移验证' : detail ? '开始本次优化' : '开始本次实验';
     $('experiment-submit').disabled = detail?.ui_preview === true || controller.state.catalog?.availability.enabled !== true;
     $('experiment-unavailable').hidden = !($('experiment-submit').disabled);
     updateCollaborationControl();
@@ -935,6 +1009,8 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
         detailHost.replaceChildren(renderMethodDetail(doc, detail, root, {
           onBack: () => { controller.deselect(); show('home'); }, onContinue: openForm,
           onRetry: current => openForm(current, null, '', 'retry'),
+          onFresh: current => openForm(current, null, '', 'fresh'),
+          onAdopt: candidateId => controller.adoptCandidate(candidateId),
           onRemove: (current, scope) => recycle?.prepare(current, scope),
           removalLocked: Boolean(recycle?.locked) || state.busy || Boolean(state.pending),
           onSelectCommission: id => { show('detail'); void controller.select(id); },
@@ -1000,6 +1076,8 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     detailHost.replaceChildren(renderMethodDetail(doc, preview, root, {
       onBack: () => show('home'), onContinue: openForm,
       onRetry: current => openForm(current, null, '', 'retry'),
+      onFresh: current => openForm(current, null, '', 'fresh'),
+      onAdopt: candidateId => controller.adoptCandidate(candidateId),
       onTransfer: (current, candidateId) => openForm(current, candidateId, '', 'transfer'),
       onFeedback: () => Promise.resolve(false), onPublish: () => Promise.resolve(false), onCancel: () => {},
       disclosureState: disclosureStates.get(preview.id),
@@ -1035,9 +1113,11 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
     if (continuation?.ui_preview || recycle.locked || controller.state.catalog?.availability.enabled !== true) return;
     const fields = Object.fromEntries(new FormData($('experiment-form')));
     Object.assign(fields, authoringControls.requestFields);
+    fields.use_wikiskill = $('experiment-use-wikiskill').checked;
     if (continuation) Object.assign(fields, {criteria_metadata: continuation.criteria,
       collaboration_inherited: continuation.collaboration_inherited,
       ...(continuation.mode === 'retry' ? {retry_of_commission_id: continuation.commission_id}
+        : continuation.mode === 'fresh' ? {creation_mode: 'fresh', effect_id: continuation.effect_id}
         : {base_candidate_id: continuation.candidate_id,
           ...(continuation.mode === 'transfer' ? {transfer_commission_id: continuation.commission_id,
             transfer_protocol: continuation.transfer_protocol, transfer_original_goal: continuation.transfer_original_goal}

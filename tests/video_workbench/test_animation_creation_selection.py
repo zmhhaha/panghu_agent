@@ -165,15 +165,12 @@ def test_retry_and_continuation_inherit_selection_without_turning_it_into_eviden
     assert continued['capability_selection'] == first['capability_selection']
     failed = start(service, capability_selection={'creation': ['canvas', 'html-svg']})
     service.commissions.cancel('developer', failed['id'])
-    retried = start(service, retry_of_commission_id=failed['id'],
-                    capability_selection={'creation': ['html-svg', 'canvas']})
+    retried = start(service, retry_of_commission_id=failed['id'])
     assert retried['capability_selection'] == {'creation': ['html-svg', 'canvas']}
     assert all('motion_orchestration' not in row for row in retried['candidates'])
-    changed_retry = start(service, retry_of_commission_id=failed['id'],
-                          capability_selection={'creation': [], 'motion': []})
-    assert changed_retry['capability_selection'] == {'creation': [], 'motion': []}
-    assert service.commissions.get('developer', changed_retry['id'])['frozen']['constraints']['allowed_engines'] == [
-        'html-svg', 'canvas', 'three']
+    for selection in ({'creation': ['html-svg', 'canvas']}, {'creation': [], 'motion': []}):
+        with pytest.raises(ServiceError, match='creative_contract_changed'):
+            start(service, retry_of_commission_id=failed['id'], capability_selection=selection)
 
 
 def test_transfer_accepts_explicit_axes_and_defaults_to_the_source_selection(tmp_path):

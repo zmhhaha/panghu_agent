@@ -305,6 +305,9 @@ def test_actual_method_service_waits_for_prelude_then_delivers_resources_to_unch
     author, reviewer = ProducerGateway(), Gateway(True)
     service = AnimationMethodService(tmp_path/'lab', author_gateway=author, review_gateway=reviewer,
         renderer=Renderer(tmp_path/'renders'), manim_coordinator=coordinator)
+    # Match deployed recipe wiring: a laboratory freezes a whole WikiSkill
+    # release and the producer imports that exact binding, including no release.
+    coordinator.skill_adapter = service.library_adapter
     queued = start(service, resource_authoring=dict(kind='manim', width=320, height=180, frame_count=3))
     assert queued['resource_authoring']['status'] == 'pending'
     for _ in range(15):

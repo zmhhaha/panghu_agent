@@ -20,6 +20,7 @@ REQUEST_FIELDS = frozenset({
     'base_commission_id', 'base_candidate_id', 'feedback', 'criteria', 'method_versions',
     'role', 'baseline_demonstration_id', 'structural_changes', 'retry_of_commission_id',
     'research_record_ids', 'content_changes', 'resource_authoring', 'collaboration', 'capability_selection',
+    'creation_mode', 'effect_id', 'use_wikiskill', 'problem_summary',
 })
 PROTOCOLS = {row.INPUT_SCHEMA: row for row in (method_protocol, skill_protocol, collaboration_protocol)}
 LIMITATIONS = [
@@ -64,7 +65,8 @@ def _safe(value):
 
 def submission_snapshot(document, *, action='create'):
     require(action in {'create', 'transfer'} and type(document) is dict
-            and {'request_id', 'goal', 'budget'} <= set(document)
+            and {'request_id', 'budget'} <= set(document)
+            and ('goal' in document or 'retry_of_commission_id' in document)
             and set(document) <= REQUEST_FIELDS, 'animation_prompt_inspection_submission_invalid', 422)
     return dict(schema=SNAPSHOT_SCHEMA, action=action, document=deepcopy(document))
 

@@ -44,6 +44,7 @@ def make_service(tmp_path, *, review='improved'):
     reviewer.outcome = review
     service = AnimationMethodService(tmp_path / 'lab', author_gateway=author, review_gateway=reviewer,
         renderer=Renderer(tmp_path / 'renders'), manim_coordinator=coordinator)
+    coordinator.skill_adapter = service.library_adapter
     return service, coordinator, recipe, executor, author, reviewer
 
 

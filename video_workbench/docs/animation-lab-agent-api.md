@@ -11,11 +11,17 @@
 
 2026-11-16 两组能力选择、继续／重跑／迁移继承及 Manim 逐轮资源迭代已从完整 Git `5a93ea3` 构建上线，真实浏览器确认控件与协作限制。干净源码 Python 矩阵234通过／1跳过，最终资源修复后55项补充回归和88项前端检查通过；分组有重叠，不累加。实际9个历史效果投影保持一致，本轮没有新模型、样片或 WikiSkill 发版，不代表审美改善已验证。[发布证据](evidence/lab-capability-selection-20261116.json)。
 
-## 2026-11-17 后续合同设计（尚未实施）
+## 2026-11-17 从零重做与知识选择
 
 已确认新增“同一效果从零重做”、独立的动效 WikiSkill 加载开关及保持原方案的技术重试。所有新创作默认加载，可在网页或 API 显式关闭；从零重做不继承旧源码、布局、专用方法或分工，新结果先作为候选，由开发者决定是否替换卡片默认作品。标准可提交，留空则由 Agent 拟定并记录后继续，无需等待确认。
 
-当前下文示例仍是已上线合同，**不要提前提交尚未实现的新字段**。现有“重新运行”可编辑部分输入并重新规划，不等于目标中的严格技术重试；`method_versions: []` 也不能保证从零隔离。新增合同与实际输入查看需同步实现，详见[完整设计、差距与任务](fresh-rebuild-and-skill-loading-design.md)。本次没有修改 API 或发起实验。
+新创作支持 `creation_mode: new | continue | fresh`，缺省按有无 `base_commission_id` 推断 new 或 continue；`use_wikiskill` 默认为严格布尔 `true`。fresh 必须指定 `effect_id`，不提交旧基线或专用方法；可带 `problem_summary`，每项明确 `text` 与 `source: developer | observation | hypothesis`。关闭知识仍保留平台规范，普通继续优化仍可沿用明确选择的作品源码。实验室读取已发布整库的冻结原文，正式制作按同一绑定提供技能工具；加载为空与显式关闭分别记录。发布与验收状态见[实现验证](fresh-rebuild-validation-20261117.md)。
+
+```json
+{"request_id":"b5df2831-7a15-445f-b437-55350634a98a","effect_id":"原效果ID","creation_mode":"fresh","use_wikiskill":false,"goal":"重新创作具有明确笔触和空间层次的山石效果","budget":{"max_rounds":1,"max_seconds":1200},"problem_summary":[{"text":"原画面缺少可辨认的笔触","source":"developer"}]}
+```
+
+新候选不自动替换默认作品。完成后 POST `/commissions/{commission_id}/adopt`，提供 `request_id`、`effect_id`、`candidate_id` 和效果当前的 `representative_revision` 作为 `expected_revision`；过期选择返回冲突。采用不发布 WikiSkill。
 
 ## 授权与写请求
 
@@ -206,7 +212,7 @@ curl --fail-with-body --cookie cookies.txt \
 
 省略 `base_candidate_id` 时服务选择基线委托的 `best_candidate_id`；基线必须存在且当前用户可访问。省略 `criteria` 时继承基线标准。此请求创建新委托，原委托保留。
 
-继续优化和重新运行省略 `capability_selection` 时，继承原能力选择；显式提交时采用本次选择，提交 `{"creation":[],"motion":[]}` 可恢复自动选择。重新运行失败或取消委托使用新 `request_id` 和 `retry_of_commission_id`，且原执行必须已经确认停止；原关联关系保持继承。相同 `request_id` 重放却改变选择会产生幂等冲突。详情中 `resource_authoring` 是只读资源进度，不是提交参数，不能原样复制到下一次请求。
+继续优化省略 `capability_selection` 时继承原能力选择；显式提交则采用本次选择，`{"creation":[],"motion":[]}` 恢复自动选择。技术重试只接受 `request_id`、`retry_of_commission_id`、`budget` 三项；原任务必须确认停止，目标、标准、技术、知识绑定和完成方案均继承，不能借重试改变创作方向。需要换方向时选择继续优化或从零重做。未知提交先找回原操作；幂等重放不提交新任务。详情中 `resource_authoring` 是只读进度，不能原样复制到请求。
 
 `reference` 可附 `{ "url": "https://example.com/reference.mp4", "start_seconds": 0, "end_seconds": 8 }`。参考 URL 和片段时间只是需求资料，提交链接不会自动读取或观看原片；需要将关键视觉特征、节奏和希望达到的效果写入 `goal` 或 `feedback`。
 
