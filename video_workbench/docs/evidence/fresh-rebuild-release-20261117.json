@@ -1,0 +1,90 @@
+{
+  "schema": "video.fresh-rebuild-release-evidence.v1",
+  "created_at": "2026-11-17T04:26:11.970398+00:00",
+  "source_revision": "70ee657a97db05cbf50d1ebcbd29ded72ba8de2f",
+  "branch": "codex/video-capability-experiment-redesign",
+  "full_git_source": true,
+  "images": {
+    "executor": "arm-cluster-master:5000/video-animation-creation:latest@sha256:4051ef8b3605b3173b2984126ac58d8046d43bb3b19f8a2dbb753b289ee6adc0",
+    "lab": "arm-cluster-master:5000/video-animation-lab:latest@sha256:0c01e6fe33ad475af4d0b6d16702c52aee60841bf669d9f46b71354086fd8293",
+    "workbench": "arm-cluster-master:5000/video-workbench:latest@sha256:f6c001d98069ef7181ad4441de5243cc6b932712f195bd690f602e4f67a5bc59"
+  },
+  "deployments": 3,
+  "offline_image_smoke_passed": true,
+  "backend_tests": {
+    "files": 22,
+    "tests": 463,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "frontend_tests": {
+    "tests": 105,
+    "failures": 0
+  },
+  "real_model_requests": 0,
+  "live_animation_art_acceptance": false,
+  "wikiskill_published": false,
+  "existing_default_samples_replaced": false,
+  "mainline_merged": false,
+  "private_receipts": "D:\\codex-work\\operations\\fresh-rebuild-20261117",
+  "receipt_sha256": {
+    "build-completed.json": "c35e3f6ac3cf390057ea9de38f6f6109fafa1b862a47578570be69ea288ef513",
+    "release-completed.json": "a7ae48d8922ec7f5b90820b9a47183887f6749cc1de59a484e9f5e69792b1396",
+    "build-context-verification.json": "94a37f280a559f7ee0c3c468a95e2723ab1a6fcb079f24d96a25432323b9680b",
+    "executor-build.json": "9b26af515666696ef6dc7e7bc16e9fb5465614797a8276a0d627a3e3771b57a3",
+    "executor-image-smoke.json": "91ccda7e30af2e1675d158030d1dad528a187d1481a4e1c0a84aa71e07bcf9d8",
+    "executor-deployment-completed.json": "0312d09e64203f27962cc94958909bcba95d827794a7a3ddcb89594969af31d4",
+    "executor-runtime-verification.json": "0bfeffda7ec7b77b7a1af2afe52d460613d8865dd2d16146dc69cc2913f5cad8",
+    "workbench-build.json": "d2783a4915ad6d7e79daae2c0449a4bef9778a92d3c4365570066369a26bf075",
+    "workbench-image-smoke.json": "9234388eeb1f70226e547a278e184f34bbb3c8674a9186455781741bf5ecaf33",
+    "workbench-deployment-completed.json": "fa5b729bc75753fec2b28c80d49558a466994b5246c4f6b8122f0532d5d31aa9",
+    "workbench-runtime-verification.json": "a84a4a25fb35313da9d744e3409d1dcd7a9c5b7a0530682cf785044beed3168c",
+    "lab-build.json": "1dcf1f5a5c7a7dd5ab9d651e4f308e68313e6485a7efd78f2f46d14d446daed7",
+    "lab-image-smoke.json": "2abef3bc0c416b81e3a7dda273a79b0ae637581990370c3fd31dba7063ca00b0",
+    "lab-deployment-completed.json": "d64f7d5d37d13b8bed33b80427d49dbe0b6eee10b245fdae2aca655a5112cca6",
+    "lab-runtime-verification.json": "7caaf0043148c774827a5774c342bf258b2dd3248c4b4bff7488fd0be881250d",
+    "test-results.xml": "dc0b201a26fce6b31a0f4d558761e4525e3e70ca5dd2fa46f6e7fffed0572b40",
+    "final-test.log": "10c1b9345bff3d6d3931f71e348d1bfb8c49fb3662d3bffa65b747a83a79bac1"
+  },
+  "browser_checks": {
+    "authenticated": true,
+    "new_creation_default_wikiskill": true,
+    "explicit_disable_visible": true,
+    "fresh_entry": true,
+    "fresh_criteria_empty": true,
+    "fresh_does_not_inherit_capability_or_collaboration_selections": true,
+    "candidate_adoption_entry": true,
+    "formal_planning_knowledge_choice": true,
+    "formal_disable_blocks_release_selection": true,
+    "creation_submissions": 0,
+    "adoption_submissions": 0
+  },
+  "openspec": {
+    "project_id": "ec663f5a-53d3-4a0e-9037-933eb788d183",
+    "change_id": "evolve-video-agent-creation-and-effect-library",
+    "revision": "080af0f7ee570ccc33d8ee3fd0d041f0b4b0d02e",
+    "valid": true,
+    "exact_file_readback": true,
+    "newly_completed": [
+      "T.1",
+      "T.2",
+      "T.3",
+      "T.4",
+      "T.5",
+      "T.6"
+    ],
+    "pending": [
+      "T.7"
+    ],
+    "pending_reason": "Real model fresh artwork and complete audiovisual acceptance remain unperformed.",
+    "untouched_other_task_states": true,
+    "files_sha256": {
+      "design.md": "18f6440eb8a61714833eecc7675b9555142d500b0968c1d81d7a885ab252bbd4",
+      "proposal.md": "8ffa5c0eb6a96628bd94769651f712847868177075887d7d0c79331025128bdd",
+      "specs/agent-directed-video-production/spec.md": "3da28659831eaf3e8ececd139fa0195f015998bcbe7b2f43dffd852cae09e4aa",
+      "specs/reference-animation-effect-library/spec.md": "ff4613b9eee4a79b4d110ad82acedc4af23b28ca827879adb0d972ac2b97b4f1",
+      "tasks.md": "7daa1925e66601e9a282096e6edf6d4290bbc288400816d97b78f484fe3aaecd"
+    }
+  }
+}
