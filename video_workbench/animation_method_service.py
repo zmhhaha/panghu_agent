@@ -1106,7 +1106,7 @@ class AnimationMethodService:
                   'base_commission_id', 'base_candidate_id', 'feedback', 'criteria', 'method_versions',
                   'role', 'baseline_demonstration_id', 'structural_changes', 'retry_of_commission_id',
                   'research_record_ids', 'content_changes', 'resource_authoring', 'collaboration', 'capability_selection',
-                  'creation_mode', 'effect_id', 'use_wikiskill', 'problem_summary'}
+                  'creation_mode', 'effect_id', 'use_wikiskill', 'problem_summary', 'renderer_rebind'}
         if type(body) is dict and body.get('baseline_demonstration_id'):
             self.trash.require_demonstrations_visible(owner, [body['baseline_demonstration_id']])
         _require(type(body) is dict and {'request_id', 'budget'} <= set(body)
@@ -1128,8 +1128,13 @@ class AnimationMethodService:
         if previous_request is not None:
             self._get_visible_commission(owner, previous_request['id'])
         retry_source = None
+        _require('renderer_rebind' not in body or (body.get('renderer_rebind') == 'current-admitted'
+            and 'retry_of_commission_id' in data), 'animation_method_renderer_rebind_invalid')
         if 'retry_of_commission_id' in data:
-            _require(set(body) == {'request_id', 'retry_of_commission_id', 'budget'},
+            retry_fields = {'request_id', 'retry_of_commission_id', 'budget'}
+            if 'renderer_rebind' in body:
+                retry_fields.add('renderer_rebind')
+            _require(set(body) == retry_fields,
                      'animation_method_retry_creative_contract_changed', 409)
             retry_source = (self.commissions.get(owner, data['retry_of_commission_id'])
                 if previous_request is not None else self._get_visible_commission(owner, data['retry_of_commission_id']))
@@ -1137,7 +1142,7 @@ class AnimationMethodService:
                 op['status'] in OP_TERMINAL for op in retry_source['operations']),
                 'animation_method_retry_not_available', 409)
             for key, value in data.items():
-                if key in {'budget', 'retry_of_commission_id'}:
+                if key in {'budget', 'retry_of_commission_id', 'renderer_rebind'}:
                     continue
                 _require(value == retry_source['frozen'].get(key),
                     'animation_method_commission_idempotency_conflict' if previous_request else
@@ -1147,6 +1152,19 @@ class AnimationMethodService:
             data = {key: deepcopy(value) for key,value in retry_source['frozen'].items()
                     if key != 'base_candidate'}
             data.update(budget=budget, retry_of_commission_id=retry_id)
+            if 'renderer_rebind' in body:
+                from .animation_renderer_rebind import freeze_binding
+                _require(type(budget) is dict and budget.get('max_rounds') == 1,
+                    'animation_method_renderer_rebind_single_render_required', 409)
+                data['renderer_rebind'] = body['renderer_rebind']
+                # An HTTP replay must retain its original new-runtime binding,
+                # even if another renderer has since been admitted.
+                if previous_request is not None:
+                    _require(previous_request.get('submission_snapshot', {}).get('document', {}).get('renderer_rebind')
+                        == body['renderer_rebind'], 'animation_method_commission_idempotency_conflict', 409)
+                    data['render_context_binding'] = deepcopy(previous_request['frozen']['render_context_binding'])
+                else:
+                    data['render_context_binding'] = freeze_binding(retry_source, self._capabilities())
         from .animation_creation_policy import normalize
         if previous_request is None or 'creation_mode' in previous_request['frozen']:
             data = normalize(data)
@@ -1225,6 +1243,9 @@ class AnimationMethodService:
             if 'capability_selection' in data:
                 data['constraints'] = freeze_creation_selection(data['capability_selection'],
                     data.get('constraints', {}), data.get('assets', {}))
+            if set(data.get('constraints', {}).get('allowed_engines', [])) & {'canvas', 'three'}:
+                from .animation_runtime_capabilities import drawing_context_budget
+                data['constraints']['native_drawing_context_budget'] = drawing_context_budget()
         allowed_engines = data.get('constraints', {}).get('allowed_engines', ['html-svg'])
         if data.get('criteria'):
             protocol.criteria(data['criteria'])
@@ -1612,6 +1633,8 @@ class AnimationMethodService:
 
     def _reuse_retry_render(self, owner, run, operation):
         """Reuse only exact stopped media, never a failed rendering or a review."""
+        if run['frozen'].get('render_context_binding') is not None:
+            return False
         previous_id = run['frozen'].get('retry_of_commission_id')
         if previous_id is None or operation['status'] != 'reserved':
             return False
@@ -1864,6 +1887,9 @@ class AnimationMethodService:
         if not selected and plan:
             selected = deepcopy(plan['methods'])
         frozen_constraints = deepcopy(run['frozen'].get('constraints', {}))
+        if mode == 'review' and run['frozen'].get('render_context_binding') is not None:
+            from .animation_renderer_rebind import review_constraints
+            frozen_constraints.update(review_constraints(run['frozen']['render_context_binding']))
         if 'creation_mode' in run['frozen']:
             from .animation_creation_policy import authoring_constraints
             frozen_constraints['authoring_policy'] = authoring_constraints(run['frozen'])
@@ -2430,9 +2456,8 @@ class AnimationMethodService:
                     if run['remaining']['render'] <= 0:
                         self.commissions.stop(owner, commission_id, 'budget_exhausted', '本次画面渲染预算已用完')
                         return
-                    self.commissions.reserve(owner, commission_id, 'render', dict(
-                        author_operation_id=authored['id'], source=authored['result']['source'],
-                        document=authored['input'], sound_events=authored['result']['sound_events']),
+                    from .animation_renderer_rebind import render_input
+                    self.commissions.reserve(owner, commission_id, 'render', render_input(run, authored),
                         'render-' + authored['id'])
                     return
             for candidate in run['candidates']:

@@ -19,6 +19,7 @@ from agent_service.skill_tool_evidence import validate_tool_evidence
 from .animation_skill_production import validate_delivery
 from .hyperframes_film_project import module_identity
 from .motion import validate_alignment
+from .animation_runtime_capabilities import with_drawing_context_guidance
 
 CREATIVE_SCHEMA = 'video.creative-film-module.v1'
 ADAPTER_REVISION = 'creative-hyperframes-composable-module-1'
@@ -35,6 +36,7 @@ def prepare_core_task(*, scene_id, title, visual_description, narration, beats, 
                       assets=None, instruction='', base_module=None, style='', allowed_engines=None,
                       predecessor_package=None):
     """Exact task for SkillProductionAdapter.freeze, including the new targets."""
+    instruction = with_drawing_context_guidance(instruction, allowed_engines or ['html-svg'])
     value = dict(scene=dict(scene_id=scene_id, title=title, visual_description=visual_description,
         narration=narration, beats=deepcopy(beats), alignment=deepcopy(alignment),
         audio_sha256=audio_sha256, instruction=instruction, style=style),

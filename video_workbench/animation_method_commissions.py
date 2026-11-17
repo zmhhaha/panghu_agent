@@ -274,8 +274,12 @@ class AnimationMethodCommissionStore:
                      "protocol_schema", "knowledge_snapshot_id", "research_record_ids", "content_changes",
                       "resource_authoring", "collaboration", "capability_selection", "manim_iteration",
                       "resource_planning", "creation_mode", "effect_id", "use_wikiskill",
-                      "problem_summary", "library_binding",
+                      "problem_summary", "library_binding", "renderer_rebind", "render_context_binding",
                  })
+        if 'renderer_rebind' in body or 'render_context_binding' in body:
+            _require(body.get('renderer_rebind') == 'current-admitted' and body.get('retry_of_commission_id')
+                and type(body.get('render_context_binding')) is dict,
+                'animation_method_renderer_rebind_invalid')
         _require('resource_planning' not in body or body['resource_planning'] == 'after-plan.v1',
                  'animation_method_resource_planning_invalid')
         if 'capability_selection' in body:
@@ -466,6 +470,7 @@ class AnimationMethodCommissionStore:
             source_commission = self._commission(db, owner, previous['commission_id'])
             provenance = dict(commission_id=previous['commission_id'], operation_id=previous_render_id)
             _require(operation['id'] != previous_render_id and operation['stage'] == 'render'
+                and commission['frozen'].get('render_context_binding') is None
                 and previous['stage'] == 'render' and previous['status'] == 'completed'
                 and source_commission['state'] in {'failed', 'cancelled'}
                 and not self._active(db, source_commission['id'])

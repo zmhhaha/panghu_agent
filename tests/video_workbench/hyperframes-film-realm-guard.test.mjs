@@ -46,3 +46,35 @@ test('pending native RAF is still detected after Set size/delete poisoning',()=>
   `try{observe();}catch(error){globalThis.failure=error.message;}`,context);
  assert.equal(context.failure,'film_realm_pending_animation_frame');
 });
+
+for(const engine of ['canvas','three'])test(`film ${engine}: cumulative contexts allow 500, reject 501 and deduplicate lookups`,()=>{
+ const context=vm.createContext({});
+ const native=`
+ class WebGL2RenderingContext {
+  getParameter(){return 'Google SwiftShader';}getExtension(){return null;}
+  isContextLost(){return false;}getError(){return 0;}
+ }
+ globalThis.WebGL2RenderingContext=WebGL2RenderingContext;
+ const nativeContexts=new WeakMap();
+ HTMLCanvasElement.prototype.getContext=function(kind){
+  if(!nativeContexts.has(this))nativeContexts.set(this,new Map());
+  const contexts=nativeContexts.get(this);
+  if(!contexts.has(kind))contexts.set(kind,kind==='webgl2'?new WebGL2RenderingContext():{});
+  return contexts.get(kind);
+ };
+ `;
+ vm.runInContext(setup+native+source+`
+  const observe=installFilmRealmGuard('${engine}');
+  const kind='${engine==='three'?'webgl2':'2d'}';
+  const firstCanvas=new HTMLCanvasElement(),first=firstCanvas.getContext(kind);
+  for(let i=0;i<1000;i++)if(firstCanvas.getContext(kind)!==first)throw Error('context identity changed');
+  for(let i=1;i<500;i++)new HTMLCanvasElement().getContext('2d');
+  globalThis.before=observe();
+  try{new HTMLCanvasElement().getContext('2d');}catch(error){globalThis.failure=error.message;}
+  globalThis.after=observe();
+ `,context);
+ assert.equal(context.before.contexts.length,500);
+ assert.equal(context.before.contexts[0].kind,engine==='three'?'webgl2':'2d');
+ assert.equal(context.failure,'film_realm_context_budget');
+ assert.equal(context.after.contexts.length,500);
+});

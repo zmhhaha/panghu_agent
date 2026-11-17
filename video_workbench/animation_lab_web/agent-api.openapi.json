@@ -41,7 +41,7 @@
         "operationId": "submitAnimationLabCommission",
         "tags": ["commissions"],
         "summary": "新建、继续优化、同效果从零重做或技术重试",
-        "description": "异步接受后返回 202 和当前详情。继续优化提供 base_commission_id、base_candidate_id 和 feedback；从零重做提供 creation_mode:fresh 和 effect_id，不传旧基线或方法。每次新创作默认 use_wikiskill:true，可显式关闭；留空标准由 Agent 拟定后继续。技术重试仅提交 request_id、retry_of_commission_id、budget，保留原需求与已完成方案。相同用户以原 request_id 和相同请求重放返回已有委托，内容改变返回 409。POST 超时先按目录 request_id 核对，不自动重发或生成新 ID。参考 URL 不会自动读取或观看原片。请求 JSON 最大 1 MiB，不支持查询参数。",
+        "description": "异步接受后返回 202 和当前详情。继续优化提供 base_commission_id、base_candidate_id 和 feedback；从零重做提供 creation_mode:fresh 和 effect_id，不传旧基线或方法。每次新创作默认 use_wikiskill:true，可显式关闭；留空标准由 Agent 拟定后继续。技术重试默认仅提交 request_id、retry_of_commission_id、budget，保留原需求、环境与已完成方案；首次普通渲染失败可显式另加 renderer_rebind:current-admitted，在新冻结的已准入环境重渲染同一源码，不重新创作。相同用户以原 request_id 和相同请求重放返回已有委托，内容改变返回 409。POST 超时先按目录 request_id 核对，不自动重发或生成新 ID。参考 URL 不会自动读取或观看原片。请求 JSON 最大 1 MiB，不支持查询参数。",
         "security": [{"OAuthSessionCookie": [], "AnimationLabCsrf": []}],
         "parameters": [{"$ref": "#/components/parameters/WriteOrigin"}],
         "requestBody": {
@@ -458,12 +458,14 @@
           "reference": {"$ref": "#/components/schemas/Reference"},
           "base_commission_id": {"$ref": "#/components/schemas/Identifier"},
           "base_candidate_id": {"$ref": "#/components/schemas/Identifier", "description": "须属于 base_commission_id；省略则采用基线 best_candidate_id。"},
-          "retry_of_commission_id": {"$ref": "#/components/schemas/Identifier", "description": "技术重试已失败或取消且原执行已确认停止的委托。仅与 request_id、budget 一起提交；需求、标准、知识设置和已完成方案由服务继承，不重规划。要改方向须新建继续优化或从零实验。"},
+          "retry_of_commission_id": {"$ref": "#/components/schemas/Identifier", "description": "技术重试已失败或取消且原执行已确认停止的委托。默认仅与 request_id、budget 一起提交，继承冻结的运行环境。首次普通画面渲染失败且创作完成时，可显式添加 renderer_rebind:current-admitted，在新冻结的已准入环境重渲染原源码；不重新创作。"},
+          "renderer_rebind": {"type": "string", "const": "current-admitted", "description": "仅用于技术重试，且 max_rounds 必须为 1。仅支持普通、无协作、无 Manim、无已有候选的首次失败渲染。保留历史 Agent 输入、Job、源码与原账本，新实验单独冻结当前已准入渲染环境并记录来源；资源哈希和库版本必须兼容。相同 request_id 重放始终保留首次绑定。不能提交环境哈希、源码或绑定收据。通过 prompt-inspection 的 renderer_rebind、render_replays 核对。"},
           "feedback": {"type": "string", "maxLength": 16000, "description": "继续优化的改进目标，不等同于单独保存 feedback 意见。"}
         },
-        "dependentRequired": {"base_candidate_id": ["base_commission_id"]},
+        "dependentRequired": {"base_candidate_id": ["base_commission_id"], "renderer_rebind": ["retry_of_commission_id"]},
         "allOf": [
-          {"if": {"required": ["retry_of_commission_id"]}, "then": {"propertyNames": {"enum": ["request_id", "retry_of_commission_id", "budget"]}}, "else": {"required": ["goal"]}},
+          {"if": {"required": ["retry_of_commission_id"]}, "then": {"propertyNames": {"enum": ["request_id", "retry_of_commission_id", "budget", "renderer_rebind"]}}, "else": {"required": ["goal"]}},
+          {"if": {"required": ["renderer_rebind"]}, "then": {"properties": {"budget": {"properties": {"max_rounds": {"const": 1}}}}}},
           {"if": {"required": ["creation_mode"], "properties": {"creation_mode": {"const": "fresh"}}}, "then": {"required": ["effect_id"], "not": {"anyOf": [{"required": ["base_commission_id"]}, {"required": ["base_candidate_id"]}]}}},
           {"if": {"required": ["creation_mode"], "properties": {"creation_mode": {"const": "continue"}}}, "then": {"required": ["base_commission_id"]}},
           {"if": {"required": ["creation_mode"], "properties": {"creation_mode": {"const": "new"}}}, "then": {"not": {"anyOf": [{"required": ["effect_id"]}, {"required": ["base_commission_id"]}]}}},
@@ -584,6 +586,8 @@
           "effective_request": {"$ref": "#/components/schemas/FrozenInputDocument"},
           "adopted_capabilities": {"anyOf": [{"$ref": "#/components/schemas/AdoptedCapabilities"}, {"type": "null"}]},
           "operations": {"type": "array", "items": {"$ref": "#/components/schemas/AgentInputIndexItem"}},
+          "renderer_rebind": {"type": ["object", "null"], "readOnly": true, "additionalProperties": true, "description": "显式重绑定的可信冻结记录；包括旧作者输入/结果/源码哈希、原运行环境和本次渲染环境。null 表示没有重绑定。历史作者输入不会因此改写。"},
+          "render_replays": {"type": "array", "readOnly": true, "items": {"type": "object", "required": ["operation_id", "input_sha256", "receipt"], "properties": {"operation_id": {"type": "string"}, "input_sha256": {"type": "string"}, "receipt": {"type": "object", "additionalProperties": true, "description": "绑定哈希、历史 author_input_sha256 与单独派生 render_input_sha256；明确本次只重新渲染，没有新作者调用。"}}}},
           "scope": {"type": "string", "const": "method_lab_agent_inputs"},
           "limitations": {"type": "array", "items": {"type": "string"}, "description": "明确本次可见范围：不包含未冻结历史系统提示词、运行凭据或独立 Manim recipe 账本。"}
         }

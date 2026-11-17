@@ -212,7 +212,7 @@ curl --fail-with-body --cookie cookies.txt \
 
 省略 `base_candidate_id` 时服务选择基线委托的 `best_candidate_id`；基线必须存在且当前用户可访问。省略 `criteria` 时继承基线标准。此请求创建新委托，原委托保留。
 
-继续优化省略 `capability_selection` 时继承原能力选择；显式提交则采用本次选择，`{"creation":[],"motion":[]}` 恢复自动选择。技术重试只接受 `request_id`、`retry_of_commission_id`、`budget` 三项；原任务必须确认停止，目标、标准、技术、知识绑定和完成方案均继承，不能借重试改变创作方向。需要换方向时选择继续优化或从零重做。未知提交先找回原操作；幂等重放不提交新任务。详情中 `resource_authoring` 是只读进度，不能原样复制到请求。
+继续优化省略 `capability_selection` 时继承原能力选择；显式提交则采用本次选择，`{"creation":[],"motion":[]}` 恢复自动选择。默认技术重试只接受 `request_id`、`retry_of_commission_id`、`budget` 三项；原任务必须确认停止，目标、标准、技术、知识绑定、运行环境和完成方案均继承，不能借重试改变创作方向。首次普通渲染失败且创作已完成、尚无候选时，可显式另加 `renderer_rebind:"current-admitted"` 并设置 `max_rounds:1`，冻结当前已准入渲染环境后重新渲染相同源码；不增加创作调用，不改原作者输入、Job 或账本。此受限入口不支持协作、Manim，资产哈希与库版本必须兼容；请求重放保留最初新绑定，不跟随之后部署。输入查看中的 `renderer_rebind` 和 `render_replays` 分别提供冻结环境绑定及每次派生渲染收据，区分历史作者输入与本次渲染输入哈希。需要换方向时选择继续优化或从零重做。未知提交先找回原操作；幂等重放不提交新任务。详情中 `resource_authoring` 是只读进度，不能原样复制到请求。
 
 `reference` 可附 `{ "url": "https://example.com/reference.mp4", "start_seconds": 0, "end_seconds": 8 }`。参考 URL 和片段时间只是需求资料，提交链接不会自动读取或观看原片；需要将关键视觉特征、节奏和希望达到的效果写入 `goal` 或 `feedback`。
 

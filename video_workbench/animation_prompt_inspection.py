@@ -20,7 +20,7 @@ REQUEST_FIELDS = frozenset({
     'base_commission_id', 'base_candidate_id', 'feedback', 'criteria', 'method_versions',
     'role', 'baseline_demonstration_id', 'structural_changes', 'retry_of_commission_id',
     'research_record_ids', 'content_changes', 'resource_authoring', 'collaboration', 'capability_selection',
-    'creation_mode', 'effect_id', 'use_wikiskill', 'problem_summary',
+    'creation_mode', 'effect_id', 'use_wikiskill', 'problem_summary', 'renderer_rebind',
 })
 PROTOCOLS = {row.INPUT_SCHEMA: row for row in (method_protocol, skill_protocol, collaboration_protocol)}
 LIMITATIONS = [
@@ -193,7 +193,12 @@ def inspection_view(run):
     return dict(schema=SCHEMA, scope='method_lab_agent_inputs', commission_id=run['id'],
         request_id=run['request_id'], submission=submission_view(run), effective_request=effective_request(run),
         adopted_capabilities=deepcopy(run.get('adopted_capabilities')),
-        operations=rows, limitations=deepcopy(LIMITATIONS))
+        operations=rows,
+        renderer_rebind=deepcopy(run['frozen'].get('render_context_binding')),
+        render_replays=[dict(operation_id=op['id'], status=op['status'],
+            input_sha256=op['input_sha256'], receipt=deepcopy(op['input']['renderer_rebind_receipt']))
+            for op in run['operations'] if op['stage'] == 'render' and op['input'].get('renderer_rebind_receipt')],
+        limitations=deepcopy(LIMITATIONS))
 
 
 def operation_input_view(run, operation):

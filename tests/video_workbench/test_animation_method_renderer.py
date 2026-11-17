@@ -582,6 +582,25 @@ def test_native_context_and_seek_evidence_cannot_be_relabelled(tmp_path, monkeyp
     assert execution.calls == 1
 
 
+@pytest.mark.parametrize('context_count', [500, 501])
+def test_native_receipt_context_limit_matches_the_runtime_budget(tmp_path, monkeypatch, context_count):
+    def execute(directory):
+        outcome = SyntheticExecution()(directory)
+        path = Path(directory) / 'work/render-receipt.json'
+        receipt = json.loads(path.read_bytes())
+        context = receipt['engine_observation']['contexts'][0]
+        receipt['engine_observation']['contexts'] = [dict(context) for _ in range(context_count)]
+        path.write_bytes(canonical_bytes(receipt))
+        return outcome
+    monkeypatch.setattr(renderer, 'execute_method_render', execute)
+    value = renderer.MethodAnimationRenderer(tmp_path / 'render', IMAGE, enabled=True, candidate_engines=['canvas'])
+    if context_count == 500:
+        assert value.render('many-native-contexts', dict(SOURCE, engine='canvas'), native_document('canvas'))['technical_passed'] is True
+    else:
+        with pytest.raises(ServiceError, match='engine_evidence_invalid'):
+            value.render('many-native-contexts', dict(SOURCE, engine='canvas'), native_document('canvas'))
+
+
 def test_engine_runtime_staged_bytes_remain_bound_after_restart(tmp_path, monkeypatch):
     execution = SyntheticExecution()
     monkeypatch.setattr(renderer, 'execute_method_render', execution)

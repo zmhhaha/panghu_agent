@@ -126,6 +126,18 @@ def test_collector_accepts_only_native_observation_shape(engine):
     assert _creative_engine_observation(value, engine) == value
 
 
+@pytest.mark.parametrize('engine', ['canvas', 'three'])
+@pytest.mark.parametrize('context_count', [500, 501])
+def test_production_collector_matches_the_native_context_budget(engine, context_count):
+    value = native_observation(engine)
+    value['contexts'] = [dict(value['contexts'][0]) for _ in range(context_count)]
+    if context_count == 500:
+        assert _creative_engine_observation(value, engine) == value
+    else:
+        with pytest.raises(ServiceError, match='creative_engine_observation_invalid'):
+            _creative_engine_observation(value, engine)
+
+
 @pytest.mark.parametrize('change', ['no-native', 'hardware', 'lost', 'gl-error', 'hidden', 'self-report'])
 def test_collector_rejects_missing_software_context_or_forged_extra_declaration(change):
     value = native_observation()

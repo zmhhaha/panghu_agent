@@ -17,6 +17,28 @@ SCHEMA = 'video.animation-runtime-capabilities.v1'
 ENGINES = frozenset({'html-svg', 'canvas', 'three'})
 ASSETS = frozenset({'gsap.min.js', 'three.module.min.js', 'three.LICENSE.txt', 'NotoSansCJK-Regular.ttc'})
 SHA = re.compile(r'[0-9a-f]{64}\Z')
+MAX_CANVAS_CONTEXTS = 500
+
+
+def drawing_context_budget():
+    """Disclose the native guard's per-page/realm limit without granting engines."""
+    return dict(max_contexts=MAX_CANVAS_CONTEXTS,
+        scope='unique_native_contexts_per_page_or_module_realm',
+        instruction=(
+            f'At most {MAX_CANVAS_CONTEXTS} distinct native drawing contexts may be created in one page or module realm. '
+            'Count the visible canvas and every detached or internal canvas buffer, including '
+            'Canvas 2D and admitted WebGL2 contexts. Repeating getContext on the same canvas '
+            'when it returns the same native context does not consume another slot. Removing '
+            'a canvas or dropping a reference does not refund a slot. Use bounded buffers or '
+            'atlases when useful; this count does not expand memory, time or engine admission.'))
+
+
+def with_drawing_context_guidance(instruction, allowed_engines):
+    """Keep the existing frozen production schema and preserve user direction."""
+    if not set(allowed_engines) & {'canvas', 'three'}:
+        return instruction
+    guidance = 'Native drawing runtime constraint: ' + drawing_context_budget()['instruction']
+    return instruction + ('\n\n' if instruction else '') + guidance
 
 
 def validate_runtime_capabilities(value):

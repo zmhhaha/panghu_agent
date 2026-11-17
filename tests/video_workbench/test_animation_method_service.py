@@ -148,6 +148,8 @@ def test_admitted_engines_and_assets_freeze_before_agent_work_and_replay_keeps_o
         document = service._document('developer', frozen, mode)
         assert document['constraints']['allowed_engines'] == ['html-svg', 'canvas']
         assert document['constraints']['runtime_identity'] == admitted['runtime_identity']
+        assert document['constraints']['native_drawing_context_budget']['max_contexts'] == 500
+        assert 'every detached or internal canvas buffer' in document['constraints']['native_drawing_context_budget']['instruction']
         assert document['assets'] == admitted['assets']
     # A configuration expansion must neither reinterpret the frozen task nor
     # turn an HTTP replay into a fresh commission or an idempotency conflict.

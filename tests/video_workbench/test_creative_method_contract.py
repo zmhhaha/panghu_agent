@@ -15,13 +15,27 @@ from video_workbench.creative_method_contract import (
 from video_workbench.motion import make_beats, estimated_alignment
 
 
-def core_task(*, seconds=3, scene_id='production-fixture-scene', base_source=None):
+def core_task(*, seconds=3, scene_id='production-fixture-scene', base_source=None,
+              allowed_engines=None, instruction=''):
     narration = '先筛选对象，再比较留下来的群体。'
     beats = make_beats(narration)
     return prepare_core_task(scene_id=scene_id, title='筛选与比较',
         visual_description='让对象逐个经过筛选，保持身份并呈现群体变化。', narration=narration,
         beats=beats, alignment=estimated_alignment(beats, 'a' * 64, seconds),
-        audio_sha256='a' * 64, duration_seconds=seconds, base_source=base_source)
+        audio_sha256='a' * 64, duration_seconds=seconds, base_source=base_source,
+        allowed_engines=allowed_engines, instruction=instruction,
+        engine_aware=allowed_engines is not None,
+        runtime_identity=(dict(image_digest='sha256:' + 'a' * 64, host_sha256='b' * 64,
+            engine_runtime_sha256='c' * 64, admission_id='synthetic-native-fixture')
+            if allowed_engines is not None else None))
+
+
+def test_native_scene_author_gets_context_budget_and_keeps_user_instruction():
+    task = core_task(allowed_engines=['canvas'], instruction='Preserve the same subject.')
+    assert task['scene']['instruction'].startswith('Preserve the same subject.\n\n')
+    assert 'At most 500 distinct native drawing contexts' in task['scene']['instruction']
+    assert 'does not refund a slot' in task['scene']['instruction']
+    assert core_task(instruction='Only SVG.')['scene']['instruction'] == 'Only SVG.'
 
 
 def published_method():

@@ -1,6 +1,9 @@
 // Dedicated opaque-realm guard. Capture observation intrinsics before import;
 // Agent prototype changes cannot manufacture native-context rows.
 export function installFilmRealmGuard(engine){
+ // Keep this opaque-realm installer self-contained when serialized. The same
+ // per-page cumulative limit is enforced by engine_runtime.mjs.
+ const maxContexts=500;
  const apply=Reflect.apply,define=Object.defineProperty,create=Object.create,number=Number,string=String;
  const test=RegExp.prototype.test,softwarePattern=/swiftshader/i,descriptor=Object.getOwnPropertyDescriptor;
  const nativeContext=HTMLCanvasElement.prototype.getContext,contexts=create(null);let count=0;
@@ -27,7 +30,7 @@ export function installFilmRealmGuard(engine){
   const value=apply(nativeContext,this,[kind,kind==='webgl2'?{...options,preserveDrawingBuffer:true}:options]);
   if(value){
    let seen=false;for(let index=0;index<count;index++)if(contexts[index].value===value)seen=true;
-   if(!seen){if(count>=16)throw Error('film_realm_context_budget');contexts[count++]={value,canvas:this,kind};}
+   if(!seen){if(count>=maxContexts)throw Error('film_realm_context_budget');contexts[count++]={value,canvas:this,kind};}
   }
   return value;
  });

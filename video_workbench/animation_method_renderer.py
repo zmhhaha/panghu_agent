@@ -28,6 +28,7 @@ from agent_service.profiles.video_animation_experiment import _validate_source_o
 from . import animation_lab_capture as docker
 from .animation_creation_renderer import _plain, _read, _write
 from .animation_experiment_render import _IMAGE
+from .animation_runtime_capabilities import MAX_CANVAS_CONTEXTS
 
 
 HOST = Path(__file__).with_name('animation_method_host.mjs')
@@ -658,7 +659,7 @@ class MethodAnimationRenderer:
             contexts = observation.get('contexts')
             _require(observation.get('engine') == request['engine']
                      and observation.get('revision') == 'animation-engine-runtime-1'
-                     and type(contexts) is list and len(contexts) <= 16,
+                     and type(contexts) is list and len(contexts) <= MAX_CANVAS_CONTEXTS,
                      'animation_method_render_engine_evidence_invalid')
             required_kind = '2d' if request['engine'] == 'canvas' else 'webgl2'
             _require((request['engine'] != 'html-svg' or not contexts)
