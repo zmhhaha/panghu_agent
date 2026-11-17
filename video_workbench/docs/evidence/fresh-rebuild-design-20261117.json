@@ -1,0 +1,35 @@
+{
+  "projectId": "ec663f5a-53d3-4a0e-9037-933eb788d183",
+  "changeId": "evolve-video-agent-creation-and-effect-library",
+  "revision": "edca1fa53d06d12c3aaf48e697cfa6196e04d55a",
+  "valid": true,
+  "artifacts_exact_readback": true,
+  "existing_tasks_unchanged": 91,
+  "new_tasks_pending": [
+    "T.1",
+    "T.2",
+    "T.3",
+    "T.4",
+    "T.5",
+    "T.6",
+    "T.7"
+  ],
+  "local_docs": [
+    "README.md",
+    "agent-creation-effect-library-plan.md",
+    "animation-knowledge-workbench.md",
+    "animation-lab-agent-api.md",
+    "collaborative-effect-authoring.md",
+    "current-architecture.md",
+    "general-creative-collaboration.md",
+    "fresh-rebuild-and-skill-loading-design.md"
+  ],
+  "relative_links_checked": 78,
+  "application_code_changed": false,
+  "deployed": false,
+  "model_calls": 0,
+  "renders": 0,
+  "wikiskill_published": false,
+  "retained_receipts": "D:/codex-work/operations/fresh-rebuild-design-20261117",
+  "independent_design_review": "passed_no_material_issues"
+}

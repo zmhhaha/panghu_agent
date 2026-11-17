@@ -1,6 +1,6 @@
 # 视频服务文档导航
 
-更新于 2026-11-16。先读[当前架构与实施边界](current-architecture.md)，再按目的查阅下表。本文是文档入口，不维护另一份任务计数或部署版本表。
+更新于 2026-11-17。先读[当前架构与实施边界](current-architecture.md)，再按目的查阅下表。本文是文档入口，不维护另一份任务计数或部署版本表。
 
 当前需求与未完成任务以根仓库 `.openspec-project.json` 指向的 OpenSpec 项目为准：`ec663f5a-53d3-4a0e-9037-933eb788d183`，主要变更为 `evolve-video-agent-creation-and-effect-library`。本地设计文档解释已确认的方案；发布、真实模型执行和人工验收必须分别有证据。
 
@@ -10,6 +10,7 @@
 | --- | --- | --- |
 | 了解整体服务 | [当前架构与实施边界](current-architecture.md) | 效果库、知识库、正式制作、渲染与公共服务关系；已实现和未完成的区别 |
 | 了解目标设计 | [Agent 效果库、视频工作台与 HyperFrames 统一设计](agent-creation-effect-library-plan.md) | 当前设计及历次检查点；不能将设计图中的全部节点当成已验收能力 |
+| 同一效果从零重做、知识加载与技术重试 | [已确认设计与实施拆分](fresh-rebuild-and-skill-loading-design.md) | 效果归属与创作继承分开；默认加载可关闭、候选人工采用，当前仅完成设计 |
 | 外部 Agent 使用效果库 | [结构化 JSON API](animation-lab-agent-api.md) | 请求、凭据边界、幂等、轮询、反馈及下载；无需模拟填写网页 |
 | 理解知识库 | [整库 WikiSkill 发布](animation-knowledge-workbench.md) | 手动快照、自动编译、同产物浏览、最近五版与正式批次冻结 |
 | 理解协作创作 | [通用协作与创作指导](general-creative-collaboration.md)、[视频职责协作](collaborative-effect-authoring.md) | 与绘制技术无关的调度核心，以及视频适配、预算、质量证据 |
