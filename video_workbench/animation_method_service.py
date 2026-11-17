@@ -2149,6 +2149,33 @@ class AnimationMethodService:
             raise
         self.commissions.complete(owner, operation['id'], result)
 
+    def _method_author_identity(self, owner, run, authored):
+        """Keep method writes idempotent across verified creator checkpoints.
+
+        Candidate/demo provenance still names this retry's operations. Only
+        the method request uses the original creator identity, so an already
+        persisted Skill package is not interpreted as a new method version.
+        """
+        seen = set()
+        while authored.get('reused_from'):
+            origin = authored['reused_from']
+            _require(authored['id'] not in seen
+                and authored['commission_id'] == run['id']
+                and authored['stage'] == 'creator' and authored['status'] == 'completed'
+                and origin['commission_id'] == run['frozen'].get('retry_of_commission_id'),
+                'animation_method_retry_method_author_changed', 409)
+            seen.add(authored['id'])
+            previous = self.commissions.get(owner, origin['commission_id'])
+            source = self.commissions.operation(owner, origin['operation_id'])
+            _require(previous['state'] in {'failed', 'cancelled'}
+                and source['commission_id'] == previous['id']
+                and source['stage'] == 'creator' and source['status'] == 'completed'
+                and all(source.get(key) == authored.get(key) for key in
+                    ('idempotency_key', 'input_sha256', 'result_sha256', 'input', 'result', 'job_id')),
+                'animation_method_retry_method_author_changed', 409)
+            run, authored = previous, source
+        return authored['id']
+
     def _materialize(self, owner, run, render):
         authored = next(op for op in run['operations'] if op['id'] == render['input']['author_operation_id'])
         result = authored['result']
@@ -2164,6 +2191,7 @@ class AnimationMethodService:
         if run['frozen'].get('role') == 'transfer':
             versions = run['frozen'].get('method_versions', [])
         else:
+            method_author_id = self._method_author_identity(owner, run, authored)
             for index, proposal in enumerate(result['methods']):
                 parent = (next((row for row in authored['input']['methods']
                     if row.get('problem') == proposal['problem'] and row.get('version_id')), None)
@@ -2179,7 +2207,7 @@ class AnimationMethodService:
                     body.pop('parent_version_id', None)
                 if parent:
                     body.update(method_id=parent['method_id'], parent_version_id=parent['version_id'])
-                method = self.methods.create_method(owner, body, authored['id'] + ':method:' + str(index))
+                method = self.methods.create_method(owner, body, method_author_id + ':method:' + str(index))
                 versions.append(method['id'])
         _require(bool(versions), 'animation_method_creator_no_method', 409)
         outcome = render['result']
