@@ -1,0 +1,221 @@
+{
+  "schema": "video.reference-learning-release-evidence.v1",
+  "date": "2026-11-18",
+  "releases": {
+    "control_and_worker": {
+      "revision": "35310d17f2430b970b442c992dd7ad26b3b43851",
+      "images": {
+        "control": "arm-cluster-master:5000/agent-service-control:latest@sha256:f7d7922a08d65c364c191195ef141784131c8c93c45f2cee0ae4481999e87e89",
+        "worker": "arm-cluster-master:5000/agent-service-pi:latest@sha256:0a334832372c20852f0b684e0d52793d51267337b05dac055a7a587e3b8a11bb"
+      }
+    },
+    "executor": {
+      "revision": "68795854120588e0cae8c787ad504ead850a7971",
+      "image": "arm-cluster-master:5000/video-animation-creation:latest@sha256:d453a0fb02809e77dbc12d9eb9b9279e12f50cef3542f978af0f09bd7454312e"
+    },
+    "frontend": {
+      "revision": "e269d4350b420120082efb316c1cef7e9a599572",
+      "image": "arm-cluster-master:5000/video-animation-lab:latest@sha256:76d7816a87e7ff71ca286eb4f63ee96d980bb7dfa48f047c89f39c01166b869a"
+    }
+  },
+  "latest_tags_only": true,
+  "source_overlays": false,
+  "technical_admission": {
+    "status": "activated",
+    "actual_frames": {
+      "author": 8,
+      "review": 16
+    },
+    "accepted_model_requests": 8,
+    "all_model_requests_including_failures": 16,
+    "source_unmodified": true,
+    "rendering_frames": 144
+  },
+  "product": {
+    "project_id": "5b4385351ea4466f9db78d30458b1bef",
+    "state": "completed",
+    "works": [
+      {
+        "id": "9e755f44c25b48d8a574a2a5754e3d79",
+        "work_kind": "reproduction",
+        "rendered": true,
+        "reviewed": true,
+        "score": 56
+      },
+      {
+        "id": "9bd03481942f4a6c8527f82735e2d8f8",
+        "work_kind": "reproduction",
+        "rendered": true,
+        "reviewed": true,
+        "score": 85
+      },
+      {
+        "id": "e6effe3d18af405b97f0c3a57b19686e",
+        "work_kind": "transfer",
+        "rendered": true,
+        "reviewed": true,
+        "score": 86
+      }
+    ],
+    "experiments": [
+      {
+        "id": "5b5da8c18e85403996df36b5113f19d7",
+        "state": "completed",
+        "stop_reason": "learning_complete",
+        "stop_proven": true,
+        "transfer_status": "reviewed"
+      }
+    ],
+    "artifacts_verified": 12,
+    "agent_operations": 6,
+    "frame_inputs_by_operation": [
+      {
+        "stage": "author",
+        "images": 8,
+        "transport": true
+      },
+      {
+        "stage": "review",
+        "images": 16,
+        "transport": true
+      },
+      {
+        "stage": "author",
+        "images": 16,
+        "transport": true
+      },
+      {
+        "stage": "review",
+        "images": 24,
+        "transport": true
+      },
+      {
+        "stage": "author",
+        "images": 0,
+        "transport": true
+      },
+      {
+        "stage": "review",
+        "images": 8,
+        "transport": true
+      }
+    ],
+    "analysis_transport": true,
+    "analysis_candidate_ranges": [
+      [
+        0,
+        2
+      ],
+      [
+        1,
+        4
+      ],
+      [
+        3,
+        6
+      ]
+    ],
+    "commissioned_range": [
+      0,
+      6
+    ],
+    "analysis_selection": null,
+    "reference_origin": "existing internal archived six-second animation, not user Bilibili reference",
+    "owner_isolation_statuses": [
+      404,
+      404,
+      404
+    ]
+  },
+  "browser": {
+    "schema": "video.reference-learning-browser-validation.v1",
+    "passed": true,
+    "url": "https://video-service.panghuer.top/dev/animations/video-library.html",
+    "frontend_revision": "e269d4350b420120082efb316c1cef7e9a599572",
+    "project_id": "5b4385351ea4466f9db78d30458b1bef",
+    "checks": {
+      "authenticated_library": true,
+      "three_library_navigation": true,
+      "new_form_and_audio_limitation_visible": true,
+      "analysis_candidate_prefills_only": {
+        "start_seconds": 0,
+        "end_seconds": 2,
+        "selected_saved_reference": true,
+        "creation_not_submitted": true
+      },
+      "three_completed_works_visible": true,
+      "internal_best_distinct_from_adoption": true,
+      "frozen_requirements_visible": true,
+      "actual_agent_input_loaded": true,
+      "actual_input_preview_characters": 331544,
+      "both_media_loaded": {
+        "duration_seconds": 6,
+        "ready_state": 4,
+        "media_error": null
+      },
+      "shared_seek_seconds": 3,
+      "playback_after_refresh": {
+        "reference_seconds": 3.5435,
+        "output_seconds": 3.5435,
+        "both_playing": true,
+        "both_muted": true
+      },
+      "history_and_input_stay_expanded_after_refresh": true,
+      "transfer_selection_resets_both_media_seconds": 0,
+      "media_source_receipt_download_links_visible": true
+    },
+    "screenshots": [
+      "video-form-browser.png",
+      "video-result-browser.png"
+    ],
+    "scope": "Interactive browser technical validation; upload/paid creation/download integrity checked separately through authenticated structured HTTP, not browser form submission.",
+    "continuous_motion_verified": false,
+    "audio_verified": false,
+    "artistic_acceptance": false,
+    "adopted": false,
+    "wikiskill_published": false
+  },
+  "existing_picture_project_preserved": true,
+  "ink": {
+    "rounds": 3,
+    "transfer_works": 1,
+    "best_candidate": "528c116665eb41bb995a07c2cc30da48",
+    "scope": "Partial appearance improvement; reference artistic objective not met; third-round retry originally lost effective baseline, separately repaired in service."
+  },
+  "wikiskill": {
+    "offline_snapshot_compatible": true,
+    "records": 23,
+    "published": false,
+    "formal_consumption_verified": false
+  },
+  "continuous_motion_verified": false,
+  "audio_verified": false,
+  "artistic_acceptance": false,
+  "adopted": false,
+  "remaining": [
+    "goal-adaptive dense motion observation",
+    "actual audio listening",
+    "internal technique probes",
+    "adaptive multiple creators",
+    "Manim learning",
+    "linked image-to-animation creation",
+    "manual WikiSkill release and actual new formal consumption"
+  ],
+  "openspec": {
+    "project_id": "ec663f5a-53d3-4a0e-9037-933eb788d183",
+    "change": "evolve-video-agent-creation-and-effect-library",
+    "revision": "698fe493b4fa5f7ccc9bb82fd9bf6258c6c775b8",
+    "valid": true,
+    "new_completed_tasks": [
+      "X.17",
+      "X.18",
+      "X.19",
+      "X.20",
+      "X.21",
+      "X.22",
+      "X.23"
+    ],
+    "original_checkbox_lines_preserved": 121,
+    "broad_remaining_tasks_unchanged": true
+  }
+}
