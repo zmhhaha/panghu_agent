@@ -207,9 +207,12 @@ def fake_runtime(monkeypatch, *, count=3):
     class CairoRenderer:
         def __init__(self, *, file_writer_class):
             self.file_writer = file_writer_class()
+            self.skip_animations = False
     class Scene:
         def __init__(self, *, renderer):
             self.renderer = renderer
+        def get_time_progression(self, *args, **kwargs):
+            raise AssertionError('This writer-only stand-in never samples animation time')
         def render(self):
             # These names are from the pinned 0.22.1 output API. png is a still
             # image, png-sequence emits every frame; no legacy movie flag exists.
@@ -218,7 +221,7 @@ def fake_runtime(monkeypatch, *, count=3):
             assert settings['renderer'] == 'cairo' and settings['frame_rate'] == 24
             for index in range(count):
                 self.renderer.file_writer.write_frame(None)
-    runtime = SimpleNamespace(__version__='0.22.1', Scene=Scene, tempconfig=tempconfig)
+    runtime = SimpleNamespace(__version__='0.22.1', Scene=Scene, tempconfig=tempconfig, config=settings)
     monkeypatch.setitem(W.sys.modules, 'manim', runtime)
     monkeypatch.setitem(W.sys.modules, 'manim.renderer.cairo_renderer', SimpleNamespace(CairoRenderer=CairoRenderer))
     monkeypatch.setitem(W.sys.modules, 'manim.scene.scene_file_writer', SimpleNamespace(SceneFileWriter=SceneFileWriter))

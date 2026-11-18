@@ -7,6 +7,7 @@ It is deliberately not an HTTP server or a host-side Python execution API.
 import argparse
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import random
@@ -48,6 +49,54 @@ def exact_png_writer(base, frame_count):
     return ExactPNGWriter
 
 
+def integer_frame_count(duration, fps):
+    """Recognize the canonical authored duration N/fps without tolerance.
+
+    Manim's arange(0, N/fps, 1/fps) can emit N+1 samples (14/24 is one
+    example). Only the exact canonical N/fps value qualifies. Even an adjacent
+    floating-point duration retains upstream sampling and the strict writer.
+    """
+    if (type(duration) not in (int, float) or type(fps) not in (int, float)
+            or not math.isfinite(duration) or not math.isfinite(fps) or fps <= 0):
+        return None
+    frames = duration * fps
+    if not math.isfinite(frames) or frames <= 0:
+        return None
+    nearest = round(frames)
+    if nearest >= 1 and duration == nearest / fps:
+        return nearest
+    return None
+
+
+def install_integer_frame_grid(scene, *, fps, progress_bar, progress_factory, upstream_method):
+    """Use integer sample indices for frame-aligned plays, without retiming.
+
+    Preserve the actual Scene, its authored duration, skip behavior and progress
+    lifecycle. Fractional durations call the original pinned implementation.
+    Frozen waits continue through Cairo's explicit repeat path unchanged.
+    """
+    original = scene.get_time_progression
+    # An author's explicit custom sampler keeps its own behavior and remains
+    # subject to the same strict output count. This fixes upstream roundoff.
+    if getattr(original, '__func__', None) is not upstream_method:
+        return False
+
+    def get_time_progression(run_time, description, n_iterations=None,
+            override_skip_animations=False):
+        count = integer_frame_count(run_time, fps)
+        if count is None or (scene.renderer.skip_animations and not override_skip_animations):
+            return original(run_time, description, n_iterations=n_iterations,
+                override_skip_animations=override_skip_animations)
+        bar = progress_bar()
+        return progress_factory((index / fps for index in range(count)),
+            desc=description, total=count if n_iterations is None else n_iterations,
+            leave=bar == 'leave', ascii=True if sys.platform == 'win32' else None,
+            disable=bar == 'none')
+
+    scene.get_time_progression = get_time_progression
+    return True
+
+
 def render_resource(request, output, *, runtime_image_digest):
     """No retries, padding, resampling, MP4 encoding, or unbounded frame import."""
     request = validate_request(request)
@@ -64,6 +113,7 @@ def render_resource(request, output, *, runtime_image_digest):
     import numpy as np
     from manim.renderer.cairo_renderer import CairoRenderer
     from manim.scene.scene_file_writer import SceneFileWriter
+    from tqdm import tqdm
     require(manim.__version__ == MANIM_VERSION, 'manim_resource_version_mismatch')
     random.seed(request['seed'])
     np.random.seed(request['seed'])
@@ -84,6 +134,9 @@ def render_resource(request, output, *, runtime_image_digest):
             'manim_resource_scene_invalid')
         writer = exact_png_writer(SceneFileWriter, request['frame_count'])
         scene = scene_class(renderer=CairoRenderer(file_writer_class=writer))
+        install_integer_frame_grid(scene, fps=24,
+            progress_bar=lambda: manim.config['progress_bar'], progress_factory=tqdm,
+            upstream_method=manim.Scene.get_time_progression)
         scene.render()
         require(scene.renderer.__class__.__name__ == 'CairoRenderer', 'manim_resource_renderer_changed')
         images = plain(scene.renderer.file_writer.image_sequence_directory)
