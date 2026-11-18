@@ -1,6 +1,6 @@
 # 当前架构与实施边界
 
-更新于 2026-11-18。图片学习首版已实现源码创作、真实单帧渲染和比较迭代；真实渲染证据见[验证记录](picture-learning-render-validation-20261118.md)，部署和完整实验另按各自回执判断。下文历史验收结论沿用记录日期。完整目标见[统一设计](agent-creation-effect-library-plan.md)及[参考学习设计](reference-learning-libraries-design.md)，未完成项以 OpenSpec 原任务及其证据为准。
+更新于 2026-11-18。图片学习首版已上线，真实完成两轮源码创作／单帧渲染／比较及一次换内容作品与评审，见[产品验收](picture-learning-product-validation-20261118.md)。渲染和看图角色各有[渲染证据](picture-learning-render-validation-20261118.md)、[角色证据](picture-learning-agent-validation-20261118.md)。完整目标见[统一设计](agent-creation-effect-library-plan.md)及[参考学习设计](reference-learning-libraries-design.md)，未完成项以 OpenSpec 原任务及其证据为准；历史验收结论保持各自范围。
 
 ## 2026-11-18：三库目标与图片学习首版
 

@@ -1,0 +1,103 @@
+{
+  "schema": "video.picture-learning-completion.v1",
+  "date": "2026-11-18",
+  "projectId": "ec663f5a-53d3-4a0e-9037-933eb788d183",
+  "changeId": "evolve-video-agent-creation-and-effect-library",
+  "openspec": {
+    "projectId": "ec663f5a-53d3-4a0e-9037-933eb788d183",
+    "changeId": "evolve-video-agent-creation-and-effect-library",
+    "revision": "db367e0bbacb88c22b0ae300ef12426ee7ea21cb",
+    "valid": true,
+    "existing_checkboxes_preserved": 114,
+    "completed": [
+      "X.10",
+      "X.11",
+      "X.12",
+      "X.13",
+      "X.14",
+      "X.15",
+      "X.16"
+    ],
+    "pending": [],
+    "broader_X1_X9_preserved": true
+  },
+  "application_deployment": {
+    "applied": true,
+    "automatic_retry": false,
+    "build_dir": "/root/video-releases/picture-learning-20261118-r3/build",
+    "build_receipt_sha256": "82a4af9423de771a4e23e45d8539b429be5bd2b7b7e10b8238923e28c42bced0",
+    "control_changed": false,
+    "images": {
+      "executor": "arm-cluster-master:5000/video-animation-creation:latest@sha256:6039d043ec85705f4dd6a006f1fd51162e331a68505ee1c376282bf7b01e02fa",
+      "lab": "arm-cluster-master:5000/video-animation-lab:latest@sha256:6790c00a4bed05d0273d7afd7b021c2d21f101a287d2e8fc5b20dc96b978e04b"
+    },
+    "model_requests": 0,
+    "renderer_changed": false,
+    "revision": "bf9dd077c79342a22348773888a9ae9ea4276296",
+    "rollout_ready": true,
+    "status": "deployed_and_source_verified",
+    "targets": {
+      "executor": {
+        "container": "creation-executor",
+        "deployment": "video-animation-creation",
+        "namespace": "video-animation-creation"
+      },
+      "lab": {
+        "container": "animation-lab",
+        "deployment": "video-animation-lab",
+        "namespace": "video-workbench"
+      }
+    },
+    "token_key": "token",
+    "token_secret": "picture-learning-agent-20261118",
+    "worker_changed": false
+  },
+  "browser": {
+    "surface": "in_app_browser",
+    "public_url": "https://video-service.panghuer.top/dev/animations/picture-library.html",
+    "checks": [
+      "consistent_navigation",
+      "reference_file_preview",
+      "current_owner_project_from_structured_http",
+      "running_view_stop_only",
+      "completed_three_versions",
+      "actual_images_loaded",
+      "lazy_actual_inputs",
+      "r3_reload_and_existing_project_retained",
+      "no_console_errors_after_reload"
+    ],
+    "paid_creations_started_in_browser": 0,
+    "screenshots": {
+      "completed-reference-comparison.jpg": {
+        "path": "D:\\codex-work\\archives\\video-service\\20261118\\picture-learning-ui\\completed-reference-comparison.jpg",
+        "sha256": "9527d0b92243de456edc1d4b30dc40384de2fccebe89ae4a2f82cab8a8a57e32"
+      },
+      "new-learning-form.jpg": {
+        "path": "D:\\codex-work\\archives\\video-service\\20261118\\picture-learning-ui\\new-learning-form.jpg",
+        "sha256": "a81760af038ffd49ae9618e1fc4bcc41dee665ed82d7dcfbf969e417d9764e8a"
+      },
+      "reference-and-first-output.jpg": {
+        "path": "D:\\codex-work\\archives\\video-service\\20261118\\picture-learning-ui\\reference-and-first-output.jpg",
+        "sha256": "e6ee2324dbda8139d18e902ef367c340bb1c671641ebf4323cda9de0096e2b91"
+      },
+      "reference-and-second-output.jpg": {
+        "path": "D:\\codex-work\\archives\\video-service\\20261118\\picture-learning-ui\\reference-and-second-output.jpg",
+        "sha256": "70e3b1a96dda1a71ee6762740e661e9f4a1b6c4d453ce64f314b5890c60cf9b3"
+      }
+    }
+  },
+  "product_evidence": "picture-learning-product-validation-20261118.json",
+  "agent_evidence": "picture-learning-agent-validation-20261118.json",
+  "render_evidence": "picture-learning-render-validation-20261118.json",
+  "wikiskill_publication_started": false,
+  "developer_adoption": false,
+  "artistic_acceptance": false,
+  "remaining": [
+    "video_reference_learning",
+    "adaptive_collaboration",
+    "internal_technique_probes",
+    "picture_manim_resources",
+    "picture_to_linked_animation",
+    "manual_static_release_and_real_formal_consumption"
+  ]
+}
