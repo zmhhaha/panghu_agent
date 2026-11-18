@@ -433,7 +433,13 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
         extensions = ((Path(ACADEMIC_EXTENSION),)
                       if policy.name in {'research.generate.v1', 'research.retrieve.v1'} else ())
         environment = registry.environment(binding.tool_environment.name, binding.tool_environment.revision)
-        if {'skill_search', 'skill_read'} & set(environment.tools):
+        if policy.name in {'video.picture-learning-author.v1', 'video.picture-learning-review.v1'}:
+            from .picture_learning_tools import verified_extensions
+            try:
+                extensions += verified_extensions()
+            except (OSError, ValueError):
+                raise WorkerConfigError() from None
+        elif {'skill_search', 'skill_read'} & set(environment.tools):
             from .skill_tools import verified_skill_tools_extensions
             try:
                 extensions += verified_skill_tools_extensions()
@@ -456,7 +462,8 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
     settings = build_pi_runtime_settings(policy, command=(NODE, PI_CLI), node_command=(NODE,),
         provider=config.model.provider, model=config.model.model,
         model_base_url=config.model.proxy_base_url, model_api=config.model.api,
-        model_max_tokens=32768 if policy.name == 'video.animation-wikiskill-compile.v2' else 8192,
+        model_max_tokens=32768 if policy.name in {'video.animation-wikiskill-compile.v2',
+            'video.picture-learning-author.v1'} else 8192,
         model_env={'AGENT_MODEL_API_KEY': secrets.model_proxy_token.get_secret_value()},
         tool_proxy_base_url=config.model.proxy_base_url,
         model_input=('text', 'image') if 'vision' in (

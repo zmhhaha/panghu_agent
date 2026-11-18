@@ -39,7 +39,8 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                   method_project_runtime='native-seek', authoring_library_admission_file=None,
                   manim_recipe_agent_token_file=None, manim_resource_image=None,
                   manim_resource_admission_file=None, film_manim_admission_file=None,
-                  enable_collaborative_authoring=False, collaboration_agent_token_file=None):
+                  enable_collaborative_authoring=False, collaboration_agent_token_file=None,
+                  picture_agent_token_file=None):
     if enable_isolated_rendering is not True:
         raise ValueError('animation_creation_isolated_rendering_opt_in_required')
     if method_protocol not in {'skills', 'legacy'}:
@@ -63,7 +64,7 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
     renderer = DurableAnimationRenderer(Path(root) / 'renders', image=renderer_image,
         assets_dir=assets_dir, enabled=True)
     client = AgentClient(agent_url, agent_token, timeout=30)
-    method_client = collaboration_client = manim_client = None
+    method_client = collaboration_client = manim_client = picture_client = None
     try:
         service = AnimationCreationService(root, creation_gateway=AnimationCreateGateway(client),
             review_gateway=AnimationInputReviewGateway(client), renderer=renderer,
@@ -151,11 +152,47 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
             raise ValueError('manim_method_config_incomplete')
         elif film_manim_admission_file is not None:
             raise ValueError('film_manim_config_incomplete')
+        pictures = None
+        if picture_agent_token_file is not None:
+            if methods is None or method_project_runtime != 'hyperframes-core-bridge':
+                raise ValueError('picture_learning_hyperframes_methods_required')
+            from .picture_learning_service import PictureLearningService
+            from .picture_learning_gateway import PictureAuthorGateway, PictureReviewGateway
+            from .picture_learning_renderer import PictureLearningRenderer
+            from .animation_laboratory_library import make_laboratory_library_adapter
+            picture_token = read_token(picture_agent_token_file)
+            if picture_token in {agent_token, executor_token, method_token, collaboration_token}:
+                raise ValueError('picture_learning_distinct_credentials_required')
+            if manim_client is not None and picture_token == read_token(manim_recipe_agent_token_file):
+                raise ValueError('picture_learning_distinct_credentials_required')
+            picture_client = AgentClient(agent_url, picture_token, timeout=30)
+            pictures = PictureLearningService(Path(root) / 'picture-lab',
+                author_gateway=PictureAuthorGateway(picture_client),
+                review_gateway=PictureReviewGateway(picture_client),
+                renderer=PictureLearningRenderer(Path(root) / 'picture-renders', runtime_renderer=methods.renderer),
+                library_adapter=make_laboratory_library_adapter(Path(root) / 'method-lab',
+                    wikiskill_store=methods.wikiskill.store))
+            capture_animation = methods.capture_wikiskill_records
+            def capture_library(owner):
+                from agent_service.contracts import ServiceError
+                records = pictures.capture_wikiskill_records(owner)
+                try:
+                    records += capture_animation(owner)
+                except ServiceError as error:
+                    if error.code != 'animation_wikiskill_library_empty' or not records:
+                        raise
+                return sorted(records, key=lambda row: row['record_id'])
+            # Only an explicit existing WikiSkill publish request invokes this
+            # read-only capture. Picture completion never publishes a release.
+            methods.wikiskill.capture = capture_library
         server = CreationHTTPServer(service, executor_token, host=listen, port=port,
             method_service=methods, film_resource_service=film_resources,
+            picture_service=pictures,
             film_review_service=FilmReviewProxy(Path(root) / 'film-reviews', service.review_gateway))
-        server.close_callbacks = tuple(client.close for client in (method_client, collaboration_client, manim_client) if client is not None)
+        server.close_callbacks = tuple(client.close for client in (method_client, collaboration_client, manim_client, picture_client) if client is not None)
     except BaseException:
+        if picture_client is not None:
+            picture_client.close()
         if manim_client is not None:
             manim_client.close()
         if collaboration_client is not None:
@@ -173,6 +210,8 @@ def main(argv=None):
     parser.add_argument('--agent-url', required=True)
     parser.add_argument('--agent-token-file', type=Path, required=True)
     parser.add_argument('--method-agent-token-file', type=Path)
+    parser.add_argument('--picture-agent-token-file', type=Path,
+        help='Distinct admitted direct-reference picture creator/reviewer credential; requires HyperFrames.')
     parser.add_argument('--enable-collaborative-authoring', action='store_true',
         help='Explicitly enable the separately admitted collaborative author; no task starts at boot.')
     parser.add_argument('--collaboration-agent-token-file', type=Path,

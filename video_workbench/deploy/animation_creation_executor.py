@@ -31,6 +31,7 @@ AGENT_TOKEN = '/run/secrets/animation-creation-agent/token'
 LAB_TOKEN = '/run/secrets/animation-creation-lab/token'
 METHOD_TOKEN = '/run/secrets/animation-method-agent/token'
 COLLABORATION_TOKEN = '/run/secrets/animation-collaboration-agent/token'
+PICTURE_TOKEN = '/run/secrets/picture-learning-agent/token'
 SELECTOR = {'app.kubernetes.io/name': NAME}
 
 
@@ -59,6 +60,9 @@ class Settings:
     collaboration_agent_token_secret: str | None = None
     collaboration_agent_token_key: str = 'token'
     enable_collaborative_authoring: bool = False
+    picture_agent_token_secret: str | None = None
+    picture_agent_token_key: str = 'token'
+    method_project_runtime: str = 'native-seek'
 
 
 def render(settings: Settings):
@@ -96,8 +100,17 @@ def render(settings: Settings):
         raise ValueError('Collaboration requires skills and independent caller Secret')
     if collaboration_secret is not None and collaboration_secret in {agent_secret, lab_secret, method_secret}:
         raise ValueError('Distinct collaboration Agent caller Secret required')
+    picture_secret = (_dns_name(settings.picture_agent_token_secret, 'picture Agent caller Secret')
+                      if settings.picture_agent_token_secret is not None else None)
+    if settings.method_project_runtime not in {'native-seek', 'hyperframes-core-bridge'}:
+        raise ValueError('Invalid method project runtime')
+    if picture_secret is not None:
+        if picture_secret in {agent_secret, lab_secret, method_secret, collaboration_secret}:
+            raise ValueError('Distinct picture Agent caller Secret required')
+        if method_secret is None or settings.method_project_runtime != 'hyperframes-core-bridge':
+            raise ValueError('Picture learning requires HyperFrames and method execution')
     for key in (settings.agent_token_key, settings.lab_token_key, settings.method_agent_token_key,
-                settings.collaboration_agent_token_key):
+                settings.collaboration_agent_token_key, settings.picture_agent_token_key):
         if type(key) is not str or not re.fullmatch(r'[A-Za-z0-9_.-]{1,253}', key):
             raise ValueError('Invalid caller Secret key')
 
@@ -124,6 +137,10 @@ def render(settings: Settings):
             '--listen', '0.0.0.0', '--port', str(PORT)]
     if method_secret:
         args += ['--method-agent-token-file', METHOD_TOKEN, '--method-protocol', settings.method_protocol]
+        if settings.method_project_runtime != 'native-seek':
+            args += ['--method-project-runtime', settings.method_project_runtime]
+    if picture_secret:
+        args += ['--picture-agent-token-file', PICTURE_TOKEN]
     if settings.enable_collaborative_authoring:
         args += ['--enable-collaborative-authoring', '--collaboration-agent-token-file', COLLABORATION_TOKEN]
     health = {'httpGet': {'path': '/healthz', 'port': 'http'}, 'periodSeconds': 10,
@@ -175,6 +192,12 @@ def render(settings: Settings):
             'items': [{'key': settings.collaboration_agent_token_key, 'path': 'token'}]}})
         container['volumeMounts'].append({'name': 'collaboration-agent-token',
             'mountPath': COLLABORATION_TOKEN.rsplit('/', 1)[0], 'readOnly': True})
+    if picture_secret:
+        volumes.append({'name': 'picture-agent-token', 'secret': {'secretName': picture_secret,
+            'optional': False, 'defaultMode': 0o400,
+            'items': [{'key': settings.picture_agent_token_key, 'path': 'token'}]}})
+        container['volumeMounts'].append({'name': 'picture-agent-token',
+            'mountPath': PICTURE_TOKEN.rsplit('/', 1)[0], 'readOnly': True})
     deployment = resource('apps/v1', 'Deployment', {
         'replicas': 1, 'strategy': {'type': 'Recreate'}, 'selector': {'matchLabels': dict(SELECTOR)},
         'template': {'metadata': {'labels': dict(labels), 'annotations': dict(annotations)}, 'spec': {
@@ -235,6 +258,9 @@ def main(argv=None):
     parser.add_argument('--collaboration-agent-token-secret')
     parser.add_argument('--collaboration-agent-token-key', default='token')
     parser.add_argument('--enable-collaborative-authoring', action='store_true')
+    parser.add_argument('--picture-agent-token-secret')
+    parser.add_argument('--picture-agent-token-key', default='token')
+    parser.add_argument('--method-project-runtime', choices=('native-seek', 'hyperframes-core-bridge'), default='native-seek')
     parser.add_argument('--output', type=Path)
     args = vars(parser.parse_args(argv))
     output = args.pop('output')

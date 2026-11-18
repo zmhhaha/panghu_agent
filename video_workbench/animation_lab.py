@@ -42,12 +42,15 @@ MAX_BODY = 32 * 1024
 WEB = Path(__file__).with_name('animation_lab_web')
 _FIELDS = {'case_id', 'case_identity', 'variant_id', 'kind', 'start_seconds',
            'end_seconds', 'region', 'tags', 'severity', 'comment', 'preference', 'verdict'}
-_PUBLIC_URL_FIELDS = frozenset({'preview_url', 'report_url', 'task_url', 'image_url', 'asset_url', 'media_url', 'assessment_url', 'source_url'})
+_PUBLIC_URL_FIELDS = frozenset({'preview_url', 'report_url', 'task_url', 'image_url', 'asset_url', 'media_url',
+                              'assessment_url', 'source_url', 'picture_url', 'reference_url', 'receipt_url'})
 _METHOD_UI_PATHS = frozenset({'/', '/index.html', '/method-gallery.html',
                               '/method-gallery.mjs', '/method-comparison.mjs', '/authoring-tools.mjs',
                               '/prompt-inspection.mjs',
                               '/method-gallery.css', '/skill-publication.mjs', '/effect-recycle-bin.mjs',
                               '/knowledge.html', '/knowledge.mjs', '/knowledge.css',
+                              '/picture-library.html', '/picture-library.css', '/picture-library.mjs',
+                              '/picture-model.mjs', '/picture-api.openapi.json',
                               '/agent-api.html', '/agent-api.openapi.json', '/agent-api-client.py'})
 
 
@@ -592,7 +595,8 @@ class LabHTTPServer(ThreadingHTTPServer):
         if type(value) is list:
             return [self.public_urls(row) for row in value]
         if type(value) is dict:
-            return {key: self.base_path + row if key in _PUBLIC_URL_FIELDS
+            return {key: self.base_path + row if (key in _PUBLIC_URL_FIELDS
+                    or key == 'url' and type(row) is str and row.startswith('/api/picture-lab/'))
                     and type(row) is str and row.startswith('/') and not row.startswith('//')
                     else self.public_urls(row) for key, row in value.items()}
         return value
@@ -789,7 +793,13 @@ class LabHandler(BaseHTTPRequestHandler):
                 return self._json(dict(status='ok'))
             if getattr(lab, 'methods_only', False):
                 _require(path in _METHOD_UI_PATHS or path == '/api/method-lab'
-                         or path.startswith('/api/method-lab/'), 'animation_lab_not_found', 404)
+                         or path.startswith('/api/method-lab/') or path.startswith('/api/picture-lab/'), 'animation_lab_not_found', 404)
+            if path.startswith('/api/picture-lab/'):
+                from .picture_learning_http import route_public
+                _require(not parsed.query, 'picture_learning_query_invalid')
+                if route_public(self, getattr(lab, 'method_client', None),
+                        self.forwarded_user or 'local-developer', 'GET', path):
+                    return
             if path == '/api/catalog':
                 return self._json(lab.get_catalog())
             method_pieces = path.strip('/').split('/')
@@ -1005,7 +1015,9 @@ class LabHandler(BaseHTTPRequestHandler):
             self._context(write=True)
             lengths = self.headers.get_all('Content-Length', [])
             request_path = self._path(urlsplit(self.path))
-            body_limit = 1024 * 1024 if request_path.startswith('/api/method-lab/') else MAX_BODY
+            from .picture_learning_http import MAX_BODY as PICTURE_MAX_BODY
+            body_limit = (PICTURE_MAX_BODY if request_path.startswith('/api/picture-lab/') else
+                1024 * 1024 if request_path.startswith('/api/method-lab/') else MAX_BODY)
             _require(len(lengths) == 1 and lengths[0].isdigit()
                      and 0 < int(lengths[0]) <= body_limit, 'animation_lab_body_size', 413)
             length = lengths[0]
@@ -1024,8 +1036,14 @@ class LabHandler(BaseHTTPRequestHandler):
             path = self._path(urlsplit(self.path))
             lab = self.server.lab
             if getattr(lab, 'methods_only', False):
-                _require(path == '/api/method-lab' or path.startswith('/api/method-lab/'),
-                         'animation_lab_not_found', 404)
+                _require(path == '/api/method-lab' or path.startswith('/api/method-lab/')
+                         or path.startswith('/api/picture-lab/'), 'animation_lab_not_found', 404)
+            if path.startswith('/api/picture-lab/'):
+                from .picture_learning_http import route_public
+                _require(not urlsplit(self.path).query, 'picture_learning_query_invalid')
+                if route_public(self, getattr(lab, 'method_client', None),
+                        self.forwarded_user or 'local-developer', 'POST', path, body):
+                    return
             method_pieces = path.strip('/').split('/')
             if method_pieces[:2] == ['api', 'method-lab']:
                 _require(not urlsplit(self.path).query, 'animation_method_query_invalid')

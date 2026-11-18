@@ -11,6 +11,7 @@ agent_service/read_skill_task_extension.mjs text eol=lf
 agent_service/read_inputs_extension.mjs text eol=lf
 agent_service/skill_tools_extension.mjs text eol=lf
 agent_service/read_compilation_input_extension.mjs text eol=lf
+agent_service/picture_learning_extension.mjs text eol=lf
 agent_service/Dockerfile* text eol=lf
 # Engine/host identities and upstream assets are hashes of exact bytes.
 video_workbench/motion_renderer/engine_runtime.mjs text eol=lf
@@ -18,4 +19,5 @@ video_workbench/motion_renderer/creative.mjs text eol=lf
 video_workbench/motion_renderer/hyperframes_project.mjs text eol=lf
 video_workbench/motion_renderer/manim_frame_layer.mjs text eol=lf
 video_workbench/motion_renderer/manim_method_frames.mjs text eol=lf
+video_workbench/picture_learning_host.mjs text eol=lf
 video_workbench/motion_renderer/vendor/** -text

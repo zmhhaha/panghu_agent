@@ -623,6 +623,7 @@ def test_completed_replay_does_not_consume_the_distinct_request_budget(execution
 
 
 @pytest.mark.parametrize('profile', ['video.animation-method-author.v1', 'video.animation-method-review.v1',
+                                   'video.picture-learning-author.v1', 'video.picture-learning-review.v1',
                                    'video.animation-method-author.v2', 'video.animation-method-review.v2',
                                    'video.animation-production.v1', 'video.animation-production.v2',
                                    'video.animation-production.v3'])
@@ -639,6 +640,7 @@ def test_method_roles_have_an_eight_request_hard_cap_and_free_completed_replay(e
 
 
 @pytest.mark.parametrize('profile', ['video.animation-method-author.v1', 'video.animation-method-review.v1',
+                                   'video.picture-learning-author.v1', 'video.picture-learning-review.v1',
                                    'video.animation-method-author.v2', 'video.animation-method-review.v2',
                                    'video.animation-production.v1', 'video.animation-production.v2',
                                    'video.animation-production.v3'])

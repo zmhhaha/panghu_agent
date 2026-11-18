@@ -17,6 +17,7 @@ PROFILES = frozenset({'video.animation-wikiskill-compile.v1', 'video.animation-w
                       'video.animation-review.v3', 'video.animation-review.v4',
                       'video.animation-method-author.v1', 'video.animation-method-review.v1',
                       'video.animation-method-author.v2', 'video.animation-method-review.v2',
+                      'video.picture-learning-author.v1', 'video.picture-learning-review.v1',
                       'video.animation-production.v1', 'video.animation-production.v2',
                       'video.animation-production.v3', 'video.animation-film-module.v1',
                       'video.animation-manim-recipe.v1',

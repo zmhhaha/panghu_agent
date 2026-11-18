@@ -3,6 +3,9 @@ from .base import ProfileImplementation, ProfileLimits
 
 
 def implementation(name):
+    if name in {'video.picture-learning-author.v1', 'video.picture-learning-review.v1'}:
+        from .video_picture_learning import VideoPictureLearningProfile
+        return VideoPictureLearningProfile(review=name == 'video.picture-learning-review.v1')
     if name == 'video.animation-collaboration.v1':
         from .video_animation_collaboration import VideoAnimationCollaborationProfile
         return VideoAnimationCollaborationProfile()

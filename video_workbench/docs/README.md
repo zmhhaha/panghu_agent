@@ -1,8 +1,10 @@
 # 视频服务文档导航
 
-更新于 2026-11-17。先读[当前架构与实施边界](current-architecture.md)，再按目的查阅下表。本文是文档入口，不维护另一份任务计数或部署版本表。
+更新于 2026-11-18。先读[当前架构与实施边界](current-architecture.md)，再按目的查阅下表。本文是文档入口，不维护另一份任务计数或部署版本表。
 
 当前需求与未完成任务以根仓库 `.openspec-project.json` 指向的 OpenSpec 项目为准：`ec663f5a-53d3-4a0e-9037-933eb788d183`，主要变更为 `evolve-video-agent-creation-and-effect-library`。本地设计文档解释已确认的方案；发布、真实模型执行和人工验收必须分别有证据。
+
+2026-11-18 确认的新增目标是需求创作库、图片学习库和视频学习库三个独立成果库，共用创作、渲染、评审和同一套 WikiSkill。图片学习首版已实现上传参考图、直接看图创作、单帧渲染、对照迭代、一次换内容验证及源码保存，部署和实际模型证据另行记录。视频学习和自适应多人创作仍待实施。
 
 ## 当前使用与维护
 
@@ -10,6 +12,8 @@
 | --- | --- | --- |
 | 了解整体服务 | [当前架构与实施边界](current-architecture.md) | 效果库、知识库、正式制作、渲染与公共服务关系；已实现和未完成的区别 |
 | 了解目标设计 | [Agent 效果库、视频工作台与 HyperFrames 统一设计](agent-creation-effect-library-plan.md) | 当前设计及历次检查点；不能将设计图中的全部节点当成已验收能力 |
+| 三库与图片／视频参考学习 | [参考学习设计与实施拆分](reference-learning-libraries-design.md) | 三个独立成果库、直接观察参考、内部技法小样、复现与迁移、证据范围及手动整库发版；2026-11-18 确认，待实施 |
+| 使用图片学习库 | [网页与结构化 API](picture-learning-library.md) | 看参考、生成绘制源码、渲染单帧、对照迭代与保存技法；单帧是验证产物，完整创作学习流程保持 |
 | 同一效果从零重做、知识加载与技术重试 | [设计与实施拆分](fresh-rebuild-and-skill-loading-design.md)、[实现验证](fresh-rebuild-validation-20261117.md) | 效果归属与创作继承分开；知识开关、冻结恢复及候选人工采用 |
 | 外部 Agent 使用效果库 | [结构化 JSON API](animation-lab-agent-api.md) | 请求、凭据边界、幂等、轮询、反馈及下载；无需模拟填写网页 |
 | 理解知识库 | [整库 WikiSkill 发布](animation-knowledge-workbench.md) | 手动快照、自动编译、同产物浏览、最近五版与正式批次冻结 |

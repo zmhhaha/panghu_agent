@@ -38,7 +38,8 @@ OutputSchema = Literal['text-output.v1', 'ppt-plan_initial-output.v1', 'ppt-plan
     'video-animation-film-module-output.v1',
     'video-animation-manim-recipe-output.v1',
     'video-joint-plan-output.v1', 'video-resource-plan-output.v1',
-    'video-animation-collaboration-output.v1']
+    'video-animation-collaboration-output.v1',
+    'video-picture-learning-author-output.v1', 'video-picture-learning-review-output.v1']
 
 NAME = r'^[a-z][a-z0-9_.-]{0,79}$'
 REVISION = r'^[A-Za-z0-9_.-]{1,100}$'
@@ -176,7 +177,14 @@ class ToolEnvironment(_Record):
 
     @model_validator(mode='after')
     def fixed_input_reader(self):
-        if 'read_compilation_input' in self.tools:
+        if self.name == 'tools-pi-picture-learning':
+            from .picture_learning_tools import environment_revision
+            if (set(self.tools) != {'read_inputs', 'skill_search', 'skill_read', 'write'}
+                    or not set(self.capabilities) <= {'video-picture-learning-author-output.v1',
+                                                     'video-picture-learning-review-output.v1'}
+                    or self.revision != environment_revision(self.model_dump(mode='json'))):
+                raise ValueError('Picture learning requires its fixed extension identity and exact tool scope')
+        elif 'read_compilation_input' in self.tools:
             from .compilation_input_tools import (COMPILATION_INPUT_ENVIRONMENT_NAME,
                 compilation_input_environment_revision)
             if (self.name != COMPILATION_INPUT_ENVIRONMENT_NAME

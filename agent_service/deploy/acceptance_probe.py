@@ -42,6 +42,7 @@ PROFILES = {'ppt.' + stage + '.v1' for stage in (
     'video.animation-review.v2', 'video.animation-review.v3', 'video.animation-review.v4',
     'video.animation-method-author.v1', 'video.animation-method-review.v1',
     'video.animation-method-author.v2', 'video.animation-method-review.v2',
+    'video.picture-learning-author.v1', 'video.picture-learning-review.v1',
     'video.animation-production.v1', 'video.animation-production.v2',
     'video.animation-production.v3', 'video.animation-film-module.v1', 'video.joint-plan.v1',
     'video.resource-plan.v1', 'video.animation-wikiskill-compile.v1', 'video.joint-plan.v2',
@@ -481,7 +482,13 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
     from agent_service.worker_entry import _host_registry
     environment = _host_registry(config).environment(binding.tool_environment.name,
                                                     binding.tool_environment.revision)
-    if {'skill_search', 'skill_read'} & set(environment.tools):
+    if policy.name in {'video.picture-learning-author.v1', 'video.picture-learning-review.v1'}:
+        from agent_service.picture_learning_tools import verified_extensions
+        try:
+            extensions += verified_extensions()
+        except (OSError, ValueError):
+            raise ServiceError('candidate_picture_learning_reader_integrity_invalid', 422) from None
+    elif {'skill_search', 'skill_read'} & set(environment.tools):
         from agent_service.skill_tools import verified_skill_tools_extensions
         try:
             extensions += verified_skill_tools_extensions()
@@ -503,7 +510,8 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
     profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL
     settings = build_pi_runtime_settings(policy, command=(NODE, PI_CLI), node_command=(NODE,), provider=config.model.provider,
         model=config.model.model, model_base_url=config.model.proxy_base_url, model_api=config.model.api,
-        model_max_tokens=32768 if policy.name == 'video.animation-wikiskill-compile.v2' else 8192,
+        model_max_tokens=32768 if policy.name in {'video.animation-wikiskill-compile.v2',
+            'video.picture-learning-author.v1'} else 8192,
         model_input=('text', 'image') if 'vision' in binding.model_policy.capabilities else ('text',),
         model_env={'AGENT_MODEL_API_KEY': credentials.model_proxy_token.get_secret_value()},
         tool_proxy_base_url=config.model.proxy_base_url, runtime_revision=policy.runtime_revision,
