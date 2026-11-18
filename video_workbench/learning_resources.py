@@ -167,7 +167,9 @@ class LearningResourceStage:
             "window.__animationExperiment = {\n"
             "  ready: layer.ready,\n"
             "  seek(seconds) { layer.seekFrame(Math.floor(Math.max(0, seconds) * 24)); }\n"
-            "};"
+            "};\n"
+            "await layer.ready;\n"
+            "window.__animationExperiment.seek(0);"
         )
         return dict(generated_resources=[descriptor], assets={name: digest_bytes(raw)
                 for name, raw in assets.items()}, resource_placement=placement,
@@ -182,7 +184,13 @@ class LearningResourceStage:
                 'to the positioned root and returns {ready, seekFrame, dispose}, not an '
                 'element or a promise. Register window.__animationExperiment synchronously '
                 'with ready: layer.ready before awaiting image decoding; the host awaits '
-                'that promise before synchronous seek(seconds). Call seekFrame from the '
+                'that promise before synchronous seek(seconds). To meet the ordinary '
+                'source contract that initializes with seek(0), await layer.ready first '
+                'and only then call window.__animationExperiment.seek(0). Never call '
+                'seek(0) immediately after registration before ready resolves: the '
+                'strict helper throws manim_method_resource_not_ready and the scene '
+                'fails even if decoding later completes. Keep registration before the '
+                'await so the host can discover the interface. Call seekFrame from the '
                 'HyperFrames absolute clock with placementStartFrame equal to '
                 'resource_placement.global_start_frame. This interface-only example '
                 'assumes your positioned container has id manim-resource and manifest is '

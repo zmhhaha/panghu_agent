@@ -12,6 +12,9 @@ def implementation(name):
     if name == 'video.animation-collaboration.v1':
         from .video_animation_collaboration import VideoAnimationCollaborationProfile
         return VideoAnimationCollaborationProfile()
+    if name == 'video.animation-wikiskill-compile.v4':
+        from .video_animation_wikiskill_v4 import VideoAnimationWikiSkillV4Profile
+        return VideoAnimationWikiSkillV4Profile()
     if name == 'video.animation-wikiskill-compile.v3':
         from .video_animation_wikiskill_v3 import VideoAnimationWikiSkillV3Profile
         return VideoAnimationWikiSkillV3Profile()

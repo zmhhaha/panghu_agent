@@ -154,6 +154,9 @@ def test_standard_worker_context_includes_exact_bundles_and_needs_no_business_im
         assert 'agent_service/profiles/video_animation_wikiskill.py' in names
         assert 'agent_service/profiles/video_animation_wikiskill_v2.py' in names
         assert 'agent_service/profiles/video_animation_wikiskill_v3.py' in names
+        assert 'agent_service/profiles/video_animation_wikiskill_v4.py' in names
+        assert 'agent_service/checked_compilation_extension.mjs' in names
+        assert 'agent_service/compilation_output_preflight.mjs' in names
         assert 'agent_service/animation_wikiskill_compact.py' in names
         assert 'agent_service/compilation_input_tools.py' in names
         assert 'agent_service/read_compilation_input_extension.mjs' in names
@@ -171,14 +174,16 @@ def test_standard_worker_context_includes_exact_bundles_and_needs_no_business_im
         'from agent_service.profiles.video_animation_wikiskill import verified_bundle; '
         'from agent_service.profiles.video_animation_wikiskill_v2 import verified_bundle as compiler_v2_bundle; '
         'from agent_service.profiles.video_animation_wikiskill_v3 import verified_bundle as compiler_v3_bundle; '
+        'from agent_service.profiles.video_animation_wikiskill_v4 import verified_bundle as compiler_v4_bundle; '
         'from agent_service.compilation_input_tools import verified_compilation_input_extension; '
         'from agent_service.profiles.video_joint_plan_skills import verified_bundle as planner_bundle; '
         'assert implementation("video.animation-wikiskill-compile.v1").required_tools == ("read","write"); '
         'assert implementation("video.animation-wikiskill-compile.v2").required_tools == ("read_compilation_input","write"); '
         'assert implementation("video.animation-wikiskill-compile.v3").required_tools == ("read_compilation_input","write"); '
         'assert "skill_read" in implementation("video.joint-plan.v2").required_tools; '
-        'verified_bundle(); compiler_v2_bundle(); compiler_v3_bundle(); '
+        'verified_bundle(); compiler_v2_bundle(); compiler_v3_bundle(); compiler_v4_bundle(); '
         'verified_compilation_input_extension(); '
-        'verified_compilation_input_extension("tools-pi-compilation-evidence"); planner_bundle()'], cwd=tmp_path / 'isolated',
+        'verified_compilation_input_extension("tools-pi-compilation-evidence"); '
+        'verified_compilation_input_extension("tools-pi-compilation-checked"); planner_bundle()'], cwd=tmp_path / 'isolated',
         env={**os.environ, 'PYTHONPATH': str(tmp_path / 'isolated')}, capture_output=True, text=True)
     assert process.returncode == 0, process.stderr

@@ -61,6 +61,8 @@ ANIMATION_RUNTIME_BUNDLES = (
      frozenset({'CONTRACT.md', 'LICENSE', 'learning-procedure/SKILL.md'})),
     ('animation-collaboration-v1', 'd8c3070184a0d18e0d2224c6245879cf6c934512d341a9423712617af0af42a5',
      frozenset({'CONTRACT.md', 'LICENSE', 'collaboration-procedure/SKILL.md'})),
+    ('animation-wikiskill-v4', '46d5522c97127e9de73e7c8006462eb6cf7a8d31b8e0474c67934cfa29e3e661',
+     frozenset({'CONTRACT.md', 'LICENSE', 'compile-procedure/SKILL.md'})),
     ('animation-wikiskill-v3', '528e7d1f8daccff8425de2f4c763683d45137b989bebbaad998fe4a95f97c10c',
      frozenset({'CONTRACT.md', 'LICENSE', 'compile-procedure/SKILL.md'})),
     ('animation-wikiskill-v2', '8c9d0891c0d7dceb965ea63fc8b5c95dc82353bda7eee93b977473161d6eaa78',

@@ -117,6 +117,11 @@ const manifest = MANIFEST;
 EXAMPLE
 assert.equal(typeof window.__animationExperiment.seek, 'function');
 assert.equal(typeof window.__animationExperiment.ready.then, 'function');
+// The supplied complete example must itself await decoding and initialize at
+// zero; adding the ordinary contract's eager seek before ready must fail.
+assert.equal(images.length, COUNT);
+if (START === 0) assert.equal(images[0].style.display, 'block');
+else assert.ok(images.every(image => image.style.display === 'none'));
 await window.__animationExperiment.ready;
 assert.equal(images.length, COUNT);
 window.__animationExperiment.seek(START / 24);

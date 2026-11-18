@@ -468,7 +468,7 @@ def build_pi_driver(config: HostConfig, secrets: HostSecrets, scope: CapsuleScop
     settings = build_pi_runtime_settings(policy, command=(NODE, PI_CLI), node_command=(NODE,),
         provider=config.model.provider, model=config.model.model,
         model_base_url=config.model.proxy_base_url, model_api=config.model.api,
-        model_max_tokens=32768 if policy.name in {'video.animation-wikiskill-compile.v2', 'video.animation-wikiskill-compile.v3',
+        model_max_tokens=32768 if policy.name in {'video.animation-wikiskill-compile.v2', 'video.animation-wikiskill-compile.v3', 'video.animation-wikiskill-compile.v4',
             'video.picture-learning-author.v1', 'video.reference-learning-author.v1'} else 8192,
         model_env={'AGENT_MODEL_API_KEY': secrets.model_proxy_token.get_secret_value()},
         tool_proxy_base_url=config.model.proxy_base_url,
