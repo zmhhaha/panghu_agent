@@ -86,6 +86,11 @@ export async function referenceBody(file, requestId) {
   for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
   return {request_id: requestId, ...description, content_base64: btoa(binary)};
 }
+export async function analyzeVideoSelection(controller, fields, file, onReference) {
+  const success = await controller.analyze(fields, file);
+  if (success && controller.state.analysis?.reference_id) onReference(videoId(controller.state.analysis.reference_id));
+  return success;
+}
 export class VideoLibraryController {
   constructor({request, root, storage = null, uuid = () => globalThis.crypto.randomUUID(),
     schedule = (fn, ms) => setTimeout(fn, ms), unschedule = id => clearTimeout(id), onChange = () => {}}) {
@@ -98,6 +103,7 @@ export class VideoLibraryController {
   enabled() { return this.writeReady && this.state.catalog?.availability?.enabled === true; }
   locked() { return this.state.busy || Boolean(this.state.pending) || this.state.pendingInvalid || this.state.pendingLoading; }
   setMessage(value) { this.state.message = value; this.changed(); }
+  clearAnalysis() { this.state.analysis = null; this.changed(); }
   async useOwner(owner) {
     if (this.state.owner_key === owner && !this.state.pendingInvalid) return this.ownerLoad;
     const epoch = ++this.ownerEpoch;
@@ -297,6 +303,7 @@ export class VideoLibraryController {
   }
   async analyze(fields, file) {
     if (!this.enabled() || this.locked()) return false;
+    this.clearAnalysis();
     const goal = text(fields.goal).trim() || '识别适合学习的画面技法、运动机制与节奏片段。';
     const minutes = Number(fields.analysis_minutes ?? 10);
     if (goal.length > 8000 || !Number.isInteger(minutes) || minutes < 1 || minutes > 30) throw Error('分析预算应为 1–30 分钟，目标不超过 8000 字');
@@ -615,6 +622,7 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
   };
   const openForm = (mode = null) => {
     if (controller.locked()) return;
+    controller.clearAnalysis();
     formMode = mode; clearPreview(); $('video-form').reset(); $('video-reference-preview').replaceChildren(); $('video-reference-preview').hidden = true;
     $('video-reference-id').value = ''; $('video-saved-reference').value = '';
     $('video-new-fields').hidden = Boolean(mode); $('video-feedback-label').hidden = !mode || mode === 'retry';
@@ -638,6 +646,7 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
   $('video-form-close').addEventListener('click', () => { clearPreview(); show(formMode ? 'detail' : 'home'); detailSignature = ''; render(controller.state); });
   $('video-search').addEventListener('input', renderCards);
   $('video-reference').addEventListener('change', () => {
+    controller.clearAnalysis();
     $('video-reference-id').value = ''; $('video-saved-reference').value = ''; $('video-reference').required = true;
     clearPreview(); const host = $('video-reference-preview'); host.replaceChildren(); host.hidden = true;
     const file = $('video-reference').files?.[0]; if (!file) return;
@@ -648,6 +657,7 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
     } catch (error) { $('video-reference').value = ''; controller.setMessage(errorMessage(error)); }
   });
   $('video-saved-reference').addEventListener('change', () => {
+    controller.clearAnalysis();
     $('video-analysis-id').value = ''; $('video-segment-index').value = '';
     const referenceId = $('video-saved-reference').value; $('video-reference-id').value = referenceId;
     $('video-reference').required = !referenceId;
@@ -658,11 +668,10 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
   });
   $('video-analyze').addEventListener('click', async () => {
     try {
-      await controller.analyze({reference_id: $('video-reference-id').value, goal: $('video-goal').value,
-        analysis_minutes: $('video-analysis-minutes').value}, $('video-reference').files?.[0]);
-      if (controller.state.analysis?.reference_id) {
-        $('video-reference-id').value = controller.state.analysis.reference_id; $('video-reference').required = false;
-      }
+      await analyzeVideoSelection(controller, {reference_id: $('video-reference-id').value, goal: $('video-goal').value,
+        analysis_minutes: $('video-analysis-minutes').value}, $('video-reference').files?.[0], referenceId => {
+          $('video-reference-id').value = referenceId; $('video-reference').required = false;
+        });
     } catch (error) {controller.setMessage(errorMessage(error));}
   });
   $('video-form').addEventListener('submit', async event => {

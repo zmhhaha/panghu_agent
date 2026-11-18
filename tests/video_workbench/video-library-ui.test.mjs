@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {buildVideoProject, buildVideoExperiment, videoAssetUrl, validateReferenceFile} from '../../video_workbench/animation_lab_web/video-model.mjs';
-import {VideoLibraryController, referenceBody, renderVideoDetail} from '../../video_workbench/animation_lab_web/video-library.mjs';
+import {VideoLibraryController, analyzeVideoSelection, referenceBody, renderVideoDetail} from '../../video_workbench/animation_lab_web/video-library.mjs';
 
 const root = new URL('https://video-service.panghuer.top/dev/animations/');
 const uuid = '00000000-0000-4000-8000-000000000001';
@@ -86,6 +86,33 @@ test('an unknown analysis submission reconciles its original key from catalog wi
   const reload=harness(()=>({...catalog(),analyses:[{id:'analysis-one',reference_id:'ref',request_id:uuid,state:'running'}]}),storage);
   await reload.controller.refresh(); assert.equal(reload.controller.state.pending,null);
   assert.ok(reload.requests.every(x=>!x.request.method));
+});
+
+test('switching reference after analysis A cannot commission A when the new B analysis is rejected', async () => {
+  let uploads = 0, selectedReference = '';
+  const h = harness((path, request) => {
+    if (path.endsWith('catalog')) return catalog();
+    if (path.endsWith('references')) {
+      if (++uploads === 1) throw Object.assign(Error('B upload rejected'), {status: 422});
+      return {id: 'reference-B'};
+    }
+    if (path.endsWith('analyses')) return {id: 'analysis-A', reference_id: 'reference-A', state: 'completed'};
+    return project();
+  });
+  await h.controller.refresh();
+  const applyReference = id => {selectedReference = id;};
+  assert.equal(await analyzeVideoSelection(h.controller, {reference_id: 'reference-A'}, null, applyReference), true);
+  assert.equal(selectedReference, 'reference-A');
+  // The file-change handler clears both the selected reference and its old analysis.
+  selectedReference = ''; h.controller.clearAnalysis();
+  const bytes = new Uint8Array([1, 2, 3]);
+  const file = {name: 'B.mp4', type: 'video/mp4', size: bytes.length, arrayBuffer: async () => bytes.buffer};
+  assert.equal(await analyzeVideoSelection(h.controller, {}, file, applyReference), false);
+  assert.equal(selectedReference, ''); assert.equal(h.controller.state.analysis, null);
+  assert.equal(h.controller.state.pending, null);
+  assert.equal(await h.controller.start({...fields, reference_id: selectedReference}, file), true);
+  const creation = h.requests.find(row => row.path.endsWith('projects') && row.request.method === 'POST');
+  assert.deepEqual(JSON.parse(creation.request.body).reference_ids, ['reference-B']);
 });
 
 test('a lost analysis stop response is cleared by read-only proof of its terminal state', async () => {

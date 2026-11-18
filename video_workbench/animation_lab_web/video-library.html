@@ -50,7 +50,7 @@
             <div id="video-form-analyses"></div>
             <div class="form-row"><label for="video-start">片段开始（秒）<input id="video-start" name="start_seconds" type="number" min="0" step="any" value="0" required></label><label for="video-end">片段结束（秒）<input id="video-end" name="end_seconds" type="number" min="1" step="any" value="8" required></label></div>
             <label class="checkbox-label" for="video-learn-audio"><input id="video-learn-audio" name="learn_audio" type="checkbox" checked><span>按目标学习有表达作用的音效及其时机</span></label>
-            <p class="small muted">保留参考音轨与观察范围；尚未实际听审的声音不标为已验证。不默认复刻旁白或背景音乐。</p>
+            <p class="small muted">此项记录音效学习目标。当前 Agent 通过采样帧观察画面，尚不能实际听审音轨或验证音画同步；参考音轨仍会保留供播放。不默认复刻旁白或背景音乐。</p>
             <div class="form-row video-dimensions"><label for="video-width">输出宽度（像素）<input id="video-width" name="width" type="number" min="320" max="1280" step="1" value="1280" required></label><label for="video-height">输出高度（像素）<input id="video-height" name="height" type="number" min="180" max="720" step="1" value="720" required></label></div>
             <label for="video-criteria">可观察的标准（可选，每行一项）<textarea id="video-criteria" name="criteria_text" rows="3" maxlength="8000" placeholder="例如：波前到达后对象才响应，按距离错峰，并在结尾自然收束。留空时由 Agent 根据目标拟定。"></textarea></label>
           </div>
