@@ -159,15 +159,36 @@ class LearningResourceStage:
         descriptor = self.context(owner, run)
         assets = self.coordinator().resolve(descriptor)
         placement = self.shared.placement(owner, resource_run)
+        playback_example = (
+            "import {prepareManimMethodFrames} from '/assets/manim_method_frames.mjs';\n"
+            "const resourceRoot = document.getElementById('manim-resource');\n"
+            "const layer = prepareManimMethodFrames(resourceRoot, manifest, "
+            "{placementStartFrame: " + str(placement['global_start_frame']) + "});\n"
+            "window.__animationExperiment = {\n"
+            "  ready: layer.ready,\n"
+            "  seek(seconds) { layer.seekFrame(Math.floor(Math.max(0, seconds) * 24)); }\n"
+            "};"
+        )
         return dict(generated_resources=[descriptor], assets={name: digest_bytes(raw)
                 for name, raw in assets.items()}, resource_placement=placement,
             manim_source_context=self.coordinator().source_context(owner, descriptor),
             consumption_guidance=(
                 'Use the exact generated Manim geometry. Import prepareManimMethodFrames '
                 'from /assets/manim_method_frames.mjs; embed the supplied manifest object '
-                'inline rather than fetching JSON (connect-src is disabled), await '
-                'its ready promise, and call seekFrame from the HyperFrames absolute clock '
-                'with placementStartFrame=resource_placement.global_start_frame. Preserve '
+                'inline as manifest rather than fetching JSON (connect-src is disabled). '
+                'Its exact API is prepareManimMethodFrames(rootElement, manifest, '
+                '{placementStartFrame}), with three positional arguments; do not pass '
+                'one object containing container and manifest. It appends its own images '
+                'to the positioned root and returns {ready, seekFrame, dispose}, not an '
+                'element or a promise. Register window.__animationExperiment synchronously '
+                'with ready: layer.ready before awaiting image decoding; the host awaits '
+                'that promise before synchronous seek(seconds). Call seekFrame from the '
+                'HyperFrames absolute clock with placementStartFrame equal to '
+                'resource_placement.global_start_frame. This interface-only example '
+                'assumes your positioned container has id manim-resource and manifest is '
+                'the exact supplied generated_resources[0].manifest; retain your own '
+                'composition and add any other permitted motion to the same seek:\n'
+                '```javascript\n' + playback_example + '\n```\nPreserve '
                 'the half-open interval; do not draw replacement geometry in HTML/SVG. '
                 'Loaded resources prove transport only, not expressive quality.'))
 

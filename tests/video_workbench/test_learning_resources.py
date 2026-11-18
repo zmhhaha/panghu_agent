@@ -1,7 +1,10 @@
 """Learning adapter custody over real ledgers; peers do not claim art quality."""
 from copy import deepcopy
 import json
+from pathlib import Path
+import shutil
 import sqlite3
+import subprocess
 import time
 from types import SimpleNamespace
 
@@ -78,6 +81,57 @@ def test_video_uses_local_resource_time_and_frozen_global_placement(tmp_path):
     changed['work_kind'], changed['round'] = 'reproduction', 2
     assert adapter.identity(changed) != adapter.identity(run)
     assert gateway.submissions == executor.calls == 1
+
+
+@pytest.mark.parametrize('kind,start,count', [('picture', 0, 1), ('video', 48, 4)])
+def test_supplied_playback_example_executes_real_helper_and_respects_half_open_placement(
+        tmp_path, kind, start, count):
+    """Catch guidance/API drift: execute the supplied example, not a rewritten call.
+
+    A real author previously guessed a one-object signature and never registered
+    seek. Fake image decoding keeps this an interface check, not a browser claim.
+    """
+    node = shutil.which('node')
+    if node is None:
+        pytest.skip('Node is required for the actual shipped playback module')
+    adapter, _, _, _, run, plan = stage(tmp_path, kind)
+    plan['options'].update(frame_count=count, global_start_frame=start)
+    assert finish(adapter, run, plan) == 'completed'
+    context = adapter.render_context(OWNER, run, plan)
+    example = context['consumption_guidance'].split('```javascript\n', 1)[1].split('\n```', 1)[0]
+    helper = Path(__file__).resolve().parents[2] / 'video_workbench/motion_renderer/manim_method_frames.mjs'
+    example = example.replace("'/assets/manim_method_frames.mjs'", json.dumps(helper.as_uri()))
+    script = '''
+import assert from 'node:assert/strict';
+const images = [];
+const root = {append(image) { images.push(image); }};
+globalThis.document = {getElementById(id) { assert.equal(id, 'manim-resource'); return root; }};
+globalThis.window = {};
+globalThis.Image = class {
+  constructor() { this.style = {}; }
+  async decode() {}
+  removeAttribute() {}
+  remove() {}
+};
+const manifest = MANIFEST;
+EXAMPLE
+assert.equal(typeof window.__animationExperiment.seek, 'function');
+assert.equal(typeof window.__animationExperiment.ready.then, 'function');
+await window.__animationExperiment.ready;
+assert.equal(images.length, COUNT);
+window.__animationExperiment.seek(START / 24);
+assert.equal(images[0].style.display, 'block');
+window.__animationExperiment.seek((START + COUNT) / 24);
+assert.ok(images.every(image => image.style.display === 'none'));
+window.__animationExperiment.seek(START / 24);
+assert.equal(images[0].style.display, 'block');
+console.log(JSON.stringify({registered: true, frames: images.length, half_open: true}));
+'''.replace('MANIFEST', json.dumps(context['generated_resources'][0]['manifest']))
+    script = script.replace('EXAMPLE', example).replace('COUNT', str(count)).replace('START', str(start))
+    result = subprocess.run([node, '--input-type=module', '-e', script],
+        capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == dict(registered=True, frames=count, half_open=True)
 
 
 def test_uncertain_recipe_resumes_original_paid_identity_after_restart(tmp_path):
