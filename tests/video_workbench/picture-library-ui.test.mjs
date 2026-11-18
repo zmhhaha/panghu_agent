@@ -236,7 +236,19 @@ test('navigation exposes the independent image and video libraries with the docu
   for (const path of ['/catalog', '/references', '/projects', '/projects/{project_id}/experiments', '/projects/{project_id}/stop', '/projects/{project_id}/adopt']) assert.ok(contract.paths[path]);
   assert.equal(contract.components.schemas.ProjectStart.properties.use_wikiskill.default, true);
   assert.deepEqual(contract.components.schemas.ExperimentStart.allOf[0].then.not.anyOf.map(row => row.required[0]),
-    ['feedback', 'base_candidate_id', 'use_wikiskill', 'max_rounds', 'max_seconds']);
+    ['feedback', 'base_candidate_id', 'use_wikiskill', 'max_rounds', 'max_seconds', 'capability_selection', 'allow_collaboration', 'allow_probes']);
+});
+
+test('internal rendered studies appear in experiment evidence without entering ordinary picture versions or cards', () => {
+  const internal=candidate('probe',{role:'internal_probe',probe_id:'dry-brush',review:{summary:'Observed texture',score:60}});
+  const p=project({candidates:[candidate('work')],experiments:[{id:'exp-1',state:'running',mode:'new',frozen:{},
+    learning_progress:{phase:'probe_review',probes:[{id:'dry-brush',goal:'texture study',status:'authored'}],components:[]},internal_attempts:[internal]}]});
+  const detail=renderPictureDetail(doc,p,{root});
+  assert.match(detail.textContent,/本次学习过程/);assert.match(detail.textContent,/内部小样：dry-brush/);
+  assert.match(detail.textContent,/Observed texture/);
+  assert.equal(buttons(detail).filter(row=>row.textContent.startsWith('复现')).length,1);
+  const card=renderPictureCard(doc,p,{root,onOpen:()=>{}});
+  assert.match(card.textContent,/1 份作品/);assert.doesNotMatch(card.textContent,/dry-brush|texture study/);
 });
 
 test('a failed catalogue read clears write readiness and stale CSRF cannot submit another operation', async () => {

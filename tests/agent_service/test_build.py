@@ -44,6 +44,7 @@ def animation_profile_bundles():
         video_animation_skill_production as skill_production, video_animation_skill_method as skill_method,
         video_animation_film_module as film_module, video_animation_manim_recipe as manim_recipe,
         video_animation_wikiskill as wikiskill, video_animation_wikiskill_v2 as wikiskill_v2,
+        video_animation_wikiskill_v3 as wikiskill_v3,
         video_animation_collaboration as collaboration, video_picture_learning as picture_learning,
         video_reference_learning as reference_learning,
         video_joint_plan_skills as joint_skills, video_resource_plan as resource_plan)
@@ -52,6 +53,7 @@ def animation_profile_bundles():
         (picture_learning.BUNDLE_ROOT, picture_learning.BUNDLE_FILES, picture_learning.verified_bundle),
         (collaboration.BUNDLE_ROOT, collaboration.BUNDLE_FILES, collaboration.verified_bundle),
         (wikiskill_v2.BUNDLE_ROOT, wikiskill_v2.BUNDLE_FILES, wikiskill_v2.verified_bundle),
+        (wikiskill_v3.BUNDLE_ROOT, wikiskill_v3.BUNDLE_FILES, wikiskill_v3.verified_bundle),
         (film_module.BUNDLE_ROOT, film_module.BUNDLE_FILES, film_module.verified_bundle),
         (manim_recipe.BUNDLE_ROOT, manim_recipe.BUNDLE_FILES, manim_recipe.verified_bundle),
         (joint.BUNDLE_ROOT, joint.BUNDLE_FILES, joint.verified_bundle),
@@ -527,6 +529,8 @@ def test_pi_build_copies_only_neutral_context_and_passes_donor_as_one_argument(s
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'compile-procedure/SKILL.md')} | {
             'agent_service/resources/animation-wikiskill-v2/' + name
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'compile-procedure/SKILL.md')} | {
+            'agent_service/resources/animation-wikiskill-v3/' + name
+            for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'compile-procedure/SKILL.md')} | {
             'agent_service/resources/animation-collaboration-v1/' + name
             for name in ('manifest.json', 'CONTRACT.md', 'LICENSE', 'collaboration-procedure/SKILL.md')} | {
             'agent_service/resources/video-joint-plan-v2/' + name
@@ -709,13 +713,13 @@ profiles=('workspace-task.v1','ppt.plan_initial.v1','ppt.plan_options.v1','ppt.p
  'video.animation-method-author.v2','video.animation-method-review.v2',
  'video.joint-plan.v1','video.animation-production.v1','video.animation-production.v2','video.animation-production.v3',
  'video.animation-film-module.v1','video.animation-manim-recipe.v1',
- 'video.animation-collaboration.v1','video.animation-wikiskill-compile.v2')
+ 'video.animation-collaboration.v1','video.animation-wikiskill-compile.v2','video.animation-wikiskill-compile.v3')
 for name in profiles:implementation(name)
 for name in ('video','video_motion','video_process','video_explanation','video_animation_experiment',
  'video_animation_create','video_animation_review','video_animation_method',
  'video_joint_plan','video_animation_production','video_animation_skill_production','video_animation_skill_method',
  'video_animation_film_module','video_animation_manim_recipe',
- 'video_animation_collaboration','video_animation_wikiskill_v2','research'):
+ 'video_animation_collaboration','video_animation_wikiskill_v2','video_animation_wikiskill_v3','research'):
  importlib.import_module('agent_service.profiles.'+name).verified_bundle()
 from agent_service.profiles.video_animation_review import verified_sequence_bundle,verified_batch_bundle,verified_packed_bundle
 verified_sequence_bundle();verified_batch_bundle();verified_packed_bundle()
@@ -728,12 +732,12 @@ print(json.dumps({'control_modules':len(modules),'profile_implementations':len(p
 '''
     result = subprocess.run([sys.executable, '-I', '-B', '-c', code, str(extracted)],
         cwd=extracted, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=True)
-    assert json.loads(result.stdout) == dict(control_modules=10, profile_implementations=36)
+    assert json.loads(result.stdout) == dict(control_modules=10, profile_implementations=37)
 
 
 @pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
                                      'animation-review-v4',
-                                     'animation-collaboration-v1', 'animation-wikiskill-v2',
+                                     'animation-collaboration-v1', 'animation-wikiskill-v2', 'animation-wikiskill-v3',
                                      'animation-create-v2', 'animation-method-v1', 'animation-method-v2',
                                      'animation-method-v3', 'animation-method-v4', 'animation-method-v5',
                                      'animation-production-v1', 'animation-production-v2',
@@ -745,7 +749,7 @@ def test_changed_animation_runtime_resource_fails_before_docker(service, revisio
                    'production' if revision.startswith('animation-production-') else
                    'creation' if revision == 'animation-create-v2' else
                    'collaboration' if revision == 'animation-collaboration-v1' else
-                   'compile' if revision == 'animation-wikiskill-v2' else
+                   'compile' if revision in {'animation-wikiskill-v2','animation-wikiskill-v3'} else
                    'author' if revision == 'animation-manim-recipe-v1' else 'review') + '-procedure/SKILL.md'
     path = service / 'resources' / revision / changed
     path.write_bytes(path.read_bytes() + b' ')
@@ -757,7 +761,7 @@ def test_changed_animation_runtime_resource_fails_before_docker(service, revisio
 
 @pytest.mark.parametrize('revision', ['animation-review-v1', 'animation-review-v2', 'animation-review-v3',
                                      'animation-review-v4',
-                                     'animation-collaboration-v1', 'animation-wikiskill-v2',
+                                     'animation-collaboration-v1', 'animation-wikiskill-v2', 'animation-wikiskill-v3',
                                      'animation-create-v2', 'animation-method-v1', 'animation-method-v2',
                                      'animation-method-v3', 'animation-method-v4', 'animation-method-v5',
                                      'animation-production-v1', 'animation-production-v2',

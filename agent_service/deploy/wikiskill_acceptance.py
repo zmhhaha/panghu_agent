@@ -15,6 +15,7 @@ import time
 
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.compilation_input_tools import (COMPILATION_INPUT_ENVIRONMENT_NAME,
+    COMPILATION_EVIDENCE_ENVIRONMENT_NAME, COMPILATION_EVIDENCE_EXTENSION_SHA256,
     COMPILATION_INPUT_EXTENSION_SHA256, compilation_input_environment_revision)
 from agent_service.deploy.acceptance_probe import candidate_config
 from agent_service.deploy.animation_creation_acceptance import (
@@ -39,6 +40,7 @@ SUITES = {
     PROFILES[0]: 'video.animation-wikiskill-compile-contract.v1',
     PROFILES[1]: 'video.joint-plan-contract.v2',
     PROFILES[2]: 'video.animation-wikiskill-compile-contract.v2',
+    PROFILES[3]: 'video.animation-wikiskill-compile-contract.v3',
 }
 EVIDENCE_NAME = 'animation-skill-tool-evidence.json'
 NOT_CLAIMED = ['offline_hmac_reverification', 'production_api_dispatcher_end_to_end',
@@ -75,12 +77,13 @@ def _bundle(package, registry, binding, policy):
             and sha(_capture(package, 'read_skill_task_extension.mjs', 128 * 1024)) == SKILL_TASK_EXTENSION_SHA256
             and sha(_capture(package, 'skill_tools_extension.mjs', 128 * 1024)) == SKILL_TOOLS_EXTENSION_SHA256,
             'wikiskill_admission_tools_mismatch')
-    elif binding.profile == PROFILES[2]:
-        require(environment.name == COMPILATION_INPUT_ENVIRONMENT_NAME
+    elif binding.profile in {PROFILES[2], PROFILES[3]}:
+        survey = binding.profile == PROFILES[3]
+        require(environment.name == (COMPILATION_EVIDENCE_ENVIRONMENT_NAME if survey else COMPILATION_INPUT_ENVIRONMENT_NAME)
             and tools == {'read_compilation_input', 'write'}
             and environment.revision == compilation_input_environment_revision(environment.model_dump(mode='json'))
-            and sha(_capture(package, 'read_compilation_input_extension.mjs', 128 * 1024))
-                == COMPILATION_INPUT_EXTENSION_SHA256,
+            and sha(_capture(package, 'read_compilation_evidence_extension.mjs' if survey else 'read_compilation_input_extension.mjs', 128 * 1024))
+                == (COMPILATION_EVIDENCE_EXTENSION_SHA256 if survey else COMPILATION_INPUT_EXTENSION_SHA256),
             'wikiskill_admission_tools_mismatch')
     else:
         identity = environment.model_dump(mode='json')

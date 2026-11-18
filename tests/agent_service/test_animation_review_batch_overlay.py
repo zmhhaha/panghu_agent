@@ -13,6 +13,8 @@ from agent_service.deploy import animation_review_batch_overlay as overlay
 
 
 ROOT = Path(overlay.__file__).resolve().parents[2]
+# This transplant uses the original candidate, independent of newer profiles.
+CANDIDATE_REVISION = '4abdbff403093fbfb35693c6424c1afedfd5c244'
 
 
 @pytest.fixture(scope='module')
@@ -25,8 +27,9 @@ def frozen_sources():
 
 def source_fixture(frozen_sources, newline='\n'):
     baseline = {name: raw.decode() for name, raw in frozen_sources.items()}
-    candidate = {name: (ROOT / 'agent_service' / name).read_text(encoding='utf-8')
-                 for name in overlay.PATCH_NAMES}
+    candidate = {name: subprocess.check_output(['git', '-C', str(ROOT), 'show',
+        CANDIDATE_REVISION + ':agent_service/' + name]).decode('utf-8')
+        for name in overlay.PATCH_NAMES}
     donors = deepcopy(baseline)
     # Model the measured Worker's missing process-plan handler. Neither donor
     # extension nor absent unrelated profiles may be replaced from local source.

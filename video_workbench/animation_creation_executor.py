@@ -172,6 +172,11 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                 renderer=PictureLearningRenderer(Path(root) / 'picture-renders', runtime_renderer=methods.renderer),
                 library_adapter=make_laboratory_library_adapter(Path(root) / 'method-lab',
                     wikiskill_store=methods.wikiskill.store))
+            from .picture_animation_bridge import PictureAnimationBridge
+            pictures.animation_bridge = PictureAnimationBridge(pictures, methods)
+            from .learning_resources import LearningResourceStage
+            pictures.resource_stage = LearningResourceStage(Path(root) / 'picture-resource-plans.sqlite',
+                bindings_path=pictures.store.path, coordinator=lambda: methods.manim, output_kind='picture')
             capture_animation = methods.capture_wikiskill_records
             def capture_library(owner):
                 from agent_service.contracts import ServiceError
@@ -208,6 +213,9 @@ def create_server(*, root, agent_url, agent_token_file, token_file, renderer_ima
                 renderer=VideoLearningRenderer(Path(root) / 'video-learning-renders', runtime_renderer=methods.renderer),
                 library_adapter=make_laboratory_library_adapter(Path(root) / 'method-lab',
                     wikiskill_store=methods.wikiskill.store))
+            from .learning_resources import LearningResourceStage
+            videos.resource_stage = LearningResourceStage(Path(root) / 'video-learning-resource-plans.sqlite',
+                bindings_path=videos.store.path, coordinator=lambda: methods.manim, output_kind='video')
             capture_previous = methods.wikiskill.capture
             def capture_video_library(owner):
                 from agent_service.contracts import ServiceError

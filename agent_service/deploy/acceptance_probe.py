@@ -47,7 +47,7 @@ PROFILES = {'ppt.' + stage + '.v1' for stage in (
     'video.animation-production.v1', 'video.animation-production.v2',
     'video.animation-production.v3', 'video.animation-film-module.v1', 'video.joint-plan.v1',
     'video.resource-plan.v1', 'video.animation-wikiskill-compile.v1', 'video.joint-plan.v2',
-    'video.animation-wikiskill-compile.v2', 'video.animation-collaboration.v1',
+    'video.animation-wikiskill-compile.v2', 'video.animation-wikiskill-compile.v3', 'video.animation-collaboration.v1',
     'video.animation-manim-recipe.v1'}
 FIXTURE_PROFILES = {'ppt.plan_initial.v1', 'research.revise.v1'}
 CONTROL = Path('/run/agent-control')
@@ -504,7 +504,7 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
     elif 'read_compilation_input' in environment.tools:
         from agent_service.compilation_input_tools import verified_compilation_input_extension
         try:
-            extensions += (verified_compilation_input_extension(),)
+            extensions += (verified_compilation_input_extension(environment.name),)
         except (OSError, ValueError):
             raise ServiceError('candidate_compilation_input_reader_integrity_invalid', 422) from None
     elif 'read_inputs' in environment.tools:
@@ -517,7 +517,7 @@ def build_candidate_driver(config, credentials, scope, stopper, observations):
     profile.agent_uid, profile.preview_uid, profile.control_root = scope.agent_uid, scope.preview_uid, CONTROL
     settings = build_pi_runtime_settings(policy, command=(NODE, PI_CLI), node_command=(NODE,), provider=config.model.provider,
         model=config.model.model, model_base_url=config.model.proxy_base_url, model_api=config.model.api,
-        model_max_tokens=32768 if policy.name in {'video.animation-wikiskill-compile.v2',
+        model_max_tokens=32768 if policy.name in {'video.animation-wikiskill-compile.v2', 'video.animation-wikiskill-compile.v3',
             'video.picture-learning-author.v1', 'video.reference-learning-author.v1'} else 8192,
         model_input=('text', 'image') if 'vision' in binding.model_policy.capabilities else ('text',),
         model_env={'AGENT_MODEL_API_KEY': credentials.model_proxy_token.get_secret_value()},

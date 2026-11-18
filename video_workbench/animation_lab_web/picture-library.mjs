@@ -1,7 +1,8 @@
-import {PICTURE_API, MAX_REFERENCE_BYTES, buildPictureProject, buildPictureExperiment, validateReferenceFile,
+import {PICTURE_API, MAX_REFERENCE_BYTES, buildPictureProject, buildPictureExperiment, buildPictureAnimation, validateReferenceFile,
   pictureAssetUrl, pictureCandidates, latestPictureExperiment, pictureProjectState, pictureState,
   pictureIsActive, pictureDefaultCandidate, pictureCandidateRole, pictureProjectMatches,
   pictureStopReason, pictureRequestPath, pictureArtifactPath, pictureId, rows, text} from './picture-model.mjs';
+import {readLearningControls, restoreLearningControls, updateLearningControls, renderLearningProgress, renderInternalAttempts} from './learning-controls.mjs';
 
 const PENDING_KEY = 'video.picture-learning.pending.v1';
 const ownerKey = value => typeof value === 'string' && value.length > 0 && value.length <= 300;
@@ -70,7 +71,7 @@ function errorMessage(error) {
 function pendingOperation(value) {
   const valid = value && value.schema === 'video.picture-learning-pending.v1'
     && ownerKey(value.owner_key)
-    && typeof value.path === 'string' && /^api\/picture-lab\/(?:references|projects(?:\/[A-Za-z0-9_.:%-]+\/(?:experiments|adopt|stop))?)$/.test(value.path)
+    && typeof value.path === 'string' && /^api\/picture-lab\/(?:references|projects(?:\/[A-Za-z0-9_.:%-]+\/(?:experiments|adopt|stop|animations))?)$/.test(value.path)
     && typeof value.body === 'object' && value.body !== null && !Array.isArray(value.body);
   if (!valid) return null;
   if (value.path === PICTURE_API + 'references') {
@@ -103,6 +104,7 @@ export class PictureLibraryController {
     const epoch = ++this.ownerEpoch;
     this.writeReady = false;
     this.state.owner_key = owner; this.state.detail = null; this.detailEpoch++;
+    this.state.animationLink = null;
     this.state.pending = null; this.state.pendingInvalid = false; this.state.pendingLoading = true;
     this.ownerLoad = (async () => {
       try {
@@ -199,6 +201,11 @@ export class PictureLibraryController {
       return;
     }
     if (!requestId) return;
+    if (pending.path.endsWith('/animations')) {
+      const linked = rows(this.state.detail?.animation_links).find(row => row.request_id === requestId);
+      if (linked) { await this.setPending(null); this.state.animationLink = linked; }
+      return;
+    }
     const found = projects.find(project => project.request_id === requestId || project.latest_experiment_request_id === requestId
       || rows(project.experiments).some(experiment => experiment.request_id === requestId));
     if (found) {
@@ -243,6 +250,14 @@ export class PictureLibraryController {
         this.changed();
         result = await this.request(operation.path, {method: 'POST', body: JSON.stringify(operation.body)});
         if (!current()) return false;
+      }
+      if (result?.schema === 'video.picture-animation-link.v1') {
+        pictureId(result.commission_id);
+        await this.setPending(null, operation.owner_key);
+        if (!current()) return false;
+        this.state.message = '已建立关联动画项目，原图片与绘制源码版本保持。';
+        this.state.animationLink = result;
+        return true;
       }
       const projectId = result?.project?.id ?? result?.project_id ?? result?.id;
       pictureId(projectId);
@@ -299,6 +314,13 @@ export class PictureLibraryController {
     if (!candidate || !pictureImageUrl(candidate, this.state.detail, this.root)
       || (candidate.role ?? candidate.work_kind) === 'transfer') return false;
     return this.send(pictureRequestPath(this.state.detail.id, 'adopt'), {candidate_id: candidateId});
+  }
+  async animate(fields, candidateId) {
+    const detail = this.state.detail;
+    if (!detail?.id || !this.enabled() || this.locked() || pictureIsActive(detail)) return false;
+    const candidate = pictureCandidates(detail).find(row => row.id === candidateId);
+    if (!pictureImageUrl(candidate, detail, this.root)) return false;
+    return this.send(pictureRequestPath(detail.id, 'animations'), buildPictureAnimation(fields, candidateId, this.uuid()));
   }
   destroy() { this.closed = true; if (this.timer !== null) this.unschedule(this.timer); this.timer = null; }
 }
@@ -371,7 +393,7 @@ export function renderPictureCard(doc, project, {root, onOpen}) {
   body.append(el(doc, 'div', 'card-meta', (project.experiments_count ?? rows(project.experiments).length) + ' 次实验'
     + (pictureCandidates(project).length ? ' · ' + pictureCandidates(project).length + ' 份作品' : ''))); article.append(body); return article;
 }
-export function renderPictureDetail(doc, project, {root, selection = null, onSelect = () => {}, onBack = () => {}, onStop = () => {}, onExperiment = () => {}, onAdopt = () => {}, onInspect = null, locked = false}) {
+export function renderPictureDetail(doc, project, {root, selection = null, onSelect = () => {}, onBack = () => {}, onStop = () => {}, onExperiment = () => {}, onAdopt = () => {}, onAnimate = null, onInspect = null, locked = false}) {
   const fragment = doc.createDocumentFragment(), header = el(doc, 'div', 'detail-heading');
   const intro = el(doc, 'div'); intro.append(el(doc, 'p', 'eyebrow', '图片学习项目'), el(doc, 'h1', '', project.title), el(doc, 'p', 'muted', project.goal));
   header.append(intro); fragment.append(button(doc, '返回图片学习库', onBack), header);
@@ -384,6 +406,7 @@ export function renderPictureDetail(doc, project, {root, selection = null, onSel
     if (candidate && selectedPictureUrl && (candidate.role ?? candidate.work_kind) !== 'transfer') toolbar.append(button(doc, '继续优化', () => onExperiment('continue'), {className: 'button primary', disabled: locked}));
     toolbar.append(button(doc, '从零重做', () => onExperiment('fresh'), {disabled: locked}));
     if (pictureProjectState(project) === 'failed') toolbar.append(button(doc, '技术重试', () => onExperiment('retry'), {disabled: locked}));
+    if (candidate && selectedPictureUrl && onAnimate) toolbar.append(button(doc, '用此版本创作动画', () => onAnimate(candidate.id), {disabled: locked}));
   }
   const status = el(doc, 'div', 'picture-status'); status.append(el(doc, 'strong', '', pictureState(pictureProjectState(project))));
   const reason = pictureStopReason(current?.stop_reason ?? project.stop_reason); if (reason) status.append(el(doc, 'p', 'small muted', reason));
@@ -396,6 +419,7 @@ export function renderPictureDetail(doc, project, {root, selection = null, onSel
   const failure = text(current?.error_code) || text(current?.error?.code) || text(current?.error);
   if (failure) status.append(el(doc, 'p', 'small muted', '执行信息：' + failure));
   fragment.append(toolbar, status);
+  const progress = renderLearningProgress(doc, current); if (progress) fragment.append(progress);
   const candidates = pictureCandidates(project), versions = el(doc, 'div', 'picture-versions');
   for (let i = 0; i < candidates.length; i++) {
     const row = candidates[i], labels = [pictureCandidateRole(row) + ' ' + (i + 1)];
@@ -443,6 +467,15 @@ export function renderPictureDetail(doc, project, {root, selection = null, onSel
     if (feedback) content.append(el(doc, 'p', 'small muted', feedback));
     const submitted = experiment.frozen ?? experiment.input ?? experiment.request ?? experiment;
     content.append(jsonSection(doc, '查看本次提交与冻结输入', submitted));
+    const attempts = renderInternalAttempts(doc, experiment, attempt => {
+      const section = el(doc, 'section', 'panel');
+      section.append(pictureFigure(doc, '内部小样：' + (attempt.probe_id || attempt.id), pictureImageUrl(attempt, project, root), '内部技法验证；不是完整作品。', root));
+      for (const [kind, label] of [['source', '下载小样源码'], ['receipt', '下载小样渲染回执']]) {
+        const link = externalArtifactLink(doc, label, candidateArtifact(attempt, kind, project.id), root, true); if (link) section.append(link);
+      }
+      section.append(reviewPanel(doc, attempt.review)); return section;
+    });
+    if (attempts) content.append(attempts);
     if (onInspect) {
       const inspection = el(doc, 'details', 'technical-details'); inspection.append(el(doc, 'summary', '', '查看实际 Agent 输入'));
       inspection.append(el(doc, 'p', 'small muted', '展开时只读取已保存的本次角色输入；不代表完整系统提示词，也不会启动创作。'));
@@ -457,13 +490,26 @@ export function renderPictureDetail(doc, project, {root, selection = null, onSel
     item.append(content, el(doc, 'small', '', typeof experiment.created_at === 'number'
       ? new Date(experiment.created_at * 1000).toLocaleString() : experiment.created_at ?? experiment.id)); historyList.append(item);
   }
-  history.append(historyList); fragment.append(history); return fragment;
+  history.append(historyList); fragment.append(history);
+  if (rows(project.animation_links).length) {
+    const links = el(doc, 'section', 'panel'); links.append(el(doc, 'h3', '', '由图片继续创作的动画'));
+    for (const row of project.animation_links) {
+      if (!IDENTIFIER_FOR_LINK(row.commission_id)) continue;
+      const link = el(doc, 'a', 'button secondary', '打开关联动画');
+      link.href = new URL('./?commission=' + encodeURIComponent(row.commission_id), root).href;
+      links.append(link, el(doc, 'p', 'small muted', '沿用图片版本：' + text(row.candidate_id)));
+    }
+    fragment.append(links);
+  }
+  return fragment;
 }
+
+function IDENTIFIER_FOR_LINK(value) { return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(value); }
 
 export function mountPictureLibrary(doc, {root = new URL('./', globalThis.location?.href), fetcher = globalThis.fetch,
   storage = browserStorage(), uuid, schedule, unschedule, URLObject = globalThis.URL} = {}) {
   const $ = id => doc.getElementById(id), app = $('picture-library-app'); if (!app) return null;
-  let formMode = null, shown = 'home', selectedId = null, previewUrl = null, detailSignature = '', controller;
+  let formMode = null, shown = 'home', selectedId = null, animationCandidateId = null, previewUrl = null, detailSignature = '', controller;
   const request = async (path, options = {}) => {
     const headers = {Accept: 'application/json'};
     if (options.method === 'POST') Object.assign(headers, {'Content-Type': 'application/json', 'X-Animation-Lab': '1',
@@ -476,7 +522,7 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
     return response.json();
   };
   const clearPreview = () => { if (previewUrl) URLObject.revokeObjectURL(previewUrl); previewUrl = null; };
-  const show = mode => { shown = mode; $('picture-home').hidden = mode !== 'home'; $('picture-detail').hidden = mode !== 'detail'; $('picture-form-panel').hidden = mode !== 'form'; };
+  const show = mode => { shown = mode; $('picture-home').hidden = mode !== 'home'; $('picture-detail').hidden = mode !== 'detail'; $('picture-form-panel').hidden = mode !== 'form'; if ($('picture-animation-panel')) $('picture-animation-panel').hidden = mode !== 'animation'; };
   const renderCards = () => {
     const projects = rows(controller.state.catalog?.projects), query = $('picture-search').value;
     const filtered = projects.filter(project => pictureProjectMatches(project, query));
@@ -497,6 +543,7 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
     for (const element of $('picture-form').elements) element.disabled = state.busy || Boolean(state.pending)
       || formMode === 'retry' && element.id !== 'picture-submit';
     $('picture-submit').disabled = !controller.enabled() || controller.locked();
+    updateLearningControls(doc, 'picture', state.catalog, {locked: state.busy || Boolean(state.pending), retry: formMode === 'retry'});
     renderCards();
     if (state.detail && shown === 'detail') {
       const signature = JSON.stringify({detail: state.detail, locked: controller.locked(), selectedId});
@@ -505,6 +552,7 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
         $('picture-detail').replaceChildren(renderPictureDetail(doc, state.detail, {root, selection: selectedId, locked: controller.locked(),
           onSelect: id => { selectedId = id; detailSignature = ''; render(state); }, onBack: () => show('home'),
           onStop: () => void controller.stop(), onExperiment: mode => openForm(mode), onAdopt: id => void controller.adopt(id),
+          onAnimate: $('picture-animation-panel') ? id => { animationCandidateId = id; $('picture-animation-form').reset(); show('animation'); $('picture-animation-goal').focus(); } : null,
           onInspect: experimentId => request(pictureRequestPath(state.detail.id, 'experiments/' + encodeURIComponent(pictureId(experimentId)) + '/input'))}));
       }
     }
@@ -523,6 +571,7 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
     for (const id of ['picture-name', 'picture-goal', 'picture-reference', 'picture-width', 'picture-height']) $(id).required = !mode;
     $('picture-feedback').required = mode === 'continue';
     $('picture-use-wikiskill').checked = mode === 'retry' ? latestPictureExperiment(controller.state.detail)?.frozen?.use_wikiskill !== false : true;
+    restoreLearningControls(doc, 'picture', mode ? latestPictureExperiment(controller.state.detail)?.frozen : {});
     $('picture-skill-help').hidden = mode === 'retry';
     show('form'); render(controller.state); (mode === 'retry' ? $('picture-submit') : mode ? $('picture-feedback') : $('picture-name')).focus();
   };
@@ -532,6 +581,8 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
   $('picture-pending-retry').addEventListener('click', () => void controller.replayPending());
   $('picture-form-close').addEventListener('click', () => { clearPreview(); show(formMode ? 'detail' : 'home'); detailSignature = ''; render(controller.state); });
   $('picture-search').addEventListener('input', renderCards);
+  $('picture-learning-options')?.addEventListener('change', () => updateLearningControls(doc, 'picture', controller.state.catalog,
+    {locked: controller.state.busy || Boolean(controller.state.pending), retry: formMode === 'retry'}));
   $('picture-reference').addEventListener('change', () => {
     clearPreview(); const host = $('picture-reference-preview'); host.replaceChildren(); host.hidden = true;
     const file = $('picture-reference').files?.[0]; if (!file) return;
@@ -544,11 +595,25 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
   $('picture-form').addEventListener('submit', async event => {
     event.preventDefault(); if (controller.locked()) return;
     const fields = Object.fromEntries(new FormData($('picture-form'))); fields.use_wikiskill = $('picture-use-wikiskill').checked;
+    Object.assign(fields, readLearningControls(doc, 'picture'));
     if (formMode === 'continue') fields.base_candidate_id = pictureDefaultCandidate(controller.state.detail, selectedId)?.id;
     try {
       const success = formMode ? await controller.experiment({...fields, mode: formMode}) : await controller.start(fields, $('picture-reference').files?.[0]);
       if (success && controller.state.detail) { clearPreview(); show('detail'); selectedId = null; detailSignature = ''; render(controller.state); void controller.refresh(); }
     } catch (error) { controller.setMessage(errorMessage(error)); }
+  });
+  $('picture-animation-close')?.addEventListener('click', () => { show('detail'); render(controller.state); });
+  $('picture-animation-form')?.addEventListener('submit', async event => {
+    event.preventDefault(); if (controller.locked()) return;
+    const fields = Object.fromEntries(new FormData($('picture-animation-form')));
+    fields.use_wikiskill = $('picture-animation-wikiskill').checked;
+    $('picture-animation-submit').disabled = true;
+    try {
+      if (await controller.animate(fields, animationCandidateId)) {
+        show('detail'); detailSignature = ''; await controller.open(controller.state.detail.id); render(controller.state);
+      }
+    } catch (error) { controller.setMessage(errorMessage(error)); }
+    finally { $('picture-animation-submit').disabled = false; }
   });
   const ready = controller.refresh();
   return {controller, ready, destroy: () => { clearPreview(); controller.destroy(); }};

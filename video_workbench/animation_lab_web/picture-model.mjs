@@ -1,3 +1,4 @@
+import {learningOptions} from './learning-controls.mjs';
 export const PICTURE_API = 'api/picture-lab/';
 export const MAX_REFERENCE_BYTES = 8 * 1024 * 1024;
 export const PICTURE_ACTIVE_STATES = new Set(['queued', 'running', 'creating', 'reviewing', 'rendering', 'planning', 'transfer_planning', 'transferring', 'stopping', 'cancelling', 'submission_unknown', 'render_unknown']);
@@ -38,7 +39,7 @@ export function buildPictureProject(fields, referenceIds, id) {
   return {request_id: requestId(id), title, goal, reference_ids: [...referenceIds], criteria,
     width: number(fields.width ?? 1280, 320, 1920, '输出宽度应为 320 至 1920 像素'),
     height: number(fields.height ?? 720, 180, 1080, '输出高度应为 180 至 1080 像素'),
-    use_wikiskill: skillSelection(fields), ...pictureBudget(fields)};
+    use_wikiskill: skillSelection(fields), ...pictureBudget(fields), ...learningOptions(fields)};
 }
 export function buildPictureExperiment(fields, id) {
   const mode = fields.mode ?? 'continue';
@@ -49,8 +50,15 @@ export function buildPictureExperiment(fields, id) {
   const feedback = text(fields.feedback).trim();
   if (feedback.length > 8000) throw Error('本次意见不能超过 8000 字');
   if (mode === 'continue' && !feedback) throw Error('请说明下一次实验希望改善哪里');
-  return {...body, feedback, use_wikiskill: skillSelection(fields),
+  return {...body, feedback, use_wikiskill: skillSelection(fields), ...learningOptions(fields),
     ...(mode === 'continue' && fields.base_candidate_id ? {base_candidate_id: pictureId(fields.base_candidate_id)} : {})};
+}
+export function buildPictureAnimation(fields, candidateId, id) {
+  const goal = text(fields.goal).trim();
+  if (!goal || goal.length > 8000) throw Error('请说明希望画面如何动起来');
+  return {request_id: requestId(id), candidate_id: pictureId(candidateId), goal,
+    duration_seconds: number(fields.duration_seconds ?? 8, 1, 60, '动画时长应为 1 至 60 秒'),
+    budget: pictureBudget(fields), use_wikiskill: skillSelection(fields)};
 }
 export function validateReferenceFile(file) {
   if (!file || !['image/png', 'image/jpeg'].includes(file.type) || !Number.isInteger(file.size)

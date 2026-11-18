@@ -158,6 +158,18 @@ test('comparison uses actual video players and aligns reference original time wi
 
 const displayedProject = extra => project({candidates:[{id:'work',work_kind:'reproduction',media_url:'/api/video-lab/projects/video-one/artifacts/media'}],...extra});
 const detailsNamed = (host, name) => host.querySelectorAll('details').find(x=>x.querySelector('summary')?.textContent.startsWith(name));
+
+test('internal video studies remain history evidence with playable media and source links', () => {
+  const p=project({candidates:[{id:'work',work_kind:'reproduction',media_url:'/api/video-lab/projects/video-one/artifacts/work'}],
+    experiments:[{id:'exp',state:'running',frozen:{...fields},learning_progress:{phase:'probe_render',probes:[{id:'wave',goal:'wave shape',status:'authored'}],components:[]},
+      internal_attempts:[{id:'probe',role:'internal_probe',probe_id:'wave',work_kind:'reproduction',media_url:'/api/video-lab/projects/video-one/artifacts/probe',
+        source_url:'/api/video-lab/projects/video-one/artifacts/probe-source',review:{summary:'Actual wave observation'}}]}]});
+  const detail=renderVideoDetail(doc,p,{root});
+  assert.match(detail.textContent,/渲染技法小样/);assert.match(detail.textContent,/内部小样：wave/);
+  assert.equal(detail.querySelectorAll('video').length,3);
+  assert.equal(detail.querySelectorAll('button').filter(row=>row.textContent.startsWith('复现')).length,1);
+  assert.ok(detail.querySelectorAll('a').some(row=>row.href?.endsWith('/probe-source')));
+});
 const options = extra => ({root,ownerKey:'owner-A',selection:'work',locked:false,...extra});
 
 test('timestamp polling keeps the exact live DOM, expanded input and player without another input read', async () => {

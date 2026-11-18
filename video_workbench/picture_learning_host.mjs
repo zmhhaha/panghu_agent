@@ -15,12 +15,18 @@ const read = (path, max) => {
 export async function capturePicture({chromium, request, resources, engineRuntime, projectRuntime,
   executablePath = '/opt/browser/headless_shell', hyperFramesDist = '/opt/renderer/node_modules/hyperframes/dist'}) {
   const c = request.constraints, engine = request.engine;
+  const generated = request.generated_resources;
+  if (generated !== undefined && (!Array.isArray(generated) || generated.length !== 1
+    || generated[0]?.schema !== 'video.manim-method-resource.v1'
+    || generated[0]?.manifest?.frame_count !== 1 || generated[0]?.manifest?.global_start_frame !== 0))
+    throw Error('picture_resource_single_frame_required');
   const project = projectRuntime.buildHyperFramesProject(request.project,
     Object.fromEntries([...resources].filter(([n]) => !n.startsWith('/assets/')).map(([n,b]) => [n.slice(1),b])),
     Object.fromEntries([...resources].filter(([n]) => n.startsWith('/assets/')).map(([n,b]) => [n.slice(1),b]))).project;
   const core = projectRuntime.hyperFramesRuntimeArtifact(hyperFramesDist);
   const mime = {'.html':'text/html;charset=utf-8','.js':'text/javascript;charset=utf-8',
-    '.mjs':'text/javascript;charset=utf-8','.css':'text/css;charset=utf-8','.ttc':'font/collection','.png':'image/png'};
+    '.mjs':'text/javascript;charset=utf-8','.css':'text/css;charset=utf-8','.ttc':'font/collection',
+    '.png':'image/png','.json':'application/json'};
   const server = createServer((req,res) => {
     const url = new URL(req.url,'http://localhost'), bytes = resources.get(url.pathname);
     res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; media-src 'none'; worker-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'");
@@ -32,13 +38,18 @@ export async function capturePicture({chromium, request, resources, engineRuntim
   await new Promise((resolve,reject) => { server.once('error',reject); server.listen(0,'127.0.0.1',resolve); });
   try {
     const origin = 'http://127.0.0.1:' + server.address().port, errors = [], blocked = [];
+    const scripts = new Set(), loadedPNG = new Set();
     browser = await chromium.launch({headless:true,executablePath,args:engineRuntime.browserLaunchArgs(engine)});
     const context = await browser.newContext({viewport:{width:c.width,height:c.height},deviceScaleFactor:1,
       serviceWorkers:'block',acceptDownloads:false});
     await engineRuntime.installEngineGuard(context,engine);
     await context.route('**/*', async route => {
       const url = new URL(route.request().url());
-      if (url.origin === origin && resources.has(url.pathname) && !url.search && route.request().method() === 'GET') await route.continue();
+      if (url.origin === origin && resources.has(url.pathname) && !url.search && route.request().method() === 'GET') {
+        if (route.request().resourceType() === 'script') scripts.add(url.pathname);
+        if (url.pathname.endsWith('.png')) loadedPNG.add(url.pathname);
+        await route.continue();
+      }
       else { if (blocked.length < 16) blocked.push(url.protocol); await route.abort(); }
     });
     if(context.routeWebSocket) await context.routeWebSocket('**/*',socket => { blocked.push('websocket'); socket.close(); });
@@ -63,6 +74,13 @@ export async function capturePicture({chromium, request, resources, engineRuntim
       const observation = await engineRuntime.verifyPageEngine(page,engine);
       const bytes = await page.screenshot({type:'png',animations:'disabled',timeout:30000});
       if(errors.length || blocked.length) throw Error('picture_scene_failed_or_blocked');
+      if(generated) {
+        const expectedPNG = generated.flatMap(item => Object.keys(item.assets_sha256)
+          .filter(name => name.endsWith('.png')).map(name => '/assets/' + name)).sort();
+        if (!scripts.has('/assets/manim_frame_layer.mjs') || !scripts.has('/assets/manim_method_frames.mjs')
+          || JSON.stringify([...loadedPNG].sort()) !== JSON.stringify(expectedPNG))
+          throw Error('picture_manim_resource_not_consumed');
+      }
       return {bytes,observation};
     };
     await ready(); const first = await capture(), repeat = await capture();
@@ -72,6 +90,9 @@ export async function capturePicture({chromium, request, resources, engineRuntim
     if(!first.bytes.equals(repeat.bytes) || !first.bytes.equals(reload.bytes)) throw Error('picture_repeat_or_reload_mismatch');
     return {bytes:first.bytes,engine_observation:first.observation,
       checks:{repeat_sha256:hash(repeat.bytes),reload_sha256:hash(reload.bytes),seek_seconds:0},
+      ...(generated ? {generated_resource_observation:{schema:'video.manim-method-resource-observation.v1',
+        scope:'loaded_resources_not_visual_acceptance', helpers_loaded:true,
+        resources_sha256:generated.map(item=>item.sha256),loaded_png_paths:[...loadedPNG].sort()}} : {}),
       project_runtime:{...(await page.evaluate(()=>({...window.__trustedHyperFramesProject.state}))),
         core_sha256:core.core_sha256,version:core.version,project_sha256:request.project_sha256}};
   } finally {
@@ -84,7 +105,9 @@ async function main() {
   const receipt = {schema:'video.picture-learning-render-receipt.v1',status:'starting',evidence_scope:'static_only'};
   try {
     const raw=read('/input/request.json',256*1024), request=JSON.parse(raw);
-    if(request.schema!=='video.picture-learning-render-request.v1' || hash(raw)!==process.env.ANIMATION_METHOD_REQUEST_SHA256
+    if(!['video.picture-learning-render-request.v1','video.picture-learning-render-request.v2'].includes(request.schema)
+      || (request.schema==='video.picture-learning-render-request.v2') !== Array.isArray(request.generated_resources)
+      || hash(raw)!==process.env.ANIMATION_METHOD_REQUEST_SHA256
       || request.image_digest!==process.env.ANIMATION_METHOD_IMAGE_DIGEST
       || hash(read(fileURLToPath(import.meta.url),1024*1024))!==request.host_sha256
       || !['html-svg','canvas','three'].includes(request.engine)) throw Error('picture_request_binding_invalid');
@@ -99,8 +122,12 @@ async function main() {
       const bytes=read('/input/scene/'+name,512*1024);
       if(hash(bytes)!==sha) throw Error('picture_source_changed'); resources.set('/'+name,bytes);
     }
+    const generatedAssets = new Map((request.generated_resources || []).flatMap(item=>Object.entries(item.assets_sha256)));
     for(const [name,sha] of Object.entries(request.assets_sha256)) {
-      if(!['gsap.min.js','NotoSansCJK-Regular.ttc','three.module.min.js','three.LICENSE.txt'].includes(name)) throw Error('picture_asset_invalid');
+      if(!['gsap.min.js','NotoSansCJK-Regular.ttc','three.module.min.js','three.LICENSE.txt'].includes(name)
+        && generatedAssets.get(name)!==sha) throw Error('picture_asset_invalid');
+      if(name.startsWith('/') || name.split('/').some(part=>!part || part==='.' || part==='..')
+        || /[\\\x00-\x1f]/.test(name)) throw Error('picture_asset_path_invalid');
       const bytes=read('/input/scene/assets/'+name,32*1024*1024);
       if(hash(bytes)!==sha) throw Error('picture_asset_changed'); resources.set('/assets/'+name,bytes);
     }

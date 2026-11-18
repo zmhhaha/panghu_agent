@@ -2,6 +2,7 @@ import {VIDEO_API, MAX_REFERENCE_BYTES, buildVideoProject, buildVideoExperiment,
   videoAssetUrl, videoCandidates, latestVideoExperiment, videoProjectState, videoState,
   videoIsActive, videoDefaultCandidate, videoCandidateRole, videoProjectMatches,
   videoStopReason, videoRequestPath, videoArtifactPath, videoId, rows, text} from './video-model.mjs';
+import {readLearningControls, restoreLearningControls, updateLearningControls, renderLearningProgress, renderInternalAttempts} from './learning-controls.mjs';
 
 const PENDING_KEY = 'video.video-learning.pending.v1';
 const ownerKey = value => typeof value === 'string' && value.length > 0 && value.length <= 300;
@@ -528,6 +529,7 @@ export function renderVideoDetail(doc, project, {root, selection = null, onSelec
   const failure = text(current?.error_code) || text(current?.error?.code) || text(current?.error);
   if (failure) status.append(el(doc, 'p', 'small muted', '执行信息：' + failure));
   fragment.append(toolbar, status);
+  const progress = renderLearningProgress(doc, current); if (progress) fragment.append(progress);
   const candidates = videoCandidates(project), versions = el(doc, 'div', 'video-versions');
   for (let i = 0; i < candidates.length; i++) {
     const row = candidates[i], labels = [videoCandidateRole(row) + ' ' + (i + 1)];
@@ -585,6 +587,16 @@ export function renderVideoDetail(doc, project, {root, selection = null, onSelec
     if (feedback) content.append(el(doc, 'p', 'small muted', feedback));
     const submitted = experiment.frozen ?? experiment.input ?? experiment.request ?? experiment;
     content.append(jsonSection(doc, '查看本次提交与冻结输入', submitted, false, viewKey(project.id, experiment.id, 'submitted')));
+    const attempts = renderInternalAttempts(doc, experiment, attempt => {
+      const section = el(doc, 'section', 'panel');
+      section.append(videoFigure(doc, '内部小样：' + (attempt.probe_id || attempt.id), videoMediaUrl(attempt, project, root), '内部技法验证；不是完整作品。', root,
+        null, viewKey(project.id, experiment.id, attempt.id, 'internal-player')));
+      for (const [kind, label] of [['source', '下载小样源码'], ['receipt', '下载小样渲染回执']]) {
+        const link = externalArtifactLink(doc, label, candidateArtifact(attempt, kind, project.id), root, true); if (link) section.append(link);
+      }
+      section.append(reviewPanel(doc, attempt.review, viewKey(project.id, experiment.id, attempt.id, 'internal-review'))); return section;
+    });
+    if (attempts) { stateKey(attempts, viewKey(project.id, experiment.id, 'internal-attempts')); content.append(attempts); }
     if (onInspect) {
       const inspection = stateKey(el(doc, 'details', 'technical-details'), viewKey(project.id, experiment.id, 'inspection')); inspection.append(el(doc, 'summary', '', '查看实际 Agent 输入'));
       inspection.append(el(doc, 'p', 'small muted', '展开时只读取已保存的本次角色输入；不代表完整系统提示词，也不会启动创作。'));
@@ -724,6 +736,7 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
     for (const element of $('video-form').elements) element.disabled = state.busy || Boolean(state.pending)
       || formMode === 'retry' && element.id !== 'video-submit';
     $('video-submit').disabled = !controller.enabled() || controller.locked();
+    updateLearningControls(doc, 'video', state.catalog, {locked: state.busy || Boolean(state.pending), retry: formMode === 'retry'});
     renderCards();
     const catalog = currentCatalog(state), refs = rows(catalog?.references), analyses = rows(catalog?.analyses), refSignature = JSON.stringify(refs.map(row => [row.id, row.file_name]));
     if (referencesSignature !== refSignature) {
@@ -781,6 +794,7 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
     for (const id of ['video-name', 'video-goal', 'video-reference', 'video-width', 'video-height', 'video-start', 'video-end']) $(id).required = !mode;
     $('video-feedback').required = mode === 'continue';
     $('video-use-wikiskill').checked = mode === 'retry' ? latestVideoExperiment(controller.state.detail)?.frozen?.use_wikiskill !== false : true;
+    restoreLearningControls(doc, 'video', mode ? latestVideoExperiment(controller.state.detail)?.frozen : {});
     $('video-skill-help').hidden = mode === 'retry';
     show('form'); render(controller.state); (mode === 'retry' ? $('video-submit') : mode ? $('video-feedback') : $('video-name')).focus();
   };
@@ -790,6 +804,8 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
   $('video-pending-retry').addEventListener('click', () => void controller.replayPending());
   $('video-form-close').addEventListener('click', () => { clearPreview(); show(formMode ? 'detail' : 'home'); render(controller.state); });
   $('video-search').addEventListener('input', renderCards);
+  $('video-learning-options')?.addEventListener('change', () => updateLearningControls(doc, 'video', controller.state.catalog,
+    {locked: controller.state.busy || Boolean(controller.state.pending), retry: formMode === 'retry'}));
   $('video-reference').addEventListener('change', () => {
     controller.clearAnalysis();
     $('video-reference-id').value = ''; $('video-saved-reference').value = ''; $('video-reference').required = true;
@@ -823,6 +839,7 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
   $('video-form').addEventListener('submit', async event => {
     event.preventDefault(); if (controller.locked()) return;
     const fields = Object.fromEntries(new FormData($('video-form'))); fields.use_wikiskill = $('video-use-wikiskill').checked; fields.learn_audio = $('video-learn-audio').checked;
+    Object.assign(fields, readLearningControls(doc, 'video'));
     if (formMode === 'continue') fields.base_candidate_id = videoDefaultCandidate(controller.state.detail, selectedId)?.id;
     try {
       const success = formMode ? await controller.experiment({...fields, mode: formMode}) : await controller.start(fields, $('video-reference').files?.[0]);

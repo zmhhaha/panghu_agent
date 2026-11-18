@@ -44,7 +44,7 @@ class PictureLabClient(CreationAPIClient):
             response_limit=MAX_DETAIL)
 
     def picture_action(self, owner, project_id, action, body):
-        _require(action in {'experiments', 'stop', 'adopt'}, 'picture_learning_action_invalid')
+        _require(action in {'experiments', 'stop', 'adopt', 'animations'}, 'picture_learning_action_invalid')
         return self._request(owner, 'POST', PREFIX + '/projects/' + identifier(project_id) + '/' + action, body)
 
     def picture_artifact(self, owner, project_id, artifact_id):
@@ -93,15 +93,22 @@ def route_private(handler, owner, method, path, body=None):
             handler._send(service.upload_reference(owner, body), 201)
         elif pieces == ['projects']:
             handler._send(service.start(owner, body), 202)
-        elif len(pieces) == 3 and pieces[0] == 'projects' and pieces[2] in {'experiments','stop','adopt'}:
+        elif len(pieces) == 3 and pieces[0] == 'projects' and pieces[2] in {'experiments','stop','adopt','animations'}:
             if pieces[2] == 'experiments':
                 value = service.experiment(owner, pieces[1], body)
             elif pieces[2] == 'adopt':
                 value = service.adopt(owner, pieces[1], body)
+            elif pieces[2] == 'animations':
+                bridge = getattr(service, 'animation_bridge', None)
+                _require(bridge is not None, 'picture_animation_unavailable', 503)
+                value = bridge.start(owner, pieces[1], body)
+                method_pump = getattr(handler.server, 'method_pump', None)
+                if method_pump:
+                    method_pump.notify()
             else:
                 _require(body == {}, 'picture_learning_stop_invalid', 422)
                 value = service.stop(owner, pieces[1])
-            handler._send(value, 202 if pieces[2] == 'experiments' else 200)
+            handler._send(value, 202 if pieces[2] in {'experiments', 'animations'} else 200)
         else:
             _require(False, 'picture_learning_not_found', 404)
         pump = getattr(handler.server, 'picture_pump', None)
@@ -148,9 +155,9 @@ def route_public(handler, client, owner, method, path, body=None):
             handler._json(client.picture_upload(owner, body), 201)
         elif pieces == ['projects']:
             handler._json(client.picture_start(owner, body), 202)
-        elif len(pieces) == 3 and pieces[0] == 'projects' and pieces[2] in {'experiments','stop','adopt'}:
+        elif len(pieces) == 3 and pieces[0] == 'projects' and pieces[2] in {'experiments','stop','adopt','animations'}:
             handler._json(client.picture_action(owner, pieces[1], pieces[2], body),
-                202 if pieces[2] == 'experiments' else 200)
+                202 if pieces[2] in {'experiments', 'animations'} else 200)
         else:
             _require(False, 'picture_learning_not_found', 404)
         return True

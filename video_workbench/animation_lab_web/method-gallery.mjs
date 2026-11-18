@@ -799,7 +799,8 @@ export function renderMethodDetail(doc, detail, root, {onBack, onContinue, onCan
 }
 
 export function mountMethodGallery({document: doc = document, root = new URL('./', location.href), fetch: fetcher = fetch,
-  storage = sessionStorage, uuid, schedule, unschedule} = {}) {
+  storage = sessionStorage, uuid, schedule, unschedule,
+  initialCommissionId = globalThis.location?.href ? new URL(globalThis.location.href).searchParams.get('commission') : null} = {}) {
   const $ = id => doc.getElementById(id), home = $('gallery-home'), detailHost = $('gallery-detail'), formPanel = $('gallery-form-panel');
   const authoringControls = mountAuthoringControls(doc, () => renderCards());
   let continuation = null, controller, recycle, nextEffectAfterRemoval = null, renderedDetailId = null, renderedDetailSnapshot = null, renderedCardsSnapshot = null, comparison = null, replacing = false;
@@ -1126,7 +1127,12 @@ export function mountMethodGallery({document: doc = document, root = new URL('./
   });
   const closeController = controller.close.bind(controller);
   controller.close = () => { recycle.close(); closeController(); releaseComparison(); promptInspection.close(); };
-  void controller.refresh(); return controller;
+  void controller.refresh().then(async () => {
+    if (typeof initialCommissionId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(initialCommissionId)) return;
+    await controller.select(initialCommissionId);
+    if (controller.state.detail?.id === initialCommissionId) { show('detail'); controller.emit(); }
+  });
+  return controller;
 }
 
 if (typeof document !== 'undefined' && document.getElementById('method-gallery-app')) {

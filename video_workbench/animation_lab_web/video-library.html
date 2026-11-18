@@ -56,6 +56,24 @@
             <label for="video-criteria">可观察的标准（可选，每行一项）<textarea id="video-criteria" name="criteria_text" rows="3" maxlength="8000" placeholder="例如：波前到达后对象才响应，按距离错峰，并在结尾自然收束。留空时由 Agent 根据目标拟定。"></textarea></label>
           </div>
           <label id="video-feedback-label" for="video-feedback" hidden>用于下一次实验的意见<textarea id="video-feedback" name="feedback" rows="4" maxlength="8000" placeholder="描述当前画面具体哪里不理想，以及本次希望尝试的方向。"></textarea></label>
+          <details id="video-learning-options" class="form-details"><summary>创作能力与学习方式</summary>
+            <fieldset><legend>画面创作（可多选）</legend>
+              <label class="checkbox-label"><input id="video-creation-html-svg" type="checkbox"><span>HTML/SVG</span></label>
+              <label class="checkbox-label"><input id="video-creation-canvas" type="checkbox"><span>Canvas 2D</span></label>
+              <label class="checkbox-label"><input id="video-creation-three" type="checkbox"><span>Three.js</span></label>
+              <label class="checkbox-label"><input id="video-creation-manim" type="checkbox"><span>Manim</span></label>
+              <p class="small muted">留空则由 Agent 在当前已准入的画面能力中自主选择。</p><p id="video-manim-help" class="small muted"></p>
+            </fieldset>
+            <fieldset><legend>动作编排（可多选）</legend>
+              <label class="checkbox-label"><input id="video-motion-native-js" type="checkbox"><span>原生 JavaScript</span></label>
+              <label class="checkbox-label"><input id="video-motion-gsap" type="checkbox"><span>GSAP</span></label>
+              <label class="checkbox-label"><input id="video-motion-animejs" type="checkbox"><span>Anime.js</span></label>
+              <p id="video-motion-help" class="small muted">可多选，Agent 从所选能力中按目标选择或组合；留空则按已准入能力自主选择。</p>
+            </fieldset>
+            <label class="checkbox-label"><input id="video-allow-probes" type="checkbox" checked><span>允许按需制作内部技法小样</span></label>
+            <label class="checkbox-label"><input id="video-allow-collaboration" type="checkbox" checked><span>允许按需分工创作</span></label>
+            <p class="small muted">Agent 只在有助于目标时安排，最多 2 个内部小样、2–3 个部件，按依赖顺序执行。创作、渲染、评审与整合共用本次预算；关闭后直接创作完整片段。</p>
+          </details>
           <label class="checkbox-label" for="video-use-wikiskill"><input id="video-use-wikiskill" name="use_wikiskill" type="checkbox" checked><span>加载已发布的动效 WikiSkill</span></label>
           <p id="video-skill-help" class="small muted">本次固定所用版本。关闭后仍提供绘制工具与渲染规范，不注入已发布的技法；本次形成的方法可用于换内容验证。</p>
           <details id="video-budget-fields" class="form-details"><summary>本次预算</summary><div class="form-row"><label for="video-rounds">最多探索轮数<input id="video-rounds" name="max_rounds" type="number" min="1" max="8" step="1" value="3" required></label><label for="video-minutes">时间上限（分钟）<input id="video-minutes" name="max_minutes" type="number" min="1" max="60" step="1" value="15" required></label></div><p class="small muted">预算覆盖创作、渲染、评审和换内容验证。预算不足时优先保存复现进展；之后可继续发起实验。</p></details>

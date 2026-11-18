@@ -82,6 +82,7 @@ SOURCE_FILES = frozenset({
     'video_workbench/animation_lab_web/picture-library.css',
     'video_workbench/animation_lab_web/picture-library.mjs',
     'video_workbench/animation_lab_web/picture-model.mjs',
+    'video_workbench/animation_lab_web/learning-controls.mjs',
     'video_workbench/animation_lab_web/picture-api.openapi.json',
     'video_workbench/animation_lab_web/video-library.html',
     'video_workbench/animation_lab_web/video-library.css',

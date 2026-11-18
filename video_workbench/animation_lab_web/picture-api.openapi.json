@@ -4,7 +4,7 @@
   "info": {
     "title": "图片学习库 API",
     "version": "1.0.0",
-    "description": "独立的图片学习项目：上传实际参考图片，异步创作、真实渲染、独立比较和换内容验证。与网页共用合同。GET 为只读；不会自动发布 WikiSkill。沿用 OAuth 登录 Cookie 和开发者权限，未提供 Bearer 或长期机器令牌。外部调用方使用用户安全提供的 Cookie 文件，不读取浏览器凭据。POST 必须提供同源 Origin、catalog.csrf_token 对应的 X-Animation-Lab-Token 和 application/json。"
+    "description": "独立的图片学习项目：上传实际参考图片，异步创作、真实渲染、独立比较和换内容验证。与网页共用合同。GET 为只读；不会自动发布 WikiSkill。沿用 OAuth 登录 Cookie 和开发者权限，未提供 Bearer 或长期机器令牌。外部调用方使用用户安全提供的 Cookie 文件，不读取浏览器凭据。POST 必须提供同源 Origin、catalog.csrf_token 对应的 X-Animation-Lab-Token 和 application/json。 创建与继续/从零实验支持 capability_selection、allow_collaboration、allow_probes；以 catalog 当前准入为准，内部小样与分工共用预算并按依赖顺序执行。技术重试不允许改变这些冻结字段。"
   },
   "servers": [
     {
@@ -98,6 +98,65 @@
                               "string",
                               "null"
                             ]
+                          }
+                        }
+                      }
+                    },
+                    "runtime_capabilities": {
+                      "type": "object",
+                      "description": "Trusted renderer runtime, local assets and allowed engines."
+                    },
+                    "capabilities": {
+                      "type": "object",
+                      "properties": {
+                        "creation": {
+                          "type": "array",
+                          "items": {
+                            "enum": [
+                              "html-svg",
+                              "canvas",
+                              "three",
+                              "manim"
+                            ]
+                          }
+                        },
+                        "motion": {
+                          "type": "array",
+                          "items": {
+                            "enum": [
+                              "native-js",
+                              "gsap",
+                              "animejs"
+                            ]
+                          }
+                        },
+                        "manim": {
+                          "type": "object",
+                          "properties": {
+                            "admitted": {
+                              "type": "boolean"
+                            }
+                          },
+                          "description": "Current producer admission and exact resource limits. Always consult before requesting Manim."
+                        },
+                        "strategy": {
+                          "type": "object",
+                          "properties": {
+                            "max_probes": {
+                              "const": 2
+                            },
+                            "max_components": {
+                              "const": 3
+                            },
+                            "max_parallel": {
+                              "const": 1
+                            },
+                            "allow_probes": {
+                              "type": "boolean"
+                            },
+                            "allow_collaboration": {
+                              "type": "boolean"
+                            }
                           }
                         }
                       }
@@ -702,6 +761,19 @@
             "minimum": 60,
             "maximum": 3600,
             "default": 900
+          },
+          "capability_selection": {
+            "$ref": "#/components/schemas/CapabilitySelection"
+          },
+          "allow_collaboration": {
+            "type": "boolean",
+            "default": true,
+            "description": "Allow the first reproduction author to propose 2-3 real specialist component jobs only when useful. Sequential dependency execution (max_parallel=1), same experiment deadline/budget. Manim resource plans cannot combine with internal subtasks."
+          },
+          "allow_probes": {
+            "type": "boolean",
+            "default": true,
+            "description": "Allow 0-2 focused internal technique studies, each actually authored, rendered and independently reviewed. Evidence belongs to internal_attempts, not normal works. Shares the experiment budget; no forced extra planning loop."
           }
         }
       },
@@ -746,6 +818,19 @@
             "minimum": 60,
             "maximum": 3600,
             "default": 900
+          },
+          "capability_selection": {
+            "$ref": "#/components/schemas/CapabilitySelection"
+          },
+          "allow_collaboration": {
+            "type": "boolean",
+            "default": true,
+            "description": "Allow the first reproduction author to propose 2-3 real specialist component jobs only when useful. Sequential dependency execution (max_parallel=1), same experiment deadline/budget. Manim resource plans cannot combine with internal subtasks."
+          },
+          "allow_probes": {
+            "type": "boolean",
+            "default": true,
+            "description": "Allow 0-2 focused internal technique studies, each actually authored, rendered and independently reviewed. Evidence belongs to internal_attempts, not normal works. Shares the experiment budget; no forced extra planning loop."
           }
         },
         "allOf": [
@@ -784,6 +869,21 @@
                     "required": [
                       "max_seconds"
                     ]
+                  },
+                  {
+                    "required": [
+                      "capability_selection"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "allow_collaboration"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "allow_probes"
+                    ]
                   }
                 ]
               }
@@ -810,7 +910,8 @@
           "role": {
             "enum": [
               "reproduction",
-              "transfer"
+              "transfer",
+              "internal_probe"
             ]
           },
           "round": {
@@ -839,6 +940,18 @@
               "object",
               "null"
             ]
+          },
+          "probe_id": {
+            "type": "string",
+            "description": "Present only for an internal technique study."
+          },
+          "resource_plan": {
+            "type": "object",
+            "description": "Frozen actual resource-production goal/options, if Manim was adopted."
+          },
+          "resource_descriptor": {
+            "type": "object",
+            "description": "Verified real preproduced resource descriptor, not a tool-selection claim."
           }
         }
       },
@@ -945,9 +1058,160 @@
                 },
                 "transfer_status": {
                   "type": "string"
+                },
+                "learning_progress": {
+                  "$ref": "#/components/schemas/LearningProgress"
+                },
+                "internal_attempts": {
+                  "type": "array",
+                  "description": "Actual internal studies, excluded from normal candidates, adoption and work counts. Artifacts use the same authenticated project artifact route.",
+                  "items": {
+                    "$ref": "#/components/schemas/Candidate"
+                  }
                 }
               }
             }
+          }
+        }
+      },
+      "CapabilitySelection": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Explicit admitted candidate tools, not observed usage. Empty/omitted groups let the Agent choose. Multiple entries permit choosing/combining rather than decorative use of all tools. Manim-only creation forbids nonempty browser motion.",
+        "properties": {
+          "creation": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "html-svg",
+                "canvas",
+                "three",
+                "manim"
+              ]
+            }
+          },
+          "motion": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "native-js",
+                "gsap",
+                "animejs"
+              ]
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "required": [
+                "creation"
+              ],
+              "properties": {
+                "creation": {
+                  "const": [
+                    "manim"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "motion": {
+                  "maxItems": 0
+                }
+              }
+            }
+          }
+        ]
+      },
+      "LearningProgress": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "description": "Actual host orchestration state; counts operations, not hidden provider model requests. Never proves visual quality or continuous/audio observation.",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "phase": {
+            "enum": [
+              "plan",
+              "probe_author",
+              "probe_render",
+              "probe_review",
+              "component",
+              "resources",
+              "compose",
+              "complete"
+            ]
+          },
+          "probes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "goal": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "candidate_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "review": {
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                }
+              }
+            }
+          },
+          "components": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "operation_id": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "max_probes": {
+            "const": 2
+          },
+          "max_components": {
+            "const": 3
+          },
+          "max_parallel": {
+            "const": 1
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "plan_operation_id": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
           }
         }
       }

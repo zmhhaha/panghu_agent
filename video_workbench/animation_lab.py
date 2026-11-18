@@ -50,7 +50,7 @@ _METHOD_UI_PATHS = frozenset({'/', '/index.html', '/method-gallery.html',
                               '/method-gallery.css', '/skill-publication.mjs', '/effect-recycle-bin.mjs',
                               '/knowledge.html', '/knowledge.mjs', '/knowledge.css',
                               '/picture-library.html', '/picture-library.css', '/picture-library.mjs',
-                              '/picture-model.mjs', '/picture-api.openapi.json',
+                              '/picture-model.mjs', '/picture-api.openapi.json', '/learning-controls.mjs',
                               '/video-library.html', '/video-library.css', '/video-library.mjs',
                               '/video-model.mjs', '/video-api.openapi.json',
                               '/agent-api.html', '/agent-api.openapi.json', '/agent-api-client.py'})

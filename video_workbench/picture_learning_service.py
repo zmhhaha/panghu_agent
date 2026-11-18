@@ -17,6 +17,8 @@ import time
 from agent_service.contracts import ServiceError, canonical_bytes, digest
 from agent_service.profiles import video_picture_learning as protocol
 from .animation_creation_service import _run_lock
+from .learning_capabilities import LearningCapabilitiesMixin
+from .learning_strategy_service import LearningStrategyMixin
 from .picture_learning_store import (
     PictureLearningStore, TERMINAL, identifier, new_id, owner_id, require,
 )
@@ -57,19 +59,21 @@ def _image(raw, mime):
     return width, height
 
 
-class PictureLearningService:
+class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
     protocol = protocol
     prefix = PREFIX
     store_type = PictureLearningStore
     start_fields = frozenset({'request_id', 'title', 'goal', 'reference_ids', 'criteria',
-        'width', 'height', 'use_wikiskill', 'max_rounds', 'max_seconds', 'allow_collaboration'})
+        'width', 'height', 'use_wikiskill', 'max_rounds', 'max_seconds', 'allow_collaboration',
+        'allow_probes', 'capability_selection'})
 
     def __init__(self, root, *, author_gateway, review_gateway, renderer,
-                 library_adapter=None, clock=time.time):
+                 library_adapter=None, resource_stage=None, clock=time.time):
         self.store = self.store_type(root)
         self.root = self.store.root
         self.author, self.reviewer = author_gateway, review_gateway
         self.renderer, self.library_adapter, self.clock = renderer, library_adapter, clock
+        self.resource_stage = resource_stage
 
     def _enabled(self):
         return self.author is not None and self.reviewer is not None and self.renderer is not None
@@ -178,10 +182,6 @@ class PictureLearningService:
                 and 180 <= height <= 1080, 'picture_learning_dimensions_invalid')
         enabled = body.get('use_wikiskill', True)
         require(type(enabled) is bool)
-        # This first admitted execution profile is one creator. Do not pretend
-        # that accepting a boolean has enabled multi-creator learning.
-        require(body.get('allow_collaboration', False) is False,
-                'picture_learning_collaboration_not_admitted')
         now, pid, eid = self.clock(), new_id(), new_id()
         binding, snapshot = self._freeze_knowledge(owner, eid, enabled)
         project = dict(id=pid, owner=owner, request_id=body['request_id'], title=body['title'],
@@ -191,9 +191,9 @@ class PictureLearningService:
             width=width, height=height, reference_ids=list(refs), references=references,
             feedback='', use_wikiskill=enabled, library_binding=binding, knowledge_snapshot=snapshot,
             base_candidate_id=None, base_source=None, base_observation=None, learned_method=None,
-            allow_collaboration=False, input_boundary='frozen_for_entire_experiment',
-            runtime_capabilities=deepcopy(self.renderer.capabilities()
-                if hasattr(self.renderer, 'capabilities') else {}))
+            input_boundary='frozen_for_entire_experiment',
+            runtime_capabilities=self._runtime_capabilities())
+        self._freeze_learning_options(body, frozen)
         frozen.update(self._extra_frozen(owner, body, references))
         run = self._new_experiment(owner, pid, eid, body['request_id'], 'initial', frozen,
                                    self._budget(body), now)
@@ -244,7 +244,7 @@ class PictureLearningService:
     def next_experiment(self, owner, project_id, body):
         require(type(body) is dict and {'request_id', 'mode'} <= set(body)
                 <= {'request_id', 'mode', 'feedback', 'use_wikiskill', 'max_rounds', 'max_seconds',
-                    'base_candidate_id', 'allow_collaboration'})
+                    'base_candidate_id', 'allow_collaboration', 'allow_probes', 'capability_selection'})
         identifier(body['request_id'])
         require(type(body['mode']) is str and body['mode'] in {'continue', 'fresh', 'retry'})
         kind = 'experiment:' + identifier(project_id)
@@ -254,8 +254,6 @@ class PictureLearningService:
         project = self.store.read('projects', owner, project_id)
         prior = self.store.read('experiments', owner, project['latest_experiment_id'])
         require(prior['state'] in TERMINAL, 'picture_learning_experiment_active', 409)
-        require(body.get('allow_collaboration', False) is False,
-                'picture_learning_collaboration_not_admitted')
         mode, now, eid = body['mode'], self.clock(), new_id()
         retry = mode == 'retry'
         if retry:
@@ -271,8 +269,8 @@ class PictureLearningService:
             require(type(frozen['use_wikiskill']) is bool)
             frozen['library_binding'], frozen['knowledge_snapshot'] = self._freeze_knowledge(
                 owner, eid, frozen['use_wikiskill'])
-            frozen['runtime_capabilities'] = deepcopy(self.renderer.capabilities()
-                if hasattr(self.renderer, 'capabilities') else {})
+            frozen['runtime_capabilities'] = self._runtime_capabilities()
+            self._freeze_learning_options(body, frozen, prior=prior['frozen'] if mode == 'continue' else None)
             frozen.update(base_source=None, base_candidate_id=None, base_observation=None, learned_method=None)
             if mode == 'continue':
                 chosen = body.get('base_candidate_id') or project['adopted_candidate_id'] or project['best_candidate_id']
@@ -285,6 +283,9 @@ class PictureLearningService:
                     learned_method=deepcopy(candidate.get('method')))
             budget = self._budget(body, prior['budget'])
         run = self._new_experiment(owner, project_id, eid, body['request_id'], mode, frozen, budget, now)
+        if mode == 'continue' and candidate.get('resource_descriptor'):
+            run['resource_baseline_descriptor'] = deepcopy(candidate['resource_descriptor'])
+            run['resource_prior_review'] = deepcopy(candidate.get('review'))
         if retry:
             run.update(round=prior['round'], work_kind=prior['work_kind'],
                        transfer_task=deepcopy(prior['transfer_task']),
@@ -301,7 +302,8 @@ class PictureLearningService:
             run['best_candidate_id'] = prior['best_candidate_id']
             original_operation = next((self.store.read('operations', owner, identity)
                 for identity in reversed(prior['operation_ids'])
-                if self.store.read('operations', owner, identity)['stage'] == prior['stage']), None)
+                if self.store.read('operations', owner, identity)['stage'] == prior['stage']
+                and self.store.read('operations', owner, identity)['status'] != 'completed'), None)
             if original_operation is not None:
                 require(digest(original_operation['input']) == original_operation['input_sha256'],
                         'picture_learning_retry_context_changed', 409)
@@ -324,6 +326,10 @@ class PictureLearningService:
                 run.update(active_candidate_id=restored['id'], stage=prior['stage'])
                 if run['best_candidate_id'] == previous['id']:
                     run['best_candidate_id'] = restored['id']
+            self._learning_restore_retry(prior, run)
+            self._restore_learning_resources(prior, run)
+            if prior.get('learning_strategy') or prior.get('resource_plan'):
+                run['stage'] = prior['stage']
         with self.store.db() as db:
             db.execute('BEGIN IMMEDIATE')
             existing = self.store.request(owner, kind, body['request_id'], body, db=db)
@@ -350,6 +356,9 @@ class PictureLearningService:
         return self.store.put('experiments', run)
 
     def _candidate(self, run):
+        internal = self._learning_candidate(run)
+        if internal is not None:
+            return internal
         return next(item for item in run['candidates'] if item['id'] == run['active_candidate_id'])
 
     def _frames(self, run, mode):
@@ -415,8 +424,8 @@ class PictureLearningService:
         # is injected by the host in place of the creator's own implementation.
         if capabilities.get('runtime_identity') is not None:
             constraints['runtime_identity'] = capabilities['runtime_identity']
-        assets = capabilities.get('assets', {})
-        return dict(schema=self.protocol.INPUT_SCHEMA, mode=mode, project_id=run['project_id'],
+        assets = deepcopy(capabilities.get('assets', {}))
+        document = dict(schema=self.protocol.INPUT_SCHEMA, mode=mode, project_id=run['project_id'],
             experiment_id=run['id'], work_kind=run['work_kind'], goal=goal,
             criteria=deepcopy(criteria), constraints=constraints,
             observation=dict(frames=self._frames(run, mode)), base_source=deepcopy(base),
@@ -425,6 +434,7 @@ class PictureLearningService:
             knowledge_binding=deepcopy(frozen['library_binding']), assets=assets, frozen_at=run['created_at'],
             selection=dict(base_candidate_id=best['id'] if best else frozen.get('base_candidate_id'),
                            previous_review_candidate_id=candidate['id'] if candidate else None))
+        return self._learning_document(run, self._resource_document(run, document))
 
     def _operation(self, run):
         if run['active_operation_id']:
@@ -537,12 +547,27 @@ class PictureLearningService:
             return
         operation.update(status='completed', result=result, observation_receipt=receipt)
         self._finish_operation(run, operation)
+        resource_proposed = (self._adopt_resource_proposal(run, operation, result)
+            if operation['stage'] == 'author' else False)
+        if operation['stage'] == 'author':
+            require(run['frozen'].get('capability_selection', {}).get('creation') != ['manim']
+                or resource_proposed or run.get('resource_ready'),
+                'picture_learning_manim_resource_required', 409)
+        if self._learning_consume_agent_result(run, operation, result):
+            return
+        if resource_proposed:
+            run['stage'] = 'learning_resources'
+            return
         if operation['stage'] == 'author':
             source = result['source']
+            self._validate_learning_source(run, source)
             candidate = dict(id=new_id(), work_kind=run['work_kind'], role=run['work_kind'],
                 round=run['round'], source=source, source_sha256=source['source_sha256'],
                 method=deepcopy(result.get('method')), review=None, status='authored',
                 created_at=self.clock(), author_operation_id=operation['id'])
+            if run.get('resource_ready'):
+                candidate['resource_descriptor'] = deepcopy(run['resource_context']['generated_resources'][0])
+                candidate['resource_plan'] = deepcopy(run['resource_plan'])
             candidate['artifacts'] = {'source': dict(id=candidate['id'] + '-source',
                 sha256=self.store.blob(canonical_bytes(source)), mime_type='application/json')}
             run['candidates'].append(candidate)
@@ -563,6 +588,9 @@ class PictureLearningService:
             if (run['round'] < run['budget']['max_rounds'] and not review['stop_recommended']
                     and not no_progress and run['deadline_at'] - self.clock() >= 90):
                 run.update(stage='author', round=run['round'] + 1)
+                best = next((item for item in self._context_candidates(run)
+                    if item['id'] == run['best_candidate_id']), candidate)
+                self._next_learning_resource_cycle(run, best)
             else:
                 run['reproduction_stop_reason'] = ('no_progress' if no_progress else
                     'review_recommends_stop' if review['stop_recommended'] else 'round_budget_reached')
@@ -620,6 +648,7 @@ class PictureLearningService:
                                 else 'method_not_available_for_transfer')
         run.update(work_kind='transfer', stage='author', transfer_status='running',
                    transfer_method=deepcopy(best['method']))
+        self._next_learning_resource_cycle(run, transfer=True)
 
     def _render(self, run, operation):
         candidate = self._candidate(run)
@@ -667,6 +696,9 @@ class PictureLearningService:
         run['stage'] = 'review'
 
     def _stop_or_expire(self, run):
+        if run['stage'] == 'learning_resources':
+            if not self._advance_learning_resources(run, cancelled=True):
+                return self._save(run)
         operation = (self.store.read('operations', run['owner'], run['active_operation_id'])
                      if run['active_operation_id'] else None)
         if operation and operation['status'] == 'reserved':
@@ -729,11 +761,20 @@ class PictureLearningService:
                     self._stop_or_expire(run)
                 else:
                     run.update(state='running', error=None)
-                    operation = self._operation(run)
-                    if run['stage'] == 'render':
-                        self._render(run, operation)
+                    retry = run.get('resource_retry_pending')
+                    if retry:
+                        previous = self.store.read('experiments', owner, retry)
+                        self.resource_stage.restore_retry(owner, run, run['resource_plan'],
+                            previous, previous['resource_plan'])
+                        run.pop('resource_retry_pending', None)
+                    if run['stage'] == 'learning_resources':
+                        self._advance_learning_resources(run)
                     else:
-                        self._agent(run, operation)
+                        operation = self._operation(run)
+                        if run['stage'] == 'render':
+                            self._render(run, operation)
+                        else:
+                            self._agent(run, operation)
                     self._save(run)
             except ServiceError as error:
                 run['error'] = dict(code=error.code)
@@ -788,6 +829,7 @@ class PictureLearningService:
     def _candidate_public(self, project_id, candidate):
         result = {key: deepcopy(value) for key, value in candidate.items()
                   if key not in {'source', 'observed_sha256', 'observed_suffix'}}
+        result['engine'] = candidate['source']['engine']
         for kind, row in result.get('artifacts', {}).items():
             url = self.prefix + '/projects/' + project_id + '/artifacts/' + row['id']
             row['url'] = url
@@ -797,7 +839,13 @@ class PictureLearningService:
     def _run_public(self, run):
         result = {key: deepcopy(value) for key, value in run.items()
                   if key not in {'owner', 'frozen', 'candidates', 'operation_ids', 'transfer_method',
-                                 'technical_retry_context'}}
+                                 'technical_retry_context', 'internal_attempts', 'learning_strategy',
+                                 'resource_context', 'resource_draft_source', 'resource_baseline_descriptor'}}
+        result['learning_progress'] = self._learning_progress(run)
+        result['internal_attempts'] = [self._candidate_public(run['project_id'], item)
+                                      for item in run.get('internal_attempts', [])]
+        if run.get('resource_plan') and self.resource_stage is not None:
+            result['resource_progress'] = self.resource_stage.view(run['owner'], run)
         result['frozen'] = {key: deepcopy(value) for key, value in run['frozen'].items()
                             if key not in {'knowledge_snapshot', 'base_source', 'references'}}
         result['candidates'] = [self._candidate_public(run['project_id'], item) for item in run['candidates']]
@@ -819,6 +867,9 @@ class PictureLearningService:
             state=latest['state'], stage=latest['stage'],
             latest_experiment_request_id=latest['request_id'],
             verification_scope='static_only', published=False)
+        bridge = getattr(self, 'animation_bridge', None)
+        if bridge is not None:
+            result['animation_links'] = bridge.links(owner, project_id)
         return result
 
     def catalogue(self, owner):
@@ -844,6 +895,7 @@ class PictureLearningService:
             availability=dict(enabled=self._enabled(), reason=None if self._enabled() else '图片创作执行器尚未配置'),
             projects=projects, limits=dict(reference_bytes=MAX_UPLOAD, reference_count=4,
                 max_rounds=8, max_seconds=3600, max_width=1920, max_height=1080),
+            runtime_capabilities=self._runtime_capabilities(), capabilities=self._capabilities_public(),
             verification_scope='static_only')
 
     catalog = catalogue
@@ -851,7 +903,10 @@ class PictureLearningService:
     def artifact(self, owner, project_id, artifact_id):
         self.store.read('projects', owner, project_id)
         identifier(artifact_id)
-        for candidate in self._all_candidates(owner, project_id):
+        all_works = self._all_candidates(owner, project_id) + [item
+            for run in self.store.list('experiments', owner, project_id=project_id)
+            for item in run.get('internal_attempts', [])]
+        for candidate in all_works:
             for row in candidate.get('artifacts', {}).values():
                 if row['id'] == artifact_id:
                     self.store.read_blob(row['sha256'])

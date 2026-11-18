@@ -275,7 +275,11 @@ class AnimationMethodCommissionStore:
                       "resource_authoring", "collaboration", "capability_selection", "manim_iteration",
                       "resource_planning", "creation_mode", "effect_id", "use_wikiskill",
                       "problem_summary", "library_binding", "renderer_rebind", "render_context_binding",
+                      "picture_origin",
                  })
+        if 'picture_origin' in body:
+            from .picture_animation_bridge import validate_origin
+            validate_origin(body['picture_origin'])
         if 'renderer_rebind' in body or 'render_context_binding' in body:
             _require(body.get('renderer_rebind') == 'current-admitted' and body.get('retry_of_commission_id')
                 and type(body.get('render_context_binding')) is dict,

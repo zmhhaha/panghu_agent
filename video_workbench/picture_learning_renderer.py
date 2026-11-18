@@ -26,7 +26,8 @@ class PictureLearningRenderer(MethodAnimationRenderer):
     def __init__(self, root, *, runtime_renderer):
         super().__init__(root, runtime_renderer.image, assets_dir=runtime_renderer.assets_dir,
             enabled=runtime_renderer.enabled, timeout=runtime_renderer.timeout,
-            hyperframes=True, legacy_bridge=True)
+            hyperframes=True, legacy_bridge=True,
+            generated_resource_resolver=getattr(runtime_renderer, 'generated_resource_resolver', None))
         self.runtime_renderer = runtime_renderer
 
     def capabilities(self):
@@ -50,8 +51,26 @@ class PictureLearningRenderer(MethodAnimationRenderer):
         _require(payload['engine'] in caps['allowed_engines'], 'picture_render_engine_unavailable', 422)
         width, height = (context['constraints'][key] for key in ('width', 'height'))
         assets = context.get('assets', context['constraints'].get('assets', {}))
-        _require(type(assets) is dict and all(ASSET_SHA256.get(name) == sha == caps['assets'].get(name)
-            for name, sha in assets.items()), 'picture_render_assets_changed', 409)
+        _require(type(assets) is dict, 'picture_render_assets_changed', 409)
+        allowed_assets = dict(caps['assets'])
+        generated = context['constraints'].get('generated_resources')
+        if generated is not None:
+            from .manim_method_resources import validate_descriptor
+            _require(type(generated) is list and len(generated) == 1
+                and callable(self.generated_resource_resolver), 'picture_render_resource_not_admitted', 422)
+            descriptor = generated[0]
+            exact_assets = self.generated_resource_resolver(descriptor)
+            validate_descriptor(descriptor, assets=exact_assets, duration_seconds=1)
+            _require(descriptor['manifest']['frame_count'] == 1
+                and descriptor['manifest']['global_start_frame'] == 0,
+                'picture_render_resource_single_frame_required', 422)
+            _require(not (set(allowed_assets) & set(exact_assets)), 'picture_render_resource_collision', 409)
+            generated_checksums = {name: digest_bytes(raw) for name, raw in exact_assets.items()}
+            _require(all(assets.get(name) == checksum for name, checksum in generated_checksums.items()),
+                'picture_render_resource_assets_missing', 409)
+            allowed_assets.update(generated_checksums)
+        _require(all(allowed_assets.get(name) == sha for name, sha in assets.items()),
+            'picture_render_assets_changed', 409)
         if payload['engine'] == 'three':
             _require('three.module.min.js' in assets, 'picture_render_three_asset_required', 422)
         frozen = context['constraints'].get('runtime_identity')
@@ -72,6 +91,8 @@ class PictureLearningRenderer(MethodAnimationRenderer):
             engine_runtime_sha256=digest_bytes(_read(ENGINE_RUNTIME, 1024 * 1024)),
             project_runtime_sha256=digest_bytes(_read(PROJECT_RUNTIME, 1024 * 1024)),
             image_digest=self.image_digest, hyperframes_core_sha256=HYPERFRAMES_CORE_SHA256)
+        if generated is not None:
+            request.update(schema='video.picture-learning-render-request.v2', generated_resources=deepcopy(generated))
         request['identity'] = digest(request)
         return dict(schema='video.picture-learning-render-binding.v1', operation_id=operation_id,
             source=payload, source_sha256=payload['source_sha256'], document=context,
@@ -106,10 +127,16 @@ class PictureLearningRenderer(MethodAnimationRenderer):
             (root / 'input/scene/assets').mkdir(parents=True)
             for name, text in source['files'].items():
                 _write(root / 'input/scene' / name, text.encode())
+            generated_assets = {}
+            for descriptor in binding['request'].get('generated_resources', []):
+                generated_assets.update(self.generated_resource_resolver(descriptor))
             for name, sha in binding['request']['assets_sha256'].items():
-                raw = _read(self.assets_dir / name, 32 * 1024 * 1024)
+                raw = (generated_assets[name] if name in generated_assets
+                       else _read(self.assets_dir / name, 32 * 1024 * 1024))
                 _require(digest_bytes(raw) == sha, 'picture_render_assets_changed', 409)
-                _write(root / 'input/scene/assets' / name, raw)
+                target = root / 'input/scene/assets' / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                _write(target, raw)
             for path, content in {
                 'host.mjs': _read(HOST, 1024 * 1024),
                 'engine_runtime.mjs': _read(ENGINE_RUNTIME, 1024 * 1024),
@@ -181,6 +208,16 @@ class PictureLearningRenderer(MethodAnimationRenderer):
                               ('hyperframes_project.mjs','project_runtime_sha256')]:
                 _require(digest_bytes(_read(root / name, 1024 * 1024)) == request[key],
                     'picture_render_runtime_changed', 409)
+            if 'generated_resources' in request:
+                observation = receipt.get('generated_resource_observation', {})
+                expected_png = sorted('/assets/' + name for descriptor in request['generated_resources']
+                    for name in descriptor['assets_sha256'] if name.endswith('.png'))
+                _require(observation.get('schema') == 'video.manim-method-resource-observation.v1'
+                    and observation.get('scope') == 'loaded_resources_not_visual_acceptance'
+                    and observation.get('resources_sha256') == [row['sha256'] for row in request['generated_resources']]
+                    and observation.get('loaded_png_paths') == expected_png
+                    and observation.get('helpers_loaded') is True,
+                    'picture_render_resource_evidence_invalid', 409)
             png = _read(root / 'work/output.png', MAX_PNG_BYTES)
             checksum = digest_bytes(png)
             _require(checksum == receipt.get('output_sha256') and len(png) == receipt.get('output_bytes')
@@ -205,6 +242,9 @@ class PictureLearningRenderer(MethodAnimationRenderer):
                     project_runtime='hyperframes-core-project-1',
                     hyperframes_core_sha256=HYPERFRAMES_CORE_SHA256,
                     engine_observation=receipt.get('engine_observation'),evidence_scope='static_only'))
+            if 'generated_resources' in request:
+                result['runtime'].update(generated_resources=deepcopy(request['generated_resources']),
+                    generated_resource_observation=deepcopy(receipt['generated_resource_observation']))
         else:
             result['error'] = 'picture_render_failed'
         proof = digest(dict(binding_sha256=digest(binding),outcome_sha256=digest_bytes(raw_outcome),

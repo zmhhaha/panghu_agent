@@ -1093,6 +1093,10 @@ class AnimationMethodService:
             library_binding=deepcopy(run['frozen'].get('library_binding')),
             problem_summary=deepcopy(run['frozen'].get('problem_summary', [])))
         detail['adopted_capabilities'] = deepcopy(run.get('adopted_capabilities'))
+        if run['frozen'].get('picture_origin') is not None:
+            detail['picture_origin'] = {key: deepcopy(value) for key, value in
+                run['frozen']['picture_origin'].items()
+                if key not in {'source', 'method', 'manim_source_context'}}
         if 'capability_selection' in run['frozen']:
             detail['capability_selection'] = deepcopy(run['frozen']['capability_selection'])
         if run['frozen'].get('collaboration'):
@@ -1101,7 +1105,7 @@ class AnimationMethodService:
         return detail
 
     @serialized_library_mutation
-    def start(self, owner, body, *, _submission_snapshot=None):
+    def start(self, owner, body, *, _submission_snapshot=None, _picture_origin=None):
         fields = {'request_id', 'title', 'goal', 'reference', 'duration_seconds', 'budget',
                   'base_commission_id', 'base_candidate_id', 'feedback', 'criteria', 'method_versions',
                   'role', 'baseline_demonstration_id', 'structural_changes', 'retry_of_commission_id',
@@ -1118,6 +1122,11 @@ class AnimationMethodService:
         submitted = (deepcopy(_submission_snapshot) if _submission_snapshot is not None else
                      submission_snapshot(body))
         data = {key: deepcopy(value) for key, value in body.items() if key != 'request_id' and value is not None}
+        if _picture_origin is not None:
+            from .picture_animation_bridge import validate_origin
+            _require(not data.get('base_commission_id') and not data.get('retry_of_commission_id')
+                     and data.get('creation_mode', 'new') == 'new', 'picture_animation_origin_invalid')
+            data['picture_origin'] = validate_origin(_picture_origin)
         explicit_selection = 'capability_selection' in data
         if 'capability_selection' in data:
             data['capability_selection'] = normalize_selection(data['capability_selection'])
@@ -1967,6 +1976,20 @@ class AnimationMethodService:
             observation=dict(frames=frames or [], audio_observed=False, motion_observed=False,
                 limitations=['Only supplied sampled images were observed; complete motion and audio are unverified.']),
             comparison=comparison, assets=assets)
+        origin = run['frozen'].get('picture_origin')
+        if origin is not None and run['frozen'].get('creation_mode') != 'fresh':
+            from .picture_animation_bridge import validate_origin
+            origin = validate_origin(origin)
+            document['constraints']['picture_origin'] = {
+                key: deepcopy(value) for key, value in origin.items() if key != 'source'}
+            document['constraints']['picture_origin']['instruction'] = (
+                'This is a source-preserving still-picture starting point for a NEW original animation, '
+                'not a previous animation or motion-validated Skill. Keep the requested visual craft '
+                'while authoring movement and rhythm for the current goal. Regenerate resource identities '
+                'for this task; do not use old picture resource URLs as runtime dependencies. '
+                'Do not claim that the still source proves motion, audio or transfer quality.')
+            if base is None and mode in {'plan', 'create'}:
+                document['base_source'] = deepcopy(origin['source'])
         if mode == 'plan':
             document['constraints']['result_requirements'] = dict(
                 source=None, review=None, sound_events=[],

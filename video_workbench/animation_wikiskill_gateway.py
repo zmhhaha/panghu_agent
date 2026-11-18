@@ -31,7 +31,7 @@ def stopped_job(job, *, profile, revision='1'):
 
 
 class AnimationWikiSkillGateway(_AnimationGateway):
-    profile = 'video.animation-wikiskill-compile.v2'
+    profile = 'video.animation-wikiskill-compile.v3'
     input_name, result_name = INPUT_NAME, RESULT_NAME
     input_role = 'animation_wikiskill_input'
     business_prefix, idempotency_prefix = 'animation-wikiskill:', 'wikiskill-'

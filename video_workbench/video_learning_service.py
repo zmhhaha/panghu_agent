@@ -227,7 +227,10 @@ class VideoLearningService(VideoLearningAnalysis, PictureLearningService):
     def _agent(self, run, operation):
         super()._agent(run, operation)
         if operation['stage'] == 'author' and operation.get('status') == 'completed':
-            self._candidate(run)['sound_events'] = deepcopy(operation['result'].get('sound_events', []))
+            candidate = next((item for item in run['candidates'] + run.get('internal_attempts', [])
+                if item.get('author_operation_id') == operation['id']), None)
+            if candidate is not None:
+                candidate['sound_events'] = deepcopy(operation['result'].get('sound_events', []))
 
     def _render(self, run, operation):
         candidate = self._candidate(run)
@@ -310,7 +313,8 @@ class VideoLearningService(VideoLearningAnalysis, PictureLearningService):
             references=[self._reference_public(value) for value in self.store.list('references', owner)],
             analyses=[self._analysis_public(value) for value in self.store.analyses(owner)],
             capabilities=dict(explicit_clip=True, long_video_candidate_analysis=True,
-                sampled_visual_comparison=True, continuous_motion_observation=False, audio_observation=False),
+                sampled_visual_comparison=True, continuous_motion_observation=False, audio_observation=False,
+                **self._capabilities_public()), runtime_capabilities=self._runtime_capabilities(),
             verification_scope='sampled_frames_only')
 
     catalog = catalogue

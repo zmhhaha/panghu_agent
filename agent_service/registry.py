@@ -194,8 +194,8 @@ class ToolEnvironment(_Record):
                 raise ValueError('Picture learning requires its fixed extension identity and exact tool scope')
         elif 'read_compilation_input' in self.tools:
             from .compilation_input_tools import (COMPILATION_INPUT_ENVIRONMENT_NAME,
-                compilation_input_environment_revision)
-            if (self.name != COMPILATION_INPUT_ENVIRONMENT_NAME
+                COMPILATION_EVIDENCE_ENVIRONMENT_NAME, compilation_input_environment_revision)
+            if (self.name not in {COMPILATION_INPUT_ENVIRONMENT_NAME, COMPILATION_EVIDENCE_ENVIRONMENT_NAME}
                     or set(self.tools) != {'read_compilation_input', 'write'}
                     or self.revision != compilation_input_environment_revision(self.model_dump(mode='json'))):
                 raise ValueError('Compilation reader requires its fixed extension identity and tool scope')
