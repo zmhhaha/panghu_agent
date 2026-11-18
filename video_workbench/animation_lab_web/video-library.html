@@ -41,8 +41,8 @@
           <div id="video-new-fields">
             <input name="reference_id" id="video-reference-id" type="hidden">
             <input name="analysis_id" id="video-analysis-id" type="hidden"><input name="segment_index" id="video-segment-index" type="hidden">
-            <label for="video-name">学习项目名称<input id="video-name" name="title" maxlength="200" required placeholder="例如：学习山石的皴擦与留白"></label>
-            <label for="video-goal">这次重点学什么<textarea id="video-goal" name="goal" rows="4" maxlength="8000" required placeholder="说明想复现的造型、笔触、材质、光影或构图技法，以及不需要照搬的内容。"></textarea></label>
+            <label for="video-name">学习项目名称<input id="video-name" name="title" maxlength="200" required placeholder="例如：冲击波触发群体依次响应"></label>
+            <label for="video-goal">这次重点学什么<textarea id="video-goal" name="goal" rows="4" maxlength="8000" required placeholder="说明想复现的运动、节奏、形变、转场或画面技法，以及不需要照搬的内容。"></textarea></label>
             <label for="video-reference">参考视频<input id="video-reference" type="file" accept="video/mp4,video/webm" required><span class="small muted">上传实际 MP4 / WebM，最大 24 MB。请先明确一个 1–60 秒效果片段；网址不能代替实际视频。</span></label>
             <div id="video-reference-preview" class="upload-preview" hidden></div>
             <label for="video-saved-reference">或选择已上传的参考<select id="video-saved-reference"><option value="">使用新上传的视频</option></select></label>
@@ -52,7 +52,7 @@
             <label class="checkbox-label" for="video-learn-audio"><input id="video-learn-audio" name="learn_audio" type="checkbox" checked><span>按目标学习有表达作用的音效及其时机</span></label>
             <p class="small muted">保留参考音轨与观察范围；尚未实际听审的声音不标为已验证。不默认复刻旁白或背景音乐。</p>
             <div class="form-row video-dimensions"><label for="video-width">输出宽度（像素）<input id="video-width" name="width" type="number" min="320" max="1280" step="1" value="1280" required></label><label for="video-height">输出高度（像素）<input id="video-height" name="height" type="number" min="180" max="720" step="1" value="720" required></label></div>
-            <label for="video-criteria">可观察的标准（可选，每行一项）<textarea id="video-criteria" name="criteria_text" rows="3" maxlength="8000" placeholder="例如：山体由皴擦形成体积，而不是重复的带状墨块。留空时由 Agent 根据目标拟定。"></textarea></label>
+            <label for="video-criteria">可观察的标准（可选，每行一项）<textarea id="video-criteria" name="criteria_text" rows="3" maxlength="8000" placeholder="例如：波前到达后对象才响应，按距离错峰，并在结尾自然收束。留空时由 Agent 根据目标拟定。"></textarea></label>
           </div>
           <label id="video-feedback-label" for="video-feedback" hidden>用于下一次实验的意见<textarea id="video-feedback" name="feedback" rows="4" maxlength="8000" placeholder="描述当前画面具体哪里不理想，以及本次希望尝试的方向。"></textarea></label>
           <label class="checkbox-label" for="video-use-wikiskill"><input id="video-use-wikiskill" name="use_wikiskill" type="checkbox" checked><span>加载已发布的动效 WikiSkill</span></label>

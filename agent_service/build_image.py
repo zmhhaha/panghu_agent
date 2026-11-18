@@ -55,7 +55,7 @@ PRODUCTION_FILES = frozenset({'CONTRACT.md', 'LICENSE', 'production-procedure/SK
 # older observe/review resources still referenced by immutable accepted Hosts.
 # These pins deliberately remain independent of importing the service runtime.
 ANIMATION_RUNTIME_BUNDLES = (
-    ('reference-learning-v1', 'f58350b9ea3dabe31174da21957f111267d7b97bba1ecbaf7cf5058eb32a0eac',
+    ('reference-learning-v1', '4bfbd0f9bb20c8a055417287c67e6be14fc05089fba28d8618dad16d40eb119e',
      frozenset({'CONTRACT.md', 'LICENSE', 'learning-procedure/SKILL.md'})),
     ('picture-learning-v1', 'f99ab90f2863220a59a6d760bb5a422717830d46774d76df45ef2ccd1a8ecde6',
      frozenset({'CONTRACT.md', 'LICENSE', 'learning-procedure/SKILL.md'})),
