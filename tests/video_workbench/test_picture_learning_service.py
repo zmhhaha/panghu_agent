@@ -493,3 +493,20 @@ def test_readiness_outage_does_not_upload_and_preparation_reuses_uploaded_inputs
     author.prepare_submission = prepare
     service.advance('developer', eid)
     assert len(author.uploads) == 1 and len(author.submissions) == 1
+
+
+def test_source_only_failed_candidate_cannot_be_continued_or_adopted(system):
+    service, author, _, renderer = system
+    renderer.fail = True
+    project, _ = start(service)
+    failed = finish(service, project)
+    candidate_id = failed['candidates'][0]['id']
+    with pytest.raises(ServiceError, match='baseline_not_rendered') as error:
+        service.next_experiment('developer', project['id'], dict(request_id=uuid4().hex,
+            mode='continue', base_candidate_id=candidate_id, use_wikiskill=False))
+    assert error.value.status == 409
+    with pytest.raises(ServiceError, match='candidate_not_rendered') as error:
+        service.adopt('developer', project['id'], dict(candidate_id=candidate_id))
+    assert error.value.status == 409
+    assert service.get('developer', project['id'])['state'] == 'failed'
+    assert len(author.submissions) == 1

@@ -30,7 +30,7 @@
         <p id="picture-availability" class="muted" role="status"></p>
         <div class="gallery-tools"><label class="search-label" for="picture-search">查找学习项目<input id="picture-search" type="search" placeholder="名称或学习目标" autocomplete="off"></label></div>
         <div id="picture-cards" class="gallery-grid" aria-live="polite"></div>
-        <div id="picture-empty" class="empty-state" hidden><span aria-hidden="true">▧</span><h2>从一张想学会的图开始</h2><p>说明想学的技法，而不是只说“越像越好”。每次实验先复现，再在预算允许时换内容验证一次。</p><button id="picture-empty-new" class="button primary" type="button">提交参考图</button></div>
+        <div id="picture-empty" class="empty-state" hidden><span aria-hidden="true">▧</span><h2>从一张想学会的图开始</h2><p>可以追求整体画面相似，也可以指定重点技法。每次实验先复现，再在预算允许时换内容验证一次。</p><button id="picture-empty-new" class="button primary" type="button">提交参考图</button></div>
       </section>
       <section id="picture-detail" hidden aria-label="学习项目详情"></section>
       <section id="picture-form-panel" class="panel experiment-form" hidden aria-labelledby="picture-form-title">
@@ -48,7 +48,7 @@
           <label id="picture-feedback-label" for="picture-feedback" hidden>用于下一次实验的意见<textarea id="picture-feedback" name="feedback" rows="4" maxlength="8000" placeholder="描述当前画面具体哪里不理想，以及本次希望尝试的方向。"></textarea></label>
           <label class="checkbox-label" for="picture-use-wikiskill"><input id="picture-use-wikiskill" name="use_wikiskill" type="checkbox" checked><span>加载已发布的动效 WikiSkill</span></label>
           <p id="picture-skill-help" class="small muted">本次固定所用版本。关闭后仍提供绘制工具与渲染规范，不注入已发布的技法；本次形成的方法可用于换内容验证。</p>
-          <details class="form-details"><summary>本次预算</summary><div class="form-row"><label for="picture-rounds">最多探索轮数<input id="picture-rounds" name="max_rounds" type="number" min="1" max="8" step="1" value="3" required></label><label for="picture-minutes">时间上限（分钟）<input id="picture-minutes" name="max_minutes" type="number" min="1" max="60" step="1" value="15" required></label></div><p class="small muted">预算覆盖创作、渲染、评审和换内容验证。预算不足时优先保存复现进展；之后可继续发起实验。</p></details>
+          <details id="picture-budget-fields" class="form-details"><summary>本次预算</summary><div class="form-row"><label for="picture-rounds">最多探索轮数<input id="picture-rounds" name="max_rounds" type="number" min="1" max="8" step="1" value="3" required></label><label for="picture-minutes">时间上限（分钟）<input id="picture-minutes" name="max_minutes" type="number" min="1" max="60" step="1" value="15" required></label></div><p class="small muted">预算覆盖创作、渲染、评审和换内容验证。预算不足时优先保存复现进展；之后可继续发起实验。</p></details>
           <div class="form-footer"><p class="small muted">运行中只能查看或停止。新意见在下一次实验生效；不会自动发布知识。</p><button id="picture-submit" class="button primary" type="submit">开始图片学习</button></div>
         </form>
       </section>

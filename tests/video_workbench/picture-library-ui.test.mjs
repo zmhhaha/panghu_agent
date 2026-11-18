@@ -61,7 +61,7 @@ test('continue binds the selected reproduction; fresh drops old source selection
   const fresh = buildPictureExperiment({...common, mode: 'fresh', source: {files: []}}, uuid);
   assert.equal(fresh.use_wikiskill, false); assert.equal(Object.hasOwn(fresh, 'base_candidate_id'), false);
   assert.equal(Object.hasOwn(fresh, 'source'), false);
-  assert.deepEqual(buildPictureExperiment({...common, mode: 'retry'}, uuid), {request_id: uuid, mode: 'retry', max_rounds: 3, max_seconds: 900});
+  assert.deepEqual(buildPictureExperiment({...common, mode: 'retry', max_rounds: 8, max_minutes: 60}, uuid), {request_id: uuid, mode: 'retry'});
   assert.throws(() => buildPictureExperiment({mode: 'continue'}, uuid), /改善/);
 });
 
@@ -159,6 +159,35 @@ test('detail compares real reference and result, provides source and receipt, an
   assert.equal(labels.includes('从零重做'), false); assert.equal(labels.includes('采用为默认作品'), false);
 });
 
+test('source-only failed candidates keep their download and retry but cannot continue or become the adopted image', async () => {
+  const sourceOnly = candidate('source-only', {picture_url: null, receipt_url: null});
+  const p = project({state: 'failed', candidates: [sourceOnly],
+    experiments: [{id: 'exp', state: 'failed'}]});
+  const detail = renderPictureDetail(doc, p, {root});
+  const labels = buttons(detail).map(row => row.textContent);
+  assert.ok(labels.includes('技术重试')); assert.ok(labels.includes('从零重做'));
+  assert.equal(labels.includes('继续优化'), false); assert.equal(labels.includes('采用为默认作品'), false);
+  assert.match(detail.textContent, /图片未完成/); assert.match(detail.textContent, /绘制源码已保存/);
+  assert.ok(all(detail).some(row => row.tagName === 'A' && row.textContent === '下载绘制源码'));
+  assert.equal(all(detail).filter(row => row.tagName === 'IMG').length, 1);
+  const h = harness(path => path.endsWith('catalog') ? catalog() : p);
+  await h.controller.refresh(); await h.controller.open(p.id);
+  assert.equal(await h.controller.experiment({mode: 'continue', feedback: '继续', base_candidate_id: sourceOnly.id}), false);
+  assert.equal(await h.controller.adopt(sourceOnly.id), false);
+  assert.equal(h.requests.some(row => row.request.method), false);
+});
+
+test('transfer validation images cannot be continued or adopted as reproduction baselines', async () => {
+  const transfer = candidate('transfer', {work_kind: 'transfer'}), p = project({candidates: [transfer]});
+  const detail = renderPictureDetail(doc, p, {root});
+  assert.equal(buttons(detail).some(row => ['继续优化', '采用为默认作品'].includes(row.textContent)), false);
+  const h = harness(path => path.endsWith('catalog') ? catalog() : p);
+  await h.controller.refresh(); await h.controller.open(p.id);
+  assert.equal(await h.controller.experiment({mode: 'continue', feedback: '继续', base_candidate_id: transfer.id}), false);
+  assert.equal(await h.controller.adopt(transfer.id), false);
+  assert.equal(h.requests.some(row => row.request.method), false);
+});
+
 test('untrusted titles, reviews and goals stay text; malicious artifact URLs do not become images or anchors', () => {
   const p = project({title: '<img src=x onerror=alert(1)>', goal: '<script>evil()</script>',
     candidates: [candidate('one', {picture_url: 'https://evil.example/image.png', source_url: 'javascript:evil()', review: {summary: '<svg onload=evil()>'}})]});
@@ -186,6 +215,8 @@ test('navigation and the documented JSON contract expose an independent image li
   assert.equal(contract.servers[0].url, root.href + 'api/picture-lab');
   for (const path of ['/catalog', '/references', '/projects', '/projects/{project_id}/experiments', '/projects/{project_id}/stop', '/projects/{project_id}/adopt']) assert.ok(contract.paths[path]);
   assert.equal(contract.components.schemas.ProjectStart.properties.use_wikiskill.default, true);
+  assert.deepEqual(contract.components.schemas.ExperimentStart.allOf[0].then.not.anyOf.map(row => row.required[0]),
+    ['feedback', 'base_candidate_id', 'use_wikiskill', 'max_rounds', 'max_seconds']);
 });
 
 test('a failed catalogue read clears write readiness and stale CSRF cannot submit another operation', async () => {

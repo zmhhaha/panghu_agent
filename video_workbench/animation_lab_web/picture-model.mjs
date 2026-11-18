@@ -43,9 +43,9 @@ export function buildPictureProject(fields, referenceIds, id) {
 export function buildPictureExperiment(fields, id) {
   const mode = fields.mode ?? 'continue';
   if (!['continue', 'fresh', 'retry'].includes(mode)) throw Error('请选择有效的实验方式');
-  const body = {request_id: requestId(id), mode, ...pictureBudget(fields)};
   // A technical retry retains the immutable original brief and knowledge pin.
-  if (mode === 'retry') return body;
+  if (mode === 'retry') return {request_id: requestId(id), mode};
+  const body = {request_id: requestId(id), mode, ...pictureBudget(fields)};
   const feedback = text(fields.feedback).trim();
   if (feedback.length > 8000) throw Error('本次意见不能超过 8000 字');
   if (mode === 'continue' && !feedback) throw Error('请说明下一次实验希望改善哪里');

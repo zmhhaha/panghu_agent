@@ -11,6 +11,9 @@ const ERROR_MESSAGES = {
   picture_learning_unavailable: '图片学习执行器尚未配置。', picture_reference_invalid: '参考图片无法读取，请选择有效的 PNG 或 JPEG。',
   picture_project_active: '项目仍在运行，请先停止或等待本次实验结束。', picture_budget_exhausted: '本次实验预算已用完。',
   picture_reference_too_large: '参考图片超过大小上限，请缩小后再上传。', picture_request_conflict: '同一请求编号的内容不一致，请核对原请求。',
+  picture_learning_baseline_not_rendered: '这份作品尚未生成图片，请技术重试或从零重做。',
+  picture_learning_candidate_not_rendered: '这份作品尚未生成图片，暂时不能采用为默认作品。',
+  picture_learning_retry_input_frozen: '技术重试沿用原始需求和预算；需要更改时，请继续优化或从零重做。',
 };
 const MODE_NAMES = {continue: '继续优化', fresh: '从零重做', retry: '重试失败的实验'};
 function errorMessage(error) {
@@ -171,6 +174,11 @@ export class PictureLibraryController {
   async experiment(fields) {
     const detail = this.state.detail;
     if (!detail?.id || !this.enabled() || this.locked() || pictureIsActive(detail)) return false;
+    const base = pictureDefaultCandidate(detail, fields.base_candidate_id);
+    if ((fields.mode ?? 'continue') === 'continue'
+      && (!pictureImageUrl(base, detail, this.root) || (base?.role ?? base?.work_kind) === 'transfer')) {
+      this.setMessage('请先选择一份已实际生成图片的复现作品。只有源码时，可以技术重试或从零重做。'); return false;
+    }
     return this.send(pictureRequestPath(detail.id, 'experiments'), buildPictureExperiment(fields, this.uuid()));
   }
   async stop() {
@@ -180,6 +188,9 @@ export class PictureLibraryController {
   async adopt(candidateId) {
     if (!this.state.detail?.id || this.locked() || pictureIsActive(this.state.detail)) return false;
     pictureId(candidateId);
+    const candidate = pictureCandidates(this.state.detail).find(row => row.id === candidateId);
+    if (!candidate || !pictureImageUrl(candidate, this.state.detail, this.root)
+      || (candidate.role ?? candidate.work_kind) === 'transfer') return false;
     return this.send(pictureRequestPath(this.state.detail.id, 'adopt'), {candidate_id: candidateId});
   }
   destroy() { this.closed = true; if (this.timer !== null) this.unschedule(this.timer); this.timer = null; }
@@ -258,11 +269,12 @@ export function renderPictureDetail(doc, project, {root, selection = null, onSel
   const intro = el(doc, 'div'); intro.append(el(doc, 'p', 'eyebrow', '图片学习项目'), el(doc, 'h1', '', project.title), el(doc, 'p', 'muted', project.goal));
   header.append(intro); fragment.append(button(doc, '返回图片学习库', onBack), header);
   const current = latestPictureExperiment(project), active = pictureIsActive(project), candidate = pictureDefaultCandidate(project, selection);
+  const selectedPictureUrl = pictureImageUrl(candidate, project, root);
   const toolbar = el(doc, 'div', 'picture-details-toolbar');
   if (active) toolbar.append(button(doc, ['stopping', 'cancelling'].includes(pictureProjectState(project)) ? '正在核实停止' : '停止本次实验', onStop,
     {className: 'button danger', disabled: locked || ['stopping', 'cancelling'].includes(pictureProjectState(project))}));
   else {
-    if (candidate) toolbar.append(button(doc, '继续优化', () => onExperiment('continue'), {className: 'button primary', disabled: locked}));
+    if (candidate && selectedPictureUrl && (candidate.role ?? candidate.work_kind) !== 'transfer') toolbar.append(button(doc, '继续优化', () => onExperiment('continue'), {className: 'button primary', disabled: locked}));
     toolbar.append(button(doc, '从零重做', () => onExperiment('fresh'), {disabled: locked}));
     if (pictureProjectState(project) === 'failed') toolbar.append(button(doc, '技术重试', () => onExperiment('retry'), {disabled: locked}));
   }
@@ -280,6 +292,7 @@ export function renderPictureDetail(doc, project, {root, selection = null, onSel
   const candidates = pictureCandidates(project), versions = el(doc, 'div', 'picture-versions');
   for (let i = 0; i < candidates.length; i++) {
     const row = candidates[i], labels = [pictureCandidateRole(row) + ' ' + (i + 1)];
+    if (!pictureImageUrl(row, project, root)) labels.push('图片未完成');
     if (row.id === project.best_candidate_id) labels.push('内部最佳');
     if (row.id === project.adopted_candidate_id) labels.push('默认作品');
     const choice = button(doc, labels.join(' · '), () => onSelect(row.id)); choice.setAttribute('aria-pressed', String(candidate?.id === row.id)); versions.append(choice);
@@ -288,16 +301,17 @@ export function renderPictureDetail(doc, project, {root, selection = null, onSel
   const references = rows(project.references), reference = references[0] ?? (rows(project.reference_ids)[0] ? {id: project.reference_ids[0]} : null);
   const work = el(doc, 'div', 'picture-workspace');
   work.append(pictureFigure(doc, '参考图片', referenceUrl(reference, root), reference?.file_name ?? '', root));
-  const pictureUrl = pictureImageUrl(candidate, project, root);
+  const pictureUrl = selectedPictureUrl;
   work.append(pictureFigure(doc, candidate ? pictureCandidateRole(candidate) : '实际绘制结果', pictureUrl,
-    candidate?.picture_sha256 || candidate?.sha256 ? '图片 SHA-256：' + (candidate.picture_sha256 ?? candidate.sha256) : '由源码真实渲染；不使用参考截图充当成品。', root)); fragment.append(work);
+    pictureUrl ? candidate?.picture_sha256 || candidate?.sha256 ? '图片 SHA-256：' + (candidate.picture_sha256 ?? candidate.sha256) : '由源码真实渲染；不使用参考截图充当成品。'
+      : candidate ? '绘制源码已保存；图片尚未完成，不能据此判断画面效果。' : '完成后展示由绘制源码实际渲染的图片。', root)); fragment.append(work);
   if (candidate) {
     const actions = el(doc, 'div', 'picture-result-links');
     if (pictureUrl) { const link = externalArtifactLink(doc, '下载图片', pictureUrl, root, true); if (link) actions.append(link); }
     for (const [kind, label] of [['source', '下载绘制源码'], ['receipt', '下载渲染回执']]) {
       const link = externalArtifactLink(doc, label, candidateArtifact(candidate, kind, project.id), root, true); if (link) actions.append(link);
     }
-    if (!active && (candidate.role ?? candidate.work_kind) !== 'transfer') actions.append(button(doc, candidate.id === project.adopted_candidate_id ? '已作为默认作品' : '采用为默认作品',
+    if (!active && pictureUrl && (candidate.role ?? candidate.work_kind) !== 'transfer') actions.append(button(doc, candidate.id === project.adopted_candidate_id ? '已作为默认作品' : '采用为默认作品',
       () => onAdopt(candidate.id), {disabled: locked || candidate.id === project.adopted_candidate_id}));
     fragment.append(actions);
   }
@@ -374,7 +388,7 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
     $('picture-availability').textContent = state.catalog?.availability?.enabled === false ? text(state.catalog.availability.reason) || '图片学习执行器尚未启用。' : '';
     $('picture-submit').disabled = !controller.enabled() || controller.locked();
     for (const element of $('picture-form').elements) element.disabled = state.busy || Boolean(state.pending)
-      || formMode === 'retry' && !['picture-rounds', 'picture-minutes', 'picture-submit'].includes(element.id);
+      || formMode === 'retry' && element.id !== 'picture-submit';
     $('picture-submit').disabled = !controller.enabled() || controller.locked();
     renderCards();
     if (state.detail && shown === 'detail') {
@@ -392,17 +406,18 @@ export function mountPictureLibrary(doc, {root = new URL('./', globalThis.locati
     if (controller.locked()) return;
     formMode = mode; clearPreview(); $('picture-form').reset(); $('picture-reference-preview').replaceChildren(); $('picture-reference-preview').hidden = true;
     $('picture-new-fields').hidden = Boolean(mode); $('picture-feedback-label').hidden = !mode || mode === 'retry';
+    $('picture-budget-fields').hidden = mode === 'retry';
     $('picture-form-title').textContent = mode ? MODE_NAMES[mode] : '新建图片学习';
     $('picture-submit').textContent = mode ? '开始' + MODE_NAMES[mode] : '开始图片学习';
     $('picture-form-note').hidden = !mode;
     $('picture-form-note').textContent = mode === 'fresh' ? '保留同一参考和学习目标，从零创作。旧源码、布局和专用方法不会作为起点；可在下方填写精简的问题。'
-      : mode === 'retry' ? '保留原来的目标、参考、标准和确切知识版本，重试失败环节。这里仅调整本次预算。'
+      : mode === 'retry' ? '保留原来的目标、参考、标准、预算和确切知识版本，重试失败环节。需要改变要求或预算时，请发起继续优化或从零重做。'
         : '保留同一参考和学习目标，在已有作品上继续改善。下方意见会冻结进下一次实验，不修改历史需求。';
     for (const id of ['picture-name', 'picture-goal', 'picture-reference', 'picture-width', 'picture-height']) $(id).required = !mode;
     $('picture-feedback').required = mode === 'continue';
     $('picture-use-wikiskill').checked = mode === 'retry' ? latestPictureExperiment(controller.state.detail)?.frozen?.use_wikiskill !== false : true;
     $('picture-skill-help').hidden = mode === 'retry';
-    show('form'); render(controller.state); (mode === 'retry' ? $('picture-rounds') : mode ? $('picture-feedback') : $('picture-name')).focus();
+    show('form'); render(controller.state); (mode === 'retry' ? $('picture-submit') : mode ? $('picture-feedback') : $('picture-name')).focus();
   };
   controller = new PictureLibraryController({request, root, storage, uuid, schedule, unschedule, onChange: render});
   $('picture-refresh').addEventListener('click', () => void controller.refresh());

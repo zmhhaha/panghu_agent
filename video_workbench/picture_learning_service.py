@@ -252,6 +252,7 @@ class PictureLearningService:
                 candidate = next((item for item in self._all_candidates(owner, project_id)
                                   if item['id'] == chosen and item['work_kind'] == 'reproduction'), None)
                 require(candidate is not None, 'picture_learning_baseline_required', 409)
+                require(self._has_picture(candidate), 'picture_learning_baseline_not_rendered', 409)
                 frozen.update(base_candidate_id=chosen, base_source=deepcopy(candidate['source']),
                     base_observation=dict(sha256=candidate['observed_sha256'],
                                           suffix=candidate['observed_suffix']),
@@ -701,12 +702,22 @@ class PictureLearningService:
 
     cancel = stop
 
+    @staticmethod
+    def _has_picture(candidate):
+        return (bool(candidate.get('picture_sha256')) and bool(candidate.get('observed_sha256'))
+                and candidate.get('observed_suffix') in {'.png', '.jpg'}
+                and type(candidate.get('artifacts')) is dict
+                and type(candidate['artifacts'].get('picture')) is dict
+                and bool(candidate['artifacts']['picture'].get('id'))
+                and candidate['artifacts']['picture'].get('sha256') == candidate['picture_sha256'])
+
     def adopt(self, owner, project_id, body):
         require(type(body) is dict and set(body) == {'candidate_id'})
         candidate = next((item for item in self._all_candidates(owner, project_id)
-                          if item['id'] == body['candidate_id'] and item.get('picture_sha256')
+                          if item['id'] == body['candidate_id']
                           and item['work_kind'] == 'reproduction'), None)
         require(candidate is not None, 'picture_learning_candidate_not_found', 404)
+        require(self._has_picture(candidate), 'picture_learning_candidate_not_rendered', 409)
         with self.store.db() as db:
             db.execute('BEGIN IMMEDIATE')
             project = self.store.read('projects', owner, project_id, db=db)

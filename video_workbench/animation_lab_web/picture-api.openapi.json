@@ -284,7 +284,7 @@
       "post": {
         "operationId": "continuePictureLearning",
         "summary": "继续、从零重做或技术重试",
-        "description": "运行中的项目不能改变需求。continue 继承明确选定的复现作品；fresh 保留参考与目标，移除旧源码、布局和专用方法；retry 保持原始需求与知识绑定，仅重试技术失败。开发者可反复发起新的有界实验。",
+        "description": "运行中的项目不能改变需求。continue 继承明确选定且已实际生成图片的复现作品；fresh 保留参考与目标，移除旧源码、布局和专用方法；retry 只发送 request_id 与 mode，保持原始需求、预算与知识绑定，仅重试技术失败。更改预算须使用 continue 或 fresh。开发者可反复发起新的有界实验。",
         "parameters": [
           {
             "$ref": "#/components/parameters/Origin"
@@ -773,6 +773,16 @@
                   {
                     "required": [
                       "use_wikiskill"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "max_rounds"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "max_seconds"
                     ]
                   }
                 ]
