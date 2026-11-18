@@ -79,6 +79,23 @@ def factory_motion(code):
             bodies.add(body_start)
             records.append(dict(name=match.group(1), start=match.start(), body_start=body_start,
                 end=end, parameters=parameters, body=code[body_start:end], parent=None))
+    # An anonymous arrow is a lexical owner too. Recognize its body even when
+    # uninvoked so that a dead closure cannot lend its declarations to a live
+    # caller. Only the exact immediate call below can initialize an API.
+    for match in re.finditer(r'\(\s*(?:\(([^()]*)\)|(' + _NAME + r'))\s*=>\s*\{', code):
+        parameters = match.group(1) if match.group(1) is not None else match.group(2)
+        parameters = [p.strip() for p in _parts(parameters)] if parameters.strip() else []
+        if any(not re.fullmatch(_NAME, p) for p in parameters):
+            continue
+        start = match.end() - 1
+        end = _closing(code, start, '{', '}')
+        if end is None or start + 1 in bodies:
+            continue
+        if len(records) >= 256:
+            return False
+        bodies.add(start + 1)
+        records.append(dict(name='<arrow>', start=match.start(), body_start=start + 1,
+            end=end, parameters=parameters, body=code[start + 1:end], parent=None))
     def scope_at(position, *, exclude=None):
         scopes = [(row['end'] - row['body_start'], i) for i, row in enumerate(records)
                   if i != exclude and row['body_start'] <= position < row['end']]
@@ -97,14 +114,72 @@ def factory_motion(code):
             if found:
                 return found[0] if len(found) == 1 else None
         return None
+    shadows = {(i, name) for i, row in enumerate(records) for name in row['parameters']}
+    shadows.update((scope_at(match.start()), match.group(1)) for match in re.finditer(
+        r'\b(?:const|let|var)\s+(' + _NAME + r')\b', code))
+    assignment = re.compile(r'(?<![\w$.])(' + _NAME + r')\s*=\s*(?!=)')
+    writes = {(scope_at(match.start()), match.group(1)) for match in assignment.finditer(code)}
+
+    def unshadowed(name, scope):
+        return not any((owner, name) in shadows or (owner, name) in writes for owner in ancestors(scope))
+
+    # Store only syntactically immediate calls. Their enclosing scope and
+    # statement boundary are checked before they can create a live binding.
+    iifes = {}
+    for index, row in enumerate(records):
+        expression_start = row['start']
+        if row['name'] == 'function':
+            prefix = code[:expression_start].rstrip()
+            if not prefix.endswith('('):
+                continue
+            expression_start = len(prefix) - 1
+        elif row['name'] != '<arrow>':
+            continue
+        call = re.match(r'\s*\)\s*\(', code[row['end'] + 1:])
+        if not call:
+            continue
+        opening = row['end'] + 1 + call.end() - 1
+        call_end = _closing(code, opening)
+        if call_end is None or not re.match(r'\s*(?:[;,]|$)', code[call_end + 1:]):
+            continue
+        iifes[index] = dict(start=expression_start, end=call_end,
+            arguments=_parts(code[opening + 1:call_end]) if code[opening + 1:call_end].strip() else [])
+
+    def direct_position(position, scope):
+        prefix = code[records[scope]['body_start'] if scope is not None else 0:position].rstrip()
+        return ((not prefix or prefix[-1] in ';}')
+            and all(prefix.count(a) == prefix.count(b) for a, b in (('(', ')'), ('[', ']'), ('{', '}'))))
+
+    executed = {None}
+    for _ in range(32):
+        changed = False
+        for index, call in iifes.items():
+            scope = records[index]['parent']
+            if scope not in executed or index in executed:
+                continue
+            prefix = code[:call['start']]
+            initializer = re.search(r'\b(?:const|let|var)\s+' + _NAME + r'\s*=\s*$', prefix)
+            statement = initializer.start() if initializer else call['start']
+            if direct_position(statement, scope):
+                executed.add(index)
+                changed = True
+        if not changed:
+            break
     # Only returns belonging to this function can define its public API.
     apis = {}
     for index, row in enumerate(records):
         body = row['body']
         candidates = []
-        for match in re.finditer(r'\breturn\s*\{', body):
+        own_returns = [match for match in re.finditer(r'\breturn\b', body)
+            if scope_at(row['body_start'] + match.start()) == index]
+        if len(own_returns) != 1 or not direct_position(
+                row['body_start'] + own_returns[0].start(), index):
+            continue
+        for match in re.finditer(r'\breturn\s*(?:(Object)\s*\.\s*freeze\s*\(\s*)?\{', body):
             position = row['body_start'] + match.start()
             if scope_at(position) != index:
+                continue
+            if match.group(1) and not unshadowed('Object', index):
                 continue
             start = row['body_start'] + match.end() - 1
             end = _closing(code, start, '{', '}')
@@ -123,19 +198,47 @@ def factory_motion(code):
         if len(candidates) == 1:
             apis[index] = candidates[0]
     bindings = {}
-    assignment = re.compile(r'(?<![\w$.])(' + _NAME + r')\s*=\s*(?!=)')
     for match in assignment.finditer(code):
         scope = scope_at(match.start())
         call = re.match(r'\s*(' + _NAME + r')\s*\(', code[match.end():])
         factory = function(call.group(1), scope) if call else None
+        value_start = match.end() + len(code[match.end():]) - len(code[match.end():].lstrip())
+        immediate = [i for i, value in iifes.items() if i in executed
+            and value['start'] == value_start]
+        if len(immediate) == 1:
+            factory = immediate[0]
         # A nonfactory assignment poisons this receiver instead of letting it
         # retain an earlier factory, or borrow a same-named outer binding.
         bindings.setdefault((scope, match.group(1)), []).append(factory if factory in apis else None)
         if len(bindings) > 512:
             return False
-    shadows = {(i, name) for i, row in enumerate(records) for name in row['parameters']}
-    shadows.update((scope_at(match.start()), match.group(1)) for match in re.finditer(
-        r'\b(?:const|let|var)\s+(' + _NAME + r')\b', code))
+
+    def receiver(name, scope):
+        for owner in ancestors(scope):
+            factories = bindings.get((owner, name))
+            if factories is not None:
+                return factories[0] if len(factories) == 1 and factories[0] in apis else None
+            if (owner, name) in shadows:
+                return None
+        return None
+
+    # Explicit object arguments of a once-invoked local factory keep their
+    # exact API identity. A reassigned parameter stays poisoned; unknown
+    # arguments never acquire methods merely because their names match.
+    for _ in range(32):
+        changed = False
+        for index, call in iifes.items():
+            if index not in executed:
+                continue
+            for parameter, argument in zip(records[index]['parameters'], call['arguments']):
+                if (index, parameter) in bindings or not re.fullmatch(_NAME, argument.strip()):
+                    continue
+                target = receiver(argument.strip(), records[index]['parent'])
+                if target is not None:
+                    bindings[(index, parameter)] = [target]
+                    changed = True
+        if not changed:
+            break
 
     # A standalone (function(host){...})(window) has a known lexical window
     # receiver. Do not rewrite identifiers globally: two contributions may use
@@ -172,9 +275,7 @@ def factory_motion(code):
     def direct_statement(position, scope):
         if scope not in windows:
             return False
-        prefix = code[records[scope]['body_start']:position].rstrip()
-        return ((not prefix or prefix[-1] in ';}')
-            and all(prefix.count(a) == prefix.count(b) for a, b in (('(', ')'), ('[', ']'), ('{', '}'))))
+        return direct_position(position, scope)
 
     # Explicit object exports retain function identity across IIFE boundaries.
     # Only an unambiguous earlier export can bind a later local receiver; an
@@ -226,6 +327,10 @@ def factory_motion(code):
         if window_receiver(match.group(1), scope_at(match.start()))]
     if any(match.group(1) == 'window' and match not in registrations for match in raw_registrations):
         return False  # A shadowed window is not the host registration.
+    if any(scope_at(match.start()) not in executed for match in registrations):
+        return False  # An uninvoked closure cannot install the host callback.
+    if any(not direct_position(match.start(), scope_at(match.start())) for match in registrations):
+        return False  # Conditional registration is not a known live root.
     if any((match.group(1) != 'window' or scope_at(match.start()) in windows)
            and not direct_statement(match.start(), scope_at(match.start())) for match in registrations):
         return False  # Conditional/uninvoked registration is not a known root.

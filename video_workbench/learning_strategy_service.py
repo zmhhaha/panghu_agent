@@ -312,6 +312,9 @@ class LearningStrategyMixin:
         for key in ('learning_strategy', 'learning_strategy_complete', 'internal_attempts'):
             if key in prior:
                 run[key] = deepcopy(prior[key])
+        if prior['work_kind'] == 'transfer':
+            self._learning_restore_completed_transfer(prior, run)
+            return
         state = run.get('learning_strategy') or {}
         # Only the first complete composition can be awaiting source acceptance.
         # A later failed revision must not silently fall back to this old source.
@@ -341,6 +344,73 @@ class LearningStrategyMixin:
             strategy.require(previous_intent == intent, 'retry_checkpoint_changed', 409)
         run['completed_author_retry'] = intent
 
+    def _learning_transfer_lineage(self, run):
+        """Bind the reviewed reproduction that supplied this transfer method."""
+        candidates = self._context_candidates(run)
+        best = next((row for row in candidates if row['id'] == run['best_candidate_id']), None)
+        strategy.require(best is not None and best['work_kind'] == 'reproduction'
+            and best.get('status') == 'reviewed' and best.get('review') is not None
+            and self._has_picture(best) and best.get('method') == run.get('transfer_method'),
+            'retry_transfer_lineage_changed', 409)
+        author = self.store.read('operations', run['owner'], best['author_operation_id'])
+        review = self.store.read('operations', run['owner'], best['review_operation_id'])
+        render = self.store.read('operations', run['owner'], best['render_operation_id'])
+        for operation in (author, review, render):
+            origin = self.store.read('experiments', run['owner'], operation['experiment_id'])
+            strategy.require(operation.get('owner') == run['owner']
+                and operation['id'] in origin['operation_ids']
+                and operation.get('status') == 'completed'
+                and origin['project_id'] == run['project_id']
+                and digest(operation['input']) == operation['input_sha256'],
+                'retry_transfer_lineage_changed', 409)
+        strategy.require(author['stage'] == 'author'
+            and author['result'].get('source') == best['source']
+            and review['stage'] == 'review' and review['input']['work_kind'] == 'reproduction'
+            and review['result'].get('review') == best['review']
+            and render['stage'] == 'render'
+            and render['result'].get('sha256') == (best.get('media_sha256') or best.get('picture_sha256')),
+            'retry_transfer_lineage_changed', 409)
+        return dict(candidate_id=best['id'], candidate_sha256=digest(best),
+            author_operation=strategy.operation_binding(author),
+            review_operation=strategy.operation_binding(review),
+            render_operation_sha256=digest(render),
+            review_receipt_sha256=digest(review.get('observation_receipt')))
+
+    def _learning_restore_completed_transfer(self, prior, run):
+        """Recover only the latest paid transfer author, never an old compose."""
+        if (prior['stage'] != 'author' or prior['round'] != 1
+                or prior.get('active_operation_id') is not None
+                or any(row['work_kind'] != 'reproduction' for row in prior['candidates'])
+                or prior.get('resource_plan')):
+            return
+        state = run.get('learning_strategy')
+        if state is not None and (state.get('phase') != 'complete'
+                or state.get('complete') is not True or run.get('learning_strategy_complete') is not True):
+            return
+        previous = prior.get('completed_author_retry')
+        pending = previous is not None and previous.get('consumed') is False
+        if pending:
+            strategy.require(previous.get('work_kind') == 'transfer' and not prior['operation_ids'],
+                'retry_checkpoint_changed', 409)
+            binding = previous['operation']
+            operation = self._learning_operation(prior, binding)
+        else:
+            if not prior['operation_ids']:
+                return
+            operation = self.store.read('operations', prior['owner'], prior['operation_ids'][-1])
+            if operation['stage'] != 'author' or operation.get('status') != 'completed':
+                return
+            binding = strategy.operation_binding(operation)
+        self._learning_check_completed_author(run, operation)
+        receipt = operation.get('observation_receipt')
+        strategy.require(type(receipt) is dict, 'retry_receipt_missing', 409)
+        intent = dict(work_kind='transfer', operation=deepcopy(binding),
+            experiment_id=operation['experiment_id'], job_id=operation['job_id'],
+            receipt_sha256=digest(receipt), reproduction=self._learning_transfer_lineage(run), consumed=False)
+        if pending:
+            strategy.require(previous == intent, 'retry_checkpoint_changed', 409)
+        run['completed_author_retry'] = intent
+
     def _learning_check_completed_author(self, run, operation):
         """Keep the original paid input/result bound to the same frozen study."""
         document = operation['input']
@@ -353,20 +423,38 @@ class LearningStrategyMixin:
             and document.get('project_id') == run['project_id'] == origin['project_id']
             and document.get('work_kind') == run['work_kind'] == origin['work_kind']
             and origin['round'] == run['round']
-            and document.get('mode') == 'create'
-            and task.get('schema') == strategy.TASK_SCHEMA and task.get('phase') == 'compose',
+            and document.get('mode') == 'create',
             'retry_checkpoint_changed', 409)
         strategy.require(origin['frozen_sha256'] == run['frozen_sha256']
+            == digest(origin['frozen']) == digest(run['frozen'])
             and origin['frozen'] == run['frozen']
             and origin.get('learning_strategy') == run.get('learning_strategy')
-            and origin.get('learning_strategy_complete') is True
-            and document.get('goal') == run['frozen']['goal']
             and document.get('knowledge_binding') == run['frozen']['library_binding']
             and document.get('knowledge_snapshot') == run['frozen']['knowledge_snapshot'],
             'retry_frozen_input_changed', 409)
+        if run['work_kind'] == 'transfer':
+            strategy.require(not task and origin.get('stop_proven') is True
+                and origin['state'] in {'failed', 'cancelled'}
+                and origin['stage'] == 'author' and origin['round'] == 1
+                and origin['active_operation_id'] is None
+                and origin['operation_ids'][-1] == operation['id']
+                and origin.get('transfer_status') == run.get('transfer_status') == 'running'
+                and origin.get('transfer_task') == run.get('transfer_task')
+                and origin.get('transfer_method') == run.get('transfer_method')
+                and origin.get('best_candidate_id') == run.get('best_candidate_id'),
+                'retry_transfer_input_changed', 409)
+            expected = self._document(run, 'create')
+            expected.update(experiment_id=origin['id'], frozen_at=origin['created_at'])
+            strategy.require(document == self._document(origin, 'create') == expected
+                and self._learning_transfer_lineage(origin) == self._learning_transfer_lineage(run),
+                'retry_transfer_input_changed', 409)
+        else:
+            strategy.require(task.get('schema') == strategy.TASK_SCHEMA and task.get('phase') == 'compose'
+                and origin.get('learning_strategy_complete') is True
+                and document.get('goal') == run['frozen']['goal'], 'retry_checkpoint_changed', 409)
 
     def _learning_resume_completed_author(self, run):
-        """Revalidate a stopped compose checkpoint without another creator POST.
+        """Revalidate a stopped complete author without another creator POST.
 
         Candidate, consumed intent and the next stage are saved together by the
         host. A restart before that save repeats only reads and validation.
@@ -375,13 +463,19 @@ class LearningStrategyMixin:
         if intent is None or intent.get('consumed'):
             return False
         state = self._learning_state(run)
-        strategy.require(state is not None and state.get('phase') == 'complete'
-            and state.get('complete') is True and run.get('learning_strategy_complete') is True
-            and run['stage'] == 'author' and not run['candidates']
-            and not run['operation_ids'] and run['active_operation_id'] is None
-            and state.get('composition_operation') == intent.get('operation'),
+        transfer = intent.get('work_kind') == 'transfer'
+        strategy.require(run['stage'] == 'author' and not run['candidates']
+            and not run['operation_ids'] and run['active_operation_id'] is None,
             'retry_checkpoint_changed', 409)
-        for probe in state['probes']:
+        strategy.require((state is not None and state.get('phase') == 'complete'
+                and state.get('complete') is True and run.get('learning_strategy_complete') is True)
+                or transfer and state is None, 'retry_checkpoint_changed', 409)
+        strategy.require((transfer and run['work_kind'] == 'transfer'
+                and self._learning_transfer_lineage(run) == intent.get('reproduction'))
+            or (not transfer and run['work_kind'] == 'reproduction'
+                and state.get('composition_operation') == intent.get('operation')),
+            'retry_checkpoint_changed', 409)
+        for probe in (state or {}).get('probes', []):
             if probe['status'] == 'reviewed':
                 self._learning_operation(run, probe['author_operation'])
                 self._learning_operation(run, probe['review_operation'])
