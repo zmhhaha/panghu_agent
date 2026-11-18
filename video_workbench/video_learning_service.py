@@ -23,6 +23,55 @@ from .video_learning_analysis import VideoLearningAnalysis
 PREFIX = '/api/video-lab'
 
 
+def review_output_contract(mode):
+    """Self-contained wire guidance, separate from creative feedback.
+
+    The input cannot contain its own final SHA. The example is explicitly a
+    template; its binding is resolved from the actual read_inputs tool receipt.
+    """
+    require(mode in {'review', 'transfer_plan'}, 'video_learning_review_mode_invalid')
+    task = (dict(goal='Change object count and spatial structure while testing the same learned technique.',
+        criteria=['The changed structure still demonstrates the learned technique.'],
+        rationale='A structural change tests reuse beyond the reference example.')
+        if mode == 'transfer_plan' else None)
+    return dict(schema='video.reference-learning-review-output-guide.v1',
+        binding=dict(mode='Copy the exact input mode.',
+            input_sha256='Use the exact read_inputs.details.input_sha256 value. Never output the template marker or a source/image SHA.'),
+        instructions=[
+            'This is an output-format contract, not creative feedback. Fill the example with findings grounded in the actual supplied frames.',
+            'The JSON example is a template. Replace its input_sha256 marker with the actual tool receipt SHA before write_outputs.',
+            'Do not add unlisted fields or put issue objects inside issues. Encode severity, description and evidence in one plain issue string when needed.',
+            'Text arrays contain at most 32 plain strings; each string has at most 8000 characters.',
+            'Do not create source or method in review/transfer_plan. source and method must be null; sound_events must be empty.',
+            'preferred may be output, baseline or inconclusive. baseline requires actual supplied baseline frames.',
+            'motion and audio can only be unverified or not_requested. Sampled pixels do not establish continuous playback or audio listening.',
+            'transfer_plan requires a non-null transfer_task with a concrete changed-content goal and string[] criteria. A proposed task is not completed transfer validation.',
+        ],
+        top_level_required=dict(schema='literal video.reference-learning-result.v1',
+            input_sha256='exact input SHA-256 from read_inputs.details.input_sha256', mode='exact input mode',
+            source='null', review='object using the listed field types', method='null',
+            transfer_task='task object required for transfer_plan; null or task object for review',
+            evidence_scope='literal sampled_frames_only'),
+        top_level_optional=dict(sound_events='empty array only', limitations='string[]', analysis='omit or null'),
+        review_required=dict(score='finite number from 0 to 100', summary='nonempty string',
+            issues='string[]; NEVER object[]', stop_recommended='boolean'),
+        review_optional=dict(comparison='plain string; NEVER object',
+            preferred='output | baseline | inconclusive', observed_facts='string[]',
+            evidence_frame_ids='string[]; actual supplied frame IDs only', limitations='string[]',
+            reference_fidelity='plain string', work_quality='plain string', transfer='plain string',
+            motion='unverified | not_requested', audio='unverified | not_requested'),
+        transfer_task=dict(goal='nonempty plain string', criteria='string[]', rationale='optional plain string'),
+        result_example=dict(schema=protocol.RESULT_SCHEMA, input_sha256='BIND_FROM_READ_INPUTS_DETAILS_INPUT_SHA256',
+            mode=mode, source=None, method=None, transfer_task=task, evidence_scope='sampled_frames_only',
+            sound_events=[], review=dict(score=50, summary='Describe concrete findings from the actual supplied frames.',
+                issues=['Describe a specific visible issue and its actual frame evidence in this string.'],
+                stop_recommended=False, comparison='Describe only the actual reference/output/baseline comparison.',
+                preferred='inconclusive', reference_fidelity='Describe fidelity only within the observed frames.',
+                work_quality='Describe actual visible strengths and remaining problems.',
+                transfer='State the actual changed-content validation scope; do not imply that a proposed task was executed.',
+                motion='unverified', audio='unverified')))
+
+
 class VideoLearningService(VideoLearningAnalysis, PictureLearningService):
     protocol = protocol
     prefix = PREFIX
@@ -171,6 +220,8 @@ class VideoLearningService(VideoLearningAnalysis, PictureLearningService):
                 dict(status='unverified', learning_requested=False, has_audio=False))
         if run['stage'] == 'render':
             document['sound_events'] = deepcopy(self._candidate(run).get('sound_events', []))
+        if mode in {'review', 'transfer_plan'}:
+            document['constraints']['output_contract'] = review_output_contract(mode)
         return document
 
     def _agent(self, run, operation):
