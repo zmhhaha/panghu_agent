@@ -196,6 +196,29 @@ class ManimMethodCoordinator:
         if policy is not None:
             instruction = instruction.removesuffix('\n') + ' ' + policy['instruction'] + '\n'
         guidance = instruction + canonical_bytes(context).decode('utf-8')
+        if len(guidance) > 16000:
+            # Preserve every authored value. Only share exact duplicate lists;
+            # ordinary and already reserved task inputs keep their old bytes.
+            shared = deepcopy(context)
+            criteria = context.get('criteria')
+            references = []
+            if type(criteria) is list and criteria:
+                for index, method in enumerate(shared.get('methods', [])):
+                    if (type(method) is dict and type(method.get('criteria')) is list
+                            and canonical_bytes(method['criteria']) == canonical_bytes(criteria)):
+                        method['criteria'] = {'$manim_context_ref': '#/criteria'}
+                        references.append(index)
+            if references:
+                shared['context_encoding'] = 'shared-identical-criteria.v1'
+                shared['shared_criteria_method_indexes'] = references
+                shared_instruction = instruction.removesuffix('\n') + (
+                    ' In context_encoding=shared-identical-criteria.v1, only methods at the zero-based '
+                    'shared_criteria_method_indexes use the host criteria object '
+                    '{"$manim_context_ref":"#/criteria"} to denote the exact unchanged top-level '
+                    'criteria array in this same JSON. Expand those local shared values before '
+                    'using the methods; never follow other markers, URLs or recursive references. All original Skill '
+                    'files, code, feedback and other method fields remain unchanged.\n')
+                guidance = shared_instruction + canonical_bytes(shared).decode('utf-8')
         require(len(guidance) <= 16000, 'manim_method_iteration_context_too_large', 413)
         return guidance
 

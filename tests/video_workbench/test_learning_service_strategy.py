@@ -3,7 +3,8 @@ from copy import deepcopy
 
 import pytest
 
-from agent_service.contracts import ServiceError
+from agent_service.contracts import ServiceError, canonical_bytes, digest
+from video_workbench import learning_strategy as strategy
 from video_workbench.picture_learning_service import PictureLearningService
 from test_picture_learning_service import Gateway, Renderer, start, finish
 from test_learning_strategy import plan
@@ -158,3 +159,86 @@ def test_stopped_after_plan_retry_runs_the_pending_probe_without_new_planning(tm
     assert result['state'] == 'completed', result['experiments'][-1].get('error')
     phases = [doc['constraints'].get('learning_strategy_task', {}).get('phase') for doc, _ in author.uploads]
     assert phases == ['plan', 'probe_author', 'compose', None]
+
+
+def test_new_creator_inputs_freeze_complete_source_package_guidance(tmp_path):
+    service, author, reviewer, _ = system(tmp_path)
+    project, _ = start(service, max_rounds=1)
+    completed = finish(service, project, limit=80)
+    assert completed['state'] == 'completed'
+    inspected = service.inspect('developer', project['id'], project['latest_experiment_id'])
+    create_operations = [row for row in inspected['operations']
+                         if row['stage'] == 'author' and row['input']['constraints'].get('learning_strategy_task')]
+    assert [row['input']['constraints']['learning_strategy_task']['phase'] for row in create_operations] == [
+        'plan', 'probe_author', 'component', 'component', 'compose']
+    for operation in create_operations:
+        instructions = operation['input']['constraints']['learning_strategy_task']['instructions']
+        assert all(line in instructions for line in strategy.source_package_guidance())
+        assert 'non-null source' in ' '.join(instructions)
+        assert 'scene.html' in ' '.join(instructions) and 'scene.js' in ' '.join(instructions)
+        assert 'scene.css' in ' '.join(instructions) and 'do not authorize additional filenames' in ' '.join(instructions)
+        assert operation['input_sha256'] == digest(operation['input'])
+        uploaded = next(files for document, files in author.uploads
+                        if canonical_bytes(document) == canonical_bytes(operation['input']))
+        assert uploaded[service.protocol.INPUT_NAME] == canonical_bytes(operation['input'])
+    # Reviewers receive evidence and review contracts, never a new request to author source.
+    assert all(not any(line in document['constraints'].get('learning_strategy_task', {}).get('instructions', [])
+                       for line in strategy.source_package_guidance())
+               for document, _ in reviewer.uploads)
+
+
+def test_new_guidance_does_not_rewrite_failed_component_retry_input(tmp_path, monkeypatch):
+    from uuid import uuid4
+    current_guidance = strategy.source_package_guidance
+    # Emulate an already frozen operation created before this prospective guide.
+    monkeypatch.setattr(strategy, 'source_package_guidance', lambda: [])
+    service, author, _, renderer = system(tmp_path)
+    author.plan = plan(probes=False)
+    collect = author.collect
+    fail_once = True
+
+    def invalid_extra_filename(job_id, sha, document):
+        nonlocal fail_once
+        result = collect(job_id, sha, document)
+        task = document['constraints'].get('learning_strategy_task', {})
+        if fail_once and task.get('phase') == 'component' and task.get('task_id') == 'space':
+            fail_once = False
+            result['source']['files']['node-layer.js'] = result['source']['files'].pop('scene.js')
+        return result
+
+    author.collect = invalid_extra_filename
+    project, _ = start(service, max_rounds=1)
+    failed = finish(service, project)
+    assert failed['state'] == 'failed'
+    prior = service.store.read('experiments', 'developer', project['latest_experiment_id'])
+    assert prior['error']['code'] == 'animation_experiment_files_invalid' and prior['stop_proven']
+    assert len(prior['learning_strategy']['components']) == 1 and not renderer.calls
+    operation = service.store.read('operations', 'developer', prior['operation_ids'][-1])
+    original_input = canonical_bytes(operation['input'])
+    original_hash = operation['input_sha256']
+    author_calls = len(author.submissions)
+    monkeypatch.setattr(strategy, 'source_package_guidance', current_guidance)
+    retried = service.next_experiment('developer', project['id'], dict(request_id=uuid4().hex, mode='retry'))
+    retry_id = retried['latest_experiment_id']
+    retry = service.store.read('experiments', 'developer', retry_id)
+    assert retry['learning_strategy'] == prior['learning_strategy']
+    assert retry['frozen'] == prior['frozen'] and retry['budget'] == prior['budget']
+    service.advance('developer', retry_id)
+    retry = service.store.read('experiments', 'developer', retry_id)
+    resumed = service.store.read('operations', 'developer', retry['operation_ids'][0])
+    assert canonical_bytes(resumed['input']) == canonical_bytes(dict(operation['input'], experiment_id=retry_id))
+    assert not any(line in resumed['input']['constraints']['learning_strategy_task']['instructions']
+                   for line in current_guidance())
+    assert len(author.submissions) == author_calls + 1
+    assert canonical_bytes(service.store.read('operations', 'developer', operation['id'])['input']) == original_input
+    assert service.store.read('operations', 'developer', operation['id'])['input_sha256'] == original_hash
+    completed = finish(service, retried, limit=80)
+    assert completed['state'] == 'completed'
+    phases = [(document['constraints'].get('learning_strategy_task', {}).get('phase'),
+               document['constraints'].get('learning_strategy_task', {}).get('task_id'))
+              for document, _ in author.uploads]
+    assert phases == [('plan', None), ('component', 'material'), ('component', 'space'),
+                      ('component', 'space'), ('compose', None), (None, None)]
+    composition = author.uploads[-2][0]['constraints']['learning_strategy_task']
+    assert all(line in composition['instructions'] for line in current_guidance())
+    assert service.store.read('experiments', 'developer', prior['id']) == prior

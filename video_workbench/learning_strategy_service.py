@@ -133,6 +133,8 @@ class LearningStrategyMixin:
             self._learning_probe_inputs(run, document, details)
         else:
             strategy.require(False, 'phase_invalid', 409)
+        if document['mode'] == 'create':
+            details['instructions'].extend(strategy.source_package_guidance())
         return document
 
     def _learning_dependencies(self, run, identities):

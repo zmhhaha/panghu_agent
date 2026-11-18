@@ -110,6 +110,15 @@ def validate_plan(value, *, config, engine, allowed_engines, resource_plan=None)
         probes=checked_probes, components=checked_components)
 
 
+def source_package_guidance():
+    """Clarify the existing source contract in newly frozen creator inputs."""
+    return [
+        'Every create handoff, including a pending plan, focused probe, specialist component and final composition, must return a complete valid non-null source under the ordinary result contract.',
+        'source.files must contain scene.html and may contain only scene.js and scene.css in addition. Logical modules, interfaces and responsibilities do not authorize additional filenames.',
+        'Organize your functions, classes or namespaces and any needed supplied dependency implementation inside those allowed files. Do not emit field.js, node-layer.js or other separately named source files, or reference files absent from the delivered package.',
+    ]
+
+
 def task_guidance(config):
     """Versioned input data; no modification of an old profile or bundle."""
     config = validate_options(config)
@@ -118,6 +127,7 @@ def task_guidance(config):
         max_probes=config['max_probes'], max_components=config['max_components'],
         instructions=[
             'Create one normal, complete editable source using the ordinary result contract.',
+            *source_package_guidance(),
             'If the target needs no internal studies or specialists, omit method.learning_strategy or use empty probes/components; your source proceeds directly to rendering.',
             'Only when useful, propose method.learning_strategy with rationale, nonempty criteria, probes and components. A proposed plan is not executed evidence.',
             'A probe has id, goal and nonempty string[] criteria. It is a small focused technique study, not a second complete learning project.',
