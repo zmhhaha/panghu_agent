@@ -721,6 +721,8 @@ class PictureLearningService:
         with self.store.db() as db:
             db.execute('BEGIN IMMEDIATE')
             project = self.store.read('projects', owner, project_id, db=db)
+            latest = self.store.read('experiments', owner, project['latest_experiment_id'], db=db)
+            require(latest['state'] in TERMINAL, 'picture_learning_experiment_active', 409)
             project.update(adopted_candidate_id=candidate['id'], updated_at=self.clock())
             self.store.put('projects', project, db=db)
         return self.get(owner, project_id)

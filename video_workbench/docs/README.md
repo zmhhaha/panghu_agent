@@ -12,8 +12,9 @@
 | --- | --- | --- |
 | 了解整体服务 | [当前架构与实施边界](current-architecture.md) | 效果库、知识库、正式制作、渲染与公共服务关系；已实现和未完成的区别 |
 | 了解目标设计 | [Agent 效果库、视频工作台与 HyperFrames 统一设计](agent-creation-effect-library-plan.md) | 当前设计及历次检查点；不能将设计图中的全部节点当成已验收能力 |
-| 三库与图片／视频参考学习 | [参考学习设计与实施拆分](reference-learning-libraries-design.md) | 三个独立成果库、直接观察参考、内部技法小样、复现与迁移、证据范围及手动整库发版；2026-11-18 确认，待实施 |
+| 三库与图片／视频参考学习 | [参考学习设计与实施拆分](reference-learning-libraries-design.md) | 完整目标与分阶段差距；图片首版已实现，视频学习、内部小样和自适应多人学习待补齐 |
 | 使用图片学习库 | [网页与结构化 API](picture-learning-library.md) | 看参考、生成绘制源码、渲染单帧、对照迭代与保存技法；单帧是验证产物，完整创作学习流程保持 |
+| 核对图片真实渲染 | [源码与 PNG 验证](picture-learning-render-validation-20261118.md) | 水墨历史源码逐像素复现、Canvas／Three.js 真实渲染、新作者源码保全；不替代艺术认可 |
 | 同一效果从零重做、知识加载与技术重试 | [设计与实施拆分](fresh-rebuild-and-skill-loading-design.md)、[实现验证](fresh-rebuild-validation-20261117.md) | 效果归属与创作继承分开；知识开关、冻结恢复及候选人工采用 |
 | 外部 Agent 使用效果库 | [结构化 JSON API](animation-lab-agent-api.md) | 请求、凭据边界、幂等、轮询、反馈及下载；无需模拟填写网页 |
 | 理解知识库 | [整库 WikiSkill 发布](animation-knowledge-workbench.md) | 手动快照、自动编译、同产物浏览、最近五版与正式批次冻结 |

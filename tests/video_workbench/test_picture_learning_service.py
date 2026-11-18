@@ -315,6 +315,37 @@ def test_adopted_default_does_not_follow_new_candidates(system):
     assert new['adopted_candidate_id'] == chosen
 
 
+def test_adopt_waits_for_latest_experiment_to_finish(system):
+    service, author, _, _ = system
+    project, _ = start(service)
+    for _ in range(12):
+        current = service.advance('developer', project['latest_experiment_id'])
+        run = current['experiments'][-1]
+        if run['round'] == 2 and run['stage'] == 'author':
+            break
+    else:
+        raise AssertionError(current)
+    chosen = current['candidates'][0]['id']
+    assert current['candidates'][0]['picture_sha256']
+    author.active = True
+    active = service.advance('developer', project['latest_experiment_id'])
+    operation = active['experiments'][-1]['operations'][-1]
+    assert operation['stage'] == 'author' and operation['status'] == 'submitted'
+    assert author._job(operation['job_id'])['state'] == 'running'
+    with pytest.raises(ServiceError, match='picture_learning_experiment_active') as error:
+        service.adopt('developer', project['id'], dict(candidate_id=chosen))
+    assert error.value.status == 409
+    assert service.get('developer', project['id']) == active
+    author._job(operation['job_id']).update(state='completed', stop_proven=True)
+    author.active = False
+    completed = finish(service, project)
+    assert completed['state'] == 'completed' and completed['adopted_candidate_id'] is None
+    count = len(author.submissions)
+    adopted = service.adopt('developer', project['id'], dict(candidate_id=chosen))
+    assert adopted['adopted_candidate_id'] == chosen
+    assert len(author.submissions) == count
+
+
 def test_technical_retry_restores_render_without_reauthoring(system):
     service, author, _, renderer = system
     renderer.fail = True

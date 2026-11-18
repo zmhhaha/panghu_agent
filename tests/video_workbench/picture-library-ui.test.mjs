@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {buildPictureProject, buildPictureExperiment, pictureAssetUrl, pictureDefaultCandidate,
   pictureCandidates, pictureIsActive, validateReferenceFile, pictureCandidateRole} from '../../video_workbench/animation_lab_web/picture-model.mjs';
-import {PictureLibraryController, referenceBody, renderPictureDetail, renderPictureCard} from '../../video_workbench/animation_lab_web/picture-library.mjs';
+import {PictureLibraryController, picturePendingStorage, referenceBody, renderPictureDetail, renderPictureCard} from '../../video_workbench/animation_lab_web/picture-library.mjs';
 
 const root = new URL('https://video-service.panghuer.top/dev/animations/');
 const uuid = '00000000-0000-4000-8000-000000000001';
@@ -20,6 +20,26 @@ const catalog = (projects = [], extra = {}) => ({availability: {enabled: true}, 
 function memoryStorage() {
   const values = new Map(); return {getItem: key => values.get(key) ?? null,
     setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key)};
+}
+function deferred() { let resolve; const promise = new Promise(done => { resolve = done; }); return {promise, resolve}; }
+function fakeIndexedDB({abortWrites = false} = {}) {
+  const values = new Map(), stores = new Set();
+  const database = {objectStoreNames: {contains: name => stores.has(name)}, createObjectStore: name => stores.add(name),
+    transaction: (_name, mode) => {
+      const tx = {aborted: false, abort: () => { tx.aborted = true; tx.onabort?.(); }, objectStore: () => Object.fromEntries(['get', 'put', 'delete'].map(method => [method, (first, second) => {
+        const request = {};
+        queueMicrotask(() => {
+          if (tx.aborted) return;
+          if (mode === 'readwrite' && abortWrites) { tx.abort(); return; }
+          if (method === 'put') values.set(second, first);
+          else if (method === 'delete') values.delete(first);
+          request.result = method === 'get' ? values.get(first) : undefined;
+          request.onsuccess?.(); queueMicrotask(() => { if (!tx.aborted) tx.oncomplete?.(); });
+        }); return request;
+      }]))}; return tx;
+    }};
+  return {values, open: () => { const request = {};
+    queueMicrotask(() => { request.result = database; request.onupgradeneeded?.(); request.onsuccess?.(); }); return request; }};
 }
 function harness(handler = () => catalog(), options = {}) {
   const requests = [], timers = new Map(); let sequence = 0;
@@ -120,7 +140,7 @@ test('unknown submission persists across reload and explicit replay sends exactl
 test('catalog request identity can reconcile a lost new-project response without a second POST', async () => {
   const h = harness(() => catalog([project({request_id: uuid})]));
   await h.controller.refresh();
-  h.controller.setPending({path: 'api/picture-lab/projects', body: buildPictureProject(fields, ['ref'], uuid)});
+  await h.controller.setPending({path: 'api/picture-lab/projects', body: buildPictureProject(fields, ['ref'], uuid)});
   await h.controller.refresh(); assert.equal(h.controller.state.pending, null);
   assert.equal(h.controller.state.detail.id, 'picture-project-1'); assert.equal(h.requests.length, 2);
   assert.equal(h.requests[0].request.method, undefined);
@@ -282,5 +302,158 @@ test('a lost stop response is reconciled from terminal state without repeated st
   await h.controller.send('api/picture-lab/projects/picture-project-1/stop', {});
   assert.ok(h.controller.state.pending); await h.controller.refresh();
   assert.equal(h.controller.state.pending, null);
+  assert.equal(h.requests.filter(row => row.request.method).length, 1);
+});
+
+test('an 8 MiB reference exceeding normal Web Storage quota is durably saved through IndexedDB before upload', async () => {
+  const database = fakeIndexedDB(), storage = picturePendingStorage(database);
+  const bytes = new Uint8Array(8 * 1024 * 1024).fill(131);
+  let persisted;
+  const h = harness((path, request) => {
+    if (!request.method) return catalog();
+    if (path.endsWith('references')) {
+      persisted = [...database.values.values()][0];
+      assert.ok(persisted.length > 5 * 1024 * 1024);
+      const quotaStorage = {setItem: (_key, value) => { if (value.length > 5 * 1024 * 1024) throw Error('QuotaExceededError'); }};
+      assert.throws(() => quotaStorage.setItem('pending', persisted), /QuotaExceededError/);
+      assert.equal(JSON.parse(persisted).body.content_base64.length, Math.ceil(bytes.length / 3) * 4);
+      throw Error('upload response unknown');
+    }
+    throw Error('a project must not start without an acknowledged upload');
+  }, {storage});
+  await h.controller.refresh();
+  assert.equal(await h.controller.start(fields, {name: 'large.png', type: 'image/png', size: bytes.length, arrayBuffer: async () => bytes.buffer}), false);
+  assert.equal(h.requests.filter(row => row.request.method).length, 1);
+  assert.equal(JSON.parse(persisted).continuation.body.request_id, uuid);
+  const reload = harness(() => catalog(), {storage: picturePendingStorage(database)});
+  await reload.controller.refresh();
+  assert.equal(reload.controller.state.pending.body.content_base64, JSON.parse(persisted).body.content_base64);
+  assert.equal(reload.requests.some(row => row.request.method), false);
+});
+
+test('unknown reference upload reloads without POST and explicit replay retains both original identities and frozen project brief', async () => {
+  const storage = picturePendingStorage(fakeIndexedDB()), bytes = new Uint8Array([1, 2, 3]);
+  let count = 0;
+  const first = harness((_path, request) => { if (request.method) throw Error('lost upload response'); return catalog(); },
+    {storage, uuid: () => '00000000-0000-4000-8000-' + String(++count).padStart(12, '0')});
+  await first.controller.refresh();
+  const mutableFields = {...fields};
+  assert.equal(await first.controller.start(mutableFields, {name: 'ref.png', type: 'image/png', size: 3, arrayBuffer: async () => bytes.buffer}), false);
+  const original = structuredClone(first.controller.state.pending); mutableFields.goal = 'changed later';
+  const second = harness((path, request) => !request.method ? catalog() : path.endsWith('references') ? {id: 'saved-reference'} : project(), {storage});
+  await second.controller.refresh(); assert.equal(second.requests.length, 1);
+  assert.equal(await second.controller.replayPending(), true);
+  const posts = second.requests.filter(row => row.request.method);
+  assert.deepEqual(JSON.parse(posts[0].request.body), original.body);
+  assert.deepEqual(JSON.parse(posts[1].request.body), {...original.continuation.body, reference_ids: ['saved-reference']});
+  assert.equal(JSON.parse(posts[1].request.body).goal, fields.goal);
+  assert.notEqual(original.body.request_id, original.continuation.body.request_id);
+  assert.equal(second.controller.state.pending, null);
+});
+
+test('known upload and unknown project submission only replay the original project, without another upload or request identity', async () => {
+  const storage = picturePendingStorage(fakeIndexedDB()), bytes = new Uint8Array([7]);
+  const first = harness((path, request) => !request.method ? catalog() : path.endsWith('references') ? {id: 'ref-known'} : Promise.reject(Error('project response lost')), {storage});
+  await first.controller.refresh();
+  assert.equal(await first.controller.start(fields, {name: 'ref.png', type: 'image/png', size: 1, arrayBuffer: async () => bytes.buffer}), false);
+  const original = structuredClone(first.controller.state.pending);
+  assert.equal(original.path, 'api/picture-lab/projects');
+  assert.equal(original.body.content_base64, undefined); assert.equal(original.continuation, undefined);
+  const second = harness((_path, request) => request.method ? project() : catalog(), {storage});
+  await second.controller.refresh(); assert.equal(second.requests.length, 1);
+  assert.equal(await second.controller.replayPending(), true);
+  assert.equal(second.requests[1].path, original.path);
+  assert.deepEqual(JSON.parse(second.requests[1].request.body), original.body);
+});
+
+test('failed IndexedDB persistence prevents reference upload and every paid project request', async () => {
+  const h = harness(() => catalog(), {storage: picturePendingStorage(fakeIndexedDB({abortWrites: true}))});
+  await h.controller.refresh();
+  await assert.rejects(() => h.controller.start(fields, {name: 'ref.png', type: 'image/png', size: 1, arrayBuffer: async () => new Uint8Array([1]).buffer}), /存储空间/);
+  assert.equal(h.requests.some(row => row.request.method), false);
+  assert.equal(h.controller.state.pending, null); assert.equal(h.controller.state.busy, false);
+});
+
+test('a known upload never starts paid work until the frozen project continuation has committed to durable storage', async () => {
+  const saved = new Map(); let writes = 0;
+  const storage = {getItem: async key => saved.get(key) ?? null,
+    setItem: async (key, value) => { if (++writes === 2) throw Error('quota after upload'); saved.set(key, value); },
+    removeItem: async key => saved.delete(key)};
+  const h = harness((path, request) => !request.method ? catalog() : path.endsWith('references') ? {id: 'known-ref'} : project(), {storage});
+  await h.controller.refresh();
+  assert.equal(await h.controller.start(fields, {name: 'ref.png', type: 'image/png', size: 1, arrayBuffer: async () => new Uint8Array([1]).buffer}), false);
+  const original = structuredClone(h.controller.state.pending);
+  assert.equal(original.path, 'api/picture-lab/references');
+  assert.equal(h.requests.filter(row => row.request.method).length, 1);
+  assert.equal(await h.controller.replayPending(), true);
+  const posts = h.requests.filter(row => row.request.method);
+  assert.deepEqual(JSON.parse(posts[0].request.body), JSON.parse(posts[1].request.body));
+  assert.equal(posts.filter(row => row.path.endsWith('projects')).length, 1);
+  assert.equal(JSON.parse(posts[2].request.body).request_id, original.continuation.body.request_id);
+});
+
+test('unavailable durable storage fails closed before any upload instead of falling back to volatile memory', async () => {
+  const h = harness(() => catalog(), {storage: picturePendingStorage(null)});
+  await h.controller.refresh();
+  assert.equal(h.controller.enabled(), false); assert.equal(h.controller.state.pendingInvalid, true);
+  assert.equal(await h.controller.start(fields, null), false);
+  assert.equal(h.requests.some(row => row.request.method), false);
+});
+
+test('another tab cannot overwrite an existing unknown request or clear a newer durable identity', async () => {
+  const storage = picturePendingStorage(fakeIndexedDB());
+  await storage.compareAndSetItem('owner', null, 'request-one');
+  await assert.rejects(() => storage.compareAndSetItem('owner', null, 'request-two'), /另一个页面/);
+  assert.equal(await storage.getItem('owner'), 'request-one');
+  await storage.compareAndSetItem('owner', 'request-one', 'request-two');
+  await assert.rejects(() => storage.compareAndSetItem('owner', 'request-one', null), /另一个页面/);
+  assert.equal(await storage.getItem('owner'), 'request-two');
+});
+
+test('a delayed previous-owner pending read cannot overwrite the current owner or its request', async () => {
+  const oldRead = deferred(), entered = deferred(); let owner = 'owner-old';
+  const stored = {schema: 'video.picture-learning-pending.v1', owner_key: 'owner-old', path: 'api/picture-lab/projects', body: buildPictureProject(fields, ['ref'], uuid)};
+  const h = harness(() => catalog([], {owner_key: owner}), {storage: {
+    getItem: key => { if (key.endsWith('owner-old')) { entered.resolve(); return oldRead.promise; } return Promise.resolve(null); },
+    setItem: async () => {}, removeItem: async () => {},
+  }});
+  const older = h.controller.refresh(); await entered.promise;
+  owner = 'owner-new'; await h.controller.refresh();
+  oldRead.resolve(JSON.stringify(stored)); await older;
+  assert.equal(h.controller.state.owner_key, 'owner-new'); assert.equal(h.controller.state.catalog.owner_key, 'owner-new');
+  assert.equal(h.controller.state.pending, null); assert.equal(h.controller.state.pendingLoading, false);
+  assert.equal(h.requests.some(row => row.request.method), false);
+});
+
+test('owner changes while an async save is pending never POST the previous owners request', async () => {
+  const blocked = deferred(), entered = deferred(), saved = new Map(); let owner = 'owner-old';
+  const storage = {getItem: async key => saved.get(key) ?? null, setItem: async (key, value) => {
+    entered.resolve(); await blocked.promise; saved.set(key, value);
+  }, removeItem: async key => saved.delete(key)};
+  const h = harness(() => catalog([], {owner_key: owner}), {storage});
+  await h.controller.refresh();
+  const submit = h.controller.send('api/picture-lab/projects', buildPictureProject(fields, ['ref'], uuid)); await entered.promise;
+  owner = 'owner-new'; await h.controller.refresh(); blocked.resolve();
+  assert.equal(await submit, false); assert.equal(h.controller.state.pending, null);
+  assert.equal(h.requests.some(row => row.request.method), false);
+  owner = 'owner-old'; await h.controller.refresh();
+  assert.equal(h.controller.state.pending.body.request_id, uuid);
+  assert.equal(h.requests.some(row => row.request.method), false);
+});
+
+test('an upload response arriving after account change cannot advance into a paid project in that account', async () => {
+  const response = deferred(), entered = deferred(); let owner = 'owner-old';
+  const storage = picturePendingStorage(fakeIndexedDB());
+  const h = harness((_path, request) => {
+    if (request.method) { entered.resolve(); return response.promise; }
+    return catalog([], {owner_key: owner});
+  }, {storage});
+  await h.controller.refresh();
+  const submit = h.controller.start(fields, {name: 'ref.png', type: 'image/png', size: 1, arrayBuffer: async () => new Uint8Array([1]).buffer});
+  await entered.promise; owner = 'owner-new'; await h.controller.refresh(); response.resolve({id: 'old-reference'});
+  assert.equal(await submit, false); assert.equal(h.controller.state.pending, null);
+  assert.equal(h.requests.filter(row => row.request.method).length, 1);
+  owner = 'owner-old'; await h.controller.refresh();
+  assert.equal(h.controller.state.pending.path, 'api/picture-lab/references');
   assert.equal(h.requests.filter(row => row.request.method).length, 1);
 });

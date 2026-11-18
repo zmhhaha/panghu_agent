@@ -6,7 +6,54 @@ import {PICTURE_API, MAX_REFERENCE_BYTES, buildPictureProject, buildPictureExper
 const PENDING_KEY = 'video.picture-learning.pending.v1';
 const ownerKey = value => typeof value === 'string' && value.length > 0 && value.length <= 300;
 const pendingKey = owner => PENDING_KEY + ':' + encodeURIComponent(owner);
-const browserStorage = () => { try { return globalThis.sessionStorage ?? null; } catch { return null; } };
+export function picturePendingStorage(indexedDB = globalThis.indexedDB) {
+  let opened;
+  const database = () => opened ??= new Promise((resolve, reject) => {
+    if (!indexedDB?.open) { reject(Error('浏览器不支持保存原请求，请启用网站存储后再提交')); return; }
+    let request;
+    try { request = indexedDB.open('video.picture-learning', 1); }
+    catch { reject(Error('无法打开本地请求存储，请启用网站存储后再提交')); return; }
+    request.onupgradeneeded = () => { if (!request.result.objectStoreNames.contains('pending')) request.result.createObjectStore('pending'); };
+    request.onsuccess = () => {
+      request.result.onversionchange = () => request.result.close(); resolve(request.result);
+    };
+    request.onerror = () => reject(Error('无法打开本地请求存储，请启用网站存储后再提交'));
+    request.onblocked = () => reject(Error('本地请求存储正在更新，请关闭其他图片学习页面后重试'));
+  });
+  const transaction = async (mode, operation) => {
+    const db = await database();
+    return new Promise((resolve, reject) => {
+      let tx, result;
+      try {
+        tx = db.transaction('pending', mode);
+        const request = operation(tx.objectStore('pending'));
+        request.onsuccess = () => { result = request.result; };
+        tx.oncomplete = () => resolve(result);
+        tx.onabort = tx.onerror = () => reject(Error('无法保存或读取原请求，请检查网站存储空间后重试'));
+      } catch { reject(Error('无法使用本地请求存储，请刷新后重试')); }
+    });
+  };
+  const compareAndSetItem = async (key, previous, value) => {
+    const db = await database();
+    return new Promise((resolve, reject) => {
+      let conflict = false;
+      const tx = db.transaction('pending', 'readwrite'), store = tx.objectStore('pending'), request = store.get(key);
+      request.onsuccess = () => {
+        if ((request.result ?? null) !== previous) { conflict = true; tx.abort(); return; }
+        if (value === null) store.delete(key); else store.put(value, key);
+      };
+      tx.oncomplete = () => resolve();
+      tx.onabort = tx.onerror = () => {
+        const error = Error(conflict ? '另一个页面保存了待核对请求，请刷新核对后再提交' : '无法保存原请求，请检查网站存储空间后重试');
+        if (conflict) error.code = 'pending_conflict'; reject(error);
+      };
+    });
+  };
+  return {getItem: key => transaction('readonly', store => store.get(key)), compareAndSetItem,
+    setItem: (key, value) => transaction('readwrite', store => store.put(value, key)),
+    removeItem: key => transaction('readwrite', store => store.delete(key))};
+}
+const browserStorage = () => picturePendingStorage();
 const ERROR_MESSAGES = {
   picture_learning_unavailable: '图片学习执行器尚未配置。', picture_reference_invalid: '参考图片无法读取，请选择有效的 PNG 或 JPEG。',
   picture_project_active: '项目仍在运行，请先停止或等待本次实验结束。', picture_budget_exhausted: '本次实验预算已用完。',
@@ -21,10 +68,16 @@ function errorMessage(error) {
     : error?.status === 413 ? '提交内容过大，请缩小参考图片后重试。' : text(error?.message) || '请求未完成，请刷新核对。');
 }
 function pendingOperation(value) {
-  return value && value.schema === 'video.picture-learning-pending.v1'
+  const valid = value && value.schema === 'video.picture-learning-pending.v1'
     && ownerKey(value.owner_key)
-    && typeof value.path === 'string' && /^api\/picture-lab\/projects(?:\/[A-Za-z0-9_.:%-]+\/(?:experiments|adopt|stop))?$/.test(value.path)
-    && typeof value.body === 'object' && value.body !== null && !Array.isArray(value.body) ? value : null;
+    && typeof value.path === 'string' && /^api\/picture-lab\/(?:references|projects(?:\/[A-Za-z0-9_.:%-]+\/(?:experiments|adopt|stop))?)$/.test(value.path)
+    && typeof value.body === 'object' && value.body !== null && !Array.isArray(value.body);
+  if (!valid) return null;
+  if (value.path === PICTURE_API + 'references') {
+    if (value.continuation?.path !== PICTURE_API + 'projects' || !value.continuation?.body?.request_id
+      || typeof value.body.content_base64 !== 'string' || value.body.content_base64.length > Math.ceil(MAX_REFERENCE_BYTES / 3) * 4) return null;
+  } else if (value.continuation !== undefined) return null;
+  return value;
 }
 export async function referenceBody(file, requestId) {
   const description = validateReferenceFile(file), bytes = new Uint8Array(await file.arrayBuffer());
@@ -38,38 +91,63 @@ export class PictureLibraryController {
     schedule = (fn, ms) => setTimeout(fn, ms), unschedule = id => clearTimeout(id), onChange = () => {}}) {
     this.request = request; this.root = root; this.storage = storage; this.uuid = uuid;
     this.schedule = schedule; this.unschedule = unschedule; this.onChange = onChange; this.timer = null; this.closed = false;
-    this.readEpoch = 0; this.detailEpoch = 0; this.writeReady = false;
-    this.state = {catalog: null, detail: null, busy: false, message: '', pending: null, pendingInvalid: false, owner_key: null, lastRead: null};
+    this.readEpoch = 0; this.detailEpoch = 0; this.ownerEpoch = 0; this.ownerLoad = null; this.writeReady = false;
+    this.state = {catalog: null, detail: null, busy: false, message: '', pending: null, pendingInvalid: false, pendingLoading: false, owner_key: null, lastRead: null};
   }
   changed() { this.onChange(this.state); }
   enabled() { return this.writeReady && this.state.catalog?.availability?.enabled === true; }
-  locked() { return this.state.busy || Boolean(this.state.pending) || this.state.pendingInvalid; }
+  locked() { return this.state.busy || Boolean(this.state.pending) || this.state.pendingInvalid || this.state.pendingLoading; }
   setMessage(value) { this.state.message = value; this.changed(); }
-  useOwner(owner) {
-    if (this.state.owner_key === owner) return;
+  async useOwner(owner) {
+    if (this.state.owner_key === owner && !this.state.pendingInvalid) return this.ownerLoad;
+    const epoch = ++this.ownerEpoch;
+    this.writeReady = false;
     this.state.owner_key = owner; this.state.detail = null; this.detailEpoch++;
-    this.state.pending = null; this.state.pendingInvalid = false;
-    try {
-      const raw = this.storage?.getItem(pendingKey(owner));
-      if (raw !== null && raw !== undefined) {
-        const saved = pendingOperation(JSON.parse(raw));
-        if (!saved || saved.owner_key !== owner) throw Error('invalid');
-        this.state.pending = saved;
-      }
-    } catch { this.state.pendingInvalid = true; this.state.message = '本浏览器保存的原请求无法读取。请先核对原实验，当前不会创建新任务。'; }
+    this.state.pending = null; this.state.pendingInvalid = false; this.state.pendingLoading = true;
+    this.ownerLoad = (async () => {
+      try {
+        const raw = await this.storage?.getItem(pendingKey(owner));
+        if (epoch !== this.ownerEpoch || this.closed) return;
+        if (raw !== null && raw !== undefined) {
+          const saved = pendingOperation(JSON.parse(raw));
+          if (!saved || saved.owner_key !== owner) throw Error('invalid');
+          this.state.pending = saved;
+        }
+      } catch {
+        if (epoch === this.ownerEpoch && !this.closed) {
+          this.state.pendingInvalid = true;
+          this.state.message = '本浏览器保存的原请求无法读取。请先核对原实验并检查网站存储，当前不会创建新任务。';
+        }
+      } finally { if (epoch === this.ownerEpoch) this.state.pendingLoading = false; }
+    })();
+    return this.ownerLoad;
   }
-  setPending(operation, owner = this.state.owner_key) {
+  async setPending(operation, owner = this.state.owner_key) {
     if (!ownerKey(owner)) throw Error('请先刷新，取得当前账号的授权与身份');
-    if (operation) {
-      const value = {schema: 'video.picture-learning-pending.v1', owner_key: owner, path: operation.path, body: structuredClone(operation.body)};
-      if (this.storage) {
-        try { this.storage.setItem(pendingKey(owner), JSON.stringify(value)); }
-        catch { throw Error('无法保存本次请求，请释放浏览器存储空间后再提交'); }
+    const epoch = this.ownerEpoch;
+    const previous = this.state.pending?.owner_key === owner ? JSON.stringify(this.state.pending) : null;
+    const save = async value => {
+      try {
+        if (this.storage?.compareAndSetItem) await this.storage.compareAndSetItem(pendingKey(owner), previous, value);
+        else if (value === null) await this.storage?.removeItem(pendingKey(owner));
+        else await this.storage?.setItem(pendingKey(owner), value);
+      } catch (error) {
+        if (error?.code === 'pending_conflict') {
+          if (owner === this.state.owner_key && epoch === this.ownerEpoch) this.state.pendingInvalid = true;
+          throw error;
+        }
+        throw Error('无法保存本次请求，请释放浏览器存储空间后再提交');
       }
-      if (owner === this.state.owner_key) this.state.pending = value;
+    };
+    if (operation) {
+      const value = {schema: 'video.picture-learning-pending.v1', owner_key: owner, ...structuredClone(operation)};
+      await save(JSON.stringify(value));
+      if (owner === this.state.owner_key && epoch === this.ownerEpoch && !this.closed) this.state.pending = value;
     } else {
-      this.storage?.removeItem(pendingKey(owner)); if (owner === this.state.owner_key) this.state.pending = null;
+      await save(null);
+      if (owner === this.state.owner_key && epoch === this.ownerEpoch && !this.closed) this.state.pending = null;
     }
+    return owner === this.state.owner_key && epoch === this.ownerEpoch && !this.closed;
   }
   poll() {
     if (this.timer !== null) this.unschedule(this.timer);
@@ -84,14 +162,17 @@ export class PictureLibraryController {
       const catalog = await this.request(PICTURE_API + 'catalog');
       if (epoch !== this.readEpoch || this.closed) return this.state.catalog;
       if (!ownerKey(catalog?.owner_key) || !text(catalog?.csrf_token)) throw Error('目录缺少当前账号的授权信息，请刷新核对');
-      this.useOwner(catalog.owner_key); this.state.catalog = catalog; this.writeReady = true;
+      await this.useOwner(catalog.owner_key);
+      if (epoch !== this.readEpoch || this.closed) return this.state.catalog;
+      this.state.catalog = catalog; this.writeReady = !this.state.pendingInvalid;
       const detailId = this.state.detail?.id, detailEpoch = this.detailEpoch;
       if (detailId) {
         const detail = await this.request(pictureRequestPath(detailId));
         if (epoch !== this.readEpoch || this.closed) return this.state.catalog;
         if (detailEpoch === this.detailEpoch && this.state.detail?.id === detailId) this.state.detail = detail;
       }
-      const recovered = this.reconcilePending();
+      const recovered = await this.reconcilePending();
+      if (epoch !== this.readEpoch || this.closed) return this.state.catalog;
       if (recovered && !Array.isArray(recovered.experiments)) {
         const detailEpoch = this.detailEpoch, owner = this.state.owner_key;
         const detail = await this.request(pictureRequestPath(recovered.id));
@@ -106,20 +187,26 @@ export class PictureLibraryController {
     }
     this.changed(); this.poll(); return this.state.catalog;
   }
-  reconcilePending() {
+  async reconcilePending() {
     const pending = this.state.pending, requestId = pending?.body?.request_id;
+    if (pending?.path === PICTURE_API + 'references') return;
     const projects = [...rows(this.state.catalog?.projects), ...(this.state.detail ? [this.state.detail] : [])];
     if (pending && !requestId) {
       const match = /^api\/picture-lab\/projects\/([^/]+)\/(stop|adopt)$/.exec(pending.path);
       const project = match && projects.find(row => row.id === decodeURIComponent(match[1]));
       if (project && (match[2] === 'stop' && !pictureIsActive(project)
-        || match[2] === 'adopt' && project.adopted_candidate_id === pending.body.candidate_id)) this.setPending(null);
+        || match[2] === 'adopt' && project.adopted_candidate_id === pending.body.candidate_id)) await this.setPending(null);
       return;
     }
     if (!requestId) return;
     const found = projects.find(project => project.request_id === requestId || project.latest_experiment_request_id === requestId
       || rows(project.experiments).some(experiment => experiment.request_id === requestId));
-    if (found) { this.setPending(null); if (!this.state.detail) this.state.detail = found; return found; }
+    if (found) {
+      const owner = this.state.owner_key, epoch = this.ownerEpoch;
+      await this.setPending(null);
+      if (owner !== this.state.owner_key || epoch !== this.ownerEpoch || this.closed) return;
+      if (!this.state.detail) this.state.detail = found; return found;
+    }
   }
   async open(projectId) {
     const epoch = ++this.detailEpoch, owner = this.state.owner_key;
@@ -130,27 +217,47 @@ export class PictureLibraryController {
     } catch (error) { if (epoch === this.detailEpoch) this.state.message = errorMessage(error); }
     this.changed(); this.poll(); return this.state.detail;
   }
-  async send(path, body) {
+  async send(path, body, continuation) {
     if (!this.writeReady || this.locked()) return false;
-    this.setPending({path, body}); return this.replayPending();
+    this.state.busy = true; this.changed();
+    let saved;
+    try { saved = await this.setPending({path, body, ...(continuation ? {continuation} : {})}); }
+    finally { this.state.busy = false; this.changed(); }
+    return saved && this.writeReady ? this.replayPending() : false;
   }
   async replayPending() {
     if (!this.writeReady || this.state.busy || !this.state.pending || this.state.pending.owner_key !== this.state.owner_key) return false;
-    const operation = structuredClone(this.state.pending);
+    let operation = structuredClone(this.state.pending);
+    const epoch = this.ownerEpoch, current = () => epoch === this.ownerEpoch && operation.owner_key === this.state.owner_key && !this.closed;
     this.state.busy = true; this.state.message = ''; this.changed();
     try {
-      const result = await this.request(operation.path, {method: 'POST', body: JSON.stringify(operation.body)});
+      let result = await this.request(operation.path, {method: 'POST', body: JSON.stringify(operation.body)});
+      if (!current()) return false;
+      if (operation.path === PICTURE_API + 'references') {
+        const referenceId = result?.reference?.id ?? result?.reference_id ?? result?.id;
+        pictureId(referenceId);
+        const next = structuredClone(operation.continuation);
+        next.body.reference_ids = [referenceId];
+        if (!await this.setPending(next, operation.owner_key) || !current() || !this.writeReady) return false;
+        operation = structuredClone(this.state.pending);
+        this.changed();
+        result = await this.request(operation.path, {method: 'POST', body: JSON.stringify(operation.body)});
+        if (!current()) return false;
+      }
       const projectId = result?.project?.id ?? result?.project_id ?? result?.id;
       pictureId(projectId);
-      this.setPending(null, operation.owner_key);
-      if (operation.owner_key === this.state.owner_key) {
-        this.detailEpoch++;
-        this.state.detail = result?.project ?? (Array.isArray(result?.experiments) ? result : await this.request(pictureRequestPath(projectId)));
-      }
+      await this.setPending(null, operation.owner_key);
+      if (!current()) return false;
+      const detailEpoch = ++this.detailEpoch;
+      const detail = result?.project ?? (Array.isArray(result?.experiments) ? result : await this.request(pictureRequestPath(projectId)));
+      if (!current() || detailEpoch !== this.detailEpoch) return false;
+      this.state.detail = detail;
       return true;
     } catch (error) {
+      if (!current()) return false;
       // Only definitive client rejection clears the immutable paid-operation key.
-      if (Number.isInteger(error?.status) && error.status >= 400 && error.status < 500 && error.status !== 408) this.setPending(null, operation.owner_key);
+      if (Number.isInteger(error?.status) && error.status >= 400 && error.status < 500 && error.status !== 408) await this.setPending(null, operation.owner_key);
+      if (!current()) return false;
       this.state.message = errorMessage(error) + (this.state.pending ? ' 原请求已保留，请核对或重送，勿重新提交。' : '');
       return false;
     } finally {
@@ -160,16 +267,16 @@ export class PictureLibraryController {
   async start(fields, file) {
     if (!this.enabled() || this.locked()) return false;
     // Validate the inexpensive form before uploading any pixels.
-    buildPictureProject(fields, ['reference-validation'], this.uuid());
-    const owner = this.state.owner_key;
+    const project = buildPictureProject(fields, ['reference-validation'], this.uuid());
+    const owner = this.state.owner_key, epoch = this.ownerEpoch;
     this.state.busy = true; this.state.message = '正在保存参考图片…'; this.changed();
-    let reference;
-    try { reference = await this.request(PICTURE_API + 'references', {method: 'POST', body: JSON.stringify(await referenceBody(file, this.uuid()))}); }
+    let body;
+    try { body = await referenceBody(file, this.uuid()); }
     catch (error) { this.state.message = errorMessage(error); return false; }
     finally { this.state.busy = false; this.changed(); }
-    if (owner !== this.state.owner_key || !this.enabled()) { this.setMessage('当前登录身份或授权已变化，请刷新后重新提交'); return false; }
-    const referenceId = reference?.reference?.id ?? reference?.reference_id ?? reference?.id;
-    return this.send(PICTURE_API + 'projects', buildPictureProject(fields, [referenceId], this.uuid()));
+    if (owner !== this.state.owner_key || epoch !== this.ownerEpoch || !this.enabled()) { this.setMessage('当前登录身份或授权已变化，请刷新后重新提交'); return false; }
+    project.reference_ids = [];
+    return this.send(PICTURE_API + 'references', body, {path: PICTURE_API + 'projects', body: project});
   }
   async experiment(fields) {
     const detail = this.state.detail;
