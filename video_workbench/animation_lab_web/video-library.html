@@ -28,12 +28,13 @@
       <section id="video-home" aria-labelledby="video-title">
         <div class="page-heading"><div><p class="eyebrow">观察参考 · 真实绘制 · 比较学习</p><h1 id="video-title">视频学习库</h1><p class="muted">从一个明确效果片段中学习画面、运动机制与节奏。保留源码、完整视频和参考对照，再换内容验证方法。</p></div><span id="video-count" class="count"></span></div>
         <p id="video-availability" class="muted" role="status"></p>
-        <div class="gallery-tools"><label class="search-label" for="video-search">查找学习项目<input id="video-search" type="search" placeholder="名称或学习目标" autocomplete="off"></label></div>
+        <div class="gallery-tools"><label class="search-label" for="video-search">查找项目或参考<input id="video-search" type="search" placeholder="名称或学习目标" autocomplete="off"></label></div>
         <div id="video-cards" class="gallery-grid" aria-live="polite"></div>
-        <details class="technical-details"><summary>参考片段分析与候选</summary><p class="small muted">分析单独计入预算。选择候选只填写创作需求，不会自动开始制作。</p><div id="video-analyses"></div></details>
+        <section id="video-analyses-section" class="video-analysis-library" hidden aria-labelledby="video-analyses-title"><div class="page-heading"><div><h2 id="video-analyses-title">参考视频</h2><p class="small muted">打开卡片查看分析与候选，再选择要学习的片段。</p></div></div><div id="video-analyses" class="gallery-grid"></div></section>
         <div id="video-empty" class="empty-state" hidden><span aria-hidden="true">▷</span><h2>从一段想学会的效果开始</h2><p>明确要学习的画面、运动或节奏。先复现参考片段，再在预算允许时换内容验证一次。</p><button id="video-empty-new" class="button primary" type="button">提交参考片段</button></div>
       </section>
       <section id="video-detail" hidden aria-label="学习项目详情"></section>
+      <section id="video-analysis-detail" hidden aria-label="参考分析详情"></section>
       <section id="video-form-panel" class="panel experiment-form" hidden aria-labelledby="video-form-title">
         <div class="panel-heading"><div><p class="eyebrow">一次有边界的视频学习</p><h2 id="video-form-title">新建视频学习</h2></div><button id="video-form-close" class="button secondary" type="button">返回视频学习库</button></div>
         <form id="video-form">
@@ -47,7 +48,7 @@
             <div id="video-reference-preview" class="upload-preview" hidden></div>
             <label for="video-saved-reference">或选择已上传的参考<select id="video-saved-reference"><option value="">使用新上传的视频</option></select></label>
             <div class="video-analysis-actions"><label for="video-analysis-minutes">候选分析预算（分钟）<input id="video-analysis-minutes" type="number" min="1" max="30" value="10"></label><button id="video-analyze" class="button secondary" type="button">分析可学习片段</button><p class="small muted">不确定学习哪一段时，可以先分析。按实际采样范围提出候选；不会自动开始制作。已有明确片段时，直接填写下方范围。</p></div>
-            <div id="video-form-analyses"></div>
+            <section id="video-form-analyses-section" class="video-form-analyses" hidden aria-labelledby="video-form-analyses-title"><h3 id="video-form-analyses-title">已有参考分析</h3><p class="small muted">打开卡片查看候选。选择片段会填写本次需求，开始制作前仍可调整。</p><div id="video-form-analyses" class="gallery-grid"></div></section>
             <div class="form-row"><label for="video-start">片段开始（秒）<input id="video-start" name="start_seconds" type="number" min="0" step="any" value="0" required></label><label for="video-end">片段结束（秒）<input id="video-end" name="end_seconds" type="number" min="1" step="any" value="8" required></label></div>
             <label class="checkbox-label" for="video-learn-audio"><input id="video-learn-audio" name="learn_audio" type="checkbox" checked><span>按目标学习有表达作用的音效及其时机</span></label>
             <p class="small muted">此项记录音效学习目标。当前 Agent 通过采样帧观察画面，尚不能实际听审音轨或验证音画同步；参考音轨仍会保留供播放。不默认复刻旁白或背景音乐。</p>

@@ -225,11 +225,11 @@ test('exact role input inspection is lazy and read-only', async () => {
   assert.match(section.textContent, /actual goal/); await section.handlers.toggle(); assert.equal(inspected.length, 1);
 });
 
-test('navigation and the documented JSON contract expose an independent image library without pretending video learning is implemented', () => {
+test('navigation exposes the independent image and video libraries with the documented picture JSON contract', () => {
   const base = new URL('../../video_workbench/animation_lab_web/', import.meta.url);
-  for (const name of ['method-gallery.html', 'knowledge.html', 'picture-library.html']) {
+  for (const name of ['method-gallery.html', 'knowledge.html', 'picture-library.html', 'video-library.html']) {
     const html = readFileSync(new URL(name, base), 'utf8'); assert.match(html, /href="\.\/picture-library\.html"/);
-    assert.match(html, /workspace-nav/); assert.equal(/video-library\.html/.test(html), false);
+    assert.match(html, /workspace-nav/); assert.match(html, /href="\.\/video-library\.html"/);
   }
   const contract = JSON.parse(readFileSync(new URL('picture-api.openapi.json', base), 'utf8'));
   assert.equal(contract.servers[0].url, root.href + 'api/picture-lab');

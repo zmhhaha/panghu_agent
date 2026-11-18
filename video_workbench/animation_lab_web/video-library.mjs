@@ -451,6 +451,58 @@ export function renderVideoCard(doc, project, {root, onOpen}) {
   body.append(el(doc, 'div', 'card-meta', (project.experiments_count ?? rows(project.experiments).length) + ' 次实验'
     + (videoCandidates(project).length ? ' · ' + videoCandidates(project).length + ' 份作品' : ''))); article.append(body); return article;
 }
+const analysisCandidates = analysis => rows(analysis?.candidates ?? analysis?.candidate_segments);
+function analysisState(analysis) {
+  return ({queued: '等待分析', running: '正在分析', stopping: '正在停止分析', failed: '分析失败',
+    cancelled: '分析已停止', submission_unknown: '提交结果待核对'})[analysis.state]
+    ?? (analysis.state === 'completed' ? analysisCandidates(analysis).length ? '待选学习片段' : '分析已结束' : videoState(analysis.state));
+}
+export function renderVideoAnalysisCard(doc, analysis, {reference = null, onOpen = () => {}} = {}) {
+  const article = el(doc, 'article', 'effect-card video-card video-analysis-card');
+  const image = el(doc, 'div', 'video-card-placeholder');
+  image.append(el(doc, 'span', '', '▷'), el(doc, 'small', '', '参考分析')); article.append(image);
+  const body = el(doc, 'div', 'card-body');
+  body.append(button(doc, reference?.file_name || '参考视频分析', () => onOpen(analysis.id), {className: 'effect-title'}),
+    el(doc, 'p', 'card-goal', text(analysis.goal).slice(0, 160) || '分析参考视频中的可学习效果片段。'),
+    el(doc, 'span', 'badge', analysisState(analysis)));
+  const count = analysisCandidates(analysis).length;
+  body.append(el(doc, 'div', 'card-meta', count ? count + ' 个候选片段' : '候选片段尚未生成'),
+    button(doc, '查看分析与候选', () => onOpen(analysis.id)));
+  article.append(body); return article;
+}
+export function renderVideoAnalysisDetail(doc, analysis, {root, reference = null, locked = false,
+  onBack = () => {}, onStop = () => {}, onChoose = () => {}, backLabel = '返回视频学习库'} = {}) {
+  const fragment = doc.createDocumentFragment(), header = el(doc, 'div', 'detail-heading'), intro = el(doc, 'div');
+  intro.append(el(doc, 'p', 'eyebrow', '参考视频分析'), el(doc, 'h1', '', reference?.file_name || '参考视频分析'),
+    el(doc, 'p', 'muted', analysis.goal)); header.append(intro);
+  fragment.append(button(doc, backLabel, onBack), header);
+  const status = el(doc, 'div', 'video-status'); status.append(el(doc, 'strong', '', analysisState(analysis)),
+    el(doc, 'p', 'small muted', '先查看候选，再选择要学习的片段。选择只填写需求，点击“开始视频学习”才会制作。'));
+  if (!['completed', 'failed', 'cancelled'].includes(analysis.state)) status.append(button(doc, '停止本次分析', onStop,
+    {disabled: locked || analysis.state === 'stopping'}));
+  if (analysis.error) status.append(el(doc, 'p', 'small muted', '分析执行信息：' + (analysis.error.code ?? analysis.error)));
+  fragment.append(status);
+  if (reference) fragment.append(videoFigure(doc, '完整参考视频', referenceUrl(reference, root),
+    reference.file_name + ' · ' + Number(reference.duration_seconds).toFixed(1) + ' 秒', root, null,
+    viewKey('analysis', analysis.id, reference.id, 'reference')));
+  const candidates = analysisCandidates(analysis), section = el(doc, 'section', 'video-analysis-candidates');
+  section.append(el(doc, 'h2', '', '候选学习片段' + (candidates.length ? '（' + candidates.length + '）' : '')),
+    el(doc, 'p', 'small muted', '范围来自采样画面分析，开始制作前请核对片段边界与学习目标。'));
+  if (!candidates.length) section.append(el(doc, 'p', 'muted', analysis.state === 'completed'
+    ? '本次没有产生候选片段。可返回新建视频学习，按明确的时间范围填写目标。' : '本次尚无候选片段。进度更新后会在这里展示。'));
+  for (const [index, candidate] of candidates.entries()) {
+    const row = el(doc, 'article', 'panel video-analysis-candidate');
+    row.append(el(doc, 'h3', '', candidate.title), el(doc, 'p', 'badge', candidate.start_seconds + '–' + candidate.end_seconds + ' 秒'),
+      el(doc, 'p', '', candidate.learning_goal));
+    if (candidate.difficulty) {
+      const difficulty = stateKey(el(doc, 'details', 'technical-details'), viewKey('analysis', analysis.id, index, 'difficulty'));
+      difficulty.append(el(doc, 'summary', '', '难点与核对重点'), el(doc, 'p', 'small muted', candidate.difficulty)); row.append(difficulty);
+    }
+    row.append(button(doc, '选择这个片段', () => onChoose(index), {disabled: locked})); section.append(row);
+  }
+  fragment.append(section, jsonSection(doc, '实际观察范围与完整分析', analysis, false, viewKey('analysis', analysis.id, 'record')));
+  return fragment;
+}
 export function renderVideoDetail(doc, project, {root, selection = null, onSelect = () => {}, onBack = () => {}, onStop = () => {}, onExperiment = () => {}, onAdopt = () => {}, onInspect = null, locked = false}) {
   const fragment = doc.createDocumentFragment(), header = el(doc, 'div', 'detail-heading');
   const intro = el(doc, 'div'); intro.append(el(doc, 'p', 'eyebrow', '视频学习项目'), el(doc, 'h1', '', project.title), el(doc, 'p', 'muted', project.goal));
@@ -555,7 +607,16 @@ export function updateVideoDetail(doc, host, project, options) {
   // Poll timestamps are not displayed. Stage, source, review and history changes still update the view.
   const signature = JSON.stringify({project, selection: options.selection, locked: options.locked},
     (key, value) => key === 'updated_at' ? undefined : value);
-  const scope = viewKey(options.ownerKey ?? null, project.id), previous = detailViews.get(host);
+  return updateVideoView(host, viewKey(options.ownerKey ?? null, project.id), signature, () => renderVideoDetail(doc, project, options));
+}
+function updateVideoAnalysisDetail(doc, host, analysis, options) {
+  const signature = JSON.stringify({analysis, reference: options.reference, locked: options.locked, backLabel: options.backLabel},
+    (key, value) => key === 'updated_at' ? undefined : value);
+  return updateVideoView(host, viewKey(options.ownerKey ?? null, 'analysis', analysis.id), signature,
+    () => renderVideoAnalysisDetail(doc, analysis, options));
+}
+function updateVideoView(host, scope, signature, render) {
+  const previous = detailViews.get(host);
   if (previous?.scope === scope && previous.signature === signature) return false;
   const generation = (previous?.generation ?? 0) + 1, details = new Map(), media = new Map(), timelines = new Map();
   if (previous?.scope === scope) {
@@ -573,7 +634,7 @@ export function updateVideoDetail(doc, host, project, options) {
   }
   // Detached players can otherwise keep playing their audio after a meaningful update.
   for (const node of host.querySelectorAll('video')) node.pause();
-  const view = renderVideoDetail(doc, project, options);
+  const view = render();
   for (const node of view.querySelectorAll('details')) {
     const key = node.getAttribute('data-video-view-key'); if (details.has(key)) node.open = details.get(key);
   }
@@ -602,7 +663,8 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
   storage = browserStorage(), uuid, schedule, unschedule, URLObject = globalThis.URL} = {}) {
   const $ = id => doc.getElementById(id), app = $('video-library-app'); if (!app) return null;
   let formMode = null, shown = 'home', selectedId = null, previewUrl = null, controller;
-  let referencesSignature = '';
+  let referencesSignature = '', renderedOwner = null, selectedAnalysisId = null, analysisReturnTo = 'home';
+  const currentCatalog = state => state.catalog?.owner_key === state.owner_key ? state.catalog : null;
   const request = async (path, options = {}) => {
     const headers = {Accept: 'application/json'};
     if (options.method === 'POST') Object.assign(headers, {'Content-Type': 'application/json', 'X-Animation-Lab': '1',
@@ -615,18 +677,44 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
     return response.json();
   };
   const clearPreview = () => { if (previewUrl) URLObject.revokeObjectURL(previewUrl); previewUrl = null; };
-  const show = mode => { shown = mode; $('video-home').hidden = mode !== 'home'; $('video-detail').hidden = mode !== 'detail'; $('video-form-panel').hidden = mode !== 'form'; };
+  const show = mode => {
+    shown = mode; $('video-home').hidden = mode !== 'home'; $('video-detail').hidden = mode !== 'detail';
+    $('video-analysis-detail').hidden = mode !== 'analysis'; $('video-form-panel').hidden = mode !== 'form';
+    for (const id of ['video-detail', 'video-analysis-detail', 'video-form-panel']) if ($(id).hidden) {
+      for (const player of $(id).querySelectorAll('video')) player.pause();
+      const previous = detailViews.get($(id));
+      if (previous) detailViews.set($(id), {...previous, generation: previous.generation + 1});
+    }
+  };
+  const openAnalysis = (id, origin = 'home') => {
+    if (!rows(currentCatalog(controller.state)?.analyses).some(row => row.id === id)) return;
+    selectedAnalysisId = id; analysisReturnTo = origin; show('analysis'); render(controller.state);
+  };
   const renderCards = () => {
-    const projects = rows(controller.state.catalog?.projects), query = $('video-search').value;
+    const catalog = currentCatalog(controller.state), projects = rows(catalog?.projects), analyses = rows(catalog?.analyses), query = $('video-search').value;
     const filtered = projects.filter(project => videoProjectMatches(project, query));
     $('video-cards').replaceChildren(...filtered.map(project => renderVideoCard(doc, project, {root, onOpen: async id => {
       await controller.open(id); if (controller.state.detail?.id === id) { show('detail'); render(controller.state); }
     }})));
-    $('video-count').textContent = projects.length + ' 个学习项目';
-    $('video-empty').hidden = projects.length > 0;
+    $('video-count').textContent = projects.length + ' 个学习项目' + (analyses.length ? ' · ' + analyses.length + ' 份参考分析' : '');
+    $('video-empty').hidden = projects.length > 0 || analyses.length > 0;
     if (projects.length && !filtered.length) $('video-cards').append(el(doc, 'p', 'muted', '没有符合条件的学习项目。'));
+    $('video-analyses-section').hidden = !analyses.length;
+    const refs = rows(catalog?.references), needle = query.trim().toLocaleLowerCase();
+    const matches = analyses.filter(row => !needle || [refs.find(ref => ref.id === row.reference_id)?.file_name,
+      row.goal, ...analysisCandidates(row).map(candidate => candidate.title)].join('\n').toLocaleLowerCase().includes(needle));
+    $('video-analyses').replaceChildren(...matches.map(analysis => renderVideoAnalysisCard(doc, analysis,
+      {reference: refs.find(ref => ref.id === analysis.reference_id), onOpen: id => openAnalysis(id)})));
+    if (analyses.length && !matches.length) $('video-analyses').append(el(doc, 'p', 'muted', '没有符合条件的参考分析。'));
   };
   const render = state => {
+    if (renderedOwner !== state.owner_key) {
+      renderedOwner = state.owner_key; referencesSignature = ''; selectedId = null; selectedAnalysisId = null; analysisReturnTo = 'home'; formMode = null;
+      clearPreview(); $('video-form').reset(); $('video-reference-id').value = ''; $('video-analysis-id').value = ''; $('video-segment-index').value = '';
+      $('video-reference-preview').replaceChildren(); $('video-reference-preview').hidden = true;
+      show('home');
+      for (const id of ['video-detail', 'video-analysis-detail']) { $(id).replaceChildren(); detailViews.delete($(id)); }
+    }
     $('video-message').hidden = !state.message; $('video-message').textContent = state.message;
     $('video-pending').hidden = !state.pending; $('video-pending-retry').disabled = state.busy;
     $('video-new').disabled = !controller.enabled() || controller.locked(); $('video-empty-new').disabled = $('video-new').disabled;
@@ -637,36 +725,38 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
       || formMode === 'retry' && element.id !== 'video-submit';
     $('video-submit').disabled = !controller.enabled() || controller.locked();
     renderCards();
-    const refs = rows(state.catalog?.references), refSignature = JSON.stringify(refs.map(row => [row.id, row.file_name]));
+    const catalog = currentCatalog(state), refs = rows(catalog?.references), analyses = rows(catalog?.analyses), refSignature = JSON.stringify(refs.map(row => [row.id, row.file_name]));
     if (referencesSignature !== refSignature) {
       referencesSignature = refSignature; const select = $('video-saved-reference'), previous = select.value;
       const blank = el(doc, 'option', '', '使用新上传的视频'); blank.value = ''; select.replaceChildren(blank);
       for (const ref of refs) { const option = el(doc, 'option', '', ref.file_name + ' · ' + Number(ref.duration_seconds).toFixed(1) + ' 秒'); option.value = ref.id; select.append(option); }
       if (refs.some(ref => ref.id === previous)) select.value = previous;
     }
-    const renderAnalyses = host => {
-      host.replaceChildren();
-      for (const analysis of rows(state.catalog?.analyses)) {
-        const section = el(doc, 'section', 'panel');
-        section.append(el(doc, 'h3', '', (refs.find(row => row.id === analysis.reference_id)?.file_name ?? '参考视频') + ' · ' + videoState(analysis.state)));
-        if (!['completed', 'failed', 'cancelled'].includes(analysis.state)) section.append(button(doc, '停止本次分析', () => void controller.stopAnalysis(analysis), {disabled: controller.locked() || analysis.state === 'stopping'}));
-        if (analysis.error) section.append(el(doc, 'p', 'small muted', '分析执行信息：' + (analysis.error.code ?? analysis.error)));
-        for (const [candidateIndex, candidate] of rows(analysis.candidates ?? analysis.candidate_segments).entries()) {
-          const row = el(doc, 'div', 'video-analysis-candidate');
-          row.append(el(doc, 'strong', '', candidate.title), el(doc, 'p', 'small muted', candidate.start_seconds + '–' + candidate.end_seconds + ' 秒 · ' + candidate.learning_goal),
-            button(doc, '选择这个片段', () => {
-              openForm(); $('video-reference-id').value = analysis.reference_id; $('video-saved-reference').value = analysis.reference_id;
-              $('video-reference').required = false; $('video-name').value = candidate.title; $('video-goal').value = candidate.learning_goal;
-              $('video-start').value = candidate.start_seconds; $('video-end').value = candidate.end_seconds;
-              $('video-analysis-id').value = analysis.id; $('video-segment-index').value = candidateIndex;
-              controller.setMessage('已选择候选片段。请核对目标和预算，再点击“开始视频学习”。');
-            }, {disabled: controller.locked()})); section.append(row);
-        }
-        section.append(jsonSection(doc, '实际观察范围与完整分析', analysis)); host.append(section);
-      }
-    };
-    renderAnalyses($('video-analyses')); renderAnalyses($('video-form-analyses'));
+    const selectedReference = $('video-reference-id').value;
+    const formAnalyses = selectedReference ? analyses.filter(row => row.reference_id === selectedReference) : analyses;
+    $('video-form-analyses-section').hidden = !formAnalyses.length;
+    $('video-form-analyses').replaceChildren(...formAnalyses.map(analysis => renderVideoAnalysisCard(doc, analysis,
+      {reference: refs.find(ref => ref.id === analysis.reference_id), onOpen: id => openAnalysis(id, 'form')})));
     $('video-analyze').disabled = !controller.enabled() || controller.locked();
+    if (shown === 'analysis') {
+      const analysis = analyses.find(row => row.id === selectedAnalysisId);
+      if (!analysis) { selectedAnalysisId = null; show('home'); $('video-analysis-detail').replaceChildren(); }
+      else updateVideoAnalysisDetail(doc, $('video-analysis-detail'), analysis, {root, reference: refs.find(ref => ref.id === analysis.reference_id),
+        ownerKey: state.owner_key, locked: controller.locked(), backLabel: analysisReturnTo === 'form' ? '返回填写需求' : '返回视频学习库',
+        onBack: () => { show(analysisReturnTo); render(controller.state); }, onStop: () => void controller.stopAnalysis(analysis),
+        onChoose: index => {
+          const current = rows(currentCatalog(controller.state)?.analyses).find(row => row.id === selectedAnalysisId);
+          const candidate = analysisCandidates(current)[index]; if (!current || !candidate || controller.locked()) return;
+          if (analysisReturnTo !== 'form' || formMode) openForm(); else show('form');
+          controller.clearAnalysis(); $('video-reference-id').value = current.reference_id; $('video-saved-reference').value = current.reference_id;
+          $('video-reference').value = ''; $('video-reference').required = false; clearPreview();
+          $('video-reference-preview').replaceChildren(); $('video-reference-preview').hidden = true;
+          $('video-name').value = candidate.title; $('video-goal').value = candidate.learning_goal;
+          $('video-start').value = candidate.start_seconds; $('video-end').value = candidate.end_seconds;
+          $('video-analysis-id').value = current.id; $('video-segment-index').value = index;
+          controller.setMessage('已选择候选片段。请核对目标和预算，再点击“开始视频学习”。');
+        }});
+    }
     if (state.detail && shown === 'detail') {
       const projectId = state.detail.id;
       updateVideoDetail(doc, $('video-detail'), state.detail, {root, selection: selectedId, locked: controller.locked(), ownerKey: state.owner_key,
@@ -717,6 +807,7 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
     const referenceId = $('video-saved-reference').value; $('video-reference-id').value = referenceId;
     $('video-reference').required = !referenceId;
     if (referenceId) { $('video-reference').value = ''; clearPreview(); $('video-reference-preview').hidden = true; }
+    render(controller.state);
   });
   for (const id of ['video-start', 'video-end', 'video-reference']) $(id).addEventListener('input', () => {
     $('video-analysis-id').value = ''; $('video-segment-index').value = '';
