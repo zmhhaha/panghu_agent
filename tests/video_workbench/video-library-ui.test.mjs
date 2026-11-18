@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {buildVideoProject, buildVideoExperiment, videoAssetUrl, validateReferenceFile} from '../../video_workbench/animation_lab_web/video-model.mjs';
-import {VideoLibraryController, analyzeVideoSelection, referenceBody, renderVideoDetail} from '../../video_workbench/animation_lab_web/video-library.mjs';
+import {VideoLibraryController, analyzeVideoSelection, referenceBody, renderVideoDetail, updateVideoDetail} from '../../video_workbench/animation_lab_web/video-library.mjs';
 
 const root = new URL('https://video-service.panghuer.top/dev/animations/');
 const uuid = '00000000-0000-4000-8000-000000000001';
@@ -125,11 +125,20 @@ test('a lost analysis stop response is cleared by read-only proof of its termina
 });
 
 class Element {
-  constructor(tag){this.tagName=tag.toUpperCase();this.children=[];this.handlers={};this.attributes={};this.currentTime=0;this.paused=true;this._text='';}
+  constructor(tag){this.tagName=tag.toUpperCase();this.children=[];this.handlers={};this.listeners={};this.attributes={};this.currentTime=0;this.paused=true;this.muted=false;this.ended=false;this.readyState=0;this.duration=NaN;this.playCalls=0;this.replacements=0;this._text='';}
   set textContent(value){this._text=String(value);this.children=[];} get textContent(){return this._text+this.children.map(x=>x.textContent).join('');}
-  append(...items){this.children.push(...items);} setAttribute(k,v){this.attributes[k]=v;}
-  addEventListener(k,v){this.handlers[k]=v;} querySelector(tag){return all(this).find(x=>x!==this&&x.tagName===tag.toUpperCase())??null;}
-  pause(){this.paused=true;} play(){this.paused=false;return Promise.resolve();}
+  append(...items){this.children.push(...items);} setAttribute(k,v){this.attributes[k]=v;} getAttribute(k){return this.attributes[k]??null;}
+  replaceChildren(...items){this.children=[];this.append(...items);this.replacements++;}
+  addEventListener(k,fn,options={}){
+    (this.listeners[k]??=[]).push({fn,once:options.once});
+    this.handlers[k]=(...args)=>Promise.all([...this.listeners[k]].map(row=>{
+      if(row.once)this.listeners[k]=this.listeners[k].filter(x=>x!==row);
+      return row.fn(...args);
+    }));
+  }
+  querySelectorAll(tag){return all(this).filter(x=>x!==this&&x.tagName===tag.toUpperCase());}
+  querySelector(tag){return this.querySelectorAll(tag)[0]??null;}
+  pause(){this.paused=true;} play(){this.paused=false;this.playCalls++;return Promise.resolve();}
 }
 const all = node => [node,...node.children.flatMap(all)];
 const doc = {createElement:tag=>new Element(tag),createDocumentFragment:()=>new Element('fragment')};
@@ -145,4 +154,73 @@ test('comparison uses actual video players and aligns reference original time wi
   assert.equal(players[0].muted,true);assert.equal(players[1].muted,true);
   players[1].currentTime=7;players[1].handlers.timeupdate();assert.equal(players[0].paused,true);
   assert.match(view.textContent,/不能由静帧补签/);
+});
+
+const displayedProject = extra => project({candidates:[{id:'work',work_kind:'reproduction',media_url:'/api/video-lab/projects/video-one/artifacts/media'}],...extra});
+const detailsNamed = (host, name) => host.querySelectorAll('details').find(x=>x.querySelector('summary')?.textContent.startsWith(name));
+const options = extra => ({root,ownerKey:'owner-A',selection:'work',locked:false,...extra});
+
+test('timestamp polling keeps the exact live DOM, expanded input and player without another input read', async () => {
+  const host=new Element('section'), p=displayedProject(); let reads=0;
+  const settings=options({onInspect:async id=>{reads++;return {experiment_id:id,role:'author'};}});
+  updateVideoDetail(doc,host,p,settings);
+  const history=detailsNamed(host,'实验历史'), inspect=detailsNamed(host,'查看实际 Agent 输入'), player=host.querySelectorAll('video')[1];
+  assert.equal(reads,0); history.open=true; inspect.open=true; await inspect.handlers.toggle();
+  player.currentTime=3.5; await player.play();
+  const poll=structuredClone(p);poll.updated_at=500;poll.experiments[0].updated_at=500;
+  assert.equal(updateVideoDetail(doc,host,poll,settings),false);
+  assert.equal(host.replacements,1);assert.equal(host.querySelectorAll('video')[1],player);
+  assert.equal(detailsNamed(host,'查看实际 Agent 输入'),inspect);assert.equal(inspect.open,true);assert.equal(history.open,true);
+  assert.equal(player.currentTime,3.5);assert.equal(player.paused,false);assert.equal(reads,1);
+  assert.match(inspect.textContent,/author/);
+});
+
+test('a real stage/history update preserves keyed disclosure, playback intent and comparison position', async () => {
+  const host=new Element('section'),p=displayedProject(),settings=options({onInspect:async()=>({role:'review'})});
+  updateVideoDetail(doc,host,p,settings);
+  detailsNamed(host,'实验历史').open=true;detailsNamed(host,'查看实际 Agent 输入').open=true;
+  const oldPlayers=host.querySelectorAll('video');
+  oldPlayers[0].currentTime=24.25;oldPlayers[0].muted=true;await oldPlayers[0].play();
+  oldPlayers[1].currentTime=3.25;oldPlayers[1].muted=false;await oldPlayers[1].play();
+  const timeline=host.querySelectorAll('input').find(x=>x.type==='range');timeline.value='3.25';
+  const next=structuredClone(p);next.experiments[0].state='running';next.experiments.push({id:'exp-two',state:'queued',frozen:{...fields}});
+  assert.equal(updateVideoDetail(doc,host,next,settings),true);
+  assert.equal(detailsNamed(host,'实验历史').open,true);assert.match(detailsNamed(host,'实验历史').querySelector('summary').textContent,/（2）/);
+  assert.equal(detailsNamed(host,'查看实际 Agent 输入').open,true);
+  assert.equal(host.querySelectorAll('input').find(x=>x.type==='range').value,'3.25');
+  const players=host.querySelectorAll('video');assert.ok(oldPlayers.every(x=>x.paused));
+  for(const player of players) await player.handlers.loadedmetadata();
+  assert.equal(players[0].currentTime,24.25);assert.equal(players[1].currentTime,3.25);
+  assert.equal(players[0].muted,true);assert.equal(players[1].muted,false);assert.ok(players.every(x=>!x.paused));
+});
+
+test('project, owner, work, media and clip changes cannot inherit another viewing position', async () => {
+  for(const change of ['project','owner','work','media','clip']) {
+    const host=new Element('section'),p=displayedProject(),settings=options();
+    updateVideoDetail(doc,host,p,settings);
+    const old=host.querySelectorAll('video');old[0].currentTime=25;old[1].currentTime=4;old[1].muted=true;await old[1].play();
+    const next=structuredClone(p),nextSettings={...settings};
+    if(change==='project')next.id='another-project';
+    if(change==='owner')nextSettings.ownerKey='owner-B';
+    if(change==='work'){next.candidates[0].id='another-work';nextSettings.selection='another-work';}
+    if(change==='media')next.candidates[0].media_url='/api/video-lab/projects/video-one/artifacts/another-media';
+    if(change==='clip')next.experiments[0].frozen.start_seconds=20;
+    updateVideoDetail(doc,host,next,nextSettings);
+    const players=host.querySelectorAll('video');
+    for(const player of players)if(player.handlers.loadedmetadata)await player.handlers.loadedmetadata();
+    assert.equal(players[0].currentTime,change==='clip'?20:21,change);
+    assert.equal(players[1].currentTime,0,change);assert.equal(players[1].muted,false,change);assert.equal(players[1].paused,true,change);
+  }
+});
+
+test('paused playback stays paused and a superseded metadata callback cannot restart a detached player', async () => {
+  const host=new Element('section'),p=displayedProject(),settings=options();
+  updateVideoDetail(doc,host,p,settings);const first=host.querySelectorAll('video')[1];first.currentTime=2;first.muted=true;
+  const next=structuredClone(p);next.experiments[0].state='running';updateVideoDetail(doc,host,next,settings);
+  const paused=host.querySelectorAll('video')[1];await paused.handlers.loadedmetadata();
+  assert.equal(paused.currentTime,2);assert.equal(paused.paused,true);assert.equal(paused.muted,true);
+  await paused.play();next.experiments[0].state='reviewing';updateVideoDetail(doc,host,next,settings);
+  const detached=host.querySelectorAll('video')[1];
+  updateVideoDetail(doc,host,displayedProject({id:'new-project'}),settings);
+  await detached.handlers.loadedmetadata();assert.equal(detached.paused,true);assert.equal(detached.playCalls,0);
 });

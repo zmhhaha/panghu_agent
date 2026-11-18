@@ -379,10 +379,13 @@ function referenceUrl(reference, root) {
   return videoAssetUrl(reference?.media_url ?? reference?.image_url ?? reference?.url
     ?? (reference?.id ? VIDEO_API + 'references/' + encodeURIComponent(videoId(reference.id)) + '/media' : null), root);
 }
-function videoFigure(doc, title, url, note, root, segment = null) {
+const viewKey = (...parts) => JSON.stringify(parts);
+const stateKey = (node, key) => { node.setAttribute('data-video-view-key', key); return node; };
+function videoFigure(doc, title, url, note, root, segment = null, key = null) {
   const figure = el(doc, 'figure', 'video-figure'), caption = el(doc, 'figcaption', '', title), well = el(doc, 'div', 'video-image-well');
   if (url) {
     const player = el(doc, 'video'); player.src = url; player.controls = true; player.preload = 'metadata'; player.playsInline = true;
+    if (key) stateKey(player, key);
     player.setAttribute('aria-label', title);
     if (segment) {
       player.addEventListener('loadedmetadata', () => { player.currentTime = segment.start; });
@@ -395,11 +398,12 @@ function videoFigure(doc, title, url, note, root, segment = null) {
   } else well.append(el(doc, 'p', '', '视频尚未生成。完成后会展示实际渲染的完整片段。'));
   figure.append(caption, well); if (note) figure.append(el(doc, 'footer', '', note)); return figure;
 }
-function comparisonControls(doc, referenceFigure, outputFigure, segment) {
+function comparisonControls(doc, referenceFigure, outputFigure, segment, key = null) {
   const reference = referenceFigure.querySelector('video'), output = outputFigure.querySelector('video');
   if (!reference || !output || !segment || !(segment.end > segment.start)) return null;
   const group = el(doc, 'div', 'video-comparison-controls'), status = el(doc, 'span', 'small muted', '以片段起点对齐；可分别播放原音轨。');
   const timeline = el(doc, 'input'); timeline.type = 'range'; timeline.min = '0'; timeline.max = String(segment.end - segment.start); timeline.step = String(1/24); timeline.value = '0'; timeline.setAttribute('aria-label', '共同片段时间');
+  if (key) stateKey(timeline, key);
   const pause = () => { reference.pause(); output.pause(); };
   const seek = seconds => { reference.currentTime = segment.start + seconds; output.currentTime = seconds; timeline.value = String(seconds); };
   const play = button(doc, '同时播放画面对照', async () => {
@@ -418,11 +422,12 @@ function comparisonControls(doc, referenceFigure, outputFigure, segment) {
   output.addEventListener('ended', pause);
   group.append(play, button(doc, '暂停对照', pause), timeline, status); return group;
 }
-function jsonSection(doc, title, value, open = false) {
+function jsonSection(doc, title, value, open = false, key = null) {
   const section = el(doc, 'details', 'technical-details'); section.open = open;
+  if (key) stateKey(section, key);
   section.append(el(doc, 'summary', '', title), el(doc, 'pre', 'video-json', JSON.stringify(value, null, 2))); return section;
 }
-function reviewPanel(doc, review) {
+function reviewPanel(doc, review, key = null) {
   const panel = el(doc, 'section', 'panel'); panel.append(el(doc, 'h3', '', '独立比较与剩余问题'));
   if (!review) { panel.append(el(doc, 'p', 'muted', '尚无评审结果。视频存在不代表效果已达标。')); return panel; }
   const summary = text(review.summary) || text(review.verdict) || text(review.conclusion);
@@ -434,7 +439,7 @@ function reviewPanel(doc, review) {
     for (const item of items) list.append(el(doc, 'li', '', typeof item === 'string' ? item : text(item.description) || text(item.issue) || JSON.stringify(item)));
     panel.append(list);
   }
-  panel.append(jsonSection(doc, '查看完整评审记录', review)); return panel;
+  panel.append(jsonSection(doc, '查看完整评审记录', review, false, key)); return panel;
 }
 export function renderVideoCard(doc, project, {root, onOpen}) {
   const article = el(doc, 'article', 'effect-card video-card'), candidate = videoDefaultCandidate(project), url = videoAssetUrl(candidateArtifact(candidate, 'poster', project.id) ?? project.poster_url ?? project.preview_url, root);
@@ -483,13 +488,18 @@ export function renderVideoDetail(doc, project, {root, selection = null, onSelec
   const references = rows(project.references), reference = references[0] ?? (rows(project.reference_ids)[0] ? {id: project.reference_ids[0]} : null);
   const work = el(doc, 'div', 'video-workspace');
   const frozen = current?.frozen ?? {}, segment = {start: Number(frozen.start_seconds ?? project.start_seconds ?? 0), end: Number(frozen.end_seconds ?? project.end_seconds ?? reference?.duration_seconds ?? 0)};
-  const referenceFigure = videoFigure(doc, '参考片段', referenceUrl(reference, root),
-    (reference?.file_name ?? '') + ' · ' + segment.start + '–' + segment.end + ' 秒', root, segment);
+  const candidateKey = candidate?.id ?? null, referenceMediaUrl = referenceUrl(reference, root);
+  const sectionKey = name => viewKey(project.id, candidateKey, name);
+  const playbackKey = role => viewKey(project.id, candidateKey, referenceMediaUrl, selectedMediaUrl, segment.start, segment.end, role);
+  const referenceFigure = videoFigure(doc, '参考片段', referenceMediaUrl,
+    (reference?.file_name ?? '') + ' · ' + segment.start + '–' + segment.end + ' 秒', root, segment,
+    playbackKey('reference'));
   const videoUrl = selectedMediaUrl;
   const outputFigure = videoFigure(doc, candidate ? videoCandidateRole(candidate) : '实际动画结果', videoUrl,
-    videoUrl ? '由 Agent 源码经 HyperFrames 渲染的完整片段。' : '源码与视频分别保存；尚未渲染的源码不能作为画面验收结果。', root);
+    videoUrl ? '由 Agent 源码经 HyperFrames 渲染的完整片段。' : '源码与视频分别保存；尚未渲染的源码不能作为画面验收结果。', root,
+    null, playbackKey('output'));
   work.append(referenceFigure, outputFigure); fragment.append(work);
-  const comparison = comparisonControls(doc, referenceFigure, outputFigure, segment); if (comparison) fragment.append(comparison);
+  const comparison = comparisonControls(doc, referenceFigure, outputFigure, segment, playbackKey('comparison-time')); if (comparison) fragment.append(comparison);
   if (candidate) {
     const actions = el(doc, 'div', 'video-result-links');
     if (videoUrl) { const link = externalArtifactLink(doc, '下载视频', videoUrl, root, true); if (link) actions.append(link); }
@@ -500,21 +510,21 @@ export function renderVideoDetail(doc, project, {root, selection = null, onSelec
       () => onAdopt(candidate.id), {disabled: locked || candidate.id === project.adopted_candidate_id}));
     fragment.append(actions);
   }
-  const evidence = el(doc, 'div', 'video-evidence-grid'); evidence.append(reviewPanel(doc, candidate?.review ?? candidate?.assessment));
+  const evidence = el(doc, 'div', 'video-evidence-grid'); evidence.append(reviewPanel(doc, candidate?.review ?? candidate?.assessment, sectionKey('review')));
   const scope = el(doc, 'section', 'panel'); scope.append(el(doc, 'h3', '', '本次验证范围'));
   const transfer = candidates.filter(row => (row.role ?? row.work_kind) === 'transfer');
   scope.append(el(doc, 'p', 'muted', '实际抽帧支持画面与关键状态对照；连续运动、声音与音画配合须实际观看或听审，不能由静帧补签。'),
     el(doc, 'p', '', transfer.length ? '已有换内容验证作品，请切换作品查看实际结果与评审。' : '换内容验证尚无产物；复现进展不能替代迁移通过。'));
   if ((candidate?.role ?? candidate?.work_kind) === 'transfer') {
     const experiment = rows(project.experiments).find(row => rows(row.candidates).some(item => item.id === candidate.id));
-    if (experiment?.transfer_task) scope.append(jsonSection(doc, '本次换内容验证的任务', experiment.transfer_task, true));
+    if (experiment?.transfer_task) scope.append(jsonSection(doc, '本次换内容验证的任务', experiment.transfer_task, true, sectionKey('transfer')));
   }
-  if (candidate?.observation) scope.append(jsonSection(doc, '实际帧时间与覆盖', candidate.observation));
-  if (candidate?.evidence_scope) scope.append(jsonSection(doc, '验证范围记录', candidate.evidence_scope));
-  if (candidate?.method) scope.append(jsonSection(doc, '查看本次形成的方法', candidate.method));
-  if (candidate?.observation_receipts) scope.append(jsonSection(doc, '参考与结果的实际输入记录', candidate.observation_receipts));
+  if (candidate?.observation) scope.append(jsonSection(doc, '实际帧时间与覆盖', candidate.observation, false, sectionKey('observation')));
+  if (candidate?.evidence_scope) scope.append(jsonSection(doc, '验证范围记录', candidate.evidence_scope, false, sectionKey('scope')));
+  if (candidate?.method) scope.append(jsonSection(doc, '查看本次形成的方法', candidate.method, false, sectionKey('method')));
+  if (candidate?.observation_receipts) scope.append(jsonSection(doc, '参考与结果的实际输入记录', candidate.observation_receipts, false, sectionKey('receipts')));
   evidence.append(scope); fragment.append(evidence);
-  const history = el(doc, 'details', 'technical-details'); history.append(el(doc, 'summary', '', '实验历史与冻结需求（' + rows(project.experiments).length + '）'));
+  const history = stateKey(el(doc, 'details', 'technical-details'), viewKey(project.id, 'history')); history.append(el(doc, 'summary', '', '实验历史与冻结需求（' + rows(project.experiments).length + '）'));
   const historyList = el(doc, 'ol', 'video-history');
   for (const experiment of rows(project.experiments)) {
     const item = el(doc, 'li'), content = el(doc, 'div');
@@ -522,9 +532,9 @@ export function renderVideoDetail(doc, project, {root, selection = null, onSelec
     const feedback = experiment.frozen?.feedback ?? experiment.feedback;
     if (feedback) content.append(el(doc, 'p', 'small muted', feedback));
     const submitted = experiment.frozen ?? experiment.input ?? experiment.request ?? experiment;
-    content.append(jsonSection(doc, '查看本次提交与冻结输入', submitted));
+    content.append(jsonSection(doc, '查看本次提交与冻结输入', submitted, false, viewKey(project.id, experiment.id, 'submitted')));
     if (onInspect) {
-      const inspection = el(doc, 'details', 'technical-details'); inspection.append(el(doc, 'summary', '', '查看实际 Agent 输入'));
+      const inspection = stateKey(el(doc, 'details', 'technical-details'), viewKey(project.id, experiment.id, 'inspection')); inspection.append(el(doc, 'summary', '', '查看实际 Agent 输入'));
       inspection.append(el(doc, 'p', 'small muted', '展开时只读取已保存的本次角色输入；不代表完整系统提示词，也不会启动创作。'));
       let loaded = false;
       inspection.addEventListener('toggle', async () => {
@@ -540,10 +550,58 @@ export function renderVideoDetail(doc, project, {root, selection = null, onSelec
   history.append(historyList); fragment.append(history); return fragment;
 }
 
+const detailViews = new WeakMap();
+export function updateVideoDetail(doc, host, project, options) {
+  // Poll timestamps are not displayed. Stage, source, review and history changes still update the view.
+  const signature = JSON.stringify({project, selection: options.selection, locked: options.locked},
+    (key, value) => key === 'updated_at' ? undefined : value);
+  const scope = viewKey(options.ownerKey ?? null, project.id), previous = detailViews.get(host);
+  if (previous?.scope === scope && previous.signature === signature) return false;
+  const generation = (previous?.generation ?? 0) + 1, details = new Map(), media = new Map(), timelines = new Map();
+  if (previous?.scope === scope) {
+    for (const node of host.querySelectorAll('details')) {
+      const key = node.getAttribute('data-video-view-key'); if (key) details.set(key, node.open);
+    }
+    for (const node of host.querySelectorAll('video')) {
+      const key = node.getAttribute('data-video-view-key');
+      if (key) media.set(key, {src: node.src, time: node.currentTime, muted: node.muted,
+        playing: !node.paused && !node.ended});
+    }
+    for (const node of host.querySelectorAll('input')) {
+      const key = node.getAttribute('data-video-view-key'); if (key) timelines.set(key, node.value);
+    }
+  }
+  // Detached players can otherwise keep playing their audio after a meaningful update.
+  for (const node of host.querySelectorAll('video')) node.pause();
+  const view = renderVideoDetail(doc, project, options);
+  for (const node of view.querySelectorAll('details')) {
+    const key = node.getAttribute('data-video-view-key'); if (details.has(key)) node.open = details.get(key);
+  }
+  for (const node of view.querySelectorAll('input')) {
+    const key = node.getAttribute('data-video-view-key'); if (timelines.has(key)) node.value = timelines.get(key);
+  }
+  host.replaceChildren(view); detailViews.set(host, {scope, signature, generation});
+  for (const node of host.querySelectorAll('video')) {
+    const saved = media.get(node.getAttribute('data-video-view-key'));
+    if (!saved || saved.src !== node.src) continue;
+    node.muted = saved.muted;
+    const restore = () => {
+      if (detailViews.get(host)?.generation !== generation) return;
+      if (Number.isFinite(saved.time)) {
+        const end = Number.isFinite(node.duration) ? node.duration : saved.time;
+        node.currentTime = Math.max(0, Math.min(saved.time, end));
+      }
+      if (saved.playing) { try { node.play()?.catch(() => {}); } catch {} }
+    };
+    if (node.readyState >= 1) restore(); else node.addEventListener('loadedmetadata', restore, {once: true});
+  }
+  return true;
+}
+
 export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location?.href), fetcher = globalThis.fetch,
   storage = browserStorage(), uuid, schedule, unschedule, URLObject = globalThis.URL} = {}) {
   const $ = id => doc.getElementById(id), app = $('video-library-app'); if (!app) return null;
-  let formMode = null, shown = 'home', selectedId = null, previewUrl = null, detailSignature = '', controller;
+  let formMode = null, shown = 'home', selectedId = null, previewUrl = null, controller;
   let referencesSignature = '';
   const request = async (path, options = {}) => {
     const headers = {Accept: 'application/json'};
@@ -562,7 +620,7 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
     const projects = rows(controller.state.catalog?.projects), query = $('video-search').value;
     const filtered = projects.filter(project => videoProjectMatches(project, query));
     $('video-cards').replaceChildren(...filtered.map(project => renderVideoCard(doc, project, {root, onOpen: async id => {
-      await controller.open(id); if (controller.state.detail?.id === id) { show('detail'); detailSignature = ''; render(controller.state); }
+      await controller.open(id); if (controller.state.detail?.id === id) { show('detail'); render(controller.state); }
     }})));
     $('video-count').textContent = projects.length + ' 个学习项目';
     $('video-empty').hidden = projects.length > 0;
@@ -610,14 +668,11 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
     renderAnalyses($('video-analyses')); renderAnalyses($('video-form-analyses'));
     $('video-analyze').disabled = !controller.enabled() || controller.locked();
     if (state.detail && shown === 'detail') {
-      const signature = JSON.stringify({detail: state.detail, locked: controller.locked(), selectedId});
-      if (signature !== detailSignature) {
-        detailSignature = signature;
-        $('video-detail').replaceChildren(renderVideoDetail(doc, state.detail, {root, selection: selectedId, locked: controller.locked(),
-          onSelect: id => { selectedId = id; detailSignature = ''; render(state); }, onBack: () => show('home'),
+      const projectId = state.detail.id;
+      updateVideoDetail(doc, $('video-detail'), state.detail, {root, selection: selectedId, locked: controller.locked(), ownerKey: state.owner_key,
+          onSelect: id => { selectedId = id; render(state); }, onBack: () => show('home'),
           onStop: () => void controller.stop(), onExperiment: mode => openForm(mode), onAdopt: id => void controller.adopt(id),
-          onInspect: experimentId => request(videoRequestPath(state.detail.id, 'experiments/' + encodeURIComponent(videoId(experimentId)) + '/input'))}));
-      }
+          onInspect: experimentId => request(videoRequestPath(projectId, 'experiments/' + encodeURIComponent(videoId(experimentId)) + '/input'))});
     }
   };
   const openForm = (mode = null) => {
@@ -643,7 +698,7 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
   $('video-refresh').addEventListener('click', () => void controller.refresh());
   $('video-new').addEventListener('click', () => openForm()); $('video-empty-new').addEventListener('click', () => openForm());
   $('video-pending-retry').addEventListener('click', () => void controller.replayPending());
-  $('video-form-close').addEventListener('click', () => { clearPreview(); show(formMode ? 'detail' : 'home'); detailSignature = ''; render(controller.state); });
+  $('video-form-close').addEventListener('click', () => { clearPreview(); show(formMode ? 'detail' : 'home'); render(controller.state); });
   $('video-search').addEventListener('input', renderCards);
   $('video-reference').addEventListener('change', () => {
     controller.clearAnalysis();
@@ -680,7 +735,7 @@ export function mountVideoLibrary(doc, {root = new URL('./', globalThis.location
     if (formMode === 'continue') fields.base_candidate_id = videoDefaultCandidate(controller.state.detail, selectedId)?.id;
     try {
       const success = formMode ? await controller.experiment({...fields, mode: formMode}) : await controller.start(fields, $('video-reference').files?.[0]);
-      if (success && controller.state.detail) { clearPreview(); show('detail'); selectedId = null; detailSignature = ''; render(controller.state); void controller.refresh(); }
+      if (success && controller.state.detail) { clearPreview(); show('detail'); selectedId = null; render(controller.state); void controller.refresh(); }
     } catch (error) { controller.setMessage(errorMessage(error)); }
   });
   const ready = controller.refresh();
