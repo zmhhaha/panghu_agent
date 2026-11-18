@@ -79,3 +79,46 @@ https://video-service.panghuer.top/dev/animations/api/picture-lab
 幂等 `request_id` 与内容共同绑定。提交结果未知时，先只读核对列表或项目；需要重送时使用相同编号和原 JSON。网页保存尚未确认的原提交，只提供明确的“重送原请求”，不会自动换编号再开实验。
 
 停止 POST `/projects/{project_id}/stop`，正文 `{}`；采用默认复现作品 POST `/projects/{project_id}/adopt`，正文 `{"candidate_id":"实际作品编号"}`。这两项均不生成新版本或发布 WikiSkill。实际 Agent 输入通过 GET `/projects/{project_id}/experiments/{experiment_id}/input` 查询。
+
+## 画面能力、内部小样与分工
+
+网页“创作能力与学习方式”和结构化 API 使用同一合同。GET `/catalog` 的 `capabilities.creation`、`capabilities.motion`、`capabilities.manim` 表示当前执行环境实际准入，`runtime_capabilities` 保留具体渲染身份与本地资源。不可根据历史作品的技术标签假定某项能力当前可用。
+
+`/projects` 以及 `continue`、`fresh` 实验可传：
+
+```json
+{
+  "capability_selection": {"creation": ["canvas", "three"]},
+  "allow_probes": true,
+  "allow_collaboration": true
+}
+```
+
+多选表示允许 Agent 按目标选择或组合这些能力，不要求每个工具都装饰性出现；空组表示在已准入能力中自主选择。两个开关默认开启，但不强制增加创作阶段。第一次复现的作者直接提交完整可编辑源码；只有确有必要，才提出最多两个内部技法小样、两至三个有明确接口的部件。小样经真实渲染、独立评审后供完整作品创作使用，部件按依赖顺序制作，最后整合并实际渲染。当前 `max_parallel=1`，不声称并发执行。所有工作共用本次预算与截止时间，后续轮次及换内容验证不递归扩张子任务。
+
+Manim 是并列画面能力，采用时先通过同一真实生产者生成资源，再进入完整画面合成；静态图片采用局部第 0 帧即完成目标画面的单帧透明资源，同时保留真实 Python 源码。观察参考的作者先提出几何与材质目标，recipe 角色据此创作，不能声称 recipe 自身看过参考。`capabilities.manim` 的准入和规格限制决定可否使用，不以 HTML 伪装。当前 Manim 预制资源与内部小样、分工子任务不在同一方案内组合。Manim-only 不接受浏览器动作编排。
+
+详情中的 `experiments[].learning_progress` 记录真实内部阶段与操作身份；`internal_attempts` 保存小样源码、渲染产物与评审，只出现在该实验的证据详情，不加入普通作品选择器、采用结果或作品数量。技术 `retry` 仍只传请求编号和模式，保留原方案、成功小样/部件和确切输入，不得借重试改变能力与开关。
+
+## 用选定图片版本创作动画
+
+已结束实验中实际渲染成功的图片版本可点击“用此版本创作动画”。这会在需求创作库新建关联项目：原图片学习及其采用、复现和迁移结论保持，新增运动与节奏由新委托独立创作与验证。只有源码而没有实际图片的版本不能作为来源。
+
+外部 Agent 使用 POST `/projects/{project_id}/animations`：
+
+```json
+{
+  "request_id": "d7a75165-89c3-4234-a787-b4b215fe13b5",
+  "candidate_id": "替换为该项目中已实际出图的作品编号",
+  "goal": "保留这版山体与笔触语言，原创雾气散开和景深显现的动作。",
+  "duration_seconds": 8,
+  "use_wikiskill": false,
+  "budget": {"max_rounds": 1, "max_seconds": 900}
+}
+```
+
+`budget` 使用需求创作 API 的同一预算合同。可显式提供 `title` 和 `capability_selection`；多选仍只是允许范围。服务校验同一 owner 的项目、实际图片、源码和摘要，由内部创建不可伪造的来源身份。相同请求编号及原始正文恢复同一动画委托，不能因跨库回执未知而重复创作。
+
+选定 Manim 图片时，服务从已验证生产记录读取完整 Python，作为新作者的创作参考；默认重新规划 Manim 动画资源，也可明确选用已准入的其他画面能力。旧的单帧 PNG 和资源描述符不作为新动画的运行依赖。仅带入图片或源码不能证明新动作有效，更不会自动采用作品或发布知识。
+
+本轮工程范围、回归与实际发布的分别验收见 [learning-capabilities-and-wikiskill-validation-20261118.md](learning-capabilities-and-wikiskill-validation-20261118.md)。
