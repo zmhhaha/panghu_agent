@@ -307,12 +307,109 @@ class LearningStrategyMixin:
             'resource_phase_invalid', 409)
         self._learning_schedule(run)
 
-    @staticmethod
-    def _learning_restore_retry(prior, run):
+    def _learning_restore_retry(self, prior, run):
         """Preserve paid plan/probe/source identities across technical recovery."""
         for key in ('learning_strategy', 'learning_strategy_complete', 'internal_attempts'):
             if key in prior:
                 run[key] = deepcopy(prior[key])
+        state = run.get('learning_strategy') or {}
+        # Only the first complete composition can be awaiting source acceptance.
+        # A later failed revision must not silently fall back to this old source.
+        if (prior['stage'] != 'author' or prior['work_kind'] != 'reproduction'
+                or prior['round'] != 1 or prior['candidates']
+                or state.get('phase') != 'complete' or state.get('complete') is not True
+                or run.get('learning_strategy_complete') is not True):
+            return
+        binding = state.get('composition_operation')
+        if binding is None:
+            return
+        previous_intent = prior.get('completed_author_retry')
+        if previous_intent is not None:
+            strategy.require(previous_intent.get('consumed') is False
+                and previous_intent.get('operation') == binding
+                and not prior['operation_ids'], 'retry_checkpoint_changed', 409)
+        else:
+            strategy.require(bool(prior['operation_ids'])
+                and prior['operation_ids'][-1] == binding['id'], 'retry_checkpoint_changed', 409)
+        operation = self._learning_operation(prior, binding)
+        self._learning_check_completed_author(run, operation)
+        receipt = operation.get('observation_receipt')
+        strategy.require(type(receipt) is dict, 'retry_receipt_missing', 409)
+        intent = dict(operation=deepcopy(binding), experiment_id=operation['experiment_id'],
+            job_id=operation['job_id'], receipt_sha256=digest(receipt), consumed=False)
+        if previous_intent is not None:
+            strategy.require(previous_intent == intent, 'retry_checkpoint_changed', 409)
+        run['completed_author_retry'] = intent
+
+    def _learning_check_completed_author(self, run, operation):
+        """Keep the original paid input/result bound to the same frozen study."""
+        document = operation['input']
+        task = document.get('constraints', {}).get('learning_strategy_task') or {}
+        origin = self.store.read('experiments', run['owner'], operation['experiment_id'])
+        strategy.require(operation.get('owner') == run['owner']
+            and operation['id'] in origin['operation_ids']
+            and operation['stage'] == 'author' and operation.get('job_id')
+            and document.get('experiment_id') == origin['id']
+            and document.get('project_id') == run['project_id'] == origin['project_id']
+            and document.get('work_kind') == run['work_kind'] == origin['work_kind']
+            and origin['round'] == run['round']
+            and document.get('mode') == 'create'
+            and task.get('schema') == strategy.TASK_SCHEMA and task.get('phase') == 'compose',
+            'retry_checkpoint_changed', 409)
+        strategy.require(origin['frozen_sha256'] == run['frozen_sha256']
+            and origin['frozen'] == run['frozen']
+            and origin.get('learning_strategy') == run.get('learning_strategy')
+            and origin.get('learning_strategy_complete') is True
+            and document.get('goal') == run['frozen']['goal']
+            and document.get('knowledge_binding') == run['frozen']['library_binding']
+            and document.get('knowledge_snapshot') == run['frozen']['knowledge_snapshot'],
+            'retry_frozen_input_changed', 409)
+
+    def _learning_resume_completed_author(self, run):
+        """Revalidate a stopped compose checkpoint without another creator POST.
+
+        Candidate, consumed intent and the next stage are saved together by the
+        host. A restart before that save repeats only reads and validation.
+        """
+        intent = run.get('completed_author_retry')
+        if intent is None or intent.get('consumed'):
+            return False
+        state = self._learning_state(run)
+        strategy.require(state is not None and state.get('phase') == 'complete'
+            and state.get('complete') is True and run.get('learning_strategy_complete') is True
+            and run['stage'] == 'author' and not run['candidates']
+            and not run['operation_ids'] and run['active_operation_id'] is None
+            and state.get('composition_operation') == intent.get('operation'),
+            'retry_checkpoint_changed', 409)
+        for probe in state['probes']:
+            if probe['status'] == 'reviewed':
+                self._learning_operation(run, probe['author_operation'])
+                self._learning_operation(run, probe['review_operation'])
+        operation = self._learning_operation(run, intent['operation'])
+        self._learning_check_completed_author(run, operation)
+        strategy.require(operation['experiment_id'] == intent['experiment_id']
+            and operation['job_id'] == intent['job_id']
+            and digest(operation.get('observation_receipt')) == intent['receipt_sha256'],
+            'retry_checkpoint_changed', 409)
+        job = self.author.poll(intent['job_id'])
+        strategy.require(job.get('job_id') == intent['job_id'], 'retry_job_changed', 409)
+        if job.get('state') != 'completed' or job.get('stop_proven') is not True:
+            run['state'] = 'submission_unknown'
+            return True
+        document, result = operation['input'], operation['result']
+        self.protocol.validate_input(document)
+        self.protocol.validate_result(result, operation['input_sha256'], document)
+        expected = {frame['sha256'] for frame in document['observation']['frames']}
+        observed = {row.get('sha256') for row in operation['observation_receipt'].get('images', [])
+            if row.get('model_request_completed') is True}
+        strategy.require(expected <= observed, 'retry_frame_transport_incomplete', 409)
+        candidate = self._accept_learning_author(run, operation, result)
+        candidate['reused_author'] = dict(source_experiment_id=intent['experiment_id'],
+            source_operation_id=operation['id'], job_id=intent['job_id'],
+            input_sha256=operation['input_sha256'], result_sha256=intent['operation']['result_sha256'],
+            observation_receipt_sha256=intent['receipt_sha256'], retry_experiment_id=run['id'])
+        intent['consumed'] = True
+        return True
 
     @staticmethod
     def _learning_progress(run):

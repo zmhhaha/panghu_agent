@@ -136,7 +136,100 @@ def factory_motion(code):
     shadows = {(i, name) for i, row in enumerate(records) for name in row['parameters']}
     shadows.update((scope_at(match.start()), match.group(1)) for match in re.finditer(
         r'\b(?:const|let|var)\s+(' + _NAME + r')\b', code))
-    if not apis:
+
+    # A standalone (function(host){...})(window) has a known lexical window
+    # receiver. Do not rewrite identifiers globally: two contributions may use
+    # identical local function names, and a parameter/local can shadow host.
+    windows = {}
+    for index, row in enumerate(records):
+        if row['name'] != 'function' or row['parent'] is not None or len(row['parameters']) != 1:
+            continue
+        if (None, 'window') in shadows or (None, 'window') in bindings:
+            continue
+        prefix = code[:row['start']].rstrip()
+        if not prefix.endswith('('):
+            continue
+        opening = len(prefix) - 1
+        before = code[:opening].rstrip()
+        if before and before[-1] != ';':
+            continue
+        if any(code.count(a, 0, opening) != code.count(b, 0, opening)
+               for a, b in (('(', ')'), ('[', ']'), ('{', '}'))):
+            continue
+        if re.match(r'\s*\)\s*\(\s*window\s*\)\s*(?:;|$)', code[row['end'] + 1:]):
+            windows[index] = row['parameters'][0]
+
+    def window_receiver(name, scope):
+        for owner in ancestors(scope):
+            if (owner, name) in bindings:
+                return False  # Reassigned aliases are deliberately ambiguous.
+            if windows.get(owner) == name:
+                return True
+            if (owner, name) in shadows:
+                return False
+        return name == 'window'
+
+    def direct_statement(position, scope):
+        if scope not in windows:
+            return False
+        prefix = code[records[scope]['body_start']:position].rstrip()
+        return ((not prefix or prefix[-1] in ';}')
+            and all(prefix.count(a) == prefix.count(b) for a, b in (('(', ')'), ('[', ']'), ('{', '}'))))
+
+    # Explicit object exports retain function identity across IIFE boundaries.
+    # Only an unambiguous earlier export can bind a later local receiver; an
+    # unknown/reassigned object never borrows an unrelated same-named method.
+    exports = {}
+    export_pattern = re.compile(r'\b(' + _NAME + r')\s*\.\s*(' + _NAME + r')\s*=\s*(?!=)')
+    for match in export_pattern.finditer(code):
+        scope = scope_at(match.start())
+        if match.group(2) == '__animationExperiment' or not window_receiver(match.group(1), scope):
+            continue
+        api = None
+        value = re.match(r'(?:Object\s*\.\s*freeze\s*\(\s*)?\{', code[match.end():])
+        builtin_freeze = (not code[match.end():].startswith('Object')
+            or not any((owner, 'Object') in shadows or (owner, 'Object') in bindings for owner in ancestors(scope)))
+        if direct_statement(match.start(), scope) and builtin_freeze and value:
+            start = match.end() + value.end() - 1
+            end = _closing(code, start, '{', '}')
+            if end is not None:
+                api = {}
+                for part in _parts(code[start + 1:end]):
+                    field = re.fullmatch(r'\s*(' + _NAME + r')\s*(?::\s*(' + _NAME + r'))?\s*', part)
+                    if field:
+                        target = function(field.group(2) or field.group(1), scope)
+                        if target is not None:
+                            api[field.group(1)] = target
+        exports.setdefault(match.group(2), []).append((match.start(), api))
+        if len(exports) > 512:
+            return False
+    for name, entries in exports.items():
+        if len(entries) == 1 and entries[0][1]:
+            apis[('window', name)] = entries[0][1]
+    for match in assignment.finditer(code):
+        scope = scope_at(match.start())
+        value = re.match(r'\s*(' + _NAME + r')\s*\.\s*(' + _NAME + r')\s*(?=[;,])', code[match.end():])
+        if not value or not window_receiver(value.group(1), scope):
+            continue
+        name = value.group(2)
+        key = ('window', name)
+        if key in apis and exports[name][0][0] < match.start():
+            # The original pass already counts every write, including poison.
+            # Replace only the sole, proven initializer.
+            receiver = (scope, match.group(1))
+            if len(bindings[receiver]) == 1:
+                bindings[receiver] = [key]
+
+    raw_registrations = list(re.finditer(
+        r'\b(' + _NAME + r')\s*\.\s*__animationExperiment\s*=\s*', code))
+    registrations = [match for match in raw_registrations
+        if window_receiver(match.group(1), scope_at(match.start()))]
+    if any(match.group(1) == 'window' and match not in registrations for match in raw_registrations):
+        return False  # A shadowed window is not the host registration.
+    if any((match.group(1) != 'window' or scope_at(match.start()) in windows)
+           and not direct_statement(match.start(), scope_at(match.start())) for match in registrations):
+        return False  # Conditional/uninvoked registration is not a known root.
+    if not apis and not any(scope_at(match.start()) in windows for match in registrations):
         return None  # Existing direct-function recognizer handles other shapes.
     def member(receiver, method, scope):
         for owner in ancestors(scope):
@@ -148,11 +241,12 @@ def factory_motion(code):
             if (owner, receiver) in shadows:
                 return None
         return None
-    registrations = list(re.finditer(r'\bwindow\s*\.\s*__animationExperiment\s*=\s*\{', code))
     if not registrations:
         return False
     registration = registrations[-1]
-    start = registration.end() - 1
+    start = registration.end()
+    if start >= len(code) or code[start] != '{':
+        return False
     end = _closing(code, start, '{', '}')
     if end is None:
         return False

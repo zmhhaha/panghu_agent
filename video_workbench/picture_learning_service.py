@@ -559,19 +559,7 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
             run['stage'] = 'learning_resources'
             return
         if operation['stage'] == 'author':
-            source = result['source']
-            self._validate_learning_source(run, source)
-            candidate = dict(id=new_id(), work_kind=run['work_kind'], role=run['work_kind'],
-                round=run['round'], source=source, source_sha256=source['source_sha256'],
-                method=deepcopy(result.get('method')), review=None, status='authored',
-                created_at=self.clock(), author_operation_id=operation['id'])
-            if run.get('resource_ready'):
-                candidate['resource_descriptor'] = deepcopy(run['resource_context']['generated_resources'][0])
-                candidate['resource_plan'] = deepcopy(run['resource_plan'])
-            candidate['artifacts'] = {'source': dict(id=candidate['id'] + '-source',
-                sha256=self.store.blob(canonical_bytes(source)), mime_type='application/json')}
-            run['candidates'].append(candidate)
-            run.update(active_candidate_id=candidate['id'], stage='render')
+            self._accept_learning_author(run, operation, result)
         elif operation['stage'] == 'review':
             candidate = self._candidate(run)
             candidate.update(review=deepcopy(result['review']), status='reviewed',
@@ -602,6 +590,25 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
                     self._finish(run, 'budget_exhausted')
         else:
             self._begin_transfer(run, result['transfer_task'])
+
+    def _accept_learning_author(self, run, operation, result):
+        """Accept a validated author result through the current source gate."""
+        source = result['source']
+        self._validate_learning_source(run, source)
+        candidate = dict(id=new_id(), work_kind=run['work_kind'], role=run['work_kind'],
+            round=run['round'], source=source, source_sha256=source['source_sha256'],
+            method=deepcopy(result.get('method')), review=None, status='authored',
+            created_at=self.clock(), author_operation_id=operation['id'])
+        if 'sound_events' in result:
+            candidate['sound_events'] = deepcopy(result['sound_events'])
+        if run.get('resource_ready'):
+            candidate['resource_descriptor'] = deepcopy(run['resource_context']['generated_resources'][0])
+            candidate['resource_plan'] = deepcopy(run['resource_plan'])
+        candidate['artifacts'] = {'source': dict(id=candidate['id'] + '-source',
+            sha256=self.store.blob(canonical_bytes(source)), mime_type='application/json')}
+        run['candidates'].append(candidate)
+        run.update(active_candidate_id=candidate['id'], stage='render')
+        return candidate
 
     def _select_best(self, run):
         candidates = [item for item in self._context_candidates(run) if item['work_kind'] == 'reproduction'
@@ -769,6 +776,8 @@ class PictureLearningService(LearningCapabilitiesMixin, LearningStrategyMixin):
                         run.pop('resource_retry_pending', None)
                     if run['stage'] == 'learning_resources':
                         self._advance_learning_resources(run)
+                    elif self._learning_resume_completed_author(run):
+                        pass
                     else:
                         operation = self._operation(run)
                         if run['stage'] == 'render':
